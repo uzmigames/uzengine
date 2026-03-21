@@ -111,7 +111,8 @@ public:
     [[nodiscard]] static TextureLoadResult Load(
         IRHIDevice* device,
         IRHICommandList* cmdList,
-        const std::string& path);
+        const std::string& path,
+        bool isSRGB = false);
 
     /// Loads a texture from an in-memory image buffer.
     ///
@@ -140,7 +141,8 @@ public:
         IRHICommandList* cmdList,
         const uint8_t* data,
         size_t size,
-        const char* debugName = "memory_texture");
+        const char* debugName = "memory_texture",
+        bool isSRGB = false);
 
     /// Uploads pre-decoded RGBA8 pixels to a GPU texture with full mip chain.
     ///
@@ -172,7 +174,8 @@ public:
         unsigned char* pixels,
         uint32_t width,
         uint32_t height,
-        const char* debugName);
+        const char* debugName,
+        bool isSRGB = false);
 
     /// Uploads pre-decoded RGBA8 pixels to a GPU texture WITHOUT flushing the
     /// command list or waiting for GPU idle.
@@ -207,7 +210,8 @@ public:
         uint32_t width,
         uint32_t height,
         const char* debugName,
-        class UploadContext* outUpload);
+        class UploadContext* outUpload,
+        bool isSRGB = false);
 
     /// Uploads pre-decoded RGBA8 pixels with a pre-computed mip chain to a GPU
     /// texture WITHOUT flushing the command list or waiting for GPU idle.
@@ -247,7 +251,32 @@ public:
         uint8_t* const* mipData,
         const uint32_t* mipWidths,
         const uint32_t* mipHeights,
-        uint16_t mipCount);
+        uint16_t mipCount,
+        bool isSRGB = false);
+
+    /// Loads a pre-cooked .uztexture file directly to the GPU.
+    ///
+    /// The .uztexture format contains pre-computed mip chains in GPU-ready format
+    /// (BC7, BC1, BC5, etc. or uncompressed RGBA8). This bypasses stbi_load and
+    /// CPU mip generation entirely — the binary mip data is uploaded directly.
+    ///
+    /// # Arguments
+    /// * `device` — RHI device for resource creation.
+    /// * `cmdList` — Command list in recording state.
+    /// * `data` — Raw .uztexture file bytes.
+    /// * `size` — Size of data in bytes.
+    /// * `debugName` — Label for GPU debug tools.
+    /// * `outUpload` — UploadContext for batched staging. If null, uses sync upload.
+    ///
+    /// # Returns
+    /// TextureLoadResult with valid handle on success.
+    [[nodiscard]] static TextureLoadResult LoadUzTex(
+        IRHIDevice* device,
+        IRHICommandList* cmdList,
+        const uint8_t* data,
+        size_t size,
+        const char* debugName,
+        class UploadContext* outUpload = nullptr);
 };
 
 } // namespace uz

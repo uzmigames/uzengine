@@ -11,6 +11,8 @@
 
 #pragma once
 
+#include "uztexture_format.h"
+
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -73,6 +75,17 @@ struct AssetImportOptions {
     std::string format;                ///< Output bytecode format: "dxil" or "spirv"
     std::vector<std::string> defines;  ///< Preprocessor defines (e.g., "USE_PBR=1", "DEBUG")
     bool debug = false;                ///< Include debug symbols and validation info in output
+
+    // ── Texture-specific options ──────────────────────────────────────────────
+    /// Target pixel format for texture imports. When set to a BC format, the
+    /// importer compresses each mip level via etcpak before writing .uztexture.
+    /// Ignored by non-texture importers.
+    TextureFormat textureCompression = TextureFormat::Uncompressed_RGBA8;
+
+    /// If `true`, the sRGB flag is written into the .uztexture header so the
+    /// runtime creates an sRGB-view SRV (e.g., DXGI_FORMAT_BC7_UNORM_SRGB).
+    /// Ignored by non-texture importers.
+    bool textureSRGB = false;
 };
 
 /// Pure-function interface for converting source assets to runtime-ready format.

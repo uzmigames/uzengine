@@ -2,6 +2,44 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.44] — 2026-03-21
+
+### Async Texture Pipeline — Zero Main-Thread Stall, BC7 Compression, sRGB Correctness
+
+**Phase 0 — Async Loading (11.6s → 0ms main thread stall):**
+- `AsyncTextureDecoder::SubmitFromMemory()` — workers decode from pre-read PAK bytes
+- `AsyncTextureDecoder::SubmitVFS()` — workers read from thread-safe VFS on background threads
+- VFS made thread-safe: `std::mutex` in PakVFS + LooseFileVFS, per-thread PAK file handles for parallel I/O
+- Batch flush threshold raised 4→32, per-frame flush when uploads are ready
+- `PreloadMaterialTextures()` method for early async submission
+- Timing instrumentation via `UZ_PROFILE_SCOPE` + `std::chrono` on batch flushes
+
+**Phase 0.5 — sRGB Correctness:**
+- `isSRGB` parameter flows through entire pipeline: TextureLoader → AsyncTextureDecoder → UploadContext
+- Generic `MaterialInterface::IsTextureSlotSRGB(slotName)` — resolves by naming convention, works for any shading model (PBR, Hair, Cloth, SSS)
+- `Material::srgbOverrides` map for per-slot artist override from .uzmat
+- Albedo/Emissive → `RGBA8Srgb`, Normal/Roughness/Metallic/AO/ORM → `RGBA8Unorm`
+
+**Phase 1 — Cook-Time BC7 Compression (.uztexture):**
+- BC1/BC3/BC4/BC5/BC7 format enums added to RHI (all 4 backends: DX12, DX11, Vulkan, Metal)
+- `IsBlockCompressed()`, `BytesPerBlock()` helpers in `rhi_types.h`
+- etcpak (Godot's compressor) integrated: `setup.ps1` + `build.zig` (ProcessDxtc, bc7enc, Tables, Dither)
+- `TextureImporter::Import()` with BC compression via etcpak, format auto-selected per filename
+- `TextureLoader::LoadUzTex()` — GPU-direct upload from .uztexture (zero stbi, zero mip gen)
+- `UploadContext::UploadTexture()` BC block-row support (blocksX×blockBytes pitch, blocksY rows)
+- `uzcook` format heuristic: BaseColor/COL → BC7 sRGB, Normal → BC5, Roughness/Metallic/AO → BC4
+- `uzcook` writes companion .uztexture alongside source files; `LoadTexture()` auto-resolves cooked companions
+- `build_common.zig` cook step: `cook_textures: true` runs uzcook before uzpack
+- DXC shader compiler init made optional (texture-only cook works without DXC)
+
+**Performance Results (PBR demo, 42 textures):**
+| Metric | Before | After |
+|--------|--------|-------|
+| Main thread stall | 11.6s | 0ms |
+| GPU upload time | 47.5ms | 0.2ms |
+| VRAM per 2K texture | 16MB (RGBA8) | 4MB (BC7) |
+| Total background load | — | ~3.2s (async) |
+
 ## [0.2.43] — 2026-03-21
 
 ### GTAO Half-Res Pipeline + PBR Material Files + Asset Pipeline Improvements

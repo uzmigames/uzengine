@@ -148,6 +148,36 @@ public:
     [[nodiscard]] const std::string& GetEmissivePath() const   { return GetTexturePath("Emissive"); }
     [[nodiscard]] const std::string& GetOrmPath() const       { return GetTexturePath("ORM"); }
 
+    // ── Per-slot sRGB resolution ─────────────────────────────────────────────
+
+    /// Returns whether a texture slot should be created as sRGB (true) or
+    /// linear (false). Queried by name so any shading model's slots work
+    /// without changing this interface (PBR, Hair, Cloth, SSS, etc.).
+    ///
+    /// Default logic: slot names containing "Color", "Albedo", "BaseColor",
+    /// "Emissive", "Diffuse", "Scatter", "Fuzz", "Subsurface" are sRGB.
+    /// Everything else (Normal, Roughness, Metallic, AO, ORM, Thickness,
+    /// Opacity, Heightmap, Mask, etc.) is linear.
+    ///
+    /// Subclasses may override for per-slot artist overrides from .uzmat.
+    [[nodiscard]] virtual bool IsTextureSlotSRGB(const std::string& slotName) const {
+        return DefaultSlotIsSRGB(slotName);
+    }
+
+    /// Static helper: determines default sRGB based on slot naming convention.
+    /// Color-carrying slots are sRGB; data/scalar slots are linear.
+    [[nodiscard]] static bool DefaultSlotIsSRGB(const std::string& slotName) {
+        // Color data slots → sRGB (GPU auto-converts gamma→linear on sample)
+        if (slotName == "Albedo" || slotName == "BaseColor" || slotName == "Diffuse") return true;
+        if (slotName == "Emissive") return true;
+        if (slotName == "ScatterColor" || slotName == "SubsurfaceColor") return true;
+        if (slotName == "FuzzColor" || slotName == "ClothColor") return true;
+        if (slotName == "DetailAlbedo") return true;
+        // Everything else → linear (normal, roughness, metallic, AO, ORM,
+        // opacity, thickness, heightmap, mask, tangent, clearcoat, etc.)
+        return false;
+    }
+
     // ── SRV index convenience ───────────────────────────────────────────────
 
     [[nodiscard]] uint32_t GetAlbedoSrvIndex() const    { return GetTextureSrvIndex("Albedo"); }

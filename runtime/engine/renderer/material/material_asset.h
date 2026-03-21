@@ -31,6 +31,7 @@
 
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 
 namespace uz {
 
@@ -68,6 +69,25 @@ struct Material : public MaterialInterface {
     /// roughness/metallic/AO maps. The ORM texture is sampled from ormPath
     /// (or aoPath as fallback) and unpacked as R=AO, G=Roughness, B=Metallic.
     bool useORM = false;
+
+    // ── Per-slot sRGB override (optional artist control) ──────────────────
+    // Generic map keyed by slot name (e.g., "Albedo", "Normal", "ORM").
+    // Values: 0 = force linear, 1 = force sRGB. Absent = auto (default).
+    // Populated from .uzmat JSON: "textures": { "Albedo": { "srgb": true } }
+    // Works for any shading model's slots without changing this struct.
+    std::unordered_map<std::string, bool> srgbOverrides;
+
+    /// Sets an explicit sRGB override for a texture slot by name.
+    void SetTextureSlotSRGB(const std::string& slotName, bool isSRGB) {
+        srgbOverrides[slotName] = isSRGB;
+    }
+
+    /// Resolves sRGB for a slot: explicit override → auto from slot name.
+    [[nodiscard]] bool IsTextureSlotSRGB(const std::string& slotName) const override {
+        auto it = srgbOverrides.find(slotName);
+        if (it != srgbOverrides.end()) return it->second;
+        return DefaultSlotIsSRGB(slotName);
+    }
 
     // ── Scalar parameters ────────────────────────────────────────────────
 

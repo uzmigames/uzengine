@@ -175,6 +175,15 @@ namespace MetalPixelFormat {
     constexpr uint32_t kDepth32Float    = 252;
     constexpr uint32_t kDepth24UnormStencil8 = 255;  ///< macOS only (not supported on iOS)
     constexpr uint32_t kDepth32FloatStencil8 = 260;
+    // Block-compressed formats (macOS only — not available on iOS/tvOS)
+    constexpr uint32_t kBC1_RGBA          = 130;
+    constexpr uint32_t kBC1_RGBA_sRGB     = 131;
+    constexpr uint32_t kBC3_RGBA          = 134;
+    constexpr uint32_t kBC3_RGBA_sRGB     = 135;
+    constexpr uint32_t kBC4_RUnorm        = 140;
+    constexpr uint32_t kBC5_RGUnorm       = 142;
+    constexpr uint32_t kBC7_RGBAUnorm     = 152;
+    constexpr uint32_t kBC7_RGBAUnorm_sRGB = 153;
 } // namespace MetalPixelFormat
 
 /// Metal storage mode integer values (from MTLStorageMode enum).
@@ -253,6 +262,14 @@ namespace MetalPrimitiveType {
         case RHIFormat::D32Float:        return MetalPixelFormat::kDepth32Float;
         case RHIFormat::D24UnormS8Uint:  return MetalPixelFormat::kDepth24UnormStencil8;
         case RHIFormat::D32FloatS8Uint:  return MetalPixelFormat::kDepth32FloatStencil8;
+        case RHIFormat::BC1Unorm:        return MetalPixelFormat::kBC1_RGBA;
+        case RHIFormat::BC1Srgb:         return MetalPixelFormat::kBC1_RGBA_sRGB;
+        case RHIFormat::BC3Unorm:        return MetalPixelFormat::kBC3_RGBA;
+        case RHIFormat::BC3Srgb:         return MetalPixelFormat::kBC3_RGBA_sRGB;
+        case RHIFormat::BC4Unorm:        return MetalPixelFormat::kBC4_RUnorm;
+        case RHIFormat::BC5Unorm:        return MetalPixelFormat::kBC5_RGUnorm;
+        case RHIFormat::BC7Unorm:        return MetalPixelFormat::kBC7_RGBAUnorm;
+        case RHIFormat::BC7Srgb:         return MetalPixelFormat::kBC7_RGBAUnorm_sRGB;
     }
     return MetalPixelFormat::kInvalid;
 }

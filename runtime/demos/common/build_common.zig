@@ -46,6 +46,10 @@ pub const DemoConfig = struct {
     /// Paths relative to the demo directory. All directories are staged
     /// into a temp folder, then packed. Empty = no packing step.
     asset_dirs: []const []const u8 = &.{},
+    /// When true, runs uzcook on asset_dirs before packing to compress
+    /// textures (PNG/JPG → BC7/BC5/BC4 .uztexture). Cooked outputs replace
+    /// originals in the pak. Requires uzcook.exe built by the runtime.
+    cook_textures: bool = false,
 };
 
 pub const ExtraSource = struct {
@@ -65,10 +69,11 @@ pub const DemoHandle = struct {
     exe: *std.Build.Step.Compile,
     config: DemoConfig,
 
-    /// Finalize: install artifact, deploy DLLs, pack assets, create run step.
+    /// Finalize: install artifact, deploy DLLs, cook textures, pack assets, create run step.
     pub fn install(self: *DemoHandle) void {
         self.b.installArtifact(self.exe);
         self.deployDlls();
+        if (self.config.cook_textures) self.cookTextures();
         self.packAssets();
         self.createRunStep();
     }
@@ -103,6 +108,28 @@ pub const DemoHandle = struct {
                 .{ .custom = "data" },
                 deploy.dest,
             ).step);
+        }
+    }
+
+    fn cookTextures(self: *DemoHandle) void {
+        if (self.config.asset_dirs.len == 0) return;
+
+        // uzcook is built by the runtime at ../../build/bin/uzcook.exe
+        const uzcook_path = self.b.path("../../build/bin/uzcook.exe");
+
+        // Cook each asset directory: PNG/JPG → BC7/BC5/BC4 .uztexture
+        // uzcook reads source textures and writes .uztexture files alongside
+        // the originals (in the cache dir), which uzpack then picks up.
+        for (self.config.asset_dirs) |dir| {
+            const cook_cmd = self.b.addSystemCommand(&.{
+                uzcook_path.getPath(self.b),
+                "--source",
+                self.b.path(dir).getPath(self.b),
+                "--output",
+                self.b.path(dir).getPath(self.b),
+            });
+            cook_cmd.step.dependOn(&self.exe.step);
+            self.b.getInstallStep().dependOn(&cook_cmd.step);
         }
     }
 

@@ -13,11 +13,13 @@
 /// PendingCount() diagnostic query — exact ordering is not required.
 
 #include "async_texture_decoder.h"
+#include "vfs.h"
 #include "log.h"
 
 #include <stb_image.h>
 
 #include <algorithm>
+#include <cstdio>
 
 #include "engine/core/simd_dispatch.h"
 
@@ -44,10 +46,39 @@ AsyncTextureDecoder::~AsyncTextureDecoder() {
 // Public API
 // ─────────────────────────────────────────────────────────────────────────────
 
-void AsyncTextureDecoder::Submit(const std::string& path) {
+void AsyncTextureDecoder::Submit(const std::string& path, bool isSRGB) {
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        m_queue.push_back(path);
+        DecodeRequest req;
+        req.path   = path;
+        req.isSRGB = isSRGB;
+        m_queue.push_back(std::move(req));
+    }
+    m_cv.notify_one();
+}
+
+void AsyncTextureDecoder::SubmitFromMemory(std::vector<uint8_t>&& data, const std::string& path, bool isSRGB) {
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        DecodeRequest req;
+        req.path       = path;
+        req.memoryData = std::move(data);
+        req.isSRGB     = isSRGB;
+        m_queue.push_back(std::move(req));
+    }
+    m_cv.notify_one();
+}
+
+void AsyncTextureDecoder::SubmitVFS(IVFS* vfs, const std::string& logicalPath,
+                                     bool isSRGB, const std::string& resultKey) {
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        DecodeRequest req;
+        req.path      = logicalPath;
+        req.resultKey = resultKey;
+        req.isSRGB    = isSRGB;
+        req.vfs       = vfs;
+        m_queue.push_back(std::move(req));
     }
     m_cv.notify_one();
 }
@@ -97,7 +128,7 @@ void AsyncTextureDecoder::Shutdown() {
 
 void AsyncTextureDecoder::WorkerLoop() {
     while (true) {
-        std::string path;
+        DecodeRequest request;
         {
             std::unique_lock<std::mutex> lock(m_mutex);
             m_cv.wait(lock, [this] {
@@ -108,20 +139,128 @@ void AsyncTextureDecoder::WorkerLoop() {
                 return;
             }
 
-            path = std::move(m_queue.front());
+            request = std::move(m_queue.front());
             m_queue.pop_front();
             m_inFlight.fetch_add(1, std::memory_order_relaxed);
         }
 
+        // Resolve result key: if resultKey is set, use it as the result path
+        // so the caller's pending slot map can find it (e.g., reading
+        // "foo.uztexture" but the slot is keyed by "foo.jpg").
+        const std::string resultPath = request.resultKey.empty()
+            ? request.path : request.resultKey;
+
+        // ── VFS path: read file bytes on this worker thread ──────────────
+        // If the request carries a VFS pointer, the file hasn't been read yet.
+        // We read it here on the worker thread (VFS is thread-safe), then fall
+        // through to the existing memory-based decode paths below.
+        if (request.vfs && request.memoryData.empty()) {
+            request.memoryData = request.vfs->Read(request.path);
+            if (request.memoryData.empty()) {
+                // VFS read failed — push empty result so the caller sees the failure.
+                UZ_LOG(Renderer, Error,
+                       "AsyncTextureDecoder: VFS read failed for '{}'", request.path);
+                TextureDecodeResult result;
+                result.path   = resultPath;
+                result.isSRGB = request.isSRGB;
+                {
+                    std::lock_guard<std::mutex> lock(m_mutex);
+                    m_completed.push_back(std::move(result));
+                }
+                m_inFlight.fetch_sub(1, std::memory_order_relaxed);
+                continue;
+            }
+            // Clear VFS pointer — data is now in memoryData, fall through to decode.
+            request.vfs = nullptr;
+        }
+
+        // ── .uztexture fast path: pass raw bytes through without CPU decode ──
+        // The .uztexture format contains GPU-ready mip data (BC7/BC1/etc.), so
+        // there is nothing for stbi to decode. We detect the magic and forward
+        // the raw file bytes to the render thread for direct GPU upload via
+        // TextureLoader::LoadUzTex().
+        //
+        // Magic: bytes 0x55 0x54 0x58 0x5A = "UZTX" little-endian.
+
+        // Check in-memory data first (PAK/VFS path).
+        bool isUzTex = false;
+        if (request.memoryData.size() >= 4) {
+            isUzTex = (request.memoryData[0] == 0x55 &&
+                       request.memoryData[1] == 0x54 &&
+                       request.memoryData[2] == 0x58 &&
+                       request.memoryData[3] == 0x5A);
+        }
+
+        if (isUzTex) {
+            // .uztexture from memory: pass raw bytes through — no CPU decode.
+            TextureDecodeResult result;
+            result.path = resultPath;
+            result.isSRGB = request.isSRGB;
+            result.uzTexData = std::move(request.memoryData);
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                m_completed.push_back(std::move(result));
+            }
+            m_inFlight.fetch_sub(1, std::memory_order_relaxed);
+            continue;
+        }
+
+        // Check filesystem path: peek at first 4 bytes to detect .uztexture.
+        if (request.memoryData.empty()) {
+            FILE* f = fopen(request.path.c_str(), "rb");
+            if (f) {
+                uint8_t magic[4] = {};
+                if (fread(magic, 1, 4, f) == 4 &&
+                    magic[0] == 0x55 && magic[1] == 0x54 &&
+                    magic[2] == 0x58 && magic[3] == 0x5A) {
+                    // Read the entire .uztexture file into memory.
+                    fseek(f, 0, SEEK_END);
+                    const long fileSize = ftell(f);
+                    fseek(f, 0, SEEK_SET);
+                    if (fileSize > 0) {
+                        TextureDecodeResult result;
+                        result.path = resultPath;
+                        result.isSRGB = request.isSRGB;
+                        result.uzTexData.resize(static_cast<size_t>(fileSize));
+                        fread(result.uzTexData.data(), 1, static_cast<size_t>(fileSize), f);
+                        fclose(f);
+                        {
+                            std::lock_guard<std::mutex> lock(m_mutex);
+                            m_completed.push_back(std::move(result));
+                        }
+                        m_inFlight.fetch_sub(1, std::memory_order_relaxed);
+                        continue;
+                    }
+                }
+                fclose(f);
+            }
+        }
+
+        // ── Standard image decode path (PNG/JPG/TGA/BMP/HDR) ────────────
         // Decode on this worker thread — the whole point is to move stbi_load
         // off the render thread so multiple textures decode in parallel.
         int w = 0;
         int h = 0;
         int channels = 0;
-        unsigned char* pixels = stbi_load(path.c_str(), &w, &h, &channels, 4);
+        unsigned char* pixels = nullptr;
+
+        if (!request.memoryData.empty()) {
+            // PAK/VFS path: image bytes already in memory, decode without filesystem I/O.
+            pixels = stbi_load_from_memory(
+                request.memoryData.data(),
+                static_cast<int>(request.memoryData.size()),
+                &w, &h, &channels, 4);
+            // Release the source buffer immediately after decode to free memory.
+            request.memoryData.clear();
+            request.memoryData.shrink_to_fit();
+        } else {
+            // Filesystem path: read and decode from disk.
+            pixels = stbi_load(request.path.c_str(), &w, &h, &channels, 4);
+        }
 
         TextureDecodeResult result;
-        result.path = std::move(path);
+        result.path   = resultPath;
+        result.isSRGB = request.isSRGB;
 
         if (pixels && w > 0 && h > 0) {
             result.pixels = pixels;

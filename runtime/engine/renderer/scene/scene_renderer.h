@@ -73,6 +73,7 @@ class IRHIDevice;
 class IRHICommandList;
 class IRHISwapChain;
 class IVFS;
+class MaterialInterface;
 class PlatformWindow;
 class InputSystem;
 class ShaderManager;
@@ -488,7 +489,17 @@ public:
     /// # Returns
     /// Index into the texture array on success, `UINT32_MAX` on failure.
     [[nodiscard]] uint32_t LoadTexture(const std::string& path, IVFS* vfs,
-                                       IRHICommandList* cmdList);
+                                       IRHICommandList* cmdList,
+                                       bool isSRGB = false);
+
+    /// Preloads all textures referenced by a material by submitting them to
+    /// the async texture decoder immediately. Call from OnStart() after
+    /// assigning materials to begin background decode before the first frame.
+    ///
+    /// sRGB is resolved per slot via MaterialInterface::IsTextureSlotSRGB(),
+    /// so this works for any shading model (PBR, Hair, Cloth, SSS, etc.).
+    void PreloadMaterialTextures(MaterialInterface* mat, IVFS* vfs,
+                                  IRHICommandList* cmdList);
 
     /// Registers a CPU-generated procedural mesh and queues it for GPU upload.
     ///

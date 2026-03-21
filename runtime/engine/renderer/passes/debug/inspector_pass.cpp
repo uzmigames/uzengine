@@ -94,6 +94,14 @@ namespace {
         case RHIFormat::D32Float:       return 1;
         case RHIFormat::D24UnormS8Uint: return 1; // Only sample the depth channel
         case RHIFormat::D32FloatS8Uint: return 1; // Only sample the depth channel
+        case RHIFormat::BC1Unorm:       return 4; // RGBA (1-bit alpha)
+        case RHIFormat::BC1Srgb:        return 4;
+        case RHIFormat::BC3Unorm:       return 4; // RGBA (8-bit alpha)
+        case RHIFormat::BC3Srgb:        return 4;
+        case RHIFormat::BC4Unorm:       return 1; // R only
+        case RHIFormat::BC5Unorm:       return 2; // RG only
+        case RHIFormat::BC7Unorm:       return 4; // RGBA
+        case RHIFormat::BC7Srgb:        return 4;
         default:                        return 0;
     }
 }

@@ -84,6 +84,8 @@
 
 #pragma once
 
+#include "rhi_types.h"
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -117,7 +119,31 @@ enum class TextureFormat : uint32_t {
     BC3                = 2, ///< 16 bytes per 4x4 block. RGB + interpolated 8-bit alpha. Best for foliage/particles.
     BC5                = 3, ///< 16 bytes per 4x4 block. Two independent channels (RG). Best for normal maps.
     BC7                = 4, ///< 16 bytes per 4x4 block. High-quality RGBA. Best when max quality is needed.
+    BC4                = 5, ///< 8 bytes per 4x4 block. Single channel. Best for roughness/metallic/AO.
 };
+
+/// Flag bits for UzTextureHeader::flags.
+static constexpr uint32_t kUzTextureFlag_sRGB = 0x1; ///< Bit 0: texture data is sRGB-encoded.
+
+/// Converts a .uztexture TextureFormat + sRGB flag to the runtime RHIFormat.
+[[nodiscard]] constexpr RHIFormat TextureFormatToRHI(TextureFormat fmt, bool isSRGB) {
+    switch (fmt) {
+        case TextureFormat::Uncompressed_RGBA8:
+            return isSRGB ? RHIFormat::RGBA8Srgb : RHIFormat::RGBA8Unorm;
+        case TextureFormat::BC1:
+            return isSRGB ? RHIFormat::BC1Srgb : RHIFormat::BC1Unorm;
+        case TextureFormat::BC3:
+            return isSRGB ? RHIFormat::BC3Srgb : RHIFormat::BC3Unorm;
+        case TextureFormat::BC5:
+            return RHIFormat::BC5Unorm; // BC5 is always linear (normal maps)
+        case TextureFormat::BC7:
+            return isSRGB ? RHIFormat::BC7Srgb : RHIFormat::BC7Unorm;
+        case TextureFormat::BC4:
+            return RHIFormat::BC4Unorm; // BC4 is always linear (single channel)
+        default:
+            return RHIFormat::Unknown;
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Binary Structs
@@ -149,7 +175,7 @@ struct UzTextureHeader {
     uint32_t height = 0;                    ///< Base mip height in pixels. Must be > 0.
     uint32_t mipCount = 0;                  ///< Number of mip levels. Must be >= 1. Max = floor(log2(max(width,height))) + 1.
     uint32_t format = 0;                    ///< `TextureFormat` cast to uint32. Valid range: 0..4.
-    uint32_t flags = 0;                     ///< Reserved flags, must be 0. Future: sRGB flag (bit 0), cubemap flag (bit 1).
+    uint32_t flags = 0;                     ///< Bit 0: sRGB (1=sRGB, 0=linear). Bit 1: reserved (cubemap). Bits 2-31: reserved, must be 0.
     uint32_t reserved[9] = {};              ///< Reserved for future use, must be all zeros.
 };
 #pragma pack(pop)

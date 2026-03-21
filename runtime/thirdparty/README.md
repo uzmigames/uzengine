@@ -206,6 +206,24 @@ Files extracted from upstream source:
 - `lib/x64/` (dxcompiler.lib)
 
 
+## etcpak
+
+- Upstream: https://github.com/wolfpld/etcpak
+- Version: git (master, 2025)
+- License: BSD-2-Clause
+
+GPU texture compression library — same compressor used by Godot Engine.
+Fastest BC7 encoder available (~100 Mpx/s on modern CPUs). Supports BC1, BC3,
+BC7, ETC1, and ETC2 compression with SIMD acceleration (SSE4.1/AVX2/NEON).
+Used by the uzcook texture pipeline to compress PNG/JPG → .uztexture at
+build time. Single-source C++, no external dependencies.
+
+Files extracted from upstream source:
+
+- Root (`*.cpp`, `*.hpp` — encoder source + headers)
+- `AUTHORS.txt`, `LICENSE`
+
+
 ## glm
 
 - Upstream: https://github.com/g-truc/glm

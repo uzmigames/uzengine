@@ -11,6 +11,7 @@
 
 #include "texture_loader.h"
 #include "upload_context.h"
+#include "uztexture_format.h"
 #include "log.h"
 #include "profiler.h"
 
@@ -81,7 +82,8 @@ static void BoxFilterDownsample(const uint8_t* src, uint32_t srcW, uint32_t srcH
 TextureLoadResult TextureLoader::Load(
     IRHIDevice* device,
     IRHICommandList* cmdList,
-    const std::string& path)
+    const std::string& path,
+    bool isSRGB)
 {
     if (!device || !cmdList) {
         UZ_LOG(Renderer, Error, "TextureLoader::Load: null device or cmdList");
@@ -110,13 +112,14 @@ TextureLoadResult TextureLoader::Load(
     auto result = UploadPixels(device, cmdList, pixels,
                                static_cast<uint32_t>(w),
                                static_cast<uint32_t>(h),
-                               path.c_str());
+                               path.c_str(),
+                               isSRGB);
 
     stbi_image_free(pixels);
 
     if (result.handle.IsValid()) {
-        UZ_LOG(Renderer, Info, "Loaded texture: path='{}', {}x{}, {} mips, SRV={}",
-               path, result.width, result.height, result.mipLevels, result.srvIndex);
+        UZ_LOG(Renderer, Info, "Loaded texture: path='{}', {}x{}, {} mips, SRV={}, sRGB={}",
+               path, result.width, result.height, result.mipLevels, result.srvIndex, isSRGB);
     }
 
     return result;
@@ -131,7 +134,8 @@ TextureLoadResult TextureLoader::LoadFromMemory(
     IRHICommandList* cmdList,
     const uint8_t* data,
     size_t size,
-    const char* debugName)
+    const char* debugName,
+    bool isSRGB)
 {
     if (!device || !cmdList) {
         UZ_LOG(Renderer, Error, "TextureLoader::LoadFromMemory: null device or cmdList");
@@ -171,13 +175,14 @@ TextureLoadResult TextureLoader::LoadFromMemory(
     auto result = UploadPixels(device, cmdList, pixels,
                                static_cast<uint32_t>(w),
                                static_cast<uint32_t>(h),
-                               name);
+                               name,
+                               isSRGB);
 
     stbi_image_free(pixels);
 
     if (result.handle.IsValid()) {
-        UZ_LOG(Renderer, Info, "Loaded texture: path='{}', {}x{}, {} mips, SRV={}",
-               name, result.width, result.height, result.mipLevels, result.srvIndex);
+        UZ_LOG(Renderer, Info, "Loaded texture: path='{}', {}x{}, {} mips, SRV={}, sRGB={}",
+               name, result.width, result.height, result.mipLevels, result.srvIndex, isSRGB);
     }
 
     return result;
@@ -199,7 +204,8 @@ static TextureLoadResult UploadPixelsCore(
     uint32_t width,
     uint32_t height,
     const char* debugName,
-    UploadContext& upload)
+    UploadContext& upload,
+    bool isSRGB)
 {
     UZ_PROFILE_FUNCTION();
 
@@ -207,12 +213,16 @@ static TextureLoadResult UploadPixelsCore(
 
     const uint16_t mipCount = ComputeTextureMipCount(width, height);
 
-    // Create GPU texture with full mip chain
+    // Create GPU texture with full mip chain.
+    // sRGB format enables automatic gamma-to-linear conversion on GPU sample,
+    // which is correct for color textures (albedo, emissive). Linear data
+    // (normal maps, roughness, metallic, AO, ORM) must use Unorm to avoid
+    // double-gamma artifacts.
     RHITextureDesc desc{};
     desc.width = width;
     desc.height = height;
     desc.mipLevels = mipCount;
-    desc.format = RHIFormat::RGBA8Unorm;
+    desc.format = isSRGB ? RHIFormat::RGBA8Srgb : RHIFormat::RGBA8Unorm;
     desc.usage = RHITextureUsage::ShaderResource | RHITextureUsage::CopyDst;
     desc.debugName = debugName;
 
@@ -326,18 +336,20 @@ static TextureLoadResult UploadPixelsWithMipsCore(
     uint8_t* const* mipData,
     const uint32_t* mipWidths,
     const uint32_t* mipHeights,
-    uint16_t mipCount)
+    uint16_t mipCount,
+    bool isSRGB)
 {
     UZ_PROFILE_FUNCTION();
 
     constexpr uint32_t kBpp = 4; // RGBA8 = 4 bytes per texel
 
-    // Create GPU texture with the caller-specified mip count
+    // Create GPU texture with the caller-specified mip count.
+    // See UploadPixelsCore for sRGB vs Unorm rationale.
     RHITextureDesc desc{};
     desc.width = width;
     desc.height = height;
     desc.mipLevels = mipCount;
-    desc.format = RHIFormat::RGBA8Unorm;
+    desc.format = isSRGB ? RHIFormat::RGBA8Srgb : RHIFormat::RGBA8Unorm;
     desc.usage = RHITextureUsage::ShaderResource | RHITextureUsage::CopyDst;
     desc.debugName = debugName;
 
@@ -403,11 +415,12 @@ TextureLoadResult TextureLoader::UploadPixels(
     unsigned char* pixels,
     uint32_t width,
     uint32_t height,
-    const char* debugName)
+    const char* debugName,
+    bool isSRGB)
 {
     UploadContext upload(device);
     TextureLoadResult result = UploadPixelsCore(device, cmdList, pixels,
-                                                 width, height, debugName, upload);
+                                                 width, height, debugName, upload, isSRGB);
 
     if (!result.handle.IsValid()) {
         return result;
@@ -438,7 +451,8 @@ TextureLoadResult TextureLoader::UploadPixelsDeferred(
     uint32_t width,
     uint32_t height,
     const char* debugName,
-    UploadContext* outUpload)
+    UploadContext* outUpload,
+    bool isSRGB)
 {
     if (!device || !cmdList || !pixels || !outUpload) {
         UZ_LOG(Renderer, Error, "TextureLoader::UploadPixelsDeferred: null argument");
@@ -446,7 +460,7 @@ TextureLoadResult TextureLoader::UploadPixelsDeferred(
     }
 
     return UploadPixelsCore(device, cmdList, pixels, width, height,
-                            debugName, *outUpload);
+                            debugName, *outUpload, isSRGB);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -464,7 +478,8 @@ TextureLoadResult TextureLoader::UploadPixelsWithMipsDeferred(
     uint8_t* const* mipData,
     const uint32_t* mipWidths,
     const uint32_t* mipHeights,
-    uint16_t mipCount)
+    uint16_t mipCount,
+    bool isSRGB)
 {
     if (!device || !cmdList || !pixels || !outUpload) {
         UZ_LOG(Renderer, Error, "TextureLoader::UploadPixelsWithMipsDeferred: null argument");
@@ -486,7 +501,112 @@ TextureLoadResult TextureLoader::UploadPixelsWithMipsDeferred(
 
     return UploadPixelsWithMipsCore(device, cmdList, pixels, width, height,
                                      debugName, *outUpload,
-                                     mipData, mipWidths, mipHeights, mipCount);
+                                     mipData, mipWidths, mipHeights, mipCount,
+                                     isSRGB);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TextureLoader::LoadUzTex — pre-cooked .uztexture direct GPU upload
+// ─────────────────────────────────────────────────────────────────────────────
+
+TextureLoadResult TextureLoader::LoadUzTex(
+    IRHIDevice* device,
+    IRHICommandList* cmdList,
+    const uint8_t* data,
+    size_t size,
+    const char* debugName,
+    UploadContext* outUpload)
+{
+    UZ_PROFILE_FUNCTION();
+
+    if (!device || !cmdList || !data || size == 0) {
+        UZ_LOG(Renderer, Error, "TextureLoader::LoadUzTex: null argument");
+        return {};
+    }
+
+    // Parse the .uztexture binary format — validates magic, version, dimensions,
+    // mip descriptors, and extracts per-mip data blobs.
+    std::vector<uint8_t> fileData(data, data + size);
+    auto parsed = ReadUzTexture(fileData);
+    if (!parsed.success) {
+        UZ_LOG(Renderer, Error, "TextureLoader::LoadUzTex: parse failed for '{}': {}",
+               debugName ? debugName : "unknown", parsed.error);
+        return {};
+    }
+
+    const auto& header = parsed.file.header;
+    const bool isSRGB = (header.flags & kUzTextureFlag_sRGB) != 0;
+    const auto texFmt = static_cast<TextureFormat>(header.format);
+    const RHIFormat rhiFormat = TextureFormatToRHI(texFmt, isSRGB);
+
+    if (rhiFormat == RHIFormat::Unknown) {
+        UZ_LOG(Renderer, Error, "TextureLoader::LoadUzTex: unsupported format {} in '{}'",
+               header.format, debugName ? debugName : "unknown");
+        return {};
+    }
+
+    // Create GPU texture with the exact format and mip count from the file.
+    // No format conversion — the .uztexture data is already in the target format.
+    RHITextureDesc desc{};
+    desc.width = header.width;
+    desc.height = header.height;
+    desc.mipLevels = static_cast<uint16_t>(header.mipCount);
+    desc.format = rhiFormat;
+    desc.usage = RHITextureUsage::ShaderResource | RHITextureUsage::CopyDst;
+    desc.debugName = debugName;
+
+    RHITextureHandle texture = device->CreateTexture(desc);
+    if (!texture.IsValid()) {
+        UZ_LOG(Renderer, Error, "TextureLoader::LoadUzTex: failed to create GPU texture '{}' {}x{} fmt={}",
+               debugName ? debugName : "unknown", header.width, header.height, static_cast<uint32_t>(rhiFormat));
+        return {};
+    }
+
+    // Upload each mip level — data is already GPU-ready (BC7/BC1/BC5/BC4/RGBA8).
+    // Use either deferred (batched) or sync (immediate) path based on outUpload.
+    UploadContext localUpload(device);
+    UploadContext& upload = outUpload ? *outUpload : localUpload;
+
+    for (uint32_t mip = 0; mip < header.mipCount; ++mip) {
+        const auto& mipBlob = parsed.file.mipData[mip];
+        if (!upload.UploadTexture(cmdList, texture, mipBlob.data(),
+                                   static_cast<uint64_t>(mipBlob.size()), mip)) {
+            UZ_LOG(Renderer, Warning,
+                   "TextureLoader::LoadUzTex: mip {} upload failed for '{}'",
+                   mip, debugName ? debugName : "unknown");
+            break;
+        }
+    }
+
+    // Transition to ShaderResource state for sampling.
+    RHIBarrierDesc barrier{};
+    barrier.texture = texture;
+    barrier.stateBefore = RHIResourceState::CopyDst;
+    barrier.stateAfter = RHIResourceState::ShaderResource;
+    cmdList->ResourceBarrier(&barrier, 1);
+
+    // Sync path: flush the command list now and wait for GPU completion.
+    // Deferred path: caller flushes later in a single batch submission.
+    if (!outUpload) {
+        cmdList->End();
+        cmdList->Execute();
+        device->WaitIdle();
+        localUpload.ReleaseStaging();
+        cmdList->Begin();
+    }
+
+    TextureLoadResult result{};
+    result.handle = texture;
+    result.srvIndex = device->GetTextureSRVIndex(texture);
+    result.width = header.width;
+    result.height = header.height;
+    result.mipLevels = static_cast<uint16_t>(header.mipCount);
+
+    UZ_LOG(Renderer, Info, "Loaded .uztexture: name='{}', {}x{}, {} mips, fmt={}, sRGB={}, SRV={}",
+           debugName ? debugName : "unknown", result.width, result.height,
+           result.mipLevels, header.format, isSRGB, result.srvIndex);
+
+    return result;
 }
 
 } // namespace uz

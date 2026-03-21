@@ -16,6 +16,7 @@
 #include "scene_renderer.h"
 
 #include "async_texture_decoder.h"
+#include "material_interface.h"
 #include "mesh.h"
 #include "gpu_mesh.h"
 #include "texture_loader.h"
@@ -29,6 +30,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <fstream>
 #include <thread>
 
 #include <stb_image.h>
@@ -126,7 +128,7 @@ uint32_t SceneRenderer::LoadMesh(const std::string& path, IVFS* vfs,
 // ─────────────────────────────────────────────────────────────────────────────
 
 uint32_t SceneRenderer::LoadTexture(const std::string& path, IVFS* vfs,
-                                     IRHICommandList* cmdList) {
+                                     IRHICommandList* cmdList, bool isSRGB) {
     // Check fully-loaded cache first
     auto it = m_textureMap.find(path);
     if (it != m_textureMap.end()) {
@@ -145,57 +147,105 @@ uint32_t SceneRenderer::LoadTexture(const std::string& path, IVFS* vfs,
     m_textures.emplace_back(); // placeholder (handle.IsValid() == false)
     m_textureMap[path] = slotIndex;
 
-    // Try VFS first (pak mode): read bytes into memory, submit to async decoder.
-    // Fall back to filesystem path for loose files (dev mode).
-    std::string decodePath = path; // key used by async decoder
-    std::vector<uint8_t> vfsData;
+    // ── Resolve texture path and submit to async worker ─────────────────
+    // Strategy: move ALL file I/O to worker threads. The main thread only
+    // enqueues a request and returns immediately.
+    //
+    // Priority:
+    //   1. Cooked .uztexture companion on filesystem (BC7, zero CPU decode)
+    //   2. Raw source file on filesystem (PNG/JPG, worker decodes via stbi)
+    //   3. VFS path (worker reads from thread-safe VFS on background thread)
+    //   4. Sync fallback (no async decoder — rare, only if decoder init failed)
 
-    if (vfs && vfs->Exists(path)) {
-        vfsData = vfs->Read(path);
+    const bool isAbsolute = !path.empty() && (path[0] == '/' || path[0] == '\\' ||
+                             (path.size() > 1 && path[1] == ':'));
+
+    // Build cooked companion path: "foo.jpg" → "foo.uztexture"
+    std::string cookedPath;
+    {
+        auto dot = path.rfind('.');
+        if (dot != std::string::npos) {
+            cookedPath = path.substr(0, dot) + ".uztexture";
+        }
     }
 
-    if (!vfsData.empty()) {
-        // Pak mode: load synchronously from in-memory bytes.
-        // AsyncTextureDecoder doesn't support in-memory submission yet,
-        // so we use the sync path. This is fast enough for pak textures
-        // since the data is already decompressed in memory.
-        TextureLoadResult result = TextureLoader::LoadFromMemory(
-            m_device, cmdList, vfsData.data(), vfsData.size(), path.c_str());
-        if (result.handle.IsValid()) {
-            m_textures[slotIndex] = result;
-            UZ_LOG(Renderer, Info, "SceneRenderer: loaded texture (VFS) '{}' (id={}, {}x{}, srv={})",
-                   path, slotIndex, result.width, result.height, result.srvIndex);
-        } else {
-            UZ_LOG(Renderer, Error, "SceneRenderer: failed to load texture (VFS): '{}'", path);
+    // Try filesystem paths first — worker thread does I/O, main thread is free
+    std::string fsPath;
+    if (!cookedPath.empty()) {
+        std::string cookedFs = (vfs && !isAbsolute) ? vfs->ResolvePath(cookedPath) : cookedPath;
+        if (std::ifstream(cookedFs, std::ios::binary).good()) {
+            fsPath = cookedFs;
         }
-    } else {
-        // Dev mode: resolve filesystem path
-        const bool isAbsolute = !path.empty() && (path[0] == '/' || path[0] == '\\' ||
-                                 (path.size() > 1 && path[1] == ':'));
-        const std::string resolvedPath = (vfs && !isAbsolute)
-            ? vfs->ResolvePath(path)
-            : path;
-
-        if (resolvedPath != path) {
-            m_textureMap[resolvedPath] = slotIndex;
+    }
+    if (fsPath.empty()) {
+        std::string rawFs = (vfs && !isAbsolute) ? vfs->ResolvePath(path) : path;
+        if (std::ifstream(rawFs, std::ios::binary).good()) {
+            fsPath = rawFs;
         }
+    }
 
-        if (m_asyncDecoder) {
-            m_asyncDecoder->Submit(resolvedPath);
-            m_asyncPendingSlots[path] = slotIndex;
-            UZ_LOG(Renderer, Debug, "SceneRenderer: submitted async texture decode '{}' (slot={})",
-                   resolvedPath, slotIndex);
-        } else {
-            TextureLoadResult result = TextureLoader::Load(m_device, cmdList, resolvedPath);
+    if (!fsPath.empty() && m_asyncDecoder) {
+        // Fast path: submit filesystem path → worker does ALL I/O in parallel
+        m_asyncDecoder->Submit(fsPath, isSRGB);
+        m_asyncPendingSlots[path] = slotIndex;
+    } else if (vfs && m_asyncDecoder) {
+        // VFS path: worker reads from thread-safe VFS on background thread.
+        // Prefer cooked .uztexture if it exists in VFS, otherwise use raw path.
+        // The VFS read path may differ from the key path (cooked vs raw),
+        // so we store a separate read path in the request but keep the
+        // original path as the result key for pending slot lookup.
+        std::string vfsReadPath = path;
+        if (!cookedPath.empty() && vfs->Exists(cookedPath)) {
+            vfsReadPath = cookedPath;
+        }
+        m_asyncDecoder->SubmitVFS(vfs, vfsReadPath, isSRGB, path);
+        m_asyncPendingSlots[path] = slotIndex;
+    } else if (vfs && vfs->Exists(path)) {
+        // Sync fallback: no async decoder available — read and upload on main thread.
+        std::vector<uint8_t> vfsData = vfs->Read(path);
+        if (!vfsData.empty()) {
+            TextureLoadResult result = TextureLoader::LoadFromMemory(
+                m_device, cmdList, vfsData.data(), vfsData.size(), path.c_str(), isSRGB);
             if (result.handle.IsValid()) {
                 m_textures[slotIndex] = result;
             } else {
-                UZ_LOG(Renderer, Error, "SceneRenderer: failed to load texture: '{}'", path);
+                UZ_LOG(Renderer, Error, "SceneRenderer: failed to load texture (VFS sync): '{}'", path);
             }
         }
+    } else if (m_asyncDecoder) {
+        // Last resort: submit path as-is to worker (filesystem path, no VFS)
+        std::string rawPath = (vfs && !isAbsolute) ? vfs->ResolvePath(path) : path;
+        m_asyncDecoder->Submit(rawPath, isSRGB);
+        m_asyncPendingSlots[path] = slotIndex;
     }
 
     return slotIndex;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PreloadMaterialTextures — submit all texture paths to async decoder immediately
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SceneRenderer::PreloadMaterialTextures(MaterialInterface* mat, IVFS* vfs,
+                                             IRHICommandList* cmdList) {
+    if (!mat) return;
+
+    // Iterate all known texture slot names and preload any that have a path.
+    // Uses the generic IsTextureSlotSRGB() so this works for any shading model.
+    static const char* const kSlotNames[] = {
+        "Albedo", "Normal", "Roughness", "Metallic", "Ao", "Emissive", "ORM",
+        // Future shading model slots (no-op if path is empty):
+        "ScatterColor", "SubsurfaceColor", "FuzzColor", "ClothColor",
+        "Thickness", "Opacity", "DetailAlbedo", "DetailNormal",
+        "ClearCoatNormal", "Tangent", "Heightmap"
+    };
+
+    for (const char* slot : kSlotNames) {
+        const std::string& path = mat->GetTexturePath(slot);
+        if (!path.empty()) {
+            LoadTexture(path, vfs, cmdList, mat->IsTextureSlotSRGB(slot));
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -390,15 +440,22 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
         // No new textures — but check if we have a pending batch to flush
         // (all decodes complete, nothing more coming)
         if (m_textureBatchCount > 0 && m_asyncDecoder->PendingCount() == 0) {
+            UZ_PROFILE_SCOPE("FlushPendingLoads::BatchFlush");
+            auto flushStart = std::chrono::high_resolution_clock::now();
+
             cmdList->End();
             cmdList->Execute();
             m_device->WaitIdle();
             m_textureBatchUpload->ReleaseStaging();
             m_textureBatchUpload.reset();
             cmdList->Begin();
+
+            auto flushEnd = std::chrono::high_resolution_clock::now();
+            const auto flushUs = std::chrono::duration_cast<std::chrono::microseconds>(flushEnd - flushStart).count();
+            const float flushMs = static_cast<float>(flushUs) / 1000.0f;
             UZ_LOG(Renderer, Info,
-                   "SceneRenderer: final texture batch flush ({} textures, 1 WaitIdle)",
-                   m_textureBatchCount);
+                   "SceneRenderer: final texture batch flush ({} textures, 1 WaitIdle, {:.1f}ms)",
+                   m_textureBatchCount, flushMs);
             m_textureBatchCount = 0;
         }
         return;
@@ -441,33 +498,44 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
 
         const uint32_t slotIndex = pendingIt->second;
 
-        if (!d.pixels) {
+        TextureLoadResult result;
+        if (!d.uzTexData.empty()) {
+            // .uztexture: pre-cooked GPU-ready data — upload directly via LoadUzTex.
+            // No stbi decode, no CPU mip generation. The file contains BC7/BC1/etc.
+            // mip blobs that go straight to the GPU.
+            result = TextureLoader::LoadUzTex(
+                m_device, cmdList, d.uzTexData.data(), d.uzTexData.size(),
+                d.path.c_str(), m_textureBatchUpload.get());
+            d.uzTexData.clear();
+            d.uzTexData.shrink_to_fit();
+        } else if (!d.pixels) {
+            // Decode failed (null pixels, no uzTexData) — skip
             UZ_LOG(Renderer, Error,
                    "SceneRenderer: async decode failed for '{}' (slot={})",
                    d.path, slotIndex);
             m_asyncPendingSlots.erase(pendingIt);
             ++processed;
             continue;
-        }
-
-        TextureLoadResult result;
-        if (!d.mipData.empty() && d.mipCount > 1) {
+        } else if (!d.mipData.empty() && d.mipCount > 1) {
             UZ_LOG(Renderer, Debug,
-                   "SceneRenderer: using pre-computed mips for '{}' ({} mips)",
-                   d.path, d.mipCount);
+                   "SceneRenderer: using pre-computed mips for '{}' ({} mips, sRGB={})",
+                   d.path, d.mipCount, d.isSRGB);
             result = TextureLoader::UploadPixelsWithMipsDeferred(
                 m_device, cmdList, d.pixels, d.width, d.height,
                 d.path.c_str(), m_textureBatchUpload.get(),
                 d.mipData.data(), d.mipWidths.data(), d.mipHeights.data(),
-                d.mipCount);
+                d.mipCount, d.isSRGB);
         } else {
             result = TextureLoader::UploadPixelsDeferred(
                 m_device, cmdList, d.pixels, d.width, d.height,
-                d.path.c_str(), m_textureBatchUpload.get());
+                d.path.c_str(), m_textureBatchUpload.get(), d.isSRGB);
         }
 
-        stbi_image_free(d.pixels);
-        d.pixels = nullptr;
+        // Free stbi-allocated pixel data (null for .uztexture path).
+        if (d.pixels) {
+            stbi_image_free(d.pixels);
+            d.pixels = nullptr;
+        }
 
         for (auto* mip : d.mipData) {
             if (mip) std::free(mip);
@@ -499,14 +567,14 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
     m_textureBatchCount += uploadedCount;
 
     // Flush conditions:
-    // 1. Accumulated >=4 textures in the batch, OR
-    // 2. All async decodes are complete (no more textures coming)
-    static constexpr uint32_t kFlushThreshold = 4;
-    const bool allDecodesComplete = m_asyncDecoder->PendingCount() == 0
-                                     && m_deferredDecoded.empty();
-    const bool batchFull = m_textureBatchCount >= kFlushThreshold;
+    // Flush the GPU upload batch whenever we uploaded textures this frame.
+    // With async VFS, textures trickle in 1-4 per frame as workers complete
+    // reads. Flushing every frame keeps textures visible ASAP instead of
+    // waiting for a large batch that may never accumulate.
+    if (m_textureBatchCount > 0 && uploadedCount > 0) {
+        UZ_PROFILE_SCOPE("FlushPendingLoads::BatchFlush");
+        auto flushStart = std::chrono::high_resolution_clock::now();
 
-    if (m_textureBatchCount > 0 && (batchFull || allDecodesComplete)) {
         cmdList->End();
         cmdList->Execute();
         m_device->WaitIdle();
@@ -514,9 +582,12 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
         m_textureBatchUpload.reset();
         cmdList->Begin();
 
+        auto flushEnd = std::chrono::high_resolution_clock::now();
+        const auto flushUs = std::chrono::duration_cast<std::chrono::microseconds>(flushEnd - flushStart).count();
+        const float flushMs = static_cast<float>(flushUs) / 1000.0f;
         UZ_LOG(Renderer, Info,
-               "SceneRenderer: texture batch flush ({} textures, 1 WaitIdle)",
-               m_textureBatchCount);
+               "SceneRenderer: texture batch flush ({} textures, 1 WaitIdle, {:.1f}ms)",
+               m_textureBatchCount, flushMs);
         m_textureBatchCount = 0;
     }
 }

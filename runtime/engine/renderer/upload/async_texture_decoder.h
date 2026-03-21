@@ -33,6 +33,8 @@
 
 namespace uz {
 
+class IVFS;  // Forward declaration — full definition in engine/asset/vfs.h
+
 // ─────────────────────────────────────────────────────────────────────────────
 // TextureDecodeResult — Output of a background CPU decode
 // ─────────────────────────────────────────────────────────────────────────────
@@ -50,6 +52,7 @@ struct TextureDecodeResult {
     uint8_t*    pixels = nullptr;   ///< Mip 0 RGBA8 data (stbi-allocated). Caller frees via stbi_image_free.
     uint32_t    width  = 0;
     uint32_t    height = 0;
+    bool        isSRGB = false;     ///< True for color data (albedo, emissive). False for linear data (normal, roughness, metallic, AO, ORM).
 
     /// Pre-computed CPU mipchain (mip 1, 2, ..., N-1). Generated on worker thread.
     /// Each entry is malloc'd by the worker. Caller frees via free().
@@ -58,6 +61,12 @@ struct TextureDecodeResult {
     std::vector<uint32_t> mipWidths;
     std::vector<uint32_t> mipHeights;
     uint16_t              mipCount = 1; ///< Total mip levels (including mip 0)
+
+    /// Pre-parsed .uztexture data. When non-empty, the texture was a .uztexture
+    /// file and should be uploaded via TextureLoader::LoadUzTex() instead of
+    /// the normal RGBA8 pixel upload path. The mipData/mipWidths/mipHeights
+    /// fields are unused in this case.
+    std::vector<uint8_t> uzTexData;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -112,7 +121,42 @@ public:
     ///
     /// # Arguments
     /// * `path` — Absolute or VFS-resolved file path to the image.
-    void Submit(const std::string& path);
+    /// * `isSRGB` — True if this texture contains color data (albedo, emissive)
+    ///   that should be created with an sRGB format for automatic gamma-to-linear
+    ///   conversion on GPU sample. False for linear data (normal, roughness, etc.).
+    void Submit(const std::string& path, bool isSRGB = false);
+
+    /// Enqueues pre-read image bytes for background decode. Thread-safe.
+    /// Takes ownership of the data buffer via std::vector move.
+    ///
+    /// Used for PAK/VFS textures where the compressed image bytes are already
+    /// in memory. The worker thread will call `stbi_load_from_memory()` instead
+    /// of `stbi_load()`, avoiding a redundant filesystem read.
+    ///
+    /// # Arguments
+    /// * `data` — Compressed image bytes (PNG/JPEG/etc). Moved into the decoder.
+    /// * `path` — Logical path for the texture (used as a key in decode results).
+    /// * `isSRGB` — True if this texture contains color data (albedo, emissive)
+    ///   that should be created with an sRGB format. Propagated to DecodeResult.
+    void SubmitFromMemory(std::vector<uint8_t>&& data, const std::string& path, bool isSRGB = false);
+
+    /// Enqueues a VFS logical path for background read + decode. Thread-safe.
+    ///
+    /// The worker thread calls `vfs->Read(logicalPath)` on the background thread
+    /// to load the file bytes, then decodes (stbi) or passes through (.uztexture).
+    /// This moves ALL file I/O off the render thread — the main thread only enqueues.
+    ///
+    /// # Arguments
+    /// * `vfs` — Thread-safe VFS backend. Must outlive all pending requests.
+    ///   PakVFS and LooseFileVFS are both internally thread-safe.
+    /// * `logicalPath` — VFS logical asset path (e.g., "textures/brick.uztexture").
+    /// * `isSRGB` — True if this texture contains color data (albedo, emissive).
+    /// # Arguments
+    /// * `resultKey` — If non-empty, used as `result.path` instead of `logicalPath`.
+    ///   Needed when the VFS read path differs from the key used in pending slot maps
+    ///   (e.g., reading "foo.uztexture" but the slot is keyed by "foo.jpg").
+    void SubmitVFS(IVFS* vfs, const std::string& logicalPath, bool isSRGB = false,
+                    const std::string& resultKey = {});
 
     /// Retrieves all decode results completed since the last poll.
     /// Thread-safe.
@@ -136,8 +180,19 @@ private:
     /// Worker thread entry point. Loops until `m_stop` is set.
     void WorkerLoop();
 
+    /// Internal queue entry — holds either a file path (for filesystem loads)
+    /// or pre-read memory bytes (for PAK/VFS loads). If `memoryData` is non-empty,
+    /// the worker uses `stbi_load_from_memory()`; otherwise `stbi_load()`.
+    struct DecodeRequest {
+        std::string          path;          ///< File path or VFS logical path to read.
+        std::string          resultKey;     ///< If non-empty, used as result.path instead of path.
+        std::vector<uint8_t> memoryData;    ///< Empty = load from file path or VFS.
+        bool                 isSRGB = false;///< Propagated to DecodeResult for GPU format selection.
+        IVFS*                vfs = nullptr; ///< If non-null, worker reads via vfs->Read(path). Non-owning.
+    };
+
     std::vector<std::thread>              m_workers;
-    std::deque<std::string>               m_queue;      ///< Paths waiting to be decoded.
+    std::deque<DecodeRequest>             m_queue;      ///< Requests waiting to be decoded.
     std::vector<TextureDecodeResult>      m_completed;  ///< Decoded results ready for pickup.
     mutable std::mutex                    m_mutex;
     std::condition_variable               m_cv;

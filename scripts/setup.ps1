@@ -403,6 +403,12 @@ Clone-Repo -Name "astcenc" `
     -Branch "5.3.0" `
     -RemoveDirs @("Docs", "Test", "Jenkins", "Utils")
 
+# etcpak (GPU texture compressor — BC1/BC3/BC7/ETC1/ETC2, same as Godot)
+Clone-Repo -Name "etcpak" `
+    -Url "https://github.com/wolfpld/etcpak.git" `
+    -Branch "master" `
+    -RemoveDirs @("build", ".github")
+
 # Remove build files from root (keep Source/ + LICENSE)
 $astcPath = Join-Path $ThirdPartyDir "astcenc"
 if (Test-Path $astcPath) {

@@ -25,8 +25,11 @@
 /// 3. Failure — empty vector returned, no exception
 ///
 /// # Thread Safety
-/// Individual backends are NOT thread-safe. If concurrent access is needed,
-/// the caller must provide external synchronization.
+/// PakVFS and LooseFileVFS are internally thread-safe — Read() and Exists()
+/// can be called from any thread (including AsyncTextureDecoder workers).
+/// LayeredVFS delegates to its mounted backends' thread safety guarantees.
+/// Mount()/UnmountAll() are NOT thread-safe and must only be called during
+/// initialization or with external synchronization.
 
 #pragma once
 
@@ -36,6 +39,7 @@
 #include <cstdint>
 #include <list>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -172,8 +176,8 @@ public:
     [[nodiscard]] std::string ResolvePath(const std::string& path) const override;
 
 private:
-
-    std::string m_rootDir;  ///< Absolute root directory, always ends with '/'
+    mutable std::mutex m_mutex;  ///< Protects Read() for thread-safe VFS access from worker threads.
+    std::string m_rootDir;       ///< Absolute root directory, always ends with '/'
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -269,8 +273,11 @@ public:
         size_t cacheSizeBytes = 256 * size_t{1024} * 1024);
 
     ~PakVFS() override = default;
-    PakVFS(PakVFS&&) noexcept = default;
-    PakVFS& operator=(PakVFS&&) noexcept = default;
+
+    /// Non-movable — mutex is not movable. PakVFS is always heap-allocated
+    /// via unique_ptr from the factory methods, so moves are unnecessary.
+    PakVFS(PakVFS&&) = delete;
+    PakVFS& operator=(PakVFS&&) = delete;
 
     /// Reads an asset by logical path.
     ///
@@ -338,7 +345,8 @@ private:
     PakStreamReader* AcquireReader(const std::string& pakFilename);
 
     // ── Shared state ───────────────────────────────────────────────────
-    std::string m_name;     ///< Human-readable name for logging
+    mutable std::mutex m_mutex;  ///< Protects all mutable state (cache, handle pool, legacy reader) for thread-safe Read().
+    std::string m_name;          ///< Human-readable name for logging
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

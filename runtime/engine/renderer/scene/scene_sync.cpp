@@ -66,17 +66,20 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
 
         // ── Lazy-load material textures from paths ──────────────────────────
         if (!meshComp.materialLoaded && !effAlbedoPath.empty()) {
-            auto tryLoad = [&](const std::string& path) -> uint32_t {
+            // sRGB resolved per slot via MaterialInterface::IsTextureSlotSRGB().
+            // Works for any shading model — PBR, Hair, Cloth, SSS, etc.
+            auto tryLoad = [&](const std::string& slotName, const std::string& path) -> uint32_t {
                 if (path.empty()) return UINT32_MAX;
-                return LoadTexture(path, vfs, cmdList);
+                const bool isSRGB = mat ? mat->IsTextureSlotSRGB(slotName) : MaterialInterface::DefaultSlotIsSRGB(slotName);
+                return LoadTexture(path, vfs, cmdList, isSRGB);
             };
-            tryLoad(effAlbedoPath);
-            tryLoad(effNormalPath);
-            tryLoad(effRoughnessPath);
-            tryLoad(effMetallicPath);
-            tryLoad(effAoPath);
-            tryLoad(effEmissivePath);
-            tryLoad(effOrmPath);
+            tryLoad("Albedo",    effAlbedoPath);
+            tryLoad("Normal",     effNormalPath);
+            tryLoad("Roughness",  effRoughnessPath);
+            tryLoad("Metallic",   effMetallicPath);
+            tryLoad("Ao",         effAoPath);
+            tryLoad("Emissive",   effEmissivePath);
+            tryLoad("ORM",        effOrmPath);
             meshComp.materialLoaded = true;
             if (mat) {
                 mat->SetGpuResourcesLoaded(true);

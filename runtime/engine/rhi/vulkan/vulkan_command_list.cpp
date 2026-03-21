@@ -50,6 +50,14 @@ static VkFormat ToVkFormat(RHIFormat format) {
         case RHIFormat::D32Float:       return VK_FORMAT_D32_SFLOAT;
         case RHIFormat::D24UnormS8Uint: return VK_FORMAT_D24_UNORM_S8_UINT;
         case RHIFormat::D32FloatS8Uint: return VK_FORMAT_D32_SFLOAT_S8_UINT;
+        case RHIFormat::BC1Unorm:       return VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
+        case RHIFormat::BC1Srgb:        return VK_FORMAT_BC1_RGBA_SRGB_BLOCK;
+        case RHIFormat::BC3Unorm:       return VK_FORMAT_BC3_UNORM_BLOCK;
+        case RHIFormat::BC3Srgb:        return VK_FORMAT_BC3_SRGB_BLOCK;
+        case RHIFormat::BC4Unorm:       return VK_FORMAT_BC4_UNORM_BLOCK;
+        case RHIFormat::BC5Unorm:       return VK_FORMAT_BC5_UNORM_BLOCK;
+        case RHIFormat::BC7Unorm:       return VK_FORMAT_BC7_UNORM_BLOCK;
+        case RHIFormat::BC7Srgb:        return VK_FORMAT_BC7_SRGB_BLOCK;
         default:                        return VK_FORMAT_UNDEFINED;
     }
 }

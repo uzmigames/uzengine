@@ -70,21 +70,38 @@ bool UploadContext::UploadTexture(IRHICommandList* cmdList, RHITextureHandle dst
 
     // Query texture desc to compute staging layout
     RHITextureDesc texDesc = m_device->GetTextureDesc(dst);
+    const bool isBC = IsBlockCompressed(texDesc.format);
     const uint32_t bpp = BytesPerTexel(texDesc.format);
-    if (bpp == 0) {
-        UZ_LOG(Renderer, Error, "UploadTexture: unsupported format (BytesPerTexel=0)");
+    if (!isBC && bpp == 0) {
+        UZ_LOG(Renderer, Error, "UploadTexture: unsupported format (BytesPerTexel=0, not BC)");
         return false;
     }
 
     // Compute mip dimensions
     const uint32_t mipWidth = (texDesc.width >> mipLevel) > 0 ? (texDesc.width >> mipLevel) : 1;
     const uint32_t mipHeight = (texDesc.height >> mipLevel) > 0 ? (texDesc.height >> mipLevel) : 1;
-    const uint32_t srcRowPitch = mipWidth * bpp;
+
+    // For block-compressed formats, staging layout is in block rows:
+    //   srcRowPitch = blocksPerRow * bytesPerBlock
+    //   numRows     = blocksPerCol (each block covers 4 texels vertically)
+    // For uncompressed: srcRowPitch = width * bpp, numRows = height
+    uint32_t srcRowPitch;
+    uint32_t numRows;
+    if (isBC) {
+        const uint32_t blockBytes = BytesPerBlock(texDesc.format);
+        const uint32_t blocksX = (mipWidth + 3) / 4;
+        const uint32_t blocksY = (mipHeight + 3) / 4;
+        srcRowPitch = blocksX * blockBytes;
+        numRows = blocksY;
+    } else {
+        srcRowPitch = mipWidth * bpp;
+        numRows = mipHeight;
+    }
 
     // DX12 requires 256-byte aligned row pitch for texture uploads
     constexpr uint32_t kRowAlignment = 256;
     const uint32_t alignedRowPitch = (srcRowPitch + kRowAlignment - 1) & ~(kRowAlignment - 1);
-    const uint64_t stagingSize = static_cast<uint64_t>(alignedRowPitch) * mipHeight;
+    const uint64_t stagingSize = static_cast<uint64_t>(alignedRowPitch) * numRows;
 
     // Create staging buffer
     RHIBufferDesc stagingDesc{};
@@ -110,10 +127,10 @@ bool UploadContext::UploadTexture(IRHICommandList* cmdList, RHITextureHandle dst
     const auto* srcBytes = static_cast<const uint8_t*>(data);
     if (srcRowPitch == alignedRowPitch) {
         // Rows are already aligned — single memcpy
-        std::memcpy(mapped, srcBytes, sizeBytes);
+        std::memcpy(mapped, srcBytes, static_cast<size_t>(srcRowPitch) * numRows);
     } else {
-        // Copy row-by-row with padding
-        for (uint32_t row = 0; row < mipHeight; ++row) {
+        // Copy row-by-row with padding (rows = block rows for BC, pixel rows for uncompressed)
+        for (uint32_t row = 0; row < numRows; ++row) {
             std::memcpy(mapped + row * alignedRowPitch,
                         srcBytes + row * srcRowPitch,
                         srcRowPitch);

@@ -7,13 +7,14 @@
 ///
 /// # Usage
 /// ```
-/// uzcook --source <dir> --output <dir> [--pak <name>]
+/// uzcook --source <dir> --output <dir> [--pak <name>] [--no-compress]
 ///
 /// Options:
 ///   --source <dir>    Directory containing source assets (HLSL, etc.)
 ///   --output <dir>    Output directory for .cache/, .uzimport, .uzpak
 ///   --pak <name>      Optional: pack all cooked assets into <name>.uzpak
 ///   --verbose         Enable debug logging
+///   --no-compress     Skip BC texture compression (keep RGBA8 uncompressed)
 /// ```
 ///
 /// # Cook Pipeline
@@ -40,6 +41,7 @@
 #include "asset_manifest.h"
 #include "shader_compiler.h"
 
+#include <cctype>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -62,6 +64,7 @@ struct CookArgs {
     std::string outputDir;     ///< Output directory for cache, sidecars, pak
     std::string pakName;       ///< Optional .uzpak archive name (empty = no pak)
     bool verbose = false;      ///< Enable debug-level logging
+    bool noCompress = false;   ///< Skip BC compression for textures (keep RGBA8)
 };
 
 /// Parses CLI arguments into a CookArgs struct.
@@ -80,11 +83,13 @@ static bool ParseArgs(int argc, char** argv, CookArgs& args) {
             args.pakName = argv[++i];
         } else if (arg == "--verbose") {
             args.verbose = true;
+        } else if (arg == "--no-compress") {
+            args.noCompress = true;
         }
     }
 
     if (args.sourceDir.empty() || args.outputDir.empty()) {
-        std::cerr << "Usage: uzcook --source <dir> --output <dir> [--pak <name>] [--verbose]\n";
+        std::cerr << "Usage: uzcook --source <dir> --output <dir> [--pak <name>] [--verbose] [--no-compress]\n";
         return false;
     }
     return true;
@@ -143,6 +148,138 @@ static std::vector<uint8_t> ReadFileBytes(const std::string& path) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Texture format selection
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Determines the optimal GPU compression format and sRGB flag for a texture
+/// based on its filename. Uses naming conventions to identify the texture's
+/// role (albedo, normal, roughness, etc.) and selects the best BC format.
+///
+/// Convention (case-insensitive suffix matching):
+///   Albedo/BaseColor/COL/Diffuse  -> BC7 sRGB  (highest quality color)
+///   Normal/NRM/NORM               -> BC5 linear (2-channel direction data)
+///   Roughness/ROUGH               -> BC4 linear (single channel)
+///   Metallic/METAL/METALNESS      -> BC4 linear (single channel)
+///   AO/AmbientOcclusion/Occlusion -> BC4 linear (single channel)
+///   Emissive/Emission             -> BC7 sRGB  (HDR color data)
+///   ORM (packed AO+Rough+Metal)   -> BC7 linear (multi-channel scalar)
+///   Opacity/Alpha/Mask            -> BC4 linear (single channel)
+///   Unknown/other                 -> BC7 sRGB  (safe default)
+static void SelectTextureFormat(const std::string& filename,
+                                uz::TextureFormat& outFormat,
+                                bool& outSRGB)
+{
+    // Convert filename to lowercase for case-insensitive matching
+    std::string lower = filename;
+    for (auto& c : lower) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+
+    // Strip extension for matching — avoids false positives from extensions
+    // like ".metallic" or path components
+    const auto dot = lower.rfind('.');
+    if (dot != std::string::npos) {
+        lower = lower.substr(0, dot);
+    }
+
+    // Priority order: most specific slot identifiers first. Albedo/color
+    // keywords checked BEFORE metallic/roughness because filenames like
+    // "MetalCorrodedHeavy001_COL_2K_METALNESS.jpg" contain both _COL_ and
+    // METALNESS — the _COL_ indicates this IS the color map (the METALNESS
+    // suffix is the texture set name, not the slot type).
+
+    // Albedo/BaseColor/Diffuse/COL — BC7 sRGB (highest quality color).
+    if (lower.find("basecolor") != std::string::npos ||
+        lower.find("albedo") != std::string::npos ||
+        lower.find("diffuse") != std::string::npos ||
+        lower.find("_col_") != std::string::npos ||
+        lower.find("_col.") != std::string::npos) {
+        outFormat = uz::TextureFormat::BC7;
+        outSRGB = true;
+        return;
+    }
+
+    // ORM packed texture — BC7 linear (3 independent scalar channels).
+    if (lower.find("_orm") != std::string::npos ||
+        lower.find("orm_") != std::string::npos) {
+        outFormat = uz::TextureFormat::BC7;
+        outSRGB = false;
+        return;
+    }
+
+    // Normal maps — BC5 (2 channels: X,Y; Z reconstructed in shader).
+    if (lower.find("normal") != std::string::npos ||
+        lower.find("_nrm") != std::string::npos ||
+        lower.find("_norm") != std::string::npos) {
+        outFormat = uz::TextureFormat::BC5;
+        outSRGB = false;
+        return;
+    }
+
+    // Emissive — BC7 sRGB (color data).
+    if (lower.find("emissive") != std::string::npos ||
+        lower.find("emission") != std::string::npos) {
+        outFormat = uz::TextureFormat::BC7;
+        outSRGB = true;
+        return;
+    }
+
+    // Roughness — BC4 (single channel, linear).
+    if (lower.find("roughness") != std::string::npos ||
+        lower.find("_rough") != std::string::npos) {
+        outFormat = uz::TextureFormat::BC4;
+        outSRGB = false;
+        return;
+    }
+
+    // Metallic — BC4 (single channel, linear).
+    if (lower.find("metallic") != std::string::npos ||
+        lower.find("metalness") != std::string::npos ||
+        lower.find("_metal") != std::string::npos) {
+        outFormat = uz::TextureFormat::BC4;
+        outSRGB = false;
+        return;
+    }
+
+    // Ambient occlusion — BC4 (single channel, linear).
+    if (lower.find("ambientocclusion") != std::string::npos ||
+        lower.find("occlusion") != std::string::npos ||
+        lower.find("_ao") != std::string::npos) {
+        outFormat = uz::TextureFormat::BC4;
+        outSRGB = false;
+        return;
+    }
+
+    // Opacity/alpha/mask — BC4 (single channel, linear).
+    if (lower.find("opacity") != std::string::npos ||
+        lower.find("alpha") != std::string::npos ||
+        lower.find("_mask") != std::string::npos) {
+        outFormat = uz::TextureFormat::BC4;
+        outSRGB = false;
+        return;
+    }
+
+    // Default: BC7 sRGB — safe fallback providing best quality for unknown
+    // texture types. sRGB is the common case for authored textures.
+    outFormat = uz::TextureFormat::BC7;
+    outSRGB = true;
+}
+
+/// Returns a human-readable name for a TextureFormat enum value.
+/// Used for logging during the cook pipeline.
+[[nodiscard]] static const char* TextureFormatName(uz::TextureFormat fmt) {
+    switch (fmt) {
+        case uz::TextureFormat::BC1:                return "BC1";
+        case uz::TextureFormat::BC3:                return "BC3";
+        case uz::TextureFormat::BC4:                return "BC4";
+        case uz::TextureFormat::BC5:                return "BC5";
+        case uz::TextureFormat::BC7:                return "BC7";
+        case uz::TextureFormat::Uncompressed_RGBA8: return "RGBA8";
+        default:                                    return "Unknown";
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Main cook pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -157,16 +294,19 @@ int main(int argc, char** argv) {
     UZ_LOG(Cook, Info, "Cook starting: source='{}', output='{}'",
            args.sourceDir, args.outputDir);
 
-    // Initialize shader compiler
+    // Initialize shader compiler (optional — only needed if shaders are present).
+    // Texture/mesh cooking does not require DXC.
     uz::ShaderCompiler compiler;
-    if (!compiler.Init()) {
-        UZ_LOG(Cook, Error, "Failed to initialize DXC shader compiler");
-        return 1;
+    bool hasShaderCompiler = compiler.Init();
+    if (!hasShaderCompiler) {
+        UZ_LOG(Cook, Warning, "DXC shader compiler unavailable — shader import disabled");
     }
 
     // Register importers
     uz::AssetImporterRegistry registry;
-    registry.Register(std::make_unique<uz::ShaderImporter>(compiler));
+    if (hasShaderCompiler) {
+        registry.Register(std::make_unique<uz::ShaderImporter>(compiler));
+    }
     registry.Register(std::make_unique<uz::MeshImporter>());
     registry.Register(std::make_unique<uz::FbxImporter>());
     registry.Register(std::make_unique<uz::TextureImporter>());
@@ -269,6 +409,15 @@ int main(int argc, char** argv) {
             }
         }
 
+        // Texture-specific options: select BC compression format from filename
+        if (std::string(importer->Name()) == "texture" && !args.noCompress) {
+            SelectTextureFormat(logicalPath, options.textureCompression, options.textureSRGB);
+            UZ_LOG(Cook, Info, "Texture format: '{}' -> {} (sRGB={})",
+                   logicalPath,
+                   TextureFormatName(options.textureCompression),
+                   options.textureSRGB);
+        }
+
         UZ_LOG(Cook, Info, "Importing: '{}' (stage={}, model={})",
                logicalPath, options.stage, options.model);
 
@@ -279,9 +428,13 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        // Compute cache key and store
-        uint64_t optionsHash = uz::AssetCache::HashString(
-            options.stage + options.model + options.entryPoint + options.format);
+        // Compute cache key and store — include texture compression options
+        // so changing BC format invalidates the cache entry
+        std::string optionsStr = options.stage + options.model +
+                                 options.entryPoint + options.format +
+                                 std::to_string(static_cast<uint32_t>(options.textureCompression)) +
+                                 (options.textureSRGB ? "srgb" : "linear");
+        uint64_t optionsHash = uz::AssetCache::HashString(optionsStr);
         uint64_t cacheKey = uz::AssetCache::ComputeKey(
             importer->Name(), importer->Version(), sourceHash, optionsHash);
 
@@ -296,6 +449,8 @@ int main(int argc, char** argv) {
             {"stage", options.stage},
             {"model", options.model},
             {"entry_point", options.entryPoint},
+            {"texture_format", TextureFormatName(options.textureCompression)},
+            {"texture_srgb", options.textureSRGB ? "true" : "false"},
         };
 
         std::string cachePath = cache.CacheDirectory() + "/imported/" +
@@ -317,6 +472,22 @@ int main(int argc, char** argv) {
         } else if (importerName == "texture") {
             outputExt = ".uztexture";
             assetType = uz::AssetType::Texture;
+        }
+
+        // Write cooked output alongside source file for uzpack to pick up.
+        // e.g., "assets/gold/albedo.jpg" → "assets/gold/albedo.uztexture"
+        if (importerName == "texture" || importerName == "mesh") {
+            std::string companionPath = sourcePath;
+            auto compDot = companionPath.rfind('.');
+            if (compDot != std::string::npos) {
+                companionPath = companionPath.substr(0, compDot) + outputExt;
+            }
+            std::ofstream out(companionPath, std::ios::binary);
+            if (out.is_open()) {
+                out.write(reinterpret_cast<const char*>(result.data.data()),
+                          static_cast<std::streamsize>(result.data.size()));
+                UZ_LOG(Cook, Info, "Wrote companion: '{}' ({} bytes)", companionPath, result.data.size());
+            }
         }
 
         // Track for pak

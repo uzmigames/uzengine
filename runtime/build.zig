@@ -122,6 +122,7 @@ pub fn build(b: *std.Build) void {
         tp ++ "luajit/src",
         tp ++ "renderdoc",
         tp ++ "ufbx",
+        tp ++ "etcpak",
     };
 
     const linux_engine_include_dirs = [_][]const u8{
@@ -411,6 +412,25 @@ pub fn build(b: *std.Build) void {
             "astcenc_weight_quant_xfer_tables.cpp",
         },
         .flags = &.{"-std=c++17"},
+    });
+
+    // Thirdparty — etcpak (BC1/BC3/BC4/BC5/BC7 GPU texture compression)
+    // bc7enc.cpp uses std::countr_zero from <bit> which requires C++20.
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path(tp ++ "etcpak"),
+        .files = &.{
+            "ProcessDxtc.cpp",
+            "Tables.cpp",
+            "Dither.cpp",
+        },
+        .flags = &.{"-std=c++17"},
+    });
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path(tp ++ "etcpak"),
+        .files = &.{
+            "bc7enc.cpp",
+        },
+        .flags = &.{"-std=c++20"},
     });
 
     // Include paths — runtime root (for "platform/platform_types.h" etc.)

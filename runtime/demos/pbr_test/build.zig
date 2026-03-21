@@ -11,6 +11,7 @@ pub fn build(b: *std.Build) void {
         .use_demo_application = false,
         .deploy_fxc = true,
         .asset_dirs = &.{ "assets", "../../content" },
+        .cook_textures = true,
     });
     demo.install();
 }

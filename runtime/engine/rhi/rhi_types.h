@@ -151,6 +151,17 @@ enum class RHIFormat : uint8_t {
     RG32Uint,                 ///< Two channels, 32-bit unsigned integer.
     RGBA32Uint,               ///< Four channels, 32-bit unsigned integer.
 
+    // ── Block-compressed formats (GPU texture compression) ────────────────
+
+    BC1Unorm,                 ///< DXT1: RGB 4:1 compression (8 bytes/4x4 block). No alpha.
+    BC1Srgb,                  ///< DXT1 sRGB: same as BC1 with sRGB decode.
+    BC3Unorm,                 ///< DXT5: RGBA 4:1 compression (16 bytes/4x4 block). Full alpha.
+    BC3Srgb,                  ///< DXT5 sRGB: same as BC3 with sRGB decode.
+    BC4Unorm,                 ///< ATI1/RGTC1: single channel 2:1 (8 bytes/4x4). Roughness, AO.
+    BC5Unorm,                 ///< ATI2/RGTC2: two channels 2:1 (16 bytes/4x4). Normal maps (RG).
+    BC7Unorm,                 ///< BPTC: RGBA high-quality 4:1 (16 bytes/4x4). Best quality.
+    BC7Srgb,                  ///< BPTC sRGB: same as BC7 with sRGB decode.
+
     // ── Depth/stencil formats ────────────────────────────────────────────
 
     D16Unorm,                 ///< 16-bit depth, no stencil.
@@ -164,8 +175,35 @@ enum class RHIFormat : uint8_t {
 /// # Returns
 /// Bytes per texel (1–16), or 0 for `Unknown`.
 ///
-/// # Notes
-/// Block-compressed formats are not yet supported.
+/// Returns true if the format is block-compressed (BC1-BC7).
+[[nodiscard]] constexpr bool IsBlockCompressed(RHIFormat format) {
+    switch (format) {
+        case RHIFormat::BC1Unorm: case RHIFormat::BC1Srgb:
+        case RHIFormat::BC3Unorm: case RHIFormat::BC3Srgb:
+        case RHIFormat::BC4Unorm:
+        case RHIFormat::BC5Unorm:
+        case RHIFormat::BC7Unorm: case RHIFormat::BC7Srgb:
+            return true;
+        default: return false;
+    }
+}
+
+/// Returns bytes per 4x4 block for block-compressed formats.
+/// 8 for BC1/BC4, 16 for BC3/BC5/BC7. Returns 0 for non-BC formats.
+[[nodiscard]] constexpr uint32_t BytesPerBlock(RHIFormat format) {
+    switch (format) {
+        case RHIFormat::BC1Unorm: case RHIFormat::BC1Srgb:   return 8;
+        case RHIFormat::BC4Unorm:                             return 8;
+        case RHIFormat::BC3Unorm: case RHIFormat::BC3Srgb:   return 16;
+        case RHIFormat::BC5Unorm:                             return 16;
+        case RHIFormat::BC7Unorm: case RHIFormat::BC7Srgb:   return 16;
+        default: return 0;
+    }
+}
+
+/// Returns bytes per texel for uncompressed formats.
+/// For block-compressed formats, use `BytesPerBlock()` and compute
+/// `numBlocksX * numBlocksY * BytesPerBlock(fmt)` instead.
 [[nodiscard]] constexpr uint32_t BytesPerTexel(RHIFormat format) {
     switch (format) {
         case RHIFormat::R8Unorm:        return 1;

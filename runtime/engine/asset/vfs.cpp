@@ -43,6 +43,11 @@ std::string LooseFileVFS::ResolvePath(const std::string& path) const {
 std::vector<uint8_t> LooseFileVFS::Read(const std::string& path) {
     UZ_PROFILE_FUNCTION();
     UZ_STAT_INCREMENT(IO, VFSReads);
+
+    // Lock protects against concurrent ifstream reads on the same LooseFileVFS
+    // instance from multiple AsyncTextureDecoder worker threads.
+    std::lock_guard<std::mutex> lock(m_mutex);
+
     const std::string fullPath = ResolvePath(path);
     auto data = FileReadAll(fullPath.c_str());
     if (data.empty() && !fs::exists(fullPath)) {
@@ -125,43 +130,50 @@ std::vector<uint8_t> PakVFS::Read(const std::string& path) {
     UZ_PROFILE_FUNCTION();
     UZ_STAT_INCREMENT(IO, VFSReads);
 
-    // Legacy mode: delegate entirely to the in-memory PakReader
+    // Legacy mode: in-memory lookup, needs lock
     if (!m_index.IsLoaded()) {
+        std::lock_guard<std::mutex> lock(m_mutex);
         return m_reader.Lookup(path);
     }
 
-    // ── Lazy mode ──────────────────────────────────────────────────────
+    // ── Lazy mode (thread-safe for concurrent worker reads) ──────────
 
     const uint64_t hash = XXH64(path.data(), path.size(), 0);
 
-    // 1. Check LRU cache — fast path, no I/O
-    if (auto* cached = m_cache->Get(hash)) {
-        return *cached;
+    // 1. Check LRU cache (lock: cache access)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (auto* cached = m_cache->Get(hash)) {
+            return *cached;
+        }
     }
 
-    // 2. Lookup in master index to find which pak file and at what offset
+    // 2. Index lookup — MasterIndex is immutable after load, no lock needed
     auto loc = m_index.Lookup(hash);
     if (!loc.has_value()) {
         return {};
     }
 
-    // 3. Get or lazily open the PakStreamReader for this pak file (pooled, max 8 handles)
-    auto* reader = AcquireReader(loc->pakFilename);
-    if (!reader) {
+    // 3. Open a private PakStreamReader for this thread's I/O.
+    //    Each thread gets its own FILE* handle so concurrent seek+read
+    //    on the same .uzpak file is safe without serialization.
+    std::string pakPath = m_baseDir + "/" + loc->pakFilename;
+    PakStreamReader threadReader;
+    if (!threadReader.Open(pakPath)) {
         UZ_LOG(Asset, Error, "PakVFS: cannot open pak '{}' for asset '{}'",
                loc->pakFilename, path);
         return {};
     }
 
-    // 4. Read the compressed+scrambled blob from disk
-    auto blob = reader->ReadBlob(loc->offset, loc->compressedSize);
+    // 4. Read blob — each thread has its own file handle, NO lock held
+    auto blob = threadReader.ReadBlob(loc->offset, loc->compressedSize);
     if (blob.empty() && loc->compressedSize > 0) {
         UZ_LOG(Asset, Error, "PakVFS: ReadBlob failed for '{}' (offset={}, size={})",
                path, loc->offset, loc->compressedSize);
         return {};
     }
 
-    // 5. Decompress (XOR descramble + optional LZ4 decompression)
+    // 5. Decompress — stateless, no lock needed
     auto raw = PakDecompressBlob(blob.data(), blob.size(), loc->rawSize, hash, m_secret);
     if (raw.empty() && loc->rawSize > 0) {
         UZ_LOG(Asset, Error, "PakVFS: decompress failed for '{}' (compressed={}, raw={})",
@@ -169,22 +181,25 @@ std::vector<uint8_t> PakVFS::Read(const std::string& path) {
         return {};
     }
 
-    // 6. Insert into LRU cache for future reads
-    const size_t rawSize = raw.size();
-    m_cache->Put(hash, raw, rawSize);
+    // 6. Cache insert (lock: cache access)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_cache->Put(hash, raw, raw.size());
+    }
 
     return raw;
 }
 
 bool PakVFS::Exists(const std::string& path) {
-    // Legacy mode
-    if (!m_index.IsLoaded()) {
-        return m_reader.Contains(path);
+    // Lazy mode: MasterIndex is immutable after load — no lock needed.
+    if (m_index.IsLoaded()) {
+        const uint64_t hash = XXH64(path.data(), path.size(), 0);
+        return m_index.Contains(hash);
     }
 
-    // Lazy mode: pure index lookup, no I/O
-    const uint64_t hash = XXH64(path.data(), path.size(), 0);
-    return m_index.Contains(hash);
+    // Legacy mode: PakReader may not be thread-safe internally.
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_reader.Contains(path);
 }
 
 std::string PakVFS::Name() const {
@@ -198,6 +213,7 @@ std::string PakVFS::ResolvePath(const std::string& /*path*/) const {
 
 IVFS::CacheStats PakVFS::GetCacheStats() const {
     if (!m_cache) return {};
+    std::lock_guard<std::mutex> lock(m_mutex);
     return {m_cache->CurrentBytes(), m_cache->MaxBytes(), m_cache->EntryCount()};
 }
 
