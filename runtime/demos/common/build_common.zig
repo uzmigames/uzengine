@@ -127,9 +127,13 @@ pub const DemoHandle = struct {
             "--name",
             "game",
         });
-        pack_cmd.step.dependOn(self.b.getInstallStep());
+        // Pack runs after the exe is compiled (no circular dependency).
+        pack_cmd.step.dependOn(&self.exe.step);
 
-        // Make the "pack" step available
+        // Default build includes packing — no separate "zig build pack" needed.
+        self.b.getInstallStep().dependOn(&pack_cmd.step);
+
+        // Also expose as a standalone "pack" step for manual re-packing.
         const pack_step = self.b.step("pack", "Pack assets into .uzpak");
         pack_step.dependOn(&pack_cmd.step);
     }
