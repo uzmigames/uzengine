@@ -2,6 +2,19 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.41] — 2026-03-21
+
+### Lua VFS API — `uz.vfs.*` bindings for asset loading from scripts
+
+- `uz.vfs.read(path)` → raw bytes (binary safe via `lua_pushlstring`) or nil
+- `uz.vfs.read_text(path)` → UTF-8 string or nil
+- `uz.vfs.exists(path)` → bool (no I/O in pak mode — pure index lookup)
+- `uz.vfs.is_pak_mode()` → bool (true when running from .uzpak archives)
+- `uz.vfs.get_mode()` → `"pak"` or `"loose"` string
+- `uz.vfs.get_cache_stats()` → `{current_bytes, max_bytes, entry_count}` table or nil
+
+Added `IVFS::CacheStats` struct and `virtual GetCacheStats()` to the VFS interface. `PakVFS` overrides with LRU cache stats. Reuses the existing `"uz_vfs"` registry key from `lua_scene_api`.
+
 ## [0.2.40] — 2026-03-21
 
 ### Asset Pak Pipeline — Multi-pak lazy loading with XOR scramble

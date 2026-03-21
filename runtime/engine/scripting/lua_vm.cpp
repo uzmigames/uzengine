@@ -12,6 +12,7 @@
 #include "lua_math_api.h"
 #include "lua_quat_api.h"
 #include "lua_window_api.h"
+#include "lua_vfs_api.h"
 
 extern "C" {
 #include <lua.h>
@@ -147,6 +148,7 @@ bool LuaVM::Init() {
     LuaRegisterMathAPI(s_state);
     LuaRegisterQuatAPI(s_state);
     LuaRegisterWindowAPI(s_state);
+    LuaRegisterVfsAPI(s_state);
 
     UZ_LOG(Scripting, Info, "LuaVM initialized (LuaJIT 2.1)");
     return true;

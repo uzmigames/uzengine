@@ -95,6 +95,19 @@ public:
     [[nodiscard]] virtual std::string ResolvePath(const std::string& path) const {
         return path;
     }
+
+    /// Statistics about the VFS internal asset cache.
+    struct CacheStats {
+        size_t currentBytes = 0;  ///< Current memory usage of cached assets
+        size_t maxBytes = 0;      ///< Maximum cache budget in bytes
+        size_t entryCount = 0;    ///< Number of entries currently cached
+    };
+
+    /// Returns VFS cache statistics. Default returns zeros (no cache).
+    ///
+    /// Only meaningful for backends that maintain an internal cache
+    /// (e.g., PakVFS in lazy mode). File-backed backends return zeros.
+    [[nodiscard]] virtual CacheStats GetCacheStats() const { return {}; }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -296,6 +309,10 @@ public:
 
     /// Returns true if this PakVFS is operating in lazy (index-based) mode.
     [[nodiscard]] bool IsLazyMode() const { return m_index.IsLoaded(); }
+
+    /// Returns cache statistics for lazy mode (LRU cache usage).
+    /// In legacy mode returns zeros (no cache).
+    [[nodiscard]] CacheStats GetCacheStats() const override;
 
 private:
     /// Private default constructor for factory methods.

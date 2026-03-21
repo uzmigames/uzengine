@@ -196,6 +196,11 @@ std::string PakVFS::ResolvePath(const std::string& /*path*/) const {
     return {};
 }
 
+IVFS::CacheStats PakVFS::GetCacheStats() const {
+    if (!m_cache) return {};
+    return {m_cache->CurrentBytes(), m_cache->MaxBytes(), m_cache->EntryCount()};
+}
+
 PakStreamReader* PakVFS::AcquireReader(const std::string& pakFilename) {
     // Check if already open — promote to MRU
     auto it = m_handleMap.find(pakFilename);
