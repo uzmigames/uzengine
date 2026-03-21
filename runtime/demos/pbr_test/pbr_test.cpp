@@ -25,9 +25,13 @@
 #include "material_baker_gpu.h"
 #include "shader_manager.h"
 #include "shader_pipeline.h"
+#include "vfs.h"
 
 #include <cmath>
 #include <filesystem>
+#include <fstream>
+
+#include <json.hpp>
 
 UZ_DECLARE_LOG_CATEGORY(Demo);
 UZ_DEFINE_LOG_CATEGORY(Demo, Info);
@@ -59,16 +63,69 @@ ApplicationConfig PBRTest::Configure() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// LoadPbrMaterial — simple .uzmat JSON loader
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Loads a simple PBR material from a .uzmat JSON file via VFS.
+/// Populates the Material struct's texture paths and UV params.
+/// Returns true on success, false if the file cannot be read or parsed.
+static bool LoadPbrMaterial(Material& mat, IVFS& vfs, const std::string& vfsPath) {
+    std::vector<uint8_t> data = vfs.Read(vfsPath);
+    if (data.empty()) {
+        UZ_LOG(Demo, Error, "LoadPbrMaterial: cannot read '{}' from VFS", vfsPath);
+        return false;
+    }
+
+    nlohmann::json root;
+    try {
+        root = nlohmann::json::parse(data.begin(), data.end());
+    } catch (const nlohmann::json::exception& e) {
+        UZ_LOG(Demo, Error, "LoadPbrMaterial: JSON parse error in '{}': {}", vfsPath, e.what());
+        return false;
+    }
+
+    // Textures
+    if (root.contains("textures")) {
+        const auto& tex = root["textures"];
+        if (tex.contains("albedo"))    mat.albedoPath    = tex["albedo"].get<std::string>();
+        if (tex.contains("normal"))    mat.normalPath    = tex["normal"].get<std::string>();
+        if (tex.contains("roughness")) mat.roughnessPath = tex["roughness"].get<std::string>();
+        if (tex.contains("metallic"))  mat.metallicPath  = tex["metallic"].get<std::string>();
+        if (tex.contains("ao"))        mat.aoPath        = tex["ao"].get<std::string>();
+        if (tex.contains("emissive"))  mat.emissivePath  = tex["emissive"].get<std::string>();
+    }
+
+    // Params
+    if (root.contains("params")) {
+        const auto& params = root["params"];
+        if (params.contains("uvScaleX"))            mat.uvScaleX            = params["uvScaleX"].get<float>();
+        if (params.contains("uvScaleY"))            mat.uvScaleY            = params["uvScaleY"].get<float>();
+        if (params.contains("uvOffsetX"))           mat.uvOffsetX           = params["uvOffsetX"].get<float>();
+        if (params.contains("uvOffsetY"))           mat.uvOffsetY           = params["uvOffsetY"].get<float>();
+        if (params.contains("roughnessMultiplier")) mat.roughnessMultiplier = params["roughnessMultiplier"].get<float>();
+        if (params.contains("metallicMultiplier"))  mat.metallicMultiplier  = params["metallicMultiplier"].get<float>();
+        if (params.contains("normalIntensity"))     mat.normalIntensity     = params["normalIntensity"].get<float>();
+        if (params.contains("aoIntensity"))         mat.aoIntensity         = params["aoIntensity"].get<float>();
+    }
+
+    UZ_LOG(Demo, Info, "Loaded PBR material '{}': albedo='{}', normal='{}', rough='{}', metal='{}', ao='{}'",
+           root.value("name", "unnamed"), mat.albedoPath, mat.normalPath,
+           mat.roughnessPath, mat.metallicPath, mat.aoPath);
+
+    return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // OnStart
 // ─────────────────────────────────────────────────────────────────────────────
 
 void PBRTest::OnStart() {
     auto& world = GetWorld();
+    const std::filesystem::path assetsDir = uz::GetExeDir() / "assets";
+    const std::filesystem::path matsDir   = assetsDir / "materials";
 
     // ── Generate procedural meshes ───────────────────────────────────────
     {
-        const std::filesystem::path assetsDir = uz::GetExeDir() / "assets";
-
         const std::filesystem::path spherePath = assetsDir / "sphere.uzmesh";
         if (!uz::FileExists(spherePath.string().c_str())) {
             const Mesh sphere = uz::GenerateSphereMesh(64, 32); // High-poly for smooth silhouettes at 1440p
@@ -88,69 +145,17 @@ void PBRTest::OnStart() {
         }
     }
 
-    // ── Initialize 9 diverse materials ───────────────────────────────────
-
-    // 0: Gold (metallic)
-    goldMat_.albedoPath    = "assets/materials/gold/Poliigon_MetalGoldPaint_7253_BaseColor.jpg";
-    goldMat_.normalPath    = "assets/materials/gold/Poliigon_MetalGoldPaint_7253_Normal.png";
-    goldMat_.roughnessPath = "assets/materials/gold/Poliigon_MetalGoldPaint_7253_Roughness.jpg";
-    goldMat_.metallicPath  = "assets/materials/gold/Poliigon_MetalGoldPaint_7253_Metallic.jpg";
-    goldMat_.aoPath        = "assets/materials/gold/Poliigon_MetalGoldPaint_7253_AmbientOcclusion.jpg";
-
-    // 1: Metal (galvanized steel)
-    metalMat_.albedoPath    = "assets/materials/metal/MetalGalvanizedSteelWorn001_COL_2K_METALNESS.jpg";
-    metalMat_.normalPath    = "assets/materials/metal/MetalGalvanizedSteelWorn001_NRM_2K_METALNESS.jpg";
-    metalMat_.roughnessPath = "assets/materials/metal/MetalGalvanizedSteelWorn001_ROUGHNESS_2K_METALNESS.jpg";
-    metalMat_.metallicPath  = "assets/materials/metal/MetalGalvanizedSteelWorn001_METALNESS_2K_METALNESS.jpg";
-
-    // 2: RattanWeave (organic)
-    rattanMat_.albedoPath    = "assets/materials/rattan/Poliigon_RattanWeave_6945_BaseColor.jpg";
-    rattanMat_.normalPath    = "assets/materials/rattan/Poliigon_RattanWeave_6945_Normal.png";
-    rattanMat_.roughnessPath = "assets/materials/rattan/Poliigon_RattanWeave_6945_Roughness.jpg";
-    rattanMat_.metallicPath  = "assets/materials/rattan/Poliigon_RattanWeave_6945_Metallic.jpg";
-    rattanMat_.aoPath        = "assets/materials/rattan/Poliigon_RattanWeave_6945_AmbientOcclusion.jpg";
-
-    // 3: StoneQuartzite (white stone)
-    quartziteMat_.albedoPath    = "assets/materials/quartzite/Poliigon_StoneQuartzite_8060_BaseColor.jpg";
-    quartziteMat_.normalPath    = "assets/materials/quartzite/Poliigon_StoneQuartzite_8060_Normal.png";
-    quartziteMat_.roughnessPath = "assets/materials/quartzite/Poliigon_StoneQuartzite_8060_Roughness.jpg";
-    quartziteMat_.metallicPath  = "assets/materials/quartzite/Poliigon_StoneQuartzite_8060_Metallic.jpg";
-    quartziteMat_.aoPath        = "assets/materials/quartzite/Poliigon_StoneQuartzite_8060_AmbientOcclusion.jpg";
-
-    // 4: Stonebricks (classic)
-    stoneBrickMat_.albedoPath    = "assets/materials/stonebricks/Stonebricks_BaseColor.jpg";
-    stoneBrickMat_.normalPath    = "assets/materials/stonebricks/Stonebricks_Normal.jpg";
-    stoneBrickMat_.roughnessPath = "assets/materials/stonebricks/Stonebricks_Roughness.jpg";
-    stoneBrickMat_.metallicPath  = "assets/materials/stonebricks/Stonebricks_Metallic.jpg";
-    stoneBrickMat_.aoPath        = "assets/materials/stonebricks/Stonebricks_AO.jpg";
-    stoneBrickMat_.uvScaleX      = 3.0f;
-    stoneBrickMat_.uvScaleY      = 3.0f;
-
-    // 5: Concrete
-    concreteMat_.albedoPath    = "assets/materials/ground/Poliigon_ConcreteWorn_8690_BaseColor.jpg";
-    concreteMat_.normalPath    = "assets/materials/ground/Poliigon_ConcreteWorn_8690_Normal.png";
-    concreteMat_.roughnessPath = "assets/materials/ground/Poliigon_ConcreteWorn_8690_Roughness.jpg";
-    concreteMat_.metallicPath  = "assets/materials/ground/Poliigon_ConcreteWorn_8690_Metallic.jpg";
-    concreteMat_.aoPath        = "assets/materials/ground/Poliigon_ConcreteWorn_8690_AmbientOcclusion.jpg";
-
-    // 6: MetalCorroded
-    metalCorrodedMat_.albedoPath    = "assets/materials/metal_corroded/MetalCorrodedHeavy001_COL_2K_METALNESS.jpg";
-    metalCorrodedMat_.normalPath    = "assets/materials/metal_corroded/MetalCorrodedHeavy001_NRM_2K_METALNESS.jpg";
-    metalCorrodedMat_.roughnessPath = "assets/materials/metal_corroded/MetalCorrodedHeavy001_ROUGHNESS_2K_METALNESS.jpg";
-    metalCorrodedMat_.metallicPath  = "assets/materials/metal_corroded/MetalCorrodedHeavy001_METALNESS_2K_METALNESS.jpg";
-
-    // 7: Grass
-    grassMat_.albedoPath    = "assets/materials/grass/Poliigon_GrassPatchyGround_4585_BaseColor.jpg";
-    grassMat_.normalPath    = "assets/materials/grass/Poliigon_GrassPatchyGround_4585_Normal.png";
-    grassMat_.roughnessPath = "assets/materials/grass/Poliigon_GrassPatchyGround_4585_Roughness.jpg";
-    grassMat_.metallicPath  = "assets/materials/grass/Poliigon_GrassPatchyGround_4585_Metallic.jpg";
-    grassMat_.aoPath        = "assets/materials/grass/Poliigon_GrassPatchyGround_4585_AmbientOcclusion.jpg";
-
-    // 8: Sand (uses GLOSS map — invert for roughness if needed)
-    sandMat_.albedoPath    = "assets/materials/sand/GroundSand005_COL_2K.jpg";
-    sandMat_.normalPath    = "assets/materials/sand/GroundSand005_NRM_2K.jpg";
-    sandMat_.aoPath        = "assets/materials/sand/GroundSand005_AO_2K.jpg";
-    // Sand has a GLOSS map — we'll use roughness=1.0 default (no roughness texture)
+    // ── Initialize 9 diverse materials from .uzmat files (loaded via VFS/pak) ──
+    auto& vfs = GetVFS();
+    LoadPbrMaterial(goldMat_,          vfs, "assets/materials/gold/gold.uzmat");
+    LoadPbrMaterial(metalMat_,         vfs, "assets/materials/metal/metal.uzmat");
+    LoadPbrMaterial(rattanMat_,        vfs, "assets/materials/rattan/rattan.uzmat");
+    LoadPbrMaterial(quartziteMat_,     vfs, "assets/materials/quartzite/quartzite.uzmat");
+    LoadPbrMaterial(stoneBrickMat_,    vfs, "assets/materials/stonebricks/stonebricks.uzmat");
+    LoadPbrMaterial(concreteMat_,      vfs, "assets/materials/ground/concrete_worn.uzmat");
+    LoadPbrMaterial(metalCorrodedMat_, vfs, "assets/materials/metal_corroded/metal_corroded.uzmat");
+    LoadPbrMaterial(grassMat_,         vfs, "assets/materials/grass/grass.uzmat");
+    LoadPbrMaterial(sandMat_,          vfs, "assets/materials/sand/sand.uzmat");
 
     // ── Ground material from graph-based .uzmat ───────────────────────
     //
@@ -161,8 +166,7 @@ void PBRTest::OnStart() {
     // bypassing the file-based texture loading path entirely.
 
     {
-        const std::filesystem::path assetsDir = uz::GetExeDir() / "assets";
-        const std::filesystem::path uzmatPath = assetsDir / "materials" / "mi_procgrid.uzmat";
+        const std::filesystem::path uzmatPath = matsDir / "mi_procgrid.uzmat";
 
         materialCache_.Init((assetsDir / "cache" / "materials").string());
 

@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "type": "PBR",
+  "name": "Metal",
+  "textures": {
+    "albedo": "assets/materials/metal/MetalGalvanizedSteelWorn001_COL_2K_METALNESS.jpg",
+    "normal": "assets/materials/metal/MetalGalvanizedSteelWorn001_NRM_2K_METALNESS.jpg",
+    "roughness": "assets/materials/metal/MetalGalvanizedSteelWorn001_ROUGHNESS_2K_METALNESS.jpg",
+    "metallic": "assets/materials/metal/MetalGalvanizedSteelWorn001_METALNESS_2K_METALNESS.jpg"
+  },
+  "params": {
+    "uvScaleX": 1.0,
+    "uvScaleY": 1.0
+  }
+}

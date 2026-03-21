@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "type": "PBR",
+  "name": "Gold",
+  "textures": {
+    "albedo": "assets/materials/gold/Poliigon_MetalGoldPaint_7253_BaseColor.jpg",
+    "normal": "assets/materials/gold/Poliigon_MetalGoldPaint_7253_Normal.png",
+    "roughness": "assets/materials/gold/Poliigon_MetalGoldPaint_7253_Roughness.jpg",
+    "metallic": "assets/materials/gold/Poliigon_MetalGoldPaint_7253_Metallic.jpg",
+    "ao": "assets/materials/gold/Poliigon_MetalGoldPaint_7253_AmbientOcclusion.jpg"
+  },
+  "params": {
+    "uvScaleX": 1.0,
+    "uvScaleY": 1.0
+  }
+}

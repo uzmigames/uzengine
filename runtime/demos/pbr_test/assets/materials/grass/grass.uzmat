@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "type": "PBR",
+  "name": "Grass",
+  "textures": {
+    "albedo": "assets/materials/grass/Poliigon_GrassPatchyGround_4585_BaseColor.jpg",
+    "normal": "assets/materials/grass/Poliigon_GrassPatchyGround_4585_Normal.png",
+    "roughness": "assets/materials/grass/Poliigon_GrassPatchyGround_4585_Roughness.jpg",
+    "metallic": "assets/materials/grass/Poliigon_GrassPatchyGround_4585_Metallic.jpg",
+    "ao": "assets/materials/grass/Poliigon_GrassPatchyGround_4585_AmbientOcclusion.jpg"
+  },
+  "params": {
+    "uvScaleX": 1.0,
+    "uvScaleY": 1.0
+  }
+}

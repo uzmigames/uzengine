@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "type": "PBR",
+  "name": "ConcreteWorn",
+  "textures": {
+    "albedo": "assets/materials/ground/Poliigon_ConcreteWorn_8690_BaseColor.jpg",
+    "normal": "assets/materials/ground/Poliigon_ConcreteWorn_8690_Normal.png",
+    "roughness": "assets/materials/ground/Poliigon_ConcreteWorn_8690_Roughness.jpg",
+    "metallic": "assets/materials/ground/Poliigon_ConcreteWorn_8690_Metallic.jpg",
+    "ao": "assets/materials/ground/Poliigon_ConcreteWorn_8690_AmbientOcclusion.jpg"
+  },
+  "params": {
+    "uvScaleX": 1.0,
+    "uvScaleY": 1.0
+  }
+}

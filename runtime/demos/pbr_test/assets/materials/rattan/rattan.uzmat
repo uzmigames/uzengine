@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "type": "PBR",
+  "name": "Rattan",
+  "textures": {
+    "albedo": "assets/materials/rattan/Poliigon_RattanWeave_6945_BaseColor.jpg",
+    "normal": "assets/materials/rattan/Poliigon_RattanWeave_6945_Normal.png",
+    "roughness": "assets/materials/rattan/Poliigon_RattanWeave_6945_Roughness.jpg",
+    "metallic": "assets/materials/rattan/Poliigon_RattanWeave_6945_Metallic.jpg",
+    "ao": "assets/materials/rattan/Poliigon_RattanWeave_6945_AmbientOcclusion.jpg"
+  },
+  "params": {
+    "uvScaleX": 1.0,
+    "uvScaleY": 1.0
+  }
+}

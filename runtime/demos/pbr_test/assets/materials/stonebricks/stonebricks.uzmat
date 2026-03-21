@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "type": "PBR",
+  "name": "StoneBricks",
+  "textures": {
+    "albedo": "assets/materials/stonebricks/Stonebricks_BaseColor.jpg",
+    "normal": "assets/materials/stonebricks/Stonebricks_Normal.jpg",
+    "roughness": "assets/materials/stonebricks/Stonebricks_Roughness.jpg",
+    "metallic": "assets/materials/stonebricks/Stonebricks_Metallic.jpg",
+    "ao": "assets/materials/stonebricks/Stonebricks_AO.jpg"
+  },
+  "params": {
+    "uvScaleX": 3.0,
+    "uvScaleY": 3.0
+  }
+}

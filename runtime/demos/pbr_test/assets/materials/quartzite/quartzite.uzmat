@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "type": "PBR",
+  "name": "Quartzite",
+  "textures": {
+    "albedo": "assets/materials/quartzite/Poliigon_StoneQuartzite_8060_BaseColor.jpg",
+    "normal": "assets/materials/quartzite/Poliigon_StoneQuartzite_8060_Normal.png",
+    "roughness": "assets/materials/quartzite/Poliigon_StoneQuartzite_8060_Roughness.jpg",
+    "metallic": "assets/materials/quartzite/Poliigon_StoneQuartzite_8060_Metallic.jpg",
+    "ao": "assets/materials/quartzite/Poliigon_StoneQuartzite_8060_AmbientOcclusion.jpg"
+  },
+  "params": {
+    "uvScaleX": 1.0,
+    "uvScaleY": 1.0
+  }
+}

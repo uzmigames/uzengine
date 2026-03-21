@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "type": "PBR",
+  "name": "Sand",
+  "textures": {
+    "albedo": "assets/materials/sand/GroundSand005_COL_2K.jpg",
+    "normal": "assets/materials/sand/GroundSand005_NRM_2K.jpg",
+    "ao": "assets/materials/sand/GroundSand005_AO_2K.jpg"
+  },
+  "params": {
+    "uvScaleX": 1.0,
+    "uvScaleY": 1.0
+  }
+}

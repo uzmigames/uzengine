@@ -2,6 +2,40 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.43] — 2026-03-21
+
+### GTAO Half-Res Pipeline + PBR Material Files + Asset Pipeline Improvements
+
+**GTAO Optimization (Phase 1 — 3.7x speedup):**
+- `GTAOQuality` enum: Low/Medium/High/Ultra with per-preset resolution scale, angle count, tap count
+- Half-res compute dispatch (960x540 at 1080p) + bilateral upsample via fullscreen pixel shader
+- `EnsureUpsamplePipeline()` creates FullscreenVS + GtaoUpsamplePS graphics PSO (R8_UNORM RT)
+- Barrier state tracking (`m_filteredAOCurrentState`) for correct cross-frame UAV/RT/SRV transitions
+- Fixed `gtao_upsample_ps.hlsl` bindless path: typed `Texture2D<float>` for `ResourceDescriptorHeap[]`
+- Fixed `gtao_temporal_cs.hlsl` entry point: `CSMain` → `main` (ShaderManager requirement)
+- Default quality: High (full-res, preserves original behavior; Medium available for 3.7x perf gain)
+- GPU profile: GTAO 1.23ms → 0.334ms (Medium), total frame 2.2ms → 1.35ms
+
+**PBR Material Files (.uzmat):**
+- New simple PBR .uzmat JSON format: `{"type":"PBR", "textures":{...}, "params":{...}}`
+- 10 .uzmat files created for all PBR demo materials (gold, metal, rattan, quartzite, stonebricks, concrete, concrete_worn, metal_corroded, grass, sand)
+- `LoadPbrMaterial()` reads .uzmat via VFS/pak, parses JSON, populates Material struct
+- PBR demo loads all materials from .uzmat files instead of hardcoded C++ paths
+
+**Asset Pipeline:**
+- `uzpack` supports multiple `--input` dirs with directory-name prefixing to prevent path collisions
+- Each input dir's files are prefixed with the dir name in the pak (e.g., `assets/meshes/sphere.uzmesh`, `content/atmosphere/shape.bin`)
+- `build_common.zig` passes all `asset_dirs` as separate `--input` flags to uzpack
+- PBR demo packs both `assets/` and `runtime/content/` into single .uzpak (67 assets)
+
+**PBR Demo Improvements:**
+- Re-enabled PBR spheres (9 materials) + ground plane (were `#if 0` for cloud testing)
+- Assets organized into subdirs: `meshes/`, `materials/<name>/`, `textures/`
+- SkyLight: `lowerHemisphereIsBlack=false`, `minOcclusion=0.15` for natural fill lighting
+- Removed texture upload throttle (`kMaxTextureUploadsPerFrame` = unlimited)
+- `cloud_pass.cpp`: shape.bin fallback warning is now log-once (no per-frame spam)
+- `sphere.uzmesh` pre-generated and included in assets (was runtime-generated)
+
 ## [0.2.42] — 2026-03-21
 
 ### FBX Import Pipeline + ORM Packed Texture Support
