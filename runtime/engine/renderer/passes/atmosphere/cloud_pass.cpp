@@ -410,7 +410,7 @@ void CloudPass::Execute(IRHICommandList* cmdList, CBRingAllocator& cbRing,
     cb.cameraPos[0]    = input.cameraPos[0];
     cb.cameraPos[1]    = input.cameraPos[1];
     cb.cameraPos[2]    = input.cameraPos[2];
-    cb.time            = input.time;
+    cb.time            = input.time * 0.1f;
     cb.sunDir[0]       = input.sunDir[0];
     cb.sunDir[1]       = input.sunDir[1];
     cb.sunDir[2]       = input.sunDir[2];

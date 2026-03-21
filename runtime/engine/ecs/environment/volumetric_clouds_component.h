@@ -49,22 +49,22 @@ struct VolumetricCloudsComponent {
     // ── Cloud Layer Geometry ─────────────────────────────────────────────
 
     /// Bottom altitude of the cloud layer in km above sea level.
-    /// Standard cumulus cloud base altitude. Default: 5.0 km.
-    float layerBottomAltitudeKm = 5.0f;
+    /// Standard fair-weather cumulus base altitude. Default: 7.0 km.
+    float layerBottomAltitudeKm = 7.0f;
 
     /// Height (thickness) of the cloud layer in km.
-    /// Typical cumulonimbus vertical extent. Default: 10.0 km.
-    float layerHeightKm = 10.0f;
+    /// Fair-weather cumulus vertical extent. Default: 6.0 km.
+    float layerHeightKm = 6.0f;
 
     // ── Cloud Density ────────────────────────────────────────────────────
 
     /// Global cloud coverage [0,1]. 0 = clear sky, 1 = overcast.
     /// Multiplied into the weather map R channel during density sampling.
-    float coverage = 0.5f;
+    float coverage = 0.35f;
 
     /// Cloud density multiplier. Higher values produce thicker, more opaque
     /// clouds. Scales the raw density after noise sampling.
-    float density = 1.0f;
+    float density = 0.6f;
 
     /// Cloud type [0,1]. 0 = stratus (flat, layered), 1 = cumulus (puffy, towering).
     /// Controls the vertical density profile applied within the cloud shell.
@@ -74,7 +74,7 @@ struct VolumetricCloudsComponent {
 
     /// Wind direction and speed in km/s (XY = horizontal direction, Z = unused).
     /// Applied as a UV offset to both the 3D shape noise and 2D weather map.
-    Vec3 windVelocity = {0.01f, 0.005f, 0.0f};
+    Vec3 windVelocity = {0.005f, 0.002f, 0.0f};
 
     /// Wind speed multiplier for detail noise relative to shape noise.
     /// Creates the churning, turbulent appearance at cloud edges.
@@ -85,7 +85,7 @@ struct VolumetricCloudsComponent {
     /// Extinction coefficient for Beer-Lambert attenuation (km^-1).
     /// Higher values cause light to be absorbed more quickly inside clouds.
     /// @ref Beer-Lambert law — cloud extinction coefficient. Default: 0.04 km^-1.
-    float extinction = 0.04f;
+    float extinction = 0.015f;
 
     /// Scattering albedo [0,1]. Ratio of scattered light to total extinction.
     /// 1.0 = pure scattering (bright white clouds).
@@ -111,7 +111,7 @@ struct VolumetricCloudsComponent {
     /// @source Schneider 2015 — multi-scatter ambient approximation.
     /// Prevents fully black cloud bases by simulating multi-bounce scattering
     /// with a constant ambient term scaled by this value.
-    float ambientMultiplier = 1.0f;
+    float ambientMultiplier = 3.5f;
 
     // ── Ray March Parameters ─────────────────────────────────────────────
 
@@ -121,7 +121,7 @@ struct VolumetricCloudsComponent {
 
     /// Number of primary ray march steps through the cloud shell.
     /// More steps = higher quality but more expensive. 64 is a good balance.
-    uint32_t primarySteps = 64;
+    uint32_t primarySteps = 48;
 
     /// Number of light march steps toward the sun at each primary step.
     /// Used to compute in-scattering and shadow self-occlusion. 6 is typical.

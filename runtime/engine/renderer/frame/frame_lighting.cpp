@@ -892,9 +892,12 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                     auto& cloudComp = cloudView.get<VolumetricCloudsComponent>(enttEntity);
                     if (!cloudComp.enabled) continue;
 
-                    // Fill CloudPassInput from component + frame data
+                    // Fill CloudPassInput from component + frame data.
+                    // Use UNJITTERED invViewProj — jittered matrix causes cloud noise
+                    // to shift every frame (TSR subpixel jitter), creating false movement.
                     CloudPassInput cloudInput{};
-                    std::memcpy(cloudInput.invViewProj, &ctx.perFrame.invViewProj, 64);
+                    Mat4 unjitteredInvVP = ctx.unjitteredViewProj.Inverse();
+                    std::memcpy(cloudInput.invViewProj, &unjitteredInvVP, 64);
                     // Use previous frame's unjittered view-projection for temporal reprojection.
                     // On the first frame, m_prevViewProj is identity — the temporal filter
                     // converges after a few frames regardless.

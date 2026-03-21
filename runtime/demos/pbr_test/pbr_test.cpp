@@ -405,12 +405,11 @@ void PBRTest::OnStart() {
         auto& scene = world.AddComponent<SceneComponent>(cloudEntity);
         scene.SetPosition({0.f, 0.f, 0.f});
         auto& clouds = world.AddComponent<VolumetricCloudsComponent>(cloudEntity);
-        /// @ref Schneider & Vos 2015 — standard cumulus defaults
         clouds.coverage              = 0.5f;
         clouds.density               = 1.0f;
-        clouds.layerBottomAltitudeKm = 5.0f;
+        clouds.layerBottomAltitudeKm = 6.0f;
         clouds.layerHeightKm         = 10.0f;
-        clouds.enabled               = true;
+        clouds.enabled = true;
     }
 #endif
 
