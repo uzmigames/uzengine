@@ -36,14 +36,14 @@ struct HeightFogComponent {
     Vec3 color = {0.0f, 0.0f, 0.0f};
 
     /// Base fog density factor. Higher = thicker fog. Typical range: 0.001 to 0.1.
-    float density = 0.02f;
+    float density = 0.0436f;
 
     /// Height falloff coefficient. Controls how quickly fog thins with altitude.
     /// Higher = fog concentrated closer to baseHeight. Typical: 0.2 to 2.0.
     float heightFalloff = 0.2f;
 
     /// World-space height at which fog density is at its maximum (cm).
-    float baseHeight = 0.f;
+    float baseHeight = -5000.f;
 
     /// Maximum fog opacity (0 to 1). Prevents fog from fully obscuring distant objects.
     float maxOpacity = 1.0f;

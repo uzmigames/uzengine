@@ -6,6 +6,7 @@
 
 #include "fbx_importer.h"
 #include "log.h"
+#include "mesh.h"
 #include "profiler.h"
 #include "sdf_baker.h"
 #include "uzmesh_format.h"
@@ -17,6 +18,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <string>
 
 namespace uz {
@@ -316,11 +318,19 @@ AssetImportResult FbxImporter::Import(
     }
 
     // ── Parse FBX via ufbx ──
-    ufbx_error fbxError;
+    // Convert to UzEngine coordinate system: Z-up, left-handed, centimeters.
+    // MODIFY_GEOMETRY bakes the transform into vertex data directly.
+    ufbx_load_opts loadOpts = {};
+    loadOpts.target_axes = ufbx_axes_left_handed_z_up;
+    loadOpts.target_unit_meters = 0.01f; // centimeters
+    loadOpts.space_conversion = UFBX_SPACE_CONVERSION_MODIFY_GEOMETRY;
+    loadOpts.generate_missing_normals = true;
+
+    ufbx_error fbxError = {};
     ufbx_scene* scene = ufbx_load_memory(
         sourceData.data(),
         sourceData.size(),
-        nullptr,  // default load options
+        &loadOpts,
         &fbxError);
 
     if (!scene) {
@@ -433,12 +443,14 @@ AssetImportResult FbxImporter::Import(
                 triIndices.resize(maxTriIndices);
             }
 
-            // Triangulate the face — returns number of triangulated indices
-            const uint32_t numTriangulated = ufbx_triangulate_face(
+            // Triangulate the face — returns number of TRIANGLES (not indices).
+            // Each triangle has 3 corner indices in the output buffer.
+            const uint32_t numTriangles = ufbx_triangulate_face(
                 triIndices.data(),
                 triIndices.size(),
                 mesh,
                 face);
+            const uint32_t numTriangulated = numTriangles * 3;
 
             // Each triangulated index is a face-corner index into the mesh's
             // vertex attribute arrays. We create a unique vertex per corner.
@@ -463,10 +475,11 @@ AssetImportResult FbxImporter::Import(
                 // else: normals will be generated as flat normals after all faces
 
                 // UV — may not exist, default to (0, 0)
+                // FBX UV: V=0 at bottom. stb_image: origin at top-left. Flip V.
                 if (hasUVs) {
                     const ufbx_vec2 uv = ufbx_get_vertex_vec2(&mesh->vertex_uv, cornerIdx);
                     vert.uv[0] = static_cast<float>(uv.x);
-                    vert.uv[1] = static_cast<float>(uv.y);
+                    vert.uv[1] = 1.0f - static_cast<float>(uv.y);
                 }
 
                 const uint32_t vertIdx = static_cast<uint32_t>(groupVertices.size());
@@ -546,35 +559,98 @@ AssetImportResult FbxImporter::Import(
         }
     }
 
-    // ── Build .uzmesh ──
+    // ── Convert to runtime Vertex format (48 bytes with tangents) ──
+    // The extraction pipeline uses VertexPosNormUV (32 bytes) for meshopt
+    // compatibility. Now combine with remapped tangent data into the runtime
+    // Vertex struct that the GPU's StructuredBuffer expects.
+    std::vector<Vertex> finalVertices(finalVertexCount);
+    Vec3 boundsMin{
+        std::numeric_limits<float>::max(),
+        std::numeric_limits<float>::max(),
+        std::numeric_limits<float>::max()};
+    Vec3 boundsMax{
+        std::numeric_limits<float>::lowest(),
+        std::numeric_limits<float>::lowest(),
+        std::numeric_limits<float>::lowest()};
+
+    for (size_t i = 0; i < finalVertexCount; ++i) {
+        const auto& src = optimizedVertices[i];
+        auto& dst = finalVertices[i];
+
+        dst.position = {src.position[0], src.position[1], src.position[2]};
+        dst.normal   = {src.normal[0],   src.normal[1],   src.normal[2]};
+        dst.texcoord = {src.uv[0],       src.uv[1]};
+        dst.tangent  = {
+            remappedTangents[i * 4 + 0],
+            remappedTangents[i * 4 + 1],
+            remappedTangents[i * 4 + 2],
+            remappedTangents[i * 4 + 3]};
+
+        // Track AABB
+        if (dst.position.x < boundsMin.x) boundsMin.x = dst.position.x;
+        if (dst.position.y < boundsMin.y) boundsMin.y = dst.position.y;
+        if (dst.position.z < boundsMin.z) boundsMin.z = dst.position.z;
+        if (dst.position.x > boundsMax.x) boundsMax.x = dst.position.x;
+        if (dst.position.y > boundsMax.y) boundsMax.y = dst.position.y;
+        if (dst.position.z > boundsMax.z) boundsMax.z = dst.position.z;
+    }
+
+    // ── Build Mesh struct with MeshHeader (UZMH, 128 bytes) ──
+    // The runtime mesh loader (LoadMeshFromMemory) only understands UZMH format.
     const uint32_t submeshCount = static_cast<uint32_t>(submeshes.size());
+    const size_t vertexDataBytes = finalVertexCount * sizeof(Vertex);
+    const size_t indexDataBytes = optimizedIndices.size() * sizeof(uint32_t);
 
-    UzMeshHeader header;
-    header.lodCount = 1;
-    header.totalSubmeshCount = submeshCount;
-    header.vertexCount = static_cast<uint32_t>(finalVertexCount);
-    header.indexCount = static_cast<uint32_t>(optimizedIndices.size());
-    header.vertexStride = sizeof(VertexPosNormUV);
-    header.indexStride = sizeof(uint32_t);
+    Mesh outputMesh{};
+    outputMesh.header.magic = kMeshMagic;
+    outputMesh.header.version = kMeshVersion;
+    outputMesh.header.vertexFormat = MeshVertexFormat::Standard;
+    outputMesh.header.vertexStride = sizeof(Vertex);
+    outputMesh.header.vertexCount = static_cast<uint32_t>(finalVertexCount);
+    outputMesh.header.indexFormat = MeshIndexFormat::UInt32;
+    outputMesh.header.indexCount = static_cast<uint32_t>(optimizedIndices.size());
+    outputMesh.header.submeshCount = submeshCount;
+    outputMesh.header.boundsMin = boundsMin;
+    outputMesh.header.boundsMax = boundsMax;
+    outputMesh.header.vertexDataOffset = sizeof(MeshHeader);
+    outputMesh.header.indexDataOffset = sizeof(MeshHeader) + vertexDataBytes;
+    std::memset(outputMesh.header.reserved, 0, sizeof(outputMesh.header.reserved));
 
-    UzMeshLOD lod;
-    lod.lodLevel = 0;
-    lod.submeshOffset = 0;
-    lod.submeshCount = submeshCount;
-    lod.screenHeightThreshold = 0.0f;
+    // Copy vertex data
+    outputMesh.vertexData.resize(vertexDataBytes);
+    std::memcpy(outputMesh.vertexData.data(), finalVertices.data(), vertexDataBytes);
 
-    // Serialize vertex/index data as raw byte arrays
-    std::vector<uint8_t> vertexData(finalVertexCount * sizeof(VertexPosNormUV));
-    std::memcpy(vertexData.data(), optimizedVertices.data(), vertexData.size());
+    // Copy index data
+    outputMesh.indexData.resize(indexDataBytes);
+    std::memcpy(outputMesh.indexData.data(), optimizedIndices.data(), indexDataBytes);
 
-    std::vector<uint8_t> indexData(optimizedIndices.size() * sizeof(uint32_t));
-    std::memcpy(indexData.data(), optimizedIndices.data(), indexData.size());
+    // Map UzMeshSubmesh -> SubMesh (runtime format)
+    for (const auto& sub : submeshes) {
+        SubMesh sm;
+        sm.startIndex = sub.indexOffset;
+        sm.indexCount = sub.indexCount;
+        sm.materialIndex = sub.materialIndex;
+        outputMesh.submeshes.push_back(sm);
+    }
 
-    result.data = WriteUzMesh(header, {lod}, submeshes, vertexData, indexData);
+    // ── Serialize as flat binary: MeshHeader + vertexData + indexData ──
+    // This matches the layout that LoadMeshFromMemory() expects.
+    const size_t totalSize = sizeof(MeshHeader) + vertexDataBytes + indexDataBytes;
+    result.data.resize(totalSize);
+    size_t writeOffset = 0;
+
+    std::memcpy(result.data.data() + writeOffset, &outputMesh.header, sizeof(MeshHeader));
+    writeOffset += sizeof(MeshHeader);
+
+    std::memcpy(result.data.data() + writeOffset, outputMesh.vertexData.data(), vertexDataBytes);
+    writeOffset += vertexDataBytes;
+
+    std::memcpy(result.data.data() + writeOffset, outputMesh.indexData.data(), indexDataBytes);
+
     result.success = true;
 
     UZ_LOG(Asset, Info,
-           "Imported FBX '{}': {} vertices, {} indices, {} submeshes, {} materials, {} bytes",
+           "Imported FBX '{}': {} vertices (48B stride), {} indices, {} submeshes, {} materials, {} bytes",
            sourceName, finalVertexCount, optimizedIndices.size(),
            submeshCount, result.materials.size(), result.data.size());
 

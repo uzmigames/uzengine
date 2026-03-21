@@ -61,6 +61,13 @@ struct Material : public MaterialInterface {
     std::string metallicPath;    ///< Metallic map (R channel). Fallback: black (metallic=0.0).
     std::string aoPath;          ///< Ambient occlusion map (R channel). Fallback: white (ao=1.0).
     std::string emissivePath;    ///< Emissive map (RGB, HDR). Fallback: black (no emission).
+    std::string ormPath;         ///< Packed ORM map (R=AO, G=Roughness, B=Metallic). When set, overrides separate R/M/AO.
+    uint32_t    ormSrvIndex = 0; ///< SRV heap index for loaded ORM texture.
+
+    /// When true, the material uses a packed ORM texture instead of separate
+    /// roughness/metallic/AO maps. The ORM texture is sampled from ormPath
+    /// (or aoPath as fallback) and unpacked as R=AO, G=Roughness, B=Metallic.
+    bool useORM = false;
 
     // ── Scalar parameters ────────────────────────────────────────────────
 
@@ -188,6 +195,7 @@ struct Material : public MaterialInterface {
         if (name == "Metallic")  return metallicPath;
         if (name == "Ao")        return aoPath;
         if (name == "Emissive")  return emissivePath;
+        if (name == "ORM")       return ormPath;
         return s_emptyString;
     }
 
@@ -199,6 +207,7 @@ struct Material : public MaterialInterface {
         if (name == "Metallic")  return metallicSrvIndex;
         if (name == "Ao")        return aoSrvIndex;
         if (name == "Emissive")  return emissiveSrvIndex;
+        if (name == "ORM")       return ormSrvIndex;
         return 0;
     }
 
@@ -231,6 +240,7 @@ struct Material : public MaterialInterface {
     [[nodiscard]] bool IsAlphaTest() const override { return alphaTest; }
     [[nodiscard]] float GetAlphaClipThreshold() const override { return alphaClipThreshold; }
 
+    [[nodiscard]] bool IsORM() const override { return useORM; }
     [[nodiscard]] bool IsGpuResourcesLoaded() const override { return gpuResourcesLoaded; }
     void SetGpuResourcesLoaded(bool loaded) override { gpuResourcesLoaded = loaded; }
 

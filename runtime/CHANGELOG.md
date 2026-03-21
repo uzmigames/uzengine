@@ -2,6 +2,25 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.42] — 2026-03-21
+
+### FBX Import Pipeline + ORM Packed Texture Support
+
+**FBX Importer — 3 critical bugs fixed:**
+- **Vertex format mismatch**: Importer wrote UZMS (32-byte VertexPosNormUV, no tangents), but runtime expected UZMH (48-byte Vertex with tangents). GPU StructuredBuffer read wrong stride → spiky mesh. Fixed: both `fbx_importer.cpp` and `uzfbx.cpp` now write UZMH format with full Vertex (pos+norm+uv+tangent).
+- **Triangulation bug**: `ufbx_triangulate_face()` returns **triangle count**, not index count. Loop iterated `N` times instead of `N*3`, producing 1/3 of the vertices. Fixed in both importers.
+- **Axis conversion**: Manual Y-up→Z-up left-handed mapping (`Engine.X=FBX.Z, Engine.Y=FBX.X, Engine.Z=FBX.Y`). UV V-flip (`1.0-v`) for stb_image compatibility.
+
+**ORM Packed Texture Mode** — materials can now use a single packed ORM texture (R=AO, G=Roughness, B=Metallic) instead of 3 separate textures:
+- `Material::useORM` flag + `Material::ormPath` for packed ORM texture path
+- `materialFlags` bitfield replaces `blendMode` in PerObjectCB (bits[1:0]=blend mode, bit[2]=ORM)
+- Both `mesh_ps.hlsl` (forward) and `gbuffer_ps.hlsl` (deferred) updated with ORM unpack branch
+- Draw command pipeline propagates ORM flag from Material → DrawCommand → PerObjectCB → shader
+
+**Height Fog improvements:**
+- Removed `fogCutoffDistance` distance culling — fog always visible
+- Default `HeightFogComponent` values updated: `density=0.0436`, `baseHeight=-5000` (matches PBR demo)
+
 ## [0.2.41] — 2026-03-21
 
 ### Lua VFS API — `uz.vfs.*` bindings for asset loading from scripts

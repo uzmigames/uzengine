@@ -62,6 +62,7 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
         const std::string& effMetallicPath   = mat ? mat->GetMetallicPath()   : s_emptyPath;
         const std::string& effAoPath         = mat ? mat->GetAoPath()         : s_emptyPath;
         const std::string& effEmissivePath   = mat ? mat->GetEmissivePath()   : s_emptyPath;
+        const std::string& effOrmPath        = mat ? mat->GetOrmPath()        : s_emptyPath;
 
         // ── Lazy-load material textures from paths ──────────────────────────
         if (!meshComp.materialLoaded && !effAlbedoPath.empty()) {
@@ -75,6 +76,7 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
             tryLoad(effMetallicPath);
             tryLoad(effAoPath);
             tryLoad(effEmissivePath);
+            tryLoad(effOrmPath);
             meshComp.materialLoaded = true;
             if (mat) {
                 mat->SetGpuResourcesLoaded(true);
@@ -190,10 +192,19 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
         };
         bindTexFromPath(effAlbedoPath,    cmd.albedoSrvIndex,    cmd.albedoTexture);
         bindTexFromPath(effNormalPath,    cmd.normalSrvIndex,    cmd.normalTexture);
-        bindTexFromPath(effRoughnessPath, cmd.roughnessSrvIndex, cmd.roughnessTexture);
-        bindTexFromPath(effMetallicPath,  cmd.metallicSrvIndex,  cmd.metallicTexture);
-        bindTexFromPath(effAoPath,        cmd.aoSrvIndex,        cmd.aoTexture);
         bindTexFromPath(effEmissivePath,  cmd.emissiveSrvIndex,  cmd.emissiveTexture);
+
+        // ORM packed mode: single texture replaces separate roughness/metallic/AO.
+        // Bind ORM texture to the aoIndex slot; shader unpacks R=AO, G=Roughness, B=Metallic.
+        const bool isORM = mat && mat->IsORM();
+        if (isORM && !effOrmPath.empty()) {
+            bindTexFromPath(effOrmPath, cmd.aoSrvIndex, cmd.aoTexture);
+            cmd.materialFlags |= 0x4u; // bit 2 = ORM packed
+        } else {
+            bindTexFromPath(effRoughnessPath, cmd.roughnessSrvIndex, cmd.roughnessTexture);
+            bindTexFromPath(effMetallicPath,  cmd.metallicSrvIndex,  cmd.metallicTexture);
+            bindTexFromPath(effAoPath,        cmd.aoSrvIndex,        cmd.aoTexture);
+        }
 
         // ── Material parameters ─────────────────────────────────────────────
         // Read from MaterialInterface if available, otherwise use legacy

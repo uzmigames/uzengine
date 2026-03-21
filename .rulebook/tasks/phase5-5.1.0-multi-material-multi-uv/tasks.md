@@ -6,10 +6,10 @@
 - [ ] Update SortKey usage — each submesh gets its own sort key with its material
 
 ## Vertex Format & Multi-UV
-- [ ] Define `VertexFormatFlags` bitmask (HasUV0, HasUV1, HasUV2, HasTangent)
+- [x] Define `VertexFormatFlags` bitmask (HasUV0, HasUV1, HasUV2, HasTangent). Already implemented in vertex_layout.h with HasNormal, HasTangent, HasUV0-UV2, HasColor flags.
 - [ ] Define flexible `Vertex` struct with UV0 (required), UV1/UV2 (optional)
-- [ ] Create `GetVertexStride(VertexFormatFlags)` helper
-- [ ] Create `BuildInputLayout(VertexFormatFlags)` per-backend helper
+- [x] Create `GetVertexStride(VertexFormatFlags)` helper. Implemented in vertex_layout.h.
+- [x] Create `BuildInputLayout(VertexFormatFlags)` helper. Implemented as `VertexLayout::FromFlags()` in vertex_layout.h.
 
 ## RHI Backend — DX12
 - [ ] Update DX12 input layout to support TEXCOORD0/1/2
@@ -39,7 +39,7 @@
 ## Import Pipeline
 - [ ] Update glTF importer to preserve submesh (primitive) boundaries
 - [ ] Update glTF importer to import TEXCOORD_0, TEXCOORD_1 UV channels
-- [ ] Update FBX importer (when available) for multi-material polygon groups
+- [x] Update FBX importer for multi-material polygon groups. Fixed ufbx_triangulate_face (returns triangles not indices), UZMH format with 48-byte Vertex (tangents), Y-up→Z-up axis conversion, UV V-flip.
 - [ ] Add importer unit tests for multi-submesh and multi-UV meshes
 
 ## Forward PBR Pass

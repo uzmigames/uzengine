@@ -446,15 +446,7 @@ float4 main(FSInput input) : SV_Target
     /// MinFogOpacity prevents the fog from becoming fully opaque.
     float ExpFogFactor = max(saturate(exp2(-ExponentialHeightLineIntegral)), MinFogOpacity);
 
-    // ── Step 13: Cutoff distance ─────────────────────────────────────────
-    /// Beyond FogCutoffDistance, disable fog entirely (transmittance = 1, no inscattering).
-    /// Uses CameraToReceiverLength (before start-distance exclusion) for the distance test.
-    [flatten]
-    if (fogCutoffDistance > 0.0f && CameraToReceiverLength > fogCutoffDistance)
-    {
-        ExpFogFactor = 1.0f;
-        DirectionalInscattering = float3(0.0f, 0.0f, 0.0f);
-    }
+    // ── Step 13: (fogCutoffDistance removed — fog is always visible) ─────
 
     // ── Step 14: Compose final color ─────────────────────────────────────
     /// FogColor = InscatteringColor * (1 - ExpFogFactor) + DirectionalInscattering
@@ -481,9 +473,10 @@ float4 main(FSInput input) : SV_Target
     /// to divide inscattering by opacity.
     float fogOpacity = 1.0f - ExpFogFactor;
 
-    // Early discard for fully transparent pixels.
-    if (fogOpacity < 0.001f)
-        discard;
+    // Clamp near-zero opacity — let alpha blending handle transparency
+    // naturally instead of discarding. Discarding all pixels would make
+    // the fog pass appear to "disappear" entirely.
+    fogOpacity = max(fogOpacity, 0.0f);
 
     // For SrcAlpha/InvSrcAlpha blending:
     //   finalColor = output.rgb * output.a + sceneColor * (1 - output.a)

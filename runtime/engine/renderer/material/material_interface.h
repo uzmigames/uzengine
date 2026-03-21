@@ -146,6 +146,7 @@ public:
     [[nodiscard]] const std::string& GetMetallicPath() const   { return GetTexturePath("Metallic"); }
     [[nodiscard]] const std::string& GetAoPath() const         { return GetTexturePath("Ao"); }
     [[nodiscard]] const std::string& GetEmissivePath() const   { return GetTexturePath("Emissive"); }
+    [[nodiscard]] const std::string& GetOrmPath() const       { return GetTexturePath("ORM"); }
 
     // ── SRV index convenience ───────────────────────────────────────────────
 
@@ -155,6 +156,11 @@ public:
     [[nodiscard]] uint32_t GetMetallicSrvIndex() const   { return GetTextureSrvIndex("Metallic"); }
     [[nodiscard]] uint32_t GetAoSrvIndex() const         { return GetTextureSrvIndex("Ao"); }
     [[nodiscard]] uint32_t GetEmissiveSrvIndex() const   { return GetTextureSrvIndex("Emissive"); }
+    [[nodiscard]] uint32_t GetOrmSrvIndex() const        { return GetTextureSrvIndex("ORM"); }
+
+    // ── ORM packed mode ─────────────────────────────────────────────────────
+
+    [[nodiscard]] virtual bool IsORM() const { return false; }
 
     // ── GPU resource state ──────────────────────────────────────────────────
 

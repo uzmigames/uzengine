@@ -251,12 +251,16 @@ struct PerObjectCB {
     float    pomFadeEnd        = 2000.0f; ///< Distance (cm) where POM is fully disabled.
     float    pomSelfShadow     = 0.0f;  ///< Self-shadow strength. 0 = disabled, 1 = full.
 
-    /// Blend mode for this material. Controls how the primitive is rendered:
-    /// 0 = Opaque (default, standard deferred GBuffer path),
-    /// 1 = Masked (alpha test with discard, still deferred),
-    /// 2 = Translucent (alpha blend, forward pass, sorted back-to-front),
-    /// 3 = Additive (additive blend, forward pass, no sorting needed).
-    uint32_t blendMode = 0;
+    /// Material flags — packed bitfield:
+    ///   bits [1:0] = blend mode:
+    ///     0 = Opaque (default, standard deferred GBuffer path),
+    ///     1 = Masked (alpha test with discard, still deferred),
+    ///     2 = Translucent (alpha blend, forward pass, sorted back-to-front),
+    ///     3 = Additive (additive blend, forward pass, no sorting needed).
+    ///   bit [2] = ORM packed texture mode:
+    ///     0 = separate roughness/metallic/AO textures (default),
+    ///     1 = packed ORM texture in aoIndex (R=AO, G=Roughness, B=Metallic).
+    uint32_t materialFlags = 0;
 };
 
 static_assert(sizeof(PerObjectCB) == 256, "PerObjectCB must be 256 bytes (D3D12 CB alignment)");

@@ -39,7 +39,7 @@ RHIPipelineHandle PipelineLibrary::GetForwardPBR(bool bindless) {
     desc.vertexShader  = m_meshVS;
     desc.pixelShader   = m_meshPS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
-    desc.rasterizer.cullMode              = RHICullMode::Back;
+    desc.rasterizer.cullMode              = RHICullMode::None;
     desc.rasterizer.frontCounterClockwise = false;
     desc.depthStencil.depthEnable         = true;
     desc.depthStencil.depthWrite          = true;
@@ -88,7 +88,7 @@ RHIPipelineHandle PipelineLibrary::GetGBuffer(bool bindless) {
     desc.vertexShader  = m_meshVS;
     desc.pixelShader   = m_gbufferPS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
-    desc.rasterizer.cullMode              = RHICullMode::Back;
+    desc.rasterizer.cullMode              = RHICullMode::None;
     desc.rasterizer.frontCounterClockwise = false;
     desc.depthStencil.depthEnable         = true;
     desc.depthStencil.depthWrite          = true;
@@ -449,7 +449,7 @@ RHIPipelineHandle PipelineLibrary::GetDepthPrepass(bool bindless) {
     RHIGraphicsPipelineDesc desc{};
     desc.vertexShader  = m_shadowVS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
-    desc.rasterizer.cullMode              = RHICullMode::Back;
+    desc.rasterizer.cullMode              = RHICullMode::None;
     desc.rasterizer.frontCounterClockwise = false;
     // No depth bias — unlike the shadow pass, the depth prepass writes to the
     // GBuffer depth and does not need bias to prevent self-shadowing.
@@ -497,7 +497,7 @@ RHIPipelineHandle PipelineLibrary::GetDepthPrepassInstanced() {
     RHIGraphicsPipelineDesc desc{};
     desc.vertexShader  = m_instancedShadowVS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
-    desc.rasterizer.cullMode              = RHICullMode::Back;
+    desc.rasterizer.cullMode              = RHICullMode::None;
     desc.rasterizer.frontCounterClockwise = false;
     // No depth bias — same as non-instanced depth prepass.
     desc.rasterizer.slopeScaledDepthBias  = 0.0f;

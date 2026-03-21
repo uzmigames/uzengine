@@ -185,7 +185,8 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                 for (const auto& drawCmd : commands) {
                     // Skip translucent and additive draws — they are rendered in
                     // a separate forward pass after deferred lighting.
-                    if (drawCmd.blendMode >= 2) {
+                    const uint32_t blendMode = drawCmd.materialFlags & 0x3u;
+                    if (blendMode >= 2) {
                         continue;
                     }
 
@@ -199,8 +200,8 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
 
                     // Select PSO based on blend mode: Masked materials use the
                     // two-sided (no cull) pipeline; alpha test is done in the
-                    // pixel shader via the blendMode CB field.
-                    const bool isMasked = (drawCmd.blendMode == 1) && desc.maskedPipeline.IsValid();
+                    // pixel shader via the materialFlags CB field.
+                    const bool isMasked = (blendMode == 1) && desc.maskedPipeline.IsValid();
                     if (isMasked) {
                         cmd->SetPipeline(desc.maskedPipeline);
                     }
@@ -246,7 +247,7 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                         perObjParams.opacity             = drawCmd.opacity;
                         perObjParams.alphaClipThreshold   = drawCmd.alphaClipThreshold;
                         perObjParams.twoSided            = drawCmd.twoSided;
-                        perObjParams.blendMode           = drawCmd.blendMode;
+                        perObjParams.materialFlags       = drawCmd.materialFlags;
 
                         // Set texture handles with fallbacks for SM5 binding
                         perObjParams.albedoTexture    = drawCmd.albedoTexture.IsValid()    ? drawCmd.albedoTexture    : desc.fallbackWhite;
@@ -298,7 +299,7 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                         perObject.pomSelfShadow       = drawCmd.pomSelfShadow;
                         perObject.alphaClipThreshold  = drawCmd.alphaClipThreshold;
                         perObject.twoSided            = drawCmd.twoSided;
-                        perObject.blendMode           = drawCmd.blendMode;
+                        perObject.materialFlags       = drawCmd.materialFlags;
 
                         CBAllocation objAlloc = desc.cbAllocator->Allocate(sizeof(PerObjectCB));
                         if (objAlloc.cpuPtr == nullptr) {

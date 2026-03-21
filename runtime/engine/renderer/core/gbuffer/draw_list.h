@@ -101,7 +101,7 @@ struct DrawCommand {
 
     // ── Blend Mode ─────────────────────────────────────────────────────────
     /// Standard blend mode enum: Opaque, Masked, Translucent, Additive.
-    uint32_t blendMode         = 0;     ///< 0=Opaque, 1=Masked, 2=Translucent, 3=Additive.
+    uint32_t materialFlags     = 0;     ///< bits[1:0]=blend mode (0-3), bit[2]=ORM packed.
     /// Default alpha clip threshold: 1/3 (industry convention for masked materials).
     float    alphaClipThreshold = 0.3333f; ///< Alpha test discard threshold for Masked mode.
     uint32_t twoSided          = 0;     ///< 0 = back-face cull, 1 = no cull (two-sided rendering).

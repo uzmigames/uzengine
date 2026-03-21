@@ -382,19 +382,8 @@ void PBRTest::OnStart() {
     Entity fog = world.CreateEntity();
     {
         auto& scene = world.AddComponent<SceneComponent>(fog);
-        /// @refBasic template — ExponentialHeightFog actor at Z=-5000
         scene.SetPosition({0.f, 0.f, -5000.f});
-        auto& fogComp = world.AddComponent<HeightFogComponent>(fog);
-        fogComp.density         = 0.0436f;
-        fogComp.heightFalloff   = 0.2f;
-        fogComp.baseHeight      = -5000.f;
-        fogComp.maxOpacity      = 1.0f;
-        fogComp.startDistance    = 0.f;
-        fogComp.fogCutoffDistance = 0.f;
-        fogComp.color            = {0.0f, 0.0f, 0.0f};
-        fogComp.directionalInscatteringColor      = {0.0f, 0.0f, 0.0f};
-        fogComp.directionalInscatteringExponent   = 4.0f;
-        fogComp.directionalInscatteringStartDistance = 10000.f;
+        world.AddComponent<HeightFogComponent>(fog);
     }
 #endif
 

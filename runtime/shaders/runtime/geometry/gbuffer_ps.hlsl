@@ -118,11 +118,11 @@ cbuffer PerObjectCB : register(b2) {
     float    pomSelfShadow;      ///< Self-shadow strength (0 = off, 1 = full). Default 0.
 #else
     // When POM is disabled, skip 28 bytes (7 floats) of padding to keep
-    // blendMode at the same offset (252) as the C++ PerObjectCB layout.
+    // materialFlags at the same offset (252) as the C++ PerObjectCB layout.
     float    _pomPad[7];
 #endif
-    /// Blend mode enum: 0=Opaque, 1=Masked, 2=Translucent, 3=Additive
-    uint     blendMode;          ///< Blend mode: 0=Opaque, 1=Masked, 2=Translucent, 3=Additive.
+    /// Material flags: bits[1:0]=blend mode (0-3), bit[2]=ORM packed texture.
+    uint     materialFlags;
 };
 
 #ifdef UZ_MATERIAL_GRAPH
@@ -341,17 +341,28 @@ GBufferOutput main(PSInput input) {
         Texture2D<float4> tex = ResourceDescriptorHeap[albedoIndex];
         albedo = tex.SampleBias(linearSampler, uv, mipBias).rgb;
     }
-    if (roughnessIndex > 0) {
-        Texture2D<float4> tex = ResourceDescriptorHeap[roughnessIndex];
-        roughness = tex.SampleBias(linearSampler, uv, mipBias).r;
-    }
-    if (metallicIndex > 0) {
-        Texture2D<float4> tex = ResourceDescriptorHeap[metallicIndex];
-        metallic = tex.SampleBias(linearSampler, uv, mipBias).r;
-    }
-    if (aoIndex > 0) {
-        Texture2D<float4> tex = ResourceDescriptorHeap[aoIndex];
-        ao = tex.SampleBias(linearSampler, uv, mipBias).r;
+    // ORM packed mode: bit 2 of materialFlags. R=AO, G=Roughness, B=Metallic.
+    if (materialFlags & 0x4u) {
+        if (aoIndex > 0) {
+            Texture2D<float4> ormTex = ResourceDescriptorHeap[aoIndex];
+            float3 orm = ormTex.SampleBias(linearSampler, uv, mipBias).rgb;
+            ao        = orm.r;
+            roughness = orm.g;
+            metallic  = orm.b;
+        }
+    } else {
+        if (roughnessIndex > 0) {
+            Texture2D<float4> tex = ResourceDescriptorHeap[roughnessIndex];
+            roughness = tex.SampleBias(linearSampler, uv, mipBias).r;
+        }
+        if (metallicIndex > 0) {
+            Texture2D<float4> tex = ResourceDescriptorHeap[metallicIndex];
+            metallic = tex.SampleBias(linearSampler, uv, mipBias).r;
+        }
+        if (aoIndex > 0) {
+            Texture2D<float4> tex = ResourceDescriptorHeap[aoIndex];
+            ao = tex.SampleBias(linearSampler, uv, mipBias).r;
+        }
     }
 #else
     // SM5 (Vulkan non-bindless): textures are always bound via SetFragmentTexture
@@ -470,7 +481,7 @@ GBufferOutput main(PSInput input) {
     // Alpha masking: clip(Opacity - OpacityMaskClipValue) for masked blend mode
     // @constants alphaClipThreshold default 0.3333 (reference Material.h:1891)
     // @deviations NONE
-    if (blendMode == 1) {
+    if ((materialFlags & 0x3u) == 1) {
 #ifdef UZ_MATERIAL_GRAPH
         float effectiveOpacity = out_opacity;
 #else

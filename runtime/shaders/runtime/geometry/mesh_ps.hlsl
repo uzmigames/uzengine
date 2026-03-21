@@ -110,8 +110,8 @@ cbuffer PerObjectCB : register(b2) {
     float    matOpacity;            // material opacity (1=opaque)                           [220..223]
     // ── POM region (offset 224, not used by forward shader) ──
     float    _pomRegion[7];         //                                                      [224..251]
-    /// Blend mode enum: 0=Opaque, 1=Masked, 2=Translucent, 3=Additive
-    uint     blendMode;             // 0=Opaque, 1=Masked, 2=Translucent, 3=Additive       [252..255]
+    /// Material flags: bits[1:0]=blend mode (0-3), bit[2]=ORM packed texture.
+    uint     materialFlags;         // bits[1:0]=blend, bit[2]=ORM                          [252..255]
 };
 
 /// Cascaded shadow map parameters — must match C++ ShadowDataCB struct exactly.
@@ -188,17 +188,28 @@ float4 main(PSInput input) : SV_Target {
         Texture2D<float4> tex = ResourceDescriptorHeap[albedoIndex];
         albedo = tex.Sample(linearSampler, uv).rgb;
     }
-    if (roughnessIndex > 0) {
-        Texture2D<float4> tex = ResourceDescriptorHeap[roughnessIndex];
-        roughness = tex.Sample(linearSampler, uv).r;
-    }
-    if (metallicIndex > 0) {
-        Texture2D<float4> tex = ResourceDescriptorHeap[metallicIndex];
-        metallic = tex.Sample(linearSampler, uv).r;
-    }
-    if (aoIndex > 0) {
-        Texture2D<float4> tex = ResourceDescriptorHeap[aoIndex];
-        ao = tex.Sample(linearSampler, uv).r;
+    // ORM packed mode: bit 2 of materialFlags. R=AO, G=Roughness, B=Metallic.
+    if (materialFlags & 0x4u) {
+        if (aoIndex > 0) {
+            Texture2D<float4> ormTex = ResourceDescriptorHeap[aoIndex];
+            float3 orm = ormTex.Sample(linearSampler, uv).rgb;
+            ao        = orm.r;
+            roughness = orm.g;
+            metallic  = orm.b;
+        }
+    } else {
+        if (roughnessIndex > 0) {
+            Texture2D<float4> tex = ResourceDescriptorHeap[roughnessIndex];
+            roughness = tex.Sample(linearSampler, uv).r;
+        }
+        if (metallicIndex > 0) {
+            Texture2D<float4> tex = ResourceDescriptorHeap[metallicIndex];
+            metallic = tex.Sample(linearSampler, uv).r;
+        }
+        if (aoIndex > 0) {
+            Texture2D<float4> tex = ResourceDescriptorHeap[aoIndex];
+            ao = tex.Sample(linearSampler, uv).r;
+        }
     }
 #else
     if (albedoIndex > 0)    albedo    = albedoTexture.Sample(linearSampler, uv).rgb;
@@ -361,6 +372,7 @@ float4 main(PSInput input) : SV_Target {
 
     // ── Alpha test for Masked blend mode ──
     // Alpha masking: clip(opacity - clipValue) for masked blend mode
+    uint blendMode = materialFlags & 0x3u;
     if (blendMode == 1) {
         if (matOpacity < alphaClipThreshold) {
             discard;

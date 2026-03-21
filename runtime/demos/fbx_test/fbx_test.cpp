@@ -4,6 +4,10 @@
 
 #include "log.h"
 #include "scene_renderer.h"
+#include "material_baker.h"
+#include "material_baker_gpu.h"
+#include "shader_manager.h"
+#include "shader_pipeline.h"
 #include "world.h"
 #include "static_mesh_component.h"
 #include "scene_component.h"
@@ -33,10 +37,10 @@ ApplicationConfig FBXTest::Configure() {
     cfg.width           = 1920;
     cfg.height          = 1080;
     cfg.cameraPositionX = 0.f;
-    cfg.cameraPositionY = -200.f;
-    cfg.cameraPositionZ = 100.f;
-    cfg.cameraYawDeg    = 0.f;
-    cfg.cameraPitchDeg  = 0.f;
+    cfg.cameraPositionY = 300.f;
+    cfg.cameraPositionZ = 150.f;
+    cfg.cameraYawDeg    = 270.f;
+    cfg.cameraPitchDeg  = -15.f;
     cfg.renderPath      = RenderPath::Deferred;
     return cfg;
 }
@@ -47,55 +51,78 @@ ApplicationConfig FBXTest::Configure() {
 
 void FBXTest::OnStart() {
     auto& world = GetWorld();
-    const std::filesystem::path assetsDir = uz::GetExeDir() / "assets";
 
-    // ── Load FBX mesh via runtime API (auto-caches as .uzmesh) ───────────
-    const std::string fbxPath = (assetsDir / "MushroomMonster_Low.fbx").string();
-    Mesh characterMesh = uz::LoadFbx(fbxPath);
-
-    if (!characterMesh.IsValid()) {
-        UZ_LOG(Demo, Error, "Failed to load FBX: {}", fbxPath);
-        return;
-    }
-
-    UZ_LOG(Demo, Info, "Character mesh: {} verts, {} indices",
-           characterMesh.GetVertexCount(), characterMesh.GetIndexCount());
-
-    // ── Character material (PBR textures) ────────────────────────────────
-    characterMat_.albedoPath    = "textures/MushroomMonster_Low_MushroomMesh2_1_BaseColor.1001.png";
-    characterMat_.normalPath    = "textures/MushroomMonster_Low_MushroomMesh2_1_Normal.1001.png";
-    characterMat_.roughnessPath = "textures/MushroomMonster_Low_MushroomMesh2_1_OcclusionRoughnessMetallic.1001.png";
-    characterMat_.metallicPath  = "textures/MushroomMonster_Low_MushroomMesh2_1_OcclusionRoughnessMetallic.1001.png";
-    characterMat_.aoPath        = "textures/MushroomMonster_Low_MushroomMesh2_1_OcclusionRoughnessMetallic.1001.png";
+    // ── Character material (PBR textures — VFS-relative paths) ───────────
+    characterMat_.albedoPath = "textures/MushroomMonster_Low_MushroomMesh2_1_BaseColor.1001.png";
+    characterMat_.normalPath = "textures/MushroomMonster_Low_MushroomMesh2_1_Normal.1001.png";
+    characterMat_.ormPath    = "textures/MushroomMonster_Low_MushroomMesh2_1_OcclusionRoughnessMetallic.1001.png";
+    characterMat_.useORM     = true;
 
     // ── Create character entity ──────────────────────────────────────────
-    // FBX from Mixamo uses meters — scale 100x to centimeters (UzEngine units)
+    // meshPath uses .fbx — SceneRenderer detects it and routes through LoadFbx
+    // which auto-caches as .uzmesh. Scale 100x: Mixamo meters → UzEngine cm.
     character_ = world.CreateEntity();
     {
         auto& scene = world.AddComponent<SceneComponent>(character_);
         scene.SetPosition({0.f, 0.f, 0.f});
-        scene.SetScale({100.f, 100.f, 100.f});
 
         auto& mesh = world.AddComponent<StaticMeshComponent>(character_);
-        mesh.meshPath = (assetsDir / "MushroomMonster_Low.uzmesh").string();
+        mesh.meshPath = "MushroomMonster_Low.uzmesh";
         mesh.SetMaterial(0, &characterMat_);
+    }
+
+    // ── Ground material (GPU-baked from mi_procgrid.uzmat) ─────────────
+    {
+        const std::filesystem::path assetsDir = uz::GetExeDir() / "assets";
+        const std::filesystem::path uzmatPath = assetsDir / "mi_procgrid.uzmat";
+
+        materialCache_.Init((assetsDir / "cache" / "materials").string());
+
+        if (graphMaterial_.LoadFromFile(uzmatPath.string(), materialCache_)) {
+            auto& renderer = GetRenderer();
+            auto* device = renderer.GetDevice();
+            auto* shaderMgr = renderer.GetShaderManager();
+
+            if (device && shaderMgr) {
+                auto& pipeline = shaderMgr->GetPipeline();
+                const auto& hlsl = graphMaterial_.GetGeneratedHlsl();
+
+                auto colorResult = MaterialBakerGpu::Bake(
+                    device, pipeline, hlsl,
+                    MaterialBakerGpu::OutputPin::BaseColor, 1024, 1024);
+                if (colorResult.success) {
+                    gpuBakedBaseColor_ = colorResult.texture;
+                    groundMat_.albedoSrvIndex = colorResult.srvIndex;
+                    groundMat_.gpuResourcesLoaded = true;
+                } else {
+                    groundMat_.albedoPath = "checker.png";
+                }
+
+                auto roughResult = MaterialBakerGpu::Bake(
+                    device, pipeline, hlsl,
+                    MaterialBakerGpu::OutputPin::Roughness, 512, 512);
+                if (roughResult.success) {
+                    gpuBakedRoughness_ = roughResult.texture;
+                    groundMat_.roughnessSrvIndex = roughResult.srvIndex;
+                }
+            } else {
+                groundMat_.albedoPath = "checker.png";
+            }
+        } else {
+            groundMat_.albedoPath = "checker.png";
+        }
     }
 
     // ── Ground plane ─────────────────────────────────────────────────────
     {
-        const std::filesystem::path planePath = assetsDir / "plane.uzmesh";
-        if (!uz::FileExists(planePath.string().c_str())) {
-            const Mesh plane = uz::GeneratePlaneMesh(8.0f);
-            uz::SaveMesh(planePath.string(), plane);
-        }
-
         ground_ = world.CreateEntity();
         auto& scene = world.AddComponent<SceneComponent>(ground_);
-        scene.SetPosition({0.f, 0.f, 0.f});
-        scene.SetScale({10000.f, 10000.f, 2.f});
+        scene.SetPosition({0.f, 0.f, -1.f});
+        scene.SetScale({2000.f, 2000.f, 2.f});
 
         auto& mesh = world.AddComponent<StaticMeshComponent>(ground_);
-        mesh.meshPath = planePath.string();
+        mesh.meshPath = "builtin:cube";
+        mesh.SetMaterial(0, &groundMat_);
     }
 
     // ── Sun (directional light) ──────────────────────────────────────────

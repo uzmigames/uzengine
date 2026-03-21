@@ -655,7 +655,7 @@ pub fn build(b: *std.Build) void {
         const win_sys_libs = [_][]const u8{ "d3d12", "d3d11", "dxgi", "dxguid", "gdi32", "user32", "xinput1_4", "ole32", "shcore", "shell32", "comdlg32" };
 
         // Helper to create a tool exe from a single .cpp + agility
-        const tool_names = [_][]const u8{ "uzengine", "uzcook", "uzpack" };
+        const tool_names = [_][]const u8{ "uzengine", "uzcook", "uzpack", "uzfbx" };
         for (tool_names) |tool_name| {
             const tool_mod = b.createModule(.{ .target = target, .optimize = optimize });
             tool_mod.link_libc = true;

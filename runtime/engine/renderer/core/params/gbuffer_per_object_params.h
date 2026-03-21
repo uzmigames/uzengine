@@ -114,8 +114,8 @@ struct GBufferPerObjectParams {
     float    aoIntensity         = 1.0f; ///< AO map strength.
     float    opacity             = 1.0f; ///< Material opacity (1=opaque).
     float    _pad2[7]           = {};   ///< Pad (POM-equivalent region, unused by binder path).
-    /// Standard blend mode enum: 0=Opaque, 1=Masked, 2=Translucent, 3=Additive.
-    uint32_t blendMode          = 0;    ///< Blend mode: 0=Opaque, 1=Masked, 2=Translucent, 3=Additive.
+    /// Material flags — bits[1:0]=blend mode (0-3), bit[2]=ORM packed.
+    uint32_t materialFlags      = 0;
 
     // ── Resource handles (NOT copied to CB) ──────────────────────────────
     // Bound by ShaderParameterBinder at their HLSL register slots on SM5.

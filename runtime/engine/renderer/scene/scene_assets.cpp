@@ -67,13 +67,22 @@ uint32_t SceneRenderer::LoadMesh(const std::string& path, IVFS* vfs,
             return UINT32_MAX;
         }
     } else {
-        // Resolve via VFS for relative paths so demos using VFS-relative asset names work.
-        const bool isAbsolute = !path.empty() && (path[0] == '/' || path[0] == '\\' ||
-                                 (path.size() > 1 && path[1] == ':'));
-        const std::string resolvedPath = (vfs && !isAbsolute)
-            ? vfs->ResolvePath(path)
-            : path;
-        cpuMesh = uz::LoadMesh(resolvedPath);
+        // Try VFS first (pak mode), then fall back to filesystem (dev mode).
+        if (vfs && vfs->Exists(path)) {
+            std::vector<uint8_t> data = vfs->Read(path);
+            if (!data.empty()) {
+                cpuMesh = uz::LoadMeshFromMemory(data, path);
+            }
+        } else {
+            // Resolve to absolute path for filesystem access
+            const bool isAbsolute = !path.empty() && (path[0] == '/' || path[0] == '\\' ||
+                                     (path.size() > 1 && path[1] == ':'));
+            const std::string resolvedPath = (vfs && !isAbsolute)
+                ? vfs->ResolvePath(path)
+                : path;
+
+            cpuMesh = uz::LoadMesh(resolvedPath);
+        }
     }
     if (!cpuMesh.IsValid()) {
         UZ_LOG(Renderer, Error, "SceneRenderer: failed to load mesh: '{}'", path);
@@ -124,19 +133,10 @@ uint32_t SceneRenderer::LoadTexture(const std::string& path, IVFS* vfs,
         return it->second;
     }
 
-    // Resolve via VFS for relative paths
-    const bool isAbsolute = !path.empty() && (path[0] == '/' || path[0] == '\\' ||
-                             (path.size() > 1 && path[1] == ':'));
-    const std::string resolvedPath = (vfs && !isAbsolute)
-        ? vfs->ResolvePath(path)
-        : path;
-
-    // Check if already submitted for async decode (by resolved path)
-    if (m_asyncPendingSlots.find(resolvedPath) != m_asyncPendingSlots.end()) {
-        // Already in flight — return the reserved slot index.
-        // The slot has an invalid placeholder that will be filled when the
-        // decode completes and FlushPendingLoads uploads it.
-        return m_textureMap.at(path);
+    // Check if already submitted for async decode
+    if (m_asyncPendingSlots.find(path) != m_asyncPendingSlots.end()) {
+        auto mapIt = m_textureMap.find(path);
+        return (mapIt != m_textureMap.end()) ? mapIt->second : UINT32_MAX;
     }
 
     // Reserve a slot with an invalid placeholder. The texture will become
@@ -145,28 +145,53 @@ uint32_t SceneRenderer::LoadTexture(const std::string& path, IVFS* vfs,
     m_textures.emplace_back(); // placeholder (handle.IsValid() == false)
     m_textureMap[path] = slotIndex;
 
-    // Also register the resolved path so we can match decode results back
-    // to the correct slot. If path != resolvedPath, register both mappings.
-    if (resolvedPath != path) {
-        m_textureMap[resolvedPath] = slotIndex;
+    // Try VFS first (pak mode): read bytes into memory, submit to async decoder.
+    // Fall back to filesystem path for loose files (dev mode).
+    std::string decodePath = path; // key used by async decoder
+    std::vector<uint8_t> vfsData;
+
+    if (vfs && vfs->Exists(path)) {
+        vfsData = vfs->Read(path);
     }
 
-    // Submit for background CPU decode
-    if (m_asyncDecoder) {
-        m_asyncDecoder->Submit(resolvedPath);
-        m_asyncPendingSlots[resolvedPath] = slotIndex;
-        UZ_LOG(Renderer, Debug, "SceneRenderer: submitted async texture decode '{}' (slot={})",
-               resolvedPath, slotIndex);
-    } else {
-        // Fallback: no async decoder available (shouldn't happen after Init).
-        // Do synchronous load to avoid silent data loss.
-        TextureLoadResult result = TextureLoader::Load(m_device, cmdList, resolvedPath);
+    if (!vfsData.empty()) {
+        // Pak mode: load synchronously from in-memory bytes.
+        // AsyncTextureDecoder doesn't support in-memory submission yet,
+        // so we use the sync path. This is fast enough for pak textures
+        // since the data is already decompressed in memory.
+        TextureLoadResult result = TextureLoader::LoadFromMemory(
+            m_device, cmdList, vfsData.data(), vfsData.size(), path.c_str());
         if (result.handle.IsValid()) {
             m_textures[slotIndex] = result;
-            UZ_LOG(Renderer, Info, "SceneRenderer: loaded texture (sync fallback) '{}' (id={}, {}x{}, srv={})",
+            UZ_LOG(Renderer, Info, "SceneRenderer: loaded texture (VFS) '{}' (id={}, {}x{}, srv={})",
                    path, slotIndex, result.width, result.height, result.srvIndex);
         } else {
-            UZ_LOG(Renderer, Error, "SceneRenderer: failed to load texture: '{}'", path);
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to load texture (VFS): '{}'", path);
+        }
+    } else {
+        // Dev mode: resolve filesystem path
+        const bool isAbsolute = !path.empty() && (path[0] == '/' || path[0] == '\\' ||
+                                 (path.size() > 1 && path[1] == ':'));
+        const std::string resolvedPath = (vfs && !isAbsolute)
+            ? vfs->ResolvePath(path)
+            : path;
+
+        if (resolvedPath != path) {
+            m_textureMap[resolvedPath] = slotIndex;
+        }
+
+        if (m_asyncDecoder) {
+            m_asyncDecoder->Submit(resolvedPath);
+            m_asyncPendingSlots[path] = slotIndex;
+            UZ_LOG(Renderer, Debug, "SceneRenderer: submitted async texture decode '{}' (slot={})",
+                   resolvedPath, slotIndex);
+        } else {
+            TextureLoadResult result = TextureLoader::Load(m_device, cmdList, resolvedPath);
+            if (result.handle.IsValid()) {
+                m_textures[slotIndex] = result;
+            } else {
+                UZ_LOG(Renderer, Error, "SceneRenderer: failed to load texture: '{}'", path);
+            }
         }
     }
 

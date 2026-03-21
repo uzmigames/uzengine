@@ -88,12 +88,12 @@ TEST(PerObjectCB, FieldOffsets) {
     EXPECT_EQ(offsetof(PerObjectCB, model),         32u);
     EXPECT_EQ(offsetof(PerObjectCB, normalMatrix),  96u);
     // Blend mode at end (offset 252)
-    EXPECT_EQ(offsetof(PerObjectCB, blendMode),    252u);
+    EXPECT_EQ(offsetof(PerObjectCB, materialFlags),    252u);
 }
 
-TEST(PerObjectCB, BlendModeDefaults) {
+TEST(PerObjectCB, MaterialFlagsDefaults) {
     PerObjectCB cb{};
-    EXPECT_EQ(cb.blendMode, 0u);               // Opaque by default
+    EXPECT_EQ(cb.materialFlags, 0u);               // Opaque by default
     EXPECT_NEAR(cb.alphaClipThreshold, 0.3333f, 1e-4f); // default
     EXPECT_EQ(cb.twoSided, 0u);                // Back-face cull by default
     EXPECT_FLOAT_EQ(cb.opacity, 1.0f);         // Fully opaque
@@ -109,7 +109,7 @@ TEST(PerObjectCB, DefaultInitialization) {
     EXPECT_EQ(cb.emissiveIndex, 0u);
     EXPECT_NEAR(cb.alphaClipThreshold, 0.3333f, 1e-4f);
     EXPECT_EQ(cb.twoSided, 0u);
-    EXPECT_EQ(cb.blendMode, 0u);
+    EXPECT_EQ(cb.materialFlags, 0u);
 }
 
 TEST(PerObjectCB, WriteTextureIndices) {
