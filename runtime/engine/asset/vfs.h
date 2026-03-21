@@ -34,6 +34,7 @@
 #include "engine/core/lru_cache.h"
 
 #include <cstdint>
+#include <list>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -305,10 +306,19 @@ private:
 
     // ── Lazy mode state ────────────────────────────────────────────────
     MasterIndex m_index;                                      ///< Path hash -> pak location
-    std::unordered_map<std::string, PakStreamReader> m_readers; ///< Pak filename -> open handle
     std::unique_ptr<LRUCache<uint64_t, std::vector<uint8_t>>> m_cache; ///< Decompressed asset cache
     uint64_t m_secret = 0;                                    ///< XOR descramble secret
     std::string m_baseDir;                                    ///< Directory containing the .uzpak files
+
+    /// File handle pool — max 8 simultaneous open pak files, LRU eviction.
+    static constexpr size_t kMaxOpenHandles = 8;
+    struct HandleEntry { std::string pakName; PakStreamReader reader; };
+    std::list<HandleEntry> m_handleList;                      ///< Front = MRU, back = LRU
+    std::unordered_map<std::string, std::list<HandleEntry>::iterator> m_handleMap;
+
+    /// Gets or opens a PakStreamReader for the given pak filename.
+    /// Promotes to MRU on hit, evicts LRU handle if pool is full.
+    PakStreamReader* AcquireReader(const std::string& pakFilename);
 
     // ── Shared state ───────────────────────────────────────────────────
     std::string m_name;     ///< Human-readable name for logging

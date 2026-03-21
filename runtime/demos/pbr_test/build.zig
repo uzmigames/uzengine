@@ -10,6 +10,7 @@ pub fn build(b: *std.Build) void {
         .sources = &.{ "main.cpp", "pbr_test.cpp" },
         .use_demo_application = false,
         .deploy_fxc = true,
+        .asset_dirs = &.{"assets"},
     });
     demo.install();
 }

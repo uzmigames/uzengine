@@ -9,6 +9,7 @@
 
 #define XXH_INLINE_ALL
 #include <xxhash.h>
+#include <lz4.h>
 
 #include "file_system.h"
 
@@ -255,8 +256,23 @@ std::vector<uint8_t> PakCompressBlob(
 
     if (raw.empty()) return {};
 
-    // XOR scramble only -- LZ4 compression requires runtime/thirdparty/lz4/
-    std::vector<uint8_t> out = raw;
+    // LZ4 compress
+    const int srcSize = static_cast<int>(raw.size());
+    const int maxDst = LZ4_compressBound(srcSize);
+    std::vector<uint8_t> out(static_cast<size_t>(maxDst));
+    const int compressedSize = LZ4_compress_default(
+        reinterpret_cast<const char*>(raw.data()),
+        reinterpret_cast<char*>(out.data()),
+        srcSize, maxDst);
+
+    if (compressedSize > 0 && static_cast<size_t>(compressedSize) < raw.size()) {
+        out.resize(static_cast<size_t>(compressedSize));
+    } else {
+        // Incompressible — store raw (compressedSize == rawSize signals no compression)
+        out = raw;
+    }
+
+    // XOR scramble
     XorScramble(out.data(), out.size(), pathHash, secret);
     return out;
 }
@@ -268,16 +284,30 @@ std::vector<uint8_t> PakDecompressBlob(
 
     if (data == nullptr || compressedSize == 0) return {};
 
-    // XOR descramble only -- sizes must match when no LZ4 compression is active
-    if (compressedSize != rawSize) {
+    // XOR descramble (into a copy)
+    std::vector<uint8_t> descrambled(data, data + compressedSize);
+    XorScramble(descrambled.data(), descrambled.size(), pathHash, secret);
+
+    if (compressedSize == rawSize) {
+        // No compression was applied — data is already raw
+        return descrambled;
+    }
+
+    // LZ4 decompress
+    std::vector<uint8_t> out(rawSize);
+    const int result = LZ4_decompress_safe(
+        reinterpret_cast<const char*>(descrambled.data()),
+        reinterpret_cast<char*>(out.data()),
+        static_cast<int>(compressedSize),
+        static_cast<int>(rawSize));
+
+    if (result < 0 || static_cast<size_t>(result) != rawSize) {
         UZ_LOG(Asset, Error,
-               "PakDecompressBlob: size mismatch without LZ4 (compressed={}, raw={})",
-               compressedSize, rawSize);
+               "PakDecompressBlob: LZ4 decompress failed (compressed={}, expected={}, got={})",
+               compressedSize, rawSize, result);
         return {};
     }
 
-    std::vector<uint8_t> out(data, data + compressedSize);
-    XorScramble(out.data(), out.size(), pathHash, secret);
     return out;
 }
 

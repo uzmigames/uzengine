@@ -39,9 +39,13 @@ pub const DemoConfig = struct {
     use_demo_application: bool = true,
     /// Whether to deploy d3dcompiler_47.dll (FXC). Some demos need it, others don't.
     deploy_fxc: bool = false,
-    /// Extra files to deploy to zig-out/bin/ (e.g., mesh assets).
+    /// Extra files to deploy (legacy — prefer asset_dirs for pak mode).
     /// Each entry is { source_path, install_subpath }.
     extra_deploy: []const DeployFile = &.{},
+    /// Asset directories to pack into build/data/game.uzpak via uzpack.
+    /// Paths relative to the demo directory. All directories are staged
+    /// into a temp folder, then packed. Empty = no packing step.
+    asset_dirs: []const []const u8 = &.{},
 };
 
 pub const ExtraSource = struct {
@@ -61,10 +65,11 @@ pub const DemoHandle = struct {
     exe: *std.Build.Step.Compile,
     config: DemoConfig,
 
-    /// Finalize: install artifact, deploy DLLs, create run step.
+    /// Finalize: install artifact, deploy DLLs, pack assets, create run step.
     pub fn install(self: *DemoHandle) void {
         self.b.installArtifact(self.exe);
         self.deployDlls();
+        self.packAssets();
         self.createRunStep();
     }
 
@@ -99,6 +104,34 @@ pub const DemoHandle = struct {
                 deploy.dest,
             ).step);
         }
+    }
+
+    fn packAssets(self: *DemoHandle) void {
+        if (self.config.asset_dirs.len == 0) return;
+
+        // uzpack is built by the runtime at ../../build/bin/uzpack.exe
+        const uzpack_path = self.b.path("../../build/bin/uzpack.exe");
+        const output_dir = self.b.getInstallPath(.{ .custom = "data" }, "");
+
+        // For each asset directory, run uzpack. If multiple dirs, we stage
+        // them via a helper script. For single dir (common case), run directly.
+        // Currently supports single asset_dir — first entry is the input.
+        const input_dir = self.config.asset_dirs[0];
+
+        const pack_cmd = self.b.addSystemCommand(&.{
+            uzpack_path.getPath(self.b),
+            "--input",
+            self.b.path(input_dir).getPath(self.b),
+            "--output",
+            output_dir,
+            "--name",
+            "game",
+        });
+        pack_cmd.step.dependOn(self.b.getInstallStep());
+
+        // Make the "pack" step available
+        const pack_step = self.b.step("pack", "Pack assets into .uzpak");
+        pack_step.dependOn(&pack_cmd.step);
     }
 
     fn createRunStep(self: *DemoHandle) void {
@@ -248,6 +281,7 @@ pub fn createDemo(b: *std.Build, config: DemoConfig) DemoHandle {
         "../../thirdparty/spirv-reflect",
         "../../thirdparty/spirv-reflect/include",
         "../../thirdparty/xxhash",
+        "../../thirdparty/lz4/lib",
         "../../thirdparty/stb",
         "../../thirdparty/tinyexr",
         "../../thirdparty/libjpeg-turbo",

@@ -283,6 +283,13 @@ Clone-Repo -Name "xxhash" `
     -Branch "v0.8.3" `
     -RemoveDirs @("tests", "doc", "cmake_unofficial", "contrib")
 
+# lz4 (fast compression for .uzpak asset archives)
+Clone-Repo -Name "lz4" `
+    -Url "https://github.com/lz4/lz4.git" `
+    -Branch "v1.10.0" `
+    -KeepDirs @("lib") `
+    -RemoveDirs @("tests", "doc", "programs", "contrib", "examples", "ossfuzz", "build")
+
 # SSE Math Fun (SIMD math functions)
 Clone-Repo -Name "sse_mathfun" `
     -Url "https://github.com/RJVB/sse_mathfun.git" `

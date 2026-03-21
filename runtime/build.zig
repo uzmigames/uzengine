@@ -106,6 +106,7 @@ pub fn build(b: *std.Build) void {
         tp ++ "spirv-reflect",
         tp ++ "spirv-reflect/include",
         tp ++ "xxhash",
+        tp ++ "lz4/lib",
         tp ++ "stb",
         tp ++ "tinyexr",
         tp ++ "libjpeg-turbo",
@@ -372,6 +373,13 @@ pub fn build(b: *std.Build) void {
     runtime_mod.addCSourceFiles(.{
         .root = b.path(tp ++ "ufbx"),
         .files = &.{"ufbx.c"},
+        .flags = &.{"-std=c11"},
+    });
+
+    // Thirdparty — lz4 (fast compression for .uzpak asset archives)
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path(tp ++ "lz4/lib"),
+        .files = &.{"lz4.c"},
         .flags = &.{"-std=c11"},
     });
 

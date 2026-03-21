@@ -27,17 +27,21 @@ build/
 - `Application::InitVFS()` auto-detection — if `../data/game.uzpakindex` exists, uses PakVFS; otherwise falls back to LooseFileVFS. `--force-loose` and `--pak-cache-mb` CLI flags.
 - `CloudPass::SetVFS()` — cloud noise textures (shape.bin) now load via VFS/pak instead of direct file I/O.
 
-**XOR scramble protection:** Each blob is XOR'd with an 8-byte key derived from `pathHash ^ secret`. No path strings stored in pak (only hashes). Custom binary format — not openable by ZIP/7z/tar tools.
+**LZ4 compression + XOR scramble:** Each blob is LZ4-compressed then XOR'd with an 8-byte key (`pathHash ^ secret`). Incompressible data (JPEGs, PNGs) stored raw with XOR only. LZ4 v1.10.0 added via `scripts/setup.ps1`. No path strings in pak (only hashes) — not openable by ZIP/7z/tar tools.
+
+**File handle pooling:** `PakVFS::AcquireReader()` manages up to 8 simultaneous open pak file handles with LRU eviction. Replaces unbounded `unordered_map` of readers.
+
+**Automated build step:** `zig build pack` runs uzpack automatically. `DemoConfig::asset_dirs` field specifies input directories. pbr_test uses `asset_dirs = &.{"assets"}`.
 
 **DLL paths updated:** Agility SDK (`../lib/D3D12/`), DXC (`../lib/dxcompiler.dll`), FXC (`../lib/d3dcompiler_47.dll`) — all relative to exe in `build/bin/`.
 
 **46 unit tests** covering MasterIndex round-trip (12), XOR scramble (8), PakStreamReader (7), LRUCache (19).
 
-**Measured results** (pbr_test, 54 assets, 97MB raw):
+**Measured results** (pbr_test, 52 assets, 95MB raw):
 - Pack time: <1s (uzpack CLI)
-- Output: 1 pak file (97MB) + 1 index (2.8KB)
+- Output: 1 pak file (95MB, 99.4% ratio) + 1 index (2.8KB)
 - VFS init: <1ms (index load only)
-- Asset read (cold): seek + read from disk
+- Asset read (cold): seek + LZ4 decompress from disk
 - Asset read (hot): LRU cache hit, zero I/O
 
 ## [0.2.39] — 2026-03-20

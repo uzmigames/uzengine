@@ -145,19 +145,16 @@ std::vector<uint8_t> PakVFS::Read(const std::string& path) {
         return {};
     }
 
-    // 3. Get or lazily open the PakStreamReader for this pak file
-    auto& reader = m_readers[loc->pakFilename];
-    if (!reader.IsOpen()) {
-        std::string pakPath = m_baseDir + "/" + loc->pakFilename;
-        if (!reader.Open(pakPath)) {
-            UZ_LOG(Asset, Error, "PakVFS: cannot open pak '{}' for asset '{}'",
-                   pakPath, path);
-            return {};
-        }
+    // 3. Get or lazily open the PakStreamReader for this pak file (pooled, max 8 handles)
+    auto* reader = AcquireReader(loc->pakFilename);
+    if (!reader) {
+        UZ_LOG(Asset, Error, "PakVFS: cannot open pak '{}' for asset '{}'",
+               loc->pakFilename, path);
+        return {};
     }
 
     // 4. Read the compressed+scrambled blob from disk
-    auto blob = reader.ReadBlob(loc->offset, loc->compressedSize);
+    auto blob = reader->ReadBlob(loc->offset, loc->compressedSize);
     if (blob.empty() && loc->compressedSize > 0) {
         UZ_LOG(Asset, Error, "PakVFS: ReadBlob failed for '{}' (offset={}, size={})",
                path, loc->offset, loc->compressedSize);
@@ -197,6 +194,34 @@ std::string PakVFS::Name() const {
 std::string PakVFS::ResolvePath(const std::string& /*path*/) const {
     // Pak assets have no filesystem path — return empty string
     return {};
+}
+
+PakStreamReader* PakVFS::AcquireReader(const std::string& pakFilename) {
+    // Check if already open — promote to MRU
+    auto it = m_handleMap.find(pakFilename);
+    if (it != m_handleMap.end()) {
+        m_handleList.splice(m_handleList.begin(), m_handleList, it->second);
+        return &it->second->reader;
+    }
+
+    // Evict LRU handle if pool is full
+    while (m_handleList.size() >= kMaxOpenHandles) {
+        auto& back = m_handleList.back();
+        m_handleMap.erase(back.pakName);
+        m_handleList.pop_back();
+    }
+
+    // Open new handle
+    std::string pakPath = m_baseDir + "/" + pakFilename;
+    m_handleList.emplace_front(HandleEntry{pakFilename, {}});
+    auto& entry = m_handleList.front();
+    if (!entry.reader.Open(pakPath)) {
+        m_handleList.pop_front();
+        return nullptr;
+    }
+
+    m_handleMap[pakFilename] = m_handleList.begin();
+    return &entry.reader;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

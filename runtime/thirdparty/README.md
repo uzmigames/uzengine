@@ -238,6 +238,22 @@ Files extracted from upstream source:
 - `LICENSE.md`
 
 
+## lz4
+
+- Upstream: https://github.com/lz4/lz4
+- Version: 1.10.0 (2024)
+- License: BSD-2-Clause
+
+Extremely fast lossless compression algorithm. Used by the .uzpak asset
+archive format to compress asset blobs before XOR scrambling. LZ4 achieves
+~500 MB/s compression and ~4 GB/s decompression on modern CPUs.
+
+Files extracted from upstream source:
+
+- `lib/` (lz4.h, lz4.c, lz4hc.h, lz4hc.c, lz4frame.h, lz4frame.c)
+- `LICENSE`
+
+
 ## luajit
 
 - Upstream: https://github.com/LuaJIT/LuaJIT
