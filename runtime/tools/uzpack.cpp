@@ -37,11 +37,11 @@ namespace fs = std::filesystem;
 
 static void PrintUsage(const char* exe) {
     std::fprintf(stderr,
-        "Usage: %s --input <dir> --output <dir> --name <basename>\n"
+        "Usage: %s --input <dir> [--input <dir2> ...] --output <dir> --name <basename>\n"
         "       [--max-pak-mb 500] [--secret <hex64>] [--verbose]\n"
-        "\nPacks all files in <dir> into .uzpak archives with a .uzpakindex.\n"
+        "\nPacks all files from input directories into .uzpak archives with a .uzpakindex.\n"
         "\nOptions:\n"
-        "  --input <dir>       Source directory to scan recursively\n"
+        "  --input <dir>       Source directory to scan recursively (repeatable)\n"
         "  --output <dir>      Output directory for .uzpak and .uzpakindex files\n"
         "  --name <basename>   Base name for output files (e.g., 'game')\n"
         "  --max-pak-mb <N>    Maximum size per .uzpak in MB (default: 500)\n"
@@ -57,7 +57,7 @@ static void PrintUsage(const char* exe) {
 
 int main(int argc, char* argv[]) {
     // ── Parse arguments ─────────────────────────────────────────────────────
-    std::string inputDir;
+    std::vector<std::string> inputDirs;
     std::string outputDir;
     std::string baseName;
     size_t maxPakMB = 500;
@@ -66,7 +66,7 @@ int main(int argc, char* argv[]) {
 
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--input") == 0 && i + 1 < argc) {
-            inputDir = argv[++i];
+            inputDirs.push_back(argv[++i]);
         } else if (std::strcmp(argv[i], "--output") == 0 && i + 1 < argc) {
             outputDir = argv[++i];
         } else if (std::strcmp(argv[i], "--name") == 0 && i + 1 < argc) {
@@ -88,54 +88,68 @@ int main(int argc, char* argv[]) {
     }
 
     // ── Validate required arguments ─────────────────────────────────────────
-    if (inputDir.empty() || outputDir.empty() || baseName.empty()) {
+    if (inputDirs.empty() || outputDir.empty() || baseName.empty()) {
         std::fprintf(stderr, "Error: --input, --output, and --name are required.\n");
         PrintUsage(argv[0]);
         return 1;
     }
 
-    if (!fs::is_directory(inputDir)) {
-        std::fprintf(stderr, "Error: input directory does not exist: %s\n", inputDir.c_str());
-        return 1;
+    for (const auto& dir : inputDirs) {
+        if (!fs::is_directory(dir)) {
+            std::fprintf(stderr, "Error: input directory does not exist: %s\n", dir.c_str());
+            return 1;
+        }
     }
 
     fs::create_directories(outputDir);
 
-    // ── Scan input directory recursively ────────────────────────────────────
+    // ── Scan all input directories recursively ──────────────────────────────
+    // Each input dir contributes files prefixed by its directory name.
+    // Example: --input assets --input ../../content
+    //   assets/sphere.uzmesh     → pak path "assets/sphere.uzmesh"
+    //   ../../content/atmosphere/ → pak path "content/atmosphere/shape.bin"
+    // This prevents name collisions between directories and preserves origin.
     std::vector<uz::PakWriteEntry> entries;
     size_t totalBytes = 0;
 
-    for (const auto& dirEntry : fs::recursive_directory_iterator(inputDir)) {
-        if (!dirEntry.is_regular_file()) continue;
+    for (const auto& inputDir : inputDirs) {
+        // Use the last path component as the prefix (e.g., "../../content" → "content")
+        const auto dirPrefix = fs::path(inputDir).filename().generic_string();
 
-        // Compute relative path with forward slashes for platform-independent lookup
-        auto relPath = fs::relative(dirEntry.path(), inputDir).generic_string();
+        for (const auto& dirEntry : fs::recursive_directory_iterator(inputDir)) {
+            if (!dirEntry.is_regular_file()) continue;
 
-        // Read file contents
-        std::ifstream file(dirEntry.path(), std::ios::binary | std::ios::ate);
-        if (!file) {
-            std::fprintf(stderr, "Warning: cannot read %s, skipping\n",
-                         dirEntry.path().string().c_str());
-            continue;
+            // Compute relative path with forward slashes for platform-independent lookup.
+            // Prefix with the directory name so VFS lookups use "content/atmosphere/shape.bin"
+            // instead of bare "atmosphere/shape.bin".
+            auto relPath = dirPrefix + "/" + fs::relative(dirEntry.path(), inputDir).generic_string();
+
+            // Read file contents
+            std::ifstream file(dirEntry.path(), std::ios::binary | std::ios::ate);
+            if (!file) {
+                std::fprintf(stderr, "Warning: cannot read %s, skipping\n",
+                             dirEntry.path().string().c_str());
+                continue;
+            }
+
+            const auto fileSize = static_cast<size_t>(file.tellg());
+            file.seekg(0);
+            std::vector<uint8_t> data(fileSize);
+            file.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(fileSize));
+
+            if (verbose) {
+                std::printf("  + %s (%zu bytes)\n", relPath.c_str(), data.size());
+            }
+
+            totalBytes += data.size();
+            entries.push_back({std::move(relPath), std::move(data), 0});
         }
-
-        const auto fileSize = static_cast<size_t>(file.tellg());
-        file.seekg(0);
-        std::vector<uint8_t> data(fileSize);
-        file.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(fileSize));
-
-        if (verbose) {
-            std::printf("  + %s (%zu bytes)\n", relPath.c_str(), data.size());
-        }
-
-        totalBytes += data.size();
-        entries.push_back({std::move(relPath), std::move(data), 0});
     }
 
     std::printf("Scanning: %zu files, %zu bytes total\n", entries.size(), totalBytes);
 
     if (entries.empty()) {
-        std::printf("No files found in %s. Writing empty index.\n", inputDir.c_str());
+        std::printf("No files found. Writing empty index.\n");
     }
 
     // ── Pack into split .uzpak archives ─────────────────────────────────────

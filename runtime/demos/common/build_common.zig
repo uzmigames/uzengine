@@ -113,20 +113,14 @@ pub const DemoHandle = struct {
         const uzpack_path = self.b.path("../../build/bin/uzpack.exe");
         const output_dir = self.b.getInstallPath(.{ .custom = "data" }, "");
 
-        // For each asset directory, run uzpack. If multiple dirs, we stage
-        // them via a helper script. For single dir (common case), run directly.
-        // Currently supports single asset_dir — first entry is the input.
-        const input_dir = self.config.asset_dirs[0];
+        // Pack all asset directories into a single .uzpak. uzpack supports
+        // multiple --input flags — each directory is scanned and merged.
+        const pack_cmd = self.b.addSystemCommand(&.{uzpack_path.getPath(self.b)});
+        for (self.config.asset_dirs) |dir| {
+            pack_cmd.addArgs(&.{ "--input", self.b.path(dir).getPath(self.b) });
+        }
+        pack_cmd.addArgs(&.{ "--output", output_dir, "--name", "game" });
 
-        const pack_cmd = self.b.addSystemCommand(&.{
-            uzpack_path.getPath(self.b),
-            "--input",
-            self.b.path(input_dir).getPath(self.b),
-            "--output",
-            output_dir,
-            "--name",
-            "game",
-        });
         // Pack runs after the exe is compiled (no circular dependency).
         pack_cmd.step.dependOn(&self.exe.step);
 

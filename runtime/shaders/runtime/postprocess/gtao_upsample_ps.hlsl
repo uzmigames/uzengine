@@ -101,7 +101,8 @@ SamplerState pointSampler : register(s0);
 float SampleHalfResAO(float2 uv)
 {
 #ifdef UZ_BINDLESS
-    return ResourceDescriptorHeap[halfResAOSrvIndex].SampleLevel(pointSampler, uv, 0);
+    Texture2D<float> tex = ResourceDescriptorHeap[halfResAOSrvIndex];
+    return tex.SampleLevel(pointSampler, uv, 0);
 #else
     return halfResAOTex.SampleLevel(pointSampler, uv, 0);
 #endif
@@ -112,7 +113,8 @@ float SampleHalfResAO(float2 uv)
 float SampleHalfResDepth(float2 uv)
 {
 #ifdef UZ_BINDLESS
-    return ResourceDescriptorHeap[halfResDepthSrvIndex].SampleLevel(pointSampler, uv, 0);
+    Texture2D<float> tex = ResourceDescriptorHeap[halfResDepthSrvIndex];
+    return tex.SampleLevel(pointSampler, uv, 0);
 #else
     return halfResDepthTex.SampleLevel(pointSampler, uv, 0);
 #endif
@@ -122,7 +124,8 @@ float SampleHalfResDepth(float2 uv)
 float SampleFullResDepth(float2 uv)
 {
 #ifdef UZ_BINDLESS
-    return ResourceDescriptorHeap[fullResDepthSrvIndex].SampleLevel(pointSampler, uv, 0);
+    Texture2D<float> tex = ResourceDescriptorHeap[fullResDepthSrvIndex];
+    return tex.SampleLevel(pointSampler, uv, 0);
 #else
     return fullResDepthTex.SampleLevel(pointSampler, uv, 0);
 #endif

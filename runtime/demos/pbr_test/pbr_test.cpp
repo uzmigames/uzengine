@@ -48,12 +48,12 @@ ApplicationConfig PBRTest::Configure() {
     cfg.title           = "UzEngine \xe2\x80\x94 PBR Test";
     cfg.width           = 1920;
     cfg.height          = 1080;
-    // Camera looking up at the sky for cloud debugging
-    cfg.cameraPositionX = 1123.f;
-    cfg.cameraPositionY = 83.f;
-    cfg.cameraPositionZ = 114.f;
-    cfg.cameraYawDeg    = 19.5f;
-    cfg.cameraPitchDeg  = 22.3f;
+    // Camera looking at PBR spheres on ground plane
+    cfg.cameraPositionX = -251.f;
+    cfg.cameraPositionY = -833.f;
+    cfg.cameraPositionZ = 222.f;
+    cfg.cameraYawDeg    = 76.2f;
+    cfg.cameraPitchDeg  = -12.0f;
     cfg.renderPath      = RenderPath::Deferred;
     return cfg;
 }
@@ -91,65 +91,65 @@ void PBRTest::OnStart() {
     // ── Initialize 9 diverse materials ───────────────────────────────────
 
     // 0: Gold (metallic)
-    goldMat_.albedoPath    = "Poliigon_MetalGoldPaint_7253_BaseColor.jpg";
-    goldMat_.normalPath    = "Poliigon_MetalGoldPaint_7253_Normal.png";
-    goldMat_.roughnessPath = "Poliigon_MetalGoldPaint_7253_Roughness.jpg";
-    goldMat_.metallicPath  = "Poliigon_MetalGoldPaint_7253_Metallic.jpg";
-    goldMat_.aoPath        = "Poliigon_MetalGoldPaint_7253_AmbientOcclusion.jpg";
+    goldMat_.albedoPath    = "assets/materials/gold/Poliigon_MetalGoldPaint_7253_BaseColor.jpg";
+    goldMat_.normalPath    = "assets/materials/gold/Poliigon_MetalGoldPaint_7253_Normal.png";
+    goldMat_.roughnessPath = "assets/materials/gold/Poliigon_MetalGoldPaint_7253_Roughness.jpg";
+    goldMat_.metallicPath  = "assets/materials/gold/Poliigon_MetalGoldPaint_7253_Metallic.jpg";
+    goldMat_.aoPath        = "assets/materials/gold/Poliigon_MetalGoldPaint_7253_AmbientOcclusion.jpg";
 
     // 1: Metal (galvanized steel)
-    metalMat_.albedoPath    = "MetalGalvanizedSteelWorn001_COL_2K_METALNESS.jpg";
-    metalMat_.normalPath    = "MetalGalvanizedSteelWorn001_NRM_2K_METALNESS.jpg";
-    metalMat_.roughnessPath = "MetalGalvanizedSteelWorn001_ROUGHNESS_2K_METALNESS.jpg";
-    metalMat_.metallicPath  = "MetalGalvanizedSteelWorn001_METALNESS_2K_METALNESS.jpg";
+    metalMat_.albedoPath    = "assets/materials/metal/MetalGalvanizedSteelWorn001_COL_2K_METALNESS.jpg";
+    metalMat_.normalPath    = "assets/materials/metal/MetalGalvanizedSteelWorn001_NRM_2K_METALNESS.jpg";
+    metalMat_.roughnessPath = "assets/materials/metal/MetalGalvanizedSteelWorn001_ROUGHNESS_2K_METALNESS.jpg";
+    metalMat_.metallicPath  = "assets/materials/metal/MetalGalvanizedSteelWorn001_METALNESS_2K_METALNESS.jpg";
 
     // 2: RattanWeave (organic)
-    rattanMat_.albedoPath    = "Poliigon_RattanWeave_6945_BaseColor.jpg";
-    rattanMat_.normalPath    = "Poliigon_RattanWeave_6945_Normal.png";
-    rattanMat_.roughnessPath = "Poliigon_RattanWeave_6945_Roughness.jpg";
-    rattanMat_.metallicPath  = "Poliigon_RattanWeave_6945_Metallic.jpg";
-    rattanMat_.aoPath        = "Poliigon_RattanWeave_6945_AmbientOcclusion.jpg";
+    rattanMat_.albedoPath    = "assets/materials/rattan/Poliigon_RattanWeave_6945_BaseColor.jpg";
+    rattanMat_.normalPath    = "assets/materials/rattan/Poliigon_RattanWeave_6945_Normal.png";
+    rattanMat_.roughnessPath = "assets/materials/rattan/Poliigon_RattanWeave_6945_Roughness.jpg";
+    rattanMat_.metallicPath  = "assets/materials/rattan/Poliigon_RattanWeave_6945_Metallic.jpg";
+    rattanMat_.aoPath        = "assets/materials/rattan/Poliigon_RattanWeave_6945_AmbientOcclusion.jpg";
 
     // 3: StoneQuartzite (white stone)
-    quartziteMat_.albedoPath    = "Poliigon_StoneQuartzite_8060_BaseColor.jpg";
-    quartziteMat_.normalPath    = "Poliigon_StoneQuartzite_8060_Normal.png";
-    quartziteMat_.roughnessPath = "Poliigon_StoneQuartzite_8060_Roughness.jpg";
-    quartziteMat_.metallicPath  = "Poliigon_StoneQuartzite_8060_Metallic.jpg";
-    quartziteMat_.aoPath        = "Poliigon_StoneQuartzite_8060_AmbientOcclusion.jpg";
+    quartziteMat_.albedoPath    = "assets/materials/quartzite/Poliigon_StoneQuartzite_8060_BaseColor.jpg";
+    quartziteMat_.normalPath    = "assets/materials/quartzite/Poliigon_StoneQuartzite_8060_Normal.png";
+    quartziteMat_.roughnessPath = "assets/materials/quartzite/Poliigon_StoneQuartzite_8060_Roughness.jpg";
+    quartziteMat_.metallicPath  = "assets/materials/quartzite/Poliigon_StoneQuartzite_8060_Metallic.jpg";
+    quartziteMat_.aoPath        = "assets/materials/quartzite/Poliigon_StoneQuartzite_8060_AmbientOcclusion.jpg";
 
     // 4: Stonebricks (classic)
-    stoneBrickMat_.albedoPath    = "Stonebricks_BaseColor.jpg";
-    stoneBrickMat_.normalPath    = "Stonebricks_Normal.jpg";
-    stoneBrickMat_.roughnessPath = "Stonebricks_Roughness.jpg";
-    stoneBrickMat_.metallicPath  = "Stonebricks_Metallic.jpg";
-    stoneBrickMat_.aoPath        = "Stonebricks_AO.jpg";
+    stoneBrickMat_.albedoPath    = "assets/materials/stonebricks/Stonebricks_BaseColor.jpg";
+    stoneBrickMat_.normalPath    = "assets/materials/stonebricks/Stonebricks_Normal.jpg";
+    stoneBrickMat_.roughnessPath = "assets/materials/stonebricks/Stonebricks_Roughness.jpg";
+    stoneBrickMat_.metallicPath  = "assets/materials/stonebricks/Stonebricks_Metallic.jpg";
+    stoneBrickMat_.aoPath        = "assets/materials/stonebricks/Stonebricks_AO.jpg";
     stoneBrickMat_.uvScaleX      = 3.0f;
     stoneBrickMat_.uvScaleY      = 3.0f;
 
     // 5: Concrete
-    concreteMat_.albedoPath    = "Poliigon_ConcreteWorn_8690_BaseColor.jpg";
-    concreteMat_.normalPath    = "Poliigon_ConcreteWorn_8690_Normal.png";
-    concreteMat_.roughnessPath = "Poliigon_ConcreteWorn_8690_Roughness.jpg";
-    concreteMat_.metallicPath  = "Poliigon_ConcreteWorn_8690_Metallic.jpg";
-    concreteMat_.aoPath        = "Poliigon_ConcreteWorn_8690_AmbientOcclusion.jpg";
+    concreteMat_.albedoPath    = "assets/materials/ground/Poliigon_ConcreteWorn_8690_BaseColor.jpg";
+    concreteMat_.normalPath    = "assets/materials/ground/Poliigon_ConcreteWorn_8690_Normal.png";
+    concreteMat_.roughnessPath = "assets/materials/ground/Poliigon_ConcreteWorn_8690_Roughness.jpg";
+    concreteMat_.metallicPath  = "assets/materials/ground/Poliigon_ConcreteWorn_8690_Metallic.jpg";
+    concreteMat_.aoPath        = "assets/materials/ground/Poliigon_ConcreteWorn_8690_AmbientOcclusion.jpg";
 
     // 6: MetalCorroded
-    metalCorrodedMat_.albedoPath    = "MetalCorrodedHeavy001_COL_2K_METALNESS.jpg";
-    metalCorrodedMat_.normalPath    = "MetalCorrodedHeavy001_NRM_2K_METALNESS.jpg";
-    metalCorrodedMat_.roughnessPath = "MetalCorrodedHeavy001_ROUGHNESS_2K_METALNESS.jpg";
-    metalCorrodedMat_.metallicPath  = "MetalCorrodedHeavy001_METALNESS_2K_METALNESS.jpg";
+    metalCorrodedMat_.albedoPath    = "assets/materials/metal_corroded/MetalCorrodedHeavy001_COL_2K_METALNESS.jpg";
+    metalCorrodedMat_.normalPath    = "assets/materials/metal_corroded/MetalCorrodedHeavy001_NRM_2K_METALNESS.jpg";
+    metalCorrodedMat_.roughnessPath = "assets/materials/metal_corroded/MetalCorrodedHeavy001_ROUGHNESS_2K_METALNESS.jpg";
+    metalCorrodedMat_.metallicPath  = "assets/materials/metal_corroded/MetalCorrodedHeavy001_METALNESS_2K_METALNESS.jpg";
 
     // 7: Grass
-    grassMat_.albedoPath    = "Poliigon_GrassPatchyGround_4585_BaseColor.jpg";
-    grassMat_.normalPath    = "Poliigon_GrassPatchyGround_4585_Normal.png";
-    grassMat_.roughnessPath = "Poliigon_GrassPatchyGround_4585_Roughness.jpg";
-    grassMat_.metallicPath  = "Poliigon_GrassPatchyGround_4585_Metallic.jpg";
-    grassMat_.aoPath        = "Poliigon_GrassPatchyGround_4585_AmbientOcclusion.jpg";
+    grassMat_.albedoPath    = "assets/materials/grass/Poliigon_GrassPatchyGround_4585_BaseColor.jpg";
+    grassMat_.normalPath    = "assets/materials/grass/Poliigon_GrassPatchyGround_4585_Normal.png";
+    grassMat_.roughnessPath = "assets/materials/grass/Poliigon_GrassPatchyGround_4585_Roughness.jpg";
+    grassMat_.metallicPath  = "assets/materials/grass/Poliigon_GrassPatchyGround_4585_Metallic.jpg";
+    grassMat_.aoPath        = "assets/materials/grass/Poliigon_GrassPatchyGround_4585_AmbientOcclusion.jpg";
 
     // 8: Sand (uses GLOSS map — invert for roughness if needed)
-    sandMat_.albedoPath    = "GroundSand005_COL_2K.jpg";
-    sandMat_.normalPath    = "GroundSand005_NRM_2K.jpg";
-    sandMat_.aoPath        = "GroundSand005_AO_2K.jpg";
+    sandMat_.albedoPath    = "assets/materials/sand/GroundSand005_COL_2K.jpg";
+    sandMat_.normalPath    = "assets/materials/sand/GroundSand005_NRM_2K.jpg";
+    sandMat_.aoPath        = "assets/materials/sand/GroundSand005_AO_2K.jpg";
     // Sand has a GLOSS map — we'll use roughness=1.0 default (no roughness texture)
 
     // ── Ground material from graph-based .uzmat ───────────────────────
@@ -162,7 +162,7 @@ void PBRTest::OnStart() {
 
     {
         const std::filesystem::path assetsDir = uz::GetExeDir() / "assets";
-        const std::filesystem::path uzmatPath = assetsDir / "mi_procgrid.uzmat";
+        const std::filesystem::path uzmatPath = assetsDir / "materials" / "mi_procgrid.uzmat";
 
         materialCache_.Init((assetsDir / "cache" / "materials").string());
 
@@ -192,7 +192,7 @@ void PBRTest::OnStart() {
                 } else {
                     UZ_LOG(Demo, Warning,
                            "GPU BaseColor bake failed — using fallback checker.png");
-                    groundMat_.albedoPath = "checker.png";
+                    groundMat_.albedoPath = "assets/textures/checker.png";
                 }
 
                 // GPU bake Roughness (512x512)
@@ -221,11 +221,11 @@ void PBRTest::OnStart() {
                 BakeResult baseColorBake = MaterialBaker::BakeBaseColor(
                     graph, kBakeColorSize, kBakeColorSize);
                 if (baseColorBake.success) {
-                    groundMat_.albedoPath = "checker.png";
+                    groundMat_.albedoPath = "assets/textures/checker.png";
                     UZ_LOG(Demo, Info, "CPU-baked BaseColor ({}x{})",
                            baseColorBake.width, baseColorBake.height);
                 } else {
-                    groundMat_.albedoPath = "checker.png";
+                    groundMat_.albedoPath = "assets/textures/checker.png";
                 }
 
                 BakeResult roughnessBake = MaterialBaker::BakeRoughness(
@@ -237,7 +237,7 @@ void PBRTest::OnStart() {
             }
         } else {
             UZ_LOG(Demo, Warning, "Failed to load mi_procgrid.uzmat — using fallback checker.png");
-            groundMat_.albedoPath = "checker.png";
+            groundMat_.albedoPath = "assets/textures/checker.png";
         }
     }
 
@@ -248,7 +248,7 @@ void PBRTest::OnStart() {
     };
 
     // ── Create spheres ──
-#if 0 // DISABLED: testing cloud pipeline without meshes
+#if 1 // Enabled for AO/PBR visual testing
     // ── Create 9 spheres in two rows (PoC1 layout) ─────────────────────
     // Back row (Y=-200): 5 smaller spheres, spaced 250cm apart
     // Front row (Y=200): 4 larger spheres, spaced 300cm apart
@@ -271,13 +271,13 @@ void PBRTest::OnStart() {
             scene.SetScale({120.f, 120.f, 120.f});
         }
 
-        mesh.meshPath = "sphere.uzmesh";
+        mesh.meshPath = "assets/meshes/sphere.uzmesh";
         mesh.SetMaterial(0, materials[i]);
     }
 #endif
 
     // ── Ground plane ─────────────────────────────────────────────────────
-#if 0 // DISABLED: testing cloud pipeline without meshes
+#if 1 // Enabled for AO/PBR visual testing
     ground_ = world.CreateEntity();
     {
         auto& scene = world.AddComponent<SceneComponent>(ground_);
@@ -287,7 +287,7 @@ void PBRTest::OnStart() {
         scene.SetScale({10000.f, 10000.f, 2.f});
 
         auto& mesh = world.AddComponent<StaticMeshComponent>(ground_);
-        mesh.meshPath = "cube.uzmesh";
+        mesh.meshPath = "assets/meshes/cube.uzmesh";
         mesh.SetMaterial(0, &groundMat_);
     }
 #endif
@@ -371,9 +371,9 @@ void PBRTest::OnStart() {
         sl.realTimeCapture           = false;      ///< @refSkyLightComponent.cpp:322
         sl.sourceType                = ESkyLightSourceType::CapturedScene;
         sl.cubemapResolution         = 128;        ///< @refSkyLightComponent.cpp:311
-        sl.lowerHemisphereIsBlack    = true;       ///< @refSkyLightComponent.cpp:304
-        sl.lowerHemisphereColor      = {0.0f, 0.0f, 0.0f}; ///< @refSkyLightComponent.cpp:312
-        sl.minOcclusion              = 0.0f;       ///< @refSkyLightComponent.cpp:308
+        sl.lowerHemisphereIsBlack    = false;      ///< Allow ground bounce light for natural fill
+        sl.lowerHemisphereColor      = {0.18f, 0.2f, 0.25f}; ///< Subtle blue-grey ground bounce
+        sl.minOcclusion              = 0.15f;      ///< Prevent AO from going fully black
     }
 #endif
 
@@ -388,7 +388,7 @@ void PBRTest::OnStart() {
 #endif
 
     // ── Volumetric Clouds ─────────────────────────────────────────────
-#if 1 // DIAG: volumetric clouds
+#if 0 // DIAG: volumetric clouds
     {
         auto cloudEntity = world.CreateEntity();
         auto& scene = world.AddComponent<SceneComponent>(cloudEntity);

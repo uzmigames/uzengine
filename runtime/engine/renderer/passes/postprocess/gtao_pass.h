@@ -29,6 +29,25 @@ class ShaderManager;
 class CBRingAllocator;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GTAOQuality — resolution and sample count presets
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// GTAO quality preset — controls resolution scale, angle count, and tap count.
+///
+/// @ref Jimenez 2016 "GTAO" — quality presets from SHADER_QUALITY levels
+enum class GTAOQuality : uint8_t {
+    Low    = 0,  ///< Half-res, 1 angle, 4 taps — fastest, minimal quality loss.
+    Medium = 1,  ///< Half-res, 2 angles, 6 taps — best quality/perf balance.
+    High   = 2,  ///< Full-res, 2 angles, 8 taps — current default behavior.
+    Ultra  = 3,  ///< Full-res, 3 angles, 12 taps — maximum quality.
+};
+
+/// Returns true if the given quality preset uses half-resolution rendering.
+inline bool GTAOQualityIsHalfRes(GTAOQuality q) noexcept {
+    return q == GTAOQuality::Low || q == GTAOQuality::Medium;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // GTAOSettings — runtime-tunable parameters
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -43,6 +62,7 @@ struct GTAOSettings {
     float    fadeEndDist     = 100000.0f;///< Distance where AO disappears (cm).
     float    maxFadeDepth    = 100000.0f;///< Skip AO beyond this depth (cm).
     bool     enabled         = true;     ///< Master toggle.
+    GTAOQuality quality      = GTAOQuality::High;  ///< Quality preset. Default: High (full-res).
 
     /// AO power curve exponent. Default: 2.0.
     /// In GTAO path, shader multiplies by 0.5 -> effective 1.0.
@@ -135,6 +155,22 @@ struct GTAODenoiseRootConstants {
 static_assert(sizeof(GTAODenoiseRootConstants) == 32,
     "GTAODenoiseRootConstants must be 8 DWORDs (32 bytes)");
 
+/// Matches `cbuffer GTAOUpsampleRootCB : register(b0)` in gtao_upsample_ps.hlsl.
+/// Packed into 8 DWORDs for root constants at slot 0.
+struct GTAOUpsampleRootConstants {
+    uint32_t halfResAOSrvIndex;     ///< DWORD 0: half-res filtered AO SRV.
+    uint32_t halfResDepthSrvIndex;  ///< DWORD 1: half-res depth SRV.
+    uint32_t fullResDepthSrvIndex;  ///< DWORD 2: full-res depth SRV.
+    uint32_t _pad0;                 ///< DWORD 3: padding for alignment.
+    float    halfResTexelSizeX;     ///< DWORD 4: 1.0 / halfWidth.
+    float    halfResTexelSizeY;     ///< DWORD 5: 1.0 / halfHeight.
+    float    fullResTexelSizeX;     ///< DWORD 6: 1.0 / fullWidth.
+    float    fullResTexelSizeY;     ///< DWORD 7: 1.0 / fullHeight.
+};
+
+static_assert(sizeof(GTAOUpsampleRootConstants) == 32,
+    "GTAOUpsampleRootConstants must be 8 DWORDs (32 bytes)");
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GTAOPass
 // ─────────────────────────────────────────────────────────────────────────────
@@ -194,7 +230,10 @@ public:
 private:
     [[nodiscard]] bool EnsureGTAOPipeline();
     [[nodiscard]] bool EnsureDenoisePipeline();
+    [[nodiscard]] bool EnsureUpsamplePipeline();
     [[nodiscard]] bool CreateTextures(uint32_t width, uint32_t height);
+    [[nodiscard]] bool CreateHalfResTextures(uint32_t halfWidth, uint32_t halfHeight);
+    void DestroyHalfResTextures();
     void DestroyTextures();
 
     IRHIDevice*    m_device    = nullptr;
@@ -204,13 +243,19 @@ private:
     RHITextureHandle m_rawAOTexture      = RHITextureHandle::Invalid();
     RHITextureHandle m_filteredAOTexture = RHITextureHandle::Invalid();
 
+    // ── Half-Resolution Textures (for Low/Medium quality) ────────────
+    RHITextureHandle m_rawAOHalf      = RHITextureHandle::Invalid();
+    RHITextureHandle m_filteredAOHalf = RHITextureHandle::Invalid();
+
     // ── Compute Pipelines ────────────────────────────────────────────────
-    RHIPipelineHandle m_gtaoPipeline    = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_denoisePipeline = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_gtaoPipeline      = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_denoisePipeline   = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_upsamplePipeline  = RHIPipelineHandle::Invalid();
 
     // ── Shader Handles ───────────────────────────────────────────────────
-    RHIShaderHandle m_gtaoCS    = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_denoiseCS = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_gtaoCS      = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_denoiseCS   = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_upsamplePS  = RHIShaderHandle::Invalid();
 
     // ── Descriptor Indices ───────────────────────────────────────────────
     uint32_t m_rawAOSrvIndex       = UINT32_MAX;
@@ -218,12 +263,25 @@ private:
     uint32_t m_filteredAOSrvIndex  = UINT32_MAX;
     uint32_t m_filteredAOUavIndex  = UINT32_MAX;
 
+    // ── Half-Res Descriptor Indices ───────────────────────────────────
+    uint32_t m_rawAOHalfSrvIndex      = UINT32_MAX;
+    uint32_t m_rawAOHalfUavIndex      = UINT32_MAX;
+    uint32_t m_filteredAOHalfSrvIndex = UINT32_MAX;
+    uint32_t m_filteredAOHalfUavIndex = UINT32_MAX;
+
     // ── Dimensions ───────────────────────────────────────────────────────
-    uint32_t m_width  = 0;
-    uint32_t m_height = 0;
+    uint32_t m_width      = 0;
+    uint32_t m_height     = 0;
+    uint32_t m_halfWidth  = 0;
+    uint32_t m_halfHeight = 0;
 
     bool m_initialized = false;
     bool m_initialBarriersDone = false;
+
+    /// Tracks the current resource state of m_filteredAOTexture across frames.
+    /// After initial barriers: UAV. After each Execute(): SRV.
+    /// The half-res upsample path needs this to transition SRV/UAV → RenderTarget correctly.
+    RHIResourceState m_filteredAOCurrentState = RHIResourceState::Common;
 
     // ── Constants ────────────────────────────────────────────────────────
     static constexpr uint32_t kThreadGroupSize = 8;

@@ -250,7 +250,7 @@ float CompareVeloc(float2 v1, float2 v2) {
 ///             The velocity data is equivalent; UzEngine precomputes it in velocity_ps.hlsl.
 
 [numthreads(8, 8, 1)]
-void CSMain(
+void main(
     uint2 groupId       : SV_GroupID,
     uint2 dispatchId    : SV_DispatchThreadID,
     uint2 groupThreadId : SV_GroupThreadID)

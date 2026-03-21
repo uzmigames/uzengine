@@ -37,10 +37,10 @@
 
 namespace uz {
 
-/// Maximum textures to upload per frame. Spreads GPU upload cost across
-/// multiple frames instead of one large stall. Remaining decoded textures
-/// are kept in m_deferredDecoded for the next frame.
-static constexpr uint32_t kMaxTextureUploadsPerFrame = 8;
+/// Maximum textures to upload per frame. UINT32_MAX = no limit (upload all
+/// decoded textures immediately). Set to a lower value (e.g., 8) to spread
+/// GPU upload cost across frames if loading causes frame hitches.
+static constexpr uint32_t kMaxTextureUploadsPerFrame = UINT32_MAX;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Asset Loading — Meshes (deferred upload, flushed in batch)

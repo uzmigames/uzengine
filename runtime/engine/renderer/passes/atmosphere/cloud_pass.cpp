@@ -225,7 +225,11 @@ void CloudPass::LoadNoiseTextures(IRHICommandList* cmdList, IVFS* vfs) {
         // Fallback: try direct file I/O (dev mode with loose files)
         std::ifstream file(shapePath, std::ios::binary | std::ios::ate);
         if (!file.is_open()) {
-            UZ_LOG(Renderer, Warning, "CloudPass: could not load {} — clouds will use procedural noise", shapePath);
+            static bool loggedOnce = false;
+            if (!loggedOnce) {
+                UZ_LOG(Renderer, Warning, "CloudPass: could not load {} — clouds will use procedural noise", shapePath);
+                loggedOnce = true;
+            }
             return;
         }
         auto fileSize = file.tellg();
