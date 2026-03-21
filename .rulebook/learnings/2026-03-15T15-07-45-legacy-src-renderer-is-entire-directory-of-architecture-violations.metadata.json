@@ -1,0 +1,15 @@
+{
+  "id": "2026-03-15T15-07-45-legacy-src-renderer-is-entire-directory-of-architecture-violations",
+  "title": "Legacy src/renderer/ is entire directory of architecture violations",
+  "content": "The src/renderer/ directory contains the original DX12 renderer with 20+ ComPtr<ID3D12*> members directly in renderer classes. This violates the RHI abstraction boundary (no DX12 types above rhi.h). The new architecture lives in runtime/engine/renderer/ using rhi.h abstractions. Key violations: DX12Renderer class with direct DX12 types, gizmo_renderer.h interface takes ID3D12Device*, scene_loader.cpp has if-chains on NodeType. Migration path: runtime/engine/renderer/ is the correct new location, src/renderer/ is deprecated and should not receive new code.",
+  "source": "manual",
+  "tags": [
+    "architecture",
+    "legacy",
+    "rhi",
+    "dx12",
+    "migration",
+    "technical-debt"
+  ],
+  "createdAt": "2026-03-15T15:07:45.990Z"
+}

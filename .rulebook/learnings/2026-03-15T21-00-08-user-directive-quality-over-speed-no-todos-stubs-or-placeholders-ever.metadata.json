@@ -1,0 +1,13 @@
+{
+  "id": "2026-03-15T21-00-08-user-directive-quality-over-speed-no-todos-stubs-or-placeholders-ever",
+  "title": "User directive: Quality over speed — no TODOs, stubs, or placeholders ever",
+  "content": "The user explicitly mandated that response time is irrelevant. What matters is the quality of the final result. When asked to implement something, the correct approach is to research how to do it properly and implement it completely, regardless of complexity.\n\nThis was added as a CRITICAL directive to:\n- CLAUDE.md (project instructions)\n- AGENTS.md (agent rules, HIGHEST PRECEDENCE)\n- All 42 agent definition files in .claude/agents/\n- Local memory (feedback_no_shortcuts.md)\n- Rulebook memory, knowledge base (pattern + anti-pattern)\n\nThe user's exact words: \"é expressamente proibido tentar simplificar, alterar a lógica, adicionar todo, stubs, placeholders para entregar rápido os resultados, o tempo de resposta não é importante o que importa é a qualidade do resultado final, sendo assim quando eu mandar fazer uma coisa é pra procurar a forma certa de fazer e implementar independente da complexidade\"",
+  "source": "manual",
+  "tags": [
+    "directive",
+    "quality",
+    "user-preference",
+    "critical"
+  ],
+  "createdAt": "2026-03-15T21:00:08.381Z"
+}

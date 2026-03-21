@@ -1,0 +1,15 @@
+{
+  "id": "2026-03-15T15-37-33-scalars-before-matrices-in-constant-buffers-avoids-spirv-std140-offset-corruption",
+  "title": "Scalars BEFORE matrices in constant buffers — avoids SPIRV std140 offset corruption",
+  "content": "In constant buffer layouts (PerFrameCB, PerObjectCB), scalar fields (uint32_t indices, float values) must be placed BEFORE matrix fields (Mat4). This is because SPIRV std140 layout rules can cause unexpected padding/offset shifts when scalars follow matrices. Placing scalars first guarantees predictable offsets across DX12 (HLSL) and Vulkan (SPIRV) backends. This pattern is enforced in constant_buffers.h.",
+  "source": "manual",
+  "tags": [
+    "rendering",
+    "constant-buffer",
+    "spirv",
+    "std140",
+    "cross-platform",
+    "gotcha"
+  ],
+  "createdAt": "2026-03-15T15:37:33.198Z"
+}

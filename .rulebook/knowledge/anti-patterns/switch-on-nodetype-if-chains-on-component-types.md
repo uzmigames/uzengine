@@ -1,0 +1,16 @@
+# Switch-on-NodeType / If-Chains on Component Types
+
+**Category**: architecture
+**Tags**: architecture, ecs, open-closed, polymorphism, legacy
+
+## Description
+
+Using if/switch chains to dispatch behavior based on node type or component type. This violates Open/Closed principle — adding a new type requires modifying every switch statement. Found in legacy code: scene_loader.cpp and scene_saver.cpp have if-chains on NodeType. The correct approach is polymorphic dispatch via virtual interfaces or ECS system queries (registry.view<Component>()).
+
+## Example
+
+// WRONG:\nif (node.type == NodeType::Mesh) { ... }\nelse if (node.type == NodeType::Light) { ... }\nelse if (node.type == NodeType::Camera) { ... }\n// Must modify for every new type!\n\n// CORRECT:\nregistry.view<CMesh>().each([](auto entity, CMesh& mesh) { ... });\nregistry.view<CLight>().each([](auto entity, CLight& light) { ... });\n// New types get their own view — no existing code changes
+
+## When to Use
+
+When reviewing scene loading, saving, or any code that dispatches on entity/node types. When adding new component types.

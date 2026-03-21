@@ -1,0 +1,18 @@
+{
+  "id": "parallel-file-edits-in-same-conversation",
+  "type": "anti-pattern",
+  "title": "Parallel File Edits in Same Conversation",
+  "category": "code",
+  "description": "Editing multiple files in parallel using the Edit tool. The Edit tool uses exact string matching for replacements. When multiple files are edited simultaneously, the tool may fail to find exact strings, race conditions can cause partial edits, and error recovery becomes impossible. Files must be edited sequentially — edit file A, wait for confirmation, then edit file B.",
+  "example": "// WRONG (parallel edits):\\nEdit file_a.cpp  // launched simultaneously\\nEdit file_b.cpp  // launched simultaneously\\nEdit file_c.cpp  // → failures likely\\n\\n// CORRECT (sequential edits):\\nEdit file_a.cpp → wait for confirmation\\nEdit file_b.cpp → wait for confirmation\\nEdit file_c.cpp → wait for confirmation",
+  "whenToUse": "When reviewing any multi-file edit operation. When planning implementation that spans multiple files.",
+  "createdAt": "2026-03-15T15:22:27.043Z",
+  "tags": [
+    "editing",
+    "workflow",
+    "sequential",
+    "reliability",
+    "tooling"
+  ],
+  "source": "manual"
+}

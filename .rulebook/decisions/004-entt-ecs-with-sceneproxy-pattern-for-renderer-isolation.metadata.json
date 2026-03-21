@@ -1,0 +1,9 @@
+{
+  "id": 4,
+  "slug": "entt-ecs-with-sceneproxy-pattern-for-renderer-isolation",
+  "title": "EnTT ECS with SceneProxy Pattern for Renderer Isolation",
+  "status": "proposed",
+  "date": "2026-03-15",
+  "relatedTasks": [],
+  "supersededBy": null
+}

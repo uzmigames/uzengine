@@ -1,0 +1,5 @@
+# Root signature full at 64/64 DWORDs — migration to bindless required
+**Source**: manual
+**Date**: 2026-03-15
+**Tags**: rendering, dx12, root-signature, bindless, architecture, blocker
+The graphics root signature hit the DX12 64-DWORD limit with 14 params: b0 world (16), b1 material (20), b2 lightCBV (2), b3 viewProj (16), t0-t9 SRV tables (10). Adding any new feature (IBL textures, shadow atlas, AO) is blocked without restructuring. Compute root signature is separate (5 params) and fine. Resolution: must migrate to bindless resources — put material params in a StructuredBuffer, use bindless descriptor indexing for textures. This is task 3.41.0 (P1 architecture risk). UE5 uses bindless for everything; Godot uses push constants + descriptor sets.

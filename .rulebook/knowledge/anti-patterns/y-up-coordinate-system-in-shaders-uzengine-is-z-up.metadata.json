@@ -1,0 +1,21 @@
+{
+  "id": "y-up-coordinate-system-in-shaders-uzengine-is-z-up",
+  "type": "anti-pattern",
+  "title": "Y-up coordinate system in shaders — UzEngine is Z-up",
+  "category": "rendering",
+  "description": "UzEngine uses a Z-up coordinate system (X-forward, Y-right, Z-up), matching UE5 convention. All shaders that place objects relative to a planet center or use \"up\" direction MUST use Z as the vertical axis, NOT Y.\n\nCommon mistake: copying atmosphere/sky code from reference implementations (Bruneton, Hillaire, shadertoy) that use Y-up and forgetting to swap axes. This causes the sky integration to produce near-zero luminance because the camera is offset on the wrong axis — the ray march goes sideways through the planet instead of upward through the atmosphere.\n\nRoot cause found: sky_atmosphere_ps.hlsl had `float3(0, bottomRadiusKm, 0)` (Y-up) instead of `float3(0, 0, bottomRadiusKm)` (Z-up). transmittance_lut_cs.hlsl had `float3(0, viewHeight, 0)` instead of `float3(0, 0, viewHeight)`.",
+  "example": "```hlsl\n// ❌ WRONG — Y-up (common in reference implementations, shadertoy, OpenGL)\nfloat3 cameraSkyKm = cameraPos.xyz * 0.001 + float3(0.0, bottomRadiusKm, 0.0);\nfloat3 pos = float3(0.0, viewHeight, 0.0);\nfloat3 dir = float3(sinTheta, cosTheta, 0.0);\n\n// ✅ CORRECT — Z-up (UzEngine convention)\nfloat3 cameraSkyKm = cameraPos.xyz * 0.001 + float3(0.0, 0.0, bottomRadiusKm);\nfloat3 pos = float3(0.0, 0.0, viewHeight);\nfloat3 dir = float3(sinTheta, 0.0, cosTheta);\n```",
+  "whenToUse": "Any time you write or review shader code that references a planet surface, sky dome, atmosphere, height-based calculations, or \"up\" direction. Also when porting shader code from external sources (shadertoy, reference papers, other engines with Y-up).",
+  "whenNotToUse": "Code that is purely 2D (screen-space UV operations) or uses view-space / clip-space where the convention doesn't matter.",
+  "createdAt": "2026-03-15T15:14:06.859Z",
+  "tags": [
+    "z-up",
+    "coordinate-system",
+    "shader",
+    "atmosphere",
+    "sky",
+    "rendering",
+    "anti-pattern"
+  ],
+  "source": "manual"
+}

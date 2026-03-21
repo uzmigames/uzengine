@@ -1,0 +1,14 @@
+{
+  "id": "2026-03-15T15-07-38-git-stash-destroyed-hours-of-work-use-wip-commits-instead",
+  "title": "git stash destroyed hours of work — use WIP commits instead",
+  "content": "On 2026-03-13, git stash pop failed with merge conflicts and all uncommitted changes were irrecoverably lost. Hours of work destroyed. Root cause: stash entries are not protected by conflict resolution — if pop fails, changes can vanish. Resolution: ABSOLUTELY FORBIDDEN to use git stash in this project. Instead: create WIP commits (git commit -m 'wip: ...') or use temp branches (git checkout -b temp && git commit -am 'wip').",
+  "source": "manual",
+  "tags": [
+    "git",
+    "workflow",
+    "safety",
+    "data-loss",
+    "critical"
+  ],
+  "createdAt": "2026-03-15T15:07:38.159Z"
+}

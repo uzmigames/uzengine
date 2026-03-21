@@ -1,0 +1,6 @@
+# DX11 MapBuffer shadow copy must be scoped to ConstantBuffer only
+**Source**: manual
+**Date**: 2026-03-17
+**Related Task**: phase0-0.8.0-uniform-buffer-system
+**Tags**: dx11, map-buffer, shadow-copy, vertex-buffer, constant-buffer, overlay
+The initial fix for WC memory read-back (shadow copy for DYNAMIC buffers) was too broad — it applied to ALL DYNAMIC Upload buffers including vertex buffers. Vertex buffers need data written directly to the GPU buffer via MAP_WRITE_DISCARD; the shadow copy data never reached the GPU, causing overlay vertices to be all zeros (stats overlay invisible). Fix: restrict shadow copy path to ConstantBuffer usage only. Vertex/index/structured buffers use direct MAP_WRITE_DISCARD into the GPU buffer.

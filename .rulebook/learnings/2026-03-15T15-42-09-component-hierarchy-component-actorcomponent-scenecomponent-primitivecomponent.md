@@ -1,0 +1,5 @@
+# Component hierarchy: Component → ActorComponent / SceneComponent → PrimitiveComponent
+**Source**: manual
+**Date**: 2026-03-15
+**Tags**: ecs, components, hierarchy, inheritance, architecture
+ECS component inheritance chain: Component (base, lifecycle callbacks, enable/disable) → ActorComponent (logic-only, no transform) OR SceneComponent (3D transform + parent-child hierarchy, dirty propagation, lazy world matrix) → PrimitiveComponent (SceneComponent + render proxy creation via SyncToRenderWorld). Concrete types: StaticMeshComponent and Light* extend PrimitiveComponent. CameraComponent extends SceneComponent (has transform but no render proxy). CName, CScript, SkyAtmosphereComponent, HeightFogComponent are plain data structs (no base class). Components are non-copyable (addresses must be stable in EnTT sparse sets).

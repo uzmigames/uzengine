@@ -1,0 +1,20 @@
+# 64-bit Packed Entity Handle (Lightuserdata)
+
+**Category**: code
+**Tags**: lua, ecs, entity-handle, performance, gc-pressure
+
+## Description
+
+Entity references passed to Lua use 64-bit packed lightuserdata: high 32 bits = entity ID, low 32 bits = generation counter. This avoids heap allocation (no full userdata/GC pressure), enables stale-entity detection (generation mismatch = entity was destroyed and ID recycled), and is compatible with EnTT's entity handle format.
+
+## Example
+
+// Pack entity to Lua lightuserdata\nuint64_t packed = (uint64_t)entity.id << 32 | entity.generation;\nlua_pushlightuserdata(L, reinterpret_cast<void*>(packed));\n\n// Unpack from Lua\nuint64_t packed = reinterpret_cast<uint64_t>(lua_touserdata(L, 1));\nuint32_t id = packed >> 32;\nuint32_t gen = packed & 0xFFFFFFFF;\n// Validate: registry.valid(entity) && entity.generation == gen
+
+## When to Use
+
+When passing entity references between C++ and Lua. When implementing any uz.scene.* or uz.entity.* API function that takes/returns entities.
+
+## When NOT to Use
+
+For complex objects that need metatables/methods (use full userdata instead, e.g., Vec3, Quat). For non-entity opaque handles where generation tracking isn't needed.

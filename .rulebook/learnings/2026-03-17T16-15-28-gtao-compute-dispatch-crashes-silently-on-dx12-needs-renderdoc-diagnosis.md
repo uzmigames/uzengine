@@ -1,0 +1,6 @@
+# GTAO compute dispatch crashes silently on DX12 — needs RenderDoc diagnosis
+**Source**: manual
+**Date**: 2026-03-17
+**Related Task**: phase0-0.9.0-ue5-rendering-parity
+**Tags**: gtao, crash, dx12, compute, silent-crash, renderdoc
+GTAOPass compiles and creates pipelines successfully, but the first Execute() call causes a silent process crash with no D3D12 validation error and no DRED breadcrumb. The crash occurs after "GTAOPass: denoise pipeline created" log with nothing else printed. Likely causes: root constant buffer overflow (GTAORootConstants struct may exceed 16 DWORD limit), UAV binding mismatch (depth/normal SRV may conflict with AO UAV), or descriptor heap corruption. Must use RenderDoc capture + PIX GPU capture to diagnose — cannot be solved by code analysis alone.

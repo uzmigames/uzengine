@@ -1,0 +1,5 @@
+# SkyLight component mirrors UE5 SkyLightComponent with 50+ parameters
+**Source**: manual
+**Date**: 2026-03-15
+**Tags**: rendering, skylight, ibl, ue5, components, environment
+The SkyLight component (implemented 2026-03-08) follows UE5's SkyLightComponent design with 50+ parameters covering: IBL ambient lighting intensity, cubemap capture settings, lower hemisphere handling, DFAO occlusion, and cloud AO. This is the primary IBL ambient lighting source for the scene. Combined with the SceneEnvironment gatherer (also UE5 SceneProxy pattern), it provides per-frame environment snapshots where singletons (sky, directional light) use first-found semantics and arrays (point/spot lights) accumulate up to caps.

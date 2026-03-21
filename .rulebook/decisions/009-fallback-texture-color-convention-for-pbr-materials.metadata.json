@@ -1,0 +1,9 @@
+{
+  "id": 9,
+  "slug": "fallback-texture-color-convention-for-pbr-materials",
+  "title": "Fallback Texture Color Convention for PBR Materials",
+  "status": "proposed",
+  "date": "2026-03-15",
+  "relatedTasks": [],
+  "supersededBy": null
+}

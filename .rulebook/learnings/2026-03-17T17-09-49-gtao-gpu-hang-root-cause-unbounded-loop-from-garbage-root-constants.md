@@ -1,0 +1,6 @@
+# GTAO GPU hang — root cause: unbounded loop from garbage root constants
+**Source**: manual
+**Date**: 2026-03-17
+**Related Task**: phase0-0.9.0-ue5-rendering-parity
+**Tags**: gtao, gpu-hang, root-constants, infinite-loop, compute, ue5
+UzEngine GTAO dispatch caused GPU hang (not crash). Root cause: the shader loop `for(uint Angle = 0; Angle < NumAngles; Angle++)` read NumAngles from root constants at an incorrect offset, getting garbage values (e.g., 0xCDCDCDCD = 3.4 billion iterations). UE5 clamps NumAngles to [1, 16] via FMath::Clamp. UE5 also uses constant buffers (not root constants) for GTAO params, and passes them via the SHADER_PARAMETER_STRUCT system, not via SetRootConstants. The compute root signature in UzEngine only supports 16 DWORDs of root constants at slot 0 — trying to pack 44 floats into 16 DWORDs caused offset corruption. Fix: either use a proper CBV (needs compute root sig extension) or hardcode loop bounds with `#define` and only pass SRV indices + minimal params via root constants.

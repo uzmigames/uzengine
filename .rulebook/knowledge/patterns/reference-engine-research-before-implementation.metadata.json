@@ -1,0 +1,20 @@
+{
+  "id": "reference-engine-research-before-implementation",
+  "type": "pattern",
+  "title": "Reference Engine Research Before Implementation",
+  "category": "architecture",
+  "description": "Before implementing any new system, launch architect agents in parallel to analyze how UE5 (W:\\\\UE_5.6_Source), Godot (E:\\\\godot), and Unity solve the same problem. Synthesize findings with engine-architect into UzEngine-specific directives. This prevents reinventing wheels and produces production-quality patterns. Architect agents run on haiku (cheap). Never rely solely on model knowledge — real engine source is ground truth.",
+  "example": "# Example: Implementing clustered shading\\n1. Launch unreal-architect: \\\"How does UE5 implement clustered/tiled shading?\\\"\\n2. Launch godot-architect: \\\"How does Godot 4 handle light culling?\\\"\\n3. Launch unity-architect: \\\"How does Unity URP/HDRP handle light clustering?\\\"\\n4. Launch engine-architect: Synthesize → UzEngine directive\\n5. Implement based on synthesized directive",
+  "whenToUse": "Before any new feature/system implementation. Before debugging a hard problem (check reference engines for edge cases). When making architectural decisions that affect multiple subsystems.",
+  "whenNotToUse": "For trivial bug fixes where the solution is obvious. For UzEngine-specific systems with no engine equivalent.",
+  "createdAt": "2026-03-15T15:21:46.435Z",
+  "tags": [
+    "architecture",
+    "research",
+    "ue5",
+    "godot",
+    "unity",
+    "methodology"
+  ],
+  "source": "manual"
+}

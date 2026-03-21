@@ -1,0 +1,15 @@
+{
+  "id": "2026-03-17T11-46-24-dx11-setdescriptortable-must-differentiate-srv-vs-uav-table-types",
+  "title": "DX11 SetDescriptorTable must differentiate SRV vs UAV table types",
+  "content": "DX11's SetDescriptorTable was always routing to SRV binding (PSSetShaderResources/CSSetShaderResources), even for UAV_Table root parameters. Fix: check rootLayout.params[index].type — if UAV_Table, use CSSetUnorderedAccessViews instead. Added FindTextureUAVByPoolIndex and FindBufferUAVByPoolIndex to DX11Device to resolve pool indices to ID3D11UnorderedAccessView*. This was critical for IBL compute bake (irradiance/prefilter dispatches wrote to UAVs that were never bound).",
+  "source": "manual",
+  "relatedTask": "phase0-0.8.0-uniform-buffer-system",
+  "tags": [
+    "dx11",
+    "uav",
+    "descriptor-table",
+    "compute",
+    "ibl"
+  ],
+  "createdAt": "2026-03-17T11:46:24.951Z"
+}

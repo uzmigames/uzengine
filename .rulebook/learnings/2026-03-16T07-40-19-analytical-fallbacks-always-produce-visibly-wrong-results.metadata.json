@@ -1,0 +1,13 @@
+{
+  "id": "2026-03-16T07-40-19-analytical-fallbacks-always-produce-visibly-wrong-results",
+  "title": "Analytical fallbacks always produce visibly wrong results",
+  "content": "Every time an \"analytical approximation\" or \"estimated fallback\" was used instead of reading UE5 source code, the visual result was obviously wrong:\n\n1. SH irradiance analytical fallback with ratios (0.7, 0.8, 1.0) — produced overly blue ground instead of neutral grey\n2. skyLightIntensity = 1.5 \"to compensate for analytical SH\" — overwashed the scene\n3. min clamp on aerial perspective skyInscatter = max(val, (0.15, 0.2, 0.35)) — forced blue on everything\n4. Fog with baseHeight=0 and invented density/falloff — covered entire scene in blue wash\n5. Shadow texel snapping applied to projection matrix instead of final VP — displaced entire shadow map out of NDC range\n\nRoot cause: Claude's model knowledge about rendering math is approximate. UE5 source code is exact. The delta between \"approximately correct\" and \"exactly correct\" is VERY visible in rendering.\n\nFix: ALWAYS read UE5 source first. NEVER invent values. If a GPU feature fails (cubemap SH readback returns zeros), fix the GPU feature instead of inventing a CPU fallback.",
+  "source": "manual",
+  "tags": [
+    "ue5-parity",
+    "rendering",
+    "critical-learning",
+    "anti-pattern"
+  ],
+  "createdAt": "2026-03-16T07:40:19.086Z"
+}

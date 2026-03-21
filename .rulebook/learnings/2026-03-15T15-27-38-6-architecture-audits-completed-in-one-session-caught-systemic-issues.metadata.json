@@ -1,0 +1,14 @@
+{
+  "id": "2026-03-15T15-27-38-6-architecture-audits-completed-in-one-session-caught-systemic-issues",
+  "title": "6 architecture audits completed in one session — caught systemic issues",
+  "content": "On 2026-03-13, ran 6 audit tasks in sequence: audit-fix-architecture, audit-fix-code-quality, audit-fix-documentation, audit-fix-security, audit-fix-shader-correctness, audit-fix-test-coverage. These caught systemic issues across the codebase including: DX12 type leakage above RHI boundary, missing log categories, inconsistent error handling, documentation gaps, shader compilation warnings, and test coverage below 95% threshold. Running periodic audits is high-value for maintaining quality in a fast-moving AI-developed codebase.",
+  "source": "manual",
+  "tags": [
+    "audits",
+    "code-quality",
+    "architecture",
+    "methodology",
+    "quality"
+  ],
+  "createdAt": "2026-03-15T15:27:38.263Z"
+}

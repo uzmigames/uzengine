@@ -1,0 +1,14 @@
+{
+  "id": "2026-03-15T15-20-24-material-system-has-10-textures-per-material-root-sig-slots-are-the-bottleneck",
+  "title": "Material system has 10+ textures per material — root sig slots are the bottleneck",
+  "content": "The material system supports: albedo, normal, metallic, roughness, AO, displacement textures + emission + per-material params (envMultiplier, normalStrength, specularMultiplier, selfShadowStrength, cavityStrength). Material CB is 20 DWORDs (b1 slot). With 10 texture SRV slots (t0-t9), each as a descriptor table, the graphics root signature is FULL. Adding IBL textures (env cubemap, irradiance, prefiltered, BRDF LUT) or shadow atlas requires bindless migration. This is the P1 blocker documented in task 3.41.0-architecture-risk-fixes.",
+  "source": "manual",
+  "tags": [
+    "rendering",
+    "materials",
+    "root-signature",
+    "bindless",
+    "blocker"
+  ],
+  "createdAt": "2026-03-15T15:20:24.311Z"
+}

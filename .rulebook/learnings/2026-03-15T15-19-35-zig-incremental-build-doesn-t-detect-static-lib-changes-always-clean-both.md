@@ -1,0 +1,5 @@
+# Zig incremental build doesn't detect static lib changes — always clean both
+**Source**: manual
+**Date**: 2026-03-15
+**Tags**: build, zig, static-library, stale-code, gotcha
+When modifying runtime engine code and testing via demos, Zig's incremental build system may not detect that runtime.lib has changed. The demo links against the stale .lib file, resulting in 'I changed the code but nothing happened' confusion. Solution: ALWAYS run 'zig build --clean' on BOTH the runtime AND the demo directories before rebuilding. Build order is strict: runtime first, then demo. This is documented in CLAUDE.md as a critical rule. Future migration to Lua scripting for demos will eliminate this problem.

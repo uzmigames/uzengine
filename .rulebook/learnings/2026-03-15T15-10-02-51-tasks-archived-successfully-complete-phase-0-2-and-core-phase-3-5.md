@@ -1,0 +1,5 @@
+# 51 tasks archived successfully — complete Phase 0-2 and core Phase 3-5
+**Source**: manual
+**Date**: 2026-03-15
+**Tags**: project-status, milestones, progress, overview
+As of 2026-03-15, the project has completed 51 Rulebook tasks covering: multi-backend RHI (DX11, Vulkan, Metal stub + full Metal), application lifecycle, job system, resource loaders, render graph, forward PBR, deferred pipeline, shadow maps, multi-light rendering, world/entity system, component model, property system, behaviors/tick, 7 platform tasks (input, DPI, clipboard, etc.), math library, first triangle, asset pipeline, embedded shaders, debug view modes, Lua runtime demos, application abstraction, 6 architecture audits (code quality, docs, security, shaders, test coverage, architecture). 45 tasks remain active, primarily Phase 3a rendering features.

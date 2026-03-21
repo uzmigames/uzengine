@@ -3,6 +3,10 @@
 !/.rulebook/specs/
 !/.rulebook/tasks/
 !/.rulebook/tasks/**/*.md
+!/.rulebook/decisions/
+!/.rulebook/knowledge/
+!/.rulebook/learnings/
+!/.rulebook/rules/
 !/.rulebook/rulebook.json
 
 # Patterns added by @hivellm/rulebook

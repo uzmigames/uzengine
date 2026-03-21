@@ -1,0 +1,19 @@
+{
+  "id": "complete-implementation-research-first-implement-fully",
+  "type": "pattern",
+  "title": "Complete Implementation — Research First, Implement Fully",
+  "category": "code",
+  "description": "Before writing any code, research the correct approach (reference engines, codebase patterns, specs). Then implement the full solution: every function body, every edge case, every error path. No shortcuts. If the implementation is 500 lines, write 500 lines. If it handles 10 cases, handle all 10.",
+  "example": "// ✅ CORRECT — full implementation, no matter how complex\nfloat CalculateFresnelSchlick(float cosTheta, float f0) {\n    float oneMinusCos = 1.0f - cosTheta;\n    float oneMinusCos2 = oneMinusCos * oneMinusCos;\n    float oneMinusCos5 = oneMinusCos2 * oneMinusCos2 * oneMinusCos;\n    return f0 + (1.0f - f0) * oneMinusCos5;\n}\n\n// ✅ CORRECT — if task is too large, communicate instead of simplifying\n// \"This system requires ~3000 lines across 5 files. I propose implementing\n//  in 3 phases: Phase 1 (core data structures), Phase 2 (algorithms),\n//  Phase 3 (integration). Shall I proceed with Phase 1?\"",
+  "whenToUse": "Always. Every implementation task must follow this pattern.",
+  "whenNotToUse": "Never skip this. There are no exceptions to the quality-over-speed rule.",
+  "createdAt": "2026-03-15T21:00:08.364Z",
+  "tags": [
+    "quality",
+    "implementation",
+    "complete",
+    "research-first",
+    "critical"
+  ],
+  "source": "manual"
+}

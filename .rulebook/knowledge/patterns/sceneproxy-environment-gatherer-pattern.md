@@ -1,0 +1,20 @@
+# SceneProxy / Environment Gatherer Pattern
+
+**Category**: architecture
+**Tags**: renderer, ecs, decoupling, scene-proxy, ue5
+
+## Description
+
+Renderer never accesses ECS registry directly. A SceneEnvironment gatherer runs per-frame to collect snapshots of all environment components (sky, lights, fog, post-process) into a flat EnvironmentState struct. Singletons use first-found semantics, arrays accumulate up to caps. Renderer reads only the gathered state. This pattern comes from UE5's SceneProxy system and decouples render thread from game thread.
+
+## Example
+
+// CORRECT: Renderer reads gathered state\nvoid SceneRenderer::Render() {\n    auto env = SceneEnvironment::Gather(registry);\n    lightingPass.Execute(env.directionalLight, env.pointLights);\n}\n\n// WRONG: Renderer queries ECS directly\nvoid SceneRenderer::Render() {\n    auto view = registry.view<CLight>(); // FORBIDDEN\n}
+
+## When to Use
+
+Any time the renderer needs data from the scene/ECS. When adding new environment components (fog, clouds, post-process volumes). When implementing new render passes that need scene data.
+
+## When NOT to Use
+
+For purely renderer-internal state (PSO cache, descriptor heaps). For editor-only data that doesn't affect rendering.

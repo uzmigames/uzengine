@@ -1,0 +1,5 @@
+# IBL compute pipeline uses separate root signature and per-mip UAV descriptors
+**Source**: manual
+**Date**: 2026-03-15
+**Tags**: rendering, ibl, compute, root-signature, descriptors, pbr
+The IBL baking pipeline (BRDF LUT, irradiance, prefiltered specular) uses a separate compute root signature (5 params, not shared with graphics). Per-mip UAV descriptors are allocated via a bump allocator starting at heap offset 4096+. This avoids polluting the graphics descriptor heap. Key specs: BRDF LUT = 256x256 RG16F, irradiance = 32x32, prefiltered specular = 128x128 with 5 mips. All baked via 3 compute shaders in IblBaker class. CPU fallback exists via sky_cubemap.cpp but GPU path is preferred for quality and speed.

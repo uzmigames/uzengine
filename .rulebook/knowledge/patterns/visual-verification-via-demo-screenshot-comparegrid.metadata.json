@@ -1,0 +1,19 @@
+{
+  "id": "visual-verification-via-demo-screenshot-comparegrid",
+  "type": "pattern",
+  "title": "Visual Verification via Demo + Screenshot + CompareGrid",
+  "category": "testing",
+  "description": "Every rendering feature must have a demo under demos/ that can be run with --screenshot to capture output. The screenshot is viewed via Read tool to verify visual correctness. For multi-backend/multi-config testing, CompareGrid composes all screenshots into a single labeled grid image (384x384 cells). Diff mode produces 3-panel comparison (Image A | Image B | Diff Heatmap) with PSNR stats. Screenshots always go to e:/UzEngine/.screenshots/ and are deleted after verification.",
+  "example": "# Capture\\ndemo.exe --backend dx12 --screenshot e:/UzEngine/.screenshots/dx12.png\\n# Compare grid\\ndemo.exe --compose-grid e:/UzEngine/.screenshots/compare.png --cell-size 384 \\\\\\n  e:/UzEngine/.screenshots/dx12.png \\\"DX12\\\" \\\"Frame 5\\\" \\\\\\n  e:/UzEngine/.screenshots/dx11.png \\\"DX11\\\" \\\"Frame 5\\\"\\n# View, verify, delete\\nrm e:/UzEngine/.screenshots/*.png",
+  "whenToUse": "After implementing any shader, render pass, post-process effect, or GPU pipeline change. When comparing rendering across DX12/DX11/Vulkan/Metal backends. When regression testing visual quality.",
+  "whenNotToUse": "For non-visual systems (math utilities, data structures, ECS logic) where unit tests suffice.",
+  "createdAt": "2026-03-15T15:16:43.607Z",
+  "tags": [
+    "testing",
+    "rendering",
+    "screenshot",
+    "visual-validation",
+    "compare-grid"
+  ],
+  "source": "manual"
+}

@@ -1,0 +1,21 @@
+{
+  "id": "vulkan-compute-dispatch-without-descriptor-flush",
+  "type": "anti-pattern",
+  "title": "Vulkan Compute Dispatch Without Descriptor Flush",
+  "category": "rhi",
+  "description": "Vulkan compute dispatches (vkCmdDispatch) require descriptors to be bound via vkCmdBindDescriptorSets with VK_PIPELINE_BIND_POINT_COMPUTE before dispatch. If the descriptor flush only happens in the draw path (DrawIndexed/Draw) but not in Dispatch(), compute shaders read from stale/empty descriptor sets. Additionally, FlushDescriptorSet must use the correct bind point — using VK_PIPELINE_BIND_POINT_GRAPHICS for a compute dispatch silently fails.",
+  "example": "// WRONG: Dispatch without flushing descriptors\nvoid VulkanCommandList::Dispatch(uint32_t x, uint32_t y, uint32_t z) {\n    vkCmdDispatch(m_cmd, x, y, z); // No descriptors bound!\n}\n\n// CORRECT: Flush descriptors with correct bind point before dispatch\nvoid VulkanCommandList::Dispatch(uint32_t x, uint32_t y, uint32_t z) {\n    FlushDescriptorSet(); // Must use VK_PIPELINE_BIND_POINT_COMPUTE\n    vkCmdDispatch(m_cmd, x, y, z);\n}\n\nvoid VulkanCommandList::FlushDescriptorSet() {\n    VkPipelineBindPoint bindPoint = m_computePipelineBound\n        ? VK_PIPELINE_BIND_POINT_COMPUTE\n        : VK_PIPELINE_BIND_POINT_GRAPHICS;\n    vkCmdBindDescriptorSets(m_cmd, bindPoint, ...);\n}",
+  "whenToUse": "Any Vulkan backend that shares command list implementation between graphics and compute pipelines. Track m_computePipelineBound in SetPipeline() and use it in FlushDescriptorSet().",
+  "whenNotToUse": "Backends that use separate command lists for compute — the bind point is always COMPUTE.",
+  "createdAt": "2026-03-17T11:45:44.605Z",
+  "tags": [
+    "vulkan",
+    "compute",
+    "dispatch",
+    "descriptor-set",
+    "bind-point",
+    "flush",
+    "rhi"
+  ],
+  "source": "manual"
+}

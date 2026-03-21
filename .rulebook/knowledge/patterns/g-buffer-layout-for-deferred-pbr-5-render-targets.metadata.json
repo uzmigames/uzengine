@@ -1,0 +1,19 @@
+{
+  "id": "g-buffer-layout-for-deferred-pbr-5-render-targets",
+  "type": "pattern",
+  "title": "G-Buffer Layout for Deferred PBR (5 Render Targets)",
+  "category": "architecture",
+  "description": "Standard G-Buffer layout: RT0 (RGBA8) = BaseColor.rgb + Metallic.a, RT1 (RGB10A2) = WorldNormal (octahedral encoding) + Roughness, RT2 (RGBA8) = Emissive.rgb + AO.a, Depth (D32_FLOAT) = Scene depth, Velocity (RG16_FLOAT) = Screen-space velocity for TAA/motion blur. Lighting pass reconstructs world position from depth via fullscreen quad. This layout follows UE5's G-Buffer conventions.",
+  "example": "// G-Buffer write (geometry pass pixel shader)\\noutput.GBuffer0 = float4(baseColor, metallic);\\noutput.GBuffer1 = float4(EncodeOctahedral(worldNormal), roughness, 0);\\noutput.GBuffer2 = float4(emissive, ao);\\n\\n// G-Buffer read (lighting pass)\\nfloat3 baseColor = GBuffer0.Sample(uv).rgb;\\nfloat metallic = GBuffer0.Sample(uv).a;\\nfloat3 normal = DecodeOctahedral(GBuffer1.Sample(uv).rg);",
+  "whenToUse": "When implementing new deferred rendering passes. When adding new material properties (must fit existing RT slots or migrate to bindless). When debugging G-Buffer output via debug view modes.",
+  "whenNotToUse": "For forward-rendered objects (translucents, special materials). For compute-only passes.",
+  "createdAt": "2026-03-15T15:32:14.650Z",
+  "tags": [
+    "rendering",
+    "deferred",
+    "gbuffer",
+    "pbr",
+    "layout"
+  ],
+  "source": "manual"
+}
