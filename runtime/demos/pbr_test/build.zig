@@ -65,6 +65,9 @@ pub fn build(b: *std.Build) void {
             .{ .source = "assets/GroundSand005_COL_2K.jpg", .dest = "assets/GroundSand005_COL_2K.jpg" },
             .{ .source = "assets/GroundSand005_NRM_2K.jpg", .dest = "assets/GroundSand005_NRM_2K.jpg" },
             .{ .source = "assets/GroundSand005_AO_2K.jpg",  .dest = "assets/GroundSand005_AO_2K.jpg"  },
+            // Cloud noise textures (precomputed 3D Perlin-Worley volumes)
+            .{ .source = "assets/cloud_shape.bin",        .dest = "assets/cloud_shape.bin"        },
+            .{ .source = "assets/cloud_shape_detail.bin", .dest = "assets/cloud_shape_detail.bin" },
         },
     });
     demo.install();

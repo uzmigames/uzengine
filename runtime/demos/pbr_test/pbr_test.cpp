@@ -248,7 +248,7 @@ void PBRTest::OnStart() {
     };
 
     // ── Create spheres ──
-#if 1
+#if 0 // DISABLED: testing cloud pipeline without meshes
     // ── Create 9 spheres in two rows (PoC1 layout) ─────────────────────
     // Back row (Y=-200): 5 smaller spheres, spaced 250cm apart
     // Front row (Y=200): 4 larger spheres, spaced 300cm apart
@@ -277,7 +277,7 @@ void PBRTest::OnStart() {
 #endif
 
     // ── Ground plane ─────────────────────────────────────────────────────
-#if 1 // ground plane
+#if 0 // DISABLED: testing cloud pipeline without meshes
     ground_ = world.CreateEntity();
     {
         auto& scene = world.AddComponent<SceneComponent>(ground_);

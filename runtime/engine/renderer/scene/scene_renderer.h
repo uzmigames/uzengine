@@ -273,6 +273,15 @@ public:
     /// Returns the current BRDF debug mode.
     [[nodiscard]] uint32_t GetBrdfDebugMode() const { return m_brdfDebugMode; }
 
+    /// Enables or disables GPU timestamp profiling.
+    ///
+    /// When enabled, per-pass GPU timestamps are recorded via the RHI profiler
+    /// and logged after each frame. Activated by the `--gpu-profile` CLI flag.
+    void SetGpuProfileEnabled(bool enabled) { m_gpuProfileEnabled = enabled; }
+
+    /// Returns whether GPU timestamp profiling is enabled.
+    [[nodiscard]] bool IsGpuProfileEnabled() const { return m_gpuProfileEnabled; }
+
     /// Enables or disables the depth prepass.
     ///
     /// When enabled, a depth-only pass executes before the GBuffer pass,
@@ -791,6 +800,8 @@ private:
     void DestroySsrResources();
 
     // ── Depth Prepass + Hi-Z Pyramid ────────────────────────────────────────
+
+    bool m_gpuProfileEnabled = false;   ///< When true, GPU timestamp profiling is active and results are logged.
 
     bool m_depthPrepassEnabled = true;  ///< When true, depth prepass runs before GBuffer.
 

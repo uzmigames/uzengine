@@ -1126,6 +1126,48 @@ void DX12Device::ComputeWaitForGraphics(uint64_t value) {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// GPU Profiler (IRHIDevice overrides)
+// ─────────────────────────────────────────────────────────────────────────────
+
+void DX12Device::GpuProfilerBeginFrame(IRHICommandList* cmdList) {
+    auto* dx12CmdList = static_cast<DX12CommandList*>(cmdList);
+    m_gpuProfiler.BeginFrame(dx12CmdList ? dx12CmdList->GetNative() : nullptr);
+}
+
+void DX12Device::GpuProfilerEndFrame(IRHICommandList* cmdList) {
+    auto* dx12CmdList = static_cast<DX12CommandList*>(cmdList);
+    if (dx12CmdList) {
+        m_gpuProfiler.EndFrame(dx12CmdList->GetNative());
+    }
+}
+
+void DX12Device::GpuProfilerResolve() {
+    m_gpuProfiler.ResolveFrame();
+}
+
+void DX12Device::GpuProfilerBeginTimestamp(IRHICommandList* cmdList, const char* name) {
+    auto* dx12CmdList = static_cast<DX12CommandList*>(cmdList);
+    if (dx12CmdList) {
+        m_gpuProfiler.BeginTimestamp(dx12CmdList->GetNative(), name);
+    }
+}
+
+void DX12Device::GpuProfilerEndTimestamp(IRHICommandList* cmdList, const char* name) {
+    auto* dx12CmdList = static_cast<DX12CommandList*>(cmdList);
+    if (dx12CmdList) {
+        m_gpuProfiler.EndTimestamp(dx12CmdList->GetNative(), name);
+    }
+}
+
+const std::vector<GpuTimingResult>& DX12Device::GpuProfilerGetResults() const {
+    return m_gpuProfiler.GetResults();
+}
+
+float DX12Device::GpuProfilerGetFrameTimeMs() const {
+    return m_gpuProfiler.GetFrameTimeMs();
+}
+
 // Factory functions moved to rhi_factory.cpp (unified dispatch for all backends).
 
 } // namespace uz

@@ -80,7 +80,7 @@ Texture2D<float>  depthBuffer     : register(t2);
 RWTexture2D<float4> resolvedSSR   : register(u0);
 
 SamplerState pointSampler  : register(s0);
-SamplerState linearSampler : register(s1);
+SamplerState linearSampler : register(s2);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Texture Sampling Helpers

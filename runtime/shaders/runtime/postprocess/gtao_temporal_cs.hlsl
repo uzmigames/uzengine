@@ -71,7 +71,7 @@ Texture2D<float>  depthTex      : register(t3); ///< Depth buffer (R32_FLOAT).
 RWTexture2D<float> outputAO     : register(u0); ///< Output accumulated AO.
 
 SamplerState pointSampler  : register(s0); ///< Point sampler for AO/depth loads.
-SamplerState linearSampler : register(s1); ///< Bilinear sampler for history reads.
+SamplerState linearSampler : register(s2); ///< Bilinear sampler for history reads.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper: Texture Sampling (bindless / SM5 paths)

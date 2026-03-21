@@ -473,7 +473,15 @@ void RgBuilder::Execute(IRHICommandList* cmdList)
             }
         }
 
+        if (m_gpuProfileEnabled) {
+            m_device->GpuProfilerBeginTimestamp(cmdList, pass.name);
+        }
+
         pass.executeFn(cmdList, passResources);
+
+        if (m_gpuProfileEnabled) {
+            m_device->GpuProfilerEndTimestamp(cmdList, pass.name);
+        }
     }
 
     ReleasePhysicalResources();

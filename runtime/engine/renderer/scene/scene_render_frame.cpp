@@ -40,8 +40,14 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     // ── Begin command list ──────────────────────────────────────────────
     cmdList->Begin();
 
+    // ── GPU Profiler: begin frame ───────────────────────────────────────
+    if (m_gpuProfileEnabled) {
+        m_device->GpuProfilerBeginFrame(cmdList);
+    }
+
     // ── Build render graph ─────────────────────────────────────────────
     rg::RgBuilder rgBuilder(m_device, m_rgPool.get());
+    rgBuilder.SetGpuProfileEnabled(m_gpuProfileEnabled);
 
     // ── Setup all per-frame state (camera, CBs, draw list, instancing) ──
     FrameContext ctx{};
@@ -54,18 +60,28 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     SetupFrameData(ctx, rgBuilder);
 
     // ── Volumetric Cloud Compute (dedicated command list) ──────────────
-    // Noise textures are now loaded from disk (precomputed .bin files),
-    // no GPU TDR risk. Weather/raymarch/temporal run as lightweight 2D
-    // compute dispatches on a dedicated command list to isolate barrier
-    // state from the render graph.
-    // ── Volumetric Cloud Compute (dedicated command list) ──────────────
+    // Noise textures are loaded from disk (precomputed .bin files).
+    // Weather/raymarch/temporal run as compute dispatches on a dedicated
+    // command list to isolate barrier state from the render graph.
+    // NOTE: WaitIdle() is REQUIRED between cloud cmd list and main cmd list
+    // to prevent barrier state race conditions that cause DEVICE REMOVED.
     if (m_pendingCloudDispatch && m_cloudPass && m_cloudPass->IsInitialized()
         && m_pendingCloudInput && m_cloudCmdList) {
         m_cloudCmdList->Begin();
+
+        if (m_gpuProfileEnabled) {
+            m_device->GpuProfilerBeginTimestamp(cmdList, "CloudCompute");
+        }
+
         m_cloudPass->Execute(m_cloudCmdList, *m_cbRing, *m_pendingCloudInput);
         m_cloudCmdList->End();
         m_cloudCmdList->Execute();
         m_device->WaitIdle();
+
+        if (m_gpuProfileEnabled) {
+            m_device->GpuProfilerEndTimestamp(cmdList, "CloudCompute");
+        }
+
         m_cloudOutputSrv = m_cloudPass->GetCloudOutputSrv();
         m_pendingCloudDispatch = false;
     }
@@ -78,6 +94,8 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     RegisterOverlayPasses(rgBuilder, ctx);
 
     // ── Compile + execute render graph ──────────────────────────────────
+    // Per-pass GPU timestamps are handled inside RgBuilder::Execute()
+    // when m_gpuProfileEnabled is set (wraps each pass callback).
     rgBuilder.Compile();
     rgBuilder.Execute(cmdList);
 
@@ -93,6 +111,10 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     // Must run after the render graph has executed (sky cubemap capture is
     // a render graph pass, but the IBL bake runs as a standalone compute
     // dispatch afterward).
+    if (m_gpuProfileEnabled) {
+        m_device->GpuProfilerBeginTimestamp(cmdList, "AtmosphereBake");
+    }
+
     {
         AtmosphereFrameContext atmoCtx{};
         atmoCtx.device              = m_device;
@@ -127,6 +149,10 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         PostFrameAtmosphereBake(cmdList, atmoCtx);
     }
 
+    if (m_gpuProfileEnabled) {
+        m_device->GpuProfilerEndTimestamp(cmdList, "AtmosphereBake");
+    }
+
     // ── Screenshot capture (after all passes, before End) ───────────────
     // Capture directly from the backbuffer after the render graph executed
     // all passes. The backbuffer is in Present state after the render graph,
@@ -140,9 +166,31 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         m_screenshotPending = false;
     }
 
+    // ── GPU Profiler: end frame (resolve timestamps to readback buffer) ──
+    if (m_gpuProfileEnabled) {
+        m_device->GpuProfilerEndFrame(cmdList);
+    }
+
     // ── End command list ────────────────────────────────────────────────
     cmdList->End();
     cmdList->Execute();
+
+    // ── GPU Profiler: resolve results from previous frame (N-2) ─────────
+    // After GPU execution, resolve the triple-buffered readback. Results
+    // lag by 2 frames due to the profiler's triple-buffered design. The
+    // first 2 frames will produce empty/zero results — this is expected.
+    if (m_gpuProfileEnabled) {
+        m_device->GpuProfilerResolve();
+
+        const auto& results = m_device->GpuProfilerGetResults();
+        if (!results.empty()) {
+            UZ_LOG(Renderer, Info, "── GPU Profile (frame {}) ──", frameIndex);
+            for (const auto& r : results) {
+                UZ_LOG(Renderer, Info, "  {:30s}  {:7.3f} ms", r.name ? r.name : "?", r.ms);
+            }
+            UZ_LOG(Renderer, Info, "  {:30s}  {:7.3f} ms", "TOTAL", m_device->GpuProfilerGetFrameTimeMs());
+        }
+    }
 
     // ── Save screenshot immediately after GPU finishes ──────────────────
     if (doScreenshot) {

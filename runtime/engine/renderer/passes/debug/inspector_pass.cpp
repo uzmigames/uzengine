@@ -754,6 +754,16 @@ void PassInspector::ExecuteDump(IRHIDevice* device, IRHICommandList* cmdList,
         fnStream << safeName << ".png";
         const std::string filename = fnStream.str();
 
+        // DEBUG: Log handle info for cloud targets
+        if (target.name.find("cloud") != std::string::npos) {
+            UZ_LOG(PassInspector, Info,
+                   "PassInspector: dumping '{}' — texHandle=(idx={}, gen={}), srvIndex={}, "
+                   "size={}x{}, state={}",
+                   target.name, target.texture.index, target.texture.generation,
+                   target.srvIndex, target.width, target.height,
+                   static_cast<int>(target.lastState));
+        }
+
         // Readback the texture to RGBA8 using the shared buffer.
         auto pixels = ReadbackTextureToRGBA8(device, cmdList, target, sharedReadback, kMaxReadbackSize);
         if (pixels.empty()) {

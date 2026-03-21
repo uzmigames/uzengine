@@ -283,6 +283,15 @@ public:
     /// Call this when `Present()` returns `DXGI_ERROR_DEVICE_REMOVED`.
     void LogDeviceRemoved();
 
+    // ── GPU Profiler (IRHIDevice overrides) ─────────────────────────────
+    void GpuProfilerBeginFrame(IRHICommandList* cmdList) override;
+    void GpuProfilerEndFrame(IRHICommandList* cmdList) override;
+    void GpuProfilerResolve() override;
+    void GpuProfilerBeginTimestamp(IRHICommandList* cmdList, const char* name) override;
+    void GpuProfilerEndTimestamp(IRHICommandList* cmdList, const char* name) override;
+    const std::vector<GpuTimingResult>& GpuProfilerGetResults() const override;
+    float GpuProfilerGetFrameTimeMs() const override;
+
     /// Returns the GPU timestamp profiler for per-pass timing.
     ///
     /// # Returns

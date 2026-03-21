@@ -951,15 +951,24 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                     // Cloud composite pass — fullscreen triangle that alpha-blends
                     // the half-res cloud output over the HDR scene color using
                     // premultiplied-alpha: final.rgb = cloud.rgb + scene.rgb * transmittance
-                    // Composite disabled — debugging cloud output via pass dump
-                    if (false && m_cloudOutputSrv != UINT32_MAX)
+                    if (m_cloudOutputSrv != UINT32_MAX)
                     rgBuilder.AddPass("CloudComposite", [this, &ctx](rg::RgPassBuilder& pb) {
                         pb.Write(ctx.hdrRes, RHIResourceState::RenderTarget);
 
                         pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& res) {
                             UZ_PROFILE_SCOPE("CloudPass::Composite");
 
-                            if (m_cloudOutputSrv == UINT32_MAX) return;
+                            if (m_cloudOutputSrv == UINT32_MAX) {
+                                UZ_LOG(Renderer, Warning, "CloudComposite: skipped — m_cloudOutputSrv is UINT32_MAX");
+                                return;
+                            }
+
+                            static bool loggedOnce = false;
+                            if (!loggedOnce) {
+                                UZ_LOG(Renderer, Info, "CloudComposite: executing — cloudSRV={}, depthSRV={}",
+                                       m_cloudOutputSrv, m_gbuffer.depthSRV);
+                                loggedOnce = true;
+                            }
 
                             auto compositePSO = ctx.pipelines->GetCloudComposite();
                             if (!compositePSO.IsValid()) return;
@@ -1113,10 +1122,17 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                                             VisDisplayMode::HDR, 64, 64);
         }
 
-        // Cloud output (half-res RGBA16F)
+        // Cloud output (half-res RGBA16F) — register both ping-pong buffers for debugging
         if (m_cloudPass && m_cloudPass->IsInitialized() && m_cloudOutputSrv != UINT32_MAX) {
             m_passInspector.RegisterTarget("cloud.output", m_cloudPass->GetCloudOutputTexture(),
                                             m_cloudOutputSrv, VisDisplayMode::HDR,
+                                            rw / 2, rh / 2);
+            // DEBUG: also register both raw ping-pong textures
+            m_passInspector.RegisterTarget("cloud.raw0", m_cloudPass->GetDebugRaymarchOutput(0),
+                                            m_cloudPass->GetDebugRaymarchOutputSrv(0), VisDisplayMode::HDR,
+                                            rw / 2, rh / 2);
+            m_passInspector.RegisterTarget("cloud.raw1", m_cloudPass->GetDebugRaymarchOutput(1),
+                                            m_cloudPass->GetDebugRaymarchOutputSrv(1), VisDisplayMode::HDR,
                                             rw / 2, rh / 2);
         }
 

@@ -92,6 +92,12 @@ struct ApplicationConfig {
     /// Initial debug view mode (overridable via --view-mode CLI arg).
     DebugViewMode debugViewMode = DebugViewMode::Lit;
 
+    // ── GPU Profiling ──────────────────────────────────────────────────────
+
+    /// When true, GPU timestamp profiling is enabled and per-pass timings are
+    /// logged each frame. Activated by the `--gpu-profile` CLI flag.
+    bool gpuProfile = false;
+
     // ── Camera Defaults ───────────────────────────────────────────────────
 
     /// FPS camera movement speed in cm/second.

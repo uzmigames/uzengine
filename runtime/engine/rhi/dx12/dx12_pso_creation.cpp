@@ -197,8 +197,8 @@ ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device, ShaderMod
         flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
     }
 
-    // Static sampler s0: linear wrap (used by mesh_ps and any textured shader)
-    D3D12_STATIC_SAMPLER_DESC staticSamplers[2] = {};
+    // Static sampler s0: anisotropic wrap (used by mesh_ps and any textured shader)
+    D3D12_STATIC_SAMPLER_DESC staticSamplers[4] = {};
     /// 16x anisotropic filtering — standard quality for material textures.
     staticSamplers[0].Filter = D3D12_FILTER_ANISOTROPIC;
     staticSamplers[0].AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
@@ -229,11 +229,41 @@ ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device, ShaderMod
     staticSamplers[1].RegisterSpace = 0;
     staticSamplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
+    // Static sampler s2: bilinear clamp (post-process, depth sampling, temporal reads)
+    staticSamplers[2].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    staticSamplers[2].AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    staticSamplers[2].AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    staticSamplers[2].AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    staticSamplers[2].MipLODBias = 0.f;
+    staticSamplers[2].MaxAnisotropy = 1;
+    staticSamplers[2].ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+    staticSamplers[2].BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_BLACK;
+    staticSamplers[2].MinLOD = 0.f;
+    staticSamplers[2].MaxLOD = D3D12_FLOAT32_MAX;
+    staticSamplers[2].ShaderRegister = 2;  // s2
+    staticSamplers[2].RegisterSpace = 0;
+    staticSamplers[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+    // Static sampler s3: bilinear wrap (3D noise textures, weather maps)
+    staticSamplers[3].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    staticSamplers[3].AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    staticSamplers[3].AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    staticSamplers[3].AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    staticSamplers[3].MipLODBias = 0.f;
+    staticSamplers[3].MaxAnisotropy = 1;
+    staticSamplers[3].ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+    staticSamplers[3].BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_BLACK;
+    staticSamplers[3].MinLOD = 0.f;
+    staticSamplers[3].MaxLOD = D3D12_FLOAT32_MAX;
+    staticSamplers[3].ShaderRegister = 3;  // s3
+    staticSamplers[3].RegisterSpace = 0;
+    staticSamplers[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
     D3D12_VERSIONED_ROOT_SIGNATURE_DESC versionedDesc = {};
     versionedDesc.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
     versionedDesc.Desc_1_1.NumParameters = numParams;
     versionedDesc.Desc_1_1.pParameters = rootParams;
-    versionedDesc.Desc_1_1.NumStaticSamplers = 2;
+    versionedDesc.Desc_1_1.NumStaticSamplers = 4;
     versionedDesc.Desc_1_1.pStaticSamplers = staticSamplers;
     versionedDesc.Desc_1_1.Flags = flags;
 

@@ -113,7 +113,7 @@ RWTexture2D<float>  accumAOOutput : register(u1);
 #endif
 
 SamplerState pointSampler  : register(s0);
-SamplerState linearSampler : register(s1);
+SamplerState linearSampler : register(s2);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Texture Sampling Helpers

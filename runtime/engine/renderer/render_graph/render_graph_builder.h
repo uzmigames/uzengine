@@ -137,6 +137,19 @@ public:
 
     // ── Parallel recording ────────────────────────────────────────────────────
 
+    /// Enables per-pass GPU timestamp profiling during Execute().
+    ///
+    /// When enabled, each non-culled pass gets a BeginTimestamp/EndTimestamp pair
+    /// recorded via IRHIDevice::GpuProfilerBeginTimestamp/EndTimestamp. The pass
+    /// name is used as the timestamp scope name.
+    ///
+    /// # Arguments
+    /// * `enabled` — `true` to enable per-pass GPU timestamps.
+    void SetGpuProfileEnabled(bool enabled) { m_gpuProfileEnabled = enabled; }
+
+    /// Returns whether per-pass GPU timestamp profiling is enabled.
+    [[nodiscard]] bool IsGpuProfileEnabled() const { return m_gpuProfileEnabled; }
+
     /// Enable parallel recording of independent passes.
     ///
     /// When enabled and an `RgParallelExecutor` is used, passes with no data
@@ -237,6 +250,7 @@ private:
 
     bool m_compiled = false;                ///< True after `Compile()` has been called.
     bool m_executed = false;                ///< True after `Execute()` has been called.
+    bool m_gpuProfileEnabled = false;       ///< When true, per-pass GPU timestamps are recorded.
     bool m_parallelRecordingEnabled = false; ///< Hint for RgParallelExecutor.
 };
 

@@ -36,6 +36,7 @@
 /// `Destroy*()` method before the device is destroyed.
 
 #include "rhi_types.h"
+#include "rhi_gpu_profiler_types.h"
 
 #include <cstdint>
 #include <vector>
@@ -917,6 +918,71 @@ public:
     /// DX12: queries `IDXGIFactory5::CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING)`.
     /// Other backends: returns false (no VRR query available).
     virtual bool SupportsVariableRefreshRate() const { return false; }
+
+    // ── GPU Profiler ─────────────────────────────────────────────────────
+
+    /// Resets the GPU profiler timestamp counter for a new frame.
+    ///
+    /// Call once at the beginning of each frame, before any BeginTimestamp/EndTimestamp.
+    ///
+    /// # Arguments
+    /// * `cmdList` — Active command list (reserved for future use).
+    virtual void GpuProfilerBeginFrame(IRHICommandList* cmdList) { (void)cmdList; }
+
+    /// Resolves all recorded timestamps into the readback buffer and advances the frame index.
+    ///
+    /// Must be called at the end of the frame, before the command list is submitted.
+    /// Writes a ResolveQueryData command that copies GPU timestamp values into the
+    /// readback buffer for later CPU access via GpuProfilerResolve().
+    ///
+    /// # Arguments
+    /// * `cmdList` — Active command list to record the resolve command on.
+    virtual void GpuProfilerEndFrame(IRHICommandList* cmdList) { (void)cmdList; }
+
+    /// Reads back resolved timestamps from a previous frame and computes millisecond deltas.
+    ///
+    /// Due to triple-buffering, this reads results from frame N-2 relative to the
+    /// current recording frame. Must be called after the GPU has completed the frame
+    /// whose timestamps are being read (i.e., after a fence wait).
+    virtual void GpuProfilerResolve() {}
+
+    /// Records a begin timestamp for a named GPU scope.
+    ///
+    /// Must be paired with a subsequent GpuProfilerEndTimestamp() call with the same name.
+    /// Up to `kMaxGpuTimestamps` (64) pairs can be recorded per frame.
+    ///
+    /// # Arguments
+    /// * `cmdList` — Active command list to record the timestamp query on.
+    /// * `name` — Human-readable scope name (string literal, not owned or copied).
+    virtual void GpuProfilerBeginTimestamp(IRHICommandList* cmdList, const char* name) {
+        (void)cmdList; (void)name;
+    }
+
+    /// Records an end timestamp for a previously begun GPU scope.
+    ///
+    /// # Arguments
+    /// * `cmdList` — Active command list to record the timestamp query on.
+    /// * `name` — Scope name (kept for symmetry with BeginTimestamp).
+    virtual void GpuProfilerEndTimestamp(IRHICommandList* cmdList, const char* name) {
+        (void)cmdList; (void)name;
+    }
+
+    /// Returns the most recent resolved GPU timing results.
+    ///
+    /// # Returns
+    /// A vector of `GpuTimingResult` entries (one per Begin/End timestamp pair).
+    /// Empty if no timestamps were recorded or GpuProfilerResolve() has not been called.
+    virtual const std::vector<GpuTimingResult>& GpuProfilerGetResults() const {
+        static const std::vector<GpuTimingResult> kEmpty;
+        return kEmpty;
+    }
+
+    /// Returns the total GPU frame time spanning all profiled scopes.
+    ///
+    /// # Returns
+    /// Time in milliseconds from the first BeginTimestamp to the last EndTimestamp.
+    /// Returns 0.0f if no timestamps were resolved.
+    virtual float GpuProfilerGetFrameTimeMs() const { return 0.0f; }
 
     // ── Copy queue (async uploads) ──────────────────────────────────────
 

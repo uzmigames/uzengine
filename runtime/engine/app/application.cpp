@@ -90,6 +90,7 @@ int Application::Run(int argc, char** argv) {
 
     m_renderer->SetRenderPath(m_config.renderPath);
     m_renderer->SetDebugViewMode(m_config.debugViewMode);
+    m_renderer->SetGpuProfileEnabled(m_config.gpuProfile);
     if (m_shadowDebugMode > 0) {
         m_renderer->SetShadowDebugMode(m_shadowDebugMode);
         UZ_LOG(App, Info, "Shadow debug mode set to {}", m_shadowDebugMode);
@@ -269,6 +270,9 @@ int Application::Run(int argc, char** argv) {
         // ── Request screenshot only after scene is fully loaded ──────────
         // Never capture before all meshes, textures, and async decodes complete.
         // This prevents black/missing textures in automated screenshots.
+        if (m_screenshotPending && m_frameIndex % 50 == 0) {
+            m_renderer->IsSceneFullyLoadedDebug();
+        }
         if (m_screenshotPending && m_renderer->IsSceneFullyLoaded() && m_frameIndex >= 2) {
             if (m_screenshotBase64) {
                 m_renderer->RequestScreenshotBase64();
@@ -494,6 +498,8 @@ void Application::ParseArgs(int argc, char* argv[]) {
             m_passToggle = argv[++i];
         } else if (std::strcmp(argv[i], "--pass-compare") == 0 && i + 1 < argc) {
             m_passCompare = argv[++i];
+        } else if (std::strcmp(argv[i], "--gpu-profile") == 0) {
+            m_config.gpuProfile = true;
         }
     }
 

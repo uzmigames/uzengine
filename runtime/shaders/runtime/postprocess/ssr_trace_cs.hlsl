@@ -115,7 +115,7 @@ Texture2D<float4> sceneColorTex   : register(t3);
 RWTexture2D<float4> ssrOutput     : register(u0);
 
 SamplerState pointSampler  : register(s0);
-SamplerState linearSampler : register(s1);
+SamplerState linearSampler : register(s2);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Texture Sampling Helpers

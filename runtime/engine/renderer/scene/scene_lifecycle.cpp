@@ -320,6 +320,9 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         UZ_LOG(Renderer, Warning, "SceneRenderer: failed to create cloud command list");
     }
 
+    // Cloud noise loading disabled — cloud pass disabled for manual testing.
+    // TODO(clouds): re-enable when cloud pipeline is debugged
+
     // ── DFS Output Texture + Culling Buffers (at render resolution) ──
     // Created here but only populated when DFS is enabled at runtime.
     // The output texture starts at half-resolution by default; fullResolution

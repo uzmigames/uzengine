@@ -114,7 +114,7 @@ RWTexture2D<float>  aoOutput       : register(u1);
 #endif
 
 SamplerState pointSampler  : register(s0);
-SamplerState linearSampler : register(s1);
+SamplerState linearSampler : register(s2);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Texture Sampling Helpers
