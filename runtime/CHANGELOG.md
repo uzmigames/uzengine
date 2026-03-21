@@ -2,6 +2,44 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.40] — 2026-03-21
+
+### Asset Pak Pipeline — Multi-pak lazy loading with XOR scramble
+
+**Custom binary format (.uzpak + .uzpakindex)** eliminates loose asset file copying from the build. Assets are packed, scrambled, and loaded on demand via seek-based I/O — no full-archive memory load.
+
+**Build output restructured** — all demos now output to `build/` with clean directory layout:
+```
+build/
+  bin/   demo.exe
+  lib/   D3D12/, dxcompiler.dll, dxil.dll, lua51.dll
+  data/  game.uzpakindex, game_001.uzpak
+```
+
+**New components:**
+
+- `.uzpakindex` master index format — maps pathHash → (pakId, offset, sizes) across multiple pak files. Loaded entirely in RAM (~2KB for 54 assets). O(1) lookup via xxHash64 hash map.
+- `PakStreamReader` — seek-based FILE* reader. Opens pak file handles lazily, reads individual blobs via `_fseeki64` + `fread`. Never loads full archive into memory.
+- `LRUCache<K,V>` template (`runtime/engine/core/lru_cache.h`) — O(1) get/put with configurable memory budget (default 256MB). Splice-to-front on hit, evict-from-back on overflow.
+- `WritePakSplit()` — splits assets into multiple .uzpak files (max 500MB each) with XOR scramble. Writes master index automatically.
+- `PakVFS::FromIndexFile()` — lazy-loading VFS backend. Reads master index at init, opens zero file handles. On `Read()`: hash → cache check → index lookup → lazy open → seek → descramble → cache → return.
+- `uzpack` CLI tool (`runtime/tools/uzpack.cpp`) — `uzpack --input <dir> --output <dir> --name game [--secret <hex64>]`. Scans directory recursively, packs into multi-pak + index.
+- `Application::InitVFS()` auto-detection — if `../data/game.uzpakindex` exists, uses PakVFS; otherwise falls back to LooseFileVFS. `--force-loose` and `--pak-cache-mb` CLI flags.
+- `CloudPass::SetVFS()` — cloud noise textures (shape.bin) now load via VFS/pak instead of direct file I/O.
+
+**XOR scramble protection:** Each blob is XOR'd with an 8-byte key derived from `pathHash ^ secret`. No path strings stored in pak (only hashes). Custom binary format — not openable by ZIP/7z/tar tools.
+
+**DLL paths updated:** Agility SDK (`../lib/D3D12/`), DXC (`../lib/dxcompiler.dll`), FXC (`../lib/d3dcompiler_47.dll`) — all relative to exe in `build/bin/`.
+
+**46 unit tests** covering MasterIndex round-trip (12), XOR scramble (8), PakStreamReader (7), LRUCache (19).
+
+**Measured results** (pbr_test, 54 assets, 97MB raw):
+- Pack time: <1s (uzpack CLI)
+- Output: 1 pak file (97MB) + 1 index (2.8KB)
+- VFS init: <1ms (index load only)
+- Asset read (cold): seek + read from disk
+- Asset read (hot): LRU cache hit, zero I/O
+
 ## [0.2.39] — 2026-03-20
 
 ### Scene Load Optimization — 25s → <0.5s (250x speedup)

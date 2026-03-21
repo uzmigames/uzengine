@@ -73,6 +73,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             m_device->GpuProfilerBeginTimestamp(cmdList, "CloudCompute");
         }
 
+        m_cloudPass->SetVFS(vfs);
         m_cloudPass->Execute(m_cloudCmdList, *m_cbRing, *m_pendingCloudInput);
         m_cloudCmdList->End();
         m_cloudCmdList->Execute();
