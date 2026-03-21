@@ -48,12 +48,12 @@ ApplicationConfig PBRTest::Configure() {
     cfg.title           = "UzEngine \xe2\x80\x94 PBR Test";
     cfg.width           = 1920;
     cfg.height          = 1080;
-    // Camera elevated and angled to see both rows of spheres
-    cfg.cameraPositionX = 137.f;
-    cfg.cameraPositionY = -906.f;
-    cfg.cameraPositionZ = 335.f;
-    cfg.cameraYawDeg    = -263.3f;
-    cfg.cameraPitchDeg  = -19.8f;
+    // Camera looking up at the sky for cloud debugging
+    cfg.cameraPositionX = 1123.f;
+    cfg.cameraPositionY = 83.f;
+    cfg.cameraPositionZ = 114.f;
+    cfg.cameraYawDeg    = 19.5f;
+    cfg.cameraPitchDeg  = 22.3f;
     cfg.renderPath      = RenderPath::Deferred;
     return cfg;
 }

@@ -722,9 +722,6 @@ void DX12CommandList::CopyBufferToTexture(RHIBufferHandle srcBuffer, uint64_t sr
     m_device->GetDevice()->GetCopyableFootprints(
         &resDesc, subresource, 1, srcOffset, &footprint, nullptr, nullptr, &totalBytes);
 
-    // Override the row pitch if the caller provided one that matches the footprint width
-    // (the footprint already accounts for 256-byte alignment)
-
     D3D12_TEXTURE_COPY_LOCATION dst = {};
     dst.pResource = tex->resource;
     dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;

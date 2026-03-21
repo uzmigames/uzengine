@@ -66,6 +66,19 @@ Every C++ rendering function MUST have:
 
 **NEVER cite proprietary source files.** Always cite published papers, standards, or techniques.
 
+### RULE 3.5: Incremental Implementation — Step by Step, Test Each Step
+
+**NEVER implement a complex feature all at once.** Break it into small steps, test each one visually before proceeding:
+
+1. **Step 1**: Absolute minimum (solid color output → verify pixel on screen)
+2. **Step 2**: Add ONE thing (ray intersection → verify correct area)
+3. **Step 3**: Build + test after EACH step — do NOT proceed if current step fails
+4. **Step 4**: If stuck for 2-3 attempts, **DELETE everything and restart from scratch**
+
+**The line between persistence and stupidity is thin.** Rewriting correctly is faster than debugging wrong code.
+
+See `.claude/rules/incremental-implementation.md` for details.
+
 ### RULE 4: NEVER Use Stubs, TODOs, Placeholders, or Approximations
 
 - No `// TODO`, `// HACK`, `// FIXME`, `// TEMP`, `// placeholder`
