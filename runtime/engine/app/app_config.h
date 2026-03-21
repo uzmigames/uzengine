@@ -63,6 +63,14 @@ struct ApplicationConfig {
     /// Root directory for the VFS. If empty, defaults to `<exeDir>/assets/`.
     std::string vfsRoot;
 
+    /// Force loose-file VFS even when a .uzpakindex is present next to the exe.
+    /// Useful for modding and debugging. Activated by `--force-loose` CLI flag.
+    bool forceLooseVFS = false;
+
+    /// LRU cache budget in megabytes for lazy-load PakVFS mode. 0 = use
+    /// PakVFS default (256 MB). Configurable via `--pak-cache-mb` CLI flag.
+    uint32_t pakCacheMB = 256;
+
     // ── Frame Control ─────────────────────────────────────────────────────
 
     /// Maximum frames to render before exiting. 0 = unlimited.

@@ -11,6 +11,9 @@
 
 #include "file_system.h"
 
+#define XXH_INLINE_ALL
+#include <xxhash.h>
+
 #include <algorithm>
 #include <filesystem>
 
@@ -67,7 +70,7 @@ std::string LooseFileVFS::Name() const {
 PakVFS::PakVFS(PakReader reader)
     : m_reader(std::move(reader))
     , m_name("PakVFS") {
-    UZ_LOG(Asset, Debug, "PakVFS mounted: entries={}", m_reader.EntryCount());
+    UZ_LOG(Asset, Debug, "PakVFS mounted (legacy): entries={}", m_reader.EntryCount());
 }
 
 std::unique_ptr<PakVFS> PakVFS::FromFile(const std::string& path) {
@@ -83,18 +86,117 @@ std::unique_ptr<PakVFS> PakVFS::FromFile(const std::string& path) {
     return vfs;
 }
 
+std::unique_ptr<PakVFS> PakVFS::FromIndexFile(
+    const std::string& indexPath, uint64_t secret, size_t cacheSizeBytes) {
+    UZ_PROFILE_FUNCTION();
+
+    // Use private default constructor via new + unique_ptr
+    auto vfs = std::unique_ptr<PakVFS>(new PakVFS());
+
+    // Load the master index — this is the only file read during init
+    if (!vfs->m_index.LoadFile(indexPath)) {
+        UZ_LOG(Asset, Error, "PakVFS: failed to load master index: path='{}'", indexPath);
+        return nullptr;
+    }
+
+    // Extract base directory from the index file path.
+    // Pak filenames in the index are relative to this directory.
+    fs::path indexFs(indexPath);
+    fs::path parentDir = indexFs.parent_path();
+    if (parentDir.empty()) {
+        vfs->m_baseDir = ".";
+    } else {
+        // Normalize to forward slashes for cross-platform consistency
+        vfs->m_baseDir = parentDir.generic_string();
+    }
+
+    vfs->m_secret = secret;
+    vfs->m_cache = std::make_unique<LRUCache<uint64_t, std::vector<uint8_t>>>(cacheSizeBytes);
+    vfs->m_name = "PakVFS(" + indexPath + ")";
+
+    UZ_LOG(Asset, Info, "PakVFS: loaded {} assets from {} paks (lazy mode, cache={} MB)",
+           vfs->m_index.EntryCount(), vfs->m_index.PakCount(),
+           cacheSizeBytes / (1024 * 1024));
+
+    return vfs;
+}
+
 std::vector<uint8_t> PakVFS::Read(const std::string& path) {
     UZ_PROFILE_FUNCTION();
     UZ_STAT_INCREMENT(IO, VFSReads);
-    return m_reader.Lookup(path);
+
+    // Legacy mode: delegate entirely to the in-memory PakReader
+    if (!m_index.IsLoaded()) {
+        return m_reader.Lookup(path);
+    }
+
+    // ── Lazy mode ──────────────────────────────────────────────────────
+
+    const uint64_t hash = XXH64(path.data(), path.size(), 0);
+
+    // 1. Check LRU cache — fast path, no I/O
+    if (auto* cached = m_cache->Get(hash)) {
+        return *cached;
+    }
+
+    // 2. Lookup in master index to find which pak file and at what offset
+    auto loc = m_index.Lookup(hash);
+    if (!loc.has_value()) {
+        return {};
+    }
+
+    // 3. Get or lazily open the PakStreamReader for this pak file
+    auto& reader = m_readers[loc->pakFilename];
+    if (!reader.IsOpen()) {
+        std::string pakPath = m_baseDir + "/" + loc->pakFilename;
+        if (!reader.Open(pakPath)) {
+            UZ_LOG(Asset, Error, "PakVFS: cannot open pak '{}' for asset '{}'",
+                   pakPath, path);
+            return {};
+        }
+    }
+
+    // 4. Read the compressed+scrambled blob from disk
+    auto blob = reader.ReadBlob(loc->offset, loc->compressedSize);
+    if (blob.empty() && loc->compressedSize > 0) {
+        UZ_LOG(Asset, Error, "PakVFS: ReadBlob failed for '{}' (offset={}, size={})",
+               path, loc->offset, loc->compressedSize);
+        return {};
+    }
+
+    // 5. Decompress (XOR descramble + optional LZ4 decompression)
+    auto raw = PakDecompressBlob(blob.data(), blob.size(), loc->rawSize, hash, m_secret);
+    if (raw.empty() && loc->rawSize > 0) {
+        UZ_LOG(Asset, Error, "PakVFS: decompress failed for '{}' (compressed={}, raw={})",
+               path, loc->compressedSize, loc->rawSize);
+        return {};
+    }
+
+    // 6. Insert into LRU cache for future reads
+    const size_t rawSize = raw.size();
+    m_cache->Put(hash, raw, rawSize);
+
+    return raw;
 }
 
 bool PakVFS::Exists(const std::string& path) {
-    return m_reader.Contains(path);
+    // Legacy mode
+    if (!m_index.IsLoaded()) {
+        return m_reader.Contains(path);
+    }
+
+    // Lazy mode: pure index lookup, no I/O
+    const uint64_t hash = XXH64(path.data(), path.size(), 0);
+    return m_index.Contains(hash);
 }
 
 std::string PakVFS::Name() const {
     return m_name;
+}
+
+std::string PakVFS::ResolvePath(const std::string& /*path*/) const {
+    // Pak assets have no filesystem path — return empty string
+    return {};
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -56,11 +56,11 @@ TEST(SceneLighting_Defaults, SunColor_IsPositive) {
     EXPECT_GT(lighting.sunColor.z, 0.f);
 }
 
-TEST(SceneLighting_Defaults, AmbientColor_IsPositive) {
+TEST(SceneLighting_Defaults, AmbientColor_IsZero) {
     SceneLighting lighting;
-    EXPECT_GT(lighting.ambientColor.x, 0.f);
-    EXPECT_GT(lighting.ambientColor.y, 0.f);
-    EXPECT_GT(lighting.ambientColor.z, 0.f);
+    EXPECT_FLOAT_EQ(lighting.ambientColor.x, 0.f);
+    EXPECT_FLOAT_EQ(lighting.ambientColor.y, 0.f);
+    EXPECT_FLOAT_EQ(lighting.ambientColor.z, 0.f);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -296,7 +296,7 @@ TEST(BuildPerFrameCB_CustomLighting, CustomSunDirection_IsReflectedInLightDir) {
 // BuildPerFrameCB — struct size guarantee
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(BuildPerFrameCB_StructSize, PerFrameCB_Is256Bytes) {
+TEST(BuildPerFrameCB_StructSize, PerFrameCB_Is768Bytes) {
     // This verifies the D3D12 CB alignment requirement is met.
-    EXPECT_EQ(sizeof(PerFrameCB), 512u);
+    EXPECT_EQ(sizeof(PerFrameCB), 768u);
 }

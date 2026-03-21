@@ -799,9 +799,17 @@ TEST_F(GIGpuTest, BufferUploadCopyReadback) {
     std::memcpy(mapped, srcData, kBufferSize);
     m_device->UnmapBuffer(uploadBuf);
 
-    // Execute: upload → GPU → readback
+    // Execute: upload → barrier → readback
     ExecuteGPUWork([&](uz::IRHICommandList* cmd) {
         cmd->CopyBuffer(uploadBuf, 0, gpuBuf, 0, kBufferSize);
+
+        // Transition gpuBuf from CopyDst to CopySrc before reading from it
+        uz::RHIBarrierDesc barrier{};
+        barrier.buffer      = gpuBuf;
+        barrier.stateBefore = uz::RHIResourceState::CopyDst;
+        barrier.stateAfter  = uz::RHIResourceState::CopySrc;
+        cmd->ResourceBarrier(&barrier, 1);
+
         cmd->CopyBuffer(gpuBuf, 0, readbackBuf, 0, kBufferSize);
     });
 

@@ -167,6 +167,28 @@ Mesh LoadMesh(const std::string& path);
 /// Logs `Renderer::Error` on write failure.
 bool SaveMesh(const std::string& path, const Mesh& mesh);
 
+/// Loads an FBX file and returns a runtime-ready Mesh.
+///
+/// Parses the FBX via ufbx, extracts the first mesh's geometry (positions,
+/// normals, UVs), triangulates n-gons, generates tangents, applies meshopt
+/// vertex cache + fetch optimization, and converts to the engine's Vertex
+/// format (48 bytes). Materials are extracted but not returned — use
+/// `LoadFbxWithMaterials()` if material data is needed.
+///
+/// Optionally caches the result as a .uzmesh file next to the FBX
+/// (same name, `.uzmesh` extension). On subsequent calls, loads the cached
+/// .uzmesh directly if it exists and is newer than the FBX.
+///
+/// # Arguments
+/// * `path` - Filesystem path to the .fbx file.
+///
+/// # Returns
+/// Populated `Mesh` on success, empty `Mesh` (magic=0) on failure.
+///
+/// # Errors
+/// Logs `Renderer::Error` on file not found, parse failure, or empty mesh.
+Mesh LoadFbx(const std::string& path);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Procedural mesh generators — convenience free functions
 // ─────────────────────────────────────────────────────────────────────────────

@@ -43,9 +43,9 @@ static bool Near(float a, float b, float eps = kEps) {
 TEST(RenderingParity, HeightFogDefaults_PrimaryLayer) {
     HeightFogComponent fog;
     EXPECT_FLOAT_EQ(fog.heightFalloff,       0.2f);
-    EXPECT_FLOAT_EQ(fog.color.x,             1.0f);
-    EXPECT_FLOAT_EQ(fog.color.y,             1.0f);
-    EXPECT_FLOAT_EQ(fog.color.z,             1.0f);
+    EXPECT_FLOAT_EQ(fog.color.x,             0.0f);
+    EXPECT_FLOAT_EQ(fog.color.y,             0.0f);
+    EXPECT_FLOAT_EQ(fog.color.z,             0.0f);
     EXPECT_FLOAT_EQ(fog.maxOpacity,          1.0f);
     EXPECT_FLOAT_EQ(fog.density,             0.02f);
     EXPECT_FLOAT_EQ(fog.startDistance,       0.f);
@@ -63,12 +63,12 @@ TEST(RenderingParity, HeightFogDefaults_SecondLayer) {
 
 TEST(RenderingParity, HeightFogDefaults_DirectionalInscattering) {
     HeightFogComponent fog;
-    // Warm orange inscattering default
-    EXPECT_FLOAT_EQ(fog.directionalInscatteringColor.x, 1.0f);
-    EXPECT_FLOAT_EQ(fog.directionalInscatteringColor.y, 0.8f);
-    EXPECT_FLOAT_EQ(fog.directionalInscatteringColor.z, 0.6f);
-    EXPECT_FLOAT_EQ(fog.directionalInscatteringExponent,       8.0f);
-    EXPECT_FLOAT_EQ(fog.directionalInscatteringStartDistance,  0.f);
+    // Default inscattering color is black (disabled)
+    EXPECT_FLOAT_EQ(fog.directionalInscatteringColor.x, 0.0f);
+    EXPECT_FLOAT_EQ(fog.directionalInscatteringColor.y, 0.0f);
+    EXPECT_FLOAT_EQ(fog.directionalInscatteringColor.z, 0.0f);
+    EXPECT_FLOAT_EQ(fog.directionalInscatteringExponent,       4.0f);
+    EXPECT_FLOAT_EQ(fog.directionalInscatteringStartDistance,  10000.f);
     EXPECT_FALSE(fog.enableVolumetricFog);
 }
 
@@ -96,7 +96,7 @@ TEST(RenderingParity, SkyAtmosphereDefaults_Mie) {
     SkyAtmosphereComponent sky;
     EXPECT_NEAR(sky.mieScattering,      3.996e-3f, 1e-7f);
     EXPECT_FLOAT_EQ(sky.mieScatteringScale, 1.0f);
-    EXPECT_NEAR(sky.mieAbsorption,      4.4e-3f, 1e-7f);
+    EXPECT_NEAR(sky.mieAbsorption,      4.44e-4f, 1e-7f);
     EXPECT_FLOAT_EQ(sky.mieAbsorptionScale, 1.0f);
     EXPECT_FLOAT_EQ(sky.mieAnisotropy,      0.8f);
     EXPECT_FLOAT_EQ(sky.mieScaleHeightKm,   1.2f);
@@ -104,9 +104,9 @@ TEST(RenderingParity, SkyAtmosphereDefaults_Mie) {
 
 TEST(RenderingParity, SkyAtmosphereDefaults_GroundAndMultiScatter) {
     SkyAtmosphereComponent sky;
-    EXPECT_FLOAT_EQ(sky.groundAlbedo.x,        0.3f);
-    EXPECT_FLOAT_EQ(sky.groundAlbedo.y,        0.3f);
-    EXPECT_FLOAT_EQ(sky.groundAlbedo.z,        0.3f);
+    EXPECT_FLOAT_EQ(sky.groundAlbedo.x,        0.4f);
+    EXPECT_FLOAT_EQ(sky.groundAlbedo.y,        0.4f);
+    EXPECT_FLOAT_EQ(sky.groundAlbedo.z,        0.4f);
     EXPECT_FLOAT_EQ(sky.multiScatteringFactor, 1.0f);
     EXPECT_FLOAT_EQ(sky.heightFogContribution, 1.0f);
 }
@@ -127,7 +127,7 @@ TEST(RenderingParity, LightComponentBaseDefaults) {
     EXPECT_FLOAT_EQ(light.color.x,   1.f);
     EXPECT_FLOAT_EQ(light.color.y,   1.f);
     EXPECT_FLOAT_EQ(light.color.z,   1.f);
-    EXPECT_FLOAT_EQ(light.intensity, 1.0f);
+    EXPECT_FLOAT_EQ(light.intensity, 10.0f);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -136,15 +136,15 @@ TEST(RenderingParity, LightComponentBaseDefaults) {
 
 TEST(RenderingParity, DirectionalLightDefaults) {
     DirectionalLightComponent dir;
-    EXPECT_FALSE(dir.atmosphereSunLight);
+    EXPECT_TRUE(dir.atmosphereSunLight);
     EXPECT_EQ(dir.atmosphereSunLightIndex, 0);
     EXPECT_NEAR(dir.lightSourceAngle,      0.5357f, 1e-4f);
     EXPECT_FLOAT_EQ(dir.lightSourceSoftAngle,           0.0f);
     EXPECT_EQ(dir.shadowCascades,          4);
-    EXPECT_FLOAT_EQ(dir.cascadeDistributionExponent,    2.0f);
+    EXPECT_FLOAT_EQ(dir.cascadeDistributionExponent,    3.0f);
     EXPECT_FLOAT_EQ(dir.cascadeTransitionFraction,      0.1f);
     EXPECT_FLOAT_EQ(dir.shadowDistanceFadeoutFraction,  0.1f);
-    EXPECT_FLOAT_EQ(dir.dynamicShadowDistance,          0.f);
+    EXPECT_FLOAT_EQ(dir.dynamicShadowDistance,          40000.f);
     EXPECT_FLOAT_EQ(dir.contactShadowLength,            0.f);
 }
 

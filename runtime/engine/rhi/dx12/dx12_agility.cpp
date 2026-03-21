@@ -18,6 +18,7 @@
 extern "C" __declspec(dllexport) extern const unsigned int D3D12SDKVersion = D3D12_SDK_VERSION;
 
 /// Path to Agility SDK DLLs, relative to the executable.
-extern "C" __declspec(dllexport) extern const char* D3D12SDKPath = ".\\D3D12\\";
+/// DLLs are deployed to build/lib/D3D12/ (exe is in build/bin/).
+extern "C" __declspec(dllexport) extern const char* D3D12SDKPath = "..\\lib\\D3D12\\";
 
 #endif // _WIN32

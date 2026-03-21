@@ -11,6 +11,7 @@
 
 #include "engine/rhi/rhi.h"
 #include "engine/renderer/core/cb_ring_allocator.h"
+#include "engine/asset/vfs.h"
 #include "shader_manager.h"
 #include "engine_shaders.h"
 #include "log.h"
@@ -207,32 +208,36 @@ bool CloudPass::EnsureRaymarchPipeline() {
 // Noise Texture Loading
 // ─────────────────────────────────────────────────────────────────────────────
 
-void CloudPass::LoadNoiseTextures(IRHICommandList* cmdList) {
+void CloudPass::LoadNoiseTextures(IRHICommandList* cmdList, IVFS* vfs) {
     if (m_hasNoiseTextures) return;
     if (!m_initialized || !cmdList) return;
 
     // Load shape noise — 128^3 R8 (2,097,152 bytes)
-    const char* shapePath = "content/atmosphere/shape.bin";
-    std::ifstream file(shapePath, std::ios::binary | std::ios::ate);
-    if (!file.is_open()) {
-        UZ_LOG(Renderer, Warning, "CloudPass: could not open {} — clouds will use procedural noise", shapePath);
-        return;
-    }
-
-    auto fileSize = file.tellg();
+    const std::string shapePath = "content/atmosphere/shape.bin";
     constexpr uint32_t kNoiseRes = 128;
     constexpr uint64_t kExpectedSize = kNoiseRes * kNoiseRes * kNoiseRes; // 2,097,152
-    if (static_cast<uint64_t>(fileSize) != kExpectedSize) {
+
+    std::vector<uint8_t> r8Data;
+    if (vfs) {
+        r8Data = vfs->Read(shapePath);
+    }
+    if (r8Data.empty()) {
+        // Fallback: try direct file I/O (dev mode with loose files)
+        std::ifstream file(shapePath, std::ios::binary | std::ios::ate);
+        if (!file.is_open()) {
+            UZ_LOG(Renderer, Warning, "CloudPass: could not load {} — clouds will use procedural noise", shapePath);
+            return;
+        }
+        auto fileSize = file.tellg();
+        r8Data.resize(static_cast<size_t>(fileSize));
+        file.seekg(0);
+        file.read(reinterpret_cast<char*>(r8Data.data()), fileSize);
+    }
+    if (r8Data.size() != kExpectedSize) {
         UZ_LOG(Renderer, Error, "CloudPass: shape.bin size mismatch — expected {}, got {}",
-               kExpectedSize, static_cast<uint64_t>(fileSize));
+               kExpectedSize, r8Data.size());
         return;
     }
-
-    // Read R8 data
-    std::vector<uint8_t> r8Data(kExpectedSize);
-    file.seekg(0);
-    file.read(reinterpret_cast<char*>(r8Data.data()), kExpectedSize);
-    file.close();
 
     // Expand R8 -> RGBA8 (replicate to all 4 channels)
     constexpr uint64_t kRGBA8Size = kExpectedSize * 4;
@@ -383,7 +388,7 @@ void CloudPass::Execute(IRHICommandList* cmdList, CBRingAllocator& cbRing,
 
     // ── Load noise textures on first execution (lazy init) ──
     if (!m_hasNoiseTextures) {
-        LoadNoiseTextures(cmdList);
+        LoadNoiseTextures(cmdList, m_vfs);
     }
 
     // ── Transition output texture to UAV for writing ──

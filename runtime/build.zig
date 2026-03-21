@@ -120,6 +120,7 @@ pub fn build(b: *std.Build) void {
         tp ++ "entt/single_include",
         tp ++ "luajit/src",
         tp ++ "renderdoc",
+        tp ++ "ufbx",
     };
 
     const linux_engine_include_dirs = [_][]const u8{
@@ -367,6 +368,13 @@ pub fn build(b: *std.Build) void {
         .flags = &.{"-std=c11"},
     });
 
+    // Thirdparty — ufbx (FBX file parser, single C file)
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path(tp ++ "ufbx"),
+        .files = &.{"ufbx.c"},
+        .flags = &.{"-std=c11"},
+    });
+
     // Thirdparty — astcenc (ASTC texture compression, library sources only)
     runtime_mod.addCSourceFiles(.{
         .root = b.path(tp ++ "astcenc/Source"),
@@ -529,6 +537,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(test_mod, b, "tests/engine/random", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/paths", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/asset", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine/core", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/shader", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/renderer", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/app", cpp_flags);
@@ -638,7 +647,7 @@ pub fn build(b: *std.Build) void {
         const win_sys_libs = [_][]const u8{ "d3d12", "d3d11", "dxgi", "dxguid", "gdi32", "user32", "xinput1_4", "ole32", "shcore", "shell32", "comdlg32" };
 
         // Helper to create a tool exe from a single .cpp + agility
-        const tool_names = [_][]const u8{ "uzengine", "uzcook" };
+        const tool_names = [_][]const u8{ "uzengine", "uzcook", "uzpack" };
         for (tool_names) |tool_name| {
             const tool_mod = b.createModule(.{ .target = target, .optimize = optimize });
             tool_mod.link_libc = true;
@@ -684,6 +693,12 @@ pub fn build(b: *std.Build) void {
         run_cook_cmd.step.dependOn(b.getInstallStep());
         if (b.args) |a| for (a) |arg| run_cook_cmd.addArg(arg);
         cook_step.dependOn(&run_cook_cmd.step);
+
+        const pack_step = b.step("pack", "Run uzpack asset packing tool");
+        const run_pack_cmd = b.addSystemCommand(&.{b.getInstallPath(.bin, "uzpack.exe")});
+        run_pack_cmd.step.dependOn(b.getInstallStep());
+        if (b.args) |a| for (a) |arg| run_pack_cmd.addArg(arg);
+        pack_step.dependOn(&run_pack_cmd.step);
 
         // ── DLL deployment ───────────────────────────────────────────────
 

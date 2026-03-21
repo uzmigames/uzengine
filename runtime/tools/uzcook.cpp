@@ -29,6 +29,7 @@
 #include "log.h"
 #include "asset_importer.h"
 #include "asset_registry.h"
+#include "fbx_importer.h"
 #include "mesh_importer.h"
 #include "shader_importer.h"
 #include "texture_importer.h"
@@ -167,6 +168,7 @@ int main(int argc, char** argv) {
     uz::AssetImporterRegistry registry;
     registry.Register(std::make_unique<uz::ShaderImporter>(compiler));
     registry.Register(std::make_unique<uz::MeshImporter>());
+    registry.Register(std::make_unique<uz::FbxImporter>());
     registry.Register(std::make_unique<uz::TextureImporter>());
 
     // Initialize cache

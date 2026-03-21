@@ -44,7 +44,7 @@ namespace uz {
 /// # Examples
 /// ```cpp
 /// ShaderCompilerFXC fxc;
-/// if (!fxc.Init("d3dcompiler_47.dll")) { /* handle error */ }
+/// if (!fxc.Init("lib/d3dcompiler_47.dll")) { /* handle error */ }
 ///
 /// ShaderCompileDesc desc;
 /// desc.source = hlslCode;
@@ -65,12 +65,13 @@ public:
     /// Loads d3dcompiler_47.dll and resolves the D3DCompile entry point.
     ///
     /// # Arguments
-    /// * `fxcPath` — Path to `d3dcompiler_47.dll`. Defaults to exe-relative lookup.
+    /// * `fxcPath` — Path to `d3dcompiler_47.dll`. Defaults to `../lib/d3dcompiler_47.dll`
+    ///               relative to the executable (exe in build/bin/, DLLs in build/lib/).
     ///
     /// # Returns
     /// `true` if the DLL was loaded and `D3DCompile` resolved successfully.
     /// `false` if the DLL cannot be found/loaded or the entry point is missing.
-    bool Init(const std::string& fxcPath = "d3dcompiler_47.dll");
+    bool Init(const std::string& fxcPath = "../lib/d3dcompiler_47.dll");
 
     /// Returns true if FXC is loaded and ready to compile.
     [[nodiscard]] bool IsInitialized() const { return m_d3dCompile != nullptr; }

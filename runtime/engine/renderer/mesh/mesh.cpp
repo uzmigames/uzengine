@@ -5,10 +5,16 @@
 #include "profiler.h"
 
 #include "file_system.h"
+#include "fbx_importer.h"
+#include "uzmesh_format.h"
+
+#include <ufbx.h>
 
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
+#include <limits>
 
 namespace uz {
 
@@ -1012,6 +1018,160 @@ void GenerateTangents(std::vector<Vertex>& vertices, const std::vector<uint32_t>
 
         vertices[v].tangent = Vec4{t.x, t.y, t.z, w};
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LoadFbx
+// ─────────────────────────────────────────────────────────────────────────────
+
+Mesh LoadFbx(const std::string& path) {
+    UZ_PROFILE_FUNCTION();
+    Mesh mesh{};
+
+    // Check for cached .uzmesh (same basename, different extension)
+    std::filesystem::path fbxPath(path);
+    std::filesystem::path cachedPath = fbxPath;
+    cachedPath.replace_extension(".uzmesh");
+
+    if (std::filesystem::exists(cachedPath) && std::filesystem::exists(fbxPath)) {
+        const auto fbxTime = std::filesystem::last_write_time(fbxPath);
+        const auto cacheTime = std::filesystem::last_write_time(cachedPath);
+        if (cacheTime >= fbxTime) {
+            UZ_LOG(Renderer, Info, "Loading cached mesh: {}", cachedPath.string());
+            return LoadMesh(cachedPath.string());
+        }
+    }
+
+    // Read FBX file bytes
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file.is_open()) {
+        UZ_LOG(Renderer, Error, "Failed to open FBX file: {}", path);
+        return mesh;
+    }
+
+    const auto fileSize = file.tellg();
+    if (fileSize <= 0) {
+        UZ_LOG(Renderer, Error, "Empty FBX file: {}", path);
+        return mesh;
+    }
+
+    std::vector<uint8_t> fbxBytes(static_cast<size_t>(fileSize));
+    file.seekg(0, std::ios::beg);
+    file.read(reinterpret_cast<char*>(fbxBytes.data()), fileSize);
+    file.close();
+
+    // Import via FbxImporter → .uzmesh bytes
+    FbxImporter importer;
+    AssetImportOptions opts{};
+    AssetImportResult importResult = importer.Import(fbxBytes, path, opts);
+
+    if (!importResult.success) {
+        UZ_LOG(Renderer, Error, "FBX import failed for '{}': {}", path, importResult.error);
+        return mesh;
+    }
+
+    // Parse the .uzmesh blob
+    UzMeshParseResult parseResult = ReadUzMesh(importResult.data);
+    if (!parseResult.success) {
+        UZ_LOG(Renderer, Error, "Failed to parse imported .uzmesh for '{}': {}",
+               path, parseResult.error);
+        return mesh;
+    }
+
+    const auto& uzFile = parseResult.file;
+    const uint32_t vertexCount = uzFile.header.vertexCount;
+    const uint32_t indexCount = uzFile.header.indexCount;
+
+    if (vertexCount == 0) {
+        UZ_LOG(Renderer, Error, "FBX produced empty mesh: {}", path);
+        return mesh;
+    }
+
+    // Convert VertexPosNormUV (32B) → Vertex (48B) with tangents
+    std::vector<Vertex> vertices(vertexCount);
+    const auto* srcVerts = reinterpret_cast<const VertexPosNormUV*>(uzFile.vertexData.data());
+
+    for (uint32_t i = 0; i < vertexCount; ++i) {
+        vertices[i].position = {srcVerts[i].position[0],
+                                srcVerts[i].position[1],
+                                srcVerts[i].position[2]};
+        vertices[i].normal   = {srcVerts[i].normal[0],
+                                srcVerts[i].normal[1],
+                                srcVerts[i].normal[2]};
+        vertices[i].texcoord = {srcVerts[i].uv[0],
+                                srcVerts[i].uv[1]};
+        vertices[i].tangent  = {1.0f, 0.0f, 0.0f, 1.0f};
+    }
+
+    // Convert indices to uint32
+    std::vector<uint32_t> indices(indexCount);
+    if (uzFile.header.indexStride == 2) {
+        const auto* srcIdx = reinterpret_cast<const uint16_t*>(uzFile.indexData.data());
+        for (uint32_t i = 0; i < indexCount; ++i) {
+            indices[i] = static_cast<uint32_t>(srcIdx[i]);
+        }
+    } else {
+        std::memcpy(indices.data(), uzFile.indexData.data(), indexCount * sizeof(uint32_t));
+    }
+
+    // Generate tangents from UV-space edge vectors
+    GenerateTangents(vertices, indices);
+
+    // Compute AABB
+    Vec3 boundsMin = {std::numeric_limits<float>::max(),
+                      std::numeric_limits<float>::max(),
+                      std::numeric_limits<float>::max()};
+    Vec3 boundsMax = {std::numeric_limits<float>::lowest(),
+                      std::numeric_limits<float>::lowest(),
+                      std::numeric_limits<float>::lowest()};
+
+    for (uint32_t i = 0; i < vertexCount; ++i) {
+        const Vec3& p = vertices[i].position;
+        if (p.x < boundsMin.x) boundsMin.x = p.x;
+        if (p.y < boundsMin.y) boundsMin.y = p.y;
+        if (p.z < boundsMin.z) boundsMin.z = p.z;
+        if (p.x > boundsMax.x) boundsMax.x = p.x;
+        if (p.y > boundsMax.y) boundsMax.y = p.y;
+        if (p.z > boundsMax.z) boundsMax.z = p.z;
+    }
+
+    // Fill Mesh header
+    std::memset(&mesh.header, 0, sizeof(MeshHeader));
+    mesh.header.magic           = kMeshMagic;
+    mesh.header.version         = kMeshVersion;
+    mesh.header.vertexFormat    = MeshVertexFormat::Standard;
+    mesh.header.vertexStride    = sizeof(Vertex);
+    mesh.header.vertexCount     = vertexCount;
+    mesh.header.indexFormat     = MeshIndexFormat::UInt32;
+    mesh.header.indexCount      = indexCount;
+    mesh.header.submeshCount    = 0;
+    mesh.header.boundsMin       = boundsMin;
+    mesh.header.boundsMax       = boundsMax;
+    mesh.header.vertexDataOffset = sizeof(MeshHeader);
+    mesh.header.indexDataOffset  = sizeof(MeshHeader) +
+        static_cast<uint64_t>(vertexCount) * sizeof(Vertex);
+
+    // Copy raw bytes
+    const size_t vertexDataSize = static_cast<size_t>(vertexCount) * sizeof(Vertex);
+    mesh.vertexData.resize(vertexDataSize);
+    std::memcpy(mesh.vertexData.data(), vertices.data(), vertexDataSize);
+
+    const size_t indexDataSize = static_cast<size_t>(indexCount) * sizeof(uint32_t);
+    mesh.indexData.resize(indexDataSize);
+    std::memcpy(mesh.indexData.data(), indices.data(), indexDataSize);
+
+    UZ_LOG(Renderer, Info,
+           "Loaded FBX '{}': {} vertices, {} indices, bounds=[{:.1f},{:.1f},{:.1f}]→[{:.1f},{:.1f},{:.1f}]",
+           path, vertexCount, indexCount,
+           boundsMin.x, boundsMin.y, boundsMin.z,
+           boundsMax.x, boundsMax.y, boundsMax.z);
+
+    // Cache as .uzmesh for fast loading next time
+    if (SaveMesh(cachedPath.string(), mesh)) {
+        UZ_LOG(Renderer, Info, "Cached FBX mesh as: {}", cachedPath.string());
+    }
+
+    return mesh;
 }
 
 } // namespace uz

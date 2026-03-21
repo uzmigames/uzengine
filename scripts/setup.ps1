@@ -295,6 +295,12 @@ Clone-Repo -Name "mikktspace" `
     -Branch "master" `
     -RemoveDirs @()
 
+# ufbx (FBX file parser — single-file C library, MIT license)
+Clone-Repo -Name "ufbx" `
+    -Url "https://github.com/ufbx/ufbx.git" `
+    -Branch "v0.14.3" `
+    -RemoveDirs @("test", "data", "examples", "misc", "extra", "bindings")
+
 # stb (image loading/writing/resizing — header-only, keep only needed headers)
 Clone-Repo -Name "stb" `
     -Url "https://github.com/nothings/stb.git" `
@@ -555,7 +561,8 @@ $ImageLibs = @(
     @{ Name = "vma";              File = "include\vk_mem_alloc.h" },
     @{ Name = "metal-cpp";        File = "Metal\Metal.hpp" },
     @{ Name = "slang";            File = "include\slang.h" },
-    @{ Name = "luajit";           File = "src\lua.h" }
+    @{ Name = "luajit";           File = "src\lua.h" },
+    @{ Name = "ufbx";             File = "ufbx.h" }
 )
 
 $allOk = $true

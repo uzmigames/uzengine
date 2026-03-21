@@ -13,7 +13,7 @@ TEST(RuntimeAPI, VersionReturnsValidString) {
 
 TEST(RuntimeAPI, BackendReturnsUzengine) {
     ASSERT_NE(uz_runtime_backend(), nullptr);
-    EXPECT_STREQ(uz_runtime_backend(), "dx11");
+    EXPECT_STREQ(uz_runtime_backend(), "dx12");
 }
 
 TEST(RuntimeAPI, InitAndShutdown) {

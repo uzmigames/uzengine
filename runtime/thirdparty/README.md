@@ -412,6 +412,24 @@ Files extracted from upstream source:
 - `LICENSE`
 
 
+## ufbx
+
+- Upstream: https://github.com/ufbx/ufbx
+- Version: 0.14.3 (2025)
+- License: MIT
+
+Single-file FBX parser. Reads Autodesk FBX binary and ASCII files without
+requiring the proprietary FBX SDK. Extracts meshes, skeletons, skin weights,
+animation curves, materials, and scene hierarchy. Used by FbxImporter for
+importing skeletal characters and animations.
+
+Files extracted from upstream source:
+
+- `ufbx.h` (public API header)
+- `ufbx.c` (implementation, compiled as C11)
+- `LICENSE`
+
+
 ## tinyexr
 
 - Upstream: https://github.com/syoyo/tinyexr

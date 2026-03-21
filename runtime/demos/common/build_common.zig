@@ -77,29 +77,32 @@ pub const DemoHandle = struct {
             .{ .src = "../../thirdparty/luajit/src/lua51.dll", .dst = "lua51.dll" },
         };
         for (dlls) |dll| {
-            self.b.getInstallStep().dependOn(&self.b.addInstallBinFile(
+            self.b.getInstallStep().dependOn(&self.b.addInstallFileWithDir(
                 self.b.path(dll.src),
+                .{ .custom = "lib" },
                 dll.dst,
             ).step);
         }
 
         if (self.config.deploy_fxc) {
-            self.b.getInstallStep().dependOn(&self.b.addInstallBinFile(
+            self.b.getInstallStep().dependOn(&self.b.addInstallFileWithDir(
                 self.b.path("../../thirdparty/fxc/bin/x64/d3dcompiler_47.dll"),
+                .{ .custom = "lib" },
                 "d3dcompiler_47.dll",
             ).step);
         }
 
         for (self.config.extra_deploy) |deploy| {
-            self.b.getInstallStep().dependOn(&self.b.addInstallBinFile(
+            self.b.getInstallStep().dependOn(&self.b.addInstallFileWithDir(
                 self.b.path(deploy.source),
+                .{ .custom = "data" },
                 deploy.dest,
             ).step);
         }
     }
 
     fn createRunStep(self: *DemoHandle) void {
-        const exe_path = self.b.getInstallPath(.bin, self.b.fmt("{s}.exe", .{self.config.name}));
+        const exe_path = self.b.getInstallPath(.bin, self.b.fmt("{s}.exe", .{ self.config.name }));
         const run = self.b.addSystemCommand(&.{exe_path});
         run.step.dependOn(self.b.getInstallStep());
         const step = self.b.step("run", self.b.fmt("Run the {s}", .{self.config.name}));
@@ -109,6 +112,11 @@ pub const DemoHandle = struct {
 
 /// Create a demo executable with all standard UzEngine build configuration.
 pub fn createDemo(b: *std.Build, config: DemoConfig) DemoHandle {
+    // Default output to build/ — matches runtime convention. Override with -p <path>.
+    if (std.mem.endsWith(u8, b.install_prefix, "zig-out")) {
+        b.resolveInstallPrefix("build", .{});
+    }
+
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 

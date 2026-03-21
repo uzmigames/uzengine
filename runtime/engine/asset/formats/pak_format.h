@@ -37,6 +37,8 @@
 #pragma once
 
 #include <cstdint>
+#include <cstdio>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -226,6 +228,268 @@ private:
     std::vector<uint8_t> m_data;
     std::unordered_map<uint64_t, LoadedEntry> m_index;
     bool m_loaded = false;
+};
+
+// ─── Pak Flags ───────────────────────────────────────────────────────────────
+
+/// Pak blob is LZ4 compressed (decompress before use).
+static constexpr uint32_t kPakFlagCompressed = 0x1;
+
+/// Pak blob is XOR scrambled (descramble before decompression).
+static constexpr uint32_t kPakFlagScrambled = 0x2;
+
+// ─── Compression / Scramble ──────────────────────────────────────────────────
+
+/// Scrambles (and optionally compresses) a raw asset blob for pak storage.
+///
+/// Currently applies XOR scramble only. LZ4 compression will be added when
+/// runtime/thirdparty/lz4/ is integrated via scripts/setup.ps1.
+///
+/// # Arguments
+/// - `raw`: Uncompressed asset bytes.
+/// - `pathHash`: xxHash64 of the asset path (used as part of XOR key).
+/// - `secret`: Application-level secret XORed with pathHash to derive the key.
+///
+/// # Returns
+/// Scrambled bytes. Size equals `raw.size()` (no compression yet).
+[[nodiscard]] std::vector<uint8_t> PakCompressBlob(
+    const std::vector<uint8_t>& raw, uint64_t pathHash, uint64_t secret);
+
+/// Descrambles (and optionally decompresses) a pak blob back to raw bytes.
+///
+/// # Arguments
+/// - `data`: Pointer to scrambled (and possibly compressed) bytes.
+/// - `compressedSize`: Size of the input data in bytes.
+/// - `rawSize`: Expected size of the decompressed output.
+/// - `pathHash`: Same pathHash used during compression.
+/// - `secret`: Same secret used during compression.
+///
+/// # Returns
+/// Original raw bytes on success, empty vector on failure.
+[[nodiscard]] std::vector<uint8_t> PakDecompressBlob(
+    const uint8_t* data, size_t compressedSize, size_t rawSize,
+    uint64_t pathHash, uint64_t secret);
+
+// ─── Master Index Format (.uzpakindex) ───────────────────────────────────────
+// Small file loaded entirely in RAM. Maps pathHash -> (pakId, offset, sizes).
+// Enables lazy loading from multiple .uzpak files without loading their data.
+
+/// Magic number for .uzpakindex files: "UZPI" in little-endian.
+static constexpr uint32_t kMasterIndexMagic = 0x49505A55;
+
+/// Current .uzpakindex format version.
+static constexpr uint32_t kMasterIndexVersion = 1;
+
+/// Maximum filename length (including null terminator) for pak table entries.
+static constexpr size_t kMaxPakFilename = 256;
+
+/// Maximum size of a single .uzpak file in bytes (500 MB).
+static constexpr size_t kMaxPakSize = size_t{500} * 1024 * 1024;
+
+/// .uzpakindex file header -- exactly 16 bytes.
+#pragma pack(push, 1)
+struct MasterIndexHeader {
+    uint32_t magic = kMasterIndexMagic;     ///< Must be kMasterIndexMagic ("UZPI")
+    uint32_t version = kMasterIndexVersion; ///< Format version (currently 1)
+    uint32_t pakCount = 0;                  ///< Number of .uzpak files referenced
+    uint32_t entryCount = 0;               ///< Number of assets indexed
+};
+#pragma pack(pop)
+
+static_assert(sizeof(MasterIndexHeader) == 16, "MasterIndexHeader must be exactly 16 bytes");
+
+/// Pak table entry -- exactly 264 bytes.
+/// Stores the filename and checksum for one .uzpak file referenced by the index.
+#pragma pack(push, 1)
+struct MasterPakTableEntry {
+    uint32_t pakId = 0;                 ///< Unique identifier for this pak within the index
+    char filename[256] = {};            ///< Null-terminated relative filename (forward slashes)
+    uint32_t checksum = 0;              ///< xxHash32 of the pak file contents (integrity check)
+};
+#pragma pack(pop)
+
+static_assert(sizeof(MasterPakTableEntry) == 264, "MasterPakTableEntry must be exactly 264 bytes");
+
+/// Asset entry — exactly 56 bytes.
+/// Maps a single asset (by path hash) to its location inside a specific .uzpak file.
+#pragma pack(push, 1)
+struct MasterAssetEntry {
+    uint64_t pathHash = 0;        ///< xxHash64 of the logical asset path
+    uint32_t pakId = 0;           ///< Index into the pak table (which .uzpak file)
+    uint32_t typeId = 0;          ///< Application-defined asset type identifier
+    uint64_t offset = 0;          ///< Byte offset of the blob within the .uzpak file
+    uint64_t compressedSize = 0;  ///< Size of the (possibly compressed+scrambled) blob
+    uint64_t rawSize = 0;         ///< Original uncompressed size in bytes
+    uint64_t contentHash = 0;     ///< xxHash64 of the raw (uncompressed) asset data
+};
+#pragma pack(pop)
+
+static_assert(sizeof(MasterAssetEntry) == 48, "MasterAssetEntry must be exactly 48 bytes");
+
+/// .uzpakindex file trailer -- exactly 20 bytes.
+#pragma pack(push, 1)
+struct MasterIndexTrailer {
+    uint64_t pakTableOffset = 0;    ///< Byte offset where the pak table starts
+    uint64_t entryTableOffset = 0;  ///< Byte offset where the asset entry table starts
+    uint32_t magic = kMasterIndexMagic; ///< Sentinel for trailer discovery
+};
+#pragma pack(pop)
+
+static_assert(sizeof(MasterIndexTrailer) == 20, "MasterIndexTrailer must be exactly 20 bytes");
+
+/// In-memory master index for multi-pak lazy loading.
+///
+/// Loads a .uzpakindex file and provides O(1) lookup of any asset's location
+/// (pak filename, byte offset, sizes) without loading any actual pak data.
+class MasterIndex {
+public:
+    /// Location of an asset within the multi-pak archive set.
+    struct AssetLocation {
+        std::string pakFilename;   ///< Relative filename of the .uzpak containing this asset
+        uint64_t offset;           ///< Byte offset of the blob within the .uzpak file
+        uint64_t compressedSize;   ///< Size of the stored (compressed+scrambled) blob
+        uint64_t rawSize;          ///< Original uncompressed size in bytes
+        uint64_t contentHash;      ///< xxHash64 of the raw asset data (for integrity)
+        uint32_t typeId;           ///< Application-defined asset type identifier
+    };
+
+    /// Loads and parses a .uzpakindex file from disk.
+    ///
+    /// Validates header magic/version, reads the trailer to locate the pak
+    /// table and asset entry table, then builds the in-memory hash map.
+    ///
+    /// # Returns
+    /// `true` on success. `false` if the file is missing, too small, has
+    /// wrong magic/version, or contains corrupted offsets.
+    [[nodiscard]] bool LoadFile(const std::string& path);
+
+    /// Looks up an asset by its precomputed xxHash64 path hash.
+    ///
+    /// # Returns
+    /// The asset's location (pak file, offset, sizes) or `std::nullopt` if
+    /// the hash is not in the index.
+    [[nodiscard]] std::optional<AssetLocation> Lookup(uint64_t pathHash) const;
+
+    /// Checks whether an asset exists in the index without returning its data.
+    [[nodiscard]] bool Contains(uint64_t pathHash) const;
+
+    /// Returns the total number of asset entries in the loaded index.
+    [[nodiscard]] size_t EntryCount() const;
+
+    /// Returns the number of .uzpak files referenced by the index.
+    [[nodiscard]] size_t PakCount() const;
+
+    /// Returns the filenames of all .uzpak files referenced by the index.
+    [[nodiscard]] const std::vector<std::string>& PakFilenames() const;
+
+    /// Returns `true` if a .uzpakindex has been successfully loaded.
+    [[nodiscard]] bool IsLoaded() const { return m_loaded; }
+
+    /// Unloads the index, freeing all internal memory.
+    void Unload();
+
+private:
+    std::unordered_map<uint64_t, AssetLocation> m_assets;
+    std::vector<std::string> m_pakFilenames;
+    bool m_loaded = false;
+};
+
+/// Writes a .uzpakindex file to disk.
+///
+/// The output file contains: header (16 bytes) + asset entries (sorted by
+/// pathHash, 48 bytes each) + pak table (264 bytes each) + trailer (20 bytes).
+///
+/// # Arguments
+/// - `path`: Output file path for the .uzpakindex.
+/// - `pakFilenames`: Ordered list of .uzpak filenames. Index = pakId.
+/// - `entries`: All asset entries to include (pakId must be valid index into pakFilenames).
+///
+/// # Returns
+/// `true` on success, `false` on I/O error or validation failure.
+bool WriteMasterIndex(const std::string& path,
+                      const std::vector<std::string>& pakFilenames,
+                      const std::vector<MasterAssetEntry>& entries);
+
+// ─── Multi-Pak Split Writer ─────────────────────────────────────────────────
+
+/// Result of a WritePakSplit operation.
+struct PakSplitResult {
+    bool success = false;           ///< true if all paks + index were written
+    uint32_t pakCount = 0;          ///< Number of .uzpak files created
+    uint64_t totalRawBytes = 0;     ///< Sum of uncompressed asset sizes
+    uint64_t totalPackedBytes = 0;  ///< Sum of compressed+scrambled sizes (across all paks)
+    std::string indexPath;          ///< Path to the written .uzpakindex file
+};
+
+/// Splits assets into multiple .uzpak files and writes a .uzpakindex master index.
+///
+/// Each .uzpak file is capped at `maxPakSizeBytes`. Assets are compressed with
+/// XOR scramble using the provided `secret`. The output files are:
+///   - `{outputDir}/{baseName}.uzpakindex` — master index
+///   - `{outputDir}/{baseName}_001.uzpak`, `{baseName}_002.uzpak`, ...
+///
+/// # Arguments
+/// - `entries`: Assets to pack (path + raw data + typeId).
+/// - `outputDir`: Directory for output files (must exist).
+/// - `baseName`: Base name for output files (e.g., "game").
+/// - `maxPakSizeBytes`: Maximum size per .uzpak file (default: kMaxPakSize = 500MB).
+/// - `secret`: XOR scramble secret (0 = no scramble).
+///
+/// # Returns
+/// A `PakSplitResult` with success status and statistics.
+[[nodiscard]] PakSplitResult WritePakSplit(
+    const std::vector<PakWriteEntry>& entries,
+    const std::string& outputDir,
+    const std::string& baseName,
+    size_t maxPakSizeBytes = kMaxPakSize,
+    uint64_t secret = 0);
+
+// ─── Seek-Based Lazy Reader ─────────────────────────────────────────────────
+
+/// Seek-based reader for .uzpak files.
+///
+/// Opens a file handle and reads individual blobs on demand via seek+read
+/// without loading the entire archive into memory. This is the I/O primitive
+/// used by the lazy-load pipeline.
+///
+/// Owns a single FILE* handle. Not thread-safe -- callers must synchronize.
+class PakStreamReader {
+public:
+    PakStreamReader() = default;
+    ~PakStreamReader();
+
+    PakStreamReader(const PakStreamReader&) = delete;
+    PakStreamReader& operator=(const PakStreamReader&) = delete;
+
+    PakStreamReader(PakStreamReader&& other) noexcept;
+    PakStreamReader& operator=(PakStreamReader&& other) noexcept;
+
+    /// Opens a .uzpak file for streaming reads.
+    ///
+    /// Only opens the file handle -- does NOT read any data from the file.
+    ///
+    /// # Returns
+    /// `true` if the file was opened successfully.
+    [[nodiscard]] bool Open(const std::string& pakPath);
+
+    /// Reads a blob at the given byte offset and size from the open file.
+    ///
+    /// Seeks to `offset` and reads `size` bytes. Returns empty vector on
+    /// any I/O error (seek failure, partial read, file not open).
+    [[nodiscard]] std::vector<uint8_t> ReadBlob(uint64_t offset, uint64_t size);
+
+    /// Closes the file handle. Safe to call if already closed or never opened.
+    void Close();
+
+    /// Returns `true` if a file is currently open.
+    [[nodiscard]] bool IsOpen() const;
+
+    /// Returns the path of the currently open file (empty if not open).
+    [[nodiscard]] const std::string& Path() const { return m_path; }
+
+private:
+    std::string m_path;
+    FILE* m_file = nullptr;
 };
 
 } // namespace uz

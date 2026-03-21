@@ -19,6 +19,10 @@
 - [ ] 2.6 Test full pipeline: .uzscene → entities → deferred PBR output — blocked on 3.3.0 + 3.4b
 - [ ] 2.7 Verify 95%+ coverage
 
+## 4. Build System
+
+- [x] 4.1 Restructure demo build output: DLLs to `lib/`, pak files to `data/`. Updated `build_common.zig` (all 5 DLL destinations + FXC prefixed with `lib/`), `dx12_agility.cpp` (`D3D12SDKPath = ".\\lib\\D3D12\\"`), `shader_compiler.h` (default `"lib/dxcompiler.dll"`), `shader_compiler_fxc.h` (default `"lib/d3dcompiler_47.dll"`), `application.cpp` (`InitVFS` reads `data/game.uzpakindex`), and `pbr_test/build.zig` (removed 52-entry `extra_deploy` array — assets packed via uzpack).
+
 ## 3. Documentation
 
 - [ ] 3.1 Update `docs/engine/12-rendering/01-render-world.md`

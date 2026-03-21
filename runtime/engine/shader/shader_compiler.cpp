@@ -107,7 +107,7 @@ bool ShaderCompiler::Init(const std::string& dxcPath) {
     if (m_compiler) return true;
 
     // Resolve relative paths against the executable directory.
-    // "dxcompiler.dll" → "{exe_dir}/dxcompiler.dll"
+    // "lib/dxcompiler.dll" → "{exe_dir}/lib/dxcompiler.dll"
     auto resolved = ResolveEngineResource(dxcPath);
     std::wstring widePath = resolved.wstring();
 

@@ -15,8 +15,8 @@ using namespace uz;
 // PerFrameCB layout
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(PerFrameCB, SizeIs256Bytes) {
-    EXPECT_EQ(sizeof(PerFrameCB), 512u);
+TEST(PerFrameCB, SizeIs768Bytes) {
+    EXPECT_EQ(sizeof(PerFrameCB), 768u);
 }
 
 TEST(PerFrameCB, FieldOffsets) {
@@ -55,7 +55,7 @@ TEST(PerFrameCB, MemcpyRoundTrip) {
     src.cameraPos = {1.0f, 2.0f, 3.0f, 0.0f};
     src.timeParams = {100.0f, 0.016f, 6000.0f, 0.0f};
 
-    uint8_t buffer[512];
+    uint8_t buffer[768];
     std::memcpy(buffer, &src, sizeof(src));
 
     PerFrameCB dst{};

@@ -124,16 +124,17 @@ TEST(GBuffer, TwoHandlesValid_MissingDepth_IsValid_ReturnsFalse) {
     EXPECT_FALSE(gb.IsValid());
 }
 
-/// GBuffer with all five handles valid must be valid.
-TEST(GBuffer, AllThreeHandlesValid_IsValid_ReturnsTrue) {
+/// GBuffer with all six handles valid must be valid.
+TEST(GBuffer, AllSixHandlesValid_IsValid_ReturnsTrue) {
     GBuffer gb;
     gb.albedo.index      = 1u; gb.albedo.generation      = 1u;
     gb.normal.index      = 2u; gb.normal.generation      = 1u;
     gb.depth.index       = 3u; gb.depth.generation       = 1u;
     gb.velocity.index    = 4u; gb.velocity.generation    = 1u;
     gb.positionWS.index  = 5u; gb.positionWS.generation  = 1u;
+    gb.emissive.index    = 6u; gb.emissive.generation    = 1u;
     EXPECT_TRUE(gb.IsValid())
-        << "IsValid() must return true when all five texture handles are valid";
+        << "IsValid() must return true when all six texture handles are valid";
 }
 
 /// Invalidating one handle on a fully-valid GBuffer must make IsValid() false.
@@ -144,6 +145,7 @@ TEST(GBuffer, AfterInvalidatingOneHandle_IsValid_ReturnsFalse) {
     gb.depth.index       = 3u; gb.depth.generation       = 1u;
     gb.velocity.index    = 4u; gb.velocity.generation    = 1u;
     gb.positionWS.index  = 5u; gb.positionWS.generation  = 1u;
+    gb.emissive.index    = 6u; gb.emissive.generation    = 1u;
     ASSERT_TRUE(gb.IsValid());
 
     gb.normal.generation = 0u; // invalidate normal
@@ -239,6 +241,7 @@ TEST(GBuffer, MoveConstruct_FromValid_TransfersAllFields) {
     src.depth.index       = 3u; src.depth.generation       = 1u;
     src.velocity.index    = 4u; src.velocity.generation    = 1u;
     src.positionWS.index  = 5u; src.positionWS.generation  = 1u;
+    src.emissive.index    = 6u; src.emissive.generation    = 1u;
     src.albedoSRV         = 10u;
     src.normalSRV         = 11u;
     src.depthSRV          = 12u;

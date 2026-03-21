@@ -60,10 +60,10 @@ TEST(PerFrameCB, FieldOffsets_MatchHLSL) {
 TEST(PerFrameCB, InvViewProjField_IsAfterAmbientColor_BeforePadding) {
     constexpr size_t kExpectedOffset = 128u + 16u; // ambientColor + sizeof(Vec4)
     EXPECT_EQ(offsetof(PerFrameCB, invViewProj), kExpectedOffset);
-    // Padding begins at 144 + 64 = 208, leaving 304 bytes to reach 512 (aerial perspective fields + pad).
+    // Padding begins at 144 + 64 = 208, leaving 560 bytes to reach 768.
     constexpr size_t kPaddingStart = offsetof(PerFrameCB, invViewProj) + 64u;
     EXPECT_EQ(kPaddingStart, 208u);
-    EXPECT_EQ(sizeof(PerFrameCB) - kPaddingStart, 304u);
+    EXPECT_EQ(sizeof(PerFrameCB) - kPaddingStart, 560u);
 }
 
 /// Write invViewProj and confirm round-trip through memcpy (simulates upload).
@@ -169,7 +169,7 @@ TEST(PointLightData, MemcpyRoundTrip) {
     src.diffuseScale   = 1.0f;
     src.flags          = kLightFlag_InverseSquared;
 
-    uint8_t blob[48];
+    uint8_t blob[64];
     std::memcpy(blob, &src, sizeof(src));
 
     PointLightData dst{};

@@ -383,9 +383,9 @@ TEST(SkyAtmosphereComponent, MieScaleHeightIs1_2km) {
     EXPECT_FLOAT_EQ(comp.mieScaleHeightKm, 1.2f);
 }
 
-TEST(SkyAtmosphereComponent, MieAbsorptionIs4_4e_3) {
+TEST(SkyAtmosphereComponent, MieAbsorptionIs4_44e_4) {
     SkyAtmosphereComponent comp{};
-    EXPECT_FLOAT_EQ(comp.mieAbsorption, 4.4e-3f);
+    EXPECT_NEAR(comp.mieAbsorption, 4.44e-4f, 1e-7f);
 }
 
 TEST(SkyAtmosphereComponent, MieScalingDefaults) {
@@ -394,11 +394,11 @@ TEST(SkyAtmosphereComponent, MieScalingDefaults) {
     EXPECT_FLOAT_EQ(comp.mieAbsorptionScale, 1.0f);
 }
 
-TEST(SkyAtmosphereComponent, GroundAlbedoIs0_3) {
+TEST(SkyAtmosphereComponent, GroundAlbedoIs0_4) {
     SkyAtmosphereComponent comp{};
-    EXPECT_FLOAT_EQ(comp.groundAlbedo.x, 0.3f);
-    EXPECT_FLOAT_EQ(comp.groundAlbedo.y, 0.3f);
-    EXPECT_FLOAT_EQ(comp.groundAlbedo.z, 0.3f);
+    EXPECT_FLOAT_EQ(comp.groundAlbedo.x, 0.4f);
+    EXPECT_FLOAT_EQ(comp.groundAlbedo.y, 0.4f);
+    EXPECT_FLOAT_EQ(comp.groundAlbedo.z, 0.4f);
 }
 
 TEST(SkyAtmosphereComponent, MultiScatteringFactorIsOne) {
@@ -474,11 +474,11 @@ TEST(SkyAtmosphereComponent, DeprecatedSkyLightColorIsWhite) {
 // HeightFogComponent — standard defaults, second layer, inscattering, control
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(HeightFogComponent, ColorDefaultIsWhite) {
+TEST(HeightFogComponent, ColorDefaultIsBlack) {
     HeightFogComponent comp{};
-    EXPECT_FLOAT_EQ(comp.color.x, 1.0f);
-    EXPECT_FLOAT_EQ(comp.color.y, 1.0f);
-    EXPECT_FLOAT_EQ(comp.color.z, 1.0f);
+    EXPECT_FLOAT_EQ(comp.color.x, 0.0f);
+    EXPECT_FLOAT_EQ(comp.color.y, 0.0f);
+    EXPECT_FLOAT_EQ(comp.color.z, 0.0f);
 }
 
 TEST(HeightFogComponent, DensityDefaultIs0_02) {
@@ -528,19 +528,19 @@ TEST(HeightFogComponent, SecondFogBaseHeightDefaultIsZero) {
 
 TEST(HeightFogComponent, DirectionalInscatteringColorDefault) {
     HeightFogComponent comp{};
-    EXPECT_FLOAT_EQ(comp.directionalInscatteringColor.x, 1.0f);
-    EXPECT_FLOAT_EQ(comp.directionalInscatteringColor.y, 0.8f);
-    EXPECT_FLOAT_EQ(comp.directionalInscatteringColor.z, 0.6f);
+    EXPECT_FLOAT_EQ(comp.directionalInscatteringColor.x, 0.0f);
+    EXPECT_FLOAT_EQ(comp.directionalInscatteringColor.y, 0.0f);
+    EXPECT_FLOAT_EQ(comp.directionalInscatteringColor.z, 0.0f);
 }
 
-TEST(HeightFogComponent, DirectionalInscatteringExponentDefaultIs8) {
+TEST(HeightFogComponent, DirectionalInscatteringExponentDefaultIs4) {
     HeightFogComponent comp{};
-    EXPECT_FLOAT_EQ(comp.directionalInscatteringExponent, 8.0f);
+    EXPECT_FLOAT_EQ(comp.directionalInscatteringExponent, 4.0f);
 }
 
-TEST(HeightFogComponent, DirectionalInscatteringStartDistanceDefaultIsZero) {
+TEST(HeightFogComponent, DirectionalInscatteringStartDistanceDefaultIs10000) {
     HeightFogComponent comp{};
-    EXPECT_FLOAT_EQ(comp.directionalInscatteringStartDistance, 0.0f);
+    EXPECT_FLOAT_EQ(comp.directionalInscatteringStartDistance, 10000.0f);
 }
 
 TEST(HeightFogComponent, VolumetricFogDisabledByDefault) {

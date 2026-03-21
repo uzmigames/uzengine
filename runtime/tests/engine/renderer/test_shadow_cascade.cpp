@@ -176,8 +176,8 @@ TEST(ShadowCascade, DefaultFarShadowCascade_IsFalse) {
 // ShadowDataCB layout
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(ShadowDataCB, SizeIs768Bytes) {
-    EXPECT_EQ(sizeof(ShadowDataCB), 768u);
+TEST(ShadowDataCB, SizeIs2304Bytes) {
+    EXPECT_EQ(sizeof(ShadowDataCB), 2304u);
 }
 
 TEST(ShadowDataCB, SizeIsMultipleOf256) {

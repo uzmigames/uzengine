@@ -132,9 +132,9 @@ TEST(ShaderParameterMetadata, CBSizeIs256Aligned) {
 // PerFrameParams — metadata correctness
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(PerFrameParams, MetadataCBSizeIs512) {
+TEST(PerFrameParams, MetadataCBSizeIs768) {
     const auto& meta = PerFrameParams::GetMetadata();
-    EXPECT_EQ(meta.cbSize, 512u);
+    EXPECT_EQ(meta.cbSize, 768u);
     EXPECT_EQ(meta.cbSize % 256, 0u);
 }
 
@@ -156,8 +156,12 @@ TEST(PerFrameParams, MetadataHasCorrectMemberCount) {
 }
 
 TEST(PerFrameParams, ScalarSectionByteIdenticalToPerFrameCB) {
-    PerFrameParams params{};
-    PerFrameCB cb{};
+    // Zero-init both to eliminate default differences (e.g., contactShadowLength),
+    // then set identical values and compare the full scalar section.
+    PerFrameParams params;
+    PerFrameCB cb;
+    std::memset(&params, 0, sizeof(PerFrameParams));
+    std::memset(&cb, 0, sizeof(PerFrameCB));
 
     // Fill with known values
     params.cameraPos = {1.0f, 2.0f, 3.0f, 0.0f};
@@ -170,14 +174,14 @@ TEST(PerFrameParams, ScalarSectionByteIdenticalToPerFrameCB) {
     cb.exposure = 2.5f;
     cb.skyLightIntensity = 0.8f;
 
-    // First 512 bytes should be identical
+    // First 768 bytes (scalar section) should be identical
     EXPECT_EQ(std::memcmp(&params, &cb, sizeof(PerFrameCB)), 0);
 }
 
 TEST(PerFrameParams, ResourceHandlesAtCorrectOffset) {
-    EXPECT_EQ(offsetof(PerFrameParams, irradianceCubemap), 512u);
-    EXPECT_EQ(offsetof(PerFrameParams, prefilteredSpecular), 520u);
-    EXPECT_EQ(offsetof(PerFrameParams, brdfLut), 528u);
+    EXPECT_EQ(offsetof(PerFrameParams, irradianceCubemap), 768u);
+    EXPECT_EQ(offsetof(PerFrameParams, prefilteredSpecular), 776u);
+    EXPECT_EQ(offsetof(PerFrameParams, brdfLut), 784u);
 }
 
 TEST(PerFrameParams, ResourceMembersHaveCorrectSlots) {
@@ -275,8 +279,8 @@ TEST(PerFrameParams, AllResourceMembersAfterCBBoundary) {
 // ShadowDataCB — layout validation (shader parameter context)
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(ShaderParamShadowCB, SizeIs768Bytes) {
-    EXPECT_EQ(sizeof(ShadowDataCB), 768u);
+TEST(ShaderParamShadowCB, SizeIs2304Bytes) {
+    EXPECT_EQ(sizeof(ShadowDataCB), 2304u);
     EXPECT_EQ(sizeof(ShadowDataCB) % 256, 0u);
 }
 
@@ -499,15 +503,15 @@ TEST(ShaderParamHLSL, PerFrameParamsHLSL) {
 // ShadowDataParams — metadata correctness
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(ShadowDataParams, MetadataCBSizeIs768) {
+TEST(ShadowDataParams, MetadataCBSizeIs2304) {
     const auto& meta = ShadowDataParams::GetMetadata();
-    EXPECT_EQ(meta.cbSize, 768u);
+    EXPECT_EQ(meta.cbSize, 2304u);
     EXPECT_EQ(meta.cbSize % 256, 0u);
 }
 
 TEST(ShadowDataParams, MetadataTextureCount) {
     const auto& meta = ShadowDataParams::GetMetadata();
-    EXPECT_EQ(meta.textureCount, 3u);
+    EXPECT_EQ(meta.textureCount, 4u);
 }
 
 TEST(ShadowDataParams, MetadataSamplerAndUAVCounts) {
@@ -545,9 +549,9 @@ TEST(ShadowDataParams, ScalarSectionByteIdenticalToShadowDataCB) {
 }
 
 TEST(ShadowDataParams, ResourceHandlesAtCorrectOffset) {
-    EXPECT_EQ(offsetof(ShadowDataParams, shadowAtlas), 768u);
-    EXPECT_EQ(offsetof(ShadowDataParams, staticShadowAtlas), 776u);
-    EXPECT_EQ(offsetof(ShadowDataParams, dfsOutputTexture), 784u);
+    EXPECT_EQ(offsetof(ShadowDataParams, shadowAtlas), 2304u);
+    EXPECT_EQ(offsetof(ShadowDataParams, staticShadowAtlas), 2312u);
+    EXPECT_EQ(offsetof(ShadowDataParams, dfsOutputTexture), 2320u);
 }
 
 TEST(ShadowDataParams, ResourceMembersHaveCorrectSlots) {
@@ -617,9 +621,9 @@ TEST(ShadowDataParams, HLSLGenerationContainsShadowAtlas) {
 // LightingParams — metadata correctness
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(LightingParams, MetadataCBSizeIs3328) {
+TEST(LightingParams, MetadataCBSizeIs5632) {
     const auto& meta = LightingParams::GetMetadata();
-    EXPECT_EQ(meta.cbSize, 3328u);
+    EXPECT_EQ(meta.cbSize, 5632u);
     EXPECT_EQ(meta.cbSize % 256, 0u);
 }
 
@@ -632,8 +636,8 @@ TEST(LightingParams, MetadataHasNoResources) {
 
 TEST(LightingParams, MetadataMemberCount) {
     const auto& meta = LightingParams::GetMetadata();
-    // 2 scalar members: pointLights array + pointLightCount
-    EXPECT_EQ(meta.memberCount, 2u);
+    // 4 scalar members: pointLights + pointLightCount + spotLightCount + spotLights
+    EXPECT_EQ(meta.memberCount, 4u);
 }
 
 TEST(LightingParams, SizeMatchesLightingCB) {

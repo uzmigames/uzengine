@@ -500,6 +500,10 @@ void Application::ParseArgs(int argc, char* argv[]) {
             m_passCompare = argv[++i];
         } else if (std::strcmp(argv[i], "--gpu-profile") == 0) {
             m_config.gpuProfile = true;
+        } else if (std::strcmp(argv[i], "--force-loose") == 0) {
+            m_config.forceLooseVFS = true;
+        } else if (std::strcmp(argv[i], "--pak-cache-mb") == 0 && i + 1 < argc) {
+            m_config.pakCacheMB = static_cast<uint32_t>(std::atoi(argv[++i]));
         }
     }
 
@@ -621,12 +625,29 @@ bool Application::InitPlatform() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void Application::InitVFS() {
+    const auto exeDir = uz::GetExeDir();
+    // Pak files are in build/data/ (exe is in build/bin/), so go up one level.
+    const auto indexPath = (exeDir / ".." / "data" / "game.uzpakindex").string();
+
+    // Pak mode: auto-detect data/game.uzpakindex (unless forced loose)
+    if (!m_config.forceLooseVFS && std::filesystem::exists(indexPath)) {
+        const size_t cacheSizeBytes = m_config.pakCacheMB * size_t{1024} * 1024;
+        constexpr uint64_t kPakSecret = 0; // No scramble by default; match the packing secret
+        m_vfs = PakVFS::FromIndexFile(indexPath, kPakSecret, cacheSizeBytes);
+        if (m_vfs) {
+            UZ_LOG(App, Info, "VFS: pak mode ({})", indexPath);
+            return;
+        }
+        UZ_LOG(App, Warning, "VFS: pak index load failed, falling back to loose files");
+    }
+
+    // Loose-file mode: use configured root or default <exeDir>/assets/ (dev mode).
     const std::string root = m_config.vfsRoot.empty()
-        ? (uz::GetExeDir() / "assets").string()
+        ? (exeDir / "assets").string()
         : m_config.vfsRoot;
 
     m_vfs = std::make_unique<LooseFileVFS>(root);
-    UZ_LOG(App, Info, "Application: VFS root='{}'", root);
+    UZ_LOG(App, Info, "VFS: loose file mode ({})", root);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

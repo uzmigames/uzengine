@@ -289,8 +289,8 @@ TEST(DrawList, GetCommandsReturnsCorrectReference) {
 // PerFrameCB — post-modification layout validation
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(PerFrameCBLighting, SizeIsStill256Bytes) {
-    EXPECT_EQ(sizeof(PerFrameCB), 512u);
+TEST(PerFrameCBLighting, SizeIsStill768Bytes) {
+    EXPECT_EQ(sizeof(PerFrameCB), 768u);
 }
 
 TEST(PerFrameCBLighting, LightingFieldOffsets) {

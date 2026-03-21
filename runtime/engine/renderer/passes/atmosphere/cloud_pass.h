@@ -33,6 +33,8 @@
 #include <cstdint>
 #include <vector>
 
+namespace uz { class IVFS; }
+
 namespace uz {
 
 class IRHIDevice;
@@ -97,15 +99,18 @@ public:
     [[nodiscard]] bool Init(IRHIDevice* device, ShaderManager* shaderMgr,
                             uint32_t width, uint32_t height);
 
+    /// Sets the VFS backend used for loading noise textures from pak archives.
+    void SetVFS(IVFS* vfs) { m_vfs = vfs; }
+
     /// Releases all GPU resources.
     void Shutdown();
 
     /// Recreates half-res textures when the render target size changes.
     void OnResize(uint32_t width, uint32_t height);
 
-    /// Loads 3D noise textures from disk (content/atmosphere/shape.bin) and uploads to GPU.
-    /// Must be called on a command list that will be submitted before Execute().
-    void LoadNoiseTextures(IRHICommandList* cmdList);
+    /// Loads 3D noise textures via VFS and uploads to GPU.
+    /// Falls back to procedural noise if the VFS does not contain the files.
+    void LoadNoiseTextures(IRHICommandList* cmdList, IVFS* vfs = nullptr);
 
     /// Dispatches the cloud ray-march compute shader.
     ///
@@ -146,6 +151,7 @@ private:
     // ── Device + shader manager references ──
     IRHIDevice*    m_device    = nullptr;
     ShaderManager* m_shaderMgr = nullptr;
+    IVFS*          m_vfs       = nullptr;   ///< Asset VFS for loading noise textures from pak
 
     // ── Output texture (half-res RGBA16F) ──
     RHITextureHandle m_outputTexture   = RHITextureHandle::Invalid();

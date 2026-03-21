@@ -7,8 +7,10 @@
 /// # Backends
 /// - `LooseFileVFS`: reads files directly from a root directory on disk.
 ///   Used during development for instant iteration without packing.
-/// - `PakVFS`: reads assets from a loaded .uzpak archive in memory.
-///   Used in shipping builds for O(1) hash-based lookups.
+/// - `PakVFS`: reads assets from .uzpak archives. Supports two modes:
+///   - **Legacy mode**: loads a single .uzpak entirely into memory via `PakReader`.
+///   - **Lazy mode**: loads a .uzpakindex master index (~small) and reads
+///     individual blobs on demand via `PakStreamReader` + `LRUCache`.
 /// - `LayeredVFS`: combines multiple IVFS backends into a priority-based
 ///   mount stack. Higher-priority mounts shadow lower-priority ones.
 ///
@@ -29,10 +31,12 @@
 #pragma once
 
 #include "pak_format.h"
+#include "engine/core/lru_cache.h"
 
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace uz {
@@ -162,29 +166,44 @@ private:
 // PakVFS — reads from .uzpak archives (ship mode)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// VFS backend that reads assets from a loaded .uzpak archive.
+/// VFS backend that reads assets from .uzpak archives.
 ///
-/// The archive is loaded entirely into memory (via `PakReader`).
-/// Lookups are O(1) via xxHash64 path hash against the in-memory index.
+/// Supports two operating modes:
+///
+/// ## Legacy mode (FromFile / PakReader constructor)
+/// Loads a single .uzpak entirely into memory. Lookups are O(1) via
+/// xxHash64 path hash. Used for backward compatibility with single-pak
+/// workflows and tests.
+///
+/// ## Lazy mode (FromIndexFile)
+/// Loads only the .uzpakindex master index into RAM (~small). Pak file
+/// handles are opened on-demand and blobs are read via seek+read through
+/// `PakStreamReader`. An `LRUCache` holds recently-read assets to avoid
+/// redundant I/O. This is the recommended mode for shipping builds with
+/// multi-pak archives.
 ///
 /// # Ownership
-/// The `PakVFS` owns its `PakReader` instance. The archive data stays
-/// in memory for the lifetime of this object.
+/// In legacy mode, owns a `PakReader` with the full archive in memory.
+/// In lazy mode, owns the `MasterIndex`, a map of `PakStreamReader` handles
+/// (opened lazily), and an `LRUCache` for decompressed asset data.
 ///
 /// # Logging
 /// - Logs `Asset::Debug` on construction with the entry count.
-/// - Logs `Asset::Error` in `FromFile()` if the pak cannot be loaded.
+/// - Logs `Asset::Error` on I/O failures during Read().
 ///
-/// # Example
+/// # Examples
 /// ```cpp
+/// // Legacy: load entire single pak
 /// auto vfs = PakVFS::FromFile("build/game.uzpak");
-/// if (vfs) {
-///     auto data = vfs->Read("shaders/simple_vs.uzshader");
-/// }
+///
+/// // Lazy: load only master index, read on demand
+/// auto vfs = PakVFS::FromIndexFile("build/game.uzpakindex", mySecret);
+///
+/// auto data = vfs->Read("shaders/simple_vs.uzshader");
 /// ```
 class PakVFS : public IVFS {
 public:
-    /// Creates a pak VFS from an already-loaded PakReader.
+    /// Creates a pak VFS from an already-loaded PakReader (legacy mode).
     ///
     /// # Arguments
     /// - `reader`: A loaded PakReader. Ownership is transferred via move.
@@ -194,9 +213,10 @@ public:
     /// Logs `Asset::Debug` with the number of entries in the archive.
     explicit PakVFS(PakReader reader);
 
-    /// Creates a pak VFS by loading a .uzpak file from disk.
+    /// Creates a pak VFS by loading a single .uzpak file from disk (legacy mode).
     ///
     /// Validates the pak header, reads the index, and builds the lookup map.
+    /// The entire archive is loaded into memory.
     ///
     /// # Arguments
     /// - `path`: Absolute or relative path to the .uzpak file on disk.
@@ -209,32 +229,88 @@ public:
     /// Logs `Asset::Error` with the file path on failure.
     [[nodiscard]] static std::unique_ptr<PakVFS> FromFile(const std::string& path);
 
-    /// Looks up an asset by logical path in the loaded archive.
+    /// Creates a pak VFS from a .uzpakindex master index file (lazy mode).
     ///
-    /// Computes xxHash64 of the path string and queries the in-memory index.
+    /// Loads the master index into RAM and opens zero pak file handles
+    /// (handles are opened lazily on first Read). The `baseDir` is derived
+    /// from the directory containing `indexPath` and is prepended to pak
+    /// filenames from the index to form absolute paths.
+    ///
+    /// An LRU cache with the given byte budget holds decompressed asset
+    /// data to avoid redundant I/O for frequently-accessed assets.
+    ///
+    /// # Arguments
+    /// - `indexPath`: Path to the .uzpakindex file.
+    /// - `secret`: XOR descramble secret (must match the one used during packing).
+    /// - `cacheSizeBytes`: LRU cache budget in bytes (default: 256 MB).
+    ///
+    /// # Returns
+    /// - `unique_ptr<PakVFS>` on success.
+    /// - `nullptr` if the index file cannot be loaded.
+    ///
+    /// # Errors
+    /// Logs `Asset::Error` with the file path on failure.
+    [[nodiscard]] static std::unique_ptr<PakVFS> FromIndexFile(
+        const std::string& indexPath, uint64_t secret = 0,
+        size_t cacheSizeBytes = 256 * size_t{1024} * 1024);
+
+    ~PakVFS() override = default;
+    PakVFS(PakVFS&&) noexcept = default;
+    PakVFS& operator=(PakVFS&&) noexcept = default;
+
+    /// Reads an asset by logical path.
+    ///
+    /// In legacy mode: computes xxHash64 and queries the in-memory PakReader.
+    /// In lazy mode: checks LRU cache first, then seeks into the appropriate
+    /// .uzpak file, reads and decompresses the blob, and caches the result.
     ///
     /// # Returns
     /// - Copy of the asset bytes on success.
     /// - Empty vector if the path is not in the archive.
     [[nodiscard]] std::vector<uint8_t> Read(const std::string& path) override;
 
-    /// Checks if an asset exists in the archive by path hash.
+    /// Checks if an asset exists by path hash.
+    ///
+    /// In lazy mode this is a pure index lookup with no I/O.
     ///
     /// # Returns
     /// `true` if the archive contains an entry matching `xxHash64(path)`.
     [[nodiscard]] bool Exists(const std::string& path) override;
 
-    /// Returns `"PakVFS"` or `"PakVFS(<filepath>)"` if loaded from file.
+    /// Returns a human-readable name for logging.
     [[nodiscard]] std::string Name() const override;
 
-    /// Returns a const reference to the underlying PakReader.
+    /// Returns empty string — pak assets have no filesystem path.
+    [[nodiscard]] std::string ResolvePath(const std::string& path) const override;
+
+    /// Returns a const reference to the underlying PakReader (legacy mode only).
     ///
     /// Useful for inspecting entry count, path hashes, or integrity data
     /// without going through the VFS abstraction.
+    ///
+    /// # Precondition
+    /// Only valid in legacy mode (constructed via PakReader or FromFile).
+    /// In lazy mode the reader is empty.
     [[nodiscard]] const PakReader& Reader() const { return m_reader; }
 
+    /// Returns true if this PakVFS is operating in lazy (index-based) mode.
+    [[nodiscard]] bool IsLazyMode() const { return m_index.IsLoaded(); }
+
 private:
-    PakReader m_reader;     ///< Loaded .uzpak archive with in-memory index
+    /// Private default constructor for factory methods.
+    PakVFS() = default;
+
+    // ── Legacy mode state ──────────────────────────────────────────────
+    PakReader m_reader;     ///< Loaded .uzpak archive (legacy mode only)
+
+    // ── Lazy mode state ────────────────────────────────────────────────
+    MasterIndex m_index;                                      ///< Path hash -> pak location
+    std::unordered_map<std::string, PakStreamReader> m_readers; ///< Pak filename -> open handle
+    std::unique_ptr<LRUCache<uint64_t, std::vector<uint8_t>>> m_cache; ///< Decompressed asset cache
+    uint64_t m_secret = 0;                                    ///< XOR descramble secret
+    std::string m_baseDir;                                    ///< Directory containing the .uzpak files
+
+    // ── Shared state ───────────────────────────────────────────────────
     std::string m_name;     ///< Human-readable name for logging
 };
 
