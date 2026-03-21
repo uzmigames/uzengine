@@ -391,8 +391,10 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     // ── FXAA LDR Intermediate (at DISPLAY resolution — post-tonemap AA) ──
     CreateFxaaResources(width, height);
 
-    // ── Async Texture Decoder (4 worker threads for parallel stbi_load) ──
-    m_asyncDecoder = std::make_unique<AsyncTextureDecoder>(4);
+    // ── Async Texture Decoder (scales with CPU cores for parallel VFS read + decode) ──
+    const int hwThreads = static_cast<int>(std::thread::hardware_concurrency());
+    const int decoderThreads = std::max(2, hwThreads / 2); // clamped to [2,8] by decoder
+    m_asyncDecoder = std::make_unique<AsyncTextureDecoder>(decoderThreads);
 
     // ── Temporal Upscaler (default: TAA — matches existing behavior) ────
     m_upscaler = CreateTemporalUpscaler(m_upscalerType);

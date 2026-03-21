@@ -39,10 +39,11 @@
 
 namespace uz {
 
-/// Maximum textures to upload per frame. UINT32_MAX = no limit (upload all
-/// decoded textures immediately). Set to a lower value (e.g., 8) to spread
-/// GPU upload cost across frames if loading causes frame hitches.
-static constexpr uint32_t kMaxTextureUploadsPerFrame = UINT32_MAX;
+/// Maximum textures to upload per frame. Limits the number of staging buffer
+/// creations + GPU copies per frame to avoid main-thread stalls during the
+/// End/Execute/WaitIdle flush. Each 2K BC7 texture upload takes ~2-3ms of
+/// command recording, so 4/frame keeps the stall under 12ms.
+static constexpr uint32_t kMaxTextureUploadsPerFrame = 4;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Asset Loading — Meshes (deferred upload, flushed in batch)
