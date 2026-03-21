@@ -1,0 +1,169 @@
+Component,Property,Type,Default,Category,UIMin,UIMax,ClampMin,ClampMax,SliderExponent,Interp,AdvancedDisplay,Status
+SkyAtmosphereComponent,BottomRadius,float,unknown,Planet,1.0,7000.0,0.1,10000.0,5.0,yes,no,PRESENT
+SkyAtmosphereComponent,GroundAlbedo,FColor,unknown,Planet,,,,,yes,no,PRESENT
+SkyAtmosphereComponent,AtmosphereHeight,float,unknown,Atmosphere,1.0,200.0,0.1,,,yes,no,PRESENT
+SkyAtmosphereComponent,MultiScatteringFactor,float,unknown,Atmosphere,0.0,2.0,0.0,100.0,,yes,no,PRESENT
+SkyAtmosphereComponent,TraceSampleCountScale,float,unknown,Atmosphere,0.25,8,0.25,,,no,yes,MISSING
+SkyAtmosphereComponent,RayleighScatteringScale,float,unknown,Atmosphere - Rayleigh,0.0,2.0,0.0,,4.0,yes,no,PRESENT
+SkyAtmosphereComponent,RayleighScattering,FLinearColor,unknown,Atmosphere - Rayleigh,,,,,yes,no,PRESENT
+SkyAtmosphereComponent,RayleighExponentialDistribution,float,unknown,Atmosphere - Rayleigh,0.01,20.0,0.001,,5.0,yes,no,PRESENT
+SkyAtmosphereComponent,MieScatteringScale,float,unknown,Atmosphere - Mie,0.0,5.0,0.0,,4.0,yes,no,PRESENT
+SkyAtmosphereComponent,MieScattering,FLinearColor,unknown,Atmosphere - Mie,,,,,yes,no,PRESENT
+SkyAtmosphereComponent,MieAbsorptionScale,float,unknown,Atmosphere - Mie,0.0,5.0,0.0,,4.0,yes,no,PRESENT
+SkyAtmosphereComponent,MieAbsorption,FLinearColor,unknown,Atmosphere - Mie,,,,,yes,no,PRESENT
+SkyAtmosphereComponent,MieAnisotropy,float,unknown,Atmosphere - Mie,0.0,0.999,0.0,0.999,,yes,no,PRESENT
+SkyAtmosphereComponent,MieExponentialDistribution,float,unknown,Atmosphere - Mie,0.01,10.0,0.001,,5.0,yes,no,PRESENT
+SkyAtmosphereComponent,OtherAbsorptionScale,float,unknown,Atmosphere - Absorption,0.0,0.2,0.0,,3.0,yes,no,PRESENT
+SkyAtmosphereComponent,OtherAbsorption,FLinearColor,unknown,Atmosphere - Absorption,,,,,yes,no,PRESENT
+SkyAtmosphereComponent,OtherTentDistribution,FTentDistribution,unknown,Atmosphere - Absorption,,,,,no,no,MISSING
+SkyAtmosphereComponent,SkyLuminanceFactor,FLinearColor,unknown,Art Direction,,,,,yes,no,PRESENT
+SkyAtmosphereComponent,SkyAndAerialPerspectiveLuminanceFactor,FLinearColor,unknown,Art Direction,,,,,yes,no,PRESENT
+SkyAtmosphereComponent,AerialPespectiveViewDistanceScale,float,unknown,Art Direction,0.0,3.0,0.0,,2.0,yes,no,PRESENT
+SkyAtmosphereComponent,HeightFogContribution,float,unknown,Art Direction,0.0,1.0,0.0,,2.0,yes,no,PRESENT
+SkyAtmosphereComponent,TransmittanceMinLightElevationAngle,float,unknown,Art Direction,-90.0,90.0,-90.0,90.0,,yes,no,PRESENT
+SkyAtmosphereComponent,AerialPerspectiveStartDepth,float,unknown,Art Direction,0.001,10.0,0.001,,,yes,no,PRESENT
+SkyAtmosphereComponent,TransformMode,ESkyAtmosphereTransformMode,unknown,Planet,,,,,no,no,MISSING
+SkyAtmosphereComponent,bHoldout,uint8 bit,0,Rendering,,,,,yes,no,PRESENT
+SkyAtmosphereComponent,bRenderInMainPass,uint8 bit,1,Rendering,,,,,no,no,PRESENT
+SkyLightComponent,bRealTimeCapture,bool,0,Light,,,,,no,no,PRESENT
+SkyLightComponent,SourceType,enum,SLS_CapturedScene,Light,,,,,no,no,PRESENT
+SkyLightComponent,Cubemap,UTextureCube*,nullptr,Light,,,,,no,no,PRESENT
+SkyLightComponent,SourceCubemapAngle,float,0.0,Light,0,360,,,no,no,PRESENT
+SkyLightComponent,CubemapResolution,int32,128,Light,,,,,no,no,PRESENT
+SkyLightComponent,SkyDistanceThreshold,float,unknown,Light,,,,,no,no,PRESENT
+SkyLightComponent,bCaptureEmissiveOnly,bool,0,Light,,,,,no,yes,PRESENT
+SkyLightComponent,bLowerHemisphereIsBlack,bool,1,Light,,,,,no,yes,PRESENT
+SkyLightComponent,LowerHemisphereColor,FLinearColor,unknown,Light,,,,,no,yes,PRESENT
+SkyLightComponent,OcclusionMaxDistance,float,1500.0,DistanceFieldAmbientOcclusion,200,1500,,,no,no,PRESENT
+SkyLightComponent,Contrast,float,0.2,DistanceFieldAmbientOcclusion,0,1,,,no,no,PRESENT
+SkyLightComponent,OcclusionExponent,float,0.8,DistanceFieldAmbientOcclusion,0.6,1.6,,,no,no,PRESENT
+SkyLightComponent,MinOcclusion,float,0.0,DistanceFieldAmbientOcclusion,0,1,,,no,no,PRESENT
+SkyLightComponent,OcclusionTint,FColor,unknown,DistanceFieldAmbientOcclusion,,,,,no,no,PRESENT
+SkyLightComponent,bCloudAmbientOcclusion,uint32 bit,1,AtmosphereAndCloud,,,,,no,no,MISSING
+SkyLightComponent,CloudAmbientOcclusionStrength,float,0.5,AtmosphereAndCloud,0,1,0,,1.0,yes,no,MISSING
+SkyLightComponent,CloudAmbientOcclusionExtent,float,64.0,AtmosphereAndCloud,1,,,1,,no,no,MISSING
+SkyLightComponent,CloudAmbientOcclusionMapResolutionScale,float,1.0,AtmosphereAndCloud,0.25,8,0.25,,,no,no,MISSING
+SkyLightComponent,CloudAmbientOcclusionApertureScale,float,0.0,AtmosphereAndCloud,0.0,0.1,0.0,1.0,2.0,no,no,MISSING
+SkyLightComponent,OcclusionCombineMode,EOcclusionCombineMode,unknown,DistanceFieldAmbientOcclusion,,,,,no,no,PRESENT
+DirectionalLightComponent,ShadowCascadeBiasDistribution,float,1.0,Light,0,1,,,yes,yes,MISSING
+DirectionalLightComponent,bEnableLightShaftOcclusion,uint32 bit,1,LightShafts,,,,,yes,no,PRESENT
+DirectionalLightComponent,OcclusionMaskDarkness,float,0.5,LightShafts,0,1,,,yes,no,PRESENT
+DirectionalLightComponent,OcclusionDepthRange,float,10000.0,LightShafts,0,500000,,,yes,no,PRESENT
+DirectionalLightComponent,LightShaftOverrideDirection,FVector,unknown,LightShafts,,,,,yes,yes,PRESENT
+DirectionalLightComponent,DynamicShadowDistanceMovableLight,float,20000.0,CascadedShadowMaps,0,20000,,,yes,no,PRESENT
+DirectionalLightComponent,DynamicShadowDistanceStationaryLight,float,20000.0,CascadedShadowMaps,0,20000,,,yes,no,PRESENT
+DirectionalLightComponent,DynamicShadowCascades,int32,4,CascadedShadowMaps,0,4,,,yes,no,PRESENT
+DirectionalLightComponent,CascadeDistributionExponent,float,2.0,CascadedShadowMaps,1,4,,,yes,no,PRESENT
+DirectionalLightComponent,CascadeTransitionFraction,float,0.1,CascadedShadowMaps,0,0.3,,,yes,no,PRESENT
+DirectionalLightComponent,ShadowDistanceFadeoutFraction,float,1.0,CascadedShadowMaps,0,1.0,,,yes,no,PRESENT
+DirectionalLightComponent,bUseInsetShadowsForMovableObjects,uint32 bit,1,CascadedShadowMaps,,,,,no,yes,PRESENT
+DirectionalLightComponent,FarShadowCascadeCount,int32,0,CascadedShadowMaps,0,4,,,no,yes,MISSING
+DirectionalLightComponent,FarShadowDistance,float,0.0,CascadedShadowMaps,0,800000,,,no,yes,MISSING
+DirectionalLightComponent,DistanceFieldShadowDistance,float,0.0,DistanceFieldShadows,0,100000,,,no,no,PRESENT
+DirectionalLightComponent,ForwardShadingPriority,int32,0,Light,0,,0,,no,yes,PRESENT
+DirectionalLightComponent,LightSourceAngle,float,0.5357,Light,0,5,,,yes,no,PRESENT
+DirectionalLightComponent,LightSourceSoftAngle,float,0.0,Light,0,5,,,yes,no,PRESENT
+DirectionalLightComponent,ShadowSourceAngleFactor,float,1.0,RayTracing,0,5,,,yes,no,MISSING
+DirectionalLightComponent,TraceDistance,float,100000.0,DistanceFieldShadows,1000,100000,,,no,yes,PRESENT
+DirectionalLightComponent,bAtmosphereSunLight,uint32 bit,1,AtmosphereAndCloud,,,,,no,no,PRESENT
+DirectionalLightComponent,AtmosphereSunLightIndex,int32,0,AtmosphereAndCloud,0,1,0,1,,no,yes,PRESENT
+DirectionalLightComponent,AtmosphereSunDiskColorScale,FLinearColor,1-1-1-1,AtmosphereAndCloud,,,,,no,yes,PRESENT
+DirectionalLightComponent,bPerPixelAtmosphereTransmittance,uint32 bit,1,AtmosphereAndCloud,,,,,no,yes,PRESENT
+DirectionalLightComponent,bCastShadowsOnClouds,uint32 bit,1,AtmosphereAndCloud,,,,,no,no,PRESENT
+DirectionalLightComponent,bCastShadowsOnAtmosphere,uint32 bit,1,AtmosphereAndCloud,,,,,no,no,PRESENT
+DirectionalLightComponent,bCastCloudShadows,uint32 bit,1,AtmosphereAndCloud,,,,,no,no,PRESENT
+DirectionalLightComponent,CloudShadowStrength,float,1.0,AtmosphereAndCloud,0,1,0,,1.0,yes,yes,MISSING
+DirectionalLightComponent,CloudShadowOnAtmosphereStrength,float,1.0,AtmosphereAndCloud,0,1,0,,1.0,yes,yes,MISSING
+DirectionalLightComponent,CloudShadowOnSurfaceStrength,float,1.0,AtmosphereAndCloud,0,1,0,,1.0,yes,yes,MISSING
+DirectionalLightComponent,CloudShadowDepthBias,float,0.0,AtmosphereAndCloud,-1,1,,,no,yes,MISSING
+DirectionalLightComponent,CloudShadowExtent,float,128.0,AtmosphereAndCloud,1,,,1,,no,yes,MISSING
+DirectionalLightComponent,CloudShadowMapResolutionScale,float,1.0,AtmosphereAndCloud,0.25,8,0.25,,,no,yes,MISSING
+DirectionalLightComponent,CloudShadowRaySampleCountScale,float,1.0,AtmosphereAndCloud,0.25,8,0.25,,,no,yes,MISSING
+DirectionalLightComponent,CloudScatteredLuminanceScale,FLinearColor,1-1-1-1,AtmosphereAndCloud,,,,,no,no,MISSING
+DirectionalLightComponent,bCastModulatedShadows,uint32 bit,0,Light,,,,,no,yes,PRESENT
+DirectionalLightComponent,ModulatedShadowColor,FColor,0-0-0-255,Light,,,,,no,yes,PRESENT
+DirectionalLightComponent,ShadowAmount,float,1.0,Light,0,1,0,1,,no,yes,PRESENT
+PointLightComponent,bUseInverseSquaredFalloff,uint32 bit,1,Light,,,,,no,yes,PRESENT
+PointLightComponent,LightFalloffExponent,float,8.0,Light,2.0,16.0,,,no,yes,PRESENT
+PointLightComponent,SourceRadius,float,0.0,Light,0.0,1000.0,,,yes,no,PRESENT
+PointLightComponent,SoftSourceRadius,float,0.0,Light,0.0,1000.0,,,yes,no,PRESENT
+PointLightComponent,SourceLength,float,0.0,Light,0.0,1000.0,,,yes,no,PRESENT
+SpotLightComponent,InnerConeAngle,float,0.0,Light,1.0,80.0,,,no,no,PRESENT
+SpotLightComponent,OuterConeAngle,float,44.0,Light,1.0,80.0,,,no,no,PRESENT
+ExponentialHeightFogComponent,FogDensity,float,0.02,ExponentialHeightFogComponent,0,0.05,,,no,yes,PRESENT
+ExponentialHeightFogComponent,FogHeightFalloff,float,0.2,ExponentialHeightFogComponent,0.001,2,,,no,yes,PRESENT
+ExponentialHeightFogComponent,SecondFogData,FExponentialHeightFogData,struct,ExponentialHeightFogComponent,,,,,no,no,MISSING
+ExponentialHeightFogComponent,FogInscatteringLuminance,FLinearColor,unknown,ExponentialHeightFogComponent,,,,,yes,no,PRESENT
+ExponentialHeightFogComponent,SkyAtmosphereAmbientContributionColorScale,FLinearColor,unknown,ExponentialHeightFogComponent,,,,,no,no,MISSING
+ExponentialHeightFogComponent,InscatteringColorCubemap,UTextureCube*,nullptr,InscatteringTexture,,,,,no,no,PRESENT
+ExponentialHeightFogComponent,InscatteringColorCubemapAngle,float,0.0,InscatteringTexture,0,360,,,no,no,PRESENT
+ExponentialHeightFogComponent,InscatteringTextureTint,FLinearColor,1-1-1-1,InscatteringTexture,,,,,no,no,PRESENT
+ExponentialHeightFogComponent,FullyDirectionalInscatteringColorDistance,float,100000.0,InscatteringTexture,1000,1000000,,,no,no,PRESENT
+ExponentialHeightFogComponent,NonDirectionalInscatteringColorDistance,float,50000.0,InscatteringTexture,1000,1000000,,,no,no,PRESENT
+ExponentialHeightFogComponent,DirectionalInscatteringExponent,float,8.0,DirectionalInscattering,2,64,,,yes,no,PRESENT
+ExponentialHeightFogComponent,DirectionalInscatteringStartDistance,float,0.0,DirectionalInscattering,,,,,yes,no,PRESENT
+ExponentialHeightFogComponent,DirectionalInscatteringLuminance,FLinearColor,unknown,DirectionalInscattering,,,,,yes,no,PRESENT
+ExponentialHeightFogComponent,FogMaxOpacity,float,1.0,ExponentialHeightFogComponent,0,1,,,yes,no,PRESENT
+ExponentialHeightFogComponent,StartDistance,float,0.0,ExponentialHeightFogComponent,0,5000,,,yes,no,PRESENT
+ExponentialHeightFogComponent,EndDistance,float,0.0,ExponentialHeightFogComponent,0,500000,,,yes,no,PRESENT
+ExponentialHeightFogComponent,FogCutoffDistance,float,3000000.0,ExponentialHeightFogComponent,100000,20000000,,,no,no,PRESENT
+ExponentialHeightFogComponent,bEnableVolumetricFog,bool,0,VolumetricFog,,,,,no,no,PRESENT
+ExponentialHeightFogComponent,VolumetricFogScatteringDistribution,float,0.2,VolumetricFog,-0.9,0.9,,,no,no,PRESENT
+ExponentialHeightFogComponent,VolumetricFogAlbedo,FColor,255-255-255-255,VolumetricFog,,,,,no,no,PRESENT
+ExponentialHeightFogComponent,VolumetricFogEmissive,FLinearColor,0-0-0-1,VolumetricFog,,,,,no,no,PRESENT
+ExponentialHeightFogComponent,VolumetricFogExtinctionScale,float,1.0,VolumetricFog,0.1,10,,,no,no,PRESENT
+ExponentialHeightFogComponent,VolumetricFogDistance,float,6400.0,VolumetricFog,1000,10000,,,no,no,PRESENT
+ExponentialHeightFogComponent,VolumetricFogStartDistance,float,0.0,VolumetricFog,0,5000,,,no,no,PRESENT
+ExponentialHeightFogComponent,VolumetricFogNearFadeInDistance,float,300.0,VolumetricFog,0,1000,,,no,no,PRESENT
+ExponentialHeightFogComponent,VolumetricFogStaticLightingScatteringIntensity,float,1.0,VolumetricFog,0,10,,,no,no,PRESENT
+ExponentialHeightFogComponent,bOverrideLightColorsWithFogInscatteringColors,bool,0,VolumetricFog,,,,,no,yes,PRESENT
+ExponentialHeightFogComponent,bHoldout,uint8 bit,0,Rendering,,,,,yes,no,PRESENT
+ExponentialHeightFogComponent,bRenderInMainPass,uint8 bit,1,Rendering,,,,,no,no,PRESENT
+ExponentialHeightFogComponent,bVisibleInReflectionCaptures,uint8 bit,1,Rendering,,,,,no,no,PRESENT
+ExponentialHeightFogComponent,bVisibleInRealTimeSkyCaptures,uint8 bit,1,Rendering,,,,,no,no,PRESENT
+VolumetricCloudComponent,LayerBottomAltitude,float,1.0,Layer,0.0,20.0,,,2.0,yes,no,PRESENT
+VolumetricCloudComponent,LayerHeight,float,1.0,Layer,0.1,20.0,0.1,,2.0,yes,no,PRESENT
+VolumetricCloudComponent,TracingStartMaxDistance,float,350.0,Layer,100.0,500.0,1.0,,2.0,yes,no,PRESENT
+VolumetricCloudComponent,TracingStartDistanceFromCamera,float,0.0,Layer,0.0,100.0,0.0,,3.0,yes,no,PRESENT
+VolumetricCloudComponent,TracingMaxDistanceMode,enum,EntryPoint,Layer,,,,,yes,no,PRESENT
+VolumetricCloudComponent,TracingMaxDistance,float,100.0,Layer,1.0,500.0,0.1,,2.0,yes,no,PRESENT
+VolumetricCloudComponent,PlanetRadius,float,6360.0,Planet,100.0,7000.0,0.1,10000.0,,yes,no,PRESENT
+VolumetricCloudComponent,GroundAlbedo,FColor,128-128-128-255,Planet,,,,,yes,no,PRESENT
+VolumetricCloudComponent,Material,TSoftObjectPtr,nullptr,Cloud Material,,,,,no,no,PRESENT
+VolumetricCloudComponent,bUsePerSampleAtmosphericLightTransmittance,uint32 bit,1,Cloud Tracing,,,,,no,no,PRESENT
+VolumetricCloudComponent,SkyLightCloudBottomOcclusion,float,0.2,Cloud Tracing,0.0,1.0,0.0,1.0,,no,no,PRESENT
+VolumetricCloudComponent,ViewSampleCountScale,float,0.5,Cloud Tracing,0.05,8,0.05,,1.0,no,no,PRESENT
+VolumetricCloudComponent,ReflectionViewSampleCountScaleValue,float,0.1,Cloud Tracing,0.05,8,0.05,,1.0,no,no,PRESENT
+VolumetricCloudComponent,ShadowViewSampleCountScale,float,0.5,Cloud Tracing,0.05,8,0.05,,1.0,no,no,PRESENT
+VolumetricCloudComponent,ShadowReflectionViewSampleCountScaleValue,float,0.1,Cloud Tracing,0.05,8,0.05,,1.0,no,no,PRESENT
+VolumetricCloudComponent,ShadowTracingDistance,float,10.0,Cloud Tracing,0.1,50,0.01,,3.0,no,no,PRESENT
+VolumetricCloudComponent,StopTracingTransmittanceThreshold,float,0.01,Cloud Tracing,0.0,1.0,0.0,1.0,5.0,no,no,PRESENT
+VolumetricCloudComponent,AerialPespectiveRayleighScatteringStartDistance,float,0.0,Art Direction,0.0,100.0,0.0,,2.0,yes,no,PRESENT
+VolumetricCloudComponent,AerialPespectiveRayleighScatteringFadeDistance,float,10.0,Art Direction,0.0,100.0,0.0,,2.0,yes,no,PRESENT
+VolumetricCloudComponent,AerialPespectiveMieScatteringStartDistance,float,0.0,Art Direction,0.0,100.0,0.0,,2.0,yes,no,PRESENT
+VolumetricCloudComponent,AerialPespectiveMieScatteringFadeDistance,float,10.0,Art Direction,0.0,100.0,0.0,,2.0,yes,no,PRESENT
+VolumetricCloudComponent,bHoldout,uint8 bit,0,Rendering,,,,,yes,no,PRESENT
+VolumetricCloudComponent,bRenderInMainPass,uint8 bit,1,Rendering,,,,,no,no,PRESENT
+VolumetricCloudComponent,bVisibleInRealTimeSkyCaptures,uint8 bit,1,Rendering,,,,,no,no,PRESENT
+StaticMeshComponent,ForcedLodModel,int32,0,LOD,,,,,no,yes,PRESENT
+StaticMeshComponent,MinLOD,int32,0,LOD,,,,,no,yes,PRESENT
+StaticMeshComponent,WireframeColorOverride,FColor,0-0-0-255,Rendering,,,,,no,yes,PRESENT
+StaticMeshComponent,WorldPositionOffsetDisableDistance,int32,0,Rendering,,,,,no,yes,PRESENT
+StaticMeshComponent,bForceNaniteForMasked,uint8 bit,0,Rendering,,,,,no,yes,PRESENT
+StaticMeshComponent,bDisallowNanite,uint8 bit,0,Rendering,,,,,no,yes,PRESENT
+StaticMeshComponent,bEvaluateWorldPositionOffset,uint8 bit,1,Rendering,,,,,no,yes,PRESENT
+StaticMeshComponent,bWorldPositionOffsetWritesVelocity,uint8 bit,1,Rendering,,,,,no,yes,PRESENT
+StaticMeshComponent,bEvaluateWorldPositionOffsetInRayTracing,uint8 bit,0,RayTracing,,,,,no,yes,PRESENT
+StaticMeshComponent,bOverrideWireframeColor,uint8 bit,0,Rendering,,,,,no,no,PRESENT
+StaticMeshComponent,bOverrideMinLOD,uint8 bit,0,LOD,,,,,no,yes,PRESENT
+StaticMeshComponent,bCastDistanceFieldIndirectShadow,uint8 bit,0,Lighting,,,,,no,yes,PRESENT
+StaticMeshComponent,bOverrideDistanceFieldSelfShadowBias,uint8 bit,0,Lighting,,,,,no,yes,PRESENT
+StaticMeshComponent,bIgnoreInstanceForTextureStreaming,uint8 bit,0,TextureStreaming,,,,,no,yes,PRESENT
+StaticMeshComponent,bOverrideLightMapRes,uint8 bit,0,Lighting,,,,,no,no,PRESENT
+StaticMeshComponent,bUseDefaultCollision,uint8 bit,1,Collision,,,,,no,no,PRESENT
+PostProcessComponent,Priority,float,0.0,PostProcessVolume,,,,,no,no,PRESENT
+PostProcessComponent,BlendRadius,float,0.0,PostProcessVolume,0.0,6000.0,0.0,,no,yes,PRESENT
+PostProcessComponent,BlendWeight,float,1.0,PostProcessVolume,0.0,1.0,,,yes,no,PRESENT
+PostProcessComponent,bEnabled,uint32 bit,1,PostProcessVolume,,,,,no,no,PRESENT
+PostProcessComponent,bUnbound,uint32 bit,1,PostProcessVolume,,,,,no,no,PRESENT
+PostProcessComponent,Settings,FPostProcessSettings,struct,PostProcessVolume,,,,,yes,no,PARTIAL

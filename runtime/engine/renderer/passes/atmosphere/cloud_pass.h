@@ -21,7 +21,7 @@
 ///
 /// # GPU Resources
 /// - Cloud output: half-resolution RGBA16F (SRV + UAV).
-/// - 3D shape noise: 128^3 RGBA8 (loaded from cloud_shape.bin).
+/// - 3D shape noise: 128^3 RGBA8 (loaded from content/atmosphere/shape.bin).
 ///
 /// # Integration
 /// Created and owned by SceneRenderer. The cloud SRV index is passed to the
@@ -103,7 +103,7 @@ public:
     /// Recreates half-res textures when the render target size changes.
     void OnResize(uint32_t width, uint32_t height);
 
-    /// Loads 3D noise textures from disk (cloud_shape.bin) and uploads to GPU.
+    /// Loads 3D noise textures from disk (content/atmosphere/shape.bin) and uploads to GPU.
     /// Must be called on a command list that will be submitted before Execute().
     void LoadNoiseTextures(IRHICommandList* cmdList);
 

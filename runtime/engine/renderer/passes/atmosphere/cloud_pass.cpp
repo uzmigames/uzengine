@@ -211,8 +211,8 @@ void CloudPass::LoadNoiseTextures(IRHICommandList* cmdList) {
     if (m_hasNoiseTextures) return;
     if (!m_initialized || !cmdList) return;
 
-    // Load cloud_shape.bin — 128^3 R8 (2,097,152 bytes)
-    const char* shapePath = "assets/cloud_shape.bin";
+    // Load shape noise — 128^3 R8 (2,097,152 bytes)
+    const char* shapePath = "content/atmosphere/shape.bin";
     std::ifstream file(shapePath, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
         UZ_LOG(Renderer, Warning, "CloudPass: could not open {} — clouds will use procedural noise", shapePath);
@@ -223,7 +223,7 @@ void CloudPass::LoadNoiseTextures(IRHICommandList* cmdList) {
     constexpr uint32_t kNoiseRes = 128;
     constexpr uint64_t kExpectedSize = kNoiseRes * kNoiseRes * kNoiseRes; // 2,097,152
     if (static_cast<uint64_t>(fileSize) != kExpectedSize) {
-        UZ_LOG(Renderer, Error, "CloudPass: cloud_shape.bin size mismatch — expected {}, got {}",
+        UZ_LOG(Renderer, Error, "CloudPass: shape.bin size mismatch — expected {}, got {}",
                kExpectedSize, static_cast<uint64_t>(fileSize));
         return;
     }
