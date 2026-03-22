@@ -632,6 +632,64 @@ RHIPipelineHandle PipelineLibrary::GetSsrResolve() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SSR Temporal Accumulation Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureSsrTemporalShader() {
+    if (m_ssrTemporalCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::SsrTemporalCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile SsrTemporalCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "ssr_temporal_cs";
+
+    m_ssrTemporalCS = m_device->CreateShader(shaderDesc);
+    if (!m_ssrTemporalCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SsrTemporalCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetSsrTemporal() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetSsrTemporal called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_ssrTemporal.IsValid()) {
+        return m_ssrTemporal;
+    }
+
+    if (!EnsureSsrTemporalShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ssrTemporalCS;
+    desc.debugName     = "SSR_Temporal";
+
+    m_ssrTemporal = m_device->CreateComputePipeline(desc);
+    if (!m_ssrTemporal.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SSR_Temporal pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created SSR_Temporal pipeline");
+    }
+
+    return m_ssrTemporal;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Color Grading LUT Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 

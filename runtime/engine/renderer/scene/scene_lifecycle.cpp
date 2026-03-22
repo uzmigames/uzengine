@@ -915,8 +915,28 @@ void SceneRenderer::CreateSsrResources(uint32_t width, uint32_t height) {
         }
     }
 
-    UZ_LOG(Renderer, Info, "SceneRenderer: SSR resources created ({}x{}, RGBA16F, trace SRV={}, resolve SRV={})",
-           width, height, m_ssrTraceOutputSrv, m_ssrResolvedOutputSrv);
+    // SSR temporal history: ping-pong RGBA16F pair for temporal accumulation.
+    // Follows the same pattern as TAA history textures (m_taaHistory[2]).
+    for (int i = 0; i < 2; ++i) {
+        RHITextureDesc histDesc{};
+        histDesc.width     = width;
+        histDesc.height    = height;
+        histDesc.format    = RHIFormat::RGBA16Float;
+        histDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::UnorderedAccess;
+        histDesc.debugName = (i == 0) ? "SSR_History_0" : "SSR_History_1";
+
+        m_ssrHistory[i] = m_device->CreateTexture(histDesc);
+        if (m_ssrHistory[i].IsValid()) {
+            m_ssrHistorySrv[i] = m_device->GetTextureSRVIndex(m_ssrHistory[i]);
+            m_ssrHistoryUav[i] = m_device->GetTextureUAVIndex(m_ssrHistory[i]);
+        } else {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create SSR history texture {}", i);
+        }
+    }
+    m_ssrHistoryIndex = 0;
+
+    UZ_LOG(Renderer, Info, "SceneRenderer: SSR resources created ({}x{}, RGBA16F, trace SRV={}, resolve SRV={}, hist0 SRV={}, hist1 SRV={})",
+           width, height, m_ssrTraceOutputSrv, m_ssrResolvedOutputSrv, m_ssrHistorySrv[0], m_ssrHistorySrv[1]);
 }
 
 void SceneRenderer::DestroySsrResources() {
@@ -932,6 +952,15 @@ void SceneRenderer::DestroySsrResources() {
         m_ssrResolvedOutputSrv = UINT32_MAX;
         m_ssrResolvedOutputUav = UINT32_MAX;
     }
+    for (int i = 0; i < 2; ++i) {
+        if (m_ssrHistory[i].IsValid()) {
+            m_device->DestroyTexture(m_ssrHistory[i]);
+            m_ssrHistory[i] = RHITextureHandle{};
+            m_ssrHistorySrv[i] = UINT32_MAX;
+            m_ssrHistoryUav[i] = UINT32_MAX;
+        }
+    }
+    m_ssrHistoryIndex = 0;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

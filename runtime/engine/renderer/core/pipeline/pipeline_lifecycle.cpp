@@ -341,6 +341,7 @@ uint32_t PipelineLibrary::WarmupAll() {
     warmup(GetDfsConeTrace(), "DFS_ConeTrace");
     warmup(GetSsrTrace(), "SSR_Trace");
     warmup(GetSsrResolve(), "SSR_Resolve");
+    warmup(GetSsrTemporal(), "SSR_Temporal");
     warmup(GetMotionBlur(), "MotionBlur");
     warmup(GetMotionBlurTileMax(), "MotionBlurTileMax");
     warmup(GetMotionBlurNeighborMax(), "MotionBlurNeighborMax");

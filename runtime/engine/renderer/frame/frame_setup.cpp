@@ -367,11 +367,20 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     perFrame.brdfDebugMode   = m_brdfDebugMode;
 
     // ── SSR SRV index (set early — actual compute runs in render graph) ──
-    // The resolved SSR texture SRV is set here so the lighting shader can
-    // sample it. When SSR is disabled or resources aren't ready, UINT32_MAX
-    // tells the shader to skip SSR sampling.
+    // When temporal accumulation is available, the lighting shader reads from
+    // the SSR history buffer (temporally accumulated, smoother). Otherwise it
+    // falls back to the raw resolved SSR output. The history write target for
+    // this frame is m_ssrHistoryIndex — the temporal pass writes to it and
+    // transitions it to SRV before the lighting pass runs.
     if (m_ssrEnabled && m_ssrResolvedOutput.IsValid()) {
-        perFrame.ssrSrvIndex = m_ssrResolvedOutputSrv;
+        const uint32_t ssrWriteIdx = m_ssrHistoryIndex;
+        if (m_ssrHistory[ssrWriteIdx].IsValid()
+            && m_ssrHistorySrv[ssrWriteIdx] != UINT32_MAX) {
+            perFrame.ssrSrvIndex = m_ssrHistorySrv[ssrWriteIdx];
+        } else {
+            // History not yet created — fall back to raw resolved output
+            perFrame.ssrSrvIndex = m_ssrResolvedOutputSrv;
+        }
     } else {
         perFrame.ssrSrvIndex = UINT32_MAX;
     }

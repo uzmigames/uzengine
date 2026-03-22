@@ -819,6 +819,10 @@ private:
     RHITextureHandle m_ssrResolvedOutput;           ///< RGBA16F resolved SSR (rgb=Fresnel-weighted, a=blend weight).
     uint32_t m_ssrResolvedOutputSrv = UINT32_MAX;  ///< SRV for lighting pass to read SSR result.
     uint32_t m_ssrResolvedOutputUav = UINT32_MAX;  ///< UAV for resolve pass to write.
+    RHITextureHandle m_ssrHistory[2];              ///< Ping-pong RGBA16F history textures for SSR temporal accumulation.
+    uint32_t m_ssrHistorySrv[2] = {UINT32_MAX, UINT32_MAX}; ///< SRV indices for history read.
+    uint32_t m_ssrHistoryUav[2] = {UINT32_MAX, UINT32_MAX}; ///< UAV indices for history write.
+    uint32_t m_ssrHistoryIndex = 0;                ///< Current write target index (0 or 1), flips each frame.
     bool     m_ssrEnabled = true;                  ///< Runtime toggle for SSR.
 
     /// Creates SSR output textures at the given resolution.

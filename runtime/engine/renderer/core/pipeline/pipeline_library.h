@@ -436,6 +436,19 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetSsrResolve();
 
+    /// Returns the SSR temporal accumulation compute pipeline (ssr_temporal_cs.hlsl).
+    ///
+    /// Blends current-frame resolved SSR with reprojected history using
+    /// motion-vector reprojection and 3x3 neighborhood variance clipping.
+    /// Reads resolved SSR, SSR history, and velocity buffer; writes
+    /// temporally-accumulated SSR to the ping-pong history target.
+    ///
+    /// @ref Stachowiak 2015 "Stochastic Screen-Space Reflections" — temporal accumulation
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetSsrTemporal();
+
     /// Returns the color grading LUT compute pipeline (color_grading_lut_cs.hlsl).
     ///
     /// Generates a 32x32x32 3D LUT that bakes the entire color grading +
@@ -637,6 +650,7 @@ private:
     [[nodiscard]] bool EnsureTsrUpdateHistoryShader();
     [[nodiscard]] bool EnsureSsrTraceShader();
     [[nodiscard]] bool EnsureSsrResolveShader();
+    [[nodiscard]] bool EnsureSsrTemporalShader();
     [[nodiscard]] bool EnsureColorGradingLutShader();
     [[nodiscard]] bool EnsureMotionBlurShader();
     [[nodiscard]] bool EnsureMotionBlurTileMaxShader();
@@ -702,6 +716,7 @@ private:
     RHIShaderHandle m_tsrUpdateHistoryCS       = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssrTraceCS               = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssrResolveCS             = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_ssrTemporalCS            = RHIShaderHandle::Invalid();
     RHIShaderHandle m_colorGradingLutCS        = RHIShaderHandle::Invalid();
     RHIShaderHandle m_motionBlurCS             = RHIShaderHandle::Invalid();
     RHIShaderHandle m_motionBlurTileMaxCS      = RHIShaderHandle::Invalid();
@@ -761,6 +776,7 @@ private:
     RHIPipelineHandle m_tsrUpdateHistory     = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssrTrace              = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssrResolve            = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_ssrTemporal           = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_colorGradingLut       = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_motionBlur            = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_motionBlurTileMax     = RHIPipelineHandle::Invalid();

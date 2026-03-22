@@ -717,7 +717,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                 const uint32_t groupsY = (m_renderHeight + 7) / 8;
                 cmd->Dispatch(groupsX, groupsY, 1);
 
-                // Transition resolved output: UAV → SRV for lighting pass to read
+                // Transition resolved output: UAV → SRV for temporal pass to read
                 {
                     RHIBarrierDesc barrier{};
                     barrier.texture     = m_ssrResolvedOutput;
@@ -728,6 +728,99 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                 }
             });
         });
+
+        // ── Pass 3: SSR Temporal Accumulation (compute) ──────────────────
+        /// SSR Temporal: blend resolved SSR with history using motion-vector
+        /// reprojection and 3x3 neighborhood variance clipping. Outputs to
+        /// the ping-pong history buffer which the lighting pass reads.
+        /// @ref Stachowiak 2015 — temporal accumulation for stochastic SSR
+        {
+            const uint32_t ssrWriteIdx = m_ssrHistoryIndex;
+            const uint32_t ssrReadIdx  = 1 - m_ssrHistoryIndex;
+            const bool     ssrFirstFrame = !m_prevViewProjValid
+                                         || !m_ssrHistory[ssrReadIdx].IsValid();
+
+            rgBuilder.AddPass("SSR_Temporal", [&, ssrWriteIdx, ssrReadIdx, ssrFirstFrame](rg::RgPassBuilder& pb) {
+                pb.Read(ctx.velocityRes, RHIResourceState::ShaderResource);
+
+                pb.SetExecutionCallback([this, &ctx, ssrWriteIdx, ssrReadIdx, ssrFirstFrame](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
+                    UZ_PROFILE_SCOPE("SSR::Temporal");
+
+                    auto ssrTemporalPSO = ctx.pipelines->GetSsrTemporal();
+                    if (!ssrTemporalPSO.IsValid()) return;
+
+                    // Transition history textures:
+                    // - Write target: SRV → UAV (will be written by temporal blend)
+                    // - Read target: ensure SRV (sampled by temporal blend)
+                    {
+                        RHIBarrierDesc barriers[2]{};
+                        barriers[0].texture     = m_ssrHistory[ssrWriteIdx];
+                        barriers[0].buffer      = RHIBufferHandle::Invalid();
+                        barriers[0].stateBefore = RHIResourceState::ShaderResource;
+                        barriers[0].stateAfter  = RHIResourceState::UnorderedAccess;
+
+                        barriers[1].texture     = m_ssrHistory[ssrReadIdx];
+                        barriers[1].buffer      = RHIBufferHandle::Invalid();
+                        barriers[1].stateBefore = RHIResourceState::UnorderedAccess;
+                        barriers[1].stateAfter  = RHIResourceState::ShaderResource;
+
+                        cmd->ResourceBarrier(barriers, 2);
+                    }
+
+                    cmd->SetPipeline(ssrTemporalPSO);
+
+                    // Root constants: 8 DWORDs (matches SsrTemporalRootCB in ssr_temporal_cs.hlsl)
+                    struct SsrTemporalConstants {
+                        uint32_t currentSsrSrvIdx;  // DWORD 0
+                        uint32_t historySsrSrvIdx;   // DWORD 1
+                        uint32_t velocitySrvIdx;     // DWORD 2
+                        uint32_t depthSrvIdx;        // DWORD 3
+                        uint32_t outputWidth;        // DWORD 4
+                        uint32_t outputHeight;       // DWORD 5
+                        uint32_t firstFrame;         // DWORD 6
+                        uint32_t reserved;           // DWORD 7
+                    };
+
+                    SsrTemporalConstants rc{};
+                    rc.currentSsrSrvIdx = m_ssrResolvedOutputSrv;
+                    rc.historySsrSrvIdx = m_ssrHistorySrv[ssrReadIdx];
+                    rc.velocitySrvIdx   = m_gbuffer.velocitySRV;
+                    rc.depthSrvIdx      = m_gbuffer.depthSRV;
+                    rc.outputWidth      = m_renderWidth;
+                    rc.outputHeight     = m_renderHeight;
+                    rc.firstFrame       = ssrFirstFrame ? 1u : 0u;
+                    rc.reserved         = 0;
+
+                    cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
+
+                    // PerFrameCB at b1
+                    cmd->SetRootCBV(kSlotPerFrame, ctx.perFrameAlloc.bufferHandle,
+                                    ctx.perFrameAlloc.offsetBytes, ctx.perFrameAlloc.cpuPtr,
+                                    sizeof(PerFrameCB));
+
+                    // UAV at descriptor table slot 4 (u0 in shader)
+                    cmd->SetDescriptorTable(4, m_ssrHistoryUav[ssrWriteIdx]);
+
+                    // Dispatch: 8x8 thread groups
+                    const uint32_t groupsX = (m_renderWidth  + 7) / 8;
+                    const uint32_t groupsY = (m_renderHeight + 7) / 8;
+                    cmd->Dispatch(groupsX, groupsY, 1);
+
+                    // Transition write target: UAV → SRV for lighting pass to read
+                    {
+                        RHIBarrierDesc barrier{};
+                        barrier.texture     = m_ssrHistory[ssrWriteIdx];
+                        barrier.buffer      = RHIBufferHandle::Invalid();
+                        barrier.stateBefore = RHIResourceState::UnorderedAccess;
+                        barrier.stateAfter  = RHIResourceState::ShaderResource;
+                        cmd->ResourceBarrier(&barrier, 1);
+                    }
+                });
+            });
+
+            // Flip SSR history ping-pong for next frame
+            m_ssrHistoryIndex = 1 - m_ssrHistoryIndex;
+        }
     }
 
     // ── Deferred Lighting / Debug View / GBuffer Debug ──────────────────
@@ -1099,8 +1192,20 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         if (ctx.ssrActive) {
             m_passInspector.RegisterTarget("ssr.trace", m_ssrTraceOutput, m_ssrTraceOutputSrv,
                                             VisDisplayMode::Color, rw, rh);
-            m_passInspector.RegisterTarget("ssr.result", m_ssrResolvedOutput, m_ssrResolvedOutputSrv,
+            m_passInspector.RegisterTarget("ssr.resolve", m_ssrResolvedOutput, m_ssrResolvedOutputSrv,
                                             VisDisplayMode::Color, rw, rh);
+            // Register the temporal history write target (the one lighting reads from).
+            // After the temporal pass flips the index, the *previous* write idx is
+            // what was written this frame. At this point m_ssrHistoryIndex has been
+            // flipped already (flip happens during pass registration), so the
+            // texture that was WRITTEN this frame is at (1 - m_ssrHistoryIndex).
+            const uint32_t ssrWrittenIdx = 1 - m_ssrHistoryIndex;
+            if (m_ssrHistory[ssrWrittenIdx].IsValid()
+                && m_ssrHistorySrv[ssrWrittenIdx] != UINT32_MAX) {
+                m_passInspector.RegisterTarget("ssr.temporal", m_ssrHistory[ssrWrittenIdx],
+                                                m_ssrHistorySrv[ssrWrittenIdx],
+                                                VisDisplayMode::Color, rw, rh);
+            }
         }
 
         // HDR scene color (after lighting + atmosphere, before postprocess)
