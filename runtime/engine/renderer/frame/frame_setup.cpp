@@ -37,19 +37,19 @@
 #include <cstring>
 
 // ── CVars ────────────────────────────────────────────────────────────────
-static auto* cv_SkyLightIntensity  = UZ_CVAR_FLOAT("r.SkyLight.Intensity", 1.f, "IBL ambient multiplier", 0.f, 20.f);
-static auto* cv_SkyLightMinAmbient = UZ_CVAR_FLOAT("r.SkyLight.MinAmbient", 0.f, "Minimum ambient floor", 0.f, 1.f);
-static auto* cv_ContactShadowLen   = UZ_CVAR_FLOAT("r.ContactShadow.Length", 0.02f, "Contact shadow ray length", 0.f, 0.2f);
+static auto* cv_SkyLightIntensity  = UZ_CVAR_FLOAT("r.SkyLight.Intensity", 2.2f, "IBL ambient multiplier", 0.f, 20.f);
+static auto* cv_SkyLightMinAmbient = UZ_CVAR_FLOAT("r.SkyLight.MinAmbient", 0.06f, "Minimum ambient floor", 0.f, 1.f);
+static auto* cv_ContactShadowLen   = UZ_CVAR_FLOAT("r.ContactShadow.Length", 0.03f, "Contact shadow ray length", 0.f, 0.2f);
 static auto* cv_FilmGrain          = UZ_CVAR_FLOAT("r.FilmGrain", 0.f, "Film grain intensity", 0.f, 1.f);
 static auto* cv_Vignette           = UZ_CVAR_FLOAT("r.Vignette", 0.4f, "Vignette intensity", 0.f, 2.f);
 static auto* cv_ChromaAb           = UZ_CVAR_FLOAT("r.ChromaticAberration", 0.f, "Chromatic aberration", 0.f, 1.f);
-static auto* cv_TonemapSlope       = UZ_CVAR_FLOAT("r.Tonemap.Slope", 0.88f, "ACES film slope", 0.f, 2.f);
-static auto* cv_TonemapToe         = UZ_CVAR_FLOAT("r.Tonemap.Toe", 0.55f, "ACES film toe", 0.f, 1.f);
-static auto* cv_TonemapShoulder    = UZ_CVAR_FLOAT("r.Tonemap.Shoulder", 0.26f, "ACES film shoulder", 0.f, 1.f);
+static auto* cv_TonemapSlope       = UZ_CVAR_FLOAT("r.Tonemap.Slope", 0.91f, "ACES film slope", 0.f, 2.f);
+static auto* cv_TonemapToe         = UZ_CVAR_FLOAT("r.Tonemap.Toe", 0.45f, "ACES film toe", 0.f, 1.f);
+static auto* cv_TonemapShoulder    = UZ_CVAR_FLOAT("r.Tonemap.Shoulder", 0.22f, "ACES film shoulder", 0.f, 1.f);
 static auto* cv_TonemapBlackClip   = UZ_CVAR_FLOAT("r.Tonemap.BlackClip", 0.f, "ACES black clip", 0.f, 1.f);
 static auto* cv_TonemapWhiteClip   = UZ_CVAR_FLOAT("r.Tonemap.WhiteClip", 0.04f, "ACES white clip", 0.f, 1.f);
 static auto* cv_MipBias            = UZ_CVAR_FLOAT("r.MipBias", 0.f, "Global mipmap LOD bias", -4.f, 4.f);
-static auto* cv_Exposure           = UZ_CVAR_FLOAT("r.Exposure", 1.f, "Manual exposure multiplier", 0.01f, 100.f);
+static auto* cv_Exposure           = UZ_CVAR_FLOAT("r.Exposure", 1.4f, "Manual exposure multiplier", 0.01f, 100.f);
 static auto* cv_GIIntensity        = UZ_CVAR_FLOAT("r.GI.Intensity", 1.f, "GI intensity multiplier", 0.f, 10.f);
 static auto* cv_TAA                = UZ_CVAR_BOOL("r.TAA", true, "TAA anti-aliasing");
 static auto* cv_DepthPrepass       = UZ_CVAR_BOOL("r.DepthPrepass", true, "Depth prepass before GBuffer");

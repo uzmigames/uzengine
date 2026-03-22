@@ -21,8 +21,8 @@ UZ_DECLARE_LOG_CATEGORY(Renderer);
 // ── CVars ────────────────────────────────────────────────────────────────
 static auto* cv_GTAOEnabled        = UZ_CVAR_BOOL("r.GTAO", true, "Ground truth ambient occlusion");
 static auto* cv_GTAORadius         = UZ_CVAR_FLOAT("r.GTAO.Radius", 200.f, "AO search radius (cm)", 1.f, 10000.f);
-static auto* cv_GTAOIntensity      = UZ_CVAR_FLOAT("r.GTAO.Intensity", 1.f, "AO strength multiplier", 0.f, 5.f);
-static auto* cv_GTAOPower          = UZ_CVAR_FLOAT("r.GTAO.Power", 2.f, "AO power curve exponent", 0.1f, 10.f);
+static auto* cv_GTAOIntensity      = UZ_CVAR_FLOAT("r.GTAO.Intensity", 2.f, "AO strength multiplier", 0.f, 5.f);
+static auto* cv_GTAOPower          = UZ_CVAR_FLOAT("r.GTAO.Power", 1.5f, "AO power curve exponent", 0.1f, 10.f);
 static auto* cv_GTAOThicknessBlend = UZ_CVAR_FLOAT("r.GTAO.ThicknessBlend", 0.5f, "Thickness heuristic", 0.f, 1.f);
 
 namespace uz {

@@ -29,7 +29,7 @@
 // ── CVars ────────────────────────────────────────────────────────────────
 static auto* cv_MotionBlurAmount = UZ_CVAR_FLOAT("r.MotionBlur.Amount", 0.5f, "Motion blur intensity", 0.f, 5.f);
 static auto* cv_MotionBlurMax    = UZ_CVAR_FLOAT("r.MotionBlur.Max", 5.f, "Max blur radius (%)", 0.f, 50.f);
-static auto* cv_CASSharpness     = UZ_CVAR_FLOAT("r.CAS.Sharpness", 0.15f, "CAS sharpening strength", 0.f, 1.f);
+static auto* cv_CASSharpness     = UZ_CVAR_FLOAT("r.CAS.Sharpness", 0.2f, "CAS sharpening strength", 0.f, 1.f);
 static auto* cv_LODBias          = UZ_CVAR_FLOAT("r.LOD.Bias", 1.f, "Global LOD bias multiplier", 0.1f, 10.f);
 static auto* cv_ContactShadows   = UZ_CVAR_BOOL("r.ContactShadows", true, "Contact shadows");
 
