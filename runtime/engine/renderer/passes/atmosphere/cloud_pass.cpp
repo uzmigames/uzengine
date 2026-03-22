@@ -10,7 +10,7 @@
 #include "cloud_pass.h"
 
 #include "engine/rhi/rhi.h"
-#include "engine/renderer/core/cb_ring_allocator.h"
+#include "cb_ring_allocator.h"
 #include "engine/asset/vfs.h"
 #include "shader_manager.h"
 #include "engine_shaders.h"

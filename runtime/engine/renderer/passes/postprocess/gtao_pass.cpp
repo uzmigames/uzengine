@@ -9,7 +9,7 @@
 
 #include "engine/rhi/rhi.h"
 #include "shader_manager.h"
-#include "engine/renderer/core/cb_ring_allocator.h"
+#include "cb_ring_allocator.h"
 #include "engine_shaders.h"
 #include "log.h"
 #include "profiler.h"

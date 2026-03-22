@@ -8,8 +8,8 @@
 #include "taa_upscaler.h"
 
 #include "engine/rhi/rhi.h"
-#include "engine/renderer/core/pipeline_library.h"
-#include "engine/renderer/core/cb_ring_allocator.h"
+#include "pipeline_library.h"
+#include "cb_ring_allocator.h"
 #include "log.h"
 #include "profiler.h"
 
