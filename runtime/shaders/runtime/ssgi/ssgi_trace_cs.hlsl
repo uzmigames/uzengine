@@ -157,9 +157,10 @@ float3 SamplePrevColor(float2 uv, float mipLevel) {
 // Depth & Position Reconstruction
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Linearize hardware depth to view-space Z distance.
+/// Linearize hardware depth to view-space Z distance (reversed-Z).
+/// deviceZ=1 at near plane, deviceZ=0 at far plane.
 float LinearizeDepth(float deviceZ) {
-    return nearPlane * farPlane / (farPlane - deviceZ * (farPlane - nearPlane));
+    return nearPlane * farPlane / (nearPlane + deviceZ * (farPlane - nearPlane));
 }
 
 /// Reconstruct world-space position from UV + device depth.

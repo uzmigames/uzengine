@@ -153,8 +153,9 @@ float4 SampleNormalMaterial(float2 uv) {
 // Depth Linearization
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Reversed-Z: deviceZ=1 at near, deviceZ=0 at far.
 float LinearizeDepth(float deviceZ) {
-    return nearPlane * farPlane / (farPlane - deviceZ * (farPlane - nearPlane));
+    return nearPlane * farPlane / (nearPlane + deviceZ * (farPlane - nearPlane));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

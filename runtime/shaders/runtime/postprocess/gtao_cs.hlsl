@@ -96,7 +96,7 @@ cbuffer GTAORootCB : register(b0) {
 #define GTAO_MAX_SCREEN_RADIUS 256.0f
 /// @ref Jimenez 2016 "GTAO" — default world radius
 static const float GTAO_WORLD_RADIUS    = 200.0f;   // cm
-static const float GTAO_AO_INTENSITY    = 1.0f;
+static const float GTAO_AO_INTENSITY    = 0.5f;
 static const float GTAO_THICKNESS_BLEND = 0.5f;
 static const float GTAO_FADE_START      = 50000.0f; // cm
 static const float GTAO_FADE_RANGE      = 50000.0f; // cm
@@ -104,7 +104,7 @@ static const float GTAO_FADE_RANGE      = 50000.0f; // cm
 /// GTAO path multiplies by 0.5, effective = 1.0.
 /// @ref Jimenez 2016 "GTAO" §1575 — AmbientOcclusionPower * 0.5
 /// @ref Jimenez 2016 "GTAO" — AO power curve, default power = 2.0 * 0.5 = 1.0
-#define GTAO_AO_POWER  1.0f
+#define GTAO_AO_POWER  0.3f
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Resources
@@ -180,12 +180,13 @@ float acosFast(float inX) {
 
 /// Linearize hardware depth to view-space Z.
 ///
-/// UzEngine uses a standard (non-reversed) depth buffer:
-///   z = near * far / (far - deviceZ * (far - near))
+/// UzEngine uses reversed-Z: deviceZ = 1.0 at near plane, 0.0 at far plane.
+/// Formula: z_view = near * far / (near * (1 - deviceZ) + deviceZ * far)
+///        = near * far / (near + deviceZ * (far - near))
 ///
-/// @ref standard perspective projection — device Z to linear depth
+/// @ref reversed-Z perspective projection — device Z to linear depth
 float LinearizeDepth(float deviceZ) {
-    return nearPlane * farPlane / (farPlane - deviceZ * (farPlane - nearPlane));
+    return nearPlane * farPlane / (nearPlane + deviceZ * (farPlane - nearPlane));
 }
 
 /// Reconstruct view-space position from UV + linear depth.
@@ -424,6 +425,13 @@ void main(
     // ── Early depth check ──
     /// @ref Jimenez 2016 "GTAO" §855-862
     float deviceZ = SampleDepth(uv);
+
+    // Reversed-Z: deviceZ ≈ 0 = sky/far plane. Skip sky pixels early.
+    if (deviceZ <= 0.0001f) {
+        aoOutput[dispatchId] = 1.0f;
+        return;
+    }
+
     float sceneDepth = LinearizeDepth(deviceZ);
 
     // Skip very distant pixels (simplified fade — no fadeMul/fadeAdd in root constants)

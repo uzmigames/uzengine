@@ -70,9 +70,10 @@ float SampleDepth(float2 uv) {
 #endif
 }
 
-/// Linearize hardware depth to view-space Z.
+/// Linearize hardware depth to view-space Z (reversed-Z).
+/// UzEngine uses reversed-Z: deviceZ = 1.0 at near plane, 0.0 at far plane.
 float LinearizeDepth(float deviceZ) {
-    return nearPlane * farPlane / (farPlane - deviceZ * (farPlane - nearPlane));
+    return nearPlane * farPlane / (nearPlane + deviceZ * (farPlane - nearPlane));
 }
 
 /// Depth similarity weight — 1.0 for same depth, 0.0 for very different.
