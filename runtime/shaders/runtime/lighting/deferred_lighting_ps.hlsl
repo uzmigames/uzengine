@@ -1040,9 +1040,11 @@ float4 main(FSInput input) : SV_Target {
         float3 Favg = F0 + (1.0f - F0) / 21.0f;
         specularIBL *= 1.0f + Favg * Ems / (1.0f - Favg * Ems);
 
-        // ── TEST 3: Horizon occlusion ENABLED ──
+        // ── Horizon occlusion — softer falloff for metals ──
+        // Linear instead of squared: metals (gold, chrome) need visible
+        // reflections even when R points below the surface plane.
         float horizon = saturate(1.0f + dot(R, N));
-        specularIBL *= horizon * horizon;
+        specularIBL *= horizon;
 
         // ── TEST 4: Specular occlusion ENABLED ──
         float specOcc = saturate(pow(NdotV + ao, exp2(-16.0f * roughness - 1.0f)) - 1.0f + ao);

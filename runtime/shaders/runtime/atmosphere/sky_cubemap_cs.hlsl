@@ -86,10 +86,11 @@ static const float RAYLEIGH_SCALE_H = 8.0f;   // km
 static const float MIE_SCALE_H      = 1.2f;   // km
 
 /// Ground albedo for Lambertian reflection when view ray hits the planet.
-/// @ref GroundAlbedo = FColor(170,170,170) ≈ 0.4 linear
-/// @constants 0.4f (Default: FColor(170,170,170) → sRGB 0.667 → linear ~0.4)
-/// @deviations Hardcoded here due to 8-DWORD root constant budget. reference passes via CB.
-static const float3 GROUND_ALBEDO = float3(0.4f, 0.4f, 0.4f);
+/// @ref GroundAlbedo — brighter ground for better lower-hemisphere IBL reflections.
+/// @constants 0.5f — slightly above UE5 default (0.4) to improve metal reflection quality
+///            when scene-captured reflection probes are not available.
+/// @deviations Hardcoded here due to 8-DWORD root constant budget.
+static const float3 GROUND_ALBEDO = float3(0.5f, 0.5f, 0.5f);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Integration Constants
