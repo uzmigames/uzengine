@@ -286,9 +286,7 @@ void PBRTest::OnStart() {
     {
         auto& scene = world.AddComponent<SceneComponent>(ground_);
         scene.SetPosition({0.f, 0.f, 0.f});
-        /// Scale large enough to cover the camera's visible ground plane.
-        /// Standard infinite ground plane approach for outdoor scenes.
-        scene.SetScale({10000.f, 10000.f, 2.f});
+        scene.SetScale({800.f, 800.f, 2.f});
 
         auto& mesh = world.AddComponent<StaticMeshComponent>(ground_);
         mesh.meshPath = "assets/meshes/cube.uzmesh";
