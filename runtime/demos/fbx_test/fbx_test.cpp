@@ -175,6 +175,17 @@ void FBXTest::OnUpdate(float dt) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void FBXTest::OnStop() {
+    auto* device = GetRenderer().GetDevice();
+    if (device) {
+        if (gpuBakedBaseColor_.IsValid()) {
+            device->DestroyTexture(gpuBakedBaseColor_);
+            gpuBakedBaseColor_ = {};
+        }
+        if (gpuBakedRoughness_.IsValid()) {
+            device->DestroyTexture(gpuBakedRoughness_);
+            gpuBakedRoughness_ = {};
+        }
+    }
     UZ_LOG(Demo, Info, "FBX test shutdown");
 }
 

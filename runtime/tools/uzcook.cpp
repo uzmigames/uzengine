@@ -65,6 +65,7 @@ struct CookArgs {
     std::string pakName;       ///< Optional .uzpak archive name (empty = no pak)
     bool verbose = false;      ///< Enable debug-level logging
     bool noCompress = false;   ///< Skip BC compression for textures (keep RGBA8)
+    bool texturesOnly = false; ///< Only register TextureImporter (skip FBX/mesh/shader)
 };
 
 /// Parses CLI arguments into a CookArgs struct.
@@ -85,6 +86,8 @@ static bool ParseArgs(int argc, char** argv, CookArgs& args) {
             args.verbose = true;
         } else if (arg == "--no-compress") {
             args.noCompress = true;
+        } else if (arg == "--textures-only") {
+            args.texturesOnly = true;
         }
     }
 
@@ -294,12 +297,30 @@ int main(int argc, char** argv) {
     UZ_LOG(Cook, Info, "Cook starting: source='{}', output='{}'",
            args.sourceDir, args.outputDir);
 
-    // Initialize shader compiler (optional — only needed if shaders are present).
-    // Texture/mesh cooking does not require DXC.
+    // Check if source dir contains any shaders before initializing DXC.
+    // DXC LoadLibrary can hang if dxcompiler.dll isn't in the search path,
+    // so we skip it entirely when there are no .hlsl files to compile.
+    bool hasHlslFiles = false;
+    {
+        std::error_code ec;
+        for (const auto& entry : fs::recursive_directory_iterator(args.sourceDir, ec)) {
+            if (entry.is_regular_file()) {
+                std::string ext = entry.path().extension().string();
+                if (ext == ".hlsl" || ext == ".glsl") {
+                    hasHlslFiles = true;
+                    break;
+                }
+            }
+        }
+    }
+
     uz::ShaderCompiler compiler;
-    bool hasShaderCompiler = compiler.Init();
-    if (!hasShaderCompiler) {
-        UZ_LOG(Cook, Warning, "DXC shader compiler unavailable — shader import disabled");
+    bool hasShaderCompiler = false;
+    if (hasHlslFiles) {
+        hasShaderCompiler = compiler.Init();
+        if (!hasShaderCompiler) {
+            UZ_LOG(Cook, Warning, "DXC shader compiler unavailable — shader import disabled");
+        }
     }
 
     // Register importers
@@ -307,8 +328,10 @@ int main(int argc, char** argv) {
     if (hasShaderCompiler) {
         registry.Register(std::make_unique<uz::ShaderImporter>(compiler));
     }
-    registry.Register(std::make_unique<uz::MeshImporter>());
-    registry.Register(std::make_unique<uz::FbxImporter>());
+    if (!args.texturesOnly) {
+        registry.Register(std::make_unique<uz::MeshImporter>());
+        registry.Register(std::make_unique<uz::FbxImporter>());
+    }
     registry.Register(std::make_unique<uz::TextureImporter>());
 
     // Initialize cache

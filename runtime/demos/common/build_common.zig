@@ -127,6 +127,7 @@ pub const DemoHandle = struct {
                 self.b.path(dir).getPath(self.b),
                 "--output",
                 self.b.path(dir).getPath(self.b),
+                "--textures-only",
             });
             cook_cmd.step.dependOn(&self.exe.step);
             self.b.getInstallStep().dependOn(&cook_cmd.step);
