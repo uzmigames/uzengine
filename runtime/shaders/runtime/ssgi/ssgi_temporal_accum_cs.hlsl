@@ -194,9 +194,12 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     float  currentAO    = SampleCurrentAO(uv);
 
     // ── Load velocity for reprojection ──
-    // Velocity buffer is full-res; UV coordinates are the same since we're
-    // reading at the same normalized position.
-    float2 velocity = SampleVelocity(uv);
+    // Velocity buffer is full-res (pixel units). Convert to UV space for
+    // history reprojection. The velocity pass outputs currScreen-prevScreen
+    // in pixels, so divide by full-res dimensions to get UV delta.
+    // Note: texWidth/texHeight are half-res; velocity buffer is full-res (2x).
+    float2 velocityPixels = SampleVelocity(uv);
+    float2 velocity = velocityPixels / float2((float)texWidth * 2.0f, (float)texHeight * 2.0f);
 
     // ── Reproject to history UV ──
     float2 historyUV = uv - velocity;
