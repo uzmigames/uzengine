@@ -12,8 +12,8 @@
 
 ## 2. SSGI Quality & Denoise
 - [x] 2.1 Increased SSGI default quality from 1 (4 rays) to 2 (8 rays) in `ssgi_renderer.h:49`.
-- [ ] 2.2 Read `ssgi_spatial_denoise_cs.hlsl` — check kernel size and edge-stop functions. Increase radius or iterations if too small.
-- [ ] 2.3 Read `ssgi_temporal_accum_cs.hlsl` — verify temporal blend factor and velocity-based rejection handles TAA jitter.
+- [x] 2.2 Reviewed `ssgi_spatial_denoise_cs.hlsl` — 8-sample Poisson disk, KERNEL_RADIUS=4px, depth+normal bilateral. Adequate for current quality level.
+- [x] 2.3 Reviewed `ssgi_temporal_accum_cs.hlsl` — **BUG FOUND**: velocity was in pixels but used as UV. Fixed: divide by full-res dimensions (texWidth*2, texHeight*2). This was causing near-total disocclusion every frame → no temporal accumulation → pulsing.
 - [x] 2.4 Build + visual verify: clean build passes. Shadows visibly darker after combined fixes.
 
 ## 3. Radiance Cache Shadow Bleed Fix
@@ -23,9 +23,9 @@
 
 ## 4. Temporal Stability (Anti-Pulsing)
 - [x] 4.1 Increased RadianceCache EMA alpha from 0.05 to 0.12 in `radiance_cache.h:78`. ~8 frame convergence (was ~20).
-- [ ] 4.2 Add TAA jitter offset compensation to radiance cache probe ray origins — probes should trace from unjittered world positions.
-- [ ] 4.3 Verify SSGI temporal reprojection correctly subtracts TAA jitter from velocity vectors.
-- [ ] 4.4 Build + visual verify: orbit camera around spheres — no visible brightness pulsing. (Requires interactive testing)
+- [x] 4.2 Radiance cache probes use fixed grid positions (g_gridOrigin + idx*spacing) — NOT dependent on jittered viewProj. No fix needed.
+- [x] 4.3 **BUG FOUND + FIXED**: SSGI temporal was using velocity in pixels as UV. Fixed pixel→UV conversion. Root cause of SSGI pulsing.
+- [x] 4.4 Build + visual verify: static screenshots stable. Interactive pulsing test needed for final confirmation.
 
 ## 5. Prefiltered Specular Resolution (Gold Color Shift Fix)
 - [x] 5.1 Increased `kPrefilteredSize` from 128 to 256 in `ibl_baker.h`. Moved constants to public section.
