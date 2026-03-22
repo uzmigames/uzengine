@@ -1007,17 +1007,8 @@ float4 main(FSInput input) : SV_Target {
         float2 envBRDF = iblBrdfLut.SampleLevel(linearSampler, float2(NdotV, roughness), 0);
 #endif
 
-        // ── Lower hemisphere compensation for metals ──
-        // Without scene-captured reflection probes, the sky-only cubemap has a dark
-        // lower hemisphere. Metals reflecting downward appear black instead of picking
-        // up indirect ground bounce. Blend toward diffuse irradiance for directions
-        // below the horizon to approximate missing ground reflections.
-        float belowHorizon = saturate(-R.z); // 0=above horizon, 1=straight down (Z-up)
-        float3 groundFallback = irradiance * 0.5f; // Use diffuse irradiance as proxy
-        float3 correctedPrefiltered = lerp(prefilteredColor, max(prefilteredColor, groundFallback), belowHorizon * metallic);
-
         // ── SSR + IBL compositing ──
-        float3 combinedSpecular = correctedPrefiltered;
+        float3 combinedSpecular = prefilteredColor;
 
         [branch]
         if (ssrSrvIndex != 0xFFFFFFFF) {
@@ -1039,17 +1030,20 @@ float4 main(FSInput input) : SV_Target {
         float F90_ibl = saturate(50.0f * F0.g);
         float3 specularIBL = combinedSpecular * (F0 * envBRDF.x + F90_ibl * envBRDF.y);
 
-        // Karis 2013 multi-scatter energy compensation
-        // @source Karis 2013 "Real Shading in Unreal Engine 4" — multi-scatter approximation
-        float Ems = 1.0f - (envBRDF.x + envBRDF.y);
-        float3 Favg = F0 + (1.0f - F0) / 21.0f;
-        specularIBL *= 1.0f + Favg * Ems / (1.0f - Favg * Ems);
+        // Multi-scatter energy compensation (Kulla-Conty + PoC1 irradiance term)
+        // @ref Kulla & Conty 2017 — multi-scatter BRDF
+        // @ref PoC1 deferred_lighting.ps.hlsl:354-360 — irradiance multi-scatter
+        float3 FssEss = F0 * envBRDF.x + F90_ibl * envBRDF.y;
+        float  Ess    = envBRDF.x + envBRDF.y;
+        float  Ems    = 1.0f - Ess;
+        float3 Favg   = F0 + (1.0f - F0) / 21.0f;
+        float3 FmsEms = Ems * FssEss * Favg / (1.0f - Favg * Ems);
+        specularIBL += FmsEms * irradiance * 0.5f;
 
-        // ── Horizon occlusion — softer falloff for metals ──
-        // Linear instead of squared: metals (gold, chrome) need visible
-        // reflections even when R points below the surface plane.
+        // ── Horizon occlusion (squared, PoC1 parity) ──
+        // @ref Marmoset "Horizon Occlusion for Normal Mapped Reflections"
         float horizon = saturate(1.0f + dot(R, N));
-        specularIBL *= horizon;
+        specularIBL *= horizon * horizon;
 
         // ── TEST 4: Specular occlusion ENABLED ──
         float specOcc = saturate(pow(NdotV + ao, exp2(-16.0f * roughness - 1.0f)) - 1.0f + ao);
