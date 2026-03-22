@@ -1007,12 +1007,17 @@ float4 main(FSInput input) : SV_Target {
         float2 envBRDF = iblBrdfLut.SampleLevel(linearSampler, float2(NdotV, roughness), 0);
 #endif
 
+        // ── Lower hemisphere compensation for metals ──
+        // Without scene-captured reflection probes, the sky-only cubemap has a dark
+        // lower hemisphere. Metals reflecting downward appear black instead of picking
+        // up indirect ground bounce. Blend toward diffuse irradiance for directions
+        // below the horizon to approximate missing ground reflections.
+        float belowHorizon = saturate(-R.z); // 0=above horizon, 1=straight down (Z-up)
+        float3 groundFallback = irradiance * 0.5f; // Use diffuse irradiance as proxy
+        float3 correctedPrefiltered = lerp(prefilteredColor, max(prefilteredColor, groundFallback), belowHorizon * metallic);
+
         // ── SSR + IBL compositing ──
-        // Blend SSR and IBL BEFORE applying EnvBRDF (split-sum pattern)
-        // standard pattern: blend SSR and IBL BEFORE applying EnvBRDF.
-        // SSR outputs unweighted scene color; IBL outputs unweighted prefiltered color.
-        // EnvBRDF (F0 * AB.x + F90 * AB.y) is applied ONCE to the combined result.
-        float3 combinedSpecular = prefilteredColor;
+        float3 combinedSpecular = correctedPrefiltered;
 
         [branch]
         if (ssrSrvIndex != 0xFFFFFFFF) {
@@ -1062,8 +1067,9 @@ float4 main(FSInput input) : SV_Target {
             Texture2D<float4> ssgiTex   = ResourceDescriptorHeap[ssgiSrvIndex];
             float3 ssgiIndirect = ssgiTex.SampleLevel(linearSampler, input.texcoord, 0).rgb;
 
-            // Add SSGI indirect to SH-based diffuse IBL
-            diffuseIBL += ssgiIndirect * kD;
+            // Add SSGI indirect to SH-based diffuse IBL, modulated by AO
+            // to prevent bright haze at contact points (sphere-ground junction)
+            diffuseIBL += ssgiIndirect * kD * ao;
 
             if (ssgiAOSrvIndex != 0xFFFFFFFF) {
                 Texture2D<float> ssgiAOTex = ResourceDescriptorHeap[ssgiAOSrvIndex];
