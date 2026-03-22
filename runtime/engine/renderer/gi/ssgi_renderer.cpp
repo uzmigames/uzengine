@@ -21,7 +21,7 @@ UZ_DECLARE_LOG_CATEGORY(Renderer);
 // ── CVars ────────────────────────────────────────────────────────────────
 static auto* cv_SSGIEnabled   = UZ_CVAR_BOOL("r.SSGI", true, "Screen-space global illumination");
 static auto* cv_SSGIQuality   = UZ_CVAR_INT("r.SSGI.Quality", 2, "SSGI quality (1=4rays, 2=8, 3=16, 4=32)", 1, 4);
-static auto* cv_SSGIIntensity = UZ_CVAR_FLOAT("r.SSGI.Intensity", 1.f, "SSGI indirect diffuse intensity", 0.f, 10.f);
+static auto* cv_SSGIIntensity = UZ_CVAR_FLOAT("r.SSGI.Intensity", 0.5f, "SSGI indirect diffuse intensity", 0.f, 10.f);
 
 namespace uz {
 

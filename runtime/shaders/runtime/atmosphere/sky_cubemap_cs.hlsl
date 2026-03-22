@@ -86,11 +86,12 @@ static const float RAYLEIGH_SCALE_H = 8.0f;   // km
 static const float MIE_SCALE_H      = 1.2f;   // km
 
 /// Ground albedo for Lambertian reflection when view ray hits the planet.
-/// @ref GroundAlbedo — brighter ground for better lower-hemisphere IBL reflections.
-/// @constants 0.5f — slightly above UE5 default (0.4) to improve metal reflection quality
-///            when scene-captured reflection probes are not available.
+/// @ref GroundAlbedo — bright ground for visible lower-hemisphere IBL reflections.
+/// @constants 0.7f — above UE5 default (0.4). Without scene-captured reflection probes,
+///            metals reflecting the lower hemisphere of a sky-only cubemap appear black.
+///            Higher ground albedo compensates by brightening the ground radiance in the IBL.
 /// @deviations Hardcoded here due to 8-DWORD root constant budget.
-static const float3 GROUND_ALBEDO = float3(0.5f, 0.5f, 0.5f);
+static const float3 GROUND_ALBEDO = float3(0.7f, 0.7f, 0.7f);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Integration Constants
