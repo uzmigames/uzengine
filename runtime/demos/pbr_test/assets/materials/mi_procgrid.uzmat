@@ -22,7 +22,7 @@
       "id": 3,
       "type": "ScalarConstant",
       "pos": [-400, 100],
-      "scalarParams": {"value": 16.0}
+      "scalarParams": {"value": 50.0}
     },
     {
       "id": 4,
@@ -37,13 +37,13 @@
       "id": 5,
       "type": "ColorConstant",
       "pos": [-200, -100],
-      "scalarParams": {"r": 0.85, "g": 0.85, "b": 0.85}
+      "scalarParams": {"r": 0.95, "g": 0.95, "b": 0.95}
     },
     {
       "id": 6,
       "type": "ColorConstant",
       "pos": [-200, 100],
-      "scalarParams": {"r": 0.65, "g": 0.65, "b": 0.65}
+      "scalarParams": {"r": 0.78, "g": 0.78, "b": 0.78}
     },
     {
       "id": 7,
