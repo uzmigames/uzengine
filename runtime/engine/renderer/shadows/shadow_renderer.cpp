@@ -45,8 +45,8 @@ ShadowFrameData SetupShadowFrame(
     cfg.csmDepthBias                = 0.0f;      // Equivalent: bias applied in shadow VS via rasterizer, NOT in pixel shader sampling
     cfg.slopeScaleDepthBias         = 3.0f * perLightShadowSlopeBias;  // Equivalent: CSMSlopeBias * per-light ShadowSlopeBias
     cfg.cascadeBiasDistribution     = 1.0f;      // Fully world-scaled (ShadowSetup.cpp:1846)
-    cfg.receiverBias                = 0.9f;      // default (ShadowRendering.cpp:76)
-    cfg.filterMethod                = 2;         // PCSS — contact hardening (ShadowRendering.cpp:180-186)
+    cfg.receiverBias                = 1.0f;      // 1.0 = full shadow strength (no attenuation)
+    cfg.filterMethod                = 1;         // Poisson 16-tap (cleaner than PCSS without temporal filter)
     cfg.maxSoftKernelSize           = 40.0f;     // default (ShadowRendering.cpp:182)
 
     // ── Far shadow cascades — wired from DirectionalLightComponent ───────

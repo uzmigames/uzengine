@@ -27,8 +27,8 @@ UZ_DECLARE_LOG_CATEGORY(Renderer);
 
 // ── CVars ────────────────────────────────────────────────────────────────
 static auto* cv_BloomEnabled   = UZ_CVAR_BOOL("r.Bloom", true, "Bloom post-process");
-static auto* cv_BloomThreshold = UZ_CVAR_FLOAT("r.Bloom.Threshold", 1.5f, "Bloom luminance threshold", -1.f, 100.f);
-static auto* cv_BloomIntensity = UZ_CVAR_FLOAT("r.Bloom.Intensity", 0.3f, "Bloom contribution multiplier", 0.f, 10.f);
+static auto* cv_BloomThreshold = UZ_CVAR_FLOAT("r.Bloom.Threshold", 0.8f, "Bloom luminance threshold", -1.f, 100.f);
+static auto* cv_BloomIntensity = UZ_CVAR_FLOAT("r.Bloom.Intensity", 0.6f, "Bloom contribution multiplier", 0.f, 10.f);
 static auto* cv_BloomRadius    = UZ_CVAR_FLOAT("r.Bloom.Radius", 1.f, "Bloom upsample filter radius", 0.1f, 4.f);
 static auto* cv_BloomSizeScale = UZ_CVAR_FLOAT("r.Bloom.SizeScale", 4.f, "Global bloom size scale", 0.1f, 64.f);
 
