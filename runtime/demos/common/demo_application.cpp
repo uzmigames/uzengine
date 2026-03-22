@@ -15,6 +15,7 @@
 #include "units.h"
 #include "uzengine.h"
 #include "compare_grid.h"
+#include "cvar.h"
 
 #include <algorithm>
 #include <cctype>
@@ -133,6 +134,18 @@ int DemoApplication::Run() {
 
     // Clear spurious resize flag — WM_SIZE fires on first ShowWindow()
     m_window->ClearResizedFlag();
+
+    // ── Apply CLI CVar overrides ─────────────────────────────────────────
+    // CVars are registered during SceneRenderer::Init() (called from OnInit()).
+    // Now that registration is complete, apply any --cvar overrides from the CLI
+    // so they take effect on the first ApplyCVars() poll in the render loop.
+    if (!m_config.cvarOverrides.empty()) {
+        auto& cvars = CVarRegistry::Get();
+        for (const auto& [name, value] : m_config.cvarOverrides) {
+            cvars.Set(name, value);
+            UZ_LOG(App, Info, "CVar override: {} = {}", name, value);
+        }
+    }
 
     UZ_LOG(App, Info, "DemoApplication '{}': entering render loop (maxFrames={}, screenshotPending={}, ready={}, readyFrame={}, screenshotFrame={})",
            m_config.title, m_config.maxFrames == 0 ? -1 : static_cast<int>(m_config.maxFrames),
@@ -682,6 +695,17 @@ void DemoApplication::ParseCommonArgs(int argc, char* argv[], DemoConfig& config
             config.cameraYawDeg = static_cast<float>(std::atof(argv[++i]));
         } else if (std::strcmp(argv[i], "--camera-pitch") == 0 && i + 1 < argc) {
             config.cameraPitchDeg = static_cast<float>(std::atof(argv[++i]));
+        } else if (std::strcmp(argv[i], "--cvar") == 0 && i + 1 < argc) {
+            // Parse "name=value" format (e.g., "r.TAA=0", "r.Bloom=1")
+            std::string arg = argv[++i];
+            const auto eqPos = arg.find('=');
+            if (eqPos != std::string::npos) {
+                std::string name  = arg.substr(0, eqPos);
+                float       value = static_cast<float>(std::atof(arg.substr(eqPos + 1).c_str()));
+                config.cvarOverrides.emplace_back(std::move(name), value);
+            } else {
+                UZ_LOG(App, Warning, "--cvar expects name=value format, got '{}'", arg);
+            }
         }
     }
 

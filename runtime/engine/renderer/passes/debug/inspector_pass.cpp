@@ -653,6 +653,16 @@ bool PassInspector::IsPassEnabled(const std::string& passName) const {
     return m_disabledPasses.find(passName) == m_disabledPasses.end();
 }
 
+void PassInspector::SetPassEnabled(const std::string& passName, bool enabled) {
+    if (passName.empty()) return;
+
+    if (enabled) {
+        m_disabledPasses.erase(passName);
+    } else {
+        m_disabledPasses.insert(passName);
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Pass Compare (Phase 4)
 // ─────────────────────────────────────────────────────────────────────────────

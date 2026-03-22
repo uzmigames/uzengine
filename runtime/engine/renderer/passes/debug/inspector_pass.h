@@ -234,6 +234,17 @@ public:
     /// are considered enabled by default.
     [[nodiscard]] bool IsPassEnabled(const std::string& passName) const;
 
+    /// Explicitly enables or disables a pass category.
+    ///
+    /// When `enabled` is false the pass name is added to the disabled set.
+    /// When `enabled` is true the pass name is removed from the disabled set
+    /// (default state — all passes start enabled).
+    ///
+    /// # Arguments
+    /// * `passName` — Category name of the pass (e.g., "bloom", "fog", "taa").
+    /// * `enabled`  — True to enable, false to disable.
+    void SetPassEnabled(const std::string& passName, bool enabled);
+
     /// Returns the set of disabled pass names for serialization.
     [[nodiscard]] const std::unordered_set<std::string>& GetDisabledPasses() const noexcept {
         return m_disabledPasses;

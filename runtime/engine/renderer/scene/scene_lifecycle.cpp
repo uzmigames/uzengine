@@ -507,6 +507,27 @@ void SceneRenderer::RegisterCVars() {
     /// pass.grid rows
     cvars.Register("r.PassInspector.GridRows", 4.f,
                    "Pass grid row count", 1.f, 8.f);
+
+    // ── Render Pass Toggles ─────────────────────────────────────────────
+    cvars.Register("r.TAA", 1.f, "TAA anti-aliasing (0=off, 1=on)", 0.f, 1.f);
+    cvars.Register("r.SSR", 1.f, "Screen-space reflections (0=off, 1=on)", 0.f, 1.f);
+    cvars.Register("r.SSGI", 1.f, "Screen-space global illumination (0=off, 1=on)", 0.f, 1.f);
+    cvars.Register("r.SSGI.Quality", 2.f, "SSGI quality: 1=4rays, 2=8rays, 3=16rays, 4=32rays", 1.f, 4.f);
+    cvars.Register("r.GTAO", 1.f, "Ground truth ambient occlusion (0=off, 1=on)", 0.f, 1.f);
+    cvars.Register("r.Bloom", 1.f, "Bloom post-process (0=off, 1=on)", 0.f, 1.f);
+    cvars.Register("r.MotionBlur", 1.f, "Motion blur (0=off, 1=on)", 0.f, 1.f);
+    cvars.Register("r.DOF", 0.f, "Depth of field (0=off, 1=on)", 0.f, 1.f);
+    cvars.Register("r.CAS", 1.f, "Contrast adaptive sharpening (0=off, 1=on)", 0.f, 1.f);
+    cvars.Register("r.LensFlare", 0.f, "Lens flare (0=off, 1=on)", 0.f, 1.f);
+    cvars.Register("r.Fog", 1.f, "Height fog (0=off, 1=on)", 0.f, 1.f);
+    cvars.Register("r.Clouds", 1.f, "Volumetric clouds (0=off, 1=on)", 0.f, 1.f);
+    cvars.Register("r.ContactShadows", 1.f, "Contact shadows (0=off, 1=on)", 0.f, 1.f);
+    cvars.Register("r.RadianceCache", 0.f, "SDF radiance cache GI (0=off, 1=on)", 0.f, 1.f);
+    cvars.Register("r.DepthPrepass", 1.f, "Depth prepass before GBuffer (0=off, 1=on)", 0.f, 1.f);
+    cvars.Register("r.AerialPerspective", 1.f, "Aerial perspective (0=off, 1=on)", 0.f, 1.f);
+    cvars.Register("r.ShadowDebug", 0.f, "Shadow debug grid mode (0=off, 1-8=debug)", 0.f, 8.f);
+    cvars.Register("r.GI.Intensity", 1.f, "GI intensity multiplier", 0.f, 10.f);
+    cvars.Register("r.Exposure", 1.f, "Manual exposure multiplier", 0.01f, 100.f);
 }
 
 void SceneRenderer::ApplyCVars() {
@@ -555,6 +576,39 @@ void SceneRenderer::ApplyCVars() {
         gridCfg.rows    = 4;
     }
     m_passInspector.SetGridConfig(gridCfg);
+
+    // ── Render Pass Toggles ─────────────────────────────────────────────
+    m_taaEnabled        = cvars.GetBool("r.TAA", true);
+    m_ssrEnabled        = cvars.GetBool("r.SSR", true);
+    m_ssgiRenderer.settings.enabled = cvars.GetBool("r.SSGI", true);
+    m_ssgiRenderer.settings.quality = cvars.GetInt("r.SSGI.Quality", 2);
+    m_motionBlurEnabled = cvars.GetBool("r.MotionBlur", true);
+    m_casEnabled        = cvars.GetBool("r.CAS", true);
+    m_lensFlareEnabled  = cvars.GetBool("r.LensFlare", false);
+    m_dofEnabled        = cvars.GetBool("r.DOF", false);
+    // Only allow SDF GI when both subsystems initialized successfully.
+    m_sdfGiEnabled      = cvars.GetBool("r.RadianceCache", false)
+                        && m_globalDistanceField.IsInitialized()
+                        && m_radianceCache.IsInitialized();
+    m_giIntensity       = cvars.GetFloat("r.GI.Intensity", 1.f);
+    m_depthPrepassEnabled = cvars.GetBool("r.DepthPrepass", true);
+    m_shadowDebugMode   = static_cast<uint32_t>(cvars.GetInt("r.ShadowDebug", 0));
+
+    // Pass inspector pass enables/disables — these control per-pass checks in
+    // frame_lighting.cpp and frame_postprocess.cpp via IsPassEnabled().
+    m_passInspector.SetPassEnabled("gtao", cvars.GetBool("r.GTAO", true));
+    m_passInspector.SetPassEnabled("bloom", cvars.GetBool("r.Bloom", true));
+    m_passInspector.SetPassEnabled("fog", cvars.GetBool("r.Fog", true));
+    m_passInspector.SetPassEnabled("clouds", cvars.GetBool("r.Clouds", true));
+    m_passInspector.SetPassEnabled("contact_shadow", cvars.GetBool("r.ContactShadows", true));
+    m_passInspector.SetPassEnabled("aerial_persp", cvars.GetBool("r.AerialPerspective", true));
+    m_passInspector.SetPassEnabled("ssgi", cvars.GetBool("r.SSGI", true));
+    m_passInspector.SetPassEnabled("sdf_gi", cvars.GetBool("r.RadianceCache", false));
+    m_passInspector.SetPassEnabled("ssr", cvars.GetBool("r.SSR", true));
+    m_passInspector.SetPassEnabled("motionblur", cvars.GetBool("r.MotionBlur", true));
+    m_passInspector.SetPassEnabled("dof", cvars.GetBool("r.DOF", false));
+    m_passInspector.SetPassEnabled("cas", cvars.GetBool("r.CAS", true));
+    m_passInspector.SetPassEnabled("taa", cvars.GetBool("r.TAA", true));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

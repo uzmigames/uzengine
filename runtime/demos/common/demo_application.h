@@ -50,6 +50,8 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace uz {
 
@@ -108,6 +110,11 @@ struct DemoConfig {
     float cameraPositionZ = 2.f;          ///< Default camera Z position.
     float cameraYawDeg = -90.f;           ///< Default camera yaw in degrees.
     float cameraPitchDeg = -20.f;         ///< Default camera pitch in degrees.
+
+    // ── CVar overrides ──────────────────────────────────────────────────
+    /// CVar overrides from `--cvar name=value` CLI args.
+    /// Applied after renderer init (RegisterCVars), before the first frame.
+    std::vector<std::pair<std::string, float>> cvarOverrides;
 };
 
 /// Abstract base class that eliminates GPU and engine boilerplate from demos.
@@ -167,6 +174,7 @@ public:
     /// - `--frames <N>` — max frames to render (0 = unlimited).
     /// - `--view-mode <name>` — initial debug view mode (e.g., "albedo", "depth", "overview").
     /// - `--all-modes <path>` — capture all debug view modes, compose into a labeled grid PNG.
+    /// - `--cvar name=value` — set a CVar (e.g., `--cvar r.TAA=0 --cvar r.Bloom=0`).
     ///
     /// Unknown flags are silently skipped so subclass-specific flags can coexist.
     ///
