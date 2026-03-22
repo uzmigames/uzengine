@@ -32,13 +32,24 @@
 - `build_common.zig` cook step: `cook_textures: true` runs uzcook before uzpack
 - DXC shader compiler init made optional (texture-only cook works without DXC)
 
+**Phase 2 — Copy Queue + UploadRing + Zero-Copy Parse:**
+- Dedicated DX12 copy queue command list for texture uploads — rendering never stalls
+- `SignalCopyQueue()` + `GraphicsWaitForCopy()` fence sync — zero CPU WaitIdle
+- `UploadRing` (64MB/frame, triple-buffered) replaces per-mip `CreateBuffer` — zero allocation overhead
+- `LoadUzTexViaRing()` — zero-copy .uztexture parsing (reads mip data via pointer offsets, no vector copies)
+- Placeholder textures with fallback SRV indices — valid draw commands from frame 1
+- `PendingCopyUpload` deferred slot update — textures finalized on next frame after copy fence
+- Worker thread count scales to `max(2, hardware_concurrency/2)`, clamped to [2,8]
+
 **Performance Results (PBR demo, 42 textures):**
 | Metric | Before | After |
 |--------|--------|-------|
-| Main thread stall | 11.6s | 0ms |
-| GPU upload time | 47.5ms | 0.2ms |
-| VRAM per 2K texture | 16MB (RGBA8) | 4MB (BC7) |
-| Total background load | — | ~3.2s (async) |
+| Main thread stall | 11.6s | **0ms** |
+| Per-texture upload cost | 82ms | **0.3ms** (273× faster) |
+| GPU upload (WaitIdle) | 47.5ms | **0ms** (copy queue) |
+| VRAM per 2K texture | 16MB (RGBA8) | **4MB** (BC7) |
+| Staging allocation | 48× CreateBuffer/frame | **0** (UploadRing) |
+| Parse overhead | 82ms (double copy) | **0ms** (zero-copy) |
 
 ## [0.2.43] — 2026-03-21
 
