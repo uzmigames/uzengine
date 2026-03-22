@@ -412,7 +412,7 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     // 16MB per frame is enough for ~4 BC7 2K textures with full mip chains.
     // Triple-buffered (3 frames in flight) = 48MB total. Falls back to
     // UploadContext if Init fails or the ring is exhausted mid-frame.
-    constexpr uint32_t kUploadRingBytesPerFrame = 16u * 1024u * 1024u;
+    constexpr uint32_t kUploadRingBytesPerFrame = 64u * 1024u * 1024u;
     constexpr uint32_t kUploadRingFrameCount = 3;
     m_uploadRing = std::make_unique<UploadRing>();
     if (m_uploadRing->Init(m_device, kUploadRingFrameCount, kUploadRingBytesPerFrame)) {
