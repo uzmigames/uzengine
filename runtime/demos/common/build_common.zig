@@ -105,7 +105,7 @@ pub const DemoHandle = struct {
         for (self.config.extra_deploy) |deploy| {
             self.b.getInstallStep().dependOn(&self.b.addInstallFileWithDir(
                 self.b.path(deploy.source),
-                .{ .custom = "data" },
+                .bin,
                 deploy.dest,
             ).step);
         }

@@ -53,9 +53,9 @@ void FBXTest::OnStart() {
     auto& world = GetWorld();
 
     // ── Character material (PBR textures — VFS-relative paths) ───────────
-    characterMat_.albedoPath = "textures/MushroomMonster_Low_MushroomMesh2_1_BaseColor.1001.png";
-    characterMat_.normalPath = "textures/MushroomMonster_Low_MushroomMesh2_1_Normal.1001.png";
-    characterMat_.ormPath    = "textures/MushroomMonster_Low_MushroomMesh2_1_OcclusionRoughnessMetallic.1001.png";
+    characterMat_.albedoPath = "assets/textures/MushroomMonster_Low_MushroomMesh_BaseColor.png";
+    characterMat_.normalPath = "assets/textures/MushroomMonster_Low_MushroomMesh_Normal.png";
+    characterMat_.ormPath    = "assets/textures/MushroomMonster_Low_MushroomMesh_ORM.png";
     characterMat_.useORM     = true;
 
     // ── Create character entity ──────────────────────────────────────────
@@ -67,14 +67,14 @@ void FBXTest::OnStart() {
         scene.SetPosition({0.f, 0.f, 0.f});
 
         auto& mesh = world.AddComponent<StaticMeshComponent>(character_);
-        mesh.meshPath = "MushroomMonster_Low.uzmesh";
+        mesh.meshPath = "assets/meshs/MushroomMonster_Low.uzmesh";
         mesh.SetMaterial(0, &characterMat_);
     }
 
     // ── Ground material (GPU-baked from mi_procgrid.uzmat) ─────────────
     {
         const std::filesystem::path assetsDir = uz::GetExeDir() / "assets";
-        const std::filesystem::path uzmatPath = assetsDir / "mi_procgrid.uzmat";
+        const std::filesystem::path uzmatPath = assetsDir / "materials" / "mi_procgrid.uzmat";
 
         materialCache_.Init((assetsDir / "cache" / "materials").string());
 
@@ -95,7 +95,7 @@ void FBXTest::OnStart() {
                     groundMat_.albedoSrvIndex = colorResult.srvIndex;
                     groundMat_.gpuResourcesLoaded = true;
                 } else {
-                    groundMat_.albedoPath = "checker.png";
+                    groundMat_.albedoPath = "assets/textures/checker.png";
                 }
 
                 auto roughResult = MaterialBakerGpu::Bake(
@@ -106,10 +106,10 @@ void FBXTest::OnStart() {
                     groundMat_.roughnessSrvIndex = roughResult.srvIndex;
                 }
             } else {
-                groundMat_.albedoPath = "checker.png";
+                groundMat_.albedoPath = "assets/textures/checker.png";
             }
         } else {
-            groundMat_.albedoPath = "checker.png";
+            groundMat_.albedoPath = "assets/textures/checker.png";
         }
     }
 

@@ -11,6 +11,9 @@ pub fn build(b: *std.Build) void {
         .use_demo_application = false,
         .deploy_fxc = true,
         .asset_dirs = &.{"assets"},
+        .extra_deploy = &.{
+            .{ .source = "assets/materials/mi_procgrid.uzmat", .dest = "assets/materials/mi_procgrid.uzmat" },
+        },
     });
     demo.install();
 }
