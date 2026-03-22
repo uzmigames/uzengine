@@ -14,10 +14,22 @@
 #include "profiler.h"
 #include "rhi.h"
 #include "log.h"
+#include "cvar.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+
+// ── CVars ────────────────────────────────────────────────────────────────
+static auto* cv_SSR             = UZ_CVAR_BOOL("r.SSR", true, "Screen-space reflections");
+static auto* cv_MotionBlur      = UZ_CVAR_BOOL("r.MotionBlur", true, "Motion blur");
+static auto* cv_DOF             = UZ_CVAR_BOOL("r.DOF", false, "Depth of field");
+static auto* cv_CAS             = UZ_CVAR_BOOL("r.CAS", true, "Contrast adaptive sharpening");
+static auto* cv_DOFFocusDist    = UZ_CVAR_FLOAT("r.DOF.FocusDistance", 0.f, "DOF focus distance (cm)", 0.f, 100000.f);
+static auto* cv_DOFAperture     = UZ_CVAR_FLOAT("r.DOF.Aperture", 4.f, "DOF f-stop number", 0.5f, 32.f);
+static auto* cv_DOFFocalRegion  = UZ_CVAR_FLOAT("r.DOF.FocalRegion", 0.f, "In-focus zone width (cm)", 0.f, 10000.f);
+static auto* cv_DOFNearTrans    = UZ_CVAR_FLOAT("r.DOF.NearTransition", 300.f, "Near transition ramp (cm)", 0.f, 10000.f);
+static auto* cv_DOFFarTrans     = UZ_CVAR_FLOAT("r.DOF.FarTransition", 500.f, "Far transition ramp (cm)", 0.f, 50000.f);
 
 namespace uz {
 
@@ -94,14 +106,14 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                     UZ_PROFILE_SCOPE("LensFlare::Execute");
 
                     LensFlareSettings settings;
-                    settings.enabled = true;
-                    settings.intensity = 0.15f;
-                    settings.ghostIntensity = 0.5f;
-                    settings.haloRadius = 0.65f;
-                    settings.haloWidth = 0.04f;
-                    settings.chromaticShift = 0.02f;
-                    settings.sunScreenX = capturedSunX;
-                    settings.sunScreenY = capturedSunY;
+                    settings.enabled        = true;
+                    settings.intensity      = m_lensFlareIntensity;
+                    settings.ghostIntensity = m_lensFlareGhostIntensity;
+                    settings.haloRadius     = m_lensFlareHaloRadius;
+                    settings.haloWidth      = 0.04f;
+                    settings.chromaticShift = m_lensFlareChromaticShift;
+                    settings.sunScreenX     = capturedSunX;
+                    settings.sunScreenY     = capturedSunY;
 
                     m_lensFlarePass->Execute(cmd, *m_cbRing,
                                               m_bloomPass->GetBloomResultSrvIndex(),

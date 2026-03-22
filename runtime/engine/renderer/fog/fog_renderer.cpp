@@ -14,11 +14,15 @@
 #include "camera.h"
 #include "pipeline_library.h"
 #include "render_graph_builder.h"
+#include "cvar.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <cfloat>
+
+// ── CVars ────────────────────────────────────────────────────────────────
+static auto* cv_Fog = UZ_CVAR_BOOL("r.Fog", true, "Height fog");
 
 namespace uz {
 

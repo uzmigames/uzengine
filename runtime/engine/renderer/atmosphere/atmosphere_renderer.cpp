@@ -21,12 +21,16 @@
 #include "sh_projection.h"
 #include "log.h"
 #include "rhi.h"
+#include "cvar.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 
 UZ_DECLARE_LOG_CATEGORY(Renderer);
+
+// ── CVars ────────────────────────────────────────────────────────────────
+static auto* cv_AerialPerspective = UZ_CVAR_BOOL("r.AerialPerspective", true, "Aerial perspective");
 
 namespace uz {
 

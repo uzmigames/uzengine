@@ -16,12 +16,16 @@
 #include "engine_shaders.h"
 #include "log.h"
 #include "profiler.h"
+#include "cvar.h"
 
 #include <cstring>
 #include <cstdio>
 #include <fstream>
 
 UZ_DECLARE_LOG_CATEGORY(Renderer);
+
+// ── CVars ────────────────────────────────────────────────────────────────
+static auto* cv_Clouds = UZ_CVAR_BOOL("r.Clouds", true, "Volumetric clouds");
 
 namespace uz {
 

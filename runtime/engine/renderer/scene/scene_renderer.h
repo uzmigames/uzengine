@@ -657,6 +657,10 @@ private:
     // ── Lens Flare ──────────────────────────────────────────────────────
     std::unique_ptr<LensFlarePass> m_lensFlarePass;  ///< Screen-space lens flare (ghosts + halo).
     bool m_lensFlareEnabled = false;                  ///< Runtime toggle. Default OFF — enable via cvar or Lua.
+    float m_lensFlareIntensity      = 1.0f;          ///< CVar-driven overall lens flare intensity.
+    float m_lensFlareGhostIntensity = 0.5f;          ///< CVar-driven ghost contribution multiplier.
+    float m_lensFlareHaloRadius     = 0.6f;          ///< CVar-driven halo ring radius (UV).
+    float m_lensFlareChromaticShift = 0.02f;         ///< CVar-driven chromatic aberration offset.
 
     // ── Volumetric Clouds ───────────────────────────────────────────────
     std::unique_ptr<CloudPass> m_cloudPass;           ///< GPU volumetric cloud pipeline (5 compute shaders).
@@ -838,6 +842,32 @@ private:
     // ── LOD System ────────────────────────────────────────────────────────
 
     float m_lodBias = 1.0f;  ///< Global LOD bias multiplier (1.0 = default).
+    float m_mipBias = 0.0f;  ///< Global mipmap LOD bias override from CVar (-4 to +4).
+
+    // ── CVar-Driven Per-Frame Overrides ──────────────────────────────────
+    // These are set by ApplyCVars() and written into PerFrameParams by frame_setup.cpp.
+
+    // ACES tone curve
+    float m_tonemapSlope      = 0.88f;  ///< ACES film curve slope (default 0.88).
+    float m_tonemapToe        = 0.55f;  ///< ACES film curve toe (default 0.55).
+    float m_tonemapShoulder   = 0.26f;  ///< ACES film curve shoulder (default 0.26).
+    float m_tonemapBlackClip  = 0.0f;   ///< ACES black clip (default 0.0).
+    float m_tonemapWhiteClip  = 0.04f;  ///< ACES white clip (default 0.04).
+
+    // Film effects
+    float m_filmGrainIntensity    = 0.0f;   ///< Film grain intensity (0=off).
+    float m_vignetteIntensity     = 0.4f;   ///< Vignette darkening (default 0.4).
+    float m_chromaticAberration   = 0.0f;   ///< Chromatic aberration / scene fringe (0=off).
+
+    // Contact shadows
+    float m_contactShadowLength   = 0.02f;  ///< Screen-space contact shadow ray length (0=off, 0.02=typical).
+
+    // Sky/IBL CVar overrides (applied when no SkyLightComponent is present)
+    float m_skylightIntensityCVar = 1.0f;   ///< CVar-driven IBL ambient multiplier.
+    float m_skylightMinAmbientCVar = 0.0f;  ///< CVar-driven minimum ambient floor.
+
+    // Radiance cache grid extent
+    float m_rcGridExtentCVar      = 5000.0f; ///< CVar-driven probe grid half-extent (cm).
 
     // ── Render State ───────────────────────────────────────────────────────
 

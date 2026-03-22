@@ -14,10 +14,15 @@
 #include "constant_buffers.h"
 #include "log.h"
 #include "rhi.h"
+#include "cvar.h"
 
 #include <cstring>
 
 UZ_DECLARE_LOG_CATEGORY(Renderer);
+
+// ── CVars ────────────────────────────────────────────────────────────────
+static auto* cv_RadianceCache    = UZ_CVAR_BOOL("r.RadianceCache", false, "SDF radiance cache GI");
+static auto* cv_RCGridExtent     = UZ_CVAR_FLOAT("r.GI.RadianceCache.GridExtent", 5000.f, "Probe grid half-extent (cm)", 100.f, 50000.f);
 
 namespace uz {
 

@@ -508,43 +508,9 @@ void SceneRenderer::RegisterCVars() {
     cvars.Register("r.PassInspector.GridRows", 4.f,
                    "Pass grid row count", 1.f, 8.f);
 
-    // ── Render Pass Toggles ─────────────────────────────────────────────
-    cvars.Register("r.TAA", 1.f, "TAA anti-aliasing (0=off, 1=on)", 0.f, 1.f);
-    cvars.Register("r.SSR", 1.f, "Screen-space reflections (0=off, 1=on)", 0.f, 1.f);
-    cvars.Register("r.SSGI", 1.f, "Screen-space global illumination (0=off, 1=on)", 0.f, 1.f);
-    cvars.Register("r.SSGI.Quality", 2.f, "SSGI quality: 1=4rays, 2=8rays, 3=16rays, 4=32rays", 1.f, 4.f);
-    cvars.Register("r.GTAO", 1.f, "Ground truth ambient occlusion (0=off, 1=on)", 0.f, 1.f);
-    cvars.Register("r.Bloom", 1.f, "Bloom post-process (0=off, 1=on)", 0.f, 1.f);
-    cvars.Register("r.MotionBlur", 1.f, "Motion blur (0=off, 1=on)", 0.f, 1.f);
-    cvars.Register("r.DOF", 0.f, "Depth of field (0=off, 1=on)", 0.f, 1.f);
-    cvars.Register("r.CAS", 1.f, "Contrast adaptive sharpening (0=off, 1=on)", 0.f, 1.f);
-    cvars.Register("r.LensFlare", 0.f, "Lens flare (0=off, 1=on)", 0.f, 1.f);
-    cvars.Register("r.Fog", 1.f, "Height fog (0=off, 1=on)", 0.f, 1.f);
-    cvars.Register("r.Clouds", 1.f, "Volumetric clouds (0=off, 1=on)", 0.f, 1.f);
-    cvars.Register("r.ContactShadows", 1.f, "Contact shadows (0=off, 1=on)", 0.f, 1.f);
-    cvars.Register("r.RadianceCache", 0.f, "SDF radiance cache GI (0=off, 1=on)", 0.f, 1.f);
-    cvars.Register("r.DepthPrepass", 1.f, "Depth prepass before GBuffer (0=off, 1=on)", 0.f, 1.f);
-    cvars.Register("r.AerialPerspective", 1.f, "Aerial perspective (0=off, 1=on)", 0.f, 1.f);
-    cvars.Register("r.ShadowDebug", 0.f, "Shadow debug grid mode (0=off, 1-8=debug)", 0.f, 8.f);
-    cvars.Register("r.GI.Intensity", 1.f, "GI intensity multiplier", 0.f, 10.f);
-    cvars.Register("r.Exposure", 1.f, "Manual exposure multiplier", 0.01f, 100.f);
-
-    // ── Depth of Field ───────────────────────────────────────────────────
-    cvars.Register("r.DOF.FocusDistance", 0.f, "DOF focus distance (cm)", 0.f, 100000.f);
-    cvars.Register("r.DOF.Aperture", 4.f, "DOF f-stop number", 0.5f, 32.f);
-    cvars.Register("r.DOF.FocalRegion", 0.f, "In-focus zone width (cm)", 0.f, 10000.f);
-    cvars.Register("r.DOF.NearTransition", 300.f, "Near transition ramp (cm)", 0.f, 10000.f);
-    cvars.Register("r.DOF.FarTransition", 500.f, "Far transition ramp (cm)", 0.f, 50000.f);
-
-    // ── GI General ───────────────────────────────────────────────────────
-    cvars.Register("r.GI.RadianceCache.GridExtent", 5000.f, "Probe grid half-extent (cm)", 100.f, 50000.f);
-
-    // NOTE: Bloom, GTAO, AutoExposure, SSGI, LensFlare, SkyLight, Tonemap,
-    // FilmGrain, Vignette, ChromaticAberration, ContactShadow, MotionBlur,
-    // CAS, LOD, and MipBias parameter CVars are now registered decentrally
+    // All other CVars (pass toggles, parameters) are registered decentrally
     // via UZ_CVAR_* macros in their respective subsystem .cpp files.
-    // Pass toggle CVars (r.Bloom, r.GTAO, etc.) remain above for
-    // PassInspector and SceneRenderer enable/disable logic.
+    // ApplyCVars() reads them by name — no local registration needed.
 }
 
 void SceneRenderer::ApplyCVars() {
