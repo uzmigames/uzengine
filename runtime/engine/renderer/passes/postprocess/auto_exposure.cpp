@@ -29,8 +29,8 @@ UZ_DECLARE_LOG_CATEGORY(Renderer);
 // ── CVars ────────────────────────────────────────────────────────────────
 static auto* cv_AutoExpEnabled       = UZ_CVAR_BOOL("r.AutoExposure", true, "Auto exposure");
 static auto* cv_AutoExpBias          = UZ_CVAR_FLOAT("r.AutoExposure.Bias", 0.7f, "Exposure EV bias (+1 = 2x brighter)", -5.f, 5.f);
-static auto* cv_AutoExpMinBrightness = UZ_CVAR_FLOAT("r.AutoExposure.MinBrightness", 0.03f, "Min avg luminance", 0.001f, 100.f);
-static auto* cv_AutoExpMaxBrightness = UZ_CVAR_FLOAT("r.AutoExposure.MaxBrightness", 2.f, "Max avg luminance", 0.001f, 100.f);
+static auto* cv_AutoExpMinBrightness = UZ_CVAR_FLOAT("r.AutoExposure.MinBrightness", 0.08f, "Min avg luminance", 0.001f, 100.f);
+static auto* cv_AutoExpMaxBrightness = UZ_CVAR_FLOAT("r.AutoExposure.MaxBrightness", 1.2f, "Max avg luminance", 0.001f, 100.f);
 
 namespace uz {
 

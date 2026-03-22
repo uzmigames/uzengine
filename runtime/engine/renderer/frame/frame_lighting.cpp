@@ -960,7 +960,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         atmoCtx.depthSrvIndex       = m_gbuffer.depthSRV;
         atmoCtx.depthTexture        = m_gbuffer.depth;
 
-        if (m_shadowDebugMode == 0) {
+        if (m_shadowDebugMode != 1) {
             AddAtmospherePasses(rgBuilder, ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc, atmoCtx);
 
             /// Sky light color for fog inscattering: uses the SH L0 coefficient from

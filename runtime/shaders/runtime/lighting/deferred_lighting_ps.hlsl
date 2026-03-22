@@ -914,7 +914,7 @@ float4 main(FSInput input) : SV_Target {
     // ── Buffer Visualization Grid ──
     // When active, remap UV per-tile so each tile shows the full scene in miniature.
     uint gridTileIdx = 4; // center = LIT (default)
-    bool gridActive = (shadowDebugMode != 0);
+    bool gridActive = (shadowDebugMode == 1);
     bool gridIsLabel = false;
     if (gridActive) {
         // Border check
@@ -948,14 +948,15 @@ float4 main(FSInput input) : SV_Target {
 #endif
 
     float3 albedo    = albedoAO.rgb;
-    float  ao        = albedoAO.a;
+    float  ao        = albedoAO.a;  // material AO only — used for ambient IBL
     float3 N         = OctDecode(normalPacked.rg);
     float  metallic  = normalPacked.b;
     float  roughness = normalPacked.a;
 
     // ── GTAO screen-space ambient occlusion ──
-    // Multiply material AO with GTAO result when available.
-    // GTAO texture stores visibility (1.0 = fully lit, 0.0 = fully occluded).
+    // GTAO provides screen-space occlusion for contact shadows and direct light
+    // micro-shadow. Material AO (from ORM texture) is used for ambient IBL.
+    // PoC1 parity: GTAO is NOT multiplied into ambient — only material AO is.
     float gtaoValue = 1.0f;
     if (gtaoSrvIndex != 0xFFFFFFFF) {
 #ifdef UZ_BINDLESS
@@ -965,7 +966,8 @@ float4 main(FSInput input) : SV_Target {
         // SM5 path: GTAO bound at t9
         gtaoValue = gtaoTexture.Sample(linearSampler, uv).r;
 #endif
-        ao *= gtaoValue;
+        // GTAO used for micro-shadow on direct light, NOT multiplied into ambient ao.
+        // ao stays as material AO only (PoC1 parity).
     }
 
     // ── World-space position ──
@@ -1037,11 +1039,13 @@ float4 main(FSInput input) : SV_Target {
 
     // ── Micro-shadow (Chan 2018 "Material Advances in Call of Duty: WWII") ──
     // @ref Chan 2018 — AO-based micro-shadow on direct light
+    // Uses combined material AO × GTAO for direct light occlusion.
     // Clamped to min 0.3 to prevent aggressive noise from GTAO dithering pattern.
     float microShadow = 1.0f;
     if (gtaoSrvIndex != 0xFFFFFFFF) {
+        float combinedAO = ao * gtaoValue;
         float NdotL_dir = saturate(dot(N, L_dir));
-        microShadow = max(saturate(NdotL_dir + 2.0f * ao * ao - 1.0f), 0.3f);
+        microShadow = max(saturate(NdotL_dir + 2.0f * combinedAO * combinedAO - 1.0f), 0.3f);
     }
 
     float3 Lo;
@@ -1190,6 +1194,18 @@ float4 main(FSInput input) : SV_Target {
     // ── Ambient: IBL or constant fallback ──────────────────────────────
     float  NdotV = max(dot(N, V), 0.0f);
     float3 ambient;
+    // Hoisted intermediates for diagnostic grid (shadowDebugMode == 2)
+    float3 dbg_irradiance = float3(0, 0, 0);
+    float3 dbg_kD = float3(0, 0, 0);
+    float3 dbg_F_ibl = float3(0, 0, 0);
+    float3 dbg_diffuseIBL = float3(0, 0, 0);
+    float3 dbg_specularIBL = float3(0, 0, 0);
+    float3 dbg_prefilteredColor = float3(0, 0, 0);
+    float2 dbg_envBRDF = float2(0, 0);
+    float3 dbg_specBeforeHorizon = float3(0, 0, 0);
+    float  dbg_horizon = 1.0f;
+    float  dbg_specOcc = 1.0f;
+    float3 dbg_diffuseAO = float3(1, 1, 1);
 
     if (irradianceSrvIndex != 0xFFFFFFFF) {
         // Diffuse IBL via L2 Spherical Harmonics (standard)
@@ -1372,8 +1388,29 @@ float4 main(FSInput input) : SV_Target {
 #endif
         }
 
+        // ── Dielectric specular IBL attenuation ──
+        // For non-metallic rough surfaces, the achromatic specular IBL
+        // overwhelms the colored diffuse IBL, causing desaturation.
+        // Scale: metals get full specular, smooth dielectrics get partial,
+        // rough dielectrics get minimal.
+        float specMetallicScale = lerp(0.3f, 1.0f, metallic);
+        specularIBL *= specMetallicScale;
+
+        // Capture ALL intermediates for diagnostic grid (shadowDebugMode == 2)
+        dbg_irradiance = irradiance;
+        dbg_kD = kD;
+        dbg_F_ibl = F;
+        dbg_diffuseIBL = diffuseIBL;
+        dbg_prefilteredColor = prefilteredColor;
+        dbg_envBRDF = envBRDF;
+        dbg_specBeforeHorizon = specularIBL;
+        dbg_specularIBL = specularIBL;
+        dbg_horizon = horizon;
+        dbg_specOcc = specOcc;
+
         float3 skyLightTint = float3(skyLightColorR, skyLightColorG, skyLightColorB);
         float3 diffuseAO = (gtaoSrvIndex != 0xFFFFFFFF) ? AOMultiBounce(ao, albedo) : float3(ao, ao, ao);
+        dbg_diffuseAO = diffuseAO;
         ambient = (diffuseIBL * diffuseAO + specularIBL * specOcc) * skyLightIntensity * skyLightTint;
     } else {
         // Fallback: constant ambient (no IBL data available)
@@ -1512,6 +1549,73 @@ float4 main(FSInput input) : SV_Target {
         if (abs(input.texcoord.x - 0.5f) < halfPixelU) {
             return float4(1.0f, 1.0f, 1.0f, 1.0f);
         }
+    }
+
+    // ── Lighting Decomposition Grid (shadowDebugMode == 2) ──
+    // 4x4 grid showing every layer of the lighting pipeline in one screenshot.
+    // Activated with --shadow-debug 2. All tiles use manual gamma (bypass tonemap).
+    //
+    // Layout:
+    //   ┌──────────────┬──────────────┬──────────────┬──────────────┐
+    //   │ 0: Albedo    │ 1: Lo(BRDF)  │ 2: Shadow    │ 3: MatAO     │
+    //   ├──────────────┼──────────────┼──────────────┼──────────────┤
+    //   │ 4: GTAO      │ 5: SH Irr    │ 6: Prefilter │ 7: envBRDF   │
+    //   ├──────────────┼──────────────┼──────────────┼──────────────┤
+    //   │ 8: kD        │ 9: DiffIBL   │10: SpecIBL   │11: specOcc   │
+    //   ├──────────────┼──────────────┼──────────────┼──────────────┤
+    //   │12: Horizon   │13: Ambient   │14: Lo+Amb    │15: D/S ratio │
+    //   └──────────────┴──────────────┴──────────────┴──────────────┘
+    if (shadowDebugMode == 2) {
+        float2 origUV = input.texcoord;
+        uint dcol = min((uint)(origUV.x * 4.0f), 3u);
+        uint drow = min((uint)(origUV.y * 4.0f), 3u);
+        uint dtile = drow * 4 + dcol;
+
+        // Label bar at bottom of each tile
+        float2 localUV = float2(frac(origUV.x * 4.0f), frac(origUV.y * 4.0f));
+        if (localUV.y > 0.92f) {
+            // Color-coded label bar per tile
+            static const float3 tileLabels[16] = {
+                float3(0.8,0.3,0.3), float3(1.0,0.8,0.2), float3(0.2,0.2,0.2), float3(0.4,0.4,0.4),
+                float3(0.3,0.6,0.3), float3(0.9,0.9,0.5), float3(0.5,0.7,1.0), float3(0.6,0.3,0.6),
+                float3(0.2,0.7,0.7), float3(0.8,0.4,0.2), float3(0.3,0.3,0.9), float3(0.7,0.7,0.3),
+                float3(0.5,0.5,0.5), float3(0.9,0.5,0.9), float3(1.0,1.0,1.0), float3(0.2,0.8,0.5)
+            };
+            return float4(tileLabels[dtile], 1.0f);
+        }
+
+        // Grid border lines
+        if (localUV.x < 0.005f || localUV.y < 0.005f) return float4(0.3f, 0.3f, 0.3f, 1.0f);
+
+        float3 tv = float3(0, 0, 0);
+        float NdL_dbg = saturate(dot(N, normalize(lightDir.xyz)));
+        float matAO = albedoAO.a;
+
+        switch (dtile) {
+            case 0:  tv = albedo; break;                                    // Albedo (linear)
+            case 1:  tv = Lo; break;                                        // Direct BRDF×shadow
+            case 2:  tv = shadow.xxx; break;                                // Shadow map
+            case 3:  tv = matAO.xxx; break;                                 // Material AO
+            case 4:  tv = gtaoValue.xxx; break;                             // GTAO
+            case 5:  tv = dbg_irradiance; break;                            // SH Irradiance
+            case 6:  tv = dbg_prefilteredColor; break;                      // Prefiltered cubemap
+            case 7:  tv = float3(dbg_envBRDF.x, dbg_envBRDF.y, 0); break;  // EnvBRDF LUT (R=x, G=y)
+            case 8:  tv = dbg_kD; break;                                    // kD (energy conservation)
+            case 9:  tv = dbg_diffuseIBL; break;                            // Diffuse IBL (before AO)
+            case 10: tv = dbg_specularIBL; break;                           // Specular IBL (after horizon+MS)
+            case 11: tv = dbg_specOcc.xxx; break;                           // Specular occlusion
+            case 12: tv = dbg_horizon.xxx; break;                           // Horizon occlusion
+            case 13: tv = ambient; break;                                   // Full ambient
+            case 14: tv = ambient + Lo; break;                              // Lo + Ambient
+            case 15: {                                                      // Diff/Spec ratio
+                float dLum = dot(dbg_diffuseIBL * dbg_diffuseAO, float3(0.333,0.333,0.333));
+                float sLum = dot(dbg_specularIBL * dbg_specOcc, float3(0.333,0.333,0.333));
+                float total = dLum + sLum + 0.0001f;
+                tv = float3(dLum / total, sLum / total, 0); // R=diff%, G=spec%
+                break;
+            }
+        }
+        return float4(pow(max(tv, 0), 1.0/2.2), 1.0);
     }
 
     // Output linear HDR — tonemap applied in separate fullscreen pass.

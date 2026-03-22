@@ -179,7 +179,11 @@ struct PerFrameParams {
     /// UINT32_MAX = no probes uploaded (fall back to global sky IBL).
     uint32_t reflectionProbeBufferSrvIndex = UINT32_MAX;
 
-    float    _pad2[57]            = {};              ///< Pad scalar section to 768 bytes.
+    // ── Color grading (at end of scalar section) ──────────────────────
+    float    colorSaturation   = 1.1f;              ///< Color saturation multiplier (0=grayscale, 1=unchanged, >1=vivid).
+    float    colorContrast     = 1.0f;              ///< Contrast power exponent (1=unchanged, >1=higher contrast).
+
+    float    _pad2[55]            = {};              ///< Pad scalar section to 768 bytes.
 
     // ── Resource handles (NOT copied to CB) ──────────────────────────────
     // These are bound by ShaderParameterBinder at their HLSL register slots.

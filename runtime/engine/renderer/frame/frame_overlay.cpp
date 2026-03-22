@@ -33,7 +33,7 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
     // Sky atmosphere + height fog are now in RegisterLightingPasses
     // (before postprocess/tonemap) to ensure correct HDR pipeline order.
     // Skip overlays when buffer visualization grid is active — grid owns the full screen.
-    if (m_shadowDebugMode == 0)
+    if (m_shadowDebugMode != 1)
     rgBuilder.AddPass("OverlayPass", [&](rg::RgPassBuilder& pb) {
         pb.Write(ctx.bbRes, RHIResourceState::RenderTarget);
         // Only attach depth when render res == display res (no screen percentage scaling).

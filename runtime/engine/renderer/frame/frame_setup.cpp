@@ -38,18 +38,20 @@
 
 // ── CVars ────────────────────────────────────────────────────────────────
 static auto* cv_SkyLightIntensity  = UZ_CVAR_FLOAT("r.SkyLight.Intensity", 3.5f, "IBL ambient multiplier", 0.f, 20.f);
-static auto* cv_SkyLightMinAmbient = UZ_CVAR_FLOAT("r.SkyLight.MinAmbient", 0.1f, "Minimum ambient floor", 0.f, 1.f);
+static auto* cv_SkyLightMinAmbient = UZ_CVAR_FLOAT("r.SkyLight.MinAmbient", 0.15f, "Minimum ambient floor", 0.f, 1.f);
 static auto* cv_ContactShadowLen   = UZ_CVAR_FLOAT("r.ContactShadow.Length", 0.03f, "Contact shadow ray length", 0.f, 0.2f);
 static auto* cv_FilmGrain          = UZ_CVAR_FLOAT("r.FilmGrain", 0.f, "Film grain intensity", 0.f, 1.f);
 static auto* cv_Vignette           = UZ_CVAR_FLOAT("r.Vignette", 0.4f, "Vignette intensity", 0.f, 2.f);
 static auto* cv_ChromaAb           = UZ_CVAR_FLOAT("r.ChromaticAberration", 0.f, "Chromatic aberration", 0.f, 1.f);
+static auto* cv_ColorSaturation   = UZ_CVAR_FLOAT("r.ColorSaturation", 1.1f, "Color saturation (1=neutral, >1=vivid)", 0.f, 3.f);
+static auto* cv_ColorContrast     = UZ_CVAR_FLOAT("r.ColorContrast", 1.0f, "Color contrast power (1=neutral)", 0.1f, 3.f);
 static auto* cv_TonemapSlope       = UZ_CVAR_FLOAT("r.Tonemap.Slope", 0.91f, "ACES film slope", 0.f, 2.f);
 static auto* cv_TonemapToe         = UZ_CVAR_FLOAT("r.Tonemap.Toe", 0.45f, "ACES film toe", 0.f, 1.f);
 static auto* cv_TonemapShoulder    = UZ_CVAR_FLOAT("r.Tonemap.Shoulder", 0.22f, "ACES film shoulder", 0.f, 1.f);
 static auto* cv_TonemapBlackClip   = UZ_CVAR_FLOAT("r.Tonemap.BlackClip", 0.f, "ACES black clip", 0.f, 1.f);
 static auto* cv_TonemapWhiteClip   = UZ_CVAR_FLOAT("r.Tonemap.WhiteClip", 0.04f, "ACES white clip", 0.f, 1.f);
 static auto* cv_MipBias            = UZ_CVAR_FLOAT("r.MipBias", 0.f, "Global mipmap LOD bias", -4.f, 4.f);
-static auto* cv_Exposure           = UZ_CVAR_FLOAT("r.Exposure", 1.4f, "Manual exposure multiplier", 0.01f, 100.f);
+static auto* cv_Exposure           = UZ_CVAR_FLOAT("r.Exposure", 1.4f, "Manual exposure bias on auto-exposure", 0.01f, 100.f);
 static auto* cv_GIIntensity        = UZ_CVAR_FLOAT("r.GI.Intensity", 1.f, "GI intensity multiplier", 0.f, 10.f);
 static auto* cv_TAA                = UZ_CVAR_BOOL("r.TAA", true, "TAA anti-aliasing");
 static auto* cv_DepthPrepass       = UZ_CVAR_BOOL("r.DepthPrepass", true, "Depth prepass before GBuffer");
@@ -322,7 +324,8 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     if (m_autoExposure && m_hdrSceneColorSrv != UINT32_MAX && m_hdrHasContent) {
         float autoExp = m_autoExposure->Execute(ctx.cmdList, m_hdrSceneColorSrv,
             m_renderWidth, m_renderHeight, ctx.dt);
-        perFrame.exposure = autoExp;
+        // Apply manual exposure bias on top of auto-exposure
+        perFrame.exposure = autoExp * cv_Exposure->value;
         // Log only on first adaptation (avoid per-frame spam)
         static bool loggedOnce = false;
         if (!loggedOnce) {
@@ -354,6 +357,8 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     perFrame.filmGrainIntensity  = cv_FilmGrain->value;
     perFrame.vignetteIntensity   = cv_Vignette->value;
     perFrame.chromaAbIntensity   = cv_ChromaAb->value;
+    perFrame.colorSaturation     = cv_ColorSaturation->value;
+    perFrame.colorContrast       = cv_ColorContrast->value;
     perFrame.contactShadowLength = cv_ContactShadowLen->value;
 
     // ── GTAO SRV index (set early — actual compute runs in render graph) ──
@@ -785,7 +790,7 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     // ── Compute post-process activation flags ─────────────────────────
     ctx.bloomEnabled = m_bloomPass && m_bloomPass->IsInitialized()
                      && m_bloomPass->settings.enabled
-                     && m_shadowDebugMode == 0
+                     && m_shadowDebugMode != 1
                      && ctx.bindless
                      && m_passInspector.IsPassEnabled("bloom");
 
@@ -794,7 +799,7 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
                   && m_ssrResolvedOutput.IsValid()
                   && m_hdrHasContent
                   && m_hizMipCount > 0
-                  && m_shadowDebugMode == 0
+                  && m_shadowDebugMode != 1
                   && m_passInspector.IsPassEnabled("ssr");
 
     // Gate motion blur on m_prevViewProjValid to avoid reading uninitialized velocity on frame 0.
@@ -802,16 +807,16 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     ctx.motionBlurActive = m_motionBlurEnabled && m_prevViewProjValid
                          && m_motionBlurOutput.IsValid()
                          && m_motionBlurTileMax.IsValid() && m_motionBlurNeighborMax.IsValid()
-                         && m_gbuffer.velocity.IsValid() && ctx.bindless && m_shadowDebugMode == 0
+                         && m_gbuffer.velocity.IsValid() && ctx.bindless && m_shadowDebugMode != 1
                          && m_passInspector.IsPassEnabled("motionblur");
 
     ctx.dofActive = m_dofEnabled && m_dofFocusDistance > 0.0f
                   && m_dofCocTexture.IsValid() && m_dofOutputTexture.IsValid()
-                  && ctx.bindless && m_shadowDebugMode == 0
+                  && ctx.bindless && m_shadowDebugMode != 1
                   && m_passInspector.IsPassEnabled("dof");
 
     ctx.fxaaActive = !ctx.taaActive && ctx.bindless
-                   && m_shadowDebugMode == 0
+                   && m_shadowDebugMode != 1
                    && m_fxaaLdrIntermediate.IsValid()
                    && m_fxaaLdrIntermediateSrv != UINT32_MAX
                    && m_passInspector.IsPassEnabled("fxaa");
@@ -819,7 +824,7 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     // CAS (Contrast Adaptive Sharpening) — runs after tonemap, before FXAA.
     // Enabled by default. Requires the LDR intermediate texture (shared with FXAA).
     ctx.casActive = m_casEnabled && ctx.bindless
-                  && m_shadowDebugMode == 0
+                  && m_shadowDebugMode != 1
                   && m_fxaaLdrIntermediate.IsValid()
                   && m_fxaaLdrIntermediateSrv != UINT32_MAX
                   && m_passInspector.IsPassEnabled("cas");

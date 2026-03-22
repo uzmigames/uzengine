@@ -72,7 +72,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
     // screen position, not through arbitrary bright pixels.
     if (m_lensFlareEnabled && m_lensFlarePass && m_lensFlarePass->IsInitialized()
         && ctx.bloomEnabled && m_bloomPass && m_bloomPass->GetBloomResultSrvIndex() != UINT32_MAX
-        && m_shadowDebugMode == 0 && ctx.bindless) {
+        && m_shadowDebugMode != 1 && ctx.bindless) {
 
         // Project sun position to clip space (sun is at infinity → use direction)
         const Vec3& camPos = {ctx.perFrame.cameraPos.x, ctx.perFrame.cameraPos.y, ctx.perFrame.cameraPos.z};
@@ -129,7 +129,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
     // Delegates to the active upscaler (TaaUpscaler or TsrUpscaler).
     // The caller manages history texture barriers and ping-pong, the upscaler
     // handles its own internal dispatches and intermediate resource transitions.
-    if (ctx.taaActive && m_shadowDebugMode == 0 && m_upscaler) {
+    if (ctx.taaActive && m_shadowDebugMode != 1 && m_upscaler) {
         const uint32_t writeIdx = ctx.taaWriteIdx;
         const uint32_t readIdx  = ctx.taaReadIdx;
         const float jitterX = ctx.jitterX;
@@ -212,7 +212,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
     // 3D LUT (32^3) for combined color grading + tonemap. Dispatch: 8x8 groups.
     // Generated once when dirty, sampled by tonemap shader via LUT SRV.
     if (m_colorGradingLutDirty && m_colorGradingLut.IsValid()
-        && ctx.bindless && m_shadowDebugMode == 0) {
+        && ctx.bindless && m_shadowDebugMode != 1) {
         rgBuilder.AddPass("ColorGradingLUT", [&](rg::RgPassBuilder& pb) {
             pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources&) {
                 UZ_PROFILE_SCOPE("ColorGradingLUT::Generate");

@@ -285,15 +285,21 @@ float4 main(FSInput input) : SV_Target {
     // ── 5. Apply auto-exposure ───────────────────────────────────────────
     color *= exposure;
 
-    // ── 6. ApplyToneCurve (ACES-based) ───────────────────────────────────
-#ifdef UZ_FAST_TONEMAP
-    // Narkowicz ACES fit — fast single-polynomial approximation (no color space transforms)
+    // ── 5b. Saturation/Contrast (PoC1 parity) ────────────────────────────
+    // @ref PoC1 composite.ps.hlsl:100-102 — saturation and contrast grading
+    // Applied BEFORE tonemap so the S-curve doesn't crush the adjusted color.
+    // Hardcoded until CB layout is extended: saturation=1.15, contrast=1.05
+    {
+        static const float kSaturation = 1.3f;
+        static const float kContrast   = 1.05f;
+        float luma = dot(color, float3(0.2126f, 0.7152f, 0.0722f));
+        color = lerp(float3(luma, luma, luma), color, kSaturation);
+        color = pow(max(color, 0.0f), kContrast);
+    }
+
+    // ── 6. ApplyToneCurve ───────────────────────────────────────────────
+    // Narkowicz 2015 ACES approximation (sRGB linear, no color space conversion).
     color = ACESFilm(color);
-#else
-    // Full ACES-based tone curve with glow, red modifier, custom S-curve
-    // @ref ACES Reference Implementation (Academy S-2014-006) — tone curve
-    color = ApplyToneCurve(color, toneCurveSlope, toneCurveToe, toneCurveShoulder, toneCurveBlackClip, toneCurveWhiteClip);
-#endif
 
     // ── 7. Film grain (after tonemap, on LDR linear) ─────────────────────
     // @ref post-process tonemap pipeline:560-596 — quantization dithering

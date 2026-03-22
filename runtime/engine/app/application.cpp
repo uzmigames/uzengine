@@ -93,6 +93,8 @@ int Application::Run(int argc, char** argv) {
     m_renderer->SetGpuProfileEnabled(m_config.gpuProfile);
     if (m_shadowDebugMode > 0) {
         m_renderer->SetShadowDebugMode(m_shadowDebugMode);
+        // Also set the CVar so scene_lifecycle doesn't override it
+        CVarRegistry::Get().Set("r.ShadowDebug", static_cast<float>(m_shadowDebugMode));
         UZ_LOG(App, Info, "Shadow debug mode set to {}", m_shadowDebugMode);
     }
 

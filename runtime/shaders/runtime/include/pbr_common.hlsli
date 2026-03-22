@@ -272,17 +272,15 @@ float3 EvaluateBRDF(float3 N, float3 V, float3 L, float3 radiance,
 
     float3 specular = D * Vis * F;
 
-    // Multiscatter energy compensation (Kulla-Conty / Turquin 2018)
-    // Recovers energy lost by single-scatter BRDF at higher roughness
-    float roughness = sqrt(alpha);
-    float4 energyComp = MultiscatterCompensation(F0, roughness, NdotV);
-    specular *= energyComp.xyz;
-
-    // Energy preservation: attenuate diffuse by total specular albedo luminance
-    // Metals have no diffuse lobe (metallic=1 → kD=0)
-    float3 kD = (1.0f - energyComp.w) * (1.0f - metallic);
+    // Energy preservation: standard (1-F) for direct lighting.
+    // Multiscatter compensation is applied only to IBL (deferred_lighting_ps ambient path)
+    // where it matters for rough metals. For direct lights, the standard PoC1-parity
+    // approach (1-F)*(1-metallic) preserves diffuse brightness correctly.
+    // @ref Karis 2013 "Real Shading in Unreal Engine 4" — kD = (1-F)*(1-metallic)
+    float3 kD = (1.0f - F) * (1.0f - metallic);
 
     // Disney Burley diffuse (roughness-dependent retroreflection)
+    float roughness = sqrt(alpha);
     float3 diffuse = kD * DiffuseDisneyBurley(albedo, roughness, NdotV, NdotL, VdotH);
 
     return (diffuse + specular) * radiance * NdotL;
@@ -308,11 +306,9 @@ float3 EvaluateBRDFScaled(float3 N, float3 V, float3 L, float3 radiance,
 
     float3 specular = D * Vis * F;
 
+    // Standard (1-F) energy preservation for direct lights (PoC1 parity)
+    float3 kD = (1.0f - F) * (1.0f - metallic);
     float roughness = sqrt(alpha);
-    float4 energyComp = MultiscatterCompensation(F0, roughness, NdotV);
-    specular *= energyComp.xyz;
-
-    float3 kD = (1.0f - energyComp.w) * (1.0f - metallic);
     float3 diffuse = kD * DiffuseDisneyBurley(albedo, roughness, NdotV, NdotL, VdotH);
 
     return (diffuse * diffuseScale + specular * specularScale) * radiance * NdotL;
