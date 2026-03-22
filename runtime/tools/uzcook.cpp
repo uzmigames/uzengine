@@ -41,12 +41,16 @@
 #include "asset_manifest.h"
 #include "shader_compiler.h"
 
+#include <atomic>
 #include <cctype>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iostream>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -352,25 +356,36 @@ int main(int argc, char** argv) {
     };
     std::vector<CookedAsset> cookedAssets;
 
-    uint32_t imported = 0;
-    uint32_t skipped = 0;
-    uint32_t failed = 0;
+    std::atomic<uint32_t> imported{0};
+    std::atomic<uint32_t> skipped{0};
+    std::atomic<uint32_t> failed{0};
+    std::mutex cookedMutex; // protects cookedAssets + cache + sidecar writes
+
+    // ── Collect import tasks ─────────────────────────────────────────────
+    // Each task captures everything needed to import one file independently.
+    struct ImportTask {
+        std::string sourcePath;
+        std::string logicalPath;
+        std::string ext;
+        uz::IAssetImporter* importer;
+        std::vector<uint8_t> sourceBytes;
+        uint64_t sourceHash;
+        std::string sourceHashHex;
+        uz::AssetImportOptions options;
+    };
+    std::vector<ImportTask> tasks;
 
     for (const auto& sourcePath : sourceFiles) {
-        // Compute relative path for logical naming
         fs::path relPath = fs::relative(fs::path(sourcePath), fs::path(args.sourceDir));
         std::string logicalPath = relPath.string();
-        // Normalize to forward slashes
         for (auto& c : logicalPath) {
             if (c == '\\') c = '/';
         }
 
-        // Find importer
         std::string ext = fs::path(sourcePath).extension().string();
         auto* importer = registry.FindByExtension(ext);
         if (!importer) continue;
 
-        // Read source bytes and compute hash
         auto sourceBytes = ReadFileBytes(sourcePath);
         if (sourceBytes.empty()) {
             UZ_LOG(Cook, Error, "Cannot read source: path='{}'", sourcePath);
@@ -386,35 +401,27 @@ int main(int argc, char** argv) {
         auto sidecarResult = uz::ReadSidecarFile(sidecarPath);
         if (sidecarResult.success &&
             !uz::NeedsReimport(sidecarResult.sidecar, sourceHashHex, importer->Version())) {
-            UZ_LOG(Cook, Debug, "Up-to-date, skipping: '{}'", logicalPath);
             ++skipped;
-
-            // Still track for pak generation
+            std::lock_guard<std::mutex> lock(cookedMutex);
             for (const auto& [variant, outputPath] : sidecarResult.sidecar.outputs) {
                 auto outputBytes = ReadFileBytes(outputPath);
                 if (!outputBytes.empty()) {
                     std::string uzExt = "." + variant + ".uzshader";
                     cookedAssets.push_back({
-                        logicalPath + uzExt,
-                        outputPath,
-                        outputBytes.size(),
-                        uz::AssetType::Shader,
-                        sidecarResult.sidecar.dependencies,
+                        logicalPath + uzExt, outputPath, outputBytes.size(),
+                        uz::AssetType::Shader, sidecarResult.sidecar.dependencies,
                     });
                 }
             }
             continue;
         }
 
-        // Import
         uz::AssetImportOptions options;
 
-        // Shader-specific options: determine stage from filename convention
         if (std::string(importer->Name()) == "shader") {
             options.entryPoint = "main";
             options.format = "dxil";
             options.model = "sm6_6";
-
             if (logicalPath.find("_vs") != std::string::npos ||
                 logicalPath.find("_vert") != std::string::npos) {
                 options.stage = "vertex";
@@ -426,141 +433,119 @@ int main(int argc, char** argv) {
                        logicalPath.find("_comp") != std::string::npos) {
                 options.stage = "compute";
             } else {
-                UZ_LOG(Cook, Error, "Cannot determine shader stage from filename: '{}'", logicalPath);
                 ++failed;
                 continue;
             }
         }
 
-        // Texture-specific options: select BC compression format from filename
         if (std::string(importer->Name()) == "texture" && !args.noCompress) {
             SelectTextureFormat(logicalPath, options.textureCompression, options.textureSRGB);
-            UZ_LOG(Cook, Info, "Texture format: '{}' -> {} (sRGB={})",
-                   logicalPath,
-                   TextureFormatName(options.textureCompression),
-                   options.textureSRGB);
         }
 
-        UZ_LOG(Cook, Info, "Importing: '{}' (stage={}, model={})",
-               logicalPath, options.stage, options.model);
+        tasks.push_back({sourcePath, logicalPath, ext, importer,
+                          std::move(sourceBytes), sourceHash, sourceHashHex, options});
+    }
 
-        auto result = importer->Import(sourceBytes, logicalPath, options);
-        if (!result.success) {
-            UZ_LOG(Cook, Error, "Import failed: '{}': {}", logicalPath, result.error);
-            ++failed;
-            continue;
-        }
+    // ── Run imports in parallel ──────────────────────────────────────────
+    const unsigned int numThreads = std::max(1u, std::thread::hardware_concurrency());
+    UZ_LOG(Cook, Info, "Cooking {} assets on {} threads", tasks.size(), numThreads);
 
-        // Compute cache key and store — include texture compression options
-        // so changing BC format invalidates the cache entry
-        std::string optionsStr = options.stage + options.model +
-                                 options.entryPoint + options.format +
-                                 std::to_string(static_cast<uint32_t>(options.textureCompression)) +
-                                 (options.textureSRGB ? "srgb" : "linear");
-        uint64_t optionsHash = uz::AssetCache::HashString(optionsStr);
-        uint64_t cacheKey = uz::AssetCache::ComputeKey(
-            importer->Name(), importer->Version(), sourceHash, optionsHash);
+    std::vector<std::future<void>> futures;
+    futures.reserve(tasks.size());
 
-        cache.Store(cacheKey, result.data);
-
-        // Write sidecar
-        uz::ImportSidecar sidecar;
-        sidecar.importer = importer->Name();
-        sidecar.version = importer->Version();
-        sidecar.sourceHash = sourceHashHex;
-        sidecar.options = {
-            {"stage", options.stage},
-            {"model", options.model},
-            {"entry_point", options.entryPoint},
-            {"texture_format", TextureFormatName(options.textureCompression)},
-            {"texture_srgb", options.textureSRGB ? "true" : "false"},
-        };
-
-        std::string cachePath = cache.CacheDirectory() + "/imported/" +
-                                uz::HashToHex(cacheKey) + ".bin";
-        sidecar.outputs = {{options.model, cachePath}};
-
-        uz::WriteSidecarFile(sidecarPath, sidecar);
-
-        // Determine output extension and asset type from importer
-        std::string outputExt = ".bin";
-        uz::AssetType assetType = uz::AssetType::Generic;
-        std::string importerName = importer->Name();
-        if (importerName == "shader") {
-            outputExt = ".uzshader";
-            assetType = uz::AssetType::Shader;
-        } else if (importerName == "mesh") {
-            outputExt = ".uzmesh";
-            assetType = uz::AssetType::Mesh;
-        } else if (importerName == "texture") {
-            outputExt = ".uztexture";
-            assetType = uz::AssetType::Texture;
-        }
-
-        // Write cooked output alongside source file for uzpack to pick up.
-        // e.g., "assets/gold/albedo.jpg" → "assets/gold/albedo.uztexture"
-        if (importerName == "texture" || importerName == "mesh") {
-            std::string companionPath = sourcePath;
-            auto compDot = companionPath.rfind('.');
-            if (compDot != std::string::npos) {
-                companionPath = companionPath.substr(0, compDot) + outputExt;
-            }
-            std::ofstream out(companionPath, std::ios::binary);
-            if (out.is_open()) {
-                out.write(reinterpret_cast<const char*>(result.data.data()),
-                          static_cast<std::streamsize>(result.data.size()));
-                UZ_LOG(Cook, Info, "Wrote companion: '{}' ({} bytes)", companionPath, result.data.size());
-            }
-        }
-
-        // Track for pak
-        std::string outputLogical = logicalPath;
-        auto dotPos = outputLogical.rfind('.');
-        if (dotPos != std::string::npos) {
-            outputLogical = outputLogical.substr(0, dotPos) + outputExt;
-        }
-
-        cookedAssets.push_back({
-            outputLogical,
-            cachePath,
-            result.data.size(),
-            assetType,
-            {},
-        });
-
-        // Write sidecar files (e.g., .uzsdf alongside .uzmesh)
-        for (const auto& sc : result.sidecars) {
-            std::string sidecarLogical = logicalPath;
-            auto scDot = sidecarLogical.rfind('.');
-            if (scDot != std::string::npos) {
-                sidecarLogical = sidecarLogical.substr(0, scDot) + sc.extension;
+    for (auto& task : tasks) {
+        futures.push_back(std::async(std::launch::async, [&, t = &task]() {
+            auto result = t->importer->Import(t->sourceBytes, t->logicalPath, t->options);
+            if (!result.success) {
+                ++failed;
+                return;
             }
 
-            uint64_t scCacheKey = uz::AssetCache::ComputeKey(
-                (std::string(importer->Name()) + "_sidecar").c_str(),
-                importer->Version(), sourceHash, optionsHash);
+            // ── Post-import: cache, sidecar, companion file (under lock) ──
+            std::string optionsStr = t->options.stage + t->options.model +
+                                     t->options.entryPoint + t->options.format +
+                                     std::to_string(static_cast<uint32_t>(t->options.textureCompression)) +
+                                     (t->options.textureSRGB ? "srgb" : "linear");
+            uint64_t optionsHash = uz::AssetCache::HashString(optionsStr);
+            uint64_t cacheKey = uz::AssetCache::ComputeKey(
+                t->importer->Name(), t->importer->Version(), t->sourceHash, optionsHash);
 
-            cache.Store(scCacheKey, sc.data);
+            std::string importerName = t->importer->Name();
+            std::string outputExt = ".bin";
+            uz::AssetType assetType = uz::AssetType::Generic;
+            if (importerName == "shader") { outputExt = ".uzshader"; assetType = uz::AssetType::Shader; }
+            else if (importerName == "mesh") { outputExt = ".uzmesh"; assetType = uz::AssetType::Mesh; }
+            else if (importerName == "texture") { outputExt = ".uztexture"; assetType = uz::AssetType::Texture; }
 
-            std::string scCachePath = cache.CacheDirectory() + "/imported/" +
-                                      uz::HashToHex(scCacheKey) + ".bin";
+            // Write companion file (filesystem, no lock needed — unique per file)
+            if (importerName == "texture" || importerName == "mesh") {
+                std::string companionPath = t->sourcePath;
+                auto compDot = companionPath.rfind('.');
+                if (compDot != std::string::npos) {
+                    companionPath = companionPath.substr(0, compDot) + outputExt;
+                }
+                std::ofstream out(companionPath, std::ios::binary);
+                if (out.is_open()) {
+                    out.write(reinterpret_cast<const char*>(result.data.data()),
+                              static_cast<std::streamsize>(result.data.size()));
+                }
+            }
 
-            cookedAssets.push_back({
-                sidecarLogical,
-                scCachePath,
-                sc.data.size(),
-                uz::AssetType::Generic,
-                {},
-            });
+            // Shared state updates under lock
+            {
+                std::lock_guard<std::mutex> lock(cookedMutex);
 
-            UZ_LOG(Cook, Info, "Wrote sidecar: '{}' ({} bytes)", sidecarLogical, sc.data.size());
-        }
+                cache.Store(cacheKey, result.data);
 
-        ++imported;
+                uz::ImportSidecar sidecar;
+                sidecar.importer = importerName;
+                sidecar.version = t->importer->Version();
+                sidecar.sourceHash = t->sourceHashHex;
+                sidecar.options = {
+                    {"stage", t->options.stage}, {"model", t->options.model},
+                    {"entry_point", t->options.entryPoint},
+                    {"texture_format", TextureFormatName(t->options.textureCompression)},
+                    {"texture_srgb", t->options.textureSRGB ? "true" : "false"},
+                };
+                std::string cachePath = cache.CacheDirectory() + "/imported/" +
+                                        uz::HashToHex(cacheKey) + ".bin";
+                sidecar.outputs = {{t->options.model, cachePath}};
+                uz::WriteSidecarFile(t->sourcePath + ".uzimport", sidecar);
+
+                std::string outputLogical = t->logicalPath;
+                auto dotPos = outputLogical.rfind('.');
+                if (dotPos != std::string::npos) {
+                    outputLogical = outputLogical.substr(0, dotPos) + outputExt;
+                }
+                cookedAssets.push_back({outputLogical, cachePath, result.data.size(), assetType, {}});
+
+                for (const auto& sc : result.sidecars) {
+                    std::string sidecarLogical = t->logicalPath;
+                    auto scDot = sidecarLogical.rfind('.');
+                    if (scDot != std::string::npos) {
+                        sidecarLogical = sidecarLogical.substr(0, scDot) + sc.extension;
+                    }
+                    uint64_t scCacheKey = uz::AssetCache::ComputeKey(
+                        (importerName + "_sidecar").c_str(),
+                        t->importer->Version(), t->sourceHash, optionsHash);
+                    cache.Store(scCacheKey, sc.data);
+                    std::string scCachePath = cache.CacheDirectory() + "/imported/" +
+                                              uz::HashToHex(scCacheKey) + ".bin";
+                    cookedAssets.push_back({sidecarLogical, scCachePath, sc.data.size(),
+                                            uz::AssetType::Generic, {}});
+                }
+            }
+            ++imported;
+        }));
+    }
+
+    // Wait for all imports to complete
+    for (auto& f : futures) {
+        f.get();
     }
 
     UZ_LOG(Cook, Info, "Cook complete: imported={}, skipped={}, failed={}",
-           imported, skipped, failed);
+           imported.load(), skipped.load(), failed.load());
 
     // Pack into .uzpak if requested
     if (!args.pakName.empty() && !cookedAssets.empty()) {
@@ -600,7 +585,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    return failed > 0 ? 1 : 0;
+    return failed.load() > 0 ? 1 : 0;
 }
 
 #else
