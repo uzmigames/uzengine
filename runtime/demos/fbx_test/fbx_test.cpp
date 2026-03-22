@@ -150,7 +150,10 @@ void FBXTest::OnStart() {
     {
         Entity skyLight = world.CreateEntity();
         world.AddComponent<SceneComponent>(skyLight);
-        world.AddComponent<SkyLightComponent>(skyLight);
+        auto& sl = world.AddComponent<SkyLightComponent>(skyLight);
+        sl.intensity = 1.5f;  // Stronger fill light for better material visibility
+        sl.lowerHemisphereIsBlack = false;
+        sl.lowerHemisphereColor = {0.2f, 0.22f, 0.28f}; // Blue-ish ground bounce
     }
 
     // ── Height fog ───────────────────────────────────────────────────────

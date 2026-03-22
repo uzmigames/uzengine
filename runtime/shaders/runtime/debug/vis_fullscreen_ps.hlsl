@@ -174,9 +174,10 @@ float4 main(FSInput input) : SV_Target0 {
             break;
 
         case VIS_MODE_DEPTH: {
-            float linear = LinearizeDepth(raw.r, nearPlane, farPlane);
+            float linDepth = LinearizeDepth(raw.r, nearPlane, farPlane);
             // Invert so near = white, far = black (more intuitive).
-            color = (1.0 - linear).xxx;
+            float invD = 1.0f - linDepth;
+            color = float3(invD, invD, invD);
             break;
         }
 

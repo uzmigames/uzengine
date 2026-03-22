@@ -59,25 +59,21 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     ctx.frameIndex = frameIndex;
     SetupFrameData(ctx, rgBuilder);
 
-    // ── Volumetric Cloud Compute (dedicated command list) ──────────────
+    // ── Volumetric Cloud Compute (inline on main command list) ─────────
     // Noise textures are loaded from disk (precomputed .bin files).
-    // Weather/raymarch/temporal run as compute dispatches on a dedicated
-    // command list to isolate barrier state from the render graph.
-    // NOTE: WaitIdle() is REQUIRED between cloud cmd list and main cmd list
-    // to prevent barrier state race conditions that cause DEVICE REMOVED.
+    // Weather/raymarch/temporal run as compute dispatches directly on the
+    // main command list before the render graph. The cloud pass manages
+    // its own barriers internally (SRV→UAV→SRV on the output texture),
+    // so no external synchronization is needed.
     if (m_pendingCloudDispatch && m_cloudPass && m_cloudPass->IsInitialized()
-        && m_pendingCloudInput && m_cloudCmdList) {
-        m_cloudCmdList->Begin();
+        && m_pendingCloudInput) {
 
         if (m_gpuProfileEnabled) {
             m_device->GpuProfilerBeginTimestamp(cmdList, "CloudCompute");
         }
 
         m_cloudPass->SetVFS(vfs);
-        m_cloudPass->Execute(m_cloudCmdList, *m_cbRing, *m_pendingCloudInput);
-        m_cloudCmdList->End();
-        m_cloudCmdList->Execute();
-        m_device->WaitIdle();
+        m_cloudPass->Execute(cmdList, *m_cbRing, *m_pendingCloudInput);
 
         if (m_gpuProfileEnabled) {
             m_device->GpuProfilerEndTimestamp(cmdList, "CloudCompute");

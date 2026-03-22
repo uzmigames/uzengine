@@ -235,7 +235,7 @@ float3 VisualizeMode(
         /// Direct lighting only (no albedo): Lambertian N dot L using the
         /// directional light direction and color from PerFrameCB. Shows the
         /// pure lighting contribution without albedo modulation.
-        float3 worldN = OctDecode(normalMetalRough.rg);
+        float3 worldN = OctDecode(normalPacked.rg);
         float3 L = normalize(-lightDir.xyz);
         float NdotL = saturate(dot(worldN, L));
         float3 lighting = NdotL * lightColor.rgb * lightColor.a + ambientColor.rgb;
