@@ -75,7 +75,7 @@
 
 ## 6. Testing
 
-- [ ] 6.1 Unit test: `.uztex` format write/read round-trip — header fields, mip data integrity, BC7 block alignment.
+- [x] 6.1 Unit test: `.uztex` format — 36 tests: roundtrip, sRGB flag, TextureFormatToRHI, IsBlockCompressed, BytesPerBlock, error paths. All passing.
 - [ ] 6.2 Unit test: `AsyncTextureDecoder::SubmitFromMemory()` — decode from memory buffer produces same result as file path.
 - [ ] 6.3 Unit test: BC7 compression quality — compress reference image, decompress, compare PSNR > 40dB.
 - [ ] 6.4 Unit test: `MipStreamingManager` screen coverage calculation — known camera setup produces expected mip levels.
