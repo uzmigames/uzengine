@@ -614,11 +614,11 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                 SsrTraceConstants rc{};
                 rc.depthSrvIdx      = m_gbuffer.depthSRV;
                 rc.normalSrvIdx     = m_gbuffer.normalSRV;
-                // Use depth buffer as HiZ source (single mip — no hierarchical
-                // acceleration, but functionally correct). Proper HiZ with mip
-                // chain is a follow-up when the RHI supports per-mip SRVs on
-                // a single texture.
-                rc.hizSrvIdx        = m_gbuffer.depthSRV;
+                // Use Hi-Z pyramid mip 0 if available for faster ray marching.
+                // Falls back to raw depth buffer if Hi-Z not built.
+                rc.hizSrvIdx        = (m_hizMipCount > 0 && m_hizMipLevels[0].srvIndex != UINT32_MAX)
+                                    ? m_hizMipLevels[0].srvIndex
+                                    : m_gbuffer.depthSRV;
                 rc.sceneColorSrvIdx = m_hdrSceneColorSrv;
                 rc.outputWidth      = m_renderWidth;
                 rc.outputHeight     = m_renderHeight;
