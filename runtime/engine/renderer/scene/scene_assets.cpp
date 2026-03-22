@@ -21,6 +21,7 @@
 #include "gpu_mesh.h"
 #include "texture_loader.h"
 #include "upload_context.h"
+#include "upload_ring.h"
 #include "vfs.h"
 #include "rhi.h"
 #include "log.h"
@@ -43,7 +44,7 @@ namespace uz {
 /// creations + GPU copies per frame to avoid main-thread stalls during the
 /// End/Execute/WaitIdle flush. Each 2K BC7 texture upload takes ~2-3ms of
 /// command recording, so 4/frame keeps the stall under 12ms.
-static constexpr uint32_t kMaxTextureUploadsPerFrame = 4;
+static constexpr uint32_t kMaxTextureUploadsPerFrame = 8;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Asset Loading — Meshes (deferred upload, flushed in batch)
@@ -142,10 +143,27 @@ uint32_t SceneRenderer::LoadTexture(const std::string& path, IVFS* vfs,
         return (mapIt != m_textureMap.end()) ? mapIt->second : UINT32_MAX;
     }
 
-    // Reserve a slot with an invalid placeholder. The texture will become
-    // usable after FlushPendingLoads() uploads the decoded pixels.
+    // Reserve a slot with a fallback placeholder so draw commands have a valid
+    // SRV from the first frame. The full-resolution texture replaces this once
+    // async loading + copy queue upload completes. Using the existing fallback
+    // textures (1x1 white or 1x1 flat normal) avoids creating per-slot resources.
     const auto slotIndex = static_cast<uint32_t>(m_textures.size());
-    m_textures.emplace_back(); // placeholder (handle.IsValid() == false)
+    {
+        TextureLoadResult placeholder{};
+        // Normal maps use the flat-normal fallback (128,128,255); everything
+        // else uses white (identity for albedo/roughness/metallic/AO).
+        const bool isNormalMap = (path.find("Normal") != std::string::npos
+                               || path.find("normal") != std::string::npos
+                               || path.find("_N.") != std::string::npos
+                               || path.find("_n.") != std::string::npos);
+        placeholder.srvIndex = isNormalMap ? m_fallbackNormalSrvIndex
+                                           : m_fallbackWhiteSrvIndex;
+        placeholder.handle = isNormalMap ? m_fallbackNormal : m_fallbackWhite;
+        placeholder.width = 1;
+        placeholder.height = 1;
+        placeholder.mipLevels = 1;
+        m_textures.push_back(placeholder);
+    }
     m_textureMap[path] = slotIndex;
 
     // ── Resolve texture path and submit to async worker ─────────────────
@@ -283,9 +301,22 @@ uint32_t SceneRenderer::QueueTextureLoad(const std::string& path) {
         return it->second;
     }
 
-    // Reserve a stable slot before the GPU upload occurs.
+    // Reserve a stable slot with a fallback placeholder (same logic as LoadTexture).
     const uint32_t slotIndex = static_cast<uint32_t>(m_textures.size());
-    m_textures.emplace_back();        // placeholder (handle.IsValid() == false)
+    {
+        TextureLoadResult placeholder{};
+        const bool isNormalMap = (path.find("Normal") != std::string::npos
+                               || path.find("normal") != std::string::npos
+                               || path.find("_N.") != std::string::npos
+                               || path.find("_n.") != std::string::npos);
+        placeholder.srvIndex = isNormalMap ? m_fallbackNormalSrvIndex
+                                           : m_fallbackWhiteSrvIndex;
+        placeholder.handle = isNormalMap ? m_fallbackNormal : m_fallbackWhite;
+        placeholder.width = 1;
+        placeholder.height = 1;
+        placeholder.mipLevels = 1;
+        m_textures.push_back(placeholder);
+    }
     m_textureMap[path] = slotIndex;
 
     // Submit to async decoder for background CPU decode.
@@ -335,6 +366,54 @@ std::string SceneRenderer::GetTexturePath(uint32_t textureId) const {
 
 void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
     UZ_PROFILE_FUNCTION();
+
+    // Reset the upload ring for this frame's suballocations. The swapchain
+    // fence guarantees frame (N - frameCount) has completed, so this frame's
+    // ring region is safe to overwrite.
+    if (m_uploadRing && m_uploadRing->IsInitialized()) {
+        m_uploadRing->BeginFrame(m_uploadRingFrameIndex++);
+    }
+
+    // ── Finalize previous frame's copy queue uploads ─────────────────────
+    // If the copy queue had in-flight texture uploads last frame, wait for the
+    // copy fence on the GPU side (no CPU stall) and transition the textures to
+    // ShaderResource state on the graphics command list. Only then do the SRV
+    // slots become usable for rendering.
+    if (m_copyFenceValue > 0 && !m_pendingCopyUploads.empty()) {
+        UZ_PROFILE_SCOPE("FlushPendingLoads::FinalizeCopyQueue");
+
+        m_device->GraphicsWaitForCopy(m_copyFenceValue);
+
+        for (auto& pending : m_pendingCopyUploads) {
+            // Transition from CopyDst to ShaderResource on the graphics queue
+            RHIBarrierDesc barrier{};
+            barrier.texture = pending.result.handle;
+            barrier.stateBefore = RHIResourceState::CopyDst;
+            barrier.stateAfter = RHIResourceState::ShaderResource;
+            cmdList->ResourceBarrier(&barrier, 1);
+
+            // Update the texture slot with the real SRV and dimensions
+            if (pending.slotIndex < static_cast<uint32_t>(m_textures.size())) {
+                m_textures[pending.slotIndex] = pending.result;
+            }
+        }
+
+        UZ_LOG(Renderer, Info,
+               "SceneRenderer: finalized {} copy queue texture uploads (fence={})",
+               m_pendingCopyUploads.size(), m_copyFenceValue);
+
+        m_pendingCopyUploads.clear();
+
+        // Release staging buffers from the previous upload batch — the copy
+        // fence guarantees the GPU is done reading from them.
+        if (m_textureBatchUpload) {
+            m_textureBatchUpload->ReleaseStaging();
+            m_textureBatchUpload.reset();
+        }
+
+        m_copyFenceValue = 0;
+        m_textureBatchCount = 0;
+    }
 
     // ── Flush pending mesh uploads (deferred — batched into single submission) ──
     for (const std::string& path : m_pendingMeshPaths) {
@@ -441,23 +520,39 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
         // No new textures — but check if we have a pending batch to flush
         // (all decodes complete, nothing more coming)
         if (m_textureBatchCount > 0 && m_asyncDecoder->PendingCount() == 0) {
-            UZ_PROFILE_SCOPE("FlushPendingLoads::BatchFlush");
-            auto flushStart = std::chrono::high_resolution_clock::now();
+            UZ_PROFILE_SCOPE("FlushPendingLoads::FinalBatchFlush");
 
-            cmdList->End();
-            cmdList->Execute();
-            m_device->WaitIdle();
-            m_textureBatchUpload->ReleaseStaging();
-            m_textureBatchUpload.reset();
-            cmdList->Begin();
+            if (m_copyCmdList) {
+                // Submit remaining copies on the DMA queue — no CPU stall.
+                // Barriers and SRV updates happen in the finalize block next frame.
+                m_copyCmdList->End();
+                m_copyCmdList->Execute();
+                m_copyFenceValue = m_device->SignalCopyQueue();
+                m_copyCmdList->Begin();
 
-            auto flushEnd = std::chrono::high_resolution_clock::now();
-            const auto flushUs = std::chrono::duration_cast<std::chrono::microseconds>(flushEnd - flushStart).count();
-            const float flushMs = static_cast<float>(flushUs) / 1000.0f;
-            UZ_LOG(Renderer, Info,
-                   "SceneRenderer: final texture batch flush ({} textures, 1 WaitIdle, {:.1f}ms)",
-                   m_textureBatchCount, flushMs);
-            m_textureBatchCount = 0;
+                UZ_LOG(Renderer, Info,
+                       "SceneRenderer: final texture batch submitted to copy queue "
+                       "({} textures, fence={})",
+                       m_textureBatchCount, m_copyFenceValue);
+            } else {
+                // Fallback: no copy queue — use graphics queue with WaitIdle.
+                auto flushStart = std::chrono::high_resolution_clock::now();
+
+                cmdList->End();
+                cmdList->Execute();
+                m_device->WaitIdle();
+                m_textureBatchUpload->ReleaseStaging();
+                m_textureBatchUpload.reset();
+                cmdList->Begin();
+
+                auto flushEnd = std::chrono::high_resolution_clock::now();
+                const auto flushUs = std::chrono::duration_cast<std::chrono::microseconds>(flushEnd - flushStart).count();
+                const float flushMs = static_cast<float>(flushUs) / 1000.0f;
+                UZ_LOG(Renderer, Info,
+                       "SceneRenderer: final texture batch flush ({} textures, 1 WaitIdle, {:.1f}ms)",
+                       m_textureBatchCount, flushMs);
+                m_textureBatchCount = 0;
+            }
         }
         return;
     }
@@ -499,14 +594,29 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
 
         const uint32_t slotIndex = pendingIt->second;
 
+        // When a copy command list is available, record uploads on the DMA queue
+        // and skip barriers (they are issued on the graphics queue next frame).
+        // Otherwise, fall back to the graphics command list with immediate barriers.
+        const bool useCopyQueue = (m_copyCmdList != nullptr);
+        IRHICommandList* uploadCmdList = useCopyQueue ? m_copyCmdList : cmdList;
+        const bool skipBarrier = useCopyQueue;
+
         TextureLoadResult result;
         if (!d.uzTexData.empty()) {
-            // .uztexture: pre-cooked GPU-ready data — upload directly via LoadUzTex.
-            // No stbi decode, no CPU mip generation. The file contains BC7/BC1/etc.
-            // mip blobs that go straight to the GPU.
-            result = TextureLoader::LoadUzTex(
-                m_device, cmdList, d.uzTexData.data(), d.uzTexData.size(),
-                d.path.c_str(), m_textureBatchUpload.get());
+            // .uztexture: pre-cooked GPU-ready data — upload directly.
+            // Prefer the ring path (zero CreateBuffer calls) over UploadContext.
+            // Falls back to UploadContext if the ring is not available or exhausted.
+            if (m_uploadRing && m_uploadRing->IsInitialized()) {
+                result = TextureLoader::LoadUzTexViaRing(
+                    m_device, uploadCmdList, d.uzTexData.data(), d.uzTexData.size(),
+                    d.path.c_str(), *m_uploadRing, skipBarrier);
+            }
+            if (!result.handle.IsValid()) {
+                // Ring unavailable or exhausted — fall back to per-mip staging buffers.
+                result = TextureLoader::LoadUzTex(
+                    m_device, uploadCmdList, d.uzTexData.data(), d.uzTexData.size(),
+                    d.path.c_str(), m_textureBatchUpload.get(), skipBarrier);
+            }
             d.uzTexData.clear();
             d.uzTexData.shrink_to_fit();
         } else if (!d.pixels) {
@@ -522,14 +632,15 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
                    "SceneRenderer: using pre-computed mips for '{}' ({} mips, sRGB={})",
                    d.path, d.mipCount, d.isSRGB);
             result = TextureLoader::UploadPixelsWithMipsDeferred(
-                m_device, cmdList, d.pixels, d.width, d.height,
+                m_device, uploadCmdList, d.pixels, d.width, d.height,
                 d.path.c_str(), m_textureBatchUpload.get(),
                 d.mipData.data(), d.mipWidths.data(), d.mipHeights.data(),
-                d.mipCount, d.isSRGB);
+                d.mipCount, d.isSRGB, skipBarrier);
         } else {
             result = TextureLoader::UploadPixelsDeferred(
-                m_device, cmdList, d.pixels, d.width, d.height,
-                d.path.c_str(), m_textureBatchUpload.get(), d.isSRGB);
+                m_device, uploadCmdList, d.pixels, d.width, d.height,
+                d.path.c_str(), m_textureBatchUpload.get(), d.isSRGB,
+                skipBarrier);
         }
 
         // Free stbi-allocated pixel data (null for .uztexture path).
@@ -544,11 +655,20 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
         d.mipData.clear();
 
         if (result.handle.IsValid()) {
-            m_textures[slotIndex] = result;
+            if (useCopyQueue) {
+                // Defer the slot update — the texture is still in CopyDst state
+                // on the copy queue. The finalize block next frame will barrier
+                // and populate the slot after the copy fence completes.
+                m_pendingCopyUploads.push_back({slotIndex, result});
+            } else {
+                // Graphics queue path: barrier was already issued, slot is ready.
+                m_textures[slotIndex] = result;
+            }
             ++uploadedCount;
             UZ_LOG(Renderer, Info,
-                   "SceneRenderer: async texture uploaded '{}' (id={}, {}x{}, srv={})",
-                   d.path, slotIndex, result.width, result.height, result.srvIndex);
+                   "SceneRenderer: async texture uploaded '{}' (id={}, {}x{}, srv={}, copyQ={})",
+                   d.path, slotIndex, result.width, result.height, result.srvIndex,
+                   useCopyQueue);
         } else {
             UZ_LOG(Renderer, Error,
                    "SceneRenderer: GPU upload failed for async-decoded '{}' (slot={})",
@@ -574,22 +694,41 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
     // waiting for a large batch that may never accumulate.
     if (m_textureBatchCount > 0 && uploadedCount > 0) {
         UZ_PROFILE_SCOPE("FlushPendingLoads::BatchFlush");
-        auto flushStart = std::chrono::high_resolution_clock::now();
 
-        cmdList->End();
-        cmdList->Execute();
-        m_device->WaitIdle();
-        m_textureBatchUpload->ReleaseStaging();
-        m_textureBatchUpload.reset();
-        cmdList->Begin();
+        if (m_copyCmdList) {
+            // Submit texture copy commands on the DMA queue — zero CPU stall.
+            // The copy command list was used for all upload calls above.
+            // Barriers and m_textures[] updates happen in the finalize block
+            // at the start of the next FlushPendingLoads call.
+            m_copyCmdList->End();
+            m_copyCmdList->Execute();
+            m_copyFenceValue = m_device->SignalCopyQueue();
+            m_copyCmdList->Begin();
 
-        auto flushEnd = std::chrono::high_resolution_clock::now();
-        const auto flushUs = std::chrono::duration_cast<std::chrono::microseconds>(flushEnd - flushStart).count();
-        const float flushMs = static_cast<float>(flushUs) / 1000.0f;
-        UZ_LOG(Renderer, Info,
-               "SceneRenderer: texture batch flush ({} textures, 1 WaitIdle, {:.1f}ms)",
-               m_textureBatchCount, flushMs);
-        m_textureBatchCount = 0;
+            UZ_LOG(Renderer, Info,
+                   "SceneRenderer: texture batch submitted to copy queue "
+                   "({} textures, fence={})",
+                   m_textureBatchCount, m_copyFenceValue);
+            // Do NOT reset m_textureBatchCount here — the finalize block does it.
+        } else {
+            // Fallback: no copy queue — flush on graphics queue with WaitIdle.
+            auto flushStart = std::chrono::high_resolution_clock::now();
+
+            cmdList->End();
+            cmdList->Execute();
+            m_device->WaitIdle();
+            m_textureBatchUpload->ReleaseStaging();
+            m_textureBatchUpload.reset();
+            cmdList->Begin();
+
+            auto flushEnd = std::chrono::high_resolution_clock::now();
+            const auto flushUs = std::chrono::duration_cast<std::chrono::microseconds>(flushEnd - flushStart).count();
+            const float flushMs = static_cast<float>(flushUs) / 1000.0f;
+            UZ_LOG(Renderer, Info,
+                   "SceneRenderer: texture batch flush ({} textures, 1 WaitIdle, {:.1f}ms)",
+                   m_textureBatchCount, flushMs);
+            m_textureBatchCount = 0;
+        }
     }
 }
 
@@ -604,16 +743,20 @@ bool SceneRenderer::IsSceneFullyLoaded() const {
     if (m_asyncDecoder && m_asyncDecoder->PendingCount() > 0) return false;
     if (!m_deferredDecoded.empty()) return false;
     if (m_textureBatchCount > 0) return false;
+    if (!m_pendingCopyUploads.empty()) return false;
+    if (m_copyFenceValue > 0) return false;
     return true;
 }
 
 bool SceneRenderer::IsSceneFullyLoadedDebug() const {
     UZ_LOG(Renderer, Debug,
-           "IsSceneFullyLoaded: meshPaths={}, procMeshes={}, texPaths={}, asyncPending={}, deferred={}, batch={}",
+           "IsSceneFullyLoaded: meshPaths={}, procMeshes={}, texPaths={}, asyncPending={}, "
+           "deferred={}, batch={}, copyUploads={}, copyFence={}",
            m_pendingMeshPaths.size(), m_pendingProceduralMeshes.size(),
            m_pendingTexturePaths.size(),
            m_asyncDecoder ? m_asyncDecoder->PendingCount() : 0,
-           m_deferredDecoded.size(), m_textureBatchCount);
+           m_deferredDecoded.size(), m_textureBatchCount,
+           m_pendingCopyUploads.size(), m_copyFenceValue);
     return IsSceneFullyLoaded();
 }
 
@@ -689,6 +832,17 @@ void SceneRenderer::DestroyAssets() {
     }
     m_textureBatchCount = 0;
 
+    // Destroy textures that were in-flight on the copy queue.
+    // WaitIdle was already called in Shutdown() before DestroyAssets(), so
+    // these textures are safe to destroy.
+    for (auto& pending : m_pendingCopyUploads) {
+        if (pending.result.handle.IsValid()) {
+            m_device->DestroyTexture(pending.result.handle);
+        }
+    }
+    m_pendingCopyUploads.clear();
+    m_copyFenceValue = 0;
+
     for (auto& mesh : m_meshes) {
         DestroyGPUMesh(m_device, mesh);
     }
@@ -696,7 +850,12 @@ void SceneRenderer::DestroyAssets() {
     m_meshMap.clear();
 
     for (auto& tex : m_textures) {
-        if (tex.handle.IsValid()) {
+        // Skip fallback textures — they are destroyed separately in Shutdown()
+        // and may be shared across multiple slots.
+        if (tex.handle.IsValid()
+            && tex.handle != m_fallbackWhite
+            && tex.handle != m_fallbackBlack
+            && tex.handle != m_fallbackNormal) {
             m_device->DestroyTexture(tex.handle);
         }
     }

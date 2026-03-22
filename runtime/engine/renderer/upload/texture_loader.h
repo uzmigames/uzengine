@@ -203,6 +203,11 @@ public:
     /// # Returns
     /// `TextureLoadResult` with a valid handle and SRV index on success.
     /// Returns default (invalid) result on failure.
+    /// # Arguments (additional)
+    /// * `skipBarrier` — When true, the CopyDst -> ShaderResource barrier is NOT
+    ///   recorded on the command list. The caller is responsible for issuing the
+    ///   barrier later (e.g., on the graphics queue after a copy queue fence wait).
+    ///   Used by the copy-queue async texture upload path.
     [[nodiscard]] static TextureLoadResult UploadPixelsDeferred(
         IRHIDevice* device,
         IRHICommandList* cmdList,
@@ -211,7 +216,8 @@ public:
         uint32_t height,
         const char* debugName,
         class UploadContext* outUpload,
-        bool isSRGB = false);
+        bool isSRGB = false,
+        bool skipBarrier = false);
 
     /// Uploads pre-decoded RGBA8 pixels with a pre-computed mip chain to a GPU
     /// texture WITHOUT flushing the command list or waiting for GPU idle.
@@ -240,6 +246,8 @@ public:
     /// # Returns
     /// `TextureLoadResult` with a valid handle and SRV index on success.
     /// Returns default (invalid) result on failure.
+    /// # Arguments (additional)
+    /// * `skipBarrier` — See `UploadPixelsDeferred`.
     [[nodiscard]] static TextureLoadResult UploadPixelsWithMipsDeferred(
         IRHIDevice* device,
         IRHICommandList* cmdList,
@@ -252,7 +260,8 @@ public:
         const uint32_t* mipWidths,
         const uint32_t* mipHeights,
         uint16_t mipCount,
-        bool isSRGB = false);
+        bool isSRGB = false,
+        bool skipBarrier = false);
 
     /// Loads a pre-cooked .uztexture file directly to the GPU.
     ///
@@ -270,13 +279,51 @@ public:
     ///
     /// # Returns
     /// TextureLoadResult with valid handle on success.
+    /// # Arguments (additional)
+    /// * `skipBarrier` — See `UploadPixelsDeferred`.
     [[nodiscard]] static TextureLoadResult LoadUzTex(
         IRHIDevice* device,
         IRHICommandList* cmdList,
         const uint8_t* data,
         size_t size,
         const char* debugName,
-        class UploadContext* outUpload = nullptr);
+        class UploadContext* outUpload = nullptr,
+        bool skipBarrier = false);
+
+    /// Loads a pre-cooked .uztexture file to the GPU via UploadRing suballocation.
+    ///
+    /// Identical to `LoadUzTex` but uses a pre-allocated ring buffer instead of
+    /// per-mip `CreateBuffer` calls. This eliminates N staging buffer allocations
+    /// per texture (one per mip level) — typically 12 for a 2K BC7 texture.
+    ///
+    /// The ring's backing buffer is persistently mapped, so each mip upload is
+    /// just: bump-allocate -> memcpy -> record CopyBufferToTexture. Zero API
+    /// buffer creation or mapping overhead.
+    ///
+    /// Falls back gracefully: if the ring is exhausted mid-texture, the GPU
+    /// texture is destroyed and an invalid result is returned. The caller should
+    /// fall back to the UploadContext path.
+    ///
+    /// # Arguments
+    /// * `device` — RHI device for texture creation. Must not be null.
+    /// * `cmdList` — Command list in recording state for copy commands.
+    /// * `data` — Raw .uztexture file bytes.
+    /// * `size` — Size of data in bytes.
+    /// * `debugName` — Label for GPU debug tools.
+    /// * `ring` — Pre-allocated upload ring for staging suballocation.
+    /// * `skipBarrier` — When true, CopyDst->ShaderResource barrier is skipped.
+    ///
+    /// # Returns
+    /// TextureLoadResult with valid handle on success. Invalid on parse failure
+    /// or ring exhaustion.
+    [[nodiscard]] static TextureLoadResult LoadUzTexViaRing(
+        IRHIDevice* device,
+        IRHICommandList* cmdList,
+        const uint8_t* data,
+        size_t size,
+        const char* debugName,
+        class UploadRing& ring,
+        bool skipBarrier = false);
 };
 
 } // namespace uz

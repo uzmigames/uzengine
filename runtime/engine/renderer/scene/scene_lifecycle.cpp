@@ -396,6 +396,46 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     const int decoderThreads = std::max(2, hwThreads / 2); // clamped to [2,8] by decoder
     m_asyncDecoder = std::make_unique<AsyncTextureDecoder>(decoderThreads);
 
+    // ── Copy command list for async texture uploads (zero-stall DMA queue) ──
+    // Texture staging copies run on a dedicated copy queue so the graphics
+    // pipeline never blocks on texture uploads. Falls back to graphics queue
+    // WaitIdle if the backend does not support a copy queue.
+    m_copyCmdList = m_device->CreateCommandList(RHIQueueType::Copy);
+    if (m_copyCmdList) {
+        m_copyCmdList->Begin();
+        UZ_LOG(Renderer, Info, "SceneRenderer: copy command list created for async texture uploads");
+    } else {
+        UZ_LOG(Renderer, Warning, "SceneRenderer: copy command list unavailable — falling back to graphics queue uploads");
+    }
+
+    // ── Upload ring for zero-alloc texture staging ───────────────────────
+    // 16MB per frame is enough for ~4 BC7 2K textures with full mip chains.
+    // Triple-buffered (3 frames in flight) = 48MB total. Falls back to
+    // UploadContext if Init fails or the ring is exhausted mid-frame.
+    constexpr uint32_t kUploadRingBytesPerFrame = 16u * 1024u * 1024u;
+    constexpr uint32_t kUploadRingFrameCount = 3;
+    m_uploadRing = std::make_unique<UploadRing>();
+    if (m_uploadRing->Init(m_device, kUploadRingFrameCount, kUploadRingBytesPerFrame)) {
+        UZ_LOG(Renderer, Info,
+               "SceneRenderer: upload ring initialized ({}MB/frame, {} frames, {}MB total)",
+               kUploadRingBytesPerFrame / (1024 * 1024),
+               kUploadRingFrameCount,
+               (kUploadRingBytesPerFrame * kUploadRingFrameCount) / (1024 * 1024));
+    } else {
+        UZ_LOG(Renderer, Warning,
+               "SceneRenderer: upload ring init failed — falling back to per-mip staging buffers");
+        m_uploadRing.reset();
+    }
+
+    // Cache fallback texture SRV indices for use as placeholders in loading
+    // texture slots. Avoids per-frame device queries.
+    if (m_fallbackWhite.IsValid()) {
+        m_fallbackWhiteSrvIndex = m_device->GetTextureSRVIndex(m_fallbackWhite);
+    }
+    if (m_fallbackNormal.IsValid()) {
+        m_fallbackNormalSrvIndex = m_device->GetTextureSRVIndex(m_fallbackNormal);
+    }
+
     // ── Temporal Upscaler (default: TAA — matches existing behavior) ────
     m_upscaler = CreateTemporalUpscaler(m_upscalerType);
     if (m_upscaler) {
@@ -1283,6 +1323,21 @@ void SceneRenderer::Shutdown() {
     if (m_gtaoPass) m_gtaoPass->Shutdown();
     if (m_cloudPass) { m_cloudPass->Shutdown(); m_cloudPass.reset(); }
     if (m_cloudCmdList) { m_device->DestroyCommandList(m_cloudCmdList); m_cloudCmdList = nullptr; }
+
+    // ── Upload ring cleanup ─────────────────────────────────────────
+    if (m_uploadRing) {
+        m_uploadRing->Shutdown();
+        m_uploadRing.reset();
+    }
+
+    // ── Copy queue command list cleanup ──────────────────────────────
+    if (m_copyCmdList) {
+        m_device->DestroyCommandList(m_copyCmdList);
+        m_copyCmdList = nullptr;
+    }
+    m_copyFenceValue = 0;
+    m_pendingCopyUploads.clear();
+
     if (m_lensFlarePass) m_lensFlarePass->Shutdown();
     if (m_bloomPass) m_bloomPass->Shutdown();
 

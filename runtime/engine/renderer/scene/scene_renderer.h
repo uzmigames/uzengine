@@ -50,6 +50,7 @@
 #include "gi/radiance_cache.h"
 #include "async_texture_decoder.h"  // TextureDecodeResult for m_deferredDecoded
 #include "inspector_pass.h"        // PassInspector for render target visualization
+#include "upload_ring.h"           // UploadRing for zero-alloc texture staging
 
 // Types needed by FrameContext struct (value members, not pointers)
 #include "per_frame_params.h"
@@ -927,6 +928,56 @@ private:
 
     /// Number of textures uploaded into m_textureBatchUpload since last flush.
     uint32_t m_textureBatchCount = 0;
+
+    /// Pre-allocated staging ring buffer for .uztexture uploads.
+    /// Eliminates per-mip CreateBuffer overhead — suballocates from a single
+    /// persistently mapped buffer instead. 16MB per frame, triple-buffered.
+    /// Falls back to UploadContext when the ring is not initialized or exhausted.
+    /// Heap-allocated because UploadRing is non-movable and SceneRenderer
+    /// requires a defaulted move constructor.
+    std::unique_ptr<UploadRing> m_uploadRing;
+
+    /// Monotonically increasing frame counter for UploadRing frame cycling.
+    /// Distinct from the swapchain frame index because it must survive resets.
+    uint32_t m_uploadRingFrameIndex = 0;
+
+    // ── Copy Queue Async Texture Upload ──────────────────────────────────
+    // Texture copies are recorded on a dedicated copy command list that
+    // executes on the DMA copy queue. This avoids stalling the graphics
+    // pipeline with End/Execute/WaitIdle during texture uploads.
+    //
+    // Flow:
+    //   1. Record staging -> texture copies on m_copyCmdList (copy queue)
+    //   2. Submit + SignalCopyQueue() -> m_copyFenceValue
+    //   3. Next frame: GraphicsWaitForCopy(m_copyFenceValue) on GPU (no CPU stall)
+    //   4. Issue CopyDst -> ShaderResource barriers on graphics cmdList
+    //   5. Update m_textures[] with real SRV indices
+
+    /// Dedicated copy command list for async texture uploads.
+    /// Uses the DMA copy queue — does NOT interrupt the graphics pipeline.
+    /// Null if the backend does not support a copy queue (graceful fallback).
+    IRHICommandList* m_copyCmdList = nullptr;
+
+    /// Fence value from the last copy queue signal. When non-zero, the
+    /// graphics queue must wait on this value before using newly uploaded textures.
+    uint64_t m_copyFenceValue = 0;
+
+    /// Texture upload that is in-flight on the copy queue, waiting for the
+    /// fence to complete before transitioning to ShaderResource state.
+    struct PendingCopyUpload {
+        uint32_t slotIndex;       ///< Index into m_textures[] to update.
+        TextureLoadResult result; ///< Full result (handle, srvIndex, width, height, mips).
+    };
+
+    /// Texture slots whose GPU upload is in-flight on the copy queue.
+    /// Populated during FlushPendingLoads, drained at the start of the next
+    /// FlushPendingLoads when the copy fence is reached.
+    std::vector<PendingCopyUpload> m_pendingCopyUploads;
+
+    /// Cached SRV indices for fallback textures, used as placeholders in
+    /// texture slots that are still loading. Set once during Init().
+    uint32_t m_fallbackWhiteSrvIndex  = UINT32_MAX;
+    uint32_t m_fallbackNormalSrvIndex = UINT32_MAX;
 
     // ── Constants ──────────────────────────────────────────────────────────
 
