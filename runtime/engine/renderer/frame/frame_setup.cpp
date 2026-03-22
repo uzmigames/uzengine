@@ -30,10 +30,27 @@
 #include "editor_grid.h"
 #include "stats_overlay.h"
 #include "halton.h"
+#include "cvar.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+
+// ── CVars ────────────────────────────────────────────────────────────────
+static auto* cv_SkyLightIntensity  = UZ_CVAR_FLOAT("r.SkyLight.Intensity", 1.f, "IBL ambient multiplier", 0.f, 20.f);
+static auto* cv_SkyLightMinAmbient = UZ_CVAR_FLOAT("r.SkyLight.MinAmbient", 0.f, "Minimum ambient floor", 0.f, 1.f);
+static auto* cv_ContactShadowLen   = UZ_CVAR_FLOAT("r.ContactShadow.Length", 0.02f, "Contact shadow ray length", 0.f, 0.2f);
+static auto* cv_FilmGrain          = UZ_CVAR_FLOAT("r.FilmGrain", 0.f, "Film grain intensity", 0.f, 1.f);
+static auto* cv_Vignette           = UZ_CVAR_FLOAT("r.Vignette", 0.4f, "Vignette intensity", 0.f, 2.f);
+static auto* cv_ChromaAb           = UZ_CVAR_FLOAT("r.ChromaticAberration", 0.f, "Chromatic aberration", 0.f, 1.f);
+static auto* cv_TonemapSlope       = UZ_CVAR_FLOAT("r.Tonemap.Slope", 0.88f, "ACES film slope", 0.f, 2.f);
+static auto* cv_TonemapToe         = UZ_CVAR_FLOAT("r.Tonemap.Toe", 0.55f, "ACES film toe", 0.f, 1.f);
+static auto* cv_TonemapShoulder    = UZ_CVAR_FLOAT("r.Tonemap.Shoulder", 0.26f, "ACES film shoulder", 0.f, 1.f);
+static auto* cv_TonemapBlackClip   = UZ_CVAR_FLOAT("r.Tonemap.BlackClip", 0.f, "ACES black clip", 0.f, 1.f);
+static auto* cv_TonemapWhiteClip   = UZ_CVAR_FLOAT("r.Tonemap.WhiteClip", 0.04f, "ACES white clip", 0.f, 1.f);
+static auto* cv_MipBias            = UZ_CVAR_FLOAT("r.MipBias", 0.f, "Global mipmap LOD bias", -4.f, 4.f);
+static auto* cv_Exposure           = UZ_CVAR_FLOAT("r.Exposure", 1.f, "Manual exposure multiplier", 0.01f, 100.f);
+static auto* cv_GIIntensity        = UZ_CVAR_FLOAT("r.GI.Intensity", 1.f, "GI intensity multiplier", 0.f, 10.f);
 
 namespace uz {
 
@@ -244,6 +261,12 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
         }
     }
 
+    // Apply CVar-driven skylight overrides on top of component values.
+    // r.SkyLight.Intensity acts as a multiplier on the component intensity.
+    // r.SkyLight.MinAmbient provides a floor that the component value is raised to.
+    perFrame.skyLightIntensity *= cv_SkyLightIntensity->value;
+    perFrame.skyLightMinAmbient = std::max(perFrame.skyLightMinAmbient, cv_SkyLightMinAmbient->value);
+
     // Upload SH coefficients for sky diffuse irradiance (standard).
     // The shader's deferred_lighting_ps.hlsl line 881 already multiplies
     // by skyLightIntensity, so we only scale SH by indirectLightingIntensity
@@ -314,7 +337,21 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     // When rendering at lower internal resolution, textures are over-minified
     // because the screen pixel density is lower than the display. A negative
     // mip bias shifts sampling toward finer mip levels to compensate.
-    perFrame.mipBias = std::log2f(m_screenPercentage / 100.f);
+    // Screen percentage compensation + CVar-driven manual mip bias.
+    perFrame.mipBias = std::log2f(m_screenPercentage / 100.f) + cv_MipBias->value;
+
+    // ── CVar-driven per-frame overrides ─────────────────────────────────
+    // These are set by ApplyCVars() each frame and forwarded to the GPU
+    // via PerFrameParams so shaders (tonemap, post-process) can read them.
+    perFrame.toneCurveSlope      = cv_TonemapSlope->value;
+    perFrame.toneCurveToe        = cv_TonemapToe->value;
+    perFrame.toneCurveShoulder   = cv_TonemapShoulder->value;
+    perFrame.toneCurveBlackClip  = cv_TonemapBlackClip->value;
+    perFrame.toneCurveWhiteClip  = cv_TonemapWhiteClip->value;
+    perFrame.filmGrainIntensity  = cv_FilmGrain->value;
+    perFrame.vignetteIntensity   = cv_Vignette->value;
+    perFrame.chromaAbIntensity   = cv_ChromaAb->value;
+    perFrame.contactShadowLength = cv_ContactShadowLen->value;
 
     // ── GTAO SRV index (set early — actual compute runs in render graph) ──
     if (m_gtaoPass && m_gtaoPass->IsInitialized() && m_gtaoPass->settings.enabled) {
@@ -353,12 +390,12 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
         perFrame.radianceCacheEnabled = 1;
         perFrame.rcProbeSHBufferSrv   = m_radianceCache.GetProbeSHBufferSrv();
         perFrame.rcProbesPerAxis      = RadianceCache::kProbesPerAxis;
-        perFrame.rcGridExtent         = m_radianceCache.GetGridExtent();
+        perFrame.rcGridExtent         = m_rcGridExtentCVar;
         const Vec3 origin = m_radianceCache.GetGridOrigin();
         perFrame.rcGridOriginX        = origin.x;
         perFrame.rcGridOriginY        = origin.y;
         perFrame.rcGridOriginZ        = origin.z;
-        perFrame.rcGiIntensity        = m_giIntensity;
+        perFrame.rcGiIntensity        = cv_GIIntensity->value;
     } else {
         perFrame.radianceCacheEnabled = 0;
         perFrame.rcProbeSHBufferSrv   = UINT32_MAX;

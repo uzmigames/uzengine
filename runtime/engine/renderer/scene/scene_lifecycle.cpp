@@ -528,6 +528,23 @@ void SceneRenderer::RegisterCVars() {
     cvars.Register("r.ShadowDebug", 0.f, "Shadow debug grid mode (0=off, 1-8=debug)", 0.f, 8.f);
     cvars.Register("r.GI.Intensity", 1.f, "GI intensity multiplier", 0.f, 10.f);
     cvars.Register("r.Exposure", 1.f, "Manual exposure multiplier", 0.01f, 100.f);
+
+    // ── Depth of Field ───────────────────────────────────────────────────
+    cvars.Register("r.DOF.FocusDistance", 0.f, "DOF focus distance (cm)", 0.f, 100000.f);
+    cvars.Register("r.DOF.Aperture", 4.f, "DOF f-stop number", 0.5f, 32.f);
+    cvars.Register("r.DOF.FocalRegion", 0.f, "In-focus zone width (cm)", 0.f, 10000.f);
+    cvars.Register("r.DOF.NearTransition", 300.f, "Near transition ramp (cm)", 0.f, 10000.f);
+    cvars.Register("r.DOF.FarTransition", 500.f, "Far transition ramp (cm)", 0.f, 50000.f);
+
+    // ── GI General ───────────────────────────────────────────────────────
+    cvars.Register("r.GI.RadianceCache.GridExtent", 5000.f, "Probe grid half-extent (cm)", 100.f, 50000.f);
+
+    // NOTE: Bloom, GTAO, AutoExposure, SSGI, LensFlare, SkyLight, Tonemap,
+    // FilmGrain, Vignette, ChromaticAberration, ContactShadow, MotionBlur,
+    // CAS, LOD, and MipBias parameter CVars are now registered decentrally
+    // via UZ_CVAR_* macros in their respective subsystem .cpp files.
+    // Pass toggle CVars (r.Bloom, r.GTAO, etc.) remain above for
+    // PassInspector and SceneRenderer enable/disable logic.
 }
 
 void SceneRenderer::ApplyCVars() {
@@ -580,8 +597,6 @@ void SceneRenderer::ApplyCVars() {
     // ── Render Pass Toggles ─────────────────────────────────────────────
     m_taaEnabled        = cvars.GetBool("r.TAA", true);
     m_ssrEnabled        = cvars.GetBool("r.SSR", true);
-    m_ssgiRenderer.settings.enabled = cvars.GetBool("r.SSGI", true);
-    m_ssgiRenderer.settings.quality = cvars.GetInt("r.SSGI.Quality", 2);
     m_motionBlurEnabled = cvars.GetBool("r.MotionBlur", true);
     m_casEnabled        = cvars.GetBool("r.CAS", true);
     m_lensFlareEnabled  = cvars.GetBool("r.LensFlare", false);
@@ -590,7 +605,6 @@ void SceneRenderer::ApplyCVars() {
     m_sdfGiEnabled      = cvars.GetBool("r.RadianceCache", false)
                         && m_globalDistanceField.IsInitialized()
                         && m_radianceCache.IsInitialized();
-    m_giIntensity       = cvars.GetFloat("r.GI.Intensity", 1.f);
     m_depthPrepassEnabled = cvars.GetBool("r.DepthPrepass", true);
     m_shadowDebugMode   = static_cast<uint32_t>(cvars.GetInt("r.ShadowDebug", 0));
 
@@ -609,6 +623,38 @@ void SceneRenderer::ApplyCVars() {
     m_passInspector.SetPassEnabled("dof", cvars.GetBool("r.DOF", false));
     m_passInspector.SetPassEnabled("cas", cvars.GetBool("r.CAS", true));
     m_passInspector.SetPassEnabled("taa", cvars.GetBool("r.TAA", true));
+    m_passInspector.SetPassEnabled("lensflare", cvars.GetBool("r.LensFlare", false));
+
+    // NOTE: Bloom, GTAO, AutoExposure, and SSGI parameters are now read
+    // directly from decentralized CVar pointers in each subsystem's
+    // Execute()/Render() function. No need to relay through member variables.
+
+    // ── Motion Blur ──────────────────────────────────────────────────────
+    m_motionBlurAmount = cvars.GetFloat("r.MotionBlur.Amount", 0.5f);
+    m_motionBlurMax    = cvars.GetFloat("r.MotionBlur.Max", 5.f);
+
+    // ── CAS ──────────────────────────────────────────────────────────────
+    m_casSharpenStrength = cvars.GetFloat("r.CAS.Sharpness", 0.15f);
+
+    // ── Depth of Field ───────────────────────────────────────────────────
+    m_dofFocusDistance  = cvars.GetFloat("r.DOF.FocusDistance", 0.f);
+    m_dofAperture       = cvars.GetFloat("r.DOF.Aperture", 4.f);
+    m_dofFocalRegion    = cvars.GetFloat("r.DOF.FocalRegion", 0.f);
+    m_dofNearTransition = cvars.GetFloat("r.DOF.NearTransition", 300.f);
+    m_dofFarTransition  = cvars.GetFloat("r.DOF.FarTransition", 500.f);
+
+    // NOTE: Tonemapping, film grain, vignette, chromatic aberration,
+    // contact shadow, skylight, mip bias, and GI intensity are now read
+    // directly from decentralized CVar pointers in frame_setup.cpp.
+
+    // ── GI General ───────────────────────────────────────────────────────
+    m_rcGridExtentCVar = cvars.GetFloat("r.GI.RadianceCache.GridExtent", 5000.f);
+
+    // NOTE: Lens flare parameters are now read directly from decentralized
+    // CVar pointers in lens_flare_pass.cpp Execute().
+
+    // ── LOD & Resolution ─────────────────────────────────────────────────
+    m_lodBias = cvars.GetFloat("r.LOD.Bias", 1.f);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

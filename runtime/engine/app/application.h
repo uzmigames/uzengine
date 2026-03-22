@@ -40,7 +40,10 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace uz {
 
@@ -237,6 +240,9 @@ private:
     bool        m_passDumpRequested = false;  ///< --pass-dump: dump all targets when scene is fully loaded.
     std::string m_passToggle;          ///< --pass-toggle <name>: toggle a pass off at startup.
     std::string m_passCompare;         ///< --pass-compare <name>: compare mode for a pass.
+
+    // ── CVar CLI overrides ────────────────────────────────────────────────
+    std::vector<std::pair<std::string, float>> m_cvarOverrides; ///< --cvar name=value pairs.
 
     // ── Deferred scene load ───────────────────────────────────────────────
     std::string m_pendingScenePath;

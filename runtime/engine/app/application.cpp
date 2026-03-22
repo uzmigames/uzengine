@@ -16,7 +16,7 @@
 #include "scene_loader.h"
 #include "world.h"
 #include "renderdoc_capture.h"
-
+#include "cvar.h"
 
 #include <algorithm>
 #include <cctype>
@@ -94,6 +94,15 @@ int Application::Run(int argc, char** argv) {
     if (m_shadowDebugMode > 0) {
         m_renderer->SetShadowDebugMode(m_shadowDebugMode);
         UZ_LOG(App, Info, "Shadow debug mode set to {}", m_shadowDebugMode);
+    }
+
+    // ── Apply CVar CLI overrides (after RegisterCVars in SceneRenderer::Init) ──
+    if (!m_cvarOverrides.empty()) {
+        auto& cvars = CVarRegistry::Get();
+        for (const auto& [name, value] : m_cvarOverrides) {
+            cvars.Set(name, value);
+            UZ_LOG(App, Info, "CVar override: {} = {}", name, value);
+        }
     }
 
     // Apply pass inspector settings from CLI
@@ -504,6 +513,15 @@ void Application::ParseArgs(int argc, char* argv[]) {
             m_config.forceLooseVFS = true;
         } else if (std::strcmp(argv[i], "--pak-cache-mb") == 0 && i + 1 < argc) {
             m_config.pakCacheMB = static_cast<uint32_t>(std::atoi(argv[++i]));
+        } else if (std::strcmp(argv[i], "--cvar") == 0 && i + 1 < argc) {
+            std::string arg = argv[++i];
+            const auto eqPos = arg.find('=');
+            if (eqPos != std::string::npos) {
+                m_cvarOverrides.emplace_back(arg.substr(0, eqPos),
+                    static_cast<float>(std::atof(arg.substr(eqPos + 1).c_str())));
+            } else {
+                UZ_LOG(App, Warning, "--cvar expects name=value format, got '{}'", arg);
+            }
         }
     }
 

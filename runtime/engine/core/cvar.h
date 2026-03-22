@@ -135,3 +135,33 @@ private:
 };
 
 } // namespace uz
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Auto-Registration Macros (UE5-style decentralized CVar declaration)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Declare static CVars in .cpp files — they self-register at static init time.
+// Each subsystem owns its CVars. No central RegisterAll() needed.
+//
+// Usage (in a .cpp file, file scope):
+//   static auto* cv_BloomThreshold = UZ_CVAR_FLOAT("r.Bloom.Threshold", -1.f,
+//       "Bloom luminance threshold", -1.f, 100.f);
+//
+//   // In the pass update:
+//   settings.threshold = cv_BloomThreshold->value;
+//
+// NEVER declare in .h files — causes duplicate registration across TUs.
+
+/// Registers a float CVar and returns a stable CVar* pointer.
+/// Safe to call at static init time (CVarRegistry uses Meyer's singleton).
+#define UZ_CVAR_FLOAT(name, defaultVal, desc, minVal, maxVal) \
+    uz::CVarRegistry::Get().Register(name, defaultVal, desc, minVal, maxVal)
+
+/// Registers a bool CVar (stored as float: 0.0=false, 1.0=true).
+#define UZ_CVAR_BOOL(name, defaultVal, desc) \
+    uz::CVarRegistry::Get().Register(name, (defaultVal) ? 1.f : 0.f, desc, 0.f, 1.f)
+
+/// Registers an int CVar (stored as float, clamped to [min, max]).
+#define UZ_CVAR_INT(name, defaultVal, desc, minVal, maxVal) \
+    uz::CVarRegistry::Get().Register(name, static_cast<float>(defaultVal), desc, \
+                                     static_cast<float>(minVal), static_cast<float>(maxVal))

@@ -18,11 +18,19 @@
 #include "engine_shaders.h"
 #include "log.h"
 #include "profiler.h"
+#include "cvar.h"
 
 #include <algorithm>
 #include <cstring>
 
 UZ_DECLARE_LOG_CATEGORY(Renderer);
+
+// ── CVars ────────────────────────────────────────────────────────────────
+static auto* cv_BloomEnabled   = UZ_CVAR_BOOL("r.Bloom", true, "Bloom post-process");
+static auto* cv_BloomThreshold = UZ_CVAR_FLOAT("r.Bloom.Threshold", -1.f, "Bloom luminance threshold (-1=none)", -1.f, 100.f);
+static auto* cv_BloomIntensity = UZ_CVAR_FLOAT("r.Bloom.Intensity", 0.675f, "Bloom contribution multiplier", 0.f, 10.f);
+static auto* cv_BloomRadius    = UZ_CVAR_FLOAT("r.Bloom.Radius", 1.f, "Bloom upsample filter radius", 0.1f, 4.f);
+static auto* cv_BloomSizeScale = UZ_CVAR_FLOAT("r.Bloom.SizeScale", 4.f, "Global bloom size scale", 0.1f, 64.f);
 
 namespace uz {
 
@@ -350,6 +358,13 @@ void BloomPass::Execute(IRHICommandList* cmdList,
         UZ_LOG(Renderer, Error, "BloomPass::Execute called before Init()");
         return;
     }
+
+    // Apply CVar overrides to settings
+    settings.enabled   = cv_BloomEnabled->value >= 0.5f;
+    settings.threshold = cv_BloomThreshold->value;
+    settings.intensity = cv_BloomIntensity->value;
+    settings.radius    = cv_BloomRadius->value;
+    settings.sizeScale = cv_BloomSizeScale->value;
 
     if (!settings.enabled) {
         return;

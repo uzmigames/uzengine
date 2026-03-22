@@ -20,10 +20,18 @@
 #include "engine_shaders.h"
 #include "log.h"
 #include "profiler.h"
+#include "cvar.h"
 
 #include <cstring>
 
 UZ_DECLARE_LOG_CATEGORY(Renderer);
+
+// ── CVars ────────────────────────────────────────────────────────────────
+static auto* cv_LFEnabled         = UZ_CVAR_BOOL("r.LensFlare", false, "Lens flare");
+static auto* cv_LFIntensity       = UZ_CVAR_FLOAT("r.LensFlare.Intensity", 1.f, "Lens flare intensity", 0.f, 10.f);
+static auto* cv_LFGhostIntensity  = UZ_CVAR_FLOAT("r.LensFlare.GhostIntensity", 0.5f, "Ghost contribution", 0.f, 5.f);
+static auto* cv_LFHaloRadius      = UZ_CVAR_FLOAT("r.LensFlare.HaloRadius", 0.6f, "Halo ring radius", 0.f, 2.f);
+static auto* cv_LFChromaticShift  = UZ_CVAR_FLOAT("r.LensFlare.ChromaticShift", 0.02f, "Chromatic shift", 0.f, 0.1f);
 
 namespace uz {
 
@@ -203,9 +211,17 @@ bool LensFlarePass::EnsurePipeline() {
 
 void LensFlarePass::Execute(IRHICommandList* cmd, CBRingAllocator& cbRing,
                              uint32_t bloomThresholdSrv,
-                             const LensFlareSettings& settings)
+                             const LensFlareSettings& settingsIn)
 {
     UZ_PROFILE_SCOPE("LensFlarePass::Execute");
+
+    // Apply CVar overrides via mutable local copy
+    LensFlareSettings settings = settingsIn;
+    settings.enabled        = cv_LFEnabled->value >= 0.5f;
+    settings.intensity      = cv_LFIntensity->value;
+    settings.ghostIntensity = cv_LFGhostIntensity->value;
+    settings.haloRadius     = cv_LFHaloRadius->value;
+    settings.chromaticShift = cv_LFChromaticShift->value;
 
     if (!settings.enabled) {
         return;
