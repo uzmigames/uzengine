@@ -74,8 +74,8 @@ public:
     static constexpr uint32_t kRaysPerProbe = 32;
 
     /// Temporal blend factor (EMA alpha). Lower = more temporal stability.
-    /// Low alpha = high temporal stability. 0.05 averages over ~20 frames.
-    static constexpr float kTemporalBlendAlpha = 0.05f;
+    /// 0.12 averages over ~8 frames (fast convergence, reduced pulsing vs 0.05).
+    static constexpr float kTemporalBlendAlpha = 0.12f;
 
     RadianceCache() = default;
     ~RadianceCache();

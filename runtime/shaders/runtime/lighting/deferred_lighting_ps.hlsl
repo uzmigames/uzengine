@@ -1141,9 +1141,11 @@ float4 main(FSInput input) : SV_Target {
             float fadeZ = saturate((1.0f - rcLocalPos.z) * 10.0f);
             float rcWeight = fadeX * fadeY * fadeZ;
 
-            float3 rcDiffuse = kD * albedo * rcIrradiance * rcGiIntensity;
-            float3 combined = max(diffuseIBL, rcDiffuse);
-            diffuseIBL = lerp(diffuseIBL, combined, rcWeight);
+            // Radiance cache diffuse: modulate by AO and direct shadow to prevent
+            // light injection in occluded/shadowed areas. Additive blend with IBL
+            // instead of max() which was losing energy and ignoring shadows.
+            float3 rcDiffuse = kD * albedo * rcIrradiance * rcGiIntensity * ao * shadow;
+            diffuseIBL += rcDiffuse * rcWeight;
 #endif
         }
 

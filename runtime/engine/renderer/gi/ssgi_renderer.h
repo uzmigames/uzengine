@@ -46,7 +46,7 @@ struct SSGISettings {
     bool     enabled   = true;    ///< Master toggle for SSGI.
     /// Quality level (1-4). Maps to ray count: Q1=4, Q2=8, Q3=16, Q4=32.
     /// Quality maps to ray count: Q1=4, Q2=8, Q3=16, Q4=32
-    int      quality   = 1;
+    int      quality   = 2;
     float    intensity = 1.0f;    ///< SSGI indirect diffuse intensity multiplier.
 };
 

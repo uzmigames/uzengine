@@ -763,7 +763,7 @@ TEST(PerFrameCB_IBL, WriteAndReadBackAllIBLFields) {
     cb.irradianceSrvIndex  = 100u;
     cb.prefilteredSrvIndex = 101u;
     cb.brdfLutSrvIndex     = 102u;
-    cb.prefilteredMipLevels = 5u;
+    cb.prefilteredMipLevels = 6u;
     cb.skyLightIntensity   = 3.0f;
     cb.skyLightColorR      = 0.9f;
     cb.skyLightColorG      = 0.95f;

@@ -46,6 +46,13 @@ class ShaderManager;
 /// textures persist until `Shutdown()` is called.
 class IBLBaker {
 public:
+    // ── Bake parameters (public for external reference) ──────────────────
+    static constexpr uint32_t kBRDFLutSize          = 512;
+    static constexpr uint32_t kIrradianceSize       = 32;
+    static constexpr uint32_t kPrefilteredSize      = 256;
+    static constexpr uint32_t kPrefilteredMipLevels = 6;
+    static constexpr uint32_t kThreadGroupSize      = 8;
+
     IBLBaker() = default;
     ~IBLBaker();
 
@@ -158,12 +165,6 @@ private:
     RHITextureHandle m_irradianceTexture  = RHITextureHandle::Invalid();
     RHITextureHandle m_prefilteredTexture = RHITextureHandle::Invalid();
 
-    // ── Bake parameters ─────────────────────────────────────────────────
-    static constexpr uint32_t kBRDFLutSize          = 512;
-    static constexpr uint32_t kIrradianceSize       = 32;
-    static constexpr uint32_t kPrefilteredSize      = 128;
-    static constexpr uint32_t kPrefilteredMipLevels = 5;
-    static constexpr uint32_t kThreadGroupSize      = 8;
 };
 
 } // namespace uz

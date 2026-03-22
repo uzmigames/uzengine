@@ -470,8 +470,12 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     // ── Step offset for temporal jitter ──
     float stepOffset = InterleavedGradientNoise(pixelCenter, fmod((float)frameIndex, 8.0f));
 
-    // ── Max trace distance: proportional to scene depth ──
-    float maxTraceDist = sceneDepth;
+    // ── Max trace distance: proportional to scene depth, capped ──
+    // Cap prevents ground pixels far from camera from tracing excessively far,
+    // which increases false hits on sky-adjacent silhouette edges.
+    /// @ref Jimenez 2016 — practical trace distance clamping for SSGI
+    /// @constants 2000.0 cm = 20 m max trace distance
+    float maxTraceDist = min(sceneDepth, 2000.0f);
 
     // ── Trace rays ──
     float3 totalColor = float3(0.0f, 0.0f, 0.0f);
@@ -506,12 +510,31 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
 
         [branch]
         if (bHit) {
+            // Post-hit sky rejection: the march depth comparison can pass for
+            // pixels at the sky boundary (silhouette edges) where bilinear
+            // sampling bleeds sky luminance into the hit color. Re-sample depth
+            // at the refined hit UV and reject if it lands on the far plane.
+            float hitDepth = SampleDepth(hitUVz.xy);
+            if (hitDepth <= FAR_DEPTH_VALUE + 0.001f) {
+                continue; // Sky pixel — treat as miss
+            }
+
             // Screen-edge vignette
             float vignette = ComputeHitVignette(hitUVz.xy);
 
             if (vignette > 0.0f) {
                 // Sample previous frame color at hit point
                 float3 hitColor = SamplePrevColor(hitUVz.xy, hitMipLevel);
+
+                // Clamp extreme luminance to prevent sky-bright samples from
+                // dominating indirect lighting via bilinear bleed at silhouette
+                // edges. This is a secondary guard beyond the depth rejection above.
+                /// @ref Karis 2014 — luminance clamping for firefly suppression
+                /// @constants 2.0 max luminance (conservative cap for indirect)
+                float hitLum = Luminance(hitColor);
+                if (hitLum > 2.0f) {
+                    hitColor *= 2.0f / hitLum;
+                }
 
                 // Karis luminance weighting for firefly suppression
                 float karisWeight = rcp(1.0f + Luminance(hitColor));

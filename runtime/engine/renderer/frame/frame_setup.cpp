@@ -221,7 +221,7 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     perFrame.irradianceSrvIndex  = m_iblResult.irradianceSrvIndex;
     perFrame.prefilteredSrvIndex = m_iblResult.prefilteredSrvIndex;
     perFrame.brdfLutSrvIndex     = m_brdfLutSrvIndex;
-    perFrame.prefilteredMipLevels = 5;
+    perFrame.prefilteredMipLevels = IBLBaker::kPrefilteredMipLevels;
 
     // ── Extract SkyLight from SkyLightComponent (standard) ──────────
     // Must be done BEFORE SH upload so intensity can be baked into the SH coefficients.
