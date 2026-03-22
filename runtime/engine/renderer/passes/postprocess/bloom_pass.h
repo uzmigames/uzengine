@@ -35,7 +35,7 @@ class ShaderManager;
 ///
 /// @ref Karis 2013 — bloom pyramid default values
 struct BloomSettings {
-    float threshold     = -1.0f;  ///< Luminance threshold. -1.0 = no threshold (default).
+    float threshold     = 1.0f;   ///< Luminance threshold. Only pixels > threshold bloom. UE5 default.
     float intensity     = 0.675f; ///< Bloom contribution to final image. Default: 0.675.
     float radius        = 1.0f;   ///< Upsample filter radius scale. Default: 1.0.
     float sizeScale     = 4.0f;   ///< Global bloom size scale (affects mip blur radius). Default: 4.0.
