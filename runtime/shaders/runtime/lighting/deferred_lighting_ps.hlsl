@@ -1035,17 +1035,23 @@ float4 main(FSInput input) : SV_Target {
     // ── Directional light (shadowed) ──
     float3 L_dir = normalize(lightDir.xyz);
 
-    // Micro-shadow disabled — causes visual artifacts when sampling GTAO texture
-    // in deferred lighting pass (texture may be in wrong state or SRV conflict).
-    // TODO: investigate GTAO texture state at this point in the pipeline.
+    // ── Micro-shadow (Chan 2018 "Material Advances in Call of Duty: WWII") ──
+    // @ref Chan 2018 — AO-based micro-shadow on direct light
+    // Clamped to min 0.3 to prevent aggressive noise from GTAO dithering pattern.
+    float microShadow = 1.0f;
+    if (gtaoSrvIndex != 0xFFFFFFFF) {
+        float NdotL_dir = saturate(dot(N, L_dir));
+        microShadow = max(saturate(NdotL_dir + 2.0f * ao * ao - 1.0f), 0.3f);
+    }
 
     float3 Lo;
+    float finalShadow = shadow * microShadow;
     if (useOldBRDF) {
         Lo = EvaluateBRDFOld(N, V, L_dir, lightColor.xyz,
-                              albedo, metallic, alpha, F0) * shadow;
+                              albedo, metallic, alpha, F0) * finalShadow;
     } else {
         Lo = EvaluateBRDF(N, V, L_dir, lightColor.xyz,
-                          albedo, metallic, alpha, F0) * shadow;
+                          albedo, metallic, alpha, F0) * finalShadow;
     }
 
     // ── Point lights ──

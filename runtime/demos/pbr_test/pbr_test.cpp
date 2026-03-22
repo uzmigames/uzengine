@@ -368,14 +368,14 @@ void PBRTest::OnStart() {
         scene.SetPosition({0.f, 0.f, 690.f});
         auto& sl = world.AddComponent<SkyLightComponent>(skyLightEnt);
         /// @refSkyLightComponent.cpp:285-333 — all defaults
-        sl.intensity                 = 0.6f;       ///< Moderate ambient — enough fill without washing shadows
-        sl.indirectLightingIntensity = 0.7f;       ///< Indirect below direct for contrast
+        sl.intensity                 = 0.8f;       ///< Balanced ambient with contrast
+        sl.indirectLightingIntensity = 0.8f;       ///< Indirect below direct for contrast
         sl.lightColor                = {0.85f, 0.9f, 1.0f}; ///< Slight cool tint for natural sky fill
         sl.realTimeCapture           = false;      ///< @refSkyLightComponent.cpp:322
         sl.sourceType                = ESkyLightSourceType::CapturedScene;
         sl.cubemapResolution         = 128;        ///< @refSkyLightComponent.cpp:311
         sl.lowerHemisphereIsBlack    = false;      ///< Allow ground bounce light for natural fill
-        sl.lowerHemisphereColor      = {0.08f, 0.09f, 0.12f}; ///< Subtle dark ground bounce
+        sl.lowerHemisphereColor      = {0.15f, 0.16f, 0.20f}; ///< Ground bounce fill light
         sl.minOcclusion              = 0.0f;       ///< Allow fully dark AO
     }
 #endif

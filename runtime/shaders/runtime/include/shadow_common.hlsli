@@ -415,13 +415,8 @@ float SampleShadowMap(float3 positionWS, float3 normalWS, float viewDepth, float
     static const float kShadowSharpen = 1.0f; // Default: 0.0 * 7.0 + 1.0
     shadow = saturate((shadow - 0.5f) * kShadowSharpen + 0.5f);
 
-    /// PCF overblur correction: Square(Shadow).
     /// @ref PCF over-blur correction — Square(Shadow) to compensate kernel softening
-    ///   Shadow = ApplyPCFOverBlurCorrection(Shadow) where
-    /// applies Square(shadow) for PCF over-blur correction
-    /// (ShadowProjectionPixelShader.usf:89-92). However, this makes shadows
-    /// significantly darker than PoC1 and most other engines. Disabled for now
-    /// to match PoC1 visual quality. Re-enable if shadows appear too soft.
+    /// ShadowProjectionPixelShader.usf:89-92. Disabled: too aggressive with receiverBias=1.0.
     // shadow = shadow * shadow;
 
     /// ShadowFadeFraction: per-projection fade (cascade distance fade).

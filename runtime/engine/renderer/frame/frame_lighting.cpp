@@ -625,7 +625,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                 /// Reflection intensity (1.0 = full strength).
                 rc.intensity        = 1.0f;
                 /// Roughness fade: surfaces above MaxRoughness get no SSR.
-                rc.roughnessMaskScale = -2.0f / 0.4f;  // MaxRoughness = 0.4
+                rc.roughnessMaskScale = -2.0f / 0.8f;  // MaxRoughness = 0.8 (UE5 default)
 
                 cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
 
@@ -700,7 +700,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                 /// Reflection intensity (1.0 = full strength).
                 rc.intensity        = 1.0f;
                 /// Roughness fade: surfaces above MaxRoughness get no SSR.
-                rc.roughnessMaskScale = -2.0f / 0.4f;
+                rc.roughnessMaskScale = -2.0f / 0.8f;  // MaxRoughness = 0.8 (UE5 default)
 
                 cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
 

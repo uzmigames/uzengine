@@ -104,7 +104,7 @@ static const float GTAO_FADE_RANGE      = 50000.0f; // cm
 /// GTAO path multiplies by 0.5, effective = 1.0.
 /// @ref Jimenez 2016 "GTAO" §1575 — AmbientOcclusionPower * 0.5
 /// @ref Jimenez 2016 "GTAO" — AO power curve, default power = 2.0 * 0.5 = 1.0
-#define GTAO_AO_POWER  0.3f
+#define GTAO_AO_POWER  0.7f
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Resources
