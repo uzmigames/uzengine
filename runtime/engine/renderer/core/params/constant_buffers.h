@@ -150,7 +150,14 @@ struct PerFrameCB {
     /// lighting to replace per-pixel AP ray march. UINT32_MAX = no volume.
     uint32_t apVolumeSrvIndex = UINT32_MAX;
 
-    float    _pad2[59] = {};                        ///< Pad to 768 bytes.
+    // ── Reflection Probes ───────────────────────────────────────────────
+    /// Number of active reflection probes in the structured buffer (0 = sky IBL only).
+    uint32_t reflectionProbeCount = 0;
+    /// SRV index for StructuredBuffer<ReflectionProbeGPU> in the bindless heap.
+    /// UINT32_MAX = no probes uploaded (fall back to global sky IBL).
+    uint32_t reflectionProbeBufferSrvIndex = UINT32_MAX;
+
+    float    _pad2[57] = {};                        ///< Pad to 768 bytes.
 };
 
 static_assert(sizeof(PerFrameCB) == 768, "PerFrameCB must be 768 bytes (D3D12 CB alignment)");
@@ -609,5 +616,35 @@ struct HeightFogCB {
 };
 
 static_assert(sizeof(HeightFogCB) == 256, "HeightFogCB must be 256 bytes (D3D12 CB alignment)");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ReflectionProbeGPU — per-probe data uploaded as StructuredBuffer
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Per-probe GPU data for reflection probe blending in the deferred lighting pass.
+///
+/// Uploaded as `StructuredBuffer<ReflectionProbeGPU>` accessible via the bindless
+/// SRV heap (index stored in `PerFrameCB::reflectionProbeBufferSrvIndex`).
+/// The deferred lighting shader iterates active probes, tests the pixel's
+/// world position against each influence sphere, and blends the probe's
+/// cubemap contribution weighted by distance falloff and priority order.
+///
+/// # Layout
+/// 32 bytes (two float4s) — tightly packed for GPU structured buffer access.
+/// No 256-byte alignment required (this is not a constant buffer).
+///
+/// @ref Lagarde 2012 "Local Image-based Lighting With Parallax-corrected Cubemaps"
+struct ReflectionProbeGPU {
+    float    posX;                     ///< Probe world position X (cm).
+    float    posY;                     ///< Probe world position Y (cm).
+    float    posZ;                     ///< Probe world position Z (cm).
+    float    influenceRadius;          ///< Influence sphere radius (cm).
+    float    blendDistance;            ///< Edge fade distance (cm).
+    float    _pad0 = 0.0f;            ///< Padding to align SRV indices to float4 boundary.
+    uint32_t irradianceSrvIndex;       ///< Bindless SRV index for irradiance cubemap.
+    uint32_t prefilteredSrvIndex;      ///< Bindless SRV index for prefiltered specular cubemap.
+};
+
+static_assert(sizeof(ReflectionProbeGPU) == 32, "ReflectionProbeGPU must be 32 bytes (two float4s)");
 
 } // namespace uz

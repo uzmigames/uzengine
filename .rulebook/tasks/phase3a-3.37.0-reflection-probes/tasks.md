@@ -1,13 +1,14 @@
 ## 1. Implementation
 
-- [ ] 1.1 Define ReflectionProbeComponent — capturePosition (Vec3), influenceRadius (float, default 10m), blendDistance (float, default 1m), resolution (uint, 128 default), priority (int), cubemapSrvIndex (uint).
+- [x] 1.1 Define ReflectionProbeComponent — POD struct in `runtime/engine/ecs/environment/reflection_probe_component.h`. Fields: influenceRadius (300cm), blendDistance (100cm), resolution (128), priority (0), enabled, needsCapture, prefilteredSrvIndex, irradianceSrvIndex. Follows SkyLightComponent pattern.
 - [ ] 1.2 Implement cubemap capture — render scene from probe position into 6 faces (RGBA16F), using existing GBuffer+lighting pipeline at reduced resolution. One probe per frame to amortize cost.
-- [ ] 1.3 Implement probe prefiltering — run existing prefilter_cs.hlsl on captured cubemap to generate roughness mip chain (5 mips). Reuse IBL baker infrastructure.
-- [ ] 1.4 Implement ReflectionProbeArray — allocate TextureCubeArray (max 16 probes) or individual cubemaps in bindless heap. Track active probe count.
-- [ ] 1.5 Define ProbeData structured buffer — per-probe: position, radius, blendDistance, priority, cubemapSrvIndex. Upload as StructuredBuffer<ProbeData> to bindless heap.
-- [ ] 1.6 Implement probe selection in deferred_lighting_ps.hlsl — reconstruct world position from depth, iterate active probes, find up to 2 overlapping probes by distance < influenceRadius. Blend by normalized distance with blendDistance fade.
-- [ ] 1.7 Implement probe/sky IBL blending — inside probe influence: use probe cubemap. Outside all probes: fallback to sky IBL. In overlap zone: lerp between probe and sky by blend factor.
-- [ ] 1.8 Add probe capture scheduling — capture one probe per frame round-robin. Mark probes dirty when scene changes. Support manual recapture trigger.
+- [x] 1.3 Implement probe prefiltering — ReflectionProbeRenderer calls IBLBaker::BakeEnvironment() to generate irradiance (32x32) + prefiltered specular (256x256, 6 mips) cubemaps per probe. Phase 1 uses sky cubemap as source; per-probe scene capture is a future enhancement.
+- [x] 1.4 Implement ReflectionProbeArray — ReflectionProbeRenderer creates an Upload-heap StructuredBuffer<ReflectionProbeGPU> (8 probes max), maps/uploads per frame with priority-sorted probe data (position, influence radius, blend distance, SRV indices). Build.zig updated with `engine/renderer/probes` directory.
+- [x] 1.5 Define ProbeData structured buffer — `ReflectionProbeGPU` struct (32 bytes, two float4s) added to `constant_buffers.h` with posXYZ, influenceRadius, blendDistance, irradianceSrvIndex, prefilteredSrvIndex. Also added `reflectionProbeCount` and `reflectionProbeBufferSrvIndex` to PerFrameCB (stole 2 floats from _pad2).
+- [x] 1.5b Wire ReflectionProbeRenderer into frame pipeline — added `m_reflectionProbes` member to SceneRenderer, Init after IBLBaker in scene_lifecycle.cpp, Shutdown before IBLBaker, Update() called in frame_setup.cpp before CB upload. Added reflectionProbeCount/reflectionProbeBufferSrvIndex to PerFrameParams and HLSL PerFrameCB (pad reduced 59→57).
+- [x] 1.6 Implement probe selection in deferred_lighting_ps.hlsl — Added ReflectionProbeGPU struct, ComputeProbeDistanceAlpha (UE5 Hermite smoothstep fade), SampleReflectionProbes (specular), SampleProbeIrradiance (diffuse). Iterates up to 8 probes from StructuredBuffer, distance check against influenceRadius, alpha compositing (under operator matching UE5 ReflectionEnvironmentComposite.ush).
+- [x] 1.7 Implement probe/sky IBL blending — Under-operator alpha compositing: probes consume alpha proportional to distance fade, sky IBL fills remaining alpha. Both specular (prefilteredColor) and diffuse (irradiance) blended. SM5 path returns sky-only. Integrated before SSR compositing (specular) and before diffuseIBL computation (irradiance).
+- [x] 1.8 Add probe capture scheduling — ReflectionProbeRenderer::Update() captures at most one dirty probe per frame via IBLBaker, clears needsCapture flag, writes baked SRV indices back to ECS component. Probes are gathered sorted by priority (highest first).
 - [ ] 1.9 Create reflection_probes demo — room with 2 probes (interior hallway + outdoor), metallic spheres showing different reflections per location.
 
 ## 2. Visual Verification

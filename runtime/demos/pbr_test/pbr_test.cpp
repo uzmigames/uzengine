@@ -17,6 +17,7 @@
 #include "sky_light_component.h"
 #include "height_fog_component.h"
 #include "volumetric_clouds_component.h"
+#include "reflection_probe_component.h"
 #include "render_path.h"
 #include "mesh.h"
 #include "paths.h"
@@ -378,6 +379,18 @@ void PBRTest::OnStart() {
         sl.minOcclusion              = 0.0f;       ///< Allow fully dark AO
     }
 #endif
+
+    // ── Reflection Probe ──────────────────────────────────────────────
+    {
+        auto probeEnt = world.CreateEntity();
+        auto& scene = world.AddComponent<SceneComponent>(probeEnt);
+        scene.SetPosition({0.f, 0.f, 150.f}); // Center of sphere grid, slightly above floor
+        auto& probe = world.AddComponent<ReflectionProbeComponent>(probeEnt);
+        probe.influenceRadius = 2000.0f; // 20m — covers the entire demo scene
+        probe.blendDistance   = 500.0f;  // 5m fade at edges
+        probe.resolution      = 128;
+        probe.priority         = 0;
+    }
 
     // ── Exponential Height Fog ───────────────────────────────────────────
 #if 1 // DIAG: fog

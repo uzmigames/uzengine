@@ -172,7 +172,14 @@ struct PerFrameParams {
     // ── Aerial Perspective Volume ─────────────────────────────────────
     uint32_t apVolumeSrvIndex = UINT32_MAX;          ///< SRV for precomputed 32x32x16 AP 3D volume.
 
-    float    _pad2[59]            = {};              ///< Pad scalar section to 768 bytes.
+    // ── Reflection Probes ───────────────────────────────────────────────
+    /// Number of active reflection probes in the structured buffer (0 = sky IBL only).
+    uint32_t reflectionProbeCount = 0;
+    /// SRV index for StructuredBuffer<ReflectionProbeGPU> in the bindless heap.
+    /// UINT32_MAX = no probes uploaded (fall back to global sky IBL).
+    uint32_t reflectionProbeBufferSrvIndex = UINT32_MAX;
+
+    float    _pad2[57]            = {};              ///< Pad scalar section to 768 bytes.
 
     // ── Resource handles (NOT copied to CB) ──────────────────────────────
     // These are bound by ShaderParameterBinder at their HLSL register slots.

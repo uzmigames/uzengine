@@ -282,6 +282,15 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         UZ_LOG(Renderer, Error, "SceneRenderer: failed to init IBL baker");
     }
 
+    // ── Reflection Probes ─────────────────────────────────────────────
+    if (m_iblBaker) {
+        if (m_reflectionProbes.Init(device, m_iblBaker.get())) {
+            UZ_LOG(Renderer, Info, "SceneRenderer: ReflectionProbeRenderer initialized");
+        } else {
+            UZ_LOG(Renderer, Warning, "SceneRenderer: ReflectionProbeRenderer init failed (probes disabled)");
+        }
+    }
+
     // ── Auto-Exposure ────────────────────────────────────────────────
     m_autoExposure = std::make_unique<AutoExposure>();
     if (!m_autoExposure->Init(device, m_shaderMgr.get())) {
@@ -1328,6 +1337,9 @@ void SceneRenderer::Shutdown() {
         m_device->DestroyTexture(m_multiScatterLut);
         m_multiScatterLut = RHITextureHandle{};
     }
+
+    // ── Reflection Probes (must shut down before IBLBaker it references) ──
+    m_reflectionProbes.Shutdown();
 
     // ── IBL resources ──────────────────────────────────────────────────
     if (m_iblBaker) m_iblBaker->Shutdown();

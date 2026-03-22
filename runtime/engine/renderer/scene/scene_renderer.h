@@ -38,6 +38,7 @@
 #include "local_light_shadow_atlas.h"
 #include "ibl/ibl_baker.h"
 #include "ibl/sh_projection.h"
+#include "probes/reflection_probe_renderer.h"
 #include "postprocess/auto_exposure.h"
 #include "postprocess/bloom_pass.h"
 #include "postprocess/lens_flare_pass.h"
@@ -644,6 +645,9 @@ private:
     IBLBaker::BakeResult m_iblResult;              ///< Irradiance + prefiltered SRV indices.
     uint32_t m_brdfLutSrvIndex = UINT32_MAX;       ///< BRDF LUT SRV (baked once at init).
     SHCoefficients m_skyIrradianceSH;              ///< L2 SH for sky diffuse irradiance.
+
+    // ── Reflection Probes ────────────────────────────────────────────────
+    ReflectionProbeRenderer m_reflectionProbes;   ///< Per-probe cubemap capture, IBL bake, and GPU upload.
 
     // ── Auto-Exposure ──────────────────────────────────────────────────────
     std::unique_ptr<AutoExposure> m_autoExposure;   ///< GPU histogram-based eye adaptation.

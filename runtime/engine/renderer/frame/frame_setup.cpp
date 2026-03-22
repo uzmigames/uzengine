@@ -450,6 +450,15 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
         perFrame.brdfLut             = m_iblBaker->GetBRDFLutTexture();
     }
 
+    // ── Reflection Probes ────────────────────────────────────────────────
+    // Gather ECS probes, bake one dirty probe per frame, upload structured buffer.
+    if (m_reflectionProbes.IsInitialized() && ctx.world) {
+        const auto probeResult = m_reflectionProbes.Update(
+            *ctx.world, m_skyCubemapSrv, m_skyCubemap);
+        perFrame.reflectionProbeCount          = probeResult.probeCount;
+        perFrame.reflectionProbeBufferSrvIndex = probeResult.probeBufferSrvIndex;
+    }
+
     // Allocate CB for per-frame data — only the scalar section (512 bytes)
     // is copied to the GPU. Resource handles live after the CB boundary
     // and are bound separately by BindResources().

@@ -161,7 +161,12 @@ cbuffer PerFrameCB : register(b1) {
     /// @ref Hillaire 2020 "A Scalable and Production Ready Sky and Atmosphere" — AP volume
     uint     apVolumeSrvIndex;    ///< SRV for precomputed 32x32x16 AP 3D volume (0xFFFFFFFF = none).
 
-    float    _framePad2[59];       ///< Padding to 768 bytes.
+    // ── Reflection Probes ────────────────────────────────────────────
+    /// @ref Lagarde 2012 "Local Image-based Lighting With Parallax-corrected Cubemaps"
+    uint     reflectionProbeCount;          ///< Number of active probes (0 = sky IBL only).
+    uint     reflectionProbeBufferSrvIndex; ///< SRV for StructuredBuffer<ReflectionProbeGPU> (0xFFFFFFFF = none).
+
+    float    _framePad2[57];       ///< Padding to 768 bytes.
 };
 
 /// Single point light for the deferred lighting pass (64 bytes = four float4s).
@@ -690,6 +695,206 @@ float3 EvaluateBRDFOld(float3 N, float3 V, float3 L, float3 radiance,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Reflection Probe Blending
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Per-probe GPU data for reflection probe blending.
+/// Layout MUST match C++ ReflectionProbeGPU (constant_buffers.h) — 32 bytes.
+struct ReflectionProbeGPU {
+    float3 position;            ///< Probe world position (cm).
+    float  influenceRadius;     ///< Influence sphere radius (cm).
+    float  blendDistance;       ///< Edge fade distance for smooth transitions (cm).
+    float  _pad0;               ///< Padding to align SRV indices to float4 boundary.
+    uint   irradianceSrvIndex;  ///< Bindless SRV index for probe irradiance cubemap.
+    uint   prefilteredSrvIndex; ///< Bindless SRV index for probe prefiltered specular cubemap.
+};
+
+/// Computes a smooth distance-based fade weight for a sphere reflection probe.
+///
+/// Implements UE5's sphere capture distance alpha: the fade starts at 60% of the
+/// influence radius and reaches zero at 100%. Uses a smooth Hermite interpolation
+/// (smoothstep) for visually pleasant transitions.
+///
+/// @ref ReflectionEnvironmentShared.ush:197 — GetLookupVectorForSphereCapture
+/// @constants x = saturate(2.5 * normalizedDist - 1.5) (ReflectionEnvironmentShared.ush:197)
+///            DistanceAlpha = 1 - x*x*(3-2*x) (ReflectionEnvironmentShared.ush:198)
+/// @deviations NONE
+///
+/// # Parameters
+/// - dist:            distance from world position to probe center (cm).
+/// - influenceRadius: probe influence sphere radius (cm).
+///
+/// # Returns
+/// Blend weight [0, 1]: 1.0 at center, fades to 0.0 at influence edge.
+float ComputeProbeDistanceAlpha(float dist, float influenceRadius)
+{
+    float normalizedDist = saturate(dist / max(influenceRadius, 0.001f));
+    // Fade starts at 60% of radius (2.5 * 0.6 - 1.5 = 0), full fade at 100%
+    float x = saturate(2.5f * normalizedDist - 1.5f);
+    // Smooth Hermite interpolation (same as smoothstep(0, 1, x))
+    return 1.0f - x * x * (3.0f - 2.0f * x);
+}
+
+/// Samples reflection probes and composites with sky IBL prefiltered specular.
+///
+/// Iterates active reflection probes from the structured buffer. For each probe,
+/// checks if the world position falls within the probe's influence sphere and
+/// computes a distance-based blend weight using smooth Hermite interpolation.
+/// Uses UE5's "under operator" alpha compositing: probes are accumulated from
+/// largest to smallest, each consuming remaining alpha, with the sky IBL filling
+/// whatever alpha remains after all probes.
+///
+/// @ref Lagarde 2012 "Local Image-based Lighting With Parallax-corrected Cubemaps"
+/// @ref ReflectionEnvironmentComposite.ush:12-188 — CompositeReflectionCapturesAndSkylightTWS
+/// @constants Under operator: result.rgb += sample.rgb * result.a; result.a *= (1 - sample.a)
+///            (ReflectionEnvironmentComposite.ush:101-102)
+/// @deviations Sphere captures only (no box captures). No parallax correction
+///   (future work). No lightmap mixing weight. Simplified to single cubemap per
+///   probe instead of cubemap array.
+///
+/// # Parameters
+/// - worldPos:            world-space fragment position (cm).
+/// - R:                   reflection vector (reflect(-V, N)).
+/// - roughness:           perceptual roughness [0, 1].
+/// - mipLevel:            precomputed mip level for roughness-based filtering.
+/// - skyPrefilteredColor: sky IBL prefiltered specular (fallback when no probes).
+///
+/// # Returns
+/// Blended prefiltered specular color from probes + sky IBL.
+float3 SampleReflectionProbes(
+    float3 worldPos, float3 R, float roughness, float mipLevel,
+    float3 skyPrefilteredColor)
+{
+    // Early-out: no probes active or buffer not bound
+    if (reflectionProbeCount == 0 || reflectionProbeBufferSrvIndex == 0xFFFFFFFF)
+        return skyPrefilteredColor;
+
+#ifdef UZ_BINDLESS
+    StructuredBuffer<ReflectionProbeGPU> probes = ResourceDescriptorHeap[reflectionProbeBufferSrvIndex];
+
+    // Alpha compositing (under operator): start with full alpha, each probe
+    // consumes alpha proportional to its distance fade. Sky fills the remainder.
+    float4 result = float4(0.0f, 0.0f, 0.0f, 1.0f);
+
+    // Iterate probes (sorted largest-to-smallest on CPU for correct compositing order)
+    uint probeCount = min(reflectionProbeCount, 8u);
+    [loop]
+    for (uint i = 0; i < probeCount; i++)
+    {
+        // Early-out if alpha is essentially zero (all contribution consumed)
+        [branch]
+        if (result.a < 0.001f)
+            break;
+
+        ReflectionProbeGPU probe = probes[i];
+
+        float3 captureVector = worldPos - probe.position;
+        float dist = length(captureVector);
+
+        // Skip probes that don't affect this pixel
+        [branch]
+        if (dist >= probe.influenceRadius)
+            continue;
+
+        // Compute distance-based fade weight (Hermite smoothstep)
+        float distanceAlpha = ComputeProbeDistanceAlpha(dist, probe.influenceRadius);
+
+        // Sample probe prefiltered cubemap at the reflection direction
+        TextureCube<float4> probePrefilteredMap = ResourceDescriptorHeap[probe.prefilteredSrvIndex];
+        float4 sample4 = probePrefilteredMap.SampleLevel(linearSampler, R, mipLevel);
+
+        // Scale by distance fade
+        sample4 *= distanceAlpha;
+
+        // Under operator (back to front compositing):
+        // Accumulate this probe's contribution, weighted by remaining alpha
+        result.rgb += sample4.rgb * result.a;
+        result.a *= 1.0f - sample4.a;
+    }
+
+    // Sky IBL fills whatever alpha remains after all probes
+    result.rgb += skyPrefilteredColor * result.a;
+
+    return result.rgb;
+#else
+    // SM5 path: no bindless, use sky IBL only
+    return skyPrefilteredColor;
+#endif
+}
+
+/// Samples reflection probe irradiance and composites with sky SH irradiance.
+///
+/// Same compositing pattern as SampleReflectionProbes but for diffuse irradiance.
+/// Each probe's irradiance cubemap is sampled along the surface normal instead of
+/// the reflection vector, and composited using the under operator.
+///
+/// @ref Lagarde 2012 "Local Image-based Lighting With Parallax-corrected Cubemaps"
+/// @ref ReflectionEnvironmentComposite.ush:12-188 — same compositing pattern
+/// @constants Under operator (same as specular)
+/// @deviations Sphere captures only. No parallax correction.
+///
+/// # Parameters
+/// - worldPos:       world-space fragment position (cm).
+/// - N:              world-space surface normal.
+/// - skyIrradiance:  sky SH irradiance (fallback when no probes).
+///
+/// # Returns
+/// Blended irradiance from probes + sky SH.
+float3 SampleProbeIrradiance(
+    float3 worldPos, float3 N,
+    float3 skyIrradiance)
+{
+    // Early-out: no probes active or buffer not bound
+    if (reflectionProbeCount == 0 || reflectionProbeBufferSrvIndex == 0xFFFFFFFF)
+        return skyIrradiance;
+
+#ifdef UZ_BINDLESS
+    StructuredBuffer<ReflectionProbeGPU> probes = ResourceDescriptorHeap[reflectionProbeBufferSrvIndex];
+
+    // Alpha compositing (under operator) for irradiance
+    float4 result = float4(0.0f, 0.0f, 0.0f, 1.0f);
+
+    uint probeCount = min(reflectionProbeCount, 8u);
+    [loop]
+    for (uint i = 0; i < probeCount; i++)
+    {
+        [branch]
+        if (result.a < 0.001f)
+            break;
+
+        ReflectionProbeGPU probe = probes[i];
+
+        float3 captureVector = worldPos - probe.position;
+        float dist = length(captureVector);
+
+        [branch]
+        if (dist >= probe.influenceRadius)
+            continue;
+
+        float distanceAlpha = ComputeProbeDistanceAlpha(dist, probe.influenceRadius);
+
+        // Sample probe irradiance cubemap along the surface normal
+        // Irradiance cubemap stores pre-convolved diffuse irradiance, so mip 0 is correct
+        TextureCube<float4> probeIrradianceMap = ResourceDescriptorHeap[probe.irradianceSrvIndex];
+        float4 sample4 = probeIrradianceMap.SampleLevel(linearSampler, N, 0.0f);
+
+        sample4 *= distanceAlpha;
+
+        // Under operator
+        result.rgb += sample4.rgb * result.a;
+        result.a *= 1.0f - sample4.a;
+    }
+
+    // Sky SH fills whatever alpha remains
+    result.rgb += skyIrradiance * result.a;
+
+    return result.rgb;
+#else
+    return skyIrradiance;
+#endif
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Pixel Shader Entry Point
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -985,6 +1190,11 @@ float4 main(FSInput input) : SV_Target {
         // SH is much higher quality than 32x32 cubemap sampling
         float3 irradiance = GetSkySHDiffuse(N, skyIrradianceSH);
 
+        // ── Reflection probe irradiance blending ──
+        // Blend local probe irradiance cubemaps with sky SH using alpha compositing.
+        // Probes provide better local diffuse lighting; sky SH fills the remainder.
+        irradiance = SampleProbeIrradiance(worldPos, N, irradiance);
+
         // Fresnel: metals reflect more at grazing, dielectrics diffuse more
         float3 F = FresnelSchlickRoughness(NdotV, F0, roughness);
         float3 kD = (1.0f - F) * (1.0f - metallic);
@@ -1006,6 +1216,11 @@ float4 main(FSInput input) : SV_Target {
         float3 prefilteredColor = iblPrefiltered.SampleLevel(linearSampler, R, mipLevel).rgb;
         float2 envBRDF = iblBrdfLut.SampleLevel(linearSampler, float2(NdotV, roughness), 0);
 #endif
+
+        // ── Reflection probe specular blending ──
+        // Blend local probe prefiltered cubemaps with sky IBL using alpha compositing.
+        // Probes provide higher-quality local specular reflections; sky fills remainder.
+        prefilteredColor = SampleReflectionProbes(worldPos, R, roughness, mipLevel, prefilteredColor);
 
         // ── SSR + IBL compositing ──
         float3 combinedSpecular = prefilteredColor;
