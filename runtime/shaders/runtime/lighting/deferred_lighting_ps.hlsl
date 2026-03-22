@@ -830,25 +830,17 @@ float4 main(FSInput input) : SV_Target {
     // ── Directional light (shadowed) ──
     float3 L_dir = normalize(lightDir.xyz);
 
-    // ── Micro-shadow (PoC1 parity) ──
-    // @ref Chan 2018 "Material Advances in Call of Duty: WWII" — AO-based micro-shadow
-    // @ref PoC1 deferred_lighting.ps.hlsl:301 — microShadow on direct light
-    // Uses RUNTIME AO (GTAO) to modulate direct light at contact points.
-    // Only effective with runtime AO — baked material AO creates uniform darkening.
-    // Requires GTAO enabled (r.GTAO=1) to produce contact-specific results.
-    float microShadow = 1.0f;
-    if (gtaoSrvIndex != 0xFFFFFFFF) {
-        float NdotL_dir = saturate(dot(N, L_dir));
-        microShadow = saturate(NdotL_dir + 2.0f * ao * ao - 1.0f);
-    }
+    // Micro-shadow disabled — causes visual artifacts when sampling GTAO texture
+    // in deferred lighting pass (texture may be in wrong state or SRV conflict).
+    // TODO: investigate GTAO texture state at this point in the pipeline.
 
     float3 Lo;
     if (useOldBRDF) {
         Lo = EvaluateBRDFOld(N, V, L_dir, lightColor.xyz,
-                              albedo, metallic, alpha, F0) * shadow * microShadow;
+                              albedo, metallic, alpha, F0) * shadow;
     } else {
         Lo = EvaluateBRDF(N, V, L_dir, lightColor.xyz,
-                          albedo, metallic, alpha, F0) * shadow * microShadow;
+                          albedo, metallic, alpha, F0) * shadow;
     }
 
     // ── Point lights ──

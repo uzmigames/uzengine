@@ -390,7 +390,7 @@ void PBRTest::OnStart() {
 #endif
 
     // ── Volumetric Clouds ─────────────────────────────────────────────
-#if 0 // DIAG: volumetric clouds
+#if 1 // DIAG: volumetric clouds
     {
         auto cloudEntity = world.CreateEntity();
         auto& scene = world.AddComponent<SceneComponent>(cloudEntity);

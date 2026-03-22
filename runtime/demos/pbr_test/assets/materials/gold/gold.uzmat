@@ -10,7 +10,7 @@
     "ao": "assets/materials/gold/Poliigon_MetalGoldPaint_7253_AmbientOcclusion.jpg"
   },
   "params": {
-    "uvScaleX": 1.0,
-    "uvScaleY": 1.0
+    "uvScaleX": 2.0,
+    "uvScaleY": 2.0
   }
 }
