@@ -417,3 +417,97 @@ TEST(UzTextureFormat, Read_OnSuccess_ErrorStringIsEmpty) {
     ASSERT_TRUE(r.success);
     EXPECT_TRUE(r.error.empty()) << "On success, error should be empty; got: " << r.error;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// sRGB flag
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Returns 3 mip levels for a 4x4 RGBA8 texture (4x4 + 2x2 + 1x1).
+static std::vector<std::vector<uint8_t>> Make4x4Mips() {
+    return {
+        MakeSolidMip(4, 4, 200, 100, 50, 255),
+        MakeSolidMip(2, 2, 150, 75, 37, 255),
+        MakeSolidMip(1, 1, 100, 50, 25, 255),
+    };
+}
+
+TEST(UzTextureFormat, sRGBFlag_SetInHeader_PreservedOnRoundtrip) {
+    UzTextureHeader h = Make4x4Header();
+    h.flags |= kUzTextureFlag_sRGB;
+    auto mips = Make4x4Mips();
+    auto blob = WriteUzTexture(h, mips);
+    auto r = ReadUzTexture(blob);
+    ASSERT_TRUE(r.success);
+    EXPECT_TRUE(r.file.header.flags & kUzTextureFlag_sRGB);
+}
+
+TEST(UzTextureFormat, sRGBFlag_NotSet_ReturnsZeroFlags) {
+    UzTextureHeader h = Make4x4Header();
+    auto mips = Make4x4Mips();
+    auto blob = WriteUzTexture(h, mips);
+    auto r = ReadUzTexture(blob);
+    ASSERT_TRUE(r.success);
+    EXPECT_EQ(r.file.header.flags & kUzTextureFlag_sRGB, 0u);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TextureFormatToRHI conversion
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST(UzTextureFormat, FormatToRHI_RGBA8_Linear) {
+    EXPECT_EQ(TextureFormatToRHI(TextureFormat::Uncompressed_RGBA8, false), RHIFormat::RGBA8Unorm);
+}
+
+TEST(UzTextureFormat, FormatToRHI_RGBA8_sRGB) {
+    EXPECT_EQ(TextureFormatToRHI(TextureFormat::Uncompressed_RGBA8, true), RHIFormat::RGBA8Srgb);
+}
+
+TEST(UzTextureFormat, FormatToRHI_BC7_Linear) {
+    EXPECT_EQ(TextureFormatToRHI(TextureFormat::BC7, false), RHIFormat::BC7Unorm);
+}
+
+TEST(UzTextureFormat, FormatToRHI_BC7_sRGB) {
+    EXPECT_EQ(TextureFormatToRHI(TextureFormat::BC7, true), RHIFormat::BC7Srgb);
+}
+
+TEST(UzTextureFormat, FormatToRHI_BC5_AlwaysLinear) {
+    EXPECT_EQ(TextureFormatToRHI(TextureFormat::BC5, false), RHIFormat::BC5Unorm);
+    EXPECT_EQ(TextureFormatToRHI(TextureFormat::BC5, true), RHIFormat::BC5Unorm);
+}
+
+TEST(UzTextureFormat, FormatToRHI_BC4_AlwaysLinear) {
+    EXPECT_EQ(TextureFormatToRHI(TextureFormat::BC4, false), RHIFormat::BC4Unorm);
+    EXPECT_EQ(TextureFormatToRHI(TextureFormat::BC4, true), RHIFormat::BC4Unorm);
+}
+
+TEST(UzTextureFormat, FormatToRHI_BC1_sRGB) {
+    EXPECT_EQ(TextureFormatToRHI(TextureFormat::BC1, false), RHIFormat::BC1Unorm);
+    EXPECT_EQ(TextureFormatToRHI(TextureFormat::BC1, true), RHIFormat::BC1Srgb);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BC format helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST(UzTextureFormat, IsBlockCompressed_BC7) {
+    EXPECT_TRUE(IsBlockCompressed(RHIFormat::BC7Unorm));
+    EXPECT_TRUE(IsBlockCompressed(RHIFormat::BC7Srgb));
+    EXPECT_TRUE(IsBlockCompressed(RHIFormat::BC1Unorm));
+    EXPECT_TRUE(IsBlockCompressed(RHIFormat::BC5Unorm));
+    EXPECT_FALSE(IsBlockCompressed(RHIFormat::RGBA8Unorm));
+    EXPECT_FALSE(IsBlockCompressed(RHIFormat::D32Float));
+}
+
+TEST(UzTextureFormat, BytesPerBlock_BC7_Is16) {
+    EXPECT_EQ(BytesPerBlock(RHIFormat::BC7Unorm), 16u);
+    EXPECT_EQ(BytesPerBlock(RHIFormat::BC7Srgb), 16u);
+}
+
+TEST(UzTextureFormat, BytesPerBlock_BC1_Is8) {
+    EXPECT_EQ(BytesPerBlock(RHIFormat::BC1Unorm), 8u);
+    EXPECT_EQ(BytesPerBlock(RHIFormat::BC4Unorm), 8u);
+}
+
+TEST(UzTextureFormat, BytesPerBlock_NonBC_IsZero) {
+    EXPECT_EQ(BytesPerBlock(RHIFormat::RGBA8Unorm), 0u);
+}

@@ -554,6 +554,15 @@ public:
     /// The texture path, or empty string if the ID is invalid.
     [[nodiscard]] std::string GetTexturePath(uint32_t textureId) const;
 
+    /// Returns the current loading state of a texture slot.
+    /// Used by debug overlays and streaming decisions.
+    [[nodiscard]] TextureLoadState GetTextureLoadState(uint32_t textureId) const {
+        if (textureId < static_cast<uint32_t>(m_textures.size())) {
+            return m_textures[textureId].loadState;
+        }
+        return TextureLoadState::Empty;
+    }
+
     // ── Low-level accessors (for subsystems needing direct GPU access) ────
 
     /// Returns the RHI device pointer. Valid from Init() through Shutdown().

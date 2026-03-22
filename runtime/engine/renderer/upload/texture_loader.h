@@ -26,6 +26,18 @@ namespace uz {
 // TextureLoadResult — Output of a texture load operation
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Texture loading lifecycle state.
+///
+/// Tracks whether a texture slot contains a placeholder (fallback SRV),
+/// is being uploaded via the copy queue, or has completed loading.
+/// Queryable per texture for UI debug overlays and streaming decisions.
+enum class TextureLoadState : uint8_t {
+    Empty,         ///< Slot reserved but no texture data (invalid handle).
+    Placeholder,   ///< Using fallback SRV (white/normal). Async load in progress.
+    CopyInFlight,  ///< GPU copy submitted on copy queue, awaiting fence.
+    FullyLoaded,   ///< All mips uploaded and barrier transitioned. Ready for rendering.
+};
+
 /// Result of a texture load operation, containing the GPU handle and metadata.
 ///
 /// Check `handle.IsValid()` to determine success. On failure, all fields
@@ -36,6 +48,7 @@ struct TextureLoadResult {
     uint32_t width = 0;                  ///< Texture width in texels.
     uint32_t height = 0;                 ///< Texture height in texels.
     uint16_t mipLevels = 0;              ///< Number of mip levels in the texture (0 on failure).
+    TextureLoadState loadState = TextureLoadState::Empty; ///< Current loading lifecycle state.
 };
 
 /// Computes the full mip chain count for a texture of the given dimensions.

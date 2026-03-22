@@ -49,9 +49,9 @@ TEST(TextureImporter, Name_ReturnsExactString) {
     EXPECT_STREQ(imp.Name(), "texture");
 }
 
-TEST(TextureImporter, Version_ReturnsOne) {
+TEST(TextureImporter, Version_ReturnsTwo) {
     TextureImporter imp;
-    EXPECT_EQ(imp.Version(), 1u);
+    EXPECT_EQ(imp.Version(), 2u);
 }
 
 TEST(TextureImporter, Extensions_ContainsPng) {

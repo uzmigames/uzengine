@@ -162,6 +162,7 @@ uint32_t SceneRenderer::LoadTexture(const std::string& path, IVFS* vfs,
         placeholder.width = 1;
         placeholder.height = 1;
         placeholder.mipLevels = 1;
+        placeholder.loadState = TextureLoadState::Placeholder;
         m_textures.push_back(placeholder);
     }
     m_textureMap[path] = slotIndex;
@@ -315,6 +316,7 @@ uint32_t SceneRenderer::QueueTextureLoad(const std::string& path) {
         placeholder.width = 1;
         placeholder.height = 1;
         placeholder.mipLevels = 1;
+        placeholder.loadState = TextureLoadState::Placeholder;
         m_textures.push_back(placeholder);
     }
     m_textureMap[path] = slotIndex;
@@ -394,6 +396,7 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
 
             // Update the texture slot with the real SRV and dimensions
             if (pending.slotIndex < static_cast<uint32_t>(m_textures.size())) {
+                pending.result.loadState = TextureLoadState::FullyLoaded;
                 m_textures[pending.slotIndex] = pending.result;
             }
         }
@@ -659,9 +662,11 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
                 // Defer the slot update — the texture is still in CopyDst state
                 // on the copy queue. The finalize block next frame will barrier
                 // and populate the slot after the copy fence completes.
+                result.loadState = TextureLoadState::CopyInFlight;
                 m_pendingCopyUploads.push_back({slotIndex, result});
             } else {
                 // Graphics queue path: barrier was already issued, slot is ready.
+                result.loadState = TextureLoadState::FullyLoaded;
                 m_textures[slotIndex] = result;
             }
             ++uploadedCount;
