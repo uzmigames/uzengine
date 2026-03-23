@@ -12,26 +12,26 @@
 ## Overview
 
 ```
-Phase 1: Foundation (DONE) ─────────────────────────────────────────►
-  1.0 Bootstrap ► 1.1 Math ► 1.2 RHI ► 1.3 Shader Pipeline
+Phase 1: Foundation (DONE ✅) ──────────────────────────────────────►
+  1.0 Bootstrap ✅ ► 1.1 Math ✅ ► 1.2 RHI ✅ ► 1.3 Shader Pipeline ✅
 
-Phase 2: Runtime Framework ─────────────────────────────────────────►
-  2.0 App Lifecycle ► 2.1 Job System ► 2.2 Resource Loaders
+Phase 2: Runtime Framework (DONE ✅) ──────────────────────────────►
+  2.0 App Lifecycle ✅ ► 2.1 Job System ✅ ► 2.2 Resource Loaders ✅
 
-Phase 3: First Pixels (parallel tracks) ────────────────────────────►
-  Track A: 3.0 Triangle ► 3.1 Render Graph ► 3.2 Forward PBR ► 3.3 Deferred ► 3.4 Shadows ► 3.5 Post-Process
-  Track B: 3.0b World ► 3.1b Components ► 3.2b Property System ► 3.3b Behaviors ► 3.4b Scene ► 3.5b Render Bridge
-  ──────── MERGE: Loaded scene with deferred PBR ────────
+Phase 3: First Pixels (DONE ✅) ───────────────────────────────────►
+  Track A: 3.0 Triangle ✅ ► 3.1 Render Graph ✅ ► 3.2 Forward PBR ✅ ► 3.3 Deferred ✅ ► 3.4 Shadows ✅ ► 3.5 Post-Process ✅
+  Track B: 3.0b World ✅ ► 3.1b Components ✅ ► 3.2b Property ✅ ► 3.3b Tick ✅ ► 3.4b Scene ✅ ► 3.5b Bridge ✅
+  ──────── MERGE: Loaded scene with deferred PBR + full post-process stack ────────
 
-Phase 4: Playable Scene ───────────────────────────────────────────►
-  4.0 Input ► 4.1 Camera ► 4.2 Physics ► 4.3 Animation ► 4.4 Audio ► 4.5 Prefabs
+Phase 4: Playable Scene (IN PROGRESS 🔨) ─────────────────────────►
+  4.0 Input ✅ ► 4.1 Camera ✅ ► 4.2 Physics ► 4.3 Animation ► 4.4 Audio ► 4.5 Prefabs
 
 Phase 5: Editor (incremental, overlaps Phase 4) ───────────────────►
   5.0 Extension + IPC ► 5.1 Viewport ► 5.2 Hierarchy + Inspector ► 5.3 Asset Browser
   5.4 Gizmos ► 5.5 Node-Graph Framework ► 5.6 Material Editor ► 5.7+ Advanced Editors
 
-Phase 6: Advanced Gameplay ─────────────────────────────────────────►
-  6.0 Navigation ► 6.1 Behavior Trees ► 6.2 C++ Hot-Reload ► 6.3 Lua ► 6.4 UI ► 6.5 Save
+Phase 6: Advanced Gameplay (PARTIAL — Lua done ✅) ────────────────►
+  6.0 Navigation ► 6.1 Behavior Trees ► 6.2 C++ Hot-Reload ► 6.3 Lua ✅ ► 6.4 UI ► 6.5 Save
 
 Phase 7: Content & Polish ─────────────────────────────────────────►
   7.0 Asset Cooking ► 7.1 Advanced Post-Process ► 7.2 Streaming ► 7.3 Terrain ► 7.4 VFX ► 7.5 Advanced Rendering
@@ -112,13 +112,12 @@ Phase 9: Shipping ────────────────────�
 
 ---
 
-## Phase 2: Runtime Framework
+## Phase 2: Runtime Framework ✅ COMPLETED
 
 > **Why this phase exists**: Every demo currently repeats 200+ lines of init/loop/shutdown boilerplate.
 > Application lifecycle, job system, and resource loading are the load-bearing walls every downstream system depends on.
-> Reference: [UE5 analysis](.claude/memory/analysis_unreal_architect.md) — "FEngineLoop is the FIRST thing that runs."
 
-### 2.0 — Application Lifecycle
+### 2.0 — Application Lifecycle ✅
 
 **Goal**: Centralized init/tick/shutdown framework. No more boilerplate in demos.
 **Docs**: [09-application-lifecycle/](engine/09-application-lifecycle/)
@@ -136,7 +135,7 @@ Phase 9: Shipping ────────────────────�
 
 ---
 
-### 2.1 — Job System
+### 2.1 — Job System ✅
 
 **Goal**: Work-stealing thread pool for parallel shader compile, asset loading, culling.
 **Docs**: [07-platform/04-job-system.md](engine/07-platform/04-job-system.md)
@@ -153,7 +152,7 @@ Phase 9: Shipping ────────────────────�
 
 ---
 
-### 2.2 — Resource System (VFS + Loaders)
+### 2.2 — Resource System (VFS + Loaders) ✅
 
 **Goal**: Load meshes and textures by path. Minimal importers for rendering.
 **Docs**: [08-resource-system/](engine/08-resource-system/)
@@ -171,15 +170,15 @@ Phase 9: Shipping ────────────────────�
 
 ---
 
-## Phase 3: First Pixels
+## Phase 3: First Pixels ✅ COMPLETED
 
-> **Two parallel tracks**: Rendering (Track A) and ECS/Scene (Track B) develop simultaneously.
-> Track B has NO rendering dependency — World, Entity, Components are pure simulation.
-> Tracks merge at 3.5b when PrimitiveComponent bridges ECS to the renderer.
+> **Two parallel tracks**: Rendering (Track A) and ECS/Scene (Track B) developed simultaneously.
+> Track B had NO rendering dependency — World, Entity, Components are pure simulation.
+> Tracks merged at 3.5b when PrimitiveComponent bridged ECS to the renderer.
 
-### Track A — Rendering
+### Track A — Rendering ✅
 
-#### 3.0 — Triangle to Screen
+#### 3.0 — Triangle to Screen ✅
 
 **Goal**: First real geometry rendered via the engine pipeline.
 **Docs**: [12-rendering/](engine/12-rendering/)
@@ -196,7 +195,7 @@ Phase 9: Shipping ────────────────────�
 
 ---
 
-#### 3.1 — Render Graph
+#### 3.1 — Render Graph ✅
 
 **Goal**: DAG-based render pass management with automatic barriers. No manual barriers after this point.
 **Docs**: [12-rendering/04-render-graph.md](engine/12-rendering/04-render-graph.md)
@@ -214,7 +213,7 @@ Phase 9: Shipping ────────────────────�
 
 ---
 
-#### 3.2 — Forward PBR
+#### 3.2 — Forward PBR ✅
 
 **Goal**: Lit geometry with a single light. Validates full material → mesh → draw → light pipeline before deferred complexity.
 
@@ -229,7 +228,7 @@ Phase 9: Shipping ────────────────────�
 
 ---
 
-#### 3.3 — Deferred Pipeline
+#### 3.3 — Deferred Pipeline ✅
 
 **Goal**: Multi-light deferred shading via G-Buffer.
 **Docs**: [12-rendering/06-lighting.md](engine/12-rendering/06-lighting.md)
@@ -246,9 +245,9 @@ Phase 9: Shipping ────────────────────�
 
 ---
 
-#### 3.4 — Shadow Maps
+#### 3.4 — Shadow Maps ✅
 
-**Goal**: Directional light cascaded shadow maps.
+**Goal**: Directional light cascaded shadow maps. Implemented: CSM (4 cascades), SDF shadows, shadow cache, local light shadow atlas, Poisson-disk PCF.
 
 | Task | Details | Acceptance Criteria |
 |------|---------|-------------------|
@@ -261,9 +260,9 @@ Phase 9: Shipping ────────────────────�
 
 ---
 
-#### 3.5 — Basic Post-Processing
+#### 3.5 — Post-Processing ✅
 
-**Goal**: Minimum post-processing for visual quality. Additional effects deferred to Phase 7.
+**Goal**: Full post-processing stack. Implemented far beyond original plan: GTAO, SSR, TAA, TSR, Bloom, Auto Exposure, Tonemap, Hi-Z, FXAA, DoF, Motion Blur, Lens Flare, CAS, Color Grading LUT, SSGI.
 
 | Task | Details | Acceptance Criteria |
 |------|---------|-------------------|
@@ -276,9 +275,9 @@ Phase 9: Shipping ────────────────────�
 
 ---
 
-### Track B — ECS / Scene (parallel with Track A)
+### Track B — ECS / Scene ✅ (parallel with Track A)
 
-#### 3.0b — World + Entity
+#### 3.0b — World + Entity ✅
 
 **Goal**: Entity creation, generational handles, sparse-set storage. No rendering dependency.
 **Docs**: [10-entity-component/](engine/10-entity-component/)
@@ -293,7 +292,7 @@ Phase 9: Shipping ────────────────────�
 
 ---
 
-#### 3.1b — Component Model
+#### 3.1b — Component Model ✅
 
 **Goal**: Component hierarchy with lifecycle callbacks.
 **Docs**: [10-entity-component/02-component-model.md](engine/10-entity-component/02-component-model.md)
@@ -311,7 +310,7 @@ Phase 9: Shipping ────────────────────�
 
 ---
 
-#### 3.2b — Property System (MVP)
+#### 3.2b — Property System (MVP) ✅
 
 **Goal**: Reflection for serialization, inspector, hot-reload. **Hard gate** for scene loading.
 **Docs**: [21-property-system/](engine/21-property-system/)
@@ -329,7 +328,7 @@ Phase 9: Shipping ────────────────────�
 
 ---
 
-#### 3.3b — Behaviors + Tick
+#### 3.3b — Tick System ✅
 
 **Goal**: Game logic framework. Behaviors tick each frame.
 **Docs**: [10-entity-component/](engine/10-entity-component/)
@@ -345,7 +344,7 @@ Phase 9: Shipping ────────────────────�
 
 ---
 
-#### 3.4b — Scene Loader
+#### 3.4b — Scene Loader ✅
 
 **Goal**: Load .uzscene files into World. Headless-testable (no renderer needed).
 **Docs**: [11-scene/](engine/11-scene/)
@@ -362,7 +361,7 @@ Phase 9: Shipping ────────────────────�
 
 ---
 
-#### 3.5b — Rendering Bridge (MERGE POINT)
+#### 3.5b — Rendering Bridge (MERGE POINT) ✅
 
 **Goal**: Connect ECS components to the renderer. PrimitiveComponent → RenderProxy → RenderWorld.
 **Docs**: [12-rendering/01-render-world.md](engine/12-rendering/01-render-world.md)
@@ -382,13 +381,14 @@ Phase 9: Shipping ────────────────────�
 
 ---
 
-## Phase 4: Playable Scene
+## Phase 4: Playable Scene — 🔨 IN PROGRESS
 
 > **Goal**: Third-person character demo with input, camera, physics, animation, and audio.
 
-### 4.0 — Input System
+### 4.0 — Input System ✅ (basic)
 
 **Goal**: Enhanced Input with action mapping, modifiers, and runtime rebinding.
+**Status**: Basic Lua input API implemented (keyboard/mouse polling). Full Enhanced Input system planned.
 **Docs**: [13-input-system/](engine/13-input-system/)
 
 | Task | Details | Acceptance Criteria |
@@ -405,9 +405,10 @@ Phase 9: Shipping ────────────────────�
 
 ---
 
-### 4.1 — Camera System
+### 4.1 — Camera System ✅ (basic)
 
 **Goal**: Third-person camera with SpringArm, collision avoidance, and modes.
+**Status**: Camera component + Lua camera API implemented. SpringArm and collision avoidance planned.
 **Docs**: [14-camera/](engine/14-camera/)
 
 | Task | Details | Acceptance Criteria |
@@ -665,7 +666,7 @@ Phase 9: Shipping ────────────────────�
 
 ---
 
-## Phase 6: Advanced Gameplay
+## Phase 6: Advanced Gameplay — PARTIAL (Lua scripting done early)
 
 ### 6.0 — Navigation (Recast/Detour)
 
@@ -712,9 +713,10 @@ Phase 9: Shipping ────────────────────�
 
 ---
 
-### 6.3 — Lua Scripting
+### 6.3 — Lua Scripting ✅ (implemented early)
 
 **Docs**: [15-scripting/](engine/15-scripting/)
+**Status**: Fully implemented out-of-sequence. LuaJIT 2.1 VM, sandboxed, 12+ Lua API modules (time, input, math, quat, camera, entity, scene, light, environment, renderer, window, VFS), ScriptComponent with on_start/on_update/on_stop lifecycle.
 
 | Task | Details | Acceptance Criteria |
 |------|---------|-------------------|
@@ -953,25 +955,25 @@ Phase 9: Shipping ────────────────────�
 
 ---
 
-## Timeline
+## Timeline (as of 2026-03-22)
 
 ```
-Phase 1  Foundation                 ████████████████████  DONE
-Phase 2  Runtime Framework          ░░░███░░░░░░░░░░░░░░  ~3 weeks
-Phase 3  First Pixels               ░░░░░████████░░░░░░░  ~8 weeks (parallel tracks)
-Phase 4  Playable Scene             ░░░░░░░░░░░██████░░░  ~7 weeks
-Phase 5  Editor (incremental)       ░░░░░░░░░░░░█████░░░  ~6 weeks (overlaps Phase 4)
-Phase 6  Advanced Gameplay          ░░░░░░░░░░░░░░░████░  ~8 weeks
-Phase 7  Content & Polish           ░░░░░░░░░░░░░░░░████  ~10 weeks
-Phase 8  MCP & AI                   ░░░░░░░░░░░░░░░░░███  ~6 weeks
-Phase 9  Shipping                   ░░░░░░░░░░░░░░░░░░██  ~8 weeks
+Phase 1  Foundation                 ████████████████████  DONE ✅
+Phase 2  Runtime Framework          ████████████████████  DONE ✅
+Phase 3  First Pixels               ████████████████████  DONE ✅ (both tracks + bonus atmosphere/IBL/clouds)
+Phase 4  Playable Scene             ████░░░░░░░░░░░░░░░░  IN PROGRESS (Input ✅, Camera ✅, Physics next)
+Phase 5  Editor (incremental)       ░░░░░░░░░░░░░░░░░░░░  Planned (overlaps Phase 4)
+Phase 6  Advanced Gameplay          ███░░░░░░░░░░░░░░░░░  PARTIAL (Lua scripting ✅, rest planned)
+Phase 7  Content & Polish           ░░░░░░░░░░░░░░░░░░░░  Planned
+Phase 8  MCP & AI                   ░░░░░░░░░░░░░░░░░░░░  Planned
+Phase 9  Shipping                   ░░░░░░░░░░░░░░░░░░░░  Planned
 ```
 
 **Key milestones**:
-- **First scene rendering**: ~11 weeks (end of Phase 3)
-- **First playable demo**: ~18 weeks (end of Phase 4)
-- **Minimum viable editor**: ~20 weeks (Phase 5 MVP)
-- **Full AAA feature set**: ~50 weeks (~1 year)
+- **First scene rendering**: ✅ ACHIEVED (Phase 3 complete)
+- **First playable demo**: In progress (Phase 4, Physics next)
+- **Minimum viable editor**: Planned (Phase 5)
+- **Full AAA feature set**: Planned
 
 ---
 
@@ -1010,5 +1012,6 @@ Each phase has detailed design docs in [engine/](engine/README.md):
 ---
 
 *This roadmap was restructured on 2026-03-12 based on analysis from 8 specialized architecture agents.*
+*Last status update: 2026-03-22 — Phases 1-3 complete, Phase 4 in progress.*
 *Previous version archived in git history.*
 *Reference: [roadmap-analysis-report.md](research/roadmap-analysis-report.md) for full analysis details.*

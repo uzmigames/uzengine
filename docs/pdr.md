@@ -1,8 +1,8 @@
 # UzEngine 0.2 — Project Design Review (PDR)
 
 > **Repository**: https://github.com/uzmigames/uzengine
-> **Date**: 2026-03-12
-> **Status**: Phase 1 — COMPLETED, Phase 2 — Starting
+> **Date**: 2026-03-22 (last updated)
+> **Status**: Phases 1-3 COMPLETED, Phase 4 IN PROGRESS (Physics next)
 > **POC Status**: POC 0.2 validated (N-API + DX12 + H.264 streaming @ 120 FPS)
 
 ---
@@ -38,7 +38,7 @@
 
 | Component | Choice | Rationale | Risk |
 |-----------|--------|-----------|------|
-| Graphics API | DX12 SM6.6 (primary) | Modern features, POC proved SM5-first was painful | Windows-only initially |
+| Graphics API | DX12 SM6.6 (primary), DX11, Vulkan 1.3, Metal | Modern features, POC proved SM5-first was painful | DX12 primary; DX11/Vulkan/Metal at visual parity |
 | Physics | Jolt | Fast, modern, MIT license | Less mature than PhysX |
 | ECS | entt | Header-only, fast, well-maintained | No built-in serialization |
 | Audio | miniaudio | Single-file, cross-platform | Limited spatial audio |
@@ -66,16 +66,16 @@
 
 ### 3.1 — Phase Structure Overview
 
-The project uses a 9-phase structure for better granularity. Phase 1 is complete.
+The project uses a 9-phase structure for better granularity. Phases 1-3 are complete, Phase 4 is in progress.
 
 | Phase | Name | Status | Est. Duration |
 |-------|------|--------|---------------|
 | Phase 1 | Runtime Foundation | ✅ COMPLETED | Done |
-| Phase 2 | Runtime Framework | Starting | 2-3 months |
-| Phase 3 | First Pixels | Planned | 4-6 months |
-| Phase 4 | Playable Scene | Planned | 3-4 months |
+| Phase 2 | Runtime Framework | ✅ COMPLETED | Done |
+| Phase 3 | First Pixels | ✅ COMPLETED | Done |
+| Phase 4 | Playable Scene | 🔨 IN PROGRESS (Input + Camera done, Physics next) | In progress |
 | Phase 5 | Editor | Planned (overlaps 4) | 4-5 months |
-| Phase 6 | Advanced Gameplay | Planned | 3-4 months |
+| Phase 6 | Advanced Gameplay | Partial (Lua scripting done early) | 3-4 months |
 | Phase 7 | Content & Polish | Planned | 3-4 months |
 | Phase 8 | MCP & AI | Planned | 2-3 months |
 | Phase 9 | Shipping | Planned | 2-3 months |
@@ -89,43 +89,52 @@ The project uses a 9-phase structure for better granularity. Phase 1 is complete
 | 1.2 RHI (DX12 SM6.6) | **HIGH** | ✅ DONE — 6,069 FPS clear screen, D3D12MA, DRED, bindless SM6.6, 183 tests |
 | 1.3 Shader Pipeline | **HIGH** | ✅ DONE — DXC+FXC dual compiler, VFS, xxHash64 cache, hot-reload, reflection, permutations, 90 tests |
 
-### 3.3 — Phase 2 (Runtime Framework) — NEXT
+### 3.3 — Phase 2 (Runtime Framework) — ✅ COMPLETED
 
-| Milestone | Complexity | Critical Path? |
-|-----------|-----------|---------------|
-| 2.0 Application Lifecycle | Medium | **YES** — EngineLoop, subsystem registry, tick architecture |
-| 2.1 Job System | Medium | **YES** — work-stealing thread pool, ParallelFor |
-| 2.2 Resource System | Medium-High | **YES** — MeshImporter v1, TextureImporter v1, .uzmesh/.uztexture loaders |
+| Milestone | Complexity | Status |
+|-----------|-----------|--------|
+| 2.0 Application Lifecycle | Medium | ✅ DONE — EngineLoop, subsystem registry, module registry, time manager, project loader |
+| 2.1 Job System | Medium | ✅ DONE — thread pool, job counters, fences |
+| 2.2 Resource System | Medium-High | ✅ DONE — asset registry, importers, .uzshader/.uzmesh/.uztexture/.uzsdf formats, manifest, cache |
 
-### 3.4 — Phase 3 (First Pixels) — Two Parallel Tracks
+### 3.4 — Phase 3 (First Pixels) — ✅ COMPLETED (Both Tracks)
 
-**Track A — Rendering:**
+**Track A — Rendering: ✅ COMPLETE**
 
-| Milestone | Depends On |
-|-----------|-----------|
-| 3.0 Triangle | Phase 2 |
-| 3.1 Render Graph | 3.0 |
-| 3.2 Forward PBR | 3.1 |
-| 3.3 Deferred | 3.2 |
-| 3.4 Shadows | 3.3 |
-| 3.5 Post-Process | 3.4 |
+| Milestone | Status |
+|-----------|--------|
+| 3.0 Triangle | ✅ DONE — clear_screen + triangle demos |
+| 3.1 Render Graph | ✅ DONE — DAG-based pass scheduling |
+| 3.2 Forward PBR | ✅ DONE — GGX BRDF, Burley diffuse |
+| 3.3 Deferred | ✅ DONE — GBuffer + deferred lighting |
+| 3.4 Shadows | ✅ DONE — CSM (4 cascades), SDF shadows, shadow cache, local light atlas |
+| 3.5 Post-Process | ✅ DONE — GTAO, SSR, TAA, TSR, Bloom, Auto Exposure, Tonemap, Hi-Z, FXAA, DoF, Motion Blur, Lens Flare, CAS, Color Grading, SSGI |
+| Atmosphere (bonus) | ✅ DONE — Sky atmosphere (Bruneton), height fog, volumetric clouds, aerial perspective, god rays |
+| IBL (bonus) | ✅ DONE — BRDF LUT, irradiance, prefiltered specular, reflection probes |
 
-**Track B — ECS/Scene:**
+**Track B — ECS/Scene: ✅ COMPLETE**
 
-| Milestone | Depends On |
-|-----------|-----------|
-| 3.0b World + Entity | Phase 2 |
-| 3.1b Components | 3.0b |
-| 3.2b Property System | 3.1b |
-| 3.3b Behaviors | 3.2b |
-| 3.4b Scene Loader | 3.3b |
-| 3.5b Rendering Bridge (MERGE) | 3.5 + 3.4b |
+| Milestone | Status |
+|-----------|--------|
+| 3.0b World + Entity | ✅ DONE — EnTT ECS, World, WorldSubsystem |
+| 3.1b Components | ✅ DONE — 11 component types (Camera, Light, StaticMesh, SkyAtmosphere, SkyLight, HeightFog, VolumetricClouds, ReflectionProbe, etc.) |
+| 3.2b Property System | ✅ DONE — ClassInfo, ClassRegistry, PropertySerializer |
+| 3.3b Tick System | ✅ DONE — TickableComponent, TickSystem, TickSubsystem |
+| 3.4b Scene Loader | ✅ DONE — .uzscene format |
+| 3.5b Rendering Bridge | ✅ DONE — Track A + Track B merged |
 
-Tracks A and B run in parallel and merge at 3.5b (Rendering Bridge).
+Both tracks ran in parallel and merged at 3.5b.
 
-### 3.5 — Phase 4 (Playable Scene)
+### 3.5 — Phase 4 (Playable Scene) — 🔨 IN PROGRESS
 
-Linear sequence: 4.0 Input → 4.1 Camera → 4.2 Physics (Jolt) → 4.3 Animation → 4.4 Audio → 4.5 Prefabs
+| Milestone | Status |
+|-----------|--------|
+| 4.0 Input | ✅ DONE — Lua input API (keyboard/mouse polling) |
+| 4.1 Camera | ✅ DONE — camera system, Lua camera API |
+| 4.2 Physics (Jolt) | Planned — **NEXT** |
+| 4.3 Animation | Planned |
+| 4.4 Audio | Planned |
+| 4.5 Prefabs | Planned |
 
 ### 3.6 — Phase 5 (Editor) — Overlaps Phase 4
 
@@ -133,9 +142,18 @@ Starts from Phase 4.0+. Sequence: 5.0 Extension+IPC → 5.1 Viewport → 5.2 Hie
 
 Includes **Engine Mode** (5.x): VSCode layout toggle to Unreal/Godot-like IDE.
 
-### 3.7 — Phase 6 (Advanced Gameplay)
+### 3.7 — Phase 6 (Advanced Gameplay) — PARTIAL
 
-After Phase 4: 6.0 Navigation → 6.1 Behavior Trees → 6.2 C++ Hot-Reload → 6.3 Lua → 6.4 UI → 6.5 Save
+6.3 Lua Scripting was implemented early (LuaJIT 2.1 VM, sandbox, 12+ Lua APIs, script system).
+
+| Milestone | Status |
+|-----------|--------|
+| 6.0 Navigation | Planned |
+| 6.1 Behavior Trees | Planned |
+| 6.2 C++ Hot-Reload | Planned |
+| 6.3 Lua Scripting | ✅ DONE (implemented early) |
+| 6.4 UI | Planned |
+| 6.5 Save | Planned |
 
 ### 3.8 — Phase 7 (Content & Polish)
 
@@ -221,11 +239,11 @@ The critical path runs through **RHI → Shader Pipeline → Runtime Framework �
 ## 6. Open Questions
 
 1. **Embedded browser for game UI**: Which library? Ultralight? CEF? Custom lightweight renderer? (Phase 6.4)
-2. **DLSS/FSR/XeSS SDK integration timing**: Include in Phase 3.5 or defer to Phase 7.5?
+2. **DLSS/FSR/XeSS SDK integration timing**: TSR upscaler already implemented; external SDK integration deferred to Phase 7.5
 3. **CI/CD pipeline**: GitHub Actions? Self-hosted runners for GPU tests?
 4. **Console support timeline**: PS5/Xbox modules — when to start NDA discussions?
-5. **Zig vs CMake as primary build**: Zig is fast but ecosystem is immature. Should we commit fully for Phase 2+?
-6. **DX11 backend priority**: Is DX11 SM5 fallback worth the maintenance cost, or is FXC+DX12 sufficient for older GPUs?
+5. ~~**Zig vs CMake as primary build**~~: **RESOLVED** — Zig is primary build system, CMake kept as fallback. Proven stable through Phases 1-3.
+6. ~~**DX11 backend priority**~~: **RESOLVED** — DX11 backend implemented and at visual parity with DX12. 4 backends total (DX12, DX11, Vulkan, Metal).
 
 ---
 

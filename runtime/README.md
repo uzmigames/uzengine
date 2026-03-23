@@ -6,7 +6,7 @@
 [![MSVC](https://img.shields.io/badge/MSVC-17.14-blue.svg)]()
 [![Clang](https://img.shields.io/badge/Clang-21-green.svg)]()
 
-UzEngine core runtime — deferred PBR renderer with industry-standard lighting, atmosphere, and post-processing. Multi-backend RHI (DX12 SM6.8 bindless, DX12 SM5, DX11, Vulkan).
+UzEngine core runtime — deferred PBR renderer with industry-standard lighting, atmosphere, and post-processing. Multi-backend RHI (DX12 SM6.8 bindless, DX12 SM5, DX11, Vulkan, Metal).
 
 **Standalone C++ static library.** Consumed by demos, CLI tools, or the VSCode extension via N-API.
 
@@ -54,13 +54,14 @@ zig build test                    # Run all tests (~3600 tests)
 ### Materials
 - PBR textures: albedo, normal, roughness, metallic, AO, emissive
 - Emissive materials (HDR emission + bloom)
-- Material system with configurable parameters (in progress)
+- Material graph system (expressions, baker, GPU baker, shader cache)
 
 ### Backends
 - DX12 SM6.8 (bindless ResourceDescriptorHeap)
 - DX12 SM5 (descriptor tables)
 - DX11 (feature-level 11.1)
 - Vulkan (via volk + VMA)
+- Metal (macOS)
 
 ## Directory Structure
 
@@ -77,13 +78,14 @@ runtime/
 │   │   ├── shadows/      ShadowRenderer, SDF atlas, shadow cascade
 │   │   ├── lighting/     LightRenderer (point + spot extraction)
 │   │   ├── ibl/          IBLBaker (irradiance + prefiltered + SH projection)
-│   │   ├── material/     Material system (in progress)
+│   │   ├── material/     Material system (graph, baker, shader cache)
 │   │   ├── camera/       Camera, FPS controller
 │   │   └── render_graph/ RgBuilder, RgResources
 │   ├── rhi/              RHI abstraction
 │   │   ├── dx12/         DX12 backend (D3D12MA, Agility SDK)
 │   │   ├── dx11/         DX11 backend
-│   │   └── vulkan/       Vulkan backend (volk + VMA)
+│   │   ├── vulkan/       Vulkan backend (volk + VMA)
+│   │   └── metal/        Metal backend (macOS)
 │   ├── shader/           Shader compiler (DXC/FXC), hot-reload, cache
 │   ├── scripting/        LuaJIT 2.1 VM + API bindings
 │   ├── math/             Vec2/3/4, Mat4, Quaternion, Transform

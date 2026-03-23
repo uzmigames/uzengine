@@ -18,11 +18,11 @@
 For comprehensive system design, API reference, and implementation details, see [engine/README.md](engine/README.md).
 
 190+ files across 33 sections organized by tier:
-- **Sections 00–06**: Architecture, core systems, RHI, shader pipeline (Phase 1 — done)
-- **Sections 07–12**: Platform, resource system, lifecycle, ECS, scene, rendering (Phases 2–3)
-- **Sections 13–21**: Input, camera, scripting, physics, audio, UI, animation, gameplay, property system (Phases 4–6)
-- **Sections 22–30**: Developer tools, localization, networking, VFX, AI pipeline, platform services, IPC, examples (Phases 7–9)
-- **Sections 31–33**: Editor framework, engine mode, VFX AI tool (Phase 5)
+- **Sections 00–06**: Architecture, core systems, RHI (4 backends), shader pipeline (Phase 1 — ✅ done)
+- **Sections 07–12**: Platform, resource system, lifecycle, ECS, scene, rendering (Phases 2–3 — ✅ done)
+- **Sections 13–21**: Input, camera, scripting, physics, audio, UI, animation, gameplay, property system (Phases 4–6 — partial: scripting ✅, input/camera ✅, rest planned)
+- **Sections 22–30**: Developer tools, localization, networking, VFX, AI pipeline, platform services, IPC, examples (Phases 7–9 — planned)
+- **Sections 31–33**: Editor framework, engine mode, VFX AI tool (Phase 5 — planned)
 
 ## Technical Specs
 
@@ -76,6 +76,17 @@ Located in [guides/](guides/):
 | [shader-parameter-binding-guide.md](guides/shader-parameter-binding-guide.md) | Macro system, metadata definition, and `ShaderParameterBinder` usage |
 | [shader-parameter-migration-guide.md](guides/shader-parameter-migration-guide.md) | Step-by-step migration from manual CB + resource binding to the new system |
 | [ue5-transmittance-lut-porting.md](guides/ue5-transmittance-lut-porting.md) | Porting the UE5 transmittance LUT pass to UzEngine |
+| [bloom-pyramid.md](guides/bloom-pyramid.md) | Bloom pyramid downsample/upsample pipeline |
+| [contact-shadows.md](guides/contact-shadows.md) | Contact shadow ray marching implementation |
+| [cvar-reference.md](guides/cvar-reference.md) | Console variable reference — 60+ CVars documented |
+| [distance-field-shadows.md](guides/distance-field-shadows.md) | SDF shadow atlas and distance field tracing |
+| [film-tonemap-artist-controls.md](guides/film-tonemap-artist-controls.md) | Film tonemap artist controls (slope, toe, shoulder, etc.) |
+| [gtao-ambient-occlusion.md](guides/gtao-ambient-occlusion.md) | GTAO ambient occlusion — compute, denoise, temporal, upsample |
+| [pbr-brdf-ue5-parity.md](guides/pbr-brdf-ue5-parity.md) | PBR BRDF reference parity guide |
+| [scene-load-optimization.md](guides/scene-load-optimization.md) | Scene loading optimization and profiling |
+| [shadow-caching-guide.md](guides/shadow-caching-guide.md) | Static shadow caching implementation guide |
+| [ue5-basic-scene-defaults.md](guides/ue5-basic-scene-defaults.md) | Reference default values for basic scene components |
+| [ue5-sky-fog-injection.md](guides/ue5-sky-fog-injection.md) | Sky-to-fog color injection data flow |
 
 ## Observability
 

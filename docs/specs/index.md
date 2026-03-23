@@ -8,7 +8,7 @@
 
 | Spec | Scope | Status |
 |------|-------|--------|
-| [observability/observability-cpp.md](../observability/observability-cpp.md) | C++ Runtime: Tracy, spdlog+UZ_LOG, GPU profiling (DRED+breadcrumbs), Crash Reporter (separate exe) | Planned |
+| [observability/observability-cpp.md](../observability/observability-cpp.md) | C++ Runtime: Tracy, spdlog+UZ_LOG, GPU profiling (DRED+breadcrumbs), Crash Reporter (separate exe) | Implemented (Tracy, UZ_LOG, DRED, GPU breadcrumbs, RenderDoc) |
 | [observability/observability-ts.md](../observability/observability-ts.md) | TS Extension + N-API + MCP: structured logging, build diagnostics, VSCode Output integration, end-to-end debug | Planned |
 
 ## Phase 1: Runtime Foundation

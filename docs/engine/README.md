@@ -12,42 +12,42 @@
 |---|--------|-------|--------|-------------|
 | [00-overview/](00-overview/) | Architecture Overview | 7 | **Reference** | Vision, principles, project structure, execution model, IPC, POC lessons |
 
-### Tier 1 — Built / In-Progress
+### Tier 1 — Built
 
 | # | Module | Files | Status | Description |
 |---|--------|-------|--------|-------------|
-| [01-core/](01-core/) | Core Systems | 5 | **Partial** | Paths, logging, assertions, config, memory |
+| [01-core/](01-core/) | Core Systems | 5 | **Done** | Paths, logging, assertions, config, memory |
 | [02-math/](02-math/) | Math Library | 4 | **Done** | Vec2/3/4, Mat4, Quat, Transform, Basis, Rect2, DirectXMath SIMD |
-| [03-rhi/](03-rhi/) | Render Hardware Interface | 14 | **Done** (DX12+Vulkan) | Multi-backend GPU abstraction, DX12 SM6.6, Vulkan 1.3, SPIR-V, **GPU memory management** |
-| [04-observability/](04-observability/) | Observability | 5 | **Partial** | Logging, CPU/GPU profiling, stat counters, crash reporting |
-| [05-shader-pipeline/](05-shader-pipeline/) | Shader Pipeline | 6 | **Planned** | VFS, DXC compilation, content-hash cache, hot-reload, reflection |
-| [06-build-toolchain/](06-build-toolchain/) | Build Toolchain | 5 | **Active** | Zig build, thirdparty libs, N-API addon, build configs |
+| [03-rhi/](03-rhi/) | Render Hardware Interface | 14 | **Done** (DX12+DX11+Vulkan+Metal) | 4-backend GPU abstraction, DX12 SM6.6, DX11, Vulkan 1.3, Metal, PSO cache, GPU breadcrumbs |
+| [04-observability/](04-observability/) | Observability | 5 | **Done** | Logging, CPU/GPU profiling (Tracy), stat counters, RenderDoc integration, profile capture |
+| [05-shader-pipeline/](05-shader-pipeline/) | Shader Pipeline | 6 | **Done** | VFS, DXC+FXC+Slang compilation, xxHash64 cache, hot-reload, reflection, permutations |
+| [06-build-toolchain/](06-build-toolchain/) | Build Toolchain | 5 | **Done** | Zig build (primary), CMake fallback, thirdparty libs, build configs |
 | [14-security/](14-security/) | **Security & Memory Safety** | **3** | **Reference** | **RAII ownership conventions, shader compilation security, bytecode validation** |
 
-### Tier 2 — Next Phase Foundation
+### Tier 2 — Implemented (Phase 2-3)
 
 | # | Module | Files | Status | Description |
 |---|--------|-------|--------|-------------|
-| [07-platform/](07-platform/) | Platform Layer | 16 | **Planned (4.3-4.11.0)** | Abstraction interfaces, window, input, file I/O, file watching, process/DLL, system info, dialogs, OS integration, crash handling, **Linux platform, macOS platform, backend registry** |
-| [08-resource-system/](08-resource-system/) | Resource System | 8 | **Planned** | Asset registry, .uz* formats, **mesh pipeline, texture pipeline, asset cooking** |
-| [09-application-lifecycle/](09-application-lifecycle/) | Application Lifecycle | 7 | **Done** | Bootstrap, subsystems, tick architecture, game instance, demo migration |
-| [10-entity-component/](10-entity-component/) | Entity/Component | 6 | **Planned (3b-3.0b)** | **World, Entity handles, ECS (EnTT)**, component hierarchy, subsystems, events |
-| [11-scene/](11-scene/) | Scene System | 4 | **Planned** | .uzscene format, **world streaming, terrain, foliage** |
-| [12-rendering/](12-rendering/) | Rendering Pipeline | 7 | **Partial (3a-3.1.0)** | **Render world, render graph (API + guide)**, material system, lighting, post-processing |
+| [07-platform/](07-platform/) | Platform Layer | 16 | **Partial** | Win32 window, input, file I/O implemented; Linux/macOS platform planned |
+| [08-resource-system/](08-resource-system/) | Resource System | 8 | **Done** | Asset registry, importers, .uzshader/.uzmesh/.uztexture/.uzsdf formats, manifest, cache |
+| [09-application-lifecycle/](09-application-lifecycle/) | Application Lifecycle | 7 | **Done** | EngineLoop, subsystem registry, module registry, time manager, project loader |
+| [10-entity-component/](10-entity-component/) | Entity/Component | 6 | **Done** | World, WorldSubsystem, EnTT ECS, 11 component types, tick system |
+| [11-scene/](11-scene/) | Scene System | 4 | **Partial** | .uzscene loader implemented; world streaming and terrain planned |
+| [12-rendering/](12-rendering/) | Rendering Pipeline | 7 | **Done** | Deferred PBR, render graph, GBuffer, shadows (CSM+SDF), 20+ post-process passes, atmosphere, IBL, volumetric clouds, material graph |
 
 ### Tier 3 — Gameplay Systems
 
 | # | Module | Files | Status | Description |
 |---|--------|-------|--------|-------------|
-| [13-input-system/](13-input-system/) | Input System | 4 | **Planned** | Enhanced Input, action mapping, runtime rebinding |
-| [14-camera/](14-camera/) | Camera System | 5 | **Planned** | SpringArm, modes, shake, post-process volumes |
-| [15-scripting/](15-scripting/) | Scripting | 6 | **Planned** | LuaJIT, sandbox, script runner, hot-reload, Lua API reference |
+| [13-input-system/](13-input-system/) | Input System | 4 | **Partial** | Lua input API (keyboard/mouse polling) implemented; Enhanced Input planned |
+| [14-camera/](14-camera/) | Camera System | 5 | **Partial** | Camera component + Lua camera API implemented; SpringArm, shake planned |
+| [15-scripting/](15-scripting/) | Scripting | 6 | **Done** | LuaJIT 2.1 VM, sandbox, ScriptComponent lifecycle, 12+ Lua API modules, hot-reload |
 | [16-physics/](16-physics/) | Physics | 4 | **Planned** | Jolt Physics, rigid bodies, queries, character controller |
 | [17-audio/](17-audio/) | Audio | 6 | **Planned** | miniaudio backend, spatial audio, bus mixing, components |
 | [18-ui-system/](18-ui-system/) | UI System | 6 | **Planned** | HTML/CSS runtime, data binding, rendering, input routing, console |
 | [19-animation/](19-animation/) | Animation | 7 | **Planned** | Skeletal mesh, GPU skinning, state machines, IK, root motion, **sequencer** |
 | [20-gameplay/](20-gameplay/) | Gameplay Systems | 6 | **Planned** | Abilities, behavior trees, save system, navigation, data tables |
-| [21-property-system/](21-property-system/) | Property System | 4 | **Implemented (3b-3.2b MVP)** | Reflection, **JSON serialization**, reactivity |
+| [21-property-system/](21-property-system/) | Property System | 4 | **Done** | ClassInfo, ClassRegistry, PropertySerializer — reflection + JSON serialization |
 
 ### Tier 4 — Developer Tools & Future
 
@@ -74,7 +74,7 @@
 
 ## Conventions
 
-- All code examples use C++17/20
+- All code examples use C++23
 - Engine comparisons reference UE5.6 and Godot 4.x (clean-room — study approach, never copy code)
 - `MUST`/`SHALL`/`NEVER` indicate hard requirements
 - `SHOULD` indicates strong recommendations
