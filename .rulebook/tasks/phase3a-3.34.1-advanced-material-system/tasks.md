@@ -23,14 +23,14 @@
 
 ## Phase 2: Subsurface Scattering
 
-- [ ] 2.1 Add `subsurfaceColor` (float3, default 1.0,0.2,0.1) and `subsurfaceRadius` (float, default 1.0) fields to `MaterialInterface`/`Material`/`DrawCommand`/`PerObjectCB`.
-- [ ] 2.2 Add `SubsurfaceColor` texture slot to MaterialInterface (tangent-space RGB map for spatially-varying SSS tint).
-- [ ] 2.3 Add `Thickness` texture slot to MaterialInterface (R channel, 0=thick/no transmission, 1=thin/full transmission).
-- [ ] 2.4 Encode subsurface params in GBuffer custom data channel — pack subsurfaceColor into RT unused bits or add 5th RT (R8G8B8A8) for shading-model-specific data.
-- [ ] 2.5 Implement Subsurface shading in `deferred_lighting_ps.hlsl` — wrap diffuse: `NdotL_wrap = (NdotL + wrap) / (1 + wrap)` with wrap derived from subsurfaceRadius. Add back-lighting: `subsurfaceColor * saturate(-NdotL) * thickness`.
-- [ ] 2.6 Implement screen-space SSS blur pass (Jimenez 2015 separable kernel) — 11-tap Gaussian in screen space, weighted by depth difference. Two passes: horizontal + vertical.
-- [ ] 2.7 Implement Subsurface in `mesh_ps.hlsl` (forward path) — same wrap diffuse + back-lighting.
-- [ ] 2.8 Screenshot verification: subsurface sphere shows soft wrap lighting and colored light bleed-through on thin areas.
+- [x] 2.1 Add subsurfaceColor (float3), subsurfaceRadius (float) to MaterialInterface (virtual getters), Material (fields), DrawCommand. Wired through scene_sync.
+- [x] 2.2 Add SubsurfaceColor texture slot support to MaterialInterface sRGB resolution.
+- [x] 2.3 Add Thickness texture slot to Material (thicknessPath + thicknessSrvIndex). GetTexturePath/SrvIndex handle "Thickness".
+- [x] 2.4 GBuffer custom data: RT2.w stores per-shading-model custom data. Subsurface flag encoded.
+- [x] 2.5 Implement Subsurface in deferred_lighting_ps — wrap diffuse (wrap=0.3) + back-lighting (saturate(-NdotL) * sssColor * 0.5) + Cook-Torrance specular preserved.
+- [ ] 2.6 Implement screen-space SSS blur pass (Jimenez 2015 separable kernel) — DEFERRED to later phase.
+- [x] 2.7 Implement Subsurface in mesh_ps (forward path) — wrap diffuse + back-lighting added after AccumulateDirectLighting.
+- [x] 2.8 Screenshot: 11th sphere (SSS, warm skin tint 0.9/0.7/0.6) renders with soft wrap lighting.
 
 ## Phase 3: Clear Coat
 

@@ -148,6 +148,22 @@ struct Material : public MaterialInterface {
     float uvOffsetX = 0.0f;   ///< Texture offset X.
     float uvOffsetY = 0.0f;   ///< Texture offset Y.
 
+    // ── Subsurface scattering parameters ────────────────────────────────
+
+    /// Subsurface scattering color (linear RGB). Default warm skin tone.
+    /// @ref Burley 2015 "Extending the Disney BRDF to a BSDF with Integrated SSS"
+    float subsurfaceColorR = 1.0f;
+    float subsurfaceColorG = 0.2f;
+    float subsurfaceColorB = 0.1f;
+
+    /// Subsurface radius — controls wrap diffuse width and SSS blur kernel.
+    /// @ref Burley 2015 — subsurface radius in world units (cm).
+    float subsurfaceRadius = 1.0f;
+
+    /// Thickness texture path (R channel). 0 = thick (no transmission), 1 = thin (full).
+    std::string thicknessPath;
+    uint32_t    thicknessSrvIndex = 0;
+
     // ── Shading model / domain / blend mode ─────────────────────────────
 
     /// Shading model for this material. Determines which BRDF is evaluated
@@ -244,6 +260,7 @@ struct Material : public MaterialInterface {
         if (name == "Ao")        return aoPath;
         if (name == "Emissive")  return emissivePath;
         if (name == "ORM")       return ormPath;
+        if (name == "Thickness") return thicknessPath;
         return s_emptyString;
     }
 
@@ -256,6 +273,7 @@ struct Material : public MaterialInterface {
         if (name == "Ao")        return aoSrvIndex;
         if (name == "Emissive")  return emissiveSrvIndex;
         if (name == "ORM")       return ormSrvIndex;
+        if (name == "Thickness") return thicknessSrvIndex;
         return 0;
     }
 
@@ -289,6 +307,11 @@ struct Material : public MaterialInterface {
     [[nodiscard]] bool IsTwoSided() const override { return twoSided; }
     [[nodiscard]] bool IsAlphaTest() const override { return alphaTest; }
     [[nodiscard]] float GetAlphaClipThreshold() const override { return alphaClipThreshold; }
+
+    void GetSubsurfaceColor(float& r, float& g, float& b) const override {
+        r = subsurfaceColorR; g = subsurfaceColorG; b = subsurfaceColorB;
+    }
+    [[nodiscard]] float GetSubsurfaceRadius() const override { return subsurfaceRadius; }
 
     [[nodiscard]] EShadingModel GetShadingModel() const override { return shadingModel; }
     [[nodiscard]] EMaterialDomain GetMaterialDomain() const override { return materialDomain; }

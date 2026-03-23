@@ -201,6 +201,20 @@ public:
     [[nodiscard]] uint32_t GetEmissiveSrvIndex() const   { return GetTextureSrvIndex("Emissive"); }
     [[nodiscard]] uint32_t GetOrmSrvIndex() const        { return GetTextureSrvIndex("ORM"); }
 
+    // ── Subsurface scattering parameters ────────────────────────────────────
+
+    /// Subsurface scattering color tint (linear RGB).
+    /// Controls the color of light transmitted through thin surfaces.
+    /// @ref Burley 2015 "Extending the Disney BRDF to a BSDF with Integrated SSS"
+    virtual void GetSubsurfaceColor(float& r, float& g, float& b) const {
+        r = 1.0f; g = 0.2f; b = 0.1f;
+    }
+
+    /// Subsurface radius — controls the width of the wrap diffuse approximation.
+    /// Higher values = more light wraps around to the dark side.
+    /// @ref Burley 2015 — subsurface radius in world units (cm).
+    [[nodiscard]] virtual float GetSubsurfaceRadius() const { return 1.0f; }
+
     // ── Shading model / domain / blend mode ─────────────────────────────────
 
     /// Shading model determines the BRDF used in the lighting pass.

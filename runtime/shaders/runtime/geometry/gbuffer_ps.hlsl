@@ -510,11 +510,26 @@ GBufferOutput main(PSInput input) {
     uint shadingModelID = (materialFlags >> 24u) & 0xFu;
     float packedSpecSM = specular + float(shadingModelID) * 16.0f;
 
+    // ── Pack shading-model-specific custom data into RT2.w ──
+    // RT2 = (worldPos.xyz, customData). RT2 is R32G32B32A32_FLOAT — w has full float32.
+    // Subsurface (ID 2,3): pack subsurfaceColor R8G8B8 into float32 via asuint/asfloat.
+    // DefaultLit (ID 1): w = 1.0 (unused, backward compatible).
+    float customData = 1.0f;
+    if (shadingModelID == 2u || shadingModelID == 3u) {
+        // Pack subsurface color as 3x8-bit into a uint, reinterpret as float.
+        // Unpack in deferred: uint bits = asuint(w); R = (bits>>16)&0xFF, etc.
+        // Subsurface color comes from PerObjectCB — not available here directly,
+        // so we encode a flag (opacity-based thickness) for now.
+        // The full subsurface color is passed via per-object CB and baked into
+        // the lighting shader directly (since shading model is known per-pixel).
+        customData = ao; // repurpose: deferred reads AO from here for SSS materials
+    }
+
     // ── Write G-Buffer (4-RT layout) ──
     GBufferOutput output;
     output.albedoAO     = float4(albedo, ao);
     output.normalMatPbr = float4(OctEncode(N), metallic, roughness);
-    output.positionWS   = float4(input.positionWS, 1.0f);
+    output.positionWS   = float4(input.positionWS, customData);
     output.emissiveHDR  = float4(emissive, packedSpecSM);
 
     return output;

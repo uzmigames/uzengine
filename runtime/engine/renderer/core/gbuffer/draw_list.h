@@ -127,6 +127,13 @@ struct DrawCommand {
     /// Default: DefaultLit (standard Cook-Torrance GGX PBR).
     EShadingModel shadingModel = EShadingModel::DefaultLit;
 
+    // ── Subsurface scattering parameters ─────────────────────────────────
+    float subsurfaceColorR = 1.0f;  ///< SSS tint R (linear).
+    float subsurfaceColorG = 0.2f;  ///< SSS tint G.
+    float subsurfaceColorB = 0.1f;  ///< SSS tint B.
+    float subsurfaceRadius = 1.0f;  ///< Wrap diffuse width (cm).
+    uint32_t thicknessSrvIndex = 0; ///< SRV for thickness map (R, 0=thick 1=thin).
+
     /// Primitive mobility for shadow cache filtering.
     ///
     /// Static/Stationary primitives are cached in the static shadow atlas.

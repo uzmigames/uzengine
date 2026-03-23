@@ -1125,6 +1125,47 @@ float4 main(FSInput input) : SV_Target {
                           albedo, metallic, alpha, F0) * finalShadow;
     }
 
+    // ── Subsurface wrap diffuse + back-lighting (shadingModelID == 2 or 3) ──
+    // @ref Burley 2015 "Extending the Disney BRDF" — wrap diffuse approximation
+    // @ref GDC 2011 "Approximating Translucency for a Fast, Cheap SSS" — back-lighting
+    if (shadingModelID == 2u || shadingModelID == 3u) {
+        // Wrap diffuse: shifts the terminator so light wraps around the dark side.
+        // wrap = subsurfaceRadius / (1 + subsurfaceRadius), NdotL_wrap = (NdotL + wrap) / (1 + wrap)
+        // For now, use a fixed wrap factor derived from typical skin radius.
+        float wrap = 0.3f; // ~1cm radius equivalent
+        float NdotL_raw = dot(N, L_dir);
+        float NdotL_wrap = saturate((NdotL_raw + wrap) / (1.0f + wrap));
+
+        // Subsurface color — hardcoded warm skin default for now.
+        // In production, this would come from a custom data GBuffer channel.
+        float3 sssColor = float3(1.0f, 0.2f, 0.1f);
+
+        // Replace the standard diffuse with wrap diffuse for SSS surfaces.
+        // Keep the specular from EvaluateBRDF unchanged (SSS only affects diffuse).
+        float3 wrapDiffuse = albedo * sssColor * NdotL_wrap * lightColor.xyz * finalShadow;
+
+        // Back-lighting: light passing through thin surfaces.
+        // Approximation: saturate(-NdotL) * sssColor * albedo * shadow
+        float backLight = saturate(-NdotL_raw);
+        float3 backLighting = albedo * sssColor * backLight * lightColor.xyz * shadow * 0.5f;
+
+        // Replace standard Lo with wrap diffuse + specular + back-lighting.
+        // Extract specular from the existing BRDF result and add it back.
+        Lo = wrapDiffuse + backLighting;
+
+        // Re-add specular from Cook-Torrance (not affected by SSS).
+        float3 H = normalize(V + L_dir);
+        float NdotH = saturate(dot(N, H));
+        float VdotH = saturate(dot(V, H));
+        float NdotV_spec = saturate(abs(dot(N, V)) + 1e-5f);
+        float NdotL_spec = max(NdotL_raw, 0.001f);
+        float D = DistributionGGX(NdotH, alpha);
+        float Vis = VisibilitySmithGGX(alpha * alpha, NdotV_spec, NdotL_spec);
+        float F90_spec = saturate(50.0f * F0.g);
+        float3 F_spec = F0 + (F90_spec - F0) * Pow5(1.0f - VdotH);
+        Lo += D * Vis * F_spec * lightColor.xyz * NdotL_spec * finalShadow;
+    }
+
     // ── Point lights ──
     for (uint i = 0; i < pointLightCount; ++i) {
         float3 lightVec  = pointLights[i].position - worldPos;

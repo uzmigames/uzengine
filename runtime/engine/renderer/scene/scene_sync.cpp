@@ -240,6 +240,10 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
             cmd.shadingModel = mat->GetShadingModel();
             const uint32_t smId = static_cast<uint32_t>(mat->GetShadingModel()) & 0xFu;
             cmd.materialFlags |= (smId << 24);
+
+            // Subsurface scattering parameters (only read for SSS shading models).
+            mat->GetSubsurfaceColor(cmd.subsurfaceColorR, cmd.subsurfaceColorG, cmd.subsurfaceColorB);
+            cmd.subsurfaceRadius = mat->GetSubsurfaceRadius();
         } else {
             // No material assigned — use neutral defaults (no emission).
             cmd.emissiveColorR    = 0.0f;

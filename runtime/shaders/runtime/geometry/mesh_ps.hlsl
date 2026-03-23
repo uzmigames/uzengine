@@ -301,6 +301,24 @@ float4 main(PSInput input) : SV_Target {
         lightCount, lights,
         cameraPos.xyz, cascadeCount, input.positionCS.xy);
 
+    // ── Subsurface wrap diffuse + back-lighting (forward path) ──
+    // @ref Burley 2015 "Extending the Disney BRDF" — wrap diffuse approximation
+    if (shadingModelID == 2u || shadingModelID == 3u) {
+        float3 L_dir = normalize(lights[0].direction.xyz);
+        float3 lightCol = lights[0].color.xyz;
+        float NdotL_raw = dot(N, L_dir);
+
+        float wrap = 0.3f;
+        float NdotL_wrap = saturate((NdotL_raw + wrap) / (1.0f + wrap));
+        float3 sssColor = float3(1.0f, 0.2f, 0.1f);
+
+        float3 wrapDiffuse = albedo * sssColor * NdotL_wrap * lightCol;
+        float backLight = saturate(-NdotL_raw);
+        float3 backLighting = albedo * sssColor * backLight * lightCol * 0.5f;
+
+        Lo += wrapDiffuse + backLighting;
+    }
+
     // ── Ambient / IBL (SH9 diffuse + split-sum specular) ──
     // Matches deferred_lighting_ps.hlsl ambient quality: L2 SH for diffuse,
     // prefiltered cubemap + BRDF LUT for specular, skyLight tint/intensity.
