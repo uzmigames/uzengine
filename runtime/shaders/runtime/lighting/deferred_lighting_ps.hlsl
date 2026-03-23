@@ -930,21 +930,47 @@ float4 main(FSInput input) : SV_Target {
         uv = tileUV;
     }
 
-    // ── Read G-Buffer (2-RT packed layout) ──
+    // ── Read G-Buffer (point-sampled Load — NEVER bilinear) ──
+    // GBuffer contains packed material data (metallic, normal, roughness, AO).
+    // Bilinear filtering interpolates between adjacent pixels that may belong to
+    // different materials — catastrophic for F0 = lerp(dielectric, albedo, metallic).
+    // On metallic boundaries, bilinear creates fractional metallic values that cause
+    // specular shimmer, wrong F0, and temporal instability under camera motion.
+    // Depth bilinear at edges reconstructs wrong world positions → broken V, R, shadow.
+    // @ref Standard deferred practice — GBuffer always read with integer pixel Load.
+
+    // Compute integer pixel coordinate for GBuffer Load().
+    // Normal mode: SV_Position.xy maps 1:1 to render target pixels.
+    // Debug grid mode: remapped UV → pixel via texture dimensions.
+    int2 gbPixel;
 #ifdef UZ_BINDLESS
-    // SM6.6 bindless: fetch G-Buffer textures from the descriptor heap
     Texture2D<float4> gbAlbedo = ResourceDescriptorHeap[gBufIndices.albedoIdx];
     Texture2D<float4> gbNormal = ResourceDescriptorHeap[gBufIndices.normalIdx];
     Texture2D<float>  gbDepth  = ResourceDescriptorHeap[gBufIndices.depthIdx];
 
-    float4 albedoAO     = gbAlbedo.Sample(linearSampler, uv);
-    float4 normalPacked = gbNormal.Sample(linearSampler, uv);
-    float  depth        = gbDepth.Sample(linearSampler, uv).r;
+    if (gridActive) {
+        uint gbW, gbH;
+        gbAlbedo.GetDimensions(gbW, gbH);
+        gbPixel = int2(uv * float2(gbW, gbH));
+    } else {
+        gbPixel = int2(input.positionCS.xy);
+    }
+
+    float4 albedoAO     = gbAlbedo.Load(int3(gbPixel, 0));
+    float4 normalPacked = gbNormal.Load(int3(gbPixel, 0));
+    float  depth        = gbDepth.Load(int3(gbPixel, 0)).r;
 #else
-    // SM5 path: register-bound textures at t0-t2
-    float4 albedoAO     = gbufferAlbedo.Sample(linearSampler, uv);
-    float4 normalPacked = gbufferNormal.Sample(linearSampler, uv);
-    float  depth        = gbufferDepth.Sample(linearSampler, uv).r;
+    if (gridActive) {
+        uint gbW, gbH;
+        gbufferAlbedo.GetDimensions(gbW, gbH);
+        gbPixel = int2(uv * float2(gbW, gbH));
+    } else {
+        gbPixel = int2(input.positionCS.xy);
+    }
+
+    float4 albedoAO     = gbufferAlbedo.Load(int3(gbPixel, 0));
+    float4 normalPacked = gbufferNormal.Load(int3(gbPixel, 0));
+    float  depth        = gbufferDepth.Load(int3(gbPixel, 0)).r;
 #endif
 
     float3 albedo    = albedoAO.rgb;
@@ -961,10 +987,10 @@ float4 main(FSInput input) : SV_Target {
 #ifdef UZ_BINDLESS
     {
         Texture2D<float4> gbEmissiveEarly = ResourceDescriptorHeap[gBufIndices.emissiveIdx];
-        specular = gbEmissiveEarly.Sample(linearSampler, uv).a;
+        specular = gbEmissiveEarly.Load(int3(gbPixel, 0)).a;
     }
 #else
-    specular = gbufferEmissive.Sample(linearSampler, uv).a;
+    specular = gbufferEmissive.Load(int3(gbPixel, 0)).a;
 #endif
 
     // ── GTAO screen-space ambient occlusion ──
@@ -990,9 +1016,9 @@ float4 main(FSInput input) : SV_Target {
 #ifdef UZ_WORLDPOS_GBUFFER
 #ifdef UZ_BINDLESS
     Texture2D<float4> gbPosition = ResourceDescriptorHeap[gBufIndices.positionIdx];
-    float3 worldPos = gbPosition.Sample(linearSampler, uv).xyz;
+    float3 worldPos = gbPosition.Load(int3(gbPixel, 0)).xyz;
 #else
-    float3 worldPos = gbufferPositionWS.Sample(linearSampler, uv).xyz;
+    float3 worldPos = gbufferPositionWS.Load(int3(gbPixel, 0)).xyz;
 #endif
 #else
     float3 worldPos = ReconstructWorldPosition(uv, depth);
@@ -1457,10 +1483,10 @@ float4 main(FSInput input) : SV_Target {
 #ifdef UZ_BINDLESS
     {
         Texture2D<float4> gbEmissive = ResourceDescriptorHeap[gBufIndices.emissiveIdx];
-        emissiveContrib = gbEmissive.Sample(linearSampler, uv).rgb;
+        emissiveContrib = gbEmissive.Load(int3(gbPixel, 0)).rgb;
     }
 #else
-    emissiveContrib = gbufferEmissive.Sample(linearSampler, uv).rgb;
+    emissiveContrib = gbufferEmissive.Load(int3(gbPixel, 0)).rgb;
 #endif
 
     // ── Combine ──
