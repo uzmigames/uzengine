@@ -1,317 +1,118 @@
-/// Shared PBR functions for Cook-Torrance BRDF evaluation.
-///
-/// Used by both the forward pass (mesh_ps.hlsl) and deferred lighting pass
-/// (deferred_lighting_ps.hlsl). Implements GGX NDF, Smith geometry, and
-/// Schlick-Fresnel from the metallic-roughness workflow.
-///
-/// # References
-/// - Karis 2013, "Real Shading in Unreal Engine 4"
-/// - Walter et al. 2007, "Microfacet Models for Refraction"
-
+/// PBR BRDF functions — GGX + Smith + Schlick + Burley.
+/// @ref Walter 2007, Heitz 2014, Burley 2012, Karis 2013
 #ifndef PBR_COMMON_HLSLI
 #define PBR_COMMON_HLSLI
 
 #include "math_util.hlsli"
 
-#ifndef UZ_PI_DEFINED
-#define UZ_PI_DEFINED
-static const float PI = 3.14159265359f;
-#endif
+static const float MIN_ROUGHNESS = 0.045;
 
-/// Minimum roughness clamped before squaring to alpha, preventing a perfectly
-/// smooth (singular) specular lobe that collapses to a delta function on GPU.
-static const float MIN_ROUGHNESS = 0.04f;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ACES Filmic Tonemapping
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// ACES filmic tonemapping curve (Narkowicz 2015 polynomial fit).
-///
-/// @source Narkowicz 2015 "ACES Filmic Tone Mapping Curve" — polynomial approximation
-/// @constants a=2.51, b=0.03, c=2.43, d=0.59, e=0.14 (Narkowicz 2015)
-/// @note The full ACES pipeline uses RRT+ODT with color space transforms
-///   (sRGB→AP0→AP1), glow module, red modifier, and custom S-curve with 5 artist
-///   parameters. See film_tonemap.hlsli for the complete implementation (~200 lines).
-///   This Narkowicz fit is a single-function approximation that produces visually similar
-///   results for the default ACES settings (Slope=0.91, Toe=0.53, Shoulder=0.23).
-///
-/// Maps HDR linear radiance to [0,1] LDR with a filmic S-curve that provides
-/// better highlight rolloff and color preservation than per-channel Reinhard.
-///
-/// # Parameters
-/// - x: linear HDR color (unbounded positive).
-///
-/// # Returns
-/// Tonemapped LDR color in [0, 1].
-float3 ACESFilm(float3 x) {
-    float a = 2.51f;
-    float b = 0.03f;
-    float c = 2.43f;
-    float d = 0.59f;
-    float e = 0.14f;
-    return saturate((x * (a * x + b)) / (x * (c * x + d) + e));
+/// GGX NDF. @ref Walter 2007 eq.33
+float D_GGX(float NdotH, float alpha) {
+    float a2 = alpha * alpha;
+    float f = NdotH * NdotH * (a2 - 1.0) + 1.0;
+    return a2 / (PI * f * f);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PBR Helper Functions
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// GGX / Trowbridge-Reitz Normal Distribution Function.
-///
-/// Describes the statistical distribution of microfacet normals relative to
-/// the macrosurface normal. A higher alpha (rougher surface) produces a wider,
-/// dimmer highlight; a lower alpha produces a tight, bright specular peak.
-///
-/// D(h) = alpha^2 / (PI * ((N.H)^2 * (alpha^2 - 1) + 1)^2)
-///
-/// # Parameters
-/// - NdotH: dot product of macrosurface normal N and half-vector H, in [0,1].
-/// - alpha: perceptual roughness squared (r^2), in [MIN_ROUGHNESS^2, 1].
-///
-/// # Returns
-/// Specular lobe density in [0, +inf). Integrates to 1 over the hemisphere.
-float DistributionGGX(float NdotH, float alpha) {
-    float a2    = alpha * alpha;
-    float denom = NdotH * NdotH * (a2 - 1.0f) + 1.0f;
-    return a2 / (PI * denom * denom);
+/// Height-correlated Smith visibility (includes 1/4NLV denominator).
+/// @ref Heitz 2014 eq.99, Lagarde 2014
+float V_SmithGGXCorrelated(float a2, float NdotV, float NdotL) {
+    float lV = NdotL * sqrt(a2 + NdotV * NdotV * (1.0 - a2));
+    float lL = NdotV * sqrt(a2 + NdotL * NdotL * (1.0 - a2));
+    return 0.5 / max(lV + lL, 1e-7);
 }
 
-/// Schlick Fresnel approximation.
-///
-/// Computes the fraction of light reflected (vs. refracted) at a microfacet
-/// surface. At grazing angles (cosTheta -> 0) the reflectance approaches 1
-/// regardless of material.
-///
-/// F(v, h) = F0 + (1 - F0) * (1 - V.H)^5
-///
-/// # Parameters
-/// - cosTheta: dot(V, H) — cosine of angle between view and half-vector.
-/// - F0:       reflectance at normal incidence (0 deg angle of incidence).
-///             Dielectric typical value: (0.04, 0.04, 0.04).
-///             Metals: use the albedo color as F0.
-///
-/// # Returns
-/// float3 Fresnel reflectance in [F0, 1].
-float3 FresnelSchlick(float cosTheta, float3 F0) {
-    return F0 + (1.0f - F0) * Pow5(saturate(1.0f - cosTheta));
+/// Schlick Fresnel. @ref Schlick 1994
+float3 F_Schlick(float cosTheta, float3 F0) {
+    return F0 + (1.0 - F0) * Pow5(1.0 - cosTheta);
 }
 
-/// Disney Burley diffuse BRDF.
-///
-/// @ref Burley 2012 "Physically Based Shading at Disney" — diffuse model
-/// @constants FD90 = 0.5 + 2 * VoH^2 * Roughness (Burley 2012 Eq.4)
-/// @deviations NONE
-///
-/// Adds roughness-dependent retroreflection at grazing angles compared to
-/// plain Lambertian. At roughness=0 this reduces to Lambert diffuse.
-///
-/// # Parameters
-/// - albedo:    surface base color (linear).
-/// - roughness: perceptual roughness [0,1] (NOT alpha = roughness^2).
-/// - NdotV:     saturated dot(N, V).
-/// - NdotL:     saturated dot(N, L).
-/// - VdotH:     saturated dot(V, H).
-///
-/// # Returns
-/// Diffuse BRDF value (includes 1/PI normalization).
-float3 DiffuseDisneyBurley(float3 albedo, float roughness, float NdotV, float NdotL, float VdotH) {
-    float FD90 = 0.5f + 2.0f * VdotH * VdotH * roughness;
-    float FdV = 1.0f + (FD90 - 1.0f) * Pow5(1.0f - NdotV);
-    float FdL = 1.0f + (FD90 - 1.0f) * Pow5(1.0f - NdotL);
-    return albedo * (1.0f / PI) * FdV * FdL;
+/// Schlick with F90. @ref Lagarde 2014
+float3 F_SchlickF90(float cosTheta, float3 F0, float F90) {
+    return F0 + (F90 - F0) * Pow5(1.0 - cosTheta);
 }
 
-/// Approximate joint Smith visibility term for GGX.
-///
-/// @ref Heitz 2014 "Understanding the Masking-Shadowing Function" — Smith joint approx
-/// @constants NONE (pure formula)
-/// @deviations NONE
-///
-/// Returns Vis = G / (4*NoV*NoL), so the specular BRDF is D*Vis*F.
-/// This is a cheaper approximation of the exact height-correlated Smith
-/// that the reference uses everywhere for direct and IBL lighting.
-///
-/// # Parameters
-/// - a2:   roughness alpha squared (roughness^4 in reference engines convention, or alpha^2).
-/// - NoV:  saturated dot(N, V).
-/// - NoL:  saturated dot(N, L).
-///
-/// # Returns
-/// Visibility term in [0, +inf).
-float VisibilitySmithGGX(float a2, float NoV, float NoL) {
-    float a = sqrt(a2);
-    float Vis_SmithV = NoL * (NoV * (1.0f - a) + a);
-    float Vis_SmithL = NoV * (NoL * (1.0f - a) + a);
-    // epsilon prevents NaN/inf at grazing angles
-    return 0.5f * rcp(Vis_SmithV + Vis_SmithL + 1e-5f);
+/// Schlick with roughness for IBL. @ref Lagarde 2011
+float3 F_SchlickRoughness(float cosTheta, float3 F0, float roughness) {
+    float s = 1.0 - roughness;
+    return F0 + (max(float3(s, s, s), F0) - F0) * Pow5(1.0 - cosTheta);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Multiscatter Energy Compensation (Kulla-Conty / Turquin 2018)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Analytic fit for GGX single-scattering directional albedo.
-///
-/// @ref Turquin 2018 "Practical multiple scattering compensation for microfacet models" — analytic fit
-/// @constants E fit: pow(r, c/r) * ((r*c + 0.0266916) / (0.466495 + c))
-///   (ShadingEnergyConservation.ush:60-61)
-/// @constants Ef fit: Pow5(1-c) * pow(2.36651 * pow(c, 4.7703*r) + 0.0387332, r)
-///   (ShadingEnergyConservation.ush:62-63)
-/// @deviations Uses analytic fit (USE_ENERGY_CONSERVATION==2) instead of BRDF LUT
-///   (USE_ENERGY_CONSERVATION==1). This matches reference's non-LUT code path exactly.
-///
-/// Returns E (single-scattering directional albedo) and Ef (Fresnel-weighted
-/// single-scattering albedo) as a float2. These represent the fraction of energy
-/// accounted for by single-scattering; the remainder (1-E) is lost without
-/// multiscatter compensation.
-///
-/// # Parameters
-/// - roughness: perceptual roughness [0,1] (NOT alpha).
-/// - NoV:       saturated dot(N, V) in [0,1].
-///
-/// # Returns
-/// float2(E, Ef) where E = single-scatter albedo, Ef = Fresnel-weighted albedo.
-float2 EnergyAlbedoFitGGX(float roughness, float NoV) {
-    float r = roughness;
-    float c = NoV;
-    // Single-scattering directional albedo: fraction of energy from one bounce
-    float E = 1.0f - saturate(pow(r, c / r) * ((r * c + 0.0266916f) / (0.466495f + c)));
-    // Fresnel-weighted single-scattering albedo
-    float Ef = Pow5(1.0f - c) * pow(2.36651f * pow(c, 4.7703f * r) + 0.0387332f, r);
-    return float2(E, Ef);
+/// F0 from metallic workflow. @ref Karis 2013
+float3 ComputeF0(float specular, float metallic, float3 albedo) {
+    float d = 0.08 * specular;
+    return lerp(float3(d, d, d), albedo, metallic);
 }
 
-/// Computes multiscatter energy compensation terms for specular and diffuse.
-///
-/// @ref Kulla & Conty 2017 "Revisiting Physically Based Shading" + Turquin 2018 Eq.16
-/// @constants luminance weights = (0.2126, 0.7152, 0.0722) (Rec.709 / sRGB)
-/// @deviations NONE
-///
-/// The single-scatter BRDF loses energy at higher roughness because it only
-/// models one bounce. This function computes a compensation weight W that scales
-/// the specular lobe to account for the missing multi-bounce energy.
-///
-/// It also computes the total specular albedo (fraction of energy reflected by
-/// specular) so that the diffuse lobe can be attenuated accordingly to preserve
-/// total energy.
-///
-/// # Parameters
-/// - F0:        reflectance at normal incidence.
-/// - roughness: perceptual roughness [0,1].
-/// - NoV:       saturated dot(N, V).
-///
-/// # Returns
-/// float4 where:
-///   .xyz = specular energy compensation weight (multiply specular by this)
-///   .w   = luminance of total specular albedo (diffuse *= 1 - w, metals excluded)
-float4 MultiscatterCompensation(float3 F0, float roughness, float NoV) {
-    float2 E = EnergyAlbedoFitGGX(roughness, NoV);
-
-    // Multiscatter compensation weight: accounts for energy lost after first bounce
-    // W = 1 + F0 * ((1 - E.x) / E.x)
-    // When E.x is high (smooth surface), W ~ 1 (little lost energy).
-    // When E.x is low (rough surface), W > 1 (significant compensation needed).
-    float3 W = 1.0f + F0 * ((1.0f - E.x) / max(E.x, 0.001f));
-
-    // Total specular albedo: energy reflected by specular (single + multi scatter)
-    // Used to attenuate diffuse for overall energy preservation
-    float3 specAlbedo = W * (E.x * F0 + E.y * (1.0f - F0));
-
-    // Rec.709 luminance of specular albedo for scalar diffuse attenuation
-    return float4(W, dot(specAlbedo, float3(0.2126f, 0.7152f, 0.0722f)));
+/// Disney Burley diffuse. @ref Burley 2012
+float3 Fd_Burley(float3 albedo, float roughness, float NdotV, float NdotL, float LdotH) {
+    float fd90 = 0.5 + 2.0 * roughness * LdotH * LdotH;
+    float ls = 1.0 + (fd90 - 1.0) * Pow5(1.0 - NdotL);
+    float vs = 1.0 + (fd90 - 1.0) * Pow5(1.0 - NdotV);
+    return albedo * (1.0 / PI) * ls * vs;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Cook-Torrance BRDF Evaluation
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Evaluates Cook-Torrance BRDF for a single light source.
-///
-/// @ref Karis 2013 "Real Shading in Unreal Engine 4" — Cook-Torrance DefaultLit
-/// @ref Burley 2012 — diffuse lobe
-/// @ref Kulla & Conty 2017 + Turquin 2018 — multiscatter compensation
-/// @constants F0_dielectric = 0.04 (IOR ~1.5)
-/// @deviations NONE
-///
-/// Computes the full outgoing radiance from a single analytic light, including
-/// both diffuse (Burley) and specular (GGX) lobes with multiscatter energy
-/// compensation (Kulla-Conty / Turquin 2018).
-///
-/// # Parameters
-/// - N:         world-space surface normal (normalised).
-/// - V:         world-space view direction (normalised, toward camera).
-/// - L:         world-space light direction (normalised, toward light).
-/// - radiance:  incoming light radiance (color * intensity * attenuation).
-/// - albedo:    surface base color (linear).
-/// - metallic:  metallic factor [0,1].
-/// - alpha:     roughness^2 (PBR alpha parameter).
-/// - F0:        reflectance at normal incidence.
-///
-/// # Returns
-/// Outgoing radiance contribution from this light.
+/// Combined BRDF. @ref Karis 2013
 float3 EvaluateBRDF(float3 N, float3 V, float3 L, float3 radiance,
                     float3 albedo, float metallic, float alpha, float3 F0) {
     float3 H = normalize(V + L);
-
-    float NdotL = max(dot(N, L), 0.001f);
-    // clamp to avoid div-by-zero at grazing angles
-    float NdotV = saturate(abs(dot(N, V)) + 1e-5f);
+    float NdotL = max(dot(N, L), 0.001);
+    float NdotV = max(abs(dot(N, V)), 0.001);
     float NdotH = saturate(dot(N, H));
-    float VdotH = saturate(dot(V, H));
+    float LdotH = saturate(dot(L, H));
 
-    // Cook-Torrance specular BRDF: D * Vis * F
-    // D_GGX uses a2 = roughness^2 (alpha squared)
-    // VisibilitySmithGGX uses a2 = Pow4(roughness) = alpha^2
-    // alpha^2 convention per Walter 2007
-    float  D   = DistributionGGX(NdotH, alpha);
-    float  Vis = VisibilitySmithGGX(alpha * alpha, NdotV, NdotL);
-    /// @ref Lagarde 2014 "Moving Frostbite to PBR" — F90 micro-occlusion
-    float  F90 = saturate(50.0f * F0.g);
-    float3 F   = F0 + (F90 - F0) * Pow5(1.0f - VdotH);
+    float  D   = D_GGX(NdotH, alpha);
+    float  Vis = V_SmithGGXCorrelated(alpha * alpha, NdotV, NdotL);
+    float  f90 = saturate(50.0 * F0.g);
+    float3 F   = F_SchlickF90(LdotH, F0, f90);
+    float3 spec = D * Vis * F;
 
-    float3 specular = D * Vis * F;
+    float3 kD = (1.0 - F) * (1.0 - metallic);
+    float3 diff = kD * Fd_Burley(albedo, sqrt(alpha), NdotV, NdotL, LdotH);
 
-    // Energy preservation: standard (1-F) for direct lighting.
-    // Multiscatter compensation is applied only to IBL (deferred_lighting_ps ambient path)
-    // where it matters for rough metals. For direct lights, the standard PoC1-parity
-    // approach (1-F)*(1-metallic) preserves diffuse brightness correctly.
-    // @ref Karis 2013 "Real Shading in Unreal Engine 4" — kD = (1-F)*(1-metallic)
-    float3 kD = (1.0f - F) * (1.0f - metallic);
-
-    // Disney Burley diffuse (roughness-dependent retroreflection)
-    float roughness = sqrt(alpha);
-    float3 diffuse = kD * DiffuseDisneyBurley(albedo, roughness, NdotV, NdotL, VdotH);
-
-    return (diffuse + specular) * radiance * NdotL;
+    return (diff + spec) * radiance * NdotL;
 }
 
-/// Evaluates Cook-Torrance BRDF with per-light SpecularScale and DiffuseScale.
-///
-/// Per-light specular/diffuse scaling for artistic control.
+/// BRDF with per-light scale. @ref Karis 2013
 float3 EvaluateBRDFScaled(float3 N, float3 V, float3 L, float3 radiance,
                           float3 albedo, float metallic, float alpha, float3 F0,
-                          float specularScale, float diffuseScale) {
+                          float specScale, float diffScale) {
     float3 H = normalize(V + L);
-
-    float NdotL = max(dot(N, L), 0.001f);
-    float NdotV = saturate(abs(dot(N, V)) + 1e-5f);
+    float NdotL = max(dot(N, L), 0.001);
+    float NdotV = max(abs(dot(N, V)), 0.001);
     float NdotH = saturate(dot(N, H));
-    float VdotH = saturate(dot(V, H));
+    float LdotH = saturate(dot(L, H));
 
-    float  D   = DistributionGGX(NdotH, alpha);
-    float  Vis = VisibilitySmithGGX(alpha * alpha, NdotV, NdotL);
-    float  F90 = saturate(50.0f * F0.g);
-    float3 F   = F0 + (F90 - F0) * Pow5(1.0f - VdotH);
+    float  D   = D_GGX(NdotH, alpha);
+    float  Vis = V_SmithGGXCorrelated(alpha * alpha, NdotV, NdotL);
+    float  f90 = saturate(50.0 * F0.g);
+    float3 F   = F_SchlickF90(LdotH, F0, f90);
+    float3 spec = D * Vis * F;
 
-    float3 specular = D * Vis * F;
+    float3 kD = (1.0 - F) * (1.0 - metallic);
+    float3 diff = kD * Fd_Burley(albedo, sqrt(alpha), NdotV, NdotL, LdotH);
 
-    // Standard (1-F) energy preservation for direct lights (PoC1 parity)
-    float3 kD = (1.0f - F) * (1.0f - metallic);
-    float roughness = sqrt(alpha);
-    float3 diffuse = kD * DiffuseDisneyBurley(albedo, roughness, NdotV, NdotL, VdotH);
-
-    return (diffuse * diffuseScale + specular * specularScale) * radiance * NdotL;
+    return (diff * diffScale + spec * specScale) * radiance * NdotL;
 }
 
-#endif // PBR_COMMON_HLSLI
+/// Multi-bounce AO. @ref Jimenez 2016
+float3 AOMultiBounce(float ao, float3 c) {
+    float3 a = 2.0404 * c - 0.3324;
+    float3 b = -4.7951 * c + 0.6417;
+    float3 cc = 2.7552 * c + 0.6903;
+    return max(ao, ((ao * a + b) * ao + cc) * ao);
+}
+
+/// ACES tonemap. @ref Narkowicz 2015
+float3 ACESFilm(float3 x) {
+    return saturate((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14));
+}
+
+// Legacy aliases for old shaders that use these names
+#define DistributionGGX D_GGX
+#define VisibilitySmithGGX V_SmithGGXCorrelated
+#define FresnelSchlick F_Schlick
+#define FresnelSchlickRoughness F_SchlickRoughness
+#define DiffuseDisneyBurley(a,r,v,l,h) Fd_Burley(a,r,v,l,h)
+
+#endif

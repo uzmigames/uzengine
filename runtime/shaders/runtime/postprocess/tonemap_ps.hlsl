@@ -283,7 +283,7 @@ float4 main(FSInput input) : SV_Target {
     }
 
     // ── 5. Apply auto-exposure ───────────────────────────────────────────
-    color *= exposure;
+    color *= max(exposure, 0.5);
 
     // ── 5b. Saturation/Contrast (PoC1 parity) ────────────────────────────
     // @ref PoC1 composite.ps.hlsl:100-102 — saturation and contrast grading
