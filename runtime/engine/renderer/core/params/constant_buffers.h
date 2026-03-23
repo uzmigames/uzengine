@@ -259,14 +259,12 @@ struct PerObjectCB {
     float    pomSelfShadow     = 0.0f;  ///< Self-shadow strength. 0 = disabled, 1 = full.
 
     /// Material flags — packed bitfield:
-    ///   bits [1:0] = blend mode:
-    ///     0 = Opaque (default, standard deferred GBuffer path),
-    ///     1 = Masked (alpha test with discard, still deferred),
-    ///     2 = Translucent (alpha blend, forward pass, sorted back-to-front),
-    ///     3 = Additive (additive blend, forward pass, no sorting needed).
-    ///   bit [2] = ORM packed texture mode:
-    ///     0 = separate roughness/metallic/AO textures (default),
-    ///     1 = packed ORM texture in aoIndex (R=AO, G=Roughness, B=Metallic).
+    ///   bits [1:0]   = blend mode (0=Opaque, 1=Masked, 2=Translucent, 3=Additive).
+    ///   bit  [2]     = ORM packed texture mode (0=separate, 1=packed R=AO G=Rough B=Metal).
+    ///   bits [8:15]  = specular * 255 (dielectric reflectance scale, 0.0-1.0).
+    ///   bits [16:23] = envMultiplier * 127.5 (IBL intensity, 0.0-2.0, 128=1.0).
+    ///   bits [24:27] = shadingModelID (EShadingModel, 4-bit, 0-15).
+    ///   bits [28:31] = reserved.
     uint32_t materialFlags = 0;
 };
 

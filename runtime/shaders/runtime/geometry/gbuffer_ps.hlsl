@@ -126,6 +126,7 @@ cbuffer PerObjectCB : register(b2) {
     ///   bit[2]     = ORM packed texture mode
     ///   bits[8:15] = specular * 255 (dielectric reflectance scale, 0.0-1.0)
     ///   bits[16:23]= envMultiplier * 127.5 (IBL intensity, 0.0-2.0, 128=1.0)
+    ///   bits[24:27]= shadingModelID (EShadingModel enum, 4-bit)
     uint     materialFlags;
 };
 
@@ -502,12 +503,19 @@ GBufferOutput main(PSInput input) {
     // @ref UE5 "Material Inputs — Specular" — same 0.08 * specular formula.
     float specular = float((materialFlags >> 8u) & 0xFFu) / 255.0;
 
+    // ── Unpack shading model ID from materialFlags ──
+    // bits[24:27] = EShadingModel enum (4-bit, 0-15).
+    // Encoded into RT3.a (RGBA16F) as: specular + shadingModelID * 16.0.
+    // Deferred lighting decodes: id = floor(a / 16), spec = frac(a / 16) * 16.
+    uint shadingModelID = (materialFlags >> 24u) & 0xFu;
+    float packedSpecSM = specular + float(shadingModelID) * 16.0f;
+
     // ── Write G-Buffer (4-RT layout) ──
     GBufferOutput output;
     output.albedoAO     = float4(albedo, ao);
     output.normalMatPbr = float4(OctEncode(N), metallic, roughness);
     output.positionWS   = float4(input.positionWS, 1.0f);
-    output.emissiveHDR  = float4(emissive, specular);
+    output.emissiveHDR  = float4(emissive, packedSpecSM);
 
     return output;
 }

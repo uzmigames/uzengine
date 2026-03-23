@@ -27,6 +27,8 @@
 
 #pragma once
 
+#include "material_types.h"
+
 #include <cstdint>
 #include <string>
 
@@ -198,6 +200,20 @@ public:
     [[nodiscard]] uint32_t GetAoSrvIndex() const         { return GetTextureSrvIndex("Ao"); }
     [[nodiscard]] uint32_t GetEmissiveSrvIndex() const   { return GetTextureSrvIndex("Emissive"); }
     [[nodiscard]] uint32_t GetOrmSrvIndex() const        { return GetTextureSrvIndex("ORM"); }
+
+    // ── Shading model / domain / blend mode ─────────────────────────────────
+
+    /// Shading model determines the BRDF used in the lighting pass.
+    /// Default: DefaultLit (Cook-Torrance GGX metallic/roughness PBR).
+    [[nodiscard]] virtual EShadingModel GetShadingModel() const { return EShadingModel::DefaultLit; }
+
+    /// Material domain determines which render pass evaluates this material.
+    /// Default: Surface (standard G-buffer or forward geometry).
+    [[nodiscard]] virtual EMaterialDomain GetMaterialDomain() const { return EMaterialDomain::Surface; }
+
+    /// Blend mode determines alpha blending behavior and pass routing.
+    /// Default: Opaque (deferred G-buffer, no blending).
+    [[nodiscard]] virtual EBlendMode GetBlendMode() const { return EBlendMode::Opaque; }
 
     // ── ORM packed mode ─────────────────────────────────────────────────────
 

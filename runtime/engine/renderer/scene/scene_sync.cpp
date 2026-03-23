@@ -235,6 +235,11 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
             const uint32_t specU8 = std::min(255u, static_cast<uint32_t>(mat->GetSpecular() * 255.0f));
             const uint32_t envU8  = std::min(255u, static_cast<uint32_t>(mat->GetEnvMultiplier() * 127.5f));
             cmd.materialFlags |= (specU8 << 8) | (envU8 << 16);
+
+            // Shading model from material — packed into materialFlags bits[24:27].
+            cmd.shadingModel = mat->GetShadingModel();
+            const uint32_t smId = static_cast<uint32_t>(mat->GetShadingModel()) & 0xFu;
+            cmd.materialFlags |= (smId << 24);
         } else {
             // No material assigned — use neutral defaults (no emission).
             cmd.emissiveColorR    = 0.0f;

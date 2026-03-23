@@ -7,6 +7,7 @@
 #pragma once
 
 #include "mat4.h"
+#include "engine/renderer/material/material_types.h"
 #include "engine/rhi/rhi_types.h"  // RHITextureHandle
 
 #include <algorithm>
@@ -120,6 +121,11 @@ struct DrawCommand {
 
     /// Number of active material parameter float4 slots (0-16).
     uint32_t materialParamCount = 0;
+
+    /// Shading model for this draw command. Determines which BRDF path the
+    /// lighting shader evaluates. Written to GBuffer for deferred dispatch.
+    /// Default: DefaultLit (standard Cook-Torrance GGX PBR).
+    EShadingModel shadingModel = EShadingModel::DefaultLit;
 
     /// Primitive mobility for shadow cache filtering.
     ///

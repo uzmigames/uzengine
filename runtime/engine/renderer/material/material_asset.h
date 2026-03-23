@@ -148,6 +148,20 @@ struct Material : public MaterialInterface {
     float uvOffsetX = 0.0f;   ///< Texture offset X.
     float uvOffsetY = 0.0f;   ///< Texture offset Y.
 
+    // ── Shading model / domain / blend mode ─────────────────────────────
+
+    /// Shading model for this material. Determines which BRDF is evaluated
+    /// in the lighting pass. Default: DefaultLit (Cook-Torrance GGX PBR).
+    EShadingModel shadingModel = EShadingModel::DefaultLit;
+
+    /// Material domain. Determines which render pass evaluates this material.
+    /// Default: Surface (standard G-buffer or forward geometry).
+    EMaterialDomain materialDomain = EMaterialDomain::Surface;
+
+    /// Blend mode. Determines alpha blending and pass routing.
+    /// Default: Opaque (deferred G-buffer, no blending).
+    EBlendMode blendMode = EBlendMode::Opaque;
+
     // ── Rendering flags ──────────────────────────────────────────────────
 
     /// When true, disables backface culling. Used for foliage, cloth, thin geometry.
@@ -275,6 +289,10 @@ struct Material : public MaterialInterface {
     [[nodiscard]] bool IsTwoSided() const override { return twoSided; }
     [[nodiscard]] bool IsAlphaTest() const override { return alphaTest; }
     [[nodiscard]] float GetAlphaClipThreshold() const override { return alphaClipThreshold; }
+
+    [[nodiscard]] EShadingModel GetShadingModel() const override { return shadingModel; }
+    [[nodiscard]] EMaterialDomain GetMaterialDomain() const override { return materialDomain; }
+    [[nodiscard]] EBlendMode GetBlendMode() const override { return blendMode; }
 
     [[nodiscard]] bool IsORM() const override { return useORM; }
     [[nodiscard]] bool IsGpuResourcesLoaded() const override { return gpuResourcesLoaded; }

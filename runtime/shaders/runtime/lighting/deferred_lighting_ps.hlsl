@@ -979,19 +979,22 @@ float4 main(FSInput input) : SV_Target {
     float  metallic  = normalPacked.b;
     float  roughness = normalPacked.a;
 
-    // ── Read per-material specular from emissive RT alpha channel ──
-    // specular is the dielectric reflectance scale (0-1). F0 = 0.08 * specular.
-    // Default 0.5 → F0 = 0.04 (standard IOR ~1.5 for most dielectrics).
-    // @ref UE5 "Material Inputs — Specular" — same 0.08 * specular formula.
-    float specular = 0.5f;
+    // ── Read per-material specular + shading model from emissive RT alpha ──
+    // RT3.a encodes: specular + shadingModelID * 16.0
+    // Decode: shadingModelID = floor(a / 16), specular = frac(a / 16) * 16
+    // @ref UE5 "Material Inputs — Specular" — F0 = 0.08 * specular.
+    float packedSpecSM = 0.5f;
 #ifdef UZ_BINDLESS
     {
         Texture2D<float4> gbEmissiveEarly = ResourceDescriptorHeap[gBufIndices.emissiveIdx];
-        specular = gbEmissiveEarly.Load(int3(gbPixel, 0)).a;
+        packedSpecSM = gbEmissiveEarly.Load(int3(gbPixel, 0)).a;
     }
 #else
-    specular = gbufferEmissive.Load(int3(gbPixel, 0)).a;
+    packedSpecSM = gbufferEmissive.Load(int3(gbPixel, 0)).a;
 #endif
+
+    uint shadingModelID = uint(floor(packedSpecSM / 16.0f));
+    float specular = (packedSpecSM - float(shadingModelID) * 16.0f);
 
     // ── GTAO screen-space ambient occlusion ──
     // GTAO provides screen-space occlusion for contact shadows and direct light
@@ -1024,7 +1027,28 @@ float4 main(FSInput input) : SV_Target {
     float3 worldPos = ReconstructWorldPosition(uv, depth);
 #endif
 
-    // ── PBR parameter preparation ──
+    // ── Unlit early-out (shadingModelID == 0) ──
+    // Unlit surfaces skip ALL lighting — output emissive color directly.
+    // No shadows, no BRDF, no IBL. Pure self-illumination.
+    if (shadingModelID == 0) {
+        float3 unlitEmissive = float3(0.0f, 0.0f, 0.0f);
+#ifdef UZ_BINDLESS
+        {
+            Texture2D<float4> gbEmissiveUnlit = ResourceDescriptorHeap[gBufIndices.emissiveIdx];
+            unlitEmissive = gbEmissiveUnlit.Load(int3(gbPixel, 0)).rgb;
+        }
+#else
+        unlitEmissive = gbufferEmissive.Load(int3(gbPixel, 0)).rgb;
+#endif
+        // Unlit uses albedo as base color, tinted by emissive if present.
+        // If no emissive texture, just output the albedo directly.
+        float3 unlitColor = (dot(unlitEmissive, float3(1,1,1)) > 0.001f)
+            ? unlitEmissive
+            : albedo;
+        return float4(unlitColor, 1.0f);
+    }
+
+    // ── PBR parameter preparation (DefaultLit and all lit models) ──
     float3 V = normalize(cameraPos.xyz - worldPos);
 
     // Perceptual roughness -> alpha: squaring linearises the perceived response
