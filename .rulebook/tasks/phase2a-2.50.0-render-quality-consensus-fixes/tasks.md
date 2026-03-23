@@ -48,6 +48,14 @@
 - [x] 5b.3 Deferred lighting PS reads specular from RT3.a, uses F0=0.08*specular instead of hardcoded 0.04. Removed `specDielectricScale` hack and `metallic=0.0` DIAG line.
 - [x] 5b.4 fbx_test mushroom set to specular=0.25 (F0=0.02, organic material).
 
+## 5c. Auto-Exposure Stability + Shadow Strength Fix
+
+- [x] 5c.1 Fixed auto-exposure oscillation causing gold sphere flickering: MinBrightness 0.3→0.1, MaxBrightness 0.6→4.0 (40x dynamic range vs 2x). Root cause: 2x exposure range caused rapid oscillation when bright metallic specular shifted avg luminance.
+- [x] 5c.2 Fixed adaptation speeds to match reference: SpeedUp 1.5→3.0, SpeedDown 0.7→1.0 (exposure_average_cs.hlsl). Faster adaptation prevents visible exposure hunting.
+- [x] 5c.3 Added exposure bias +1.0 EV to compensate for bright sky dominating histogram with wider range. Without bias, widened range over-darkened ground-level objects.
+- [x] 5c.4 Increased shadow ambient floor: skyLightMinAmbient 0.15→0.25 (frame_setup.cpp). Shadow regions now have visible ambient fill instead of near-black.
+- [x] 5c.5 Visual verification: gold sphere consistent across 3 camera positions, FBX mushroom stable, shadows softer.
+
 ## 6. Documentation
 
 - [x] 6.1 Analysis docs committed (11 files, 6800+ lines in docs/analysis/renderer/).
