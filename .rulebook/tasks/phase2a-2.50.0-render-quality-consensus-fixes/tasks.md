@@ -41,6 +41,13 @@
 - [x] 5.7 Multi-position verification: default, z=700, z=1500 all render correctly with proper exposure.
 - [x] 5.8 Performance: ~28 FPS at 1080p on RTX 4090 (acceptable — clouds + SSR temporal add cost).
 
+## 5b. Per-Material Specular Parameter (desaturation fix)
+
+- [x] 5b.1 Add `specular` and `envMultiplier` to MaterialInterface/Material/MaterialInstance. specular (0-1, default 0.5) controls F0=0.08*specular. envMultiplier (0-2, default 1.0) controls per-material IBL intensity. Both packed into materialFlags bits[8:15]/[16:23].
+- [x] 5b.2 GBuffer PS unpacks specular from materialFlags, writes to RT3.a (emissive alpha channel).
+- [x] 5b.3 Deferred lighting PS reads specular from RT3.a, uses F0=0.08*specular instead of hardcoded 0.04. Removed `specDielectricScale` hack and `metallic=0.0` DIAG line.
+- [x] 5b.4 fbx_test mushroom set to specular=0.25 (F0=0.02, organic material).
+
 ## 6. Documentation
 
 - [x] 6.1 Analysis docs committed (11 files, 6800+ lines in docs/analysis/renderer/).

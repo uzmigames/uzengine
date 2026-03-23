@@ -115,6 +115,17 @@ public:
     [[nodiscard]] virtual float GetUvOffsetX() const           { return GetScalarParam("UvOffsetX", 0.0f); }
     [[nodiscard]] virtual float GetUvOffsetY() const           { return GetScalarParam("UvOffsetY", 0.0f); }
 
+    /// Dielectric specular reflectance scale. Controls F0 for non-metallic surfaces:
+    /// F0 = 0.08 * specular. Default 0.5 produces F0 = 0.04 (IOR ~1.5).
+    /// Range [0, 1]. 0 = no specular reflection, 1 = F0 = 0.08 (IOR ~1.8).
+    /// @ref UE5 "Material Inputs — Specular" — same 0.08 * specular formula.
+    [[nodiscard]] virtual float GetSpecular() const            { return GetScalarParam("Specular", 0.5f); }
+
+    /// Per-material IBL intensity multiplier. 0 = no environment lighting,
+    /// 1 = full skylight intensity, >1 = boosted. Packed into materialFlags
+    /// bits[16:23] with 8-bit precision (range 0.0-2.0, 128 = 1.0).
+    [[nodiscard]] virtual float GetEnvMultiplier() const       { return GetScalarParam("EnvMultiplier", 1.0f); }
+
     /// Base color tint — multiplied with the albedo texture sample.
     /// Returns (R, G, B) in linear sRGB. Default (1,1,1) = no tint.
     virtual void GetBaseColorTint(float& r, float& g, float& b) const {

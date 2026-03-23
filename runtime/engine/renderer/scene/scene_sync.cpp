@@ -13,6 +13,7 @@
 #include "world.h"
 #include "material_interface.h"
 
+#include <algorithm>
 #include <cmath>
 #include <string>
 
@@ -226,12 +227,25 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
 
             mat->GetEmissiveColor(cmd.emissiveColorR, cmd.emissiveColorG, cmd.emissiveColorB);
             cmd.emissiveIntensity = mat->GetEmissiveIntensity();
+
+            // Pack specular and envMultiplier into materialFlags unused bits.
+            // bits[8:15]  = specular * 255 (range 0.0-1.0, 8-bit precision)
+            // bits[16:23] = envMultiplier * 127.5 (range 0.0-2.0, 128 = 1.0)
+            // @ref UE5 "Material Inputs — Specular" — F0 = 0.08 * specular
+            const uint32_t specU8 = std::min(255u, static_cast<uint32_t>(mat->GetSpecular() * 255.0f));
+            const uint32_t envU8  = std::min(255u, static_cast<uint32_t>(mat->GetEnvMultiplier() * 127.5f));
+            cmd.materialFlags |= (specU8 << 8) | (envU8 << 16);
         } else {
             // No material assigned — use neutral defaults (no emission).
             cmd.emissiveColorR    = 0.0f;
             cmd.emissiveColorG    = 0.0f;
             cmd.emissiveColorB    = 0.0f;
             cmd.emissiveIntensity = 0.0f;
+
+            // Default specular=0.5 (F0=0.04) and envMultiplier=1.0 for unassigned materials.
+            constexpr uint32_t kDefaultSpecU8 = 128; // 0.5 * 255 ≈ 128
+            constexpr uint32_t kDefaultEnvU8  = 128; // 1.0 * 127.5 ≈ 128
+            cmd.materialFlags |= (kDefaultSpecU8 << 8) | (kDefaultEnvU8 << 16);
         }
 
         outDrawList.Add(cmd);

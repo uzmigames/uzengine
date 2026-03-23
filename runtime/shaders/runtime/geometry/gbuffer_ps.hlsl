@@ -10,7 +10,7 @@
 /// - SV_Target0: AlbedoAO     (R8G8B8A8_UNORM)  — rgb = base color (linear), a = AO
 /// - SV_Target1: NormalMatPbr  (R8G8B8A8_UNORM)  — rg = octahedral normal, b = metallic, a = roughness
 /// - SV_Target2: PositionWS    (R32G32B32A32_FLOAT) — xyz = world pos, w = 1
-/// - SV_Target3: Emissive      (R16G16B16A16_FLOAT) — rgb = HDR emissive color, a = unused
+/// - SV_Target3: Emissive      (R16G16B16A16_FLOAT) — rgb = HDR emissive color, a = specular (0-1)
 ///
 /// # Texture Maps (all optional — index 0 = use default value)
 /// - albedoIndex:    BaseColor map (sRGB) -> linear albedo
@@ -44,7 +44,7 @@ struct GBufferOutput {
     float4 albedoAO     : SV_Target0; ///< rgb = base color (linear), a = ambient occlusion
     float4 normalMatPbr : SV_Target1; ///< rg = octahedral-encoded normal, b = metallic, a = roughness
     float4 positionWS   : SV_Target2; ///< xyz = world-space position (debug / reconstruction verification), w = 1
-    float4 emissiveHDR  : SV_Target3; ///< rgb = HDR emissive color (can be > 1.0 for bloom), a = unused
+    float4 emissiveHDR  : SV_Target3; ///< rgb = HDR emissive color (can be > 1.0 for bloom), a = specular (0-1)
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -121,7 +121,11 @@ cbuffer PerObjectCB : register(b2) {
     // materialFlags at the same offset (252) as the C++ PerObjectCB layout.
     float    _pomPad[7];
 #endif
-    /// Material flags: bits[1:0]=blend mode (0-3), bit[2]=ORM packed texture.
+    /// Material flags packed bitfield:
+    ///   bits[1:0]  = blend mode (0=Opaque, 1=Masked, 2=Translucent, 3=Additive)
+    ///   bit[2]     = ORM packed texture mode
+    ///   bits[8:15] = specular * 255 (dielectric reflectance scale, 0.0-1.0)
+    ///   bits[16:23]= envMultiplier * 127.5 (IBL intensity, 0.0-2.0, 128=1.0)
     uint     materialFlags;
 };
 
@@ -492,12 +496,18 @@ GBufferOutput main(PSInput input) {
         }
     }
 
+    // ── Unpack per-material specular from materialFlags ──
+    // bits[8:15] = specular * 255 → dielectric reflectance scale (0.0-1.0).
+    // F0 = 0.08 * specular. Default 0.5 → F0 = 0.04 (standard IOR ~1.5).
+    // @ref UE5 "Material Inputs — Specular" — same 0.08 * specular formula.
+    float specular = float((materialFlags >> 8u) & 0xFFu) / 255.0;
+
     // ── Write G-Buffer (4-RT layout) ──
     GBufferOutput output;
     output.albedoAO     = float4(albedo, ao);
     output.normalMatPbr = float4(OctEncode(N), metallic, roughness);
     output.positionWS   = float4(input.positionWS, 1.0f);
-    output.emissiveHDR  = float4(emissive, 0.0f);
+    output.emissiveHDR  = float4(emissive, specular);
 
     return output;
 }

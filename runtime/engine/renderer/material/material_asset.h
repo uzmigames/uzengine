@@ -117,6 +117,18 @@ struct Material : public MaterialInterface {
     /// Used only for translucent/masked blend modes.
     float opacity = 1.0f;
 
+    /// Dielectric specular reflectance scale. F0 = 0.08 * specular.
+    /// Default 0.5 produces F0 = 0.04 (standard IOR ~1.5 for most dielectrics).
+    /// Range [0, 1]. Organic materials (skin, fabric, wood) typically use 0.25-0.5.
+    /// @ref UE5 "Material Inputs — Specular" — same 0.08 * specular formula.
+    float specular = 0.5f;
+
+    /// Per-material IBL intensity multiplier. Controls how much environment
+    /// lighting (sky light, reflection probes) affects this surface.
+    /// 0 = no IBL, 1 = full skylight contribution (default), >1 = boosted.
+    /// Packed into materialFlags bits[16:23] with range 0.0-2.0.
+    float envMultiplier = 1.0f;
+
     // ── Emissive parameters ──────────────────────────────────────────────
 
     /// Emissive tint color (linear RGB). Default (0,0,0) = no emission.
@@ -181,6 +193,8 @@ struct Material : public MaterialInterface {
         if (name == "UvOffsetX")           return uvOffsetX;
         if (name == "UvOffsetY")           return uvOffsetY;
         if (name == "AlphaClipThreshold")  return alphaClipThreshold;
+        if (name == "Specular")            return specular;
+        if (name == "EnvMultiplier")       return envMultiplier;
         return defaultVal;
     }
 
@@ -243,6 +257,8 @@ struct Material : public MaterialInterface {
     [[nodiscard]] float GetUvScaleY() const override            { return uvScaleY; }
     [[nodiscard]] float GetUvOffsetX() const override           { return uvOffsetX; }
     [[nodiscard]] float GetUvOffsetY() const override           { return uvOffsetY; }
+    [[nodiscard]] float GetSpecular() const override            { return specular; }
+    [[nodiscard]] float GetEnvMultiplier() const override       { return envMultiplier; }
 
     void GetBaseColorTint(float& r, float& g, float& b) const override {
         r = baseColorTintR;

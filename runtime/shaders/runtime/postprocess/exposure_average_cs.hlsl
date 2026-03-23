@@ -32,8 +32,8 @@ cbuffer ExposureParams : register(b0)
 /// defaults — hardcoded to stay within root constant budget
 /// @ref Reinhard et al. 2002 "Photographic Tone Reproduction" — auto-exposure defaults
 /// AutoExposureSpeedUp = 3.0f, SpeedDown = 1.0f, LowPercent = 10.0f, HighPercent = 90.0f
-static const float g_SpeedUp     = 3.0;   // f-stops/sec when LogDiff > 0 (target brighter than current)
-static const float g_SpeedDown   = 1.0;   // f-stops/sec when LogDiff <= 0 (target darker than current)
+static const float g_SpeedUp     = 1.5;   // f-stops/sec when LogDiff > 0 (target brighter than current)
+static const float g_SpeedDown   = 0.7;   // f-stops/sec when LogDiff <= 0 (target darker than current)
 static const float g_LowPercent  = 10.0;  // Equivalent: AutoExposureLowPercent = 10
 static const float g_HighPercent = 90.0;  // Equivalent: AutoExposureHighPercent = 90
 

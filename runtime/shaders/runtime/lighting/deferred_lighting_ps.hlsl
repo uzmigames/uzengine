@@ -14,7 +14,7 @@
 /// - AlbedoAO     (R8G8B8A8_UNORM) — rgb = base color (linear), a = AO
 /// - NormalMatPbr  (R8G8B8A8_UNORM) — rg = octahedral normal, b = metallic, a = roughness
 /// - Depth         (R32_FLOAT SRV)  — hardware depth sampled as float
-/// - Emissive      (R16G16B16A16_FLOAT) — rgb = HDR emissive, a = unused
+/// - Emissive      (R16G16B16A16_FLOAT) — rgb = HDR emissive, a = specular (0-1)
 ///
 /// # Constant Buffers
 /// - b0: Root constants (UZ_BINDLESS only) — 3 x uint32 SRV descriptor indices
@@ -953,6 +953,20 @@ float4 main(FSInput input) : SV_Target {
     float  metallic  = normalPacked.b;
     float  roughness = normalPacked.a;
 
+    // ── Read per-material specular from emissive RT alpha channel ──
+    // specular is the dielectric reflectance scale (0-1). F0 = 0.08 * specular.
+    // Default 0.5 → F0 = 0.04 (standard IOR ~1.5 for most dielectrics).
+    // @ref UE5 "Material Inputs — Specular" — same 0.08 * specular formula.
+    float specular = 0.5f;
+#ifdef UZ_BINDLESS
+    {
+        Texture2D<float4> gbEmissiveEarly = ResourceDescriptorHeap[gBufIndices.emissiveIdx];
+        specular = gbEmissiveEarly.Sample(linearSampler, uv).a;
+    }
+#else
+    specular = gbufferEmissive.Sample(linearSampler, uv).a;
+#endif
+
     // ── GTAO screen-space ambient occlusion ──
     // GTAO provides screen-space occlusion for contact shadows and direct light
     // micro-shadow. Material AO (from ORM texture) is used for ambient IBL.
@@ -990,8 +1004,11 @@ float4 main(FSInput input) : SV_Target {
     // Perceptual roughness -> alpha: squaring linearises the perceived response
     float alpha = max(roughness * roughness, MIN_ROUGHNESS * MIN_ROUGHNESS);
 
-    // F0: dielectrics use 0.04 (IOR ~1.5), metals use albedo as tinted reflectance
-    float3 F0 = lerp(float3(0.04f, 0.04f, 0.04f), albedo, metallic);
+    // F0: dielectrics use 0.08 * specular (default 0.04 when specular=0.5),
+    // metals use albedo as tinted reflectance.
+    // @ref UE5 "Material Inputs — Specular" — F0 = 0.08 * specular for dielectrics.
+    float dielectricF0 = 0.08f * specular;
+    float3 F0 = lerp(float3(dielectricF0, dielectricF0, dielectricF0), albedo, metallic);
 
     // ── Cascaded shadow map ──
     float viewDepth = length(worldPos - cameraPos.xyz);
@@ -1282,7 +1299,13 @@ float4 main(FSInput input) : SV_Target {
         float horizon = saturate(1.0f + dot(R, N));
         specularIBL *= horizon * horizon;
 
-        // ── TEST 4: Specular occlusion ENABLED ──
+        // ── Per-material specular IBL scale ──
+        // The specular parameter (0-1, default 0.5) controls both F0 (via 0.08*specular)
+        // and overall specular IBL brightness. specular=0.5 → 1.0× (default, unchanged).
+        // Lower values reduce specular reflections for matte organic materials.
+        specularIBL *= specular * 2.0f;
+
+        // ── Specular occlusion ──
         float specOcc = saturate(pow(NdotV + ao, exp2(-16.0f * roughness - 1.0f)) - 1.0f + ao);
 
         // ── SSGI compositing ──────────────────────────────────────────
@@ -1388,13 +1411,9 @@ float4 main(FSInput input) : SV_Target {
 #endif
         }
 
-        // ── Dielectric specular IBL attenuation ──
-        // For non-metallic rough surfaces, the achromatic specular IBL
-        // overwhelms the colored diffuse IBL, causing desaturation.
-        // Scale: metals get full specular, smooth dielectrics get partial,
-        // rough dielectrics get minimal.
-        float specMetallicScale = lerp(0.3f, 1.0f, metallic);
-        specularIBL *= specMetallicScale;
+        // Per-material specular reflectance is now handled via the `specular` parameter
+        // packed in the emissive RT alpha. F0 = 0.08 * specular controls both direct
+        // and IBL specular intensity. No separate dielectric attenuation needed.
 
         // Capture ALL intermediates for diagnostic grid (shadowDebugMode == 2)
         dbg_irradiance = irradiance;

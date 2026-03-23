@@ -58,6 +58,12 @@ void FBXTest::OnStart() {
     characterMat_.normalPath = "assets/textures/MushroomMonster_Low_MushroomMesh_Normal.png";
     characterMat_.ormPath    = "assets/textures/MushroomMonster_Low_MushroomMesh_ORM.png";
     characterMat_.useORM     = true;
+    // ORM texture B channel has incorrect metallic (0.9+) for this organic mesh.
+    // Override to 0 — mushroom is a dielectric organic material, not metal.
+    characterMat_.metallicMultiplier = 0.0f;
+    // Organic material: reduced dielectric specular to prevent IBL desaturation.
+    // specular=0.25 → F0 = 0.08 * 0.25 = 0.02 (suitable for organic surfaces).
+    characterMat_.specular = 0.25f;
 
     // ── Create character entity ──────────────────────────────────────────
     // meshPath uses .fbx — SceneRenderer detects it and routes through LoadFbx

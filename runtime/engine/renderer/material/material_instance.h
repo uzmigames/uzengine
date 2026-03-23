@@ -109,6 +109,9 @@ struct MaterialInstance : public MaterialInterface {
         uvOffsetY_ = y; hasUvOffsetY_ = true;
     }
 
+    void SetSpecular(float v) noexcept          { specular_ = v;      hasSpecular_ = true; }
+    void SetEnvMultiplier(float v) noexcept    { envMultiplier_ = v; hasEnvMultiplier_ = true; }
+
     void SetTwoSided(bool v) noexcept     { twoSided_ = v;     hasTwoSided_ = true; }
     void SetAlphaTest(bool v) noexcept     { alphaTest_ = v;     hasAlphaTest_ = true; }
     void SetAlphaClipThreshold(float v) noexcept { alphaClipThreshold_ = v; hasAlphaClipThreshold_ = true; }
@@ -132,6 +135,8 @@ struct MaterialInstance : public MaterialInterface {
     void ClearEmissiveIntensity() noexcept   { hasEmissiveIntensity_ = false; }
     void ClearUvScale() noexcept             { hasUvScaleX_ = hasUvScaleY_ = false; }
     void ClearUvOffset() noexcept            { hasUvOffsetX_ = hasUvOffsetY_ = false; }
+    void ClearSpecular() noexcept             { hasSpecular_ = false; }
+    void ClearEnvMultiplier() noexcept       { hasEnvMultiplier_ = false; }
     void ClearTwoSided() noexcept            { hasTwoSided_ = false; }
     void ClearAlphaTest() noexcept           { hasAlphaTest_ = false; }
     void ClearAlphaClipThreshold() noexcept  { hasAlphaClipThreshold_ = false; }
@@ -151,6 +156,7 @@ struct MaterialInstance : public MaterialInterface {
         hasEmissiveColorR_ = hasEmissiveColorG_ = hasEmissiveColorB_ = false;
         hasEmissiveIntensity_ = false;
         hasUvScaleX_ = hasUvScaleY_ = hasUvOffsetX_ = hasUvOffsetY_ = false;
+        hasSpecular_ = hasEnvMultiplier_ = false;
         hasTwoSided_ = hasAlphaTest_ = hasAlphaClipThreshold_ = false;
         hasAlbedoPath_ = hasNormalPath_ = hasRoughnessPath_ = false;
         hasMetallicPath_ = hasAoPath_ = hasEmissivePath_ = false;
@@ -184,6 +190,8 @@ struct MaterialInstance : public MaterialInterface {
         if (hasTwoSided_)            ++count;
         if (hasAlphaTest_)           ++count;
         if (hasAlphaClipThreshold_)  ++count;
+        if (hasSpecular_)            ++count;
+        if (hasEnvMultiplier_)       ++count;
         return count;
     }
 
@@ -204,6 +212,8 @@ struct MaterialInstance : public MaterialInterface {
         if (name == "UvOffsetX")           return hasUvOffsetX_           ? uvOffsetX_           : parent_->GetScalarParam(name, defaultVal);
         if (name == "UvOffsetY")           return hasUvOffsetY_           ? uvOffsetY_           : parent_->GetScalarParam(name, defaultVal);
         if (name == "AlphaClipThreshold")  return hasAlphaClipThreshold_  ? alphaClipThreshold_  : parent_->GetScalarParam(name, defaultVal);
+        if (name == "Specular")            return hasSpecular_            ? specular_            : parent_->GetScalarParam(name, defaultVal);
+        if (name == "EnvMultiplier")       return hasEnvMultiplier_       ? envMultiplier_       : parent_->GetScalarParam(name, defaultVal);
         return parent_ ? parent_->GetScalarParam(name, defaultVal) : defaultVal;
     }
 
@@ -336,6 +346,12 @@ struct MaterialInstance : public MaterialInterface {
     [[nodiscard]] float GetAlphaClipThreshold() const override {
         return hasAlphaClipThreshold_ ? alphaClipThreshold_ : (parent_ ? parent_->GetAlphaClipThreshold() : 0.3333f);
     }
+    [[nodiscard]] float GetSpecular() const override {
+        return hasSpecular_ ? specular_ : (parent_ ? parent_->GetSpecular() : 0.5f);
+    }
+    [[nodiscard]] float GetEnvMultiplier() const override {
+        return hasEnvMultiplier_ ? envMultiplier_ : (parent_ ? parent_->GetEnvMultiplier() : 1.0f);
+    }
 
     [[nodiscard]] bool IsGpuResourcesLoaded() const override {
         return parent_ ? parent_->IsGpuResourcesLoaded() : false;
@@ -388,6 +404,9 @@ private:
     float uvScaleY_  = 1.0f; bool hasUvScaleY_  = false;
     float uvOffsetX_ = 0.0f; bool hasUvOffsetX_ = false;
     float uvOffsetY_ = 0.0f; bool hasUvOffsetY_ = false;
+
+    float specular_       = 0.5f; bool hasSpecular_       = false;
+    float envMultiplier_  = 1.0f; bool hasEnvMultiplier_  = false;
 
     bool twoSided_ = false;     bool hasTwoSided_ = false;
     bool alphaTest_ = false;    bool hasAlphaTest_ = false;
