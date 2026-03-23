@@ -158,6 +158,12 @@ void PBRTest::OnStart() {
     LoadPbrMaterial(grassMat_,         vfs, "assets/materials/grass/grass.uzmat");
     LoadPbrMaterial(sandMat_,          vfs, "assets/materials/sand/sand.uzmat");
 
+    // ── Unlit test material — flat red, no lighting response ──
+    unlitMat_.shadingModel = EShadingModel::Unlit;
+    unlitMat_.baseColorTintR = 1.0f;
+    unlitMat_.baseColorTintG = 0.2f;
+    unlitMat_.baseColorTintB = 0.1f;
+
     // ── Ground material from graph-based .uzmat ───────────────────────
     //
     // Load the MI_ProcGrid material graph, compile it to HLSL, then bake
@@ -249,7 +255,7 @@ void PBRTest::OnStart() {
     // ── Material array for sphere assignment ─────────────────────────────
     Material* materials[kSphereCount] = {
         &goldMat_, &metalMat_, &rattanMat_, &quartziteMat_, &stoneBrickMat_,
-        &concreteMat_, &metalCorrodedMat_, &grassMat_, &sandMat_
+        &concreteMat_, &metalCorrodedMat_, &grassMat_, &sandMat_, &unlitMat_
     };
 
     // ── Create spheres ──
@@ -270,8 +276,8 @@ void PBRTest::OnStart() {
             scene.SetPosition({x, -200.f, 80.f});
             scene.SetScale({80.f, 80.f, 80.f});
         } else {
-            // Front row: 4 spheres, radius=120cm
-            float x = -450.f + static_cast<float>(i - 5) * 300.f;
+            // Front row: 5 spheres, radius=120cm (includes Unlit test sphere)
+            float x = -600.f + static_cast<float>(i - 5) * 300.f;
             scene.SetPosition({x, 200.f, 120.f});
             scene.SetScale({120.f, 120.f, 120.f});
         }

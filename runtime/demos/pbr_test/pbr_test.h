@@ -29,7 +29,7 @@ public:
     void OnStop() override;
 
 private:
-    static constexpr int kSphereCount = 9;
+    static constexpr int kSphereCount = 10;
 
     Entity spheres_[kSphereCount]{};
     Entity ground_{};
@@ -49,6 +49,7 @@ private:
     Material sandMat_;
     Material quartziteMat_;
     Material stoneBrickMat_;
+    Material unlitMat_;           ///< Unlit test material — flat red, no lighting.
 
     MaterialInstance wetBrickInst_;
     Material groundMat_;

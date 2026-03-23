@@ -110,8 +110,8 @@ cbuffer PerObjectCB : register(b2) {
     float    matOpacity;            // material opacity (1=opaque)                           [220..223]
     // ── POM region (offset 224, not used by forward shader) ──
     float    _pomRegion[7];         //                                                      [224..251]
-    /// Material flags: bits[1:0]=blend mode (0-3), bit[2]=ORM packed texture.
-    uint     materialFlags;         // bits[1:0]=blend, bit[2]=ORM                          [252..255]
+    /// Material flags: bits[1:0]=blend, bit[2]=ORM, bits[24:27]=shadingModelID.
+    uint     materialFlags;         // bits[1:0]=blend, bit[2]=ORM, [24:27]=SM              [252..255]
 };
 
 /// Cascaded shadow map parameters — must match C++ ShadowDataCB struct exactly.
@@ -170,6 +170,9 @@ SamplerComparisonState shadowSampler : register(s1);
 // Note: [earlydepthstencil] omitted to support translucent/additive blend modes.
 // The depth prepass handles early Z for opaque geometry.
 float4 main(PSInput input) : SV_Target {
+
+    // ── Shading model dispatch ──
+    uint shadingModelID = (materialFlags >> 24u) & 0xFu;
 
     // ── Material parameters (defaults when no texture is bound) ──
     float3 albedo    = float3(1.0f, 1.0f, 1.0f);
@@ -264,12 +267,22 @@ float4 main(PSInput input) : SV_Target {
         N = normalize(mul(normalTS, TBN));
     }
 
+    // ── Unlit early-out (shadingModelID == 0) ──
+    // Unlit surfaces skip ALL lighting — output albedo * baseColorTint or emissive.
+    if (shadingModelID == 0) {
+        float3 unlitColor = albedo * baseColorTint;
+        if (dot(emissive, float3(1,1,1)) > 0.001f) {
+            unlitColor = emissive;
+        }
+        return float4(unlitColor, matOpacity);
+    }
+
     float3 V = normalize(cameraPos.xyz - input.positionWS);
 
     // NdotV depends only on N and V — computed once, shared across all lights
     float NdotV = max(dot(N, V), 0.001f);
 
-    // ── PBR parameter preparation ──
+    // ── PBR parameter preparation (DefaultLit and all lit models) ──
 
     // Perceptual roughness → alpha: squaring linearises the perceived roughness
     // response and is standard practice (Disney PBR, UE4 Karis 2013).
