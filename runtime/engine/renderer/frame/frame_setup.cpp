@@ -38,7 +38,7 @@
 
 // ── CVars ────────────────────────────────────────────────────────────────
 static auto* cv_SkyLightIntensity  = UZ_CVAR_FLOAT("r.SkyLight.Intensity", 1.0f, "IBL ambient multiplier", 0.f, 20.f);
-static auto* cv_SkyLightMinAmbient = UZ_CVAR_FLOAT("r.SkyLight.MinAmbient", 0.15f, "Minimum ambient floor", 0.f, 1.f);
+static auto* cv_SkyLightMinAmbient = UZ_CVAR_FLOAT("r.SkyLight.MinAmbient", 0.25f, "Minimum ambient floor", 0.f, 1.f);
 static auto* cv_ContactShadowLen   = UZ_CVAR_FLOAT("r.ContactShadow.Length", 0.03f, "Contact shadow ray length", 0.f, 0.2f);
 static auto* cv_FilmGrain          = UZ_CVAR_FLOAT("r.FilmGrain", 0.f, "Film grain intensity", 0.f, 1.f);
 static auto* cv_Vignette           = UZ_CVAR_FLOAT("r.Vignette", 0.4f, "Vignette intensity", 0.f, 2.f);

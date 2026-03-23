@@ -1292,18 +1292,18 @@ float4 main(FSInput input) : SV_Target {
         float  Ems    = 1.0f - Ess;
         float3 Favg   = F0 + (1.0f - F0) / 21.0f;
         float3 FmsEms = Ems * FssEss * Favg / (1.0f - Favg * Ems);
-        specularIBL += FmsEms * irradiance * 0.5f;
+        // @ref Kulla & Conty 2017 — full multi-scatter energy recovery (no 0.5 damping).
+        // Critical for rough metals where Ems can reach 0.3+, recovering 10-15% lost energy.
+        specularIBL += FmsEms * irradiance;
 
         // ── Horizon occlusion (squared, PoC1 parity) ──
         // @ref Marmoset "Horizon Occlusion for Normal Mapped Reflections"
         float horizon = saturate(1.0f + dot(R, N));
         specularIBL *= horizon * horizon;
 
-        // ── Per-material specular IBL scale ──
-        // The specular parameter (0-1, default 0.5) controls both F0 (via 0.08*specular)
-        // and overall specular IBL brightness. specular=0.5 → 1.0× (default, unchanged).
-        // Lower values reduce specular reflections for matte organic materials.
-        specularIBL *= specular * 2.0f;
+        // Per-material specular controls ONLY F0 for dielectrics (F0 = 0.08 * specular).
+        // It does NOT scale IBL specular output — that would double-apply the parameter.
+        // @ref UE5 "Material Inputs — Specular" — specular affects F0 only, not IBL scale.
 
         // ── Specular occlusion ──
         float specOcc = saturate(pow(NdotV + ao, exp2(-16.0f * roughness - 1.0f)) - 1.0f + ao);
