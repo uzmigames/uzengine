@@ -68,8 +68,11 @@ struct UpscalerInput {
     uint32_t historyReadSrv  = UINT32_MAX; ///< Previous frame's history texture SRV
     uint32_t historyWriteUav = UINT32_MAX; ///< Current frame's history texture UAV (output)
 
-    // --- Physical texture handles (for barriers) ---
+    // --- Physical texture handles (for barriers and vendor upscalers) ---
 
+    RHITextureHandle sceneColorTexture;    ///< HDR scene color texture (for vendor upscalers needing native resource)
+    RHITextureHandle depthTexture;         ///< Depth buffer texture (for vendor upscalers needing native resource)
+    RHITextureHandle velocityTexture;      ///< Velocity buffer texture (for vendor upscalers needing native resource)
     RHITextureHandle historyReadTexture;   ///< Previous frame's history texture
     RHITextureHandle historyWriteTexture;  ///< Current frame's history texture (write target)
 

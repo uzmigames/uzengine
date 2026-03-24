@@ -30,6 +30,15 @@ static auto* cv_DOFAperture     = UZ_CVAR_FLOAT("r.DOF.Aperture", 4.f, "DOF f-st
 static auto* cv_DOFFocalRegion  = UZ_CVAR_FLOAT("r.DOF.FocalRegion", 0.f, "In-focus zone width (cm)", 0.f, 10000.f);
 static auto* cv_DOFNearTrans    = UZ_CVAR_FLOAT("r.DOF.NearTransition", 300.f, "Near transition ramp (cm)", 0.f, 10000.f);
 static auto* cv_DOFFarTrans     = UZ_CVAR_FLOAT("r.DOF.FarTransition", 500.f, "Far transition ramp (cm)", 0.f, 50000.f);
+static auto* cv_DOFRingCount    = UZ_CVAR_INT("r.DOF.RingCount", 5, "DOF bokeh concentric ring count", 3, 8);
+static auto* cv_DOFCoCSkip      = UZ_CVAR_FLOAT("r.DOF.CoCSkipThreshold", 0.5f, "DOF CoC radius skip threshold (px)", 0.1f, 3.f);
+static auto* cv_MotionBlurMaxR  = UZ_CVAR_FLOAT("r.MotionBlur.MaxRadius", 5.0f, "Max motion blur radius (% viewport)", 0.1f, 20.f);
+static auto* cv_MotionBlurFPS   = UZ_CVAR_INT("r.MotionBlur.TargetFPS", 30, "Target FPS for velocity scaling", 24, 120);
+static auto* cv_FXAAThreshold   = UZ_CVAR_FLOAT("r.FXAA.EdgeThreshold", 0.166f, "FXAA edge detection threshold", 0.063f, 0.333f);
+static auto* cv_TonemapChromaAb = UZ_CVAR_FLOAT("r.Tonemap.ChromaAbScale", 0.007f, "Chromatic aberration intensity scale", 0.f, 0.02f);
+static auto* cv_POMHeightRatio    = UZ_CVAR_FLOAT("r.Material.POM.HeightRatio", 0.05f, "POM perceived height ratio", 0.01f, 0.2f);
+static auto* cv_POMShadowSteps   = UZ_CVAR_INT("r.Material.POM.ShadowSteps", 6, "POM self-shadow ray steps", 4, 16);
+static auto* cv_POMRefinement    = UZ_CVAR_INT("r.Material.POM.RefinementSteps", 1, "POM binary search refinement", 1, 3);
 
 namespace uz {
 
@@ -166,6 +175,9 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 input.velocitySrv      = m_gbuffer.velocitySRV;
                 input.historyReadSrv   = m_taaHistorySrv[readIdx];
                 input.historyWriteUav  = m_taaHistoryUav[writeIdx];
+                input.sceneColorTexture   = m_hdrSceneColor;
+                input.depthTexture        = m_gbuffer.depth;
+                input.velocityTexture     = m_gbuffer.velocity;
                 input.historyReadTexture  = m_taaHistory[readIdx];
                 input.historyWriteTexture = m_taaHistory[writeIdx];
                 input.jitterX      = jitterX;

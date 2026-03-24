@@ -573,6 +573,20 @@ pub fn build(b: *std.Build) void {
         .flags = &.{ "-std=c++17", "-DMSDFGEN_USE_FREETYPE", "-DMSDFGEN_PUBLIC=" },
     });
 
+    // Thirdparty — AMD FidelityFX SDK headers (FSR 2.x temporal upscaling)
+    // Include paths only — the FFX SDK requires MSVC + CMake to compile its source
+    // (C++20 std::span, generated shader permutation blobs, Agility SDK ABI).
+    // FSR2Upscaler compiles but links are resolved only when an ffx_fsr2.lib is provided.
+    // Build the FFX SDK separately: cd thirdparty/amd-fidelityfx && cmake --build .
+    if (is_windows) {
+        const ffx = tp ++ "amd-fidelityfx/Kits/FidelityFX/";
+        runtime_mod.addIncludePath(b.path(ffx ++ "api/include"));
+        runtime_mod.addIncludePath(b.path(ffx ++ "api/internal"));
+        runtime_mod.addIncludePath(b.path(ffx ++ "upscalers/fsr3/include"));
+        runtime_mod.addIncludePath(b.path(ffx ++ "upscalers/fsr3/internal"));
+        runtime_mod.addIncludePath(b.path(ffx ++ "backend/dx12"));
+    }
+
     // Include paths — runtime root (for "platform/platform_types.h" etc.)
     runtime_mod.addIncludePath(b.path("."));
 
