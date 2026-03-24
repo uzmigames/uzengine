@@ -24,12 +24,15 @@
 
 #include "camera.h"
 #include "gpu_mesh.h"
+#include "quaternion.h"
+#include "world.h"
 #include "render_graph_builder.h"
 #include "render_graph_resources.h"
 #include "profiler.h"
 #include "rhi.h"
 #include "log.h"
 
+#include <algorithm>
 #include <cstring>
 
 UZ_DECLARE_LOG_CATEGORY(Renderer);
@@ -225,6 +228,80 @@ void SceneRenderer::RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContex
                     phase2Desc.instanceCount         = instCount;
                     phase2Desc.bindless              = bindless;
                     AddGpuCullPass(rgBuilder, phase2Desc);
+                }
+            }
+
+            // ── DBuffer Decal Render Pass (after depth prepass, before GBuffer) ──
+            // @ref Valient 2014 "Deferred Rendering in Killzone: Shadow Fall"
+            // Gathers all DecalComponent entities, sorts by priority, and renders
+            // into three DBuffer targets. Requires depth for world pos reconstruction.
+            if (ctx.dbufferARes.IsValid() && ctx.world) {
+                // Gather decals from ECS
+                std::vector<DecalInfo> decalInfos;
+                auto decalView = ctx.world->View<DecalComponent, SceneComponent>();
+                for (auto [enttEntity, decal, scene] : decalView.each()) {
+                    if (!decal.enabled) continue;
+
+                    const Mat4& worldMat = scene.GetWorldMatrix();
+
+                    // Build decal world matrix incorporating extents as scale.
+                    // The unit cube [-0.5, 0.5]^3 is scaled by 2*extents to form
+                    // the decal OBB. We bake the extents into the world matrix
+                    // by pre-multiplying a scale matrix.
+                    Vec3 extentScale(decal.extentsX * 2.0f,
+                                     decal.extentsY * 2.0f,
+                                     decal.extentsZ * 2.0f);
+                    Mat4 scaleMat = Mat4::TRS(Vec3(0.0f, 0.0f, 0.0f),
+                                              Quat::Identity(),
+                                              extentScale);
+                    Mat4 decalWorldMat = scaleMat * worldMat;
+
+                    DecalInfo info{};
+                    info.cb.world         = decalWorldMat;
+                    info.cb.invWorld      = decalWorldMat.Inverse();
+                    info.cb.opacity       = decal.opacity;
+                    info.cb.normalBlend   = decal.normalBlend;
+                    info.cb.roughness     = decal.roughness;
+                    info.cb.metallic      = decal.metallic;
+                    info.cb.fadeDistance   = decal.fadeDistance;
+                    info.cb.angleFade     = decal.angleFadeStart;
+                    info.cb.albedoSrv     = decal.albedoTextureId;
+                    info.cb.normalSrv     = decal.normalTextureId;
+                    info.cb.materialSrv   = decal.materialTextureId;
+                    info.cb.depthSrv      = m_gbuffer.depthSRV;
+                    info.cb.normalGbufSrv = m_gbuffer.normalSRV;
+                    info.priority         = decal.priority;
+
+                    decalInfos.push_back(info);
+                }
+
+                // Sort decals by priority (ascending — higher priority renders last).
+                std::sort(decalInfos.begin(), decalInfos.end(),
+                    [](const DecalInfo& a, const DecalInfo& b) {
+                        return a.priority < b.priority;
+                    });
+
+                if (!decalInfos.empty()) {
+                    // Store sorted decals in a member to keep them alive until Execute.
+                    m_frameDecals = std::move(decalInfos);
+
+                    DecalRenderPassDesc decalDesc{};
+                    decalDesc.dbufferARes    = ctx.dbufferARes;
+                    decalDesc.dbufferBRes    = ctx.dbufferBRes;
+                    decalDesc.dbufferCRes    = ctx.dbufferCRes;
+                    decalDesc.dbufferATex    = m_dbufferA;
+                    decalDesc.dbufferBTex    = m_dbufferB;
+                    decalDesc.dbufferCTex    = m_dbufferC;
+                    decalDesc.depthRes       = ctx.depthRes;
+                    decalDesc.normalRes      = ctx.normalRes;
+                    decalDesc.pipeline       = pipelines->GetDecalRender();
+                    decalDesc.cbAllocator    = m_cbRing.get();
+                    decalDesc.decals         = m_frameDecals.data();
+                    decalDesc.decalCount     = static_cast<uint32_t>(m_frameDecals.size());
+                    decalDesc.viewportWidth  = vpWidth;
+                    decalDesc.viewportHeight = vpHeight;
+
+                    AddDecalRenderPass(rgBuilder, decalDesc);
                 }
             }
 

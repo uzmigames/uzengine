@@ -131,10 +131,10 @@
 - [x] 3.2.3 Two-phase occlusion — Phase 1 culls against prev frame's HiZ (saved in m_prevHiz* fields at frame end), depth prepass draws Phase 1 visible via indirect draw, HiZ rebuilds from partial depth, Phase 2 re-tests ALL instances against updated HiZ into separate Phase 2 buffers (m_visibleIndexBuffers2/m_indirectArgsBuffers2), GBuffer issues two indirect draws (Phase 1 + Phase 2). Falls back to frustum-only on first frame (no prev HiZ). Files: scene_renderer.h (prev HiZ state + Phase 2 buffers + FrameContext fields), scene_lifecycle.cpp (Phase 2 buffer create/destroy), frame_setup.cpp (dual cull constants), frame_geometry.cpp (two-phase pass ordering + RegisterInitIndirectArgsPass helper), frame_postprocess.cpp (save HiZ state), depth_prepass.h/.cpp (indirect draw support), gbuffer_pass.h/.cpp (Phase 2 indirect draw).
 
 ### 3.3 Decals — DBuffer (NEW — no existing task)
-- [ ] 3.3.1 DBuffer textures — 3 render targets (albedo, normal, roughness) at GBuffer resolution.
-- [ ] 3.3.2 Decal projection — OBB projector, project UVs from world position, sample decal textures.
-- [ ] 3.3.3 DBuffer application — modify GBuffer before lighting: `gbuffer.albedo = lerp(gbuffer.albedo, decal.albedo, decal.alpha)`.
-- [ ] 3.3.4 Decal sorting — front-to-back by priority, blend stack.
+- [x] 3.3.1 DBuffer textures — 3 RGBA8Unorm render targets (albedo+opacity, normal+blend, roughness/metallic/AO+blend) at GBuffer resolution. Created in scene_lifecycle.cpp, resized on window resize, destroyed on shutdown.
+- [x] 3.3.2 Decal projection — OBB projector via unit cube (36 verts from SV_VertexID), decal_vs.hlsl + decal_ps.hlsl. PS reconstructs world pos from depth, projects into decal local space via inverse decal matrix, clips [0,1]^3, samples textures at projected UV. Edge fade + angle fade. Pipeline: front-face cull, alpha blend (SrcAlpha/InvSrcAlpha) on 3 RTs.
+- [x] 3.3.3 DBuffer application — fullscreen compute pass (decal_apply_cs.hlsl, 8x8 thread groups) reads 3 DBuffer SRVs, writes GBuffer albedo+normal UAVs in-place via alpha-weighted lerp. GBuffer albedo/normal textures now have UnorderedAccess usage. Runs after GBuffer fill, before GTAO/lighting.
+- [x] 3.3.4 Decal sorting — DecalComponent gathered from ECS via View<DecalComponent, SceneComponent>, sorted ascending by priority (higher=on top), rendered in order with alpha blending in DBuffer. DecalInfo struct holds pre-filled CB + sort key.
 - [ ] 3.3.5 Screenshot: bullet hole decal on wall, blood splatter, weathering.
 
 ### 3.4 Reflection Probes → task `phase3a-3.37.0-reflection-probes` (85% done)

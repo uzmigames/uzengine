@@ -122,6 +122,8 @@ public:
 
     uint32_t albedoSRV      = UINT32_MAX;    ///< Bindless SRV index for albedo texture.
     uint32_t normalSRV      = UINT32_MAX;    ///< Bindless SRV index for normal texture.
+    uint32_t albedoUAV      = UINT32_MAX;    ///< Bindless UAV index for albedo (DBuffer apply compute pass).
+    uint32_t normalUAV      = UINT32_MAX;    ///< Bindless UAV index for normal (DBuffer apply compute pass).
     uint32_t depthSRV       = UINT32_MAX;    ///< Bindless SRV index for depth texture.
     uint32_t velocitySRV    = UINT32_MAX;    ///< Bindless SRV index for velocity texture.
     uint32_t positionWSSRV  = UINT32_MAX;    ///< Bindless SRV index for world-space position texture.

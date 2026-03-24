@@ -61,6 +61,34 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
 
     const auto& cascades = ctx.shadowFrame.cascades;
 
+    // ── DBuffer Apply Pass (after GBuffer fill, before GTAO/lighting) ──
+    // Merges the DBuffer decal targets into the GBuffer albedo and normal
+    // textures via a fullscreen compute pass. Only runs if the DBuffer was
+    // rendered (m_frameDecals is non-empty) and UAV indices are available.
+    // @ref Valient 2014 "Deferred Rendering in Killzone: Shadow Fall"
+    if (!m_frameDecals.empty()
+        && ctx.dbufferARes.IsValid()
+        && m_gbuffer.albedoUAV != UINT32_MAX
+        && m_gbuffer.normalUAV != UINT32_MAX) {
+
+        DecalApplyPassDesc applyDesc{};
+        applyDesc.dbufferARes       = ctx.dbufferARes;
+        applyDesc.dbufferBRes       = ctx.dbufferBRes;
+        applyDesc.dbufferCRes       = ctx.dbufferCRes;
+        applyDesc.dbufferASrvIndex  = m_dbufferASrv;
+        applyDesc.dbufferBSrvIndex  = m_dbufferBSrv;
+        applyDesc.dbufferCSrvIndex  = m_dbufferCSrv;
+        applyDesc.albedoRes         = ctx.albedoRes;
+        applyDesc.normalRes         = ctx.normalRes;
+        applyDesc.albedoUavIndex    = m_gbuffer.albedoUAV;
+        applyDesc.normalUavIndex    = m_gbuffer.normalUAV;
+        applyDesc.pipeline          = ctx.pipelines->GetDecalApply();
+        applyDesc.width             = m_renderWidth;
+        applyDesc.height            = m_renderHeight;
+
+        AddDecalApplyPass(rgBuilder, applyDesc);
+    }
+
     // ── GTAO Pass (after GBuffer, before lighting) ─────────────────
     if (m_gtaoPass && m_gtaoPass->IsInitialized() && m_gtaoPass->settings.enabled
         && m_passInspector.IsPassEnabled("gtao")) {

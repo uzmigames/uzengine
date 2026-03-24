@@ -618,6 +618,28 @@ public:
     ///
     [[nodiscard]] RHIPipelineHandle GetRadianceCacheTrace();
 
+    /// Returns the DBuffer decal render pipeline (decal_vs + decal_ps, 3 RT, no depth).
+    ///
+    /// Rasterizer: front-face cull (render back faces of decal OBB).
+    /// Depth: disabled (depth read via SRV in pixel shader).
+    /// Blend: SrcAlpha / InvSrcAlpha on all 3 render targets.
+    /// Render targets: 3x RGBA8Unorm (DBuffer A, B, C).
+    ///
+    /// @ref Valient 2014 "Deferred Rendering in Killzone: Shadow Fall"
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure.
+    [[nodiscard]] RHIPipelineHandle GetDecalRender();
+
+    /// Returns the DBuffer application compute pipeline (decal_apply_cs.hlsl).
+    ///
+    /// Fullscreen compute dispatch that merges DBuffer into GBuffer.
+    /// 8x8x1 thread groups.
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure.
+    [[nodiscard]] RHIPipelineHandle GetDecalApply();
+
     /// Pre-creates all standard pipelines eagerly instead of on first use.
     ///
     /// Call at scene load time to avoid hitches during the first frame.
@@ -657,6 +679,8 @@ private:
     [[nodiscard]] bool EnsureSkyCubemapCaptureShader();
     [[nodiscard]] bool EnsureSkyCubemapCapturePSShader();
     [[nodiscard]] bool EnsureHiZPyramidShader();
+    [[nodiscard]] bool EnsureDecalShaders();
+    [[nodiscard]] bool EnsureDecalApplyShader();
     [[nodiscard]] bool EnsureGpuCullShader();
     [[nodiscard]] bool EnsureDfsCullObjectsShader();
     [[nodiscard]] bool EnsureDfsConeTraceShader();
@@ -751,6 +775,9 @@ private:
     RHIShaderHandle m_gdfCompositeCS            = RHIShaderHandle::Invalid();
     RHIShaderHandle m_meshSdfBakeCS             = RHIShaderHandle::Invalid();
     RHIShaderHandle m_radianceCacheTraceCS      = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_decalVS                   = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_decalPS                   = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_decalApplyCS              = RHIShaderHandle::Invalid();
 
     // ── Shader permutation cache (material-dependent PSOs) ─────────────
     /// Caches ForwardPBR, GBuffer, GBufferMasked, Translucent, and Additive
@@ -808,6 +835,8 @@ private:
     RHIPipelineHandle m_gdfComposite          = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_meshSdfBake           = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_radianceCacheTrace    = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_decalRender           = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_decalApply            = RHIPipelineHandle::Invalid();
 };
 
 } // namespace uz
