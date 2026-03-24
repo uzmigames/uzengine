@@ -470,18 +470,19 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     // ── Reflection Probes ────────────────────────────────────────────────
     // Phase 1: Capture — render the scene into a dirty probe's cubemap.
     // Phase 2: Update — bake IBL from the captured cubemap and upload GPU data.
-    if (m_reflectionProbes.IsInitialized() && ctx.world && ctx.pipelines) {
+    if (m_reflectionProbes.IsInitialized() && ctx.world && m_pipelines) {
         // Build a scene descriptor so the probe can render into its cubemap.
         // The forward PBR pipeline and draw list are used for simplified
         // scene capture at the probe's resolution.
+        const bool bindless = m_device->IsBindless();
         ProbeCaptureSceneDesc captureDesc{};
         captureDesc.cmdList         = ctx.cmdList;
         captureDesc.drawList        = &ctx.drawList;
         captureDesc.meshes          = m_meshes.data();
         captureDesc.meshCount       = static_cast<uint32_t>(m_meshes.size());
         captureDesc.cbAllocator     = m_cbRing.get();
-        captureDesc.forwardPipeline = ctx.pipelines->GetForwardPBR(ctx.bindless);
-        captureDesc.bindless        = ctx.bindless;
+        captureDesc.forwardPipeline = m_pipelines->GetForwardPBR(bindless);
+        captureDesc.bindless        = bindless;
 
         m_reflectionProbes.CaptureIfDirty(
             *ctx.world, captureDesc, m_skyCubemapSrv, m_skyCubemap);

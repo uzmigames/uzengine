@@ -12,6 +12,12 @@
 - [x] 0.11 Lens flare disabled by default (`m_lensFlareEnabled=false`), Lua toggle added.
 - [ ] 0.12 **BLOCKED**: Cloud compute dispatch causes GPU TDR. Noise bake with trivial shaders works; real Worley noise (29KB shader, 3x3x3 nested loops) crashes GPU. Weather/raymarch/temporal also crash. Root cause: likely shader instruction count or descriptor table validation under bindless root signature. Needs: rewrite noise as precomputed texture load OR optimize Worley to 2x2x2 search OR move to dedicated compute queue with async fence.
 
+## Phase 0c: Cloud Render Graph Migration (moved from phase2a-2.50.0)
+- [ ] 0c.1 Register cloud compute as a proper `rgBuilder.AddPass("Cloud_Raymarch", ...)` with declared resource dependencies (depth SRV read, cloud output UAV write).
+- [ ] 0c.2 Remove WaitIdle: after render graph integration, the cloud compute runs as part of the normal command list submission without explicit GPU synchronization.
+- [ ] 0c.3 Verify async compute compatibility: if cloud compute can overlap with shadow rendering or GBuffer fill, mark the pass as async-capable in the render graph.
+- [ ] 0c.4 Performance verification: measure frame time before/after. The WaitIdle removal should reduce frame time by eliminating the full GPU drain. Target: at least 10% frame time improvement on scenes with clouds.
+
 ## Phase 0 Bugs Found (must fix before Phase 1)
 - [ ] 0.B1 Noise shaders: `VoronoiCornerSample` had `normalize(zero)` → NaN. Fixed with rsqrt guard. But real noise still TDRs — shader too heavy for single dispatch (128^3 × 27-iteration Worley).
 - [ ] 0.B2 Noise shaders: `[unroll]` on 3x3x3 Worley loops → 29KB shader binary. Changed to `[loop]` but still TDRs.

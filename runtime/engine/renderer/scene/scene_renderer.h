@@ -564,6 +564,31 @@ public:
         return TextureLoadState::Empty;
     }
 
+    // ── HDRI Environment ──────────────────────────────────────────────────
+
+    /// Sets an external HDRI equirectangular panorama as the environment map.
+    ///
+    /// Converts the equirect texture to a cubemap via compute shader, then
+    /// bakes irradiance and prefiltered specular cubemaps for IBL. This
+    /// replaces the procedural sky atmosphere as the source of environment
+    /// lighting for the current scene.
+    ///
+    /// The sky atmosphere capture pass is automatically suppressed after
+    /// calling this — the HDRI cubemap is used directly for IBL and skybox.
+    ///
+    /// # Arguments
+    /// * `equirectSrvIndex` — SRV descriptor heap index of the equirect HDR
+    ///   texture (RGBA16F). Obtained from `TextureLoader::LoadHDR().srvIndex`.
+    /// * `cubemapSize` — Face resolution for the cubemap conversion. Default
+    ///   512 is a good balance of quality vs. VRAM.
+    ///
+    /// # Returns
+    /// `true` on success (IBL re-baked), `false` on failure (error logged).
+    ///
+    /// # Thread Safety
+    /// Must be called from the render/init thread.
+    bool SetHDRIEnvironment(uint32_t equirectSrvIndex, uint32_t cubemapSize = 512);
+
     // ── Low-level accessors (for subsystems needing direct GPU access) ────
 
     /// Returns the RHI device pointer. Valid from Init() through Shutdown().
@@ -645,6 +670,11 @@ private:
     IBLBaker::BakeResult m_iblResult;              ///< Irradiance + prefiltered SRV indices.
     uint32_t m_brdfLutSrvIndex = UINT32_MAX;       ///< BRDF LUT SRV (baked once at init).
     SHCoefficients m_skyIrradianceSH;              ///< L2 SH for sky diffuse irradiance.
+
+    // ── HDRI environment override ────────────────────────────────────────
+    RHITextureHandle m_hdriCubemap;            ///< Cubemap converted from HDRI equirect (owned, must destroy).
+    uint32_t m_hdriCubemapSrv = UINT32_MAX;    ///< SRV for the HDRI cubemap.
+    bool m_hdriActive = false;                 ///< True when using external HDRI instead of procedural sky.
 
     // ── Reflection Probes ────────────────────────────────────────────────
     ReflectionProbeRenderer m_reflectionProbes;   ///< Per-probe cubemap capture, IBL bake, and GPU upload.

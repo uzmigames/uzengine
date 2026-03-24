@@ -86,8 +86,10 @@ Located in [guides/](guides/):
 | [material-blend-modes.md](guides/material-blend-modes.md) | Blend mode guide — Opaque, Masked, Translucent, Additive |
 | [material-perobject-cb.md](guides/material-perobject-cb.md) | PerObjectCB layout, byte offsets, and materialFlags bitfield packing |
 | [pbr-brdf-ue5-parity.md](guides/pbr-brdf-ue5-parity.md) | PBR BRDF reference parity guide |
+| [reflection-probe-placement.md](guides/reflection-probe-placement.md) | Reflection probe placement, parameter tuning, and optimization guide |
 | [scene-load-optimization.md](guides/scene-load-optimization.md) | Scene loading optimization and profiling |
 | [shadow-caching-guide.md](guides/shadow-caching-guide.md) | Static shadow caching implementation guide |
+| [texture-pipeline.md](guides/texture-pipeline.md) | Async texture loading, cook pipeline, .uztexture format, copy queue parallelism, sRGB support |
 | [ue5-basic-scene-defaults.md](guides/ue5-basic-scene-defaults.md) | Reference default values for basic scene components |
 | [ue5-sky-fog-injection.md](guides/ue5-sky-fog-injection.md) | Sky-to-fog color injection data flow |
 

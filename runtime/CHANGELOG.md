@@ -2,6 +2,47 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.50] — 2026-03-24
+
+### Reflection Probe Capture + Task Cleanup + Quality-of-Life Fixes
+
+**Reflection Probe Cubemap Capture (phase3a-3.37.0):**
+- Scene-based cubemap capture: renders scene from probe position into 6 RGBA16F faces (128x128 default) using forward PBR pipeline
+- `BuildCubemapFaceMatrices()` — Z-up to Y-up swap, 90° FOV, 6 face directions matching DX convention
+- Per-probe `RHITextureHandle` cubemap + shared D32F depth buffer, amortized 1 probe/frame
+- `CaptureIfDirty()` → `RenderProbeCubemap()` → `IBLBaker::BakeEnvironment()` pipeline
+- Wired into `frame_setup.cpp` before probe Update(), using `m_pipelines` directly (fixed null pipeline crash)
+- Reflection probe docs: lighting reference (276 lines) + placement guide (314 lines)
+
+**UZ_CHECK/UZ_ENSURE Stack Traces:**
+- `PrintStackTrace()` now uses `uz::WalkStack` + `uz::FormatStackTrace` with symbolicated function names, file paths, and line numbers (was raw hex addresses)
+- `skipFrames=3` skips internal assertion frames — first visible frame is always user code
+
+**CVar Documentation Fix:**
+- Fixed 4 stale defaults in `docs/guides/cvar-reference.md`: GTAO.Power (2.0→1.0), MinBrightness (0.03→0.1), MaxBrightness (8.0→4.0), SkyLight.MinAmbient (0.0→0.25)
+- Added render quality tuning log with 7 before/after values and rationale
+
+**Root Signature Audit:**
+- Full inventory: 5 root params, 52/64 DWORDs used, 12 headroom
+- Documented slot 2 contention (PerObjectCB/LightingCB dual-use)
+- Optimization plan: root constants 16→8 (saves 8 DWORDs), shadow to table (saves 4)
+
+**Tasks Archived (7 tasks, 187 items):**
+- Render Quality Consensus Fixes (2.50.0) — 44/44: GTAO, micro-shadows, SSR temporal, auto-exposure, per-material specular
+- Crash Handling (4.5.0) — 20/20: SEH, minidump, stack walker, symbolication
+- Native Dialogs (4.9.0) — 18/18: file dialogs, dark mode, taskbar, tray, notifications
+- Material System Expansion (3.31.0) — 23/23: emissive, opacity, blend modes, POM
+- Process/DLL Management (4.7.0) — 19/19: DLL loader, process pipes, shared memory
+- Window State Machine (4.1.0) — 23/23: fullscreen toggle, minimize/maximize, focus
+- Async Texture Pipeline (2.23.0) — 40/40: BC7 cook, async decode, copy queue, 273× speedup
+
+**New Documentation:**
+- `docs/guides/texture-pipeline.md` — cook workflow, .uztexture format, runtime loading
+- `docs/guides/reflection-probe-placement.md` — placement principles, optimization
+- `docs/analysis/texture-loading-benchmarks.md` — performance comparison
+- `docs/analysis/architecture/root-signature-audit.md` — full root sig inventory
+- `docs/analysis/dataflow/reflection-probe-capture.md` — capture data flow
+
 ## [0.2.49] — 2026-03-24
 
 ### Thirdparty Integration + CVar System Expansion + Comprehensive Testing

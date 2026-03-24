@@ -1,47 +1,65 @@
 /// UzEngine Assertion System Implementation
 ///
-/// Provides stack trace capture (via CaptureStackBackTrace on Windows),
-/// assertion failure reporting to stderr, and debugger break support.
-/// Fatal assertions (UZ_CHECK) call std::abort() after logging.
+/// Provides symbolized stack trace capture via the platform stack walker
+/// (WalkStack + FormatStackTrace), assertion failure reporting to stderr,
+/// and debugger break support. Fatal assertions (UZ_CHECK) call std::abort()
+/// after logging.
 
 #include "engine_assert.h"
 
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <windows.h>
+// Include the platform-specific stack walker header so that
+// uz::WalkStack / uz::FormatStackTrace are available.  Each header is
+// guarded by its own platform preprocessor check, so exactly one of the
+// three branches below will contribute a definition.
+#if defined(_WIN32)
+#   define WIN32_LEAN_AND_MEAN
+#   define NOMINMAX
+#   include <windows.h>
+#   include "stack_walker.h"   // platform/windows/stack_walker.h
+#elif defined(__linux__)
+#   include "stack_walker.h"   // platform/linux/stack_walker.h
+#elif defined(__APPLE__)
+#   include "stack_walker.h"   // platform/macos/stack_walker.h
 #endif
 
 namespace uz::detail {
 
-/// Platform-specific stack trace printing (Windows / other platforms).
+/// Captures up to `kAssertStackFrames` resolved frames and prints them to
+/// stderr.
 ///
-/// # Windows
-/// Uses CaptureStackBackTrace to capture up to 32 frame addresses.
-/// Shows raw pointers (use debugger symbols to resolve names).
+/// # Skip count
+/// The skip accounts for the internal call chain on the failure path so that
+/// the first printed frame is the caller of UZ_CHECK / UZ_ENSURE:
 ///
-/// # Other Platforms
-/// Currently shows a stub message (stack trace support can be added).
-#ifdef _WIN32
-static void PrintStackTrace() {
-    constexpr int kMaxFrames = 32;
-    void* frames[kMaxFrames];
-    WORD frameCount = CaptureStackBackTrace(2, kMaxFrames, frames, nullptr);
+///   PrintStackTrace            [skip]
+///   AssertionFailed / FatalAssert  [skip]
+///   UZ_CHECK / UZ_ENSURE lambda    [skip] (ENSURE uses a lambda)
+///   <user code>                [first visible frame]
+///
+/// We pass skipFrames=3 to WalkStack so those three internal frames are
+/// omitted (WalkStack itself always skips itself as frame 0 internally,
+/// so the value here refers to frames above WalkStack).
+static constexpr int kAssertStackFrames = 8;
+static constexpr int kAssertSkipFrames  = 3;
 
-    std::fprintf(stderr, "  Stack trace (%d frames):\n", frameCount);
-    for (WORD i = 0; i < frameCount; ++i) {
-        std::fprintf(stderr, "    [%2d] 0x%llx\n", i,
-                     reinterpret_cast<unsigned long long>(frames[i]));
-    }
-}
-#else
 static void PrintStackTrace() {
-    std::fprintf(stderr, "  (stack trace not available on this platform)\n");
-}
+#if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
+    uz::StackFrame frames[kAssertStackFrames];
+    const int count = uz::WalkStack(frames, kAssertStackFrames, kAssertSkipFrames);
+    if (count > 0) {
+        const std::string trace = uz::FormatStackTrace(frames, count);
+        std::fprintf(stderr, "  Stack trace:\n%s", trace.c_str());
+    } else {
+        std::fprintf(stderr, "  Stack trace: (unavailable — no PDB / no debug symbols)\n");
+    }
+#else
+    std::fprintf(stderr, "  Stack trace: (not supported on this platform)\n");
 #endif
+}
 
 /// Implements UZ_ENSURE — logs violation but continues.
 ///
@@ -49,7 +67,7 @@ static void PrintStackTrace() {
 /// - Expression: the code that failed
 /// - Location: file and line number
 /// - Message: optional custom message from UZ_ENSURE macro
-/// - Stack trace: raw frame pointers for debugging
+/// - Stack trace: symbolized frames (function name + file:line where available)
 ///
 /// # Behavior
 /// - Prints to stderr (not the game log, to guarantee visibility)
@@ -74,7 +92,7 @@ bool AssertionFailed(const char* expr, const char* file, int line, const char* m
 /// - Expression: the code that failed
 /// - Location: file and line number
 /// - Message: optional custom message from UZ_CHECKF macro
-/// - Stack trace: raw frame pointers for crash analysis
+/// - Stack trace: symbolized frames (function name + file:line where available)
 ///
 /// # Behavior
 /// - Prints to stderr (bypasses logging system, guaranteed output)

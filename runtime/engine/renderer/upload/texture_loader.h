@@ -337,6 +337,64 @@ public:
         const char* debugName,
         class UploadRing& ring,
         bool skipBarrier = false);
+
+    /// Loads a high dynamic range texture from a file path on disk.
+    ///
+    /// Supports two HDR formats:
+    /// - `.exr` files: decoded via tinyexr (OpenEXR format, arbitrary channel layouts)
+    /// - `.hdr` files: decoded via stbi_loadf (Radiance RGBE format)
+    ///
+    /// The decoded float32 RGBA data is converted to float16 (half-precision)
+    /// on the CPU to halve VRAM usage (RGBA16Float instead of RGBA32Float).
+    /// This is standard practice — the visual difference is imperceptible for
+    /// environment maps, and GPU sampling of RGBA16F is faster than RGBA32F.
+    ///
+    /// The texture is uploaded as a single mip level (no mip chain). HDR
+    /// environment maps are typically sampled via IBL baking (irradiance +
+    /// prefiltered specular) which generates its own mip pyramid, so a
+    /// source-level mip chain is unnecessary.
+    ///
+    /// The command list is left in a recording state after this call.
+    ///
+    /// # Arguments
+    /// * `device` — RHI device for resource creation. Must not be null.
+    /// * `cmdList` — Command list in recording state. Must not be null.
+    /// * `path` — File path to the HDR image (.exr or .hdr).
+    ///
+    /// # Returns
+    /// `TextureLoadResult` with a valid handle and SRV index on success.
+    /// Returns default (invalid) result on failure (file not found, decode
+    /// error, unsupported format, GPU resource creation failure).
+    ///
+    /// # Errors
+    /// Logs `Renderer::Error` with the file path and failure reason.
+    ///
+    /// # Side Effects
+    /// - Creates one GPU texture resource (RGBA16Float, caller owns lifetime).
+    /// - Flushes the command list and waits for GPU idle.
+    [[nodiscard]] static TextureLoadResult LoadHDR(
+        IRHIDevice* device,
+        const std::string& path);
+
+    /// Loads a high dynamic range texture from in-memory data (VFS-compatible).
+    ///
+    /// Same as the file-path overload, but reads from a byte buffer instead of
+    /// disk. Use this when loading from VFS/pak:
+    /// ```cpp
+    /// auto bytes = vfs.Read("assets/sunset.exr");
+    /// auto result = TextureLoader::LoadHDRFromMemory(device, bytes, "exr");
+    /// ```
+    ///
+    /// @param data       Raw file bytes (.exr or .hdr format).
+    /// @param dataSize   Size of the data buffer in bytes.
+    /// @param formatHint Extension hint: "exr" or "hdr" (determines decoder).
+    /// @param debugName  Optional debug name for the GPU resource.
+    [[nodiscard]] static TextureLoadResult LoadHDRFromMemory(
+        IRHIDevice* device,
+        const void* data,
+        size_t dataSize,
+        const char* formatHint = "exr",
+        const char* debugName = "HDRTexture");
 };
 
 } // namespace uz

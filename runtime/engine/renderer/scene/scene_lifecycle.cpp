@@ -1299,6 +1299,64 @@ void SceneRenderer::Resize(uint32_t width, uint32_t height) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SetHDRIEnvironment
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool SceneRenderer::SetHDRIEnvironment(uint32_t equirectSrvIndex, uint32_t cubemapSize) {
+    if (!m_iblBaker || !m_iblBaker->IsInitialized()) {
+        UZ_LOG(Renderer, Error, "SceneRenderer::SetHDRIEnvironment: IBL baker not initialized");
+        return false;
+    }
+
+    if (equirectSrvIndex == UINT32_MAX) {
+        UZ_LOG(Renderer, Error, "SceneRenderer::SetHDRIEnvironment: invalid equirectSrvIndex");
+        return false;
+    }
+
+    // Convert equirectangular panorama to cubemap
+    auto equirectResult = m_iblBaker->EquirectToCubemap(equirectSrvIndex, cubemapSize);
+    if (!equirectResult.cubemap.IsValid() || equirectResult.srvIndex == UINT32_MAX) {
+        UZ_LOG(Renderer, Error, "SceneRenderer::SetHDRIEnvironment: equirect-to-cubemap conversion failed");
+        return false;
+    }
+
+    // Destroy previous HDRI cubemap if one was set
+    if (m_hdriCubemap.IsValid()) {
+        m_device->DestroyTexture(m_hdriCubemap);
+    }
+
+    m_hdriCubemap = equirectResult.cubemap;
+    m_hdriCubemapSrv = equirectResult.srvIndex;
+
+    // Bake IBL from the new cubemap
+    auto bakeResult = m_iblBaker->BakeEnvironment(m_hdriCubemapSrv, m_hdriCubemap);
+    if (bakeResult.irradianceSrvIndex == UINT32_MAX || bakeResult.prefilteredSrvIndex == UINT32_MAX) {
+        UZ_LOG(Renderer, Error, "SceneRenderer::SetHDRIEnvironment: IBL bake failed");
+        return false;
+    }
+
+    m_iblResult = bakeResult;
+    m_hdriActive = true;
+
+    // Suppress procedural sky IBL re-capture — the HDRI cubemap is authoritative
+    m_skyIBLDirty = false;
+
+    // Overwrite the sky cubemap SRV so the skybox pass renders the HDRI
+    // instead of the procedural sky atmosphere. The sky cubemap is used in the
+    // PerFrameCB as the environment cubemap SRV index for both the skybox
+    // background and IBL sampling.
+    m_skyCubemapSrv = m_hdriCubemapSrv;
+
+    UZ_LOG(Renderer, Info,
+           "SceneRenderer: HDRI environment set (cubemap={}x{}, SRV={}, "
+           "irrad={}, prefilt={})",
+           cubemapSize, cubemapSize, m_hdriCubemapSrv,
+           bakeResult.irradianceSrvIndex, bakeResult.prefilteredSrvIndex);
+
+    return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Shutdown
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1372,6 +1430,12 @@ void SceneRenderer::Shutdown() {
 
     // ── IBL resources ──────────────────────────────────────────────────
     if (m_iblBaker) m_iblBaker->Shutdown();
+    if (m_hdriCubemap.IsValid()) {
+        m_device->DestroyTexture(m_hdriCubemap);
+        m_hdriCubemap = RHITextureHandle{};
+        m_hdriCubemapSrv = UINT32_MAX;
+        m_hdriActive = false;
+    }
     if (m_skyCubemap.IsValid()) {
         m_device->DestroyTexture(m_skyCubemap);
         m_skyCubemap = RHITextureHandle{};

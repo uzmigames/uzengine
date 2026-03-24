@@ -17,9 +17,9 @@
 - [ ] 2.2 Screenshot: metallic sphere outside probe influence — must fallback to sky IBL
 - [ ] 2.3 Screenshot: probe overlap zone — smooth blend between two probes, no hard edge
 - [ ] 2.4 Screenshot: rough vs smooth surfaces — rough surfaces show blurred probe, smooth show sharp
-- [ ] 2.5 Regression: existing IBL demos still work (sky IBL unchanged when no probes active)
+- [x] 2.5 Regression: existing IBL demos still work (sky IBL unchanged when no probes active). Verified: pbr_test runs clean at default and z=700 with probe capture active, no visual differences from pre-capture state.
 
 ## 3. Documentation
 
-- [ ] 3.1 Update `docs/engine/12-rendering/06-lighting.md` with reflection probe system
-- [ ] 3.2 Document probe placement guidelines (spacing, influence radius, priority rules)
+- [x] 3.1 Updated `docs/engine/12-rendering/17-lighting.md` with 276-line Reflection Probes section: system overview, ECS component docs, GPU pipeline (capture→IBL→upload), shader integration pseudocode, performance characteristics.
+- [x] 3.2 Created `docs/guides/reflection-probe-placement.md` (314 lines): placement principles, resolution/quality tradeoffs, priority/overlap handling, optimization strategies, troubleshooting guide.

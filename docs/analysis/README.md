@@ -8,6 +8,7 @@ Reference analysis documents organized by subsystem. Used for architectural rese
 
 | Directory | Contents | Files |
 |-----------|----------|-------|
+| [texture-loading-benchmarks.md](texture-loading-benchmarks.md) | Async texture pipeline performance: main thread stall, upload time, VRAM reduction, cook time, scaling analysis | 1 |
 | [asset-pipeline/](asset-pipeline/) | Asset loading architecture, bottleneck analysis | 4 |
 | [atmosphere/](atmosphere/) | Sky, fog, volumetric clouds, aerial perspective, transmittance LUTs | 17 |
 | [dataflow/](dataflow/) | Data flow documents for multi-subsystem features (SDF GI, SSGI, radiance cache) | 5 |
