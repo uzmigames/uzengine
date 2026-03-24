@@ -461,6 +461,59 @@ Clone-Repo -Name "vma" `
 # Crashpad (crash reporting) — deferred to milestone 2.x when crash reporting is implemented
 Write-Host "  [crashpad] skipped (not needed until 2.x crash reporting)" -ForegroundColor DarkYellow
 
+# ─── Post-Processing & Upscaling ──────────────────────────────────────────
+
+# AMD FidelityFX SDK (includes FSR 1.0/2.x/3.x, SMAA, CAS, etc.)
+Clone-Repo -Name "amd-fidelityfx" `
+    -Url "https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK.git" `
+    -Branch "main" `
+    -RemoveDirs @("docs", "samples", "tools", "PrebuiltSignedDLL", "framework", "BuildFidelityFXSolution.bat")
+
+# SMAA — Subpixel Morphological Anti-Aliasing (header-only HLSL/GLSL)
+Clone-Repo -Name "smaa" `
+    -Url "https://github.com/iryoku/smaa.git" `
+    -Branch "master" `
+    -RemoveDirs @("Demo", "Scripts")
+
+# ─── Mesh & Geometry Tools ────────────────────────────────────────────────
+
+# xatlas — UV atlas generation (lightmaps, LOD baking)
+Clone-Repo -Name "xatlas" `
+    -Url "https://github.com/jpcy/xatlas.git" `
+    -Branch "master" `
+    -RemoveDirs @("extra", "viewer", "test")
+
+# ─── Image Formats ────────────────────────────────────────────────────────
+
+# libpng — PNG image format (16-bit, interlacing, robust asset pipeline)
+Clone-Repo -Name "libpng" `
+    -Url "https://github.com/pnggroup/libpng.git" `
+    -Branch "v1.6.49" `
+    -RemoveDirs @("contrib", "projects", "tests")
+
+# libpng needs pnglibconf.h — copy the prebuilt version from scripts/
+$libpngDir = Join-Path $ThirdPartyDir "libpng"
+$prebuilt  = Join-Path $libpngDir "scripts\pnglibconf.h.prebuilt"
+$target    = Join-Path $libpngDir "pnglibconf.h"
+if ((Test-Path $prebuilt) -and -not (Test-Path $target)) {
+    Copy-Item $prebuilt $target
+    Write-Host "  [libpng] copied pnglibconf.h.prebuilt → pnglibconf.h" -ForegroundColor Green
+}
+
+# ─── Font & Text Rendering ────────────────────────────────────────────────
+
+# msdfgen — Multi-channel signed distance field font atlas generator
+Clone-Repo -Name "msdfgen" `
+    -Url "https://github.com/Chlumsky/msdfgen.git" `
+    -Branch "v1.13" `
+    -RemoveDirs @("cmake", "test")
+
+# FreeType — Font rasterization (hinting, CJK, complex scripts)
+Clone-Repo -Name "freetype" `
+    -Url "https://github.com/freetype/freetype.git" `
+    -Branch "VER-2-13-3" `
+    -RemoveDirs @("docs", "tests", "builds")
+
 # ─── Downloads ──────────────────────────────────────────────────────────────
 
 Write-Host ""
