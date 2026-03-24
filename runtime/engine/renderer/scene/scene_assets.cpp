@@ -106,6 +106,8 @@ uint32_t SceneRenderer::LoadMesh(const std::string& path, IVFS* vfs,
 
     const auto index = static_cast<uint32_t>(m_meshes.size());
     m_meshes.push_back(deferred.mesh);  // copy handles (GPUMesh is trivially copyable)
+    m_meshBoundsMin.push_back(cpuMesh.header.boundsMin);
+    m_meshBoundsMax.push_back(cpuMesh.header.boundsMax);
     m_meshMap[path] = index;
     m_deferredMeshUploads.push_back(std::move(deferred));  // move staging ownership
 
@@ -268,7 +270,7 @@ void SceneRenderer::PreloadMaterialTextures(MaterialInterface* mat, IVFS* vfs,
     for (const char* slot : kSlotNames) {
         const std::string& path = mat->GetTexturePath(slot);
         if (!path.empty()) {
-            LoadTexture(path, vfs, cmdList, mat->IsTextureSlotSRGB(slot));
+            (void)LoadTexture(path, vfs, cmdList, mat->IsTextureSlotSRGB(slot));
         }
     }
 }
@@ -291,6 +293,8 @@ uint32_t SceneRenderer::QueueMeshLoad(const std::string& path) {
     // Insert a placeholder GPUMesh so the vector slot exists.
     const uint32_t slotIndex = static_cast<uint32_t>(m_meshes.size());
     m_meshes.emplace_back();          // placeholder (IsValid() == false)
+    m_meshBoundsMin.emplace_back();   // placeholder bounds (zero) — filled by FlushPendingLoads
+    m_meshBoundsMax.emplace_back();
     m_meshMap[path] = slotIndex;
 
     m_pendingMeshPaths.push_back(path);
@@ -351,6 +355,8 @@ uint32_t SceneRenderer::RegisterProceduralMesh(Mesh&& mesh, const std::string& k
     // Reserve a stable slot with a placeholder GPUMesh.
     const auto index = static_cast<uint32_t>(m_meshes.size());
     m_meshes.emplace_back();  // placeholder (IsValid() == false)
+    m_meshBoundsMin.push_back(mesh.header.boundsMin);
+    m_meshBoundsMax.push_back(mesh.header.boundsMax);
     m_meshMap[key] = index;
 
     // Queue the CPU mesh for GPU upload on the next FlushPendingLoads().
@@ -438,6 +444,8 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
         }
 
         m_meshes[slotIndex] = deferred.mesh;  // copy handles into slot
+        m_meshBoundsMin[slotIndex] = cpuMesh.header.boundsMin;
+        m_meshBoundsMax[slotIndex] = cpuMesh.header.boundsMax;
         m_deferredMeshUploads.push_back(std::move(deferred));  // move staging ownership
 
         // Queue SDF bake for the Lua-path loaded mesh (same logic as LoadMesh).
@@ -857,6 +865,8 @@ void SceneRenderer::DestroyAssets() {
         DestroyGPUMesh(m_device, mesh);
     }
     m_meshes.clear();
+    m_meshBoundsMin.clear();
+    m_meshBoundsMax.clear();
     m_meshMap.clear();
 
     for (auto& tex : m_textures) {

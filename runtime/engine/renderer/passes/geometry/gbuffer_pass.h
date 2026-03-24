@@ -99,6 +99,13 @@ struct GBufferPassDesc {
     uint32_t          instanceBufferSrvIndex = UINT32_MAX; ///< SRV index for StructuredBuffer<InstanceData>.
     const InstanceBatch* batchData = nullptr;  ///< Pointer to instanced draw batches array.
     uint32_t          batchCount = 0;          ///< Number of batches in the array.
+
+    // ── GPU Indirect Draw (optional — set useIndirectDraw=true to enable) ──
+    /// When true and instanced is also true, the GBuffer pass uses
+    /// DrawIndexedIndirect instead of DrawIndexedInstanced. The indirect
+    /// args buffer is written by the GPU cull compute pass.
+    bool              useIndirectDraw = false;
+    RHIBufferHandle   indirectArgsBuffer;     ///< Buffer containing DrawIndexedIndirectArgs (20 bytes).
 };
 
 /// Registers a deferred G-Buffer pass in the render graph.

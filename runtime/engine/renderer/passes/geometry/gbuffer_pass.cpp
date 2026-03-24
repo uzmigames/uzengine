@@ -168,8 +168,18 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                         break;
                     }
 
-                    cmd->DrawIndexed(mesh0.indexCount, batch.instanceCount,
-                                     0, 0, batch.firstInstance);
+                    if (desc.useIndirectDraw && desc.indirectArgsBuffer.IsValid()
+                        && desc.batchCount == 1) {
+                        // Indirect draw: the GPU cull pass has written the visible
+                        // instance count into the indirect args buffer at offset 4.
+                        // The index count, start index, base vertex, and start
+                        // instance fields were pre-filled before the cull dispatch.
+                        cmd->DrawIndexedIndirect(desc.indirectArgsBuffer, 0, 1,
+                                                 sizeof(RHIDrawIndexedIndirectArgs));
+                    } else {
+                        cmd->DrawIndexed(mesh0.indexCount, batch.instanceCount,
+                                         0, 0, batch.firstInstance);
+                    }
                     ++drawCallCount;
                 }
             } else {

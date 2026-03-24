@@ -877,6 +877,51 @@ private:
     /// Number of mip levels in the Hi-Z pyramid (depends on render target size).
     uint32_t m_hizMipCount = 0;
 
+    // ── GPU Occlusion Culling Buffers (triple-buffered) ──────────────────
+
+    /// Number of per-frame-in-flight buffers (used by instance, bounding sphere,
+    /// visible index, and indirect args buffers).
+    static constexpr uint32_t kInstanceBufferCount = 3;
+
+    /// Bounding sphere input: StructuredBuffer<float4> (xyz = center, w = radius).
+    /// One per frame-in-flight to avoid CPU-GPU sync.
+    RHIBufferHandle m_boundingSphereBuffers[kInstanceBufferCount];
+
+    /// SRV descriptor heap indices for bounding sphere buffers.
+    uint32_t m_boundingSphereSrvIndices[kInstanceBufferCount] = {UINT32_MAX, UINT32_MAX, UINT32_MAX};
+
+    /// GPU cull output: AppendStructuredBuffer<uint> of visible instance indices.
+    RHIBufferHandle m_visibleIndexBuffers[kInstanceBufferCount];
+
+    /// UAV descriptor heap indices for visible index buffers.
+    uint32_t m_visibleIndexUavIndices[kInstanceBufferCount] = {UINT32_MAX, UINT32_MAX, UINT32_MAX};
+
+    /// Indirect draw args: RWByteAddressBuffer (20 bytes = DrawIndexedIndirectArgs).
+    RHIBufferHandle m_indirectArgsBuffers[kInstanceBufferCount];
+
+    /// UAV descriptor heap indices for indirect args buffers.
+    uint32_t m_indirectArgsUavIndices[kInstanceBufferCount] = {UINT32_MAX, UINT32_MAX, UINT32_MAX};
+
+    /// Current capacity of bounding sphere / visible index buffers (in number of instances).
+    uint32_t m_gpuCullBufferCapacity = 0;
+
+    /// Creates GPU cull buffers at the given capacity. Called from Init() and when
+    /// instance count exceeds current capacity in frame_setup.cpp.
+    void CreateGpuCullBuffers(uint32_t capacity);
+
+    /// Destroys all GPU cull buffers. Called from Shutdown().
+    void DestroyGpuCullBuffers();
+
+    // ── Mesh Bounds (parallel to m_meshes) ───────────────────────────────
+
+    /// Per-mesh object-space AABB minimum corners, indexed by mesh ID.
+    /// Populated during mesh loading from MeshHeader::boundsMin.
+    std::vector<Vec3> m_meshBoundsMin;
+
+    /// Per-mesh object-space AABB maximum corners, indexed by mesh ID.
+    /// Populated during mesh loading from MeshHeader::boundsMax.
+    std::vector<Vec3> m_meshBoundsMax;
+
     // ── LOD System ────────────────────────────────────────────────────────
 
     float m_lodBias = 1.0f;  ///< Global LOD bias multiplier (1.0 = default).
@@ -1062,7 +1107,6 @@ private:
     bool m_hasFog = false;            ///< True if a HeightFogComponent (enabled) was found this frame.
 
     // ── GPU Instancing (triple-buffered) ─────────────────────────────────
-    static constexpr uint32_t kInstanceBufferCount = 3; ///< One per frame-in-flight.
     RHIBufferHandle m_instanceBuffers[kInstanceBufferCount]; ///< Per-frame instance buffers.
     uint32_t m_instanceBufferCapacity = 0;   ///< Current capacity in number of InstanceData elements.
     uint32_t m_instanceBufferSrvIndices[kInstanceBufferCount] = {UINT32_MAX, UINT32_MAX, UINT32_MAX};
@@ -1167,6 +1211,15 @@ private:
         std::vector<InstanceData>   instanceDataVec;
         uint32_t                    instanceBufferSrvIndex = UINT32_MAX;
         bool                        useInstancing = false;
+
+        // ── GPU Occlusion Culling ──────────────────────────────────────
+        bool     gpuCullingActive = false;       ///< True when GPU cull pass should run this frame.
+        uint32_t boundingSphereSrvIndex = UINT32_MAX; ///< SRV for bounding sphere buffer (this frame's slot).
+        uint32_t visibleIndexUavIndex = UINT32_MAX;   ///< UAV for visible index output buffer.
+        uint32_t indirectArgsUavIndex = UINT32_MAX;   ///< UAV for indirect draw args buffer.
+        RHIBufferHandle visibleIndexBuffer;      ///< Handle for UAV barrier in cull pass.
+        RHIBufferHandle indirectArgsBuffer;      ///< Handle for UAV barrier and indirect draw.
+        CBAllocation    gpuCullCBAlloc{};         ///< CB ring allocation for GpuCullConstants.
 
         // ── Render graph resource IDs ───────────────────────────────────
         rg::RgResourceId bbRes{};

@@ -313,7 +313,7 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
 
     // ── Lens Flare (at display resolution — post-bloom effect) ──────
     m_lensFlarePass = std::make_unique<LensFlarePass>();
-    m_lensFlarePass->Init(device, m_shaderMgr.get(), width, height);
+    (void)m_lensFlarePass->Init(device, m_shaderMgr.get(), width, height);
 
     // ── Volumetric Clouds (compute pipeline, half-res output) ────────
     m_cloudPass = std::make_unique<CloudPass>();
@@ -363,6 +363,10 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
 
     // ── Hi-Z Pyramid (at render resolution — used by depth prepass/occlusion) ──
     CreateHiZPyramid(m_renderWidth, m_renderHeight);
+
+    // ── GPU Occlusion Culling Buffers (initial allocation) ──────────────
+    // Start with 4096 capacity — frame_setup.cpp will grow if needed.
+    CreateGpuCullBuffers(4096);
 
     // ── TAA History Textures (at DISPLAY resolution — TAA is the upscale point) ──
     CreateTaaResources(width, height);
@@ -581,6 +585,7 @@ void SceneRenderer::ApplyCVars() {
                         && m_globalDistanceField.IsInitialized()
                         && m_radianceCache.IsInitialized();
     m_depthPrepassEnabled = cvars.GetBool("r.DepthPrepass", true);
+    m_gpuOcclusionCullingEnabled = cvars.GetBool("r.GpuCull", false);
     m_shadowDebugMode   = static_cast<uint32_t>(cvars.GetInt("r.ShadowDebug", 0));
 
     // Pass inspector pass enables/disables — these control per-pass checks in
@@ -755,6 +760,102 @@ void SceneRenderer::DestroyHiZPyramid() {
         }
     }
     m_hizMipCount = 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GPU Occlusion Culling Buffer Creation / Destruction
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SceneRenderer::CreateGpuCullBuffers(uint32_t capacity) {
+    // Destroy any existing buffers first.
+    DestroyGpuCullBuffers();
+
+    if (capacity == 0) return;
+
+    // ── Bounding Sphere Buffers (StructuredBuffer<float4>, Upload heap) ──
+    // CPU writes bounding spheres each frame; GPU reads in cull compute shader.
+    {
+        RHIBufferDesc desc{};
+        desc.sizeBytes = static_cast<uint64_t>(capacity) * 16;  // sizeof(float4) = 16
+        desc.stride    = 16;
+        desc.usage     = RHIBufferUsage::StructuredBuffer;
+        desc.memory    = RHIMemoryType::Upload;
+
+        for (uint32_t i = 0; i < kInstanceBufferCount; ++i) {
+            desc.debugName = (i == 0) ? "BoundingSphereBuffer[0]"
+                           : (i == 1) ? "BoundingSphereBuffer[1]"
+                                      : "BoundingSphereBuffer[2]";
+            m_boundingSphereBuffers[i] = m_device->CreateBuffer(desc);
+            if (m_boundingSphereBuffers[i].IsValid()) {
+                m_boundingSphereSrvIndices[i] = m_device->GetBufferSRVIndex(m_boundingSphereBuffers[i]);
+            }
+        }
+    }
+
+    // ── Visible Index Buffers (StructuredBuffer<uint> + UAV, Default heap) ──
+    // GPU compute writes visible instance indices into this buffer.
+    {
+        RHIBufferDesc desc{};
+        desc.sizeBytes = static_cast<uint64_t>(capacity) * 4;  // sizeof(uint) = 4
+        desc.stride    = 4;
+        desc.usage     = RHIBufferUsage::StructuredBuffer | RHIBufferUsage::UnorderedAccess;
+        desc.memory    = RHIMemoryType::Default;
+
+        for (uint32_t i = 0; i < kInstanceBufferCount; ++i) {
+            desc.debugName = (i == 0) ? "VisibleIndexBuffer[0]"
+                           : (i == 1) ? "VisibleIndexBuffer[1]"
+                                      : "VisibleIndexBuffer[2]";
+            m_visibleIndexBuffers[i] = m_device->CreateBuffer(desc);
+            if (m_visibleIndexBuffers[i].IsValid()) {
+                m_visibleIndexUavIndices[i] = m_device->GetBufferUAVIndex(m_visibleIndexBuffers[i]);
+            }
+        }
+    }
+
+    // ── Indirect Args Buffers (ByteAddressBuffer + UAV + IndirectArgs, Default heap) ──
+    // 20 bytes = sizeof(RHIDrawIndexedIndirectArgs). GPU compute writes instance count;
+    // CPU pre-fills the rest per batch before dispatch.
+    {
+        RHIBufferDesc desc{};
+        desc.sizeBytes = 20;  // DrawIndexedIndirectArgs = 5 x uint32_t
+        desc.stride    = 0;   // Raw (byte-address), not structured
+        desc.usage     = RHIBufferUsage::UnorderedAccess | RHIBufferUsage::IndirectArgs | RHIBufferUsage::CopyDst;
+        desc.memory    = RHIMemoryType::Default;
+
+        for (uint32_t i = 0; i < kInstanceBufferCount; ++i) {
+            desc.debugName = (i == 0) ? "IndirectArgsBuffer[0]"
+                           : (i == 1) ? "IndirectArgsBuffer[1]"
+                                      : "IndirectArgsBuffer[2]";
+            m_indirectArgsBuffers[i] = m_device->CreateBuffer(desc);
+            if (m_indirectArgsBuffers[i].IsValid()) {
+                m_indirectArgsUavIndices[i] = m_device->GetBufferUAVIndex(m_indirectArgsBuffers[i]);
+            }
+        }
+    }
+
+    m_gpuCullBufferCapacity = capacity;
+    UZ_LOG(Renderer, Info, "SceneRenderer: created GPU cull buffers (capacity={})", capacity);
+}
+
+void SceneRenderer::DestroyGpuCullBuffers() {
+    for (uint32_t i = 0; i < kInstanceBufferCount; ++i) {
+        if (m_boundingSphereBuffers[i].IsValid()) {
+            m_device->DestroyBuffer(m_boundingSphereBuffers[i]);
+            m_boundingSphereBuffers[i] = RHIBufferHandle{};
+            m_boundingSphereSrvIndices[i] = UINT32_MAX;
+        }
+        if (m_visibleIndexBuffers[i].IsValid()) {
+            m_device->DestroyBuffer(m_visibleIndexBuffers[i]);
+            m_visibleIndexBuffers[i] = RHIBufferHandle{};
+            m_visibleIndexUavIndices[i] = UINT32_MAX;
+        }
+        if (m_indirectArgsBuffers[i].IsValid()) {
+            m_device->DestroyBuffer(m_indirectArgsBuffers[i]);
+            m_indirectArgsBuffers[i] = RHIBufferHandle{};
+            m_indirectArgsUavIndices[i] = UINT32_MAX;
+        }
+    }
+    m_gpuCullBufferCapacity = 0;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1451,6 +1552,9 @@ void SceneRenderer::Shutdown() {
 
     // ── Hi-Z Pyramid cleanup ─────────────────────────────────────
     DestroyHiZPyramid();
+
+    // ── GPU Occlusion Culling cleanup ────────────────────────────────
+    DestroyGpuCullBuffers();
 
     // ── DFS cleanup ─────────────────────────────────────────────────
     DestroyDfsResources();

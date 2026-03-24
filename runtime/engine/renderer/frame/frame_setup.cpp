@@ -788,6 +788,116 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
         ctx.instanceBufferSrvIndex = m_instanceBufferSrvIndices[ibSlot];
     }
 
+    // ── GPU Occlusion Culling — bounding sphere upload + cull constants ──
+    ctx.gpuCullingActive = false;
+    if (m_gpuOcclusionCullingEnabled && m_depthPrepassEnabled && instanceCount > 0 && ctx.bindless) {
+        UZ_PROFILE_SCOPE("GpuCull_Setup");
+
+        // Grow GPU cull buffers if instance count exceeds current capacity.
+        if (instanceCount > m_gpuCullBufferCapacity) {
+            m_device->WaitIdle();
+            // Round up to next power of two for stable allocation.
+            uint32_t newCap = instanceCount;
+            newCap |= (newCap >> 1);
+            newCap |= (newCap >> 2);
+            newCap |= (newCap >> 4);
+            newCap |= (newCap >> 8);
+            newCap |= (newCap >> 16);
+            newCap++;
+            if (newCap < 256) newCap = 256;
+            CreateGpuCullBuffers(newCap);
+        }
+
+        // Compute world-space bounding spheres from per-instance transforms + mesh AABB.
+        // Each sphere packs as float4(center.xyz, radius).
+        std::vector<Vec4> boundingSpheres(instanceCount);
+        uint32_t batchIdx = 0;
+        uint32_t batchInstanceBase = 0;
+        for (uint32_t i = 0; i < instanceCount; ++i) {
+            // Find which batch this instance belongs to (walk batches sequentially).
+            while (batchIdx < ctx.instanceBatches.size()
+                   && i >= batchInstanceBase + ctx.instanceBatches[batchIdx].instanceCount) {
+                batchInstanceBase += ctx.instanceBatches[batchIdx].instanceCount;
+                ++batchIdx;
+            }
+
+            const uint32_t meshId = (batchIdx < ctx.instanceBatches.size())
+                ? ctx.instanceBatches[batchIdx].meshId : 0;
+
+            // Object-space AABB center and radius.
+            Vec3 bMin{}, bMax{};
+            if (meshId < m_meshBoundsMin.size()) {
+                bMin = m_meshBoundsMin[meshId];
+                bMax = m_meshBoundsMax[meshId];
+            }
+            const Vec3 center_os{
+                (bMin.x + bMax.x) * 0.5f,
+                (bMin.y + bMax.y) * 0.5f,
+                (bMin.z + bMax.z) * 0.5f
+            };
+            const Vec3 extent{
+                bMax.x - center_os.x,
+                bMax.y - center_os.y,
+                bMax.z - center_os.z
+            };
+            const float radius_os = extent.Length();
+
+            // Transform center to world space and extract max axis scale.
+            const Mat4& world = ctx.instanceDataVec[i].world;
+            // center_ws = world * float4(center_os, 1.0)
+            const float cx = world.m.m[0][0] * center_os.x + world.m.m[1][0] * center_os.y + world.m.m[2][0] * center_os.z + world.m.m[3][0];
+            const float cy = world.m.m[0][1] * center_os.x + world.m.m[1][1] * center_os.y + world.m.m[2][1] * center_os.z + world.m.m[3][1];
+            const float cz = world.m.m[0][2] * center_os.x + world.m.m[1][2] * center_os.y + world.m.m[2][2] * center_os.z + world.m.m[3][2];
+
+            // Max axis scale: largest column vector length of the 3x3 rotation/scale.
+            const float scaleX = std::sqrt(world.m.m[0][0] * world.m.m[0][0] + world.m.m[0][1] * world.m.m[0][1] + world.m.m[0][2] * world.m.m[0][2]);
+            const float scaleY = std::sqrt(world.m.m[1][0] * world.m.m[1][0] + world.m.m[1][1] * world.m.m[1][1] + world.m.m[1][2] * world.m.m[1][2]);
+            const float scaleZ = std::sqrt(world.m.m[2][0] * world.m.m[2][0] + world.m.m[2][1] * world.m.m[2][1] + world.m.m[2][2] * world.m.m[2][2]);
+            const float maxScale = std::max({scaleX, scaleY, scaleZ});
+
+            boundingSpheres[i] = Vec4{cx, cy, cz, radius_os * maxScale};
+        }
+
+        // Upload bounding spheres to the current frame's buffer.
+        if (m_boundingSphereBuffers[ibSlot].IsValid()) {
+            void* mapped = m_device->MapBuffer(m_boundingSphereBuffers[ibSlot]);
+            if (mapped) {
+                std::memcpy(mapped, boundingSpheres.data(),
+                            instanceCount * sizeof(Vec4));
+                m_device->UnmapBuffer(m_boundingSphereBuffers[ibSlot]);
+            }
+        }
+
+        // Fill GpuCullConstants and allocate from CB ring.
+        GpuCullConstants cullConstants{};
+        cullConstants.viewProjection = camera.GetViewProjection();
+        cullConstants.viewMatrix     = camera.GetView();
+        cullConstants.viewToClip     = camera.GetProjection();
+        cullConstants.instanceCount  = instanceCount;
+        cullConstants.hizEnabled     = (m_hizMipCount > 0) ? 1u : 0u;
+        if (m_hizMipCount > 0) {
+            cullConstants.hizWidth    = m_hizMipLevels[0].width;
+            cullConstants.hizHeight   = m_hizMipLevels[0].height;
+            cullConstants.hizMipCount = m_hizMipCount;
+            for (uint32_t m = 0; m < m_hizMipCount && m < kGpuCullMaxHiZMips; ++m) {
+                cullConstants.hizMipSrvIndices[m] = m_hizMipLevels[m].srvIndex;
+            }
+        }
+
+        ctx.gpuCullCBAlloc = m_cbRing->Allocate(sizeof(GpuCullConstants));
+        if (ctx.gpuCullCBAlloc.cpuPtr) {
+            std::memcpy(ctx.gpuCullCBAlloc.cpuPtr, &cullConstants, sizeof(GpuCullConstants));
+        }
+
+        // Populate FrameContext fields for downstream pass registration.
+        ctx.boundingSphereSrvIndex = m_boundingSphereSrvIndices[ibSlot];
+        ctx.visibleIndexUavIndex   = m_visibleIndexUavIndices[ibSlot];
+        ctx.indirectArgsUavIndex   = m_indirectArgsUavIndices[ibSlot];
+        ctx.visibleIndexBuffer     = m_visibleIndexBuffers[ibSlot];
+        ctx.indirectArgsBuffer     = m_indirectArgsBuffers[ibSlot];
+        ctx.gpuCullingActive       = true;
+    }
+
     // ── Resolve viewport dimensions ────────────────────────────────────
     ctx.vpWidth  = static_cast<float>(ctx.swapChain->GetWidth());
     ctx.vpHeight = static_cast<float>(ctx.swapChain->GetHeight());

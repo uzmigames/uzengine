@@ -76,16 +76,72 @@ void SceneRenderer::RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContex
                 }
 
                 // ── GPU Frustum + HiZ Occlusion Culling (after Hi-Z, before GBuffer) ──
-                // @ref HZBTestPS
-                //
-                // The GPU cull pass is registered when occlusion culling is enabled
-                // and bounding sphere data has been uploaded. The pass writes to a
-                // visibility buffer that downstream passes can consume for indirect
-                // draw or CPU readback filtering.
-                //
-                // Currently gated behind m_gpuOcclusionCullingEnabled (default: false).
-                // Bounding sphere upload and indirect draw integration are future work
-                // tracked in the depth-prepass-hiz-pyramid tasks.
+                // Dispatches a compute pass that tests per-instance bounding spheres
+                // against the view frustum and (optionally) the Hi-Z depth pyramid.
+                // Survivors are written to a visibility buffer and indirect args are
+                // filled for ExecuteIndirect-based GBuffer drawing.
+                if (ctx.gpuCullingActive
+                    && ctx.gpuCullCBAlloc.cpuPtr != nullptr
+                    && ctx.boundingSphereSrvIndex != UINT32_MAX)
+                {
+                    const uint32_t instCount = static_cast<uint32_t>(ctx.instanceDataVec.size());
+
+                    // ── Pre-fill indirect args buffer ─────────────────────────
+                    // The GPU cull shader atomically writes instanceCount at offset 4.
+                    // We must pre-fill the remaining fields (indexCount, startIndex,
+                    // baseVertex, startInstance) and zero instanceCount.
+                    // Allocate staging memory from the CB ring (upload heap) and
+                    // copy to the default-heap indirect args buffer.
+                    if (ctx.indirectArgsBuffer.IsValid() && m_meshes.size() > 0 && m_meshes[0].IsValid()) {
+                        const GPUMesh& mesh0 = m_meshes[0];
+
+                        CBAllocation staging = m_cbRing->Allocate(sizeof(RHIDrawIndexedIndirectArgs));
+                        if (staging.cpuPtr) {
+                            auto* args = reinterpret_cast<RHIDrawIndexedIndirectArgs*>(staging.cpuPtr);
+                            args->indexCountPerInstance  = mesh0.indexCount;
+                            args->instanceCount          = 0;  // GPU cull shader will fill this
+                            args->startIndexLocation     = 0;
+                            args->baseVertexLocation     = 0;
+                            args->startInstanceLocation  = 0;
+
+                            // Register a copy pass to transfer staging → default buffer.
+                            const RHIBufferHandle dstBuf = ctx.indirectArgsBuffer;
+                            const RHIBufferHandle srcBuf = staging.bufferHandle;
+                            const uint64_t srcOff = staging.offsetBytes;
+                            rgBuilder.AddPass("GpuCull_InitIndirectArgs", [srcBuf, srcOff, dstBuf](rg::RgPassBuilder& pb) {
+                                pb.SetExecutionCallback([srcBuf, srcOff, dstBuf](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
+                                    UZ_PROFILE_SCOPE("GpuCull::InitIndirectArgs");
+                                    // Transition indirect args buffer to copy dest.
+                                    RHIBarrierDesc barrier{};
+                                    barrier.buffer      = dstBuf;
+                                    barrier.stateBefore = RHIResourceState::IndirectArgument;
+                                    barrier.stateAfter  = RHIResourceState::CopyDst;
+                                    cmd->ResourceBarrier(&barrier, 1);
+
+                                    cmd->CopyBuffer(srcBuf, srcOff, dstBuf, 0,
+                                                    sizeof(RHIDrawIndexedIndirectArgs));
+
+                                    // Transition to UAV for the cull pass to write.
+                                    barrier.stateBefore = RHIResourceState::CopyDst;
+                                    barrier.stateAfter  = RHIResourceState::UnorderedAccess;
+                                    cmd->ResourceBarrier(&barrier, 1);
+                                });
+                            });
+                        }
+                    }
+
+                    GpuCullPassDesc cullDesc{};
+                    cullDesc.pipeline              = pipelines->GetGpuCull();
+                    cullDesc.cullCBAlloc           = ctx.gpuCullCBAlloc;
+                    cullDesc.boundingSphereSrvIndex = ctx.boundingSphereSrvIndex;
+                    cullDesc.visibleIndexUavIndex  = ctx.visibleIndexUavIndex;
+                    cullDesc.indirectArgsUavIndex  = ctx.indirectArgsUavIndex;
+                    cullDesc.visibleIndexBuffer    = ctx.visibleIndexBuffer;
+                    cullDesc.indirectArgsBuffer    = ctx.indirectArgsBuffer;
+                    cullDesc.instanceCount         = instCount;
+                    cullDesc.bindless              = bindless;
+                    AddGpuCullPass(rgBuilder, cullDesc);
+                }
             }
 
             // ── GBuffer Pass ─────────────────────────────────────────────
@@ -117,6 +173,13 @@ void SceneRenderer::RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContex
                 gbDesc.instanceBufferSrvIndex = ctx.instanceBufferSrvIndex;
                 gbDesc.batchData              = ctx.instanceBatches.data();
                 gbDesc.batchCount             = static_cast<uint32_t>(ctx.instanceBatches.size());
+
+                // When GPU culling is active, use indirect draw so the GPU-written
+                // instance count controls how many instances are drawn.
+                if (ctx.gpuCullingActive && ctx.indirectArgsBuffer.IsValid()) {
+                    gbDesc.useIndirectDraw  = true;
+                    gbDesc.indirectArgsBuffer = ctx.indirectArgsBuffer;
+                }
             }
             AddGBufferPass(rgBuilder, gbDesc);
         }
