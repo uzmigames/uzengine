@@ -82,6 +82,9 @@ Located in [guides/](guides/):
 | [distance-field-shadows.md](guides/distance-field-shadows.md) | SDF shadow atlas and distance field tracing |
 | [film-tonemap-artist-controls.md](guides/film-tonemap-artist-controls.md) | Film tonemap artist controls (slope, toe, shoulder, etc.) |
 | [gtao-ambient-occlusion.md](guides/gtao-ambient-occlusion.md) | GTAO ambient occlusion — compute, denoise, temporal, upsample |
+| [material-texture-slots.md](guides/material-texture-slots.md) | Material texture slots, defaults, and SRV index binding |
+| [material-blend-modes.md](guides/material-blend-modes.md) | Blend mode guide — Opaque, Masked, Translucent, Additive |
+| [material-perobject-cb.md](guides/material-perobject-cb.md) | PerObjectCB layout, byte offsets, and materialFlags bitfield packing |
 | [pbr-brdf-ue5-parity.md](guides/pbr-brdf-ue5-parity.md) | PBR BRDF reference parity guide |
 | [scene-load-optimization.md](guides/scene-load-optimization.md) | Scene loading optimization and profiling |
 | [shadow-caching-guide.md](guides/shadow-caching-guide.md) | Static shadow caching implementation guide |

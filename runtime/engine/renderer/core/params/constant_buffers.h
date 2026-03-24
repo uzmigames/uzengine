@@ -181,7 +181,7 @@ static_assert(sizeof(PerFrameCB) == 768, "PerFrameCB must be 768 bytes (D3D12 CB
 ///     uint     aoIndex;
 ///     uint     emissiveIndex;
 ///     float    alphaClipThreshold;
-///     uint     twoSided;
+///     uint     opacitySrvIndex;
 ///     float4x4 model;
 ///     float4x4 normalMatrix;
 ///     float3   emissiveColor;
@@ -214,7 +214,7 @@ struct PerObjectCB {
     uint32_t aoIndex;          ///< SRV heap index for AO map (0 = 1.0 default)
     uint32_t emissiveIndex;    ///< SRV heap index for emissive map (0 = no emissive texture, use color only)
     float    alphaClipThreshold = 0.3333f; ///< Alpha test threshold for Masked blend mode. Pixels with opacity below this are discarded.
-    uint32_t twoSided = 0;    ///< 0 = back-face cull (default), 1 = disable culling (two-sided rendering).
+    uint32_t opacitySrvIndex = 0; ///< SRV index for opacity/alpha mask texture (0 = none, use scalar opacity).
     // ── Matrices after scalars (offset 32) ──
     Mat4     model;            ///< Object-to-world transform
     Mat4     normalMatrix;     ///< transpose(inverse(model)) — for lighting
@@ -261,6 +261,7 @@ struct PerObjectCB {
     /// Material flags — packed bitfield:
     ///   bits [1:0]   = blend mode (0=Opaque, 1=Masked, 2=Translucent, 3=Additive).
     ///   bit  [2]     = ORM packed texture mode (0=separate, 1=packed R=AO G=Rough B=Metal).
+    ///   bit  [3]     = twoSided (0=back-face cull, 1=no cull). PSO-level only, not read in shader.
     ///   bits [8:15]  = specular * 255 (dielectric reflectance scale, 0.0-1.0).
     ///   bits [16:23] = envMultiplier * 127.5 (IBL intensity, 0.0-2.0, 128=1.0).
     ///   bits [24:27] = shadingModelID (EShadingModel, 4-bit, 0-15).

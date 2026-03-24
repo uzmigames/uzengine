@@ -67,4 +67,4 @@
 
 - [x] 6.1 Analysis docs committed (11 files, 6800+ lines in docs/analysis/renderer/).
 - [x] 6.2 Task progress tracked in tasks.md throughout session.
-- [ ] 6.3 Update CVar documentation: document all changed default values with before/after and rationale.
+- [x] 6.3 Update CVar documentation: documented all 7 changed CVar defaults with before/after values and rationale in `docs/guides/cvar-reference.md`. Fixed 4 stale defaults (GTAO.Power, MinBrightness, MaxBrightness, SkyLight.MinAmbient).

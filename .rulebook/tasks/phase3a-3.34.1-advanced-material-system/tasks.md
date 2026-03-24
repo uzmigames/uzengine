@@ -99,7 +99,7 @@
 
 ## Phase 12: Additional Texture Slots
 
-- [ ] 12.1 Add `OpacityMask` texture slot — separate from albedo alpha. R channel, used for masked blend mode.
+- [x] 12.1 Add `OpacityMask` texture slot — Implemented as `opacitySrvIndex` in PerObjectCB (offset 28, repurposed twoSided field). R channel, bindless SRV, multiplied with scalar opacity in gbuffer_ps and mesh_ps. twoSided moved to materialFlags bit 3.
 - [ ] 12.2 Add `DetailNormal` texture slot — second normal map sampled with UV1 (detail tiling).
 - [ ] 12.3 Add `DetailAlbedo` texture slot — second albedo overlay with UV1.
 - [ ] 12.4 Update GBuffer PS to blend detail normal with base normal via Reoriented Normal Mapping (RNM).

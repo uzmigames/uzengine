@@ -2,6 +2,52 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.49] — 2026-03-24
+
+### Thirdparty Integration + CVar System Expansion + Comprehensive Testing
+
+**Thirdparty Library Integration (phase2-2.60.0):**
+- **FSR 1.0** (AMD FidelityFX): EASU (edge adaptive spatial) + RCAS (contrast adaptive) compute shaders, `FSRPass` C++ class, `r.FSR` + `r.FSR.Sharpness` CVars
+- **FSR 2.x** (AMD FidelityFX): Temporal upscaler with motion vectors, depth history, `FSR2Upscaler` class implementing `ITemporalUpscaler`, `r.FSR2` + `r.FSR2.Quality` CVars
+- **SMAA** (Subpixel Morphological AA): 3-pass post-process (edge detect → blend weight → neighborhood blend), `SMAAPass` with precomputed area/search textures, `r.SMAA` CVar
+- **xatlas**: Lightmap UV generation via `LightmapUVGenerator::GenerateLightmapUVs()` for cook-time atlas packing
+- **libpng 1.6**: Full PNG codec with 8/16-bit read/write, `PngCodec` class with sRGB detection
+- **msdfgen + FreeType**: Multi-channel SDF font atlas generation via `GenerateSDFAtlas()`, FreeType glyph extraction, `FontManager` singleton with caching and metrics
+- Build infrastructure: zlib compiled from source (static), minimal `ftmodule.h`, FFX SDK headers
+
+**CVar System Expansion (47 → 118 CVars):**
+- 50+ new CVars across renderer, post-process, debug, and performance subsystems
+- Shadows: `r.Shadow.AtlasResolution`, `r.Shadow.PCSS.SearchSamples`, `r.Shadow.PCSS.Samples`, `r.ShadowDebug`
+- Post-Process: `r.Bloom.*`, `r.SSR.*`, `r.TAA.*`, `r.FSR*`, `r.SMAA`
+- Auto-Exposure: `r.AutoExposure.*` (bias, min/max brightness, histograms)
+- Atmosphere/Fog: `r.Atmosphere.*`, `r.Fog*` parameters
+- PBR/Materials: `r.PBR.MinRoughness`, `r.Material.POM.*`
+- Film Effects: `r.Tonemap.*`, `r.FilmGrain`, `r.Vignette`, `r.ChromaticAberration`
+- System: `sys.MaxDeltaTime`, `sys.FixedDeltaTime`, `rhi.VSync`, `job.MaxWorkerCount`, `camera.MoveSpeed`
+
+**Lua API Enhancements:**
+- **`uz.cvar` namespace**: `get(name)`, `set(name, value)`, `reset(name)`, `reset_all()`, `info(name)` → `{name, description, value, default, min, max}`, `list(prefix?)`
+- **Material API**: Added `specular` (F0 scale), `env_multiplier` (IBL intensity), SSS params, ORM support, shading model + blend mode enums as strings
+- **Scene I/O API**: `uz.scene.load_scene(path)`, `uz.scene.save_scene(path)` with full guard clauses and stack hygiene
+
+**Testing Suite (187 new tests across 11 files):**
+- `test_cvar.cpp` (13 tests): Registration, clamping, reset, find, macros
+- `test_fsr_pass.cpp` (16 tests): CPU utilities, CVar defaults
+- `test_smaa_pass.cpp` (10 tests): Parameter validation
+- `test_fsr2_upscaler.cpp` (25 tests): Quality levels, temporal state
+- `test_lua_cvar_api.cpp` (29 tests): VM integration for get/set/reset/info/list
+- `test_lua_material_api.cpp` (49 tests): Scalar params, enums, flags round-trip
+- `test_lua_scene_io_api.cpp` (22 tests): Load/save guards, stack balance
+- `test_png_codec.cpp` (22 tests): Round-trip, 16-bit encoding, edge cases
+- `test_font_manager.cpp` (13 tests): Initialization, font loading, metrics
+- `test_sdf_font_atlas.cpp` (18 tests): Atlas generation, glyph metrics, error handling
+- `test_lightmap_uv.cpp` (3 tests): UV generation, empty input handling
+- **Total: 3987/3988 tests passing** (baseline 3800)
+
+**Documentation:**
+- `cvar-reference.md` updated with all 118 CVars, usage examples, Lua API section
+- `thirdparty/README.md` updated with all new libraries (FSR, SMAA, FreeType, libpng, msdfgen, xatlas)
+
 ## [0.2.48] — 2026-03-24
 
 ### Lua API Reorg, CVar Expansion, Thirdparty Integration, Full Test Coverage

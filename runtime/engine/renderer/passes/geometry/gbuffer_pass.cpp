@@ -246,7 +246,7 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                         perObjParams.aoIntensity         = drawCmd.aoIntensity;
                         perObjParams.opacity             = drawCmd.opacity;
                         perObjParams.alphaClipThreshold   = drawCmd.alphaClipThreshold;
-                        perObjParams.twoSided            = drawCmd.twoSided;
+                        perObjParams.opacitySrvIndex     = drawCmd.opacitySrvIndex;
                         perObjParams.materialFlags       = drawCmd.materialFlags;
 
                         // Set texture handles with fallbacks for SM5 binding
@@ -298,7 +298,7 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                         perObject.heightmapSrvIndex   = drawCmd.heightmapSrvIndex;
                         perObject.pomSelfShadow       = drawCmd.pomSelfShadow;
                         perObject.alphaClipThreshold  = drawCmd.alphaClipThreshold;
-                        perObject.twoSided            = drawCmd.twoSided;
+                        perObject.opacitySrvIndex     = drawCmd.opacitySrvIndex;
                         perObject.materialFlags       = drawCmd.materialFlags;
 
                         CBAllocation objAlloc = desc.cbAllocator->Allocate(sizeof(PerObjectCB));

@@ -200,6 +200,7 @@ public:
     [[nodiscard]] uint32_t GetAoSrvIndex() const         { return GetTextureSrvIndex("Ao"); }
     [[nodiscard]] uint32_t GetEmissiveSrvIndex() const   { return GetTextureSrvIndex("Emissive"); }
     [[nodiscard]] uint32_t GetOrmSrvIndex() const        { return GetTextureSrvIndex("ORM"); }
+    [[nodiscard]] uint32_t GetOpacitySrvIndex() const    { return GetTextureSrvIndex("Opacity"); }
 
     // ── Subsurface scattering parameters ────────────────────────────────────
 

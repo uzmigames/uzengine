@@ -55,7 +55,7 @@ namespace uz {
 /// 16       4      aoIndex (uint32_t)
 /// 20       4      emissiveIndex (uint32_t)
 /// 24       4      alphaClipThreshold (float)
-/// 28       4      twoSided (uint32_t)
+/// 28       4      opacitySrvIndex (uint32_t)
 /// 32       64     model (Mat4)
 /// 96       64     normalMatrix (Mat4)
 /// 160      12     emissiveColor (3 floats)
@@ -91,7 +91,7 @@ struct GBufferPerObjectParams {
     uint32_t emissiveIndex  = 0;    ///< SRV heap index for emissive map (0 = no texture, use color only).
     /// Default alpha clip threshold: 1/3 (standard masked material convention).
     float    alphaClipThreshold = 0.3333f; ///< Alpha test threshold for Masked blend mode.
-    uint32_t twoSided       = 0;    ///< 0 = back-face cull (default), 1 = no cull (two-sided).
+    uint32_t opacitySrvIndex = 0;   ///< SRV index for opacity/alpha mask texture (0 = none, use scalar opacity).
     Mat4     model;                 ///< Object-to-world transform.
     Mat4     normalMatrix;          ///< transpose(inverse(model)) for lighting.
     /// Emissive tint is added to scene color during the lighting pass.

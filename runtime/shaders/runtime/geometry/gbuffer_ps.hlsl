@@ -43,7 +43,7 @@ cbuffer PerObjectCB : register(b2) {
     uint     aoIndex;
     uint     emissiveIndex;
     float    alphaClipThreshold;
-    uint     twoSided;
+    uint     opacitySrvIndex;
     row_major float4x4 model;
     row_major float4x4 normalMatrix;
     float3   emissiveColor;
@@ -200,7 +200,12 @@ GBufferOutput main(PSInput input) {
 
     // ── Alpha test (Masked blend mode) ────────────────────────────────────
     if ((materialFlags & 0x3u) == 1) {
-        if (matOpacity < alphaClipThreshold) discard;
+        float alphaValue = matOpacity;
+        if (opacitySrvIndex > 0) {
+            Texture2D<float4> opacityTex = ResourceDescriptorHeap[opacitySrvIndex];
+            alphaValue *= opacityTex.Sample(linearSampler, uv).r;
+        }
+        if (alphaValue < alphaClipThreshold) discard;
     }
 
     // ── Per-shading-model custom data in RT2.w ──────────────────────────

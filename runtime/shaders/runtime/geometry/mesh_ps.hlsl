@@ -31,7 +31,7 @@ cbuffer PerObjectCB : register(b2) {
     uint     aoIndex;
     uint     emissiveIndex;
     float    alphaClipThreshold;
-    uint     twoSided;
+    uint     opacitySrvIndex;
     row_major float4x4 model;
     row_major float4x4 normalMatrix;
     float3   emissiveColor;
@@ -73,5 +73,12 @@ float4 main(PSInput input) : SV_Target {
     float NdotL = max(dot(N, L), 0.0);
     float3 color = albedo * (NdotL * lightColor.xyz + ambientColor.xyz);
 
-    return float4(color, matOpacity);
+    // ── Opacity texture modulation (forward/translucent path) ──────────
+    float finalOpacity = matOpacity;
+    if (opacitySrvIndex > 0) {
+        Texture2D<float4> opacityTex = ResourceDescriptorHeap[opacitySrvIndex];
+        finalOpacity *= opacityTex.Sample(linearSampler, uv).r;
+    }
+
+    return float4(color, finalOpacity);
 }

@@ -161,6 +161,46 @@ function on_update(entity, dt)
 end
 ```
 
+### Adjusting Console Variables (CVars)
+
+Use `uz.cvar` to query and modify render settings at runtime:
+
+```lua
+function on_update(entity, dt)
+    -- Get current values
+    local bloom_enabled = uz.cvar.get("r.Bloom")
+    local exposure = uz.cvar.get("r.Exposure")
+    uz.log("Current exposure: " .. exposure)
+
+    -- Set values
+    if uz.input.is_key_just_pressed("B") then
+        uz.cvar.set("r.Bloom", bloom_enabled == 1 and 0 or 1)
+    end
+
+    if uz.input.is_key_just_pressed("E") then
+        uz.cvar.set("r.Exposure", uz.cvar.get("r.Exposure") + 0.1)
+    end
+
+    -- Reset to defaults
+    if uz.input.is_key_just_pressed("R") then
+        uz.cvar.reset("r.Bloom")
+        uz.cvar.reset_all()  -- reset all CVars
+    end
+
+    -- Query CVar metadata
+    local info = uz.cvar.info("r.Bloom.Intensity")
+    if info then
+        uz.log("CVar: " .. info.name .. " = " .. info.value .. " (default: " .. info.default .. ")")
+    end
+
+    -- List all CVars by prefix
+    local bloom_vars = uz.cvar.list("r.Bloom")
+    for i = 1, #bloom_vars do
+        uz.log("Found: " .. bloom_vars[i])
+    end
+end
+```
+
 ### Quitting the Application
 
 ```lua
@@ -321,7 +361,10 @@ For complete API documentation, see:
 - **Camera**: `uz.camera.set_position()`, `uz.camera.look_at()`
 - **Input**: `uz.input.is_key_down()`, `uz.input.is_key_just_pressed()`, `uz.input.get_mouse_delta()`, etc.
 - **Scene**: `uz.scene.get_entities()`, `uz.scene.get_name()`, `uz.scene.get_rotation()`, `uz.scene.set_rotation()`
+- **Scene I/O**: `uz.scene.load_scene()`, `uz.scene.save_scene()`
+- **Materials**: `uz.scene.set_material()`, `uz.scene.get_material()` — set/query material properties (albedo, metallic, roughness, shading models, etc.)
 - **Renderer**: `uz.renderer.set_render_path()`, `uz.renderer.set_debug_view()`
+- **CVars**: `uz.cvar.get()`, `uz.cvar.set()`, `uz.cvar.reset()`, `uz.cvar.reset_all()`, `uz.cvar.info()`, `uz.cvar.list()` — query and modify console variables at runtime
 
 See [docs/engine/15-scripting/06-lua-api.md](../../engine/15-scripting/06-lua-api.md) for the full reference with examples.
 
