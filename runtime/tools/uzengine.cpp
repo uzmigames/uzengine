@@ -18,11 +18,12 @@
 #include "scene_loader.h"
 #include "../engine/scripting/lua_vm.h"
 #include "lua_scene_api.h"
+#include "lua_scene_io_api.h"
 #include "lua_renderer_api.h"
 #include "../engine/scripting/script_system.h"
 #include "../engine/asset/vfs.h"
 #include "../engine/renderer/scene/scene_renderer.h"
-#include "../engine/scripting/api/core/lua_input_api.h"
+#include "../engine/scripting/core/lua_input_api.h"
 
 #ifdef _WIN32
 #include "platform_window.h"

@@ -62,8 +62,9 @@ file(GLOB SRC_PATHS          engine/paths/*.cpp)
 file(GLOB SRC_SHADER_COMMON  engine/shader/*.cpp)
 file(GLOB SRC_RENDERER       engine/renderer/*.cpp)
 file(GLOB SRC_SCRIPTING      engine/scripting/*.cpp)
-file(GLOB SRC_SCRIPTING_API  engine/scripting/api/scene/*.cpp)
-file(GLOB SRC_SCRIPTING_API_CORE engine/scripting/api/core/*.cpp)
+file(GLOB SRC_SCRIPTING_API  engine/scripting/scene/*.cpp)
+file(GLOB SRC_SCRIPTING_API_CORE engine/scripting/core/*.cpp
+                                 engine/scripting/renderer/*.cpp)
 file(GLOB SRC_ASSET          engine/asset/*.cpp)
 file(GLOB SRC_RHI_VULKAN     engine/rhi/vulkan/*.cpp)
 file(GLOB SRC_MATERIAL       engine/material/*.cpp)
@@ -260,8 +261,9 @@ target_include_directories(uzengine_runtime PUBLIC
     engine/paths
     engine/renderer
     engine/scripting
-    engine/scripting/api/scene
-    engine/scripting/api/core
+    engine/scripting/scene
+    engine/scripting/core
+    engine/scripting/renderer
     engine/ecs
     engine/asset
     engine/material

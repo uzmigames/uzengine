@@ -2,6 +2,52 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.46] — 2026-03-24
+
+### Lua Scripting API — CVar Extensions, Material Parity, Directory Reorganization
+
+**Lua CVar API Extensions (uz.cvar):**
+- `uz.cvar.reset(name)` — reset CVar to default value
+- `uz.cvar.reset_all()` — reset all CVars to defaults
+- `uz.cvar.info(name)` — returns `{name, description, value, default, min, max}` or nil
+- `uz.cvar.list(prefix?)` — enumerate CVar names, optionally filtered by prefix
+
+**Material Lua API — Full Parameter Parity (uz.scene.set_material / get_material):**
+- Added `specular` (F0 scale, default 0.5) and `env_multiplier` (IBL intensity, default 1.0)
+- Added SSS params: `subsurface_color_r/g/b`, `subsurface_radius`
+- Added ORM support: `use_orm` flag, `orm` and `thickness` texture IDs
+- Added enum params as strings: `shading_model`, `blend_mode`, `material_domain`
+
+**Scripting Directory Reorganization (12 → 21 focused files):**
+- Removed `api/` nesting: `scripting/api/{core,renderer,scene}/` → `scripting/{core,renderer,scene}/`
+- Split `lua_scene_api.cpp` (1246 lines) → `lua_scene_api` + `lua_material_api` + `lua_scene_io_api`
+- Split `lua_renderer_api.cpp` (1057 lines) → `lua_renderer_api` + `lua_cvar_api` + `lua_asset_api` + `lua_pass_inspector_api`
+- Split `lua_environment_api.cpp` (1207 lines) → `lua_fog_api` + `lua_skylight_api` + `lua_atmosphere_api` + `lua_clouds_api`
+- All files under 500 lines, single responsibility each
+
+## [0.2.45] — 2026-03-24
+
+### Deferred Lighting Overhaul — Metallic Flickering Fix + IBL Improvements
+
+**Critical Bug Fix — HLSL cbuffer array packing mismatch:**
+- `float _pomPad[7]` in `gbuffer_ps.hlsl` consumed 112 bytes (7×16) in HLSL instead of 28 bytes (7×4) in C++
+- `materialFlags` at C++ offset 252 was read from HLSL offset 336 — 80 bytes past the 256-byte CB allocation
+- GPU read garbage, intermittently triggering the ORM texture path → wrong metallic values on gold sphere
+- **Fix**: replaced `float[7]` with 7 individual scalar fields matching `PerObjectCB` layout
+
+**Deferred Lighting Shader Improvements:**
+- Sky pixel discard (`if (z <= 0.0001) discard`) — prevents garbage worldPos from cleared GBuffer
+- `clampSampler` (register s2) for all IBL sampling — prevents BRDF LUT wrap artifacts at grazing angles
+- Explicit F90 in split-sum: `F0 * envBRDF.x + saturate(50.0 * F0.g) * envBRDF.y` (matches UE5 `EnvBRDF()`)
+- Horizon occlusion: `saturate(1.0 + dot(R, N))^2` — fades specular below surface plane
+- Multi-scatter energy compensation (Kulla & Conty 2017 / Fdez-Agüera 2019)
+- Specular occlusion (Lagarde 2014) — reduces IBL at grazing angles with low AO
+- IBL fallback for empty cubemaps (first frames before sky bake): F0-colored ambient for metals
+
+**Infrastructure:**
+- GBuffer pass now uses `cbRingAllocator` (ShaderParameterBinder path) instead of legacy manual CB
+- `DrawList::Sort()` changed from `std::sort` to `std::stable_sort` for deterministic ordering
+
 ## [0.2.44] — 2026-03-21
 
 ### Async Texture Pipeline — Zero Main-Thread Stall, BC7 Compression, sRGB Correctness

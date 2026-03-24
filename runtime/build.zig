@@ -87,9 +87,9 @@ pub fn build(b: *std.Build) void {
         "engine/ecs/update",
         "engine/ecs/loaders",
         "engine/scripting",
-        "engine/scripting/api/scene",
-        "engine/scripting/api/core",
-        "engine/scripting/api/renderer",
+        "engine/scripting/scene",
+        "engine/scripting/core",
+        "engine/scripting/renderer",
         "engine/event",
         "engine/property",
         "engine/debug",
@@ -234,9 +234,9 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/ecs/update", cpp_flags);
     addCppDir(runtime_mod, b, "engine/ecs/loaders", cpp_flags);
     addCppDir(runtime_mod, b, "engine/scripting", cpp_flags);
-    addCppDir(runtime_mod, b, "engine/scripting/api/scene", cpp_flags);
-    addCppDir(runtime_mod, b, "engine/scripting/api/core", cpp_flags);
-    addCppDir(runtime_mod, b, "engine/scripting/api/renderer", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/scripting/scene", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/scripting/core", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/scripting/renderer", cpp_flags);
     addCppDir(runtime_mod, b, "engine/property", cpp_flags);
     addCppDir(runtime_mod, b, "engine/debug",    cpp_flags);
 

@@ -2,12 +2,20 @@
 
 #include "log.h"
 #include "lua_scene_api.h"
+#include "lua_material_api.h"
+#include "lua_scene_io_api.h"
 #include "lua_camera_api.h"
 #include "lua_input_api.h"
 #include "lua_renderer_api.h"
+#include "lua_cvar_api.h"
+#include "lua_asset_api.h"
+#include "lua_pass_inspector_api.h"
 #include "lua_entity_api.h"
 #include "lua_light_api.h"
-#include "lua_environment_api.h"
+#include "lua_fog_api.h"
+#include "lua_skylight_api.h"
+#include "lua_atmosphere_api.h"
+#include "lua_clouds_api.h"
 #include "lua_time_api.h"
 #include "lua_math_api.h"
 #include "lua_quat_api.h"
@@ -138,12 +146,20 @@ bool LuaVM::Init() {
 
     // Register engine sub-API tables into uz.* after the base table exists.
     LuaRegisterSceneAPI(s_state);
+    LuaRegisterMaterialAPI(s_state);
+    LuaRegisterSceneIoAPI(s_state);
     LuaRegisterCameraAPI(s_state);
     LuaRegisterInputAPI(s_state);
     LuaRegisterRendererAPI(s_state);
+    LuaRegisterCvarAPI(s_state);
+    LuaRegisterAssetAPI(s_state);
+    LuaRegisterPassInspectorAPI(s_state);
     LuaRegisterEntityAPI(s_state);
     LuaRegisterLightAPI(s_state);
-    LuaRegisterEnvironmentAPI(s_state);
+    LuaRegisterFogAPI(s_state);
+    LuaRegisterSkyLightAPI(s_state);
+    LuaRegisterAtmosphereAPI(s_state);
+    LuaRegisterCloudsAPI(s_state);
     LuaRegisterTimeAPI(s_state);
     LuaRegisterMathAPI(s_state);
     LuaRegisterQuatAPI(s_state);

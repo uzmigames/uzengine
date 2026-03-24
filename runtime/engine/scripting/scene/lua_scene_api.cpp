@@ -5,12 +5,8 @@
 #include "name_component.h"
 #include "scene_component.h"
 #include "static_mesh_component.h"
-#include "material/material_asset.h"
 #include "vector3.h"
 #include "quaternion.h"
-#include "scene_loader.h"
-#include "scene_renderer.h"
-#include "vfs.h"
 
 extern "C" {
 #include <lua.h>
@@ -19,7 +15,6 @@ extern "C" {
 }
 
 #include <cstdint>
-#include <cstdio>
 #include <cmath>
 #include <cstring>
 
@@ -36,34 +31,11 @@ UZ_DECLARE_LOG_CATEGORY(Scripting);
 namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Lua-created material storage
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Materials created by Lua scripts via `uz.scene.set_material()`. Owned here;
-/// referenced by StaticMeshComponent via non-owning pointers. Cleared when the
-/// Lua VM shuts down (process exit or script reload).
-static std::vector<std::unique_ptr<Material>> s_luaCreatedMaterials;
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Registry key constants
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Key used to store the World* in the Lua registry.
 static constexpr const char* kWorldRegistryKey = "uz_world";
-
-/// Key used to store the IVFS* in the Lua registry.
-static constexpr const char* kVfsRegistryKey = "uz_vfs";
-
-/// Key used to store the SceneRenderer* in the Lua registry (shared with lua_renderer_api.cpp).
-static constexpr const char* kRendererRegistryKey = "uz_scene_renderer";
-
-/// Retrieves the SceneRenderer* from the Lua registry. Returns null if not set.
-[[nodiscard]] static SceneRenderer* GetSceneRenderer(lua_State* L) {
-    lua_getfield(L, LUA_REGISTRYINDEX, kRendererRegistryKey);
-    void* p = lua_touserdata(L, -1);
-    lua_pop(L, 1);
-    return static_cast<SceneRenderer*>(p);
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Entity <-> lightuserdata encoding helpers
@@ -103,14 +75,6 @@ static constexpr const char* kRendererRegistryKey = "uz_scene_renderer";
     void* p = lua_touserdata(L, -1);
     lua_pop(L, 1);
     return static_cast<World*>(p);
-}
-
-/// Retrieves the IVFS* from the Lua registry. Returns null if not set.
-[[nodiscard]] static IVFS* GetVFS(lua_State* L) {
-    lua_getfield(L, LUA_REGISTRYINDEX, kVfsRegistryKey);
-    void* p = lua_touserdata(L, -1);
-    lua_pop(L, 1);
-    return static_cast<IVFS*>(p);
 }
 
 /// Reads an entity lightuserdata from stack position `idx`.
@@ -540,316 +504,6 @@ static int SceneGetChildren(lua_State* L) {
     return 1;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Internal helpers — StaticMeshComponent access
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Retrieves or creates a StaticMeshComponent for the entity at stack index 1.
-///
-/// Returns nullptr and logs a warning if the world is not set or the entity is
-/// invalid. Creates the component if the entity doesn't have one yet, which
-/// matches the expected scripting ergonomics (call set_mesh on any entity).
-[[nodiscard]] static StaticMeshComponent* GetOrAddMeshComponent(
-    lua_State* L, const char* funcName)
-{
-    World* world = GetWorld(L);
-    if (!world) {
-        UZ_LOG(Scripting, Warning, "uz.scene.{}: World not set", funcName);
-        return nullptr;
-    }
-
-    const Entity entity = CheckEntity(L, 1, funcName);
-    if (!entity.IsValid() || !world->IsValid(entity)) {
-        UZ_LOG(Scripting, Warning, "uz.scene.{}: invalid or stale entity", funcName);
-        return nullptr;
-    }
-
-    if (!world->HasComponent<StaticMeshComponent>(entity)) {
-        world->AddComponent<StaticMeshComponent>(entity);
-    }
-    return &world->GetComponent<StaticMeshComponent>(entity);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Internal helpers — read-only StaticMeshComponent access
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Retrieves the StaticMeshComponent for the entity at stack index 1 (read-only).
-///
-/// Returns nullptr without logging if the entity simply lacks the component —
-/// callers distinguish "no component" (nil return) from errors (logged here).
-[[nodiscard]] static StaticMeshComponent* GetMeshComponent(
-    lua_State* L, const char* funcName)
-{
-    World* world = GetWorld(L);
-    if (!world) {
-        UZ_LOG(Scripting, Warning, "uz.scene.{}: World not set", funcName);
-        return nullptr;
-    }
-
-    const Entity entity = CheckEntity(L, 1, funcName);
-    if (!entity.IsValid() || !world->IsValid(entity)) {
-        UZ_LOG(Scripting, Warning, "uz.scene.{}: invalid or stale entity", funcName);
-        return nullptr;
-    }
-
-    if (!world->HasComponent<StaticMeshComponent>(entity)) {
-        return nullptr;  // Not an error — caller pushes nil.
-    }
-
-    return &world->GetComponent<StaticMeshComponent>(entity);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Lua C functions — uz.scene.set_mesh / uz.scene.set_material
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// uz.scene.set_mesh(entity, mesh_id)
-///
-/// Assigns a mesh (by ID returned from `uz.mesh.load`) to an entity.
-/// Creates a `StaticMeshComponent` on the entity if it doesn't have one.
-/// Sets `meshLoaded = true` because the ID was obtained from `uz.mesh.load`
-/// which already queued the GPU upload.
-///
-/// # Arguments
-/// * `entity` (lightuserdata) — Target entity.
-/// * `mesh_id` (integer)      — Mesh ID from `uz.mesh.load`.
-static int SceneSetMesh(lua_State* L) {
-    StaticMeshComponent* meshComp = GetOrAddMeshComponent(L, "set_mesh");
-    if (!meshComp) return 0;
-
-    const lua_Integer meshId = luaL_checkinteger(L, 2);
-    if (meshId < 0) {
-        UZ_LOG(Scripting, Warning, "uz.scene.set_mesh: invalid mesh_id {}", meshId);
-        return 0;
-    }
-
-    meshComp->meshId     = static_cast<uint32_t>(meshId);
-    meshComp->meshLoaded = true;   // GPU upload was already queued by uz.mesh.load
-    return 0;
-}
-
-/// uz.scene.set_material(entity, material_table)
-///
-/// Assigns texture IDs from a material table to the entity's mesh component.
-/// All fields are optional — omitted fields leave the existing value unchanged.
-///
-/// # Arguments
-/// * `entity` (lightuserdata) — Target entity.
-/// * `material_table` (table) — Table with optional fields:
-///   - `albedo`    (integer) — Texture ID from `uz.texture.load`.
-///   - `normal`    (integer) — Texture ID from `uz.texture.load`.
-///   - `roughness` (integer) — Texture ID from `uz.texture.load`.
-///   - `metallic`  (integer) — Texture ID from `uz.texture.load`.
-///   - `ao`        (integer) — Texture ID from `uz.texture.load`.
-///
-/// For MVP the albedo texture ID is also used as `materialId` so the draw
-/// system can pick a material index without a full material asset system.
-static int SceneSetMaterial(lua_State* L) {
-    StaticMeshComponent* meshComp = GetOrAddMeshComponent(L, "set_material");
-    if (!meshComp) return 0;
-
-    if (!lua_istable(L, 2)) {
-        UZ_LOG(Scripting, Warning,
-            "uz.scene.set_material: argument 2 must be a table, got {}",
-            lua_typename(L, lua_type(L, 2)));
-        return 0;
-    }
-
-    // Helper: read an integer field from the table at stack index 2.
-    // Returns UINT32_MAX if the field is absent or nil.
-    auto readTexId = [&](const char* field) -> uint32_t {
-        lua_getfield(L, 2, field);
-        uint32_t id = UINT32_MAX;
-        if (lua_isnumber(L, -1)) {
-            const lua_Integer raw = lua_tointeger(L, -1);
-            if (raw >= 0) {
-                id = static_cast<uint32_t>(raw);
-            }
-        }
-        lua_pop(L, 1);
-        return id;
-    };
-
-    const uint32_t albedoId    = readTexId("albedo");
-    const uint32_t normalId    = readTexId("normal");
-    const uint32_t roughnessId = readTexId("roughness");
-    const uint32_t metallicId  = readTexId("metallic");
-    const uint32_t aoId        = readTexId("ao");
-    const uint32_t emissiveId  = readTexId("emissive");
-
-    // Read emissive color and intensity float fields (optional).
-    auto readFloat = [&](const char* field, float defaultVal) -> float {
-        lua_getfield(L, 2, field);
-        float val = defaultVal;
-        if (lua_isnumber(L, -1)) {
-            val = static_cast<float>(lua_tonumber(L, -1));
-        }
-        lua_pop(L, 1);
-        return val;
-    };
-
-    // Create a Material asset owned by the Lua material storage.
-    auto mat = std::make_unique<Material>();
-
-    // ── Material parameters (all optional, use Material defaults if absent) ──
-
-    // Emissive
-    mat->emissiveColorR    = readFloat("emissive_color_r", 0.0f);
-    mat->emissiveColorG    = readFloat("emissive_color_g", 0.0f);
-    mat->emissiveColorB    = readFloat("emissive_color_b", 0.0f);
-    mat->emissiveIntensity = readFloat("emissive_intensity", 0.0f);
-
-    // PBR multipliers
-    mat->roughnessMultiplier = readFloat("roughness_multiplier", 1.0f);
-    mat->metallicMultiplier  = readFloat("metallic_multiplier", 1.0f);
-    mat->normalIntensity     = readFloat("normal_intensity", 1.0f);
-    mat->aoIntensity         = readFloat("ao_intensity", 1.0f);
-    mat->opacity             = readFloat("opacity", 1.0f);
-
-    // Base color tint
-    mat->baseColorTintR = readFloat("base_color_r", 1.0f);
-    mat->baseColorTintG = readFloat("base_color_g", 1.0f);
-    mat->baseColorTintB = readFloat("base_color_b", 1.0f);
-
-    // UV transform
-    mat->uvScaleX  = readFloat("uv_scale_x", 1.0f);
-    mat->uvScaleY  = readFloat("uv_scale_y", 1.0f);
-    mat->uvOffsetX = readFloat("uv_offset_x", 0.0f);
-    mat->uvOffsetY = readFloat("uv_offset_y", 0.0f);
-
-    // Rendering flags
-    auto readBool = [&](const char* field, bool defaultVal) -> bool {
-        lua_getfield(L, 2, field);
-        bool val = defaultVal;
-        if (lua_isboolean(L, -1)) val = lua_toboolean(L, -1) != 0;
-        lua_pop(L, 1);
-        return val;
-    };
-    mat->twoSided           = readBool("two_sided", false);
-    mat->alphaTest           = readBool("alpha_test", false);
-    mat->alphaClipThreshold  = readFloat("alpha_clip_threshold", 0.3333f);
-
-    // Resolve texture IDs back to VFS paths and set them on the Material.
-    // The renderer's SyncWorldToDrawList uses these paths to bind textures.
-    SceneRenderer* renderer = GetSceneRenderer(L);
-
-    auto resolveAndSet = [&](uint32_t texId, std::string& pathField) {
-        if (texId == UINT32_MAX) return;
-        if (!renderer) {
-            UZ_LOG(Scripting, Warning,
-                "uz.scene.set_material: SceneRenderer not available, cannot resolve texture ID {}", texId);
-            return;
-        }
-        std::string path = renderer->GetTexturePath(texId);
-        if (!path.empty()) {
-            pathField = std::move(path);
-        }
-    };
-
-    if (albedoId != UINT32_MAX) {
-        meshComp->materialId = albedoId;
-        resolveAndSet(albedoId, mat->albedoPath);
-    }
-    resolveAndSet(normalId,    mat->normalPath);
-    resolveAndSet(roughnessId, mat->roughnessPath);
-    resolveAndSet(metallicId,  mat->metallicPath);
-    resolveAndSet(aoId,        mat->aoPath);
-    resolveAndSet(emissiveId,  mat->emissivePath);
-
-    meshComp->SetMaterial(0, mat.get());
-    s_luaCreatedMaterials.push_back(std::move(mat));
-
-    meshComp->materialLoaded = true;
-    return 0;
-}
-
-/// uz.scene.get_mesh(entity) -> mesh_id (integer) | nil
-///
-/// Returns the `meshId` from the entity's `StaticMeshComponent` when the mesh
-/// has been uploaded to the GPU (i.e., `meshLoaded == true`). Returns nil if
-/// the entity has no `StaticMeshComponent` or the mesh has not been loaded yet.
-///
-/// # Arguments
-/// * `entity` (lightuserdata) — Target entity.
-///
-/// # Returns
-/// - Integer `mesh_id` on success.
-/// - `nil` if the component is missing or `meshLoaded` is false.
-static int SceneGetMesh(lua_State* L) {
-    StaticMeshComponent* meshComp = GetMeshComponent(L, "get_mesh");
-    if (!meshComp || !meshComp->meshLoaded) {
-        lua_pushnil(L);
-        return 1;
-    }
-    lua_pushinteger(L, static_cast<lua_Integer>(meshComp->meshId));
-    return 1;
-}
-
-/// uz.scene.get_material(entity) -> table | nil
-///
-/// Returns a table with the entity's material parameters. Includes the albedo
-/// texture ID (from `materialId`) and, if a `Material` is assigned via the
-/// override material slot system, all scalar/boolean material parameters.
-///
-/// # Arguments
-/// * `entity` (lightuserdata) — Target entity.
-///
-/// # Returns
-/// - Table with material parameters on success.
-/// - `nil` if the component is missing or `materialLoaded` is false.
-static int SceneGetMaterial(lua_State* L) {
-    StaticMeshComponent* meshComp = GetMeshComponent(L, "get_material");
-    if (!meshComp || !meshComp->materialLoaded) {
-        lua_pushnil(L);
-        return 1;
-    }
-
-    lua_newtable(L);
-
-    // materialId is used as the albedo texture ID in the MVP asset system.
-    if (meshComp->materialId != 0) {
-        lua_pushinteger(L, static_cast<lua_Integer>(meshComp->materialId));
-        lua_setfield(L, -2, "albedo");
-    }
-
-    // If a Material is assigned via the slot system, expose its parameters.
-    const MaterialInterface* matIface = meshComp->GetMaterial(0);
-    if (matIface) {
-        const auto* mat = static_cast<const Material*>(matIface);
-
-        auto pushFloat = [&](const char* name, float val) {
-            lua_pushnumber(L, static_cast<double>(val));
-            lua_setfield(L, -2, name);
-        };
-
-        pushFloat("roughness_multiplier", mat->roughnessMultiplier);
-        pushFloat("metallic_multiplier", mat->metallicMultiplier);
-        pushFloat("normal_intensity", mat->normalIntensity);
-        pushFloat("ao_intensity", mat->aoIntensity);
-        pushFloat("opacity", mat->opacity);
-        pushFloat("emissive_color_r", mat->emissiveColorR);
-        pushFloat("emissive_color_g", mat->emissiveColorG);
-        pushFloat("emissive_color_b", mat->emissiveColorB);
-        pushFloat("emissive_intensity", mat->emissiveIntensity);
-        pushFloat("base_color_r", mat->baseColorTintR);
-        pushFloat("base_color_g", mat->baseColorTintG);
-        pushFloat("base_color_b", mat->baseColorTintB);
-        pushFloat("uv_scale_x", mat->uvScaleX);
-        pushFloat("uv_scale_y", mat->uvScaleY);
-        pushFloat("uv_offset_x", mat->uvOffsetX);
-        pushFloat("uv_offset_y", mat->uvOffsetY);
-
-        lua_pushboolean(L, mat->twoSided ? 1 : 0);
-        lua_setfield(L, -2, "two_sided");
-        lua_pushboolean(L, mat->alphaTest ? 1 : 0);
-        lua_setfield(L, -2, "alpha_test");
-        pushFloat("alpha_clip_threshold", mat->alphaClipThreshold);
-    }
-
-    return 1;
-}
-
 /// uz.scene.set_visible(entity, enabled)
 ///
 /// Sets the `visible` flag on the entity's `StaticMeshComponent`. Logs a warning
@@ -922,134 +576,6 @@ static int SceneIsVisible(lua_State* L) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Lua C functions — uz.scene scene load/save
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// uz.scene.load_scene(path) -> bool
-///
-/// Destroys all existing entities in the world and loads a new scene from the
-/// given VFS-relative path (e.g. `"scenes/demo.uzscene"`).
-///
-/// The file is read through the VFS registered via `LuaSetVFS`. The world is
-/// cleared via `World::Clear()` before parsing begins, so partial failures
-/// leave the world empty rather than in a mixed state.
-///
-/// # Arguments
-/// * `path` (string) — VFS-relative path to the `.uzscene` file.
-///
-/// # Returns
-/// - `true` if at least one entity was successfully created.
-/// - `false` if the World or VFS is not set, the file is not found, or the
-///   JSON is malformed (all failures are logged at Warning/Error level).
-static int SceneLoadScene(lua_State* L) {
-    const char* path = luaL_checkstring(L, 1);
-
-    World* world = GetWorld(L);
-    if (!world) {
-        UZ_LOG(Scripting, Warning, "uz.scene.load_scene: World not set");
-        lua_pushboolean(L, 0);
-        return 1;
-    }
-
-    IVFS* vfs = GetVFS(L);
-    if (!vfs) {
-        UZ_LOG(Scripting, Warning, "uz.scene.load_scene: VFS not set");
-        lua_pushboolean(L, 0);
-        return 1;
-    }
-
-    UZ_LOG(Scripting, Info, "uz.scene.load_scene: loading '{}'", path);
-
-    const std::vector<uint8_t> data = vfs->Read(path);
-    if (data.empty()) {
-        UZ_LOG(Scripting, Warning,
-            "uz.scene.load_scene: file not found or empty — path='{}'", path);
-        lua_pushboolean(L, 0);
-        return 1;
-    }
-
-    world->Clear();
-
-    const size_t count = uz::LoadScene(*world, data, path);
-    if (count == 0) {
-        UZ_LOG(Scripting, Warning,
-            "uz.scene.load_scene: no entities loaded from '{}'", path);
-        lua_pushboolean(L, 0);
-        return 1;
-    }
-
-    UZ_LOG(Scripting, Info,
-        "uz.scene.load_scene: loaded {} entities from '{}'", count, path);
-    lua_pushboolean(L, 1);
-    return 1;
-}
-
-/// uz.scene.save_scene(path) -> bool
-///
-/// Serializes the current scene to a `.uzscene` JSON file at the given VFS path.
-///
-/// # Arguments
-/// * `path` (string) — VFS-relative destination path (e.g. "scenes/my_scene.uzscene").
-///
-/// # Returns
-/// `true` on success, `false` on failure (error is logged).
-static int SceneSaveScene(lua_State* L) {
-    const char* path = luaL_checkstring(L, 1);
-
-    lua_getfield(L, LUA_REGISTRYINDEX, kWorldRegistryKey);
-    auto* world = static_cast<World*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
-    if (!world) {
-        UZ_LOG(Scripting, Warning,
-            "uz.scene.save_scene: World not set in Lua registry");
-        lua_pushboolean(L, 0);
-        return 1;
-    }
-
-    lua_getfield(L, LUA_REGISTRYINDEX, kVfsRegistryKey);
-    auto* vfs = static_cast<IVFS*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
-    if (!vfs) {
-        UZ_LOG(Scripting, Warning,
-            "uz.scene.save_scene: VFS not set in Lua registry");
-        lua_pushboolean(L, 0);
-        return 1;
-    }
-
-    const std::vector<uint8_t> data = uz::SaveScene(*world);
-    if (data.empty()) {
-        UZ_LOG(Scripting, Warning,
-            "uz.scene.save_scene: no entities to save — path='{}'", path);
-        lua_pushboolean(L, 0);
-        return 1;
-    }
-
-    const std::string resolvedPath = vfs->ResolvePath(path);
-    FILE* file = std::fopen(resolvedPath.c_str(), "wb");
-    if (!file) {
-        UZ_LOG(Scripting, Warning,
-            "uz.scene.save_scene: failed to open '{}' for writing", resolvedPath);
-        lua_pushboolean(L, 0);
-        return 1;
-    }
-    const size_t written = std::fwrite(data.data(), 1, data.size(), file);
-    std::fclose(file);
-
-    if (written != data.size()) {
-        UZ_LOG(Scripting, Warning,
-            "uz.scene.save_scene: partial write — expected {} bytes, wrote {}",
-            data.size(), written);
-        lua_pushboolean(L, 0);
-        return 1;
-    }
-
-    UZ_LOG(Scripting, Info,
-        "uz.scene.save_scene: saved {} bytes to '{}'", data.size(), resolvedPath);
-    lua_pushboolean(L, 1);
-    return 1;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Registration
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1087,18 +613,6 @@ void LuaRegisterSceneAPI(lua_State* L) {
     lua_pushcfunction(L, SceneSetScale);
     lua_setfield(L, -2, "set_scale");
 
-    lua_pushcfunction(L, SceneSetMesh);
-    lua_setfield(L, -2, "set_mesh");
-
-    lua_pushcfunction(L, SceneSetMaterial);
-    lua_setfield(L, -2, "set_material");
-
-    lua_pushcfunction(L, SceneGetMesh);
-    lua_setfield(L, -2, "get_mesh");
-
-    lua_pushcfunction(L, SceneGetMaterial);
-    lua_setfield(L, -2, "get_material");
-
     lua_pushcfunction(L, SceneSetVisible);
     lua_setfield(L, -2, "set_visible");
 
@@ -1123,12 +637,6 @@ void LuaRegisterSceneAPI(lua_State* L) {
     lua_pushcfunction(L, SceneGetChildren);
     lua_setfield(L, -2, "get_children");
 
-    lua_pushcfunction(L, SceneLoadScene);
-    lua_setfield(L, -2, "load_scene");
-
-    lua_pushcfunction(L, SceneSaveScene);
-    lua_setfield(L, -2, "save_scene");
-
     // uz.scene = { ... }
     lua_setfield(L, -2, "scene");
 
@@ -1142,12 +650,6 @@ void LuaSetWorld(lua_State* L, World* world) {
     lua_pushlightuserdata(L, static_cast<void*>(world));
     lua_setfield(L, LUA_REGISTRYINDEX, kWorldRegistryKey);
     UZ_LOG(Scripting, Debug, "LuaSetWorld: world={}", static_cast<void*>(world));
-}
-
-void LuaSetVFS(lua_State* L, IVFS* vfs) {
-    lua_pushlightuserdata(L, static_cast<void*>(vfs));
-    lua_setfield(L, LUA_REGISTRYINDEX, kVfsRegistryKey);
-    UZ_LOG(Scripting, Debug, "LuaSetVFS: vfs={}", static_cast<void*>(vfs));
 }
 
 } // namespace uz
