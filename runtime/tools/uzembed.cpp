@@ -198,6 +198,16 @@ static bool GenerateHeader(const fs::path& inputPath, const fs::path& outputPath
     visited.push_back(fs::canonical(inputPath, ec).string());
     source = ResolveIncludes(source, inputPath.parent_path(), visited, 0);
 
+    // Sanitize non-ASCII bytes (e.g., middle-dot 0xB7 in SMAA.hlsl comment art).
+    // These appear only in comments and cause "illegal character encoding" errors
+    // when embedded as C++ raw string literals. Replace with '?' to preserve
+    // line structure while keeping the source valid ASCII.
+    for (auto& ch : source) {
+        if (static_cast<unsigned char>(ch) > 127) {
+            ch = '?';
+        }
+    }
+
     while (!source.empty() && (source.back() == '\n' || source.back() == '\r')) {
         source.pop_back();
     }

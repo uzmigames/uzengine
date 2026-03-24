@@ -30,6 +30,13 @@
 - [ ] 4.4 Verify async compute compatibility: if cloud compute can overlap with shadow rendering or GBuffer fill, mark the pass as async-capable in the render graph.
 - [ ] 4.5 Performance verification: measure frame time before/after. The WaitIdle removal should reduce frame time by eliminating the full GPU drain. Target: at least 10% frame time improvement on scenes with clouds.
 
+## 6. Unit Tests — CVar System + Render Pass Utilities
+
+- [x] 6.1 `tests/engine/core/test_cvar.cpp` — 39 tests: RegisterFloat/Bool/Int, Get typed accessors, Set clamping (above/below/at boundaries), Set unknown no-op, Find existing/nonexistent (mutable + const), GetFloat/GetInt/GetBool missing-CVar fallbacks, Reset single/missing/default-field-unchanged, ResetAll 3-CVar round-trip, GetAll contains registered names, DuplicateRegistration idempotent (same pointer + value unchanged + after-set preserved), default clamped at registration (above max, below min), pointer stability after rehash, UZ_CVAR_FLOAT/BOOL/INT macro registration. All pass.
+- [x] 6.2 `tests/engine/renderer/test_fsr_pass.cpp` — 16 tests: FsrRcasCon packs exp2(-sharpness) for 0.0/0.2/1.0/2.0, clamps above-2/below-0 inputs, monotonically decreasing attenuation, zeros out con0[1-3]; FSRInput value-initialization (zero fields, false enableRCAS), manual field roundtrip; r.FSR and r.FSR.Sharpness CVars exist with correct defaults (false/0.0, range [0,1]/[0,2]); FSRPass default-constructed IsInitialized=false. All pass.
+- [x] 6.3 `tests/engine/renderer/test_smaa_pass.cpp` — 10 tests: r.SMAA CVar exists, stored as 0.0 (false), clamped to [0,1], GetBool=false; SMAASettings default enabled=false, writable; SMAAPass default-constructed IsInitialized=false, settings.enabled=false, safe destruction. All pass.
+- [x] 6.4 `tests/engine/renderer/test_fsr2_upscaler.cpp` — 25 tests: GetType=FSR2, GetName non-empty/contains "FSR2", GetMinScreenPercentage positive/<max/≈33%, GetMaxScreenPercentage=100, screen-percentage range in valid bounds; UpscalerType FSR2 distinct from None/TAA/TSR/DLSS; default construct/Shutdown/Shutdown-twice/OnResize-before-init all safe; ITemporalUpscaler interface contract; stub-build CVar absence (r.FSR2/Quality/Sharpness not in registry), GetFloat/GetBool/GetInt return provided defaults. All pass.
+
 ## 5. Testing
 
 - [x] 5.1 Visual regression: screenshots captured at each phase (phase1_v1-v5, phase3_hiz, ssr_temporal, final_default/z700/z1500).

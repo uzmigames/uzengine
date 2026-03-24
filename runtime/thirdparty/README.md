@@ -35,6 +35,23 @@ git checkout -- runtime/thirdparty/stb/stb_truetype.h
 - Document each patch in the library's section below with a one-line description
 
 
+## amd-fidelityfx
+
+- Upstream: https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK
+- Version: git (main, 2025)
+- License: MIT
+
+AMD FidelityFX SDK — collection of GPU effects. Includes FSR 1.0 (spatial
+upscaling via EASU + RCAS), FSR 2.x/3.x (temporal upscaling with motion vectors
+and depth history), CAS (Contrast Adaptive Sharpening), and more. Provides
+DX12 and Vulkan backends with HLSL/GLSL shader source.
+
+Files extracted from upstream source:
+
+- `sdk/` (FSR, CAS, and other effect source + headers)
+- `LICENSE`
+
+
 ## agility
 
 - Upstream: https://www.nuget.org/packages/Microsoft.Direct3D.D3D12
@@ -224,6 +241,24 @@ Files extracted from upstream source:
 - `AUTHORS.txt`, `LICENSE`
 
 
+## freetype
+
+- Upstream: https://github.com/freetype/freetype
+- Version: 2.13.3 (2024)
+- License: FreeType License (BSD-style) / GPLv2
+
+Industry-standard font rasterization library. Supports TrueType, OpenType, and
+WOFF fonts with hinting, anti-aliasing, and subpixel rendering. Required for
+CJK characters, complex script shaping (with HarfBuzz), and professional-quality
+text rendering in game UI.
+
+Files extracted from upstream source:
+
+- `include/` (ft2build.h, freetype/*.h)
+- `src/` (modular source — base, truetype, sfnt, smooth, etc.)
+- `LICENSE.TXT`
+
+
 ## glm
 
 - Upstream: https://github.com/g-truc/glm
@@ -254,6 +289,22 @@ Files extracted from upstream source:
 - Root (jpeglib.h, jconfig.h, turbojpeg.h, source files)
 - `simd/` (SIMD implementations)
 - `LICENSE.md`
+
+
+## libpng
+
+- Upstream: https://github.com/pnggroup/libpng
+- Version: 1.6.49 (2025)
+- License: libpng License (permissive)
+
+PNG image format reference implementation. Supports 16-bit depth, interlacing,
+gamma correction, and full metadata. More robust than stb_image for the asset
+pipeline (cook-time texture import). Requires zlib for DEFLATE compression.
+
+Files extracted from upstream source:
+
+- Root (png.h, pngconf.h, source files)
+- `LICENSE`
 
 
 ## lz4
@@ -319,6 +370,25 @@ Files extracted from upstream source:
 - `include/` (mimalloc.h, mimalloc-override.h)
 - `src/` (alloc.c, arena.c, heap.c, init.c, options.c, os.c, page.c, segment.c, etc.)
 - `LICENSE`
+
+
+## msdfgen
+
+- Upstream: https://github.com/Chlumsky/msdfgen
+- Version: 1.13 (2025)
+- License: MIT
+
+Multi-channel signed distance field generator. Produces MSDF font atlases where
+each RGB channel encodes a separate distance field, enabling sharp text rendering
+at any scale without per-glyph re-rasterization. Used by the SDF font atlas
+system for in-game UI text.
+
+Files extracted from upstream source:
+
+- `core/` (SDF generation core)
+- `ext/` (FreeType integration, SVG support)
+- `msdfgen.h`, `msdfgen-ext.h`
+- `LICENSE.txt`
 
 
 ## nlohmann
@@ -427,6 +497,23 @@ Files extracted from upstream source:
 
 - Root (header files)
 - `LICENSE`
+
+
+## smaa
+
+- Upstream: https://github.com/iryoku/smaa
+- Version: git (master, 2024)
+- License: MIT
+
+Subpixel Morphological Anti-Aliasing. Header-only HLSL/GLSL implementation of
+SMAA 1x/T2x/S2x/4x. Better edge detection than FXAA with lower cost than TAA.
+Useful as a lightweight AA fallback or in combination with temporal upscaling.
+
+Files extracted from upstream source:
+
+- `Shaders/` (SMAA.hlsl — edge detection, blending weight, neighborhood blending)
+- `Textures/` (SearchTex.h, AreaTex.h — precomputed lookup textures)
+- `LICENSE.txt`
 
 
 ## spdlog
@@ -567,3 +654,19 @@ Files extracted from upstream source:
 - `include/vulkan/` (vulkan.h, vulkan_core.h, platform headers)
 - `include/vk_video/` (video codec headers)
 - `LICENSE.md`
+
+
+## xatlas
+
+- Upstream: https://github.com/jpcy/xatlas
+- Version: git (master, 2024)
+- License: MIT
+
+Automatic UV atlas generation. Packs mesh UVs into a single atlas with minimal
+stretch and overlap. Used for lightmap UV generation, LOD baking, and texture
+atlas creation in the asset pipeline.
+
+Files extracted from upstream source:
+
+- `source/xatlas/` (xatlas.h, xatlas.cpp — single-file library)
+- `LICENSE`
