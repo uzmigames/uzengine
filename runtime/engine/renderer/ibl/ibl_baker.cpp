@@ -532,7 +532,7 @@ IBLBaker::BakeResult IBLBaker::BakeEnvironment(uint32_t envCubemapSrvIndex, RHIT
         const uint32_t mipSize = kPrefilteredSize >> mip;
         const float mipRoughness = static_cast<float>(mip) /
                                     static_cast<float>(kPrefilteredMipLevels - 1);
-        const uint32_t sampleCount = 256;
+        const uint32_t sampleCount = 1024;
 
         // Root constants: envMapIndex, faceSize, roughness (as uint bits), sampleCount
         uint32_t roughnessBits = 0;

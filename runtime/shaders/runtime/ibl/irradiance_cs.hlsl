@@ -68,7 +68,7 @@ void main(uint3 dtid : SV_DispatchThreadID) {
     // Integrate cosine-weighted radiance over the hemisphere
     float3 irradiance = float3(0.0f, 0.0f, 0.0f);
 
-    static const uint SAMPLE_COUNT = 64u;
+    static const uint SAMPLE_COUNT = 512u;
     static const float INV_SAMPLES = 1.0f / float(SAMPLE_COUNT);
 
     for (uint i = 0u; i < SAMPLE_COUNT; ++i) {
