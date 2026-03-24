@@ -18,6 +18,7 @@
 #include "input.h"
 #include "platform_window.h"
 #include "log.h"
+#include "sh_projection.h"
 #include "editor_grid.h"
 #include "stats_overlay.h"
 #include "shader_compiler.h"
@@ -121,6 +122,44 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     if (!m_gbuffer.Create(device, m_renderWidth, m_renderHeight)) {
         UZ_LOG(Renderer, Error, "SceneRenderer: failed to create GBuffer");
         return false;
+    }
+
+    // ── DBuffer (Deferred Decals — 3 RGBA8 targets at render resolution) ──
+    // @ref Valient 2014 "Deferred Rendering in Killzone: Shadow Fall"
+    {
+        RHITextureDesc dbufDesc{};
+        dbufDesc.width  = m_renderWidth;
+        dbufDesc.height = m_renderHeight;
+        dbufDesc.format = RHIFormat::RGBA8Unorm;
+        dbufDesc.usage  = RHITextureUsage::ShaderResource | RHITextureUsage::RenderTarget;
+
+        dbufDesc.debugName = "DBuffer_A_AlbedoOpacity";
+        m_dbufferA = device->CreateTexture(dbufDesc);
+        if (m_dbufferA.IsValid()) {
+            m_dbufferASrv = device->GetTextureSRVIndex(m_dbufferA);
+        }
+
+        dbufDesc.debugName = "DBuffer_B_NormalBlend";
+        m_dbufferB = device->CreateTexture(dbufDesc);
+        if (m_dbufferB.IsValid()) {
+            m_dbufferBSrv = device->GetTextureSRVIndex(m_dbufferB);
+        }
+
+        dbufDesc.debugName = "DBuffer_C_MaterialBlend";
+        m_dbufferC = device->CreateTexture(dbufDesc);
+        if (m_dbufferC.IsValid()) {
+            m_dbufferCSrv = device->GetTextureSRVIndex(m_dbufferC);
+        }
+
+        if (m_dbufferA.IsValid() && m_dbufferB.IsValid() && m_dbufferC.IsValid()) {
+            UZ_LOG(Renderer, Info,
+                   "SceneRenderer: DBuffer created ({}x{}, 3x RGBA8Unorm, SRV={}/{}/{})",
+                   m_renderWidth, m_renderHeight,
+                   m_dbufferASrv, m_dbufferBSrv, m_dbufferCSrv);
+        } else {
+            UZ_LOG(Renderer, Warning,
+                   "SceneRenderer: DBuffer creation partially failed — decals disabled");
+        }
     }
 
     // ── HDR Scene Color (RGBA16F — at render resolution, upscaled by TAA) ──
@@ -1381,6 +1420,26 @@ void SceneRenderer::Resize(uint32_t width, uint32_t height) {
         UZ_CHECK(ok);
     }
 
+    // Recreate DBuffer textures at render resolution
+    {
+        auto recreateDbufTex = [this](RHITextureHandle& tex, uint32_t& srv, const char* name) {
+            if (tex.IsValid()) {
+                m_device->DestroyTexture(tex);
+            }
+            RHITextureDesc dbufDesc{};
+            dbufDesc.width     = m_renderWidth;
+            dbufDesc.height    = m_renderHeight;
+            dbufDesc.format    = RHIFormat::RGBA8Unorm;
+            dbufDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::RenderTarget;
+            dbufDesc.debugName = name;
+            tex = m_device->CreateTexture(dbufDesc);
+            srv = tex.IsValid() ? m_device->GetTextureSRVIndex(tex) : UINT32_MAX;
+        };
+        recreateDbufTex(m_dbufferA, m_dbufferASrv, "DBuffer_A_AlbedoOpacity");
+        recreateDbufTex(m_dbufferB, m_dbufferBSrv, "DBuffer_B_NormalBlend");
+        recreateDbufTex(m_dbufferC, m_dbufferCSrv, "DBuffer_C_MaterialBlend");
+    }
+
     // Recreate HDR scene color at render resolution
     if (m_hdrSceneColor.IsValid()) {
         m_device->DestroyTexture(m_hdrSceneColor);
@@ -1491,6 +1550,27 @@ bool SceneRenderer::SetHDRIEnvironment(uint32_t equirectSrvIndex, uint32_t cubem
     m_iblResult = bakeResult;
     m_hdriActive = true;
 
+    // Project SH irradiance from the HDRI cubemap for diffuse lighting + fog color.
+    // Without this, m_skyIrradianceSH retains stale procedural sky values.
+    {
+        auto* cmdList = m_device->CreateCommandList(RHIQueueType::Graphics);
+        if (cmdList) {
+            cmdList->Begin();
+            auto shResult = ProjectCubemapToSH(m_device, cmdList,
+                                                m_hdriCubemap, cubemapSize);
+            cmdList->End();
+            m_device->DestroyCommandList(cmdList);
+
+            bool shValid = (std::abs(shResult.coeffs[0].w) > 1e-6f ||
+                           std::abs(shResult.coeffs[1].w) > 1e-6f);
+            if (shValid) {
+                m_skyIrradianceSH = shResult;
+                UZ_LOG(Renderer, Info, "SceneRenderer: HDRI SH projected (L0_R={:.4f})",
+                       shResult.coeffs[0].x);
+            }
+        }
+    }
+
     // Suppress procedural sky IBL re-capture — the HDRI cubemap is authoritative
     m_skyIBLDirty = false;
 
@@ -1551,6 +1631,12 @@ void SceneRenderer::Shutdown() {
 
     m_shadowAtlas.Shutdown(m_device);
     m_localShadowAtlas.Shutdown(m_device);
+
+    // ── DBuffer (Deferred Decals) ────────────────────────────────────
+    if (m_dbufferA.IsValid()) { m_device->DestroyTexture(m_dbufferA); m_dbufferA = RHITextureHandle{}; }
+    if (m_dbufferB.IsValid()) { m_device->DestroyTexture(m_dbufferB); m_dbufferB = RHITextureHandle{}; }
+    if (m_dbufferC.IsValid()) { m_device->DestroyTexture(m_dbufferC); m_dbufferC = RHITextureHandle{}; }
+    m_dbufferASrv = m_dbufferBSrv = m_dbufferCSrv = UINT32_MAX;
 
     // ── Shadow Cache + Static Shadow Atlas ───────────────────────────
     m_shadowCacheManager.Shutdown();

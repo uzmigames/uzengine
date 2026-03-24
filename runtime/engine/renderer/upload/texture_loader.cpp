@@ -1097,15 +1097,48 @@ TextureLoadResult TextureLoader::LoadHDRFromMemory(
         return {};
     }
 
-    const uint32_t width  = static_cast<uint32_t>(w);
-    const uint32_t height = static_cast<uint32_t>(h);
+    uint32_t width  = static_cast<uint32_t>(w);
+    uint32_t height = static_cast<uint32_t>(h);
+
+    // Downscale if larger than needed — HDRI environment maps are typically
+    // consumed at cubemap resolution (512-1024), so uploading 4K+ is wasteful.
+    // 2:1 box filter halving preserves HDR range without clamping.
+    constexpr uint32_t kMaxHDRResolution = 2048;
+    std::unique_ptr<float[]> downscaled;
+    while (width > kMaxHDRResolution && height > 1) {
+        const uint32_t newW = width / 2;
+        const uint32_t newH = height / 2;
+        downscaled = std::make_unique<float[]>(static_cast<size_t>(newW) * newH * 4);
+        for (uint32_t y = 0; y < newH; ++y) {
+            for (uint32_t x = 0; x < newW; ++x) {
+                const size_t dst = (static_cast<size_t>(y) * newW + x) * 4;
+                const size_t s00 = (static_cast<size_t>(y * 2)     * width + x * 2) * 4;
+                const size_t s10 = (static_cast<size_t>(y * 2)     * width + x * 2 + 1) * 4;
+                const size_t s01 = (static_cast<size_t>(y * 2 + 1) * width + x * 2) * 4;
+                const size_t s11 = (static_cast<size_t>(y * 2 + 1) * width + x * 2 + 1) * 4;
+                for (int c = 0; c < 4; ++c) {
+                    downscaled[dst + c] = (pixels[s00 + c] + pixels[s10 + c] +
+                                           pixels[s01 + c] + pixels[s11 + c]) * 0.25f;
+                }
+            }
+        }
+        if (isExr) { free(pixels); } else { stbi_image_free(pixels); }
+        pixels = downscaled.get();
+        width = newW;
+        height = newH;
+        UZ_LOG(Renderer, Info, "TextureLoader: downscaled HDR to {}x{}", width, height);
+    }
+
     const size_t texelCount = static_cast<size_t>(width) * height;
     constexpr size_t kBytesPerTexelF16 = 8;
 
     auto halfPixels = std::make_unique<uint16_t[]>(texelCount * 4);
     ConvertFloat32ToFloat16(pixels, halfPixels.get(), texelCount);
 
-    if (isExr) free(pixels); else stbi_image_free(pixels);
+    if (!downscaled) {
+        // Original buffer not yet freed (no downscale happened)
+        if (isExr) free(pixels); else stbi_image_free(pixels);
+    }
     pixels = nullptr;
 
     RHITextureDesc desc{};

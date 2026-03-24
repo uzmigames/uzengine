@@ -349,7 +349,7 @@ float4 main(FSInput input) : SV_Target {
     // ── IBL Ambient ────────────────────────────────────────────────────
     float3 ambient = float3(0, 0, 0);
     {
-        float skyInt = skyLightIntensity;
+        float3 skyTint = float3(skyLightColorR, skyLightColorG, skyLightColorB) * skyLightIntensity;
 
         float3 irradiance = float3(0, 0, 0);
 #ifdef UZ_BINDLESS
@@ -405,13 +405,11 @@ float4 main(FSInput input) : SV_Target {
         /// @ref Lagarde 2014
         specularAmbient *= SpecularOcclusion(NoV, ao, roughness);
 
-        ambient = (diffuseAmbient * ao + specularAmbient) * skyInt;
+        ambient = (diffuseAmbient * ao + specularAmbient) * skyTint;
 
-        // Fallback: if IBL cubemaps are empty (first frames), metals get F0 base color.
-        float iblEnergy = dot(prefilteredColor, float3(0.299, 0.587, 0.114));
-        if (iblEnergy < 0.001) {
-            ambient = lerp(baseColor * 0.05, F0 * 0.15, metallic) * skyInt;
-        }
+        // Note: removed dark-environment fallback that was replacing real IBL with
+        // flat F0*0.15 approximation. This caused dark HDRI regions to appear
+        // brighter than reality and flattened metallic appearance.
     }
 
     // ── ClearCoat dual-layer specular (smID == 4) ──────────────────────
@@ -463,7 +461,7 @@ float4 main(FSInput input) : SV_Target {
 #else
         coatRefl = iblPrefiltered.SampleLevel(clampSampler, WorldToCubemap(R_cc), coatMip).rgb;
 #endif
-        ambient += coatRefl * coatFresnelAvg * clearCoatVal * skyLightIntensity;
+        ambient += coatRefl * coatFresnelAvg * clearCoatVal * skyTint;
     }
 
     // ── Final composite: ambient + direct + emissive ────────────────────

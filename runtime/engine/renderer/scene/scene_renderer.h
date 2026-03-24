@@ -25,6 +25,7 @@
 #pragma once
 
 #include "gbuffer.h"
+#include "decal_pass.h"   // DecalInfo for m_frameDecals
 #include "draw_list.h"
 #include "mesh.h"
 #include "render_path.h"
@@ -633,6 +634,20 @@ private:
     uint32_t m_staticShadowAtlasSrv = UINT32_MAX;  ///< SRV heap index for static shadow atlas.
     LocalLightShadowAtlas m_localShadowAtlas;      ///< Local light (spot/point) shadow depth atlas.
 
+    // ── DBuffer (Deferred Decals) ─────────────────────────────────────────
+    /// @ref Valient 2014 "Deferred Rendering in Killzone: Shadow Fall"
+
+    RHITextureHandle m_dbufferA;                    ///< RGBA8Unorm — decal albedo (RGB) + opacity (A).
+    RHITextureHandle m_dbufferB;                    ///< RGBA8Unorm — decal normal [0,1] (RGB) + blend (A).
+    RHITextureHandle m_dbufferC;                    ///< RGBA8Unorm — roughness (R) + metallic (G) + AO (B) + blend (A).
+    uint32_t m_dbufferASrv = UINT32_MAX;            ///< SRV index for DBuffer A.
+    uint32_t m_dbufferBSrv = UINT32_MAX;            ///< SRV index for DBuffer B.
+    uint32_t m_dbufferCSrv = UINT32_MAX;            ///< SRV index for DBuffer C.
+    uint32_t m_dbufferAUav = UINT32_MAX;            ///< UAV index for DBuffer A (unused — apply pass uses GBuffer UAVs).
+    uint32_t m_dbufferBUav = UINT32_MAX;            ///< UAV index for DBuffer B (unused).
+    uint32_t m_dbufferCUav = UINT32_MAX;            ///< UAV index for DBuffer C (unused).
+    std::vector<DecalInfo> m_frameDecals;            ///< Per-frame sorted decal array (alive until Execute completes).
+
     // ── HDR Scene Color (intermediate before tonemap) ───────────────────
     RHITextureHandle m_hdrSceneColor;           ///< RGBA16F HDR render target for scene color.
     uint32_t m_hdrSceneColorSrv = UINT32_MAX;   ///< SRV for tonemap pass to read.
@@ -816,7 +831,7 @@ private:
     // ── Temporal Upscaler (ITemporalUpscaler) ────────────────────────────────
 
     std::unique_ptr<ITemporalUpscaler> m_upscaler;         ///< Active temporal upscaler (TAA or TSR).
-    UpscalerType m_upscalerType = UpscalerType::TAA;        ///< Temporal anti-aliasing (default).
+    UpscalerType m_upscalerType = UpscalerType::TSR;        ///< Temporal super resolution (default).
 
     // ── Dynamic Resolution ───────────────────────────────────────────────────
 
@@ -1277,6 +1292,11 @@ private:
         rg::RgResourceId emissiveRes{};
         rg::RgResourceId velocityRes{};
         rg::RgResourceId shadowAtlasRes{};
+
+        // ── DBuffer resource IDs (decal system) ─────────────────────────
+        rg::RgResourceId dbufferARes{};
+        rg::RgResourceId dbufferBRes{};
+        rg::RgResourceId dbufferCRes{};
 
         // ── TAA state ───────────────────────────────────────────────────
         bool     taaActive = false;
