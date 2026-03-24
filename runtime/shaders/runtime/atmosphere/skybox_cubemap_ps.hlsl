@@ -16,6 +16,7 @@
 /// Linear HDR color (pre-tonemap).
 
 #include "../include/pbr_common.hlsli"
+#include "../include/ibl.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Input Structure
@@ -101,9 +102,8 @@ float4 main(FSInput input) : SV_Target {
     float3 rayDir = normalize(world0 - world1);
 
     // ── Sample HDRI cubemap ──────────────────────────────────────────────────
-    // The cubemap was built with Y-up DX convention (CubeFaceDirection in ibl.hlsli).
-    // UzEngine world space is Z-up. Convert: DX cubemap (X,Y,Z) = world (X,-Z,Y).
-    float3 cubemapDir = float3(rayDir.x, -rayDir.z, rayDir.y);
+    // Convert Z-up world direction to Y-up DX cubemap convention.
+    float3 cubemapDir = WorldToCubemap(rayDir);
 
 #ifdef UZ_BINDLESS
     TextureCube<float4> cubemap = ResourceDescriptorHeap[skyboxIndices.cubemapIdx];

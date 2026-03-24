@@ -11,6 +11,7 @@
 #include "../include/octahedral.hlsli"
 #include "../include/pbr_common.hlsli"
 #include "../include/sh_irradiance.hlsli"
+#include "../include/ibl.hlsli"
 
 // shadow_common.hlsli and contact_shadows.hlsli are included AFTER sampler/texture
 // declarations because they reference shadowSampler, shadowAtlasTexture, etc.
@@ -354,12 +355,12 @@ float4 main(FSInput input) : SV_Target {
 #ifdef UZ_BINDLESS
         if (irradianceSrvIndex > 0) {
             TextureCube<float4> irrTex = ResourceDescriptorHeap[irradianceSrvIndex];
-            irradiance = irrTex.SampleLevel(clampSampler, N, 0).rgb;
+            irradiance = irrTex.SampleLevel(clampSampler, WorldToCubemap(N), 0).rgb;
         } else {
             irradiance = GetSkySHDiffuse(N, skyIrradianceSH);
         }
 #else
-        irradiance = iblIrradiance.SampleLevel(clampSampler, N, 0).rgb;
+        irradiance = iblIrradiance.SampleLevel(clampSampler, WorldToCubemap(N), 0).rgb;
 #endif
 
         float3 kS_env = F_SchlickRoughness(NoV, F0, roughness);
@@ -374,14 +375,14 @@ float4 main(FSInput input) : SV_Target {
 #ifdef UZ_BINDLESS
         if (prefilteredSrvIndex > 0) {
             TextureCube<float4> prefTex = ResourceDescriptorHeap[prefilteredSrvIndex];
-            prefilteredColor = prefTex.SampleLevel(clampSampler, R, mipLevel).rgb;
+            prefilteredColor = prefTex.SampleLevel(clampSampler, WorldToCubemap(R), mipLevel).rgb;
         }
         if (brdfLutSrvIndex > 0) {
             Texture2D<float2> brdfTex = ResourceDescriptorHeap[brdfLutSrvIndex];
             envBRDF = brdfTex.SampleLevel(clampSampler, float2(NoV, roughness), 0).rg;
         }
 #else
-        prefilteredColor = iblPrefiltered.SampleLevel(clampSampler, R, mipLevel).rgb;
+        prefilteredColor = iblPrefiltered.SampleLevel(clampSampler, WorldToCubemap(R), mipLevel).rgb;
         envBRDF = iblBrdfLut.SampleLevel(clampSampler, float2(NoV, roughness), 0).rg;
 #endif
 
@@ -457,10 +458,10 @@ float4 main(FSInput input) : SV_Target {
 #ifdef UZ_BINDLESS
         if (prefilteredSrvIndex > 0) {
             TextureCube<float4> prefTex = ResourceDescriptorHeap[prefilteredSrvIndex];
-            coatRefl = prefTex.SampleLevel(clampSampler, R_cc, coatMip).rgb;
+            coatRefl = prefTex.SampleLevel(clampSampler, WorldToCubemap(R_cc), coatMip).rgb;
         }
 #else
-        coatRefl = iblPrefiltered.SampleLevel(clampSampler, R_cc, coatMip).rgb;
+        coatRefl = iblPrefiltered.SampleLevel(clampSampler, WorldToCubemap(R_cc), coatMip).rgb;
 #endif
         ambient += coatRefl * coatFresnelAvg * clearCoatVal * skyLightIntensity;
     }
