@@ -190,7 +190,7 @@ bool SaveMesh(const std::string& path, const Mesh& mesh);
 /// # Returns
 /// A valid `Mesh` with Standard vertices and UInt16 indices (for slices=32,
 /// stacks=16 the result is 578 vertices and 3072 indices).
-[[nodiscard]] Mesh GenerateSphereMesh(uint32_t sectorCount = 32, uint32_t stackCount = 16);
+[[nodiscard]] Mesh GenerateSphereMesh(uint32_t sectorCount = 64, uint32_t stackCount = 32);
 
 /// Generates a flat quad (plane) mesh lying in the XY plane (Z=0).
 ///
