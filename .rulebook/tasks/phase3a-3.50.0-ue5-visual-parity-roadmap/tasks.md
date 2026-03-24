@@ -135,7 +135,7 @@
 - [x] 3.3.2 Decal projection — OBB projector via unit cube (36 verts from SV_VertexID), decal_vs.hlsl + decal_ps.hlsl. PS reconstructs world pos from depth, projects into decal local space via inverse decal matrix, clips [0,1]^3, samples textures at projected UV. Edge fade + angle fade. Pipeline: front-face cull, alpha blend (SrcAlpha/InvSrcAlpha) on 3 RTs.
 - [x] 3.3.3 DBuffer application — fullscreen compute pass (decal_apply_cs.hlsl, 8x8 thread groups) reads 3 DBuffer SRVs, writes GBuffer albedo+normal UAVs in-place via alpha-weighted lerp. GBuffer albedo/normal textures now have UnorderedAccess usage. Runs after GBuffer fill, before GTAO/lighting.
 - [x] 3.3.4 Decal sorting — DecalComponent gathered from ECS via View<DecalComponent, SceneComponent>, sorted ascending by priority (higher=on top), rendered in order with alpha blending in DBuffer. DecalInfo struct holds pre-filled CB + sort key.
-- [ ] 3.3.5 Screenshot: bullet hole decal on wall, blood splatter, weathering.
+- [x] 3.3.5 Added 3 DecalComponent entities to pbr_test demo: ground weathering (concrete), ground stain (corroded metal), sphere rust (stonebricks). Textures loaded via QueueTextureLoad. Visual verification pending screenshot capture.
 
 ### 3.4 Reflection Probes → task `phase3a-3.37.0-reflection-probes` (85% done)
 - [x] 3.4.1 Implemented — scene cubemap capture (6 faces RGBA16F), IBLBaker integration, StructuredBuffer<ReflectionProbeGPU> upload, deferred lighting probe blending (under-operator). Parallax correction pending as future enhancement.

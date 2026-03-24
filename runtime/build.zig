@@ -293,7 +293,7 @@ pub fn build(b: *std.Build) void {
         const objcxx_flags = &.{ "-std=c++17", "-ObjC++", "-fno-objc-arc", "-DSPDLOG_COMPILED_LIB", "-DUZ_PROFILING_ENABLED", "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND" };
         runtime_mod.addCSourceFiles(.{
             .root = b.path("engine/rhi/metal"),
-            .files = &.{ "metal_device.cpp", "metal_command_list.cpp", "metal_fence.cpp", "metal_gpu_profiler.cpp", "metal_swapchain.mm" },
+            .files = &.{ "metal_device.cpp", "metal_resource_creation.cpp", "metal_command_list.cpp", "metal_fence.cpp", "metal_gpu_profiler.cpp", "metal_swapchain.mm" },
             .flags = objcxx_flags,
         });
 

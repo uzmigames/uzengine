@@ -10,7 +10,7 @@
 ///
 /// # New Functions (added to uz.scene)
 ///
-/// ## HeightFog (15.4)
+/// ## HeightFog (15.4) — Setters
 /// - `uz.scene.create_fog(entity)` → void
 /// - `uz.scene.set_fog_density(entity, density)` → void
 /// - `uz.scene.set_fog_color(entity, r, g, b)` → void
@@ -27,6 +27,23 @@
 /// - `uz.scene.set_fog_directional_inscattering_exponent(entity, exponent)` → void
 /// - `uz.scene.set_fog_directional_inscattering_start_distance(entity, distance)` → void
 /// - `uz.scene.set_fog_volumetric(entity, enabled)` → void
+///
+/// ## HeightFog (15.4) — Getters
+/// - `uz.scene.get_fog_density(entity)` → number | nil
+/// - `uz.scene.get_fog_color(entity)` → r, g, b | nil
+/// - `uz.scene.get_fog_height_falloff(entity)` → number | nil
+/// - `uz.scene.get_fog_base_height(entity)` → number | nil
+/// - `uz.scene.get_fog_max_opacity(entity)` → number | nil
+/// - `uz.scene.is_fog_enabled(entity)` → bool
+/// - `uz.scene.get_fog_start_distance(entity)` → number | nil
+/// - `uz.scene.get_fog_cutoff_distance(entity)` → number | nil
+/// - `uz.scene.get_fog_second_density(entity)` → number | nil
+/// - `uz.scene.get_fog_second_height_falloff(entity)` → number | nil
+/// - `uz.scene.get_fog_second_base_height(entity)` → number | nil
+/// - `uz.scene.get_fog_directional_inscattering_color(entity)` → r, g, b | nil
+/// - `uz.scene.get_fog_directional_inscattering_exponent(entity)` → number | nil
+/// - `uz.scene.get_fog_directional_inscattering_start_distance(entity)` → number | nil
+/// - `uz.scene.is_fog_volumetric(entity)` → bool
 
 struct lua_State;
 

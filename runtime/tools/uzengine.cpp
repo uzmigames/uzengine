@@ -302,13 +302,44 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         UZ_LOG(Engine, Info, "Lua renderer + input API connected to SceneRenderer");
     }
 
-    // ── Render Loop ─────────────────────────────────────────────────────
+    // ── Pre-load: drain async texture decodes before the render loop ──────
+    // Render one frame to trigger lazy material texture loads (SyncWorldToDrawList
+    // → LoadTexture → async decoder submit), then drain all pending decodes via
+    // the lightweight DrainPendingTextureLoads (no full RenderFrame overhead).
     uint32_t frameIndex = 0;
     uint64_t globalFenceValue = 0;
+
+    if (sceneRendererReady && !defaultScene.empty()) {
+        UZ_LOG(Engine, Info, "Pre-loading scene textures...");
+
+        // First frame triggers lazy material texture loads via SyncWorldToDrawList.
+        sceneRenderer.RenderFrame(cmdList, swapChain, &world, &vfs, 0.016f, 0);
+        swapChain->Present(false);
+        globalFenceValue++;
+        fenceValues[0] = globalFenceValue;
+        device->GetDirectQueue()->Signal(
+            frameFences[0]->GetNativeFence(), globalFenceValue);
+        frameIndex = 1;
+
+        // Wait for frame 0 to finish before draining textures on the same command list.
+        frameFences[0]->WaitCPU(globalFenceValue);
+
+        // Drain all pending async texture decodes + GPU uploads.
+        cmdList->Begin();
+        sceneRenderer.DrainPendingTextureLoads(cmdList, &vfs);
+        cmdList->End();
+        cmdList->Execute();
+        device->WaitIdle();
+
+        UZ_LOG(Engine, Info, "Pre-load complete, all textures loaded");
+    }
+
+    // ── Render Loop ─────────────────────────────────────────────────────
     auto startTime = std::chrono::high_resolution_clock::now();
     auto prevTime = startTime;
 
-    const uint32_t frameLimit = maxFrames == kInfiniteFrames ? 0 : static_cast<uint32_t>(maxFrames);
+    // frameLimit accounts for pre-load frames so --frames N means N frames after pre-load.
+    const uint32_t frameLimit = maxFrames == kInfiniteFrames ? 0 : (frameIndex + static_cast<uint32_t>(maxFrames));
     UZ_LOG(Engine, Info, "Starting render loop (frames={})", maxFrames);
 
     while (window.PumpMessages() && window.IsOpen()) {

@@ -203,7 +203,11 @@ pub fn createDemo(b: *std.Build, config: DemoConfig) DemoHandle {
     if (config.use_demo_application) {
         mod.addCSourceFiles(.{
             .root = b.path("../common"),
-            .files = &.{"demo_application.cpp"},
+            .files = &.{
+                "demo_application.cpp",
+                "demo_application_init.cpp",
+                "demo_application_args.cpp",
+            },
             .flags = cpp_flags,
         });
     }

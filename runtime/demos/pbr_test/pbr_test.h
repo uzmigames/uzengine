@@ -17,6 +17,7 @@
 #include "material_asset_graph.h"
 #include "material_instance.h"
 #include "material_shader_cache.h"
+#include "decal_component.h"
 #include "rhi_types.h"
 
 namespace uz {
@@ -35,6 +36,7 @@ private:
     Entity ground_{};
     Entity sun_{};
     Entity pointLights_[4]{};
+    Entity decals_[3]{};
 
     float totalTime_ = 0.f;
 

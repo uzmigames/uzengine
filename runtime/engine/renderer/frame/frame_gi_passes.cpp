@@ -1,0 +1,394 @@
+/// UzEngine Scene Renderer — GI-related passes: SSGI, SDF GI (GDF composite +
+/// radiance cache trace), SSR (trace + resolve + temporal), and SSGI prev-frame
+/// color copy.
+///
+/// Extracted from frame_lighting.cpp. All functions are private methods of
+/// SceneRenderer, called by RegisterLightingPasses().
+
+#include "scene_renderer.h"
+
+// Umbrella headers
+#include "renderer_core.h"
+#include "passes.h"
+#include "subsystems.h"
+#include "components.h"
+
+#include "camera.h"
+#include "gi/ssgi_renderer.h"
+#include "gi/mesh_sdf_baker.h"
+#include "gpu_mesh.h"
+#include "world.h"
+#include "render_graph_builder.h"
+#include "render_graph_resources.h"
+#include "profiler.h"
+#include "rhi.h"
+#include "log.h"
+
+#include <cstring>
+
+namespace uz {
+
+// ── SSGI Compute Passes (after GTAO, before SSR and lighting) ───────────────
+// Dispatches 5 compute passes: PrevColorReduce, Trace, SpatialDenoise,
+// TemporalAccum, BilateralUpsample. The result SRV indices are written
+// to PerFrameCB in frame_setup.cpp for the deferred lighting shader.
+
+void SceneRenderer::RegisterSSGIPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
+    // Screen-space global illumination — traces against the depth buffer for indirect light.
+    const bool ssgiActive = m_ssgiRenderer.IsReady()
+                          && m_device->IsBindless()
+                          && m_passInspector.IsPassEnabled("ssgi");
+    if (!ssgiActive) return;
+
+    rgBuilder.AddPass("SSGI", [&](rg::RgPassBuilder& pb) {
+        pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
+        pb.Read(ctx.normalRes, RHIResourceState::ShaderResource);
+        pb.Read(ctx.velocityRes, RHIResourceState::ShaderResource);
+
+        pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
+            UZ_PROFILE_SCOPE("SSGI::Execute");
+
+            SSGIRenderParams ssgiParams{};
+            ssgiParams.cbRing          = m_cbRing.get();
+            ssgiParams.pipelines       = ctx.pipelines;
+            ssgiParams.depthSrvIndex   = m_gbuffer.depthSRV;
+            ssgiParams.normalSrvIndex  = m_gbuffer.normalSRV;
+            ssgiParams.velocitySrvIndex = m_gbuffer.velocitySRV;
+            ssgiParams.depthTexture    = m_gbuffer.depth;
+            ssgiParams.normalTexture   = m_gbuffer.normal;
+            ssgiParams.velocityTexture = m_gbuffer.velocity;
+            ssgiParams.hdrSceneColor   = m_hdrSceneColor;
+            ssgiParams.hdrSceneColorSrv = m_hdrSceneColorSrv;
+            ssgiParams.perFrameBuffer  = ctx.perFrameAlloc.bufferHandle;
+            ssgiParams.perFrameOffset  = ctx.perFrameAlloc.offsetBytes;
+            ssgiParams.perFrameCpuPtr  = ctx.perFrameAlloc.cpuPtr;
+            ssgiParams.perFrameSize    = sizeof(PerFrameCB);
+            ssgiParams.frameIndex      = ctx.frameIndex;
+            ssgiParams.renderWidth     = static_cast<uint32_t>(ctx.renderWidth);
+            ssgiParams.renderHeight    = static_cast<uint32_t>(ctx.renderHeight);
+
+            m_ssgiRenderer.Render(cmd, ssgiParams);
+        });
+    });
+}
+
+// ── SDF GI: GDF Composite + Radiance Cache Trace ───────────────────────────
+// Updates the global distance field from mesh SDFs, then traces radiance
+// probes. The probe SH buffer SRV is written to PerFrameCB for the
+// deferred lighting pass.
+
+void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
+    // GDF composite + radiance cache probe trace for software-raytraced GI.
+    const bool sdfGiActive = m_sdfGiEnabled
+                           && m_globalDistanceField.IsInitialized()
+                           && m_radianceCache.IsInitialized()
+                           && m_device->IsBindless()
+                           && m_passInspector.IsPassEnabled("sdf_gi");
+    if (!sdfGiActive) return;
+
+    // ── Pass: GDF Composite ──────────────────────────────────────────
+    // Collect mesh SDFs and world transforms from all StaticMeshComponent
+    // entities, then composite them into the global distance field clipmaps.
+    // Composite all per-mesh SDFs into the cascaded GDF clipmaps.
+    rgBuilder.AddPass("GDF_Composite", [&](rg::RgPassBuilder& pb) {
+        pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
+            UZ_PROFILE_SCOPE("GDF::Composite");
+
+            auto gdfPipeline = ctx.pipelines->GetGdfComposite();
+            if (!gdfPipeline.IsValid()) return;
+
+            // Update clipmap centers to track camera
+            Vec3 camPos = ctx.perFrame.cameraPos.xyz();
+            m_globalDistanceField.Update(camPos);
+
+            // Collect mesh SDFs from the ECS, precompute inverse transforms.
+            std::vector<MeshSDF> meshSDFs;
+            std::vector<Mat4> meshTransforms;
+
+            if (ctx.world) {
+                auto meshView = ctx.world->GetRegistry().view<StaticMeshComponent, SceneComponent>();
+                for (auto [enttEntity, meshComp, sceneComp] : meshView.each()) {
+                    if (meshComp.meshId >= m_meshes.size()) continue;
+                    const GPUMesh& gpuMesh = m_meshes[meshComp.meshId];
+                    if (!gpuMesh.HasSDF()) continue;
+
+                    MeshSDF sdfCopy = gpuMesh.sdf;
+                    // Precompute world-to-local inverse transform (cached in MeshSDF)
+                    Mat4 worldMat = sceneComp.GetWorldMatrix();
+                    Mat4 inv = worldMat.Inverse();
+                    sdfCopy.invTransform[0]  = inv.m._11;
+                    sdfCopy.invTransform[1]  = inv.m._12;
+                    sdfCopy.invTransform[2]  = inv.m._13;
+                    sdfCopy.invTransform[3]  = inv.m._14;
+                    sdfCopy.invTransform[4]  = inv.m._21;
+                    sdfCopy.invTransform[5]  = inv.m._22;
+                    sdfCopy.invTransform[6]  = inv.m._23;
+                    sdfCopy.invTransform[7]  = inv.m._24;
+                    sdfCopy.invTransform[8]  = inv.m._31;
+                    sdfCopy.invTransform[9]  = inv.m._32;
+                    sdfCopy.invTransform[10] = inv.m._33;
+                    sdfCopy.invTransform[11] = inv.m._34;
+
+                    meshSDFs.push_back(sdfCopy);
+                    meshTransforms.push_back(worldMat);
+                }
+            }
+
+            const auto sdfCount = static_cast<uint32_t>(meshSDFs.size());
+
+            m_globalDistanceField.CompositeFromMeshSDFs(
+                cmd,
+                sdfCount > 0 ? meshSDFs.data() : nullptr,
+                sdfCount > 0 ? meshTransforms.data() : nullptr,
+                sdfCount,
+                gdfPipeline,
+                m_cbRing.get(),
+                ctx.perFrameAlloc.bufferHandle,
+                ctx.perFrameAlloc.offsetBytes,
+                ctx.perFrameAlloc.cpuPtr,
+                sizeof(PerFrameCB));
+        });
+    });
+
+    // ── Pass: Radiance Cache Trace ─────────────────────────────────
+    rgBuilder.AddPass("RadianceCache_Trace", [&](rg::RgPassBuilder& pb) {
+        pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
+            UZ_PROFILE_SCOPE("RadianceCache::Trace");
+
+            auto rcPipeline = ctx.pipelines->GetRadianceCacheTrace();
+            if (!rcPipeline.IsValid()) return;
+
+            // Update probe grid center to track camera
+            Vec3 camPos = ctx.perFrame.cameraPos.xyz();
+            m_radianceCache.Update(camPos);
+
+            m_radianceCache.UpdateProbes(
+                cmd, m_globalDistanceField, rcPipeline,
+                m_cbRing.get(),
+                ctx.perFrameAlloc.bufferHandle,
+                ctx.perFrameAlloc.offsetBytes,
+                ctx.perFrameAlloc.cpuPtr,
+                sizeof(PerFrameCB),
+                ctx.frameIndex);
+        });
+    });
+}
+
+// ── SSR Compute Passes (after GBuffer + depth prepass + HiZ, before lighting)
+// Two compute passes:
+//   1. SSR_Trace:   Hi-Z ray march → trace output (rgb=hit color, a=confidence)
+//   2. SSR_Resolve: Fresnel weight + roughness fade → resolved SSR for lighting
+//
+// The lighting pass blends SSR with IBL specular via ssrSrvIndex in PerFrameCB.
+
+void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
+    // Screen-space reflections: Hi-Z ray march + Fresnel-weighted resolve.
+    if (!ctx.ssrActive) return;
+
+    rgBuilder.AddPass("SSR_Trace", [&](rg::RgPassBuilder& pb) {
+        pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
+        pb.Read(ctx.normalRes, RHIResourceState::ShaderResource);
+        pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
+
+        pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources&) {
+            UZ_PROFILE_SCOPE("SSR::Trace");
+
+            auto ssrTracePSO = ctx.pipelines->GetSsrTrace();
+            if (!ssrTracePSO.IsValid()) return;
+
+            {
+                RHIBarrierDesc barrier{};
+                barrier.texture     = m_ssrTraceOutput;
+                barrier.stateBefore = RHIResourceState::ShaderResource;
+                barrier.stateAfter  = RHIResourceState::UnorderedAccess;
+                cmd->ResourceBarrier(&barrier, 1);
+            }
+
+            cmd->SetPipeline(ssrTracePSO);
+
+            struct SsrTraceConstants {
+                uint32_t depthSrvIdx, normalSrvIdx, hizSrvIdx, sceneColorSrvIdx;
+                uint32_t outputWidth, outputHeight;
+                float intensity, roughnessMaskScale;
+            };
+
+            SsrTraceConstants rc{};
+            rc.depthSrvIdx      = m_gbuffer.depthSRV;
+            rc.normalSrvIdx     = m_gbuffer.normalSRV;
+            rc.hizSrvIdx        = (m_hizMipCount > 0 && m_hizMipLevels[0].srvIndex != UINT32_MAX)
+                                ? m_hizMipLevels[0].srvIndex : m_gbuffer.depthSRV;
+            rc.sceneColorSrvIdx = m_hdrSceneColorSrv;
+            rc.outputWidth      = m_renderWidth;
+            rc.outputHeight     = m_renderHeight;
+            rc.intensity        = 1.0f;
+            rc.roughnessMaskScale = -2.0f / 0.8f;
+
+            cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
+            cmd->SetRootCBV(kSlotPerFrame, ctx.perFrameAlloc.bufferHandle,
+                            ctx.perFrameAlloc.offsetBytes, ctx.perFrameAlloc.cpuPtr,
+                            sizeof(PerFrameCB));
+            cmd->SetDescriptorTable(4, m_ssrTraceOutputUav);
+
+            const uint32_t groupsX = (m_renderWidth + 7) / 8;
+            const uint32_t groupsY = (m_renderHeight + 7) / 8;
+            cmd->Dispatch(groupsX, groupsY, 1);
+
+            {
+                RHIBarrierDesc barrier{};
+                barrier.texture     = m_ssrTraceOutput;
+                barrier.stateBefore = RHIResourceState::UnorderedAccess;
+                barrier.stateAfter  = RHIResourceState::ShaderResource;
+                cmd->ResourceBarrier(&barrier, 1);
+            }
+        });
+    });
+
+    rgBuilder.AddPass("SSR_Resolve", [&](rg::RgPassBuilder& pb) {
+        pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
+        pb.Read(ctx.normalRes, RHIResourceState::ShaderResource);
+
+        pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources&) {
+            UZ_PROFILE_SCOPE("SSR::Resolve");
+
+            auto ssrResolvePSO = ctx.pipelines->GetSsrResolve();
+            if (!ssrResolvePSO.IsValid()) return;
+
+            {
+                RHIBarrierDesc barrier{};
+                barrier.texture     = m_ssrResolvedOutput;
+                barrier.stateBefore = RHIResourceState::ShaderResource;
+                barrier.stateAfter  = RHIResourceState::UnorderedAccess;
+                cmd->ResourceBarrier(&barrier, 1);
+            }
+
+            cmd->SetPipeline(ssrResolvePSO);
+
+            struct SsrResolveConstants {
+                uint32_t ssrTraceSrvIdx, normalSrvIdx, depthSrvIdx, reserved;
+                uint32_t outputWidth, outputHeight;
+                float intensity, roughnessMaskScale;
+            };
+
+            SsrResolveConstants rc{};
+            rc.ssrTraceSrvIdx   = m_ssrTraceOutputSrv;
+            rc.normalSrvIdx     = m_gbuffer.normalSRV;
+            rc.depthSrvIdx      = m_gbuffer.depthSRV;
+            rc.outputWidth      = m_renderWidth;
+            rc.outputHeight     = m_renderHeight;
+            rc.intensity        = 1.0f;
+            rc.roughnessMaskScale = -2.0f / 0.8f;
+
+            cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
+            cmd->SetRootCBV(kSlotPerFrame, ctx.perFrameAlloc.bufferHandle,
+                            ctx.perFrameAlloc.offsetBytes, ctx.perFrameAlloc.cpuPtr,
+                            sizeof(PerFrameCB));
+            cmd->SetDescriptorTable(4, m_ssrResolvedOutputUav);
+
+            const uint32_t groupsX = (m_renderWidth + 7) / 8;
+            const uint32_t groupsY = (m_renderHeight + 7) / 8;
+            cmd->Dispatch(groupsX, groupsY, 1);
+
+            {
+                RHIBarrierDesc barrier{};
+                barrier.texture     = m_ssrResolvedOutput;
+                barrier.stateBefore = RHIResourceState::UnorderedAccess;
+                barrier.stateAfter  = RHIResourceState::ShaderResource;
+                cmd->ResourceBarrier(&barrier, 1);
+            }
+        });
+    });
+
+    // SSR Temporal accumulation
+    {
+        const uint32_t ssrWriteIdx = m_ssrHistoryIndex;
+        const uint32_t ssrReadIdx  = 1 - m_ssrHistoryIndex;
+        const bool ssrFirstFrame = !m_prevViewProjValid
+                                 || !m_ssrHistory[ssrReadIdx].IsValid();
+
+        rgBuilder.AddPass("SSR_Temporal", [&, ssrWriteIdx, ssrReadIdx, ssrFirstFrame](rg::RgPassBuilder& pb) {
+            pb.Read(ctx.velocityRes, RHIResourceState::ShaderResource);
+
+            pb.SetExecutionCallback([this, &ctx, ssrWriteIdx, ssrReadIdx, ssrFirstFrame](IRHICommandList* cmd, const rg::RgPassResources&) {
+                UZ_PROFILE_SCOPE("SSR::Temporal");
+
+                auto ssrTemporalPSO = ctx.pipelines->GetSsrTemporal();
+                if (!ssrTemporalPSO.IsValid()) return;
+
+                {
+                    RHIBarrierDesc barriers[2]{};
+                    barriers[0].texture     = m_ssrHistory[ssrWriteIdx];
+                    barriers[0].stateBefore = RHIResourceState::ShaderResource;
+                    barriers[0].stateAfter  = RHIResourceState::UnorderedAccess;
+                    barriers[1].texture     = m_ssrHistory[ssrReadIdx];
+                    barriers[1].stateBefore = RHIResourceState::UnorderedAccess;
+                    barriers[1].stateAfter  = RHIResourceState::ShaderResource;
+                    cmd->ResourceBarrier(barriers, 2);
+                }
+
+                cmd->SetPipeline(ssrTemporalPSO);
+
+                struct SsrTemporalConstants {
+                    uint32_t currentSsrSrvIdx, historySsrSrvIdx, velocitySrvIdx, depthSrvIdx;
+                    uint32_t outputWidth, outputHeight, firstFrame, reserved;
+                };
+
+                SsrTemporalConstants rc{};
+                rc.currentSsrSrvIdx = m_ssrResolvedOutputSrv;
+                rc.historySsrSrvIdx = m_ssrHistorySrv[ssrReadIdx];
+                rc.velocitySrvIdx   = m_gbuffer.velocitySRV;
+                rc.depthSrvIdx      = m_gbuffer.depthSRV;
+                rc.outputWidth      = m_renderWidth;
+                rc.outputHeight     = m_renderHeight;
+                rc.firstFrame       = ssrFirstFrame ? 1u : 0u;
+
+                cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
+                cmd->SetRootCBV(kSlotPerFrame, ctx.perFrameAlloc.bufferHandle,
+                                ctx.perFrameAlloc.offsetBytes, ctx.perFrameAlloc.cpuPtr,
+                                sizeof(PerFrameCB));
+                cmd->SetDescriptorTable(4, m_ssrHistoryUav[ssrWriteIdx]);
+
+                const uint32_t groupsX = (m_renderWidth + 7) / 8;
+                const uint32_t groupsY = (m_renderHeight + 7) / 8;
+                cmd->Dispatch(groupsX, groupsY, 1);
+
+                {
+                    RHIBarrierDesc barrier{};
+                    barrier.texture     = m_ssrHistory[ssrWriteIdx];
+                    barrier.stateBefore = RHIResourceState::UnorderedAccess;
+                    barrier.stateAfter  = RHIResourceState::ShaderResource;
+                    cmd->ResourceBarrier(&barrier, 1);
+                }
+            });
+        });
+
+        m_ssrHistoryIndex = 1 - m_ssrHistoryIndex;
+    }
+}
+
+// ── SSGI Previous Frame Color Copy ─────────────────────────────────────────
+// Copy the current HDR scene color (after lighting + atmosphere) to the
+// prev-frame buffer for SSGI to use next frame. This must happen AFTER
+// all scene color contributions (lighting, atmosphere, fog) and BEFORE
+// post-process modifies the HDR buffer (bloom, tonemap, etc.).
+
+void SceneRenderer::RegisterSSGIPrevColorCopy(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
+    const bool ssgiActive = m_ssgiRenderer.IsReady()
+                          && m_device->IsBindless()
+                          && m_passInspector.IsPassEnabled("ssgi");
+    if (!ssgiActive) return;
+
+    rgBuilder.AddPass("SSGI_CopyPrevColor", [&](rg::RgPassBuilder& pb) {
+        pb.Read(ctx.hdrRes, RHIResourceState::RenderTarget);
+
+        pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
+            UZ_PROFILE_SCOPE("SSGI::CopyPrevColor");
+
+            m_ssgiRenderer.CopyPrevSceneColor(
+                cmd, m_hdrSceneColor,
+                static_cast<uint32_t>(ctx.renderWidth),
+                static_cast<uint32_t>(ctx.renderHeight));
+        });
+    });
+}
+
+} // namespace uz

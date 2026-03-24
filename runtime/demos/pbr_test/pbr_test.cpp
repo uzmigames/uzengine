@@ -17,6 +17,7 @@
 #include "sky_light_component.h"
 #include "height_fog_component.h"
 #include "volumetric_clouds_component.h"
+#include "decal_component.h"
 #include "reflection_probe_component.h"
 #include "render_path.h"
 #include "mesh.h"
@@ -417,6 +418,65 @@ void PBRTest::OnStart() {
         probe.blendDistance   = 500.0f;  // 5m fade at edges
         probe.resolution      = 128;
         probe.priority         = 0;
+    }
+
+    // ── DBuffer Decals ─────────────────────────────────────────────────
+    // Three decals projecting onto scene geometry to verify the DBuffer
+    // decal pipeline: gather → sort → render into DBuffer → apply to GBuffer.
+    {
+        auto& renderer = GetRenderer();
+
+        // Decal 0 — "Weathering" on ground (worn concrete patch, 200x200 cm face)
+        decals_[0] = world.CreateEntity();
+        {
+            auto& scene = world.AddComponent<SceneComponent>(decals_[0]);
+            scene.SetPosition({-200.f, -100.f, 1.0f}); // Slightly above ground to avoid Z-fight
+            scene.SetScale({1.f, 1.f, 1.f});            // Scale handled by DecalComponent extents
+
+            auto& decal = world.AddComponent<DecalComponent>(decals_[0]);
+            decal.albedoTextureId  = renderer.QueueTextureLoad("assets/materials/concrete/Concrete_BaseColor.jpg");
+            decal.normalTextureId  = renderer.QueueTextureLoad("assets/materials/concrete/Concrete_Normal.png");
+            decal.extentsX         = 100.0f;  // 200 cm face
+            decal.extentsY         = 100.0f;
+            decal.extentsZ         = 10.0f;   // 20 cm projection depth
+            decal.opacity          = 0.8f;
+            decal.priority         = 0;
+            decal.fadeDistance      = 10.0f;
+        }
+
+        // Decal 1 — "Stain" on ground (dark corroded metal patch, 120x120 cm face)
+        decals_[1] = world.CreateEntity();
+        {
+            auto& scene = world.AddComponent<SceneComponent>(decals_[1]);
+            scene.SetPosition({100.f, 50.f, 1.0f});
+
+            auto& decal = world.AddComponent<DecalComponent>(decals_[1]);
+            decal.albedoTextureId  = renderer.QueueTextureLoad("assets/materials/metal_corroded/MetalCorrodedHeavy001_COL_2K_METALNESS.jpg");
+            decal.extentsX         = 60.0f;   // 120 cm face
+            decal.extentsY         = 60.0f;
+            decal.extentsZ         = 8.0f;
+            decal.opacity          = 0.7f;
+            decal.priority         = 1;
+            decal.fadeDistance      = 8.0f;
+        }
+
+        // Decal 2 — "Rust" on first back-row sphere (stone bricks projected onto sphere)
+        decals_[2] = world.CreateEntity();
+        {
+            auto& scene = world.AddComponent<SceneComponent>(decals_[2]);
+            scene.SetPosition({-500.f, -200.f, 80.f}); // Coincides with back-row sphere 0
+
+            auto& decal = world.AddComponent<DecalComponent>(decals_[2]);
+            decal.albedoTextureId  = renderer.QueueTextureLoad("assets/materials/stonebricks/Stonebricks_BaseColor.jpg");
+            decal.normalTextureId  = renderer.QueueTextureLoad("assets/materials/stonebricks/Stonebricks_Normal.jpg");
+            decal.extentsX         = 50.0f;   // 100 cm face, covers part of sphere
+            decal.extentsY         = 50.0f;
+            decal.extentsZ         = 100.0f;  // Deep projection to reach sphere surface
+            decal.opacity          = 0.9f;
+            decal.priority         = 2;
+            decal.fadeDistance      = 5.0f;
+            decal.angleFadeStart   = 70.0f;
+        }
     }
 
     // ── Exponential Height Fog ───────────────────────────────────────────

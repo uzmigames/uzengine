@@ -2,6 +2,48 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.51] — 2026-03-24
+
+### Runtime Project Loading, SRP File Split, DLL Path Fixes
+
+**uzengine.exe Project Loading Fixes:**
+- Fixed Agility SDK path: `D3D12SDKPath` changed from `"..\\lib\\D3D12\\"` to `".\\D3D12\\"` — DLLs are next to the exe, not in `../lib/`
+- Fixed DXC compiler path: default changed from `"../lib/dxcompiler.dll"` to `"dxcompiler.dll"`
+- Fixed FXC compiler path: default changed from `"../lib/d3dcompiler_47.dll"` to `"d3dcompiler_47.dll"`
+- Fixed async texture path mismatch: `Submit()` now accepts `resultKey` so decoded results match the VFS-relative key in `m_asyncPendingSlots` (was discarding ALL textures with "unknown path")
+- Fixed scene loader transform ordering: "transform" now processed in pass 0 before "camera"/"mesh" — nlohmann::json iterates alphabetically, so "camera" was processed before "transform" existed
+- Added `DrainPendingTextureLoads()` — blocks until all async texture decodes + GPU uploads complete before the first visible frame (was showing white placeholders for 2-4 seconds)
+- Added `HasPendingTextureLoads()` query for pre-load readiness checking
+
+**SRP File Split (phase0-0.9.0):**
+- Split `scene_lifecycle.cpp` (1789 lines) → `scene_renderer_init.cpp`, `scene_temporal_resources.cpp`, `scene_postprocess_resources.cpp`, `scene_upscaler.cpp`
+- Split `scene_assets.cpp` (886 lines) → `scene_mesh_assets.cpp`, `scene_texture_assets.cpp`
+- Split `mesh.cpp` (1122 lines) → `mesh_builder.cpp`, `mesh_io.cpp`, `mesh_tangents.cpp`
+- Split `rhi.h` (978 lines) → `rhi_device.h`, `rhi_command_list.h`, `rhi_fence.h`, `rhi_swapchain.h`
+- Split `dx11_device.cpp`, `metal_device.cpp` → resource creation into separate files
+- Split `inspector_pass.cpp` → `inspector_pass_dump.cpp`, `inspector_pass_validate.cpp`, `inspector_pass_utils.h`
+- Split `application.cpp` → `application_args.cpp`, `application_platform.cpp`
+- Split `demo_application.cpp` → `demo_application_args.cpp`, `demo_application_init.cpp`
+- Split `shader_pipeline.cpp` → `shader_pipeline_batch.cpp`, `shader_pipeline_internal.h`
+- Split `pipeline_library.h` → `pipeline_library_impl.h`; extracted `pipeline_depth.cpp`, `pipeline_gi.cpp`, `pipeline_temporal.cpp`
+
+**Lua API Expansions:**
+- Atmosphere API: 444 lines — full SkyAtmosphereComponent bindings
+- Light API: 696 lines — directional, point, spot light bindings
+- Fog API: 186 lines — HeightFogComponent bindings
+- Clouds API: 207 lines — VolumetricCloudsComponent bindings
+- SkyLight API: 169 lines — SkyLightComponent bindings
+- Decal API: new `lua_decal_api.cpp` — DecalComponent bindings
+- Reflection Probe API: new `lua_reflection_probe_api.cpp`
+- PostProcess API: new `lua_postprocess_api.cpp`
+
+**Decal Demo Integration:**
+- Added 3 DecalComponent entities to pbr_test demo (concrete weathering, corroded metal stain, stonebrick rust on sphere)
+
+**Tasks Archived:**
+- Linux Platform (phase4-4.10.0) — 34/34: X11 window/input, POSIX file I/O, inotify, mmap, crash handler, XDG paths, dlopen, fork/exec, system info, stack walker
+- SRP File Split (phase0-0.9.0) — archived
+
 ## [0.2.50] — 2026-03-24
 
 ### Reflection Probe Capture + Task Cleanup + Quality-of-Life Fixes

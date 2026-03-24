@@ -21,6 +21,9 @@
 #include "lua_quat_api.h"
 #include "lua_window_api.h"
 #include "lua_vfs_api.h"
+#include "lua_decal_api.h"
+#include "lua_reflection_probe_api.h"
+#include "lua_postprocess_api.h"
 
 extern "C" {
 #include <lua.h>
@@ -165,6 +168,9 @@ bool LuaVM::Init() {
     LuaRegisterQuatAPI(s_state);
     LuaRegisterWindowAPI(s_state);
     LuaRegisterVfsAPI(s_state);
+    LuaRegisterDecalAPI(s_state);
+    LuaRegisterReflectionProbeAPI(s_state);
+    LuaRegisterPostProcessAPI(s_state);
 
     UZ_LOG(Scripting, Info, "LuaVM initialized (LuaJIT 2.1)");
     return true;

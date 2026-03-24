@@ -325,6 +325,196 @@ static int SceneSetCloudsEnabled(lua_State* L) {
     return 0;
 }
 
+/// uz.scene.get_clouds_layer_bottom_altitude(entity) -> number | nil
+static int SceneGetCloudsLayerBottomAltitude(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_clouds_layer_bottom_altitude");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(world->GetComponent<VolumetricCloudsComponent>(entity).layerBottomAltitudeKm));
+    return 1;
+}
+
+/// uz.scene.get_clouds_layer_height(entity) -> number | nil
+static int SceneGetCloudsLayerHeight(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_clouds_layer_height");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(world->GetComponent<VolumetricCloudsComponent>(entity).layerHeightKm));
+    return 1;
+}
+
+/// uz.scene.get_clouds_coverage(entity) -> number | nil
+static int SceneGetCloudsCoverage(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_clouds_coverage");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(world->GetComponent<VolumetricCloudsComponent>(entity).coverage));
+    return 1;
+}
+
+/// uz.scene.get_clouds_density(entity) -> number | nil
+static int SceneGetCloudsDensity(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_clouds_density");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(world->GetComponent<VolumetricCloudsComponent>(entity).density));
+    return 1;
+}
+
+/// uz.scene.get_clouds_type(entity) -> number | nil
+static int SceneGetCloudsType(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_clouds_type");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(world->GetComponent<VolumetricCloudsComponent>(entity).cloudType));
+    return 1;
+}
+
+/// uz.scene.get_clouds_wind_velocity(entity) -> x, y, z | nil
+static int SceneGetCloudsWindVelocity(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_clouds_wind_velocity");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    const auto& clouds = world->GetComponent<VolumetricCloudsComponent>(entity);
+    lua_pushnumber(L, static_cast<double>(clouds.windVelocity.x));
+    lua_pushnumber(L, static_cast<double>(clouds.windVelocity.y));
+    lua_pushnumber(L, static_cast<double>(clouds.windVelocity.z));
+    return 3;
+}
+
+/// uz.scene.get_clouds_detail_wind_scale(entity) -> number | nil
+static int SceneGetCloudsDetailWindScale(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_clouds_detail_wind_scale");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(world->GetComponent<VolumetricCloudsComponent>(entity).detailWindScale));
+    return 1;
+}
+
+/// uz.scene.get_clouds_extinction(entity) -> number | nil
+static int SceneGetCloudsExtinction(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_clouds_extinction");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(world->GetComponent<VolumetricCloudsComponent>(entity).extinction));
+    return 1;
+}
+
+/// uz.scene.get_clouds_scattering_albedo(entity) -> number | nil
+static int SceneGetCloudsScatteringAlbedo(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_clouds_scattering_albedo");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(world->GetComponent<VolumetricCloudsComponent>(entity).scatteringAlbedo));
+    return 1;
+}
+
+/// uz.scene.get_clouds_phase_g(entity) -> number | nil
+static int SceneGetCloudsPhaseG(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_clouds_phase_g");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(world->GetComponent<VolumetricCloudsComponent>(entity).phaseG));
+    return 1;
+}
+
+/// uz.scene.get_clouds_phase_g2(entity) -> number | nil
+static int SceneGetCloudsPhaseG2(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_clouds_phase_g2");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(world->GetComponent<VolumetricCloudsComponent>(entity).phaseG2));
+    return 1;
+}
+
+/// uz.scene.get_clouds_phase_blend(entity) -> number | nil
+static int SceneGetCloudsPhaseBlend(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_clouds_phase_blend");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(world->GetComponent<VolumetricCloudsComponent>(entity).phaseBlend));
+    return 1;
+}
+
+/// uz.scene.get_clouds_ambient_multiplier(entity) -> number | nil
+static int SceneGetCloudsAmbientMultiplier(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_clouds_ambient_multiplier");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(world->GetComponent<VolumetricCloudsComponent>(entity).ambientMultiplier));
+    return 1;
+}
+
+/// uz.scene.get_clouds_tracing_max_distance(entity) -> number | nil
+static int SceneGetCloudsTracingMaxDistance(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_clouds_tracing_max_distance");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(world->GetComponent<VolumetricCloudsComponent>(entity).tracingMaxDistanceKm));
+    return 1;
+}
+
+/// uz.scene.get_clouds_primary_steps(entity) -> int | nil
+static int SceneGetCloudsPrimarySteps(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_clouds_primary_steps");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushinteger(L, static_cast<lua_Integer>(world->GetComponent<VolumetricCloudsComponent>(entity).primarySteps));
+    return 1;
+}
+
+/// uz.scene.get_clouds_light_steps(entity) -> int | nil
+static int SceneGetCloudsLightSteps(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_clouds_light_steps");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushinteger(L, static_cast<lua_Integer>(world->GetComponent<VolumetricCloudsComponent>(entity).lightSteps));
+    return 1;
+}
+
+/// uz.scene.is_clouds_enabled(entity) -> bool
+static int SceneIsCloudsEnabled(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "is_clouds_enabled");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushboolean(L, world->GetComponent<VolumetricCloudsComponent>(entity).enabled ? 1 : 0);
+    return 1;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Registration
 // ─────────────────────────────────────────────────────────────────────────────
@@ -362,6 +552,23 @@ void LuaRegisterCloudsAPI(lua_State* L) {
     lua_pushcfunction(L, SceneSetCloudsPrimarySteps);           lua_setfield(L, -2, "set_clouds_primary_steps");
     lua_pushcfunction(L, SceneSetCloudsLightSteps);             lua_setfield(L, -2, "set_clouds_light_steps");
     lua_pushcfunction(L, SceneSetCloudsEnabled);                lua_setfield(L, -2, "set_clouds_enabled");
+    lua_pushcfunction(L, SceneGetCloudsLayerBottomAltitude);    lua_setfield(L, -2, "get_clouds_layer_bottom_altitude");
+    lua_pushcfunction(L, SceneGetCloudsLayerHeight);            lua_setfield(L, -2, "get_clouds_layer_height");
+    lua_pushcfunction(L, SceneGetCloudsCoverage);               lua_setfield(L, -2, "get_clouds_coverage");
+    lua_pushcfunction(L, SceneGetCloudsDensity);                lua_setfield(L, -2, "get_clouds_density");
+    lua_pushcfunction(L, SceneGetCloudsType);                   lua_setfield(L, -2, "get_clouds_type");
+    lua_pushcfunction(L, SceneGetCloudsWindVelocity);           lua_setfield(L, -2, "get_clouds_wind_velocity");
+    lua_pushcfunction(L, SceneGetCloudsDetailWindScale);        lua_setfield(L, -2, "get_clouds_detail_wind_scale");
+    lua_pushcfunction(L, SceneGetCloudsExtinction);             lua_setfield(L, -2, "get_clouds_extinction");
+    lua_pushcfunction(L, SceneGetCloudsScatteringAlbedo);       lua_setfield(L, -2, "get_clouds_scattering_albedo");
+    lua_pushcfunction(L, SceneGetCloudsPhaseG);                 lua_setfield(L, -2, "get_clouds_phase_g");
+    lua_pushcfunction(L, SceneGetCloudsPhaseG2);                lua_setfield(L, -2, "get_clouds_phase_g2");
+    lua_pushcfunction(L, SceneGetCloudsPhaseBlend);             lua_setfield(L, -2, "get_clouds_phase_blend");
+    lua_pushcfunction(L, SceneGetCloudsAmbientMultiplier);      lua_setfield(L, -2, "get_clouds_ambient_multiplier");
+    lua_pushcfunction(L, SceneGetCloudsTracingMaxDistance);     lua_setfield(L, -2, "get_clouds_tracing_max_distance");
+    lua_pushcfunction(L, SceneGetCloudsPrimarySteps);           lua_setfield(L, -2, "get_clouds_primary_steps");
+    lua_pushcfunction(L, SceneGetCloudsLightSteps);             lua_setfield(L, -2, "get_clouds_light_steps");
+    lua_pushcfunction(L, SceneIsCloudsEnabled);                 lua_setfield(L, -2, "is_clouds_enabled");
 
     lua_pop(L, 2);
 

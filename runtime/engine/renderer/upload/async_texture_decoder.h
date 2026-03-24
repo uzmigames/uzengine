@@ -124,7 +124,8 @@ public:
     /// * `isSRGB` — True if this texture contains color data (albedo, emissive)
     ///   that should be created with an sRGB format for automatic gamma-to-linear
     ///   conversion on GPU sample. False for linear data (normal, roughness, etc.).
-    void Submit(const std::string& path, bool isSRGB = false);
+    void Submit(const std::string& path, bool isSRGB = false,
+                const std::string& resultKey = {});
 
     /// Enqueues pre-read image bytes for background decode. Thread-safe.
     /// Takes ownership of the data buffer via std::vector move.

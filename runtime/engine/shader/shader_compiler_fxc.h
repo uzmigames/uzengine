@@ -71,7 +71,7 @@ public:
     /// # Returns
     /// `true` if the DLL was loaded and `D3DCompile` resolved successfully.
     /// `false` if the DLL cannot be found/loaded or the entry point is missing.
-    bool Init(const std::string& fxcPath = "../lib/d3dcompiler_47.dll");
+    bool Init(const std::string& fxcPath = "d3dcompiler_47.dll");
 
     /// Returns true if FXC is loaded and ready to compile.
     [[nodiscard]] bool IsInitialized() const { return m_d3dCompile != nullptr; }

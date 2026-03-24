@@ -10,7 +10,7 @@
 ///
 /// # New Functions (added to uz.scene)
 ///
-/// ## VolumetricClouds
+/// ## VolumetricClouds — Setters
 /// - `uz.scene.create_clouds(entity)` → void
 /// - `uz.scene.set_clouds_layer_bottom_altitude(entity, km)` → void
 /// - `uz.scene.set_clouds_layer_height(entity, km)` → void
@@ -29,6 +29,25 @@
 /// - `uz.scene.set_clouds_primary_steps(entity, n)` → void
 /// - `uz.scene.set_clouds_light_steps(entity, n)` → void
 /// - `uz.scene.set_clouds_enabled(entity, enabled)` → void
+///
+/// ## VolumetricClouds — Getters
+/// - `uz.scene.get_clouds_layer_bottom_altitude(entity)` → number | nil
+/// - `uz.scene.get_clouds_layer_height(entity)` → number | nil
+/// - `uz.scene.get_clouds_coverage(entity)` → number | nil
+/// - `uz.scene.get_clouds_density(entity)` → number | nil
+/// - `uz.scene.get_clouds_type(entity)` → number | nil
+/// - `uz.scene.get_clouds_wind_velocity(entity)` → x, y, z | nil
+/// - `uz.scene.get_clouds_detail_wind_scale(entity)` → number | nil
+/// - `uz.scene.get_clouds_extinction(entity)` → number | nil
+/// - `uz.scene.get_clouds_scattering_albedo(entity)` → number | nil
+/// - `uz.scene.get_clouds_phase_g(entity)` → number | nil
+/// - `uz.scene.get_clouds_phase_g2(entity)` → number | nil
+/// - `uz.scene.get_clouds_phase_blend(entity)` → number | nil
+/// - `uz.scene.get_clouds_ambient_multiplier(entity)` → number | nil
+/// - `uz.scene.get_clouds_tracing_max_distance(entity)` → number | nil
+/// - `uz.scene.get_clouds_primary_steps(entity)` → int | nil
+/// - `uz.scene.get_clouds_light_steps(entity)` → int | nil
+/// - `uz.scene.is_clouds_enabled(entity)` → bool
 
 struct lua_State;
 
