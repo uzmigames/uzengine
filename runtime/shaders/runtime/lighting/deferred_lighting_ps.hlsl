@@ -347,9 +347,9 @@ float4 main(FSInput input) : SV_Target {
     }
 
     // ── IBL Ambient ────────────────────────────────────────────────────
+    float3 skyTint = float3(skyLightColorR, skyLightColorG, skyLightColorB) * skyLightIntensity;
     float3 ambient = float3(0, 0, 0);
     {
-        float3 skyTint = float3(skyLightColorR, skyLightColorG, skyLightColorB) * skyLightIntensity;
 
         float3 irradiance = float3(0, 0, 0);
 #ifdef UZ_BINDLESS
