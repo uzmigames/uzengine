@@ -743,7 +743,7 @@ TEST_F(LuaMaterialAPITest, GetMaterial_ShadingModel_RoundTrips) {
     ));
 
     const std::string sm = EvalString("uz.scene.get_material(me).shading_model");
-    EXPECT_EQ(sm, "subsurface");
+    EXPECT_EQ(sm, "Subsurface");
 }
 
 TEST_F(LuaMaterialAPITest, GetMaterial_BlendMode_RoundTrips) {
@@ -755,7 +755,7 @@ TEST_F(LuaMaterialAPITest, GetMaterial_BlendMode_RoundTrips) {
     ));
 
     const std::string bm = EvalString("uz.scene.get_material(me).blend_mode");
-    EXPECT_EQ(bm, "translucent");
+    EXPECT_EQ(bm, "Translucent");
 }
 
 TEST_F(LuaMaterialAPITest, GetMaterial_MaterialDomain_RoundTrips) {
@@ -768,7 +768,7 @@ TEST_F(LuaMaterialAPITest, GetMaterial_MaterialDomain_RoundTrips) {
     ));
 
     const std::string md = EvalString("uz.scene.get_material(me).material_domain");
-    EXPECT_EQ(md, "surface");
+    EXPECT_EQ(md, "Surface");
 }
 
 TEST_F(LuaMaterialAPITest, GetMaterial_NilEntity_ReturnsNil) {
