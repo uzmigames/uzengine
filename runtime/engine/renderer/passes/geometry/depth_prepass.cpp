@@ -115,8 +115,16 @@ void AddDepthPrepass(rg::RgBuilder& builder, const DepthPrepassDesc& desc)
                                "DepthPrepass(instanced): CB ring exhausted at batch {}", drawCallCount);
                         break;
                     }
-                    cmd->DrawIndexed(mesh0.indexCount, batch.instanceCount,
-                                     0, 0, batch.firstInstance);
+                    if (desc.useIndirectDraw && desc.indirectArgsBuffer.IsValid()
+                        && desc.batchCount == 1) {
+                        // Indirect draw: the Phase 1 GPU cull pass has written
+                        // the visible instance count into the indirect args buffer.
+                        cmd->DrawIndexedIndirect(desc.indirectArgsBuffer, 0, 1,
+                                                 sizeof(RHIDrawIndexedIndirectArgs));
+                    } else {
+                        cmd->DrawIndexed(mesh0.indexCount, batch.instanceCount,
+                                         0, 0, batch.firstInstance);
+                    }
                     ++drawCallCount;
                 }
             } else {

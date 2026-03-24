@@ -833,6 +833,47 @@ void SceneRenderer::CreateGpuCullBuffers(uint32_t capacity) {
         }
     }
 
+    // ── Phase 2 Visible Index Buffers (same layout as Phase 1) ─────────
+    // Two-phase occlusion re-tests all instances against the updated HiZ.
+    // Newly-visible instances are written to this separate buffer so the
+    // GBuffer pass can issue two indirect draws (Phase 1 + Phase 2).
+    {
+        RHIBufferDesc desc{};
+        desc.sizeBytes = static_cast<uint64_t>(capacity) * 4;
+        desc.stride    = 4;
+        desc.usage     = RHIBufferUsage::StructuredBuffer | RHIBufferUsage::UnorderedAccess;
+        desc.memory    = RHIMemoryType::Default;
+
+        for (uint32_t i = 0; i < kInstanceBufferCount; ++i) {
+            desc.debugName = (i == 0) ? "VisibleIndexBuffer2[0]"
+                           : (i == 1) ? "VisibleIndexBuffer2[1]"
+                                      : "VisibleIndexBuffer2[2]";
+            m_visibleIndexBuffers2[i] = m_device->CreateBuffer(desc);
+            if (m_visibleIndexBuffers2[i].IsValid()) {
+                m_visibleIndexUavIndices2[i] = m_device->GetBufferUAVIndex(m_visibleIndexBuffers2[i]);
+            }
+        }
+    }
+
+    // ── Phase 2 Indirect Args Buffers (same layout as Phase 1) ───────────
+    {
+        RHIBufferDesc desc{};
+        desc.sizeBytes = 20;
+        desc.stride    = 0;
+        desc.usage     = RHIBufferUsage::UnorderedAccess | RHIBufferUsage::IndirectArgs | RHIBufferUsage::CopyDst;
+        desc.memory    = RHIMemoryType::Default;
+
+        for (uint32_t i = 0; i < kInstanceBufferCount; ++i) {
+            desc.debugName = (i == 0) ? "IndirectArgsBuffer2[0]"
+                           : (i == 1) ? "IndirectArgsBuffer2[1]"
+                                      : "IndirectArgsBuffer2[2]";
+            m_indirectArgsBuffers2[i] = m_device->CreateBuffer(desc);
+            if (m_indirectArgsBuffers2[i].IsValid()) {
+                m_indirectArgsUavIndices2[i] = m_device->GetBufferUAVIndex(m_indirectArgsBuffers2[i]);
+            }
+        }
+    }
+
     m_gpuCullBufferCapacity = capacity;
     UZ_LOG(Renderer, Info, "SceneRenderer: created GPU cull buffers (capacity={})", capacity);
 }
@@ -853,6 +894,17 @@ void SceneRenderer::DestroyGpuCullBuffers() {
             m_device->DestroyBuffer(m_indirectArgsBuffers[i]);
             m_indirectArgsBuffers[i] = RHIBufferHandle{};
             m_indirectArgsUavIndices[i] = UINT32_MAX;
+        }
+        // Phase 2 buffers
+        if (m_visibleIndexBuffers2[i].IsValid()) {
+            m_device->DestroyBuffer(m_visibleIndexBuffers2[i]);
+            m_visibleIndexBuffers2[i] = RHIBufferHandle{};
+            m_visibleIndexUavIndices2[i] = UINT32_MAX;
+        }
+        if (m_indirectArgsBuffers2[i].IsValid()) {
+            m_device->DestroyBuffer(m_indirectArgsBuffers2[i]);
+            m_indirectArgsBuffers2[i] = RHIBufferHandle{};
+            m_indirectArgsUavIndices2[i] = UINT32_MAX;
         }
     }
     m_gpuCullBufferCapacity = 0;

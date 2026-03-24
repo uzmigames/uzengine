@@ -1250,11 +1250,22 @@ private:
         // ── GPU Occlusion Culling ──────────────────────────────────────
         bool     gpuCullingActive = false;       ///< True when GPU cull pass should run this frame.
         uint32_t boundingSphereSrvIndex = UINT32_MAX; ///< SRV for bounding sphere buffer (this frame's slot).
-        uint32_t visibleIndexUavIndex = UINT32_MAX;   ///< UAV for visible index output buffer.
-        uint32_t indirectArgsUavIndex = UINT32_MAX;   ///< UAV for indirect draw args buffer.
-        RHIBufferHandle visibleIndexBuffer;      ///< Handle for UAV barrier in cull pass.
-        RHIBufferHandle indirectArgsBuffer;      ///< Handle for UAV barrier and indirect draw.
-        CBAllocation    gpuCullCBAlloc{};         ///< CB ring allocation for GpuCullConstants.
+        uint32_t visibleIndexUavIndex = UINT32_MAX;   ///< UAV for Phase 1 visible index output buffer.
+        uint32_t indirectArgsUavIndex = UINT32_MAX;   ///< UAV for Phase 1 indirect draw args buffer.
+        RHIBufferHandle visibleIndexBuffer;      ///< Phase 1 visible index buffer handle.
+        RHIBufferHandle indirectArgsBuffer;      ///< Phase 1 indirect args buffer handle.
+        CBAllocation    gpuCullCBAlloc{};         ///< CB ring allocation for Phase 1 GpuCullConstants.
+
+        // ── Two-Phase Occlusion Culling ───────────────────────────────────
+        // Phase 1 culls against previous frame's HiZ (conservative — may reject
+        // newly revealed objects). Phase 2 re-tests all instances against the
+        // updated HiZ built from Phase 1 visible geometry.
+        bool     twoPhaseOcclusion = false;      ///< True when two-phase culling is active (prevHiZ available).
+        uint32_t visibleIndexUavIndex2 = UINT32_MAX;  ///< UAV for Phase 2 visible index output.
+        uint32_t indirectArgsUavIndex2 = UINT32_MAX;  ///< UAV for Phase 2 indirect draw args.
+        RHIBufferHandle visibleIndexBuffer2;     ///< Phase 2 visible index buffer handle.
+        RHIBufferHandle indirectArgsBuffer2;     ///< Phase 2 indirect args buffer handle.
+        CBAllocation    gpuCullCBAlloc2{};        ///< CB ring allocation for Phase 2 GpuCullConstants.
 
         // ── Render graph resource IDs ───────────────────────────────────
         rg::RgResourceId bbRes{};

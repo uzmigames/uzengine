@@ -868,25 +868,55 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
             }
         }
 
-        // Fill GpuCullConstants and allocate from CB ring.
-        GpuCullConstants cullConstants{};
-        cullConstants.viewProjection = camera.GetViewProjection();
-        cullConstants.viewMatrix     = camera.GetView();
-        cullConstants.viewToClip     = camera.GetProjection();
-        cullConstants.instanceCount  = instanceCount;
-        cullConstants.hizEnabled     = (m_hizMipCount > 0) ? 1u : 0u;
-        if (m_hizMipCount > 0) {
-            cullConstants.hizWidth    = m_hizMipLevels[0].width;
-            cullConstants.hizHeight   = m_hizMipLevels[0].height;
-            cullConstants.hizMipCount = m_hizMipCount;
-            for (uint32_t m = 0; m < m_hizMipCount && m < kGpuCullMaxHiZMips; ++m) {
-                cullConstants.hizMipSrvIndices[m] = m_hizMipLevels[m].srvIndex;
+        // ── Phase 1 Cull Constants — use previous frame's HiZ ─────────────
+        // Phase 1 tests against last frame's HiZ pyramid to identify objects
+        // that are "definitely visible" (were visible last frame and still pass
+        // frustum + occlusion). This is conservative: objects newly revealed
+        // by camera movement may be incorrectly rejected.
+        // If no previous HiZ exists (first frame), Phase 1 runs frustum-only.
+        GpuCullConstants phase1Constants{};
+        phase1Constants.viewProjection = camera.GetViewProjection();
+        phase1Constants.viewMatrix     = camera.GetView();
+        phase1Constants.viewToClip     = camera.GetProjection();
+        phase1Constants.instanceCount  = instanceCount;
+        phase1Constants.hizEnabled     = (m_prevHizMipCount > 0) ? 1u : 0u;
+        if (m_prevHizMipCount > 0) {
+            phase1Constants.hizWidth    = m_prevHizWidth;
+            phase1Constants.hizHeight   = m_prevHizHeight;
+            phase1Constants.hizMipCount = m_prevHizMipCount;
+            for (uint32_t m = 0; m < m_prevHizMipCount && m < kGpuCullMaxHiZMips; ++m) {
+                phase1Constants.hizMipSrvIndices[m] = m_prevHizMipSrvIndices[m];
             }
         }
 
         ctx.gpuCullCBAlloc = m_cbRing->Allocate(sizeof(GpuCullConstants));
         if (ctx.gpuCullCBAlloc.cpuPtr) {
-            std::memcpy(ctx.gpuCullCBAlloc.cpuPtr, &cullConstants, sizeof(GpuCullConstants));
+            std::memcpy(ctx.gpuCullCBAlloc.cpuPtr, &phase1Constants, sizeof(GpuCullConstants));
+        }
+
+        // ── Phase 2 Cull Constants — use current frame's HiZ ─────────────
+        // Phase 2 re-tests ALL instances against the updated HiZ pyramid built
+        // from Phase 1 visible geometry. Objects that pass Phase 2 but failed
+        // Phase 1 are "newly visible" (e.g., revealed by camera movement).
+        // The GBuffer draws both Phase 1 and Phase 2 visible objects.
+        GpuCullConstants phase2Constants{};
+        phase2Constants.viewProjection = camera.GetViewProjection();
+        phase2Constants.viewMatrix     = camera.GetView();
+        phase2Constants.viewToClip     = camera.GetProjection();
+        phase2Constants.instanceCount  = instanceCount;
+        phase2Constants.hizEnabled     = (m_hizMipCount > 0) ? 1u : 0u;
+        if (m_hizMipCount > 0) {
+            phase2Constants.hizWidth    = m_hizMipLevels[0].width;
+            phase2Constants.hizHeight   = m_hizMipLevels[0].height;
+            phase2Constants.hizMipCount = m_hizMipCount;
+            for (uint32_t m = 0; m < m_hizMipCount && m < kGpuCullMaxHiZMips; ++m) {
+                phase2Constants.hizMipSrvIndices[m] = m_hizMipLevels[m].srvIndex;
+            }
+        }
+
+        ctx.gpuCullCBAlloc2 = m_cbRing->Allocate(sizeof(GpuCullConstants));
+        if (ctx.gpuCullCBAlloc2.cpuPtr) {
+            std::memcpy(ctx.gpuCullCBAlloc2.cpuPtr, &phase2Constants, sizeof(GpuCullConstants));
         }
 
         // Populate FrameContext fields for downstream pass registration.
@@ -895,7 +925,16 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
         ctx.indirectArgsUavIndex   = m_indirectArgsUavIndices[ibSlot];
         ctx.visibleIndexBuffer     = m_visibleIndexBuffers[ibSlot];
         ctx.indirectArgsBuffer     = m_indirectArgsBuffers[ibSlot];
-        ctx.gpuCullingActive       = true;
+
+        // Phase 2 output buffers.
+        ctx.visibleIndexUavIndex2  = m_visibleIndexUavIndices2[ibSlot];
+        ctx.indirectArgsUavIndex2  = m_indirectArgsUavIndices2[ibSlot];
+        ctx.visibleIndexBuffer2    = m_visibleIndexBuffers2[ibSlot];
+        ctx.indirectArgsBuffer2    = m_indirectArgsBuffers2[ibSlot];
+
+        // Two-phase is active when previous frame's HiZ data is available.
+        ctx.twoPhaseOcclusion = (m_prevHizMipCount > 0);
+        ctx.gpuCullingActive  = true;
     }
 
     // ── Resolve viewport dimensions ────────────────────────────────────

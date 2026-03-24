@@ -219,6 +219,18 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
     m_prevViewProj = ctx.unjitteredViewProj;
     m_prevViewProjValid = true;
 
+    // Save current frame's HiZ pyramid state for next frame's Phase 1 occlusion cull.
+    // Phase 1 of two-phase culling tests against the previous frame's HiZ to identify
+    // objects that are "definitely visible" before the depth prepass runs.
+    m_prevHizMipCount = m_hizMipCount;
+    if (m_hizMipCount > 0) {
+        m_prevHizWidth  = m_hizMipLevels[0].width;
+        m_prevHizHeight = m_hizMipLevels[0].height;
+        for (uint32_t i = 0; i < m_hizMipCount && i < kHiZMaxMipLevels; ++i) {
+            m_prevHizMipSrvIndices[i] = m_hizMipLevels[i].srvIndex;
+        }
+    }
+
     // ── Color Grading LUT generation (compute) ─────────────────────────
     // 3D LUT (32^3) for combined color grading + tonemap. Dispatch: 8x8 groups.
     // Generated once when dirty, sampled by tonemap shader via LUT SRV.

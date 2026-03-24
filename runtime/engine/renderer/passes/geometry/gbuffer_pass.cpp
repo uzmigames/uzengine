@@ -170,17 +170,26 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
 
                     if (desc.useIndirectDraw && desc.indirectArgsBuffer.IsValid()
                         && desc.batchCount == 1) {
-                        // Indirect draw: the GPU cull pass has written the visible
+                        // Phase 1 indirect draw: the GPU cull pass has written the visible
                         // instance count into the indirect args buffer at offset 4.
                         // The index count, start index, base vertex, and start
                         // instance fields were pre-filled before the cull dispatch.
                         cmd->DrawIndexedIndirect(desc.indirectArgsBuffer, 0, 1,
                                                  sizeof(RHIDrawIndexedIndirectArgs));
+                        ++drawCallCount;
+
+                        // Phase 2 indirect draw: newly-visible instances from the
+                        // second cull pass (re-tested against updated HiZ).
+                        if (desc.usePhase2IndirectDraw && desc.indirectArgsBuffer2.IsValid()) {
+                            cmd->DrawIndexedIndirect(desc.indirectArgsBuffer2, 0, 1,
+                                                     sizeof(RHIDrawIndexedIndirectArgs));
+                            ++drawCallCount;
+                        }
                     } else {
                         cmd->DrawIndexed(mesh0.indexCount, batch.instanceCount,
                                          0, 0, batch.firstInstance);
+                        ++drawCallCount;
                     }
-                    ++drawCallCount;
                 }
             } else {
                 // ── Non-instanced path — bind the correct mesh per draw command ──
