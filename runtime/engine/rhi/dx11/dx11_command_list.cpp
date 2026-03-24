@@ -465,13 +465,53 @@ void DX11CommandList::Dispatch(uint32_t groupCountX, uint32_t groupCountY,
     m_ctx->Dispatch(groupCountX, groupCountY, groupCountZ);
 }
 
-void DX11CommandList::DrawIndexedIndirect(RHIBufferHandle /*argsBuffer*/, uint64_t /*argsOffset*/,
-                                           uint32_t /*drawCount*/, uint32_t /*argsStride*/) {
-    UZ_LOG(RHI, Warning, "DrawIndexedIndirect — not supported on DX11 backend");
+void DX11CommandList::DrawIndexedIndirect(RHIBufferHandle argsBuffer, uint64_t argsOffset,
+                                           uint32_t drawCount, uint32_t argsStride) {
+    if (!m_ctx) return;
+
+    if (!argsBuffer.IsValid()) {
+        UZ_LOG(RHI, Warning, "DrawIndexedIndirect — invalid args buffer handle");
+        return;
+    }
+
+    DX11Buffer* buf = m_device->GetBufferPool().Get(argsBuffer.index, argsBuffer.generation);
+    if (!buf || !buf->buffer) {
+        UZ_LOG(RHI, Warning, "DrawIndexedIndirect — could not resolve args buffer");
+        return;
+    }
+
+    if (drawCount == 0) return;
+
+    // DX11 DrawIndexedInstancedIndirect processes exactly one draw command per call.
+    // The args buffer must contain D3D11_DRAW_INDEXED_INSTANCED_INDIRECT_ARGS structs
+    // (IndexCountPerInstance, InstanceCount, StartIndexLocation, BaseVertexLocation,
+    //  StartInstanceLocation — 5 uint32_t = 20 bytes each).
+    // For multi-draw, we loop and advance by argsStride per iteration.
+    // If argsStride is 0, default to the standard argument struct size (20 bytes).
+    const uint32_t stride = (argsStride != 0) ? argsStride : 20u;
+    for (uint32_t i = 0; i < drawCount; ++i) {
+        const uint32_t offset = static_cast<uint32_t>(argsOffset) + i * stride;
+        m_ctx->DrawIndexedInstancedIndirect(buf->buffer, offset);
+    }
 }
 
-void DX11CommandList::DispatchIndirect(RHIBufferHandle /*argsBuffer*/, uint64_t /*argsOffset*/) {
-    UZ_LOG(RHI, Warning, "DispatchIndirect — not supported on DX11 backend");
+void DX11CommandList::DispatchIndirect(RHIBufferHandle argsBuffer, uint64_t argsOffset) {
+    if (!m_ctx) return;
+
+    if (!argsBuffer.IsValid()) {
+        UZ_LOG(RHI, Warning, "DispatchIndirect — invalid args buffer handle");
+        return;
+    }
+
+    DX11Buffer* buf = m_device->GetBufferPool().Get(argsBuffer.index, argsBuffer.generation);
+    if (!buf || !buf->buffer) {
+        UZ_LOG(RHI, Warning, "DispatchIndirect — could not resolve args buffer");
+        return;
+    }
+
+    // The args buffer must contain a D3D11_DISPATCH_INDIRECT_ARGS struct at argsOffset
+    // (ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ — 3 uint32_t = 12 bytes).
+    m_ctx->DispatchIndirect(buf->buffer, static_cast<uint32_t>(argsOffset));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

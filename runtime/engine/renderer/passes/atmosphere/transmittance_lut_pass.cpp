@@ -15,8 +15,13 @@
 #include "engine_assert.h"
 #include "log.h"
 #include "profiler.h"
+#include "cvar.h"
 
 UZ_DECLARE_LOG_CATEGORY(Renderer);
+
+// ── CVars ────────────────────────────────────────────────────────────────
+static auto* cv_TransmittanceLutW = UZ_CVAR_INT("r.Atmosphere.TransmittanceLutWidth", 256, "Transmittance LUT width", 64, 512);
+static auto* cv_TransmittanceLutH = UZ_CVAR_INT("r.Atmosphere.TransmittanceLutHeight", 64, "Transmittance LUT height", 32, 256);
 
 namespace uz {
 

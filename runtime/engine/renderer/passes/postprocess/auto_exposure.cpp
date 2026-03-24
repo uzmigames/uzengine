@@ -31,6 +31,11 @@ static auto* cv_AutoExpEnabled       = UZ_CVAR_BOOL("r.AutoExposure", true, "Aut
 static auto* cv_AutoExpBias          = UZ_CVAR_FLOAT("r.AutoExposure.Bias", 0.0f, "Exposure EV bias (+1 = 2x brighter)", -5.f, 5.f);
 static auto* cv_AutoExpMinBrightness = UZ_CVAR_FLOAT("r.AutoExposure.MinBrightness", 0.1f, "Min avg luminance", 0.001f, 100.f);
 static auto* cv_AutoExpMaxBrightness = UZ_CVAR_FLOAT("r.AutoExposure.MaxBrightness", 4.0f, "Max avg luminance", 0.001f, 100.f);
+static auto* cv_AutoExpMidGray       = UZ_CVAR_FLOAT("r.AutoExposure.MidGrayTarget", 0.18f, "18% gray card target", 0.1f, 0.5f);
+static auto* cv_AutoExpLogLumMin     = UZ_CVAR_FLOAT("r.AutoExposure.LogLuminanceMin", -10.0f, "Histogram log2 luminance min", -20.f, 0.f);
+static auto* cv_AutoExpLogLumMax     = UZ_CVAR_FLOAT("r.AutoExposure.LogLuminanceMax", 20.0f, "Histogram log2 luminance max", 0.f, 40.f);
+static auto* cv_AutoExpSpeedUp       = UZ_CVAR_FLOAT("r.AutoExposure.SpeedUp", 3.0f, "Bright adaptation speed (EV/s)", 0.1f, 20.f);
+static auto* cv_AutoExpSpeedDown     = UZ_CVAR_FLOAT("r.AutoExposure.SpeedDown", 1.0f, "Dark adaptation speed (EV/s)", 0.1f, 20.f);
 
 namespace uz {
 

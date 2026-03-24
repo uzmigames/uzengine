@@ -8,11 +8,22 @@
 #include "camera.h"
 #include "shadow_pass.h"
 #include "log.h"
+#include "cvar.h"
 
 UZ_DECLARE_LOG_CATEGORY(Shadow);
 
 #include <cmath>
 #include <cstring>
+
+// ── CVars ────────────────────────────────────────────────────────────────
+static auto* cv_ShadowAtlasRes       = UZ_CVAR_INT("r.Shadow.AtlasResolution", 2048, "Main shadow atlas resolution", 512, 8192);
+static auto* cv_LocalShadowAtlasSize = UZ_CVAR_INT("r.Shadow.LocalAtlasSize", 4096, "Local light shadow atlas resolution", 1024, 8192);
+static auto* cv_LocalShadowTileSize  = UZ_CVAR_INT("r.Shadow.LocalTileSize", 1024, "Per-light shadow tile size", 256, 2048);
+static auto* cv_PCSSSearchSamples    = UZ_CVAR_INT("r.Shadow.PCSS.SearchSamples", 16, "PCSS blocker search sample count", 8, 32);
+static auto* cv_PCSSFilterSamples    = UZ_CVAR_INT("r.Shadow.PCSS.Samples", 32, "PCSS PCF filter sample count", 16, 64);
+static auto* cv_PCSSMaxSharpness     = UZ_CVAR_FLOAT("r.Shadow.PCSS.MaxSharpness", 4.0f, "PCSS post-PCF sharpening limit", 1.f, 8.f);
+static auto* cv_ContactShadowSteps   = UZ_CVAR_INT("r.ContactShadow.Steps", 12, "Contact shadow ray march steps", 4, 24);
+static auto* cv_ContactShadowThick   = UZ_CVAR_FLOAT("r.ContactShadow.Thickness", 0.01f, "Contact shadow geometry thickness", 0.0001f, 0.1f);
 
 namespace uz {
 

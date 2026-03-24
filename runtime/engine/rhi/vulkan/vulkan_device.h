@@ -374,11 +374,20 @@ private:
     VkSampler                      m_staticSamplerLinear = VK_NULL_HANDLE;
     VkSampler                      m_staticSamplerShadow = VK_NULL_HANDLE;
 
+    // ── Async queue synchronization (timeline semaphores) ──────────────
+    VkSemaphore                    m_copyTimelineSemaphore = VK_NULL_HANDLE;
+    VkSemaphore                    m_computeTimelineSemaphore = VK_NULL_HANDLE;
+    VkSemaphore                    m_graphicsTimelineSemaphore = VK_NULL_HANDLE;
+    uint64_t                       m_copyFenceValue = 0;
+    uint64_t                       m_computeFenceValue = 0;
+    uint64_t                       m_graphicsFenceValue = 0;
+
     ShaderModel                    m_shaderModel = ShaderModel::SM6_6;
     std::string                    m_adapterName;
     std::string                    m_apiVersionStr;
     bool                           m_validationEnabled = false;
     bool                           m_bindlessSupported = false; ///< True if descriptor indexing + runtime arrays available.
+    bool                           m_memoryBudgetSupported = false; ///< True if VK_EXT_memory_budget is available.
 
     /// Tracy GPU context for Vulkan timestamp collection.
     /// nullptr when `TRACY_ENABLE` is not defined.

@@ -10,10 +10,16 @@
 #include "rhi.h"
 #include "shader_manager.h"
 #include "engine_shaders.h"
+#include "cvar.h"
 
 #include <cstring>
 
 UZ_DECLARE_LOG_CATEGORY(Renderer);
+
+// ── CVars ────────────────────────────────────────────────────────────────
+static auto* cv_IBLBrdfLutRes       = UZ_CVAR_INT("r.IBL.BRDFLutResolution", 512, "BRDF integration LUT resolution", 128, 1024);
+static auto* cv_IBLPrefilteredSize  = UZ_CVAR_INT("r.IBL.PrefilteredSize", 256, "Prefiltered specular cubemap base size", 64, 512);
+static auto* cv_IBLPrefilteredMips  = UZ_CVAR_INT("r.IBL.PrefilteredMipLevels", 6, "Prefiltered specular mip count", 1, 10);
 
 namespace uz {
 

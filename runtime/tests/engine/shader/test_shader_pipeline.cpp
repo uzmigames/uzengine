@@ -13,6 +13,7 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -26,19 +27,18 @@ namespace fs = std::filesystem;
 class ShaderPipelineTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        m_testDir = "test_shader_pipeline_tmp";
+        m_testDir = "test_shader_pipeline_tmp_" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count());
         m_cacheDir = m_testDir + "/cache";
         m_shaderDir = m_testDir + "/shaders";
 
-        // Clean up stale leftovers from a previous aborted run
-        std::error_code ec;
-        fs::remove_all(m_testDir, ec);
         fs::create_directories(m_shaderDir);
         fs::create_directories(m_cacheDir);
     }
 
     void TearDown() override {
-        fs::remove_all(m_testDir);
+        std::error_code ec;
+        fs::remove_all(m_testDir, ec);
     }
 
     static void WriteFile(const std::string& path, const std::string& content) {

@@ -39,7 +39,7 @@
 - [x] 3.4 UploadRing (64MB/frame, triple-buffered) — zero CreateBuffer per mip.
 - [x] 3.4.1 Zero-copy .uztexture parse — 0.0ms (was 37-82ms). LoadUzTexViaRing.
 - [x] 3.6 Verified: 0.3ms per 2K BC7 texture (273× faster than baseline).
-- [ ] 3.5 Vulkan copy queue equivalent — vkGetDeviceQueue transfer-only family.
+- [x] 3.5 Vulkan copy queue equivalent — vkGetDeviceQueue transfer-only family. Implemented SignalCopyQueue/GraphicsWaitForCopy using VkSemaphore timeline semaphores on the dedicated transfer queue.
 
 ## Phase 4: Mip Streaming Manager (future)
 

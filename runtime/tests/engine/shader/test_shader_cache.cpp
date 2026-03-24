@@ -2,6 +2,7 @@
 
 #include "shader_cache.h"
 #include <gtest/gtest.h>
+#include <chrono>
 #include <filesystem>
 
 namespace fs = std::filesystem;
@@ -13,14 +14,13 @@ namespace fs = std::filesystem;
 class ShaderCacheTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        m_cacheDir = "test_shader_cache_tmp";
-        // Clean up stale leftovers from a previous aborted run (non-throwing)
-        std::error_code ec;
-        fs::remove_all(m_cacheDir, ec);
+        m_cacheDir = "test_shader_cache_tmp_" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count());
     }
 
     void TearDown() override {
-        fs::remove_all(m_cacheDir);
+        std::error_code ec;
+        fs::remove_all(m_cacheDir, ec);
     }
 
     std::vector<uint8_t> MakeBytecode(const std::string& content) {

@@ -44,6 +44,11 @@ cbuffer FSRRcasParams : register(b0) {
     uint  g_OutputHeight;   ///< Output texture height in pixels.
 };
 
+#ifndef UZ_BINDLESS
+Texture2D<float4>   g_InputTexture  : register(t0);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+#endif
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -147,9 +152,14 @@ void main(uint3 DTid : SV_DispatchThreadID)
     // Early-out for threads outside the output dimensions.
     if (DTid.x >= g_OutputWidth || DTid.y >= g_OutputHeight) return;
 
-    // Access bindless resources.
+    // Access resources — bindless (SM6.6) or explicit register (SM5).
+#ifdef UZ_BINDLESS
     Texture2D<float4>   inputTex  = ResourceDescriptorHeap[g_InputSrvIndex];
     RWTexture2D<float4> outputTex = ResourceDescriptorHeap[g_OutputUavIndex];
+#else
+    Texture2D<float4>   inputTex  = g_InputTexture;
+    RWTexture2D<float4> outputTex = g_OutputTexture;
+#endif
 
     // Run RCAS sharpening.
     float3 color = FsrRcasF(DTid.xy, inputTex);

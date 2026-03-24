@@ -3,6 +3,7 @@
 #include "shader_source_manager.h"
 #include "shader_vfs.h"
 #include <gtest/gtest.h>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 
@@ -15,10 +16,9 @@ namespace fs = std::filesystem;
 class ShaderSourceManagerTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        m_testDir = "test_shader_src_mgr_tmp";
-        // Clean up stale leftovers from a previous aborted run
-        std::error_code ec;
-        fs::remove_all(m_testDir, ec);
+        // Use a unique dir name per test instance to avoid cross-test contamination
+        m_testDir = "test_shader_src_mgr_tmp_" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count());
         fs::create_directories(m_testDir + "/engine");
         fs::create_directories(m_testDir + "/game");
 
@@ -47,7 +47,9 @@ protected:
     }
 
     void TearDown() override {
-        fs::remove_all(m_testDir);
+        m_vfs.Clear();
+        std::error_code ec;
+        fs::remove_all(m_testDir, ec);
     }
 
     static void WriteFile(const std::string& path, const std::string& content) {

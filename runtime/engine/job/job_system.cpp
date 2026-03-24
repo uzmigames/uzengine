@@ -12,10 +12,13 @@
 #include "job_system.h"
 
 #include "../assertions/engine_assert.h"
+#include "../core/cvar.h"
 #include "../logging/log.h"
 #include "../profiling/profiler.h"
 
 #include <random>
+
+static auto* cv_MaxWorkerCount = UZ_CVAR_INT("job.MaxWorkerCount", 0, "Max job worker threads (0=auto from hardware_concurrency)", 0, 64);
 
 namespace uz {
 
@@ -33,6 +36,10 @@ bool JobSystem::Init() {
 
     uint32_t hwThreads = std::thread::hardware_concurrency();
     uint32_t workerCount = (hwThreads > 1) ? (hwThreads - 1) : 1;
+    const int maxOverride = cv_MaxWorkerCount->value > 0.5f ? static_cast<int>(cv_MaxWorkerCount->value) : 0;
+    if (maxOverride > 0 && static_cast<uint32_t>(maxOverride) < workerCount) {
+        workerCount = static_cast<uint32_t>(maxOverride);
+    }
 
     running_.store(true, std::memory_order_release);
 

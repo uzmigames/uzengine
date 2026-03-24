@@ -30,6 +30,14 @@
 
 UZ_DEFINE_LOG_CATEGORY(App, Trace);
 
+// ─── System CVars ────────────────────────────────────────────────────────────
+
+static auto* cv_MaxDeltaTime   = UZ_CVAR_FLOAT("sys.MaxDeltaTime", 0.25f, "Max delta time clamp — prevents spiral-of-death after hitches", 0.016f, 1.0f);
+static auto* cv_FixedDeltaTime = UZ_CVAR_FLOAT("sys.FixedDeltaTime", 1.0f / 60.0f, "Fixed timestep for physics/deterministic logic", 0.002f, 0.1f);
+static auto* cv_FramesInFlight = UZ_CVAR_INT("rhi.FramesInFlight", 3, "GPU frames in flight (init-time only)", 1, 5);
+static auto* cv_VSync          = UZ_CVAR_BOOL("rhi.VSync", false, "Vertical sync");
+static auto* cv_CameraMoveSpeed = UZ_CVAR_FLOAT("camera.MoveSpeed", 1000.0f, "FPS camera movement speed (cm/s)", 100.0f, 10000.0f);
+
 namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -235,7 +243,8 @@ int Application::Run(int argc, char** argv) {
         auto now = std::chrono::high_resolution_clock::now();
         float dt = std::chrono::duration<float>(now - prevFrame).count();
         prevFrame = now;
-        if (dt > kMaxDeltaTime) dt = kMaxDeltaTime;
+        const float maxDt = CVarRegistry::Get().GetFloat("sys.MaxDeltaTime", 0.25f);
+        if (dt > maxDt) dt = maxDt;
 
         // ── Fence wait ────────────────────────────────────────────────────
         const uint32_t allocFrame = m_frameIndex % kFramesInFlight;

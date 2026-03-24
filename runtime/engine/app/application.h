@@ -205,7 +205,6 @@ public:
 
 private:
     static constexpr uint32_t kFramesInFlight = 3;
-    static constexpr float    kMaxDeltaTime   = 0.1f;
 
     // ── Configuration ────────────────────────────────────────────────────
     ApplicationConfig m_config;

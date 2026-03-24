@@ -35,6 +35,9 @@ static auto* cv_GTAO             = UZ_CVAR_BOOL("r.GTAO", true, "Ground Truth Am
 static auto* cv_SSR              = UZ_CVAR_BOOL("r.SSR", true, "Screen-Space Reflections");
 static auto* cv_SSRIntensity     = UZ_CVAR_FLOAT("r.SSR.Intensity", 1.0f, "SSR reflection intensity", 0.f, 2.f);
 static auto* cv_SSRMaxRoughness  = UZ_CVAR_FLOAT("r.SSR.MaxRoughness", 0.8f, "Max roughness for SSR", 0.f, 1.f);
+static auto* cv_SSRNumSteps      = UZ_CVAR_INT("r.SSR.NumSteps", 16, "SSR ray march step count", 8, 32);
+static auto* cv_SSRStartMip      = UZ_CVAR_FLOAT("r.SSR.StartMipLevel", 1.0f, "SSR initial HZB mip level", 0.f, 3.f);
+static auto* cv_SSRSlopeTolerance = UZ_CVAR_FLOAT("r.SSR.SlopeToleranceScale", 4.0f, "SSR slope tolerance scale", 1.f, 16.f);
 // SSGI
 static auto* cv_SSGI             = UZ_CVAR_BOOL("r.SSGI", false, "Screen-Space Global Illumination");
 // DFS (Distance Field Shadows)
@@ -89,6 +92,12 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                     loggedGtaoInputs = true;
                 }
 
+                // Hi-Z mip 0 (half-res min-depth) for cache-friendly distant
+                // horizon steps. Falls back gracefully when unavailable.
+                const uint32_t hizSrv =
+                    (m_hizMipCount > 0 && m_hizMipLevels[0].srvIndex != UINT32_MAX)
+                        ? m_hizMipLevels[0].srvIndex : UINT32_MAX;
+
                 const uint32_t gtaoResult = m_gtaoPass->Execute(
                     cmd, m_cbRing.get(),
                     m_gbuffer.depthSRV, m_gbuffer.normalSRV,
@@ -97,7 +106,17 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                     invTanHalfFov, aspectRatio,
                     ctx.perFrame.nearPlane, ctx.perFrame.farPlane,
                     m_renderWidth, m_renderHeight,
-                    ctx.frameIndex);
+                    ctx.frameIndex,
+                    m_gbuffer.velocitySRV,
+                    hizSrv);
+
+                // Update perFrame with the actual AO SRV returned by Execute().
+                // When temporal accumulation is active, the final AO is in a
+                // history texture (not m_filteredAOTexture), so the SRV index
+                // differs from what was pre-computed in SetupFrameData().
+                // The deferred lighting pass reads perFrame via binder path
+                // (pointer to ctx.perFrame), so this update takes effect.
+                ctx.perFrame.gtaoSrvIndex = gtaoResult;
 
                 if (gtaoResult == UINT32_MAX) {
                     UZ_LOG(Renderer, Warning,

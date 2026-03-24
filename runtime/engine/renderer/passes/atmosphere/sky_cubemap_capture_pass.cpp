@@ -15,8 +15,12 @@
 #include "engine_assert.h"
 #include "log.h"
 #include "profiler.h"
+#include "cvar.h"
 
 UZ_DECLARE_LOG_CATEGORY(Renderer);
+
+// ── CVars ────────────────────────────────────────────────────────────────
+static auto* cv_SkyCubemapRes = UZ_CVAR_INT("r.Atmosphere.SkyCubemapResolution", 64, "Sky cubemap face resolution", 32, 256);
 
 namespace uz {
 

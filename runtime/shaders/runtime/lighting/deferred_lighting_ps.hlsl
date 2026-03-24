@@ -141,6 +141,25 @@ float SpecularOcclusion(float NoV, float ao, float roughness) {
     return saturate(pow(NoV + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao);
 }
 
+/// Charlie sheen NDF — fabric/velvet specular distribution.
+/// @ref Estevez & Kulla 2017 "Production Friendly Microfacet Sheen BRDF"
+/// @constants Uses sin(theta) instead of cos(theta) for fabric highlight at grazing
+/// @deviations NONE
+float D_Charlie(float roughness, float NoH) {
+    float sin2h = max(1.0 - NoH * NoH, 0.0078125);  // 2^(-14/2) min to avoid zero
+    float sinH  = sqrt(sin2h);
+    // Inverted Gaussian: peaks at grazing angles (fabric sheen behavior)
+    float invR = 1.0 / max(roughness, 0.001);
+    return (2.0 + invR) * pow(sinH, invR) / (2.0 * 3.14159265);
+}
+
+/// Neubelt visibility for cloth — simplified geometric term for sheen.
+/// @ref Neubelt 2013, Estevez & Kulla 2017 "Production Friendly Microfacet Sheen BRDF"
+/// @deviations NONE
+float V_Neubelt(float NoV, float NoL) {
+    return 1.0 / (4.0 * (NoL + NoV - NoL * NoV));
+}
+
 float4 main(FSInput input) : SV_Target {
     int2 px = int2(input.positionCS.xy);
 
@@ -274,12 +293,26 @@ float4 main(FSInput input) : SV_Target {
             // @ref Burley 2012 "Physically Based Shading at Disney" — wrap shading
             // approximation for subsurface scattering: replaces standard NdotL
             // falloff with a softer (NdotL + w) / (1 + w)^2 curve.
-            if (shadingModelID == 2) {
-                float wrap   = 0.3;
+            if (shadingModelID == 2 || shadingModelID == 5) {
+                // @ref Burley 2012 — wrap diffuse for SSS/foliage
+                // TwoSidedFoliage (5): wider wrap for thinner leaf surfaces
+                float wrap   = (shadingModelID == 5) ? 0.5 : 0.3;
                 float rawNoL = dot(N, L);
                 float wrapNoL = max((rawNoL + wrap) / ((1.0 + wrap) * (1.0 + wrap)), 0.0);
                 Lo = (DiffuseColor / 3.14159265 + specBRDF) * lightColor.rgb
                      * wrapNoL * microShadow * shadow * contact;
+            } else if (shadingModelID == 7) {
+                // ── Cloth sheen specular (smID == 7) ──────────────────
+                // @ref Estevez & Kulla 2017 "Production Friendly Microfacet Sheen BRDF"
+                // Replace GGX specular with Charlie/Ashikhmin sheen NDF for fabric.
+                // Cloth uses Lambert diffuse (no Burley roughness correction).
+                float3 sheenColor = float3(0.04, 0.04, 0.04);
+                float  D_sheen   = D_Charlie(roughness, NoH);
+                float  V_sheen   = V_Neubelt(NoV, NoL);
+                float3 sheenSpec = sheenColor * D_sheen * V_sheen;
+                float3 clothDiffuse = DiffuseColor / 3.14159265;
+                Lo = (clothDiffuse + sheenSpec) * lightColor.rgb
+                     * NoL * microShadow * shadow * contact;
             } else {
                 Lo = (diffuse + specBRDF) * lightColor.rgb * NoL * microShadow
                      * shadow * contact;
@@ -290,12 +323,25 @@ float4 main(FSInput input) : SV_Target {
         // @ref Burley 2012 — back-scattering through thin geometry.
         // Applied outside NoL > 0 block because back-lighting occurs when
         // the surface faces away from the light.
-        if (shadingModelID == 2) {
-            float3 sssColor  = baseColor;  // Use base color as SSS tint
-            float  backNoL   = saturate(-dot(N, normalize(lightDir.xyz)));
-            float3 backLight = sssColor * backNoL * 0.5 * lightColor.rgb;
-            // Attenuate back-lighting by shadow (partially — some light bleeds through)
+        if (shadingModelID == 2 || shadingModelID == 5) {
+            // @ref Burley 2012 — back-scattering / leaf transmittance
+            // TwoSidedFoliage (5): stronger transmittance for thin leaves
+            float3 sssColor        = baseColor;
+            float  backNoL         = saturate(-dot(N, normalize(lightDir.xyz)));
+            float  transmittance   = (shadingModelID == 5) ? 0.8 : 0.5;
+            float3 backLight       = sssColor * backNoL * transmittance * lightColor.rgb;
             Lo += backLight * lerp(0.5, 1.0, shadow);
+        }
+
+        // ── Thin Translucent back-lighting (smID == 9) ────────────
+        // @ref Beer-Lambert absorption for thin-film translucency.
+        // Uses base color as absorption filter — light passing through
+        // thin surfaces is tinted by the material color.
+        if (shadingModelID == 9) {
+            float3 transmittanceColor = baseColor;
+            float  backNoL            = saturate(-dot(N, normalize(lightDir.xyz)));
+            float3 transmitted        = transmittanceColor * backNoL * 0.6 * lightColor.rgb;
+            Lo += transmitted * shadow;
         }
     }
 

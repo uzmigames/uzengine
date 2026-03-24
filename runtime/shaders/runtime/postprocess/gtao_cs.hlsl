@@ -18,16 +18,16 @@
 /// - t0: Depth buffer (R32_FLOAT or hardware depth SRV)
 /// - t1: Normal buffer (R8G8B8A8_UNORM, rg = octahedral normal)
 /// - u0: Output AO texture (R8_UNORM)
-/// - b0: Root constants (8 DWORDs — SRV indices + frame index)
+/// - b0: Root constants (16 DWORDs — SRV indices + frame + algorithm params)
 /// - b2: GTAOParams CBV (bulk parameters including view matrix)
 ///
 /// @ref Jimenez 2016 "Practical Real-time Strategies for Accurate Indirect Occlusion"
 /// @ref Jimenez 2016 — horizon search, inner integral, noise, combined CS
 /// @ref Penner 2011 "Pre-Integrated Skin Shading" — acosFast approximation
-/// @constants GTAO_NUM_TAPS=12, GTAO_MAX_PIXEL_SCREEN_RADIUS=256.0,
-///            PI=3.14159265, PI_HALF=PI*0.5,
-///            ThicknessBlend=0.5, AttenFactor=2.0/(WorldRadius*WorldRadius),
-///            OffsetAdvance=0.617
+/// @constants GTAO_MAX_SCREEN_RADIUS=256.0, PI=3.14159265, PI_HALF=PI*0.5,
+///            AttenFactor=2.0/(worldRadius*worldRadius), OffsetAdvance=0.617
+///            numAngles, numTaps, worldRadius, aoIntensity, thicknessBlend,
+///            fadeStart, fadeEnd, aoPower — all from root constants DWORDs 8-15
 /// @deviations NONE
 
 #include "../include/math_util.hlsli"
@@ -38,11 +38,13 @@
 // Optional Feature Defines (set by CPU-side compile flags)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// GTAO_USE_HIZ: When defined, the horizon search samples from the HiZ
-/// min-depth pyramid at coarser mip levels for distant samples instead of
-/// always sampling mip 0 of the depth buffer. This accelerates horizon search
-/// at the cost of slightly less precise occlusion at distant steps.
-/// Default: OFF (not defined). Enable via -DGTAO_USE_HIZ=1.
+/// GTAO_USE_HIZ: When defined, the horizon search samples from the Hi-Z
+/// half-resolution min-depth texture for distant samples instead of always
+/// sampling mip 0 of the full-res depth buffer. This improves cache
+/// utilization for distant horizon steps at minimal quality cost.
+/// The Hi-Z SRV index is packed into bits[16:31] of frameAndHiz (DWORD 7).
+/// When hizSrvIndex == 0xFFFF, falls back to the full-res depth buffer.
+#define GTAO_USE_HIZ 1
 ///
 /// GTAO_RECONSTRUCT_NORMAL: Reconstructs view-space normals from depth buffer
 /// gradients instead of reading the G-Buffer normal texture.
@@ -65,14 +67,15 @@
 #define PI_HALF  (PI * 0.5f)
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Root Constants (b0, 8 DWORDs = 32 bytes)
+// Root Constants (b0, 16 DWORDs = 64 bytes)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Root constants — exactly 8 DWORDs (32 bytes).
-/// Compute root sig slot 0 supports max 8 DWORDs (dx12_pso_creation.cpp:135).
-/// All algorithm params (radius, intensity, etc.) hardcoded below via #defines.
+/// Root constants — exactly 16 DWORDs (64 bytes).
+/// DWORDs 0-7: per-frame dynamic values (SRV indices, camera, frame index).
+/// DWORDs 8-15: algorithm parameters driven by GTAOSettings / CVars.
 /// @ref Jimenez 2016 "GTAO" §566 — GTAOParams layout
 cbuffer GTAORootCB : register(b0) {
+    // ── Per-frame dynamic values (DWORDs 0-7) ──
     uint     depthSrvIndex;     // DWORD 0
     uint     normalSrvIndex;    // DWORD 1
     uint     outputWidth;       // DWORD 2
@@ -80,31 +83,33 @@ cbuffer GTAORootCB : register(b0) {
     float    invTanHalfFov;     // DWORD 4
     float    nearPlane;         // DWORD 5
     float    farPlane;          // DWORD 6
-    uint     frameIndex;        // DWORD 7
+    uint     frameAndHiz;       // DWORD 7: bits[0:15]=frameIndex, bits[16:31]=hizSrvIndex
+
+    // ── Algorithm parameters from GTAOSettings (DWORDs 8-15) ──
+    uint     numAngles;         // DWORD 8:  direction search count
+    uint     numTaps;           // DWORD 9:  steps per direction
+    float    worldRadius;       // DWORD 10: AO search radius (cm)
+    float    aoIntensity;       // DWORD 11: AO strength multiplier
+    float    thicknessBlend;    // DWORD 12: thickness heuristic [0,1]
+    float    fadeStart;         // DWORD 13: distance where AO fades (cm)
+    float    fadeEnd;           // DWORD 14: distance where AO disappears (cm)
+    float    aoPower;           // DWORD 15: AO power curve exponent
 };
 
+/// Unpack frame index from the lower 16 bits of DWORD 7.
+uint GetFrameIndex() { return frameAndHiz & 0xFFFFu; }
+
+/// Unpack Hi-Z SRV index from the upper 16 bits of DWORD 7.
+/// Returns 0xFFFF when Hi-Z is not available (fallback to full-res depth).
+uint GetHizSrvIndex() { return (frameAndHiz >> 16u) & 0xFFFFu; }
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Hardcoded Algorithm Parameters (reference defaults)
+// Algorithm Constants (non-tunable)
 // ─────────────────────────────────────────────────────────────────────────────
-// These are constants in reference engines controlled by CVars. Hardcoded here because
-// the compute root signature only supports 8 DWORDs of root constants.
-/// @ref Jimenez 2016 "GTAO" — NumAngles clamped [1,16]
-#define GTAO_NUM_ANGLES     2       // medium quality
-/// @ref Jimenez 2016 "GTAO" §542 — SHADER_QUALITY 2 (medium) uses GTAO_NUMTAPS=8
-#define GTAO_NUM_TAPS       8       // Steps per direction (reference medium quality)
+// Tunable parameters (numAngles, numTaps, worldRadius, aoIntensity, thicknessBlend,
+// fadeStart, fadeEnd, aoPower) are now driven from root constants DWORDs 8-15.
 /// @ref Jimenez 2016 "GTAO" §557
 #define GTAO_MAX_SCREEN_RADIUS 256.0f
-/// @ref Jimenez 2016 "GTAO" — default world radius
-static const float GTAO_WORLD_RADIUS    = 200.0f;   // cm
-static const float GTAO_AO_INTENSITY    = 0.5f;
-static const float GTAO_THICKNESS_BLEND = 0.5f;
-static const float GTAO_FADE_START      = 50000.0f; // cm
-static const float GTAO_FADE_RANGE      = 50000.0f; // cm
-/// AO power curve exponent. reference default AmbientOcclusionPower = 2.0 (Scene.cpp:528),
-/// GTAO path multiplies by 0.5, effective = 1.0.
-/// @ref Jimenez 2016 "GTAO" §1575 — AmbientOcclusionPower * 0.5
-/// @ref Jimenez 2016 "GTAO" — AO power curve, default power = 2.0 * 0.5 = 1.0
-#define GTAO_AO_POWER  0.7f
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Resources
@@ -121,13 +126,77 @@ RWTexture2D<float> aoOutput     : register(u0);
 
 SamplerState pointSampler : register(s0);
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Groupshared Depth Preload (8×8 tile + 8px border = 24×24)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Preloaded depth tile for nearby horizon search steps. The 8-pixel border
+/// around the 8×8 thread group covers the first few march steps without
+/// requiring texture fetches. Steps beyond the tile fall back to SampleDepth().
+/// 24×24 = 576 floats = 2304 bytes of LDS — well within the 32 KB limit.
+/// @ref Jimenez 2016 "GTAO" — groupshared cache for horizon search optimization
+groupshared float g_sharedDepth[24][24];
+
+/// Preloads a 24×24 depth region around the 8×8 thread group cooperatively.
+/// Each of the 64 threads loads ~9 texels (576/64 = 9). The tile covers the
+/// group's 8×8 pixels plus an 8-pixel border for nearby horizon steps.
+/// @ref Jimenez 2016 "GTAO" — cooperative LDS fill pattern
+void PreloadDepthTile(uint2 groupThreadId, uint2 groupOrigin) {
+    float2 invSize = float2(1.0f / float(outputWidth), 1.0f / float(outputHeight));
+    uint linearIdx = groupThreadId.y * 8 + groupThreadId.x;
+
+    // Each thread loads multiple texels to fill the 24×24 region.
+    // 576 total texels / 64 threads = 9 iterations per thread.
+    [unroll] for (uint i = linearIdx; i < 24 * 24; i += 64) {
+        uint tx = i % 24;
+        uint ty = i / 24;
+        // Map tile-local coordinate to pixel coordinate.
+        // The tile starts 8 pixels before the group origin in each axis.
+        int2 pixelCoord = int2(groupOrigin) + int2(tx, ty) - int2(8, 8);
+        // Clamp to valid screen range to avoid out-of-bounds sampling.
+        pixelCoord = clamp(pixelCoord, int2(0, 0),
+                           int2(int(outputWidth) - 1, int(outputHeight) - 1));
+        float2 uv = (float2(pixelCoord) + 0.5f) * invSize;
+        g_sharedDepth[ty][tx] = SampleDepth(uv);
+    }
+    GroupMemoryBarrierWithGroupSync();
+}
+
+/// Try to read depth from groupshared memory. Returns true if the coordinate
+/// was within the preloaded 24×24 tile, false if a texture fetch is needed.
+/// @param uv          Screen UV of the sample location.
+/// @param groupOrigin Pixel coordinate of the thread group's top-left corner.
+/// @param depth       [out] Device-Z depth value if within tile.
+bool TryReadSharedDepth(float2 uv, uint2 groupOrigin, out float depth) {
+    // Convert UV back to pixel coordinates (integer grid).
+    float2 pixelCoordF = uv * float2(float(outputWidth), float(outputHeight));
+    int2 localCoord = int2(pixelCoordF) - int2(groupOrigin) + int2(8, 8);
+    if (localCoord.x >= 0 && localCoord.x < 24 &&
+        localCoord.y >= 0 && localCoord.y < 24) {
+        depth = g_sharedDepth[localCoord.y][localCoord.x];
+        return true;
+    }
+    depth = 0.0f;
+    return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Wave Intrinsics (SM6.0+)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// WaveReadLaneFirst broadcasts a uniform value to all lanes in the wave.
+/// For GTAO, this ensures the temporal sincos() result (which is the same for
+/// all threads sharing a frame index) is computed once and broadcast.
+/// DXC targets SM6.0+ by default for this engine, so wave ops are available.
+/// @ref HLSL SM6.0 "Wave Intrinsics" — WaveReadLaneFirst for uniform broadcast
+
 #ifdef GTAO_USE_HIZ
-/// HiZ min-depth pyramid for hierarchical horizon search.
-/// Each mip level is half the resolution of the previous, storing the minimum
-/// (closest) depth in each 2x2 block. Generated by hiz_pyramid_cs.hlsl.
-/// Bound as SRV with full mip chain access for SampleLevel() at varying LODs.
+#ifndef UZ_BINDLESS
+/// Hi-Z half-res min-depth texture (SM5 fallback path).
+/// Bound explicitly at t2 when bindless is not available.
 /// @ref Jimenez 2016 "GTAO" §575-577 — HZBTexture, HZBSampler
 Texture2D<float>  hizPyramid    : register(t2);
+#endif
 #endif
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -145,15 +214,28 @@ float SampleDepth(float2 uv) {
 }
 
 #ifdef GTAO_USE_HIZ
-/// Fetch depth from HiZ pyramid at a specified mip level.
-/// Used by FindMaxHorizonAngle for distant samples where coarser mips
-/// provide sufficient accuracy with better cache utilization.
+/// Fetch depth from Hi-Z half-res min-depth texture.
+/// The mipLevel parameter is accepted for API compatibility but ignored —
+/// our RHI stores Hi-Z mips as separate textures, so we only have access
+/// to mip 0 (half-resolution). This still provides a significant cache
+/// improvement for distant horizon steps.
+///
+/// Falls back to full-res SampleDepth() when hizSrvIndex == 0xFFFF.
 ///
 /// @ref Jimenez 2016 "GTAO" §575-577 — HZBTexture SampleLevel
-/// @constants mipLevel computed from step distance
-/// @deviations NONE
+/// @constants mipLevel always 0 (single half-res texture per RHI constraint)
+/// @deviations Only mip 0 sampled; full mip chain requires RHI per-mip SRV support.
 float SampleDepthHiZ(float2 uv, float mipLevel) {
-    return hizPyramid.SampleLevel(pointSampler, uv, mipLevel).r;
+    uint hizIdx = GetHizSrvIndex();
+    if (hizIdx == 0xFFFFu) {
+        return SampleDepth(uv);
+    }
+#ifdef UZ_BINDLESS
+    Texture2D<float> hiz = ResourceDescriptorHeap[hizIdx];
+    return hiz.SampleLevel(pointSampler, uv, 0).r;
+#else
+    return hizPyramid.SampleLevel(pointSampler, uv, 0).r;
+#endif
 }
 #endif
 
@@ -278,20 +360,33 @@ float3 GetRandomVector(uint2 iPos) {
 
     float2 randomTexVec;
     /// @ref Jimenez 2016 "GTAO" §825-826
-    randomTexVec.x = cos(gradientNoise * PI);
-    randomTexVec.y = sin(gradientNoise * PI);
+    sincos(gradientNoise * PI, randomTexVec.y, randomTexVec.x);
 
     /// @ref Jimenez 2016 "GTAO" §828
     float scaleOffset = (1.0f / 4.0f) * ((iPos.y - iPos.x) & 3u);
 
     float3 result;
     /// @ref Jimenez 2016 "GTAO" §831-833
-    // Compute temporal rotation from frameIndex (moved from root constants to shader)
+    // Compute temporal rotation from frame index (unpacked from DWORD 7)
     /// @ref Jimenez 2016 "GTAO" §820-833
-    float temporalAngle = float(frameIndex % 6) * (PI / 3.0f);
-    float tCos = cos(temporalAngle);
-    float tSin = sin(temporalAngle);
-    float tOffset = float((frameIndex / 6) % 4) * 0.25f;
+    uint fi = GetFrameIndex();
+    float temporalAngle = float(fi % 6) * (PI / 3.0f);
+    float tCos, tSin;
+    sincos(temporalAngle, tSin, tCos);
+    // Wave broadcast: temporalAngle is uniform across the entire dispatch
+    // (same frame index for all threads), so sincos is redundantly computed
+    // per-lane. WaveReadLaneFirst ensures the compiler treats these as
+    // uniform scalar values, enabling scalar register allocation on GCN/RDNA
+    // and avoiding per-lane sincos on architectures with scalar units.
+    // @ref HLSL SM6.0 "Wave Intrinsics" — WaveReadLaneFirst for uniform broadcast
+#ifdef UZ_BINDLESS  // SM6.6 implies SM6.0 wave intrinsics available
+    tCos = WaveReadLaneFirst(tCos);
+    tSin = WaveReadLaneFirst(tSin);
+#endif
+    float tOffset = float((fi / 6) % 4) * 0.25f;
+#ifdef UZ_BINDLESS
+    tOffset = WaveReadLaneFirst(tOffset);
+#endif
     result.x = dot(randomTexVec, float2(tCos, -tSin));
     result.y = dot(randomTexVec, float2(tSin,  tCos));
     result.z = frac(scaleOffset + tOffset);
@@ -311,11 +406,12 @@ float2 FindMaxHorizonAngle(
     float  initialOffset,
     float3 viewPos,
     float3 viewDir,
-    float  attenFactor)
+    float  attenFactor,
+    uint2  groupOrigin)
 {
     float2 bestAng = float2(-1.0f, -1.0f);
 
-    for (uint i = 0; i < numSteps; i++) {
+    [loop] for (uint i = 0; i < numSteps; i++) {
         float fi = (float)i;
 
         /// @ref Jimenez 2016 "GTAO" §661
@@ -334,8 +430,20 @@ float2 FindMaxHorizonAngle(
         float sceneDepthPos = LinearizeDepth(SampleDepthHiZ(uv2.xy, mipLevel));
         float sceneDepthNeg = LinearizeDepth(SampleDepthHiZ(uv2.zw, mipLevel));
 #else
-        float sceneDepthPos = LinearizeDepth(SampleDepth(uv2.xy));
-        float sceneDepthNeg = LinearizeDepth(SampleDepth(uv2.zw));
+        // Try groupshared depth first — avoids texture fetch for samples within
+        // the preloaded 24×24 tile (covers ~8px radius from the tile center).
+        // Falls back to SampleDepth() for samples outside the tile footprint.
+        float sharedD;
+        float sceneDepthPos, sceneDepthNeg;
+        if (TryReadSharedDepth(uv2.xy, groupOrigin, sharedD))
+            sceneDepthPos = LinearizeDepth(sharedD);
+        else
+            sceneDepthPos = LinearizeDepth(SampleDepth(uv2.xy));
+
+        if (TryReadSharedDepth(uv2.zw, groupOrigin, sharedD))
+            sceneDepthNeg = LinearizeDepth(sharedD);
+        else
+            sceneDepthNeg = LinearizeDepth(SampleDepth(uv2.zw));
 #endif
 
         // ── Positive direction ──
@@ -348,7 +456,7 @@ float2 FindMaxHorizonAngle(
         float falloffPos = saturate(lenSqPos * attenFactor);
         angPos = lerp(angPos, bestAng.x, falloffPos);
         /// @ref Jimenez 2016 "GTAO" §676 — thickness heuristic
-        bestAng.x = (angPos > bestAng.x) ? angPos : lerp(angPos, bestAng.x, GTAO_THICKNESS_BLEND);
+        bestAng.x = (angPos > bestAng.x) ? angPos : lerp(angPos, bestAng.x, thicknessBlend);
 
         // ── Negative direction ──
         /// @ref Jimenez 2016 "GTAO" §679-687
@@ -359,7 +467,7 @@ float2 FindMaxHorizonAngle(
 
         float falloffNeg = saturate(lenSqNeg * attenFactor);
         angNeg = lerp(angNeg, bestAng.y, falloffNeg);
-        bestAng.y = (angNeg > bestAng.y) ? angNeg : lerp(angNeg, bestAng.y, GTAO_THICKNESS_BLEND);
+        bestAng.y = (angNeg > bestAng.y) ? angNeg : lerp(angNeg, bestAng.y, thicknessBlend);
     }
 
     /// @ref Jimenez 2016 "GTAO" §690-691
@@ -415,6 +523,13 @@ void main(
     uint2 dispatchId     : SV_DispatchThreadID,
     uint2 groupThreadId  : SV_GroupThreadID)
 {
+    // ── Groupshared depth preload ──
+    // Cooperatively fill the 24×24 LDS tile before any thread accesses it.
+    // This must happen BEFORE the early-out so all 64 threads participate
+    // in the preload (GroupMemoryBarrierWithGroupSync requires uniform control flow).
+    uint2 groupOrigin = groupId * 8;
+    PreloadDepthTile(groupThreadId, groupOrigin);
+
     if (dispatchId.x >= (uint)float(outputWidth) || dispatchId.y >= (uint)outputHeight) {
         return;
     }
@@ -457,11 +572,11 @@ void main(
     // ── Compute screen-space radius ──
     /// @ref Jimenez 2016 "GTAO" §870-877
     float fovScale = outputHeight * invTanHalfFov;
-    float worldRadiusAdj = GTAO_WORLD_RADIUS * fovScale;
-    float pixelRadius = max(min(worldRadiusAdj / viewSpacePos.z, GTAO_MAX_SCREEN_RADIUS), (float)GTAO_NUM_TAPS);
-    float stepRadius = pixelRadius / ((float)GTAO_NUM_TAPS + 1.0f);
+    float worldRadiusAdj = worldRadius * fovScale;
+    float pixelRadius = max(min(worldRadiusAdj / viewSpacePos.z, GTAO_MAX_SCREEN_RADIUS), (float)numTaps);
+    float stepRadius = pixelRadius / ((float)numTaps + 1.0f);
     /// @ref Jimenez 2016 "GTAO" §877
-    float attenFactor = 2.0f / (GTAO_WORLD_RADIUS * GTAO_WORLD_RADIUS);
+    float attenFactor = 2.0f / (worldRadius * worldRadius);
 
     // ── Get per-pixel random direction and offset ──
     /// @ref Jimenez 2016 "GTAO" §880-882
@@ -472,23 +587,24 @@ void main(
     // ── Accumulate AO over multiple directions ──
     float sum = 0.0f;
 
-    float deltaAngle = PI / (float)GTAO_NUM_ANGLES;
-    float sinDeltaAngle = sin(deltaAngle);
-    float cosDeltaAngle = cos(deltaAngle);
+    float deltaAngle = PI / (float)numAngles;
+    float sinDeltaAngle, cosDeltaAngle;
+    sincos(deltaAngle, sinDeltaAngle, cosDeltaAngle);
 
     float2 screenDir = randomVec;
 
-    for (uint angle = 0; angle < GTAO_NUM_ANGLES; angle++) {
+    [loop] for (uint angle = 0; angle < numAngles; angle++) {
         /// @ref Jimenez 2016 "GTAO" §894-895
         float2 horizonAngles = FindMaxHorizonAngle(
-            GTAO_NUM_TAPS,
+            numTaps,
             uv,
             screenDir * float2((1.0f / float(outputWidth)), (1.0f / float(outputHeight))),
             stepRadius,
             offset,
             viewSpacePos,
             viewDir,
-            attenFactor);
+            attenFactor,
+            groupOrigin);
 
         /// @ref Jimenez 2016 "GTAO" §897
         sum += IntegrateHorizonArc(horizonAngles, screenDir, viewDir, viewSpaceNormal);
@@ -504,7 +620,7 @@ void main(
 
     // ── Normalize and scale ──
     /// @ref Jimenez 2016 "GTAO" §906-909
-    float ao = sum / (float)GTAO_NUM_ANGLES;
+    float ao = sum / (float)numAngles;
     ao *= 2.0f / PI;
 
     // ── AO power curve and intensity ──
@@ -512,14 +628,15 @@ void main(
     // reference formula: ao = 1 - (1 - pow(abs(ao), power)) * intensity
     // With default power=1.0 and intensity=1.0 this is identity.
     // @ref Jimenez 2016 "GTAO" §1575-1576
-    // @constants GTAO_AO_POWER=1.0 (Scene.cpp:528 * 0.5), GTAO_AO_INTENSITY=1.0
+    // @constants aoPower, aoIntensity from root constants DWORDs 15 and 11
     // @deviations NONE
-    ao = 1.0f - (1.0f - pow(abs(ao), GTAO_AO_POWER)) * GTAO_AO_INTENSITY;
+    ao = 1.0f - (1.0f - pow(abs(ao), aoPower)) * aoIntensity;
 
     // ── Distance fade ──
     /// @ref Jimenez 2016 "GTAO" §913-915
-    // Distance fade (simplified — linear fade beyond 50000cm)
-    float distFade = saturate((sceneDepth - 50000.0f) / 50000.0f);
+    // Linear fade from fadeStart to fadeEnd (both from root constants).
+    float fadeRange = max(fadeEnd - fadeStart, 1.0f);
+    float distFade = saturate((sceneDepth - fadeStart) / fadeRange);
     ao = lerp(ao, 1.0f, distFade);
 
     aoOutput[dispatchId] = saturate(ao);

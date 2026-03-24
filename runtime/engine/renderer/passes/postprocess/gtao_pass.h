@@ -77,15 +77,17 @@ struct GTAOSettings {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Root Constants — b0 (8 DWORDs)
+// Root Constants — b0 (16 DWORDs)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Matches `cbuffer GTAORootCB : register(b0)` in gtao_cs.hlsl.
-/// GTAO root constants — exactly 8 DWORDs (32 bytes).
-/// This is the compute root signature limit (dx12_pso_creation.cpp:135).
-/// All other params (radius, intensity, etc.) are hardcoded in the shader
-/// via #defines. Only dynamic per-frame values here.
+/// GTAO root constants — exactly 16 DWORDs (64 bytes).
+/// DWORDs 0-7: per-frame dynamic values (SRV indices, frame index, camera).
+/// DWORDs 8-15: algorithm parameters driven by GTAOSettings / CVars.
+///
+/// @ref Jimenez 2016 "GTAO" — GTAOParams layout
 struct GTAORootConstants {
+    // ── Per-frame dynamic values (DWORDs 0-7) ──
     uint32_t depthSrvIndex;     // DWORD 0: depth buffer SRV
     uint32_t normalSrvIndex;    // DWORD 1: normal buffer SRV
     uint32_t outputWidth;       // DWORD 2: output texture width
@@ -93,52 +95,21 @@ struct GTAORootConstants {
     float    invTanHalfFov;     // DWORD 4: 1/tan(fovY/2) for screen→view
     float    nearPlane;         // DWORD 5: camera near plane (cm)
     float    farPlane;          // DWORD 6: camera far plane (cm)
-    uint32_t frameIndex;        // DWORD 7: for temporal jitter
+    uint32_t frameAndHiz;       // DWORD 7: bits[0:15]=frameIndex, bits[16:31]=hizSrvIndex (0xFFFF=disabled)
+
+    // ── Algorithm parameters from GTAOSettings (DWORDs 8-15) ──
+    uint32_t numAngles;         // DWORD 8:  direction search count (quality preset)
+    uint32_t numTaps;           // DWORD 9:  steps per direction (quality preset)
+    float    worldRadius;       // DWORD 10: AO search radius in cm
+    float    aoIntensity;       // DWORD 11: AO strength multiplier
+    float    thicknessBlend;    // DWORD 12: thickness heuristic [0,1]
+    float    fadeStart;         // DWORD 13: distance where AO fades (cm)
+    float    fadeEnd;           // DWORD 14: distance where AO disappears (cm)
+    float    aoPower;           // DWORD 15: AO power curve exponent
 };
 
-static_assert(sizeof(GTAORootConstants) == 32,
-    "GTAORootConstants must be exactly 8 DWORDs (32 bytes) — compute root sig limit");
-
-// ─────────────────────────────────────────────────────────────────────────────
-// CBV at b2 — bulk GTAO parameters
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Matches `cbuffer GTAOParams : register(b2)` in gtao_cs.hlsl.
-/// Must be 256-byte aligned for D3D12 CBV.
-struct GTAOParamsCBV {
-    // Temporal jitter (4 floats)
-    float    temporalCos;
-    float    temporalSin;
-    float    temporalOffset;
-    float    thicknessBlend;
-
-    // Target size (4 floats)
-    float    targetSizeX;
-    float    targetSizeY;
-    float    invTargetSizeX;
-    float    invTargetSizeY;
-
-    // World radius + view (4 floats)
-    float    worldRadius;
-    float    invTanHalfFov;
-    float    nearPlane;
-    float    farPlane;
-
-    // Fade (4 floats)
-    float    fadeMul;
-    float    fadeAdd;
-    float    maxFadeDepth;
-    float    aoIntensity;
-
-    // View matrix (16 floats)
-    float    viewMatrix[16];
-
-    // Pad to 256 bytes (current: 32 floats = 128 bytes, need 128 more)
-    float    _pad[32];
-};
-
-static_assert(sizeof(GTAOParamsCBV) == 256,
-    "GTAOParamsCBV must be 256 bytes (D3D12 CB alignment)");
+static_assert(sizeof(GTAORootConstants) == 64,
+    "GTAORootConstants must be exactly 16 DWORDs (64 bytes)");
 
 /// Matches `cbuffer DenoiseParams : register(b0)` in gtao_denoise_cs.hlsl.
 /// Packed into 8 DWORDs for root constants at slot 0.
@@ -154,6 +125,24 @@ struct GTAODenoiseRootConstants {
 
 static_assert(sizeof(GTAODenoiseRootConstants) == 32,
     "GTAODenoiseRootConstants must be 8 DWORDs (32 bytes)");
+
+/// Matches `cbuffer GTAOTemporalRootCB : register(b0)` in gtao_temporal_cs.hlsl.
+/// Packed into 8 DWORDs for root constants at slot 0.
+///
+/// @ref Jimenez 2016 "GTAO" — temporal accumulation parameters
+struct GTAOTemporalRootConstants {
+    uint32_t currentAOSrvIndex;   ///< DWORD 0: current frame denoised AO SRV.
+    uint32_t historyAOSrvIndex;   ///< DWORD 1: previous frame accumulated AO SRV.
+    uint32_t velocitySrvIndex;    ///< DWORD 2: velocity buffer SRV (RG16F, pixels).
+    uint32_t depthSrvIndex;       ///< DWORD 3: depth buffer SRV (R32_FLOAT).
+    uint32_t outputWidth;         ///< DWORD 4: render target width.
+    uint32_t outputHeight;        ///< DWORD 5: render target height.
+    float    blendWeight;         ///< DWORD 6: temporal blend weight (default 0.1).
+    uint32_t _pad0;               ///< DWORD 7: padding.
+};
+
+static_assert(sizeof(GTAOTemporalRootConstants) == 32,
+    "GTAOTemporalRootConstants must be 8 DWORDs (32 bytes)");
 
 /// Matches `cbuffer GTAOUpsampleRootCB : register(b0)` in gtao_upsample_ps.hlsl.
 /// Packed into 8 DWORDs for root constants at slot 0.
@@ -202,9 +191,14 @@ public:
     /// Recreate AO textures at a new resolution.
     [[nodiscard]] bool Resize(uint32_t width, uint32_t height);
 
-    /// Execute GTAO + denoise for this frame.
+    /// Execute GTAO + denoise + temporal accumulation for this frame.
     ///
-    /// Returns the SRV index of the filtered AO texture, or UINT32_MAX if disabled.
+    /// @param velocitySrvIndex SRV index for the velocity buffer (RG16F, pixels).
+    ///        Pass UINT32_MAX if velocity is unavailable — temporal pass will be skipped.
+    /// @param hizSrvIndex SRV index for Hi-Z mip 0 (half-res min-depth R32F).
+    ///        Pass UINT32_MAX to disable Hi-Z accelerated horizon search.
+    ///
+    /// Returns the SRV index of the final AO texture, or UINT32_MAX if disabled.
     uint32_t Execute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
                      uint32_t depthSrvIndex, uint32_t normalSrvIndex,
                      RHITextureHandle depthTexture, RHITextureHandle normalTexture,
@@ -212,7 +206,9 @@ public:
                      float invTanHalfFov, float aspectRatio,
                      float nearPlane, float farPlane,
                      uint32_t width, uint32_t height,
-                     uint32_t frameIndex);
+                     uint32_t frameIndex,
+                     uint32_t velocitySrvIndex = UINT32_MAX,
+                     uint32_t hizSrvIndex = UINT32_MAX);
 
     /// Shutdown and release all GPU resources.
     void Shutdown();
@@ -231,6 +227,7 @@ private:
     [[nodiscard]] bool EnsureGTAOPipeline();
     [[nodiscard]] bool EnsureDenoisePipeline();
     [[nodiscard]] bool EnsureUpsamplePipeline();
+    [[nodiscard]] bool EnsureTemporalPipeline();
     [[nodiscard]] bool CreateTextures(uint32_t width, uint32_t height);
     [[nodiscard]] bool CreateHalfResTextures(uint32_t halfWidth, uint32_t halfHeight);
     void DestroyHalfResTextures();
@@ -251,11 +248,13 @@ private:
     RHIPipelineHandle m_gtaoPipeline      = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_denoisePipeline   = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_upsamplePipeline  = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_temporalPipeline  = RHIPipelineHandle::Invalid();
 
     // ── Shader Handles ───────────────────────────────────────────────────
     RHIShaderHandle m_gtaoCS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_denoiseCS   = RHIShaderHandle::Invalid();
     RHIShaderHandle m_upsamplePS  = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_temporalCS  = RHIShaderHandle::Invalid();
 
     // ── Descriptor Indices ───────────────────────────────────────────────
     uint32_t m_rawAOSrvIndex       = UINT32_MAX;
@@ -268,6 +267,14 @@ private:
     uint32_t m_rawAOHalfUavIndex      = UINT32_MAX;
     uint32_t m_filteredAOHalfSrvIndex = UINT32_MAX;
     uint32_t m_filteredAOHalfUavIndex = UINT32_MAX;
+
+    // ── Temporal History (ping-pong) ─────────────────────────────────────
+    RHITextureHandle  m_aoHistory[2]        = { RHITextureHandle::Invalid(), RHITextureHandle::Invalid() };
+    uint32_t          m_aoHistorySrvIndex[2] = { UINT32_MAX, UINT32_MAX };
+    uint32_t          m_aoHistoryUavIndex[2] = { UINT32_MAX, UINT32_MAX };
+    RHIResourceState  m_aoHistoryState[2]   = { RHIResourceState::Common, RHIResourceState::Common };
+    uint32_t          m_historyIndex        = 0;   ///< Current write target (flips each frame).
+    bool              m_historyValid        = false; ///< False on first frame / after resize.
 
     // ── Dimensions ───────────────────────────────────────────────────────
     uint32_t m_width      = 0;

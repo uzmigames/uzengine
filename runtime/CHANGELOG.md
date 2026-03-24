@@ -2,6 +2,85 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.48] — 2026-03-24
+
+### Lua API Reorg, CVar Expansion, Thirdparty Integration, Full Test Coverage
+
+**Lua Scripting API Reorganization (12 → 21 focused files):**
+- Removed `scripting/api/` nesting → flat `scripting/{core,renderer,scene}/`
+- Split lua_scene_api (1246 lines) → scene + material + scene_io
+- Split lua_renderer_api (1057 lines) → renderer + cvar + asset + pass_inspector
+- Split lua_environment_api (1207 lines) → fog + skylight + atmosphere + clouds
+- New `uz.cvar` functions: `reset()`, `reset_all()`, `info()`, `list(prefix?)`
+- Material API parity: specular, env_multiplier, SSS, shading_model, blend_mode, ORM
+
+**CVar System Expansion (47 → 118 CVars):**
+- 71 new CVars across shadows, GTAO, SSR, TAA, auto-exposure, IBL, atmosphere, POM, motion blur, DOF, scene, system
+- Bug fixes: bloom defaults reconciled, MaxDeltaTime consolidated, GTAO CVar registration
+- System CVars: sys.MaxDeltaTime, sys.FixedDeltaTime, rhi.VSync, job.MaxWorkerCount, camera.MoveSpeed
+
+**Thirdparty Library Integration (6 new libraries):**
+- **FSR 1.0**: EASU + RCAS compute shaders, FSRPass C++ class
+- **FSR 2.x**: FSR2Upscaler implementing ITemporalUpscaler (stub without FFX lib)
+- **SMAA**: 3-pass pixel shaders (edge/blend/resolve), SMAAPass with area/search textures
+- **xatlas**: GenerateLightmapUVs() for UV1 atlas generation
+- **libpng**: PngCodec with 8/16-bit read/write, sRGB detection
+- **msdfgen**: GenerateSDFAtlas() with FreeType glyph extraction + row packer
+- **FreeType**: FontManager singleton with font caching + glyph metrics
+- Build: zlib compiled from source (static), minimal ftmodule.h, FFX SDK headers
+
+**Test Coverage (187 new test cases, 11 new test files):**
+- CVar: 13 tests (register, clamp, reset, find, macros)
+- FSR/SMAA/FSR2: 18 tests (CPU utilities, CVar registration, defaults)
+- Lua CVar API: 29 tests (get/set/reset/info/list via VM)
+- Lua Material API: 49 tests (set/get_material scalars, enums, flags)
+- Lua Scene I/O: 22 tests (load/save guards, stack hygiene)
+- libpng: 22 tests (round-trip, 16-bit, edge cases)
+- FreeType: 13 tests (init, load, metrics, cache)
+- msdfgen: 18 tests (atlas gen, glyph metrics, errors)
+- xatlas: 3 tests (UV gen, empty input, resolution)
+- **Total: 3987/3988 tests passing** (1 pre-existing CrashHandler failure)
+
+**Infrastructure:**
+- Code coverage tool: `scripts/coverage.bat` via OpenCppCoverage (42% baseline)
+- cvar-reference.md updated with all 118 CVars + Lua API usage
+
+## [0.2.47] — 2026-03-24
+
+### Render Quality + Advanced Materials + GTAO Optimization + Backend Parity
+
+**Render Quality Fixes:**
+- Tonemap exposure floor: `max(exposure, 0.5)` → `max(exposure, 0.2)` — auto-exposure now properly darkens bright outdoor scenes, making shadows visible
+- Tonemap saturation/contrast: 1.3/1.15 → 1.15/1.05 — reduced overbright
+- Builtin mesh quality: sphere 32×32→64×64 tessellation, cube gains `subdivisions` param (default 8×8 per face for ground planes)
+
+**Advanced Material System — 6 Shading Models:**
+- `ShaderPermutationKey` (64-bit packed) + `ShaderPermutationCache` for PSO management
+- PipelineLibrary migrated: 5 material PSO getters route through permutation cache
+- ClearCoat (smID=4): dual-layer GGX specular + IBL coat reflection, energy conservation
+- TwoSidedFoliage (smID=5): wide wrap diffuse + strong leaf transmittance (0.8)
+- Cloth (smID=7): Charlie sheen NDF + Neubelt visibility (Estevez & Kulla 2017)
+- ThinTranslucent (smID=9): Beer-Lambert back-lighting for thin-film surfaces
+- Deferred lighting: full shading model dispatch (Unlit early-out, Subsurface wrap, ClearCoat, Foliage, Cloth, ThinTranslucent)
+- GBuffer encoding: shadingModelID decoded from RT3.a, clearCoatRoughness in RT2.w
+- Material chain: clearCoat, clearCoatRoughness, ClearCoatNormal texture, sheenColor, sheenRoughness fields
+
+**GTAO Optimization (ARCHIVED — 32/32 tasks):**
+- Phase 2: Temporal accumulation — ping-pong history textures, variance clamp, velocity rejection, blend weight 0.1
+- Phase 3: Hi-Z acceleration — half-res min-depth for distant horizon steps via packed SRV index
+- Phase 4: Dynamic quality system — runtime angle/tap counts via 16-DWORD root constants, `r.GTAO.Quality` CVar (0-3)
+- Phase 5: sincos() intrinsic (3 call sites), groupshared depth preload (24×24 tile), WaveReadLaneFirst uniform broadcast
+- Phase 6: Dead code cleanup (GTAOParamsCBV removed), all tests pass
+
+**DX11/Vulkan Backend Parity:**
+- DX11: Indirect Draw/Dispatch implemented (was stubbed)
+- Vulkan: Indirect Draw/Dispatch, memory budget (VK_EXT_memory_budget), async queues (timeline semaphores for copy/compute/graphics)
+- Shader SM5 compatibility: WaveReadLaneFirst guarded with `#ifdef UZ_BINDLESS`, FSR EASU/RCAS SM5 fallback paths added
+- 22 shaders audited for cross-backend compatibility
+
+**Test Fixes:**
+- 29 test failures → 0: temp dir isolation (unique dirs via chrono timestamp), HeightFog defaults updated, PerFrameCB IBL expectation fixed, PakScramble LZ4 compression assertion corrected
+
 ## [0.2.46] — 2026-03-24
 
 ### Lua Scripting API — CVar Extensions, Material Parity, Directory Reorganization

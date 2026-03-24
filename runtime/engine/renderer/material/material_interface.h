@@ -226,6 +226,18 @@ public:
     /// @ref Karis 2013 "Real Shading in Unreal Engine 4" — ClearCoatRoughness parameter.
     [[nodiscard]] virtual float GetClearCoatRoughness() const { return 0.04f; }
 
+    // ── Cloth parameters ────────────────────────────────────────────────────
+
+    /// Cloth sheen tint color (linear RGB). Controls the color of the fabric sheen.
+    /// @ref Estevez & Kulla 2017 "Production Friendly Microfacet Sheen BRDF"
+    virtual void GetSheenColor(float& r, float& g, float& b) const {
+        r = 0.04f; g = 0.04f; b = 0.04f;
+    }
+
+    /// Cloth sheen roughness. Controls the spread of the fabric highlight.
+    /// @ref Estevez & Kulla 2017 — sheen roughness parameter.
+    [[nodiscard]] virtual float GetSheenRoughness() const { return 0.5f; }
+
     // ── Shading model / domain / blend mode ─────────────────────────────────
 
     /// Shading model determines the BRDF used in the lighting pass.

@@ -38,6 +38,11 @@
 
 #include <string>
 
+#include "cvar.h"
+
+// ── CVars ────────────────────────────────────────────────────────────────
+static auto* cv_MaxTexUploads = UZ_CVAR_INT("r.Scene.MaxTextureUploadsPerFrame", 8, "Max async texture uploads per frame", 1, 32);
+
 namespace uz {
 
 /// Maximum textures to upload per frame. Limits the number of staging buffer

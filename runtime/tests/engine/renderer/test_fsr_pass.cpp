@@ -155,34 +155,52 @@ TEST(FsrRcasCon, Sharpness1Point0_PacksExp2Neg1) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 7. FSRInput — default construction produces valid (zero-sentinel) state
+// 7. FSRInput — struct layout and field semantics
+//
+// FSRInput is a plain aggregate with no in-class initializers.
+// Value-initialization ({}) zero-initializes all fields.
+// The documented "Default: 0.2" and "Default: true" are caller conventions,
+// not C++ in-class defaults — the caller must set them before calling Execute().
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(FSRInput, DefaultConstructed_DefaultSharpness) {
-    // The header documents sharpness default as 0.2 (AMD recommended).
+TEST(FSRInput, ValueInitialized_SharpnessIsZero) {
+    // {} zero-initializes all plain struct members (no in-class initializers).
     FSRInput input{};
-    // sharpness is 0.2f per the struct comment.
-    // The default-initialized struct (value-init with {}) gives 0.0f for float
-    // unless the struct member has an in-class initializer.
-    // From the header: `float sharpness = 0.2f` (line 57).
-    // Aggregate init with {} respects the member default initializer in C++11+.
-    EXPECT_FLOAT_EQ(input.sharpness, 0.2f)
-        << "FSRInput::sharpness default must be 0.2 (AMD recommended quality mode)";
+    EXPECT_FLOAT_EQ(input.sharpness, 0.0f)
+        << "FSRInput zero-initialization must produce sharpness=0.0";
 }
 
-TEST(FSRInput, DefaultConstructed_RCASEnabled) {
+TEST(FSRInput, ValueInitialized_EnableRCASIsFalse) {
+    // bool zero-initializes to false.
     FSRInput input{};
-    // From header: `bool enableRCAS = true`
-    EXPECT_TRUE(input.enableRCAS)
-        << "FSRInput::enableRCAS should default to true (RCAS on by default)";
+    EXPECT_FALSE(input.enableRCAS)
+        << "FSRInput zero-initialization must produce enableRCAS=false";
 }
 
-TEST(FSRInput, DefaultConstructed_ZeroDimensions) {
+TEST(FSRInput, ValueInitialized_ZeroDimensions) {
     FSRInput input{};
-    EXPECT_EQ(input.inputWidth,  0u);
-    EXPECT_EQ(input.inputHeight, 0u);
-    EXPECT_EQ(input.outputWidth, 0u);
+    EXPECT_EQ(input.inputWidth,   0u);
+    EXPECT_EQ(input.inputHeight,  0u);
+    EXPECT_EQ(input.outputWidth,  0u);
     EXPECT_EQ(input.outputHeight, 0u);
+}
+
+TEST(FSRInput, ManuallySet_SharpnessAndRCAS_ValuesRoundtrip) {
+    // Verify the fields are writable and readable correctly.
+    FSRInput input{};
+    input.sharpness   = 0.2f;  // AMD recommended default
+    input.enableRCAS  = true;
+    input.inputWidth  = 1280;
+    input.inputHeight = 720;
+    input.outputWidth  = 1920;
+    input.outputHeight = 1080;
+
+    EXPECT_FLOAT_EQ(input.sharpness, 0.2f);
+    EXPECT_TRUE(input.enableRCAS);
+    EXPECT_EQ(input.inputWidth,   1280u);
+    EXPECT_EQ(input.inputHeight,   720u);
+    EXPECT_EQ(input.outputWidth,  1920u);
+    EXPECT_EQ(input.outputHeight, 1080u);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

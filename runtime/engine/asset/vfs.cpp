@@ -8,6 +8,7 @@
 #include "vfs.h"
 #include "log.h"
 #include "profiler.h"
+#include "cvar.h"
 
 #include "file_system.h"
 
@@ -16,6 +17,8 @@
 
 #include <algorithm>
 #include <filesystem>
+
+static auto* cv_PakCacheMB = UZ_CVAR_INT("asset.PakCacheMB", 256, "PakVFS LRU cache size in MB", 64, 2048);
 
 namespace fs = std::filesystem;
 

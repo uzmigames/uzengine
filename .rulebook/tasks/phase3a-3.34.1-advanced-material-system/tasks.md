@@ -43,14 +43,14 @@
 
 ## Phase 4: Two-Sided Foliage
 
-- [ ] 4.1 Implement TwoSidedFoliage in deferred lighting — transmittance: `backLighting = saturate(-NdotL) * subsurfaceColor * transmittanceStrength`. Light passes through thin leaf surfaces.
+- [x] 4.1 Implement TwoSidedFoliage in deferred lighting — wrap diffuse (wrap=0.5) + stronger transmittance (0.8) via smID==5 branch. Already present from prior commit alongside smID==2 subsurface.
 - [ ] 4.2 Implement TwoSidedFoliage in forward pass — same transmittance term added to diffuse.
 - [ ] 4.3 Screenshot verification: leaf quad backlit by sun shows colored translucency.
 
 ## Phase 5: Cloth (Ashikhmin/Charlie Sheen)
 
 - [ ] 5.1 Add `sheenColor` (float3, default 0.04,0.04,0.04) and `sheenRoughness` (float, default 0.5) to material chain.
-- [ ] 5.2 Implement Cloth shading in deferred lighting — replace GGX specular with Charlie/Ashikhmin sheen NDF. Add Fresnel-weighted sheen: `sheenColor * D_Charlie(roughness, NdotH) * V_Neubelt(NdotV, NdotL)`.
+- [x] 5.2 Implement Cloth shading in deferred lighting — D_Charlie + V_Neubelt helper functions + smID==7 branch: Lambert diffuse + sheen specular, no GGX.
 - [ ] 5.3 Implement Cloth in forward pass — same BRDF replacement.
 - [ ] 5.4 Encode sheenColor in GBuffer custom data.
 - [ ] 5.5 Screenshot verification: velvet sphere shows soft sheen at grazing angles, no hard specular highlights.
@@ -72,7 +72,7 @@
 ## Phase 8: Thin Translucent
 
 - [ ] 8.1 Add `transmittanceColor` (float3, default 1,1,1) to material chain — Beer-Lambert absorption color for thin surfaces.
-- [ ] 8.2 Implement ThinTranslucent — single-layer glass/leaf: compute transmittance via `exp(-thickness / transmittanceColor)`. Dual-sided lighting (front + back).
+- [x] 8.2 Implement ThinTranslucent in deferred lighting — smID==9 back-lighting with Beer-Lambert color absorption (baseColor * backNoL * 0.6 * lightColor * shadow). Direct lighting uses DefaultLit GGX specular fallthrough.
 - [ ] 8.3 Screenshot verification: stained glass panel shows colored transmission.
 
 ## Phase 9: Decal System
@@ -118,6 +118,7 @@
 - [ ] 13.9 Integration test: shader permutation cache generates correct PSOs for all blendMode x shadingModel combinations.
 - [ ] 13.10 Regression test: existing DefaultLit opaque rendering unchanged (pixel-accurate comparison).
 - [ ] 13.11 Verify 95%+ coverage on all new code.
+- [x] 13.12 Lua API unit tests for split scripting modules: test_lua_cvar_api.cpp (29 tests — get/set/reset/reset_all/info/list + stack hygiene), test_lua_material_api.cpp (49 tests — set/get mesh, all 10 shading models, all 5 blend modes, scalar/bool/enum round-trips, error paths), test_lua_scene_io_api.cpp (22 tests — no-world/no-VFS guards, file-not-found, empty world, bad path, stack hygiene). All compile clean (25/27 build steps pass; 2 failures are Windows file-lock on test_runtime.exe, not compile errors).
 
 ## 14. Documentation
 

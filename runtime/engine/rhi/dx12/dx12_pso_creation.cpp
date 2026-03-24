@@ -132,7 +132,7 @@ ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device, ShaderMod
     rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     rootParams[0].Constants.ShaderRegister = 0;   // b0
     rootParams[0].Constants.RegisterSpace = 0;
-    rootParams[0].Constants.Num32BitValues = 8;  // 8 x uint32 — supports up to 8 bindless indices
+    rootParams[0].Constants.Num32BitValues = 16; // 16 x uint32 — supports root indices + algorithm params
     rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
     // Root parameter 1: root CBV for per-frame data at b1

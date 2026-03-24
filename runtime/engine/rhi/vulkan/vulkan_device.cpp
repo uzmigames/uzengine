@@ -91,6 +91,11 @@ VulkanDevice::~VulkanDevice() {
         if (pipeline.pipeline != VK_NULL_HANDLE) vkDestroyPipeline(m_device, pipeline.pipeline, nullptr);
     }
 
+    // Destroy timeline semaphores for async queue synchronization
+    if (m_copyTimelineSemaphore != VK_NULL_HANDLE)     vkDestroySemaphore(m_device, m_copyTimelineSemaphore, nullptr);
+    if (m_computeTimelineSemaphore != VK_NULL_HANDLE)  vkDestroySemaphore(m_device, m_computeTimelineSemaphore, nullptr);
+    if (m_graphicsTimelineSemaphore != VK_NULL_HANDLE) vkDestroySemaphore(m_device, m_graphicsTimelineSemaphore, nullptr);
+
     if (m_pipelineLayout != VK_NULL_HANDLE)       vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
     if (m_descriptorSetLayout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr);
     if (m_staticSamplerLinear != VK_NULL_HANDLE) vkDestroySampler(m_device, m_staticSamplerLinear, nullptr);
@@ -445,6 +450,23 @@ bool VulkanDevice::CreateLogicalDevice() {
         VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME,
     };
 
+    // Optional: VK_EXT_memory_budget for accurate VRAM usage/budget queries.
+    // Enumerate available device extensions and add if present.
+    {
+        uint32_t extCount = 0;
+        vkEnumerateDeviceExtensionProperties(m_physicalDevice, nullptr, &extCount, nullptr);
+        std::vector<VkExtensionProperties> availableExts(extCount);
+        vkEnumerateDeviceExtensionProperties(m_physicalDevice, nullptr, &extCount, availableExts.data());
+        for (const auto& ext : availableExts) {
+            if (std::strcmp(ext.extensionName, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME) == 0) {
+                deviceExtensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+                m_memoryBudgetSupported = true;
+                UZ_LOG(RHI, Info, "VK_EXT_memory_budget available — enabling accurate VRAM budget queries");
+                break;
+            }
+        }
+    }
+
     // Enable Vulkan 1.2 features (timeline semaphores, descriptor indexing, bindless)
     VkPhysicalDeviceVulkan12Features vk12Features = {};
     vk12Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
@@ -537,6 +559,40 @@ bool VulkanDevice::CreateLogicalDevice() {
         } else {
             UZ_LOG(RHI, Warning, "Bindless descriptors: NOT AVAILABLE (missing required features)");
         }
+    }
+
+    // Create timeline semaphores for async queue synchronization.
+    // These mirror DX12's ID3D12Fence objects used for cross-queue waits.
+    // Timeline semaphores are core in Vulkan 1.2 (VK_KHR_timeline_semaphore).
+    {
+        VkSemaphoreTypeCreateInfo timelineCI = {};
+        timelineCI.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO;
+        timelineCI.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+        timelineCI.initialValue = 0;
+
+        VkSemaphoreCreateInfo semCI = {};
+        semCI.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+        semCI.pNext = &timelineCI;
+
+        VkResult semResult = vkCreateSemaphore(m_device, &semCI, nullptr, &m_copyTimelineSemaphore);
+        if (semResult != VK_SUCCESS) {
+            UZ_LOG(RHI, Error, "Failed to create copy timeline semaphore, result={}", static_cast<int>(semResult));
+            return false;
+        }
+
+        semResult = vkCreateSemaphore(m_device, &semCI, nullptr, &m_computeTimelineSemaphore);
+        if (semResult != VK_SUCCESS) {
+            UZ_LOG(RHI, Error, "Failed to create compute timeline semaphore, result={}", static_cast<int>(semResult));
+            return false;
+        }
+
+        semResult = vkCreateSemaphore(m_device, &semCI, nullptr, &m_graphicsTimelineSemaphore);
+        if (semResult != VK_SUCCESS) {
+            UZ_LOG(RHI, Error, "Failed to create graphics timeline semaphore, result={}", static_cast<int>(semResult));
+            return false;
+        }
+
+        UZ_LOG(RHI, Info, "Created 3 timeline semaphores for async queue synchronization");
     }
 
     return true;
@@ -840,22 +896,46 @@ const char* VulkanDevice::GetFeatureLevel() const {
 RHIMemoryBudget VulkanDevice::GetMemoryBudget() const {
     if (!m_physicalDevice) return {};
 
-    VkPhysicalDeviceMemoryProperties memProps = {};
-    vkGetPhysicalDeviceMemoryProperties(m_physicalDevice, &memProps);
-
-    // Sum up device-local heap sizes
     RHIMemoryBudget budget = {};
-    for (uint32_t i = 0; i < memProps.memoryHeapCount; ++i) {
-        if (memProps.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
-            budget.budgetBytes += memProps.memoryHeaps[i].size;
-        }
-    }
 
-    // VMA can provide usage stats
-    if (m_allocator) {
-        VmaTotalStatistics stats = {};
-        vmaCalculateStatistics(m_allocator, &stats);
-        budget.usageBytes = stats.total.statistics.allocationBytes;
+    if (m_memoryBudgetSupported) {
+        // VK_EXT_memory_budget provides accurate real-time VRAM budget and usage
+        // via vkGetPhysicalDeviceMemoryProperties2. The driver reports per-heap
+        // budget (how much the process can use) and usage (how much is currently
+        // allocated), accounting for other processes sharing the GPU.
+        VkPhysicalDeviceMemoryBudgetPropertiesEXT budgetProps = {};
+        budgetProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
+
+        VkPhysicalDeviceMemoryProperties2 memProps2 = {};
+        memProps2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
+        memProps2.pNext = &budgetProps;
+
+        vkGetPhysicalDeviceMemoryProperties2(m_physicalDevice, &memProps2);
+
+        for (uint32_t i = 0; i < memProps2.memoryProperties.memoryHeapCount; ++i) {
+            if (memProps2.memoryProperties.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
+                budget.budgetBytes += budgetProps.heapBudget[i];
+                budget.usageBytes += budgetProps.heapUsage[i];
+            }
+        }
+    } else {
+        // Fallback: report heap size as budget, VMA allocation total as usage.
+        // Less accurate — budget is the physical heap size (not accounting for
+        // other processes), and usage is only what VMA tracks (not driver overhead).
+        VkPhysicalDeviceMemoryProperties memProps = {};
+        vkGetPhysicalDeviceMemoryProperties(m_physicalDevice, &memProps);
+
+        for (uint32_t i = 0; i < memProps.memoryHeapCount; ++i) {
+            if (memProps.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
+                budget.budgetBytes += memProps.memoryHeaps[i].size;
+            }
+        }
+
+        if (m_allocator) {
+            VmaTotalStatistics stats = {};
+            vmaCalculateStatistics(m_allocator, &stats);
+            budget.usageBytes = stats.total.statistics.allocationBytes;
+        }
     }
 
     return budget;
@@ -895,38 +975,145 @@ VulkanSampler* VulkanDevice::FindSamplerByIndex(uint32_t samplerIndex) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Copy Queue Stubs
+// Copy Queue — Async upload synchronization via timeline semaphores
 // ─────────────────────────────────────────────────────────────────────────────
 
 uint64_t VulkanDevice::SignalCopyQueue()
 {
-    UZ_LOG(RHI, Warning, "Vulkan transfer queue not yet implemented — SignalCopyQueue is a no-op");
-    return 0;
+    ++m_copyFenceValue;
+
+    // Signal the copy timeline semaphore from the transfer queue.
+    // This is the Vulkan equivalent of DX12's ID3D12CommandQueue::Signal(fence, value).
+    VkTimelineSemaphoreSubmitInfo timelineInfo = {};
+    timelineInfo.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
+    timelineInfo.signalSemaphoreValueCount = 1;
+    timelineInfo.pSignalSemaphoreValues = &m_copyFenceValue;
+
+    VkSubmitInfo submitInfo = {};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.pNext = &timelineInfo;
+    submitInfo.signalSemaphoreCount = 1;
+    submitInfo.pSignalSemaphores = &m_copyTimelineSemaphore;
+
+    VkResult result = vkQueueSubmit(m_transferQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    if (result != VK_SUCCESS) {
+        UZ_LOG(RHI, Error, "SignalCopyQueue failed: vkQueueSubmit result={}", static_cast<int>(result));
+        return 0;
+    }
+    return m_copyFenceValue;
 }
 
-void VulkanDevice::GraphicsWaitForCopy(uint64_t /*value*/)
+void VulkanDevice::GraphicsWaitForCopy(uint64_t value)
 {
-    UZ_LOG(RHI, Warning, "Vulkan transfer queue not yet implemented — GraphicsWaitForCopy is a no-op");
+    // Insert a GPU-side wait on the graphics queue until the copy timeline
+    // semaphore reaches the specified value. This is the Vulkan equivalent
+    // of DX12's ID3D12CommandQueue::Wait(fence, value).
+    VkTimelineSemaphoreSubmitInfo timelineInfo = {};
+    timelineInfo.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
+    timelineInfo.waitSemaphoreValueCount = 1;
+    timelineInfo.pWaitSemaphoreValues = &value;
+
+    VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+
+    VkSubmitInfo submitInfo = {};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.pNext = &timelineInfo;
+    submitInfo.waitSemaphoreCount = 1;
+    submitInfo.pWaitSemaphores = &m_copyTimelineSemaphore;
+    submitInfo.pWaitDstStageMask = &waitStage;
+
+    VkResult result = vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    if (result != VK_SUCCESS) {
+        UZ_LOG(RHI, Error, "GraphicsWaitForCopy failed: vkQueueSubmit result={}", static_cast<int>(result));
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Compute Queue Stubs
+// Compute Queue — Async compute synchronization via timeline semaphores
 // ─────────────────────────────────────────────────────────────────────────────
 
 uint64_t VulkanDevice::SignalComputeQueue()
 {
-    UZ_LOG(RHI, Warning, "Vulkan compute queue not yet implemented — SignalComputeQueue is a no-op");
-    return 0;
+    ++m_computeFenceValue;
+
+    // If no dedicated compute queue, submit signal on the graphics queue.
+    // This matches the DX12 pattern where compute work runs on a separate queue.
+    VkQueue targetQueue = (m_computeQueue != VK_NULL_HANDLE) ? m_computeQueue : m_graphicsQueue;
+
+    VkTimelineSemaphoreSubmitInfo timelineInfo = {};
+    timelineInfo.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
+    timelineInfo.signalSemaphoreValueCount = 1;
+    timelineInfo.pSignalSemaphoreValues = &m_computeFenceValue;
+
+    VkSubmitInfo submitInfo = {};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.pNext = &timelineInfo;
+    submitInfo.signalSemaphoreCount = 1;
+    submitInfo.pSignalSemaphores = &m_computeTimelineSemaphore;
+
+    VkResult result = vkQueueSubmit(targetQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    if (result != VK_SUCCESS) {
+        UZ_LOG(RHI, Error, "SignalComputeQueue failed: vkQueueSubmit result={}", static_cast<int>(result));
+        return 0;
+    }
+    return m_computeFenceValue;
 }
 
-void VulkanDevice::GraphicsWaitForCompute(uint64_t /*value*/)
+void VulkanDevice::GraphicsWaitForCompute(uint64_t value)
 {
-    UZ_LOG(RHI, Warning, "Vulkan compute queue not yet implemented — GraphicsWaitForCompute is a no-op");
+    VkTimelineSemaphoreSubmitInfo timelineInfo = {};
+    timelineInfo.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
+    timelineInfo.waitSemaphoreValueCount = 1;
+    timelineInfo.pWaitSemaphoreValues = &value;
+
+    VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+
+    VkSubmitInfo submitInfo = {};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.pNext = &timelineInfo;
+    submitInfo.waitSemaphoreCount = 1;
+    submitInfo.pWaitSemaphores = &m_computeTimelineSemaphore;
+    submitInfo.pWaitDstStageMask = &waitStage;
+
+    VkResult result = vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    if (result != VK_SUCCESS) {
+        UZ_LOG(RHI, Error, "GraphicsWaitForCompute failed: vkQueueSubmit result={}", static_cast<int>(result));
+    }
 }
 
-void VulkanDevice::ComputeWaitForGraphics(uint64_t /*value*/)
+void VulkanDevice::ComputeWaitForGraphics(uint64_t value)
 {
-    UZ_LOG(RHI, Warning, "Vulkan compute queue not yet implemented — ComputeWaitForGraphics is a no-op");
+    // The graphics queue signals its own timeline semaphore.
+    // To make the compute queue wait, we first need to signal the graphics
+    // timeline, then have the compute queue wait on it.
+    // The caller is expected to have signaled a value on the graphics queue
+    // (via frame fence or explicit signal). We use m_graphicsTimelineSemaphore
+    // as the cross-queue wait target, matching DX12's pattern where
+    // ComputeWaitForGraphics uses the direct queue's fence (m_idleFence).
+    VkQueue targetQueue = (m_computeQueue != VK_NULL_HANDLE) ? m_computeQueue : m_graphicsQueue;
+
+    // If compute and graphics are the same queue, a wait is a no-op since
+    // commands execute in submission order on the same queue.
+    if (targetQueue == m_graphicsQueue) return;
+
+    VkTimelineSemaphoreSubmitInfo timelineInfo = {};
+    timelineInfo.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
+    timelineInfo.waitSemaphoreValueCount = 1;
+    timelineInfo.pWaitSemaphoreValues = &value;
+
+    VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+
+    VkSubmitInfo submitInfo = {};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.pNext = &timelineInfo;
+    submitInfo.waitSemaphoreCount = 1;
+    submitInfo.pWaitSemaphores = &m_graphicsTimelineSemaphore;
+    submitInfo.pWaitDstStageMask = &waitStage;
+
+    VkResult result = vkQueueSubmit(targetQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    if (result != VK_SUCCESS) {
+        UZ_LOG(RHI, Error, "ComputeWaitForGraphics failed: vkQueueSubmit result={}", static_cast<int>(result));
+    }
 }
 
 } // namespace uz

@@ -692,19 +692,52 @@ void VulkanCommandList::Dispatch(uint32_t groupCountX, uint32_t groupCountY,
     vkCmdDispatch(m_commandBuffers[m_frameIndex], groupCountX, groupCountY, groupCountZ);
 }
 
-void VulkanCommandList::DrawIndexedIndirect(RHIBufferHandle /*argsBuffer*/, uint64_t /*argsOffset*/,
-                                             uint32_t /*drawCount*/, uint32_t /*argsStride*/) {
-    // Vulkan indirect draw requires resolving the RHIBufferHandle to a VkBuffer
-    // via the device's buffer pool, then calling vkCmdDrawIndexedIndirect.
-    // Not yet used by any render pass — logs a warning if called unexpectedly.
-    UZ_LOG(RHI, Warning, "DrawIndexedIndirect — Vulkan backend does not support indirect draw yet");
+void VulkanCommandList::DrawIndexedIndirect(RHIBufferHandle argsBuffer, uint64_t argsOffset,
+                                             uint32_t drawCount, uint32_t argsStride) {
+    if (!argsBuffer.IsValid()) {
+        UZ_LOG(RHI, Warning, "DrawIndexedIndirect — invalid args buffer handle");
+        return;
+    }
+
+    auto* buf = m_device->GetBufferPool().Get(argsBuffer.index, argsBuffer.generation);
+    if (!buf || buf->buffer == VK_NULL_HANDLE) {
+        UZ_LOG(RHI, Warning, "DrawIndexedIndirect — could not resolve args buffer");
+        return;
+    }
+
+    if (drawCount == 0) return;
+
+    FlushDescriptorSet();
+
+    // Vulkan's vkCmdDrawIndexedIndirect natively supports multi-draw with a stride
+    // parameter, unlike DX12 which bakes stride into the command signature.
+    // VkDrawIndexedIndirectCommand layout matches D3D12_DRAW_INDEXED_ARGUMENTS:
+    //   { indexCount, instanceCount, firstIndex, vertexOffset, firstInstance }
+    // Default stride = sizeof(VkDrawIndexedIndirectCommand) = 20 bytes.
+    uint32_t stride = argsStride > 0 ? argsStride
+                                     : static_cast<uint32_t>(sizeof(VkDrawIndexedIndirectCommand));
+
+    vkCmdDrawIndexedIndirect(m_commandBuffers[m_frameIndex], buf->buffer,
+                             argsOffset, drawCount, stride);
 }
 
-void VulkanCommandList::DispatchIndirect(RHIBufferHandle /*argsBuffer*/, uint64_t /*argsOffset*/) {
-    // Vulkan indirect dispatch requires resolving the RHIBufferHandle to a VkBuffer
-    // via the device's buffer pool, then calling vkCmdDispatchIndirect.
-    // Not yet used by any compute pass — logs a warning if called unexpectedly.
-    UZ_LOG(RHI, Warning, "DispatchIndirect — Vulkan backend does not support indirect dispatch yet");
+void VulkanCommandList::DispatchIndirect(RHIBufferHandle argsBuffer, uint64_t argsOffset) {
+    if (!argsBuffer.IsValid()) {
+        UZ_LOG(RHI, Warning, "DispatchIndirect — invalid args buffer handle");
+        return;
+    }
+
+    auto* buf = m_device->GetBufferPool().Get(argsBuffer.index, argsBuffer.generation);
+    if (!buf || buf->buffer == VK_NULL_HANDLE) {
+        UZ_LOG(RHI, Warning, "DispatchIndirect — could not resolve args buffer");
+        return;
+    }
+
+    FlushDescriptorSet();
+
+    // VkDispatchIndirectCommand layout matches D3D12_DISPATCH_ARGUMENTS:
+    //   { groupCountX, groupCountY, groupCountZ } — 3 uint32_t values (12 bytes).
+    vkCmdDispatchIndirect(m_commandBuffers[m_frameIndex], buf->buffer, argsOffset);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

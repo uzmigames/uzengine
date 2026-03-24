@@ -182,6 +182,16 @@ struct Material : public MaterialInterface {
     std::string clearCoatNormalPath;
     uint32_t    clearCoatNormalSrvIndex = 0;
 
+    // ── Cloth parameters ─────────────────────────────────────────────────
+
+    /// Cloth sheen tint R. @ref Estevez & Kulla 2017 "Production Friendly Microfacet Sheen BRDF"
+    float sheenColorR = 0.04f;
+    float sheenColorG = 0.04f;
+    float sheenColorB = 0.04f;
+
+    /// Cloth sheen roughness. Controls spread of fabric highlight. Default 0.5.
+    float sheenRoughness = 0.5f;
+
     // ── Shading model / domain / blend mode ─────────────────────────────
 
     /// Shading model for this material. Determines which BRDF is evaluated
@@ -337,6 +347,11 @@ struct Material : public MaterialInterface {
 
     [[nodiscard]] float GetClearCoat() const override { return clearCoat; }
     [[nodiscard]] float GetClearCoatRoughness() const override { return clearCoatRoughness; }
+
+    void GetSheenColor(float& r, float& g, float& b) const override {
+        r = sheenColorR; g = sheenColorG; b = sheenColorB;
+    }
+    [[nodiscard]] float GetSheenRoughness() const override { return sheenRoughness; }
 
     [[nodiscard]] EShadingModel GetShadingModel() const override { return shadingModel; }
     [[nodiscard]] EMaterialDomain GetMaterialDomain() const override { return materialDomain; }
