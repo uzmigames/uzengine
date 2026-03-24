@@ -923,6 +923,9 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         atmoCtx.cameraPos           = reinterpret_cast<const Vec3*>(&ctx.perFrame.cameraPos);
         atmoCtx.depthSrvIndex       = m_gbuffer.depthSRV;
         atmoCtx.depthTexture        = m_gbuffer.depth;
+        atmoCtx.hdriActive          = m_hdriActive;
+        atmoCtx.hdriCubemapSrv      = m_hdriActive ? m_hdriCubemapSrv : UINT32_MAX;
+        atmoCtx.hdriCubemapTex      = m_hdriCubemap;
 
         if (m_shadowDebugMode != 1) {
             AddAtmospherePasses(rgBuilder, ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc, atmoCtx);

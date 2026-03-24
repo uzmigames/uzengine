@@ -251,6 +251,20 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetSkyAtmosphere();
 
+    /// Returns the HDRI skybox pipeline (fullscreen_vs + skybox_cubemap_ps, 1 RT, no depth).
+    ///
+    /// Renders an HDRI cubemap as the sky background, replacing the procedural
+    /// sky atmosphere pass when an external HDRI environment map is active.
+    /// Only fills pixels where depth == 0.0 (reversed-Z far plane).
+    ///
+    /// Rasterizer: no cull (fullscreen triangle).
+    /// Depth: disabled.
+    /// Render target: RGBA16Float (HDR scene color).
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetHdriSkybox();
+
     /// Returns the transmittance LUT compute pipeline (transmittance_lut_cs.hlsl).
     ///
     /// Compute pipeline dispatched once per scene to fill a 256x64 RGBA16F texture
@@ -633,6 +647,7 @@ private:
     [[nodiscard]] bool EnsureInstancedShadowShaders();
     [[nodiscard]] bool EnsureShadowShaders();
     [[nodiscard]] bool EnsureSkyAtmospherePixelShader();
+    [[nodiscard]] bool EnsureHdriSkyboxPixelShader();
     [[nodiscard]] bool EnsureTonemapPixelShader();
     [[nodiscard]] bool EnsureVelocityPixelShader();
     [[nodiscard]] bool EnsureHeightFogPixelShader();
@@ -698,6 +713,7 @@ private:
     RHIShaderHandle m_instancedShadowVS = RHIShaderHandle::Invalid();
     RHIShaderHandle m_shadowVS         = RHIShaderHandle::Invalid();
     RHIShaderHandle m_skyAtmospherePS      = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_hdriSkyboxPS         = RHIShaderHandle::Invalid();
     RHIShaderHandle m_tonemapPS            = RHIShaderHandle::Invalid();
     RHIShaderHandle m_velocityPS           = RHIShaderHandle::Invalid();
     RHIShaderHandle m_heightFogPS          = RHIShaderHandle::Invalid();
@@ -751,6 +767,7 @@ private:
     RHIPipelineHandle m_gbufferInstanced      = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_shadowDepthInstanced  = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_skyAtmosphere         = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_hdriSkybox            = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_tonemap               = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_velocityPass           = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_heightFog             = RHIPipelineHandle::Invalid();

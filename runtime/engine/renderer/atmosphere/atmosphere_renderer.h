@@ -86,6 +86,12 @@ struct AtmosphereFrameContext {
     // GBuffer depth (for sky pass depth test)
     uint32_t          depthSrvIndex = UINT32_MAX;
     RHITextureHandle  depthTexture;
+
+    // HDRI environment override — when active, skip procedural sky passes
+    // and render the HDRI cubemap as a skybox background instead.
+    bool              hdriActive       = false;          ///< True = HDRI cubemap replaces procedural sky.
+    uint32_t          hdriCubemapSrv   = UINT32_MAX;     ///< SRV index for HDRI cubemap (when hdriActive).
+    RHITextureHandle  hdriCubemapTex;                    ///< Physical texture handle (SM5 non-bindless path).
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -143,6 +143,9 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         atmoCtx.skyIrradianceSH     = &m_skyIrradianceSH;
         atmoCtx.depthSrvIndex       = m_gbuffer.depthSRV;
         atmoCtx.depthTexture        = m_gbuffer.depth;
+        atmoCtx.hdriActive          = m_hdriActive;
+        atmoCtx.hdriCubemapSrv      = m_hdriActive ? m_hdriCubemapSrv : UINT32_MAX;
+        atmoCtx.hdriCubemapTex      = m_hdriCubemap;
         PostFrameAtmosphereBake(cmdList, atmoCtx);
     }
 

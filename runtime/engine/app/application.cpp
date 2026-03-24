@@ -291,7 +291,7 @@ int Application::Run(int argc, char** argv) {
         // Never capture before all meshes, textures, and async decodes complete.
         // This prevents black/missing textures in automated screenshots.
         if (m_screenshotPending && m_frameIndex % 50 == 0) {
-            m_renderer->IsSceneFullyLoadedDebug();
+            (void)m_renderer->IsSceneFullyLoadedDebug();
         }
         if (m_screenshotPending && m_renderer->IsSceneFullyLoaded() && m_frameIndex >= 2) {
             if (m_screenshotBase64) {

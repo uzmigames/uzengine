@@ -15,6 +15,7 @@
 #include "aerial_perspective_volume_pass.h"
 #include "sky_cubemap_capture_pass.h"
 #include "sky_cubemap_capture_ps_pass.h"
+#include "hdri_skybox_pass.h"
 #include "light_component.h"
 #include "color_utils.h"
 #include "ibl_baker.h"
@@ -46,6 +47,36 @@ void AddAtmospherePasses(
     const AtmosphereFrameContext& ctx)
 {
     if (!ctx.world) return;
+
+    // ── HDRI skybox path — replaces procedural sky entirely ─────────────
+    // When an external HDRI environment map is active, skip all procedural
+    // atmosphere passes (transmittance LUT, multi-scatter LUT, sky cubemap
+    // capture, aerial perspective) and render the HDRI cubemap directly as
+    // the sky background. The HDRI cubemap was already baked into IBL maps
+    // during SetHDRIEnvironment().
+    if (ctx.hdriActive && ctx.hdriCubemapSrv != UINT32_MAX) {
+        auto hdriPipeline = ctx.pipelines->GetHdriSkybox();
+        if (hdriPipeline.IsValid()) {
+            HdriSkyboxPassDesc hdriDesc{};
+            hdriDesc.backbuffer      = hdrRes;
+            hdriDesc.depthGBuffer    = depthRes;
+            hdriDesc.perFrameAlloc   = perFrameAlloc;
+            hdriDesc.pipeline        = hdriPipeline;
+            hdriDesc.depthSrvIndex   = ctx.depthSrvIndex;
+            hdriDesc.depthTexture    = ctx.depthTexture;
+            hdriDesc.cubemapSrvIndex = ctx.hdriCubemapSrv;
+            hdriDesc.cubemapTexture  = ctx.hdriCubemapTex;
+            hdriDesc.bindless        = ctx.bindless;
+            hdriDesc.viewportWidth   = ctx.vpWidth;
+            hdriDesc.viewportHeight  = ctx.vpHeight;
+            AddHdriSkyboxPass(rgBuilder, hdriDesc);
+        } else {
+            UZ_LOG(Renderer, Error,
+                   "AddAtmospherePasses: HdriSkybox pipeline creation failed — "
+                   "sky will be black");
+        }
+        return;  // No procedural atmosphere passes needed when HDRI is active
+    }
 
     auto skyView = ctx.world->GetRegistry().view<SkyAtmosphereComponent>();
     for (auto enttEntity : skyView) {
@@ -138,7 +169,10 @@ void AddAtmospherePasses(
         // The compute path dispatches all 6 faces in a single call via
         // ResourceDescriptorHeap. The PS path draws 6 fullscreen triangles
         // with explicit register(t0) binding — no bindless required.
-        if (*ctx.skyIBLDirty && ctx.skyCubemap.IsValid()
+        //
+        // When HDRI is active, the HDRI cubemap is used directly for IBL —
+        // skip the procedural sky cubemap capture entirely.
+        if (!ctx.hdriActive && *ctx.skyIBLDirty && ctx.skyCubemap.IsValid()
                 && ctx.transmittanceLutSrv != UINT32_MAX) {
 
             // Shared f16 packing helper for scattering scale factors

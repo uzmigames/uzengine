@@ -877,6 +877,24 @@ private:
     /// Number of mip levels in the Hi-Z pyramid (depends on render target size).
     uint32_t m_hizMipCount = 0;
 
+    // ── Previous Frame HiZ State (for two-phase occlusion culling) ───────
+    // Phase 1 culls against last frame's HiZ to identify "definitely visible"
+    // objects. After those draw and the HiZ rebuilds, Phase 2 re-tests Phase 1
+    // rejects against the updated HiZ to catch newly revealed objects.
+    // @ref Wihlidal 2015 "Optimizing the Graphics Pipeline with Compute" — two-phase HZB
+
+    /// Per-mip SRV descriptor heap indices from the previous frame's HiZ pyramid.
+    /// Copied from m_hizMipLevels[].srvIndex at end of each frame.
+    uint32_t m_prevHizMipSrvIndices[kHiZMaxMipLevels] = {};
+
+    /// Number of mip levels in the previous frame's HiZ pyramid.
+    /// Zero on the first frame (no previous data available).
+    uint32_t m_prevHizMipCount = 0;
+
+    /// Previous frame's HiZ mip 0 dimensions. Used to fill Phase 1 cull constants.
+    uint32_t m_prevHizWidth  = 0;
+    uint32_t m_prevHizHeight = 0;
+
     // ── GPU Occlusion Culling Buffers (triple-buffered) ──────────────────
 
     /// Number of per-frame-in-flight buffers (used by instance, bounding sphere,
@@ -911,6 +929,23 @@ private:
 
     /// Destroys all GPU cull buffers. Called from Shutdown().
     void DestroyGpuCullBuffers();
+
+    // ── Phase 2 GPU Occlusion Culling Buffers (triple-buffered) ──────────
+    // Separate output buffers for the second cull pass. Phase 2 re-tests ALL
+    // instances against the updated HiZ and writes newly-visible indices here.
+    // The GBuffer pass issues two indirect draws: Phase 1 visible + Phase 2 visible.
+
+    /// Phase 2 visible index output: AppendStructuredBuffer<uint>.
+    RHIBufferHandle m_visibleIndexBuffers2[kInstanceBufferCount];
+
+    /// Phase 2 UAV descriptor heap indices for visible index buffers.
+    uint32_t m_visibleIndexUavIndices2[kInstanceBufferCount] = {UINT32_MAX, UINT32_MAX, UINT32_MAX};
+
+    /// Phase 2 indirect draw args: RWByteAddressBuffer (20 bytes).
+    RHIBufferHandle m_indirectArgsBuffers2[kInstanceBufferCount];
+
+    /// Phase 2 UAV descriptor heap indices for indirect args buffers.
+    uint32_t m_indirectArgsUavIndices2[kInstanceBufferCount] = {UINT32_MAX, UINT32_MAX, UINT32_MAX};
 
     // ── Mesh Bounds (parallel to m_meshes) ───────────────────────────────
 

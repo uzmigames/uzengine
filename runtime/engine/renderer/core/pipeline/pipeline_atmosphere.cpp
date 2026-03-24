@@ -63,6 +63,54 @@ RHIPipelineHandle PipelineLibrary::GetSkyAtmosphere() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// HDRI Skybox Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureHdriSkyboxPixelShader() {
+    if (!m_hdriSkyboxPS.IsValid()) {
+        m_hdriSkyboxPS = m_shaderMgr->CreateShader(EngineShader::SkyboxCubemapPS, RHIShaderStage::Pixel);
+        if (!m_hdriSkyboxPS.IsValid()) {
+            UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile SkyboxCubemapPS");
+            return false;
+        }
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetHdriSkybox() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetHdriSkybox called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_hdriSkybox.IsValid()) {
+        return m_hdriSkybox;
+    }
+
+    if (!EnsureFullscreenShaders() || !EnsureHdriSkyboxPixelShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIGraphicsPipelineDesc desc{};
+    desc.vertexShader  = m_fullscreenVS;
+    desc.pixelShader   = m_hdriSkyboxPS;
+    desc.topology      = RHIPrimitiveTopology::TriangleList;
+    desc.rasterizer.cullMode      = RHICullMode::None;
+    desc.depthStencil.depthEnable = false;
+    desc.depthStencil.depthWrite  = false;
+    desc.renderTargetFormats[0]   = RHIFormat::RGBA16Float;
+    desc.renderTargetCount        = 1;
+    desc.debugName                = "HdriSkybox";
+
+    m_hdriSkybox = CreateCachedPipeline(desc);
+    if (!m_hdriSkybox.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create HdriSkybox pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created HdriSkybox pipeline");
+    }
+
+    return m_hdriSkybox;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Height Fog Pipeline
