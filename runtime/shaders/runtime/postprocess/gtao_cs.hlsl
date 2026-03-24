@@ -161,7 +161,7 @@ void PreloadDepthTile(uint2 groupThreadId, uint2 groupOrigin) {
 
     // Each thread loads multiple texels to fill the 24×24 region.
     // 576 total texels / 64 threads = 9 iterations per thread.
-    [unroll] for (uint i = linearIdx; i < 24 * 24; i += 64) {
+    [unroll(9)] for (uint i = linearIdx; i < 24 * 24; i += 64) {
         uint tx = i % 24;
         uint ty = i / 24;
         // Map tile-local coordinate to pixel coordinate.
