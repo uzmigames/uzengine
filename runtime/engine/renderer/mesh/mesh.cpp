@@ -226,15 +226,25 @@ Mesh GenerateSphereMesh(uint32_t sectorCount, uint32_t stackCount) {
             const float u = static_cast<float>(j) / static_cast<float>(sectorCount);
             const float v = static_cast<float>(i) / static_cast<float>(stackCount);
 
-            // Tangent: dP/dSectorAngle = (-y, x, 0) normalized
-            const float tx = -std::sin(sectorAngle);
-            const float ty =  std::cos(sectorAngle);
+            // Tangent: dP/dSectorAngle = (-sin(sector), cos(sector), 0)
+            // At poles (xy≈0), all vertices collapse to a single point with
+            // degenerate tangent frames. Use a fixed tangent at poles to avoid
+            // specular artifacts from the UV singularity.
+            float tx, ty, tz;
+            if (i == 0 || i == stackCount) {
+                // Pole: use a consistent tangent direction (X-axis)
+                tx = 1.0f; ty = 0.0f; tz = 0.0f;
+            } else {
+                tx = -std::sin(sectorAngle);
+                ty =  std::cos(sectorAngle);
+                tz =  0.0f;
+            }
 
             Vertex vert{};
             vert.position = {x, y, z};
             vert.normal   = {nx, ny, nz};
             vert.texcoord = {u, v};
-            vert.tangent  = {tx, ty, 0.0f, 1.0f};
+            vert.tangent  = {tx, ty, tz, 1.0f};
             vertices.push_back(vert);
         }
     }
