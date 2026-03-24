@@ -29,7 +29,7 @@ public:
     void OnStop() override;
 
 private:
-    static constexpr int kSphereCount = 11;
+    static constexpr int kSphereCount = 12;
 
     Entity spheres_[kSphereCount]{};
     Entity ground_{};
@@ -51,6 +51,7 @@ private:
     Material stoneBrickMat_;
     Material unlitMat_;           ///< Unlit test material — flat red, no lighting.
     Material sssMat_;             ///< Subsurface scattering test — warm skin-like.
+    Material clearCoatMat_;       ///< ClearCoat test — car paint with sharp coat specular.
 
     MaterialInstance wetBrickInst_;
     Material groundMat_;

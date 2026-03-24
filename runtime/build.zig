@@ -14,12 +14,14 @@ pub fn build(b: *std.Build) void {
     const is_ios = target.result.os.tag == .ios;
     const is_apple = is_macos or is_ios;
 
-    const cpp_flags = &.{ "-std=c++17", "-DSPDLOG_COMPILED_LIB", "-DUZ_PROFILING_ENABLED", "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND" };
     const tp = "thirdparty/";
 
     // -Deditor=true  → also build editor.lib (grid, font, stats, screenshot)
     // Default: false — runtime.lib only (play mode / headless)
     const build_editor = b.option(bool, "editor", "Build editor.lib alongside runtime.lib") orelse false;
+
+    const cpp_flags: []const []const u8 =
+        &.{ "-std=c++17", "-DSPDLOG_COMPILED_LIB", "-DUZ_PROFILING_ENABLED", "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND" };
 
     // ── Include path tables (shared between runtime and tests) ───────────
 
@@ -709,6 +711,7 @@ pub fn build(b: *std.Build) void {
             const tool_exe = b.addExecutable(.{ .name = tool_name, .root_module = tool_mod });
             tool_exe.linkLibrary(lib);
             tool_exe.linkLibrary(editor_lib);
+
             for (win_sys_libs) |l| tool_exe.linkSystemLibrary(l);
             b.installArtifact(tool_exe);
         }

@@ -15,6 +15,9 @@ class ShaderVFSTest : public ::testing::Test {
 protected:
     void SetUp() override {
         m_testDir = "test_shader_vfs_tmp";
+        // Clean up any stale leftovers from a previous crashed/aborted run
+        std::error_code ec;
+        fs::remove_all(m_testDir, ec);
         fs::create_directories(m_testDir + "/engine");
         fs::create_directories(m_testDir + "/game");
 

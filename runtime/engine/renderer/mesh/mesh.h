@@ -297,11 +297,14 @@ struct MeshBuilder {
     /// Creates a unit cube centered at origin with bottom at Z=0.
     ///
     /// Uses `Vertex` format with normals, UVs, and tangents.
-    /// Each face has 4 unique vertices (24 total) for correct normals.
+    /// Each face is subdivided into a grid of quads for per-vertex
+    /// lighting and displacement fidelity.
     ///
     /// # Arguments
     /// * `size` - Half-extent of the cube (default 1.0).
-    static Mesh CreateCube(float size = 1.0f);
+    /// * `subdivisions` - Quads per edge per face (default 1 = 4 verts/face,
+    ///   8 = 64 quads/face = 81 verts/face). Clamped to [1, 256].
+    static Mesh CreateCube(float size = 1.0f, uint32_t subdivisions = 1);
 
     /// Creates a UV sphere centered at origin with the given radius.
     ///

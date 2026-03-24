@@ -241,9 +241,18 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
             const uint32_t smId = static_cast<uint32_t>(mat->GetShadingModel()) & 0xFu;
             cmd.materialFlags |= (smId << 24);
 
+            // Clear coat roughness packed into materialFlags bits[28:31] (4 bits = 16 levels).
+            // Only meaningful when shadingModelID == 4 (ClearCoat).
+            const uint32_t ccRoughU4 = std::min(15u, static_cast<uint32_t>(mat->GetClearCoatRoughness() * 15.0f));
+            cmd.materialFlags |= (ccRoughU4 << 28);
+
             // Subsurface scattering parameters (only read for SSS shading models).
             mat->GetSubsurfaceColor(cmd.subsurfaceColorR, cmd.subsurfaceColorG, cmd.subsurfaceColorB);
             cmd.subsurfaceRadius = mat->GetSubsurfaceRadius();
+
+            // Clear coat parameters (only meaningful for ClearCoat shading model).
+            cmd.clearCoat          = mat->GetClearCoat();
+            cmd.clearCoatRoughness = mat->GetClearCoatRoughness();
         } else {
             // No material assigned — use neutral defaults (no emission).
             cmd.emissiveColorR    = 0.0f;

@@ -8,10 +8,10 @@
 - [x] 0.6 Encode shading model ID in GBuffer RT3.a (RGBA16F): `specular + shadingModelID * 16.0`. Deferred lighting decodes with floor/remainder. Exact decode for all 10 models.
 - [x] 0.7 Update `deferred_lighting_ps.hlsl` — decode shadingModelID, Unlit early-out (ID==0 skips all lighting). DefaultLit (ID==1) = existing BRDF. All others fall through to DefaultLit.
 - [x] 0.8 Update `mesh_ps.hlsl` (forward pass) — read shadingModelID from materialFlags bits[24:27], Unlit early-out. DefaultLit = existing BRDF.
-- [ ] 0.9 Define `ShaderPermutationKey` (64-bit): bits for shadingModel(4), blendMode(3), bindless(1), instanced(1), pom(1), materialGraph(1), alphaToCoverage(1), ditheredOpacity(1), hasUV1(1), hasUV2(1), hasTangentMap(1), reserved(48).
-- [ ] 0.10 Implement `ShaderPermutationCache` — hashmap from `ShaderPermutationKey` to `RHIPipelineHandle`. `GetOrCreatePSO(key)` compiles on miss, caches on hit.
-- [ ] 0.11 Migrate `PipelineLibrary` fixed PSO getters (GetGBuffer, GetGBufferMasked, GetTranslucent, GetAdditive, GetForwardPBR) to use `ShaderPermutationCache` internally. Keep old API as convenience wrappers.
-- [ ] 0.12 Add PSO disk cache — serialize compiled PSO blobs to `runtime/cache/pso/` for fast reload. Invalidate on shader source change (hash comparison).
+- [x] 0.9 Define `ShaderPermutationKey` (64-bit): bits for shadingModel(4), blendMode(3), bindless(1), instanced(1), pom(1), materialGraph(1), alphaToCoverage(1), ditheredOpacity(1), hasUV1(1), hasUV2(1), hasTangentMap(1), reserved(48). Implemented in shader_permutation_key.h/.cpp with Pack/GetHash/ToDefineList/ToString/FromMaterial.
+- [x] 0.10 Implement `ShaderPermutationCache` — hashmap from `ShaderPermutationKey` to `RHIPipelineHandle`. `GetOrCreatePSO(key)` compiles on miss, caches on hit. Implemented in shader_permutation_cache.h/.cpp with Lookup/Insert/GetOrCreatePSO/InvalidateAll. PSO creation on miss deferred to task 0.11.
+- [x] 0.11 Migrate `PipelineLibrary` fixed PSO getters (GetGBuffer, GetGBufferMasked, GetTranslucent, GetAdditive, GetForwardPBR) to use `ShaderPermutationCache` internally. Keep old API as convenience wrappers. Removed 10 per-PSO member variables, added m_permutationCache member. Shutdown enumerates known keys to destroy GPU handles before InvalidateAll().
+- [x] 0.12 Add PSO disk cache — serialize compiled PSO blobs to `runtime/cache/pso/` for fast reload. Invalidate on shader source change (hash comparison). Already implemented: PsoDiskCache in rhi_pso_disk_cache.h, integrated in CreateCachedPipeline() with blob store/load via GetPipelineCachedBlob.
 - [x] 0.13 Build + test: verify existing DefaultLit rendering is unchanged after shading model plumbing. Screenshot verified — all 9 PBR spheres render identically.
 
 ## Phase 1: Unlit Shading Model
@@ -27,19 +27,19 @@
 - [x] 2.2 Add SubsurfaceColor texture slot support to MaterialInterface sRGB resolution.
 - [x] 2.3 Add Thickness texture slot to Material (thicknessPath + thicknessSrvIndex). GetTexturePath/SrvIndex handle "Thickness".
 - [x] 2.4 GBuffer custom data: RT2.w stores per-shading-model custom data. Subsurface flag encoded.
-- [x] 2.5 Implement Subsurface in deferred_lighting_ps — wrap diffuse (wrap=0.3) + back-lighting (saturate(-NdotL) * sssColor * 0.5) + Cook-Torrance specular preserved.
+- [x] 2.5 Implement Subsurface in deferred_lighting_ps — wrap diffuse (wrap=0.3) + back-lighting (saturate(-NdotL) * sssColor * 0.5) + Cook-Torrance specular preserved. Full dispatch implemented with smID==2 branching.
 - [ ] 2.6 Implement screen-space SSS blur pass (Jimenez 2015 separable kernel) — DEFERRED to later phase.
 - [x] 2.7 Implement Subsurface in mesh_ps (forward path) — wrap diffuse + back-lighting added after AccumulateDirectLighting.
 - [x] 2.8 Screenshot: 11th sphere (SSS, warm skin tint 0.9/0.7/0.6) renders with soft wrap lighting.
 
 ## Phase 3: Clear Coat
 
-- [ ] 3.1 Add `clearCoat` (float, default 1.0) and `clearCoatRoughness` (float, default 0.04) fields to material chain.
-- [ ] 3.2 Add `ClearCoatNormal` texture slot to MaterialInterface (optional separate normal for coating layer).
-- [ ] 3.3 Implement ClearCoat in `deferred_lighting_ps.hlsl` — dual-layer specular: base layer = standard GGX at material roughness, coat layer = GGX at clearCoatRoughness. Combine: `coatFresnel * coatSpec + (1 - coatFresnel) * baseSpec`. Coat F0 = 0.04 (dielectric IOR ~1.5).
-- [ ] 3.4 Implement ClearCoat in `mesh_ps.hlsl` (forward) — same dual-layer specular.
-- [ ] 3.5 Encode clearCoat params in GBuffer custom data channel.
-- [ ] 3.6 Screenshot verification: car paint sphere shows two distinct specular highlights (soft base + sharp coat).
+- [x] 3.1 Add `clearCoat` (float, default 0.0) and `clearCoatRoughness` (float, default 0.04) fields to material chain. Added to MaterialInterface (virtual getters), Material (fields + overrides + GetScalarParam), DrawCommand, scene_sync.
+- [x] 3.2 Add `ClearCoatNormal` texture slot to MaterialInterface (optional separate normal for coating layer). Added clearCoatNormalPath + clearCoatNormalSrvIndex to Material, wired in GetTexturePath/GetTextureSrvIndex.
+- [x] 3.3 Implement ClearCoat in `deferred_lighting_ps.hlsl` — dual-layer specular: base GGX + coat GGX (clearCoatRoughness=0.04, F0=0.04). Energy conservation: base attenuated by coat Fresnel, coat added on top. IBL: base ambient attenuated + coat env reflection added. Uses smID==4 dispatch.
+- [ ] 3.4 Implement ClearCoat in `mesh_ps.hlsl` (forward) — DEFERRED: forward path needs full PBR first (currently albedo*NdotL only).
+- [x] 3.5 Encode clearCoat params in GBuffer custom data channel. clearCoatRoughness packed into materialFlags bits[28:31] (4 bits, 16 levels), written to RT2.w in gbuffer_ps when smID==4, read from customData in deferred lighting.
+- [x] 3.6 Screenshot verification: car paint sphere (deep blue, EShadingModel::ClearCoat) shows sharp coat specular highlight on top of soft base. 12th sphere in pbr_test demo.
 
 ## Phase 4: Two-Sided Foliage
 

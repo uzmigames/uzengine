@@ -134,6 +134,14 @@ struct DrawCommand {
     float subsurfaceRadius = 1.0f;  ///< Wrap diffuse width (cm).
     uint32_t thicknessSrvIndex = 0; ///< SRV for thickness map (R, 0=thick 1=thin).
 
+    // ── Clear coat parameters ─────────────────────────────────────────────
+    /// Clear coat layer intensity. 0 = no coating, 1 = full second specular lobe.
+    /// @ref Karis 2013 "Real Shading in Unreal Engine 4"
+    float clearCoat = 0.0f;
+    /// Clear coat layer roughness. 0.04 = near-mirror coating (automotive paint).
+    /// @ref Karis 2013 "Real Shading in Unreal Engine 4"
+    float clearCoatRoughness = 0.04f;
+
     /// Primitive mobility for shadow cache filtering.
     ///
     /// Static/Stationary primitives are cached in the static shadow atlas.
@@ -268,10 +276,10 @@ public:
 
     /// Sorts all recorded commands by sort key in ascending order.
     ///
-    /// Must be called before iterating `GetCommands()`. Sorting is stable is
-    /// NOT guaranteed — commands with equal sort keys may appear in any order.
+    /// Must be called before iterating `GetCommands()`. Uses stable sort to
+    /// ensure deterministic ordering for commands with equal sort keys.
     void Sort() {
-        std::sort(m_commands.begin(), m_commands.end(),
+        std::stable_sort(m_commands.begin(), m_commands.end(),
             [](const DrawCommand& a, const DrawCommand& b) noexcept {
                 return a.sortKey < b.sortKey;
             });

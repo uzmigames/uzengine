@@ -786,7 +786,7 @@ private:
     // ── Temporal Upscaler (ITemporalUpscaler) ────────────────────────────────
 
     std::unique_ptr<ITemporalUpscaler> m_upscaler;         ///< Active temporal upscaler (TAA or TSR).
-    UpscalerType m_upscalerType = UpscalerType::TSR;       ///< Current upscaler type. Default: TSR (default).
+    UpscalerType m_upscalerType = UpscalerType::TAA;        ///< Temporal anti-aliasing (default).
 
     // ── Dynamic Resolution ───────────────────────────────────────────────────
 

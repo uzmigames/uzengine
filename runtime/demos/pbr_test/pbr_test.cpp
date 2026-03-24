@@ -175,6 +175,16 @@ void PBRTest::OnStart() {
     sssMat_.subsurfaceColorB = 0.1f;
     sssMat_.subsurfaceRadius = 1.2f;
 
+    // ── ClearCoat test material — car paint (deep blue, glossy base + sharp coat) ──
+    clearCoatMat_.shadingModel = EShadingModel::ClearCoat;
+    clearCoatMat_.baseColorTintR = 0.02f;
+    clearCoatMat_.baseColorTintG = 0.02f;
+    clearCoatMat_.baseColorTintB = 0.15f;
+    clearCoatMat_.roughnessMultiplier = 0.3f;
+    clearCoatMat_.metallicMultiplier = 0.0f;
+    clearCoatMat_.clearCoat = 1.0f;
+    clearCoatMat_.clearCoatRoughness = 0.04f;
+
     // ── Ground material from graph-based .uzmat ───────────────────────
     //
     // Load the MI_ProcGrid material graph, compile it to HLSL, then bake
@@ -266,7 +276,7 @@ void PBRTest::OnStart() {
     // ── Material array for sphere assignment ─────────────────────────────
     Material* materials[kSphereCount] = {
         &goldMat_, &metalMat_, &rattanMat_, &quartziteMat_, &stoneBrickMat_,
-        &concreteMat_, &metalCorrodedMat_, &grassMat_, &sandMat_, &unlitMat_, &sssMat_
+        &concreteMat_, &metalCorrodedMat_, &grassMat_, &sandMat_, &unlitMat_, &sssMat_, &clearCoatMat_
     };
 
     // ── Create spheres ──

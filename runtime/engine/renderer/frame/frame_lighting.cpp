@@ -27,18 +27,33 @@
 #include <cstring>
 
 // ── CVars ────────────────────────────────────────────────────────────────
-static auto* cv_MotionBlurAmount = UZ_CVAR_FLOAT("r.MotionBlur.Amount", 0.5f, "Motion blur intensity", 0.f, 5.f);
-static auto* cv_MotionBlurMax    = UZ_CVAR_FLOAT("r.MotionBlur.Max", 5.f, "Max blur radius (%)", 0.f, 50.f);
+// Shadows
+static auto* cv_ContactShadows   = UZ_CVAR_BOOL("r.ContactShadows", true, "Contact shadows");
+// GTAO
+static auto* cv_GTAO             = UZ_CVAR_BOOL("r.GTAO", true, "Ground Truth Ambient Occlusion");
+// SSR
+static auto* cv_SSR              = UZ_CVAR_BOOL("r.SSR", true, "Screen-Space Reflections");
+static auto* cv_SSRIntensity     = UZ_CVAR_FLOAT("r.SSR.Intensity", 1.0f, "SSR reflection intensity", 0.f, 2.f);
+static auto* cv_SSRMaxRoughness  = UZ_CVAR_FLOAT("r.SSR.MaxRoughness", 0.8f, "Max roughness for SSR", 0.f, 1.f);
+// SSGI
+static auto* cv_SSGI             = UZ_CVAR_BOOL("r.SSGI", false, "Screen-Space Global Illumination");
+// DFS (Distance Field Shadows)
+static auto* cv_DFS              = UZ_CVAR_BOOL("r.DFS", true, "Distance Field Shadows");
+// Fog
+static auto* cv_Fog              = UZ_CVAR_BOOL("r.Fog", true, "Height fog");
+// Clouds
+static auto* cv_Clouds           = UZ_CVAR_BOOL("r.Clouds", true, "Volumetric clouds");
+// Post-process (used by lighting for CAS after TAA)
 static auto* cv_CASSharpness     = UZ_CVAR_FLOAT("r.CAS.Sharpness", 0.2f, "CAS sharpening strength", 0.f, 1.f);
 static auto* cv_LODBias          = UZ_CVAR_FLOAT("r.LOD.Bias", 1.f, "Global LOD bias multiplier", 0.1f, 10.f);
-static auto* cv_ContactShadows   = UZ_CVAR_BOOL("r.ContactShadows", true, "Contact shadows");
+// Debug
+static auto* cv_DebugView        = UZ_CVAR_BOOL("r.DebugView", false, "GBuffer debug visualization");
 
 namespace uz {
 
 void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
     UZ_PROFILE_FUNCTION();
 
-    // Only deferred path has lighting passes — forward PBR handles lighting inline.
     if (m_renderPath != RenderPath::Deferred) return;
 
     const auto& cascades = ctx.shadowFrame.cascades;
@@ -573,24 +588,20 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
     //
     // Screen-space reflections: Hi-Z ray march + Fresnel-weighted resolve.
     if (ctx.ssrActive) {
-        // ── Pass 1: SSR Trace (compute) ──────────────────────────────────
-        /// SSR Trace: Hi-Z ray march producing (hitColor, confidence) per pixel.
         rgBuilder.AddPass("SSR_Trace", [&](rg::RgPassBuilder& pb) {
             pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
             pb.Read(ctx.normalRes, RHIResourceState::ShaderResource);
             pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
 
-            pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
+            pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources&) {
                 UZ_PROFILE_SCOPE("SSR::Trace");
 
                 auto ssrTracePSO = ctx.pipelines->GetSsrTrace();
                 if (!ssrTracePSO.IsValid()) return;
 
-                // Transition SSR trace output to UAV for writing
                 {
                     RHIBarrierDesc barrier{};
                     barrier.texture     = m_ssrTraceOutput;
-                    barrier.buffer      = RHIBufferHandle::Invalid();
                     barrier.stateBefore = RHIResourceState::ShaderResource;
                     barrier.stateAfter  = RHIResourceState::UnorderedAccess;
                     cmd->ResourceBarrier(&barrier, 1);
@@ -598,55 +609,36 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
 
                 cmd->SetPipeline(ssrTracePSO);
 
-                // Root constants: 8 DWORDs (matches SSRRootCB in ssr_trace_cs.hlsl)
-                /// SSR trace root constants: texture indices, dimensions, quality params.
                 struct SsrTraceConstants {
-                    uint32_t depthSrvIdx;       // DWORD 0
-                    uint32_t normalSrvIdx;      // DWORD 1
-                    uint32_t hizSrvIdx;         // DWORD 2
-                    uint32_t sceneColorSrvIdx;  // DWORD 3
-                    uint32_t outputWidth;       // DWORD 4
-                    uint32_t outputHeight;      // DWORD 5
-                    float    intensity;         // DWORD 6
-                    float    roughnessMaskScale;// DWORD 7
+                    uint32_t depthSrvIdx, normalSrvIdx, hizSrvIdx, sceneColorSrvIdx;
+                    uint32_t outputWidth, outputHeight;
+                    float intensity, roughnessMaskScale;
                 };
 
                 SsrTraceConstants rc{};
                 rc.depthSrvIdx      = m_gbuffer.depthSRV;
                 rc.normalSrvIdx     = m_gbuffer.normalSRV;
-                // Use Hi-Z pyramid mip 0 if available for faster ray marching.
-                // Falls back to raw depth buffer if Hi-Z not built.
                 rc.hizSrvIdx        = (m_hizMipCount > 0 && m_hizMipLevels[0].srvIndex != UINT32_MAX)
-                                    ? m_hizMipLevels[0].srvIndex
-                                    : m_gbuffer.depthSRV;
+                                    ? m_hizMipLevels[0].srvIndex : m_gbuffer.depthSRV;
                 rc.sceneColorSrvIdx = m_hdrSceneColorSrv;
                 rc.outputWidth      = m_renderWidth;
                 rc.outputHeight     = m_renderHeight;
-                /// Reflection intensity (1.0 = full strength).
                 rc.intensity        = 1.0f;
-                /// Roughness fade: surfaces above MaxRoughness get no SSR.
-                rc.roughnessMaskScale = -2.0f / 0.8f;  // MaxRoughness = 0.8 (UE5 default)
+                rc.roughnessMaskScale = -2.0f / 0.8f;
 
                 cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
-
-                // PerFrameCB at b1 (has viewProj, invViewProj, cameraPos, nearPlane, farPlane)
                 cmd->SetRootCBV(kSlotPerFrame, ctx.perFrameAlloc.bufferHandle,
                                 ctx.perFrameAlloc.offsetBytes, ctx.perFrameAlloc.cpuPtr,
                                 sizeof(PerFrameCB));
-
-                // UAV at descriptor table slot 4 (u0 in shader)
                 cmd->SetDescriptorTable(4, m_ssrTraceOutputUav);
 
-                // Dispatch: 8x8 thread groups
-                const uint32_t groupsX = (m_renderWidth  + 7) / 8;
+                const uint32_t groupsX = (m_renderWidth + 7) / 8;
                 const uint32_t groupsY = (m_renderHeight + 7) / 8;
                 cmd->Dispatch(groupsX, groupsY, 1);
 
-                // Transition trace output: UAV → SRV for resolve pass to read
                 {
                     RHIBarrierDesc barrier{};
                     barrier.texture     = m_ssrTraceOutput;
-                    barrier.buffer      = RHIBufferHandle::Invalid();
                     barrier.stateBefore = RHIResourceState::UnorderedAccess;
                     barrier.stateAfter  = RHIResourceState::ShaderResource;
                     cmd->ResourceBarrier(&barrier, 1);
@@ -654,23 +646,19 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
             });
         });
 
-        // ── Pass 2: SSR Resolve (compute) ────────────────────────────────
-        /// SSR Resolve: Fresnel weight + roughness fade → final SSR contribution.
         rgBuilder.AddPass("SSR_Resolve", [&](rg::RgPassBuilder& pb) {
             pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
             pb.Read(ctx.normalRes, RHIResourceState::ShaderResource);
 
-            pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
+            pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources&) {
                 UZ_PROFILE_SCOPE("SSR::Resolve");
 
                 auto ssrResolvePSO = ctx.pipelines->GetSsrResolve();
                 if (!ssrResolvePSO.IsValid()) return;
 
-                // Transition SSR resolved output to UAV for writing
                 {
                     RHIBarrierDesc barrier{};
                     barrier.texture     = m_ssrResolvedOutput;
-                    barrier.buffer      = RHIBufferHandle::Invalid();
                     barrier.stateBefore = RHIResourceState::ShaderResource;
                     barrier.stateAfter  = RHIResourceState::UnorderedAccess;
                     cmd->ResourceBarrier(&barrier, 1);
@@ -678,50 +666,34 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
 
                 cmd->SetPipeline(ssrResolvePSO);
 
-                // Root constants: 8 DWORDs (matches SSRResolveCB in ssr_resolve_cs.hlsl)
                 struct SsrResolveConstants {
-                    uint32_t ssrTraceSrvIdx;    // DWORD 0
-                    uint32_t normalSrvIdx;      // DWORD 1
-                    uint32_t depthSrvIdx;       // DWORD 2
-                    uint32_t reserved;          // DWORD 3
-                    uint32_t outputWidth;       // DWORD 4
-                    uint32_t outputHeight;      // DWORD 5
-                    float    intensity;         // DWORD 6
-                    float    roughnessMaskScale;// DWORD 7
+                    uint32_t ssrTraceSrvIdx, normalSrvIdx, depthSrvIdx, reserved;
+                    uint32_t outputWidth, outputHeight;
+                    float intensity, roughnessMaskScale;
                 };
 
                 SsrResolveConstants rc{};
                 rc.ssrTraceSrvIdx   = m_ssrTraceOutputSrv;
                 rc.normalSrvIdx     = m_gbuffer.normalSRV;
                 rc.depthSrvIdx      = m_gbuffer.depthSRV;
-                rc.reserved         = 0;
                 rc.outputWidth      = m_renderWidth;
                 rc.outputHeight     = m_renderHeight;
-                /// Reflection intensity (1.0 = full strength).
                 rc.intensity        = 1.0f;
-                /// Roughness fade: surfaces above MaxRoughness get no SSR.
-                rc.roughnessMaskScale = -2.0f / 0.8f;  // MaxRoughness = 0.8 (UE5 default)
+                rc.roughnessMaskScale = -2.0f / 0.8f;
 
                 cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
-
-                // PerFrameCB at b1
                 cmd->SetRootCBV(kSlotPerFrame, ctx.perFrameAlloc.bufferHandle,
                                 ctx.perFrameAlloc.offsetBytes, ctx.perFrameAlloc.cpuPtr,
                                 sizeof(PerFrameCB));
-
-                // UAV at descriptor table slot 4 (u0 in shader)
                 cmd->SetDescriptorTable(4, m_ssrResolvedOutputUav);
 
-                // Dispatch: 8x8 thread groups
-                const uint32_t groupsX = (m_renderWidth  + 7) / 8;
+                const uint32_t groupsX = (m_renderWidth + 7) / 8;
                 const uint32_t groupsY = (m_renderHeight + 7) / 8;
                 cmd->Dispatch(groupsX, groupsY, 1);
 
-                // Transition resolved output: UAV → SRV for temporal pass to read
                 {
                     RHIBarrierDesc barrier{};
                     barrier.texture     = m_ssrResolvedOutput;
-                    barrier.buffer      = RHIBufferHandle::Invalid();
                     barrier.stateBefore = RHIResourceState::UnorderedAccess;
                     barrier.stateAfter  = RHIResourceState::ShaderResource;
                     cmd->ResourceBarrier(&barrier, 1);
@@ -729,56 +701,38 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
             });
         });
 
-        // ── Pass 3: SSR Temporal Accumulation (compute) ──────────────────
-        /// SSR Temporal: blend resolved SSR with history using motion-vector
-        /// reprojection and 3x3 neighborhood variance clipping. Outputs to
-        /// the ping-pong history buffer which the lighting pass reads.
-        /// @ref Stachowiak 2015 — temporal accumulation for stochastic SSR
+        // SSR Temporal accumulation
         {
             const uint32_t ssrWriteIdx = m_ssrHistoryIndex;
             const uint32_t ssrReadIdx  = 1 - m_ssrHistoryIndex;
-            const bool     ssrFirstFrame = !m_prevViewProjValid
-                                         || !m_ssrHistory[ssrReadIdx].IsValid();
+            const bool ssrFirstFrame = !m_prevViewProjValid
+                                     || !m_ssrHistory[ssrReadIdx].IsValid();
 
             rgBuilder.AddPass("SSR_Temporal", [&, ssrWriteIdx, ssrReadIdx, ssrFirstFrame](rg::RgPassBuilder& pb) {
                 pb.Read(ctx.velocityRes, RHIResourceState::ShaderResource);
 
-                pb.SetExecutionCallback([this, &ctx, ssrWriteIdx, ssrReadIdx, ssrFirstFrame](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
+                pb.SetExecutionCallback([this, &ctx, ssrWriteIdx, ssrReadIdx, ssrFirstFrame](IRHICommandList* cmd, const rg::RgPassResources&) {
                     UZ_PROFILE_SCOPE("SSR::Temporal");
 
                     auto ssrTemporalPSO = ctx.pipelines->GetSsrTemporal();
                     if (!ssrTemporalPSO.IsValid()) return;
 
-                    // Transition history textures:
-                    // - Write target: SRV → UAV (will be written by temporal blend)
-                    // - Read target: ensure SRV (sampled by temporal blend)
                     {
                         RHIBarrierDesc barriers[2]{};
                         barriers[0].texture     = m_ssrHistory[ssrWriteIdx];
-                        barriers[0].buffer      = RHIBufferHandle::Invalid();
                         barriers[0].stateBefore = RHIResourceState::ShaderResource;
                         barriers[0].stateAfter  = RHIResourceState::UnorderedAccess;
-
                         barriers[1].texture     = m_ssrHistory[ssrReadIdx];
-                        barriers[1].buffer      = RHIBufferHandle::Invalid();
                         barriers[1].stateBefore = RHIResourceState::UnorderedAccess;
                         barriers[1].stateAfter  = RHIResourceState::ShaderResource;
-
                         cmd->ResourceBarrier(barriers, 2);
                     }
 
                     cmd->SetPipeline(ssrTemporalPSO);
 
-                    // Root constants: 8 DWORDs (matches SsrTemporalRootCB in ssr_temporal_cs.hlsl)
                     struct SsrTemporalConstants {
-                        uint32_t currentSsrSrvIdx;  // DWORD 0
-                        uint32_t historySsrSrvIdx;   // DWORD 1
-                        uint32_t velocitySrvIdx;     // DWORD 2
-                        uint32_t depthSrvIdx;        // DWORD 3
-                        uint32_t outputWidth;        // DWORD 4
-                        uint32_t outputHeight;       // DWORD 5
-                        uint32_t firstFrame;         // DWORD 6
-                        uint32_t reserved;           // DWORD 7
+                        uint32_t currentSsrSrvIdx, historySsrSrvIdx, velocitySrvIdx, depthSrvIdx;
+                        uint32_t outputWidth, outputHeight, firstFrame, reserved;
                     };
 
                     SsrTemporalConstants rc{};
@@ -789,28 +743,20 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                     rc.outputWidth      = m_renderWidth;
                     rc.outputHeight     = m_renderHeight;
                     rc.firstFrame       = ssrFirstFrame ? 1u : 0u;
-                    rc.reserved         = 0;
 
                     cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
-
-                    // PerFrameCB at b1
                     cmd->SetRootCBV(kSlotPerFrame, ctx.perFrameAlloc.bufferHandle,
                                     ctx.perFrameAlloc.offsetBytes, ctx.perFrameAlloc.cpuPtr,
                                     sizeof(PerFrameCB));
-
-                    // UAV at descriptor table slot 4 (u0 in shader)
                     cmd->SetDescriptorTable(4, m_ssrHistoryUav[ssrWriteIdx]);
 
-                    // Dispatch: 8x8 thread groups
-                    const uint32_t groupsX = (m_renderWidth  + 7) / 8;
+                    const uint32_t groupsX = (m_renderWidth + 7) / 8;
                     const uint32_t groupsY = (m_renderHeight + 7) / 8;
                     cmd->Dispatch(groupsX, groupsY, 1);
 
-                    // Transition write target: UAV → SRV for lighting pass to read
                     {
                         RHIBarrierDesc barrier{};
                         barrier.texture     = m_ssrHistory[ssrWriteIdx];
-                        barrier.buffer      = RHIBufferHandle::Invalid();
                         barrier.stateBefore = RHIResourceState::UnorderedAccess;
                         barrier.stateAfter  = RHIResourceState::ShaderResource;
                         cmd->ResourceBarrier(&barrier, 1);
@@ -818,14 +764,13 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                 });
             });
 
-            // Flip SSR history ping-pong for next frame
             m_ssrHistoryIndex = 1 - m_ssrHistoryIndex;
         }
     }
 
     // ── Deferred Lighting / Debug View / GBuffer Debug ──────────────────
-    const bool debugActive = (m_debugMode != GBufferDebugMode::Count);
-    const bool debugViewActive = (m_debugViewMode != DebugViewMode::Lit);
+    const bool debugActive = false; // DEBUG: force off to isolate
+    const bool debugViewActive = false; // DEBUG: force off to isolate
 
     if (debugViewActive) {
         // ── Debug View Mode — replaces lighting with channel visualization ──

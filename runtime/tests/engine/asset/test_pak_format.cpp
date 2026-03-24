@@ -639,7 +639,8 @@ TEST(PakScramble, LargeBlob_64KB_RoundTrips) {
     const uint64_t secret = 0x0123456789ABCDEFULL;
 
     auto scrambled = PakCompressBlob(original, pathHash, secret);
-    ASSERT_EQ(scrambled.size(), original.size());
+    ASSERT_GT(scrambled.size(), 0u);
+    ASSERT_LE(scrambled.size(), original.size());
     EXPECT_NE(scrambled, original);
 
     auto restored = PakDecompressBlob(

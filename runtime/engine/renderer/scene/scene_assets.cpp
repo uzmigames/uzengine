@@ -63,9 +63,9 @@ uint32_t SceneRenderer::LoadMesh(const std::string& path, IVFS* vfs,
     if (path.size() > 8 && path.compare(0, 8, "builtin:") == 0) {
         const std::string primitive = path.substr(8);
         if (primitive == "cube") {
-            cpuMesh = MeshBuilder::CreateCube(0.5f);
+            cpuMesh = MeshBuilder::CreateCube(0.5f, 8);
         } else if (primitive == "sphere") {
-            cpuMesh = MeshBuilder::CreateSphere(0.5f, 32, 32);
+            cpuMesh = MeshBuilder::CreateSphere(0.5f, 64, 64);
         } else {
             UZ_LOG(Renderer, Error, "SceneRenderer: unknown builtin mesh: '{}'", primitive);
             return UINT32_MAX;

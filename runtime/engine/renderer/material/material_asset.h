@@ -164,6 +164,24 @@ struct Material : public MaterialInterface {
     std::string thicknessPath;
     uint32_t    thicknessSrvIndex = 0;
 
+    // ── Clear coat parameters ─────────────────────────────────────────────
+
+    /// Clear coat layer intensity. 0 = no coating (default), 1 = full second specular lobe.
+    /// @ref Karis 2013 "Real Shading in Unreal Engine 4" — clear coat shading model.
+    float clearCoat = 0.0f;
+
+    /// Clear coat layer roughness. Controls smoothness of the top specular lobe.
+    /// Default 0.04 = near-mirror coating (automotive paint, varnish).
+    /// @ref Karis 2013 "Real Shading in Unreal Engine 4" — ClearCoatRoughness parameter.
+    float clearCoatRoughness = 0.04f;
+
+    /// Optional separate normal map for the clear coat layer.
+    /// When set, the coat specular lobe uses this normal instead of the base normal.
+    /// Useful for orange-peel coating, carbon fiber clear coat, etc.
+    /// @ref Karis 2013 "Real Shading in Unreal Engine 4" — ClearCoatBottomNormal.
+    std::string clearCoatNormalPath;
+    uint32_t    clearCoatNormalSrvIndex = 0;
+
     // ── Shading model / domain / blend mode ─────────────────────────────
 
     /// Shading model for this material. Determines which BRDF is evaluated
@@ -225,6 +243,8 @@ struct Material : public MaterialInterface {
         if (name == "AlphaClipThreshold")  return alphaClipThreshold;
         if (name == "Specular")            return specular;
         if (name == "EnvMultiplier")       return envMultiplier;
+        if (name == "ClearCoat")           return clearCoat;
+        if (name == "ClearCoatRoughness")  return clearCoatRoughness;
         return defaultVal;
     }
 
@@ -261,6 +281,7 @@ struct Material : public MaterialInterface {
         if (name == "Emissive")  return emissivePath;
         if (name == "ORM")       return ormPath;
         if (name == "Thickness") return thicknessPath;
+        if (name == "ClearCoatNormal") return clearCoatNormalPath;
         return s_emptyString;
     }
 
@@ -274,6 +295,7 @@ struct Material : public MaterialInterface {
         if (name == "Emissive")  return emissiveSrvIndex;
         if (name == "ORM")       return ormSrvIndex;
         if (name == "Thickness") return thicknessSrvIndex;
+        if (name == "ClearCoatNormal") return clearCoatNormalSrvIndex;
         return 0;
     }
 
@@ -312,6 +334,9 @@ struct Material : public MaterialInterface {
         r = subsurfaceColorR; g = subsurfaceColorG; b = subsurfaceColorB;
     }
     [[nodiscard]] float GetSubsurfaceRadius() const override { return subsurfaceRadius; }
+
+    [[nodiscard]] float GetClearCoat() const override { return clearCoat; }
+    [[nodiscard]] float GetClearCoatRoughness() const override { return clearCoatRoughness; }
 
     [[nodiscard]] EShadingModel GetShadingModel() const override { return shadingModel; }
     [[nodiscard]] EMaterialDomain GetMaterialDomain() const override { return materialDomain; }

@@ -264,7 +264,7 @@ struct PerObjectCB {
     ///   bits [8:15]  = specular * 255 (dielectric reflectance scale, 0.0-1.0).
     ///   bits [16:23] = envMultiplier * 127.5 (IBL intensity, 0.0-2.0, 128=1.0).
     ///   bits [24:27] = shadingModelID (EShadingModel, 4-bit, 0-15).
-    ///   bits [28:31] = reserved.
+    ///   bits [28:31] = clearCoatRoughness * 15 (4-bit, 16 levels, only when smID==4).
     uint32_t materialFlags = 0;
 };
 

@@ -15,6 +15,9 @@ class ShaderArchiveTest : public ::testing::Test {
 protected:
     void SetUp() override {
         m_testDir = fs::temp_directory_path() / "uzengine_test" / "shader_archive";
+        // Clean up stale leftovers from a previous aborted run
+        std::error_code ec;
+        fs::remove_all(m_testDir, ec);
         fs::create_directories(m_testDir);
         m_archivePath = m_testDir / "shaders.uzpak";
     }

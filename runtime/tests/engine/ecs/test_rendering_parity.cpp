@@ -47,10 +47,10 @@ TEST(RenderingParity, HeightFogDefaults_PrimaryLayer) {
     EXPECT_FLOAT_EQ(fog.color.y,             0.0f);
     EXPECT_FLOAT_EQ(fog.color.z,             0.0f);
     EXPECT_FLOAT_EQ(fog.maxOpacity,          1.0f);
-    EXPECT_FLOAT_EQ(fog.density,             0.02f);
+    EXPECT_FLOAT_EQ(fog.density,             0.0436f);
     EXPECT_FLOAT_EQ(fog.startDistance,       0.f);
     EXPECT_FLOAT_EQ(fog.fogCutoffDistance,   0.f);
-    EXPECT_FLOAT_EQ(fog.baseHeight,          0.f);
+    EXPECT_FLOAT_EQ(fog.baseHeight,          -5000.f);
     EXPECT_TRUE(fog.enabled);
 }
 

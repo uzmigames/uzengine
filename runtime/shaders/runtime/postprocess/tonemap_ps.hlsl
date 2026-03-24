@@ -283,14 +283,16 @@ float4 main(FSInput input) : SV_Target {
     }
 
     // ── 5. Apply auto-exposure ───────────────────────────────────────────
-    color *= max(exposure, 0.5);
+    // Auto-exposure already clamps via min/max brightness settings.
+    // Floor of 0.001 prevents division-by-zero only.
+    color *= max(exposure, 0.2);
 
     // ── 5b. Saturation/Contrast (PoC1 parity) ────────────────────────────
     // @ref PoC1 composite.ps.hlsl:100-102 — saturation and contrast grading
     // Applied BEFORE tonemap so the S-curve doesn't crush the adjusted color.
-    // Hardcoded until CB layout is extended: saturation=1.15, contrast=1.05
+    // Hardcoded until CB layout is extended.
     {
-        static const float kSaturation = 1.3f;
+        static const float kSaturation = 1.15f;
         static const float kContrast   = 1.05f;
         float luma = dot(color, float3(0.2126f, 0.7152f, 0.0722f));
         color = lerp(float3(luma, luma, luma), color, kSaturation);

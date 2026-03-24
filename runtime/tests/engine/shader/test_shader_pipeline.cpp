@@ -30,6 +30,9 @@ protected:
         m_cacheDir = m_testDir + "/cache";
         m_shaderDir = m_testDir + "/shaders";
 
+        // Clean up stale leftovers from a previous aborted run
+        std::error_code ec;
+        fs::remove_all(m_testDir, ec);
         fs::create_directories(m_shaderDir);
         fs::create_directories(m_cacheDir);
     }

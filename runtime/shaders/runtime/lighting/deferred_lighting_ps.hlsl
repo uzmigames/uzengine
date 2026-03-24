@@ -1,6 +1,19 @@
-/// Deferred lighting — Step 2: albedo + NdotL directional.
+/// Deferred lighting — PBR + IBL + CSM shadows + contact shadows.
+///
+/// @ref Walter 2007 "Microfacet Models for Refraction through Rough Surfaces"
+/// @ref Heitz 2014 "Understanding the Masking-Shadowing Function in Microfacet-Based BRDFs"
+/// @ref Burley 2012 "Physically Based Shading at Disney"
+/// @ref Karis 2013 "Real Shading in Unreal Engine 4"
+/// @ref Ramamoorthi 2001 "An Efficient Representation for Irradiance Environment Maps"
+/// @ref Engel 2006 "Cascaded Shadow Maps" (ShaderX5) — CSM shadow sampling
+/// @ref Wihlidal 2017 "4K Checkerboard Rendering in Battlefield 1" — contact shadows
 
 #include "../include/octahedral.hlsli"
+#include "../include/pbr_common.hlsli"
+#include "../include/sh_irradiance.hlsli"
+
+// shadow_common.hlsli and contact_shadows.hlsli are included AFTER sampler/texture
+// declarations because they reference shadowSampler, shadowAtlasTexture, etc.
 
 struct FSInput {
     float4 positionCS : SV_Position;
@@ -102,12 +115,30 @@ Texture2D<float>   localShadowAtlasTexture : register(t11);
 
 SamplerState linearSampler : register(s0);
 SamplerComparisonState shadowSampler : register(s1);
+SamplerState clampSampler : register(s2);
+
+// Shadow/contact includes AFTER samplers+textures (they reference shadowSampler, etc.)
+#include "../include/shadow_common.hlsli"
+#include "../include/contact_shadows.hlsli"
 
 float3 ReconstructWorldPosition(float2 uv, float depth) {
     float2 ndc = uv * 2.0 - 1.0;
     ndc.y = -ndc.y;
     float4 wp = mul(float4(ndc, depth, 1.0), invViewProj);
     return wp.xyz / wp.w;
+}
+
+/// Smith Joint Approximation (Epic). @ref Karis 2013 "Real Shading in Unreal Engine 4"
+float Vis_SmithJointApprox(float a2, float NoV, float NoL) {
+    float a = sqrt(a2);
+    float Vis_SmithV = NoL * (NoV * (1.0 - a) + a);
+    float Vis_SmithL = NoV * (NoL * (1.0 - a) + a);
+    return 0.5 / (Vis_SmithV + Vis_SmithL + 1e-5);
+}
+
+/// Specular occlusion from AO. @ref Lagarde 2014
+float SpecularOcclusion(float NoV, float ao, float roughness) {
+    return saturate(pow(NoV + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao);
 }
 
 float4 main(FSInput input) : SV_Target {
@@ -119,29 +150,276 @@ float4 main(FSInput input) : SV_Target {
     Texture2D<float4> gbNormal = ResourceDescriptorHeap[gBufIndices.normalIdx];
     Texture2D<float>  gbDepth  = ResourceDescriptorHeap[gBufIndices.depthIdx];
 
-    float3 albedo = gbAlbedo.Load(int3(px, 0)).rgb;
+    float4 rt0    = gbAlbedo.Load(int3(px, 0));
     float4 rt1    = gbNormal.Load(int3(px, 0));
     float  z      = gbDepth.Load(int3(px, 0)).r;
 #else
-    float3 albedo = gbufferAlbedo.Load(int3(px, 0)).rgb;
+    float4 rt0    = gbufferAlbedo.Load(int3(px, 0));
     float4 rt1    = gbufferNormal.Load(int3(px, 0));
     float  z      = gbufferDepth.Load(int3(px, 0)).r;
 #endif
 
-    // ── Decode normal ─────────────────────────────────────────────────────
+    // ── Load RT3: emissive + packed shading model ────────────────────────
+#ifdef UZ_BINDLESS
+    Texture2D<float4> gbEmissive = ResourceDescriptorHeap[gBufIndices.emissiveIdx];
+    float4 rt3 = gbEmissive.Load(int3(px, 0));
+#else
+    float4 rt3 = gbufferEmissive.Load(int3(px, 0));
+#endif
+    float3 emissive = rt3.rgb;
+
+    // Decode: packedAlpha = specular + smID * 16.0
+    // @ref gbuffer_ps.hlsl encoding — specular in [0,1], smID in upper bits
+    uint  shadingModelID = uint(floor(rt3.a / 16.0));
+    float specular       = rt3.a - float(shadingModelID) * 16.0;
+
+    // Skip sky pixels — reversed-Z: far plane = 0.0 (kDepthFar).
+    if (z <= 0.0001) discard;
+
+    // ── Unlit early-out (shadingModelID == 0) ────────────────────────────
+    // Unlit materials output emissive + base color only, no lighting.
+    if (shadingModelID == 0) {
+        return float4(emissive + rt0.rgb, 1.0);
+    }
+
+    float3 baseColor = rt0.rgb;
+    float  ao        = rt0.a;
     float3 N = OctDecode(rt1.rg);
+    float metallic  = rt1.b;
+    float roughness = max(rt1.a, 0.04);
+    float alpha     = roughness * roughness;
+    float a2        = alpha * alpha;
 
-    // ── Reconstruct world position ────────────────────────────────────────
-    float3 worldPos = ReconstructWorldPosition(input.texcoord, z);
+    float3 F0           = lerp(float3(0.04, 0.04, 0.04), baseColor, metallic);
+    float3 DiffuseColor = baseColor * (1.0 - metallic);
 
-    // ── NdotL directional light ───────────────────────────────────────────
-    float3 L = normalize(lightDir.xyz);
-    float  NdotL = max(dot(N, L), 0.0);
+    // ── World position + view direction ────────────────────────────────
+#ifdef UZ_BINDLESS
+    Texture2D<float4> gbPos = ResourceDescriptorHeap[gBufIndices.positionIdx];
+    float3 worldPos = gbPos.Load(int3(px, 0)).xyz;
+#else
+    float3 worldPos = gbufferPositionWS.Load(int3(px, 0)).xyz;
+#endif
 
-    // DEBUG: visualize NdotL as grayscale
-    float3 L = normalize(float3(0.5, -0.5, 0.7));
-    float  NdotL = dot(N, L); // NOT clamped — see if negative
-    float3 color = float3(max(NdotL, 0.0), max(-NdotL, 0.0), 0.0); // R=lit, G=backlit
+    // Read RT2.w — custom data channel (used by ClearCoat for coat params)
+#ifdef UZ_BINDLESS
+    float customData = gbPos.Load(int3(px, 0)).w;
+#else
+    float customData = gbufferPositionWS.Load(int3(px, 0)).w;
+#endif
 
-    return float4(color, 1.0);
+    float3 V   = normalize(cameraPos.xyz - worldPos);
+    float  NoV = max(dot(N, V), 1e-4);
+
+    // ── ClearCoat parameters (decoded from RT2.w when smID == 4) ──────
+    // @ref Karis 2013 "Real Shading in Unreal Engine 4" — clear coat layer
+    // RT2.w stores clearCoatRoughness (0..1) when smID==4, else 1.0.
+    float clearCoatVal   = 0.0;
+    float clearCoatRough = 0.04;
+    if (shadingModelID == 4) {
+        clearCoatVal   = 1.0;
+        clearCoatRough = max(customData, 0.01); // customData = RT2.w = ccRoughness from GBuffer
+    }
+
+    // ── View depth (linear, positive) ────────────────────────────────
+    // Reversed-Z: near=1.0, far=0.0. Linearize using nearPlane/farPlane.
+    // viewDepth = distance from camera along the view axis in world units.
+    float viewDepth = length(cameraPos.xyz - worldPos);
+
+    // ── Direct Lighting + CSM Shadows ────────────────────────────────
+    float3 Lo      = float3(0, 0, 0);
+    float  shadow  = 1.0;  // Hoisted — needed by ClearCoat / Subsurface post-processing
+    float  contact = 1.0;  // Hoisted — needed by ClearCoat / Subsurface post-processing
+    {
+        float3 L   = normalize(lightDir.xyz);
+        float  NoL = max(dot(N, L), 0.0);
+        if (NoL > 0.0) {
+            float3 H   = normalize(V + L);
+            float  NoH = saturate(dot(N, H));
+            float  VoH = saturate(dot(V, H));
+
+            float  D   = D_GGX(NoH, alpha);
+            float  Vis = Vis_SmithJointApprox(a2, NoV, NoL);
+            float3 F   = F_SchlickF90(VoH, F0, saturate(50.0 * F0.g));
+            float3 specBRDF = D * Vis * F;
+            float3 diffuse  = Fd_Burley(DiffuseColor, roughness, NoV, NoL, VoH);
+
+            float microShadow = saturate(NoL + 2.0 * ao * ao - 1.0);
+
+            // ── CSM shadow sampling ─────────────────────────────────
+            // @ref Engel 2006 "Cascaded Shadow Maps" — cascade selection + PCF
+            shadow = SampleShadowMapFull(worldPos, N, NoL, viewDepth,
+                                         input.positionCS.xy);
+
+            // ── Contact shadows ─────────────────────────────────────
+            // @ref Wihlidal 2017 — screen-space ray march for small-scale
+            // shadow detail that CSM resolution cannot capture.
+            if (contactShadowLength > 0.0) {
+                float frameCycle = fmod(timeParams.w, 4.0);
+#ifdef UZ_BINDLESS
+                Texture2D<float> csDepth = ResourceDescriptorHeap[gBufIndices.depthIdx];
+#else
+                #define csDepth gbufferDepth
+#endif
+                contact = ComputeContactShadow(
+                    worldPos, L, contactShadowLength, viewDepth,
+                    input.positionCS.xy, frameCycle,
+                    viewProj, csDepth, linearSampler);
+#ifndef UZ_BINDLESS
+                #undef csDepth
+#endif
+            }
+
+            // ── Subsurface wrap diffuse override (smID == 2) ────────
+            // @ref Burley 2012 "Physically Based Shading at Disney" — wrap shading
+            // approximation for subsurface scattering: replaces standard NdotL
+            // falloff with a softer (NdotL + w) / (1 + w)^2 curve.
+            if (shadingModelID == 2) {
+                float wrap   = 0.3;
+                float rawNoL = dot(N, L);
+                float wrapNoL = max((rawNoL + wrap) / ((1.0 + wrap) * (1.0 + wrap)), 0.0);
+                Lo = (DiffuseColor / 3.14159265 + specBRDF) * lightColor.rgb
+                     * wrapNoL * microShadow * shadow * contact;
+            } else {
+                Lo = (diffuse + specBRDF) * lightColor.rgb * NoL * microShadow
+                     * shadow * contact;
+            }
+        }
+
+        // ── Subsurface back-lighting (smID == 2) ────────────────────
+        // @ref Burley 2012 — back-scattering through thin geometry.
+        // Applied outside NoL > 0 block because back-lighting occurs when
+        // the surface faces away from the light.
+        if (shadingModelID == 2) {
+            float3 sssColor  = baseColor;  // Use base color as SSS tint
+            float  backNoL   = saturate(-dot(N, normalize(lightDir.xyz)));
+            float3 backLight = sssColor * backNoL * 0.5 * lightColor.rgb;
+            // Attenuate back-lighting by shadow (partially — some light bleeds through)
+            Lo += backLight * lerp(0.5, 1.0, shadow);
+        }
+    }
+
+    // ── IBL Ambient ────────────────────────────────────────────────────
+    float3 ambient = float3(0, 0, 0);
+    {
+        float skyInt = skyLightIntensity;
+
+        float3 irradiance = float3(0, 0, 0);
+#ifdef UZ_BINDLESS
+        if (irradianceSrvIndex > 0) {
+            TextureCube<float4> irrTex = ResourceDescriptorHeap[irradianceSrvIndex];
+            irradiance = irrTex.SampleLevel(clampSampler, N, 0).rgb;
+        } else {
+            irradiance = GetSkySHDiffuse(N, skyIrradianceSH);
+        }
+#else
+        irradiance = iblIrradiance.SampleLevel(clampSampler, N, 0).rgb;
+#endif
+
+        float3 kS_env = F_SchlickRoughness(NoV, F0, roughness);
+        float3 kD_env = (1.0 - kS_env) * (1.0 - metallic);
+        float3 diffuseAmbient = kD_env * irradiance * baseColor;
+
+        float3 R = reflect(-V, N);
+        float  mipLevel = roughness * float(prefilteredMipLevels - 1);
+
+        float3 prefilteredColor = float3(0, 0, 0);
+        float2 envBRDF = float2(0, 0);
+#ifdef UZ_BINDLESS
+        if (prefilteredSrvIndex > 0) {
+            TextureCube<float4> prefTex = ResourceDescriptorHeap[prefilteredSrvIndex];
+            prefilteredColor = prefTex.SampleLevel(clampSampler, R, mipLevel).rgb;
+        }
+        if (brdfLutSrvIndex > 0) {
+            Texture2D<float2> brdfTex = ResourceDescriptorHeap[brdfLutSrvIndex];
+            envBRDF = brdfTex.SampleLevel(clampSampler, float2(NoV, roughness), 0).rg;
+        }
+#else
+        prefilteredColor = iblPrefiltered.SampleLevel(clampSampler, R, mipLevel).rgb;
+        envBRDF = iblBrdfLut.SampleLevel(clampSampler, float2(NoV, roughness), 0).rg;
+#endif
+
+        /// @ref Karis 2013, UE5 BRDF.ush:EnvBRDF()
+        float  F90 = saturate(50.0 * F0.g);
+        float3 specularAmbient = prefilteredColor * (F0 * envBRDF.x + F90 * envBRDF.y);
+
+        /// @ref Lagarde 2012 "Horizon Occlusion for Normal Mapped Reflections"
+        float horizon = saturate(1.0 + dot(R, N));
+        specularAmbient *= horizon * horizon;
+
+        /// @ref Kulla & Conty 2017, Fdez-Aguera 2019
+        float3 FssEss = F0 * envBRDF.x + F90 * envBRDF.y;
+        float  Ess    = envBRDF.x + envBRDF.y;
+        float  Ems    = 1.0 - Ess;
+        float3 Favg   = F0 + (1.0 - F0) / 21.0;
+        float3 FmsEms = Ems * FssEss * Favg / (1.0 - Favg * Ems);
+        specularAmbient += FmsEms * irradiance * 0.5;
+
+        /// @ref Lagarde 2014
+        specularAmbient *= SpecularOcclusion(NoV, ao, roughness);
+
+        ambient = (diffuseAmbient * ao + specularAmbient) * skyInt;
+
+        // Fallback: if IBL cubemaps are empty (first frames), metals get F0 base color.
+        float iblEnergy = dot(prefilteredColor, float3(0.299, 0.587, 0.114));
+        if (iblEnergy < 0.001) {
+            ambient = lerp(baseColor * 0.05, F0 * 0.15, metallic) * skyInt;
+        }
+    }
+
+    // ── ClearCoat dual-layer specular (smID == 4) ──────────────────────
+    // @ref Karis 2013 "Real Shading in Unreal Engine 4" — clear coat is a
+    // dielectric layer (IOR ~1.5, F0 = 0.04) on top of the base material.
+    // Energy conservation: base layer attenuated by coat Fresnel, coat
+    // specular added on top.
+    if (shadingModelID == 4) {
+        // ── Direct light coat lobe ──────────────────────────────────
+        float3 L_cc     = normalize(lightDir.xyz);
+        float  NdotL_cc = max(dot(N, L_cc), 0.0);
+        if (NdotL_cc > 0.0) {
+            float3 H_cc     = normalize(V + L_cc);
+            float  coatNoH  = saturate(dot(N, H_cc));
+            float  coatVoH  = saturate(dot(V, H_cc));
+
+            float  coatAlpha = clearCoatRough * clearCoatRough;
+            float  coatA2    = coatAlpha * coatAlpha;
+
+            // GGX NDF for coat layer
+            float coatD   = D_GGX(coatNoH, coatAlpha);
+            // Schlick Fresnel for dielectric coat (F0 = 0.04)
+            float coatF   = 0.04 + 0.96 * pow(1.0 - coatVoH, 5.0);
+            // Smith visibility for coat
+            float coatVis = Vis_SmithJointApprox(coatA2, NoV, NdotL_cc);
+
+            float  coatSpec = coatD * coatF * coatVis;
+            float3 coatLo   = float3(coatSpec, coatSpec, coatSpec)
+                              * lightColor.rgb * NdotL_cc * shadow * contact;
+
+            // Attenuate base layer by coat Fresnel, then add coat on top
+            Lo = Lo * (1.0 - coatF * clearCoatVal) + coatLo * clearCoatVal;
+        }
+
+        // ── IBL coat reflection ─────────────────────────────────────
+        // Attenuate base ambient by average coat Fresnel at grazing angle
+        float coatFresnelAvg = 0.04 + 0.96 * pow(1.0 - NoV, 5.0);
+        ambient *= (1.0 - coatFresnelAvg * clearCoatVal);
+
+        // Add coat specular reflection from environment
+        float3 R_cc    = reflect(-V, N);
+        float  coatMip = clearCoatRough * float(prefilteredMipLevels - 1);
+        float3 coatRefl = float3(0, 0, 0);
+#ifdef UZ_BINDLESS
+        if (prefilteredSrvIndex > 0) {
+            TextureCube<float4> prefTex = ResourceDescriptorHeap[prefilteredSrvIndex];
+            coatRefl = prefTex.SampleLevel(clampSampler, R_cc, coatMip).rgb;
+        }
+#else
+        coatRefl = iblPrefiltered.SampleLevel(clampSampler, R_cc, coatMip).rgb;
+#endif
+        ambient += coatRefl * coatFresnelAvg * clearCoatVal * skyLightIntensity;
+    }
+
+    // ── Final composite: ambient + direct + emissive ────────────────────
+    float3 color = ambient + Lo + emissive;
+    return float4(max(color, 0.0), 1.0);
 }

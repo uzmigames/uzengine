@@ -6,6 +6,7 @@
 
 #include "file_system.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <fstream>
@@ -787,15 +788,20 @@ Mesh MeshBuilder::CreateFromSimpleVertices(const std::vector<SimpleVertex>& vert
 // MeshBuilder::CreateCube
 // ─────────────────────────────────────────────────────────────────────────────
 
-Mesh MeshBuilder::CreateCube(float size) {
+Mesh MeshBuilder::CreateCube(float size, uint32_t subdivisions) {
     UZ_PROFILE_FUNCTION();
     // Cube with bottom at Z=0, centered on XY.
-    // 6 faces × 4 vertices = 24 vertices, 6 faces × 2 triangles × 3 = 36 indices.
+    // Each face is subdivided into subdivisions×subdivisions quads.
     // Z-up coordinate system: X-forward, Y-right, Z-up.
+
+    const uint32_t subs = std::clamp(subdivisions, 1u, 256u);
+    const uint32_t vertsPerEdge = subs + 1;
+    const uint32_t vertsPerFace = vertsPerEdge * vertsPerEdge;
+    const uint32_t indicesPerFace = subs * subs * 6;
 
     const float s = size;
 
-    // Positions: bottom Z=0, top Z=2*size, centered on XY
+    // Corner positions: bottom Z=0, top Z=2*size, centered on XY
     const Vec3 p000{-s, -s, 0.0f};
     const Vec3 p100{ s, -s, 0.0f};
     const Vec3 p110{ s,  s, 0.0f};
@@ -821,40 +827,88 @@ Mesh MeshBuilder::CreateCube(float size) {
     const Vec4 tTop   { 1,  0,  0, 1};
     const Vec4 tBottom{ 1,  0,  0, 1};
 
-    // UV corners
-    const Vec2 uv00{0, 0}, uv10{1, 0}, uv11{1, 1}, uv01{0, 1};
-
-    std::vector<Vertex> vertices = {
-        // +X face (front)
-        {p100, nFront, uv00, tFront}, {p110, nFront, uv10, tFront},
-        {p111, nFront, uv11, tFront}, {p101, nFront, uv01, tFront},
-        // -X face (back)
-        {p010, nBack, uv00, tBack}, {p000, nBack, uv10, tBack},
-        {p001, nBack, uv11, tBack}, {p011, nBack, uv01, tBack},
-        // +Y face (right)
-        {p110, nRight, uv00, tRight}, {p010, nRight, uv10, tRight},
-        {p011, nRight, uv11, tRight}, {p111, nRight, uv01, tRight},
-        // -Y face (left)
-        {p000, nLeft, uv00, tLeft}, {p100, nLeft, uv10, tLeft},
-        {p101, nLeft, uv11, tLeft}, {p001, nLeft, uv01, tLeft},
-        // +Z face (top)
-        {p001, nTop, uv00, tTop}, {p101, nTop, uv10, tTop},
-        {p111, nTop, uv11, tTop}, {p011, nTop, uv01, tTop},
-        // -Z face (bottom)
-        {p010, nBottom, uv00, tBottom}, {p110, nBottom, uv10, tBottom},
-        {p100, nBottom, uv11, tBottom}, {p000, nBottom, uv01, tBottom},
+    // Face definitions: 4 corners in winding order matching the original code.
+    // Corner order per face: [0]=uv(0,0), [1]=uv(1,0), [2]=uv(1,1), [3]=uv(0,1)
+    // Bilinear interpolation: P(u,v) = (1-u)(1-v)*c0 + u(1-v)*c1 + uv*c2 + (1-u)v*c3
+    struct FaceDef {
+        Vec3 corners[4];
+        Vec3 normal;
+        Vec4 tangent;
     };
 
+    const FaceDef faces[6] = {
+        // +X face (front)
+        {{p100, p110, p111, p101}, nFront, tFront},
+        // -X face (back)
+        {{p010, p000, p001, p011}, nBack, tBack},
+        // +Y face (right)
+        {{p110, p010, p011, p111}, nRight, tRight},
+        // -Y face (left)
+        {{p000, p100, p101, p001}, nLeft, tLeft},
+        // +Z face (top)
+        {{p001, p101, p111, p011}, nTop, tTop},
+        // -Z face (bottom)
+        {{p010, p110, p100, p000}, nBottom, tBottom},
+    };
+
+    std::vector<Vertex> vertices;
+    vertices.reserve(6 * vertsPerFace);
+
     std::vector<uint32_t> indices;
-    indices.reserve(36);
-    for (uint32_t face = 0; face < 6; ++face) {
-        uint32_t base = face * 4;
-        indices.push_back(base + 0);
-        indices.push_back(base + 1);
-        indices.push_back(base + 2);
-        indices.push_back(base + 0);
-        indices.push_back(base + 2);
-        indices.push_back(base + 3);
+    indices.reserve(6 * indicesPerFace);
+
+    const float invSubs = 1.0f / static_cast<float>(subs);
+
+    for (uint32_t f = 0; f < 6; ++f) {
+        const auto& face = faces[f];
+        const uint32_t baseVertex = static_cast<uint32_t>(vertices.size());
+
+        // Generate (subs+1)×(subs+1) vertices via bilinear interpolation
+        for (uint32_t row = 0; row <= subs; ++row) {
+            const float v = static_cast<float>(row) * invSubs;
+            for (uint32_t col = 0; col <= subs; ++col) {
+                const float u = static_cast<float>(col) * invSubs;
+
+                // Bilinear interpolation of position from the 4 corners
+                const float w00 = (1.0f - u) * (1.0f - v);
+                const float w10 = u * (1.0f - v);
+                const float w11 = u * v;
+                const float w01 = (1.0f - u) * v;
+
+                const Vec3 pos{
+                    w00 * face.corners[0].x + w10 * face.corners[1].x +
+                    w11 * face.corners[2].x + w01 * face.corners[3].x,
+                    w00 * face.corners[0].y + w10 * face.corners[1].y +
+                    w11 * face.corners[2].y + w01 * face.corners[3].y,
+                    w00 * face.corners[0].z + w10 * face.corners[1].z +
+                    w11 * face.corners[2].z + w01 * face.corners[3].z,
+                };
+
+                const Vec2 uv{u, v};
+
+                vertices.push_back({pos, face.normal, uv, face.tangent});
+            }
+        }
+
+        // Generate indices: two triangles per quad, same winding as original
+        for (uint32_t row = 0; row < subs; ++row) {
+            for (uint32_t col = 0; col < subs; ++col) {
+                const uint32_t i00 = baseVertex + row * vertsPerEdge + col;
+                const uint32_t i10 = i00 + 1;
+                const uint32_t i01 = i00 + vertsPerEdge;
+                const uint32_t i11 = i01 + 1;
+
+                // Triangle 1: (0,0)→(1,0)→(1,1)  — matches original base+0, base+1, base+2
+                indices.push_back(i00);
+                indices.push_back(i10);
+                indices.push_back(i11);
+
+                // Triangle 2: (0,0)→(1,1)→(0,1)  — matches original base+0, base+2, base+3
+                indices.push_back(i00);
+                indices.push_back(i11);
+                indices.push_back(i01);
+            }
+        }
     }
 
     return CreateFromVertices(vertices, indices);

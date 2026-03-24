@@ -152,14 +152,21 @@ void FBXTest::OnStart() {
         world.AddComponent<SkyAtmosphereComponent>(sky);
     }
 
-    // ── Sky light (IBL) ──────────────────────────────────────────────────
+    // ── Sky light (IBL) — matched to pbr_test values ──────────────────
     {
         Entity skyLight = world.CreateEntity();
-        world.AddComponent<SceneComponent>(skyLight);
+        auto& scene = world.AddComponent<SceneComponent>(skyLight);
+        scene.SetPosition({0.f, 0.f, 690.f});
         auto& sl = world.AddComponent<SkyLightComponent>(skyLight);
-        sl.intensity = 1.5f;  // Stronger fill light for better material visibility
-        sl.lowerHemisphereIsBlack = false;
-        sl.lowerHemisphereColor = {0.2f, 0.22f, 0.28f}; // Blue-ish ground bounce
+        sl.intensity                 = 0.8f;
+        sl.indirectLightingIntensity = 0.8f;
+        sl.lightColor                = {0.85f, 0.9f, 1.0f};
+        sl.realTimeCapture           = false;
+        sl.sourceType                = ESkyLightSourceType::CapturedScene;
+        sl.cubemapResolution         = 128;
+        sl.lowerHemisphereIsBlack    = false;
+        sl.lowerHemisphereColor      = {0.15f, 0.16f, 0.20f};
+        sl.minOcclusion              = 0.0f;
     }
 
     // ── Height fog ───────────────────────────────────────────────────────
@@ -183,6 +190,9 @@ void FBXTest::OnStart() {
         clouds.enabled = true;
     }
 #endif
+
+    // ── Rendering config — matched to pbr_test ─────────────────────────
+    GetRenderer().SetScreenPercentage(100.0f);
 
     UZ_LOG(Demo, Info, "FBX test scene ready");
 }

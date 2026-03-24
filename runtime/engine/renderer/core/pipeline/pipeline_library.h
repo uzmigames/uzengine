@@ -30,6 +30,7 @@
 #include "rhi_pso_disk_cache.h"
 #include "rhi_pso_cache.h"
 #include "rhi_types.h"
+#include "engine/renderer/core/shader/shader_permutation_cache.h"
 
 #include <memory>
 #include <string>
@@ -735,17 +736,13 @@ private:
     RHIShaderHandle m_meshSdfBakeCS             = RHIShaderHandle::Invalid();
     RHIShaderHandle m_radianceCacheTraceCS      = RHIShaderHandle::Invalid();
 
-    // ── Cached pipeline handles (one per bindless variant) ──────────────
-    RHIPipelineHandle m_forwardPBR         = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_forwardPBRBindless = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_gbuffer            = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_gbufferBindless    = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_gbufferMasked         = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_gbufferMaskedBindless = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_translucent           = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_translucentBindless   = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_additive              = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_additiveBindless      = RHIPipelineHandle::Invalid();
+    // ── Shader permutation cache (material-dependent PSOs) ─────────────
+    /// Caches ForwardPBR, GBuffer, GBufferMasked, Translucent, and Additive
+    /// pipelines keyed by ShaderPermutationKey (blend mode + bindless flag).
+    /// Replaces the per-variant m_forwardPBR/m_gbuffer/etc. member variables.
+    ShaderPermutationCache m_permutationCache;
+
+    // ── Cached pipeline handles (non-material pipelines) ────────────────
     RHIPipelineHandle m_lighting              = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_gbufferDebug          = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_debugView             = RHIPipelineHandle::Invalid();

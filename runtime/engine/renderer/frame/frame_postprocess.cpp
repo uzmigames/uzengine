@@ -39,6 +39,8 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
     // All locals (pipelines, bindless, vpWidth, etc.) are accessed via ctx.*
     // to avoid dangling references in deferred execution callbacks.
 
+    // Post-process passes below (bloom, tonemap, CAS, FXAA, etc.)
+
     // ── Bloom pass (compute: threshold + downsample + upsample) ─────────
     // Runs after all HDR rendering is complete. Reads HDR scene color,
     // extracts bright pixels, and builds a multi-scale bloom mip chain.
@@ -53,12 +55,9 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
         rgBuilder.AddPass("Bloom", [&](rg::RgPassBuilder& pb) {
             pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
 
-            pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
+            pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources&) {
                 UZ_PROFILE_SCOPE("Bloom::Execute");
 
-                // HDR is in ShaderResource state (render graph transition).
-                // Dispatch the full bloom compute chain at render resolution
-                // (bloom operates on the HDR scene color before TAA upscale).
                 m_bloomPass->Execute(cmd, m_hdrSceneColorSrv,
                                      static_cast<uint32_t>(ctx.renderWidth), static_cast<uint32_t>(ctx.renderHeight),
                                      ctx.perFrame.exposure);
@@ -139,7 +138,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
         rgBuilder.AddPass(passName, [&, writeIdx, readIdx, jitterX, jitterY](rg::RgPassBuilder& pb) {
             pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
 
-            pb.SetExecutionCallback([this, &ctx, writeIdx, readIdx, jitterX, jitterY](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
+            pb.SetExecutionCallback([this, &ctx, writeIdx, readIdx, jitterX, jitterY](IRHICommandList* cmd, const rg::RgPassResources&) {
                 UZ_PROFILE_SCOPE("Upscaler::Execute");
 
                 // Transition TAA history textures:

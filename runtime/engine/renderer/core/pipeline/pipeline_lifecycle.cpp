@@ -72,16 +72,46 @@ void PipelineLibrary::Shutdown() {
         }
     };
 
-    destroyPipeline(m_forwardPBR);
-    destroyPipeline(m_forwardPBRBindless);
-    destroyPipeline(m_gbuffer);
-    destroyPipeline(m_gbufferBindless);
-    destroyPipeline(m_gbufferMasked);
-    destroyPipeline(m_gbufferMaskedBindless);
-    destroyPipeline(m_translucent);
-    destroyPipeline(m_translucentBindless);
-    destroyPipeline(m_additive);
-    destroyPipeline(m_additiveBindless);
+    // Destroy material-dependent PSOs stored in the permutation cache.
+    // Enumerate all known keys (5 blend modes x 2 bindless variants = 10 entries max).
+    {
+        const EBlendMode blendModes[] = {
+            EBlendMode::Opaque,      // ForwardPBR + GBuffer
+            EBlendMode::Masked,      // GBufferMasked
+            EBlendMode::Translucent, // Translucent
+            EBlendMode::Additive,    // Additive
+        };
+        const bool bindlessValues[] = { false, true };
+
+        for (const auto blend : blendModes) {
+            for (const bool bl : bindlessValues) {
+                // ForwardPBR uses Opaque + a distinct shading model (Unlit) to
+                // differentiate from GBuffer's Opaque + DefaultLit key.
+                if (blend == EBlendMode::Opaque) {
+                    // GBuffer key: DefaultLit + Opaque
+                    const ShaderPermutationKey gbufKey(EShadingModel::DefaultLit, blend, bl);
+                    auto gbufHandle = m_permutationCache.Lookup(gbufKey);
+                    if (gbufHandle.IsValid()) {
+                        m_device->DestroyPipeline(gbufHandle);
+                    }
+                    // ForwardPBR key: Unlit + Opaque
+                    const ShaderPermutationKey fwdKey(EShadingModel::Unlit, blend, bl);
+                    auto fwdHandle = m_permutationCache.Lookup(fwdKey);
+                    if (fwdHandle.IsValid()) {
+                        m_device->DestroyPipeline(fwdHandle);
+                    }
+                } else {
+                    const ShaderPermutationKey key(EShadingModel::DefaultLit, blend, bl);
+                    auto handle = m_permutationCache.Lookup(key);
+                    if (handle.IsValid()) {
+                        m_device->DestroyPipeline(handle);
+                    }
+                }
+            }
+        }
+        m_permutationCache.InvalidateAll();
+    }
+
     destroyPipeline(m_lighting);
     destroyPipeline(m_gbufferDebug);
     destroyPipeline(m_debugView);

@@ -112,6 +112,9 @@ class FileWatcherTest : public ::testing::Test {
 protected:
     void SetUp() override {
         m_tempDir = std::filesystem::temp_directory_path() / "uz_test_filewatcher";
+        // Clean up stale leftovers from a previous aborted run
+        std::error_code ec;
+        std::filesystem::remove_all(m_tempDir, ec);
         std::filesystem::create_directories(m_tempDir);
     }
 
@@ -227,6 +230,9 @@ class ShaderHotReloadIntegrationTest : public ::testing::Test {
 protected:
     void SetUp() override {
         m_tempDir = std::filesystem::temp_directory_path() / "uz_test_hotreload";
+        // Clean up stale leftovers from a previous aborted run
+        std::error_code ec;
+        std::filesystem::remove_all(m_tempDir, ec);
         std::filesystem::create_directories(m_tempDir);
     }
 

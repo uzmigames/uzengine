@@ -14,7 +14,9 @@ class ShaderCacheTest : public ::testing::Test {
 protected:
     void SetUp() override {
         m_cacheDir = "test_shader_cache_tmp";
-        fs::remove_all(m_cacheDir);
+        // Clean up stale leftovers from a previous aborted run (non-throwing)
+        std::error_code ec;
+        fs::remove_all(m_cacheDir, ec);
     }
 
     void TearDown() override {

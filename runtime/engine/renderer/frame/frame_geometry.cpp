@@ -98,7 +98,9 @@ void SceneRenderer::RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContex
             gbDesc.depthTexture         = m_gbuffer.depth;
             gbDesc.drawList             = &ctx.drawList;
             gbDesc.cbAllocator          = m_cbRing.get();
+            gbDesc.cbRingAllocator      = m_cbRing.get();
             gbDesc.perFrameAlloc        = ctx.perFrameAlloc;
+            gbDesc.perFrameParams       = &ctx.perFrame;
             gbDesc.pipeline             = pipelines->GetGBuffer(bindless);
             gbDesc.maskedPipeline       = pipelines->GetGBufferMasked(bindless);
             gbDesc.meshes               = m_meshes.data();

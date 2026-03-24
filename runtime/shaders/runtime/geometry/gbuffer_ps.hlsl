@@ -56,7 +56,13 @@ cbuffer PerObjectCB : register(b2) {
     float2   uvOffset;
     float    aoIntensity;
     float    matOpacity;
-    float    _pomPad[7];
+    float    displacementScale;
+    uint     heightmapSrvIndex;
+    float    pomMinLayers;
+    float    pomMaxLayers;
+    float    pomFadeStart;
+    float    pomFadeEnd;
+    float    pomSelfShadow;
     uint     materialFlags;
 };
 
@@ -71,6 +77,7 @@ Texture2D<float4> aoTexture        : register(t4);
 Texture2D<float4> emissiveTexture  : register(t5);
 #endif
 SamplerState linearSampler : register(s0);
+SamplerState clampSampler  : register(s2);
 
 GBufferOutput main(PSInput input) {
     float2 uv = input.texcoord * uvScale + uvOffset;
@@ -124,7 +131,7 @@ GBufferOutput main(PSInput input) {
         ao = orm.r; roughness = orm.g; metallic = orm.b;
     } else {
         roughness = roughnessTexture.SampleBias(linearSampler, uv, mipBias).r;
-        metallic  = metallicTexture.SampleBias(linearSampler, uv, mipBias).r;
+        metallic  = metallicTexture.SampleLevel(clampSampler, uv, 0).r;
         ao        = aoTexture.SampleBias(linearSampler, uv, mipBias).r;
     }
 #endif
@@ -196,11 +203,19 @@ GBufferOutput main(PSInput input) {
         if (matOpacity < alphaClipThreshold) discard;
     }
 
+    // ── Per-shading-model custom data in RT2.w ──────────────────────────
+    // RT2.w is available (RGBA32Float) for per-model parameters.
+    // smID==4 (ClearCoat): clearCoatRoughness from materialFlags bits[28:31]
+    float customW = 1.0;
+    if (smID == 4) {
+        customW = float((materialFlags >> 28u) & 0xFu) / 15.0;
+    }
+
     // ── Write GBuffer ─────────────────────────────────────────────────────
     GBufferOutput output;
     output.albedoAO     = float4(albedo, ao);
     output.normalMatPbr = float4(octN, metallic, roughness);
-    output.positionWS   = float4(input.positionWS, 1.0);
+    output.positionWS   = float4(input.positionWS, customW);
     output.emissiveHDR  = float4(emissive, packedAlpha);
     return output;
 }

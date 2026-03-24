@@ -774,7 +774,7 @@ TEST(PerFrameCB_IBL, WriteAndReadBackAllIBLFields) {
     EXPECT_EQ(cb.irradianceSrvIndex,  100u);
     EXPECT_EQ(cb.prefilteredSrvIndex, 101u);
     EXPECT_EQ(cb.brdfLutSrvIndex,     102u);
-    EXPECT_EQ(cb.prefilteredMipLevels, 5u);
+    EXPECT_EQ(cb.prefilteredMipLevels, 6u);
     EXPECT_FLOAT_EQ(cb.skyLightIntensity,  3.0f);
     EXPECT_FLOAT_EQ(cb.skyLightColorR,     0.9f);
     EXPECT_FLOAT_EQ(cb.skyLightColorG,     0.95f);

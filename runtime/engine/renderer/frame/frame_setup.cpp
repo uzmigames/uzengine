@@ -39,9 +39,9 @@
 // ── CVars ────────────────────────────────────────────────────────────────
 static auto* cv_SkyLightIntensity  = UZ_CVAR_FLOAT("r.SkyLight.Intensity", 1.0f, "IBL ambient multiplier", 0.f, 20.f);
 static auto* cv_SkyLightMinAmbient = UZ_CVAR_FLOAT("r.SkyLight.MinAmbient", 0.25f, "Minimum ambient floor", 0.f, 1.f);
-static auto* cv_ContactShadowLen   = UZ_CVAR_FLOAT("r.ContactShadow.Length", 0.03f, "Contact shadow ray length", 0.f, 0.2f);
+static auto* cv_ContactShadowLen   = UZ_CVAR_FLOAT("r.ContactShadow.Length", 0.0f, "Contact shadow ray length (0=off)", 0.f, 0.2f);
 static auto* cv_FilmGrain          = UZ_CVAR_FLOAT("r.FilmGrain", 0.f, "Film grain intensity", 0.f, 1.f);
-static auto* cv_Vignette           = UZ_CVAR_FLOAT("r.Vignette", 0.4f, "Vignette intensity", 0.f, 2.f);
+static auto* cv_Vignette           = UZ_CVAR_FLOAT("r.Vignette", 0.0f, "Vignette intensity", 0.f, 2.f);
 static auto* cv_ChromaAb           = UZ_CVAR_FLOAT("r.ChromaticAberration", 0.f, "Chromatic aberration", 0.f, 1.f);
 static auto* cv_ColorSaturation   = UZ_CVAR_FLOAT("r.ColorSaturation", 1.1f, "Color saturation (1=neutral, >1=vivid)", 0.f, 3.f);
 static auto* cv_ColorContrast     = UZ_CVAR_FLOAT("r.ColorContrast", 1.0f, "Color contrast power (1=neutral)", 0.1f, 3.f);
@@ -53,7 +53,7 @@ static auto* cv_TonemapWhiteClip   = UZ_CVAR_FLOAT("r.Tonemap.WhiteClip", 0.04f,
 static auto* cv_MipBias            = UZ_CVAR_FLOAT("r.MipBias", 0.f, "Global mipmap LOD bias", -4.f, 4.f);
 static auto* cv_Exposure           = UZ_CVAR_FLOAT("r.Exposure", 1.0f, "Manual exposure bias on auto-exposure", 0.01f, 100.f);
 static auto* cv_GIIntensity        = UZ_CVAR_FLOAT("r.GI.Intensity", 1.f, "GI intensity multiplier", 0.f, 10.f);
-static auto* cv_TAA                = UZ_CVAR_BOOL("r.TAA", true, "TAA anti-aliasing");
+static auto* cv_TAA                = UZ_CVAR_BOOL("r.TAA", false, "TAA anti-aliasing");
 static auto* cv_DepthPrepass       = UZ_CVAR_BOOL("r.DepthPrepass", true, "Depth prepass before GBuffer");
 static auto* cv_ShadowDebug        = UZ_CVAR_INT("r.ShadowDebug", 0, "Shadow debug grid mode (0=off, 1-8)", 0, 8);
 
@@ -197,7 +197,7 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     ctx.taaActive = m_taaEnabled
                  && m_taaHistory[0].IsValid()
                  && m_taaHistory[1].IsValid()
-                 && m_device->IsBindless()  // TAA compute requires bindless
+                 && m_device->IsBindless()
                  && m_passInspector.IsPassEnabled("taa");
 
     if (ctx.taaActive) {

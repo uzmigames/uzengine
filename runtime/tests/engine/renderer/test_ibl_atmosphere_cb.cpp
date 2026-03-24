@@ -481,9 +481,9 @@ TEST(HeightFogComponent, ColorDefaultIsBlack) {
     EXPECT_FLOAT_EQ(comp.color.z, 0.0f);
 }
 
-TEST(HeightFogComponent, DensityDefaultIs0_02) {
+TEST(HeightFogComponent, DensityDefaultIs0_0436) {
     HeightFogComponent comp{};
-    EXPECT_FLOAT_EQ(comp.density, 0.02f);
+    EXPECT_FLOAT_EQ(comp.density, 0.0436f);
 }
 
 TEST(HeightFogComponent, HeightFalloffDefaultIs0_2) {
@@ -491,9 +491,9 @@ TEST(HeightFogComponent, HeightFalloffDefaultIs0_2) {
     EXPECT_FLOAT_EQ(comp.heightFalloff, 0.2f);
 }
 
-TEST(HeightFogComponent, BaseHeightDefaultIsZero) {
+TEST(HeightFogComponent, BaseHeightDefaultIsNeg5000) {
     HeightFogComponent comp{};
-    EXPECT_FLOAT_EQ(comp.baseHeight, 0.0f);
+    EXPECT_FLOAT_EQ(comp.baseHeight, -5000.0f);
 }
 
 TEST(HeightFogComponent, MaxOpacityDefaultIsOne) {

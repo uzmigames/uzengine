@@ -26,7 +26,10 @@ RHIPipelineHandle PipelineLibrary::GetForwardPBR(bool bindless) {
         return RHIPipelineHandle::Invalid();
     }
 
-    auto& cached = bindless ? m_forwardPBRBindless : m_forwardPBR;
+    // ForwardPBR uses Unlit shading model as a key differentiator from GBuffer
+    // (both are Opaque blend mode, but ForwardPBR is the single-pass forward path).
+    const ShaderPermutationKey key(EShadingModel::Unlit, EBlendMode::Opaque, bindless);
+    const auto cached = m_permutationCache.Lookup(key);
     if (cached.IsValid()) {
         return cached;
     }
@@ -55,14 +58,15 @@ RHIPipelineHandle PipelineLibrary::GetForwardPBR(bool bindless) {
         desc.vertexStride      = layout.stride;
     }
 
-    cached = CreateCachedPipeline(desc);
-    if (!cached.IsValid()) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create ForwardPBR pipeline (bindless={})", bindless);
-    } else {
+    auto handle = CreateCachedPipeline(desc);
+    if (handle.IsValid()) {
+        m_permutationCache.Insert(key, handle);
         UZ_LOG(Renderer, Info, "PipelineLibrary: created ForwardPBR pipeline (bindless={})", bindless);
+    } else {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create ForwardPBR pipeline (bindless={})", bindless);
     }
 
-    return cached;
+    return handle;
 }
 
 RHIPipelineHandle PipelineLibrary::GetGBuffer() {
@@ -75,7 +79,8 @@ RHIPipelineHandle PipelineLibrary::GetGBuffer(bool bindless) {
         return RHIPipelineHandle::Invalid();
     }
 
-    auto& cached = bindless ? m_gbufferBindless : m_gbuffer;
+    const ShaderPermutationKey key(EShadingModel::DefaultLit, EBlendMode::Opaque, bindless);
+    const auto cached = m_permutationCache.Lookup(key);
     if (cached.IsValid()) {
         return cached;
     }
@@ -108,14 +113,15 @@ RHIPipelineHandle PipelineLibrary::GetGBuffer(bool bindless) {
         desc.vertexStride      = layout.stride;
     }
 
-    cached = CreateCachedPipeline(desc);
-    if (!cached.IsValid()) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create GBuffer pipeline (bindless={})", bindless);
-    } else {
+    auto handle = CreateCachedPipeline(desc);
+    if (handle.IsValid()) {
+        m_permutationCache.Insert(key, handle);
         UZ_LOG(Renderer, Info, "PipelineLibrary: created GBuffer pipeline (bindless={})", bindless);
+    } else {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create GBuffer pipeline (bindless={})", bindless);
     }
 
-    return cached;
+    return handle;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -132,7 +138,8 @@ RHIPipelineHandle PipelineLibrary::GetGBufferMasked(bool bindless) {
         return RHIPipelineHandle::Invalid();
     }
 
-    auto& cached = bindless ? m_gbufferMaskedBindless : m_gbufferMasked;
+    const ShaderPermutationKey key(EShadingModel::DefaultLit, EBlendMode::Masked, bindless);
+    const auto cached = m_permutationCache.Lookup(key);
     if (cached.IsValid()) {
         return cached;
     }
@@ -172,14 +179,15 @@ RHIPipelineHandle PipelineLibrary::GetGBufferMasked(bool bindless) {
         desc.vertexStride      = layout.stride;
     }
 
-    cached = CreateCachedPipeline(desc);
-    if (!cached.IsValid()) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create GBufferMasked pipeline (bindless={})", bindless);
-    } else {
+    auto handle = CreateCachedPipeline(desc);
+    if (handle.IsValid()) {
+        m_permutationCache.Insert(key, handle);
         UZ_LOG(Renderer, Info, "PipelineLibrary: created GBufferMasked pipeline (bindless={})", bindless);
+    } else {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create GBufferMasked pipeline (bindless={})", bindless);
     }
 
-    return cached;
+    return handle;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -196,7 +204,8 @@ RHIPipelineHandle PipelineLibrary::GetTranslucent(bool bindless) {
         return RHIPipelineHandle::Invalid();
     }
 
-    auto& cached = bindless ? m_translucentBindless : m_translucent;
+    const ShaderPermutationKey key(EShadingModel::DefaultLit, EBlendMode::Translucent, bindless);
+    const auto cached = m_permutationCache.Lookup(key);
     if (cached.IsValid()) {
         return cached;
     }
@@ -238,14 +247,15 @@ RHIPipelineHandle PipelineLibrary::GetTranslucent(bool bindless) {
         desc.vertexStride      = layout.stride;
     }
 
-    cached = CreateCachedPipeline(desc);
-    if (!cached.IsValid()) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create Translucent pipeline (bindless={})", bindless);
-    } else {
+    auto handle = CreateCachedPipeline(desc);
+    if (handle.IsValid()) {
+        m_permutationCache.Insert(key, handle);
         UZ_LOG(Renderer, Info, "PipelineLibrary: created Translucent pipeline (bindless={})", bindless);
+    } else {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create Translucent pipeline (bindless={})", bindless);
     }
 
-    return cached;
+    return handle;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -262,7 +272,8 @@ RHIPipelineHandle PipelineLibrary::GetAdditive(bool bindless) {
         return RHIPipelineHandle::Invalid();
     }
 
-    auto& cached = bindless ? m_additiveBindless : m_additive;
+    const ShaderPermutationKey key(EShadingModel::DefaultLit, EBlendMode::Additive, bindless);
+    const auto cached = m_permutationCache.Lookup(key);
     if (cached.IsValid()) {
         return cached;
     }
@@ -303,14 +314,15 @@ RHIPipelineHandle PipelineLibrary::GetAdditive(bool bindless) {
         desc.vertexStride      = layout.stride;
     }
 
-    cached = CreateCachedPipeline(desc);
-    if (!cached.IsValid()) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create Additive pipeline (bindless={})", bindless);
-    } else {
+    auto handle = CreateCachedPipeline(desc);
+    if (handle.IsValid()) {
+        m_permutationCache.Insert(key, handle);
         UZ_LOG(Renderer, Info, "PipelineLibrary: created Additive pipeline (bindless={})", bindless);
+    } else {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create Additive pipeline (bindless={})", bindless);
     }
 
-    return cached;
+    return handle;
 }
 
 RHIPipelineHandle PipelineLibrary::GetLighting() {

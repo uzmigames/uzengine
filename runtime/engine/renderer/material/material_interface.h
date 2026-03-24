@@ -215,6 +215,17 @@ public:
     /// @ref Burley 2015 — subsurface radius in world units (cm).
     [[nodiscard]] virtual float GetSubsurfaceRadius() const { return 1.0f; }
 
+    // ── Clear coat parameters ──────────────────────────────────────────────
+
+    /// Clear coat layer intensity. 0 = no coating, 1 = full second specular lobe.
+    /// @ref Karis 2013 "Real Shading in Unreal Engine 4" — clear coat shading model.
+    [[nodiscard]] virtual float GetClearCoat() const { return 0.0f; }
+
+    /// Clear coat layer roughness. Controls the smoothness of the top specular lobe.
+    /// Default 0.04 produces a near-mirror coating (automotive paint, varnish).
+    /// @ref Karis 2013 "Real Shading in Unreal Engine 4" — ClearCoatRoughness parameter.
+    [[nodiscard]] virtual float GetClearCoatRoughness() const { return 0.04f; }
+
     // ── Shading model / domain / blend mode ─────────────────────────────────
 
     /// Shading model determines the BRDF used in the lighting pass.
