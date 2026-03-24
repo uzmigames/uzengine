@@ -1,5 +1,14 @@
 # UzEngine Documentation Operator Memory
 
+## Most Recent Work (2026-03-24)
+**Created async texture pipeline documentation** — 2 comprehensive guides (1,036 total lines)
+
+Files:
+- **`docs/guides/texture-pipeline.md`** (542 lines) — Full cook-to-runtime workflow with format heuristics, .uztexture binary, AsyncTextureDecoder API, copy queue architecture, UploadRing buffer, sRGB support, performance metrics (273× upload speedup, 4× VRAM reduction)
+- **`docs/analysis/texture-loading-benchmarks.md`** (494 lines) — Detailed metrics: main thread stall (11.6s→0ms), per-texture upload (82ms→0.3ms), VRAM (16MB→4MB), cook time (543ms→170ms parallel), staging allocations, parse overhead, hardware variation analysis
+
+Updated indices: Added entries to `/docs/README.md` guides table and `/docs/analysis/README.md` directory index.
+
 ## Most Recent Work (2026-03-17)
 **Created 4 rendering sub-spec files** under `docs/specs/rendering/`
 
