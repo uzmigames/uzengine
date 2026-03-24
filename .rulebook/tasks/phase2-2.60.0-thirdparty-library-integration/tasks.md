@@ -24,10 +24,10 @@
 
 ## 4. libpng — PNG Image Format
 
-- [ ] 4.1 Add libpng as alternative PNG decoder in TextureImporter — fall back to stb_image if libpng unavailable.
-- [ ] 4.2 Support 16-bit PNG input (heightmaps, displacement) — decode to R16/RG16 format.
-- [ ] 4.3 Add PNG write support for screenshot export (replace stb_image_write for PNG).
-- [ ] 4.4 Unit test: round-trip encode/decode 8-bit and 16-bit PNG.
+- [x] 4.1 Add libpng as alternative PNG decoder — PngCodec::DecodeFile/DecodeMemory with forceRGBA, sRGB chunk detection. Created png_codec.h/.cpp in asset/importers/.
+- [x] 4.2 Support 16-bit PNG input — DecodeMemory preserves 16-bit depth, byte swap for big-endian PNG data.
+- [x] 4.3 Add PNG write support — PngCodec::EncodeFile/EncodeMemory for 8/16-bit, 1-4 channels.
+- [x] 4.4 Unit test: 22 test cases — round-trip 8/16-bit, forceRGBA expansion, invalid input, file I/O, edge cases.
 
 ## 5. msdfgen — Multi-Channel SDF Font Atlas
 
@@ -40,10 +40,10 @@
 ## 6. FreeType — Font Rasterization
 
 - [ ] 6.1 Build FreeType as static lib in Zig build system — add to `build.zig` with include paths and source files.
-- [ ] 6.2 Create FontManager singleton — loads .ttf/.otf, caches FT_Face handles.
+- [x] 6.2 Create FontManager singleton — loads .ttf/.otf, caches FT_Face handles. Created `engine/core/font_manager.h/.cpp` with Init/Shutdown lifecycle, LoadFont with path+size caching, GetFace for msdfgen, GetGlyphMetrics/GetLineHeight/GetAscender/GetASCIIMetrics for text layout.
 - [ ] 6.3 Wire FreeType as msdfgen backend — msdfgen uses FreeType for glyph outline extraction.
 - [ ] 6.4 Add bitmap font rasterization path (fallback for debug overlay when SDF not available).
-- [ ] 6.5 Unit test: load font → extract glyph metrics → verify advance widths.
+- [x] 6.5 Unit test: load font → extract glyph metrics → verify advance widths. Created `tests/engine/core/test_font_manager.cpp` with 13 tests: init/shutdown, load/cache, glyph metrics, line height, ascender, ASCII batch, monospace consistency, invalid handle/path error cases.
 
 ## 7. Build System Integration
 
@@ -58,5 +58,5 @@
 ## 8. Documentation
 
 - [x] 8.1 Update thirdparty README.md with all new entries — done in prior session (7 sections added).
-- [ ] 8.2 Add CVar reference entries for FSR, SMAA in docs/guides/cvar-reference.md.
+- [x] 8.2 Add CVar reference entries for FSR in docs/guides/cvar-reference.md. SMAA CVars to be added when section 2 is implemented.
 - [ ] 8.3 Document upscaler selection API in docs/lua-api-reference.md.

@@ -153,7 +153,8 @@ pub fn build(b: *std.Build) void {
         tp ++ "agility/include",
         tp ++ "dxc/inc",
         // vcpkg-installed headers (zlib required by libpng, freetype, etc.)
-        tp ++ "vcpkg/installed/x64-windows/include",
+        // zlib headers from source (not vcpkg DLL headers)
+        tp ++ "vcpkg/buildtrees/zlib/src/v1.3.1-2e5db616bf.clean",
     };
 
     // ── uzembed build tool (generates .hlsl.gen.h headers) ─────────
@@ -456,6 +457,20 @@ pub fn build(b: *std.Build) void {
         .flags = &.{"-std=c++17"},
     });
 
+    // Thirdparty — zlib (compiled from vcpkg source — static build avoids DLL import issues)
+    // Use source dir headers instead of vcpkg-installed DLL headers
+    runtime_mod.addIncludePath(b.path(tp ++ "vcpkg/buildtrees/zlib/src/v1.3.1-2e5db616bf.clean"));
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path(tp ++ "vcpkg/buildtrees/zlib/src/v1.3.1-2e5db616bf.clean"),
+        .files = &.{
+            "adler32.c", "compress.c", "crc32.c", "deflate.c",
+            "gzclose.c", "gzlib.c", "gzread.c", "gzwrite.c",
+            "infback.c", "inffast.c", "inflate.c", "inftrees.c",
+            "trees.c", "uncompr.c", "zutil.c",
+        },
+        .flags = &.{},
+    });
+
     // Thirdparty — libpng (PNG read/write, required by msdfgen ext/save-png.cpp)
     // PNG_ARM_NEON_OPT=0 disables the NEON intrinsics path on non-ARM platforms;
     // without it the build fails when <arm_neon.h> is unavailable.
@@ -478,7 +493,7 @@ pub fn build(b: *std.Build) void {
             "pngwtran.c",
             "pngwutil.c",
         },
-        .flags = &.{"-DPNG_ARM_NEON_OPT=0"},
+        .flags = &.{ "-DPNG_ARM_NEON_OPT=0", "-DPNG_STATIC" },
     });
 
     // Thirdparty — FreeType (font rasterization, required by msdfgen ext/import-font.cpp)
@@ -494,13 +509,15 @@ pub fn build(b: *std.Build) void {
             "base/ftbbox.c",
             "base/ftbitmap.c",
             "base/ftglyph.c",
+            "base/ftmm.c",
             "truetype/truetype.c",
             "sfnt/sfnt.c",
             "smooth/smooth.c",
             "autofit/autofit.c",
             "psnames/psnames.c",
+            "gzip/ftgzip.c",
         },
-        .flags = &.{"-DFT2_BUILD_LIBRARY"},
+        .flags = &.{ "-DFT2_BUILD_LIBRARY", "-DFT_CONFIG_OPTION_SYSTEM_ZLIB=0" },
     });
 
     // Thirdparty — msdfgen core (multi-channel SDF generation, C++17)
@@ -602,8 +619,7 @@ pub fn build(b: *std.Build) void {
         lib.linkSystemLibrary("ole32");       // OLE drag-drop (OleInitialize, RegisterDragDrop)
         lib.linkSystemLibrary("shell32");     // Shell_NotifyIconW, SHCreateItemFromParsingName
         lib.linkSystemLibrary("comdlg32");    // Common dialog support (IFileDialog COM)
-        // vcpkg-installed static libraries (required by libpng and FreeType)
-        lib.addObjectFile(b.path(tp ++ "vcpkg/installed/x64-windows/lib/zlib.lib"));
+        // zlib — compiled from vcpkg source (static, no DLL import issues)
     } else if (target.result.os.tag == .linux) {
         lib.linkSystemLibrary("X11");
     }
