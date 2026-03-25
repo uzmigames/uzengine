@@ -57,6 +57,14 @@ cbuffer DecalObjectCB : register(b2) {
 // Samplers & Textures
 // ─────────────────────────────────────────────────────────────────────────────
 
+#ifndef UZ_BINDLESS
+Texture2D<float>  decalDepthTexture     : register(t0);
+Texture2D<float4> decalNormalGbufTexture: register(t1);
+Texture2D<float4> decalAlbedoTexture    : register(t2);
+Texture2D<float4> decalNormalTexture    : register(t3);
+Texture2D<float4> decalMaterialTexture  : register(t4);
+#endif
+
 SamplerState linearClamp : register(s0);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -130,8 +138,12 @@ DecalPSOutput main(DecalPSInput input) {
     screenUV.y = 1.0 - screenUV.y;
 
     // ── Sample depth buffer ──────────────────────────────────────────────
+#ifdef UZ_BINDLESS
     Texture2D<float> depthTex = ResourceDescriptorHeap[decalDepthSrv];
     float depth = depthTex.SampleLevel(linearClamp, screenUV, 0);
+#else
+    float depth = decalDepthTexture.SampleLevel(linearClamp, screenUV, 0);
+#endif
 
     // Skip sky pixels (reversed-Z: depth=0 is far plane/sky)
     if (depth <= 0.0) discard;
@@ -157,9 +169,17 @@ DecalPSOutput main(DecalPSInput input) {
 
     // ── Angle fade ───────────────────────────────────────────────────────
     float angleFade = 1.0;
-    if (decalAngleFade < 90.0 && decalNormalGbufSrv != 0xFFFFFFFF) {
+    if (decalAngleFade < 90.0
+#ifdef UZ_BINDLESS
+        && decalNormalGbufSrv != 0xFFFFFFFF
+#endif
+    ) {
+#ifdef UZ_BINDLESS
         Texture2D<float4> normalGbufTex = ResourceDescriptorHeap[decalNormalGbufSrv];
         float4 normalSample = normalGbufTex.SampleLevel(linearClamp, screenUV, 0);
+#else
+        float4 normalSample = decalNormalGbufTexture.SampleLevel(linearClamp, screenUV, 0);
+#endif
 
         // Decode octahedral normal from GBuffer (RG channels, [0,1] range)
         float2 octEnc = normalSample.rg * 2.0 - 1.0;
@@ -195,23 +215,39 @@ DecalPSOutput main(DecalPSInput input) {
     // ── Sample decal textures ────────────────────────────────────────────
     float4 albedo = float4(0.0, 0.0, 0.0, 0.0);
     float albedoBlend = 0.0;
+#ifdef UZ_BINDLESS
     if (decalAlbedoSrv != 0xFFFFFFFF) {
         Texture2D<float4> albedoTex = ResourceDescriptorHeap[decalAlbedoSrv];
         albedo = albedoTex.SampleLevel(linearClamp, decalUV, 0);
         albedoBlend = albedo.a * totalFade;
     }
+#else
+    {
+        albedo = decalAlbedoTexture.SampleLevel(linearClamp, decalUV, 0);
+        albedoBlend = albedo.a * totalFade;
+    }
+#endif
 
     float normalBlendFinal = 0.0;
     float3 decalNormal = float3(0.5, 0.5, 1.0);  // Neutral normal (no modification)
+#ifdef UZ_BINDLESS
     if (decalNormalSrv != 0xFFFFFFFF) {
         Texture2D<float4> normalTex = ResourceDescriptorHeap[decalNormalSrv];
         float4 normalSample = normalTex.SampleLevel(linearClamp, decalUV, 0);
         decalNormal = normalSample.rgb;
         normalBlendFinal = decalNormalBlend * totalFade;
     }
+#else
+    {
+        float4 normalSample = decalNormalTexture.SampleLevel(linearClamp, decalUV, 0);
+        decalNormal = normalSample.rgb;
+        normalBlendFinal = decalNormalBlend * totalFade;
+    }
+#endif
 
     float materialBlend = 0.0;
     float3 materialValues = float3(decalRoughness, decalMetallic, 1.0);
+#ifdef UZ_BINDLESS
     if (decalMaterialSrv != 0xFFFFFFFF) {
         Texture2D<float4> matTex = ResourceDescriptorHeap[decalMaterialSrv];
         float4 matSample = matTex.SampleLevel(linearClamp, decalUV, 0);
@@ -224,6 +260,16 @@ DecalPSOutput main(DecalPSInput input) {
         // No material texture but decal has roughness/metallic overrides
         materialBlend = totalFade;
     }
+#else
+    {
+        float4 matSample = decalMaterialTexture.SampleLevel(linearClamp, decalUV, 0);
+        materialValues = float3(
+            matSample.r * decalRoughness,
+            matSample.g * decalMetallic,
+            matSample.b);  // AO
+        materialBlend = totalFade;
+    }
+#endif
 
     // ── Write DBuffer outputs ────────────────────────────────────────────
     output.dbufferA = float4(albedo.rgb, albedoBlend);

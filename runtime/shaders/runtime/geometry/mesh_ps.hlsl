@@ -49,7 +49,8 @@ cbuffer PerObjectCB : register(b2) {
 };
 
 #ifndef UZ_BINDLESS
-Texture2D<float4> albedoTexture : register(t0);
+Texture2D<float4> albedoTexture  : register(t0);
+Texture2D<float4> opacityTexture : register(t1);
 #endif
 SamplerState linearSampler : register(s0);
 
@@ -75,10 +76,14 @@ float4 main(PSInput input) : SV_Target {
 
     // ── Opacity texture modulation (forward/translucent path) ──────────
     float finalOpacity = matOpacity;
+#ifdef UZ_BINDLESS
     if (opacitySrvIndex > 0) {
         Texture2D<float4> opacityTex = ResourceDescriptorHeap[opacitySrvIndex];
         finalOpacity *= opacityTex.Sample(linearSampler, uv).r;
     }
+#else
+    finalOpacity *= opacityTexture.Sample(linearSampler, uv).r;
+#endif
 
     return float4(color, finalOpacity);
 }

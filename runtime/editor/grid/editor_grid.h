@@ -98,7 +98,7 @@ private:
 
     float m_minorSpacing = 100.0f;    ///< 100 cm = 1 m per minor line
     uint32_t m_majorInterval = 10;    ///< Major line every 10 m
-    float m_fadeDistance = 10000.0f;   ///< Fade at 100 m
+    float m_fadeDistance = 5000.0f;    ///< Fade at 50 m (exponential falloff)
 };
 
 } // namespace uz
