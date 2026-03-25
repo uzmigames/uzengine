@@ -16,8 +16,8 @@ Documentation for the UzEngine MCP (Model Context Protocol) integration layer.
 
 | Document | Status | Description |
 |----------|--------|-------------|
-| [auto-doc-generator.md](auto-doc-generator.md) | Planning | Parses `///` doc comments into `docs.json` — entities, relationships, tags |
-| [search-architecture.md](search-architecture.md) | Planning | Hybrid BM25 + HNSW search with TF-IDF embeddings and Reciprocal Rank Fusion |
+| [auto-doc-generator.md](auto-doc-generator.md) | Implemented | Parses `///` doc comments into `docs.json` — entities, relationships, tags |
+| [search-architecture.md](search-architecture.md) | Implemented | Hybrid BM25 + HNSW search with TF-IDF embeddings and Reciprocal Rank Fusion |
 
 ## Related
 
