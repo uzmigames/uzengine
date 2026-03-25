@@ -166,6 +166,13 @@ public:
     [[nodiscard]] bool Init(IRHIDevice* device, PlatformWindow* window,
                             uint32_t width, uint32_t height);
 
+    /// Enables or disables editor mode (grid, stats overlay, gizmos).
+    /// Default: false (game/play mode — no editor overlays).
+    void SetEditorMode(bool enabled);
+
+    /// Returns true if editor mode is active.
+    [[nodiscard]] bool IsEditorMode() const;
+
     /// Handles window resize — recreates GBuffer and updates camera aspect ratio.
     ///
     /// # Arguments

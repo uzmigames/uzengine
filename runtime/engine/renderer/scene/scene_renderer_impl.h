@@ -5,6 +5,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
     IRHIDevice* m_device = nullptr;
+    bool m_editorMode = false;            ///< When true, editor grid + stats overlay are rendered.
 
     // ── Engine Infrastructure ──────────────────────────────────────────────
 
