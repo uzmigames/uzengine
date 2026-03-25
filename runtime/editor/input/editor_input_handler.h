@@ -121,8 +121,14 @@ public:
     /// Returns the current gizmo manipulation mode.
     [[nodiscard]] GizmoMode GetGizmoMode() const { return m_mode; }
 
+    /// Sets the gizmo manipulation mode programmatically (e.g., from Lua API).
+    void SetGizmoMode(GizmoMode mode) { m_mode = mode; }
+
     /// Returns the current gizmo coordinate space.
     [[nodiscard]] GizmoSpace GetGizmoSpace() const { return m_space; }
+
+    /// Sets the gizmo coordinate space programmatically (e.g., from Lua API).
+    void SetGizmoSpace(GizmoSpace space) { m_space = space; }
 
     /// Returns the gizmo hovered axis as an int for the renderer.
     ///

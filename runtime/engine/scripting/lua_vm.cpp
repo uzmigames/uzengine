@@ -24,6 +24,7 @@
 #include "lua_decal_api.h"
 #include "lua_reflection_probe_api.h"
 #include "lua_postprocess_api.h"
+#include "lua_editor_api.h"
 
 extern "C" {
 #include <lua.h>
@@ -171,6 +172,7 @@ bool LuaVM::Init() {
     LuaRegisterDecalAPI(s_state);
     LuaRegisterReflectionProbeAPI(s_state);
     LuaRegisterPostProcessAPI(s_state);
+    LuaRegisterEditorAPI(s_state);
 
     UZ_LOG(Scripting, Info, "LuaVM initialized (LuaJIT 2.1)");
     return true;

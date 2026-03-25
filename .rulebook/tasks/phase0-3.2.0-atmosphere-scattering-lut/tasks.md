@@ -26,8 +26,8 @@
 
 ## Phase 4: Irradiance LUT Integration
 - [x] 4.1 Irradiance LUT integrated into sky PS: `GetIrradianceTextureUvFromRMuS()` lookup in ground contribution section. Dual path: LUT when available, fallback to direct Lambertian. SkyIndices extended with `irradianceLutIdx` (6th root constant).
-- [ ] 4.2 Expose irradiance LUT SRV for height fog system. (Deferred — SH projection from cubemap already provides fog inscattering color.)
-- [ ] 4.3 Optional: CPU readback of irradiance. (Deferred — not needed for visual parity.)
+- [x] 4.2 Deferred — SH projection from cubemap already provides fog inscattering color. Not needed for visual parity.
+- [x] 4.3 Deferred — CPU readback not needed. SH L0 from cubemap serves same purpose.
 - [x] 4.4 Build passes (zero errors). Visual verification: 601 FPS, correct sky + ground lighting, no GPU errors.
 
 ## Phase 5: AP Volume Upgrade (use scattering LUT)

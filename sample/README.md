@@ -47,6 +47,18 @@ runtime/build/bin/uzengine.exe --project sample/projects/fbx_test.uzproject
 | Tab | Cycle debug views |
 | Escape | Quit |
 
+### Editor Mode Controls (`--editor`)
+
+| Input | Action |
+|-------|--------|
+| `--editor` | Enables editor mode (grid, selection, gizmos) |
+| Left-click | Select entity (editor mode) |
+| W | Translate gizmo (editor mode) |
+| E | Rotate gizmo (editor mode) |
+| R | Scale gizmo (editor mode) |
+| Space | Toggle world/local space (editor mode) |
+| Ctrl+Drag | Snap to grid (editor mode) |
+
 ## Demos
 
 | Demo | Description | Features |

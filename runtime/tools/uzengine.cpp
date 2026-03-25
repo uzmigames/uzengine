@@ -26,6 +26,7 @@
 #include "../engine/scripting/core/lua_input_api.h"
 #include "../editor/input/editor_input_handler.h"
 #include "../editor/selection/selection_manager.h"
+#include "../engine/scripting/editor/lua_editor_api.h"
 
 #ifdef _WIN32
 #include "platform_window.h"
@@ -324,6 +325,11 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         LuaSetSceneRenderer(LuaVM::GetState(), &sceneRenderer);
         LuaSetInputSystem(LuaVM::GetState(), sceneRenderer.GetInput());
         UZ_LOG(Engine, Info, "Lua renderer + input API connected to SceneRenderer");
+    }
+
+    // Wire editor state into Lua so uz.editor.* can access selection and gizmo.
+    if (editorMode && luaReady) {
+        LuaSetEditorState(LuaVM::GetState(), &selectionManager, &editorInput);
     }
 
     // ── Pre-load: drain async texture decodes before the render loop ──────

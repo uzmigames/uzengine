@@ -7,10 +7,10 @@ version: 1.0
 
 # UzEngine Shader Reference
 
-Complete catalog of all HLSL shaders and shared include files in the UzEngine runtime. 98 shader programs organized by category + 20 shared libraries.
+Complete catalog of all HLSL shaders and shared include files in the UzEngine runtime. 102 shader programs organized by category + 20 shared libraries.
 
 **Quick Stats**
-- **Shader Programs**: 98 total (23 compute, 36 pixel, 6 vertex, 1 pixel+vertex shader pairs, misc)
+- **Shader Programs**: 102 total (23 compute, 40 pixel, 8 vertex, 1 pixel+vertex shader pairs, misc)
 - **Shared Includes**: 20 reusable libraries
 - **Total Lines**: ~50,000+ HLSL
 - **Rendering Pipeline**: Deferred lit, forward PBR, tone-mapped post-process
@@ -59,7 +59,7 @@ Compute Passes (async)
 
 ---
 
-## Editor Shaders (5 programs)
+## Editor Shaders (9 programs)
 
 | File | Stage | Purpose | Notes |
 |------|-------|---------|-------|
@@ -68,6 +68,10 @@ Compute Passes (async)
 | `editor/overlay_vs.hlsl` | VS | Stats overlay vertex pass | Fullscreen quad for FPS counter, frame time graph |
 | `editor/overlay_rect_ps.hlsl` | PS | Rectangle UI primitives | Renders colored rects for bars, graph backgrounds |
 | `editor/overlay_text_ps.hlsl` | PS | Text rendering for stats | SDF font atlas sampling (monospace for timing readout) |
+| `editor/outline_mask_ps.hlsl` | PS | Selection outline mask | Writes 1.0 mask for selected entity pixels |
+| `editor/outline_detect_ps.hlsl` | PS | Selection outline edge detect | 3x3 edge detection on mask, outputs colored outline |
+| `editor/gizmo_vs.hlsl` | VS | Gizmo vertex transform | Transforms gizmo vertices with constant screen-space scale via StructuredBuffer |
+| `editor/gizmo_ps.hlsl` | PS | Gizmo flat shading | Unlit flat colored output with alpha for axis highlighting |
 
 ---
 
