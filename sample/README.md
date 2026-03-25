@@ -24,6 +24,7 @@ runtime/build/bin/uzengine.exe --project sample/textured_quad.uzproject
 runtime/build/bin/uzengine.exe --project sample/postprocess_test.uzproject
 runtime/build/bin/uzengine.exe --project sample/instancing_test.uzproject
 runtime/build/bin/uzengine.exe --project sample/material_test.uzproject
+runtime/build/bin/uzengine.exe --project sample/fbx_test.uzproject
 ```
 
 ## Controls (all demos)
@@ -53,6 +54,7 @@ runtime/build/bin/uzengine.exe --project sample/material_test.uzproject
 | `instancing_test` | 1000 cubes in 10x10x10 grid (Lua-spawned) | GPU instancing, InstanceBatcher |
 | `material_test` | 5 spheres with different blend modes | Emissive, masked, translucent, additive, opaque |
 | `cornell_box` | Classic GI test box (red/green walls + sphere) | Procedural mesh, solid materials, atmosphere, fog |
+| `fbx_test` | Mushroom monster character on ground plane | FBX mesh import, ORM textures, reflection probe |
 | `pbr_showcase` | Multi-material showcase (cubes + spheres) | Full PBR pipeline, multiple PBR texture sets |
 
 ## Structure
@@ -109,13 +111,12 @@ sample/
 | `.uzmesh` | Mesh data | Binary — UZMH header + vertex/index data |
 | `.lua` | Script | Lua — `on_start`/`on_update`/`on_stop` lifecycle |
 
-## C++ Demos (RHI-level)
+## C++ Demo Template (RHI-level)
 
-Two demos remain as C++ executables because they test the RHI layer directly
-(no scene system, no ECS):
+One C++ demo remains as a template for prototyping new features in C++ before
+migrating to the sample format:
 
 ```bash
-cd runtime/demos/clear_screen && zig build && zig-out/bin/clear_screen.exe
 cd runtime/demos/triangle && zig build && zig-out/bin/triangle.exe
 ```
 

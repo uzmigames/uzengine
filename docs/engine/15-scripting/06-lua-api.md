@@ -333,6 +333,60 @@ uz.scene.set_cast_shadows(entity, true)                 -- Works on lights and s
 | `uz.scene.get_light_shadow_bias(entity)` | entity | float | Get shadow bias |
 | `uz.scene.set_light_shadow_slope_bias(entity, bias)` | entity, bias: float | — | Slope-based depth bias |
 | `uz.scene.get_light_shadow_slope_bias(entity)` | entity | float | Get slope bias |
+| **Light Cascades (Directional Only)** | | | |
+| `uz.scene.set_light_shadow_cascades(entity, count)` | entity, count: int (1-4) | — | Number of cascade splits |
+| `uz.scene.get_light_shadow_cascades(entity)` | entity | int or nil | Get cascade count |
+| `uz.scene.set_light_cascade_distribution_exponent(entity, v)` | entity, v: float | — | Cascade distribution curve |
+| `uz.scene.get_light_cascade_distribution_exponent(entity)` | entity | float or nil | Get cascade distribution |
+| `uz.scene.set_light_cascade_transition_fraction(entity, v)` | entity, v: float (0-1) | — | Cascade blend fraction |
+| `uz.scene.get_light_cascade_transition_fraction(entity)` | entity | float or nil | Get cascade transition |
+| `uz.scene.set_light_dynamic_shadow_distance(entity, cm)` | entity, cm: float | — | Dynamic shadow distance |
+| `uz.scene.get_light_dynamic_shadow_distance(entity)` | entity | float or nil | Get dynamic shadow distance |
+| `uz.scene.set_light_far_shadow_cascade_count(entity, count)` | entity, count: int | — | Far cascade count |
+| `uz.scene.get_light_far_shadow_cascade_count(entity)` | entity | int or nil | Get far cascade count |
+| `uz.scene.set_light_far_shadow_distance(entity, cm)` | entity, cm: float | — | Far shadow distance |
+| `uz.scene.get_light_far_shadow_distance(entity)` | entity | float or nil | Get far shadow distance |
+| `uz.scene.set_light_shadow_distance_fadeout_fraction(entity, v)` | entity, v: float (0-1) | — | Shadow fade-out distance |
+| `uz.scene.get_light_shadow_distance_fadeout_fraction(entity)` | entity | float or nil | Get fadeout fraction |
+| **Point Light Shadows** | | | |
+| `uz.scene.set_light_point_shadow_bias(entity, bias)` | entity, bias: float | — | Point light shadow bias |
+| `uz.scene.get_light_point_shadow_bias(entity)` | entity | float or nil | Get point shadow bias |
+| **Spot Light Shadows** | | | |
+| `uz.scene.set_light_spot_shadow_bias(entity, bias)` | entity, bias: float | — | Spot light shadow bias |
+| `uz.scene.get_light_spot_shadow_bias(entity)` | entity | float or nil | Get spot shadow bias |
+| **Contact Shadows** | | | |
+| `uz.scene.set_light_contact_shadow_length(entity, cm)` | entity, cm: float | — | Contact shadow trace length |
+| `uz.scene.get_light_contact_shadow_length(entity)` | entity | float or nil | Get contact shadow length |
+| **Area Lights** | | | |
+| `uz.scene.set_light_source_length(entity, cm)` | entity, cm: float | — | Rectangular light length |
+| `uz.scene.get_light_source_length(entity)` | entity | float or nil | Get source length |
+| `uz.scene.set_light_source_angle(entity, radians)` | entity, radians: float | — | Rectangular light angle |
+| `uz.scene.get_light_source_angle(entity)` | entity | float or nil | Get source angle |
+| `uz.scene.set_light_source_soft_angle(entity, radians)` | entity, radians: float | — | Source soft edge angle |
+| `uz.scene.get_light_source_soft_angle(entity)` | entity | float or nil | Get source soft angle |
+| `uz.scene.set_light_soft_source_radius(entity, cm)` | entity, cm: float | — | Soft source radius |
+| `uz.scene.get_light_soft_source_radius(entity)` | entity | float or nil | Get soft source radius |
+| **Spot Light Specific** | | | |
+| `uz.scene.set_spot_angles(entity, inner, outer)` | entity, inner, outer: float (degrees) | — | Spot light cone angles |
+| `uz.scene.get_spot_angles(entity)` | entity | (inner, outer) or nil | Get spot cone angles |
+| **Atmosphere Integration** | | | |
+| `uz.scene.set_light_atmosphere_sun_index(entity, idx)` | entity, idx: int (0-3) | — | Atmosphere sun index |
+| `uz.scene.get_light_atmosphere_sun_index(entity)` | entity | int or nil | Get atmosphere sun index |
+| `uz.scene.set_light_atmosphere_sun_disk_color_scale(entity, v)` | entity, v: float | — | Sun disk color scale |
+| `uz.scene.get_light_atmosphere_sun_disk_color_scale(entity)` | entity | float or nil | Get sun disk color scale |
+| `uz.scene.set_light_use_inverse_squared_falloff(entity, bool)` | entity, bool: bool | — | Use inverse squared falloff |
+| `uz.scene.get_light_use_inverse_squared_falloff(entity)` | entity | bool or nil | Check inverse squared falloff |
+| `uz.scene.set_light_falloff_exponent(entity, v)` | entity, v: float | — | Light falloff exponent |
+| `uz.scene.get_light_falloff_exponent(entity)` | entity | float or nil | Get falloff exponent |
+| **Other Light Properties** | | | |
+| `uz.scene.add_directional_light(entity)` | entity | — | Add directional light component |
+| `uz.scene.add_point_light(entity)` | entity | — | Add point light component |
+| `uz.scene.add_spot_light(entity)` | entity | — | Add spot light component |
+| `uz.scene.remove_light(entity)` | entity | — | Remove light component |
+| `uz.scene.get_light_intensity(entity)` | entity | float or nil | Get light intensity |
+| `uz.scene.get_light_color(entity)` | entity | (r, g, b) or nil | Get light color (linear RGB) |
+| `uz.scene.get_light_range(entity)` | entity | float or nil | Get light range (cm) |
+| `uz.scene.get_light_direction(entity)` | entity | (x, y, z) or nil | Get light direction (normalized) |
 | **Height Fog** | | | |
 | `uz.scene.create_fog(entity)` | entity | — | Add HeightFogComponent (idempotent) |
 | `uz.scene.set_fog_density(entity, density)` | entity, density: float | — | Primary fog density |
@@ -350,6 +404,19 @@ uz.scene.set_cast_shadows(entity, true)                 -- Works on lights and s
 | `uz.scene.set_fog_directional_inscattering_exponent(entity, exponent)` | entity, exponent: float | — | Inscattering cone tightness |
 | `uz.scene.set_fog_directional_inscattering_start_distance(entity, distance)` | entity, distance: float (cm) | — | Inscattering start distance |
 | `uz.scene.set_fog_volumetric(entity, enabled)` | entity, enabled: bool | — | Enable volumetric fog (Phase 3+) |
+| `uz.scene.get_fog_density(entity)` | entity | float or nil | Get primary fog density |
+| `uz.scene.get_fog_color(entity)` | entity | (r, g, b) or nil | Get fog color (linear RGB) |
+| `uz.scene.get_fog_height_falloff(entity)` | entity | float or nil | Get height falloff curve |
+| `uz.scene.get_fog_base_height(entity)` | entity | float or nil | Get fog base altitude (cm) |
+| `uz.scene.get_fog_max_opacity(entity)` | entity | float or nil | Get maximum fog opacity (0-1) |
+| `uz.scene.get_fog_start_distance(entity)` | entity | float or nil | Get fog start distance (cm) |
+| `uz.scene.get_fog_cutoff_distance(entity)` | entity | float or nil | Get fog cutoff distance (cm) |
+| `uz.scene.get_fog_second_density(entity)` | entity | float or nil | Get second layer density |
+| `uz.scene.get_fog_second_height_falloff(entity)` | entity | float or nil | Get second layer height falloff |
+| `uz.scene.get_fog_second_base_height(entity)` | entity | float or nil | Get second layer base height (cm) |
+| `uz.scene.get_fog_directional_inscattering_color(entity)` | entity | (r, g, b) or nil | Get inscattering color |
+| `uz.scene.get_fog_directional_inscattering_exponent(entity)` | entity | float or nil | Get inscattering cone tightness |
+| `uz.scene.get_fog_directional_inscattering_start_distance(entity)` | entity | float or nil | Get inscattering start distance |
 | **Sky Light (IBL)** | | | |
 | `uz.scene.create_sky_light(entity)` | entity | — | Add SkyLightComponent |
 | `uz.scene.set_sky_light_intensity(entity, intensity)` | entity, intensity: float | — | Intensity multiplier |
@@ -365,6 +432,16 @@ uz.scene.set_cast_shadows(entity, true)                 -- Works on lights and s
 | `uz.scene.set_sky_light_occlusion_tint(entity, r, g, b)` | entity, r, g, b: float (0-1) | — | Occluded area tint |
 | `uz.scene.set_sky_light_occlusion_exponent(entity, exp)` | entity, exp: float | — | AO falloff exponent |
 | `uz.scene.set_sky_light_enabled(entity, bool)` | entity, bool: bool | — | Enable/disable sky light |
+| `uz.scene.get_sky_light_intensity(entity)` | entity | float or nil | Get intensity multiplier |
+| `uz.scene.get_sky_light_color(entity)` | entity | (r, g, b) or nil | Get tint color (linear RGB) |
+| `uz.scene.get_sky_light_min_occlusion(entity)` | entity | float or nil | Get minimum ambient occlusion floor |
+| `uz.scene.get_sky_light_indirect_intensity(entity)` | entity | float or nil | Get diffuse IBL multiplier |
+| `uz.scene.get_sky_light_source_type(entity)` | entity | "captured" or "cubemap" or nil | Get cubemap source type |
+| `uz.scene.get_sky_light_cubemap_resolution(entity)` | entity | uint or nil | Get capture resolution per face |
+| `uz.scene.get_sky_light_lower_hemisphere_color(entity)` | entity | (r, g, b) or nil | Get lower hemisphere color |
+| `uz.scene.get_sky_light_occlusion_max_distance(entity)` | entity | float or nil | Get AO influence distance (cm) |
+| `uz.scene.get_sky_light_occlusion_tint(entity)` | entity | (r, g, b) or nil | Get occluded area tint |
+| `uz.scene.get_sky_light_occlusion_exponent(entity)` | entity | float or nil | Get AO falloff exponent |
 | **Sky Atmosphere** | | | |
 | `uz.scene.create_sky_atmosphere(entity)` | entity | — | Add SkyAtmosphereComponent (idempotent) |
 | `uz.scene.set_sky_bottom_radius(entity, km)` | entity, km: float | — | Planet radius (default 6360 km) |
@@ -383,6 +460,32 @@ uz.scene.set_cast_shadows(entity, true)                 -- Works on lights and s
 | `uz.scene.set_sky_ozone_width(entity, km)` | entity, km: float | — | Ozone half-width (default 15 km) |
 | `uz.scene.set_sky_luminance_factor(entity, r, g, b)` | entity, r, g, b: float (0-1) | — | Per-channel sky luminance multiplier |
 | `uz.scene.set_sky_height_fog_contribution(entity, v)` | entity, v: float | — | Atmosphere contribution to height fog |
+| `uz.scene.set_atmosphere_transform_mode(entity, mode)` | entity, mode: string | — | Sky atmosphere transform mode |
+| `uz.scene.get_atmosphere_transform_mode(entity)` | entity | string or nil | Get sky atmosphere transform mode |
+| `uz.scene.set_atmosphere_sun_illuminance(entity, lux)` | entity, lux: float | — | Sun illuminance in lux |
+| `uz.scene.get_atmosphere_sun_illuminance(entity)` | entity | float or nil | Get sun illuminance in lux |
+| `uz.scene.set_atmosphere_sun_angular_radius(entity, radians)` | entity, radians: float | — | Sun disk angular radius |
+| `uz.scene.get_atmosphere_sun_angular_radius(entity)` | entity | float or nil | Get sun disk angular radius |
+| `uz.scene.set_atmosphere_sun_disk_intensity(entity, intensity)` | entity, intensity: float | — | Sun disk intensity scale |
+| `uz.scene.get_atmosphere_sun_disk_intensity(entity)` | entity | float or nil | Get sun disk intensity scale |
+| `uz.scene.set_atmosphere_enabled(entity, enabled)` | entity, enabled: bool | — | Enable/disable atmosphere |
+| `uz.scene.is_atmosphere_enabled(entity)` | entity | bool or nil | Check if atmosphere is enabled |
+| `uz.scene.get_atmosphere_bottom_radius(entity)` | entity | float or nil | Get planet radius (km) |
+| `uz.scene.get_atmosphere_height(entity)` | entity | float or nil | Get atmosphere thickness (km) |
+| `uz.scene.get_atmosphere_rayleigh_scattering(entity)` | entity | (r, g, b) or nil | Get Rayleigh coefficients km^-1 |
+| `uz.scene.get_atmosphere_rayleigh_scale_height(entity)` | entity | float or nil | Get Rayleigh scale height (km) |
+| `uz.scene.get_atmosphere_mie_scattering(entity)` | entity | float or nil | Get Mie coefficient km^-1 |
+| `uz.scene.get_atmosphere_mie_absorption(entity)` | entity | float or nil | Get Mie absorption km^-1 |
+| `uz.scene.get_atmosphere_mie_absorption_scale(entity)` | entity | float or nil | Get Mie absorption multiplier |
+| `uz.scene.get_atmosphere_mie_anisotropy(entity)` | entity | float or nil | Get HG phase function |
+| `uz.scene.get_atmosphere_mie_scale_height(entity)` | entity | float or nil | Get Mie scale height (km) |
+| `uz.scene.get_atmosphere_ground_albedo(entity)` | entity | (r, g, b) or nil | Get ground reflectance |
+| `uz.scene.get_atmosphere_ozone_absorption(entity)` | entity | (r, g, b) or nil | Get ozone absorption km^-1 |
+| `uz.scene.get_atmosphere_ozone_tip_altitude(entity)` | entity | float or nil | Get ozone peak altitude (km) |
+| `uz.scene.get_atmosphere_ozone_tip_value(entity)` | entity | float or nil | Get ozone peak density |
+| `uz.scene.get_atmosphere_ozone_width(entity)` | entity | float or nil | Get ozone half-width (km) |
+| `uz.scene.get_atmosphere_luminance_factor(entity)` | entity | (r, g, b) or nil | Get per-channel sky luminance multiplier |
+| `uz.scene.get_atmosphere_height_fog_contribution(entity)` | entity | float or nil | Get atmosphere contribution to height fog |
 
 ## Input
 
@@ -487,6 +590,23 @@ uz.scene.set_clouds_enabled(entity, true)                    -- Enable/disable c
 | `uz.scene.set_clouds_primary_steps(entity, n)` | entity, n: integer | — | Primary ray march steps |
 | `uz.scene.set_clouds_light_steps(entity, n)` | entity, n: integer | — | Light march steps |
 | `uz.scene.set_clouds_enabled(entity, bool)` | entity, bool: bool | — | Enable/disable clouds |
+| `uz.scene.get_clouds_layer_bottom_altitude(entity)` | entity | float or nil | Get cloud base altitude (km) |
+| `uz.scene.get_clouds_layer_height(entity)` | entity | float or nil | Get cloud layer thickness (km) |
+| `uz.scene.get_clouds_coverage(entity)` | entity | float or nil | Get global coverage (0-1) |
+| `uz.scene.get_clouds_density(entity)` | entity | float or nil | Get density multiplier |
+| `uz.scene.get_clouds_type(entity)` | entity | float or nil | Get cloud type (0=stratus, 1=cumulus) |
+| `uz.scene.get_clouds_wind_velocity(entity)` | entity | (x, y, z) or nil | Get wind in km/s |
+| `uz.scene.get_clouds_detail_wind_scale(entity)` | entity | float or nil | Get detail noise wind multiplier |
+| `uz.scene.get_clouds_extinction(entity)` | entity | float or nil | Get extinction coefficient km^-1 |
+| `uz.scene.get_clouds_scattering_albedo(entity)` | entity | float or nil | Get scattering ratio (0-1) |
+| `uz.scene.get_clouds_phase_g(entity)` | entity | float or nil | Get primary HG phase eccentricity |
+| `uz.scene.get_clouds_phase_g2(entity)` | entity | float or nil | Get secondary phase eccentricity |
+| `uz.scene.get_clouds_phase_blend(entity)` | entity | float or nil | Get blend between phase lobes (0-1) |
+| `uz.scene.get_clouds_ambient_multiplier(entity)` | entity | float or nil | Get ambient fill multiplier |
+| `uz.scene.get_clouds_tracing_max_distance(entity)` | entity | float or nil | Get max ray march distance (km) |
+| `uz.scene.get_clouds_primary_steps(entity)` | entity | integer or nil | Get primary ray march steps |
+| `uz.scene.get_clouds_light_steps(entity)` | entity | integer or nil | Get light march steps |
+| `uz.scene.is_clouds_enabled(entity)` | entity | bool or nil | Check if clouds are enabled |
 
 ## Mesh Generation
 
