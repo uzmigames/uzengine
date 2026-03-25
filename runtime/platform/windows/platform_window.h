@@ -350,6 +350,20 @@ class PlatformWindow {
         m_fileDropUserData = userData;
     }
 
+    /// Marks this window as running in library mode (embedded inside a host
+    /// process like VSCode/Electron).
+    ///
+    /// When enabled:
+    /// - WM_DESTROY does NOT call PostQuitMessage (avoids killing the host)
+    /// - PumpMessages scopes PeekMessage to this HWND only (avoids stealing
+    ///   host messages)
+    ///
+    /// Must be called after Create() and before the first PumpMessages().
+    void SetLibraryMode(bool enabled) { m_libraryMode = enabled; }
+
+    /// Returns true if library mode is active.
+    [[nodiscard]] bool IsLibraryMode() const { return m_libraryMode; }
+
     /// Binds an InputSystem to receive keyboard and mouse events from this window.
     ///
     /// # Arguments
@@ -413,6 +427,9 @@ class PlatformWindow {
     // ── File drop callback ─────────────────────────────────────────
     FileDropCallback m_fileDropCb = nullptr;
     void* m_fileDropUserData = nullptr;
+
+    // ── Library mode (embedded in host process) ─────────────────
+    bool m_libraryMode = false;
 
     /// Transitions to a new state and fires the state change callback.
     void TransitionState(WindowState newState);

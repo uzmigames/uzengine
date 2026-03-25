@@ -15,7 +15,13 @@ static Napi::Value CreateViewport(const Napi::CallbackInfo& info) {
     int width         = info[1].As<Napi::Number>().Int32Value();
     int height        = info[2].As<Napi::Number>().Int32Value();
 
-    if (!uz_create_viewport(reinterpret_cast<void*>(static_cast<uintptr_t>(parentHwnd)), width, height)) {
+    int result = 0;
+    DWORD sehCode = uz_seh_create_viewport(
+        reinterpret_cast<void*>(static_cast<uintptr_t>(parentHwnd)),
+        width, height, &result);
+    if (UzNapiCheckSeh(env, sehCode)) return env.Undefined();
+
+    if (!result) {
         Napi::Error::New(env, "Failed to create viewport").ThrowAsJavaScriptException();
     }
     return env.Undefined();
@@ -59,7 +65,10 @@ static Napi::Value SetViewportPosition(const Napi::CallbackInfo& info) {
 
 static Napi::Value RenderFrame(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
-    uz_frame_stats stats = uz_render_frame();
+
+    uz_frame_stats stats = {};
+    DWORD sehCode = uz_seh_render_frame(&stats);
+    if (UzNapiCheckSeh(env, sehCode)) return env.Undefined();
 
     Napi::Object obj = Napi::Object::New(env);
     obj.Set("fps",        Napi::Number::New(env, stats.fps));
@@ -75,10 +84,14 @@ static Napi::Value RenderFrame(const Napi::CallbackInfo& info) {
 
 static Napi::Value CaptureScreenshot(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
+
     uint8_t* data  = nullptr;
     uint32_t size  = 0;
+    int result     = 0;
+    DWORD sehCode = uz_seh_capture_screenshot(&data, &size, &result);
+    if (UzNapiCheckSeh(env, sehCode)) return env.Undefined();
 
-    if (!uz_capture_screenshot(&data, &size) || !data || size == 0) {
+    if (!result || !data || size == 0) {
         return env.Null();
     }
     Napi::Buffer<uint8_t> buf = Napi::Buffer<uint8_t>::Copy(env, data, size);
@@ -92,6 +105,56 @@ static Napi::Value FreeBuffer(const Napi::CallbackInfo& info) {
 
 // ── Registration ────────────────────────────────────────────────────────────
 
+// ── H.264 Frame Encoding ────────────────────────────────────────────────
+
+static Napi::Value EncodeFrame(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+
+    const uint8_t* data = nullptr;
+    uint32_t size       = 0;
+    int result          = 0;
+    DWORD sehCode = uz_seh_encode_frame(&data, &size, &result);
+    if (UzNapiCheckSeh(env, sehCode)) return env.Undefined();
+
+    if (!result || !data || size == 0) {
+        return env.Null();
+    }
+    return Napi::Buffer<uint8_t>::Copy(env, data, size);
+}
+
+static Napi::Value RequestKeyframe(const Napi::CallbackInfo& info) {
+    uz_request_keyframe();
+    return info.Env().Undefined();
+}
+
+static Napi::Value SetEncodeBitrate(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 1 || !info[0].IsNumber()) {
+        Napi::TypeError::New(env, "setEncodeBitrate(kbps: number) expected")
+            .ThrowAsJavaScriptException();
+        return env.Undefined();
+    }
+    uz_set_encode_bitrate(static_cast<uint32_t>(info[0].As<Napi::Number>().Int32Value()));
+    return env.Undefined();
+}
+
+static Napi::Value GetCodecExtradata(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+
+    const uint8_t* data = nullptr;
+    uint32_t size       = 0;
+    int result          = 0;
+    DWORD sehCode = uz_seh_get_codec_extradata(&data, &size, &result);
+    if (UzNapiCheckSeh(env, sehCode)) return env.Undefined();
+
+    if (!result || !data || size == 0) {
+        return env.Null();
+    }
+    return Napi::Buffer<uint8_t>::Copy(env, data, size);
+}
+
+// ── Registration ────────────────────────────────────────────────────────
+
 void RegisterViewportBindings(Napi::Env env, Napi::Object exports) {
     exports.Set("createViewport",      Napi::Function::New(env, CreateViewport));
     exports.Set("destroyViewport",     Napi::Function::New(env, DestroyViewport));
@@ -100,4 +163,8 @@ void RegisterViewportBindings(Napi::Env env, Napi::Object exports) {
     exports.Set("renderFrame",         Napi::Function::New(env, RenderFrame));
     exports.Set("captureScreenshot",   Napi::Function::New(env, CaptureScreenshot));
     exports.Set("freeBuffer",          Napi::Function::New(env, FreeBuffer));
+    exports.Set("encodeFrame",         Napi::Function::New(env, EncodeFrame));
+    exports.Set("requestKeyframe",     Napi::Function::New(env, RequestKeyframe));
+    exports.Set("getCodecExtradata",   Napi::Function::New(env, GetCodecExtradata));
+    exports.Set("setEncodeBitrate",   Napi::Function::New(env, SetEncodeBitrate));
 }

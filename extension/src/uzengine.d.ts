@@ -69,6 +69,13 @@ export interface UzEngineAddon {
     // ── Lifecycle ──────────────────────────────────────────────────────────────
 
     /**
+     * Override the engine resource directory for DLL/shader discovery.
+     * Call before `init()`. When running as a .node addon inside Electron,
+     * pass the addon's directory so the engine finds dxcompiler.dll etc.
+     */
+    setEngineDir(path: string): void;
+
+    /**
      * Returns the version string of the UzEngine runtime, e.g. `"0.7.0"`.
      * Safe to call before `init()`.
      */
@@ -292,6 +299,52 @@ export interface UzEngineAddon {
      * @param delta - Scroll amount. Positive = scroll up, negative = scroll down.
      */
     onScroll(delta: number): void;
+
+    // ── H.264 Frame Encoding ────────────────────────────────────────────────────
+
+    /**
+     * Encodes the most recently rendered frame as H.264 NAL units.
+     *
+     * Call after `renderFrame()`. The returned Buffer contains one or more
+     * H.264 NAL units suitable for WebCodecs `VideoDecoder`. The buffer is
+     * a Node-owned copy — safe to hold across frames.
+     *
+     * Only available when editor mode is active (`setEditorMode(true)`).
+     *
+     * @returns H.264 NAL data as a `Buffer`, or `null` if no frame was
+     *   produced (encoder buffering) or the encoder is not initialized.
+     */
+    encodeFrame(): Buffer | null;
+
+    /**
+     * Forces the next encoded frame to be an IDR keyframe.
+     *
+     * Call when the WebCodecs decoder needs a clean reference point
+     * (e.g., after a panel is revealed or a decode error occurs).
+     */
+    requestKeyframe(): void;
+
+    /**
+     * Returns the codec extradata (SPS/PPS) needed by WebCodecs.
+     *
+     * Pass this as the `description` field in `VideoDecoder.configure()`.
+     * The data is valid for the encoder's lifetime and does not change
+     * unless the viewport is resized.
+     *
+     * @returns Extradata bytes as a `Buffer`, or `null` if the encoder
+     *   is not initialized.
+     */
+    getCodecExtradata(): Buffer | null;
+
+    /**
+     * Updates the H.264 encoder bitrate for adaptive quality.
+     *
+     * Lower during high motion (faster encoding), higher on static scenes
+     * (maximum quality).
+     *
+     * @param kbps - Target bitrate in kilobits per second.
+     */
+    setEncodeBitrate(kbps: number): void;
 
     // ── Diagnostics ────────────────────────────────────────────────────────────
 

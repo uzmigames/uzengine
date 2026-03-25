@@ -97,10 +97,30 @@ UZ_API const char* uz_runtime_version(void);
 /// The string is statically allocated and never freed.
 UZ_API const char* uz_runtime_backend(void);
 
+/// Overrides the engine resource directory for DLL and shader discovery.
+///
+/// When the engine runs as a .node addon inside Electron, the host executable
+/// is `Code.exe` (e.g., `F:/IDEs/Microsoft VS Code/`). GetModuleFileNameW
+/// returns that directory, causing DLL loads for dxcompiler.dll, dxil.dll, and
+/// D3D12/ to fail. Call this function with the addon's own directory
+/// (e.g., the directory containing `uzengine.node`) before uz_runtime_init()
+/// to redirect all resource discovery to the correct location.
+///
+/// Passing NULL or an empty string clears any previously set override.
+///
+/// # Arguments
+/// * `path` — Absolute path to the directory that contains the engine DLLs
+///   and shader artefacts. May be NULL or empty to clear the override.
+///
+/// # Safety
+/// - Must be called before uz_runtime_init() and uz_create_viewport().
+/// - NOT thread-safe: call from the main thread only.
+UZ_API void uz_set_engine_dir(const char* path);
+
 /// Initializes the UzEngine runtime.
 ///
 /// Sets up the logging system and global engine state. Must be called before
-/// any other uz_* function (except uz_runtime_version).
+/// any other uz_* function (except uz_runtime_version and uz_set_engine_dir).
 ///
 /// # Returns
 /// - 1 on success
@@ -346,6 +366,58 @@ UZ_API int uz_capture_screenshot(uint8_t** out_data, uint32_t* out_size);
 /// # Arguments
 /// * `data` — Pointer returned by uz_capture_screenshot(). Passing NULL is safe.
 UZ_API void uz_free_buffer(uint8_t* data);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// H.264 Frame Encoding
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Encodes the most recently rendered frame as H.264.
+///
+/// After uz_render_frame() returns, call this to encode the frame's back
+/// buffer as H.264 NAL units suitable for WebCodecs VideoDecoder. The output
+/// includes Annex-B start codes and is ready for transport.
+///
+/// The output buffer is owned by the encoder and valid until the next call
+/// to uz_encode_frame(). Do NOT free it — it is reused internally.
+///
+/// # Arguments
+/// * `out_data` — Receives a pointer to the encoded H.264 NAL data.
+/// * `out_size` — Receives the encoded data size in bytes.
+///
+/// # Returns
+/// - 1 if a frame was produced
+/// - 0 if the encoder buffered the frame or an error occurred
+UZ_API int uz_encode_frame(const uint8_t** out_data, uint32_t* out_size);
+
+/// Forces the next encoded frame to be an IDR keyframe.
+///
+/// Call when the WebCodecs decoder needs a clean reference point (e.g.,
+/// after a panel is revealed or a decode error occurs).
+UZ_API void uz_request_keyframe(void);
+
+/// Updates the H.264 encoder bitrate for adaptive quality control.
+///
+/// Lower bitrate during high motion for faster encoding, higher on static
+/// scenes for maximum quality. Takes effect gradually via the rate controller.
+///
+/// # Arguments
+/// * `kbps` — Target bitrate in kilobits per second.
+UZ_API void uz_set_encode_bitrate(uint32_t kbps);
+
+/// Returns the codec description (extradata) needed by WebCodecs.
+///
+/// The extradata contains SPS/PPS NAL units that must be passed to the
+/// VideoDecoder's configure() call as the `description` field. The buffer
+/// is owned by the encoder and valid for the encoder's lifetime.
+///
+/// # Arguments
+/// * `out_data` — Receives a pointer to the extradata bytes.
+/// * `out_size` — Receives the extradata size in bytes.
+///
+/// # Returns
+/// - 1 on success
+/// - 0 if the encoder is not initialized
+UZ_API int uz_get_codec_extradata(const uint8_t** out_data, uint32_t* out_size);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Editor Configuration

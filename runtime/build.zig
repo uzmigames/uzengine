@@ -93,6 +93,7 @@ pub fn build(b: *std.Build) void {
         "engine/scripting/core",
         "engine/scripting/renderer",
         "engine/scripting/editor",
+        "engine/ipc",
         "engine/event",
         "engine/property",
         "engine/debug",
@@ -141,6 +142,7 @@ pub fn build(b: *std.Build) void {
         tp ++ "msdfgen/ext",
         tp ++ "freetype/include",
         tp ++ "smaa",
+        tp ++ "ffmpeg/include",
     };
 
     const linux_engine_include_dirs = [_][]const u8{
@@ -258,6 +260,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/scripting/core", cpp_flags);
     addCppDir(runtime_mod, b, "engine/scripting/renderer", cpp_flags);
     addCppDir(runtime_mod, b, "engine/scripting/editor", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/ipc", cpp_flags);
     addCppDir(runtime_mod, b, "engine/property", cpp_flags);
     addCppDir(runtime_mod, b, "engine/debug",    cpp_flags);
 
@@ -278,6 +281,11 @@ pub fn build(b: *std.Build) void {
         runtime_mod.addIncludePath(b.path(tp ++ "d3d12ma/src"));
         // LuaJIT pre-built library (built by setup.ps1 via msvcbuild.bat)
         runtime_mod.addObjectFile(b.path(tp ++ "luajit/src/lua51.lib"));
+        // FFmpeg pre-built shared libraries (H.264 encoding for viewport streaming)
+        runtime_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avcodec.lib"));
+        runtime_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avutil.lib"));
+        runtime_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/swscale.lib"));
+        runtime_mod.addLibraryPath(b.path(tp ++ "ffmpeg/lib"));
     } else if (target.result.os.tag == .linux) {
         addCppDir(runtime_mod, b, "platform/linux", cpp_flags);
     }
@@ -771,6 +779,11 @@ pub fn build(b: *std.Build) void {
         dll_mod.addObjectFile(editor_lib.getEmittedBin());
         // LuaJIT static lib — Lua VM referenced by LuaVM.cpp.
         dll_mod.addObjectFile(b.path(tp ++ "luajit/src/lua51.lib"));
+        // FFmpeg import libs for H.264 encoding.
+        dll_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avcodec.lib"));
+        dll_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avutil.lib"));
+        dll_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/swscale.lib"));
+        dll_mod.addLibraryPath(b.path(tp ++ "ffmpeg/lib"));
 
         const dll = b.addLibrary(.{
             .linkage = .dynamic,
@@ -904,6 +917,10 @@ pub fn build(b: *std.Build) void {
     // LuaJIT — needed by scripting tests that call lua C API directly
     if (is_windows) {
         test_mod.addObjectFile(b.path(tp ++ "luajit/src/lua51.lib"));
+        // FFmpeg import libs for H.264 encoder
+        test_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avcodec.lib"));
+        test_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avutil.lib"));
+        test_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/swscale.lib"));
     }
 
     if (is_windows) {
@@ -969,6 +986,10 @@ pub fn build(b: *std.Build) void {
             addCppDir(tool_mod, b, "engine/ecs/environment", cpp_flags);
 
             tool_mod.addObjectFile(b.path(tp ++ "luajit/src/lua51.lib"));
+            // FFmpeg import libs for H.264 encoder
+            tool_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avcodec.lib"));
+            tool_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avutil.lib"));
+            tool_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/swscale.lib"));
 
             const tool_exe = b.addExecutable(.{ .name = tool_name, .root_module = tool_mod });
             tool_exe.linkLibrary(lib);

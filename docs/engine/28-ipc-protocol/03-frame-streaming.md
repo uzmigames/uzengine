@@ -549,12 +549,24 @@ bool H264Encoder::RequestKeyframe() {
 | Raw RGBA | 2 FPS | Perfect | <1ms | Bandwidth-limited (~8 Gbps for 1920x1080) |
 | JPEG (stb) | 138 FPS | Visible artifacts | ~7ms | Loss compression, decoding overhead |
 | WebP (libwebp) | 24 FPS | Good | ~10ms | Slower codec, still software |
-| **H.264 (MF)** | **120 FPS** | **Good** | **<5ms** | **Hardware accelerated** |
+| **H.264 (FFmpeg)** | **120 FPS** | **Good** | **<5ms** | **Hardware accelerated (NVENC/AMF/QSV)** |
 
-## Implementation Phase
+## Implementation Status
 
-| Phase | What Ships |
-|-------|-----------|
-| **Phase 1** | Basic H.264 encoder (Media Foundation), WebCodecs decoder, single frame streaming |
-| **Phase 1.5** | Triple-buffer optimization, motion-adaptive bitrate, latency measurement & logging, error recovery |
-| **Phase 2** | Selective region encoding (only encode changed regions), frame pacing adaptive to network, VP9 fallback for low-bandwidth scenarios |
+| Phase | Status | What Ships |
+|-------|--------|-----------|
+| **Phase 1** | **DONE** (v0.2.52) | FFmpeg libavcodec H.264 encoder, HW probe (NVENC/AMF/QSV/MF/x264), WebCodecs VideoDecoder, synchronous frame streaming, PNG fallback, crash protection (SEH + VEH), resize handling |
+| **Phase 1.5** | Pending | Triple-buffer readback, async encoder thread, motion-adaptive bitrate, latency benchmarks |
+| **Phase 2** | Pending | Selective region encoding, frame pacing, VP9 fallback |
+
+### Phase 1 Implementation Notes (v0.2.52)
+
+- **Encoder**: FFmpeg libavcodec (not Media Foundation directly). Probes HW encoders: `h264_nvenc` > `h264_amf` > `h264_qsv` > `h264_mf` > `libx264`.
+- **Color conversion**: libswscale RGBA-to-NV12 (SWS_BILINEAR).
+- **Readback**: Single `ScreenshotCapture::MapReadback` + `WaitIdle` (synchronous). Sufficient for 720p@120FPS, needs triple-buffer for 1080p.
+- **Transport**: N-API `encodeFrame()` returns Buffer of H.264 NAL units. Extension posts to webview via `postMessage`.
+- **Decoder**: WebCodecs `VideoDecoder` with `avc1.42001e` baseline, HW-accelerated, `optimizeForLatency: true`.
+- **Fallback**: PNG via `captureScreenshot()` when encoder unavailable or WebCodecs unsupported.
+- **Crash protection**: VEH crash reports + SEH wrappers on all N-API calls.
+- **C API**: `uz_encode_frame`, `uz_request_keyframe`, `uz_get_codec_extradata`, `uz_set_encode_bitrate`.
+- **Task tracking**: `.rulebook/tasks/phase2-2.1.0-viewport-hwnd-embedding/tasks.md`

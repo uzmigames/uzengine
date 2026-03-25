@@ -109,6 +109,32 @@ void ScreenshotCapture::CaptureFromPresent(IRHICommandList* cmdList, IRHISwapCha
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// MapReadback / UnmapReadback — direct pixel access for H.264 encoder
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool ScreenshotCapture::MapReadback(const uint8_t** outData, uint32_t* outStride) const {
+    if (!m_device || !m_readbackBuffer.IsValid() || !outData || !outStride) {
+        return false;
+    }
+
+    void* mapped = m_device->MapBuffer(m_readbackBuffer);
+    if (!mapped) {
+        UZ_LOG(Screenshot, Error, "MapReadback: failed to map readback buffer");
+        return false;
+    }
+
+    *outData = static_cast<const uint8_t*>(mapped);
+    *outStride = m_rowPitch;
+    return true;
+}
+
+void ScreenshotCapture::UnmapReadback() const {
+    if (m_device && m_readbackBuffer.IsValid()) {
+        m_device->UnmapBuffer(m_readbackBuffer);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Save
 // ─────────────────────────────────────────────────────────────────────────────
 

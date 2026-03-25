@@ -54,11 +54,21 @@ char g_lastRhiOp[256] = {};
 /// GPU adapter name buffer. Written once at RHI init.
 char g_gpuAdapter[256] = {};
 
+/// Override crash output base directory. When non-empty, crash reports go to
+/// `{g_crashBaseDir}/crashes/{timestamp}/` instead of `{exe_dir}/crashes/`.
+char g_crashBaseDir[MAX_PATH] = {};
+
 /// Previous exception filter, restored on uninstall.
 LPTOP_LEVEL_EXCEPTION_FILTER g_previousFilter = nullptr;
 
 /// Whether the crash handler is currently installed.
 bool g_installed = false;
+
+/// Whether library mode is enabled (VEH instead of UEF).
+bool g_libraryMode = false;
+
+/// VEH handle for library mode.
+void* g_vehHandle = nullptr;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Crash directory and file writing helpers — exception-safe (no heap allocs)
@@ -323,9 +333,14 @@ LONG WINAPI UzExceptionFilter(EXCEPTION_POINTERS* exceptionInfo) {
     ctx.stackFrameCount = CaptureRawStackTrace(
         ctx.stackFrames, CrashContext::kMaxStackFrames, 0);
 
-    // 3. Build crash directory path: {exe_dir}/crashes/{timestamp}/
+    // 3. Build crash directory path: {base_dir}/crashes/{timestamp}/
+    //    Use override dir if set (for .node addon running inside Electron),
+    //    otherwise fall back to exe directory.
     char exeDirBuf[MAX_PATH];
-    {
+    if (g_crashBaseDir[0] != '\0') {
+        std::strncpy(exeDirBuf, g_crashBaseDir, MAX_PATH - 1);
+        exeDirBuf[MAX_PATH - 1] = '\0';
+    } else {
         // Get exe directory without std::filesystem (crash-safe).
         const DWORD exeLen = GetModuleFileNameA(nullptr, exeDirBuf, MAX_PATH);
         if (exeLen == 0 || exeLen >= MAX_PATH) {
@@ -381,6 +396,34 @@ LONG WINAPI UzExceptionFilter(EXCEPTION_POINTERS* exceptionInfo) {
     return EXCEPTION_EXECUTE_HANDLER;
 }
 
+/// Vectored Exception Handler for library mode.
+///
+/// Writes crash reports (minidump, txt, json) but returns
+/// EXCEPTION_CONTINUE_SEARCH so inner __try/__except blocks (like the
+/// N-API SEH wrappers) can catch the exception and convert it to a JS error
+/// instead of terminating the host process.
+///
+/// Only fires for fatal exceptions (access violations, stack overflow, etc.).
+/// Ignores non-fatal exceptions (C++ exceptions, breakpoints in debug builds).
+LONG WINAPI UzVectoredHandler(EXCEPTION_POINTERS* exceptionInfo) {
+    const DWORD code = exceptionInfo->ExceptionRecord->ExceptionCode;
+
+    // Skip non-fatal exceptions: C++ exceptions, debugger breakpoints,
+    // and "output debug string" exceptions.
+    if (code == 0xE06D7363 ||  // MSVC C++ exception
+        code == EXCEPTION_BREAKPOINT ||
+        code == 0x40010006 ||  // DBG_PRINTEXCEPTION_C
+        code == 0x4001000A) {  // DBG_PRINTEXCEPTION_WIDE_C
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    // Write crash reports using the same logic as UzExceptionFilter.
+    UzExceptionFilter(exceptionInfo);
+
+    // Let the exception propagate to inner __try/__except blocks.
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
 } // anonymous namespace
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -390,10 +433,16 @@ LONG WINAPI UzExceptionFilter(EXCEPTION_POINTERS* exceptionInfo) {
 void InstallCrashHandler() {
     UZ_PROFILE_FUNCTION();
 
-    g_previousFilter = SetUnhandledExceptionFilter(UzExceptionFilter);
+    if (g_libraryMode) {
+        // VEH: writes crash reports but lets __try/__except catch the exception.
+        g_vehHandle = AddVectoredExceptionHandler(1, UzVectoredHandler);
+        UZ_LOG(CrashHandler, Info, "Crash handler installed (library mode — VEH)");
+    } else {
+        // Standalone: traditional unhandled exception filter.
+        g_previousFilter = SetUnhandledExceptionFilter(UzExceptionFilter);
+        UZ_LOG(CrashHandler, Info, "Crash handler installed (standalone — UEF)");
+    }
     g_installed = true;
-
-    UZ_LOG(CrashHandler, Info, "Crash handler installed");
 }
 
 void UninstallCrashHandler() {
@@ -401,8 +450,13 @@ void UninstallCrashHandler() {
         return;
     }
 
-    SetUnhandledExceptionFilter(g_previousFilter);
-    g_previousFilter = nullptr;
+    if (g_libraryMode && g_vehHandle) {
+        RemoveVectoredExceptionHandler(g_vehHandle);
+        g_vehHandle = nullptr;
+    } else {
+        SetUnhandledExceptionFilter(g_previousFilter);
+        g_previousFilter = nullptr;
+    }
     g_installed = false;
 
     UZ_LOG(CrashHandler, Info, "Crash handler uninstalled");
@@ -426,6 +480,20 @@ void CrashHandler_SetGpuAdapter(const char* adapter) {
 
 void CrashHandler_SetGpuDeviceRemoved(bool removed) {
     g_gpuDeviceRemoved.store(removed, std::memory_order_relaxed);
+}
+
+void CrashHandler_SetLibraryMode(bool enabled) {
+    g_libraryMode = enabled;
+}
+
+void CrashHandler_SetCrashDir(const char* dir) {
+    if (!dir || dir[0] == '\0') {
+        g_crashBaseDir[0] = '\0';
+        return;
+    }
+    std::strncpy(g_crashBaseDir, dir, MAX_PATH - 1);
+    g_crashBaseDir[MAX_PATH - 1] = '\0';
+    UZ_LOG(CrashHandler, Info, "Crash output directory set to: {}", g_crashBaseDir);
 }
 
 } // namespace uz

@@ -2,6 +2,88 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.52] — 2026-03-25
+
+### H.264 Viewport Frame Streaming (phase2-2.1.0)
+
+Full H.264 hardware-accelerated frame streaming pipeline from DX12 render to
+VSCode webview canvas via WebCodecs VideoDecoder. 120 FPS target at 720p with
+<5ms latency (POC 0.2 validated architecture).
+
+**H.264 Encoder (`runtime/engine/ipc/h264_encoder.h/.cpp`):**
+- FFmpeg libavcodec with HW encoder probe: NVENC → AMF → QSV → MF → x264 software fallback
+- RGBA→NV12 via libswscale, Baseline profile, low-latency CBR, no B-frames
+- Per-encoder tuning: NVENC p1+ull, AMF ultralowlatency, QSV veryfast, x264 ultrafast+zerolatency
+- `EncodeFrame()` (sync), `SubmitFrameAsync()`/`GetEncodedFrame()` (async thread)
+- `RequestKeyframe()`, `SetBitrate()` (atomic, thread-safe), `GetExtradata()` (SPS/PPS)
+- Dedicated encoder thread: mutex+CV, double-buffered staging/output, frame-drop on backpressure
+
+**Triple-Buffered GPU Readback (`runtime/engine/ipc/frame_readback.h/.cpp`):**
+- 3 readback buffers + 3 fences, rotated per frame
+- GPU copies frame N while CPU reads frame N-2 — eliminates `WaitIdle()` stall
+- Pipeline fill: first 2 frames return empty (no stall, no blocking)
+- Fallback to single-buffer `WaitIdle()` if triple-buffer init fails
+
+**Runtime C API:**
+- `uz_encode_frame()`, `uz_request_keyframe()`, `uz_get_codec_extradata()`, `uz_set_encode_bitrate()`
+- H.264 encoder initializes only when `--editor` / `setEditorMode(true)` is active
+
+**N-API Bridge:**
+- `encodeFrame(): Buffer | null`, `requestKeyframe()`, `getCodecExtradata(): Buffer | null`, `setEncodeBitrate(kbps)`
+- SEH wrappers on all encode functions (`uz_seh_encode_frame`, `uz_seh_get_codec_extradata`)
+- Fixed Win32 `GetVersion`/`Shutdown` macro collisions in napi_lifecycle.cpp
+
+**VSCode Extension (`scene-editor-provider.ts`):**
+- WebCodecs `VideoDecoder` with `avc1.42001e` Baseline, HW-accelerated, `optimizeForLatency: true`
+- 8ms render loop (120 FPS target): `renderFrame()` → `encodeFrame()` → `postMessage(Uint8Array)` → `VideoDecoder` → canvas
+- PNG fallback via `captureScreenshot()` when encoder unavailable or WebCodecs unsupported
+- Codec extradata flow: extension sends SPS/PPS on ready → webview configures decoder
+- Resize handling: webview notifies extension → `resizeViewport()` → encoder reinit → new extradata + keyframe
+- Decoder error recovery: webview posts `decoderError` → extension calls `requestKeyframe()`
+- Crash detection: consecutive error counting, stops loop on SEH, VSCode error notification
+
+**Crash Protection (library mode):**
+- `PlatformWindow::SetLibraryMode()` — no `PostQuitMessage`, scoped `PeekMessageW`
+- Hidden HWND when `parent_hwnd == 0` — no standalone window
+- `CrashHandler` VEH mode — writes minidump + crash reports, propagates to `__try/__except`
+- `CrashHandler_SetCrashDir()` — redirects to engine dir (not VSCode exe dir)
+- N-API SEH wrappers on all critical functions
+
+**FFmpeg Integration:**
+- `scripts/setup.ps1` — downloads BtbN LGPL shared build, keeps LICENSE
+- `napi/CMakeLists.txt` — copies FFmpeg DLLs alongside uzengine.node
+- `runtime/build.zig` — links avcodec.lib, avutil.lib, swscale.lib on all targets
+
+**Infrastructure for H.264 pipeline (crash protection, hidden HWND):**
+
+**Hidden HWND (prerequisite for H.264 pipeline):**
+- `uz_create_viewport(0, w, h)` creates HWND for DX12 swapchain but keeps it hidden (no `ShowWindow`). No standalone window appears.
+- When `parent_hwnd != 0`, reparented as `WS_CHILD` inside the parent — same as before.
+- PNG screenshot fallback is temporary until H.264 encoder (Media Foundation) is implemented per POC 0.2 architecture.
+
+**PlatformWindow Library Mode:**
+- Added `PlatformWindow::SetLibraryMode(bool)` — prevents host process interference:
+  - `WM_DESTROY` no longer calls `PostQuitMessage(0)` (was killing VSCode/Electron).
+  - `PumpMessages()` scopes `PeekMessageW` to our HWND only (was stealing Electron messages).
+
+**Crash Handler Library Mode (VEH):**
+- Added `CrashHandler_SetLibraryMode(bool)` — switches from `SetUnhandledExceptionFilter` (terminates process) to `AddVectoredExceptionHandler` (writes crash reports, lets `__try/__except` catch the exception).
+- VEH writes minidump + crash.txt + crash.json to `{engine_dir}/crashes/{timestamp}/`, returns `EXCEPTION_CONTINUE_SEARCH`.
+- Added `CrashHandler_SetCrashDir(const char*)` — redirects crash reports from VSCode's exe dir to the engine directory. Automatically set by `uz_set_engine_dir()`.
+
+**N-API SEH Wrappers:**
+- `uz_seh_render_frame()`, `uz_seh_create_viewport()`, `uz_seh_capture_screenshot()`, `uz_seh_runtime_init()` — plain-C wrappers with `__try/__except`. Crash → JS exception instead of killing Extension Host.
+- `UzNapiCheckSeh()` converts exception codes to `Napi::Error`.
+
+**Extension Crash Detection:**
+- Render loop counts consecutive errors and detects SEH exceptions.
+- On native crash: stops render loop, shows VSCode error notification with crash file location.
+
+**Crash report files** (`native/crashes/{YYYY-MM-DD_HH-MM-SS}/`):
+- `crash.dmp` — minidump (open in Visual Studio for full stack trace)
+- `crash.txt` — human-readable: exception code, frame number, scene, stack trace
+- `crash.json` — machine-parseable for automated analysis
+
 ## [0.2.51] — 2026-03-24
 
 ### Runtime Project Loading, SRP File Split, DLL Path Fixes

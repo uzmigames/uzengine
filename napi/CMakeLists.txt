@@ -8,7 +8,7 @@
 # ///   cd runtime && zig build -Ddll=true
 # ///
 # /// # Build (from VS Developer Command Prompt)
-# ///   cd napi && npx cmake-js compile -d . --runtime=electron --runtime-version=39.6.0
+# ///   cd napi && npx cmake-js compile -d . --runtime=electron --runtime-version=39.8.0
 
 cmake_minimum_required(VERSION 3.15)
 project(uzengine LANGUAGES CXX)
@@ -73,9 +73,11 @@ target_link_libraries(${PROJECT_NAME}
 
 # Copy DLL + dependencies alongside uzengine.node
 set(RUNTIME_BIN_DIR ${CMAKE_SOURCE_DIR}/../runtime/build/bin)
+set(FFMPEG_BIN_DIR ${CMAKE_SOURCE_DIR}/../runtime/thirdparty/ffmpeg/bin)
 
 file(GLOB RUNTIME_DLLS "${RUNTIME_BIN_DIR}/*.dll")
 file(GLOB AGILITY_DLLS "${RUNTIME_BIN_DIR}/D3D12/*.dll")
+file(GLOB FFMPEG_DLLS "${FFMPEG_BIN_DIR}/*.dll")
 
 if(RUNTIME_DLLS)
   add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
@@ -87,5 +89,11 @@ if(AGILITY_DLLS)
   add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${PROJECT_NAME}>/D3D12
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${AGILITY_DLLS} $<TARGET_FILE_DIR:${PROJECT_NAME}>/D3D12/
+  )
+endif()
+if(FFMPEG_DLLS)
+  add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMENT "Copying FFmpeg DLLs (H.264 encoding)..."
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${FFMPEG_DLLS} $<TARGET_FILE_DIR:${PROJECT_NAME}>/
   )
 endif()

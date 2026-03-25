@@ -33,9 +33,13 @@
 #include "name_component.h"
 #include "entity.h"
 #include "input.h"
+#include "paths.h"
+#include "h264_encoder.h"
+#include "frame_readback.h"
 
 #ifdef _WIN32
 #include "platform_window.h"
+#include "crash_handler.h"
 #endif
 
 #include <json.hpp>
@@ -152,6 +156,12 @@ struct RuntimeState {
     // Screenshot
     uz::ScreenshotCapture screenshotCapture;
 
+    // H.264 encoding for viewport streaming
+    uz::H264Encoder h264Encoder;
+
+    // Triple-buffered GPU readback for stall-free H.264 encoding
+    uz::FrameReadback frameReadback;
+
     // Static buffers for returned strings (valid until next call)
     std::string sceneTreeJson;
     std::string componentJson;
@@ -211,8 +221,29 @@ const char* uz_runtime_backend(void) {
     }
 }
 
+void uz_set_engine_dir(const char* path) {
+    if (!path || path[0] == '\0') {
+        uz::SetEngineDir({});
+        return;
+    }
+    uz::SetEngineDir(std::filesystem::path(path));
+
+    // Redirect crash reports to the engine directory instead of the host
+    // exe dir (which would be VSCode's install path for .node addons).
+    uz::CrashHandler_SetCrashDir(path);
+
+    UZ_LOG(RuntimeAPI, Info, "Engine resource dir set to: {}", path);
+}
+
 int uz_runtime_init(void) {
     uz::LogInit();
+
+    // When called via C API (from a .node addon inside VSCode/Electron), use
+    // library mode: VEH writes crash reports but lets __try/__except blocks
+    // catch the exception gracefully instead of terminating the host process.
+    uz::CrashHandler_SetLibraryMode(true);
+    uz::InstallCrashHandler();
+
     UZ_LOG(RuntimeAPI, Info, "UzEngine Runtime C API initializing (v{})", uz_runtime_version());
     return 1;
 }
@@ -222,6 +253,8 @@ void uz_runtime_shutdown(void) {
     uz_destroy_viewport();
 
     UZ_LOG(RuntimeAPI, Info, "UzEngine Runtime C API shutting down");
+
+    uz::UninstallCrashHandler();
 
     // Remove callback sink before log shutdown.
     {
@@ -265,12 +298,15 @@ int uz_create_viewport(void* parent_hwnd, int width, int height) {
         return 0;
     }
 
-    // Reparent the window if a parent HWND was provided (VSCode panel).
+    // When running inside a host process (VSCode/Electron), enable library
+    // mode to prevent PostQuitMessage and message-queue interference.
+    state->window.SetLibraryMode(true);
+
     if (parent_hwnd) {
+        // Reparent as a child window inside the provided parent HWND.
         HWND hwnd = state->window.GetHWND();
         HWND parent = static_cast<HWND>(parent_hwnd);
 
-        // Switch from overlapped to child window style.
         LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
         style = (style & ~WS_OVERLAPPEDWINDOW) | WS_CHILD;
         SetWindowLongPtrW(hwnd, GWL_STYLE, style);
@@ -278,9 +314,13 @@ int uz_create_viewport(void* parent_hwnd, int width, int height) {
         SetParent(hwnd, parent);
         SetWindowPos(hwnd, nullptr, 0, 0, width, height,
                      SWP_NOZORDER | SWP_FRAMECHANGED);
+        state->window.Show();
     }
-
-    state->window.Show();
+    // When no parent is provided (embedded PNG streaming mode), keep the
+    // window hidden. DX12 still needs an HWND for swapchain creation, but
+    // there is no reason to display it — frames are captured via
+    // uz_capture_screenshot() and streamed to the webview.
+    // DO NOT call Show() here.
 
     // ── Device ──────────────────────────────────────────────────────────
     uz::RHIDeviceDesc deviceDesc{};
@@ -369,6 +409,30 @@ int uz_create_viewport(void* parent_hwnd, int width, int height) {
     state->screenshotCapture.Init(device,
         static_cast<uint32_t>(width), static_cast<uint32_t>(height));
 
+    // ── Triple-buffered readback for H.264 encoding ─────────────────────
+    if (!state->frameReadback.Init(device,
+            static_cast<uint32_t>(width), static_cast<uint32_t>(height))) {
+        UZ_LOG(RuntimeAPI, Warning,
+               "Frame readback init failed — H.264 encoding will use fallback path");
+    }
+
+    // ── H.264 encoder for viewport streaming ────────────────────────────
+    {
+        uz::H264Encoder::Config encConfig{};
+        encConfig.width  = static_cast<uint32_t>(width);
+        encConfig.height = static_cast<uint32_t>(height);
+        encConfig.fps    = 120;
+        encConfig.bitrateKbps    = 20000;
+        encConfig.keyframeInterval = 15;
+        if (!state->h264Encoder.Initialize(encConfig)) {
+            UZ_LOG(RuntimeAPI, Warning,
+                   "H.264 encoder not available — frame streaming disabled");
+        } else {
+            UZ_LOG(RuntimeAPI, Info, "H.264 encoder ready: {}",
+                   state->h264Encoder.GetEncoderName());
+        }
+    }
+
     // ── Timing ──────────────────────────────────────────────────────────
     state->startTime = std::chrono::high_resolution_clock::now();
     state->prevTime = state->startTime;
@@ -409,6 +473,12 @@ void uz_destroy_viewport(void) {
         state->sceneRenderer.Shutdown();
         state->sceneRendererReady = false;
     }
+
+    // Shutdown H.264 encoder.
+    state->h264Encoder.Shutdown();
+
+    // Shutdown triple-buffered readback (fences + buffers).
+    state->frameReadback.Shutdown();
 
     // Shutdown screenshot capture.
     state->screenshotCapture.Shutdown();
@@ -463,6 +533,28 @@ void uz_resize_viewport(int width, int height) {
     // Reinitialize screenshot capture for the new dimensions.
     state->screenshotCapture.Shutdown();
     state->screenshotCapture.Init(state->device.get(), newW, newH);
+
+    // Reinitialize triple-buffered readback for the new dimensions.
+    state->frameReadback.Shutdown();
+    if (!state->frameReadback.Init(state->device.get(), newW, newH)) {
+        UZ_LOG(RuntimeAPI, Warning,
+               "Frame readback re-init failed after resize — encoding will use fallback");
+    }
+
+    // Reinitialize H.264 encoder for the new dimensions.
+    if (state->h264Encoder.IsInitialized()) {
+        state->h264Encoder.Shutdown();
+        uz::H264Encoder::Config encConfig{};
+        encConfig.width  = newW;
+        encConfig.height = newH;
+        encConfig.fps    = 120;
+        encConfig.bitrateKbps    = 20000;
+        encConfig.keyframeInterval = 15;
+        if (!state->h264Encoder.Initialize(encConfig)) {
+            UZ_LOG(RuntimeAPI, Warning,
+                   "H.264 encoder re-init failed after resize — streaming disabled");
+        }
+    }
 
     UZ_LOG(RuntimeAPI, Info, "Viewport resized to {}x{}", newW, newH);
 }
@@ -888,6 +980,103 @@ int uz_capture_screenshot(uint8_t** out_data, uint32_t* out_size) {
 
 void uz_free_buffer(uint8_t* data) {
     std::free(data);
+}
+
+// ── H.264 Frame Encoding ────────────────────────────────────────────────────
+
+int uz_encode_frame(const uint8_t** out_data, uint32_t* out_size) {
+    if (out_data) *out_data = nullptr;
+    if (out_size) *out_size = 0;
+
+    if (!HasViewport() || !out_data || !out_size) return 0;
+
+    auto* state = s_state;
+    if (!state->h264Encoder.IsInitialized()) return 0;
+
+    // ── Triple-buffered path with async encoder ─────────────────────────
+    // Uses FrameReadback to avoid WaitIdle() stalls. Three readback buffers
+    // rotate: the GPU copies into buffer N, buffer N-1 is in flight, and
+    // buffer N-2 is ready for CPU read. The first two frames return 0
+    // (pipeline filling).
+    //
+    // Encoding is offloaded to a background thread via SubmitFrameAsync().
+    // GetEncodedFrame() returns the result from the PREVIOUS submission,
+    // adding one extra frame of latency but removing 3-5ms of encode cost
+    // from the render thread at 1080p.
+    if (state->frameReadback.IsInitialized()) {
+        // Step 1: Kick off GPU copy of the current backbuffer into the
+        // write buffer. The backbuffer is in Present state after the
+        // render graph's Present transition.
+        state->cmdList->Begin();
+        state->frameReadback.CaptureFrame(state->cmdList, state->swapChain);
+        state->cmdList->End();
+        state->cmdList->Execute();
+        state->frameReadback.SignalFence();
+
+        // Step 2: Read the OLDEST buffer (N-2) — no stall if its fence
+        // has been signaled by the GPU.
+        if (state->frameReadback.IsReadReady()) {
+            const uint8_t* rgbaData = nullptr;
+            uint32_t rgbaStride = 0;
+            if (state->frameReadback.MapRead(&rgbaData, &rgbaStride)) {
+                // Submit to the encoder thread (non-blocking memcpy + signal).
+                state->h264Encoder.SubmitFrameAsync(rgbaData, rgbaStride);
+                state->frameReadback.UnmapRead();
+                state->frameReadback.AdvanceRead();
+            } else {
+                UZ_LOG(RuntimeAPI, Error, "uz_encode_frame: failed to map readback buffer");
+            }
+        }
+
+        // Return the most recently completed encoded frame from the
+        // encoder thread. This is typically the frame submitted on the
+        // PREVIOUS call, providing one frame of decoupled latency.
+        return state->h264Encoder.GetEncodedFrame(out_data, out_size) ? 1 : 0;
+    }
+
+    // ── Fallback path (no triple-buffered readback) ─────────────────────
+    // Uses the screenshot capture system with WaitIdle(). This path is only
+    // reached if FrameReadback::Init() failed.
+    state->cmdList->Begin();
+    state->screenshotCapture.CaptureFromPresent(state->cmdList, state->swapChain);
+    state->cmdList->End();
+    state->cmdList->Execute();
+
+    state->device->WaitIdle();
+
+    const uint8_t* rgbaData = nullptr;
+    uint32_t rgbaStride = 0;
+    if (!state->screenshotCapture.MapReadback(&rgbaData, &rgbaStride)) {
+        UZ_LOG(RuntimeAPI, Error, "uz_encode_frame: fallback map failed");
+        return 0;
+    }
+
+    const bool ok = state->h264Encoder.EncodeFrame(rgbaData, rgbaStride, out_data, out_size);
+    state->screenshotCapture.UnmapReadback();
+
+    return ok ? 1 : 0;
+}
+
+void uz_request_keyframe(void) {
+    if (!HasViewport()) return;
+    s_state->h264Encoder.RequestKeyframe();
+}
+
+void uz_set_encode_bitrate(uint32_t kbps) {
+    if (!HasViewport()) return;
+    s_state->h264Encoder.SetBitrate(kbps);
+}
+
+int uz_get_codec_extradata(const uint8_t** out_data, uint32_t* out_size) {
+    if (out_data) *out_data = nullptr;
+    if (out_size) *out_size = 0;
+
+    if (!HasViewport() || !out_data || !out_size) return 0;
+
+    auto* state = s_state;
+    if (!state->h264Encoder.IsInitialized()) return 0;
+
+    return state->h264Encoder.GetExtradata(out_data, out_size) ? 1 : 0;
 }
 
 // ── Editor Configuration ────────────────────────────────────────────────────

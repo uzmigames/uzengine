@@ -20,10 +20,13 @@ extension.ts (entry point)
   └─ manages webview panels (scene tree, inspector, console, viewport)
 
 Webview panels
-  ├─ panels/viewport-panel.ts     (native HWND viewport rendering)
-  ├─ panels/scene-tree-panel.ts   (entity hierarchy + components)
-  ├─ panels/console-panel.ts      (log streaming via ThreadSafeFunction)
-  └─ engine-mode.ts               (layout toggle: Code / Engine)
+  ├─ panels/scene-editor-provider.ts  (H.264 viewport — .uzscene custom editor)
+  │   ├─ DX12 render → FFmpeg H.264 encode → N-API encodeFrame()
+  │   ├─ postMessage(Uint8Array) → WebCodecs VideoDecoder → canvas @ 120 FPS
+  │   └─ PNG fallback when encoder unavailable
+  ├─ panels/scene-tree-panel.ts       (entity hierarchy + components)
+  ├─ panels/console-panel.ts          (log streaming via ThreadSafeFunction)
+  └─ engine-mode.ts                   (layout toggle: Code / Engine)
 ```
 
 ## Build

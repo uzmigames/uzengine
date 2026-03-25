@@ -73,7 +73,11 @@ LRESULT CALLBACK PlatformWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         return 0;
 
     case WM_DESTROY:
-        PostQuitMessage(0);
+        // In library mode (embedded inside VSCode/Electron), do NOT post
+        // WM_QUIT — that would kill the entire host process.
+        if (!self || !self->IsLibraryMode()) {
+            PostQuitMessage(0);
+        }
         return 0;
 
     case WM_ACTIVATEAPP:
@@ -347,7 +351,10 @@ PlatformWindow::~PlatformWindow() {
 bool PlatformWindow::PumpMessages() {
     UZ_PROFILE_FUNCTION();
     MSG msg = {};
-    while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+    // In library mode, scope PeekMessage to our HWND only so we do not
+    // steal messages from the host process (VSCode/Electron).
+    HWND filterHwnd = m_libraryMode ? m_hwnd : nullptr;
+    while (PeekMessageW(&msg, filterHwnd, 0, 0, PM_REMOVE)) {
         if (msg.message == WM_QUIT) {
             m_open = false;
             return false;
