@@ -137,6 +137,14 @@ RWTexture2D<float4> godRaysOutput : register(u0);
 SamplerState LinearClampSampler : register(s0);
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SM5 register-bound fallback (when UZ_BINDLESS is not defined)
+// ─────────────────────────────────────────────────────────────────────────────
+#ifndef UZ_BINDLESS
+Texture2D<float4> g_SceneColor : register(t0);
+Texture2D<float>  g_DepthTex   : register(t1);
+#endif
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -195,8 +203,13 @@ void main(uint3 dtid : SV_DispatchThreadID)
         return;
 
     // ── Bind resources from descriptor heap ──────────────────────────────
+#ifdef UZ_BINDLESS
     Texture2D<float4> sceneColor = ResourceDescriptorHeap[sceneSrvIndex];
     Texture2D<float>  depthTex   = ResourceDescriptorHeap[depthSrvIndex];
+#else
+    Texture2D<float4> sceneColor = g_SceneColor;
+    Texture2D<float>  depthTex   = g_DepthTex;
+#endif
 
     // ── Compute UV for this pixel ────────────────────────────────────────
     // +0.5 centers the UV on the texel (pixel center convention).

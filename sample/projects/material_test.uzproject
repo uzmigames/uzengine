@@ -1,11 +1,11 @@
 {
-  "name": "Post-Process Test",
+  "name": "Material Test",
   "version": "1.0",
   "engine_version": "0.2.0",
-  "default_scene": "scenes/postprocess_test.uzscene",
-  "content_root": "content/",
+  "default_scene": "scenes/material_test.uzscene",
+  "content_root": "../content/",
   "window": {
-    "title": "UzEngine — Post-Process Test (Lua)",
+    "title": "UzEngine — Material Test (Lua)",
     "width": 1280,
     "height": 720,
     "fullscreen": false

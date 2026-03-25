@@ -54,6 +54,14 @@ struct GPUTriangle
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SM5 register-bound fallback (when UZ_BINDLESS is not defined)
+// ─────────────────────────────────────────────────────────────────────────────
+#ifndef UZ_BINDLESS
+StructuredBuffer<GPUTriangle> g_Triangles : register(t0);
+RWTexture3D<float>            g_OutputTex : register(u0);
+#endif
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Closest point on triangle — Ericson's Voronoi region test
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -162,7 +170,11 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     // ── Iterate all triangles, find closest surface point ────────────────
     // Bindless access to the triangle buffer via descriptor heap index.
+#ifdef UZ_BINDLESS
     StructuredBuffer<GPUTriangle> triangles = ResourceDescriptorHeap[g_trianglesSrv];
+#else
+    StructuredBuffer<GPUTriangle> triangles = g_Triangles;
+#endif
 
     // Track minimum squared distance, closest triangle index, and its face normal.
     // Using squared distance in the inner loop avoids a sqrt per triangle.
@@ -219,6 +231,10 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     // ── Write result ─────────────────────────────────────────────────────
     // Output texture accessed via bindless descriptor heap.
     // The texture format (R16F or R32F) handles the signed float encoding.
+#ifdef UZ_BINDLESS
     RWTexture3D<float> outputTex = ResourceDescriptorHeap[g_outputUav];
+#else
+    RWTexture3D<float> outputTex = g_OutputTex;
+#endif
     outputTex[dispatchThreadId] = signedDist;
 }

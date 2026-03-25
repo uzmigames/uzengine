@@ -1,11 +1,11 @@
 {
-  "name": "HDRI Environment Test",
+  "name": "FBX Character Test",
   "version": "1.0",
   "engine_version": "0.2.0",
-  "default_scene": "scenes/hdri_test.uzscene",
-  "content_root": "content/",
+  "default_scene": "scenes/fbx_test.uzscene",
+  "content_root": "../content/",
   "window": {
-    "title": "UzEngine — HDRI Environment Test (Lua)",
+    "title": "UzEngine — FBX Character Test (Lua)",
     "width": 1920,
     "height": 1080,
     "fullscreen": false

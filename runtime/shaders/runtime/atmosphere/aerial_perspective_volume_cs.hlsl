@@ -69,6 +69,15 @@ cbuffer APVolumeCB : register(b2) {
 SamplerState linearSampler : register(s0);
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SM5 register-bound fallback (when UZ_BINDLESS is not defined)
+// ─────────────────────────────────────────────────────────────────────────────
+#ifndef UZ_BINDLESS
+Texture2D<float4>   g_TransmittanceLut  : register(t0);
+Texture2D<float4>   g_MultiScatterLut   : register(t1);
+RWTexture3D<float4> g_OutputVol         : register(u0);
+#endif
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Volume Dimensions
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -93,7 +102,11 @@ void main(uint3 tid : SV_DispatchThreadID)
         return;
 
     // ── Output UAV ───────────────────────────────────────────────────────
+#ifdef UZ_BINDLESS
     RWTexture3D<float4> outputVol = ResourceDescriptorHeap[outputUavIdx];
+#else
+    RWTexture3D<float4> outputVol = g_OutputVol;
+#endif
 
     // ── Screen UV from voxel XY ──────────────────────────────────────────
     float2 screenUV = (float2(tid.xy) + 0.5f) / float(AP_VOL_XY);
@@ -171,7 +184,11 @@ void main(uint3 tid : SV_DispatchThreadID)
     float  artMieBeta      = mieBeta * mieScale;
 
     // Fetch transmittance LUT
+#ifdef UZ_BINDLESS
     Texture2D<float4> tLut = ResourceDescriptorHeap[transmittanceLutIdx];
+#else
+    Texture2D<float4> tLut = g_TransmittanceLut;
+#endif
 
     // Frostbite analytical integration
     float3 L          = float3(0, 0, 0);
@@ -202,7 +219,11 @@ void main(uint3 tid : SV_DispatchThreadID)
         // diffuse light after the 1st scatter bounce.
         float3 multiScatteredLum = float3(0, 0, 0);
         {
+#ifdef UZ_BINDLESS
             Texture2D<float4> msLut = ResourceDescriptorHeap[multiScatterLutIdx];
+#else
+            Texture2D<float4> msLut = g_MultiScatterLut;
+#endif
             multiScatteredLum = AP_SampleMultiScatteringLut(msLut, linearSampler,
                 sampleKm, sunDir, bottomRadiusKm, topRadiusKm);
         }

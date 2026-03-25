@@ -1,13 +1,13 @@
 {
-  "name": "Cornell Box",
+  "name": "Deferred Test",
   "version": "1.0",
   "engine_version": "0.2.0",
-  "default_scene": "scenes/cornell_box.uzscene",
-  "content_root": "content/",
+  "default_scene": "scenes/deferred_test.uzscene",
+  "content_root": "../content/",
   "window": {
-    "title": "UzEngine — Cornell Box (Lua)",
-    "width": 1920,
-    "height": 1080,
+    "title": "UzEngine — Deferred Test (Lua)",
+    "width": 1280,
+    "height": 720,
     "fullscreen": false
   },
   "render": {

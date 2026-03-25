@@ -71,6 +71,16 @@ cbuffer ScatteringParams : register(b2) {
 SamplerState linearClampSamp : register(s0);
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SM5 register-bound fallback (when UZ_BINDLESS is not defined)
+// ─────────────────────────────────────────────────────────────────────────────
+#ifndef UZ_BINDLESS
+Texture2D<float4>   g_TransmittanceLut   : register(t0);
+RWTexture3D<float4> g_DeltaRayleighOut   : register(u0);
+RWTexture3D<float4> g_DeltaMieOut        : register(u1);
+RWTexture3D<float4> g_ScatteringOut      : register(u2);
+#endif
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -264,12 +274,22 @@ void main(uint3 tid : SV_DispatchThreadID)
         return;
 
     // ── Fetch output UAVs via bindless ───────────────────────────────────
+#ifdef UZ_BINDLESS
     RWTexture3D<float4> deltaRayleighOut = ResourceDescriptorHeap[deltaRayleighUavIdx];
     RWTexture3D<float4> deltaMieOut      = ResourceDescriptorHeap[deltaMieUavIdx];
     RWTexture3D<float4> scatteringOut    = ResourceDescriptorHeap[scatteringUavIdx];
+#else
+    RWTexture3D<float4> deltaRayleighOut = g_DeltaRayleighOut;
+    RWTexture3D<float4> deltaMieOut      = g_DeltaMieOut;
+    RWTexture3D<float4> scatteringOut    = g_ScatteringOut;
+#endif
 
     // ── Fetch transmittance LUT ──────────────────────────────────────────
+#ifdef UZ_BINDLESS
     Texture2D<float4> tLut = ResourceDescriptorHeap[transmittanceLutSrvIdx];
+#else
+    Texture2D<float4> tLut = g_TransmittanceLut;
+#endif
 
     // ── Decode texel to atmosphere parameters ────────────────────────────
     // Bruneton 2017 4D→3D mapping: (r, mu, mu_s, nu) packed into (x, y, z).

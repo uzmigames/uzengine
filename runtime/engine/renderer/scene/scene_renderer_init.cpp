@@ -923,6 +923,19 @@ void SceneRenderer::Resize(uint32_t width, uint32_t height) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Editor Mode
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SceneRenderer::SetEditorMode(bool enabled) {
+    m_editorMode = enabled;
+    UZ_LOG(Renderer, Info, "Editor mode: {}", enabled ? "ON" : "OFF");
+}
+
+bool SceneRenderer::IsEditorMode() const {
+    return m_editorMode;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Shutdown
 // ─────────────────────────────────────────────────────────────────────────────
 

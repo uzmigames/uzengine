@@ -55,7 +55,8 @@ static const float COC_SKIP_THRESHOLD = 0.5f;
 
 /// Pi constant for angle computation.
 /// @ref DoF gather kernel —51 — PI * SampleRingPos / float(RingSampleIteration)
-#ifndef PI
+#ifndef UZ_PI_DEFINED
+#define UZ_PI_DEFINED
 static const float PI = 3.14159265358979323846f;
 #endif
 
@@ -75,6 +76,15 @@ cbuffer DofBlurParams : register(b0) {
 };
 
 SamplerState linearSampler : register(s0);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SM5 register-bound fallback (when UZ_BINDLESS is not defined)
+// ─────────────────────────────────────────────────────────────────────────────
+#ifndef UZ_BINDLESS
+Texture2D<float4>   g_SceneTex  : register(t0);
+Texture2D<float>    g_CocTex    : register(t1);
+RWTexture2D<float4> g_OutputTex : register(u0);
+#endif
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Noise
@@ -148,9 +158,9 @@ void main(uint3 dtid : SV_DispatchThreadID)
     Texture2D<float>  cocTex     = ResourceDescriptorHeap[g_CocSrvIndex];
     RWTexture2D<float4> outputTex = ResourceDescriptorHeap[g_OutputUavIndex];
 #else
-    Texture2D<float4> sceneTex   : register(t0);
-    Texture2D<float>  cocTex     : register(t1);
-    RWTexture2D<float4> outputTex : register(u0);
+    Texture2D<float4>   sceneTex  = g_SceneTex;
+    Texture2D<float>    cocTex    = g_CocTex;
+    RWTexture2D<float4> outputTex = g_OutputTex;
 #endif
 
     float2 outputSize = float2(g_OutputWidth, g_OutputHeight);

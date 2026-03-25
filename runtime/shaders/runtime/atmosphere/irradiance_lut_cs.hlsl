@@ -80,6 +80,17 @@ cbuffer IrradianceParams : register(b2) {
 SamplerState linearClampSamp : register(s0);
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SM5 register-bound fallback (when UZ_BINDLESS is not defined)
+// ─────────────────────────────────────────────────────────────────────────────
+#ifndef UZ_BINDLESS
+Texture2D<float4>   g_TransmittanceLut     : register(t0);
+Texture3D<float4>   g_DeltaRayleighTex     : register(t1);
+Texture3D<float4>   g_DeltaMieTex          : register(t2);
+RWTexture2D<float4> g_IrradianceUav        : register(u0);
+RWTexture2D<float4> g_DeltaIrradianceUav   : register(u1);
+#endif
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -150,9 +161,15 @@ void main(uint3 tid : SV_DispatchThreadID)
         return;
 
     // ── Fetch resources via bindless ─────────────────────────────────────
+#ifdef UZ_BINDLESS
     Texture2D<float4>   tLut          = ResourceDescriptorHeap[transmittanceLutSrvIdx];
     RWTexture2D<float4> irradianceUav = ResourceDescriptorHeap[irradianceUavIdx];
     RWTexture2D<float4> deltaIrrUav   = ResourceDescriptorHeap[deltaIrradianceUavIdx];
+#else
+    Texture2D<float4>   tLut          = g_TransmittanceLut;
+    RWTexture2D<float4> irradianceUav = g_IrradianceUav;
+    RWTexture2D<float4> deltaIrrUav   = g_DeltaIrradianceUav;
+#endif
 
     // ── Decode texel to atmosphere parameters ────────────────────────────
     float2 uv = (float2(tid.xy) + 0.5f) / float2(IRRADIANCE_TEX_WIDTH, IRRADIANCE_TEX_HEIGHT);
@@ -195,8 +212,13 @@ void main(uint3 tid : SV_DispatchThreadID)
         // weighted by cos(theta_i) for the Lambert cosine law.
 
         // Fetch the scattering textures for the previous order.
+#ifdef UZ_BINDLESS
         Texture3D<float4> deltaRayleighTex = ResourceDescriptorHeap[deltaRayleighSrvIdx];
         Texture3D<float4> deltaMieTex      = ResourceDescriptorHeap[deltaMieSrvIdx];
+#else
+        Texture3D<float4> deltaRayleighTex = g_DeltaRayleighTex;
+        Texture3D<float4> deltaMieTex      = g_DeltaMieTex;
+#endif
 
         // Reconstruct the sun direction in the local coordinate frame.
         // At the ground point, zenithDir = (0,0,1) (Z-up).

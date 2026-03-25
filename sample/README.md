@@ -4,28 +4,31 @@ Demo scenes showcasing UzEngine features via Lua scripting and `.uzscene` files.
 
 ## Running
 
-Each demo has a `.uzproject` file. Run with `uzengine.exe`:
+Each demo has a `.uzproject` file in `projects/`. Run with `uzengine.exe`:
 
 ```bash
 # From the UzEngine root directory:
-runtime/build/bin/uzengine.exe --project sample/camera_test.uzproject
+runtime/build/bin/uzengine.exe --project sample/projects/pbr_showcase.uzproject
 
-# With screenshot capture (auto-triggers after scene fully loads):
-runtime/build/bin/uzengine.exe --project sample/deferred_test.uzproject --screenshot output.png
+# With editor overlays (grid, stats, frame graph):
+runtime/build/bin/uzengine.exe --project sample/projects/pbr_showcase.uzproject --editor
+
+# With screenshot capture:
+runtime/build/bin/uzengine.exe --project sample/projects/deferred_test.uzproject --screenshot output.png
 
 # Available demos:
-runtime/build/bin/uzengine.exe --project sample/camera_test.uzproject
-runtime/build/bin/uzengine.exe --project sample/mesh_test.uzproject
-runtime/build/bin/uzengine.exe --project sample/deferred_test.uzproject
-runtime/build/bin/uzengine.exe --project sample/ibl_test.uzproject
-runtime/build/bin/uzengine.exe --project sample/hdri_test.uzproject
-runtime/build/bin/uzengine.exe --project sample/cornell_box.uzproject
-runtime/build/bin/uzengine.exe --project sample/pbr_showcase.uzproject
-runtime/build/bin/uzengine.exe --project sample/textured_quad.uzproject
-runtime/build/bin/uzengine.exe --project sample/postprocess_test.uzproject
-runtime/build/bin/uzengine.exe --project sample/instancing_test.uzproject
-runtime/build/bin/uzengine.exe --project sample/material_test.uzproject
-runtime/build/bin/uzengine.exe --project sample/fbx_test.uzproject
+runtime/build/bin/uzengine.exe --project sample/projects/camera_test.uzproject
+runtime/build/bin/uzengine.exe --project sample/projects/mesh_test.uzproject
+runtime/build/bin/uzengine.exe --project sample/projects/deferred_test.uzproject
+runtime/build/bin/uzengine.exe --project sample/projects/ibl_test.uzproject
+runtime/build/bin/uzengine.exe --project sample/projects/hdri_test.uzproject
+runtime/build/bin/uzengine.exe --project sample/projects/cornell_box.uzproject
+runtime/build/bin/uzengine.exe --project sample/projects/pbr_showcase.uzproject
+runtime/build/bin/uzengine.exe --project sample/projects/textured_quad.uzproject
+runtime/build/bin/uzengine.exe --project sample/projects/postprocess_test.uzproject
+runtime/build/bin/uzengine.exe --project sample/projects/instancing_test.uzproject
+runtime/build/bin/uzengine.exe --project sample/projects/material_test.uzproject
+runtime/build/bin/uzengine.exe --project sample/projects/fbx_test.uzproject
 ```
 
 ## Controls (all demos)
@@ -63,17 +66,20 @@ runtime/build/bin/uzengine.exe --project sample/fbx_test.uzproject
 
 ```
 sample/
-├── camera_test.uzproject
-├── mesh_test.uzproject
-├── textured_quad.uzproject
-├── postprocess_test.uzproject
-├── deferred_test.uzproject
-├── ibl_test.uzproject
-├── hdri_test.uzproject
-├── instancing_test.uzproject
-├── material_test.uzproject
-├── cornell_box.uzproject
-├── pbr_showcase.uzproject
+├── projects/
+│   ├── camera_test.uzproject
+│   ├── mesh_test.uzproject
+│   ├── textured_quad.uzproject
+│   ├── postprocess_test.uzproject
+│   ├── deferred_test.uzproject
+│   ├── ibl_test.uzproject
+│   ├── hdri_test.uzproject
+│   ├── instancing_test.uzproject
+│   ├── material_test.uzproject
+│   ├── cornell_box.uzproject
+│   ├── fbx_test.uzproject
+│   ├── pbr_showcase.uzproject
+│   └── demo.uzproject
 └── content/
     ├── scenes/
     │   ├── camera_test.uzscene

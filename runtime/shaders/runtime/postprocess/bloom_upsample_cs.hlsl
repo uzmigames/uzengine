@@ -49,6 +49,11 @@ cbuffer BloomUpsampleParams : register(b0) {
 
 SamplerState linearSampler : register(s0);
 
+#ifndef UZ_BINDLESS
+Texture2D<float4>   g_LowerMipTex : register(t0);
+RWTexture2D<float4> g_OutputTex   : register(u0);
+#endif
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Entry Point
 // ─────────────────────────────────────────────────────────────────────────────
@@ -71,8 +76,13 @@ void main(uint3 dtid : SV_DispatchThreadID)
     if (dtid.x >= g_OutputWidth || dtid.y >= g_OutputHeight)
         return;
 
+#ifdef UZ_BINDLESS
     Texture2D<float4> lowerMipTex  = ResourceDescriptorHeap[g_LowerMipSrvIndex];
     RWTexture2D<float4> outputTex  = ResourceDescriptorHeap[g_OutputUavIndex];
+#else
+    Texture2D<float4>   lowerMipTex = g_LowerMipTex;
+    RWTexture2D<float4> outputTex   = g_OutputTex;
+#endif
 
     float2 texelSize = g_BloomRadius / float2(g_OutputWidth, g_OutputHeight);
 

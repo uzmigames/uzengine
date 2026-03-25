@@ -32,6 +32,17 @@ cbuffer DecalApplyConstants : register(b0) {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SM5 register-bound fallback (when UZ_BINDLESS is not defined)
+// ─────────────────────────────────────────────────────────────────────────────
+#ifndef UZ_BINDLESS
+Texture2D<float4>   g_DbufferA       : register(t0);
+Texture2D<float4>   g_DbufferB       : register(t1);
+Texture2D<float4>   g_DbufferC       : register(t2);
+RWTexture2D<float4> g_GbufferAlbedo  : register(u0);
+RWTexture2D<float4> g_GbufferNormal  : register(u1);
+#endif
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Entry Point
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -43,9 +54,15 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     uint2 coord = DTid.xy;
 
     // ── Load DBuffer values ──────────────────────────────────────────────
+#ifdef UZ_BINDLESS
     Texture2D<float4> dbufferA = ResourceDescriptorHeap[dbufferASrvIndex];
     Texture2D<float4> dbufferB = ResourceDescriptorHeap[dbufferBSrvIndex];
     Texture2D<float4> dbufferC = ResourceDescriptorHeap[dbufferCSrvIndex];
+#else
+    Texture2D<float4> dbufferA = g_DbufferA;
+    Texture2D<float4> dbufferB = g_DbufferB;
+    Texture2D<float4> dbufferC = g_DbufferC;
+#endif
 
     float4 dA = dbufferA.Load(int3(coord, 0));
     float4 dB = dbufferB.Load(int3(coord, 0));
@@ -57,8 +74,13 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     if (maxAlpha < 0.001) return;
 
     // ── Load and modify GBuffer ──────────────────────────────────────────
+#ifdef UZ_BINDLESS
     RWTexture2D<float4> gbufferAlbedo = ResourceDescriptorHeap[gbufferAlbedoUavIndex];
     RWTexture2D<float4> gbufferNormal = ResourceDescriptorHeap[gbufferNormalUavIndex];
+#else
+    RWTexture2D<float4> gbufferAlbedo = g_GbufferAlbedo;
+    RWTexture2D<float4> gbufferNormal = g_GbufferNormal;
+#endif
 
     float4 gAlbedo = gbufferAlbedo[coord];
     float4 gNormal = gbufferNormal[coord];

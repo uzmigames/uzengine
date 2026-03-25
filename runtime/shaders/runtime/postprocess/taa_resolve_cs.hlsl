@@ -34,6 +34,16 @@ SamplerState LinearClampSampler : register(s0);
 RWTexture2D<float4> taaOutput : register(u0);
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SM5 register-bound fallback (when UZ_BINDLESS is not defined)
+// ─────────────────────────────────────────────────────────────────────────────
+#ifndef UZ_BINDLESS
+Texture2D<float4> g_SceneColor  : register(t0);
+Texture2D<float>  g_DepthTex    : register(t1);
+Texture2D<float4> g_HistoryTex  : register(t2);
+Texture2D<float2> g_VelocityTex : register(t3);
+#endif
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Color Space Transforms
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -129,7 +139,11 @@ float2 ComputeMotionVector(int2 pixelCoord, float2 uv)
 {
     // Read velocity buffer at the dilated pixel coordinate.
     // Velocity buffer is RG16F: velocity in pixels (currScreen - prevScreen).
+#ifdef UZ_BINDLESS
     Texture2D<float2> VelocityTex = ResourceDescriptorHeap[velocitySrvIndex];
+#else
+    Texture2D<float2> VelocityTex = g_VelocityTex;
+#endif
     float2 velocityPixels = VelocityTex.Load(int3(pixelCoord, 0));
 
     // Convert pixel-space velocity to UV-space by dividing by screen dimensions.
@@ -191,9 +205,15 @@ void main(
     float2 uv = (float2(DispatchThreadId) + 0.5) * outputTexelSize;
 
     // ── Bindless Texture Access ─────────────────────────────────────────────
+#ifdef UZ_BINDLESS
     Texture2D<float4> SceneColor = ResourceDescriptorHeap[sceneSrvIndex];
     Texture2D<float>  DepthTex   = ResourceDescriptorHeap[depthSrvIndex];
     Texture2D<float4> HistoryTex = ResourceDescriptorHeap[historySrvIndex];
+#else
+    Texture2D<float4> SceneColor = g_SceneColor;
+    Texture2D<float>  DepthTex   = g_DepthTex;
+    Texture2D<float4> HistoryTex = g_HistoryTex;
+#endif
 
     // ── Scene Color Dimensions ──────────────────────────────────────────────
     // Scene color and depth may be at render resolution (smaller than output

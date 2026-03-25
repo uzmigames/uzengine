@@ -80,10 +80,12 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
             // use UINT32_MAX so the shader uses hardware depth test.
             // Otherwise pass the scene depth SRV for manual shader-based occlusion.
             const uint32_t depthSrv = attachDepth ? UINT32_MAX : m_gbuffer.depthSRV;
-            m_editorGrid->Draw(cmd, *m_cbRing, *m_camera,
-                               depthSrv, ctx.vpWidth, ctx.vpHeight);
+            if (m_editorMode) {
+                m_editorGrid->Draw(cmd, *m_cbRing, *m_camera,
+                                   depthSrv, ctx.vpWidth, ctx.vpHeight);
+            }
 
-            if (m_statsOverlayInitialized) {
+            if (m_editorMode && m_statsOverlayInitialized) {
                 const uint32_t drawCount = ctx.useInstancing
                     ? static_cast<uint32_t>(ctx.instanceBatches.size())
                     : static_cast<uint32_t>(ctx.drawList.Count());

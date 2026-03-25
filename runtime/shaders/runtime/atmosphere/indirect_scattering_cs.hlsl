@@ -72,6 +72,16 @@ cbuffer IndirectScatteringParams : register(b2) {
 SamplerState linearClampSamp : register(s0);
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SM5 register-bound fallback (when UZ_BINDLESS is not defined)
+// ─────────────────────────────────────────────────────────────────────────────
+#ifndef UZ_BINDLESS
+Texture2D<float4>   g_TransmittanceLut   : register(t0);
+Texture3D<float4>   g_ScatteringDensity  : register(t1);
+RWTexture3D<float4> g_ScatteringUav      : register(u0);
+RWTexture3D<float4> g_DeltaScatteringUav : register(u1);
+#endif
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -163,10 +173,17 @@ void main(uint3 tid : SV_DispatchThreadID)
         return;
 
     // ── Fetch resources via bindless ─────────────────────────────────────
+#ifdef UZ_BINDLESS
     Texture2D<float4>   tLut        = ResourceDescriptorHeap[transmittanceLutSrvIdx];
     Texture3D<float4>   densityTex  = ResourceDescriptorHeap[scatteringDensitySrvIdx];
     RWTexture3D<float4> scatUav     = ResourceDescriptorHeap[scatteringUavIdx];
     RWTexture3D<float4> deltaUav    = ResourceDescriptorHeap[deltaScatteringUavIdx];
+#else
+    Texture2D<float4>   tLut        = g_TransmittanceLut;
+    Texture3D<float4>   densityTex  = g_ScatteringDensity;
+    RWTexture3D<float4> scatUav     = g_ScatteringUav;
+    RWTexture3D<float4> deltaUav    = g_DeltaScatteringUav;
+#endif
 
     // ── Decode texel to atmosphere parameters ────────────────────────────
     float3 fragCoord = float3(tid) + 0.5f;

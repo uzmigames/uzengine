@@ -34,6 +34,10 @@ cbuffer RootConstants : register(b0) {
 
 SamplerState linearSampler : register(s0);
 
+#ifndef UZ_BINDLESS
+Texture2D<float4> g_EquirectTex : register(t0);
+#endif
+
 RWTexture2DArray<float4> outputCubemap : register(u0);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -86,7 +90,11 @@ void main(uint3 dtid : SV_DispatchThreadID) {
     float2 equirectUV = DirectionToEquirectUV(dir);
 
     // Sample the HDR equirectangular panorama via bindless descriptor heap
+#ifdef UZ_BINDLESS
     Texture2D<float4> equirectTex = ResourceDescriptorHeap[equirectSrvIndex];
+#else
+    Texture2D<float4> equirectTex = g_EquirectTex;
+#endif
     float4 color = equirectTex.SampleLevel(linearSampler, equirectUV, 0.0f);
 
     // Write to the output cubemap face slice

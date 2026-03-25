@@ -74,6 +74,17 @@ cbuffer ScatteringDensityParams : register(b2) {
 SamplerState linearClampSamp : register(s0);
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SM5 register-bound fallback (when UZ_BINDLESS is not defined)
+// ─────────────────────────────────────────────────────────────────────────────
+#ifndef UZ_BINDLESS
+Texture2D<float4>   g_TransmittanceLut     : register(t0);
+Texture3D<float4>   g_DeltaRayleighTex     : register(t1);
+Texture3D<float4>   g_DeltaMieTex          : register(t2);
+Texture2D<float4>   g_DeltaIrradianceTex   : register(t3);
+RWTexture3D<float4> g_DensityOut           : register(u0);
+#endif
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -182,11 +193,19 @@ void main(uint3 tid : SV_DispatchThreadID)
         return;
 
     // ── Fetch resources via bindless ─────────────────────────────────────
+#ifdef UZ_BINDLESS
     Texture2D<float4>   tLut              = ResourceDescriptorHeap[transmittanceLutSrvIdx];
     Texture3D<float4>   deltaRayleighTex  = ResourceDescriptorHeap[deltaRayleighSrvIdx];
     Texture3D<float4>   deltaMieTex       = ResourceDescriptorHeap[deltaMieSrvIdx];
     Texture2D<float4>   deltaIrradianceTex = ResourceDescriptorHeap[deltaIrradianceSrvIdx];
     RWTexture3D<float4> densityOut        = ResourceDescriptorHeap[scatteringDensityUavIdx];
+#else
+    Texture2D<float4>   tLut              = g_TransmittanceLut;
+    Texture3D<float4>   deltaRayleighTex  = g_DeltaRayleighTex;
+    Texture3D<float4>   deltaMieTex       = g_DeltaMieTex;
+    Texture2D<float4>   deltaIrradianceTex = g_DeltaIrradianceTex;
+    RWTexture3D<float4> densityOut        = g_DensityOut;
+#endif
 
     // ── Decode texel to atmosphere parameters ────────────────────────────
     float3 fragCoord = float3(tid) + 0.5f;

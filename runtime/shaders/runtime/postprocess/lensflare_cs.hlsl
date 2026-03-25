@@ -61,6 +61,10 @@ SamplerState LinearClampSampler : register(s0);
 /// composited onto the bloom result by a subsequent combine pass.
 RWTexture2D<float4> flareOutput : register(u0);
 
+#ifndef UZ_BINDLESS
+Texture2D<float4> g_BloomTex : register(t0);
+#endif
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Ghost Configuration
 // ─────────────────────────────────────────────────────────────────────────────
@@ -166,7 +170,11 @@ void main(uint3 dtid : SV_DispatchThreadID)
         return;
 
     // Bindless texture access via descriptor heap.
+#ifdef UZ_BINDLESS
     Texture2D<float4> bloomTex = ResourceDescriptorHeap[bloomThresholdSrv];
+#else
+    Texture2D<float4> bloomTex = g_BloomTex;
+#endif
 
     // Current pixel UV in [0,1].
     float2 uv = (float2(dtid.xy) + 0.5) / float2(outputWidth, outputHeight);

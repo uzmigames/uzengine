@@ -43,6 +43,11 @@ cbuffer BloomThresholdParams : register(b0) {
 
 SamplerState linearSampler : register(s0);
 
+#ifndef UZ_BINDLESS
+Texture2D<float4>   g_HdrTex    : register(t0);
+RWTexture2D<float4> g_OutputTex : register(u0);
+#endif
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -79,8 +84,13 @@ void main(uint3 dtid : SV_DispatchThreadID)
     if (dtid.x >= outputWidth || dtid.y >= outputHeight)
         return;
 
+#ifdef UZ_BINDLESS
     Texture2D<float4> hdrTex = ResourceDescriptorHeap[g_HdrSrvIndex];
     RWTexture2D<float4> outputTex = ResourceDescriptorHeap[g_OutputUavIndex];
+#else
+    Texture2D<float4>   hdrTex    = g_HdrTex;
+    RWTexture2D<float4> outputTex = g_OutputTex;
+#endif
 
     // Sample 4 corners of the 2x2 block using bilinear filtering
     // Each SampleLevel at the center of the 2x2 block naturally averages the 4 texels

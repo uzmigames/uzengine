@@ -1,11 +1,11 @@
 {
-  "name": "Instancing Test",
+  "name": "PBR Showcase",
   "version": "1.0",
   "engine_version": "0.2.0",
-  "default_scene": "scenes/instancing_test.uzscene",
-  "content_root": "content/",
+  "default_scene": "scenes/pbr_showcase.uzscene",
+  "content_root": "../content/",
   "window": {
-    "title": "UzEngine — Instancing Test (1000 cubes, Lua)",
+    "title": "UzEngine — PBR Showcase (Lua)",
     "width": 1280,
     "height": 720,
     "fullscreen": false

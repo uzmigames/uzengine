@@ -201,7 +201,8 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
                        const std::string& defaultScene,
                        const std::string& screenshotPath = {},
                        int screenshotFrame = 5,
-                       int shadowDebugMode = 0) {
+                       int shadowDebugMode = 0,
+                       bool editorMode = false) {
     // ── Window ──────────────────────────────────────────────────────────
     WindowDesc winDesc{};
     winDesc.title = windowTitle.empty() ? "UzEngine Runtime" : windowTitle.c_str();
@@ -299,6 +300,11 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     if (shadowDebugMode > 0 && sceneRendererReady) {
         sceneRenderer.SetShadowDebugMode(static_cast<uint32_t>(shadowDebugMode));
         UZ_LOG(Engine, Info, "Shadow debug mode set to {}", shadowDebugMode);
+    }
+
+    // Apply editor mode from CLI (--editor)
+    if (editorMode && sceneRendererReady) {
+        sceneRenderer.SetEditorMode(true);
     }
 
     // Bind SceneRenderer into the Lua VM so uz.renderer / uz.mesh / uz.texture work.
@@ -494,9 +500,10 @@ int main(int argc, char** argv) {
         const std::string ssPath = config.GetString("screenshot");
         const int ssFrame = config.GetInt("screenshot-frame", 5);
         const int shadowDebug = config.GetInt("shadow-debug", 0);
+        const bool editorMode = config.GetBool("editor", false);
         exitCode = uz::RunWindowed(deviceDesc, width, height, maxFrames,
                                     windowTitle, projectDir, contentRoot, defaultScene,
-                                    ssPath, ssFrame, shadowDebug);
+                                    ssPath, ssFrame, shadowDebug, editorMode);
 #else
         UZ_LOG(Engine, Error, "Windowed mode not supported on this platform yet");
         exitCode = uz::kExitRenderError;

@@ -1,11 +1,11 @@
 {
-  "name": "IBL Test",
+  "name": "Instancing Test",
   "version": "1.0",
   "engine_version": "0.2.0",
-  "default_scene": "scenes/ibl_test.uzscene",
-  "content_root": "content/",
+  "default_scene": "scenes/instancing_test.uzscene",
+  "content_root": "../content/",
   "window": {
-    "title": "UzEngine — IBL Test (Lua)",
+    "title": "UzEngine — Instancing Test (1000 cubes, Lua)",
     "width": 1280,
     "height": 720,
     "fullscreen": false

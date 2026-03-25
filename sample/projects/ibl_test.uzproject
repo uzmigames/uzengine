@@ -1,11 +1,11 @@
 {
-  "name": "Deferred Test",
+  "name": "IBL Test",
   "version": "1.0",
   "engine_version": "0.2.0",
-  "default_scene": "scenes/deferred_test.uzscene",
-  "content_root": "content/",
+  "default_scene": "scenes/ibl_test.uzscene",
+  "content_root": "../content/",
   "window": {
-    "title": "UzEngine — Deferred Test (Lua)",
+    "title": "UzEngine — IBL Test (Lua)",
     "width": 1280,
     "height": 720,
     "fullscreen": false

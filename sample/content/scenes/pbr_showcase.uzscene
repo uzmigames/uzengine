@@ -29,7 +29,7 @@
             0.96,
             0.88
           ],
-          "intensity": 3.14
+          "intensity": 12.0
         }
       }
     },
@@ -70,7 +70,7 @@
       "components": {
         "transform": {
           "position": [
-            -4,
+            -6,
             0,
             0
           ],
@@ -80,9 +80,9 @@
             0
           ],
           "scale": [
-            0.8,
-            0.8,
-            0.8
+            1.5,
+            1.5,
+            1.5
           ]
         },
         "mesh": {
@@ -102,7 +102,7 @@
       "components": {
         "transform": {
           "position": [
-            -2,
+            -3,
             0,
             0
           ],
@@ -112,9 +112,9 @@
             0
           ],
           "scale": [
-            0.8,
-            0.8,
-            0.8
+            1.5,
+            1.5,
+            1.5
           ]
         },
         "mesh": {
@@ -144,9 +144,9 @@
             0
           ],
           "scale": [
-            0.8,
-            0.8,
-            0.8
+            1.5,
+            1.5,
+            1.5
           ]
         },
         "mesh": {
@@ -165,7 +165,7 @@
       "components": {
         "transform": {
           "position": [
-            2,
+            3,
             0,
             0
           ],
@@ -175,9 +175,9 @@
             0
           ],
           "scale": [
-            0.8,
-            0.8,
-            0.8
+            1.5,
+            1.5,
+            1.5
           ]
         },
         "mesh": {
@@ -197,7 +197,7 @@
       "components": {
         "transform": {
           "position": [
-            4,
+            6,
             0,
             0
           ],
@@ -207,9 +207,9 @@
             0
           ],
           "scale": [
-            0.8,
-            0.8,
-            0.8
+            1.5,
+            1.5,
+            1.5
           ]
         },
         "mesh": {
@@ -230,8 +230,8 @@
         "transform": {
           "position": [
             0,
-            3,
-            1
+            4,
+            1.5
           ],
           "rotation": [
             0,
@@ -239,9 +239,9 @@
             0
           ],
           "scale": [
-            1,
-            1,
-            1
+            1.8,
+            1.8,
+            1.8
           ]
         },
         "mesh": {
@@ -260,9 +260,9 @@
       "components": {
         "transform": {
           "position": [
-            -3,
-            3,
-            1
+            -4,
+            4,
+            1.5
           ],
           "rotation": [
             0,
@@ -270,9 +270,9 @@
             0
           ],
           "scale": [
-            1,
-            1,
-            1
+            1.8,
+            1.8,
+            1.8
           ]
         },
         "mesh": {
@@ -292,9 +292,9 @@
       "components": {
         "transform": {
           "position": [
-            3,
-            3,
-            1
+            4,
+            4,
+            1.5
           ],
           "rotation": [
             0,
@@ -302,9 +302,9 @@
             0
           ],
           "scale": [
-            1,
-            1,
-            1
+            1.8,
+            1.8,
+            1.8
           ]
         },
         "mesh": {
@@ -325,8 +325,8 @@
         "transform": {
           "position": [
             0,
-            -8,
-            3
+            -12,
+            5
           ],
           "rotation": [
             -15,
@@ -490,7 +490,7 @@
           ]
         },
         "sky_light": {
-          "intensity": 0.8,
+          "intensity": 2.0,
           "light_color": [
             0.85,
             0.9,
@@ -520,6 +520,22 @@
           ]
         },
         "height_fog": {}
+      }
+    },
+    {
+      "name": "VolumetricClouds",
+      "components": {
+        "transform": {
+          "position": [0, 0, 0],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1]
+        },
+        "volumetric_clouds": {
+          "coverage": 0.6,
+          "density": 1,
+          "layer_bottom_altitude_km": 7.0,
+          "layer_height_km": 10.0
+        }
       }
     }
   ]

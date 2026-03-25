@@ -1,11 +1,11 @@
 {
-  "name": "Camera Test",
+  "name": "Mesh Test",
   "version": "1.0",
   "engine_version": "0.2.0",
-  "default_scene": "scenes/camera_test.uzscene",
-  "content_root": "content/",
+  "default_scene": "scenes/mesh_test.uzscene",
+  "content_root": "../content/",
   "window": {
-    "title": "UzEngine — Camera Test (Lua)",
+    "title": "UzEngine — Mesh Test (Lua)",
     "width": 1280,
     "height": 720,
     "fullscreen": false

@@ -5,6 +5,7 @@
 - [ ] 1.3 Reclaim freed root slots — reserve 3-4 slots for future use (GBufferD, reflection probes, post-process UBO, fog CB).
 - [ ] 1.4 Update all PSOs — rebuild pipeline states with new root signature layout. Update shader root parameter indices.
 - [ ] 1.5 Update root_slots.h — new slot definitions matching refactored layout. Document slot budget and remaining capacity.
+- [x] 1.6 Add `#ifdef UZ_BINDLESS` guards to all compute shaders using `ResourceDescriptorHeap`. Fixed 13 failing shaders (atmosphere, GI, postprocess, compute, shadows) + 6 proactive fixes (bloom, lensflare, equirect, god_rays, dof_setup). Fixed PI redefinition in dof_blur_cs.hlsl. Fixed CSMain->main entry point in dfs_cull_objects_cs.hlsl. All backends (DX11, DX12, Vulkan) compile cleanly.
 
 ## 2. Light Data GPU Migration
 
