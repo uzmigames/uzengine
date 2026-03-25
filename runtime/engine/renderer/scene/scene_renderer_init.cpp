@@ -1158,4 +1158,24 @@ void SceneRenderer::Shutdown() {
     m_device = nullptr;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Editor Selection
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SceneRenderer::SetSelectedEntity(Entity entity) {
+    m_selectedEntity = entity;
+}
+
+Entity SceneRenderer::GetSelectedEntity() const {
+    return m_selectedEntity;
+}
+
+bool SceneRenderer::GetMeshBounds(uint32_t meshId, Vec3& outMin, Vec3& outMax) const {
+    if (meshId >= static_cast<uint32_t>(m_meshBoundsMin.size())) return false;
+    if (meshId >= static_cast<uint32_t>(m_meshBoundsMax.size())) return false;
+    outMin = m_meshBoundsMin[meshId];
+    outMax = m_meshBoundsMax[meshId];
+    return true;
+}
+
 } // namespace uz

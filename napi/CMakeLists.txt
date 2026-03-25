@@ -1,33 +1,28 @@
 # /// UzEngine N-API Native Addon Build Configuration
 # ///
-# /// Configures CMake to build the UzEngine native addon (.node file) for Node.js.
-# /// The addon bridges JavaScript/TypeScript with the native C++ runtime.
+# /// MSVC cl.exe compiles .cpp (delay-load hook requires MSVC ABI).
+# /// lld-link links .node (reads Zig/LLVM COMDAT sections that MSVC link.exe can't).
+# /// Both runtime.lib and editor.lib from the Zig build are linked directly.
 # ///
-# /// # Key Features
-# /// - Compiled as a shared library (.node) for direct Node.js loading
-# /// - Uses Node-Addon-API (N-API) for stable ABI across Node.js versions
-# /// - Includes delay-load hook for Electron process redirection
-# /// - Links to Zig-built runtime static library
-# /// - Disables C++ exceptions (NAPI compatibility on Electron)
+# /// # Build
+# /// Use NMake generator from a VS Developer Command Prompt:
+# ///   cmake-js compile -d . --runtime=electron --runtime-version=39.6.0 -G "NMake Makefiles"
 
 cmake_minimum_required(VERSION 3.15)
+
+# Force lld-link BEFORE project() — NMake generator respects CMAKE_LINKER.
+find_program(LLD_LINK lld-link REQUIRED)
+set(CMAKE_LINKER ${LLD_LINK})
+
 project(uzengine LANGUAGES CXX)
 
-# /// C++ Standard Configuration
-# /// Requires C++17 for modern language features (optional, structured bindings, etc.)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# /// cmake-js Integration
-# /// Provides three critical variables:
-# /// - CMAKE_JS_INC: Node.js headers directory
-# /// - CMAKE_JS_LIB: Node.js libraries for linking
-# /// - CMAKE_JS_SRC: Delay-load hook (mandatory for Electron support)
+# cmake-js Integration
 include_directories(${CMAKE_JS_INC})
 
-# /// Node-Addon-API Header Discovery
-# /// Dynamically queries npm package to locate node-addon-api headers.
-# /// This ensures compatibility across different installations.
+# Node-Addon-API Headers
 execute_process(
   COMMAND node -p "require('node-addon-api').include"
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
@@ -37,47 +32,65 @@ execute_process(
 string(REPLACE "\"" "" NODE_ADDON_API_DIR ${NODE_ADDON_API_DIR})
 include_directories(${NODE_ADDON_API_DIR})
 
-# /// N-API Configuration
-# /// - Version 10: Stable ABI compatible with Node.js 14+
-# /// - NAPI_DISABLE_CPP_EXCEPTIONS: CRITICAL for Electron
-# ///   Using NAPI_CPP_EXCEPTIONS crashes on Windows/Electron (electron#22799)
-# ///   All C++ exceptions must be caught and converted to N-API errors
+# N-API Configuration
 add_definitions(-DNAPI_VERSION=10)
 add_definitions(-DNAPI_DISABLE_CPP_EXCEPTIONS)
 
-# /// Runtime Library Headers
-# /// Include paths for the C++ runtime implementation
-include_directories(${CMAKE_SOURCE_DIR}/../runtime/src)
+# Runtime C API Header
+include_directories(${CMAKE_SOURCE_DIR}/../runtime/engine/app)
 
-# /// Build the N-API Addon
-# /// Creates uzengine.node (shared library):
-# /// - src/addon.cpp: N-API bindings and entry points
-# /// - ${CMAKE_JS_SRC}: Delay-load hook for Electron process redirection
+# Source Files
 add_library(${PROJECT_NAME} SHARED
   src/addon.cpp
+  src/napi_lifecycle.cpp
+  src/napi_viewport.cpp
+  src/napi_scene.cpp
+  src/napi_input.cpp
+  src/napi_diagnostics.cpp
   ${CMAKE_JS_SRC}
 )
 
-# /// Output Configuration
-# /// - PREFIX: Remove "lib" prefix (Windows/Unix convention)
-# /// - SUFFIX: .node extension for Node.js native module
 set_target_properties(${PROJECT_NAME} PROPERTIES
   PREFIX ""
   SUFFIX ".node"
 )
 
-# /// Runtime Library Discovery
-# /// Locates the Zig-built static library (uzengine_runtime.lib on Windows).
-# /// NO_DEFAULT_PATH ensures we use only the specified directory.
-find_library(UZENGINE_RUNTIME uzengine_runtime
-  PATHS ${CMAKE_SOURCE_DIR}/../runtime/zig-out/lib
-  NO_DEFAULT_PATH
-)
+# Runtime + Editor Libraries (Zig-built, LLVM archive format — lld-link reads them)
+set(RUNTIME_LIB_DIR ${CMAKE_SOURCE_DIR}/../runtime/build/lib)
 
-# /// Link Dependencies
-# /// - CMAKE_JS_LIB: Node.js runtime library
-# /// - UZENGINE_RUNTIME: Zig-built C++ runtime static library
+find_library(UZENGINE_RUNTIME NAMES runtime PATHS ${RUNTIME_LIB_DIR} NO_DEFAULT_PATH)
+find_library(UZENGINE_EDITOR  NAMES editor  PATHS ${RUNTIME_LIB_DIR} NO_DEFAULT_PATH)
+
+if(NOT UZENGINE_RUNTIME)
+  message(FATAL_ERROR "runtime.lib not found in ${RUNTIME_LIB_DIR} — run 'cd runtime && zig build' first")
+endif()
+if(NOT UZENGINE_EDITOR)
+  message(FATAL_ERROR "editor.lib not found in ${RUNTIME_LIB_DIR} — run 'cd runtime && zig build -Deditor=true' first")
+endif()
+
 target_link_libraries(${PROJECT_NAME}
   ${CMAKE_JS_LIB}
   ${UZENGINE_RUNTIME}
+  ${UZENGINE_EDITOR}
+  # Win32 system libs required by the runtime
+  d3d12 d3d11 dxgi dxguid gdi32 user32 ole32 shcore shell32 comdlg32 xinput
 )
+
+# Copy DLLs needed at runtime alongside uzengine.node
+set(RUNTIME_BIN_DIR ${CMAKE_SOURCE_DIR}/../runtime/build/bin)
+
+file(GLOB RUNTIME_DLLS "${RUNTIME_BIN_DIR}/*.dll")
+file(GLOB AGILITY_DLLS "${RUNTIME_BIN_DIR}/D3D12/*.dll")
+
+if(RUNTIME_DLLS)
+  add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMENT "Copying runtime DLLs..."
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RUNTIME_DLLS} $<TARGET_FILE_DIR:${PROJECT_NAME}>/
+  )
+endif()
+if(AGILITY_DLLS)
+  add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${PROJECT_NAME}>/D3D12
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${AGILITY_DLLS} $<TARGET_FILE_DIR:${PROJECT_NAME}>/D3D12/
+  )
+endif()

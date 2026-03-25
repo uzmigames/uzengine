@@ -34,3 +34,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 #include "screenshot/screenshot_capture.h"
 #include "screenshot/compare_grid.h"
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Editor Input & Selection
+// ─────────────────────────────────────────────────────────────────────────────
+#include "input/editor_input_handler.h"
+#include "selection/selection_manager.h"

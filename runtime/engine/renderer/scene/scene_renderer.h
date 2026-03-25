@@ -24,6 +24,7 @@
 
 #pragma once
 
+#include "entity.h"
 #include "gbuffer.h"
 #include "decal_pass.h"   // DecalInfo for m_frameDecals
 #include "draw_list.h"
@@ -622,6 +623,33 @@ public:
     /// Used by subsystems that need to compile shaders at runtime (e.g.,
     /// GPU material baking with dynamically generated HLSL).
     [[nodiscard]] ShaderManager* GetShaderManager() const noexcept { return m_shaderMgr.get(); }
+
+    // ── Editor Selection ──────────────────────────────────────────────────
+
+    /// Sets the currently selected entity for editor outline rendering.
+    ///
+    /// # Arguments
+    /// * `entity` — The selected entity. Pass `Entity::Invalid()` to clear.
+    void SetSelectedEntity(Entity entity);
+
+    /// Returns the currently selected entity for editor outline rendering.
+    [[nodiscard]] Entity GetSelectedEntity() const;
+
+    // ── Mesh Bounds (for editor picking) ──────────────────────────────────
+
+    /// Returns the object-space AABB bounds for a mesh by its ID.
+    ///
+    /// Used by the editor SelectionManager for ray-AABB picking. Returns
+    /// false if the mesh ID is out of range or bounds are not yet loaded.
+    ///
+    /// # Arguments
+    /// * `meshId` — Index into the mesh resource table.
+    /// * `outMin` — [out] AABB minimum corner in object space.
+    /// * `outMax` — [out] AABB maximum corner in object space.
+    ///
+    /// # Returns
+    /// `true` if bounds were retrieved successfully.
+    [[nodiscard]] bool GetMeshBounds(uint32_t meshId, Vec3& outMin, Vec3& outMax) const;
 
 private:
     #include "scene_renderer_impl.h"

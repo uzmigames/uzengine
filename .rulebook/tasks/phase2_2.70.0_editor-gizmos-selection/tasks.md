@@ -1,14 +1,14 @@
 ## 1. Editor Mode Foundation
-- [ ] 1.1 Wire `--editor` CLI flag in `uzengine.cpp` to call `sceneRenderer.SetEditorMode(true)`. Verify editor grid renders.
-- [ ] 1.2 Create `runtime/editor/input/editor_input_handler.h/.cpp` — routes mouse/keyboard to selection or gizmo. Mode state: Translate(W), Rotate(E), Scale(R). Space toggle: World/Local.
-- [ ] 1.3 Integrate EditorInputHandler into uzengine.cpp render loop (before ScriptSystem::Update, only when editorMode=true).
+- [x] 1.1 Wire `--editor` CLI flag — already wired (config.GetBool("editor") → SetEditorMode). Verified editor grid renders with screenshot.
+- [x] 1.2 Create `runtime/editor/input/editor_input_handler.h/.cpp` — routes mouse/keyboard to selection or gizmo. Mode state: Translate(W), Rotate(E), Scale(R). Space toggle: World/Local. GizmoMode/GizmoSpace enums, W/E/R hotkeys, Space toggle, left-click delegates to SelectionManager.
+- [x] 1.3 Integrate EditorInputHandler into uzengine.cpp render loop (before ScriptSystem::Update, only when editorMode=true). Added includes, created SelectionManager + EditorInputHandler after SceneRenderer init, wired Update(dt) before Lua scripts, syncs selected entity to SceneRenderer each frame.
 
 ## 2. Selection System
-- [ ] 2.1 Create `runtime/editor/selection/selection_manager.h/.cpp` — stores selected Entity, provides Select(entity), Deselect(), GetSelected().
-- [ ] 2.2 Implement mouse ray construction from screen coordinates: unproject mouse pos through inverse VP matrix → world-space ray origin + direction.
-- [ ] 2.3 Implement AABB hit testing: iterate all entities with SceneComponent + StaticMeshComponent, test ray vs world-space AABB, select nearest hit.
-- [ ] 2.4 Wire left-click in EditorInputHandler → SelectionManager::SelectAtScreenPos(mouseX, mouseY).
-- [ ] 2.5 Add `GetSelectedEntity()` / `SetSelectedEntity()` to SceneRenderer for outline pass access.
+- [x] 2.1 Create `runtime/editor/selection/selection_manager.h/.cpp` — stores selected Entity, provides Select(entity), Deselect(), GetSelected(). Also HasSelection(), SelectAtScreenPos() with viewport dims, camera, world, renderer params.
+- [x] 2.2 Implement mouse ray construction from screen coordinates: UnprojectPoint() helper converts NDC→world via inverse VP. Screen→NDC with Y-flip, reversed-Z (near=1, far=0). Ray from camera position along (farPt - nearPt).Normalized().
+- [x] 2.3 Implement AABB hit testing: RayIntersectsAABB() slab method (Kay & Kajiya 1986). Iterates all SceneComponent+StaticMeshComponent entities, gets mesh bounds from SceneRenderer::GetMeshBounds(), applies scale+translation, selects nearest tMin hit.
+- [x] 2.4 Wire left-click in EditorInputHandler → SelectionManager::SelectAtScreenPos(mouseX, mouseY, vw, vh, camera, world, renderer). Guards against RMB-held (camera orbit) interference.
+- [x] 2.5 Add `GetSelectedEntity()` / `SetSelectedEntity()` / `GetMeshBounds()` to SceneRenderer. Entity stored as m_selectedEntity in scene_renderer_impl.h. Bounds accessor reads m_meshBoundsMin/Max vectors. Implemented in scene_renderer_init.cpp.
 
 ## 3. Selection Outline
 - [ ] 3.1 Create `runtime/editor/outline/outline_pass.h/.cpp` — stencil-based outline renderer.

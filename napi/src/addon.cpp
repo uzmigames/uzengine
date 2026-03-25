@@ -1,33 +1,20 @@
-#include "uz_runtime.h"
+/// UzEngine N-API Addon — Module entry point.
+///
+/// Delegates all bindings to domain-specific modules:
+///   napi_lifecycle.cpp    — version, backend, init, shutdown
+///   napi_viewport.cpp     — viewport create/destroy/resize, render, screenshot
+///   napi_scene.cpp        — scene load/save, entity CRUD, component access
+///   napi_input.cpp        — mouse, keyboard, scroll forwarding
+///   napi_diagnostics.cpp  — log callback, editor mode, content root
 
-#include <napi.h>
-
-Napi::Value GetVersion(const Napi::CallbackInfo& info) {
-    return Napi::String::New(info.Env(), uz_runtime_version());
-}
-
-Napi::Value GetBackend(const Napi::CallbackInfo& info) {
-    return Napi::String::New(info.Env(), uz_runtime_backend());
-}
-
-Napi::Value Init(const Napi::CallbackInfo& info) {
-    Napi::Env env = info.Env();
-    if (!uz_runtime_init()) {
-        Napi::Error::New(env, "Engine initialization failed").ThrowAsJavaScriptException();
-    }
-    return env.Undefined();
-}
-
-Napi::Value Shutdown(const Napi::CallbackInfo& info) {
-    uz_runtime_shutdown();
-    return info.Env().Undefined();
-}
+#include "napi_common.h"
 
 Napi::Object InitModule(Napi::Env env, Napi::Object exports) {
-    exports.Set("getVersion", Napi::Function::New(env, GetVersion));
-    exports.Set("getBackend", Napi::Function::New(env, GetBackend));
-    exports.Set("init", Napi::Function::New(env, Init));
-    exports.Set("shutdown", Napi::Function::New(env, Shutdown));
+    RegisterLifecycleBindings(env, exports);
+    RegisterViewportBindings(env, exports);
+    RegisterSceneBindings(env, exports);
+    RegisterInputBindings(env, exports);
+    RegisterDiagnosticsBindings(env, exports);
     return exports;
 }
 

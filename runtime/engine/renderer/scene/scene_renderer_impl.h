@@ -6,6 +6,7 @@
 
     IRHIDevice* m_device = nullptr;
     bool m_editorMode = false;            ///< When true, editor grid + stats overlay are rendered.
+    Entity m_selectedEntity{};            ///< Currently selected entity for editor outline/gizmo rendering.
 
     // ── Engine Infrastructure ──────────────────────────────────────────────
 

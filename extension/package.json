@@ -12,12 +12,48 @@
     "Other"
   ],
   "main": "./out/extension.js",
-  "activationEvents": [],
+  "activationEvents": [
+    "onLanguage:uzscene",
+    "onLanguage:uzproject"
+  ],
   "contributes": {
     "commands": [
       {
         "command": "uzengine.start",
         "title": "UzEngine: Start"
+      },
+      {
+        "command": "uzengine.openViewport",
+        "title": "UzEngine: Open Viewport"
+      },
+      {
+        "command": "uzengine.openScene",
+        "title": "UzEngine: Open Scene"
+      },
+      {
+        "command": "uzengine.toggleEngineMode",
+        "title": "UzEngine: Toggle Engine Mode"
+      },
+      {
+        "command": "uzengine.refreshSceneTree",
+        "title": "UzEngine: Refresh Scene Tree",
+        "icon": "$(refresh)"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "uzengine.sceneTree",
+          "name": "Scene Hierarchy",
+          "when": "uzengine.active"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "uzengine.toggleEngineMode",
+        "key": "ctrl+shift+e",
+        "when": "uzengine.active"
       }
     ],
     "languages": [

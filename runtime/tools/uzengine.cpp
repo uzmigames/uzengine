@@ -24,6 +24,8 @@
 #include "../engine/asset/vfs.h"
 #include "../engine/renderer/scene/scene_renderer.h"
 #include "../engine/scripting/core/lua_input_api.h"
+#include "../editor/input/editor_input_handler.h"
+#include "../editor/selection/selection_manager.h"
 
 #ifdef _WIN32
 #include "platform_window.h"
@@ -307,6 +309,16 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         sceneRenderer.SetEditorMode(true);
     }
 
+    // ── Editor Input & Selection (only when editor mode is active) ────
+    SelectionManager selectionManager;
+    EditorInputHandler editorInput;
+    if (editorMode && sceneRendererReady) {
+        editorInput.Init(sceneRenderer.GetInput(), &selectionManager,
+                         &sceneRenderer.GetCamera(), &world);
+        editorInput.SetSceneRenderer(&sceneRenderer);
+        UZ_LOG(Engine, Info, "Editor input handler initialized");
+    }
+
     // Bind SceneRenderer into the Lua VM so uz.renderer / uz.mesh / uz.texture work.
     if (sceneRendererReady && luaReady) {
         LuaSetSceneRenderer(LuaVM::GetState(), &sceneRenderer);
@@ -384,6 +396,13 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         const float t = std::chrono::duration<float>(now - startTime).count();
         const float dt = std::chrono::duration<float>(now - prevTime).count();
         prevTime = now;
+
+        // Update editor input (before scripts, so editor hotkeys take priority)
+        if (editorMode && sceneRendererReady) {
+            editorInput.Update(dt);
+            // Sync selection to renderer for outline pass
+            sceneRenderer.SetSelectedEntity(selectionManager.GetSelected());
+        }
 
         // Update Lua scripts
         if (luaReady) {
