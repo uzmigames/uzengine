@@ -15,11 +15,14 @@ export class SearchEngine {
   private entities: DocumentedEntity[] = [];
   private entityById = new Map<string, DocumentedEntity>();
   private bm25 = new Bm25Index();
-  private hnsw = new HnswIndex();
+  private hnsw: HnswIndex | null = null;
+  private hnswBuilding = false;
   private idfMap = new Map<string, number>();
   private tokenCache: string[][] = [];
+  private embeddings: Float32Array[] = [];
 
-  /// Load entities and build all indices.
+  /// Load entities and build BM25 index (fast).
+  /// HNSW index is built lazily on first search query.
   load(entities: DocumentedEntity[]): void {
     this.entities = entities;
     this.entityById.clear();
@@ -33,16 +36,28 @@ export class SearchEngine {
     // Build IDF map from corpus
     this.idfMap = buildIdfMap(this.tokenCache);
 
-    // Build BM25 index
+    // Build BM25 index (fast — ~100ms for 9K entities)
     this.bm25.build(this.tokenCache);
 
-    // Build HNSW index — scale efConstruction based on corpus size
-    const efC = entities.length > 5000 ? 50 : entities.length > 1000 ? 100 : 200;
-    this.hnsw = new HnswIndex({ M: 16, efConstruction: efC });
-    for (let i = 0; i < entities.length; i++) {
-      const vec = embed(this.tokenCache[i], this.idfMap);
-      this.hnsw.insert(i, vec);
+    // Pre-compute embeddings (fast — ~200ms for 9K entities)
+    this.embeddings = this.tokenCache.map((tokens) => embed(tokens, this.idfMap));
+
+    // HNSW is built lazily on first search
+    this.hnsw = null;
+  }
+
+  /// Ensures HNSW index is built. Called lazily on first search.
+  private ensureHnsw(): void {
+    if (this.hnsw || this.hnswBuilding) return;
+    this.hnswBuilding = true;
+
+    const efC = this.entities.length > 5000 ? 50 : this.entities.length > 1000 ? 100 : 200;
+    const index = new HnswIndex({ M: 16, efConstruction: efC });
+    for (let i = 0; i < this.entities.length; i++) {
+      index.insert(i, this.embeddings[i]);
     }
+    this.hnsw = index;
+    this.hnswBuilding = false;
   }
 
   /// Get total entity count.
@@ -67,13 +82,18 @@ export class SearchEngine {
     const bm25Hits = this.bm25.search(allTokens, 50);
     const bm25Ranked = bm25Hits.map((h, i) => ({ id: h.doc, rank: i + 1 }));
 
-    // HNSW search (top 50)
-    const queryVec = embed(allTokens, this.idfMap);
-    const hnswHits = this.hnsw.search(queryVec, 50);
-    const hnswRanked = hnswHits.map((h, i) => ({ id: h.id, rank: i + 1 }));
-
-    // Reciprocal Rank Fusion
-    let fused = reciprocalRankFusion(bm25Ranked, hnswRanked);
+    // HNSW search (top 50) — triggers lazy build on first call
+    this.ensureHnsw();
+    let fused;
+    if (this.hnsw) {
+      const queryVec = embed(allTokens, this.idfMap);
+      const hnswHits = this.hnsw.search(queryVec, 50);
+      const hnswRanked = hnswHits.map((h, i) => ({ id: h.id, rank: i + 1 }));
+      fused = reciprocalRankFusion(bm25Ranked, hnswRanked);
+    } else {
+      // Fallback to BM25-only if HNSW not ready
+      fused = bm25Ranked.map((r) => ({ id: r.id, score: 1 / (60 + r.rank) }));
+    }
 
     // Post-filter
     if (filters) {
