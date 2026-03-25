@@ -7,6 +7,14 @@
         "@hivehub/rulebook@latest",
         "mcp-server"
       ]
+    },
+    "uzengine-docs": {
+      "command": "node",
+      "args": [
+        "mcp/dist/src/server.js",
+        "--stdio"
+      ],
+      "cwd": "e:/UzEngine"
     }
   }
 }
