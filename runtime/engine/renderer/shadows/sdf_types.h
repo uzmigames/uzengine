@@ -101,6 +101,7 @@ struct MeshSdfAsset {
     /// MIP chain for LOD tracing in distance field atlas
     static constexpr uint32_t kMaxMipLevels = 3;
 
+    /// Sparse brick data and indirection table for one MIP level.
     struct MipLevel {
         std::vector<SdfBrick>  bricks;       ///< Sparse brick data for this MIP level.
         std::vector<uint32_t>  indirection;  ///< Flat 3D indirection for this MIP level.

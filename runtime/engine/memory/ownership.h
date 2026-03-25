@@ -202,12 +202,14 @@ template <typename T> class Own {
     /// Deletes the owned object.
     ~Own() { delete m_ptr; }
 
+    /// Move constructor — transfers ownership, leaving `other` null.
     Own(Own&& other) noexcept : m_ptr(other.m_ptr) {
         // BorrowTracker stays default-initialized (fresh, no borrows).
         // No borrows should be active when moving ownership.
         other.m_ptr = nullptr;
     }
 
+    /// Move assignment — deletes the current object and takes ownership from `other`.
     Own& operator=(Own&& other) noexcept {
         if (this != &other) {
             delete m_ptr;
@@ -244,6 +246,7 @@ template <typename T> class Own {
     }
 
 #ifndef UZ_SHIPPING
+    /// Returns the embedded borrow tracker for debug-build borrow checking.
     BorrowTracker* GetTracker() { return &m_tracker; }
 #endif
 
@@ -292,6 +295,13 @@ template <typename T> class Ref {
     /// Default: null borrow.
     Ref() = default;
 
+    /// Borrows immutably from an `Own<T>`, incrementing the immutable borrow count.
+    ///
+    /// # Arguments
+    /// * `owner` — The owning pointer to borrow from. Must outlive this `Ref<T>`.
+    ///
+    /// # Panics (Debug)
+    /// Asserts if a `RefMut<T>` is currently active on the same owner.
     explicit Ref(const Own<T>& owner)
         : m_ptr(owner.Get())
 #ifndef UZ_SHIPPING
@@ -312,6 +322,7 @@ template <typename T> class Ref {
 #endif
     }
 
+    /// Copy constructor — creates another immutable borrow of the same resource.
     Ref(const Ref& other)
         : m_ptr(other.m_ptr)
 #ifndef UZ_SHIPPING
@@ -325,6 +336,7 @@ template <typename T> class Ref {
 #endif
     }
 
+    /// Copy assignment — releases the current borrow and acquires a new one.
     Ref& operator=(const Ref& other) {
         if (this != &other) {
 #ifndef UZ_SHIPPING
@@ -339,6 +351,7 @@ template <typename T> class Ref {
         return *this;
     }
 
+    /// Move constructor — transfers the borrow without touching the tracker.
     Ref(Ref&& other) noexcept
         : m_ptr(other.m_ptr)
 #ifndef UZ_SHIPPING
@@ -352,6 +365,7 @@ template <typename T> class Ref {
 #endif
     }
 
+    /// Move assignment — releases the current borrow and takes the other's.
     Ref& operator=(Ref&& other) noexcept {
         if (this != &other) {
 #ifndef UZ_SHIPPING
@@ -420,6 +434,13 @@ template <typename T> class RefMut {
     /// Default: null borrow.
     RefMut() = default;
 
+    /// Borrows mutably from an `Own<T>`, acquiring exclusive mutable access.
+    ///
+    /// # Arguments
+    /// * `owner` — The owning pointer to borrow from. Must outlive this `RefMut<T>`.
+    ///
+    /// # Panics (Debug)
+    /// Asserts if any `Ref<T>` or another `RefMut<T>` is active on the same owner.
     explicit RefMut(Own<T>& owner)
         : m_ptr(owner.Get())
 #ifndef UZ_SHIPPING

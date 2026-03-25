@@ -46,11 +46,14 @@ public:
 
     // --- Queries ---
 
+    /// Returns UpscalerType::TSR.
     [[nodiscard]] UpscalerType GetType() const noexcept override { return UpscalerType::TSR; }
+    /// Returns "TSR".
     [[nodiscard]] const char*  GetName() const noexcept override { return "TSR"; }
 
     /// TSR supports 50% to 200% screen percentage (2x upscale to 2x supersample).
     [[nodiscard]] float GetMinScreenPercentage() const noexcept override { return 50.f; }
+    /// Returns 200% — TSR supports up to 2x supersampling.
     [[nodiscard]] float GetMaxScreenPercentage() const noexcept override { return 200.f; }
 
     // --- Lifecycle ---

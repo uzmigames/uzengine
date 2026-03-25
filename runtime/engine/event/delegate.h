@@ -44,6 +44,7 @@ struct DelegateHandle {
 // MulticastDelegate<Args...> — fan-out event dispatch
 // ─────────────────────────────────────────────────────────────────────────────
 
+template <typename... Args>
 /// Multi-listener delegate that invokes all registered callbacks in insertion order.
 ///
 /// Listeners are stored as std::function objects associated with a monotonically
@@ -57,7 +58,6 @@ struct DelegateHandle {
 ///
 /// # Type Parameters
 /// * `Args...` — argument types passed to each callback on Invoke().
-template <typename... Args>
 class MulticastDelegate {
 public:
     MulticastDelegate() = default;
@@ -144,9 +144,10 @@ public:
     [[nodiscard]] size_t Count() const noexcept { return m_listeners.size(); }
 
 private:
+    /// A registered listener: its unique id paired with the callback.
     struct Entry {
-        uint32_t                    id;
-        std::function<void(Args...)> callback;
+        uint32_t                    id;       ///< Monotonically increasing id (never 0).
+        std::function<void(Args...)> callback; ///< The callable invoked on Invoke().
     };
 
     std::vector<Entry> m_listeners;

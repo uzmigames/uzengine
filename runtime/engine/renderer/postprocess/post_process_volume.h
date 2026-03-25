@@ -24,36 +24,36 @@ namespace uz {
 /// When a bit is set, the corresponding field actively overrides lower-priority volumes.
 /// When clear, the field is ignored during blending (pass-through from lower priority).
 enum class PostProcessOverride : uint32_t {
-    BloomIntensity                  = 0,
-    BloomThreshold                  = 1,
-    AutoExposureMinBrightness       = 2,
-    AutoExposureMaxBrightness       = 3,
-    AutoExposureBias                = 4,
-    AutoExposureSpeedUp             = 5,
-    AutoExposureSpeedDown           = 6,
-    DepthOfFieldFocalDistance       = 7,
-    DepthOfFieldFocalRegion         = 8,
-    DepthOfFieldNearTransition      = 9,
-    DepthOfFieldFarTransition       = 10,
-    DepthOfFieldFstop               = 11,
-    MotionBlurAmount                = 12,
-    MotionBlurMax                   = 13,
-    MotionBlurTargetFPS             = 14,
-    WhiteTemp                       = 15,
-    WhiteTint                       = 16,
-    FilmSlope                       = 17,
-    FilmToe                         = 18,
-    FilmShoulder                    = 19,
-    FilmBlackClip                   = 20,
-    FilmWhiteClip                   = 21,
-    VignetteIntensity               = 22,
-    AmbientOcclusionIntensity       = 23,
-    AmbientOcclusionRadius          = 24,
-    AmbientOcclusionPower           = 25,
-    ScreenSpaceReflectionIntensity  = 26,
-    ScreenSpaceReflectionQuality    = 27,
+    BloomIntensity                  = 0,  ///< Overall bloom intensity multiplier.
+    BloomThreshold                  = 1,  ///< Luminance threshold below which pixels do not bloom.
+    AutoExposureMinBrightness       = 2,  ///< Minimum average scene brightness for auto-exposure.
+    AutoExposureMaxBrightness       = 3,  ///< Maximum average scene brightness for auto-exposure.
+    AutoExposureBias                = 4,  ///< Logarithmic exposure bias (EV offset).
+    AutoExposureSpeedUp             = 5,  ///< Adaptation speed when scene brightens (EV/s).
+    AutoExposureSpeedDown           = 6,  ///< Adaptation speed when scene darkens (EV/s).
+    DepthOfFieldFocalDistance       = 7,  ///< Distance to the focal plane (cm).
+    DepthOfFieldFocalRegion         = 8,  ///< Width of the in-focus region (cm).
+    DepthOfFieldNearTransition      = 9,  ///< Near blur transition width (cm).
+    DepthOfFieldFarTransition       = 10, ///< Far blur transition width (cm).
+    DepthOfFieldFstop               = 11, ///< Simulated camera f-stop aperture size.
+    MotionBlurAmount                = 12, ///< Motion blur strength (0 = off, 1 = full).
+    MotionBlurMax                   = 13, ///< Maximum blur distance (% of screen width).
+    MotionBlurTargetFPS             = 14, ///< Target framerate for motion blur scaling.
+    WhiteTemp                       = 15, ///< White balance color temperature (Kelvin).
+    WhiteTint                       = 16, ///< White balance green-magenta tint shift.
+    FilmSlope                       = 17, ///< ACES tonemap slope (mid-tone contrast).
+    FilmToe                         = 18, ///< ACES tonemap toe (dark region rolloff).
+    FilmShoulder                    = 19, ///< ACES tonemap shoulder (highlight compression).
+    FilmBlackClip                   = 20, ///< ACES tonemap black clip (crush blacks below this).
+    FilmWhiteClip                   = 21, ///< ACES tonemap white clip (clip whites above this).
+    VignetteIntensity               = 22, ///< Screen-edge darkening intensity.
+    AmbientOcclusionIntensity       = 23, ///< SSAO darkening intensity.
+    AmbientOcclusionRadius          = 24, ///< SSAO sampling radius (cm).
+    AmbientOcclusionPower           = 25, ///< SSAO power curve (contrast).
+    ScreenSpaceReflectionIntensity  = 26, ///< SSR reflection intensity (0-100%).
+    ScreenSpaceReflectionQuality    = 27, ///< SSR quality level (0-100%).
 
-    Count                           = 28,
+    Count                           = 28, ///< Total number of override flags.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -332,6 +332,7 @@ private:
         const Vec3& boundsMin,
         const Vec3& boundsMax) noexcept;
 
+    /// Internal storage for a registered volume and its integer ID.
     struct VolumeEntry {
         uint32_t id;
         PostProcessVolume volume;

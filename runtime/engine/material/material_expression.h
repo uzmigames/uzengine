@@ -62,51 +62,69 @@ struct MatPin {
 /// Expression type enum. Groups match reference material expression categories.
 enum class MatExprType : uint16_t {
     // ── Output ──
-    PBROutput = 0,
+    PBROutput = 0, ///< Final PBR output node connecting to the material surface.
 
     // ── Constants ──
-    ScalarConstant = 100,
-    Vector2Constant,
-    Vector3Constant,
-    Vector4Constant,
-    ColorConstant,
+    ScalarConstant = 100, ///< Single float constant value.
+    Vector2Constant,      ///< 2-component vector constant (UV, direction).
+    Vector3Constant,      ///< 3-component vector constant (color, position).
+    Vector4Constant,      ///< 4-component vector constant (color+alpha).
+    ColorConstant,        ///< sRGB color constant with alpha.
 
     // ── Math ──
-    Add = 200, Subtract, Multiply, Divide,
-    Lerp, Clamp, Saturate, Abs, Pow, Sqrt,
-    OneMinus, Frac, Floor, Ceil, Min, Max,
-    Dot, Cross, Normalize, Length, Step, SmoothStep,
+    Add = 200,   ///< Component-wise addition (A + B).
+    Subtract,    ///< Component-wise subtraction (A - B).
+    Multiply,    ///< Component-wise multiplication (A * B).
+    Divide,      ///< Component-wise division (A / B).
+    Lerp,        ///< Linear interpolation (lerp(A, B, Alpha)).
+    Clamp,       ///< Clamp value between min and max.
+    Saturate,    ///< Clamp to [0, 1] range.
+    Abs,         ///< Absolute value.
+    Pow,         ///< Power (Base ^ Exponent).
+    Sqrt,        ///< Square root.
+    OneMinus,    ///< One minus input (1 - X).
+    Frac,        ///< Fractional part (frac(X)).
+    Floor,       ///< Round down to nearest integer.
+    Ceil,        ///< Round up to nearest integer.
+    Min,         ///< Component-wise minimum of two inputs.
+    Max,         ///< Component-wise maximum of two inputs.
+    Dot,         ///< Dot product of two vectors.
+    Cross,       ///< Cross product of two 3-component vectors.
+    Normalize,   ///< Normalize vector to unit length.
+    Length,      ///< Vector length (magnitude).
+    Step,        ///< Step function (0 if X < Edge, else 1).
+    SmoothStep,  ///< Hermite interpolation between two edges.
 
     // ── Texture ──
-    TextureSample = 300,
+    TextureSample = 300, ///< Sample a 2D texture at given UV coordinates.
 
     // ── Coordinates ──
-    TexCoord = 400,
-    WorldPosition,
-    ObjectPosition,
-    VertexNormal,
-    VertexColor,
-    CameraVector,
-    ScreenPosition,
-    Time,
+    TexCoord = 400,  ///< Mesh UV texture coordinates (channel selectable).
+    WorldPosition,   ///< World-space position of the shaded pixel.
+    ObjectPosition,  ///< Object-space (local) position of the shaded pixel.
+    VertexNormal,    ///< Interpolated vertex normal in world space.
+    VertexColor,     ///< Per-vertex color attribute.
+    CameraVector,    ///< Normalized direction from pixel to camera.
+    ScreenPosition,  ///< Screen-space UV position [0,1].
+    Time,            ///< Global engine time in seconds.
 
     // ── Procedural ──
-    CheckerPattern = 500,
-    NoisePerlin,
-    GradientLinear,
-    GradientRadial,
+    CheckerPattern = 500, ///< Procedural black-and-white checkerboard pattern.
+    NoisePerlin,          ///< Perlin noise generator.
+    GradientLinear,       ///< Linear gradient along a configurable axis.
+    GradientRadial,       ///< Radial gradient from center outward.
 
     // ── Utility ──
-    TriPlanarMapping = 600,
-    Fresnel,
-    Panner,
-    ComponentMask,
-    Append,
+    TriPlanarMapping = 600, ///< Tri-planar texture projection (avoids UV seams on non-planar meshes).
+    Fresnel,                ///< Fresnel effect based on view angle (rim lighting).
+    Panner,                 ///< Animated UV offset (scrolling textures).
+    ComponentMask,          ///< Select/swizzle individual RGBA components.
+    Append,                 ///< Concatenate two vectors (e.g., Float2 + Float -> Float3).
 
     // ── Parameters (runtime-tweakable per MaterialInstance) ──
-    ScalarParameter = 700,
-    VectorParameter,
-    TextureParameter,
+    ScalarParameter = 700, ///< Exposed scalar parameter for MaterialInstance override.
+    VectorParameter,       ///< Exposed vector parameter for MaterialInstance override.
+    TextureParameter,      ///< Exposed texture parameter for MaterialInstance override.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

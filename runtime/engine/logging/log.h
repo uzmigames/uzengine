@@ -172,8 +172,10 @@ void LogSetLevel(LogLevel level);
 /// messages are stripped at compile time across all categories.
 /// In development builds, set to `Trace` (everything passes compile-time gate).
 #ifdef UZ_SHIPPING
+/// Minimum log level that passes the compile-time gate (Info in shipping).
 #define UZ_LOG_COMPILE_MIN ::uz::LogLevel::Info
 #else
+/// Minimum log level that passes the compile-time gate (Trace in dev).
 #define UZ_LOG_COMPILE_MIN ::uz::LogLevel::Trace
 #endif
 

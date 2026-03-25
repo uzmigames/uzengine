@@ -35,11 +35,14 @@ public:
 
     // --- Queries ---
 
+    /// Returns UpscalerType::TAA.
     [[nodiscard]] UpscalerType GetType() const noexcept override { return UpscalerType::TAA; }
+    /// Returns "TAA".
     [[nodiscard]] const char*  GetName() const noexcept override { return "TAA"; }
 
     /// TAA operates at native resolution only — no upscaling support.
     [[nodiscard]] float GetMinScreenPercentage() const noexcept override { return 100.f; }
+    /// TAA operates at native resolution only — always 100%.
     [[nodiscard]] float GetMaxScreenPercentage() const noexcept override { return 100.f; }
 
     // --- Lifecycle ---

@@ -57,51 +57,103 @@ public:
 
     // ── IRHICommandList overrides ────────────────────────────────────────
 
+    /// Begins recording. Resets the current frame's command pool and begins
+    /// the command buffer with `VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT`.
     void Begin() override;
+
+    /// Ends recording by calling `vkEndCommandBuffer`.
     void End() override;
+
+    /// Submits the command buffer to the graphics queue via `vkQueueSubmit`
+    /// and rotates the frame index for triple-buffered pool rotation.
     void Execute() override;
 
+    /// Binds a graphics or compute pipeline via `vkCmdBindPipeline`.
     void SetPipeline(RHIPipelineHandle pipeline) override;
+
+    /// Binds a vertex buffer to the given slot via `vkCmdBindVertexBuffers`.
     void SetVertexBuffer(uint32_t slot, RHIBufferHandle buffer, uint32_t offset) override;
+
+    /// Binds an index buffer via `vkCmdBindIndexBuffer`.
     void SetIndexBuffer(RHIBufferHandle buffer, RHIIndexFormat format, uint32_t offset) override;
+
+    /// Sets the viewport via `vkCmdSetViewport` (flipped Y for DX-to-Vulkan convention).
     void SetViewport(const RHIViewport& viewport) override;
+
+    /// Sets the scissor rectangle via `vkCmdSetScissor`.
     void SetScissor(const RHIScissorRect& scissor) override;
+
+    /// Sets a descriptor index via push constants.
     void SetDescriptorIndex(uint32_t rootParamIndex, uint32_t descriptorIndex) override;
+
+    /// Writes inline root constants via `vkCmdPushConstants`.
     void SetRootConstants(uint32_t rootParamIndex, const uint32_t* data,
                           uint32_t count, uint32_t offsetIn32BitValues) override;
+
+    /// Binds a constant buffer by GPU address (resolved to VkBuffer + offset via lookup).
     void SetRootCBV(uint32_t rootParamIndex, uint64_t gpuAddress) override;
+
+    /// Uploads CPU data into a buffer and writes a descriptor set binding for it.
     void SetRootCBV(uint32_t rootParamIndex, RHIBufferHandle buffer,
                     uint64_t offsetBytes, const void* cpuData, uint32_t dataSize) override;
+
+    /// Writes a descriptor binding for a texture or sampler at the given root parameter.
     void SetDescriptorTable(uint32_t rootParamIndex, uint32_t descriptorIndex) override;
+
+    /// Writes a combined image sampler descriptor for a texture at the given slot.
     void SetFragmentTexture(uint32_t slot, RHITextureHandle texture) override;
 
+    /// Submits an indexed draw call via `vkCmdDrawIndexed`.
     void DrawIndexed(uint32_t indexCount, uint32_t instanceCount,
                      uint32_t firstIndex, int32_t vertexOffset,
                      uint32_t firstInstance) override;
+
+    /// Submits a non-indexed draw call via `vkCmdDraw`.
     void Draw(uint32_t vertexCount, uint32_t instanceCount,
               uint32_t firstVertex, uint32_t firstInstance) override;
+
+    /// Dispatches a compute workload via `vkCmdDispatch`.
     void Dispatch(uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ) override;
+
+    /// Submits indirect indexed draw calls via `vkCmdDrawIndexedIndirect`.
     void DrawIndexedIndirect(RHIBufferHandle argsBuffer, uint64_t argsOffset,
                              uint32_t drawCount, uint32_t argsStride) override;
+
+    /// Dispatches an indirect compute workload via `vkCmdDispatchIndirect`.
     void DispatchIndirect(RHIBufferHandle argsBuffer, uint64_t argsOffset) override;
 
+    /// Inserts pipeline barriers via `vkCmdPipelineBarrier2` (VK_KHR_synchronization2).
     void ResourceBarrier(const RHIBarrierDesc* barriers, uint32_t count) override;
 
+    /// Clears a color image to the specified RGBA value via `vkCmdClearColorImage`.
     void ClearRenderTarget(RHITextureHandle texture, const float color[4]) override;
+
+    /// Clears a depth-stencil image via `vkCmdClearDepthStencilImage`.
     void ClearDepthStencil(RHITextureHandle texture, float depth, uint8_t stencil) override;
 
+    /// Copies a region of bytes between two buffers via `vkCmdCopyBuffer`.
     void CopyBuffer(RHIBufferHandle src, uint64_t srcOffset,
                     RHIBufferHandle dst, uint64_t dstOffset, uint64_t size) override;
+
+    /// Copies an entire texture to another via `vkCmdCopyImage`.
     void CopyTexture(RHITextureHandle src, RHITextureHandle dst) override;
+
+    /// Copies buffer data into a texture subresource via `vkCmdCopyBufferToImage`.
     void CopyBufferToTexture(RHIBufferHandle srcBuffer, uint64_t srcOffset,
                              uint32_t srcRowPitch,
                              RHITextureHandle dstTexture,
                              uint32_t mipLevel, uint32_t arraySlice) override;
+
+    /// Copies a texture subresource into a buffer via `vkCmdCopyImageToBuffer`.
     void CopyTextureToBuffer(RHITextureHandle srcTexture, uint32_t mipLevel,
                              RHIBufferHandle dstBuffer, uint64_t dstOffset,
                              uint32_t dstRowPitch, uint32_t arraySlice = 0) override;
 
+    /// Begins a render pass via `vkCmdBeginRendering` (VK_KHR_dynamic_rendering).
+    /// Creates per-slice/mip image views if targeting non-zero array slices or mip levels.
     void BeginRenderPass(const RHIRenderPassDesc& desc) override;
+
+    /// Ends the render pass via `vkCmdEndRendering`. Destroys temporary image views.
     void EndRenderPass() override;
 
 private:

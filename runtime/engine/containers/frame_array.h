@@ -57,6 +57,7 @@ template <typename T, size_t Capacity> class FrameArray {
     /// Destructs all remaining elements.
     ~FrameArray() { Clear(); }
 
+    /// Non-copyable — stack-allocated storage cannot be safely duplicated.
     FrameArray(const FrameArray&) = delete;
     FrameArray& operator=(const FrameArray&) = delete;
 

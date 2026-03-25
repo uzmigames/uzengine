@@ -63,6 +63,9 @@ static constexpr float kPI = 3.14159265359f;
 // 3-component float vector for matrix/color operations
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Minimal 3-component float vector for CPU-side BRDF and color math.
+/// Mirrors HLSL float3 operations (dot, saturate, component-wise arithmetic).
+/// Used only within this test-support header — production code uses uz::Vec3.
 struct Vec3 {
     float x{}, y{}, z{};
 

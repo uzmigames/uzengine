@@ -70,6 +70,10 @@ struct Entity {
 // ─────────────────────────────────────────────────────────────────────────────
 
 template <>
+/// std::hash specialization for `uz::Entity`, enabling use in unordered containers.
+///
+/// Combines id (upper 32 bits) and generation (lower 32 bits) into a single
+/// 64-bit value and hashes that with `std::hash<uint64_t>`.
 struct std::hash<uz::Entity> {
     /// Hashes an Entity by combining id and generation.
     std::size_t operator()(const uz::Entity& e) const noexcept {

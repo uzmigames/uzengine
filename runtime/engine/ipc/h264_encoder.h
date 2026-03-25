@@ -43,6 +43,7 @@
 
 namespace uz {
 
+/// Hardware-accelerated H.264 encoder for low-latency viewport frame streaming.
 class H264Encoder {
 public:
     /// Configuration for the H.264 encoder.

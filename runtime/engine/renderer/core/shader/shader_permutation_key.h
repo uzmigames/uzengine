@@ -288,6 +288,8 @@ private:
 // ---------------------------------------------------------------------------
 
 template <>
+/// std::hash specialization for ShaderPermutationKey.
+/// Delegates to `GetHash()` which applies a splitmix64 finalizer to the packed bits.
 struct std::hash<uz::ShaderPermutationKey> {
     std::size_t operator()(const uz::ShaderPermutationKey& key) const noexcept {
         return static_cast<std::size_t>(key.GetHash());

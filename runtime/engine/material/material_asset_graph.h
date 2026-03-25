@@ -81,8 +81,9 @@ public:
     /// True if compilation succeeded.
     [[nodiscard]] bool Recompile(MaterialShaderCache& cache);
 
-    /// Access the underlying graph for editing (editor use).
+    /// Returns a mutable reference to the underlying node graph for editing.
     [[nodiscard]] MaterialGraph& GetGraph() noexcept { return graph_; }
+    /// Returns a const reference to the underlying node graph.
     [[nodiscard]] const MaterialGraph& GetGraph() const noexcept { return graph_; }
 
     /// Access the compilation result (parameter metadata, texture slots, etc.).

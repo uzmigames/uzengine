@@ -41,10 +41,10 @@ struct RenderProxyHandle {
 
 /// Type of render proxy — determines draw call generation behavior.
 enum class RenderProxyType : uint8_t {
-    StaticMesh,
-    DirectionalLight,
-    PointLight,
-    SpotLight,
+    StaticMesh,       ///< Static mesh geometry (opaque or masked).
+    DirectionalLight, ///< Infinite-distance directional light (sun/moon).
+    PointLight,       ///< Omnidirectional point light with range falloff.
+    SpotLight,        ///< Cone-shaped spot light with inner/outer angles.
 };
 
 /// POD render proxy — flat data for GPU submission, no virtual dispatch.

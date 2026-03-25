@@ -83,6 +83,7 @@ public:
     ///
     /// @returns Pointer to the CVar, or nullptr if no CVar with that name exists.
     [[nodiscard]] CVar*       Find(const std::string& name);
+    /// Const overload — returns a const pointer, or nullptr if not found.
     [[nodiscard]] const CVar* Find(const std::string& name) const;
 
     /// Reads a CVar's value as float.

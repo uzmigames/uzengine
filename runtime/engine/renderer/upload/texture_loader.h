@@ -22,8 +22,9 @@
 
 namespace uz {
 
-// Forward declaration for the external-cmdList overload of LoadHDRFromMemory.
+// Forward declarations for deferred upload paths.
 class UploadContext;
+class UploadRing;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TextureLoadResult — Output of a texture load operation
@@ -231,7 +232,7 @@ public:
         uint32_t width,
         uint32_t height,
         const char* debugName,
-        class UploadContext* outUpload,
+        UploadContext* outUpload,
         bool isSRGB = false,
         bool skipBarrier = false);
 
@@ -271,7 +272,7 @@ public:
         uint32_t width,
         uint32_t height,
         const char* debugName,
-        class UploadContext* outUpload,
+        UploadContext* outUpload,
         uint8_t* const* mipData,
         const uint32_t* mipWidths,
         const uint32_t* mipHeights,
@@ -303,7 +304,7 @@ public:
         const uint8_t* data,
         size_t size,
         const char* debugName,
-        class UploadContext* outUpload = nullptr,
+        UploadContext* outUpload = nullptr,
         bool skipBarrier = false);
 
     /// Loads a pre-cooked .uztexture file to the GPU via UploadRing suballocation.
@@ -338,7 +339,7 @@ public:
         const uint8_t* data,
         size_t size,
         const char* debugName,
-        class UploadRing& ring,
+        UploadRing& ring,
         bool skipBarrier = false);
 
     /// Loads a high dynamic range texture from a file path on disk.

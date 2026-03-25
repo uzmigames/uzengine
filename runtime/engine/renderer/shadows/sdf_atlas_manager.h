@@ -240,6 +240,7 @@ private:
     std::vector<uint32_t> m_freeObjectSlots;
 
     // ── Mesh registration tracking ───────────────────────────────────────
+    /// Tracks atlas and indirection table placement for one registered SDF mesh.
     struct MeshAllocation {
         uint32_t atlasOffset;         ///< First brick index in atlas.
         uint32_t brickCount;          ///< Number of bricks in atlas.

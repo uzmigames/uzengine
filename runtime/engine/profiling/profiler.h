@@ -158,6 +158,7 @@ namespace uz {
 /// GpuProfileScope<DX12GpuProfiler, ID3D12GraphicsCommandList> scope(profiler, cmdList, "GBuffer");
 /// ```
 template <typename ProfilerT, typename CmdListT>
+/// RAII scope that records a begin/end GPU timestamp pair.
 struct GpuProfileScope {
     /// Begins a GPU timestamp with the given name.
     ///

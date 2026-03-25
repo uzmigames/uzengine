@@ -114,8 +114,7 @@ void ClassInfo::AddProperty(const char* prop_name, size_t byte_offset, const cha
 ///
 /// # Arguments
 /// * `ClassName` - The unqualified class name (e.g., `Enemy`, `HealthComponent`)
-// NOLINTNEXTLINE(cppcoreguidelines-macro-usage) — macro required for offsetof/stringification
-#define UZ_COMPONENT(ClassName)                                                                    \
+#define UZ_COMPONENT(ClassName) /* NOLINT(cppcoreguidelines-macro-usage) */                        \
 public:                                                                                            \
     using ThisClass = ClassName;                                                                   \
     static ::uz::ClassInfo& GetStaticClassInfo() {                                                 \
@@ -153,8 +152,7 @@ public:
 ///
 /// # Arguments
 /// * `ClassName` - The unqualified class name (e.g., `PatrolBehavior`, `FollowTarget`)
-// NOLINTNEXTLINE(cppcoreguidelines-macro-usage) — macro required for offsetof/stringification
-#define UZ_BEHAVIOR(ClassName)                                                                    \
+#define UZ_BEHAVIOR(ClassName) /* NOLINT(cppcoreguidelines-macro-usage) */                        \
 public:                                                                                            \
     using ThisClass = ClassName;                                                                   \
     static ::uz::ClassInfo& GetStaticClassInfo() {                                                 \
@@ -189,8 +187,7 @@ public:
 ///
 /// # Arguments
 /// * `ClassName` - Must match the `UZ_COMPONENT(ClassName)` in the same class.
-// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
-#define UZ_PROPERTIES_BEGIN(ClassName)                                                             \
+#define UZ_PROPERTIES_BEGIN(ClassName) /* NOLINT(cppcoreguidelines-macro-usage) */                 \
     static void RegisterProperties(::uz::ClassInfo& _uz_info) {                                   \
         (void)_uz_info;
 
@@ -200,8 +197,7 @@ public:
 /// * `type` - C++ type (e.g., `float`, `Vec3`, `std::string`)
 /// * `name` - Field name (must be a member of `ThisClass`)
 /// * `desc` - Description string literal
-// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
-#define UZ_PROP(type, name, desc)                                                                  \
+#define UZ_PROP(type, name, desc) /* NOLINT(cppcoreguidelines-macro-usage) */                      \
     _uz_info.AddProperty<type>(#name, offsetof(ThisClass, name), desc);
 
 /// Adds a property entry with category and flags.
@@ -212,11 +208,9 @@ public:
 /// * `desc` - Description string literal
 /// * `cat` - Category string literal (e.g., "Physics", "Rendering")
 /// * `flags` - `PropertyFlags` value or combination
-// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
-#define UZ_PROP_EX(type, name, desc, cat, flags)                                                   \
+#define UZ_PROP_EX(type, name, desc, cat, flags) /* NOLINT(cppcoreguidelines-macro-usage) */       \
     _uz_info.AddProperty<type>(#name, offsetof(ThisClass, name), desc, cat, flags);
 
 /// Closes a `UZ_PROPERTIES_BEGIN` block.
-// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
-#define UZ_PROPERTIES_END()                                                                        \
+#define UZ_PROPERTIES_END() /* NOLINT(cppcoreguidelines-macro-usage) */                            \
     }

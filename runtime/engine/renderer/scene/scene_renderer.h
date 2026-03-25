@@ -135,6 +135,7 @@ public:
     /// Returns true when all meshes, textures, and async decodes are complete.
     /// Used to gate screenshots — never capture before the scene is fully loaded.
     [[nodiscard]] bool IsSceneFullyLoaded() const;
+    /// Debug variant — also logs which async loads are still outstanding.
     [[nodiscard]] bool IsSceneFullyLoadedDebug() const;
 
     /// Returns true if there are async texture decodes still in flight,
@@ -413,6 +414,7 @@ public:
 
     /// Returns the pass inspector for render target visualization and validation.
     [[nodiscard]] PassInspector& GetPassInspector() noexcept { return m_passInspector; }
+    /// Const overload of GetPassInspector().
     [[nodiscard]] const PassInspector& GetPassInspector() const noexcept { return m_passInspector; }
 
     /// Sets the global LOD bias.
@@ -433,6 +435,7 @@ public:
 
     /// Returns the camera used for rendering. Must only be called after `Init()`.
     [[nodiscard]] Camera& GetCamera();
+    /// Const overload — returns a const reference to the render camera.
     [[nodiscard]] const Camera& GetCamera() const;
 
     /// Returns the FPS camera controller. Must only be called after `Init()`.

@@ -149,6 +149,7 @@ static constexpr uint32_t kUzTextureFlag_sRGB = 0x1; ///< Bit 0: texture data is
 // Binary Structs
 // ─────────────────────────────────────────────────────────────────────────────
 
+#pragma pack(push, 1)
 /// .uztexture file header — exactly 64 bytes, little-endian.
 ///
 /// Immediately followed by `mipCount` mip level descriptors, then the
@@ -167,7 +168,6 @@ static constexpr uint32_t kUzTextureFlag_sRGB = 0x1; ///< Bit 0: texture data is
 /// 0x18    4     flags          reserved, must be 0
 /// 0x1C    36    reserved[9]    must be all zeros
 /// ```
-#pragma pack(push, 1)
 struct UzTextureHeader {
     uint32_t magic = kUzTextureMagic;       ///< Must be `kUzTextureMagic` (0x5A585455, "UZTX"). First validation check.
     uint32_t version = kUzTextureVersion;   ///< Format version (currently 1). Reject if > kUzTextureVersion.
@@ -182,6 +182,7 @@ struct UzTextureHeader {
 
 static_assert(sizeof(UzTextureHeader) == 64, "UzTextureHeader must be exactly 64 bytes");
 
+#pragma pack(push, 1)
 /// Describes a single mip level within the texture.
 ///
 /// `offset` is an absolute byte offset from the start of the file, allowing
@@ -208,7 +209,6 @@ static_assert(sizeof(UzTextureHeader) == 64, "UzTextureHeader must be exactly 64
 /// # Notes
 /// Uses uint64 for offset/size to support textures larger than 4 GB
 /// (e.g., 8K virtual textures with full mip chains).
-#pragma pack(push, 1)
 struct UzTextureMipLevel {
     uint64_t offset = 0;                    ///< Absolute byte offset from file start to this mip's data.
     uint64_t size = 0;                      ///< Mip data size in bytes. See format-specific size formulas above.

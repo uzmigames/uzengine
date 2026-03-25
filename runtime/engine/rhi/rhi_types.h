@@ -71,6 +71,7 @@ constexpr float    kShadowDepthFar   = 1.0f;  ///< Shadow depth far (standard-Z)
 /// }
 /// ```
 template <typename Tag>
+/// Type-safe GPU resource handle with generational validation.
 struct RHIHandle {
     uint32_t index = 0;      ///< Slot index in the backend's resource pool.
     uint32_t generation = 0; ///< Generation counter. 0 means invalid/never-allocated.

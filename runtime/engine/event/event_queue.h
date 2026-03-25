@@ -39,6 +39,7 @@ namespace uz {
 // EventQueue<TEvent> — deferred single-type event bus
 // ─────────────────────────────────────────────────────────────────────────────
 
+template <typename TEvent>
 /// Deferred event queue that collects events during a frame and dispatches
 /// them all at a designated sync point via Flush().
 ///
@@ -48,7 +49,6 @@ namespace uz {
 ///
 /// # Type Parameters
 /// * `TEvent` — The event payload type. Must be move-constructible.
-template <typename TEvent>
 class EventQueue {
 public:
     EventQueue() = default;

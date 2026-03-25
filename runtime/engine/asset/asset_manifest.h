@@ -68,8 +68,8 @@ enum class AssetType : uint32_t {
     Script  = 5,   ///< Script file (Lua bytecode)
 };
 
-/// .uzmanifest file header — exactly 16 bytes.
 #pragma pack(push, 1)
+/// .uzmanifest file header — exactly 16 bytes.
 struct ManifestHeader {
     uint32_t magic = kManifestMagic;      ///< Must be kManifestMagic
     uint32_t version = kManifestVersion;  ///< Format version
@@ -80,8 +80,8 @@ struct ManifestHeader {
 
 static_assert(sizeof(ManifestHeader) == 16, "ManifestHeader must be exactly 16 bytes");
 
-/// Single entry in the manifest — exactly 32 bytes.
 #pragma pack(push, 1)
+/// Single entry in the manifest — exactly 32 bytes.
 struct ManifestEntry {
     uint64_t pathHash = 0;       ///< xxHash64 of the logical asset path
     uint64_t size = 0;           ///< Uncompressed asset size in bytes

@@ -39,7 +39,7 @@ enum class EShadingModel : uint8_t {
     Cloth              = 7,  ///< Fabric sheen BRDF (Estevez-Kulla or Ashikhmin).
     Eye                = 8,  ///< Specialized eye shading with iris caustics.
     ThinTranslucent    = 9,  ///< Single-layer thin-film translucency.
-    Count              = 10,
+    Count              = 10, ///< Total number of shading models. Not a valid model.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -58,7 +58,7 @@ enum class EMaterialDomain : uint8_t {
     LightFunction = 3,  ///< Light attenuation modifier (IES profile, gobo, etc.).
     UI            = 4,  ///< 2D user interface element — screen-space, no lighting.
     Volume        = 5,  ///< Volumetric material (fog cards, participating media).
-    Count         = 6,
+    Count         = 6, ///< Total number of material domains. Not a valid domain.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -76,7 +76,7 @@ enum class EBlendMode : uint8_t {
     Translucent = 2,  ///< Standard alpha blending (SrcAlpha, InvSrcAlpha).
     Additive    = 3,  ///< Additive blending (One, One) — used for glow, particles.
     Modulate    = 4,  ///< Multiplicative blending (DestColor, Zero) — used for shadows.
-    Count       = 5,
+    Count       = 5, ///< Total number of blend modes. Not a valid mode.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

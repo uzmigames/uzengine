@@ -46,7 +46,7 @@ enum class GpuMemoryCategory : uint8_t {
     RenderTargets,  ///< GBuffer surfaces, shadow maps, post-process targets
     Buffers,        ///< Vertex, index, constant, and structured buffers
     Staging,        ///< Upload-heap and readback staging buffers
-    Count
+    Count           ///< Total number of categories. Not a valid category.
 };
 
 /// Returns a human-readable name for a GPU memory category.

@@ -36,14 +36,25 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // DLL export/import macro
 // ─────────────────────────────────────────────────────────────────────────────
-// When building the shared library:  compile with -DUZ_BUILDING_DLL
-// When consuming the shared library: compile with -DUZ_USING_DLL
-// When building the static library:  neither define is set → UZ_API is empty
+
+/// Platform visibility macro for public API symbols.
+///
+/// Resolves to `__declspec(dllexport)` when building UzEngine as a shared
+/// library (`-DUZ_BUILDING_DLL`), `__declspec(dllimport)` when consuming it
+/// (`-DUZ_USING_DLL`), or empty for static library builds (the default).
+///
+/// # Usage
+/// ```cpp
+/// UZ_API void MyPublicFunction();
+/// ```
 #if defined(UZ_BUILDING_DLL)
+/// DLL export/import visibility (building DLL — export).
 #  define UZ_API __declspec(dllexport)
 #elif defined(UZ_USING_DLL)
+/// DLL export/import visibility (consuming DLL — import).
 #  define UZ_API __declspec(dllimport)
 #else
+/// DLL export/import visibility (static build — no-op).
 #  define UZ_API
 #endif
 

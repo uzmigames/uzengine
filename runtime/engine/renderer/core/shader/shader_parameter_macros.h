@@ -58,13 +58,13 @@ namespace uz {
 // Type trait: maps C++ types to ShaderParamType for scalar members
 // ─────────────────────────────────────────────────────────────────────────────
 
+template <typename T>
 /// Type trait that classifies a C++ type as a scalar shader parameter type.
 ///
 /// All types used in SHADER_PARAMETER macros must be trivially copyable.
 /// The trait returns `ShaderParamType::Scalar` for all non-resource types.
 /// Resource types (RHITextureHandle, RHISamplerHandle) are handled by
 /// separate macros (SHADER_PARAMETER_TEXTURE, SHADER_PARAMETER_SAMPLER).
-template <typename T>
 struct ShaderParamTypeTrait {
     static constexpr ShaderParamType value = ShaderParamType::Scalar;
     static_assert(std::is_trivially_copyable_v<T>,
@@ -75,11 +75,11 @@ struct ShaderParamTypeTrait {
 // HLSL type name mapping — used by GenerateHLSL()
 // ─────────────────────────────────────────────────────────────────────────────
 
+template <typename T>
 /// Returns the HLSL type name for a C++ type used in a shader parameter struct.
 ///
 /// Specializations exist for common types (float, uint32_t, Vec2, Vec3, Vec4, Mat4).
 /// The default returns "float4" as a safe fallback for unknown types.
-template <typename T>
 struct HlslTypeName {
     static constexpr const char* value = "/* unknown */";
 };

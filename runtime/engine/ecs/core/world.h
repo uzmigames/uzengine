@@ -109,6 +109,7 @@ public:
 
     // ── Component Operations ────────────────────────────────────────────
 
+    template <typename T, typename... Args>
     /// Adds a component to an entity by constructing it in-place.
     ///
     /// If the entity already has a component of type T, this replaces it.
@@ -122,9 +123,9 @@ public:
     ///
     /// # Returns
     /// Mutable reference to the newly emplaced component.
-    template <typename T, typename... Args>
     T& AddComponent(Entity entity, Args&&... args);
 
+    template <typename T>
     /// Removes a component from an entity.
     ///
     /// No-op if the entity does not have the component (logs a warning).
@@ -134,9 +135,9 @@ public:
     ///
     /// # Arguments
     /// * `entity` - Must be valid (asserts via UZ_CHECK).
-    template <typename T>
     void RemoveComponent(Entity entity);
 
+    template <typename T>
     /// Returns a mutable reference to an entity's component.
     ///
     /// # Type Parameters
@@ -147,9 +148,9 @@ public:
     ///
     /// # Returns
     /// Mutable reference to the component.
-    template <typename T>
     [[nodiscard]] T& GetComponent(Entity entity);
 
+    template <typename T>
     /// Returns a const reference to an entity's component.
     ///
     /// # Type Parameters
@@ -160,9 +161,9 @@ public:
     ///
     /// # Returns
     /// Const reference to the component.
-    template <typename T>
     [[nodiscard]] const T& GetComponent(Entity entity) const;
 
+    template <typename T>
     /// Checks whether an entity has a specific component.
     ///
     /// # Type Parameters
@@ -173,11 +174,11 @@ public:
     ///
     /// # Returns
     /// `true` if the entity has a component of type T.
-    template <typename T>
     [[nodiscard]] bool HasComponent(Entity entity) const;
 
     // ── Iteration ───────────────────────────────────────────────────────
 
+    template <typename... Ts>
     /// Returns an EnTT view for iterating entities with the specified components.
     ///
     /// This exposes EnTT's view API directly — no additional wrapping.
@@ -196,11 +197,10 @@ public:
     ///     // process transform and mesh
     /// }
     /// ```
-    template <typename... Ts>
     [[nodiscard]] auto View();
 
-    /// Returns a const EnTT view for read-only iteration.
     template <typename... Ts>
+    /// Returns a const EnTT view for read-only iteration.
     [[nodiscard]] auto View() const;
 
     // ── Queries ─────────────────────────────────────────────────────────

@@ -31,9 +31,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
-    /// x86/x64 platform — SSE2 is always available, AVX2 may be available.
+    /// x86/x64 platform — SSE2 is always available.
     #define UZ_SIMD_SSE2  1
-    #define UZ_SIMD_AVX2  1  // Header available; runtime check needed before use.
+    /// AVX2 header available on x86/x64; runtime CPUID check needed before use.
+    #define UZ_SIMD_AVX2  1
+    /// NEON not available on x86/x64.
     #define UZ_SIMD_NEON  0
 #elif defined(__aarch64__) || defined(_M_ARM64)
     /// ARM64 platform — NEON is always available.

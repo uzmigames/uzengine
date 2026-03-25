@@ -112,6 +112,7 @@ inline bool RequiresDXC(ShaderModelCompile model) {
 // PIMPL — holds all subsystems with correct initialization order
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// PIMPL internals — owns all shader subsystems in dependency order.
 struct ShaderPipeline::Impl {
     ShaderVFS vfs;
     ShaderSourceManager sourceManager;

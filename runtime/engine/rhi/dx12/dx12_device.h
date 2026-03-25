@@ -284,12 +284,19 @@ public:
     void LogDeviceRemoved();
 
     // ── GPU Profiler (IRHIDevice overrides) ─────────────────────────────
+    /// Resets the GPU timestamp query heap for a new frame.
     void GpuProfilerBeginFrame(IRHICommandList* cmdList) override;
+    /// Resolves GPU timestamps at end of frame.
     void GpuProfilerEndFrame(IRHICommandList* cmdList) override;
+    /// Reads back resolved timestamps and computes per-pass durations.
     void GpuProfilerResolve() override;
+    /// Inserts a begin-timestamp query for the named region.
     void GpuProfilerBeginTimestamp(IRHICommandList* cmdList, const char* name) override;
+    /// Inserts an end-timestamp query for the named region.
     void GpuProfilerEndTimestamp(IRHICommandList* cmdList, const char* name) override;
+    /// Returns the resolved per-pass timing results for the last frame.
     const std::vector<GpuTimingResult>& GpuProfilerGetResults() const override;
+    /// Returns total GPU frame time in milliseconds for the last resolved frame.
     float GpuProfilerGetFrameTimeMs() const override;
 
     /// Returns the GPU timestamp profiler for per-pass timing.
