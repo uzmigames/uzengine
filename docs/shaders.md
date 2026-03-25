@@ -399,6 +399,90 @@ Every shader follows this documentation pattern:
 
 ---
 
+## References & Licenses
+
+Every shader cites its published reference via `@ref` comments. Below is the complete list of papers, techniques, and third-party code used, grouped by license.
+
+### MIT License
+
+| Source | Used In | Description |
+|--------|---------|-------------|
+| AMD FidelityFX FSR 1.0 (`ffx_fsr1.h`) | `fsr_easu_cs.hlsl`, `fsr_rcas_cs.hlsl` | Edge Adaptive Spatial Upscaling + Robust Contrast-Adaptive Sharpening. AMD 2021 "FidelityFX Super Resolution" |
+| AMD FidelityFX CAS (`ffx_cas.h`) | `cas_sharpen_ps.hlsl` | Contrast Adaptive Sharpening. AMD 2019 "FidelityFX Contrast Adaptive Sharpening" |
+| SMAA (`SMAA.hlsl`) | `smaa_edge_ps.hlsl`, `smaa_blend_ps.hlsl`, `smaa_resolve_ps.hlsl` | Jimenez 2012 "SMAA: Enhanced Subpixel Morphological Antialiasing" |
+
+### BSD-3 License
+
+| Source | Used In | Description |
+|--------|---------|-------------|
+| Bruneton Precomputed Atmospheric Scattering (`functions.glsl`) | `transmittance_lut_cs.hlsl`, `multi_scatter_lut_cs.hlsl`, `single_scattering_lut_cs.hlsl`, `scattering_density_cs.hlsl`, `indirect_scattering_cs.hlsl`, `irradiance_lut_cs.hlsl`, `aerial_perspective_volume_cs.hlsl`, `atmosphere_lut.hlsli` | Bruneton & Neyret 2017 "Precomputed Atmospheric Scattering". Reference: `github.com/ebruneton/precomputed_atmospheric_scattering` |
+
+### Public Domain / NVIDIA
+
+| Source | Used In | Description |
+|--------|---------|-------------|
+| FXAA 3.11 (`Fxaa3_11.ush`) | `fxaa_ps.hlsl` | Lottes 2009/2011 "Fast Approximate Anti-Aliasing". NVIDIA public algorithm, no license restriction on reimplementation |
+
+### ACES (Academy Software Foundation License)
+
+| Source | Used In | Description |
+|--------|---------|-------------|
+| ACES CTL Reference (Academy S-2014-006) | `film_tonemap.hlsli`, `tonemap_ps.hlsl`, `color_grading_lut_cs.hlsl` | ACES tone curve (RRT glow, red modifier, 3-segment S-curve). Academy Color Encoding System reference implementation |
+
+### Published Papers (no code license — algorithm reimplementation)
+
+All techniques below are reimplemented from published papers. No source code was copied; only the mathematical algorithms and constants described in the papers are used.
+
+| Paper | Author(s) | Year | Used In |
+|-------|-----------|------|---------|
+| "Precomputed Atmospheric Scattering" | Bruneton, Neyret | 2008/2017 | Atmosphere LUT pipeline (transmittance, multi-scatter, aerial perspective) |
+| "A Scalable and Production Ready Sky and Atmosphere Rendering Technique" | Hillaire (Epic) | 2020 | `sky_atmosphere_ps.hlsl`, multi-scatter integration |
+| "Physically Based and Unified Volumetric Rendering in Frostbite" | Hillaire (EA) | 2015 | `height_fog_ps.hlsl`, volumetric fog inscattering |
+| "Physically Based Shading at Disney" | Burley | 2012 | `pbr_common.hlsli` (Burley diffuse), `lighting.hlsli` (SSS wrap diffuse) |
+| "Real Shading in Unreal Engine 4" | Karis (Epic) | 2013 | `pbr_common.hlsli` (GGX NDF, Smith visibility, Schlick Fresnel) |
+| "Moving Frostbite to PBR" | Lagarde, de Rousiers (EA) | 2014 | `pbr_common.hlsli` (multi-scatter energy compensation), `ibl.hlsli` |
+| "Production Friendly Microfacet Sheen BRDF" | Estevez, Kulla | 2017 | `pbr_common.hlsli` (cloth shading) |
+| "Ground-Truth Ambient Occlusion" (GTAO) | Jimenez et al. (Activision) | 2016 | `gtao_cs.hlsl`, `gtao_denoise_cs.hlsl`, `gtao_temporal_cs.hlsl` |
+| "Practical Real-Time Strategies for Accurate Indirect Occlusion" | Jimenez et al. | 2016 | GTAO spatial filter, mip selection from screen radius |
+| "High Quality Temporal Supersampling" | Karis (Epic) | 2014 | `taa_resolve_cs.hlsl` (YCoCg clamping, Halton jitter, HDR weighting) |
+| "Temporal Reprojection Anti-Aliasing in INSIDE" | Pedersen (Playdead) | 2016 | `taa_resolve_cs.hlsl` (neighbourhood clamping refinements) |
+| "A Reconstruction Filter for Plausible Motion Blur" | McGuire et al. | 2012 | `motion_blur_cs.hlsl`, `motionblur_tilemax_cs.hlsl`, `motionblur_neighbormax_cs.hlsl` |
+| "Percentage-Closer Soft Shadows" (PCSS) | Fernando (NVIDIA) | 2005 | `pcss.hlsli` (blocker search, variable penumbra estimation) |
+| "Cascaded Shadow Maps" | Engel | 2006 | `shadow_common.hlsli` (cascade selection, per-cascade PCF radius) |
+| "Cascaded Shadow Maps" | Dimitrov, Bavoil | 2007 | `shadow_common.hlsli` (smooth cascade transitions) |
+| "Screen-Space Contact Shadows" | Wihlidal (EA) | 2017 | `contact_shadows.hlsli` (screen-space ray march) |
+| "Distance Field Soft Shadows" | Wright (Epic) | 2015 | `dfs_cone_trace_cs.hlsl`, `dfs_cull_objects_cs.hlsl`, `dfs_common.hlsli` |
+| "Sphere Tracing" | Hart | 1996 | `dfs_cone_trace_cs.hlsl` (SDF ray marching foundation) |
+| "Real-Time Rendering of Procedural Multiscale Cloud" | Schneider (Guerrilla) | 2015 | `cloud_raymarch_cs.hlsl` (Worley noise, weather map, beer-powder) |
+| "The Real-Time Volumetric Cloudscapes of Horizon Zero Dawn" | Schneider, Vos | 2017 | Cloud noise pipeline, temporal reprojection |
+| "Hi-Z Screen-Space Reflections" | Uludag (AMD) | 2014 | `ssr_trace_cs.hlsl` (hierarchical ray march) |
+| "Stochastic Screen-Space Reflections" | Stachowiak (EA) | 2015 | `ssr_resolve_cs.hlsl`, `ssr_temporal_cs.hlsl` |
+| "Screen Space Indirect Lighting with Visibility Bitmask" | Jimenez | 2023 | `ssgi_trace_cs.hlsl` (multi-direction screen-space GI) |
+
+### UzEngine Original
+
+All shaders not listed above are original UzEngine implementations with no third-party code dependencies:
+
+- Editor grid, overlay, stats display
+- GBuffer write/read
+- Deferred lighting composition
+- Decal projection + DBuffer merge
+- IBL baking (BRDF LUT, irradiance, prefiltered specular, equirect-to-cubemap)
+- Mesh SDF baking + global SDF compositing
+- Bloom pyramid (threshold, downsample, upsample, composite)
+- Color grading LUT generation
+- Exposure histogram + adaptation
+- Depth of field (CoC + bokeh gather)
+- Lens flare
+- Velocity buffer
+- GPU culling (frustum + HiZ)
+- HiZ pyramid
+- Mipmap generation
+- TSR (Temporal Super Resolution)
+- Debug visualization modes
+
+---
+
 ## Related Documentation
 
 - **Rendering Architecture**: `docs/engine/renderer.md`
