@@ -49,10 +49,21 @@ bool Application::InitPlatform() {
 #else
     deviceDesc.enableValidation = m_config.enableValidation;
 #endif
+
+    // Shader model force: CLI --sm > env UZ_FORCE_SM
     if (m_config.shaderModel.has_value()) {
         deviceDesc.forceShaderModel = m_config.shaderModel.value();
-    } else if (const char* env = std::getenv("UZ_FORCE_SM5"); env && std::string(env) == "1") {
-        deviceDesc.forceShaderModel = ShaderModel::SM5_0;
+    } else if (const char* env = std::getenv("UZ_FORCE_SM"); env) {
+        ShaderModel smEnv{};
+        std::string smStr(env);
+        std::replace(smStr.begin(), smStr.end(), '_', '.');
+        if (smStr == "5" || smStr == "5.0") smEnv = ShaderModel::SM5_0;
+        else if (smStr == "5.1") smEnv = ShaderModel::SM5_1;
+        else if (smStr == "6" || smStr == "6.0") smEnv = ShaderModel::SM6_0;
+        else if (smStr == "6.5") smEnv = ShaderModel::SM6_5;
+        else if (smStr == "6.6") smEnv = ShaderModel::SM6_6;
+        if (static_cast<int>(smEnv) > 0)
+            deviceDesc.forceShaderModel = smEnv;
     }
 
     UZ_LOG(App, Info, "Application '{}': backend={}, shaderModel={}",
