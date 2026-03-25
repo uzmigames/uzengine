@@ -23,6 +23,10 @@
     [[nodiscard]] bool EnsureHeightFogPixelShader();
     [[nodiscard]] bool EnsureTransmittanceLutShader();
     [[nodiscard]] bool EnsureMultiScatterLutShader();
+    [[nodiscard]] bool EnsureSingleScatterLutShader();
+    [[nodiscard]] bool EnsureScatteringDensityShader();
+    [[nodiscard]] bool EnsureIndirectScatteringShader();
+    [[nodiscard]] bool EnsureIrradianceLutShader();
     [[nodiscard]] bool EnsureAPVolumeShader();
     [[nodiscard]] bool EnsureSkyCubemapCaptureShader();
     [[nodiscard]] bool EnsureSkyCubemapCapturePSShader();
@@ -92,6 +96,10 @@
     RHIShaderHandle m_cloudCompositePS     = RHIShaderHandle::Invalid();
     RHIShaderHandle m_transmittanceLutCS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_multiScatterLutCS      = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_singleScatterLutCS     = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_scatteringDensityCS    = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_indirectScatteringCS   = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_irradianceLutCS        = RHIShaderHandle::Invalid();
     RHIShaderHandle m_apVolumeCS             = RHIShaderHandle::Invalid();
     RHIShaderHandle m_skyCubemapCaptureCS    = RHIShaderHandle::Invalid();
     RHIShaderHandle m_skyCubemapCapturePSShader = RHIShaderHandle::Invalid();
@@ -149,6 +157,10 @@
     RHIPipelineHandle m_cloudComposite        = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_transmittanceLut      = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_multiScatterLut      = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_singleScatterLut     = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_scatteringDensity    = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_indirectScattering   = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_irradianceLut        = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_apVolume             = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_skyCubemapCapture    = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_skyCubemapCapturePSPipeline = RHIPipelineHandle::Invalid();

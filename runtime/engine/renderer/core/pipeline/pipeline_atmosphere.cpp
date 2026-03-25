@@ -518,5 +518,237 @@ RHIPipelineHandle PipelineLibrary::GetSkyCubemapCapturePS() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Single Scattering 3D LUT Compute Pipeline (Bruneton 2017)
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureSingleScatterLutShader() {
+    if (m_singleScatterLutCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::SingleScatteringLutCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile SingleScatteringLutCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "single_scattering_lut_cs";
+
+    m_singleScatterLutCS = m_device->CreateShader(shaderDesc);
+    if (!m_singleScatterLutCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SingleScatteringLutCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetSingleScatterLut() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetSingleScatterLut called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_singleScatterLut.IsValid()) {
+        return m_singleScatterLut;
+    }
+
+    if (!EnsureSingleScatterLutShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_singleScatterLutCS;
+    desc.debugName     = "SingleScatterLUT";
+
+    m_singleScatterLut = m_device->CreateComputePipeline(desc);
+    if (!m_singleScatterLut.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SingleScatterLUT pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created SingleScatterLUT pipeline");
+    }
+
+    return m_singleScatterLut;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scattering Density Compute Pipeline (Bruneton 2017)
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureScatteringDensityShader() {
+    if (m_scatteringDensityCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::ScatteringDensityCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile ScatteringDensityCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "scattering_density_cs";
+
+    m_scatteringDensityCS = m_device->CreateShader(shaderDesc);
+    if (!m_scatteringDensityCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create ScatteringDensityCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetScatteringDensity() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetScatteringDensity called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_scatteringDensity.IsValid()) {
+        return m_scatteringDensity;
+    }
+
+    if (!EnsureScatteringDensityShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_scatteringDensityCS;
+    desc.debugName     = "ScatteringDensity";
+
+    m_scatteringDensity = m_device->CreateComputePipeline(desc);
+    if (!m_scatteringDensity.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create ScatteringDensity pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created ScatteringDensity pipeline");
+    }
+
+    return m_scatteringDensity;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Indirect Scattering Compute Pipeline (Bruneton 2017)
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureIndirectScatteringShader() {
+    if (m_indirectScatteringCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::IndirectScatteringCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile IndirectScatteringCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "indirect_scattering_cs";
+
+    m_indirectScatteringCS = m_device->CreateShader(shaderDesc);
+    if (!m_indirectScatteringCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create IndirectScatteringCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetIndirectScattering() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetIndirectScattering called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_indirectScattering.IsValid()) {
+        return m_indirectScattering;
+    }
+
+    if (!EnsureIndirectScatteringShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_indirectScatteringCS;
+    desc.debugName     = "IndirectScattering";
+
+    m_indirectScattering = m_device->CreateComputePipeline(desc);
+    if (!m_indirectScattering.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create IndirectScattering pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created IndirectScattering pipeline");
+    }
+
+    return m_indirectScattering;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Irradiance LUT Compute Pipeline (Bruneton 2017)
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureIrradianceLutShader() {
+    if (m_irradianceLutCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::IrradianceLutCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile IrradianceLutCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "irradiance_lut_cs";
+
+    m_irradianceLutCS = m_device->CreateShader(shaderDesc);
+    if (!m_irradianceLutCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create IrradianceLutCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetIrradianceLut() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetIrradianceLut called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_irradianceLut.IsValid()) {
+        return m_irradianceLut;
+    }
+
+    if (!EnsureIrradianceLutShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_irradianceLutCS;
+    desc.debugName     = "IrradianceLUT";
+
+    m_irradianceLut = m_device->CreateComputePipeline(desc);
+    if (!m_irradianceLut.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create IrradianceLUT pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created IrradianceLUT pipeline");
+    }
+
+    return m_irradianceLut;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 } // namespace uz

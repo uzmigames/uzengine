@@ -278,6 +278,22 @@ public:
     /// 32x32 R11G11B10F, Hillaire 2020 isotropic integration + geometric series.
     [[nodiscard]] RHIPipelineHandle GetMultiScatterLut();
 
+    /// Returns the single-scatter 3D LUT precomputation pipeline (single_scattering_lut_cs.hlsl).
+    /// 256x128x32 RGBA16F, Bruneton 2017 single Rayleigh+Mie scatter.
+    [[nodiscard]] RHIPipelineHandle GetSingleScatterLut();
+
+    /// Returns the scattering density precomputation pipeline (scattering_density_cs.hlsl).
+    /// 256x128x32 RGBA16F, Bruneton 2017 per-order density computation.
+    [[nodiscard]] RHIPipelineHandle GetScatteringDensity();
+
+    /// Returns the indirect scattering integration pipeline (indirect_scattering_cs.hlsl).
+    /// 256x128x32, Bruneton 2017 N-th order scattering accumulation.
+    [[nodiscard]] RHIPipelineHandle GetIndirectScattering();
+
+    /// Returns the irradiance LUT pipeline (irradiance_lut_cs.hlsl).
+    /// 64x16 RGBA16F, direct + indirect ground irradiance.
+    [[nodiscard]] RHIPipelineHandle GetIrradianceLut();
+
     /// Returns the aerial perspective volume compute pipeline (aerial_perspective_volume_cs.hlsl).
     /// 32x32x16 RGBA16F 3D texture, precomputed per-frame AP inscattering + transmittance.
     [[nodiscard]] RHIPipelineHandle GetAerialPerspectiveVolume();

@@ -74,6 +74,38 @@
     bool m_multiScatterLutDirty = true;             ///< True if multi-scatter LUT needs recompute.
     bool m_multiScatterLutFilled = false;           ///< True once the LUT has been computed.
 
+    // ── Bruneton 3D Scattering LUT (256x128x32 RGBA16F) ────────────────
+    RHITextureHandle m_scatteringLut3D;             ///< Combined scattering (Rayleigh.rgb + Mie.r packed).
+    uint32_t m_scatteringLut3DSrv = UINT32_MAX;     ///< SRV for sky shader lookup.
+    uint32_t m_scatteringLut3DUav = UINT32_MAX;     ///< UAV for precompute write.
+    bool m_scatteringLut3DDirty = true;             ///< True if LUT needs recompute.
+    bool m_scatteringLut3DFilled = false;           ///< True once precomputed.
+
+    // ── Delta Rayleigh 3D (256x128x32 RGBA16F, temp for precompute) ───
+    RHITextureHandle m_deltaRayleigh3D;
+    uint32_t m_deltaRayleigh3DSrv = UINT32_MAX;
+    uint32_t m_deltaRayleigh3DUav = UINT32_MAX;
+
+    // ── Delta Mie 3D (256x128x32 RGBA16F, temp for precompute) ────────
+    RHITextureHandle m_deltaMie3D;
+    uint32_t m_deltaMie3DSrv = UINT32_MAX;
+    uint32_t m_deltaMie3DUav = UINT32_MAX;
+
+    // ── Scattering Density 3D (256x128x32 RGBA16F, temp for precompute)
+    RHITextureHandle m_scatteringDensity3D;
+    uint32_t m_scatteringDensity3DSrv = UINT32_MAX;
+    uint32_t m_scatteringDensity3DUav = UINT32_MAX;
+
+    // ── Irradiance LUT (64x16 RGBA16F) ────────────────────────────────
+    RHITextureHandle m_irradianceLut;
+    uint32_t m_irradianceLutSrv = UINT32_MAX;
+    uint32_t m_irradianceLutUav = UINT32_MAX;
+
+    // ── Delta Irradiance (64x16 RGBA16F, temp for precompute) ──────────
+    RHITextureHandle m_deltaIrradiance;
+    uint32_t m_deltaIrradianceSrv = UINT32_MAX;
+    uint32_t m_deltaIrradianceUav = UINT32_MAX;
+
     // ── IBL (Image-Based Lighting from sky cubemap) ────────────────────
 
     std::unique_ptr<IBLBaker> m_iblBaker;            ///< GPU compute pipeline for IBL bake (irradiance + prefiltered).

@@ -27,11 +27,6 @@
 
 #ifdef _WIN32
 #include "platform_window.h"
-#include "dx12_device.h"
-#include "dx12_swapchain.h"
-#include "dx12_command_list.h"
-#include "dx12_fence.h"
-#include <d3d12.h>
 #endif
 
 #include <chrono>
@@ -129,7 +124,7 @@ static int RunHeadless(const RHIDeviceDesc& deviceDesc) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Windowed render loop (Windows/DX12)
+// Windowed render loop (Windows)
 // ─────────────────────────────────────────────────────────────────────────────
 
 #ifdef _WIN32
@@ -138,9 +133,9 @@ static int RunHeadless(const RHIDeviceDesc& deviceDesc) {
 ///
 /// Returns false if any fence creation fails. On failure, all previously
 /// created fences are cleaned up.
-static bool CreateFrameFences(DX12Device* device, DX12Fence* fences[], uint32_t count) {
+static bool CreateFrameFences(IRHIDevice* device, IRHIFence* fences[], uint32_t count) {
     for (uint32_t i = 0; i < count; ++i) {
-        auto* f = static_cast<DX12Fence*>(device->CreateFence());
+        auto* f = device->CreateFence();
         if (!f) {
             UZ_LOG(RHI, Error, "Failed to create frame fence {}", i);
             for (uint32_t j = 0; j < i; ++j) {
@@ -162,18 +157,29 @@ static void ComputeClearColor(float t, float outColor[4]) {
 }
 
 /// Records and submits a single clear-screen frame.
-static void RenderClearFrame(DX12CommandList* cmdList, DX12SwapChain* swapChain, float t) {
+static void RenderClearFrame(IRHICommandList* cmdList, IRHISwapChain* swapChain, float t) {
     float color[4];
     ComputeClearColor(t, color);
 
     cmdList->Begin();
 
-    ID3D12Resource* backBuffer = swapChain->GetCurrentBackBufferResource();
-    D3D12_CPU_DESCRIPTOR_HANDLE rtv = swapChain->GetCurrentRTV();
+    const RHITextureHandle backBuffer = swapChain->GetCurrentBackBuffer();
 
-    cmdList->TransitionBarrier(backBuffer, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
-    cmdList->ClearRTV(rtv, color);
-    cmdList->TransitionBarrier(backBuffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+    const RHIBarrierDesc toRT{
+        .texture = backBuffer,
+        .stateBefore = RHIResourceState::Present,
+        .stateAfter = RHIResourceState::RenderTarget,
+    };
+    cmdList->ResourceBarrier(&toRT, 1);
+
+    cmdList->ClearRenderTarget(backBuffer, color);
+
+    const RHIBarrierDesc toPresent{
+        .texture = backBuffer,
+        .stateBefore = RHIResourceState::RenderTarget,
+        .stateAfter = RHIResourceState::Present,
+    };
+    cmdList->ResourceBarrier(&toPresent, 1);
 
     cmdList->End();
     cmdList->Execute();
@@ -187,7 +193,7 @@ static void LogRenderStats(uint32_t frameIndex, float totalMs) {
            frameIndex, totalMs, avgMs, fps);
 }
 
-/// Runs the windowed render loop with DX12 clear screen, optional scene + Lua scripting.
+/// Runs the windowed render loop with animated clear screen, optional scene + Lua scripting.
 static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, int maxFrames,
                        const std::string& windowTitle,
                        const std::string& projectDir,
@@ -215,7 +221,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         UZ_LOG(Engine, Error, "Failed to create RHI device");
         return kExitRenderError;
     }
-    auto* device = static_cast<DX12Device*>(rhiDevice.get());
+    auto* device = rhiDevice.get();
 
     // ── Swapchain ───────────────────────────────────────────────────────
     RHISwapChainDesc scDesc{};
@@ -227,14 +233,14 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     scDesc.format = RHIFormat::RGBA8Unorm;
     scDesc.vsync = false;
 
-    auto* swapChain = static_cast<DX12SwapChain*>(device->CreateSwapChain(scDesc));
+    auto* swapChain = device->CreateSwapChain(scDesc);
     if (!swapChain) {
         UZ_LOG(Engine, Error, "Failed to create swapchain");
         return kExitRenderError;
     }
 
     // ── Command List ────────────────────────────────────────────────────
-    auto* cmdList = static_cast<DX12CommandList*>(device->CreateCommandList(RHIQueueType::Graphics));
+    auto* cmdList = device->CreateCommandList(RHIQueueType::Graphics);
     if (!cmdList) {
         UZ_LOG(Engine, Error, "Failed to create command list");
         device->DestroySwapChain(swapChain);
@@ -242,7 +248,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     }
 
     // ── Per-frame fences ────────────────────────────────────────────────
-    DX12Fence* frameFences[kFramesInFlight] = {};
+    IRHIFence* frameFences[kFramesInFlight] = {};
     uint64_t fenceValues[kFramesInFlight] = {};
 
     if (!CreateFrameFences(device, frameFences, kFramesInFlight)) {
@@ -317,8 +323,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         swapChain->Present(false);
         globalFenceValue++;
         fenceValues[0] = globalFenceValue;
-        device->GetDirectQueue()->Signal(
-            frameFences[0]->GetNativeFence(), globalFenceValue);
+        frameFences[0]->Signal(globalFenceValue);
         frameIndex = 1;
 
         // Wait for frame 0 to finish before draining textures on the same command list.
@@ -397,8 +402,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         swapChain->Present(false);
         globalFenceValue++;
         fenceValues[allocFrame] = globalFenceValue;
-        device->GetDirectQueue()->Signal(
-            frameFences[allocFrame]->GetNativeFence(), globalFenceValue);
+        frameFences[allocFrame]->Signal(globalFenceValue);
 
         frameIndex++;
     }

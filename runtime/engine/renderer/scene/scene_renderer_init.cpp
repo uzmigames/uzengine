@@ -312,6 +312,141 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         }
     }
 
+    // ── Bruneton 3D Scattering LUT (256x128x32 RGBA16F) ──────────────
+    // Combined single+multi-scatter 3D texture for sky rendering.
+    {
+        RHITextureDesc desc{};
+        desc.width            = 256;
+        desc.height           = 128;
+        desc.depthOrArraySize = 32;
+        desc.is3D             = true;
+        desc.format           = RHIFormat::RGBA16Float;
+        desc.usage            = RHITextureUsage::ShaderResource
+                              | RHITextureUsage::UnorderedAccess;
+        desc.debugName        = "ScatteringLUT3D";
+
+        m_scatteringLut3D = m_device->CreateTexture(desc);
+        if (!m_scatteringLut3D.IsValid()) {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create ScatteringLUT3D texture");
+        } else {
+            m_scatteringLut3DSrv = m_device->GetTextureSRVIndex(m_scatteringLut3D);
+            m_scatteringLut3DUav = m_device->GetTextureUAVIndex(m_scatteringLut3D);
+            UZ_LOG(Renderer, Info, "SceneRenderer: ScatteringLUT3D created (256x128x32 RGBA16F, SRV={}, UAV={})",
+                   m_scatteringLut3DSrv, m_scatteringLut3DUav);
+        }
+    }
+
+    // ── Delta Rayleigh 3D (256x128x32 RGBA16F, temp for precompute) ──
+    {
+        RHITextureDesc desc{};
+        desc.width            = 256;
+        desc.height           = 128;
+        desc.depthOrArraySize = 32;
+        desc.is3D             = true;
+        desc.format           = RHIFormat::RGBA16Float;
+        desc.usage            = RHITextureUsage::ShaderResource
+                              | RHITextureUsage::UnorderedAccess;
+        desc.debugName        = "DeltaRayleigh3D";
+
+        m_deltaRayleigh3D = m_device->CreateTexture(desc);
+        if (!m_deltaRayleigh3D.IsValid()) {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create DeltaRayleigh3D texture");
+        } else {
+            m_deltaRayleigh3DSrv = m_device->GetTextureSRVIndex(m_deltaRayleigh3D);
+            m_deltaRayleigh3DUav = m_device->GetTextureUAVIndex(m_deltaRayleigh3D);
+            UZ_LOG(Renderer, Info, "SceneRenderer: DeltaRayleigh3D created (256x128x32 RGBA16F, SRV={}, UAV={})",
+                   m_deltaRayleigh3DSrv, m_deltaRayleigh3DUav);
+        }
+    }
+
+    // ── Delta Mie 3D (256x128x32 RGBA16F, temp for precompute) ───────
+    {
+        RHITextureDesc desc{};
+        desc.width            = 256;
+        desc.height           = 128;
+        desc.depthOrArraySize = 32;
+        desc.is3D             = true;
+        desc.format           = RHIFormat::RGBA16Float;
+        desc.usage            = RHITextureUsage::ShaderResource
+                              | RHITextureUsage::UnorderedAccess;
+        desc.debugName        = "DeltaMie3D";
+
+        m_deltaMie3D = m_device->CreateTexture(desc);
+        if (!m_deltaMie3D.IsValid()) {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create DeltaMie3D texture");
+        } else {
+            m_deltaMie3DSrv = m_device->GetTextureSRVIndex(m_deltaMie3D);
+            m_deltaMie3DUav = m_device->GetTextureUAVIndex(m_deltaMie3D);
+            UZ_LOG(Renderer, Info, "SceneRenderer: DeltaMie3D created (256x128x32 RGBA16F, SRV={}, UAV={})",
+                   m_deltaMie3DSrv, m_deltaMie3DUav);
+        }
+    }
+
+    // ── Scattering Density 3D (256x128x32 RGBA16F, temp for precompute)
+    {
+        RHITextureDesc desc{};
+        desc.width            = 256;
+        desc.height           = 128;
+        desc.depthOrArraySize = 32;
+        desc.is3D             = true;
+        desc.format           = RHIFormat::RGBA16Float;
+        desc.usage            = RHITextureUsage::ShaderResource
+                              | RHITextureUsage::UnorderedAccess;
+        desc.debugName        = "ScatteringDensity3D";
+
+        m_scatteringDensity3D = m_device->CreateTexture(desc);
+        if (!m_scatteringDensity3D.IsValid()) {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create ScatteringDensity3D texture");
+        } else {
+            m_scatteringDensity3DSrv = m_device->GetTextureSRVIndex(m_scatteringDensity3D);
+            m_scatteringDensity3DUav = m_device->GetTextureUAVIndex(m_scatteringDensity3D);
+            UZ_LOG(Renderer, Info, "SceneRenderer: ScatteringDensity3D created (256x128x32 RGBA16F, SRV={}, UAV={})",
+                   m_scatteringDensity3DSrv, m_scatteringDensity3DUav);
+        }
+    }
+
+    // ── Irradiance LUT (64x16 RGBA16F) ──────────────────────────────────
+    {
+        RHITextureDesc desc{};
+        desc.width     = 64;
+        desc.height    = 16;
+        desc.format    = RHIFormat::RGBA16Float;
+        desc.usage     = RHITextureUsage::ShaderResource
+                       | RHITextureUsage::UnorderedAccess;
+        desc.debugName = "IrradianceLUT";
+
+        m_irradianceLut = m_device->CreateTexture(desc);
+        if (!m_irradianceLut.IsValid()) {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create IrradianceLUT texture");
+        } else {
+            m_irradianceLutSrv = m_device->GetTextureSRVIndex(m_irradianceLut);
+            m_irradianceLutUav = m_device->GetTextureUAVIndex(m_irradianceLut);
+            UZ_LOG(Renderer, Info, "SceneRenderer: IrradianceLUT created (64x16 RGBA16F, SRV={}, UAV={})",
+                   m_irradianceLutSrv, m_irradianceLutUav);
+        }
+    }
+
+    // ── Delta Irradiance (64x16 RGBA16F, temp for precompute) ──────────
+    {
+        RHITextureDesc desc{};
+        desc.width     = 64;
+        desc.height    = 16;
+        desc.format    = RHIFormat::RGBA16Float;
+        desc.usage     = RHITextureUsage::ShaderResource
+                       | RHITextureUsage::UnorderedAccess;
+        desc.debugName = "DeltaIrradiance";
+
+        m_deltaIrradiance = m_device->CreateTexture(desc);
+        if (!m_deltaIrradiance.IsValid()) {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create DeltaIrradiance texture");
+        } else {
+            m_deltaIrradianceSrv = m_device->GetTextureSRVIndex(m_deltaIrradiance);
+            m_deltaIrradianceUav = m_device->GetTextureUAVIndex(m_deltaIrradiance);
+            UZ_LOG(Renderer, Info, "SceneRenderer: DeltaIrradiance created (64x16 RGBA16F, SRV={}, UAV={})",
+                   m_deltaIrradianceSrv, m_deltaIrradianceUav);
+        }
+    }
+
     // ── IBL Baker (bake BRDF LUT once) ────────────────────────────────
     m_iblBaker = std::make_unique<IBLBaker>();
     if (m_iblBaker->Init(device, m_shaderMgr.get())) {
@@ -860,6 +995,32 @@ void SceneRenderer::Shutdown() {
     if (m_multiScatterLut.IsValid()) {
         m_device->DestroyTexture(m_multiScatterLut);
         m_multiScatterLut = RHITextureHandle{};
+    }
+
+    // ── Bruneton 3D Scattering LUT textures ─────────────────────────
+    if (m_scatteringLut3D.IsValid()) {
+        m_device->DestroyTexture(m_scatteringLut3D);
+        m_scatteringLut3D = RHITextureHandle{};
+    }
+    if (m_deltaRayleigh3D.IsValid()) {
+        m_device->DestroyTexture(m_deltaRayleigh3D);
+        m_deltaRayleigh3D = RHITextureHandle{};
+    }
+    if (m_deltaMie3D.IsValid()) {
+        m_device->DestroyTexture(m_deltaMie3D);
+        m_deltaMie3D = RHITextureHandle{};
+    }
+    if (m_scatteringDensity3D.IsValid()) {
+        m_device->DestroyTexture(m_scatteringDensity3D);
+        m_scatteringDensity3D = RHITextureHandle{};
+    }
+    if (m_irradianceLut.IsValid()) {
+        m_device->DestroyTexture(m_irradianceLut);
+        m_irradianceLut = RHITextureHandle{};
+    }
+    if (m_deltaIrradiance.IsValid()) {
+        m_device->DestroyTexture(m_deltaIrradiance);
+        m_deltaIrradiance = RHITextureHandle{};
     }
 
     // ── Reflection Probes (must shut down before IBLBaker it references) ──

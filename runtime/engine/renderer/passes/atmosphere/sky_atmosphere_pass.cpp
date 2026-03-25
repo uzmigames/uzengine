@@ -33,6 +33,10 @@ void AddSkyAtmospherePass(rg::RgBuilder& builder, const SkyAtmospherePassDesc& d
             pb.Read(desc.transmittanceLutRes, RHIResourceState::ShaderResource);
         if (desc.multiScatterLutRes.IsValid())
             pb.Read(desc.multiScatterLutRes, RHIResourceState::ShaderResource);
+        if (desc.scatteringLut3DRes.IsValid())
+            pb.Read(desc.scatteringLut3DRes, RHIResourceState::ShaderResource);
+        if (desc.irradianceLutRes.IsValid())
+            pb.Read(desc.irradianceLutRes, RHIResourceState::ShaderResource);
 
         pb.SetExecutionCallback([desc](IRHICommandList* cmd, const rg::RgPassResources& res) {
             UZ_PROFILE_SCOPE("SkyAtmosphere::Execute");
@@ -63,13 +67,15 @@ void AddSkyAtmospherePass(rg::RgBuilder& builder, const SkyAtmospherePassDesc& d
 
             // ── Bind depth texture + transmittance LUT + multi-scatter LUT ──
             if (desc.bindless) {
-                const uint32_t indices[4] = {
+                const uint32_t indices[6] = {
                     desc.depthSrvIndex,
                     desc.transmittanceLutSrvIndex,
                     desc.multiScatterLutSrvIndex,
-                    desc.apVolumeSrvIndex
+                    desc.apVolumeSrvIndex,
+                    desc.scatteringLut3DSrvIndex,
+                    desc.irradianceLutSrvIndex
                 };
-                cmd->SetRootConstants(kSlotRootConstants, indices, 4);
+                cmd->SetRootConstants(kSlotRootConstants, indices, 6);
             } else {
                 cmd->SetFragmentTexture(0, desc.depthTexture);
                 // t1: transmittance LUT (non-bindless, SM5 path)

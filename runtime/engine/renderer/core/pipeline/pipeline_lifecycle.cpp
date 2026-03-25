@@ -124,6 +124,10 @@ void PipelineLibrary::Shutdown() {
     destroyPipeline(m_heightFog);
     destroyPipeline(m_cloudComposite);
     destroyPipeline(m_transmittanceLut);
+    destroyPipeline(m_singleScatterLut);
+    destroyPipeline(m_scatteringDensity);
+    destroyPipeline(m_indirectScattering);
+    destroyPipeline(m_irradianceLut);
     destroyPipeline(m_apVolume);
     destroyPipeline(m_skyCubemapCapture);
     destroyPipeline(m_skyCubemapCapturePSPipeline);
@@ -184,6 +188,10 @@ void PipelineLibrary::Shutdown() {
     destroyShader(m_dofBlurCS);
     destroyShader(m_velocityPS);
     destroyShader(m_multiScatterLutCS);
+    destroyShader(m_singleScatterLutCS);
+    destroyShader(m_scatteringDensityCS);
+    destroyShader(m_indirectScatteringCS);
+    destroyShader(m_irradianceLutCS);
     destroyShader(m_fxaaPS);
 
     m_psoCache.Shutdown();
