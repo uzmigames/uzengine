@@ -14,6 +14,17 @@ cmake_minimum_required(VERSION 3.15)
 find_program(LLD_LINK lld-link REQUIRED)
 set(CMAKE_LINKER ${LLD_LINK})
 
+# Force the real Windows SDK resource compiler (not node_modules/.bin/rc).
+find_program(WIN_RC rc.exe
+  PATHS "C:/Program Files (x86)/Windows Kits/10/bin/10.0.26100.0/x64"
+        "C:/Program Files (x86)/Windows Kits/10/bin/10.0.22621.0/x64"
+        "C:/Program Files (x86)/Windows Kits/10/bin/10.0.22000.0/x64"
+  NO_DEFAULT_PATH
+)
+if(WIN_RC)
+  set(CMAKE_RC_COMPILER ${WIN_RC})
+endif()
+
 project(uzengine LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)

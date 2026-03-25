@@ -11,12 +11,12 @@
 - [x] 2.5 Add `GetSelectedEntity()` / `SetSelectedEntity()` / `GetMeshBounds()` to SceneRenderer. Entity stored as m_selectedEntity in scene_renderer_impl.h. Bounds accessor reads m_meshBoundsMin/Max vectors. Implemented in scene_renderer_init.cpp.
 
 ## 3. Selection Outline
-- [ ] 3.1 Create `runtime/editor/outline/outline_pass.h/.cpp` — stencil-based outline renderer.
-- [ ] 3.2 Create `runtime/shaders/editor/outline_stencil_vs.hlsl` — re-renders selected object mesh to stencil buffer (depth test, no color write).
-- [ ] 3.3 Create `runtime/shaders/editor/outline_detect_ps.hlsl` — fullscreen pass reads stencil, detects edges via 3x3 kernel, outputs colored outline.
-- [ ] 3.4 Create outline pipeline in PipelineLibrary: stencil-write pass + fullscreen outline detect pass.
-- [ ] 3.5 Integrate outline pass into `frame_overlay.cpp` — runs after GBuffer, before editor grid. Only when editorMode && selectedEntity valid.
-- [ ] 3.6 Outline color: orange (#FF8C00) default, configurable via CVar `r.Editor.OutlineColor`.
+- [x] 3.1 Created `runtime/editor/outline/outline_pass.h/.cpp` — mask-based outline (R8Unorm mask + edge detect). Two-pass: mask selected mesh → fullscreen edge detect with 3x3 kernel.
+- [x] 3.2 Created `runtime/shaders/editor/outline_mask_ps.hlsl` — outputs 1.0 for selected mesh pixels. Uses existing mesh_vs for vertex transform + GBuffer depth for visibility.
+- [x] 3.3 Created `runtime/shaders/editor/outline_detect_ps.hlsl` — fullscreen edge detection. Samples mask at 8 neighbors, outputs outline color where center=0 and neighbor>0.5. Configurable thickness.
+- [x] 3.4 Created OutlineMaskPipeline + OutlineDetectPipeline in OutlinePass::Init. Mask: R8Unorm RT, depth read, reversed-Z. Detect: backbuffer RT, alpha blend, no depth.
+- [x] 3.5 Integrated into frame_overlay.cpp as render graph pass "OutlinePass" before OverlayPass. Guarded by editorMode && selectedEntity.IsValid().
+- [x] 3.6 Outline color: orange (1.0, 0.549, 0.0) default. Configurable via SetOutlineColor(). entityId field added to DrawCommand for mesh matching.
 
 ## 4. Gizmo Rendering
 - [ ] 4.1 Create `runtime/editor/gizmo/gizmo_renderer.h/.cpp` — draws translate/rotate/scale gizmo at selected entity's world position.

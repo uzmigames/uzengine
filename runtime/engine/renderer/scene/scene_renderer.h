@@ -86,6 +86,7 @@ class PipelineLibrary;
 class CBRingAllocator;
 class EditorGrid;
 class StatsOverlay;
+class OutlinePass;
 class UploadContext;
 class Camera;
 class FPSCameraController;

@@ -20,6 +20,7 @@
 #include "log.h"
 #include "sh_projection.h"
 #include "editor_grid.h"
+#include "outline_pass.h"
 #include "stats_overlay.h"
 #include "shader_compiler.h"
 #include "shader_compiler_fxc.h"
@@ -98,6 +99,14 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     if (!m_editorGrid->Init(device, m_shaderMgr->GetPipeline(),
                             RHIFormat::RGBA8Unorm, RHIFormat::D32Float)) {
         UZ_LOG(Renderer, Error, "SceneRenderer: failed to init editor grid");
+    }
+
+    // ── Outline Pass (editor selection outline) ────────────────────────
+    m_outlinePass = std::make_unique<OutlinePass>();
+    if (!m_outlinePass->Init(device, m_shaderMgr->GetPipeline(),
+                             RHIFormat::RGBA8Unorm, RHIFormat::D32Float,
+                             width, height)) {
+        UZ_LOG(Renderer, Error, "SceneRenderer: failed to init outline pass");
     }
 
     // ── Stats Overlay (deferred init — needs cmdList in recording state) ─
@@ -917,6 +926,10 @@ void SceneRenderer::Resize(uint32_t width, uint32_t height) {
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
     m_camera->SetAspectRatio(aspect);
 
+    if (m_outlinePass) {
+        m_outlinePass->Resize(width, height);
+    }
+
     if (m_statsOverlay) {
         m_statsOverlay->SetScreenSize(width, height);
     }
@@ -1140,6 +1153,7 @@ void SceneRenderer::Shutdown() {
     m_asyncPendingSlots.clear();
 
     if (m_statsOverlay)  m_statsOverlay->Shutdown();
+    if (m_outlinePass)   m_outlinePass->Shutdown();
     if (m_editorGrid)    m_editorGrid->Shutdown();
     if (m_cbRing)        m_cbRing->Shutdown();
     if (m_pipelines)     m_pipelines->Shutdown();
@@ -1149,6 +1163,7 @@ void SceneRenderer::Shutdown() {
     m_cameraCtrl.reset();
     m_camera.reset();
     m_statsOverlay.reset();
+    m_outlinePass.reset();
     m_editorGrid.reset();
     m_cbRing.reset();
     m_pipelines.reset();

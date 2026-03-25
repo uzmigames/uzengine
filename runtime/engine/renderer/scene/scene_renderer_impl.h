@@ -15,6 +15,7 @@
     std::unique_ptr<PipelineLibrary> m_pipelines;
     std::unique_ptr<CBRingAllocator> m_cbRing;
     std::unique_ptr<EditorGrid> m_editorGrid;
+    std::unique_ptr<OutlinePass> m_outlinePass;
     std::unique_ptr<StatsOverlay> m_statsOverlay;
     std::unique_ptr<Camera> m_camera;
     std::unique_ptr<FPSCameraController> m_cameraCtrl;

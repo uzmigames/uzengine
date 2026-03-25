@@ -140,6 +140,7 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
         cmd.worldMatrix  = sceneComp.GetWorldMatrix();
         cmd.normalMatrix = cmd.worldMatrix.NormalMatrix();
         cmd.meshId       = meshId;
+        cmd.entityId     = static_cast<uint32_t>(enttEntity);
 
         // Map ECS mobility to renderer-side EMobility for shadow cache filtering.
         // Stationary is treated as Static for shadow caching (standard).

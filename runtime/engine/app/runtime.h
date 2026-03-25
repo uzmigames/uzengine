@@ -33,6 +33,20 @@
 
 #include <stdint.h>
 
+// ─────────────────────────────────────────────────────────────────────────────
+// DLL export/import macro
+// ─────────────────────────────────────────────────────────────────────────────
+// When building the shared library:  compile with -DUZ_BUILDING_DLL
+// When consuming the shared library: compile with -DUZ_USING_DLL
+// When building the static library:  neither define is set → UZ_API is empty
+#if defined(UZ_BUILDING_DLL)
+#  define UZ_API __declspec(dllexport)
+#elif defined(UZ_USING_DLL)
+#  define UZ_API __declspec(dllimport)
+#else
+#  define UZ_API
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -74,14 +88,14 @@ typedef void (*uz_log_callback)(int level, const char* category, const char* mes
 /// # Returns
 /// A pointer to a null-terminated string (e.g., "0.7.0").
 /// The string is statically allocated and never freed.
-const char* uz_runtime_version(void);
+UZ_API const char* uz_runtime_version(void);
 
 /// Returns the name of the active rendering backend.
 ///
 /// # Returns
 /// Backend identifier string ("dx12", "dx11", "vulkan", "metal", "none").
 /// The string is statically allocated and never freed.
-const char* uz_runtime_backend(void);
+UZ_API const char* uz_runtime_backend(void);
 
 /// Initializes the UzEngine runtime.
 ///
@@ -96,7 +110,7 @@ const char* uz_runtime_backend(void);
 /// - Must be called exactly once before any other runtime function
 /// - NOT thread-safe: call from main thread only
 /// - Failure does NOT require shutdown()
-int uz_runtime_init(void);
+UZ_API int uz_runtime_init(void);
 
 /// Shuts down the UzEngine runtime.
 ///
@@ -107,7 +121,7 @@ int uz_runtime_init(void);
 /// - Must be called exactly once if init() succeeded
 /// - NOT thread-safe: call from main thread only
 /// - Safe to call if init() failed or never called
-void uz_runtime_shutdown(void);
+UZ_API void uz_runtime_shutdown(void);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Viewport
@@ -132,13 +146,13 @@ void uz_runtime_shutdown(void);
 /// - Only one viewport can be active at a time. Call uz_destroy_viewport()
 ///   before creating a new one.
 /// - Returns 0 if a viewport already exists.
-int uz_create_viewport(void* parent_hwnd, int width, int height);
+UZ_API int uz_create_viewport(void* parent_hwnd, int width, int height);
 
 /// Destroys the viewport and releases all GPU resources.
 ///
 /// Waits for GPU idle, shuts down SceneRenderer, Lua, fences, command list,
 /// swapchain, and device. Safe to call if no viewport exists (no-op).
-void uz_destroy_viewport(void);
+UZ_API void uz_destroy_viewport(void);
 
 /// Resizes the viewport swapchain and all render targets.
 ///
@@ -147,7 +161,7 @@ void uz_destroy_viewport(void);
 /// * `height` — New height in pixels. Must be > 0.
 ///
 /// No-op if no viewport exists or if dimensions match current size.
-void uz_resize_viewport(int width, int height);
+UZ_API void uz_resize_viewport(int width, int height);
 
 /// Repositions and optionally resizes the viewport window.
 ///
@@ -159,7 +173,7 @@ void uz_resize_viewport(int width, int height);
 /// * `y` — New Y position in parent-client coordinates.
 /// * `width` — New width in pixels. Must be > 0.
 /// * `height` — New height in pixels. Must be > 0.
-void uz_set_viewport_position(int x, int y, int width, int height);
+UZ_API void uz_set_viewport_position(int x, int y, int width, int height);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Frame Rendering
@@ -176,7 +190,7 @@ void uz_set_viewport_position(int x, int y, int width, int height);
 ///
 /// # Safety
 /// Must be called from the thread that created the viewport.
-uz_frame_stats uz_render_frame(void);
+UZ_API uz_frame_stats uz_render_frame(void);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Scene Management
@@ -193,7 +207,7 @@ uz_frame_stats uz_render_frame(void);
 /// # Returns
 /// - 1 on success
 /// - 0 on failure (file not found, parse error, no viewport — check logs)
-int uz_load_scene(const char* path);
+UZ_API int uz_load_scene(const char* path);
 
 /// Saves the current scene to a .uzscene file.
 ///
@@ -205,7 +219,7 @@ int uz_load_scene(const char* path);
 /// # Returns
 /// - 1 on success
 /// - 0 on failure (I/O error, no viewport — check logs)
-int uz_save_scene(const char* path);
+UZ_API int uz_save_scene(const char* path);
 
 /// Returns a JSON string describing the entity hierarchy.
 ///
@@ -219,7 +233,7 @@ int uz_save_scene(const char* path);
 ///
 /// # Returns
 /// JSON string, or "{}" if no viewport/world exists.
-const char* uz_get_scene_tree(void);
+UZ_API const char* uz_get_scene_tree(void);
 
 /// Creates a new entity with a name.
 ///
@@ -228,7 +242,7 @@ const char* uz_get_scene_tree(void);
 ///
 /// # Returns
 /// Entity ID (slot index) on success. 0 indicates failure (no viewport).
-uint32_t uz_create_entity(const char* name);
+UZ_API uint32_t uz_create_entity(const char* name);
 
 /// Destroys an entity and all its components.
 ///
@@ -236,7 +250,7 @@ uint32_t uz_create_entity(const char* name);
 /// * `entity_id` — Entity slot index returned by uz_create_entity().
 ///
 /// No-op if the entity does not exist or no viewport is active.
-void uz_destroy_entity(uint32_t entity_id);
+UZ_API void uz_destroy_entity(uint32_t entity_id);
 
 /// Returns JSON describing a component attached to an entity.
 ///
@@ -248,7 +262,7 @@ void uz_destroy_entity(uint32_t entity_id);
 ///
 /// # Returns
 /// JSON string with component data, or "{}" if not found / not implemented.
-const char* uz_get_component_json(uint32_t entity_id, const char* component_type);
+UZ_API const char* uz_get_component_json(uint32_t entity_id, const char* component_type);
 
 /// Sets a property on a component attached to an entity.
 ///
@@ -261,8 +275,8 @@ const char* uz_get_component_json(uint32_t entity_id, const char* component_type
 /// # Returns
 /// - 1 on success
 /// - 0 on failure (entity not found, unknown component/property, parse error)
-int uz_set_component_property(uint32_t entity_id, const char* component_type,
-                              const char* property_name, const char* value_json);
+UZ_API int uz_set_component_property(uint32_t entity_id, const char* component_type,
+                                     const char* property_name, const char* value_json);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Input Forwarding
@@ -273,27 +287,27 @@ int uz_set_component_property(uint32_t entity_id, const char* component_type,
 /// # Arguments
 /// * `x` — Mouse X position in viewport-local pixels.
 /// * `y` — Mouse Y position in viewport-local pixels.
-void uz_on_mouse_move(float x, float y);
+UZ_API void uz_on_mouse_move(float x, float y);
 
 /// Forwards a mouse button event to the viewport's input system.
 ///
 /// # Arguments
 /// * `button` — Button index: 0=Left, 1=Right, 2=Middle.
 /// * `pressed` — 1 if button was pressed, 0 if released.
-void uz_on_mouse_button(int button, int pressed);
+UZ_API void uz_on_mouse_button(int button, int pressed);
 
 /// Forwards a key event to the viewport's input system.
 ///
 /// # Arguments
 /// * `keycode` — Virtual key code (Win32 VK_* values).
 /// * `pressed` — 1 if key was pressed, 0 if released.
-void uz_on_key(int keycode, int pressed);
+UZ_API void uz_on_key(int keycode, int pressed);
 
 /// Forwards a scroll wheel event to the viewport's input system.
 ///
 /// # Arguments
 /// * `delta` — Scroll amount (positive = up, negative = down).
-void uz_on_scroll(float delta);
+UZ_API void uz_on_scroll(float delta);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Logging
@@ -307,7 +321,7 @@ void uz_on_scroll(float delta);
 ///
 /// # Arguments
 /// * `callback` — Function pointer, or NULL to unregister.
-void uz_set_log_callback(uz_log_callback callback);
+UZ_API void uz_set_log_callback(uz_log_callback callback);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Screenshot
@@ -325,13 +339,13 @@ void uz_set_log_callback(uz_log_callback callback);
 /// # Returns
 /// - 1 on success
 /// - 0 on failure (no viewport, GPU error — check logs)
-int uz_capture_screenshot(uint8_t** out_data, uint32_t* out_size);
+UZ_API int uz_capture_screenshot(uint8_t** out_data, uint32_t* out_size);
 
 /// Frees a buffer allocated by uz_capture_screenshot().
 ///
 /// # Arguments
 /// * `data` — Pointer returned by uz_capture_screenshot(). Passing NULL is safe.
-void uz_free_buffer(uint8_t* data);
+UZ_API void uz_free_buffer(uint8_t* data);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Editor Configuration
@@ -344,7 +358,7 @@ void uz_free_buffer(uint8_t* data);
 ///
 /// # Arguments
 /// * `enabled` — 1 to enable editor mode, 0 to disable.
-void uz_set_editor_mode(int enabled);
+UZ_API void uz_set_editor_mode(int enabled);
 
 /// Sets the content root path for the VFS.
 ///
@@ -353,7 +367,7 @@ void uz_set_editor_mode(int enabled);
 ///
 /// # Arguments
 /// * `path` — Absolute path to the content directory.
-void uz_set_content_root(const char* path);
+UZ_API void uz_set_content_root(const char* path);
 
 #ifdef __cplusplus
 }
