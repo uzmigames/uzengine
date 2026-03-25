@@ -29,10 +29,31 @@
 
 namespace uz {
 
+/// Overrides the engine resource directory used by GetExeDir().
+///
+/// When the engine runs as a .node addon inside Electron, GetModuleFileNameW
+/// returns the Electron host executable directory (e.g., `F:/IDEs/VS Code/`),
+/// not the addon directory. Call this function with the addon's own directory
+/// before uz_init() or uz_create_viewport() to redirect all resource discovery
+/// (dxcompiler.dll, dxil.dll, D3D12/, shaders/) to the correct location.
+///
+/// Passing an empty path clears the override and reverts to exe-relative
+/// discovery.
+///
+/// # Arguments
+/// * `dir` — Absolute path to the directory containing engine DLLs and shaders.
+///
+/// # Thread Safety
+/// Must be called from the main thread before any resource resolution occurs.
+void SetEngineDir(const std::filesystem::path& dir);
+
 /// Returns the directory containing the running executable.
 ///
-/// Uses platform-native API (GetModuleFileNameW on Windows, /proc/self/exe
-/// on Linux, _NSGetExecutablePath on macOS). Result is cached after first call.
+/// If SetEngineDir() was called with a non-empty path, that path is returned
+/// instead of the real exe directory. Otherwise, uses the platform-native API
+/// (GetModuleFileNameW on Windows, /proc/self/exe on Linux,
+/// _NSGetExecutablePath on macOS). Result is cached after first call when no
+/// override is active.
 ///
 /// Example: if exe is at `C:/project/build/bin/test_runtime.exe`,
 /// returns `C:/project/build/bin`.

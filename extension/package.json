@@ -102,6 +102,16 @@
         "icon": { "light": "./icons/uzproject.svg", "dark": "./icons/uzproject.svg" }
       }
     ],
+    "customEditors": [
+      {
+        "viewType": "uzengine.sceneEditor",
+        "displayName": "UzEngine Scene Editor",
+        "selector": [
+          { "filenamePattern": "*.uzscene" }
+        ],
+        "priority": "default"
+      }
+    ],
     "grammars": [
       {
         "language": "hlsl",

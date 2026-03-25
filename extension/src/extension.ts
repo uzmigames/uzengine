@@ -11,21 +11,12 @@
 ///  - `EngineMode` — permanent; drives the status bar toggle.
 
 import * as vscode from 'vscode';
-import * as path from 'path';
 import type { UzEngineAddon } from './uzengine';
 import { ViewportPanel } from './panels/viewport-panel';
 import { SceneTreeProvider } from './panels/scene-tree-panel';
 import { EngineConsole } from './panels/console-panel';
 import { EngineMode } from './engine-mode';
-
-// ── Native addon ──────────────────────────────────────────────────────────────
-
-// The .node binary is built separately and placed next to package.json.
-// Using require() because N-API addons cannot be imported via ESM.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const addon: UzEngineAddon = require(
-    path.join(__dirname, '..', 'native', 'uzengine.node')
-) as UzEngineAddon;
+import { SceneEditorProvider } from './panels/scene-editor-provider';
 
 // ── Module-level state ────────────────────────────────────────────────────────
 
@@ -34,6 +25,29 @@ let engineConsole: EngineConsole;
 let sceneTree: SceneTreeProvider;
 let viewport: ViewportPanel | undefined;
 let engineMode: EngineMode;
+
+// ── Native addon helpers ──────────────────────────────────────────────────────
+
+/// Lazily loads the native .node addon. Called inside activate() — NOT at
+/// module scope — because require() of a .node triggers DllMain and other
+/// native init that can block the Extension Host event loop long enough to
+/// trip the 10-s debugger timeout.
+function loadNativeAddon(): { addon?: UzEngineAddon; error?: string } {
+    try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const nodePath = require('path') as typeof import('path');
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const mod = require(
+            nodePath.join(__dirname, '..', 'native', 'uzengine.node')
+        ) as UzEngineAddon;
+        return { addon: mod };
+    } catch (e: unknown) {
+        return { error: e instanceof Error ? e.message : String(e) };
+    }
+}
+
+/// Cached addon reference — populated once during activate().
+let _addon: UzEngineAddon | undefined;
 
 // ── Activation ────────────────────────────────────────────────────────────────
 
@@ -48,6 +62,23 @@ export function activate(context: vscode.ExtensionContext): void {
     // ── Logging channel ───────────────────────────────────────────────────────
     log = vscode.window.createOutputChannel('UzEngine', { log: true });
     context.subscriptions.push(log);
+
+    // ── Load native addon (lazy — not at module scope) ────────────────────────
+    const result = loadNativeAddon();
+    if (!result.addon) {
+        const msg = `UzEngine native addon failed to load: ${result.error}`;
+        log.error(msg);
+        vscode.window.showErrorMessage(msg);
+        return;
+    }
+    _addon = result.addon;
+    const addon: UzEngineAddon = _addon;
+
+    // Point the engine at the native/ directory so it finds dxcompiler.dll,
+    // D3D12/ Agility SDK, etc. instead of looking in the Electron exe dir.
+    const nodePath = require('path') as typeof import('path');
+    const nativeDir = nodePath.join(__dirname, '..', 'native');
+    addon.setEngineDir(nativeDir);
 
     const version = addon.getVersion();
     const backend = addon.getBackend();
@@ -64,6 +95,15 @@ export function activate(context: vscode.ExtensionContext): void {
         showCollapseAll: true,
     });
     context.subscriptions.push(treeView);
+
+    // ── Scene editor — opens .uzscene files in the viewport ─────────────────
+    context.subscriptions.push(
+        vscode.window.registerCustomEditorProvider(
+            SceneEditorProvider.viewType,
+            new SceneEditorProvider(addon, sceneTree),
+            { supportsMultipleEditorsPerDocument: false }
+        )
+    );
 
     // ── Engine mode status bar toggle ─────────────────────────────────────────
     engineMode = new EngineMode(context);
@@ -165,8 +205,9 @@ export function deactivate(): void {
         viewport.dispose();
         viewport = undefined;
     }
+    if (!_addon) return;
     // Unregister the log callback before the addon shuts down.
-    try { addon.setLogCallback(null); } catch { /* ignore */ }
-    try { addon.destroyViewport(); } catch { /* ignore */ }
-    try { addon.shutdown(); } catch { /* ignore */ }
+    try { _addon.setLogCallback(null); } catch { /* ignore */ }
+    try { _addon.destroyViewport(); } catch { /* ignore */ }
+    try { _addon.shutdown(); } catch { /* ignore */ }
 }

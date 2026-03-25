@@ -18,10 +18,32 @@
 namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GetExeDir — cached exe directory lookup
+// SetEngineDir — explicit override for addon / embedded scenarios
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Why a function-local static: avoids static-initialization-order issues while
+// still providing a single, mutation-safe storage location that is guaranteed to
+// be constructed before first use.
+static std::filesystem::path& EngineOverrideDir() {
+    static std::filesystem::path s_override;
+    return s_override;
+}
+
+void SetEngineDir(const std::filesystem::path& dir) {
+    EngineOverrideDir() = dir;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GetExeDir — override-aware, cached exe directory lookup
 // ─────────────────────────────────────────────────────────────────────────────
 
 std::filesystem::path GetExeDir() {
+    // If an explicit override was set (e.g., by a .node addon running inside
+    // Electron where GetModuleFileNameW returns the host exe directory), return
+    // it immediately without touching the cached exe path.
+    const std::filesystem::path& override = EngineOverrideDir();
+    if (!override.empty()) return override;
+
     static std::filesystem::path cachedDir = []() -> std::filesystem::path {
 #ifdef _WIN32
         wchar_t buf[MAX_PATH];
