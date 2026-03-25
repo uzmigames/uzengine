@@ -138,7 +138,9 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
                 m_gizmoRenderer->Draw(cmd, *m_cbRing, *m_camera,
                                        entityPos, entityRot,
                                        static_cast<GizmoMode>(ctx.gizmoModeRaw),
-                                       static_cast<GizmoSpace>(ctx.gizmoSpaceRaw));
+                                       static_cast<GizmoSpace>(ctx.gizmoSpaceRaw),
+                                       ctx.gizmoHoveredAxis,
+                                       ctx.gizmoActiveAxis);
             }
 
             if (m_editorMode && m_statsOverlayInitialized) {

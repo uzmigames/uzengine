@@ -2,7 +2,14 @@
 ///
 /// Manages gizmo mode (Translate/Rotate/Scale) and coordinate space (World/Local).
 /// Listens for hotkeys (W/E/R for mode, Space for space toggle) and forwards
-/// left-click events to the SelectionManager for entity picking.
+/// left-click events to the SelectionManager for entity picking. When a gizmo
+/// handle is clicked, initiates drag interaction to translate/rotate/scale the
+/// selected entity in real-time.
+///
+/// # Interaction Priority
+/// 1. Gizmo drag (if mouse is over a gizmo handle, left-click starts drag)
+/// 2. Entity selection (left-click on scene if gizmo not hit)
+/// 3. Camera orbit (right-click, handled elsewhere)
 ///
 /// # Lifecycle
 /// ```cpp
@@ -16,6 +23,8 @@
 /// NOT thread-safe. All calls must be from the main thread.
 
 #pragma once
+
+#include "gizmo_interaction.h"
 
 #include <cstdint>
 
@@ -45,6 +54,19 @@ enum class GizmoSpace : uint8_t {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Snap defaults
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Default translate snap grid in centimeters (10 cm).
+static constexpr float kDefaultTranslateSnap = 10.0f;
+
+/// Default rotate snap in degrees (15 degrees).
+static constexpr float kDefaultRotateSnap = 15.0f;
+
+/// Default scale snap increment (0.25 = quarter steps).
+static constexpr float kDefaultScaleSnap = 0.25f;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // EditorInputHandler
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -55,7 +77,9 @@ enum class GizmoSpace : uint8_t {
 /// - E: Switch to Rotate mode
 /// - R: Switch to Scale mode
 /// - Space: Toggle World/Local coordinate space
-/// - Left-click: Pick entity at cursor position via SelectionManager
+/// - Left-click on gizmo: Begin drag to transform entity
+/// - Left-click on scene: Pick entity at cursor position via SelectionManager
+/// - Ctrl + drag: Enable snapping (10cm translate, 15deg rotate, 0.25 scale)
 ///
 /// # Ownership
 /// Does NOT own any of the pointers passed to `Init()`. All must outlive
@@ -87,11 +111,11 @@ public:
 
     /// Processes input for the current frame.
     ///
-    /// Checks hotkeys for gizmo mode/space changes and handles left-click
-    /// for entity selection. No-op if `m_input` is null.
+    /// Handles gizmo mode/space hotkeys, gizmo hit testing (hover highlight),
+    /// left-click for drag start or entity selection, drag update, and drag end.
     ///
     /// # Arguments
-    /// * `dt` — Frame delta time in seconds (unused currently, reserved for future drag smoothing).
+    /// * `dt` — Frame delta time in seconds.
     void Update(float dt);
 
     /// Returns the current gizmo manipulation mode.
@@ -100,7 +124,26 @@ public:
     /// Returns the current gizmo coordinate space.
     [[nodiscard]] GizmoSpace GetGizmoSpace() const { return m_space; }
 
+    /// Returns the gizmo hovered axis as an int for the renderer.
+    ///
+    /// Encoding: -1=none, 0=X, 1=Y, 2=Z, 3=XY, 4=XZ, 5=YZ, 6=center.
+    /// Matches the hoveredAxis/activeAxis parameter of GizmoRenderer::Draw.
+    [[nodiscard]] int GetGizmoHoveredAxis() const;
+
+    /// Returns the gizmo active (dragging) axis as an int for the renderer.
+    ///
+    /// Same encoding as GetGizmoHoveredAxis.
+    [[nodiscard]] int GetGizmoActiveAxis() const;
+
+    /// Returns true if a gizmo drag is in progress.
+    [[nodiscard]] bool IsGizmoDragging() const { return m_gizmoInteraction.IsDragging(); }
+
 private:
+    /// Converts a GizmoHitResult to the int encoding used by GizmoRenderer::Draw.
+    /// None → -1, AxisX → 0, AxisY → 1, AxisZ → 2, PlaneXY → 3, PlaneXZ → 4,
+    /// PlaneYZ → 5, Center → 6.
+    static int HitResultToAxisIndex(GizmoHitResult hit);
+
     InputSystem* m_input = nullptr;
     SelectionManager* m_selection = nullptr;
     Camera* m_camera = nullptr;
@@ -108,6 +151,7 @@ private:
     SceneRenderer* m_renderer = nullptr;
     GizmoMode m_mode = GizmoMode::Translate;
     GizmoSpace m_space = GizmoSpace::World;
+    GizmoInteraction m_gizmoInteraction;
 };
 
 } // namespace uz

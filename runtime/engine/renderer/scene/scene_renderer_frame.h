@@ -142,6 +142,8 @@ struct FrameContext {
     // Using uint8_t to avoid including editor_input_handler.h in this header.
     uint8_t gizmoModeRaw = 0;   ///< GizmoMode enum cast: 0=Translate, 1=Rotate, 2=Scale.
     uint8_t gizmoSpaceRaw = 0;  ///< GizmoSpace enum cast: 0=World, 1=Local.
+    int gizmoHoveredAxis = -1;  ///< Hovered gizmo axis (-1=none, 0-6=axis/plane/center).
+    int gizmoActiveAxis = -1;   ///< Active (dragging) gizmo axis (same encoding).
 };
 
 } // namespace uz

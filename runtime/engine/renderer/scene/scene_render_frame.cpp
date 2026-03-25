@@ -57,8 +57,10 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     ctx.vfs        = vfs;
     ctx.dt         = dt;
     ctx.frameIndex = frameIndex;
-    ctx.gizmoModeRaw  = m_gizmoMode;
-    ctx.gizmoSpaceRaw = m_gizmoSpace;
+    ctx.gizmoModeRaw    = m_gizmoMode;
+    ctx.gizmoSpaceRaw   = m_gizmoSpace;
+    ctx.gizmoHoveredAxis = m_gizmoHoveredAxis;
+    ctx.gizmoActiveAxis  = m_gizmoActiveAxis;
     SetupFrameData(ctx, rgBuilder);
 
     // ── Volumetric Cloud Compute (inline on main command list) ─────────

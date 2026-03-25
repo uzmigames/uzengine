@@ -651,6 +651,20 @@ public:
     /// Returns the current gizmo space.
     [[nodiscard]] uint8_t GetGizmoSpace() const { return m_gizmoSpace; }
 
+    /// Sets the gizmo hovered axis index for highlight rendering.
+    /// -1=none, 0=X, 1=Y, 2=Z, 3=XY, 4=XZ, 5=YZ, 6=center.
+    void SetGizmoHoveredAxis(int axis) { m_gizmoHoveredAxis = axis; }
+
+    /// Returns the gizmo hovered axis index.
+    [[nodiscard]] int GetGizmoHoveredAxis() const { return m_gizmoHoveredAxis; }
+
+    /// Sets the gizmo active (dragging) axis index for highlight rendering.
+    /// Same encoding as hovered axis.
+    void SetGizmoActiveAxis(int axis) { m_gizmoActiveAxis = axis; }
+
+    /// Returns the gizmo active axis index.
+    [[nodiscard]] int GetGizmoActiveAxis() const { return m_gizmoActiveAxis; }
+
     // ── Mesh Bounds (for editor picking) ──────────────────────────────────
 
     /// Returns the object-space AABB bounds for a mesh by its ID.

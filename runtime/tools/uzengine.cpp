@@ -404,6 +404,8 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
             sceneRenderer.SetSelectedEntity(selectionManager.GetSelected());
             sceneRenderer.SetGizmoMode(static_cast<uint8_t>(editorInput.GetGizmoMode()));
             sceneRenderer.SetGizmoSpace(static_cast<uint8_t>(editorInput.GetGizmoSpace()));
+            sceneRenderer.SetGizmoHoveredAxis(editorInput.GetGizmoHoveredAxis());
+            sceneRenderer.SetGizmoActiveAxis(editorInput.GetGizmoActiveAxis());
         }
 
         // Update Lua scripts

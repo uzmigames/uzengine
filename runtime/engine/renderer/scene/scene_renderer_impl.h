@@ -9,6 +9,8 @@
     Entity m_selectedEntity{};            ///< Currently selected entity for editor outline/gizmo rendering.
     uint8_t m_gizmoMode = 0;             ///< GizmoMode: 0=Translate, 1=Rotate, 2=Scale.
     uint8_t m_gizmoSpace = 0;            ///< GizmoSpace: 0=World, 1=Local.
+    int m_gizmoHoveredAxis = -1;         ///< Hovered axis: -1=none, 0-6=axis/plane/center.
+    int m_gizmoActiveAxis = -1;          ///< Active (dragging) axis: same encoding.
 
     // ── Engine Infrastructure ──────────────────────────────────────────────
 

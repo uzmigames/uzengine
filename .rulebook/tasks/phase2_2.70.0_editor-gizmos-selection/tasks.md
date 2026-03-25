@@ -29,13 +29,13 @@
 - [x] 4.8 Integrated into frame_overlay.cpp OverlayPass after editor grid, before stats overlay. Entity position extracted from DrawList worldMatrix via getTranslation(). GizmoMode/Space flow: EditorInputHandler -> uzengine.cpp -> SceneRenderer (m_gizmoMode/Space uint8_t) -> FrameContext (gizmoModeRaw/SpaceRaw) -> frame_overlay.cpp cast to enum. Hover/active axis highlighting: yellow=hover, white=active, 0.3 alpha for inactive during drag.
 
 ## 5. Gizmo Interaction
-- [ ] 5.1 Implement gizmo hit testing: ray vs axis line (cylinder test), ray vs plane handle (quad test), ray vs circle (torus test). Returns axis/plane/none.
-- [ ] 5.2 Implement translate drag: project mouse delta onto gizmo axis/plane, compute world-space delta position. Apply to SceneComponent::SetPosition.
-- [ ] 5.3 Implement rotate drag: mouse delta → angle around selected axis. Use arcball for trackball mode. Apply to SceneComponent::SetRotation via quaternion.
-- [ ] 5.4 Implement scale drag: mouse delta along axis → scale factor. Uniform scale via center handle. Apply to SceneComponent::SetScale.
-- [ ] 5.5 Implement snapping: translate snap to grid (default 10cm), rotate snap to degrees (default 15°), scale snap to increments (default 0.25). Toggle with Ctrl held.
-- [ ] 5.6 Gizmo highlight: hovered axis turns yellow. Active (dragging) axis turns white.
-- [ ] 5.7 World vs Local space: W key cycles mode. World = gizmo aligned to world axes. Local = gizmo aligned to entity rotation.
+- [x] 5.1 Implement gizmo hit testing: screen-space projection approach — projects axis endpoints to screen, measures 2D pixel distance from mouse to projected segments (15px threshold). Plane handles use PointInQuad2D. Rotate circles tested as segmented screen-space lines. Center cube uses projected radius. Created gizmo_interaction.h/.cpp.
+- [x] 5.2 Implement translate drag: single-axis projects mouse delta onto screen-space axis direction, converts px→world via 1-unit projection ratio. Plane handles project onto two in-plane screen dirs. Center handle uses camera right/up with distance-based worldPerPx. All apply total delta from drag start to SceneComponent::SetPosition.
+- [x] 5.3 Implement rotate drag: tracks accumulated screen-angle delta around projected gizmo center (atan2), handles 2π wraparound. Outputs total Quat::FromAxisAngle from drag start. Caller applies: entity.rot = deltaRot * dragStartRot.
+- [x] 5.4 Implement scale drag: single-axis projects mouse delta onto screen axis (0.005 units/px sensitivity). Uniform scale via center handle uses vertical mouse delta. Outputs total scale offset from drag start.
+- [x] 5.5 Implement snapping: Ctrl held activates snap. Translate=10cm grid (Vec3::snap), Rotate=15° (round to nearest snapRad), Scale=0.25 increment (round). Constants in editor_input_handler.h.
+- [x] 5.6 Gizmo highlight: GizmoInteraction tracks hoveredAxis (from HitTest) and activeAxis (from drag). Wired through EditorInputHandler → SceneRenderer (SetGizmoHoveredAxis/ActiveAxis) → FrameContext → frame_overlay.cpp → GizmoRenderer::Draw(hoveredAxis, activeAxis). Yellow=hover, white=active (already in renderer).
+- [x] 5.7 World vs Local space: ComputeAxisDirs() rotates axis directions by entityRotation when gizmoSpace=Local. Applied in both HitTest and BeginDrag. Space toggle via Space key (already existed). W/E/R switch mode (mode, not space — clarified: W=Translate, E=Rotate, R=Scale; Space=toggle World/Local).
 
 ## 6. Lua API
 - [ ] 6.1 Add `uz.editor.get_selected()` → entity or nil.

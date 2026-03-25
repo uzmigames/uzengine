@@ -73,7 +73,7 @@ Push-Location "$Root/runtime"
 
 switch ($compiler) {
     "zig" {
-        zig build -Doptimize=ReleaseFast
+        zig build -Ddll=true -Doptimize=ReleaseFast
     }
     "msvc" {
         cmake --preset msvc-release 2>&1 | Out-Null
@@ -103,10 +103,15 @@ Pop-Location
 Write-Host "      OK" -ForegroundColor Green
 Write-Host ""
 
-# Copy .node to extension
-Write-Host "      Copying uzengine.node to extension/native/..." -ForegroundColor Gray
+# Copy .node + DLLs to extension
+Write-Host "      Deploying uzengine.node + DLLs to extension/native/..." -ForegroundColor Gray
 New-Item -ItemType Directory -Path "$Root/extension/native" -Force | Out-Null
-Copy-Item "$Root/napi/build/Release/uzengine.node" "$Root/extension/native/uzengine.node" -Force
+New-Item -ItemType Directory -Path "$Root/extension/native/D3D12" -Force | Out-Null
+Copy-Item "$Root/napi/build/Release/uzengine.node" "$Root/extension/native/" -Force
+# Copy all DLLs from napi build output (uzengine_runtime.dll, dxcompiler.dll, lua51.dll, etc.)
+Get-ChildItem "$Root/napi/build/Release/*.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination "$Root/extension/native/" -Force
+# Copy D3D12 Agility SDK DLLs
+Get-ChildItem "$Root/napi/build/Release/D3D12/*.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination "$Root/extension/native/D3D12/" -Force
 Write-Host "      OK" -ForegroundColor Green
 Write-Host ""
 

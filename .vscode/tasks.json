@@ -2,30 +2,41 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "build",
+      "label": "build:all",
       "type": "shell",
-      "command": "npm run build",
+      "command": "powershell -ExecutionPolicy Bypass -File scripts/build.ps1",
       "group": { "kind": "build", "isDefault": true },
-      "problemMatcher": ["$tsc"]
-    },
-    {
-      "label": "build:debug",
-      "type": "shell",
-      "command": "npm run build:debug",
-      "group": "build",
-      "problemMatcher": ["$tsc"]
+      "problemMatcher": ["$tsc"],
+      "detail": "Full pipeline: runtime DLL + N-API addon + extension TS"
     },
     {
       "label": "build:runtime",
       "type": "shell",
-      "command": "npm run build:runtime",
-      "group": "build"
+      "command": "cd runtime && zig build -Ddll=true",
+      "group": "build",
+      "detail": "Zig: runtime.lib + uzengine_runtime.dll"
     },
     {
       "label": "build:napi",
       "type": "shell",
-      "command": "npm run build:napi",
-      "group": "build"
+      "command": "cd napi && npx cmake-js compile --runtime=electron --runtime-version=39.6.0 --CDCMAKE_BUILD_TYPE=Release",
+      "group": "build",
+      "detail": "MSVC: uzengine.node (links DLL import lib)"
+    },
+    {
+      "label": "build:extension",
+      "type": "shell",
+      "command": "cd extension && npx tsc",
+      "group": "build",
+      "problemMatcher": ["$tsc"],
+      "detail": "TypeScript: extension panels"
+    },
+    {
+      "label": "build:runtime:debug",
+      "type": "shell",
+      "command": "cd runtime && zig build -Ddll=true",
+      "group": "build",
+      "detail": "Zig debug: runtime.lib + uzengine_runtime.dll (no optimizations)"
     }
   ]
 }
