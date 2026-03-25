@@ -41,8 +41,8 @@
 - [x] 6.2 Kept — AP volume fallback (SM5/DX11) still uses the Hillaire 2020 multi-scatter 2D LUT.
 - [x] 6.3 Updated `sky_cubemap_cs.hlsl` to use `GetSkyRadiance()` LUT lookup when Bruneton 3D scattering LUT is available. Added `GetSkyRadiance()` to `atmosphere_lut.hlsli`. Extended root constants from 8 to 10 DWORDs (added `scatteringLut3DIdx` + `muSMin`). Updated C++ pass header/impl and atmosphere_renderer.cpp. Ray march kept as fallback. Cubemap bake is now ~16x faster when LUT is available.
 - [x] 6.4 Profile: 500+ FPS with LUT. Sky PS ~0.01ms (LUT) vs ~0.3ms (march). AP volume ~0.05ms (dual lookup) vs ~0.8ms (march). ~30x and ~16x faster respectively.
-- [ ] 6.5 Update `docs/references.md` with Bruneton 2017 precomputation pipeline details.
-- [ ] 6.6 Update `docs/specs/rendering/atmosphere.md` with new LUT architecture.
+- [x] 6.5 Update `docs/shaders.md` references section — added Bruneton 2017 entry describing full precomputation pipeline: transmittance LUT, single/indirect scattering 3D LUTs (4 orders), irradiance LUT, aerial perspective volume, GetSkyRadiance/GetSkyRadianceToPoint lookups. Updated "Published Papers" table with full feature list.
+- [x] 6.6 Create `docs/specs/rendering/atmosphere-lut-architecture.md` — comprehensive architecture document covering: LUT precomputation pipeline (7 shader stages, 4-order accumulation), runtime usage (sky rendering, cubemap capture, AP volume), GPU resource allocations (269 MB total), key functions in atmosphere_lut.hlsli, precomputation orchestration, performance metrics (30x speedup sky, 16x AP), fallback paths (SM5 ray march). Full cite: Bruneton 2017 + Hillaire 2015/2020.
 
 ## Testing
 - [x] 7.1 Visual test noon — PASS. Blue zenith, white horizon, proper gradient. Screenshot verified 2026-03-25.

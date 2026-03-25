@@ -415,7 +415,7 @@ Every shader cites its published reference via `@ref` comments. Below is the com
 
 | Source | Used In | Description |
 |--------|---------|-------------|
-| Bruneton Precomputed Atmospheric Scattering (`functions.glsl`) | `transmittance_lut_cs.hlsl`, `multi_scatter_lut_cs.hlsl`, `single_scattering_lut_cs.hlsl`, `scattering_density_cs.hlsl`, `indirect_scattering_cs.hlsl`, `irradiance_lut_cs.hlsl`, `aerial_perspective_volume_cs.hlsl`, `atmosphere_lut.hlsli` | Bruneton & Neyret 2017 "Precomputed Atmospheric Scattering". Reference: `github.com/ebruneton/precomputed_atmospheric_scattering` |
+| Bruneton Precomputed Atmospheric Scattering (`functions.glsl`) | `transmittance_lut_cs.hlsl`, `single_scattering_lut_cs.hlsl`, `scattering_density_cs.hlsl`, `indirect_scattering_cs.hlsl`, `irradiance_lut_cs.hlsl`, `aerial_perspective_volume_cs.hlsl`, `sky_atmosphere_ps.hlsl`, `sky_cubemap_cs.hlsl`, `atmosphere_lut.hlsli` | Bruneton & Neyret 2017 "Precomputed Atmospheric Scattering" — full precomputation pipeline. Reference: `github.com/ebruneton/precomputed_atmospheric_scattering`. Implements: transmittance LUT (256x64 RGBA16F), multi-scatter LUT (32x32 RGBA16F, Hillaire 2020), single scattering 3D LUT (256x128x32 RGBA16F), scattering density 3D LUT, indirect scattering 3D LUT (4 orders accumulated), irradiance LUT (64x16 RGBA16F), aerial perspective volume (32x32x16 RGBA16F). Functions: `GetRMuMuSNuFromScatteringTextureUvwz`, `SampleScatteringTexture`, `SampleScatteringTexture4`, `GetSkyRadiance`, `GetSkyRadianceToPoint`, `GetTransmittance`, `GetTransmittanceToSun`, `RayIntersectsGround`, `GetIrradianceTextureUvFromRMuS`. |
 
 ### Public Domain / NVIDIA
 
@@ -435,7 +435,7 @@ All techniques below are reimplemented from published papers. No source code was
 
 | Paper | Author(s) | Year | Used In |
 |-------|-----------|------|---------|
-| "Precomputed Atmospheric Scattering" | Bruneton, Neyret | 2008/2017 | Atmosphere LUT pipeline (transmittance, multi-scatter, aerial perspective) |
+| "Precomputed Atmospheric Scattering" | Bruneton, Neyret | 2008/2017 | Full precomputation pipeline: transmittance LUT, 3D scattering LUT (4 orders), irradiance LUT, GetSkyRadiance/GetSkyRadianceToPoint lookups, AP volume dual-4D lookup |
 | "A Scalable and Production Ready Sky and Atmosphere Rendering Technique" | Hillaire (Epic) | 2020 | `sky_atmosphere_ps.hlsl`, multi-scatter integration |
 | "Physically Based and Unified Volumetric Rendering in Frostbite" | Hillaire (EA) | 2015 | `height_fog_ps.hlsl`, volumetric fog inscattering |
 | "Physically Based Shading at Disney" | Burley | 2012 | `pbr_common.hlsli` (Burley diffuse), `lighting.hlsli` (SSS wrap diffuse) |
