@@ -274,8 +274,14 @@ uint32_t SceneRenderer::QueueTextureLoad(const std::string& path) {
     m_textureMap[path] = slotIndex;
 
     // Submit to async decoder for background CPU decode.
+    // Use VFS-backed submission when VFS is available (set during last RenderFrame).
+    // The resultKey = original path ensures m_asyncPendingSlots lookup works.
     if (m_asyncDecoder) {
-        m_asyncDecoder->Submit(path);
+        if (m_lastVfs) {
+            m_asyncDecoder->SubmitVFS(m_lastVfs, path, false, path);
+        } else {
+            m_asyncDecoder->Submit(path, false, path);
+        }
         m_asyncPendingSlots[path] = slotIndex;
         UZ_LOG(Renderer, Debug, "SceneRenderer: queued async texture load '{}' (slot={})", path, slotIndex);
     } else {

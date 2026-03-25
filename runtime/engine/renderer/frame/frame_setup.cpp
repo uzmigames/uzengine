@@ -96,6 +96,9 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     }
     m_deferredDestroyBuffers.clear();
 
+    // ── Cache VFS for QueueTextureLoad (called from Lua outside RenderFrame) ──
+    m_lastVfs = ctx.vfs;
+
     // ── Flush deferred asset loads (queued from Lua callbacks) ─────────
     FlushPendingLoads(ctx.cmdList, ctx.vfs);
 

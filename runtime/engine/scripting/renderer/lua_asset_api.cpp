@@ -3,6 +3,8 @@
 #include "log.h"
 #include "scene_renderer.h"
 #include "mesh.h"
+#include "texture_loader.h"
+#include "vfs.h"
 
 extern "C" {
 #include <lua.h>
@@ -11,6 +13,8 @@ extern "C" {
 }
 
 #include <cstdint>
+#include <cstring>
+#include <string>
 
 // Scripting log category is defined in lua_vm.cpp — only declare here.
 UZ_DECLARE_LOG_CATEGORY(Scripting);
@@ -24,6 +28,9 @@ namespace uz {
 /// Key used to store the SceneRenderer* in the Lua registry.
 static constexpr const char* kRendererRegistryKey = "uz_scene_renderer";
 
+/// Key used to store the IVFS* in the Lua registry.
+static constexpr const char* kVfsRegistryKey = "uz_vfs";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -36,6 +43,16 @@ static constexpr const char* kRendererRegistryKey = "uz_scene_renderer";
     void* p = lua_touserdata(L, -1);
     lua_pop(L, 1);
     return static_cast<SceneRenderer*>(p);
+}
+
+/// Retrieves the IVFS* from the Lua registry.
+///
+/// Returns null if the VFS was never registered via `LuaSetVFS`.
+[[nodiscard]] static IVFS* GetVFS(lua_State* L) {
+    lua_getfield(L, LUA_REGISTRYINDEX, kVfsRegistryKey);
+    void* p = lua_touserdata(L, -1);
+    lua_pop(L, 1);
+    return static_cast<IVFS*>(p);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -201,6 +218,71 @@ static int TextureLoad(lua_State* L) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Lua C functions — uz.texture.load_hdr
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// uz.texture.load_hdr(path) -> srv_index | nil
+///
+/// Loads an HDR/EXR panorama texture via VFS and returns its SRV descriptor
+/// heap index. The texture is loaded synchronously (HDR panoramas are
+/// typically small enough that blocking is acceptable).
+///
+/// The returned SRV index can be passed to `uz.renderer.set_hdri_environment()`
+/// to use the loaded panorama as the scene's IBL environment.
+///
+/// # Arguments
+/// * `path` (string) — VFS-relative path to an `.exr` or `.hdr` file.
+///
+/// # Returns
+/// Integer SRV index on success; nil on failure (error is logged).
+static int TextureLoadHDR(lua_State* L) {
+    const char* path = luaL_checkstring(L, 1);
+
+    SceneRenderer* renderer = GetRenderer(L);
+    if (!renderer) {
+        UZ_LOG(Scripting, Warning, "uz.texture.load_hdr: SceneRenderer not set");
+        lua_pushnil(L);
+        return 1;
+    }
+
+    IVFS* vfs = GetVFS(L);
+    if (!vfs) {
+        UZ_LOG(Scripting, Warning, "uz.texture.load_hdr: VFS not set");
+        lua_pushnil(L);
+        return 1;
+    }
+
+    const std::string pathStr(path);
+    auto data = vfs->Read(pathStr);
+    if (data.empty()) {
+        UZ_LOG(Scripting, Warning, "uz.texture.load_hdr: failed to read '{}'", path);
+        lua_pushnil(L);
+        return 1;
+    }
+
+    // Determine decoder from file extension (.hdr = Radiance RGBE, .exr = OpenEXR).
+    const char* formatHint = "exr";
+    if (pathStr.size() > 4) {
+        const std::string ext = pathStr.substr(pathStr.size() - 4);
+        if (ext == ".hdr") {
+            formatHint = "hdr";
+        }
+    }
+
+    const TextureLoadResult result = TextureLoader::LoadHDRFromMemory(
+        renderer->GetDevice(), data.data(), data.size(), formatHint, path);
+
+    if (!result.handle.IsValid()) {
+        UZ_LOG(Scripting, Warning, "uz.texture.load_hdr: failed to decode '{}'", path);
+        lua_pushnil(L);
+        return 1;
+    }
+
+    lua_pushinteger(L, static_cast<lua_Integer>(result.srvIndex));
+    return 1;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Registration
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -227,11 +309,14 @@ void LuaRegisterAssetAPI(lua_State* L) {
 
     lua_setfield(L, -2, "mesh");
 
-    // ── uz.texture = { load } ──────────────────────────────────────────────
+    // ── uz.texture = { load, load_hdr } ──────────────────────────────────
     lua_newtable(L);
 
     lua_pushcfunction(L, TextureLoad);
     lua_setfield(L, -2, "load");
+
+    lua_pushcfunction(L, TextureLoadHDR);
+    lua_setfield(L, -2, "load_hdr");
 
     lua_setfield(L, -2, "texture");
 

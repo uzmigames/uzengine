@@ -167,6 +167,14 @@
         },
         "height_fog": {}
       }
+    },
+    {
+      "name": "Controller",
+      "components": {
+        "script": {
+          "path": "scripts/camera_test_controller.lua"
+        }
+      }
     }
   ]
 }

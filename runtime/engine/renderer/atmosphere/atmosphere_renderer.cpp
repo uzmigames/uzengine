@@ -425,6 +425,7 @@ void AddAtmospherePasses(
             apCB.mieScale           = skyComp.mieScatteringScale;
             apCB.transmittanceLutIdx = ctx.transmittanceLutSrv;
             apCB.outputUavIdx       = ctx.apVolumeUav;
+            apCB.multiScatterLutIdx = ctx.multiScatterLutSrv;
             apCB.depthSlices        = 16;
             apCB.totalDepthKm       = 100.0f;
 
@@ -434,6 +435,7 @@ void AddAtmospherePasses(
             APVolumePassDesc apPassDesc{};
             apPassDesc.volumeTarget        = apRes;
             apPassDesc.transmittanceLutDep = lutRes;
+            apPassDesc.multiScatterLutDep  = msLutRes;
             apPassDesc.pipeline            = ctx.pipelines->GetAerialPerspectiveVolume();
             apPassDesc.rootConstants       = apRC;
             apPassDesc.cbAlloc             = apAlloc;

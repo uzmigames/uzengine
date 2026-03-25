@@ -250,29 +250,45 @@ TextureLoadResult TextureLoader::LoadHDR(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TextureLoader::LoadHDRFromMemory — load .exr/.hdr from in-memory VFS data
+// HDR CPU decode helper — shared by both LoadHDRFromMemory overloads
 // ─────────────────────────────────────────────────────────────────────────────
 
-TextureLoadResult TextureLoader::LoadHDRFromMemory(
-    IRHIDevice* device,
+/// CPU-side result of decoding and converting an HDR image to float16 RGBA.
+/// Holds the pixel data, dimensions, and format metadata needed to create the
+/// GPU texture. Separated from GPU upload so both the self-contained and
+/// external-cmdList overloads can share the same decode path.
+struct DecodedHDR {
+    std::unique_ptr<uint16_t[]> halfPixels; ///< Float16 RGBA pixel data.
+    uint32_t width  = 0;
+    uint32_t height = 0;
+    bool     isExr  = false;                ///< True if decoded from EXR (for log messages).
+};
+
+/// Decodes an in-memory .exr or .hdr image to float16 RGBA on the CPU.
+///
+/// Performs: format detection -> decode (tinyexr or stbi) -> optional downscale
+/// to kMaxHDRResolution -> float32-to-float16 conversion. The returned struct
+/// owns the pixel buffer and is ready for GPU upload.
+///
+/// @param data       Raw file bytes (.exr or .hdr format).
+/// @param dataSize   Size of the data buffer in bytes.
+/// @param formatHint Extension hint: "exr" or "hdr" (determines decoder).
+/// @return           Populated DecodedHDR on success, or default (width==0) on failure.
+static DecodedHDR DecodeHDRFromMemory(
     const void* data,
     size_t dataSize,
-    const char* formatHint,
-    const char* debugName)
+    const char* formatHint)
 {
     UZ_PROFILE_FUNCTION();
 
-    if (!device || !data || dataSize == 0) {
-        UZ_LOG(Renderer, Error, "TextureLoader::LoadHDRFromMemory: invalid arguments");
-        return {};
-    }
+    DecodedHDR decoded;
+    decoded.isExr = formatHint && (std::string(formatHint) == "exr" || std::string(formatHint) == "EXR");
 
     float* pixels = nullptr;
     int w = 0;
     int h = 0;
-    const bool isExr = formatHint && (std::string(formatHint) == "exr" || std::string(formatHint) == "EXR");
 
-    if (isExr) {
+    if (decoded.isExr) {
         const char* err = nullptr;
         const int ret = LoadEXRFromMemory(
             &pixels, &w, &h,
@@ -301,7 +317,7 @@ TextureLoadResult TextureLoader::LoadHDRFromMemory(
     if (w <= 0 || h <= 0) {
         UZ_LOG(Renderer, Error,
                "TextureLoader::LoadHDRFromMemory: invalid dimensions {}x{}", w, h);
-        if (isExr) free(pixels); else stbi_image_free(pixels);
+        if (decoded.isExr) free(pixels); else stbi_image_free(pixels);
         return {};
     }
 
@@ -330,7 +346,7 @@ TextureLoadResult TextureLoader::LoadHDRFromMemory(
                 }
             }
         }
-        if (isExr) { free(pixels); } else { stbi_image_free(pixels); }
+        if (decoded.isExr) { free(pixels); } else { stbi_image_free(pixels); }
         pixels = downscaled.get();
         width = newW;
         height = newH;
@@ -338,48 +354,60 @@ TextureLoadResult TextureLoader::LoadHDRFromMemory(
     }
 
     const size_t texelCount = static_cast<size_t>(width) * height;
-    constexpr size_t kBytesPerTexelF16 = 8;
 
-    auto halfPixels = std::make_unique<uint16_t[]>(texelCount * 4);
-    ConvertFloat32ToFloat16(pixels, halfPixels.get(), texelCount);
+    decoded.halfPixels = std::make_unique<uint16_t[]>(texelCount * 4);
+    ConvertFloat32ToFloat16(pixels, decoded.halfPixels.get(), texelCount);
 
     if (!downscaled) {
         // Original buffer not yet freed (no downscale happened)
-        if (isExr) free(pixels); else stbi_image_free(pixels);
+        if (decoded.isExr) free(pixels); else stbi_image_free(pixels);
     }
-    pixels = nullptr;
+
+    decoded.width  = width;
+    decoded.height = height;
+    return decoded;
+}
+
+/// Uploads a decoded HDR image to the GPU and transitions to ShaderResource.
+///
+/// Records the copy and barrier commands onto `cmdList` and appends the staging
+/// buffer to `upload`. Does NOT manage cmdList lifecycle (Begin/End/Execute)
+/// or GPU synchronization — the caller is responsible for those.
+///
+/// @return Populated TextureLoadResult on success, default (invalid handle) on failure.
+static TextureLoadResult UploadDecodedHDR(
+    IRHIDevice* device,
+    IRHICommandList* cmdList,
+    UploadContext& upload,
+    const DecodedHDR& decoded,
+    const char* debugName)
+{
+    constexpr size_t kBytesPerTexelF16 = 8; // 4 channels * 2 bytes
 
     RHITextureDesc desc{};
-    desc.width = width;
-    desc.height = height;
+    desc.width = decoded.width;
+    desc.height = decoded.height;
     desc.mipLevels = 1;
     desc.format = RHIFormat::RGBA16Float;
     desc.usage = RHITextureUsage::ShaderResource | RHITextureUsage::CopyDst;
     desc.debugName = debugName;
 
-    auto* cmdList = device->CreateCommandList(RHIQueueType::Graphics);
-    if (!cmdList) {
-        UZ_LOG(Renderer, Error, "TextureLoader::LoadHDRFromMemory: failed to create command list");
-        return {};
-    }
-    cmdList->Begin();
-
     RHITextureHandle texture = device->CreateTexture(desc);
     if (!texture.IsValid()) {
         UZ_LOG(Renderer, Error,
-               "TextureLoader::LoadHDRFromMemory: GPU texture creation failed, {}x{}", width, height);
-        cmdList->End(); device->DestroyCommandList(cmdList);
+               "TextureLoader::LoadHDRFromMemory: GPU texture creation failed, {}x{}",
+               decoded.width, decoded.height);
         return {};
     }
 
-    UploadContext upload(device);
+    const size_t texelCount = static_cast<size_t>(decoded.width) * decoded.height;
     const uint64_t uploadSize = static_cast<uint64_t>(texelCount) * kBytesPerTexelF16;
 
-    if (!upload.UploadTexture(cmdList, texture, halfPixels.get(), uploadSize, 0)) {
+    if (!upload.UploadTexture(cmdList, texture, decoded.halfPixels.get(), uploadSize, 0)) {
         UZ_LOG(Renderer, Error,
-               "TextureLoader::LoadHDRFromMemory: upload failed, {}x{}", width, height);
+               "TextureLoader::LoadHDRFromMemory: upload failed, {}x{}",
+               decoded.width, decoded.height);
         device->DestroyTexture(texture);
-        cmdList->End(); device->DestroyCommandList(cmdList);
         return {};
     }
 
@@ -389,24 +417,108 @@ TextureLoadResult TextureLoader::LoadHDRFromMemory(
     barrier.stateAfter = RHIResourceState::ShaderResource;
     cmdList->ResourceBarrier(&barrier, 1);
 
+    TextureLoadResult result{};
+    result.handle = texture;
+    result.srvIndex = device->GetTextureSRVIndex(texture);
+    result.width = decoded.width;
+    result.height = decoded.height;
+    result.mipLevels = 1;
+    result.loadState = TextureLoadState::FullyLoaded;
+    return result;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TextureLoader::LoadHDRFromMemory — self-contained (creates own command list)
+// ─────────────────────────────────────────────────────────────────────────────
+
+TextureLoadResult TextureLoader::LoadHDRFromMemory(
+    IRHIDevice* device,
+    const void* data,
+    size_t dataSize,
+    const char* formatHint,
+    const char* debugName)
+{
+    UZ_PROFILE_FUNCTION();
+
+    if (!device || !data || dataSize == 0) {
+        UZ_LOG(Renderer, Error, "TextureLoader::LoadHDRFromMemory: invalid arguments");
+        return {};
+    }
+
+    DecodedHDR decoded = DecodeHDRFromMemory(data, dataSize, formatHint);
+    if (decoded.width == 0) {
+        return {};
+    }
+
+    auto* cmdList = device->CreateCommandList(RHIQueueType::Graphics);
+    if (!cmdList) {
+        UZ_LOG(Renderer, Error, "TextureLoader::LoadHDRFromMemory: failed to create command list");
+        return {};
+    }
+    cmdList->Begin();
+
+    UploadContext upload(device);
+    TextureLoadResult result = UploadDecodedHDR(device, cmdList, upload, decoded, debugName);
+
+    if (!result.handle.IsValid()) {
+        cmdList->End();
+        device->DestroyCommandList(cmdList);
+        return {};
+    }
+
+    // Flush and wait — this overload is fully self-contained.
     cmdList->End();
     cmdList->Execute();
     device->WaitIdle();
     upload.ReleaseStaging();
     device->DestroyCommandList(cmdList);
 
-    TextureLoadResult result{};
-    result.handle = texture;
-    result.srvIndex = device->GetTextureSRVIndex(texture);
-    result.width = width;
-    result.height = height;
-    result.mipLevels = 1;
-    result.loadState = TextureLoadState::FullyLoaded;
-
     UZ_LOG(Renderer, Info,
            "Loaded HDR texture from memory: {}x{}, format={}, SRV={}",
-           width, height, isExr ? "EXR->RGBA16F" : "HDR->RGBA16F",
+           result.width, result.height,
+           decoded.isExr ? "EXR->RGBA16F" : "HDR->RGBA16F",
            result.srvIndex);
+
+    return result;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TextureLoader::LoadHDRFromMemory — external command list overload
+// ─────────────────────────────────────────────────────────────────────────────
+
+TextureLoadResult TextureLoader::LoadHDRFromMemory(
+    IRHIDevice* device,
+    IRHICommandList* cmdList,
+    UploadContext& upload,
+    const void* data,
+    size_t dataSize,
+    const char* formatHint,
+    const char* debugName)
+{
+    UZ_PROFILE_FUNCTION();
+
+    if (!device || !cmdList || !data || dataSize == 0) {
+        UZ_LOG(Renderer, Error,
+               "TextureLoader::LoadHDRFromMemory(external cmdList): invalid arguments");
+        return {};
+    }
+
+    DecodedHDR decoded = DecodeHDRFromMemory(data, dataSize, formatHint);
+    if (decoded.width == 0) {
+        return {};
+    }
+
+    // Upload onto the caller's command list. Staging buffers are appended to
+    // the caller's UploadContext — the caller releases them after GPU flush.
+    TextureLoadResult result = UploadDecodedHDR(device, cmdList, upload, decoded, debugName);
+
+    if (result.handle.IsValid()) {
+        UZ_LOG(Renderer, Info,
+               "Loaded HDR texture from memory (external cmdList): {}x{}, format={}, SRV={}",
+               result.width, result.height,
+               decoded.isExr ? "EXR->RGBA16F" : "HDR->RGBA16F",
+               result.srvIndex);
+    }
 
     return result;
 }

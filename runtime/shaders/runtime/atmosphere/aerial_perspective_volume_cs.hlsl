@@ -196,15 +196,33 @@ void main(uint3 tid : SV_DispatchThreadID)
         float3 sunT = AP_SampleTransmittanceLut(tLut, linearSampler,
             sampleKm, sunDir, bottomRadiusKm, topRadiusKm);
 
+        // ── Multi-scattering contribution ────────────────────────────
+        // @ref Hillaire 2020 — GetMultipleScattering + S integration
+        // Multi-scattering is isotropic (no phase weighting) and adds
+        // diffuse light after the 1st scatter bounce.
+        float3 multiScatteredLum = float3(0, 0, 0);
+        {
+            Texture2D<float4> msLut = ResourceDescriptorHeap[multiScatterLutIdx];
+            multiScatteredLum = AP_SampleMultiScatteringLut(msLut, linearSampler,
+                sampleKm, sunDir, bottomRadiusKm, topRadiusKm);
+        }
+
         // In-scattering with artistic coefficients
         float3 scatterR = artRayleighBeta * densR * phaseR;
         float3 scatterM = artMieBeta * densM * phaseM;
-        float3 scatter  = scatterR + scatterM;
+
+        // Physical total scattering (for multi-scatter weighting)
+        float3 totalScatter = rayleighBeta * densR + mieBeta * densM;
+
+        // @ref S = sunIlluminance * (sunTransmittance * phaseScatter + multiScatter * totalScatter)
+        float3 singleScatter = sunT * (scatterR + scatterM);
+        float3 multiScatter  = multiScatteredLum * totalScatter;
+        float3 scatter = singleScatter + multiScatter;
 
         // Analytical step integral: Sint = scatter * (1 - T_step) / ext
         float3 Sint = (scatter - scatter * T_step) / max(extTotal, AP_EXT_EPS);
 
-        L         += Throughput * sunT * Sint * sunIntensity;
+        L         += Throughput * Sint * sunIntensity;
         Throughput *= T_step;
     }
 

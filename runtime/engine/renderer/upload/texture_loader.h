@@ -22,6 +22,9 @@
 
 namespace uz {
 
+// Forward declaration for the external-cmdList overload of LoadHDRFromMemory.
+class UploadContext;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // TextureLoadResult — Output of a texture load operation
 // ─────────────────────────────────────────────────────────────────────────────
@@ -391,6 +394,32 @@ public:
     /// @param debugName  Optional debug name for the GPU resource.
     [[nodiscard]] static TextureLoadResult LoadHDRFromMemory(
         IRHIDevice* device,
+        const void* data,
+        size_t dataSize,
+        const char* formatHint = "exr",
+        const char* debugName = "HDRTexture");
+
+    /// Loads HDR from memory using an external command list and upload context.
+    ///
+    /// Use this overload when a command list is already in recording state
+    /// (e.g., during the render loop). The caller owns the command list lifecycle
+    /// — this function does NOT call Begin/End/Execute or WaitIdle.
+    ///
+    /// Staging buffers are appended to the provided `UploadContext`. The caller
+    /// MUST keep the upload context alive and call `ReleaseStaging()` only after
+    /// the GPU has finished executing the command list.
+    ///
+    /// @param device      RHI device for resource creation.
+    /// @param cmdList     Command list in recording state (caller manages lifecycle).
+    /// @param upload      Upload context to hold staging buffers (caller releases after GPU flush).
+    /// @param data        Raw file bytes (.exr or .hdr format).
+    /// @param dataSize    Size of the data buffer in bytes.
+    /// @param formatHint  Extension hint: "exr" or "hdr" (determines decoder).
+    /// @param debugName   Optional debug name for the GPU resource.
+    [[nodiscard]] static TextureLoadResult LoadHDRFromMemory(
+        IRHIDevice* device,
+        IRHICommandList* cmdList,
+        UploadContext& upload,
         const void* data,
         size_t dataSize,
         const char* formatHint = "exr",

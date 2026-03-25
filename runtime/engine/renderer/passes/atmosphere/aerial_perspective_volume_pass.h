@@ -11,6 +11,7 @@
 /// The pass declares:
 /// - volumeTarget as Write (UnorderedAccess state)
 /// - transmittanceLutDep as Read (ShaderResource state)
+/// - multiScatterLutDep as Read (ShaderResource state)
 ///
 /// # Dispatch
 /// [numthreads(8,8,1)], dispatch (4, 4, 16) = 32x32x16 total threads.

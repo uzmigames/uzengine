@@ -1,0 +1,87 @@
+{
+  "name": "HDRI Environment Test",
+  "version": "1.0",
+  "entities": [
+    {
+      "name": "Sun",
+      "components": {
+        "transform": {
+          "position": [0, 0, 920],
+          "rotation": [35, -60, 0],
+          "scale": [1, 1, 1]
+        },
+        "light": {
+          "type": "directional",
+          "color": [1.0, 0.98, 0.95],
+          "intensity": 8.0
+        }
+      }
+    },
+    {
+      "name": "GroundPlane",
+      "components": {
+        "transform": {
+          "position": [0, 0, 0],
+          "rotation": [0, 0, 0],
+          "scale": [1500, 1500, 1]
+        },
+        "mesh": { "asset": "builtin:cube" }
+      }
+    },
+    {
+      "name": "MainCamera",
+      "components": {
+        "transform": {
+          "position": [0, -600, 200],
+          "rotation": [-10, 0, 0]
+        },
+        "camera": {
+          "fov": 75,
+          "near": 1,
+          "far": 100000,
+          "active": true
+        }
+      }
+    },
+    {
+      "name": "SkyLight",
+      "components": {
+        "transform": { "position": [0, 0, 500] },
+        "sky_light": {
+          "intensity": 1.0,
+          "indirect_lighting_intensity": 1.0,
+          "light_color": [1.0, 1.0, 1.0],
+          "cubemap_resolution": 128,
+          "lower_hemisphere_black": false,
+          "lower_hemisphere_color": [0.1, 0.1, 0.12]
+        }
+      }
+    },
+    {
+      "name": "SkyAtmosphere",
+      "components": {
+        "transform": { "position": [0, 0, 1020] },
+        "sky_atmosphere": {}
+      }
+    },
+    {
+      "name": "HeightFog",
+      "components": {
+        "transform": { "position": [0, 0, -5000] },
+        "height_fog": {}
+      }
+    },
+    {
+      "name": "HDRISetup",
+      "components": {
+        "script": { "path": "scripts/hdri_setup.lua" }
+      }
+    },
+    {
+      "name": "Controller",
+      "components": {
+        "script": { "path": "scripts/camera_test_controller.lua" }
+      }
+    }
+  ]
+}

@@ -1,9 +1,9 @@
 ## Phase 1: Multi-Scatter in AP Volume (P0 — trivial fix)
-- [ ] 1.1 Read `aerial_perspective_volume_cs.hlsl`, identify the per-voxel ray march loop.
-- [ ] 1.2 Add `MultiScatterLUT.SampleLevel(linearClamp, multiScatterUV, 0)` per step using (r, mu_s) parameterization from existing `multi_scatter_lut_cs.hlsl`.
-- [ ] 1.3 Accumulate multi-scattered contribution into inscattering: `inscatter += multiScatter * scatteringCoeff * stepSize * transmittance`.
-- [ ] 1.4 Bind multi-scatter LUT SRV in `cloud_pass.cpp` or `atmosphere_renderer.cpp` (wherever AP volume dispatch lives).
-- [ ] 1.5 Build + visual verification: compare distant object brightness before/after. Distant terrain should be brighter/more blue.
+- [x] 1.1 Read `aerial_perspective_volume_cs.hlsl`, identify the per-voxel ray march loop. Identified 8-step march loop at line 180.
+- [x] 1.2 Add `MultiScatterLUT.SampleLevel(linearClamp, multiScatterUV, 0)` per step. Added `AP_SampleMultiScatteringLut()` in aerial_perspective.hlsli + sampling in march loop via `ResourceDescriptorHeap[multiScatterLutIdx]`.
+- [x] 1.3 Accumulate multi-scattered contribution: `singleScatter = sunT * phaseScatter` + `multiScatter = multiScatteredLum * totalScatter`, combined into Frostbite analytical integral.
+- [x] 1.4 Bind multi-scatter LUT SRV in `atmosphere_renderer.cpp`. Added `multiScatterLutIdx` to APVolumeCB (replacing _pad0), set from `ctx.multiScatterLutSrv`. Added `multiScatterLutDep` to APVolumePassDesc with RG read dependency.
+- [x] 1.5 Build passes (zig build — zero errors). Visual verification pending demo run.
 
 ## Phase 2: Bruneton 3D Scattering LUT Precomputation (P1 — core)
 - [ ] 2.1 Create `runtime/shaders/runtime/atmosphere/single_scattering_lut_cs.hlsl`: compute shader that writes to a 256x128x32 3D UAV. For each texel, decode (r, mu, mu_s, nu) from the 4D→3D packing, integrate single Rayleigh+Mie scattering along the view ray using transmittance LUT. Output RGBA: Rayleigh.rgb + Mie.r (combined scattering packing).

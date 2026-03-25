@@ -482,6 +482,10 @@
     /// and batch-uploaded to the GPU at the start of each RenderFrame().
     std::unique_ptr<AsyncTextureDecoder> m_asyncDecoder;
 
+    /// VFS pointer cached from the last RenderFrame call.
+    /// Used by QueueTextureLoad (which doesn't receive VFS as a parameter).
+    IVFS* m_lastVfs = nullptr;
+
     /// Paths submitted to the async decoder that are still in-flight.
     /// Maps path -> slot index in m_textures, so we know where to store
     /// the TextureLoadResult when the decode completes.
