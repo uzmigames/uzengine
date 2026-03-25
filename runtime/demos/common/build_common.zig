@@ -199,6 +199,10 @@ pub fn createDemo(b: *std.Build, config: DemoConfig) DemoHandle {
         .flags = cpp_flags,
     });
 
+    // Component serializers compiled directly into exe for auto-registration.
+    // Cannot be in static lib — linker strips unused static initializers.
+    addCppDir(mod, b, "../../engine/ecs/environment", cpp_flags);
+
     // DemoApplication base class — only needed for legacy DemoApplication-based demos.
     if (config.use_demo_application) {
         mod.addCSourceFiles(.{

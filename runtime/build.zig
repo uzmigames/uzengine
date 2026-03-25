@@ -244,6 +244,9 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/ecs/lighting", cpp_flags);
     addCppDir(runtime_mod, b, "engine/ecs/mesh", cpp_flags);
     addCppDir(runtime_mod, b, "engine/ecs/update", cpp_flags);
+    // NOTE: engine/ecs/environment/*.cpp are compiled into executables directly
+    // (not the static lib) to preserve static initializers for component auto-registration.
+    // See component_serializer.h UZ_REGISTER_COMPONENT_SERIALIZER macro.
     addCppDir(runtime_mod, b, "engine/ecs/loaders", cpp_flags);
     addCppDir(runtime_mod, b, "engine/scripting", cpp_flags);
     addCppDir(runtime_mod, b, "engine/scripting/scene", cpp_flags);
@@ -784,6 +787,9 @@ pub fn build(b: *std.Build) void {
         test_mod.addIncludePath(b.path("engine/rhi/metal"));
     }
 
+    // Component serializers compiled directly into exe for auto-registration
+    addCppDir(test_mod, b, "engine/ecs/environment", cpp_flags);
+
     const test_exe = b.addExecutable(.{
         .name = "test_runtime",
         .root_module = test_mod,
@@ -853,6 +859,10 @@ pub fn build(b: *std.Build) void {
                 .files = &.{"dx12_agility.cpp"},
                 .flags = cpp_flags,
             });
+
+            // Component serializers compiled directly into exe (not static lib)
+            // to preserve static initializers for auto-registration.
+            addCppDir(tool_mod, b, "engine/ecs/environment", cpp_flags);
 
             tool_mod.addObjectFile(b.path(tp ++ "luajit/src/lua51.lib"));
 

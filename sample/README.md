@@ -20,6 +20,10 @@ runtime/build/bin/uzengine.exe --project sample/deferred_test.uzproject
 runtime/build/bin/uzengine.exe --project sample/ibl_test.uzproject
 runtime/build/bin/uzengine.exe --project sample/cornell_box.uzproject
 runtime/build/bin/uzengine.exe --project sample/pbr_showcase.uzproject
+runtime/build/bin/uzengine.exe --project sample/textured_quad.uzproject
+runtime/build/bin/uzengine.exe --project sample/postprocess_test.uzproject
+runtime/build/bin/uzengine.exe --project sample/instancing_test.uzproject
+runtime/build/bin/uzengine.exe --project sample/material_test.uzproject
 ```
 
 ## Controls (all demos)
@@ -42,10 +46,14 @@ runtime/build/bin/uzengine.exe --project sample/pbr_showcase.uzproject
 |------|-------------|----------|
 | `camera_test` | Single white cube with FPS camera | Basic rendering, camera control |
 | `mesh_test` | Single white cube (same as camera_test) | Mesh loading, transforms |
+| `textured_quad` | Checker ground plane from above | Texture loading, UV mapping |
+| `postprocess_test` | 3 white cubes + sun | Tone mapping, FXAA, bloom |
 | `deferred_test` | 5 Stonebricks cubes + debug views | PBR textures, GBuffer visualization |
 | `ibl_test` | 5 Stonebricks cubes + IBL | Image-based lighting |
+| `instancing_test` | 1000 cubes in 10x10x10 grid (Lua-spawned) | GPU instancing, InstanceBatcher |
+| `material_test` | 5 spheres with different blend modes | Emissive, masked, translucent, additive, opaque |
 | `cornell_box` | Classic GI test box (red/green walls + sphere) | Procedural mesh, solid materials, atmosphere, fog |
-| `pbr_showcase` | Multi-material showcase | Full PBR pipeline, multiple materials |
+| `pbr_showcase` | Multi-material showcase (cubes + spheres) | Full PBR pipeline, multiple PBR texture sets |
 
 ## Structure
 
@@ -53,22 +61,31 @@ runtime/build/bin/uzengine.exe --project sample/pbr_showcase.uzproject
 sample/
 ├── camera_test.uzproject
 ├── mesh_test.uzproject
+├── textured_quad.uzproject
+├── postprocess_test.uzproject
 ├── deferred_test.uzproject
 ├── ibl_test.uzproject
+├── instancing_test.uzproject
+├── material_test.uzproject
 ├── cornell_box.uzproject
 ├── pbr_showcase.uzproject
 └── content/
     ├── scenes/
     │   ├── camera_test.uzscene
     │   ├── mesh_test.uzscene
+    │   ├── textured_quad.uzscene
+    │   ├── postprocess_test.uzscene
     │   ├── deferred_test.uzscene
     │   ├── ibl_test.uzscene
+    │   ├── instancing_test.uzscene
+    │   ├── material_test.uzscene
     │   ├── cornell_box.uzscene
     │   ├── pbr_showcase.uzscene
     │   └── demo.uzscene
     ├── scripts/
     │   ├── camera_test_controller.lua
     │   ├── deferred_test_controller.lua
+    │   ├── instancing_grid_setup.lua
     │   ├── cornell_box_setup.lua
     │   ├── pbr_showcase_controller.lua
     │   ├── pbr_controller.lua
@@ -79,7 +96,8 @@ sample/
     └── textures/
         ├── Stonebricks/         # PBR texture set
         ├── Concrete/            # PBR texture set
-        └── MetalCorroded/       # PBR texture set
+        ├── MetalCorroded/       # PBR texture set
+        └── checker.png          # Debug checker pattern
 ```
 
 ## File Formats
@@ -90,6 +108,16 @@ sample/
 | `.uzscene` | Scene definition | JSON — entities, components, hierarchy |
 | `.uzmesh` | Mesh data | Binary — UZMH header + vertex/index data |
 | `.lua` | Script | Lua — `on_start`/`on_update`/`on_stop` lifecycle |
+
+## C++ Demos (RHI-level)
+
+Two demos remain as C++ executables because they test the RHI layer directly
+(no scene system, no ECS):
+
+```bash
+cd runtime/demos/clear_screen && zig build && zig-out/bin/clear_screen.exe
+cd runtime/demos/triangle && zig build && zig-out/bin/triangle.exe
+```
 
 ## Building
 

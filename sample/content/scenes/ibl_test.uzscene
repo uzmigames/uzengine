@@ -6,13 +6,29 @@
       "name": "Sun",
       "components": {
         "transform": {
-          "position": [0, 0, 20],
-          "rotation": [50, -30, 0],
-          "scale": [1, 1, 1]
+          "position": [
+            0,
+            0,
+            20
+          ],
+          "rotation": [
+            50,
+            -30,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
         },
         "light": {
           "type": "directional",
-          "color": [3.0, 2.85, 2.7],
+          "color": [
+            3.0,
+            2.85,
+            2.7
+          ],
           "intensity": 1.0
         }
       }
@@ -20,8 +36,21 @@
     {
       "name": "Cube_1",
       "components": {
-        "transform": { "position": [-400, 0, 0], "scale": [80, 80, 80] },
-        "mesh": { "asset": "meshes/cube.uzmesh" },
+        "transform": {
+          "position": [
+            -400,
+            0,
+            0
+          ],
+          "scale": [
+            80,
+            80,
+            80
+          ]
+        },
+        "mesh": {
+          "asset": "meshes/cube.uzmesh"
+        },
         "material": {
           "albedo": "textures/Stonebricks/stonebricks_albedo.jpg",
           "normal": "textures/Stonebricks/stonebricks_normal.jpg",
@@ -34,8 +63,21 @@
     {
       "name": "Cube_2",
       "components": {
-        "transform": { "position": [-200, 0, 0], "scale": [80, 80, 80] },
-        "mesh": { "asset": "meshes/cube.uzmesh" },
+        "transform": {
+          "position": [
+            -200,
+            0,
+            0
+          ],
+          "scale": [
+            80,
+            80,
+            80
+          ]
+        },
+        "mesh": {
+          "asset": "meshes/cube.uzmesh"
+        },
         "material": {
           "albedo": "textures/Stonebricks/stonebricks_albedo.jpg",
           "normal": "textures/Stonebricks/stonebricks_normal.jpg",
@@ -48,8 +90,21 @@
     {
       "name": "Cube_3",
       "components": {
-        "transform": { "position": [0, 0, 0], "scale": [80, 80, 80] },
-        "mesh": { "asset": "meshes/cube.uzmesh" },
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            80,
+            80,
+            80
+          ]
+        },
+        "mesh": {
+          "asset": "meshes/cube.uzmesh"
+        },
         "material": {
           "albedo": "textures/Stonebricks/stonebricks_albedo.jpg",
           "normal": "textures/Stonebricks/stonebricks_normal.jpg",
@@ -62,8 +117,21 @@
     {
       "name": "Cube_4",
       "components": {
-        "transform": { "position": [200, 0, 0], "scale": [80, 80, 80] },
-        "mesh": { "asset": "meshes/cube.uzmesh" },
+        "transform": {
+          "position": [
+            200,
+            0,
+            0
+          ],
+          "scale": [
+            80,
+            80,
+            80
+          ]
+        },
+        "mesh": {
+          "asset": "meshes/cube.uzmesh"
+        },
         "material": {
           "albedo": "textures/Stonebricks/stonebricks_albedo.jpg",
           "normal": "textures/Stonebricks/stonebricks_normal.jpg",
@@ -76,8 +144,21 @@
     {
       "name": "Cube_5",
       "components": {
-        "transform": { "position": [400, 0, 0], "scale": [80, 80, 80] },
-        "mesh": { "asset": "meshes/cube.uzmesh" },
+        "transform": {
+          "position": [
+            400,
+            0,
+            0
+          ],
+          "scale": [
+            80,
+            80,
+            80
+          ]
+        },
+        "mesh": {
+          "asset": "meshes/cube.uzmesh"
+        },
         "material": {
           "albedo": "textures/Stonebricks/stonebricks_albedo.jpg",
           "normal": "textures/Stonebricks/stonebricks_normal.jpg",
@@ -91,8 +172,16 @@
       "name": "MainCamera",
       "components": {
         "transform": {
-          "position": [0, -500, 200],
-          "rotation": [-20, 0, 0]
+          "position": [
+            0,
+            -500,
+            200
+          ],
+          "rotation": [
+            -20,
+            0,
+            0
+          ]
         },
         "camera": {
           "fov": 90,
@@ -105,7 +194,85 @@
     {
       "name": "Controller",
       "components": {
-        "script": { "path": "scripts/deferred_test_controller.lua" }
+        "script": {
+          "path": "scripts/deferred_test_controller.lua"
+        }
+      }
+    },
+    {
+      "name": "SkyAtmosphere",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            1020
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "sky_atmosphere": {}
+      }
+    },
+    {
+      "name": "SkyLight",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            690
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "sky_light": {
+          "intensity": 0.8,
+          "light_color": [
+            0.85,
+            0.9,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "HeightFog",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            -5000
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "height_fog": {}
       }
     }
   ]

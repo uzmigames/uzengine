@@ -1,0 +1,219 @@
+{
+  "name": "Post-Process Test",
+  "version": "1.0",
+  "entities": [
+    {
+      "name": "Sun",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            500
+          ],
+          "rotation": [
+            45,
+            -30,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "light": {
+          "type": "directional",
+          "color": [
+            3.0,
+            2.85,
+            2.7
+          ],
+          "intensity": 1.0
+        }
+      }
+    },
+    {
+      "name": "Cube_Left",
+      "components": {
+        "transform": {
+          "position": [
+            -300,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            100,
+            100,
+            100
+          ]
+        },
+        "mesh": {
+          "asset": "meshes/cube.uzmesh"
+        }
+      }
+    },
+    {
+      "name": "Cube_Center",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            100,
+            100,
+            100
+          ]
+        },
+        "mesh": {
+          "asset": "meshes/cube.uzmesh"
+        }
+      }
+    },
+    {
+      "name": "Cube_Right",
+      "components": {
+        "transform": {
+          "position": [
+            300,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            100,
+            100,
+            100
+          ]
+        },
+        "mesh": {
+          "asset": "meshes/cube.uzmesh"
+        }
+      }
+    },
+    {
+      "name": "MainCamera",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            -400,
+            300
+          ],
+          "rotation": [
+            -25,
+            0,
+            0
+          ]
+        },
+        "camera": {
+          "fov": 90,
+          "near": 1,
+          "far": 100000,
+          "active": true
+        }
+      }
+    },
+    {
+      "name": "Controller",
+      "components": {
+        "script": {
+          "path": "scripts/camera_test_controller.lua"
+        }
+      }
+    },
+    {
+      "name": "SkyAtmosphere",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            1020
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "sky_atmosphere": {}
+      }
+    },
+    {
+      "name": "SkyLight",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            690
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "sky_light": {
+          "intensity": 0.8,
+          "light_color": [
+            0.85,
+            0.9,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "HeightFog",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            -5000
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "height_fog": {}
+      }
+    }
+  ]
+}
