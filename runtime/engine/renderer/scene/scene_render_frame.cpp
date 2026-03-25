@@ -7,6 +7,7 @@
 ///   - RegisterGeometryPasses()  → frame/frame_geometry.cpp
 ///   - RegisterLightingPasses()  → frame/frame_lighting.cpp
 ///   - RegisterPostProcessPasses() → frame/frame_postprocess.cpp
+///   - RegisterDecalPasses()     → frame/frame_decals.cpp
 ///   - RegisterOverlayPasses()   → frame/frame_overlay.cpp
 
 #include "scene_renderer.h"
@@ -86,7 +87,9 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     // ── Register render graph passes in pipeline order ──────────────────
     RegisterShadowPasses(rgBuilder, ctx);
     RegisterGeometryPasses(rgBuilder, ctx);
+    RegisterDecalPasses(rgBuilder, ctx);
     RegisterLightingPasses(rgBuilder, ctx);
+    RegisterParticlePasses(rgBuilder, ctx);
     RegisterPostProcessPasses(rgBuilder, ctx);
     RegisterOverlayPasses(rgBuilder, ctx);
 

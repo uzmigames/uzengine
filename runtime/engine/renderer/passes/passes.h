@@ -31,3 +31,7 @@
 #include "postprocess/velocity_pass.h"
 #include "postprocess/postprocess_math.h"
 #include "postprocess/postprocess_stack.h"
+
+// VFX passes
+#include "engine/vfx/passes/particle_simulation_pass.h"
+#include "engine/vfx/passes/particle_render_pass.h"

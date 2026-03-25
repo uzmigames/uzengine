@@ -93,6 +93,9 @@ class SdfAtlasManager;
 class DynamicResolutionController;
 class CloudPass;
 struct CloudPassInput;
+class VFXSystem;
+class DecalManager;
+class TrailSystem;
 namespace rg { class RgResourcePool; }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -188,6 +191,38 @@ public:
     /// Safe to call multiple times or without prior `Init()`. The caller must
     /// ensure the GPU is idle before calling this (no in-flight frames).
     void Shutdown();
+
+    // ── VFX System ────────────────────────────────────────────────────────
+
+    /// Sets the VFX system reference for particle rendering.
+    ///
+    /// The VFX system provides active emitter lists to RegisterParticlePasses().
+    /// The pointer must remain valid until Shutdown() or the next SetVFXSystem()
+    /// call. Pass nullptr to disable particle rendering.
+    ///
+    /// # Parameters
+    /// - `vfx`: Non-owning pointer to the VFX system, or nullptr.
+    void SetVFXSystem(VFXSystem* vfx) { m_vfxSystem = vfx; }
+
+    /// Sets the decal manager reference for deferred decal rendering.
+    ///
+    /// The decal manager provides frustum-culled, sorted decal lists to
+    /// RegisterDecalPasses(). The pointer must remain valid until Shutdown()
+    /// or the next SetDecalManager() call. Pass nullptr to disable decal rendering.
+    ///
+    /// # Parameters
+    /// - `mgr`: Non-owning pointer to the DecalManager, or nullptr.
+    void SetDecalManager(DecalManager* mgr) { m_decalManager = mgr; }
+
+    /// Sets the trail system reference for ribbon trail rendering.
+    ///
+    /// The trail system provides per-trail render data to RegisterParticlePasses().
+    /// The pointer must remain valid until Shutdown() or the next SetTrailSystem()
+    /// call. Pass nullptr to disable trail rendering.
+    ///
+    /// # Parameters
+    /// - `sys`: Non-owning pointer to the TrailSystem, or nullptr.
+    void SetTrailSystem(TrailSystem* sys) { m_trailSystem = sys; }
 
     // ── Configuration ──────────────────────────────────────────────────────
 
@@ -592,6 +627,28 @@ private:
     std::unique_ptr<Camera> m_camera;
     std::unique_ptr<FPSCameraController> m_cameraCtrl;
     std::unique_ptr<rg::RgResourcePool> m_rgPool;
+
+    /// VFX system — manages GPU particle emitters and budget. Non-owning.
+    /// Set via SetVFXSystem(). Null if no VFX is active.
+    VFXSystem* m_vfxSystem = nullptr;
+
+    /// Decal manager — provides frustum-culled, sorted decals for deferred
+    /// projection into the G-Buffer. Non-owning. Set via SetDecalManager().
+    /// Null if no decals are active.
+    DecalManager* m_decalManager = nullptr;
+
+    /// Trail system — provides per-trail ribbon mesh data for transparent
+    /// phase rendering. Non-owning. Set via SetTrailSystem().
+    /// Null if no trails are active.
+    TrailSystem* m_trailSystem = nullptr;
+
+    /// Unit cube vertex buffer for decal projection OBBs.
+    /// Created once in Init(), destroyed in Shutdown().
+    RHIBufferHandle m_decalCubeVB;
+
+    /// Unit cube index buffer for decal projection OBBs (36 indices, uint16).
+    /// Created once in Init(), destroyed in Shutdown().
+    RHIBufferHandle m_decalCubeIB;
 
     // ── Fallback Textures (SM5 unconditional sampling) ────────────────────
 
@@ -1189,6 +1246,14 @@ private:
     /// GTAO, DFS, SSR, and deferred lighting (or forward PBR).
     void RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
 
+    /// Registers deferred decal passes that project decals onto the G-Buffer.
+    ///
+    /// Scheduled between the geometry pass and the lighting pass so that
+    /// decals modify albedo/normal/roughness before lighting reads them.
+    /// No-op if m_decalManager is null, uninitialized, or has no active decals.
+    /// Gracefully skips the pass when the decal pipeline is not yet compiled.
+    void RegisterDecalPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
+
     /// Registers lighting-related compute passes: GTAO, DFS, SSR, and the
     /// deferred lighting (or debug view) pass.
     void RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
@@ -1200,6 +1265,15 @@ private:
     /// Registers overlay passes: atmosphere, fog, editor grid, stats overlay,
     /// screenshot capture, and present transition.
     void RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
+
+    /// Registers VFX particle passes: compute simulation (spawn, update,
+    /// indirect args) followed by transparent-phase billboard rendering
+    /// (back-to-front sorted).
+    ///
+    /// Placed after lighting and before post-processing in the frame pipeline.
+    /// No-op if m_vfxSystem is null, uninitialized, or has no active emitters.
+    /// Gracefully skips passes when required pipelines are not yet compiled.
+    void RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
 
     /// Registers CVars in the global CVarRegistry. Called once from Init().
     void RegisterCVars();

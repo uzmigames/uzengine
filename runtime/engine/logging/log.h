@@ -232,3 +232,4 @@ UZ_DECLARE_LOG_CATEGORY(CrashHandler); ///< Crash handling and diagnostics (mini
 UZ_DECLARE_LOG_CATEGORY(App);          ///< Demo/application framework (lifecycle, frame timing)
 UZ_DECLARE_LOG_CATEGORY(Scripting);    ///< Lua scripting VM (sandbox, bindings, hot-reload)
 UZ_DECLARE_LOG_CATEGORY(Material);     ///< Material graph system (expressions, compiler, serialization)
+UZ_DECLARE_LOG_CATEGORY(VFX);          ///< VFX / GPU particle system (emitters, budget, simulation)

@@ -81,6 +81,16 @@ Located in [guides/](guides/):
 | [cvar-reference.md](guides/cvar-reference.md) | Console variable reference — 60+ CVars documented |
 | [distance-field-shadows.md](guides/distance-field-shadows.md) | SDF shadow atlas and distance field tracing |
 | [film-tonemap-artist-controls.md](guides/film-tonemap-artist-controls.md) | Film tonemap artist controls (slope, toe, shoulder, etc.) |
+| [vfx-distortion-pipeline.md](guides/vfx-distortion-pipeline.md) | VFX screen-space distortion — two-pass accumulation and resolve pipeline |
+| [vfx-flipbook-subuv-guide.md](guides/vfx-flipbook-subuv-guide.md) | Flipbook/SubUV sprite sheet animation — configuration, blend modes, HLSL functions |
+| [vfx-gpu-particle-sort.md](guides/vfx-gpu-particle-sort.md) | GPU particle sort system — bitonic merge sort for depth-ordered alpha blending |
+| [vfx-attractor-forces.md](guides/vfx-attractor-forces.md) | VFX attractor forces — three falloff modes, multi-attractor support, kill-on-arrival |
+| [vfx-vector-field-guide.md](guides/vfx-vector-field-guide.md) | VFX vector field sampling — 3D texture encoding, UVW mapping, tightness blending, animated fields |
+| [vfx-sub-emitter-system.md](guides/vfx-sub-emitter-system.md) | VFX sub-emitter system — GPU→CPU readback pipeline, trigger modes, event payloads, multi-level cascades |
+| [vfx-constraint-modules.md](guides/vfx-constraint-modules.md) | VFX constraint modules — Orbit, Pin (Hooke's law), DistanceConstraint for spatial relationships |
+| [lua-vfx-api-reference.md](guides/lua-vfx-api-reference.md) | Lua VFX API — particle emitter spawning, parameter control, LOD, budget tracking, composite effects |
+| [lua-vfx-trail-api.md](guides/lua-vfx-trail-api.md) | Lua Trail API — ribbon creation, color/width animation, point lifetime management, sword and projectile trails |
+| [lua-vfx-decal-api.md](guides/lua-vfx-decal-api.md) | Lua Decal API — impact decals, blend modes, normal intensity, scorch marks, blood splats, crack patterns |
 | [gtao-ambient-occlusion.md](guides/gtao-ambient-occlusion.md) | GTAO ambient occlusion — compute, denoise, temporal, upsample |
 | [pbr-brdf-ue5-parity.md](guides/pbr-brdf-ue5-parity.md) | PBR BRDF reference parity guide |
 | [scene-load-optimization.md](guides/scene-load-optimization.md) | Scene loading optimization and profiling |
