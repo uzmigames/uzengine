@@ -338,6 +338,10 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                             cmd->SetFragmentTexture(3, drawCmd.metallicTexture.IsValid()  ? drawCmd.metallicTexture  : desc.fallbackBlack);
                             cmd->SetFragmentTexture(4, drawCmd.aoTexture.IsValid()        ? drawCmd.aoTexture        : desc.fallbackWhite);
                             cmd->SetFragmentTexture(5, drawCmd.emissiveTexture.IsValid()  ? drawCmd.emissiveTexture  : desc.fallbackBlack);
+                            // t6 (opacityTexture) — not bound because DrawCommand has no
+                            // RHITextureHandle for opacity. The shader defaults to sampling
+                            // a null SRV (returns 0) and uses the scalar opacity field instead.
+                            // Opacity via texture is bindless-only (opacitySrvIndex in CB).
                         }
                     }
 

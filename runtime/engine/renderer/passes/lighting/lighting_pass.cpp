@@ -132,7 +132,19 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
                 cmd->SetFragmentTexture(2, desc.depthTextureForSrv);
                 cmd->SetFragmentTexture(3, desc.shadowAtlasTexture);
                 cmd->SetFragmentTexture(4, desc.positionTexture);
+                // t5-t7 (IBL irradiance, prefiltered, BRDF LUT) are bound by
+                // ShaderParameterBinder via PerFrameParams metadata above.
+                // t8: transmittance LUT for aerial perspective
+                if (desc.transmittanceLutTexture.IsValid()) {
+                    cmd->SetFragmentTexture(8, desc.transmittanceLutTexture);
+                }
+                // t9: GTAO filtered AO texture
+                if (desc.gtaoTexture.IsValid()) {
+                    cmd->SetFragmentTexture(9, desc.gtaoTexture);
+                }
                 cmd->SetFragmentTexture(10, desc.emissiveTexture);
+                // t11 (local shadow atlas) is bound by ShaderParameterBinder
+                // via ShadowDataParams metadata above.
             }
 
             // ── Viewport and scissor ─────────────────────────────────────

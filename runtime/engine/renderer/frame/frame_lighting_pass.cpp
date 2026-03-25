@@ -82,6 +82,14 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
             lightDesc.iblPrefiltered  = m_iblBaker->GetPrefilteredTexture();
             lightDesc.iblBrdfLut      = m_iblBaker->GetBRDFLutTexture();
         }
+        // Transmittance LUT for SM5 fallback (t8) — aerial perspective
+        if (m_transmittanceLut.IsValid() && m_transmittanceLutFilled) {
+            lightDesc.transmittanceLutTexture = m_transmittanceLut;
+        }
+        // GTAO filtered AO texture for SM5 fallback (t9)
+        if (m_gtaoPass && m_gtaoPass->IsInitialized() && m_gtaoPass->settings.enabled) {
+            lightDesc.gtaoTexture = m_gtaoPass->GetFilteredAOTexture();
+        }
         lightDesc.bindless            = ctx.bindless;
         lightDesc.viewportWidth       = ctx.renderWidth;
         lightDesc.viewportHeight      = ctx.renderHeight;

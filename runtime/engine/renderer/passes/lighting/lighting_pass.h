@@ -76,6 +76,8 @@ struct LightingPassDesc {
     RHITextureHandle  iblIrradiance;    ///< IBL irradiance cubemap (SM5 fallback, bound at t5).
     RHITextureHandle  iblPrefiltered;   ///< IBL prefiltered specular cubemap (SM5 fallback, bound at t6).
     RHITextureHandle  iblBrdfLut;       ///< BRDF integration LUT (SM5 fallback, bound at t7).
+    RHITextureHandle  transmittanceLutTexture; ///< Atmosphere transmittance LUT (SM5 fallback, bound at t8).
+    RHITextureHandle  gtaoTexture;     ///< GTAO filtered AO texture (SM5 fallback, bound at t9).
     bool              bindless;         ///< True if SM6.6 bindless path is active.
     float             viewportWidth;    ///< Viewport width in pixels.
     float             viewportHeight;   ///< Viewport height in pixels.

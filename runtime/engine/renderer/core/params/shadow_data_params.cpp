@@ -7,10 +7,11 @@
 namespace uz {
 
 /// SM5 shadow texture register slots.
+/// Only shadowAtlas (t3) and localShadowAtlas (t11) have non-bindless register
+/// declarations in deferred_lighting_ps.hlsl. Static shadow atlas and DFS output
+/// are bindless-only (accessed via CB scalar indices + ResourceDescriptorHeap).
 static constexpr uint32_t kShadowAtlasSlot        = 3;
-static constexpr uint32_t kStaticShadowAtlasSlot  = 8;
-static constexpr uint32_t kDfsOutputSlot           = 9;
-static constexpr uint32_t kLocalShadowAtlasSlot    = 11;
+static constexpr uint32_t kLocalShadowAtlasSlot   = 11;
 
 const ShaderParameterMetadata& ShadowDataParams::GetMetadata()
 {
@@ -39,9 +40,13 @@ const ShaderParameterMetadata& ShadowDataParams::GetMetadata()
         {"localShadowCount",      ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(ShadowDataParams, localShadowCount)),      sizeof(uint32_t),   0},
 
         // ── Resource members (drive texture binding on SM5) ──
+        // Only shadowAtlas (t3) and localShadowAtlas (t11) are bound as SM5
+        // fragment textures. Static shadow atlas and DFS output are accessed
+        // exclusively via bindless ResourceDescriptorHeap[index] in the shader,
+        // so they have no non-bindless register slot. Binding them at t8/t9 was
+        // incorrect — those slots are transmittanceLutTex and gtaoTexture in
+        // deferred_lighting_ps.hlsl.
         {"shadowAtlas",           ShaderParamType::Texture2D, static_cast<uint32_t>(offsetof(ShadowDataParams, shadowAtlas)),        0, kShadowAtlasSlot},
-        {"staticShadowAtlas",     ShaderParamType::Texture2D, static_cast<uint32_t>(offsetof(ShadowDataParams, staticShadowAtlas)),  0, kStaticShadowAtlasSlot},
-        {"dfsOutputTexture",      ShaderParamType::Texture2D, static_cast<uint32_t>(offsetof(ShadowDataParams, dfsOutputTexture)),   0, kDfsOutputSlot},
         {"localShadowAtlas",      ShaderParamType::Texture2D, static_cast<uint32_t>(offsetof(ShadowDataParams, localShadowAtlas)),   0, kLocalShadowAtlasSlot},
     };
 
@@ -49,7 +54,7 @@ const ShaderParameterMetadata& ShadowDataParams::GetMetadata()
         kMembers,
         sizeof(kMembers) / sizeof(kMembers[0]),
         2304,  // cbSize — matches sizeof(ShadowDataCB), 256-byte aligned
-        4,    // textureCount (shadowAtlas + staticShadowAtlas + dfsOutputTexture + localShadowAtlas)
+        2,    // textureCount (shadowAtlas + localShadowAtlas; static shadow & DFS are bindless-only)
         0,    // samplerCount
         0,    // uavCount
     };
