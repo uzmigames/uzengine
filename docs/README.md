@@ -71,6 +71,7 @@ Located in [guides/](guides/):
 
 | Guide | Description |
 |-------|-------------|
+| **[build-and-deployment.md](guides/build-and-deployment.md)** | **⭐ START HERE** — Complete build pipeline: runtime DLL, N-API addon (cmake-js), extension deployment, troubleshooting |
 | [material-graph-authoring.md](guides/material-graph-authoring.md) | Material graph authoring — node types, `.uzmat` JSON format, procedural patterns, GPU baking, Lua API |
 | [temporal-upscaling.md](guides/temporal-upscaling.md) | Temporal upscaling (TAA/TSR), screen percentage system, dynamic resolution, and Lua API |
 | [shader-parameter-binding-guide.md](guides/shader-parameter-binding-guide.md) | Macro system, metadata definition, and `ShaderParameterBinder` usage |

@@ -7,6 +7,8 @@
     IRHIDevice* m_device = nullptr;
     bool m_editorMode = false;            ///< When true, editor grid + stats overlay are rendered.
     Entity m_selectedEntity{};            ///< Currently selected entity for editor outline/gizmo rendering.
+    uint8_t m_gizmoMode = 0;             ///< GizmoMode: 0=Translate, 1=Rotate, 2=Scale.
+    uint8_t m_gizmoSpace = 0;            ///< GizmoSpace: 0=World, 1=Local.
 
     // ── Engine Infrastructure ──────────────────────────────────────────────
 
@@ -16,6 +18,7 @@
     std::unique_ptr<CBRingAllocator> m_cbRing;
     std::unique_ptr<EditorGrid> m_editorGrid;
     std::unique_ptr<OutlinePass> m_outlinePass;
+    std::unique_ptr<GizmoRenderer> m_gizmoRenderer;
     std::unique_ptr<StatsOverlay> m_statsOverlay;
     std::unique_ptr<Camera> m_camera;
     std::unique_ptr<FPSCameraController> m_cameraCtrl;

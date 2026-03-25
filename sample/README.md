@@ -4,6 +4,8 @@ Demo scenes showcasing UzEngine features via Lua scripting and `.uzscene` files.
 
 ## Running
 
+### Standalone Runtime
+
 Each demo has a `.uzproject` file in `projects/`. Run with `uzengine.exe`:
 
 ```bash
@@ -133,10 +135,28 @@ migrating to the sample format:
 cd runtime/demos/triangle && zig build && zig-out/bin/triangle.exe
 ```
 
+### VSCode Extension
+
+To run demos inside the VSCode extension:
+
+1. Build the VSCode extension: `scripts/build.ps1`
+2. Press F5 to launch Extension Development Host
+3. Command palette: `uzengine.openScene` → select `sample/projects/pbr_showcase.uzproject`
+4. Viewport panel opens with native HWND rendering (DX12 swapchain)
+
 ## Building
 
+For standalone runtime:
+
 ```bash
-cd runtime && zig build    # Build the runtime (includes uzengine.exe)
+cd runtime && zig build -Ddll=true    # Build the runtime (includes uzengine.exe)
+```
+
+For full VSCode extension:
+
+```bash
+scripts/build.ps1                      # Builds runtime + N-API addon + extension
 ```
 
 The `uzengine.exe` binary is output to `runtime/build/bin/`.
+The `.node` addon and DLLs are deployed to `extension/native/`.

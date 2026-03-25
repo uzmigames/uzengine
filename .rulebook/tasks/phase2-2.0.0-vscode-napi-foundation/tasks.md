@@ -45,6 +45,7 @@
 
 ## Phase D: Build Pipeline
 
+- [x] D.0 Add `uzengine_runtime.dll` shared library target to `runtime/build.zig` (`-Ddll=true`). Exports all 25 `uz_*` C API functions via `__declspec(dllexport)` by recompiling `runtime.cpp` with `-DUZ_BUILDING_DLL=1`. Produces `build/bin/uzengine_runtime.dll` (39MB) and `build/lib/uzengine_runtime.lib` (MSVC-compatible import lib, 6KB). Added `UZ_API` macro to `runtime.h` for dllexport/dllimport. Solves LNK1143 and C++ ABI incompatibility when MSVC N-API addon links against Zig-compiled code.
 - [ ] D.1 Verify root `npm run build` works end-to-end: `zig build` (runtime .lib) → `cmake-js` (napi .node with MSVC) → `cp .node extension/native/` → `tsc` (extension) → VSIX package.
 - [ ] D.2 Add `preBuild` task in `.vscode/tasks.json` that calls `uz_pool_shutdown()` (or kills runtime processes) before recompile.
 - [ ] D.3 Test full cycle: edit C++ → build → reload extension → viewport still works.

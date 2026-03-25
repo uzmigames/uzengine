@@ -19,6 +19,8 @@
 #include "rhi.h"
 #include "log.h"
 #include "editor_grid.h"
+#include "editor_input_handler.h"
+#include "gizmo_renderer.h"
 #include "outline_pass.h"
 #include "stats_overlay.h"
 
@@ -118,6 +120,25 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
             if (m_editorMode) {
                 m_editorGrid->Draw(cmd, *m_cbRing, *m_camera,
                                    depthSrv, ctx.vpWidth, ctx.vpHeight);
+            }
+
+            // ── Gizmo (transform handles on selected entity) ────────
+            if (m_editorMode && m_selectedEntity.IsValid()
+                && m_gizmoRenderer && m_gizmoRenderer->IsInitialized()) {
+                // Find the selected entity's world position from the draw list.
+                Vec3 entityPos{0.f, 0.f, 0.f};
+                Quat entityRot = Quat::Identity();
+                for (const auto& dc : ctx.drawList.GetCommands()) {
+                    if (dc.entityId == m_selectedEntity.id) {
+                        entityPos = dc.worldMatrix.getTranslation();
+                        entityRot = Quat::FromMatrix(dc.worldMatrix);
+                        break;
+                    }
+                }
+                m_gizmoRenderer->Draw(cmd, *m_cbRing, *m_camera,
+                                       entityPos, entityRot,
+                                       static_cast<GizmoMode>(ctx.gizmoModeRaw),
+                                       static_cast<GizmoSpace>(ctx.gizmoSpaceRaw));
             }
 
             if (m_editorMode && m_statsOverlayInitialized) {

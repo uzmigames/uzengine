@@ -149,7 +149,7 @@ void SelectionManager::SelectAtScreenPos(float screenX, float screenY,
         Vec3 objectMax{ kDefaultHalfExtent,  kDefaultHalfExtent,  kDefaultHalfExtent};
 
         // Try to get actual mesh bounds from the renderer
-        if (renderer && mesh.meshId > 0) {
+        if (renderer && mesh.meshLoaded) {
             Vec3 meshMin, meshMax;
             if (renderer->GetMeshBounds(mesh.meshId, meshMin, meshMax)) {
                 objectMin = meshMin;
@@ -185,11 +185,13 @@ void SelectionManager::SelectAtScreenPos(float screenX, float screenY,
         float tMin = 0.0f;
         float tMax = 0.0f;
         if (RayIntersectsAABB(rayOrigin, rayDir, aabbMin, aabbMax, tMin, tMax)) {
-            // Use the entry point (tMin) for distance comparison.
-            // If tMin < 0, the ray starts inside the box — use tMax instead.
-            const float hitT = (tMin >= 0.0f) ? tMin : tMax;
-            if (hitT >= 0.0f && hitT < closestT) {
-                closestT = hitT;
+            // Skip objects where the ray starts inside the AABB (tMin < 0)
+            // unless nothing else hits. This prevents the ground plane
+            // (which the camera is always inside) from stealing selection.
+            if (tMin < 0.0f) continue;  // ray inside box — skip
+
+            if (tMin < closestT) {
+                closestT = tMin;
                 closestEntity = world->EntityFromEntt(enttEntity);
             }
         }

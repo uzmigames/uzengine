@@ -87,6 +87,7 @@ class CBRingAllocator;
 class EditorGrid;
 class StatsOverlay;
 class OutlinePass;
+class GizmoRenderer;
 class UploadContext;
 class Camera;
 class FPSCameraController;
@@ -635,6 +636,20 @@ public:
 
     /// Returns the currently selected entity for editor outline rendering.
     [[nodiscard]] Entity GetSelectedEntity() const;
+
+    /// Sets the gizmo manipulation mode (0=Translate, 1=Rotate, 2=Scale).
+    /// Cast from GizmoMode enum defined in editor_input_handler.h.
+    void SetGizmoMode(uint8_t mode) { m_gizmoMode = mode; }
+
+    /// Returns the current gizmo mode.
+    [[nodiscard]] uint8_t GetGizmoMode() const { return m_gizmoMode; }
+
+    /// Sets the gizmo coordinate space (0=World, 1=Local).
+    /// Cast from GizmoSpace enum defined in editor_input_handler.h.
+    void SetGizmoSpace(uint8_t space) { m_gizmoSpace = space; }
+
+    /// Returns the current gizmo space.
+    [[nodiscard]] uint8_t GetGizmoSpace() const { return m_gizmoSpace; }
 
     // ── Mesh Bounds (for editor picking) ──────────────────────────────────
 

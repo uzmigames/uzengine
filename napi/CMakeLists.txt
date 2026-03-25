@@ -1,30 +1,16 @@
 # /// UzEngine N-API Native Addon Build Configuration
 # ///
-# /// MSVC cl.exe compiles .cpp (delay-load hook requires MSVC ABI).
-# /// lld-link links .node (reads Zig/LLVM COMDAT sections that MSVC link.exe can't).
-# /// Both runtime.lib and editor.lib from the Zig build are linked directly.
+# /// MSVC compiles .cpp (Electron delay-load hook requires MSVC ABI).
+# /// Links against uzengine_runtime.lib (import lib for the Zig-built DLL).
+# /// The DLL carries its own libc++, avoiding C++ ABI incompatibility.
 # ///
-# /// # Build
-# /// Use NMake generator from a VS Developer Command Prompt:
-# ///   cmake-js compile -d . --runtime=electron --runtime-version=39.6.0 -G "NMake Makefiles"
+# /// # Prerequisites
+# ///   cd runtime && zig build -Ddll=true
+# ///
+# /// # Build (from VS Developer Command Prompt)
+# ///   cd napi && npx cmake-js compile -d . --runtime=electron --runtime-version=39.6.0
 
 cmake_minimum_required(VERSION 3.15)
-
-# Force lld-link BEFORE project() — NMake generator respects CMAKE_LINKER.
-find_program(LLD_LINK lld-link REQUIRED)
-set(CMAKE_LINKER ${LLD_LINK})
-
-# Force the real Windows SDK resource compiler (not node_modules/.bin/rc).
-find_program(WIN_RC rc.exe
-  PATHS "C:/Program Files (x86)/Windows Kits/10/bin/10.0.26100.0/x64"
-        "C:/Program Files (x86)/Windows Kits/10/bin/10.0.22621.0/x64"
-        "C:/Program Files (x86)/Windows Kits/10/bin/10.0.22000.0/x64"
-  NO_DEFAULT_PATH
-)
-if(WIN_RC)
-  set(CMAKE_RC_COMPILER ${WIN_RC})
-endif()
-
 project(uzengine LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -46,6 +32,8 @@ include_directories(${NODE_ADDON_API_DIR})
 # N-API Configuration
 add_definitions(-DNAPI_VERSION=10)
 add_definitions(-DNAPI_DISABLE_CPP_EXCEPTIONS)
+# Tell runtime.h to use __declspec(dllimport) for uz_* functions
+add_definitions(-DUZ_USING_DLL)
 
 # Runtime C API Header
 include_directories(${CMAKE_SOURCE_DIR}/../runtime/engine/app)
@@ -66,28 +54,24 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
   SUFFIX ".node"
 )
 
-# Runtime + Editor Libraries (Zig-built, LLVM archive format — lld-link reads them)
-set(RUNTIME_LIB_DIR ${CMAKE_SOURCE_DIR}/../runtime/build/lib)
+# Link against DLL import lib (MSVC-compatible, 6KB — all C++ internals are in the DLL)
+find_library(UZENGINE_DLL_IMPORT
+  NAMES uzengine_runtime
+  PATHS ${CMAKE_SOURCE_DIR}/../runtime/build/lib
+  NO_DEFAULT_PATH
+)
 
-find_library(UZENGINE_RUNTIME NAMES runtime PATHS ${RUNTIME_LIB_DIR} NO_DEFAULT_PATH)
-find_library(UZENGINE_EDITOR  NAMES editor  PATHS ${RUNTIME_LIB_DIR} NO_DEFAULT_PATH)
-
-if(NOT UZENGINE_RUNTIME)
-  message(FATAL_ERROR "runtime.lib not found in ${RUNTIME_LIB_DIR} — run 'cd runtime && zig build' first")
-endif()
-if(NOT UZENGINE_EDITOR)
-  message(FATAL_ERROR "editor.lib not found in ${RUNTIME_LIB_DIR} — run 'cd runtime && zig build -Deditor=true' first")
+if(NOT UZENGINE_DLL_IMPORT)
+  message(FATAL_ERROR
+    "uzengine_runtime.lib not found — run 'cd runtime && zig build -Ddll=true' first")
 endif()
 
 target_link_libraries(${PROJECT_NAME}
   ${CMAKE_JS_LIB}
-  ${UZENGINE_RUNTIME}
-  ${UZENGINE_EDITOR}
-  # Win32 system libs required by the runtime
-  d3d12 d3d11 dxgi dxguid gdi32 user32 ole32 shcore shell32 comdlg32 xinput
+  ${UZENGINE_DLL_IMPORT}
 )
 
-# Copy DLLs needed at runtime alongside uzengine.node
+# Copy DLL + dependencies alongside uzengine.node
 set(RUNTIME_BIN_DIR ${CMAKE_SOURCE_DIR}/../runtime/build/bin)
 
 file(GLOB RUNTIME_DLLS "${RUNTIME_BIN_DIR}/*.dll")

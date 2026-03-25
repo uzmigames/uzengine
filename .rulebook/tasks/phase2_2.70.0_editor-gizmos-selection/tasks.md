@@ -19,14 +19,14 @@
 - [x] 3.6 Outline color: orange (1.0, 0.549, 0.0) default. Configurable via SetOutlineColor(). entityId field added to DrawCommand for mesh matching.
 
 ## 4. Gizmo Rendering
-- [ ] 4.1 Create `runtime/editor/gizmo/gizmo_renderer.h/.cpp` — draws translate/rotate/scale gizmo at selected entity's world position.
-- [ ] 4.2 Create `runtime/shaders/editor/gizmo_vs.hlsl` + `gizmo_ps.hlsl` — unlit colored lines/triangles, depth test against scene but always-on-top option.
-- [ ] 4.3 Implement translate gizmo geometry: 3 axis arrows (RGB = XYZ) + 3 plane handles (YZ=red, XZ=green, XY=blue) + center screen-space handle.
-- [ ] 4.4 Implement rotate gizmo geometry: 3 axis circles (RGB = XYZ) + trackball (screen-space rotation).
-- [ ] 4.5 Implement scale gizmo geometry: 3 axis lines with cubes at ends (RGB = XYZ) + center uniform scale cube.
-- [ ] 4.6 Gizmo size: constant screen-space size (scales with camera distance). UE5 default ~120px.
-- [ ] 4.7 Create gizmo pipeline in PipelineLibrary: line + triangle pipelines with depth test + alpha blend.
-- [ ] 4.8 Integrate gizmo draw into `frame_overlay.cpp` after editor grid, before stats overlay.
+- [x] 4.1 Create `runtime/editor/gizmo/gizmo_renderer.h/.cpp` — GizmoRenderer class with Init/Shutdown/Draw/IsInitialized. Owns geometry VBs/IBs, line+triangle pipelines, GizmoCB layout matching b1 root slot. GizmoVertex struct (pos[3]+color[3]=24 bytes).
+- [x] 4.2 Create `runtime/shaders/editor/gizmo_vs.hlsl` + `gizmo_ps.hlsl` — unlit colored output. VS scales vertices by screenScale + translates to gizmoWorldPos. PS passes through color+alpha. Entry point = main. Auto-embedded via uzembed.
+- [x] 4.3 Implement translate gizmo geometry: 3 axis stems (LineList, 2 verts each), 3 arrow cones (8-segment, 16 tris each), 3 plane handles (XY=blue, XZ=green, YZ=red quads at offset 0.3), center cube (gray). All pre-baked with axis colors.
+- [x] 4.4 Implement rotate gizmo geometry: 3 axis circles (64-segment LineList rings, radius 0.85). X-circle in YZ plane, Y-circle in XZ, Z-circle in XY. Per-vertex axis colors.
+- [x] 4.5 Implement scale gizmo geometry: 3 axis stems (same as translate) + 3 tip cubes (half-size 0.04) + center cube (half-size 0.06, gray). Indexed triangle lists.
+- [x] 4.6 Constant screen-space size: screenScale = dist * tan(fov/2) * (120px / 720). Computed per-frame in Draw(), uploaded via GizmoCB. kTargetScreenPx=120.
+- [x] 4.7 Two pipelines: GizmoLinePipeline (LineList) + GizmoTrianglePipeline (TriangleList). Both: depth read (GreaterEqual reversed-Z), no depth write, alpha blend (srcAlpha/invSrcAlpha), no backface culling. Bindless: no IA input layout — vertices fetched via SV_VertexID from StructuredBuffer with SRV index in GizmoCB.vertexBufferSrv. SM5 fallback: register(t0) SRV.
+- [x] 4.8 Integrated into frame_overlay.cpp OverlayPass after editor grid, before stats overlay. Entity position extracted from DrawList worldMatrix via getTranslation(). GizmoMode/Space flow: EditorInputHandler -> uzengine.cpp -> SceneRenderer (m_gizmoMode/Space uint8_t) -> FrameContext (gizmoModeRaw/SpaceRaw) -> frame_overlay.cpp cast to enum. Hover/active axis highlighting: yellow=hover, white=active, 0.3 alpha for inactive during drag.
 
 ## 5. Gizmo Interaction
 - [ ] 5.1 Implement gizmo hit testing: ray vs axis line (cylinder test), ray vs plane handle (quad test), ray vs circle (torus test). Returns axis/plane/none.

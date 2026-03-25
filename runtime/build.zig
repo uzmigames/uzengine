@@ -97,6 +97,7 @@ pub fn build(b: *std.Build) void {
         "engine/debug",
         "editor/grid",
         "editor/outline",
+        "editor/gizmo",
         "editor/font",
         "editor/stats",
         "editor/screenshot",
@@ -658,89 +659,8 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(lib);
 
-    // ── Shared library (DLL) for N-API addon ─────────────────────────────
-    // Exports only the extern "C" uz_* API declared in engine/app/runtime.h.
-    // The DLL carries its own libc++ (Zig/LLVM), so the N-API addon compiled
-    // by MSVC can link against the MSVC-compatible import .lib produced here
-    // without any COMDAT or C++ ABI incompatibility (LNK1143).
-    //
-    // Architecture: the DLL is a thin wrapper module that:
-    //   1. Contains only the extern "C" C API stub (engine/app/runtime.cpp)
-    //      compiled with -DUZ_BUILDING_DLL so __declspec(dllexport) fires.
-    //   2. Links the already-compiled runtime.lib (Zig static lib) to pull in
-    //      all the C++ internals. This avoids duplicate symbol errors that
-    //      would occur if we tried to recompile everything into both a .lib
-    //      and a .dll from the same source module.
-    //
-    // Build:   zig build -Ddll=true
-    // Outputs: zig-out/bin/uzengine_runtime.dll
-    //          zig-out/lib/uzengine_runtime.lib  (MSVC-compatible import lib)
+    // (DLL target is built after editor_lib — see below)
     const build_dll = b.option(bool, "dll", "Also build runtime as shared library (DLL) for N-API addon") orelse false;
-    if (build_dll and is_windows) {
-        // The DLL is a pure re-export of runtime.lib: all C++ internals come
-        // from the already-compiled static lib; we add no new source files.
-        // The __declspec(dllexport) annotations emitted by -DUZ_BUILDING_DLL
-        // in the static lib's runtime.cpp compilation instruct lld-link to
-        // expose those symbols as DLL exports automatically.
-        //
-        // Why no duplicate symbols: runtime.lib is linked as a whole archive
-        // into the DLL; there is only one copy of each object file.  We do NOT
-        // recompile any .cpp here — we only provide the DLL shell and the
-        // system library links that a shared link requires.
-        //
-        // The static lib (runtime.lib) is rebuilt with UZ_BUILDING_DLL=1 in
-        // this invocation so that the dllexport attribute is present in the
-        // COFF .obj files that lld reads out of the archive.
-        runtime_mod.addCMacro("UZ_BUILDING_DLL", "1");
-
-        // Empty DLL module — no source files of its own.
-        const dll_mod = b.createModule(.{
-            .target = target,
-            .optimize = optimize,
-        });
-        dll_mod.link_libc = true;
-        dll_mod.link_libcpp = true;
-
-        const dll = b.addLibrary(.{
-            .linkage = .dynamic,
-            .name = "uzengine_runtime",
-            .root_module = dll_mod,
-        });
-
-        // Pass runtime.lib directly as a positional linker argument.
-        // When lld-link receives a .lib as a positional argument (not via
-        // /DEFAULTLIB or linkLibrary), it extracts ALL member objects from the
-        // archive — equivalent to /WHOLEARCHIVE on MSVC link.exe.  This is
-        // what causes the __declspec(dllexport) attributes in runtime.lib's
-        // object files (compiled with UZ_BUILDING_DLL=1) to be honoured and
-        // emitted as DLL export entries.
-        dll_mod.addObjectFile(lib.getEmittedBin());
-
-        // The DLL step depends on run_embed for the same reason runtime.lib
-        // does: the generated shader headers must exist before compilation.
-        dll.step.dependOn(&run_embed.step);
-
-        // System libraries — identical to the static lib Windows block above.
-        // These must be listed here too because a DLL link resolves all
-        // unresolved references; a static lib link does not.
-        dll.linkSystemLibrary("d3d12");
-        dll.linkSystemLibrary("d3d11");
-        dll.linkSystemLibrary("dxgi");
-        dll.linkSystemLibrary("dxguid");
-        dll.linkSystemLibrary("ws2_32");
-        dll.linkSystemLibrary("dbghelp");
-        dll.linkSystemLibrary("winmm");
-        dll.linkSystemLibrary("xinput1_4");
-        dll.linkSystemLibrary("shcore");
-        dll.linkSystemLibrary("ole32");
-        dll.linkSystemLibrary("shell32");
-        dll.linkSystemLibrary("comdlg32");
-
-        // LuaJIT: already baked into runtime.lib via addObjectFile in runtime_mod
-        // and will be included when lld extracts the archive.  No duplicate needed.
-
-        b.installArtifact(dll);
-    }
 
     // ── Editor static library (grid, font, stats, screenshot) ────────────
     // Built when -Deditor=true. Links against runtime.lib for includes only.
@@ -752,6 +672,7 @@ pub fn build(b: *std.Build) void {
 
         addCppDir(editor_mod, b, "editor/grid",       cpp_flags);
         addCppDir(editor_mod, b, "editor/outline",    cpp_flags);
+        addCppDir(editor_mod, b, "editor/gizmo",      cpp_flags);
         addCppDir(editor_mod, b, "editor/font",       cpp_flags);
         addCppDir(editor_mod, b, "editor/stats",      cpp_flags);
         addCppDir(editor_mod, b, "editor/screenshot", cpp_flags);
@@ -785,6 +706,97 @@ pub fn build(b: *std.Build) void {
         b.installArtifact(elib);
         break :blk elib;
     };
+
+    // ── Shared library (DLL) for N-API addon ─────────────────────────────
+    // Exports only the extern "C" uz_* API declared in engine/app/runtime.h.
+    // The DLL carries its own libc++ (Zig/LLVM), so the N-API addon compiled
+    // by MSVC can link against the MSVC-compatible import .lib produced here
+    // without any COMDAT or C++ ABI incompatibility (LNK1143).
+    //
+    // Architecture:
+    //   - runtime.cpp is recompiled with -DUZ_BUILDING_DLL=1 so that the
+    //     UZ_API macro expands to __declspec(dllexport) on every uz_* function.
+    //     These exported definitions live in the DLL's own .obj file.
+    //   - runtime.lib is linked as a positional archive for all the C++
+    //     internals (SceneRenderer, World, RHI, etc.) that runtime.cpp calls.
+    //     Because runtime.cpp's own symbols take precedence over the archive
+    //     copy, lld-link uses the dllexport version and the archive copy of
+    //     runtime.cpp is never extracted.
+    //   - editor.lib supplies screenshot_capture.cpp and other editor symbols
+    //     referenced transitively from runtime.cpp.
+    //
+    // Build:   zig build -Ddll=true
+    // Outputs: build/bin/uzengine_runtime.dll
+    //          build/lib/uzengine_runtime.lib  (MSVC-compatible import lib)
+    if (build_dll and is_windows) {
+        const dll_mod = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+        });
+        dll_mod.link_libc = true;
+        dll_mod.link_libcpp = true;
+
+        // Recompile runtime.cpp with -DUZ_BUILDING_DLL=1.
+        // UZ_API in runtime.h expands to __declspec(dllexport), making every
+        // uz_* function definition in this .obj an exported DLL symbol.
+        // All include paths that runtime.cpp needs are added below.
+        const dll_cpp_flags = cpp_flags ++ &[_][]const u8{"-DUZ_BUILDING_DLL=1"};
+        dll_mod.addCSourceFiles(.{
+            .root = b.path("engine/app"),
+            .files = &.{"runtime.cpp"},
+            .flags = dll_cpp_flags,
+        });
+
+        // Include paths — same as runtime_mod so runtime.cpp can resolve all
+        // headers it transitively includes.
+        dll_mod.addIncludePath(b.path("."));
+        for (engine_include_dirs) |dir| dll_mod.addIncludePath(b.path(dir));
+        for (thirdparty_include_dirs) |dir| dll_mod.addIncludePath(b.path(dir));
+        dll_mod.addIncludePath(b.path("build/generated/shaders"));
+        for (windows_engine_include_dirs) |dir| dll_mod.addIncludePath(b.path(dir));
+        for (windows_thirdparty_include_dirs) |dir| dll_mod.addIncludePath(b.path(dir));
+        dll_mod.addIncludePath(b.path("engine/rhi/dx12"));
+        dll_mod.addIncludePath(b.path("engine/rhi/dx11"));
+        dll_mod.addIncludePath(b.path("engine/rhi/vulkan"));
+        dll_mod.addIncludePath(b.path(tp ++ "d3d12ma/src"));
+
+        // runtime.lib — C++ internals referenced by runtime.cpp.
+        // lld-link uses the DLL's own runtime.cpp object for uz_* definitions
+        // and extracts other members from this archive to satisfy remaining
+        // unresolved references.
+        dll_mod.addObjectFile(lib.getEmittedBin());
+        // editor.lib — screenshot_capture.cpp and other editor symbols.
+        dll_mod.addObjectFile(editor_lib.getEmittedBin());
+        // LuaJIT static lib — Lua VM referenced by LuaVM.cpp.
+        dll_mod.addObjectFile(b.path(tp ++ "luajit/src/lua51.lib"));
+
+        const dll = b.addLibrary(.{
+            .linkage = .dynamic,
+            .name = "uzengine_runtime",
+            .root_module = dll_mod,
+        });
+
+        // Depends on the shader-embed step (generated shader headers must exist
+        // before runtime.cpp is compiled).
+        dll.step.dependOn(&run_embed.step);
+
+        // System libraries — same as the static lib Windows block above.
+        dll.linkSystemLibrary("d3d12");
+        dll.linkSystemLibrary("d3d11");
+        dll.linkSystemLibrary("dxgi");
+        dll.linkSystemLibrary("dxguid");
+        dll.linkSystemLibrary("ws2_32");
+        dll.linkSystemLibrary("dbghelp");
+        dll.linkSystemLibrary("winmm");
+        dll.linkSystemLibrary("xinput1_4");
+        dll.linkSystemLibrary("shcore");
+        dll.linkSystemLibrary("ole32");
+        dll.linkSystemLibrary("shell32");
+        dll.linkSystemLibrary("comdlg32");
+        dll.linkSystemLibrary("gdi32");      // GetStockObject — used by font/overlay subsystem
+
+        b.installArtifact(dll);
+    }
 
     // ── Test executable (links runtime lib — no recompilation) ───────────
 

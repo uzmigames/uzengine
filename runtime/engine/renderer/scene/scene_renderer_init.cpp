@@ -20,6 +20,7 @@
 #include "log.h"
 #include "sh_projection.h"
 #include "editor_grid.h"
+#include "gizmo_renderer.h"
 #include "outline_pass.h"
 #include "stats_overlay.h"
 #include "shader_compiler.h"
@@ -107,6 +108,13 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
                              RHIFormat::RGBA8Unorm, RHIFormat::D32Float,
                              width, height)) {
         UZ_LOG(Renderer, Error, "SceneRenderer: failed to init outline pass");
+    }
+
+    // ── Gizmo Renderer (transform gizmo handles) ────────────────────
+    m_gizmoRenderer = std::make_unique<GizmoRenderer>();
+    if (!m_gizmoRenderer->Init(device, m_shaderMgr->GetPipeline(),
+                                RHIFormat::RGBA8Unorm, RHIFormat::D32Float)) {
+        UZ_LOG(Renderer, Error, "SceneRenderer: failed to init gizmo renderer");
     }
 
     // ── Stats Overlay (deferred init — needs cmdList in recording state) ─
@@ -1152,17 +1160,19 @@ void SceneRenderer::Shutdown() {
     m_asyncDecoder.reset();
     m_asyncPendingSlots.clear();
 
-    if (m_statsOverlay)  m_statsOverlay->Shutdown();
-    if (m_outlinePass)   m_outlinePass->Shutdown();
-    if (m_editorGrid)    m_editorGrid->Shutdown();
-    if (m_cbRing)        m_cbRing->Shutdown();
-    if (m_pipelines)     m_pipelines->Shutdown();
-    if (m_shaderMgr)     m_shaderMgr->Shutdown();
+    if (m_statsOverlay)    m_statsOverlay->Shutdown();
+    if (m_gizmoRenderer)   m_gizmoRenderer->Shutdown();
+    if (m_outlinePass)     m_outlinePass->Shutdown();
+    if (m_editorGrid)      m_editorGrid->Shutdown();
+    if (m_cbRing)          m_cbRing->Shutdown();
+    if (m_pipelines)       m_pipelines->Shutdown();
+    if (m_shaderMgr)       m_shaderMgr->Shutdown();
 
     m_rgPool.reset();
     m_cameraCtrl.reset();
     m_camera.reset();
     m_statsOverlay.reset();
+    m_gizmoRenderer.reset();
     m_outlinePass.reset();
     m_editorGrid.reset();
     m_cbRing.reset();

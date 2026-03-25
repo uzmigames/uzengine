@@ -400,8 +400,10 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         // Update editor input (before scripts, so editor hotkeys take priority)
         if (editorMode && sceneRendererReady) {
             editorInput.Update(dt);
-            // Sync selection to renderer for outline pass
+            // Sync selection + gizmo state to renderer for outline/gizmo passes
             sceneRenderer.SetSelectedEntity(selectionManager.GetSelected());
+            sceneRenderer.SetGizmoMode(static_cast<uint8_t>(editorInput.GetGizmoMode()));
+            sceneRenderer.SetGizmoSpace(static_cast<uint8_t>(editorInput.GetGizmoSpace()));
         }
 
         // Update Lua scripts

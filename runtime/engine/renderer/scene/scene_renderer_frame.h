@@ -135,6 +135,13 @@ struct FrameContext {
 
     // ── FXAA/CAS render graph resource ──────────────────────────────
     rg::RgResourceId fxaaLdrRes{};
+
+    // ── Editor gizmo state ───────────────────────────────────────────
+    // These are set from the EditorInputHandler during frame setup.
+    // The overlay pass reads them to choose which gizmo geometry to draw.
+    // Using uint8_t to avoid including editor_input_handler.h in this header.
+    uint8_t gizmoModeRaw = 0;   ///< GizmoMode enum cast: 0=Translate, 1=Rotate, 2=Scale.
+    uint8_t gizmoSpaceRaw = 0;  ///< GizmoSpace enum cast: 0=World, 1=Local.
 };
 
 } // namespace uz

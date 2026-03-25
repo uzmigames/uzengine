@@ -63,11 +63,13 @@ scripts/setup.bat    # CMD
 
 All operations go through `scripts/`. The `--compiler` flag selects the toolchain.
 
+**Complete pipeline** (all steps handled automatically):
+
 ```bash
-# Default (Zig)
+# Default (Zig + cmake-js + TypeScript)
 scripts/build.ps1
 
-# MSVC
+# MSVC (static lib for all components)
 scripts/build.ps1 --compiler=msvc
 
 # Clang
@@ -76,6 +78,25 @@ scripts/build.ps1 --compiler=clang
 # CMD equivalent
 scripts/build.bat
 scripts/build.bat --compiler=msvc
+```
+
+**Manual step-by-step** (for development):
+
+```bash
+# 1. Build runtime as DLL + static lib
+cd runtime && zig build -Ddll=true
+
+# 2. Compile N-API addon (MSVC links DLL import lib)
+cd napi && npx cmake-js compile --runtime=electron --runtime-version=39.6.0
+
+# 3. Deploy addon + DLLs to extension
+cp napi/build/Release/uzengine.node extension/native/
+cp napi/build/Release/*.dll extension/native/
+mkdir -p extension/native/D3D12
+cp napi/build/Release/D3D12/*.dll extension/native/D3D12/
+
+# 4. Build extension TypeScript
+cd extension && npx tsc
 ```
 
 > The build scripts check for locked files (e.g. `.node` loaded by VSCode) before building.
@@ -98,17 +119,43 @@ Press **F5** in VSCode to launch the Extension Development Host, or:
 npm run build:debug
 ```
 
-## Build Pipeline
+## Architecture
+
+### DLL-Based N-API Bridge
+
+UzEngine uses a **DLL-based architecture** for ABI compatibility with MSVC:
+
+```
+Runtime (Zig)  ──→  uzengine_runtime.dll (41MB)
+                     + uzengine_runtime.lib (6KB, MSVC-compatible import lib)
+                         │
+                         └──→  napi/src/*.cpp (MSVC)
+                              + uzengine.node (N-API addon, 162KB)
+                                  │
+                                  └──→  extension/src/extension.ts (VSCode extension)
+```
+
+**Why DLL?** Zig's static library format (LLVM archive) is incompatible with MSVC's `link.exe` (LNK1143 COMDAT error). By building the runtime as a DLL, we produce an MSVC-compatible import lib that cmake-js can link against.
+
+**Benefits**:
+- N-API addon compiled with MSVC (zero ABI surprises)
+- Zig runtime + MSVC N-API bridge + TypeScript extension all work together
+- Multi-compiler support (Zig produces the DLL, MSVC compiles the bridge, tsc compiles the UI)
+
+### Build Pipeline
 
 ```
 scripts/build.ps1 [--compiler=zig|msvc|clang]
   │
   ├─ 0. Pre-flight        check for locked .node / .lib files
-  ├─ 1. build:runtime     zig build / cmake → runtime/build/
-  ├─ 2. build:napi        cmake-js  → napi/build/Release/uzengine.node
-  │     └─ copy:node                → extension/native/uzengine.node
-  ├─ 3. build:mcp         tsc       → mcp/dist/
-  └─ 4. build:extension   tsc       → extension/out/extension.js
+  ├─ 1. build:runtime     zig build -Ddll=true
+  │                       → uzengine_runtime.dll + import lib
+  ├─ 2. build:napi        cmake-js compile
+  │                       → napi/build/Release/uzengine.node
+  │                       → napi/build/Release/*.dll (copies)
+  │     └─ copy:artifacts → extension/native/
+  ├─ 3. build:mcp         tsc → mcp/dist/
+  └─ 4. build:extension   tsc → extension/out/extension.js
 ```
 
 ## Quality
