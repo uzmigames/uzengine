@@ -75,7 +75,7 @@ export function activate(context: vscode.ExtensionContext): void {
     const addon: UzEngineAddon = _addon;
 
     // Point the engine at the native/ directory so it finds dxcompiler.dll,
-    // D3D12/ Agility SDK, etc. instead of looking in the Electron exe dir.
+    // dxil.dll, etc. instead of looking in the Electron exe dir.
     const nodePath = require('path') as typeof import('path');
     const nativeDir = nodePath.join(__dirname, '..', 'native');
     addon.setEngineDir(nativeDir);

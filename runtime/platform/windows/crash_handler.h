@@ -54,6 +54,16 @@ struct CrashContext {
     char gpuAdapter[256];       ///< GPU adapter description (set at RHI init).
     bool gpuDeviceRemoved;      ///< True if DXGI_ERROR_DEVICE_REMOVED was detected before crash.
 
+    /// ACCESS_VIOLATION details (valid when exceptionCode == 0xC0000005).
+    uint32_t accessType;        ///< 0=read, 1=write, 8=DEP violation.
+    void* accessAddress;        ///< Virtual address that caused the violation.
+    bool hasAccessDetails;      ///< True if accessType/accessAddress are valid.
+
+    /// Faulting module name resolved from exceptionAddress.
+    char faultModule[256];      ///< e.g. "nvwgf2umx.dll", "d3d12.dll", "uzengine_runtime.dll"
+    void* faultModuleBase;      ///< Base address of the faulting module.
+    uint64_t faultModuleOffset; ///< Offset within the faulting module.
+
     /// Stack trace captured at exception point.
     static constexpr int kMaxStackFrames = 64;
     void* stackFrames[kMaxStackFrames]; ///< Raw instruction pointer addresses.

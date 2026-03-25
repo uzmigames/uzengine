@@ -93,8 +93,10 @@ inline void ApplyBindlessConfig(ShaderCompileDesc& desc, bool bindless) {
             desc.model = ShaderModelCompile::SM6_6;
         }
     } else {
-        // Vulkan requires DXC (FXC cannot emit SPIR-V), so use SM6_0 minimum
-        desc.model = isVulkan ? ShaderModelCompile::SM6_0 : ShaderModelCompile::SM5_0;
+        // DX12 without bindless: use SM6_0 (system d3d12.dll on Win10 supports up to SM6.5).
+        // SM5.0 bytecode is incompatible with SM5.1+ root signatures (descriptor tables).
+        // Vulkan requires DXC (FXC cannot emit SPIR-V), so also SM6_0 minimum.
+        desc.model = ShaderModelCompile::SM6_0;
     }
 
     if (isVulkan) {

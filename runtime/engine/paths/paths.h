@@ -16,9 +16,6 @@
 ///     test_runtime.exe         # Test executable
 ///     dxcompiler.dll           # DXC (same directory as exe)
 ///     dxil.dll                 # DXC validator
-///     D3D12/                   # Agility SDK subdirectory
-///         D3D12Core.dll
-///         d3d12SDKLayers.dll
 ///     shaders/                 # Future: built-in shaders
 /// ```
 
@@ -35,7 +32,7 @@ namespace uz {
 /// returns the Electron host executable directory (e.g., `F:/IDEs/VS Code/`),
 /// not the addon directory. Call this function with the addon's own directory
 /// before uz_init() or uz_create_viewport() to redirect all resource discovery
-/// (dxcompiler.dll, dxil.dll, D3D12/, shaders/) to the correct location.
+/// (dxcompiler.dll, dxil.dll, shaders/) to the correct location.
 ///
 /// Passing an empty path clears the override and reverts to exe-relative
 /// discovery.
@@ -67,8 +64,6 @@ std::filesystem::path GetExeDir();
 /// Example:
 ///   ResolveEngineResource("dxcompiler.dll")
 ///     → "C:/project/build/bin/dxcompiler.dll"
-///   ResolveEngineResource("D3D12/D3D12Core.dll")
-///     → "C:/project/build/bin/D3D12/D3D12Core.dll"
 ///   ResolveEngineResource("C:/absolute/path.dll")
 ///     → "C:/absolute/path.dll" (unchanged)
 std::filesystem::path ResolveEngineResource(const std::string& relativePath);

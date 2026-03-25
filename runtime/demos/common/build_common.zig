@@ -80,8 +80,8 @@ pub const DemoHandle = struct {
 
     fn deployDlls(self: *DemoHandle) void {
         const dlls = [_]struct { src: []const u8, dst: []const u8 }{
-            .{ .src = "../../thirdparty/agility/bin/x64/D3D12Core.dll", .dst = "D3D12/D3D12Core.dll" },
-            .{ .src = "../../thirdparty/agility/bin/x64/d3d12SDKLayers.dll", .dst = "D3D12/d3d12SDKLayers.dll" },
+            .{ .src = "../../thirdparty/agility/bin/x64/D3D12Core.dll", .dst = "D3D12Core.dll" },
+            .{ .src = "../../thirdparty/agility/bin/x64/d3d12SDKLayers.dll", .dst = "d3d12SDKLayers.dll" },
             .{ .src = "../../thirdparty/dxc/bin/x64/dxcompiler.dll", .dst = "dxcompiler.dll" },
             .{ .src = "../../thirdparty/dxc/bin/x64/dxil.dll", .dst = "dxil.dll" },
             .{ .src = "../../thirdparty/luajit/src/lua51.dll", .dst = "lua51.dll" },
@@ -192,7 +192,7 @@ pub fn createDemo(b: *std.Build, config: DemoConfig) DemoHandle {
         .flags = cpp_flags,
     });
 
-    // DX12 Agility SDK export (required by all demos)
+    // Agility SDK exports — EXE only (enables SM6.6+ on Win10)
     mod.addCSourceFiles(.{
         .root = b.path("../../engine/rhi/dx12"),
         .files = &.{"dx12_agility.cpp"},

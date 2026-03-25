@@ -106,12 +106,9 @@ Write-Host ""
 # Copy .node + DLLs to extension
 Write-Host "      Deploying uzengine.node + DLLs to extension/native/..." -ForegroundColor Gray
 New-Item -ItemType Directory -Path "$Root/extension/native" -Force | Out-Null
-New-Item -ItemType Directory -Path "$Root/extension/native/D3D12" -Force | Out-Null
 Copy-Item "$Root/napi/build/Release/uzengine.node" "$Root/extension/native/" -Force
-# Copy all DLLs from napi build output (uzengine_runtime.dll, dxcompiler.dll, lua51.dll, etc.)
+# Copy all runtime DLLs alongside the addon
 Get-ChildItem "$Root/napi/build/Release/*.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination "$Root/extension/native/" -Force
-# Copy D3D12 Agility SDK DLLs
-Get-ChildItem "$Root/napi/build/Release/D3D12/*.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination "$Root/extension/native/D3D12/" -Force
 Write-Host "      OK" -ForegroundColor Green
 Write-Host ""
 

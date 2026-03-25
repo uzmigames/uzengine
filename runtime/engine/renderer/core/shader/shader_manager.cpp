@@ -53,7 +53,7 @@ bool ShaderManager::Init(IRHIDevice* device) {
     ShaderPipeline::Config config;
     config.cacheDir = "cache/shaders";
     config.bindless = m_bindless;
-    config.targetBackend = m_bindless ? "dx12_sm68" : "dx12_sm50";
+    config.targetBackend = m_bindless ? "dx12_sm68" : "dx12_sm60";
     config.enableHotReload = false;
 #ifndef NDEBUG
     config.generateDebugInfo = true;  // Embed HLSL symbols for RenderDoc/PIX pixel debugging

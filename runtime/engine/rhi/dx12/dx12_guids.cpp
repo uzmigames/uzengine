@@ -5,7 +5,7 @@
 /// __CRT_UUID_DECL to generate __uuidof<T> / IID_PPV_ARGS template specializations.
 ///
 /// DXGI interfaces already have __CRT_UUID_DECL from MinGW's own dxgi headers.
-/// Only D3D12 interfaces from the Agility SDK / directx_headers need manual entries.
+/// Only D3D12 interfaces from directx_headers need manual entries.
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX

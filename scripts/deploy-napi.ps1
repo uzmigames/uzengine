@@ -14,23 +14,16 @@ if (-not (Test-Path "$src/uzengine.node")) {
 }
 
 New-Item -ItemType Directory -Force -Path $dst | Out-Null
-New-Item -ItemType Directory -Force -Path "$dst/D3D12" | Out-Null
 
 Write-Host "Deploying N-API addon..." -ForegroundColor Yellow
 
 Copy-Item "$src/uzengine.node" "$dst/" -Force
 Write-Host "  uzengine.node ($('{0:N0} KB' -f ((Get-Item "$dst/uzengine.node").Length / 1KB)))" -ForegroundColor Green
 
+# Copy all DLLs alongside the addon
 Get-ChildItem "$src/*.dll" | ForEach-Object {
     Copy-Item $_.FullName "$dst/" -Force
     Write-Host "  $($_.Name)" -ForegroundColor Green
-}
-
-if (Test-Path "$src/D3D12") {
-    Get-ChildItem "$src/D3D12/*.dll" | ForEach-Object {
-        Copy-Item $_.FullName "$dst/D3D12/" -Force
-        Write-Host "  D3D12/$($_.Name)" -ForegroundColor Green
-    }
 }
 
 Write-Host ""

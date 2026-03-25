@@ -213,4 +213,5 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     }
 }
 
+
 } // namespace uz

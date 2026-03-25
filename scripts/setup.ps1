@@ -523,11 +523,6 @@ Write-Host "[4/8] Downloading prebuilt packages..." -ForegroundColor Cyan
 Download-Extract-Zip -Name "dxc" `
     -Url "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2602/dxc_2026_02_20.zip"
 
-# Agility SDK (DX12 runtime)
-Download-Extract-Zip -Name "agility" `
-    -Url "https://globalcdn.nuget.org/packages/microsoft.direct3d.d3d12.1.619.1.nupkg" `
-    -SubPath "build\native"
-
 # ─── Metal Dependencies (macOS build cross-compile support) ──────────────────
 
 # metal-cpp (Apple's C++ wrapper for Metal — macOS only, downloaded for cross-ref)

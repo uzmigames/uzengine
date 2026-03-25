@@ -12,6 +12,7 @@
 #endif
 
 #include "application.h"
+#include "crash_handler.h"
 #include "units.h"
 #include "uzengine.h"
 #include "scene_renderer.h"
@@ -305,9 +306,16 @@ int Application::Run(int argc, char** argv) {
         }
 
         // ── Render frame (SceneRenderer drives Begin/End/Execute) ─────────
+        // Update crash context before rendering so the crash handler knows
+        // which frame we're on if a SEGFAULT occurs.
+        CrashHandler_SetFrameNumber(m_frameIndex);
+        CrashHandler_SetLastRhiOp("RenderFrame entry");
+
         m_renderer->RenderFrame(m_cmdList, m_swapChain,
                                 m_world.get(), m_vfs.get(),
                                 dt, m_frameIndex);
+
+        CrashHandler_SetLastRhiOp("RenderFrame completed");
 
         // ── Present ───────────────────────────────────────────────────────
         m_swapChain->Present(m_config.vsync);

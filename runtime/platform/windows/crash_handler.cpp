@@ -166,7 +166,7 @@ void WriteTextReport(const char* path, const CrashContext& ctx) {
         "Scene:      %s\n"
         "Last RHI:   %s\n"
         "GPU:        %s\n"
-        "Device Removed: %s\n\n",
+        "Device Removed: %s\n",
         ctx.exceptionCode,
         ExceptionCodeToString(ctx.exceptionCode),
         reinterpret_cast<unsigned long long>(ctx.exceptionAddress),
@@ -175,6 +175,31 @@ void WriteTextReport(const char* path, const CrashContext& ctx) {
         ctx.lastRhiOp[0] ? ctx.lastRhiOp : "(none)",
         ctx.gpuAdapter[0] ? ctx.gpuAdapter : "(unknown)",
         ctx.gpuDeviceRemoved ? "YES" : "no");
+    WriteFile(file, buf, static_cast<DWORD>(len), &written, nullptr);
+
+    // Faulting module
+    if (ctx.faultModule[0]) {
+        len = std::snprintf(buf, sizeof(buf),
+            "Fault Module: %s (base=0x%016llX, offset=0x%llX)\n",
+            ctx.faultModule,
+            reinterpret_cast<unsigned long long>(ctx.faultModuleBase),
+            static_cast<unsigned long long>(ctx.faultModuleOffset));
+        WriteFile(file, buf, static_cast<DWORD>(len), &written, nullptr);
+    }
+
+    // ACCESS_VIOLATION details
+    if (ctx.hasAccessDetails) {
+        const char* accessStr = ctx.accessType == 0 ? "READ" :
+                                ctx.accessType == 1 ? "WRITE" :
+                                ctx.accessType == 8 ? "DEP" : "UNKNOWN";
+        len = std::snprintf(buf, sizeof(buf),
+            "Access Violation: %s at address 0x%016llX\n",
+            accessStr,
+            reinterpret_cast<unsigned long long>(ctx.accessAddress));
+        WriteFile(file, buf, static_cast<DWORD>(len), &written, nullptr);
+    }
+
+    len = std::snprintf(buf, sizeof(buf), "\n");
     WriteFile(file, buf, static_cast<DWORD>(len), &written, nullptr);
 
     // Stack trace — resolve symbols (we're already crashing, worth the attempt).
@@ -252,6 +277,18 @@ void WriteJsonReport(const char* path, const CrashContext& ctx) {
     char timestamp[64];
     FormatTimestamp(timestamp, sizeof(timestamp));
 
+    // Determine access violation details string
+    const char* accessStr = "";
+    char accessAddrStr[32] = {};
+    if (ctx.hasAccessDetails) {
+        accessStr = ctx.accessType == 0 ? "READ" :
+                    ctx.accessType == 1 ? "WRITE" :
+                    ctx.accessType == 8 ? "DEP" : "UNKNOWN";
+        std::snprintf(accessAddrStr, sizeof(accessAddrStr),
+                      "0x%016llX",
+                      reinterpret_cast<unsigned long long>(ctx.accessAddress));
+    }
+
     len = std::snprintf(buf, sizeof(buf),
         "{\n"
         "  \"engine\": \"UzEngine\",\n"
@@ -259,7 +296,11 @@ void WriteJsonReport(const char* path, const CrashContext& ctx) {
         "  \"exception\": {\n"
         "    \"code\": \"0x%08X\",\n"
         "    \"name\": \"%s\",\n"
-        "    \"address\": \"0x%016llX\"\n"
+        "    \"address\": \"0x%016llX\",\n"
+        "    \"faultModule\": \"%s\",\n"
+        "    \"faultModuleOffset\": \"0x%llX\",\n"
+        "    \"accessType\": \"%s\",\n"
+        "    \"accessAddress\": \"%s\"\n"
         "  },\n"
         "  \"context\": {\n"
         "    \"frameNumber\": %llu,\n"
@@ -273,6 +314,10 @@ void WriteJsonReport(const char* path, const CrashContext& ctx) {
         ctx.exceptionCode,
         ExceptionCodeToString(ctx.exceptionCode),
         reinterpret_cast<unsigned long long>(ctx.exceptionAddress),
+        ctx.faultModule[0] ? ctx.faultModule : "",
+        static_cast<unsigned long long>(ctx.faultModuleOffset),
+        accessStr,
+        ctx.hasAccessDetails ? accessAddrStr : "",
         static_cast<unsigned long long>(ctx.frameNumber),
         ctx.sceneName[0] ? ctx.sceneName : "",
         ctx.lastRhiOp[0] ? ctx.lastRhiOp : "",
@@ -317,6 +362,10 @@ void SafeCopyString(char* dst, size_t dstSize, const char* src) {
 /// This function runs in exception context. It avoids heap allocation and
 /// uses only stack buffers + Win32 file APIs for output.
 LONG WINAPI UzExceptionFilter(EXCEPTION_POINTERS* exceptionInfo) {
+    UZ_LOG(CrashHandler, Error, "!!! UzExceptionFilter ENTERED — exception code 0x{:08X} at {}",
+           exceptionInfo->ExceptionRecord->ExceptionCode,
+           exceptionInfo->ExceptionRecord->ExceptionAddress);
+
     // 1. Populate CrashContext from exception info and global state.
     CrashContext ctx{};
     ctx.exceptionCode = exceptionInfo->ExceptionRecord->ExceptionCode;
@@ -328,6 +377,34 @@ LONG WINAPI UzExceptionFilter(EXCEPTION_POINTERS* exceptionInfo) {
     std::memcpy(ctx.sceneName, g_sceneName, sizeof(ctx.sceneName));
     std::memcpy(ctx.lastRhiOp, g_lastRhiOp, sizeof(ctx.lastRhiOp));
     std::memcpy(ctx.gpuAdapter, g_gpuAdapter, sizeof(ctx.gpuAdapter));
+
+    // Extract ACCESS_VIOLATION details: read/write/DEP + faulting address.
+    const auto* rec = exceptionInfo->ExceptionRecord;
+    if (rec->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && rec->NumberParameters >= 2) {
+        ctx.hasAccessDetails = true;
+        ctx.accessType = static_cast<uint32_t>(rec->ExceptionInformation[0]);
+        ctx.accessAddress = reinterpret_cast<void*>(rec->ExceptionInformation[1]);
+    }
+
+    // Resolve faulting module from exception address.
+    HMODULE hFaultMod = nullptr;
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                           GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           static_cast<LPCSTR>(ctx.exceptionAddress), &hFaultMod)) {
+        GetModuleFileNameA(hFaultMod, ctx.faultModule, sizeof(ctx.faultModule));
+        ctx.faultModuleBase = reinterpret_cast<void*>(hFaultMod);
+        ctx.faultModuleOffset = reinterpret_cast<uintptr_t>(ctx.exceptionAddress) -
+                                reinterpret_cast<uintptr_t>(hFaultMod);
+        // Strip path — keep only filename.
+        char* lastSlash = nullptr;
+        for (char* p = ctx.faultModule; *p; ++p) {
+            if (*p == '\\' || *p == '/') lastSlash = p;
+        }
+        if (lastSlash) {
+            std::memmove(ctx.faultModule, lastSlash + 1,
+                         std::strlen(lastSlash + 1) + 1);
+        }
+    }
 
     // 2. Capture stack trace (crash-safe, no DbgHelp).
     ctx.stackFrameCount = CaptureRawStackTrace(

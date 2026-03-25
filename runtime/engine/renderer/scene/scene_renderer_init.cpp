@@ -107,7 +107,8 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     if (!m_outlinePass->Init(device, m_shaderMgr->GetPipeline(),
                              RHIFormat::RGBA8Unorm, RHIFormat::D32Float,
                              width, height)) {
-        UZ_LOG(Renderer, Error, "SceneRenderer: failed to init outline pass");
+        UZ_LOG(Renderer, Error, "SceneRenderer: failed to init outline pass — disabling");
+        m_outlinePass.reset();
     }
 
     // ── Gizmo Renderer (transform gizmo handles) ────────────────────

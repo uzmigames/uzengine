@@ -65,6 +65,13 @@ void LogInit(const char* logFilePath = "uzengine.log");
 /// prints base64 PNG data that would be corrupted by interleaved log messages).
 void LogSuppressConsole();
 
+/// Flushes all log sinks immediately.
+///
+/// Forces all buffered log messages to be written to their sinks (console + file).
+/// Use before operations that may crash to ensure the last diagnostic message
+/// is visible in the log output.
+void LogFlushAll();
+
 /// Shuts down the global logging system.
 ///
 /// # Behavior

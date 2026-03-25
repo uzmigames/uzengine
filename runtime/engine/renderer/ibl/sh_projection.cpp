@@ -556,9 +556,12 @@ SHCoefficients ProjectCubemapToSH(IRHIDevice* device, IRHICommandList* cmdList,
     // UAV writes so the copy reads correct data.
     cmdList->Begin();
 
+    // The cubemap may be in ShaderResource (after IBL bake read it as SRV)
+    // or UnorderedAccess (if IBL bake didn't run). Use ShaderResource as the
+    // expected state since BakeEnvironment always transitions it UAV→SRV.
     RHIBarrierDesc toCopySrc = {};
     toCopySrc.texture = cubemap;
-    toCopySrc.stateBefore = RHIResourceState::UnorderedAccess;
+    toCopySrc.stateBefore = RHIResourceState::ShaderResource;
     toCopySrc.stateAfter = RHIResourceState::CopySrc;
     cmdList->ResourceBarrier(&toCopySrc, 1);
 
@@ -567,11 +570,12 @@ SHCoefficients ProjectCubemapToSH(IRHIDevice* device, IRHICommandList* cmdList,
         cmdList->CopyTextureToBuffer(cubemap, 0, readbackBuf, offset, alignedRowPitch, face);
     }
 
-    // Transition cubemap back to UAV for next frame's sky capture.
+    // Transition cubemap back to ShaderResource (common readable state).
+    // The render graph sky capture pass will transition to UAV as needed.
     RHIBarrierDesc toUAV = {};
     toUAV.texture = cubemap;
     toUAV.stateBefore = RHIResourceState::CopySrc;
-    toUAV.stateAfter = RHIResourceState::UnorderedAccess;
+    toUAV.stateAfter = RHIResourceState::ShaderResource;
     cmdList->ResourceBarrier(&toUAV, 1);
 
     cmdList->End();

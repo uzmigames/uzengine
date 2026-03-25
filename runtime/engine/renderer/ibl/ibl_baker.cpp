@@ -480,6 +480,21 @@ IBLBaker::BakeResult IBLBaker::BakeEnvironment(uint32_t envCubemapSrvIndex, RHIT
 
     cmdList->Begin();
 
+    // ── Transition env cubemap UAV → SRV for SM5 reads ────────────────
+    // On SM6.6+ bindless, textures are accessed via ResourceDescriptorHeap
+    // which doesn't require explicit state tracking. On SM5/SM6.0, the
+    // cubemap was left in UnorderedAccess by the sky capture pass — we must
+    // transition to ShaderResource before reading it as an SRV in the
+    // compute shader's descriptor table.
+    if (!m_device->IsBindless()) {
+        RHIBarrierDesc envBarrier = {};
+        envBarrier.texture = envCubemapTexture;
+        envBarrier.buffer = RHIBufferHandle::Invalid();
+        envBarrier.stateBefore = RHIResourceState::UnorderedAccess;
+        envBarrier.stateAfter = RHIResourceState::ShaderResource;
+        cmdList->ResourceBarrier(&envBarrier, 1);
+    }
+
     // ── Irradiance dispatch ─────────────────────────────────────────────
     cmdList->SetPipeline(m_irradiancePipeline);
 

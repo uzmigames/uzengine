@@ -957,7 +957,7 @@ pub fn build(b: *std.Build) void {
     if (is_windows) {
         const win_sys_libs = [_][]const u8{ "d3d12", "d3d11", "dxgi", "dxguid", "gdi32", "user32", "xinput1_4", "ole32", "shcore", "shell32", "comdlg32" };
 
-        // Helper to create a tool exe from a single .cpp + agility
+        // Helper to create a tool exe from a single .cpp
         const tool_names = [_][]const u8{ "uzengine", "uzcook", "uzpack", "uzfbx" };
         for (tool_names) |tool_name| {
             const tool_mod = b.createModule(.{ .target = target, .optimize = optimize });
@@ -976,12 +976,12 @@ pub fn build(b: *std.Build) void {
                 .files = &.{b.fmt("{s}.cpp", .{tool_name})},
                 .flags = cpp_flags,
             });
+            // Agility SDK exports — EXE only (enables SM6.6+ on Win10)
             tool_mod.addCSourceFiles(.{
                 .root = b.path("engine/rhi/dx12"),
                 .files = &.{"dx12_agility.cpp"},
                 .flags = cpp_flags,
             });
-
             // Component serializers compiled directly into exe (not static lib)
             // to preserve static initializers for auto-registration.
             addCppDir(tool_mod, b, "engine/ecs/environment", cpp_flags);
@@ -1022,12 +1022,12 @@ pub fn build(b: *std.Build) void {
 
         // ── DLL deployment ───────────────────────────────────────────────
 
-        // Agility SDK
+        // Agility SDK (SM6.6+ on Win10 — EXE only, not deployed for DLL builds)
         b.getInstallStep().dependOn(&b.addInstallBinFile(
-            b.path(tp ++ "agility/bin/x64/D3D12Core.dll"), "D3D12/D3D12Core.dll",
+            b.path(tp ++ "agility/bin/x64/D3D12Core.dll"), "D3D12Core.dll",
         ).step);
         b.getInstallStep().dependOn(&b.addInstallBinFile(
-            b.path(tp ++ "agility/bin/x64/d3d12SDKLayers.dll"), "D3D12/d3d12SDKLayers.dll",
+            b.path(tp ++ "agility/bin/x64/d3d12SDKLayers.dll"), "d3d12SDKLayers.dll",
         ).step);
 
         // DXC
@@ -1095,6 +1095,9 @@ fn addCppDir(
             d3d12ma_found = true;
             continue;
         }
+
+        // Agility SDK exports — only linked into EXE builds, not lib/DLL.
+        if (std.mem.eql(u8, name, "dx12_agility.cpp")) continue;
 
         cpp_files.append(b.allocator, b.allocator.dupe(u8, name) catch @panic("OOM")) catch @panic("OOM");
     }

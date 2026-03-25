@@ -140,8 +140,7 @@ file(GLOB SRC_PLATFORM_WIN   platform/windows/*.cpp)
 file(GLOB SRC_RHI_DX12       engine/rhi/dx12/*.cpp)
 file(GLOB SRC_RHI_DX11       engine/rhi/dx11/*.cpp)
 
-# Exclude dx12_agility.cpp — only linked into executables, not the library
-list(FILTER SRC_RHI_DX12 EXCLUDE REGEX "dx12_agility\\.cpp$")
+# dx12_agility.cpp removed — Agility SDK no longer used
 
 set(WINDOWS_SOURCES
     ${SRC_PLATFORM_WIN}
@@ -303,7 +302,6 @@ if(WIN32)
         thirdparty/d3d12ma/include
         thirdparty/directx_headers/include
         thirdparty/directx_headers/include/directx
-        thirdparty/agility/include
         thirdparty/dxc/inc
     )
     target_include_directories(uzengine_runtime PUBLIC
@@ -447,9 +445,6 @@ list(FILTER TOOL_SOURCES EXCLUDE REGEX "uzembed\\.cpp$")
 foreach(tool_src IN LISTS TOOL_SOURCES)
     get_filename_component(tool_name ${tool_src} NAME_WE)
     set(TOOL_EXE_SOURCES ${tool_src})
-    if(WIN32)
-        list(APPEND TOOL_EXE_SOURCES engine/rhi/dx12/dx12_agility.cpp)
-    endif()
     add_executable(${tool_name} ${TOOL_EXE_SOURCES})
     target_link_libraries(${tool_name} PRIVATE uzengine_runtime)
 endforeach()
@@ -462,9 +457,6 @@ foreach(demo_dir IN LISTS DEMO_DIRS)
     endif()
     get_filename_component(demo_name ${demo_dir} NAME)
     file(GLOB DEMO_SOURCES ${demo_dir}/*.cpp)
-    if(WIN32)
-        list(APPEND DEMO_SOURCES engine/rhi/dx12/dx12_agility.cpp)
-    endif()
     add_executable(${demo_name}_demo ${DEMO_SOURCES})
     target_link_libraries(${demo_name}_demo PRIVATE uzengine_runtime)
 endforeach()
@@ -473,9 +465,6 @@ endforeach()
 # DLL Deployment (Windows)
 # ─────────────────────────────────────────────────────────────────────────────
 if(WIN32)
-    # Agility SDK DLLs → D3D12/ subdirectory
-    file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/D3D12)
-
     # Collect all deploy targets
     set(DEPLOY_TARGETS test_runtime)
     foreach(tool_src IN LISTS TOOL_SOURCES)
@@ -491,12 +480,6 @@ if(WIN32)
 
     foreach(tgt IN LISTS DEPLOY_TARGETS)
         add_custom_command(TARGET ${tgt} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/agility/bin/x64/D3D12Core.dll
-                $<TARGET_FILE_DIR:${tgt}>/D3D12/D3D12Core.dll
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/agility/bin/x64/d3d12SDKLayers.dll
-                $<TARGET_FILE_DIR:${tgt}>/D3D12/d3d12SDKLayers.dll
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/dxc/bin/x64/dxcompiler.dll
                 $<TARGET_FILE_DIR:${tgt}>/dxcompiler.dll

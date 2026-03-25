@@ -76,19 +76,13 @@ set(RUNTIME_BIN_DIR ${CMAKE_SOURCE_DIR}/../runtime/build/bin)
 set(FFMPEG_BIN_DIR ${CMAKE_SOURCE_DIR}/../runtime/thirdparty/ffmpeg/bin)
 
 file(GLOB RUNTIME_DLLS "${RUNTIME_BIN_DIR}/*.dll")
-file(GLOB AGILITY_DLLS "${RUNTIME_BIN_DIR}/D3D12/*.dll")
 file(GLOB FFMPEG_DLLS "${FFMPEG_BIN_DIR}/*.dll")
 
+# All runtime DLLs go flat into the build output dir.
 if(RUNTIME_DLLS)
   add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMENT "Copying runtime DLLs..."
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RUNTIME_DLLS} $<TARGET_FILE_DIR:${PROJECT_NAME}>/
-  )
-endif()
-if(AGILITY_DLLS)
-  add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${PROJECT_NAME}>/D3D12
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${AGILITY_DLLS} $<TARGET_FILE_DIR:${PROJECT_NAME}>/D3D12/
   )
 endif()
 if(FFMPEG_DLLS)
