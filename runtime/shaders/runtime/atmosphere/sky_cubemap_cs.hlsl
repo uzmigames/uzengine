@@ -15,7 +15,7 @@
 ///   to convert cubemap directions into the atmosphere's Z-up coordinate system
 ///
 /// # Resources
-/// - b0: Root constants (8 DWORDs) -- atmosphere radii, scale heights, sun direction
+/// - b0: Root constants (10 DWORDs) -- atmosphere radii, sun direction, LUT indices
 /// - u0: RWTexture2DArray<float4> output cubemap (64x64x6, RGBA16F)
 /// - Transmittance LUT accessed via bindless ResourceDescriptorHeap[transmittanceLutIdx]
 ///
@@ -23,13 +23,14 @@
 /// [8, 8, 6] thread groups of [8, 8, 1] = 64x64 per face x 6 faces.
 
 #include "../include/ibl.hlsli"
+#include "../include/atmosphere_lut.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Root Constants — 8 DWORDs (32 bytes)
+// Root Constants — 10 DWORDs (40 bytes)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Packs atmosphere geometry, sun direction, and the bindless LUT index into
-/// exactly 8 DWORDs. Scattering coefficients are hardcoded below as standard
+/// Packs atmosphere geometry, sun direction, LUT indices, and muSMin into
+/// exactly 10 DWORDs. Scattering coefficients are hardcoded below as standard
 /// Earth atmosphere values (matching the transmittance LUT bake).
 cbuffer SkyCubemapParams : register(b0) {
     float bottomRadiusKm;       // DWORD 0: planet surface radius (km)
@@ -40,6 +41,8 @@ cbuffer SkyCubemapParams : register(b0) {
     float sunIntensity;         // DWORD 5: sun illuminance (uniform RGB, from DirectionalLight)
     uint  transmittanceLutIdx;  // DWORD 6: bindless SRV index for transmittance LUT
     uint  packedScatterScales;  // DWORD 7: packed f16 pair — low16 = rayleighScale, high16 = mieScale
+    uint  scatteringLut3DIdx;   // DWORD 8: bindless SRV for Bruneton 3D scattering LUT (0 = not available)
+    float muSMin;               // DWORD 9: cos(102 deg) = -0.2079116908, minimum sun zenith cosine
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -307,6 +310,59 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     Texture2D<float4> tLut = g_TransmittanceLut;
 #endif
 
+    // ── LUT-based sky radiance (Bruneton 2017 precomputed scattering) ────
+    // When the 3D scattering LUT is available, replace the 16-step ray march
+    // with a single 4D→3D texture lookup via GetSkyRadiance(). This makes
+    // cubemap bake ~16x faster (2 texture samples vs 16 integration steps).
+#ifdef UZ_BINDLESS
+    if (scatteringLut3DIdx != 0) {
+        Texture3D<float4> scatLut = ResourceDescriptorHeap[scatteringLut3DIdx];
+
+        float3 skyRadiance;
+        float3 skyTransmittance;
+        GetSkyRadiance(
+            cameraSkyKm, rayDir, sunDir,
+            scatLut, tLut, linearSampler,
+            bottomRadiusKm, topRadiusKm, muSMin,
+            phaseR, phaseM,
+            skyRadiance, skyTransmittance);
+
+        // Apply artistic scattering scales. The LUT was baked with physical
+        // coefficients, so we scale the result by the user's artistic factors.
+        // Since the LUT stores Rayleigh and Mie combined (after GetSkyRadiance
+        // applies phase functions), we apply a weighted average scale.
+        // For most cases rayleighScale = mieScale = 1.0 so this is identity.
+        float avgScale = lerp(rayleighScale, mieScale, 0.5f);
+        skyRadiance *= avgScale;
+
+        float3 L_lut = skyRadiance * float3(sunIntensity, sunIntensity, sunIntensity);
+
+        // Ground contribution: Lambertian reflection attenuated by transmittance.
+        // GetSkyRadiance handles the atmospheric path integral; we add ground
+        // shading separately for ground-intersecting rays.
+        if (hitsGround) {
+            float3 groundPosKm = cameraSkyKm + rayDir * groundHit.x;
+            float3 groundNormal = normalize(groundPosKm);
+
+            // Sun-to-ground transmittance via LUT
+            float3 groundSunT = SampleTransmittanceLut(tLut, linearSampler,
+                groundPosKm, sunDir, bottomRadiusKm, topRadiusKm);
+
+            // Lambertian BRDF: albedo / PI * max(N.L, 0)
+            float NdotL = max(0.0f, dot(groundNormal, sunDir));
+            float3 groundRadiance = GROUND_ALBEDO * (1.0f / PI) * NdotL
+                                  * float3(sunIntensity, sunIntensity, sunIntensity) * groundSunT;
+
+            // Attenuate by path transmittance from camera to ground
+            L_lut += skyTransmittance * groundRadiance;
+        }
+
+        outputCubemap[uint3(texel, faceIndex)] = float4(L_lut, 1.0f);
+        return;
+    }
+#endif // UZ_BINDLESS
+
+    // FALLBACK_RAYMARCH: kept for SM5/non-LUT debugging
     // ── Frostbite analytical integration (Bruneton atmosphere pattern) ────
     //
     // Per-step analytical integral of in-scattered luminance:

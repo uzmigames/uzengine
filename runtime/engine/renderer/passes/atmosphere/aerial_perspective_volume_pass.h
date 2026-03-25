@@ -76,7 +76,9 @@ struct APVolumeCB {
     uint32_t depthSlices;             ///< Number of depth slices (16).
     float    totalDepthKm;            ///< Total depth range (100.0 km).
     uint32_t multiScatterLutIdx;     ///< SRV index for multi-scattering LUT (32x32).
-    float    _pad1[32] = {};          ///< Pad to 256 bytes total.
+    uint32_t scatteringLut3DIdx;     ///< SRV index for Bruneton 3D scattering LUT. 0 = not available.
+    float    muSMin;                 ///< Minimum sun zenith cosine for LUT parameterization. cos(102 deg).
+    float    _pad1[30] = {};          ///< Pad to 256 bytes total.
 };
 
 static_assert(sizeof(APVolumeCB) == 256,
@@ -91,6 +93,7 @@ struct APVolumePassDesc {
     rg::RgResourceId  volumeTarget;          ///< Output 3D texture (write, UnorderedAccess).
     rg::RgResourceId  transmittanceLutDep;   ///< Transmittance LUT dependency (read, ShaderResource).
     rg::RgResourceId  multiScatterLutDep;   ///< Multi-scatter LUT dependency (read, ShaderResource).
+    rg::RgResourceId  scatteringLut3DDep;   ///< Scattering 3D LUT dependency (read, ShaderResource). Optional.
     RHIPipelineHandle pipeline;              ///< Compute PSO for aerial_perspective_volume_cs.hlsl.
     APVolumeRootConstants rootConstants;     ///< Atmosphere params (8 DWORDs at root param 0).
     CBAllocation      cbAlloc;               ///< APVolumeCB at root param 2 (b2).

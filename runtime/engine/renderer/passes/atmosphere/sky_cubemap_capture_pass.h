@@ -35,14 +35,14 @@ class RgBuilder;
 namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SkyCubemapCaptureRootConstants — 8 DWORDs (32 bytes) at root param 0 (b0)
+// SkyCubemapCaptureRootConstants — 10 DWORDs (40 bytes) at root param 0 (b0)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Root constants for the sky cubemap capture compute shader.
 ///
 /// Matches the HLSL cbuffer SkyCubemapParams at b0 in sky_cubemap_cs.hlsl.
 /// Uses root constants (not a CBV) because the compute root signature
-/// defines slot 0 as 8x 32-bit root constants — same pattern as the
+/// defines slot 0 as 16x 32-bit root constants — same pattern as the
 /// transmittance LUT and IBL baker compute shaders.
 struct SkyCubemapCaptureRootConstants {
     float    bottomRadiusKm;        ///< Planet surface radius (km). DWORD 0.
@@ -53,10 +53,12 @@ struct SkyCubemapCaptureRootConstants {
     float    sunIntensity;          ///< Sun illuminance (uniform RGB). DWORD 5.
     uint32_t transmittanceLutIdx;   ///< SRV index for transmittance LUT texture. DWORD 6.
     uint32_t packedScatterScales;   ///< Packed f16 pair: low16 = rayleighScatteringScale, high16 = mieScatteringScale. DWORD 7.
+    uint32_t scatteringLut3DIdx;    ///< SRV index for Bruneton 3D scattering LUT (0 = not available). DWORD 8.
+    float    muSMin;                ///< Minimum sun zenith cosine for LUT parameterization, cos(102 deg). DWORD 9.
 };
 
-static_assert(sizeof(SkyCubemapCaptureRootConstants) == 32,
-    "SkyCubemapCaptureRootConstants must be exactly 8 DWORDs (32 bytes)");
+static_assert(sizeof(SkyCubemapCaptureRootConstants) == 40,
+    "SkyCubemapCaptureRootConstants must be exactly 10 DWORDs (40 bytes)");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SkyCubemapCapturePassDesc
@@ -69,8 +71,9 @@ static_assert(sizeof(SkyCubemapCaptureRootConstants) == 32,
 struct SkyCubemapCapturePassDesc {
     rg::RgResourceId  cubemapTarget;    ///< Output texture (write, UnorderedAccess state). RGBA16F 64x64x6.
     rg::RgResourceId  transmittanceLutDep; ///< Transmittance LUT (read dependency for correct execution order).
+    rg::RgResourceId  scatteringLut3DDep;  ///< Bruneton 3D scattering LUT (read dependency, may be invalid if LUT not available).
     RHIPipelineHandle pipeline;         ///< Compute PSO for sky_cubemap_cs.hlsl.
-    SkyCubemapCaptureRootConstants rootConstants; ///< Atmosphere params (8 DWORDs at root param 0).
+    SkyCubemapCaptureRootConstants rootConstants; ///< Atmosphere params (10 DWORDs at root param 0).
     uint32_t          cubemapUavIndex;  ///< UAV descriptor heap index for the output cubemap.
 };
 

@@ -620,4 +620,226 @@ void GetRMuSFromIrradianceTextureUv(float2 uv, float bottomRadius, float topRadi
     mu_s = ClampCosine(2.0f * x_mu_s - 1.0f);
 }
 
+// ─── Sky Radiance to Point (Aerial Perspective LUT Lookup) ─────────────────
+//
+// Computes the inscattered radiance between two points using dual 4D LUT
+// lookups instead of ray marching. This is the key function for LUT-based
+// aerial perspective.
+//
+// Algorithm:
+//   inscatter(camera→point) = S(camera→top) - T(camera→point) * S(point→top)
+//
+// where S(p→top) is the path-integrated inscattering from point p to the
+// atmosphere top, and T is the transmittance between the two points.
+//
+// @ref Bruneton & Neyret 2017 "Precomputed Atmospheric Scattering"
+//      Section 5 — Runtime Rendering, GetSkyRadianceToPoint function.
+// @ref Reference implementation: github.com/ebruneton/precomputed_atmospheric_scattering
+//      atmosphere/functions.glsl, GetSkyRadianceToPoint (BSD-3 license)
+
+/// Computes inscattered radiance and transmittance between camera and a point
+/// in the atmosphere using two 4D LUT lookups.
+///
+/// @param cameraPos     Camera position in sky space (km), origin at planet center.
+/// @param pointPos      Target point position in sky space (km).
+/// @param sunDir        Normalised direction TOWARD the sun.
+/// @param scatteringLut Precomputed 3D scattering texture (256x128x32 RGBA16F).
+/// @param transmittanceLut Precomputed 2D transmittance texture (256x64 RGBA16F).
+/// @param samp          Linear clamp sampler.
+/// @param bottomRadius  Planet surface radius (km).
+/// @param topRadius     Top of atmosphere radius (km).
+/// @param mu_s_min      Minimum sun zenith cosine for LUT parameterization (cos(102 deg)).
+/// @param phaseR        Rayleigh phase function value for the camera-to-point direction.
+/// @param phaseM        Mie phase function value for the camera-to-point direction.
+/// @param outInscatter  [out] Inscattered radiance between camera and point (no sun illuminance).
+/// @param outTransmittance [out] Transmittance from camera to point.
+///
+/// @ref Bruneton 2017 functions.glsl — GetSkyRadianceToPoint
+/// @constants mu_s_min = cos(102 deg) = -0.2079116908 (Bruneton 2017 default)
+/// @deviations NONE
+void GetSkyRadianceToPoint(
+    float3 cameraPos, float3 pointPos, float3 sunDir,
+    Texture3D<float4> scatteringLut,
+    Texture2D<float4> transmittanceLut,
+    SamplerState samp,
+    float bottomRadius, float topRadius, float mu_s_min,
+    float phaseR, float phaseM,
+    out float3 outInscatter, out float3 outTransmittance) {
+
+    // ── Compute atmosphere parameters for the camera position ────────────
+    float3 viewDir = normalize(pointPos - cameraPos);
+    float d = length(pointPos - cameraPos);
+
+    // Camera: radius, view zenith cosine, sun zenith cosine, sun-view angle cosine
+    float r_cam = length(cameraPos);
+    float3 upCam = cameraPos / r_cam;
+    float mu_cam = dot(upCam, viewDir);
+    float mu_s_cam = dot(upCam, sunDir);
+    float nu = dot(viewDir, sunDir);
+
+    // Clamp radius to valid atmosphere range
+    r_cam = ClampRadius(r_cam, bottomRadius, topRadius);
+
+    bool rayHitsGround_cam = RayIntersectsGround(r_cam, mu_cam, bottomRadius);
+
+    // ── Sample scattering at camera position ─────────────────────────────
+    // S(camera → atmosphere boundary along view direction)
+    // Returns float4(Rayleigh.rgb, Mie.r) — phase functions NOT applied.
+    float4 scatCam = SampleScatteringTexture4(
+        scatteringLut, samp,
+        r_cam, mu_cam, mu_s_cam, nu, rayHitsGround_cam,
+        bottomRadius, topRadius, mu_s_min);
+
+    // ── Compute atmosphere parameters for the target point ───────────────
+    float r_point = length(pointPos);
+    r_point = ClampRadius(r_point, bottomRadius, topRadius);
+    float3 upPoint = pointPos / r_point;
+
+    // At the target point, the "view direction" for the LUT lookup is the SAME
+    // direction (camera→point), because we need S(point → atmosphere boundary
+    // along the SAME ray direction). The zenith cosine at the point is computed
+    // relative to the point's local up vector.
+    float mu_point = dot(upPoint, viewDir);
+    float mu_s_point = dot(upPoint, sunDir);
+
+    bool rayHitsGround_point = RayIntersectsGround(r_point, mu_point, bottomRadius);
+
+    // ── Sample scattering at target point ────────────────────────────────
+    // S(point → atmosphere boundary along same view direction)
+    float4 scatPoint = SampleScatteringTexture4(
+        scatteringLut, samp,
+        r_point, mu_point, mu_s_point, nu, rayHitsGround_point,
+        bottomRadius, topRadius, mu_s_min);
+
+    // ── Transmittance from camera to point ───────────────────────────────
+    // T(camera → point) using the precomputed transmittance LUT.
+    outTransmittance = GetTransmittance(
+        transmittanceLut, samp,
+        r_cam, mu_cam, d, rayHitsGround_cam,
+        bottomRadius, topRadius);
+
+    // ── Inscattering = S(camera) - T(camera→point) * S(point) ───────────
+    // @ref Bruneton 2017 functions.glsl — GetSkyRadianceToPoint:
+    //   inscattering = S_camera - transmittance * S_point
+    // This computes the path-integrated inscattering along just the segment
+    // from camera to point (not the full path to the atmosphere boundary).
+
+    // Rayleigh component: camera - attenuated point
+    float3 rayleighCam   = scatCam.rgb;
+    float3 rayleighPoint = scatPoint.rgb;
+    float3 rayleighInscatter = rayleighCam - outTransmittance * rayleighPoint;
+
+    // Mie component: extrapolate full-spectrum from red channel using Rayleigh ratio.
+    // @ref Bruneton 2017 functions.glsl — GetScattering combined Rayleigh+Mie:
+    //   mie = rayleigh * (scattering.a / max(rayleigh.r, 1e-4))
+    // Apply this extrapolation to the DIFFERENCE (inscatter), not to each term
+    // separately, to avoid numerical issues.
+    float mieCamR   = scatCam.a;
+    float miePointR = scatPoint.a;
+    float mieInscatterR = mieCamR - dot(outTransmittance, float3(1, 0, 0)) * miePointR;
+
+    float3 mieInscatter;
+    if (rayleighInscatter.r > 1e-6f) {
+        mieInscatter = rayleighInscatter * (mieInscatterR / rayleighInscatter.r);
+    } else {
+        // Fallback when Rayleigh red is negligible (deep twilight)
+        mieInscatter = float3(mieInscatterR, mieInscatterR, mieInscatterR);
+    }
+
+    // Apply phase functions. The LUT stores scattering WITHOUT phase functions.
+    // @ref Bruneton 2017 Section 5: phase functions applied at lookup time.
+    outInscatter = rayleighInscatter * phaseR + mieInscatter * phaseM;
+}
+
+// ─── Sky Radiance (Camera to Atmosphere Boundary) ───────────────────────────
+//
+// Computes the inscattered radiance from the camera to the atmosphere boundary
+// along a given ray direction. This is the infinite-distance version of
+// GetSkyRadianceToPoint — used when the ray does not hit any geometry (sky
+// pixels, cubemap capture).
+//
+// Algorithm:
+//   inscatter = S(camera→boundary) with phase functions applied at lookup time.
+//   transmittance = T(camera→boundary) via the transmittance LUT.
+//
+// For ground-intersecting rays, the scattering LUT already stores the correct
+// integral terminated at the ground. The caller should handle ground shading
+// separately (Lambertian reflection attenuated by transmittance).
+//
+// @ref Bruneton & Neyret 2017 "Precomputed Atmospheric Scattering"
+//      Section 5 — Runtime Rendering, GetSkyRadiance function.
+// @ref Reference implementation: github.com/ebruneton/precomputed_atmospheric_scattering
+//      atmosphere/functions.glsl, GetSkyRadiance (BSD-3 license)
+
+/// Computes inscattered radiance and transmittance from camera to the atmosphere
+/// boundary (or ground) along a ray direction.
+///
+/// @param cameraPos        Camera position in sky space (km), origin at planet center.
+/// @param rayDir           Normalised view ray direction.
+/// @param sunDir           Normalised direction TOWARD the sun.
+/// @param scatteringLut    Precomputed 3D scattering texture (256x128x32 RGBA16F).
+/// @param transmittanceLut Precomputed 2D transmittance texture (256x64 RGBA16F).
+/// @param samp             Linear clamp sampler.
+/// @param bottomRadius     Planet surface radius (km).
+/// @param topRadius        Top of atmosphere radius (km).
+/// @param mu_s_min         Minimum sun zenith cosine for LUT parameterization (cos(102 deg)).
+/// @param outRadiance      [out] Inscattered radiance along the ray (phase-weighted, no sun illuminance).
+/// @param outTransmittance [out] Transmittance from camera to the atmosphere boundary (or ground).
+///
+/// @ref Bruneton 2017 functions.glsl — GetSkyRadiance
+/// @constants mu_s_min = cos(102 deg) = -0.2079116908 (Bruneton 2017 default)
+/// @deviations NONE
+void GetSkyRadiance(
+    float3 cameraPos, float3 rayDir, float3 sunDir,
+    Texture3D<float4> scatteringLut,
+    Texture2D<float4> transmittanceLut,
+    SamplerState samp,
+    float bottomRadius, float topRadius, float mu_s_min,
+    float phaseR, float phaseM,
+    out float3 outRadiance, out float3 outTransmittance) {
+
+    // ── Compute atmosphere parameters for the camera position ────────────
+    float r = length(cameraPos);
+    r = ClampRadius(r, bottomRadius, topRadius);
+    float3 up = cameraPos / r;
+    float mu = dot(up, rayDir);
+    float mu_s = dot(up, sunDir);
+    float nu = dot(rayDir, sunDir);
+
+    bool intersectsGround = RayIntersectsGround(r, mu, bottomRadius);
+
+    // ── Sample scattering at camera position ─────────────────────────────
+    // S(camera → atmosphere boundary along ray direction)
+    // Returns float4(Rayleigh.rgb, Mie.r) — phase functions NOT applied.
+    float4 scatSample = SampleScatteringTexture4(
+        scatteringLut, samp,
+        r, mu, mu_s, nu, intersectsGround,
+        bottomRadius, topRadius, mu_s_min);
+
+    // ── Extract Rayleigh and Mie components ──────────────────────────────
+    float3 rayleigh = scatSample.rgb;
+
+    // Mie extrapolation: full-spectrum Mie from red channel using Rayleigh ratio.
+    // @ref Bruneton 2017 functions.glsl — GetScattering combined Rayleigh+Mie:
+    //   mie = rayleigh * (scattering.a / max(rayleigh.r, 1e-4))
+    float3 mie;
+    if (rayleigh.r > 1e-6f) {
+        mie = rayleigh * (scatSample.a / rayleigh.r);
+    } else {
+        // Fallback when Rayleigh red is negligible (deep twilight)
+        mie = float3(scatSample.a, scatSample.a, scatSample.a);
+    }
+
+    // ── Apply phase functions ────────────────────────────────────────────
+    // @ref Bruneton 2017 Section 5: phase functions applied at lookup time.
+    outRadiance = rayleigh * phaseR + mie * phaseM;
+
+    // ── Transmittance from camera to the atmosphere boundary ─────────────
+    float d = DistanceToNearestAtmosphereBoundary(r, mu, bottomRadius, topRadius, intersectsGround);
+    outTransmittance = GetTransmittance(
+        transmittanceLut, samp,
+        r, mu, d, intersectsGround,
+        bottomRadius, topRadius);
+}
+
 #endif // ATMOSPHERE_LUT_HLSLI

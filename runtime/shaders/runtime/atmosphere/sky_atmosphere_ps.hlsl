@@ -486,6 +486,7 @@ float4 main(FSInput input) : SV_Target {
     } else
 #endif // UZ_BINDLESS
     {
+        // FALLBACK_RAYMARCH: kept for SM5/non-LUT debugging
         // ── FALLBACK: 32-step ray march (SM5 or LUT not yet precomputed) ─
         // Frostbite analytical per-step integration (Bruneton atmosphere pattern).
         // For each step we compute the analytical integral of scattered luminance

@@ -211,6 +211,12 @@ void AddAtmospherePasses(
                 cubeRC.sunIntensity        = skySunColor.Length();
                 cubeRC.transmittanceLutIdx = ctx.transmittanceLutSrv;
                 cubeRC.packedScatterScales = packed;
+                // Bruneton 3D scattering LUT for cubemap capture — avoids 16-step ray march.
+                // Use 0 when LUT is not available (shader falls back to ray march).
+                cubeRC.scatteringLut3DIdx  = (ctx.scatteringLut3DSrv != UINT32_MAX)
+                                           ? ctx.scatteringLut3DSrv : 0u;
+                // muSMin: cos(102 deg) = cos(1.78 rad) — Bruneton 2017 default minimum sun zenith cosine
+                cubeRC.muSMin              = -0.2079116908f;
 
                 SkyCubemapCapturePassDesc cubePassDesc{};
                 cubePassDesc.cubemapTarget      = cubeRes;
@@ -218,6 +224,16 @@ void AddAtmospherePasses(
                 cubePassDesc.pipeline           = ctx.pipelines->GetSkyCubemapCapture();
                 cubePassDesc.rootConstants      = cubeRC;
                 cubePassDesc.cubemapUavIndex    = ctx.skyCubemapUav;
+
+                // Import scattering LUT 3D as read dependency if available
+                if (ctx.scatteringLut3D.IsValid() && ctx.scatteringLut3DFilled
+                        && *ctx.scatteringLut3DFilled
+                        && ctx.scatteringLut3DSrv != UINT32_MAX) {
+                    cubePassDesc.scatteringLut3DDep = rgBuilder.ImportTexture(
+                        "ScatteringLUT3D_CubeCapture", ctx.scatteringLut3D,
+                        RHIResourceState::ShaderResource);
+                }
+
                 AddSkyCubemapCapturePass(rgBuilder, cubePassDesc);
             } else {
                 // ── Pixel shader path (SM5, no bindless) ─────────────────
@@ -746,6 +762,22 @@ void AddAtmospherePasses(
             apCB.depthSlices        = 16;
             apCB.totalDepthKm       = 100.0f;
 
+            // Bruneton 3D scattering LUT for LUT-based aerial perspective.
+            // When available and enabled via CVar, the compute shader uses dual 4D
+            // LUT lookups instead of the 8-step ray march (Phase 5).
+            // @ref Bruneton & Neyret 2017 "Precomputed Atmospheric Scattering"
+            //      Section 5 — GetSkyRadianceToPoint
+            if (cv_ScatteringLut->value > 0.5f
+                && ctx.scatteringLut3DFilled && *ctx.scatteringLut3DFilled
+                && ctx.scatteringLut3DSrv != UINT32_MAX) {
+                apCB.scatteringLut3DIdx = ctx.scatteringLut3DSrv;
+            } else {
+                apCB.scatteringLut3DIdx = 0; // 0 = LUT not available, shader uses ray march fallback
+            }
+            // muSMin: cos(102 deg) = cos(1.78 rad) — Bruneton 2017 default minimum
+            // sun zenith cosine for the scattering LUT parameterization.
+            apCB.muSMin = -0.2079116908f;
+
             CBAllocation apAlloc = ctx.cbRing->Allocate(sizeof(APVolumeCB));
             std::memcpy(apAlloc.cpuPtr, &apCB, sizeof(APVolumeCB));
 
@@ -753,6 +785,12 @@ void AddAtmospherePasses(
             apPassDesc.volumeTarget        = apRes;
             apPassDesc.transmittanceLutDep = lutRes;
             apPassDesc.multiScatterLutDep  = msLutRes;
+            // Scattering 3D LUT dependency — only when LUT is filled and CVar enabled.
+            if (cv_ScatteringLut->value > 0.5f
+                && ctx.scatteringLut3DFilled && *ctx.scatteringLut3DFilled
+                && scatRes.IsValid()) {
+                apPassDesc.scatteringLut3DDep = scatRes;
+            }
             apPassDesc.pipeline            = ctx.pipelines->GetAerialPerspectiveVolume();
             apPassDesc.rootConstants       = apRC;
             apPassDesc.cbAlloc             = apAlloc;
