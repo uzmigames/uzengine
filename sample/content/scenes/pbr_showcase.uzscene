@@ -29,7 +29,7 @@
             0.96,
             0.88
           ],
-          "intensity": 12.0
+          "intensity": 8.0
         }
       }
     },
@@ -531,10 +531,13 @@
           "scale": [1, 1, 1]
         },
         "volumetric_clouds": {
-          "coverage": 0.6,
-          "density": 1,
-          "layer_bottom_altitude_km": 7.0,
-          "layer_height_km": 10.0
+          "coverage": 0.7,
+          "density": 0.8,
+          "extinction": 0.01,
+          "scattering_albedo": 0.99,
+          "ambient_multiplier": 6.0,
+          "layer_bottom_altitude_km": 5.0,
+          "layer_height_km": 5.0
         }
       }
     }

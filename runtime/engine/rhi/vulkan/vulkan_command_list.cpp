@@ -236,10 +236,34 @@ void VulkanCommandList::Execute() {
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &m_commandBuffers[m_frameIndex];
 
+    // If the swapchain set pending semaphores on the device (via GetCurrentBackBuffer),
+    // wire them into this submission:
+    //   - Wait on imageAvailable at COLOR_ATTACHMENT_OUTPUT (don't write to the back
+    //     buffer until the presentation engine has finished reading it)
+    //   - Signal renderFinished when this submission completes (Present waits on it)
+    VkSemaphore waitSemaphore = m_device->m_pendingImageAvailableSem;
+    VkSemaphore signalSemaphore = m_device->m_pendingRenderFinishedSem;
+    VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+
+    if (waitSemaphore != VK_NULL_HANDLE) {
+        submitInfo.waitSemaphoreCount = 1;
+        submitInfo.pWaitSemaphores = &waitSemaphore;
+        submitInfo.pWaitDstStageMask = &waitStage;
+    }
+    if (signalSemaphore != VK_NULL_HANDLE) {
+        submitInfo.signalSemaphoreCount = 1;
+        submitInfo.pSignalSemaphores = &signalSemaphore;
+    }
+
     VkResult result = vkQueueSubmit(m_device->GetGraphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE);
     if (result != VK_SUCCESS) {
         UZ_LOG(RHI, Error, "vkQueueSubmit failed, result={}", static_cast<int>(result));
     }
+
+    // Clear pending semaphores so subsequent Execute() calls in the same frame
+    // (e.g., compute or copy submissions) don't re-use them.
+    m_device->m_pendingImageAvailableSem = VK_NULL_HANDLE;
+    m_device->m_pendingRenderFinishedSem = VK_NULL_HANDLE;
 
     // Rotate to next frame's command pool
     m_frameIndex = (m_frameIndex + 1) % kVulkanFrameCount;

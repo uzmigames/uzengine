@@ -61,6 +61,8 @@ namespace uz {
 /// timeline semaphores, and VMA memory management. Push constants are
 /// used for root constant / descriptor index binding (128 bytes).
 class VulkanDevice final : public IRHIDevice {
+    friend class VulkanSwapChain;
+    friend class VulkanCommandList;
 public:
     VulkanDevice() = default;
     ~VulkanDevice() override;
@@ -367,6 +369,19 @@ private:
     /// Built during Init() so Vulkan command list can translate rootParamIndex to
     /// the correct HLSL register for descriptor binding (with -fvk-b-shift 32 0).
     RHIRootSignatureDesc           m_rootLayout;
+
+    // ── Swapchain presentation synchronization ──────────────────────────
+    // Set by VulkanSwapChain::GetCurrentBackBuffer() when acquiring a swapchain
+    // image, consumed by VulkanCommandList::Execute() to wire semaphore wait/signal
+    // into the queue submission. This keeps the abstract IRHICommandList interface
+    // unchanged while enabling correct Vulkan presentation sync.
+
+    /// Semaphore signaled by vkAcquireNextImageKHR — the next queue submit must
+    /// wait on this at COLOR_ATTACHMENT_OUTPUT before writing to the back buffer.
+    VkSemaphore                    m_pendingImageAvailableSem = VK_NULL_HANDLE;
+
+    /// Semaphore to signal when rendering completes — Present() waits on this.
+    VkSemaphore                    m_pendingRenderFinishedSem = VK_NULL_HANDLE;
 
     /// Static samplers matching DX12 root signature static samplers.
     /// s0 (binding 16): linear wrap — general texturing.
