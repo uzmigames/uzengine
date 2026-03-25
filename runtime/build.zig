@@ -844,6 +844,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(test_mod, b, "tests/engine/shader", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/renderer", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/app", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine/ipc", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/job", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/ecs", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/event", cpp_flags);

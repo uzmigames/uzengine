@@ -81,8 +81,8 @@
 
 ## Testing
 
-- [ ] T.1 Unit test: H264Encoder init/encode/shutdown cycle (requires GPU + FFmpeg DLLs).
-- [ ] T.2 Unit test: encoder fallback chain (mock unavailable codecs).
+- [x] T.1 Unit test: H264Encoder init/encode/shutdown cycle (requires GPU + FFmpeg DLLs). Written 30 tests in `tests/engine/ipc/test_h264_encoder.cpp` covering DefaultConstruction, InitializeAndShutdown, DoubleInitFails, ShutdownWithoutInit, EncodeProducesOutput, RequestKeyframe, SetBitrate, GetExtradata, MoveConstruction, MoveAssignment, AsyncSubmitAndGet, and destructor cleanup. 18 FrameReadback tests in `tests/engine/ipc/test_frame_readback.cpp`. 11 C API tests added to `tests/engine/app/test_runtime_api.cpp`. All 54 non-GPU tests pass.
+- [ ] T.2 Unit test: encoder fallback chain (mock unavailable codecs). Requires FFmpeg codec-unavailability mocking infrastructure not yet in place.
 - [ ] T.3 Integration: Extension activates → open .uzscene → canvas shows rendered frame via H.264.
 - [ ] T.4 Integration: resize panel → viewport resizes → encoder reinits → decoder reconfigures.
 - [ ] T.5 Benchmark: measure encode latency (target <4ms), total latency (target <7ms).
