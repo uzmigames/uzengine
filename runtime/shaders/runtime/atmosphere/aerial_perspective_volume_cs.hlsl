@@ -59,7 +59,7 @@ cbuffer APVolumeCB : register(b2) {
     uint   outputUavIdx;            ///< UAV index for output 3D texture.
     uint   depthSlices;             ///< Number of depth slices (16).
     float  totalDepthKm;            ///< Total depth range in km (100.0).
-    float  _apPad0;                 ///< Pad to 16-byte boundary.
+    uint   multiScatterLutIdx;      ///< SRV index for multi-scattering LUT (32x32 R11G11B10F).
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

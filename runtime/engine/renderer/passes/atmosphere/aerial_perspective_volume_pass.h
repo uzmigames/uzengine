@@ -74,7 +74,7 @@ struct APVolumeCB {
     uint32_t outputUavIdx;            ///< UAV index for output 3D texture.
     uint32_t depthSlices;             ///< Number of depth slices (16).
     float    totalDepthKm;            ///< Total depth range (100.0 km).
-    float    _pad0;                   ///< Pad to 16-byte boundary.
+    uint32_t multiScatterLutIdx;     ///< SRV index for multi-scattering LUT (32x32).
     float    _pad1[32] = {};          ///< Pad to 256 bytes total.
 };
 
@@ -89,6 +89,7 @@ static_assert(sizeof(APVolumeCB) == 256,
 struct APVolumePassDesc {
     rg::RgResourceId  volumeTarget;          ///< Output 3D texture (write, UnorderedAccess).
     rg::RgResourceId  transmittanceLutDep;   ///< Transmittance LUT dependency (read, ShaderResource).
+    rg::RgResourceId  multiScatterLutDep;   ///< Multi-scatter LUT dependency (read, ShaderResource).
     RHIPipelineHandle pipeline;              ///< Compute PSO for aerial_perspective_volume_cs.hlsl.
     APVolumeRootConstants rootConstants;     ///< Atmosphere params (8 DWORDs at root param 0).
     CBAllocation      cbAlloc;               ///< APVolumeCB at root param 2 (b2).

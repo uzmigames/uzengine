@@ -352,7 +352,22 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
     // ── Flush pending mesh uploads (deferred — batched into single submission) ──
     for (const std::string& path : m_pendingMeshPaths) {
         const uint32_t slotIndex = m_meshMap.at(path);
-        Mesh cpuMesh = uz::LoadMesh(path);
+        Mesh cpuMesh{};
+        // Try VFS first (consistent with LoadMesh), then fall back to filesystem.
+        if (vfs && vfs->Exists(path)) {
+            std::vector<uint8_t> data = vfs->Read(path);
+            if (!data.empty()) {
+                cpuMesh = uz::LoadMeshFromMemory(data, path);
+            }
+        }
+        if (!cpuMesh.IsValid()) {
+            // Filesystem fallback: resolve via VFS or use as-is.
+            const bool isAbsolute = !path.empty() && (path[0] == '/' || path[0] == '\\' ||
+                                     (path.size() > 1 && path[1] == ':'));
+            const std::string resolvedPath = (vfs && !isAbsolute)
+                ? vfs->ResolvePath(path) : path;
+            cpuMesh = uz::LoadMesh(resolvedPath);
+        }
         if (!cpuMesh.IsValid()) {
             UZ_LOG(Renderer, Error, "SceneRenderer: failed to load queued mesh '{}'", path);
             continue;
