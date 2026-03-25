@@ -18,6 +18,7 @@ runtime/build/bin/uzengine.exe --project sample/camera_test.uzproject
 runtime/build/bin/uzengine.exe --project sample/mesh_test.uzproject
 runtime/build/bin/uzengine.exe --project sample/deferred_test.uzproject
 runtime/build/bin/uzengine.exe --project sample/ibl_test.uzproject
+runtime/build/bin/uzengine.exe --project sample/hdri_test.uzproject
 runtime/build/bin/uzengine.exe --project sample/cornell_box.uzproject
 runtime/build/bin/uzengine.exe --project sample/pbr_showcase.uzproject
 runtime/build/bin/uzengine.exe --project sample/textured_quad.uzproject
@@ -51,6 +52,7 @@ runtime/build/bin/uzengine.exe --project sample/fbx_test.uzproject
 | `postprocess_test` | 3 white cubes + sun | Tone mapping, FXAA, bloom |
 | `deferred_test` | 5 Stonebricks cubes + debug views | PBR textures, GBuffer visualization |
 | `ibl_test` | 5 Stonebricks cubes + IBL | Image-based lighting |
+| `hdri_test` | HDRI panorama + 7 PBR spheres | EXR loading, IBL reflections, varying metallic/roughness |
 | `instancing_test` | 1000 cubes in 10x10x10 grid (Lua-spawned) | GPU instancing, InstanceBatcher |
 | `material_test` | 5 spheres with different blend modes | Emissive, masked, translucent, additive, opaque |
 | `cornell_box` | Classic GI test box (red/green walls + sphere) | Procedural mesh, solid materials, atmosphere, fog |
@@ -67,6 +69,7 @@ sample/
 ├── postprocess_test.uzproject
 ├── deferred_test.uzproject
 ├── ibl_test.uzproject
+├── hdri_test.uzproject
 ├── instancing_test.uzproject
 ├── material_test.uzproject
 ├── cornell_box.uzproject
@@ -79,6 +82,7 @@ sample/
     │   ├── postprocess_test.uzscene
     │   ├── deferred_test.uzscene
     │   ├── ibl_test.uzscene
+    │   ├── hdri_test.uzscene
     │   ├── instancing_test.uzscene
     │   ├── material_test.uzscene
     │   ├── cornell_box.uzscene
@@ -87,6 +91,7 @@ sample/
     ├── scripts/
     │   ├── camera_test_controller.lua
     │   ├── deferred_test_controller.lua
+    │   ├── hdri_setup.lua
     │   ├── instancing_grid_setup.lua
     │   ├── cornell_box_setup.lua
     │   ├── pbr_showcase_controller.lua
@@ -99,6 +104,8 @@ sample/
         ├── Stonebricks/         # PBR texture set
         ├── Concrete/            # PBR texture set
         ├── MetalCorroded/       # PBR texture set
+        ├── MushroomMonster/     # FBX character textures
+        ├── hdri/                # HDRI panorama images (EXR)
         └── checker.png          # Debug checker pattern
 ```
 

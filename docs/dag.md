@@ -2,7 +2,7 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 > Milestone dependency graph. Arrows mean "depends on". Read top-to-bottom.
-> **Last updated**: 2026-03-22
+> **Last updated**: 2026-03-24
 > Phases 1-3 are complete (✅). Phase 4 is in progress. Lua scripting (6.3) was implemented early.
 
 ---
@@ -362,8 +362,8 @@
    ✅ Script system (ScriptComponent, per-node on_start/on_update/on_stop)
    ✅ Lua APIs: time, input, math, quat, camera, entity, scene, light, environment, renderer, window, VFS
 
-   14 demos: clear_screen, triangle, textured_quad, mesh_test, pbr_test,
-             deferred_test, ibl_test, instancing_test, postprocess_test,
+   15 demos: clear_screen, triangle, textured_quad, mesh_test, pbr_test,
+             deferred_test, ibl_test, hdri_test, instancing_test, postprocess_test,
              fbx_test, cornell_box, camera_test, + common lib
 ```
 

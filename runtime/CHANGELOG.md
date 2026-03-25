@@ -40,6 +40,18 @@
 **Decal Demo Integration:**
 - Added 3 DecalComponent entities to pbr_test demo (concrete weathering, corroded metal stain, stonebrick rust on sphere)
 
+**Texture System Improvements:**
+- Fixed `QueueTextureLoad()` VFS path resolution: now correctly resolves relative paths before lookup, preventing "unknown path" discard of all async texture results
+- Fixed `instancing_test` white cube texture: metallic fallback now WHITE (was BLACK), allowing material parameter control
+
+**HDRI Environment System:**
+- New HDRI Lua API: `uz.texture.load_hdr()` for EXR panorama loading, `uz.renderer.set_hdri_environment()` for IBL environment
+- `hdri_test` demo migrated to sample format: HDRI panorama + 7 PBR spheres with varying metallic/roughness showcasing EXR loading and IBL reflections
+
+**Component Auto-Registration:**
+- `ComponentSerializerRegistry` now auto-registers standard components (Transform, Scene, Mesh, Light, Sky, Fog, etc.) via static initializers
+- Eliminates manual registration boilerplate in scene loader, enabling cleaner component system architecture
+
 **Tasks Archived:**
 - Linux Platform (phase4-4.10.0) — 34/34: X11 window/input, POSIX file I/O, inotify, mmap, crash handler, XDG paths, dlopen, fork/exec, system info, stack walker
 - SRP File Split (phase0-0.9.0) — archived
