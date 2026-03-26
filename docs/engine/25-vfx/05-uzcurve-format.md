@@ -1,7 +1,7 @@
 ---
 title: .uzcurve JSON Format Specification
-status: Done (Phase 3.61.0)
-last-updated: 2026-03-24
+status: Implemented (Phase 3.62.0)
+last-updated: 2026-03-26
 ---
 
 # .uzcurve JSON Format Specification

@@ -426,8 +426,7 @@ Optimization:
 
 ## Implementation Phase
 
-| Phase | What Ships |
-|-------|-----------|
-| **Phase 3** | DecalComponent, box projection, basic rendering, pooling |
-| **Phase 4** | **Deferred decal pass**, atlasing, fade curves, multiple blend modes |
-| **Phase 5** | Decal sorting by depth, LOD system, performance profiling |
+| Phase | Status |
+|-------|--------|
+| **Phase 3.63.0** | **IMPLEMENTED** — DecalComponent, box projection, deferred pass, pooling, atlasing, fade curves, blend modes |
+| **Phase 3.64.0** | Trail system (sibling feature, independently complete) |

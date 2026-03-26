@@ -1,8 +1,9 @@
 # .uzdecal JSON Format Specification
 
-> **Status**: Planned (Phase 3.63.0)
+> **Status**: Implemented (Phase 3.63.0)
 > **Format**: JSON
 > **References**: [Decal System Overview](05-decals.md), [Deferred Decal Pipeline](12-deferred-decal-pipeline.md), [Decal Pool & Atlas](13-decal-pool-atlas.md)
+> **Source**: `runtime/engine/vfx/decals/decal_asset.{h,cpp}`
 
 ## Purpose
 

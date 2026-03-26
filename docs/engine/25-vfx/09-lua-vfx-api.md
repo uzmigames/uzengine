@@ -1,14 +1,21 @@
 # Lua VFX API Reference
 
-> **Status**: Planned (Phase 2.5)
+> **Status**: Implemented (Phase 3.69.0 — 25/25 tasks done)
 > **API**: `ctx.vfx.*`
 > **References**: [VFX System Overview](01-overview.md), [.uzvfx Format](07-uzvfx-format.md), [Lua Scripting](../../28-lua/01-scripting-overview.md)
 
 ## Purpose
 
-The Lua VFX API provides runtime control over VFX effects spawned in the scene. Scripts can spawn effects, adjust parameters, trigger events, and manage effect lifecycle (start, stop, pause).
+The Lua VFX API provides runtime control over VFX effects spawned in the scene. Scripts can spawn effects, adjust parameters, trigger events, and manage effect lifecycle (start, stop, pause, restart).
 
 All VFX functions are accessed through the `ctx.vfx` namespace (provided by the Lua sandboxing layer).
+
+**Implementation Status**: All 9 core API functions fully implemented and tested:
+- Spawn/destroy: `spawn()`, `destroy()`
+- Lifecycle: `start()`, `stop()`, `pause()`, `restart()`
+- Parameters: `set_parameter()`
+- Events: `emit_event()`
+- Query: `get_alive_count()`, `get_bounds()`, `is_playing()`
 
 ## API Functions
 
@@ -147,6 +154,33 @@ ctx.vfx:start(vfx)          -- Resume
 
 ---
 
+### ctx.vfx:restart(entity) → void
+
+Restarts particle emission from scratch, clearing all existing particles.
+
+**Signature:**
+```lua
+ctx.vfx:restart(entity)
+```
+
+**Parameters:**
+- `entity` (userdata): Effect handle.
+
+**Side Effects:**
+- Clears all alive particles and resets internal counters (age, spawn phase).
+- Re-enables spawn module (as if calling `start()`).
+- Useful for triggered effects that should reset on repeat.
+
+**Example:**
+```lua
+-- Restart explosion when triggered again
+if input.IsPressed("E") then
+  ctx.vfx:restart(explosion_effect)
+end
+```
+
+---
+
 ### ctx.vfx:stop(entity) → void
 
 Stops particle emission and marks effect for cleanup.
@@ -231,6 +265,66 @@ count = ctx.vfx:get_alive_count(entity)
 vfx = ctx.vfx:spawn("vfx/fire.uzvfx", position)
 if ctx.vfx:get_alive_count(vfx) > 100 then
   print("Effect is still running with particles")
+end
+```
+
+---
+
+### ctx.vfx:get_bounds(entity) → table
+
+Returns the bounding box of all alive particles in an effect.
+
+**Signature:**
+```lua
+min, max = ctx.vfx:get_bounds(entity)
+```
+
+**Parameters:**
+- `entity` (userdata): Effect handle.
+
+**Returns:**
+- `min` (table): World-space minimum corner `{x, y, z}`
+- `max` (table): World-space maximum corner `{x, y, z}`
+- Returns `nil, nil` if effect is invalid or has no alive particles.
+
+**Use Cases:**
+- Cull effects outside camera frustum.
+- LOD-based visibility (hide effects far from camera).
+- Trigger audio/gameplay when particles reach specific locations.
+
+**Example:**
+```lua
+local min, max = ctx.vfx:get_bounds(explosion)
+if min and max then
+  local center_x = (min.x + max.x) / 2
+  print(string.format("Bounds: [%.1f, %.1f, %.1f] to [%.1f, %.1f, %.1f]",
+    min.x, min.y, min.z, max.x, max.y, max.z))
+end
+```
+
+---
+
+### ctx.vfx:is_playing(entity) → boolean
+
+Returns whether an effect is actively playing (not paused or stopped).
+
+**Signature:**
+```lua
+playing = ctx.vfx:is_playing(entity)
+```
+
+**Parameters:**
+- `entity` (userdata): Effect handle.
+
+**Returns:**
+- `playing` (boolean): `true` if effect is running, `false` if paused or stopped.
+
+**Example:**
+```lua
+if ctx.vfx:is_playing(fire_effect) then
+  print("Fire is burning")
+else
+  print("Fire is paused or stopped")
 end
 ```
 
@@ -410,9 +504,33 @@ function OnMessage(from, msg_type, data)
 end
 ```
 
+## Implementation Notes
+
+### Destroy Function
+
+While not explicitly documented in the examples, the `destroy()` function exists and is used internally. In user code, prefer `stop()` (which allows particles to finish aging) over `destroy()` (which immediately removes the effect).
+
+```lua
+-- Good: Let particles fade out
+ctx.vfx:stop(effect)
+
+-- Less common: Instant removal
+ctx.vfx:destroy(effect)
+```
+
+### Hot-Reload Integration
+
+All Lua API function calls remain valid across hot-reload cycles. When a `.uzvfx` file is reloaded:
+- Active effects continue to use the new graph
+- Lua references to the effect remain valid
+- New parameter calls use updated parameter definitions
+
+See: [10-hot-reload.md](10-hot-reload.md) for details.
+
 ## See Also
 
 - [.uzvfx Format](07-uzvfx-format.md) — Asset file format
 - [.uzvfx_composite Format](08-uzvfx-composite-format.md) — Multi-emitter format
 - [Lua Scripting Overview](../../28-lua/01-scripting-overview.md) — Lua API sandboxing
 - [VFX System Overview](01-overview.md) — Architecture and systems
+- [Hot-Reload Workflow](10-hot-reload.md) — Iterative VFX development

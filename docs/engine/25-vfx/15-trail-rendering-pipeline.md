@@ -1,7 +1,9 @@
 # Trail Rendering Pipeline
 
-> **Status**: Planned (Phase 3.64.0)
+> **Status**: Implemented (Phase 3.64.0)
 > **References**: [.uztrail Format](14-uztrail-format.md), [Trail Configuration Guide](16-trail-configuration-guide.md)
+> **Source**: `runtime/engine/vfx/trails/trail_component.{h,cpp}`, `trail_system.{h,cpp}`, `trail_mesh_builder.{h,cpp}`
+> **Shaders**: `runtime/shaders/runtime/vfx/trail_vs.hlsl`, `trail_ps.hlsl`
 
 ## Purpose
 

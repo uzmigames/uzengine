@@ -1,9 +1,10 @@
 # VFX System
 
-GPU particle system, VFX modules, VFX graph, and decals.
+GPU particle system, VFX modules, VFX graph, decals, trails, and advanced effects.
 
-> **Status**: Planned
-> **Source**: `runtime/engine/vfx/`
+> **Status**: Implemented (Phases 3.60–3.69 Complete; 3.66–5.3 Mostly Complete)
+> **Source**: `runtime/engine/vfx/` + `runtime/shaders/runtime/vfx/`
+> **Viewport**: `runtime/tools/uz_viewport.exe` (standalone VFX preview with full rendering stack)
 
 | Document | Topic |
 |----------|-------|

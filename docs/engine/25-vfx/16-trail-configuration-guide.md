@@ -1,7 +1,8 @@
 # Trail Configuration & Usage Guide
 
-> **Status**: Planned (Phase 3.64.0)
+> **Status**: Implemented (Phase 3.64.0)
 > **References**: [.uztrail Format](14-uztrail-format.md), [Trail Rendering Pipeline](15-trail-rendering-pipeline.md)
+> **Source**: `runtime/engine/vfx/trails/trail_component.{h,cpp}`
 
 ## Purpose
 

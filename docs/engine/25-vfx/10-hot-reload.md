@@ -1,14 +1,16 @@
 # VFX Hot-Reload Workflow
 
-> **Status**: Planned (Phase 2.5)
+> **Status**: Implemented (Phase 3.69.0 — 25/25 tasks done)
 > **Availability**: Dev builds only (`UZ_DEV_BUILD` or `!NDEBUG`)
-> **References**: [VFX System Overview](01-overview.md), [.uzvfx Format](07-uzvfx-format.md), [Module API](04-module-api.md)
+> **References**: [VFX System Overview](01-overview.md), [.uzvfx Format](07-uzvfx-format.md), [Module API](04-module-api.md), [Lua VFX API](09-lua-vfx-api.md)
 
 ## Purpose
 
 VFX hot-reload enables iterative development: modify a `.uzvfx` file, save it, and see changes reflected in-engine without restarting. This dramatically speeds up VFX authoring workflows.
 
 The hot-reload system monitors asset files for changes, reloads modified `.uzvfx` graphs, recompiles shader pipelines, and applies updates to live effects in the scene.
+
+**Implementation Status**: Fully implemented with file monitoring, change detection, graph recompilation, and live effect updates. Works seamlessly with Lua API calls — effects remain valid across reloads.
 
 ## Architecture Overview
 
@@ -128,7 +130,7 @@ VFX hot-reload is **dev-only** and disabled in shipping builds. It is conditiona
 #endif
 ```
 
-### Debug vs. Release Builds
+### Build Configuration
 
 | Build Type | Hot-Reload | Reason |
 |-----------|-----------|--------|
@@ -136,11 +138,22 @@ VFX hot-reload is **dev-only** and disabled in shipping builds. It is conditiona
 | Release with dev flag (`UZ_DEV_BUILD`) | **Enabled** | Packaged dev builds |
 | Shipping (`NDEBUG` set, no `UZ_DEV_BUILD`) | **Disabled** | Performance, no filesystem scanning |
 
-### Checking Availability at Runtime
+### Integration
+
+Hot-reload is automatically initialized by the VFX system if `UZ_VFX_HOT_RELOAD` is enabled. No manual code required in most cases:
 
 ```cpp
+// In VFXSystem::Init() (automatic)
 #if UZ_VFX_HOT_RELOAD
-    vfx_hot_reload.Initialize();
+    vfx_hot_reload_.Initialize();
+    vfx_hot_reload_.SetOnReload([this](const std::string& path, const VFXGraph& graph) {
+        OnVFXReloaded(path, graph);  // Update active effects
+    });
+#endif
+
+// In VFXSystem::Update() (automatic)
+#if UZ_VFX_HOT_RELOAD
+    vfx_hot_reload_.Poll();  // Called once per frame
 #endif
 ```
 
@@ -393,14 +406,56 @@ git add vfx/fire_campfire.uzvfx
 git commit -m "Tweak fire spawn rate and color"
 ```
 
+## Implementation Architecture
+
+### File Monitoring
+
+The hot-reload system uses `std::filesystem::last_write_time()` for change detection:
+
+```cpp
+class VFXHotReload {
+    struct LoadedFile {
+        std::string path;
+        std::filesystem::file_time_type lastWrite;
+        VFXGraphHandle graphHandle;
+    };
+
+    std::vector<LoadedFile> loadedFiles_;
+    std::function<void(const std::string&, const VFXGraph&)> onReload_;
+};
+```
+
+On each poll, timestamps are checked and changed files are reloaded. The system is efficient (O(n) where n = number of loaded VFX files, typically < 50).
+
+### Recompilation Pipeline
+
+When a `.uzvfx` file changes:
+
+1. **Parse JSON** — Load and validate file structure
+2. **Compile Graph** — Build shader modules, validate module chain
+3. **Register PSOs** — Add/update compute and graphics pipelines in `PipelineLibrary`
+4. **Apply Update** — Call `OnReload` callback with new graph
+5. **Update Effects** — Replace graph on all active effects
+
+The recompilation is **not** frame-locked — it runs immediately when change detected, then effects use new graph next frame.
+
+### Shader Compilation
+
+If shader source changes (rare for `.uzvfx` — shaders are typically static), recompilation happens via:
+
+- Module type → shader stage mapping (SpawnModule → compute, etc.)
+- DXC compilation with full debug info (`-Zi -Od`)
+- Pipeline library update with new PSO handle
+
 ## Future Extensions (Phase 3.0+)
 
-Planned enhancements:
+Potential enhancements (not yet implemented):
 
-- **Automatic new file detection**: New `.uzvfx` files in asset directories automatically registered.
+- **Automatic new file detection**: New `.uzvfx` files in asset directories automatically registered (currently requires one spawn to register).
 - **Parameter persisting**: Changed parameters persist across hot-reload (not reset to defaults).
 - **Diff visualization**: Show what changed between old and new version before reloading.
 - **Undo/Redo**: Record hot-reload history and allow reverting.
+- **Multi-platform watch**: fsnotify-style file watching instead of polling (platform-specific, optional optimization).
 
 ## See Also
 
@@ -408,3 +463,4 @@ Planned enhancements:
 - [.uzvfx Format](07-uzvfx-format.md) — Asset file format
 - [Module API](04-module-api.md) — Module programming (affects shader compilation)
 - [Lua Scripting Overview](../../28-lua/01-scripting-overview.md) — Script integration with hot-reload
+- [Lua VFX API](09-lua-vfx-api.md) — Effect control from Lua scripts

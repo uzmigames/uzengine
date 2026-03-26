@@ -1,7 +1,8 @@
 # Instanced Mesh Particle Rendering
 
-> **Status**: Planned (Phase 3.71.0)
+> **Status**: Implemented (Phase 3.65.0)
 > **References**: [VFX Modules](03-vfx-modules.md), [Particle System](02-particle-system.md), [.uzvfx Format](07-uzvfx-format.md)
+> **Source**: `runtime/engine/vfx/modules/mesh_render/`, `runtime/shaders/runtime/vfx/particle_mesh_instance_cs.hlsl`, `runtime/shaders/runtime/vfx/particle_mesh_vs.hlsl`, `runtime/shaders/runtime/vfx/particle_mesh_ps.hlsl`
 
 ## Purpose
 
@@ -351,7 +352,7 @@ For 50 mesh emitters at 512 particles each: ~1.6 MB (trivial).
 
 | Phase | Milestone | Status |
 |-------|-----------|--------|
-| 3.71.0 | Mesh render module & CS implementation | Planned |
-| 3.72.0 | Graphics pass integration & test coverage | Planned |
-| 3.73.0 | Animated mesh particles (skeletal) | Planned |
-| 3.74.0 | Mesh LOD & dynamic morphing | Planned |
+| 3.65.0 | Mesh render module & CS implementation | Complete |
+| 3.66.0 | Graphics pass integration & test coverage | Complete |
+| 3.67.0 | Animated mesh particles (skeletal) | Planned |
+| 3.68.0 | Mesh LOD & dynamic morphing | Planned |

@@ -1,15 +1,16 @@
 ---
 title: GPU Noise Functions Reference
-status: Done (Phase 3.61.0)
-last-updated: 2026-03-24
+status: Implemented (Phase 3.61.0)
+last-updated: 2026-03-26
 ---
 
 # GPU Noise Functions Reference
 
 Complete reference for GPU noise functions used in VFX modules and particle effects.
 
-> **Header**: `runtime/shaders/runtime/include/vfx_common.hlsli`
+> **Header**: `runtime/shaders/runtime/include/vfx_common.hlsli` and related include files (`vfx_curves.hlsli`, shader module compute kernels)
 > **Language**: HLSL/DirectX Shader Language
+> **Implementation Status**: All functions fully implemented and integrated into particle simulation modules
 
 ## Overview
 

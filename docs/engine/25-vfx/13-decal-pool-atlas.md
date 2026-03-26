@@ -1,8 +1,9 @@
 # Decal Pool & Atlas Usage Guide
 
-> **Status**: Planned (Phase 3.63.0)
+> **Status**: Implemented (Phase 3.63.0)
 > **Category**: Performance, VFX, Memory Management
 > **References**: [Decal System Overview](05-decals.md), [Deferred Decal Pipeline](12-deferred-decal-pipeline.md), [.uzdecal Format](11-uzdecal-format.md)
+> **Source**: `runtime/engine/vfx/decals/decal_pool.{h,cpp}`, `decal_atlas.{h,cpp}`, `decal_manager.{h,cpp}`
 
 ## Purpose
 

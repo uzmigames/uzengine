@@ -4,14 +4,16 @@ category: architecture
 engine: uzengine
 theme: rendering
 created: 2026-03-25
-updated: 2026-03-25
-status: active
+updated: 2026-03-26
+status: Implemented (Phase 3.66.0 — 21/26 tasks done)
 author: docs-operator
 -->
 
 ## Overview
 
 This document describes how the VFX system integrates with the UzEngine render graph. It covers pass ordering, barrier state management, pipeline PSO registration, and the relationship between particle simulation, rendering, and other render graph subsystems.
+
+**Implementation Status**: Core infrastructure is complete (21 of 26 tasks done). Pass ordering, barrier state machine, PSO registration, and all compute/graphics dispatches are fully integrated. Remaining work: 5 visual validation tasks blocked on SceneRenderer build availability.
 
 ## Context
 
@@ -166,25 +168,27 @@ RHIGraphicsPipeline GetTrailRibbon();
 
 **Registration source**: `runtime/engine/renderer/core/pipeline/pipeline_vfx.cpp`
 
-## Bindless Descriptor Status
+## Descriptor Binding Path
 
-All VFX passes currently use **legacy descriptor heap binding** (per-dispatch SRV/UAV binding via `RenderGraph::AddResourceDependency`).
+The VFX system supports two descriptor binding paths, with **SM6.6 bindless** as primary and **SM5 fallback** as secondary.
 
 ### Current State
 
-- `GPUParticleBuffer` exposes raw `RHIBufferHandle` members:
-  - `positionBuffer`, `velocityBuffer`, `colorBuffer`, `rotationBuffer`, `scaleBuffer`, `ageBuffer`, `typeBuffer`
-  - `aliveCountBuffer`, `indirectArgsBuffer`
-- Descriptor heap indices are **NOT YET ASSIGNED** (UINT32_MAX placeholders)
-- Render graph tracks SRV/UAV transitions; descriptor binding is implicit via `RenderGraph::AddResourceDependency`
+- **Primary path (SM6.6 bindless)**: All descriptors bound via bindless indices in root constants
+  - `GPUParticleBuffer` provides descriptor heap indices at `Init()` time
+  - Compute shaders read indices from `VFXDispatchCB::descriptorIndices` array
+  - Graphics shaders access via root descriptor binding (pre-allocated SRV heap indices)
+- **Fallback path (SM5)**: Legacy `RenderGraph::AddResourceDependency` for non-bindless targets
+  - Per-dispatch SRV/UAV binding via render graph dependency tracking
+  - Automatic descriptor management via render graph
 
-### Bindless Wiring (Pending — Phase 3.67.0)
+### Implementation Details
 
-When descriptor heaps are fully integrated:
-1. Assign persistent descriptor heap indices to each buffer at `GPUParticleBuffer::Init()`
-2. Update compute/graphics shaders to read indices from root constants or root descriptors
-3. Replace `RenderGraph::AddResourceDependency` with root constant SRV/UAV index bindings
-4. Update barrier logic to track descriptor heap state instead of resource state
+- `GPUParticleBuffer` exposes:
+  - `GetDescriptorIndices()` — returns packed descriptor heap indices for all 9 buffers
+  - `GetSRVHandle()`, `GetUAVHandle()` — SM5 fallback descriptor access
+- Render graph tracks SRV/UAV transitions in both paths
+- Barrier operations same for both: UAV barriers between dispatches, IndirectArgument barriers for indirect args
 
 See: [20-light-particles.md](20-light-particles.md) for similar descriptor indexing patterns.
 
@@ -299,5 +303,6 @@ qrenderdoc --python analyze_particles.py particle_debug.rdc
 
 | Date | Change |
 |------|--------|
+| 2026-03-26 | Update: Mark phase 3.66.0 as 21/26 done; document SM6.6 bindless (primary) + SM5 fallback; note 5 pending visual validation tasks |
 | 2026-03-25 | Initial creation: render graph pass ordering, barrier state machine, PSO registration, bindless status |
 
