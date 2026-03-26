@@ -148,6 +148,7 @@ The following rules are equally important but less frequently violated. Full det
 | UI system | ui-engineer | sonnet |
 | Gameplay systems | gameplay-systems-engineer | sonnet |
 | Multi-subsystem integration | systems-integration | opus |
+| Post-merge/implementation audit | implementation-auditor | sonnet |
 | Project coordination | project-manager | haiku |
 
 ## Persistent Memory
@@ -158,6 +159,53 @@ This project uses a **persistent memory system** via the Rulebook MCP server and
 1. **Start of session**: `rulebook_memory_search` for relevant past context
 2. **During work**: Save decisions, bugs, discoveries as they happen
 3. **End of session**: Save a summary with `type: observation`
+
+## MCP Documentation Server (uzengine-docs)
+
+An MCP server indexes all C++ and HLSL code documentation. Use it to understand the codebase without reading every file.
+
+### Available Tools
+
+| Tool | Purpose | Example |
+|------|---------|---------|
+| `search_docs` | Hybrid BM25 + semantic search across all code entities | `search_docs({ query: "fog density" })` |
+| `get_entity` | Get full docs for a specific entity by ID | `get_entity({ id: "runtime/src/engine/renderer/passes/fog_pass.h::FogPass" })` |
+| `get_data_flow` | Trace a field through component → renderer → cbuffer → shader | `get_data_flow({ field: "fogDensity" })` |
+| `get_relationships` | Find related entities (inheritance, bindings, etc.) | `get_relationships({ id: "SkyAtmosphereComponent", depth: 2 })` |
+| `get_subsystem_map` | List all subsystems with entity counts | `get_subsystem_map()` |
+| `get_refs` | List academic paper references cited in code | `get_refs({ author: "Bruneton" })` |
+
+### When to Use
+
+- **Before implementing** — `search_docs` to find existing code for the feature area
+- **Understanding data flow** — `get_data_flow` to trace a field across the pipeline (replaces manual grep across 4+ files)
+- **Finding related code** — `get_relationships` to discover what depends on or extends an entity
+- **Checking citations** — `get_refs` to verify which papers are already referenced
+- **Exploring subsystems** — `get_subsystem_map` for a high-level view of the codebase structure
+
+### Search Filters
+
+`search_docs` supports optional filters:
+- `kind`: `file`, `class`, `struct`, `enum`, `function`, `method`, `field`, `macro`, `shader_fn`, `shader_cb`, `typedef`
+- `subsystem`: filter by subsystem name (use `get_subsystem_map` to list them)
+- `tags`: array of tags (AND logic)
+- `limit`: max results (default 10)
+
+### Example Workflow
+
+```
+# 1. Find all fog-related entities
+search_docs({ query: "exponential height fog", kind: "struct" })
+
+# 2. Get full docs for the component
+get_entity({ id: "height_fog_component.h::HeightFogComponent" })
+
+# 3. Trace how fogDensity flows through the pipeline
+get_data_flow({ field: "fogDensity" })
+
+# 4. Find what references this component
+get_relationships({ id: "height_fog_component.h::HeightFogComponent", kind: "binding" })
+```
 
 ## Commands
 
