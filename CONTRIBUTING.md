@@ -203,18 +203,104 @@ Rules:
 
 ---
 
+## Acceptance Criteria (Mandatory)
+
+Contributions are **only accepted** when all of the following are met. PRs that fail any criterion will be rejected without detailed review.
+
+### 1. Follow the existing directory structure
+
+Every subsystem in UzEngine has a well-defined home. New code **must** follow the same layout as existing code — never create parallel hierarchies.
+
+| File type | Where it goes | Example |
+|-----------|---------------|---------|
+| ECS components | `engine/ecs/<category>/` | `engine/ecs/environment/height_fog_component.h` |
+| Render passes | `engine/renderer/passes/<category>/` | `engine/renderer/passes/vfx/particle_render_pass.h` |
+| Lua bindings | `engine/scripting/<category>/` | `engine/scripting/scene/lua_fog_api.cpp` |
+| Asset formats/loaders | `engine/asset/formats/` | `engine/asset/formats/uzfx_loader.h` |
+| Core subsystem logic | `engine/<subsystem>/` | `engine/vfx/core/gpu_particle_buffer.h` |
+
+**How to check**: before creating a file, search for existing files of the same type (`grep -r "passes/" runtime/build.zig`, look at peer directories). If 15 render passes live under `renderer/passes/`, yours does too — not under your subsystem directory.
+
+> **What went wrong (VFX)**: The VFX implementation placed render passes, Lua bindings, and asset formats under `engine/vfx/passes/`, `engine/vfx/scripting/`, and `engine/vfx/asset/` respectively, ignoring the established locations. This required a full reorganization of 23 files and 17 include-path updates after the fact.
+
+### 2. Document everything
+
+- Every `.h` and `.cpp` file **must** start with a `///` file header describing its purpose.
+- Every public class, struct, method, enum, and macro **must** have `///` documentation.
+- One-liner descriptions that restate the name ("Gets the value." on `GetValue()`) are rejected.
+- Run `python scripts/audit_docs.py --severity V1,V2,V3` and fix all violations before opening your PR.
+
+**How to check**: run the audit script. Zero violations = ready for review.
+
+```bash
+python scripts/audit_docs.py --severity V1,V2,V3,V5,V6
+# Target: 0 violations on your changed files
+```
+
+> **What went wrong (VFX)**: 40 source files were committed without `///` file headers, requiring a separate doc-fix pass across the entire subsystem.
+
+### 3. Respect file size limits
+
+- **Max 1500 lines** per source file. Split proactively at ~1000 lines.
+- Each file has **single responsibility**. If a file handles directional lights AND point lights AND spot lights extended properties, it is doing too much.
+
+**How to check**: `wc -l runtime/engine/**/*.cpp | awk '$1 > 1500'` — must return nothing for your files.
+
+> **What went wrong (VFX)**: `lua_light_api.cpp` grew to 1669 lines, requiring a post-hoc split into two files.
+
+### 4. Tests are mandatory
+
+- 95% coverage minimum on all new code.
+- Tests mirror the source tree: `engine/vfx/core/foo.cpp` → `tests/engine/vfx/test_foo.cpp`.
+- Every error path, edge case, and public API function needs a test.
+- No placeholder assertions, no skipped tests.
+
+### 5. Do not break existing functionality
+
+- `zig build` must pass with zero errors and zero new warnings.
+- `zig build test` — all existing tests must still pass.
+- Include paths in `build.zig` must be updated if you move or add directories.
+- If your change touches `build.zig`, verify that **all** demos still build: `cd runtime/demos/<each> && zig build`.
+
+### 6. Update build.zig correctly
+
+When adding a new directory:
+1. Add it to the **include paths array** (alphabetically within its section).
+2. Add the corresponding `addCppDir()` call (in the same relative position).
+3. **Never** duplicate an entry that already exists — search first.
+
+## Pre-PR Checklist
+
+Copy this into your PR description and check every box:
+
+```markdown
+- [ ] Files placed in correct directories (matches existing patterns)
+- [ ] `python scripts/audit_docs.py --severity V1,V2,V3,V5,V6` reports 0 violations on my files
+- [ ] No file exceeds 1500 lines (`wc -l` check)
+- [ ] `cd runtime && zig build` passes with zero errors
+- [ ] `cd runtime && zig build test` — all tests pass
+- [ ] New code has 95%+ test coverage
+- [ ] `build.zig` include paths updated (no duplicates, no stale entries)
+- [ ] No existing functionality broken (ran affected demos)
+```
+
+---
+
 ## Pull Request Process
 
 1. **Fork** the repository and create a feature branch from `main`.
-2. **Keep PRs small** — large PRs stall. Prefer a series of focused PRs.
-3. **Fill in the PR template** completely. Incomplete templates are closed.
-4. **CI must be green** before requesting review. Do not ask reviewers to look at failing builds.
-5. **One approving review** required from a maintainer before merge.
-6. **Squash or rebase** — no merge commits. The maintainer merges with squash if the branch is messy.
-7. **Delete your branch** after merge.
+2. **Complete the pre-PR checklist** above — PRs without a checked-off checklist are closed.
+3. **Keep PRs small** — large PRs stall. Prefer a series of focused PRs.
+4. **Fill in the PR template** completely. Incomplete templates are closed.
+5. **CI must be green** before requesting review. Do not ask reviewers to look at failing builds.
+6. **One approving review** required from a maintainer before merge.
+7. **Squash or rebase** — no merge commits. The maintainer merges with squash if the branch is messy.
+8. **Delete your branch** after merge.
 
 ### What Gets Reviewed
 
+- **Directory placement** — files in the wrong location are rejected before code is read.
+- **Documentation** — undocumented public APIs are rejected.
 - Correctness and test coverage.
 - Adherence to code standards above (doc comments, engine APIs, file size).
 - Performance implications (allocations, draw calls, frame time).
