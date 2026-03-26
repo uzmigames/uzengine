@@ -90,7 +90,7 @@ class OutlinePass;
 class GizmoRenderer;
 class UploadContext;
 class Camera;
-class FPSCameraController;
+class FlyCameraController;
 class World;
 class AsyncTextureDecoder;
 
@@ -157,7 +157,7 @@ public:
     /// Initializes all rendering infrastructure.
     ///
     /// Creates ShaderManager, PipelineLibrary, CBRingAllocator (3 frames, 2MB),
-    /// EditorGrid, Camera, FPSCameraController, RgResourcePool, GBuffer, and
+    /// EditorGrid, Camera, FlyCameraController, RgResourcePool, GBuffer, and
     /// shadow atlas (4096x4096 D32F).
     ///
     /// StatsOverlay initialization is deferred to the first `RenderFrame()` call
@@ -479,8 +479,8 @@ public:
     /// Const overload — returns a const reference to the render camera.
     [[nodiscard]] const Camera& GetCamera() const;
 
-    /// Returns the FPS camera controller. Must only be called after `Init()`.
-    [[nodiscard]] FPSCameraController& GetCameraController();
+    /// Returns the fly camera controller. Must only be called after `Init()`.
+    [[nodiscard]] FlyCameraController& GetCameraController();
 
     /// Returns the input system. May return null if `Init()` has not been called.
     [[nodiscard]] InputSystem* GetInput() const;

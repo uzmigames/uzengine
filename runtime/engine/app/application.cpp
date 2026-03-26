@@ -37,7 +37,7 @@ static auto* cv_MaxDeltaTime   = UZ_CVAR_FLOAT("sys.MaxDeltaTime", 0.25f, "Max d
 static auto* cv_FixedDeltaTime = UZ_CVAR_FLOAT("sys.FixedDeltaTime", 1.0f / 60.0f, "Fixed timestep for physics/deterministic logic", 0.002f, 0.1f);
 static auto* cv_FramesInFlight = UZ_CVAR_INT("rhi.FramesInFlight", 3, "GPU frames in flight (init-time only)", 1, 5);
 static auto* cv_VSync          = UZ_CVAR_BOOL("rhi.VSync", false, "Vertical sync");
-static auto* cv_CameraMoveSpeed = UZ_CVAR_FLOAT("camera.MoveSpeed", 1000.0f, "FPS camera movement speed (cm/s)", 100.0f, 10000.0f);
+static auto* cv_CameraMoveSpeed = UZ_CVAR_FLOAT("camera.MoveSpeed", 1000.0f, "Fly camera movement speed (cm/s)", 100.0f, 10000.0f);
 
 namespace uz {
 
@@ -140,7 +140,7 @@ int Application::Run(int argc, char** argv) {
     // Apply camera defaults from config
     {
         Camera& cam  = m_renderer->GetCamera();
-        FPSCameraController& ctrl = m_renderer->GetCameraController();
+        FlyCameraController& ctrl = m_renderer->GetCameraController();
 
         const float aspect = static_cast<float>(m_width) / static_cast<float>(m_height);
         cam.SetHorizontalFOV(90.f, aspect, uz::Units::kDefaultNearPlaneCm, uz::Units::kDefaultFarPlaneCm);

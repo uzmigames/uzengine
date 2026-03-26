@@ -11,7 +11,7 @@
 
 // Individual includes needed by setup logic
 #include "camera.h"
-#include "fps_camera_controller.h"
+#include "fly_camera_controller.h"
 #include "gpu_mesh.h"
 #include "render_graph_builder.h"
 #include "render_graph_resources.h"
@@ -144,8 +144,11 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     }
 
     // ── Camera: prefer ECS CameraComponent, fallback to FPS controller ──
+    // In editor mode: ALWAYS use FPS controller (ignore ECS camera + Lua scripts).
+    // ECS cameras are driven by Lua scripts that have their own WASD handling,
+    // which bypasses the editor input gate. The editor needs direct camera control.
     bool cameraFromECS = false;
-    if (ctx.world) {
+    if (!m_editorMode && ctx.world) {
         auto cameraView = ctx.world->View<CameraComponent>();
         for (auto [enttEntity, cam] : cameraView.each()) {
             if (cam.isActive) {
@@ -158,7 +161,7 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
                 } else {
                     // Fallback: use rotation quaternion to derive forward direction.
                     // Note: FromEuler produces Y-up quaternions, so we convert via
-                    // the same yaw/pitch extraction that FPSCameraController uses.
+                    // the same yaw/pitch extraction that FlyCameraController uses.
                     const Vec3 fwd = (cam.GetRotation() * Vec3::Forward()).Normalized();
                     m_camera->LookAt(camPos + fwd * 1000.f);  // 10m ahead in cm
                 }
@@ -173,7 +176,13 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     }
 
     if (!cameraFromECS) {
-        m_cameraCtrl->Update(*m_camera, *m_input, ctx.dt);
+        // In editor mode (UE5 behavior): camera controller only runs when RMB is held.
+        // Without RMB, W/E/R are gizmo hotkeys — camera must NOT move.
+        const bool cameraAllowed = !m_editorMode
+                                 || m_input->IsMouseDown(MouseButton::Right);
+        if (cameraAllowed) {
+            m_cameraCtrl->Update(*m_camera, *m_input, ctx.dt);
+        }
     }
 
     auto& camera = *m_camera;

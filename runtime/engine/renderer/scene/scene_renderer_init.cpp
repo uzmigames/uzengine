@@ -9,7 +9,7 @@
 #include "async_texture_decoder.h"
 #include "camera.h"
 #include "units.h"
-#include "fps_camera_controller.h"
+#include "fly_camera_controller.h"
 #include "render_graph_resources.h"
 #include "shadow_atlas.h"
 #include "shadow_pass.h"
@@ -134,7 +134,7 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
 
     // ── Camera ──────────────────────────────────────────────────────────
     m_camera = std::make_unique<Camera>();
-    m_cameraCtrl = std::make_unique<FPSCameraController>();
+    m_cameraCtrl = std::make_unique<FlyCameraController>();
 
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
     m_camera->SetHorizontalFOV(90.f, aspect, uz::Units::kDefaultNearPlaneCm, uz::Units::kDefaultFarPlaneCm);

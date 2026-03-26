@@ -362,7 +362,7 @@ class InputSystem {
     /// Registers for WM_INPUT raw mouse messages on the given window.
     ///
     /// Raw input bypasses mouse acceleration and provides hardware-level
-    /// deltas, ideal for FPS camera control. Call once after window creation.
+    /// deltas, ideal for fly camera control. Call once after window creation.
     ///
     /// # Arguments
     /// * `hwnd` — The window handle to receive WM_INPUT messages.

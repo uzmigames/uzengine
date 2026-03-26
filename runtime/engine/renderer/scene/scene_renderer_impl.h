@@ -27,7 +27,7 @@
     std::unique_ptr<GizmoRenderer> m_gizmoRenderer;
     std::unique_ptr<StatsOverlay> m_statsOverlay;
     std::unique_ptr<Camera> m_camera;
-    std::unique_ptr<FPSCameraController> m_cameraCtrl;
+    std::unique_ptr<FlyCameraController> m_cameraCtrl;
     std::unique_ptr<rg::RgResourcePool> m_rgPool;
 
     // ── Fallback Textures (SM5 unconditional sampling) ────────────────────

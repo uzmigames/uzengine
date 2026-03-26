@@ -2,6 +2,30 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.55] — 2026-03-26
+
+### Editor: gizmo/outline always-on-top, fly camera rename, WASD input routing
+
+- **fix(outline):** Disable depth test on outline mask pass so selection
+  outline always renders on top of all geometry (UE5 behavior). Previously
+  outline was occluded by meshes in front of the selected object.
+- **fix(gizmo):** Disable depth test on gizmo line and triangle pipelines
+  so transform gizmo always renders on top of scene geometry.
+- **feat(gizmo):** Increase gizmo screen-space size from 120px to 180px
+  at 720p reference (closer to UE5 ~150-200px). Updated in renderer,
+  interaction hit-testing, and editor input handler.
+- **fix(camera):** In editor mode, skip ECS CameraComponent (driven by
+  Lua scripts with their own WASD handling) and use the built-in fly
+  camera controller instead. Lua camera scripts were bypassing the
+  editor input gate entirely.
+- **feat(camera):** Add editor mode to FlyCameraController — WASD
+  movement only allowed while RMB is held (UE5 viewport behavior).
+  Without RMB, W/E/R switch gizmo modes instead of moving the camera.
+- **refactor(camera):** Rename `FPSCameraController` → `FlyCameraController`
+  and `fps_camera_controller.h/.cpp` → `fly_camera_controller.h/.cpp`
+  across ~15 files. "Fly camera" accurately describes the free-flight
+  behavior vs misleading "FPS" label.
+
 ## [0.2.54] — 2026-03-26
 
 ### Fix: LDR tonemap color shift + CCW mesh winding across all sources

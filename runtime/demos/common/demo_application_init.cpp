@@ -74,7 +74,7 @@ void DemoApplication::InitInfrastructure() {
 
     // ── Camera ──────────────────────────────────────────────────────────
     m_camera = std::make_unique<Camera>();
-    m_cameraCtrl = std::make_unique<FPSCameraController>();
+    m_cameraCtrl = std::make_unique<FlyCameraController>();
 
     constexpr float kHFovDeg = 90.f;
     constexpr float kAspect  = 16.f / 9.f;

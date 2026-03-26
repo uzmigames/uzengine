@@ -210,7 +210,8 @@ private:
     bool m_initialized = false;
 
     /// Constant screen-space gizmo size in pixels.
-    static constexpr float kTargetScreenPx = 120.0f;
+    /// @ref UE5 viewport gizmo is ~150-200px at 720p. 180px gives good visibility.
+    static constexpr float kTargetScreenPx = 180.0f;
 };
 
 } // namespace uz

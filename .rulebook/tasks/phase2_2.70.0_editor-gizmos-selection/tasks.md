@@ -43,6 +43,12 @@
 - [x] 6.3 Add `uz.editor.set_gizmo_mode(mode)` — "translate"/"rotate"/"scale". Added SetGizmoMode() setter to EditorInputHandler. String-to-enum mapping with validation.
 - [x] 6.4 Add `uz.editor.set_gizmo_space(space)` — "world"/"local". Added SetGizmoSpace() setter to EditorInputHandler. String-to-enum mapping with validation.
 
+## 6.5 Visual/Interaction Fixes
+- [x] 6.5.1 Fix outline occlusion: disabled depth test on mask pass so outline always renders on top of all geometry (UE5 behavior). outline_pass.cpp depthEnable=false.
+- [x] 6.5.2 Fix gizmo occlusion: disabled depth test on both line and triangle pipelines so gizmo always renders on top. gizmo_renderer.cpp depthEnable=false.
+- [x] 6.5.3 Increase gizmo size: kTargetScreenPx 120→180 (UE5 reference ~150-200px at 720p). Updated in gizmo_renderer.h, gizmo_interaction.cpp, editor_input_handler.cpp (2 locations).
+- [x] 6.5.4 Fix WASD camera routing: added SetEditorMode(bool) to FPSCameraController. In editor mode, WASD only moves camera while RMB held (UE5 behavior). Without RMB, W/E/R are gizmo hotkeys. Wired in uzengine.cpp.
+
 ## 7. Testing
 - [ ] 7.1 Test: click on entity selects it (SelectionManager returns correct entity).
 - [ ] 7.2 Test: click on empty space deselects.

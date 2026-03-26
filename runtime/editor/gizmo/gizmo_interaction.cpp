@@ -167,8 +167,8 @@ static float ComputeScreenScale(const Vec3& gizmoPos, const Camera& camera) {
     if (dist < 0.001f) return 0.f;
 
     const float tanHalfFov = std::tan(camera.GetFovY() * 0.5f);
-    // Same formula as gizmo_renderer.cpp: kTargetScreenPx=120, reference height=720.
-    return dist * tanHalfFov * (120.0f / 720.0f);
+    // Same formula as gizmo_renderer.cpp: kTargetScreenPx=180, reference height=720.
+    return dist * tanHalfFov * (180.0f / 720.0f);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

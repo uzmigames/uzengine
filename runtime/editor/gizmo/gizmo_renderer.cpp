@@ -588,10 +588,11 @@ bool GizmoRenderer::Init(IRHIDevice* device, ShaderPipeline& pipeline,
     lineDesc.renderTargetCount = 1;
     lineDesc.depthStencilFormat = dsvFormat;
 
-    // Depth: test only (read), no write — gizmo renders on top of scene.
-    lineDesc.depthStencil.depthEnable = true;
+    // Depth disabled: gizmo ALWAYS renders on top of all scene geometry (UE5 behavior).
+    // This ensures the gizmo is never occluded by meshes, making it always visible and
+    // interactable regardless of camera angle or scene complexity.
+    lineDesc.depthStencil.depthEnable = false;
     lineDesc.depthStencil.depthWrite = false;
-    lineDesc.depthStencil.depthFunc = RHICompareFunc::GreaterEqual; // Reversed-Z
 
     // Rasterizer: no culling for lines.
     lineDesc.rasterizer.cullMode = RHICullMode::None;

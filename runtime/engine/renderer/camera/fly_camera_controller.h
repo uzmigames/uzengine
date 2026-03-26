@@ -1,6 +1,6 @@
-/// UzEngine FPS Camera Controller
+/// UzEngine Fly Camera Controller
 ///
-/// First-person camera controller with WASD movement and mouse look.
+/// Free-flight camera controller with WASD movement and mouse look.
 /// Updates a `Camera` instance based on `InputSystem` state each frame.
 ///
 /// # Controls
@@ -14,7 +14,7 @@
 /// Camera cam;
 /// cam.SetPerspective(XM_PIDIV4, 16.f/9.f, 0.1f, 1000.f);
 ///
-/// FPSCameraController controller;
+/// FlyCameraController controller;
 /// controller.SetMoveSpeed(5.f);
 ///
 /// // Per frame:
@@ -28,7 +28,7 @@
 
 namespace uz {
 
-/// First-person camera controller driven by keyboard and mouse input.
+/// Free-flight camera controller driven by keyboard and mouse input.
 ///
 /// Applies yaw/pitch rotation (Euler angles internally, stored as quaternion
 /// on the Camera) and WASD translation relative to the camera's orientation.
@@ -38,9 +38,9 @@ namespace uz {
 ///
 /// # Thread Safety
 /// NOT thread-safe. Call `Update()` from the game/render thread only.
-class FPSCameraController {
+class FlyCameraController {
 public:
-    FPSCameraController() = default;
+    FlyCameraController() = default;
 
     /// Updates the camera's position and orientation from input state.
     ///
@@ -74,6 +74,10 @@ public:
     /// Returns the current sprint multiplier.
     [[nodiscard]] float GetSprintMultiplier() const { return m_sprintMultiplier; }
 
+    /// Enables editor mode: WASD movement requires RMB held (UE5 behavior).
+    /// When disabled (game mode), WASD always moves the camera.
+    void SetEditorMode(bool enabled) { m_editorMode = enabled; }
+
     /// Initializes yaw/pitch from the camera's current forward direction.
     ///
     /// Call after `Camera::LookAt()` so the controller starts at the
@@ -92,6 +96,7 @@ private:
     float m_sprintMultiplier = 3.0f;
     float m_yaw = 0.f;    ///< Horizontal rotation (radians, around world Z)
     float m_pitch = 0.f;  ///< Vertical rotation (radians, around local Y)
+    bool m_editorMode = false; ///< When true, WASD requires RMB held (UE5 editor behavior).
 
     static constexpr float kMaxPitch = 1.5533f;  ///< ~89 degrees in radians
 };

@@ -70,7 +70,7 @@ class EditorGrid;
 class StatsOverlay;
 class ScreenshotCapture;
 class Camera;
-class FPSCameraController;
+class FlyCameraController;
 enum class RHIBackend : uint8_t;
 enum class ShaderModel : uint8_t;
 
@@ -105,7 +105,7 @@ struct DemoConfig {
     DebugViewMode debugViewMode = DebugViewMode::Lit; ///< Initial debug view mode (from --view-mode).
 
     // ── Camera defaults ─────────────────────────────────────────────────
-    float cameraMoveSpeed = 10.f;         ///< FPS camera movement speed (units/sec).
+    float cameraMoveSpeed = 10.f;         ///< Fly camera movement speed (units/sec).
     float cameraPositionX = 0.f;          ///< Default camera X position.
     float cameraPositionY = 5.f;          ///< Default camera Y position.
     float cameraPositionZ = 2.f;          ///< Default camera Z position.
@@ -320,8 +320,8 @@ protected:
     /// Subclasses may reposition/reconfigure via SetPosition/SetPerspective.
     [[nodiscard]] Camera& GetCamera();
 
-    /// Returns the FPS camera controller. Valid after `OnInit()` is called.
-    [[nodiscard]] FPSCameraController& GetCameraController();
+    /// Returns the fly camera controller. Valid after `OnInit()` is called.
+    [[nodiscard]] FlyCameraController& GetCameraController();
 
     /// Returns the render graph resource pool (persistent across frames).
     [[nodiscard]] rg::RgResourcePool* GetRgPool() const;
@@ -407,7 +407,7 @@ private:
     std::unique_ptr<StatsOverlay> m_statsOverlay;
     std::unique_ptr<ScreenshotCapture> m_screenshotCapture;
     std::unique_ptr<Camera> m_camera;
-    std::unique_ptr<FPSCameraController> m_cameraCtrl;
+    std::unique_ptr<FlyCameraController> m_cameraCtrl;
     std::unique_ptr<rg::RgResourcePool> m_rgPool;
 
     // ── Debug view mode ────────────────────────────────────────────────

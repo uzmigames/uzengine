@@ -306,7 +306,7 @@ ScreenshotCapture* DemoApplication::GetScreenshotCapture() const { return m_scre
 rg::RgResourcePool* DemoApplication::GetRgPool() const { return m_rgPool.get(); }
 
 Camera& DemoApplication::GetCamera() { return *m_camera; }
-FPSCameraController& DemoApplication::GetCameraController() { return *m_cameraCtrl; }
+FlyCameraController& DemoApplication::GetCameraController() { return *m_cameraCtrl; }
 
 const std::string& DemoApplication::GetScreenshotPath() const { return m_config.screenshotPath; }
 uint32_t DemoApplication::GetScreenshotFrame() const { return m_config.screenshotFrame; }

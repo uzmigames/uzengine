@@ -26,6 +26,7 @@
 #include "../engine/scripting/core/lua_input_api.h"
 #include "../editor/input/editor_input_handler.h"
 #include "../editor/selection/selection_manager.h"
+#include "../engine/renderer/camera/fly_camera_controller.h"
 #include "../engine/scripting/editor/lua_editor_api.h"
 
 #ifdef _WIN32
@@ -317,6 +318,8 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         editorInput.Init(sceneRenderer.GetInput(), &selectionManager,
                          &sceneRenderer.GetCamera(), &world);
         editorInput.SetSceneRenderer(&sceneRenderer);
+        // UE5 behavior: WASD moves camera only while RMB held in editor mode.
+        sceneRenderer.GetCameraController().SetEditorMode(true);
         UZ_LOG(Engine, Info, "Editor input handler initialized");
     }
 
