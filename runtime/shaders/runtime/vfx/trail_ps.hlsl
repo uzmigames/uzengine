@@ -5,7 +5,7 @@
 /// # Soft Particle Depth Fade
 /// When `softDepthRange > 0`, the shader reads the scene depth buffer at the
 /// current screen pixel, linearizes it via the camera near/far planes (stored
-/// in cb_TrailPixelConstants), and computes the world-space distance between
+/// in PerFrameCB at b1), and computes the world-space distance between
 /// the ribbon fragment and the underlying opaque surface. Fragments closer than
 /// `softDepthRange` metres fade out smoothly, eliminating the harsh cutoff line
 /// where the ribbon intersects opaque meshes.
@@ -20,20 +20,19 @@
 /// equation (SrcOne / InvSrcAlpha) composites correctly over opaque geometry.
 ///
 /// # Pipeline State Requirements
-/// - DepthStencil: DepthWrite = OFF, DepthFunc = GREATER_EQUAL (reversed-Z).
-/// - Blend: Premultiplied (SrcOne / InvSrcAlpha) or standard alpha
-///          (SrcAlpha / InvSrcAlpha) — match the emitter blend mode setting.
+/// - DepthStencil: DepthWrite = OFF, DepthFunc = GREATER (reversed-Z).
+/// - Blend: Premultiplied (SrcOne / InvSrcAlpha).
 /// - Rasterizer: CullMode = NONE.
 ///
-/// # Constant Buffers
-/// - b1: cb_TrailPixelConstants — soft depth range, alpha clip, screen size,
-///        camera near/far planes.
+/// # Register Layout (Shared Root Signature)
+/// - b0: TrailRootConstants (32 bytes root constants — softDepthRange,
+///        alphaClipThreshold, trailTexSrvIndex, depthBufferSrvIndex)
+/// - b1: PerFrameCB (root CBV — nearPlane, farPlane for depth linearization)
 ///
-/// # Texture Inputs
+/// # Texture Inputs (SM5 fallback only)
 /// - t0: trailTexture — trail colour/alpha map (RGBA8_SRGB recommended).
 /// - t1: sceneDepth   — reversed-Z scene depth buffer (R32_FLOAT or R24_UNORM).
-///                      Only sampled when softDepthRange > 0.
-/// - s0: linearSampler — bilinear wrap for the trail texture.
+/// - s0: linearSampler — bilinear wrap for the trail texture (static sampler).
 
 #include "../include/depth_common.hlsli"
 #include "trail_common.hlsli"
@@ -42,55 +41,47 @@
 // Constant Buffers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Per-emitter pixel constants, updated once per draw call.
-///
-/// softDepthRange: World-space distance in metres over which soft-particle
-///   fading is applied. Fragments within this distance of an opaque surface
-///   linearly fade to zero alpha. Set to 0.0 to disable the feature entirely
-///   (avoids the depth texture read and linearization cost).
-///   Valid range: [0, +inf). Typical value: 0.5 to 2.0 metres.
-///
-/// alphaClipThreshold: Fragments with final alpha below this value are
-///   discarded. Set to 0.0 to disable alpha testing. Setting this too high
-///   will clip thin or faded trail tails prematurely.
-///   Valid range: [0, 1]. Typical value: 1/255 ≈ 0.0039.
-///
-/// screenDimensions: Viewport width and height in pixels. Used to convert
-///   the SV_Position screen-space pixel coordinate to a [0,1] UV for
-///   sampling the scene depth buffer at the current pixel.
-///
-/// cameraNear: Camera near plane distance in metres (positive). Required
-///   for depth linearization. Must match the projection matrix.
-///
-/// cameraFar: Camera far plane distance in metres (positive). Required
-///   for depth linearization. Must match the projection matrix.
-///
-/// _pad: Explicit 8-byte pad for 16-byte cbuffer alignment. Unused.
-cbuffer cb_TrailPixelConstants : register(b1) {
-    float  softDepthRange;      ///< Soft-fade radius in metres. 0 = disabled.
-    float  alphaClipThreshold;  ///< Alpha discard threshold in [0, 1].
-    float2 screenDimensions;    ///< Viewport (width, height) in pixels.
-    float  cameraNear;          ///< Camera near plane in metres.
-    float  cameraFar;           ///< Camera far plane in metres.
-    float2 _pad;                ///< Alignment pad — unused.
+/// Root constants at b0 — per-draw-call trail parameters.
+/// The PS reads softDepthRange, alphaClipThreshold, and bindless SRV indices.
+ConstantBuffer<TrailRootConstants> trailConstants : register(b0);
+
+/// Per-frame constant buffer at b1 — standard engine layout.
+/// The PS reads nearPlane and farPlane for depth linearization.
+/// All fields must be declared for correct memory layout.
+cbuffer PerFrameCB : register(b1) {
+    row_major float4x4 viewProj;    ///< View * Projection matrix.
+    float4   cameraPos;             ///< xyz = camera world position, w = unused.
+    float4   timeParams;            ///< x = totalTime, y = deltaTime, z = frameCount, w = unused.
+    float4   lightDir;              ///< xyz = direction toward light, w = unused.
+    float4   lightColor;            ///< xyz = color * intensity, w = unused.
+    float4   ambientColor;          ///< xyz = ambient radiance, w = unused.
+    row_major float4x4 invViewProj; ///< Inverse view-projection (declared for layout).
+    float    nearPlane;             ///< Camera near plane distance.
+    float    farPlane;              ///< Camera far plane distance.
+    uint     _perFramePad0;
+    uint     _perFramePad1;
+    uint     _perFramePad2;
+    uint     _perFramePad3;
+    float    _perFramePad4;
+    float    _perFramePad5;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Texture / Sampler Inputs
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Trail colour and alpha texture. Alpha encodes trail shape/feathering.
-/// Typically authored as a horizontal strip animated via UV scroll.
+#ifndef UZ_BINDLESS
+/// Trail colour and alpha texture (SM5 fallback path).
+/// Alpha encodes trail shape/feathering.
 Texture2D<float4> trailTexture  : register(t0);
 
-/// Scene depth buffer — reversed-Z, matches the depth_common.hlsli convention.
+/// Scene depth buffer (SM5 fallback path) — reversed-Z.
 /// Bound only when soft depth fade is active (softDepthRange > 0).
-/// Unbound when the feature is disabled; Load() is guarded by the branch.
 Texture2D<float>  sceneDepth    : register(t1);
+#endif
 
-/// Bilinear clamp sampler for trail texture. Wrap mode on U allows tiling for
-/// repeating texture patterns driven by UV scroll (set wrap on U in the PSO).
-SamplerState      linearSampler : register(s0);
+/// Bilinear wrap sampler for trail texture. Static sampler s0 from root signature.
+SamplerState linearSampler : register(s0);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper Functions
@@ -101,21 +92,23 @@ SamplerState      linearSampler : register(s0);
 /// Reads the reversed-Z scene depth at the current screen pixel, converts both
 /// the scene depth and the ribbon fragment depth to linear view-space distances,
 /// and returns a fade weight that is 0 at the intersection surface and reaches
-/// 1 at `softDepthRange` metres in front of it.
+/// 1 at `fadeRange` metres in front of it.
 ///
 /// # Arguments
 /// - screenPos:     Screen-space pixel coordinate from SV_Position (xy used).
 /// - fragmentDepth: Linear view-space depth of the ribbon fragment in metres
 ///                  (positive in front of the camera). Interpolated from the VS.
 /// - fadeRange:     World-space fade radius in metres. Must be > 0.
+/// - depthTex:      Scene depth texture to sample at the current pixel.
 ///
 /// # Returns
 /// Fade multiplier in [0, 1]. 0 = at or behind the opaque surface,
 /// 1 = `fadeRange` or more metres in front of it.
-float ComputeSoftDepthFade(float4 screenPos, float fragmentDepth, float fadeRange) {
+float ComputeSoftDepthFade(float4 screenPos, float fragmentDepth, float fadeRange,
+                           Texture2D<float> depthTex) {
     // Read the raw reversed-Z depth at this pixel (integer texel fetch)
     int2 pixelCoord = int2(screenPos.xy);
-    float rawSceneDepth = sceneDepth.Load(int3(pixelCoord, 0));
+    float rawSceneDepth = depthTex.Load(int3(pixelCoord, 0));
 
     // Sky pixels have no opaque surface — no fading needed
     if (IsSkyDepth(rawSceneDepth)) {
@@ -123,7 +116,7 @@ float ComputeSoftDepthFade(float4 screenPos, float fragmentDepth, float fadeRang
     }
 
     // Linearize scene depth from reversed-Z to view-space metres
-    float sceneLinearDepth = LinearizeDepthReversedZ(rawSceneDepth, cameraNear, cameraFar);
+    float sceneLinearDepth = LinearizeDepthReversedZ(rawSceneDepth, nearPlane, farPlane);
 
     // Depth difference: positive when the fragment is in front of the surface.
     // A negative difference means the ribbon is occluded (should not happen
@@ -156,7 +149,20 @@ float ComputeSoftDepthFade(float4 screenPos, float fragmentDepth, float fadeRang
 float4 main(TrailVSOutput input) : SV_Target0 {
 
     // ── Step 1: Sample trail texture ─────────────────────────────────────────
-    float4 texSample = trailTexture.Sample(linearSampler, input.uv);
+    // When trailTexSrvIndex == 0xFFFFFFFF, no texture is bound — use white
+    // so vertex color provides all tinting and alpha.
+    float4 texSample;
+
+#ifdef UZ_BINDLESS
+    if (trailConstants.trailTexSrvIndex != 0xFFFFFFFF) {
+        Texture2D<float4> trailTex = ResourceDescriptorHeap[trailConstants.trailTexSrvIndex];
+        texSample = trailTex.Sample(linearSampler, input.uv);
+    } else {
+        texSample = float4(1.0, 1.0, 1.0, 1.0);
+    }
+#else
+    texSample = trailTexture.Sample(linearSampler, input.uv);
+#endif
 
     // ── Step 2: Combine with per-vertex tint and lifetime alpha ───────────────
     // Vertex color encodes: RGB = emitter colour-over-lifetime tint,
@@ -164,10 +170,16 @@ float4 main(TrailVSOutput input) : SV_Target0 {
     float4 finalColor = texSample * input.color;
 
     // ── Step 3: Soft-particle depth fade (optional) ───────────────────────────
-    // Branch on the cbuffer value — constant across the draw call so this is
-    // a uniform branch (no divergence across warps/waves in practice).
-    if (softDepthRange > 0.0f) {
-        float softFade = ComputeSoftDepthFade(input.positionCS, input.linearDepth, softDepthRange);
+    // Branch on the root constant value — constant across the draw call so
+    // this is a uniform branch (no divergence across warps/waves in practice).
+    if (trailConstants.softDepthRange > 0.0f) {
+#ifdef UZ_BINDLESS
+        Texture2D<float> depthTex = ResourceDescriptorHeap[trailConstants.depthBufferSrvIndex];
+#else
+        Texture2D<float> depthTex = sceneDepth;
+#endif
+        float softFade = ComputeSoftDepthFade(input.positionCS, input.linearDepth,
+                                              trailConstants.softDepthRange, depthTex);
         finalColor.a *= softFade;
     }
 
@@ -176,7 +188,7 @@ float4 main(TrailVSOutput input) : SV_Target0 {
     // and to preserve the depth pre-pass benefit for opaque regions of the trail.
     // The threshold is intentionally tiny (default ~1/255) to catch numerical
     // near-zeros from texture border sampling without cutting visible trail edges.
-    if (finalColor.a < alphaClipThreshold) {
+    if (finalColor.a < trailConstants.alphaClipThreshold) {
         discard;
     }
 

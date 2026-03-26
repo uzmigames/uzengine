@@ -32,7 +32,7 @@ struct GridCB {
     uint32_t sceneDepthSrv;     // Bindless SRV index (UINT32_MAX = use hardware depth test)
     float    displayWidth;      // Display-resolution width (for pixel-to-UV mapping)
     float    displayHeight;     // Display-resolution height
-    float    _pad0;
+    uint32_t reflectionHdrSrv; // Bindless SRV index for HDR reflection texture (UINT32_MAX = off)
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -137,7 +137,8 @@ void EditorGrid::Shutdown() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void EditorGrid::Draw(IRHICommandList* cmdList, CBRingAllocator& cbRing, const Camera& camera,
-                      uint32_t sceneDepthSrv, float displayWidth, float displayHeight) {
+                      uint32_t sceneDepthSrv, float displayWidth, float displayHeight,
+                      uint32_t reflectionHdrSrv) {
     Mat4 vp = camera.GetViewProjection();
     Mat4 invVP = vp.inverse();
     Vec3 camPos = camera.GetPosition();
@@ -150,7 +151,7 @@ void EditorGrid::Draw(IRHICommandList* cmdList, CBRingAllocator& cbRing, const C
     cb.sceneDepthSrv  = sceneDepthSrv;
     cb.displayWidth   = displayWidth;
     cb.displayHeight  = displayHeight;
-    cb._pad0          = 0.f;
+    cb.reflectionHdrSrv = reflectionHdrSrv;
 
     CBAllocation alloc = cbRing.Allocate(sizeof(GridCB));
     std::memcpy(alloc.cpuPtr, &cb, sizeof(GridCB));

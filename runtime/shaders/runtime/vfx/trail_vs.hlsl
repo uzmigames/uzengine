@@ -16,10 +16,11 @@
 /// - Input Assembler: TrailVertex stride vertex buffer (see trail_common.hlsli).
 /// - Rasterizer: CullMode = NONE (ribbon is single-sided but may fold).
 /// - DepthStencil: DepthWrite = OFF (trails composite on top, no depth write).
-/// - Blend: SrcAlpha / InvSrcAlpha on the forward/transparency render target.
+/// - Blend: Premultiplied alpha (SrcOne / InvSrcAlpha).
 ///
-/// # Constant Buffers
-/// - b0: cb_TrailVertexConstants — per-emitter time, scroll rate, view-projection.
+/// # Register Layout (Shared Root Signature)
+/// - b0: TrailRootConstants (32 bytes root constants — uvScrollRate used here)
+/// - b1: PerFrameCB (root CBV — viewProj, timeParams.x = totalTime)
 
 #include "trail_common.hlsli"
 
@@ -27,29 +28,31 @@
 // Constant Buffers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Per-emitter vertex constants updated once per draw call.
-///
-/// viewProjection: Combined view-projection matrix transforming world-space
-///   positions to clip space. Row-major to match HLSL default mul() convention
-///   (vector on the left: v * M).
-///
-/// time: Elapsed simulation time in seconds. Used to animate UV scrolling
-///   so the trail texture flows along the ribbon regardless of frame rate.
-///   Valid range: [0, +inf). Wrapping is left to the caller; the scroll
-///   offset will loop naturally as UV coordinates are periodic.
-///
-/// uvScrollRate: Units of UV-space per second applied to the U axis.
-///   Positive values scroll texture from head toward tail (downstream flow).
-///   Negative values scroll upstream. Zero disables scrolling.
-///   Typical range: [-4.0, 4.0].
-///
-/// padding: Explicit 8-byte pad so the constant buffer is 16-byte aligned.
-///   Must remain zero — not read by the shader.
-cbuffer cb_TrailVertexConstants : register(b0) {
-    row_major float4x4 viewProjection; ///< World -> Clip transform.
-    float              time;           ///< Simulation time in seconds.
-    float              uvScrollRate;   ///< U-axis scroll speed (UV-units/second).
-    float2             padding;        ///< Alignment pad — unused.
+/// Root constants at b0 — per-draw-call trail parameters.
+/// Only uvScrollRate is consumed by the VS; the remaining fields are PS-only
+/// but must be declared for correct layout (they share root param 0).
+ConstantBuffer<TrailRootConstants> trailConstants : register(b0);
+
+/// Per-frame constant buffer at b1 — standard engine layout.
+/// The VS reads viewProj (for world->clip transform) and timeParams.x
+/// (for UV scroll animation). All fields must be declared for correct
+/// memory layout even though only a subset is consumed.
+cbuffer PerFrameCB : register(b1) {
+    row_major float4x4 viewProj;    ///< View * Projection matrix.
+    float4   cameraPos;             ///< xyz = camera world position, w = unused.
+    float4   timeParams;            ///< x = totalTime, y = deltaTime, z = frameCount, w = unused.
+    float4   lightDir;              ///< xyz = direction toward light, w = unused.
+    float4   lightColor;            ///< xyz = color * intensity, w = unused.
+    float4   ambientColor;          ///< xyz = ambient radiance, w = unused.
+    row_major float4x4 invViewProj; ///< Inverse view-projection (declared for layout).
+    float    nearPlane;             ///< Camera near plane distance.
+    float    farPlane;              ///< Camera far plane distance.
+    uint     _perFramePad0;
+    uint     _perFramePad1;
+    uint     _perFramePad2;
+    uint     _perFramePad3;
+    float    _perFramePad4;
+    float    _perFramePad5;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -70,14 +73,15 @@ TrailVSOutput main(TrailVertex input) {
     // ── Step 1: World -> Clip ────────────────────────────────────────────────
     // The ribbon CPU builder already places vertices in world space.
     // Multiply as a row vector (HLSL convention: vector * matrix).
-    output.positionCS = mul(float4(input.position, 1.0f), viewProjection);
+    output.positionCS = mul(float4(input.position, 1.0f), viewProj);
 
     // ── Step 2: UV scroll along trail length ─────────────────────────────────
     // Offset U by accumulated time to animate the texture downstream.
     // V (ribbon width axis) is passed through unmodified.
+    // timeParams.x = totalTime from PerFrameCB.
     output.uv = float2(
-        input.uv.x + time * uvScrollRate,  // U: scroll along trail
-        input.uv.y                          // V: width, no scroll
+        input.uv.x + timeParams.x * trailConstants.uvScrollRate, // U: scroll along trail
+        input.uv.y                                                 // V: width, no scroll
     );
 
     // ── Step 3: Pass-through color ───────────────────────────────────────────

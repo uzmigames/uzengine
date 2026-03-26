@@ -1,4 +1,5 @@
-/// Trail/ribbon shared definitions — vertex layout, VS output, and common constants.
+/// Trail/ribbon shared definitions — vertex layout, VS output, root constants,
+/// and common constants.
 ///
 /// Included by both trail_vs.hlsl and trail_ps.hlsl to guarantee that the
 /// interpolated struct layout is identical on both sides of the rasterizer.
@@ -16,12 +17,12 @@
 /// - Clip space: reversed-Z (near=1, far=0) — never assume depth direction.
 /// - UVs: U scrolls along the trail length (top-level), V across the width.
 ///
-/// # Register Conventions
-/// - b0: cb_TrailVertexConstants (VS per-emitter constants)
-/// - b1: cb_TrailPixelConstants  (PS per-emitter constants)
-/// - t0: trailTexture             (PS color/alpha map)
-/// - t1: sceneDepth               (PS soft-particle depth fade, optional)
-/// - s0: linearSampler            (bilinear + clamp)
+/// # Register Conventions (Shared Root Signature)
+/// - b0: TrailRootConstants (32 bytes, root constants — shared by VS and PS)
+/// - b1: PerFrameCB         (root CBV — viewProj, timeParams, nearPlane, farPlane)
+/// - t0: trailTexture       (PS color/alpha map, SM5 fallback)
+/// - t1: sceneDepth         (PS soft-particle depth fade, SM5 fallback)
+/// - s0: linearSampler      (bilinear + wrap, static sampler from root signature)
 
 #ifndef TRAIL_COMMON_HLSLI
 #define TRAIL_COMMON_HLSLI
@@ -38,6 +39,40 @@ static const float kTrailAlphaClipMin = 1.0f / 255.0f;
 /// Discard threshold for soft-particle depth fade comparison.
 /// Avoids a division by zero when softDepthRange is set to exactly 0.
 static const float kSoftDepthEpsilon = 1e-5f;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Root Constants (b0) — 32 bytes, shared by VS and PS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Per-draw-call root constants for trail rendering (8 x uint32 = 32 bytes).
+///
+/// Packed into root parameter 0 (b0) via SetRootConstants. Both vertex and
+/// pixel shaders share this memory, so the layout is unified.
+///
+/// uvScrollRate:        UV-space units per second applied to the U axis in the VS.
+///                      Positive scrolls head-to-tail. 0 disables scrolling.
+///
+/// softDepthRange:      World-space fade radius in metres for soft-particle
+///                      depth fade in the PS. 0 disables the feature (skips
+///                      depth texture read).
+///
+/// alphaClipThreshold:  Fragments below this alpha are discarded. Typical: 1/255.
+///
+/// trailTexSrvIndex:    Bindless SRV heap index for the trail color/alpha texture.
+///                      0xFFFFFFFF = no texture (vertex color only).
+///
+/// depthBufferSrvIndex: Bindless SRV heap index for the reversed-Z scene depth.
+///                      Only sampled when softDepthRange > 0.
+struct TrailRootConstants {
+    float uvScrollRate;        ///< U-axis scroll speed (UV-units/second).
+    float softDepthRange;      ///< Soft-fade radius in metres. 0 = disabled.
+    float alphaClipThreshold;  ///< Alpha discard threshold [0, 1].
+    uint  trailTexSrvIndex;    ///< Bindless SRV index for trail texture (0xFFFFFFFF = none).
+    uint  depthBufferSrvIndex; ///< Bindless SRV index for scene depth buffer.
+    uint  _pad0;               ///< Alignment pad — unused.
+    uint  _pad1;               ///< Alignment pad — unused.
+    uint  _pad2;               ///< Alignment pad — unused.
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Vertex Input — matches TrailVertex on the CPU side

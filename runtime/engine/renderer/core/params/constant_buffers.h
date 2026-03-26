@@ -157,7 +157,45 @@ struct PerFrameCB {
     /// UINT32_MAX = no probes uploaded (fall back to global sky IBL).
     uint32_t reflectionProbeBufferSrvIndex = UINT32_MAX;
 
-    float    _pad2[57] = {};                        ///< Pad to 768 bytes.
+    // ── Point Lights (forward PBR, up to 3) ────────────────────────────
+    /// Number of active point lights (0-3). Added for forward PBR multi-light.
+    /// @ref Karis 2013 "Real Shading in Unreal Engine 4" — point light attenuation
+    uint32_t numPointLights = 0;                    // byte 540, HLSL c33.w
+
+    /// Point light 0: xyz = world position (cm), w = radius (cm).
+    float    pointLight0PosX = 0.0f;                // byte 544, HLSL c34.x
+    float    pointLight0PosY = 0.0f;
+    float    pointLight0PosZ = 0.0f;
+    float    pointLight0Radius = 500.0f;
+    /// Point light 0: xyz = linear RGB color, w = intensity multiplier.
+    float    pointLight0ColorR = 0.0f;              // byte 560, HLSL c35.x
+    float    pointLight0ColorG = 0.0f;
+    float    pointLight0ColorB = 0.0f;
+    float    pointLight0Intensity = 0.0f;
+
+    /// Point light 1: xyz = world position (cm), w = radius (cm).
+    float    pointLight1PosX = 0.0f;                // byte 576, HLSL c36.x
+    float    pointLight1PosY = 0.0f;
+    float    pointLight1PosZ = 0.0f;
+    float    pointLight1Radius = 500.0f;
+    /// Point light 1: xyz = linear RGB color, w = intensity multiplier.
+    float    pointLight1ColorR = 0.0f;
+    float    pointLight1ColorG = 0.0f;
+    float    pointLight1ColorB = 0.0f;
+    float    pointLight1Intensity = 0.0f;
+
+    /// Point light 2: xyz = world position (cm), w = radius (cm).
+    float    pointLight2PosX = 0.0f;                // byte 608, HLSL c38.x
+    float    pointLight2PosY = 0.0f;
+    float    pointLight2PosZ = 0.0f;
+    float    pointLight2Radius = 500.0f;
+    /// Point light 2: xyz = linear RGB color, w = intensity multiplier.
+    float    pointLight2ColorR = 0.0f;
+    float    pointLight2ColorG = 0.0f;
+    float    pointLight2ColorB = 0.0f;
+    float    pointLight2Intensity = 0.0f;
+
+    float    _pad2[32] = {};                        ///< Pad to 768 bytes.
 };
 
 static_assert(sizeof(PerFrameCB) == 768, "PerFrameCB must be 768 bytes (D3D12 CB alignment)");

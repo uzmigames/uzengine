@@ -28,9 +28,9 @@
 /// `(right * u + up * v) * halfSize`, where u,v are [-1,+1] corner offsets.
 ///
 /// # Root Signature
-/// - b0: VFXBillboardIndices (bindless descriptor indices for particle buffers)
+/// - b0: VFXBillboardConstants (unified bindless indices for VS buffers + PS textures)
 /// - b1: PerFrameCB (viewProj, cameraPos, invView for billboard vectors)
-/// - b2: VFXEmitterCB (per-emitter parameters, prevViewProj for motion vectors)
+/// - b2: VFXBillboardCB (unified VS emitter params + PS rendering params)
 /// - s0: not used in VS
 ///
 /// # Outputs
@@ -96,21 +96,27 @@ struct VSOutput {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #ifdef UZ_BINDLESS
-/// Root constants for bindless resource access.
-/// Contains SRV descriptor heap indices for particle attribute buffers.
-/// These are written by the CPU each frame and point into the global
-/// descriptor heap where the simulation compute pass left particle data.
-struct VFXBillboardIndices {
-    uint positionBufferIdx;   ///< SRV index: StructuredBuffer<float4> (xyz=pos, w=unused).
-    uint sizeBufferIdx;       ///< SRV index: StructuredBuffer<float> (uniform scale).
-    uint colorBufferIdx;      ///< SRV index: StructuredBuffer<float4> (rgba).
-    uint rotationBufferIdx;   ///< SRV index: StructuredBuffer<float> (radians, Z-axis rotation).
-    uint sortedIndicesSrvIndex; ///< SRV index: StructuredBuffer<uint> (sorted draw order).
-    uint velocityBufferIdx;   ///< SRV index: StructuredBuffer<float4> (xyz=velocity, w=unused).
-    uint agesBufferIdx;       ///< SRV index: StructuredBuffer<float> (particle age in seconds).
-    uint lifespansBufferIdx;  ///< SRV index: StructuredBuffer<float> (particle total lifetime).
+/// Unified root constants for bindless resource access (shared by VS and PS).
+/// Contains SRV descriptor heap indices for particle attribute buffers (VS)
+/// and texture resources (PS). Both stages read from the same b0 memory,
+/// so the layout MUST be identical in VS and PS.
+struct VFXBillboardConstants {
+    // VS indices (bytes 0-31)
+    uint positionBufferIdx;    ///< SRV index: StructuredBuffer<float4> (xyz=pos, w=unused).
+    uint sizeBufferIdx;        ///< SRV index: StructuredBuffer<float> (uniform scale).
+    uint colorBufferIdx;       ///< SRV index: StructuredBuffer<float4> (rgba).
+    uint rotationBufferIdx;    ///< SRV index: StructuredBuffer<float> (radians, Z-axis rotation).
+    uint sortedIndicesSrvIndex;///< SRV index: StructuredBuffer<uint> (sorted draw order).
+    uint velocityBufferIdx;    ///< SRV index: StructuredBuffer<float4> (xyz=velocity, w=unused).
+    uint agesBufferIdx;        ///< SRV index: StructuredBuffer<float> (particle age in seconds).
+    uint lifespansBufferIdx;   ///< SRV index: StructuredBuffer<float> (particle total lifetime).
+    // PS indices (bytes 32-47)
+    uint spriteTextureIdx;     ///< SRV index: Texture2D<float4> sprite/atlas (PS only).
+    uint depthBufferIdx;       ///< SRV index: Texture2D<float> scene depth reversed-Z (PS only).
+    uint _pad0;
+    uint _pad1;
 };
-ConstantBuffer<VFXBillboardIndices> vfxIndices : register(b0);
+ConstantBuffer<VFXBillboardConstants> vfxConstants : register(b0);
 #else
 /// SM5 fallback: explicit SRV bindings for particle attribute buffers.
 StructuredBuffer<float4> particlePositions  : register(t0);
@@ -151,20 +157,33 @@ cbuffer PerFrameCB : register(b1) {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Per-Emitter Constant Buffer (b2) — VFX Emitter Parameters
+// Unified Billboard Constant Buffer (b2) — VS Emitter + PS Rendering Params
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Per-emitter parameters uploaded each frame via the CB ring allocator.
-/// Contains the inverse view matrix (for billboard orientation) and emitter
-/// transform, plus optional size/color overrides.
-cbuffer VFXEmitterCB : register(b2) {
+/// Unified per-emitter constant buffer (shared by VS and PS).
+/// Both stages read from the same b2 memory, so the layout MUST be
+/// identical in VS and PS. VS reads the first 160 bytes (emitter params),
+/// PS reads the remaining 48 bytes (rendering params).
+cbuffer VFXBillboardCB : register(b2) {
+    // ── VS data (emitter parameters, 160 bytes) ─────────────────────────
     row_major float4x4 invView;        ///< Inverse view matrix — rows 0,1 give camera right/up.
     float3   emitterPosition;          ///< World-space emitter origin (for local-space particles).
     float    globalSizeMultiplier;     ///< Multiplied with per-particle size (default 1.0).
     float4   globalColorTint;          ///< Multiplied with per-particle color (default white).
     row_major float4x4 prevViewProj;   ///< Previous frame's view * projection for TAA motion vectors.
-                                       ///< Set to identity when no previous frame is available,
-                                       ///< producing zero motion vectors on the first frame.
+    // ── PS data (rendering parameters, 48 bytes) ────────────────────────
+    float    softFadeDistance;         ///< World-space distance for soft particle depth fade.
+    float    alphaErosion;            ///< Subtractive alpha erosion [0, 1].
+    float    emissiveIntensity;       ///< Multiplier for additive emissive contribution.
+    float    _psPad0;
+    uint     flipbookRows;            ///< Rows in sprite sheet. 1 = no flipbook.
+    uint     flipbookCols;            ///< Columns in sprite sheet. 1 = no flipbook.
+    uint     flipbookTotalFrames;     ///< Total valid frames (rows * cols or less).
+    float    flipbookFPS;             ///< Playback speed in frames per second.
+    uint     flipbookBlendMode;       ///< 0 = None, 1 = Linear, 2 = Random.
+    uint     _fbPad0;
+    uint     _fbPad1;
+    uint     _fbPad2;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -215,13 +234,13 @@ VSOutput main(uint vertexID : SV_VertexID) {
 
     // ── Read particle attributes from structured buffers ──
 #ifdef UZ_BINDLESS
-    StructuredBuffer<float4> positions  = ResourceDescriptorHeap[vfxIndices.positionBufferIdx];
-    StructuredBuffer<float>  sizes      = ResourceDescriptorHeap[vfxIndices.sizeBufferIdx];
-    StructuredBuffer<float4> colors     = ResourceDescriptorHeap[vfxIndices.colorBufferIdx];
-    StructuredBuffer<float>  rotations  = ResourceDescriptorHeap[vfxIndices.rotationBufferIdx];
-    StructuredBuffer<float4> velocities = ResourceDescriptorHeap[vfxIndices.velocityBufferIdx];
-    StructuredBuffer<float>  ages       = ResourceDescriptorHeap[vfxIndices.agesBufferIdx];
-    StructuredBuffer<float>  lifespans  = ResourceDescriptorHeap[vfxIndices.lifespansBufferIdx];
+    StructuredBuffer<float4> positions  = ResourceDescriptorHeap[vfxConstants.positionBufferIdx];
+    StructuredBuffer<float>  sizes      = ResourceDescriptorHeap[vfxConstants.sizeBufferIdx];
+    StructuredBuffer<float4> colors     = ResourceDescriptorHeap[vfxConstants.colorBufferIdx];
+    StructuredBuffer<float>  rotations  = ResourceDescriptorHeap[vfxConstants.rotationBufferIdx];
+    StructuredBuffer<float4> velocities = ResourceDescriptorHeap[vfxConstants.velocityBufferIdx];
+    StructuredBuffer<float>  ages       = ResourceDescriptorHeap[vfxConstants.agesBufferIdx];
+    StructuredBuffer<float>  lifespans  = ResourceDescriptorHeap[vfxConstants.lifespansBufferIdx];
 
     float3 particlePos   = positions[particleID].xyz;
     float  particleSize  = sizes[particleID];

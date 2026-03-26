@@ -75,7 +75,8 @@ file(GLOB SRC_RENDERER_SHADOWS     engine/renderer/shadows/*.cpp)
 file(GLOB SRC_SCRIPTING      engine/scripting/*.cpp)
 file(GLOB SRC_SCRIPTING_API  engine/scripting/scene/*.cpp)
 file(GLOB SRC_SCRIPTING_API_CORE engine/scripting/core/*.cpp
-                                 engine/scripting/renderer/*.cpp)
+                                 engine/scripting/renderer/*.cpp
+                                 engine/scripting/editor/*.cpp)
 file(GLOB SRC_ASSET          engine/asset/*.cpp)
 file(GLOB SRC_RHI_VULKAN     engine/rhi/vulkan/*.cpp)
 file(GLOB SRC_MATERIAL       engine/material/*.cpp)
@@ -391,6 +392,7 @@ target_include_directories(uzengine_runtime PUBLIC
     engine/scripting/scene
     engine/scripting/core
     engine/scripting/renderer
+    engine/scripting/editor
     engine/ecs
     engine/asset
     engine/material
@@ -463,6 +465,7 @@ if(WIN32)
     target_include_directories(uzengine_runtime PUBLIC
         engine/rhi/dx12
         engine/rhi/dx11
+        engine/rhi/vulkan
     )
     target_include_directories(uzengine_runtime PRIVATE
         thirdparty/d3d12ma/src
@@ -674,8 +677,6 @@ target_link_libraries(test_runtime PRIVATE
 file(GLOB TOOL_SOURCES tools/*.cpp)
 # uzembed is built separately above — exclude from generic tool loop
 list(FILTER TOOL_SOURCES EXCLUDE REGEX "uzembed\\.cpp$")
-# uz_viewport is standalone (no engine deps) — excluded from generic loop, built below
-list(FILTER TOOL_SOURCES EXCLUDE REGEX "uz_viewport\\.cpp$")
 foreach(tool_src IN LISTS TOOL_SOURCES)
     get_filename_component(tool_name ${tool_src} NAME_WE)
     set(TOOL_EXE_SOURCES ${tool_src})
@@ -683,17 +684,6 @@ foreach(tool_src IN LISTS TOOL_SOURCES)
     target_link_libraries(${tool_name} PRIVATE uzengine_runtime)
 endforeach()
 
-# ─────────────────────────────────────────────────────────────────────────────
-# uz_viewport — Minimal standalone DX12 viewport (NO engine dependencies)
-# Links only against system DX12/DXGI libs. Used to verify the DX12 pipeline
-# independently of engine subsystems that may have compilation issues.
-# ─────────────────────────────────────────────────────────────────────────────
-if(WIN32)
-    add_executable(uz_viewport tools/uz_viewport.cpp)
-    target_link_libraries(uz_viewport PRIVATE d3d12.lib dxgi.lib dxguid.lib d3dcompiler.lib)
-    # No engine headers — this target must stay dependency-free.
-    set_target_properties(uz_viewport PROPERTIES WIN32_EXECUTABLE TRUE)
-endif()
 
 # --- Demo executables ---
 file(GLOB DEMO_DIRS demos/*)

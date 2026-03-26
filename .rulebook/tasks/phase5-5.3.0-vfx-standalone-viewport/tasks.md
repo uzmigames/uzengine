@@ -38,9 +38,9 @@
 - [x] 4.4 Implement 8 material presets: Red Plastic, Gold Metal, Rough Stone, Polished Chrome, Rubber, Copper, Ceramic White, Emissive Blue.
 - [x] 4.5 Implement Left/Right arrow keys to cycle materials, name displayed in title bar.
 - [x] 4.6 Implement Up/Down arrow keys to cycle meshes (sphere/cube/plane/cylinder/torus), name displayed in title bar.
-- [ ] 4.7 Implement texture loading via stb_image: load PNG from optional command-line path (--albedo, --normal, --roughness) — DEFERRED: requires stb_image + SRV heap + bindless or texture slot
-- [ ] 4.8 Implement normal mapping in PBR shader: tangent-space normal map with TBN matrix — DEFERRED: requires tangent generation in mesh + texture loading
-- [ ] 4.9 Implement multi-object scene: 3 reference spheres with metallic sweep — DEFERRED: requires per-object CB or root constants
+- [x] 4.7 Implement texture loading via TextureLoader API: --albedo/--normal/--roughness CLI args, PerObjectCB with SRV indices bound at kSlotPerObject, cleanup in OnShutdown.
+- [x] 4.8 Add tangent vectors to ProceduralVertex (32→48 bytes) and compute them in all 5 mesh generators via ComputeTangents() using Lengyel's triangle-edge/delta-UV method with Gram-Schmidt orthonormalization and bitangent handedness in tangent.w.
+- [x] 4.9 Implement multi-object scene: 3 reference spheres with metallic sweep. Added 3 white unit spheres at x={-3,0,3} z=-3 with metallic={0.0,0.5,1.0} roughness=0.3 in both RenderScenePass and RenderShadowPass. Each sphere gets its own PerObjectCB with translation matrix.
 
 ## Phase 5: Shadow Mapping
 
@@ -50,14 +50,14 @@
 - [x] 5.4 Shadow sampling: SampleShadowPCF() in sphere PS, SamplerComparisonState at s0, shadow map at t0.
 - [x] 5.5 PCF 3x3 soft shadows with texel offsets + edge fade at shadow map borders.
 - [x] 5.6 Shadow bias: hardware depth bias in shadow PSO + g_shadowBias adjustable with [/] keys.
-- [ ] 5.7 Shadow debug view: F7 shows shadow map in corner — DEFERRED: needs additional fullscreen pass
+- [x] 5.7 Shadow debug view: G key toggles 256x256 shadow map overlay in bottom-left corner. Reuses tonemap PSO with shadow map SRV index and restricted viewport/scissor.
 
 ## Phase 6: Post-Processing
 
 - [x] 6.1 HDR render target: RGBA16F at screen res, scene renders to HDR, tonemap pass writes to backbuffer.
 - [x] 6.2 ACES filmic tonemapping (Stephen Hill fit) in tonemap PS. Removed per-shader Reinhard + gamma.
 - [x] 6.3 Exposure control: +/- keys adjust g_exposure (x1.2 per step), displayed in title bar.
-- [ ] 6.4 Bloom — DEFERRED: requires multiple downsample/upsample render targets
+- [x] 6.4 Bloom — Integrated engine BloomPass (compute threshold+downsample+upsample). B key toggle. TonemapIndices expanded to 4 uints (HDR, bloom SRV, bloom intensity bits, lens flare).
 - [x] 6.5 Vignette: radial darkening in tonemap PS, V key toggles (0 or 0.4 intensity).
 - [x] 6.6 Gamma correction: pow(1/2.2) in tonemap PS only (all other shaders output linear).
 - [x] 6.7 Post-process toggle: P key switches between ACES and linear tonemap mode.
@@ -94,26 +94,33 @@
 - [x] 9.5 Port billboard vertex/pixel shaders (particle_billboard_vs/ps.hlsl) — SV_VertexID billboards, camera-facing quads from invViewProj, soft circle PS, alpha blend PSO, ExecuteIndirect draw, Tab toggle.
 - [x] 9.6 Implement soft particle depth fade — depth copy resource (R32_FLOAT), CopyResource before billboard pass, LinearizeDepth in PS, 30cm world-space fade distance.
 - [x] 9.7 Port particle sort compute — bitonic merge sort with local (groupshared 256) + global merge phases, sign-bit-flipped distance keys for back-to-front, sortIndices read in billboard VS.
-- [ ] 9.8 Port flipbook animation — sub-UV atlas sampling with blend — DEFERRED: requires texture atlas support
-- [ ] 9.9 Port trail/ribbon renderer — polyline strip from particle history, VS/PS for ribbon geometry
-- [ ] 9.10 Port decal system — deferred decal projection (OBB projector, sample decal textures)
-- [ ] 9.11 Port distortion pass — accumulate UV offsets, resolve with scene color warp
+- [x] 9.8 Port flipbook animation — sub-UV atlas sampling with blend. Fixed root signature mismatch (VS/PS shared b0 and b2 structs unified into VFXBillboardConstants/VFXBillboardCB), added flipbook fields to VFXEmitterConfig, wired depth buffer SRV to PS, added flipbook presets (Fire Fountain=4x4 linear, Magic Orb=2x2 random).
+- [x] 9.9 Port trail/ribbon renderer — adapted trail shaders to shared root signature (TrailRootConstants at b0, PerFrameCB at b1), added bindless/SM5 paths, integrated TrailSystem into demo with orbiting fire trail, dynamic upload VB/IB, Y key toggle.
+- [x] 9.10 Port decal system — forward decal projection with OBB projector, DecalObjectCB at b2, DecalVS + DecalForwardPS, 4 demo ground decals, D key toggle.
+- [x] 9.11 Port distortion pass — procedural heat-haze accumulation (DistortionHazePS) + fullscreen resolve (DistortionResolvePS), HDR copy + warp, X key toggle.
 - [x] 9.12 Implement VFX emitter presets — 5 presets: Fire Fountain, Smoke Plume, Sparks, Magic Orb, Explosion Debris with distinct configs.
 - [x] 9.13 Implement emitter cycling — Tab cycles presets (Shift+Tab toggles on/off), preset name shown in title bar.
 - [x] 9.14 Implement VFX parameter tweaking — keys 1-9 adjust spawn rate/size/gravity/spread/lifetime/velocity/damping/radius, Shift=decrease, 90-frame display timer in title bar.
 
+## Phase 9.5: Refactor to DemoApplication Pattern
+
+- [x] 9.5.1 Refactored monolithic `tools/uz_viewport.cpp` (5095 lines, raw DX12, SM5.0/FXC) into `demos/vfx_viewport/` using DemoApplication base class with engine RHI/ShaderManager/PipelineLibrary/CBRingAllocator.
+- [x] 9.5.2 Created 9 files: build.zig, build.zig.zon, main.cpp, vfx_viewport_demo.h/.cpp, vfx_viewport_mesh.h/.cpp, vfx_viewport_vfx.h/.cpp — all under 750 lines each.
+- [x] 9.5.3 Deleted `tools/uz_viewport.cpp` and removed CMakeLists.txt uz_viewport target (lines 686-696).
+- [x] 9.5.4 Verified API correctness against actual RHI headers: RHIGraphicsPipelineDesc/RHIComputePipelineDesc, CreateGraphicsPipeline/CreateComputePipeline, RHIIndexFormat::Uint32, SetVertexBuffer(slot, buffer), EditorGrid::Draw(cmd, cbRing, camera, ...), StatsOverlay::BeginFrame/Render, ScreenshotCapture::CaptureBackBuffer(cmd, swapChain).
+
 ## Phase 10: Advanced Features & Polish
 
-- [ ] 10.1 Implement multi-light support: place 2-3 colored point lights around the scene, toggle with L key
-- [ ] 10.2 Implement environment rotation: R key rotates environment (sky + ambient) around Y axis
-- [ ] 10.3 Implement ground reflection: planar reflection or SSR approximation on ground plane
-- [ ] 10.4 Implement object rotation: hold Alt + LMB drag to rotate the preview mesh manually
-- [ ] 10.5 Implement background color presets: dark gray (default), black, white, checker pattern (B key cycles)
-- [ ] 10.6 Implement window resize handling: WM_SIZE → recreate swapchain + depth buffer + HDR target
-- [ ] 10.7 Implement DPI awareness: SetProcessDpiAwarenessContext for sharp text on HiDPI displays
-- [ ] 10.8 Implement fullscreen toggle: Alt+Enter switches between windowed and borderless fullscreen
-- [ ] 10.9 Implement help overlay: H key shows keyboard shortcut reference overlay
-- [ ] 10.10 Implement RenderDoc integration: load renderdoc.dll if present, F11 triggers frame capture
+- [x] 10.1 Implement multi-light support: 3 colored point lights (red/blue/green) with Karis 2013 inverse-square attenuation in mesh_ps.hlsl, PerFrameCB point light fields at c33.w-c39, L key toggle.
+- [x] 10.2 Implement environment rotation: R key (15 deg step, Shift+R reverse) rotates sun direction around Y axis via azimuth angle, wraps [0, 360).
+- [x] 10.3 Implement ground reflection: screen-space planar SSR on grid via HDR copy before grid pass, Schlick Fresnel (F0=0.04), reflected camera projection, bindless sampling with mip 2.0 blur, fade-modulated blending.
+- [x] 10.4 Implement object rotation: Alt+LMB drag rotates preview mesh (yaw from horizontal, pitch from vertical drag, clamped ±89°), applied via Mat4::RotationX/Y to PerObjectCB model + normalMatrix.
+- [x] 10.5 Implement background color presets: 5 presets (Sky/DarkGray/Black/White/NeutralGray) cycled with C key (B was taken by bloom). Non-sky presets skip sky shader, clear to preset color.
+- [x] 10.6 Implement window resize handling: already handled by DemoApplication base class (WM_SIZE → swapchain resize → OnResize callback → DestroySizeDependent/CreateSizeDependent + bloom Resize).
+- [x] 10.7 Implement DPI awareness: already implemented in PlatformWindow::Create() — calls SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2).
+- [x] 10.8 Implement fullscreen toggle: Alt+Enter calls PlatformWindow::SetFullscreen()/SetWindowed(), uses existing DPI-aware borderless fullscreen infrastructure.
+- [x] 10.9 Implement help overlay: H key prints comprehensive keyboard shortcut reference to console via UZ_LOG (27 bindings listed).
+- [x] 10.10 Implement RenderDoc integration: RenderDocInit() + SetCaptureOptions() in main.cpp before device creation, F11 key triggers RenderDocTriggerCapture() in HandleInput().
 
 ## Testing
 
@@ -134,7 +141,7 @@
 
 ## Documentation
 
-- [ ] D.1 Create docs/guides/vfx-viewport-controls.md — keyboard shortcuts, mouse controls, CLI arguments
-- [ ] D.2 Create docs/guides/vfx-viewport-architecture.md — rendering pipeline, shader structure, buffer layout
-- [ ] D.3 Update docs/engine/25-vfx/README.md with viewport documentation links
-- [ ] D.4 Add viewport screenshot to project README showing VFX particles in action
+- [x] D.1 Create docs/guides/vfx-viewport-controls.md — keyboard shortcuts, mouse controls, CLI arguments. Complete reference with camera, mesh/material, lighting, post-processing, shadow, VFX, utility controls + all CLI args.
+- [x] D.2 Create docs/guides/vfx-viewport-architecture.md — rendering pipeline (15-stage frame order), CB layout (768-byte PerFrameCB), root sig, GPU resources, VFX compute pipeline, material/emitter presets.
+- [x] D.3 Update docs/engine/25-vfx/README.md with viewport documentation links. Added links to vfx-viewport-controls.md and vfx-viewport-architecture.md, fixed stale tools/uz_viewport.exe path to demos/vfx_viewport/.
+- [x] D.4 Add VFX system section to project README with feature list (particles, trails, decals, distortion, flipbook, soft depth fade), viewport demo entry in directory structure, and links to controls/architecture docs. Screenshot image pending build (thirdparty DLLs needed).

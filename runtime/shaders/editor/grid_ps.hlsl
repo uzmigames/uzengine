@@ -13,7 +13,7 @@ cbuffer GridCB : register(b1) {
     uint   sceneDepthSrv;   // Bindless SRV index for scene depth (0xFFFFFFFF = use hardware depth test)
     float  displayWidth;    // Display-resolution width (for pixel-to-UV mapping)
     float  displayHeight;   // Display-resolution height
-    float  _pad0;
+    uint   reflectionHdrSrv;  // Bindless SRV index for pre-grid HDR copy (0xFFFFFFFF = no reflection)
 };
 
 struct PSInput {
@@ -109,6 +109,38 @@ PSOutput main(PSInput input) {
     alpha = max(alpha, max(onXAxis, onYAxis) * 0.8);
 
     alpha *= fade;
+
+    // ── Screen-space ground reflection (optional) ──────────────────────
+    /// @ref Vlachos 2015 "Advanced VR Rendering" — planar SSR approximation
+#ifdef UZ_BINDLESS
+    if (reflectionHdrSrv != 0xFFFFFFFF) {
+        // Reflect camera position about Z=0 ground plane
+        float3 reflCamPos = float3(cameraPos.x, cameraPos.y, -cameraPos.z);
+        // View direction from reflected camera to ground hit point
+        float3 reflViewDir = normalize(worldPos - reflCamPos);
+        // March a small step along reflected direction and project back to screen
+        float3 reflSamplePos = worldPos + reflViewDir * cameraPos.z * 2.0;
+        float4 reflClip = mul(float4(reflSamplePos, 1.0), viewProj);
+        float2 reflUV = (reflClip.xy / reflClip.w) * 0.5 + 0.5;
+        reflUV.y = 1.0 - reflUV.y; // D3D UV convention
+
+        // Only sample if reflected UV is within screen bounds
+        if (all(reflUV > 0.0) && all(reflUV < 1.0)) {
+            Texture2D<float4> hdrTex = ResourceDescriptorHeap[reflectionHdrSrv];
+            SamplerState bilinearSampler = SamplerDescriptorHeap[0];
+            float3 reflColor = hdrTex.SampleLevel(bilinearSampler, reflUV, 2.0).rgb;
+
+            // Schlick Fresnel approximation (F0=0.04 for dielectric ground)
+            float3 V = normalize(cameraPos.xyz - worldPos);
+            float NdotV = saturate(dot(float3(0, 0, 1), V));
+            float fresnel = 0.04 + 0.96 * pow(1.0 - NdotV, 5.0);
+
+            // Blend reflection into grid color (subtle, attenuated by distance fade)
+            color = lerp(color, reflColor * 0.5, fresnel * fade * 0.6);
+            alpha = max(alpha, fresnel * fade * 0.3);
+        }
+    }
+#endif
 
     if (alpha < 0.01) {
         discard;

@@ -8,7 +8,7 @@
 /// Compares the particle's linear depth with the scene depth buffer to produce
 /// a fade factor when the particle is close to opaque surfaces. This prevents
 /// the visually jarring "hard cut" where a billboard quad intersects geometry.
-/// The fade distance is controlled by `softFadeDistance` in VFXBillboardPS_CB.
+/// The fade distance is controlled by `softFadeDistance` in VFXBillboardCB.
 ///
 /// Uses reversed-Z depth convention (near=1.0, far=0.0) via depth_common.hlsli.
 ///
@@ -18,9 +18,9 @@
 ///   DepthTest = enabled, DepthWrite = disabled, Cull = None
 ///
 /// # Root Signature
-/// - b0: VFXBillboardPSIndices (bindless SRV indices for sprite + depth textures)
+/// - b0: VFXBillboardConstants (unified bindless indices for VS buffers + PS textures)
 /// - b1: PerFrameCB (nearPlane, farPlane for depth linearization)
-/// - b2: VFXBillboardPS_CB (per-emitter PS parameters: soft fade distance)
+/// - b2: VFXBillboardCB (unified VS emitter params + PS rendering params)
 /// - s0: linearSampler (bilinear, clamp — for sprite texture)
 /// - s1: pointSampler (point, clamp — for depth buffer sampling)
 ///
@@ -41,7 +41,7 @@
 /// Avoids blending near-invisible fragments that waste bandwidth.
 static const float SOFT_FADE_MIN_ALPHA = 0.001f;
 
-/// Flipbook blend mode constants matching VFXBillboardPS_CB::flipbookBlendMode.
+/// Flipbook blend mode constants matching VFXBillboardCB::flipbookBlendMode.
 static const uint kFlipbookBlendNone   = 0; ///< No inter-frame blending; snap to nearest frame.
 static const uint kFlipbookBlendLinear = 1; ///< Linearly interpolate between adjacent frames.
 static const uint kFlipbookBlendRandom = 2; ///< Deterministic per-particle random frame (no animation).
@@ -67,16 +67,26 @@ struct PSInput {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #ifdef UZ_BINDLESS
-/// Root constants for bindless resource access in the pixel shader.
-/// Contains SRV descriptor heap indices for the sprite texture and
-/// scene depth buffer (used for soft particle fade).
-struct VFXBillboardPSIndices {
-    uint spriteTextureIdx; ///< SRV index: Texture2D<float4> sprite/atlas.
-    uint depthBufferIdx;   ///< SRV index: Texture2D<float> scene depth (reversed-Z).
+/// Unified root constants for bindless resource access (shared by VS and PS).
+/// Layout MUST match VFXBillboardConstants in particle_billboard_vs.hlsl exactly.
+/// PS reads spriteTextureIdx and depthBufferIdx from bytes 32-39.
+struct VFXBillboardConstants {
+    // VS indices (bytes 0-31) — not read by PS, declared for layout correctness.
+    uint positionBufferIdx;
+    uint sizeBufferIdx;
+    uint colorBufferIdx;
+    uint rotationBufferIdx;
+    uint sortedIndicesSrvIndex;
+    uint velocityBufferIdx;
+    uint agesBufferIdx;
+    uint lifespansBufferIdx;
+    // PS indices (bytes 32-47)
+    uint spriteTextureIdx;     ///< SRV index: Texture2D<float4> sprite/atlas.
+    uint depthBufferIdx;       ///< SRV index: Texture2D<float> scene depth (reversed-Z).
     uint _pad0;
     uint _pad1;
 };
-ConstantBuffer<VFXBillboardPSIndices> vfxPSIndices : register(b0);
+ConstantBuffer<VFXBillboardConstants> vfxConstants : register(b0);
 #else
 /// SM5 fallback: explicit texture bindings.
 Texture2D<float4> spriteTexture : register(t0);
@@ -103,12 +113,20 @@ cbuffer PerFrameCB : register(b1) {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Per-Emitter PS Constant Buffer (b2) — Soft Particle Parameters
+// Unified Billboard Constant Buffer (b2) — VS Emitter + PS Rendering Params
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Per-emitter pixel shader parameters. Controls soft particle behavior,
-/// optional distortion/emission settings, and flipbook sprite sheet animation.
-cbuffer VFXBillboardPS_CB : register(b2) {
+/// Unified per-emitter constant buffer (shared by VS and PS).
+/// Layout MUST match VFXBillboardCB in particle_billboard_vs.hlsl exactly.
+/// PS reads the rendering parameters starting at byte offset 160.
+cbuffer VFXBillboardCB : register(b2) {
+    // ── VS data (emitter parameters, 160 bytes) — not read by PS ────────
+    row_major float4x4 invView;
+    float3   emitterPosition;
+    float    globalSizeMultiplier;
+    float4   globalColorTint;
+    row_major float4x4 prevViewProj;
+    // ── PS data (rendering parameters, 48 bytes) ────────────────────────
     float    softFadeDistance;      ///< World-space distance over which particles fade near surfaces.
                                    ///< 0.0 = hard edges (no soft fade). Typical: 0.5 to 2.0.
     float    alphaErosion;         ///< Subtractive alpha erosion. Useful for dissolve effects.
@@ -170,7 +188,7 @@ float ComputeSoftParticleFade(float4 screenPos, float2 screenSize, float fadeDis
     // Sample scene depth from the depth buffer
     float sceneDepthRaw;
 #ifdef UZ_BINDLESS
-    Texture2D<float> depthTex = ResourceDescriptorHeap[vfxPSIndices.depthBufferIdx];
+    Texture2D<float> depthTex = ResourceDescriptorHeap[vfxConstants.depthBufferIdx];
     sceneDepthRaw = depthTex.SampleLevel(pointSampler, depthUV, 0);
 #else
     sceneDepthRaw = depthBuffer.SampleLevel(pointSampler, depthUV, 0);
@@ -236,7 +254,7 @@ float4 main(PSInput input) : SV_Target {
         float2 uv0 = SampleFlipbookUV(input.texcoord, fb.uv0, fb.frameSize);
 
 #ifdef UZ_BINDLESS
-        Texture2D<float4> spriteTex = ResourceDescriptorHeap[vfxPSIndices.spriteTextureIdx];
+        Texture2D<float4> spriteTex = ResourceDescriptorHeap[vfxConstants.spriteTextureIdx];
 #endif
 
         // Sample the current frame.
@@ -260,7 +278,7 @@ float4 main(PSInput input) : SV_Target {
     } else {
         // No flipbook — standard single-frame sprite sampling (original path).
 #ifdef UZ_BINDLESS
-        Texture2D<float4> spriteTex = ResourceDescriptorHeap[vfxPSIndices.spriteTextureIdx];
+        Texture2D<float4> spriteTex = ResourceDescriptorHeap[vfxConstants.spriteTextureIdx];
         spriteColor = spriteTex.Sample(linearSampler, input.texcoord);
 #else
         spriteColor = spriteTexture.Sample(linearSampler, input.texcoord);
@@ -291,7 +309,7 @@ float4 main(PSInput input) : SV_Target {
     float2 screenSize;
 #ifdef UZ_BINDLESS
     {
-        Texture2D<float> depthTex = ResourceDescriptorHeap[vfxPSIndices.depthBufferIdx];
+        Texture2D<float> depthTex = ResourceDescriptorHeap[vfxConstants.depthBufferIdx];
         uint w, h;
         depthTex.GetDimensions(w, h);
         screenSize = float2(w, h);
