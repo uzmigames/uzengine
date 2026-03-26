@@ -1,7 +1,8 @@
 # VFX System — GPU Particle Simulation + Decals + Trails
 
-> **Status**: Planned (Phase 3–4)
-> **Source**: `engine/vfx/`, `engine/vfx/particle_system.h`, `engine/vfx/decal_system.h`, `engine/vfx/trail_system.h`
+> **Status**: Phase 3 Particle Core (GPU Compute, Indirect Draw) Complete; Phase 4 (Decals, Trails) Planned
+> **Phase 3.60.0**: ✓ GPU Particle Core (spawn/update/render compute shaders, ping-pong SoA buffers, lock-free free list, indirect draw args, billboard rendering, soft particle depth fade, global particle budget)
+> **Source**: `engine/vfx/`, `engine/vfx/components/particle_emitter.h`, `engine/vfx/core/`, `engine/vfx/passes/`
 > **References**: UE5 Niagara (clean-room approach), Godot GPUParticles3D
 
 ## Purpose
@@ -316,7 +317,9 @@ When multiple emitters compete for a fixed budget, the system:
 
 ## Implementation Phase
 
-| Phase | What Ships |
-|-------|-----------|
-| **Phase 3** | ParticleSystem (GPU compute), basic spawn/update/render modules, SoA GPU buffers, Sprite renderer, DecalComponent, global particle budget |
-| **Phase 4** | VFX node graph editor (visual authoring), advanced modules (collision, light, constraint), Trail/Beam rendering, LOD system, decal atlasing, performance profiling |
+| Phase | Status | What Ships |
+|-------|--------|-----------|
+| **3.60.0** | ✓ DONE | **GPU Particle Core System**: ParticleEmitter component, GPUParticleBuffer (ping-pong SoA), ParticleBudget (lock-free CAS allocator), VFXSystem manager, ParticleSimulationPass (spawn/update/indirect-args compute), ParticleRenderPass (indirect billboard draw), billboard vertex expansion (SV_VertexID), soft particle depth fade, free list atomic protocol (spawn pop / update push/recycle) |
+| **3.60.1** | TBD | **Decal System**: DecalComponent, decal placement (raycast-based), deferred decal pass, fade curves, atlasing |
+| **3.60.2** | TBD | **Trail/Beam System**: TrailComponent, spline tessellation, width curves, UV scrolling |
+| **Phase 4.0** | Planned | VFX node graph editor (visual authoring), advanced modules (collision, light constraint), LOD system with distance/screen-size culling, decal batching, GPU memory profiling, performance tuning |

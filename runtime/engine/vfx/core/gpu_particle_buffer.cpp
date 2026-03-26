@@ -1,0 +1,289 @@
+/// GPU Particle Buffer -- Allocation and teardown of SoA ping-pong storage.
+
+#include "gpu_particle_buffer.h"
+
+#include "engine/rhi/rhi.h"
+
+#include "engine/assertions/engine_assert.h"
+#include "engine/logging/log.h"
+
+#include <cstdio>
+
+UZ_DEFINE_LOG_CATEGORY(VFX, Trace);
+
+namespace uz {
+
+// ---------------------------------------------------------------------------
+// ParticleAttributeSet
+// ---------------------------------------------------------------------------
+
+bool ParticleAttributeSet::IsValid() const noexcept
+{
+    return positions.IsValid() && velocities.IsValid() &&
+           ages.IsValid() && lifespans.IsValid() &&
+           sizes.IsValid() && colors.IsValid() &&
+           rotations.IsValid();
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// Approximate total bytes per particle including both sets and shared buffers.
+constexpr uint32_t kApproxBytesPerParticle = 120;
+
+/// Creates a structured buffer with UAV access for VFX compute shaders.
+///
+/// # Parameters
+/// - `device`: RHI device for allocation.
+/// - `sizeBytes`: Total buffer size in bytes.
+/// - `stride`: Element stride for structured buffer SRV/UAV views.
+/// - `debugName`: GPU debug label (visible in PIX/RenderDoc).
+///
+/// # Returns
+/// Valid handle on success, invalid handle on failure.
+RHIBufferHandle CreateVFXBuffer(IRHIDevice* device, uint64_t sizeBytes,
+                                uint32_t stride, const char* debugName)
+{
+    RHIBufferDesc desc{};
+    desc.sizeBytes = sizeBytes;
+    desc.stride = stride;
+    desc.usage = RHIBufferUsage::StructuredBuffer | RHIBufferUsage::UnorderedAccess;
+    desc.memory = RHIMemoryType::Default;
+    desc.debugName = debugName;
+    return device->CreateBuffer(desc);
+}
+
+/// Creates an indirect argument buffer (UAV + IndirectArgs usage).
+///
+/// Written by compute shaders, consumed by DrawIndexedIndirect / DispatchIndirect.
+RHIBufferHandle CreateIndirectArgsBuffer(IRHIDevice* device, uint64_t sizeBytes,
+                                         const char* debugName)
+{
+    RHIBufferDesc desc{};
+    desc.sizeBytes = sizeBytes;
+    desc.stride = 0;
+    desc.usage = RHIBufferUsage::UnorderedAccess | RHIBufferUsage::IndirectArgs;
+    desc.memory = RHIMemoryType::Default;
+    desc.debugName = debugName;
+    return device->CreateBuffer(desc);
+}
+
+/// Formats a VFX debug name into a thread-local buffer.
+///
+/// Returns a pointer valid until the next call on the same thread.
+const char* FormatDebugName(const char* attribute, const char* suffix)
+{
+    static thread_local char buf[128];
+    std::snprintf(buf, sizeof(buf), "VFX_%s_%s", attribute, suffix);
+    return buf;
+}
+
+/// Allocates all seven attribute buffers for one ParticleAttributeSet.
+///
+/// # Returns
+/// `true` if all buffers were allocated successfully.
+bool CreateAttributeSet(IRHIDevice* device, ParticleAttributeSet& set,
+                        uint32_t capacity, const char* suffix)
+{
+    const auto cap = static_cast<uint64_t>(capacity);
+
+    set.positions  = CreateVFXBuffer(device, cap * 12, 12, FormatDebugName("Positions", suffix));
+    set.velocities = CreateVFXBuffer(device, cap * 12, 12, FormatDebugName("Velocities", suffix));
+    set.ages       = CreateVFXBuffer(device, cap * 4,  4,  FormatDebugName("Ages", suffix));
+    set.lifespans  = CreateVFXBuffer(device, cap * 4,  4,  FormatDebugName("Lifespans", suffix));
+    set.sizes      = CreateVFXBuffer(device, cap * 4,  4,  FormatDebugName("Sizes", suffix));
+    set.colors     = CreateVFXBuffer(device, cap * 16, 16, FormatDebugName("Colors", suffix));
+    set.rotations  = CreateVFXBuffer(device, cap * 4,  4,  FormatDebugName("Rotations", suffix));
+
+    return set.IsValid();
+}
+
+/// Destroys all attribute buffers in a set and resets handles to invalid.
+void DestroyAttributeSet(IRHIDevice* device, ParticleAttributeSet& set)
+{
+    if (set.positions.IsValid())  device->DestroyBuffer(set.positions);
+    if (set.velocities.IsValid()) device->DestroyBuffer(set.velocities);
+    if (set.ages.IsValid())       device->DestroyBuffer(set.ages);
+    if (set.lifespans.IsValid())  device->DestroyBuffer(set.lifespans);
+    if (set.sizes.IsValid())      device->DestroyBuffer(set.sizes);
+    if (set.colors.IsValid())     device->DestroyBuffer(set.colors);
+    if (set.rotations.IsValid())  device->DestroyBuffer(set.rotations);
+    set = {};
+}
+
+}  // namespace
+
+// ---------------------------------------------------------------------------
+// GPUParticleBuffer::Create
+// ---------------------------------------------------------------------------
+
+bool GPUParticleBuffer::Create(IRHIDevice* device, uint32_t particleCapacity)
+{
+    UZ_CHECKF(device != nullptr, "GPUParticleBuffer::Create: device is null");
+    UZ_CHECKF(particleCapacity > 0, "GPUParticleBuffer::Create: capacity must be > 0");
+    UZ_CHECKF(!IsValid(), "GPUParticleBuffer::Create: already allocated, call Destroy() first");
+
+    capacity = particleCapacity;
+    readIndex = 0;
+    writeIndex = 1;
+
+    // Allocate both ping-pong attribute sets
+    if (!CreateAttributeSet(device, sets[0], capacity, "SetA")) {
+        UZ_LOG(VFX, Error, "Failed to allocate particle attribute set A: capacity={}", capacity);
+        Destroy(device);
+        return false;
+    }
+
+    if (!CreateAttributeSet(device, sets[1], capacity, "SetB")) {
+        UZ_LOG(VFX, Error, "Failed to allocate particle attribute set B: capacity={}", capacity);
+        Destroy(device);
+        return false;
+    }
+
+    const auto cap = static_cast<uint64_t>(capacity);
+
+    // Shared: alive count (single uint32, modified by GPU atomics)
+    aliveCount = CreateVFXBuffer(device, sizeof(uint32_t), sizeof(uint32_t),
+                                 "VFX_AliveCount");
+
+    // Shared: free list stack (capacity entries, each uint32 particle index)
+    freeList = CreateVFXBuffer(device, cap * sizeof(uint32_t), sizeof(uint32_t),
+                               "VFX_FreeList");
+
+    // Shared: free list head pointer (single uint32 atomic, top-of-stack index)
+    freeListHead = CreateVFXBuffer(device, sizeof(uint32_t), sizeof(uint32_t),
+                                   "VFX_FreeListHead");
+
+    // Shared: particle ID to buffer index mapping (capacity entries)
+    idToIndex = CreateVFXBuffer(device, cap * sizeof(uint32_t), sizeof(uint32_t),
+                                "VFX_IdToIndex");
+
+    // Shared: indirect draw arguments (5 x uint32 = 20 bytes)
+    indirectDrawArgs = CreateIndirectArgsBuffer(device, sizeof(RHIDrawIndexedIndirectArgs),
+                                                "VFX_IndirectDrawArgs");
+
+    // Shared: indirect dispatch arguments (3 x uint32 = 12 bytes)
+    indirectDispatchArgs = CreateIndirectArgsBuffer(device, sizeof(RHIDispatchIndirectArgs),
+                                                    "VFX_IndirectDispatchArgs");
+
+    if (!aliveCount.IsValid() || !freeList.IsValid() || !freeListHead.IsValid() ||
+        !idToIndex.IsValid() || !indirectDrawArgs.IsValid() ||
+        !indirectDispatchArgs.IsValid()) {
+        UZ_LOG(VFX, Error, "Failed to allocate shared particle buffers: capacity={}", capacity);
+        Destroy(device);
+        return false;
+    }
+
+    // Allocate sort buffers (sortKeys + sortIndices, power-of-two padded).
+    if (!sort.Create(device, capacity)) {
+        UZ_LOG(VFX, Error, "Failed to allocate particle sort buffers: capacity={}", capacity);
+        Destroy(device);
+        return false;
+    }
+
+    const uint64_t estimatedKB = (cap * kApproxBytesPerParticle) / 1024;
+    UZ_LOG(VFX, Info, "GPU particle buffer created: capacity={}, memory~{}KB",
+           capacity, estimatedKB);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// GPUParticleBuffer::CreateMeshBuffers
+// ---------------------------------------------------------------------------
+
+bool GPUParticleBuffer::CreateMeshBuffers(IRHIDevice* device)
+{
+    UZ_CHECKF(device != nullptr, "GPUParticleBuffer::CreateMeshBuffers: device is null");
+    UZ_CHECKF(IsValid(), "GPUParticleBuffer::CreateMeshBuffers: base buffers not allocated");
+    UZ_CHECKF(!hasMeshBuffers, "GPUParticleBuffer::CreateMeshBuffers: already allocated");
+
+    const auto cap = static_cast<uint64_t>(capacity);
+
+    // Instance transforms: one float4x4 (64 bytes) per particle.
+    meshInstanceTransforms = CreateVFXBuffer(device, cap * 64, 64,
+                                              "VFX_MeshInstanceTransforms");
+
+    // Instance count: single uint32 atomic counter.
+    meshInstanceCount = CreateVFXBuffer(device, sizeof(uint32_t), sizeof(uint32_t),
+                                         "VFX_MeshInstanceCount");
+
+    // Mesh indirect draw args: DrawIndexedInstancedIndirect (5 x uint32 = 20 bytes).
+    meshIndirectDrawArgs = CreateIndirectArgsBuffer(device,
+                                                     sizeof(RHIDrawIndexedIndirectArgs),
+                                                     "VFX_MeshIndirectDrawArgs");
+
+    if (!meshInstanceTransforms.IsValid() || !meshInstanceCount.IsValid() ||
+        !meshIndirectDrawArgs.IsValid()) {
+        UZ_LOG(VFX, Error,
+               "Failed to allocate mesh instance buffers: capacity={}", capacity);
+        DestroyMeshBuffers(device);
+        return false;
+    }
+
+    hasMeshBuffers = true;
+
+    const uint64_t meshKB = (cap * 64 + sizeof(uint32_t) +
+                             sizeof(RHIDrawIndexedIndirectArgs)) / 1024;
+    UZ_LOG(VFX, Info,
+           "GPU mesh instance buffers created: capacity={}, memory~{}KB",
+           capacity, meshKB);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// GPUParticleBuffer::DestroyMeshBuffers
+// ---------------------------------------------------------------------------
+
+void GPUParticleBuffer::DestroyMeshBuffers(IRHIDevice* device)
+{
+    if (!device) return;
+
+    if (meshInstanceTransforms.IsValid()) device->DestroyBuffer(meshInstanceTransforms);
+    if (meshInstanceCount.IsValid())      device->DestroyBuffer(meshInstanceCount);
+    if (meshIndirectDrawArgs.IsValid())   device->DestroyBuffer(meshIndirectDrawArgs);
+
+    meshInstanceTransforms = {};
+    meshInstanceCount = {};
+    meshIndirectDrawArgs = {};
+    hasMeshBuffers = false;
+}
+
+// ---------------------------------------------------------------------------
+// GPUParticleBuffer::Destroy
+// ---------------------------------------------------------------------------
+
+void GPUParticleBuffer::Destroy(IRHIDevice* device)
+{
+    if (!device) return;
+
+    DestroyAttributeSet(device, sets[0]);
+    DestroyAttributeSet(device, sets[1]);
+
+    // Destroy optional mesh instance buffers if present.
+    DestroyMeshBuffers(device);
+
+    // Destroy sort buffers (sortKeys + sortIndices).
+    sort.Destroy(device);
+
+    if (aliveCount.IsValid())           device->DestroyBuffer(aliveCount);
+    if (freeList.IsValid())             device->DestroyBuffer(freeList);
+    if (freeListHead.IsValid())         device->DestroyBuffer(freeListHead);
+    if (idToIndex.IsValid())            device->DestroyBuffer(idToIndex);
+    if (indirectDrawArgs.IsValid())     device->DestroyBuffer(indirectDrawArgs);
+    if (indirectDispatchArgs.IsValid()) device->DestroyBuffer(indirectDispatchArgs);
+
+    aliveCount = {};
+    freeList = {};
+    freeListHead = {};
+    idToIndex = {};
+    indirectDrawArgs = {};
+    indirectDispatchArgs = {};
+    capacity = 0;
+    readIndex = 0;
+    writeIndex = 1;
+}
+
+}  // namespace uz

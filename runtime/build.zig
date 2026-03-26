@@ -94,6 +94,20 @@ pub fn build(b: *std.Build) void {
         "engine/scripting/renderer",
         "engine/scripting/editor",
         "engine/ipc",
+        "engine/vfx",
+        "engine/vfx/core",
+        "engine/vfx/components",
+        "engine/vfx/curves",
+        "engine/vfx/modules",
+        "engine/vfx/passes",
+        "engine/vfx/asset",
+        "engine/vfx/parameters",
+        "engine/vfx/events",
+        "engine/vfx/scripting",
+        "engine/vfx/decals",
+        "engine/vfx/trails",
+        "engine/vfx/lod",
+        "engine/vfx/budget",
         "engine/event",
         "engine/property",
         "engine/debug",
@@ -261,6 +275,19 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/scripting/renderer", cpp_flags);
     addCppDir(runtime_mod, b, "engine/scripting/editor", cpp_flags);
     addCppDir(runtime_mod, b, "engine/ipc", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/core", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/components", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/curves", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/modules", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/passes", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/asset", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/parameters", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/events", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/scripting", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/decals",  cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/trails",  cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/lod",     cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/budget",  cpp_flags);
     addCppDir(runtime_mod, b, "engine/property", cpp_flags);
     addCppDir(runtime_mod, b, "engine/debug",    cpp_flags);
 
@@ -850,6 +877,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(test_mod, b, "tests/engine/event", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/property", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/scripting", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine/vfx", cpp_flags);
     // Thirdparty image lib tests — disable alignment sanitizer for stb_image_resize2
     test_mod.addCSourceFiles(.{
         .root = b.path("tests/thirdparty"),
@@ -890,6 +918,7 @@ pub fn build(b: *std.Build) void {
     for (engine_include_dirs) |dir| test_mod.addIncludePath(b.path(dir));
     for (thirdparty_include_dirs) |dir| test_mod.addIncludePath(b.path(dir));
     test_mod.addIncludePath(b.path("build/generated/shaders"));
+    test_mod.addIncludePath(b.path("tests/engine/vfx")); // mock_rhi_device.h
 
     if (is_windows) {
         test_mod.addIncludePath(b.path("engine/rhi/dx12"));

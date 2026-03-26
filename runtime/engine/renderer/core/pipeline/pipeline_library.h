@@ -656,6 +656,146 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure.
     [[nodiscard]] RHIPipelineHandle GetDecalApply();
 
+    // ── VFX Particle Pipelines ──────────────────────────────────────────
+
+    /// Returns the particle billboard pipeline (particle_billboard_vs + particle_billboard_ps).
+    ///
+    /// Renders GPU particles as camera-facing billboard quads using DrawIndirect
+    /// with vertexCount = aliveParticles * 6 (no vertex/index buffer required).
+    ///
+    /// Blend: SrcAlpha / InvSrcAlpha (standard alpha compositing).
+    /// Depth: enabled (read-only, no write — particles do not occlude).
+    /// Rasterizer: no cull (billboards are single-sided but may flip orientation).
+    /// Render target: RGBA16Float (HDR scene color).
+    /// Depth format: D32Float.
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetParticleBillboard();
+
+    /// Returns the additive particle billboard pipeline (particle_billboard_vs + particle_billboard_ps).
+    ///
+    /// Identical geometry to `GetParticleBillboard()` but uses One/One additive
+    /// blending for emissive effects (fire, sparks, magic, energy).
+    /// No sorting required since additive blending is order-independent.
+    ///
+    /// Blend: One / One (additive).
+    /// Depth: enabled (read-only, no write).
+    /// Rasterizer: no cull.
+    /// Render target: RGBA16Float (HDR scene color).
+    /// Depth format: D32Float.
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetParticleBillboardAdditive();
+
+    /// Returns the particle spawn compute pipeline (particle_spawn_cs.hlsl).
+    ///
+    /// Initializes newly emitted particles with position, velocity, lifetime,
+    /// and other per-particle attributes. Dispatched with threadCount = emitCount.
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetParticleSpawnCS();
+
+    /// Returns the particle update compute pipeline (particle_update_cs.hlsl).
+    ///
+    /// Steps the simulation forward: integrates velocity, applies forces/gravity,
+    /// ages particles, and writes dead indices to the free list. Dispatched with
+    /// threadCount = maxParticles.
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetParticleUpdateCS();
+
+    /// Returns the particle indirect args compute pipeline (particle_indirect_args_cs.hlsl).
+    ///
+    /// Reads the alive count from the particle state buffer and writes DrawIndirect /
+    /// DispatchIndirect argument structs for the rendering and instance-transform passes.
+    /// Single-thread dispatch (1,1,1).
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetParticleIndirectArgsCS();
+
+    /// Returns the particle mesh instance transform compute pipeline (particle_mesh_instance_cs.hlsl).
+    ///
+    /// Converts per-particle position/rotation/scale into per-instance world matrices
+    /// written to a StructuredBuffer consumed by the instanced mesh draw call.
+    /// Dispatched with threadCount = aliveParticles.
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetParticleMeshInstanceCS();
+
+    /// Returns the particle bitonic sort compute pipeline (particle_sort_cs.hlsl).
+    ///
+    /// Two-phase depth sort: phase 0 generates sort keys and performs a local
+    /// bitonic sort within each thread group using shared memory; phase 1
+    /// dispatches global merge passes across thread group boundaries.
+    /// Output: sorted index buffer for back-to-front alpha-blended rendering.
+    ///
+    /// @ref Batcher 1968 "Sorting Networks and Their Applications" — bitonic merge sort
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetParticleSortCS();
+
+    /// Returns the deferred decal projection pipeline (decal_deferred_vs + decal_deferred_ps).
+    ///
+    /// Renders a unit cube per decal with front-face culling (draws the inside of the
+    /// box). The pixel shader reprojects world position from depth and writes to the
+    /// G-Buffer (albedo, normal, roughness/metallic). Depth is read-only.
+    ///
+    /// Rasterizer: front-face cull (RHICullMode::Front).
+    /// Depth: read-only, Greater (reversed-Z).
+    /// Blend: disabled (opaque overwrite for now).
+    /// Render targets: 4 matching GBuffer (albedo RGBA8, normal RGBA8, position RGBA32F, emissive RGBA16F).
+    /// Depth format: D32Float.
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetDecalDeferred();
+
+    /// Returns the trail ribbon pipeline (trail_vs + trail_ps, alpha blended, two-sided).
+    ///
+    /// Renders ribbon geometry generated from trail control points. Uses SV_VertexID
+    /// to read from a structured buffer (no vertex input layout). Two-sided rendering
+    /// with alpha blending over HDR scene color.
+    ///
+    /// Rasterizer: no cull (two-sided ribbons).
+    /// Depth: read-only, Greater (reversed-Z).
+    /// Blend: SrcAlpha / InvSrcAlpha.
+    /// Render target: RGBA16Float (HDR scene color).
+    /// Depth format: D32Float.
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetTrailRibbon();
+
+    /// Returns the instanced mesh particle pipeline (particle_mesh_vs + particle_mesh_ps).
+    ///
+    /// Renders 3D mesh instances with pre-computed per-particle world transforms
+    /// from ParticleMeshInstanceCS. Two variants: opaque (depth writes) and
+    /// transparent (alpha blend, no depth writes). This returns the OPAQUE variant.
+    ///
+    /// Rasterizer: back-face cull.
+    /// Depth: enabled, write enabled, Greater (reversed-Z).
+    /// Blend: disabled (opaque).
+    /// Render target: RGBA16Float (HDR scene color).
+    /// Depth format: D32Float.
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetParticleMeshOpaque();
+
+    /// Returns the transparent variant of the instanced mesh particle pipeline.
+    ///
+    /// Same shaders as GetParticleMeshOpaque() but with:
+    /// Depth: read-only (no writes).
+    /// Blend: SrcAlpha / InvSrcAlpha.
+    [[nodiscard]] RHIPipelineHandle GetParticleMeshTransparent();
+
     /// Pre-creates all standard pipelines eagerly instead of on first use.
     ///
     /// Call at scene load time to avoid hitches during the first frame.
@@ -673,6 +813,46 @@ public:
 
 private:
     #include "pipeline_library_impl.h"
+
+    // ── VFX pipeline members (from VFX system PR) ───────────────────────
+    // ── VFX shader/pipeline ensure methods ──────────────────────────────
+    [[nodiscard]] bool EnsureParticleBillboardShaders();
+    [[nodiscard]] bool EnsureParticleSpawnCSShader();
+    [[nodiscard]] bool EnsureParticleUpdateCSShader();
+    [[nodiscard]] bool EnsureParticleIndirectArgsCSShader();
+    [[nodiscard]] bool EnsureParticleMeshInstanceCSShader();
+    [[nodiscard]] bool EnsureParticleSortCSShader();
+    [[nodiscard]] bool EnsureDecalDeferredShaders();
+    [[nodiscard]] bool EnsureTrailRibbonShaders();
+    [[nodiscard]] bool EnsureParticleMeshShaders();
+
+    // ── VFX cached shader handles ────────────────────────────────────────
+    RHIShaderHandle m_particleBillboardVS       = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_particleBillboardPS       = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_particleSpawnCS           = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_particleUpdateCS          = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_particleIndirectArgsCS    = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_particleMeshInstanceCS    = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_particleSortCS            = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_decalDeferredVS           = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_decalDeferredPS           = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_trailVS                   = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_trailPS                   = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_particleMeshVS            = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_particleMeshPS            = RHIShaderHandle::Invalid();
+
+    // ── VFX cached pipeline handles ──────────────────────────────────────
+    RHIPipelineHandle m_particleBillboard          = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_particleBillboardAdditive  = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_particleSpawnCS_PSO        = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_particleUpdateCS_PSO       = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_particleIndirectArgsCS_PSO = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_particleMeshInstanceCS_PSO = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_particleSortCS_PSO         = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_decalDeferred              = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_trailRibbon                = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_particleMeshOpaque         = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_particleMeshTransparent    = RHIPipelineHandle::Invalid();
 };
 
 } // namespace uz

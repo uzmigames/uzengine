@@ -1,0 +1,207 @@
+UNREAL ENGINE NIAGARA VFX SYSTEM ANALYSIS
+==========================================
+Date: 2026-03-24
+Analysis Tool: Claude Code Deep Dive
+Target: Extract architectural patterns for UzEngine VFX adaptation
+
+================================================================================
+LOCATION OF DETAILED ANALYSIS
+================================================================================
+Full 300+ line architectural analysis saved to:
+  u:\UzmiEngine\uzengine\NIAGARA_VFX_ARCHITECTURE_ANALYSIS.md
+
+This file contains:
+- Executive summary of 5 core design patterns
+- Detailed breakdown of each pattern with code examples
+- UzEngine C/C++ adaptation guidance
+- Critical anti-patterns to avoid
+- File reference guide to UE5.6 source
+- Summary table of key takeaways
+
+================================================================================
+EXECUTIVE SUMMARY: 5 CORE NIAGARA PATTERNS
+================================================================================
+
+1. GPU PARTICLE STORAGE (SOA - Structure of Arrays)
+   Pattern: Particles stored as multiple large buffers, not per-particle structs
+   File: NiagaraGPUInstanceCountManager.h
+
+   WRONG (AOS):
+   struct Particle { float3 pos, vel; float lifetime; }
+   Particle particles[1M];  // Wastes cache, poor coalescing
+
+   RIGHT (SOA):
+   float3 positions[1M];
+   float3 velocities[1M];
+   float lifetimes[1M];  // Coalesced GPU access, one SRV per type
+
+   Why: Threads in same compute wavefront access positions[tid], velocities[tid], etc.
+        Cache-line alignment is perfect. Every byte fetched is used.
+
+2. FREE LIST MEMORY MANAGEMENT
+   Pattern: Frame-local allocation with pre-sized buffer and free list stack
+   File: NiagaraGPUInstanceCountManager.h, lines 72-80
+
+   Flow:
+   - Game thread: Acquire slot from free list stack
+   - Slot points to offset in shared InstanceCountBuffer
+   - Simulation writes particle count to that offset
+   - Render thread reads count for draw call
+   - Next frame: Return slot to free list
+
+   O(1) allocation, no fragmentation, no reallocation.
+
+3. DISPATCH BATCHING BY SHADER PERMUTATION
+   Pattern: Group emitter instances by compute shader, single PSO bind per group
+   File: NiagaraGpuComputeDispatch.h, lines 32-81
+
+   Advantage: 100 emitters with same spawn script = 1 PSO bind, 1 dispatch
+             (not 100 PSO binds, 100 dispatches)
+
+   Dispatch args use indirect buffer: thread count comes from GPU particle count
+
+4. RENDER PROXY PATTERN (CPU/GPU DECOUPLING)
+   Pattern: Two-phase rendering, no game-thread state on render thread
+   File: NiagaraRenderer.h, lines 30-104
+
+   Phase 1 (Game Thread):
+   FNiagaraDynamicDataBase* GenerateDynamicData(FNiagaraEmitterInstance* emitter) {
+       // Access game-thread state (alive_count, etc)
+       // Pack into opaque blob, return
+   }
+
+   Phase 2 (Render Thread):
+   GetDynamicMeshElements(FNiagaraDynamicDataBase* opaque_data) {
+       // Receive opaque blob only
+       // Do NOT know about FNiagaraEmitterInstance (can't access game thread!)
+       // Setup draws
+   }
+
+   Prevents race conditions. Core pattern.
+
+5. DATA INTERFACE PLUGIN SYSTEM (NDI)
+   Pattern: Extensibility via vtable, no switch statements in core dispatch
+   File: NiagaraDataInterface.h
+
+   Fixed lifecycle hooks (every NDI implements):
+   - PreStageInterface(context)
+   - PostStageInterface(context)
+   - PostSimulateInterface(context)
+
+   Core dispatch loop:
+   for (each ndi) { ndi->PreStage(ctx); }
+   RunComputeShader();
+   for (each ndi) { ndi->PostStage(ctx); }
+
+   No type switch! Adding new NDI (e.g., ParticleGrid) = new subclass, no core changes.
+
+================================================================================
+ADDITIONAL PATTERNS
+================================================================================
+
+6. INDIRECT DRAW BUFFER GENERATION
+   - Simulation shader writes alive particle count to CountBuffer[offset]
+   - Separate compute pass reads CountBuffer, writes D3D12_DRAW_INDEXED_ARGUMENTS
+   - Render thread feeds this buffer to DrawIndirect() GPU command
+   - Zero CPU readback, zero stalls
+
+7. SCRIPT COMPILATION (NOT MONOLITHIC)
+   - Spawn script compiles to separate compute shader
+   - Update script: separate compute shader
+   - Event script: separate compute shader
+   - Each shader only touches relevant attributes
+   - Adding particle attribute doesn't force full recompile
+
+================================================================================
+ANTI-PATTERNS TO AVOID IN UZENGINE
+================================================================================
+
+1. Template Metaprogramming for Parameter Binding
+   - Niagara uses TNDIParamBinder<> (compile-time heavy)
+   - Causes slow compile times, cryptic error messages
+   - ALTERNATIVE: Use runtime type switching instead
+
+2. UObject Overhead on Hot-Path Data
+   - Niagara systems inherit from UObject (refcount, vtable, etc)
+   - Not all needed at runtime
+   - ALTERNATIVE: Separate runtime POD data from editor asset wrapper
+
+3. CPU Readback Complexity
+   - Niagara's GPU readback is async but not frame-latent
+   - Complex state machine (EnqueueGPUReadback, HasPending, GetReadback)
+   - ALTERNATIVE: Keep compute shader writes on GPU, no readback unless debugging
+
+================================================================================
+CRITICAL IMPLEMENTATION NOTES
+================================================================================
+
+Memory Layout:
+- MUST be SOA (separate buffers), NOT per-particle structs
+- Each attribute gets one GPU buffer, one SRV
+
+Compute Dispatch:
+- Always use 1D dispatch [numthreads(64, 1, 1)]
+- Threads map 1:1 to particles (better cache, simpler indexing)
+
+Frame Allocation:
+- Game thread submits "acquire slot" before simulation
+- Render thread processes allocated slots after simulation
+- Reuse slots via free list, never deallocate during frame
+
+Indirect Args:
+- DO: Separate compute pass after simulation
+- DON'T: Embed in simulation shader (harder to debug, profile)
+
+Extensibility:
+- Use vtable-based plugins (NDI pattern)
+- Fixed set of lifecycle hooks
+- Core dispatch never switches on type
+
+================================================================================
+KEY FILES IN UE5.6 SOURCE (W:\UE_5.6_Source\...)
+================================================================================
+
+GPU Simulation Core:
+- Engine/Plugins/FX/Niagara/Source/Niagara/Classes/NiagaraGPUInstanceCountManager.h
+- Engine/Plugins/FX/Niagara/Source/Niagara/Private/NiagaraGpuComputeDispatch.h
+- Engine/Plugins/FX/Niagara/Shaders/Private/NiagaraEmitterInstanceShader.usf
+
+Architecture:
+- Engine/Plugins/FX/Niagara/Source/Niagara/Classes/NiagaraSystem.h
+- Engine/Plugins/FX/Niagara/Source/Niagara/Classes/NiagaraEmitter.h
+- Engine/Plugins/FX/Niagara/Source/Niagara/Classes/NiagaraScript.h
+
+Rendering:
+- Engine/Plugins/FX/Niagara/Source/Niagara/Public/NiagaraRenderer.h
+- Engine/Plugins/FX/Niagara/Source/Niagara/Public/NiagaraRendererSprites.h
+- Engine/Plugins/FX/Niagara/Shaders/Private/NiagaraDrawIndirectArgsGen.usf
+
+Data Interfaces:
+- Engine/Plugins/FX/Niagara/Source/Niagara/Classes/NiagaraDataInterface.h
+- Engine/Plugins/FX/Niagara/Source/Niagara/Classes/NiagaraDataInterfaceCollisionQuery.h
+
+Total Lines Analyzed:
+- 350+ lines NiagaraSystem.h
+- 300+ lines NiagaraGPUInstanceCountManager.h + dispatch header
+- 250+ lines NiagaraScript.h
+- 300+ lines NiagaraDataInterface.h
+- 250+ lines NiagaraRenderer.h, NiagaraRendererSprites.h
+- 200+ lines shader code (usf files)
+
+================================================================================
+NEXT STEPS FOR UZENGINE
+================================================================================
+
+1. Implement uz_particle_allocator_t (SOA buffers + free list)
+2. Build uz_ndi_t plugin registry (vtable-based, lifecycle hooks)
+3. Design uz_particle_script_pack_t (spawn/update/event shaders separate)
+4. Create indirect args generation compute shader
+5. Implement render proxy pattern in sprite/mesh renderers
+6. Test SOA cache performance vs current system
+7. Profile dispatch batching benefits
+
+All concrete code examples included in detailed analysis document.
+
+================================================================================
+END OF SUMMARY
+================================================================================
