@@ -45,6 +45,15 @@
 ///
 /// @constants MESH_INSTANCE_GROUP_SIZE=256
 /// @deviations Random rotation uses XYZ Euler not quaternion -- cheaper for GPU
+///
+/// # SM5 Register Layout (non-bindless fallback)
+/// - t0: StructuredBuffer<float3>           positions
+/// - t1: StructuredBuffer<float3>           velocities
+/// - t2: StructuredBuffer<float>            ages
+/// - t3: StructuredBuffer<float>            lifespans
+/// - u0: RWStructuredBuffer<float4x4>       instanceTransforms
+/// - u1: RWStructuredBuffer<uint>           instanceCount (1 element)
+/// - u2: RWByteAddressBuffer                indirectArgs (20 bytes)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -75,7 +84,6 @@ static const uint INDIRECT_START_INSTANCE_OFFSET = 16;  ///< StartInstanceLocati
 /// Per-dispatch constants uploaded by the CPU each frame.
 ///
 /// Layout is 16-byte aligned per HLSL packing rules.
-/// Total size: 80 bytes.
 cbuffer VFXMeshInstanceConstants : register(b0) {
     // ── Simulation parameters ─────────────────────────────────────────────
     uint     aliveCount;             ///< Total alive particles to process.     0
@@ -88,6 +96,7 @@ cbuffer VFXMeshInstanceConstants : register(b0) {
     uint     _pad0;                  ///<                                       24
     uint     _pad1;                  ///<                                       28
 
+#ifdef UZ_BINDLESS
     // ── Bindless descriptor indices: READ set (SRV) ───────────────────────
     uint     positionsSrvIndex;      ///< StructuredBuffer<float3> positions.  32
     uint     velocitiesSrvIndex;     ///< StructuredBuffer<float3> velocities. 36
@@ -99,8 +108,19 @@ cbuffer VFXMeshInstanceConstants : register(b0) {
     uint     instanceCountUavIndex;      ///< RWStructuredBuffer<uint> (1 el). 52
     uint     indirectArgsUavIndex;       ///< RWByteAddressBuffer (20 bytes).  56
     uint     _pad2;                      ///<                                  60
+#endif
+};
 
-};                                       ///<                            Total: 64
+#ifndef UZ_BINDLESS
+/// SM5 fallback: explicit register bindings for particle buffers.
+StructuredBuffer<float3>           sm5_positions       : register(t0);
+StructuredBuffer<float3>           sm5_velocities      : register(t1);
+StructuredBuffer<float>            sm5_ages            : register(t2);
+StructuredBuffer<float>            sm5_lifespans       : register(t3);
+RWStructuredBuffer<float4x4>       sm5_instanceXforms  : register(u0);
+RWStructuredBuffer<uint>           sm5_instanceCount   : register(u1);
+RWByteAddressBuffer                sm5_indirectArgs    : register(u2);
+#endif
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal helpers
@@ -242,9 +262,20 @@ float4x4 BuildRandomTRS(float3 pos, uint particleIdx,
 ///   and writes the static fields of the indirect args buffer (index count, etc.)
 ///   so a separate init dispatch is not required.
 [numthreads(MESH_INSTANCE_GROUP_SIZE, 1, 1)]
-void CSMain(uint3 dtid : SV_DispatchThreadID)
+void main(uint3 dtid : SV_DispatchThreadID)
 {
     uint particleIdx = dtid.x;
+
+    // ── Bind UAV resources ───────────────────────────────────────────────────
+#ifdef UZ_BINDLESS
+    RWStructuredBuffer<uint>    instanceCount    = ResourceDescriptorHeap[instanceCountUavIndex];
+    RWByteAddressBuffer         indirectArgs     = ResourceDescriptorHeap[indirectArgsUavIndex];
+    RWStructuredBuffer<float4x4> instanceXforms  = ResourceDescriptorHeap[instanceTransformsUavIndex];
+#else
+    #define instanceCount    sm5_instanceCount
+    #define indirectArgs     sm5_indirectArgs
+    #define instanceXforms   sm5_instanceXforms
+#endif
 
     // ── One-time initialisation by thread 0 ─────────────────────────────────
     // Thread 0 resets the instance count and writes the static indirect args
@@ -255,12 +286,8 @@ void CSMain(uint3 dtid : SV_DispatchThreadID)
     // This avoids needing a dedicated clear dispatch before this CS runs.
     // The UAV barrier before the draw call ensures visibility.
     if (particleIdx == 0) {
-        RWStructuredBuffer<uint> instanceCount =
-            ResourceDescriptorHeap[instanceCountUavIndex];
         instanceCount[0] = 0;
 
-        RWByteAddressBuffer indirectArgs =
-            ResourceDescriptorHeap[indirectArgsUavIndex];
         indirectArgs.Store(INDIRECT_INDEX_COUNT_OFFSET,    meshIndexCount);
         indirectArgs.Store(INDIRECT_START_INDEX_OFFSET,    0u);
         indirectArgs.Store(INDIRECT_BASE_VERTEX_OFFSET,    0u);
@@ -272,10 +299,17 @@ void CSMain(uint3 dtid : SV_DispatchThreadID)
     if (particleIdx >= aliveCount) return;
 
     // ── Read particle attributes from SRV buffers ────────────────────────────
+#ifdef UZ_BINDLESS
     StructuredBuffer<float3> positionsBuf  = ResourceDescriptorHeap[positionsSrvIndex];
     StructuredBuffer<float3> velocitiesBuf = ResourceDescriptorHeap[velocitiesSrvIndex];
     StructuredBuffer<float>  agesBuf       = ResourceDescriptorHeap[agesSrvIndex];
     StructuredBuffer<float>  lifespansBuf  = ResourceDescriptorHeap[lifespansSrvIndex];
+#else
+    #define positionsBuf   sm5_positions
+    #define velocitiesBuf  sm5_velocities
+    #define agesBuf        sm5_ages
+    #define lifespansBuf   sm5_lifespans
+#endif
 
     float  age      = agesBuf[particleIdx];
     float  lifespan = max(lifespansBuf[particleIdx], 0.001f);
@@ -303,26 +337,29 @@ void CSMain(uint3 dtid : SV_DispatchThreadID)
     }
 
     // ── Claim an output slot and write the transform ──────────────────────────
-    RWStructuredBuffer<uint> instanceCount =
-        ResourceDescriptorHeap[instanceCountUavIndex];
-
     uint instanceSlot = 0;
     InterlockedAdd(instanceCount[0], 1, instanceSlot);
 
-    RWStructuredBuffer<float4x4> instanceTransforms =
-        ResourceDescriptorHeap[instanceTransformsUavIndex];
-    instanceTransforms[instanceSlot] = transform;
+    instanceXforms[instanceSlot] = transform;
 
     // ── Update indirect args instance count ──────────────────────────────────
     // Write instance count into the indirect args buffer. Because multiple
     // threads write this concurrently, we use an interlocked max (equivalent
     // to a store of the final count). After all threads complete, the value
     // at offset 4 equals the total number of instances written.
-    RWByteAddressBuffer indirectArgs =
-        ResourceDescriptorHeap[indirectArgsUavIndex];
 
     // Atomic max ensures the last alive slot wins.
     // (instanceSlot + 1) is the running upper bound on the instance count.
     uint prev;
     indirectArgs.InterlockedMax(INDIRECT_INSTANCE_COUNT_OFFSET, instanceSlot + 1u, prev);
+
+#ifndef UZ_BINDLESS
+    #undef instanceCount
+    #undef indirectArgs
+    #undef instanceXforms
+    #undef positionsBuf
+    #undef velocitiesBuf
+    #undef agesBuf
+    #undef lifespansBuf
+#endif
 }

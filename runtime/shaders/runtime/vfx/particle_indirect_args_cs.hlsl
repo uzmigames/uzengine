@@ -44,6 +44,10 @@
 /// @ref D3D12 ExecuteIndirect argument buffer layout
 /// @constants VERTICES_PER_PARTICLE=6, UPDATE_GROUP_SIZE=256
 /// @deviations NONE
+///
+/// # SM5 Register Layout (non-bindless fallback)
+/// - t0: StructuredBuffer<uint>  aliveCountBuf   (1 element, alive particle count)
+/// - u0: RWByteAddressBuffer     indirectArgs    (32 bytes, draw + dispatch args)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -77,6 +81,7 @@ static const uint DISPATCH_GROUP_Z_OFFSET        = 28;  ///< ThreadGroupCountZ
 // Constant Buffer (b0) -- Bindless Descriptor Indices
 // ─────────────────────────────────────────────────────────────────────────────
 
+#ifdef UZ_BINDLESS
 /// Constants for the indirect args shader. Contains descriptor indices to
 /// read the alive count and write the indirect argument buffer.
 ///
@@ -87,6 +92,11 @@ cbuffer VFXIndirectArgsConstants : register(b0) {
     uint     _pad0;                ///<                                              8
     uint     _pad1;                ///<                                              12
 };                                 ///<                                        Total: 16
+#else
+/// SM5 fallback: explicit register bindings for particle buffers.
+StructuredBuffer<uint>  aliveCountBuf : register(t0); ///< Alive particle count (1 element).
+RWByteAddressBuffer     indirectArgs  : register(u0); ///< Indirect draw + dispatch args (32 bytes).
+#endif
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Entry Point
@@ -99,14 +109,18 @@ cbuffer VFXIndirectArgsConstants : register(b0) {
 /// - Writes 8 uint32 values (32 bytes) to the indirect args RWByteAddressBuffer.
 /// - No atomic operations needed (single thread, no contention).
 [numthreads(1, 1, 1)]
-void CSMain(uint3 dtid : SV_DispatchThreadID)
+void main(uint3 dtid : SV_DispatchThreadID)
 {
     // ── Read alive count from GPU counter ───────────────────────────────
+#ifdef UZ_BINDLESS
     StructuredBuffer<uint> aliveCountBuf = ResourceDescriptorHeap[aliveCountSrvIndex];
+#endif
     uint aliveCount = aliveCountBuf[0];
 
     // ── Write DrawIndexedInstancedIndirectArgs ──────────────────────────
+#ifdef UZ_BINDLESS
     RWByteAddressBuffer indirectArgs = ResourceDescriptorHeap[indirectArgsUavIndex];
+#endif
 
     indirectArgs.Store(DRAW_INDEX_COUNT_OFFSET,    VERTICES_PER_PARTICLE);
     indirectArgs.Store(DRAW_INSTANCE_COUNT_OFFSET,  aliveCount);

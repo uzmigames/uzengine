@@ -30,6 +30,10 @@
 ///      particles with pre-computed transforms
 /// @constants NONE
 /// @deviations NONE
+///
+/// # SM5 Register Layout (non-bindless fallback)
+/// - t0: StructuredBuffer<float4x4>         instanceTransforms
+/// - t1: StructuredBuffer<float4>           particleColors
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Per-Pass Constant Buffer (b0)
@@ -42,11 +46,24 @@
 /// Total size: 80 bytes (5 x 16-byte aligned rows).
 cbuffer ParticleMeshPassCB : register(b0) {
     row_major float4x4 viewProjection;       ///< 0:  View * Projection matrix.
+#ifdef UZ_BINDLESS
     uint instanceTransformsSrvIndex;         ///< 64: SRV heap index for StructuredBuffer<float4x4>.
     uint colorsSrvIndex;                     ///< 68: SRV heap index for StructuredBuffer<float4>.
     uint _pad0;                              ///< 72: Padding for 16-byte alignment.
     uint _pad1;                              ///< 76: Padding for 16-byte alignment.
+#else
+    uint _pad0;                              ///< 64: Padding (no bindless indices).
+    uint _pad1;                              ///< 68: Padding.
+    uint _pad2;                              ///< 72: Padding.
+    uint _pad3;                              ///< 76: Padding.
+#endif
 };
+
+#ifndef UZ_BINDLESS
+/// SM5 fallback: explicit SRV bindings for instance data.
+StructuredBuffer<float4x4> sm5_instanceTransforms : register(t0);
+StructuredBuffer<float4>   sm5_particleColors     : register(t1);
+#endif
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Output Structure
@@ -76,11 +93,15 @@ struct VSOutput {
 VSOutput main(float3 localPos : POSITION, uint instanceID : SV_InstanceID) {
     VSOutput output;
 
-    // ── Fetch per-instance transform from bindless StructuredBuffer ──────────
+    // ── Fetch per-instance transform from StructuredBuffer ───────────────────
     // The instance CS wrote one row-major float4x4 per alive particle into this
     // buffer. The order matches the draw's instance indexing (0..instanceCount-1).
+#ifdef UZ_BINDLESS
     StructuredBuffer<float4x4> instanceTransforms =
         ResourceDescriptorHeap[instanceTransformsSrvIndex];
+#else
+    #define instanceTransforms sm5_instanceTransforms
+#endif
     row_major float4x4 instanceWorld = instanceTransforms[instanceID];
 
     // ── Transform to world space ────────────────────────────────────────────
@@ -95,12 +116,21 @@ VSOutput main(float3 localPos : POSITION, uint instanceID : SV_InstanceID) {
     // The color buffer is written by the simulation (spawn/update) shaders and
     // indexed identically to the instance transform buffer (same alive-particle
     // compaction order from the instance CS's InterlockedAdd).
+#ifdef UZ_BINDLESS
     StructuredBuffer<float4> particleColors =
         ResourceDescriptorHeap[colorsSrvIndex];
+#else
+    #define particleColors sm5_particleColors
+#endif
     output.color = particleColors[instanceID];
 
     // ── Pass through instance ID for debug / per-instance PS logic ──────────
     output.instanceId = instanceID;
+
+#ifndef UZ_BINDLESS
+    #undef instanceTransforms
+    #undef particleColors
+#endif
 
     return output;
 }

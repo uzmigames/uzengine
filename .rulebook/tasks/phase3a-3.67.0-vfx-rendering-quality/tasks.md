@@ -34,6 +34,12 @@
 - [x] 6.2 Create distortion demo — demos/distortion_effect/ with heat_shimmer + glass_sphere emitters, validates DistortionConstants/ResolveConstants struct sizes and field defaults.
 - [x] 6.3 Update particle_fountain with GPU sort — Added gpu_particle_sort.h include, sort buffer validation (IsValid, paddedCount == NextPowerOfTwo), sort memory reporting in summary. Updated build.zig with gpu_particle_sort.cpp source.
 
+## Shader Standards Compliance
+
+- [x] Fix entry point CSMain → main in 4 compute shaders (particle_indirect_args_cs, particle_mesh_instance_cs, particle_spawn_cs, particle_update_cs). UzEngine ShaderManager requires entryPoint="main".
+- [x] Add #ifdef UZ_BINDLESS guards + SM5 fallback register bindings to 6 shaders (particle_indirect_args_cs, particle_mesh_instance_cs, particle_sort_cs, particle_spawn_cs, particle_update_cs, particle_mesh_vs). Each shader now has SM5 register layout comment block and explicit t0/u0 style fallback declarations.
+- [x] Verified 3 shaders already compliant: decal_deferred_ps, decal_deferred_vs, trail_vs (no ResourceDescriptorHeap, entry point=main).
+
 ## 7. Documentation
 
 - [x] 7.1 Document GPU sort algorithm and performance characteristics — Created docs/guides/vfx-gpu-particle-sort.md with bitonic merge sort algorithm, phase 0/1 dispatch pattern, buffer layout, performance analysis (O(n log²n)), and API reference.

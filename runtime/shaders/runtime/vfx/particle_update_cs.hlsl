@@ -43,6 +43,27 @@
 /// @ref Harada 2007 "Real-Time Particle System on the GPU"
 /// @constants UPDATE_GROUP_SIZE=256
 /// @deviations Linear damping approximation instead of exponential decay
+///
+/// # SM5 Register Layout (non-bindless fallback)
+/// SRV (READ set):
+/// - t0: StructuredBuffer<float3>           positionsIn
+/// - t1: StructuredBuffer<float3>           velocitiesIn
+/// - t2: StructuredBuffer<float>            agesIn
+/// - t3: StructuredBuffer<float>            lifespansIn
+/// - t4: StructuredBuffer<float>            sizesIn
+/// - t5: StructuredBuffer<float4>           colorsIn
+/// - t6: StructuredBuffer<float>            rotationsIn
+/// UAV (WRITE set + shared):
+/// - u0: RWStructuredBuffer<float3>         positionsOut
+/// - u1: RWStructuredBuffer<float3>         velocitiesOut
+/// - u2: RWStructuredBuffer<float>          agesOut
+/// - u3: RWStructuredBuffer<float>          lifespansOut
+/// - u4: RWStructuredBuffer<float>          sizesOut
+/// - u5: RWStructuredBuffer<float4>         colorsOut
+/// - u6: RWStructuredBuffer<float>          rotationsOut
+/// - u7: RWStructuredBuffer<uint>           freeList
+/// - u8: RWStructuredBuffer<uint>           freeListHead (1 element)
+/// - u9: RWStructuredBuffer<uint>           aliveCountNew (1 element)
 
 #include "../include/vfx_common.hlsli"
 
@@ -74,6 +95,7 @@ cbuffer VFXUpdateConstants : register(b0) {
     uint     frameNumber;          ///< Monotonically increasing frame counter.  24
     uint     maxParticles;         ///< Total particle pool capacity.            28
 
+#ifdef UZ_BINDLESS
     // ── Bindless Descriptor Indices: READ set (SRV) ─────────────────────
     uint     positionsSrvIndex;    ///< StructuredBuffer<float3> positions.      32
     uint     velocitiesSrvIndex;   ///< StructuredBuffer<float3> velocities.     36
@@ -103,7 +125,31 @@ cbuffer VFXUpdateConstants : register(b0) {
                                    ///< New alive count for current frame.
                                    ///< Must be reset to 0 before dispatch.
     uint     _padShared0;          ///<                                          108
-};                                 ///<                                    Total: 112
+#endif
+};
+
+#ifndef UZ_BINDLESS
+/// SM5 fallback: explicit register bindings for READ set (SRV).
+StructuredBuffer<float3>           sm5_positionsIn   : register(t0);
+StructuredBuffer<float3>           sm5_velocitiesIn  : register(t1);
+StructuredBuffer<float>            sm5_agesIn        : register(t2);
+StructuredBuffer<float>            sm5_lifespansIn   : register(t3);
+StructuredBuffer<float>            sm5_sizesIn       : register(t4);
+StructuredBuffer<float4>           sm5_colorsIn      : register(t5);
+StructuredBuffer<float>            sm5_rotationsIn   : register(t6);
+
+/// SM5 fallback: explicit register bindings for WRITE set (UAV) + shared.
+RWStructuredBuffer<float3>         sm5_positionsOut   : register(u0);
+RWStructuredBuffer<float3>         sm5_velocitiesOut  : register(u1);
+RWStructuredBuffer<float>          sm5_agesOut        : register(u2);
+RWStructuredBuffer<float>          sm5_lifespansOut   : register(u3);
+RWStructuredBuffer<float>          sm5_sizesOut       : register(u4);
+RWStructuredBuffer<float4>         sm5_colorsOut      : register(u5);
+RWStructuredBuffer<float>          sm5_rotationsOut   : register(u6);
+RWStructuredBuffer<uint>           sm5_freeList       : register(u7);
+RWStructuredBuffer<uint>           sm5_freeListHead   : register(u8);
+RWStructuredBuffer<uint>           sm5_aliveCountNew  : register(u9);
+#endif
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Entry Point
@@ -127,7 +173,7 @@ cbuffer VFXUpdateConstants : register(b0) {
 /// - Alive particles: writes updated state to WRITE set UAVs, increments
 ///   aliveCountNew.
 [numthreads(UPDATE_GROUP_SIZE, 1, 1)]
-void CSMain(uint3 dtid : SV_DispatchThreadID)
+void main(uint3 dtid : SV_DispatchThreadID)
 {
     uint threadIdx = dtid.x;
 
@@ -137,6 +183,7 @@ void CSMain(uint3 dtid : SV_DispatchThreadID)
     }
 
     // ── Bind READ set (SRV) ─────────────────────────────────────────────
+#ifdef UZ_BINDLESS
     StructuredBuffer<float3> positionsIn  = ResourceDescriptorHeap[positionsSrvIndex];
     StructuredBuffer<float3> velocitiesIn = ResourceDescriptorHeap[velocitiesSrvIndex];
     StructuredBuffer<float>  agesIn       = ResourceDescriptorHeap[agesSrvIndex];
@@ -144,6 +191,15 @@ void CSMain(uint3 dtid : SV_DispatchThreadID)
     StructuredBuffer<float>  sizesIn      = ResourceDescriptorHeap[sizesSrvIndex];
     StructuredBuffer<float4> colorsIn     = ResourceDescriptorHeap[colorsSrvIndex];
     StructuredBuffer<float>  rotationsIn  = ResourceDescriptorHeap[rotationsSrvIndex];
+#else
+    #define positionsIn   sm5_positionsIn
+    #define velocitiesIn  sm5_velocitiesIn
+    #define agesIn        sm5_agesIn
+    #define lifespansIn   sm5_lifespansIn
+    #define sizesIn       sm5_sizesIn
+    #define colorsIn      sm5_colorsIn
+    #define rotationsIn   sm5_rotationsIn
+#endif
 
     // ── Read current particle state ─────────────────────────────────────
     float3 pos      = positionsIn[threadIdx];
@@ -161,8 +217,13 @@ void CSMain(uint3 dtid : SV_DispatchThreadID)
     if (age >= lifespan) {
         // Return this slot to the free list stack.
         // Atomically increment free_list_head to get the push index.
+#ifdef UZ_BINDLESS
         RWStructuredBuffer<uint> freeList     = ResourceDescriptorHeap[freeListUavIndex];
         RWStructuredBuffer<uint> freeListHead = ResourceDescriptorHeap[freeListHeadUavIndex];
+#else
+        #define freeList     sm5_freeList
+        #define freeListHead sm5_freeListHead
+#endif
 
         uint pushIndex;
         InterlockedAdd(freeListHead[0], 1, pushIndex);
@@ -172,6 +233,10 @@ void CSMain(uint3 dtid : SV_DispatchThreadID)
             freeList[pushIndex] = threadIdx;
         }
 
+#ifndef UZ_BINDLESS
+        #undef freeList
+        #undef freeListHead
+#endif
         return;
     }
 
@@ -189,6 +254,7 @@ void CSMain(uint3 dtid : SV_DispatchThreadID)
     pos += vel * dt;
 
     // ── Write updated state to WRITE set (UAV) ─────────────────────────
+#ifdef UZ_BINDLESS
     RWStructuredBuffer<float3> positionsOut  = ResourceDescriptorHeap[positionsUavIndex];
     RWStructuredBuffer<float3> velocitiesOut = ResourceDescriptorHeap[velocitiesUavIndex];
     RWStructuredBuffer<float>  agesOut       = ResourceDescriptorHeap[agesUavIndex];
@@ -196,6 +262,17 @@ void CSMain(uint3 dtid : SV_DispatchThreadID)
     RWStructuredBuffer<float>  sizesOut      = ResourceDescriptorHeap[sizesUavIndex];
     RWStructuredBuffer<float4> colorsOut     = ResourceDescriptorHeap[colorsUavIndex];
     RWStructuredBuffer<float>  rotationsOut  = ResourceDescriptorHeap[rotationsUavIndex];
+    RWStructuredBuffer<uint>   aliveCountNew = ResourceDescriptorHeap[aliveCountNewUavIndex];
+#else
+    #define positionsOut   sm5_positionsOut
+    #define velocitiesOut  sm5_velocitiesOut
+    #define agesOut        sm5_agesOut
+    #define lifespansOut   sm5_lifespansOut
+    #define sizesOut       sm5_sizesOut
+    #define colorsOut      sm5_colorsOut
+    #define rotationsOut   sm5_rotationsOut
+    #define aliveCountNew  sm5_aliveCountNew
+#endif
 
     positionsOut[threadIdx]  = pos;
     velocitiesOut[threadIdx] = vel;
@@ -206,7 +283,24 @@ void CSMain(uint3 dtid : SV_DispatchThreadID)
     rotationsOut[threadIdx]  = rotation;
 
     // ── Increment new alive count ───────────────────────────────────────
-    RWStructuredBuffer<uint> aliveCountNew = ResourceDescriptorHeap[aliveCountNewUavIndex];
     uint dummy;
     InterlockedAdd(aliveCountNew[0], 1, dummy);
+
+#ifndef UZ_BINDLESS
+    #undef positionsIn
+    #undef velocitiesIn
+    #undef agesIn
+    #undef lifespansIn
+    #undef sizesIn
+    #undef colorsIn
+    #undef rotationsIn
+    #undef positionsOut
+    #undef velocitiesOut
+    #undef agesOut
+    #undef lifespansOut
+    #undef sizesOut
+    #undef colorsOut
+    #undef rotationsOut
+    #undef aliveCountNew
+#endif
 }
