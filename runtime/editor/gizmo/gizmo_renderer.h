@@ -1,21 +1,20 @@
 /// Editor Gizmo Renderer — Transform gizmo visualization for editor mode.
 ///
 /// Renders translate, rotate, and scale gizmo handles at the selected entity's
-/// world position. The gizmo maintains a constant screen-space size (~120px)
+/// world position. The gizmo maintains a constant screen-space size (~180px)
 /// regardless of camera distance. Supports axis highlighting for hover/drag states.
 ///
 /// # Geometry
-/// - **Translate**: 3 axis arrows (cones + lines) + 3 plane handles + center cube.
-/// - **Rotate**: 3 axis circles (64-segment line rings in XY/XZ/YZ planes).
-/// - **Scale**: 3 axis lines + 3 cubes at tips + center cube for uniform scale.
+/// - **Translate**: 3 axis cylinders + 3 cone arrow tips + 3 plane handles + center cube.
+/// - **Rotate**: 3 thick ring annuli (64-segment, `kCircleThickness` minor radius).
+/// - **Scale**: 3 axis cylinders + 3 tip cubes + center cube for uniform scale.
 ///
-/// All geometry is pre-baked at Init time with per-vertex axis colors:
-/// X = Red (1,0,0), Y = Green (0,1,0), Z = Blue (0,0,1).
+/// All geometry is 3D solid TriangleList with per-vertex normals for N-dot-L
+/// diffuse shading. Colors match UE5 muted tones (not pure RGB).
 ///
 /// # Rendering
-/// Uses two pipelines: LineList (circles, axis lines) and TriangleList (cones, cubes).
-/// Both use depth-read/write-disabled + alpha blending to render on top of scene geometry.
-/// Reversed-Z depth test (GreaterEqual) ensures correct depth ordering.
+/// Uses a single TriangleList pipeline with depth disabled + alpha blending.
+/// N-dot-L diffuse shading in pixel shader gives 3D depth cues to cylinders and cones.
 ///
 /// # Usage
 /// ```cpp
@@ -67,10 +66,12 @@ enum class GizmoSpace : uint8_t;
 /// Does NOT own the `IRHIDevice` — it must outlive this renderer.
 class GizmoRenderer {
 public:
-    /// Vertex format for gizmo geometry: position + per-vertex color.
+    /// Vertex format for gizmo geometry: position + normal + per-vertex color.
     /// Public so that the static geometry builder helpers can use it.
+    /// Normal is used for N-dot-L diffuse shading in the pixel shader.
     struct GizmoVertex {
         float pos[3];
+        float normal[3];
         float color[3];
     };
 
@@ -141,13 +142,8 @@ private:
     void BuildScaleGeometry();
 
     // ── Per-axis draw helpers ────────────────────────────────────────────
-    void DrawAxisSubset(IRHICommandList* cmdList, CBRingAllocator& cbRing,
-                        const GizmoCB& baseCB,
-                        int axisIndex, int hoveredAxis, int activeAxis,
-                        const float axisColor[3],
-                        uint32_t srvIndex, uint32_t vertexOffset, uint32_t vertexCount,
-                        bool isTriangles);
 
+    /// Draws an indexed triangle subset with per-axis color/alpha resolution.
     void DrawAxisSubsetIndexed(IRHICommandList* cmdList, CBRingAllocator& cbRing,
                                const GizmoCB& baseCB,
                                int axisIndex, int hoveredAxis, int activeAxis,
@@ -158,49 +154,42 @@ private:
 
     // ── GPU Resources ────────────────────────────────────────────────────
 
-    /// Translate geometry: lines (axis stems) + triangles (cones, plane handles, center).
-    RHIBufferHandle m_translateLineVB{};       ///< Structured buffer for line vertices.
-    uint32_t m_translateLineSrv = UINT32_MAX;  ///< SRV index for line vertex structured buffer.
-    uint32_t m_translateLineVertCount = 0;
-
-    RHIBufferHandle m_translateTriVB{};        ///< Structured buffer for triangle vertices.
-    uint32_t m_translateTriSrv = UINT32_MAX;   ///< SRV index for triangle vertex structured buffer.
-    RHIBufferHandle m_translateTriIB{};        ///< Index buffer for triangle geometry.
-    uint32_t m_translateTriIndexCount = 0;
-
-    /// Per-axis triangle ranges (indexOffset, indexCount, vertexOffset) for selective drawing.
+    /// Per-axis indexed triangle range within a shared VB/IB.
     struct AxisRange {
         uint32_t indexOffset = 0;
         uint32_t indexCount = 0;
         uint32_t vertexOffset = 0;
     };
+
+    /// Translate geometry: all TriangleList (cylinders + cones + planes + center cube).
+    RHIBufferHandle m_translateTriVB{};
+    uint32_t m_translateTriSrv = UINT32_MAX;
+    RHIBufferHandle m_translateTriIB{};
+    uint32_t m_translateTriIndexCount = 0;
+    AxisRange m_translateStemRange[3];         ///< X, Y, Z cylinder stem ranges.
     AxisRange m_translateConeRange[3];         ///< X, Y, Z cone ranges.
     AxisRange m_translatePlaneRange[3];        ///< XY, XZ, YZ plane handle ranges.
     AxisRange m_translateCenterRange;          ///< Center cube range.
 
-    /// Rotate geometry: line vertices for 3 axis circles.
-    RHIBufferHandle m_rotateLineVB{};
-    uint32_t m_rotateLineSrv = UINT32_MAX;     ///< SRV index for rotate vertex structured buffer.
-    uint32_t m_rotateLineVertCount = 0;
-    uint32_t m_rotateCircleVertOffset[3];     ///< Per-axis start offset in vertex buffer.
-    uint32_t m_rotateCircleVertCount[3];      ///< Per-axis vertex count.
+    /// Rotate geometry: all TriangleList (thick ring annuli).
+    RHIBufferHandle m_rotateTriVB{};
+    uint32_t m_rotateTriSrv = UINT32_MAX;
+    RHIBufferHandle m_rotateTriIB{};
+    uint32_t m_rotateTriIndexCount = 0;
+    AxisRange m_rotateRingRange[3];           ///< X, Y, Z ring ranges.
 
-    /// Scale geometry: same layout as translate but cubes instead of cones.
-    RHIBufferHandle m_scaleLineVB{};
-    uint32_t m_scaleLineSrv = UINT32_MAX;      ///< SRV index for scale line vertex structured buffer.
-    uint32_t m_scaleLineVertCount = 0;
-
+    /// Scale geometry: all TriangleList (cylinders + tip cubes + center cube).
     RHIBufferHandle m_scaleTriVB{};
-    uint32_t m_scaleTriSrv = UINT32_MAX;       ///< SRV index for scale triangle vertex structured buffer.
+    uint32_t m_scaleTriSrv = UINT32_MAX;
     RHIBufferHandle m_scaleTriIB{};
     uint32_t m_scaleTriIndexCount = 0;
+    AxisRange m_scaleStemRange[3];            ///< X, Y, Z cylinder stem ranges.
     AxisRange m_scaleCubeRange[3];            ///< X, Y, Z tip cube ranges.
     AxisRange m_scaleCenterRange;             ///< Center uniform-scale cube range.
 
     // ── Pipeline States ──────────────────────────────────────────────────
 
-    RHIPipelineHandle m_linePipeline{};        ///< LineList topology, depth read, no write, alpha blend.
-    RHIPipelineHandle m_trianglePipeline{};    ///< TriangleList topology, same depth/blend settings.
+    RHIPipelineHandle m_trianglePipeline{};    ///< TriangleList topology, depth disabled, alpha blend.
     RHIShaderHandle m_vs{};
     RHIShaderHandle m_ps{};
 

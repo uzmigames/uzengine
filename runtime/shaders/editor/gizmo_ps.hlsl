@@ -1,16 +1,24 @@
-/// Gizmo pixel shader — unlit flat colored output with alpha.
+/// Gizmo pixel shader — N-dot-L diffuse shading with alpha.
 ///
-/// Simply passes through the interpolated vertex color and alpha from the
-/// vertex shader. No lighting, no textures. The alpha channel is used to
-/// dim non-active axes when one axis is being dragged (alpha = 0.5 for
-/// inactive, 1.0 for active/hovered).
+/// Uses a simple directional light from upper-right-forward to give 3D depth
+/// perception to cylindrical stems, cones, and cubes. Ambient + diffuse model
+/// ensures geometry is never fully black (ambient = 0.45, diffuse weight = 0.55).
+/// Alpha channel dims non-active axes when one axis is being dragged.
 
 struct PSInput {
     float4 position : SV_Position;
+    float3 normal   : NORMAL;
     float3 color    : COLOR;
     float  alpha    : TEXCOORD0;
 };
 
 float4 main(PSInput input) : SV_Target {
-    return float4(input.color, input.alpha);
+    // Simple directional light from upper-right-forward for depth cues.
+    float3 lightDir = normalize(float3(0.4, 0.3, 0.7));
+    float NdotL = saturate(dot(normalize(input.normal), lightDir));
+
+    // Ambient + diffuse: ensures geometry is never fully black.
+    float3 lit = input.color * (0.45 + 0.55 * NdotL);
+
+    return float4(lit, input.alpha);
 }
