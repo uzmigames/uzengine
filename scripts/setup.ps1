@@ -83,9 +83,11 @@ function Apply-Patches {
     if ($patches.Count -eq 0) { return }
     foreach ($patch in $patches) {
         Write-Host "  [$Name] applying $($patch.Name)..." -ForegroundColor Magenta
-        # Apply from repo root — git apply works on the working tree even for non-git subdirs
         Push-Location $RootDir
-        git apply $patch.FullName 2>&1
+        $prevPref = $ErrorActionPreference
+        $ErrorActionPreference = "SilentlyContinue"
+        git apply $patch.FullName 2>$null
+        $ErrorActionPreference = $prevPref
         if ($LASTEXITCODE -ne 0) {
             Write-Host "  [$Name] WARN: patch may already be applied: $($patch.Name)" -ForegroundColor DarkYellow
         }
@@ -264,6 +266,24 @@ Clone-Repo -Name "glm" `
 Download-Header -Name "nlohmann" `
     -Url "https://github.com/nlohmann/json/releases/download/v3.12.0/json.hpp" `
     -FileName "json.hpp"
+
+# EnTT (Entity Component System — header-only)
+Clone-Repo -Name "entt" `
+    -Url "https://github.com/skypjack/entt.git" `
+    -Branch "v3.14.0" `
+    -RemoveDirs @("docs", "test", "conan", "natvis", "cmake")
+
+# fastgltf (glTF 2.0 loader — fast, header-mostly)
+Clone-Repo -Name "fastgltf" `
+    -Url "https://github.com/spnda/fastgltf.git" `
+    -Branch "v0.8.0" `
+    -RemoveDirs @("docs", "tests", "examples", "cmake")
+
+# meshoptimizer (mesh optimization — LOD, simplification, vertex cache)
+Clone-Repo -Name "meshoptimizer" `
+    -Url "https://github.com/zeux/meshoptimizer.git" `
+    -Branch "v0.22" `
+    -RemoveDirs @("demo", "docs", "tools", "gltf", "cmake", "js")
 
 # GoogleTest (testing framework)
 Clone-Repo -Name "googletest" `
@@ -539,12 +559,12 @@ Clone-Repo -Name "metal-cpp" `
 
 # Slang (HLSL→MSL/SPIR-V shader compiler, Windows prebuilt)
 # macOS uses libslang.dylib; see setup.sh for the macOS download.
-$slangArch = "win64"
+$slangArch = "windows-x86_64"
 if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [System.Runtime.InteropServices.Architecture]::Arm64) {
-    $slangArch = "win-arm64"
+    $slangArch = "windows-aarch64"
 }
 Download-Extract-Zip -Name "slang" `
-    -Url "https://github.com/shader-slang/slang/releases/download/v2025.6.3/slang-2025.6.3-$slangArch.zip"
+    -Url "https://github.com/shader-slang/slang/releases/download/v2026.5.1/slang-2026.5.1-$slangArch.zip"
 
 # ─── Global Cleanup ────────────────────────────────────────────────────────
 

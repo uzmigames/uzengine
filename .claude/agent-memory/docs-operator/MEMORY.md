@@ -1,5 +1,26 @@
 # UzEngine Documentation Operator Memory
 
+## Most Recent Work (2026-03-25)
+**Created GPU particle sort system documentation** — comprehensive guide for bitonic merge sort implementation
+
+- **`docs/guides/vfx-gpu-particle-sort.md`** (402 lines) — Complete reference for GPU particle sort system
+  - Algorithm overview: two-phase bitonic merge sort (@ref Batcher 1968)
+  - Phase 0: local sort within thread groups (256 elements, 8 stages, shared memory only)
+  - Phase 1: global merge passes across thread group boundaries (log²n dispatch loop)
+  - Sort key generation: camera view-distance dot product + IEEE 754 float-to-sortable-uint conversion
+  - Back-to-front (descending) particle ordering for correct alpha blending
+  - Dead particle handling: sentinel key 0x00000000 sorts to end of array
+  - Performance: O(n log²n) comparisons, ~2048 bytes shared memory per group
+  - Memory footprint: 8 bytes per particle (4B key + 4B index), power-of-two padded
+  - Scaling table: 1K particles → 21 total dispatches, 100K particles → 6,657 dispatches
+  - API reference: Create(), Destroy(), IsValid(), GetPaddedCount(), DispatchSort()
+  - VFXSortConstants cbuffer layout: 80 bytes, 5 rows (control, camera params, bindless indices, merge params)
+  - Integration: invokes from render graph's VFX_ParticleSort pass between simulation and rendering
+  - Source files: `runtime/engine/vfx/core/gpu_particle_sort.{h,cpp}`, `runtime/shaders/runtime/vfx/particle_sort_cs.hlsl`
+- Updated `docs/README.md` guides section to include new vfx-gpu-particle-sort.md entry
+
+Verified: 402 lines (within 800-line limit), proper frontmatter, comprehensive code examples, citations, key takeaways, changelog.
+
 ## Most Recent Work (2026-03-17)
 **Created 4 rendering sub-spec files** under `docs/specs/rendering/`
 
