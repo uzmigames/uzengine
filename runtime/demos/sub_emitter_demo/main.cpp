@@ -1,47 +1,33 @@
-/// Sub-Emitter Demo -- Headless firework cascade (no window, no GPU).
+/// Sub-Emitter Demo — Headless firework cascade (no window, no GPU).
 ///
-/// Demonstrates the SubEmitterModule event propagation system by simulating
-/// a 3-stage firework: rocket particles die and spawn a burst, burst particles
-/// die and spawn sparkles. No GPU or window required.
-///
-/// Validates:
-/// - SubEmitterModule::SetChildEventQueue() wires child event queues correctly.
-/// - SubEmitterModule::Execute() emits one EventPayload per dead particle into
-///   the child queue when given a SubEmitterReadback with flagged particles.
-/// - VFXEventQueue::EmitWithPayloads() stores payloads that Drain() returns.
-/// - Cascade: rocket (2 deaths) → burst queue receives 2 payloads →
-///   burst (2 deaths, scaled velocity) → sparkle queue receives 2 payloads.
-/// - inheritVelocity=0.0 on rocket module produces zero velocity in burst queue.
-/// - inheritVelocity=0.5 on burst module halves velocity in sparkle queue.
-/// - inheritColor=true preserves parent color in child payloads.
-///
-/// # Build
-///   cd demos/sub_emitter_demo
-///   zig build
-///   ./zig-out/bin/sub_emitter_demo
-///
-/// # Firework cascade
-/// - Stage 1: Rocket  (trigger=OnDeath, inheritVelocity=0.0, inheritColor=true)
-/// - Stage 2: Burst   (trigger=OnDeath, inheritVelocity=0.5, inheritColor=true)
-/// - Stage 3: Sparkle (leaf — no sub-emitter needed)
-
-#include <cmath>
-#include <cstdint>
-#include <cstdio>
-#include <memory>
-#include <string>
-#include <vector>
+/// Loads three emitter configurations from .uzfx assets (rocket, burst, sparkle),
+/// then validates the SubEmitterModule event propagation system by simulating
+/// a 3-stage firework cascade through manual readback injection.
 
 #include "mock_device.h"
-
-// ─────────────────────────────────────────────────────────────────────────────
-// VFX includes
-// ─────────────────────────────────────────────────────────────────────────────
-
 #include "engine/vfx/vfx_system.h"
 #include "engine/vfx/core/particle_budget.h"
 #include "engine/vfx/events/vfx_event.h"
 #include "engine/vfx/modules/sub_emitter_module.h"
+#include "engine/vfx/asset/uzfx_loader.h"
+
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <fstream>
+#include <sstream>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <vector>
+
+static std::string ReadFile(const char* path) {
+    std::ifstream f(path);
+    if (!f.is_open()) return {};
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Demo parameters
@@ -82,41 +68,6 @@ void PrintSection(const char* title) {
     std::printf("─────────────────────────────────────────────────\n");
 }
 
-/// Prints the payloads contained in the first pending event in the queue.
-/// Drains the queue in the process.
-void PrintQueuePayloads(const char* label, uz::VFXEventQueue& queue) {
-    if (!queue.HasPending()) {
-        std::printf("[%s] queue has no pending events\n", label);
-        return;
-    }
-
-    auto events = queue.Drain();
-    std::printf("[%s] %zu event(s) drained:\n", label, events.size());
-    for (const auto& ev : events) {
-        std::printf("  event name='%s' emissionCount=%u payloads=%zu\n",
-                    ev.name.c_str(),
-                    ev.emissionCount,
-                    ev.payloads.size());
-        for (size_t i = 0; i < ev.payloads.size(); ++i) {
-            const auto& p = ev.payloads[i];
-            std::printf("    [%zu] pos=(%.2f,%.2f,%.2f) vel=(%.4f,%.4f,%.4f) "
-                        "color=(%.2f,%.2f,%.2f,%.2f) age=%.3f\n",
-                        i,
-                        static_cast<double>(p.position.x),
-                        static_cast<double>(p.position.y),
-                        static_cast<double>(p.position.z),
-                        static_cast<double>(p.velocity.x),
-                        static_cast<double>(p.velocity.y),
-                        static_cast<double>(p.velocity.z),
-                        static_cast<double>(p.color.x),
-                        static_cast<double>(p.color.y),
-                        static_cast<double>(p.color.z),
-                        static_cast<double>(p.color.w),
-                        static_cast<double>(p.age));
-        }
-    }
-}
-
 } // anonymous namespace
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -129,6 +80,30 @@ int main() {
     std::printf("  Headless cascade: Rocket -> Burst -> Sparkle\n");
     std::printf("==========================================================\n");
 
+    // ── Load .uzfx assets ───────────────────────────────────────────────
+    const char* kAssetPaths[] = {
+        "assets/firework_rocket.uzfx",
+        "assets/firework_burst.uzfx",
+        "assets/firework_sparkle.uzfx",
+    };
+
+    std::vector<uz::UzfxDesc> descs;
+    for (const char* path : kAssetPaths) {
+        auto json = ReadFile(path);
+        if (json.empty()) {
+            std::fprintf(stderr, "[Error] Cannot read %s\n", path);
+            return 1;
+        }
+        auto desc = uz::UzfxLoader::Load(json);
+        if (desc.name.empty()) {
+            std::fprintf(stderr, "[Error] Failed to parse %s\n", path);
+            return 1;
+        }
+        std::printf("[Asset] Loaded '%s' (version %u) from %s\n",
+                    desc.name.c_str(), desc.version, path);
+        descs.push_back(std::move(desc));
+    }
+
     // ── Minimal VFX system initialization ─────────────────────────────
     uz::DemoMockDevice device;
 
@@ -138,36 +113,25 @@ int main() {
     std::printf("\n[Init] VFXSystem initialized -- budget: %u particles\n", kBudgetMax);
 
     // ── Create event queues for the two cascade links ──────────────────
-    // rocketToBurstQueue: rocket sub-emitter fires into this when rockets die.
-    // burstToSparkleQueue: burst sub-emitter fires into this when burst particles die.
     uz::VFXEventQueue rocketToBurstQueue;
     uz::VFXEventQueue burstToSparkleQueue;
 
     std::printf("[Init] Created 2 VFXEventQueues (rocket->burst, burst->sparkle)\n");
 
     // ── Create SubEmitterModules ───────────────────────────────────────
-
     // Stage 1 -- Rocket module: fires when a rocket particle dies.
-    // inheritVelocity=0.0 means burst particles start fresh (no rocket momentum).
-    // inheritColor=true means burst particles take the rocket's color.
-    //
-    // @ref UE5 Niagara Event Handler -- parent-to-child event spawning
     auto rocketModule = std::make_unique<uz::SubEmitterModule>();
-    rocketModule->childGraphId    = 1;                          // burst .uzvfx asset ID
+    rocketModule->childGraphId    = 1;
     rocketModule->trigger         = uz::SubEmitterTrigger::OnDeath;
-    rocketModule->inheritVelocity = kRocketInheritVelocity;    // 0.0 = fresh start
+    rocketModule->inheritVelocity = kRocketInheritVelocity;
     rocketModule->inheritColor    = true;
     rocketModule->SetChildEventQueue(&rocketToBurstQueue);
 
     // Stage 2 -- Burst module: fires when a burst particle dies.
-    // inheritVelocity=0.5 means sparkles inherit half the burst velocity.
-    // inheritColor=true means sparkles take the burst particle's color.
-    //
-    // @ref UE5 Niagara Event Handler -- parent-to-child event spawning
     auto burstModule = std::make_unique<uz::SubEmitterModule>();
-    burstModule->childGraphId    = 2;                          // sparkle .uzvfx asset ID
+    burstModule->childGraphId    = 2;
     burstModule->trigger         = uz::SubEmitterTrigger::OnDeath;
-    burstModule->inheritVelocity = kBurstInheritVelocity;     // 0.5 = half velocity
+    burstModule->inheritVelocity = kBurstInheritVelocity;
     burstModule->inheritColor    = true;
     burstModule->SetChildEventQueue(&burstToSparkleQueue);
 
@@ -202,22 +166,19 @@ int main() {
     // ── Stage 1 simulation: 2 rocket particles die ────────────────────
     PrintSection("Stage 1 -- Rocket OnDeath -> Burst Queue");
 
-    // Build a SubEmitterReadback representing 2 dead rocket particles.
-    // Rockets are positioned at (0,0,1000) and (500,0,1200) with upward
-    // velocity and red-orange color (linear RGBA firework color).
     uz::SubEmitterReadback rocketReadback;
     {
         uz::EventPayload p0;
         p0.position = {   0.0f, 0.0f, 1000.0f };
         p0.velocity = { 100.0f, 0.0f,  200.0f };
-        p0.color    = {   1.0f, 0.4f,    0.0f, 1.0f };  // orange-red
+        p0.color    = {   1.0f, 0.4f,    0.0f, 1.0f };
         p0.age      = 2.5f;
         rocketReadback.flaggedParticles.push_back(p0);
 
         uz::EventPayload p1;
         p1.position = { 500.0f, 0.0f, 1200.0f };
         p1.velocity = { -80.0f, 0.0f,  150.0f };
-        p1.color    = {   1.0f, 0.6f,    0.0f, 1.0f };  // yellow-orange
+        p1.color    = {   1.0f, 0.6f,    0.0f, 1.0f };
         p1.age      = 3.1f;
         rocketReadback.flaggedParticles.push_back(p1);
     }
@@ -225,8 +186,6 @@ int main() {
     std::printf("[Stage1] Feeding %zu dead rocket particle(s) to RocketModule::Execute()\n",
                 rocketReadback.flaggedParticles.size());
 
-    // Execute the rocket module with the readback. parameterData points to
-    // the readback; this drives EmitWithPayloads() into rocketToBurstQueue.
     {
         uz::ExecuteContext ctx;
         ctx.numParticles  = static_cast<uint32_t>(rocketReadback.flaggedParticles.size());
@@ -242,8 +201,6 @@ int main() {
     std::printf("[Stage1] rocketToBurstQueue.GetPendingCount() = %zu\n",
                 rocketToBurstQueue.GetPendingCount());
 
-    // Drain and display the burst queue contents before Stage 2.
-    // We drain into a local vector so we can inspect without losing the data.
     auto burstEvents = rocketToBurstQueue.Drain();
 
     std::printf("[Stage1] Drained %zu event(s) from rocketToBurstQueue:\n",
@@ -275,25 +232,19 @@ int main() {
     // ── Stage 2 simulation: burst particles die ────────────────────────
     PrintSection("Stage 2 -- Burst OnDeath -> Sparkle Queue");
 
-    // Build a SubEmitterReadback representing 2 dead burst particles.
-    // These would normally come from the GPU readback of the burst emitter;
-    // in this headless demo we synthesize them to mirror the burst events.
     uz::SubEmitterReadback burstReadback;
     {
-        // Burst particles inherit position from rocket deaths, but velocity
-        // was zeroed by rocketModule (inheritVelocity=0.0). So burst particles
-        // have their own velocities from the burst emitter's spawn logic.
         uz::EventPayload p0;
         p0.position = {   0.0f, 0.0f, 1000.0f };
-        p0.velocity = {  50.0f, 30.0f,  80.0f };  // burst spread velocity
-        p0.color    = {   1.0f, 0.4f,   0.0f, 1.0f };  // inherited orange-red
+        p0.velocity = {  50.0f, 30.0f,  80.0f };
+        p0.color    = {   1.0f, 0.4f,   0.0f, 1.0f };
         p0.age      = 0.8f;
         burstReadback.flaggedParticles.push_back(p0);
 
         uz::EventPayload p1;
         p1.position = { 500.0f, 0.0f, 1200.0f };
-        p1.velocity = { -40.0f, 60.0f,  60.0f };  // burst spread velocity
-        p1.color    = {   1.0f, 0.6f,   0.0f, 1.0f };  // inherited yellow-orange
+        p1.velocity = { -40.0f, 60.0f,  60.0f };
+        p1.color    = {   1.0f, 0.6f,   0.0f, 1.0f };
         p1.age      = 0.9f;
         burstReadback.flaggedParticles.push_back(p1);
     }
@@ -316,7 +267,6 @@ int main() {
     std::printf("[Stage2] burstToSparkleQueue.GetPendingCount() = %zu\n",
                 burstToSparkleQueue.GetPendingCount());
 
-    // Drain and display the sparkle queue contents.
     auto sparkleEvents = burstToSparkleQueue.Drain();
 
     std::printf("[Stage2] Drained %zu event(s) from burstToSparkleQueue:\n",
@@ -379,7 +329,7 @@ int main() {
         std::printf("  [OK] BurstModule::GetName() == 'sub_emitter'\n");
     }
 
-    // 2. Parameter count must be 4 (child_graph, trigger, inherit_velocity, inherit_color).
+    // 2. Parameter count must be 4.
     if (rocketParams.size() != 4) {
         std::fprintf(stderr, "[FAIL] RocketModule param count: expected 4, got %zu\n",
                      rocketParams.size());
@@ -401,7 +351,7 @@ int main() {
                     kDeadRocketCount);
     }
 
-    // 4. inheritVelocity=0.0 on rocket module: all velocities in burst payloads must be zero.
+    // 4. inheritVelocity=0.0: all velocities in burst payloads must be zero.
     if (!burstEvents.empty()) {
         bool velZero = true;
         for (const auto& p : burstEvents[0].payloads) {
@@ -421,7 +371,7 @@ int main() {
         }
     }
 
-    // 5. inheritColor=true on rocket module: burst payload colors must match rocket colors.
+    // 5. inheritColor=true: burst payload colors must match rocket colors.
     if (!burstEvents.empty() && burstEvents[0].payloads.size() >= 2) {
         const uz::Vec4 expectedColor0 = {1.0f, 0.4f, 0.0f, 1.0f};
         const uz::Vec4 expectedColor1 = {1.0f, 0.6f, 0.0f, 1.0f};
@@ -455,12 +405,11 @@ int main() {
                     kDeadBurstCount);
     }
 
-    // 7. inheritVelocity=0.5 on burst module: sparkle velocity = 0.5 * burst velocity.
+    // 7. inheritVelocity=0.5: sparkle velocity = 0.5 * burst velocity.
     if (!sparkleEvents.empty() && sparkleEvents[0].payloads.size() >= 2) {
         const auto& sp0 = sparkleEvents[0].payloads[0];
         const auto& sp1 = sparkleEvents[0].payloads[1];
 
-        // Expected sparkle velocities are half the burst source velocities.
         const float expectedVx0 = burstReadback.flaggedParticles[0].velocity.x * kBurstInheritVelocity;
         const float expectedVy0 = burstReadback.flaggedParticles[0].velocity.y * kBurstInheritVelocity;
         const float expectedVz0 = burstReadback.flaggedParticles[0].velocity.z * kBurstInheritVelocity;
@@ -476,20 +425,13 @@ int main() {
         if (!velOk) {
             std::fprintf(stderr,
                          "[FAIL] BurstModule inheritVelocity=0.5 but sparkle velocities are wrong\n");
-            std::fprintf(stderr, "  sp0 vel=(%.4f,%.4f,%.4f) expected=(%.4f,%.4f,%.4f)\n",
-                         static_cast<double>(sp0.velocity.x),
-                         static_cast<double>(sp0.velocity.y),
-                         static_cast<double>(sp0.velocity.z),
-                         static_cast<double>(expectedVx0),
-                         static_cast<double>(expectedVy0),
-                         static_cast<double>(expectedVz0));
             pass = false;
         } else {
             std::printf("  [OK] Sparkle velocities are half burst velocities (inheritVelocity=0.5 honored)\n");
         }
     }
 
-    // 8. inheritColor=true on burst module: sparkle colors must match burst colors.
+    // 8. inheritColor=true: sparkle colors must match burst colors.
     if (!sparkleEvents.empty() && sparkleEvents[0].payloads.size() >= 2) {
         const auto& sp0 = sparkleEvents[0].payloads[0];
         const auto& sp1 = sparkleEvents[0].payloads[1];
@@ -525,7 +467,7 @@ int main() {
         std::printf("  [OK] burstToSparkleQueue is empty after Drain()\n");
     }
 
-    // 10. Execute() with null parameterData must be a no-op (no crash, no events).
+    // 10. Execute() with null parameterData must be a no-op.
     {
         uz::ExecuteContext nullCtx;
         nullCtx.parameterData = nullptr;
@@ -562,12 +504,12 @@ int main() {
     }
 
     // ── Cleanup ────────────────────────────────────────────────────────
-    // Modules own no GPU resources (the mock device allocated nothing real).
-    // VFXSystem::Shutdown releases budget; budget used is zero (no emitters registered).
     vfxSystem.Shutdown(&device);
 
     // ── Final result ───────────────────────────────────────────────────
     std::printf("\n==========================================================\n");
+    std::printf("[OK] Sub-emitter firework: %zu stages loaded from .uzfx\n", descs.size());
+
     if (pass) {
         std::printf("  Rocket -> Burst -> Sparkle\n");
         std::printf("  [PASS] Sub-emitter firework demo completed successfully.\n");

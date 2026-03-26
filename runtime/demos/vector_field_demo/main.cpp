@@ -1,79 +1,37 @@
-/// Vector Field Demo -- Headless VFX wind tunnel with vector field velocity perturbation.
+/// Vector Field Demo — Headless VFX wind tunnel with vector field velocity perturbation.
 ///
-/// Demonstrates the VectorFieldModule feature by building a wind-tunnel particle
-/// effect: particles are blown through a visible 3D flow field (intensity=5.0,
-/// tightness=0.3). The field volume is 100x100x100 cm centred at {0,10,0} with
-/// animated W-axis scrolling at timeScale=1.5 to simulate continuous wind flow.
-///
-/// This is a headless (no window, no GPU) demo that validates:
-/// - VectorFieldModule configuration (intensity, tightness, bounds, fieldOffset, timeScale)
-/// - GetName() returns "vector_field"
-/// - GetParameters() exposes all 6 parameters
-/// - GetShaderCode() contains the expected HLSL constant references
-/// - Animated field: shader code contains "cbVectorFieldTimeScale" and "frac"
-/// - VFXSystem + ParticleEmitter budget allocation and tick accumulator
-///
-/// # Build
-///   cd demos/vector_field_demo
-///   zig build
-///   ./zig-out/bin/vector_field_demo
-///
-/// # Vector field parameters (wind tunnel)
-/// - intensity:    5.0  (strong directional push)
-/// - tightness:    0.3  (partial velocity blending)
-/// - bounds:       {50, 50, 50} half-extents (100x100x100 cm box)
-/// - fieldOffset:  {0, 10, 0}  (centred 10 cm above origin)
-/// - timeScale:    1.5  (W-axis scroll for animated flow)
-
-#include <chrono>
-#include <cmath>
-#include <cstdint>
-#include <cstdio>
-#include <algorithm>
-#include <memory>
-#include <string>
-#include <string_view>
+/// Loads emitter configuration from assets/vector_field_demo.uzfx,
+/// runs 5 frames of simulation, and validates vector field module configuration,
+/// parameter exposure, and shader code content.
 
 #include "mock_device.h"
-
-// ─────────────────────────────────────────────────────────────────────────────
-// VFX includes
-// ─────────────────────────────────────────────────────────────────────────────
-
 #include "engine/vfx/vfx_system.h"
 #include "engine/vfx/components/particle_emitter.h"
 #include "engine/vfx/core/particle_budget.h"
 #include "engine/vfx/modules/emitter_module_stack.h"
 #include "engine/vfx/modules/module_compositor.h"
 #include "engine/vfx/modules/module_registry.h"
-#include "engine/vfx/modules/register_builtin_modules.h"
-#include "engine/vfx/modules/spawn_module.h"
-#include "engine/vfx/modules/update_module.h"
-#include "engine/vfx/modules/decay_module.h"
 #include "engine/vfx/modules/vector_field_module.h"
+#include "engine/vfx/asset/uzfx_loader.h"
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Demo parameters
-// ─────────────────────────────────────────────────────────────────────────────
+#include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <fstream>
+#include <sstream>
+#include <algorithm>
+#include <memory>
+#include <string>
+#include <string_view>
 
-static constexpr uint32_t kMaxParticles = 5000u;
-static constexpr float    kEmissionRate = 100.0f;   // particles/sec
-static constexpr float    kLifetimeMin  = 1.0f;     // seconds
-static constexpr float    kLifetimeMax  = 3.0f;     // seconds
-static constexpr float    kDt           = 0.016f;   // ~60 FPS frame step
-static constexpr int      kFrameCount   = 5;        // wind tunnel tick steps
-static constexpr uint32_t kBudgetMax    = 500000u;
-
-// Wind tunnel vector field parameters.
-static constexpr float kFieldIntensity  = 5.0f;
-static constexpr float kFieldTightness  = 0.3f;
-static constexpr float kBoundsX        = 50.0f;
-static constexpr float kBoundsY        = 50.0f;
-static constexpr float kBoundsZ        = 50.0f;
-static constexpr float kFieldOffsetX   = 0.0f;
-static constexpr float kFieldOffsetY   = 10.0f;
-static constexpr float kFieldOffsetZ   = 0.0f;
-static constexpr float kFieldTimeScale = 1.5f;
+static std::string ReadFile(const char* path) {
+    std::ifstream f(path);
+    if (!f.is_open()) return {};
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -136,23 +94,23 @@ int main() {
     std::printf("  Headless wind tunnel VFX (no GPU required)\n");
     std::printf("==========================================================\n\n");
 
-    std::printf("[Config] Vector field: intensity=%.1f tightness=%.1f\n",
-                static_cast<double>(kFieldIntensity),
-                static_cast<double>(kFieldTightness));
-    std::printf("[Config] Bounds: {%.0f, %.0f, %.0f} cm half-extents\n",
-                static_cast<double>(kBoundsX),
-                static_cast<double>(kBoundsY),
-                static_cast<double>(kBoundsZ));
-    std::printf("[Config] Field offset: {%.0f, %.0f, %.0f} cm\n",
-                static_cast<double>(kFieldOffsetX),
-                static_cast<double>(kFieldOffsetY),
-                static_cast<double>(kFieldOffsetZ));
-    std::printf("[Config] Time scale (animated wind): %.1f\n\n",
-                static_cast<double>(kFieldTimeScale));
+    // ── Load .uzfx asset ──────────────────────────────────────────────
+    auto json = ReadFile("assets/vector_field_demo.uzfx");
+    if (json.empty()) {
+        std::fprintf(stderr, "[Error] Cannot read assets/vector_field_demo.uzfx\n");
+        return 1;
+    }
+    auto desc = uz::UzfxLoader::Load(json);
+    if (desc.name.empty()) {
+        std::fprintf(stderr, "[Error] Failed to parse vector_field_demo.uzfx\n");
+        return 1;
+    }
+    std::printf("[Asset] Loaded '%s' (version %u)\n\n", desc.name.c_str(), desc.version);
 
     // ── Setup ──────────────────────────────────────────────────────────
     uz::DemoMockDevice device;
 
+    constexpr uint32_t kBudgetMax = 500000u;
     uz::VFXSystem vfxSystem;
     vfxSystem.Initialize(&device, kBudgetMax);
     std::printf("[Init] VFXSystem initialized -- budget: %u particles\n", kBudgetMax);
@@ -165,19 +123,10 @@ int main() {
     }
     std::printf("\n");
 
-    // ── Emitter ────────────────────────────────────────────────────────
+    // ── Instantiate emitter from .uzfx ────────────────────────────────
     uz::ParticleEmitter emitter;
-    emitter.maxParticles  = kMaxParticles;
-    emitter.emissionRate  = kEmissionRate;
-    emitter.lifetime      = kLifetimeMax;
-    emitter.gravity       = {0.0f, 0.0f, 0.0f};  // wind field provides motion
-    emitter.damping       = 0.99f;
-    emitter.spawnVelocity = {1.0f, 0.0f, 0.0f};  // initial rightward drift
-    emitter.spreadAngle   = 20.0f;
-    emitter.isEmitting    = true;
-
-    if (!emitter.Initialize(&device, vfxSystem.GetBudget())) {
-        std::fprintf(stderr, "[Error] Failed to initialize emitter\n");
+    if (!uz::UzfxLoader::Instantiate(desc, emitter, &device, vfxSystem.GetBudget())) {
+        std::fprintf(stderr, "[Error] Failed to instantiate emitter\n");
         vfxSystem.Shutdown(&device);
         return 1;
     }
@@ -187,48 +136,25 @@ int main() {
                 vfxSystem.GetBudget().GetUsed(),
                 vfxSystem.GetBudget().GetMax());
 
-    // ── Build module stack ─────────────────────────────────────────────
-    auto& stack = emitter.moduleStack;
-
-    // Spawn module: continuous stream of wind-tunnel particles.
-    auto spawnMod = std::make_unique<uz::SpawnModule>();
-    spawnMod->rate        = kEmissionRate;
-    spawnMod->spreadAngle = 20.0f;
-    spawnMod->velocity    = {1.0f, 0.0f, 0.0f};
-    spawnMod->lifespanMin = kLifetimeMin;
-    spawnMod->lifespanMax = kLifetimeMax;
-    stack.AddSpawnModule(std::move(spawnMod));
-
-    // Update module: minimal drag so the wind field dominates.
-    auto updateMod = std::make_unique<uz::UpdateModule>();
-    updateMod->gravity = {0.0f, 0.0f, 0.0f};
-    updateMod->drag    = 0.99f;
-    stack.AddUpdateModule(std::move(updateMod));
-
-    // Decay must be last in update order.
-    stack.AddUpdateModule(std::make_unique<uz::DecayModule>());
-
-    // Vector field module: wind tunnel configuration.
-    // @ref Stam 1999 "Stable Fluids" -- velocity field advection
-    // @ref Bridson 2007 "Fluid Simulation for Computer Graphics" -- field sampling
-    auto vfMod = std::make_unique<uz::VectorFieldModule>();
-    vfMod->intensity   = kFieldIntensity;
-    vfMod->tightness   = kFieldTightness;
-    vfMod->bounds      = {kBoundsX, kBoundsY, kBoundsZ};
-    vfMod->fieldOffset = {kFieldOffsetX, kFieldOffsetY, kFieldOffsetZ};
-    vfMod->timeScale   = kFieldTimeScale;
-
-    // Store a raw pointer for validation before moving ownership into the stack.
-    const uz::VectorFieldModule* vfModPtr = vfMod.get();
-    stack.AddUpdateModule(std::move(vfMod));
-
     std::printf("[Init] Module stack: %zu spawn, %zu update, render=%s\n",
-                stack.spawnModules.size(),
-                stack.updateModules.size(),
-                stack.renderModule ? stack.renderModule->GetName() : "none");
+                emitter.moduleStack.spawnModules.size(),
+                emitter.moduleStack.updateModules.size(),
+                emitter.moduleStack.renderModule ? emitter.moduleStack.renderModule->GetName() : "none");
 
-    // ── Register emitter and run wind tunnel simulation ────────────────
+    // ── Find the vector field module in the instantiated stack ─────────
+    const uz::VectorFieldModule* vfModPtr = nullptr;
+    for (const auto& m : emitter.moduleStack.updateModules) {
+        if (std::string_view{m->GetName()} == "vector_field") {
+            vfModPtr = static_cast<const uz::VectorFieldModule*>(m.get());
+            break;
+        }
+    }
+
+    // ── Register emitter and run simulation ────────────────────────────
     vfxSystem.RegisterEmitter(&emitter);
+
+    constexpr float kDt         = 0.016f;
+    constexpr int   kFrameCount = 5;
 
     std::printf("\n[Tick] Running %d frames at dt=%.3f s...\n\n",
                 kFrameCount, static_cast<double>(kDt));
@@ -247,151 +173,115 @@ int main() {
     }
 
     // ── Vector field configuration report ─────────────────────────────
-    std::printf("\nVECTOR FIELD CONFIGURATION\n");
-    std::printf("--------------------------------------------------\n");
-    std::printf("  GetName():     %s\n",        vfModPtr->GetName());
-    std::printf("  intensity:     %.1f\n",      static_cast<double>(vfModPtr->intensity));
-    std::printf("  tightness:     %.1f\n",      static_cast<double>(vfModPtr->tightness));
-    std::printf("  bounds:        {%.0f, %.0f, %.0f}\n",
-                static_cast<double>(vfModPtr->bounds.x),
-                static_cast<double>(vfModPtr->bounds.y),
-                static_cast<double>(vfModPtr->bounds.z));
-    std::printf("  fieldOffset:   {%.0f, %.0f, %.0f}\n",
-                static_cast<double>(vfModPtr->fieldOffset.x),
-                static_cast<double>(vfModPtr->fieldOffset.y),
-                static_cast<double>(vfModPtr->fieldOffset.z));
-    std::printf("  timeScale:     %.1f\n",      static_cast<double>(vfModPtr->timeScale));
+    if (vfModPtr) {
+        std::printf("\nVECTOR FIELD CONFIGURATION\n");
+        std::printf("--------------------------------------------------\n");
+        std::printf("  GetName():     %s\n",        vfModPtr->GetName());
+        std::printf("  intensity:     %.1f\n",      static_cast<double>(vfModPtr->intensity));
+        std::printf("  tightness:     %.1f\n",      static_cast<double>(vfModPtr->tightness));
+        std::printf("  bounds:        {%.0f, %.0f, %.0f}\n",
+                    static_cast<double>(vfModPtr->bounds.x),
+                    static_cast<double>(vfModPtr->bounds.y),
+                    static_cast<double>(vfModPtr->bounds.z));
+        std::printf("  fieldOffset:   {%.0f, %.0f, %.0f}\n",
+                    static_cast<double>(vfModPtr->fieldOffset.x),
+                    static_cast<double>(vfModPtr->fieldOffset.y),
+                    static_cast<double>(vfModPtr->fieldOffset.z));
+        std::printf("  timeScale:     %.1f\n",      static_cast<double>(vfModPtr->timeScale));
 
-    // ── Shader code snippet ────────────────────────────────────────────
-    const std::string_view shaderCode = vfModPtr->GetShaderCode();
-    const size_t snippetLen = std::min(shaderCode.size(), static_cast<size_t>(200));
-    std::printf("\nSHADER CODE SNIPPET (first %zu chars):\n", snippetLen);
-    std::printf("--------------------------------------------------\n");
-    std::printf("%.*s\n",
-                static_cast<int>(snippetLen),
-                shaderCode.data());
-    std::printf("--------------------------------------------------\n");
+        // Shader code snippet.
+        const std::string_view shaderCode = vfModPtr->GetShaderCode();
+        const size_t snippetLen = std::min(shaderCode.size(), static_cast<size_t>(200));
+        std::printf("\nSHADER CODE SNIPPET (first %zu chars):\n", snippetLen);
+        std::printf("--------------------------------------------------\n");
+        std::printf("%.*s\n",
+                    static_cast<int>(snippetLen),
+                    shaderCode.data());
+        std::printf("--------------------------------------------------\n");
+    }
 
     // ── Parameter summary ──────────────────────────────────────────────
     std::printf("\nMODULE PARAMETER SUMMARY\n");
     std::printf("--------------------------------------------------\n");
     std::printf("Spawn modules:\n");
-    for (const auto& m : stack.spawnModules) {
+    for (const auto& m : emitter.moduleStack.spawnModules) {
         PrintModuleParams(m.get());
     }
     std::printf("Update modules:\n");
-    for (const auto& m : stack.updateModules) {
+    for (const auto& m : emitter.moduleStack.updateModules) {
         PrintModuleParams(m.get());
     }
     std::printf("--------------------------------------------------\n");
-    std::printf("Parameter count: %zu\n", vfModPtr->GetParameters().size());
+    if (vfModPtr) {
+        std::printf("Parameter count: %zu\n", vfModPtr->GetParameters().size());
+    }
     std::printf("--------------------------------------------------\n");
 
     // ── Validation ─────────────────────────────────────────────────────
     bool pass = true;
 
-    // GetName() must return "vector_field".
-    if (std::string_view{vfModPtr->GetName()} != "vector_field") {
-        std::fprintf(stderr, "[FAIL] GetName(): expected 'vector_field', got '%s'\n",
-                     vfModPtr->GetName());
+    if (!vfModPtr) {
+        std::fprintf(stderr, "[FAIL] VectorFieldModule not found in update stack\n");
         pass = false;
-    }
+    } else {
+        // GetName() must return "vector_field".
+        if (std::string_view{vfModPtr->GetName()} != "vector_field") {
+            std::fprintf(stderr, "[FAIL] GetName(): expected 'vector_field', got '%s'\n",
+                         vfModPtr->GetName());
+            pass = false;
+        }
 
-    // GetParameters() must expose exactly 6 parameters.
-    const auto vfParams = vfModPtr->GetParameters();
-    if (vfParams.size() != 6u) {
-        std::fprintf(stderr, "[FAIL] GetParameters().size(): expected 6, got %zu\n",
-                     vfParams.size());
-        pass = false;
-    }
+        // GetParameters() must expose exactly 6 parameters.
+        const auto vfParams = vfModPtr->GetParameters();
+        if (vfParams.size() != 6u) {
+            std::fprintf(stderr, "[FAIL] GetParameters().size(): expected 6, got %zu\n",
+                         vfParams.size());
+            pass = false;
+        }
 
-    // All expected parameter names must be present.
-    const char* kRequiredParams[] = {
-        "field_texture",
-        "intensity",
-        "tightness",
-        "bounds",
-        "field_offset",
-        "time_scale",
-    };
-    for (const char* pname : kRequiredParams) {
-        if (!HasParameter(vfParams, pname)) {
+        // All expected parameter names must be present.
+        const char* kRequiredParams[] = {
+            "field_texture",
+            "intensity",
+            "tightness",
+            "bounds",
+            "field_offset",
+            "time_scale",
+        };
+        for (const char* pname : kRequiredParams) {
+            if (!HasParameter(vfParams, pname)) {
+                std::fprintf(stderr,
+                             "[FAIL] VectorFieldModule missing parameter: '%s'\n",
+                             pname);
+                pass = false;
+            }
+        }
+
+        // Shader must reference the main intensity constant.
+        const std::string_view shaderCode = vfModPtr->GetShaderCode();
+        if (shaderCode.find("cbVectorFieldIntensity") == std::string_view::npos) {
             std::fprintf(stderr,
-                         "[FAIL] VectorFieldModule missing parameter: '%s'\n",
-                         pname);
+                         "[FAIL] Shader code does not contain 'cbVectorFieldIntensity'\n");
+            pass = false;
+        }
+
+        // Animated field: shader must reference time scale and frac().
+        if (shaderCode.find("cbVectorFieldTimeScale") == std::string_view::npos) {
+            std::fprintf(stderr,
+                         "[FAIL] Shader code does not contain 'cbVectorFieldTimeScale'\n");
+            pass = false;
+        }
+        if (shaderCode.find("frac") == std::string_view::npos) {
+            std::fprintf(stderr,
+                         "[FAIL] Shader code does not contain 'frac' (animated W-axis scroll)\n");
             pass = false;
         }
     }
 
-    // Shader must reference the main intensity constant.
-    if (shaderCode.find("cbVectorFieldIntensity") == std::string_view::npos) {
-        std::fprintf(stderr,
-                     "[FAIL] Shader code does not contain 'cbVectorFieldIntensity'\n");
-        pass = false;
-    }
-
-    // Animated field: shader must reference time scale and frac() for W-scroll.
-    if (shaderCode.find("cbVectorFieldTimeScale") == std::string_view::npos) {
-        std::fprintf(stderr,
-                     "[FAIL] Shader code does not contain 'cbVectorFieldTimeScale'\n");
-        pass = false;
-    }
-    if (shaderCode.find("frac") == std::string_view::npos) {
-        std::fprintf(stderr,
-                     "[FAIL] Shader code does not contain 'frac' (animated W-axis scroll)\n");
-        pass = false;
-    }
-
-    // Configured field values must match what was set.
-    if (vfModPtr->intensity != kFieldIntensity) {
-        std::fprintf(stderr, "[FAIL] intensity: expected %.1f, got %.1f\n",
-                     static_cast<double>(kFieldIntensity),
-                     static_cast<double>(vfModPtr->intensity));
-        pass = false;
-    }
-    if (vfModPtr->tightness != kFieldTightness) {
-        std::fprintf(stderr, "[FAIL] tightness: expected %.1f, got %.1f\n",
-                     static_cast<double>(kFieldTightness),
-                     static_cast<double>(vfModPtr->tightness));
-        pass = false;
-    }
-    if (vfModPtr->bounds.x != kBoundsX ||
-        vfModPtr->bounds.y != kBoundsY ||
-        vfModPtr->bounds.z != kBoundsZ) {
-        std::fprintf(stderr,
-                     "[FAIL] bounds: expected {%.0f, %.0f, %.0f}, got {%.0f, %.0f, %.0f}\n",
-                     static_cast<double>(kBoundsX),
-                     static_cast<double>(kBoundsY),
-                     static_cast<double>(kBoundsZ),
-                     static_cast<double>(vfModPtr->bounds.x),
-                     static_cast<double>(vfModPtr->bounds.y),
-                     static_cast<double>(vfModPtr->bounds.z));
-        pass = false;
-    }
-    if (vfModPtr->fieldOffset.x != kFieldOffsetX ||
-        vfModPtr->fieldOffset.y != kFieldOffsetY ||
-        vfModPtr->fieldOffset.z != kFieldOffsetZ) {
-        std::fprintf(stderr,
-                     "[FAIL] fieldOffset: expected {%.0f, %.0f, %.0f}, got {%.0f, %.0f, %.0f}\n",
-                     static_cast<double>(kFieldOffsetX),
-                     static_cast<double>(kFieldOffsetY),
-                     static_cast<double>(kFieldOffsetZ),
-                     static_cast<double>(vfModPtr->fieldOffset.x),
-                     static_cast<double>(vfModPtr->fieldOffset.y),
-                     static_cast<double>(vfModPtr->fieldOffset.z));
-        pass = false;
-    }
-    if (vfModPtr->timeScale != kFieldTimeScale) {
-        std::fprintf(stderr, "[FAIL] timeScale: expected %.1f, got %.1f\n",
-                     static_cast<double>(kFieldTimeScale),
-                     static_cast<double>(vfModPtr->timeScale));
-        pass = false;
-    }
-
     // Budget must still reflect the emitter's allocation.
-    if (vfxSystem.GetBudget().GetUsed() != kMaxParticles) {
+    if (vfxSystem.GetBudget().GetUsed() != desc.maxParticles) {
         std::fprintf(stderr, "[FAIL] Budget used=%u, expected %u\n",
-                     vfxSystem.GetBudget().GetUsed(), kMaxParticles);
+                     vfxSystem.GetBudget().GetUsed(), desc.maxParticles);
         pass = false;
     }
 
@@ -409,8 +299,11 @@ int main() {
     vfxSystem.Shutdown(&device);
 
     // ── Result ─────────────────────────────────────────────────────────
+    std::printf("\n[OK] %s: %u particles allocated, %d frames simulated\n",
+                desc.name.c_str(), emitter.allocatedFromBudget, kFrameCount);
+
     if (pass) {
-        std::printf("\n[PASS] Vector field demo completed successfully.\n");
+        std::printf("[PASS] Vector field demo completed successfully.\n");
         return 0;
     }
 

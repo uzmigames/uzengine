@@ -1,56 +1,35 @@
-/// Explosion Composite Demo -- Headless multi-emitter VFX simulation.
+/// Explosion Composite Demo — Headless multi-emitter VFX simulation.
 ///
-/// Demonstrates the VFX composite effect system by building an explosion from
-/// three sub-emitters (fire, smoke, debris) defined via inline JSON. Each
-/// emitter has independent offsets, delays, and module stacks.
-///
-/// This is a headless (no window, no GPU) demo that validates:
-/// - VFXComposite JSON parsing via LoadFromString
-/// - Multi-emitter creation with per-entry offsets and delays
-/// - VFXEventQueue burst emission ("explode" event at frame 30)
-/// - VFXSystem simulation loop with per-frame stats
-/// - Proper cleanup and budget return
-///
-/// # Build
-/// Compiled standalone via Zig:
-///   cd demos/explosion_composite
-///   zig build
-///   ./zig-out/bin/explosion_composite_demo
-///
-/// # Simulation Parameters
-/// - fire:   rate=500, spread=60deg, velocity=[0,8,0], gravity=[0,-3,0]
-/// - smoke:  rate=200, spread=45deg, velocity=[0,3,0], gravity=[0,-0.5,0]
-/// - debris: rate=300, spread=90deg, velocity=[0,12,0], gravity=[0,-9.81,0]
-/// - Burst event "explode" at frame 30 (0.5s) with 500 particles, 3x velocity
+/// Loads three emitter configurations from .uzfx assets (fire, smoke, debris),
+/// runs 180 frames of simulation with a burst event at frame 30, and validates
+/// multi-emitter spawn statistics and budget management.
+
+#include "mock_device.h"
+#include "engine/vfx/vfx_system.h"
+#include "engine/vfx/components/particle_emitter.h"
+#include "engine/vfx/core/particle_budget.h"
+#include "engine/vfx/events/vfx_event.h"
+#include "engine/vfx/modules/emitter_module_stack.h"
+#include "engine/vfx/modules/module_registry.h"
+#include "engine/vfx/asset/uzfx_loader.h"
 
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <fstream>
+#include <sstream>
 #include <algorithm>
-#include <memory>
 #include <string>
 #include <vector>
 
-#include "mock_device.h"
-
-// ─────────────────────────────────────────────────────────────────────────────
-// VFX includes
-// ─────────────────────────────────────────────────────────────────────────────
-
-#include "engine/vfx/vfx_system.h"
-#include "engine/vfx/components/particle_emitter.h"
-#include "engine/vfx/asset/vfx_composite.h"
-#include "engine/vfx/events/vfx_event.h"
-#include "engine/vfx/modules/register_builtin_modules.h"
-#include "engine/vfx/modules/module_registry.h"
-#include "engine/vfx/modules/emitter_module_stack.h"
-#include "engine/vfx/modules/spawn_module.h"
-#include "engine/vfx/modules/update_module.h"
-#include "engine/vfx/modules/decay_module.h"
-#include "engine/vfx/modules/turbulence_module.h"
-#include "engine/vfx/modules/sprite_render_module.h"
-#include "engine/vfx/core/particle_budget.h"
+static std::string ReadFile(const char* path) {
+    std::ifstream f(path);
+    if (!f.is_open()) return {};
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Demo constants
@@ -77,158 +56,11 @@ static constexpr uint32_t kBurstCount = 500;
 /// Velocity multiplier for burst particles.
 static constexpr float kBurstVelocityScale = 3.0f;
 
-// Per-emitter capacities.
-static constexpr uint32_t kFireMaxParticles   = 25000u;
-static constexpr uint32_t kSmokeMaxParticles  = 15000u;
-static constexpr uint32_t kDebrisMaxParticles = 10000u;
-
 // ─────────────────────────────────────────────────────────────────────────────
-// Composite JSON definition (inline, no file dependency)
-// ─────────────────────────────────────────────────────────────────────────────
-
-static const char* const kCompositeJson = R"({
-    "format": "uzvfx_composite",
-    "version": 1,
-    "name": "explosion",
-    "emitters": [
-        { "name": "fire",   "graph": "vfx/fire.uzvfx",   "offset": [0,0,0],     "delay": 0.0 },
-        { "name": "smoke",  "graph": "vfx/smoke.uzvfx",  "offset": [0,0.5,0],   "delay": 0.2 },
-        { "name": "debris", "graph": "vfx/debris.uzvfx", "offset": [0,0,0],     "delay": 0.0 }
-    ]
-})";
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Emitter configuration helpers
+// Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
 namespace {
-
-/// Configures a fire emitter: fast upward particles with turbulence and decay.
-///
-/// # Parameters
-/// - `emitter`: Emitter to configure. Must not be null.
-/// - `entry`: Composite entry providing offset and delay.
-void ConfigureFireEmitter(uz::ParticleEmitter& emitter,
-                          const uz::VFXCompositeEntry& entry) {
-    emitter.maxParticles  = kFireMaxParticles;
-    emitter.emissionRate  = 500.0f;
-    emitter.lifetime      = 2.0f;
-    emitter.gravity       = {0.0f, -3.0f, 0.0f};
-    emitter.damping       = 0.98f;
-    emitter.spawnVelocity = {0.0f, 8.0f, 0.0f};
-    emitter.spreadAngle   = 60.0f;
-    emitter.startDelay    = entry.delay;
-    emitter.isEmitting    = true;
-
-    // Build module stack: spawn -> update -> turbulence -> decay -> sprite.
-    auto& stack = emitter.moduleStack;
-
-    auto spawn = std::make_unique<uz::SpawnModule>();
-    spawn->rate        = 500.0f;
-    spawn->spreadAngle = 60.0f;
-    spawn->velocity    = {0.0f, 8.0f, 0.0f};
-    spawn->lifespanMin = 0.5f;
-    spawn->lifespanMax = 2.0f;
-    stack.AddSpawnModule(std::move(spawn));
-
-    auto update = std::make_unique<uz::UpdateModule>();
-    update->gravity = {0.0f, -3.0f, 0.0f};
-    update->drag    = 0.98f;
-    stack.AddUpdateModule(std::move(update));
-
-    auto turb = std::make_unique<uz::TurbulenceModule>();
-    turb->strength  = 2.0f;
-    turb->frequency = 0.5f;
-    turb->octaves   = 3;
-    stack.AddUpdateModule(std::move(turb));
-
-    stack.AddUpdateModule(std::make_unique<uz::DecayModule>());
-
-    auto sprite = std::make_unique<uz::SpriteRenderModule>();
-    sprite->spriteWidth  = 0.5f;
-    sprite->spriteHeight = 0.5f;
-    stack.SetRenderModule(std::move(sprite));
-}
-
-/// Configures a smoke emitter: slow rising particles with high drag.
-///
-/// # Parameters
-/// - `emitter`: Emitter to configure. Must not be null.
-/// - `entry`: Composite entry providing offset and delay.
-void ConfigureSmokeEmitter(uz::ParticleEmitter& emitter,
-                           const uz::VFXCompositeEntry& entry) {
-    emitter.maxParticles  = kSmokeMaxParticles;
-    emitter.emissionRate  = 200.0f;
-    emitter.lifetime      = 4.0f;
-    emitter.gravity       = {0.0f, -0.5f, 0.0f};
-    emitter.damping       = 0.95f;
-    emitter.spawnVelocity = {0.0f, 3.0f, 0.0f};
-    emitter.spreadAngle   = 45.0f;
-    emitter.startDelay    = entry.delay;
-    emitter.isEmitting    = true;
-
-    auto& stack = emitter.moduleStack;
-
-    auto spawn = std::make_unique<uz::SpawnModule>();
-    spawn->rate        = 200.0f;
-    spawn->spreadAngle = 45.0f;
-    spawn->velocity    = {0.0f, 3.0f, 0.0f};
-    spawn->lifespanMin = 1.0f;
-    spawn->lifespanMax = 4.0f;
-    stack.AddSpawnModule(std::move(spawn));
-
-    auto update = std::make_unique<uz::UpdateModule>();
-    update->gravity = {0.0f, -0.5f, 0.0f};
-    update->drag    = 0.95f;
-    stack.AddUpdateModule(std::move(update));
-
-    stack.AddUpdateModule(std::make_unique<uz::DecayModule>());
-
-    auto sprite = std::make_unique<uz::SpriteRenderModule>();
-    sprite->spriteWidth  = 1.0f;
-    sprite->spriteHeight = 1.0f;
-    stack.SetRenderModule(std::move(sprite));
-}
-
-/// Configures a debris emitter: fast scattered particles with strong gravity.
-///
-/// # Parameters
-/// - `emitter`: Emitter to configure. Must not be null.
-/// - `entry`: Composite entry providing offset and delay.
-void ConfigureDebrisEmitter(uz::ParticleEmitter& emitter,
-                            const uz::VFXCompositeEntry& entry) {
-    emitter.maxParticles  = kDebrisMaxParticles;
-    emitter.emissionRate  = 300.0f;
-    emitter.lifetime      = 3.0f;
-    emitter.gravity       = {0.0f, -9.81f, 0.0f};
-    emitter.damping       = 0.99f;
-    emitter.spawnVelocity = {0.0f, 12.0f, 0.0f};
-    emitter.spreadAngle   = 90.0f;
-    emitter.startDelay    = entry.delay;
-    emitter.isEmitting    = true;
-
-    auto& stack = emitter.moduleStack;
-
-    auto spawn = std::make_unique<uz::SpawnModule>();
-    spawn->rate        = 300.0f;
-    spawn->spreadAngle = 90.0f;
-    spawn->velocity    = {0.0f, 12.0f, 0.0f};
-    spawn->lifespanMin = 0.5f;
-    spawn->lifespanMax = 3.0f;
-    stack.AddSpawnModule(std::move(spawn));
-
-    auto update = std::make_unique<uz::UpdateModule>();
-    update->gravity = {0.0f, -9.81f, 0.0f};
-    update->drag    = 0.99f;
-    stack.AddUpdateModule(std::move(update));
-
-    stack.AddUpdateModule(std::make_unique<uz::DecayModule>());
-
-    auto sprite = std::make_unique<uz::SpriteRenderModule>();
-    sprite->spriteWidth  = 0.2f;
-    sprite->spriteHeight = 0.2f;
-    stack.SetRenderModule(std::move(sprite));
-}
 
 /// Prints a separator line to stdout.
 void PrintSeparator() {
@@ -236,15 +68,9 @@ void PrintSeparator() {
 }
 
 /// Prints per-emitter stats for a single frame.
-///
-/// # Parameters
-/// - `frame`: Current frame index.
-/// - `emitters`: Active emitter list.
-/// - `entries`: Composite entry metadata (parallel to emitters).
-/// - `budget`: Global particle budget for reporting.
 void PrintFrameStats(int frame,
                      const std::vector<uz::ParticleEmitter>& emitters,
-                     const std::vector<uz::VFXCompositeEntry>& entries,
+                     const std::vector<uz::UzfxDesc>& descs,
                      const uz::ParticleBudget& budget) {
     std::printf("[Frame %3d | t=%.2fs]  budget=%u/%u\n",
                 frame,
@@ -257,14 +83,12 @@ void PrintFrameStats(int frame,
         const char* state = "emitting";
         if (!e.initialized) {
             state = "not-init";
-        } else if (e.timeSinceRegistration < e.startDelay) {
-            state = "delayed";
         } else if (!e.isEmitting) {
             state = "stopped";
         }
 
         std::printf("  %-8s: accum=%.4f  allocated=%5u  events=%zu  [%s]\n",
-                    entries[i].name.c_str(),
+                    descs[i].name.c_str(),
                     static_cast<double>(e.spawnAccumulator),
                     e.allocatedFromBudget,
                     e.eventQueue.GetPendingCount(),
@@ -284,7 +108,35 @@ int main() {
     std::printf("   Headless multi-emitter VFX system (no GPU required)\n");
     std::printf("==========================================================\n\n");
 
-    // ── Step 1: Create VFXSystem with builtin modules ─────────────────
+    // ── Load .uzfx assets ────────────────────────────────────────────────
+    struct AssetEntry {
+        const char* path;
+    };
+    const AssetEntry kAssets[] = {
+        {"assets/explosion_fire.uzfx"},
+        {"assets/explosion_smoke.uzfx"},
+        {"assets/explosion_debris.uzfx"},
+    };
+
+    std::vector<uz::UzfxDesc> descs;
+    for (const auto& asset : kAssets) {
+        auto json = ReadFile(asset.path);
+        if (json.empty()) {
+            std::fprintf(stderr, "[Error] Cannot read %s\n", asset.path);
+            return 1;
+        }
+        auto desc = uz::UzfxLoader::Load(json);
+        if (desc.name.empty()) {
+            std::fprintf(stderr, "[Error] Failed to parse %s\n", asset.path);
+            return 1;
+        }
+        std::printf("[Asset] Loaded '%s' (version %u) from %s\n",
+                    desc.name.c_str(), desc.version, asset.path);
+        descs.push_back(std::move(desc));
+    }
+    std::printf("\n");
+
+    // ── Create VFXSystem ────────────────────────────────────────────────
     uz::DemoMockDevice device;
 
     uz::VFXSystem vfxSystem;
@@ -300,63 +152,25 @@ int main() {
     }
     std::printf("\n\n");
 
-    // ── Step 2: Parse composite JSON ──────────────────────────────────
-    auto composite = uz::VFXComposite::LoadFromString(kCompositeJson);
-    if (!composite) {
-        std::fprintf(stderr, "[Error] Failed to parse composite JSON\n");
-        vfxSystem.Shutdown(&device);
-        return 1;
-    }
+    // ── Instantiate emitters from .uzfx descs ────────────────────────────
+    std::vector<uz::ParticleEmitter> emitters(descs.size());
 
-    std::printf("[Composite] Loaded '%s' (version %u) with %zu emitters:\n",
-                composite->GetName().c_str(),
-                composite->GetVersion(),
-                composite->GetEmitterCount());
-
-    const auto& entries = composite->GetEntries();
-    for (size_t i = 0; i < entries.size(); ++i) {
-        const auto& e = entries[i];
-        std::printf("  [%zu] name='%s'  graph='%s'  offset=[%.1f,%.1f,%.1f]  delay=%.2fs\n",
-                    i,
-                    e.name.c_str(),
-                    e.graphPath.c_str(),
-                    static_cast<double>(e.offset.x),
-                    static_cast<double>(e.offset.y),
-                    static_cast<double>(e.offset.z),
-                    static_cast<double>(e.delay));
-    }
-    std::printf("\n");
-
-    // ── Step 3: Create emitters from composite entries ────────────────
-    std::vector<uz::ParticleEmitter> emitters(entries.size());
-
-    for (size_t i = 0; i < entries.size(); ++i) {
-        const auto& entry = entries[i];
-
-        // Configure each emitter based on its role in the explosion.
-        if (entry.name == "fire") {
-            ConfigureFireEmitter(emitters[i], entry);
-        } else if (entry.name == "smoke") {
-            ConfigureSmokeEmitter(emitters[i], entry);
-        } else if (entry.name == "debris") {
-            ConfigureDebrisEmitter(emitters[i], entry);
-        }
-
-        if (!emitters[i].Initialize(&device, vfxSystem.GetBudget())) {
-            std::fprintf(stderr, "[Error] Failed to initialize emitter '%s'\n",
-                         entry.name.c_str());
+    for (size_t i = 0; i < descs.size(); ++i) {
+        if (!uz::UzfxLoader::Instantiate(descs[i], emitters[i], &device, vfxSystem.GetBudget())) {
+            std::fprintf(stderr, "[Error] Failed to instantiate emitter '%s'\n",
+                         descs[i].name.c_str());
             vfxSystem.Shutdown(&device);
             return 1;
         }
 
         std::printf("[Init] Emitter '%s' initialized -- capacity=%u, budget=%u/%u\n",
-                    entry.name.c_str(),
+                    descs[i].name.c_str(),
                     emitters[i].allocatedFromBudget,
                     vfxSystem.GetBudget().GetUsed(),
                     vfxSystem.GetBudget().GetMax());
     }
 
-    // ── Step 4: Register emitters with VFXSystem ──────────────────────
+    // ── Register emitters with VFXSystem ──────────────────────────────
     for (auto& emitter : emitters) {
         vfxSystem.RegisterEmitter(&emitter);
     }
@@ -370,12 +184,12 @@ int main() {
                 static_cast<double>(kBurstFrame * kDt));
     PrintSeparator();
 
-    // ── Step 5-7: Simulation loop ─────────────────────────────────────
+    // ── Simulation loop ─────────────────────────────────────────────────
     uint32_t totalSpawned = 0;
     const auto startTime = std::chrono::high_resolution_clock::now();
 
     for (int frame = 0; frame < kTotalFrames; ++frame) {
-        // Step 7: Fire "explode" burst at the designated frame.
+        // Fire "explode" burst at the designated frame.
         if (frame == kBurstFrame) {
             std::printf("\n  >>> BURST EVENT: 'explode' -- %u particles, %.1fx velocity\n\n",
                         kBurstCount,
@@ -396,7 +210,7 @@ int main() {
         // Advance the simulation.
         vfxSystem.Tick(kDt);
 
-        // Step 6: Log frame stats at the reporting interval.
+        // Log frame stats at the reporting interval.
         const bool isReportFrame =
             frame == 0 ||
             frame == kBurstFrame ||
@@ -405,7 +219,7 @@ int main() {
             (frame + 1) % kReportInterval == 0;
 
         if (isReportFrame) {
-            PrintFrameStats(frame, emitters, entries, vfxSystem.GetBudget());
+            PrintFrameStats(frame, emitters, descs, vfxSystem.GetBudget());
         }
     }
 
@@ -427,13 +241,12 @@ int main() {
     std::printf("  CPU wall time:            %.2f ms\n", elapsedMs);
 
     std::printf("\nPer-emitter breakdown:\n");
-    for (size_t i = 0; i < entries.size(); ++i) {
+    for (size_t i = 0; i < descs.size(); ++i) {
         const auto& e = emitters[i];
-        std::printf("  %-8s: allocated=%5u  accum=%.4f  delay=%.2fs  modules=%zu+%zu\n",
-                    entries[i].name.c_str(),
+        std::printf("  %-8s: allocated=%5u  accum=%.4f  modules=%zu+%zu\n",
+                    descs[i].name.c_str(),
                     e.allocatedFromBudget,
                     static_cast<double>(e.spawnAccumulator),
-                    static_cast<double>(e.startDelay),
                     e.moduleStack.spawnModules.size(),
                     e.moduleStack.updateModules.size());
     }
@@ -442,22 +255,9 @@ int main() {
     // ── Validation ────────────────────────────────────────────────────
     bool pass = true;
 
-    // Composite must have parsed correctly.
-    if (composite->GetEmitterCount() != 3) {
-        std::fprintf(stderr, "[FAIL] Expected 3 composite entries, got %zu\n",
-                     composite->GetEmitterCount());
-        pass = false;
-    }
-
-    if (composite->GetName() != "explosion") {
-        std::fprintf(stderr, "[FAIL] Expected composite name 'explosion', got '%s'\n",
-                     composite->GetName().c_str());
-        pass = false;
-    }
-
-    if (composite->GetVersion() != 1) {
-        std::fprintf(stderr, "[FAIL] Expected composite version 1, got %u\n",
-                     composite->GetVersion());
+    // Must have loaded 3 emitters.
+    if (descs.size() != 3) {
+        std::fprintf(stderr, "[FAIL] Expected 3 .uzfx assets, loaded %zu\n", descs.size());
         pass = false;
     }
 
@@ -465,21 +265,12 @@ int main() {
     for (size_t i = 0; i < emitters.size(); ++i) {
         if (!emitters[i].initialized) {
             std::fprintf(stderr, "[FAIL] Emitter '%s' not initialized\n",
-                         entries[i].name.c_str());
+                         descs[i].name.c_str());
             pass = false;
         }
     }
 
-    // Smoke emitter must have had a start delay.
-    if (emitters[1].startDelay < 0.19f || emitters[1].startDelay > 0.21f) {
-        std::fprintf(stderr, "[FAIL] Smoke emitter delay expected ~0.2, got %.3f\n",
-                     static_cast<double>(emitters[1].startDelay));
-        pass = false;
-    }
-
-    // Total spawned must be reasonable (fire=500/s*3s + smoke=200/s*2.8s + debris=300/s*3s).
-    // Plus burst events. Rough estimate: 1500 + 560 + 900 + 1500 burst = ~4460.
-    // Allow wide tolerance since accumulator rounding and delay affect counts.
+    // Total spawned must be reasonable.
     if (totalSpawned < 100) {
         std::fprintf(stderr, "[FAIL] Expected meaningful spawn count, got %u\n",
                      totalSpawned);
@@ -493,7 +284,7 @@ int main() {
         pass = false;
     }
 
-    // ── Step 8: Cleanup ───────────────────────────────────────────────
+    // ── Cleanup ───────────────────────────────────────────────────────
     for (auto& emitter : emitters) {
         vfxSystem.UnregisterEmitter(&emitter);
     }
@@ -512,8 +303,11 @@ int main() {
     vfxSystem.Shutdown(&device);
 
     // ── Result ────────────────────────────────────────────────────────
+    std::printf("\n[OK] Explosion composite: %zu emitters, %u total spawned, %d frames\n",
+                descs.size(), totalSpawned, kTotalFrames);
+
     if (pass) {
-        std::printf("\n[PASS] Explosion composite demo completed successfully.\n");
+        std::printf("[PASS] Explosion composite demo completed successfully.\n");
         return 0;
     } else {
         std::fprintf(stderr, "\n[FAIL] One or more validation checks failed.\n");

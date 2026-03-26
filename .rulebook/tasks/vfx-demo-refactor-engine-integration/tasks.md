@@ -14,15 +14,15 @@
 
 ## 3. Demo Conversion — Thin Consumers
 
-- [ ] 3.1 Convert `particle_fountain` demo: remove mock device + manual lifecycle, use DemoApplication + .uzfx asset + VFS loading. ~289 → ~30 lines.
-- [ ] 3.2 Convert `fire_effect` demo: extract ModuleCompositor stack to fire_effect.uzfx. ~424 → ~30 lines.
-- [ ] 3.3 Convert `explosion_composite` demo: extract multi-emitter + sub-emitter config to explosion.uzfx. ~582 → ~40 lines.
-- [ ] 3.4 Convert `attractor_demo`: extract attractor force module config to attractor.uzfx. ~414 → ~30 lines.
-- [ ] 3.5 Convert `orbit_demo`: extract orbital physics config to orbit.uzfx. ~542 → ~30 lines.
-- [ ] 3.6 Convert `sub_emitter_demo`: extract sub-emitter chain to sub_emitter.uzfx. ~638 → ~30 lines.
-- [ ] 3.7 Convert `flipbook_animation`: extract sprite sheet config to flipbook.uzfx. ~522 → ~30 lines.
-- [ ] 3.8 Convert `vector_field_demo`: extract vector field config to vector_field.uzfx. ~479 → ~30 lines.
-- [ ] 3.9 Convert `distortion_effect`: extract distortion config to distortion.uzfx. ~510 → ~30 lines.
+- [x] 3.1 Convert `particle_fountain` demo: loads from assets/particle_fountain.uzfx via UzfxLoader, keeps sort buffer + spawn count validation.
+- [x] 3.2 Convert `fire_effect` demo: loads from assets/fire_effect.uzfx, keeps ModuleCompositor HLSL composition + spawn validation.
+- [x] 3.3 Convert `explosion_composite` demo: loads 3 .uzfx files (fire/smoke/debris), keeps burst event + multi-emitter validation.
+- [x] 3.4 Convert `attractor_demo`: loads from assets/attractor_demo.uzfx, finds AttractorModule in stack for validation.
+- [x] 3.5 Convert `orbit_demo`: loads from assets/orbit_demo.uzfx, finds orbit/pin/distance_constraint modules for validation.
+- [x] 3.6 Convert `sub_emitter_demo`: loads 3 .uzfx files (rocket/burst/sparkle), keeps manual readback cascade validation.
+- [x] 3.7 Convert `flipbook_animation`: loads from assets/flipbook_animation.uzfx, validates flipbook frame selection from loaded sprite module.
+- [x] 3.8 Convert `vector_field_demo`: loads from assets/vector_field_demo.uzfx, validates VectorFieldModule params + shader code.
+- [x] 3.9 Convert `distortion_effect`: loads 2 .uzfx files (heat_shimmer/glass_sphere), keeps DistortionConstants struct validation.
 - [ ] 3.10 Convert `trails` demo: use TrailSystem from engine, load config from asset. ~668 → ~40 lines.
 - [ ] 3.11 Convert `decals` demo: use DecalManager from engine, load config from asset. ~893 → ~40 lines.
 - [ ] 3.12 Convert `vfx_advanced` demo: use engine LOD + budget systems, load config from asset. ~448 → ~40 lines.

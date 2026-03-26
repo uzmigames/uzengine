@@ -1,60 +1,29 @@
-/// Particle Fountain Demo — Headless VFX system proof-of-concept.
+/// Particle Fountain Demo — Headless VFX proof-of-concept.
 ///
-/// Demonstrates the GPU particle system's CPU-side logic by creating a single
-/// emitter and ticking the VFX system for 180 frames (3 seconds at 60 FPS).
-/// Prints per-frame spawn statistics and a final summary.
-///
-/// This is a headless (no window, no GPU) demo that validates:
-/// - VFXSystem lifecycle (Initialize, Tick, Shutdown)
-/// - ParticleEmitter budget allocation and spawn accumulator
-/// - ParticleBudget lock-free allocation and return
-/// - GPUParticleBuffer creation via mock RHI device
-///
-/// # Build
-/// Compiled as part of the engine test suite or standalone:
-///   zig build -Ddemo=particle_fountain
-///
-/// # Parameters (matching task spec)
-/// - velocity:      [0, 10, 0]  (upward fountain)
-/// - gravity:       [0, -9.81, 0]
-/// - damping:       0.98
-/// - lifetime:      3.0 s
-/// - emission_rate: 1000 particles/sec
-/// - max_particles: 50000
-
-#include <chrono>
-#include <cstdint>
-#include <cstdio>
-#include <algorithm>
+/// Loads emitter configuration from assets/particle_fountain.uzfx,
+/// runs 180 frames of simulation, and validates spawn statistics.
 
 #include "mock_device.h"
-
-// ─────────────────────────────────────────────────────────────────────────────
-// VFX includes
-// ─────────────────────────────────────────────────────────────────────────────
-
 #include "engine/vfx/vfx_system.h"
 #include "engine/vfx/components/particle_emitter.h"
 #include "engine/vfx/core/particle_budget.h"
 #include "engine/vfx/core/gpu_particle_buffer.h"
 #include "engine/vfx/core/gpu_particle_sort.h"
+#include "engine/vfx/asset/uzfx_loader.h"
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Demo parameters
-// ─────────────────────────────────────────────────────────────────────────────
+#include <chrono>
+#include <cstdio>
+#include <fstream>
+#include <sstream>
+#include <algorithm>
 
-static constexpr uint32_t kMaxParticles   = 50000u;
-static constexpr float    kEmissionRate   = 1000.0f;   // particles/sec
-static constexpr float    kLifetime       = 3.0f;      // seconds
-static constexpr float    kDamping        = 0.98f;
-static constexpr float    kDt             = 1.0f / 60.0f;
-static constexpr int      kTotalFrames    = 180;       // 3 seconds at 60 FPS
-static constexpr int      kReportInterval = 30;        // print stats every N frames
-static constexpr uint32_t kBudgetMax      = 500000u;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Main
-// ─────────────────────────────────────────────────────────────────────────────
+static std::string ReadFile(const char* path) {
+    std::ifstream f(path);
+    if (!f.is_open()) return {};
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
+}
 
 int main() {
     std::printf("╔══════════════════════════════════════════════════════╗\n");
@@ -62,24 +31,31 @@ int main() {
     std::printf("║   Headless VFX + GPU Sort proof-of-concept          ║\n");
     std::printf("╚══════════════════════════════════════════════════════╝\n\n");
 
+    // ── Load .uzfx asset ────────────────────────────────────────────────
+    auto json = ReadFile("assets/particle_fountain.uzfx");
+    if (json.empty()) {
+        std::fprintf(stderr, "[Error] Cannot read assets/particle_fountain.uzfx\n");
+        return 1;
+    }
+    auto desc = uz::UzfxLoader::Load(json);
+    if (desc.name.empty()) {
+        std::fprintf(stderr, "[Error] Failed to parse particle_fountain.uzfx\n");
+        return 1;
+    }
+    std::printf("[Asset] Loaded '%s' (version %u)\n", desc.name.c_str(), desc.version);
+
     // ── Setup ──────────────────────────────────────────────────────────
     uz::DemoMockDevice device;
 
     uz::VFXSystem vfxSystem;
+    constexpr uint32_t kBudgetMax = 500000u;
     vfxSystem.Initialize(&device, kBudgetMax);
     std::printf("[Init] VFXSystem initialized — budget: %u particles\n", kBudgetMax);
 
+    // ── Instantiate emitter from .uzfx ─────────────────────────────────
     uz::ParticleEmitter emitter;
-    emitter.maxParticles  = kMaxParticles;
-    emitter.emissionRate  = kEmissionRate;
-    emitter.lifetime      = kLifetime;
-    emitter.gravity       = {0.0f, -9.81f, 0.0f};
-    emitter.damping       = kDamping;
-    emitter.spawnVelocity = {0.0f, 10.0f, 0.0f};
-    emitter.isEmitting    = true;
-
-    if (!emitter.Initialize(&device, vfxSystem.GetBudget())) {
-        std::fprintf(stderr, "[Error] Failed to initialize emitter\n");
+    if (!uz::UzfxLoader::Instantiate(desc, emitter, &device, vfxSystem.GetBudget())) {
+        std::fprintf(stderr, "[Error] Failed to instantiate emitter\n");
         vfxSystem.Shutdown(&device);
         return 1;
     }
@@ -88,16 +64,12 @@ int main() {
                 emitter.allocatedFromBudget,
                 vfxSystem.GetBudget().GetUsed(),
                 vfxSystem.GetBudget().GetMax());
-    std::printf("[Init] Parameters: rate=%.0f/s, lifetime=%.1fs, damping=%.2f\n",
-                kEmissionRate, kLifetime, kDamping);
-    std::printf("[Init] Velocity: [%.1f, %.1f, %.1f], Gravity: [%.1f, %.2f, %.1f]\n\n",
-                emitter.spawnVelocity.x, emitter.spawnVelocity.y, emitter.spawnVelocity.z,
-                emitter.gravity.x, emitter.gravity.y, emitter.gravity.z);
+    std::printf("[Init] Parameters: rate=%.0f/s, lifetime=%.1fs\n",
+                desc.emissionRate, desc.lifetime);
 
     // ── Sort buffer validation ─────────────────────────────────────────
     bool pass = true;
 
-    // Verify sort buffers were created by GPUParticleBuffer::Create().
     if (!emitter.buffer.sort.IsValid()) {
         std::fprintf(stderr, "[FAIL] Sort buffers not created\n");
         pass = false;
@@ -107,7 +79,6 @@ int main() {
                     emitter.buffer.sort.capacity);
     }
 
-    // Verify padded count is the correct power-of-two for the allocated capacity.
     const uint32_t expectedPadded = uz::NextPowerOfTwo(emitter.allocatedFromBudget);
     if (emitter.buffer.sort.GetPaddedCount() != expectedPadded) {
         std::fprintf(stderr, "[FAIL] Padded count %u != expected %u\n",
@@ -120,7 +91,6 @@ int main() {
 
     vfxSystem.RegisterEmitter(&emitter);
 
-    // If sort buffer validation already failed, abort early before simulation.
     if (!pass) {
         vfxSystem.UnregisterEmitter(&emitter);
         emitter.Shutdown(&device, vfxSystem.GetBudget());
@@ -130,6 +100,10 @@ int main() {
     }
 
     // ── Simulation loop ────────────────────────────────────────────────
+    constexpr float kDt          = 1.0f / 60.0f;
+    constexpr int   kTotalFrames = 180;
+    constexpr int   kReportInterval = 30;
+
     std::printf("%-8s  %-12s  %-12s  %-14s  %-10s\n",
                 "Frame", "Spawned", "Accumulator", "Budget Used", "Emitters");
     std::printf("──────── ──────────── ──────────── ────────────── ──────────\n");
@@ -140,17 +114,12 @@ int main() {
     const auto startTime = std::chrono::high_resolution_clock::now();
 
     for (int frame = 0; frame < kTotalFrames; ++frame) {
-        // Calculate spawn count (same as what VFXSystem::Tick does internally).
         const uint32_t spawnCount = emitter.CalculateSpawnCount(kDt);
         totalSpawned += spawnCount;
         peakSpawnPerFrame = std::max(peakSpawnPerFrame, spawnCount);
 
-        // Tick the system (this also calls CalculateSpawnCount internally,
-        // but since we already consumed this frame's spawn, the second call
-        // will return 0 — the accumulator was already drained).
         vfxSystem.Tick(kDt);
 
-        // Print stats at intervals and on first/last frames.
         if (frame == 0 || frame == kTotalFrames - 1 ||
             (frame + 1) % kReportInterval == 0) {
             std::printf("%-8d  %-12u  %-12.6f  %-14u  %-10u\n",
@@ -185,25 +154,21 @@ int main() {
     std::printf("──────────────────────────────────────────────\n");
 
     // ── Validation ─────────────────────────────────────────────────────
-    // (pass was initialized in the sort buffer validation section above)
-
-    // At 1000/sec × 3sec = 3000 expected spawns (may vary by ±1 due to accumulator).
+    // At 1000/sec x 3sec = 3000 expected spawns (may vary by +/-1 due to accumulator).
     if (totalSpawned < 2990 || totalSpawned > 3010) {
         std::fprintf(stderr, "[FAIL] Expected ~3000 total spawns, got %u\n", totalSpawned);
         pass = false;
     }
 
-    // Accumulator must be in [0, 1).
     if (emitter.spawnAccumulator < 0.0f || emitter.spawnAccumulator >= 1.0f) {
         std::fprintf(stderr, "[FAIL] Accumulator out of range: %.6f\n",
                      static_cast<double>(emitter.spawnAccumulator));
         pass = false;
     }
 
-    // Budget must still show the emitter's allocation.
-    if (vfxSystem.GetBudget().GetUsed() != kMaxParticles) {
+    if (vfxSystem.GetBudget().GetUsed() != desc.maxParticles) {
         std::fprintf(stderr, "[FAIL] Budget used=%u, expected %u\n",
-                     vfxSystem.GetBudget().GetUsed(), kMaxParticles);
+                     vfxSystem.GetBudget().GetUsed(), desc.maxParticles);
         pass = false;
     }
 
@@ -220,8 +185,11 @@ int main() {
     vfxSystem.Shutdown(&device);
 
     // ── Result ─────────────────────────────────────────────────────────
+    std::printf("\n[OK] %s: %u particles allocated, %d frames simulated\n",
+                desc.name.c_str(), emitter.allocatedFromBudget, kTotalFrames);
+
     if (pass) {
-        std::printf("\n[PASS] Particle fountain demo completed successfully.\n");
+        std::printf("[PASS] Particle fountain demo completed successfully.\n");
         return 0;
     } else {
         std::fprintf(stderr, "\n[FAIL] One or more validation checks failed.\n");

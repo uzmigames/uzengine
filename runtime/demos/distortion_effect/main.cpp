@@ -1,74 +1,46 @@
-/// Distortion Effect Demo -- Headless screen-space distortion VFX showcase.
+/// Distortion Effect Demo — Headless screen-space distortion VFX showcase.
 ///
-/// Demonstrates screen-space distortion by exercising the VFXSystem with two
-/// particle emitters that represent heat shimmer above a flame and a glass-sphere
-/// refraction source. The demo validates the DistortionConstants and
-/// DistortionResolveConstants struct layouts, populates DistortionEmitterData
-/// with mock buffer handles, and runs the full emitter tick loop.
-///
-/// This is a headless (no window, no GPU) demo that validates:
-/// - VFXSystem + two ParticleEmitters with separate distortion configurations
-/// - DistortionConstants layout: sizeof==16, distortionStrength default==1.0f
-/// - DistortionResolveConstants layout: sizeof==16
-/// - DistortionEmitterData population with mock pipeline and CB handles
-/// - Emitter spawn accumulation over 120 frames (2 s at 60 FPS)
-/// - Per-frame stats printed at report intervals
-///
-/// # Build
-///   cd demos/distortion_effect
-///   zig build
-///   ./zig-out/bin/distortion_effect
-///
-/// # Emitters
-/// - heat_shimmer: rate=200/s, lifetime=1.5s, velocity=(0,3,0), maxParticles=5000
-/// - glass_sphere:  rate=100/s, lifetime=3.0s, velocity=(0,0,0), maxParticles=2000
+/// Loads two emitter configurations from .uzfx assets (heat shimmer, glass sphere),
+/// validates distortion struct layouts, and runs 120 frames of simulation with
+/// per-frame spawn statistics.
+
+#include "mock_device.h"
+#include "engine/vfx/vfx_system.h"
+#include "engine/vfx/components/particle_emitter.h"
+#include "engine/vfx/core/particle_budget.h"
+#include "engine/vfx/modules/emitter_module_stack.h"
+#include "engine/vfx/asset/uzfx_loader.h"
+
+// Distortion pass struct definitions (no GPU execution -- header types only).
+#include "engine/vfx/passes/distortion_pass.h"
+#include "engine/vfx/passes/distortion_resolve_pass.h"
 
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <sstream>
 #include <algorithm>
 #include <memory>
 #include <string>
 
-#include "mock_device.h"
-
-// ─────────────────────────────────────────────────────────────────────────────
-// VFX includes
-// ─────────────────────────────────────────────────────────────────────────────
-
-#include "engine/vfx/vfx_system.h"
-#include "engine/vfx/components/particle_emitter.h"
-#include "engine/vfx/core/particle_budget.h"
-#include "engine/vfx/modules/emitter_module_stack.h"
-#include "engine/vfx/modules/spawn_module.h"
-#include "engine/vfx/modules/update_module.h"
-#include "engine/vfx/modules/decay_module.h"
-
-// Distortion pass struct definitions (no GPU execution — header types only).
-#include "engine/vfx/passes/distortion_pass.h"
-#include "engine/vfx/passes/distortion_resolve_pass.h"
+static std::string ReadFile(const char* path) {
+    std::ifstream f(path);
+    if (!f.is_open()) return {};
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Demo parameters
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// heat_shimmer emitter: high-rate, short-lived distortion above a flame source.
-static constexpr uint32_t kHeatMaxParticles  = 5000u;
-static constexpr float    kHeatEmissionRate  = 200.0f;   // particles/sec
-static constexpr float    kHeatLifetime      = 1.5f;     // seconds
-static constexpr float    kHeatSpreadAngle   = 25.0f;    // degrees -- narrow rising column
-
-/// glass_sphere emitter: lower rate, longer lifetime, sphere-distributed distortion.
-static constexpr uint32_t kGlassMaxParticles = 2000u;
-static constexpr float    kGlassEmissionRate = 100.0f;   // particles/sec
-static constexpr float    kGlassLifetime     = 3.0f;     // seconds
-static constexpr float    kGlassSpreadAngle  = 90.0f;    // degrees -- full hemisphere
-
 static constexpr float    kDt             = 1.0f / 60.0f;
-static constexpr int      kTotalFrames    = 120;          // 2 seconds at 60 FPS
-static constexpr int      kReportInterval = 30;           // print stats every N frames
+static constexpr int      kTotalFrames    = 120;
+static constexpr int      kReportInterval = 30;
 static constexpr uint32_t kBudgetMax      = 500000u;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -81,6 +53,31 @@ int main() {
     std::printf("  Heat shimmer + glass sphere (headless, no GPU)\n");
     std::printf("==========================================================\n\n");
 
+    // ── Load .uzfx assets ────────────────────────────────────────────────
+    auto heatJson = ReadFile("assets/distortion_heat_shimmer.uzfx");
+    if (heatJson.empty()) {
+        std::fprintf(stderr, "[Error] Cannot read assets/distortion_heat_shimmer.uzfx\n");
+        return 1;
+    }
+    auto heatDesc = uz::UzfxLoader::Load(heatJson);
+    if (heatDesc.name.empty()) {
+        std::fprintf(stderr, "[Error] Failed to parse distortion_heat_shimmer.uzfx\n");
+        return 1;
+    }
+    std::printf("[Asset] Loaded '%s' (version %u)\n", heatDesc.name.c_str(), heatDesc.version);
+
+    auto glassJson = ReadFile("assets/distortion_glass_sphere.uzfx");
+    if (glassJson.empty()) {
+        std::fprintf(stderr, "[Error] Cannot read assets/distortion_glass_sphere.uzfx\n");
+        return 1;
+    }
+    auto glassDesc = uz::UzfxLoader::Load(glassJson);
+    if (glassDesc.name.empty()) {
+        std::fprintf(stderr, "[Error] Failed to parse distortion_glass_sphere.uzfx\n");
+        return 1;
+    }
+    std::printf("[Asset] Loaded '%s' (version %u)\n\n", glassDesc.name.c_str(), glassDesc.version);
+
     // ── Setup ──────────────────────────────────────────────────────────
     uz::DemoMockDevice device;
 
@@ -88,60 +85,22 @@ int main() {
     vfxSystem.Initialize(&device, kBudgetMax);
     std::printf("[Init] VFXSystem initialized -- budget: %u particles\n\n", kBudgetMax);
 
-    // ── Emitter A: heat_shimmer ─────────────────────────────────────────
+    // ── Instantiate emitter A: heat_shimmer ─────────────────────────────
     uz::ParticleEmitter heatEmitter;
-    heatEmitter.maxParticles  = kHeatMaxParticles;
-    heatEmitter.emissionRate  = kHeatEmissionRate;
-    heatEmitter.lifetime      = kHeatLifetime;
-    heatEmitter.spawnVelocity = {0.0f, 3.0f, 0.0f};   // upward shimmer column
-    heatEmitter.spreadAngle   = kHeatSpreadAngle;
-    heatEmitter.gravity       = {0.0f, 0.5f, 0.0f};   // slight upward buoyancy
-    heatEmitter.damping       = 0.97f;
-    heatEmitter.isEmitting    = true;
-
-    if (!heatEmitter.Initialize(&device, vfxSystem.GetBudget())) {
-        std::fprintf(stderr, "[Error] Failed to initialize heat_shimmer emitter\n");
+    if (!uz::UzfxLoader::Instantiate(heatDesc, heatEmitter, &device, vfxSystem.GetBudget())) {
+        std::fprintf(stderr, "[Error] Failed to instantiate heat_shimmer emitter\n");
         vfxSystem.Shutdown(&device);
         return 1;
     }
 
     std::printf("[Init] heat_shimmer emitter initialized\n");
     std::printf("       capacity=%u  rate=%.1f/s  lifetime=%.2fs\n",
-                heatEmitter.allocatedFromBudget, kHeatEmissionRate, kHeatLifetime);
+                heatEmitter.allocatedFromBudget, heatDesc.emissionRate, heatDesc.lifetime);
 
-    // Build a basic module stack for heat_shimmer (spawn + update + decay).
-    {
-        auto& stack = heatEmitter.moduleStack;
-
-        auto spawnMod         = std::make_unique<uz::SpawnModule>();
-        spawnMod->rate        = kHeatEmissionRate;
-        spawnMod->spreadAngle = kHeatSpreadAngle;
-        spawnMod->velocity    = {0.0f, 3.0f, 0.0f};
-        spawnMod->lifespanMin = 0.5f;
-        spawnMod->lifespanMax = kHeatLifetime;
-        stack.AddSpawnModule(std::move(spawnMod));
-
-        auto updateMod    = std::make_unique<uz::UpdateModule>();
-        updateMod->gravity = {0.0f, 0.5f, 0.0f};
-        updateMod->drag    = 0.97f;
-        stack.AddUpdateModule(std::move(updateMod));
-
-        stack.AddUpdateModule(std::make_unique<uz::DecayModule>());
-    }
-
-    // ── Emitter B: glass_sphere ─────────────────────────────────────────
+    // ── Instantiate emitter B: glass_sphere ─────────────────────────────
     uz::ParticleEmitter glassEmitter;
-    glassEmitter.maxParticles  = kGlassMaxParticles;
-    glassEmitter.emissionRate  = kGlassEmissionRate;
-    glassEmitter.lifetime      = kGlassLifetime;
-    glassEmitter.spawnVelocity = {0.0f, 0.0f, 0.0f};  // no initial velocity -- sphere surface
-    glassEmitter.spreadAngle   = kGlassSpreadAngle;    // full hemisphere coverage
-    glassEmitter.gravity       = {0.0f, 0.0f, 0.0f};  // no gravity -- glass is static
-    glassEmitter.damping       = 1.0f;                 // no damping
-    glassEmitter.isEmitting    = true;
-
-    if (!glassEmitter.Initialize(&device, vfxSystem.GetBudget())) {
-        std::fprintf(stderr, "[Error] Failed to initialize glass_sphere emitter\n");
+    if (!uz::UzfxLoader::Instantiate(glassDesc, glassEmitter, &device, vfxSystem.GetBudget())) {
+        std::fprintf(stderr, "[Error] Failed to instantiate glass_sphere emitter\n");
         heatEmitter.Shutdown(&device, vfxSystem.GetBudget());
         vfxSystem.Shutdown(&device);
         return 1;
@@ -149,23 +108,7 @@ int main() {
 
     std::printf("[Init] glass_sphere emitter initialized\n");
     std::printf("       capacity=%u  rate=%.1f/s  lifetime=%.2fs\n\n",
-                glassEmitter.allocatedFromBudget, kGlassEmissionRate, kGlassLifetime);
-
-    // Build a basic module stack for glass_sphere (spawn + decay).
-    // No UpdateModule with gravity — glass sphere distortion is a static effect.
-    {
-        auto& stack = glassEmitter.moduleStack;
-
-        auto spawnMod         = std::make_unique<uz::SpawnModule>();
-        spawnMod->rate        = kGlassEmissionRate;
-        spawnMod->spreadAngle = kGlassSpreadAngle;
-        spawnMod->velocity    = {0.0f, 0.0f, 0.0f};
-        spawnMod->lifespanMin = 1.5f;
-        spawnMod->lifespanMax = kGlassLifetime;
-        stack.AddSpawnModule(std::move(spawnMod));
-
-        stack.AddUpdateModule(std::make_unique<uz::DecayModule>());
-    }
+                glassEmitter.allocatedFromBudget, glassDesc.emissionRate, glassDesc.lifetime);
 
     // ── Register emitters ────────────────────────────────────────────────
     vfxSystem.RegisterEmitter(&heatEmitter);
@@ -178,7 +121,6 @@ int main() {
 
     std::printf("\n── Distortion Struct Layout ─────────────────────────────────────\n");
 
-    // DistortionConstants: must be exactly 16 bytes.
     static_assert(sizeof(uz::DistortionConstants) == 16,
                   "DistortionConstants must be 16 bytes");
     {
@@ -194,7 +136,6 @@ int main() {
                     static_cast<double>(dc._pad1));
     }
 
-    // DistortionResolveConstants: must be exactly 16 bytes.
     static_assert(sizeof(uz::DistortionResolveConstants) == 16,
                   "DistortionResolveConstants must be 16 bytes");
     {
@@ -209,14 +150,11 @@ int main() {
                     drc._pad0, drc._pad1);
     }
 
-    // DistortionEmitterData: populate with mock handles to verify field access.
+    // DistortionEmitterData: populate with mock handles.
     {
         uz::DistortionEmitterData ded;
-        // Mock GPU buffer pointer -- points to heat emitter's buffer struct (valid for demo).
         ded.buffer = &heatEmitter.buffer;
-        // Assign a mock pipeline handle (heat shimmer distortion PSO).
         ded.pipeline = device.CreateGraphicsPipeline({});
-        // Assign mock CB allocations (non-null gpuAddr for heat shimmer).
         ded.billboardCB  = {nullptr, 0x1000, {0, 0}, 0, 256};
         ded.distortionCB = {nullptr, 0x2000, {0, 0}, 0, 256};
         ded.readSetSrvIndex = 42u;
@@ -291,19 +229,12 @@ int main() {
     std::printf("    Peak spawn/frame:        %u\n",  peakHeatPerFrame);
     std::printf("    Final accumulator:       %.6f\n",
                 static_cast<double>(heatEmitter.spawnAccumulator));
-    std::printf("    Distortion strength:     %.4f (default)\n", 1.0);
-    std::printf("    Velocity:                (0, 3, 0) cm/s upward column\n");
-    std::printf("    Lifetime:                %.2f s\n", kHeatLifetime);
     std::printf("\n");
     std::printf("  glass_sphere emitter:\n");
     std::printf("    Total particles spawned: %u\n",  totalGlassSpawned);
     std::printf("    Peak spawn/frame:        %u\n",  peakGlassPerFrame);
     std::printf("    Final accumulator:       %.6f\n",
                 static_cast<double>(glassEmitter.spawnAccumulator));
-    std::printf("    Distortion strength:     %.4f (default)\n", 1.0);
-    std::printf("    Spawn shape:             Point (spread=%.0f deg hemisphere)\n",
-                static_cast<double>(kGlassSpreadAngle));
-    std::printf("    Lifetime:                %.2f s\n", kGlassLifetime);
     std::printf("\n");
     std::printf("  Budget used:               %u / %u\n",
                 vfxSystem.GetBudget().GetUsed(),
@@ -330,11 +261,9 @@ int main() {
     }
 
     // Both emitters must have spawned particles over the 2-second run.
-    // heat_shimmer: 200/s x 2s = 400, glass_sphere: 100/s x 2s = 200.
-    // Apply a tolerance of 10 for accumulator rounding.
     {
-        const uint32_t expectedHeat  = static_cast<uint32_t>(kHeatEmissionRate  * kTotalFrames * kDt);
-        const uint32_t expectedGlass = static_cast<uint32_t>(kGlassEmissionRate * kTotalFrames * kDt);
+        const uint32_t expectedHeat  = static_cast<uint32_t>(heatDesc.emissionRate  * kTotalFrames * kDt);
+        const uint32_t expectedGlass = static_cast<uint32_t>(glassDesc.emissionRate * kTotalFrames * kDt);
         const uint32_t tolerance = 10;
 
         if (totalHeatSpawned < expectedHeat - tolerance ||
@@ -440,8 +369,11 @@ int main() {
     vfxSystem.Shutdown(&device);
 
     // ── Result ─────────────────────────────────────────────────────────
+    std::printf("\n[OK] Distortion effect: 2 emitters (heat=%u, glass=%u), %d frames\n",
+                heatEmitter.allocatedFromBudget, glassEmitter.allocatedFromBudget, kTotalFrames);
+
     if (pass) {
-        std::printf("\n[PASS] Distortion effect demo completed successfully.\n");
+        std::printf("[PASS] Distortion effect demo completed successfully.\n");
         return 0;
     } else {
         std::fprintf(stderr, "\n[FAIL] One or more validation checks failed.\n");

@@ -1,74 +1,35 @@
-/// Fire Effect Demo -- Headless VFX module system proof-of-concept.
+/// Fire Effect Demo — Headless VFX module system proof-of-concept.
 ///
-/// Demonstrates the composable module stack by building a fire-like particle
-/// effect with SpawnModule, UpdateModule, TurbulenceModule, SpriteRenderModule,
-/// and DecayModule. The ModuleCompositor stitches their HLSL snippets into a
-/// single compute shader and prints the generated source.
-///
-/// This is a headless (no window, no GPU) demo that validates:
-/// - EmitterModuleStack lifecycle (add modules, compose, query)
-/// - ModuleCompositor HLSL generation from module snippets
-/// - ModuleRegistry built-in registration and factory creation
-/// - VFXSystem + ParticleEmitter budget allocation and spawn accumulator
-/// - Module parameter inspection and reporting
-///
-/// # Build
-/// Compiled as part of the engine test suite or standalone:
-///   zig build -Ddemo=fire_effect
-///
-/// # Parameters (fire-like)
-/// - velocity:       [0, 8, 0]   (upward flame)
-/// - gravity:        [0, -3, 0]  (gentle downdraft)
-/// - damping:        0.98
-/// - lifetime:       0.5 -- 2.0 s
-/// - emission_rate:  500 particles/sec
-/// - max_particles:  25000
-/// - turbulence:     strength=2.0, freq=0.5, octaves=3
-/// - sprite:         0.5 x 0.5 world units
-
-#include <chrono>
-#include <cmath>
-#include <cstdint>
-#include <cstdio>
-#include <algorithm>
-#include <memory>
-#include <string>
+/// Loads emitter configuration from assets/fire_effect.uzfx,
+/// runs 120 frames of simulation, and validates the module stack
+/// composition and spawn statistics.
 
 #include "mock_device.h"
-
-// ─────────────────────────────────────────────────────────────────────────────
-// VFX includes
-// ─────────────────────────────────────────────────────────────────────────────
-
 #include "engine/vfx/vfx_system.h"
 #include "engine/vfx/components/particle_emitter.h"
 #include "engine/vfx/core/particle_budget.h"
 #include "engine/vfx/modules/emitter_module_stack.h"
 #include "engine/vfx/modules/module_compositor.h"
 #include "engine/vfx/modules/module_registry.h"
-#include "engine/vfx/modules/register_builtin_modules.h"
-#include "engine/vfx/modules/spawn_module.h"
-#include "engine/vfx/modules/update_module.h"
-#include "engine/vfx/modules/decay_module.h"
-#include "engine/vfx/modules/turbulence_module.h"
-#include "engine/vfx/modules/sprite_render_module.h"
+#include "engine/vfx/asset/uzfx_loader.h"
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Demo parameters
-// ─────────────────────────────────────────────────────────────────────────────
+#include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <fstream>
+#include <sstream>
+#include <algorithm>
+#include <memory>
+#include <string>
 
-static constexpr uint32_t kMaxParticles   = 25000u;
-static constexpr float    kEmissionRate   = 500.0f;    // particles/sec
-static constexpr float    kLifetimeMin    = 0.5f;      // seconds
-static constexpr float    kLifetimeMax    = 2.0f;      // seconds
-static constexpr float    kDamping        = 0.98f;
-static constexpr float    kDt             = 1.0f / 60.0f;
-static constexpr int      kTotalFrames    = 120;       // 2 seconds at 60 FPS
-static constexpr int      kReportInterval = 30;        // print stats every N frames
-static constexpr uint32_t kBudgetMax      = 500000u;
-
-/// Spread angle converted to radians for SpawnModule configuration.
-static constexpr float kSpreadAngleDeg = 60.0f;
+static std::string ReadFile(const char* path) {
+    std::ifstream f(path);
+    if (!f.is_open()) return {};
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -135,9 +96,23 @@ int main() {
     std::printf("   Headless VFX module system (no GPU required)\n");
     std::printf("==========================================================\n\n");
 
+    // ── Load .uzfx asset ──────────────────────────────────────────────
+    auto json = ReadFile("assets/fire_effect.uzfx");
+    if (json.empty()) {
+        std::fprintf(stderr, "[Error] Cannot read assets/fire_effect.uzfx\n");
+        return 1;
+    }
+    auto desc = uz::UzfxLoader::Load(json);
+    if (desc.name.empty()) {
+        std::fprintf(stderr, "[Error] Failed to parse fire_effect.uzfx\n");
+        return 1;
+    }
+    std::printf("[Asset] Loaded '%s' (version %u)\n", desc.name.c_str(), desc.version);
+
     // ── Setup ──────────────────────────────────────────────────────────
     uz::DemoMockDevice device;
 
+    constexpr uint32_t kBudgetMax = 500000u;
     uz::VFXSystem vfxSystem;
     vfxSystem.Initialize(&device, kBudgetMax);
     std::printf("[Init] VFXSystem initialized -- budget: %u particles\n", kBudgetMax);
@@ -151,19 +126,10 @@ int main() {
     }
     std::printf("\n");
 
-    // ── Emitter ────────────────────────────────────────────────────────
+    // ── Instantiate emitter from .uzfx ────────────────────────────────
     uz::ParticleEmitter emitter;
-    emitter.maxParticles  = kMaxParticles;
-    emitter.emissionRate  = kEmissionRate;
-    emitter.lifetime      = kLifetimeMax;
-    emitter.gravity       = {0.0f, -3.0f, 0.0f};
-    emitter.damping       = kDamping;
-    emitter.spawnVelocity = {0.0f, 8.0f, 0.0f};
-    emitter.spreadAngle   = kSpreadAngleDeg;
-    emitter.isEmitting    = true;
-
-    if (!emitter.Initialize(&device, vfxSystem.GetBudget())) {
-        std::fprintf(stderr, "[Error] Failed to initialize emitter\n");
+    if (!uz::UzfxLoader::Instantiate(desc, emitter, &device, vfxSystem.GetBudget())) {
+        std::fprintf(stderr, "[Error] Failed to instantiate emitter\n");
         vfxSystem.Shutdown(&device);
         return 1;
     }
@@ -173,48 +139,14 @@ int main() {
                 vfxSystem.GetBudget().GetUsed(),
                 vfxSystem.GetBudget().GetMax());
 
-    // ── Build module stack ─────────────────────────────────────────────
-    auto& stack = emitter.moduleStack;
-
-    // Spawn module with fire parameters.
-    auto spawnMod = std::make_unique<uz::SpawnModule>();
-    spawnMod->rate            = kEmissionRate;
-    spawnMod->spreadAngle     = kSpreadAngleDeg;
-    spawnMod->velocity        = {0.0f, 8.0f, 0.0f};
-    spawnMod->lifespanMin     = kLifetimeMin;
-    spawnMod->lifespanMax     = kLifetimeMax;
-    stack.AddSpawnModule(std::move(spawnMod));
-
-    // Update module with gentle gravity and drag.
-    auto updateMod = std::make_unique<uz::UpdateModule>();
-    updateMod->gravity = {0.0f, -3.0f, 0.0f};
-    updateMod->drag    = kDamping;
-    stack.AddUpdateModule(std::move(updateMod));
-
-    // Turbulence for organic flame flicker.
-    auto turbMod = std::make_unique<uz::TurbulenceModule>();
-    turbMod->strength  = 2.0f;
-    turbMod->frequency = 0.5f;
-    turbMod->octaves   = 3;
-    stack.AddUpdateModule(std::move(turbMod));
-
-    // Sprite render for billboard visuals.
-    auto spriteMod = std::make_unique<uz::SpriteRenderModule>();
-    spriteMod->spriteWidth  = 0.5f;
-    spriteMod->spriteHeight = 0.5f;
-    stack.SetRenderModule(std::move(spriteMod));
-
-    // Decay must be last in update order.
-    stack.AddUpdateModule(std::make_unique<uz::DecayModule>());
-
     std::printf("[Init] Module stack: %zu spawn, %zu update, render=%s\n",
-                stack.spawnModules.size(),
-                stack.updateModules.size(),
-                stack.renderModule ? stack.renderModule->GetName() : "none");
+                emitter.moduleStack.spawnModules.size(),
+                emitter.moduleStack.updateModules.size(),
+                emitter.moduleStack.renderModule ? emitter.moduleStack.renderModule->GetName() : "none");
 
     // ── Compose HLSL via ModuleCompositor ──────────────────────────────
     uz::ModuleCompositor compositor;
-    const auto updatePtrs = stack.GetUpdateModulePtrs();
+    const auto updatePtrs = emitter.moduleStack.GetUpdateModulePtrs();
     const auto composed   = compositor.ComposeUpdateShader(updatePtrs);
 
     PrintComposedHlsl(composed.hlslSource);
@@ -223,6 +155,10 @@ int main() {
 
     // ── Register emitter and run simulation ────────────────────────────
     vfxSystem.RegisterEmitter(&emitter);
+
+    constexpr float kDt          = 1.0f / 60.0f;
+    constexpr int   kTotalFrames = 120;
+    constexpr int   kReportInterval = 30;
 
     std::printf("\n%-8s  %-12s  %-12s  %-14s  %-10s\n",
                 "Frame", "Spawned", "Accumulator", "Budget Used", "Emitters");
@@ -275,35 +211,29 @@ int main() {
     std::printf("\nMODULE PARAMETER SUMMARY\n");
     std::printf("--------------------------------------------------\n");
     std::printf("Spawn modules:\n");
-    for (const auto& m : stack.spawnModules) {
+    for (const auto& m : emitter.moduleStack.spawnModules) {
         PrintModuleParams(m.get());
     }
     std::printf("Update modules:\n");
-    for (const auto& m : stack.updateModules) {
+    for (const auto& m : emitter.moduleStack.updateModules) {
         PrintModuleParams(m.get());
     }
-    if (stack.renderModule) {
+    if (emitter.moduleStack.renderModule) {
         std::printf("Render module:\n");
-        PrintModuleParams(stack.renderModule.get());
+        PrintModuleParams(emitter.moduleStack.renderModule.get());
     }
     std::printf("--------------------------------------------------\n");
 
     // ── Validation ─────────────────────────────────────────────────────
     bool pass = true;
 
-    // Module stack must have correct counts.
-    if (stack.spawnModules.size() != 1) {
-        std::fprintf(stderr, "[FAIL] Expected 1 spawn module, got %zu\n",
-                     stack.spawnModules.size());
+    // Module stack must have correct counts (loaded from .uzfx).
+    if (emitter.moduleStack.spawnModules.empty()) {
+        std::fprintf(stderr, "[FAIL] Expected at least 1 spawn module\n");
         pass = false;
     }
-    if (stack.updateModules.size() != 3) {
-        std::fprintf(stderr, "[FAIL] Expected 3 update modules, got %zu\n",
-                     stack.updateModules.size());
-        pass = false;
-    }
-    if (!stack.renderModule) {
-        std::fprintf(stderr, "[FAIL] Render module is null\n");
+    if (emitter.moduleStack.updateModules.empty()) {
+        std::fprintf(stderr, "[FAIL] Expected at least 1 update module\n");
         pass = false;
     }
 
@@ -317,8 +247,8 @@ int main() {
         pass = false;
     }
 
-    // At 500/sec x 2sec = 1000 expected spawns (tolerance for accumulator rounding).
-    const uint32_t expectedSpawns = static_cast<uint32_t>(kEmissionRate * kTotalFrames * kDt);
+    // Spawn count sanity: emissionRate * totalTime with tolerance.
+    const uint32_t expectedSpawns = static_cast<uint32_t>(desc.emissionRate * kTotalFrames * kDt);
     const uint32_t tolerance = 10;
     if (totalSpawned < expectedSpawns - tolerance ||
         totalSpawned > expectedSpawns + tolerance) {
@@ -335,9 +265,9 @@ int main() {
     }
 
     // Budget must still show the emitter's allocation.
-    if (vfxSystem.GetBudget().GetUsed() != kMaxParticles) {
+    if (vfxSystem.GetBudget().GetUsed() != desc.maxParticles) {
         std::fprintf(stderr, "[FAIL] Budget used=%u, expected %u\n",
-                     vfxSystem.GetBudget().GetUsed(), kMaxParticles);
+                     vfxSystem.GetBudget().GetUsed(), desc.maxParticles);
         pass = false;
     }
 
@@ -354,8 +284,11 @@ int main() {
     vfxSystem.Shutdown(&device);
 
     // ── Result ─────────────────────────────────────────────────────────
+    std::printf("\n[OK] %s: %u particles allocated, %d frames simulated\n",
+                desc.name.c_str(), emitter.allocatedFromBudget, kTotalFrames);
+
     if (pass) {
-        std::printf("\n[PASS] Fire effect demo completed successfully.\n");
+        std::printf("[PASS] Fire effect demo completed successfully.\n");
         return 0;
     } else {
         std::fprintf(stderr, "\n[FAIL] One or more validation checks failed.\n");

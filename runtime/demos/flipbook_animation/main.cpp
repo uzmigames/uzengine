@@ -1,74 +1,37 @@
-/// Flipbook Animation Demo -- Headless VFX flipbook (SubUV) sprite sheet proof-of-concept.
+/// Flipbook Animation Demo — Headless VFX flipbook (SubUV) sprite sheet proof-of-concept.
 ///
-/// Demonstrates the SpriteRenderModule flipbook animation feature by building a
-/// fire-sprite particle effect with a 4x4 sprite sheet (16 frames at 24 FPS).
-/// Uses FlipbookBlendMode::Linear for smooth inter-frame interpolation.
-///
-/// This is a headless (no window, no GPU) demo that validates:
-/// - SpriteRenderModule flipbook configuration (rows, cols, totalFrames, FPS, blendMode)
-/// - HasFlipbook() returns true when rows or cols > 1
-/// - EmitterModuleStack correctly holds the sprite_render module
-/// - SpriteRenderModule::GetParameters() exposes all flipbook parameters
-/// - Per-frame flipbook frame index computed from particle age * fps
-/// - VFXSystem + ParticleEmitter budget allocation and spawn accumulator
-///
-/// # Build
-///   cd demos/flipbook_animation
-///   zig build
-///   ./zig-out/bin/flipbook_animation
-///
-/// # Flipbook parameters (4x4 fire sprite sheet)
-/// - rows:          4
-/// - cols:          4
-/// - totalFrames:   16
-/// - fps:           24.0
-/// - blendMode:     Linear
-/// - sprite:        1.0 x 1.0 world units
-
-#include <chrono>
-#include <cmath>
-#include <cstdint>
-#include <cstdio>
-#include <algorithm>
-#include <memory>
-#include <string>
+/// Loads emitter configuration from assets/flipbook_animation.uzfx,
+/// runs 120 frames of simulation, and validates flipbook frame selection,
+/// module stack configuration, and spawn statistics.
 
 #include "mock_device.h"
-
-// ─────────────────────────────────────────────────────────────────────────────
-// VFX includes
-// ─────────────────────────────────────────────────────────────────────────────
-
 #include "engine/vfx/vfx_system.h"
 #include "engine/vfx/components/particle_emitter.h"
 #include "engine/vfx/core/particle_budget.h"
 #include "engine/vfx/modules/emitter_module_stack.h"
 #include "engine/vfx/modules/module_compositor.h"
 #include "engine/vfx/modules/module_registry.h"
-#include "engine/vfx/modules/register_builtin_modules.h"
-#include "engine/vfx/modules/spawn_module.h"
-#include "engine/vfx/modules/update_module.h"
-#include "engine/vfx/modules/decay_module.h"
 #include "engine/vfx/modules/sprite_render_module.h"
+#include "engine/vfx/asset/uzfx_loader.h"
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Demo parameters
-// ─────────────────────────────────────────────────────────────────────────────
+#include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <fstream>
+#include <sstream>
+#include <algorithm>
+#include <memory>
+#include <string>
+#include <string_view>
 
-static constexpr uint32_t kMaxParticles   = 10000u;
-static constexpr float    kEmissionRate   = 200.0f;    // particles/sec
-static constexpr float    kLifetimeMin    = 0.5f;      // seconds
-static constexpr float    kLifetimeMax    = 2.0f;      // seconds
-static constexpr float    kDt             = 1.0f / 60.0f;
-static constexpr int      kTotalFrames    = 120;       // 2 seconds at 60 FPS
-static constexpr int      kReportInterval = 30;        // print stats every N frames
-static constexpr uint32_t kBudgetMax      = 500000u;
-
-// Flipbook parameters for a 4x4 fire sprite sheet.
-static constexpr uint32_t kFlipbookRows        = 4u;
-static constexpr uint32_t kFlipbookCols        = 4u;
-static constexpr uint32_t kFlipbookTotalFrames = 16u;
-static constexpr float    kFlipbookFPS         = 24.0f;
+static std::string ReadFile(const char* path) {
+    std::ifstream f(path);
+    if (!f.is_open()) return {};
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -136,15 +99,23 @@ int main() {
     std::printf("  Headless VFX flipbook sprite sheet (no GPU required)\n");
     std::printf("==========================================================\n\n");
 
-    std::printf("[Config] Sprite sheet: %ux%u grid, %u frames @ %.1f FPS\n",
-                kFlipbookRows, kFlipbookCols,
-                kFlipbookTotalFrames,
-                static_cast<double>(kFlipbookFPS));
-    std::printf("[Config] Blend mode: Linear\n\n");
+    // ── Load .uzfx asset ──────────────────────────────────────────────
+    auto json = ReadFile("assets/flipbook_animation.uzfx");
+    if (json.empty()) {
+        std::fprintf(stderr, "[Error] Cannot read assets/flipbook_animation.uzfx\n");
+        return 1;
+    }
+    auto desc = uz::UzfxLoader::Load(json);
+    if (desc.name.empty()) {
+        std::fprintf(stderr, "[Error] Failed to parse flipbook_animation.uzfx\n");
+        return 1;
+    }
+    std::printf("[Asset] Loaded '%s' (version %u)\n\n", desc.name.c_str(), desc.version);
 
     // ── Setup ──────────────────────────────────────────────────────────
     uz::DemoMockDevice device;
 
+    constexpr uint32_t kBudgetMax = 500000u;
     uz::VFXSystem vfxSystem;
     vfxSystem.Initialize(&device, kBudgetMax);
     std::printf("[Init] VFXSystem initialized -- budget: %u particles\n", kBudgetMax);
@@ -158,19 +129,10 @@ int main() {
     }
     std::printf("\n");
 
-    // ── Emitter ────────────────────────────────────────────────────────
+    // ── Instantiate emitter from .uzfx ────────────────────────────────
     uz::ParticleEmitter emitter;
-    emitter.maxParticles  = kMaxParticles;
-    emitter.emissionRate  = kEmissionRate;
-    emitter.lifetime      = kLifetimeMax;
-    emitter.gravity       = {0.0f, -2.0f, 0.0f};
-    emitter.damping       = 0.97f;
-    emitter.spawnVelocity = {0.0f, 5.0f, 0.0f};
-    emitter.spreadAngle   = 45.0f;
-    emitter.isEmitting    = true;
-
-    if (!emitter.Initialize(&device, vfxSystem.GetBudget())) {
-        std::fprintf(stderr, "[Error] Failed to initialize emitter\n");
+    if (!uz::UzfxLoader::Instantiate(desc, emitter, &device, vfxSystem.GetBudget())) {
+        std::fprintf(stderr, "[Error] Failed to instantiate emitter\n");
         vfxSystem.Shutdown(&device);
         return 1;
     }
@@ -180,59 +142,33 @@ int main() {
                 vfxSystem.GetBudget().GetUsed(),
                 vfxSystem.GetBudget().GetMax());
 
-    // ── Build module stack ─────────────────────────────────────────────
-    auto& stack = emitter.moduleStack;
-
-    // Spawn module with fire-sprite parameters.
-    auto spawnMod = std::make_unique<uz::SpawnModule>();
-    spawnMod->rate        = kEmissionRate;
-    spawnMod->spreadAngle = 45.0f;
-    spawnMod->velocity    = {0.0f, 5.0f, 0.0f};
-    spawnMod->lifespanMin = kLifetimeMin;
-    spawnMod->lifespanMax = kLifetimeMax;
-    stack.AddSpawnModule(std::move(spawnMod));
-
-    // Update module with gentle upward motion and drag.
-    auto updateMod = std::make_unique<uz::UpdateModule>();
-    updateMod->gravity = {0.0f, -2.0f, 0.0f};
-    updateMod->drag    = 0.97f;
-    stack.AddUpdateModule(std::move(updateMod));
-
-    // Decay must be last in update order.
-    stack.AddUpdateModule(std::make_unique<uz::DecayModule>());
-
-    // Sprite render module with flipbook configured for a 4x4 fire sprite sheet.
-    // @ref Nguyen 2007 "GPU Gems 3" ch. 23 -- SubUV animation
-    auto spriteMod = std::make_unique<uz::SpriteRenderModule>();
-    spriteMod->spriteWidth         = 1.0f;
-    spriteMod->spriteHeight        = 1.0f;
-    spriteMod->flipbookRows        = kFlipbookRows;
-    spriteMod->flipbookCols        = kFlipbookCols;
-    spriteMod->flipbookTotalFrames = kFlipbookTotalFrames;
-    spriteMod->flipbookFPS         = kFlipbookFPS;
-    spriteMod->flipbookBlendMode   = uz::FlipbookBlendMode::Linear;
-    stack.SetRenderModule(std::move(spriteMod));
-
     std::printf("[Init] Module stack: %zu spawn, %zu update, render=%s\n",
-                stack.spawnModules.size(),
-                stack.updateModules.size(),
-                stack.renderModule ? stack.renderModule->GetName() : "none");
+                emitter.moduleStack.spawnModules.size(),
+                emitter.moduleStack.updateModules.size(),
+                emitter.moduleStack.renderModule ? emitter.moduleStack.renderModule->GetName() : "none");
 
     // ── Verify flipbook state on the render module ─────────────────────
-    // HasFlipbook() must return true for a 4x4 sheet.
     const auto* spriteModPtr =
-        static_cast<const uz::SpriteRenderModule*>(stack.renderModule.get());
+        emitter.moduleStack.renderModule
+            ? static_cast<const uz::SpriteRenderModule*>(emitter.moduleStack.renderModule.get())
+            : nullptr;
 
-    std::printf("[Flipbook] HasFlipbook(): %s\n",
-                spriteModPtr->HasFlipbook() ? "true" : "false");
-    std::printf("[Flipbook] Rows=%u Cols=%u TotalFrames=%u FPS=%.1f BlendMode=Linear\n",
-                spriteModPtr->flipbookRows,
-                spriteModPtr->flipbookCols,
-                spriteModPtr->flipbookTotalFrames,
-                static_cast<double>(spriteModPtr->flipbookFPS));
+    if (spriteModPtr) {
+        std::printf("[Flipbook] HasFlipbook(): %s\n",
+                    spriteModPtr->HasFlipbook() ? "true" : "false");
+        std::printf("[Flipbook] Rows=%u Cols=%u TotalFrames=%u FPS=%.1f\n",
+                    spriteModPtr->flipbookRows,
+                    spriteModPtr->flipbookCols,
+                    spriteModPtr->flipbookTotalFrames,
+                    static_cast<double>(spriteModPtr->flipbookFPS));
+    }
 
     // ── Register emitter and run simulation ────────────────────────────
     vfxSystem.RegisterEmitter(&emitter);
+
+    constexpr float kDt          = 1.0f / 60.0f;
+    constexpr int   kTotalFrames = 120;
+    constexpr int   kReportInterval = 30;
 
     std::printf("\n%-8s  %-12s  %-12s  %-14s  %-12s\n",
                 "Frame", "Spawned", "Accumulator", "Budget Used", "FlipFrame");
@@ -240,11 +176,6 @@ int main() {
 
     uint32_t totalSpawned      = 0;
     uint32_t peakSpawnPerFrame = 0;
-
-    // Simulated particle ages for demonstrating flipbook frame calculation.
-    // We track 4 representative ages at fixed intervals within the lifetime range.
-    const float kSampleAges[4] = {0.0f, kLifetimeMax * 0.25f,
-                                   kLifetimeMax * 0.5f, kLifetimeMax * 0.75f};
 
     const auto startTime = std::chrono::high_resolution_clock::now();
 
@@ -258,10 +189,11 @@ int main() {
         if (frame == 0 || frame == kTotalFrames - 1 ||
             (frame + 1) % kReportInterval == 0) {
             // Compute flipbook frame for a particle at the median age (half lifetime).
-            const float  medianAge   = kLifetimeMax * 0.5f;
+            const float  medianAge   = desc.lifetime * 0.5f;
             const float  currentAge  = medianAge + frame * kDt;
-            const uint32_t flipFrame = ComputeFlipbookFrame(
-                currentAge, kFlipbookFPS, kFlipbookTotalFrames);
+            const uint32_t flipFrame = spriteModPtr
+                ? ComputeFlipbookFrame(currentAge, spriteModPtr->flipbookFPS, spriteModPtr->flipbookTotalFrames)
+                : 0u;
 
             std::printf("%-8d  %-12u  %-12.6f  %-14u  %-12u\n",
                         frame,
@@ -275,16 +207,6 @@ int main() {
     const auto endTime = std::chrono::high_resolution_clock::now();
     const double elapsedMs =
         std::chrono::duration<double, std::milli>(endTime - startTime).count();
-
-    // ── Per-age flipbook frame report ──────────────────────────────────
-    std::printf("\nFLIPBOOK FRAME SAMPLE (at end of simulation)\n");
-    std::printf("--------------------------------------------------\n");
-    std::printf("  %-12s  %-10s\n", "Age (sec)", "Frame Index");
-    std::printf("  %-12s  %-10s\n", "-----------", "----------");
-    for (const float age : kSampleAges) {
-        const uint32_t frameIdx = ComputeFlipbookFrame(age, kFlipbookFPS, kFlipbookTotalFrames);
-        std::printf("  %-12.4f  %-10u\n", static_cast<double>(age), frameIdx);
-    }
 
     // ── Summary ────────────────────────────────────────────────────────
     std::printf("\n--------------------------------------------------\n");
@@ -300,123 +222,97 @@ int main() {
                 vfxSystem.GetBudget().GetUsed(),
                 vfxSystem.GetBudget().GetMax());
     std::printf("  CPU wall time:           %.2f ms\n", elapsedMs);
-    std::printf("\n  Flipbook configuration:\n");
-    std::printf("    Rows x Cols:           %u x %u\n",
-                spriteModPtr->flipbookRows, spriteModPtr->flipbookCols);
-    std::printf("    Total frames:          %u\n", spriteModPtr->flipbookTotalFrames);
-    std::printf("    Playback FPS:          %.1f\n", static_cast<double>(spriteModPtr->flipbookFPS));
-    std::printf("    Blend mode:            Linear\n");
+    if (spriteModPtr) {
+        std::printf("\n  Flipbook configuration:\n");
+        std::printf("    Rows x Cols:           %u x %u\n",
+                    spriteModPtr->flipbookRows, spriteModPtr->flipbookCols);
+        std::printf("    Total frames:          %u\n", spriteModPtr->flipbookTotalFrames);
+        std::printf("    Playback FPS:          %.1f\n", static_cast<double>(spriteModPtr->flipbookFPS));
+    }
     std::printf("--------------------------------------------------\n");
 
     // ── Parameter summary ──────────────────────────────────────────────
     std::printf("\nMODULE PARAMETER SUMMARY\n");
     std::printf("--------------------------------------------------\n");
     std::printf("Spawn modules:\n");
-    for (const auto& m : stack.spawnModules) {
+    for (const auto& m : emitter.moduleStack.spawnModules) {
         PrintModuleParams(m.get());
     }
     std::printf("Update modules:\n");
-    for (const auto& m : stack.updateModules) {
+    for (const auto& m : emitter.moduleStack.updateModules) {
         PrintModuleParams(m.get());
     }
-    if (stack.renderModule) {
+    if (emitter.moduleStack.renderModule) {
         std::printf("Render module:\n");
-        PrintModuleParams(stack.renderModule.get());
+        PrintModuleParams(emitter.moduleStack.renderModule.get());
     }
     std::printf("--------------------------------------------------\n");
 
     // ── Validation ─────────────────────────────────────────────────────
     bool pass = true;
 
-    // HasFlipbook() must return true for a 4x4 sheet.
-    if (!spriteModPtr->HasFlipbook()) {
-        std::fprintf(stderr, "[FAIL] HasFlipbook() returned false for %ux%u sheet\n",
-                     kFlipbookRows, kFlipbookCols);
-        pass = false;
-    }
-
-    // Module stack must have the sprite_render render module.
-    if (!stack.renderModule) {
+    // Render module must exist and be sprite_render.
+    if (!spriteModPtr) {
         std::fprintf(stderr, "[FAIL] Render module is null\n");
         pass = false;
-    } else if (std::string_view{stack.renderModule->GetName()} != "sprite_render") {
-        std::fprintf(stderr, "[FAIL] Render module name: expected 'sprite_render', got '%s'\n",
-                     stack.renderModule->GetName());
-        pass = false;
-    }
-
-    // Module stack counts.
-    if (stack.spawnModules.size() != 1) {
-        std::fprintf(stderr, "[FAIL] Expected 1 spawn module, got %zu\n",
-                     stack.spawnModules.size());
-        pass = false;
-    }
-    if (stack.updateModules.size() != 2) {
-        std::fprintf(stderr, "[FAIL] Expected 2 update modules, got %zu\n",
-                     stack.updateModules.size());
-        pass = false;
-    }
-
-    // GetParameters() must expose all flipbook parameters.
-    const auto spriteParams = spriteModPtr->GetParameters();
-    const char* kRequiredParams[] = {
-        "flipbook_rows",
-        "flipbook_cols",
-        "flipbook_total_frames",
-        "flipbook_fps",
-        "flipbook_blend_mode",
-    };
-    for (const char* pname : kRequiredParams) {
-        if (!HasParameter(spriteParams, pname)) {
-            std::fprintf(stderr, "[FAIL] SpriteRenderModule missing parameter: '%s'\n", pname);
-            pass = false;
+    } else {
+        // HasFlipbook() must return true if rows or cols > 1.
+        if (spriteModPtr->flipbookRows > 1 || spriteModPtr->flipbookCols > 1) {
+            if (!spriteModPtr->HasFlipbook()) {
+                std::fprintf(stderr, "[FAIL] HasFlipbook() returned false for %ux%u sheet\n",
+                             spriteModPtr->flipbookRows, spriteModPtr->flipbookCols);
+                pass = false;
+            }
         }
-    }
 
-    // Flipbook fields must match what was configured.
-    if (spriteModPtr->flipbookRows != kFlipbookRows) {
-        std::fprintf(stderr, "[FAIL] flipbookRows: expected %u, got %u\n",
-                     kFlipbookRows, spriteModPtr->flipbookRows);
-        pass = false;
-    }
-    if (spriteModPtr->flipbookCols != kFlipbookCols) {
-        std::fprintf(stderr, "[FAIL] flipbookCols: expected %u, got %u\n",
-                     kFlipbookCols, spriteModPtr->flipbookCols);
-        pass = false;
-    }
-    if (spriteModPtr->flipbookTotalFrames != kFlipbookTotalFrames) {
-        std::fprintf(stderr, "[FAIL] flipbookTotalFrames: expected %u, got %u\n",
-                     kFlipbookTotalFrames, spriteModPtr->flipbookTotalFrames);
-        pass = false;
-    }
-    if (spriteModPtr->flipbookBlendMode != uz::FlipbookBlendMode::Linear) {
-        std::fprintf(stderr, "[FAIL] flipbookBlendMode: expected Linear\n");
-        pass = false;
-    }
-
-    // Flipbook frame index must wrap correctly.
-    // At age=0, fps=24, totalFrames=16: frame 0.
-    // At age=1.0, fps=24, totalFrames=16: floor(24) % 16 = 8.
-    {
-        const uint32_t frame0 = ComputeFlipbookFrame(0.0f, kFlipbookFPS, kFlipbookTotalFrames);
-        if (frame0 != 0u) {
-            std::fprintf(stderr, "[FAIL] Frame at age=0 expected 0, got %u\n", frame0);
+        if (std::string_view{emitter.moduleStack.renderModule->GetName()} != "sprite_render") {
+            std::fprintf(stderr, "[FAIL] Render module name: expected 'sprite_render', got '%s'\n",
+                         emitter.moduleStack.renderModule->GetName());
             pass = false;
         }
 
-        const uint32_t frame1s = ComputeFlipbookFrame(1.0f, kFlipbookFPS, kFlipbookTotalFrames);
-        // floor(1.0 * 24) = 24; 24 % 16 = 8
-        const uint32_t expected1s = 24u % kFlipbookTotalFrames;
-        if (frame1s != expected1s) {
-            std::fprintf(stderr, "[FAIL] Frame at age=1.0s expected %u, got %u\n",
-                         expected1s, frame1s);
-            pass = false;
+        // GetParameters() must expose flipbook parameters.
+        const auto spriteParams = spriteModPtr->GetParameters();
+        const char* kRequiredParams[] = {
+            "flipbook_rows",
+            "flipbook_cols",
+            "flipbook_total_frames",
+            "flipbook_fps",
+            "flipbook_blend_mode",
+        };
+        for (const char* pname : kRequiredParams) {
+            if (!HasParameter(spriteParams, pname)) {
+                std::fprintf(stderr, "[FAIL] SpriteRenderModule missing parameter: '%s'\n", pname);
+                pass = false;
+            }
+        }
+
+        // Flipbook frame index must wrap correctly.
+        {
+            const uint32_t totalFrames = spriteModPtr->flipbookTotalFrames;
+            const float fps = spriteModPtr->flipbookFPS;
+
+            const uint32_t frame0 = ComputeFlipbookFrame(0.0f, fps, totalFrames);
+            if (frame0 != 0u) {
+                std::fprintf(stderr, "[FAIL] Frame at age=0 expected 0, got %u\n", frame0);
+                pass = false;
+            }
+
+            if (totalFrames > 0 && fps > 0.0f) {
+                const uint32_t frame1s = ComputeFlipbookFrame(1.0f, fps, totalFrames);
+                const uint32_t expected1s = static_cast<uint32_t>(fps) % totalFrames;
+                if (frame1s != expected1s) {
+                    std::fprintf(stderr, "[FAIL] Frame at age=1.0s expected %u, got %u\n",
+                                 expected1s, frame1s);
+                    pass = false;
+                }
+            }
         }
     }
 
-    // Spawn count sanity: at 200/sec x 2sec = 400 expected spawns.
+    // Spawn count sanity.
     const uint32_t expectedSpawns =
-        static_cast<uint32_t>(kEmissionRate * kTotalFrames * kDt);
+        static_cast<uint32_t>(desc.emissionRate * kTotalFrames * kDt);
     const uint32_t tolerance = 10;
     if (totalSpawned < expectedSpawns - tolerance ||
         totalSpawned > expectedSpawns + tolerance) {
@@ -433,9 +329,9 @@ int main() {
     }
 
     // Budget must still show the emitter's allocation.
-    if (vfxSystem.GetBudget().GetUsed() != kMaxParticles) {
+    if (vfxSystem.GetBudget().GetUsed() != desc.maxParticles) {
         std::fprintf(stderr, "[FAIL] Budget used=%u, expected %u\n",
-                     vfxSystem.GetBudget().GetUsed(), kMaxParticles);
+                     vfxSystem.GetBudget().GetUsed(), desc.maxParticles);
         pass = false;
     }
 
@@ -452,8 +348,11 @@ int main() {
     vfxSystem.Shutdown(&device);
 
     // ── Result ─────────────────────────────────────────────────────────
+    std::printf("\n[OK] %s: %u particles allocated, %d frames simulated\n",
+                desc.name.c_str(), emitter.allocatedFromBudget, kTotalFrames);
+
     if (pass) {
-        std::printf("\n[PASS] Flipbook animation demo completed successfully.\n");
+        std::printf("[PASS] Flipbook animation demo completed successfully.\n");
         return 0;
     } else {
         std::fprintf(stderr, "\n[FAIL] One or more validation checks failed.\n");

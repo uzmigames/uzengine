@@ -1,100 +1,37 @@
-/// Orbit Demo -- Headless VFX ring-orbit particle effect proof-of-concept.
+/// Orbit Demo — Headless VFX ring-orbit particle effect proof-of-concept.
 ///
-/// Demonstrates particles orbiting a central point forming a ring, using:
-/// - OrbitModule: constant angular velocity around a world-space center
-/// - PinModule: Hooke's-law spring attraction toward an anchor above center
-/// - DistanceConstraintModule: spherical-shell radial range enforcement
-///
-/// This is a headless (no window, no GPU) demo that validates:
-/// - OrbitModule configuration (center, speed, orbitRadius, axis)
-/// - PinModule configuration (pinPosition, springStrength)
-/// - DistanceConstraintModule configuration (constraintOrigin, minDistance,
-///   maxDistance, constraintStrength)
-/// - Module GetName() and GetParameters() contracts
-/// - Shader code content checks (cross tangent, spring/force keyword)
-/// - VFXSystem + ParticleEmitter budget allocation and simulation ticking
-///
-/// # Build
-///   cd demos/orbit_demo
-///   zig build
-///   ./zig-out/bin/orbit_demo
-///
-/// # Orbit configuration
-/// - center:      {0, 0, 0}    world-space orbit center
-/// - speed:       2.0          radians per second
-/// - orbitRadius: 15.0         desired orbit radius (cm)
-/// - axis:        {0, 0, 1}    Z-up ring plane
-///
-/// # Pin configuration
-/// - pinPosition:    {0, 0, 5}   anchor above center
-/// - springStrength: 5.0         Hooke's spring constant k
-///
-/// # Distance constraint configuration
-/// - constraintOrigin:   {0, 0, 0}
-/// - minDistance:        10.0
-/// - maxDistance:        20.0
-/// - constraintStrength: 0.8
-
-#include <algorithm>
-#include <cstdint>
-#include <cstdio>
-#include <memory>
-#include <string>
-#include <string_view>
+/// Loads emitter configuration from assets/orbit_demo.uzfx,
+/// runs 5 frames of simulation, and validates orbit/pin/distance_constraint
+/// module configuration, parameter exposure, and shader code content.
 
 #include "mock_device.h"
-
-// ─────────────────────────────────────────────────────────────────────────────
-// VFX includes
-// ─────────────────────────────────────────────────────────────────────────────
-
 #include "engine/vfx/vfx_system.h"
 #include "engine/vfx/components/particle_emitter.h"
 #include "engine/vfx/core/particle_budget.h"
 #include "engine/vfx/modules/emitter_module_stack.h"
 #include "engine/vfx/modules/module_compositor.h"
 #include "engine/vfx/modules/module_registry.h"
-#include "engine/vfx/modules/register_builtin_modules.h"
-#include "engine/vfx/modules/spawn_module.h"
-#include "engine/vfx/modules/update_module.h"
-#include "engine/vfx/modules/decay_module.h"
 #include "engine/vfx/modules/orbit_module.h"
 #include "engine/vfx/modules/pin_module.h"
 #include "engine/vfx/modules/distance_constraint_module.h"
+#include "engine/vfx/asset/uzfx_loader.h"
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Demo parameters
-// ─────────────────────────────────────────────────────────────────────────────
+#include <algorithm>
+#include <cstdint>
+#include <cstdio>
+#include <fstream>
+#include <sstream>
+#include <memory>
+#include <string>
+#include <string_view>
 
-/// Budget ceiling for the global particle pool.
-static constexpr uint32_t kBudgetMax    = 500000u;
-
-/// Emitter capacity -- ring uses a modest particle count.
-static constexpr uint32_t kMaxParticles = 2000u;
-
-/// Emission rate in particles per second.
-static constexpr float kEmissionRate = 100.0f;
-
-/// Particle lifetime in seconds.
-static constexpr float kLifetimeMax = 4.0f;
-
-/// Fixed time-step in seconds (matches task specification: dt=0.016).
-static constexpr float kDt = 0.016f;
-
-/// Number of simulation ticks (task specification: 5 frames).
-static constexpr int kSimFrames = 5;
-
-/// OrbitModule parameters.
-static constexpr float kOrbitSpeed  = 2.0f;
-static constexpr float kOrbitRadius = 15.0f;
-
-/// PinModule parameters.
-static constexpr float kSpringStrength = 5.0f;
-
-/// DistanceConstraintModule parameters.
-static constexpr float kMinDistance        = 10.0f;
-static constexpr float kMaxDistance        = 20.0f;
-static constexpr float kConstraintStrength = 0.8f;
+static std::string ReadFile(const char* path) {
+    std::ifstream f(path);
+    if (!f.is_open()) return {};
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -152,8 +89,7 @@ void PrintModuleParams(const uz::IVFXModule* mod) {
     return shader.find(term) != std::string_view::npos;
 }
 
-/// Prints the first `maxChars` characters of a shader snippet followed by
-/// "..." if the snippet is longer.
+/// Prints the first `maxChars` characters of a shader snippet.
 void PrintShaderSnippet(const char* label, std::string_view shader,
                         std::size_t maxChars = 150) {
     std::printf("  %s shader snippet (first %zu chars):\n", label, maxChars);
@@ -176,36 +112,31 @@ int main() {
     std::printf("  Headless VFX ring-orbit particle effect (no GPU required)\n");
     std::printf("==========================================================\n\n");
 
-    std::printf("[Config] Orbit: center={0,0,0}  speed=%.1f rad/s  radius=%.1f cm  axis={0,0,1}\n",
-                static_cast<double>(kOrbitSpeed),
-                static_cast<double>(kOrbitRadius));
-    std::printf("[Config] Pin: pinPosition={0,0,5}  springStrength=%.1f\n",
-                static_cast<double>(kSpringStrength));
-    std::printf("[Config] DistanceConstraint: origin={0,0,0}  min=%.1f  max=%.1f  strength=%.2f\n\n",
-                static_cast<double>(kMinDistance),
-                static_cast<double>(kMaxDistance),
-                static_cast<double>(kConstraintStrength));
+    // ── Load .uzfx asset ──────────────────────────────────────────────
+    auto json = ReadFile("assets/orbit_demo.uzfx");
+    if (json.empty()) {
+        std::fprintf(stderr, "[Error] Cannot read assets/orbit_demo.uzfx\n");
+        return 1;
+    }
+    auto desc = uz::UzfxLoader::Load(json);
+    if (desc.name.empty()) {
+        std::fprintf(stderr, "[Error] Failed to parse orbit_demo.uzfx\n");
+        return 1;
+    }
+    std::printf("[Asset] Loaded '%s' (version %u)\n\n", desc.name.c_str(), desc.version);
 
     // ── Setup ──────────────────────────────────────────────────────────────
     uz::DemoMockDevice device;
 
+    constexpr uint32_t kBudgetMax = 500000u;
     uz::VFXSystem vfxSystem;
     vfxSystem.Initialize(&device, kBudgetMax);
     std::printf("[Init] VFXSystem initialized -- budget: %u particles\n", kBudgetMax);
 
-    // ── Emitter ────────────────────────────────────────────────────────────
+    // ── Instantiate emitter from .uzfx ────────────────────────────────────
     uz::ParticleEmitter emitter;
-    emitter.maxParticles  = kMaxParticles;
-    emitter.emissionRate  = kEmissionRate;
-    emitter.lifetime      = kLifetimeMax;
-    emitter.gravity       = {0.0f, 0.0f, 0.0f};  // gravity off -- orbit drives motion
-    emitter.damping       = 0.99f;
-    emitter.spawnVelocity = {0.0f, 0.0f, 0.0f};
-    emitter.spreadAngle   = 360.0f;               // full-circle spawn for ring shape
-    emitter.isEmitting    = true;
-
-    if (!emitter.Initialize(&device, vfxSystem.GetBudget())) {
-        std::fprintf(stderr, "[Error] Failed to initialize emitter\n");
+    if (!uz::UzfxLoader::Instantiate(desc, emitter, &device, vfxSystem.GetBudget())) {
+        std::fprintf(stderr, "[Error] Failed to instantiate emitter\n");
         vfxSystem.Shutdown(&device);
         return 1;
     }
@@ -215,62 +146,16 @@ int main() {
                 vfxSystem.GetBudget().GetUsed(),
                 vfxSystem.GetBudget().GetMax());
 
-    // ── Build module stack ─────────────────────────────────────────────────
-    auto& stack = emitter.moduleStack;
-
-    // Spawn module -- positions particles anywhere in the orbit plane.
-    auto spawnMod = std::make_unique<uz::SpawnModule>();
-    spawnMod->rate        = kEmissionRate;
-    spawnMod->spreadAngle = 360.0f;
-    spawnMod->velocity    = {0.0f, 0.0f, 0.0f};
-    spawnMod->lifespanMin = kLifetimeMax * 0.5f;
-    spawnMod->lifespanMax = kLifetimeMax;
-    stack.AddSpawnModule(std::move(spawnMod));
-
-    // Update module -- minimal drag to let orbit forces dominate.
-    auto updateMod = std::make_unique<uz::UpdateModule>();
-    updateMod->gravity = {0.0f, 0.0f, 0.0f};
-    updateMod->drag    = 0.99f;
-    stack.AddUpdateModule(std::move(updateMod));
-
-    // Orbit module -- steers particles into a ring around the world origin.
-    // @ref tangential cross-product drive: tangent = cross(axis, radialDir)
-    auto orbitMod = std::make_unique<uz::OrbitModule>();
-    orbitMod->center      = {0.0f, 0.0f, 0.0f};
-    orbitMod->speed       = kOrbitSpeed;
-    orbitMod->orbitRadius = kOrbitRadius;
-    orbitMod->axis        = {0.0f, 0.0f, 1.0f};
-    stack.AddUpdateModule(std::move(orbitMod));
-
-    // Pin module -- attracts particles toward a point above the orbit center.
-    // @ref Hooke 1678 "De Potentia Restitutiva" -- F = k * x
-    auto pinMod = std::make_unique<uz::PinModule>();
-    pinMod->pinPosition    = {0.0f, 0.0f, 5.0f};
-    pinMod->springStrength = kSpringStrength;
-    stack.AddUpdateModule(std::move(pinMod));
-
-    // Distance constraint module -- enforces inner/outer shell radii.
-    auto constraintMod = std::make_unique<uz::DistanceConstraintModule>();
-    constraintMod->constraintOrigin   = {0.0f, 0.0f, 0.0f};
-    constraintMod->minDistance        = kMinDistance;
-    constraintMod->maxDistance        = kMaxDistance;
-    constraintMod->constraintStrength = kConstraintStrength;
-    stack.AddUpdateModule(std::move(constraintMod));
-
-    // Decay module must be last in update order.
-    stack.AddUpdateModule(std::make_unique<uz::DecayModule>());
-
     std::printf("[Init] Module stack: %zu spawn, %zu update modules\n",
-                stack.spawnModules.size(),
-                stack.updateModules.size());
+                emitter.moduleStack.spawnModules.size(),
+                emitter.moduleStack.updateModules.size());
 
     // ── Retrieve module pointers for inspection ─────────────────────────────
-    // Update stack order: update(0), orbit(1), pin(2), distance_constraint(3), decay(4)
     const uz::OrbitModule*             orbitPtr      = nullptr;
     const uz::PinModule*               pinPtr        = nullptr;
     const uz::DistanceConstraintModule* constraintPtr = nullptr;
 
-    for (const auto& m : stack.updateModules) {
+    for (const auto& m : emitter.moduleStack.updateModules) {
         if (std::string_view{m->GetName()} == "orbit") {
             orbitPtr = static_cast<const uz::OrbitModule*>(m.get());
         } else if (std::string_view{m->GetName()} == "pin") {
@@ -282,6 +167,9 @@ int main() {
 
     // ── Register emitter and run simulation ────────────────────────────────
     vfxSystem.RegisterEmitter(&emitter);
+
+    constexpr float kDt       = 0.016f;
+    constexpr int   kSimFrames = 5;
 
     std::printf("\nRunning %d simulation ticks (dt=%.3f s)\n", kSimFrames, static_cast<double>(kDt));
     std::printf("%-8s  %-12s  %-14s\n", "Tick", "Spawn/Tick", "Budget Used");
@@ -301,11 +189,11 @@ int main() {
     std::printf("\nMODULE PARAMETER SUMMARY\n");
     std::printf("--------------------------------------------------\n");
     std::printf("Spawn modules:\n");
-    for (const auto& m : stack.spawnModules) {
+    for (const auto& m : emitter.moduleStack.spawnModules) {
         PrintModuleParams(m.get());
     }
     std::printf("Update modules:\n");
-    for (const auto& m : stack.updateModules) {
+    for (const auto& m : emitter.moduleStack.updateModules) {
         PrintModuleParams(m.get());
     }
     std::printf("--------------------------------------------------\n");
@@ -327,7 +215,7 @@ int main() {
     // ── Validation ─────────────────────────────────────────────────────────
     bool pass = true;
 
-    // OrbitModule: name must be "orbit".
+    // OrbitModule validation.
     if (!orbitPtr) {
         std::fprintf(stderr, "[FAIL] OrbitModule not found in update stack\n");
         pass = false;
@@ -338,7 +226,6 @@ int main() {
             pass = false;
         }
 
-        // OrbitModule: must expose exactly 4 parameters.
         const auto orbitParams = orbitPtr->GetParameters();
         if (orbitParams.size() != 4u) {
             std::fprintf(stderr, "[FAIL] OrbitModule::GetParameters() size expected 4, got %zu\n",
@@ -346,7 +233,6 @@ int main() {
             pass = false;
         }
 
-        // OrbitModule: required parameters.
         const char* kOrbitRequired[] = {"center", "speed", "orbit_radius", "axis"};
         for (const char* pname : kOrbitRequired) {
             if (!HasParameter(orbitParams, pname)) {
@@ -355,7 +241,6 @@ int main() {
             }
         }
 
-        // OrbitModule: shader must contain "cross" (tangent = cross(axis, radialDir)).
         const std::string_view orbitShader = orbitPtr->GetShaderCode();
         if (!ShaderContains(orbitShader, "cross")) {
             std::fprintf(stderr, "[FAIL] OrbitModule shader does not contain 'cross'\n");
@@ -365,7 +250,7 @@ int main() {
         }
     }
 
-    // PinModule: name must be "pin".
+    // PinModule validation.
     if (!pinPtr) {
         std::fprintf(stderr, "[FAIL] PinModule not found in update stack\n");
         pass = false;
@@ -376,7 +261,6 @@ int main() {
             pass = false;
         }
 
-        // PinModule: must expose exactly 2 parameters.
         const auto pinParams = pinPtr->GetParameters();
         if (pinParams.size() != 2u) {
             std::fprintf(stderr, "[FAIL] PinModule::GetParameters() size expected 2, got %zu\n",
@@ -384,7 +268,6 @@ int main() {
             pass = false;
         }
 
-        // PinModule: required parameters.
         const char* kPinRequired[] = {"pin_position", "spring_strength"};
         for (const char* pname : kPinRequired) {
             if (!HasParameter(pinParams, pname)) {
@@ -393,7 +276,6 @@ int main() {
             }
         }
 
-        // PinModule: shader must contain "force" (spring restoring force application).
         const std::string_view pinShader = pinPtr->GetShaderCode();
         if (!ShaderContains(pinShader, "force")) {
             std::fprintf(stderr, "[FAIL] PinModule shader does not contain 'force'\n");
@@ -403,7 +285,7 @@ int main() {
         }
     }
 
-    // DistanceConstraintModule: name must be "distance_constraint".
+    // DistanceConstraintModule validation.
     if (!constraintPtr) {
         std::fprintf(stderr, "[FAIL] DistanceConstraintModule not found in update stack\n");
         pass = false;
@@ -415,7 +297,6 @@ int main() {
             pass = false;
         }
 
-        // DistanceConstraintModule: must expose exactly 4 parameters.
         const auto dcParams = constraintPtr->GetParameters();
         if (dcParams.size() != 4u) {
             std::fprintf(stderr, "[FAIL] DistanceConstraintModule::GetParameters() size expected 4, "
@@ -423,7 +304,6 @@ int main() {
             pass = false;
         }
 
-        // DistanceConstraintModule: required parameters.
         const char* kDcRequired[] = {
             "constraint_origin",
             "min_distance",
@@ -439,23 +319,10 @@ int main() {
         }
     }
 
-    // Module stack structure sanity.
-    if (stack.spawnModules.size() != 1u) {
-        std::fprintf(stderr, "[FAIL] Expected 1 spawn module, got %zu\n",
-                     stack.spawnModules.size());
-        pass = false;
-    }
-    // Update stack: UpdateModule, OrbitModule, PinModule, DistanceConstraintModule, DecayModule = 5.
-    if (stack.updateModules.size() != 5u) {
-        std::fprintf(stderr, "[FAIL] Expected 5 update modules, got %zu\n",
-                     stack.updateModules.size());
-        pass = false;
-    }
-
     // Budget must still reflect the emitter's allocation.
-    if (vfxSystem.GetBudget().GetUsed() != kMaxParticles) {
+    if (vfxSystem.GetBudget().GetUsed() != desc.maxParticles) {
         std::fprintf(stderr, "[FAIL] Budget used=%u, expected %u\n",
-                     vfxSystem.GetBudget().GetUsed(), kMaxParticles);
+                     vfxSystem.GetBudget().GetUsed(), desc.maxParticles);
         pass = false;
     }
 
@@ -472,8 +339,11 @@ int main() {
     vfxSystem.Shutdown(&device);
 
     // ── Result ─────────────────────────────────────────────────────────────
+    std::printf("\n[OK] %s: %u particles allocated, %d frames simulated\n",
+                desc.name.c_str(), emitter.allocatedFromBudget, kSimFrames);
+
     if (pass) {
-        std::printf("\nPASS\n");
+        std::printf("PASS\n");
         return 0;
     } else {
         std::fprintf(stderr, "\n[FAIL] One or more validation checks failed.\n");
