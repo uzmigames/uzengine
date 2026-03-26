@@ -1,5 +1,17 @@
 #pragma once
 
+/// UzEngine LRU Cache
+///
+/// Generic LRU (Least Recently Used) cache template with O(1) lookup, insertion,
+/// and eviction operations. Maintains a configurable memory budget and evicts
+/// least-recently-used entries when capacity is exceeded.
+///
+/// # Design
+/// - Backed by a doubly-linked list for LRU tracking (front = most recent)
+/// - Hash map for O(1) key lookup
+/// - Automatic eviction of oldest entries when memory limit is exceeded
+/// - Fully generic: works with any hashable Key and move-constructible Value
+
 #include <cstddef>
 #include <list>
 #include <unordered_map>
