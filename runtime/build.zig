@@ -99,11 +99,11 @@ pub fn build(b: *std.Build) void {
         "engine/vfx/components",
         "engine/vfx/curves",
         "engine/vfx/modules",
-        "engine/vfx/passes",
         "engine/vfx/asset",
         "engine/vfx/parameters",
         "engine/vfx/events",
-        "engine/vfx/scripting",
+        "engine/renderer/passes/vfx",
+        "engine/asset/formats",
         "engine/vfx/decals",
         "engine/vfx/trails",
         "engine/vfx/lod",
@@ -248,6 +248,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/renderer/passes/postprocess", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/postprocess", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/passes/debug", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer/passes/vfx", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/passes/ibl", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/shadows", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/lighting", cpp_flags);
@@ -280,11 +281,11 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/vfx/components", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/curves", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/modules", cpp_flags);
-    addCppDir(runtime_mod, b, "engine/vfx/passes", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/asset", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/parameters", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/events", cpp_flags);
-    addCppDir(runtime_mod, b, "engine/vfx/scripting", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer/passes/vfx", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/asset/formats", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/decals",  cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/trails",  cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/lod",     cpp_flags);
