@@ -219,10 +219,11 @@ public:
     void Unload();
 
 private:
+    /// Cached entry metadata from the index for zero-copy lookup.
     struct LoadedEntry {
-        uint64_t offset;
-        uint64_t size;
-        uint64_t contentHash;
+        uint64_t offset;        ///< Byte offset into data region
+        uint64_t size;          ///< Asset size in bytes
+        uint64_t contentHash;   ///< xxHash64 of blob data (integrity check)
     };
 
     std::vector<uint8_t> m_data;

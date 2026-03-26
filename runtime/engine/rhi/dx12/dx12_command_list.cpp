@@ -673,10 +673,8 @@ void DX12CommandList::CopyTextureRegion(RHITextureHandle src, uint32_t srcMip, u
         return;
     }
 
-    D3D12_RESOURCE_DESC srcDesc = {};
-    srcTex->resource->GetDesc(&srcDesc);
-    D3D12_RESOURCE_DESC dstDesc = {};
-    dstTex->resource->GetDesc(&dstDesc);
+    D3D12_RESOURCE_DESC srcDesc = srcTex->resource->GetDesc();
+    D3D12_RESOURCE_DESC dstDesc = dstTex->resource->GetDesc();
     const uint32_t srcSubresource = D3D12CalcSubresource(srcMip, srcSlice, 0,
         srcDesc.MipLevels, static_cast<uint32_t>(srcDesc.DepthOrArraySize));
     const uint32_t dstSubresource = D3D12CalcSubresource(dstMip, dstSlice, 0,
@@ -717,8 +715,7 @@ void DX12CommandList::CopyBufferToTexture(RHIBufferHandle srcBuffer, uint64_t sr
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
     UINT64 totalBytes = 0;
 
-    D3D12_RESOURCE_DESC resDesc{};
-    tex->resource->GetDesc(&resDesc);
+    D3D12_RESOURCE_DESC resDesc = tex->resource->GetDesc();
     m_device->GetDevice()->GetCopyableFootprints(
         &resDesc, subresource, 1, srcOffset, &footprint, nullptr, nullptr, &totalBytes);
 

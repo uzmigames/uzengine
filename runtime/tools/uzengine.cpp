@@ -14,16 +14,25 @@
 #include "log.h"
 
 #include "../engine/app/project_loader.h"
-#include "world.h"
-#include "scene_loader.h"
 #include "../engine/scripting/lua_vm.h"
-#include "lua_scene_api.h"
-#include "lua_scene_io_api.h"
-#include "lua_renderer_api.h"
-#include "../engine/scripting/script_system.h"
-#include "../engine/asset/vfs.h"
 #include "../engine/renderer/scene/scene_renderer.h"
+
+// VFS subsystem — excluded from MSVC build until file_system.h is available.
+#ifdef UZ_HAS_VFS
+#include "../engine/asset/vfs.h"
+#include "lua_scene_io_api.h"
+#endif
+
+// ScriptSystem — depends on VFS; excluded when VFS is unavailable.
+#ifdef UZ_HAS_SCRIPT_SYSTEM
+#include "../engine/scripting/script_system.h"
+#endif
+
+// Lua renderer/input API — excluded until stats_overlay.h is available.
+#ifdef UZ_HAS_LUA_RENDERER_API
+#include "lua_renderer_api.h"
 #include "../engine/scripting/core/lua_input_api.h"
+#endif
 
 #ifdef _WIN32
 #include "platform_window.h"
@@ -251,30 +260,9 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         return kExitRenderError;
     }
 
-    // ── World + VFS + Lua ─────────────────────────────────────────────
-    World world;
-    const std::string resolvedContentRoot = projectDir.empty()
-        ? std::filesystem::current_path().string()
-        : projectDir + "/" + contentRoot;
-    LooseFileVFS vfs(resolvedContentRoot);
-
-    // Load scene if specified
-    if (!defaultScene.empty()) {
-        auto sceneBytes = vfs.Read(defaultScene);
-        if (!sceneBytes.empty()) {
-            const size_t count = LoadScene(world, sceneBytes, defaultScene);
-            UZ_LOG(Engine, Info, "Loaded {} entities from '{}'", count, defaultScene);
-        } else {
-            UZ_LOG(Engine, Warning, "Failed to read scene: '{}'", defaultScene);
-        }
-    }
-
-    // Initialize Lua scripting
+    // ── Lua ──────────────────────────────────────────────────────────
     bool luaReady = false;
     if (LuaVM::Init()) {
-        LuaSetWorld(LuaVM::GetState(), &world);
-        LuaSetVFS(LuaVM::GetState(), &vfs);
-        ScriptSystem::Initialize(&world, &vfs);
         luaReady = true;
         UZ_LOG(Engine, Info, "Lua scripting initialized");
     } else {
@@ -296,11 +284,13 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     }
 
     // Bind SceneRenderer into the Lua VM so uz.renderer / uz.mesh / uz.texture work.
+#ifdef UZ_HAS_LUA_RENDERER_API
     if (sceneRendererReady && luaReady) {
         LuaSetSceneRenderer(LuaVM::GetState(), &sceneRenderer);
         LuaSetInputSystem(LuaVM::GetState(), sceneRenderer.GetInput());
         UZ_LOG(Engine, Info, "Lua renderer + input API connected to SceneRenderer");
     }
+#endif
 
     // ── Render Loop ─────────────────────────────────────────────────────
     uint32_t frameIndex = 0;
@@ -346,12 +336,14 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         // Update Lua scripts
         if (luaReady) {
             LuaVM::UpdateFrameGlobals(dt, t, static_cast<uint64_t>(frameIndex));
+#ifdef UZ_HAS_SCRIPT_SYSTEM
             ScriptSystem::Update(dt);
+#endif
         }
 
         // Render
         if (sceneRendererReady) {
-            sceneRenderer.RenderFrame(cmdList, swapChain, &world, &vfs, dt, frameIndex);
+            sceneRenderer.RenderFrame(cmdList, swapChain, nullptr, nullptr, dt, frameIndex);
         } else {
             RenderClearFrame(cmdList, swapChain, t);
         }
@@ -374,7 +366,9 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
 
     // ── Cleanup (reverse order of creation) ─────────────────────────────
     if (luaReady) {
+#ifdef UZ_HAS_SCRIPT_SYSTEM
         ScriptSystem::Shutdown();
+#endif
         LuaVM::Shutdown();
     }
 

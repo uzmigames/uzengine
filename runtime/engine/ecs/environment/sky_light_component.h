@@ -1,3 +1,5 @@
+#pragma once
+
 /// UzEngine SkyLightComponent — ECS data for image-based ambient lighting.
 ///
 /// Equivalent to standard sky light component. Controls the intensity and tint
@@ -24,8 +26,6 @@
 /// skyLight.lightColor = {0.9f, 0.95f, 1.0f};  // Cool sky tint
 /// ```
 
-#pragma once
-
 #include "vector3.h"
 
 #include <cstdint>
@@ -36,13 +36,8 @@ namespace uz {
 ///
 /// Determines where the IBL cubemap data comes from.
 enum class ESkyLightSourceType : uint8_t {
-    /// Capture the scene's sky (SkyAtmosphere + clouds) into a cubemap at runtime.
-    /// This is the default and most common mode for outdoor scenes.
-    CapturedScene = 0,
-
-    /// Use a user-specified cubemap texture (e.g., HDR environment map).
-    /// Useful for indoor scenes or when artistic control over ambient is needed.
-    SpecifiedCubemap = 1,
+    CapturedScene = 0,    ///< Capture the scene's sky (SkyAtmosphere + clouds) into a cubemap at runtime. Default and most common mode for outdoor scenes.
+    SpecifiedCubemap = 1, ///< Use a user-specified cubemap texture (e.g., HDR environment map). Useful for indoor scenes or artistic control.
 };
 
 /// Image-based ambient lighting parameters.
