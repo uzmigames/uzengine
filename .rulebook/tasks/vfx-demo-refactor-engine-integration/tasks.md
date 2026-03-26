@@ -4,6 +4,7 @@
 - [x] 1.2 Integrate VFXSystem lifecycle into SceneRenderer. Owned via unique_ptr, Init/Tick/Shutdown wired. m_vfxSystemOverride kept for backward compat.
 - [x] 1.3 Add VfxEmitterComponent ECS component to `engine/ecs/environment/`. JSON serialize/deserialize via UZ_REGISTER_COMPONENT_SERIALIZER. Scene key: "vfx_emitter".
 - [x] 1.4 Wire `RegisterParticlePasses()` into render graph frame pipeline. Called after lighting, before post-process.
+- [x] 1.5 Wire VfxEmitterComponent ECS sync to VFXSystem runtime. SyncVfxEmitters() in scene_vfx_sync.cpp creates/updates ParticleEmitter from ECS, called before VFX Tick in RenderFrame. Supports both asset-driven (.uzfx) and inline-param emitters. Cleanup in Shutdown. Fixed pre-existing build errors (VFXSystem move ctor, LuaVM include).
 
 ## 2. Asset Format — .uzfx Emitter Definitions
 

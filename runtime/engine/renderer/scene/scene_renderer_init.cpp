@@ -28,6 +28,11 @@
 #include "dynamic_resolution.h"
 #include "cvar.h"
 #include "engine/vfx/vfx_system.h"
+#include "engine/vfx/components/particle_emitter.h"
+#include "engine/scripting/lua_vm.h"
+#include "engine/scripting/scene/vfx_lua_bindings.h"
+#include "engine/scripting/scene/trail_lua_bindings.h"
+#include "engine/scripting/scene/decal_lua_bindings.h"
 
 #include <cmath>
 
@@ -643,6 +648,19 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     UZ_LOG(Renderer, Info,
            "SceneRenderer: VFX system initialized (budget={})", kVFXParticleBudget);
 
+    // Register uz.vfx Lua API now that VFXSystem is available.
+    // Must be called after LuaVM::Init() (which registers uz.scene etc.)
+    // and after VFXSystem::Initialize().
+    {
+        auto* L = uz::LuaVM::GetState();
+        if (L && m_vfxSystem) {
+            RegisterVFXLuaBindings(L, m_vfxSystem.get());
+            RegisterTrailLuaBindings(L, m_trailSystem);
+            RegisterDecalLuaBindings(L, m_decalManager);
+            UZ_LOG(Renderer, Info, "SceneRenderer: uz.vfx Lua API registered");
+        }
+    }
+
     // Cache fallback texture SRV indices for use as placeholders in loading
     // texture slots. Avoids per-frame device queries.
     if (m_fallbackWhite.IsValid()) {
@@ -1141,6 +1159,22 @@ void SceneRenderer::Shutdown() {
     if (m_gtaoPass) m_gtaoPass->Shutdown();
     if (m_cloudPass) { m_cloudPass->Shutdown(); m_cloudPass.reset(); }
     if (m_cloudCmdList) { m_device->DestroyCommandList(m_cloudCmdList); m_cloudCmdList = nullptr; }
+
+    // ── Runtime VFX Emitter cleanup ─────────────────────────────────
+    // Unregister and destroy all emitters created by SyncVfxEmitters()
+    // before shutting down the VFXSystem that tracks them.
+    {
+        VFXSystem* activeVFX = m_vfxSystemOverride ? m_vfxSystemOverride : m_vfxSystem.get();
+        if (activeVFX) {
+            for (auto& emitter : m_runtimeEmitters) {
+                if (emitter) {
+                    activeVFX->UnregisterEmitter(emitter.get());
+                    emitter->Shutdown(m_device, activeVFX->GetBudget());
+                }
+            }
+        }
+        m_runtimeEmitters.clear();
+    }
 
     // ── VFX System cleanup ───────────────────────────────────────────
     // Shut down before the upload ring and copy queue so any pending emitter

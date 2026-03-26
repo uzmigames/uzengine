@@ -89,6 +89,12 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         m_pendingCloudDispatch = false;
     }
 
+    // ── VFX Emitter Sync ───────────────────────────────────────────────
+    // Create/update ParticleEmitter instances from VfxEmitterComponent ECS
+    // entities. Must run before VFXSystem::Tick() so newly created emitters
+    // participate in spawn counting for this frame.
+    SyncVfxEmitters(world, vfs);
+
     // ── VFX Tick ──────────────────────────────────────────────────────────
     // Calculates per-emitter spawn counts for this frame. Must run before
     // RegisterParticlePasses(), which consumes GetActiveEmitters().

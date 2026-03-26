@@ -101,6 +101,7 @@ struct CloudPassInput;
 class VFXSystem;
 class DecalManager;
 class TrailSystem;
+struct ParticleEmitter;
 namespace rg { class RgResourcePool; }
 
 // ─────────────────────────────────────────────────────────────────────────────

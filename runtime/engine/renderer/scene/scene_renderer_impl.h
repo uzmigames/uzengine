@@ -603,6 +603,11 @@
     bool m_hasSkyAtmosphere = false;  ///< True if a SkyAtmosphereComponent was found this frame.
     bool m_hasFog = false;            ///< True if a HeightFogComponent (enabled) was found this frame.
 
+    // ── VFX Runtime Emitters (owned by SceneRenderer, synced from ECS) ──
+    /// ParticleEmitter instances created from VfxEmitterComponent ECS data.
+    /// Indexed by the component's runtimeEmitterIdx field.
+    std::vector<std::unique_ptr<ParticleEmitter>> m_runtimeEmitters;
+
     // ── GPU Instancing (triple-buffered) ─────────────────────────────────
     RHIBufferHandle m_instanceBuffers[kInstanceBufferCount]; ///< Per-frame instance buffers.
     uint32_t m_instanceBufferCapacity = 0;   ///< Current capacity in number of InstanceData elements.
@@ -677,6 +682,12 @@
     /// Builds the draw list from ECS, batches instances, uploads instance
     /// data, and sets up GPU occlusion culling buffers. Called from SetupFrameData().
     void SyncDrawListAndInstances(FrameContext& ctx);
+
+    /// Synchronizes VfxEmitterComponent ECS entities to live ParticleEmitter
+    /// instances in m_runtimeEmitters. Creates emitters for new components,
+    /// updates emitting state for existing ones. Called from RenderFrame()
+    /// before VFXSystem::Tick().
+    void SyncVfxEmitters(World* world, IVFS* vfs);
 
     /// Registers shadow depth passes (CSM cache-aware + local light shadows).
     void RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
