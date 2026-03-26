@@ -169,6 +169,69 @@ pub const DemoHandle = struct {
     }
 };
 
+/// Scan a directory for .cpp files and add them to the module.
+///
+/// Handles the D3D12MA wrapper separately with suppressed upstream warnings.
+/// Skips dx12_agility.cpp (EXE-only, compiled directly in createDemo).
+/// Silently returns if the directory does not exist (optional source dirs).
+fn addCppDir(
+    mod: *std.Build.Module,
+    b: *std.Build,
+    dir: []const u8,
+    flags: []const []const u8,
+) void {
+    const d3d12ma_flags = &[_][]const u8{
+        "-std=c++17",
+        "-fno-sanitize=undefined",
+        "-Wno-undefined-bool-conversion",
+        "-Wno-switch",
+        "-Wno-unused-private-field",
+    };
+
+    var cpp_files = std.ArrayListUnmanaged([]const u8){};
+
+    var d3d12ma_found = false;
+
+    const resolved = b.path(dir);
+    var iter_dir = std.fs.openDirAbsolute(resolved.getPath(b), .{ .iterate = true }) catch return;
+    defer iter_dir.close();
+
+    var iter = iter_dir.iterate();
+    while (iter.next() catch null) |entry| {
+        if (entry.kind != .file) continue;
+        const name = entry.name;
+        if (!std.mem.endsWith(u8, name, ".cpp")) continue;
+
+        // D3D12MA wrapper gets its own warning-suppression flags.
+        if (std.mem.eql(u8, name, "dx12_d3d12ma.cpp")) {
+            d3d12ma_found = true;
+            continue;
+        }
+
+        // Agility SDK exports — only linked into EXE builds, not lib/DLL.
+        if (std.mem.eql(u8, name, "dx12_agility.cpp")) continue;
+
+        cpp_files.append(b.allocator, b.allocator.dupe(u8, name) catch @panic("OOM")) catch @panic("OOM");
+    }
+
+    if (cpp_files.items.len > 0) {
+        const files_slice = b.allocator.dupe([]const u8, cpp_files.items) catch @panic("OOM");
+        mod.addCSourceFiles(.{
+            .root = b.path(dir),
+            .files = files_slice,
+            .flags = flags,
+        });
+    }
+
+    if (d3d12ma_found) {
+        mod.addCSourceFiles(.{
+            .root = b.path(dir),
+            .files = &.{"dx12_d3d12ma.cpp"},
+            .flags = d3d12ma_flags,
+        });
+    }
+}
+
 /// Create a demo executable with all standard UzEngine build configuration.
 pub fn createDemo(b: *std.Build, config: DemoConfig) DemoHandle {
     // Default output to build/ — matches runtime convention. Override with -p <path>.
