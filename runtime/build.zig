@@ -877,6 +877,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(test_mod, b, "tests/engine/property", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/scripting", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/vfx", cpp_flags);
+    addCppDir(test_mod, b, "tests/editor", cpp_flags);
     // Thirdparty image lib tests — disable alignment sanitizer for stb_image_resize2
     test_mod.addCSourceFiles(.{
         .root = b.path("tests/thirdparty"),
