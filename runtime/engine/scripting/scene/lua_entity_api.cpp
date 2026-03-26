@@ -1,3 +1,5 @@
+/// Lua bindings for the entity API (create, destroy, components, transforms, hierarchy).
+
 #include "lua_entity_api.h"
 
 #include "log.h"
@@ -17,6 +19,8 @@ extern "C" {
 
 #include <cstdint>
 #include <cstring>
+
+/// Lua bindings for the entity/node API (transform, components, hierarchy, lifecycle).
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Compile-time guarantee: void* must be at least 64 bits to encode Entity.

@@ -1,0 +1,166 @@
+/// uz::Application — CLI argument parsing.
+///
+/// Handles --backend, --sm, --screenshot, --frames, --cvar, --camera-*,
+/// --renderdoc-capture, --vis, --pass-*, and other command-line flags.
+/// See application.h for the full Application interface.
+
+#include "application.h"
+#include "uzengine.h"
+#include "cvar.h"
+
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+
+UZ_DECLARE_LOG_CATEGORY(App);
+
+namespace uz {
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Anonymous helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+
+bool ParseBackendArg(const char* str, RHIBackend& out) {
+    std::string s(str);
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (s == "dx12")   { out = RHIBackend::DX12;   return true; }
+    if (s == "dx11")   { out = RHIBackend::DX11;   return true; }
+    if (s == "vulkan") { out = RHIBackend::Vulkan;  return true; }
+    return false;
+}
+
+bool ParseShaderModelArg(const char* str, ShaderModel& out) {
+    std::string s(str);
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (s.rfind("sm", 0) == 0) s = s.substr(2);
+    std::replace(s.begin(), s.end(), '_', '.');
+    if (s == "5" || s == "5.0")  { out = ShaderModel::SM5_0; return true; }
+    if (s == "5.1")              { out = ShaderModel::SM5_1; return true; }
+    if (s == "6" || s == "6.0")  { out = ShaderModel::SM6_0; return true; }
+    if (s == "6.5")              { out = ShaderModel::SM6_5; return true; }
+    if (s == "6.6")              { out = ShaderModel::SM6_6; return true; }
+    return false;
+}
+
+} // anonymous namespace
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ParseArgs — Parses common CLI flags into m_config
+// ─────────────────────────────────────────────────────────────────────────────
+
+void Application::ParseArgs(int argc, char* argv[]) {
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--backend") == 0 && i + 1 < argc) {
+            RHIBackend backend{};
+            if (ParseBackendArg(argv[++i], backend)) m_config.backend = backend;
+        } else if (std::strcmp(argv[i], "--sm") == 0 && i + 1 < argc) {
+            ShaderModel sm{};
+            if (ParseShaderModelArg(argv[++i], sm)) m_config.shaderModel = sm;
+        } else if (std::strcmp(argv[i], "--screenshot") == 0 && i + 1 < argc) {
+            m_config.screenshotPath = argv[++i];
+        } else if (std::strcmp(argv[i], "--screenshot-frame") == 0 && i + 1 < argc) {
+            // Deprecated — screenshot now auto-triggers after scene fully loads.
+            // Argument consumed but ignored.
+            ++i;
+        } else if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
+            m_config.maxFrames = static_cast<uint32_t>(std::atoi(argv[++i]));
+        } else if (std::strcmp(argv[i], "--view-mode") == 0 && i + 1 < argc) {
+            m_config.debugViewMode = DebugViewModeFromString(argv[++i]);
+        } else if (std::strcmp(argv[i], "--all-modes") == 0 && i + 1 < argc) {
+            m_config.allModesOutputPath = argv[++i];
+        } else if (std::strcmp(argv[i], "--shadow-debug") == 0 && i + 1 < argc) {
+            m_shadowDebugMode = static_cast<uint32_t>(std::atoi(argv[++i]));
+        } else if (std::strcmp(argv[i], "--renderdoc-capture") == 0 && i + 1 < argc) {
+            // --renderdoc-capture <frame_number>
+            // Automatically triggers a RenderDoc capture on the specified frame.
+            // Useful for headless CI pipelines or reproducible captures.
+            const int frameNum = std::atoi(argv[++i]);
+            if (frameNum >= 0) {
+                m_renderdocCaptureFrame = static_cast<uint32_t>(frameNum);
+            } else {
+                UZ_LOG(App, Warning,
+                       "--renderdoc-capture requires a non-negative frame number, got '{}'",
+                       argv[i]);
+            }
+        } else if (std::strcmp(argv[i], "--camera-x") == 0 && i + 1 < argc) {
+            m_config.cameraPositionX = static_cast<float>(std::atof(argv[++i]));
+        } else if (std::strcmp(argv[i], "--camera-y") == 0 && i + 1 < argc) {
+            m_config.cameraPositionY = static_cast<float>(std::atof(argv[++i]));
+        } else if (std::strcmp(argv[i], "--camera-z") == 0 && i + 1 < argc) {
+            m_config.cameraPositionZ = static_cast<float>(std::atof(argv[++i]));
+        } else if (std::strcmp(argv[i], "--camera-yaw") == 0 && i + 1 < argc) {
+            m_config.cameraYawDeg = static_cast<float>(std::atof(argv[++i]));
+        } else if (std::strcmp(argv[i], "--camera-pitch") == 0 && i + 1 < argc) {
+            m_config.cameraPitchDeg = static_cast<float>(std::atof(argv[++i]));
+        } else if (std::strcmp(argv[i], "--screenshot-stdout") == 0) {
+            m_screenshotBase64 = true;
+        } else if (std::strcmp(argv[i], "--headless") == 0) {
+            m_headless = true;
+        } else if (std::strcmp(argv[i], "--vis") == 0 && i + 1 < argc) {
+            m_visTarget = argv[++i];
+        } else if (std::strcmp(argv[i], "--pass-validate") == 0) {
+            m_passValidate = true;
+        } else if (std::strcmp(argv[i], "--pass-dump") == 0) {
+            m_passDumpRequested = true;
+        } else if (std::strcmp(argv[i], "--pass-toggle") == 0 && i + 1 < argc) {
+            m_passToggle = argv[++i];
+        } else if (std::strcmp(argv[i], "--pass-compare") == 0 && i + 1 < argc) {
+            m_passCompare = argv[++i];
+        } else if (std::strcmp(argv[i], "--gpu-profile") == 0) {
+            m_config.gpuProfile = true;
+        } else if (std::strcmp(argv[i], "--force-loose") == 0) {
+            m_config.forceLooseVFS = true;
+        } else if (std::strcmp(argv[i], "--pak-cache-mb") == 0 && i + 1 < argc) {
+            m_config.pakCacheMB = static_cast<uint32_t>(std::atoi(argv[++i]));
+        } else if (std::strcmp(argv[i], "--cvar") == 0 && i + 1 < argc) {
+            std::string arg = argv[++i];
+            const auto eqPos = arg.find('=');
+            if (eqPos != std::string::npos) {
+                m_cvarOverrides.emplace_back(arg.substr(0, eqPos),
+                    static_cast<float>(std::atof(arg.substr(eqPos + 1).c_str())));
+            } else {
+                UZ_LOG(App, Warning, "--cvar expects name=value format, got '{}'", arg);
+            }
+        }
+    }
+
+    // Screenshot: auto-triggers after scene fully loads. Set enough frames to allow loading.
+    if (!m_config.screenshotPath.empty() && m_config.maxFrames == 0) {
+        m_config.maxFrames = 500; // Enough for async texture loading + convergence
+    }
+    if (m_screenshotBase64 && m_config.maxFrames == 0) {
+        m_config.maxFrames = 500;
+    }
+
+    // --screenshot-stdout implies --headless (LLM doesn't need a visible window)
+    if (m_screenshotBase64) {
+        m_headless = true;
+    }
+
+    // Suppress console logging when stdout is reserved for base64 output.
+    // Logs still go to the file sink (uzengine.log).
+    if (m_screenshotBase64) {
+        LogSuppressConsole();
+    }
+
+    m_screenshotPending = !m_config.screenshotPath.empty() || m_screenshotBase64;
+
+    // --vis with --screenshot-stdout: auto-set frame limits for headless vis capture
+    if (!m_visTarget.empty() && m_screenshotBase64 && m_config.maxFrames == 0) {
+        m_config.screenshotFrame = std::max(m_config.screenshotFrame, 5u);
+        m_config.maxFrames = m_config.screenshotFrame + 2;
+    }
+
+    // --pass-validate: default to 120 frames then exit
+    if (m_passValidate && m_config.maxFrames == 0) {
+        m_config.maxFrames = 120;
+    }
+}
+
+} // namespace uz

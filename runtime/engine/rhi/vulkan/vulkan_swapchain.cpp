@@ -358,7 +358,8 @@ void VulkanSwapChain::DestroySwapChainResources() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 RHITextureHandle VulkanSwapChain::GetCurrentBackBuffer() {
-    // Acquire next image if we haven't yet this frame
+    // Acquire next image — signals m_imageAvailableSemaphore when the presentation
+    // engine is done reading the image (i.e., safe to render into it).
     VkResult result = vkAcquireNextImageKHR(
         m_device->GetVkDevice(), m_swapchain, UINT64_MAX,
         m_imageAvailableSemaphore, VK_NULL_HANDLE, &m_currentImageIndex);
@@ -372,6 +373,12 @@ RHITextureHandle VulkanSwapChain::GetCurrentBackBuffer() {
         return RHITextureHandle::Invalid();
     }
 
+    // Store pending semaphores on the device so the next VulkanCommandList::Execute()
+    // can wire them into vkQueueSubmit (wait on imageAvailable, signal renderFinished).
+    // This avoids changing the abstract IRHICommandList interface.
+    m_device->m_pendingImageAvailableSem = m_imageAvailableSemaphore;
+    m_device->m_pendingRenderFinishedSem = m_renderFinishedSemaphore;
+
     return m_backBufferHandles[m_currentImageIndex];
 }
 
@@ -383,9 +390,12 @@ void VulkanSwapChain::Present(bool vsync) {
     UZ_PROFILE_FUNCTION();
     (void)vsync; // Present mode was chosen at init time (mailbox vs fifo)
 
+    // Wait for rendering to finish before presenting. The renderFinishedSemaphore
+    // is signaled by vkQueueSubmit in VulkanCommandList::Execute().
     VkPresentInfoKHR presentInfo = {};
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-    presentInfo.waitSemaphoreCount = 0; // No wait — we trust fence-based sync
+    presentInfo.waitSemaphoreCount = 1;
+    presentInfo.pWaitSemaphores = &m_renderFinishedSemaphore;
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = &m_swapchain;
     presentInfo.pImageIndices = &m_currentImageIndex;

@@ -449,8 +449,12 @@ void DX12CommandList::SetFragmentTexture(uint32_t slot, RHITextureHandle texture
 
     // Bind the staging block as root param 5 (SM5 SRV descriptor table)
     constexpr uint32_t kSM5SrvTableRootParam = 5;
-    m_cmdList->SetGraphicsRootDescriptorTable(
-        kSM5SrvTableRootParam, alloc.GpuHandle(m_fragmentTexStagingBase));
+    auto gpuHandle = alloc.GpuHandle(m_fragmentTexStagingBase);
+    if (m_isComputeBound) {
+        m_cmdList->SetComputeRootDescriptorTable(kSM5SrvTableRootParam, gpuHandle);
+    } else {
+        m_cmdList->SetGraphicsRootDescriptorTable(kSM5SrvTableRootParam, gpuHandle);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

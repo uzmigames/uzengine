@@ -1,3 +1,5 @@
+/// Lua bindings for the window API (resolution, title, fullscreen).
+
 #include "lua_window_api.h"
 
 #include "log.h"

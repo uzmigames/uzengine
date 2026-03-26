@@ -6,27 +6,56 @@
       "name": "Sun",
       "components": {
         "transform": {
-          "position": [0, 0, 20],
-          "rotation": [50, -30, 0],
-          "scale": [1, 1, 1]
+          "position": [
+            0,
+            0,
+            20
+          ],
+          "rotation": [
+            50,
+            -30,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
         },
         "light": {
           "type": "directional",
-          "color": [1.0, 0.96, 0.88],
-          "intensity": 3.14
+          "color": [
+            1.0,
+            0.96,
+            0.88
+          ],
+          "intensity": 10.0
         }
       }
     },
-
     {
       "name": "GroundPlane",
       "components": {
         "transform": {
-          "position": [0, 0, 0],
-          "rotation": [0, 0, 0],
-          "scale": [30, 30, 0.04]
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            30,
+            30,
+            0.04
+          ]
         },
-        "mesh": { "asset": "builtin:cube" },
+        "mesh": {
+          "asset": "builtin:cube"
+        },
         "material": {
           "albedo": "textures/Concrete/Poliigon_ConcreteWorn_8690_BaseColor.jpg",
           "normal": "textures/Concrete/Poliigon_ConcreteWorn_8690_Normal.png",
@@ -36,16 +65,29 @@
         }
       }
     },
-
     {
       "name": "Cube_Stone_1",
       "components": {
         "transform": {
-          "position": [-4, 0, 0],
-          "rotation": [0, 0, 0],
-          "scale": [0.8, 0.8, 0.8]
+          "position": [
+            -6,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1.5,
+            1.5,
+            1.5
+          ]
         },
-        "mesh": { "asset": "builtin:cube" },
+        "mesh": {
+          "asset": "builtin:cube"
+        },
         "material": {
           "albedo": "textures/Stonebricks/stonebricks_albedo.jpg",
           "normal": "textures/Stonebricks/stonebricks_normal.jpg",
@@ -59,11 +101,25 @@
       "name": "Cube_Stone_2",
       "components": {
         "transform": {
-          "position": [-2, 0, 0],
-          "rotation": [0, 0, 0],
-          "scale": [0.8, 0.8, 0.8]
+          "position": [
+            -3,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1.5,
+            1.5,
+            1.5
+          ]
         },
-        "mesh": { "asset": "builtin:cube" },
+        "mesh": {
+          "asset": "builtin:cube"
+        },
         "material": {
           "albedo": "textures/Stonebricks/stonebricks_albedo.jpg",
           "normal": "textures/Stonebricks/stonebricks_normal.jpg",
@@ -77,11 +133,25 @@
       "name": "Cube_Metal_Center",
       "components": {
         "transform": {
-          "position": [0, 0, 0],
-          "rotation": [0, 0, 0],
-          "scale": [0.8, 0.8, 0.8]
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1.5,
+            1.5,
+            1.5
+          ]
         },
-        "mesh": { "asset": "builtin:cube" },
+        "mesh": {
+          "asset": "builtin:cube"
+        },
         "material": {
           "albedo": "textures/MetalCorroded/MetalCorrodedHeavy001_COL_2K_METALNESS.jpg",
           "normal": "textures/MetalCorroded/MetalCorrodedHeavy001_NRM_2K_METALNESS.jpg",
@@ -94,11 +164,25 @@
       "name": "Cube_Stone_4",
       "components": {
         "transform": {
-          "position": [2, 0, 0],
-          "rotation": [0, 0, 0],
-          "scale": [0.8, 0.8, 0.8]
+          "position": [
+            3,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1.5,
+            1.5,
+            1.5
+          ]
         },
-        "mesh": { "asset": "builtin:cube" },
+        "mesh": {
+          "asset": "builtin:cube"
+        },
         "material": {
           "albedo": "textures/Stonebricks/stonebricks_albedo.jpg",
           "normal": "textures/Stonebricks/stonebricks_normal.jpg",
@@ -112,11 +196,25 @@
       "name": "Cube_Stone_5",
       "components": {
         "transform": {
-          "position": [4, 0, 0],
-          "rotation": [0, 0, 0],
-          "scale": [0.8, 0.8, 0.8]
+          "position": [
+            6,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1.5,
+            1.5,
+            1.5
+          ]
         },
-        "mesh": { "asset": "builtin:cube" },
+        "mesh": {
+          "asset": "builtin:cube"
+        },
         "material": {
           "albedo": "textures/Stonebricks/stonebricks_albedo.jpg",
           "normal": "textures/Stonebricks/stonebricks_normal.jpg",
@@ -126,16 +224,29 @@
         }
       }
     },
-
     {
       "name": "Sphere_Metal",
       "components": {
         "transform": {
-          "position": [0, 3, 1],
-          "rotation": [0, 0, 0],
-          "scale": [1, 1, 1]
+          "position": [
+            0,
+            4,
+            1.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1.8,
+            1.8,
+            1.8
+          ]
         },
-        "mesh": { "asset": "builtin:sphere" },
+        "mesh": {
+          "asset": "builtin:sphere"
+        },
         "material": {
           "albedo": "textures/MetalCorroded/MetalCorrodedHeavy001_COL_2K_METALNESS.jpg",
           "normal": "textures/MetalCorroded/MetalCorrodedHeavy001_NRM_2K_METALNESS.jpg",
@@ -148,11 +259,25 @@
       "name": "Sphere_Stone",
       "components": {
         "transform": {
-          "position": [-3, 3, 1],
-          "rotation": [0, 0, 0],
-          "scale": [1, 1, 1]
+          "position": [
+            -4,
+            4,
+            1.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1.8,
+            1.8,
+            1.8
+          ]
         },
-        "mesh": { "asset": "builtin:sphere" },
+        "mesh": {
+          "asset": "builtin:sphere"
+        },
         "material": {
           "albedo": "textures/Stonebricks/stonebricks_albedo.jpg",
           "normal": "textures/Stonebricks/stonebricks_normal.jpg",
@@ -166,11 +291,25 @@
       "name": "Sphere_Concrete",
       "components": {
         "transform": {
-          "position": [3, 3, 1],
-          "rotation": [0, 0, 0],
-          "scale": [1, 1, 1]
+          "position": [
+            4,
+            4,
+            1.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1.8,
+            1.8,
+            1.8
+          ]
         },
-        "mesh": { "asset": "builtin:sphere" },
+        "mesh": {
+          "asset": "builtin:sphere"
+        },
         "material": {
           "albedo": "textures/Concrete/Poliigon_ConcreteWorn_8690_BaseColor.jpg",
           "normal": "textures/Concrete/Poliigon_ConcreteWorn_8690_Normal.png",
@@ -180,13 +319,20 @@
         }
       }
     },
-
     {
       "name": "MainCamera",
       "components": {
         "transform": {
-          "position": [0, -8, 3],
-          "rotation": [-15, 0, 0]
+          "position": [
+            0,
+            -12,
+            5
+          ],
+          "rotation": [
+            -15,
+            0,
+            0
+          ]
         },
         "camera": {
           "fov": 75,
@@ -196,14 +342,23 @@
         }
       }
     },
-
     {
       "name": "PointLight_Red",
       "components": {
-        "transform": { "position": [-3, 2, 2] },
+        "transform": {
+          "position": [
+            -3,
+            2,
+            2
+          ]
+        },
         "light": {
           "type": "point",
-          "color": [4.0, 0.2, 0.2],
+          "color": [
+            4.0,
+            0.2,
+            0.2
+          ],
           "intensity": 1.0,
           "range": 15
         }
@@ -212,10 +367,20 @@
     {
       "name": "PointLight_Green",
       "components": {
-        "transform": { "position": [0, -2, 3] },
+        "transform": {
+          "position": [
+            0,
+            -2,
+            3
+          ]
+        },
         "light": {
           "type": "point",
-          "color": [0.2, 4.0, 0.2],
+          "color": [
+            0.2,
+            4.0,
+            0.2
+          ],
           "intensity": 1.0,
           "range": 20
         }
@@ -224,10 +389,20 @@
     {
       "name": "PointLight_Blue",
       "components": {
-        "transform": { "position": [3, 2, 2] },
+        "transform": {
+          "position": [
+            3,
+            2,
+            2
+          ]
+        },
         "light": {
           "type": "point",
-          "color": [0.2, 0.2, 4.0],
+          "color": [
+            0.2,
+            0.2,
+            4.0
+          ],
           "intensity": 1.0,
           "range": 15
         }
@@ -236,26 +411,134 @@
     {
       "name": "PointLight_White",
       "components": {
-        "transform": { "position": [0, 0, 1] },
+        "transform": {
+          "position": [
+            0,
+            0,
+            1
+          ]
+        },
         "light": {
           "type": "point",
-          "color": [3.0, 3.0, 3.0],
+          "color": [
+            3.0,
+            3.0,
+            3.0
+          ],
           "intensity": 1.0,
           "range": 25
         }
       }
     },
-
     {
       "name": "Controller",
       "components": {
-        "script": { "path": "scripts/pbr_showcase_controller.lua" }
+        "script": {
+          "path": "scripts/pbr_showcase_controller.lua"
+        }
       }
     },
     {
       "name": "CubeRotator",
       "components": {
-        "script": { "path": "scripts/cube_rotator.lua" }
+        "script": {
+          "path": "scripts/cube_rotator.lua"
+        }
+      }
+    },
+    {
+      "name": "SkyAtmosphere",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            1020
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "sky_atmosphere": {}
+      }
+    },
+    {
+      "name": "SkyLight",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            690
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "sky_light": {
+          "intensity": 1.0,
+          "light_color": [
+            0.85,
+            0.9,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "HeightFog",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            -5000
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "height_fog": {}
+      }
+    },
+    {
+      "name": "VolumetricClouds",
+      "components": {
+        "transform": {
+          "position": [0, 0, 0],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1]
+        },
+        "volumetric_clouds": {
+          "coverage": 0.7,
+          "density": 0.8,
+          "extinction": 0.01,
+          "scattering_albedo": 0.99,
+          "ambient_multiplier": 6.0,
+          "layer_bottom_altitude_km": 5.0,
+          "layer_height_km": 5.0
+        }
       }
     }
   ]

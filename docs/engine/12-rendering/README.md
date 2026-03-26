@@ -27,7 +27,7 @@ The rendering pipeline system is split across multiple documents covering archit
 | [15-depth-prepass-hiz.md](15-depth-prepass-hiz.md) | **Done (Phase 0.8.0)** | **Depth prepass (early-Z), Hi-Z pyramid (12-mip min-depth chain), downstream consumers (GTAO, SSR, occlusion)** | **Depth optimization & hierarchical depth** |
 | [15-shader-includes.md](15-shader-includes.md) | **Done (1.2)** | **Shared .hlsli structure, pbr_common.hlsli, shadow_common.hlsli** | **Shader code reuse** |
 | [16-material-system.md](16-material-system.md) | Planned (2.0) | High-level material system overview, .uzmat format, manager, hot-reload | Material management |
-| [17-lighting.md](17-lighting.md) | **Done (1.3+)** | **Multi-light system (8 lights max), light types, attenuation math, CPU culling** + Phase 2-4 roadmap | **Lighting systems** |
+| [17-lighting.md](17-lighting.md) | **Done (1.3+)** | **Multi-light system (8 lights max), light types, attenuation math, CPU culling, Reflection Probes (Phase 2+)** + Phase 2-4 roadmap | **Lighting systems** |
 | [18-shadow-system.md](18-shadow-system.md) | **Done (Phase 2)** | **UE5 Exact Parity: exponential accumulation splits, Z-up light up-vector, per-cascade bias, cascade blending** | **Directional light shadows** |
 | [28-pcss-soft-shadows.md](28-pcss-soft-shadows.md) | Planned (2.2) | PCSS algorithm (blocker search, penumbra estimation, adaptive PCF), performance tuning, parameter reference | Soft shadow filtering |
 | [29-far-shadow-cascades.md](29-far-shadow-cascades.md) | **Done (Phase 2.3)** | **Far shadow cascades: extended distance (0–3km), 4–8 total cascades, atlas layout, UE5 exact parity** | **Extended shadow coverage** |

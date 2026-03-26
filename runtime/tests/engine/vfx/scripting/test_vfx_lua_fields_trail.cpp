@@ -12,8 +12,8 @@
 /// No GPU hardware required — VFXSystem is initialised with a null device and the
 /// emitter's initialized flag is set manually so no GPU buffer allocation occurs.
 
-#include "engine/vfx/scripting/vfx_lua_bindings.h"
-#include "engine/vfx/scripting/trail_lua_bindings.h"
+#include "engine/scripting/scene/vfx_lua_bindings.h"
+#include "engine/scripting/scene/trail_lua_bindings.h"
 #include "engine/vfx/vfx_system.h"
 #include "engine/vfx/components/particle_emitter.h"
 #include "engine/vfx/parameters/vfx_parameter_store.h"

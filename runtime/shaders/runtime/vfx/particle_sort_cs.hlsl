@@ -50,6 +50,11 @@
 /// @ref Batcher 1968 "Sorting Networks and Their Applications" — bitonic merge sort
 /// @ref Peters & Schulz-Hildebrandt 2023 "Fast GPU-based sorting"
 /// @constants SORT_GROUP_SIZE=256
+///
+/// # SM5 Register Layout (non-bindless fallback)
+/// - t0: StructuredBuffer<float3>           positions (particle world positions)
+/// - u0: RWStructuredBuffer<uint>           sortKeys  (sort keys, read/write)
+/// - u1: RWStructuredBuffer<uint>           sortIndices (sorted particle indices, read/write)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -94,6 +99,7 @@ cbuffer VFXSortConstants : register(b0) {
                                   ///< (normalized).
     float    _pad2;               ///<                                         44
 
+#ifdef UZ_BINDLESS
     // ── Bindless Descriptor Indices ───────────────────────────────────────
     uint     positionsSrvIndex;   ///< SRV: StructuredBuffer<float3>           48
                                   ///< particle positions (read only).
@@ -102,6 +108,12 @@ cbuffer VFXSortConstants : register(b0) {
     uint     sortIndicesUavIndex; ///< UAV: RWStructuredBuffer<uint>           56
                                   ///< sorted particle indices (read/write).
     uint     _pad3;               ///<                                         60
+#else
+    uint     _pad3a;              ///<                                         48
+    uint     _pad3b;              ///<                                         52
+    uint     _pad3c;              ///<                                         56
+    uint     _pad3d;              ///<                                         60
+#endif
 
     // ── Global Merge Parameters (phase 1 only) ───────────────────────────
     uint     bitonicBlockSize;    ///< Current bitonic merge block size.       64
@@ -113,6 +125,13 @@ cbuffer VFXSortConstants : register(b0) {
     uint     _pad4;               ///<                                         72
     uint     _pad5;               ///<                                         76
 };                                ///<                                   Total: 80
+
+#ifndef UZ_BINDLESS
+/// SM5 fallback: explicit register bindings for sort buffers.
+StructuredBuffer<float3>           sm5_positions    : register(t0);
+RWStructuredBuffer<uint>           sm5_sortKeys     : register(u0);
+RWStructuredBuffer<uint>           sm5_sortIndices  : register(u1);
+#endif
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Groupshared Memory (Phase 0 only)
@@ -224,9 +243,15 @@ void CompareAndSwapLocal(uint idxA, uint idxB, bool ascending)
 void LocalSortPhase(uint groupIdx, uint localIdx, uint globalIdx)
 {
     // ── Bind buffers ──────────────────────────────────────────────────────
+#ifdef UZ_BINDLESS
     StructuredBuffer<float3> positions = ResourceDescriptorHeap[positionsSrvIndex];
     RWStructuredBuffer<uint> outKeys   = ResourceDescriptorHeap[sortKeysUavIndex];
     RWStructuredBuffer<uint> outVals   = ResourceDescriptorHeap[sortIndicesUavIndex];
+#else
+    #define positions sm5_positions
+    #define outKeys   sm5_sortKeys
+    #define outVals   sm5_sortIndices
+#endif
 
     // ── Load: generate sort key or assign dead sentinel ───────────────────
     if (globalIdx < particleCount)
@@ -277,6 +302,12 @@ void LocalSortPhase(uint groupIdx, uint localIdx, uint globalIdx)
     // ── Store sorted results to output buffers ────────────────────────────
     outKeys[globalIdx] = gs_keys[localIdx];
     outVals[globalIdx] = gs_indices[localIdx];
+
+#ifndef UZ_BINDLESS
+    #undef positions
+    #undef outKeys
+    #undef outVals
+#endif
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -297,8 +328,13 @@ void LocalSortPhase(uint groupIdx, uint localIdx, uint globalIdx)
 void GlobalMergePhase(uint globalIdx)
 {
     // ── Bind buffers (read-modify-write) ──────────────────────────────────
+#ifdef UZ_BINDLESS
     RWStructuredBuffer<uint> keys = ResourceDescriptorHeap[sortKeysUavIndex];
     RWStructuredBuffer<uint> vals = ResourceDescriptorHeap[sortIndicesUavIndex];
+#else
+    #define keys sm5_sortKeys
+    #define vals sm5_sortIndices
+#endif
 
     // ── Compute comparison pair ───────────────────────────────────────────
     // For a sub-block of size `bitonicSubBlockSize`, each thread computes
@@ -327,6 +363,11 @@ void GlobalMergePhase(uint globalIdx)
             vals[pairIdx]   = valA;
         }
     }
+
+#ifndef UZ_BINDLESS
+    #undef keys
+    #undef vals
+#endif
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

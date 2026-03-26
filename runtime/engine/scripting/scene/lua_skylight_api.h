@@ -9,7 +9,7 @@
 ///
 /// # New Functions (added to uz.scene)
 ///
-/// ## SkyLight (15.6)
+/// ## SkyLight (15.6) — Setters
 /// - `uz.scene.create_sky_light(entity)` → void
 /// - `uz.scene.set_sky_light_intensity(entity, intensity)` → void
 /// - `uz.scene.set_sky_light_color(entity, r, g, b)` → void
@@ -24,6 +24,21 @@
 /// - `uz.scene.set_sky_light_occlusion_tint(entity, r, g, b)` → void
 /// - `uz.scene.set_sky_light_occlusion_exponent(entity, exp)` → void
 /// - `uz.scene.set_sky_light_enabled(entity, enabled)` → void
+///
+/// ## SkyLight (15.6) — Getters
+/// - `uz.scene.get_sky_light_intensity(entity)` → number | nil
+/// - `uz.scene.get_sky_light_color(entity)` → r, g, b | nil
+/// - `uz.scene.get_sky_light_min_occlusion(entity)` → number | nil
+/// - `uz.scene.get_sky_light_indirect_intensity(entity)` → number | nil
+/// - `uz.scene.get_sky_light_source_type(entity)` → "captured" | "cubemap" | nil
+/// - `uz.scene.is_sky_light_real_time_capture(entity)` → bool
+/// - `uz.scene.get_sky_light_cubemap_resolution(entity)` → int | nil
+/// - `uz.scene.is_sky_light_lower_hemisphere_black(entity)` → bool
+/// - `uz.scene.get_sky_light_lower_hemisphere_color(entity)` → r, g, b | nil
+/// - `uz.scene.get_sky_light_occlusion_max_distance(entity)` → number | nil
+/// - `uz.scene.get_sky_light_occlusion_tint(entity)` → r, g, b | nil
+/// - `uz.scene.get_sky_light_occlusion_exponent(entity)` → number | nil
+/// - `uz.scene.is_sky_light_enabled(entity)` → bool
 
 struct lua_State;
 

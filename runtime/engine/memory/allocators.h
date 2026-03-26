@@ -47,6 +47,7 @@ class LinearAllocator {
     /// Frees the backing buffer.
     ~LinearAllocator() { std::free(m_buffer); }
 
+    /// Non-copyable — each allocator owns its backing buffer exclusively.
     LinearAllocator(const LinearAllocator&) = delete;
     LinearAllocator& operator=(const LinearAllocator&) = delete;
 
@@ -147,6 +148,7 @@ template <typename T> class PoolAllocator {
     /// Frees the backing buffer. Does NOT call destructors on live objects.
     ~PoolAllocator() { std::free(m_buffer); }
 
+    /// Non-copyable — each pool owns its backing buffer exclusively.
     PoolAllocator(const PoolAllocator&) = delete;
     PoolAllocator& operator=(const PoolAllocator&) = delete;
 

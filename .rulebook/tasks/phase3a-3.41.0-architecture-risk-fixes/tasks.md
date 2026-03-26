@@ -1,10 +1,11 @@
 ## 1. Root Signature Refactor
 
-- [ ] 1.1 Audit current root signature — document all 14 params, their usage frequency, and which can be moved to descriptor tables.
+- [x] 1.1 Audit current root signature — 5 root params, 52/64 DWORDs used, 12 headroom. Slot 2 dual-use (PerObjectCB/LightingCB). Quick wins: root constants 16→8 (saves 8), shadow to table (saves 4). Full audit at `docs/analysis/architecture/root-signature-audit.md`.
 - [ ] 1.2 Move per-material texture indices to a single bindless descriptor table — replace 10 individual texture table slots with a single StructuredBuffer<MaterialData> indexed by materialID.
 - [ ] 1.3 Reclaim freed root slots — reserve 3-4 slots for future use (GBufferD, reflection probes, post-process UBO, fog CB).
 - [ ] 1.4 Update all PSOs — rebuild pipeline states with new root signature layout. Update shader root parameter indices.
 - [ ] 1.5 Update root_slots.h — new slot definitions matching refactored layout. Document slot budget and remaining capacity.
+- [x] 1.6 Add `#ifdef UZ_BINDLESS` guards to all compute shaders using `ResourceDescriptorHeap`. Fixed 13 failing shaders (atmosphere, GI, postprocess, compute, shadows) + 6 proactive fixes (bloom, lensflare, equirect, god_rays, dof_setup). Fixed PI redefinition in dof_blur_cs.hlsl. Fixed CSMain->main entry point in dfs_cull_objects_cs.hlsl. All backends (DX11, DX12, Vulkan) compile cleanly.
 
 ## 2. Light Data GPU Migration
 
@@ -24,6 +25,10 @@
 - [ ] 4.1 Define SceneEnvironmentState struct — contains all per-frame environment: fog params, sky params, tonemap params, bloom params, exposure params. Single version uint32 for dirty tracking.
 - [ ] 4.2 Implement SceneEnvironmentGatherer refactor — collect all environment components into single SceneEnvironmentState per frame. One CB upload, one dirty check.
 - [ ] 4.3 Update all passes to read from SceneEnvironmentState — lighting, fog, tonemap, bloom all read from same CB instead of separate sources.
+
+## 4b. DRED Integration (moved from phase4_4.5.0_crash-handling)
+
+- [ ] 4b.1 Wire DRED breadcrumbs from RHI into crash context on `DXGI_ERROR_DEVICE_REMOVED`. Requires RHI-level DRED API (ID3D12DeviceRemovedExtendedDataSettings1).
 
 ## 5. Documentation
 

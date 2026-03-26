@@ -8,7 +8,7 @@ Reference analysis documents organized by subsystem. Used for architectural rese
 
 | Directory | Contents | Files |
 |-----------|----------|-------|
-| [asset-pipeline/](asset-pipeline/) | Asset loading architecture, bottleneck analysis | 4 |
+| [asset-pipeline/](asset-pipeline/) | Asset loading architecture, texture benchmarks, bottleneck analysis | 5 |
 | [atmosphere/](atmosphere/) | Sky, fog, volumetric clouds, aerial perspective, transmittance LUTs | 17 |
 | [dataflow/](dataflow/) | Data flow documents for multi-subsystem features (SDF GI, SSGI, radiance cache) | 5 |
 | [engine-comparison/](engine-comparison/) | Cross-engine architecture analysis (Godot, Unity, Three.js) | 8+ |

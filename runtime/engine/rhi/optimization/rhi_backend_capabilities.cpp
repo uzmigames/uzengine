@@ -1,3 +1,5 @@
+/// RHI backend capability detection and feature-tier computation.
+
 #include "rhi_backend_capabilities.h"
 
 #include "log.h"

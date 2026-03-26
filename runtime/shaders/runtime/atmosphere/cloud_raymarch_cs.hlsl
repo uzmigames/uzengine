@@ -58,6 +58,11 @@ cbuffer CloudCB : register(b2) {
 
 SamplerState linearSampler : register(s0);
 
+#ifndef UZ_BINDLESS
+Texture3D<float>    g_ShapeNoiseTex : register(t0);
+RWTexture2D<float4> g_OutputTex     : register(u0);
+#endif
+
 #ifndef UZ_PI_DEFINED
 #define UZ_PI_DEFINED
 static const float PI = 3.14159265359f;
@@ -291,6 +296,9 @@ void main(uint3 DTid : SV_DispatchThreadID) {
 
 #ifdef UZ_BINDLESS
     RWTexture2D<float4> output = ResourceDescriptorHeap[g_outputUavIdx];
+#else
+    RWTexture2D<float4> output = g_OutputTex;
+#endif
 
     float3 rayDir = ReconstructRayDir(DTid.xy);
 
@@ -402,5 +410,4 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     }
 
     output[DTid.xy] = float4(luminance, transmittance);
-#endif
 }

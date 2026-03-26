@@ -666,12 +666,11 @@ RHIPipelineHandle PipelineLibrary::GetParticleMeshOpaque() {
 
     // Vertex input: mesh position data from vertex buffer slot 0
     RHIInputElementDesc inputElements[1] = {};
-    inputElements[0].semantic      = "POSITION";
+    inputElements[0].semantic      = RHIInputSemantic::Position;
     inputElements[0].semanticIndex = 0;
     inputElements[0].format        = RHIFormat::RGB32Float;
     inputElements[0].inputSlot     = 0;
     inputElements[0].byteOffset    = 0;
-    inputElements[0].instanceStepRate = 0; // per-vertex
     desc.inputElements     = inputElements;
     desc.inputElementCount = 1;
 
@@ -730,12 +729,11 @@ RHIPipelineHandle PipelineLibrary::GetParticleMeshTransparent() {
 
     // Vertex input: mesh position data from vertex buffer slot 0
     RHIInputElementDesc inputElements[1] = {};
-    inputElements[0].semantic      = "POSITION";
+    inputElements[0].semantic      = RHIInputSemantic::Position;
     inputElements[0].semanticIndex = 0;
     inputElements[0].format        = RHIFormat::RGB32Float;
     inputElements[0].inputSlot     = 0;
     inputElements[0].byteOffset    = 0;
-    inputElements[0].instanceStepRate = 0; // per-vertex
     desc.inputElements     = inputElements;
     desc.inputElementCount = 1;
 

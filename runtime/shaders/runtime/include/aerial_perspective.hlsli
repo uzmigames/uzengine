@@ -114,6 +114,28 @@ float3 AP_SampleTransmittanceLut(Texture2D<float4> lut, SamplerState samp,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Multi-Scattering LUT Sampling
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Samples the precomputed multi-scattering LUT for aerial perspective.
+/// The LUT is parameterized by sun zenith cosine (U) and normalized height (V).
+/// @ref Hillaire 2020 "A Scalable and Production Ready Sky and Atmosphere Rendering Technique"
+/// @constants UV mapping: x = dot(up,sunDir)*0.5+0.5, y = (h-bR)/(tR-bR)
+/// @deviations NONE
+float3 AP_SampleMultiScatteringLut(Texture2D<float4> lut, SamplerState samp,
+    float3 samplePos, float3 sunDir_, float bRadius, float tRadius)
+{
+    float3 upVec = normalize(samplePos);
+    float viewZenithCos = dot(upVec, sunDir_);
+    float h = length(samplePos);
+    float2 uv = saturate(float2(
+        viewZenithCos * 0.5f + 0.5f,
+        (h - bRadius) / (tRadius - bRadius)
+    ));
+    return lut.SampleLevel(samp, uv, 0).rgb;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Deferred Lighting Integration (stub for Step 8)
 // ─────────────────────────────────────────────────────────────────────────────
 

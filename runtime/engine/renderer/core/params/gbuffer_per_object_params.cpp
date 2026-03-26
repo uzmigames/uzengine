@@ -32,8 +32,8 @@ static_assert(offsetof(uz::GBufferPerObjectParams, opacity) == offsetof(uz::PerO
               "opacity offset mismatch");
 static_assert(offsetof(uz::GBufferPerObjectParams, alphaClipThreshold) == offsetof(uz::PerObjectCB, alphaClipThreshold),
               "alphaClipThreshold offset mismatch");
-static_assert(offsetof(uz::GBufferPerObjectParams, twoSided) == offsetof(uz::PerObjectCB, twoSided),
-              "twoSided offset mismatch");
+static_assert(offsetof(uz::GBufferPerObjectParams, opacitySrvIndex) == offsetof(uz::PerObjectCB, opacitySrvIndex),
+              "opacitySrvIndex offset mismatch");
 static_assert(offsetof(uz::GBufferPerObjectParams, materialFlags) == offsetof(uz::PerObjectCB, materialFlags),
               "materialFlags offset mismatch");
 

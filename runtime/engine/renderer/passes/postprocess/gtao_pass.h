@@ -213,8 +213,10 @@ public:
     /// Shutdown and release all GPU resources.
     void Shutdown();
 
+    /// Returns true if Init() has been called and GPU resources are allocated.
     [[nodiscard]] bool IsInitialized() const noexcept { return m_initialized; }
 
+    /// Returns the SRV descriptor index of the filtered AO texture.
     [[nodiscard]] uint32_t GetFilteredAOSrvIndex() const noexcept { return m_filteredAOSrvIndex; }
 
     /// Returns the filtered AO texture handle (for PassInspector registration).

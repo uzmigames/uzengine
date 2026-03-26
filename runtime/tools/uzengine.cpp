@@ -32,15 +32,13 @@
 #ifdef UZ_HAS_LUA_RENDERER_API
 #include "lua_renderer_api.h"
 #include "../engine/scripting/core/lua_input_api.h"
+#include "../editor/input/editor_input_handler.h"
+#include "../editor/selection/selection_manager.h"
+#include "../engine/scripting/editor/lua_editor_api.h"
 #endif
 
 #ifdef _WIN32
 #include "platform_window.h"
-#include "dx12_device.h"
-#include "dx12_swapchain.h"
-#include "dx12_command_list.h"
-#include "dx12_fence.h"
-#include <d3d12.h>
 #endif
 
 #include <chrono>
@@ -138,7 +136,7 @@ static int RunHeadless(const RHIDeviceDesc& deviceDesc) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Windowed render loop (Windows/DX12)
+// Windowed render loop (Windows)
 // ─────────────────────────────────────────────────────────────────────────────
 
 #ifdef _WIN32
@@ -147,9 +145,9 @@ static int RunHeadless(const RHIDeviceDesc& deviceDesc) {
 ///
 /// Returns false if any fence creation fails. On failure, all previously
 /// created fences are cleaned up.
-static bool CreateFrameFences(DX12Device* device, DX12Fence* fences[], uint32_t count) {
+static bool CreateFrameFences(IRHIDevice* device, IRHIFence* fences[], uint32_t count) {
     for (uint32_t i = 0; i < count; ++i) {
-        auto* f = static_cast<DX12Fence*>(device->CreateFence());
+        auto* f = device->CreateFence();
         if (!f) {
             UZ_LOG(RHI, Error, "Failed to create frame fence {}", i);
             for (uint32_t j = 0; j < i; ++j) {
@@ -171,18 +169,29 @@ static void ComputeClearColor(float t, float outColor[4]) {
 }
 
 /// Records and submits a single clear-screen frame.
-static void RenderClearFrame(DX12CommandList* cmdList, DX12SwapChain* swapChain, float t) {
+static void RenderClearFrame(IRHICommandList* cmdList, IRHISwapChain* swapChain, float t) {
     float color[4];
     ComputeClearColor(t, color);
 
     cmdList->Begin();
 
-    ID3D12Resource* backBuffer = swapChain->GetCurrentBackBufferResource();
-    D3D12_CPU_DESCRIPTOR_HANDLE rtv = swapChain->GetCurrentRTV();
+    const RHITextureHandle backBuffer = swapChain->GetCurrentBackBuffer();
 
-    cmdList->TransitionBarrier(backBuffer, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
-    cmdList->ClearRTV(rtv, color);
-    cmdList->TransitionBarrier(backBuffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+    const RHIBarrierDesc toRT{
+        .texture = backBuffer,
+        .stateBefore = RHIResourceState::Present,
+        .stateAfter = RHIResourceState::RenderTarget,
+    };
+    cmdList->ResourceBarrier(&toRT, 1);
+
+    cmdList->ClearRenderTarget(backBuffer, color);
+
+    const RHIBarrierDesc toPresent{
+        .texture = backBuffer,
+        .stateBefore = RHIResourceState::RenderTarget,
+        .stateAfter = RHIResourceState::Present,
+    };
+    cmdList->ResourceBarrier(&toPresent, 1);
 
     cmdList->End();
     cmdList->Execute();
@@ -196,7 +205,7 @@ static void LogRenderStats(uint32_t frameIndex, float totalMs) {
            frameIndex, totalMs, avgMs, fps);
 }
 
-/// Runs the windowed render loop with DX12 clear screen, optional scene + Lua scripting.
+/// Runs the windowed render loop with animated clear screen, optional scene + Lua scripting.
 static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, int maxFrames,
                        const std::string& windowTitle,
                        const std::string& projectDir,
@@ -204,7 +213,8 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
                        const std::string& defaultScene,
                        const std::string& screenshotPath = {},
                        int screenshotFrame = 5,
-                       int shadowDebugMode = 0) {
+                       int shadowDebugMode = 0,
+                       bool editorMode = false) {
     // ── Window ──────────────────────────────────────────────────────────
     WindowDesc winDesc{};
     winDesc.title = windowTitle.empty() ? "UzEngine Runtime" : windowTitle.c_str();
@@ -224,7 +234,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         UZ_LOG(Engine, Error, "Failed to create RHI device");
         return kExitRenderError;
     }
-    auto* device = static_cast<DX12Device*>(rhiDevice.get());
+    auto* device = rhiDevice.get();
 
     // ── Swapchain ───────────────────────────────────────────────────────
     RHISwapChainDesc scDesc{};
@@ -236,14 +246,14 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     scDesc.format = RHIFormat::RGBA8Unorm;
     scDesc.vsync = false;
 
-    auto* swapChain = static_cast<DX12SwapChain*>(device->CreateSwapChain(scDesc));
+    auto* swapChain = device->CreateSwapChain(scDesc);
     if (!swapChain) {
         UZ_LOG(Engine, Error, "Failed to create swapchain");
         return kExitRenderError;
     }
 
     // ── Command List ────────────────────────────────────────────────────
-    auto* cmdList = static_cast<DX12CommandList*>(device->CreateCommandList(RHIQueueType::Graphics));
+    auto* cmdList = device->CreateCommandList(RHIQueueType::Graphics);
     if (!cmdList) {
         UZ_LOG(Engine, Error, "Failed to create command list");
         device->DestroySwapChain(swapChain);
@@ -251,7 +261,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     }
 
     // ── Per-frame fences ────────────────────────────────────────────────
-    DX12Fence* frameFences[kFramesInFlight] = {};
+    IRHIFence* frameFences[kFramesInFlight] = {};
     uint64_t fenceValues[kFramesInFlight] = {};
 
     if (!CreateFrameFences(device, frameFences, kFramesInFlight)) {
@@ -283,6 +293,21 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         UZ_LOG(Engine, Info, "Shadow debug mode set to {}", shadowDebugMode);
     }
 
+    // Apply editor mode from CLI (--editor)
+    if (editorMode && sceneRendererReady) {
+        sceneRenderer.SetEditorMode(true);
+    }
+
+    // ── Editor Input & Selection (only when editor mode is active) ────
+    SelectionManager selectionManager;
+    EditorInputHandler editorInput;
+    if (editorMode && sceneRendererReady) {
+        editorInput.Init(sceneRenderer.GetInput(), &selectionManager,
+                         &sceneRenderer.GetCamera(), &world);
+        editorInput.SetSceneRenderer(&sceneRenderer);
+        UZ_LOG(Engine, Info, "Editor input handler initialized");
+    }
+
     // Bind SceneRenderer into the Lua VM so uz.renderer / uz.mesh / uz.texture work.
 #ifdef UZ_HAS_LUA_RENDERER_API
     if (sceneRendererReady && luaReady) {
@@ -292,13 +317,48 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     }
 #endif
 
-    // ── Render Loop ─────────────────────────────────────────────────────
+    // Wire editor state into Lua so uz.editor.* can access selection and gizmo.
+    if (editorMode && luaReady) {
+        LuaSetEditorState(LuaVM::GetState(), &selectionManager, &editorInput);
+    }
+
+    // ── Pre-load: drain async texture decodes before the render loop ──────
+    // Render one frame to trigger lazy material texture loads (SyncWorldToDrawList
+    // → LoadTexture → async decoder submit), then drain all pending decodes via
+    // the lightweight DrainPendingTextureLoads (no full RenderFrame overhead).
     uint32_t frameIndex = 0;
     uint64_t globalFenceValue = 0;
+
+    if (sceneRendererReady && !defaultScene.empty()) {
+        UZ_LOG(Engine, Info, "Pre-loading scene textures...");
+
+        // First frame triggers lazy material texture loads via SyncWorldToDrawList.
+        sceneRenderer.RenderFrame(cmdList, swapChain, &world, &vfs, 0.016f, 0);
+        swapChain->Present(false);
+        globalFenceValue++;
+        fenceValues[0] = globalFenceValue;
+        frameFences[0]->Signal(globalFenceValue);
+        frameIndex = 1;
+
+        // Wait for frame 0 to finish before draining textures on the same command list.
+        frameFences[0]->WaitCPU(globalFenceValue);
+
+        // Drain all pending async texture decodes + GPU uploads.
+        cmdList->Begin();
+        sceneRenderer.DrainPendingTextureLoads(cmdList, &vfs);
+        cmdList->End();
+        cmdList->Execute();
+        device->WaitIdle();
+
+        UZ_LOG(Engine, Info, "Pre-load complete, all textures loaded");
+    }
+
+    // ── Render Loop ─────────────────────────────────────────────────────
     auto startTime = std::chrono::high_resolution_clock::now();
     auto prevTime = startTime;
 
-    const uint32_t frameLimit = maxFrames == kInfiniteFrames ? 0 : static_cast<uint32_t>(maxFrames);
+    // frameLimit accounts for pre-load frames so --frames N means N frames after pre-load.
+    const uint32_t frameLimit = maxFrames == kInfiniteFrames ? 0 : (frameIndex + static_cast<uint32_t>(maxFrames));
     UZ_LOG(Engine, Info, "Starting render loop (frames={})", maxFrames);
 
     while (window.PumpMessages() && window.IsOpen()) {
@@ -333,6 +393,17 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         const float dt = std::chrono::duration<float>(now - prevTime).count();
         prevTime = now;
 
+        // Update editor input (before scripts, so editor hotkeys take priority)
+        if (editorMode && sceneRendererReady) {
+            editorInput.Update(dt);
+            // Sync selection + gizmo state to renderer for outline/gizmo passes
+            sceneRenderer.SetSelectedEntity(selectionManager.GetSelected());
+            sceneRenderer.SetGizmoMode(static_cast<uint8_t>(editorInput.GetGizmoMode()));
+            sceneRenderer.SetGizmoSpace(static_cast<uint8_t>(editorInput.GetGizmoSpace()));
+            sceneRenderer.SetGizmoHoveredAxis(editorInput.GetGizmoHoveredAxis());
+            sceneRenderer.SetGizmoActiveAxis(editorInput.GetGizmoActiveAxis());
+        }
+
         // Update Lua scripts
         if (luaReady) {
             LuaVM::UpdateFrameGlobals(dt, t, static_cast<uint64_t>(frameIndex));
@@ -358,8 +429,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         swapChain->Present(false);
         globalFenceValue++;
         fenceValues[allocFrame] = globalFenceValue;
-        device->GetDirectQueue()->Signal(
-            frameFences[allocFrame]->GetNativeFence(), globalFenceValue);
+        frameFences[allocFrame]->Signal(globalFenceValue);
 
         frameIndex++;
     }
@@ -453,9 +523,10 @@ int main(int argc, char** argv) {
         const std::string ssPath = config.GetString("screenshot");
         const int ssFrame = config.GetInt("screenshot-frame", 5);
         const int shadowDebug = config.GetInt("shadow-debug", 0);
+        const bool editorMode = config.GetBool("editor", false);
         exitCode = uz::RunWindowed(deviceDesc, width, height, maxFrames,
                                     windowTitle, projectDir, contentRoot, defaultScene,
-                                    ssPath, ssFrame, shadowDebug);
+                                    ssPath, ssFrame, shadowDebug, editorMode);
 #else
         UZ_LOG(Engine, Error, "Windowed mode not supported on this platform yet");
         exitCode = uz::kExitRenderError;

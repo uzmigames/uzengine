@@ -12,6 +12,7 @@
 
 #include "vulkan_command_list.h"
 #include "vulkan_device.h"
+#include "vulkan_format_helpers.h"
 
 #include <tracy/TracyVulkan.hpp>
 
@@ -22,51 +23,11 @@
 
 namespace uz {
 
+using namespace uz::vk; // Format/state conversion helpers from vulkan_format_helpers.h
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
-
-/// Maps RHIFormat to VkFormat (command list needs its own copy since
-/// vulkan_device.cpp's is file-static).
-static VkFormat ToVkFormat(RHIFormat format) {
-    switch (format) {
-        case RHIFormat::R8Unorm:        return VK_FORMAT_R8_UNORM;
-        case RHIFormat::RG8Unorm:       return VK_FORMAT_R8G8_UNORM;
-        case RHIFormat::RGBA8Unorm:     return VK_FORMAT_R8G8B8A8_UNORM;
-        case RHIFormat::RGBA8Srgb:      return VK_FORMAT_R8G8B8A8_SRGB;
-        case RHIFormat::BGRA8Unorm:     return VK_FORMAT_B8G8R8A8_UNORM;
-        case RHIFormat::BGRA8Srgb:      return VK_FORMAT_B8G8R8A8_SRGB;
-        case RHIFormat::R16Float:       return VK_FORMAT_R16_SFLOAT;
-        case RHIFormat::RG16Float:      return VK_FORMAT_R16G16_SFLOAT;
-        case RHIFormat::RGBA16Float:    return VK_FORMAT_R16G16B16A16_SFLOAT;
-        case RHIFormat::R32Float:       return VK_FORMAT_R32_SFLOAT;
-        case RHIFormat::RG32Float:      return VK_FORMAT_R32G32_SFLOAT;
-        case RHIFormat::RGB32Float:     return VK_FORMAT_R32G32B32_SFLOAT;
-        case RHIFormat::RGBA32Float:    return VK_FORMAT_R32G32B32A32_SFLOAT;
-        case RHIFormat::R32Uint:        return VK_FORMAT_R32_UINT;
-        case RHIFormat::RG32Uint:       return VK_FORMAT_R32G32_UINT;
-        case RHIFormat::RGBA32Uint:     return VK_FORMAT_R32G32B32A32_UINT;
-        case RHIFormat::D16Unorm:       return VK_FORMAT_D16_UNORM;
-        case RHIFormat::D32Float:       return VK_FORMAT_D32_SFLOAT;
-        case RHIFormat::D24UnormS8Uint: return VK_FORMAT_D24_UNORM_S8_UINT;
-        case RHIFormat::D32FloatS8Uint: return VK_FORMAT_D32_SFLOAT_S8_UINT;
-        case RHIFormat::BC1Unorm:       return VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
-        case RHIFormat::BC1Srgb:        return VK_FORMAT_BC1_RGBA_SRGB_BLOCK;
-        case RHIFormat::BC3Unorm:       return VK_FORMAT_BC3_UNORM_BLOCK;
-        case RHIFormat::BC3Srgb:        return VK_FORMAT_BC3_SRGB_BLOCK;
-        case RHIFormat::BC4Unorm:       return VK_FORMAT_BC4_UNORM_BLOCK;
-        case RHIFormat::BC5Unorm:       return VK_FORMAT_BC5_UNORM_BLOCK;
-        case RHIFormat::BC7Unorm:       return VK_FORMAT_BC7_UNORM_BLOCK;
-        case RHIFormat::BC7Srgb:        return VK_FORMAT_BC7_SRGB_BLOCK;
-        default:                        return VK_FORMAT_UNDEFINED;
-    }
-}
-
-/// Returns true if format is depth/stencil.
-static bool IsDepthFormat(RHIFormat format) {
-    return format == RHIFormat::D16Unorm || format == RHIFormat::D32Float
-        || format == RHIFormat::D24UnormS8Uint || format == RHIFormat::D32FloatS8Uint;
-}
 
 /// Maps RHIResourceState to Vulkan image layout.
 /// Depth formats use DEPTH_STENCIL_READ_ONLY_OPTIMAL instead of SHADER_READ_ONLY_OPTIMAL
@@ -275,10 +236,34 @@ void VulkanCommandList::Execute() {
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &m_commandBuffers[m_frameIndex];
 
+    // If the swapchain set pending semaphores on the device (via GetCurrentBackBuffer),
+    // wire them into this submission:
+    //   - Wait on imageAvailable at COLOR_ATTACHMENT_OUTPUT (don't write to the back
+    //     buffer until the presentation engine has finished reading it)
+    //   - Signal renderFinished when this submission completes (Present waits on it)
+    VkSemaphore waitSemaphore = m_device->m_pendingImageAvailableSem;
+    VkSemaphore signalSemaphore = m_device->m_pendingRenderFinishedSem;
+    VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+
+    if (waitSemaphore != VK_NULL_HANDLE) {
+        submitInfo.waitSemaphoreCount = 1;
+        submitInfo.pWaitSemaphores = &waitSemaphore;
+        submitInfo.pWaitDstStageMask = &waitStage;
+    }
+    if (signalSemaphore != VK_NULL_HANDLE) {
+        submitInfo.signalSemaphoreCount = 1;
+        submitInfo.pSignalSemaphores = &signalSemaphore;
+    }
+
     VkResult result = vkQueueSubmit(m_device->GetGraphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE);
     if (result != VK_SUCCESS) {
         UZ_LOG(RHI, Error, "vkQueueSubmit failed, result={}", static_cast<int>(result));
     }
+
+    // Clear pending semaphores so subsequent Execute() calls in the same frame
+    // (e.g., compute or copy submissions) don't re-use them.
+    m_device->m_pendingImageAvailableSem = VK_NULL_HANDLE;
+    m_device->m_pendingRenderFinishedSem = VK_NULL_HANDLE;
 
     // Rotate to next frame's command pool
     m_frameIndex = (m_frameIndex + 1) % kVulkanFrameCount;

@@ -250,9 +250,14 @@ float4 main(FSInput input) : SV_Target {
         color += bloom * bloomIntensity;
     }
 #else
-    // SM5 path: sample bloom from t1 if bound
-    // bloomColor is always declared; if not bound it returns (0,0,0,0)
-    // which is safe — no bloom contribution when not bound.
+    // SM5 path: bloom texture at t1 is always declared. When not bound by
+    // the DX11 backend, sampling returns (0,0,0,0) — no bloom contribution.
+    // Bloom intensity is not available via root constants in SM5; the
+    // C++ backend premultiplies bloom intensity into the bloom texture.
+    {
+        float3 bloom = bloomColor.Sample(linearSampler, uv).rgb;
+        color += bloom;
+    }
 #endif
 
     // ── 3b. Composite lens flare (additive, after bloom) ─────────────────

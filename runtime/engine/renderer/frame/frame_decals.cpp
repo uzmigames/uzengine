@@ -19,7 +19,7 @@
 #include "profiler.h"
 #include "log.h"
 
-#include "engine/vfx/passes/decal_pass.h"
+#include "engine/renderer/passes/vfx/decal_pass.h"
 #include "engine/vfx/decals/decal_manager.h"
 #include "engine/vfx/decals/decal_component.h"
 

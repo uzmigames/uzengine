@@ -2,6 +2,7 @@
 #pragma once
 
 // Geometry passes
+#include "geometry/decal_pass.h"
 #include "geometry/depth_prepass.h"
 #include "geometry/gbuffer_pass.h"
 #include "geometry/gpu_cull_pass.h"
@@ -33,5 +34,5 @@
 #include "postprocess/postprocess_stack.h"
 
 // VFX passes
-#include "engine/vfx/passes/particle_simulation_pass.h"
-#include "engine/vfx/passes/particle_render_pass.h"
+#include "vfx/particle_simulation_pass.h"
+#include "vfx/particle_render_pass.h"

@@ -127,6 +127,20 @@ RWTexture2D<float> aoOutput     : register(u0);
 SamplerState pointSampler : register(s0);
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Depth Sampling
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Fetch depth value from the depth buffer at the given UV (always mip 0).
+float SampleDepth(float2 uv) {
+#ifdef UZ_BINDLESS
+    Texture2D<float> depthTex = ResourceDescriptorHeap[depthSrvIndex];
+    return depthTex.SampleLevel(pointSampler, uv, 0).r;
+#else
+    return depthBuffer.SampleLevel(pointSampler, uv, 0).r;
+#endif
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Groupshared Depth Preload (8×8 tile + 8px border = 24×24)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -147,7 +161,7 @@ void PreloadDepthTile(uint2 groupThreadId, uint2 groupOrigin) {
 
     // Each thread loads multiple texels to fill the 24×24 region.
     // 576 total texels / 64 threads = 9 iterations per thread.
-    [unroll] for (uint i = linearIdx; i < 24 * 24; i += 64) {
+    [unroll(9)] for (uint i = linearIdx; i < 24 * 24; i += 64) {
         uint tx = i % 24;
         uint ty = i / 24;
         // Map tile-local coordinate to pixel coordinate.
@@ -202,16 +216,6 @@ Texture2D<float>  hizPyramid    : register(t2);
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper Functions
 // ─────────────────────────────────────────────────────────────────────────────
-
-/// Fetch depth value from the depth buffer at the given UV (always mip 0).
-float SampleDepth(float2 uv) {
-#ifdef UZ_BINDLESS
-    Texture2D<float> depthTex = ResourceDescriptorHeap[depthSrvIndex];
-    return depthTex.SampleLevel(pointSampler, uv, 0).r;
-#else
-    return depthBuffer.SampleLevel(pointSampler, uv, 0).r;
-#endif
-}
 
 #ifdef GTAO_USE_HIZ
 /// Fetch depth from Hi-Z half-res min-depth texture.

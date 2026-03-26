@@ -241,6 +241,34 @@ Files extracted from upstream source:
 - `AUTHORS.txt`, `LICENSE`
 
 
+## ffmpeg
+
+- Upstream: https://github.com/ffmpeg/ffmpeg
+- Builds: https://github.com/BtbN/FFmpeg-Builds (pre-built LGPL shared)
+- Version: 7.x (master, LGPL shared build)
+- License: LGPL 2.1+
+
+FFmpeg shared libraries for H.264 hardware-accelerated video encoding. Used by
+the viewport frame streaming pipeline to encode DX12 rendered frames as H.264
+bitstream, which is then decoded by WebCodecs VideoDecoder in the VSCode webview
+at 120 FPS with <5ms latency (validated by POC 0.2).
+
+Only the shared libraries (DLLs), headers, and import libs are included — no
+CLI executables (ffmpeg.exe, ffprobe.exe). The LGPL build excludes GPL-only
+codecs, making it safe for proprietary use without source disclosure.
+
+Libraries used:
+- `libavcodec` — H.264 encoder/decoder (uses HW acceleration: NVENC, AMF, QSV)
+- `libavutil` — pixel formats, memory management, error codes
+- `libswscale` — pixel format conversion (RGBA → NV12 for H.264 input)
+
+Files from pre-built package:
+
+- `bin/` (avcodec-*.dll, avutil-*.dll, swscale-*.dll, swresample-*.dll)
+- `include/` (libavcodec/, libavutil/, libswscale/, libswresample/)
+- `lib/` (.lib import libraries for MSVC/Zig linking)
+
+
 ## freetype
 
 - Upstream: https://github.com/freetype/freetype

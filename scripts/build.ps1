@@ -73,7 +73,7 @@ Push-Location "$Root/runtime"
 
 switch ($compiler) {
     "zig" {
-        zig build -Doptimize=ReleaseFast
+        zig build -Ddll=true -Doptimize=ReleaseFast
     }
     "msvc" {
         cmake --preset msvc-release 2>&1 | Out-Null
@@ -103,10 +103,12 @@ Pop-Location
 Write-Host "      OK" -ForegroundColor Green
 Write-Host ""
 
-# Copy .node to extension
-Write-Host "      Copying uzengine.node to extension/native/..." -ForegroundColor Gray
+# Copy .node + DLLs to extension
+Write-Host "      Deploying uzengine.node + DLLs to extension/native/..." -ForegroundColor Gray
 New-Item -ItemType Directory -Path "$Root/extension/native" -Force | Out-Null
-Copy-Item "$Root/napi/build/Release/uzengine.node" "$Root/extension/native/uzengine.node" -Force
+Copy-Item "$Root/napi/build/Release/uzengine.node" "$Root/extension/native/" -Force
+# Copy all runtime DLLs alongside the addon
+Get-ChildItem "$Root/napi/build/Release/*.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination "$Root/extension/native/" -Force
 Write-Host "      OK" -ForegroundColor Green
 Write-Host ""
 

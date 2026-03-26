@@ -140,6 +140,7 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
         cmd.worldMatrix  = sceneComp.GetWorldMatrix();
         cmd.normalMatrix = cmd.worldMatrix.NormalMatrix();
         cmd.meshId       = meshId;
+        cmd.entityId     = static_cast<uint32_t>(enttEntity);
 
         // Map ECS mobility to renderer-side EMobility for shadow cache filtering.
         // Stationary is treated as Static for shadow caching (standard).
@@ -245,6 +246,14 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
             // Only meaningful when shadingModelID == 4 (ClearCoat).
             const uint32_t ccRoughU4 = std::min(15u, static_cast<uint32_t>(mat->GetClearCoatRoughness() * 15.0f));
             cmd.materialFlags |= (ccRoughU4 << 28);
+
+            // Pack twoSided into materialFlags bit 3 (PSO-level only, not read in shader).
+            if (mat->IsTwoSided()) {
+                cmd.materialFlags |= 0x8u; // bit 3
+            }
+
+            // Opacity texture SRV index — used for alpha mask sampling in the shader.
+            cmd.opacitySrvIndex = mat->GetOpacitySrvIndex();
 
             // Subsurface scattering parameters (only read for SSS shading models).
             mat->GetSubsurfaceColor(cmd.subsurfaceColorR, cmd.subsurfaceColorG, cmd.subsurfaceColorB);

@@ -1,5 +1,10 @@
 #include "cvar.h"
 
+/// Console variable (CVar) registry implementation.
+///
+/// Manages registration, lookup, and mutation of floating-point configuration variables
+/// with min/max bounds enforcement and default value tracking.
+
 #include <algorithm>
 #include <cmath>
 

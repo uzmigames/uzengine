@@ -1,3 +1,5 @@
+/// Lua bindings for the scene API (node transforms, hierarchy, find-by-name).
+
 #include "lua_scene_api.h"
 
 #include "log.h"

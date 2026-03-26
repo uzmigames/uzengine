@@ -1,12 +1,22 @@
 # N-API Bridge — Function Registration and Typed Array Transfer
 
-> **Status**: Planned (Phase 1–2)
-> **Source**: `extension/ipc/napi_bridge.h`, `runtime/ipc/napi_dispatcher.cpp`
-> **References**: Node-API (NAPI) v10, Electron N-API compatibility (electron#22799)
+> **Status**: **DONE (Phase 2.0)**
+> **Source**: `napi/src/addon.cpp`, `napi/src/napi_*.cpp`, `runtime/engine/app/runtime.h`
+> **References**: Node-API (NAPI) v10, Electron N-API compatibility (electron#22799), cmake-js build system
 
 ## Purpose
 
 The N-API bridge translates between TypeScript extension code and C++ runtime code. It handles function registration (exposing C++ functions as async methods), argument marshaling (scalars, strings, buffers), return value serialization, error propagation, and callback patterns. This bridge is the low-level transport; the IPC protocol (§28-01) sits on top.
+
+### Architecture (DLL-Based)
+
+The bridge works via:
+1. Runtime compiled as **DLL** (`zig build -Ddll=true`) → `uzengine_runtime.dll` + `uzengine_runtime.lib` (MSVC-compatible import lib)
+2. N-API addon compiled with MSVC → `uzengine.node` (links `uzengine_runtime.lib`)
+3. All DLLs copied to `extension/native/` alongside `.node`
+4. Extension's `require('./native/uzengine.node')` loads addon, which loads DLL, which calls C API functions
+
+This DLL-based approach ensures MSVC compatibility and ABI safety across the Zig→MSVC→Node.js stack.
 
 ## Critical NAPI Rules
 

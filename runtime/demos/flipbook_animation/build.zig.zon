@@ -1,0 +1,9 @@
+.{
+    .name = .flipbook_animation,
+    .version = "0.1.0",
+    .fingerprint = 0xc470366f10e19100,
+    .dependencies = .{
+        .uz_demo_common = .{ .path = "../common" },
+    },
+    .paths = .{"build.zig"},
+}

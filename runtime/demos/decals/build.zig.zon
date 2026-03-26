@@ -1,0 +1,9 @@
+.{
+    .name = .decals,
+    .version = "0.1.0",
+    .fingerprint = 0x13b7e905071d454f,
+    .dependencies = .{
+        .uz_demo_common = .{ .path = "../common" },
+    },
+    .paths = .{"build.zig"},
+}

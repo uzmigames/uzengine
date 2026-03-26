@@ -1,22 +1,22 @@
 #pragma once
 
-/// DecalPool -- Pre-allocated object pool for DecalComponent instances.
+/// DecalPool -- Pre-allocated object pool for VfxDecal instances.
 ///
-/// Eliminates per-frame heap allocations by pre-allocating all DecalComponents
+/// Eliminates per-frame heap allocations by pre-allocating all VfxDecals
 /// in a single contiguous vector at construction time. Decals are acquired and
 /// returned via O(1) free-list operations.
 ///
 /// # Design
-/// - **Contiguous backing store**: Single `std::vector<DecalComponent>` for
+/// - **Contiguous backing store**: Single `std::vector<VfxDecal>` for
 ///   cache-friendly iteration and zero fragmentation.
 /// - **Index-based free list**: `std::vector<uint32_t>` tracks available slot
 ///   indices. Acquire pops from the back (O(1)), return pushes (O(1)).
-/// - **Active pointer list**: `std::vector<DecalComponent*>` for efficient
+/// - **Active pointer list**: `std::vector<VfxDecal*>` for efficient
 ///   iteration by rendering and tick systems.
 /// - **No allocation after construction**: All vectors are reserved up front.
 ///
 /// # Ownership
-/// The pool owns all DecalComponent memory. Pointers returned by `AcquireDecal()`
+/// The pool owns all VfxDecal memory. Pointers returned by `AcquireDecal()`
 /// remain valid until the pool is destroyed. Callers must not delete or free them.
 ///
 /// # Thread Safety
@@ -25,7 +25,7 @@
 /// # Example
 /// ```cpp
 /// DecalPool pool(500);
-/// DecalComponent* decal = pool.AcquireDecal();
+/// VfxDecal* decal = pool.AcquireDecal();
 /// if (decal) {
 ///     decal->position = impactPoint;
 ///     decal->materialPath = "materials/decals/bullet_hole.uzmat";
@@ -43,7 +43,7 @@
 
 namespace uz {
 
-/// Pre-allocated pool of DecalComponent instances.
+/// Pre-allocated pool of VfxDecal instances.
 ///
 /// Manages a fixed-capacity pool where decals are acquired and returned
 /// without dynamic memory allocation. The pool tracks active and available
@@ -59,7 +59,7 @@ class DecalPool {
   public:
     /// Constructs a decal pool with the given capacity.
     ///
-    /// Pre-allocates `poolSize` DecalComponent instances in contiguous memory.
+    /// Pre-allocates `poolSize` VfxDecal instances in contiguous memory.
     /// All start in the free list (available for acquisition).
     ///
     /// # Arguments
@@ -82,17 +82,17 @@ class DecalPool {
     /// Acquires a decal from the pool, reset to default state.
     ///
     /// Pops an index from the free list, resets the corresponding
-    /// DecalComponent to defaults, adds it to the active list, and
+    /// VfxDecal to defaults, adds it to the active list, and
     /// returns a pointer into the backing store.
     ///
     /// # Returns
-    /// Pointer to a default-initialized DecalComponent, or `nullptr`
+    /// Pointer to a default-initialized VfxDecal, or `nullptr`
     /// if the pool is exhausted.
     ///
     /// # Side Effects
     /// - Logs VFX/Warning on pool exhaustion (at most once per second
     ///   to avoid log spam).
-    [[nodiscard]] DecalComponent* AcquireDecal();
+    [[nodiscard]] VfxDecal* AcquireDecal();
 
     /// Returns a decal to the available pool.
     ///
@@ -108,7 +108,7 @@ class DecalPool {
     /// - Logs VFX/Error if the pointer is null or out of range.
     /// - Logs VFX/Warning if the decal is not in the active list
     ///   (double-return).
-    void ReturnDecal(DecalComponent* decal);
+    void ReturnDecal(VfxDecal* decal);
 
     /// Returns all active decals to the available pool.
     ///
@@ -135,13 +135,13 @@ class DecalPool {
     ///
     /// # Returns
     /// Const reference to the internal active-decal pointer vector.
-    [[nodiscard]] const std::vector<DecalComponent*>& GetActiveDecals() const noexcept;
+    [[nodiscard]] const std::vector<VfxDecal*>& GetActiveDecals() const noexcept;
 
   private:
-    /// Contiguous backing store. All DecalComponent instances live here.
+    /// Contiguous backing store. All VfxDecal instances live here.
     /// Pointers into this vector remain stable because the vector is never
     /// resized after construction.
-    std::vector<DecalComponent> backingStore_;
+    std::vector<VfxDecal> backingStore_;
 
     /// Indices of available (free) slots in `backingStore_`.
     /// AcquireDecal() pops from the back; ReturnDecal() pushes.
@@ -149,7 +149,7 @@ class DecalPool {
 
     /// Pointers to currently active (in-use) decals in `backingStore_`.
     /// Used by rendering/tick systems to iterate only over live decals.
-    std::vector<DecalComponent*> activeDecals_;
+    std::vector<VfxDecal*> activeDecals_;
 
     /// Total capacity (size of backingStore_).
     uint32_t poolSize_ = 0;

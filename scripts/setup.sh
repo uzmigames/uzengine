@@ -229,7 +229,7 @@ done
 echo ""
 echo -e "${CYAN}[3/9] Cloning thirdparty repos...${NC}"
 
-# Note: DirectX-specific deps (directx_headers, d3d12ma, dxc, agility, fxc)
+# Note: DirectX-specific deps (directx_headers, d3d12ma, dxc, fxc)
 # are Windows-only and intentionally omitted here.
 
 # spdlog (logging)

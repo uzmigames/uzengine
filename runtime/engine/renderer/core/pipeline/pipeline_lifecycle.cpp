@@ -124,6 +124,10 @@ void PipelineLibrary::Shutdown() {
     destroyPipeline(m_heightFog);
     destroyPipeline(m_cloudComposite);
     destroyPipeline(m_transmittanceLut);
+    destroyPipeline(m_singleScatterLut);
+    destroyPipeline(m_scatteringDensity);
+    destroyPipeline(m_indirectScattering);
+    destroyPipeline(m_irradianceLut);
     destroyPipeline(m_apVolume);
     destroyPipeline(m_skyCubemapCapture);
     destroyPipeline(m_skyCubemapCapturePSPipeline);
@@ -184,6 +188,10 @@ void PipelineLibrary::Shutdown() {
     destroyShader(m_dofBlurCS);
     destroyShader(m_velocityPS);
     destroyShader(m_multiScatterLutCS);
+    destroyShader(m_singleScatterLutCS);
+    destroyShader(m_scatteringDensityCS);
+    destroyShader(m_indirectScatteringCS);
+    destroyShader(m_irradianceLutCS);
     destroyShader(m_fxaaPS);
 
     m_psoCache.Shutdown();
@@ -396,10 +404,23 @@ uint32_t PipelineLibrary::WarmupAll() {
     warmup(GetDofSetup(), "DoF_Setup");
     warmup(GetDofBlur(), "DoF_Blur");
 
-    // ── Instanced variants ──────────────────────────────────────────────
-    warmup(GetGBufferInstanced(), "GBuffer_Instanced");
-    warmup(GetShadowDepthInstanced(), "ShadowDepth_Instanced");
-    warmup(GetDepthPrepassInstanced(), "DepthPrepass_Instanced");
+    // ── Instanced variants (optional — non-instanced path is always available) ──
+    // These require SM6.1+ and may fail on downlevel feature levels. Failures
+    // are non-fatal: the renderer falls back to the per-draw path.
+    {
+        auto warmupInstanced = [&](RHIPipelineHandle h, const char* name) {
+            if (h.IsValid()) {
+                ++count;
+            } else {
+                UZ_LOG(Renderer, Warning,
+                       "WarmupAll: instanced pipeline '{}' failed to create "
+                       "(non-fatal, will use per-draw fallback)", name);
+            }
+        };
+        warmupInstanced(GetGBufferInstanced(), "GBuffer_Instanced");
+        warmupInstanced(GetShadowDepthInstanced(), "ShadowDepth_Instanced");
+        warmupInstanced(GetDepthPrepassInstanced(), "DepthPrepass_Instanced");
+    }
 
     // ── Fullscreen debug ────────────────────────────────────────────────
     warmup(GetVisFullscreen(), "Vis_Fullscreen");

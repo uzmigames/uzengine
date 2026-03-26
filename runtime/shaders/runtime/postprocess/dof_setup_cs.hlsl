@@ -69,6 +69,11 @@ cbuffer DofSetupParams : register(b0) {
 
 SamplerState pointSampler : register(s0);
 
+#ifndef UZ_BINDLESS
+Texture2D<float>    g_DepthTex  : register(t0);
+RWTexture2D<float>  g_OutputTex : register(u0);
+#endif
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Depth Linearization
 // ─────────────────────────────────────────────────────────────────────────────
@@ -192,11 +197,8 @@ void main(uint3 dtid : SV_DispatchThreadID)
     Texture2D<float> depthTex    = ResourceDescriptorHeap[g_DepthSrvIndex];
     RWTexture2D<float> outputTex = ResourceDescriptorHeap[g_OutputUavIndex];
 #else
-    // Fallback: explicit register bindings for non-bindless path
-    // These would be defined externally; this branch exists for shader model
-    // compatibility but the engine uses bindless by default.
-    Texture2D<float> depthTex    : register(t0);
-    RWTexture2D<float> outputTex : register(u0);
+    Texture2D<float>   depthTex  = g_DepthTex;
+    RWTexture2D<float> outputTex = g_OutputTex;
 #endif
 
     // Compute UV for depth buffer sampling.

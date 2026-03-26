@@ -45,6 +45,7 @@ napi/build/
 extension/out/
 extension/native/
 mcp/dist/
+mcp/data/
 
 # C++ build
 *.obj

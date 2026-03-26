@@ -17,8 +17,8 @@
 
 #include <gtest/gtest.h>
 
-#include "engine/vfx/passes/distortion_pass.h"
-#include "engine/vfx/passes/distortion_resolve_pass.h"
+#include "engine/renderer/passes/vfx/distortion_pass.h"
+#include "engine/renderer/passes/vfx/distortion_resolve_pass.h"
 #include "engine/vfx/core/gpu_particle_buffer.h"
 #include "mock_rhi_device.h"
 

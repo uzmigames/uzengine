@@ -157,6 +157,11 @@ struct DrawCommand {
     RHITextureHandle metallicTexture;
     RHITextureHandle aoTexture;
     RHITextureHandle emissiveTexture;
+
+    /// ECS entity ID that produced this draw command. Used by the editor
+    /// outline pass to find draw commands for the selected entity. Not sent
+    /// to the GPU — CPU-side metadata only.
+    uint32_t entityId = UINT32_MAX;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

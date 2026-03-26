@@ -1,3 +1,5 @@
+/// Lua bindings for the material API (albedo, roughness, metallic, emission, textures).
+
 #include "lua_material_api.h"
 
 #include "log.h"

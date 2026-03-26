@@ -71,6 +71,7 @@ Located in [guides/](guides/):
 
 | Guide | Description |
 |-------|-------------|
+| **[build-and-deployment.md](guides/build-and-deployment.md)** | **⭐ START HERE** — Complete build pipeline: runtime DLL, N-API addon (cmake-js), extension deployment, troubleshooting |
 | [material-graph-authoring.md](guides/material-graph-authoring.md) | Material graph authoring — node types, `.uzmat` JSON format, procedural patterns, GPU baking, Lua API |
 | [temporal-upscaling.md](guides/temporal-upscaling.md) | Temporal upscaling (TAA/TSR), screen percentage system, dynamic resolution, and Lua API |
 | [shader-parameter-binding-guide.md](guides/shader-parameter-binding-guide.md) | Macro system, metadata definition, and `ShaderParameterBinder` usage |
@@ -92,9 +93,14 @@ Located in [guides/](guides/):
 | [lua-vfx-trail-api.md](guides/lua-vfx-trail-api.md) | Lua Trail API — ribbon creation, color/width animation, point lifetime management, sword and projectile trails |
 | [lua-vfx-decal-api.md](guides/lua-vfx-decal-api.md) | Lua Decal API — impact decals, blend modes, normal intensity, scorch marks, blood splats, crack patterns |
 | [gtao-ambient-occlusion.md](guides/gtao-ambient-occlusion.md) | GTAO ambient occlusion — compute, denoise, temporal, upsample |
+| [material-texture-slots.md](guides/material-texture-slots.md) | Material texture slots, defaults, and SRV index binding |
+| [material-blend-modes.md](guides/material-blend-modes.md) | Blend mode guide — Opaque, Masked, Translucent, Additive |
+| [material-perobject-cb.md](guides/material-perobject-cb.md) | PerObjectCB layout, byte offsets, and materialFlags bitfield packing |
 | [pbr-brdf-ue5-parity.md](guides/pbr-brdf-ue5-parity.md) | PBR BRDF reference parity guide |
+| [reflection-probe-placement.md](guides/reflection-probe-placement.md) | Reflection probe placement, parameter tuning, and optimization guide |
 | [scene-load-optimization.md](guides/scene-load-optimization.md) | Scene loading optimization and profiling |
 | [shadow-caching-guide.md](guides/shadow-caching-guide.md) | Static shadow caching implementation guide |
+| [texture-pipeline.md](guides/texture-pipeline.md) | Async texture loading, cook pipeline, .uztexture format, copy queue parallelism, sRGB support |
 | [ue5-basic-scene-defaults.md](guides/ue5-basic-scene-defaults.md) | Reference default values for basic scene components |
 | [ue5-sky-fog-injection.md](guides/ue5-sky-fog-injection.md) | Sky-to-fog color injection data flow |
 

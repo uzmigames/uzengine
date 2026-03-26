@@ -62,6 +62,32 @@ struct AtmosphereFrameContext {
     bool*             multiScatterLutDirty  = nullptr;
     bool*             multiScatterLutFilled = nullptr;
 
+    // Bruneton 3D Scattering LUT (owned by SceneRenderer)
+    RHITextureHandle  scatteringLut3D;
+    uint32_t          scatteringLut3DSrv = UINT32_MAX;
+    uint32_t          scatteringLut3DUav = UINT32_MAX;
+    bool*             scatteringLut3DDirty  = nullptr;
+    bool*             scatteringLut3DFilled = nullptr;
+
+    // Delta Rayleigh/Mie/Density 3D textures (temp, owned by SceneRenderer)
+    RHITextureHandle  deltaRayleigh3D;
+    uint32_t          deltaRayleigh3DSrv = UINT32_MAX;
+    uint32_t          deltaRayleigh3DUav = UINT32_MAX;
+    RHITextureHandle  deltaMie3D;
+    uint32_t          deltaMie3DSrv = UINT32_MAX;
+    uint32_t          deltaMie3DUav = UINT32_MAX;
+    RHITextureHandle  scatteringDensity3D;
+    uint32_t          scatteringDensity3DSrv = UINT32_MAX;
+    uint32_t          scatteringDensity3DUav = UINT32_MAX;
+
+    // Irradiance LUT (64x16, owned by SceneRenderer)
+    RHITextureHandle  irradianceLut;
+    uint32_t          irradianceLutSrv = UINT32_MAX;
+    uint32_t          irradianceLutUav = UINT32_MAX;
+    RHITextureHandle  deltaIrradiance;
+    uint32_t          deltaIrradianceSrv = UINT32_MAX;
+    uint32_t          deltaIrradianceUav = UINT32_MAX;
+
     // Sky cubemap state (owned by SceneRenderer)
     RHITextureHandle  skyCubemap;
     uint32_t          skyCubemapSrv = UINT32_MAX;
@@ -86,6 +112,12 @@ struct AtmosphereFrameContext {
     // GBuffer depth (for sky pass depth test)
     uint32_t          depthSrvIndex = UINT32_MAX;
     RHITextureHandle  depthTexture;
+
+    // HDRI environment override — when active, skip procedural sky passes
+    // and render the HDRI cubemap as a skybox background instead.
+    bool              hdriActive       = false;          ///< True = HDRI cubemap replaces procedural sky.
+    uint32_t          hdriCubemapSrv   = UINT32_MAX;     ///< SRV index for HDRI cubemap (when hdriActive).
+    RHITextureHandle  hdriCubemapTex;                    ///< Physical texture handle (SM5 non-bindless path).
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

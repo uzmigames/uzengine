@@ -3,7 +3,7 @@
 /// Registers and executes a compute pass that fills a 64x64x6 RGBA16F
 /// cubemap with sky radiance via the sky_cubemap_cs.hlsl compute shader.
 ///
-/// Uses root constants (8 DWORDs at slot 0 = b0) instead of a CBV,
+/// Uses root constants (10 DWORDs at slot 0 = b0) instead of a CBV,
 /// matching the transmittance LUT and IBL baker patterns.
 
 #include "sky_cubemap_capture_pass.h"
@@ -48,6 +48,9 @@ void AddSkyCubemapCapturePass(rg::RgBuilder& builder, const SkyCubemapCapturePas
         if (desc.transmittanceLutDep.IsValid()) {
             pb.Read(desc.transmittanceLutDep, RHIResourceState::ShaderResource);
         }
+        if (desc.scatteringLut3DDep.IsValid()) {
+            pb.Read(desc.scatteringLut3DDep, RHIResourceState::ShaderResource);
+        }
 
         pb.SetExecutionCallback([desc](IRHICommandList* cmd, const rg::RgPassResources& res) {
             UZ_PROFILE_SCOPE("SkyCubemapCapture::Execute");
@@ -66,8 +69,8 @@ void AddSkyCubemapCapturePass(rg::RgBuilder& builder, const SkyCubemapCapturePas
             // ── Bind compute pipeline ──────────────────────────────────
             cmd->SetPipeline(desc.pipeline);
 
-            // ── Set root constants at slot 0 (b0) -- 8 DWORDs ──────────
-            cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&desc.rootConstants), 8);
+            // ── Set root constants at slot 0 (b0) -- 10 DWORDs ──────────
+            cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&desc.rootConstants), 10);
 
             // ── Bind output UAV at root param 4 (u0 descriptor table) ──
             cmd->SetDescriptorTable(4, desc.cubemapUavIndex);

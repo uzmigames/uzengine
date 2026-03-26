@@ -148,10 +148,11 @@ RHIConfig ResolveRHIConfig(const Config& config) {
         }
     }
 
-    // Shader model: CLI "shader-model" / "shader_model" or project "render.shader_model"
-    const std::string smStr = config.GetString("shader-model",
-        config.GetString("shader_model",
-            config.GetString("render.shader_model", "")));
+    // Shader model: CLI "sm" / "shader-model" / "shader_model" or project "render.shader_model"
+    const std::string smStr = config.GetString("sm",
+        config.GetString("shader-model",
+            config.GetString("shader_model",
+                config.GetString("render.shader_model", ""))));
     if (!smStr.empty()) {
         ShaderModel parsed{};
         if (ParseShaderModel(smStr, parsed)) {

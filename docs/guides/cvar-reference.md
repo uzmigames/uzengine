@@ -85,7 +85,7 @@ Registered in `gtao_pass.cpp`.
 |------|------|---------|-------|-------------|
 | `r.GTAO.Radius` | float | 200.0 | [1, 10000] | AO search radius (cm) |
 | `r.GTAO.Intensity` | float | 1.0 | [0, 5] | AO strength multiplier |
-| `r.GTAO.Power` | float | 2.0 | [0.1, 10] | AO power curve exponent |
+| `r.GTAO.Power` | float | 1.0 | [0.1, 10] | AO power curve exponent |
 | `r.GTAO.ThicknessBlend` | float | 0.5 | [0, 1] | Thickness heuristic (0=thin, 1=thick) |
 | `r.GTAO.NumAngles` | int | 2 | [1, 16] | Direction search count |
 | `r.GTAO.NumTaps` | int | 8 | [4, 16] | Steps per direction |
@@ -101,8 +101,8 @@ Registered in `auto_exposure.cpp`.
 |------|------|---------|-------|-------------|
 | `r.AutoExposure` | bool | 1 | [0, 1] | Auto exposure toggle |
 | `r.AutoExposure.Bias` | float | 0.0 | [-5, 5] | Exposure EV bias |
-| `r.AutoExposure.MinBrightness` | float | 0.03 | [0.001, 100] | Min avg luminance |
-| `r.AutoExposure.MaxBrightness` | float | 8.0 | [0.001, 100] | Max avg luminance |
+| `r.AutoExposure.MinBrightness` | float | 0.1 | [0.001, 100] | Min avg luminance |
+| `r.AutoExposure.MaxBrightness` | float | 4.0 | [0.001, 100] | Max avg luminance |
 | `r.AutoExposure.MidGrayTarget` | float | 0.18 | [0.1, 0.5] | 18% gray card target |
 | `r.AutoExposure.LogLuminanceMin` | float | -10.0 | [-20, 0] | Histogram log2 luminance min |
 | `r.AutoExposure.LogLuminanceMax` | float | 20.0 | [0, 40] | Histogram log2 luminance max |
@@ -136,7 +136,7 @@ Registered in `frame_setup.cpp`.
 | CVar | Type | Default | Range | Description |
 |------|------|---------|-------|-------------|
 | `r.SkyLight.Intensity` | float | 1.0 | [0, 20] | IBL ambient multiplier |
-| `r.SkyLight.MinAmbient` | float | 0.0 | [0, 1] | Minimum ambient floor |
+| `r.SkyLight.MinAmbient` | float | 0.25 | [0, 1] | Minimum ambient floor |
 
 ## Tonemap Parameters
 
@@ -340,3 +340,17 @@ Registered in `application.cpp`, `job_system.cpp`, `vfs.cpp`.
 | `asset.PakCacheMB` | int | 256 | [64, 2048] | PakVFS LRU cache size in MB |
 | `camera.MoveSpeed` | float | 1000 | [100, 10000] | FPS camera movement speed (cm/s) |
 | `r.DynamicResolution.TargetFPS` | float | 60.0 | [15, 240] | Target FPS for dynamic res |
+
+## Render Quality Tuning Log (phase2a-2.50.0)
+
+Changes made during the render quality consensus fixes task, with rationale.
+
+| CVar | Before | After | Rationale |
+|------|--------|-------|-----------|
+| `r.GTAO.Power` | 0.3 | 1.0 | Jimenez 2016 GTAO reference: AmbientOcclusionPower = 2.0 * 0.5 = 1.0. Previous 0.3 was too weak (pow(0.5, 0.3) = 0.81 vs correct pow(0.5, 1.0) = 0.5). |
+| `r.SSR.MaxRoughness` | 0.4 | 0.8 | UE5 default r.SSR.MaxRoughness = 0.8. Previous 0.4 excluded wood, stone, rough metal from reflections. |
+| `r.AutoExposure.MinBrightness` | 0.3 | 0.1 | Previous 2x dynamic range (0.3-0.6) caused rapid oscillation when bright metallic specular shifted avg luminance. Widened to 40x range. |
+| `r.AutoExposure.MaxBrightness` | 0.6 | 4.0 | Paired with MinBrightness change — 40x dynamic range prevents exposure hunting on high-contrast scenes. |
+| `r.AutoExposure.SpeedUp` | 1.5 | 3.0 | UE5 reference adaptation speed. Faster bright adaptation prevents visible exposure hunting. |
+| `r.AutoExposure.SpeedDown` | 0.7 | 1.0 | UE5 reference adaptation speed. Paired with SpeedUp for balanced adaptation. |
+| `r.SkyLight.MinAmbient` | 0.15 | 0.25 | Shadow regions were near-black after GTAO power increase. Floor of 0.25 provides visible ambient fill. |

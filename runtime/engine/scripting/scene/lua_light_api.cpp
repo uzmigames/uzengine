@@ -1,4 +1,7 @@
+/// Lua bindings for the light API (directional, point, spot — color, intensity, shadows).
+
 #include "lua_light_api.h"
+#include "lua_light_extended_api.h"
 
 #include "log.h"
 #include "world.h"
@@ -13,6 +16,8 @@ extern "C" {
 
 #include <cstdint>
 #include <cstring>
+
+/// Lua bindings for the directional/point light API (color, intensity, shadows, attenuation).
 
 static_assert(sizeof(void*) >= 8,
     "uz::Entity requires 64-bit pointers for lightuserdata encoding");
@@ -962,6 +967,10 @@ void LuaRegisterLightAPI(lua_State* L) {
     lua_setfield(L, -2, "get_light_shadow_slope_bias");
 
     lua_pop(L, 2);
+
+    // Chain-register extended light properties (directional 15.5, point 15.6, spot 15.7)
+    // from lua_light_extended_api.cpp — that function gets uz.scene itself.
+    LuaRegisterLightExtendedAPI(L);
 
     UZ_LOG(Scripting, Info, "uz.scene light API registered");
 }

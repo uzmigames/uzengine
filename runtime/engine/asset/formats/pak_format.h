@@ -54,8 +54,8 @@ static constexpr uint32_t kPakVersion = 1;
 /// Data blob alignment in bytes (DX12 requirement).
 static constexpr size_t kPakAlignment = 64;
 
-/// .uzpak file header — exactly 16 bytes.
 #pragma pack(push, 1)
+/// .uzpak file header — exactly 16 bytes.
 struct PakHeader {
     uint32_t magic = kPakMagic;          ///< Must be kPakMagic ("UZPK" = 0x4B505A55)
     uint32_t version = kPakVersion;      ///< Format version (currently 1)
@@ -66,8 +66,8 @@ struct PakHeader {
 
 static_assert(sizeof(PakHeader) == 16, "PakHeader must be exactly 16 bytes");
 
-/// Index entry — exactly 40 bytes.
 #pragma pack(push, 1)
+/// Index entry — exactly 40 bytes.
 struct PakIndexEntry {
     uint64_t pathHash = 0;       ///< xxHash64 of logical asset path
     uint64_t offset = 0;         ///< Byte offset into data region
@@ -80,8 +80,8 @@ struct PakIndexEntry {
 
 static_assert(sizeof(PakIndexEntry) == 40, "PakIndexEntry must be exactly 40 bytes");
 
-/// .uzpak file trailer — exactly 16 bytes.
 #pragma pack(push, 1)
+/// .uzpak file trailer — exactly 16 bytes.
 struct PakTrailer {
     uint64_t indexOffset = 0;    ///< Byte offset where the index starts
     uint32_t indexChecksum = 0;  ///< Reserved for future CRC32
@@ -219,7 +219,7 @@ public:
     void Unload();
 
 private:
-    /// Cached entry metadata from the index for zero-copy lookup.
+    /// Cached location and integrity info for one asset in the loaded archive.
     struct LoadedEntry {
         uint64_t offset;        ///< Byte offset into data region
         uint64_t size;          ///< Asset size in bytes
@@ -287,8 +287,8 @@ static constexpr size_t kMaxPakFilename = 256;
 /// Maximum size of a single .uzpak file in bytes (500 MB).
 static constexpr size_t kMaxPakSize = size_t{500} * 1024 * 1024;
 
-/// .uzpakindex file header -- exactly 16 bytes.
 #pragma pack(push, 1)
+/// .uzpakindex file header -- exactly 16 bytes.
 struct MasterIndexHeader {
     uint32_t magic = kMasterIndexMagic;     ///< Must be kMasterIndexMagic ("UZPI")
     uint32_t version = kMasterIndexVersion; ///< Format version (currently 1)
@@ -299,9 +299,9 @@ struct MasterIndexHeader {
 
 static_assert(sizeof(MasterIndexHeader) == 16, "MasterIndexHeader must be exactly 16 bytes");
 
+#pragma pack(push, 1)
 /// Pak table entry -- exactly 264 bytes.
 /// Stores the filename and checksum for one .uzpak file referenced by the index.
-#pragma pack(push, 1)
 struct MasterPakTableEntry {
     uint32_t pakId = 0;                 ///< Unique identifier for this pak within the index
     char filename[256] = {};            ///< Null-terminated relative filename (forward slashes)
@@ -311,9 +311,9 @@ struct MasterPakTableEntry {
 
 static_assert(sizeof(MasterPakTableEntry) == 264, "MasterPakTableEntry must be exactly 264 bytes");
 
+#pragma pack(push, 1)
 /// Asset entry — exactly 56 bytes.
 /// Maps a single asset (by path hash) to its location inside a specific .uzpak file.
-#pragma pack(push, 1)
 struct MasterAssetEntry {
     uint64_t pathHash = 0;        ///< xxHash64 of the logical asset path
     uint32_t pakId = 0;           ///< Index into the pak table (which .uzpak file)
@@ -327,8 +327,8 @@ struct MasterAssetEntry {
 
 static_assert(sizeof(MasterAssetEntry) == 48, "MasterAssetEntry must be exactly 48 bytes");
 
-/// .uzpakindex file trailer -- exactly 20 bytes.
 #pragma pack(push, 1)
+/// .uzpakindex file trailer -- exactly 20 bytes.
 struct MasterIndexTrailer {
     uint64_t pakTableOffset = 0;    ///< Byte offset where the pak table starts
     uint64_t entryTableOffset = 0;  ///< Byte offset where the asset entry table starts

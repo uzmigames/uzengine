@@ -1,5 +1,10 @@
 #include "font_manager.h"
 
+/// FreeType-based font loading and glyph metrics extraction.
+///
+/// Provides singleton font caching with per-size variation support and glyph
+/// outline metrics for SDF text rendering.
+
 #include <ft2build.h>
 #include FT_FREETYPE_H
 

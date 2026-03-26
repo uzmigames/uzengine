@@ -119,7 +119,7 @@ bool ShadowConvexHullIntersectBox(float3 boxCenter, float3 boxExtent) {
 ///             no bounding geometry index count. Uses AABB test instead of
 ///             sphere test (more conservative, catches elongated objects better).
 [numthreads(64, 1, 1)]
-void CSMain(uint3 DTid : SV_DispatchThreadID) {
+void main(uint3 DTid : SV_DispatchThreadID) {
     uint objectIndex = DTid.x;
     if (objectIndex >= g_TotalObjectCount) {
         return;

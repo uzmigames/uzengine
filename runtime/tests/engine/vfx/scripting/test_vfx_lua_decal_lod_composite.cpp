@@ -40,8 +40,8 @@
 #include <gtest/gtest.h>
 
 #include "engine/scripting/lua_vm.h"
-#include "engine/vfx/scripting/vfx_lua_bindings.h"
-#include "engine/vfx/scripting/decal_lua_bindings.h"
+#include "engine/scripting/scene/vfx_lua_bindings.h"
+#include "engine/scripting/scene/decal_lua_bindings.h"
 #include "engine/vfx/vfx_system.h"
 #include "engine/vfx/components/particle_emitter.h"
 #include "engine/vfx/decals/decal_manager.h"
@@ -302,7 +302,7 @@ TEST_F(VFXLuaDecalLodCompositeTest,
     asset.materialPath = "mat/test.uzmat";
     const Vec3 pos{0.0f, 0.0f, 0.0f};
     const Vec3 nrm{0.0f, 0.0f, 1.0f};
-    DecalComponent* comp = decalManager_.SpawnDecal(asset, pos, nrm);
+    VfxDecal* comp = decalManager_.SpawnDecal(asset, pos, nrm);
     ASSERT_NE(comp, nullptr);
 
     // Encode the pointer as a Lua integer handle matching EmitterToHandle's pattern.
@@ -323,7 +323,7 @@ TEST_F(VFXLuaDecalLodCompositeTest,
        SetDecalNormalIntensity_ValidValue_WritesCppField) {
     DecalAsset asset;
     asset.materialPath = "mat/norm.uzmat";
-    DecalComponent* comp = decalManager_.SpawnDecal(
+    VfxDecal* comp = decalManager_.SpawnDecal(
         asset, Vec3{0,0,0}, Vec3{0,0,1});
     ASSERT_NE(comp, nullptr);
 
@@ -348,7 +348,7 @@ TEST_F(VFXLuaDecalLodCompositeTest,
     DecalAsset asset;
     asset.materialPath = "mat/smoke.uzmat";
     asset.lifetime     = 30.0f;
-    DecalComponent* comp = decalManager_.SpawnDecal(
+    VfxDecal* comp = decalManager_.SpawnDecal(
         asset, Vec3{0,0,0}, Vec3{0,1,0});
     ASSERT_NE(comp, nullptr);
     EXPECT_TRUE(comp->isActive);
@@ -371,7 +371,7 @@ TEST_F(VFXLuaDecalLodCompositeTest,
        DestroyDecal_ValidHandle_SetsComponentInactive) {
     DecalAsset asset;
     asset.materialPath = "mat/dirt.uzmat";
-    DecalComponent* comp = decalManager_.SpawnDecal(
+    VfxDecal* comp = decalManager_.SpawnDecal(
         asset, Vec3{5,0,0}, Vec3{0,0,1});
     ASSERT_NE(comp, nullptr);
     EXPECT_TRUE(comp->isActive);

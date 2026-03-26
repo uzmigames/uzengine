@@ -121,6 +121,13 @@ struct DepthPrepassDesc {
     uint32_t           instanceBufferSrvIndex = UINT32_MAX; ///< SRV index for StructuredBuffer<InstanceData>.
     const InstanceBatch* batchData = nullptr;      ///< Pointer to instanced draw batches array.
     uint32_t           batchCount = 0;             ///< Number of batches in the array.
+
+    // ── GPU Indirect Draw (optional — set useIndirectDraw=true to enable) ──
+    /// When true and instanced is also true, the depth prepass uses
+    /// DrawIndexedIndirect instead of DrawIndexedInstanced. The indirect
+    /// args buffer is written by the Phase 1 GPU cull pass (two-phase occlusion).
+    bool              useIndirectDraw = false;
+    RHIBufferHandle   indirectArgsBuffer;     ///< Buffer containing DrawIndexedIndirectArgs (20 bytes).
 };
 
 /// Registers a depth-only prepass in the render graph.

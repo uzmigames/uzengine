@@ -53,10 +53,12 @@ bool DX11CommandList::Init(DX11Device* device, RHIQueueType queueType) {
     m_device = device;
     m_queueType = queueType;
 
-    // DX11 only has one queue type — graphics handles everything
+    // DX11 only has one queue type — reject Copy/Compute so the renderer
+    // falls back to the graphics queue upload path (WaitIdle flush).
     if (queueType != RHIQueueType::Graphics) {
-        UZ_LOG(RHI, Warning, "DX11 only supports Graphics queue — ignoring queue type {}",
-               static_cast<int>(queueType));
+        UZ_LOG(RHI, Info, "DX11 does not support dedicated {} queue — returning null",
+               queueType == RHIQueueType::Copy ? "Copy" : "Compute");
+        return false;
     }
 
     UZ_LOG(RHI, Info, "DX11CommandList created (immediate context mode)");

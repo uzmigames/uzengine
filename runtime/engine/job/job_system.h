@@ -145,6 +145,7 @@ public:
     ///     [](float& v) { v = std::sqrt(v); });
     /// ```
     template <typename T, typename Fn>
+    /// Dispatches `count` elements across worker threads and processes in parallel.
     void ParallelFor(T* data, size_t count, Fn&& fn);
 
     /// Returns the global JobSystem instance set during Init().

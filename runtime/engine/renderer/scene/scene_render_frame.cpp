@@ -14,6 +14,8 @@
 
 // Umbrella headers
 #include "renderer_core.h"
+#include "engine/vfx/vfx_system.h"
+#include "engine/vfx/asset/vfx_hot_reload.h"
 #include "passes.h"
 #include "subsystems.h"
 #include "components.h"
@@ -58,6 +60,10 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     ctx.vfs        = vfs;
     ctx.dt         = dt;
     ctx.frameIndex = frameIndex;
+    ctx.gizmoModeRaw    = m_gizmoMode;
+    ctx.gizmoSpaceRaw   = m_gizmoSpace;
+    ctx.gizmoHoveredAxis = m_gizmoHoveredAxis;
+    ctx.gizmoActiveAxis  = m_gizmoActiveAxis;
     SetupFrameData(ctx, rgBuilder);
 
     // ── Volumetric Cloud Compute (inline on main command list) ─────────
@@ -82,6 +88,29 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
 
         m_cloudOutputSrv = m_cloudPass->GetCloudOutputSrv();
         m_pendingCloudDispatch = false;
+    }
+
+    // ── VFX Emitter Sync ───────────────────────────────────────────────
+    // Poll VFX hot-reload (.uzfx/.uzvfx file changes) — dev builds only.
+#if !defined(NDEBUG)
+    if (m_vfxHotReload) m_vfxHotReload->Poll();
+#endif
+
+    // Create/update ParticleEmitter instances from VfxEmitterComponent ECS
+    // entities. Must run before VFXSystem::Tick() so newly created emitters
+    // participate in spawn counting for this frame.
+    SyncVfxEmitters(world, vfs);
+
+    // ── VFX Tick ──────────────────────────────────────────────────────────
+    // Calculates per-emitter spawn counts for this frame. Must run before
+    // RegisterParticlePasses(), which consumes GetActiveEmitters().
+    // The override pointer (non-owning) takes precedence over the owned system
+    // so that external emitter pools managed by the game layer work correctly.
+    {
+        VFXSystem* activeVFX = m_vfxSystemOverride ? m_vfxSystemOverride : m_vfxSystem.get();
+        if (activeVFX) {
+            activeVFX->Tick(dt);
+        }
     }
 
     // ── Register render graph passes in pipeline order ──────────────────
@@ -146,6 +175,9 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         atmoCtx.skyIrradianceSH     = &m_skyIrradianceSH;
         atmoCtx.depthSrvIndex       = m_gbuffer.depthSRV;
         atmoCtx.depthTexture        = m_gbuffer.depth;
+        atmoCtx.hdriActive          = m_hdriActive;
+        atmoCtx.hdriCubemapSrv      = m_hdriActive ? m_hdriCubemapSrv : UINT32_MAX;
+        atmoCtx.hdriCubemapTex      = m_hdriCubemap;
         PostFrameAtmosphereBake(cmdList, atmoCtx);
     }
 
@@ -208,5 +240,6 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         m_screenshotPath.clear();
     }
 }
+
 
 } // namespace uz

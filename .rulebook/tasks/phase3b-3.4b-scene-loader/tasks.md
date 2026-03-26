@@ -1,7 +1,7 @@
 ## 1. Implementation
 
 - [ ] 1.1 Define .uzscene JSON format (entities array, name + parent + components)
-- [ ] 1.2 Implement SceneLoader: parse JSON → create entities → deserialize via PropertySystem
+- [x] 1.2 Implement SceneLoader: parse JSON → create entities → deserialize via PropertySystem. Created ComponentSerializerRegistry with UZ_REGISTER_COMPONENT_SERIALIZER macro for type-erased self-registration. Added serializers for all 6 environment components (sky_atmosphere, sky_light, height_fog, reflection_probe, volumetric_clouds, decal). Registry integrated into scene_loader.cpp load (fallback) and save (iterate all registered entries).
 - [ ] 1.3 Implement parent-child hierarchy setup from scene file
 - [ ] 1.4 Implement headless scene tick (load + tick N frames without renderer)
 - [ ] 1.5 Implement scene save: World → .uzscene JSON

@@ -22,6 +22,10 @@
 
 namespace uz {
 
+// Forward declarations for deferred upload paths.
+class UploadContext;
+class UploadRing;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // TextureLoadResult — Output of a texture load operation
 // ─────────────────────────────────────────────────────────────────────────────
@@ -228,7 +232,7 @@ public:
         uint32_t width,
         uint32_t height,
         const char* debugName,
-        class UploadContext* outUpload,
+        UploadContext* outUpload,
         bool isSRGB = false,
         bool skipBarrier = false);
 
@@ -268,7 +272,7 @@ public:
         uint32_t width,
         uint32_t height,
         const char* debugName,
-        class UploadContext* outUpload,
+        UploadContext* outUpload,
         uint8_t* const* mipData,
         const uint32_t* mipWidths,
         const uint32_t* mipHeights,
@@ -300,7 +304,7 @@ public:
         const uint8_t* data,
         size_t size,
         const char* debugName,
-        class UploadContext* outUpload = nullptr,
+        UploadContext* outUpload = nullptr,
         bool skipBarrier = false);
 
     /// Loads a pre-cooked .uztexture file to the GPU via UploadRing suballocation.
@@ -335,8 +339,92 @@ public:
         const uint8_t* data,
         size_t size,
         const char* debugName,
-        class UploadRing& ring,
+        UploadRing& ring,
         bool skipBarrier = false);
+
+    /// Loads a high dynamic range texture from a file path on disk.
+    ///
+    /// Supports two HDR formats:
+    /// - `.exr` files: decoded via tinyexr (OpenEXR format, arbitrary channel layouts)
+    /// - `.hdr` files: decoded via stbi_loadf (Radiance RGBE format)
+    ///
+    /// The decoded float32 RGBA data is converted to float16 (half-precision)
+    /// on the CPU to halve VRAM usage (RGBA16Float instead of RGBA32Float).
+    /// This is standard practice — the visual difference is imperceptible for
+    /// environment maps, and GPU sampling of RGBA16F is faster than RGBA32F.
+    ///
+    /// The texture is uploaded as a single mip level (no mip chain). HDR
+    /// environment maps are typically sampled via IBL baking (irradiance +
+    /// prefiltered specular) which generates its own mip pyramid, so a
+    /// source-level mip chain is unnecessary.
+    ///
+    /// The command list is left in a recording state after this call.
+    ///
+    /// # Arguments
+    /// * `device` — RHI device for resource creation. Must not be null.
+    /// * `cmdList` — Command list in recording state. Must not be null.
+    /// * `path` — File path to the HDR image (.exr or .hdr).
+    ///
+    /// # Returns
+    /// `TextureLoadResult` with a valid handle and SRV index on success.
+    /// Returns default (invalid) result on failure (file not found, decode
+    /// error, unsupported format, GPU resource creation failure).
+    ///
+    /// # Errors
+    /// Logs `Renderer::Error` with the file path and failure reason.
+    ///
+    /// # Side Effects
+    /// - Creates one GPU texture resource (RGBA16Float, caller owns lifetime).
+    /// - Flushes the command list and waits for GPU idle.
+    [[nodiscard]] static TextureLoadResult LoadHDR(
+        IRHIDevice* device,
+        const std::string& path);
+
+    /// Loads a high dynamic range texture from in-memory data (VFS-compatible).
+    ///
+    /// Same as the file-path overload, but reads from a byte buffer instead of
+    /// disk. Use this when loading from VFS/pak:
+    /// ```cpp
+    /// auto bytes = vfs.Read("assets/sunset.exr");
+    /// auto result = TextureLoader::LoadHDRFromMemory(device, bytes, "exr");
+    /// ```
+    ///
+    /// @param data       Raw file bytes (.exr or .hdr format).
+    /// @param dataSize   Size of the data buffer in bytes.
+    /// @param formatHint Extension hint: "exr" or "hdr" (determines decoder).
+    /// @param debugName  Optional debug name for the GPU resource.
+    [[nodiscard]] static TextureLoadResult LoadHDRFromMemory(
+        IRHIDevice* device,
+        const void* data,
+        size_t dataSize,
+        const char* formatHint = "exr",
+        const char* debugName = "HDRTexture");
+
+    /// Loads HDR from memory using an external command list and upload context.
+    ///
+    /// Use this overload when a command list is already in recording state
+    /// (e.g., during the render loop). The caller owns the command list lifecycle
+    /// — this function does NOT call Begin/End/Execute or WaitIdle.
+    ///
+    /// Staging buffers are appended to the provided `UploadContext`. The caller
+    /// MUST keep the upload context alive and call `ReleaseStaging()` only after
+    /// the GPU has finished executing the command list.
+    ///
+    /// @param device      RHI device for resource creation.
+    /// @param cmdList     Command list in recording state (caller manages lifecycle).
+    /// @param upload      Upload context to hold staging buffers (caller releases after GPU flush).
+    /// @param data        Raw file bytes (.exr or .hdr format).
+    /// @param dataSize    Size of the data buffer in bytes.
+    /// @param formatHint  Extension hint: "exr" or "hdr" (determines decoder).
+    /// @param debugName   Optional debug name for the GPU resource.
+    [[nodiscard]] static TextureLoadResult LoadHDRFromMemory(
+        IRHIDevice* device,
+        IRHICommandList* cmdList,
+        UploadContext& upload,
+        const void* data,
+        size_t dataSize,
+        const char* formatHint = "exr",
+        const char* debugName = "HDRTexture");
 };
 
 } // namespace uz

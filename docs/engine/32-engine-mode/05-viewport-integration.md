@@ -1,75 +1,104 @@
-# Viewport Integration — Embedding, Input Routing, and Toolbar
+# Viewport Integration — H.264 Frame Streaming, Input Routing, and Toolbar
 
-> **Status**: Planned (Phase 2–3)
-> **Source**: `editor/viewport/viewport_embedding.ts`, `editor/viewport/viewport_client.cpp`
-> **References**: VSCode WebviewPanel containment, Win32 HWND parenting, message routing for cross-process input
+> **Status**: Infrastructure ready (crash protection, hidden HWND, library mode). H.264 encoder pending (phase2-2.1.0).
+> **Target Architecture**: H.264 Media Foundation → WebCodecs VideoDecoder → Canvas @ 120 FPS (validated by POC 0.2)
+> **Source**: `extension/src/panels/scene-editor-provider.ts`, `napi/src/napi_viewport.cpp`, `runtime/engine/app/runtime.cpp`
+> **References**: `docs/engine/29-design-decisions/02-poc-lessons.md`, `docs/engine/28-ipc-protocol/03-frame-streaming.md`
 
 ## Purpose
 
-The Viewport Integration layer manages the 3D HWND viewport within Engine Mode. The runtime N-API module creates a native window and D3D12 swapchain; the VSCode extension must embed this HWND into the UI, route input events, and provide toolbar controls for camera, rendering mode, and snap settings.
+The Viewport Integration layer renders the 3D scene inside a VSCode editor tab as a webview `<canvas>`. The runtime encodes frames as H.264 via Media Foundation hardware encoder, streams the bitstream to the webview via N-API typed arrays, and the webview decodes with WebCodecs `VideoDecoder` at 120 FPS with <5ms latency. This is the architecture validated by POC 0.2.
 
-## Viewport Architecture
+## Target Architecture (H.264 — POC 0.2 Validated)
 
 ```
-VSCode Extension (TypeScript)
-    │
-    ├── viewport_embedding.ts               — Webview container for HWND
-    ├── viewport_toolbar.ts                 — Camera, shading, snap controls
-    └── input_router.ts                     — Forward keyboard/mouse to engine
-            │
-            └──► N-API Runtime (C++)
-                 │
-                 ├── viewport_client.h/cpp   — HWND creation, input handling
-                 ├── editor_viewport.h/cpp   — Window messages (WM_MOUSEMOVE, etc.)
-                 └── input_dispatcher.h/cpp  — Route input to gizmo/camera/orbit
+Runtime (.node addon, in-process)
+  ├─ DX12 render to offscreen RT (hidden HWND, no visible window)
+  ├─ GPU readback to CPU (triple-buffered)
+  ├─ H.264 encode via Media Foundation (HW accelerated, 2-4ms)
+  └─ N-API typed array (zero-copy Uint8Array)
+       │
+       ▼
+VSCode Webview (Canvas)
+  ├─ WebCodecs VideoDecoder (HW accelerated, 1-2ms)
+  ├─ VideoFrame → Canvas drawImage
+  └─ 120 FPS @ 854x480, 80-100 FPS @ 1080p
 ```
 
-## HWND Embedding Strategy
+### POC 0.2 Benchmarks
 
-The runtime creates an HWND child window. The extension embeds it into a webview container.
+| Operation | Latency |
+|-----------|---------|
+| N-API function call | <1 µs |
+| H.264 frame encode (GPU) | 2-4 ms |
+| WebCodecs decode | 1-2 ms |
+| Canvas render | <1 ms |
+| **Total latency** | **3-7 ms** |
+
+| Resolution | Bitrate | FPS |
+|------------|---------|-----|
+| 854x480 | 5 Mbps | 120 FPS |
+| 1280x720 | 8 Mbps | 120 FPS |
+| 1920x1080 | 15 Mbps | 80-100 FPS |
+
+See `docs/engine/29-design-decisions/02-poc-lessons.md` for full POC data.
+
+## Implementation Status
+
+### Done: Infrastructure (v0.2.52)
+
+- **Hidden HWND**: `uz_create_viewport(0, w, h)` creates HWND for DX12 swapchain but never shows it. No standalone window.
+- **Library mode**: `PlatformWindow::SetLibraryMode(true)` — no `PostQuitMessage`, scoped `PeekMessage`.
+- **Crash handler (VEH)**: writes minidump + crash reports to `native/crashes/`, propagates to `__try/__except`.
+- **N-API SEH wrappers**: `uz_seh_render_frame()`, `uz_seh_create_viewport()`, etc. — crash → JS exception.
+- **Extension crash detection**: stops render loop on SEH exception, shows VSCode error notification.
+- **Temporary PNG fallback**: `captureScreenshot()` → base64 PNG → webview canvas @ 30 FPS (placeholder until H.264).
+
+### Pending: H.264 Pipeline (phase2-2.1.0)
+
+Full task list in `.rulebook/tasks/phase2-2.1.0-viewport-hwnd-embedding/tasks.md`:
+
+- **Phase A**: `H264Encoder` class — Media Foundation, Baseline profile, low-latency CBR, triple-buffered readback, encoder thread
+- **Phase B**: C API (`uz_encode_frame`) + N-API bridge (`encodeFrame(): Buffer`)
+- **Phase C**: WebView `VideoDecoder` — `avc1.42001e`, HW-accelerated, `optimizeForLatency: true`
+- **Phase D**: Input forwarding verification on `<canvas>`
+- **Phase E**: Lifecycle (panel hide/reveal/resize), adaptive bitrate, error recovery, JPEG fallback
+
+## Library Mode (Crash Protection)
+
+When running inside VSCode/Electron, the runtime enables library mode:
+
+1. **PlatformWindow::SetLibraryMode(true)** — prevents host interference:
+   - `WM_DESTROY` skips `PostQuitMessage(0)` (would kill Electron)
+   - `PumpMessages()` scopes `PeekMessageW` to our HWND only
+
+2. **CrashHandler library mode (VEH)** — crash reports without termination:
+   - `AddVectoredExceptionHandler` writes minidump + txt + json
+   - Returns `EXCEPTION_CONTINUE_SEARCH` → inner `__try/__except` catches it
+   - Crash files: `native/crashes/{YYYY-MM-DD_HH-MM-SS}/`
+
+3. **N-API SEH wrappers** — structured exception → JS exception:
+   - `uz_seh_render_frame()`, `uz_seh_create_viewport()`, etc.
+   - `UzNapiCheckSeh()` converts to `Napi::Error`
+
+4. **Extension crash detection** — consecutive error counting:
+   - On SEH exception or 5+ consecutive failures: stops render loop
+   - Shows VSCode error notification with crash details
+
+## Current SceneEditorProvider (Temporary PNG Fallback)
+
+Until H.264 encoder is implemented, frames are streamed as PNG base64 at ~30 FPS.
+This will be replaced by H.264 `encodeFrame()` → `postMessage(Uint8Array)` → `VideoDecoder`.
 
 ```typescript
-class ViewportEmbedding {
-    private viewportPanel: vscode.WebviewPanel;
-    private viewportHwnd: number | null = null;  // Win32 HWND handle
-    private nativeModule: any;  // N-API module
-
-    async create(viewColumn: vscode.ViewColumn): Promise<void> {
-        // 1. Create webview panel to hold viewport
-        this.viewportPanel = vscode.window.createWebviewPanel(
-            "uz-viewport",
-            "Viewport",
-            viewColumn,
-            {
-                enableScripts: true,
-                retainContextWhenHidden: true,
-                portMapping: [],  // No port mapping needed (HWND-based)
-            }
-        );
-
-        // 2. Initialize N-API runtime and create HWND
-        this.nativeModule = require("uz_engine.node");
-        const result = this.nativeModule.createViewportWindow({
-            width: 1920,
-            height: 1080,
-            parentHwnd: 0,  // Will be set after webview container is created
-        });
-
-        if (!result.success) {
-            throw new Error(`Failed to create viewport: ${result.error}`);
-        }
-
-        this.viewportHwnd = result.hwnd;
-
-        // 3. Provide viewport HTML with drag/drop and input routing
-        this.viewportPanel.webview.html = this.getWebviewContent();
-
-        // 4. Set up input routing
-        this.setupInputRouting();
-
-        // 5. Set up toolbar
-        this.setupToolbar();
+// TEMPORARY: PNG fallback. Target: H.264 MF + WebCodecs @ 120 FPS
+class SceneEditorProvider implements vscode.CustomTextEditorProvider {
+    resolveCustomTextEditor(document, webviewPanel, _token) {
+        this.ensureViewport();       // addon.init() + addon.createViewport(0, 1280, 720)
+        this.loadScene(document);    // addon.loadScene(path)
+        this.startRenderLoop(panel); // 30 FPS PNG (will become 120 FPS H.264)
     }
+}
 
     /// Get webview HTML that embeds the HWND and provides controls.
     private getWebviewContent(): string {
@@ -441,3 +470,38 @@ Each tile renders a different camera view but receives input from a single gizmo
 - **[Panel Management (§41.03)](03-panel-management.md)** — Panel lifecycle for viewport
 - **[IDE Compatibility (§41.04)](04-compatibility.md)** — Input routing across IDEs
 - **[Editor Framework (§40)](../40-editor-framework/01-overview.md)** — Viewport client (C++) and gizmo system
+
+## Crash Report Format
+
+Crash files are written to `native/crashes/{YYYY-MM-DD_HH-MM-SS}/`:
+
+| File | Purpose |
+|------|---------|
+| `crash.dmp` | Windows minidump — open in Visual Studio for full stack trace with symbols |
+| `crash.txt` | Human-readable: exception code, address, frame number, scene, RHI op, GPU adapter, stack trace |
+| `crash.json` | Machine-parseable: same data as txt, structured for automated analysis or CI integration |
+
+### crash.json Schema
+
+```json
+{
+  "engine": "UzEngine",
+  "timestamp": "2026-03-25_14-30-00",
+  "exception": {
+    "code": "0xC0000005",
+    "name": "EXCEPTION_ACCESS_VIOLATION",
+    "address": "0x00007FF6A1234567"
+  },
+  "context": {
+    "frameNumber": 142,
+    "sceneName": "scenes/main.uzscene",
+    "lastRhiOp": "DrawIndexedInstanced",
+    "gpuAdapter": "NVIDIA GeForce RTX 4090",
+    "gpuDeviceRemoved": false
+  },
+  "stackTrace": [
+    {"index": 0, "address": "0x00007FF6A1234567"},
+    {"index": 1, "address": "0x00007FF6A1234568"}
+  ]
+}
+```

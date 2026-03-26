@@ -46,12 +46,14 @@ AsyncTextureDecoder::~AsyncTextureDecoder() {
 // Public API
 // ─────────────────────────────────────────────────────────────────────────────
 
-void AsyncTextureDecoder::Submit(const std::string& path, bool isSRGB) {
+void AsyncTextureDecoder::Submit(const std::string& path, bool isSRGB,
+                                  const std::string& resultKey) {
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         DecodeRequest req;
-        req.path   = path;
-        req.isSRGB = isSRGB;
+        req.path      = path;
+        req.resultKey = resultKey;
+        req.isSRGB    = isSRGB;
         m_queue.push_back(std::move(req));
     }
     m_cv.notify_one();

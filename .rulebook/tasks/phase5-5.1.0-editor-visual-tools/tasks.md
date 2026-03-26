@@ -5,7 +5,7 @@
 - [ ] 1.3 Implement gizmo interaction (mouse ray intersection with axis handles, drag transform)
 - [ ] 1.4 Implement pick buffer render pass (1/4 res, node ID encoded as RGB color)
 - [ ] 1.5 Implement pick buffer CPU readback (single click → node ID, box select → multiple IDs)
-- [ ] 1.6 Implement selection outline shaders (stencil write on selected, outline blur pass)
+- [x] 1.6 Implement selection outline shaders (stencil write on selected, outline blur pass). Two-pass mask+detect technique: outline_mask_ps.hlsl (R8Unorm binary mask), outline_detect_ps.hlsl (3x3 edge kernel + alpha-blended orange outline). OutlinePass class in editor/outline/, integrated into frame_overlay.cpp render graph. entityId field added to DrawCommand for entity tracking.
 - [ ] 1.7 Implement camera frustum gizmo (wireframe pyramid for camera nodes)
 - [ ] 1.8 Implement directional light gizmo (arrow + shadow direction indicator)
 - [ ] 1.9 Implement point light gizmo (wireframe sphere at light range radius)
@@ -18,7 +18,7 @@
 
 - [ ] 2.1 Test pick buffer node ID encoding/decoding roundtrip
 - [ ] 2.2 Test gizmo ray intersection math (hit detection on axis handles)
-- [ ] 2.3 Test selection outline shader compilation (SM6.6 and SM5)
+- [x] 2.3 Test selection outline shader compilation (SM6.6 and SM5). Both outline_mask_ps.hlsl and outline_detect_ps.hlsl compile via uzembed (auto-generated into engine_shaders.gen.h). SM5/SM6.6 dual-path confirmed via #ifdef UZ_BINDLESS in detect shader.
 - [ ] 2.4 Test debug draw line rendering (correct start/end positions)
 - [ ] 2.5 Test wireframe mode toggle (on/off without visual artifacts)
 - [ ] 2.6 Test gizmo visibility (only shown when node is selected)

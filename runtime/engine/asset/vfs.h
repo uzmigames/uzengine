@@ -336,6 +336,7 @@ private:
 
     /// File handle pool — max 8 simultaneous open pak files, LRU eviction.
     static constexpr size_t kMaxOpenHandles = 8;
+    /// Cached file handle for one open .uzpak, evicted LRU when pool is full.
     struct HandleEntry { std::string pakName; PakStreamReader reader; };
     std::list<HandleEntry> m_handleList;                      ///< Front = MRU, back = LRU
     std::unordered_map<std::string, std::list<HandleEntry>::iterator> m_handleMap;

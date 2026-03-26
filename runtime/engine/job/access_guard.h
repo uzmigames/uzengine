@@ -53,11 +53,11 @@ namespace uz {
 // Shipping Builds — Zero-Cost Pass-Through
 // ─────────────────────────────────────────────────────────────────────────────
 
+template<typename T>
 /// Read-only access wrapper (shipping build: zero overhead).
 ///
 /// Wraps a raw pointer and provides const-only access.
 /// No tracking, no atomics — compiles to a plain pointer.
-template<typename T>
 struct ReadAccess {
     T* ptr;
 
@@ -77,11 +77,11 @@ struct ReadAccess {
     [[nodiscard]] const T* get() const noexcept { return ptr; }
 };
 
+template<typename T>
 /// Read-write access wrapper (shipping build: zero overhead).
 ///
 /// Wraps a raw pointer and provides mutable access.
 /// No tracking, no atomics — compiles to a plain pointer.
-template<typename T>
 struct WriteAccess {
     T* ptr;
 
@@ -140,6 +140,7 @@ struct AccessTracker {
 /// # Panics
 /// `UZ_CHECK` fires if a writer is active when this reader is created.
 template<typename T>
+/// Read-only access wrapper with debug race detection (see class doc above).
 struct ReadAccess {
     T* ptr;
     AccessTracker* tracker;
@@ -217,6 +218,7 @@ struct ReadAccess {
 /// `UZ_CHECK` fires if any reader or writer is active when this writer
 /// is created (i.e., `tracker->state` is not 0).
 template<typename T>
+/// Read-write access wrapper with debug race detection (see class doc above).
 struct WriteAccess {
     T* ptr;
     AccessTracker* tracker;

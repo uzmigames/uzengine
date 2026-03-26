@@ -141,13 +141,13 @@ public:
     /// Loads dxcompiler.dll and creates DXC compiler/utils COM objects.
     ///
     /// # Arguments
-    /// * `dxcPath` — Path to `dxcompiler.dll`. Defaults to `../lib/dxcompiler.dll`
-    ///               relative to the executable (exe in build/bin/, DLLs in build/lib/).
+    /// * `dxcPath` — Path to `dxcompiler.dll`. Defaults to `dxcompiler.dll`
+    ///               in the same directory as the executable.
     ///
     /// # Returns
     /// `true` if DXC was loaded and all COM objects created successfully.
     /// `false` if the DLL cannot be found/loaded or `DxcCreateInstance` fails.
-    bool Init(const std::string& dxcPath = "../lib/dxcompiler.dll");
+    bool Init(const std::string& dxcPath = "dxcompiler.dll");
 
     /// Returns true if DXC is loaded and ready to compile.
     [[nodiscard]] bool IsInitialized() const { return m_compiler != nullptr; }

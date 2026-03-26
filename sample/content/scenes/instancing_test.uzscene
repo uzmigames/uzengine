@@ -1,0 +1,180 @@
+{
+  "name": "Instancing Test",
+  "version": "1.0",
+  "entities": [
+    {
+      "name": "Sun",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            2000
+          ],
+          "rotation": [
+            45,
+            -45,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "light": {
+          "type": "directional",
+          "color": [
+            1.0,
+            0.96,
+            0.88
+          ],
+          "intensity": 3.14
+        }
+      }
+    },
+    {
+      "name": "GroundPlane",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            2000,
+            2000,
+            1
+          ]
+        },
+        "mesh": {
+          "asset": "meshes/cube.uzmesh"
+        },
+        "material": {
+          "albedo": "textures/checker.png"
+        }
+      }
+    },
+    {
+      "name": "MainCamera",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            -800,
+            600
+          ],
+          "rotation": [
+            -10,
+            0,
+            0
+          ]
+        },
+        "camera": {
+          "fov": 90,
+          "near": 1,
+          "far": 100000,
+          "active": true
+        }
+      }
+    },
+    {
+      "name": "CubeGridSpawner",
+      "components": {
+        "script": {
+          "path": "scripts/instancing_grid_setup.lua"
+        }
+      }
+    },
+    {
+      "name": "SkyAtmosphere",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            1020
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "sky_atmosphere": {}
+      }
+    },
+    {
+      "name": "SkyLight",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            690
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "sky_light": {
+          "intensity": 0.8,
+          "light_color": [
+            0.85,
+            0.9,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "HeightFog",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            -5000
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "height_fog": {}
+      }
+    },
+    {
+      "name": "Controller",
+      "components": {
+        "script": {
+          "path": "scripts/camera_test_controller.lua"
+        }
+      }
+    }
+  ]
+}

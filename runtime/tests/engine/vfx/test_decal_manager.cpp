@@ -175,7 +175,7 @@ TEST(DecalManager, SpawnDecal_ValidAsset_ReturnsNonNull) {
     auto asset = MakeTestAsset();
     ASSERT_NE(asset, nullptr);
 
-    DecalComponent* d = mgr.SpawnDecal(*asset, kHitPos, kUpNormal);
+    VfxDecal* d = mgr.SpawnDecal(*asset, kHitPos, kUpNormal);
     EXPECT_NE(d, nullptr)
         << "SpawnDecal must return a non-null pointer for a valid asset";
 
@@ -189,7 +189,7 @@ TEST(DecalManager, SpawnDecal_CopiesAssetMaterialPath) {
     auto asset = MakeTestAsset();
     ASSERT_NE(asset, nullptr);
 
-    DecalComponent* d = mgr.SpawnDecal(*asset, kHitPos, kUpNormal);
+    VfxDecal* d = mgr.SpawnDecal(*asset, kHitPos, kUpNormal);
     ASSERT_NE(d, nullptr);
     EXPECT_EQ(d->materialPath, asset->materialPath);
 
@@ -203,7 +203,7 @@ TEST(DecalManager, SpawnDecal_CopiesAssetHalfExtents) {
     auto asset = MakeTestAsset();
     ASSERT_NE(asset, nullptr);
 
-    DecalComponent* d = mgr.SpawnDecal(*asset, kHitPos, kUpNormal);
+    VfxDecal* d = mgr.SpawnDecal(*asset, kHitPos, kUpNormal);
     ASSERT_NE(d, nullptr);
     EXPECT_FLOAT_EQ(d->halfExtents.x, asset->halfExtents.x);
     EXPECT_FLOAT_EQ(d->halfExtents.y, asset->halfExtents.y);
@@ -219,7 +219,7 @@ TEST(DecalManager, SpawnDecal_CopiesAssetLifetime) {
     auto asset = MakeTestAsset();
     ASSERT_NE(asset, nullptr);
 
-    DecalComponent* d = mgr.SpawnDecal(*asset, kHitPos, kUpNormal);
+    VfxDecal* d = mgr.SpawnDecal(*asset, kHitPos, kUpNormal);
     ASSERT_NE(d, nullptr);
     EXPECT_FLOAT_EQ(d->lifetime, asset->lifetime);
 
@@ -234,7 +234,7 @@ TEST(DecalManager, SpawnDecal_LifetimeOverride_UsesOverride) {
     ASSERT_NE(asset, nullptr);
 
     const float override = 25.0f;
-    DecalComponent* d = mgr.SpawnDecal(*asset, kHitPos, kUpNormal, override);
+    VfxDecal* d = mgr.SpawnDecal(*asset, kHitPos, kUpNormal, override);
     ASSERT_NE(d, nullptr);
     EXPECT_FLOAT_EQ(d->lifetime, override)
         << "SpawnDecal must use lifetimeOverride when > 0";
@@ -249,7 +249,7 @@ TEST(DecalManager, SpawnDecal_NegativeLifetimeOverride_UsesAssetLifetime) {
     auto asset = MakeTestAsset();
     ASSERT_NE(asset, nullptr);
 
-    DecalComponent* d = mgr.SpawnDecal(*asset, kHitPos, kUpNormal, -1.0f);
+    VfxDecal* d = mgr.SpawnDecal(*asset, kHitPos, kUpNormal, -1.0f);
     ASSERT_NE(d, nullptr);
     EXPECT_FLOAT_EQ(d->lifetime, asset->lifetime)
         << "Negative lifetime override must fall back to asset lifetime";
@@ -264,7 +264,7 @@ TEST(DecalManager, SpawnDecal_SpawnedDecal_StartsFullyActive) {
     auto asset = MakeTestAsset();
     ASSERT_NE(asset, nullptr);
 
-    DecalComponent* d = mgr.SpawnDecal(*asset, kHitPos, kUpNormal);
+    VfxDecal* d = mgr.SpawnDecal(*asset, kHitPos, kUpNormal);
     ASSERT_NE(d, nullptr);
     EXPECT_TRUE(d->isActive);
     EXPECT_FLOAT_EQ(d->age, 0.0f);
@@ -283,7 +283,7 @@ TEST(DecalManager, SpawnDecal_PositionOffsetAlongNormal) {
 
     const Vec3 hitPos{0.0f, 0.0f, 0.0f};
     const Vec3 normal{0.0f, 1.0f, 0.0f}; // unit up
-    DecalComponent* d = mgr.SpawnDecal(*asset, hitPos, normal);
+    VfxDecal* d = mgr.SpawnDecal(*asset, hitPos, normal);
     ASSERT_NE(d, nullptr);
 
     // Position must be offset by 0.01 along the normal.
@@ -302,7 +302,7 @@ TEST(DecalManager, SpawnDecal_BeforeInitialize_ReturnsNullptr) {
     auto asset = MakeTestAsset();
     ASSERT_NE(asset, nullptr);
 
-    DecalComponent* d = mgr.SpawnDecal(*asset, kHitPos, kUpNormal);
+    VfxDecal* d = mgr.SpawnDecal(*asset, kHitPos, kUpNormal);
     EXPECT_EQ(d, nullptr)
         << "SpawnDecal before Initialize must return nullptr";
 }
@@ -321,7 +321,7 @@ TEST(DecalManager, SpawnDecal_ExhaustedPool_ReturnsNullptr) {
     EXPECT_NE(mgr.SpawnDecal(*asset, kHitPos, kUpNormal), nullptr);
     EXPECT_NE(mgr.SpawnDecal(*asset, kHitPos, kUpNormal), nullptr);
 
-    DecalComponent* overflow = mgr.SpawnDecal(*asset, kHitPos, kUpNormal);
+    VfxDecal* overflow = mgr.SpawnDecal(*asset, kHitPos, kUpNormal);
     EXPECT_EQ(overflow, nullptr)
         << "SpawnDecal must return nullptr when pool is exhausted";
 
@@ -377,8 +377,8 @@ TEST(DecalManager, Update_TicksAllActiveDecals_AgeAdvances) {
     auto asset = MakeTestAsset();
     ASSERT_NE(asset, nullptr);
 
-    DecalComponent* d1 = mgr.SpawnDecal(*asset, kHitPos, kUpNormal);
-    DecalComponent* d2 = mgr.SpawnDecal(*asset, kHitPos, kUpNormal);
+    VfxDecal* d1 = mgr.SpawnDecal(*asset, kHitPos, kUpNormal);
+    VfxDecal* d2 = mgr.SpawnDecal(*asset, kHitPos, kUpNormal);
     ASSERT_NE(d1, nullptr);
     ASSERT_NE(d2, nullptr);
 
@@ -398,7 +398,7 @@ TEST(DecalManager, Update_ExpiredDecals_AreRemovedFromActiveList) {
     ASSERT_NE(asset, nullptr);
 
     // Spawn a decal with a short lifetime.
-    DecalComponent* d = mgr.SpawnDecal(*asset, kHitPos, kUpNormal, 1.0f);
+    VfxDecal* d = mgr.SpawnDecal(*asset, kHitPos, kUpNormal, 1.0f);
     ASSERT_NE(d, nullptr);
     EXPECT_EQ(mgr.GetActiveCount(), 1u);
 
@@ -445,7 +445,7 @@ TEST(DecalManager, Update_MarkForDestruction_RemovedInNextCleanup) {
     auto asset = MakeTestAsset();
     ASSERT_NE(asset, nullptr);
 
-    DecalComponent* d = mgr.SpawnDecal(*asset, kHitPos, kUpNormal);
+    VfxDecal* d = mgr.SpawnDecal(*asset, kHitPos, kUpNormal);
     ASSERT_NE(d, nullptr);
     EXPECT_EQ(mgr.GetActiveCount(), 1u);
 
@@ -513,8 +513,8 @@ TEST(DecalManager, GetSortedDecals_SortOrderAscending) {
     auto asset = MakeTestAsset();
     ASSERT_NE(asset, nullptr);
 
-    DecalComponent* high = mgr.SpawnDecal(*asset, Vec3{0.0f, 0.0f, 0.0f}, kUpNormal);
-    DecalComponent* low  = mgr.SpawnDecal(*asset, Vec3{0.0f, 0.0f, 0.0f}, kUpNormal);
+    VfxDecal* high = mgr.SpawnDecal(*asset, Vec3{0.0f, 0.0f, 0.0f}, kUpNormal);
+    VfxDecal* low  = mgr.SpawnDecal(*asset, Vec3{0.0f, 0.0f, 0.0f}, kUpNormal);
     ASSERT_NE(high, nullptr);
     ASSERT_NE(low, nullptr);
 
@@ -537,8 +537,8 @@ TEST(DecalManager, GetSortedDecals_SameSortOrder_BackToFrontByDistance) {
     auto asset = MakeTestAsset();
     ASSERT_NE(asset, nullptr);
 
-    DecalComponent* close = mgr.SpawnDecal(*asset, Vec3{0.0f, 0.0f, 1.0f}, kUpNormal);
-    DecalComponent* far   = mgr.SpawnDecal(*asset, Vec3{0.0f, 0.0f, 10.0f}, kUpNormal);
+    VfxDecal* close = mgr.SpawnDecal(*asset, Vec3{0.0f, 0.0f, 1.0f}, kUpNormal);
+    VfxDecal* far   = mgr.SpawnDecal(*asset, Vec3{0.0f, 0.0f, 10.0f}, kUpNormal);
     ASSERT_NE(close, nullptr);
     ASSERT_NE(far, nullptr);
 
@@ -587,7 +587,7 @@ TEST(DecalManager, FrustumCull_DecalAtOrigin_InsideWideFrustum_IsIncluded) {
     auto asset = MakeTestAsset();
     ASSERT_NE(asset, nullptr);
     // Spawn at world origin — should be inside the wide frustum.
-    DecalComponent* d = mgr.SpawnDecal(*asset, Vec3{0.0f, 0.0f, 0.0f}, kUpNormal);
+    VfxDecal* d = mgr.SpawnDecal(*asset, Vec3{0.0f, 0.0f, 0.0f}, kUpNormal);
     ASSERT_NE(d, nullptr);
     d->position = Vec3{0.0f, 0.0f, 0.0f}; // reset offset for clarity
 
@@ -605,7 +605,7 @@ TEST(DecalManager, FrustumCull_DecalAtOrigin_OutsideFrustumPointingAway_IsExclud
 
     auto asset = MakeTestAsset();
     ASSERT_NE(asset, nullptr);
-    DecalComponent* d = mgr.SpawnDecal(*asset, Vec3{0.0f, 0.0f, 0.0f}, kUpNormal);
+    VfxDecal* d = mgr.SpawnDecal(*asset, Vec3{0.0f, 0.0f, 0.0f}, kUpNormal);
     ASSERT_NE(d, nullptr);
     d->position = Vec3{0.0f, 0.0f, 0.0f};
     ASSERT_EQ(mgr.GetActiveCount(), 1u);
@@ -643,7 +643,7 @@ TEST(DecalManager, FrustumCull_AfterCull_UpdateStillTicksAllDecals) {
 
     auto asset = MakeTestAsset();
     ASSERT_NE(asset, nullptr);
-    DecalComponent* d = mgr.SpawnDecal(*asset, Vec3{0.0f, 0.0f, 0.0f}, kUpNormal, 1.0f);
+    VfxDecal* d = mgr.SpawnDecal(*asset, Vec3{0.0f, 0.0f, 0.0f}, kUpNormal, 1.0f);
     ASSERT_NE(d, nullptr);
     d->position = Vec3{0.0f, 0.0f, 0.0f};
 
@@ -666,7 +666,7 @@ TEST(DecalManager, SpawnDecal_UnitUpNormal_RotationIsNormalized) {
     auto asset = MakeTestAsset();
     ASSERT_NE(asset, nullptr);
 
-    DecalComponent* d = mgr.SpawnDecal(*asset, kHitPos, Vec3{0.0f, 1.0f, 0.0f});
+    VfxDecal* d = mgr.SpawnDecal(*asset, kHitPos, Vec3{0.0f, 1.0f, 0.0f});
     ASSERT_NE(d, nullptr);
     const float len = std::sqrt(d->rotation.x * d->rotation.x +
                                 d->rotation.y * d->rotation.y +
@@ -685,7 +685,7 @@ TEST(DecalManager, SpawnDecal_DiagonalNormal_RotationIsNormalized) {
 
     // Diagonal normal — exercises the general rotation path in AlignToSurface.
     const Vec3 diagNormal{0.577350f, 0.577350f, 0.577350f};
-    DecalComponent* d = mgr.SpawnDecal(*asset, kHitPos, diagNormal);
+    VfxDecal* d = mgr.SpawnDecal(*asset, kHitPos, diagNormal);
     ASSERT_NE(d, nullptr);
     const float len = std::sqrt(d->rotation.x * d->rotation.x +
                                 d->rotation.y * d->rotation.y +
@@ -706,7 +706,7 @@ TEST(DecalManager, SpawnDecal_DownwardNormal_RotationIsNormalized_NoNaN) {
     auto asset = MakeTestAsset();
     ASSERT_NE(asset, nullptr);
 
-    DecalComponent* d = mgr.SpawnDecal(*asset, kHitPos, Vec3{0.0f, -1.0f, 0.0f});
+    VfxDecal* d = mgr.SpawnDecal(*asset, kHitPos, Vec3{0.0f, -1.0f, 0.0f});
     ASSERT_NE(d, nullptr);
     const float len = std::sqrt(d->rotation.x * d->rotation.x +
                                 d->rotation.y * d->rotation.y +
@@ -738,7 +738,7 @@ TEST(DecalManager, MultipleSpawnUpdateCycles_PoolReusedCorrectly) {
         ASSERT_NE(asset, nullptr) << "Round " << round;
 
         for (int i = 0; i < 4; ++i) {
-            DecalComponent* d = mgr.SpawnDecal(
+            VfxDecal* d = mgr.SpawnDecal(
                 *asset,
                 Vec3{static_cast<float>(i), 0.0f, 0.0f},
                 kUpNormal);
@@ -764,8 +764,8 @@ TEST(DecalManager, SpawnThenMarkForDestructionThenRespawn_WorksCorrectly) {
     auto asset = MakeTestAsset();
     ASSERT_NE(asset, nullptr);
 
-    DecalComponent* d1 = mgr.SpawnDecal(*asset, kHitPos, kUpNormal);
-    DecalComponent* d2 = mgr.SpawnDecal(*asset, kHitPos, kUpNormal);
+    VfxDecal* d1 = mgr.SpawnDecal(*asset, kHitPos, kUpNormal);
+    VfxDecal* d2 = mgr.SpawnDecal(*asset, kHitPos, kUpNormal);
     ASSERT_NE(d1, nullptr);
     ASSERT_NE(d2, nullptr);
     EXPECT_EQ(mgr.GetPoolAvailable(), 0u);
@@ -779,8 +779,8 @@ TEST(DecalManager, SpawnThenMarkForDestructionThenRespawn_WorksCorrectly) {
     EXPECT_EQ(mgr.GetPoolAvailable(), 2u);
 
     // Should be able to spawn two fresh decals again.
-    DecalComponent* d3 = mgr.SpawnDecal(*asset, kHitPos, kUpNormal);
-    DecalComponent* d4 = mgr.SpawnDecal(*asset, kHitPos, kUpNormal);
+    VfxDecal* d3 = mgr.SpawnDecal(*asset, kHitPos, kUpNormal);
+    VfxDecal* d4 = mgr.SpawnDecal(*asset, kHitPos, kUpNormal);
     EXPECT_NE(d3, nullptr) << "First re-spawn must succeed after MarkForDestruction";
     EXPECT_NE(d4, nullptr) << "Second re-spawn must succeed after MarkForDestruction";
 

@@ -1,0 +1,19 @@
+{
+  "name": "Textured Quad",
+  "version": "1.0",
+  "engine_version": "0.2.0",
+  "default_scene": "scenes/textured_quad.uzscene",
+  "content_root": "../content/",
+  "window": {
+    "title": "UzEngine — Textured Quad (Lua)",
+    "width": 1280,
+    "height": 720,
+    "fullscreen": false
+  },
+  "render": {
+    "backend": "dx12",
+    "shader_model": "6_6",
+    "vsync": false,
+    "hdr": false
+  }
+}

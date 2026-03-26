@@ -88,9 +88,12 @@ namespace uz::detail {
 /// UZ_CHECKF(size > 0, "Buffer size must be positive, got %d", size);
 /// ```
 #ifdef UZ_SHIPPING
+/// Fatal assertion — no-op in shipping builds.
 #define UZ_CHECK(expr) ((void)0)
+/// Fatal assertion with format message — no-op in shipping builds.
 #define UZ_CHECKF(expr, ...) ((void)0)
 #else
+/// Fatal assertion — aborts with diagnostic if expr is false.
 #define UZ_CHECK(expr)                                                                             \
     do {                                                                                           \
         if (!(expr)) {                                                                             \
@@ -98,6 +101,7 @@ namespace uz::detail {
         }                                                                                          \
     } while (0)
 
+/// Fatal assertion with format message — aborts with diagnostic if expr is false.
 #define UZ_CHECKF(expr, fmt, ...)                                                                  \
     do {                                                                                           \
         if (!(expr)) {                                                                             \
@@ -131,8 +135,10 @@ namespace uz::detail {
 /// if (!UZ_ENSURE(file.is_open())) { UseDefault(); }
 /// ```
 #ifdef UZ_SHIPPING
+/// Recoverable assertion — evaluates to bool, no logging in shipping.
 #define UZ_ENSURE(expr) (!!(expr))
 #else
+/// Recoverable assertion — logs failure and returns bool result.
 #define UZ_ENSURE(expr)                                                                            \
     ([&]() -> bool {                                                                               \
         bool _uz_ok = !!(expr);                                                                    \

@@ -16,6 +16,7 @@
 #include "d3dx12.h"
 #include "log.h"
 #include "profiler.h"
+#include "engine/paths/paths.h"
 
 #include <cstring>
 #include <windows.h>
@@ -302,6 +303,23 @@ bool DX12Device::CreateFactory(bool validation) {
 
 bool DX12Device::SelectAdapter(uint32_t adapterIndex) {
     UZ_PROFILE_FUNCTION();
+
+    // Log all available adapters for diagnostics
+    for (UINT i = 0; ; i++) {
+        ComPtr<IDXGIAdapter1> enumAdapter;
+        if (FAILED(m_factory->EnumAdapterByGpuPreference(
+                i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&enumAdapter)))) {
+            break;
+        }
+        DXGI_ADAPTER_DESC1 desc = {};
+        enumAdapter->GetDesc1(&desc);
+        bool isSoftware = (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0;
+        UZ_LOG(RHI, Info, "  GPU [{}]: '{}' VRAM={} MB{}",
+               i, WideToUtf8(desc.Description),
+               desc.DedicatedVideoMemory / (1024 * 1024),
+               isSoftware ? " (SOFTWARE)" : "");
+    }
+
     ComPtr<IDXGIAdapter1> adapter1;
     HRESULT hr = m_factory->EnumAdapterByGpuPreference(
         adapterIndex, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&adapter1));
@@ -325,9 +343,9 @@ bool DX12Device::SelectAdapter(uint32_t adapterIndex) {
     return true;
 }
 
+
 bool DX12Device::CreateDevice() {
     UZ_PROFILE_FUNCTION();
-    // Try feature levels in descending order
     static constexpr D3D_FEATURE_LEVEL kFeatureLevels[] = {
         D3D_FEATURE_LEVEL_12_2,
         D3D_FEATURE_LEVEL_12_1,
@@ -367,12 +385,32 @@ void DX12Device::NegotiateShaderModel(std::optional<ShaderModel> forceModel) {
         hasTier3 = (options.ResourceBindingTier >= D3D12_RESOURCE_BINDING_TIER_3);
     }
 
-    // Probe the highest shader model — request SM6.9 and let the driver clamp down
+    // Probe shader model progressively — older d3d12.dll (Windows 10 without
+    // Agility SDK) rejects unknown SM values instead of clamping them down.
+    // Try from highest to lowest until CheckFeatureSupport succeeds.
+    static constexpr D3D_SHADER_MODEL kShaderModelProbe[] = {
+        D3D_SHADER_MODEL_6_9,
+        D3D_SHADER_MODEL_6_8,
+        D3D_SHADER_MODEL_6_7,
+        D3D_SHADER_MODEL_6_6,
+        D3D_SHADER_MODEL_6_5,
+        D3D_SHADER_MODEL_6_4,
+        D3D_SHADER_MODEL_6_3,
+        D3D_SHADER_MODEL_6_2,
+        D3D_SHADER_MODEL_6_1,
+        D3D_SHADER_MODEL_6_0,
+        D3D_SHADER_MODEL_5_1,
+    };
     D3D12_FEATURE_DATA_SHADER_MODEL smData = {};
-    smData.HighestShaderModel = D3D_SHADER_MODEL_6_9;
-    hr = m_device->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &smData, sizeof(smData));
-    if (FAILED(hr)) {
-        smData.HighestShaderModel = D3D_SHADER_MODEL_5_1;
+    smData.HighestShaderModel = D3D_SHADER_MODEL_5_1;
+    for (D3D_SHADER_MODEL probe : kShaderModelProbe) {
+        D3D12_FEATURE_DATA_SHADER_MODEL test = {};
+        test.HighestShaderModel = probe;
+        hr = m_device->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &test, sizeof(test));
+        if (SUCCEEDED(hr)) {
+            smData.HighestShaderModel = test.HighestShaderModel;
+            break;
+        }
     }
 
     // Negotiate: pick the highest SM the hardware actually supports

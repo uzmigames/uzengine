@@ -11,6 +11,7 @@
 #include "../include/octahedral.hlsli"
 #include "../include/pbr_common.hlsli"
 #include "../include/sh_irradiance.hlsli"
+#include "../include/ibl.hlsli"
 
 // shadow_common.hlsli and contact_shadows.hlsli are included AFTER sampler/texture
 // declarations because they reference shadowSampler, shadowAtlasTexture, etc.
@@ -346,20 +347,20 @@ float4 main(FSInput input) : SV_Target {
     }
 
     // ── IBL Ambient ────────────────────────────────────────────────────
+    float3 skyTint = float3(skyLightColorR, skyLightColorG, skyLightColorB) * skyLightIntensity;
     float3 ambient = float3(0, 0, 0);
     {
-        float skyInt = skyLightIntensity;
 
         float3 irradiance = float3(0, 0, 0);
 #ifdef UZ_BINDLESS
         if (irradianceSrvIndex > 0) {
             TextureCube<float4> irrTex = ResourceDescriptorHeap[irradianceSrvIndex];
-            irradiance = irrTex.SampleLevel(clampSampler, N, 0).rgb;
+            irradiance = irrTex.SampleLevel(clampSampler, WorldToCubemap(N), 0).rgb;
         } else {
             irradiance = GetSkySHDiffuse(N, skyIrradianceSH);
         }
 #else
-        irradiance = iblIrradiance.SampleLevel(clampSampler, N, 0).rgb;
+        irradiance = iblIrradiance.SampleLevel(clampSampler, WorldToCubemap(N), 0).rgb;
 #endif
 
         float3 kS_env = F_SchlickRoughness(NoV, F0, roughness);
@@ -374,14 +375,14 @@ float4 main(FSInput input) : SV_Target {
 #ifdef UZ_BINDLESS
         if (prefilteredSrvIndex > 0) {
             TextureCube<float4> prefTex = ResourceDescriptorHeap[prefilteredSrvIndex];
-            prefilteredColor = prefTex.SampleLevel(clampSampler, R, mipLevel).rgb;
+            prefilteredColor = prefTex.SampleLevel(clampSampler, WorldToCubemap(R), mipLevel).rgb;
         }
         if (brdfLutSrvIndex > 0) {
             Texture2D<float2> brdfTex = ResourceDescriptorHeap[brdfLutSrvIndex];
             envBRDF = brdfTex.SampleLevel(clampSampler, float2(NoV, roughness), 0).rg;
         }
 #else
-        prefilteredColor = iblPrefiltered.SampleLevel(clampSampler, R, mipLevel).rgb;
+        prefilteredColor = iblPrefiltered.SampleLevel(clampSampler, WorldToCubemap(R), mipLevel).rgb;
         envBRDF = iblBrdfLut.SampleLevel(clampSampler, float2(NoV, roughness), 0).rg;
 #endif
 
@@ -404,13 +405,11 @@ float4 main(FSInput input) : SV_Target {
         /// @ref Lagarde 2014
         specularAmbient *= SpecularOcclusion(NoV, ao, roughness);
 
-        ambient = (diffuseAmbient * ao + specularAmbient) * skyInt;
+        ambient = (diffuseAmbient * ao + specularAmbient) * skyTint;
 
-        // Fallback: if IBL cubemaps are empty (first frames), metals get F0 base color.
-        float iblEnergy = dot(prefilteredColor, float3(0.299, 0.587, 0.114));
-        if (iblEnergy < 0.001) {
-            ambient = lerp(baseColor * 0.05, F0 * 0.15, metallic) * skyInt;
-        }
+        // Note: removed dark-environment fallback that was replacing real IBL with
+        // flat F0*0.15 approximation. This caused dark HDRI regions to appear
+        // brighter than reality and flattened metallic appearance.
     }
 
     // ── ClearCoat dual-layer specular (smID == 4) ──────────────────────
@@ -457,12 +456,12 @@ float4 main(FSInput input) : SV_Target {
 #ifdef UZ_BINDLESS
         if (prefilteredSrvIndex > 0) {
             TextureCube<float4> prefTex = ResourceDescriptorHeap[prefilteredSrvIndex];
-            coatRefl = prefTex.SampleLevel(clampSampler, R_cc, coatMip).rgb;
+            coatRefl = prefTex.SampleLevel(clampSampler, WorldToCubemap(R_cc), coatMip).rgb;
         }
 #else
-        coatRefl = iblPrefiltered.SampleLevel(clampSampler, R_cc, coatMip).rgb;
+        coatRefl = iblPrefiltered.SampleLevel(clampSampler, WorldToCubemap(R_cc), coatMip).rgb;
 #endif
-        ambient += coatRefl * coatFresnelAvg * clearCoatVal * skyLightIntensity;
+        ambient += coatRefl * coatFresnelAvg * clearCoatVal * skyTint;
     }
 
     // ── Final composite: ambient + direct + emissive ────────────────────

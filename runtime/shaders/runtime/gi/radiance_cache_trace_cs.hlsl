@@ -85,6 +85,16 @@ cbuffer RadianceCacheTraceConstants : register(b2)
 SamplerState g_linearClamp : register(s0);
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SM5 register-bound fallback (when UZ_BINDLESS is not defined)
+// ─────────────────────────────────────────────────────────────────────────────
+#ifndef UZ_BINDLESS
+RWStructuredBuffer<float4> g_ShBuffer          : register(u0);
+// SM5/Vulkan: dynamic clipmap indexing requires bindless. This single fallback
+// texture allows compilation; the pass should be disabled on non-bindless backends.
+Texture3D<float>           g_GdfClipmapFallback : register(t0);
+#endif
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Quasi-random direction sampling
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -177,7 +187,11 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     }
 
     // ── Bindless SH buffer access via root constants UAV index ───────
+#ifdef UZ_BINDLESS
     RWStructuredBuffer<float4> shBuffer = ResourceDescriptorHeap[g_shBufferUav];
+#else
+    RWStructuredBuffer<float4> shBuffer = g_ShBuffer;
+#endif
 
     // ── Bindless GDF clipmap texture SRV indices ─────────────────────
     uint gdfSrvIndices[4] = { g_gdfClipmapSrv0, g_gdfClipmapSrv1, g_gdfClipmapSrv2, g_gdfClipmapSrv3 };
@@ -246,7 +260,11 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 
                     // Bindless GDF texture sampling — each cascade has its own
                     // SRV index in the descriptor heap
+#ifdef UZ_BINDLESS
                     Texture3D<float> gdfTex = ResourceDescriptorHeap[gdfSrvIndices[c]];
+#else
+                    Texture3D<float> gdfTex = g_GdfClipmapFallback;
+#endif
                     dist = gdfTex.SampleLevel(g_linearClamp, uvPos, 0).r;
                     break;
                 }
@@ -270,7 +288,11 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
                     float ext = clipmaps[nc].w;
                     if (all(abs(hitPos - ctr) < ext))
                     {
+#ifdef UZ_BINDLESS
                         Texture3D<float> gTex = ResourceDescriptorHeap[gdfSrvIndices[nc]];
+#else
+                        Texture3D<float> gTex = g_GdfClipmapFallback;
+#endif
                         float invExt2 = 1.0f / (ext * 2.0f);
                         float3 uvC = (hitPos - ctr + ext) * invExt2;
                         float3 epsUV = float3(eps * invExt2, 0, 0);

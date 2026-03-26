@@ -543,11 +543,6 @@ Write-Host "[4/8] Downloading prebuilt packages..." -ForegroundColor Cyan
 Download-Extract-Zip -Name "dxc" `
     -Url "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2602/dxc_2026_02_20.zip"
 
-# Agility SDK (DX12 runtime)
-Download-Extract-Zip -Name "agility" `
-    -Url "https://globalcdn.nuget.org/packages/microsoft.direct3d.d3d12.1.619.1.nupkg" `
-    -SubPath "build\native"
-
 # ─── Metal Dependencies (macOS build cross-compile support) ──────────────────
 
 # metal-cpp (Apple's C++ wrapper for Metal — macOS only, downloaded for cross-ref)
@@ -565,6 +560,49 @@ if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [Sys
 }
 Download-Extract-Zip -Name "slang" `
     -Url "https://github.com/shader-slang/slang/releases/download/v2026.5.1/slang-2026.5.1-$slangArch.zip"
+
+# ─── FFmpeg (H.264 hardware encoding for viewport frame streaming) ────────
+
+# Pre-built LGPL shared libraries from BtbN's automated builds.
+# Includes: libavcodec (H.264 encode/decode), libavutil, libswscale (RGBA to NV12).
+# LGPL licensed - no GPL codec libraries, safe for proprietary use.
+$ffmpegDir = Join-Path $ThirdPartyDir "ffmpeg"
+if (-not (Test-Path $ffmpegDir)) {
+    $ffmpegZipUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl-shared.zip"
+    $ffmpegZip = Join-Path $TempDir "ffmpeg.zip"
+    Write-Host "  [ffmpeg] downloading LGPL shared build..." -ForegroundColor Yellow
+    Download-File -Url $ffmpegZipUrl -OutFile $ffmpegZip
+
+    # Extract to temp, then move inner dir to thirdparty/ffmpeg
+    $ffmpegTemp = Join-Path $TempDir "ffmpeg_temp"
+    Expand-Archive -Path $ffmpegZip -DestinationPath $ffmpegTemp -Force
+
+    # Find the extracted inner directory (name varies with build date)
+    $innerDir = Get-ChildItem $ffmpegTemp -Directory | Select-Object -First 1
+    if ($innerDir) {
+        Move-Item $innerDir.FullName $ffmpegDir
+        Write-Host "  [ffmpeg] installed: $($innerDir.Name)" -ForegroundColor Green
+    } else {
+        Write-Error "FFmpeg extraction failed - no inner directory found"
+    }
+
+    Remove-Item -Recurse -Force $ffmpegTemp -ErrorAction SilentlyContinue
+    Remove-Item $ffmpegZip -ErrorAction SilentlyContinue
+
+    # Remove docs we don't need (keep LICENSE for LGPL compliance)
+    $ffmpegRemove = @("doc", "man", "README.txt")
+    foreach ($f in $ffmpegRemove) {
+        $p = Join-Path $ffmpegDir $f
+        if (Test-Path $p) { Remove-Item -Recurse -Force $p }
+    }
+    # Remove executables (we only need libraries + headers)
+    @("ffmpeg.exe", "ffprobe.exe", "ffplay.exe") | ForEach-Object {
+        $p = Join-Path $ffmpegDir "bin\$_"
+        if (Test-Path $p) { Remove-Item -Force $p }
+    }
+} else {
+    Write-Host "  [ffmpeg] already exists, skipping." -ForegroundColor Green
+}
 
 # ─── Global Cleanup ────────────────────────────────────────────────────────
 
@@ -648,7 +686,8 @@ $ImageLibs = @(
     @{ Name = "metal-cpp";        File = "Metal\Metal.hpp" },
     @{ Name = "slang";            File = "include\slang.h" },
     @{ Name = "luajit";           File = "src\lua.h" },
-    @{ Name = "ufbx";             File = "ufbx.h" }
+    @{ Name = "ufbx";             File = "ufbx.h" },
+    @{ Name = "ffmpeg";           File = "include\libavcodec\avcodec.h" }
 )
 
 $allOk = $true

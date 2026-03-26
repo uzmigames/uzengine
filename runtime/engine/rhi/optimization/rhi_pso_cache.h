@@ -188,6 +188,7 @@ public:
     [[nodiscard]] bool IsInitialized() const { return !m_slots.empty(); }
 
 private:
+    /// Open-addressed hash table entry for one cached PSO.
     struct Slot {
         PsoCacheKey key = {0};
         RHIPipelineHandle pipeline = RHIPipelineHandle::Invalid();

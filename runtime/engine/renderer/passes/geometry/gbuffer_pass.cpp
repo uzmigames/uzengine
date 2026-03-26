@@ -168,9 +168,28 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                         break;
                     }
 
-                    cmd->DrawIndexed(mesh0.indexCount, batch.instanceCount,
-                                     0, 0, batch.firstInstance);
-                    ++drawCallCount;
+                    if (desc.useIndirectDraw && desc.indirectArgsBuffer.IsValid()
+                        && desc.batchCount == 1) {
+                        // Phase 1 indirect draw: the GPU cull pass has written the visible
+                        // instance count into the indirect args buffer at offset 4.
+                        // The index count, start index, base vertex, and start
+                        // instance fields were pre-filled before the cull dispatch.
+                        cmd->DrawIndexedIndirect(desc.indirectArgsBuffer, 0, 1,
+                                                 sizeof(RHIDrawIndexedIndirectArgs));
+                        ++drawCallCount;
+
+                        // Phase 2 indirect draw: newly-visible instances from the
+                        // second cull pass (re-tested against updated HiZ).
+                        if (desc.usePhase2IndirectDraw && desc.indirectArgsBuffer2.IsValid()) {
+                            cmd->DrawIndexedIndirect(desc.indirectArgsBuffer2, 0, 1,
+                                                     sizeof(RHIDrawIndexedIndirectArgs));
+                            ++drawCallCount;
+                        }
+                    } else {
+                        cmd->DrawIndexed(mesh0.indexCount, batch.instanceCount,
+                                         0, 0, batch.firstInstance);
+                        ++drawCallCount;
+                    }
                 }
             } else {
                 // ── Non-instanced path — bind the correct mesh per draw command ──
@@ -246,7 +265,7 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                         perObjParams.aoIntensity         = drawCmd.aoIntensity;
                         perObjParams.opacity             = drawCmd.opacity;
                         perObjParams.alphaClipThreshold   = drawCmd.alphaClipThreshold;
-                        perObjParams.twoSided            = drawCmd.twoSided;
+                        perObjParams.opacitySrvIndex     = drawCmd.opacitySrvIndex;
                         perObjParams.materialFlags       = drawCmd.materialFlags;
 
                         // Set texture handles with fallbacks for SM5 binding
@@ -298,7 +317,7 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                         perObject.heightmapSrvIndex   = drawCmd.heightmapSrvIndex;
                         perObject.pomSelfShadow       = drawCmd.pomSelfShadow;
                         perObject.alphaClipThreshold  = drawCmd.alphaClipThreshold;
-                        perObject.twoSided            = drawCmd.twoSided;
+                        perObject.opacitySrvIndex     = drawCmd.opacitySrvIndex;
                         perObject.materialFlags       = drawCmd.materialFlags;
 
                         CBAllocation objAlloc = desc.cbAllocator->Allocate(sizeof(PerObjectCB));
@@ -319,6 +338,10 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                             cmd->SetFragmentTexture(3, drawCmd.metallicTexture.IsValid()  ? drawCmd.metallicTexture  : desc.fallbackBlack);
                             cmd->SetFragmentTexture(4, drawCmd.aoTexture.IsValid()        ? drawCmd.aoTexture        : desc.fallbackWhite);
                             cmd->SetFragmentTexture(5, drawCmd.emissiveTexture.IsValid()  ? drawCmd.emissiveTexture  : desc.fallbackBlack);
+                            // t6 (opacityTexture) — not bound because DrawCommand has no
+                            // RHITextureHandle for opacity. The shader defaults to sampling
+                            // a null SRV (returns 0) and uses the scalar opacity field instead.
+                            // Opacity via texture is bindless-only (opacitySrvIndex in CB).
                         }
                     }
 

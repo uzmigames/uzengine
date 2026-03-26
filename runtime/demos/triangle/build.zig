@@ -5,7 +5,7 @@ const common = @import("uz_demo_common");
 /// Run `zig build` from runtime/ first, then `zig build run` from here.
 ///
 /// Platforms:
-///   Windows — Links DX12/DX11/DXGI libs, deploys Agility SDK + DXC DLLs
+///   Windows — Links DX12/DX11/DXGI libs, deploys DXC DLLs
 ///   macOS   — Links Metal/QuartzCore/AppKit/Cocoa frameworks
 ///   Linux   — Links Vulkan (via volk, no static vulkan-1.lib needed)
 pub fn build(b: *std.Build) void {

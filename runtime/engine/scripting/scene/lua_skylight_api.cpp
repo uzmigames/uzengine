@@ -1,3 +1,5 @@
+/// Lua bindings for the sky light API (intensity, cubemap, lower hemisphere, occlusion).
+
 #include "lua_skylight_api.h"
 
 #include "log.h"
@@ -277,6 +279,162 @@ static int SceneSetSkyLightEnabled(lua_State* L) {
     return 0;
 }
 
+/// uz.scene.get_sky_light_intensity(entity) -> number | nil
+static int SceneGetSkyLightIntensity(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_sky_light_intensity");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<SkyLightComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(world->GetComponent<SkyLightComponent>(entity).intensity));
+    return 1;
+}
+
+/// uz.scene.get_sky_light_color(entity) -> r, g, b | nil
+static int SceneGetSkyLightColor(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_sky_light_color");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<SkyLightComponent>(entity)) { lua_pushnil(L); return 1; }
+    const auto& sky = world->GetComponent<SkyLightComponent>(entity);
+    lua_pushnumber(L, static_cast<double>(sky.lightColor.x));
+    lua_pushnumber(L, static_cast<double>(sky.lightColor.y));
+    lua_pushnumber(L, static_cast<double>(sky.lightColor.z));
+    return 3;
+}
+
+/// uz.scene.get_sky_light_min_occlusion(entity) -> number | nil
+static int SceneGetSkyLightMinOcclusion(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_sky_light_min_occlusion");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<SkyLightComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(world->GetComponent<SkyLightComponent>(entity).minOcclusion));
+    return 1;
+}
+
+/// uz.scene.get_sky_light_indirect_intensity(entity) -> number | nil
+static int SceneGetSkyLightIndirectIntensity(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_sky_light_indirect_intensity");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<SkyLightComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(world->GetComponent<SkyLightComponent>(entity).indirectLightingIntensity));
+    return 1;
+}
+
+/// uz.scene.get_sky_light_source_type(entity) -> "captured" | "cubemap" | nil
+static int SceneGetSkyLightSourceType(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_sky_light_source_type");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<SkyLightComponent>(entity)) { lua_pushnil(L); return 1; }
+    const auto& sky = world->GetComponent<SkyLightComponent>(entity);
+    if (sky.sourceType == ESkyLightSourceType::CapturedScene)
+        lua_pushstring(L, "captured");
+    else
+        lua_pushstring(L, "cubemap");
+    return 1;
+}
+
+/// uz.scene.is_sky_light_real_time_capture(entity) -> bool
+static int SceneIsSkyLightRealTimeCapture(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "is_sky_light_real_time_capture");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<SkyLightComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushboolean(L, world->GetComponent<SkyLightComponent>(entity).realTimeCapture ? 1 : 0);
+    return 1;
+}
+
+/// uz.scene.get_sky_light_cubemap_resolution(entity) -> int | nil
+static int SceneGetSkyLightCubemapResolution(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_sky_light_cubemap_resolution");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<SkyLightComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushinteger(L, static_cast<lua_Integer>(world->GetComponent<SkyLightComponent>(entity).cubemapResolution));
+    return 1;
+}
+
+/// uz.scene.is_sky_light_lower_hemisphere_black(entity) -> bool
+static int SceneIsSkyLightLowerHemisphereBlack(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "is_sky_light_lower_hemisphere_black");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<SkyLightComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushboolean(L, world->GetComponent<SkyLightComponent>(entity).lowerHemisphereIsBlack ? 1 : 0);
+    return 1;
+}
+
+/// uz.scene.get_sky_light_lower_hemisphere_color(entity) -> r, g, b | nil
+static int SceneGetSkyLightLowerHemisphereColor(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_sky_light_lower_hemisphere_color");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<SkyLightComponent>(entity)) { lua_pushnil(L); return 1; }
+    const auto& sky = world->GetComponent<SkyLightComponent>(entity);
+    lua_pushnumber(L, static_cast<double>(sky.lowerHemisphereColor.x));
+    lua_pushnumber(L, static_cast<double>(sky.lowerHemisphereColor.y));
+    lua_pushnumber(L, static_cast<double>(sky.lowerHemisphereColor.z));
+    return 3;
+}
+
+/// uz.scene.get_sky_light_occlusion_max_distance(entity) -> number | nil
+static int SceneGetSkyLightOcclusionMaxDistance(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_sky_light_occlusion_max_distance");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<SkyLightComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(world->GetComponent<SkyLightComponent>(entity).occlusionMaxDistance));
+    return 1;
+}
+
+/// uz.scene.get_sky_light_occlusion_tint(entity) -> r, g, b | nil
+static int SceneGetSkyLightOcclusionTint(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_sky_light_occlusion_tint");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<SkyLightComponent>(entity)) { lua_pushnil(L); return 1; }
+    const auto& sky = world->GetComponent<SkyLightComponent>(entity);
+    lua_pushnumber(L, static_cast<double>(sky.occlusionTint.x));
+    lua_pushnumber(L, static_cast<double>(sky.occlusionTint.y));
+    lua_pushnumber(L, static_cast<double>(sky.occlusionTint.z));
+    return 3;
+}
+
+/// uz.scene.get_sky_light_occlusion_exponent(entity) -> number | nil
+static int SceneGetSkyLightOcclusionExponent(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_sky_light_occlusion_exponent");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<SkyLightComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(world->GetComponent<SkyLightComponent>(entity).occlusionExponent));
+    return 1;
+}
+
+/// uz.scene.is_sky_light_enabled(entity) -> bool
+static int SceneIsSkyLightEnabled(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "is_sky_light_enabled");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<SkyLightComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushboolean(L, world->GetComponent<SkyLightComponent>(entity).enabled ? 1 : 0);
+    return 1;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Registration
 // ─────────────────────────────────────────────────────────────────────────────
@@ -310,6 +468,19 @@ void LuaRegisterSkyLightAPI(lua_State* L) {
     lua_pushcfunction(L, SceneSetSkyLightOcclusionTint);          lua_setfield(L, -2, "set_sky_light_occlusion_tint");
     lua_pushcfunction(L, SceneSetSkyLightOcclusionExponent);      lua_setfield(L, -2, "set_sky_light_occlusion_exponent");
     lua_pushcfunction(L, SceneSetSkyLightEnabled);                lua_setfield(L, -2, "set_sky_light_enabled");
+    lua_pushcfunction(L, SceneGetSkyLightIntensity);              lua_setfield(L, -2, "get_sky_light_intensity");
+    lua_pushcfunction(L, SceneGetSkyLightColor);                  lua_setfield(L, -2, "get_sky_light_color");
+    lua_pushcfunction(L, SceneGetSkyLightMinOcclusion);           lua_setfield(L, -2, "get_sky_light_min_occlusion");
+    lua_pushcfunction(L, SceneGetSkyLightIndirectIntensity);      lua_setfield(L, -2, "get_sky_light_indirect_intensity");
+    lua_pushcfunction(L, SceneGetSkyLightSourceType);             lua_setfield(L, -2, "get_sky_light_source_type");
+    lua_pushcfunction(L, SceneIsSkyLightRealTimeCapture);         lua_setfield(L, -2, "is_sky_light_real_time_capture");
+    lua_pushcfunction(L, SceneGetSkyLightCubemapResolution);      lua_setfield(L, -2, "get_sky_light_cubemap_resolution");
+    lua_pushcfunction(L, SceneIsSkyLightLowerHemisphereBlack);    lua_setfield(L, -2, "is_sky_light_lower_hemisphere_black");
+    lua_pushcfunction(L, SceneGetSkyLightLowerHemisphereColor);   lua_setfield(L, -2, "get_sky_light_lower_hemisphere_color");
+    lua_pushcfunction(L, SceneGetSkyLightOcclusionMaxDistance);   lua_setfield(L, -2, "get_sky_light_occlusion_max_distance");
+    lua_pushcfunction(L, SceneGetSkyLightOcclusionTint);          lua_setfield(L, -2, "get_sky_light_occlusion_tint");
+    lua_pushcfunction(L, SceneGetSkyLightOcclusionExponent);      lua_setfield(L, -2, "get_sky_light_occlusion_exponent");
+    lua_pushcfunction(L, SceneIsSkyLightEnabled);                 lua_setfield(L, -2, "is_sky_light_enabled");
 
     lua_pop(L, 2);
 

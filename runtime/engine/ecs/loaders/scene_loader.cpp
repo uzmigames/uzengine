@@ -8,6 +8,7 @@
 
 #include "scene_loader.h"
 
+#include "component_serializer.h"
 #include "world.h"
 #include "name_component.h"
 #include "scene_component.h"
@@ -19,6 +20,12 @@
 #include "../logging/log.h"
 #include "../math/vector3.h"
 #include "../math/quaternion.h"
+
+#include "sky_atmosphere_component.h"
+#include "sky_light_component.h"
+#include "height_fog_component.h"
+#include "reflection_probe_component.h"
+#include "volumetric_clouds_component.h"
 
 #include <json.hpp>
 
@@ -319,9 +326,16 @@ size_t ProcessEntityJson(World& world,
     // ── Components ────────────────────────────────────────────────────────────
     auto compIt = entityJson.find("components");
     if (compIt != entityJson.end() && compIt->is_object()) {
-        // Two-pass dispatch: "mesh" must be processed before "material"
-        // because material data is stored on StaticMeshComponent.
-        // Pass 1: all components except "material".
+        // Three-pass dispatch:
+        // Pass 0: "transform" first — other components (camera, mesh) depend on SceneComponent.
+        // Pass 1: all components except "transform" and "material".
+        // Pass 2: "material" last — requires StaticMeshComponent from pass 1.
+        auto transformIt = compIt->find("transform");
+        if (transformIt != compIt->end() && transformIt->is_object()) {
+            ParseTransformComponent(world, entity, *transformIt);
+        }
+
+        // Pass 1: all components except "transform" and "material".
         for (const auto& [compKey, compValue] : compIt->items()) {
             if (!compValue.is_object()) {
                 UZ_LOG(Scene, Warning,
@@ -330,10 +344,8 @@ size_t ProcessEntityJson(World& world,
                 continue;
             }
 
-            if (compKey == "material") {
-                continue; // deferred to pass 2
-            } else if (compKey == "transform") {
-                ParseTransformComponent(world, entity, compValue);
+            if (compKey == "material" || compKey == "transform") {
+                continue; // transform already processed in pass 0, material deferred to pass 2
             } else if (compKey == "script") {
                 ParseScriptComponent(world, entity, compValue);
             } else if (compKey == "camera") {
@@ -342,7 +354,7 @@ size_t ProcessEntityJson(World& world,
                 ParseMeshComponent(world, entity, compValue);
             } else if (compKey == "light") {
                 ParseLightComponent(world, entity, compValue, sourceName);
-            } else {
+            } else if (!ComponentSerializerRegistry::Get().Deserialize(compKey, world, entity, &compValue)) {
                 UZ_LOG(Scene, Warning,
                        "LoadScene: '{}': unknown component type '{}' — skipped",
                        sourceName, compKey);
@@ -443,7 +455,8 @@ nlohmann::json WriteEulerDeg(const Quat& q) {
 }
 
 /// Serializes a single entity and its components to JSON.
-nlohmann::json SerializeEntity(const entt::registry& registry, entt::entity enttEntity) {
+nlohmann::json SerializeEntity(const World& world, entt::entity enttEntity) {
+    const auto& registry = world.GetRegistry();
     nlohmann::json entityJson;
 
     // Name
@@ -589,6 +602,21 @@ nlohmann::json SerializeEntity(const entt::registry& registry, entt::entity entt
         }
     }
 
+    // Registry-based serialization for self-registered component types.
+    // This covers environment components (sky_atmosphere, sky_light, height_fog,
+    // reflection_probe, volumetric_clouds, decal) and any future components that
+    // register via UZ_REGISTER_COMPONENT_SERIALIZER.
+    {
+        const Entity entity = world.EntityFromEntt(enttEntity);
+        const auto& entries = ComponentSerializerRegistry::Get().GetEntries();
+        for (const auto& [key, entry] : entries) {
+            nlohmann::json compJson;
+            if (entry.serialize(world, entity, &compJson)) {
+                components[key] = std::move(compJson);
+            }
+        }
+    }
+
     if (!components.empty()) {
         entityJson["components"] = std::move(components);
     }
@@ -610,7 +638,7 @@ std::vector<uint8_t> SaveScene(const World& world) {
     for (auto it = entityStorage.begin(); it != entityStorage.end(); ++it) {
         const auto enttEntity = *it;
         if (!registry.valid(enttEntity)) continue;
-        entities.push_back(SerializeEntity(registry, enttEntity));
+        entities.push_back(SerializeEntity(world, enttEntity));
     }
 
     root["entities"] = std::move(entities);

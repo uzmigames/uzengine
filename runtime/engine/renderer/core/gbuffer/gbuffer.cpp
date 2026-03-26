@@ -1,5 +1,10 @@
 #include "gbuffer.h"
 
+/// Deferred geometry buffer (GBuffer) resource lifecycle and move semantics.
+///
+/// GBuffer holds 6 render textures (albedo, normal, depth, velocity, position, emissive)
+/// plus their SRV/UAV descriptor indices for deferred lighting pipeline access.
+
 #include "rhi.h"
 #include "log.h"
 
@@ -18,6 +23,8 @@ GBuffer::GBuffer(GBuffer&& other) noexcept
     , emissive(other.emissive)
     , albedoSRV(other.albedoSRV)
     , normalSRV(other.normalSRV)
+    , albedoUAV(other.albedoUAV)
+    , normalUAV(other.normalUAV)
     , depthSRV(other.depthSRV)
     , velocitySRV(other.velocitySRV)
     , positionWSSRV(other.positionWSSRV)
@@ -33,6 +40,8 @@ GBuffer::GBuffer(GBuffer&& other) noexcept
     other.emissive = RHITextureHandle::Invalid();
     other.albedoSRV = UINT32_MAX;
     other.normalSRV = UINT32_MAX;
+    other.albedoUAV = UINT32_MAX;
+    other.normalUAV = UINT32_MAX;
     other.depthSRV = UINT32_MAX;
     other.velocitySRV = UINT32_MAX;
     other.positionWSSRV = UINT32_MAX;
@@ -51,6 +60,8 @@ GBuffer& GBuffer::operator=(GBuffer&& other) noexcept {
         emissive = other.emissive;
         albedoSRV = other.albedoSRV;
         normalSRV = other.normalSRV;
+        albedoUAV = other.albedoUAV;
+        normalUAV = other.normalUAV;
         depthSRV = other.depthSRV;
         velocitySRV = other.velocitySRV;
         positionWSSRV = other.positionWSSRV;
@@ -66,6 +77,8 @@ GBuffer& GBuffer::operator=(GBuffer&& other) noexcept {
         other.emissive = RHITextureHandle::Invalid();
         other.albedoSRV = UINT32_MAX;
         other.normalSRV = UINT32_MAX;
+        other.albedoUAV = UINT32_MAX;
+        other.normalUAV = UINT32_MAX;
         other.depthSRV = UINT32_MAX;
         other.velocitySRV = UINT32_MAX;
         other.positionWSSRV = UINT32_MAX;
@@ -87,28 +100,35 @@ bool GBuffer::Create(IRHIDevice* device, uint32_t w, uint32_t h) {
     const RHITextureUsage colorUsage =
         RHITextureUsage::RenderTarget | RHITextureUsage::ShaderResource;
 
+    // Albedo and Normal also need UnorderedAccess for the DBuffer apply compute pass.
+    // @ref Valient 2014 "Deferred Rendering in Killzone: Shadow Fall" — DBuffer decals
+    const RHITextureUsage colorUsageUAV =
+        RHITextureUsage::RenderTarget | RHITextureUsage::ShaderResource | RHITextureUsage::UnorderedAccess;
+
     const RHITextureUsage depthUsage =
         RHITextureUsage::DepthStencil | RHITextureUsage::ShaderResource;
 
     // Albedo — RGBA8Unorm base color + opacity
+    // Uses UAV for DBuffer decal apply compute pass (in-place modification).
     albedo = device->CreateTexture(RHITextureDesc{
         .width = w,
         .height = h,
         .depthOrArraySize = 1,
         .mipLevels = 1,
         .format = RHIFormat::RGBA8Unorm,
-        .usage = colorUsage,
+        .usage = colorUsageUAV,
         .debugName = "GBuffer_Albedo",
     });
 
     // Normal — RGBA8Unorm octahedral normal (RG) + metallic (B) + roughness (A)
+    // Uses UAV for DBuffer decal apply compute pass (in-place modification).
     normal = device->CreateTexture(RHITextureDesc{
         .width = w,
         .height = h,
         .depthOrArraySize = 1,
         .mipLevels = 1,
         .format = RHIFormat::RGBA8Unorm,
-        .usage = colorUsage,
+        .usage = colorUsageUAV,
         .debugName = "GBuffer_Normal",
     });
 
@@ -174,6 +194,11 @@ bool GBuffer::Create(IRHIDevice* device, uint32_t w, uint32_t h) {
     positionWSSRV = device->GetTextureSRVIndex(positionWS);
     emissiveSRV   = device->GetTextureSRVIndex(emissive);
 
+    // Retrieve bindless UAV indices for DBuffer apply compute pass.
+    // @ref Valient 2014 "Deferred Rendering in Killzone: Shadow Fall"
+    albedoUAV     = device->GetTextureUAVIndex(albedo);
+    normalUAV     = device->GetTextureUAVIndex(normal);
+
     UZ_LOG(Renderer, Info, "GBuffer created: {}x{}", w, h);
     return true;
 }
@@ -200,6 +225,8 @@ void GBuffer::Destroy(IRHIDevice* device) {
 
     albedoSRV     = UINT32_MAX;
     normalSRV     = UINT32_MAX;
+    albedoUAV     = UINT32_MAX;
+    normalUAV     = UINT32_MAX;
     depthSRV      = UINT32_MAX;
     velocitySRV   = UINT32_MAX;
     positionWSSRV = UINT32_MAX;

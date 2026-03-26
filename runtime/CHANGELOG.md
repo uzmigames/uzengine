@@ -2,6 +2,341 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.53] — 2026-03-26
+
+### GPU-Driven VFX System (PR #6 + post-merge integration)
+
+Complete GPU-driven particle, trail, and decal system with modular simulation,
+Lua scripting, declarative `.uzfx` asset format, 13 standalone demos, and
+full engine integration (SceneRenderer lifecycle, ECS component, render graph).
+
+**Core System (`engine/vfx/`):**
+- `VFXSystem` — top-level owner: tick, spawn, budget enforcement, module registry
+- `ParticleEmitter` — per-emitter state: GPU buffers, module stack, LOD, events, parameters
+- `GPUParticleBuffer` — GPU-side particle storage (position, velocity, age, color, size)
+- `GPUParticleSort` — back-to-front distance sort for transparent blending
+- `ParticleBudget` — global particle cap with per-emitter allocation
+- `AttractorBuffer` — GPU attractor point data for force-field modules
+- `SubEmitterReadback` — GPU→CPU readback for cascading sub-emitter events
+
+**Simulation Modules (`engine/vfx/modules/`, 15 modules):**
+- `SpawnModule` — rate/burst emission with shape distribution (point, sphere, cone, box)
+- `UpdateModule` — velocity integration, gravity, drag, lifetime decay
+- `AttractorModule` — point/line attractors with inverse-square falloff, kill-on-arrival
+- `CollisionModule` — world-plane collision with bounce, friction, kill-on-hit
+- `TurbulenceModule` — 3D curl noise velocity perturbation
+- `VectorFieldModule` — 3D vector field sampling for wind/flow effects
+- `OrbitModule` — orbital motion around anchor points
+- `PinModule` — position constraint to world-space anchor
+- `DistanceConstraintModule` — min/max distance enforcement from anchor
+- `ConstraintModule` — generic position/velocity clamping
+- `DecayModule` — alpha/size fade over particle lifetime
+- `SubEmitterModule` — cascading child emitter spawning on death/collision events
+- `SpriteRenderModule` — flipbook (SubUV) sprite sheet animation
+- `MeshRenderModule` — instanced mesh particle rendering
+- `LightRenderModule` — per-particle dynamic light emission
+- `ModuleRegistry` — factory pattern for module creation by name
+- `ModuleCompositor` — composites module shader code into final compute kernel
+- `EmitterModuleStack` — ordered module execution pipeline
+
+**Render Passes (`renderer/passes/vfx/`, 7 passes):**
+- `ParticleSimulationPass` — compute shader dispatch for particle update
+- `ParticleRenderPass` — billboard quad rendering (transparent, back-to-front sorted)
+- `ParticleMeshRenderPass` — instanced mesh rendering for mesh particles
+- `TrailRenderPass` — ribbon/trail geometry generation and rendering
+- `DecalPass` — deferred decal projection into GBuffer
+- `DistortionPass` — screen-space distortion accumulation (heat shimmer, glass)
+- `DistortionResolvePass` — distortion buffer application to scene color
+
+**Trail System (`engine/vfx/trails/`):**
+- `TrailSystem` — manages active trails, point recording, mesh rebuilding
+- `TrailComponent` — per-entity trail state (points, width, color, lifetime)
+- `TrailMeshBuilder` — generates triangle strip geometry from trail points
+- `TrailPoint` — position + width + color + age per trail vertex
+- `TrailAsset` — serializable trail configuration
+
+**Decal System (`engine/vfx/decals/`):**
+- `DecalManager` — lifecycle management, sorting, atlas allocation
+- `DecalPool` — object pool for decal recycling (no per-frame allocation)
+- `DecalAtlas` — texture atlas packing for batched decal rendering
+- `DecalComponent` — VFX decal data (OBB projection, fade, lifetime)
+- `DecalAsset` — serializable decal configuration
+
+**VFX Curves (`engine/vfx/curves/`):**
+- `VfxCurve` — keyframe-based value curves (linear, bezier, step interpolation)
+- `VfxCurveLoader` — JSON curve deserialization
+
+**Budget & LOD (`engine/vfx/budget/`, `engine/vfx/lod/`):**
+- `VfxBudget` — global budget tracking with per-emitter allocation/deallocation
+- `VfxSignificanceManager` — distance/screen-size significance scoring for LOD
+- `VfxLod` — 4-tier LOD (Full, Reduced, Minimal, Culled) with hysteresis
+
+**Events & Parameters (`engine/vfx/events/`, `engine/vfx/parameters/`):**
+- `VfxEvent` — typed event system (spawn, death, collision, burst, custom)
+- `VfxParameterStore` — runtime parameter override (Vec4, float, int per emitter)
+
+**Asset Pipeline:**
+- `.uzfx` JSON format (`asset/formats/uzfx_format.h`) — declarative emitter description
+- `UzfxLoader` (`asset/formats/uzfx_loader.h/.cpp`) — parses `.uzfx` into configured emitters
+- `VfxComposite` — multi-emitter effect composition (explosion = fire + smoke + debris)
+- `VfxGraph` — node-based effect graph structure
+- `VfxGraphValidator` — validates graph connectivity and parameter bindings
+- `VfxHotReload` — file-watcher triggered effect reload
+
+**ECS Integration:**
+- `VfxEmitterComponent` (`ecs/environment/`) — ECS component with `.uzscene` serialization
+- SceneRenderer lifecycle: `InitVFX()` / `TickVFX()` / `ShutdownVFX()`
+
+**Lua API (`scripting/scene/`):**
+- `vfx_lua_bindings` — `uz.vfx:create_emitter`, `destroy_emitter`, `set_field`, `get_field`, `set_parameter_vec4`, `get_parameter`, `emit_burst`, `set_active`, `get_active`, `get_particle_count`
+- `decal_lua_bindings` — `uz.vfx:spawn_decal`, `set_decal_fade`, `remove_decal`, `get_decal_count`
+- `trail_lua_bindings` — `uz.vfx:create_trail`, `destroy_trail`, `set_trail_active`, `clear_trail`, `get_trail_length`, `get_trail_point_count`, `set_trail_width`, `set_trail_color`, `set_trail_lifetime`, `set_trail_uv_scroll`
+
+**Demos (13 standalone, `runtime/demos/`):**
+- `particle_fountain` — basic upward emission with gravity
+- `fire_effect` — modular fire with spawn + update + turbulence + decay
+- `explosion_composite` — multi-emitter composite (fire + smoke + debris + burst event)
+- `sub_emitter_demo` — 3-stage firework cascade (rocket → burst → sparkle)
+- `attractor_demo` — black hole attractor with kill-on-arrival
+- `flipbook_animation` — SubUV sprite sheet animation
+- `vector_field_demo` — 3D vector field wind tunnel
+- `orbit_demo` — ring orbit with pin + distance constraint
+- `distortion_effect` — heat shimmer + glass sphere distortion
+- `decals` — deferred decal projection
+- `trails` — ribbon trail rendering
+- `vfx_advanced` — combined advanced effects
+- `vfx_showcase` — full feature showcase
+- Shared `demos/common/mock_device.h` — headless RHI mock for CPU-only demos
+
+**Post-Merge Cleanup:**
+- Reorganized 23 files from `vfx/passes/`, `vfx/scripting/`, `vfx/asset/uzfx_*` into correct engine directories (`renderer/passes/vfx/`, `scripting/scene/`, `asset/formats/`)
+- Added `///` file headers to 40 files (V1 doc violations)
+- Split oversized `lua_light_api.cpp` (1669→978+778 lines)
+- Updated `CONTRIBUTING.md` with acceptance criteria and lessons learned
+
+## [0.2.52] — 2026-03-25
+
+### H.264 Viewport Frame Streaming (phase2-2.1.0)
+
+Full H.264 hardware-accelerated frame streaming pipeline from DX12 render to
+VSCode webview canvas via WebCodecs VideoDecoder. 120 FPS target at 720p with
+<5ms latency (POC 0.2 validated architecture).
+
+**H.264 Encoder (`runtime/engine/ipc/h264_encoder.h/.cpp`):**
+- FFmpeg libavcodec with HW encoder probe: NVENC → AMF → QSV → MF → x264 software fallback
+- RGBA→NV12 via libswscale, Baseline profile, low-latency CBR, no B-frames
+- Per-encoder tuning: NVENC p1+ull, AMF ultralowlatency, QSV veryfast, x264 ultrafast+zerolatency
+- `EncodeFrame()` (sync), `SubmitFrameAsync()`/`GetEncodedFrame()` (async thread)
+- `RequestKeyframe()`, `SetBitrate()` (atomic, thread-safe), `GetExtradata()` (SPS/PPS)
+- Dedicated encoder thread: mutex+CV, double-buffered staging/output, frame-drop on backpressure
+
+**Triple-Buffered GPU Readback (`runtime/engine/ipc/frame_readback.h/.cpp`):**
+- 3 readback buffers + 3 fences, rotated per frame
+- GPU copies frame N while CPU reads frame N-2 — eliminates `WaitIdle()` stall
+- Pipeline fill: first 2 frames return empty (no stall, no blocking)
+- Fallback to single-buffer `WaitIdle()` if triple-buffer init fails
+
+**Runtime C API:**
+- `uz_encode_frame()`, `uz_request_keyframe()`, `uz_get_codec_extradata()`, `uz_set_encode_bitrate()`
+- H.264 encoder initializes only when `--editor` / `setEditorMode(true)` is active
+
+**N-API Bridge:**
+- `encodeFrame(): Buffer | null`, `requestKeyframe()`, `getCodecExtradata(): Buffer | null`, `setEncodeBitrate(kbps)`
+- SEH wrappers on all encode functions (`uz_seh_encode_frame`, `uz_seh_get_codec_extradata`)
+- Fixed Win32 `GetVersion`/`Shutdown` macro collisions in napi_lifecycle.cpp
+
+**VSCode Extension (`scene-editor-provider.ts`):**
+- WebCodecs `VideoDecoder` with `avc1.42001e` Baseline, HW-accelerated, `optimizeForLatency: true`
+- 8ms render loop (120 FPS target): `renderFrame()` → `encodeFrame()` → `postMessage(Uint8Array)` → `VideoDecoder` → canvas
+- PNG fallback via `captureScreenshot()` when encoder unavailable or WebCodecs unsupported
+- Codec extradata flow: extension sends SPS/PPS on ready → webview configures decoder
+- Resize handling: webview notifies extension → `resizeViewport()` → encoder reinit → new extradata + keyframe
+- Decoder error recovery: webview posts `decoderError` → extension calls `requestKeyframe()`
+- Crash detection: consecutive error counting, stops loop on SEH, VSCode error notification
+
+**Crash Protection (library mode):**
+- `PlatformWindow::SetLibraryMode()` — no `PostQuitMessage`, scoped `PeekMessageW`
+- Hidden HWND when `parent_hwnd == 0` — no standalone window
+- `CrashHandler` VEH mode — writes minidump + crash reports, propagates to `__try/__except`
+- `CrashHandler_SetCrashDir()` — redirects to engine dir (not VSCode exe dir)
+- N-API SEH wrappers on all critical functions
+
+**FFmpeg Integration:**
+- `scripts/setup.ps1` — downloads BtbN LGPL shared build, keeps LICENSE
+- `napi/CMakeLists.txt` — copies FFmpeg DLLs alongside uzengine.node
+- `runtime/build.zig` — links avcodec.lib, avutil.lib, swscale.lib on all targets
+
+**Infrastructure for H.264 pipeline (crash protection, hidden HWND):**
+
+**Hidden HWND (prerequisite for H.264 pipeline):**
+- `uz_create_viewport(0, w, h)` creates HWND for DX12 swapchain but keeps it hidden (no `ShowWindow`). No standalone window appears.
+- When `parent_hwnd != 0`, reparented as `WS_CHILD` inside the parent — same as before.
+- PNG screenshot fallback is temporary until H.264 encoder (Media Foundation) is implemented per POC 0.2 architecture.
+
+**PlatformWindow Library Mode:**
+- Added `PlatformWindow::SetLibraryMode(bool)` — prevents host process interference:
+  - `WM_DESTROY` no longer calls `PostQuitMessage(0)` (was killing VSCode/Electron).
+  - `PumpMessages()` scopes `PeekMessageW` to our HWND only (was stealing Electron messages).
+
+**Crash Handler Library Mode (VEH):**
+- Added `CrashHandler_SetLibraryMode(bool)` — switches from `SetUnhandledExceptionFilter` (terminates process) to `AddVectoredExceptionHandler` (writes crash reports, lets `__try/__except` catch the exception).
+- VEH writes minidump + crash.txt + crash.json to `{engine_dir}/crashes/{timestamp}/`, returns `EXCEPTION_CONTINUE_SEARCH`.
+- Added `CrashHandler_SetCrashDir(const char*)` — redirects crash reports from VSCode's exe dir to the engine directory. Automatically set by `uz_set_engine_dir()`.
+
+**N-API SEH Wrappers:**
+- `uz_seh_render_frame()`, `uz_seh_create_viewport()`, `uz_seh_capture_screenshot()`, `uz_seh_runtime_init()` — plain-C wrappers with `__try/__except`. Crash → JS exception instead of killing Extension Host.
+- `UzNapiCheckSeh()` converts exception codes to `Napi::Error`.
+
+**Extension Crash Detection:**
+- Render loop counts consecutive errors and detects SEH exceptions.
+- On native crash: stops render loop, shows VSCode error notification with crash file location.
+
+**Crash report files** (`native/crashes/{YYYY-MM-DD_HH-MM-SS}/`):
+- `crash.dmp` — minidump (open in Visual Studio for full stack trace)
+- `crash.txt` — human-readable: exception code, frame number, scene, stack trace
+- `crash.json` — machine-parseable for automated analysis
+
+## [0.2.51] — 2026-03-24
+
+### Runtime Project Loading, SRP File Split, DLL Path Fixes
+
+**uzengine.exe Project Loading Fixes:**
+- Fixed Agility SDK path: `D3D12SDKPath` changed from `"..\\lib\\D3D12\\"` to `".\\D3D12\\"` — DLLs are next to the exe, not in `../lib/`
+- Fixed DXC compiler path: default changed from `"../lib/dxcompiler.dll"` to `"dxcompiler.dll"`
+- Fixed FXC compiler path: default changed from `"../lib/d3dcompiler_47.dll"` to `"d3dcompiler_47.dll"`
+- Fixed async texture path mismatch: `Submit()` now accepts `resultKey` so decoded results match the VFS-relative key in `m_asyncPendingSlots` (was discarding ALL textures with "unknown path")
+- Fixed scene loader transform ordering: "transform" now processed in pass 0 before "camera"/"mesh" — nlohmann::json iterates alphabetically, so "camera" was processed before "transform" existed
+- Added `DrainPendingTextureLoads()` — blocks until all async texture decodes + GPU uploads complete before the first visible frame (was showing white placeholders for 2-4 seconds)
+- Added `HasPendingTextureLoads()` query for pre-load readiness checking
+
+**SRP File Split (phase0-0.9.0):**
+- Split `scene_lifecycle.cpp` (1789 lines) → `scene_renderer_init.cpp`, `scene_temporal_resources.cpp`, `scene_postprocess_resources.cpp`, `scene_upscaler.cpp`
+- Split `scene_assets.cpp` (886 lines) → `scene_mesh_assets.cpp`, `scene_texture_assets.cpp`
+- Split `mesh.cpp` (1122 lines) → `mesh_builder.cpp`, `mesh_io.cpp`, `mesh_tangents.cpp`
+- Split `rhi.h` (978 lines) → `rhi_device.h`, `rhi_command_list.h`, `rhi_fence.h`, `rhi_swapchain.h`
+- Split `dx11_device.cpp`, `metal_device.cpp` → resource creation into separate files
+- Split `inspector_pass.cpp` → `inspector_pass_dump.cpp`, `inspector_pass_validate.cpp`, `inspector_pass_utils.h`
+- Split `application.cpp` → `application_args.cpp`, `application_platform.cpp`
+- Split `demo_application.cpp` → `demo_application_args.cpp`, `demo_application_init.cpp`
+- Split `shader_pipeline.cpp` → `shader_pipeline_batch.cpp`, `shader_pipeline_internal.h`
+- Split `pipeline_library.h` → `pipeline_library_impl.h`; extracted `pipeline_depth.cpp`, `pipeline_gi.cpp`, `pipeline_temporal.cpp`
+
+**Lua API Expansions:**
+- Atmosphere API: 444 lines — full SkyAtmosphereComponent bindings
+- Light API: 696 lines — directional, point, spot light bindings
+- Fog API: 186 lines — HeightFogComponent bindings
+- Clouds API: 207 lines — VolumetricCloudsComponent bindings
+- SkyLight API: 169 lines — SkyLightComponent bindings
+- Decal API: new `lua_decal_api.cpp` — DecalComponent bindings
+- Reflection Probe API: new `lua_reflection_probe_api.cpp`
+- PostProcess API: new `lua_postprocess_api.cpp`
+
+**Decal Demo Integration:**
+- Added 3 DecalComponent entities to pbr_test demo (concrete weathering, corroded metal stain, stonebrick rust on sphere)
+
+**Texture System Improvements:**
+- Fixed `QueueTextureLoad()` VFS path resolution: now correctly resolves relative paths before lookup, preventing "unknown path" discard of all async texture results
+- Fixed `instancing_test` white cube texture: metallic fallback now WHITE (was BLACK), allowing material parameter control
+
+**HDRI Environment System:**
+- New HDRI Lua API: `uz.texture.load_hdr()` for EXR panorama loading, `uz.renderer.set_hdri_environment()` for IBL environment
+- `hdri_test` demo migrated to sample format: HDRI panorama + 7 PBR spheres with varying metallic/roughness showcasing EXR loading and IBL reflections
+
+**Component Auto-Registration:**
+- `ComponentSerializerRegistry` now auto-registers standard components (Transform, Scene, Mesh, Light, Sky, Fog, etc.) via static initializers
+- Eliminates manual registration boilerplate in scene loader, enabling cleaner component system architecture
+
+**Tasks Archived:**
+- Linux Platform (phase4-4.10.0) — 34/34: X11 window/input, POSIX file I/O, inotify, mmap, crash handler, XDG paths, dlopen, fork/exec, system info, stack walker
+- SRP File Split (phase0-0.9.0) — archived
+
+## [0.2.50] — 2026-03-24
+
+### Reflection Probe Capture + Task Cleanup + Quality-of-Life Fixes
+
+**Reflection Probe Cubemap Capture (phase3a-3.37.0):**
+- Scene-based cubemap capture: renders scene from probe position into 6 RGBA16F faces (128x128 default) using forward PBR pipeline
+- `BuildCubemapFaceMatrices()` — Z-up to Y-up swap, 90° FOV, 6 face directions matching DX convention
+- Per-probe `RHITextureHandle` cubemap + shared D32F depth buffer, amortized 1 probe/frame
+- `CaptureIfDirty()` → `RenderProbeCubemap()` → `IBLBaker::BakeEnvironment()` pipeline
+- Wired into `frame_setup.cpp` before probe Update(), using `m_pipelines` directly (fixed null pipeline crash)
+- Reflection probe docs: lighting reference (276 lines) + placement guide (314 lines)
+
+**UZ_CHECK/UZ_ENSURE Stack Traces:**
+- `PrintStackTrace()` now uses `uz::WalkStack` + `uz::FormatStackTrace` with symbolicated function names, file paths, and line numbers (was raw hex addresses)
+- `skipFrames=3` skips internal assertion frames — first visible frame is always user code
+
+**CVar Documentation Fix:**
+- Fixed 4 stale defaults in `docs/guides/cvar-reference.md`: GTAO.Power (2.0→1.0), MinBrightness (0.03→0.1), MaxBrightness (8.0→4.0), SkyLight.MinAmbient (0.0→0.25)
+- Added render quality tuning log with 7 before/after values and rationale
+
+**Root Signature Audit:**
+- Full inventory: 5 root params, 52/64 DWORDs used, 12 headroom
+- Documented slot 2 contention (PerObjectCB/LightingCB dual-use)
+- Optimization plan: root constants 16→8 (saves 8 DWORDs), shadow to table (saves 4)
+
+**Tasks Archived (7 tasks, 187 items):**
+- Render Quality Consensus Fixes (2.50.0) — 44/44: GTAO, micro-shadows, SSR temporal, auto-exposure, per-material specular
+- Crash Handling (4.5.0) — 20/20: SEH, minidump, stack walker, symbolication
+- Native Dialogs (4.9.0) — 18/18: file dialogs, dark mode, taskbar, tray, notifications
+- Material System Expansion (3.31.0) — 23/23: emissive, opacity, blend modes, POM
+- Process/DLL Management (4.7.0) — 19/19: DLL loader, process pipes, shared memory
+- Window State Machine (4.1.0) — 23/23: fullscreen toggle, minimize/maximize, focus
+- Async Texture Pipeline (2.23.0) — 40/40: BC7 cook, async decode, copy queue, 273× speedup
+
+**New Documentation:**
+- `docs/guides/texture-pipeline.md` — cook workflow, .uztexture format, runtime loading
+- `docs/guides/reflection-probe-placement.md` — placement principles, optimization
+- `docs/analysis/texture-loading-benchmarks.md` — performance comparison
+- `docs/analysis/architecture/root-signature-audit.md` — full root sig inventory
+- `docs/analysis/dataflow/reflection-probe-capture.md` — capture data flow
+
+## [0.2.49] — 2026-03-24
+
+### Thirdparty Integration + CVar System Expansion + Comprehensive Testing
+
+**Thirdparty Library Integration (phase2-2.60.0):**
+- **FSR 1.0** (AMD FidelityFX): EASU (edge adaptive spatial) + RCAS (contrast adaptive) compute shaders, `FSRPass` C++ class, `r.FSR` + `r.FSR.Sharpness` CVars
+- **FSR 2.x** (AMD FidelityFX): Temporal upscaler with motion vectors, depth history, `FSR2Upscaler` class implementing `ITemporalUpscaler`, `r.FSR2` + `r.FSR2.Quality` CVars
+- **SMAA** (Subpixel Morphological AA): 3-pass post-process (edge detect → blend weight → neighborhood blend), `SMAAPass` with precomputed area/search textures, `r.SMAA` CVar
+- **xatlas**: Lightmap UV generation via `LightmapUVGenerator::GenerateLightmapUVs()` for cook-time atlas packing
+- **libpng 1.6**: Full PNG codec with 8/16-bit read/write, `PngCodec` class with sRGB detection
+- **msdfgen + FreeType**: Multi-channel SDF font atlas generation via `GenerateSDFAtlas()`, FreeType glyph extraction, `FontManager` singleton with caching and metrics
+- Build infrastructure: zlib compiled from source (static), minimal `ftmodule.h`, FFX SDK headers
+
+**CVar System Expansion (47 → 118 CVars):**
+- 50+ new CVars across renderer, post-process, debug, and performance subsystems
+- Shadows: `r.Shadow.AtlasResolution`, `r.Shadow.PCSS.SearchSamples`, `r.Shadow.PCSS.Samples`, `r.ShadowDebug`
+- Post-Process: `r.Bloom.*`, `r.SSR.*`, `r.TAA.*`, `r.FSR*`, `r.SMAA`
+- Auto-Exposure: `r.AutoExposure.*` (bias, min/max brightness, histograms)
+- Atmosphere/Fog: `r.Atmosphere.*`, `r.Fog*` parameters
+- PBR/Materials: `r.PBR.MinRoughness`, `r.Material.POM.*`
+- Film Effects: `r.Tonemap.*`, `r.FilmGrain`, `r.Vignette`, `r.ChromaticAberration`
+- System: `sys.MaxDeltaTime`, `sys.FixedDeltaTime`, `rhi.VSync`, `job.MaxWorkerCount`, `camera.MoveSpeed`
+
+**Lua API Enhancements:**
+- **`uz.cvar` namespace**: `get(name)`, `set(name, value)`, `reset(name)`, `reset_all()`, `info(name)` → `{name, description, value, default, min, max}`, `list(prefix?)`
+- **Material API**: Added `specular` (F0 scale), `env_multiplier` (IBL intensity), SSS params, ORM support, shading model + blend mode enums as strings
+- **Scene I/O API**: `uz.scene.load_scene(path)`, `uz.scene.save_scene(path)` with full guard clauses and stack hygiene
+
+**Testing Suite (187 new tests across 11 files):**
+- `test_cvar.cpp` (13 tests): Registration, clamping, reset, find, macros
+- `test_fsr_pass.cpp` (16 tests): CPU utilities, CVar defaults
+- `test_smaa_pass.cpp` (10 tests): Parameter validation
+- `test_fsr2_upscaler.cpp` (25 tests): Quality levels, temporal state
+- `test_lua_cvar_api.cpp` (29 tests): VM integration for get/set/reset/info/list
+- `test_lua_material_api.cpp` (49 tests): Scalar params, enums, flags round-trip
+- `test_lua_scene_io_api.cpp` (22 tests): Load/save guards, stack balance
+- `test_png_codec.cpp` (22 tests): Round-trip, 16-bit encoding, edge cases
+- `test_font_manager.cpp` (13 tests): Initialization, font loading, metrics
+- `test_sdf_font_atlas.cpp` (18 tests): Atlas generation, glyph metrics, error handling
+- `test_lightmap_uv.cpp` (3 tests): UV generation, empty input handling
+- **Total: 3987/3988 tests passing** (baseline 3800)
+
+**Documentation:**
+- `cvar-reference.md` updated with all 118 CVars, usage examples, Lua API section
+- `thirdparty/README.md` updated with all new libraries (FSR, SMAA, FreeType, libpng, msdfgen, xatlas)
+
 ## [0.2.48] — 2026-03-24
 
 ### Lua API Reorg, CVar Expansion, Thirdparty Integration, Full Test Coverage

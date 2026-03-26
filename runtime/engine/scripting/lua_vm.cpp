@@ -21,6 +21,12 @@
 #include "lua_quat_api.h"
 #include "lua_window_api.h"
 #include "lua_vfs_api.h"
+#include "lua_decal_api.h"
+#include "lua_reflection_probe_api.h"
+#include "lua_postprocess_api.h"
+#include "lua_editor_api.h"
+
+/// Lua virtual machine initialization, state management, sandbox configuration, and API registration.
 
 extern "C" {
 #include <lua.h>
@@ -159,6 +165,10 @@ bool LuaVM::Init() {
 #ifdef UZ_HAS_VFS
     LuaRegisterVfsAPI(s_state);
     LuaRegisterSceneIoAPI(s_state);
+    LuaRegisterDecalAPI(s_state);
+    LuaRegisterReflectionProbeAPI(s_state);
+    LuaRegisterPostProcessAPI(s_state);
+    LuaRegisterEditorAPI(s_state);
 #endif
 #ifdef UZ_HAS_SCENE_API
     LuaRegisterSceneAPI(s_state);

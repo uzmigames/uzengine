@@ -1,0 +1,9 @@
+.{
+    .name = .distortion_effect,
+    .version = "0.1.0",
+    .fingerprint = 0xdfa5c5963b4a1601,
+    .dependencies = .{
+        .uz_demo_common = .{ .path = "../common" },
+    },
+    .paths = .{"build.zig"},
+}

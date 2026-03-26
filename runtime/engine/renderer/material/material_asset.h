@@ -227,6 +227,7 @@ struct Material : public MaterialInterface {
     uint32_t metallicSrvIndex  = 0;  ///< SRV heap index for loaded metallic map.
     uint32_t aoSrvIndex        = 0;  ///< SRV heap index for loaded AO map.
     uint32_t emissiveSrvIndex  = 0;  ///< SRV heap index for loaded emissive map.
+    uint32_t opacitySrvIndex   = 0;  ///< SRV heap index for opacity/alpha mask texture (0 = none).
 
     /// True after the scene renderer has uploaded all referenced textures.
     bool gpuResourcesLoaded = false;
@@ -306,6 +307,7 @@ struct Material : public MaterialInterface {
         if (name == "ORM")       return ormSrvIndex;
         if (name == "Thickness") return thicknessSrvIndex;
         if (name == "ClearCoatNormal") return clearCoatNormalSrvIndex;
+        if (name == "Opacity")  return opacitySrvIndex;
         return 0;
     }
 

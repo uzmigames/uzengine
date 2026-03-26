@@ -11,6 +11,7 @@
 /// - Hash map for O(1) key lookup
 /// - Automatic eviction of oldest entries when memory limit is exceeded
 /// - Fully generic: works with any hashable Key and move-constructible Value
+/// - Thread-unsafe — callers must synchronize externally
 
 #include <cstddef>
 #include <list>
@@ -19,6 +20,7 @@
 
 namespace uz {
 
+template <typename Key, typename Value>
 /// Generic LRU cache with a configurable memory budget.
 ///
 /// Provides O(1) lookup, insertion, and eviction using a doubly-linked list
@@ -26,7 +28,6 @@ namespace uz {
 ///
 /// @tparam Key   Hashable key type (must support std::hash and operator==).
 /// @tparam Value Cached value type (must be move-constructible).
-template <typename Key, typename Value>
 class LRUCache {
 public:
     /// Constructs a cache with the given memory budget in bytes.
@@ -101,9 +102,10 @@ public:
     }
 
 private:
+    /// Internal storage for a cached value and its reported byte size.
     struct Entry {
-        Value value;
-        size_t sizeBytes;
+        Value value;       ///< The cached payload.
+        size_t sizeBytes;  ///< Size in bytes as reported by the caller of Put().
     };
 
     using ListType = std::list<std::pair<Key, Entry>>;

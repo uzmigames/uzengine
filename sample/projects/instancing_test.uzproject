@@ -1,0 +1,19 @@
+{
+  "name": "Instancing Test",
+  "version": "1.0",
+  "engine_version": "0.2.0",
+  "default_scene": "scenes/instancing_test.uzscene",
+  "content_root": "../content/",
+  "window": {
+    "title": "UzEngine — Instancing Test (1000 cubes, Lua)",
+    "width": 1280,
+    "height": 720,
+    "fullscreen": false
+  },
+  "render": {
+    "backend": "dx12",
+    "shader_model": "6_6",
+    "vsync": false,
+    "hdr": false
+  }
+}

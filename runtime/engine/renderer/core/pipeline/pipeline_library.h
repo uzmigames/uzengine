@@ -251,6 +251,20 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetSkyAtmosphere();
 
+    /// Returns the HDRI skybox pipeline (fullscreen_vs + skybox_cubemap_ps, 1 RT, no depth).
+    ///
+    /// Renders an HDRI cubemap as the sky background, replacing the procedural
+    /// sky atmosphere pass when an external HDRI environment map is active.
+    /// Only fills pixels where depth == 0.0 (reversed-Z far plane).
+    ///
+    /// Rasterizer: no cull (fullscreen triangle).
+    /// Depth: disabled.
+    /// Render target: RGBA16Float (HDR scene color).
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetHdriSkybox();
+
     /// Returns the transmittance LUT compute pipeline (transmittance_lut_cs.hlsl).
     ///
     /// Compute pipeline dispatched once per scene to fill a 256x64 RGBA16F texture
@@ -263,6 +277,22 @@ public:
     /// Returns the multi-scattering LUT compute pipeline (multi_scatter_lut_cs.hlsl).
     /// 32x32 R11G11B10F, Hillaire 2020 isotropic integration + geometric series.
     [[nodiscard]] RHIPipelineHandle GetMultiScatterLut();
+
+    /// Returns the single-scatter 3D LUT precomputation pipeline (single_scattering_lut_cs.hlsl).
+    /// 256x128x32 RGBA16F, Bruneton 2017 single Rayleigh+Mie scatter.
+    [[nodiscard]] RHIPipelineHandle GetSingleScatterLut();
+
+    /// Returns the scattering density precomputation pipeline (scattering_density_cs.hlsl).
+    /// 256x128x32 RGBA16F, Bruneton 2017 per-order density computation.
+    [[nodiscard]] RHIPipelineHandle GetScatteringDensity();
+
+    /// Returns the indirect scattering integration pipeline (indirect_scattering_cs.hlsl).
+    /// 256x128x32, Bruneton 2017 N-th order scattering accumulation.
+    [[nodiscard]] RHIPipelineHandle GetIndirectScattering();
+
+    /// Returns the irradiance LUT pipeline (irradiance_lut_cs.hlsl).
+    /// 64x16 RGBA16F, direct + indirect ground irradiance.
+    [[nodiscard]] RHIPipelineHandle GetIrradianceLut();
 
     /// Returns the aerial perspective volume compute pipeline (aerial_perspective_volume_cs.hlsl).
     /// 32x32x16 RGBA16F 3D texture, precomputed per-frame AP inscattering + transmittance.
@@ -604,6 +634,28 @@ public:
     ///
     [[nodiscard]] RHIPipelineHandle GetRadianceCacheTrace();
 
+    /// Returns the DBuffer decal render pipeline (decal_vs + decal_ps, 3 RT, no depth).
+    ///
+    /// Rasterizer: front-face cull (render back faces of decal OBB).
+    /// Depth: disabled (depth read via SRV in pixel shader).
+    /// Blend: SrcAlpha / InvSrcAlpha on all 3 render targets.
+    /// Render targets: 3x RGBA8Unorm (DBuffer A, B, C).
+    ///
+    /// @ref Valient 2014 "Deferred Rendering in Killzone: Shadow Fall"
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure.
+    [[nodiscard]] RHIPipelineHandle GetDecalRender();
+
+    /// Returns the DBuffer application compute pipeline (decal_apply_cs.hlsl).
+    ///
+    /// Fullscreen compute dispatch that merges DBuffer into GBuffer.
+    /// 8x8x1 thread groups.
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure.
+    [[nodiscard]] RHIPipelineHandle GetDecalApply();
+
     // ── VFX Particle Pipelines ──────────────────────────────────────────
 
     /// Returns the particle billboard pipeline (particle_billboard_vs + particle_billboard_ps).
@@ -760,56 +812,10 @@ public:
     [[nodiscard]] bool IsInitialized() const noexcept { return m_initialized; }
 
 private:
-    /// Creates and caches shaders needed for a pipeline if not already compiled.
-    /// Returns false if any required shader fails to compile.
-    [[nodiscard]] bool EnsureMeshShaders();
-    [[nodiscard]] bool EnsureFullscreenShaders();
-    [[nodiscard]] bool EnsureGBufferPixelShader();
-    [[nodiscard]] bool EnsureLightingPixelShader();
-    [[nodiscard]] bool EnsureGBufferDebugPixelShader();
-    [[nodiscard]] bool EnsureDebugViewPixelShader();
-    [[nodiscard]] bool EnsureForwardPixelShader();
-    [[nodiscard]] bool EnsureInstancedMeshShaders();
-    [[nodiscard]] bool EnsureInstancedShadowShaders();
-    [[nodiscard]] bool EnsureShadowShaders();
-    [[nodiscard]] bool EnsureSkyAtmospherePixelShader();
-    [[nodiscard]] bool EnsureTonemapPixelShader();
-    [[nodiscard]] bool EnsureVelocityPixelShader();
-    [[nodiscard]] bool EnsureHeightFogPixelShader();
-    [[nodiscard]] bool EnsureTransmittanceLutShader();
-    [[nodiscard]] bool EnsureMultiScatterLutShader();
-    [[nodiscard]] bool EnsureAPVolumeShader();
-    [[nodiscard]] bool EnsureSkyCubemapCaptureShader();
-    [[nodiscard]] bool EnsureSkyCubemapCapturePSShader();
-    [[nodiscard]] bool EnsureHiZPyramidShader();
-    [[nodiscard]] bool EnsureGpuCullShader();
-    [[nodiscard]] bool EnsureDfsCullObjectsShader();
-    [[nodiscard]] bool EnsureDfsConeTraceShader();
-    [[nodiscard]] bool EnsureTaaResolveShader();
-    [[nodiscard]] bool EnsureTsrDilateVelocityShader();
-    [[nodiscard]] bool EnsureTsrRejectShadingShader();
-    [[nodiscard]] bool EnsureTsrUpdateHistoryShader();
-    [[nodiscard]] bool EnsureSsrTraceShader();
-    [[nodiscard]] bool EnsureSsrResolveShader();
-    [[nodiscard]] bool EnsureSsrTemporalShader();
-    [[nodiscard]] bool EnsureColorGradingLutShader();
-    [[nodiscard]] bool EnsureMotionBlurShader();
-    [[nodiscard]] bool EnsureMotionBlurTileMaxShader();
-    [[nodiscard]] bool EnsureMotionBlurNeighborMaxShader();
-    [[nodiscard]] bool EnsureDofSetupShader();
-    [[nodiscard]] bool EnsureDofBlurShader();
-    [[nodiscard]] bool EnsureFxaaPixelShader();
-    [[nodiscard]] bool EnsureCasSharpenPixelShader();
-    [[nodiscard]] bool EnsureSsgiPrevColorReduceShader();
-    [[nodiscard]] bool EnsureSsgiTraceShader();
-    [[nodiscard]] bool EnsureSsgiSpatialDenoiseShader();
-    [[nodiscard]] bool EnsureSsgiTemporalAccumShader();
-    [[nodiscard]] bool EnsureSsgiBilateralUpsampleShader();
-    [[nodiscard]] bool EnsureVisFullscreenPixelShader();
-    [[nodiscard]] bool EnsureGdfCompositeShader();
-    [[nodiscard]] bool EnsureMeshSdfBakeShader();
-    [[nodiscard]] bool EnsureRadianceCacheTraceShader();
-    [[nodiscard]] bool EnsureCloudCompositePixelShader();
+    #include "pipeline_library_impl.h"
+
+    // ── VFX pipeline members (from VFX system PR) ───────────────────────
+    // ── VFX shader/pipeline ensure methods ──────────────────────────────
     [[nodiscard]] bool EnsureParticleBillboardShaders();
     [[nodiscard]] bool EnsureParticleSpawnCSShader();
     [[nodiscard]] bool EnsureParticleUpdateCSShader();
@@ -820,70 +826,7 @@ private:
     [[nodiscard]] bool EnsureTrailRibbonShaders();
     [[nodiscard]] bool EnsureParticleMeshShaders();
 
-    /// Creates a pipeline through the PSO cache. On cache hit, returns the
-    /// cached handle without calling the device. On miss, creates via the
-    /// device and inserts into the cache.
-    [[nodiscard]] RHIPipelineHandle CreateCachedPipeline(const RHIGraphicsPipelineDesc& desc);
-
-    IRHIDevice*    m_device    = nullptr;
-    ShaderManager* m_shaderMgr = nullptr;
-    bool           m_initialized = false;
-
-    // ── PSO content-hash cache ─────────────────────────────────────────
-    PsoCache m_psoCache;
-
-    // ── PSO disk cache (optional) ────────────────────────────────────
-    std::unique_ptr<PsoDiskCache> m_psoDiskCache;
-
-    // ── Cached shader handles ───────────────────────────────────────────
-    RHIShaderHandle m_meshVS           = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_meshPS           = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_fullscreenVS     = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_gbufferPS        = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_lightingPS       = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_gbufferDebugPS   = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_debugViewPS      = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_instancedMeshVS  = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_instancedShadowVS = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_shadowVS         = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_skyAtmospherePS      = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_tonemapPS            = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_velocityPS           = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_heightFogPS          = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_cloudCompositePS     = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_transmittanceLutCS      = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_multiScatterLutCS      = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_apVolumeCS             = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_skyCubemapCaptureCS    = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_skyCubemapCapturePSShader = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_hizPyramidCS             = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_gpuCullCS                = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_dfsCullObjectsCS         = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_dfsConeTraceCS           = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_taaResolveCS             = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_tsrDilateVelocityCS      = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_tsrRejectShadingCS       = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_tsrUpdateHistoryCS       = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_ssrTraceCS               = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_ssrResolveCS             = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_ssrTemporalCS            = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_colorGradingLutCS        = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_motionBlurCS             = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_motionBlurTileMaxCS      = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_motionBlurNeighborMaxCS  = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_dofSetupCS               = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_dofBlurCS                = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_fxaaPS                   = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_casSharpenPS             = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_ssgiPrevColorReduceCS    = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_ssgiTraceCS              = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_ssgiSpatialDenoiseCS     = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_ssgiTemporalAccumCS      = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_ssgiBilateralUpsampleCS  = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_visFullscreenPS           = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_gdfCompositeCS            = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_meshSdfBakeCS             = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_radianceCacheTraceCS      = RHIShaderHandle::Invalid();
+    // ── VFX cached shader handles ────────────────────────────────────────
     RHIShaderHandle m_particleBillboardVS       = RHIShaderHandle::Invalid();
     RHIShaderHandle m_particleBillboardPS       = RHIShaderHandle::Invalid();
     RHIShaderHandle m_particleSpawnCS           = RHIShaderHandle::Invalid();
@@ -898,61 +841,7 @@ private:
     RHIShaderHandle m_particleMeshVS            = RHIShaderHandle::Invalid();
     RHIShaderHandle m_particleMeshPS            = RHIShaderHandle::Invalid();
 
-    // ── Shader permutation cache (material-dependent PSOs) ─────────────
-    /// Caches ForwardPBR, GBuffer, GBufferMasked, Translucent, and Additive
-    /// pipelines keyed by ShaderPermutationKey (blend mode + bindless flag).
-    /// Replaces the per-variant m_forwardPBR/m_gbuffer/etc. member variables.
-    ShaderPermutationCache m_permutationCache;
-
-    // ── Cached pipeline handles (non-material pipelines) ────────────────
-    RHIPipelineHandle m_lighting              = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_gbufferDebug          = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_debugView             = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_shadowDepth           = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_shadowDepthBindless   = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_gbufferInstanced      = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_shadowDepthInstanced  = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_skyAtmosphere         = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_tonemap               = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_velocityPass           = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_heightFog             = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_cloudComposite        = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_transmittanceLut      = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_multiScatterLut      = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_apVolume             = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_skyCubemapCapture    = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_skyCubemapCapturePSPipeline = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_depthPrepass          = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_depthPrepassBindless  = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_depthPrepassInstanced = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_hizPyramid            = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_gpuCull              = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_dfsCullObjects        = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_dfsConeTrace          = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_taaResolve            = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_tsrDilateVelocity    = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_tsrRejectShading     = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_tsrUpdateHistory     = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_ssrTrace              = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_ssrResolve            = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_ssrTemporal           = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_colorGradingLut       = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_motionBlur            = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_motionBlurTileMax     = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_motionBlurNeighborMax = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_dofSetup              = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_dofBlur               = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_fxaa                  = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_casSharpen            = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_ssgiPrevColorReduce   = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_ssgiTrace             = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_ssgiSpatialDenoise    = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_ssgiTemporalAccum     = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_ssgiBilateralUpsample = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_visFullscreen         = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_gdfComposite          = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_meshSdfBake           = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_radianceCacheTrace    = RHIPipelineHandle::Invalid();
+    // ── VFX cached pipeline handles ──────────────────────────────────────
     RHIPipelineHandle m_particleBillboard          = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_particleBillboardAdditive  = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_particleSpawnCS_PSO        = RHIPipelineHandle::Invalid();

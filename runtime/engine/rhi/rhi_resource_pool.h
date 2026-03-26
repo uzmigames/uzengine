@@ -24,6 +24,7 @@ namespace uz {
 // ResourcePool
 // ─────────────────────────────────────────────────────────────────────────────
 
+template <typename T>
 /// Flat array pool for GPU resources with generational handle validation.
 ///
 /// Allocates slots linearly from a growable `std::vector`, reuses freed slots
@@ -35,7 +36,6 @@ namespace uz {
 ///
 /// # Type Requirements
 /// `T` must have a `uint32_t generation` member field.
-template <typename T>
 class ResourcePool {
 public:
     /// Allocates a new slot and returns its index. Sets `outGeneration` to the
@@ -75,6 +75,7 @@ public:
         return &slot;
     }
 
+    /// Const overload of Get(). Returns nullptr on stale or out-of-range handle.
     const T* Get(uint32_t index, uint32_t generation) const {
         if (index >= m_slots.size()) return nullptr;
         auto& slot = m_slots[index];
@@ -91,8 +92,9 @@ public:
         m_freeList.push_back(index);
     }
 
-    /// Access all slots (for cleanup on shutdown).
+    /// Returns mutable reference to all slots (for cleanup on shutdown).
     std::vector<T>& Slots() { return m_slots; }
+    /// Returns const reference to all slots.
     const std::vector<T>& Slots() const { return m_slots; }
 
 private:

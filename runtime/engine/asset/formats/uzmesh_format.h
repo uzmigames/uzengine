@@ -99,6 +99,7 @@ static constexpr uint32_t kUzMeshDataAlignment = 64;
 // Binary Structs
 // ─────────────────────────────────────────────────────────────────────────────
 
+#pragma pack(push, 1)
 /// .uzmesh file header — exactly 64 bytes, little-endian.
 ///
 /// Immediately followed by `lodCount` LOD descriptors, then
@@ -121,7 +122,6 @@ static constexpr uint32_t kUzMeshDataAlignment = 64;
 /// 0x28    4     indexDataOffset    64-byte aligned file offset
 /// 0x2C    20    reserved[5]        must be all zeros
 /// ```
-#pragma pack(push, 1)
 struct UzMeshHeader {
     uint32_t magic = kUzMeshMagic;          ///< Must be `kUzMeshMagic` (0x534D5A55, "UZMS"). First validation check.
     uint32_t version = kUzMeshVersion;      ///< Format version (currently 1). Reject if > kUzMeshVersion.
@@ -140,6 +140,7 @@ struct UzMeshHeader {
 
 static_assert(sizeof(UzMeshHeader) == 64, "UzMeshHeader must be exactly 64 bytes");
 
+#pragma pack(push, 1)
 /// Describes a single LOD level within the mesh.
 ///
 /// Each LOD references a contiguous range of submeshes via offset and count
@@ -161,7 +162,6 @@ static_assert(sizeof(UzMeshHeader) == 64, "UzMeshHeader must be exactly 64 bytes
 /// - LOD ranges must not overlap (each submesh belongs to exactly one LOD).
 /// - `screenHeightThreshold` should decrease with increasing lodLevel
 ///   (LOD 0 = 0.0, LOD 1 = e.g. 0.5 meaning "use when object < 50% screen height").
-#pragma pack(push, 1)
 struct UzMeshLOD {
     uint32_t lodLevel = 0;                ///< LOD index (0 = highest detail, N = coarsest).
     uint32_t submeshOffset = 0;           ///< Index of first submesh in the global submesh array.
@@ -174,6 +174,7 @@ struct UzMeshLOD {
 
 static_assert(sizeof(UzMeshLOD) == 16, "UzMeshLOD must be exactly 16 bytes");
 
+#pragma pack(push, 1)
 /// Describes a single submesh (draw call) within a LOD level.
 ///
 /// Vertex and index offsets are element indices (not byte offsets) relative
@@ -194,7 +195,6 @@ static_assert(sizeof(UzMeshLOD) == 16, "UzMeshLOD must be exactly 16 bytes");
 /// - `vertexOffset < header.vertexCount` (or 0 if vertexCount == 0).
 /// - `indexOffset + indexCount <= header.indexCount`.
 /// - `materialIndex` is an opaque slot — the renderer maps it to a material at load time.
-#pragma pack(push, 1)
 struct UzMeshSubmesh {
     uint32_t vertexOffset = 0;            ///< Base vertex index added to each index value (DrawIndexedInstanced BaseVertexLocation).
     uint32_t indexOffset = 0;             ///< First index in the index buffer for this submesh.
@@ -205,6 +205,7 @@ struct UzMeshSubmesh {
 
 static_assert(sizeof(UzMeshSubmesh) == 16, "UzMeshSubmesh must be exactly 16 bytes");
 
+#pragma pack(push, 1)
 /// Standard interleaved vertex layout: position + normal + UV.
 ///
 /// 32 bytes per vertex, tightly packed with no internal padding.
@@ -224,7 +225,6 @@ static_assert(sizeof(UzMeshSubmesh) == 16, "UzMeshSubmesh must be exactly 16 byt
 /// - Position is in object-space (model transform applied by vertex shader).
 /// - Normal must be unit-length. The importer normalizes during conversion.
 /// - UV origin is top-left (DirectX convention): u=0,v=0 is top-left corner.
-#pragma pack(push, 1)
 struct VertexPosNormUV {
     float position[3];                    ///< Object-space position (x, y, z) in float32.
     float normal[3];                      ///< Unit normal vector (x, y, z). Must be normalized.

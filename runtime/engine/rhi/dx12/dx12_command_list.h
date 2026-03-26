@@ -47,53 +47,107 @@ public:
 
     // ── IRHICommandList overrides ────────────────────────────────────────
 
+    /// Begins recording. Resets the current frame's command allocator and
+    /// binds the global CBV_SRV_UAV and Sampler descriptor heaps for bindless access.
     void Begin() override;
+
+    /// Ends recording by closing the command list.
     void End() override;
+
+    /// Submits the command list to the appropriate queue and advances the frame index.
     void Execute() override;
 
+    /// Binds a graphics or compute pipeline state object. Sets the root signature
+    /// and selects `SetGraphicsRoot*` vs `SetComputeRoot*` dispatch for subsequent calls.
     void SetPipeline(RHIPipelineHandle pipeline) override;
+
+    /// Binds a vertex buffer view to the given input assembler slot.
     void SetVertexBuffer(uint32_t slot, RHIBufferHandle buffer, uint32_t offset) override;
+
+    /// Binds an index buffer view to the input assembler.
     void SetIndexBuffer(RHIBufferHandle buffer, RHIIndexFormat format, uint32_t offset) override;
+
+    /// Sets the viewport via `RSSetViewports` on the command list.
     void SetViewport(const RHIViewport& viewport) override;
+
+    /// Sets the scissor rectangle via `RSSetScissorRects` on the command list.
     void SetScissor(const RHIScissorRect& scissor) override;
+
+    /// Sets a descriptor index as a 32-bit root constant (SM6.6 bindless path).
     void SetDescriptorIndex(uint32_t rootParamIndex, uint32_t descriptorIndex) override;
+
+    /// Writes inline 32-bit root constants to the root signature.
     void SetRootConstants(uint32_t rootParamIndex, const uint32_t* data,
                           uint32_t count, uint32_t offsetIn32BitValues) override;
+
+    /// Binds a constant buffer by GPU virtual address as a root CBV.
     void SetRootCBV(uint32_t rootParamIndex, uint64_t gpuAddress) override;
+
+    /// Uploads CPU data into a buffer and binds it as a root CBV.
     void SetRootCBV(uint32_t rootParamIndex, RHIBufferHandle buffer,
                     uint64_t offsetBytes, const void* cpuData, uint32_t dataSize) override;
+
+    /// Binds a descriptor table at the given root parameter index.
     void SetDescriptorTable(uint32_t rootParamIndex, uint32_t descriptorIndex) override;
+
+    /// Copies a texture SRV into the staging descriptor block for SM5 binding.
     void SetFragmentTexture(uint32_t slot, RHITextureHandle texture) override;
 
+    /// Submits an indexed draw call via `DrawIndexedInstanced`.
     void DrawIndexed(uint32_t indexCount, uint32_t instanceCount = 1,
                      uint32_t firstIndex = 0, int32_t vertexOffset = 0,
                      uint32_t firstInstance = 0) override;
+
+    /// Submits a non-indexed draw call via `DrawInstanced`.
     void Draw(uint32_t vertexCount, uint32_t instanceCount = 1,
               uint32_t firstVertex = 0, uint32_t firstInstance = 0) override;
+
+    /// Dispatches a compute workload via `Dispatch`.
     void Dispatch(uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ) override;
+
+    /// Submits indirect indexed draw calls via `ExecuteIndirect` with the draw signature.
     void DrawIndexedIndirect(RHIBufferHandle argsBuffer, uint64_t argsOffset,
                              uint32_t drawCount, uint32_t argsStride) override;
+
+    /// Dispatches an indirect compute workload via `ExecuteIndirect` with the dispatch signature.
     void DispatchIndirect(RHIBufferHandle argsBuffer, uint64_t argsOffset) override;
 
+    /// Inserts resource state transition barriers on the command list.
     void ResourceBarrier(const RHIBarrierDesc* barriers, uint32_t count) override;
 
+    /// Clears a render target view to the specified RGBA color.
     void ClearRenderTarget(RHITextureHandle texture, const float color[4]) override;
+
+    /// Clears a depth-stencil view to the specified depth and stencil values.
     void ClearDepthStencil(RHITextureHandle texture, float depth, uint8_t stencil) override;
 
+    /// Copies a region of bytes between two buffers via `CopyBufferRegion`.
     void CopyBuffer(RHIBufferHandle src, uint64_t srcOffset,
                     RHIBufferHandle dst, uint64_t dstOffset, uint64_t size) override;
+
+    /// Copies an entire texture to another texture via `CopyResource`.
     void CopyTexture(RHITextureHandle src, RHITextureHandle dst) override;
+
+    /// Copies a specific mip/slice from one texture to another via `CopyTextureRegion`.
     void CopyTextureRegion(RHITextureHandle src, uint32_t srcMip, uint32_t srcSlice,
                            RHITextureHandle dst, uint32_t dstMip, uint32_t dstSlice) override;
+
+    /// Copies buffer data into a texture subresource via `CopyTextureRegion`.
     void CopyBufferToTexture(RHIBufferHandle srcBuffer, uint64_t srcOffset,
                              uint32_t srcRowPitch,
                              RHITextureHandle dstTexture,
                              uint32_t mipLevel = 0, uint32_t arraySlice = 0) override;
+
+    /// Copies a texture subresource into a buffer via `CopyTextureRegion`.
     void CopyTextureToBuffer(RHITextureHandle srcTexture, uint32_t mipLevel,
                              RHIBufferHandle dstBuffer, uint64_t dstOffset,
                              uint32_t dstRowPitch, uint32_t arraySlice = 0) override;
 
+    /// Begins a render pass by setting render targets and depth-stencil views.
+    /// Creates per-slice/mip RTVs if targeting non-zero array slices or mip levels.
     void BeginRenderPass(const RHIRenderPassDesc& desc) override;
+
+    /// Ends the render pass. Frees any temporary per-slice/mip RTVs.
     void EndRenderPass() override;
 
     // ── DX12-specific methods (pre-texture-pool) ─────────────────────────

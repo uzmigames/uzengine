@@ -122,6 +122,7 @@ enum class UzShaderFormat : uint32_t {
     SPIRV = 1, ///< Standard Portable Intermediate Representation (Vulkan, cross-platform)
 };
 
+#pragma pack(push, 1)
 /// .uzshader file header — exactly 32 bytes, little-endian.
 ///
 /// All fields are uint32_t for alignment simplicity. The header is
@@ -141,7 +142,6 @@ enum class UzShaderFormat : uint32_t {
 /// 0x18    4     format         UzShaderFormat enum (0..1)
 /// 0x1C    4     reserved       must be 0
 /// ```
-#pragma pack(push, 1)
 struct UzShaderHeader {
     uint32_t magic = kUzShaderMagic;         ///< Must be `kUzShaderMagic` (0x48535A55, "UZSH"). First validation check.
     uint32_t version = kUzShaderVersion;     ///< Format version (currently 1). Reject if > kUzShaderVersion.

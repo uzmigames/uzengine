@@ -47,8 +47,8 @@ static constexpr uint32_t kUzSdfVersion = 1;
 // Binary Structs
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// .uzsdf file header — exactly 64 bytes, little-endian.
 #pragma pack(push, 1)
+/// .uzsdf file header — exactly 64 bytes, little-endian.
 struct UzSdfHeader {
     uint32_t magic   = kUzSdfMagic;      ///< Must be kUzSdfMagic.
     uint32_t version = kUzSdfVersion;    ///< Format version (currently 1).
@@ -67,11 +67,11 @@ struct UzSdfHeader {
 
 static_assert(sizeof(UzSdfHeader) == 64, "UzSdfHeader must be exactly 64 bytes");
 
+#pragma pack(push, 1)
 /// Describes a single MIP level in the .uzsdf file.
 ///
 /// Each MIP level has its own brick resolution and brick/indirection data
 /// stored contiguously after the header + MIP descriptors.
-#pragma pack(push, 1)
 struct UzSdfMipDesc {
     uint32_t resolutionX   = 0;   ///< Brick resolution X for this MIP.
     uint32_t resolutionY   = 0;   ///< Brick resolution Y for this MIP.

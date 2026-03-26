@@ -92,16 +92,17 @@ pub fn build(b: *std.Build) void {
         "engine/scripting/scene",
         "engine/scripting/core",
         "engine/scripting/renderer",
+        "engine/scripting/editor",
+        "engine/ipc",
         "engine/vfx",
         "engine/vfx/core",
         "engine/vfx/components",
         "engine/vfx/curves",
         "engine/vfx/modules",
-        "engine/vfx/passes",
         "engine/vfx/asset",
         "engine/vfx/parameters",
         "engine/vfx/events",
-        "engine/vfx/scripting",
+        "engine/renderer/passes/vfx",
         "engine/vfx/decals",
         "engine/vfx/trails",
         "engine/vfx/lod",
@@ -110,9 +111,13 @@ pub fn build(b: *std.Build) void {
         "engine/property",
         "engine/debug",
         "editor/grid",
+        "editor/outline",
+        "editor/gizmo",
         "editor/font",
         "editor/stats",
         "editor/screenshot",
+        "editor/input",
+        "editor/selection",
     };
 
     const thirdparty_include_dirs = [_][]const u8{
@@ -150,6 +155,7 @@ pub fn build(b: *std.Build) void {
         tp ++ "msdfgen/ext",
         tp ++ "freetype/include",
         tp ++ "smaa",
+        tp ++ "ffmpeg/include",
     };
 
     const linux_engine_include_dirs = [_][]const u8{
@@ -241,6 +247,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/renderer/passes/postprocess", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/postprocess", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/passes/debug", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer/passes/vfx", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/passes/ibl", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/shadows", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/lighting", cpp_flags);
@@ -258,20 +265,24 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/ecs/lighting", cpp_flags);
     addCppDir(runtime_mod, b, "engine/ecs/mesh", cpp_flags);
     addCppDir(runtime_mod, b, "engine/ecs/update", cpp_flags);
+    // NOTE: engine/ecs/environment/*.cpp are compiled into executables directly
+    // (not the static lib) to preserve static initializers for component auto-registration.
+    // See component_serializer.h UZ_REGISTER_COMPONENT_SERIALIZER macro.
     addCppDir(runtime_mod, b, "engine/ecs/loaders", cpp_flags);
     addCppDir(runtime_mod, b, "engine/scripting", cpp_flags);
     addCppDir(runtime_mod, b, "engine/scripting/scene", cpp_flags);
     addCppDir(runtime_mod, b, "engine/scripting/core", cpp_flags);
     addCppDir(runtime_mod, b, "engine/scripting/renderer", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/scripting/editor", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/ipc", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/core", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/components", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/curves", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/modules", cpp_flags);
-    addCppDir(runtime_mod, b, "engine/vfx/passes", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/asset", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/parameters", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/events", cpp_flags);
-    addCppDir(runtime_mod, b, "engine/vfx/scripting", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/decals",  cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/trails",  cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/lod",     cpp_flags);
@@ -296,6 +307,11 @@ pub fn build(b: *std.Build) void {
         runtime_mod.addIncludePath(b.path(tp ++ "d3d12ma/src"));
         // LuaJIT pre-built library (built by setup.ps1 via msvcbuild.bat)
         runtime_mod.addObjectFile(b.path(tp ++ "luajit/src/lua51.lib"));
+        // FFmpeg pre-built shared libraries (H.264 encoding for viewport streaming)
+        runtime_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avcodec.lib"));
+        runtime_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avutil.lib"));
+        runtime_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/swscale.lib"));
+        runtime_mod.addLibraryPath(b.path(tp ++ "ffmpeg/lib"));
     } else if (target.result.os.tag == .linux) {
         addCppDir(runtime_mod, b, "platform/linux", cpp_flags);
     }
@@ -320,7 +336,7 @@ pub fn build(b: *std.Build) void {
         const objcxx_flags = &.{ "-std=c++17", "-ObjC++", "-fno-objc-arc", "-DSPDLOG_COMPILED_LIB", "-DUZ_PROFILING_ENABLED", "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND" };
         runtime_mod.addCSourceFiles(.{
             .root = b.path("engine/rhi/metal"),
-            .files = &.{ "metal_device.cpp", "metal_command_list.cpp", "metal_fence.cpp", "metal_gpu_profiler.cpp", "metal_swapchain.mm" },
+            .files = &.{ "metal_device.cpp", "metal_resource_creation.cpp", "metal_command_list.cpp", "metal_fence.cpp", "metal_gpu_profiler.cpp", "metal_swapchain.mm" },
             .flags = objcxx_flags,
         });
 
@@ -679,6 +695,9 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(lib);
 
+    // (DLL target is built after editor_lib — see below)
+    const build_dll = b.option(bool, "dll", "Also build runtime as shared library (DLL) for N-API addon") orelse false;
+
     // ── Editor static library (grid, font, stats, screenshot) ────────────
     // Built when -Deditor=true. Links against runtime.lib for includes only.
     // Output: build/lib/editor.lib
@@ -688,9 +707,13 @@ pub fn build(b: *std.Build) void {
         editor_mod.link_libcpp = true;
 
         addCppDir(editor_mod, b, "editor/grid",       cpp_flags);
+        addCppDir(editor_mod, b, "editor/outline",    cpp_flags);
+        addCppDir(editor_mod, b, "editor/gizmo",      cpp_flags);
         addCppDir(editor_mod, b, "editor/font",       cpp_flags);
         addCppDir(editor_mod, b, "editor/stats",      cpp_flags);
         addCppDir(editor_mod, b, "editor/screenshot", cpp_flags);
+        addCppDir(editor_mod, b, "editor/input",      cpp_flags);
+        addCppDir(editor_mod, b, "editor/selection",  cpp_flags);
 
         // Include paths — same as runtime so editor code can include engine headers
         editor_mod.addIncludePath(b.path("."));
@@ -719,6 +742,102 @@ pub fn build(b: *std.Build) void {
         b.installArtifact(elib);
         break :blk elib;
     };
+
+    // ── Shared library (DLL) for N-API addon ─────────────────────────────
+    // Exports only the extern "C" uz_* API declared in engine/app/runtime.h.
+    // The DLL carries its own libc++ (Zig/LLVM), so the N-API addon compiled
+    // by MSVC can link against the MSVC-compatible import .lib produced here
+    // without any COMDAT or C++ ABI incompatibility (LNK1143).
+    //
+    // Architecture:
+    //   - runtime.cpp is recompiled with -DUZ_BUILDING_DLL=1 so that the
+    //     UZ_API macro expands to __declspec(dllexport) on every uz_* function.
+    //     These exported definitions live in the DLL's own .obj file.
+    //   - runtime.lib is linked as a positional archive for all the C++
+    //     internals (SceneRenderer, World, RHI, etc.) that runtime.cpp calls.
+    //     Because runtime.cpp's own symbols take precedence over the archive
+    //     copy, lld-link uses the dllexport version and the archive copy of
+    //     runtime.cpp is never extracted.
+    //   - editor.lib supplies screenshot_capture.cpp and other editor symbols
+    //     referenced transitively from runtime.cpp.
+    //
+    // Build:   zig build -Ddll=true
+    // Outputs: build/bin/uzengine_runtime.dll
+    //          build/lib/uzengine_runtime.lib  (MSVC-compatible import lib)
+    if (build_dll and is_windows) {
+        const dll_mod = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+        });
+        dll_mod.link_libc = true;
+        dll_mod.link_libcpp = true;
+
+        // Recompile runtime.cpp with -DUZ_BUILDING_DLL=1.
+        // UZ_API in runtime.h expands to __declspec(dllexport), making every
+        // uz_* function definition in this .obj an exported DLL symbol.
+        // All include paths that runtime.cpp needs are added below.
+        const dll_cpp_flags = cpp_flags ++ &[_][]const u8{"-DUZ_BUILDING_DLL=1"};
+        dll_mod.addCSourceFiles(.{
+            .root = b.path("engine/app"),
+            .files = &.{"runtime.cpp"},
+            .flags = dll_cpp_flags,
+        });
+
+        // Include paths — same as runtime_mod so runtime.cpp can resolve all
+        // headers it transitively includes.
+        dll_mod.addIncludePath(b.path("."));
+        for (engine_include_dirs) |dir| dll_mod.addIncludePath(b.path(dir));
+        for (thirdparty_include_dirs) |dir| dll_mod.addIncludePath(b.path(dir));
+        dll_mod.addIncludePath(b.path("build/generated/shaders"));
+        for (windows_engine_include_dirs) |dir| dll_mod.addIncludePath(b.path(dir));
+        for (windows_thirdparty_include_dirs) |dir| dll_mod.addIncludePath(b.path(dir));
+        dll_mod.addIncludePath(b.path("engine/rhi/dx12"));
+        dll_mod.addIncludePath(b.path("engine/rhi/dx11"));
+        dll_mod.addIncludePath(b.path("engine/rhi/vulkan"));
+        dll_mod.addIncludePath(b.path(tp ++ "d3d12ma/src"));
+
+        // runtime.lib — C++ internals referenced by runtime.cpp.
+        // lld-link uses the DLL's own runtime.cpp object for uz_* definitions
+        // and extracts other members from this archive to satisfy remaining
+        // unresolved references.
+        dll_mod.addObjectFile(lib.getEmittedBin());
+        // editor.lib — screenshot_capture.cpp and other editor symbols.
+        dll_mod.addObjectFile(editor_lib.getEmittedBin());
+        // LuaJIT static lib — Lua VM referenced by LuaVM.cpp.
+        dll_mod.addObjectFile(b.path(tp ++ "luajit/src/lua51.lib"));
+        // FFmpeg import libs for H.264 encoding.
+        dll_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avcodec.lib"));
+        dll_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avutil.lib"));
+        dll_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/swscale.lib"));
+        dll_mod.addLibraryPath(b.path(tp ++ "ffmpeg/lib"));
+
+        const dll = b.addLibrary(.{
+            .linkage = .dynamic,
+            .name = "uzengine_runtime",
+            .root_module = dll_mod,
+        });
+
+        // Depends on the shader-embed step (generated shader headers must exist
+        // before runtime.cpp is compiled).
+        dll.step.dependOn(&run_embed.step);
+
+        // System libraries — same as the static lib Windows block above.
+        dll.linkSystemLibrary("d3d12");
+        dll.linkSystemLibrary("d3d11");
+        dll.linkSystemLibrary("dxgi");
+        dll.linkSystemLibrary("dxguid");
+        dll.linkSystemLibrary("ws2_32");
+        dll.linkSystemLibrary("dbghelp");
+        dll.linkSystemLibrary("winmm");
+        dll.linkSystemLibrary("xinput1_4");
+        dll.linkSystemLibrary("shcore");
+        dll.linkSystemLibrary("ole32");
+        dll.linkSystemLibrary("shell32");
+        dll.linkSystemLibrary("comdlg32");
+        dll.linkSystemLibrary("gdi32");      // GetStockObject — used by font/overlay subsystem
+
+        b.installArtifact(dll);
+    }
 
     // ── Test executable (links runtime lib — no recompilation) ───────────
 
@@ -751,6 +870,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(test_mod, b, "tests/engine/shader", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/renderer", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/app", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine/ipc", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/job", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/ecs", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/event", cpp_flags);
@@ -813,6 +933,9 @@ pub fn build(b: *std.Build) void {
         test_mod.addIncludePath(b.path("engine/rhi/metal"));
     }
 
+    // Component serializers compiled directly into exe for auto-registration
+    addCppDir(test_mod, b, "engine/ecs/environment", cpp_flags);
+
     const test_exe = b.addExecutable(.{
         .name = "test_runtime",
         .root_module = test_mod,
@@ -823,6 +946,10 @@ pub fn build(b: *std.Build) void {
     // LuaJIT — needed by scripting tests that call lua C API directly
     if (is_windows) {
         test_mod.addObjectFile(b.path(tp ++ "luajit/src/lua51.lib"));
+        // FFmpeg import libs for H.264 encoder
+        test_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avcodec.lib"));
+        test_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avutil.lib"));
+        test_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/swscale.lib"));
     }
 
     if (is_windows) {
@@ -858,7 +985,7 @@ pub fn build(b: *std.Build) void {
     if (is_windows) {
         const win_sys_libs = [_][]const u8{ "d3d12", "d3d11", "dxgi", "dxguid", "gdi32", "user32", "xinput1_4", "ole32", "shcore", "shell32", "comdlg32" };
 
-        // Helper to create a tool exe from a single .cpp + agility
+        // Helper to create a tool exe from a single .cpp
         const tool_names = [_][]const u8{ "uzengine", "uzcook", "uzpack", "uzfbx" };
         for (tool_names) |tool_name| {
             const tool_mod = b.createModule(.{ .target = target, .optimize = optimize });
@@ -877,13 +1004,21 @@ pub fn build(b: *std.Build) void {
                 .files = &.{b.fmt("{s}.cpp", .{tool_name})},
                 .flags = cpp_flags,
             });
+            // Agility SDK exports — EXE only (enables SM6.6+ on Win10)
             tool_mod.addCSourceFiles(.{
                 .root = b.path("engine/rhi/dx12"),
                 .files = &.{"dx12_agility.cpp"},
                 .flags = cpp_flags,
             });
+            // Component serializers compiled directly into exe (not static lib)
+            // to preserve static initializers for auto-registration.
+            addCppDir(tool_mod, b, "engine/ecs/environment", cpp_flags);
 
             tool_mod.addObjectFile(b.path(tp ++ "luajit/src/lua51.lib"));
+            // FFmpeg import libs for H.264 encoder
+            tool_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avcodec.lib"));
+            tool_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avutil.lib"));
+            tool_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/swscale.lib"));
 
             const tool_exe = b.addExecutable(.{ .name = tool_name, .root_module = tool_mod });
             tool_exe.linkLibrary(lib);
@@ -915,12 +1050,12 @@ pub fn build(b: *std.Build) void {
 
         // ── DLL deployment ───────────────────────────────────────────────
 
-        // Agility SDK
+        // Agility SDK (SM6.6+ on Win10 — EXE only, not deployed for DLL builds)
         b.getInstallStep().dependOn(&b.addInstallBinFile(
-            b.path(tp ++ "agility/bin/x64/D3D12Core.dll"), "D3D12/D3D12Core.dll",
+            b.path(tp ++ "agility/bin/x64/D3D12Core.dll"), "D3D12Core.dll",
         ).step);
         b.getInstallStep().dependOn(&b.addInstallBinFile(
-            b.path(tp ++ "agility/bin/x64/d3d12SDKLayers.dll"), "D3D12/d3d12SDKLayers.dll",
+            b.path(tp ++ "agility/bin/x64/d3d12SDKLayers.dll"), "d3d12SDKLayers.dll",
         ).step);
 
         // DXC
@@ -988,6 +1123,9 @@ fn addCppDir(
             d3d12ma_found = true;
             continue;
         }
+
+        // Agility SDK exports — only linked into EXE builds, not lib/DLL.
+        if (std.mem.eql(u8, name, "dx12_agility.cpp")) continue;
 
         cpp_files.append(b.allocator, b.allocator.dupe(u8, name) catch @panic("OOM")) catch @panic("OOM");
     }

@@ -6,13 +6,29 @@
       "name": "Sun",
       "components": {
         "transform": {
-          "position": [0, 0, 20],
-          "rotation": [50, -30, 0],
-          "scale": [1, 1, 1]
+          "position": [
+            0,
+            0,
+            20
+          ],
+          "rotation": [
+            50,
+            -30,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
         },
         "light": {
           "type": "directional",
-          "color": [3.0, 3.0, 3.0],
+          "color": [
+            3.0,
+            3.0,
+            3.0
+          ],
           "intensity": 1.0
         }
       }
@@ -21,19 +37,41 @@
       "name": "Cube",
       "components": {
         "transform": {
-          "position": [0, 0, 0],
-          "rotation": [0, 0, 0],
-          "scale": [100, 100, 100]
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            100,
+            100,
+            100
+          ]
         },
-        "mesh": { "asset": "meshes/cube.uzmesh" }
+        "mesh": {
+          "asset": "meshes/cube.uzmesh"
+        }
       }
     },
     {
       "name": "MainCamera",
       "components": {
         "transform": {
-          "position": [0, -500, 250],
-          "rotation": [-15, 0, 0]
+          "position": [
+            0,
+            -500,
+            250
+          ],
+          "rotation": [
+            -15,
+            0,
+            0
+          ]
         },
         "camera": {
           "fov": 90,
@@ -46,7 +84,85 @@
     {
       "name": "Controller",
       "components": {
-        "script": { "path": "scripts/camera_test_controller.lua" }
+        "script": {
+          "path": "scripts/camera_test_controller.lua"
+        }
+      }
+    },
+    {
+      "name": "SkyAtmosphere",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            1020
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "sky_atmosphere": {}
+      }
+    },
+    {
+      "name": "SkyLight",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            690
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "sky_light": {
+          "intensity": 0.8,
+          "light_color": [
+            0.85,
+            0.9,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "HeightFog",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            -5000
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "height_fog": {}
       }
     }
   ]

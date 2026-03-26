@@ -54,11 +54,21 @@ char g_lastRhiOp[256] = {};
 /// GPU adapter name buffer. Written once at RHI init.
 char g_gpuAdapter[256] = {};
 
+/// Override crash output base directory. When non-empty, crash reports go to
+/// `{g_crashBaseDir}/crashes/{timestamp}/` instead of `{exe_dir}/crashes/`.
+char g_crashBaseDir[MAX_PATH] = {};
+
 /// Previous exception filter, restored on uninstall.
 LPTOP_LEVEL_EXCEPTION_FILTER g_previousFilter = nullptr;
 
 /// Whether the crash handler is currently installed.
 bool g_installed = false;
+
+/// Whether library mode is enabled (VEH instead of UEF).
+bool g_libraryMode = false;
+
+/// VEH handle for library mode.
+void* g_vehHandle = nullptr;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Crash directory and file writing helpers — exception-safe (no heap allocs)
@@ -156,7 +166,7 @@ void WriteTextReport(const char* path, const CrashContext& ctx) {
         "Scene:      %s\n"
         "Last RHI:   %s\n"
         "GPU:        %s\n"
-        "Device Removed: %s\n\n",
+        "Device Removed: %s\n",
         ctx.exceptionCode,
         ExceptionCodeToString(ctx.exceptionCode),
         reinterpret_cast<unsigned long long>(ctx.exceptionAddress),
@@ -165,6 +175,31 @@ void WriteTextReport(const char* path, const CrashContext& ctx) {
         ctx.lastRhiOp[0] ? ctx.lastRhiOp : "(none)",
         ctx.gpuAdapter[0] ? ctx.gpuAdapter : "(unknown)",
         ctx.gpuDeviceRemoved ? "YES" : "no");
+    WriteFile(file, buf, static_cast<DWORD>(len), &written, nullptr);
+
+    // Faulting module
+    if (ctx.faultModule[0]) {
+        len = std::snprintf(buf, sizeof(buf),
+            "Fault Module: %s (base=0x%016llX, offset=0x%llX)\n",
+            ctx.faultModule,
+            reinterpret_cast<unsigned long long>(ctx.faultModuleBase),
+            static_cast<unsigned long long>(ctx.faultModuleOffset));
+        WriteFile(file, buf, static_cast<DWORD>(len), &written, nullptr);
+    }
+
+    // ACCESS_VIOLATION details
+    if (ctx.hasAccessDetails) {
+        const char* accessStr = ctx.accessType == 0 ? "READ" :
+                                ctx.accessType == 1 ? "WRITE" :
+                                ctx.accessType == 8 ? "DEP" : "UNKNOWN";
+        len = std::snprintf(buf, sizeof(buf),
+            "Access Violation: %s at address 0x%016llX\n",
+            accessStr,
+            reinterpret_cast<unsigned long long>(ctx.accessAddress));
+        WriteFile(file, buf, static_cast<DWORD>(len), &written, nullptr);
+    }
+
+    len = std::snprintf(buf, sizeof(buf), "\n");
     WriteFile(file, buf, static_cast<DWORD>(len), &written, nullptr);
 
     // Stack trace — resolve symbols (we're already crashing, worth the attempt).
@@ -242,6 +277,18 @@ void WriteJsonReport(const char* path, const CrashContext& ctx) {
     char timestamp[64];
     FormatTimestamp(timestamp, sizeof(timestamp));
 
+    // Determine access violation details string
+    const char* accessStr = "";
+    char accessAddrStr[32] = {};
+    if (ctx.hasAccessDetails) {
+        accessStr = ctx.accessType == 0 ? "READ" :
+                    ctx.accessType == 1 ? "WRITE" :
+                    ctx.accessType == 8 ? "DEP" : "UNKNOWN";
+        std::snprintf(accessAddrStr, sizeof(accessAddrStr),
+                      "0x%016llX",
+                      reinterpret_cast<unsigned long long>(ctx.accessAddress));
+    }
+
     len = std::snprintf(buf, sizeof(buf),
         "{\n"
         "  \"engine\": \"UzEngine\",\n"
@@ -249,7 +296,11 @@ void WriteJsonReport(const char* path, const CrashContext& ctx) {
         "  \"exception\": {\n"
         "    \"code\": \"0x%08X\",\n"
         "    \"name\": \"%s\",\n"
-        "    \"address\": \"0x%016llX\"\n"
+        "    \"address\": \"0x%016llX\",\n"
+        "    \"faultModule\": \"%s\",\n"
+        "    \"faultModuleOffset\": \"0x%llX\",\n"
+        "    \"accessType\": \"%s\",\n"
+        "    \"accessAddress\": \"%s\"\n"
         "  },\n"
         "  \"context\": {\n"
         "    \"frameNumber\": %llu,\n"
@@ -263,6 +314,10 @@ void WriteJsonReport(const char* path, const CrashContext& ctx) {
         ctx.exceptionCode,
         ExceptionCodeToString(ctx.exceptionCode),
         reinterpret_cast<unsigned long long>(ctx.exceptionAddress),
+        ctx.faultModule[0] ? ctx.faultModule : "",
+        static_cast<unsigned long long>(ctx.faultModuleOffset),
+        accessStr,
+        ctx.hasAccessDetails ? accessAddrStr : "",
         static_cast<unsigned long long>(ctx.frameNumber),
         ctx.sceneName[0] ? ctx.sceneName : "",
         ctx.lastRhiOp[0] ? ctx.lastRhiOp : "",
@@ -307,6 +362,10 @@ void SafeCopyString(char* dst, size_t dstSize, const char* src) {
 /// This function runs in exception context. It avoids heap allocation and
 /// uses only stack buffers + Win32 file APIs for output.
 LONG WINAPI UzExceptionFilter(EXCEPTION_POINTERS* exceptionInfo) {
+    UZ_LOG(CrashHandler, Error, "!!! UzExceptionFilter ENTERED — exception code 0x{:08X} at {}",
+           exceptionInfo->ExceptionRecord->ExceptionCode,
+           exceptionInfo->ExceptionRecord->ExceptionAddress);
+
     // 1. Populate CrashContext from exception info and global state.
     CrashContext ctx{};
     ctx.exceptionCode = exceptionInfo->ExceptionRecord->ExceptionCode;
@@ -319,13 +378,46 @@ LONG WINAPI UzExceptionFilter(EXCEPTION_POINTERS* exceptionInfo) {
     std::memcpy(ctx.lastRhiOp, g_lastRhiOp, sizeof(ctx.lastRhiOp));
     std::memcpy(ctx.gpuAdapter, g_gpuAdapter, sizeof(ctx.gpuAdapter));
 
+    // Extract ACCESS_VIOLATION details: read/write/DEP + faulting address.
+    const auto* rec = exceptionInfo->ExceptionRecord;
+    if (rec->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && rec->NumberParameters >= 2) {
+        ctx.hasAccessDetails = true;
+        ctx.accessType = static_cast<uint32_t>(rec->ExceptionInformation[0]);
+        ctx.accessAddress = reinterpret_cast<void*>(rec->ExceptionInformation[1]);
+    }
+
+    // Resolve faulting module from exception address.
+    HMODULE hFaultMod = nullptr;
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                           GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           static_cast<LPCSTR>(ctx.exceptionAddress), &hFaultMod)) {
+        GetModuleFileNameA(hFaultMod, ctx.faultModule, sizeof(ctx.faultModule));
+        ctx.faultModuleBase = reinterpret_cast<void*>(hFaultMod);
+        ctx.faultModuleOffset = reinterpret_cast<uintptr_t>(ctx.exceptionAddress) -
+                                reinterpret_cast<uintptr_t>(hFaultMod);
+        // Strip path — keep only filename.
+        char* lastSlash = nullptr;
+        for (char* p = ctx.faultModule; *p; ++p) {
+            if (*p == '\\' || *p == '/') lastSlash = p;
+        }
+        if (lastSlash) {
+            std::memmove(ctx.faultModule, lastSlash + 1,
+                         std::strlen(lastSlash + 1) + 1);
+        }
+    }
+
     // 2. Capture stack trace (crash-safe, no DbgHelp).
     ctx.stackFrameCount = CaptureRawStackTrace(
         ctx.stackFrames, CrashContext::kMaxStackFrames, 0);
 
-    // 3. Build crash directory path: {exe_dir}/crashes/{timestamp}/
+    // 3. Build crash directory path: {base_dir}/crashes/{timestamp}/
+    //    Use override dir if set (for .node addon running inside Electron),
+    //    otherwise fall back to exe directory.
     char exeDirBuf[MAX_PATH];
-    {
+    if (g_crashBaseDir[0] != '\0') {
+        std::strncpy(exeDirBuf, g_crashBaseDir, MAX_PATH - 1);
+        exeDirBuf[MAX_PATH - 1] = '\0';
+    } else {
         // Get exe directory without std::filesystem (crash-safe).
         const DWORD exeLen = GetModuleFileNameA(nullptr, exeDirBuf, MAX_PATH);
         if (exeLen == 0 || exeLen >= MAX_PATH) {
@@ -381,6 +473,34 @@ LONG WINAPI UzExceptionFilter(EXCEPTION_POINTERS* exceptionInfo) {
     return EXCEPTION_EXECUTE_HANDLER;
 }
 
+/// Vectored Exception Handler for library mode.
+///
+/// Writes crash reports (minidump, txt, json) but returns
+/// EXCEPTION_CONTINUE_SEARCH so inner __try/__except blocks (like the
+/// N-API SEH wrappers) can catch the exception and convert it to a JS error
+/// instead of terminating the host process.
+///
+/// Only fires for fatal exceptions (access violations, stack overflow, etc.).
+/// Ignores non-fatal exceptions (C++ exceptions, breakpoints in debug builds).
+LONG WINAPI UzVectoredHandler(EXCEPTION_POINTERS* exceptionInfo) {
+    const DWORD code = exceptionInfo->ExceptionRecord->ExceptionCode;
+
+    // Skip non-fatal exceptions: C++ exceptions, debugger breakpoints,
+    // and "output debug string" exceptions.
+    if (code == 0xE06D7363 ||  // MSVC C++ exception
+        code == EXCEPTION_BREAKPOINT ||
+        code == 0x40010006 ||  // DBG_PRINTEXCEPTION_C
+        code == 0x4001000A) {  // DBG_PRINTEXCEPTION_WIDE_C
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    // Write crash reports using the same logic as UzExceptionFilter.
+    UzExceptionFilter(exceptionInfo);
+
+    // Let the exception propagate to inner __try/__except blocks.
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
 } // anonymous namespace
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -390,10 +510,16 @@ LONG WINAPI UzExceptionFilter(EXCEPTION_POINTERS* exceptionInfo) {
 void InstallCrashHandler() {
     UZ_PROFILE_FUNCTION();
 
-    g_previousFilter = SetUnhandledExceptionFilter(UzExceptionFilter);
+    if (g_libraryMode) {
+        // VEH: writes crash reports but lets __try/__except catch the exception.
+        g_vehHandle = AddVectoredExceptionHandler(1, UzVectoredHandler);
+        UZ_LOG(CrashHandler, Info, "Crash handler installed (library mode — VEH)");
+    } else {
+        // Standalone: traditional unhandled exception filter.
+        g_previousFilter = SetUnhandledExceptionFilter(UzExceptionFilter);
+        UZ_LOG(CrashHandler, Info, "Crash handler installed (standalone — UEF)");
+    }
     g_installed = true;
-
-    UZ_LOG(CrashHandler, Info, "Crash handler installed");
 }
 
 void UninstallCrashHandler() {
@@ -401,8 +527,13 @@ void UninstallCrashHandler() {
         return;
     }
 
-    SetUnhandledExceptionFilter(g_previousFilter);
-    g_previousFilter = nullptr;
+    if (g_libraryMode && g_vehHandle) {
+        RemoveVectoredExceptionHandler(g_vehHandle);
+        g_vehHandle = nullptr;
+    } else {
+        SetUnhandledExceptionFilter(g_previousFilter);
+        g_previousFilter = nullptr;
+    }
     g_installed = false;
 
     UZ_LOG(CrashHandler, Info, "Crash handler uninstalled");
@@ -426,6 +557,20 @@ void CrashHandler_SetGpuAdapter(const char* adapter) {
 
 void CrashHandler_SetGpuDeviceRemoved(bool removed) {
     g_gpuDeviceRemoved.store(removed, std::memory_order_relaxed);
+}
+
+void CrashHandler_SetLibraryMode(bool enabled) {
+    g_libraryMode = enabled;
+}
+
+void CrashHandler_SetCrashDir(const char* dir) {
+    if (!dir || dir[0] == '\0') {
+        g_crashBaseDir[0] = '\0';
+        return;
+    }
+    std::strncpy(g_crashBaseDir, dir, MAX_PATH - 1);
+    g_crashBaseDir[MAX_PATH - 1] = '\0';
+    UZ_LOG(CrashHandler, Info, "Crash output directory set to: {}", g_crashBaseDir);
 }
 
 } // namespace uz

@@ -112,6 +112,20 @@ public:
     /// Base64-encoded PNG string on success, empty string on failure.
     [[nodiscard]] std::string ToBase64PNG() const;
 
+    /// Maps the readback buffer for CPU read access.
+    ///
+    /// Returns a pointer to the first row of RGBA pixel data and the row
+    /// stride (pitch) in bytes. The buffer remains mapped until UnmapReadback().
+    ///
+    /// Must be called AFTER the GPU has finished the copy commands (fence wait).
+    ///
+    /// # Returns
+    /// true on success, false if the buffer is not initialized or mapping fails.
+    bool MapReadback(const uint8_t** outData, uint32_t* outStride) const;
+
+    /// Unmaps the readback buffer after MapReadback().
+    void UnmapReadback() const;
+
     /// Releases the readback buffer.
     void Shutdown();
 

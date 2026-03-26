@@ -47,6 +47,14 @@ float3 CubeFaceDirection(uint face, float2 uv) {
     }
 }
 
+/// Converts a world-space direction (Z-up) to DX cubemap convention (Y-up).
+/// UzEngine uses Z-up world space, but DX12 TextureCube hardware sampling
+/// expects Y-up. Apply this before any TextureCube.SampleLevel() call.
+/// Mapping: world (X,Y,Z) → cubemap (X,-Z,Y)
+float3 WorldToCubemap(float3 dir) {
+    return float3(dir.x, -dir.z, dir.y);
+}
+
 // Legacy alias
 #define MIN_ROUGHNESS IBL_MIN_ROUGHNESS
 

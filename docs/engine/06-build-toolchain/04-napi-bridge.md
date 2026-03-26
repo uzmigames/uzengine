@@ -1,8 +1,8 @@
 # Build Toolchain — N-API Bridge & Three-Layer Architecture
 
-> **Status**: Planned (Phase 2)
-> **Source**: `napi/CMakeLists.txt`, `napi/src/addon.cpp`
-> **Depends on**: Runtime static library, Electron/VSCode
+> **Status**: **DONE (Phase 2.0)**
+> **Source**: `napi/CMakeLists.txt`, `napi/src/addon.cpp`, `runtime/build.zig`
+> **Depends on**: Runtime DLL + import lib, Electron/VSCode
 
 ## Purpose
 
@@ -22,9 +22,26 @@ UzEngine's final deployment target is a VSCode extension. The runtime (C++) runs
 ├────────────────────────────────────────────────────────────┤
 │  Layer 1: runtime/ (C++, Zig)                              │
 │  Engine core: RHI, renderer, ECS, physics, audio           │
-│  Compiles as static library (uzengine_runtime.lib)         │
+│  Compiles as DLL (uzengine_runtime.dll) + import lib       │
 └────────────────────────────────────────────────────────────┘
 ```
+
+### Architecture: Why DLL, Not Static Lib?
+
+Zig produces libraries in **LLVM archive format** (via `ar`), which MSVC's linker cannot read (LNK1143 COMDAT error). Solution: build runtime as DLL instead:
+
+```
+zig build -Ddll=true
+  ├─ uzengine_runtime.dll (41MB, runtime code)
+  └─ uzengine_runtime.lib (6KB, import lib, MSVC-native format)
+       ↓ (MSVC linker understands this)
+  napi/src/*.cpp → uzengine.node
+```
+
+**Benefits**:
+- N-API addon built with MSVC (zero ABI surprises)
+- Full C ABI compatibility between Zig runtime and MSVC bridge
+- Multi-compiler pipeline: Zig (runtime) + MSVC (addon) + TypeScript (extension)
 
 ### Why In-Process (Not Separate Process)?
 
@@ -39,58 +56,99 @@ POC 0.2 proved that N-API in-process is viable: DX12 renderer runs at 6069 FPS i
 
 ## Build Pipeline
 
-The full build sequence orchestrated by the root `package.json`:
+The full build sequence orchestrated by `scripts/build.ps1`:
 
 ```
-npm run build
+scripts/build.ps1
   │
-  ├─ 1. build:runtime     zig build -Doptimize=ReleaseFast
-  │                        → runtime/build/lib/uzengine_runtime.lib
+  ├─ 1. build:runtime     zig build -Ddll=true
+  │                        → uzengine_runtime.dll (41MB)
+  │                        → uzengine_runtime.lib (MSVC-compatible)
+  │                        → uzengine.exe (standalone)
   │
-  ├─ 2. build:napi        cmake-js compile (MSVC, Electron ABI)
+  ├─ 2. build:napi        cmake-js compile --runtime=electron
   │                        Links: uzengine_runtime.lib + node.lib
+  │                        Includes: ${CMAKE_JS_SRC} (delay-load hook)
   │                        → napi/build/Release/uzengine.node
   │
-  ├─ 3. copy:node         cp → extension/native/uzengine.node
+  ├─ 3. deploy:artifacts  cp napi/build/Release/*.dll → extension/native/
+  │                        cp napi/build/Release/*.node → extension/native/
   │
-  └─ 4. build:extension   tsc -p .
-                           → extension/out/extension.js
+  ├─ 4. build:mcp         tsc -p . → mcp/dist/
+  │
+  └─ 5. build:extension   tsc -p . → extension/out/extension.js
 ```
 
-### Why MSVC for N-API?
+### Why MSVC for N-API, Zig for Runtime?
 
-The N-API bridge **must** use MSVC because:
-
+**N-API (MSVC)**:
 1. **Delay-load hook** — Electron's executable is `Code.exe`, not `node.exe`. The addon must delay-load `node.dll` symbols via a hook provided by `cmake-js`. This hook is MSVC-specific (`__pfnDliNotifyHook2`).
-2. **ABI compatibility** — Electron is built with MSVC. Mixing Clang-compiled C++ with MSVC-compiled Node internals causes ABI mismatches (vtable layout, exception handling, RTTI).
-3. **cmake-js** — The standard tool for building Node native addons. It handles Electron header downloads, ABI matching, and delay-load configuration automatically.
+2. **ABI compatibility** — Electron is built with MSVC. The addon's C++ calling conventions, exception handling, and RTTI must match MSVC exactly.
+3. **cmake-js standard** — The standard tool for building Node native addons. Handles Electron headers, ABI matching, and delay-load automatically.
 
-The runtime library itself is compiled with Zig/Clang, but it exposes only a C API (`extern "C"`) to the N-API bridge — C ABI is compatible across all compilers.
+**Runtime (Zig)**:
+1. **Fast compilation** — Zig's build system is ~3× faster than CMake for large C++ codebases
+2. **Multi-compiler** — Zig can produce the same binary via MSVC, Clang, or GCC backends
+3. **C ABI bridge** — Runtime exposes only `extern "C"` functions. C ABI is compatible across all compilers.
 
-## N-API Bridge Requirements (POC 0.2 Findings)
+**Separation ensures**:
+- Zig's internal libraries (libc++, lto, sanitizers) don't leak into MSVC-linked code
+- MSVC's C++ exception semantics (NAPI-specific) are isolated from runtime
+- Each layer compiles independently and can be updated without cross-contamination
+
+## N-API Bridge Requirements
 
 ### Critical Build Configuration
 
 | Requirement | Why | Consequence if Missing |
 |-------------|-----|----------------------|
+| `zig build -Ddll=true` | Produces MSVC-compatible import lib | `LNK1143 COMDAT error` — static lib format incompatible |
 | Include `${CMAKE_JS_SRC}` in CMakeLists | Provides delay-load hook for Electron | `require()` segfaults — addon tries to resolve symbols from `node.exe` but exe is `Code.exe` |
 | `NAPI_DISABLE_CPP_EXCEPTIONS` | C++ exceptions crash Electron (electron#22799) | Random crashes on any N-API error path |
-| `--runtime=electron --runtime-version=<ver>` | Match Electron's Node ABI | `MODULE_NOT_FOUND` or silent ABI corruption |
+| `--runtime=electron --runtime-version=39.6.0` | Match Electron/VSCode 1.111.0 | `MODULE_NOT_FOUND` or silent ABI corruption |
+| Link `uzengine_runtime.lib` | Import lib from DLL | Missing symbols, linker error |
+| Copy DLLs to `extension/native/` | Runtime DLL must load at runtime | `ERROR_MOD_NOT_FOUND` at `require()` time |
 
 ### Version Matrix (VSCode 1.111.0)
 
-| Component | Version |
-|-----------|---------|
-| Electron | 39.6.0 |
-| Node | 22.22.0 |
-| ABI | 140 |
-| VSCode path | `f:/IDEs/Microsoft VS Code/` |
+| Component | Version | Notes |
+|-----------|---------|-------|
+| VSCode | 1.111.0 | Latest stable (2026-03-25) |
+| Electron | 39.6.0 | Bundled with VSCode |
+| Node | 22.22.0 | LTS, ABI 140 |
+| ABI | 140 | Must match exactly for `.node` to load |
 
-To verify Electron version:
+To verify your VSCode Electron version:
 ```bash
-ELECTRON_RUN_AS_NODE=1 "f:/IDEs/Microsoft VS Code/Code.exe" \
-  -e "console.log(process.versions)"
+ELECTRON_RUN_AS_NODE=1 "C:\Program Files\Microsoft VS Code\Code.exe" \
+  -e "console.log(process.versions.electron, process.versions.node)"
 ```
+
+### N-API Addon Structure
+
+The addon is split into 6 source files for maintainability:
+
+```cpp
+// addon.cpp — Module entry point
+NAPI_MODULE(NODE_GYP_MODULE_NAME, Initialize)
+
+static napi_value Initialize(napi_env env, napi_value exports) {
+    RegisterLifecycleBindings(env, exports);
+    RegisterViewportBindings(env, exports);
+    RegisterSceneBindings(env, exports);
+    RegisterInputBindings(env, exports);
+    RegisterDiagnosticsBindings(env, exports);
+    return exports;
+}
+
+// napi_lifecycle.cpp — init, shutdown, getVersion, getBackend, tick
+// napi_viewport.cpp — createViewport, renderFrame, captureScreenshot, resizeViewport
+// napi_scene.cpp — loadScene, saveScene, createEntity, getComponentJson, setComponentProperty
+// napi_input.cpp — onMouseMove, onMouseButton, onKeyDown, onKeyUp, onScroll
+// napi_diagnostics.cpp — setLogCallback (ThreadSafeFunction), setEditorMode, setContentRoot
+```
+
+All callbacks use `ThreadSafeFunction` for thread-safe posting to the JavaScript event loop.
 
 ## Viewport Architecture
 
@@ -137,10 +195,24 @@ Many tools (VS Code itself, Figma) use Electron for cross-platform desktop apps.
 
 The cost is the N-API bridge complexity and Electron-specific build requirements. The payoff is that UzEngine feels like a natural extension of the developer's existing workflow.
 
+## Deployment Checklist
+
+Before releasing a new version:
+
+1. **Build clean** — `zig build --clean && zig build -Ddll=true`
+2. **Verify import lib** — Check `runtime/build/lib/uzengine_runtime.lib` exists (6KB+)
+3. **Verify DLL** — Check `runtime/build/bin/uzengine_runtime.dll` exists (40MB+)
+4. **Build N-API** — `npx cmake-js compile --runtime=electron --runtime-version=39.6.0`
+5. **Deploy artifacts** — Copy `.node` + all `.dll` to `extension/native/`
+6. **Verify extension** — `npm run build` succeeds, `extension/out/extension.js` generated
+7. **Test in VSCode** — Press F5, verify commands work, no console errors
+
 ## Rules
 
-1. **ALWAYS expose a C API (`extern "C"`) from the runtime** — C ABI is the only safe bridge between Zig/Clang and MSVC
-2. **NEVER use C++ exceptions in N-API code** — always `NAPI_DISABLE_CPP_EXCEPTIONS`
-3. **ALWAYS include `${CMAKE_JS_SRC}` in CMakeLists** — the delay-load hook is not optional
-4. **ALWAYS verify Electron/Node ABI version before building** — ABI mismatch causes silent corruption
-5. **NEVER stream frames for the primary viewport** — use a native HWND with direct DX12 swap chain
+1. **ALWAYS build runtime as DLL (`-Ddll=true`)** — static lib format incompatible with MSVC linker
+2. **ALWAYS expose a C API (`extern "C"`) from the runtime** — C ABI is the only safe bridge between Zig/Clang and MSVC
+3. **NEVER use C++ exceptions in N-API code** — always `NAPI_DISABLE_CPP_EXCEPTIONS`
+4. **ALWAYS include `${CMAKE_JS_SRC}` in CMakeLists** — the delay-load hook is not optional
+5. **ALWAYS verify Electron/Node ABI version before building** — ABI mismatch causes silent corruption
+6. **NEVER stream frames for the primary viewport** — use a native HWND with direct DX12 swap chain
+7. **ALWAYS copy DLLs alongside `.node`** — `extension/native/` must have uzengine.node + uzengine_runtime.dll

@@ -61,7 +61,7 @@ TEST(DecalPool, Invariant_ActivePlusAvailable_EqualsPoolSize_AfterAcquire) {
 
 TEST(DecalPool, AcquireDecal_ReturnsNonNullPointer) {
     DecalPool pool(10);
-    DecalComponent* d = pool.AcquireDecal();
+    VfxDecal* d = pool.AcquireDecal();
     ASSERT_NE(d, nullptr);
 }
 
@@ -85,7 +85,7 @@ TEST(DecalPool, AcquireDecal_DecreasesAvailableCount) {
 
 TEST(DecalPool, AcquireDecal_ReturnedDecal_IsResetToDefaults) {
     DecalPool pool(10);
-    DecalComponent* first = pool.AcquireDecal();
+    VfxDecal* first = pool.AcquireDecal();
     ASSERT_NE(first, nullptr);
 
     // Dirty the decal with non-default values.
@@ -97,7 +97,7 @@ TEST(DecalPool, AcquireDecal_ReturnedDecal_IsResetToDefaults) {
 
     // Return it and re-acquire -- should get a clean slate.
     pool.ReturnDecal(first);
-    DecalComponent* second = pool.AcquireDecal();
+    VfxDecal* second = pool.AcquireDecal();
     ASSERT_NE(second, nullptr);
 
     // The re-acquired decal must have default values.
@@ -115,9 +115,9 @@ TEST(DecalPool, AcquireDecal_ReturnedDecal_IsResetToDefaults) {
 
 TEST(DecalPool, AcquireDecal_MultiplePointers_AreDistinct) {
     DecalPool pool(5);
-    std::vector<DecalComponent*> ptrs;
+    std::vector<VfxDecal*> ptrs;
     for (int i = 0; i < 5; ++i) {
-        DecalComponent* d = pool.AcquireDecal();
+        VfxDecal* d = pool.AcquireDecal();
         ASSERT_NE(d, nullptr);
         ptrs.push_back(d);
     }
@@ -142,7 +142,7 @@ TEST(DecalPool, AcquireDecal_FullPool_ReturnsNullptr) {
     EXPECT_EQ(pool.GetActiveCount(), 3u);
     EXPECT_EQ(pool.GetAvailableCount(), 0u);
 
-    DecalComponent* overflow = pool.AcquireDecal();
+    VfxDecal* overflow = pool.AcquireDecal();
     EXPECT_EQ(overflow, nullptr)
         << "AcquireDecal must return nullptr when pool is exhausted";
 }
@@ -164,7 +164,7 @@ TEST(DecalPool, AcquireDecal_FullPool_CountsDoNotChange) {
 
 TEST(DecalPool, ReturnDecal_DecreasesActiveCount) {
     DecalPool pool(10);
-    DecalComponent* d = pool.AcquireDecal();
+    VfxDecal* d = pool.AcquireDecal();
     ASSERT_NE(d, nullptr);
     EXPECT_EQ(pool.GetActiveCount(), 1u);
     pool.ReturnDecal(d);
@@ -173,7 +173,7 @@ TEST(DecalPool, ReturnDecal_DecreasesActiveCount) {
 
 TEST(DecalPool, ReturnDecal_IncreasesAvailableCount) {
     DecalPool pool(10);
-    DecalComponent* d = pool.AcquireDecal();
+    VfxDecal* d = pool.AcquireDecal();
     ASSERT_NE(d, nullptr);
     const uint32_t availBefore = pool.GetAvailableCount();
     pool.ReturnDecal(d);
@@ -182,11 +182,11 @@ TEST(DecalPool, ReturnDecal_IncreasesAvailableCount) {
 
 TEST(DecalPool, ReturnDecal_SlotBecomesReusable) {
     DecalPool pool(1);
-    DecalComponent* first = pool.AcquireDecal();
+    VfxDecal* first = pool.AcquireDecal();
     ASSERT_NE(first, nullptr);
     pool.ReturnDecal(first);
     // After return, acquiring again must succeed.
-    DecalComponent* second = pool.AcquireDecal();
+    VfxDecal* second = pool.AcquireDecal();
     EXPECT_NE(second, nullptr)
         << "After ReturnDecal, the slot must be available for re-acquisition";
 }
@@ -210,11 +210,11 @@ TEST(DecalPool, ReturnDecal_NullPointer_IsNoOp_DoesNotCrash) {
 
 TEST(DecalPool, ReturnDecal_OutOfRangePointer_IsNoOp_DoesNotCrash) {
     DecalPool pool(10);
-    DecalComponent* valid = pool.AcquireDecal();
+    VfxDecal* valid = pool.AcquireDecal();
     ASSERT_NE(valid, nullptr);
 
     // A pointer far outside the pool's memory range.
-    DecalComponent outsider{};
+    VfxDecal outsider{};
     const uint32_t activeBefore = pool.GetActiveCount();
     const uint32_t availBefore = pool.GetAvailableCount();
 
@@ -274,7 +274,7 @@ TEST(DecalPool, MultipleAcquireReturnCycles_WorkCorrectly) {
     DecalPool pool(4);
 
     // Cycle 1: acquire all, return all.
-    std::vector<DecalComponent*> batch1;
+    std::vector<VfxDecal*> batch1;
     for (int i = 0; i < 4; ++i) {
         batch1.push_back(pool.AcquireDecal());
     }
@@ -283,16 +283,16 @@ TEST(DecalPool, MultipleAcquireReturnCycles_WorkCorrectly) {
     EXPECT_EQ(pool.GetAvailableCount(), 4u);
 
     // Cycle 2: acquire 2, return 2, acquire 4 more.
-    DecalComponent* a = pool.AcquireDecal();
-    DecalComponent* b = pool.AcquireDecal();
+    VfxDecal* a = pool.AcquireDecal();
+    VfxDecal* b = pool.AcquireDecal();
     ASSERT_NE(a, nullptr);
     ASSERT_NE(b, nullptr);
     pool.ReturnDecal(a);
     pool.ReturnDecal(b);
 
-    std::vector<DecalComponent*> batch2;
+    std::vector<VfxDecal*> batch2;
     for (int i = 0; i < 4; ++i) {
-        DecalComponent* d = pool.AcquireDecal();
+        VfxDecal* d = pool.AcquireDecal();
         EXPECT_NE(d, nullptr) << "Pool should have 4 available slots after returning 2";
         batch2.push_back(d);
     }
@@ -306,8 +306,8 @@ TEST(DecalPool, MultipleAcquireReturnCycles_WorkCorrectly) {
 
 TEST(DecalPool, GetActiveDecals_ReturnsCorrectPointers) {
     DecalPool pool(5);
-    DecalComponent* d1 = pool.AcquireDecal();
-    DecalComponent* d2 = pool.AcquireDecal();
+    VfxDecal* d1 = pool.AcquireDecal();
+    VfxDecal* d2 = pool.AcquireDecal();
     ASSERT_NE(d1, nullptr);
     ASSERT_NE(d2, nullptr);
 
@@ -325,8 +325,8 @@ TEST(DecalPool, GetActiveDecals_ReturnsCorrectPointers) {
 
 TEST(DecalPool, GetActiveDecals_AfterReturn_RemovedFromList) {
     DecalPool pool(5);
-    DecalComponent* d1 = pool.AcquireDecal();
-    DecalComponent* d2 = pool.AcquireDecal();
+    VfxDecal* d1 = pool.AcquireDecal();
+    VfxDecal* d2 = pool.AcquireDecal();
     ASSERT_NE(d1, nullptr);
     ASSERT_NE(d2, nullptr);
 

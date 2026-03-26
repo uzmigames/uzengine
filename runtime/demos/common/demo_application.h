@@ -47,6 +47,7 @@
 #include "debug_view_mode.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
@@ -441,6 +442,10 @@ private:
 
     /// Destroys all platform objects in reverse creation order.
     void ShutdownPlatform();
+
+    /// Returns the user-scoped screenshots directory, creating it if needed.
+    /// Shared between Run() (all-modes capture) and ParseCommonArgs() (path routing).
+    static std::filesystem::path GetScreenshotsDir();
 };
 
 } // namespace uz

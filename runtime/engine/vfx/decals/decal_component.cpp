@@ -1,4 +1,4 @@
-/// DecalComponent implementation -- projection matrix, tick, fade, and lifetime.
+/// VfxDecal implementation -- projection matrix, tick, fade, and lifetime.
 
 #include "engine/vfx/decals/decal_component.h"
 
@@ -24,7 +24,7 @@ const char* DecalBlendModeToString(DecalBlendMode mode) noexcept {
 // GetProjectionMatrix -- world-to-decal-local normalized transform
 // ─────────────────────────────────────────────────────────────────────────────
 
-Mat4 DecalComponent::GetProjectionMatrix() const {
+Mat4 VfxDecal::GetProjectionMatrix() const {
     // Step 1: translate so the OBB center is at the origin.
     const Mat4 translate = Mat4::Translation(-position);
 
@@ -51,7 +51,7 @@ Mat4 DecalComponent::GetProjectionMatrix() const {
 // Tick -- advance age and compute linear fade
 // ─────────────────────────────────────────────────────────────────────────────
 
-void DecalComponent::Tick(float dt) {
+void VfxDecal::Tick(float dt) {
     if (!isActive) {
         return;
     }
@@ -73,7 +73,7 @@ void DecalComponent::Tick(float dt) {
 // FadeOut -- begin early fade from current state
 // ─────────────────────────────────────────────────────────────────────────────
 
-void DecalComponent::FadeOut(float duration) {
+void VfxDecal::FadeOut(float duration) {
     if (duration <= 0.0f) {
         // Immediate expiry when duration is zero or negative.
         fadeAlpha = 0.0f;
@@ -90,7 +90,7 @@ void DecalComponent::FadeOut(float duration) {
 // MarkForDestruction -- signal pool to reclaim this slot
 // ─────────────────────────────────────────────────────────────────────────────
 
-void DecalComponent::MarkForDestruction() noexcept {
+void VfxDecal::MarkForDestruction() noexcept {
     isActive = false;
 }
 
@@ -98,7 +98,7 @@ void DecalComponent::MarkForDestruction() noexcept {
 // IsExpired -- lifetime check
 // ─────────────────────────────────────────────────────────────────────────────
 
-bool DecalComponent::IsExpired() const noexcept {
+bool VfxDecal::IsExpired() const noexcept {
     return age >= lifetime;
 }
 

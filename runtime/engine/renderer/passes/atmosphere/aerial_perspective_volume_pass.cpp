@@ -40,6 +40,12 @@ void AddAerialPerspectiveVolumePass(rg::RgBuilder& builder, const APVolumePassDe
         if (desc.transmittanceLutDep.IsValid()) {
             pb.Read(desc.transmittanceLutDep, RHIResourceState::ShaderResource);
         }
+        if (desc.multiScatterLutDep.IsValid()) {
+            pb.Read(desc.multiScatterLutDep, RHIResourceState::ShaderResource);
+        }
+        if (desc.scatteringLut3DDep.IsValid()) {
+            pb.Read(desc.scatteringLut3DDep, RHIResourceState::ShaderResource);
+        }
 
         pb.SetExecutionCallback([desc](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
             UZ_PROFILE_SCOPE("APVolume::Execute");

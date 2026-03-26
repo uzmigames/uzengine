@@ -217,7 +217,7 @@ void CloudPass::LoadNoiseTextures(IRHICommandList* cmdList, IVFS* vfs) {
     if (!m_initialized || !cmdList) return;
 
     // Load shape noise — 128^3 R8 (2,097,152 bytes)
-    const std::string shapePath = "content/atmosphere/shape.bin";
+    const std::string shapePath = "atmosphere/shape.bin";
     constexpr uint32_t kNoiseRes = 128;
     constexpr uint64_t kExpectedSize = kNoiseRes * kNoiseRes * kNoiseRes; // 2,097,152
 

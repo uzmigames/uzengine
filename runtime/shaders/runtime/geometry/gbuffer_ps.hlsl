@@ -43,7 +43,7 @@ cbuffer PerObjectCB : register(b2) {
     uint     aoIndex;
     uint     emissiveIndex;
     float    alphaClipThreshold;
-    uint     twoSided;
+    uint     opacitySrvIndex;
     row_major float4x4 model;
     row_major float4x4 normalMatrix;
     float3   emissiveColor;
@@ -67,7 +67,7 @@ cbuffer PerObjectCB : register(b2) {
 };
 
 #ifdef UZ_BINDLESS
-// Bindless textures
+// Bindless textures — accessed via ResourceDescriptorHeap[index] at sample sites
 #else
 Texture2D<float4> albedoTexture    : register(t0);
 Texture2D<float4> normalTexture    : register(t1);
@@ -75,6 +75,7 @@ Texture2D<float4> roughnessTexture : register(t2);
 Texture2D<float4> metallicTexture  : register(t3);
 Texture2D<float4> aoTexture        : register(t4);
 Texture2D<float4> emissiveTexture  : register(t5);
+Texture2D<float4> opacityTexture   : register(t6);
 #endif
 SamplerState linearSampler : register(s0);
 SamplerState clampSampler  : register(s2);
@@ -200,7 +201,16 @@ GBufferOutput main(PSInput input) {
 
     // ── Alpha test (Masked blend mode) ────────────────────────────────────
     if ((materialFlags & 0x3u) == 1) {
-        if (matOpacity < alphaClipThreshold) discard;
+        float alphaValue = matOpacity;
+#ifdef UZ_BINDLESS
+        if (opacitySrvIndex > 0) {
+            Texture2D<float4> opacityTex = ResourceDescriptorHeap[opacitySrvIndex];
+            alphaValue *= opacityTex.Sample(linearSampler, uv).r;
+        }
+#else
+        alphaValue *= opacityTexture.Sample(linearSampler, uv).r;
+#endif
+        if (alphaValue < alphaClipThreshold) discard;
     }
 
     // ── Per-shading-model custom data in RT2.w ──────────────────────────

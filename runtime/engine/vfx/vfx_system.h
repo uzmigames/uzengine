@@ -60,11 +60,12 @@ public:
     VFXSystem() = default;
     ~VFXSystem() = default;
 
-    // Non-copyable (owns budget state), movable.
+    // Non-copyable, non-movable (ParticleBudget contains std::atomic).
+    // Always held via std::unique_ptr — move semantics are not needed.
     VFXSystem(const VFXSystem&) = delete;
     VFXSystem& operator=(const VFXSystem&) = delete;
-    VFXSystem(VFXSystem&&) noexcept = default;
-    VFXSystem& operator=(VFXSystem&&) noexcept = default;
+    VFXSystem(VFXSystem&&) = delete;
+    VFXSystem& operator=(VFXSystem&&) = delete;
 
     /// Initializes the VFX system with a global particle budget.
     ///

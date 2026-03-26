@@ -19,6 +19,9 @@
 #include "rhi.h"
 #include "log.h"
 #include "editor_grid.h"
+#include "editor_input_handler.h"
+#include "gizmo_renderer.h"
+#include "outline_pass.h"
 #include "stats_overlay.h"
 
 #include <cstdio>
@@ -28,6 +31,40 @@ namespace uz {
 
 void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
     UZ_PROFILE_FUNCTION();
+
+    // ── Editor Selection Outline pass ───────────────────────────────────
+    // Renders a colored outline around the selected entity. Runs before the
+    // overlay pass (grid + stats) so the outline composites under the UI.
+    // Uses a two-pass technique: mask (mesh→R8Unorm) + detect (fullscreen edge).
+    if (m_editorMode && m_selectedEntity.IsValid() && m_outlinePass && m_shadowDebugMode != 1) {
+        // Depth must match display resolution for the mask depth test.
+        const bool depthMatchesDisplay = (m_renderWidth == m_width && m_renderHeight == m_height);
+        if (depthMatchesDisplay) {
+            rgBuilder.AddPass("OutlinePass", [&](rg::RgPassBuilder& pb) {
+                pb.Write(ctx.bbRes, RHIResourceState::RenderTarget);
+                // Use Write (not Read) for depth — pipeline has depthWrite=false,
+                // but D3D12 requires DEPTH_WRITE state for OMSetRenderTargets
+                // when no read-only DSV descriptor is created.
+                pb.Write(ctx.depthRes, RHIResourceState::DepthStencilWrite);
+
+                pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& res) {
+                    UZ_PROFILE_SCOPE("OutlinePass");
+
+                    auto bb    = res.GetTexture(ctx.bbRes);
+                    auto depth = res.GetTexture(ctx.depthRes);
+
+                    m_outlinePass->Draw(
+                        cmd, *m_cbRing, *m_camera,
+                        ctx.drawList.GetCommands(), m_meshes,
+                        m_selectedEntity.id,
+                        ctx.vpWidth, ctx.vpHeight,
+                        depth, bb,
+                        ctx.bindless,
+                        ctx.perFrameAlloc);
+                });
+            });
+        }
+    }
 
     // ── Overlay pass (editor grid + stats overlay) ──────────────────────
     // Sky atmosphere + height fog are now in RegisterLightingPasses
@@ -80,10 +117,33 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
             // use UINT32_MAX so the shader uses hardware depth test.
             // Otherwise pass the scene depth SRV for manual shader-based occlusion.
             const uint32_t depthSrv = attachDepth ? UINT32_MAX : m_gbuffer.depthSRV;
-            m_editorGrid->Draw(cmd, *m_cbRing, *m_camera,
-                               depthSrv, ctx.vpWidth, ctx.vpHeight);
+            if (m_editorMode) {
+                m_editorGrid->Draw(cmd, *m_cbRing, *m_camera,
+                                   depthSrv, ctx.vpWidth, ctx.vpHeight);
+            }
 
-            if (m_statsOverlayInitialized) {
+            // ── Gizmo (transform handles on selected entity) ────────
+            if (m_editorMode && m_selectedEntity.IsValid()
+                && m_gizmoRenderer && m_gizmoRenderer->IsInitialized()) {
+                // Find the selected entity's world position from the draw list.
+                Vec3 entityPos{0.f, 0.f, 0.f};
+                Quat entityRot = Quat::Identity();
+                for (const auto& dc : ctx.drawList.GetCommands()) {
+                    if (dc.entityId == m_selectedEntity.id) {
+                        entityPos = dc.worldMatrix.getTranslation();
+                        entityRot = Quat::FromMatrix(dc.worldMatrix);
+                        break;
+                    }
+                }
+                m_gizmoRenderer->Draw(cmd, *m_cbRing, *m_camera,
+                                       entityPos, entityRot,
+                                       static_cast<GizmoMode>(ctx.gizmoModeRaw),
+                                       static_cast<GizmoSpace>(ctx.gizmoSpaceRaw),
+                                       ctx.gizmoHoveredAxis,
+                                       ctx.gizmoActiveAxis);
+            }
+
+            if (m_editorMode && m_statsOverlayInitialized) {
                 const uint32_t drawCount = ctx.useInstancing
                     ? static_cast<uint32_t>(ctx.instanceBatches.size())
                     : static_cast<uint32_t>(ctx.drawList.Count());

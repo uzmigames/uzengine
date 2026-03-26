@@ -1,0 +1,9 @@
+.{
+    .name = .vfx_advanced,
+    .version = "0.1.0",
+    .fingerprint = 0x991a42d330b576d2,
+    .dependencies = .{
+        .uz_demo_common = .{ .path = "../common" },
+    },
+    .paths = .{"build.zig"},
+}

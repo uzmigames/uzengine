@@ -43,6 +43,35 @@ RWTexture2D<float4> taaOutput : register(u0);
 
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SM5 register-bound fallback (when UZ_BINDLESS is not defined)
+// ─────────────────────────────────────────────────────────────────────────────
+#ifndef UZ_BINDLESS
+
+#if defined(TSR_PASS_DILATE_VELOCITY)
+Texture2D<float>    g_DepthTex           : register(t0);
+Texture2D<float2>   g_VelocityTex        : register(t1);
+RWTexture2D<float2> g_DilatedVelocityOut : register(u1);
+RWTexture2D<float>  g_ClosestDepthOut    : register(u2);
+
+#elif defined(TSR_PASS_REJECT_SHADING)
+Texture2D<float4>   g_SceneColor         : register(t0);
+Texture2D<float2>   g_DilatedVelTex      : register(t1);
+Texture2D<float4>   g_HistoryTex         : register(t2);
+RWTexture2D<float>  g_RejectionMaskOut   : register(u1);
+RWTexture2D<float4> g_InputSceneColorOut : register(u2);
+
+#elif defined(TSR_PASS_UPDATE_HISTORY)
+Texture2D<float4>   g_SceneColor         : register(t0);
+Texture2D<float>    g_DepthTex           : register(t1);
+Texture2D<float4>   g_HistoryTex         : register(t2);
+Texture2D<float2>   g_DilatedVelTex      : register(t3);
+Texture2D<float>    g_RejectionTex       : register(t4);
+#endif
+
+#endif // !UZ_BINDLESS
+
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Constant Buffers — one per sub-pass, all at b2
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -228,12 +257,17 @@ void main(
     uint2 GroupThreadId : SV_GroupThreadID)
 {
     // Bindless resource access.
+#ifdef UZ_BINDLESS
     Texture2D<float>  DepthTex    = ResourceDescriptorHeap[depthSrvIndex];
     Texture2D<float2> VelocityTex = ResourceDescriptorHeap[velocitySrvIndex];
-
-    // Output UAVs for intermediate results.
     RWTexture2D<float2> DilatedVelocityOut = ResourceDescriptorHeap[dilatedVelocityUav];
     RWTexture2D<float>  ClosestDepthOut    = ResourceDescriptorHeap[closestDepthUav];
+#else
+    Texture2D<float>    DepthTex           = g_DepthTex;
+    Texture2D<float2>   VelocityTex        = g_VelocityTex;
+    RWTexture2D<float2> DilatedVelocityOut = g_DilatedVelocityOut;
+    RWTexture2D<float>  ClosestDepthOut    = g_ClosestDepthOut;
+#endif
 
     // Determine render-resolution dimensions from the texel size.
     uint renderW = uint(rcp(texelSize.x) + 0.5);
@@ -321,13 +355,19 @@ void main(
     uint2 GroupThreadId : SV_GroupThreadID)
 {
     // Bindless resource access.
+#ifdef UZ_BINDLESS
     Texture2D<float4> SceneColor     = ResourceDescriptorHeap[sceneColorSrvIndex];
     Texture2D<float2> DilatedVelTex  = ResourceDescriptorHeap[dilatedVelocitySrvIndex];
     Texture2D<float4> HistoryTex     = ResourceDescriptorHeap[historyReadSrvIndex];
-
-    // Output UAVs.
     RWTexture2D<float>  RejectionMaskOut     = ResourceDescriptorHeap[rejectionMaskUav];
     RWTexture2D<float4> InputSceneColorOut   = ResourceDescriptorHeap[inputSceneColorUav];
+#else
+    Texture2D<float4>   SceneColor           = g_SceneColor;
+    Texture2D<float2>   DilatedVelTex        = g_DilatedVelTex;
+    Texture2D<float4>   HistoryTex           = g_HistoryTex;
+    RWTexture2D<float>  RejectionMaskOut     = g_RejectionMaskOut;
+    RWTexture2D<float4> InputSceneColorOut   = g_InputSceneColorOut;
+#endif
 
     // Dimensions.
     uint renderW = uint(rcp(texelSize.x) + 0.5);
@@ -491,11 +531,19 @@ void main(
     float2 uv = (float2(DispatchThreadId) + 0.5) * outputTexelSize;
 
     // ── Bindless Texture Access ───────────────────────────────────────────────
+#ifdef UZ_BINDLESS
     Texture2D<float4> SceneColor     = ResourceDescriptorHeap[sceneColorSrvIndex];
     Texture2D<float>  DepthTex       = ResourceDescriptorHeap[depthSrvIndex];
     Texture2D<float4> HistoryTex     = ResourceDescriptorHeap[historyReadSrvIndex];
     Texture2D<float2> DilatedVelTex  = ResourceDescriptorHeap[dilatedVelocitySrvIndex];
     Texture2D<float>  RejectionTex   = ResourceDescriptorHeap[rejectionMaskSrvIndex];
+#else
+    Texture2D<float4> SceneColor     = g_SceneColor;
+    Texture2D<float>  DepthTex       = g_DepthTex;
+    Texture2D<float4> HistoryTex     = g_HistoryTex;
+    Texture2D<float2> DilatedVelTex  = g_DilatedVelTex;
+    Texture2D<float>  RejectionTex   = g_RejectionTex;
+#endif
 
     // ── Scene Color Dimensions ────────────────────────────────────────────────
     // Scene color may be at render resolution (smaller than output when

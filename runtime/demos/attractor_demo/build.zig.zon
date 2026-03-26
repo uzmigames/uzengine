@@ -1,0 +1,9 @@
+.{
+    .name = .attractor_demo,
+    .version = "0.1.0",
+    .fingerprint = 0x3ea6d5165018defb,
+    .dependencies = .{
+        .uz_demo_common = .{ .path = "../common" },
+    },
+    .paths = .{"build.zig"},
+}

@@ -75,6 +75,18 @@ cbuffer MeshSdfData : register(b2)
 SamplerState g_linearClamp : register(s0);
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SM5 register-bound fallback (when UZ_BINDLESS is not defined)
+// ─────────────────────────────────────────────────────────────────────────────
+#ifndef UZ_BINDLESS
+// On SM5/Vulkan, dynamic indexing of texture objects is not supported.
+// The C++ side must use bindless (DX12 SM6.6) for this pass.
+// This single fallback texture allows the shader to compile on non-bindless
+// backends; the pass should be disabled at runtime when bindless is unavailable.
+Texture3D<float>   g_MeshSdfTexFallback : register(t0);
+RWTexture3D<float> g_OutputTex          : register(u0);
+#endif
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Helper: transform world position to mesh local space and sample SDF
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -162,7 +174,13 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 
         // Bindless mesh SDF sampling: fetch the per-mesh 3D texture from the
         // descriptor heap using the SRV index stored in the mesh descriptor.
+#ifdef UZ_BINDLESS
         Texture3D<float> sdfTex = ResourceDescriptorHeap[mesh.srvIndex];
+#else
+        // SM5 fallback: dynamic mesh SDF indexing requires bindless. This path
+        // uses a single fallback texture; the pass should be disabled on SM5.
+        Texture3D<float> sdfTex = g_MeshSdfTexFallback;
+#endif
         float meshDist = SampleMeshSdfLocal(sdfTex, mesh, worldPos);
 
         minDist = min(minDist, meshDist);
@@ -172,6 +190,10 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     /// @ref Wright 2015 — GDF distance encoding to UNORM
     /// We store raw float16 distance (the R16F texture handles encoding).
     /// Output texture accessed via bindless descriptor heap.
+#ifdef UZ_BINDLESS
     RWTexture3D<float> outputTex = ResourceDescriptorHeap[g_outputUav];
+#else
+    RWTexture3D<float> outputTex = g_OutputTex;
+#endif
     outputTex[dispatchThreadId] = minDist;
 }

@@ -1,3 +1,5 @@
+/// Lua bindings for the height fog API (density, falloff, color, inscattering).
+
 #include "lua_fog_api.h"
 
 #include "log.h"
@@ -12,6 +14,8 @@ extern "C" {
 
 #include <cstdint>
 #include <cstring>
+
+/// Lua bindings for the height fog API (density, height falloff, inscatter color).
 
 static_assert(sizeof(void*) >= 8,
     "uz::Entity requires 64-bit pointers for lightuserdata encoding");
@@ -296,6 +300,177 @@ static int SceneSetFogVolumetric(lua_State* L) {
     return 0;
 }
 
+/// uz.scene.get_fog_density(entity) -> number | nil
+static int SceneGetFogDensity(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_fog_density");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<HeightFogComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(world->GetComponent<HeightFogComponent>(entity).density));
+    return 1;
+}
+
+/// uz.scene.get_fog_color(entity) -> r, g, b | nil
+static int SceneGetFogColor(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_fog_color");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<HeightFogComponent>(entity)) { lua_pushnil(L); return 1; }
+    const auto& fog = world->GetComponent<HeightFogComponent>(entity);
+    lua_pushnumber(L, static_cast<double>(fog.color.x));
+    lua_pushnumber(L, static_cast<double>(fog.color.y));
+    lua_pushnumber(L, static_cast<double>(fog.color.z));
+    return 3;
+}
+
+/// uz.scene.get_fog_height_falloff(entity) -> number | nil
+static int SceneGetFogHeightFalloff(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_fog_height_falloff");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<HeightFogComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(world->GetComponent<HeightFogComponent>(entity).heightFalloff));
+    return 1;
+}
+
+/// uz.scene.get_fog_base_height(entity) -> number | nil
+static int SceneGetFogBaseHeight(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_fog_base_height");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<HeightFogComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(world->GetComponent<HeightFogComponent>(entity).baseHeight));
+    return 1;
+}
+
+/// uz.scene.get_fog_max_opacity(entity) -> number | nil
+static int SceneGetFogMaxOpacity(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_fog_max_opacity");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<HeightFogComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(world->GetComponent<HeightFogComponent>(entity).maxOpacity));
+    return 1;
+}
+
+/// uz.scene.is_fog_enabled(entity) -> bool
+static int SceneIsFogEnabled(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "is_fog_enabled");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<HeightFogComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushboolean(L, world->GetComponent<HeightFogComponent>(entity).enabled ? 1 : 0);
+    return 1;
+}
+
+/// uz.scene.get_fog_start_distance(entity) -> number | nil
+static int SceneGetFogStartDistance(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_fog_start_distance");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<HeightFogComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(world->GetComponent<HeightFogComponent>(entity).startDistance));
+    return 1;
+}
+
+/// uz.scene.get_fog_cutoff_distance(entity) -> number | nil
+static int SceneGetFogCutoffDistance(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_fog_cutoff_distance");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<HeightFogComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(world->GetComponent<HeightFogComponent>(entity).fogCutoffDistance));
+    return 1;
+}
+
+/// uz.scene.get_fog_second_density(entity) -> number | nil
+static int SceneGetFogSecondDensity(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_fog_second_density");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<HeightFogComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(world->GetComponent<HeightFogComponent>(entity).secondFogDensity));
+    return 1;
+}
+
+/// uz.scene.get_fog_second_height_falloff(entity) -> number | nil
+static int SceneGetFogSecondHeightFalloff(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_fog_second_height_falloff");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<HeightFogComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(world->GetComponent<HeightFogComponent>(entity).secondFogHeightFalloff));
+    return 1;
+}
+
+/// uz.scene.get_fog_second_base_height(entity) -> number | nil
+static int SceneGetFogSecondBaseHeight(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_fog_second_base_height");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<HeightFogComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(world->GetComponent<HeightFogComponent>(entity).secondFogBaseHeight));
+    return 1;
+}
+
+/// uz.scene.get_fog_directional_inscattering_color(entity) -> r, g, b | nil
+static int SceneGetFogDirectionalInscatteringColor(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_fog_directional_inscattering_color");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<HeightFogComponent>(entity)) { lua_pushnil(L); return 1; }
+    const auto& fog = world->GetComponent<HeightFogComponent>(entity);
+    lua_pushnumber(L, static_cast<double>(fog.directionalInscatteringColor.x));
+    lua_pushnumber(L, static_cast<double>(fog.directionalInscatteringColor.y));
+    lua_pushnumber(L, static_cast<double>(fog.directionalInscatteringColor.z));
+    return 3;
+}
+
+/// uz.scene.get_fog_directional_inscattering_exponent(entity) -> number | nil
+static int SceneGetFogDirectionalInscatteringExponent(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_fog_directional_inscattering_exponent");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<HeightFogComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(world->GetComponent<HeightFogComponent>(entity).directionalInscatteringExponent));
+    return 1;
+}
+
+/// uz.scene.get_fog_directional_inscattering_start_distance(entity) -> number | nil
+static int SceneGetFogDirectionalInscatteringStartDistance(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_fog_directional_inscattering_start_distance");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<HeightFogComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(world->GetComponent<HeightFogComponent>(entity).directionalInscatteringStartDistance));
+    return 1;
+}
+
+/// uz.scene.is_fog_volumetric(entity) -> bool
+static int SceneIsFogVolumetric(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "is_fog_volumetric");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<HeightFogComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushboolean(L, world->GetComponent<HeightFogComponent>(entity).enableVolumetricFog ? 1 : 0);
+    return 1;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Registration
 // ─────────────────────────────────────────────────────────────────────────────
@@ -331,6 +506,21 @@ void LuaRegisterFogAPI(lua_State* L) {
     lua_pushcfunction(L, SceneSetFogDirectionalInscatteringExponent);  lua_setfield(L, -2, "set_fog_directional_inscattering_exponent");
     lua_pushcfunction(L, SceneSetFogDirectionalInscatteringStartDistance); lua_setfield(L, -2, "set_fog_directional_inscattering_start_distance");
     lua_pushcfunction(L, SceneSetFogVolumetric);                       lua_setfield(L, -2, "set_fog_volumetric");
+    lua_pushcfunction(L, SceneGetFogDensity);                          lua_setfield(L, -2, "get_fog_density");
+    lua_pushcfunction(L, SceneGetFogColor);                            lua_setfield(L, -2, "get_fog_color");
+    lua_pushcfunction(L, SceneGetFogHeightFalloff);                    lua_setfield(L, -2, "get_fog_height_falloff");
+    lua_pushcfunction(L, SceneGetFogBaseHeight);                       lua_setfield(L, -2, "get_fog_base_height");
+    lua_pushcfunction(L, SceneGetFogMaxOpacity);                       lua_setfield(L, -2, "get_fog_max_opacity");
+    lua_pushcfunction(L, SceneIsFogEnabled);                           lua_setfield(L, -2, "is_fog_enabled");
+    lua_pushcfunction(L, SceneGetFogStartDistance);                    lua_setfield(L, -2, "get_fog_start_distance");
+    lua_pushcfunction(L, SceneGetFogCutoffDistance);                   lua_setfield(L, -2, "get_fog_cutoff_distance");
+    lua_pushcfunction(L, SceneGetFogSecondDensity);                    lua_setfield(L, -2, "get_fog_second_density");
+    lua_pushcfunction(L, SceneGetFogSecondHeightFalloff);              lua_setfield(L, -2, "get_fog_second_height_falloff");
+    lua_pushcfunction(L, SceneGetFogSecondBaseHeight);                 lua_setfield(L, -2, "get_fog_second_base_height");
+    lua_pushcfunction(L, SceneGetFogDirectionalInscatteringColor);     lua_setfield(L, -2, "get_fog_directional_inscattering_color");
+    lua_pushcfunction(L, SceneGetFogDirectionalInscatteringExponent);  lua_setfield(L, -2, "get_fog_directional_inscattering_exponent");
+    lua_pushcfunction(L, SceneGetFogDirectionalInscatteringStartDistance); lua_setfield(L, -2, "get_fog_directional_inscattering_start_distance");
+    lua_pushcfunction(L, SceneIsFogVolumetric);                        lua_setfield(L, -2, "is_fog_volumetric");
 
     lua_pop(L, 2);
 

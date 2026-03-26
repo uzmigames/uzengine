@@ -1,0 +1,52 @@
+{
+  "name": "Orbit Demo",
+  "version": 1,
+  "emitter": {
+    "max_particles": 2000,
+    "emission_rate": 100.0,
+    "lifetime": 4.0,
+    "looping": true
+  },
+  "modules": {
+    "spawn": {
+      "type": "spawn",
+      "velocity": [0.0, 0.0, 0.0],
+      "spread_angle": 360.0,
+      "lifespan_min": 2.0,
+      "lifespan_max": 4.0,
+      "rate": 100.0
+    },
+    "update": [
+      {
+        "type": "update",
+        "gravity": [0.0, 0.0, 0.0],
+        "drag": 0.99
+      },
+      {
+        "type": "orbit",
+        "center": [0.0, 0.0, 0.0],
+        "speed": 2.0,
+        "orbit_radius": 15.0,
+        "axis": [0.0, 0.0, 1.0]
+      },
+      {
+        "type": "pin",
+        "pin_position": [0.0, 0.0, 5.0],
+        "spring_strength": 5.0
+      },
+      {
+        "type": "distance_constraint",
+        "constraint_origin": [0.0, 0.0, 0.0],
+        "min_distance": 10.0,
+        "max_distance": 20.0,
+        "constraint_strength": 0.8
+      },
+      {
+        "type": "decay"
+      }
+    ],
+    "render": {
+      "type": "sprite"
+    }
+  }
+}

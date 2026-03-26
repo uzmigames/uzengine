@@ -48,9 +48,9 @@ class IBLBaker {
 public:
     // ── Bake parameters (public for external reference) ──────────────────
     static constexpr uint32_t kBRDFLutSize          = 512;
-    static constexpr uint32_t kIrradianceSize       = 32;
-    static constexpr uint32_t kPrefilteredSize      = 256;
-    static constexpr uint32_t kPrefilteredMipLevels = 6;
+    static constexpr uint32_t kIrradianceSize       = 64;
+    static constexpr uint32_t kPrefilteredSize      = 1024;
+    static constexpr uint32_t kPrefilteredMipLevels = 8;
     static constexpr uint32_t kThreadGroupSize      = 8;
 
     IBLBaker() = default;
@@ -110,6 +110,37 @@ public:
     [[nodiscard]] BakeResult BakeEnvironment(uint32_t envCubemapSrvIndex,
                                              RHITextureHandle envCubemapTexture = {});
 
+    /// Result of equirectangular-to-cubemap conversion.
+    struct EquirectResult {
+        RHITextureHandle cubemap;          ///< Cubemap texture (6-slice Texture2DArray, RGBA16F).
+        uint32_t srvIndex = UINT32_MAX;    ///< SRV heap index for the cubemap.
+    };
+
+    /// Converts an equirectangular HDR panorama texture into a cubemap.
+    ///
+    /// Dispatches `equirect_to_cubemap_cs.hlsl` to convert a 2:1 equirect
+    /// panorama (any resolution) into an NxN cubemap stored as a
+    /// Texture2DArray with 6 slices, RGBA16Float format.
+    ///
+    /// The output cubemap can be passed directly to `BakeEnvironment()` for
+    /// IBL irradiance and prefiltered specular baking.
+    ///
+    /// # Arguments
+    /// * `equirectSrvIndex` — SRV descriptor heap index of the equirect
+    ///   texture. Must be a valid RGBA16F or RGBA32F 2D texture.
+    /// * `cubemapSize` — Face resolution in texels (e.g., 256, 512, 1024).
+    ///   Must be a multiple of `kThreadGroupSize` (8).
+    ///
+    /// # Returns
+    /// `EquirectResult` with a valid cubemap handle and SRV on success.
+    /// Returns default (invalid) result on failure (error logged).
+    ///
+    /// # Ownership
+    /// The returned cubemap texture is owned by the CALLER — the baker does
+    /// NOT track or destroy it. Call `device->DestroyTexture()` when done.
+    [[nodiscard]] EquirectResult EquirectToCubemap(uint32_t equirectSrvIndex,
+                                                    uint32_t cubemapSize = 512);
+
     /// Returns true if the BRDF LUT has been baked.
     [[nodiscard]] bool HasBRDFLut() const noexcept { return m_brdfLutSrvIndex != UINT32_MAX; }
 
@@ -143,6 +174,9 @@ private:
     /// Ensures the prefilter compute pipeline is compiled and ready.
     [[nodiscard]] bool EnsurePrefilterPipeline();
 
+    /// Ensures the equirect-to-cubemap compute pipeline is compiled and ready.
+    [[nodiscard]] bool EnsureEquirectPipeline();
+
     IRHIDevice*    m_device    = nullptr;
     ShaderManager* m_shaderMgr = nullptr;
     bool           m_initialized = false;
@@ -151,11 +185,13 @@ private:
     RHIPipelineHandle m_brdfLutPipeline    = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_irradiancePipeline = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_prefilterPipeline  = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_equirectPipeline   = RHIPipelineHandle::Invalid();
 
     // ── Shader handles ──────────────────────────────────────────────────
     RHIShaderHandle m_brdfLutCS    = RHIShaderHandle::Invalid();
     RHIShaderHandle m_irradianceCS = RHIShaderHandle::Invalid();
     RHIShaderHandle m_prefilterCS  = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_equirectCS   = RHIShaderHandle::Invalid();
 
     // ── BRDF LUT texture (persistent, baked once) ───────────────────────
     RHITextureHandle m_brdfLutTexture = RHITextureHandle::Invalid();

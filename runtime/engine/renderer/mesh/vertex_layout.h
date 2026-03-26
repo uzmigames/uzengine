@@ -32,7 +32,7 @@ namespace uz {
 /// Used by `VertexLayout::FromFlags()` to build dynamic input layouts.
 /// `HasPosition` is always implicitly present and does not need to be set.
 enum class VertexFormatFlags : uint32_t {
-    None       = 0,
+    None       = 0,  ///< No optional channels — position only.
     HasNormal  = 1 << 0,  ///< float3 NORMAL
     HasTangent = 1 << 1,  ///< float4 TANGENT (xyz + handedness w)
     HasUV0     = 1 << 2,  ///< float2 TEXCOORD0 — primary UV

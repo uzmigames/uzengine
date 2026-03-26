@@ -4,11 +4,13 @@
   "private": true,
   "description": "UzEngine MCP server — AI tool invocations, scene queries, autonomous development",
   "type": "module",
-  "main": "dist/server.js",
+  "main": "dist/src/server.js",
   "scripts": {
     "build": "tsc -p .",
-    "start": "node dist/server.js --stdio",
+    "start": "node dist/src/server.js --stdio",
     "dev": "tsc -w -p .",
+    "generate-docs": "node --import tsx tools/generate-docs.ts",
+    "generate-docs:watch": "node --import tsx tools/generate-docs.ts --watch",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "format": "prettier --write \"src/**/*.ts\"",
@@ -22,12 +24,15 @@
     "pino": "^10.3.1"
   },
   "devDependencies": {
-    "@types/node": "^25.4.0",
-    "@typescript-eslint/eslint-plugin": "^8.57.0",
-    "@typescript-eslint/parser": "^8.57.0",
+    "@types/node": "^25.5.0",
+    "@typescript-eslint/eslint-plugin": "^8.57.2",
+    "@typescript-eslint/parser": "^8.57.2",
+    "chokidar": "^5.0.0",
     "eslint": "^9.39.4",
+    "glob": "^13.0.6",
     "prettier": "^3.8.1",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.18"
+    "vitest": "^4.1.1"
   }
 }

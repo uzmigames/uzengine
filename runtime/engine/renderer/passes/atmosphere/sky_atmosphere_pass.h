@@ -58,6 +58,13 @@ struct SkyAtmospherePassDesc {
 
     uint32_t          apVolumeSrvIndex = UINT32_MAX; ///< SRV index for AP volume 3D texture (UINT32_MAX = none).
 
+    uint32_t          scatteringLut3DSrvIndex = UINT32_MAX; ///< SRV index for Bruneton 3D scattering LUT.
+    RHITextureHandle  scatteringLut3DTexture;  ///< Physical 3D scattering texture handle (SM5 fallback).
+    rg::RgResourceId  scatteringLut3DRes;      ///< Render graph resource for barrier tracking.
+
+    uint32_t          irradianceLutSrvIndex = UINT32_MAX; ///< SRV index for 64x16 irradiance LUT.
+    rg::RgResourceId  irradianceLutRes;        ///< Render graph resource for barrier tracking.
+
     bool              bindless;         ///< True if SM6.6 bindless path is active.
     float             viewportWidth;    ///< Viewport width in pixels.
     float             viewportHeight;   ///< Viewport height in pixels.

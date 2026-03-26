@@ -44,5 +44,5 @@
     "type": "command",
     "command": "bash .claude/statusline.sh 2>/dev/null || echo UzEngine"
   },
-  "enabledMcpjsonServers": ["tml", "rulebook"]
+  "enabledMcpjsonServers": ["tml", "rulebook", "uzengine"]
 }

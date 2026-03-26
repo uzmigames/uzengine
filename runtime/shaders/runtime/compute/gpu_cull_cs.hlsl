@@ -63,6 +63,17 @@ StructuredBuffer<float4>       g_BoundingSpheres : register(t0);
 AppendStructuredBuffer<uint>   g_VisibleIndices  : register(u0);
 RWByteAddressBuffer            g_IndirectArgs    : register(u1);
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SM5 register-bound fallback for HiZ mip textures
+// ─────────────────────────────────────────────────────────────────────────────
+#ifndef UZ_BINDLESS
+// When bindless is not available, the C++ side must set g_HiZEnabled=0
+// (frustum-only culling). This single texture declaration exists to allow
+// compilation of the SM5 path; the HiZ code path is guarded by g_HiZEnabled
+// at runtime and will never be reached without bindless.
+Texture2D<float> g_HiZMipFallback : register(t1);
+#endif
+
 /// Retrieves the SRV index for the given Hi-Z mip level.
 /// The indices are packed into uint4 arrays for efficient CBV layout.
 uint GetHiZMipSrvIndex(uint mipLevel)
@@ -298,7 +309,13 @@ bool IsVisibleHiZ(float3 worldCenter, float radius)
     // Clamp coordinates to the mip texture dimensions to avoid out-of-bounds.
     /// @ref Wihlidal 2015 / Greene 1993 — HZB culling:161-169 — LoadHZBRow4 with clamped integer coords
     uint mipSrvIndex = GetHiZMipSrvIndex((uint)mipLevel);
+#ifdef UZ_BINDLESS
     Texture2D<float> hizMipTex = ResourceDescriptorHeap[mipSrvIndex];
+#else
+    // SM5 fallback: HiZ is disabled at runtime (g_HiZEnabled=0), so this path
+    // should never execute. Provide a compilable fallback using a single texture.
+    Texture2D<float> hizMipTex = g_HiZMipFallback;
+#endif
 
     // Clamp to mip texture bounds (mip width/height = hizSize >> mipLevel).
     int2 mipDims = int2(g_HiZWidth >> mipLevel, g_HiZHeight >> mipLevel);

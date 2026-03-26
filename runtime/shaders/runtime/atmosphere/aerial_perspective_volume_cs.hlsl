@@ -27,6 +27,7 @@
 /// [numthreads(8,8,1)], dispatch (4, 4, 16) = 32x32x16 total threads.
 
 #include "../include/aerial_perspective.hlsli"
+#include "../include/atmosphere_lut.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Root Constants (b0) — atmosphere scattering parameters
@@ -59,7 +60,9 @@ cbuffer APVolumeCB : register(b2) {
     uint   outputUavIdx;            ///< UAV index for output 3D texture.
     uint   depthSlices;             ///< Number of depth slices (16).
     float  totalDepthKm;            ///< Total depth range in km (100.0).
-    float  _apPad0;                 ///< Pad to 16-byte boundary.
+    uint   multiScatterLutIdx;      ///< SRV index for multi-scattering LUT (32x32 R11G11B10F).
+    uint   scatteringLut3DIdx;     ///< SRV index for Bruneton 3D scattering LUT (256x128x32 RGBA16F). 0 = not available.
+    float  muSMin;                 ///< Minimum sun zenith cosine for LUT parameterization. cos(102 deg) = -0.2079116908.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -67,6 +70,16 @@ cbuffer APVolumeCB : register(b2) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 SamplerState linearSampler : register(s0);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SM5 register-bound fallback (when UZ_BINDLESS is not defined)
+// ─────────────────────────────────────────────────────────────────────────────
+#ifndef UZ_BINDLESS
+Texture2D<float4>   g_TransmittanceLut  : register(t0);
+Texture2D<float4>   g_MultiScatterLut   : register(t1);
+Texture3D<float4>   g_ScatteringLut3D   : register(t2);
+RWTexture3D<float4> g_OutputVol         : register(u0);
+#endif
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Volume Dimensions
@@ -93,7 +106,11 @@ void main(uint3 tid : SV_DispatchThreadID)
         return;
 
     // ── Output UAV ───────────────────────────────────────────────────────
+#ifdef UZ_BINDLESS
     RWTexture3D<float4> outputVol = ResourceDescriptorHeap[outputUavIdx];
+#else
+    RWTexture3D<float4> outputVol = g_OutputVol;
+#endif
 
     // ── Screen UV from voxel XY ──────────────────────────────────────────
     float2 screenUV = (float2(tid.xy) + 0.5f) / float(AP_VOL_XY);
@@ -158,54 +175,134 @@ void main(uint3 tid : SV_DispatchThreadID)
         return;
     }
 
-    // ── Ray march through atmosphere ─────────────────────────────────────
-    float stepLenKm = marchLen / float(AP_STEPS_PER_VOXEL);
-
+    // ── Common setup ────────────────────────────────────────────────────
     float3 sunDir      = sunDirAndIntensity.xyz;
     float  sunIntensity = sunDirAndIntensity.w;
     float  cosTheta    = dot(rayDir, sunDir);
     float  phaseR      = AP_RayleighPhase(cosTheta);
     float  phaseM      = AP_MiePhase(cosTheta, mieAnisotropy);
 
-    float3 artRayleighBeta = rayleighBeta * rayleighScale;
-    float  artMieBeta      = mieBeta * mieScale;
-
     // Fetch transmittance LUT
+#ifdef UZ_BINDLESS
     Texture2D<float4> tLut = ResourceDescriptorHeap[transmittanceLutIdx];
+#else
+    Texture2D<float4> tLut = g_TransmittanceLut;
+#endif
 
-    // Frostbite analytical integration
     float3 L          = float3(0, 0, 0);
     float3 Throughput = float3(1, 1, 1);
 
-    for (int i = 0; i < AP_STEPS_PER_VOXEL; ++i) {
-        float  t        = tStart + (float(i) + 0.5f) * stepLenKm;
-        float3 sampleKm = cameraSkyKm + rayDir * t;
-        float  altKm    = max(0.0f, length(sampleKm) - bottomRadiusKm);
+    // ── LUT-based path: dual 4D scattering lookup ────────────────────────
+    // @ref Bruneton & Neyret 2017 "Precomputed Atmospheric Scattering"
+    //      Section 5 — Runtime Rendering, GetSkyRadianceToPoint.
+    // Replaces the 8-step ray march with two scattering LUT lookups per voxel.
+    // The 3D scattering LUT (256x128x32 RGBA16F) is precomputed once when
+    // atmosphere parameters change and provides exact multi-order scattering.
+    // Fallback: when scatteringLut3DIdx == 0 (LUT not yet computed or
+    // bindless not available), the 8-step ray march runs instead.
+    bool usedLut = false;
 
-        float densR = AP_DensityAtAltitude(altKm, rayleighScaleH);
-        float densM = AP_DensityAtAltitude(altKm, mieScaleH);
+#ifdef UZ_BINDLESS
+    if (scatteringLut3DIdx != 0) {
+        Texture3D<float4> scatLut3D = ResourceDescriptorHeap[scatteringLut3DIdx];
 
-        // Extinction uses physical coefficients (must match transmittance LUT)
-        float3 extR     = rayleighBeta * densR;
-        float3 extM     = mieBeta * AP_MIE_EXTINCTION_RATIO * densM;
-        float3 extTotal = extR + extM;
+        // Compute target point position in sky space (km)
+        float3 pointKm = cameraSkyKm + rayDir * depthKm;
 
-        float3 T_step = exp(-extTotal * stepLenKm);
+        // Clamp point above planet surface (same safety as camera)
+        float pointDist = length(pointKm);
+        float pointMinR = bottomRadiusKm + AP_PLANET_RADIUS_OFFSET_KM;
+        if (pointDist < pointMinR) {
+            pointKm = pointKm * (pointMinR / pointDist);
+        }
 
-        // Sun transmittance from LUT
-        float3 sunT = AP_SampleTransmittanceLut(tLut, linearSampler,
-            sampleKm, sunDir, bottomRadiusKm, topRadiusKm);
+        // Dual 4D lookup: inscatter(camera→point) via LUT subtraction.
+        // GetSkyRadianceToPoint computes:
+        //   inscatter = S(camera→top) - T(camera→point) * S(point→top)
+        // and applies phase functions (Rayleigh + HG Mie).
+        // Artistic scale factors are applied separately below.
+        float3 inscatter;
+        float3 transmittance;
+        GetSkyRadianceToPoint(
+            cameraSkyKm, pointKm, sunDir,
+            scatLut3D, tLut, linearSampler,
+            bottomRadiusKm, topRadiusKm, muSMin,
+            phaseR, phaseM,
+            /*out*/ inscatter, /*out*/ transmittance);
 
-        // In-scattering with artistic coefficients
-        float3 scatterR = artRayleighBeta * densR * phaseR;
-        float3 scatterM = artMieBeta * densM * phaseM;
-        float3 scatter  = scatterR + scatterM;
+        // Apply artistic scattering scales.
+        // The LUT stores physical scattering; artistic multipliers modulate the
+        // visual intensity of Rayleigh/Mie independently. For the LUT path we
+        // apply a uniform scale based on the artistic weights, blending between
+        // physical (1.0) and the user-specified multipliers.
+        // This matches the ray march behavior where artRayleighBeta = rayleighBeta * rayleighScale
+        // and artMieBeta = mieBeta * mieScale are used for in-scattering.
+        float artScale = max(rayleighScale, mieScale);
+        L = inscatter * artScale * sunIntensity;
+        Throughput = transmittance;
+        usedLut = true;
+    }
+#endif
 
-        // Analytical step integral: Sint = scatter * (1 - T_step) / ext
-        float3 Sint = (scatter - scatter * T_step) / max(extTotal, AP_EXT_EPS);
+    // ── Fallback: 8-step ray march (SM5 / no LUT available) ──────────────
+    if (!usedLut) {
+        float stepLenKm = marchLen / float(AP_STEPS_PER_VOXEL);
 
-        L         += Throughput * sunT * Sint * sunIntensity;
-        Throughput *= T_step;
+        float3 artRayleighBeta = rayleighBeta * rayleighScale;
+        float  artMieBeta      = mieBeta * mieScale;
+
+        for (int i = 0; i < AP_STEPS_PER_VOXEL; ++i) {
+            float  t        = tStart + (float(i) + 0.5f) * stepLenKm;
+            float3 sampleKm = cameraSkyKm + rayDir * t;
+            float  altKm    = max(0.0f, length(sampleKm) - bottomRadiusKm);
+
+            float densR = AP_DensityAtAltitude(altKm, rayleighScaleH);
+            float densM = AP_DensityAtAltitude(altKm, mieScaleH);
+
+            // Extinction uses physical coefficients (must match transmittance LUT)
+            float3 extR     = rayleighBeta * densR;
+            float3 extM     = mieBeta * AP_MIE_EXTINCTION_RATIO * densM;
+            float3 extTotal = extR + extM;
+
+            float3 T_step = exp(-extTotal * stepLenKm);
+
+            // Sun transmittance from LUT
+            float3 sunT = AP_SampleTransmittanceLut(tLut, linearSampler,
+                sampleKm, sunDir, bottomRadiusKm, topRadiusKm);
+
+            // ── Multi-scattering contribution ────────────────────────────
+            // @ref Hillaire 2020 — GetMultipleScattering + S integration
+            // Multi-scattering is isotropic (no phase weighting) and adds
+            // diffuse light after the 1st scatter bounce.
+            float3 multiScatteredLum = float3(0, 0, 0);
+            {
+#ifdef UZ_BINDLESS
+                Texture2D<float4> msLut = ResourceDescriptorHeap[multiScatterLutIdx];
+#else
+                Texture2D<float4> msLut = g_MultiScatterLut;
+#endif
+                multiScatteredLum = AP_SampleMultiScatteringLut(msLut, linearSampler,
+                    sampleKm, sunDir, bottomRadiusKm, topRadiusKm);
+            }
+
+            // In-scattering with artistic coefficients
+            float3 scatterR = artRayleighBeta * densR * phaseR;
+            float3 scatterM = artMieBeta * densM * phaseM;
+
+            // Physical total scattering (for multi-scatter weighting)
+            float3 totalScatter = rayleighBeta * densR + mieBeta * densM;
+
+            // @ref S = sunIlluminance * (sunTransmittance * phaseScatter + multiScatter * totalScatter)
+            float3 singleScatter = sunT * (scatterR + scatterM);
+            float3 multiScatter  = multiScatteredLum * totalScatter;
+            float3 scatter = singleScatter + multiScatter;
+
+            // Analytical step integral: Sint = scatter * (1 - T_step) / ext
+            float3 Sint = (scatter - scatter * T_step) / max(extTotal, AP_EXT_EPS);
+
+            L         += Throughput * Sint * sunIntensity;
+            Throughput *= T_step;
+        }
     }
 
     // Mean transmittance (standard: average of RGB channels)

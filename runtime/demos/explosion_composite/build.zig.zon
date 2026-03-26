@@ -1,0 +1,9 @@
+.{
+    .name = .explosion_composite,
+    .version = "0.1.0",
+    .fingerprint = 0x6c463eb3a806f7c2,
+    .dependencies = .{
+        .uz_demo_common = .{ .path = "../common" },
+    },
+    .paths = .{"build.zig"},
+}

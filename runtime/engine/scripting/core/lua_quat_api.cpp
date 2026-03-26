@@ -2,6 +2,8 @@
 
 #include "log.h"
 
+/// Lua bindings for quaternion operations (rotation, slerp, from_euler, to_euler).
+
 extern "C" {
 #include <lua.h>
 #include <lualib.h>

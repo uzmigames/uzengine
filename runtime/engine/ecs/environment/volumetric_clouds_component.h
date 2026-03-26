@@ -84,8 +84,9 @@ struct VolumetricCloudsComponent {
 
     /// Extinction coefficient for Beer-Lambert attenuation (km^-1).
     /// Higher values cause light to be absorbed more quickly inside clouds.
-    /// @ref Beer-Lambert law — cloud extinction coefficient. Default: 0.04 km^-1.
-    float extinction = 0.015f;
+    /// @ref Beer-Lambert law — cloud extinction coefficient. Default: 0.01 km^-1.
+    /// Lower values = brighter, more translucent clouds. Higher = darker, more opaque.
+    float extinction = 0.01f;
 
     /// Scattering albedo [0,1]. Ratio of scattered light to total extinction.
     /// 1.0 = pure scattering (bright white clouds).
@@ -111,7 +112,7 @@ struct VolumetricCloudsComponent {
     /// @source Schneider 2015 — multi-scatter ambient approximation.
     /// Prevents fully black cloud bases by simulating multi-bounce scattering
     /// with a constant ambient term scaled by this value.
-    float ambientMultiplier = 3.5f;
+    float ambientMultiplier = 6.0f;
 
     // ── Ray March Parameters ─────────────────────────────────────────────
 

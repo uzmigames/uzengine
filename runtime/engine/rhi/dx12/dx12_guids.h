@@ -2,7 +2,7 @@
 
 /// DX12 COM GUID declarations for Clang/MinGW ABI compatibility.
 ///
-/// The DirectX headers from the Agility SDK use `MIDL_INTERFACE("uuid")` which
+/// The DirectX headers (directx_headers) use `MIDL_INTERFACE("uuid")` which
 /// maps to `__declspec(uuid(...))` on MSVC. Clang/MinGW uses `__uuidof<T>` template
 /// specializations instead, which must be provided via `__CRT_UUID_DECL`.
 ///

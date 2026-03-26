@@ -106,15 +106,25 @@ public:
     // Default implementations delegate to the named queries. Subclasses should
     // override these to read fixed fields directly for hot-path performance.
 
+    /// Returns the roughness multiplier [0,1]. Default 1.0.
     [[nodiscard]] virtual float GetRoughnessMultiplier() const { return GetScalarParam("RoughnessMultiplier", 1.0f); }
+    /// Returns the metallic multiplier [0,1]. Default 1.0.
     [[nodiscard]] virtual float GetMetallicMultiplier() const  { return GetScalarParam("MetallicMultiplier", 1.0f); }
+    /// Returns the normal map intensity scale. Default 1.0 (full strength).
     [[nodiscard]] virtual float GetNormalIntensity() const     { return GetScalarParam("NormalIntensity", 1.0f); }
+    /// Returns the ambient occlusion intensity [0,1]. Default 1.0.
     [[nodiscard]] virtual float GetAoIntensity() const         { return GetScalarParam("AoIntensity", 1.0f); }
+    /// Returns the surface opacity [0,1]. Default 1.0 (fully opaque).
     [[nodiscard]] virtual float GetOpacity() const             { return GetScalarParam("Opacity", 1.0f); }
+    /// Returns the emissive intensity multiplier. Default 0.0 (no emission).
     [[nodiscard]] virtual float GetEmissiveIntensity() const   { return GetScalarParam("EmissiveIntensity", 0.0f); }
+    /// Returns the U-axis texture coordinate scale. Default 1.0.
     [[nodiscard]] virtual float GetUvScaleX() const            { return GetScalarParam("UvScaleX", 1.0f); }
+    /// Returns the V-axis texture coordinate scale. Default 1.0.
     [[nodiscard]] virtual float GetUvScaleY() const            { return GetScalarParam("UvScaleY", 1.0f); }
+    /// Returns the U-axis texture coordinate offset. Default 0.0.
     [[nodiscard]] virtual float GetUvOffsetX() const           { return GetScalarParam("UvOffsetX", 0.0f); }
+    /// Returns the V-axis texture coordinate offset. Default 0.0.
     [[nodiscard]] virtual float GetUvOffsetY() const           { return GetScalarParam("UvOffsetY", 0.0f); }
 
     /// Dielectric specular reflectance scale. Controls F0 for non-metallic surfaces:
@@ -153,12 +163,19 @@ public:
 
     // ── Texture path convenience ────────────────────────────────────────────
 
+    /// Returns the VFS path to the albedo (base color) texture.
     [[nodiscard]] const std::string& GetAlbedoPath() const    { return GetTexturePath("Albedo"); }
+    /// Returns the VFS path to the normal map texture.
     [[nodiscard]] const std::string& GetNormalPath() const     { return GetTexturePath("Normal"); }
+    /// Returns the VFS path to the roughness texture.
     [[nodiscard]] const std::string& GetRoughnessPath() const  { return GetTexturePath("Roughness"); }
+    /// Returns the VFS path to the metallic texture.
     [[nodiscard]] const std::string& GetMetallicPath() const   { return GetTexturePath("Metallic"); }
+    /// Returns the VFS path to the ambient occlusion texture.
     [[nodiscard]] const std::string& GetAoPath() const         { return GetTexturePath("Ao"); }
+    /// Returns the VFS path to the emissive texture.
     [[nodiscard]] const std::string& GetEmissivePath() const   { return GetTexturePath("Emissive"); }
+    /// Returns the VFS path to the packed ORM (Occlusion/Roughness/Metallic) texture.
     [[nodiscard]] const std::string& GetOrmPath() const       { return GetTexturePath("ORM"); }
 
     // ── Per-slot sRGB resolution ─────────────────────────────────────────────
@@ -193,13 +210,22 @@ public:
 
     // ── SRV index convenience ───────────────────────────────────────────────
 
+    /// Returns the GPU SRV heap index for the albedo texture. 0 if not loaded.
     [[nodiscard]] uint32_t GetAlbedoSrvIndex() const    { return GetTextureSrvIndex("Albedo"); }
+    /// Returns the GPU SRV heap index for the normal map. 0 if not loaded.
     [[nodiscard]] uint32_t GetNormalSrvIndex() const     { return GetTextureSrvIndex("Normal"); }
+    /// Returns the GPU SRV heap index for the roughness texture. 0 if not loaded.
     [[nodiscard]] uint32_t GetRoughnessSrvIndex() const  { return GetTextureSrvIndex("Roughness"); }
+    /// Returns the GPU SRV heap index for the metallic texture. 0 if not loaded.
     [[nodiscard]] uint32_t GetMetallicSrvIndex() const   { return GetTextureSrvIndex("Metallic"); }
+    /// Returns the GPU SRV heap index for the ambient occlusion texture. 0 if not loaded.
     [[nodiscard]] uint32_t GetAoSrvIndex() const         { return GetTextureSrvIndex("Ao"); }
+    /// Returns the GPU SRV heap index for the emissive texture. 0 if not loaded.
     [[nodiscard]] uint32_t GetEmissiveSrvIndex() const   { return GetTextureSrvIndex("Emissive"); }
+    /// Returns the GPU SRV heap index for the packed ORM texture. 0 if not loaded.
     [[nodiscard]] uint32_t GetOrmSrvIndex() const        { return GetTextureSrvIndex("ORM"); }
+    /// Returns the GPU SRV heap index for the opacity texture. 0 if not loaded.
+    [[nodiscard]] uint32_t GetOpacitySrvIndex() const    { return GetTextureSrvIndex("Opacity"); }
 
     // ── Subsurface scattering parameters ────────────────────────────────────
 
@@ -254,6 +280,8 @@ public:
 
     // ── ORM packed mode ─────────────────────────────────────────────────────
 
+    /// Returns true if this material uses a packed ORM texture (Occlusion in R,
+    /// Roughness in G, Metallic in B) instead of separate per-channel textures.
     [[nodiscard]] virtual bool IsORM() const { return false; }
 
     // ── GPU resource state ──────────────────────────────────────────────────

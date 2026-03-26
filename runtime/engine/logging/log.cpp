@@ -98,6 +98,15 @@ void LogSuppressConsole() {
     }
 }
 
+/// Flushes all active loggers immediately.
+///
+/// Forces all buffered messages to their sinks. Call before operations that
+/// may crash to ensure the last diagnostic message is visible.
+void LogFlushAll() {
+    if (!g_initialized) return;
+    spdlog::apply_all([](std::shared_ptr<spdlog::logger> l) { l->flush(); });
+}
+
 /// Shuts down logging and releases all resources.
 ///
 /// # Behavior

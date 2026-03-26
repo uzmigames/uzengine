@@ -7,6 +7,8 @@
 #include "postprocess/temporal_upscaler.h"
 #include "cvar.h"
 
+/// Lua bindings for renderer API (debug view modes, exposure, upscaler settings, stat overlays).
+
 extern "C" {
 #include <lua.h>
 #include <lualib.h>
@@ -279,6 +281,40 @@ static int RendererGetShadowCache(lua_State* L) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Lua C functions — uz.renderer.* (HDRI environment)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// uz.renderer.set_hdri_environment(srv_index) -> boolean
+///
+/// Sets an HDR panorama as the sky environment for IBL. The panorama is
+/// converted to a cubemap and used to bake irradiance and prefiltered specular
+/// maps, replacing the procedural sky atmosphere as the source of environment
+/// lighting.
+///
+/// The `srv_index` is typically obtained from `uz.texture.load_hdr()`.
+///
+/// # Arguments
+/// * `srv_index` (integer) — SRV descriptor heap index of the equirectangular
+///   HDR texture (RGBA16F).
+///
+/// # Returns
+/// `true` if the HDRI was set and IBL re-baked successfully, `false` on failure.
+static int RendererSetHDRIEnvironment(lua_State* L) {
+    const lua_Integer srvIndex = luaL_checkinteger(L, 1);
+
+    SceneRenderer* renderer = GetRenderer(L);
+    if (!renderer) {
+        UZ_LOG(Scripting, Warning, "uz.renderer.set_hdri_environment: SceneRenderer not set");
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    const bool ok = renderer->SetHDRIEnvironment(static_cast<uint32_t>(srvIndex));
+    lua_pushboolean(L, ok ? 1 : 0);
+    return 1;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Lua C functions — uz.renderer.* (screen percentage / upscaling)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -487,6 +523,9 @@ void LuaRegisterRendererAPI(lua_State* L) {
 
     lua_pushcfunction(L, RendererGetDisplayResolution);
     lua_setfield(L, -2, "get_display_resolution");
+
+    lua_pushcfunction(L, RendererSetHDRIEnvironment);
+    lua_setfield(L, -2, "set_hdri_environment");
 
     lua_setfield(L, -2, "renderer");
 

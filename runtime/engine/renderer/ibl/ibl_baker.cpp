@@ -88,6 +88,10 @@ void IBLBaker::Shutdown() {
         m_device->DestroyPipeline(m_prefilterPipeline);
         m_prefilterPipeline = RHIPipelineHandle::Invalid();
     }
+    if (m_equirectPipeline.IsValid()) {
+        m_device->DestroyPipeline(m_equirectPipeline);
+        m_equirectPipeline = RHIPipelineHandle::Invalid();
+    }
 
     // Destroy shaders
     if (m_brdfLutCS.IsValid()) {
@@ -101,6 +105,10 @@ void IBLBaker::Shutdown() {
     if (m_prefilterCS.IsValid()) {
         m_device->DestroyShader(m_prefilterCS);
         m_prefilterCS = RHIShaderHandle::Invalid();
+    }
+    if (m_equirectCS.IsValid()) {
+        m_device->DestroyShader(m_equirectCS);
+        m_equirectCS = RHIShaderHandle::Invalid();
     }
 
     m_brdfLutSrvIndex = UINT32_MAX;
@@ -472,6 +480,21 @@ IBLBaker::BakeResult IBLBaker::BakeEnvironment(uint32_t envCubemapSrvIndex, RHIT
 
     cmdList->Begin();
 
+    // ── Transition env cubemap UAV → SRV for SM5 reads ────────────────
+    // On SM6.6+ bindless, textures are accessed via ResourceDescriptorHeap
+    // which doesn't require explicit state tracking. On SM5/SM6.0, the
+    // cubemap was left in UnorderedAccess by the sky capture pass — we must
+    // transition to ShaderResource before reading it as an SRV in the
+    // compute shader's descriptor table.
+    if (!m_device->IsBindless()) {
+        RHIBarrierDesc envBarrier = {};
+        envBarrier.texture = envCubemapTexture;
+        envBarrier.buffer = RHIBufferHandle::Invalid();
+        envBarrier.stateBefore = RHIResourceState::UnorderedAccess;
+        envBarrier.stateAfter = RHIResourceState::ShaderResource;
+        cmdList->ResourceBarrier(&envBarrier, 1);
+    }
+
     // ── Irradiance dispatch ─────────────────────────────────────────────
     cmdList->SetPipeline(m_irradiancePipeline);
 
@@ -524,7 +547,7 @@ IBLBaker::BakeResult IBLBaker::BakeEnvironment(uint32_t envCubemapSrvIndex, RHIT
         const uint32_t mipSize = kPrefilteredSize >> mip;
         const float mipRoughness = static_cast<float>(mip) /
                                     static_cast<float>(kPrefilteredMipLevels - 1);
-        const uint32_t sampleCount = 256;
+        const uint32_t sampleCount = 1024;
 
         // Root constants: envMapIndex, faceSize, roughness (as uint bits), sampleCount
         uint32_t roughnessBits = 0;
@@ -638,6 +661,168 @@ IBLBaker::BakeResult IBLBaker::BakeEnvironment(uint32_t envCubemapSrvIndex, RHIT
            "IBLBaker: environment baked (irradiance={}x{} SRV={}, prefiltered={}x{} SRV={})",
            kIrradianceSize, kIrradianceSize, result.irradianceSrvIndex,
            kPrefilteredSize, kPrefilteredSize, result.prefilteredSrvIndex);
+
+    return result;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EnsureEquirectPipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool IBLBaker::EnsureEquirectPipeline() {
+    if (m_equirectPipeline.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::EquirectToCubemapCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "IBLBaker: failed to compile equirect_to_cubemap_cs.hlsl");
+        return false;
+    }
+
+    UZ_LOG(Renderer, Info, "IBLBaker: equirect-to-cubemap shader bytecode size = {} bytes",
+           bytecode.size());
+
+    RHIShaderDesc shaderDesc;
+    shaderDesc.bytecode = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage = RHIShaderStage::Compute;
+    shaderDesc.entryPoint = "main";
+    shaderDesc.debugName = "equirect_to_cubemap_cs";
+
+    m_equirectCS = m_device->CreateShader(shaderDesc);
+    if (!m_equirectCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "IBLBaker: failed to create equirect_to_cubemap_cs shader");
+        return false;
+    }
+
+    RHIComputePipelineDesc pipeDesc;
+    pipeDesc.computeShader = m_equirectCS;
+    pipeDesc.debugName = "IBL_EquirectToCubemap";
+
+    m_equirectPipeline = m_device->CreateComputePipeline(pipeDesc);
+    if (!m_equirectPipeline.IsValid()) {
+        UZ_LOG(Renderer, Error, "IBLBaker: failed to create equirect-to-cubemap compute pipeline");
+        return false;
+    }
+
+    UZ_LOG(Renderer, Info, "IBLBaker: equirect-to-cubemap pipeline created (shader={}, pipeline={})",
+           m_equirectCS.index, m_equirectPipeline.index);
+    return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EquirectToCubemap
+// ─────────────────────────────────────────────────────────────────────────────
+
+IBLBaker::EquirectResult IBLBaker::EquirectToCubemap(uint32_t equirectSrvIndex,
+                                                       uint32_t cubemapSize) {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "IBLBaker::EquirectToCubemap called before Init()");
+        return {};
+    }
+
+    if (equirectSrvIndex == UINT32_MAX) {
+        UZ_LOG(Renderer, Error, "IBLBaker::EquirectToCubemap: invalid equirectSrvIndex");
+        return {};
+    }
+
+    if (cubemapSize == 0 || (cubemapSize % kThreadGroupSize) != 0) {
+        UZ_LOG(Renderer, Error,
+               "IBLBaker::EquirectToCubemap: cubemapSize ({}) must be a non-zero multiple of {}",
+               cubemapSize, kThreadGroupSize);
+        return {};
+    }
+
+    if (!EnsureEquirectPipeline()) {
+        return {};
+    }
+
+    // Create output cubemap: NxNx6 RGBA16F with UAV + SRV usage.
+    // The caller owns this texture and is responsible for destroying it.
+    RHITextureDesc cubeDesc;
+    cubeDesc.width = cubemapSize;
+    cubeDesc.height = cubemapSize;
+    cubeDesc.depthOrArraySize = 6;
+    cubeDesc.format = RHIFormat::RGBA16Float;
+    cubeDesc.usage = RHITextureUsage::UnorderedAccess | RHITextureUsage::ShaderResource;
+    cubeDesc.debugName = "IBL_EquirectCubemap";
+
+    auto cubemapTex = m_device->CreateTexture(cubeDesc);
+    if (!cubemapTex.IsValid()) {
+        UZ_LOG(Renderer, Error, "IBLBaker: failed to create equirect cubemap texture ({}x{})",
+               cubemapSize, cubemapSize);
+        return {};
+    }
+
+    auto* cmdList = m_device->CreateCommandList(RHIQueueType::Graphics);
+    auto* fence = m_device->CreateFence();
+    if (!cmdList || !fence) {
+        UZ_LOG(Renderer, Error,
+               "IBLBaker: failed to create command list or fence for equirect conversion");
+        m_device->DestroyTexture(cubemapTex);
+        if (cmdList) m_device->DestroyCommandList(cmdList);
+        if (fence)   m_device->DestroyFence(fence);
+        return {};
+    }
+
+    cmdList->Begin();
+    cmdList->SetPipeline(m_equirectPipeline);
+
+    // Root constants at b0: cubemapSize, equirectSrvIndex, pad, pad
+    // Must match the equirect_to_cubemap_cs.hlsl cbuffer layout
+    const uint32_t rootConstants[4] = { cubemapSize, equirectSrvIndex, 0, 0 };
+    cmdList->SetRootConstants(0, rootConstants, 4);
+
+    // Bind cubemap UAV at root param 4 (u0)
+    uint32_t cubemapUav = m_device->GetTextureUAVIndex(cubemapTex);
+    if (cubemapUav == UINT32_MAX) {
+        UZ_LOG(Renderer, Error, "IBLBaker: equirect cubemap has no UAV descriptor");
+        m_device->DestroyCommandList(cmdList);
+        m_device->DestroyFence(fence);
+        m_device->DestroyTexture(cubemapTex);
+        return {};
+    }
+    cmdList->SetDescriptorTable(4, cubemapUav);
+
+    // Dispatch: (cubemapSize/8, cubemapSize/8, 6) — one thread per texel per face
+    const uint32_t groupsXY = cubemapSize / kThreadGroupSize;
+    UZ_LOG(Renderer, Info,
+           "IBLBaker: equirect-to-cubemap dispatch — groups=({}, {}, 6), "
+           "equirectSRV={}, cubemapUAV={}, size={}x{}",
+           groupsXY, groupsXY, equirectSrvIndex, cubemapUav,
+           cubemapSize, cubemapSize);
+
+    cmdList->Dispatch(groupsXY, groupsXY, 6);
+
+    // Barrier: UAV -> ShaderResource
+    RHIBarrierDesc barrier;
+    barrier.texture = cubemapTex;
+    barrier.buffer = RHIBufferHandle::Invalid();
+    barrier.stateBefore = RHIResourceState::UnorderedAccess;
+    barrier.stateAfter = RHIResourceState::ShaderResource;
+    cmdList->ResourceBarrier(&barrier, 1);
+
+    cmdList->End();
+    cmdList->Execute();
+
+    fence->Signal(1);
+    fence->WaitCPU(1);
+
+    m_device->DestroyFence(fence);
+    m_device->DestroyCommandList(cmdList);
+
+    EquirectResult result;
+    result.cubemap = cubemapTex;
+    result.srvIndex = m_device->GetTextureSRVIndex(cubemapTex);
+
+    if (result.srvIndex == UINT32_MAX) {
+        UZ_LOG(Renderer, Error, "IBLBaker: equirect cubemap has no SRV");
+    }
+
+    UZ_LOG(Renderer, Info,
+           "IBLBaker: equirect-to-cubemap conversion done ({}x{} per face, SRV={})",
+           cubemapSize, cubemapSize, result.srvIndex);
 
     return result;
 }

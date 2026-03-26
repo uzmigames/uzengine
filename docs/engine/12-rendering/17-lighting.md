@@ -143,13 +143,165 @@ struct LightProbeContribution {
 };
 ```
 
-### Reflection Probes (Cubemap, Parallax-Corrected) — Phase 3
+### Reflection Probes (Cubemap, Parallax-Corrected) — Phase 2+
 
-Bake environment reflection at strategic positions:
-- Capture cubemap (6 faces, 128×128)
-- Bind roughness-filtered mips (high roughness = blurry reflection)
-- Parallax correction: adjust reflection ray to account for probe box shape
-- Fallback: Screen-space reflections for real-time updates
+Capture dynamic local reflections from strategic scene positions via real-time cubemap probes. Each probe bakes a cubemap environment at its position and blends with global IBL using under-operator alpha compositing.
+
+#### System Overview
+
+**Capture Flow:**
+1. **CaptureIfDirty** — Every frame, one probe queues for capture (amortized cost)
+2. **RenderProbeCubemap** — Render scene 6 times (one per cubemap face) in forward PBR mode at probe resolution
+3. **IBLBaker** — Compute irradiance (32×32) + prefiltered specular (256×256, 6 mips) via GPU compute shaders
+4. **StructuredBuffer Upload** — Store baked cubemaps in GPU texture atlas, upload probe metadata to constant buffer
+5. **Shader Evaluation** — Deferred lighting iterates up to 8 active probes, applies distance-based fading + blending
+
+**Max Probes:** 8 simultaneously active in deferred lighting shader
+
+#### ECS Component
+
+**`ReflectionProbeComponent`** — Attached to scene nodes:
+
+```cpp
+/// @ref UE5 ReflectionCaptureComponent — dynamic cubemap probe for local IBL
+struct ReflectionProbeComponent {
+    /// Radius of influence in world units (cm). Default: 300.
+    /// Reflections fade to 0 at influence radius boundary using Hermite smoothstep.
+    float influenceRadius = 300.0f;
+
+    /// Distance over which reflections smoothly blend with neighboring probes (cm).
+    /// Default: 100. Larger values = softer transitions, more GPU work.
+    float blendDistance = 100.0f;
+
+    /// Cubemap resolution (width=height=depth). Default: 128.
+    /// Valid: 64 (distant/cheap), 128 (standard), 256 (hero areas).
+    /// Capture cost scales with resolution^2 per face.
+    uint32_t resolution = 128;
+
+    /// Priority for competing probes in overlapping regions. Default: 0.
+    /// Higher priority wins in overlap. Allows artist control of blending hierarchy.
+    uint32_t priority = 0;
+
+    /// Is this probe active and influencing reflections? Default: true.
+    bool enabled = true;
+
+    /// Signals GPU to re-capture cubemap. Set true on component creation or when
+    /// scene geometry changes. Automatically cleared after capture completes.
+    bool needsCapture = true;
+};
+```
+
+#### GPU Pipeline
+
+**Stage 1: Capture (if needsCapture)**
+
+Render the scene 6 times (one per cubemap face). Each pass:
+- Render to intermediate RT at probe resolution (e.g., 128×128)
+- Use forward PBR shading (same as game rendering, but from probe viewpoint)
+- Capture all geometry visible from probe position
+
+```cpp
+// Pseudocode: capture one probe per frame
+for (uint32_t i = 0; i < probes.size(); ++i) {
+    if (probes[i].needsCapture) {
+        CaptureProbe(probes[i], resolution);
+        probes[i].needsCapture = false;
+        break;  // Only one per frame — amortize cost
+    }
+}
+```
+
+**Stage 2: IBL Baking (GPU Compute)**
+
+After capture, run 3 compute shaders to generate offline IBL data:
+
+| Compute Shader | Input | Output | Purpose |
+|---|---|---|---|
+| **IrradianceBaker** | Cubemap (128×128) | Irradiance cubemap (32×32) | Diffuse lighting (SH9 encoded or sampled directly) |
+| **PrefilteredBaker** | Cubemap (128×128) | Mip chain 0–5 (256→8 px) | Specular at roughness levels |
+| **BRDFIntegrator** | — | 2D LUT (256×256) | Fresnel factor lookup (pre-computed once globally) |
+
+All runs are read-only GUP passes (no sync required between probes).
+
+**Stage 3: Upload to GPU**
+
+Store baked cubemaps in a texture array (or atlas) indexed by probe ID:
+- `ProbeIrradianceTexture[]` — cube array, 32×32 per probe
+- `ProbePrefilteredTexture[]` — cube array with mips, 256×256 base per probe
+- `ProbeMetadataBuffer[]` — structured buffer with influence radius, blend distance, priority, position
+
+#### Shader Integration
+
+**Deferred Lighting Evaluation** — `deferred_lighting_ps.hlsl`
+
+Iterate all active probes (up to 8) and blend their contributions:
+
+```hlsl
+// Per-pixel lighting from all probes
+float3 totalProbeSpecular = float3(0, 0, 0);
+float3 totalProbeDiffuse = float3(0, 0, 0);
+
+for (uint p = 0; p < probeCount; ++p) {
+    ProbeMetadata probe = probes[p];
+    float3 probeDir = probe.position - positionWS;
+    float distToProbe = length(probeDir);
+
+    // Distance-based fade using Hermite smoothstep
+    float influence = 0.0f;
+    if (distToProbe < probe.influenceRadius) {
+        float normalizedDist = (distToProbe - (probe.influenceRadius - probe.blendDistance))
+                             / probe.blendDistance;
+        influence = smoothstep(1.0f, 0.0f, clamp(normalizedDist, 0.0f, 1.0f));
+    }
+
+    if (influence > 0.001f) {
+        // Sample probe cubemaps at current pixel
+        float3 R = reflect(-V, N);
+        float3 irradiance = SampleIrradianceProbe(probe.id, N).rgb;
+        float3 specular = SamplePrefilteredProbe(probe.id, R, roughness).rgb;
+
+        // Accumulate weighted contribution
+        totalProbeDiffuse += irradiance * influence;
+        totalProbeSpecular += specular * influence;
+    }
+}
+
+// Blend with global IBL using under-operator (probe = foreground)
+float3 blendedDiffuse = lerp(globalIrradiance, totalProbeDiffuse, probeAlpha);
+float3 blendedSpecular = lerp(globalSpecular, totalProbeSpecular, probeAlpha);
+```
+
+Where `probeAlpha` is determined by:
+- If any probe is active at this pixel: alpha = influence of highest-priority probe
+- Otherwise: alpha = 0 (use global IBL)
+
+#### File Locations
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| **ECS Component** | `runtime/engine/scene/reflection_probe_component.h` | `ReflectionProbeComponent` definition |
+| **Capture System** | `runtime/engine/renderer/core/reflection_probe_manager.h` | Probe capture, baking, GPU upload |
+| **GPU Compute** | `runtime/shaders/compute/ibl_baker_irradiance_cs.hlsl` | Irradiance cubemap baking |
+| **GPU Compute** | `runtime/shaders/compute/ibl_baker_prefiltered_cs.hlsl` | Prefiltered mip chain baking |
+| **Deferred Pass** | `runtime/shaders/runtime/deferred_lighting_ps.hlsl` | Probe sampling + blending (lines TBD) |
+| **Data Struct** | `runtime/engine/renderer/core/probe_types.h` | `ProbeMetadata`, GPU buffer layout |
+| **Tests** | `runtime/tests/engine/renderer/test_reflection_probes.cpp` | Capture, baking, blending math |
+
+#### Performance Characteristics
+
+| Operation | Cost | Per Frame |
+|---|---|---|
+| **Single probe capture** | 6 forward passes at resolution² | ~1/8 frame (amortized: 1 probe/frame) |
+| **IBL baking (1 probe)** | 3 compute shaders (irradiance, prefilt, BRDF) | ~2ms (one-time after capture) |
+| **Deferred blend (8 probes)** | 8 × (distance fade + 2 cubemap samples) | ~0.5–1.0ms (included in deferred lighting) |
+| **VRAM (per probe)** | Irradiance (4KB) + Prefiltered (512KB) + Metadata (16B) | ~520KB per probe |
+
+With 8 probes active, total VRAM ≈ 4.2 MB (negligible vs. scene textures).
+
+**Optimization opportunities:**
+- **Captured once, updated only on needsCapture flag** — leverage temporal coherence for static scenes
+- **Distance-based fade reduces sample cost for distant probes** — farther probes skip computation entirely
+- **Bake offline or during loading screen** — capture all probes asynchronously before gameplay starts
 
 ### Image-Based Lighting (IBL) — Phase 2
 
@@ -267,8 +419,8 @@ enum class ToneMapMode {
 |-------|-----------|
 | **Phase 1 (Milestone 1.2)** | Forward PBR shading, single directional light + ambient, Cook-Torrance BRDF, Reinhard tonemap. |
 | **Phase 1.3 (Milestone 1.3)** | ✅ Deferred G-Buffer + Lighting pass, up to 64 point lights, smooth attenuation, Cook-Torrance evaluation per-light. |
-| **Phase 2** | DirectionalLight + CSM (4 cascades), PointLight + SpotLight shadow atlas, tiled forward light culling, IBL (prefiltered env maps), ACES tone mapping. |
-| **Phase 3** | Light probes (SH9 grid), reflection probes (cubemap + parallax), SSGI, volumetric fog/rays, auto-exposure, IES profiles, emissive area lights (approximated), light functions (projected textures). |
+| **Phase 2** | DirectionalLight + CSM (4 cascades), PointLight + SpotLight shadow atlas, tiled forward light culling, IBL (prefiltered env maps), **Reflection Probes (cubemap + distance fade, 8 max)**, ACES tone mapping. |
+| **Phase 3** | Light probes (SH9 grid), parallax-corrected probes, SSGI, volumetric fog/rays, auto-exposure, IES profiles, emissive area lights (approximated), light functions (projected textures). |
 | **Phase 4** | Virtual Shadow Maps, hardware ray-traced GI (DXR), LTC area light shading, clustered deferred, 100+ dynamic lights with full quality. |
 
 ## Engine Comparison
@@ -277,9 +429,10 @@ enum class ToneMapMode {
 |---------|----------|---------|--------------|
 | Directional shadows | Cascaded (4 default) | Same | **Cascaded (4 fixed Phase 2)** |
 | Dynamic point shadows | Atlas (512×512 slots) | Per-light cubemap | **Dynamic atlas Phase 2/3** |
+| Reflection probes | ReflectionCapture (cubemap + parallax) | ReflectionProbe (cubemap) | **ReflectionProbeComponent (8 max, Phase 2+)** |
 | Indirect lighting | Lumen (RT) or baked | VoxelGI, SDFGI, baked | **Probes Phase 3 + SSGI Phase 3** |
 | Light culling | Deferred (tile + cluster) | Forward + culling | **Tiled Forward+ Phase 2** |
-| Reflection | Reflection captures + SSR | Reflection probes + SSR | **Probes Phase 3 + SSGI Phase 3** |
+| Global reflections | SSR + Lumen | SSR | **SSR Phase 3** |
 | Ray-traced GI | Lumen (Nanite + GPU RT) | Via Godot RT | **Hardware RT Phase 4+** |
 
 ## Multi-Light System (Phase 1.3+)

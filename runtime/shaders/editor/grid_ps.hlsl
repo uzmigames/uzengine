@@ -67,6 +67,14 @@ PSOutput main(PSInput input) {
 
     float3 worldPos = rayOrigin + rayDir * t;
 
+    // ── Hard distance clamp — discard BEFORE any grid computation ─────────
+    // This is the primary horizon-line fix: any pixel whose Z=0 hit point
+    // is farther than fadeDistance from the camera is killed immediately.
+    float dist = length(worldPos - cameraPos.xyz);
+    if (dist > fadeDistance) {
+        discard;
+    }
+
     // ── Grid lines on XY plane (Z-up ground) ───────────────────────────────
     float minorX = GridLine(worldPos.x, minorSpacing);
     float minorY = GridLine(worldPos.y, minorSpacing);
@@ -82,10 +90,10 @@ PSOutput main(PSInput input) {
     // Y-axis (right) = green line at X=0
     float onYAxis = (abs(worldPos.x) < fwidth(worldPos.x) * 2.0) ? 1.0 : 0.0;
 
-    // ── Color and fade ───────────────────────────────────────────────────
-    float dist = length(worldPos - cameraPos.xyz);
-    float fade = 1.0 - saturate(dist / fadeDistance);
-    fade *= fade; // Quadratic falloff
+    // ── Distance fade — exponential falloff ──────────────────────────────
+    // dist already computed above (before grid lines)
+    float ratio = dist / fadeDistance;
+    float fade = exp(-3.0 * ratio * ratio);
 
     // Base grid color: dark gray for minor, lighter for major
     float3 color = float3(0.3, 0.3, 0.3);
@@ -116,6 +124,7 @@ PSOutput main(PSInput input) {
     // Instead of hardware depth test, we sample the scene depth via bindless
     // and discard pixels where geometry is closer than the grid plane.
     // Reversed-Z: larger depth values are closer to the camera.
+#ifdef UZ_BINDLESS
     if (sceneDepthSrv != 0xFFFFFFFF) {
         // Map display-resolution pixel coords to [0,1] UVs for depth sampling
         float2 uv = input.position.xy / float2(displayWidth, displayHeight);
@@ -128,6 +137,10 @@ PSOutput main(PSInput input) {
             discard;
         }
     }
+#endif
+    // SM5 path: depth occlusion relies on hardware depth test (DepthStencilState).
+    // When no bindless descriptor is available, the editor grid uses standard
+    // depth testing against the scene depth buffer bound to the output merger.
 
     PSOutput output;
     output.color = float4(color, alpha);

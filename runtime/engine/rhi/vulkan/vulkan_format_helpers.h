@@ -10,6 +10,7 @@
 #ifdef _WIN32
 #define VK_USE_PLATFORM_WIN32_KHR
 #elif defined(__linux__)
+/// Vulkan WSI platform: X11/Xlib on Linux.
 #define VK_USE_PLATFORM_XLIB_KHR
 #endif
 

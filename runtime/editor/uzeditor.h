@@ -6,7 +6,7 @@
 /// ```
 ///
 /// Provides: EditorGrid, StatsOverlay, BitmapFont, TextRenderer,
-/// ScreenshotCapture, CompareGrid, ImageDiff.
+/// ScreenshotCapture, CompareGrid, ImageDiff, GizmoRenderer.
 ///
 /// This header is only available when linking against `editor.lib`
 /// (i.e., when building with `zig build -Deditor=true`).
@@ -34,3 +34,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 #include "screenshot/screenshot_capture.h"
 #include "screenshot/compare_grid.h"
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Editor Input & Selection
+// ─────────────────────────────────────────────────────────────────────────────
+#include "input/editor_input_handler.h"
+#include "selection/selection_manager.h"
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Transform Gizmo
+// ─────────────────────────────────────────────────────────────────────────────
+#include "gizmo/gizmo_renderer.h"

@@ -1,4 +1,4 @@
-/// Unit tests for DecalComponent.
+/// Unit tests for VfxDecal.
 ///
 /// Covers: default field values, GetProjectionMatrix (determinant, center mapping),
 /// Tick (age advancement, expiry, linear fade), FadeOut (immediate and timed),
@@ -47,22 +47,22 @@ Vec3 TransformPoint(const Mat4& m, const Vec3& p) {
 // Default field values
 // =============================================================================
 
-TEST(DecalComponent, DefaultValues_HalfExtents_Are_1_1_0p5) {
-    DecalComponent d;
+TEST(VfxDecal, DefaultValues_HalfExtents_Are_1_1_0p5) {
+    VfxDecal d;
     EXPECT_FLOAT_EQ(d.halfExtents.x, 1.0f);
     EXPECT_FLOAT_EQ(d.halfExtents.y, 1.0f);
     EXPECT_FLOAT_EQ(d.halfExtents.z, 0.5f);
 }
 
-TEST(DecalComponent, DefaultValues_Position_IsZero) {
-    DecalComponent d;
+TEST(VfxDecal, DefaultValues_Position_IsZero) {
+    VfxDecal d;
     EXPECT_FLOAT_EQ(d.position.x, 0.0f);
     EXPECT_FLOAT_EQ(d.position.y, 0.0f);
     EXPECT_FLOAT_EQ(d.position.z, 0.0f);
 }
 
-TEST(DecalComponent, DefaultValues_Rotation_IsIdentity) {
-    DecalComponent d;
+TEST(VfxDecal, DefaultValues_Rotation_IsIdentity) {
+    VfxDecal d;
     // Identity quaternion: (0, 0, 0, 1)
     EXPECT_FLOAT_EQ(d.rotation.x, 0.0f);
     EXPECT_FLOAT_EQ(d.rotation.y, 0.0f);
@@ -70,48 +70,48 @@ TEST(DecalComponent, DefaultValues_Rotation_IsIdentity) {
     EXPECT_FLOAT_EQ(d.rotation.w, 1.0f);
 }
 
-TEST(DecalComponent, DefaultValues_NormalIntensity_Is_0p8) {
-    DecalComponent d;
+TEST(VfxDecal, DefaultValues_NormalIntensity_Is_0p8) {
+    VfxDecal d;
     EXPECT_FLOAT_EQ(d.normalIntensity, 0.8f);
 }
 
-TEST(DecalComponent, DefaultValues_RoughnessOverride_Is_NegativeOne) {
-    DecalComponent d;
+TEST(VfxDecal, DefaultValues_RoughnessOverride_Is_NegativeOne) {
+    VfxDecal d;
     EXPECT_FLOAT_EQ(d.roughnessOverride, -1.0f);
 }
 
-TEST(DecalComponent, DefaultValues_BlendMode_IsOpaque) {
-    DecalComponent d;
+TEST(VfxDecal, DefaultValues_BlendMode_IsOpaque) {
+    VfxDecal d;
     EXPECT_EQ(d.blendMode, DecalBlendMode::Opaque);
 }
 
-TEST(DecalComponent, DefaultValues_Lifetime_Is_10) {
-    DecalComponent d;
+TEST(VfxDecal, DefaultValues_Lifetime_Is_10) {
+    VfxDecal d;
     EXPECT_FLOAT_EQ(d.lifetime, 10.0f);
 }
 
-TEST(DecalComponent, DefaultValues_Age_IsZero) {
-    DecalComponent d;
+TEST(VfxDecal, DefaultValues_Age_IsZero) {
+    VfxDecal d;
     EXPECT_FLOAT_EQ(d.age, 0.0f);
 }
 
-TEST(DecalComponent, DefaultValues_FadeAlpha_IsOne) {
-    DecalComponent d;
+TEST(VfxDecal, DefaultValues_FadeAlpha_IsOne) {
+    VfxDecal d;
     EXPECT_FLOAT_EQ(d.fadeAlpha, 1.0f);
 }
 
-TEST(DecalComponent, DefaultValues_IsActive_IsTrue) {
-    DecalComponent d;
+TEST(VfxDecal, DefaultValues_IsActive_IsTrue) {
+    VfxDecal d;
     EXPECT_TRUE(d.isActive);
 }
 
-TEST(DecalComponent, DefaultValues_SortOrder_IsZero) {
-    DecalComponent d;
+TEST(VfxDecal, DefaultValues_SortOrder_IsZero) {
+    VfxDecal d;
     EXPECT_EQ(d.sortOrder, 0);
 }
 
-TEST(DecalComponent, DefaultValues_MaterialPath_IsEmpty) {
-    DecalComponent d;
+TEST(VfxDecal, DefaultValues_MaterialPath_IsEmpty) {
+    VfxDecal d;
     EXPECT_TRUE(d.materialPath.empty());
 }
 
@@ -119,8 +119,8 @@ TEST(DecalComponent, DefaultValues_MaterialPath_IsEmpty) {
 // GetProjectionMatrix — determinant (non-singular)
 // =============================================================================
 
-TEST(DecalComponent, GetProjectionMatrix_IdentityDecal_DeterminantIsNonZero) {
-    DecalComponent d;
+TEST(VfxDecal, GetProjectionMatrix_IdentityDecal_DeterminantIsNonZero) {
+    VfxDecal d;
     // Default: position=(0,0,0), rotation=identity, halfExtents=(1,1,0.5)
     const Mat4 proj = d.GetProjectionMatrix();
     const float det = Det3x3(proj);
@@ -128,8 +128,8 @@ TEST(DecalComponent, GetProjectionMatrix_IdentityDecal_DeterminantIsNonZero) {
         << "Projection matrix must be non-singular for default decal";
 }
 
-TEST(DecalComponent, GetProjectionMatrix_CustomHalfExtents_DeterminantIsNonZero) {
-    DecalComponent d;
+TEST(VfxDecal, GetProjectionMatrix_CustomHalfExtents_DeterminantIsNonZero) {
+    VfxDecal d;
     d.halfExtents = Vec3{2.0f, 3.0f, 1.5f};
     const Mat4 proj = d.GetProjectionMatrix();
     const float det = Det3x3(proj);
@@ -141,8 +141,8 @@ TEST(DecalComponent, GetProjectionMatrix_CustomHalfExtents_DeterminantIsNonZero)
 // GetProjectionMatrix — center position maps to origin
 // =============================================================================
 
-TEST(DecalComponent, GetProjectionMatrix_CenterPosition_MapsToOrigin) {
-    DecalComponent d;
+TEST(VfxDecal, GetProjectionMatrix_CenterPosition_MapsToOrigin) {
+    VfxDecal d;
     d.position = Vec3{5.0f, 3.0f, -2.0f};
     d.halfExtents = Vec3{1.0f, 1.0f, 0.5f};
     // Identity rotation: no rotation
@@ -160,10 +160,10 @@ TEST(DecalComponent, GetProjectionMatrix_CenterPosition_MapsToOrigin) {
         << "Center Z must map to 0 after projection";
 }
 
-TEST(DecalComponent, GetProjectionMatrix_HalfExtentBoundary_MapsToOne) {
+TEST(VfxDecal, GetProjectionMatrix_HalfExtentBoundary_MapsToOne) {
     // A point exactly at the +X boundary of the OBB (position.x + halfExtents.x)
     // should map to x=1 in decal-local normalized space.
-    DecalComponent d;
+    VfxDecal d;
     d.position = Vec3{0.0f, 0.0f, 0.0f};
     d.halfExtents = Vec3{2.0f, 2.0f, 1.0f};
     d.rotation = Quat::Identity();
@@ -177,8 +177,8 @@ TEST(DecalComponent, GetProjectionMatrix_HalfExtentBoundary_MapsToOne) {
         << "+X boundary must map to x=1.0 in normalized decal space";
 }
 
-TEST(DecalComponent, GetProjectionMatrix_NegativeHalfExtentBoundary_MapsToNegativeOne) {
-    DecalComponent d;
+TEST(VfxDecal, GetProjectionMatrix_NegativeHalfExtentBoundary_MapsToNegativeOne) {
+    VfxDecal d;
     d.position = Vec3{0.0f, 0.0f, 0.0f};
     d.halfExtents = Vec3{2.0f, 2.0f, 1.0f};
     d.rotation = Quat::Identity();
@@ -196,15 +196,15 @@ TEST(DecalComponent, GetProjectionMatrix_NegativeHalfExtentBoundary_MapsToNegati
 // Tick — age advancement
 // =============================================================================
 
-TEST(DecalComponent, Tick_AdvancesAge_ByDt) {
-    DecalComponent d;
+TEST(VfxDecal, Tick_AdvancesAge_ByDt) {
+    VfxDecal d;
     d.lifetime = 10.0f;
     d.Tick(0.016f);
     EXPECT_NEAR(d.age, 0.016f, 1e-5f);
 }
 
-TEST(DecalComponent, Tick_MultipleCalls_AccumulatesAge) {
-    DecalComponent d;
+TEST(VfxDecal, Tick_MultipleCalls_AccumulatesAge) {
+    VfxDecal d;
     d.lifetime = 10.0f;
     d.Tick(0.1f);
     d.Tick(0.2f);
@@ -212,8 +212,8 @@ TEST(DecalComponent, Tick_MultipleCalls_AccumulatesAge) {
     EXPECT_NEAR(d.age, 0.6f, 1e-5f);
 }
 
-TEST(DecalComponent, Tick_WhileInactive_DoesNotAdvanceAge) {
-    DecalComponent d;
+TEST(VfxDecal, Tick_WhileInactive_DoesNotAdvanceAge) {
+    VfxDecal d;
     d.lifetime = 10.0f;
     d.isActive = false;
     d.age = 2.0f;
@@ -226,8 +226,8 @@ TEST(DecalComponent, Tick_WhileInactive_DoesNotAdvanceAge) {
 // Tick — linear fade alpha computation
 // =============================================================================
 
-TEST(DecalComponent, Tick_AtQuarterLifetime_FadeAlphaIsThreeQuarters) {
-    DecalComponent d;
+TEST(VfxDecal, Tick_AtQuarterLifetime_FadeAlphaIsThreeQuarters) {
+    VfxDecal d;
     d.lifetime = 8.0f;
     d.Tick(2.0f);
     // fadeAlpha = 1.0 - (2/8) = 0.75
@@ -235,8 +235,8 @@ TEST(DecalComponent, Tick_AtQuarterLifetime_FadeAlphaIsThreeQuarters) {
     EXPECT_TRUE(d.isActive);
 }
 
-TEST(DecalComponent, Tick_AtHalfLifetime_FadeAlphaIsHalf) {
-    DecalComponent d;
+TEST(VfxDecal, Tick_AtHalfLifetime_FadeAlphaIsHalf) {
+    VfxDecal d;
     d.lifetime = 10.0f;
     d.Tick(5.0f);
     // fadeAlpha = 1.0 - (5/10) = 0.5
@@ -244,8 +244,8 @@ TEST(DecalComponent, Tick_AtHalfLifetime_FadeAlphaIsHalf) {
     EXPECT_TRUE(d.isActive);
 }
 
-TEST(DecalComponent, Tick_JustBeforeExpiry_FadeAlphaIsNearZero) {
-    DecalComponent d;
+TEST(VfxDecal, Tick_JustBeforeExpiry_FadeAlphaIsNearZero) {
+    VfxDecal d;
     d.lifetime = 4.0f;
     // Tick to age = 3.9 -- still active, very low fade
     d.Tick(3.9f);
@@ -253,8 +253,8 @@ TEST(DecalComponent, Tick_JustBeforeExpiry_FadeAlphaIsNearZero) {
     EXPECT_TRUE(d.isActive);
 }
 
-TEST(DecalComponent, Tick_AtExactLifetime_IsActiveBecomesFlase_FadeAlphaIsZero) {
-    DecalComponent d;
+TEST(VfxDecal, Tick_AtExactLifetime_IsActiveBecomesFlase_FadeAlphaIsZero) {
+    VfxDecal d;
     d.lifetime = 5.0f;
     d.Tick(5.0f);
     EXPECT_FALSE(d.isActive)
@@ -263,8 +263,8 @@ TEST(DecalComponent, Tick_AtExactLifetime_IsActiveBecomesFlase_FadeAlphaIsZero) 
         << "fadeAlpha must be 0.0 when expired";
 }
 
-TEST(DecalComponent, Tick_BeyondLifetime_IsActiveBecomesFlase_FadeAlphaIsZero) {
-    DecalComponent d;
+TEST(VfxDecal, Tick_BeyondLifetime_IsActiveBecomesFlase_FadeAlphaIsZero) {
+    VfxDecal d;
     d.lifetime = 3.0f;
     d.Tick(10.0f);
     EXPECT_FALSE(d.isActive)
@@ -273,9 +273,9 @@ TEST(DecalComponent, Tick_BeyondLifetime_IsActiveBecomesFlase_FadeAlphaIsZero) {
         << "fadeAlpha must be 0.0 after expiry";
 }
 
-TEST(DecalComponent, Tick_AfterExpiry_FurtherTicksDoNotChangeAge) {
+TEST(VfxDecal, Tick_AfterExpiry_FurtherTicksDoNotChangeAge) {
     // Once expired (isActive=false), subsequent Ticks are no-ops.
-    DecalComponent d;
+    VfxDecal d;
     d.lifetime = 2.0f;
     d.Tick(2.0f); // expires here
     ASSERT_FALSE(d.isActive);
@@ -289,8 +289,8 @@ TEST(DecalComponent, Tick_AfterExpiry_FurtherTicksDoNotChangeAge) {
 // Tick — zero dt is a valid no-op
 // =============================================================================
 
-TEST(DecalComponent, Tick_ZeroDt_DoesNotChangeState) {
-    DecalComponent d;
+TEST(VfxDecal, Tick_ZeroDt_DoesNotChangeState) {
+    VfxDecal d;
     d.lifetime = 10.0f;
     d.Tick(0.0f);
     EXPECT_FLOAT_EQ(d.age, 0.0f);
@@ -302,8 +302,8 @@ TEST(DecalComponent, Tick_ZeroDt_DoesNotChangeState) {
 // FadeOut
 // =============================================================================
 
-TEST(DecalComponent, FadeOut_PositiveDuration_SetsLifetimeToAgePlusDuration) {
-    DecalComponent d;
+TEST(VfxDecal, FadeOut_PositiveDuration_SetsLifetimeToAgePlusDuration) {
+    VfxDecal d;
     d.lifetime = 10.0f;
     d.age = 3.0f;
     d.FadeOut(2.0f);
@@ -313,8 +313,8 @@ TEST(DecalComponent, FadeOut_PositiveDuration_SetsLifetimeToAgePlusDuration) {
         << "FadeOut with positive duration must not expire immediately";
 }
 
-TEST(DecalComponent, FadeOut_ZeroDuration_ExpiresImmediately) {
-    DecalComponent d;
+TEST(VfxDecal, FadeOut_ZeroDuration_ExpiresImmediately) {
+    VfxDecal d;
     d.lifetime = 10.0f;
     d.age = 3.0f;
     d.FadeOut(0.0f);
@@ -324,8 +324,8 @@ TEST(DecalComponent, FadeOut_ZeroDuration_ExpiresImmediately) {
         << "fadeAlpha must be 0 after immediate fade-out";
 }
 
-TEST(DecalComponent, FadeOut_NegativeDuration_ExpiresImmediately) {
-    DecalComponent d;
+TEST(VfxDecal, FadeOut_NegativeDuration_ExpiresImmediately) {
+    VfxDecal d;
     d.lifetime = 10.0f;
     d.age = 1.0f;
     d.FadeOut(-5.0f);
@@ -334,8 +334,8 @@ TEST(DecalComponent, FadeOut_NegativeDuration_ExpiresImmediately) {
     EXPECT_FLOAT_EQ(d.fadeAlpha, 0.0f);
 }
 
-TEST(DecalComponent, FadeOut_ThenTick_FadesOverRemainingDuration) {
-    DecalComponent d;
+TEST(VfxDecal, FadeOut_ThenTick_FadesOverRemainingDuration) {
+    VfxDecal d;
     d.lifetime = 20.0f;
     d.age = 5.0f;
     d.FadeOut(4.0f); // new lifetime = 5 + 4 = 9
@@ -347,8 +347,8 @@ TEST(DecalComponent, FadeOut_ThenTick_FadesOverRemainingDuration) {
     EXPECT_TRUE(d.isActive);
 }
 
-TEST(DecalComponent, FadeOut_ThenTickFull_ExpiresAtNewLifetime) {
-    DecalComponent d;
+TEST(VfxDecal, FadeOut_ThenTickFull_ExpiresAtNewLifetime) {
+    VfxDecal d;
     d.lifetime = 20.0f;
     d.age = 0.0f;
     d.FadeOut(3.0f); // new lifetime = 0 + 3 = 3
@@ -362,28 +362,28 @@ TEST(DecalComponent, FadeOut_ThenTickFull_ExpiresAtNewLifetime) {
 // MarkForDestruction
 // =============================================================================
 
-TEST(DecalComponent, MarkForDestruction_SetsIsActiveToFalse) {
-    DecalComponent d;
+TEST(VfxDecal, MarkForDestruction_SetsIsActiveToFalse) {
+    VfxDecal d;
     d.MarkForDestruction();
     EXPECT_FALSE(d.isActive);
 }
 
-TEST(DecalComponent, MarkForDestruction_DoesNotChangeAge) {
-    DecalComponent d;
+TEST(VfxDecal, MarkForDestruction_DoesNotChangeAge) {
+    VfxDecal d;
     d.age = 3.5f;
     d.MarkForDestruction();
     EXPECT_FLOAT_EQ(d.age, 3.5f);
 }
 
-TEST(DecalComponent, MarkForDestruction_DoesNotChangeLifetime) {
-    DecalComponent d;
+TEST(VfxDecal, MarkForDestruction_DoesNotChangeLifetime) {
+    VfxDecal d;
     d.lifetime = 10.0f;
     d.MarkForDestruction();
     EXPECT_FLOAT_EQ(d.lifetime, 10.0f);
 }
 
-TEST(DecalComponent, MarkForDestruction_DoesNotChangeFadeAlpha) {
-    DecalComponent d;
+TEST(VfxDecal, MarkForDestruction_DoesNotChangeFadeAlpha) {
+    VfxDecal d;
     d.fadeAlpha = 0.7f;
     d.MarkForDestruction();
     EXPECT_FLOAT_EQ(d.fadeAlpha, 0.7f)
@@ -394,37 +394,37 @@ TEST(DecalComponent, MarkForDestruction_DoesNotChangeFadeAlpha) {
 // IsExpired
 // =============================================================================
 
-TEST(DecalComponent, IsExpired_ReturnsFalse_WhenAgeIsZeroAndLifetimeIsPositive) {
-    DecalComponent d;
+TEST(VfxDecal, IsExpired_ReturnsFalse_WhenAgeIsZeroAndLifetimeIsPositive) {
+    VfxDecal d;
     d.age = 0.0f;
     d.lifetime = 10.0f;
     EXPECT_FALSE(d.IsExpired());
 }
 
-TEST(DecalComponent, IsExpired_ReturnsFalse_WhenAgeLessThanLifetime) {
-    DecalComponent d;
+TEST(VfxDecal, IsExpired_ReturnsFalse_WhenAgeLessThanLifetime) {
+    VfxDecal d;
     d.age = 4.9f;
     d.lifetime = 5.0f;
     EXPECT_FALSE(d.IsExpired());
 }
 
-TEST(DecalComponent, IsExpired_ReturnsTrue_WhenAgeEqualsLifetime) {
-    DecalComponent d;
+TEST(VfxDecal, IsExpired_ReturnsTrue_WhenAgeEqualsLifetime) {
+    VfxDecal d;
     d.age = 10.0f;
     d.lifetime = 10.0f;
     EXPECT_TRUE(d.IsExpired());
 }
 
-TEST(DecalComponent, IsExpired_ReturnsTrue_WhenAgeExceedsLifetime) {
-    DecalComponent d;
+TEST(VfxDecal, IsExpired_ReturnsTrue_WhenAgeExceedsLifetime) {
+    VfxDecal d;
     d.age = 15.0f;
     d.lifetime = 10.0f;
     EXPECT_TRUE(d.IsExpired());
 }
 
-TEST(DecalComponent, IsExpired_IsIndependentOfIsActive) {
+TEST(VfxDecal, IsExpired_IsIndependentOfIsActive) {
     // IsExpired checks only age vs lifetime, not the isActive flag.
-    DecalComponent d;
+    VfxDecal d;
     d.age = 0.0f;
     d.lifetime = 5.0f;
     d.isActive = false;

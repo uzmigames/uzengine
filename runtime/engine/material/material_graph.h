@@ -73,8 +73,9 @@ public:
     /// Cannot remove PBROutput (id=1).
     void RemoveExpression(uint32_t exprId);
 
-    /// Find an expression by ID. Returns nullptr if not found.
+    /// Finds an expression node by ID. Returns nullptr if not found.
     [[nodiscard]] MaterialExpression* FindExpression(uint32_t exprId);
+    /// Const overload — finds an expression node by ID.
     [[nodiscard]] const MaterialExpression* FindExpression(uint32_t exprId) const;
 
     /// Connect srcExpr.output[srcPin] -> dstExpr.input[dstPin].
@@ -118,8 +119,9 @@ public:
     /// Load from .uzmat file (reads JSON from disk).
     bool LoadFromFile(const std::string& path, std::string* outError = nullptr);
 
-    /// Access the PBR output expression (always exists, id=1).
+    /// Returns the PBR output expression (always exists, id=1).
     [[nodiscard]] MaterialExpression& GetPBROutput() { return expressions_[0]; }
+    /// Const overload — returns the PBR output expression.
     [[nodiscard]] const MaterialExpression& GetPBROutput() const { return expressions_[0]; }
 
     /// All expressions in the graph.
