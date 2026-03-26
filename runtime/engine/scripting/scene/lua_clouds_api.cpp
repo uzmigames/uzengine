@@ -520,6 +520,429 @@ static int SceneIsCloudsEnabled(lua_State* L) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Lua C functions — tracing quality properties
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// uz.scene.set_clouds_view_sample_count_scale(entity, scale)
+///
+/// Sets the multiplier for primary ray-march samples during main view rendering. Default: 0.5.
+static int SceneSetCloudsViewSampleCountScale(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_clouds_view_sample_count_scale: World not set"); return 0; }
+    const Entity entity = CheckEntity(L, 1, "set_clouds_view_sample_count_scale");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.set_clouds_view_sample_count_scale: entity {} has no VolumetricCloudsComponent", entity.id);
+        return 0;
+    }
+    world->GetComponent<VolumetricCloudsComponent>(entity).viewSampleCountScale =
+        static_cast<float>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+/// uz.scene.get_clouds_view_sample_count_scale(entity) -> number | nil
+static int SceneGetCloudsViewSampleCountScale(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_clouds_view_sample_count_scale");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(
+        world->GetComponent<VolumetricCloudsComponent>(entity).viewSampleCountScale));
+    return 1;
+}
+
+/// uz.scene.set_clouds_reflection_view_sample_count_scale(entity, scale)
+///
+/// Sets the multiplier for sample count when tracing clouds in reflections. Default: 0.1.
+static int SceneSetCloudsReflectionViewSampleCountScale(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_clouds_reflection_view_sample_count_scale: World not set"); return 0; }
+    const Entity entity = CheckEntity(L, 1, "set_clouds_reflection_view_sample_count_scale");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.set_clouds_reflection_view_sample_count_scale: entity {} has no VolumetricCloudsComponent", entity.id);
+        return 0;
+    }
+    world->GetComponent<VolumetricCloudsComponent>(entity).reflectionViewSampleCountScale =
+        static_cast<float>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+/// uz.scene.get_clouds_reflection_view_sample_count_scale(entity) -> number | nil
+static int SceneGetCloudsReflectionViewSampleCountScale(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_clouds_reflection_view_sample_count_scale");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(
+        world->GetComponent<VolumetricCloudsComponent>(entity).reflectionViewSampleCountScale));
+    return 1;
+}
+
+/// uz.scene.set_clouds_shadow_view_sample_count_scale(entity, scale)
+///
+/// Sets the multiplier for sample count when tracing cloud shadows. Default: 0.5.
+static int SceneSetCloudsShadowViewSampleCountScale(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_clouds_shadow_view_sample_count_scale: World not set"); return 0; }
+    const Entity entity = CheckEntity(L, 1, "set_clouds_shadow_view_sample_count_scale");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.set_clouds_shadow_view_sample_count_scale: entity {} has no VolumetricCloudsComponent", entity.id);
+        return 0;
+    }
+    world->GetComponent<VolumetricCloudsComponent>(entity).shadowViewSampleCountScale =
+        static_cast<float>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+/// uz.scene.get_clouds_shadow_view_sample_count_scale(entity) -> number | nil
+static int SceneGetCloudsShadowViewSampleCountScale(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_clouds_shadow_view_sample_count_scale");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(
+        world->GetComponent<VolumetricCloudsComponent>(entity).shadowViewSampleCountScale));
+    return 1;
+}
+
+/// uz.scene.set_clouds_shadow_reflection_view_sample_count_scale(entity, scale)
+///
+/// Sets the multiplier for sample count when tracing cloud shadow reflections. Default: 0.1.
+static int SceneSetCloudsShadowReflectionViewSampleCountScale(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_clouds_shadow_reflection_view_sample_count_scale: World not set"); return 0; }
+    const Entity entity = CheckEntity(L, 1, "set_clouds_shadow_reflection_view_sample_count_scale");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.set_clouds_shadow_reflection_view_sample_count_scale: entity {} has no VolumetricCloudsComponent", entity.id);
+        return 0;
+    }
+    world->GetComponent<VolumetricCloudsComponent>(entity).shadowReflectionViewSampleCountScale =
+        static_cast<float>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+/// uz.scene.get_clouds_shadow_reflection_view_sample_count_scale(entity) -> number | nil
+static int SceneGetCloudsShadowReflectionViewSampleCountScale(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_clouds_shadow_reflection_view_sample_count_scale");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(
+        world->GetComponent<VolumetricCloudsComponent>(entity).shadowReflectionViewSampleCountScale));
+    return 1;
+}
+
+/// uz.scene.set_clouds_shadow_tracing_distance(entity, km)
+///
+/// Sets the maximum distance for shadow ray tracing in kilometers. Default: 10.0 km.
+static int SceneSetCloudsShadowTracingDistance(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_clouds_shadow_tracing_distance: World not set"); return 0; }
+    const Entity entity = CheckEntity(L, 1, "set_clouds_shadow_tracing_distance");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.set_clouds_shadow_tracing_distance: entity {} has no VolumetricCloudsComponent", entity.id);
+        return 0;
+    }
+    world->GetComponent<VolumetricCloudsComponent>(entity).shadowTracingDistance =
+        static_cast<float>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+/// uz.scene.get_clouds_shadow_tracing_distance(entity) -> number | nil
+static int SceneGetCloudsShadowTracingDistance(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_clouds_shadow_tracing_distance");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(
+        world->GetComponent<VolumetricCloudsComponent>(entity).shadowTracingDistance));
+    return 1;
+}
+
+/// uz.scene.set_clouds_stop_tracing_transmittance_threshold(entity, threshold)
+///
+/// Sets the transmittance threshold below which ray tracing stops. Default: 0.01.
+static int SceneSetCloudsStopTracingTransmittanceThreshold(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_clouds_stop_tracing_transmittance_threshold: World not set"); return 0; }
+    const Entity entity = CheckEntity(L, 1, "set_clouds_stop_tracing_transmittance_threshold");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.set_clouds_stop_tracing_transmittance_threshold: entity {} has no VolumetricCloudsComponent", entity.id);
+        return 0;
+    }
+    world->GetComponent<VolumetricCloudsComponent>(entity).stopTracingTransmittanceThreshold =
+        static_cast<float>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+/// uz.scene.get_clouds_stop_tracing_transmittance_threshold(entity) -> number | nil
+static int SceneGetCloudsStopTracingTransmittanceThreshold(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_clouds_stop_tracing_transmittance_threshold");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(
+        world->GetComponent<VolumetricCloudsComponent>(entity).stopTracingTransmittanceThreshold));
+    return 1;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lua C functions — aerial perspective scattering properties
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// uz.scene.set_clouds_aerial_perspective_rayleigh_scattering_start_distance(entity, km)
+///
+/// Sets the distance from camera where Rayleigh scattering on clouds begins in km. Default: 0.0 km.
+static int SceneSetCloudsAerialPerspectiveRayleighScatteringStartDistance(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_clouds_aerial_perspective_rayleigh_scattering_start_distance: World not set"); return 0; }
+    const Entity entity = CheckEntity(L, 1, "set_clouds_aerial_perspective_rayleigh_scattering_start_distance");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.set_clouds_aerial_perspective_rayleigh_scattering_start_distance: entity {} has no VolumetricCloudsComponent", entity.id);
+        return 0;
+    }
+    world->GetComponent<VolumetricCloudsComponent>(entity).aerialPerspectiveRayleighScatteringStartDistance =
+        static_cast<float>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+/// uz.scene.get_clouds_aerial_perspective_rayleigh_scattering_start_distance(entity) -> number | nil
+static int SceneGetCloudsAerialPerspectiveRayleighScatteringStartDistance(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_clouds_aerial_perspective_rayleigh_scattering_start_distance");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(
+        world->GetComponent<VolumetricCloudsComponent>(entity).aerialPerspectiveRayleighScatteringStartDistance));
+    return 1;
+}
+
+/// uz.scene.set_clouds_aerial_perspective_rayleigh_scattering_fade_distance(entity, km)
+///
+/// Sets the distance over which Rayleigh scattering fades in on clouds in km. Default: 10.0 km.
+static int SceneSetCloudsAerialPerspectiveRayleighScatteringFadeDistance(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_clouds_aerial_perspective_rayleigh_scattering_fade_distance: World not set"); return 0; }
+    const Entity entity = CheckEntity(L, 1, "set_clouds_aerial_perspective_rayleigh_scattering_fade_distance");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.set_clouds_aerial_perspective_rayleigh_scattering_fade_distance: entity {} has no VolumetricCloudsComponent", entity.id);
+        return 0;
+    }
+    world->GetComponent<VolumetricCloudsComponent>(entity).aerialPerspectiveRayleighScatteringFadeDistance =
+        static_cast<float>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+/// uz.scene.get_clouds_aerial_perspective_rayleigh_scattering_fade_distance(entity) -> number | nil
+static int SceneGetCloudsAerialPerspectiveRayleighScatteringFadeDistance(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_clouds_aerial_perspective_rayleigh_scattering_fade_distance");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(
+        world->GetComponent<VolumetricCloudsComponent>(entity).aerialPerspectiveRayleighScatteringFadeDistance));
+    return 1;
+}
+
+/// uz.scene.set_clouds_aerial_perspective_mie_scattering_start_distance(entity, km)
+///
+/// Sets the distance from camera where Mie scattering on clouds begins in km. Default: 0.0 km.
+static int SceneSetCloudsAerialPerspectiveMieScatteringStartDistance(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_clouds_aerial_perspective_mie_scattering_start_distance: World not set"); return 0; }
+    const Entity entity = CheckEntity(L, 1, "set_clouds_aerial_perspective_mie_scattering_start_distance");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.set_clouds_aerial_perspective_mie_scattering_start_distance: entity {} has no VolumetricCloudsComponent", entity.id);
+        return 0;
+    }
+    world->GetComponent<VolumetricCloudsComponent>(entity).aerialPerspectiveMieScatteringStartDistance =
+        static_cast<float>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+/// uz.scene.get_clouds_aerial_perspective_mie_scattering_start_distance(entity) -> number | nil
+static int SceneGetCloudsAerialPerspectiveMieScatteringStartDistance(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_clouds_aerial_perspective_mie_scattering_start_distance");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(
+        world->GetComponent<VolumetricCloudsComponent>(entity).aerialPerspectiveMieScatteringStartDistance));
+    return 1;
+}
+
+/// uz.scene.set_clouds_aerial_perspective_mie_scattering_fade_distance(entity, km)
+///
+/// Sets the distance over which Mie scattering fades in on clouds in km. Default: 10.0 km.
+static int SceneSetCloudsAerialPerspectiveMieScatteringFadeDistance(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_clouds_aerial_perspective_mie_scattering_fade_distance: World not set"); return 0; }
+    const Entity entity = CheckEntity(L, 1, "set_clouds_aerial_perspective_mie_scattering_fade_distance");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.set_clouds_aerial_perspective_mie_scattering_fade_distance: entity {} has no VolumetricCloudsComponent", entity.id);
+        return 0;
+    }
+    world->GetComponent<VolumetricCloudsComponent>(entity).aerialPerspectiveMieScatteringFadeDistance =
+        static_cast<float>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+/// uz.scene.get_clouds_aerial_perspective_mie_scattering_fade_distance(entity) -> number | nil
+static int SceneGetCloudsAerialPerspectiveMieScatteringFadeDistance(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_clouds_aerial_perspective_mie_scattering_fade_distance");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(
+        world->GetComponent<VolumetricCloudsComponent>(entity).aerialPerspectiveMieScatteringFadeDistance));
+    return 1;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lua C functions — sky light occlusion and tracing distance mode properties
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// uz.scene.set_clouds_sky_light_cloud_bottom_occlusion(entity, occlusion)
+///
+/// Sets the occlusion factor at the bottom of the cloud layer [0,1]. Default: 0.2.
+static int SceneSetCloudsSkyLightCloudBottomOcclusion(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_clouds_sky_light_cloud_bottom_occlusion: World not set"); return 0; }
+    const Entity entity = CheckEntity(L, 1, "set_clouds_sky_light_cloud_bottom_occlusion");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.set_clouds_sky_light_cloud_bottom_occlusion: entity {} has no VolumetricCloudsComponent", entity.id);
+        return 0;
+    }
+    world->GetComponent<VolumetricCloudsComponent>(entity).skyLightCloudBottomOcclusion =
+        static_cast<float>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+/// uz.scene.get_clouds_sky_light_cloud_bottom_occlusion(entity) -> number | nil
+static int SceneGetCloudsSkyLightCloudBottomOcclusion(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_clouds_sky_light_cloud_bottom_occlusion");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(
+        world->GetComponent<VolumetricCloudsComponent>(entity).skyLightCloudBottomOcclusion));
+    return 1;
+}
+
+/// uz.scene.set_clouds_tracing_max_distance_mode(entity, mode)
+///
+/// Sets the tracing max distance mode: 0 = DistanceFromCloudLayerEntryPoint, 1 = DistanceFromPointOfView.
+/// Default: 0.
+static int SceneSetCloudsTracingMaxDistanceMode(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_clouds_tracing_max_distance_mode: World not set"); return 0; }
+    const Entity entity = CheckEntity(L, 1, "set_clouds_tracing_max_distance_mode");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.set_clouds_tracing_max_distance_mode: entity {} has no VolumetricCloudsComponent", entity.id);
+        return 0;
+    }
+    const lua_Integer mode = luaL_checkinteger(L, 2);
+    world->GetComponent<VolumetricCloudsComponent>(entity).tracingMaxDistanceMode =
+        (mode == 1) ? TracingMaxDistanceMode::DistanceFromPointOfView
+                    : TracingMaxDistanceMode::DistanceFromCloudLayerEntryPoint;
+    return 0;
+}
+
+/// uz.scene.get_clouds_tracing_max_distance_mode(entity) -> int | nil
+///
+/// Returns 0 = DistanceFromCloudLayerEntryPoint, 1 = DistanceFromPointOfView.
+static int SceneGetCloudsTracingMaxDistanceMode(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_clouds_tracing_max_distance_mode");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    const auto mode = world->GetComponent<VolumetricCloudsComponent>(entity).tracingMaxDistanceMode;
+    lua_pushinteger(L, mode == TracingMaxDistanceMode::DistanceFromPointOfView ? 1 : 0);
+    return 1;
+}
+
+/// uz.scene.set_clouds_tracing_start_max_distance(entity, km)
+///
+/// Sets the maximum distance from the tracing origin in kilometers. Default: 350.0 km.
+static int SceneSetCloudsTracingStartMaxDistance(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_clouds_tracing_start_max_distance: World not set"); return 0; }
+    const Entity entity = CheckEntity(L, 1, "set_clouds_tracing_start_max_distance");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.set_clouds_tracing_start_max_distance: entity {} has no VolumetricCloudsComponent", entity.id);
+        return 0;
+    }
+    world->GetComponent<VolumetricCloudsComponent>(entity).tracingStartMaxDistance =
+        static_cast<float>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+/// uz.scene.get_clouds_tracing_start_max_distance(entity) -> number | nil
+static int SceneGetCloudsTracingStartMaxDistance(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_clouds_tracing_start_max_distance");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(
+        world->GetComponent<VolumetricCloudsComponent>(entity).tracingStartMaxDistance));
+    return 1;
+}
+
+/// uz.scene.set_clouds_tracing_start_distance_from_camera(entity, km)
+///
+/// Sets the minimum distance from camera before cloud tracing begins in km. Default: 0.0 km.
+static int SceneSetCloudsTracingStartDistanceFromCamera(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_clouds_tracing_start_distance_from_camera: World not set"); return 0; }
+    const Entity entity = CheckEntity(L, 1, "set_clouds_tracing_start_distance_from_camera");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.set_clouds_tracing_start_distance_from_camera: entity {} has no VolumetricCloudsComponent", entity.id);
+        return 0;
+    }
+    world->GetComponent<VolumetricCloudsComponent>(entity).tracingStartDistanceFromCamera =
+        static_cast<float>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+/// uz.scene.get_clouds_tracing_start_distance_from_camera(entity) -> number | nil
+static int SceneGetCloudsTracingStartDistanceFromCamera(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_clouds_tracing_start_distance_from_camera");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<VolumetricCloudsComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(
+        world->GetComponent<VolumetricCloudsComponent>(entity).tracingStartDistanceFromCamera));
+    return 1;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Registration
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -573,6 +996,40 @@ void LuaRegisterCloudsAPI(lua_State* L) {
     lua_pushcfunction(L, SceneGetCloudsPrimarySteps);           lua_setfield(L, -2, "get_clouds_primary_steps");
     lua_pushcfunction(L, SceneGetCloudsLightSteps);             lua_setfield(L, -2, "get_clouds_light_steps");
     lua_pushcfunction(L, SceneIsCloudsEnabled);                 lua_setfield(L, -2, "is_clouds_enabled");
+
+    // Tracing quality properties
+    lua_pushcfunction(L, SceneSetCloudsViewSampleCountScale);                                  lua_setfield(L, -2, "set_clouds_view_sample_count_scale");
+    lua_pushcfunction(L, SceneGetCloudsViewSampleCountScale);                                  lua_setfield(L, -2, "get_clouds_view_sample_count_scale");
+    lua_pushcfunction(L, SceneSetCloudsReflectionViewSampleCountScale);                        lua_setfield(L, -2, "set_clouds_reflection_view_sample_count_scale");
+    lua_pushcfunction(L, SceneGetCloudsReflectionViewSampleCountScale);                        lua_setfield(L, -2, "get_clouds_reflection_view_sample_count_scale");
+    lua_pushcfunction(L, SceneSetCloudsShadowViewSampleCountScale);                            lua_setfield(L, -2, "set_clouds_shadow_view_sample_count_scale");
+    lua_pushcfunction(L, SceneGetCloudsShadowViewSampleCountScale);                            lua_setfield(L, -2, "get_clouds_shadow_view_sample_count_scale");
+    lua_pushcfunction(L, SceneSetCloudsShadowReflectionViewSampleCountScale);                  lua_setfield(L, -2, "set_clouds_shadow_reflection_view_sample_count_scale");
+    lua_pushcfunction(L, SceneGetCloudsShadowReflectionViewSampleCountScale);                  lua_setfield(L, -2, "get_clouds_shadow_reflection_view_sample_count_scale");
+    lua_pushcfunction(L, SceneSetCloudsShadowTracingDistance);                                 lua_setfield(L, -2, "set_clouds_shadow_tracing_distance");
+    lua_pushcfunction(L, SceneGetCloudsShadowTracingDistance);                                 lua_setfield(L, -2, "get_clouds_shadow_tracing_distance");
+    lua_pushcfunction(L, SceneSetCloudsStopTracingTransmittanceThreshold);                     lua_setfield(L, -2, "set_clouds_stop_tracing_transmittance_threshold");
+    lua_pushcfunction(L, SceneGetCloudsStopTracingTransmittanceThreshold);                     lua_setfield(L, -2, "get_clouds_stop_tracing_transmittance_threshold");
+
+    // Aerial perspective scattering properties
+    lua_pushcfunction(L, SceneSetCloudsAerialPerspectiveRayleighScatteringStartDistance);      lua_setfield(L, -2, "set_clouds_aerial_perspective_rayleigh_scattering_start_distance");
+    lua_pushcfunction(L, SceneGetCloudsAerialPerspectiveRayleighScatteringStartDistance);      lua_setfield(L, -2, "get_clouds_aerial_perspective_rayleigh_scattering_start_distance");
+    lua_pushcfunction(L, SceneSetCloudsAerialPerspectiveRayleighScatteringFadeDistance);       lua_setfield(L, -2, "set_clouds_aerial_perspective_rayleigh_scattering_fade_distance");
+    lua_pushcfunction(L, SceneGetCloudsAerialPerspectiveRayleighScatteringFadeDistance);       lua_setfield(L, -2, "get_clouds_aerial_perspective_rayleigh_scattering_fade_distance");
+    lua_pushcfunction(L, SceneSetCloudsAerialPerspectiveMieScatteringStartDistance);           lua_setfield(L, -2, "set_clouds_aerial_perspective_mie_scattering_start_distance");
+    lua_pushcfunction(L, SceneGetCloudsAerialPerspectiveMieScatteringStartDistance);           lua_setfield(L, -2, "get_clouds_aerial_perspective_mie_scattering_start_distance");
+    lua_pushcfunction(L, SceneSetCloudsAerialPerspectiveMieScatteringFadeDistance);            lua_setfield(L, -2, "set_clouds_aerial_perspective_mie_scattering_fade_distance");
+    lua_pushcfunction(L, SceneGetCloudsAerialPerspectiveMieScatteringFadeDistance);            lua_setfield(L, -2, "get_clouds_aerial_perspective_mie_scattering_fade_distance");
+
+    // Sky light occlusion and tracing distance mode
+    lua_pushcfunction(L, SceneSetCloudsSkyLightCloudBottomOcclusion);                         lua_setfield(L, -2, "set_clouds_sky_light_cloud_bottom_occlusion");
+    lua_pushcfunction(L, SceneGetCloudsSkyLightCloudBottomOcclusion);                         lua_setfield(L, -2, "get_clouds_sky_light_cloud_bottom_occlusion");
+    lua_pushcfunction(L, SceneSetCloudsTracingMaxDistanceMode);                                lua_setfield(L, -2, "set_clouds_tracing_max_distance_mode");
+    lua_pushcfunction(L, SceneGetCloudsTracingMaxDistanceMode);                                lua_setfield(L, -2, "get_clouds_tracing_max_distance_mode");
+    lua_pushcfunction(L, SceneSetCloudsTracingStartMaxDistance);                               lua_setfield(L, -2, "set_clouds_tracing_start_max_distance");
+    lua_pushcfunction(L, SceneGetCloudsTracingStartMaxDistance);                               lua_setfield(L, -2, "get_clouds_tracing_start_max_distance");
+    lua_pushcfunction(L, SceneSetCloudsTracingStartDistanceFromCamera);                        lua_setfield(L, -2, "set_clouds_tracing_start_distance_from_camera");
+    lua_pushcfunction(L, SceneGetCloudsTracingStartDistanceFromCamera);                        lua_setfield(L, -2, "get_clouds_tracing_start_distance_from_camera");
 
     lua_pop(L, 2);
 

@@ -436,6 +436,269 @@ static int SceneIsSkyLightEnabled(lua_State* L) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Lua C functions — cloud ambient occlusion and capture properties
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// uz.scene.set_sky_light_cloud_ambient_occlusion(entity, bool)
+///
+/// Enables/disables cloud-based ambient occlusion on the sky light. Default: true.
+static int SceneSetSkyLightCloudAmbientOcclusion(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_sky_light_cloud_ambient_occlusion: World not set"); return 0; }
+    const Entity entity = CheckEntity(L, 1, "set_sky_light_cloud_ambient_occlusion");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+    if (!world->HasComponent<SkyLightComponent>(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.set_sky_light_cloud_ambient_occlusion: entity {} has no SkyLightComponent", entity.id);
+        return 0;
+    }
+    world->GetComponent<SkyLightComponent>(entity).cloudAmbientOcclusion =
+        lua_toboolean(L, 2) != 0;
+    return 0;
+}
+
+/// uz.scene.get_sky_light_cloud_ambient_occlusion(entity) -> bool | nil
+static int SceneGetSkyLightCloudAmbientOcclusion(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_sky_light_cloud_ambient_occlusion");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<SkyLightComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushboolean(L, world->GetComponent<SkyLightComponent>(entity).cloudAmbientOcclusion ? 1 : 0);
+    return 1;
+}
+
+/// uz.scene.set_sky_light_cloud_ambient_occlusion_strength(entity, strength)
+///
+/// Sets the strength of the cloud ambient occlusion effect [0,1]. Default: 0.5.
+static int SceneSetSkyLightCloudAmbientOcclusionStrength(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_sky_light_cloud_ambient_occlusion_strength: World not set"); return 0; }
+    const Entity entity = CheckEntity(L, 1, "set_sky_light_cloud_ambient_occlusion_strength");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+    if (!world->HasComponent<SkyLightComponent>(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.set_sky_light_cloud_ambient_occlusion_strength: entity {} has no SkyLightComponent", entity.id);
+        return 0;
+    }
+    world->GetComponent<SkyLightComponent>(entity).cloudAmbientOcclusionStrength =
+        static_cast<float>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+/// uz.scene.get_sky_light_cloud_ambient_occlusion_strength(entity) -> number | nil
+static int SceneGetSkyLightCloudAmbientOcclusionStrength(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_sky_light_cloud_ambient_occlusion_strength");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<SkyLightComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(
+        world->GetComponent<SkyLightComponent>(entity).cloudAmbientOcclusionStrength));
+    return 1;
+}
+
+/// uz.scene.set_sky_light_cloud_ambient_occlusion_extent(entity, km)
+///
+/// Sets the world-space extent of the cloud AO map in kilometers. Default: 64.0 km.
+static int SceneSetSkyLightCloudAmbientOcclusionExtent(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_sky_light_cloud_ambient_occlusion_extent: World not set"); return 0; }
+    const Entity entity = CheckEntity(L, 1, "set_sky_light_cloud_ambient_occlusion_extent");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+    if (!world->HasComponent<SkyLightComponent>(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.set_sky_light_cloud_ambient_occlusion_extent: entity {} has no SkyLightComponent", entity.id);
+        return 0;
+    }
+    world->GetComponent<SkyLightComponent>(entity).cloudAmbientOcclusionExtent =
+        static_cast<float>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+/// uz.scene.get_sky_light_cloud_ambient_occlusion_extent(entity) -> number | nil
+static int SceneGetSkyLightCloudAmbientOcclusionExtent(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_sky_light_cloud_ambient_occlusion_extent");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<SkyLightComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(
+        world->GetComponent<SkyLightComponent>(entity).cloudAmbientOcclusionExtent));
+    return 1;
+}
+
+/// uz.scene.set_sky_light_cloud_ambient_occlusion_map_resolution_scale(entity, scale)
+///
+/// Sets the multiplier for the cloud AO map resolution. Default: 1.0.
+static int SceneSetSkyLightCloudAmbientOcclusionMapResolutionScale(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_sky_light_cloud_ambient_occlusion_map_resolution_scale: World not set"); return 0; }
+    const Entity entity = CheckEntity(L, 1, "set_sky_light_cloud_ambient_occlusion_map_resolution_scale");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+    if (!world->HasComponent<SkyLightComponent>(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.set_sky_light_cloud_ambient_occlusion_map_resolution_scale: entity {} has no SkyLightComponent", entity.id);
+        return 0;
+    }
+    world->GetComponent<SkyLightComponent>(entity).cloudAmbientOcclusionMapResolutionScale =
+        static_cast<float>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+/// uz.scene.get_sky_light_cloud_ambient_occlusion_map_resolution_scale(entity) -> number | nil
+static int SceneGetSkyLightCloudAmbientOcclusionMapResolutionScale(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_sky_light_cloud_ambient_occlusion_map_resolution_scale");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<SkyLightComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(
+        world->GetComponent<SkyLightComponent>(entity).cloudAmbientOcclusionMapResolutionScale));
+    return 1;
+}
+
+/// uz.scene.set_sky_light_cloud_ambient_occlusion_aperture_scale(entity, scale)
+///
+/// Sets the cone aperture for cloud AO sampling. Default: 0.0.
+static int SceneSetSkyLightCloudAmbientOcclusionApertureScale(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_sky_light_cloud_ambient_occlusion_aperture_scale: World not set"); return 0; }
+    const Entity entity = CheckEntity(L, 1, "set_sky_light_cloud_ambient_occlusion_aperture_scale");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+    if (!world->HasComponent<SkyLightComponent>(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.set_sky_light_cloud_ambient_occlusion_aperture_scale: entity {} has no SkyLightComponent", entity.id);
+        return 0;
+    }
+    world->GetComponent<SkyLightComponent>(entity).cloudAmbientOcclusionApertureScale =
+        static_cast<float>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+/// uz.scene.get_sky_light_cloud_ambient_occlusion_aperture_scale(entity) -> number | nil
+static int SceneGetSkyLightCloudAmbientOcclusionApertureScale(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_sky_light_cloud_ambient_occlusion_aperture_scale");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<SkyLightComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(
+        world->GetComponent<SkyLightComponent>(entity).cloudAmbientOcclusionApertureScale));
+    return 1;
+}
+
+/// uz.scene.set_sky_light_sky_distance_threshold(entity, cm)
+///
+/// Sets the maximum distance at which geometry contributes to the sky light cubemap capture in cm. Default: 150000.0 cm.
+static int SceneSetSkyLightSkyDistanceThreshold(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_sky_light_sky_distance_threshold: World not set"); return 0; }
+    const Entity entity = CheckEntity(L, 1, "set_sky_light_sky_distance_threshold");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+    if (!world->HasComponent<SkyLightComponent>(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.set_sky_light_sky_distance_threshold: entity {} has no SkyLightComponent", entity.id);
+        return 0;
+    }
+    world->GetComponent<SkyLightComponent>(entity).skyDistanceThreshold =
+        static_cast<float>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+/// uz.scene.get_sky_light_sky_distance_threshold(entity) -> number | nil
+static int SceneGetSkyLightSkyDistanceThreshold(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_sky_light_sky_distance_threshold");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<SkyLightComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(
+        world->GetComponent<SkyLightComponent>(entity).skyDistanceThreshold));
+    return 1;
+}
+
+/// uz.scene.set_sky_light_occlusion_contrast(entity, contrast)
+///
+/// Sets the contrast adjustment for sky light occlusion. Default: 0.2.
+static int SceneSetSkyLightOcclusionContrast(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_sky_light_occlusion_contrast: World not set"); return 0; }
+    const Entity entity = CheckEntity(L, 1, "set_sky_light_occlusion_contrast");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+    if (!world->HasComponent<SkyLightComponent>(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.set_sky_light_occlusion_contrast: entity {} has no SkyLightComponent", entity.id);
+        return 0;
+    }
+    world->GetComponent<SkyLightComponent>(entity).occlusionContrast =
+        static_cast<float>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+/// uz.scene.get_sky_light_occlusion_contrast(entity) -> number | nil
+static int SceneGetSkyLightOcclusionContrast(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_sky_light_occlusion_contrast");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<SkyLightComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(
+        world->GetComponent<SkyLightComponent>(entity).occlusionContrast));
+    return 1;
+}
+
+/// uz.scene.set_sky_light_capture_emissive_only(entity, bool)
+///
+/// When true, the sky cubemap capture only includes emissive surfaces. Default: false.
+static int SceneSetSkyLightCaptureEmissiveOnly(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_sky_light_capture_emissive_only: World not set"); return 0; }
+    const Entity entity = CheckEntity(L, 1, "set_sky_light_capture_emissive_only");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+    if (!world->HasComponent<SkyLightComponent>(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.set_sky_light_capture_emissive_only: entity {} has no SkyLightComponent", entity.id);
+        return 0;
+    }
+    world->GetComponent<SkyLightComponent>(entity).captureEmissiveOnly =
+        lua_toboolean(L, 2) != 0;
+    return 0;
+}
+
+/// uz.scene.get_sky_light_capture_emissive_only(entity) -> bool | nil
+static int SceneGetSkyLightCaptureEmissiveOnly(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_sky_light_capture_emissive_only");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<SkyLightComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushboolean(L, world->GetComponent<SkyLightComponent>(entity).captureEmissiveOnly ? 1 : 0);
+    return 1;
+}
+
+/// uz.scene.set_sky_light_source_cubemap_angle(entity, degrees)
+///
+/// Sets the rotation angle for the specified cubemap source in degrees. Default: 0.0.
+static int SceneSetSkyLightSourceCubemapAngle(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_sky_light_source_cubemap_angle: World not set"); return 0; }
+    const Entity entity = CheckEntity(L, 1, "set_sky_light_source_cubemap_angle");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+    if (!world->HasComponent<SkyLightComponent>(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.set_sky_light_source_cubemap_angle: entity {} has no SkyLightComponent", entity.id);
+        return 0;
+    }
+    world->GetComponent<SkyLightComponent>(entity).sourceCubemapAngle =
+        static_cast<float>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+/// uz.scene.get_sky_light_source_cubemap_angle(entity) -> number | nil
+static int SceneGetSkyLightSourceCubemapAngle(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_sky_light_source_cubemap_angle");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<SkyLightComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(
+        world->GetComponent<SkyLightComponent>(entity).sourceCubemapAngle));
+    return 1;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Registration
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -481,6 +744,26 @@ void LuaRegisterSkyLightAPI(lua_State* L) {
     lua_pushcfunction(L, SceneGetSkyLightOcclusionTint);          lua_setfield(L, -2, "get_sky_light_occlusion_tint");
     lua_pushcfunction(L, SceneGetSkyLightOcclusionExponent);      lua_setfield(L, -2, "get_sky_light_occlusion_exponent");
     lua_pushcfunction(L, SceneIsSkyLightEnabled);                 lua_setfield(L, -2, "is_sky_light_enabled");
+
+    // Cloud ambient occlusion and capture properties
+    lua_pushcfunction(L, SceneSetSkyLightCloudAmbientOcclusion);                         lua_setfield(L, -2, "set_sky_light_cloud_ambient_occlusion");
+    lua_pushcfunction(L, SceneGetSkyLightCloudAmbientOcclusion);                         lua_setfield(L, -2, "get_sky_light_cloud_ambient_occlusion");
+    lua_pushcfunction(L, SceneSetSkyLightCloudAmbientOcclusionStrength);                 lua_setfield(L, -2, "set_sky_light_cloud_ambient_occlusion_strength");
+    lua_pushcfunction(L, SceneGetSkyLightCloudAmbientOcclusionStrength);                 lua_setfield(L, -2, "get_sky_light_cloud_ambient_occlusion_strength");
+    lua_pushcfunction(L, SceneSetSkyLightCloudAmbientOcclusionExtent);                   lua_setfield(L, -2, "set_sky_light_cloud_ambient_occlusion_extent");
+    lua_pushcfunction(L, SceneGetSkyLightCloudAmbientOcclusionExtent);                   lua_setfield(L, -2, "get_sky_light_cloud_ambient_occlusion_extent");
+    lua_pushcfunction(L, SceneSetSkyLightCloudAmbientOcclusionMapResolutionScale);       lua_setfield(L, -2, "set_sky_light_cloud_ambient_occlusion_map_resolution_scale");
+    lua_pushcfunction(L, SceneGetSkyLightCloudAmbientOcclusionMapResolutionScale);       lua_setfield(L, -2, "get_sky_light_cloud_ambient_occlusion_map_resolution_scale");
+    lua_pushcfunction(L, SceneSetSkyLightCloudAmbientOcclusionApertureScale);            lua_setfield(L, -2, "set_sky_light_cloud_ambient_occlusion_aperture_scale");
+    lua_pushcfunction(L, SceneGetSkyLightCloudAmbientOcclusionApertureScale);            lua_setfield(L, -2, "get_sky_light_cloud_ambient_occlusion_aperture_scale");
+    lua_pushcfunction(L, SceneSetSkyLightSkyDistanceThreshold);                          lua_setfield(L, -2, "set_sky_light_sky_distance_threshold");
+    lua_pushcfunction(L, SceneGetSkyLightSkyDistanceThreshold);                          lua_setfield(L, -2, "get_sky_light_sky_distance_threshold");
+    lua_pushcfunction(L, SceneSetSkyLightOcclusionContrast);                             lua_setfield(L, -2, "set_sky_light_occlusion_contrast");
+    lua_pushcfunction(L, SceneGetSkyLightOcclusionContrast);                             lua_setfield(L, -2, "get_sky_light_occlusion_contrast");
+    lua_pushcfunction(L, SceneSetSkyLightCaptureEmissiveOnly);                           lua_setfield(L, -2, "set_sky_light_capture_emissive_only");
+    lua_pushcfunction(L, SceneGetSkyLightCaptureEmissiveOnly);                           lua_setfield(L, -2, "get_sky_light_capture_emissive_only");
+    lua_pushcfunction(L, SceneSetSkyLightSourceCubemapAngle);                            lua_setfield(L, -2, "set_sky_light_source_cubemap_angle");
+    lua_pushcfunction(L, SceneGetSkyLightSourceCubemapAngle);                            lua_setfield(L, -2, "get_sky_light_source_cubemap_angle");
 
     lua_pop(L, 2);
 
