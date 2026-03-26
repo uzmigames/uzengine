@@ -14,7 +14,8 @@
   "main": "./out/extension.js",
   "activationEvents": [
     "onLanguage:uzscene",
-    "onLanguage:uzproject"
+    "onLanguage:uzproject",
+    "onLanguage:uzfx"
   ],
   "contributes": {
     "commands": [
@@ -100,6 +101,12 @@
         "aliases": ["UzEngine Project"],
         "extensions": [".uzproject"],
         "icon": { "light": "./icons/uzproject.svg", "dark": "./icons/uzproject.svg" }
+      },
+      {
+        "id": "uzfx",
+        "aliases": ["UzEngine VFX Effect"],
+        "extensions": [".uzfx"],
+        "icon": { "light": "./icons/uzfx.svg", "dark": "./icons/uzfx.svg" }
       }
     ],
     "customEditors": [
@@ -145,6 +152,11 @@
       },
       {
         "language": "uzproject",
+        "scopeName": "source.json.uzengine",
+        "path": "./syntaxes/uzengine-json.tmLanguage.json"
+      },
+      {
+        "language": "uzfx",
         "scopeName": "source.json.uzengine",
         "path": "./syntaxes/uzengine-json.tmLanguage.json"
       },

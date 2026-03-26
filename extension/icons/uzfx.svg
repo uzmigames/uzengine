@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <rect x="2" y="2" width="20" height="20" rx="3" fill="#E8632B" opacity="0.15"/>
+  <!-- particle burst: center dot + radiating sparks -->
+  <circle cx="12" cy="12" r="2" fill="#E8632B"/>
+  <line x1="12" y1="6" x2="12" y2="9"   stroke="#E8632B" stroke-width="1.3" stroke-linecap="round"/>
+  <line x1="12" y1="15" x2="12" y2="18" stroke="#E8632B" stroke-width="1.3" stroke-linecap="round"/>
+  <line x1="6"  y1="12" x2="9"  y2="12" stroke="#E8632B" stroke-width="1.3" stroke-linecap="round"/>
+  <line x1="15" y1="12" x2="18" y2="12" stroke="#E8632B" stroke-width="1.3" stroke-linecap="round"/>
+  <line x1="7.8" y1="7.8"   x2="9.9"  y2="9.9"  stroke="#E8632B" stroke-width="1.1" stroke-linecap="round" opacity="0.75"/>
+  <line x1="14.1" y1="14.1" x2="16.2" y2="16.2" stroke="#E8632B" stroke-width="1.1" stroke-linecap="round" opacity="0.75"/>
+  <line x1="16.2" y1="7.8"  x2="14.1" y2="9.9"  stroke="#E8632B" stroke-width="1.1" stroke-linecap="round" opacity="0.75"/>
+  <line x1="9.9"  y1="14.1" x2="7.8"  y2="16.2" stroke="#E8632B" stroke-width="1.1" stroke-linecap="round" opacity="0.75"/>
+</svg>
