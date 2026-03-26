@@ -99,6 +99,7 @@ class DynamicResolutionController;
 class CloudPass;
 struct CloudPassInput;
 class VFXSystem;
+class VFXHotReload;
 class DecalManager;
 class TrailSystem;
 struct ParticleEmitter;

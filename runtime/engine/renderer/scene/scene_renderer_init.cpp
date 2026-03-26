@@ -28,6 +28,7 @@
 #include "dynamic_resolution.h"
 #include "cvar.h"
 #include "engine/vfx/vfx_system.h"
+#include "engine/vfx/asset/vfx_hot_reload.h"
 #include "engine/vfx/components/particle_emitter.h"
 #include "engine/scripting/lua_vm.h"
 #include "engine/scripting/scene/vfx_lua_bindings.h"
@@ -660,6 +661,29 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
             UZ_LOG(Renderer, Info, "SceneRenderer: uz.vfx Lua API registered");
         }
     }
+
+    // ── VFX Hot-Reload (.uzfx + .uzvfx files) ───────────────────────────
+    // Watches content directories for changes and triggers emitter
+    // re-instantiation when .uzfx files are modified on disk.
+#if !defined(NDEBUG)
+    {
+        m_vfxHotReload = std::make_unique<VFXHotReload>();
+        m_vfxHotReload->Initialize("content/", m_vfxSystem.get(), nullptr);
+
+        // When a .uzfx file changes, reset all emitters that reference it
+        // so SyncVfxEmitters re-creates them next frame.
+        m_vfxHotReload->OnReload([this](const std::string& path) {
+            for (auto& emitter : m_runtimeEmitters) {
+                if (emitter) {
+                    m_vfxSystem->UnregisterEmitter(emitter.get());
+                    emitter->Shutdown(m_device, m_vfxSystem->GetBudget());
+                }
+            }
+            m_runtimeEmitters.clear();
+            UZ_LOG(Renderer, Info, "VFX hot-reload: cleared runtime emitters for '{}'", path);
+        });
+    }
+#endif
 
     // Cache fallback texture SRV indices for use as placeholders in loading
     // texture slots. Avoids per-frame device queries.

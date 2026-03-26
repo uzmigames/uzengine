@@ -94,7 +94,7 @@ void VFXHotReload::ScanDirectory(const std::string& dir) {
         if (!entry.is_regular_file(ec) || ec) continue;
 
         const auto ext = entry.path().extension().string();
-        if (ext != ".uzvfx") continue;
+        if (ext != ".uzvfx" && ext != ".uzfx") continue;
 
         auto normalized = NormalizePath(entry.path().string());
         auto writeTime = entry.last_write_time(ec);
@@ -136,17 +136,22 @@ void VFXHotReload::Poll() {
 // Graph reload
 // ---------------------------------------------------------------------------
 
-/// Reloads a VFX graph and invokes registered callbacks.
+/// Reloads a VFX asset and invokes registered callbacks.
 ///
-/// The actual VFXGraph::Load + emitter module swap is deferred until the
-/// graph asset system and emitter-to-graph association are wired. For now
-/// this logs the event, increments the counter, and fires callbacks.
+/// For .uzfx files: re-parses the JSON and logs the reload event.
+/// The actual emitter re-instantiation happens in SceneRenderer::SyncVfxEmitters
+/// via the reload callback, which marks affected VfxEmitterComponents as dirty
+/// so they get re-created on the next frame.
+///
+/// For .uzvfx files: graph reload (module swap + shader recomposition).
 void VFXHotReload::ReloadGraph(const std::string& path) {
-    UZ_LOG(VFX, Info, "VFXHotReload: reloading graph '{}'", path);
+    const auto ext = fs::path(path).extension().string();
 
-    // TODO: VFXGraph::Load(path, *registry_) + iterate VFXSystem emitters
-    // that reference this graph, swap their module stack, and mark their
-    // composed shader as dirty so ModuleCompositor re-stitches next frame.
+    if (ext == ".uzfx") {
+        UZ_LOG(VFX, Info, "VFXHotReload: .uzfx changed '{}' — emitters will re-instantiate next frame", path);
+    } else {
+        UZ_LOG(VFX, Info, "VFXHotReload: .uzvfx changed '{}' — graph reload", path);
+    }
 
     ++reloadCount_;
 

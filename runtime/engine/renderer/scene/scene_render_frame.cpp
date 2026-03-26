@@ -15,6 +15,7 @@
 // Umbrella headers
 #include "renderer_core.h"
 #include "engine/vfx/vfx_system.h"
+#include "engine/vfx/asset/vfx_hot_reload.h"
 #include "passes.h"
 #include "subsystems.h"
 #include "components.h"
@@ -90,6 +91,11 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     }
 
     // ── VFX Emitter Sync ───────────────────────────────────────────────
+    // Poll VFX hot-reload (.uzfx/.uzvfx file changes) — dev builds only.
+#if !defined(NDEBUG)
+    if (m_vfxHotReload) m_vfxHotReload->Poll();
+#endif
+
     // Create/update ParticleEmitter instances from VfxEmitterComponent ECS
     // entities. Must run before VFXSystem::Tick() so newly created emitters
     // participate in spawn counting for this frame.

@@ -608,6 +608,9 @@
     /// Indexed by the component's runtimeEmitterIdx field.
     std::vector<std::unique_ptr<ParticleEmitter>> m_runtimeEmitters;
 
+    /// Hot-reload watcher for .uzfx and .uzvfx files (dev builds only).
+    std::unique_ptr<VFXHotReload> m_vfxHotReload;
+
     // ── GPU Instancing (triple-buffered) ─────────────────────────────────
     RHIBufferHandle m_instanceBuffers[kInstanceBufferCount]; ///< Per-frame instance buffers.
     uint32_t m_instanceBufferCapacity = 0;   ///< Current capacity in number of InstanceData elements.
