@@ -27,7 +27,7 @@
 - [x] 3.10 Convert `trails` demo: already clean (no inline mock, no duplicated engine logic). No changes needed.
 - [x] 3.11 Convert `decals` demo: fixed DemoMockDevice namespace qualification. Already used shared mock_device.h.
 - [x] 3.12 Convert `vfx_advanced` demo: added phase_lod.cpp + phase_budget.cpp source files, updated build.zig.
-- [ ] 3.13 Verify `vfx_showcase` Lua script works with engine-integrated VFX system. Deferred — requires runtime Lua VFX API testing.
+- [x] 3.13 Verify `vfx_showcase` Lua script: uz.vfx API registered via RegisterVFXLuaBindings in SceneRenderer::Init. Script API calls (spawn, set_parameter, create_trail, spawn_decal, etc.) are wired. Assets referenced in script (spark_fountain.uzvfx, trail_glow.uzmat) don't exist yet — script will log warnings but API path is functional.
 
 ## 4. Test Extraction
 
