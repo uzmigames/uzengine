@@ -590,7 +590,7 @@ static bool RunAtlasPhase() {
 ///
 /// # Returns
 /// true if all validation checks pass, false on any failure.
-static bool RunSimulationPhase(DemoMockDevice& device,
+static bool RunSimulationPhase(uz::DemoMockDevice& device,
                                 const uz::DecalAsset& bulletHoleAsset,
                                 const uz::DecalAsset& opaqueShowcase,
                                 const uz::DecalAsset& additive,
