@@ -9,7 +9,7 @@
 #include "engine/vfx/core/particle_budget.h"
 #include "engine/vfx/events/vfx_event.h"
 #include "engine/vfx/modules/sub_emitter_module.h"
-#include "engine/vfx/asset/uzfx_loader.h"
+#include "engine/asset/formats/uzfx_loader.h"
 
 #include <cmath>
 #include <cstdint>

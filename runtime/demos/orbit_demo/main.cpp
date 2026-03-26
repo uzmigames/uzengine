@@ -14,7 +14,7 @@
 #include "engine/vfx/modules/orbit_module.h"
 #include "engine/vfx/modules/pin_module.h"
 #include "engine/vfx/modules/distance_constraint_module.h"
-#include "engine/vfx/asset/uzfx_loader.h"
+#include "engine/asset/formats/uzfx_loader.h"
 
 #include <algorithm>
 #include <cstdint>

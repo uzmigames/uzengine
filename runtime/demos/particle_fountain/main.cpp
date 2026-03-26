@@ -9,7 +9,7 @@
 #include "engine/vfx/core/particle_budget.h"
 #include "engine/vfx/core/gpu_particle_buffer.h"
 #include "engine/vfx/core/gpu_particle_sort.h"
-#include "engine/vfx/asset/uzfx_loader.h"
+#include "engine/asset/formats/uzfx_loader.h"
 
 #include <chrono>
 #include <cstdio>

@@ -40,8 +40,8 @@
 #include <gtest/gtest.h>
 
 #include "engine/scripting/lua_vm.h"
-#include "engine/vfx/scripting/vfx_lua_bindings.h"
-#include "engine/vfx/scripting/decal_lua_bindings.h"
+#include "engine/scripting/scene/vfx_lua_bindings.h"
+#include "engine/scripting/scene/decal_lua_bindings.h"
 #include "engine/vfx/vfx_system.h"
 #include "engine/vfx/components/particle_emitter.h"
 #include "engine/vfx/decals/decal_manager.h"

@@ -9,11 +9,11 @@
 #include "engine/vfx/components/particle_emitter.h"
 #include "engine/vfx/core/particle_budget.h"
 #include "engine/vfx/modules/emitter_module_stack.h"
-#include "engine/vfx/asset/uzfx_loader.h"
+#include "engine/asset/formats/uzfx_loader.h"
 
 // Distortion pass struct definitions (no GPU execution -- header types only).
-#include "engine/vfx/passes/distortion_pass.h"
-#include "engine/vfx/passes/distortion_resolve_pass.h"
+#include "engine/renderer/passes/vfx/distortion_pass.h"
+#include "engine/renderer/passes/vfx/distortion_resolve_pass.h"
 
 #include <chrono>
 #include <cmath>

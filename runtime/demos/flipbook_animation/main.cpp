@@ -12,7 +12,7 @@
 #include "engine/vfx/modules/module_compositor.h"
 #include "engine/vfx/modules/module_registry.h"
 #include "engine/vfx/modules/sprite_render_module.h"
-#include "engine/vfx/asset/uzfx_loader.h"
+#include "engine/asset/formats/uzfx_loader.h"
 
 #include <chrono>
 #include <cmath>

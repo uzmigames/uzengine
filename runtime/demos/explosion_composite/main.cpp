@@ -11,7 +11,7 @@
 #include "engine/vfx/events/vfx_event.h"
 #include "engine/vfx/modules/emitter_module_stack.h"
 #include "engine/vfx/modules/module_registry.h"
-#include "engine/vfx/asset/uzfx_loader.h"
+#include "engine/asset/formats/uzfx_loader.h"
 
 #include <chrono>
 #include <cmath>
