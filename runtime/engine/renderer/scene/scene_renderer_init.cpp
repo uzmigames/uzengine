@@ -27,6 +27,7 @@
 #include "shader_compiler_fxc.h"
 #include "dynamic_resolution.h"
 #include "cvar.h"
+#include "engine/vfx/vfx_system.h"
 
 #include <cmath>
 
@@ -632,6 +633,16 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         m_uploadRing.reset();
     }
 
+    // ── VFX System ───────────────────────────────────────────────────────
+    // Owned by the renderer; ticked every frame in RenderFrame() before
+    // render-graph pass registration. Budget matches the default arg in
+    // VFXSystem::Initialize() so emitter code can rely on the constant.
+    constexpr uint32_t kVFXParticleBudget = 500000;
+    m_vfxSystem = std::make_unique<VFXSystem>();
+    m_vfxSystem->Initialize(m_device, kVFXParticleBudget);
+    UZ_LOG(Renderer, Info,
+           "SceneRenderer: VFX system initialized (budget={})", kVFXParticleBudget);
+
     // Cache fallback texture SRV indices for use as placeholders in loading
     // texture slots. Avoids per-frame device queries.
     if (m_fallbackWhite.IsValid()) {
@@ -1130,6 +1141,16 @@ void SceneRenderer::Shutdown() {
     if (m_gtaoPass) m_gtaoPass->Shutdown();
     if (m_cloudPass) { m_cloudPass->Shutdown(); m_cloudPass.reset(); }
     if (m_cloudCmdList) { m_device->DestroyCommandList(m_cloudCmdList); m_cloudCmdList = nullptr; }
+
+    // ── VFX System cleanup ───────────────────────────────────────────
+    // Shut down before the upload ring and copy queue so any pending emitter
+    // GPU work is properly fenced out. The override pointer is non-owning
+    // and must be cleared to prevent a dangling access in RenderFrame().
+    m_vfxSystemOverride = nullptr;
+    if (m_vfxSystem) {
+        m_vfxSystem->Shutdown(m_device);
+        m_vfxSystem.reset();
+    }
 
     // ── Upload ring cleanup ─────────────────────────────────────────
     if (m_uploadRing) {

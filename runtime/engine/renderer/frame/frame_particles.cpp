@@ -38,10 +38,15 @@ namespace uz {
 void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
     UZ_PROFILE_FUNCTION();
 
-    // Skip if no VFX system is set or it has no active emitters.
-    if (!m_vfxSystem || !m_vfxSystem->IsInitialized()) return;
+    // Resolve active VFX system: the non-owning override (set via SetVFXSystem)
+    // takes precedence over the renderer-owned system so that an external
+    // emitter pool managed by the game layer is used when present.
+    VFXSystem* activeVFX = m_vfxSystemOverride ? m_vfxSystemOverride : m_vfxSystem.get();
 
-    const auto& emitters = m_vfxSystem->GetActiveEmitters();
+    // Skip if no VFX system is available or it has no active emitters.
+    if (!activeVFX || !activeVFX->IsInitialized()) return;
+
+    const auto& emitters = activeVFX->GetActiveEmitters();
     if (emitters.empty()) return;
 
     // ── Swap ping-pong buffers at the TOP of frame registration ────────

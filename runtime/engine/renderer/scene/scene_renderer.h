@@ -218,15 +218,19 @@ public:
 
     // ── VFX System ────────────────────────────────────────────────────────
 
-    /// Sets the VFX system reference for particle rendering.
+    /// Sets an externally-owned VFX system for particle rendering.
     ///
-    /// The VFX system provides active emitter lists to RegisterParticlePasses().
-    /// The pointer must remain valid until Shutdown() or the next SetVFXSystem()
-    /// call. Pass nullptr to disable particle rendering.
+    /// @deprecated The SceneRenderer now owns and auto-initializes its own
+    /// VFXSystem (budget=500 000) during Init(). Call this only when an
+    /// externally-managed VFXSystem must override the internal one (e.g.,
+    /// a shared emitter pool owned by the game layer). The supplied pointer
+    /// is stored as a non-owning alias; its lifetime must exceed Shutdown().
+    /// Pass nullptr to re-enable the internal owned system.
     ///
     /// # Parameters
-    /// - `vfx`: Non-owning pointer to the VFX system, or nullptr.
-    void SetVFXSystem(VFXSystem* vfx) { m_vfxSystem = vfx; }
+    /// - `vfx`: Non-owning pointer to an externally-managed VFX system,
+    ///          or nullptr to restore use of the internally-owned system.
+    void SetVFXSystem(VFXSystem* vfx) { m_vfxSystemOverride = vfx; }
 
     /// Sets the decal manager reference for deferred decal rendering.
     ///
@@ -697,8 +701,13 @@ public:
 private:
     #include "scene_renderer_impl.h"
 
-    // ── VFX members (from VFX system PR) ─────────────────────────────────
-    VFXSystem* m_vfxSystem = nullptr;
+    // ── VFX members ───────────────────────────────────────────────────────
+    /// Owned VFX system. Initialized during Init(), shut down during Shutdown().
+    /// Budget is fixed at 500 000 particles (~60 MB GPU).
+    std::unique_ptr<VFXSystem> m_vfxSystem;
+    /// Non-owning override supplied via SetVFXSystem(). When non-null this
+    /// takes precedence over m_vfxSystem for all render-pass queries.
+    VFXSystem* m_vfxSystemOverride = nullptr;
     DecalManager* m_decalManager = nullptr;
     TrailSystem* m_trailSystem = nullptr;
     RHIBufferHandle m_decalCubeVB;

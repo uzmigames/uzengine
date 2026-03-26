@@ -14,6 +14,7 @@
 
 // Umbrella headers
 #include "renderer_core.h"
+#include "engine/vfx/vfx_system.h"
 #include "passes.h"
 #include "subsystems.h"
 #include "components.h"
@@ -86,6 +87,18 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
 
         m_cloudOutputSrv = m_cloudPass->GetCloudOutputSrv();
         m_pendingCloudDispatch = false;
+    }
+
+    // ── VFX Tick ──────────────────────────────────────────────────────────
+    // Calculates per-emitter spawn counts for this frame. Must run before
+    // RegisterParticlePasses(), which consumes GetActiveEmitters().
+    // The override pointer (non-owning) takes precedence over the owned system
+    // so that external emitter pools managed by the game layer work correctly.
+    {
+        VFXSystem* activeVFX = m_vfxSystemOverride ? m_vfxSystemOverride : m_vfxSystem.get();
+        if (activeVFX) {
+            activeVFX->Tick(dt);
+        }
     }
 
     // ── Register render graph passes in pipeline order ──────────────────
