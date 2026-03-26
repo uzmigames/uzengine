@@ -69,6 +69,24 @@ struct CloudPassInput {
     uint32_t depthSrv;
     float    globalCoverage;
     float    temporalBlendFactor;
+
+    // ── Additional tracing/quality parameters from VolumetricCloudsComponent ──
+    float    cloudType;                                       ///< Cloud type [0,1]. 0=stratus, 1=cumulus.
+    float    tracingMaxDistanceKm;                            ///< Max ray-march distance from camera (km).
+    float    viewSampleCountScale;                            ///< Multiplier for primary ray-march samples.
+    float    reflectionViewSampleCountScale;                  ///< Multiplier for reflection trace samples.
+    float    shadowViewSampleCountScale;                      ///< Multiplier for shadow trace samples.
+    float    shadowReflectionViewSampleCountScale;            ///< Multiplier for shadow reflection samples.
+    float    shadowTracingDistance;                            ///< Max shadow ray tracing distance (km).
+    float    stopTracingTransmittanceThreshold;               ///< Stop tracing when transmittance < threshold.
+    float    aerialPerspectiveRayleighScatteringStartDistance; ///< AP Rayleigh scattering start (km).
+    float    aerialPerspectiveRayleighScatteringFadeDistance;  ///< AP Rayleigh scattering fade (km).
+    float    aerialPerspectiveMieScatteringStartDistance;      ///< AP Mie scattering start (km).
+    float    aerialPerspectiveMieScatteringFadeDistance;       ///< AP Mie scattering fade (km).
+    float    skyLightCloudBottomOcclusion;                    ///< Sky light occlusion at cloud bottom [0,1].
+    uint32_t tracingMaxDistanceMode;                          ///< 0=from cloud layer entry, 1=from camera.
+    float    tracingStartMaxDistance;                          ///< Max distance from tracing origin (km).
+    float    tracingStartDistanceFromCamera;                   ///< Min distance from camera before tracing (km).
 };
 
 /// Volumetric cloud ray-march pass.

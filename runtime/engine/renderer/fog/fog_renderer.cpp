@@ -253,6 +253,31 @@ static void PopulateHeightFogCB(
     fogCB.sunDirX = sunDir.x;
     fogCB.sunDirY = sunDir.y;
     fogCB.sunDirZ = sunDir.z;
+
+    // ── Volumetric fog parameters ──────────────────────────────────────
+    fogCB.enableVolumetricFog = fogComp.enableVolumetricFog ? 1u : 0u;
+    fogCB.volumetricFogScatteringDistribution = fogComp.volumetricFogScatteringDistribution;
+    fogCB.volumetricFogExtinctionScale = fogComp.volumetricFogExtinctionScale;
+    fogCB.volumetricFogDistance = fogComp.volumetricFogDistance;
+    fogCB.volumetricFogAlbedoR = fogComp.volumetricFogAlbedo.x;
+    fogCB.volumetricFogAlbedoG = fogComp.volumetricFogAlbedo.y;
+    fogCB.volumetricFogAlbedoB = fogComp.volumetricFogAlbedo.z;
+    fogCB.volumetricFogStartDistance = fogComp.volumetricFogStartDistance;
+    fogCB.volumetricFogEmissiveR = fogComp.volumetricFogEmissive.x;
+    fogCB.volumetricFogEmissiveG = fogComp.volumetricFogEmissive.y;
+    fogCB.volumetricFogEmissiveB = fogComp.volumetricFogEmissive.z;
+    fogCB.volumetricFogNearFadeInDistance = fogComp.volumetricFogNearFadeInDistance;
+    fogCB.volumetricFogStaticLightingScatteringIntensity = fogComp.volumetricFogStaticLightingScatteringIntensity;
+    fogCB.overrideLightColorsWithFogInscatteringColors = fogComp.overrideLightColorsWithFogInscatteringColors ? 1u : 0u;
+
+    // ── Inscattering texture parameters ──────────────────────────────────
+    fogCB.inscatteringColorCubemapId = fogComp.inscatteringColorCubemapId;
+    fogCB.inscatteringColorCubemapAngle = fogComp.inscatteringColorCubemapAngle;
+    fogCB.inscatteringTextureTintR = fogComp.inscatteringTextureTint.x;
+    fogCB.inscatteringTextureTintG = fogComp.inscatteringTextureTint.y;
+    fogCB.inscatteringTextureTintB = fogComp.inscatteringTextureTint.z;
+    fogCB.fullyDirectionalInscatteringColorDistance = fogComp.fullyDirectionalInscatteringColorDistance;
+    fogCB.nonDirectionalInscatteringColorDistance = fogComp.nonDirectionalInscatteringColorDistance;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

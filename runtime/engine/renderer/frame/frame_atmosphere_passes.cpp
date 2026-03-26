@@ -176,6 +176,24 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
             cloudInput.globalCoverage    = cloudComp.coverage;
             cloudInput.temporalBlendFactor = 1.0f; // DEBUG: 100% current, skip temporal history
 
+            // ── Additional tracing/quality parameters from VolumetricCloudsComponent ──
+            cloudInput.cloudType = cloudComp.cloudType;
+            cloudInput.tracingMaxDistanceKm = cloudComp.tracingMaxDistanceKm;
+            cloudInput.viewSampleCountScale = cloudComp.viewSampleCountScale;
+            cloudInput.reflectionViewSampleCountScale = cloudComp.reflectionViewSampleCountScale;
+            cloudInput.shadowViewSampleCountScale = cloudComp.shadowViewSampleCountScale;
+            cloudInput.shadowReflectionViewSampleCountScale = cloudComp.shadowReflectionViewSampleCountScale;
+            cloudInput.shadowTracingDistance = cloudComp.shadowTracingDistance;
+            cloudInput.stopTracingTransmittanceThreshold = cloudComp.stopTracingTransmittanceThreshold;
+            cloudInput.aerialPerspectiveRayleighScatteringStartDistance = cloudComp.aerialPerspectiveRayleighScatteringStartDistance;
+            cloudInput.aerialPerspectiveRayleighScatteringFadeDistance = cloudComp.aerialPerspectiveRayleighScatteringFadeDistance;
+            cloudInput.aerialPerspectiveMieScatteringStartDistance = cloudComp.aerialPerspectiveMieScatteringStartDistance;
+            cloudInput.aerialPerspectiveMieScatteringFadeDistance = cloudComp.aerialPerspectiveMieScatteringFadeDistance;
+            cloudInput.skyLightCloudBottomOcclusion = cloudComp.skyLightCloudBottomOcclusion;
+            cloudInput.tracingMaxDistanceMode = static_cast<uint32_t>(cloudComp.tracingMaxDistanceMode);
+            cloudInput.tracingStartMaxDistance = cloudComp.tracingStartMaxDistance;
+            cloudInput.tracingStartDistanceFromCamera = cloudComp.tracingStartDistanceFromCamera;
+
             // Store cloud input for deferred execution after render graph.
             // CloudPass::Execute() manages its own barriers on internally-owned
             // textures (noise, weather, cloud output). Running it inside a render
