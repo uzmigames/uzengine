@@ -1,0 +1,41 @@
+{
+  "name": "Vector Field Demo",
+  "version": 1,
+  "emitter": {
+    "max_particles": 5000,
+    "emission_rate": 100.0,
+    "lifetime": 3.0,
+    "looping": true
+  },
+  "modules": {
+    "spawn": {
+      "type": "spawn",
+      "velocity": [1.0, 0.0, 0.0],
+      "spread_angle": 20.0,
+      "lifespan_min": 1.0,
+      "lifespan_max": 3.0,
+      "rate": 100.0
+    },
+    "update": [
+      {
+        "type": "update",
+        "gravity": [0.0, 0.0, 0.0],
+        "drag": 0.99
+      },
+      {
+        "type": "decay"
+      },
+      {
+        "type": "vector_field",
+        "intensity": 5.0,
+        "tightness": 0.3,
+        "bounds": [50.0, 50.0, 50.0],
+        "field_offset": [0.0, 10.0, 0.0],
+        "time_scale": 1.5
+      }
+    ],
+    "render": {
+      "type": "sprite"
+    }
+  }
+}

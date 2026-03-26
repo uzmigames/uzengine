@@ -1,0 +1,42 @@
+{
+  "name": "Explosion Fire",
+  "version": 1,
+  "emitter": {
+    "max_particles": 25000,
+    "emission_rate": 500.0,
+    "lifetime": 2.0,
+    "looping": true,
+    "start_delay": 0.0
+  },
+  "modules": {
+    "spawn": {
+      "type": "spawn",
+      "velocity": [0.0, 8.0, 0.0],
+      "spread_angle": 60.0,
+      "lifespan_min": 0.5,
+      "lifespan_max": 2.0,
+      "rate": 500.0
+    },
+    "update": [
+      {
+        "type": "update",
+        "gravity": [0.0, -3.0, 0.0],
+        "drag": 0.98
+      },
+      {
+        "type": "turbulence",
+        "strength": 2.0,
+        "frequency": 0.5,
+        "octaves": 3
+      },
+      {
+        "type": "decay"
+      }
+    ],
+    "render": {
+      "type": "sprite",
+      "width": 0.5,
+      "height": 0.5
+    }
+  }
+}
