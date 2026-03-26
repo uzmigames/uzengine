@@ -1,3 +1,5 @@
+/// Lua bindings for the height fog API (density, falloff, color, inscattering).
+
 #include "lua_fog_api.h"
 
 #include "log.h"
@@ -12,6 +14,8 @@ extern "C" {
 
 #include <cstdint>
 #include <cstring>
+
+/// Lua bindings for the height fog API (density, height falloff, inscatter color).
 
 static_assert(sizeof(void*) >= 8,
     "uz::Entity requires 64-bit pointers for lightuserdata encoding");

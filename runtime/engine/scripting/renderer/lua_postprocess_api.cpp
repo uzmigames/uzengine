@@ -3,6 +3,8 @@
 #include "log.h"
 #include "postprocess/post_process_volume.h"
 
+/// Lua bindings for post-process volume API (color grading, bloom, tone mapping, bloom intensity).
+
 extern "C" {
 #include <lua.h>
 #include <lualib.h>

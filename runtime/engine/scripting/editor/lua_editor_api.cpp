@@ -5,6 +5,8 @@
 #include "editor_input_handler.h"
 #include "entity.h"
 
+/// Lua bindings for editor APIs (selection, input handling, node management).
+
 extern "C" {
 #include <lua.h>
 #include <lualib.h>

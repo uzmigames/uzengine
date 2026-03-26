@@ -1,3 +1,7 @@
+/// Private implementation of shader cache and lazy-load methods for the render pipeline.
+///
+/// This file is #included inside the PipelineLibrary class body. Do not include directly.
+
 // ─────────────────────────────────────────────────────────────────────────────
 // pipeline_library_impl.h — Private members of PipelineLibrary.
 // This file is #included inside the PipelineLibrary class body.

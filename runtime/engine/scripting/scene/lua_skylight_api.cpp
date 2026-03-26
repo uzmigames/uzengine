@@ -1,3 +1,5 @@
+/// Lua bindings for the sky light API (intensity, cubemap, lower hemisphere, occlusion).
+
 #include "lua_skylight_api.h"
 
 #include "log.h"

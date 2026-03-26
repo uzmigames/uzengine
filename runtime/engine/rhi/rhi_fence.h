@@ -1,5 +1,7 @@
 #pragma once
 
+/// RHI fence interface for CPU-GPU synchronization.
+
 #include <cstdint>
 
 namespace uz {

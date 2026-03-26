@@ -9,6 +9,8 @@
 #include "quaternion.h"
 #include "mat4.h"
 
+/// Lua bindings for the camera API (set_position, look_at, field_of_view, aspect_ratio).
+
 extern "C" {
 #include <lua.h>
 #include <lualib.h>

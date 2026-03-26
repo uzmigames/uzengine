@@ -1,5 +1,7 @@
 #pragma once
 
+/// RHI command list interface for recording GPU commands (draw, dispatch, barriers).
+
 #include "rhi_types.h"
 
 #include <cstdint>

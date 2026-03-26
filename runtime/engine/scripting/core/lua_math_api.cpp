@@ -2,6 +2,8 @@
 
 #include "log.h"
 
+/// Lua bindings for math utilities (vec3 and related vector operations).
+
 extern "C" {
 #include <lua.h>
 #include <lualib.h>

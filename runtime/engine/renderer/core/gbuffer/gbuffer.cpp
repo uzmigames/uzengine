@@ -1,5 +1,10 @@
 #include "gbuffer.h"
 
+/// Deferred geometry buffer (GBuffer) resource lifecycle and move semantics.
+///
+/// GBuffer holds 6 render textures (albedo, normal, depth, velocity, position, emissive)
+/// plus their SRV/UAV descriptor indices for deferred lighting pipeline access.
+
 #include "rhi.h"
 #include "log.h"
 

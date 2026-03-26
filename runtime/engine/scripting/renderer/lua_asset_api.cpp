@@ -6,6 +6,8 @@
 #include "texture_loader.h"
 #include "vfs.h"
 
+/// Lua bindings for asset loading API (mesh, texture, material queries and properties).
+
 extern "C" {
 #include <lua.h>
 #include <lualib.h>

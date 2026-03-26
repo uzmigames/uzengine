@@ -1,3 +1,5 @@
+/// Script system — runs per-entity Lua scripts through the on_start/on_update/on_stop lifecycle.
+
 #include "script_system.h"
 
 #include "script_component.h"

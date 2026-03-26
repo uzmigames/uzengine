@@ -1,5 +1,10 @@
 #include "frame_pacer.h"
 
+/// Frame timing controller and VRR (Variable Refresh Rate) integration.
+///
+/// Manages frame budget, timing history, dropped frame detection, and sync mode
+/// selection (VSync, adaptive sync, uncapped).
+
 #include "rhi.h"
 #include "log.h"
 #include "profiler.h"

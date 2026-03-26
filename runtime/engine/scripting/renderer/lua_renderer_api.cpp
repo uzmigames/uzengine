@@ -7,6 +7,8 @@
 #include "postprocess/temporal_upscaler.h"
 #include "cvar.h"
 
+/// Lua bindings for renderer API (debug view modes, exposure, upscaler settings, stat overlays).
+
 extern "C" {
 #include <lua.h>
 #include <lualib.h>

@@ -3,6 +3,8 @@
 #include "log.h"
 #include "time_manager.h"
 
+/// Lua bindings for time queries (delta_time, total_time, time_scale).
+
 extern "C" {
 #include <lua.h>
 #include <lualib.h>

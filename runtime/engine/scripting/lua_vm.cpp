@@ -26,6 +26,8 @@
 #include "lua_postprocess_api.h"
 #include "lua_editor_api.h"
 
+/// Lua virtual machine initialization, state management, sandbox configuration, and API registration.
+
 extern "C" {
 #include <lua.h>
 #include <lualib.h>

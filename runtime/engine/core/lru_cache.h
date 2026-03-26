@@ -1,5 +1,10 @@
 #pragma once
 
+/// Least-Recently-Used (LRU) cache with memory budget eviction policy.
+///
+/// Thread-unsafe generic cache using a doubly-linked list + hash map for O(1) access
+/// and automatic eviction when the memory budget is exceeded.
+
 #include <cstddef>
 #include <list>
 #include <unordered_map>

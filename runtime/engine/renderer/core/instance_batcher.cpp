@@ -1,3 +1,5 @@
+/// Instance batcher — groups meshes with identical materials for GPU-instanced draw calls.
+
 #include "instance_batcher.h"
 
 #include "log.h"

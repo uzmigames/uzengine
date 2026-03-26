@@ -1,5 +1,7 @@
 #pragma once
 
+/// RHI device interface for GPU resource creation, queue submission, and synchronization.
+
 #include "rhi_fence.h"
 #include "rhi_command_list.h"
 #include "rhi_swapchain.h"

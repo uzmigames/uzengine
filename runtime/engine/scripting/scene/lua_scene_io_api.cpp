@@ -1,3 +1,5 @@
+/// Lua bindings for scene I/O (load, save, serialize .uzscene files).
+
 #include "lua_scene_io_api.h"
 
 #include "log.h"

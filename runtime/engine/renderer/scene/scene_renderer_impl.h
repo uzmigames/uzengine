@@ -1,3 +1,7 @@
+/// Private state and render graph passes of the scene deferred renderer.
+///
+/// This file is #included inside the SceneRenderer class body. Do not include directly.
+
 // ─────────────────────────────────────────────────────────────────────────────
 // scene_renderer_impl.h — Private members of SceneRenderer.
 // This file is #included inside the SceneRenderer class body.

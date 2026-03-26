@@ -1,3 +1,5 @@
+/// Lua bindings for the reflection probe API (position, radius, capture, blend).
+
 #include "lua_reflection_probe_api.h"
 
 #include "log.h"

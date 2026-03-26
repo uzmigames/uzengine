@@ -4,6 +4,8 @@
 #include "scene_renderer.h"
 #include "cvar.h"
 
+/// Lua bindings for render pass inspector API (pass names, timing, statistics, state inspection).
+
 extern "C" {
 #include <lua.h>
 #include <lualib.h>

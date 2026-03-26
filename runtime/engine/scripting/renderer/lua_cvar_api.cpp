@@ -3,6 +3,8 @@
 #include "log.h"
 #include "cvar.h"
 
+/// Lua bindings for console variable API (get, set, list cvars by category).
+
 extern "C" {
 #include <lua.h>
 #include <lualib.h>

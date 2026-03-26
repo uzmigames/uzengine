@@ -1,3 +1,5 @@
+/// Lua bindings for the volumetric clouds API (coverage, density, wind, lighting).
+
 #include "lua_clouds_api.h"
 
 #include "log.h"
@@ -12,6 +14,8 @@ extern "C" {
 
 #include <cstdint>
 #include <cstring>
+
+/// Lua bindings for the volumetric clouds API (cloud shape, coverage, density, absorption).
 
 static_assert(sizeof(void*) >= 8,
     "uz::Entity requires 64-bit pointers for lightuserdata encoding");

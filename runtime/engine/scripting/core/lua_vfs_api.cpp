@@ -3,6 +3,8 @@
 #include "log.h"
 #include "engine/asset/vfs.h"
 
+/// Lua bindings for virtual filesystem API (file read, write, directory queries).
+
 extern "C" {
 #include <lua.h>
 #include <lualib.h>

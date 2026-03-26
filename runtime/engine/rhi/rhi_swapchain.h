@@ -1,5 +1,7 @@
 #pragma once
 
+/// RHI swapchain interface for presenting rendered frames to a window.
+
 #include "rhi_types.h"
 
 #include <cstdint>

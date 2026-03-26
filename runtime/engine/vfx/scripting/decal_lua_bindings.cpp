@@ -1,3 +1,5 @@
+/// Lua bindings for the decal VFX system (spawn, transform, fade, lifetime).
+
 #include "decal_lua_bindings.h"
 
 #include "engine/vfx/decals/decal_manager.h"

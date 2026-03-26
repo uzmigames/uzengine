@@ -1,3 +1,5 @@
+/// Lua bindings for the decal API (projection, material, fade, sorting).
+
 #include "lua_decal_api.h"
 
 #include "log.h"
@@ -12,6 +14,8 @@ extern "C" {
 
 #include <cstdint>
 #include <cstring>
+
+/// Lua bindings for the decal API (placement, normal blending, fade distance).
 
 static_assert(sizeof(void*) >= 8,
     "uz::Entity requires 64-bit pointers for lightuserdata encoding");

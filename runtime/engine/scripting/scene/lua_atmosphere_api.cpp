@@ -1,3 +1,5 @@
+/// Lua bindings for the sky atmosphere API (Rayleigh/Mie scattering, sun direction, ozone).
+
 #include "lua_atmosphere_api.h"
 
 #include "log.h"
@@ -12,6 +14,8 @@ extern "C" {
 
 #include <cstdint>
 #include <cstring>
+
+/// Lua bindings for the atmosphere API (sky color, sun direction, Rayleigh/Mie scattering).
 
 static_assert(sizeof(void*) >= 8,
     "uz::Entity requires 64-bit pointers for lightuserdata encoding");

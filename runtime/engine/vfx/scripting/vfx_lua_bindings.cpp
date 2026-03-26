@@ -1,3 +1,5 @@
+/// Lua bindings for the VFX particle system (spawn, parameters, events, LOD, budget).
+
 #include "vfx_lua_bindings.h"
 
 #include "engine/vfx/vfx_system.h"
