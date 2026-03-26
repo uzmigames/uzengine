@@ -133,8 +133,8 @@ Mesh GeneratePlaneMesh(float uvScale) {
         {{-1.f,  1.f, 0.f}, normal, {0.f,       uvScale  }, tangent},
     };
 
-    // Two CCW triangles: 0-1-2 and 0-2-3
-    const std::vector<uint32_t> indices = {0, 1, 2, 0, 2, 3};
+    // Two CCW triangles (screen-space): 0-2-1 and 0-3-2.
+    const std::vector<uint32_t> indices = {0, 2, 1, 0, 3, 2};
 
     return MeshBuilder::CreateFromVertices(vertices, indices);
 }
@@ -722,7 +722,8 @@ Mesh MeshBuilder::CreateCube(float size, uint32_t subdivisions) {
             }
         }
 
-        // Generate indices: two triangles per quad, same winding as original
+        // Generate indices: two triangles per quad, CCW screen-space winding
+        // (matches frontCounterClockwise = true convention).
         for (uint32_t row = 0; row < subs; ++row) {
             for (uint32_t col = 0; col < subs; ++col) {
                 const uint32_t i00 = baseVertex + row * vertsPerEdge + col;
@@ -730,15 +731,15 @@ Mesh MeshBuilder::CreateCube(float size, uint32_t subdivisions) {
                 const uint32_t i01 = i00 + vertsPerEdge;
                 const uint32_t i11 = i01 + 1;
 
-                // Triangle 1: (0,0)→(1,0)→(1,1)  — matches original base+0, base+1, base+2
+                // Triangle 1: (0,0)→(1,1)→(1,0)
                 indices.push_back(i00);
+                indices.push_back(i11);
                 indices.push_back(i10);
-                indices.push_back(i11);
 
-                // Triangle 2: (0,0)→(1,1)→(0,1)  — matches original base+0, base+2, base+3
+                // Triangle 2: (0,0)→(0,1)→(1,1)
                 indices.push_back(i00);
-                indices.push_back(i11);
                 indices.push_back(i01);
+                indices.push_back(i11);
             }
         }
     }

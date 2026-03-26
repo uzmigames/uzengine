@@ -2,6 +2,33 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.54] — 2026-03-26
+
+### Fix: LDR tonemap color shift + CCW mesh winding across all sources
+
+- **fix(tonemap):** Remove hardcoded saturation (1.15) and contrast (1.05)
+  boost that caused red/brown/magenta tint in LDR output. ACESFilm
+  tonemap now runs clean without pre-grading hacks.
+- **feat(tonemap):** Wire color grading 3D LUT infrastructure into
+  tonemap pass — `LinToLog`, `ColorGradingLUTSample`, SRV routing via
+  5th root constant (bindless) and `t2` (SM5). LUT path disabled by
+  default; ACESFilm fallback active.
+- **fix(mesh):** Correct `CreateCube` and `GeneratePlaneMesh` winding
+  order to CCW (screen-space) to match `frontCounterClockwise = true` +
+  `cullMode = Back` convention from commit db420aff.
+- **fix(fbx):** Reverse triangle winding in both `fbx_importer.cpp` and
+  `uzfbx` tool after axis remap (Y-up→Z-up odd permutation flips
+  handedness). Winding swap placed AFTER `ufbx_generate_indices`
+  deduplication to avoid being overwritten.
+- **feat(uzfbx):** Add `--builtin cube|sphere` mode for generating
+  procedural .uzmesh files with correct winding.
+- **fix(gizmo):** Correct AppendCube, AppendCone, AppendQuad winding
+  CW→CCW in gizmo renderer.
+- **fix(assets):** Regenerated `cube.uzmesh` and
+  `MushroomMonster_Low.uzmesh` with correct CCW winding.
+- **fix(demos):** Update `mock_device.h` — add missing includes for
+  `ShaderModel`, `RHIBackend`, remove stale `GpuProfilerResult` overrides.
+
 ## [0.2.53] — 2026-03-26
 
 ### GPU-Driven VFX System (PR #6 + post-merge integration)

@@ -559,14 +559,21 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 lensFlareSrvIdx = m_lensFlarePass->GetOutputSrv();
             }
 
+            // Color grading LUT SRV (0 = no LUT, shader bypasses LUT sampling)
+            const uint32_t lutSrvIdx = (m_colorGradingLut.IsValid() && m_colorGradingLutSrv != UINT32_MAX)
+                                         ? m_colorGradingLutSrv : 0u;
+
             // Read from the final post-process output (DOF > motion blur > TAA > raw HDR).
-            uint32_t indices[4] = { ctx.postDofSrvForTonemap, bloomSrvIdx, bloomIntensityBits, lensFlareSrvIdx };
-            cmd->SetRootConstants(kSlotRootConstants, indices, 4);
+            uint32_t indices[5] = { ctx.postDofSrvForTonemap, bloomSrvIdx, bloomIntensityBits, lensFlareSrvIdx, lutSrvIdx };
+            cmd->SetRootConstants(kSlotRootConstants, indices, 5);
 
             // SM5: bind HDR scene color texture at t0 directly
             // (TAA not available on SM5 path since it requires ctx.bindless)
             if (!ctx.bindless) {
                 cmd->SetFragmentTexture(0, m_hdrSceneColor);
+                if (m_colorGradingLut.IsValid()) {
+                    cmd->SetFragmentTexture(2, m_colorGradingLut);
+                }
             }
 
             // PerFrameCB at b1 — contains exposure from auto-exposure

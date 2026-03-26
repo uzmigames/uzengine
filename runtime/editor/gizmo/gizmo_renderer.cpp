@@ -111,20 +111,20 @@ static uint32_t AppendCube(std::vector<GizmoRenderer::GizmoVertex>& verts,
         verts.push_back(v);
     }
 
-    // 12 triangles (6 faces * 2 tris each). Winding order: CW when viewed from outside.
+    // 12 triangles (6 faces * 2 tris each). CCW winding (frontCounterClockwise = true).
     static constexpr uint16_t cubeIdx[36] = {
         // -Z face
-        0, 2, 1, 0, 3, 2,
+        0, 1, 2, 0, 2, 3,
         // +Z face
-        4, 5, 6, 4, 6, 7,
+        4, 6, 5, 4, 7, 6,
         // -Y face
-        0, 1, 5, 0, 5, 4,
+        0, 5, 1, 0, 4, 5,
         // +Y face
-        2, 3, 7, 2, 7, 6,
+        2, 7, 3, 2, 6, 7,
         // -X face
-        0, 4, 7, 0, 7, 3,
+        0, 7, 4, 0, 3, 7,
         // +X face
-        1, 2, 6, 1, 6, 5,
+        1, 6, 2, 1, 5, 6,
     };
     for (int i = 0; i < 36; ++i) {
         indices.push_back(static_cast<uint16_t>(base + cubeIdx[i]));
@@ -193,15 +193,15 @@ static void AppendCone(std::vector<GizmoRenderer::GizmoVertex>& verts,
         const uint32_t curr = circleBase + i;
         const uint32_t next = circleBase + ((i + 1) % segments);
 
-        // Side triangle (CW when viewed from outside).
+        // Side triangle (CCW when viewed from outside).
         indices.push_back(static_cast<uint16_t>(tipIdx));
-        indices.push_back(static_cast<uint16_t>(next));
         indices.push_back(static_cast<uint16_t>(curr));
+        indices.push_back(static_cast<uint16_t>(next));
 
-        // Base cap triangle.
+        // Base cap triangle (CCW when viewed from below).
         indices.push_back(static_cast<uint16_t>(centerIdx));
-        indices.push_back(static_cast<uint16_t>(curr));
         indices.push_back(static_cast<uint16_t>(next));
+        indices.push_back(static_cast<uint16_t>(curr));
     }
 }
 
@@ -224,13 +224,13 @@ static void AppendQuad(std::vector<GizmoRenderer::GizmoVertex>& verts,
     pushVert(p2);
     pushVert(p3);
 
-    // Two triangles: p0-p1-p2, p0-p2-p3.
+    // Two CCW triangles: p0-p2-p1, p0-p3-p2.
     indices.push_back(static_cast<uint16_t>(base));
+    indices.push_back(static_cast<uint16_t>(base + 2));
     indices.push_back(static_cast<uint16_t>(base + 1));
-    indices.push_back(static_cast<uint16_t>(base + 2));
     indices.push_back(static_cast<uint16_t>(base));
-    indices.push_back(static_cast<uint16_t>(base + 2));
     indices.push_back(static_cast<uint16_t>(base + 3));
+    indices.push_back(static_cast<uint16_t>(base + 2));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

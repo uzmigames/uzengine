@@ -12,6 +12,9 @@
 ///   vfxSystem.Initialize(&device, budgetMax);
 
 #include "engine/rhi/rhi.h"
+#include "engine/rhi/rhi_config.h"
+#include "engine/rhi/rhi_backend.h"
+#include "engine/rhi/rhi_gpu_profiler_types.h"
 
 #include <cstdint>
 #include <vector>
@@ -53,13 +56,7 @@ public:
     RHIMemoryBudget   GetMemoryBudget() const override { return {}; }
     ShaderModel       GetShaderModel() const override { return ShaderModel::SM5_0; }
     RHIBackend        GetBackend() const override { return RHIBackend::Null; }
-    void              GpuProfilerBeginFrame(IRHICommandList*) override {}
-    void              GpuProfilerEndFrame(IRHICommandList*) override {}
-    void              GpuProfilerBeginTimestamp(IRHICommandList*, const char*) override {}
-    void              GpuProfilerEndTimestamp(IRHICommandList*, const char*) override {}
-    void              GpuProfilerResolve() override {}
-    std::vector<GpuProfilerResult> GpuProfilerGetResults() const override { return {}; }
-    float             GpuProfilerGetFrameTimeMs() const override { return 0.0f; }
+    // GPU profiler uses default no-op implementations from IRHIDevice.
 
 private:
     uint32_t m_nextIdx = 0;
