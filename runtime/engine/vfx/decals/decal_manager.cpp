@@ -134,7 +134,7 @@ void DecalManager::Shutdown(IRHIDevice* /*device*/) {
 // SpawnDecal
 // ─────────────────────────────────────────────────────────────────────────────
 
-DecalComponent* DecalManager::SpawnDecal(const DecalAsset& asset,
+VfxDecal* DecalManager::SpawnDecal(const DecalAsset& asset,
                                           const Vec3& position,
                                           const Vec3& surfaceNormal,
                                           float lifetimeOverride) {
@@ -144,7 +144,7 @@ DecalComponent* DecalManager::SpawnDecal(const DecalAsset& asset,
         return nullptr;
     }
 
-    DecalComponent* decal = pool_->AcquireDecal();
+    VfxDecal* decal = pool_->AcquireDecal();
     if (!decal) {
         // Pool exhaustion warning is logged by DecalPool::AcquireDecal().
         return nullptr;
@@ -203,7 +203,7 @@ void DecalManager::Cleanup() {
 
     // Collect expired decals first to avoid mutating the list while iterating.
     // We use a small local vector to batch the returns.
-    std::vector<DecalComponent*> toReturn;
+    std::vector<VfxDecal*> toReturn;
     toReturn.reserve(16);
 
     for (auto* decal : activeDecals) {
@@ -221,7 +221,7 @@ void DecalManager::Cleanup() {
 // Rendering -- sorting and frustum culling
 // ─────────────────────────────────────────────────────────────────────────────
 
-const std::vector<DecalComponent*>& DecalManager::GetSortedDecals(
+const std::vector<VfxDecal*>& DecalManager::GetSortedDecals(
     const Vec3& cameraPos) {
     sortedDecals_.clear();
 
@@ -248,7 +248,7 @@ const std::vector<DecalComponent*>& DecalManager::GetSortedDecals(
 
     // Sort: primary key = sortOrder (ascending), secondary = distance (back-to-front).
     std::sort(sortedDecals_.begin(), sortedDecals_.end(),
-              [&cameraPos](const DecalComponent* a, const DecalComponent* b) {
+              [&cameraPos](const VfxDecal* a, const VfxDecal* b) {
                   if (a->sortOrder != b->sortOrder) {
                       return a->sortOrder < b->sortOrder;
                   }

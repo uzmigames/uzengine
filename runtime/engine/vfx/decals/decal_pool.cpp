@@ -1,4 +1,4 @@
-/// DecalPool implementation -- object pool for DecalComponent instances.
+/// DecalPool implementation -- object pool for VfxDecal instances.
 
 #include "engine/vfx/decals/decal_pool.h"
 
@@ -63,7 +63,7 @@ DecalPool& DecalPool::operator=(DecalPool&& other) noexcept {
 // AcquireDecal -- pop from free list, reset, add to active list
 // ─────────────────────────────────────────────────────────────────────────────
 
-DecalComponent* DecalPool::AcquireDecal() {
+VfxDecal* DecalPool::AcquireDecal() {
     if (freeList_.empty()) {
         UZ_LOG(VFX, Warning,
                "DecalPool exhausted: all {} slots in use, cannot acquire",
@@ -75,9 +75,9 @@ DecalComponent* DecalPool::AcquireDecal() {
     freeList_.pop_back();
 
     // Reset to a clean default state so no stale data leaks from prior use.
-    backingStore_[index] = DecalComponent{};
+    backingStore_[index] = VfxDecal{};
 
-    DecalComponent* decal = &backingStore_[index];
+    VfxDecal* decal = &backingStore_[index];
     activeDecals_.push_back(decal);
 
     return decal;
@@ -87,15 +87,15 @@ DecalComponent* DecalPool::AcquireDecal() {
 // ReturnDecal -- validate, remove from active, push to free list
 // ─────────────────────────────────────────────────────────────────────────────
 
-void DecalPool::ReturnDecal(DecalComponent* decal) {
+void DecalPool::ReturnDecal(VfxDecal* decal) {
     if (decal == nullptr) {
         UZ_LOG(VFX, Error, "DecalPool::ReturnDecal called with nullptr");
         return;
     }
 
     // Validate that the pointer falls within our backing store's memory range.
-    const DecalComponent* storeBegin = backingStore_.data();
-    const DecalComponent* storeEnd = storeBegin + backingStore_.size();
+    const VfxDecal* storeBegin = backingStore_.data();
+    const VfxDecal* storeEnd = storeBegin + backingStore_.size();
 
     if (decal < storeBegin || decal >= storeEnd) {
         UZ_LOG(VFX, Error,
@@ -126,7 +126,7 @@ void DecalPool::ReturnDecal(DecalComponent* decal) {
     activeDecals_.pop_back();
 
     // Reset the component to defaults before returning to the free list.
-    backingStore_[index] = DecalComponent{};
+    backingStore_[index] = VfxDecal{};
 
     freeList_.push_back(index);
 }
@@ -143,7 +143,7 @@ void DecalPool::Clear() {
     // Reset all components to defaults and rebuild the full free list.
     freeList_.clear();
     for (uint32_t i = poolSize_; i > 0; --i) {
-        backingStore_[i - 1] = DecalComponent{};
+        backingStore_[i - 1] = VfxDecal{};
         freeList_.push_back(i - 1);
     }
 
@@ -168,7 +168,7 @@ uint32_t DecalPool::GetPoolSize() const noexcept {
     return poolSize_;
 }
 
-const std::vector<DecalComponent*>& DecalPool::GetActiveDecals() const noexcept {
+const std::vector<VfxDecal*>& DecalPool::GetActiveDecals() const noexcept {
     return activeDecals_;
 }
 

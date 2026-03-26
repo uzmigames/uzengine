@@ -20,7 +20,7 @@
 ///
 /// // On bullet impact:
 /// auto asset = DecalAsset::Load("decals/bullet_hole.uzdecal");
-/// DecalComponent* d = mgr.SpawnDecal(*asset, hitPos, hitNormal);
+/// VfxDecal* d = mgr.SpawnDecal(*asset, hitPos, hitNormal);
 ///
 /// // Per frame:
 /// mgr.Update(dt);
@@ -48,7 +48,7 @@ class IRHIDevice;
 class DecalPool;
 class DecalAtlas;
 struct DecalAsset;
-struct DecalComponent;
+struct VfxDecal;
 struct Mat4;
 
 // ---------------------------------------------------------------------------
@@ -61,7 +61,7 @@ struct Mat4;
 /// render-ready decals. Non-copyable; movable for container storage.
 ///
 /// # Ownership
-/// - Owns `DecalPool` (unique_ptr) -- all DecalComponent memory lives here.
+/// - Owns `DecalPool` (unique_ptr) -- all VfxDecal memory lives here.
 /// - Owns three `DecalAtlas` instances (albedo, normal, roughness).
 /// - Sorted decal list is a cached view into the pool; pointers are non-owning.
 ///
@@ -98,7 +98,7 @@ public:
     /// * `atlasSize` -- Square atlas dimension in pixels. Default: 2048.
     ///
     /// # Side Effects
-    /// - Allocates pool backing store (`poolSize` * sizeof(DecalComponent)).
+    /// - Allocates pool backing store (`poolSize` * sizeof(VfxDecal)).
     /// - Creates three atlas instances (albedo, normal, roughness).
     /// - Logs `VFX/Info` on success.
     void Initialize(IRHIDevice* device,
@@ -137,13 +137,13 @@ public:
     ///                         Default: -1 (use asset lifetime).
     ///
     /// # Returns
-    /// - Non-owning pointer to the configured DecalComponent on success.
+    /// - Non-owning pointer to the configured VfxDecal on success.
     /// - `nullptr` if the pool is exhausted or the manager is uninitialized.
     ///
     /// # Side Effects
     /// - Logs `VFX/Debug` on successful spawn with material path.
     /// - Logs `VFX/Warning` if pool is exhausted (via DecalPool).
-    [[nodiscard]] DecalComponent* SpawnDecal(const DecalAsset& asset,
+    [[nodiscard]] VfxDecal* SpawnDecal(const DecalAsset& asset,
                                              const Vec3& position,
                                              const Vec3& surfaceNormal,
                                              float lifetimeOverride = -1.0f);
@@ -158,7 +158,7 @@ public:
     /// * `dt` -- Frame delta time in seconds. Must be >= 0.
     ///
     /// # Side Effects
-    /// - Calls `DecalComponent::Tick(dt)` on every active decal.
+    /// - Calls `VfxDecal::Tick(dt)` on every active decal.
     /// - Returns expired/destroyed decals to the pool via `Cleanup()`.
     void Update(float dt);
 
@@ -178,7 +178,7 @@ public:
     /// # Returns
     /// Const reference to the internal sorted decal pointer vector. Valid until
     /// the next call to `GetSortedDecals()`, `Update()`, or `Shutdown()`.
-    [[nodiscard]] const std::vector<DecalComponent*>& GetSortedDecals(
+    [[nodiscard]] const std::vector<VfxDecal*>& GetSortedDecals(
         const Vec3& cameraPos);
 
     /// Marks decals outside the view frustum for culling.
@@ -260,7 +260,7 @@ private:
 
     // -- Data -----------------------------------------------------------------
 
-    /// Pre-allocated pool of DecalComponent instances.
+    /// Pre-allocated pool of VfxDecal instances.
     std::unique_ptr<DecalPool> pool_;
 
     /// Shelf-packed texture atlas for decal albedo textures.
@@ -274,7 +274,7 @@ private:
 
     /// Cached sorted list of visible (non-culled) active decals.
     /// Rebuilt on each `GetSortedDecals()` call.
-    std::vector<DecalComponent*> sortedDecals_;
+    std::vector<VfxDecal*> sortedDecals_;
 
     /// Per-decal culling flag. Indexed by pool slot offset.
     /// True = culled (not visible). Resized to pool capacity on Initialize().

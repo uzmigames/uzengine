@@ -37,7 +37,7 @@
 
 namespace uz {
 
-struct DecalComponent;
+struct VfxDecal;
 
 } // namespace uz
 
@@ -86,7 +86,7 @@ struct DecalConstants {
 /// valid until `RgBuilder::Execute()` completes.
 struct DecalRenderData {
     /// The source decal component (read-only access for skipping inactive decals).
-    const DecalComponent* decal = nullptr;
+    const VfxDecal* decal = nullptr;
 
     /// Pre-filled CB allocation for the per-decal shader constants.
     CBAllocation decalCB = {};

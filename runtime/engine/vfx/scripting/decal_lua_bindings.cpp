@@ -24,7 +24,7 @@ UZ_DECLARE_LOG_CATEGORY(VFX);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Compile-time safety: void* must be at least 64 bits to encode a
-// DecalComponent pointer as a Lua integer handle.
+// VfxDecal pointer as a Lua integer handle.
 // ─────────────────────────────────────────────────────────────────────────────
 
 static_assert(sizeof(void*) >= 8,
@@ -40,23 +40,23 @@ namespace uz {
 static constexpr const char* kDecalManagerRegistryKey = "uz_decal_manager";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DecalComponent handle encoding
+// VfxDecal handle encoding
 //
-// Same pattern as emitter handles in vfx_lua_bindings.cpp: DecalComponent*
+// Same pattern as emitter handles in vfx_lua_bindings.cpp: VfxDecal*
 // pointers are encoded as lua_Integer values for opaque handle storage.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Encodes a DecalComponent* as a lua_Integer for opaque handle storage.
-[[nodiscard]] static lua_Integer DecalToHandle(DecalComponent* decal) noexcept {
+/// Encodes a VfxDecal* as a lua_Integer for opaque handle storage.
+[[nodiscard]] static lua_Integer DecalToHandle(VfxDecal* decal) noexcept {
     uintptr_t ptr;
     std::memcpy(&ptr, &decal, sizeof(ptr));
     return static_cast<lua_Integer>(ptr);
 }
 
-/// Decodes a lua_Integer back to a DecalComponent*.
-[[nodiscard]] static DecalComponent* HandleToDecal(lua_Integer handle) noexcept {
+/// Decodes a lua_Integer back to a VfxDecal*.
+[[nodiscard]] static VfxDecal* HandleToDecal(lua_Integer handle) noexcept {
     uintptr_t ptr = static_cast<uintptr_t>(handle);
-    DecalComponent* decal;
+    VfxDecal* decal;
     std::memcpy(&decal, &ptr, sizeof(decal));
     return decal;
 }
@@ -206,7 +206,7 @@ static int DecalSpawn(lua_State* L) {
     DecalAsset tempAsset;
     tempAsset.materialPath = materialPath;
 
-    DecalComponent* decal = manager->SpawnDecal(
+    VfxDecal* decal = manager->SpawnDecal(
         tempAsset, position, normal, lifetimeOverride);
 
     if (!decal) {
@@ -230,7 +230,7 @@ static int DecalSpawn(lua_State* L) {
 /// - `duration` (number): Seconds over which to fade from current alpha to zero.
 ///
 /// # Side Effects
-/// - Calls `DecalComponent::FadeOut(duration)` on the resolved decal.
+/// - Calls `VfxDecal::FadeOut(duration)` on the resolved decal.
 /// - Logs `VFX/Warning` if the manager is not registered or the handle is invalid.
 static int DecalFadeOut(lua_State* L) {
     const lua_Integer handle = luaL_checkinteger(L, 2);
@@ -242,7 +242,7 @@ static int DecalFadeOut(lua_State* L) {
         return 0;
     }
 
-    DecalComponent* decal = HandleToDecal(handle);
+    VfxDecal* decal = HandleToDecal(handle);
     if (!decal || !decal->isActive) {
         UZ_LOG(VFX, Warning,
             "uz.vfx:fade_out_decal -- invalid or inactive decal handle");
@@ -262,7 +262,7 @@ static int DecalFadeOut(lua_State* L) {
 /// - `handle` (integer): Decal handle returned by `spawn_decal`.
 ///
 /// # Side Effects
-/// - Calls `DecalComponent::MarkForDestruction()` on the resolved decal.
+/// - Calls `VfxDecal::MarkForDestruction()` on the resolved decal.
 /// - Logs `VFX/Warning` if the manager is not registered or the handle is invalid.
 static int DecalDestroy(lua_State* L) {
     const lua_Integer handle = luaL_checkinteger(L, 2);
@@ -273,7 +273,7 @@ static int DecalDestroy(lua_State* L) {
         return 0;
     }
 
-    DecalComponent* decal = HandleToDecal(handle);
+    VfxDecal* decal = HandleToDecal(handle);
     if (!decal || !decal->isActive) {
         UZ_LOG(VFX, Warning,
             "uz.vfx:destroy_decal -- invalid or inactive decal handle");
@@ -294,7 +294,7 @@ static int DecalDestroy(lua_State* L) {
 ///                  `"screen"`.
 ///
 /// # Side Effects
-/// - Sets `DecalComponent::blendMode` to the parsed enum value.
+/// - Sets `VfxDecal::blendMode` to the parsed enum value.
 /// - Errors via `luaL_error` if the mode string is not recognized.
 /// - Logs `VFX/Warning` if the manager is not registered or the handle is invalid.
 static int DecalSetBlendMode(lua_State* L) {
@@ -308,7 +308,7 @@ static int DecalSetBlendMode(lua_State* L) {
         return 0;
     }
 
-    DecalComponent* decal = HandleToDecal(handle);
+    VfxDecal* decal = HandleToDecal(handle);
     if (!decal || !decal->isActive) {
         UZ_LOG(VFX, Warning,
             "uz.vfx:set_decal_blend_mode -- invalid or inactive decal handle");
@@ -336,7 +336,7 @@ static int DecalSetBlendMode(lua_State* L) {
 ///            1 = full override.
 ///
 /// # Side Effects
-/// - Sets `DecalComponent::normalIntensity` to the given value.
+/// - Sets `VfxDecal::normalIntensity` to the given value.
 /// - Logs `VFX/Warning` if the manager is not registered or the handle is invalid.
 static int DecalSetNormalIntensity(lua_State* L) {
     const lua_Integer handle = luaL_checkinteger(L, 2);
@@ -349,7 +349,7 @@ static int DecalSetNormalIntensity(lua_State* L) {
         return 0;
     }
 
-    DecalComponent* decal = HandleToDecal(handle);
+    VfxDecal* decal = HandleToDecal(handle);
     if (!decal || !decal->isActive) {
         UZ_LOG(VFX, Warning,
             "uz.vfx:set_decal_normal_intensity -- invalid or inactive decal handle");

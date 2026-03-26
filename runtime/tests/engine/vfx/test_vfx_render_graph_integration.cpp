@@ -8,7 +8,7 @@
 /// - 7.1: ParticleRenderPassDesc + ParticleSimulationPassDesc — billboard
 ///   pipeline wiring: EmitterRenderData and EmitterSimDispatch fields are
 ///   correctly set from an initialized ParticleEmitter.
-/// - 7.2: DecalPassDesc — DecalManager produces sorted DecalComponent pointers
+/// - 7.2: DecalPassDesc — DecalManager produces sorted VfxDecal pointers
 ///   that drive the DecalRenderData array, and DecalConstants is the correct
 ///   size (192 bytes, 256-byte aligned by CBRingAllocator).
 /// - 7.3: TrailPassDesc — TrailSystem render data maps to TrailPassRenderItem
@@ -551,7 +551,7 @@ TEST(VFXRenderGraph_Decal, DecalManager_OneSpawnedDecal_AppearsinSortedList) {
 
     const Vec3 hitPos{0.0f, 0.0f, 0.0f};
     const Vec3 normal{0.0f, 1.0f, 0.0f};
-    DecalComponent* d = mgr.SpawnDecal(*asset, hitPos, normal);
+    VfxDecal* d = mgr.SpawnDecal(*asset, hitPos, normal);
     ASSERT_NE(d, nullptr)
         << "SpawnDecal must succeed with a valid asset and available pool slot";
 
@@ -582,9 +582,9 @@ TEST(VFXRenderGraph_Decal, DecalManager_ThreeDecals_SortedBySortOrder) {
     const Vec3 n{0.0f, 1.0f, 0.0f};
 
     // Spawn 3 decals at the same position — sort order distinguishes them.
-    DecalComponent* da = mgr.SpawnDecal(*asset, pos, n);
-    DecalComponent* db = mgr.SpawnDecal(*asset, pos, n);
-    DecalComponent* dc = mgr.SpawnDecal(*asset, pos, n);
+    VfxDecal* da = mgr.SpawnDecal(*asset, pos, n);
+    VfxDecal* db = mgr.SpawnDecal(*asset, pos, n);
+    VfxDecal* dc = mgr.SpawnDecal(*asset, pos, n);
     ASSERT_NE(da, nullptr);
     ASSERT_NE(db, nullptr);
     ASSERT_NE(dc, nullptr);
@@ -627,7 +627,7 @@ TEST(VFXRenderGraph_Decal, DecalRenderData_Default_AllSrvIndicesAreUINT32MAX) {
 }
 
 /// Verifies that DecalRenderData can be correctly populated from a
-/// DecalComponent pointer retrieved from the manager.
+/// VfxDecal pointer retrieved from the manager.
 TEST(VFXRenderGraph_Decal, DecalRenderData_PopulatedFromComponent_DecalPtrIsCorrect) {
     DecalManager mgr;
     mgr.Initialize(nullptr, 10u, 512u);
@@ -635,7 +635,7 @@ TEST(VFXRenderGraph_Decal, DecalRenderData_PopulatedFromComponent_DecalPtrIsCorr
     const auto asset = MakeTestDecalAsset();
     ASSERT_NE(asset, nullptr);
 
-    DecalComponent* spawned = mgr.SpawnDecal(*asset,
+    VfxDecal* spawned = mgr.SpawnDecal(*asset,
                                               Vec3{1.0f, 0.0f, 0.0f},
                                               Vec3{0.0f, 0.0f, 1.0f});
     ASSERT_NE(spawned, nullptr);
@@ -649,7 +649,7 @@ TEST(VFXRenderGraph_Decal, DecalRenderData_PopulatedFromComponent_DecalPtrIsCorr
     rd.decal = sorted[0];
 
     EXPECT_EQ(rd.decal, spawned)
-        << "DecalRenderData.decal must point to the spawned DecalComponent";
+        << "DecalRenderData.decal must point to the spawned VfxDecal";
     EXPECT_TRUE(rd.decal->isActive)
         << "The referenced decal must still be active";
 
@@ -666,7 +666,7 @@ TEST(VFXRenderGraph_Decal, DecalManager_ExpiredDecal_NotInSortedList) {
     const auto asset = MakeTestDecalAsset();
     ASSERT_NE(asset, nullptr);
 
-    DecalComponent* d = mgr.SpawnDecal(*asset,
+    VfxDecal* d = mgr.SpawnDecal(*asset,
                                         Vec3{0.0f, 0.0f, 0.0f},
                                         Vec3{0.0f, 1.0f, 0.0f});
     ASSERT_NE(d, nullptr);

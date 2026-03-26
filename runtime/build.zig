@@ -275,6 +275,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/scripting/renderer", cpp_flags);
     addCppDir(runtime_mod, b, "engine/scripting/editor", cpp_flags);
     addCppDir(runtime_mod, b, "engine/ipc", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/core", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/components", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/curves", cpp_flags);

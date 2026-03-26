@@ -1,13 +1,13 @@
 #pragma once
 
-/// DecalComponent -- ECS component for projected decals.
+/// VfxDecal -- ECS component for projected decals.
 ///
 /// Decals are projected onto scene geometry using an oriented bounding box (OBB).
 /// The decal's local -Z axis is the projection direction. World-space points inside
 /// the OBB are mapped to normalized [-1,1] coordinates for texture sampling.
 ///
 /// # Lifecycle
-/// 1. Attach DecalComponent to an entity with position/rotation
+/// 1. Attach VfxDecal to an entity with position/rotation
 /// 2. DecalSystem ticks all decals each frame (age, fade, expiry)
 /// 3. Expired decals are reclaimed by the decal pool
 ///
@@ -16,7 +16,7 @@
 ///
 /// # Example
 /// ```cpp
-/// DecalComponent decal;
+/// VfxDecal decal;
 /// decal.position = impactPoint;
 /// decal.rotation = Quat::FromAxisAngle(surfaceNormal, 0.0f);
 /// decal.materialPath = "materials/decals/bullet_hole.uzmat";
@@ -56,7 +56,7 @@ enum class DecalBlendMode : uint8_t {
 [[nodiscard]] const char* DecalBlendModeToString(DecalBlendMode mode) noexcept;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DecalComponent -- Projected decal ECS component (pure data + methods)
+// VfxDecal -- Projected decal ECS component (pure data + methods)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Projected decal attached to scene entities.
@@ -82,7 +82,7 @@ enum class DecalBlendMode : uint8_t {
 /// `FadeOut(duration)` can override the remaining lifetime to trigger an
 /// early fade from the current state. Once `age >= lifetime`, `isActive`
 /// is set to false and the decal pool can reclaim the slot.
-struct DecalComponent {
+struct VfxDecal {
     // -- Configuration --------------------------------------------------------
 
     /// World-space position of the decal's OBB center.

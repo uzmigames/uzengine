@@ -134,7 +134,7 @@ void AddDecalPass(rg::RgBuilder& builder, const DecalPassDesc& desc)
 
     for (size_t i = 0; i < desc.decals.size(); ++i) {
         UZ_CHECKF(desc.decals[i].decal != nullptr,
-                  "DecalPass: decal[{}] has null DecalComponent pointer", i);
+                  "DecalPass: decal[{}] has null VfxDecal pointer", i);
     }
 
     auto passDesc = desc;
