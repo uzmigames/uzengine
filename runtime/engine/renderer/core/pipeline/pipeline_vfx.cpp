@@ -80,9 +80,8 @@ RHIPipelineHandle PipelineLibrary::GetParticleBillboard() {
     // No vertex input layout — VS uses SV_VertexID to index structured buffers
     desc.inputElementCount = 0;
 
-    // Billboard quads are single-sided but may face away due to rotation
+    // Two-sided: billboard quads may face either direction due to rotation
     desc.rasterizer.cullMode              = RHICullMode::None;
-    desc.rasterizer.frontCounterClockwise = false;
 
     // Read scene depth for occlusion, do NOT write (particles are transparent)
     desc.depthStencil.depthEnable = true;
@@ -146,8 +145,7 @@ RHIPipelineHandle PipelineLibrary::GetParticleBillboardAdditive() {
     // No vertex input layout — SV_VertexID only
     desc.inputElementCount = 0;
 
-    desc.rasterizer.cullMode              = RHICullMode::None;
-    desc.rasterizer.frontCounterClockwise = false;
+    desc.rasterizer.cullMode              = RHICullMode::None; // Two-sided for billboard particles
 
     // Read scene depth, do NOT write
     desc.depthStencil.depthEnable = true;
@@ -482,9 +480,8 @@ RHIPipelineHandle PipelineLibrary::GetDecalDeferred() {
     // No vertex input — VS reads unit cube vertices from structured buffer
     desc.inputElementCount = 0;
 
-    // Front-face cull: render the inside of the decal box
+    // Front-face cull: render the inside (back faces) of the decal box
     desc.rasterizer.cullMode              = RHICullMode::Front;
-    desc.rasterizer.frontCounterClockwise = false;
 
     // Depth read-only: decals project onto existing scene geometry
     desc.depthStencil.depthEnable = true;
@@ -573,7 +570,6 @@ RHIPipelineHandle PipelineLibrary::GetTrailRibbon() {
 
     // Two-sided: ribbons are visible from both directions
     desc.rasterizer.cullMode              = RHICullMode::None;
-    desc.rasterizer.frontCounterClockwise = false;
 
     // Depth read-only: trails do not occlude scene geometry
     desc.depthStencil.depthEnable = true;
@@ -674,9 +670,8 @@ RHIPipelineHandle PipelineLibrary::GetParticleMeshOpaque() {
     desc.inputElements     = inputElements;
     desc.inputElementCount = 1;
 
-    // Back-face cull: opaque meshes have consistent winding order
+    // Opaque particle meshes — cull back faces
     desc.rasterizer.cullMode              = RHICullMode::Back;
-    desc.rasterizer.frontCounterClockwise = false;
 
     // Depth enabled + write: opaque particles participate fully in depth buffer
     desc.depthStencil.depthEnable = true;
@@ -737,9 +732,8 @@ RHIPipelineHandle PipelineLibrary::GetParticleMeshTransparent() {
     desc.inputElements     = inputElements;
     desc.inputElementCount = 1;
 
-    // No cull: transparent meshes visible from both sides
+    // Two-sided: transparent meshes visible from both sides
     desc.rasterizer.cullMode              = RHICullMode::None;
-    desc.rasterizer.frontCounterClockwise = false;
 
     // Depth read-only: transparent particles do not occlude each other
     desc.depthStencil.depthEnable = true;

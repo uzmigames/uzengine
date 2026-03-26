@@ -508,7 +508,7 @@ struct RHIDepthStencilDesc {
 struct RHIRasterizerDesc {
     RHICullMode cullMode = RHICullMode::Back;
     RHIFillMode fillMode = RHIFillMode::Solid;
-    bool frontCounterClockwise = false;
+    bool frontCounterClockwise = true; // CCW front face — DX12/UE5 industry standard
     float depthBias = 0.0f;
     float slopeScaledDepthBias = 0.0f;
 };

@@ -78,8 +78,7 @@ RHIPipelineHandle PipelineLibrary::GetDecalRender() {
     // is visible when the camera is outside the box. When the camera enters
     // the OBB, all back faces are behind the camera and the decal disappears
     // gracefully (correct behavior — camera is inside the decal volume).
-    desc.rasterizer.cullMode              = RHICullMode::Front;
-    desc.rasterizer.frontCounterClockwise = false;
+    desc.rasterizer.cullMode              = RHICullMode::Front; // Render back faces of decal OBB (Valient 2014)
 
     // No depth test or write — depth is read as an SRV in the pixel shader.
     desc.depthStencil.depthEnable = false;

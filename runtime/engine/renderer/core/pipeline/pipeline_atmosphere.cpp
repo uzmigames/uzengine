@@ -45,7 +45,7 @@ RHIPipelineHandle PipelineLibrary::GetSkyAtmosphere() {
     desc.vertexShader  = m_fullscreenVS;
     desc.pixelShader   = m_skyAtmospherePS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
-    desc.rasterizer.cullMode      = RHICullMode::None;
+    desc.rasterizer.cullMode      = RHICullMode::None; // Fullscreen triangle — no geometry to cull
     desc.depthStencil.depthEnable = false;
     desc.depthStencil.depthWrite  = false;
     desc.renderTargetFormats[0]   = RHIFormat::RGBA16Float;
@@ -95,7 +95,7 @@ RHIPipelineHandle PipelineLibrary::GetHdriSkybox() {
     desc.vertexShader  = m_fullscreenVS;
     desc.pixelShader   = m_hdriSkyboxPS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
-    desc.rasterizer.cullMode      = RHICullMode::None;
+    desc.rasterizer.cullMode      = RHICullMode::None; // Fullscreen triangle — no geometry to cull
     desc.depthStencil.depthEnable = false;
     desc.depthStencil.depthWrite  = false;
     desc.renderTargetFormats[0]   = RHIFormat::RGBA16Float;
@@ -145,7 +145,7 @@ RHIPipelineHandle PipelineLibrary::GetHeightFog() {
     desc.vertexShader  = m_fullscreenVS;
     desc.pixelShader   = m_heightFogPS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
-    desc.rasterizer.cullMode      = RHICullMode::None;
+    desc.rasterizer.cullMode      = RHICullMode::None; // Fullscreen triangle — no geometry to cull
     desc.depthStencil.depthEnable = false;
     desc.depthStencil.depthWrite  = false;
     desc.renderTargetFormats[0]   = RHIFormat::RGBA16Float;
@@ -206,7 +206,7 @@ RHIPipelineHandle PipelineLibrary::GetCloudComposite() {
     desc.vertexShader  = m_fullscreenVS;
     desc.pixelShader   = m_cloudCompositePS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
-    desc.rasterizer.cullMode      = RHICullMode::None;
+    desc.rasterizer.cullMode      = RHICullMode::None; // Fullscreen triangle — no geometry to cull
     desc.depthStencil.depthEnable = false;
     desc.depthStencil.depthWrite  = false;
     desc.renderTargetFormats[0]   = RHIFormat::RGBA16Float;
@@ -500,7 +500,7 @@ RHIPipelineHandle PipelineLibrary::GetSkyCubemapCapturePS() {
     desc.vertexShader  = m_fullscreenVS;
     desc.pixelShader   = m_skyCubemapCapturePSShader;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
-    desc.rasterizer.cullMode      = RHICullMode::None;
+    desc.rasterizer.cullMode      = RHICullMode::None; // Fullscreen triangle — no geometry to cull
     desc.depthStencil.depthEnable = false;
     desc.depthStencil.depthWrite  = false;
     desc.renderTargetFormats[0]   = RHIFormat::RGBA16Float;
