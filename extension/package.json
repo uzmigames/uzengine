@@ -15,7 +15,8 @@
   "activationEvents": [
     "onLanguage:uzscene",
     "onLanguage:uzproject",
-    "onLanguage:uzfx"
+    "onLanguage:uzfx",
+    "onLanguage:uzimport"
   ],
   "contributes": {
     "commands": [
@@ -107,6 +108,12 @@
         "aliases": ["UzEngine VFX Effect"],
         "extensions": [".uzfx"],
         "icon": { "light": "./icons/uzfx.svg", "dark": "./icons/uzfx.svg" }
+      },
+      {
+        "id": "uzimport",
+        "aliases": ["UzEngine Import Sidecar"],
+        "extensions": [".uzimport"],
+        "icon": { "light": "./icons/uzimport.svg", "dark": "./icons/uzimport.svg" }
       }
     ],
     "customEditors": [
@@ -157,6 +164,11 @@
       },
       {
         "language": "uzfx",
+        "scopeName": "source.json.uzengine",
+        "path": "./syntaxes/uzengine-json.tmLanguage.json"
+      },
+      {
+        "language": "uzimport",
         "scopeName": "source.json.uzengine",
         "path": "./syntaxes/uzengine-json.tmLanguage.json"
       },
