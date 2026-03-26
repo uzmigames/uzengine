@@ -34,67 +34,7 @@
 #include <memory>
 #include <string>
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Inline mock RHI device -- avoids dependency on test infrastructure
-// ─────────────────────────────────────────────────────────────────────────────
-
-#include "engine/rhi/rhi.h"
-
-namespace {
-
-/// Minimal mock device for headless demo. Returns valid dummy handles so that
-/// VFXSystem::Initialize and ParticleEmitter::Initialize succeed without GPU.
-class DemoMockDevice final : public uz::IRHIDevice {
-public:
-    uz::RHIBufferHandle CreateBuffer(const uz::RHIBufferDesc&) override {
-        return {++idx_, 1u};
-    }
-    void DestroyBuffer(uz::RHIBufferHandle) override {}
-
-    uz::RHITextureHandle  CreateTexture(const uz::RHITextureDesc&) override  { return {0, 0}; }
-    void                  DestroyTexture(uz::RHITextureHandle) override      {}
-    void*                 MapBuffer(uz::RHIBufferHandle) override            { return nullptr; }
-    void                  UnmapBuffer(uz::RHIBufferHandle) override          {}
-    uint32_t              GetBufferSRVIndex(uz::RHIBufferHandle) const override  { return UINT32_MAX; }
-    uint32_t              GetBufferUAVIndex(uz::RHIBufferHandle) const override  { return UINT32_MAX; }
-    uint64_t              GetBufferGPUAddress(uz::RHIBufferHandle) const override { return 0; }
-    uint32_t              GetTextureSRVIndex(uz::RHITextureHandle) const override { return UINT32_MAX; }
-    uint32_t              GetTextureUAVIndex(uz::RHITextureHandle) const override { return UINT32_MAX; }
-    uz::RHITextureDesc    GetTextureDesc(uz::RHITextureHandle) const override    { return {}; }
-    uz::RHIShaderHandle   CreateShader(const uz::RHIShaderDesc&) override        { return {0, 0}; }
-    void                  DestroyShader(uz::RHIShaderHandle) override            {}
-    uz::RHIPipelineHandle CreateGraphicsPipeline(const uz::RHIGraphicsPipelineDesc&) override { return {0, 0}; }
-    uz::RHIPipelineHandle CreateComputePipeline(const uz::RHIComputePipelineDesc&) override   { return {0, 0}; }
-    void                  DestroyPipeline(uz::RHIPipelineHandle) override        {}
-    std::vector<uint8_t>  GetPipelineCachedBlob(uz::RHIPipelineHandle) override  { return {}; }
-    uz::RHISamplerHandle  CreateSampler(const uz::RHISamplerDesc&) override      { return {0, 0}; }
-    void                  DestroySampler(uz::RHISamplerHandle) override          {}
-    uint32_t              GetSamplerIndex(uz::RHISamplerHandle) const override   { return UINT32_MAX; }
-    uz::IRHISwapChain*    CreateSwapChain(const uz::RHISwapChainDesc&) override  { return nullptr; }
-    void                  DestroySwapChain(uz::IRHISwapChain*) override          {}
-    uz::IRHIFence*        CreateFence() override                                 { return nullptr; }
-    void                  DestroyFence(uz::IRHIFence*) override                  {}
-    uz::IRHICommandList*  CreateCommandList(uz::RHIQueueType) override           { return nullptr; }
-    void                  DestroyCommandList(uz::IRHICommandList*) override      {}
-    void                  WaitIdle() override                                    {}
-    const char*           GetAdapterName() const override   { return "DemoMockDevice"; }
-    const char*           GetFeatureLevel() const override  { return "Mock"; }
-    uz::RHIMemoryBudget   GetMemoryBudget() const override  { return {}; }
-    uz::ShaderModel       GetShaderModel() const override   { return static_cast<uz::ShaderModel>(0); }
-    uz::RHIBackend        GetBackend() const override       { return static_cast<uz::RHIBackend>(0); }
-    void                  GpuProfilerBeginFrame(uz::IRHICommandList*) override    {}
-    void                  GpuProfilerEndFrame(uz::IRHICommandList*) override      {}
-    void                  GpuProfilerBeginTimestamp(uz::IRHICommandList*, const char*) override {}
-    void                  GpuProfilerEndTimestamp(uz::IRHICommandList*, const char*) override   {}
-    void                  GpuProfilerResolve() override                           {}
-    std::vector<uz::GpuProfilerResult> GpuProfilerGetResults() const override     { return {}; }
-    float                 GpuProfilerGetFrameTimeMs() const override              { return 0.0f; }
-
-private:
-    uint32_t idx_ = 0;
-};
-
-} // anonymous namespace
+#include "mock_device.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VFX includes
@@ -196,7 +136,7 @@ int main() {
     std::printf("==========================================================\n\n");
 
     // ── Setup ──────────────────────────────────────────────────────────
-    DemoMockDevice device;
+    uz::DemoMockDevice device;
 
     uz::VFXSystem vfxSystem;
     vfxSystem.Initialize(&device, kBudgetMax);
