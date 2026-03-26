@@ -143,27 +143,48 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
                RenderPathToString(m_renderPath));
     }
 
-    // ── Camera: prefer ECS CameraComponent, fallback to FPS controller ──
-    // In editor mode: ALWAYS use FPS controller (ignore ECS camera + Lua scripts).
-    // ECS cameras are driven by Lua scripts that have their own WASD handling,
-    // which bypasses the editor input gate. The editor needs direct camera control.
+    // ── Camera: ECS camera (game mode) or fly controller (editor mode) ──
     bool cameraFromECS = false;
-    if (!m_editorMode && ctx.world) {
+
+    if (m_editorMode && !m_editorCameraInitialized && ctx.world) {
+        // First frame in editor mode: copy ECS camera pose to the fly controller
+        // so the editor starts at the scene-defined camera position, then hand
+        // off control to the fly controller (with WASD gated behind RMB).
         auto cameraView = ctx.world->View<CameraComponent>();
         for (auto [enttEntity, cam] : cameraView.each()) {
             if (cam.isActive) {
-                // Sync ECS camera into our Camera object.
-                // Camera::LookAt handles Z-up → Y-up conversion internally.
                 const Vec3 camPos = cam.GetWorldPosition();
                 m_camera->SetPosition(camPos);
                 if (cam.hasLookTarget) {
                     m_camera->LookAt(cam.lookTarget);
                 } else {
-                    // Fallback: use rotation quaternion to derive forward direction.
-                    // Note: FromEuler produces Y-up quaternions, so we convert via
-                    // the same yaw/pitch extraction that FlyCameraController uses.
                     const Vec3 fwd = (cam.GetRotation() * Vec3::Forward()).Normalized();
-                    m_camera->LookAt(camPos + fwd * 1000.f);  // 10m ahead in cm
+                    m_camera->LookAt(camPos + fwd * 1000.f);
+                }
+                m_camera->SetPerspective(
+                    cam.fov * (3.14159265f / 180.f),
+                    static_cast<float>(m_width) / static_cast<float>(m_height),
+                    cam.nearPlane, cam.farPlane);
+                // Initialize fly controller yaw/pitch from this camera pose.
+                m_cameraCtrl->InitFromCamera(*m_camera);
+                m_editorCameraInitialized = true;
+                break;
+            }
+        }
+    }
+
+    if (!m_editorMode && ctx.world) {
+        // Game mode: ECS camera driven by Lua scripts every frame.
+        auto cameraView = ctx.world->View<CameraComponent>();
+        for (auto [enttEntity, cam] : cameraView.each()) {
+            if (cam.isActive) {
+                const Vec3 camPos = cam.GetWorldPosition();
+                m_camera->SetPosition(camPos);
+                if (cam.hasLookTarget) {
+                    m_camera->LookAt(cam.lookTarget);
+                } else {
+                    const Vec3 fwd = (cam.GetRotation() * Vec3::Forward()).Normalized();
+                    m_camera->LookAt(camPos + fwd * 1000.f);
                 }
                 m_camera->SetPerspective(
                     cam.fov * (3.14159265f / 180.f),
@@ -176,8 +197,7 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     }
 
     if (!cameraFromECS) {
-        // In editor mode (UE5 behavior): camera controller only runs when RMB is held.
-        // Without RMB, W/E/R are gizmo hotkeys — camera must NOT move.
+        // Fly controller: in editor mode, only runs when RMB is held.
         const bool cameraAllowed = !m_editorMode
                                  || m_input->IsMouseDown(MouseButton::Right);
         if (cameraAllowed) {
