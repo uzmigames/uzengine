@@ -1,10 +1,10 @@
 /// UzfxLoader unit tests — validates .uzfx JSON parsing and emitter instantiation.
 
 #include <gtest/gtest.h>
-#include "engine/vfx/asset/uzfx_loader.h"
+#include "engine/asset/formats/uzfx_loader.h"
 #include "engine/vfx/components/particle_emitter.h"
 #include "engine/vfx/core/particle_budget.h"
-#include "mock_device.h"
+#include "mock_rhi_device.h"
 
 using namespace uz;
 
@@ -109,9 +109,8 @@ TEST(UzfxLoader, InstantiateFromDesc) {
 
     auto desc = UzfxLoader::Load(json);
 
-    DemoMockDevice device;
-    ParticleBudget budget;
-    budget.Init(500000);
+    test::MockRHIDevice device;
+    ParticleBudget budget(500000);
 
     ParticleEmitter emitter;
     ASSERT_TRUE(UzfxLoader::Instantiate(desc, emitter, &device, budget));
@@ -150,9 +149,8 @@ TEST(UzfxLoader, InstantiateAllModuleTypes) {
 
     auto desc = UzfxLoader::Load(json);
 
-    DemoMockDevice device;
-    ParticleBudget budget;
-    budget.Init(500000);
+    test::MockRHIDevice device;
+    ParticleBudget budget(500000);
 
     ParticleEmitter emitter;
     ASSERT_TRUE(UzfxLoader::Instantiate(desc, emitter, &device, budget));
