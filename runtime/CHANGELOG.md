@@ -2,6 +2,118 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.53] — 2026-03-26
+
+### GPU-Driven VFX System (PR #6 + post-merge integration)
+
+Complete GPU-driven particle, trail, and decal system with modular simulation,
+Lua scripting, declarative `.uzfx` asset format, 13 standalone demos, and
+full engine integration (SceneRenderer lifecycle, ECS component, render graph).
+
+**Core System (`engine/vfx/`):**
+- `VFXSystem` — top-level owner: tick, spawn, budget enforcement, module registry
+- `ParticleEmitter` — per-emitter state: GPU buffers, module stack, LOD, events, parameters
+- `GPUParticleBuffer` — GPU-side particle storage (position, velocity, age, color, size)
+- `GPUParticleSort` — back-to-front distance sort for transparent blending
+- `ParticleBudget` — global particle cap with per-emitter allocation
+- `AttractorBuffer` — GPU attractor point data for force-field modules
+- `SubEmitterReadback` — GPU→CPU readback for cascading sub-emitter events
+
+**Simulation Modules (`engine/vfx/modules/`, 15 modules):**
+- `SpawnModule` — rate/burst emission with shape distribution (point, sphere, cone, box)
+- `UpdateModule` — velocity integration, gravity, drag, lifetime decay
+- `AttractorModule` — point/line attractors with inverse-square falloff, kill-on-arrival
+- `CollisionModule` — world-plane collision with bounce, friction, kill-on-hit
+- `TurbulenceModule` — 3D curl noise velocity perturbation
+- `VectorFieldModule` — 3D vector field sampling for wind/flow effects
+- `OrbitModule` — orbital motion around anchor points
+- `PinModule` — position constraint to world-space anchor
+- `DistanceConstraintModule` — min/max distance enforcement from anchor
+- `ConstraintModule` — generic position/velocity clamping
+- `DecayModule` — alpha/size fade over particle lifetime
+- `SubEmitterModule` — cascading child emitter spawning on death/collision events
+- `SpriteRenderModule` — flipbook (SubUV) sprite sheet animation
+- `MeshRenderModule` — instanced mesh particle rendering
+- `LightRenderModule` — per-particle dynamic light emission
+- `ModuleRegistry` — factory pattern for module creation by name
+- `ModuleCompositor` — composites module shader code into final compute kernel
+- `EmitterModuleStack` — ordered module execution pipeline
+
+**Render Passes (`renderer/passes/vfx/`, 7 passes):**
+- `ParticleSimulationPass` — compute shader dispatch for particle update
+- `ParticleRenderPass` — billboard quad rendering (transparent, back-to-front sorted)
+- `ParticleMeshRenderPass` — instanced mesh rendering for mesh particles
+- `TrailRenderPass` — ribbon/trail geometry generation and rendering
+- `DecalPass` — deferred decal projection into GBuffer
+- `DistortionPass` — screen-space distortion accumulation (heat shimmer, glass)
+- `DistortionResolvePass` — distortion buffer application to scene color
+
+**Trail System (`engine/vfx/trails/`):**
+- `TrailSystem` — manages active trails, point recording, mesh rebuilding
+- `TrailComponent` — per-entity trail state (points, width, color, lifetime)
+- `TrailMeshBuilder` — generates triangle strip geometry from trail points
+- `TrailPoint` — position + width + color + age per trail vertex
+- `TrailAsset` — serializable trail configuration
+
+**Decal System (`engine/vfx/decals/`):**
+- `DecalManager` — lifecycle management, sorting, atlas allocation
+- `DecalPool` — object pool for decal recycling (no per-frame allocation)
+- `DecalAtlas` — texture atlas packing for batched decal rendering
+- `DecalComponent` — VFX decal data (OBB projection, fade, lifetime)
+- `DecalAsset` — serializable decal configuration
+
+**VFX Curves (`engine/vfx/curves/`):**
+- `VfxCurve` — keyframe-based value curves (linear, bezier, step interpolation)
+- `VfxCurveLoader` — JSON curve deserialization
+
+**Budget & LOD (`engine/vfx/budget/`, `engine/vfx/lod/`):**
+- `VfxBudget` — global budget tracking with per-emitter allocation/deallocation
+- `VfxSignificanceManager` — distance/screen-size significance scoring for LOD
+- `VfxLod` — 4-tier LOD (Full, Reduced, Minimal, Culled) with hysteresis
+
+**Events & Parameters (`engine/vfx/events/`, `engine/vfx/parameters/`):**
+- `VfxEvent` — typed event system (spawn, death, collision, burst, custom)
+- `VfxParameterStore` — runtime parameter override (Vec4, float, int per emitter)
+
+**Asset Pipeline:**
+- `.uzfx` JSON format (`asset/formats/uzfx_format.h`) — declarative emitter description
+- `UzfxLoader` (`asset/formats/uzfx_loader.h/.cpp`) — parses `.uzfx` into configured emitters
+- `VfxComposite` — multi-emitter effect composition (explosion = fire + smoke + debris)
+- `VfxGraph` — node-based effect graph structure
+- `VfxGraphValidator` — validates graph connectivity and parameter bindings
+- `VfxHotReload` — file-watcher triggered effect reload
+
+**ECS Integration:**
+- `VfxEmitterComponent` (`ecs/environment/`) — ECS component with `.uzscene` serialization
+- SceneRenderer lifecycle: `InitVFX()` / `TickVFX()` / `ShutdownVFX()`
+
+**Lua API (`scripting/scene/`):**
+- `vfx_lua_bindings` — `uz.vfx:create_emitter`, `destroy_emitter`, `set_field`, `get_field`, `set_parameter_vec4`, `get_parameter`, `emit_burst`, `set_active`, `get_active`, `get_particle_count`
+- `decal_lua_bindings` — `uz.vfx:spawn_decal`, `set_decal_fade`, `remove_decal`, `get_decal_count`
+- `trail_lua_bindings` — `uz.vfx:create_trail`, `destroy_trail`, `set_trail_active`, `clear_trail`, `get_trail_length`, `get_trail_point_count`, `set_trail_width`, `set_trail_color`, `set_trail_lifetime`, `set_trail_uv_scroll`
+
+**Demos (13 standalone, `runtime/demos/`):**
+- `particle_fountain` — basic upward emission with gravity
+- `fire_effect` — modular fire with spawn + update + turbulence + decay
+- `explosion_composite` — multi-emitter composite (fire + smoke + debris + burst event)
+- `sub_emitter_demo` — 3-stage firework cascade (rocket → burst → sparkle)
+- `attractor_demo` — black hole attractor with kill-on-arrival
+- `flipbook_animation` — SubUV sprite sheet animation
+- `vector_field_demo` — 3D vector field wind tunnel
+- `orbit_demo` — ring orbit with pin + distance constraint
+- `distortion_effect` — heat shimmer + glass sphere distortion
+- `decals` — deferred decal projection
+- `trails` — ribbon trail rendering
+- `vfx_advanced` — combined advanced effects
+- `vfx_showcase` — full feature showcase
+- Shared `demos/common/mock_device.h` — headless RHI mock for CPU-only demos
+
+**Post-Merge Cleanup:**
+- Reorganized 23 files from `vfx/passes/`, `vfx/scripting/`, `vfx/asset/uzfx_*` into correct engine directories (`renderer/passes/vfx/`, `scripting/scene/`, `asset/formats/`)
+- Added `///` file headers to 40 files (V1 doc violations)
+- Split oversized `lua_light_api.cpp` (1669→978+778 lines)
+- Updated `CONTRIBUTING.md` with acceptance criteria and lessons learned
+
 ## [0.2.52] — 2026-03-25
 
 ### H.264 Viewport Frame Streaming (phase2-2.1.0)
