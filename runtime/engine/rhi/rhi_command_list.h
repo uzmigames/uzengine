@@ -172,6 +172,12 @@ public:
         (void)slot; (void)texture;
     }
 
+    /// Forces the next SetFragmentTexture call to allocate a fresh descriptor
+    /// block. Call this before each draw call that binds different textures to
+    /// the same slots (e.g., per-material texture binding in the GBuffer pass).
+    /// No-op on backends that don't use descriptor staging (bindless, Vulkan, DX11).
+    virtual void InvalidateDescriptorBlock() {}
+
     /// Binds a sampler to the fragment/pixel shader at the specified slot.
     ///
     /// On Metal, this calls `[encoder setFragmentSamplerState:atIndex:]` directly.

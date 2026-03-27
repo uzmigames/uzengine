@@ -92,6 +92,7 @@ public:
 
     /// Copies a texture SRV into the staging descriptor block for SM5 binding.
     void SetFragmentTexture(uint32_t slot, RHITextureHandle texture) override;
+    void InvalidateDescriptorBlock() override;
 
     /// Submits an indexed draw call via `DrawIndexedInstanced`.
     void DrawIndexed(uint32_t indexCount, uint32_t instanceCount = 1,

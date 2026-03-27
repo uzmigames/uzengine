@@ -463,12 +463,11 @@ void DX12CommandList::SetFragmentTexture(uint32_t slot, RHITextureHandle texture
     }
 
     // Allocate a fresh kMaxFragmentTextures block when needed.
-    // A new block is required when: (1) first call after SetPipeline, or
-    // (2) slot 0 is rebound — indicating a new draw call with different
-    // material textures. Without per-draw blocks, the GPU would read stale
-    // descriptors from a previous draw while the CPU overwrites them.
-    const bool needNewBlock = (m_currentPassDescBase == UINT32_MAX) || (slot == 0);
-    if (needNewBlock) {
+    // A new block is required on first call after SetPipeline (which resets
+    // m_currentPassDescBase to UINT32_MAX). Subsequent SetFragmentTexture
+    // calls write into the same block. Call InvalidateDescriptorBlock()
+    // before a new draw call that needs different textures in the same slots.
+    if (m_currentPassDescBase == UINT32_MAX) {
         // Check that we have room in this frame's slice
         if (m_frameDescriptorOffset + kMaxFragmentTextures > kDescriptorsPerFrame) {
             UZ_LOG(RHI, Error, "SetFragmentTexture — exhausted per-frame descriptor budget "
@@ -502,6 +501,10 @@ void DX12CommandList::SetFragmentTexture(uint32_t slot, RHITextureHandle texture
     } else {
         m_cmdList->SetGraphicsRootDescriptorTable(kSM5SrvTableRootParam, gpuHandle);
     }
+}
+
+void DX12CommandList::InvalidateDescriptorBlock() {
+    m_currentPassDescBase = UINT32_MAX;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

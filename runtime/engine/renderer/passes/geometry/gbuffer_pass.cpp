@@ -276,6 +276,10 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                         perObjParams.aoTexture        = drawCmd.aoTexture.IsValid()        ? drawCmd.aoTexture        : desc.fallbackWhite;
                         perObjParams.emissiveTexture  = drawCmd.emissiveTexture.IsValid()  ? drawCmd.emissiveTexture  : desc.fallbackBlack;
 
+                        // Force fresh descriptor block per draw — each draw binds
+                        // different material textures to the same t0-t5 slots.
+                        cmd->InvalidateDescriptorBlock();
+
                         CBAllocation objAlloc = ShaderParameterBinder::Bind(
                             cmd, &perObjParams,
                             GBufferPerObjectParams::GetMetadata(),
@@ -332,6 +336,7 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                                         objAlloc.cpuPtr, sizeof(PerObjectCB));
 
                         if (!desc.bindless) {
+                            cmd->InvalidateDescriptorBlock();
                             cmd->SetFragmentTexture(0, drawCmd.albedoTexture.IsValid()    ? drawCmd.albedoTexture    : desc.fallbackWhite);
                             cmd->SetFragmentTexture(1, drawCmd.normalTexture.IsValid()    ? drawCmd.normalTexture    : desc.fallbackNormal);
                             cmd->SetFragmentTexture(2, drawCmd.roughnessTexture.IsValid() ? drawCmd.roughnessTexture : desc.fallbackWhite);
