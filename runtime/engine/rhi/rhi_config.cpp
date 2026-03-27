@@ -175,7 +175,7 @@ RHIConfig ResolveRHIConfig(const Config& config) {
 
     UZ_LOG(RHI, Info, "Resolved RHI config: backend={}, shader_model={}, validation={}, breadcrumbs={}, adapter={}",
            RHIBackendToString(result.backend),
-           ShaderModelToString(result.shaderModel),
+           result.shaderModel.has_value() ? ShaderModelToString(*result.shaderModel) : "auto",
            result.enableValidation,
            result.enableBreadcrumbs,
            result.adapterIndex);
@@ -193,6 +193,9 @@ RHIDeviceDesc ToDeviceDesc(const RHIConfig& config) {
     desc.enableValidation = config.enableValidation;
     desc.enableGpuValidation = config.enableGpuValidation;
     desc.adapterIndex = config.adapterIndex;
+    // Pass CLI shader model override to force device negotiation down.
+    // Without this, --sm 6.0 is parsed but never forwarded to the device.
+    desc.forceShaderModel = config.shaderModel;
     return desc;
 }
 

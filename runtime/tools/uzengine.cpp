@@ -99,7 +99,7 @@ static Config BuildConfig(int argc, char** argv) {
 /// Logs the resolved RHI configuration for diagnostics.
 static void LogResolvedConfig(const RHIConfig& rhiCfg, bool headless, int frames, int width, int height) {
     UZ_LOG(Engine, Info, "RHI backend:       {}", RHIBackendToString(rhiCfg.backend));
-    UZ_LOG(Engine, Info, "Shader model:      {}", ShaderModelToString(rhiCfg.shaderModel));
+    UZ_LOG(Engine, Info, "Shader model:      {}", rhiCfg.shaderModel.has_value() ? ShaderModelToString(*rhiCfg.shaderModel) : "auto");
     UZ_LOG(Engine, Info, "Validation:        {}", rhiCfg.enableValidation ? "on" : "off");
     UZ_LOG(Engine, Info, "GPU validation:    {}", rhiCfg.enableGpuValidation ? "on" : "off");
     UZ_LOG(Engine, Info, "Breadcrumbs:       {}", rhiCfg.enableBreadcrumbs ? "on" : "off");
