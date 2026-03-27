@@ -991,7 +991,19 @@ void VulkanCommandList::CopyBufferToTexture(RHIBufferHandle srcBuffer, uint64_t 
 
     VkBufferImageCopy region = {};
     region.bufferOffset = srcOffset;
-    region.bufferRowLength = srcRowPitch / BytesPerTexel(tex->desc.format);
+    const uint32_t bpt = BytesPerTexel(tex->desc.format);
+    if (bpt > 0) {
+        region.bufferRowLength = srcRowPitch / bpt;
+    } else {
+        // Block-compressed format (BC1-BC7): bufferRowLength is in texels.
+        // srcRowPitch is bytes per row of blocks. Each block covers 4 texels wide.
+        // BC1/BC4 = 8 bytes/block, BC3/BC5/BC7 = 16 bytes/block.
+        const bool is8ByteBlock = (tex->desc.format == RHIFormat::BC1Unorm
+                                || tex->desc.format == RHIFormat::BC1Srgb
+                                || tex->desc.format == RHIFormat::BC4Unorm);
+        const uint32_t blockBytes = is8ByteBlock ? 8 : 16;
+        region.bufferRowLength = (srcRowPitch / blockBytes) * 4;
+    }
     region.bufferImageHeight = 0; // Tightly packed rows
     region.imageSubresource.aspectMask = GetAspectFlags(tex->desc.format);
     region.imageSubresource.mipLevel = mipLevel;
@@ -1053,7 +1065,16 @@ void VulkanCommandList::CopyTextureToBuffer(RHITextureHandle srcTexture, uint32_
     VkBufferImageCopy region = {};
     region.bufferOffset = dstOffset;
     // bufferRowLength is in texels, not bytes
-    region.bufferRowLength = dstRowPitch / texelSize;
+    if (texelSize > 0) {
+        region.bufferRowLength = dstRowPitch / texelSize;
+    } else {
+        // Block-compressed: compute texels from block count
+        const bool is8ByteBlock = (tex->desc.format == RHIFormat::BC1Unorm
+                                || tex->desc.format == RHIFormat::BC1Srgb
+                                || tex->desc.format == RHIFormat::BC4Unorm);
+        const uint32_t blockBytes = is8ByteBlock ? 8 : 16;
+        region.bufferRowLength = (dstRowPitch / blockBytes) * 4;
+    }
     region.bufferImageHeight = mipHeight;
     region.imageSubresource.aspectMask = GetAspectFlags(tex->desc.format);
     region.imageSubresource.mipLevel = mipLevel;
