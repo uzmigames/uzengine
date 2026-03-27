@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>UzEngine Viewport Test Harness</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #1e1e1e; color: #ccc; font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; height: 100vh; }
+
+#toolbar {
+    display: flex; align-items: center; gap: 8px; padding: 6px 12px;
+    background: #2d2d2d; border-bottom: 1px solid #404040; font-size: 13px;
+}
+#toolbar button {
+    padding: 4px 12px; background: #0e639c; color: #fff; border: none;
+    border-radius: 3px; cursor: pointer; font-size: 12px;
+}
+#toolbar button:hover { background: #1177bb; }
+#toolbar button.active { background: #04395e; }
+#toolbar button.danger { background: #c72e2e; }
+#toolbar button.danger:hover { background: #e03e3e; }
+#toolbar .sep { width: 1px; height: 20px; background: #555; }
+#toolbar select { background: #3c3c3c; color: #ccc; border: 1px solid #555; padding: 2px 6px; border-radius: 3px; }
+#toolbar input[type=number] { width: 60px; background: #3c3c3c; color: #ccc; border: 1px solid #555; padding: 2px 6px; border-radius: 3px; }
+
+#viewport-container {
+    flex: 1; position: relative; background: #111; overflow: hidden;
+    outline: none;
+}
+#viewport-canvas {
+    width: 100%; height: 100%; display: block; background: #000;
+}
+#overlay {
+    position: absolute; top: 0; right: 0; padding: 8px 12px;
+    background: rgba(0,0,0,0.7); font-size: 12px; font-family: monospace;
+    pointer-events: none; white-space: pre; line-height: 1.6;
+    border-bottom-left-radius: 6px;
+}
+.stat-label { color: #888; }
+.stat-value { color: #4ec9b0; }
+.stat-warn { color: #dcdcaa; }
+.stat-error { color: #f44747; }
+
+#log {
+    height: 150px; overflow-y: auto; background: #1a1a1a; padding: 6px 12px;
+    font-family: monospace; font-size: 11px; border-top: 1px solid #404040;
+    flex-shrink: 0;
+}
+.log-info { color: #569cd6; }
+.log-warn { color: #dcdcaa; }
+.log-error { color: #f44747; }
+.log-frame { color: #4ec9b0; }
+</style>
+</head>
+<body>
+
+<!-- ── Toolbar ─────────────────────────────────────────────────────────── -->
+<div id="toolbar">
+    <span style="color:#569cd6;font-weight:bold;">UzEngine Test Harness</span>
+    <div class="sep"></div>
+
+    <label>Server:</label>
+    <input type="text" id="ws-url" value="ws://localhost:9090" style="width:180px;background:#3c3c3c;color:#ccc;border:1px solid #555;padding:2px 6px;border-radius:3px;">
+    <button id="btn-connect">Connect</button>
+    <button id="btn-disconnect" class="danger" disabled>Disconnect</button>
+    <div class="sep"></div>
+
+    <label>Mode:</label>
+    <select id="mode-select">
+        <option value="h264">H.264 (WebCodecs)</option>
+        <option value="jpeg">JPEG Fallback</option>
+        <option value="local">Local Addon</option>
+    </select>
+    <div class="sep"></div>
+
+    <label>FPS:</label>
+    <input type="number" id="target-fps" value="60" min="1" max="120">
+    <div class="sep"></div>
+
+    <button id="btn-keyframe">Request Keyframe</button>
+    <button id="btn-screenshot">Screenshot</button>
+    <button id="btn-clear-log">Clear Log</button>
+</div>
+
+<!-- ── Viewport ────────────────────────────────────────────────────────── -->
+<div id="viewport-container" tabindex="0">
+    <canvas id="viewport-canvas"></canvas>
+    <div id="overlay">
+        <span class="stat-label">FPS: </span><span id="stat-fps" class="stat-value">--</span>
+        <span class="stat-label"> | Frame: </span><span id="stat-frame-ms" class="stat-value">--</span><span class="stat-label"> ms</span>
+        <span class="stat-label"> | Draws: </span><span id="stat-draws" class="stat-value">--</span>
+        <span class="stat-label"> | Tris: </span><span id="stat-tris" class="stat-value">--</span>
+<br><span class="stat-label">Decoder: </span><span id="stat-decoder" class="stat-value">--</span>
+        <span class="stat-label"> | NAL: </span><span id="stat-nal-size" class="stat-value">--</span><span class="stat-label"> KB</span>
+        <span class="stat-label"> | Frames: </span><span id="stat-frames-decoded" class="stat-value">0</span>
+        <span class="stat-label"> | Dropped: </span><span id="stat-dropped" class="stat-value">0</span>
+    </div>
+</div>
+
+<!-- ── Log panel ───────────────────────────────────────────────────────── -->
+<div id="log"></div>
+
+<script>
+// ─────────────────────────────────────────────────────────────────────────────
+// State
+// ─────────────────────────────────────────────────────────────────────────────
+
+let ws = null;
+let decoder = null;
+let canvas, ctx;
+let framesDecoded = 0;
+let framesDropped = 0;
+let viewportFocused = false;
+let lastNalSize = 0;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Logging
+// ─────────────────────────────────────────────────────────────────────────────
+
+const logEl = document.getElementById('log');
+function log(msg, cls = 'log-info') {
+    const ts = new Date().toISOString().slice(11, 23);
+    const div = document.createElement('div');
+    div.className = cls;
+    div.textContent = `[${ts}] ${msg}`;
+    logEl.appendChild(div);
+    logEl.scrollTop = logEl.scrollHeight;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Canvas setup
+// ─────────────────────────────────────────────────────────────────────────────
+
+canvas = document.getElementById('viewport-canvas');
+ctx = canvas.getContext('2d');
+
+function resizeCanvas() {
+    const container = document.getElementById('viewport-container');
+    canvas.width = container.clientWidth;
+    canvas.height = container.clientHeight;
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WebCodecs H.264 Decoder
+// ─────────────────────────────────────────────────────────────────────────────
+
+const hasWebCodecs = typeof VideoDecoder !== 'undefined';
+document.getElementById('stat-decoder').textContent = hasWebCodecs ? 'WebCodecs' : 'JPEG fallback';
+
+function initDecoder(extradata) {
+    if (!hasWebCodecs) {
+        log('WebCodecs not available — using JPEG fallback', 'log-warn');
+        return;
+    }
+
+    try {
+        decoder = new VideoDecoder({
+            output: (frame) => {
+                ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
+                frame.close();
+                framesDecoded++;
+                document.getElementById('stat-frames-decoded').textContent = framesDecoded;
+            },
+            error: (e) => {
+                log(`Decoder error: ${e.message}`, 'log-error');
+                framesDropped++;
+                document.getElementById('stat-dropped').textContent = framesDropped;
+            },
+        });
+
+        const config = {
+            codec: 'avc1.42E01F',
+            codedWidth: canvas.width || 1280,
+            codedHeight: canvas.height || 720,
+        };
+        if (extradata && extradata.byteLength > 0) {
+            config.description = extradata;
+        }
+
+        decoder.configure(config);
+        log(`Decoder configured: ${config.codec} ${config.codedWidth}x${config.codedHeight}` +
+            (extradata ? ` (extradata: ${extradata.byteLength} bytes)` : ''));
+    } catch (e) {
+        log(`Decoder init failed: ${e.message} — falling back to JPEG`, 'log-error');
+        decoder = null;
+    }
+}
+
+function decodeNAL(data) {
+    if (!decoder || decoder.state === 'closed') return;
+
+    lastNalSize = data.byteLength;
+    document.getElementById('stat-nal-size').textContent = (data.byteLength / 1024).toFixed(1);
+
+    // Detect NAL type (skip Annex-B start code)
+    let offset = 0;
+    if (data[0] === 0 && data[1] === 0 && data[2] === 0 && data[3] === 1) offset = 4;
+    else if (data[0] === 0 && data[1] === 0 && data[2] === 1) offset = 3;
+    const nalType = data[offset] & 0x1F;
+    const isKeyframe = (nalType === 5); // IDR
+
+    try {
+        const chunk = new EncodedVideoChunk({
+            type: isKeyframe ? 'key' : 'delta',
+            timestamp: performance.now() * 1000,
+            data: data,
+        });
+        decoder.decode(chunk);
+    } catch (e) {
+        log(`Decode error: ${e.message}`, 'log-error');
+        framesDropped++;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// JPEG fallback
+// ─────────────────────────────────────────────────────────────────────────────
+
+const jpegImg = new Image();
+jpegImg.onload = () => {
+    ctx.drawImage(jpegImg, 0, 0, canvas.width, canvas.height);
+    framesDecoded++;
+    document.getElementById('stat-frames-decoded').textContent = framesDecoded;
+};
+
+function decodeJPEG(base64) {
+    jpegImg.src = 'data:image/jpeg;base64,' + base64;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WebSocket connection (simulates Extension Host ↔ Webview IPC)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function connect() {
+    const url = document.getElementById('ws-url').value;
+    log(`Connecting to ${url}...`);
+
+    ws = new WebSocket(url);
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = () => {
+        log('Connected!', 'log-info');
+        document.getElementById('btn-connect').disabled = true;
+        document.getElementById('btn-disconnect').disabled = false;
+
+        // Request init (extradata)
+        ws.send(JSON.stringify({ type: 'init', width: canvas.width, height: canvas.height,
+            fps: parseInt(document.getElementById('target-fps').value),
+            mode: document.getElementById('mode-select').value }));
+    };
+
+    ws.onmessage = (event) => {
+        if (event.data instanceof ArrayBuffer) {
+            // Binary = H.264 NAL data
+            decodeNAL(new Uint8Array(event.data));
+        } else {
+            // JSON message
+            try {
+                const msg = JSON.parse(event.data);
+                handleMessage(msg);
+            } catch (e) {
+                log(`Invalid JSON: ${event.data}`, 'log-error');
+            }
+        }
+    };
+
+    ws.onclose = () => {
+        log('Disconnected', 'log-warn');
+        document.getElementById('btn-connect').disabled = false;
+        document.getElementById('btn-disconnect').disabled = true;
+        ws = null;
+    };
+
+    ws.onerror = (e) => {
+        log(`WebSocket error`, 'log-error');
+    };
+}
+
+function disconnect() {
+    if (ws) {
+        ws.send(JSON.stringify({ type: 'stop' }));
+        ws.close();
+    }
+}
+
+function handleMessage(msg) {
+    switch (msg.type) {
+        case 'stats':
+            document.getElementById('stat-fps').textContent = msg.fps ?? '--';
+            document.getElementById('stat-frame-ms').textContent = (msg.frameMs ?? 0).toFixed(1);
+            document.getElementById('stat-draws').textContent = msg.drawCalls ?? '--';
+            document.getElementById('stat-tris').textContent = msg.triangles ?? '--';
+            break;
+
+        case 'init':
+            log(`Init: codec extradata ${msg.extradata?.length ?? 0} bytes`);
+            if (msg.extradata) {
+                initDecoder(new Uint8Array(msg.extradata));
+            } else {
+                initDecoder(null);
+            }
+            break;
+
+        case 'jpeg':
+            decodeJPEG(msg.data);
+            break;
+
+        case 'log':
+            log(msg.message, msg.level === 'error' ? 'log-error' : msg.level === 'warn' ? 'log-warn' : 'log-info');
+            break;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Local mode (direct N-API addon — for Electron/Node.js context only)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// In local mode, this page would be loaded inside an Electron BrowserWindow
+// that has access to the N-API addon. For now, local mode just shows a message.
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Input forwarding
+// ─────────────────────────────────────────────────────────────────────────────
+
+const container = document.getElementById('viewport-container');
+container.addEventListener('focus', () => { viewportFocused = true; });
+container.addEventListener('blur', () => { viewportFocused = false; });
+
+// Key map: DOM event.code → Win32 VK_*
+const KEY_MAP = {
+    'KeyW':0x57,'KeyA':0x41,'KeyS':0x53,'KeyD':0x44,'KeyQ':0x51,'KeyE':0x45,
+    'KeyF':0x46,'KeyG':0x47,'KeyR':0x52,'KeyT':0x54,'KeyZ':0x5A,'KeyX':0x58,
+    'KeyC':0x43,'KeyV':0x56,'Space':0x20,'Escape':0x1B,'Tab':0x09,'Enter':0x0D,
+    'Backspace':0x08,'Delete':0x2E,'Insert':0x2D,'Home':0x24,'End':0x23,
+    'PageUp':0x21,'PageDown':0x22,
+    'ShiftLeft':0x10,'ShiftRight':0x10,'ControlLeft':0x11,'ControlRight':0x11,
+    'AltLeft':0x12,'AltRight':0x12,
+    'ArrowUp':0x26,'ArrowDown':0x28,'ArrowLeft':0x25,'ArrowRight':0x27,
+    'F1':0x70,'F2':0x71,'F3':0x72,'F4':0x73,'F5':0x74,'F6':0x75,
+    'F7':0x76,'F8':0x77,'F9':0x78,'F10':0x79,'F11':0x7A,'F12':0x7B,
+    'Digit0':0x30,'Digit1':0x31,'Digit2':0x32,'Digit3':0x33,'Digit4':0x34,
+    'Digit5':0x35,'Digit6':0x36,'Digit7':0x37,'Digit8':0x38,'Digit9':0x39,
+};
+
+function sendInput(msg) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(msg));
+    }
+}
+
+document.addEventListener('keydown', (e) => {
+    if (!viewportFocused) return;
+    const vk = KEY_MAP[e.code];
+    if (vk === undefined) return;
+    const mods = (e.shiftKey?1:0)|(e.ctrlKey?2:0)|(e.altKey?4:0)|(e.metaKey?8:0);
+    sendInput({ type: 'key', vk, pressed: true, modifiers: mods });
+    e.preventDefault();
+});
+
+document.addEventListener('keyup', (e) => {
+    if (!viewportFocused) return;
+    const vk = KEY_MAP[e.code];
+    if (vk === undefined) return;
+    sendInput({ type: 'key', vk, pressed: false, modifiers: 0 });
+});
+
+canvas.addEventListener('mousedown', (e) => {
+    if (e.button === 2) canvas.requestPointerLock();
+    sendInput({ type: 'mouseButton', button: e.button, pressed: true });
+});
+
+canvas.addEventListener('mouseup', (e) => {
+    if (e.button === 2 && document.pointerLockElement === canvas) document.exitPointerLock();
+    sendInput({ type: 'mouseButton', button: e.button, pressed: false });
+});
+
+document.addEventListener('mousemove', (e) => {
+    if (document.pointerLockElement === canvas) {
+        sendInput({ type: 'mouseDelta', dx: e.movementX, dy: e.movementY });
+    } else if (viewportFocused) {
+        sendInput({ type: 'mouseMove', x: e.offsetX, y: e.offsetY });
+    }
+});
+
+canvas.addEventListener('wheel', (e) => {
+    sendInput({ type: 'scroll', delta: e.deltaY > 0 ? -120 : 120 });
+    e.preventDefault();
+}, { passive: false });
+
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Toolbar buttons
+// ─────────────────────────────────────────────────────────────────────────────
+
+document.getElementById('btn-connect').addEventListener('click', connect);
+document.getElementById('btn-disconnect').addEventListener('click', disconnect);
+document.getElementById('btn-keyframe').addEventListener('click', () => {
+    sendInput({ type: 'requestKeyframe' });
+    log('Keyframe requested');
+});
+document.getElementById('btn-screenshot').addEventListener('click', () => {
+    // Download current canvas as PNG
+    const link = document.createElement('a');
+    link.download = `uzengine_${Date.now()}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+    log('Screenshot saved');
+});
+document.getElementById('btn-clear-log').addEventListener('click', () => {
+    logEl.innerHTML = '';
+});
+
+// Auto-focus viewport on click
+container.addEventListener('click', () => container.focus());
+
+log('Test harness ready. Click Connect to start streaming.');
+log(`WebCodecs: ${hasWebCodecs ? 'available' : 'NOT available (JPEG fallback)'}`);
+log(`Canvas: ${canvas.width}x${canvas.height}`);
+</script>
+</body>
+</html>
