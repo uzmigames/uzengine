@@ -146,29 +146,31 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     // ── Camera: ECS camera (game mode) or fly controller (editor mode) ──
     bool cameraFromECS = false;
 
-    if (m_editorMode && !m_editorCameraInitialized && ctx.world) {
-        // First frame in editor mode: copy ECS camera pose to the fly controller
-        // so the editor starts at the scene-defined camera position, then hand
-        // off control to the fly controller (with WASD gated behind RMB).
-        auto cameraView = ctx.world->View<CameraComponent>();
-        for (auto [enttEntity, cam] : cameraView.each()) {
-            if (cam.isActive) {
-                const Vec3 camPos = cam.GetWorldPosition();
-                m_camera->SetPosition(camPos);
-                if (cam.hasLookTarget) {
-                    m_camera->LookAt(cam.lookTarget);
-                } else {
-                    const Vec3 fwd = (cam.GetRotation() * Vec3::Forward()).Normalized();
-                    m_camera->LookAt(camPos + fwd * 1000.f);
+    // Editor mode: capture camera pose from ECS CameraComponent on frame 2
+    // (not frame 0/1) so Lua on_start scripts have run and set the camera to
+    // the desired position. Without this delay, the camera starts at the raw
+    // scene JSON position which is usually wrong.
+    if (m_editorMode && m_editorCameraInitFrame < 3 && ctx.world) {
+        ++m_editorCameraInitFrame;
+        if (m_editorCameraInitFrame == 3) {
+            auto cameraView = ctx.world->View<CameraComponent>();
+            for (auto [enttEntity, cam] : cameraView.each()) {
+                if (cam.isActive) {
+                    const Vec3 camPos = cam.GetWorldPosition();
+                    m_camera->SetPosition(camPos);
+                    if (cam.hasLookTarget) {
+                        m_camera->LookAt(cam.lookTarget);
+                    } else {
+                        const Vec3 fwd = (cam.GetRotation() * Vec3::Forward()).Normalized();
+                        m_camera->LookAt(camPos + fwd * 1000.f);
+                    }
+                    m_camera->SetPerspective(
+                        cam.fov * (3.14159265f / 180.f),
+                        static_cast<float>(m_width) / static_cast<float>(m_height),
+                        cam.nearPlane, cam.farPlane);
+                    m_cameraCtrl->InitFromCamera(*m_camera);
+                    break;
                 }
-                m_camera->SetPerspective(
-                    cam.fov * (3.14159265f / 180.f),
-                    static_cast<float>(m_width) / static_cast<float>(m_height),
-                    cam.nearPlane, cam.farPlane);
-                // Initialize fly controller yaw/pitch from this camera pose.
-                m_cameraCtrl->InitFromCamera(*m_camera);
-                m_editorCameraInitialized = true;
-                break;
             }
         }
     }
