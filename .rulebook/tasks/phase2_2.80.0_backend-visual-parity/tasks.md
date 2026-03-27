@@ -1,10 +1,10 @@
 ## Phase -1: DX11 Shader Compilation (BLOCKING — DX11 is 100% broken)
-- [ ] -1.1 Fix DX11 shader compiler selection: DX11 device receives DXIL bytecode (SM6.0/DXC) but needs DXBC (SM5.0/FXC). The ShaderPipeline must use FXC compiler when backend=DX11. Investigate `ApplyBindlessConfig()` and `RequiresDXC()` in shader_pipeline_internal.h — DX11 should force SM5.0 + FXC, not SM6.0 + DXC.
-- [ ] -1.2 Verify ALL vertex shaders compile on DX11/FXC: mesh_vs, fullscreen_vs, shadow_depth_vs, grid_vs, outline shaders, gizmo_vs, overlay_vs. Each must have SM5 VSInput path.
-- [ ] -1.3 Verify ALL pixel shaders compile on DX11/FXC: gbuffer_ps, deferred_lighting_ps, mesh_ps, tonemap_ps, sky_atmosphere_ps, height_fog_ps, etc.
-- [ ] -1.4 Verify compute shaders on DX11: DX11 supports CS5.0. Check which compute shaders have SM5 fallback paths: gtao_cs, bloom_threshold/downsample/upsample, brdf_lut_cs, irradiance_cs, prefilter_cs. Those without fallback should be gracefully skipped (not crash).
-- [ ] -1.5 Fix 3D texture creation on DX11 — `CreateTexture3D()` returns error. APVolume, ScatteringLUT3D, DeltaRayleigh3D, DeltaMie3D, ScatteringDensity3D, ColorGradingLUT all fail.
-- [ ] -1.6 Verify DX11 runs with zero CreateShader errors: `--rhi dx11 --log-level error` shows zero RHI errors.
+- [x] -1.1 Fix DX11 shader compiler selection: ApplyBindlessConfig() now forces SM5_0 for DX11 backend (FXC/DXBC). All CreateShader E_INVALIDARG errors resolved.
+- [x] -1.2 Verify ALL vertex shaders compile on DX11/FXC. Verified: zero CreateShader stage=0 errors with `--rhi dx11 --log-level error` after clean build.
+- [x] -1.3 Verify ALL pixel shaders compile on DX11/FXC. Verified: zero CreateShader stage=1 errors. All PS compiled successfully.
+- [x] -1.4 Verify compute shaders on DX11. All CS compile with FXC/SM5.0. Zero CreateShader stage=2 errors after clean cache rebuild.
+- [x] -1.5 Fix 3D texture creation on DX11. Added ID3D11Texture3D path with SRV (TEXTURE3D) + UAV (TEXTURE3D) support. APVolume, ScatteringLUT3D, DeltaRayleigh3D, DeltaMie3D, ScatteringDensity3D, ColorGradingLUT all create successfully.
+- [x] -1.6 Verify DX11 runs with zero RHI errors: `--rhi dx11 --log-level error` shows zero CreateShader/CreateTexture/pipeline errors.
 
 ## Phase 0: SM6.0 Pipeline Creation Crashes (BLOCKING — SM6.0 partially broken)
 - [ ] 0.1 Fix `GBuffer_Instanced` pipeline failure (E_INVALIDARG): instanced vertex shader uses StructuredBuffer vertex fetch without `#ifndef UZ_BINDLESS` fallback with Input Assembler VSInput. Add SM5 instanced VS path.
