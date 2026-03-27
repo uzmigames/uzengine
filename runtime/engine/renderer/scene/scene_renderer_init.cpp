@@ -141,7 +141,7 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     m_camera->SetPosition({0.f, 200.f, -500.f});
     m_camera->LookAt({0.f, 0.f, 0.f}, Vec3::Up());
     m_cameraCtrl->InitFromCamera(*m_camera);
-    m_cameraCtrl->SetMoveSpeed(500.f);  // 500 cm/s = 5 m/s
+    m_cameraCtrl->SetMoveSpeed(5.f);  // 5 cm/s — matches Lua pbr_showcase_controller default
 
     // ── GBuffer (at render resolution — upscaled to display res by TAA) ──
     if (!m_gbuffer.Create(device, m_renderWidth, m_renderHeight)) {
