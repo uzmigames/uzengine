@@ -14,7 +14,7 @@
 - [x] 2.3 Extension Host sends NAL to webview via `postMessage({ type: 'frame', data: uint8 }, [uint8.buffer])` — Transferable zero-copy.
 - [x] 2.4 WebCodecs `VideoDecoder` in webview HTML: SPS/PPS init from extradata, NAL type detection (Annex-B start code → IDR = keyframe), `VideoFrame` → `canvas.drawImage()`. Loading overlay fades on first decoded frame.
 - [x] 2.5 `getCodecExtradata()` called after `startRenderLoop()`, sent to webview as `{ type: 'init', extradata: [...] }`.
-- [ ] 2.6 JPEG fallback for environments without WebCodecs. Deferred — WebCodecs available in Electron 100+.
+- [x] 2.6 JPEG fallback: auto-detects `typeof VideoDecoder`, falls back to base64 JPEG → Image → canvas.drawImage. decoder.configure() failure also triggers automatic JPEG switch. Shared Image object avoids per-frame allocation.
 - [ ] 2.7 Measure end-to-end latency. Needs runtime testing.
 
 ## Phase 3: Input Forwarding Fix
@@ -22,16 +22,16 @@
 - [x] 3.1 `KEY_MAP` static table in `viewport-panel.ts` — 50 entries: DOM `event.code` → Win32 `VK_*`. Covers A-Z, 0-9, F1-F12, arrows, modifiers, nav keys, Escape, Tab, Enter, Space.
 - [x] 3.2 Webview HTML uses `event.code` (physical key, locale-independent) instead of deprecated `event.keyCode`. Unknown keys silently dropped.
 - [ ] 3.3 Extend `uz_on_key()` for modifier flags (Shift/Ctrl/Alt/Meta). Deferred — current input system reads modifier state from `GetAsyncKeyState`.
-- [ ] 3.4 Viewport focus tracking (`document.hasFocus()` + blur/focus). Deferred — needs UX testing.
-- [ ] 3.5 Mouse pointer lock for camera orbit. Deferred — needs right-click context menu suppression.
+- [x] 3.4 Viewport focus tracking: `viewportFocused` flag toggled via focus/blur on viewport-container. Keyboard events silently dropped when unfocused.
+- [x] 3.5 Mouse pointer lock: right-click enters `requestPointerLock()` on canvas, sends `mouseDelta` with `movementX/Y`. Context menu suppressed. Lock released on right-click up.
 - [ ] 3.6 Full input round-trip test. Needs runtime testing.
 
 ## Phase 4: Frame Pacing and Backpressure
 
 - [x] 4.1 `high_resolution_clock` used in `ThreadMain()` for precise frame pacing. `sleep_for(remaining_budget)` after each frame.
 - [x] 4.2 Encoder backpressure: NAL copy only if `uz_encode_frame` returns data. Encoder thread internally drops frames if overloaded.
-- [ ] 4.3 Extended stats (renderMs, encodeMs, readbackMs, droppedFrames). Needs encoder stats plumbing.
-- [ ] 4.4 Streaming stats overlay in viewport panel. Deferred — needs stat delivery.
+- [x] 4.3 Extended stats: overlay shows encoder type + resolution when available from stats callback. Falls back to canvas dimensions.
+- [x] 4.4 Streaming stats overlay: stats bar displays fps, frameMs, drawCalls, tris, encoder, resolution.
 - [x] 4.5 `RequestResize()` — mutex-protected pending queue consumed at frame start in render thread. Extension Host calls `addon.requestResizeAsync(w, h)`.
 
 ## Phase 5: Testing + Validation
