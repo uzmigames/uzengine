@@ -619,8 +619,10 @@ uz_frame_stats uz_render_frame(void) {
     // Update timing.
     auto now = std::chrono::high_resolution_clock::now();
     const float totalTime = std::chrono::duration<float>(now - state->startTime).count();
-    const float dt = std::chrono::duration<float>(now - state->prevTime).count();
+    float dt = std::chrono::duration<float>(now - state->prevTime).count();
     state->prevTime = now;
+    // Clamp dt to avoid huge jumps on first frame or after hitches (shader compile, etc.)
+    if (dt > 0.1f) dt = 0.016f;
 
     // Update Lua scripts.
     if (state->luaReady) {
