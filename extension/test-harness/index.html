@@ -110,7 +110,8 @@ let decoder = null;
 let canvas, ctx;
 let framesDecoded = 0;
 let framesDropped = 0;
-let viewportFocused = false;
+window.viewportFocused = false;
+let viewportFocused = window.viewportFocused;
 let lastNalSize = 0;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -325,8 +326,8 @@ function handleMessage(msg) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const container = document.getElementById('viewport-container');
-container.addEventListener('focus', () => { viewportFocused = true; });
-container.addEventListener('blur', () => { viewportFocused = false; });
+container.addEventListener('focus', () => { viewportFocused = true; window.viewportFocused = true; });
+container.addEventListener('blur', () => { viewportFocused = false; window.viewportFocused = false; });
 
 // Key map: DOM event.code → Win32 VK_*
 const KEY_MAP = {
