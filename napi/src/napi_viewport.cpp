@@ -1,6 +1,11 @@
 /// UzEngine N-API — Viewport + rendering bindings.
 
 #include "napi_common.h"
+#include "render_thread.h"
+
+// ── Async Render Thread (singleton) ──────────────────────────────────────────
+
+static RenderThread g_renderThread;
 
 // ── Viewport Lifecycle ──────────────────────────────────────────────────────
 
@@ -153,6 +158,60 @@ static Napi::Value GetCodecExtradata(const Napi::CallbackInfo& info) {
     return Napi::Buffer<uint8_t>::Copy(env, data, size);
 }
 
+// ── Async Render Loop ────────────────────────────────────────────────────
+
+/// startRenderLoop(targetFps: number, onFrame: Function, onEncodedFrame: Function): boolean
+///
+/// Starts a dedicated render thread that calls uz_render_frame() + uz_encode_frame()
+/// at the target FPS. Results are delivered to the provided callbacks on the Node.js
+/// main thread via napi_threadsafe_function, keeping the event loop unblocked.
+static Napi::Value StartRenderLoop(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 3 || !info[0].IsNumber() || !info[1].IsFunction() || !info[2].IsFunction()) {
+        Napi::TypeError::New(env,
+            "startRenderLoop(targetFps: number, onFrame: Function, onEncodedFrame: Function) expected")
+            .ThrowAsJavaScriptException();
+        return Napi::Boolean::New(env, false);
+    }
+    int fps = info[0].As<Napi::Number>().Int32Value();
+    auto onFrame = info[1].As<Napi::Function>();
+    auto onEncodedFrame = info[2].As<Napi::Function>();
+
+    bool ok = g_renderThread.Start(env, fps, onFrame, onEncodedFrame);
+    return Napi::Boolean::New(env, ok);
+}
+
+/// stopRenderLoop(): void
+///
+/// Signals the render thread to stop and blocks until it has joined.
+/// Safe to call even if the loop is not running (no-op).
+static Napi::Value StopRenderLoop(const Napi::CallbackInfo& info) {
+    g_renderThread.Stop();
+    return info.Env().Undefined();
+}
+
+/// requestResizeAsync(width: number, height: number): void
+///
+/// Queues a swapchain resize to be applied at the start of the next frame on
+/// the render thread. Does not block the caller.
+static Napi::Value RequestResizeAsync(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 2 || !info[0].IsNumber() || !info[1].IsNumber()) {
+        Napi::TypeError::New(env, "requestResizeAsync(width: number, height: number) expected")
+            .ThrowAsJavaScriptException();
+        return env.Undefined();
+    }
+    g_renderThread.RequestResize(
+        info[0].As<Napi::Number>().Int32Value(),
+        info[1].As<Napi::Number>().Int32Value());
+    return env.Undefined();
+}
+
+/// isRenderLoopRunning(): boolean
+static Napi::Value IsRenderLoopRunning(const Napi::CallbackInfo& info) {
+    return Napi::Boolean::New(info.Env(), g_renderThread.IsRunning());
+}
+
 // ── Registration ────────────────────────────────────────────────────────
 
 void RegisterViewportBindings(Napi::Env env, Napi::Object exports) {
@@ -167,4 +226,10 @@ void RegisterViewportBindings(Napi::Env env, Napi::Object exports) {
     exports.Set("requestKeyframe",     Napi::Function::New(env, RequestKeyframe));
     exports.Set("getCodecExtradata",   Napi::Function::New(env, GetCodecExtradata));
     exports.Set("setEncodeBitrate",   Napi::Function::New(env, SetEncodeBitrate));
+
+    // Async render loop (dedicated thread -- does not block the event loop).
+    exports.Set("startRenderLoop",      Napi::Function::New(env, StartRenderLoop));
+    exports.Set("stopRenderLoop",       Napi::Function::New(env, StopRenderLoop));
+    exports.Set("requestResizeAsync",   Napi::Function::New(env, RequestResizeAsync));
+    exports.Set("isRenderLoopRunning",  Napi::Function::New(env, IsRenderLoopRunning));
 }

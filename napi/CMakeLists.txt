@@ -46,6 +46,7 @@ add_library(${PROJECT_NAME} SHARED
   src/napi_scene.cpp
   src/napi_input.cpp
   src/napi_diagnostics.cpp
+  src/render_thread.cpp
   ${CMAKE_JS_SRC}
 )
 

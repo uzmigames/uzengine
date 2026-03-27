@@ -172,6 +172,39 @@ export interface UzEngineAddon {
     renderFrame(): FrameStats;
 
     /**
+     * Starts an asynchronous render thread that fires callbacks on the Node.js
+     * event loop via N-API ThreadSafeFunction.
+     *
+     * The render thread runs at `targetFps` and, on each completed frame:
+     *  1. Calls `onFrame` with the per-frame stats.
+     *  2. Calls `onEncodedFrame` with the H.264 NAL Buffer produced by the
+     *     hardware encoder (one call per encoded output, which may be once
+     *     every N frames depending on the encoder pipeline depth).
+     *
+     * Calling `startRenderLoop` while the loop is already running is a no-op
+     * (the existing loop continues at its current rate).
+     *
+     * @param targetFps      - Desired frames per second (e.g. `60`).
+     * @param onFrame        - Callback fired with `FrameStats` each rendered frame.
+     * @param onEncodedFrame - Callback fired with a H.264 NAL `Buffer` whenever
+     *   the encoder produces output.
+     * @throws Error if no viewport is active.
+     */
+    startRenderLoop(
+        targetFps: number,
+        onFrame: (stats: FrameStats) => void,
+        onEncodedFrame: (nalBuffer: Buffer) => void
+    ): void;
+
+    /**
+     * Stops the asynchronous render thread started by `startRenderLoop`.
+     *
+     * Blocks until the render thread has exited and all in-flight callbacks
+     * have been flushed. Safe to call when the loop is not running (no-op).
+     */
+    stopRenderLoop(): void;
+
+    /**
      * Captures the current frame as a PNG image.
      *
      * This is a synchronous (blocking) GPU readback. The returned `Buffer`

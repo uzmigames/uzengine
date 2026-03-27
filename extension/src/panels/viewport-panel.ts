@@ -1,14 +1,21 @@
 /// UzEngine Viewport panel — WebviewPanel that drives the native render loop.
 ///
-/// The native DX12 viewport renders into a STANDALONE top-level window
-/// (HWND embedding into the WebView is Phase 2.1). The WebviewPanel acts as
-/// the interaction surface: it captures keyboard / mouse / scroll events and
-/// forwards them to the runtime via the addon, and receives per-frame stats
-/// back via `postMessage` to display in the toolbar overlay.
+/// The native DX12 viewport renders on a dedicated render thread. Encoded H.264
+/// NAL units are streamed from that thread to the webview via two callbacks
+/// registered with `addon.startRenderLoop`:
 ///
-/// Render loop: `setInterval` at ~60 FPS calls `addon.renderFrame()`.  When
-/// the panel is hidden (`onDidChangeViewState`) the loop is paused to avoid
-/// consuming GPU resources in the background.
+///  - `onFrame`        — per-frame stats (fps, frameMs, drawCalls, …)
+///  - `onEncodedFrame` — H.264 NAL Buffer; forwarded as binary to the WebView
+///                       where `VideoDecoder` (WebCodecs) decodes and blits to
+///                       a `<canvas>`.
+///
+/// Input forwarding: the WebView now sends `event.code` strings (e.g. `'KeyW'`)
+/// rather than numeric keyCodes.  The extension host translates them to Win32
+/// virtual-key codes via `ViewportPanel.KEY_MAP` before calling `addon.onKey`.
+///
+/// Render loop lifecycle:
+///  - Panel hidden  → `addon.stopRenderLoop()`  (saves GPU)
+///  - Panel visible → `addon.startRenderLoop(60, onFrame, onEncodedFrame)`
 
 import * as vscode from 'vscode';
 import type { UzEngineAddon } from '../uzengine';
@@ -21,7 +28,8 @@ type WebViewMessage =
     | { type: 'ready' }
     | { type: 'mouseMove'; x: number; y: number }
     | { type: 'mouseButton'; button: number; pressed: boolean }
-    | { type: 'key'; keycode: number; pressed: boolean }
+    /** `code` is the `KeyboardEvent.code` string, e.g. `'KeyW'`, `'ArrowUp'`. */
+    | { type: 'key'; code: string; pressed: boolean }
     | { type: 'scroll'; delta: number };
 
 // ── ViewportPanel ─────────────────────────────────────────────────────────────
@@ -31,14 +39,40 @@ type WebViewMessage =
 /// Lifecycle:
 ///  1. Constructed → creates the WebviewPanel + starts the render loop once
 ///     the WebView signals `ready`.
-///  2. Panel hidden → render loop paused.
-///  3. Panel revealed → render loop resumed.
+///  2. Panel hidden → render loop paused (`addon.stopRenderLoop`).
+///  3. Panel revealed → render loop resumed (`addon.startRenderLoop`).
 ///  4. `dispose()` → render loop stopped, native viewport destroyed, emitter fired.
 export class ViewportPanel {
     private readonly panel: vscode.WebviewPanel;
-    private renderTimer: ReturnType<typeof setInterval> | undefined;
+    private renderLoopActive = false;
     private disposed = false;
     private viewportCreated = false;
+
+    /**
+     * Translation table from `KeyboardEvent.code` (DOM standard) to Win32
+     * virtual-key codes.  Any code not present in this map is silently ignored.
+     */
+    private static readonly KEY_MAP: Readonly<Record<string, number>> = {
+        'KeyW': 0x57, 'KeyA': 0x41, 'KeyS': 0x53, 'KeyD': 0x44,
+        'KeyQ': 0x51, 'KeyE': 0x45, 'KeyF': 0x46, 'KeyG': 0x47,
+        'KeyR': 0x52, 'KeyT': 0x54, 'KeyZ': 0x5A, 'KeyX': 0x58,
+        'KeyC': 0x43, 'KeyV': 0x56,
+        'Space':        0x20,
+        'ShiftLeft':    0x10, 'ShiftRight':   0x10,
+        'ControlLeft':  0x11, 'ControlRight':  0x11,
+        'AltLeft':      0x12, 'AltRight':      0x12,
+        'ArrowUp':      0x26, 'ArrowDown':     0x28,
+        'ArrowLeft':    0x25, 'ArrowRight':    0x27,
+        'F1':  0x70, 'F2':  0x71, 'F3':  0x72, 'F4':  0x73,
+        'F5':  0x74, 'F6':  0x75, 'F7':  0x76, 'F8':  0x77,
+        'F9':  0x78, 'F10': 0x79, 'F11': 0x7A, 'F12': 0x7B,
+        'Escape':    0x1B, 'Tab':    0x09, 'Enter':    0x0D, 'Backspace': 0x08,
+        'Delete':    0x2E, 'Insert': 0x2D, 'Home':     0x24, 'End':       0x23,
+        'PageUp':    0x21, 'PageDown': 0x22,
+        'Digit0': 0x30, 'Digit1': 0x31, 'Digit2': 0x32, 'Digit3': 0x33,
+        'Digit4': 0x34, 'Digit5': 0x35, 'Digit6': 0x36, 'Digit7': 0x37,
+        'Digit8': 0x38, 'Digit9': 0x39,
+    };
 
     private readonly _onDidDispose = new vscode.EventEmitter<void>();
     /// Fired when this ViewportPanel is disposed (panel closed or `dispose()` called).
@@ -111,7 +145,7 @@ export class ViewportPanel {
     // ── Private — render loop ─────────────────────────────────────────────────
 
     private startRenderLoop(): void {
-        if (this.renderTimer !== undefined || this.disposed) return;
+        if (this.renderLoopActive || this.disposed) return;
 
         // Create the native viewport the first time the loop starts.
         if (!this.viewportCreated) {
@@ -127,14 +161,21 @@ export class ViewportPanel {
             }
         }
 
-        // ~60 FPS — 16 ms interval.
-        this.renderTimer = setInterval(() => {
-            if (this.disposed) {
-                this.stopRenderLoop();
-                return;
-            }
-            try {
-                const stats = this.addon.renderFrame();
+        // Start the native render thread at 60 FPS.
+        // onFrame    — receives per-frame stats from the render thread.
+        // onEncoded  — receives a H.264 NAL Buffer; forwarded as binary to the
+        //              WebView where VideoDecoder (WebCodecs) decodes it.
+        this.addon.startRenderLoop(
+            60,
+            // onFrame callback
+            (stats: {
+                fps: number;
+                frameMs: number;
+                drawCalls: number;
+                vertices: number;
+                triangles: number;
+            }) => {
+                if (this.disposed) return;
                 void this.panel.webview.postMessage({
                     type: 'stats',
                     fps: stats.fps,
@@ -143,17 +184,46 @@ export class ViewportPanel {
                     vertices: stats.vertices,
                     triangles: stats.triangles,
                 });
-            } catch {
-                // Render errors are transient (e.g. device lost recovery).
-                // The loop continues — the next frame will attempt recovery.
+            },
+            // onEncodedFrame callback
+            (nalBuffer: Buffer) => {
+                if (this.disposed) return;
+                // Transfer ownership of the underlying ArrayBuffer to the WebView
+                // via the transferable objects mechanism to avoid a copy.
+                const uint8 = new Uint8Array(
+                    nalBuffer.buffer,
+                    nalBuffer.byteOffset,
+                    nalBuffer.byteLength
+                );
+                void this.panel.webview.postMessage({ type: 'frame', data: uint8 });
             }
-        }, 16);
+        );
+
+        this.renderLoopActive = true;
+
+        // Send SPS/PPS codec extradata so the WebView can configure VideoDecoder.
+        try {
+            const extradata = this.addon.getCodecExtradata();
+            if (extradata) {
+                void this.panel.webview.postMessage({
+                    type: 'init',
+                    extradata: Array.from(extradata as Uint8Array),
+                });
+            }
+        } catch {
+            // getCodecExtradata may not yet be available if the encoder is still
+            // initialising; the WebView will request a re-init on next key frame.
+        }
     }
 
     private stopRenderLoop(): void {
-        if (this.renderTimer !== undefined) {
-            clearInterval(this.renderTimer);
-            this.renderTimer = undefined;
+        if (this.renderLoopActive) {
+            try {
+                this.addon.stopRenderLoop();
+            } catch {
+                // Ignore — addon may be torn down during extension deactivation.
+            }
+            this.renderLoopActive = false;
         }
     }
 
@@ -171,9 +241,13 @@ export class ViewportPanel {
             case 'mouseButton':
                 this.addon.onMouseButton(msg.button, msg.pressed);
                 break;
-            case 'key':
-                this.addon.onKey(msg.keycode, msg.pressed);
+            case 'key': {
+                const vk = ViewportPanel.KEY_MAP[msg.code];
+                if (vk !== undefined) {
+                    this.addon.onKey(vk, msg.pressed);
+                }
                 break;
+            }
             case 'scroll':
                 this.addon.onScroll(msg.delta);
                 break;
@@ -187,10 +261,13 @@ export class ViewportPanel {
     /// The page contains:
     ///  - A toolbar with gizmo mode buttons (Translate / Rotate / Scale) and
     ///    a space-mode toggle (Local / World).
-    ///  - A placeholder `#viewport` div with an explanatory message (the real
-    ///    render output is in the native window).
-    ///  - Input forwarding for mouse, wheel, and keyboard events.
+    ///  - A `<canvas id="viewport-canvas">` that fills the viewport area and
+    ///    receives decoded H.264 frames via the WebCodecs `VideoDecoder` API.
+    ///  - A fallback `#viewport-overlay` shown while waiting for the first frame.
+    ///  - Input forwarding for mouse, wheel, and keyboard events (`event.code`).
     ///  - Stats overlay driven by `postMessage` from the extension host.
+    ///  - WebCodecs decoder: handles `init` (SPS/PPS config) and `frame` (NAL)
+    ///    messages from the extension host.
     private buildHtml(): string {
         // Content Security Policy: only inline scripts, no external resources.
         const csp = [
@@ -267,17 +344,41 @@ export class ViewportPanel {
         font-variant-numeric: tabular-nums;
     }
 
-    /* ── Viewport placeholder ── */
-    #viewport {
+    /* ── Viewport area ── */
+    #viewport-container {
+        position: relative;
         width: 100%;
         height: calc(100vh - 28px);
         background: #111111;
+        overflow: hidden;
+        outline: none;
+    }
+
+    /* Canvas fills the container and is the render target for decoded frames. */
+    #viewport-canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+        /* Nearest-neighbour scaling keeps pixel-perfect look for non-native res. */
+        image-rendering: pixelated;
+    }
+
+    /* Overlay shown while waiting for the first decoded video frame. */
+    #viewport-overlay {
+        position: absolute;
+        inset: 0;
         display: flex;
         flex-direction: column;
         align-items: center;
         justify-content: center;
         gap: 12px;
         color: #555555;
+        pointer-events: none;
+        transition: opacity 0.3s;
+    }
+
+    #viewport-overlay.hidden {
+        opacity: 0;
     }
 
     #viewport-icon {
@@ -308,24 +409,90 @@ export class ViewportPanel {
     <button id="btn-world"  class="active" title="World Space">World</button>
     <span id="stats">-- FPS</span>
 </div>
-<div id="viewport" tabindex="0">
-    <div id="viewport-icon">&#x1F5A5;</div>
-    <div id="viewport-msg">Rendering in native viewport window</div>
-    <div id="viewport-sub">Keyboard &amp; mouse input is captured here and forwarded to the engine</div>
+
+<!-- Viewport: canvas receives H.264 frames; overlay fades once decoding starts. -->
+<div id="viewport-container" tabindex="0">
+    <canvas id="viewport-canvas"></canvas>
+    <div id="viewport-overlay">
+        <div id="viewport-icon">&#x1F5A5;</div>
+        <div id="viewport-msg">Waiting for render stream&hellip;</div>
+        <div id="viewport-sub">H.264 stream will appear here once the engine is ready</div>
+    </div>
 </div>
+
 <script>
 (function () {
     'use strict';
 
     const vscode = acquireVsCodeApi();
 
+    // ── Canvas / 2-D context ────────────────────────────────────────────────
+    const canvas  = /** @type {HTMLCanvasElement} */ (document.getElementById('viewport-canvas'));
+    const overlay = document.getElementById('viewport-overlay');
+    const ctx2d   = canvas.getContext('2d');
+
+    // Track whether we have ever drawn a frame (to hide the overlay once).
+    var firstFrameDrawn = false;
+
+    function onFirstFrame() {
+        if (firstFrameDrawn) return;
+        firstFrameDrawn = true;
+        if (overlay) overlay.classList.add('hidden');
+    }
+
+    // ── WebCodecs VideoDecoder ───────────────────────────────────────────────
+    // A null decoder means we are waiting for the 'init' message.
+    var decoder = null;
+
+    /**
+     * Initialise (or re-initialise) the VideoDecoder with the SPS/PPS
+     * extradata from the encoder.
+     *
+     * @param {Uint8Array} extradata  Raw AVCC/Annex-B SPS+PPS bytes.
+     */
+    function initDecoder(extradata) {
+        // Close any previous decoder before creating a new one.
+        if (decoder !== null) {
+            try { decoder.close(); } catch (_) {}
+            decoder = null;
+        }
+
+        // Size the canvas to match the encode resolution (1280x720 default).
+        // The CSS makes it fill the container regardless of the intrinsic size.
+        canvas.width  = 1280;
+        canvas.height = 720;
+
+        decoder = new VideoDecoder({
+            output: function (frame) {
+                // Draw the decoded VideoFrame onto the 2-D canvas.
+                ctx2d.drawImage(frame, 0, 0, canvas.width, canvas.height);
+                frame.close();
+                onFirstFrame();
+            },
+            error: function (e) {
+                console.error('[UzEngine] VideoDecoder error:', e);
+                // On error, reset so the next 'init' message can recover.
+                decoder = null;
+            },
+        });
+
+        decoder.configure({
+            codec: 'avc1.42E01F',   // H.264 Baseline Level 3.1
+            codedWidth:  canvas.width,
+            codedHeight: canvas.height,
+            description: extradata, // SPS/PPS as AVCC extra data
+            hardwareAcceleration: 'prefer-hardware',
+            optimizeForLatency: true,
+        });
+    }
+
     // ── Toolbar gizmo mode buttons ──────────────────────────────────────────
-    const gizmoGroup = ['btn-translate', 'btn-rotate', 'btn-scale'];
-    const spaceGroup  = ['btn-local', 'btn-world'];
+    var gizmoGroup = ['btn-translate', 'btn-rotate', 'btn-scale'];
+    var spaceGroup  = ['btn-local', 'btn-world'];
 
     function setActiveInGroup(groupIds, clickedId) {
         groupIds.forEach(function (id) {
-            const el = document.getElementById(id);
+            var el = document.getElementById(id);
             if (el) {
                 el.classList.toggle('active', id === clickedId);
             }
@@ -333,56 +500,91 @@ export class ViewportPanel {
     }
 
     gizmoGroup.forEach(function (id) {
-        const el = document.getElementById(id);
+        var el = document.getElementById(id);
         if (el) {
             el.addEventListener('click', function () { setActiveInGroup(gizmoGroup, id); });
         }
     });
     spaceGroup.forEach(function (id) {
-        const el = document.getElementById(id);
+        var el = document.getElementById(id);
         if (el) {
             el.addEventListener('click', function () { setActiveInGroup(spaceGroup, id); });
         }
     });
 
     // ── Input forwarding ────────────────────────────────────────────────────
-    const viewport = document.getElementById('viewport');
+    var container = document.getElementById('viewport-container');
 
-    viewport.addEventListener('mousemove', function (e) {
+    container.addEventListener('mousemove', function (e) {
         vscode.postMessage({ type: 'mouseMove', x: e.offsetX, y: e.offsetY });
     });
 
-    viewport.addEventListener('mousedown', function (e) {
-        viewport.focus();
+    container.addEventListener('mousedown', function (e) {
+        container.focus();
         vscode.postMessage({ type: 'mouseButton', button: e.button, pressed: true });
         e.preventDefault();
     });
 
-    viewport.addEventListener('mouseup', function (e) {
+    container.addEventListener('mouseup', function (e) {
         vscode.postMessage({ type: 'mouseButton', button: e.button, pressed: false });
     });
 
-    viewport.addEventListener('contextmenu', function (e) {
+    container.addEventListener('contextmenu', function (e) {
         e.preventDefault();
     });
 
-    viewport.addEventListener('wheel', function (e) {
+    container.addEventListener('wheel', function (e) {
         vscode.postMessage({ type: 'scroll', delta: e.deltaY > 0 ? -1 : 1 });
         e.preventDefault();
     }, { passive: false });
 
+    // Use event.code (layout-independent) instead of keyCode.
     document.addEventListener('keydown', function (e) {
-        vscode.postMessage({ type: 'key', keycode: e.keyCode, pressed: true });
+        vscode.postMessage({ type: 'key', code: e.code, pressed: true });
+        e.preventDefault();
     });
 
     document.addEventListener('keyup', function (e) {
-        vscode.postMessage({ type: 'key', keycode: e.keyCode, pressed: false });
+        vscode.postMessage({ type: 'key', code: e.code, pressed: false });
     });
 
-    // ── Stats update ────────────────────────────────────────────────────────
-    window.addEventListener('message', function (e) {
-        var msg = e.data;
-        if (msg.type === 'stats') {
+    // ── Message handler ─────────────────────────────────────────────────────
+    window.addEventListener('message', function (event) {
+        var msg = event.data;
+
+        if (msg.type === 'init') {
+            // SPS/PPS extradata — configure the VideoDecoder.
+            var extradataArray = new Uint8Array(msg.extradata);
+            initDecoder(extradataArray);
+
+        } else if (msg.type === 'frame') {
+            // Encoded H.264 NAL unit — feed to the VideoDecoder.
+            if (decoder === null || decoder.state === 'closed') return;
+            try {
+                // Determine chunk type: IDR NAL type (5) = key frame, else delta.
+                var nalData = msg.data;
+                // NAL unit type is in the lower 5 bits of the first byte.
+                // For Annex-B streams, skip the start code (00 00 00 01 or 00 00 01).
+                var startOffset = 0;
+                if (nalData[0] === 0 && nalData[1] === 0 && nalData[2] === 0 && nalData[3] === 1) {
+                    startOffset = 4;
+                } else if (nalData[0] === 0 && nalData[1] === 0 && nalData[2] === 1) {
+                    startOffset = 3;
+                }
+                var nalType = nalData[startOffset] & 0x1F;
+                var isKeyFrame = (nalType === 5 || nalType === 7 || nalType === 8);
+
+                var chunk = new EncodedVideoChunk({
+                    type: isKeyFrame ? 'key' : 'delta',
+                    timestamp: performance.now() * 1000, // microseconds
+                    data: nalData,
+                });
+                decoder.decode(chunk);
+            } catch (e) {
+                console.error('[UzEngine] decode error:', e);
+            }
+
+        } else if (msg.type === 'stats') {
             var statsEl = document.getElementById('stats');
             if (statsEl) {
                 statsEl.textContent =
