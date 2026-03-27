@@ -2,6 +2,26 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.56] — 2026-03-26
+
+### Backend Visual Parity — DX11 + SM6.0 fixes
+
+- **fix(rhi):** DX11 now compiles shaders via FXC/SM5.0 instead of DXC/SM6.0.
+  All `CreateShader E_INVALIDARG` errors resolved — DX11 was 100% broken.
+- **feat(rhi):** DX11 3D texture support — `CreateTexture3D` + SRV + UAV for
+  atmosphere volumes, color grading LUT, global distance field.
+- **fix(rhi):** SM6.0 instanced pipelines gracefully skip (require bindless).
+  Engine falls back to per-object draws instead of crashing with E_INVALIDARG.
+- **fix(editor):** OutlineMaskPipeline now provides VertexLayout on non-bindless
+  path, fixing root signature IA mismatch on SM6.0/DX11.
+- **fix(shader):** GBuffer SM5 metallic sampling changed from
+  `SampleLevel(clampSampler, 0)` to `SampleBias(linearSampler, mipBias)`.
+- **fix(shader):** Deferred lighting SM5 IBL null-guard — uses SRV index from
+  PerFrameCB to gate texture sampling. Falls back to SH diffuse when IBL not ready.
+- **fix(config):** `--sm 6.0` CLI flag now works (was silently ignored due to
+  JSON number parsing and missing ToDeviceDesc forwarding).
+- **feat(cli):** Added `--log-level` flag (trace/debug/info/warning/error).
+
 ## [0.2.55] — 2026-03-26
 
 ### Editor: gizmo/outline always-on-top, fly camera rename, WASD input routing
