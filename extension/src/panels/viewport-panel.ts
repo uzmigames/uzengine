@@ -27,6 +27,11 @@ import type { SceneTreeProvider } from './scene-tree-panel';
 type WebViewMessage =
     | { type: 'ready' }
     | { type: 'mouseMove'; x: number; y: number }
+    /**
+     * Sent while the pointer is locked (right-click camera orbit).
+     * `dx`/`dy` are the raw `MouseEvent.movementX/Y` deltas in pixels.
+     */
+    | { type: 'mouseDelta'; dx: number; dy: number }
     | { type: 'mouseButton'; button: number; pressed: boolean }
     /** `code` is the `KeyboardEvent.code` string, e.g. `'KeyW'`, `'ArrowUp'`. */
     | { type: 'key'; code: string; pressed: boolean }
@@ -238,6 +243,11 @@ export class ViewportPanel {
             case 'mouseMove':
                 this.addon.onMouseMove(msg.x, msg.y);
                 break;
+            case 'mouseDelta':
+                // Relative movement while pointer is locked — engine handles
+                // the camera-orbit interpretation on its side.
+                this.addon.onMouseMove(msg.dx, msg.dy);
+                break;
             case 'mouseButton':
                 this.addon.onMouseButton(msg.button, msg.pressed);
                 break;
@@ -440,6 +450,17 @@ export class ViewportPanel {
         if (overlay) overlay.classList.add('hidden');
     }
 
+    // ── WebCodecs capability detection ──────────────────────────────────────
+    // Detect whether the current webview context supports the WebCodecs API.
+    // VSCode's webview runs on the embedded Electron/Chromium renderer, so
+    // VideoDecoder is normally available, but older VSCode versions may not
+    // expose it.  When absent, we fall back to JPEG image decoding.
+    var hasWebCodecs = (typeof VideoDecoder !== 'undefined');
+
+    // Flag switched to true if configure() throws, so we degrade gracefully
+    // within a session even if VideoDecoder is technically present.
+    var usingJpegFallback = !hasWebCodecs;
+
     // ── WebCodecs VideoDecoder ───────────────────────────────────────────────
     // A null decoder means we are waiting for the 'init' message.
     var decoder = null;
@@ -451,6 +472,8 @@ export class ViewportPanel {
      * @param {Uint8Array} extradata  Raw AVCC/Annex-B SPS+PPS bytes.
      */
     function initDecoder(extradata) {
+        if (usingJpegFallback) return; // JPEG mode — VideoDecoder not used.
+
         // Close any previous decoder before creating a new one.
         if (decoder !== null) {
             try { decoder.close(); } catch (_) {}
@@ -476,15 +499,35 @@ export class ViewportPanel {
             },
         });
 
-        decoder.configure({
-            codec: 'avc1.42E01F',   // H.264 Baseline Level 3.1
-            codedWidth:  canvas.width,
-            codedHeight: canvas.height,
-            description: extradata, // SPS/PPS as AVCC extra data
-            hardwareAcceleration: 'prefer-hardware',
-            optimizeForLatency: true,
-        });
+        try {
+            decoder.configure({
+                codec: 'avc1.42E01F',   // H.264 Baseline Level 3.1
+                codedWidth:  canvas.width,
+                codedHeight: canvas.height,
+                description: extradata, // SPS/PPS as AVCC extra data
+                hardwareAcceleration: 'prefer-hardware',
+                optimizeForLatency: true,
+            });
+        } catch (configErr) {
+            // configure() threw (unsupported codec profile, hardware restriction, etc.)
+            // Switch permanently to JPEG fallback for this session.
+            console.warn('[UzEngine] VideoDecoder.configure() failed, switching to JPEG fallback:', configErr);
+            try { decoder.close(); } catch (_) {}
+            decoder = null;
+            usingJpegFallback = true;
+        }
     }
+
+    // ── JPEG fallback ────────────────────────────────────────────────────────
+    // When WebCodecs is unavailable or configure() failed, the extension host
+    // sends { type: 'jpeg', data: <base64 string> } messages instead of
+    // H.264 NAL units.  We decode them by assigning a data URL to an <img>
+    // element and blitting the result onto the canvas.
+    var jpegImg = new Image();
+    jpegImg.onload = function () {
+        ctx2d.drawImage(jpegImg, 0, 0, canvas.width, canvas.height);
+        onFirstFrame();
+    };
 
     // ── Toolbar gizmo mode buttons ──────────────────────────────────────────
     var gizmoGroup = ['btn-translate', 'btn-rotate', 'btn-scale'];
@@ -512,25 +555,56 @@ export class ViewportPanel {
         }
     });
 
-    // ── Input forwarding ────────────────────────────────────────────────────
+    // ── Focus tracking ───────────────────────────────────────────────────────
+    // Only forward keyboard events while the viewport container is focused.
+    // The container has tabindex="0" so it can receive focus.
     var container = document.getElementById('viewport-container');
+    var viewportFocused = false;
 
-    container.addEventListener('mousemove', function (e) {
-        vscode.postMessage({ type: 'mouseMove', x: e.offsetX, y: e.offsetY });
+    container.addEventListener('focus', function () {
+        viewportFocused = true;
+    });
+    container.addEventListener('blur', function () {
+        viewportFocused = false;
     });
 
-    container.addEventListener('mousedown', function (e) {
+    // ── Pointer lock helpers ─────────────────────────────────────────────────
+    // Right-click acquires pointer lock for camera orbit (relative deltas).
+    // Releasing right-click exits pointer lock.
+    canvas.addEventListener('mousedown', function (e) {
+        if (e.button === 2) {
+            // Acquire pointer lock for camera orbit — browser suppresses
+            // absolute position while locked and we send movement deltas.
+            canvas.requestPointerLock();
+        }
+        // Ensure the container is focused so keyboard input routes here.
         container.focus();
         vscode.postMessage({ type: 'mouseButton', button: e.button, pressed: true });
         e.preventDefault();
     });
 
-    container.addEventListener('mouseup', function (e) {
+    canvas.addEventListener('mouseup', function (e) {
+        if (e.button === 2 && document.pointerLockElement === canvas) {
+            document.exitPointerLock();
+        }
         vscode.postMessage({ type: 'mouseButton', button: e.button, pressed: false });
     });
 
-    container.addEventListener('contextmenu', function (e) {
+    // Suppress the browser context menu on right-click.
+    canvas.addEventListener('contextmenu', function (e) {
         e.preventDefault();
+    });
+
+    // ── Mouse move ───────────────────────────────────────────────────────────
+    // When pointer is locked, send relative deltas (camera orbit).
+    // Otherwise, send absolute canvas-relative position.
+    document.addEventListener('mousemove', function (e) {
+        if (document.pointerLockElement === canvas) {
+            vscode.postMessage({ type: 'mouseDelta', dx: e.movementX, dy: e.movementY });
+        } else if (viewportFocused) {
+            // e.offsetX/Y on the canvas give canvas-local coordinates.
+            vscode.postMessage({ type: 'mouseMove', x: e.offsetX, y: e.offsetY });
+        }
     });
 
     container.addEventListener('wheel', function (e) {
@@ -539,12 +613,16 @@ export class ViewportPanel {
     }, { passive: false });
 
     // Use event.code (layout-independent) instead of keyCode.
+    // Events are only forwarded while the viewport has focus so they don't
+    // interfere with text input elsewhere in VSCode.
     document.addEventListener('keydown', function (e) {
+        if (!viewportFocused) return;
         vscode.postMessage({ type: 'key', code: e.code, pressed: true });
         e.preventDefault();
     });
 
     document.addEventListener('keyup', function (e) {
+        if (!viewportFocused) return;
         vscode.postMessage({ type: 'key', code: e.code, pressed: false });
     });
 
@@ -553,12 +631,16 @@ export class ViewportPanel {
         var msg = event.data;
 
         if (msg.type === 'init') {
-            // SPS/PPS extradata — configure the VideoDecoder.
-            var extradataArray = new Uint8Array(msg.extradata);
-            initDecoder(extradataArray);
+            // SPS/PPS extradata — configure the VideoDecoder (no-op in JPEG mode).
+            if (!usingJpegFallback) {
+                var extradataArray = new Uint8Array(msg.extradata);
+                initDecoder(extradataArray);
+            }
 
         } else if (msg.type === 'frame') {
             // Encoded H.264 NAL unit — feed to the VideoDecoder.
+            // Silently ignored in JPEG fallback mode.
+            if (usingJpegFallback) return;
             if (decoder === null || decoder.state === 'closed') return;
             try {
                 // Determine chunk type: IDR NAL type (5) = key frame, else delta.
@@ -584,14 +666,41 @@ export class ViewportPanel {
                 console.error('[UzEngine] decode error:', e);
             }
 
+        } else if (msg.type === 'jpeg') {
+            // JPEG fallback frame — used when VideoDecoder is unavailable or
+            // failed to configure.  The extension host base64-encodes the
+            // JPEG bytes and sends them here; we decode via an <img> element.
+            if (!usingJpegFallback) return;
+            // Resize canvas on first JPEG frame if dimensions are provided.
+            if (msg.width && msg.height) {
+                canvas.width  = msg.width;
+                canvas.height = msg.height;
+            } else if (canvas.width === 0 || canvas.height === 0) {
+                canvas.width  = 1280;
+                canvas.height = 720;
+            }
+            jpegImg.src = 'data:image/jpeg;base64,' + msg.data;
+
         } else if (msg.type === 'stats') {
             var statsEl = document.getElementById('stats');
             if (statsEl) {
-                statsEl.textContent =
-                    msg.fps.toFixed(0) + ' FPS\u2002|\u2002' +
-                    msg.frameMs.toFixed(1) + ' ms\u2002|\u2002' +
-                    msg.drawCalls + ' draw calls\u2002|\u2002' +
-                    msg.triangles + ' tris';
+                // Build the stats string.  Optional fields (encoder, resolution)
+                // are appended only when the extension host provides them.
+                var parts = [
+                    msg.fps.toFixed(0) + ' FPS',
+                    msg.frameMs.toFixed(1) + ' ms',
+                    msg.drawCalls + ' draw calls',
+                    msg.triangles + ' tris',
+                ];
+                if (msg.encoder) {
+                    parts.push(String(msg.encoder));
+                }
+                if (msg.resolution) {
+                    parts.push(String(msg.resolution));
+                } else if (canvas.width > 0 && canvas.height > 0) {
+                    parts.push(canvas.width + '\u00D7' + canvas.height);
+                }
+                statsEl.textContent = parts.join('\u2002|\u2002');
             }
         }
     });

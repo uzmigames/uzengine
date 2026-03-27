@@ -67,11 +67,12 @@ DX11Device::~DX11Device() {
         if (buf.shadowCopy) { delete[] buf.shadowCopy; buf.shadowCopy = nullptr; }
     }
     for (auto& tex : m_texturePool.Slots()) {
-        if (tex.uav) { tex.uav->Release(); tex.uav = nullptr; }
-        if (tex.dsv) { tex.dsv->Release(); tex.dsv = nullptr; }
-        if (tex.rtv) { tex.rtv->Release(); tex.rtv = nullptr; }
-        if (tex.srv) { tex.srv->Release(); tex.srv = nullptr; }
-        if (tex.texture) { tex.texture->Release(); tex.texture = nullptr; }
+        if (tex.uav)      { tex.uav->Release();      tex.uav      = nullptr; }
+        if (tex.dsv)      { tex.dsv->Release();      tex.dsv      = nullptr; }
+        if (tex.rtv)      { tex.rtv->Release();      tex.rtv      = nullptr; }
+        if (tex.srv)      { tex.srv->Release();      tex.srv      = nullptr; }
+        if (tex.texture3D){ tex.texture3D->Release(); tex.texture3D = nullptr; }
+        if (tex.texture)  { tex.texture->Release();  tex.texture  = nullptr; }
     }
     for (auto& shader : m_shaderPool.Slots()) {
         if (shader.vs) { shader.vs->Release(); shader.vs = nullptr; }

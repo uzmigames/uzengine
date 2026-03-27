@@ -107,12 +107,29 @@ struct DX11Buffer {
 /// COM objects — no heap allocation, no index management. The `srvIndex` field
 /// is a logical slot for the RHI binding abstraction.
 ///
+/// # 2D vs 3D Layout
+/// `texture` holds the `ID3D11Texture2D*` for 2D/cubemap/array textures and for
+/// swap-chain back buffers. `texture3D` holds `ID3D11Texture3D*` for volume
+/// textures (desc.is3D == true). Exactly one of the two is non-null at any time.
+/// Use `GetResource()` to obtain the `ID3D11Resource*` base pointer when the
+/// concrete dimension is not required (e.g., for CopyResource / UpdateSubresource).
+///
 /// # Memory Layout
-/// ~56 bytes (5 COM pointers + uint32 srvIndex + generation + desc).
+/// ~64 bytes (6 COM pointers + uint32 srvIndex + generation + desc).
 struct DX11Texture {
     /// Native D3D11 2D texture. Owns GPU memory via COM refcount.
     /// For swapchain back buffers, obtained via `IDXGISwapChain::GetBuffer()`.
+    /// Null when this slot holds a 3D volume texture — use `texture3D` instead.
     ID3D11Texture2D*             texture = nullptr;
+    /// Native D3D11 3D (volume) texture. Non-null only when `desc.is3D == true`.
+    /// Null for all 2D, cubemap, and array textures.
+    ID3D11Texture3D*             texture3D = nullptr;
+    /// Returns the active `ID3D11Resource*` regardless of dimensionality.
+    /// Always non-null for a valid, fully-created texture slot.
+    ID3D11Resource* GetResource() const noexcept {
+        return texture3D ? static_cast<ID3D11Resource*>(texture3D)
+                         : static_cast<ID3D11Resource*>(texture);
+    }
     /// SRV for shader sampling (`Texture2D.Sample()` in HLSL).
     /// `nullptr` if not sampled (e.g., depth-only or render-target-only).
     ID3D11ShaderResourceView*    srv = nullptr;
