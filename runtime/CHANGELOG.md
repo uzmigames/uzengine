@@ -2,6 +2,31 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.57] — 2026-03-27
+
+### DX11 Black Screen Fix + Error Cleanup
+
+#### DX11 Rendering (was black screen → fully functional)
+- **fix(renderer):** CloudComposite pass zeroed out entire HDR scene color on DX11.
+  Premultiplied-alpha blend (`dstColor=SrcAlpha`) with empty cloud output (alpha=0)
+  multiplied the scene by zero every frame. Added SM5 non-bindless path with explicit
+  `SetFragmentTexture(0/1)` for cloud output + depth textures.
+- **fix(rhi):** Added `SetVertexSRV(slot, buffer)` to RHI command list interface.
+  DX11 implementation calls `VSSetShaderResources()` for structured buffer binding.
+- **fix(editor):** Gizmo renderer now binds vertex buffer SRV at VS register(t0)
+  on non-bindless backends via `SetVertexSRV`. Gizmos were invisible on DX11 because
+  the StructuredBuffer was declared but never bound.
+
+#### Error Log Cleanup (zero errors on both DX11 and DX12)
+- **fix(pipeline):** Removed SM5 non-bindless pipeline warmup on DX12 bindless devices.
+  Root signature mismatch caused E_INVALIDARG for 7 pipelines (ForwardPBR, GBuffer,
+  ShadowDepth, etc.). These variants are never used on bindless devices.
+- **fix(pipeline):** Skipped warmup for optional compute pipelines (GpuCull,
+  DFS_CullObjects, DFS_ConeTrace) — created lazily on first use instead.
+- **fix(vfx):** Guarded `RegisterTrailLuaBindings`/`RegisterDecalLuaBindings` with
+  null checks. Trail system and decal manager are set externally and may be null
+  during initialization.
+
 ## [0.2.56] — 2026-03-27
 
 ### Backend Visual Parity — DX11 + SM6.0 + Vulkan (29 issues, 24 fixed)

@@ -399,6 +399,24 @@ void DX11CommandList::SetDescriptorTable(uint32_t rootParamIndex, uint32_t descr
     }
 }
 
+void DX11CommandList::SetVertexSRV(uint32_t slot, RHIBufferHandle buffer) {
+    if (!m_ctx) return;
+
+    if (!buffer.IsValid()) {
+        ID3D11ShaderResourceView* nullSrv = nullptr;
+        m_ctx->VSSetShaderResources(slot, 1, &nullSrv);
+        return;
+    }
+
+    auto* dx11Buffer = m_device->GetBufferPool().Get(buffer.index, buffer.generation);
+    if (!dx11Buffer || !dx11Buffer->srv) {
+        UZ_LOG(RHI, Warning, "SetVertexSRV: buffer has no SRV at slot {}", slot);
+        return;
+    }
+
+    m_ctx->VSSetShaderResources(slot, 1, &dx11Buffer->srv);
+}
+
 void DX11CommandList::SetFragmentTexture(uint32_t slot, RHITextureHandle texture) {
     if (!m_ctx) return;
 

@@ -144,11 +144,14 @@ private:
     // ── Per-axis draw helpers ────────────────────────────────────────────
 
     /// Draws an indexed triangle subset with per-axis color/alpha resolution.
+    /// `vbHandle` is the vertex buffer to bind as VS SRV at register(t0)
+    /// for non-bindless backends (DX11 SM5).
     void DrawAxisSubsetIndexed(IRHICommandList* cmdList, CBRingAllocator& cbRing,
                                const GizmoCB& baseCB,
                                int axisIndex, int hoveredAxis, int activeAxis,
                                const float axisColor[3],
-                               uint32_t srvIndex, RHIBufferHandle ib,
+                               uint32_t srvIndex, RHIBufferHandle vbHandle,
+                               RHIBufferHandle ib,
                                uint32_t indexOffset, uint32_t indexCount,
                                uint32_t vertexOffset);
 

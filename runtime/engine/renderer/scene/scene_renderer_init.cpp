@@ -656,8 +656,12 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         auto* L = uz::LuaVM::GetState();
         if (L && m_vfxSystem) {
             RegisterVFXLuaBindings(L, m_vfxSystem.get());
-            RegisterTrailLuaBindings(L, m_trailSystem);
-            RegisterDecalLuaBindings(L, m_decalManager);
+            if (m_trailSystem) {
+                RegisterTrailLuaBindings(L, m_trailSystem);
+            }
+            if (m_decalManager) {
+                RegisterDecalLuaBindings(L, m_decalManager);
+            }
             UZ_LOG(Renderer, Info, "SceneRenderer: uz.vfx Lua API registered");
         }
     }

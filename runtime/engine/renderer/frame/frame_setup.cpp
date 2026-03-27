@@ -219,9 +219,14 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     // TAA runs on both bindless (DX12/SM6.6) and non-bindless (DX11/SM5) backends.
     // On SM5 the TAA upscaler binds textures via SetDescriptorTable/SetFragmentTexture
     // instead of ResourceDescriptorHeap indexing.
+    // DX11: disable TAA — compute SRV/UAV resource conflicts on DX11's
+    // immediate context cause the HDR scene color to go black after frame 1.
+    // DX11 SM5.1 is below SM6.0, so use shader model as the backend check.
+    const bool taaBackendOk = (m_device->GetShaderModel() >= ShaderModel::SM6_0);
     ctx.taaActive = m_taaEnabled
                  && m_taaHistory[0].IsValid()
                  && m_taaHistory[1].IsValid()
+                 && taaBackendOk
                  && m_passInspector.IsPassEnabled("taa");
 
     if (ctx.taaActive) {

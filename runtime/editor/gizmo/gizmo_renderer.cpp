@@ -902,7 +902,8 @@ void GizmoRenderer::DrawAxisSubsetIndexed(IRHICommandList* cmdList, CBRingAlloca
                                            const GizmoCB& baseCB,
                                            int axisIndex, int hoveredAxis, int activeAxis,
                                            const float axisColor[3],
-                                           uint32_t srvIndex, RHIBufferHandle ib,
+                                           uint32_t srvIndex, RHIBufferHandle vbHandle,
+                                           RHIBufferHandle ib,
                                            uint32_t indexOffset, uint32_t indexCount,
                                            uint32_t vertexOffset) {
     GizmoCB cb = baseCB;
@@ -918,6 +919,9 @@ void GizmoRenderer::DrawAxisSubsetIndexed(IRHICommandList* cmdList, CBRingAlloca
 
     cmdList->SetPipeline(m_trianglePipeline);
     cmdList->SetRootCBV(kSlotPerFrame, alloc.bufferHandle, alloc.offsetBytes, alloc.cpuPtr, sizeof(GizmoCB));
+    // Bind the structured vertex buffer as VS SRV at register(t0) for DX11 SM5.
+    // On DX12 (bindless), this is a no-op — the shader uses ResourceDescriptorHeap[srvIndex].
+    cmdList->SetVertexSRV(0, vbHandle);
     cmdList->SetIndexBuffer(ib, RHIIndexFormat::Uint16);
     cmdList->DrawIndexed(indexCount, 1, indexOffset, static_cast<int32_t>(vertexOffset), 0);
 }
@@ -975,7 +979,8 @@ void GizmoRenderer::Draw(IRHICommandList* cmdList, CBRingAllocator& cbRing,
             DrawAxisSubsetIndexed(cmdList, cbRing, baseCB,
                                   axis, hoveredAxis, activeAxis,
                                   kAxisColors[axis],
-                                  m_translateTriSrv, m_translateTriIB,
+                                  m_translateTriSrv, m_translateTriVB,
+                                  m_translateTriIB,
                                   m_translateStemRange[axis].indexOffset,
                                   m_translateStemRange[axis].indexCount,
                                   0);
@@ -986,7 +991,8 @@ void GizmoRenderer::Draw(IRHICommandList* cmdList, CBRingAllocator& cbRing,
             DrawAxisSubsetIndexed(cmdList, cbRing, baseCB,
                                   axis, hoveredAxis, activeAxis,
                                   kAxisColors[axis],
-                                  m_translateTriSrv, m_translateTriIB,
+                                  m_translateTriSrv, m_translateTriVB,
+                                  m_translateTriIB,
                                   m_translateConeRange[axis].indexOffset,
                                   m_translateConeRange[axis].indexCount,
                                   0);
@@ -1002,7 +1008,8 @@ void GizmoRenderer::Draw(IRHICommandList* cmdList, CBRingAllocator& cbRing,
             DrawAxisSubsetIndexed(cmdList, cbRing, baseCB,
                                   3 + plane, hoveredAxis, activeAxis,
                                   planeColors[plane],
-                                  m_translateTriSrv, m_translateTriIB,
+                                  m_translateTriSrv, m_translateTriVB,
+                                  m_translateTriIB,
                                   m_translatePlaneRange[plane].indexOffset,
                                   m_translatePlaneRange[plane].indexCount,
                                   0);
@@ -1012,7 +1019,8 @@ void GizmoRenderer::Draw(IRHICommandList* cmdList, CBRingAllocator& cbRing,
         DrawAxisSubsetIndexed(cmdList, cbRing, baseCB,
                               6, hoveredAxis, activeAxis,
                               kCenterColor,
-                              m_translateTriSrv, m_translateTriIB,
+                              m_translateTriSrv, m_translateTriVB,
+                              m_translateTriIB,
                               m_translateCenterRange.indexOffset,
                               m_translateCenterRange.indexCount,
                               0);
@@ -1025,7 +1033,8 @@ void GizmoRenderer::Draw(IRHICommandList* cmdList, CBRingAllocator& cbRing,
             DrawAxisSubsetIndexed(cmdList, cbRing, baseCB,
                                   axis, hoveredAxis, activeAxis,
                                   kAxisColors[axis],
-                                  m_rotateTriSrv, m_rotateTriIB,
+                                  m_rotateTriSrv, m_rotateTriVB,
+                                  m_rotateTriIB,
                                   m_rotateRingRange[axis].indexOffset,
                                   m_rotateRingRange[axis].indexCount,
                                   0);
@@ -1039,7 +1048,8 @@ void GizmoRenderer::Draw(IRHICommandList* cmdList, CBRingAllocator& cbRing,
             DrawAxisSubsetIndexed(cmdList, cbRing, baseCB,
                                   axis, hoveredAxis, activeAxis,
                                   kAxisColors[axis],
-                                  m_scaleTriSrv, m_scaleTriIB,
+                                  m_scaleTriSrv, m_scaleTriVB,
+                                  m_scaleTriIB,
                                   m_scaleStemRange[axis].indexOffset,
                                   m_scaleStemRange[axis].indexCount,
                                   0);
@@ -1050,7 +1060,8 @@ void GizmoRenderer::Draw(IRHICommandList* cmdList, CBRingAllocator& cbRing,
             DrawAxisSubsetIndexed(cmdList, cbRing, baseCB,
                                   axis, hoveredAxis, activeAxis,
                                   kAxisColors[axis],
-                                  m_scaleTriSrv, m_scaleTriIB,
+                                  m_scaleTriSrv, m_scaleTriVB,
+                                  m_scaleTriIB,
                                   m_scaleCubeRange[axis].indexOffset,
                                   m_scaleCubeRange[axis].indexCount,
                                   0);
@@ -1060,7 +1071,8 @@ void GizmoRenderer::Draw(IRHICommandList* cmdList, CBRingAllocator& cbRing,
         DrawAxisSubsetIndexed(cmdList, cbRing, baseCB,
                               6, hoveredAxis, activeAxis,
                               kCenterColor,
-                              m_scaleTriSrv, m_scaleTriIB,
+                              m_scaleTriSrv, m_scaleTriVB,
+                              m_scaleTriIB,
                               m_scaleCenterRange.indexOffset,
                               m_scaleCenterRange.indexCount,
                               0);

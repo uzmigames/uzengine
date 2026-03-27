@@ -220,8 +220,8 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
 
                     static bool loggedOnce = false;
                     if (!loggedOnce) {
-                        UZ_LOG(Renderer, Info, "CloudComposite: executing — cloudSRV={}, depthSRV={}",
-                               m_cloudOutputSrv, m_gbuffer.depthSRV);
+                        UZ_LOG(Renderer, Info, "CloudComposite: executing — cloudSRV={}, depthSRV={}, bindless={}",
+                               m_cloudOutputSrv, m_gbuffer.depthSRV, ctx.bindless);
                         loggedOnce = true;
                     }
 
@@ -239,9 +239,18 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
 
                     cmd->SetPipeline(compositePSO);
 
-                    // Root constants: cloud SRV index + depth SRV index
-                    const uint32_t rootConst[4] = { m_cloudOutputSrv, m_gbuffer.depthSRV, 0, 0 };
-                    cmd->SetRootConstants(kSlotRootConstants, rootConst, 4);
+                    if (ctx.bindless) {
+                        // SM6.6 bindless: push descriptor indices via root constants.
+                        const uint32_t rootConst[4] = { m_cloudOutputSrv, m_gbuffer.depthSRV, 0, 0 };
+                        cmd->SetRootConstants(kSlotRootConstants, rootConst, 4);
+                    } else {
+                        // SM5 non-bindless: bind textures directly at register slots.
+                        // t0 = cloud output, t1 = scene depth
+                        if (m_cloudPass) {
+                            cmd->SetFragmentTexture(0, m_cloudPass->GetCloudOutputTexture());
+                        }
+                        cmd->SetFragmentTexture(1, m_gbuffer.depth);
+                    }
                     cmd->SetRootCBV(kSlotPerFrame, ctx.perFrameAlloc.bufferHandle,
                                     ctx.perFrameAlloc.offsetBytes, ctx.perFrameAlloc.cpuPtr,
                                     sizeof(PerFrameCB));
