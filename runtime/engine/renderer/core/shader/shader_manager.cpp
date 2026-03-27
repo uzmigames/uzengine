@@ -4,6 +4,7 @@
 
 #include "log.h"
 #include "rhi.h"
+#include "rhi_backend.h"
 #include "shader_compiler.h"
 #include "shader_compiler_fxc.h"
 #include "paths.h"
@@ -53,7 +54,15 @@ bool ShaderManager::Init(IRHIDevice* device) {
     ShaderPipeline::Config config;
     config.cacheDir = "cache/shaders";
     config.bindless = m_bindless;
-    config.targetBackend = m_bindless ? "dx12_sm68" : "dx12_sm60";
+    // Backend string determines shader cache subdirectory and compilation target.
+    const auto backend = GetActiveRHIBackend();
+    if (backend == RHIBackend::DX11) {
+        config.targetBackend = "dx11_sm50";
+    } else if (m_bindless) {
+        config.targetBackend = "dx12_sm68";
+    } else {
+        config.targetBackend = "dx12_sm60";
+    }
     config.enableHotReload = false;
 #ifndef NDEBUG
     config.generateDebugInfo = true;  // Embed HLSL symbols for RenderDoc/PIX pixel debugging
