@@ -117,31 +117,42 @@ bool DX12CommandList::Init(DX12Device* device, RHIQueueType queueType) {
     // Close the command list — Begin() will reset it before recording
     m_cmdList->Close();
 
-    // Allocate a contiguous block of kMaxFragmentTextures descriptors in the
-    // shader-visible CBV_SRV_UAV heap for the SM5 SetFragmentTexture staging area.
-    // These are allocated once and reused every frame via CopyDescriptorsSimple.
+    // Allocate a contiguous ring buffer of kDescriptorsPerFrame * kFramesInFlight
+    // descriptors in the shader-visible CBV_SRV_UAV heap for SM5 SetFragmentTexture.
+    // Each frame gets its own slice so the GPU never reads descriptors that the CPU
+    // is simultaneously writing (eliminates the cross-frame race condition where a
+    // single shared staging block was reused across all frames).
+    //
+    // @ref Microsoft DX12 docs: "Descriptors cannot be changed while a command list
+    // submitted for execution might reference that location."
     if (m_listType == D3D12_COMMAND_LIST_TYPE_DIRECT) {
+        constexpr uint32_t kTotalRingDescriptors = kDescriptorsPerFrame * kFramesInFlight;
         auto& srvAlloc = m_device->GetDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
         uint32_t base = srvAlloc.Allocate();
         if (base == DescriptorAllocator::kInvalidIndex) {
-            UZ_LOG(RHI, Error, "Failed to allocate fragment texture staging block");
+            UZ_LOG(RHI, Error, "Failed to allocate descriptor ring buffer base");
             return false;
         }
-        m_fragmentTexStagingBase = base;
 
         // Allocate remaining slots — bump allocator guarantees contiguity for
         // sequential Allocate() calls when no free-list entries exist yet.
-        for (uint32_t i = 1; i < kMaxFragmentTextures; ++i) {
+        for (uint32_t i = 1; i < kTotalRingDescriptors; ++i) {
             uint32_t idx = srvAlloc.Allocate();
             if (idx != base + i) {
-                UZ_LOG(RHI, Error, "Fragment texture staging block not contiguous at slot {} "
+                UZ_LOG(RHI, Error, "Descriptor ring buffer not contiguous at slot {} "
                        "(expected {}, got {})", i, base + i, idx);
                 return false;
             }
         }
 
-        UZ_LOG(RHI, Info, "Allocated fragment texture staging block at heap index {} ({} slots)",
-               m_fragmentTexStagingBase, kMaxFragmentTextures);
+        m_frameRingBase = base;
+        m_frameDescriptorOffset = 0;
+        m_currentPassDescBase = UINT32_MAX;
+
+        UZ_LOG(RHI, Info, "Allocated per-frame descriptor ring at heap index {} "
+               "({} descriptors/frame x {} frames = {} total)",
+               m_frameRingBase, kDescriptorsPerFrame, kFramesInFlight, kTotalRingDescriptors);
     }
 
     UZ_LOG(RHI, Info, "DX12CommandList created, type={}", static_cast<int>(m_listType));
@@ -169,6 +180,13 @@ void DX12CommandList::Begin() {
                static_cast<uint32_t>(hr));
         return;
     }
+
+    // Reset the per-frame descriptor bump allocator. The current frame's slice
+    // starts at m_frameRingBase + m_currentFrame * kDescriptorsPerFrame.
+    // The GPU fence (waited on before this Begin call) guarantees frame N-kFramesInFlight
+    // is done, so reusing that slice is safe.
+    m_frameDescriptorOffset = 0;
+    m_currentPassDescBase = UINT32_MAX;
 
     // Bind the global shader-visible descriptor heaps for bindless access
     if (m_listType != D3D12_COMMAND_LIST_TYPE_COPY) {
@@ -288,6 +306,11 @@ void DX12CommandList::SetPipeline(RHIPipelineHandle pipeline) {
 
     // Bind the global root signature — compute and graphics use the same
     // root signature but require different Set* entry points.
+    // Force a fresh descriptor block allocation on the next SetFragmentTexture call.
+    // Each pipeline/pass gets its own contiguous block so descriptor writes from
+    // different passes never alias within the same frame.
+    m_currentPassDescBase = UINT32_MAX;
+
     if (auto* rootSig = m_device->GetRootSignature()) {
         if (m_isComputeBound) {
             m_cmdList->SetComputeRootSignature(rootSig);
@@ -422,8 +445,8 @@ void DX12CommandList::SetFragmentTexture(uint32_t slot, RHITextureHandle texture
         return;
     }
 
-    if (m_fragmentTexStagingBase == UINT32_MAX) {
-        UZ_LOG(RHI, Error, "SetFragmentTexture — staging block not allocated");
+    if (m_frameRingBase == UINT32_MAX) {
+        UZ_LOG(RHI, Error, "SetFragmentTexture — descriptor ring not allocated");
         return;
     }
 
@@ -439,17 +462,41 @@ void DX12CommandList::SetFragmentTexture(uint32_t slot, RHITextureHandle texture
         return;
     }
 
-    // Copy the texture's SRV descriptor into the contiguous staging block
+    // Allocate a fresh kMaxFragmentTextures block when needed.
+    // A new block is required when: (1) first call after SetPipeline, or
+    // (2) slot 0 is rebound — indicating a new draw call with different
+    // material textures. Without per-draw blocks, the GPU would read stale
+    // descriptors from a previous draw while the CPU overwrites them.
+    const bool needNewBlock = (m_currentPassDescBase == UINT32_MAX) || (slot == 0);
+    if (needNewBlock) {
+        // Check that we have room in this frame's slice
+        if (m_frameDescriptorOffset + kMaxFragmentTextures > kDescriptorsPerFrame) {
+            UZ_LOG(RHI, Error, "SetFragmentTexture — exhausted per-frame descriptor budget "
+                   "({} used of {} max, need {} more for new pass)",
+                   m_frameDescriptorOffset, kDescriptorsPerFrame, kMaxFragmentTextures);
+            return;
+        }
+
+        // Compute the absolute heap index for this pass's block:
+        // ring base + current frame's slice offset + bump offset within frame
+        const uint32_t frameSliceBase = m_frameRingBase + m_currentFrame * kDescriptorsPerFrame;
+        m_currentPassDescBase = frameSliceBase + m_frameDescriptorOffset;
+        m_frameDescriptorOffset += kMaxFragmentTextures;
+    }
+
+    // Copy the texture's SRV descriptor into this pass's block at the requested slot
     auto& alloc = m_device->GetDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     auto srcHandle = alloc.CpuHandle(dx12Tex->srvIndex);
-    auto dstHandle = alloc.CpuHandle(m_fragmentTexStagingBase + slot);
+    auto dstHandle = alloc.CpuHandle(m_currentPassDescBase + slot);
 
     m_device->GetDevice()->CopyDescriptorsSimple(
         1, dstHandle, srcHandle, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
-    // Bind the staging block as root param 5 (SM5 SRV descriptor table)
+    // Bind the pass's descriptor table at root param 5 (SM5 SRV descriptor table).
+    // Re-binding after each copy is cheap — the driver tracks dirty state internally
+    // and only re-validates at draw/dispatch time.
     constexpr uint32_t kSM5SrvTableRootParam = 5;
-    auto gpuHandle = alloc.GpuHandle(m_fragmentTexStagingBase);
+    auto gpuHandle = alloc.GpuHandle(m_currentPassDescBase);
     if (m_isComputeBound) {
         m_cmdList->SetComputeRootDescriptorTable(kSM5SrvTableRootParam, gpuHandle);
     } else {

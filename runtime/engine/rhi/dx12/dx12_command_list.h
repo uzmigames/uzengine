@@ -186,6 +186,13 @@ private:
     /// Maximum fragment textures bindable via SetFragmentTexture (SM5 path).
     static constexpr uint32_t kMaxFragmentTextures = 16;
 
+    /// Descriptors available per frame for SM5 SetFragmentTexture staging.
+    /// Each SetPipeline call consumes kMaxFragmentTextures descriptors within
+    /// this budget. 256 descriptors / 16 per pass = 16 passes per frame, which
+    /// covers the typical deferred rendering pipeline (GBuffer, shadow, lighting,
+    /// post-process, UI, debug overlays).
+    static constexpr uint32_t kDescriptorsPerFrame = 4096;
+
     DX12Device*                          m_device = nullptr;
     ComPtr<ID3D12GraphicsCommandList>    m_cmdList;
     ComPtr<ID3D12CommandAllocator>       m_allocators[kFramesInFlight];
@@ -196,10 +203,24 @@ private:
     /// Used to select `SetComputeRoot*` vs `SetGraphicsRoot*` variants.
     bool                                 m_isComputeBound = false;
 
-    /// Base index in the CBV_SRV_UAV heap for the contiguous staging block
-    /// used by SetFragmentTexture (SM5 descriptor table path).
-    /// Allocated once in Init(), reused every frame via descriptor copies.
-    uint32_t                             m_fragmentTexStagingBase = UINT32_MAX;
+    /// Base index in the CBV_SRV_UAV heap for the per-frame descriptor ring.
+    /// A contiguous block of `kDescriptorsPerFrame * kFramesInFlight` descriptors
+    /// is allocated once in Init(). Each frame uses slice
+    /// `m_frameRingBase + m_currentFrame * kDescriptorsPerFrame` so the GPU
+    /// never reads descriptors that the CPU is simultaneously writing.
+    /// @ref Microsoft DX12 docs: "Descriptors cannot be changed while a command
+    /// list submitted for execution might reference that location."
+    uint32_t                             m_frameRingBase = UINT32_MAX;
+
+    /// Bump offset within the current frame's descriptor slice.
+    /// Reset to 0 in Begin(). Advanced by kMaxFragmentTextures on each
+    /// SetPipeline call that is followed by SetFragmentTexture.
+    uint32_t                             m_frameDescriptorOffset = 0;
+
+    /// Base index of the current pass's descriptor block within the frame slice.
+    /// Set when the first SetFragmentTexture call after SetPipeline allocates
+    /// a fresh kMaxFragmentTextures block. Reset to UINT32_MAX in SetPipeline.
+    uint32_t                             m_currentPassDescBase = UINT32_MAX;
 
     /// Maximum number of temporary per-slice/mip RTVs per render pass.
     static constexpr uint32_t kMaxTempRtvs = 8;
