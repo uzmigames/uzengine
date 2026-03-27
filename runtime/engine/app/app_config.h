@@ -108,8 +108,8 @@ struct ApplicationConfig {
 
     // ── Camera Defaults ───────────────────────────────────────────────────
 
-    /// Fly camera movement speed in cm/second.
-    float cameraMoveSpeed = 1000.f;
+    /// Fly camera movement speed in cm/second. 500 = 5 m/s walk speed.
+    float cameraMoveSpeed = 500.f;
 
     /// Default camera X position (cm).
     float cameraPositionX = 0.f;
