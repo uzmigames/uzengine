@@ -855,13 +855,12 @@ void uz_on_key_ex(int keycode, int pressed, int modifiers) {
     auto* input = s_state->sceneRenderer.GetInput();
     if (!input) return;
 
-    // Inject modifier state from the editor host before processing the key.
-    input->SetModifierState(
-        (modifiers & 1) != 0,   // shift
-        (modifiers & 2) != 0,   // ctrl
-        (modifiers & 4) != 0,   // alt
-        (modifiers & 8) != 0    // meta
-    );
+    // Modifier keys are handled via their own keydown/keyup events
+    // (ShiftLeft → VK_SHIFT, ControlLeft → VK_CONTROL, etc.) which
+    // flow through the normal OnKeyDown/OnKeyUp path. We do NOT call
+    // SetModifierState here because the DOM modifier flags on non-modifier
+    // key events can be stale (e.g., keyup of 'W' may report shiftKey=false
+    // even if Shift is still held, causing premature modifier clearing).
 
     if (pressed) {
         input->OnKeyDown(static_cast<uint16_t>(keycode));
