@@ -87,6 +87,11 @@ RHIPipelineHandle PipelineLibrary::GetShadowDepth(bool bindless) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool PipelineLibrary::EnsureInstancedMeshShaders() {
+    // GPU instancing requires bindless (StructuredBuffer vertex/instance fetch via
+    // ResourceDescriptorHeap). On non-bindless (SM6.0/DX11), instancing is not
+    // available — the engine falls back to per-object draw calls.
+    if (!m_device->IsBindless()) return false;
+
     if (!m_instancedMeshVS.IsValid()) {
         m_instancedMeshVS = m_shaderMgr->CreateShaderWithDefines(
             EngineShader::MeshVS, RHIShaderStage::Vertex, "UZ_INSTANCED=1");
@@ -99,6 +104,8 @@ bool PipelineLibrary::EnsureInstancedMeshShaders() {
 }
 
 bool PipelineLibrary::EnsureInstancedShadowShaders() {
+    if (!m_device->IsBindless()) return false;
+
     if (!m_instancedShadowVS.IsValid()) {
         m_instancedShadowVS = m_shaderMgr->CreateShaderWithDefines(
             EngineShader::ShadowDepthVS, RHIShaderStage::Vertex, "UZ_INSTANCED=1");

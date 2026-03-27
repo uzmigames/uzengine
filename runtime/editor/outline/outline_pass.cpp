@@ -16,6 +16,7 @@
 #include "rhi.h"
 #include "root_slots.h"
 #include "shader_pipeline.h"
+#include "vertex_layout.h"
 
 #include <cstring>
 
@@ -137,6 +138,14 @@ bool OutlinePass::Init(IRHIDevice* device, ShaderPipeline& pipeline,
 
         // No culling — render both sides for correct outline on all geometry.
         desc.rasterizer.cullMode = RHICullMode::None;
+
+        // Non-bindless (SM6.0/DX11): mesh_vs uses Input Assembler, needs vertex layout.
+        if (!device->IsBindless()) {
+            const auto layout = VertexLayout::Standard();
+            desc.inputElements     = layout.elements;
+            desc.inputElementCount = layout.count;
+            desc.vertexStride      = layout.stride;
+        }
 
         desc.debugName = "OutlineMaskPipeline";
 
