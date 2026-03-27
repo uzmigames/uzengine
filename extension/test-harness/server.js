@@ -28,7 +28,10 @@ for (let i = 0; i < args.length; i++) {
 
 // ── Load N-API addon ─────────────────────────────────────────────────────
 
-const nativePath = path.resolve(__dirname, '..', 'native');
+// Try local native/ first (Node.js build), fall back to extension/native/ (Electron build)
+const localNative = path.resolve(__dirname, 'native');
+const extNative = path.resolve(__dirname, '..', 'native');
+const nativePath = require('fs').existsSync(path.join(localNative, 'uzengine.node')) ? localNative : extNative;
 const addonPath = path.join(nativePath, 'uzengine.node');
 
 console.log(`[Server] Loading addon from: ${addonPath}`);

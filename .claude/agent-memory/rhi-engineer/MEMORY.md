@@ -1,0 +1,1 @@
+- [DX12 Per-Frame Descriptor Ring](dx12-descriptor-ring.md) — SM5 SetFragmentTexture uses per-frame ring to avoid cross-frame descriptor races

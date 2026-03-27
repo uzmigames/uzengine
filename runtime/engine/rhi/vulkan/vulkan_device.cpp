@@ -100,6 +100,8 @@ VulkanDevice::~VulkanDevice() {
     if (m_descriptorSetLayout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr);
     if (m_staticSamplerLinear != VK_NULL_HANDLE) vkDestroySampler(m_device, m_staticSamplerLinear, nullptr);
     if (m_staticSamplerShadow != VK_NULL_HANDLE) vkDestroySampler(m_device, m_staticSamplerShadow, nullptr);
+    if (m_staticSamplerBilinearClamp != VK_NULL_HANDLE) vkDestroySampler(m_device, m_staticSamplerBilinearClamp, nullptr);
+    if (m_staticSamplerBilinearWrap != VK_NULL_HANDLE) vkDestroySampler(m_device, m_staticSamplerBilinearWrap, nullptr);
     if (m_descriptorPool != VK_NULL_HANDLE)      vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
     if (m_tracyVkCtx) TracyVkDestroy(m_tracyVkCtx);
     if (m_allocator)                          vmaDestroyAllocator(m_allocator);
@@ -700,6 +702,43 @@ bool VulkanDevice::CreateDescriptorSetLayout() {
         }
     }
 
+    // s2 (binding 18): bilinear clamp — post-process, LUT lookups, IBL BRDF
+    {
+        VkSamplerCreateInfo ci = {};
+        ci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        ci.magFilter = VK_FILTER_LINEAR;
+        ci.minFilter = VK_FILTER_LINEAR;
+        ci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        ci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        ci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        ci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        ci.maxAnisotropy = 1.0f;
+        ci.minLod = 0.0f;
+        ci.maxLod = VK_LOD_CLAMP_NONE;
+        if (vkCreateSampler(m_device, &ci, nullptr, &m_staticSamplerBilinearClamp) != VK_SUCCESS) {
+            UZ_LOG(RHI, Error, "Failed to create static bilinear clamp sampler");
+            return false;
+        }
+    }
+    // s3 (binding 19): bilinear wrap — 3D noise, weather maps
+    {
+        VkSamplerCreateInfo ci = {};
+        ci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        ci.magFilter = VK_FILTER_LINEAR;
+        ci.minFilter = VK_FILTER_LINEAR;
+        ci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        ci.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        ci.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        ci.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        ci.maxAnisotropy = 1.0f;
+        ci.minLod = 0.0f;
+        ci.maxLod = VK_LOD_CLAMP_NONE;
+        if (vkCreateSampler(m_device, &ci, nullptr, &m_staticSamplerBilinearWrap) != VK_SUCCESS) {
+            UZ_LOG(RHI, Error, "Failed to create static bilinear wrap sampler");
+            return false;
+        }
+    }
+
     // ── Descriptor set layout ───────────────────────────────────────────────
     // Matches the DXC -fvk-*-shift flags in shader_compiler.cpp:
     //   binding 0..15  = SAMPLED_IMAGE  (t0..t15, via -fvk-t-shift 0 0)
@@ -734,10 +773,12 @@ bool VulkanDevice::CreateDescriptorSetLayout() {
                      | VK_SHADER_STAGE_COMPUTE_BIT;
     }
 
-    // Make s0 and s1 immutable samplers — equivalent to DX12 static samplers.
+    // Make s0-s3 immutable samplers — equivalent to DX12 static samplers.
     // These are baked into the descriptor set layout and never need explicit binding.
-    bindings[kMaxTextureBindings + 0].pImmutableSamplers = &m_staticSamplerLinear;  // s0
-    bindings[kMaxTextureBindings + 1].pImmutableSamplers = &m_staticSamplerShadow;  // s1
+    bindings[kMaxTextureBindings + 0].pImmutableSamplers = &m_staticSamplerLinear;        // s0: aniso wrap
+    bindings[kMaxTextureBindings + 1].pImmutableSamplers = &m_staticSamplerShadow;        // s1: PCF comparison
+    bindings[kMaxTextureBindings + 2].pImmutableSamplers = &m_staticSamplerBilinearClamp; // s2: bilinear clamp
+    bindings[kMaxTextureBindings + 3].pImmutableSamplers = &m_staticSamplerBilinearWrap;  // s3: bilinear wrap
 
     // b registers (b0-b15) → bindings 32-47 as uniform buffers
     for (uint32_t i = 0; i < kMaxCBBindings; ++i) {
