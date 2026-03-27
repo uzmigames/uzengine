@@ -474,7 +474,16 @@ bool PipelineLibrary::EnsureSkyCubemapCapturePSShader() {
         return true;
     }
 
-    m_skyCubemapCapturePSShader = m_shaderMgr->CreateShader(EngineShader::SkyCubemapPS, RHIShaderStage::Pixel);
+    // sky_cubemap_ps.hlsl is an SM5 fallback — always uses register(t0),
+    // never ResourceDescriptorHeap. On bindless, the CS path is used instead
+    // and this pipeline is never needed. Skip creation to avoid E_INVALIDARG
+    // from register(t0) conflicting with the DIRECTLY_INDEXED root sig.
+    if (m_device->IsBindless()) {
+        return false; // Bindless uses compute sky cubemap capture — PS not needed.
+    }
+
+    m_skyCubemapCapturePSShader = m_shaderMgr->CreateShader(
+        EngineShader::SkyCubemapPS, RHIShaderStage::Pixel);
     if (!m_skyCubemapCapturePSShader.IsValid()) {
         UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile SkyCubemapPS");
         return false;
