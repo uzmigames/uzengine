@@ -27,6 +27,10 @@
 
 #include <cstdint>
 
+// Forward declare VMA types (same pattern as vulkan_resources.h).
+struct VmaAllocation_T;
+typedef VmaAllocation_T* VmaAllocation;
+
 namespace uz {
 
 class VulkanDevice;
@@ -86,7 +90,12 @@ public:
     /// Sets a descriptor index via push constants.
     void SetDescriptorIndex(uint32_t rootParamIndex, uint32_t descriptorIndex) override;
 
-    /// Writes inline root constants via `vkCmdPushConstants`.
+    /// Writes inline root constants via a scratch UBO bound as a descriptor.
+    ///
+    /// Vulkan shaders compiled with `-fvk-b-shift 32 0` expect `cbuffer register(bN)`
+    /// to appear as a UBO descriptor at binding `32 + N`, not as push constants.
+    /// This method copies the data into a persistently-mapped scratch UBO and writes
+    /// a `VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER` binding, matching the DX11 scratch CB pattern.
     void SetRootConstants(uint32_t rootParamIndex, const uint32_t* data,
                           uint32_t count, uint32_t offsetIn32BitValues) override;
 
@@ -192,6 +201,29 @@ private:
     static constexpr uint32_t kMaxTempImageViews = 8;
     VkImageView          m_tempImageViews[kMaxTempImageViews] = {};
     uint32_t             m_tempImageViewCount = 0;
+
+    // ── Scratch UBOs for SetRootConstants ────────────────────────────────
+    // Vulkan shaders compiled with `-fvk-b-shift 32 0` map cbuffer register(bN)
+    // to UBO descriptor binding 32+N. Push constants are a different mechanism
+    // that the shader never reads. These scratch UBOs provide the CPU→descriptor
+    // path, mirroring DX11's scratch constant buffer pattern.
+
+    /// Gets or creates a scratch UBO for the given slot. If the existing buffer
+    /// is too small, it is destroyed and a larger one is created via VMA.
+    /// Returns the VkBuffer and its persistently-mapped pointer, or
+    /// {VK_NULL_HANDLE, nullptr} on failure.
+    struct ScratchUBO {
+        VkBuffer      buffer = VK_NULL_HANDLE;
+        VmaAllocation allocation = nullptr;
+        void*         mappedPtr = nullptr;
+        uint32_t      sizeBytes = 0;
+    };
+    ScratchUBO GetOrCreateScratchUBO(uint32_t slot, uint32_t requiredSize);
+
+    /// Maximum number of scratch UBO slots (one per root parameter index).
+    static constexpr uint32_t kMaxScratchUBOSlots = 8;
+    /// Per-slot scratch UBO state. Lazily allocated on first use.
+    ScratchUBO           m_scratchUBOs[kMaxScratchUBOSlots] = {};
 };
 
 } // namespace uz
