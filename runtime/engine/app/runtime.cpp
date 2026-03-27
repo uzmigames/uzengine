@@ -849,6 +849,27 @@ void uz_on_key(int keycode, int pressed) {
     }
 }
 
+void uz_on_key_ex(int keycode, int pressed, int modifiers) {
+    if (!HasViewport() || !s_state->sceneRendererReady) return;
+
+    auto* input = s_state->sceneRenderer.GetInput();
+    if (!input) return;
+
+    // Inject modifier state from the editor host before processing the key.
+    input->SetModifierState(
+        (modifiers & 1) != 0,   // shift
+        (modifiers & 2) != 0,   // ctrl
+        (modifiers & 4) != 0,   // alt
+        (modifiers & 8) != 0    // meta
+    );
+
+    if (pressed) {
+        input->OnKeyDown(static_cast<uint16_t>(keycode));
+    } else {
+        input->OnKeyUp(static_cast<uint16_t>(keycode));
+    }
+}
+
 void uz_on_scroll(float delta) {
     if (!HasViewport() || !s_state->sceneRendererReady) return;
 

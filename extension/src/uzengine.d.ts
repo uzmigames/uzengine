@@ -327,6 +327,20 @@ export interface UzEngineAddon {
     onKey(keycode: number, pressed: boolean): void;
 
     /**
+     * Forwards a key event with modifier state from the editor.
+     *
+     * When the viewport runs inside VSCode, the native HWND does not
+     * receive WM_KEYDOWN for modifier keys.  This extended variant accepts
+     * a bitmask so the input system reflects the true modifier state.
+     *
+     * @param keycode   - Win32 virtual key code (`VK_*` constant).
+     * @param pressed   - `true` if the key was pressed, `false` if released.
+     * @param modifiers - Bitmask: bit 0 = Shift, bit 1 = Ctrl, bit 2 = Alt,
+     *   bit 3 = Meta.
+     */
+    onKeyEx(keycode: number, pressed: boolean, modifiers: number): void;
+
+    /**
      * Forwards a scroll wheel event.
      *
      * @param delta - Scroll amount. Positive = scroll up, negative = scroll down.

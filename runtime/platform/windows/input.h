@@ -592,6 +592,23 @@ class InputSystem {
     /// `false` if the action name is not registered.
     [[nodiscard]] bool IsActionJustPressed(const std::string& name) const;
 
+    // ── Modifier State (Editor Injection) ──────────────────────────────
+
+    /// Sets modifier key state explicitly from the editor host.
+    ///
+    /// When the engine viewport runs as a child window inside VSCode, the
+    /// HWND does not receive native WM_KEYDOWN for modifier keys because
+    /// the editor consumes them.  The N-API layer calls this with the
+    /// modifier bitmask extracted from the DOM KeyboardEvent so that
+    /// `IsKeyDown(Key::LeftShift)` etc. reflect the true state.
+    ///
+    /// # Arguments
+    /// * `shift` — true if Shift is held.
+    /// * `ctrl`  — true if Ctrl is held.
+    /// * `alt`   — true if Alt is held.
+    /// * `meta`  — true if Meta (Win key) is held.
+    void SetModifierState(bool shift, bool ctrl, bool alt, bool meta);
+
     // ── Platform Callbacks (called by WndProc) ──────────────────────────
 
     /// Called by the platform layer when a key is pressed.

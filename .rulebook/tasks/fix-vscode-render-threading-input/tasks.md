@@ -21,7 +21,7 @@
 
 - [x] 3.1 `KEY_MAP` static table in `viewport-panel.ts` — 50 entries: DOM `event.code` → Win32 `VK_*`. Covers A-Z, 0-9, F1-F12, arrows, modifiers, nav keys, Escape, Tab, Enter, Space.
 - [x] 3.2 Webview HTML uses `event.code` (physical key, locale-independent) instead of deprecated `event.keyCode`. Unknown keys silently dropped.
-- [ ] 3.3 Extend `uz_on_key()` for modifier flags (Shift/Ctrl/Alt/Meta). Deferred — current input system reads modifier state from `GetAsyncKeyState`.
+- [x] 3.3 Extend `uz_on_key()` for modifier flags (Shift/Ctrl/Alt/Meta). Added `uz_on_key_ex(keycode, pressed, modifiers)` C API + `InputSystem::SetModifierState()` + N-API binding `onKeyEx` + webview sends modifier bitmask from DOM events + viewport-panel uses `onKeyEx`.
 - [x] 3.4 Viewport focus tracking: `viewportFocused` flag toggled via focus/blur on viewport-container. Keyboard events silently dropped when unfocused.
 - [x] 3.5 Mouse pointer lock: right-click enters `requestPointerLock()` on canvas, sends `mouseDelta` with `movementX/Y`. Context menu suppressed. Lock released on right-click up.
 - [ ] 3.6 Full input round-trip test. Needs runtime testing.

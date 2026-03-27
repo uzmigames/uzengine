@@ -34,7 +34,7 @@ type WebViewMessage =
     | { type: 'mouseDelta'; dx: number; dy: number }
     | { type: 'mouseButton'; button: number; pressed: boolean }
     /** `code` is the `KeyboardEvent.code` string, e.g. `'KeyW'`, `'ArrowUp'`. */
-    | { type: 'key'; code: string; pressed: boolean }
+    | { type: 'key'; code: string; pressed: boolean; modifiers: number }
     | { type: 'scroll'; delta: number };
 
 // ── ViewportPanel ─────────────────────────────────────────────────────────────
@@ -254,7 +254,7 @@ export class ViewportPanel {
             case 'key': {
                 const vk = ViewportPanel.KEY_MAP[msg.code];
                 if (vk !== undefined) {
-                    this.addon.onKey(vk, msg.pressed);
+                    this.addon.onKeyEx(vk, msg.pressed, msg.modifiers ?? 0);
                 }
                 break;
             }
@@ -617,13 +617,23 @@ export class ViewportPanel {
     // interfere with text input elsewhere in VSCode.
     document.addEventListener('keydown', function (e) {
         if (!viewportFocused) return;
-        vscode.postMessage({ type: 'key', code: e.code, pressed: true });
+        vscode.postMessage({
+            type: 'key',
+            code: e.code,
+            pressed: true,
+            modifiers: (e.shiftKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.altKey ? 4 : 0) | (e.metaKey ? 8 : 0)
+        });
         e.preventDefault();
     });
 
     document.addEventListener('keyup', function (e) {
         if (!viewportFocused) return;
-        vscode.postMessage({ type: 'key', code: e.code, pressed: false });
+        vscode.postMessage({
+            type: 'key',
+            code: e.code,
+            pressed: false,
+            modifiers: (e.shiftKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.altKey ? 4 : 0) | (e.metaKey ? 8 : 0)
+        });
     });
 
     // ── Message handler ─────────────────────────────────────────────────────

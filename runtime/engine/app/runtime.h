@@ -334,6 +334,20 @@ UZ_API void uz_on_mouse_button(int button, int pressed);
 /// * `pressed` — 1 if key was pressed, 0 if released.
 UZ_API void uz_on_key(int keycode, int pressed);
 
+/// Forwards a keyboard event with modifier state from the editor.
+///
+/// When the engine viewport runs inside VSCode, the native HWND does not
+/// receive WM_KEYDOWN for modifier keys because the editor host consumes
+/// them.  This extended variant accepts a bitmask so the input system
+/// reflects the true modifier state even without OS-level key messages.
+///
+/// # Arguments
+/// * `keycode`   — Win32 VK_* virtual key code.
+/// * `pressed`   — 1 = key down, 0 = key up.
+/// * `modifiers` — Bitmask: bit 0 = Shift, bit 1 = Ctrl, bit 2 = Alt,
+///                 bit 3 = Meta.
+UZ_API void uz_on_key_ex(int keycode, int pressed, int modifiers);
+
 /// Forwards a scroll wheel event to the viewport's input system.
 ///
 /// # Arguments
