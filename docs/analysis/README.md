@@ -1,4 +1,4 @@
-<!-- doc-meta: analysis-directory-index; date: 2026-03-21 -->
+<!-- doc-meta: analysis-directory-index; date: 2026-03-27 -->
 
 # Analysis Documents
 
@@ -8,39 +8,31 @@ Reference analysis documents organized by subsystem. Used for architectural rese
 
 | Directory | Contents | Files |
 |-----------|----------|-------|
+| [architecture/](architecture/) | Engine architecture decisions and patterns | 2+ |
 | [asset-pipeline/](asset-pipeline/) | Asset loading architecture, texture benchmarks, bottleneck analysis | 5 |
 | [atmosphere/](atmosphere/) | Sky, fog, volumetric clouds, aerial perspective, transmittance LUTs | 17 |
+| [backend-parity/](backend-parity/) | DX11/SM6.0 vs SM6.6 rendering parity: gap analysis, fix tracking | 2 |
 | [dataflow/](dataflow/) | Data flow documents for multi-subsystem features (SDF GI, SSGI, radiance cache) | 5 |
+| [dx12-descriptors/](dx12-descriptors/) | DX12 descriptor management: UE5/Godot patterns, non-bindless issues | 5 |
 | [engine-comparison/](engine-comparison/) | Cross-engine architecture analysis (Godot, Unity, Three.js) | 8+ |
 | [gi/](gi/) | Global illumination: Lumen radiance cache, SDF GI, ground radiance | 3 |
+| [gizmo/](gizmo/) | Editor gizmo specifications: UE5 geometry, colors, interaction, gap analysis | 6 |
 | [lighting/](lighting/) | Shadows, sky light, local lights, reversed-Z depth | 5 |
 | [materials/](materials/) | Material system architecture, parameter layouts, struct definitions | 12 |
 | [parity/](parity/) | UE5 vs UzEngine rendering parity: gap analysis, property inventory, roadmap | 10 |
 | [post-process/](post-process/) | Auto-exposure, histogram, tonemapping | 5 |
+| [renderer/](renderer/) | Debug visualization, general pipeline analysis, mesh winding | 3+ |
 | [rendering-pipeline/](rendering-pipeline/) | Debug visualization, general pipeline analysis | 2+ |
 | [rhi/](rhi/) | RHI abstraction: cbuffer layouts, bindless, SM5 patterns, Vulkan analysis | 12 |
 | [upscaling/](upscaling/) | TSR, Godot 4K upscaling, temporal super-resolution | 8 |
+| [vfx/](vfx/) | VFX system gaps, implementation roadmap, architectural analysis | 5 |
 
 ## Key Documents
 
+- **Backend parity**: [backend-parity/dx11-sm6-parity-report.md](backend-parity/dx11-sm6-parity-report.md) — 29 issues across DX11/SM6.0 vs SM6.6
+- **DX12 descriptors**: [dx12-descriptors/dx12-non-bindless-rendering-issues.md](dx12-descriptors/dx12-non-bindless-rendering-issues.md) — root cause analysis of staging block race condition
 - **Component parity**: [parity/ue5-component-property-parity.md](parity/ue5-component-property-parity.md) — field-by-field comparison of 9 rendering components
-- **Implementation checklist**: [parity/implementation-checklist.md](parity/implementation-checklist.md) — agent-ready tasks for missing properties
-- **Rendering gap analysis**: [parity/ue5-vs-uzengine-rendering-gap-analysis.md](parity/ue5-vs-uzengine-rendering-gap-analysis.md) — full feature matrix
-
-## Editor Gizmo Specifications (NEW 2026-03-26)
-
-Complete UE5.6 transform gizmo specifications for visual parity:
-- **[editor-gizmo-specifications.md](editor-gizmo-specifications.md)** — EXACT geometry, colors, dimensions, rendering styles (24 KB)
-- **[gizmo-implementation-guide.md](gizmo-implementation-guide.md)** — Step-by-step C++ implementation with mesh generators and rendering pipeline (23 KB)
-- **[gizmo-quick-reference.md](gizmo-quick-reference.md)** — One-page cheat sheet with all constants and copy-paste values (11 KB)
-
-**All values extracted from UE5.6 source**:
-- X/Y/Z axis colors: `#980503 / #226400 / #0624D9` (linear RGB)
-- Translate axis length: 70 units with 22-unit cone tip
-- Rotation radius: 70 units with 1.25 inner + 3.0 outer thickness
-- Scale cube: 12×12×12 units
-- Planar handles: 15×15×2 units, offset -15 units inward
-- Screen-space sizing: Dynamic via projection matrix to maintain constant viewport appearance
+- **Gizmo specs**: [gizmo/editor-gizmo-specifications.md](gizmo/editor-gizmo-specifications.md) — UE5.6 exact geometry, colors, dimensions
 
 ## Conventions
 
