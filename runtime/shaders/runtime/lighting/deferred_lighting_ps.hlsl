@@ -360,7 +360,12 @@ float4 main(FSInput input) : SV_Target {
             irradiance = GetSkySHDiffuse(N, skyIrradianceSH);
         }
 #else
-        irradiance = iblIrradiance.SampleLevel(clampSampler, WorldToCubemap(N), 0).rgb;
+        // SM5: use irradianceSrvIndex from PerFrameCB as null-guard (0 = IBL not ready).
+        if (irradianceSrvIndex > 0) {
+            irradiance = iblIrradiance.SampleLevel(clampSampler, WorldToCubemap(N), 0).rgb;
+        } else {
+            irradiance = GetSkySHDiffuse(N, skyIrradianceSH);
+        }
 #endif
 
         float3 kS_env = F_SchlickRoughness(NoV, F0, roughness);
@@ -382,8 +387,12 @@ float4 main(FSInput input) : SV_Target {
             envBRDF = brdfTex.SampleLevel(clampSampler, float2(NoV, roughness), 0).rg;
         }
 #else
-        prefilteredColor = iblPrefiltered.SampleLevel(clampSampler, WorldToCubemap(R), mipLevel).rgb;
-        envBRDF = iblBrdfLut.SampleLevel(clampSampler, float2(NoV, roughness), 0).rg;
+        if (prefilteredSrvIndex > 0) {
+            prefilteredColor = iblPrefiltered.SampleLevel(clampSampler, WorldToCubemap(R), mipLevel).rgb;
+        }
+        if (brdfLutSrvIndex > 0) {
+            envBRDF = iblBrdfLut.SampleLevel(clampSampler, float2(NoV, roughness), 0).rg;
+        }
 #endif
 
         /// @ref Karis 2013, UE5 BRDF.ush:EnvBRDF()
