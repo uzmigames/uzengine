@@ -567,10 +567,22 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
             uint32_t indices[5] = { ctx.postDofSrvForTonemap, bloomSrvIdx, bloomIntensityBits, lensFlareSrvIdx, lutSrvIdx };
             cmd->SetRootConstants(kSlotRootConstants, indices, 5);
 
-            // SM5: bind HDR scene color texture at t0 directly
-            // (TAA not available on SM5 path since it requires ctx.bindless)
+            // SM5/SM6.0: bind all textures via SetFragmentTexture.
+            // CRITICAL: every slot the shader reads MUST be explicitly bound —
+            // stale descriptors from previous passes persist in the DX12 staging
+            // block. If t1 (bloom) is not bound, it contains the transmittance LUT
+            // from the sky atmosphere pass, which gets ADDED to every pixel and
+            // produces the orange/pink sky bug.
             if (!ctx.bindless) {
                 cmd->SetFragmentTexture(0, m_hdrSceneColor);
+                // t1: bloom result — MUST always be bound. Use black fallback when
+                // bloom is not available to prevent stale descriptor reads.
+                if (ctx.bloomEnabled && m_bloomPass
+                    && m_bloomPass->GetBloomResultTexture().IsValid()) {
+                    cmd->SetFragmentTexture(1, m_bloomPass->GetBloomResultTexture());
+                } else {
+                    cmd->SetFragmentTexture(1, m_fallbackBlack);
+                }
                 if (m_colorGradingLut.IsValid()) {
                     cmd->SetFragmentTexture(2, m_colorGradingLut);
                 }

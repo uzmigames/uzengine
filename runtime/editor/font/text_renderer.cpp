@@ -355,10 +355,14 @@ void TextRenderer::Render(IRHICommandList* cmdList, CBRingAllocator& cbRing,
 
         if (totalTextVerts > 0) {
             cmdList->SetPipeline(m_textPipeline);
-            // Bind font atlas — DX12 uses descriptor table, Metal uses direct binding
-            cmdList->SetDescriptorTable(4, font.GetAtlasSRVIndex());
-            cmdList->SetFragmentTexture(0, font.GetAtlasTexture());
-            cmdList->SetFragmentSampler(0, m_sampler);
+            // Bind font atlas at t0.
+            // Bindless: atlas index passed as root constant (slot 0), shader uses
+            // ResourceDescriptorHeap[index]. The descriptor table is not needed.
+            // Non-bindless: SetFragmentTexture copies SRV into staging block at
+            // root param 5 (SRV table covering t0+).
+            if (!m_bindless) {
+                cmdList->SetFragmentTexture(0, font.GetAtlasTexture());
+            }
             cmdList->Draw(totalTextVerts, 1, totalRectVerts);
         }
     }
