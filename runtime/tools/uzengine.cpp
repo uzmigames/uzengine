@@ -486,6 +486,20 @@ int main(int argc, char** argv) {
     // Config: project file + CLI overrides
     uz::Config config = uz::BuildConfig(argc, argv);
 
+    // Apply log level filter (--log-level trace|debug|info|warning|error)
+    {
+        const std::string ll = config.GetString("log-level",
+            config.GetString("log_level", ""));
+        if (!ll.empty()) {
+            if (ll == "trace")        uz::LogSetLevel(uz::LogLevel::Trace);
+            else if (ll == "debug")   uz::LogSetLevel(uz::LogLevel::Debug);
+            else if (ll == "info")    uz::LogSetLevel(uz::LogLevel::Info);
+            else if (ll == "warning") uz::LogSetLevel(uz::LogLevel::Warning);
+            else if (ll == "error")   uz::LogSetLevel(uz::LogLevel::Error);
+            else UZ_LOG(Engine, Warning, "Unknown log level '{}', using default", ll);
+        }
+    }
+
     // Resolve RHI settings from config
     const uz::RHIConfig rhiCfg = uz::ResolveRHIConfig(config);
     const uz::RHIDeviceDesc deviceDesc = uz::ToDeviceDesc(rhiCfg);
