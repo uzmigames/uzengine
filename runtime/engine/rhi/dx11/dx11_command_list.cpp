@@ -469,6 +469,12 @@ void DX11CommandList::Dispatch(uint32_t groupCountX, uint32_t groupCountY,
                                 uint32_t groupCountZ) {
     if (!m_ctx) return;
     m_ctx->Dispatch(groupCountX, groupCountY, groupCountZ);
+
+    // Unbind all UAVs after dispatch to prevent SRV-UAV conflicts.
+    // DX11 forces SRV to NULL if the same resource is still bound as UAV.
+    // Without this, the next pass reading the compute output as SRV gets zeros.
+    ID3D11UnorderedAccessView* nullUAVs[8] = {};
+    m_ctx->CSSetUnorderedAccessViews(0, 8, nullUAVs, nullptr);
 }
 
 void DX11CommandList::DrawIndexedIndirect(RHIBufferHandle argsBuffer, uint64_t argsOffset,
