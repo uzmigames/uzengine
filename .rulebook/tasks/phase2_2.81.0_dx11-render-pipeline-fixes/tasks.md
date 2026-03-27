@@ -1,9 +1,9 @@
 ## Phase 1: Diagnostics (determine exact root cause)
-- [ ] 1.1 Run DX11 with debug layer (`--rhi dx11 --gpu-validation`): capture D3D11 warnings about SRV-RTV conflicts, dimension mismatches, null bindings.
-- [ ] 1.2 Add first-frame diagnostic logging in deferred lighting pass: log texture handle validity on DX11.
-- [ ] 1.3 Replace deferred_lighting_ps with flat red output on DX11 to isolate GBuffer vs pipeline issue.
-- [ ] 1.4 Verify `m_hdrSceneColor` has valid RTV on DX11.
-- [ ] 1.5 Verify tonemap reads same physical texture lighting wrote to.
+- [x] 1.1 DX11 debug layer: found ~50x `CSSetShaderResources: Resource still bound on output! Forcing to NULL` — compute pass outputs (transmittance LUT, IBL) not readable as SRV because UAVs not unbound after Dispatch. Fixed: unbind all UAVs after every Dispatch(). Warnings eliminated.
+- [x] 1.2 DX11 debug layer: found 1x `Map: This resource is already mapped!` — double Map on a readback buffer. Minor, non-fatal.
+- [ ] 1.3 Remaining issue: sky renders for 1 frame then goes black. Likely TAA or auto-exposure compute pass corrupting HDR scene color via SRV-UAV conflict or resource aliasing.
+- [ ] 1.4 Test with TAA disabled to isolate if TAA resolve CS causes the black-after-frame-1.
+- [ ] 1.5 Test with auto-exposure disabled to isolate if histogram/average CS causes incorrect exposure → black.
 
 ## Phase 2: GBuffer Fixes
 - [ ] 2.1 Fix GBuffer data not reaching lighting pass (based on Phase 1 findings).
