@@ -159,6 +159,9 @@ export class ViewportPanel {
                 this.addon.createViewport(0, 1280, 720);
                 this.addon.setEditorMode(true);
                 this.viewportCreated = true;
+
+                // Auto-load project scene if a .uzproject is found in the workspace.
+                this.autoLoadProjectScene();
             } catch {
                 // Viewport may already exist if createViewport was called elsewhere.
                 // Treat it as created so we still drive the render loop.
@@ -278,6 +281,76 @@ export class ViewportPanel {
     ///  - Stats overlay driven by `postMessage` from the extension host.
     ///  - WebCodecs decoder: handles `init` (SPS/PPS config) and `frame` (NAL)
     ///    messages from the extension host.
+    /// Searches the workspace for a .uzproject file, reads its default_scene,
+    /// sets the content root, and loads the scene automatically.
+    private autoLoadProjectScene(): void {
+        try {
+            const workspaceFolders = vscode.workspace.workspaceFolders;
+            if (!workspaceFolders) return;
+
+            // Find .uzproject files in the workspace
+            const fs = require('fs') as typeof import('fs');
+            const path = require('path') as typeof import('path');
+
+            for (const folder of workspaceFolders) {
+                const root = folder.uri.fsPath;
+
+                // Check common locations for .uzproject
+                const candidates = [
+                    path.join(root, 'sample', 'projects', 'pbr_showcase.uzproject'),
+                    ...this.findFiles(root, '.uzproject', 3),
+                ];
+
+                for (const projectPath of candidates) {
+                    if (!fs.existsSync(projectPath)) continue;
+
+                    const projectJson = JSON.parse(fs.readFileSync(projectPath, 'utf8'));
+                    const defaultScene = projectJson.default_scene;
+                    const contentRoot = projectJson.content_root || '../content/';
+
+                    if (!defaultScene) continue;
+
+                    // Resolve content root relative to project file
+                    const projectDir = path.dirname(projectPath);
+                    const resolvedContentRoot = path.resolve(projectDir, contentRoot);
+                    const scenePath = path.join(resolvedContentRoot, defaultScene);
+
+                    if (!fs.existsSync(scenePath)) continue;
+
+                    // Set content root and load scene
+                    this.addon.setContentRoot(resolvedContentRoot);
+                    this.addon.loadScene(scenePath);
+                    this.sceneTree.refresh();
+
+                    console.log(`[Viewport] Auto-loaded: ${scenePath} (content: ${resolvedContentRoot})`);
+                    return;
+                }
+            }
+            console.log('[Viewport] No .uzproject found in workspace — empty viewport');
+        } catch (e) {
+            console.warn('[Viewport] Auto-load failed:', e);
+        }
+    }
+
+    /// Recursively finds files with a given extension up to maxDepth.
+    private findFiles(dir: string, ext: string, maxDepth: number): string[] {
+        if (maxDepth <= 0) return [];
+        const fs = require('fs') as typeof import('fs');
+        const path = require('path') as typeof import('path');
+        const results: string[] = [];
+        try {
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+                const full = path.join(dir, entry.name);
+                if (entry.isFile() && entry.name.endsWith(ext)) {
+                    results.push(full);
+                } else if (entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules') {
+                    results.push(...this.findFiles(full, ext, maxDepth - 1));
+                }
+            }
+        } catch { /* permission denied etc. */ }
+        return results;
+    }
+
     private buildHtml(): string {
         // Content Security Policy: only inline scripts, no external resources.
         const csp = [
