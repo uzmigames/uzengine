@@ -1,1 +1,2 @@
 - [DX12 Per-Frame Descriptor Ring](dx12-descriptor-ring.md) — SM5 SetFragmentTexture uses per-frame ring to avoid cross-frame descriptor races
+- [Vulkan Scratch UBO Pattern](vulkan-scratch-ubo-pattern.md) — SetRootConstants uses scratch UBOs, not push constants, because DXC maps cbuffer to UBO descriptors at binding 32+N
