@@ -214,10 +214,12 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     ctx.jitterX = 0.f;
     ctx.jitterY = 0.f;
 
+    // TAA runs on both bindless (DX12/SM6.6) and non-bindless (DX11/SM5) backends.
+    // On SM5 the TAA upscaler binds textures via SetDescriptorTable/SetFragmentTexture
+    // instead of ResourceDescriptorHeap indexing.
     ctx.taaActive = m_taaEnabled
                  && m_taaHistory[0].IsValid()
                  && m_taaHistory[1].IsValid()
-                 && m_device->IsBindless()
                  && m_passInspector.IsPassEnabled("taa");
 
     if (ctx.taaActive) {

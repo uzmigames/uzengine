@@ -370,17 +370,6 @@ void BloomPass::Execute(IRHICommandList* cmdList,
         return;
     }
 
-    // Bloom compute shaders require bindless (ResourceDescriptorHeap).
-    // On SM5/DX11, bloom is not available — skip silently.
-    if (!m_device->IsBindless()) {
-        static bool loggedOnce = false;
-        if (!loggedOnce) {
-            UZ_LOG(Renderer, Warning, "BloomPass: skipped — compute bloom requires bindless (SM6.6+)");
-            loggedOnce = true;
-        }
-        return;
-    }
-
     if (hdrSrvIndex == UINT32_MAX) {
         UZ_LOG(Renderer, Error, "BloomPass::Execute: hdrSrvIndex is UINT32_MAX — HDR SRV not allocated");
         return;
@@ -447,6 +436,13 @@ void BloomPass::Execute(IRHICommandList* cmdList,
 
         cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
 
+        // On non-bindless backends (DX11/SM5) bind SRV (t0) and UAV (u0) explicitly.
+        // Bindless reads via ResourceDescriptorHeap[] using the root constant indices above.
+        if (!m_device->IsBindless()) {
+            cmdList->SetDescriptorTable(5, hdrSrvIndex);          // t0 — HDR scene color
+            cmdList->SetDescriptorTable(4, m_mipUavIndices[0]);   // u0 — mip[0] output
+        }
+
         const uint32_t groupsX = (m_mipWidths[0]  + kGroupSize - 1) / kGroupSize;
         const uint32_t groupsY = (m_mipHeights[0] + kGroupSize - 1) / kGroupSize;
         cmdList->Dispatch(groupsX, groupsY, 1);
@@ -480,6 +476,12 @@ void BloomPass::Execute(IRHICommandList* cmdList,
         rc.outputHeight   = m_mipHeights[i + 1];
 
         cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 4);
+
+        // On non-bindless backends (DX11/SM5) bind SRV (t0) and UAV (u0) explicitly.
+        if (!m_device->IsBindless()) {
+            cmdList->SetDescriptorTable(5, m_mipSrvIndices[i]);          // t0 — input mip
+            cmdList->SetDescriptorTable(4, m_mipUavIndices[i + 1]);      // u0 — output mip
+        }
 
         const uint32_t groupsX = (m_mipWidths[i + 1]  + kGroupSize - 1) / kGroupSize;
         const uint32_t groupsY = (m_mipHeights[i + 1] + kGroupSize - 1) / kGroupSize;
@@ -549,6 +551,12 @@ void BloomPass::Execute(IRHICommandList* cmdList,
         rc.stageTintB = settings.stageTints[lowerIdx];
 
         cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
+
+        // On non-bindless backends (DX11/SM5) bind SRV (t0) and UAV (u0) explicitly.
+        if (!m_device->IsBindless()) {
+            cmdList->SetDescriptorTable(5, m_mipSrvIndices[lowerIdx]);    // t0 — lower mip input
+            cmdList->SetDescriptorTable(4, m_mipUavIndices[currentIdx]);  // u0 — current mip output
+        }
 
         const uint32_t groupsX = (m_mipWidths[currentIdx]  + kGroupSize - 1) / kGroupSize;
         const uint32_t groupsY = (m_mipHeights[currentIdx] + kGroupSize - 1) / kGroupSize;
