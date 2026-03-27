@@ -88,13 +88,20 @@ void DX11CommandList::Begin() {
     ID3D11UnorderedAccessView* nullUAVs[8] = {};
     m_ctx->CSSetUnorderedAccessViews(0, 8, nullUAVs, nullptr);
 
-    // Bind default samplers matching DX12 static samplers s0 (linear wrap) and s1 (shadow comparison)
-    ID3D11SamplerState* defaultSamplers[2] = {
+    // Bind all 4 default samplers matching DX12 static samplers s0-s3:
+    //   s0 — anisotropic wrap (material textures)
+    //   s1 — shadow PCF comparison (shadow atlas)
+    //   s2 — bilinear clamp (post-process, LUT, IBL BRDF)
+    //   s3 — bilinear wrap (3D noise, weather maps)
+    ID3D11SamplerState* defaultSamplers[4] = {
         m_device->GetDefaultSampler(),
         m_device->GetShadowComparisonSampler(),
+        m_device->GetBilinearClampSampler(),
+        m_device->GetBilinearWrapSampler(),
     };
-    m_ctx->PSSetSamplers(0, 2, defaultSamplers);
-    m_ctx->CSSetSamplers(0, 2, defaultSamplers);
+    m_ctx->PSSetSamplers(0, 4, defaultSamplers);
+    m_ctx->VSSetSamplers(0, 4, defaultSamplers);
+    m_ctx->CSSetSamplers(0, 4, defaultSamplers);
 }
 
 void DX11CommandList::End() {
@@ -374,20 +381,17 @@ void DX11CommandList::SetDescriptorTable(uint32_t rootParamIndex, uint32_t descr
     }
 
     // SRV binding — descriptorIndex is a logical SRV index from GetTextureSRVIndex.
+    // Use shaderRegister from the root layout as the HLSL texture slot (t<N>), so that
+    // t0-t13 in the deferred lighting pass all bind to their correct registers.
     ID3D11ShaderResourceView* srv = m_device->FindTextureSRVByIndex(descriptorIndex);
     if (srv) {
+        const uint32_t hlslSlot = (rootParamIndex < rootLayout.paramCount)
+            ? rootLayout.params[rootParamIndex].shaderRegister
+            : 0u;
         if (m_computePipelineBound) {
-            m_ctx->CSSetShaderResources(0, 1, &srv);
-            ID3D11SamplerState* sampler = m_device->FindSamplerByIndex(0);
-            if (sampler) {
-                m_ctx->CSSetSamplers(0, 1, &sampler);
-            }
+            m_ctx->CSSetShaderResources(hlslSlot, 1, &srv);
         } else {
-            m_ctx->PSSetShaderResources(0, 1, &srv);
-            ID3D11SamplerState* sampler = m_device->FindSamplerByIndex(0);
-            if (sampler) {
-                m_ctx->PSSetSamplers(0, 1, &sampler);
-            }
+            m_ctx->PSSetShaderResources(hlslSlot, 1, &srv);
         }
     } else {
         UZ_LOG(RHI, Warning, "SetDescriptorTable: no SRV found for index {} (rootParam={})",
