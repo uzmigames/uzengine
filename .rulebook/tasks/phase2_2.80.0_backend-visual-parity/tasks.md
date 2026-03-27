@@ -1,4 +1,11 @@
-## Phase 1: SM6.0 Shader Parity (CRITICAL — fixes shared by DX11)
+## Phase 0: Pipeline Creation Crashes (BLOCKING — SM6.0 is unusable without these)
+- [ ] 0.1 Fix `GBuffer_Instanced` pipeline failure (E_INVALIDARG): instanced vertex shader uses StructuredBuffer vertex fetch without `#ifndef UZ_BINDLESS` fallback with Input Assembler VSInput. Add SM5 instanced VS path.
+- [ ] 0.2 Fix `ShadowDepth_Instanced` pipeline failure: same root cause as 0.1 — instanced shadow depth VS needs non-bindless path.
+- [ ] 0.3 Fix `DepthPrepass_Instanced` pipeline failure: same root cause as 0.1.
+- [ ] 0.4 Fix `OutlineMaskPipeline` failure: outline mask uses `mesh_vs.hlsl` which in non-bindless mode uses Input Assembler, but the pipeline may have wrong input layout or root signature mismatch. Verify input element desc matches VSInput struct.
+- [ ] 0.5 Verify SM6.0 runs without any pipeline creation errors: `--sm 6.0 --log-level error` shows zero RHI errors.
+
+## Phase 1: SM6.0 Shader Parity (visual differences)
 - [ ] 1.1 Fix deferred_lighting_ps.hlsl: add `register(t12)` for SSR texture and `register(t13)` for SSGI texture in `#ifndef UZ_BINDLESS` block. Wire sampling with null-guard (`if ssrEnabled`).
 - [ ] 1.2 Fix lighting_pass.cpp: add `SetFragmentTexture(12, desc.ssrTexture)` and `SetFragmentTexture(13, desc.ssgiTexture)` in SM6.0 path when textures are valid.
 - [ ] 1.3 Fix gbuffer_ps.hlsl SM5 metallic sampling: change `metallicTexture.SampleLevel(clampSampler, uv, 0)` to `metallicTexture.SampleBias(linearSampler, uv, mipBias)` to match SM6.6 path.
