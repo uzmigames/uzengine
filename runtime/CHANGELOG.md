@@ -2,25 +2,59 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
-## [0.2.56] — 2026-03-26
+## [0.2.56] — 2026-03-27
 
-### Backend Visual Parity — DX11 + SM6.0 fixes
+### Backend Visual Parity — DX11 + SM6.0 + Vulkan (29 issues, 24 fixed)
 
-- **fix(rhi):** DX11 now compiles shaders via FXC/SM5.0 instead of DXC/SM6.0.
-  All `CreateShader E_INVALIDARG` errors resolved — DX11 was 100% broken.
+#### DX11 (was 100% broken → functional)
+- **fix(rhi):** DX11 shader compilation via FXC/SM5.0 instead of DXC/SM6.0.
+  All `CreateShader E_INVALIDARG` errors resolved.
 - **feat(rhi):** DX11 3D texture support — `CreateTexture3D` + SRV + UAV for
   atmosphere volumes, color grading LUT, global distance field.
+- **fix(rhi):** DX11 missing samplers s2 (bilinear clamp) + s3 (bilinear wrap)
+  added and bound to PS/VS/CS slots 0-3 in Begin().
+- **fix(rhi):** DX11 SRV multi-bind — `SetDescriptorTable` SRV path now reads
+  hlslSlot from root layout instead of hardcoding slot 0. t0-t13 all bind correctly.
+
+#### SM6.0 DX12 non-bindless (was crashing → visual parity with SM6.8)
 - **fix(rhi):** SM6.0 instanced pipelines gracefully skip (require bindless).
-  Engine falls back to per-object draws instead of crashing with E_INVALIDARG.
-- **fix(editor):** OutlineMaskPipeline now provides VertexLayout on non-bindless
-  path, fixing root signature IA mismatch on SM6.0/DX11.
-- **fix(shader):** GBuffer SM5 metallic sampling changed from
-  `SampleLevel(clampSampler, 0)` to `SampleBias(linearSampler, mipBias)`.
-- **fix(shader):** Deferred lighting SM5 IBL null-guard — uses SRV index from
-  PerFrameCB to gate texture sampling. Falls back to SH diffuse when IBL not ready.
-- **fix(config):** `--sm 6.0` CLI flag now works (was silently ignored due to
-  JSON number parsing and missing ToDeviceDesc forwarding).
+- **fix(editor):** OutlineMaskPipeline provides VertexLayout on non-bindless path.
+- **fix(shader):** GBuffer SM5 metallic sampling: `SampleBias(linearSampler, mipBias)`.
+- **fix(shader):** Deferred lighting SM5 IBL null-guard via SRV index from PerFrameCB.
+- **fix(rhi):** Per-frame/per-draw descriptor ring allocator (4096 desc/frame × 3 frames).
+  Replaced shared 16-descriptor staging block that caused cross-frame race conditions,
+  stale descriptor carryover between passes, and per-draw texture clobbering.
+  Based on UE5 online descriptor heap pattern.
+- **fix(rhi):** `InvalidateDescriptorBlock()` API for per-draw descriptor isolation
+  in GBuffer pass. Each draw call gets a fresh 16-descriptor block.
+- **fix(tonemap):** Bind bloom result (or black fallback) at t1 on non-bindless.
+  Stale transmittance LUT from sky pass was being added as bloom, causing orange sky.
+- **fix(text):** Font atlas binding uses `m_bindless` flag, not `SetDescriptorTable(4)`
+  which targeted UAV table instead of SRV table.
+- **fix(atmosphere):** `multiScatteringFactor=0` on non-bindless (LUT not precomputed).
+- **fix(pipeline):** SkyCubemapCapturePS pipeline skipped on bindless (register(t0)
+  conflicts with DIRECTLY_INDEXED root signature).
+
+#### Vulkan
+- **fix(rhi):** `CopyBufferToTexture` division by zero on BC compressed textures.
+  `BytesPerTexel()` returns 0 for BC1-BC7; now computes from block size.
+- **fix(rhi):** Added immutable samplers s2 (bilinear clamp) + s3 (bilinear wrap)
+  to Vulkan descriptor set layout. Missing s2 caused black IBL ambient on
+  surfaces not directly lit.
+
+#### TAA + Bloom (were bindless-only → work on all backends)
+- **feat(renderer):** TAA enabled on non-bindless — removed `IsBindless()` gate,
+  added `SetDescriptorTable`/`SetFragmentTexture` binds for t0-t3.
+- **feat(renderer):** Bloom enabled on non-bindless — removed early-exit gate,
+  added SRV/UAV descriptor table binds per dispatch.
+
+#### CLI / Config
+- **fix(config):** `--sm 6.0` CLI flag now works (JSON number parsing fix +
+  `ToDeviceDesc` forwarding).
+- **fix(config):** `Config::GetString` handles JSON-parsed numbers from CLI args
+  via `json::dump()`.
 - **feat(cli):** Added `--log-level` flag (trace/debug/info/warning/error).
+- **fix(camera):** Editor camera init delayed to frame 3 (after Lua on_start).
 
 ## [0.2.55] — 2026-03-26
 
