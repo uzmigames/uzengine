@@ -849,7 +849,9 @@ void DX12CommandList::BeginRenderPass(const RHIRenderPassDesc& desc) {
         // Fast path: use the default RTV when targeting slice 0, mip 0
         if (att.arraySlice == 0 && att.mipLevel == 0) {
             if (tex->rtvIndex == UINT32_MAX) {
-                UZ_LOG(RHI, Warning, "BeginRenderPass — color attachment {} has no RTV", i);
+                UZ_LOG(RHI, Warning, "BeginRenderPass — color attachment {} has no RTV (name='{}', {}x{}, fmt={})",
+                       i, tex->desc.debugName ? tex->desc.debugName : "?",
+                       tex->desc.width, tex->desc.height, static_cast<int>(tex->desc.format));
                 continue;
             }
             rtvHandles[validRtvCount] = rtvHeap.CpuHandle(tex->rtvIndex);
