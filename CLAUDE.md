@@ -207,12 +207,31 @@ get_data_flow({ field: "fogDensity" })
 get_relationships({ id: "height_fog_component.h::HeightFogComponent", kind: "binding" })
 ```
 
+## Logging & Crash Reports
+
+All logs and crash reports are centralized in the user's OS data directory:
+
+| Type | Location (Windows) | Format |
+|------|-------------------|--------|
+| Runtime logs | `%LOCALAPPDATA%/UzEngine/logs/` | `uzengine_YYYY-MM-DD_HH-MM-SS.log` |
+| Crash reports | `{engine_dir}/crashes/{YYYY-MM-DD_HH-MM-SS}/` | `crash.dmp`, `crash.txt`, `crash.json` |
+| Worker logs | `extension/native/worker.log` | Appended per-session (N-API worker process) |
+
+- `LogInit()` with no args auto-resolves to `%LOCALAPPDATA%/UzEngine/logs/` with a timestamped filename
+- `LogInit(path)` with an explicit path still works (used by tests)
+- `LogGetFilePath()` returns the resolved log file path at runtime
+- Rotating file sink: 10MB max per file, keeps 3 rotated files
+
 ## Commands
 
 ```bash
 # Build & test (Zig)
 cd runtime && zig build          # Build runtime
+cd runtime && zig build -Ddll=true  # Build runtime DLL (for VSCode extension)
 cd demos/<name> && zig build     # Build demo
+
+# Deploy DLL to extension
+cp runtime/build/bin/uzengine_runtime.dll extension/native/uzengine_runtime.dll
 
 # Quality checks
 npm run type-check    # TypeScript type checking

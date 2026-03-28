@@ -51,12 +51,18 @@ struct LogCategory {
 ///
 /// # Arguments
 /// * `logFilePath` - Path to rotating log file. If empty or nullptr, only console logging.
+///   Default: `%LOCALAPPDATA%/UzEngine/logs/uzengine_YYYY-MM-DD_HH-MM-SS.log` (Windows)
+///            `~/.local/share/uzengine/logs/uzengine_YYYY-MM-DD_HH-MM-SS.log` (Linux/macOS)
+///   Pass an explicit path to override (e.g., in tests).
 ///
 /// # Behavior
 /// - Sets up console sink (colored output)
 /// - Sets up file sink (rotating: 10MB max, keeps 3 files)
 /// - Safe to call multiple times (no-op if already initialized)
 void LogInit(const char* logFilePath = "uzengine.log");
+
+/// Returns the path of the current log file, or empty string if not initialized.
+const std::string& LogGetFilePath();
 
 /// Suppresses console (stdout) logging output.
 ///
@@ -71,6 +77,13 @@ void LogSuppressConsole();
 /// Use before operations that may crash to ensure the last diagnostic message
 /// is visible in the log output.
 void LogFlushAll();
+
+/// Adds a sink to all existing and future loggers. Use this to register a
+/// callback sink after LogInit() has already created loggers.
+void LogAddSink(spdlog::sink_ptr sink);
+
+/// Removes a sink from all existing loggers.
+void LogRemoveSink(spdlog::sink_ptr sink);
 
 /// Shuts down the global logging system.
 ///

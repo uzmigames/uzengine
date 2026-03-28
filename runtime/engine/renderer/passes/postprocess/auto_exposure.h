@@ -200,8 +200,9 @@ private:
     uint32_t m_histogramSrvIndex = UINT32_MAX; ///< SRV for histogram buffer (t0 in average pass).
     uint32_t m_exposureUavIndex  = UINT32_MAX; ///< UAV for exposure buffer (u0 in average pass).
 
-    float m_lastExposure = 1.0f;  ///< Cached exposure from last frame.
-    bool  m_initialized  = false;
+    float m_lastExposure  = 1.0f;  ///< Cached exposure from last frame.
+    bool  m_initialized   = false;
+    bool  m_pipelineFailed = false; ///< Latched on pipeline creation failure to avoid per-frame retry spam.
 
     // ── Constants ────────────────────────────────────────────────────────
     static constexpr uint32_t kNumBins          = 64;

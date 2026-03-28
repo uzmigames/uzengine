@@ -220,9 +220,10 @@ void AutoExposure::Shutdown() {
     m_histogramUavIndex = UINT32_MAX;
     m_histogramSrvIndex = UINT32_MAX;
     m_exposureUavIndex  = UINT32_MAX;
-    m_device    = nullptr;
-    m_shaderMgr = nullptr;
-    m_initialized = false;
+    m_device         = nullptr;
+    m_shaderMgr      = nullptr;
+    m_initialized    = false;
+    m_pipelineFailed = false;
 
     UZ_LOG(Renderer, Info, "AutoExposure shut down");
 }
@@ -263,7 +264,8 @@ bool AutoExposure::EnsureHistogramPipeline() {
 
     m_histogramPipeline = m_device->CreateComputePipeline(pipeDesc);
     if (!m_histogramPipeline.IsValid()) {
-        UZ_LOG(Renderer, Error, "AutoExposure: failed to create histogram pipeline");
+        UZ_LOG(Renderer, Error, "AutoExposure: failed to create histogram pipeline — latching failure");
+        m_pipelineFailed = true;
         return false;
     }
 
@@ -304,7 +306,8 @@ bool AutoExposure::EnsureAveragePipeline() {
 
     m_averagePipeline = m_device->CreateComputePipeline(pipeDesc);
     if (!m_averagePipeline.IsValid()) {
-        UZ_LOG(Renderer, Error, "AutoExposure: failed to create average pipeline");
+        UZ_LOG(Renderer, Error, "AutoExposure: failed to create average pipeline — latching failure");
+        m_pipelineFailed = true;
         return false;
     }
 
@@ -366,6 +369,10 @@ float AutoExposure::Execute(IRHICommandList* cmdList, uint32_t hdrSrvIndex,
 
     // ── Ensure pipelines are compiled ───────────────────────────────────
 
+    if (m_pipelineFailed) {
+        return m_lastExposure;
+    }
+
     if (!EnsureHistogramPipeline() || !EnsureAveragePipeline()) {
         return m_lastExposure;
     }
@@ -417,6 +424,12 @@ float AutoExposure::Execute(IRHICommandList* cmdList, uint32_t hdrSrvIndex,
         // Bind histogram UAV at root param 4 (u0 descriptor table)
         cmdList->SetDescriptorTable(4, m_histogramUavIndex);
 
+        // SM5/SM6.0: bind HDR scene color at t0 via SRV descriptor table (root param 5).
+        // In bindless mode the shader uses ResourceDescriptorHeap[hdrSrvIndex] instead.
+        if (!m_device->IsBindless()) {
+            cmdList->SetDescriptorTable(5, hdrSrvIndex);
+        }
+
         // Dispatch: ceil(width/16) x ceil(height/16) x 1
         const uint32_t groupsX = (width  + kHistGroupSize - 1) / kHistGroupSize;
         const uint32_t groupsY = (height + kHistGroupSize - 1) / kHistGroupSize;
@@ -464,6 +477,12 @@ float AutoExposure::Execute(IRHICommandList* cmdList, uint32_t hdrSrvIndex,
 
         // Bind exposure UAV at root param 4 (u0 descriptor table)
         cmdList->SetDescriptorTable(4, m_exposureUavIndex);
+
+        // SM5/SM6.0: bind histogram SRV at t0 via SRV descriptor table (root param 5).
+        // In bindless mode the shader uses ResourceDescriptorHeap[histogramSrvIdx] instead.
+        if (!m_device->IsBindless()) {
+            cmdList->SetDescriptorTable(5, m_histogramSrvIndex);
+        }
 
         // Single thread group — this shader runs as a single thread
         cmdList->Dispatch(1, 1, 1);

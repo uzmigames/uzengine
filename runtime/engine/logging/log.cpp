@@ -6,6 +6,9 @@
 
 #include "log.h"
 
+#include <cstdlib>
+#include <ctime>
+#include <filesystem>
 #include <mutex>
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -44,6 +47,57 @@ static std::mutex g_loggerMutex;
 static std::unordered_map<std::string, std::shared_ptr<spdlog::logger>> g_loggers;
 static bool g_initialized = false;
 static spdlog::level::level_enum g_runtimeLevel = spdlog::level::trace;
+static std::string g_logFilePath;
+
+/// Builds the default log file path in the user's local app data directory.
+///
+/// On Windows: %LOCALAPPDATA%/UzEngine/logs/uzengine_YYYY-MM-DD_HH-MM-SS.log
+/// On Linux/macOS: ~/.local/share/uzengine/logs/uzengine_YYYY-MM-DD_HH-MM-SS.log
+///
+/// Creates the directory tree if it doesn't exist. Falls back to "uzengine.log"
+/// in the current working directory if the directory cannot be created.
+static std::string BuildDefaultLogPath() {
+    // Resolve the base directory for log storage
+    std::filesystem::path baseDir;
+#ifdef _WIN32
+    const char* localAppData = std::getenv("LOCALAPPDATA");
+    if (localAppData && localAppData[0] != '\0') {
+        baseDir = std::filesystem::path(localAppData) / "UzEngine" / "logs";
+    }
+#else
+    const char* home = std::getenv("HOME");
+    if (home && home[0] != '\0') {
+        baseDir = std::filesystem::path(home) / ".local" / "share" / "uzengine" / "logs";
+    }
+#endif
+
+    // Fall back to CWD if the environment variable is missing
+    if (baseDir.empty()) {
+        return "uzengine.log";
+    }
+
+    // Create the directory tree (no-op if it already exists)
+    std::error_code ec;
+    std::filesystem::create_directories(baseDir, ec);
+    if (ec) {
+        return "uzengine.log";
+    }
+
+    // Format timestamp: uzengine_YYYY-MM-DD_HH-MM-SS.log
+    std::time_t now = std::time(nullptr);
+    std::tm localTime{};
+#ifdef _WIN32
+    localtime_s(&localTime, &now);
+#else
+    localtime_r(&now, &localTime);
+#endif
+
+    char timestamp[32];
+    std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%d_%H-%M-%S", &localTime);
+
+    std::filesystem::path logFile = baseDir / ("uzengine_" + std::string(timestamp) + ".log");
+    return logFile.string();
+}
 
 /// Initializes logging with console and optional file output.
 ///
@@ -58,19 +112,31 @@ void LogInit(const char* logFilePath) {
     if (g_initialized)
         return;
 
+    // Resolve the log file path. The default sentinel "uzengine.log" (or null/empty)
+    // triggers auto-computation to a timestamped file in the user's app data directory.
+    // Explicit paths (e.g., from tests) are used as-is.
+    std::string resolvedPath;
+    if (!logFilePath || logFilePath[0] == '\0' ||
+        std::string_view(logFilePath) == "uzengine.log") {
+        resolvedPath = BuildDefaultLogPath();
+    } else {
+        resolvedPath = logFilePath;
+    }
+
     // Console sink with color support
     auto consoleSink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
     consoleSink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%n] [%^%l%$] %v");
     g_sinks.push_back(consoleSink);
 
     // File sink: rotating (10MB max, 3 files kept)
-    if (logFilePath && logFilePath[0] != '\0') {
-        auto fileSink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(logFilePath,
-                                                                               10 * 1024 * 1024, 3);
+    if (!resolvedPath.empty()) {
+        auto fileSink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
+            resolvedPath, 10 * 1024 * 1024, 3);
         fileSink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%n] [%l] %v");
         g_sinks.push_back(fileSink);
     }
 
+    g_logFilePath = std::move(resolvedPath);
     g_initialized = true;
 }
 
@@ -98,13 +164,53 @@ void LogSuppressConsole() {
     }
 }
 
-/// Flushes all active loggers immediately.
+/// Adds a sink to the global sink list and retrofits it into all existing loggers.
 ///
-/// Forces all buffered messages to their sinks. Call before operations that
-/// may crash to ensure the last diagnostic message is visible.
+/// This solves the problem where a callback sink registered after LogInit()
+/// is not picked up by loggers created before the sink was added (BUG-8).
+void LogAddSink(spdlog::sink_ptr sink) {
+    if (!g_initialized || !sink) return;
+
+    std::lock_guard<std::mutex> lock(g_loggerMutex);
+    g_sinks.push_back(sink);
+
+    // Rebuild all cached loggers to include the new sink.
+    for (auto& [name, logger] : g_loggers) {
+        auto newLogger = std::make_shared<spdlog::logger>(
+            std::string(name), g_sinks.begin(), g_sinks.end());
+        newLogger->set_level(logger->level());
+        newLogger->flush_on(spdlog::level::err);
+        logger = newLogger;
+    }
+}
+
+/// Removes a sink from the global sink list and retrofits into all existing loggers.
+void LogRemoveSink(spdlog::sink_ptr sink) {
+    if (!g_initialized || !sink) return;
+
+    std::lock_guard<std::mutex> lock(g_loggerMutex);
+    g_sinks.erase(std::remove(g_sinks.begin(), g_sinks.end(), sink), g_sinks.end());
+
+    for (auto& [name, logger] : g_loggers) {
+        auto newLogger = std::make_shared<spdlog::logger>(
+            std::string(name), g_sinks.begin(), g_sinks.end());
+        newLogger->set_level(logger->level());
+        newLogger->flush_on(spdlog::level::err);
+        logger = newLogger;
+    }
+}
+
+/// Flushes all active loggers immediately.
 void LogFlushAll() {
     if (!g_initialized) return;
     spdlog::apply_all([](std::shared_ptr<spdlog::logger> l) { l->flush(); });
+}
+
+/// Returns the resolved path of the current log file.
+///
+/// Returns an empty string if LogInit() has not been called yet.
+const std::string& LogGetFilePath() {
+    return g_logFilePath;
 }
 
 /// Shuts down logging and releases all resources.
@@ -123,6 +229,7 @@ void LogShutdown() {
     std::lock_guard<std::mutex> lock(g_loggerMutex);
     g_loggers.clear();
     g_sinks.clear();
+    g_logFilePath.clear();
     g_runtimeLevel = spdlog::level::trace;
     g_initialized = false;
 }
