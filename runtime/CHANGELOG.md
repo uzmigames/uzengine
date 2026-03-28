@@ -2,6 +2,37 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.58] — 2026-03-28
+
+### Centralized Logging, GPU Crash Protection, Auto-Exposure Fix
+
+#### Centralized Logging
+- **feat(logging):** `LogInit()` now writes to `%LOCALAPPDATA%/UzEngine/logs/uzengine_YYYY-MM-DD_HH-MM-SS.log` by default. Explicit paths (used by tests) still work via `LogInit(path)`.
+- **feat(logging):** Added `LogGetFilePath()` to query the resolved log file path at runtime.
+- **feat(logging):** Worker process log (`worker.log`) also centralized to `%LOCALAPPDATA%/UzEngine/logs/`.
+
+#### GPU Device Removed Protection
+- **feat(rhi):** Added `IRHIDevice::IsDeviceRemoved()` virtual method (default false). DX12 backend sets `m_deviceRemoved = true` on first `LogDeviceRemoved()` call.
+- **fix(rhi):** `LogDeviceRemoved()` now executes only once — subsequent calls are no-ops, preventing per-frame error log spam.
+- **feat(runtime):** `uz_render_frame()` returns immediately with `device_removed = 1` in stats when the GPU device is lost.
+- **feat(runtime):** Added `device_removed` field to `uz_frame_stats` struct.
+- **fix(runtime):** Render thread (`RenderThread::ThreadMain`) breaks the loop on `device_removed` and calls `_exit(1)` to terminate the worker process cleanly. Extension shows restart dialog.
+
+#### Auto-Exposure Fix (SM5/SM6.0 Non-Bindless)
+- **fix(renderer):** Auto-exposure histogram compute shader was dispatching without binding the HDR SRV descriptor table (root param 5) on non-bindless backends. This caused the GPU to read an unbound descriptor, resulting in DEVICE REMOVED on frame 2.
+- **fix(renderer):** Average pass also now binds histogram SRV at root param 5 for non-bindless.
+- **fix(renderer):** Added pipeline failure latch (`m_pipelineFailed`) to avoid per-frame retry spam when compute pipeline creation fails.
+
+#### DX12 Debug Layer
+- **fix(runtime):** Disabled D3D12 debug layer in DLL mode. The SM5/non-bindless path has known validation errors (barrier state mismatches, CPU-only descriptor heap copies) that the debug layer promotes to fatal `CommandList::Close` failures.
+
+#### IPC & Frame Readback
+- **feat(ipc):** Frame readback GPU copy pipeline for H.264 encoding.
+- **feat(ipc):** Media Foundation H.264 encoder integration.
+
+#### Crash Handler
+- **fix(crash):** Improved library mode (VEH) for DLL-hosted scenarios.
+
 ## [0.2.57] — 2026-03-27
 
 ### DX11 Black Screen Fix + Error Cleanup
