@@ -264,20 +264,11 @@ public:
     /// Returns the command signature for indirect dispatch calls.
     ID3D12CommandSignature* GetDispatchIndirectSignature() const { return m_dispatchIndirectSig.Get(); }
 
-    /// Function pointer type for D3D12SerializeVersionedRootSignature.
+    /// Returns the maximum root signature version supported by this device.
     ///
-    /// When the Agility SDK is active, the system d3d12.dll's version of this
-    /// function does not support SM6.6 flags (e.g., DIRECTLY_INDEXED). We must
-    /// load the function from D3D12Core.dll instead.
-    using PFN_SERIALIZE_ROOT_SIG = HRESULT(WINAPI*)(
-        const D3D12_VERSIONED_ROOT_SIGNATURE_DESC*,
-        ID3DBlob**, ID3DBlob**);
-
-    /// Returns the D3D12SerializeVersionedRootSignature function pointer.
-    ///
-    /// Uses the Agility SDK's D3D12Core.dll version if loaded, otherwise falls
-    /// back to the system d3d12.dll version linked from d3d12.lib.
-    [[nodiscard]] PFN_SERIALIZE_ROOT_SIG GetSerializeRootSignatureFn() const;
+    /// Detected at init time via `CheckFeatureSupport(D3D12_FEATURE_ROOT_SIGNATURE)`.
+    /// Used by `D3DX12SerializeVersionedRootSignature` for automatic 1.1→1.0 fallback.
+    [[nodiscard]] D3D_ROOT_SIGNATURE_VERSION GetRootSignatureVersion() const { return m_rootSigVersion; }
 
     /// Returns the negotiated shader model for this device.
     ///
@@ -399,6 +390,7 @@ private:
     DX12GpuProfiler                m_gpuProfiler;
     TracyD3D12Ctx                  m_tracyD3D12Ctx = nullptr;
 
+    D3D_ROOT_SIGNATURE_VERSION     m_rootSigVersion = D3D_ROOT_SIGNATURE_VERSION_1_0;
     ShaderModel                    m_shaderModel = ShaderModel::SM5_0;
     std::string                    m_adapterName;
     std::string                    m_featureLevelStr;

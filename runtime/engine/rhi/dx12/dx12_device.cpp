@@ -181,6 +181,21 @@ bool DX12Device::Init(const RHIDeviceDesc& desc) {
 
     NegotiateShaderModel(desc.forceShaderModel);
 
+    // Detect root signature version support (1.0 vs 1.1).
+    // D3DX12SerializeVersionedRootSignature uses this to automatically downgrade
+    // 1.1 descriptors to 1.0 on older drivers that lack 1.1 support.
+    {
+        D3D12_FEATURE_DATA_ROOT_SIGNATURE rootSigCaps = {};
+        rootSigCaps.HighestVersion = D3D_ROOT_SIGNATURE_VERSION_1_1;
+        if (FAILED(m_device->CheckFeatureSupport(D3D12_FEATURE_ROOT_SIGNATURE,
+                                                  &rootSigCaps, sizeof(rootSigCaps)))) {
+            rootSigCaps.HighestVersion = D3D_ROOT_SIGNATURE_VERSION_1_0;
+        }
+        m_rootSigVersion = rootSigCaps.HighestVersion;
+        UZ_LOG(RHI, Info, "Root signature version: {}",
+               m_rootSigVersion == D3D_ROOT_SIGNATURE_VERSION_1_1 ? "1.1" : "1.0");
+    }
+
     if (!CreateAllocator())                     return false;
     if (!CreateDescriptorHeaps())               return false;
     InitDescriptorAllocators();
@@ -188,7 +203,7 @@ bool DX12Device::Init(const RHIDeviceDesc& desc) {
 
     // Global root signature (adapts to negotiated shader model)
     m_rootSignature = CreateBindlessRootSignature(m_device.Get(), m_shaderModel,
-                                                    GetSerializeRootSignatureFn());
+                                                    m_rootSigVersion);
     if (!m_rootSignature) return false;
 
     // Indirect command signatures for GPU-driven rendering
@@ -355,34 +370,19 @@ bool DX12Device::TryLoadAgilitySdk() {
     UZ_LOG(RHI, Info, "Agility SDK loaded via CreateDeviceFactory (version={}, path='{}')",
            D3D12_SDK_VERSION, sdkPath);
 
-    // Load D3D12Core.dll from the SDK path so we can resolve
-    // D3D12SerializeVersionedRootSignature from it. The system d3d12.dll's
-    // version does not support SM6.6 root signature flags (DIRECTLY_INDEXED)
-    // because it delegates to the system D3D12Core.dll, not our bundled one.
+    // Keep the D3D12Core.dll loaded so the Agility SDK runtime remains active
+    // for the lifetime of the device. Root signature serialization is now handled
+    // by D3DX12SerializeVersionedRootSignature (d3dx12 helper) which automatically
+    // falls back from 1.1 to 1.0 when needed — no manual DLL function resolution required.
     std::string coreDllPath = sdkPath + "D3D12Core.dll";
     m_agilityCoreModule = LoadLibraryA(coreDllPath.c_str());
     if (m_agilityCoreModule) {
         UZ_LOG(RHI, Info, "Loaded D3D12Core.dll from '{}'", coreDllPath);
     } else {
-        UZ_LOG(RHI, Warning, "Failed to load D3D12Core.dll from '{}' — "
-               "root signature serialization may fail for SM6.6 flags",
-               coreDllPath);
+        UZ_LOG(RHI, Warning, "Failed to load D3D12Core.dll from '{}'", coreDllPath);
     }
 
     return true;
-}
-
-DX12Device::PFN_SERIALIZE_ROOT_SIG DX12Device::GetSerializeRootSignatureFn() const {
-    // When the Agility SDK is loaded via CreateDeviceFactory, the system
-    // d3d12.dll's D3D12SerializeVersionedRootSignature does NOT get redirected
-    // (only SetSDKVersion-based loading redirects global functions).
-    // D3D12Core.dll does not export the serialize function.
-    //
-    // However, the system d3d12.dll may still work if the Windows version is
-    // new enough (Win11, or recent Win10 with KB updates). Try it first.
-    // If it fails at call time (returns E_INVALIDARG for unknown flags),
-    // CreateBindlessRootSignature will fall back to CreateRootSignature1 on the device.
-    return &D3D12SerializeVersionedRootSignature;
 }
 
 bool DX12Device::EnableDebugLayer(bool gpuValidation) {

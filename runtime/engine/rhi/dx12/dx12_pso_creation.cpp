@@ -122,7 +122,7 @@ void DestroyDX12Sampler(DX12Sampler& sampler, DescriptorAllocator& samplerHeap) 
 ///   [4] SRV descriptor table at t0, space0, unbounded (textures + structured buffers)
 ID3D12RootSignature* CreateBindlessRootSignature(
         ID3D12Device* device, ShaderModel sm,
-        PFN_SerializeVersionedRootSignature serializeFn) {
+        D3D_ROOT_SIGNATURE_VERSION maxVersion) {
     UZ_PROFILE_FUNCTION();
     const bool bindless = (sm >= ShaderModel::SM6_6);
 
@@ -269,25 +269,14 @@ ID3D12RootSignature* CreateBindlessRootSignature(
     versionedDesc.Desc_1_1.pStaticSamplers = staticSamplers;
     versionedDesc.Desc_1_1.Flags = flags;
 
+    // D3DX12SerializeVersionedRootSignature (d3dx12 helper) automatically downgrades
+    // the 1.1 descriptor to 1.0 when maxVersion is 1.0, preserving flags like
+    // DIRECTLY_INDEXED in the Flags field. This eliminates all manual version/SM
+    // fallback hacks — the same approach UE5 uses for root signature creation.
     ComPtr<ID3DBlob> serialized;
     ComPtr<ID3DBlob> error;
-    auto actualSerialize = serializeFn ? serializeFn : &D3D12SerializeVersionedRootSignature;
-    HRESULT hr = actualSerialize(&versionedDesc, &serialized, &error);
-
-    // Fallback: if the system d3d12.dll rejects SM6.6 flags (DIRECTLY_INDEXED),
-    // serialize WITHOUT those flags. The Agility SDK device created via
-    // CreateDeviceFactory still supports bindless ResourceDescriptorHeap[] in
-    // shaders — the root signature flags are a driver hint, not a hard requirement
-    // on most hardware. The device->CreateRootSignature will succeed because it
-    // uses the Agility SDK runtime internally.
-    if (FAILED(hr) && bindless) {
-        UZ_LOG(RHI, Warning, "Root signature serialization failed with bindless flags — "
-               "retrying without DIRECTLY_INDEXED flags (Agility SDK device factory mode)");
-        error.Reset();
-        versionedDesc.Desc_1_1.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
-        hr = actualSerialize(&versionedDesc, &serialized, &error);
-    }
-
+    HRESULT hr = D3DX12SerializeVersionedRootSignature(&versionedDesc, maxVersion,
+                                                        &serialized, &error);
     if (FAILED(hr)) {
         const char* errMsg = error ? static_cast<const char*>(error->GetBufferPointer()) : "unknown";
         UZ_LOG(RHI, Error, "Failed to serialize root signature: {}", errMsg);
@@ -304,8 +293,12 @@ ID3D12RootSignature* CreateBindlessRootSignature(
         return nullptr;
     }
 
-    const char* mode = (sm >= ShaderModel::SM6_6) ? "SM6.6 DIRECTLY_INDEXED" : "standard";
-    UZ_LOG(RHI, Info, "Root signature created ({})", mode);
+    if (bindless) {
+        UZ_LOG(RHI, Info, "Root signature created (SM6.6 DIRECTLY_INDEXED, serialized as v{})",
+               maxVersion == D3D_ROOT_SIGNATURE_VERSION_1_1 ? "1.1" : "1.0");
+    } else {
+        UZ_LOG(RHI, Info, "Root signature created (standard)");
+    }
     return rootSig;
 }
 
