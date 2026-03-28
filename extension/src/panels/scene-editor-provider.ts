@@ -313,12 +313,13 @@ export class SceneEditorProvider implements vscode.CustomTextEditorProvider {
         const client = this.getClient();
         const log = this.log;
 
-        log.info('[SceneEditor] startRenderLoop: launching native render thread @ 30 FPS');
+        const targetFps = 120;
+        log.info(`[SceneEditor] startRenderLoop: launching native render thread @ ${targetFps} FPS`);
         let frameCount = 0;
 
         try {
             await client.startRenderLoop(
-                30,
+                targetFps,
                 (stats) => {
                     frameCount++;
                     if (frameCount === 1) {
