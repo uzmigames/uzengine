@@ -77,6 +77,7 @@ typedef struct uz_frame_stats {
     uint32_t vertices;      ///< Total vertices processed this frame.
     uint32_t triangles;     ///< Total triangles processed this frame.
     uint32_t frame_index;   ///< Monotonically increasing frame counter.
+    uint32_t device_removed; ///< Non-zero if the GPU device was lost (fatal, unrecoverable).
 } uz_frame_stats;
 
 /// Log callback function type.

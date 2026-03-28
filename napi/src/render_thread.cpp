@@ -6,6 +6,7 @@
 #include "render_thread.h"
 #include "napi_common.h"
 
+#include <cstdlib>    // _exit
 #include <objbase.h>  // CoInitializeEx, CoUninitialize
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -154,6 +155,13 @@ void RenderThread::ThreadMain() {
         // a crash should propagate to the OS exception handler / crash reporter.
         uz_frame_stats stats = uz_render_frame();
 
+        // GPU device lost — fatal, unrecoverable. Log once and break out of
+        // the render loop. The worker process will terminate below.
+        if (stats.device_removed) {
+            fprintf(stderr, "[RenderThread] FATAL: GPU device removed — stopping render loop\n");
+            break;
+        }
+
         // Deliver stats to Node.js. Heap-allocate because the TSFN callback
         // runs asynchronously on the main thread after we return.
         auto* statsCopy = new uz_frame_stats(stats);
@@ -193,5 +201,13 @@ void RenderThread::ThreadMain() {
 
     if (comInitialized) {
         CoUninitialize();
+    }
+
+    // If the loop ended due to device removal (not a graceful stop request),
+    // terminate the worker process immediately. Use _exit() to bypass atexit
+    // handlers that might touch GPU resources and crash during teardown.
+    // The VSCode extension will detect the non-zero exit and show a restart dialog.
+    if (!m_stopRequested.load(std::memory_order_acquire)) {
+        _exit(1);
     }
 }

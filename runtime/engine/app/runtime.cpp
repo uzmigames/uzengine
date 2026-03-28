@@ -607,6 +607,13 @@ uz_frame_stats uz_render_frame(void) {
 
     auto* state = s_state;
 
+    // Fatal: GPU device was removed. Stop rendering immediately — all GPU
+    // operations will fail. The caller must break the render loop and exit.
+    if (state->device->IsDeviceRemoved()) {
+        stats.device_removed = 1;
+        return stats;
+    }
+
 #ifdef _WIN32
     // Pump OS messages (input, resize, close).
     state->window.PumpMessages();

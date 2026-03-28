@@ -273,6 +273,9 @@ public:
     /// Returns `RHIBackend::DX12`. See `IRHIDevice::GetBackend`.
     RHIBackend GetBackend() const override { return RHIBackend::DX12; }
 
+    /// Returns true if the DX12 device has been lost. See `IRHIDevice::IsDeviceRemoved`.
+    bool IsDeviceRemoved() const override { return m_deviceRemoved; }
+
     /// Queries DXGI for tearing/VRR support. See `IRHIDevice::SupportsVariableRefreshRate`.
     bool SupportsVariableRefreshRate() const override;
 
@@ -383,6 +386,11 @@ private:
     std::string                    m_featureLevelStr;
     D3D_FEATURE_LEVEL              m_featureLevel = D3D_FEATURE_LEVEL_12_0;
     bool                           m_validationEnabled = false;
+
+    /// Set to true by `LogDeviceRemoved()` on first call. Once set, subsequent
+    /// calls to `LogDeviceRemoved()` are no-ops to prevent log spam, and
+    /// `IsDeviceRemoved()` returns true so the render loop can exit.
+    bool                           m_deviceRemoved = false;
 };
 
 } // namespace uz

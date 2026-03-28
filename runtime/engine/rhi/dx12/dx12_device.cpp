@@ -604,6 +604,12 @@ static const char* BreadcrumbOpToString(D3D12_AUTO_BREADCRUMB_OP op) {
 
 void DX12Device::LogDeviceRemoved() {
     UZ_PROFILE_FUNCTION();
+
+    // Guard: only log device removal diagnostics once. Subsequent calls are
+    // no-ops to prevent infinite log spam when the render loop hasn't stopped yet.
+    if (m_deviceRemoved) return;
+    m_deviceRemoved = true;
+
     HRESULT removedReason = m_device->GetDeviceRemovedReason();
     UZ_LOG(RHI, Error, "=== DEVICE REMOVED ===");
     UZ_LOG(RHI, Error, "Adapter: '{}'", m_adapterName);

@@ -377,6 +377,16 @@ public:
     /// Defined out-of-line in rhi_config.h (needs full ShaderModel enum).
     bool IsBindless() const;
 
+    /// Returns true if the GPU device has been removed (fatal, unrecoverable).
+    ///
+    /// When this returns true, all GPU operations will fail. The render loop
+    /// must stop immediately and the process should terminate. Device removal
+    /// can happen due to driver crashes, TDR timeouts, or GPU hardware faults.
+    ///
+    /// The default returns false — backends that support device-loss detection
+    /// (DX12) override this to check the actual device state.
+    virtual bool IsDeviceRemoved() const { return false; }
+
     /// Returns true if the display supports variable refresh rate (VRR/FreeSync/G-Sync).
     ///
     /// DX12: queries `IDXGIFactory5::CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING)`.
