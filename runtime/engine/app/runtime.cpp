@@ -926,12 +926,6 @@ int uz_set_component_property(uint32_t /*entity_id*/, const char* /*component_ty
 void uz_on_mouse_move(float x, float y) {
     if (!HasViewport() || !s_state->sceneRendererReady) return;
 
-    static int logCount = 0;
-    if (logCount < 5) {
-        UZ_LOG(RuntimeAPI, Info, "uz_on_mouse_move({:.1f}, {:.1f})", x, y);
-        logCount++;
-    }
-
     auto* input = s_state->sceneRenderer.GetInput();
     if (input) {
         input->OnMouseMove(x, y);
@@ -940,7 +934,6 @@ void uz_on_mouse_move(float x, float y) {
 
 void uz_on_mouse_button(int button, int pressed) {
     if (!HasViewport() || !s_state->sceneRendererReady) return;
-    UZ_LOG(RuntimeAPI, Info, "uz_on_mouse_button({}, {})", button, pressed);
 
     auto* input = s_state->sceneRenderer.GetInput();
     if (!input) return;

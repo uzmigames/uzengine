@@ -192,8 +192,20 @@ bool DX12Device::Init(const RHIDeviceDesc& desc) {
             rootSigCaps.HighestVersion = D3D_ROOT_SIGNATURE_VERSION_1_0;
         }
         m_rootSigVersion = rootSigCaps.HighestVersion;
-        UZ_LOG(RHI, Info, "Root signature version: {}",
-               m_rootSigVersion == D3D_ROOT_SIGNATURE_VERSION_1_1 ? "1.1" : "1.0");
+
+        // When the Agility SDK was loaded via CreateDeviceFactory, the device
+        // reports root signature 1.1 support, but the GLOBAL serialization API
+        // (D3D12SerializeVersionedRootSignature from system d3d12.dll) still
+        // rejects SM6.6 flags (DIRECTLY_INDEXED). Force 1.0 so the d3dx12
+        // helper uses D3D12SerializeRootSignature (1.0 API) which accepts
+        // arbitrary flags in the Flags field without validation.
+        if (m_deviceFactory && m_rootSigVersion >= D3D_ROOT_SIGNATURE_VERSION_1_1) {
+            m_rootSigVersion = D3D_ROOT_SIGNATURE_VERSION_1_0;
+            UZ_LOG(RHI, Info, "Root signature version: 1.0 (forced — Agility SDK device factory mode)");
+        } else {
+            UZ_LOG(RHI, Info, "Root signature version: {}",
+                   m_rootSigVersion == D3D_ROOT_SIGNATURE_VERSION_1_1 ? "1.1" : "1.0");
+        }
     }
 
     if (!CreateAllocator())                     return false;
