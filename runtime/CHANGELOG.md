@@ -2,6 +2,29 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.3.1] — 2026-03-28
+
+### Runtime APIs for Editor Integration
+
+#### Component Introspection
+- **feat(api):** `uz_get_component_json(entity_id, type)` — real JSON serialization for transform, camera, mesh, light, script, name, and all registry-based environment components.
+- **feat(api):** `uz_set_component_property(entity_id, type, prop, value)` — real property mutation for transform, camera, light properties.
+- **feat(api):** `uz_get_entity_components(entity_id)` — returns JSON array of all component type names on an entity.
+
+#### Entity Selection
+- **feat(api):** `uz_select_entity(entity_id)` / `uz_get_selected_entity()` — programmatic entity selection with outline + gizmo sync.
+
+#### Shader Hot-Reload
+- **feat(shader):** Wired `ShaderPipeline::PollHotReload()` into the render loop. FileWatcher polls shader source directories every frame; dirty shaders are recompiled on the fly.
+- **feat(shader):** `ShaderPipeline::Init()` now starts the FileWatcher automatically when `enableHotReload=true`.
+
+#### Play/Stop Mode
+- **feat(api):** `uz_play()` / `uz_stop()` / `uz_is_playing()` — toggles between editor mode (camera control, gizmos, grid) and play mode (game camera, no overlays).
+
+#### Bug Fixes
+- **fix(startup):** Eliminated race condition where `setEngineDir` failed on first scene open (worker killed before IPC completed).
+- **fix(shader):** Shader cache stored in engine dir (`GetExeDir()/cache/shaders/`) instead of CWD, which was wrong in DLL mode.
+
 ## [0.3.0] — 2026-03-28
 
 ### VSCode Viewport — Full DX12 Rendering Inside the Editor
