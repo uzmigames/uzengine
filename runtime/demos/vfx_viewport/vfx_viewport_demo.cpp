@@ -141,6 +141,14 @@ void VFXViewportDemo::OnInit() {
     auto* cmd = GetCommandList();
     auto* shaders = GetShaderManager();
 
+    // Re-initialize editor grid for HDR render target (RGBA16Float, not RGBA8Unorm)
+    auto* grid = GetEditorGrid();
+    if (grid) {
+        grid->Shutdown();
+        grid->Init(device, shaders->GetPipeline(),
+                   RHIFormat::RGBA16Float, RHIFormat::D32Float);
+    }
+
     UploadContext upload(device);
 
     // ── Generate and upload procedural meshes ────────────────────────────
@@ -192,6 +200,9 @@ void VFXViewportDemo::OnInit() {
     if (!m_vfxSystem.Init(device, shaders, 50000)) {
         UZ_LOG(App, Error, "VFXViewport: Failed to initialize VFX particle system");
         m_vfxEnabled = false;
+    }
+    if (m_vfxEnabled) {
+        m_vfxSystem.UploadInitialFreeList(cmd);
     }
 
     // ── Bloom pass ──────────────────────────────────────────────────────
@@ -405,8 +416,17 @@ void VFXViewportDemo::OnInit() {
         }
     }
 
-    // Flush upload staging buffers
+    // Submit and flush all upload copy commands before releasing staging buffers.
+    // ReleaseStaging() destroys the underlying ID3D12Resource objects. If those
+    // resources are still referenced by an open command list the D3D12 debug layer
+    // reports "resource deleted prior to Close()" and the device hangs (0x887A0006).
+    // demo_application.cpp submits this command list only AFTER OnInit() returns,
+    // so we must do our own flush here and then re-open the list for the caller.
+    cmd->End();
+    cmd->Execute();
+    device->WaitIdle();
     upload.ReleaseStaging();
+    cmd->Begin();
 
     UZ_LOG(App, Info, "VFXViewport: Init complete — {} meshes, {} materials, VFX={}, Trails={}, Decals={}, Distortion={}",
            kMeshNames[0], kMaterialCount, m_vfxEnabled ? "on" : "off",
@@ -648,7 +668,7 @@ void VFXViewportDemo::HandleInput(float dt) {
             RenderDocTriggerCapture();
             UZ_LOG(App, Info, "RenderDoc: capture triggered");
         } else {
-            UZ_LOG(App, Warn, "RenderDoc: not loaded (install RenderDoc and relaunch)");
+            UZ_LOG(App, Warning, "RenderDoc: not loaded (install RenderDoc and relaunch)");
         }
     }
 }
@@ -738,6 +758,14 @@ void VFXViewportDemo::OnFrame(float dt) {
         m_vfxSpawnAccum += m_vfxSpawnRate * dt;
         const auto spawnCount = static_cast<uint32_t>(m_vfxSpawnAccum);
         m_vfxSpawnAccum -= static_cast<float>(spawnCount);
+
+        if (GetFrameIndex() < 3) {
+            const auto& camPos = GetCamera().GetPosition();
+            UZ_LOG(App, Info, "VFX frame={}: spawn={}, dt={:.4f}, emitter=({:.1f},{:.1f},{:.1f}), cam=({:.1f},{:.1f},{:.1f})",
+                   GetFrameIndex(), spawnCount, dt,
+                   m_vfxEmitter.position[0], m_vfxEmitter.position[1], m_vfxEmitter.position[2],
+                   camPos.x, camPos.y, camPos.z);
+        }
 
         m_vfxSystem.DispatchCompute(cmd, cbRing, m_vfxEmitter, spawnCount,
                                     dt, GetFrameIndex());
@@ -965,12 +993,12 @@ void VFXViewportDemo::OnFrame(float dt) {
         cmd->SetScissor(debugSc);
 
         cmd->SetPipeline(m_tonemapPSO);
-        cmd->SetRootCBV(0, perFrameGpu);
+        cmd->SetRootCBV(kSlotPerFrame, perFrameGpu);
 
         if (IsBindless()) {
             auto* device = GetDevice();
             uint32_t shadowSrvIdx = device->GetTextureSRVIndex(m_shadowMap);
-            cmd->SetRootConstants(1, &shadowSrvIdx, 1);
+            cmd->SetRootConstants(0, &shadowSrvIdx, 1);
         }
 
         cmd->Draw(3, 1, 0, 0);
@@ -979,12 +1007,28 @@ void VFXViewportDemo::OnFrame(float dt) {
 
     // ── Screenshot capture ───────────────────────────────────────────────
     if (ShouldCaptureScreenshot()) {
+        UZ_LOG(App, Info, "Screenshot: capturing frame {}", GetFrameIndex());
         auto* capture = GetScreenshotCapture();
         auto* swapChain = GetSwapChain();
         if (capture && swapChain) {
-            capture->CaptureBackBuffer(cmd, swapChain);
+            capture->CaptureFromPresent(cmd, swapChain);
             SetScreenshotSaveDeferred();
+            UZ_LOG(App, Info, "Screenshot: deferred save set");
+        } else {
+            UZ_LOG(App, Warning, "Screenshot: capture={} swapChain={} — skipping",
+                   capture != nullptr, swapChain != nullptr);
         }
+    }
+
+    // Transition backbuffer from RenderTarget → Present for DXGI Present()
+    {
+        auto* swapChain = GetSwapChain();
+        auto backBuffer = swapChain->GetCurrentBackBuffer();
+        RHIBarrierDesc barrier{};
+        barrier.texture = backBuffer;
+        barrier.stateBefore = RHIResourceState::RenderTarget;
+        barrier.stateAfter = RHIResourceState::Present;
+        cmd->ResourceBarrier(&barrier, 1);
     }
 
     // Store view-projection for next frame's motion vectors
@@ -1052,13 +1096,14 @@ void VFXViewportDemo::RenderShadowPass(IRHICommandList* cmd) {
     if (shadowPSO.IsValid()) {
         cmd->SetPipeline(shadowPSO);
 
-        // Upload shadow view-projection as a root CBV
+        // Upload shadow view-projection as a root CBV at slot 3 (b4)
         struct ShadowCB { Mat4 viewProj; };
         ShadowCB shadowCB{};
         shadowCB.viewProj = shadowViewProj;
         auto shadowAlloc = cbRing->Allocate(sizeof(ShadowCB));
         std::memcpy(shadowAlloc.cpuPtr, &shadowCB, sizeof(ShadowCB));
-        cmd->SetRootCBV(0, shadowAlloc.gpuAddr);
+        static constexpr uint32_t kSlotShadow = 3; // root param 3 = CBV at b4
+        cmd->SetRootCBV(kSlotShadow, shadowAlloc.gpuAddr);
 
         // ── Helper: upload PerObjectCB with a given world matrix for the shadow pass ──
         // The shadow depth VS reads PerObjectCB.world (register b2) to transform
@@ -1162,7 +1207,7 @@ void VFXViewportDemo::RenderSkyPass(IRHICommandList* cmd, uint64_t perFrameGpu) 
     cmd->SetScissor(sc);
 
     cmd->SetPipeline(m_skyPSO);
-    cmd->SetRootCBV(0, perFrameGpu);
+    cmd->SetRootCBV(kSlotPerFrame, perFrameGpu);
 
     // Fullscreen triangle (3 vertices, no vertex buffer)
     cmd->Draw(3, 1, 0, 0);
@@ -1637,6 +1682,15 @@ void VFXViewportDemo::RenderTonemapPass(IRHICommandList* cmd, uint64_t perFrameG
     auto* swapChain = GetSwapChain();
     auto backBuffer = swapChain->GetCurrentBackBuffer();
 
+    // Transition backbuffer from Present → RenderTarget
+    {
+        RHIBarrierDesc barrier{};
+        barrier.texture = backBuffer;
+        barrier.stateBefore = RHIResourceState::Present;
+        barrier.stateAfter = RHIResourceState::RenderTarget;
+        cmd->ResourceBarrier(&barrier, 1);
+    }
+
     // Begin render pass targeting the backbuffer
     RHIRenderPassDesc rpDesc{};
     rpDesc.colorAttachmentCount = 1;
@@ -1661,10 +1715,9 @@ void VFXViewportDemo::RenderTonemapPass(IRHICommandList* cmd, uint64_t perFrameG
     cmd->SetScissor(sc);
 
     cmd->SetPipeline(m_tonemapPSO);
-    cmd->SetRootCBV(0, perFrameGpu);
+    // Slot 1 = PerFrameCB (b1), Slot 0 = TonemapIndices root constants (b0)
+    cmd->SetRootCBV(kSlotPerFrame, perFrameGpu);
 
-    // Bind HDR + bloom SRV indices — the tonemap shader reads them via
-    // bindless descriptor indices packed into root constants slot 1.
     if (IsBindless()) {
         auto* device = GetDevice();
 
@@ -1685,7 +1738,7 @@ void VFXViewportDemo::RenderTonemapPass(IRHICommandList* cmd, uint64_t perFrameG
         }
         // lensFlareSrvIdx stays 0 (no lens flare in this demo)
 
-        cmd->SetRootConstants(1, &indices, 4);
+        cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&indices), 4);
     }
 
     // Fullscreen triangle

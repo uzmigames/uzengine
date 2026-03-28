@@ -122,6 +122,17 @@
 - [x] 10.9 Implement help overlay: H key prints comprehensive keyboard shortcut reference to console via UZ_LOG (27 bindings listed).
 - [x] 10.10 Implement RenderDoc integration: RenderDocInit() + SetCaptureOptions() in main.cpp before device creation, F11 key triggers RenderDocTriggerCapture() in HandleInput().
 
+## Bugfix: Build & PSO Blockers
+
+- [x] B.1 Fix screenshot capture not saving. Root cause: CaptureBackBuffer() used RenderTarget→CopySrc barrier but DX12 tracked state was Present/Common (implicit DXGI promotion after Present()). Changed to CaptureFromPresent() which uses Present→CopySrc→Present, matching the tracked state. Added diagnostic logging.
+- [x] B.2 Fix staging buffer lifetime violation causing DEVICE_HUNG (0x887A0006). Root cause: upload.ReleaseStaging() in OnInit() destroyed ID3D12Resource staging objects while the command list was still open; the command list is only submitted by demo_application.cpp after OnInit() returns. Fix: flush the command list (End/Execute/WaitIdle) before ReleaseStaging(), then re-open it (Begin()) so the caller can continue recording.
+- [ ] B.3 Fix ShadowDepth_Bindless PSO creation failure (hr=0x887A0005): VS-only pipeline with DSV=D32_FLOAT, no PS, no RT. Investigate root signature compatibility, input layout mismatch, or DSV format issue with Agility SDK 1.619.1 (SM6.9). Check if shadow_depth_vs.hlsl root constants match the global bindless root signature.
+- [ ] B.4 Fix ForwardPBR_Bindless PSO creation failure (hr=0x887A0005): mesh_vs + mesh_ps pipeline with 1 RT (R16G16B16A16_FLOAT) + DSV (D32_FLOAT). Same 0x887A0005 error as ShadowDepth. Likely shared root cause — investigate vertex input layout, root signature, or shader bytecode incompatibility.
+- [ ] B.5 Fix BloomPass_Threshold compute PSO creation failure (hr=0x887A0005): bloom_threshold_cs.hlsl compute shader. Investigate if compute root signature differs from graphics, or if shader uses unsupported SM6.8+ features.
+- [ ] B.6 Fix VFX_TrailPSO creation failure (hr=0x80070057 E_INVALIDARG): trail_vs + trail_ps pipeline. Different error code from other PSOs — likely PSO desc configuration error (input layout, topology, blend state). Inspect trail vertex layout and pipeline descriptor fields.
+- [ ] B.7 Agility SDK version: verify D3D12SDKVersion=619 matches installed 1.619.1 DLLs in D3D12/ subdirectory. Confirm D3D12Core.dll is loaded (check log for Agility SDK activation message).
+- [x] B.8 Fix zero particles spawning: free list and bookkeeping buffers never initialized with data. Added UploadInitialFreeList() — staging copy of [0..maxParticles-1] to m_freeList, maxParticles to m_freeListHead, 0 to m_aliveCount. Called from OnInit() after VFX Init(). Staging buffers stored as members, destroyed in Shutdown().
+
 ## Testing
 
 - [ ] T.1 Visual test: camera WASD movement works in all directions, sprint multiplier visible

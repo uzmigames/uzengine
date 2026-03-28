@@ -43,7 +43,7 @@
 /// @constants VERTICES_PER_PARTICLE=6
 /// @deviations NONE
 
-#include "../runtime/include/depth_common.hlsli"
+#include "../include/depth_common.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -258,6 +258,19 @@ VSOutput main(uint vertexID : SV_VertexID) {
     float  particleAge   = particleAges[particleID];
     float  particleLife  = particleLifespans[particleID];
 #endif
+
+    // ── Cull dead/uninitialized particles ──
+    if (particleLife <= 0.0f || particleAge >= particleLife) {
+        output.positionCS     = float4(0, 0, 0, 1);
+        output.texcoord       = float2(0, 0);
+        output.color          = float4(0, 0, 0, 0);
+        output.positionWS     = float3(0, 0, 0);
+        output.age            = 0;
+        output.lifetime       = 0;
+        output.particleIdx    = particleID;
+        output.prevPositionCS = float4(0, 0, 0, 1);
+        return output;
+    }
 
     // ── Apply global emitter overrides ──
     float  finalSize  = particleSize * globalSizeMultiplier;

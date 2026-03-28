@@ -30,7 +30,7 @@
 ///            kFlipbookBlendNone=0, kFlipbookBlendLinear=1, kFlipbookBlendRandom=2
 /// @deviations NONE
 
-#include "../runtime/include/depth_common.hlsli"
+#include "../include/depth_common.hlsli"
 #include "vfx_flipbook.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -233,7 +233,18 @@ float4 main(PSInput input) : SV_Target {
     // the sprite sheet atlas. When flipbook is inactive (1x1), we fall
     // through to the standard single-frame sample for zero overhead.
     float4 spriteColor;
-    if (flipbookRows > 1 || flipbookCols > 1) {
+
+    // When no sprite texture is bound (spriteTextureIdx == 0xFFFFFFFF),
+    // use solid white — the particle's vertex color alone determines appearance.
+#ifdef UZ_BINDLESS
+    bool hasSpriteTexture = (vfxConstants.spriteTextureIdx != 0xFFFFFFFF);
+#else
+    bool hasSpriteTexture = true; // SM5 path always has explicit texture binding
+#endif
+
+    if (!hasSpriteTexture) {
+        spriteColor = float4(1.0f, 1.0f, 1.0f, 1.0f);
+    } else if (flipbookRows > 1 || flipbookCols > 1) {
         // Flipbook active — compute frame UVs based on blend mode.
         FlipbookResult fb;
         if (flipbookBlendMode == kFlipbookBlendRandom) {

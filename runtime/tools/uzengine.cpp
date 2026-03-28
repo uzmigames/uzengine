@@ -299,6 +299,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     }
 
     // ── Editor Input & Selection (only when editor mode is active) ────
+#ifdef UZ_HAS_LUA_RENDERER_API
     SelectionManager selectionManager;
     EditorInputHandler editorInput;
     if (editorMode && sceneRendererReady) {
@@ -309,18 +310,17 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     }
 
     // Bind SceneRenderer into the Lua VM so uz.renderer / uz.mesh / uz.texture work.
-#ifdef UZ_HAS_LUA_RENDERER_API
     if (sceneRendererReady && luaReady) {
         LuaSetSceneRenderer(LuaVM::GetState(), &sceneRenderer);
         LuaSetInputSystem(LuaVM::GetState(), sceneRenderer.GetInput());
         UZ_LOG(Engine, Info, "Lua renderer + input API connected to SceneRenderer");
     }
-#endif
 
     // Wire editor state into Lua so uz.editor.* can access selection and gizmo.
     if (editorMode && luaReady) {
         LuaSetEditorState(LuaVM::GetState(), &selectionManager, &editorInput);
     }
+#endif
 
     // ── Pre-load: drain async texture decodes before the render loop ──────
     // Render one frame to trigger lazy material texture loads (SyncWorldToDrawList
@@ -329,6 +329,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     uint32_t frameIndex = 0;
     uint64_t globalFenceValue = 0;
 
+#ifdef UZ_HAS_VFS
     if (sceneRendererReady && !defaultScene.empty()) {
         UZ_LOG(Engine, Info, "Pre-loading scene textures...");
 
@@ -352,6 +353,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
 
         UZ_LOG(Engine, Info, "Pre-load complete, all textures loaded");
     }
+#endif
 
     // ── Render Loop ─────────────────────────────────────────────────────
     auto startTime = std::chrono::high_resolution_clock::now();
@@ -394,6 +396,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         prevTime = now;
 
         // Update editor input (before scripts, so editor hotkeys take priority)
+#ifdef UZ_HAS_LUA_RENDERER_API
         if (editorMode && sceneRendererReady) {
             editorInput.Update(dt);
             // Sync selection + gizmo state to renderer for outline/gizmo passes
@@ -403,6 +406,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
             sceneRenderer.SetGizmoHoveredAxis(editorInput.GetGizmoHoveredAxis());
             sceneRenderer.SetGizmoActiveAxis(editorInput.GetGizmoActiveAxis());
         }
+#endif
 
         // Update Lua scripts
         if (luaReady) {

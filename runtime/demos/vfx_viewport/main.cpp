@@ -26,11 +26,11 @@ int main(int argc, char* argv[]) {
     uz::DemoConfig config;
     config.title = "UzEngine VFX Viewport";
     config.cameraMoveSpeed = 15.f;
-    config.cameraPositionX = 3.f;
-    config.cameraPositionY = 5.f;
-    config.cameraPositionZ = 2.f;
-    config.cameraYawDeg = -135.f;
-    config.cameraPitchDeg = -20.f;
+    config.cameraPositionX = 0.f;
+    config.cameraPositionY = -40.f;
+    config.cameraPositionZ = 25.f;
+    config.cameraYawDeg = 90.f;
+    config.cameraPitchDeg = -30.f;
     uz::DemoApplication::ParseCommonArgs(argc, argv, config);
 
     // Handle compose-grid / diff utility modes (exit early if triggered)

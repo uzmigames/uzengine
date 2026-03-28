@@ -23,13 +23,13 @@ namespace uz {
 
 static const VFXPreset s_presets[] = {
     { "Fire Fountain", {
-        {0.0f, 1.5f, 0.0f}, 0.1f,
-        {0.0f, 3.0f, 0.0f}, 0.5f, 0.3f, 1.0f, 3.0f, 0.05f,
-        {1.0f, 0.6f, 0.2f, 0.8f},
-        {0.0f, -9.81f, 0.0f}, 0.1f,
-        /*softFadeDistance*/ 0.5f, /*emissiveIntensity*/ 1.0f,
-        /*flipbookRows*/ 4, /*flipbookCols*/ 4, /*flipbookTotalFrames*/ 16,
-        /*flipbookFPS*/ 24.0f, /*flipbookBlendMode*/ 1 /*Linear*/
+        {0.0f, 0.0f, 0.0f}, 1.0f,
+        {0.0f, 0.0f, 15.0f}, 3.0f, 0.5f, 1.0f, 3.0f, 3.0f,
+        {1.0f, 0.6f, 0.2f, 1.0f},
+        {0.0f, 0.0f, -9.81f}, 0.1f,
+        /*softFadeDistance*/ 0.5f, /*emissiveIntensity*/ 2.0f,
+        /*flipbookRows*/ 1, /*flipbookCols*/ 1, /*flipbookTotalFrames*/ 1,
+        /*flipbookFPS*/ 0.0f, /*flipbookBlendMode*/ 0 /*None*/
     }, 500.0f },
     { "Smoke Plume", {
         {0.0f, 0.5f, 0.0f}, 0.15f,
@@ -245,9 +245,10 @@ bool VFXParticleSystem::Init(IRHIDevice* device, ShaderManager* shaderMgr,
         desc.renderTargetFormats[0] = RHIFormat::RGBA16Float; // HDR target
         desc.depthStencilFormat = RHIFormat::D32Float;
         desc.depthStencil.depthEnable = true;
-        desc.depthStencil.depthWrite = false;   // Particles don't write depth
-        desc.depthStencil.depthFunc = RHICompareFunc::Greater; // Reverse-Z: near=1, far=0
+        desc.depthStencil.depthWrite = false; // Particles don't write depth
+        // depthFunc defaults to Greater (reversed-Z)
         desc.rasterizer.cullMode = RHICullMode::None;
+        // Alpha blend: SrcAlpha / InvSrcAlpha
         desc.renderTargetBlend[0].blendEnable = true;
         desc.renderTargetBlend[0].srcColor = RHIBlendFactor::SrcAlpha;
         desc.renderTargetBlend[0].dstColor = RHIBlendFactor::InvSrcAlpha;
@@ -267,6 +268,110 @@ bool VFXParticleSystem::Init(IRHIDevice* device, ShaderManager* shaderMgr,
 
     UZ_LOG(App, Info, "VFX: Initialized particle system — maxParticles={}", maxParticles);
     return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Upload Initial Free List
+// ─────────────────────────────────────────────────────────────────────────────
+
+void VFXParticleSystem::UploadInitialFreeList(IRHICommandList* cmd) {
+    // Free list: array of [0, 1, 2, ..., maxParticles-1] — every slot starts free
+    {
+        const uint64_t sizeBytes = static_cast<uint64_t>(m_maxParticles) * sizeof(uint32_t);
+        RHIBufferDesc desc{};
+        desc.sizeBytes = sizeBytes;
+        desc.stride = sizeof(uint32_t);
+        desc.usage = RHIBufferUsage::StructuredBuffer;
+        desc.memory = RHIMemoryType::Upload;
+        desc.debugName = "VFX_FreeList_Staging";
+        m_freeListStaging = m_device->CreateBuffer(desc);
+
+        void* mapped = m_device->MapBuffer(m_freeListStaging);
+        if (mapped) {
+            auto* indices = static_cast<uint32_t*>(mapped);
+            for (uint32_t i = 0; i < m_maxParticles; ++i) {
+                indices[i] = i;
+            }
+            m_device->UnmapBuffer(m_freeListStaging);
+        }
+        cmd->CopyBuffer(m_freeListStaging, 0, m_freeList, 0, sizeBytes);
+    }
+
+    // Free list head: initial value = maxParticles (all slots are free)
+    {
+        RHIBufferDesc desc{};
+        desc.sizeBytes = sizeof(uint32_t);
+        desc.stride = sizeof(uint32_t);
+        desc.usage = RHIBufferUsage::StructuredBuffer;
+        desc.memory = RHIMemoryType::Upload;
+        desc.debugName = "VFX_FreeListHead_Staging";
+        m_freeListHeadStaging = m_device->CreateBuffer(desc);
+
+        void* mapped = m_device->MapBuffer(m_freeListHeadStaging);
+        if (mapped) {
+            auto* head = static_cast<uint32_t*>(mapped);
+            *head = m_maxParticles;
+            m_device->UnmapBuffer(m_freeListHeadStaging);
+        }
+        cmd->CopyBuffer(m_freeListHeadStaging, 0, m_freeListHead, 0, sizeof(uint32_t));
+    }
+
+    // Alive count: initial value = 0 (no particles alive yet)
+    {
+        RHIBufferDesc desc{};
+        desc.sizeBytes = sizeof(uint32_t);
+        desc.stride = sizeof(uint32_t);
+        desc.usage = RHIBufferUsage::StructuredBuffer;
+        desc.memory = RHIMemoryType::Upload;
+        desc.debugName = "VFX_AliveCount_Staging";
+        m_aliveCountStaging = m_device->CreateBuffer(desc);
+
+        void* mapped = m_device->MapBuffer(m_aliveCountStaging);
+        if (mapped) {
+            auto* count = static_cast<uint32_t*>(mapped);
+            *count = 0;
+            m_device->UnmapBuffer(m_aliveCountStaging);
+        }
+        cmd->CopyBuffer(m_aliveCountStaging, 0, m_aliveCount, 0, sizeof(uint32_t));
+    }
+
+    // Zero-initialize ALL particle attribute buffers (both ping-pong sets).
+    // GPU Default memory has undefined contents — if the update shader reads
+    // uninitialized data on frame 0, garbage lifespans could make particles
+    // appear "alive" and corrupt the alive count. With all-zero data:
+    // age=0, lifespan=0 → age >= lifespan → all particles are dead (correct).
+    {
+        // Find largest channel size for a reusable staging buffer
+        uint64_t maxChannelSize = 0;
+        for (uint32_t ch = 0; ch < kChannelCount; ++ch) {
+            const uint64_t chSize = static_cast<uint64_t>(m_maxParticles) * ChannelStride(ch);
+            if (chSize > maxChannelSize) maxChannelSize = chSize;
+        }
+
+        RHIBufferDesc desc{};
+        desc.sizeBytes = maxChannelSize;
+        desc.stride = sizeof(uint32_t);
+        desc.usage = RHIBufferUsage::StructuredBuffer;
+        desc.memory = RHIMemoryType::Upload;
+        desc.debugName = "VFX_ZeroInit_Staging";
+        m_zeroInitStaging = m_device->CreateBuffer(desc);
+
+        void* mapped = m_device->MapBuffer(m_zeroInitStaging);
+        if (mapped) {
+            std::memset(mapped, 0, maxChannelSize);
+            m_device->UnmapBuffer(m_zeroInitStaging);
+        }
+
+        for (uint32_t ch = 0; ch < kChannelCount; ++ch) {
+            const uint64_t chSize = static_cast<uint64_t>(m_maxParticles) * ChannelStride(ch);
+            for (int pp = 0; pp < 2; ++pp) {
+                cmd->CopyBuffer(m_zeroInitStaging, 0,
+                                m_particleBuffers[ch][pp], 0, chSize);
+            }
+        }
+    }
+
+    UZ_LOG(App, Info, "VFX: Uploaded initial free list — {} slots available", m_maxParticles);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -294,6 +399,10 @@ void VFXParticleSystem::Shutdown(IRHIDevice* device) {
     destroyBuf(m_indirectArgs);
     destroyBuf(m_sortKeys);
     destroyBuf(m_sortIndices);
+    destroyBuf(m_freeListStaging);
+    destroyBuf(m_freeListHeadStaging);
+    destroyBuf(m_aliveCountStaging);
+    destroyBuf(m_zeroInitStaging);
 
     auto destroyPso = [device](RHIPipelineHandle& h) {
         if (h.IsValid()) { device->DestroyPipeline(h); h = {}; }
@@ -359,7 +468,7 @@ void VFXParticleSystem::DispatchCompute(IRHICommandList* cmdList, CBRingAllocato
         std::memcpy(alloc.cpuPtr, &cb, sizeof(VFXSpawnCB));
 
         cmdList->SetPipeline(m_spawnPSO);
-        cmdList->SetRootCBV(0, alloc.gpuAddr);
+        cmdList->SetRootCBV(1, alloc.gpuAddr); // b1 = root param 1 (CBV)
         cmdList->Dispatch((spawnCount + kSpawnGroupSize - 1) / kSpawnGroupSize, 1, 1);
     }
 
@@ -409,7 +518,7 @@ void VFXParticleSystem::DispatchCompute(IRHICommandList* cmdList, CBRingAllocato
         std::memcpy(alloc.cpuPtr, &cb, sizeof(VFXUpdateCB));
 
         cmdList->SetPipeline(m_updatePSO);
-        cmdList->SetRootCBV(0, alloc.gpuAddr);
+        cmdList->SetRootCBV(1, alloc.gpuAddr); // b1 = root param 1 (CBV)
         cmdList->Dispatch((m_maxParticles + kUpdateGroupSize - 1) / kUpdateGroupSize, 1, 1);
     }
 
@@ -518,8 +627,6 @@ void VFXParticleSystem::DrawBillboards(IRHICommandList* cmdList, CBRingAllocator
 
     // Draw all particle slots — the billboard VS reads particle attributes
     // and outputs degenerate triangles for dead particles (age >= lifespan).
-    // This avoids the need for indirect draw, which would require a non-indexed
-    // indirect command signature not exposed by the current RHI.
     // 6 vertices per particle (2 triangles per billboard quad).
     cmdList->Draw(m_maxParticles * 6, 1, 0, 0);
 }

@@ -82,7 +82,7 @@ static const uint UPDATE_GROUP_SIZE = 256;
 /// and descriptor heap indices for both READ (SRV) and WRITE (UAV) buffer sets.
 ///
 /// Layout is 16-byte aligned per HLSL packing rules. Total: 112 bytes.
-cbuffer VFXUpdateConstants : register(b0) {
+cbuffer VFXUpdateConstants : register(b1) {
     // ── Simulation Parameters ───────────────────────────────────────────
     float3   gravity;              ///< Gravitational acceleration (m/s^2).      0
                                    ///< Typical: (0, -9.81, 0) for downward.
@@ -206,6 +206,14 @@ void main(uint3 dtid : SV_DispatchThreadID)
     float3 vel      = velocitiesIn[threadIdx];
     float  age      = agesIn[threadIdx];
     float  lifespan = lifespansIn[threadIdx];
+
+    // ── Skip uninitialized slots ───────────────────────────────────────
+    // Zero-initialized particles have lifespan == 0.  These were never
+    // spawned, so they must NOT be treated as "dead" and pushed onto the
+    // free list — doing so overflows the free-list head past maxParticles
+    // and permanently prevents future spawns.
+    if (lifespan == 0.0f) { return; }
+
     float  size     = sizesIn[threadIdx];
     float4 color    = colorsIn[threadIdx];
     float  rotation = rotationsIn[threadIdx];

@@ -112,8 +112,8 @@ struct VFXUpdateCB {
     uint32_t writeAgesUav;            uint32_t writeLifespansUav; // 16 bytes
     uint32_t writeSizesUav;           uint32_t writeColorsUav;
     uint32_t writeRotationsUav;       uint32_t _padWrite;         // 16 bytes
-    uint32_t aliveCountUavIndex;      uint32_t freeListUavIndex;
-    uint32_t freeListHeadUavIndex;    uint32_t _padAtomic;        // 16 bytes
+    uint32_t freeListUavIndex;        uint32_t freeListHeadUavIndex;
+    uint32_t aliveCountUavIndex;      uint32_t _padAtomic;        // 16 bytes
 };
 static_assert(sizeof(VFXUpdateCB) == 112, "VFXUpdateCB must be 112 bytes (7 x float4)");
 
@@ -203,6 +203,11 @@ public:
     [[nodiscard]] bool Init(IRHIDevice* device, ShaderManager* shaderMgr,
                             uint32_t maxParticles);
 
+    /// Uploads initial free list data to GPU buffers via staging copy.
+    /// Must be called once after Init(), with a command list in recording state.
+    /// The command list must be submitted before the first DispatchCompute().
+    void UploadInitialFreeList(IRHICommandList* cmd);
+
     /// Destroys all GPU resources. Safe to call multiple times.
     void Shutdown(IRHIDevice* device);
 
@@ -276,6 +281,12 @@ private:
     // Sort buffers
     RHIBufferHandle m_sortKeys;      ///< float per particle: depth for sorting.
     RHIBufferHandle m_sortIndices;   ///< uint32 per particle: particle index.
+
+    // Staging buffers for initial free list upload (destroyed on Shutdown)
+    RHIBufferHandle m_freeListStaging;     ///< Staging buffer for free list init.
+    RHIBufferHandle m_freeListHeadStaging; ///< Staging buffer for free list head init.
+    RHIBufferHandle m_aliveCountStaging;   ///< Staging buffer for alive count init.
+    RHIBufferHandle m_zeroInitStaging;     ///< Staging buffer for zeroing particle attributes.
 
     // Compute pipelines
     RHIPipelineHandle m_spawnPSO;

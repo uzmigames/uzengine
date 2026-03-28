@@ -532,6 +532,32 @@ bool CreateDX12GraphicsPipeline(ID3D12Device* device,
                static_cast<uint32_t>(psoDesc.DSVFormat),
                static_cast<uint32_t>(psoDesc.PrimitiveTopologyType));
 
+        // Device removal diagnostics: log the removal reason so the caller knows
+        // exactly which GPU fault (TDR, hardware error, driver bug, etc.) caused
+        // the PSO creation to fail.
+        if (hr == static_cast<HRESULT>(0x887A0005L)) { // DXGI_ERROR_DEVICE_REMOVED
+            const HRESULT removedReason = device->GetDeviceRemovedReason();
+            UZ_LOG(RHI, Error, "  Device removed reason: 0x{:08X}",
+                   static_cast<uint32_t>(removedReason));
+
+            Microsoft::WRL::ComPtr<ID3D12InfoQueue> infoQueue;
+            if (SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&infoQueue)))) {
+                const UINT64 messageCount = infoQueue->GetNumStoredMessages();
+                for (UINT64 i = 0; i < messageCount; ++i) {
+                    SIZE_T messageLength = 0;
+                    if (FAILED(infoQueue->GetMessage(i, nullptr, &messageLength))) {
+                        continue;
+                    }
+                    std::vector<uint8_t> messageBuffer(messageLength);
+                    auto* message = reinterpret_cast<D3D12_MESSAGE*>(messageBuffer.data());
+                    if (SUCCEEDED(infoQueue->GetMessage(i, message, &messageLength))) {
+                        UZ_LOG(RHI, Error, "  D3D12 InfoQueue[{}]: {}", i,
+                               message->pDescription ? message->pDescription : "(no description)");
+                    }
+                }
+            }
+        }
+
         return false;
     }
 
@@ -602,6 +628,31 @@ bool CreateDX12ComputePipeline(ID3D12Device* device,
         UZ_LOG(RHI, Error, "CreateComputePipelineState failed: hr=0x{:08X} (name='{}') CS={}",
                static_cast<uint32_t>(hr), desc.debugName ? desc.debugName : "",
                psoDesc.CS.BytecodeLength);
+
+        // Device removal diagnostics: same pattern as the graphics PSO path above.
+        if (hr == static_cast<HRESULT>(0x887A0005L)) { // DXGI_ERROR_DEVICE_REMOVED
+            const HRESULT removedReason = device->GetDeviceRemovedReason();
+            UZ_LOG(RHI, Error, "  Device removed reason: 0x{:08X}",
+                   static_cast<uint32_t>(removedReason));
+
+            Microsoft::WRL::ComPtr<ID3D12InfoQueue> infoQueue;
+            if (SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&infoQueue)))) {
+                const UINT64 messageCount = infoQueue->GetNumStoredMessages();
+                for (UINT64 i = 0; i < messageCount; ++i) {
+                    SIZE_T messageLength = 0;
+                    if (FAILED(infoQueue->GetMessage(i, nullptr, &messageLength))) {
+                        continue;
+                    }
+                    std::vector<uint8_t> messageBuffer(messageLength);
+                    auto* message = reinterpret_cast<D3D12_MESSAGE*>(messageBuffer.data());
+                    if (SUCCEEDED(infoQueue->GetMessage(i, message, &messageLength))) {
+                        UZ_LOG(RHI, Error, "  D3D12 InfoQueue[{}]: {}", i,
+                               message->pDescription ? message->pDescription : "(no description)");
+                    }
+                }
+            }
+        }
+
         return false;
     }
 

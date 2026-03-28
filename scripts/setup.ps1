@@ -543,6 +543,48 @@ Write-Host "[4/8] Downloading prebuilt packages..." -ForegroundColor Cyan
 Download-Extract-Zip -Name "dxc" `
     -Url "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2602/dxc_2026_02_20.zip"
 
+# D3D12 Agility SDK (runtime DLLs for D3D12Core.dll + d3d12SDKLayers.dll)
+# Downloaded from NuGet as a .nupkg (renamed .zip), then we extract bin/x64/.
+$agilityDir = Join-Path $ThirdPartyDir "agility"
+$agilityBinDir = Join-Path $agilityDir "bin\x64"
+if (-not (Test-Path $agilityBinDir)) {
+    $agilityVersion = "1.619.1"
+    $agilityUrl = "https://www.nuget.org/api/v2/package/Microsoft.Direct3D.D3D12/$agilityVersion"
+    $agilityZip = Join-Path $TempDir "agility.zip"
+    Write-Host "  [agility] downloading D3D12 Agility SDK v$agilityVersion..." -ForegroundColor Yellow
+    Download-File -Url $agilityUrl -OutFile $agilityZip
+    $agilityTemp = Join-Path $TempDir "agility_temp"
+    Expand-Archive -Path $agilityZip -DestinationPath $agilityTemp -Force
+    # Copy bin/x64 DLLs into thirdparty/agility/bin/x64/
+    New-Item -ItemType Directory -Path $agilityBinDir -Force | Out-Null
+    $srcBin = Join-Path $agilityTemp "build\native\bin\x64"
+    if (Test-Path $srcBin) {
+        Copy-Item -Path "$srcBin\*" -Destination $agilityBinDir -Recurse -Force
+        Write-Host "  [agility] installed bin/x64/ DLLs." -ForegroundColor Green
+    } else {
+        Write-Host "  [agility] WARNING: bin/x64 not found in package." -ForegroundColor Red
+    }
+    Remove-Item -Recurse -Force $agilityTemp -ErrorAction SilentlyContinue
+    Remove-Item $agilityZip -ErrorAction SilentlyContinue
+} else {
+    Write-Host "  [agility] bin/x64 already exists, skipping." -ForegroundColor Green
+}
+
+# FXC (d3dcompiler_47.dll) — from Windows SDK, copy from system if available
+$fxcDir = Join-Path $ThirdPartyDir "fxc\bin\x64"
+if (-not (Test-Path $fxcDir)) {
+    $systemD3dCompiler = "C:\Windows\System32\d3dcompiler_47.dll"
+    if (Test-Path $systemD3dCompiler) {
+        New-Item -ItemType Directory -Path $fxcDir -Force | Out-Null
+        Copy-Item -Path $systemD3dCompiler -Destination $fxcDir -Force
+        Write-Host "  [fxc] copied d3dcompiler_47.dll from system." -ForegroundColor Green
+    } else {
+        Write-Host "  [fxc] WARNING: d3dcompiler_47.dll not found in system." -ForegroundColor Red
+    }
+} else {
+    Write-Host "  [fxc] already exists, skipping." -ForegroundColor Green
+}
+
 # ─── Metal Dependencies (macOS build cross-compile support) ──────────────────
 
 # metal-cpp (Apple's C++ wrapper for Metal — macOS only, downloaded for cross-ref)

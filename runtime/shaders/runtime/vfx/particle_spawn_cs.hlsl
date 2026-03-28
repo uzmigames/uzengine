@@ -70,7 +70,7 @@ static const uint SPAWN_GROUP_SIZE = 256;
 ///
 /// Layout is tightly packed with explicit padding for 16-byte CBV alignment.
 /// Total: 128 bytes (8 x float4).
-cbuffer VFXSpawnConstants : register(b0) {
+cbuffer VFXSpawnConstants : register(b1) {
     // ── Emitter Parameters ──────────────────────────────────────────────
     float3   emitterPos;           ///< World-space emitter origin.              0
     float    spawnRadius;          ///< Random offset sphere radius.             12
