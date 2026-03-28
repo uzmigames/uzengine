@@ -52,7 +52,7 @@
 /// @constants SORT_GROUP_SIZE=256
 ///
 /// # SM5 Register Layout (non-bindless fallback)
-/// - t0: StructuredBuffer<float3>           positions (particle world positions)
+/// - t0: StructuredBuffer<float4>           positions (xyz=pos, w=unused)
 /// - u0: RWStructuredBuffer<uint>           sortKeys  (sort keys, read/write)
 /// - u1: RWStructuredBuffer<uint>           sortIndices (sorted particle indices, read/write)
 
@@ -101,7 +101,7 @@ cbuffer VFXSortConstants : register(b0) {
 
 #ifdef UZ_BINDLESS
     // ── Bindless Descriptor Indices ───────────────────────────────────────
-    uint     positionsSrvIndex;   ///< SRV: StructuredBuffer<float3>           48
+    uint     positionsSrvIndex;   ///< SRV: StructuredBuffer<float4>           48
                                   ///< particle positions (read only).
     uint     sortKeysUavIndex;    ///< UAV: RWStructuredBuffer<uint>           52
                                   ///< sort keys (read/write).
@@ -128,7 +128,7 @@ cbuffer VFXSortConstants : register(b0) {
 
 #ifndef UZ_BINDLESS
 /// SM5 fallback: explicit register bindings for sort buffers.
-StructuredBuffer<float3>           sm5_positions    : register(t0);
+StructuredBuffer<float4>           sm5_positions    : register(t0);
 RWStructuredBuffer<uint>           sm5_sortKeys     : register(u0);
 RWStructuredBuffer<uint>           sm5_sortIndices  : register(u1);
 #endif
@@ -191,9 +191,9 @@ uint FloatToSortableUint(float f)
 ///
 /// # Returns
 /// Sortable uint key. Descending: largest distance -> largest key value.
-uint GenerateSortKey(uint particleIdx, StructuredBuffer<float3> positionsBuf)
+uint GenerateSortKey(uint particleIdx, StructuredBuffer<float4> positionsBuf)
 {
-    float3 pos = positionsBuf[particleIdx];
+    float3 pos = positionsBuf[particleIdx].xyz;
     float viewDist = dot(pos - cameraPos, cameraForward);
     uint key = FloatToSortableUint(viewDist);
     // Invert for descending order: farthest particle gets the largest uint key.
@@ -244,7 +244,7 @@ void LocalSortPhase(uint groupIdx, uint localIdx, uint globalIdx)
 {
     // ── Bind buffers ──────────────────────────────────────────────────────
 #ifdef UZ_BINDLESS
-    StructuredBuffer<float3> positions = ResourceDescriptorHeap[positionsSrvIndex];
+    StructuredBuffer<float4> positions = ResourceDescriptorHeap[positionsSrvIndex];
     RWStructuredBuffer<uint> outKeys   = ResourceDescriptorHeap[sortKeysUavIndex];
     RWStructuredBuffer<uint> outVals   = ResourceDescriptorHeap[sortIndicesUavIndex];
 #else

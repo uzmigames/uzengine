@@ -243,7 +243,13 @@ float4 main(PSInput input) : SV_Target {
 #endif
 
     if (!hasSpriteTexture) {
-        spriteColor = float4(1.0f, 1.0f, 1.0f, 1.0f);
+        // No sprite texture — generate a soft radial circle procedurally.
+        // Maps UV [0,1] to [-1,+1] centered, then applies smooth falloff.
+        float2 center = input.texcoord * 2.0f - 1.0f;
+        float dist = dot(center, center); // squared distance from center
+        float alpha = saturate(1.0f - dist); // linear falloff: 1 at center, 0 at edge
+        alpha *= alpha; // quadratic for softer look
+        spriteColor = float4(1.0f, 1.0f, 1.0f, alpha);
     } else if (flipbookRows > 1 || flipbookCols > 1) {
         // Flipbook active — compute frame UVs based on blend mode.
         FlipbookResult fb;

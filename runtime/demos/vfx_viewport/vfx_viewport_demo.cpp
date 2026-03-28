@@ -997,18 +997,17 @@ void VFXViewportDemo::OnFrame(float dt) {
 
     // ── VFX compute dispatch ─────────────────────────────────────────────
     if (m_vfxEnabled) {
+        // Update emitter position to follow the current mesh's world position
+        // plus the preset's local offset (e.g., Z=3 above the mesh center).
+        const auto& meshPos = m_meshTransforms[m_currentMesh].position;
+        m_vfxEmitter.position[0] = meshPos.x;
+        m_vfxEmitter.position[1] = meshPos.y;
+        m_vfxEmitter.position[2] = meshPos.z + 3.0f; // offset above mesh
+
         // Calculate spawn count from rate and accumulator
         m_vfxSpawnAccum += m_vfxSpawnRate * dt;
         const auto spawnCount = static_cast<uint32_t>(m_vfxSpawnAccum);
         m_vfxSpawnAccum -= static_cast<float>(spawnCount);
-
-        if (GetFrameIndex() < 3) {
-            const auto& camPos = GetCamera().GetPosition();
-            UZ_LOG(App, Info, "VFX frame={}: spawn={}, dt={:.4f}, emitter=({:.1f},{:.1f},{:.1f}), cam=({:.1f},{:.1f},{:.1f})",
-                   GetFrameIndex(), spawnCount, dt,
-                   m_vfxEmitter.position[0], m_vfxEmitter.position[1], m_vfxEmitter.position[2],
-                   camPos.x, camPos.y, camPos.z);
-        }
 
         m_vfxSystem.DispatchCompute(cmd, cbRing, m_vfxEmitter, spawnCount,
                                     dt, GetFrameIndex());

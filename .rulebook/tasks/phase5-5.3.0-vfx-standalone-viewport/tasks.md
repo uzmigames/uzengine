@@ -132,6 +132,7 @@
 - [ ] B.6 Fix VFX_TrailPSO creation failure (hr=0x80070057 E_INVALIDARG): trail_vs + trail_ps pipeline. Different error code from other PSOs — likely PSO desc configuration error (input layout, topology, blend state). Inspect trail vertex layout and pipeline descriptor fields.
 - [ ] B.7 Agility SDK version: verify D3D12SDKVersion=619 matches installed 1.619.1 DLLs in D3D12/ subdirectory. Confirm D3D12Core.dll is loaded (check log for Agility SDK activation message).
 - [x] B.8 Fix zero particles spawning: free list and bookkeeping buffers never initialized with data. Added UploadInitialFreeList() — staging copy of [0..maxParticles-1] to m_freeList, maxParticles to m_freeListHead, 0 to m_aliveCount. Called from OnInit() after VFX Init(). Staging buffers stored as members, destroyed in Shutdown().
+- [x] B.9 Fix invisible particles (stride mismatch): spawn/update compute shaders declared position/velocity buffers as `RWStructuredBuffer<float3>` (stride 12) but C++ created buffers with stride 16 (float4) and billboard VS read as `StructuredBuffer<float4>`. With SM6.6 bindless, HLSL type determines indexing stride, so element[1] at byte 12 (CS) vs byte 16 (VS) caused total data misalignment. Fixed all VFX compute shaders (spawn, update, sort, mesh_instance) to use float4 for positions/velocities, packing float3 with w=0.
 
 ## Testing
 

@@ -47,8 +47,8 @@
 /// @deviations Random rotation uses XYZ Euler not quaternion -- cheaper for GPU
 ///
 /// # SM5 Register Layout (non-bindless fallback)
-/// - t0: StructuredBuffer<float3>           positions
-/// - t1: StructuredBuffer<float3>           velocities
+/// - t0: StructuredBuffer<float4>           positions  (xyz=pos, w=unused)
+/// - t1: StructuredBuffer<float4>           velocities (xyz=vel, w=unused)
 /// - t2: StructuredBuffer<float>            ages
 /// - t3: StructuredBuffer<float>            lifespans
 /// - u0: RWStructuredBuffer<float4x4>       instanceTransforms
@@ -98,8 +98,8 @@ cbuffer VFXMeshInstanceConstants : register(b0) {
 
 #ifdef UZ_BINDLESS
     // ── Bindless descriptor indices: READ set (SRV) ───────────────────────
-    uint     positionsSrvIndex;      ///< StructuredBuffer<float3> positions.  32
-    uint     velocitiesSrvIndex;     ///< StructuredBuffer<float3> velocities. 36
+    uint     positionsSrvIndex;      ///< StructuredBuffer<float4> positions.  32
+    uint     velocitiesSrvIndex;     ///< StructuredBuffer<float4> velocities. 36
     uint     agesSrvIndex;           ///< StructuredBuffer<float>  ages.       40
     uint     lifespansSrvIndex;      ///< StructuredBuffer<float>  lifespans.  44
 
@@ -113,8 +113,8 @@ cbuffer VFXMeshInstanceConstants : register(b0) {
 
 #ifndef UZ_BINDLESS
 /// SM5 fallback: explicit register bindings for particle buffers.
-StructuredBuffer<float3>           sm5_positions       : register(t0);
-StructuredBuffer<float3>           sm5_velocities      : register(t1);
+StructuredBuffer<float4>           sm5_positions       : register(t0);
+StructuredBuffer<float4>           sm5_velocities      : register(t1);
 StructuredBuffer<float>            sm5_ages            : register(t2);
 StructuredBuffer<float>            sm5_lifespans       : register(t3);
 RWStructuredBuffer<float4x4>       sm5_instanceXforms  : register(u0);
@@ -300,8 +300,8 @@ void main(uint3 dtid : SV_DispatchThreadID)
 
     // ── Read particle attributes from SRV buffers ────────────────────────────
 #ifdef UZ_BINDLESS
-    StructuredBuffer<float3> positionsBuf  = ResourceDescriptorHeap[positionsSrvIndex];
-    StructuredBuffer<float3> velocitiesBuf = ResourceDescriptorHeap[velocitiesSrvIndex];
+    StructuredBuffer<float4> positionsBuf  = ResourceDescriptorHeap[positionsSrvIndex];
+    StructuredBuffer<float4> velocitiesBuf = ResourceDescriptorHeap[velocitiesSrvIndex];
     StructuredBuffer<float>  agesBuf       = ResourceDescriptorHeap[agesSrvIndex];
     StructuredBuffer<float>  lifespansBuf  = ResourceDescriptorHeap[lifespansSrvIndex];
 #else
@@ -317,8 +317,8 @@ void main(uint3 dtid : SV_DispatchThreadID)
     // ── Skip dead particles ───────────────────────────────────────────────────
     if (age >= lifespan) return;
 
-    float3 pos = positionsBuf[particleIdx];
-    float3 vel = velocitiesBuf[particleIdx];
+    float3 pos = positionsBuf[particleIdx].xyz;
+    float3 vel = velocitiesBuf[particleIdx].xyz;
 
     float sx = meshScaleX;
     float sy = meshScaleY;

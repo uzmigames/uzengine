@@ -23,40 +23,49 @@ namespace uz {
 
 static const VFXPreset s_presets[] = {
     { "Fire Fountain", {
-        {0.0f, 0.0f, 0.0f}, 1.0f,
-        {0.0f, 0.0f, 15.0f}, 3.0f, 0.5f, 1.0f, 3.0f, 3.0f,
-        {1.0f, 0.6f, 0.2f, 1.0f},
-        {0.0f, 0.0f, -9.81f}, 0.1f,
-        /*softFadeDistance*/ 0.5f, /*emissiveIntensity*/ 2.0f,
-        /*flipbookRows*/ 1, /*flipbookCols*/ 1, /*flipbookTotalFrames*/ 1,
-        /*flipbookFPS*/ 0.0f, /*flipbookBlendMode*/ 0 /*None*/
+        /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.3f,
+        /*velocity*/ {0.0f, 0.0f, 8.0f}, /*velVariation*/ 2.0f,
+        /*spread*/ 0.4f, /*minLife*/ 1.0f, /*maxLife*/ 3.0f, /*size*/ 0.8f,
+        /*color*/ {1.0f, 0.6f, 0.2f, 1.0f},
+        /*gravity*/ {0.0f, 0.0f, -9.81f}, /*damping*/ 0.1f,
+        /*softFade*/ 0.5f, /*emissive*/ 2.0f,
+        /*flipbook*/ 1, 1, 1, 0.0f, 0
     }, 500.0f },
     { "Smoke Plume", {
-        {0.0f, 0.5f, 0.0f}, 0.15f,
-        {0.0f, 1.5f, 0.0f}, 0.3f, 0.5f, 3.0f, 6.0f, 0.15f,
-        {0.4f, 0.4f, 0.4f, 0.6f},
-        {0.0f, -1.0f, 0.0f}, 0.2f
+        /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.2f,
+        /*velocity*/ {0.0f, 0.0f, 3.0f}, /*velVariation*/ 0.5f,
+        /*spread*/ 0.6f, /*minLife*/ 3.0f, /*maxLife*/ 6.0f, /*size*/ 1.2f,
+        /*color*/ {0.4f, 0.4f, 0.4f, 0.6f},
+        /*gravity*/ {0.0f, 0.0f, -1.0f}, /*damping*/ 0.2f,
+        /*softFade*/ 0.5f, /*emissive*/ 0.0f,
+        /*flipbook*/ 1, 1, 1, 0.0f, 0
     }, 200.0f },
     { "Sparks", {
-        {0.0f, 2.0f, 0.0f}, 0.05f,
-        {0.0f, 8.0f, 0.0f}, 0.8f, 0.15f, 0.3f, 1.0f, 0.02f,
-        {1.0f, 0.9f, 0.5f, 1.0f},
-        {0.0f, -15.0f, 0.0f}, 0.05f
+        /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.1f,
+        /*velocity*/ {0.0f, 0.0f, 12.0f}, /*velVariation*/ 3.0f,
+        /*spread*/ 0.8f, /*minLife*/ 0.3f, /*maxLife*/ 1.0f, /*size*/ 0.3f,
+        /*color*/ {1.0f, 0.9f, 0.5f, 1.0f},
+        /*gravity*/ {0.0f, 0.0f, -15.0f}, /*damping*/ 0.05f,
+        /*softFade*/ 0.3f, /*emissive*/ 3.0f,
+        /*flipbook*/ 1, 1, 1, 0.0f, 0
     }, 1000.0f },
     { "Magic Orb", {
-        {0.0f, 1.5f, 0.0f}, 0.05f,
-        {0.0f, 0.5f, 0.0f}, 0.6f, 3.14159f, 1.0f, 2.0f, 0.03f,
-        {0.2f, 0.6f, 1.0f, 0.9f},
-        {0.0f, 0.0f, 0.0f}, 0.3f,
-        /*softFadeDistance*/ 0.3f, /*emissiveIntensity*/ 0.5f,
-        /*flipbookRows*/ 2, /*flipbookCols*/ 2, /*flipbookTotalFrames*/ 4,
-        /*flipbookFPS*/ 0.0f, /*flipbookBlendMode*/ 2 /*Random*/
+        /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.8f,
+        /*velocity*/ {0.0f, 0.0f, 1.0f}, /*velVariation*/ 0.6f,
+        /*spread*/ 3.14159f, /*minLife*/ 1.0f, /*maxLife*/ 2.0f, /*size*/ 0.5f,
+        /*color*/ {0.2f, 0.6f, 1.0f, 0.9f},
+        /*gravity*/ {0.0f, 0.0f, 0.0f}, /*damping*/ 0.3f,
+        /*softFade*/ 0.3f, /*emissive*/ 0.5f,
+        /*flipbook*/ 2, 2, 4, 0.0f, 2
     }, 300.0f },
     { "Explosion Debris", {
-        {0.0f, 1.5f, 0.0f}, 0.1f,
-        {0.0f, 5.0f, 0.0f}, 1.0f, 1.5f, 0.5f, 2.0f, 0.08f,
-        {1.0f, 0.4f, 0.1f, 0.9f},
-        {0.0f, -20.0f, 0.0f}, 0.08f
+        /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.3f,
+        /*velocity*/ {0.0f, 0.0f, 8.0f}, /*velVariation*/ 4.0f,
+        /*spread*/ 1.5f, /*minLife*/ 0.5f, /*maxLife*/ 2.0f, /*size*/ 0.5f,
+        /*color*/ {1.0f, 0.4f, 0.1f, 0.9f},
+        /*gravity*/ {0.0f, 0.0f, -20.0f}, /*damping*/ 0.08f,
+        /*softFade*/ 0.3f, /*emissive*/ 1.5f,
+        /*flipbook*/ 1, 1, 1, 0.0f, 0
     }, 2000.0f },
 };
 

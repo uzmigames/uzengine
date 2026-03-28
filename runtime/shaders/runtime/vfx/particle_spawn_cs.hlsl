@@ -40,8 +40,8 @@
 ///
 /// # SM5 Register Layout (non-bindless fallback)
 /// - t0: StructuredBuffer<uint>             freeList
-/// - u0: RWStructuredBuffer<float3>         positions
-/// - u1: RWStructuredBuffer<float3>         velocities
+/// - u0: RWStructuredBuffer<float4>         positions  (xyz=pos, w=unused)
+/// - u1: RWStructuredBuffer<float4>         velocities (xyz=vel, w=unused)
 /// - u2: RWStructuredBuffer<float>          ages
 /// - u3: RWStructuredBuffer<float>          lifespans
 /// - u4: RWStructuredBuffer<float>          sizes
@@ -96,8 +96,8 @@ cbuffer VFXSpawnConstants : register(b1) {
     uint     freeListSrvIndex;     ///< StructuredBuffer<uint> free_list.        80
 
     // UAV: write set particle attribute buffers
-    uint     positionsUavIndex;    ///< RWStructuredBuffer<float3> positions.    84
-    uint     velocitiesUavIndex;   ///< RWStructuredBuffer<float3> velocities.   88
+    uint     positionsUavIndex;    ///< RWStructuredBuffer<float4> positions.    84
+    uint     velocitiesUavIndex;   ///< RWStructuredBuffer<float4> velocities.   88
     uint     agesUavIndex;         ///< RWStructuredBuffer<float> ages.          92
 
     uint     lifespansUavIndex;    ///< RWStructuredBuffer<float> lifespans.     96
@@ -116,8 +116,8 @@ cbuffer VFXSpawnConstants : register(b1) {
 #ifndef UZ_BINDLESS
 /// SM5 fallback: explicit register bindings for particle buffers.
 StructuredBuffer<uint>             sm5_freeList      : register(t0);
-RWStructuredBuffer<float3>         sm5_positions     : register(u0);
-RWStructuredBuffer<float3>         sm5_velocities    : register(u1);
+RWStructuredBuffer<float4>         sm5_positions     : register(u0);
+RWStructuredBuffer<float4>         sm5_velocities    : register(u1);
 RWStructuredBuffer<float>          sm5_ages          : register(u2);
 RWStructuredBuffer<float>          sm5_lifespans     : register(u3);
 RWStructuredBuffer<float>          sm5_sizes         : register(u4);
@@ -155,8 +155,8 @@ void main(uint3 dtid : SV_DispatchThreadID)
 #ifdef UZ_BINDLESS
     RWStructuredBuffer<uint>   freeListHead = ResourceDescriptorHeap[freeListHeadUavIndex];
     StructuredBuffer<uint>     freeList     = ResourceDescriptorHeap[freeListSrvIndex];
-    RWStructuredBuffer<float3> positions    = ResourceDescriptorHeap[positionsUavIndex];
-    RWStructuredBuffer<float3> velocities   = ResourceDescriptorHeap[velocitiesUavIndex];
+    RWStructuredBuffer<float4> positions    = ResourceDescriptorHeap[positionsUavIndex];
+    RWStructuredBuffer<float4> velocities   = ResourceDescriptorHeap[velocitiesUavIndex];
     RWStructuredBuffer<float>  ages         = ResourceDescriptorHeap[agesUavIndex];
     RWStructuredBuffer<float>  lifespans    = ResourceDescriptorHeap[lifespansUavIndex];
     RWStructuredBuffer<float>  sizes        = ResourceDescriptorHeap[sizesUavIndex];
@@ -227,8 +227,10 @@ void main(uint3 dtid : SV_DispatchThreadID)
     float rotation = RandomFloat(seed, 0.0f, VFX_TWO_PI);
 
     // ── Write particle state to WRITE set buffers ───────────────────────
-    positions[particleIdx]  = pos;
-    velocities[particleIdx] = vel;
+    // Pack float3 into float4 (w=0) to match buffer stride of 16 bytes.
+    // The billboard VS reads as StructuredBuffer<float4> and extracts .xyz.
+    positions[particleIdx]  = float4(pos, 0.0f);
+    velocities[particleIdx] = float4(vel, 0.0f);
     ages[particleIdx]       = 0.0f;
     lifespans[particleIdx]  = lifespan;
     sizes[particleIdx]      = initialSize;

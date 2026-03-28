@@ -46,16 +46,16 @@
 ///
 /// # SM5 Register Layout (non-bindless fallback)
 /// SRV (READ set):
-/// - t0: StructuredBuffer<float3>           positionsIn
-/// - t1: StructuredBuffer<float3>           velocitiesIn
+/// - t0: StructuredBuffer<float4>           positionsIn  (xyz=pos, w=unused)
+/// - t1: StructuredBuffer<float4>           velocitiesIn (xyz=vel, w=unused)
 /// - t2: StructuredBuffer<float>            agesIn
 /// - t3: StructuredBuffer<float>            lifespansIn
 /// - t4: StructuredBuffer<float>            sizesIn
 /// - t5: StructuredBuffer<float4>           colorsIn
 /// - t6: StructuredBuffer<float>            rotationsIn
 /// UAV (WRITE set + shared):
-/// - u0: RWStructuredBuffer<float3>         positionsOut
-/// - u1: RWStructuredBuffer<float3>         velocitiesOut
+/// - u0: RWStructuredBuffer<float4>         positionsOut  (xyz=pos, w=unused)
+/// - u1: RWStructuredBuffer<float4>         velocitiesOut (xyz=vel, w=unused)
 /// - u2: RWStructuredBuffer<float>          agesOut
 /// - u3: RWStructuredBuffer<float>          lifespansOut
 /// - u4: RWStructuredBuffer<float>          sizesOut
@@ -97,8 +97,8 @@ cbuffer VFXUpdateConstants : register(b1) {
 
 #ifdef UZ_BINDLESS
     // ── Bindless Descriptor Indices: READ set (SRV) ─────────────────────
-    uint     positionsSrvIndex;    ///< StructuredBuffer<float3> positions.      32
-    uint     velocitiesSrvIndex;   ///< StructuredBuffer<float3> velocities.     36
+    uint     positionsSrvIndex;    ///< StructuredBuffer<float4> positions.      32
+    uint     velocitiesSrvIndex;   ///< StructuredBuffer<float4> velocities.     36
     uint     agesSrvIndex;         ///< StructuredBuffer<float> ages.            40
     uint     lifespansSrvIndex;    ///< StructuredBuffer<float> lifespans.       44
 
@@ -108,8 +108,8 @@ cbuffer VFXUpdateConstants : register(b1) {
     uint     _padSrv0;             ///<                                          60
 
     // ── Bindless Descriptor Indices: WRITE set (UAV) ────────────────────
-    uint     positionsUavIndex;    ///< RWStructuredBuffer<float3> positions.    64
-    uint     velocitiesUavIndex;   ///< RWStructuredBuffer<float3> velocities.   68
+    uint     positionsUavIndex;    ///< RWStructuredBuffer<float4> positions.    64
+    uint     velocitiesUavIndex;   ///< RWStructuredBuffer<float4> velocities.   68
     uint     agesUavIndex;         ///< RWStructuredBuffer<float> ages.          72
     uint     lifespansUavIndex;    ///< RWStructuredBuffer<float> lifespans.     76
 
@@ -130,8 +130,8 @@ cbuffer VFXUpdateConstants : register(b1) {
 
 #ifndef UZ_BINDLESS
 /// SM5 fallback: explicit register bindings for READ set (SRV).
-StructuredBuffer<float3>           sm5_positionsIn   : register(t0);
-StructuredBuffer<float3>           sm5_velocitiesIn  : register(t1);
+StructuredBuffer<float4>           sm5_positionsIn   : register(t0);
+StructuredBuffer<float4>           sm5_velocitiesIn  : register(t1);
 StructuredBuffer<float>            sm5_agesIn        : register(t2);
 StructuredBuffer<float>            sm5_lifespansIn   : register(t3);
 StructuredBuffer<float>            sm5_sizesIn       : register(t4);
@@ -139,8 +139,8 @@ StructuredBuffer<float4>           sm5_colorsIn      : register(t5);
 StructuredBuffer<float>            sm5_rotationsIn   : register(t6);
 
 /// SM5 fallback: explicit register bindings for WRITE set (UAV) + shared.
-RWStructuredBuffer<float3>         sm5_positionsOut   : register(u0);
-RWStructuredBuffer<float3>         sm5_velocitiesOut  : register(u1);
+RWStructuredBuffer<float4>         sm5_positionsOut   : register(u0);
+RWStructuredBuffer<float4>         sm5_velocitiesOut  : register(u1);
 RWStructuredBuffer<float>          sm5_agesOut        : register(u2);
 RWStructuredBuffer<float>          sm5_lifespansOut   : register(u3);
 RWStructuredBuffer<float>          sm5_sizesOut       : register(u4);
@@ -184,8 +184,8 @@ void main(uint3 dtid : SV_DispatchThreadID)
 
     // ── Bind READ set (SRV) ─────────────────────────────────────────────
 #ifdef UZ_BINDLESS
-    StructuredBuffer<float3> positionsIn  = ResourceDescriptorHeap[positionsSrvIndex];
-    StructuredBuffer<float3> velocitiesIn = ResourceDescriptorHeap[velocitiesSrvIndex];
+    StructuredBuffer<float4> positionsIn  = ResourceDescriptorHeap[positionsSrvIndex];
+    StructuredBuffer<float4> velocitiesIn = ResourceDescriptorHeap[velocitiesSrvIndex];
     StructuredBuffer<float>  agesIn       = ResourceDescriptorHeap[agesSrvIndex];
     StructuredBuffer<float>  lifespansIn  = ResourceDescriptorHeap[lifespansSrvIndex];
     StructuredBuffer<float>  sizesIn      = ResourceDescriptorHeap[sizesSrvIndex];
@@ -202,8 +202,10 @@ void main(uint3 dtid : SV_DispatchThreadID)
 #endif
 
     // ── Read current particle state ─────────────────────────────────────
-    float3 pos      = positionsIn[threadIdx];
-    float3 vel      = velocitiesIn[threadIdx];
+    // Positions and velocities are stored as float4 (xyz + padding) to match
+    // the buffer stride of 16 bytes. Extract .xyz for simulation math.
+    float3 pos      = positionsIn[threadIdx].xyz;
+    float3 vel      = velocitiesIn[threadIdx].xyz;
     float  age      = agesIn[threadIdx];
     float  lifespan = lifespansIn[threadIdx];
 
@@ -263,8 +265,8 @@ void main(uint3 dtid : SV_DispatchThreadID)
 
     // ── Write updated state to WRITE set (UAV) ─────────────────────────
 #ifdef UZ_BINDLESS
-    RWStructuredBuffer<float3> positionsOut  = ResourceDescriptorHeap[positionsUavIndex];
-    RWStructuredBuffer<float3> velocitiesOut = ResourceDescriptorHeap[velocitiesUavIndex];
+    RWStructuredBuffer<float4> positionsOut  = ResourceDescriptorHeap[positionsUavIndex];
+    RWStructuredBuffer<float4> velocitiesOut = ResourceDescriptorHeap[velocitiesUavIndex];
     RWStructuredBuffer<float>  agesOut       = ResourceDescriptorHeap[agesUavIndex];
     RWStructuredBuffer<float>  lifespansOut  = ResourceDescriptorHeap[lifespansUavIndex];
     RWStructuredBuffer<float>  sizesOut      = ResourceDescriptorHeap[sizesUavIndex];
@@ -282,8 +284,9 @@ void main(uint3 dtid : SV_DispatchThreadID)
     #define aliveCountNew  sm5_aliveCountNew
 #endif
 
-    positionsOut[threadIdx]  = pos;
-    velocitiesOut[threadIdx] = vel;
+    // Pack float3 into float4 (w=0) to match buffer stride of 16 bytes.
+    positionsOut[threadIdx]  = float4(pos, 0.0f);
+    velocitiesOut[threadIdx] = float4(vel, 0.0f);
     agesOut[threadIdx]       = age;
     lifespansOut[threadIdx]  = lifespan;
     sizesOut[threadIdx]      = size;
