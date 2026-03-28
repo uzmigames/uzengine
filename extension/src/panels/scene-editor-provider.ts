@@ -559,39 +559,20 @@ export class SceneEditorProvider implements vscode.CustomTextEditorProvider {
     });
 
     // ── Input forwarding on canvas ────────────────────────────────────────
-    var viewportFocused = false;
-    // Virtual mouse position — accumulates pointer-lock deltas so the
-    // runtime's delta calculation (mouseX - prevMouseX) works correctly.
-    var virtualMouseX = 0, virtualMouseY = 0;
-    canvas.addEventListener('focus', function () { viewportFocused = true; });
-    canvas.addEventListener('blur',  function () { viewportFocused = false; });
-
+    // All mouse coordinates are sent as absolute viewport-local positions.
+    // The runtime's InputSystem::BeginFrame() calculates deltas from the
+    // difference between current and previous positions each frame.
+    // Pointer lock is NOT used — VSCode webviews may not support it.
     canvas.addEventListener('mousedown', function (e) {
-        if (e.button === 2) {
-            virtualMouseX = e.offsetX;
-            virtualMouseY = e.offsetY;
-            canvas.requestPointerLock();
-        }
         canvas.focus();
         vscode.postMessage({ type: 'mouseButton', button: e.button, pressed: true });
         e.preventDefault();
     });
     canvas.addEventListener('mouseup', function (e) {
-        if (e.button === 2 && document.pointerLockElement === canvas) {
-            document.exitPointerLock();
-        }
         vscode.postMessage({ type: 'mouseButton', button: e.button, pressed: false });
     });
-    document.addEventListener('mousemove', function (e) {
-        if (document.pointerLockElement === canvas) {
-            // Accumulate deltas into virtual position so the runtime's
-            // per-frame delta = (mouseX - prevMouseX) produces the correct value.
-            virtualMouseX += e.movementX;
-            virtualMouseY += e.movementY;
-            vscode.postMessage({ type: 'mouseMove', x: virtualMouseX, y: virtualMouseY });
-        } else if (viewportFocused) {
-            vscode.postMessage({ type: 'mouseMove', x: e.offsetX, y: e.offsetY });
-        }
+    canvas.addEventListener('mousemove', function (e) {
+        vscode.postMessage({ type: 'mouseMove', x: e.offsetX, y: e.offsetY });
     });
     canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
     canvas.addEventListener('wheel', function (e) {
