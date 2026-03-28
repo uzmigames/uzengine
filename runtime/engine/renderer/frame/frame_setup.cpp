@@ -146,37 +146,11 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     // ── Camera: ECS camera (game mode) or fly controller (editor mode) ──
     bool cameraFromECS = false;
 
-    // Editor mode: capture camera pose from ECS CameraComponent on frame 2
-    // (not frame 0/1) so Lua on_start scripts have run and set the camera to
-    // the desired position. Without this delay, the camera starts at the raw
-    // scene JSON position which is usually wrong.
-    if (m_editorMode && m_editorCameraInitFrame < 3 && ctx.world) {
-        ++m_editorCameraInitFrame;
-        if (m_editorCameraInitFrame == 3) {
-            auto cameraView = ctx.world->View<CameraComponent>();
-            for (auto [enttEntity, cam] : cameraView.each()) {
-                if (cam.isActive) {
-                    const Vec3 camPos = cam.GetWorldPosition();
-                    m_camera->SetPosition(camPos);
-                    if (cam.hasLookTarget) {
-                        m_camera->LookAt(cam.lookTarget);
-                    } else {
-                        const Vec3 fwd = (cam.GetRotation() * Vec3::Forward()).Normalized();
-                        m_camera->LookAt(camPos + fwd * 1000.f);
-                    }
-                    m_camera->SetPerspective(
-                        cam.fov * (3.14159265f / 180.f),
-                        static_cast<float>(m_width) / static_cast<float>(m_height),
-                        cam.nearPlane, cam.farPlane);
-                    m_cameraCtrl->InitFromCamera(*m_camera);
-                    break;
-                }
-            }
-        }
-    }
-
-    if (!m_editorMode && ctx.world) {
-        // Game mode: ECS camera driven by Lua scripts every frame.
+    // Sync camera from ECS CameraComponent every frame.
+    // Lua scripts (camera_test_controller.lua, etc.) update CameraComponent
+    // via uz.camera.set_position/look_at in on_update — we read that here.
+    // This works in both editor and game mode, driven by the Lua script.
+    if (ctx.world) {
         auto cameraView = ctx.world->View<CameraComponent>();
         for (auto [enttEntity, cam] : cameraView.each()) {
             if (cam.isActive) {
@@ -198,13 +172,9 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
         }
     }
 
+    // Fallback: FlyCameraController when no ECS camera is active.
     if (!cameraFromECS) {
-        // Fly controller: in editor mode, only runs when RMB is held.
-        const bool cameraAllowed = !m_editorMode
-                                 || m_input->IsMouseDown(MouseButton::Right);
-        if (cameraAllowed) {
-            m_cameraCtrl->Update(*m_camera, *m_input, ctx.dt);
-        }
+        m_cameraCtrl->Update(*m_camera, *m_input, ctx.dt);
     }
 
     auto& camera = *m_camera;
