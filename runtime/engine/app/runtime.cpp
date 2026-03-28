@@ -1115,6 +1115,34 @@ const char* uz_get_entity_components(uint32_t entity_id) {
     return s_buf.c_str();
 }
 
+void uz_select_entity(uint32_t entity_id) {
+    if (!HasViewport()) return;
+    auto* state = s_state;
+
+    if (entity_id == UINT32_MAX) {
+        state->selectionManager.Deselect();
+        if (state->sceneRendererReady) {
+            state->sceneRenderer.SetSelectedEntity(uz::Entity{});
+        }
+        return;
+    }
+
+    const auto enttEntity = static_cast<entt::entity>(entity_id);
+    if (!state->world.GetRegistry().valid(enttEntity)) return;
+
+    uz::Entity entity = state->world.EntityFromEntt(enttEntity);
+    state->selectionManager.Select(entity);
+    if (state->sceneRendererReady) {
+        state->sceneRenderer.SetSelectedEntity(entity);
+    }
+}
+
+uint32_t uz_get_selected_entity(void) {
+    if (!HasViewport()) return UINT32_MAX;
+    const uz::Entity sel = s_state->selectionManager.GetSelected();
+    return sel.IsValid() ? sel.id : UINT32_MAX;
+}
+
 // ── Input Forwarding ────────────────────────────────────────────────────────
 
 void uz_on_mouse_move(float x, float y) {

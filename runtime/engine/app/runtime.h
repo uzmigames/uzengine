@@ -320,6 +320,15 @@ UZ_API int uz_set_component_property(uint32_t entity_id, const char* component_t
 /// Empty array `"[]"` if entity not found. Static buffer valid until next call.
 UZ_API const char* uz_get_entity_components(uint32_t entity_id);
 
+/// Selects an entity in the editor (outline + gizmo).
+///
+/// # Arguments
+/// * `entity_id` — Entity slot index. Pass UINT32_MAX to deselect.
+UZ_API void uz_select_entity(uint32_t entity_id);
+
+/// Returns the currently selected entity ID, or UINT32_MAX if none selected.
+UZ_API uint32_t uz_get_selected_entity(void);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Input Forwarding
 // ─────────────────────────────────────────────────────────────────────────────
