@@ -35,6 +35,10 @@
 #include "script_system.h"
 #include "name_component.h"
 #include "entity.h"
+#include "components.h"
+#include "component_serializer.h"
+#include "script_component.h"
+#include <json.hpp>
 #include "input.h"
 #include "paths.h"
 #include "h264_encoder.h"
@@ -940,19 +944,175 @@ void uz_destroy_entity(uint32_t entity_id) {
     }
 }
 
-const char* uz_get_component_json(uint32_t /*entity_id*/, const char* /*component_type*/) {
-    // Component introspection requires the property reflection system.
-    // Returning empty object for now — full implementation in Phase B
-    // when the property system is connected.
-    static const char* kEmpty = "{}";
-    return kEmpty;
+const char* uz_get_component_json(uint32_t entity_id, const char* component_type) {
+    static std::string s_buffer;  // valid until next call
+    s_buffer = "{}";
+
+    if (!HasViewport() || !component_type) return s_buffer.c_str();
+
+    auto* state = s_state;
+    const auto& reg = state->world.GetRegistry();
+    const auto enttEntity = static_cast<entt::entity>(entity_id);
+    if (!reg.valid(enttEntity)) return s_buffer.c_str();
+
+    const uz::Entity entity = state->world.EntityFromEntt(enttEntity);
+    const std::string type(component_type);
+    nlohmann::json j;
+
+    // Built-in components (not in the auto-registry)
+    if (type == "transform") {
+        if (const auto* sc = reg.try_get<uz::SceneComponent>(enttEntity)) {
+            j["position"] = {sc->GetPosition().x, sc->GetPosition().y, sc->GetPosition().z};
+            const auto euler = sc->GetRotation().get_euler();
+            j["rotation"] = {euler.x * 57.2957795f, euler.y * 57.2957795f, euler.z * 57.2957795f};
+            j["scale"] = {sc->GetScale().x, sc->GetScale().y, sc->GetScale().z};
+        }
+    } else if (type == "camera") {
+        if (const auto* cam = reg.try_get<uz::CameraComponent>(enttEntity)) {
+            j["fov"] = cam->fov;
+            j["near"] = cam->nearPlane;
+            j["far"] = cam->farPlane;
+            j["active"] = cam->isActive;
+        }
+    } else if (type == "mesh") {
+        if (const auto* mesh = reg.try_get<uz::StaticMeshComponent>(enttEntity)) {
+            j["asset"] = mesh->meshPath;
+        }
+    } else if (type == "light") {
+        if (const auto* dir = reg.try_get<uz::DirectionalLightComponent>(enttEntity)) {
+            j["type"] = "directional";
+            j["color"] = {dir->color.x, dir->color.y, dir->color.z};
+            j["intensity"] = dir->intensity;
+        } else if (const auto* spot = reg.try_get<uz::SpotLightComponent>(enttEntity)) {
+            j["type"] = "spot";
+            j["color"] = {spot->color.x, spot->color.y, spot->color.z};
+            j["intensity"] = spot->intensity;
+            j["range"] = spot->range;
+            j["innerAngle"] = spot->innerAngleDeg;
+            j["outerAngle"] = spot->outerAngleDeg;
+        } else if (const auto* point = reg.try_get<uz::PointLightComponent>(enttEntity)) {
+            j["type"] = "point";
+            j["color"] = {point->color.x, point->color.y, point->color.z};
+            j["intensity"] = point->intensity;
+            j["range"] = point->range;
+        }
+    } else if (type == "script") {
+        if (const auto* script = reg.try_get<uz::CScript>(enttEntity)) {
+            j["path"] = script->scriptPath;
+        }
+    } else if (type == "name") {
+        if (const auto* name = reg.try_get<uz::CName>(enttEntity)) {
+            j["name"] = name->name;
+        }
+    } else {
+        // Registry-based components (sky_atmosphere, height_fog, etc.)
+        (void)uz::ComponentSerializerRegistry::Get().Serialize(type, state->world, entity, &j);
+    }
+
+    s_buffer = j.dump();
+    return s_buffer.c_str();
 }
 
-int uz_set_component_property(uint32_t /*entity_id*/, const char* /*component_type*/,
-                              const char* /*property_name*/, const char* /*value_json*/) {
-    // Property mutation requires the property reflection system.
-    // Returning 0 (failure) for now — full implementation in Phase B.
+int uz_set_component_property(uint32_t entity_id, const char* component_type,
+                              const char* property_name, const char* value_json) {
+    if (!HasViewport() || !component_type || !property_name || !value_json)
+        return 0;
+
+    auto* state = s_state;
+    auto& reg = state->world.GetRegistry();
+    const auto enttEntity = static_cast<entt::entity>(entity_id);
+    if (!reg.valid(enttEntity)) return 0;
+
+    const std::string type(component_type);
+    const std::string prop(property_name);
+
+    nlohmann::json val;
+    try { val = nlohmann::json::parse(value_json); }
+    catch (...) { return 0; }
+
+    // Transform properties
+    if (type == "transform") {
+        auto* sc = reg.try_get<uz::SceneComponent>(enttEntity);
+        if (!sc) return 0;
+        if (prop == "position" && val.is_array() && val.size() == 3) {
+            sc->SetPosition({val[0].get<float>(), val[1].get<float>(), val[2].get<float>()});
+            return 1;
+        }
+        if (prop == "scale" && val.is_array() && val.size() == 3) {
+            sc->SetScale({val[0].get<float>(), val[1].get<float>(), val[2].get<float>()});
+            return 1;
+        }
+    }
+
+    // Camera properties
+    if (type == "camera") {
+        auto* cam = reg.try_get<uz::CameraComponent>(enttEntity);
+        if (!cam) return 0;
+        if (prop == "fov")    { cam->fov = val.get<float>(); return 1; }
+        if (prop == "near")   { cam->nearPlane = val.get<float>(); return 1; }
+        if (prop == "far")    { cam->farPlane = val.get<float>(); return 1; }
+        if (prop == "active") { cam->isActive = val.get<bool>(); return 1; }
+    }
+
+    // Light properties
+    if (type == "light") {
+        if (auto* dir = reg.try_get<uz::DirectionalLightComponent>(enttEntity)) {
+            if (prop == "intensity") { dir->intensity = val.get<float>(); return 1; }
+            if (prop == "color" && val.is_array() && val.size() == 3) {
+                dir->color = {val[0].get<float>(), val[1].get<float>(), val[2].get<float>()};
+                return 1;
+            }
+        }
+        if (auto* point = reg.try_get<uz::PointLightComponent>(enttEntity)) {
+            if (prop == "intensity") { point->intensity = val.get<float>(); return 1; }
+            if (prop == "range") { point->range = val.get<float>(); return 1; }
+            if (prop == "color" && val.is_array() && val.size() == 3) {
+                point->color = {val[0].get<float>(), val[1].get<float>(), val[2].get<float>()};
+                return 1;
+            }
+        }
+        if (auto* spot = reg.try_get<uz::SpotLightComponent>(enttEntity)) {
+            if (prop == "innerAngle") { spot->innerAngleDeg = val.get<float>(); return 1; }
+            if (prop == "outerAngle") { spot->outerAngleDeg = val.get<float>(); return 1; }
+        }
+    }
+
     return 0;
+}
+
+const char* uz_get_entity_components(uint32_t entity_id) {
+    static std::string s_buf;
+    s_buf = "[]";
+
+    if (!HasViewport()) return s_buf.c_str();
+
+    const auto& reg = s_state->world.GetRegistry();
+    const auto enttEntity = static_cast<entt::entity>(entity_id);
+    if (!reg.valid(enttEntity)) return s_buf.c_str();
+
+    nlohmann::json arr = nlohmann::json::array();
+
+    // Built-in component checks
+    if (reg.all_of<uz::SceneComponent>(enttEntity))      arr.push_back("transform");
+    if (reg.all_of<uz::CameraComponent>(enttEntity))     arr.push_back("camera");
+    if (reg.all_of<uz::StaticMeshComponent>(enttEntity))  arr.push_back("mesh");
+    if (reg.all_of<uz::DirectionalLightComponent>(enttEntity)) arr.push_back("light");
+    else if (reg.all_of<uz::SpotLightComponent>(enttEntity))   arr.push_back("light");
+    else if (reg.all_of<uz::PointLightComponent>(enttEntity))  arr.push_back("light");
+    if (reg.all_of<uz::CScript>(enttEntity))             arr.push_back("script");
+    if (reg.all_of<uz::CName>(enttEntity))               arr.push_back("name");
+
+    // Registry-based components (environment components, etc.)
+    const uz::Entity entity = s_state->world.EntityFromEntt(enttEntity);
+    for (const auto& [key, entry] : uz::ComponentSerializerRegistry::Get().GetEntries()) {
+        nlohmann::json tmp;
+        if (entry.serialize(s_state->world, entity, &tmp)) {
+            arr.push_back(key);
+        }
+    }
+
+    s_buf = arr.dump();
+    return s_buf.c_str();
 }
 
 // ── Input Forwarding ────────────────────────────────────────────────────────

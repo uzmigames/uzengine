@@ -310,6 +310,16 @@ UZ_API const char* uz_get_component_json(uint32_t entity_id, const char* compone
 UZ_API int uz_set_component_property(uint32_t entity_id, const char* component_type,
                                      const char* property_name, const char* value_json);
 
+/// Returns a JSON array of component type names attached to an entity.
+///
+/// # Arguments
+/// * `entity_id` — Entity slot index.
+///
+/// # Returns
+/// JSON array string, e.g. `["transform","mesh","material","light"]`.
+/// Empty array `"[]"` if entity not found. Static buffer valid until next call.
+UZ_API const char* uz_get_entity_components(uint32_t entity_id);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Input Forwarding
 // ─────────────────────────────────────────────────────────────────────────────
