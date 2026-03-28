@@ -229,6 +229,7 @@
 
     RHITextureHandle m_fxaaLdrIntermediate;             ///< RGBA8Unorm LDR intermediate for CAS/FXAA input.
     uint32_t m_fxaaLdrIntermediateSrv = UINT32_MAX;     ///< SRV for CAS/FXAA to read tonemap output.
+    RHIResourceState m_ldrFinalState = RHIResourceState::ShaderResource; ///< LDR state after render graph.
 
     /// Creates the FXAA LDR intermediate texture at the given resolution.
     /// Called from Init() and Resize().

@@ -493,16 +493,14 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
     }
 
     // ── LDR intermediate import ─────────────────────────────────────────
-    // Import LDR intermediate into the render graph if CAS or FXAA is active.
-    // When either is active, tonemap writes here instead of to the backbuffer.
-    // The intermediate is shared between CAS and FXAA (both are fullscreen
-    // LDR passes that read from it).
-    const bool needsLdrIntermediate = ctx.casActive || ctx.fxaaActive;
-    if (needsLdrIntermediate) {
-        ctx.fxaaLdrRes = rgBuilder.ImportTexture("LDR_Intermediate",
-                                                  m_fxaaLdrIntermediate,
-                                                  RHIResourceState::ShaderResource);
-    }
+    // Always import the LDR intermediate — tonemap writes here, then either
+    // CAS/FXAA or a raw CopyTexture forwards the result to the backbuffer.
+    // This guarantees a stable, engine-owned texture for H.264 readback
+    // (never read back from the swapchain backbuffer — it rotates after Present).
+    const bool needsLdrIntermediate = true;
+    ctx.fxaaLdrRes = rgBuilder.ImportTexture("LDR_Intermediate",
+                                              m_fxaaLdrIntermediate,
+                                              RHIResourceState::ShaderResource);
 
     // ── Tonemap pass (HDR → LDR) ────────────────────────────────────────
     // Reads HDR scene color (RGBA16F) + optional bloom result, applies
@@ -730,6 +728,28 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 cmd->EndRenderPass();
             });
         });
+    }
+
+    // ── LDR → Backbuffer copy (when neither CAS nor FXAA writes to bb) ──
+    // Both CAS and FXAA read from LDR intermediate and write to the backbuffer.
+    // When neither is active, the backbuffer is untouched — copy the intermediate
+    // to the backbuffer via a GPU copy. Both textures are RGBA8Unorm (same format),
+    // so CopyTexture is a valid, zero-overhead GPU memcpy.
+    if (!ctx.casActive && !ctx.fxaaActive) {
+        rgBuilder.AddPass("LDR_Blit", [&](rg::RgPassBuilder& pb) {
+            pb.Read(ctx.fxaaLdrRes, RHIResourceState::CopySrc);
+            pb.Write(ctx.bbRes, RHIResourceState::CopyDst);
+
+            pb.SetExecutionCallback([&ctx](IRHICommandList* cmd, const rg::RgPassResources& res) {
+                UZ_PROFILE_SCOPE("LDR_Blit::Execute");
+                auto ldr = res.GetTexture(ctx.fxaaLdrRes);
+                auto bb  = res.GetTexture(ctx.bbRes);
+                cmd->CopyTexture(ldr, bb);
+            });
+        });
+        m_ldrFinalState = RHIResourceState::CopySrc;
+    } else {
+        m_ldrFinalState = RHIResourceState::ShaderResource;
     }
 
     // ── PassInspector: register post-process targets ─────────────────────

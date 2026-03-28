@@ -36,6 +36,20 @@ namespace uz {
 
 void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapChain,
                                  World* world, IVFS* vfs, float dt, uint32_t frameIndex) {
+    RenderFrame(cmdList, swapChain, world, vfs, dt, frameIndex, nullptr);
+}
+
+RHITextureHandle SceneRenderer::GetLdrIntermediate() const {
+    return m_fxaaLdrIntermediate;
+}
+
+RHIResourceState SceneRenderer::GetLdrIntermediateState() const {
+    return m_ldrFinalState;
+}
+
+void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapChain,
+                                 World* world, IVFS* vfs, float dt, uint32_t frameIndex,
+                                 PreEndCallback preEndCb) {
     if (!m_device || !cmdList || !swapChain) return;
 
     UZ_PROFILE_FUNCTION();
@@ -201,6 +215,15 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     // ── GPU Profiler: end frame (resolve timestamps to readback buffer) ──
     if (m_gpuProfileEnabled) {
         m_device->GpuProfilerEndFrame(cmdList);
+    }
+
+    // ── Pre-End callback (e.g., H.264 readback copy) ─────────────────────
+    // Invoked after all render graph passes, atmosphere bake, and screenshot
+    // capture, but before End+Execute. The command list is still recording,
+    // so the callback can insert additional GPU copies (e.g., LDR intermediate
+    // → readback buffer for H.264 encoding).
+    if (preEndCb) {
+        preEndCb(cmdList);
     }
 
     // ── End command list ────────────────────────────────────────────────

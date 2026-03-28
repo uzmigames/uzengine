@@ -211,6 +211,25 @@ void FrameReadback::CaptureFrame(IRHICommandList* cmdList, IRHISwapChain* swapCh
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// CaptureFromTexture — copy an engine-owned texture (not swapchain backbuffer)
+// ─────────────────────────────────────────────────────────────────────────────
+
+void FrameReadback::CaptureFromTexture(IRHICommandList* cmdList, RHITextureHandle srcTexture) {
+    UZ_PROFILE_SCOPE(FrameReadback_CaptureFromTexture);
+
+    if (!impl_ || !cmdList || !srcTexture.IsValid()) return;
+
+    const uint32_t slot = impl_->writeIndex;
+
+    // The caller must have already transitioned srcTexture to CopySrc.
+    cmdList->CopyTextureToBuffer(srcTexture, 0, impl_->buffers[slot], 0, impl_->rowPitch);
+
+    // Advance write index for the next frame.
+    impl_->writeIndex = (slot + 1) % kBufferCount;
+    impl_->captureCount++;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Fence signaling — call AFTER cmdList->Execute()
 // ─────────────────────────────────────────────────────────────────────────────
 

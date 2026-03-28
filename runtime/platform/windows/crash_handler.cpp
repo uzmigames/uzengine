@@ -481,16 +481,29 @@ LONG WINAPI UzExceptionFilter(EXCEPTION_POINTERS* exceptionInfo) {
 /// instead of terminating the host process.
 ///
 /// Only fires for fatal exceptions (access violations, stack overflow, etc.).
-/// Ignores non-fatal exceptions (C++ exceptions, breakpoints in debug builds).
+/// Only handles genuinely fatal exceptions (access violations, stack overflow,
+/// illegal instructions, etc.). All other exceptions — including thread-naming
+/// (0x406D1388), C++ exceptions, debugger events, and driver-internal exceptions
+/// — are ignored immediately. This is critical in library/DLL mode because
+/// calling MiniDumpWriteDump on a benign exception suspends all threads and can
+/// deadlock the host process (VSCode Extension Host).
 LONG WINAPI UzVectoredHandler(EXCEPTION_POINTERS* exceptionInfo) {
     const DWORD code = exceptionInfo->ExceptionRecord->ExceptionCode;
 
-    // Skip non-fatal exceptions: C++ exceptions, debugger breakpoints,
-    // and "output debug string" exceptions.
-    if (code == 0xE06D7363 ||  // MSVC C++ exception
-        code == EXCEPTION_BREAKPOINT ||
-        code == 0x40010006 ||  // DBG_PRINTEXCEPTION_C
-        code == 0x4001000A) {  // DBG_PRINTEXCEPTION_WIDE_C
+    // Only handle exceptions that are genuinely fatal and unrecoverable.
+    // Everything else passes through untouched — no minidump, no logging.
+    const bool isFatal =
+        code == EXCEPTION_ACCESS_VIOLATION      ||  // 0xC0000005
+        code == EXCEPTION_STACK_OVERFLOW         ||  // 0xC00000FD
+        code == EXCEPTION_ILLEGAL_INSTRUCTION    ||  // 0xC000001D
+        code == EXCEPTION_INT_DIVIDE_BY_ZERO     ||  // 0xC0000094
+        code == EXCEPTION_FLT_DIVIDE_BY_ZERO     ||  // 0xC000008E
+        code == EXCEPTION_ARRAY_BOUNDS_EXCEEDED  ||  // 0xC000008C
+        code == EXCEPTION_IN_PAGE_ERROR          ||  // 0xC0000006
+        code == EXCEPTION_NONCONTINUABLE_EXCEPTION||  // 0xC0000025
+        code == 0xC0000409;                           // STATUS_STACK_BUFFER_OVERRUN (/GS)
+
+    if (!isFatal) {
         return EXCEPTION_CONTINUE_SEARCH;
     }
 
