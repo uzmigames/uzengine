@@ -44,8 +44,15 @@ static Napi::Value ResizeViewport(const Napi::CallbackInfo& info) {
             .ThrowAsJavaScriptException();
         return env.Undefined();
     }
-    uz_resize_viewport(info[0].As<Napi::Number>().Int32Value(),
-                       info[1].As<Napi::Number>().Int32Value());
+    int w = info[0].As<Napi::Number>().Int32Value();
+    int h = info[1].As<Napi::Number>().Int32Value();
+
+    // Always defer resize to the render thread (BUG-3 fix). Calling
+    // uz_resize_viewport() directly from the IPC thread causes concurrent
+    // access to frameReadback/h264Encoder with the render thread.
+    // If the render loop isn't running yet, the resize will be applied
+    // when the loop starts (first frame checks m_resizePending).
+    g_renderThread.RequestResize(w, h);
     return env.Undefined();
 }
 

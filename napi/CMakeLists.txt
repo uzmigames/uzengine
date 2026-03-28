@@ -70,6 +70,7 @@ endif()
 target_link_libraries(${PROJECT_NAME}
   ${CMAKE_JS_LIB}
   ${UZENGINE_DLL_IMPORT}
+  delayimp.lib
 )
 
 # Copy DLL + dependencies alongside uzengine.node

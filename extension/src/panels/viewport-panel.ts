@@ -1,24 +1,21 @@
 /// UzEngine Viewport panel — WebviewPanel that drives the native render loop.
 ///
-/// The native DX12 viewport renders on a dedicated render thread. Encoded H.264
-/// NAL units are streamed from that thread to the webview via two callbacks
-/// registered with `addon.startRenderLoop`:
+/// The native DX12 viewport renders in the isolated worker process. Encoded
+/// H.264 NAL units are streamed from the worker to the extension host via IPC,
+/// then forwarded to the webview via `postMessage`. The webview uses WebCodecs
+/// `VideoDecoder` to decode and blit frames onto a `<canvas>`.
 ///
-///  - `onFrame`        — per-frame stats (fps, frameMs, drawCalls, …)
-///  - `onEncodedFrame` — H.264 NAL Buffer; forwarded as binary to the WebView
-///                       where `VideoDecoder` (WebCodecs) decodes and blits to
-///                       a `<canvas>`.
-///
-/// Input forwarding: the WebView now sends `event.code` strings (e.g. `'KeyW'`)
+/// Input forwarding: the WebView sends `event.code` strings (e.g. `'KeyW'`)
 /// rather than numeric keyCodes.  The extension host translates them to Win32
-/// virtual-key codes via `ViewportPanel.KEY_MAP` before calling `addon.onKey`.
+/// virtual-key codes via `ViewportPanel.KEY_MAP` before calling
+/// `client.keyEx()`.
 ///
 /// Render loop lifecycle:
-///  - Panel hidden  → `addon.stopRenderLoop()`  (saves GPU)
-///  - Panel visible → `addon.startRenderLoop(60, onFrame, onEncodedFrame)`
+///  - Panel hidden  → `client.stopRenderLoop()`  (saves GPU)
+///  - Panel visible → `client.startRenderLoop(60, onFrame, onEncodedFrame)`
 
 import * as vscode from 'vscode';
-import type { UzEngineAddon } from '../uzengine';
+import type { RuntimeClient } from '../runtime-client';
 import type { SceneTreeProvider } from './scene-tree-panel';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -44,8 +41,8 @@ type WebViewMessage =
 /// Lifecycle:
 ///  1. Constructed → creates the WebviewPanel + starts the render loop once
 ///     the WebView signals `ready`.
-///  2. Panel hidden → render loop paused (`addon.stopRenderLoop`).
-///  3. Panel revealed → render loop resumed (`addon.startRenderLoop`).
+///  2. Panel hidden → render loop paused (`client.stopRenderLoop`).
+///  3. Panel revealed → render loop resumed (`client.startRenderLoop`).
 ///  4. `dispose()` → render loop stopped, native viewport destroyed, emitter fired.
 export class ViewportPanel {
     private readonly panel: vscode.WebviewPanel;
@@ -83,11 +80,19 @@ export class ViewportPanel {
     /// Fired when this ViewportPanel is disposed (panel closed or `dispose()` called).
     readonly onDidDispose: vscode.Event<void> = this._onDidDispose.event;
 
+    /// The RuntimeClient used to communicate with the isolated worker process.
+    private readonly client: RuntimeClient;
+
     constructor(
         extensionUri: vscode.Uri,
-        private readonly addon: UzEngineAddon,
+        clientOrGetter: RuntimeClient | (() => RuntimeClient),
         private readonly sceneTree: SceneTreeProvider
     ) {
+        // Accept either a client instance or a lazy getter for backward compat.
+        this.client = typeof clientOrGetter === 'function'
+            ? clientOrGetter()
+            : clientOrGetter;
+
         this.panel = vscode.window.createWebviewPanel(
             'uzengine.viewport',
             'UzEngine Viewport',
@@ -95,7 +100,6 @@ export class ViewportPanel {
             {
                 enableScripts: true,
                 retainContextWhenHidden: true,
-                // No local resource roots needed — HTML is fully inline.
                 localResourceRoots: [extensionUri],
             }
         );
@@ -107,15 +111,15 @@ export class ViewportPanel {
 
         // Handle messages arriving from the WebView JavaScript.
         this.panel.webview.onDidReceiveMessage((msg: WebViewMessage) => {
-            this.handleWebViewMessage(msg);
+            void this.handleWebViewMessage(msg);
         });
 
         // Pause / resume the render loop when the panel visibility changes.
         this.panel.onDidChangeViewState(() => {
             if (this.panel.visible) {
-                this.startRenderLoop();
+                void this.startRenderLoop();
             } else {
-                this.stopRenderLoop();
+                void this.stopRenderLoop();
             }
         });
     }
@@ -133,15 +137,14 @@ export class ViewportPanel {
     dispose(): void {
         if (this.disposed) return;
         this.disposed = true;
-        this.stopRenderLoop();
-        if (this.viewportCreated) {
-            try {
-                this.addon.destroyViewport();
-            } catch {
-                // Ignore — the addon may already be torn down during extension deactivation.
+        void this.stopRenderLoop().then(() => {
+            if (this.viewportCreated) {
+                void this.client.destroyViewport().catch(() => {
+                    // Ignore — the worker may already be torn down.
+                });
+                this.viewportCreated = false;
             }
-            this.viewportCreated = false;
-        }
+        });
         this.panel.dispose();
         this._onDidDispose.fire();
         this._onDidDispose.dispose();
@@ -149,40 +152,30 @@ export class ViewportPanel {
 
     // ── Private — render loop ─────────────────────────────────────────────────
 
-    private startRenderLoop(): void {
+    private async startRenderLoop(): Promise<void> {
         if (this.renderLoopActive || this.disposed) return;
 
         // Create the native viewport the first time the loop starts.
         if (!this.viewportCreated) {
             try {
-                // Pass parentHwnd = 0 → standalone top-level window (Phase 2.1 will embed).
-                this.addon.createViewport(0, 1280, 720);
-                this.addon.setEditorMode(true);
+                await this.client.createViewport(0, 1280, 720);
+                await this.client.setEditorMode(true);
                 this.viewportCreated = true;
 
                 // Auto-load project scene if a .uzproject is found in the workspace.
-                this.autoLoadProjectScene();
+                await this.autoLoadProjectScene();
             } catch {
-                // Viewport may already exist if createViewport was called elsewhere.
-                // Treat it as created so we still drive the render loop.
+                // Viewport may already exist. Treat as created so we still drive
+                // the render loop.
                 this.viewportCreated = true;
             }
         }
 
         // Start the native render thread at 60 FPS.
-        // onFrame    — receives per-frame stats from the render thread.
-        // onEncoded  — receives a H.264 NAL Buffer; forwarded as binary to the
-        //              WebView where VideoDecoder (WebCodecs) decodes it.
-        this.addon.startRenderLoop(
+        await this.client.startRenderLoop(
             60,
-            // onFrame callback
-            (stats: {
-                fps: number;
-                frameMs: number;
-                drawCalls: number;
-                vertices: number;
-                triangles: number;
-            }) => {
+            // onFrame callback — per-frame stats
+            (stats) => {
                 if (this.disposed) return;
                 void this.panel.webview.postMessage({
                     type: 'stats',
@@ -193,17 +186,10 @@ export class ViewportPanel {
                     triangles: stats.triangles,
                 });
             },
-            // onEncodedFrame callback
-            (nalBuffer: Buffer) => {
+            // onEncodedFrame callback — H.264 NAL as base64 string
+            (nalBase64: string) => {
                 if (this.disposed) return;
-                // Transfer ownership of the underlying ArrayBuffer to the WebView
-                // via the transferable objects mechanism to avoid a copy.
-                const uint8 = new Uint8Array(
-                    nalBuffer.buffer,
-                    nalBuffer.byteOffset,
-                    nalBuffer.byteLength
-                );
-                void this.panel.webview.postMessage({ type: 'frame', data: uint8 });
+                void this.panel.webview.postMessage({ type: 'frame', data: nalBase64 });
             }
         );
 
@@ -211,7 +197,7 @@ export class ViewportPanel {
 
         // Send SPS/PPS codec extradata so the WebView can configure VideoDecoder.
         try {
-            const extradata = this.addon.getCodecExtradata();
+            const extradata = await this.client.getCodecExtradata();
             if (extradata) {
                 void this.panel.webview.postMessage({
                     type: 'init',
@@ -219,131 +205,123 @@ export class ViewportPanel {
                 });
             }
         } catch {
-            // getCodecExtradata may not yet be available if the encoder is still
-            // initialising; the WebView will request a re-init on next key frame.
+            // getCodecExtradata may not yet be available if the encoder is
+            // still initialising; the WebView will request a re-init on the
+            // next key frame.
         }
     }
 
-    private stopRenderLoop(): void {
-        if (this.renderLoopActive) {
-            try {
-                this.addon.stopRenderLoop();
-            } catch {
-                // Ignore — addon may be torn down during extension deactivation.
-            }
-            this.renderLoopActive = false;
+    private async stopRenderLoop(): Promise<void> {
+        if (!this.renderLoopActive) return;
+        try {
+            await this.client.stopRenderLoop();
+        } catch {
+            // Ignore — worker may be torn down during extension deactivation.
         }
+        this.renderLoopActive = false;
     }
 
     // ── Private — message handling ────────────────────────────────────────────
 
-    private handleWebViewMessage(msg: WebViewMessage): void {
+    private async handleWebViewMessage(msg: WebViewMessage): Promise<void> {
         switch (msg.type) {
             case 'ready':
-                // WebView is fully initialised — safe to start rendering.
-                this.startRenderLoop();
+                await this.startRenderLoop();
                 break;
             case 'mouseMove':
-                this.addon.onMouseMove(msg.x, msg.y);
+                this.client.mouseMove(msg.x, msg.y);
                 break;
             case 'mouseDelta':
-                // Relative movement while pointer is locked — engine handles
-                // the camera-orbit interpretation on its side.
-                this.addon.onMouseMove(msg.dx, msg.dy);
+                this.client.mouseMove(msg.dx, msg.dy);
                 break;
             case 'mouseButton':
-                this.addon.onMouseButton(msg.button, msg.pressed);
+                this.client.mouseButton(msg.button, msg.pressed);
                 break;
             case 'key': {
                 const vk = ViewportPanel.KEY_MAP[msg.code];
                 if (vk !== undefined) {
-                    this.addon.onKeyEx(vk, msg.pressed, msg.modifiers ?? 0);
+                    this.client.keyEx(vk, msg.pressed, msg.modifiers ?? 0);
                 }
                 break;
             }
             case 'scroll':
-                this.addon.onScroll(msg.delta);
+                this.client.scroll(msg.delta);
                 break;
         }
     }
 
-    // ── Private — HTML ────────────────────────────────────────────────────────
+    // ── Private — auto scene load ─────────────────────────────────────────────
 
-    /// Returns the complete inline HTML for the WebviewPanel.
-    ///
-    /// The page contains:
-    ///  - A toolbar with gizmo mode buttons (Translate / Rotate / Scale) and
-    ///    a space-mode toggle (Local / World).
-    ///  - A `<canvas id="viewport-canvas">` that fills the viewport area and
-    ///    receives decoded H.264 frames via the WebCodecs `VideoDecoder` API.
-    ///  - A fallback `#viewport-overlay` shown while waiting for the first frame.
-    ///  - Input forwarding for mouse, wheel, and keyboard events (`event.code`).
-    ///  - Stats overlay driven by `postMessage` from the extension host.
-    ///  - WebCodecs decoder: handles `init` (SPS/PPS config) and `frame` (NAL)
-    ///    messages from the extension host.
     /// Searches the workspace for a .uzproject file, reads its default_scene,
     /// sets the content root, and loads the scene automatically.
-    private autoLoadProjectScene(): void {
+    private async autoLoadProjectScene(): Promise<void> {
         try {
             const workspaceFolders = vscode.workspace.workspaceFolders;
             if (!workspaceFolders) return;
 
-            // Find .uzproject files in the workspace
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
             const fs = require('fs') as typeof import('fs');
-            const path = require('path') as typeof import('path');
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            const nodePath = require('path') as typeof import('path');
 
             for (const folder of workspaceFolders) {
                 const root = folder.uri.fsPath;
 
-                // Check common locations for .uzproject
                 const candidates = [
-                    path.join(root, 'sample', 'projects', 'pbr_showcase.uzproject'),
+                    nodePath.join(root, 'sample', 'projects', 'pbr_showcase.uzproject'),
                     ...this.findFiles(root, '.uzproject', 3),
                 ];
 
                 for (const projectPath of candidates) {
                     if (!fs.existsSync(projectPath)) continue;
 
-                    const projectJson = JSON.parse(fs.readFileSync(projectPath, 'utf8'));
+                    let projectJson: { default_scene?: string; content_root?: string };
+                    try {
+                        projectJson = JSON.parse(fs.readFileSync(projectPath, 'utf8')) as typeof projectJson;
+                    } catch {
+                        continue;
+                    }
+
                     const defaultScene = projectJson.default_scene;
-                    const contentRoot = projectJson.content_root || '../content/';
+                    const contentRoot = projectJson.content_root ?? '../content/';
 
                     if (!defaultScene) continue;
 
-                    // Resolve content root relative to project file
-                    const projectDir = path.dirname(projectPath);
-                    const resolvedContentRoot = path.resolve(projectDir, contentRoot);
-                    const scenePath = path.join(resolvedContentRoot, defaultScene);
+                    const projectDir = nodePath.dirname(projectPath);
+                    const resolvedContentRoot = nodePath.resolve(projectDir, contentRoot);
+                    const scenePath = nodePath.join(resolvedContentRoot, defaultScene);
 
                     if (!fs.existsSync(scenePath)) continue;
 
-                    // Set content root and load scene
-                    this.addon.setContentRoot(resolvedContentRoot);
-                    this.addon.loadScene(scenePath);
+                    await this.client.setContentRoot(resolvedContentRoot);
+                    await this.client.loadScene(scenePath);
                     this.sceneTree.refresh();
-
-                    console.log(`[Viewport] Auto-loaded: ${scenePath} (content: ${resolvedContentRoot})`);
                     return;
                 }
             }
-            console.log('[Viewport] No .uzproject found in workspace — empty viewport');
-        } catch (e) {
-            console.warn('[Viewport] Auto-load failed:', e);
+        } catch {
+            // Auto-load is best-effort; ignore all errors.
         }
     }
 
     /// Recursively finds files with a given extension up to maxDepth.
     private findFiles(dir: string, ext: string, maxDepth: number): string[] {
         if (maxDepth <= 0) return [];
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
         const fs = require('fs') as typeof import('fs');
-        const path = require('path') as typeof import('path');
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const nodePath = require('path') as typeof import('path');
         const results: string[] = [];
         try {
             for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-                const full = path.join(dir, entry.name);
+                const full = nodePath.join(dir, entry.name);
                 if (entry.isFile() && entry.name.endsWith(ext)) {
                     results.push(full);
-                } else if (entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules') {
+                } else if (
+                    entry.isDirectory() &&
+                    !entry.name.startsWith('.') &&
+                    entry.name !== 'node_modules'
+                ) {
                     results.push(...this.findFiles(full, ext, maxDepth - 1));
                 }
             }
@@ -351,8 +329,10 @@ export class ViewportPanel {
         return results;
     }
 
+    // ── Private — HTML ────────────────────────────────────────────────────────
+
+    /// Returns the complete inline HTML for the WebviewPanel.
     private buildHtml(): string {
-        // Content Security Policy: only inline scripts, no external resources.
         const csp = [
             "default-src 'none'",
             "style-src 'unsafe-inline'",
@@ -437,16 +417,13 @@ export class ViewportPanel {
         outline: none;
     }
 
-    /* Canvas fills the container and is the render target for decoded frames. */
     #viewport-canvas {
         display: block;
         width: 100%;
         height: 100%;
-        /* Nearest-neighbour scaling keeps pixel-perfect look for non-native res. */
         image-rendering: pixelated;
     }
 
-    /* Overlay shown while waiting for the first decoded video frame. */
     #viewport-overlay {
         position: absolute;
         inset: 0;
@@ -493,7 +470,6 @@ export class ViewportPanel {
     <span id="stats">-- FPS</span>
 </div>
 
-<!-- Viewport: canvas receives H.264 frames; overlay fades once decoding starts. -->
 <div id="viewport-container" tabindex="0">
     <canvas id="viewport-canvas"></canvas>
     <div id="viewport-overlay">
@@ -509,12 +485,10 @@ export class ViewportPanel {
 
     const vscode = acquireVsCodeApi();
 
-    // ── Canvas / 2-D context ────────────────────────────────────────────────
     const canvas  = /** @type {HTMLCanvasElement} */ (document.getElementById('viewport-canvas'));
     const overlay = document.getElementById('viewport-overlay');
     const ctx2d   = canvas.getContext('2d');
 
-    // Track whether we have ever drawn a frame (to hide the overlay once).
     var firstFrameDrawn = false;
 
     function onFirstFrame() {
@@ -523,67 +497,43 @@ export class ViewportPanel {
         if (overlay) overlay.classList.add('hidden');
     }
 
-    // ── WebCodecs capability detection ──────────────────────────────────────
-    // Detect whether the current webview context supports the WebCodecs API.
-    // VSCode's webview runs on the embedded Electron/Chromium renderer, so
-    // VideoDecoder is normally available, but older VSCode versions may not
-    // expose it.  When absent, we fall back to JPEG image decoding.
     var hasWebCodecs = (typeof VideoDecoder !== 'undefined');
-
-    // Flag switched to true if configure() throws, so we degrade gracefully
-    // within a session even if VideoDecoder is technically present.
     var usingJpegFallback = !hasWebCodecs;
-
-    // ── WebCodecs VideoDecoder ───────────────────────────────────────────────
-    // A null decoder means we are waiting for the 'init' message.
     var decoder = null;
 
-    /**
-     * Initialise (or re-initialise) the VideoDecoder with the SPS/PPS
-     * extradata from the encoder.
-     *
-     * @param {Uint8Array} extradata  Raw AVCC/Annex-B SPS+PPS bytes.
-     */
     function initDecoder(extradata) {
-        if (usingJpegFallback) return; // JPEG mode — VideoDecoder not used.
+        if (usingJpegFallback) return;
 
-        // Close any previous decoder before creating a new one.
         if (decoder !== null) {
             try { decoder.close(); } catch (_) {}
             decoder = null;
         }
 
-        // Size the canvas to match the encode resolution (1280x720 default).
-        // The CSS makes it fill the container regardless of the intrinsic size.
         canvas.width  = 1280;
         canvas.height = 720;
 
         decoder = new VideoDecoder({
             output: function (frame) {
-                // Draw the decoded VideoFrame onto the 2-D canvas.
                 ctx2d.drawImage(frame, 0, 0, canvas.width, canvas.height);
                 frame.close();
                 onFirstFrame();
             },
             error: function (e) {
                 console.error('[UzEngine] VideoDecoder error:', e);
-                // On error, reset so the next 'init' message can recover.
                 decoder = null;
             },
         });
 
         try {
             decoder.configure({
-                codec: 'avc1.42E01F',   // H.264 Baseline Level 3.1
+                codec: 'avc1.42E01F',
                 codedWidth:  canvas.width,
                 codedHeight: canvas.height,
-                description: extradata, // SPS/PPS as AVCC extra data
+                description: extradata,
                 hardwareAcceleration: 'prefer-hardware',
                 optimizeForLatency: true,
             });
         } catch (configErr) {
-            // configure() threw (unsupported codec profile, hardware restriction, etc.)
-            // Switch permanently to JPEG fallback for this session.
             console.warn('[UzEngine] VideoDecoder.configure() failed, switching to JPEG fallback:', configErr);
             try { decoder.close(); } catch (_) {}
             decoder = null;
@@ -591,66 +541,39 @@ export class ViewportPanel {
         }
     }
 
-    // ── JPEG fallback ────────────────────────────────────────────────────────
-    // When WebCodecs is unavailable or configure() failed, the extension host
-    // sends { type: 'jpeg', data: <base64 string> } messages instead of
-    // H.264 NAL units.  We decode them by assigning a data URL to an <img>
-    // element and blitting the result onto the canvas.
     var jpegImg = new Image();
     jpegImg.onload = function () {
         ctx2d.drawImage(jpegImg, 0, 0, canvas.width, canvas.height);
         onFirstFrame();
     };
 
-    // ── Toolbar gizmo mode buttons ──────────────────────────────────────────
     var gizmoGroup = ['btn-translate', 'btn-rotate', 'btn-scale'];
     var spaceGroup  = ['btn-local', 'btn-world'];
 
     function setActiveInGroup(groupIds, clickedId) {
         groupIds.forEach(function (id) {
             var el = document.getElementById(id);
-            if (el) {
-                el.classList.toggle('active', id === clickedId);
-            }
+            if (el) el.classList.toggle('active', id === clickedId);
         });
     }
 
     gizmoGroup.forEach(function (id) {
         var el = document.getElementById(id);
-        if (el) {
-            el.addEventListener('click', function () { setActiveInGroup(gizmoGroup, id); });
-        }
+        if (el) el.addEventListener('click', function () { setActiveInGroup(gizmoGroup, id); });
     });
     spaceGroup.forEach(function (id) {
         var el = document.getElementById(id);
-        if (el) {
-            el.addEventListener('click', function () { setActiveInGroup(spaceGroup, id); });
-        }
+        if (el) el.addEventListener('click', function () { setActiveInGroup(spaceGroup, id); });
     });
 
-    // ── Focus tracking ───────────────────────────────────────────────────────
-    // Only forward keyboard events while the viewport container is focused.
-    // The container has tabindex="0" so it can receive focus.
     var container = document.getElementById('viewport-container');
     var viewportFocused = false;
 
-    container.addEventListener('focus', function () {
-        viewportFocused = true;
-    });
-    container.addEventListener('blur', function () {
-        viewportFocused = false;
-    });
+    container.addEventListener('focus', function () { viewportFocused = true; });
+    container.addEventListener('blur',  function () { viewportFocused = false; });
 
-    // ── Pointer lock helpers ─────────────────────────────────────────────────
-    // Right-click acquires pointer lock for camera orbit (relative deltas).
-    // Releasing right-click exits pointer lock.
     canvas.addEventListener('mousedown', function (e) {
-        if (e.button === 2) {
-            // Acquire pointer lock for camera orbit — browser suppresses
-            // absolute position while locked and we send movement deltas.
-            canvas.requestPointerLock();
-        }
-        // Ensure the container is focused so keyboard input routes here.
+        if (e.button === 2) canvas.requestPointerLock();
         container.focus();
         vscode.postMessage({ type: 'mouseButton', button: e.button, pressed: true });
         e.preventDefault();
@@ -663,19 +586,12 @@ export class ViewportPanel {
         vscode.postMessage({ type: 'mouseButton', button: e.button, pressed: false });
     });
 
-    // Suppress the browser context menu on right-click.
-    canvas.addEventListener('contextmenu', function (e) {
-        e.preventDefault();
-    });
+    canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
 
-    // ── Mouse move ───────────────────────────────────────────────────────────
-    // When pointer is locked, send relative deltas (camera orbit).
-    // Otherwise, send absolute canvas-relative position.
     document.addEventListener('mousemove', function (e) {
         if (document.pointerLockElement === canvas) {
             vscode.postMessage({ type: 'mouseDelta', dx: e.movementX, dy: e.movementY });
         } else if (viewportFocused) {
-            // e.offsetX/Y on the canvas give canvas-local coordinates.
             vscode.postMessage({ type: 'mouseMove', x: e.offsetX, y: e.offsetY });
         }
     });
@@ -685,9 +601,6 @@ export class ViewportPanel {
         e.preventDefault();
     }, { passive: false });
 
-    // Use event.code (layout-independent) instead of keyCode.
-    // Events are only forwarded while the viewport has focus so they don't
-    // interfere with text input elsewhere in VSCode.
     document.addEventListener('keydown', function (e) {
         if (!viewportFocused) return;
         vscode.postMessage({
@@ -709,27 +622,19 @@ export class ViewportPanel {
         });
     });
 
-    // ── Message handler ─────────────────────────────────────────────────────
     window.addEventListener('message', function (event) {
         var msg = event.data;
 
         if (msg.type === 'init') {
-            // SPS/PPS extradata — configure the VideoDecoder (no-op in JPEG mode).
             if (!usingJpegFallback) {
                 var extradataArray = new Uint8Array(msg.extradata);
                 initDecoder(extradataArray);
             }
-
         } else if (msg.type === 'frame') {
-            // Encoded H.264 NAL unit — feed to the VideoDecoder.
-            // Silently ignored in JPEG fallback mode.
             if (usingJpegFallback) return;
             if (decoder === null || decoder.state === 'closed') return;
             try {
-                // Determine chunk type: IDR NAL type (5) = key frame, else delta.
                 var nalData = msg.data;
-                // NAL unit type is in the lower 5 bits of the first byte.
-                // For Annex-B streams, skip the start code (00 00 00 01 or 00 00 01).
                 var startOffset = 0;
                 if (nalData[0] === 0 && nalData[1] === 0 && nalData[2] === 0 && nalData[3] === 1) {
                     startOffset = 4;
@@ -741,20 +646,15 @@ export class ViewportPanel {
 
                 var chunk = new EncodedVideoChunk({
                     type: isKeyFrame ? 'key' : 'delta',
-                    timestamp: performance.now() * 1000, // microseconds
+                    timestamp: performance.now() * 1000,
                     data: nalData,
                 });
                 decoder.decode(chunk);
             } catch (e) {
                 console.error('[UzEngine] decode error:', e);
             }
-
         } else if (msg.type === 'jpeg') {
-            // JPEG fallback frame — used when VideoDecoder is unavailable or
-            // failed to configure.  The extension host base64-encodes the
-            // JPEG bytes and sends them here; we decode via an <img> element.
             if (!usingJpegFallback) return;
-            // Resize canvas on first JPEG frame if dimensions are provided.
             if (msg.width && msg.height) {
                 canvas.width  = msg.width;
                 canvas.height = msg.height;
@@ -763,24 +663,18 @@ export class ViewportPanel {
                 canvas.height = 720;
             }
             jpegImg.src = 'data:image/jpeg;base64,' + msg.data;
-
         } else if (msg.type === 'stats') {
             var statsEl = document.getElementById('stats');
             if (statsEl) {
-                // Build the stats string.  Optional fields (encoder, resolution)
-                // are appended only when the extension host provides them.
                 var parts = [
                     msg.fps.toFixed(0) + ' FPS',
                     msg.frameMs.toFixed(1) + ' ms',
                     msg.drawCalls + ' draw calls',
                     msg.triangles + ' tris',
                 ];
-                if (msg.encoder) {
-                    parts.push(String(msg.encoder));
-                }
-                if (msg.resolution) {
-                    parts.push(String(msg.resolution));
-                } else if (canvas.width > 0 && canvas.height > 0) {
+                if (msg.encoder)     parts.push(String(msg.encoder));
+                if (msg.resolution)  parts.push(String(msg.resolution));
+                else if (canvas.width > 0 && canvas.height > 0) {
                     parts.push(canvas.width + '\u00D7' + canvas.height);
                 }
                 statsEl.textContent = parts.join('\u2002|\u2002');
@@ -788,7 +682,6 @@ export class ViewportPanel {
         }
     });
 
-    // Signal that the WebView is ready to receive render-loop messages.
     vscode.postMessage({ type: 'ready' });
 }());
 </script>
