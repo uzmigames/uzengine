@@ -670,34 +670,31 @@ uz_frame_stats uz_render_frame(void) {
 
         if (state->frameReadback.IsInitialized()) {
             readbackCb = [state](uz::IRHICommandList* cmd) {
-                uz::RHITextureHandle ldr = state->sceneRenderer.GetLdrIntermediate();
-                if (!ldr.IsValid()) return;
+                // Capture the backbuffer (which includes editor overlays: grid,
+                // stats, gizmos) instead of the LDR intermediate (which doesn't).
+                // This ensures the H.264 stream sent to the webview shows the
+                // complete editor UI, not just the scene color.
+                uz::RHITextureHandle bb = state->swapChain->GetCurrentBackBuffer();
+                if (!bb.IsValid()) return;
 
-                // The render graph leaves the LDR intermediate in a state that
-                // depends on which post-process path ran:
-                //   CAS/FXAA active → ShaderResource
-                //   LDR_Blit path   → CopySrc
-                const uz::RHIResourceState ldrState = state->sceneRenderer.GetLdrIntermediateState();
-
-                if (ldrState != uz::RHIResourceState::CopySrc) {
-                    const uz::RHIBarrierDesc toCopySrc{
-                        .texture     = ldr,
-                        .stateBefore = ldrState,
-                        .stateAfter  = uz::RHIResourceState::CopySrc,
-                    };
-                    cmd->ResourceBarrier(&toCopySrc, 1);
-                }
-
-                state->frameReadback.CaptureFromTexture(cmd, ldr);
-
-                // Restore to ShaderResource for the next frame (matches the
-                // render graph import state).
-                const uz::RHIBarrierDesc toSrv{
-                    .texture     = ldr,
-                    .stateBefore = uz::RHIResourceState::CopySrc,
-                    .stateAfter  = uz::RHIResourceState::ShaderResource,
+                // The render graph leaves the backbuffer in Present state after
+                // the final overlay pass. Transition to CopySrc for readback.
+                const uz::RHIBarrierDesc toCopySrc{
+                    .texture     = bb,
+                    .stateBefore = uz::RHIResourceState::Present,
+                    .stateAfter  = uz::RHIResourceState::CopySrc,
                 };
-                cmd->ResourceBarrier(&toSrv, 1);
+                cmd->ResourceBarrier(&toCopySrc, 1);
+
+                state->frameReadback.CaptureFromTexture(cmd, bb);
+
+                // Transition back to Present for SwapChain::Present().
+                const uz::RHIBarrierDesc toPresent{
+                    .texture     = bb,
+                    .stateBefore = uz::RHIResourceState::CopySrc,
+                    .stateAfter  = uz::RHIResourceState::Present,
+                };
+                cmd->ResourceBarrier(&toPresent, 1);
             };
         }
 
