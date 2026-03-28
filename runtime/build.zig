@@ -796,6 +796,12 @@ pub fn build(b: *std.Build) void {
         dll_mod.addIncludePath(b.path("engine/rhi/vulkan"));
         dll_mod.addIncludePath(b.path(tp ++ "d3d12ma/src"));
 
+        // Component serializers compiled directly into DLL (not from static lib)
+        // to preserve static initializers for auto-registration.
+        // Without this, environment components (sky_atmosphere, sky_light,
+        // height_fog, volumetric_clouds, etc.) are stripped by the linker.
+        addCppDir(dll_mod, b, "engine/ecs/environment", dll_cpp_flags);
+
         // runtime.lib — C++ internals referenced by runtime.cpp.
         // lld-link uses the DLL's own runtime.cpp object for uz_* definitions
         // and extracts other members from this archive to satisfy remaining

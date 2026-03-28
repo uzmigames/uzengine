@@ -559,11 +559,18 @@ export class SceneEditorProvider implements vscode.CustomTextEditorProvider {
 
     // ── Input forwarding on canvas ────────────────────────────────────────
     var viewportFocused = false;
+    // Virtual mouse position — accumulates pointer-lock deltas so the
+    // runtime's delta calculation (mouseX - prevMouseX) works correctly.
+    var virtualMouseX = 0, virtualMouseY = 0;
     canvas.addEventListener('focus', function () { viewportFocused = true; });
     canvas.addEventListener('blur',  function () { viewportFocused = false; });
 
     canvas.addEventListener('mousedown', function (e) {
-        if (e.button === 2) canvas.requestPointerLock();
+        if (e.button === 2) {
+            virtualMouseX = e.offsetX;
+            virtualMouseY = e.offsetY;
+            canvas.requestPointerLock();
+        }
         canvas.focus();
         vscode.postMessage({ type: 'mouseButton', button: e.button, pressed: true });
         e.preventDefault();
@@ -576,7 +583,11 @@ export class SceneEditorProvider implements vscode.CustomTextEditorProvider {
     });
     document.addEventListener('mousemove', function (e) {
         if (document.pointerLockElement === canvas) {
-            vscode.postMessage({ type: 'mouseMove', x: e.movementX, y: e.movementY });
+            // Accumulate deltas into virtual position so the runtime's
+            // per-frame delta = (mouseX - prevMouseX) produces the correct value.
+            virtualMouseX += e.movementX;
+            virtualMouseY += e.movementY;
+            vscode.postMessage({ type: 'mouseMove', x: virtualMouseX, y: virtualMouseY });
         } else if (viewportFocused) {
             vscode.postMessage({ type: 'mouseMove', x: e.offsetX, y: e.offsetY });
         }
