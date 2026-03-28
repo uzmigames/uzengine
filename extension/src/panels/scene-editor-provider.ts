@@ -581,9 +581,13 @@ export class SceneEditorProvider implements vscode.CustomTextEditorProvider {
     }, { passive: false });
     document.addEventListener('keydown', function (e) {
         vscode.postMessage({ type: 'key', keycode: e.keyCode, pressed: true });
+        e.preventDefault();
+        e.stopPropagation();
     });
     document.addEventListener('keyup', function (e) {
         vscode.postMessage({ type: 'key', keycode: e.keyCode, pressed: false });
+        e.preventDefault();
+        e.stopPropagation();
     });
 
     // ── Message handler ───────────────────────────────────────────────────
