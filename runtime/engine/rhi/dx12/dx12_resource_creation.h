@@ -146,6 +146,15 @@ void DestroyDX12Sampler(DX12Sampler& sampler,
 // Root Signature
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Function pointer type for D3D12SerializeVersionedRootSignature.
+///
+/// When the Agility SDK is loaded via CreateDeviceFactory, the system d3d12.dll's
+/// serialize function does not support SM6.6 flags. The caller can provide the
+/// Agility SDK's version from D3D12Core.dll instead.
+using PFN_SerializeVersionedRootSignature = HRESULT(WINAPI*)(
+    const D3D12_VERSIONED_ROOT_SIGNATURE_DESC*,
+    ID3DBlob**, ID3DBlob**);
+
 /// Creates the global root signature, adapting to the negotiated shader model.
 ///
 /// - SM6.6+: Uses `DIRECTLY_INDEXED` flags for bindless `ResourceDescriptorHeap[]` access.
@@ -156,11 +165,15 @@ void DestroyDX12Sampler(DX12Sampler& sampler,
 /// # Arguments
 /// * `device` — D3D12 device to create the root signature on.
 /// * `sm` — Negotiated shader model (determines root signature flags).
+/// * `serializeFn` — Optional function pointer to D3D12SerializeVersionedRootSignature
+///   from D3D12Core.dll. When `nullptr`, falls back to the system d3d12.dll version.
 ///
 /// # Returns
 /// A valid `ID3D12RootSignature*` on success (caller owns the COM reference),
 /// or `nullptr` on failure.
-[[nodiscard]] ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device, ShaderModel sm);
+[[nodiscard]] ID3D12RootSignature* CreateBindlessRootSignature(
+    ID3D12Device* device, ShaderModel sm,
+    PFN_SerializeVersionedRootSignature serializeFn = nullptr);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pipeline Creation

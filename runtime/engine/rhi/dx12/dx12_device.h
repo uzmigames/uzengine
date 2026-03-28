@@ -264,6 +264,21 @@ public:
     /// Returns the command signature for indirect dispatch calls.
     ID3D12CommandSignature* GetDispatchIndirectSignature() const { return m_dispatchIndirectSig.Get(); }
 
+    /// Function pointer type for D3D12SerializeVersionedRootSignature.
+    ///
+    /// When the Agility SDK is active, the system d3d12.dll's version of this
+    /// function does not support SM6.6 flags (e.g., DIRECTLY_INDEXED). We must
+    /// load the function from D3D12Core.dll instead.
+    using PFN_SERIALIZE_ROOT_SIG = HRESULT(WINAPI*)(
+        const D3D12_VERSIONED_ROOT_SIGNATURE_DESC*,
+        ID3DBlob**, ID3DBlob**);
+
+    /// Returns the D3D12SerializeVersionedRootSignature function pointer.
+    ///
+    /// Uses the Agility SDK's D3D12Core.dll version if loaded, otherwise falls
+    /// back to the system d3d12.dll version linked from d3d12.lib.
+    [[nodiscard]] PFN_SERIALIZE_ROOT_SIG GetSerializeRootSignatureFn() const;
+
     /// Returns the negotiated shader model for this device.
     ///
     /// Determined during device creation by probing GPU capabilities.
@@ -316,6 +331,7 @@ public:
     TracyD3D12Ctx GetTracyGpuContext() const { return m_tracyD3D12Ctx; }
 
 private:
+    bool TryLoadAgilitySdk();
     bool EnableDebugLayer(bool gpuValidation);
     bool CreateFactory(bool validation);
     bool SelectAdapter(uint32_t adapterIndex);
@@ -335,6 +351,8 @@ private:
     ComPtr<IDXGIFactory6>          m_factory;
     ComPtr<IDXGIAdapter4>          m_adapter;
     ComPtr<ID3D12Device>           m_device;
+    ComPtr<ID3D12DeviceFactory>    m_deviceFactory;  ///< Agility SDK device factory (DLL mode).
+    HMODULE                        m_agilityCoreModule = nullptr;  ///< D3D12Core.dll handle (Agility SDK).
     D3D12MA::Allocator*            m_allocator = nullptr;
 
     ComPtr<ID3D12CommandQueue>     m_directQueue;

@@ -120,7 +120,9 @@ void DestroyDX12Sampler(DX12Sampler& sampler, DescriptorAllocator& samplerHeap) 
 ///   [2] Root CBV at b2 (per-object data)
 ///   [3] Root CBV at b4 (shadow data)
 ///   [4] SRV descriptor table at t0, space0, unbounded (textures + structured buffers)
-ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device, ShaderModel sm) {
+ID3D12RootSignature* CreateBindlessRootSignature(
+        ID3D12Device* device, ShaderModel sm,
+        PFN_SerializeVersionedRootSignature serializeFn) {
     UZ_PROFILE_FUNCTION();
     const bool bindless = (sm >= ShaderModel::SM6_6);
 
@@ -269,7 +271,23 @@ ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device, ShaderMod
 
     ComPtr<ID3DBlob> serialized;
     ComPtr<ID3DBlob> error;
-    HRESULT hr = D3D12SerializeVersionedRootSignature(&versionedDesc, &serialized, &error);
+    auto actualSerialize = serializeFn ? serializeFn : &D3D12SerializeVersionedRootSignature;
+    HRESULT hr = actualSerialize(&versionedDesc, &serialized, &error);
+
+    // Fallback: if the system d3d12.dll rejects SM6.6 flags (DIRECTLY_INDEXED),
+    // serialize WITHOUT those flags. The Agility SDK device created via
+    // CreateDeviceFactory still supports bindless ResourceDescriptorHeap[] in
+    // shaders — the root signature flags are a driver hint, not a hard requirement
+    // on most hardware. The device->CreateRootSignature will succeed because it
+    // uses the Agility SDK runtime internally.
+    if (FAILED(hr) && bindless) {
+        UZ_LOG(RHI, Warning, "Root signature serialization failed with bindless flags — "
+               "retrying without DIRECTLY_INDEXED flags (Agility SDK device factory mode)");
+        error.Reset();
+        versionedDesc.Desc_1_1.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
+        hr = actualSerialize(&versionedDesc, &serialized, &error);
+    }
+
     if (FAILED(hr)) {
         const char* errMsg = error ? static_cast<const char*>(error->GetBufferPointer()) : "unknown";
         UZ_LOG(RHI, Error, "Failed to serialize root signature: {}", errMsg);
