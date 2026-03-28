@@ -344,7 +344,7 @@ int uz_create_viewport(void* parent_hwnd, int width, int height) {
     // known validation errors (barrier state mismatches, CPU-only heap copies)
     // that the debug layer promotes to fatal CommandList::Close failures.
     // Enable manually for debugging specific issues.
-    deviceDesc.enableValidation = true;
+    deviceDesc.enableValidation = false;
     deviceDesc.enableGpuValidation = false;
     deviceDesc.adapterIndex = 0;
 
