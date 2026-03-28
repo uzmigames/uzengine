@@ -558,16 +558,28 @@ export class SceneEditorProvider implements vscode.CustomTextEditorProvider {
     });
 
     // ── Input forwarding on canvas ────────────────────────────────────────
-    canvas.addEventListener('mousemove', function (e) {
-        vscode.postMessage({ type: 'mouseMove', x: e.offsetX, y: e.offsetY });
-    });
+    var viewportFocused = false;
+    canvas.addEventListener('focus', function () { viewportFocused = true; });
+    canvas.addEventListener('blur',  function () { viewportFocused = false; });
+
     canvas.addEventListener('mousedown', function (e) {
+        if (e.button === 2) canvas.requestPointerLock();
         canvas.focus();
         vscode.postMessage({ type: 'mouseButton', button: e.button, pressed: true });
         e.preventDefault();
     });
     canvas.addEventListener('mouseup', function (e) {
+        if (e.button === 2 && document.pointerLockElement === canvas) {
+            document.exitPointerLock();
+        }
         vscode.postMessage({ type: 'mouseButton', button: e.button, pressed: false });
+    });
+    document.addEventListener('mousemove', function (e) {
+        if (document.pointerLockElement === canvas) {
+            vscode.postMessage({ type: 'mouseMove', x: e.movementX, y: e.movementY });
+        } else if (viewportFocused) {
+            vscode.postMessage({ type: 'mouseMove', x: e.offsetX, y: e.offsetY });
+        }
     });
     canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
     canvas.addEventListener('wheel', function (e) {
@@ -575,9 +587,12 @@ export class SceneEditorProvider implements vscode.CustomTextEditorProvider {
         e.preventDefault();
     }, { passive: false });
     document.addEventListener('keydown', function (e) {
+        if (!viewportFocused) return;
         vscode.postMessage({ type: 'key', keycode: e.keyCode, pressed: true });
+        e.preventDefault();
     });
     document.addEventListener('keyup', function (e) {
+        if (!viewportFocused) return;
         vscode.postMessage({ type: 'key', keycode: e.keyCode, pressed: false });
     });
 

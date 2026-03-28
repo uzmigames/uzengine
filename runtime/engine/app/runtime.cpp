@@ -760,12 +760,10 @@ uz_frame_stats uz_render_frame(void) {
     stats.fps = (frameMs > 0.0f) ? (1000.0f / frameMs) : 0.0f;
     stats.frame_ms = frameMs;
     stats.frame_index = state->frameIndex;
-    // Diagnostic: encode renderer state + entity counts in stats fields.
-    // draw_calls = (sceneRendererReady ? 10000 : 0) + total entity count
-    // triangles = mesh entities found by SyncWorldToDrawList (from scene_sync.cpp)
+    // Real stats from the renderer (entity count + mesh count as placeholder
+    // until the renderer exposes actual draw call / triangle counters).
     extern std::atomic<uint32_t> g_lastSyncMeshEntityCount;
-    stats.draw_calls = (state->sceneRendererReady ? 10000 : 0)
-        + static_cast<uint32_t>(state->world.GetRegistry().storage<entt::entity>().size());
+    stats.draw_calls = static_cast<uint32_t>(state->world.GetRegistry().storage<entt::entity>().size());
     stats.triangles = g_lastSyncMeshEntityCount.load(std::memory_order_relaxed);
 
     return stats;
