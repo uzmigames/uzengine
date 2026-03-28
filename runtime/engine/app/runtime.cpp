@@ -686,6 +686,12 @@ uz_frame_stats uz_render_frame(void) {
     // Update editor input (selection picking, gizmo interaction).
     if (state->editorInputReady) {
         state->editorInput.Update(dt);
+        // Sync selection + gizmo state to renderer for outline/gizmo passes.
+        state->sceneRenderer.SetSelectedEntity(state->selectionManager.GetSelected());
+        state->sceneRenderer.SetGizmoMode(static_cast<uint8_t>(state->editorInput.GetGizmoMode()));
+        state->sceneRenderer.SetGizmoSpace(static_cast<uint8_t>(state->editorInput.GetGizmoSpace()));
+        state->sceneRenderer.SetGizmoHoveredAxis(state->editorInput.GetGizmoHoveredAxis());
+        state->sceneRenderer.SetGizmoActiveAxis(state->editorInput.GetGizmoActiveAxis());
     }
 
     // Render the frame.
