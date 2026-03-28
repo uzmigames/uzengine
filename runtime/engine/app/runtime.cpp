@@ -23,6 +23,9 @@
 #include "scene_loader.h"
 #include "scene_renderer.h"
 #include "screenshot_capture.h"
+#include "editor_input_handler.h"
+#include "selection_manager.h"
+#include "lua_editor_api.h"
 #include "vfs.h"
 #include "lua_vm.h"
 #include "lua_scene_api.h"
@@ -148,6 +151,11 @@ struct RuntimeState {
     uz::SceneRenderer sceneRenderer;
     bool sceneRendererReady = false;
     bool editorModeRequested = false;
+
+    // Editor systems (selection, gizmos, input routing)
+    uz::SelectionManager selectionManager;
+    uz::EditorInputHandler editorInput;
+    bool editorInputReady = false;
 
     // Lua scripting
     bool luaReady = false;
@@ -421,11 +429,26 @@ int uz_create_viewport(void* parent_hwnd, int width, int height) {
         state->sceneRenderer.SetEditorMode(true);
     }
 
+    // ── Editor input (selection, gizmos) ────────────────────────────────
+    if (state->sceneRendererReady && state->editorModeRequested) {
+        state->editorInput.Init(
+            state->sceneRenderer.GetInput(), &state->selectionManager,
+            &state->sceneRenderer.GetCamera(), &state->world);
+        state->editorInput.SetSceneRenderer(&state->sceneRenderer);
+        state->editorInputReady = true;
+        UZ_LOG(RuntimeAPI, Info, "Editor input handler initialized (selection + gizmos)");
+    }
+
     // Connect Lua to the scene renderer for uz.renderer / uz.mesh / uz.texture APIs.
     if (state->sceneRendererReady && state->luaReady) {
         uz::LuaSetSceneRenderer(uz::LuaVM::GetState(), &state->sceneRenderer);
         uz::LuaSetInputSystem(uz::LuaVM::GetState(), state->sceneRenderer.GetInput());
         UZ_LOG(RuntimeAPI, Info, "Lua renderer + input API connected");
+    }
+
+    // Wire editor state into Lua for uz.editor.* APIs.
+    if (state->editorInputReady && state->luaReady) {
+        uz::LuaSetEditorState(uz::LuaVM::GetState(), &state->selectionManager, &state->editorInput);
     }
 
     // ── Screenshot capture ──────────────────────────────────────────────
@@ -658,6 +681,11 @@ uz_frame_stats uz_render_frame(void) {
     if (state->luaReady) {
         uz::LuaVM::UpdateFrameGlobals(dt, totalTime, static_cast<uint64_t>(state->frameIndex));
         uz::ScriptSystem::Update(dt);
+    }
+
+    // Update editor input (selection picking, gizmo interaction).
+    if (state->editorInputReady) {
+        state->editorInput.Update(dt);
     }
 
     // Render the frame.
