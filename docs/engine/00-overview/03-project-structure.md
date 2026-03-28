@@ -61,7 +61,7 @@ UzEngine/0.2/
 │   ├── shaders/                          # HLSL shaders (SM6.6 + SM5)
 │   ├── tests/                            # Test harness
 │   ├── thirdparty/                       # Third-party libraries
-│   │   ├── agility/                      # D3D12 Agility SDK
+│   │   ├── agility/                      # D3D12 Agility SDK (DLLs only, downloaded by setup.ps1)
 │   │   ├── dxc/                          # DirectX Shader Compiler
 │   │   └── vcpkg/                        # vcpkg-managed dependencies
 │   └── tools/                            # Build tools (uzcook, etc.)

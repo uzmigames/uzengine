@@ -15,6 +15,7 @@
 #include "stats_overlay.h"
 #include "screenshot_capture.h"
 #include "camera.h"
+#include "fps_camera_controller.h"
 #include "rhi_device.h"
 #include "rhi_command_list.h"
 #include "rhi_swapchain.h"
@@ -167,6 +168,12 @@ void VFXViewportDemo::OnInit() {
 
         auto torusData = GenerateTorus(1.0f, 0.3f, 32, 16);
         m_meshes[4] = UploadProceduralMesh(device, cmd, upload, torusData, "Torus");
+
+        for (int i = 0; i < kMeshCount; ++i) {
+            UZ_LOG(App, Info, "Mesh[{}] '{}': vbSrvIndex={}, indexCount={}, bindless={}",
+                   i, m_meshes[i].name, m_meshes[i].vbSrvIndex, m_meshes[i].indexCount,
+                   IsBindless());
+        }
     }
 
     // ── Shadow map (2048x2048 depth-only) ────────────────────────────────
@@ -182,6 +189,32 @@ void VFXViewportDemo::OnInit() {
 
     // ── Size-dependent resources (HDR target, depth buffer) ──────────────
     CreateSizeDependent(GetWidth(), GetHeight());
+
+    // ── Dummy LUT textures for sky atmosphere ray march fallback ────────
+    // The sky shader samples transmittance and multi-scattering LUTs even in
+    // the ray march fallback path (bindless mode). Provide 1x1 textures with
+    // neutral values to avoid invalid descriptor heap reads.
+    {
+        RHITextureDesc lutDesc{};
+        lutDesc.width = 1;
+        lutDesc.height = 1;
+        lutDesc.format = RHIFormat::RGBA16Float;
+        lutDesc.usage = RHITextureUsage::ShaderResource | RHITextureUsage::CopyDst;
+        lutDesc.debugName = "DummyTransmittanceLUT";
+        m_dummyTransmittanceLut = device->CreateTexture(lutDesc);
+
+        lutDesc.debugName = "DummyMultiScatterLUT";
+        m_dummyMultiScatterLut = device->CreateTexture(lutDesc);
+
+        // Upload white (1,1,1,1) for transmittance (no extinction) and
+        // black (0,0,0,0) for multi-scattering (no contribution).
+        const uint16_t kHalfOne  = 0x3C00; // IEEE 754 half-float 1.0
+        const uint16_t kHalfZero = 0x0000; // IEEE 754 half-float 0.0
+        const uint16_t whiteData[4] = { kHalfOne, kHalfOne, kHalfOne, kHalfOne };
+        const uint16_t blackData[4] = { kHalfZero, kHalfZero, kHalfZero, kHalfZero };
+        upload.UploadTexture(cmd, m_dummyTransmittanceLut, whiteData, sizeof(whiteData));
+        upload.UploadTexture(cmd, m_dummyMultiScatterLut, blackData, sizeof(blackData));
+    }
 
     // ── Pipeline creation ────────────────────────────────────────────────
     // Sky atmosphere (fullscreen triangle)
@@ -683,6 +716,7 @@ void VFXViewportDemo::OnFrame(float dt) {
 
     m_totalTime += dt;
     HandleInput(dt);
+    GetCameraController().Update(GetCamera(), *GetInput(), dt);
 
     // Begin CB ring frame
     cbRing->BeginFrame(GetFrameIndex());
@@ -1121,6 +1155,9 @@ void VFXViewportDemo::RenderShadowPass(IRHICommandList* cmd) {
         uploadShadowPerObject(Mat4::Identity());
         const auto& mesh = m_meshes[m_currentMesh];
         if (mesh.vertexBuffer.IsValid() && mesh.indexBuffer.IsValid()) {
+            if (IsBindless()) {
+                cmd->SetDescriptorIndex(kSlotRootConstants, mesh.vbSrvIndex);
+            }
             cmd->SetVertexBuffer(0, mesh.vertexBuffer);
             cmd->SetIndexBuffer(mesh.indexBuffer, RHIIndexFormat::Uint32);
             cmd->DrawIndexed(mesh.indexCount);
@@ -1133,6 +1170,9 @@ void VFXViewportDemo::RenderShadowPass(IRHICommandList* cmd) {
 
         const auto& sphereMesh = m_meshes[0];
         if (sphereMesh.vertexBuffer.IsValid() && sphereMesh.indexBuffer.IsValid()) {
+            if (IsBindless()) {
+                cmd->SetDescriptorIndex(kSlotRootConstants, sphereMesh.vbSrvIndex);
+            }
             cmd->SetVertexBuffer(0, sphereMesh.vertexBuffer);
             cmd->SetIndexBuffer(sphereMesh.indexBuffer, RHIIndexFormat::Uint32);
 
@@ -1141,6 +1181,19 @@ void VFXViewportDemo::RenderShadowPass(IRHICommandList* cmd) {
                     Mat4::Translation(Vec3(kRefPositionX[i], 0.0f, kRefPositionZ)));
                 cmd->DrawIndexed(sphereMesh.indexCount);
             }
+        }
+
+        // ── Draw ground plane into shadow map ──
+        const auto& planeMesh = m_meshes[2]; // index 2 = plane
+        if (planeMesh.vertexBuffer.IsValid() && planeMesh.indexBuffer.IsValid()) {
+            if (IsBindless()) {
+                cmd->SetDescriptorIndex(kSlotRootConstants, planeMesh.vbSrvIndex);
+            }
+            cmd->SetVertexBuffer(0, planeMesh.vertexBuffer);
+            cmd->SetIndexBuffer(planeMesh.indexBuffer, RHIIndexFormat::Uint32);
+            constexpr float kHalfPi = 3.14159265f * 0.5f;
+            uploadShadowPerObject(Mat4::Scaling(Vec3(20.0f, 1.0f, 20.0f)) * Mat4::RotationX(kHalfPi) * Mat4::Translation(Vec3(0.0f, 0.0f, -0.1f)));
+            cmd->DrawIndexed(planeMesh.indexCount);
         }
     }
 
@@ -1208,6 +1261,73 @@ void VFXViewportDemo::RenderSkyPass(IRHICommandList* cmd, uint64_t perFrameGpu) 
 
     cmd->SetPipeline(m_skyPSO);
     cmd->SetRootCBV(kSlotPerFrame, perFrameGpu);
+
+    // ── Set SkyIndices root constants (b0) — depth + LUT bindless indices ──
+    // The sky shader reads depth from ResourceDescriptorHeap[depthIdx] to skip
+    // geometry pixels. Dummy 1x1 LUTs provide neutral values for the ray march
+    // fallback (transmittance=1, multi-scatter=0). scatteringLut3DIdx=0xFFFFFFFF
+    // triggers the ray march path instead of the precomputed 3D LUT path.
+    {
+        const uint32_t depthSrv = GetDevice()->GetTextureSRVIndex(m_depthBuffer);
+        const uint32_t transmittanceSrv = GetDevice()->GetTextureSRVIndex(m_dummyTransmittanceLut);
+        const uint32_t multiScatterSrv  = GetDevice()->GetTextureSRVIndex(m_dummyMultiScatterLut);
+        const uint32_t skyIndices[6] = {
+            depthSrv,           // depthIdx
+            transmittanceSrv,   // transmittanceLutIdx (1x1 white = no extinction)
+            multiScatterSrv,    // multiScatteringLutIdx (1x1 black = no multi-scatter)
+            UINT32_MAX,         // apVolumeSrvIdx (none)
+            UINT32_MAX,         // scatteringLut3DIdx (none → triggers ray march fallback)
+            UINT32_MAX          // irradianceLutIdx (none)
+        };
+        cmd->SetRootConstants(kSlotRootConstants, skyIndices, 6);
+    }
+
+    // ── Fill SkyAtmosphereCB with Earth-default atmosphere parameters (b2) ──
+    // Values from SkyAtmosphereComponent defaults and atmosphere_renderer.cpp
+    // ozone tent calculation.
+    {
+        SkyAtmosphereCB skyCB{};
+
+        // Rayleigh: xyz = scattering coefficients (km^-1), w = scale height (km)
+        skyCB.rayleighScattering = {5.802e-3f, 13.558e-3f, 33.1e-3f, 8.0f};
+
+        // Mie: x = coefficient (km^-1), y = anisotropy g, z = scale height (km)
+        skyCB.mieScattering = {3.996e-3f, 0.8f, 1.2f, 0.0f};
+
+        // Ground reflectance
+        skyCB.groundAlbedo = {0.4f, 0.4f, 0.4f, 0.0f};
+
+        // Sun: xyz = illuminance color, w = angular radius (rad)
+        skyCB.sunIlluminance = {20.0f, 20.0f, 20.0f, 0.00872665f};
+
+        skyCB.bottomRadiusKm       = 6360.0f;
+        skyCB.atmosphereHeightKm   = 60.0f;
+        skyCB.sunDiskIntensity     = 1.0f;
+        skyCB.multiScatteringFactor = 1.0f;
+        skyCB.rayleighScatteringScale = 1.0f;
+        skyCB.mieScatteringScale   = 1.0f;
+        skyCB.mieAbsorptionScale   = 1.0f;
+        skyCB.mieAbsorption        = 4.44e-4f;
+        skyCB.skyLuminanceFactor   = {1.0f, 1.0f, 1.0f, 1.0f};
+
+        // Ozone tent distribution — piecewise-linear coefficients
+        // from atmosphere_renderer.cpp: tipAltitude=25km, tipValue=1.0, width=15km
+        constexpr float kOzoneTipAlt = 25.0f;
+        constexpr float kOzoneTipVal = 1.0f;
+        constexpr float kOzoneWidth  = 15.0f;
+        constexpr float kOzoneSlope  = kOzoneTipVal / kOzoneWidth; // 1/15 = 0.06667
+
+        skyCB.ozoneAbsorption = {0.000650f, 0.001881f, 0.000085f, kOzoneTipAlt};
+        skyCB.ozoneLinTerm0   =  kOzoneSlope;                              //  1/15
+        skyCB.ozoneConstTerm0 = kOzoneTipVal - kOzoneTipAlt * kOzoneSlope; // 1 - 25/15 = -0.6667
+        skyCB.ozoneLinTerm1   = -kOzoneSlope;                              // -1/15
+        skyCB.ozoneConstTerm1 = kOzoneTipVal - kOzoneTipAlt * (-kOzoneSlope); // 1 + 25/15 = 2.6667
+
+        auto* cbRing = GetCBRing();
+        auto skyAlloc = cbRing->Allocate(sizeof(SkyAtmosphereCB));
+        std::memcpy(skyAlloc.cpuPtr, &skyCB, sizeof(SkyAtmosphereCB));
+        cmd->SetRootCBV(kSlotPerObject, skyAlloc.gpuAddr);
+    }
 
     // Fullscreen triangle (3 vertices, no vertex buffer)
     cmd->Draw(3, 1, 0, 0);
@@ -1290,6 +1410,9 @@ void VFXViewportDemo::RenderScenePass(IRHICommandList* cmd, uint64_t perFrameGpu
     // Draw the current mesh
     const auto& mesh = m_meshes[m_currentMesh];
     if (mesh.vertexBuffer.IsValid() && mesh.indexBuffer.IsValid()) {
+        if (IsBindless()) {
+            cmd->SetDescriptorIndex(kSlotRootConstants, mesh.vbSrvIndex);
+        }
         cmd->SetVertexBuffer(0, mesh.vertexBuffer);
         cmd->SetIndexBuffer(mesh.indexBuffer, RHIIndexFormat::Uint32);
         cmd->DrawIndexed(mesh.indexCount);
@@ -1304,6 +1427,9 @@ void VFXViewportDemo::RenderScenePass(IRHICommandList* cmd, uint64_t perFrameGpu
 
     const auto& sphereMesh = m_meshes[0]; // index 0 = sphere (first generated in OnInit)
     if (sphereMesh.vertexBuffer.IsValid() && sphereMesh.indexBuffer.IsValid()) {
+        if (IsBindless()) {
+            cmd->SetDescriptorIndex(kSlotRootConstants, sphereMesh.vbSrvIndex);
+        }
         cmd->SetVertexBuffer(0, sphereMesh.vertexBuffer);
         cmd->SetIndexBuffer(sphereMesh.indexBuffer, RHIIndexFormat::Uint32);
 
@@ -1317,7 +1443,7 @@ void VFXViewportDemo::RenderScenePass(IRHICommandList* cmd, uint64_t perFrameGpu
             refObj.emissiveIndex  = 0;
 
             refObj.model        = Mat4::Translation(Vec3(kRefPositionX[i], 0.0f, kRefPositionZ));
-            refObj.normalMatrix = Mat4::Identity(); // Translation-only — normals unaffected
+            refObj.normalMatrix = Mat4::Identity();
 
             refObj.baseColorTintR      = 1.0f;
             refObj.baseColorTintG      = 1.0f;
@@ -1330,6 +1456,46 @@ void VFXViewportDemo::RenderScenePass(IRHICommandList* cmd, uint64_t perFrameGpu
             cmd->SetRootCBV(kSlotPerObject, refAlloc.gpuAddr);
 
             cmd->DrawIndexed(sphereMesh.indexCount);
+        }
+    }
+
+    // ── Draw ground plane ──
+    {
+        const auto& planeMesh = m_meshes[2]; // index 2 = plane
+        if (planeMesh.vertexBuffer.IsValid() && planeMesh.indexBuffer.IsValid()) {
+            if (IsBindless()) {
+                cmd->SetDescriptorIndex(kSlotRootConstants, planeMesh.vbSrvIndex);
+            }
+            cmd->SetVertexBuffer(0, planeMesh.vertexBuffer);
+            cmd->SetIndexBuffer(planeMesh.indexBuffer, RHIIndexFormat::Uint32);
+
+            PerObjectCB groundObj{};
+            groundObj.albedoIndex    = 0;
+            groundObj.normalIndex    = 0;
+            groundObj.roughnessIndex = 0;
+            groundObj.metallicIndex  = 0;
+            groundObj.aoIndex        = 0;
+            groundObj.emissiveIndex  = 0;
+
+            constexpr float kHalfPi = 3.14159265f * 0.5f;
+            groundObj.model        = Mat4::Scaling(Vec3(20.0f, 1.0f, 20.0f)) * Mat4::RotationX(kHalfPi) * Mat4::Translation(Vec3(0.0f, 0.0f, -0.1f));
+            groundObj.normalMatrix = Mat4::RotationX(kHalfPi); // Rotation only for normals
+
+            groundObj.baseColorTintR      = 0.15f;
+            groundObj.baseColorTintG      = 0.15f;
+            groundObj.baseColorTintB      = 0.15f;
+            groundObj.roughnessMultiplier = 0.95f;
+            groundObj.metallicMultiplier  = 0.0f;
+            groundObj.emissiveColorR      = 0.0f;
+            groundObj.emissiveColorG      = 0.0f;
+            groundObj.emissiveColorB      = 0.0f;
+            groundObj.emissiveIntensity   = 0.0f;
+
+            auto groundAlloc = cbRing->Allocate(sizeof(PerObjectCB));
+            std::memcpy(groundAlloc.cpuPtr, &groundObj, sizeof(PerObjectCB));
+            cmd->SetRootCBV(kSlotPerObject, groundAlloc.gpuAddr);
+
+            cmd->DrawIndexed(planeMesh.indexCount);
         }
     }
 
@@ -1784,6 +1950,10 @@ void VFXViewportDemo::OnShutdown() {
     if (m_distortionResolvePSO.IsValid()) { device->DestroyPipeline(m_distortionResolvePSO); m_distortionResolvePSO = {}; }
 
     DestroySizeDependent();
+
+    // Destroy dummy sky LUT textures
+    if (m_dummyTransmittanceLut.IsValid()) { device->DestroyTexture(m_dummyTransmittanceLut); m_dummyTransmittanceLut = {}; }
+    if (m_dummyMultiScatterLut.IsValid()) { device->DestroyTexture(m_dummyMultiScatterLut); m_dummyMultiScatterLut = {}; }
 
     // Destroy loaded PBR textures
     if (m_albedoTex.IsValid()) { device->DestroyTexture(m_albedoTex); m_albedoTex = {}; }

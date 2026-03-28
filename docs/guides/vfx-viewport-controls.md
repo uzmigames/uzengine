@@ -3,7 +3,7 @@ title: VFX Viewport Controls Reference
 category: guide
 theme: editor
 created: 2026-03-26
-updated: 2026-03-26
+updated: 2026-03-27
 status: active
 author: claude
 -->
@@ -27,7 +27,7 @@ The VFX Viewport demo (`demos/vfx_viewport`) is a standalone DX12 application fo
 | Scroll wheel | Dolly forward/back |
 | Ctrl + Scroll | Adjust FOV (30°-120°) |
 
-Default camera position: (3, 5, 2), yaw=-135°, pitch=-20°, move speed=15 units/sec.
+Default camera position: (0, -40, 25), yaw=90°, pitch=-30°, move speed=15 units/sec.
 
 ## Mesh & Material Controls
 

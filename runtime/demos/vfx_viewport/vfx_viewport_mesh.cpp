@@ -505,7 +505,7 @@ ProceduralMesh UploadProceduralMesh(IRHIDevice* device,
         RHIBufferDesc desc{};
         desc.sizeBytes = data.vertices.size() * sizeof(ProceduralVertex);
         desc.stride = sizeof(ProceduralVertex);
-        desc.usage = RHIBufferUsage::VertexBuffer | RHIBufferUsage::CopyDst;
+        desc.usage = RHIBufferUsage::VertexBuffer | RHIBufferUsage::StructuredBuffer | RHIBufferUsage::CopyDst;
         desc.memory = RHIMemoryType::Default;
         desc.debugName = name;
 
@@ -513,6 +513,7 @@ ProceduralMesh UploadProceduralMesh(IRHIDevice* device,
         upload.UploadBuffer(cmdList, result.vertexBuffer,
                             data.vertices.data(),
                             desc.sizeBytes);
+        result.vbSrvIndex = device->GetBufferSRVIndex(result.vertexBuffer);
     }
 
     // Create index buffer

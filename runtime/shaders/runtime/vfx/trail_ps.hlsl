@@ -43,7 +43,18 @@
 
 /// Root constants at b0 — per-draw-call trail parameters.
 /// The PS reads softDepthRange, alphaClipThreshold, and bindless SRV indices.
-ConstantBuffer<TrailRootConstants> trailConstants : register(b0);
+/// Expanded inline for SM5.0 compatibility (cbuffer syntax required by DX11).
+/// Layout MUST match TrailRootConstants in trail_common.hlsli exactly.
+cbuffer TrailRootCB : register(b0) {
+    float uvScrollRate;        ///< U-axis scroll speed (VS-only, declared for layout).
+    float softDepthRange;      ///< Soft-fade radius in metres. 0 = disabled.
+    float alphaClipThreshold;  ///< Alpha discard threshold [0, 1].
+    uint  trailTexSrvIndex;    ///< Bindless SRV index for trail texture (0xFFFFFFFF = none).
+    uint  depthBufferSrvIndex; ///< Bindless SRV index for scene depth buffer.
+    uint  _cbPad0;
+    uint  _cbPad1;
+    uint  _cbPad2;
+};
 
 /// Per-frame constant buffer at b1 — standard engine layout.
 /// The PS reads nearPlane and farPlane for depth linearization.
@@ -154,8 +165,8 @@ float4 main(TrailVSOutput input) : SV_Target0 {
     float4 texSample;
 
 #ifdef UZ_BINDLESS
-    if (trailConstants.trailTexSrvIndex != 0xFFFFFFFF) {
-        Texture2D<float4> trailTex = ResourceDescriptorHeap[trailConstants.trailTexSrvIndex];
+    if (trailTexSrvIndex != 0xFFFFFFFF) {
+        Texture2D<float4> trailTex = ResourceDescriptorHeap[trailTexSrvIndex];
         texSample = trailTex.Sample(linearSampler, input.uv);
     } else {
         texSample = float4(1.0, 1.0, 1.0, 1.0);
@@ -172,14 +183,14 @@ float4 main(TrailVSOutput input) : SV_Target0 {
     // ── Step 3: Soft-particle depth fade (optional) ───────────────────────────
     // Branch on the root constant value — constant across the draw call so
     // this is a uniform branch (no divergence across warps/waves in practice).
-    if (trailConstants.softDepthRange > 0.0f) {
+    if (softDepthRange > 0.0f) {
 #ifdef UZ_BINDLESS
-        Texture2D<float> depthTex = ResourceDescriptorHeap[trailConstants.depthBufferSrvIndex];
+        Texture2D<float> depthTex = ResourceDescriptorHeap[depthBufferSrvIndex];
 #else
         Texture2D<float> depthTex = sceneDepth;
 #endif
         float softFade = ComputeSoftDepthFade(input.positionCS, input.linearDepth,
-                                              trailConstants.softDepthRange, depthTex);
+                                              softDepthRange, depthTex);
         finalColor.a *= softFade;
     }
 
@@ -188,7 +199,7 @@ float4 main(TrailVSOutput input) : SV_Target0 {
     // and to preserve the depth pre-pass benefit for opaque regions of the trail.
     // The threshold is intentionally tiny (default ~1/255) to catch numerical
     // near-zeros from texture border sampling without cutting visible trail edges.
-    if (finalColor.a < trailConstants.alphaClipThreshold) {
+    if (finalColor.a < alphaClipThreshold) {
         discard;
     }
 

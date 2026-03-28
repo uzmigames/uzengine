@@ -31,7 +31,18 @@
 /// Root constants at b0 — per-draw-call trail parameters.
 /// Only uvScrollRate is consumed by the VS; the remaining fields are PS-only
 /// but must be declared for correct layout (they share root param 0).
-ConstantBuffer<TrailRootConstants> trailConstants : register(b0);
+/// Expanded inline for SM5.0 compatibility (cbuffer syntax required by DX11).
+/// Layout MUST match TrailRootConstants in trail_common.hlsli exactly.
+cbuffer TrailRootCB : register(b0) {
+    float uvScrollRate;        ///< U-axis scroll speed (UV-units/second).
+    float softDepthRange;      ///< Soft-fade radius in metres. 0 = disabled.
+    float alphaClipThreshold;  ///< Alpha discard threshold [0, 1].
+    uint  trailTexSrvIndex;    ///< Bindless SRV index for trail texture (0xFFFFFFFF = none).
+    uint  depthBufferSrvIndex; ///< Bindless SRV index for scene depth buffer.
+    uint  _cbPad0;
+    uint  _cbPad1;
+    uint  _cbPad2;
+};
 
 /// Per-frame constant buffer at b1 — standard engine layout.
 /// The VS reads viewProj (for world->clip transform) and timeParams.x
@@ -80,7 +91,7 @@ TrailVSOutput main(TrailVertex input) {
     // V (ribbon width axis) is passed through unmodified.
     // timeParams.x = totalTime from PerFrameCB.
     output.uv = float2(
-        input.uv.x + timeParams.x * trailConstants.uvScrollRate, // U: scroll along trail
+        input.uv.x + timeParams.x * uvScrollRate, // U: scroll along trail
         input.uv.y                                                 // V: width, no scroll
     );
 

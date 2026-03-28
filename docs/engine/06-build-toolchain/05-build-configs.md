@@ -63,7 +63,7 @@ The engine declares the Agility SDK version via an exported symbol in `dx12_agil
 
 ```cpp
 extern "C" {
-    __declspec(dllexport) extern const unsigned int D3D12SDKVersion = 614;
+    __declspec(dllexport) extern const unsigned int D3D12SDKVersion = 619;
     __declspec(dllexport) extern const char* D3D12SDKPath = ".\\D3D12\\";
 }
 ```

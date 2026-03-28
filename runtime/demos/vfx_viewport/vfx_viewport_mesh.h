@@ -57,6 +57,7 @@ struct ProceduralMesh {
     RHIBufferHandle indexBuffer;   ///< GPU index buffer handle.
     uint32_t indexCount = 0;       ///< Number of indices (for DrawIndexed).
     uint32_t vertexStride = 0;     ///< Vertex stride in bytes (sizeof(ProceduralVertex)).
+    uint32_t vbSrvIndex = UINT32_MAX; ///< Bindless SRV index for vertex buffer (SM6.6 ResourceDescriptorHeap).
     const char* name = "";         ///< Human-readable name for debug overlay.
 };
 

@@ -189,6 +189,10 @@ private:
     uint32_t m_normalSrvIndex  = UINT32_MAX;  ///< Bindless SRV index for loaded normal texture.
     uint32_t m_roughnessSrvIndex = UINT32_MAX; ///< Bindless SRV index for loaded roughness texture.
 
+    // ── Sky dummy LUTs (1x1 textures for ray march fallback) ──────────
+    RHITextureHandle m_dummyTransmittanceLut;   ///< 1x1 white RGBA16F (transmittance=1, no extinction).
+    RHITextureHandle m_dummyMultiScatterLut;    ///< 1x1 black R11G11B10F (no multi-scatter contribution).
+
     // ── Pipeline handles ────────────────────────────────────────────────
     RHIPipelineHandle m_skyPSO;
     RHIPipelineHandle m_tonemapPSO;

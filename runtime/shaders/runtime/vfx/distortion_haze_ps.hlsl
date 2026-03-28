@@ -90,16 +90,16 @@ struct PSInput {
 
 /// Per-frame constants for the procedural haze effect.
 /// Filled by the CPU each frame. 32 bytes = 8 uint32 root constants.
-struct DistortionHazeConstants {
+/// SM5.0-compatible cbuffer syntax (DX11 does not support ConstantBuffer<T> template).
+cbuffer DistortionHazeCB : register(b0) {
     float2 emitterScreenUV; ///< Emitter position in screen UV [0,1].
-    float  strength;        ///< Global distortion strength (0 = off, 1 = full).
-    float  time;            ///< Total elapsed time in seconds for animation.
-    float  radius;          ///< Falloff radius in screen UV units (e.g. 0.3 = 30% of screen).
-    float  frequency;       ///< Wave frequency for animated haze (higher = tighter ripples).
+    float  hazeStrength;    ///< Global distortion strength (0 = off, 1 = full).
+    float  hazeTime;        ///< Total elapsed time in seconds for animation.
+    float  hazeRadius;      ///< Falloff radius in screen UV units (e.g. 0.3 = 30% of screen).
+    float  hazeFrequency;   ///< Wave frequency for animated haze (higher = tighter ripples).
     float  _pad0;           ///< Padding to 16-byte alignment.
     float  _pad1;           ///< Padding to 16-byte alignment.
 };
-ConstantBuffer<DistortionHazeConstants> hazeParams : register(b0);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pixel Shader Entry Point
@@ -122,11 +122,11 @@ ConstantBuffer<DistortionHazeConstants> hazeParams : register(b0);
 /// @ref Tatarchuk 2006 "Artist-Directable Real-Time Rain" — radial distortion waves
 float4 main(PSInput input) : SV_Target {
     // ── Load parameters from root constants ──
-    float2 emitterUV = hazeParams.emitterScreenUV;
-    float  strength  = hazeParams.strength;
-    float  time      = hazeParams.time;
-    float  radius    = hazeParams.radius;
-    float  frequency = hazeParams.frequency;
+    float2 emitterUV = emitterScreenUV;
+    float  strength  = hazeStrength;
+    float  time      = hazeTime;
+    float  radius    = hazeRadius;
+    float  frequency = hazeFrequency;
 
     // ── Early out if effect is globally disabled ──
     if (strength <= 0.0f) {

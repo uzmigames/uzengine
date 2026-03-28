@@ -200,6 +200,11 @@ int DemoApplication::Run() {
             OnResize(m_width, m_height);
         }
 
+        // Snapshot input state (compute mouse deltas from last frame's position)
+        if (m_input) {
+            m_input->BeginFrame();
+        }
+
         // Delta time calculation
         auto now = std::chrono::high_resolution_clock::now();
         float dt = std::chrono::duration<float>(now - prevFrame).count();

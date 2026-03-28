@@ -3,7 +3,7 @@ title: VFX Viewport Architecture
 category: guide
 theme: rendering
 created: 2026-03-26
-updated: 2026-03-26
+updated: 2026-03-27
 status: active
 author: claude
 -->
@@ -293,7 +293,7 @@ Five preconfigured emitter templates demonstrating different VFX effects:
 
 | Preset | Colors | Velocity | Life | Animation | Effect |
 |--------|--------|----------|------|-----------|--------|
-| Fire Fountain | Red→Yellow | 0→300 cm/s upward | 1.5s | 4×4 flipbook | Warm flame effect |
+| Fire Fountain | Red→Yellow | 0→1500 cm/s upward (Z-up) | 3.0s | 1×1 (single frame) | Warm flame fountain |
 | Smoke Plume | Gray gradients | Slow rise (50 cm/s) | 3.0s | 2×2 flipbook | Dense smoke column |
 | Sparks | Bright white/yellow | High velocity radial | 0.5s | 1×1 (single) | Energetic burst |
 | Magic Orb | Blue→Purple | Orbital paths | 2.0s | 2×2 flipbook | Mystical aura |
