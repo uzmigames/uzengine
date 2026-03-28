@@ -926,6 +926,12 @@ int uz_set_component_property(uint32_t /*entity_id*/, const char* /*component_ty
 void uz_on_mouse_move(float x, float y) {
     if (!HasViewport() || !s_state->sceneRendererReady) return;
 
+    static int logCount = 0;
+    if (logCount < 5) {
+        UZ_LOG(RuntimeAPI, Info, "uz_on_mouse_move({:.1f}, {:.1f})", x, y);
+        logCount++;
+    }
+
     auto* input = s_state->sceneRenderer.GetInput();
     if (input) {
         input->OnMouseMove(x, y);
@@ -934,16 +940,18 @@ void uz_on_mouse_move(float x, float y) {
 
 void uz_on_mouse_button(int button, int pressed) {
     if (!HasViewport() || !s_state->sceneRendererReady) return;
+    UZ_LOG(RuntimeAPI, Info, "uz_on_mouse_button({}, {})", button, pressed);
 
     auto* input = s_state->sceneRenderer.GetInput();
     if (!input) return;
 
+    // Web API MouseEvent.button: 0=Left, 1=Middle, 2=Right
     uz::MouseButton btn = uz::MouseButton::Left;
     switch (button) {
         case 0: btn = uz::MouseButton::Left; break;
-        case 1: btn = uz::MouseButton::Right; break;
-        case 2: btn = uz::MouseButton::Middle; break;
-        default: return; // Unknown button — ignore.
+        case 1: btn = uz::MouseButton::Middle; break;
+        case 2: btn = uz::MouseButton::Right; break;
+        default: return;
     }
     input->OnMouseButton(btn, pressed != 0);
 }
