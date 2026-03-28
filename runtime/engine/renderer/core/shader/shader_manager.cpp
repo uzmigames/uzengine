@@ -50,9 +50,10 @@ bool ShaderManager::Init(IRHIDevice* device) {
         // Not fatal — FXC is only needed for SM5.0 path
     }
 
-    // Configure pipeline
+    // Configure pipeline — use engine dir for shader cache so it persists
+    // correctly in both standalone (CWD = project) and DLL mode (CWD = VSCode dir).
     ShaderPipeline::Config config;
-    config.cacheDir = "cache/shaders";
+    config.cacheDir = (GetExeDir() / "cache" / "shaders").string();
     config.bindless = m_bindless;
     // Backend string determines shader cache subdirectory and compilation target.
     const auto backend = GetActiveRHIBackend();
