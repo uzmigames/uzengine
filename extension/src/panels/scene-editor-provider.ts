@@ -66,16 +66,19 @@ export class SceneEditorProvider implements vscode.CustomTextEditorProvider {
         webviewPanel: vscode.WebviewPanel,
         _token: vscode.CancellationToken
     ): void {
-        // Reset all per-session state and restart the worker process.
-        // The SceneEditorProvider is a singleton — state carries over from a
-        // previous session. The worker may have a DEVICE REMOVED GPU state
-        // from the previous session, so we kill it and start fresh.
+        // Reset per-session state. Only restart the worker if a viewport was
+        // previously created (stale GPU state from a prior session). On the
+        // very first open, the worker was just spawned — restarting it causes
+        // a race condition where ensureClient's setEngineDir is rejected.
         this.sessionId++;
         const mySession = this.sessionId;
+        const needsRestart = this.viewportCreated;
         this.viewportCreated = false;
         this.renderLoopActive = false;
         this.readyInProgress = false;
-        try { this.getClient().restart(); } catch { /* no client yet */ }
+        if (needsRestart) {
+            try { this.getClient().restart(); } catch { /* no client yet */ }
+        }
 
         webviewPanel.webview.options = { enableScripts: true };
         webviewPanel.webview.html = this.buildHtml(document);
