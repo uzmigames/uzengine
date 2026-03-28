@@ -99,6 +99,54 @@ static Napi::Value SetComponentProperty(const Napi::CallbackInfo& info) {
     return Napi::Boolean::New(env, ok != 0);
 }
 
+static Napi::Value GetEntityComponents(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 1 || !info[0].IsNumber()) {
+        Napi::TypeError::New(env, "getEntityComponents(entityId: number) expected")
+            .ThrowAsJavaScriptException();
+        return env.Undefined();
+    }
+    uint32_t entityId = static_cast<uint32_t>(info[0].As<Napi::Number>().Uint32Value());
+    const char* json = uz_get_entity_components(entityId);
+    if (!json) return env.Null();
+    return Napi::String::New(env, json);
+}
+
+// ── Selection ──────────────────────────────────────────────────────────────
+
+static Napi::Value SelectEntity(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 1 || !info[0].IsNumber()) {
+        Napi::TypeError::New(env, "selectEntity(entityId: number) expected")
+            .ThrowAsJavaScriptException();
+        return env.Undefined();
+    }
+    uz_select_entity(static_cast<uint32_t>(info[0].As<Napi::Number>().Uint32Value()));
+    return env.Undefined();
+}
+
+static Napi::Value GetSelectedEntity(const Napi::CallbackInfo& info) {
+    uint32_t id = uz_get_selected_entity();
+    return Napi::Number::New(info.Env(), id);
+}
+
+// ── Play Mode ──────────────────────────────────────────────────────────────
+
+static Napi::Value Play(const Napi::CallbackInfo& info) {
+    int ok = uz_play();
+    return Napi::Boolean::New(info.Env(), ok != 0);
+}
+
+static Napi::Value Stop(const Napi::CallbackInfo& info) {
+    int ok = uz_stop();
+    return Napi::Boolean::New(info.Env(), ok != 0);
+}
+
+static Napi::Value IsPlaying(const Napi::CallbackInfo& info) {
+    int playing = uz_is_playing();
+    return Napi::Boolean::New(info.Env(), playing != 0);
+}
+
 // ── Registration ────────────────────────────────────────────────────────────
 
 void RegisterSceneBindings(Napi::Env env, Napi::Object exports) {
@@ -109,4 +157,10 @@ void RegisterSceneBindings(Napi::Env env, Napi::Object exports) {
     exports.Set("destroyEntity",        Napi::Function::New(env, DestroyEntity));
     exports.Set("getComponentJson",     Napi::Function::New(env, GetComponentJson));
     exports.Set("setComponentProperty", Napi::Function::New(env, SetComponentProperty));
+    exports.Set("getEntityComponents",  Napi::Function::New(env, GetEntityComponents));
+    exports.Set("selectEntity",         Napi::Function::New(env, SelectEntity));
+    exports.Set("getSelectedEntity",    Napi::Function::New(env, GetSelectedEntity));
+    exports.Set("play",                 Napi::Function::New(env, Play));
+    exports.Set("stop",                 Napi::Function::New(env, Stop));
+    exports.Set("isPlaying",            Napi::Function::New(env, IsPlaying));
 }

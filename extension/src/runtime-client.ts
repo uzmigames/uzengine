@@ -315,6 +315,46 @@ export class RuntimeClient implements vscode.Disposable {
     }
 
     /**
+     * Returns a JSON string listing all component types attached to an entity.
+     *
+     * @returns JSON array string, or `null` if the entity was not found.
+     */
+    async getEntityComponents(entityId: number): Promise<string | null> {
+        return (await this.send(
+            { id: 0, cmd: 'getEntityComponents', entityId },
+            'getEntityComponents'
+        )) as string | null;
+    }
+
+    /**
+     * Sets the editor selection to the specified entity.
+     * Pass `0` to deselect.
+     */
+    async selectEntity(entityId: number): Promise<void> {
+        await this.send({ id: 0, cmd: 'selectEntity', entityId }, 'selectEntity');
+    }
+
+    /** Returns the currently selected entity ID, or `0` if nothing is selected. */
+    async getSelectedEntity(): Promise<number> {
+        return (await this.send({ id: 0, cmd: 'getSelectedEntity' }, 'getSelectedEntity')) as number;
+    }
+
+    /** Enters play mode. Returns `true` on success. */
+    async play(): Promise<boolean> {
+        return (await this.send({ id: 0, cmd: 'play' }, 'play')) as boolean;
+    }
+
+    /** Exits play mode. Returns `true` on success. */
+    async stop(): Promise<boolean> {
+        return (await this.send({ id: 0, cmd: 'stop' }, 'stop')) as boolean;
+    }
+
+    /** Returns whether the engine is currently in play mode. */
+    async isPlaying(): Promise<boolean> {
+        return (await this.send({ id: 0, cmd: 'isPlaying' }, 'isPlaying')) as boolean;
+    }
+
+    /**
      * Captures the current frame as PNG.
      *
      * @returns `Buffer` with PNG data, or `null` on failure.
