@@ -147,6 +147,7 @@ struct RuntimeState {
     // Renderer
     uz::SceneRenderer sceneRenderer;
     bool sceneRendererReady = false;
+    bool editorModeRequested = false;
 
     // Lua scripting
     bool luaReady = false;
@@ -415,6 +416,9 @@ int uz_create_viewport(void* parent_hwnd, int width, int height) {
 
     if (!state->sceneRendererReady) {
         UZ_LOG(RuntimeAPI, Warning, "SceneRenderer init failed — only clear-screen available");
+    } else if (state->editorModeRequested) {
+        // Apply editor mode that was requested before the renderer was ready.
+        state->sceneRenderer.SetEditorMode(true);
     }
 
     // Connect Lua to the scene renderer for uz.renderer / uz.mesh / uz.texture APIs.
@@ -1167,8 +1171,13 @@ int uz_get_codec_extradata(const uint8_t** out_data, uint32_t* out_size) {
 // ── Editor Configuration ────────────────────────────────────────────────────
 
 void uz_set_editor_mode(int enabled) {
-    if (!HasViewport() || !s_state->sceneRendererReady) return;
-    s_state->sceneRenderer.SetEditorMode(enabled != 0);
+    if (!HasViewport()) return;
+    // Store the value immediately — it will be applied even if the SceneRenderer
+    // hasn't finished initializing yet (the flag is read every frame).
+    s_state->editorModeRequested = (enabled != 0);
+    if (s_state->sceneRendererReady) {
+        s_state->sceneRenderer.SetEditorMode(enabled != 0);
+    }
 }
 
 void uz_set_content_root(const char* path) {
