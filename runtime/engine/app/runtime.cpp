@@ -1198,11 +1198,24 @@ int uz_get_codec_extradata(const uint8_t** out_data, uint32_t* out_size) {
 
 void uz_set_editor_mode(int enabled) {
     if (!HasViewport()) return;
-    // Store the value immediately — it will be applied even if the SceneRenderer
-    // hasn't finished initializing yet (the flag is read every frame).
     s_state->editorModeRequested = (enabled != 0);
     if (s_state->sceneRendererReady) {
         s_state->sceneRenderer.SetEditorMode(enabled != 0);
+
+        // Initialize editor input handler (selection, gizmos) on first enable.
+        if (enabled && !s_state->editorInputReady) {
+            s_state->editorInput.Init(
+                s_state->sceneRenderer.GetInput(), &s_state->selectionManager,
+                &s_state->sceneRenderer.GetCamera(), &s_state->world);
+            s_state->editorInput.SetSceneRenderer(&s_state->sceneRenderer);
+            s_state->editorInputReady = true;
+            UZ_LOG(RuntimeAPI, Info, "Editor input handler initialized (selection + gizmos)");
+
+            if (s_state->luaReady) {
+                uz::LuaSetEditorState(uz::LuaVM::GetState(),
+                    &s_state->selectionManager, &s_state->editorInput);
+            }
+        }
     }
 }
 
