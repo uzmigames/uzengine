@@ -1,5 +1,14 @@
 # Changelog — extension
 
+## [0.3.1] — 2026-03-28
+
+### Viewport Input + Rendering Fixes
+
+- **fix:** Mouse button mapping corrected (Web API `e.button` 2=Right, not 1).
+- **fix:** Key events forwarded with `preventDefault` + `stopPropagation` to prevent VSCode from capturing WASD/QE.
+- **fix:** Removed broken pointer lock — uses absolute coordinates, runtime calculates deltas.
+- **fix:** Render loop target increased from 30 FPS to 120 FPS.
+
 ## [0.3.0] — 2026-03-28
 
 ### Worker Isolation, H.264 Streaming, Scene Editor

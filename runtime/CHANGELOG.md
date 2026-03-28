@@ -2,6 +2,35 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.3.0] — 2026-03-28
+
+### VSCode Viewport — Full DX12 Rendering Inside the Editor
+
+#### Agility SDK (Win10 DLL Mode)
+- **feat(rhi):** Programmatic Agility SDK loading via `ID3D12SDKConfiguration1::CreateDeviceFactory()` — bypasses the `dllexport` limitation when running as a DLL inside VSCode/Electron on Win10.
+- **feat(rhi):** DXC-based root signature compilation fallback — when system d3d12.dll rejects `DIRECTLY_INDEXED` flags, compiles root signature HLSL via DXC with `-T rootsig_1_1`. Enables SM6.8 bindless rendering in DLL mode.
+- **feat(rhi):** Root signature version detection via `CheckFeatureSupport(D3D12_FEATURE_ROOT_SIGNATURE)` with `D3DX12SerializeVersionedRootSignature` helper for automatic 1.1→1.0 downgrade (UE5 pattern).
+- **Result:** Feature Level 12_2, SM6.8, bindless ON, RTX 4090 @ 108+ FPS inside VSCode.
+
+#### Viewport Rendering
+- **feat(renderer):** H.264 frame readback captures backbuffer (includes editor overlays: grid, stats, gizmos) instead of LDR intermediate.
+- **feat(renderer):** Editor mode applied even when `setEditorMode()` is called before SceneRenderer init completes.
+- **feat(renderer):** Render loop target increased from 30 to 120 FPS.
+- **feat(renderer):** Stats overlay shows real entity/mesh counts.
+
+#### Input System (VSCode Webview)
+- **fix(input):** Mouse button mapping corrected for Web API (`e.button`: 0=Left, 1=Middle, 2=Right).
+- **fix(input):** Key events forwarded with `preventDefault + stopPropagation` to prevent VSCode from capturing WASD.
+- **fix(input):** ECS camera synced every frame in editor mode — Lua scripts (camera_test_controller.lua) drive camera input via `uz.input` + `uz.camera` APIs instead of C++ FlyCameraController.
+
+#### GPU Device Removed Protection
+- **feat(rhi):** `IRHIDevice::IsDeviceRemoved()` — stops render loop on first device removal, logs DRED once, terminates worker with `_exit(1)`.
+- **feat(runtime):** `device_removed` field in `uz_frame_stats` — render thread breaks loop immediately.
+
+#### DLL Build
+- **fix(build):** Environment components (`sky_atmosphere`, `sky_light`, `height_fog`, `volumetric_clouds`, etc.) compiled directly into DLL to preserve static initializer auto-registration.
+- **fix(build):** Debug layer disabled in DLL mode (SM5 validation errors promoted to fatal failures).
+
 ## [0.2.58] — 2026-03-28
 
 ### Centralized Logging, GPU Crash Protection, Auto-Exposure Fix
