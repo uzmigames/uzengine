@@ -377,6 +377,10 @@ pub fn createDemo(b: *std.Build, config: DemoConfig) DemoHandle {
         "../../editor/grid",
         "../../editor/font",
         "../../editor/stats",
+        "../../editor/outline",
+        "../../editor/gizmo",
+        "../../editor/input",
+        "../../editor/selection",
         "../../build/generated/shaders",
     };
     for (engine_dirs) |dir| mod.addIncludePath(b.path(dir));

@@ -23,6 +23,8 @@
 #include "root_slots.h"
 #include "platform_window.h"
 #include "renderdoc_capture.h"
+#include "draw_list.h"
+#include "gpu_mesh.h"
 
 #include <algorithm>
 #include <cmath>
@@ -449,6 +451,37 @@ void VFXViewportDemo::OnInit() {
         }
     }
 
+    // ── Initialize per-mesh transforms ─────────────────────────────────
+    // Meshes 0,1,3,4 (sphere, cube, cylinder, torus) start at the origin
+    // with identity rotation and unit scale. Mesh 2 (ground plane) has
+    // its existing hardcoded transform: scale(20,1,20) * rotX(pi/2) * translate(0,0,-0.1).
+    for (int i = 0; i < kMeshCount; ++i) {
+        m_meshTransforms[i] = MeshInstance{};
+    }
+    // Ground plane: special transform preserved from the original hardcoded values.
+    // The ground plane mesh is generated as an XZ plane, rotated 90 deg around X
+    // to become an XY ground plane, then translated down to Z=-0.1 and scaled 20x.
+    {
+        constexpr float kHalfPi = 3.14159265f * 0.5f;
+        m_meshTransforms[2].position = Vec3(0.0f, 0.0f, -0.1f);
+        m_meshTransforms[2].rotation = Quat::FromAxisAngle(Vec3(1.0f, 0.0f, 0.0f), kHalfPi);
+        m_meshTransforms[2].scale = Vec3(20.0f, 1.0f, 20.0f);
+    }
+
+    // ── Outline pass initialization ─────────────────────────────────────
+    if (!m_outlinePass.Init(device, shaders->GetPipeline(),
+                            RHIFormat::RGBA16Float, RHIFormat::D32Float,
+                            GetWidth(), GetHeight())) {
+        UZ_LOG(App, Error, "VFXViewport: Failed to initialize outline pass");
+        m_outlineEnabled = false;
+    }
+
+    // ── Gizmo renderer initialization ───────────────────────────────────
+    if (!m_gizmoRenderer.Init(device, shaders->GetPipeline(),
+                              RHIFormat::RGBA16Float, RHIFormat::D32Float)) {
+        UZ_LOG(App, Error, "VFXViewport: Failed to initialize gizmo renderer");
+    }
+
     // Submit and flush all upload copy commands before releasing staging buffers.
     // ReleaseStaging() destroys the underlying ID3D12Resource objects. If those
     // resources are still referenced by an open command list the D3D12 debug layer
@@ -622,20 +655,38 @@ void VFXViewportDemo::HandleInput(float dt) {
         UZ_LOG(App, Info, "Point lights: {}", m_pointLightsEnabled ? "enabled" : "disabled");
     }
 
-    // Environment rotation (R key — 15 deg step, Shift+R = reverse)
-    if (input->IsKeyJustPressed(Key::R)) {
-        if (input->IsKeyDown(Key::LeftShift) || input->IsKeyDown(Key::RightShift)) {
-            m_envRotation -= 15.0f;
-        } else {
-            m_envRotation += 15.0f;
+    // ── Gizmo mode keys (W/E/R) — only when an entity is selected ──────
+    // When nothing is selected, R still controls environment rotation.
+    if (m_selectedMeshIndex != UINT32_MAX) {
+        if (input->IsKeyJustPressed(Key::W)) {
+            m_gizmoMode = GizmoMode::Translate;
+            UZ_LOG(App, Info, "Gizmo mode: Translate");
         }
-        // Wrap to [0, 360)
-        m_envRotation = std::fmod(m_envRotation + 360.0f, 360.0f);
-        UZ_LOG(App, Info, "Environment rotation: {:.0f} deg", m_envRotation);
+        if (input->IsKeyJustPressed(Key::E)) {
+            m_gizmoMode = GizmoMode::Rotate;
+            UZ_LOG(App, Info, "Gizmo mode: Rotate");
+        }
+        if (input->IsKeyJustPressed(Key::R)) {
+            m_gizmoMode = GizmoMode::Scale;
+            UZ_LOG(App, Info, "Gizmo mode: Scale");
+        }
+    } else {
+        // Environment rotation (R key — 15 deg step, Shift+R = reverse)
+        if (input->IsKeyJustPressed(Key::R)) {
+            if (input->IsKeyDown(Key::LeftShift) || input->IsKeyDown(Key::RightShift)) {
+                m_envRotation -= 15.0f;
+            } else {
+                m_envRotation += 15.0f;
+            }
+            // Wrap to [0, 360)
+            m_envRotation = std::fmod(m_envRotation + 360.0f, 360.0f);
+            UZ_LOG(App, Info, "Environment rotation: {:.0f} deg", m_envRotation);
+        }
     }
 
-    // Object rotation (Alt + LMB drag)
-    if (input->IsKeyDown(Key::LeftAlt) && input->IsMouseDown(MouseButton::Left)) {
+    // Object rotation (Alt + LMB drag) — only when NOT dragging gizmo
+    if (input->IsKeyDown(Key::LeftAlt) && input->IsMouseDown(MouseButton::Left)
+        && !m_gizmoInteraction.IsDragging()) {
         constexpr float kRotSensitivity = 0.3f;
         m_objectYaw   += input->GetMouseDeltaX() * kRotSensitivity;
         m_objectPitch += input->GetMouseDeltaY() * kRotSensitivity;
@@ -649,6 +700,157 @@ void VFXViewportDemo::HandleInput(float dt) {
         UZ_LOG(App, Info, "Background: {}", kBgNames[m_bgPreset]);
     }
 
+    // Outline toggle (O key)
+    if (input->IsKeyJustPressed(Key::O)) {
+        m_outlineEnabled = !m_outlineEnabled;
+        UZ_LOG(App, Info, "Outline: {}", m_outlineEnabled ? "enabled" : "disabled");
+    }
+
+    // Escape — deselect
+    if (input->IsKeyJustPressed(Key::Escape)) {
+        if (m_selectedMeshIndex != UINT32_MAX) {
+            m_selectedMeshIndex = UINT32_MAX;
+            m_gizmoInteraction.EndDrag();
+            UZ_LOG(App, Info, "Deselected");
+        }
+    }
+
+    // ── Gizmo interaction (hover + drag) ────────────────────────────────
+    // Every frame when a mesh is selected: hit-test the gizmo, handle drag.
+    {
+        const float mouseX = input->GetMouseX();
+        const float mouseY = input->GetMouseY();
+
+        const float vpW = static_cast<float>(GetWidth());
+        const float vpH = static_cast<float>(GetHeight());
+        const Camera& cam = GetCamera();
+
+        if (m_selectedMeshIndex != UINT32_MAX && m_gizmoRenderer.IsInitialized()) {
+            const auto& xform = m_meshTransforms[m_selectedMeshIndex];
+
+            // Compute constant screen-space scale factor for gizmo hit testing.
+            // Same formula as GizmoRenderer: 120px / (dist * tan(fov/2) * 2 / vpH).
+            const float dist = (cam.GetPosition() - xform.position).Length();
+            constexpr float kTargetPx = 120.0f;
+            const float fovRad = cam.GetFovY() * (3.14159265f / 180.0f);
+            const float screenScale = (dist > 0.001f)
+                ? kTargetPx / (dist * std::tan(fovRad * 0.5f) * 2.0f / vpH)
+                : 1.0f;
+
+            if (m_gizmoInteraction.IsDragging()) {
+                // Update drag — compute transform delta
+                Vec3 deltaPos{};
+                Quat deltaRot = Quat::Identity();
+                Vec3 deltaScale{};
+                const bool snap = input->IsKeyDown(Key::LeftCtrl) || input->IsKeyDown(Key::RightCtrl);
+                float snapGrid = kDefaultTranslateSnap;
+                if (m_gizmoMode == GizmoMode::Rotate) snapGrid = kDefaultRotateSnap;
+                else if (m_gizmoMode == GizmoMode::Scale) snapGrid = kDefaultScaleSnap;
+
+                if (m_gizmoInteraction.UpdateDrag(mouseX, mouseY, vpW, vpH, cam,
+                                                   snap, snapGrid,
+                                                   deltaPos, deltaRot, deltaScale)) {
+                    auto& xf = m_meshTransforms[m_selectedMeshIndex];
+                    if (m_gizmoMode == GizmoMode::Translate) {
+                        xf.position = m_gizmoInteraction.GetDragStartPos() + deltaPos;
+                    } else if (m_gizmoMode == GizmoMode::Rotate) {
+                        xf.rotation = deltaRot * m_gizmoInteraction.GetDragStartRot();
+                    } else if (m_gizmoMode == GizmoMode::Scale) {
+                        xf.scale = m_gizmoInteraction.GetDragStartScale() + deltaScale;
+                    }
+                }
+
+                // End drag on LMB release
+                if (input->IsMouseJustReleased(MouseButton::Left)) {
+                    m_gizmoInteraction.EndDrag();
+                }
+            } else {
+                // Hit-test gizmo for hover highlight
+                auto hitResult = m_gizmoInteraction.HitTest(
+                    mouseX, mouseY, vpW, vpH, cam,
+                    xform.position, screenScale,
+                    static_cast<uint8_t>(m_gizmoMode),
+                    static_cast<uint8_t>(m_gizmoSpace),
+                    xform.rotation);
+                m_gizmoInteraction.SetHoveredAxis(hitResult);
+
+                // Begin drag on LMB press when hovering a gizmo axis
+                if (input->IsMouseJustPressed(MouseButton::Left)
+                    && hitResult != GizmoHitResult::None
+                    && !input->IsKeyDown(Key::LeftAlt)) {
+                    m_gizmoInteraction.BeginDrag(
+                        hitResult, mouseX, mouseY, vpW, vpH, cam,
+                        xform.position, xform.rotation, xform.scale,
+                        screenScale,
+                        static_cast<uint8_t>(m_gizmoMode),
+                        static_cast<uint8_t>(m_gizmoSpace));
+                }
+                // Click-to-select (LMB click, not on gizmo, not Alt-held)
+                else if (input->IsMouseJustPressed(MouseButton::Left)
+                         && hitResult == GizmoHitResult::None
+                         && !input->IsKeyDown(Key::LeftAlt)
+                         && !input->IsKeyDown(Key::RightAlt)) {
+                    // Ray-sphere intersection: test against the current mesh's bounding sphere.
+                    // The main mesh sits at m_meshTransforms[m_currentMesh].position.
+                    // Use a conservative bounding sphere radius of 1.5 (most procedural meshes
+                    // fit within a radius of ~1.0-1.5).
+                    const auto& meshXform = m_meshTransforms[m_currentMesh];
+                    const Mat4 invVP = cam.GetViewProjection().Inverse();
+
+                    // Unproject mouse position to a world-space ray
+                    const float ndcX = (mouseX / vpW) * 2.0f - 1.0f;
+                    const float ndcY = 1.0f - (mouseY / vpH) * 2.0f; // Flip Y: screen top=+1
+                    const Vec4 nearClip = invVP * Vec4(ndcX, ndcY, 1.0f, 1.0f); // Reverse-Z: near=1
+                    const Vec4 farClip  = invVP * Vec4(ndcX, ndcY, 0.0f, 1.0f); // Reverse-Z: far=0
+                    const Vec3 nearW = Vec3(nearClip.x, nearClip.y, nearClip.z) / nearClip.w;
+                    const Vec3 farW  = Vec3(farClip.x, farClip.y, farClip.z) / farClip.w;
+                    const Vec3 rayDir = (farW - nearW).Normalized();
+
+                    // Ray-sphere test: |P + t*D - C|^2 = r^2
+                    const Vec3 oc = nearW - meshXform.position;
+                    constexpr float kBoundingRadius = 1.5f;
+                    const float a = rayDir.Dot(rayDir);
+                    const float b = 2.0f * oc.Dot(rayDir);
+                    const float c = oc.Dot(oc) - kBoundingRadius * kBoundingRadius;
+                    const float discriminant = b * b - 4.0f * a * c;
+
+                    if (discriminant >= 0.0f) {
+                        m_selectedMeshIndex = static_cast<uint32_t>(m_currentMesh);
+                        UZ_LOG(App, Info, "Selected mesh: {}", kMeshNames[m_currentMesh]);
+                    } else {
+                        m_selectedMeshIndex = UINT32_MAX;
+                    }
+                }
+            }
+        } else if (m_selectedMeshIndex == UINT32_MAX) {
+            // No selection — still support click-to-select
+            if (input->IsMouseJustPressed(MouseButton::Left)
+                && !input->IsKeyDown(Key::LeftAlt)
+                && !input->IsKeyDown(Key::RightAlt)
+                && !input->IsMouseDown(MouseButton::Right)) {
+                const auto& meshXform = m_meshTransforms[m_currentMesh];
+                const Mat4 invVP = cam.GetViewProjection().Inverse();
+                const float ndcX = (mouseX / vpW) * 2.0f - 1.0f;
+                const float ndcY = 1.0f - (mouseY / vpH) * 2.0f;
+                const Vec4 nearClip = invVP * Vec4(ndcX, ndcY, 1.0f, 1.0f);
+                const Vec4 farClip  = invVP * Vec4(ndcX, ndcY, 0.0f, 1.0f);
+                const Vec3 nearW = Vec3(nearClip.x, nearClip.y, nearClip.z) / nearClip.w;
+                const Vec3 farW  = Vec3(farClip.x, farClip.y, farClip.z) / farClip.w;
+                const Vec3 rayDir = (farW - nearW).Normalized();
+                const Vec3 oc = nearW - meshXform.position;
+                constexpr float kBoundingRadius = 1.5f;
+                const float a = rayDir.Dot(rayDir);
+                const float b = 2.0f * oc.Dot(rayDir);
+                const float c = oc.Dot(oc) - kBoundingRadius * kBoundingRadius;
+                const float discriminant = b * b - 4.0f * a * c;
+                if (discriminant >= 0.0f) {
+                    m_selectedMeshIndex = static_cast<uint32_t>(m_currentMesh);
+                    UZ_LOG(App, Info, "Selected mesh: {}", kMeshNames[m_currentMesh]);
+                }
+            }
+        }
+    }
+
     // Help overlay (H key) — prints keyboard shortcut reference to console
     if (input->IsKeyJustPressed(Key::H)) {
         UZ_LOG(App, Info, "=== VFX Viewport Controls ===");
@@ -657,10 +859,17 @@ void VFXViewportDemo::HandleInput(float dt) {
         UZ_LOG(App, Info, "  MMB + Mouse          — Orbit camera");
         UZ_LOG(App, Info, "  Scroll               — Dolly zoom");
         UZ_LOG(App, Info, "  Alt + LMB + Mouse    — Rotate object");
+        UZ_LOG(App, Info, "  LMB (click mesh)     — Select mesh");
+        UZ_LOG(App, Info, "  Escape               — Deselect");
+        UZ_LOG(App, Info, "  W (when selected)    — Gizmo: Translate mode");
+        UZ_LOG(App, Info, "  E (when selected)    — Gizmo: Rotate mode");
+        UZ_LOG(App, Info, "  R (when selected)    — Gizmo: Scale mode");
+        UZ_LOG(App, Info, "  O                    — Toggle outline");
+        UZ_LOG(App, Info, "  Ctrl + drag          — Snap gizmo");
         UZ_LOG(App, Info, "  Left/Right Arrows    — Cycle material presets");
         UZ_LOG(App, Info, "  Up/Down Arrows       — Cycle mesh types");
         UZ_LOG(App, Info, "  T / Shift+T          — Sun elevation +/- 5 deg");
-        UZ_LOG(App, Info, "  R / Shift+R          — Environment rotation +/- 15 deg");
+        UZ_LOG(App, Info, "  R (no selection)     — Environment rotation +/- 15 deg");
         UZ_LOG(App, Info, "  L                    — Toggle point lights");
         UZ_LOG(App, Info, "  B                    — Toggle bloom");
         UZ_LOG(App, Info, "  C                    — Cycle background (Sky/Gray/Black/White)");
@@ -947,6 +1156,18 @@ void VFXViewportDemo::OnFrame(float dt) {
         RenderDistortionPass(cmd, perFrameGpu);
     }
 
+    // ── Outline pass (selection highlight) ──────────────────────────────
+    // The outline pass needs a CBAllocation (not just a GPU address) because
+    // it uses the 4-arg SetRootCBV overload for DX11 compatibility.
+    {
+        auto outlinePerFrameAlloc = cbRing->Allocate(sizeof(PerFrameCB));
+        std::memcpy(outlinePerFrameAlloc.cpuPtr, &perFrame, sizeof(PerFrameCB));
+        RenderOutlinePass(cmd, outlinePerFrameAlloc);
+    }
+
+    // ── Gizmo pass (transform gizmo overlay) ────────────────────────────
+    RenderGizmoPass(cmd);
+
     // ── Transition HDR target to SRV for tonemap ─────────────────────────
     {
         RHIBarrierDesc barrier{};
@@ -1151,8 +1372,8 @@ void VFXViewportDemo::RenderShadowPass(IRHICommandList* cmd) {
             cmd->SetRootCBV(kSlotPerObject, alloc.gpuAddr);
         };
 
-        // Draw current mesh (at world origin)
-        uploadShadowPerObject(Mat4::Identity());
+        // Draw current mesh (using per-mesh transform)
+        uploadShadowPerObject(BuildMeshWorldMatrix(static_cast<uint32_t>(m_currentMesh)));
         const auto& mesh = m_meshes[m_currentMesh];
         if (mesh.vertexBuffer.IsValid() && mesh.indexBuffer.IsValid()) {
             if (IsBindless()) {
@@ -1163,26 +1384,6 @@ void VFXViewportDemo::RenderShadowPass(IRHICommandList* cmd) {
             cmd->DrawIndexed(mesh.indexCount);
         }
 
-        // ── Draw 3 reference spheres into shadow map ──
-        // Positions must match RenderScenePass so shadows align with geometry.
-        constexpr float kRefPositionX[] = { -3.0f, 0.0f, 3.0f };
-        constexpr float kRefPositionZ   = -3.0f;
-
-        const auto& sphereMesh = m_meshes[0];
-        if (sphereMesh.vertexBuffer.IsValid() && sphereMesh.indexBuffer.IsValid()) {
-            if (IsBindless()) {
-                cmd->SetDescriptorIndex(kSlotRootConstants, sphereMesh.vbSrvIndex);
-            }
-            cmd->SetVertexBuffer(0, sphereMesh.vertexBuffer);
-            cmd->SetIndexBuffer(sphereMesh.indexBuffer, RHIIndexFormat::Uint32);
-
-            for (int i = 0; i < 3; ++i) {
-                uploadShadowPerObject(
-                    Mat4::Translation(Vec3(kRefPositionX[i], 0.0f, kRefPositionZ)));
-                cmd->DrawIndexed(sphereMesh.indexCount);
-            }
-        }
-
         // ── Draw ground plane into shadow map ──
         const auto& planeMesh = m_meshes[2]; // index 2 = plane
         if (planeMesh.vertexBuffer.IsValid() && planeMesh.indexBuffer.IsValid()) {
@@ -1191,8 +1392,7 @@ void VFXViewportDemo::RenderShadowPass(IRHICommandList* cmd) {
             }
             cmd->SetVertexBuffer(0, planeMesh.vertexBuffer);
             cmd->SetIndexBuffer(planeMesh.indexBuffer, RHIIndexFormat::Uint32);
-            constexpr float kHalfPi = 3.14159265f * 0.5f;
-            uploadShadowPerObject(Mat4::Scaling(Vec3(20.0f, 1.0f, 20.0f)) * Mat4::RotationX(kHalfPi) * Mat4::Translation(Vec3(0.0f, 0.0f, -0.1f)));
+            uploadShadowPerObject(BuildMeshWorldMatrix(2));
             cmd->DrawIndexed(planeMesh.indexCount);
         }
     }
@@ -1382,13 +1582,15 @@ void VFXViewportDemo::RenderScenePass(IRHICommandList* cmd, uint64_t perFrameGpu
     perObj.aoIndex         = 0;
     perObj.emissiveIndex   = 0;
 
-    // Object transform — mesh at world origin with optional manual rotation (Alt+LMB)
+    // Object transform — from per-mesh transform + optional manual rotation (Alt+LMB)
     constexpr float kDeg2Rad = 3.14159265f / 180.0f;
-    const Mat4 rotY = Mat4::RotationY(m_objectYaw * kDeg2Rad);
-    const Mat4 rotX = Mat4::RotationX(m_objectPitch * kDeg2Rad);
-    const Mat4 objRotation = rotX * rotY;
-    perObj.model        = objRotation;
-    perObj.normalMatrix = objRotation; // Rotation-only — no non-uniform scale, so normal matrix = model
+    const Mat4 manualRotY = Mat4::RotationY(m_objectYaw * kDeg2Rad);
+    const Mat4 manualRotX = Mat4::RotationX(m_objectPitch * kDeg2Rad);
+    const Mat4 manualRotation = manualRotX * manualRotY;
+    const Mat4 meshWorld = BuildMeshWorldMatrix(static_cast<uint32_t>(m_currentMesh));
+    perObj.model        = manualRotation * meshWorld;
+    const Mat4 meshRot = m_meshTransforms[m_currentMesh].rotation.ToMatrix();
+    perObj.normalMatrix = manualRotation * meshRot; // Rotation-only for normals
 
     // Material color tints from the active preset
     perObj.baseColorTintR      = mat.baseColor[0];
@@ -1418,47 +1620,6 @@ void VFXViewportDemo::RenderScenePass(IRHICommandList* cmd, uint64_t perFrameGpu
         cmd->DrawIndexed(mesh.indexCount);
     }
 
-    // ── Draw 3 reference spheres with metallic sweep ──
-    // Dielectric (0.0) → half-metal (0.5) → full metal (1.0), all at roughness 0.3
-    // and white base color so the metallic effect is clearly visible.
-    constexpr float kRefMetallic[]  = { 0.0f, 0.5f, 1.0f };
-    constexpr float kRefPositionX[] = { -3.0f, 0.0f, 3.0f };
-    constexpr float kRefPositionZ   = -3.0f;
-
-    const auto& sphereMesh = m_meshes[0]; // index 0 = sphere (first generated in OnInit)
-    if (sphereMesh.vertexBuffer.IsValid() && sphereMesh.indexBuffer.IsValid()) {
-        if (IsBindless()) {
-            cmd->SetDescriptorIndex(kSlotRootConstants, sphereMesh.vbSrvIndex);
-        }
-        cmd->SetVertexBuffer(0, sphereMesh.vertexBuffer);
-        cmd->SetIndexBuffer(sphereMesh.indexBuffer, RHIIndexFormat::Uint32);
-
-        for (int i = 0; i < 3; ++i) {
-            PerObjectCB refObj{};
-            refObj.albedoIndex    = 0;
-            refObj.normalIndex    = 0;
-            refObj.roughnessIndex = 0;
-            refObj.metallicIndex  = 0;
-            refObj.aoIndex        = 0;
-            refObj.emissiveIndex  = 0;
-
-            refObj.model        = Mat4::Translation(Vec3(kRefPositionX[i], 0.0f, kRefPositionZ));
-            refObj.normalMatrix = Mat4::Identity();
-
-            refObj.baseColorTintR      = 1.0f;
-            refObj.baseColorTintG      = 1.0f;
-            refObj.baseColorTintB      = 1.0f;
-            refObj.roughnessMultiplier = 0.3f;
-            refObj.metallicMultiplier  = kRefMetallic[i];
-
-            auto refAlloc = cbRing->Allocate(sizeof(PerObjectCB));
-            std::memcpy(refAlloc.cpuPtr, &refObj, sizeof(PerObjectCB));
-            cmd->SetRootCBV(kSlotPerObject, refAlloc.gpuAddr);
-
-            cmd->DrawIndexed(sphereMesh.indexCount);
-        }
-    }
-
     // ── Draw ground plane ──
     {
         const auto& planeMesh = m_meshes[2]; // index 2 = plane
@@ -1477,9 +1638,8 @@ void VFXViewportDemo::RenderScenePass(IRHICommandList* cmd, uint64_t perFrameGpu
             groundObj.aoIndex        = 0;
             groundObj.emissiveIndex  = 0;
 
-            constexpr float kHalfPi = 3.14159265f * 0.5f;
-            groundObj.model        = Mat4::Scaling(Vec3(20.0f, 1.0f, 20.0f)) * Mat4::RotationX(kHalfPi) * Mat4::Translation(Vec3(0.0f, 0.0f, -0.1f));
-            groundObj.normalMatrix = Mat4::RotationX(kHalfPi); // Rotation only for normals
+            groundObj.model        = BuildMeshWorldMatrix(2);
+            groundObj.normalMatrix = m_meshTransforms[2].rotation.ToMatrix(); // Rotation only for normals
 
             groundObj.baseColorTintR      = 0.15f;
             groundObj.baseColorTintG      = 0.15f;
@@ -1924,6 +2084,10 @@ void VFXViewportDemo::OnResize(uint32_t width, uint32_t height) {
     if (m_bloomPass.IsInitialized()) {
         m_bloomPass.Resize(width, height);
     }
+
+    if (m_outlineEnabled) {
+        m_outlinePass.Resize(width, height);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1933,6 +2097,8 @@ void VFXViewportDemo::OnResize(uint32_t width, uint32_t height) {
 void VFXViewportDemo::OnShutdown() {
     auto* device = GetDevice();
 
+    m_outlinePass.Shutdown();
+    m_gizmoRenderer.Shutdown();
     m_bloomPass.Shutdown();
     m_vfxSystem.Shutdown(device);
 
@@ -1970,6 +2136,110 @@ void VFXViewportDemo::OnShutdown() {
         if (mesh.indexBuffer.IsValid()) device->DestroyBuffer(mesh.indexBuffer);
         mesh = {};
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BuildMeshWorldMatrix
+// ─────────────────────────────────────────────────────────────────────────────
+
+Mat4 VFXViewportDemo::BuildMeshWorldMatrix(uint32_t meshIndex) const {
+    const auto& xform = m_meshTransforms[meshIndex];
+
+    // Ground plane (index 2) has special handling: scale + rotation + translation
+    // as before, but now driven by m_meshTransforms instead of hardcoded values.
+    const Mat4 scale = Mat4::Scaling(xform.scale);
+    const Mat4 rot = xform.rotation.ToMatrix();
+    const Mat4 trans = Mat4::Translation(xform.position);
+
+    // Order: scale * rotation * translation (scale applied first in object space)
+    return scale * rot * trans;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Outline Pass
+// ─────────────────────────────────────────────────────────────────────────────
+
+void VFXViewportDemo::RenderOutlinePass(IRHICommandList* cmd,
+                                         const CBAllocation& perFrameAlloc) {
+    if (m_selectedMeshIndex == UINT32_MAX || !m_outlineEnabled) return;
+
+    // Build a temporary DrawCommand + GPUMesh vector for the outline pass.
+    // The outline pass expects engine DrawCommand/GPUMesh types, not ProceduralMesh.
+    const auto& procMesh = m_meshes[m_selectedMeshIndex];
+    if (!procMesh.vertexBuffer.IsValid() || !procMesh.indexBuffer.IsValid()) return;
+
+    DrawCommand dc{};
+    dc.worldMatrix = BuildMeshWorldMatrix(m_selectedMeshIndex);
+    dc.normalMatrix = m_meshTransforms[m_selectedMeshIndex].rotation.ToMatrix();
+    dc.entityId = 0; // Use entityId=0 for the selected mesh
+    dc.meshId = 0;   // Index into the temporary meshes vector
+
+    GPUMesh gpuMesh{};
+    gpuMesh.vertexBuffer = procMesh.vertexBuffer;
+    gpuMesh.indexBuffer = procMesh.indexBuffer;
+    gpuMesh.vbSrvIndex = procMesh.vbSrvIndex;
+    gpuMesh.indexCount = procMesh.indexCount;
+    gpuMesh.vertexCount = 0; // Not used by outline pass
+    gpuMesh.indexFormat = RHIIndexFormat::Uint32;
+
+    std::vector<DrawCommand> drawList = { dc };
+    std::vector<GPUMesh> meshes = { gpuMesh };
+
+    // Transition depth to read for outline mask pass (outline reads depth via DSV).
+    // Depth is already in DepthStencilWrite from the scene pass — outline pass
+    // needs it in that same state (it reads via depth test, not SRV).
+    m_outlinePass.Draw(cmd, *GetCBRing(), GetCamera(), drawList, meshes,
+                       0, // selectedEntityId = 0 (matches dc.entityId above)
+                       static_cast<float>(GetWidth()),
+                       static_cast<float>(GetHeight()),
+                       m_depthBuffer, m_hdrTarget, IsBindless(),
+                       perFrameAlloc);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Gizmo Pass
+// ─────────────────────────────────────────────────────────────────────────────
+
+void VFXViewportDemo::RenderGizmoPass(IRHICommandList* cmd) {
+    if (m_selectedMeshIndex == UINT32_MAX) return;
+    if (!m_gizmoRenderer.IsInitialized()) return;
+
+    const auto& xform = m_meshTransforms[m_selectedMeshIndex];
+
+    // Begin render pass with HDR target + depth bound.
+    // Gizmo renders on top of the scene with depth read/no-write.
+    RHIRenderPassDesc rpDesc{};
+    rpDesc.colorAttachmentCount = 1;
+    rpDesc.colorAttachments[0].texture = m_hdrTarget;
+    rpDesc.hasDepth = true;
+    rpDesc.depthAttachment.texture = m_depthBuffer;
+    cmd->BeginRenderPass(rpDesc);
+
+    RHIViewport vp{};
+    vp.width = static_cast<float>(GetWidth());
+    vp.height = static_cast<float>(GetHeight());
+    vp.minDepth = 0.0f;
+    vp.maxDepth = 1.0f;
+    cmd->SetViewport(vp);
+
+    RHIScissorRect sc{};
+    sc.right = static_cast<int32_t>(GetWidth());
+    sc.bottom = static_cast<int32_t>(GetHeight());
+    cmd->SetScissor(sc);
+
+    // Convert GizmoHitResult to int axis index for the renderer:
+    // None=-1, AxisX=0, AxisY=1, AxisZ=2, PlaneXY=3, PlaneXZ=4, PlaneYZ=5, Center=6
+    auto hitToAxis = [](GizmoHitResult h) -> int {
+        return (h == GizmoHitResult::None) ? -1 : (static_cast<int>(h) - 1);
+    };
+
+    m_gizmoRenderer.Draw(cmd, *GetCBRing(), GetCamera(),
+                          xform.position, xform.rotation,
+                          m_gizmoMode, m_gizmoSpace,
+                          hitToAxis(m_gizmoInteraction.GetHoveredAxis()),
+                          hitToAxis(m_gizmoInteraction.GetActiveAxis()));
+
+    cmd->EndRenderPass();
 }
 
 } // namespace uz

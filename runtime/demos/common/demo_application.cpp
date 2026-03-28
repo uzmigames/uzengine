@@ -120,7 +120,18 @@ int DemoApplication::Run() {
     auto loopStart = std::chrono::high_resolution_clock::now();
     auto prevFrame = loopStart;
 
-    while (m_window->PumpMessages() && m_window->IsOpen()) {
+    while (true) {
+        // Snapshot input state BEFORE processing messages so that events
+        // delivered by PumpMessages() land in the current frame's state
+        // while previous frame's state is preserved for "just pressed" detection.
+        if (m_input) {
+            m_input->BeginFrame();
+        }
+
+        if (!m_window->PumpMessages() || !m_window->IsOpen()) {
+            break;
+        }
+
         // Skip rendering while minimized — swapchain surface is 0x0
         if (m_window->IsMinimized()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -198,11 +209,6 @@ int DemoApplication::Run() {
             }
 
             OnResize(m_width, m_height);
-        }
-
-        // Snapshot input state (compute mouse deltas from last frame's position)
-        if (m_input) {
-            m_input->BeginFrame();
         }
 
         // Delta time calculation

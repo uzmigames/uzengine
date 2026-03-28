@@ -34,9 +34,15 @@
 #include "bloom_pass.h"
 #include "rhi_types.h"
 #include "mat4.h"
+#include "quaternion.h"
+#include "vector3.h"
 #include "engine/vfx/trails/trail_system.h"
 #include "engine/vfx/trails/trail_component.h"
 #include "engine/vfx/decals/decal_component.h"
+#include "outline_pass.h"
+#include "gizmo_renderer.h"
+#include "gizmo_interaction.h"
+#include "editor_input_handler.h"
 
 #include <array>
 #include <cstdint>
@@ -98,6 +104,26 @@ private:
     static constexpr int kMeshCount = 5;
     std::array<ProceduralMesh, kMeshCount> m_meshes;
     int m_currentMesh = 0;
+
+    // ── Per-mesh transform state (needed for gizmo manipulation) ──────
+    /// Stores position, rotation, and scale for each mesh slot.
+    struct MeshInstance {
+        Vec3 position{};
+        Quat rotation = Quat::Identity();
+        Vec3 scale{1.0f, 1.0f, 1.0f};
+    };
+    std::array<MeshInstance, kMeshCount> m_meshTransforms;
+    uint32_t m_selectedMeshIndex = UINT32_MAX; ///< Index into m_meshes, UINT32_MAX = nothing selected.
+
+    // ── Outline pass ──────────────────────────────────────────────────
+    OutlinePass m_outlinePass;
+    bool m_outlineEnabled = true; ///< O key toggles.
+
+    // ── Gizmo renderer + interaction ──────────────────────────────────
+    GizmoRenderer   m_gizmoRenderer;
+    GizmoInteraction m_gizmoInteraction;
+    GizmoMode  m_gizmoMode  = GizmoMode::Translate;
+    GizmoSpace m_gizmoSpace = GizmoSpace::World;
 
     // ── Material presets ─────────────────────────────────────────────────
     int m_currentMaterial = 0;
@@ -209,6 +235,11 @@ private:
     void RenderDecalPass(IRHICommandList* cmd, uint64_t perFrameGpu);
     void RenderDistortionPass(IRHICommandList* cmd, uint64_t perFrameGpu);
     void RenderTonemapPass(IRHICommandList* cmd, uint64_t perFrameGpu);
+    void RenderOutlinePass(IRHICommandList* cmd, const CBAllocation& perFrameAlloc);
+    void RenderGizmoPass(IRHICommandList* cmd);
+
+    /// Builds the world matrix for the mesh at the given transform index.
+    Mat4 BuildMeshWorldMatrix(uint32_t meshIndex) const;
 };
 
 } // namespace uz
