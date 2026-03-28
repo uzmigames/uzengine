@@ -155,6 +155,7 @@ struct RuntimeState {
     uz::SceneRenderer sceneRenderer;
     bool sceneRendererReady = false;
     bool editorModeRequested = false;
+    bool playMode = false;
 
     // Editor systems (selection, gizmos, input routing)
     uz::SelectionManager selectionManager;
@@ -1141,6 +1142,34 @@ uint32_t uz_get_selected_entity(void) {
     if (!HasViewport()) return UINT32_MAX;
     const uz::Entity sel = s_state->selectionManager.GetSelected();
     return sel.IsValid() ? sel.id : UINT32_MAX;
+}
+
+// ── Play Mode ───────────────────────────────────────────────────────────────
+
+int uz_play(void) {
+    if (!HasViewport() || !s_state->sceneRendererReady) return 0;
+    if (s_state->playMode) return 0; // already playing
+
+    s_state->playMode = true;
+    s_state->sceneRenderer.SetEditorMode(false);
+
+    UZ_LOG(RuntimeAPI, Info, "Play mode started");
+    return 1;
+}
+
+int uz_stop(void) {
+    if (!HasViewport() || !s_state->sceneRendererReady) return 0;
+    if (!s_state->playMode) return 0; // not playing
+
+    s_state->playMode = false;
+    s_state->sceneRenderer.SetEditorMode(true);
+
+    UZ_LOG(RuntimeAPI, Info, "Play mode stopped — editor restored");
+    return 1;
+}
+
+int uz_is_playing(void) {
+    return HasViewport() && s_state->playMode ? 1 : 0;
 }
 
 // ── Input Forwarding ────────────────────────────────────────────────────────

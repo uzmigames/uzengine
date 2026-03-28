@@ -330,6 +330,27 @@ UZ_API void uz_select_entity(uint32_t entity_id);
 UZ_API uint32_t uz_get_selected_entity(void);
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Play Mode
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Enters play mode — switches from editor camera to game camera,
+/// re-runs Lua on_start scripts, and hides editor overlays (grid, gizmos).
+///
+/// # Returns
+/// 1 on success, 0 if no viewport or already in play mode.
+UZ_API int uz_play(void);
+
+/// Exits play mode — restores editor camera, stops game scripts,
+/// and re-enables editor overlays.
+///
+/// # Returns
+/// 1 on success, 0 if no viewport or not in play mode.
+UZ_API int uz_stop(void);
+
+/// Returns 1 if currently in play mode, 0 otherwise.
+UZ_API int uz_is_playing(void);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Input Forwarding
 // ─────────────────────────────────────────────────────────────────────────────
 
