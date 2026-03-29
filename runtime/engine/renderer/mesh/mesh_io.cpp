@@ -113,11 +113,16 @@ Mesh LoadMeshFromMemory(const std::vector<uint8_t>& data, const std::string& nam
         return mesh;
     }
 
-    if (mesh.header.version != kMeshVersion) {
-        UZ_LOG(Renderer, Error, "Unsupported mesh version: expected={}, got={}, name='{}'",
+    if (mesh.header.version != kMeshVersion && mesh.header.version != 1) {
+        UZ_LOG(Renderer, Error, "Unsupported mesh version: expected={} or 1, got={}, name='{}'",
                kMeshVersion, mesh.header.version, name);
         mesh.header.magic = 0;
         return mesh;
+    }
+    // v1 compatibility: no LOD data in header, treat as single LOD
+    if (mesh.header.version == 1) {
+        mesh.header.lodCount = 1;
+        std::memset(mesh.header.lods, 0, sizeof(mesh.header.lods));
     }
 
     const uint64_t vertexSize = mesh.GetVertexDataSize();

@@ -115,10 +115,17 @@ GPUMesh UploadMesh(IRHIDevice* device, IRHICommandList* cmdList, const Mesh& mes
 
     // -- Populate metadata --
     result.vertexCount = mesh.GetVertexCount();
-    result.indexCount  = mesh.GetIndexCount();
+    result.indexCount  = mesh.header.indexCount; // LOD0 index count
     result.indexFormat  = (mesh.header.indexFormat == MeshIndexFormat::UInt16)
                              ? RHIIndexFormat::Uint16
                              : RHIIndexFormat::Uint32;
+
+    // -- LOD info --
+    result.lodCount = mesh.GetLODCount();
+    for (uint32_t i = 0; i < 3; ++i) {
+        result.lodInfo[i].indexOffset = mesh.GetLODIndexOffset(i + 1);
+        result.lodInfo[i].indexCount  = mesh.GetLODIndexCount(i + 1);
+    }
 
     // -- Bindless SRV index --
     if (device->IsBindless()) {

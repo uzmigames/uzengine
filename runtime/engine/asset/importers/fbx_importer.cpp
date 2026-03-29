@@ -692,7 +692,11 @@ AssetImportResult FbxImporter::Import(
 
     const uint32_t submeshCount = static_cast<uint32_t>(submeshes.size());
     const size_t vertexDataBytes = finalVertexCount * sizeof(Vertex);
-    const size_t indexDataBytes = optimizedIndices.size() * sizeof(uint32_t);
+
+    // Concatenate all LOD index buffers into one contiguous block.
+    // LOD0 indices come first, then LOD1, LOD2, LOD3.
+    std::vector<uint32_t> allLodIndices;
+    allLodIndices.insert(allLodIndices.end(), optimizedIndices.begin(), optimizedIndices.end());
 
     Mesh outputMesh{};
     outputMesh.header.magic = kMeshMagic;
@@ -707,15 +711,29 @@ AssetImportResult FbxImporter::Import(
     outputMesh.header.boundsMax = boundsMax;
     outputMesh.header.vertexDataOffset = sizeof(MeshHeader);
     outputMesh.header.indexDataOffset = sizeof(MeshHeader) + vertexDataBytes;
+
+    // LOD descriptors — LOD0 uses indexCount/indexDataOffset, LOD1-3 use lods[].
+    outputMesh.header.lodCount = static_cast<uint32_t>(autoLODs.size());
+    std::memset(outputMesh.header.lods, 0, sizeof(outputMesh.header.lods));
+    for (size_t i = 1; i < autoLODs.size() && i <= 3; ++i) {
+        outputMesh.header.lods[i - 1].indexOffset =
+            static_cast<uint32_t>(allLodIndices.size() * sizeof(uint32_t));
+        outputMesh.header.lods[i - 1].indexCount =
+            static_cast<uint32_t>(autoLODs[i].indices.size());
+        allLodIndices.insert(allLodIndices.end(),
+                             autoLODs[i].indices.begin(), autoLODs[i].indices.end());
+    }
     std::memset(outputMesh.header.reserved, 0, sizeof(outputMesh.header.reserved));
+
+    const size_t indexDataBytes = allLodIndices.size() * sizeof(uint32_t);
 
     // Copy vertex data
     outputMesh.vertexData.resize(vertexDataBytes);
     std::memcpy(outputMesh.vertexData.data(), finalVertices.data(), vertexDataBytes);
 
-    // Copy index data
+    // Copy index data (all LODs concatenated)
     outputMesh.indexData.resize(indexDataBytes);
-    std::memcpy(outputMesh.indexData.data(), optimizedIndices.data(), indexDataBytes);
+    std::memcpy(outputMesh.indexData.data(), allLodIndices.data(), indexDataBytes);
 
     // Map UzMeshSubmesh -> SubMesh (runtime format)
     for (const auto& sub : submeshes) {
