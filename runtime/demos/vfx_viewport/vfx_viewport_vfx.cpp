@@ -22,13 +22,13 @@ namespace uz {
 // ─────────────────────────────────────────────────────────────────────────────
 
 static const VFXPreset s_presets[] = {
-    { "Fire Fountain", {
-        /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.3f,
-        /*velocity*/ {0.0f, 0.0f, 8.0f}, /*velVariation*/ 2.0f,
-        /*spread*/ 0.4f, /*minLife*/ 1.0f, /*maxLife*/ 3.0f, /*size*/ 0.8f,
-        /*color*/ {1.0f, 0.6f, 0.2f, 1.0f},
-        /*gravity*/ {0.0f, 0.0f, -9.81f}, /*damping*/ 0.1f,
-        /*softFade*/ 0.5f, /*emissive*/ 2.0f,
+    { "Simple Burst", {
+        /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.2f,
+        /*velocity*/ {0.0f, 0.0f, 6.0f}, /*velVariation*/ 3.0f,
+        /*spread*/ 3.14159f, /*minLife*/ 1.0f, /*maxLife*/ 2.5f, /*size*/ 0.4f,
+        /*color*/ {1.0f, 0.7f, 0.3f, 0.9f},
+        /*gravity*/ {0.0f, 0.0f, -5.0f}, /*damping*/ 0.15f,
+        /*softFade*/ 0.5f, /*emissive*/ 1.5f,
         /*flipbook*/ 1, 1, 1, 0.0f, 0
     }, 500.0f },
     { "Smoke Plume", {
@@ -67,6 +67,15 @@ static const VFXPreset s_presets[] = {
         /*softFade*/ 0.3f, /*emissive*/ 1.5f,
         /*flipbook*/ 1, 1, 1, 0.0f, 0
     }, 2000.0f },
+    { "Fireball", {
+        /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.4f,
+        /*velocity*/ {0.0f, 0.0f, 0.5f}, /*velVariation*/ 1.5f,
+        /*spread*/ 2.5f, /*minLife*/ 0.3f, /*maxLife*/ 0.8f, /*size*/ 0.6f,
+        /*color*/ {1.0f, 0.4f, 0.05f, 0.85f},
+        /*gravity*/ {0.0f, 0.0f, 1.0f}, /*damping*/ 0.5f,
+        /*softFade*/ 0.4f, /*emissive*/ 4.0f,
+        /*flipbook*/ 1, 1, 1, 0.0f, 0
+    }, 800.0f },
 };
 
 const VFXPreset* GetVFXPresets(int& outCount) {

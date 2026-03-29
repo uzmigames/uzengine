@@ -159,6 +159,17 @@ private:
     int   m_vfxPresetIndex = 0;
     VFXEmitterConfig m_vfxEmitter;
     Mat4  m_prevViewProj;
+    bool  m_vfxBurstMode = true;        ///< true = single burst, false = continuous emission.
+    uint32_t m_vfxBurstCount = 500;     ///< Number of particles per burst.
+    bool  m_vfxBurstPending = true;     ///< true = fire burst on next frame.
+
+    // ── Fireball projectile ─────────────────────────────────────────────
+    bool  m_fireballActive = false;     ///< true = fireball projectile is flying.
+    Vec3  m_fireballPos = {};           ///< Current fireball world position.
+    Vec3  m_fireballVel = {};           ///< Fireball velocity (units/sec).
+    float m_fireballLife = 0.0f;        ///< Time alive (sec). Dies after max lifetime.
+    static constexpr float kFireballSpeed = 15.0f;    ///< Projectile speed (units/sec).
+    static constexpr float kFireballMaxLife = 4.0f;   ///< Max fireball duration (sec).
 
     // ── Trail / ribbon system ────────────────────────────────────────────
     TrailSystem m_trailSystem;                                ///< CPU trail simulation and mesh generation.

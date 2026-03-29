@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <cstring>
 #include <unordered_map>
 
 UZ_DECLARE_LOG_CATEGORY(App);
@@ -587,12 +588,54 @@ void VFXViewportDemo::HandleInput(float dt) {
         UZ_LOG(App, Info, "Bloom: {}", m_bloomEnabled ? "on" : "off");
     }
 
-    // VFX restart (Delete key) — clears all particles and restarts emission
+    // VFX restart (Delete key) — clears all particles and fires new burst/restarts
     if (input->IsKeyJustPressed(Key::Delete)) {
         auto* cmd = GetCommandList();
         m_vfxSystem.UploadInitialFreeList(cmd);
         m_vfxSpawnAccum = 0.0f;
+        m_vfxBurstPending = true;
         UZ_LOG(App, Info, "[VFX] Particles reset — emission restarted");
+    }
+
+    // Toggle burst/continuous mode (Insert key)
+    if (input->IsKeyJustPressed(Key::Insert)) {
+        m_vfxBurstMode = !m_vfxBurstMode;
+        if (m_vfxBurstMode) {
+            m_vfxBurstPending = true;
+        }
+        UZ_LOG(App, Info, "[VFX] Mode: {} (burst count={})",
+               m_vfxBurstMode ? "Burst" : "Continuous", m_vfxBurstCount);
+    }
+
+    // Launch fireball projectile (Space key) — switches to Fireball preset,
+    // continuous mode, and launches a moving emitter in the camera's forward direction.
+    if (input->IsKeyJustPressed(Key::Space) && !m_fireballActive) {
+        // Switch to Fireball preset
+        int presetCount = 0;
+        const VFXPreset* presets = GetVFXPresets(presetCount);
+        for (int i = 0; i < presetCount; ++i) {
+            if (std::strcmp(presets[i].name, "Fireball") == 0) {
+                m_vfxPresetIndex = i;
+                m_vfxEmitter = presets[i].config;
+                m_vfxSpawnRate = presets[i].spawnRate;
+                break;
+            }
+        }
+        // Reset particles and start fireball
+        auto* cmd = GetCommandList();
+        m_vfxSystem.UploadInitialFreeList(cmd);
+        m_vfxSpawnAccum = 0.0f;
+        m_vfxBurstMode = false; // continuous emission for trail
+        m_vfxEnabled = true;
+        m_trailEnabled = true;
+
+        // Launch from mesh position in Y direction (forward in our scene)
+        const auto& meshPos = m_meshTransforms[m_currentMesh].position;
+        m_fireballPos = Vec3(meshPos.x, meshPos.y, meshPos.z + 3.0f);
+        m_fireballVel = Vec3(0.0f, kFireballSpeed, 0.0f);
+        m_fireballLife = 0.0f;
+        m_fireballActive = true;
+        UZ_LOG(App, Info, "[VFX] Fireball launched!");
     }
 
     // VFX preset cycling (Tab / Shift+Tab)
@@ -947,7 +990,9 @@ void VFXViewportDemo::HandleInput(float dt) {
         UZ_LOG(App, Info, "  P                    — Toggle post-processing (ACES/linear)");
         UZ_LOG(App, Info, "  G                    — Toggle shadow debug overlay");
         UZ_LOG(App, Info, "  Tab                  — Cycle VFX presets (Shift+Tab = toggle)");
-        UZ_LOG(App, Info, "  Delete               — Reset particles (restart emission)");
+        UZ_LOG(App, Info, "  Delete               — Reset particles + fire burst");
+        UZ_LOG(App, Info, "  Insert               — Toggle Burst / Continuous mode");
+        UZ_LOG(App, Info, "  Space                — Launch fireball projectile (with trail)");
         UZ_LOG(App, Info, "  Y                    — Toggle trails");
         UZ_LOG(App, Info, "  D                    — Toggle decals");
         UZ_LOG(App, Info, "  X                    — Toggle distortion");
@@ -1073,19 +1118,42 @@ void VFXViewportDemo::OnFrame(float dt) {
     std::memcpy(perFrameAlloc.cpuPtr, &perFrame, sizeof(PerFrameCB));
     const uint64_t perFrameGpu = perFrameAlloc.gpuAddr;
 
+    // ── Fireball projectile update ─────────────────────────────────────
+    if (m_fireballActive) {
+        m_fireballPos = m_fireballPos + m_fireballVel * dt;
+        m_fireballLife += dt;
+        if (m_fireballLife >= kFireballMaxLife) {
+            m_fireballActive = false;
+            UZ_LOG(App, Info, "[VFX] Fireball expired");
+        }
+    }
+
     // ── VFX compute dispatch ─────────────────────────────────────────────
     if (m_vfxEnabled) {
-        // Update emitter position to follow the current mesh's world position
-        // plus the preset's local offset (e.g., Z=3 above the mesh center).
-        const auto& meshPos = m_meshTransforms[m_currentMesh].position;
-        m_vfxEmitter.position[0] = meshPos.x;
-        m_vfxEmitter.position[1] = meshPos.y;
-        m_vfxEmitter.position[2] = meshPos.z + 3.0f; // offset above mesh
+        // Emitter follows fireball if active, otherwise follows mesh
+        if (m_fireballActive) {
+            m_vfxEmitter.position[0] = m_fireballPos.x;
+            m_vfxEmitter.position[1] = m_fireballPos.y;
+            m_vfxEmitter.position[2] = m_fireballPos.z;
+        } else {
+            const auto& meshPos = m_meshTransforms[m_currentMesh].position;
+            m_vfxEmitter.position[0] = meshPos.x;
+            m_vfxEmitter.position[1] = meshPos.y;
+            m_vfxEmitter.position[2] = meshPos.z + 3.0f;
+        }
 
-        // Calculate spawn count from rate and accumulator
-        m_vfxSpawnAccum += m_vfxSpawnRate * dt;
-        const auto spawnCount = static_cast<uint32_t>(m_vfxSpawnAccum);
-        m_vfxSpawnAccum -= static_cast<float>(spawnCount);
+        // Calculate spawn count — burst or continuous
+        uint32_t spawnCount = 0;
+        if (m_vfxBurstMode) {
+            if (m_vfxBurstPending) {
+                spawnCount = m_vfxBurstCount;
+                m_vfxBurstPending = false;
+            }
+        } else {
+            m_vfxSpawnAccum += m_vfxSpawnRate * dt;
+            spawnCount = static_cast<uint32_t>(m_vfxSpawnAccum);
+            m_vfxSpawnAccum -= static_cast<float>(spawnCount);
+        }
 
         m_vfxSystem.DispatchCompute(cmd, cbRing, m_vfxEmitter, spawnCount,
                                     dt, GetFrameIndex());
@@ -1206,14 +1274,19 @@ void VFXViewportDemo::OnFrame(float dt) {
 
     // ── Trail ribbon update + rendering ──────────────────────────────────
     if (m_trailEnabled && m_trailHandle != TrailSystem::kInvalidHandle) {
-        // Compute an orbiting trail source position around the particle emitter
-        constexpr float kOrbitRadius = 1.5f;
-        constexpr float kOrbitSpeed  = 2.0f;
-        const Vec3 trailPos(
-            m_vfxEmitter.position[0] + kOrbitRadius * std::cos(m_totalTime * kOrbitSpeed),
-            m_vfxEmitter.position[1] + 0.5f,
-            m_vfxEmitter.position[2] + kOrbitRadius * std::sin(m_totalTime * kOrbitSpeed)
-        );
+        // Trail follows fireball when active, otherwise orbits the emitter
+        Vec3 trailPos;
+        if (m_fireballActive) {
+            trailPos = m_fireballPos;
+        } else {
+            constexpr float kOrbitRadius = 1.5f;
+            constexpr float kOrbitSpeed  = 2.0f;
+            trailPos = Vec3(
+                m_vfxEmitter.position[0] + kOrbitRadius * std::cos(m_totalTime * kOrbitSpeed),
+                m_vfxEmitter.position[1] + 0.5f,
+                m_vfxEmitter.position[2] + kOrbitRadius * std::sin(m_totalTime * kOrbitSpeed)
+            );
+        }
 
         // Update trail system (aging, point emission, mesh generation)
         std::unordered_map<TrailSystem::TrailHandle, Vec3> trailPositions;
