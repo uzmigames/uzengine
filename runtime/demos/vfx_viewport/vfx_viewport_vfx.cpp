@@ -338,14 +338,18 @@ bool VFXParticleSystem::Init(IRHIDevice* device, ShaderManager* shaderMgr,
         desc.depthStencil.depthWrite = false; // Particles don't write depth
         // depthFunc defaults to Greater (reversed-Z)
         desc.rasterizer.cullMode = RHICullMode::None;
-        // Additive blend: SrcAlpha / One — fire/emissive particles add light
-        // Niagara reference: Unlit + Additive blend mode for fire/sparks/magic
+        // Premultiplied alpha blend: One / InvSrcAlpha
+        // The pixel shader outputs premultiplied RGB (rgb *= alpha before return).
+        // This supports both additive glow (emissive adds to pre-multiplied RGB)
+        // AND proper alpha transparency at particle edges, avoiding the full-white
+        // washout that pure additive (SrcAlpha/One) causes.
+        // Reference: Niagara uses premultiplied alpha for translucent/emissive materials.
         desc.renderTargetBlend[0].blendEnable = true;
-        desc.renderTargetBlend[0].srcColor = RHIBlendFactor::SrcAlpha;
-        desc.renderTargetBlend[0].dstColor = RHIBlendFactor::One;
+        desc.renderTargetBlend[0].srcColor = RHIBlendFactor::One;
+        desc.renderTargetBlend[0].dstColor = RHIBlendFactor::InvSrcAlpha;
         desc.renderTargetBlend[0].colorOp = RHIBlendOp::Add;
         desc.renderTargetBlend[0].srcAlpha = RHIBlendFactor::One;
-        desc.renderTargetBlend[0].dstAlpha = RHIBlendFactor::One;
+        desc.renderTargetBlend[0].dstAlpha = RHIBlendFactor::InvSrcAlpha;
         desc.renderTargetBlend[0].alphaOp = RHIBlendOp::Add;
         // No input layout — billboard VS reads from structured buffers via SV_VertexID
         desc.inputElementCount = 0;

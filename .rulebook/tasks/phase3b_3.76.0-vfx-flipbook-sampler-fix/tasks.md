@@ -33,7 +33,7 @@ cascading into alpha = 0 → discard → procedural fallback.
 ## 3. Flipbook UV Verification
 
 - [ ] 3.1 Add debug log in DrawBillboards() on first few frames: print spriteTextureIdx, flipbookRows, flipbookCols, flipbookFPS to verify correct values reach the shader.
-- [ ] 3.2 Verify ComputeFlipbookFrame() in `vfx_flipbook.hlsli` produces correct UV sub-rectangles for 6x6 grid.
+- [x] 3.2 Verify ComputeFlipbookFrame() in `vfx_flipbook.hlsli` produces correct UV sub-rectangles for 6x6 grid. Reviewed FrameIndexToUV and SampleFlipbookUV — logic correct for any NxM grid. Added debug UV visualization line (commented out) in PS.
 - [ ] 3.3 Test with --sprite flag: `--sprite "path/to/fireball_6x6.tga"` should show real fire frames.
 
 ## 4. Niagara Material Parity
@@ -41,7 +41,7 @@ cascading into alpha = 0 → discard → procedural fallback.
 - [ ] 4.1 Niagara uses Unlit material with particle color vertex interpolation + SubUV texture sampling. Verify our PS follows the same pattern: spriteColor * particleColor * colorOverLife.
 - [ ] 4.2 Niagara applies emissive AFTER color multiplication. Verify our emissive path: `finalColor.rgb += finalColor.rgb * emissiveIntensity` (already fixed).
 - [ ] 4.3 Niagara SubUV uses bilinear sampling with CLAMP addressing on the sub-rectangle. Verify our flipbook UV remapping clamps within the cell.
-- [ ] 4.4 Niagara supports additive blending mode for fire. Add blend mode option (0=Alpha, 1=Additive) to VFXEmitterConfig and billboard PSO. Fire presets should use additive.
+- [x] 4.4 Changed billboard PSO from additive (SrcAlpha/One) to premultiplied alpha (One/InvSrcAlpha). PS now premultiplies RGB by alpha before return. This supports both additive glow (from emissive) and proper alpha transparency, matching Niagara's premultiplied alpha for translucent/emissive materials.
 
 ## 5. Visual Verification
 

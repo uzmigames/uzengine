@@ -13,9 +13,12 @@
 /// Uses reversed-Z depth convention (near=1.0, far=0.0) via depth_common.hlsli.
 ///
 /// # Alpha Blending
-/// This shader outputs premultiplied alpha. The PSO blend state should be:
-///   SrcBlend = SrcAlpha, DestBlend = InvSrcAlpha
+/// This shader outputs premultiplied alpha (RGB *= alpha before return).
+/// The PSO blend state MUST be:
+///   SrcBlend = One, DestBlend = InvSrcAlpha (premultiplied alpha)
 ///   DepthTest = enabled, DepthWrite = disabled, Cull = None
+/// This allows emissive particles to add light (additive glow from emissive term)
+/// while transparent edges blend correctly via alpha.
 ///
 /// # Root Signature
 /// - b0: VFXBillboardConstants (unified bindless indices for VS buffers + PS textures)
@@ -287,6 +290,10 @@ float4 main(PSInput input) : SV_Target {
         // Remap billboard [0,1] UV into the atlas sub-rectangle for the current frame.
         float2 uv0 = SampleFlipbookUV(input.texcoord, fb.uv0, fb.frameSize);
 
+        // DEBUG: Uncomment to visualize flipbook UVs as color (R=U, G=V, B=frame/total).
+        // This verifies that the flipbook sub-rectangle is correctly computed.
+        // return float4(uv0.x, uv0.y, (float)((uint)(max(input.age,0) * flipbookFPS) % flipbookTotalFrames) / (float)flipbookTotalFrames, 1.0f);
+
 #ifdef UZ_BINDLESS
         Texture2D<float4> spriteTex = ResourceDescriptorHeap[vfxConstants.spriteTextureIdx];
 #endif
@@ -372,7 +379,18 @@ float4 main(PSInput input) : SV_Target {
     // ── Add emissive contribution ──
     // Emissive brightens the particle using its own tinted color (not raw sprite white).
     // This preserves the color-over-lifetime tint in the glow.
+    // Applied BEFORE premultiply so the emissive term gets baked into the premultiplied
+    // RGB, producing additive glow through the framebuffer's One/InvSrcAlpha blend.
     finalColor.rgb += finalColor.rgb * emissiveIntensity;
+
+    // ── Premultiply alpha ──
+    // The PSO uses premultiplied alpha blend (SrcOne / InvSrcAlpha).
+    // Premultiplying RGB by alpha here enables dual behavior:
+    //   - Transparent edges: alpha < 1 reduces both RGB and coverage correctly.
+    //   - Additive glow: emissive contribution (above) adds energy through SrcOne,
+    //     while alpha controls how much of the background is preserved via InvSrcAlpha.
+    // Without this premultiply, colors would appear too bright (double-multiplied by alpha).
+    finalColor.rgb *= finalColor.a;
 
     return finalColor;
 }
