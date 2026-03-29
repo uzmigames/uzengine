@@ -200,13 +200,20 @@ DeferredMeshUpload UploadMeshDeferred(IRHIDevice* device, IRHICommandList* cmdLi
                                   ? RHIIndexFormat::Uint16
                                   : RHIIndexFormat::Uint32;
 
+    // -- LOD metadata --
+    result.mesh.lodCount = mesh.GetLODCount();
+    for (uint32_t i = 0; i < 3; ++i) {
+        result.mesh.lodInfo[i].indexOffset = mesh.GetLODIndexOffset(i + 1);
+        result.mesh.lodInfo[i].indexCount  = mesh.GetLODIndexCount(i + 1);
+    }
+
     // -- Bindless SRV index --
     if (device->IsBindless()) {
         result.mesh.vbSrvIndex = device->GetBufferSRVIndex(result.mesh.vertexBuffer);
     }
 
-    UZ_LOG(Renderer, Info, "UploadMeshDeferred: queued {} vertices, {} indices (bindless SRV={})",
-           result.mesh.vertexCount, result.mesh.indexCount,
+    UZ_LOG(Renderer, Info, "UploadMeshDeferred: queued {} vertices, {} indices, {} LODs (bindless SRV={})",
+           result.mesh.vertexCount, result.mesh.indexCount, result.mesh.lodCount,
            result.mesh.vbSrvIndex != UINT32_MAX ? static_cast<int>(result.mesh.vbSrvIndex) : -1);
 
     return result;
