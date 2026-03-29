@@ -433,6 +433,14 @@ void VFXParticleSystem::DispatchCompute(IRHICommandList* cmdList, CBRingAllocato
     const int read = m_pingPong;
     const int write = 1 - m_pingPong;
 
+    // ── Reset alive count to 0 before this frame's simulation ─────────
+    // Both spawn and update atomically increment aliveCount. Without a
+    // per-frame reset, the counter grows without bound and the free list
+    // eventually exhausts (particles stop spawning).
+    if (m_aliveCountStaging.IsValid()) {
+        cmdList->CopyBuffer(m_aliveCountStaging, 0, m_aliveCount, 0, sizeof(uint32_t));
+    }
+
     // ── UAV barriers before compute ──────────────────────────────────────
     // Transition all write-set buffers to UAV state. Read-set already in SRV
     // from the previous frame's billboard draw.
@@ -440,6 +448,15 @@ void VFXParticleSystem::DispatchCompute(IRHICommandList* cmdList, CBRingAllocato
         RHIBarrierDesc barrier{};
         barrier.buffer = m_particleBuffers[ch][write];
         barrier.stateBefore = RHIResourceState::Common;
+        barrier.stateAfter = RHIResourceState::UnorderedAccess;
+        cmdList->ResourceBarrier(&barrier, 1);
+    }
+
+    // Transition aliveCount to UAV after the copy
+    {
+        RHIBarrierDesc barrier{};
+        barrier.buffer = m_aliveCount;
+        barrier.stateBefore = RHIResourceState::CopyDst;
         barrier.stateAfter = RHIResourceState::UnorderedAccess;
         cmdList->ResourceBarrier(&barrier, 1);
     }

@@ -605,30 +605,92 @@ void VFXViewportDemo::HandleInput(float dt) {
         }
     }
 
-    // VFX parameter tweaking (number keys 1-9)
-    if (input->IsKeyJustPressed(Key::Num1)) {
-        m_vfxSpawnRate = std::min(5000.0f, m_vfxSpawnRate * 1.5f);
-        UZ_LOG(App, Info, "Spawn rate: {:.0f}/s", m_vfxSpawnRate);
+    // VFX parameter tweaking (number keys — plain = basic, Shift = advanced)
+    const bool shift = input->IsKeyDown(Key::LeftShift) || input->IsKeyDown(Key::RightShift);
+    if (!shift) {
+        // 1/2: Spawn rate ↑/↓
+        if (input->IsKeyJustPressed(Key::Num1)) {
+            m_vfxSpawnRate = std::min(5000.0f, m_vfxSpawnRate * 1.5f);
+            UZ_LOG(App, Info, "[VFX] Spawn rate: {:.0f}/s", m_vfxSpawnRate);
+        }
+        if (input->IsKeyJustPressed(Key::Num2)) {
+            m_vfxSpawnRate = std::max(10.0f, m_vfxSpawnRate / 1.5f);
+            UZ_LOG(App, Info, "[VFX] Spawn rate: {:.0f}/s", m_vfxSpawnRate);
+        }
+        // 3/4: Particle size ↑/↓
+        if (input->IsKeyJustPressed(Key::Num3)) {
+            m_vfxEmitter.initialSize = std::min(5.0f, m_vfxEmitter.initialSize * 1.3f);
+            UZ_LOG(App, Info, "[VFX] Size: {:.3f}", m_vfxEmitter.initialSize);
+        }
+        if (input->IsKeyJustPressed(Key::Num4)) {
+            m_vfxEmitter.initialSize = std::max(0.02f, m_vfxEmitter.initialSize / 1.3f);
+            UZ_LOG(App, Info, "[VFX] Size: {:.3f}", m_vfxEmitter.initialSize);
+        }
+        // 5/6: Gravity Z ↑/↓ (Z-up)
+        if (input->IsKeyJustPressed(Key::Num5)) {
+            m_vfxEmitter.gravity[2] -= 2.0f;
+            UZ_LOG(App, Info, "[VFX] Gravity Z: {:.1f}", m_vfxEmitter.gravity[2]);
+        }
+        if (input->IsKeyJustPressed(Key::Num6)) {
+            m_vfxEmitter.gravity[2] += 2.0f;
+            UZ_LOG(App, Info, "[VFX] Gravity Z: {:.1f}", m_vfxEmitter.gravity[2]);
+        }
+        // 7/8: Velocity speed ↑/↓
+        if (input->IsKeyJustPressed(Key::Num7)) {
+            m_vfxEmitter.spawnVelocity[2] = std::min(30.0f, m_vfxEmitter.spawnVelocity[2] * 1.3f);
+            UZ_LOG(App, Info, "[VFX] Velocity Z: {:.1f}", m_vfxEmitter.spawnVelocity[2]);
+        }
+        if (input->IsKeyJustPressed(Key::Num8)) {
+            m_vfxEmitter.spawnVelocity[2] = std::max(0.5f, m_vfxEmitter.spawnVelocity[2] / 1.3f);
+            UZ_LOG(App, Info, "[VFX] Velocity Z: {:.1f}", m_vfxEmitter.spawnVelocity[2]);
+        }
+        // 9/0: Spread angle ↑/↓
+        if (input->IsKeyJustPressed(Key::Num9)) {
+            m_vfxEmitter.spreadAngle = std::min(3.14159f, m_vfxEmitter.spreadAngle + 0.1f);
+            UZ_LOG(App, Info, "[VFX] Spread: {:.2f} rad", m_vfxEmitter.spreadAngle);
+        }
+        if (input->IsKeyJustPressed(Key::Num0)) {
+            m_vfxEmitter.spreadAngle = std::max(0.0f, m_vfxEmitter.spreadAngle - 0.1f);
+            UZ_LOG(App, Info, "[VFX] Spread: {:.2f} rad", m_vfxEmitter.spreadAngle);
+        }
     }
-    if (input->IsKeyJustPressed(Key::Num2)) {
-        m_vfxSpawnRate = std::max(10.0f, m_vfxSpawnRate / 1.5f);
-        UZ_LOG(App, Info, "Spawn rate: {:.0f}/s", m_vfxSpawnRate);
+    // Shift+1/Shift+2: Lifetime ↑/↓
+    if (input->IsKeyJustPressed(Key::Num1) && (input->IsKeyDown(Key::LeftShift) || input->IsKeyDown(Key::RightShift))) {
+        m_vfxEmitter.minLifetime = std::min(10.0f, m_vfxEmitter.minLifetime * 1.3f);
+        m_vfxEmitter.maxLifetime = std::min(15.0f, m_vfxEmitter.maxLifetime * 1.3f);
+        UZ_LOG(App, Info, "[VFX] Lifetime: {:.1f}-{:.1f}s", m_vfxEmitter.minLifetime, m_vfxEmitter.maxLifetime);
     }
-    if (input->IsKeyJustPressed(Key::Num3)) {
-        m_vfxEmitter.initialSize *= 1.5f;
-        UZ_LOG(App, Info, "Particle size: {:.3f}", m_vfxEmitter.initialSize);
+    if (input->IsKeyJustPressed(Key::Num2) && (input->IsKeyDown(Key::LeftShift) || input->IsKeyDown(Key::RightShift))) {
+        m_vfxEmitter.minLifetime = std::max(0.1f, m_vfxEmitter.minLifetime / 1.3f);
+        m_vfxEmitter.maxLifetime = std::max(0.2f, m_vfxEmitter.maxLifetime / 1.3f);
+        UZ_LOG(App, Info, "[VFX] Lifetime: {:.1f}-{:.1f}s", m_vfxEmitter.minLifetime, m_vfxEmitter.maxLifetime);
     }
-    if (input->IsKeyJustPressed(Key::Num4)) {
-        m_vfxEmitter.initialSize /= 1.5f;
-        UZ_LOG(App, Info, "Particle size: {:.3f}", m_vfxEmitter.initialSize);
+    // Shift+3/Shift+4: Emissive intensity ↑/↓
+    if (input->IsKeyJustPressed(Key::Num3) && (input->IsKeyDown(Key::LeftShift) || input->IsKeyDown(Key::RightShift))) {
+        m_vfxEmitter.emissiveIntensity = std::min(10.0f, m_vfxEmitter.emissiveIntensity + 0.5f);
+        UZ_LOG(App, Info, "[VFX] Emissive: {:.1f}", m_vfxEmitter.emissiveIntensity);
     }
-    if (input->IsKeyJustPressed(Key::Num5)) {
-        m_vfxEmitter.gravity[1] -= 2.0f;
-        UZ_LOG(App, Info, "Gravity Y: {:.1f}", m_vfxEmitter.gravity[1]);
+    if (input->IsKeyJustPressed(Key::Num4) && (input->IsKeyDown(Key::LeftShift) || input->IsKeyDown(Key::RightShift))) {
+        m_vfxEmitter.emissiveIntensity = std::max(0.0f, m_vfxEmitter.emissiveIntensity - 0.5f);
+        UZ_LOG(App, Info, "[VFX] Emissive: {:.1f}", m_vfxEmitter.emissiveIntensity);
     }
-    if (input->IsKeyJustPressed(Key::Num6)) {
-        m_vfxEmitter.gravity[1] += 2.0f;
-        UZ_LOG(App, Info, "Gravity Y: {:.1f}", m_vfxEmitter.gravity[1]);
+    // Shift+5/Shift+6: Damping ↑/↓
+    if (input->IsKeyJustPressed(Key::Num5) && (input->IsKeyDown(Key::LeftShift) || input->IsKeyDown(Key::RightShift))) {
+        m_vfxEmitter.damping = std::min(2.0f, m_vfxEmitter.damping + 0.1f);
+        UZ_LOG(App, Info, "[VFX] Damping: {:.2f}", m_vfxEmitter.damping);
+    }
+    if (input->IsKeyJustPressed(Key::Num6) && (input->IsKeyDown(Key::LeftShift) || input->IsKeyDown(Key::RightShift))) {
+        m_vfxEmitter.damping = std::max(0.0f, m_vfxEmitter.damping - 0.1f);
+        UZ_LOG(App, Info, "[VFX] Damping: {:.2f}", m_vfxEmitter.damping);
+    }
+    // Shift+7/Shift+8: Spawn radius ↑/↓
+    if (input->IsKeyJustPressed(Key::Num7) && (input->IsKeyDown(Key::LeftShift) || input->IsKeyDown(Key::RightShift))) {
+        m_vfxEmitter.spawnRadius = std::min(5.0f, m_vfxEmitter.spawnRadius + 0.2f);
+        UZ_LOG(App, Info, "[VFX] Spawn radius: {:.1f}", m_vfxEmitter.spawnRadius);
+    }
+    if (input->IsKeyJustPressed(Key::Num8) && (input->IsKeyDown(Key::LeftShift) || input->IsKeyDown(Key::RightShift))) {
+        m_vfxEmitter.spawnRadius = std::max(0.0f, m_vfxEmitter.spawnRadius - 0.2f);
+        UZ_LOG(App, Info, "[VFX] Spawn radius: {:.1f}", m_vfxEmitter.spawnRadius);
     }
 
     // Trail toggle (Y key)
@@ -880,9 +942,16 @@ void VFXViewportDemo::HandleInput(float dt) {
         UZ_LOG(App, Info, "  Y                    — Toggle trails");
         UZ_LOG(App, Info, "  D                    — Toggle decals");
         UZ_LOG(App, Info, "  X                    — Toggle distortion");
-        UZ_LOG(App, Info, "  1-6                  — VFX param tweaks (spawn/size/gravity)");
-        UZ_LOG(App, Info, "  7/8                  — Shadow bias decrease/increase");
-        UZ_LOG(App, Info, "  9/0                  — Exposure increase/decrease");
+        UZ_LOG(App, Info, "  --- VFX Controls (number keys) ---");
+        UZ_LOG(App, Info, "  1/2                  — Spawn rate ↑/↓");
+        UZ_LOG(App, Info, "  3/4                  — Particle size ↑/↓");
+        UZ_LOG(App, Info, "  5/6                  — Gravity Z ↑/↓");
+        UZ_LOG(App, Info, "  7/8                  — Velocity ↑/↓");
+        UZ_LOG(App, Info, "  9/0                  — Spread angle ↑/↓");
+        UZ_LOG(App, Info, "  Shift+1/2            — Lifetime ↑/↓");
+        UZ_LOG(App, Info, "  Shift+3/4            — Emissive ↑/↓");
+        UZ_LOG(App, Info, "  Shift+5/6            — Damping ↑/↓");
+        UZ_LOG(App, Info, "  Shift+7/8            — Spawn radius ↑/↓");
         UZ_LOG(App, Info, "  F1-F8                — Debug view modes");
         UZ_LOG(App, Info, "  F5                   — Screenshot");
         UZ_LOG(App, Info, "  Alt+Enter            — Toggle fullscreen");
