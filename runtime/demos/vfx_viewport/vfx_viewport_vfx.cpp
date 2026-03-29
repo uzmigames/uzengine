@@ -338,13 +338,14 @@ bool VFXParticleSystem::Init(IRHIDevice* device, ShaderManager* shaderMgr,
         desc.depthStencil.depthWrite = false; // Particles don't write depth
         // depthFunc defaults to Greater (reversed-Z)
         desc.rasterizer.cullMode = RHICullMode::None;
-        // Alpha blend: SrcAlpha / InvSrcAlpha
+        // Additive blend: SrcAlpha / One — fire/emissive particles add light
+        // Niagara reference: Unlit + Additive blend mode for fire/sparks/magic
         desc.renderTargetBlend[0].blendEnable = true;
         desc.renderTargetBlend[0].srcColor = RHIBlendFactor::SrcAlpha;
-        desc.renderTargetBlend[0].dstColor = RHIBlendFactor::InvSrcAlpha;
+        desc.renderTargetBlend[0].dstColor = RHIBlendFactor::One;
         desc.renderTargetBlend[0].colorOp = RHIBlendOp::Add;
         desc.renderTargetBlend[0].srcAlpha = RHIBlendFactor::One;
-        desc.renderTargetBlend[0].dstAlpha = RHIBlendFactor::InvSrcAlpha;
+        desc.renderTargetBlend[0].dstAlpha = RHIBlendFactor::One;
         desc.renderTargetBlend[0].alphaOp = RHIBlendOp::Add;
         // No input layout — billboard VS reads from structured buffers via SV_VertexID
         desc.inputElementCount = 0;
