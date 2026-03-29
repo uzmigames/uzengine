@@ -587,6 +587,14 @@ void VFXViewportDemo::HandleInput(float dt) {
         UZ_LOG(App, Info, "Bloom: {}", m_bloomEnabled ? "on" : "off");
     }
 
+    // VFX restart (Delete key) — clears all particles and restarts emission
+    if (input->IsKeyJustPressed(Key::Delete)) {
+        auto* cmd = GetCommandList();
+        m_vfxSystem.UploadInitialFreeList(cmd);
+        m_vfxSpawnAccum = 0.0f;
+        UZ_LOG(App, Info, "[VFX] Particles reset — emission restarted");
+    }
+
     // VFX preset cycling (Tab / Shift+Tab)
     if (input->IsKeyJustPressed(Key::Tab)) {
         if (input->IsKeyDown(Key::LeftShift) || input->IsKeyDown(Key::RightShift)) {
@@ -939,6 +947,7 @@ void VFXViewportDemo::HandleInput(float dt) {
         UZ_LOG(App, Info, "  P                    — Toggle post-processing (ACES/linear)");
         UZ_LOG(App, Info, "  G                    — Toggle shadow debug overlay");
         UZ_LOG(App, Info, "  Tab                  — Cycle VFX presets (Shift+Tab = toggle)");
+        UZ_LOG(App, Info, "  Delete               — Reset particles (restart emission)");
         UZ_LOG(App, Info, "  Y                    — Toggle trails");
         UZ_LOG(App, Info, "  D                    — Toggle decals");
         UZ_LOG(App, Info, "  X                    — Toggle distortion");
