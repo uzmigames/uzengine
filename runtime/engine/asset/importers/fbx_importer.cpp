@@ -603,78 +603,11 @@ AssetImportResult FbxImporter::Import(
         if (dst.position.z > boundsMax.z) boundsMax.z = dst.position.z;
     }
 
-    // ── Auto-generate LODs (additive — does NOT touch the existing pipeline) ──
-    // Uses meshopt_simplify on the already-optimized vertices+indices.
-    // LOD indices reference the same vertex buffer as LOD0.
-    struct LODIndices { std::vector<uint32_t> indices; };
-    std::vector<LODIndices> extraLODs; // LOD1, LOD2, LOD3
-
-    {
-        // meshopt_simplify requires welded vertices (shared positions) to
-        // collapse edges. The existing pipeline may leave verts unwelded
-        // (same position but different UV/normal). We weld ONLY for simplification,
-        // then remap the simplified indices back to the original vertex buffer.
-        std::vector<uint32_t> weldRemap(finalVertexCount);
-        const size_t weldedCount = meshopt_generateVertexRemap(
-            weldRemap.data(), optimizedIndices.data(), optimizedIndices.size(),
-            optimizedVertices.data(), finalVertexCount, sizeof(VertexPosNormUV));
-
-        std::vector<uint32_t> weldedIndices(optimizedIndices.size());
-        meshopt_remapIndexBuffer(weldedIndices.data(), optimizedIndices.data(),
-                                 optimizedIndices.size(), weldRemap.data());
-
-        std::vector<float> pos(weldedCount * 3);
-        for (size_t i = 0; i < finalVertexCount; ++i) {
-            const uint32_t wi = weldRemap[i];
-            if (wi < weldedCount) {
-                pos[wi * 3 + 0] = optimizedVertices[i].position[0];
-                pos[wi * 3 + 1] = optimizedVertices[i].position[1];
-                pos[wi * 3 + 2] = optimizedVertices[i].position[2];
-            }
-        }
-
-        // Build reverse lookup: for each welded index, one original index
-        std::vector<uint32_t> unweldMap(weldedCount, UINT32_MAX);
-        for (size_t i = 0; i < finalVertexCount; ++i) {
-            if (weldRemap[i] < weldedCount && unweldMap[weldRemap[i]] == UINT32_MAX)
-                unweldMap[weldRemap[i]] = static_cast<uint32_t>(i);
-        }
-
-        constexpr float kReductions[] = { 0.50f, 0.25f, 0.125f };
-        for (int lod = 0; lod < 3; ++lod) {
-            const size_t target = static_cast<size_t>(
-                static_cast<float>(weldedIndices.size()) * kReductions[lod]);
-            if (target < 3) break;
-            std::vector<uint32_t> lodIdx(weldedIndices.size());
-            float err = 0.0f;
-            const size_t actual = meshopt_simplify(
-                lodIdx.data(), weldedIndices.data(), weldedIndices.size(),
-                pos.data(), weldedCount, sizeof(float) * 3,
-                target, 1e10f, 0, &err);
-            if (actual < 3) break;
-            lodIdx.resize(actual);
-
-            // Remap simplified indices back to original vertex buffer
-            for (auto& idx : lodIdx) {
-                if (idx < weldedCount && unweldMap[idx] != UINT32_MAX)
-                    idx = unweldMap[idx];
-            }
-
-            meshopt_optimizeVertexCache(lodIdx.data(), lodIdx.data(), lodIdx.size(), finalVertexCount);
-            extraLODs.push_back({std::move(lodIdx)});
-            UZ_LOG(Asset, Debug, "FBX LOD{}: {} → {} indices ({:.0f}% reduction)",
-                   lod + 1, weldedIndices.size(), actual,
-                   100.0f * (1.0f - float(actual) / float(weldedIndices.size())));
-        }
-    }
-
-    // ── Build UZMH v2 with all LOD indices concatenated ──
+    // ── Build Mesh struct with MeshHeader (UZMH, 128 bytes) ──
+    // The runtime mesh loader (LoadMeshFromMemory) only understands UZMH format.
     const uint32_t submeshCount = static_cast<uint32_t>(submeshes.size());
     const size_t vertexDataBytes = finalVertexCount * sizeof(Vertex);
-
-    // Concatenate LOD0 + LOD1..3 indices
-    std::vector<uint32_t> allLodIndices(optimizedIndices.begin(), optimizedIndices.end());
-    const uint32_t lodCount = 1 + static_cast<uint32_t>(extraLODs.size());
+    const size_t indexDataBytes = optimizedIndices.size() * sizeof(uint32_t);
 
     Mesh outputMesh{};
     outputMesh.header.magic = kMeshMagic;
@@ -683,33 +616,21 @@ AssetImportResult FbxImporter::Import(
     outputMesh.header.vertexStride = sizeof(Vertex);
     outputMesh.header.vertexCount = static_cast<uint32_t>(finalVertexCount);
     outputMesh.header.indexFormat = MeshIndexFormat::UInt32;
-    outputMesh.header.indexCount = static_cast<uint32_t>(optimizedIndices.size()); // LOD0
+    outputMesh.header.indexCount = static_cast<uint32_t>(optimizedIndices.size());
     outputMesh.header.submeshCount = submeshCount;
     outputMesh.header.boundsMin = boundsMin;
     outputMesh.header.boundsMax = boundsMax;
     outputMesh.header.vertexDataOffset = sizeof(MeshHeader);
     outputMesh.header.indexDataOffset = sizeof(MeshHeader) + vertexDataBytes;
-    outputMesh.header.lodCount = lodCount;
-    std::memset(outputMesh.header.lods, 0, sizeof(outputMesh.header.lods));
-    for (size_t i = 0; i < extraLODs.size() && i < 3; ++i) {
-        outputMesh.header.lods[i].indexOffset =
-            static_cast<uint32_t>(allLodIndices.size() * sizeof(uint32_t));
-        outputMesh.header.lods[i].indexCount =
-            static_cast<uint32_t>(extraLODs[i].indices.size());
-        allLodIndices.insert(allLodIndices.end(),
-                             extraLODs[i].indices.begin(), extraLODs[i].indices.end());
-    }
     std::memset(outputMesh.header.reserved, 0, sizeof(outputMesh.header.reserved));
-
-    const size_t indexDataBytes = allLodIndices.size() * sizeof(uint32_t);
 
     // Copy vertex data
     outputMesh.vertexData.resize(vertexDataBytes);
     std::memcpy(outputMesh.vertexData.data(), finalVertices.data(), vertexDataBytes);
 
-    // Copy index data (all LODs concatenated)
+    // Copy index data
     outputMesh.indexData.resize(indexDataBytes);
-    std::memcpy(outputMesh.indexData.data(), allLodIndices.data(), indexDataBytes);
+    std::memcpy(outputMesh.indexData.data(), optimizedIndices.data(), indexDataBytes);
 
     // Map UzMeshSubmesh -> SubMesh (runtime format)
     for (const auto& sub : submeshes) {
@@ -721,6 +642,7 @@ AssetImportResult FbxImporter::Import(
     }
 
     // ── Serialize as flat binary: MeshHeader + vertexData + indexData ──
+    // This matches the layout that LoadMeshFromMemory() expects.
     const size_t totalSize = sizeof(MeshHeader) + vertexDataBytes + indexDataBytes;
     result.data.resize(totalSize);
     size_t writeOffset = 0;
@@ -736,14 +658,11 @@ AssetImportResult FbxImporter::Import(
     result.success = true;
 
     UZ_LOG(Asset, Info,
-           "Imported FBX '{}': {} vertices (48B stride), {} indices, {} submeshes, {} materials, {} LODs, {} bytes",
+           "Imported FBX '{}': {} vertices (48B stride), {} indices, {} submeshes, {} materials, {} bytes",
            sourceName, finalVertexCount, optimizedIndices.size(),
-           submeshCount, result.materials.size(), lodCount, result.data.size());
+           submeshCount, result.materials.size(), result.data.size());
 
-    // ── Generate SDF sidecar (skip for large meshes — too slow on CPU) ──
-    if (optimizedIndices.size() > 50000) {
-        return result;
-    }
+    // ── Generate SDF sidecar ──
     {
         std::vector<float> positions(finalVertexCount * 3);
         for (size_t i = 0; i < finalVertexCount; ++i) {
