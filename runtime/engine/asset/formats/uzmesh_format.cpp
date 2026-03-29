@@ -25,7 +25,8 @@ std::vector<uint8_t> WriteUzMesh(
     const std::vector<UzMeshLOD>& lods,
     const std::vector<UzMeshSubmesh>& submeshes,
     const std::vector<uint8_t>& vertexData,
-    const std::vector<uint8_t>& indexData) {
+    const std::vector<uint8_t>& indexData,
+    const std::string& skeletonPath) {
     UZ_PROFILE_FUNCTION();
 
     // Compute layout offsets with 64-byte alignment
@@ -36,13 +37,24 @@ std::vector<uint8_t> WriteUzMesh(
     const uint32_t vertexOffset = AlignUp(afterSubmeshes, kUzMeshDataAlignment);
     const uint32_t afterVertex = vertexOffset + static_cast<uint32_t>(vertexData.size());
     const uint32_t indexOffset = AlignUp(afterVertex, kUzMeshDataAlignment);
-    const uint32_t totalSize = indexOffset + static_cast<uint32_t>(indexData.size());
+    const uint32_t afterIndex = indexOffset + static_cast<uint32_t>(indexData.size());
 
-    // Fill computed offsets into header
+    // Skeleton path is appended after index data for skinned meshes (null-terminated)
+    const uint32_t skelPathLen = skeletonPath.empty()
+                                     ? 0u
+                                     : static_cast<uint32_t>(skeletonPath.size() + 1); // +1 for null
+    const uint32_t totalSize = afterIndex + skelPathLen;
+
+    // Fill computed offsets and skinned metadata into header
     header.magic = kUzMeshMagic;
     header.version = kUzMeshVersion;
     header.vertexDataOffset = vertexOffset;
     header.indexDataOffset = indexOffset;
+
+    if (!skeletonPath.empty()) {
+        header.flags |= kUzMeshFlag_Skinned;
+        header.reserved[0] = skelPathLen;
+    }
 
     std::vector<uint8_t> out(totalSize, 0);
 
@@ -59,6 +71,10 @@ std::vector<uint8_t> WriteUzMesh(
     }
     if (!indexData.empty()) {
         std::memcpy(out.data() + indexOffset, indexData.data(), indexData.size());
+    }
+    if (!skeletonPath.empty()) {
+        // Write null-terminated skeleton path after index data
+        std::memcpy(out.data() + afterIndex, skeletonPath.c_str(), skelPathLen);
     }
 
     return out;
@@ -80,9 +96,17 @@ UzMeshParseResult ReadUzMesh(const std::vector<uint8_t>& data) {
         return result;
     }
 
-    if (result.file.header.version != kUzMeshVersion) {
+    if (result.file.header.version == 0 || result.file.header.version > kUzMeshVersion) {
         result.error = "Unsupported .uzmesh version: " +
                        std::to_string(result.file.header.version);
+        return result;
+    }
+
+    // Reject unknown flag bits — only kUzMeshFlag_Skinned (0x1) is defined
+    constexpr uint32_t kKnownFlags = kUzMeshFlag_Skinned;
+    if (result.file.header.flags & ~kKnownFlags) {
+        result.error = "Unknown flags in .uzmesh header: 0x" +
+                       std::to_string(result.file.header.flags);
         return result;
     }
 
@@ -131,6 +155,24 @@ UzMeshParseResult ReadUzMesh(const std::vector<uint8_t>& data) {
     result.file.indexData.assign(
         data.data() + h.indexDataOffset,
         data.data() + h.indexDataOffset + indexBytes);
+
+    // v2: Read skeleton path for skinned meshes
+    if (h.version >= 2 && (h.flags & kUzMeshFlag_Skinned)) {
+        const uint32_t skelPathLen = h.reserved[0];
+        if (skelPathLen > 0) {
+            const size_t skelPathOffset = h.indexDataOffset + indexBytes;
+            if (data.size() < skelPathOffset + skelPathLen) {
+                result.error = "Data truncated — skeleton path exceeds file size";
+                return result;
+            }
+            // Extract string without the null terminator
+            const auto* pathBegin = reinterpret_cast<const char*>(data.data() + skelPathOffset);
+            const size_t strLen = (skelPathLen > 0 && pathBegin[skelPathLen - 1] == '\0')
+                                      ? skelPathLen - 1
+                                      : skelPathLen;
+            result.file.skeletonPath.assign(pathBegin, strLen);
+        }
+    }
 
     result.success = true;
     return result;

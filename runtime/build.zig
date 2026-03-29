@@ -107,6 +107,7 @@ pub fn build(b: *std.Build) void {
         "engine/vfx/trails",
         "engine/vfx/lod",
         "engine/vfx/budget",
+        "engine/animation",
         "engine/event",
         "engine/property",
         "engine/debug",
@@ -287,6 +288,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/vfx/trails",  cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/lod",     cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/budget",  cpp_flags);
+    addCppDir(runtime_mod, b, "engine/animation", cpp_flags);
     addCppDir(runtime_mod, b, "engine/property", cpp_flags);
     addCppDir(runtime_mod, b, "engine/debug",    cpp_flags);
 

@@ -7,8 +7,10 @@
 ///
 /// # Version History
 /// - **v1** (initial): Header + LODs + Submeshes + vertex/index data.
-///   Future versions will maintain backward compatibility by appending new
-///   fields to reserved space or adding new sections after index data.
+/// - **v2**: Skeletal mesh support. `flags & kUzMeshFlag_Skinned` indicates
+///   skinned vertex data (56 bytes/vertex). `reserved[0]` stores the byte
+///   length of a null-terminated skeleton filepath string appended after
+///   the index data region. Version 1 files remain fully loadable.
 ///
 /// # Endianness
 /// All multi-byte fields are little-endian (native x86/ARM LE). No byte-swap
@@ -31,14 +33,15 @@
 ///          vertexCount * vertexStride    [Vertex Data] interleaved vertices
 ///          0..63 bytes                   [Padding] zeros to 64-byte boundary
 ///          indexCount * indexStride      [Index Data] uint16 or uint32 indices
+///          skeletonPathLength bytes      [v2 Skinned] skeleton filepath (null-terminated)
 /// ```
 ///
 /// # Validation Rules
 /// Readers MUST validate in this order before accessing data:
 /// 1. File size >= 64 bytes (header fits).
 /// 2. `magic == 0x534D5A55` ("UZMS" in LE).
-/// 3. `version == 1` (reject unknown versions).
-/// 4. `flags == 0` (reject unknown flags).
+/// 3. `version <= kUzMeshVersion` (reject future versions).
+/// 4. `flags` contains only known bits (`kUzMeshFlag_Skinned`).
 /// 5. `indexStride` is 2 or 4.
 /// 6. `vertexStride > 0`.
 /// 7. `vertexDataOffset` and `indexDataOffset` are within file bounds.
@@ -89,7 +92,19 @@ static constexpr uint32_t kUzMeshMagic = 0x534D5A55;
 
 /// Current .uzmesh format version. Increment when adding fields or changing
 /// layout. Readers must reject files with `version > kUzMeshVersion`.
-static constexpr uint32_t kUzMeshVersion = 1;
+///
+/// # Version History
+/// - **v1**: Initial format — static meshes only.
+/// - **v2**: Skeletal mesh support — adds `kUzMeshFlag_Skinned` flag. When set,
+///   `reserved[0]` holds `skeletonPathLength` and a null-terminated skeleton
+///   filepath string is appended after the index data region.
+static constexpr uint32_t kUzMeshVersion = 2;
+
+/// Mesh contains skinned vertex data (`SkinnedVertex`, 56 bytes/vertex) and
+/// a skeleton filepath string appended after the index data region.
+/// When this flag is set, `vertexStride` must be 56 and `reserved[0]` holds
+/// the byte length of the skeleton path string (including null terminator).
+static constexpr uint32_t kUzMeshFlag_Skinned = 0x1;
 
 /// Alignment boundary (in bytes) for vertex and index data regions.
 /// Matches GPU cache line size for zero-copy upload on most hardware.
@@ -110,8 +125,8 @@ static constexpr uint32_t kUzMeshDataAlignment = 64;
 /// Offset  Size  Field
 /// ──────  ────  ─────────────────────────────────────────
 /// 0x00    4     magic              "UZMS" = 0x534D5A55
-/// 0x04    4     version            must be 1
-/// 0x08    4     flags              reserved, must be 0
+/// 0x04    4     version            1 or 2
+/// 0x08    4     flags              bit 0 = kUzMeshFlag_Skinned
 /// 0x0C    4     lodCount           [0, 256] typical
 /// 0x10    4     totalSubmeshCount  sum of all LOD submeshCounts
 /// 0x14    4     vertexCount        total vertices in buffer
@@ -120,12 +135,13 @@ static constexpr uint32_t kUzMeshDataAlignment = 64;
 /// 0x20    4     indexStride        2 (uint16) or 4 (uint32)
 /// 0x24    4     vertexDataOffset   64-byte aligned file offset
 /// 0x28    4     indexDataOffset    64-byte aligned file offset
-/// 0x2C    20    reserved[5]        must be all zeros
+/// 0x2C    4     reserved[0]        v2: skeletonPathLength (incl. null)
+/// 0x30    16    reserved[1..4]     must be zeros
 /// ```
 struct UzMeshHeader {
     uint32_t magic = kUzMeshMagic;          ///< Must be `kUzMeshMagic` (0x534D5A55, "UZMS"). First validation check.
-    uint32_t version = kUzMeshVersion;      ///< Format version (currently 1). Reject if > kUzMeshVersion.
-    uint32_t flags = 0;                     ///< Reserved flags, must be 0. Reject if non-zero.
+    uint32_t version = kUzMeshVersion;      ///< Format version (currently 2). Reject if > kUzMeshVersion.
+    uint32_t flags = 0;                     ///< Bit field: bit 0 = `kUzMeshFlag_Skinned`. Reject unknown bits.
     uint32_t lodCount = 0;                  ///< Number of LOD levels (0 is valid for empty mesh).
     uint32_t totalSubmeshCount = 0;         ///< Total submesh count across all LODs. Must equal sum of all LOD submeshCounts.
     uint32_t vertexCount = 0;              ///< Total vertex count in the vertex data region.
@@ -134,7 +150,7 @@ struct UzMeshHeader {
     uint32_t indexStride = 0;              ///< Bytes per index: 2 (uint16) or 4 (uint32). Must be 2 or 4 if indexCount > 0.
     uint32_t vertexDataOffset = 0;         ///< Byte offset from file start to vertex data. Always 64-byte aligned.
     uint32_t indexDataOffset = 0;          ///< Byte offset from file start to index data. Always 64-byte aligned.
-    uint32_t reserved[5] = {};             ///< Reserved for future use, must be all zeros.
+    uint32_t reserved[5] = {};             ///< `reserved[0]`: v2 skeleton path length (bytes, incl. null). `reserved[1..4]`: must be zero.
 };
 #pragma pack(pop)
 
@@ -249,6 +265,9 @@ static_assert(sizeof(VertexPosNormUV) == 32, "VertexPosNormUV must be exactly 32
 /// * `submeshes` - Submesh descriptors referenced by LODs.
 /// * `vertexData` - Raw interleaved vertex bytes.
 /// * `indexData` - Raw index bytes (uint16 or uint32).
+/// * `skeletonPath` - Skeleton filepath for skinned meshes. When non-empty,
+///   the writer sets `kUzMeshFlag_Skinned` in `header.flags` and stores the
+///   null-terminated path after the index data region. Pass empty for static meshes.
 ///
 /// # Returns
 /// Complete .uzmesh file bytes. Vertex and index data regions are 64-byte
@@ -259,7 +278,8 @@ static_assert(sizeof(VertexPosNormUV) == 32, "VertexPosNormUV must be exactly 32
     const std::vector<UzMeshLOD>& lods,
     const std::vector<UzMeshSubmesh>& submeshes,
     const std::vector<uint8_t>& vertexData,
-    const std::vector<uint8_t>& indexData);
+    const std::vector<uint8_t>& indexData,
+    const std::string& skeletonPath = {});
 
 /// Deserialized contents of a .uzmesh file.
 struct UzMeshFile {
@@ -268,6 +288,7 @@ struct UzMeshFile {
     std::vector<UzMeshSubmesh> submeshes; ///< Submesh descriptors
     std::vector<uint8_t> vertexData;      ///< Raw vertex bytes
     std::vector<uint8_t> indexData;       ///< Raw index bytes
+    std::string skeletonPath;             ///< Skeleton filepath (v2 skinned meshes). Empty for static meshes.
 };
 
 /// Result of parsing a .uzmesh binary blob.
