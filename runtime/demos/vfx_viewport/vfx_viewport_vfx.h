@@ -68,6 +68,12 @@ struct VFXEmitterConfig {
     // Billboard alignment and stretching
     uint32_t alignmentMode   = 0;     ///< 0=CameraFacing, 1=VelocityAligned.
     float    stretchFactor   = 0.0f;  ///< Velocity stretch multiplier. 0=no stretch, >0=elongate along velocity.
+    // Spawn shape parameters
+    uint32_t spawnShape      = 0;     ///< 0=Point, 1=Sphere, 2=Box, 3=Ring, 4=Cone, 5=Cylinder, 6=Disc, 7=Line.
+    uint32_t spawnOnSurface  = 0;     ///< 0=volume fill, 1=surface only.
+    float    shapeParam1     = 0.0f;  ///< Ring: ring width, Cone: half-angle (rad), Cylinder: height, Line: length.
+    float    shapeParam2     = 0.0f;  ///< Cone: height, Box: (unused).
+    float    shapeParam3     = 0.0f;  ///< Reserved for future shapes.
 };
 
 /// Named emitter preset with a spawn rate.
@@ -107,9 +113,11 @@ struct VFXSpawnCB {
     uint32_t lifespansUavIndex;       uint32_t sizesUavIndex;
     uint32_t colorsUavIndex;          uint32_t rotationsUavIndex; // 16 bytes
     uint32_t freeListHeadUavIndex;    uint32_t aliveCountUavIndex;
-    uint32_t _pad0;                   uint32_t _pad1;             // 16 bytes
+    uint32_t spawnShape;              uint32_t spawnOnSurface;    // 16 bytes
+    float    shapeParam1;             float    shapeParam2;
+    float    shapeParam3;             uint32_t _pad0;             // 16 bytes
 };
-static_assert(sizeof(VFXSpawnCB) == 128, "VFXSpawnCB must be 128 bytes (8 x float4)");
+static_assert(sizeof(VFXSpawnCB) == 144, "VFXSpawnCB must be 144 bytes (9 x float4)");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VFX Update Constant Buffer (matches particle_update_cs.hlsl b0 layout)

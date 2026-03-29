@@ -5,18 +5,18 @@ disc, line, and mesh surface emission. Niagara reference: Shape Location module.
 
 ## 1. New Spawn Shapes (Shader)
 
-- [ ] 1.1 Add `uint spawnShape` to VFXSpawnCB: 0=Point, 1=Sphere, 2=Box, 3=Ring, 4=Cone, 5=Cylinder, 6=Disc, 7=Line.
-- [ ] 1.2 In `particle_spawn_cs.hlsl`: implement Ring shape — particles on a torus at `spawnRadius` with ring width. Normal points outward radially.
-- [ ] 1.3 Implement Cone shape — particles distributed on a cone surface defined by angle and height. Velocity along cone normal.
-- [ ] 1.4 Implement Cylinder shape — particles on the surface or volume of a cylinder (height + radius).
-- [ ] 1.5 Implement Disc shape — flat circle spawn (XY plane in emitter local space).
-- [ ] 1.6 Implement Line shape — particles along a line segment between two points.
+- [x] 1.1 Add `uint spawnShape` to VFXSpawnCB: 0=Point, 1=Sphere, 2=Box, 3=Ring, 4=Cone, 5=Cylinder, 6=Disc, 7=Line. Added to both VFXSpawnCB (C++) and VFXSpawnConstants (HLSL cbuffer). CB grew from 128 to 144 bytes (9 x float4).
+- [x] 1.2 In `particle_spawn_cs.hlsl`: implement Ring shape — particles on a torus at `spawnRadius` with ring width `shapeParam1`. Normal points outward radially.
+- [x] 1.3 Implement Cone shape — particles on cone surface/volume, half-angle = `shapeParam1`, height = `shapeParam2`. Normal perpendicular to cone surface.
+- [x] 1.4 Implement Cylinder shape — particles on surface or volume, height = `shapeParam1`, radius = `spawnRadius`. Surface-only mode spawns on shell.
+- [x] 1.5 Implement Disc shape — flat circle in XY plane. Surface mode = circumference only, volume mode = area-uniform.
+- [x] 1.6 Implement Line shape — particles along X axis, length = `shapeParam1`.
 
 ## 2. Shape Parameters
 
-- [ ] 2.1 Add shape-specific params to VFXEmitterConfig: `float shapeParam1, shapeParam2, shapeParam3` (ring width, cone angle, cylinder height, etc.).
-- [ ] 2.2 Add `bool spawnOnSurface = false` — true = surface only, false = volume fill.
-- [ ] 2.3 Pass shape params through VFXSpawnCB to compute shader.
+- [x] 2.1 Add shape-specific params to VFXEmitterConfig: `spawnShape`, `shapeParam1`, `shapeParam2`, `shapeParam3`.
+- [x] 2.2 Add `uint32_t spawnOnSurface = 0` — 1 = surface only, 0 = volume fill. Implemented for Sphere, Box, Cone, Cylinder, Disc.
+- [x] 2.3 Pass shape params through VFXSpawnCB to compute shader. Done in DispatchCompute().
 
 ## 3. Mesh Surface Emission (Advanced)
 
@@ -27,7 +27,7 @@ disc, line, and mesh surface emission. Niagara reference: Shape Location module.
 ## 4. Demo Integration
 
 - [ ] 4.1 Add shape cycling key (Shift+Num0: cycle through shapes).
-- [ ] 4.2 Add presets demonstrating each shape (Ring of Fire, Cone Jet, Cylinder Volume).
+- [x] 4.2 Add presets demonstrating each shape: "Ring of Fire" (shape=3, ring), "Cone Jet" (shape=4, cone surface), "Cylinder Volume" (shape=5, cylinder volume).
 
 ## 5. Visual Verification
 

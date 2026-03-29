@@ -98,8 +98,56 @@ static const VFXPreset s_presets[] = {
         /*sizeOverLife*/ 0.5f, 1.3f, 0.4f, 0.2f,
         /*colorLifeStart*/ 1.0f, 0.7f, 0.2f, 1.0f,
         /*colorLifeEnd*/ 0.7f, 0.15f, 0.02f, 0.3f,
-        /*alignment*/ 0, /*stretch*/ 0.5f
+        /*alignment*/ 0, /*stretch*/ 0.5f,
+        /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
+        /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f
     }, 800.0f },
+    // ── Spawn Shape Presets ──────────────────────────────────────────────
+    { "Ring of Fire", {
+        /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 3.0f,
+        /*velocity*/ {0.0f, 0.0f, 4.0f}, /*velVariation*/ 1.0f,
+        /*spread*/ 0.5f, /*minLife*/ 0.5f, /*maxLife*/ 1.5f, /*size*/ 0.4f,
+        /*color*/ {1.0f, 0.5f, 0.1f, 0.9f},
+        /*gravity*/ {0.0f, 0.0f, -2.0f}, /*damping*/ 0.2f,
+        /*softFade*/ 0.3f, /*emissive*/ 1.5f,
+        /*flipbook*/ 1, 1, 1, 0.0f, 0,
+        /*sizeOverLife*/ 0.5f, 1.0f, 0.0f, 0.3f,
+        /*colorLifeStart*/ 1.0f, 0.8f, 0.3f, 1.0f,
+        /*colorLifeEnd*/ 1.0f, 0.2f, 0.0f, 0.0f,
+        /*alignment*/ 0, /*stretch*/ 0.0f,
+        /*spawnShape*/ 3, /*spawnOnSurface*/ 0,
+        /*shapeParam1*/ 0.3f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f
+    }, 400.0f },
+    { "Cone Jet", {
+        /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.1f,
+        /*velocity*/ {0.0f, 0.0f, 10.0f}, /*velVariation*/ 2.0f,
+        /*spread*/ 0.3f, /*minLife*/ 0.5f, /*maxLife*/ 1.5f, /*size*/ 0.2f,
+        /*color*/ {0.3f, 0.6f, 1.0f, 0.9f},
+        /*gravity*/ {0.0f, 0.0f, -5.0f}, /*damping*/ 0.1f,
+        /*softFade*/ 0.3f, /*emissive*/ 2.0f,
+        /*flipbook*/ 1, 1, 1, 0.0f, 0,
+        /*sizeOverLife*/ 0.3f, 1.0f, 0.0f, 0.3f,
+        /*colorLifeStart*/ 0.5f, 0.8f, 1.0f, 1.0f,
+        /*colorLifeEnd*/ 0.1f, 0.3f, 0.8f, 0.0f,
+        /*alignment*/ 1, /*stretch*/ 1.5f,
+        /*spawnShape*/ 4, /*spawnOnSurface*/ 1,
+        /*shapeParam1*/ 0.5f, /*shapeParam2*/ 2.0f, /*shapeParam3*/ 0.0f
+    }, 600.0f },
+    { "Cylinder Volume", {
+        /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 2.0f,
+        /*velocity*/ {0.0f, 0.0f, 2.0f}, /*velVariation*/ 0.5f,
+        /*spread*/ 0.8f, /*minLife*/ 1.5f, /*maxLife*/ 3.0f, /*size*/ 0.3f,
+        /*color*/ {0.2f, 0.9f, 0.3f, 0.8f},
+        /*gravity*/ {0.0f, 0.0f, -1.0f}, /*damping*/ 0.15f,
+        /*softFade*/ 0.4f, /*emissive*/ 0.5f,
+        /*flipbook*/ 1, 1, 1, 0.0f, 0,
+        /*sizeOverLife*/ 0.5f, 1.2f, 0.3f, 0.4f,
+        /*colorLifeStart*/ 0.3f, 1.0f, 0.4f, 1.0f,
+        /*colorLifeEnd*/ 0.1f, 0.5f, 0.1f, 0.0f,
+        /*alignment*/ 0, /*stretch*/ 0.0f,
+        /*spawnShape*/ 5, /*spawnOnSurface*/ 0,
+        /*shapeParam1*/ 4.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f
+    }, 300.0f },
 };
 
 const VFXPreset* GetVFXPresets(int& outCount) {
@@ -522,6 +570,13 @@ void VFXParticleSystem::DispatchCompute(IRHICommandList* cmdList, CBRingAllocato
         cb.rotationsUavIndex = m_device->GetBufferUAVIndex(m_particleBuffers[6][write]);
         cb.freeListHeadUavIndex = m_device->GetBufferUAVIndex(m_freeListHead);
         cb.aliveCountUavIndex = m_device->GetBufferUAVIndex(m_aliveCount);
+
+        // Spawn shape parameters
+        cb.spawnShape = config.spawnShape;
+        cb.spawnOnSurface = config.spawnOnSurface;
+        cb.shapeParam1 = config.shapeParam1;
+        cb.shapeParam2 = config.shapeParam2;
+        cb.shapeParam3 = config.shapeParam3;
 
         auto alloc = cbRing->Allocate(sizeof(VFXSpawnCB));
         std::memcpy(alloc.cpuPtr, &cb, sizeof(VFXSpawnCB));

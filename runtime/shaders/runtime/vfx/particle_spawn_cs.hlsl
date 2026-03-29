@@ -69,7 +69,7 @@ static const uint SPAWN_GROUP_SIZE = 256;
 /// buffer access.
 ///
 /// Layout is tightly packed with explicit padding for 16-byte CBV alignment.
-/// Total: 128 bytes (8 x float4).
+/// Total: 144 bytes (9 x float4).
 cbuffer VFXSpawnConstants : register(b1) {
     // ── Emitter Parameters ──────────────────────────────────────────────
     float3   emitterPos;           ///< World-space emitter origin.              0
@@ -108,8 +108,15 @@ cbuffer VFXSpawnConstants : register(b1) {
     // UAV: atomic counters
     uint     freeListHeadUavIndex; ///< RWStructuredBuffer<uint> (1 element).    112
     uint     aliveCountUavIndex;   ///< RWStructuredBuffer<uint> (1 element).    116
-    uint     _pad0;                ///<                                          120
-    uint     _pad1;                ///<                                          124
+
+    // ── Spawn shape parameters ──────────────────────────────────────────
+    uint     spawnShape;           ///< 0=Point,1=Sphere,2=Box,3=Ring,4=Cone,5=Cylinder,6=Disc,7=Line. 120
+    uint     spawnOnSurface;       ///< 0=volume fill, 1=surface only.           124
+
+    float    shapeParam1;          ///< Ring: width, Cone: half-angle, Cyl: height, Line: len. 128
+    float    shapeParam2;          ///< Cone: height.                            132
+    float    shapeParam3;          ///< Reserved.                                136
+    uint     _pad0;                ///<                                          140
 #endif
 };
 
@@ -203,8 +210,147 @@ void main(uint3 dtid : SV_DispatchThreadID)
     // is recycled across different spawn batches.
     uint seed = VFXSeed(particleIdx + spawnIdx, frameNumber);
 
-    // ── Position: emitter origin + random sphere offset ─────────────────
-    float3 pos = emitterPos + RandomInSphere(seed, spawnRadius);
+    // ── Position: shape-dependent spawn location ──────────────────────
+    // spawnShape: 0=Point, 1=Sphere, 2=Box, 3=Ring, 4=Cone,
+    //             5=Cylinder, 6=Disc, 7=Line
+    // spawnOnSurface: 0=volume fill, 1=surface only
+    float3 pos = emitterPos;
+    float3 spawnNormal = float3(0, 0, 1); // default up — used for velocity direction on some shapes
+
+    if (spawnShape == 0) {
+        // ── Point: all particles from exact emitter origin ──────────
+        // (pos already set to emitterPos)
+    }
+    else if (spawnShape == 1) {
+        // ── Sphere: uniform volume or surface distribution ──────────
+        if (spawnOnSurface != 0) {
+            // Surface: random direction * exact radius
+            float3 dir = RandomUnitVector(seed);
+            pos = emitterPos + dir * spawnRadius;
+            spawnNormal = dir;
+        } else {
+            // Volume: cube-root corrected radius for uniform distribution
+            pos = emitterPos + RandomInSphere(seed, spawnRadius);
+        }
+    }
+    else if (spawnShape == 2) {
+        // ── Box: axis-aligned box with half-extents (spawnRadius, shapeParam1, shapeParam2)
+        // spawnRadius = half-extent X, shapeParam1 = half-extent Y, shapeParam2 = half-extent Z
+        float hx = spawnRadius;
+        float hy = (shapeParam1 > 0.0f) ? shapeParam1 : spawnRadius;
+        float hz = (shapeParam2 > 0.0f) ? shapeParam2 : spawnRadius;
+
+        if (spawnOnSurface != 0) {
+            // Surface: pick one of 6 faces weighted by area, then uniform point on that face
+            float areaXY = hx * hy; // +Z and -Z faces
+            float areaXZ = hx * hz; // +Y and -Y faces
+            float areaYZ = hy * hz; // +X and -X faces
+            float totalArea = 2.0f * (areaXY + areaXZ + areaYZ);
+            float pick = RandomFloat01(seed) * totalArea;
+
+            float lx = RandomFloat(seed, -hx, hx);
+            float ly = RandomFloat(seed, -hy, hy);
+            float lz = RandomFloat(seed, -hz, hz);
+
+            if (pick < 2.0f * areaYZ) {
+                // +X or -X face
+                float sign = (pick < areaYZ) ? 1.0f : -1.0f;
+                pos = emitterPos + float3(sign * hx, ly, lz);
+                spawnNormal = float3(sign, 0, 0);
+            } else if (pick < 2.0f * (areaYZ + areaXZ)) {
+                // +Y or -Y face
+                float sign = (pick < 2.0f * areaYZ + areaXZ) ? 1.0f : -1.0f;
+                pos = emitterPos + float3(lx, sign * hy, lz);
+                spawnNormal = float3(0, sign, 0);
+            } else {
+                // +Z or -Z face
+                float sign = (pick < totalArea - areaXY) ? 1.0f : -1.0f;
+                pos = emitterPos + float3(lx, ly, sign * hz);
+                spawnNormal = float3(0, 0, sign);
+            }
+        } else {
+            // Volume: uniform random inside the box
+            pos = emitterPos + float3(
+                RandomFloat(seed, -hx, hx),
+                RandomFloat(seed, -hy, hy),
+                RandomFloat(seed, -hz, hz)
+            );
+        }
+    }
+    else if (spawnShape == 3) {
+        // ── Ring: torus in XY plane, major radius = spawnRadius, ring width = shapeParam1
+        float angle = RandomFloat(seed, 0.0f, VFX_TWO_PI);
+        float cosA = cos(angle);
+        float sinA = sin(angle);
+        float ringWidth = max(shapeParam1, 0.0f);
+        float r = spawnRadius + RandomFloat(seed, -ringWidth, ringWidth);
+        float zOffset = RandomFloat(seed, -ringWidth, ringWidth);
+        pos = emitterPos + float3(cosA * r, sinA * r, zOffset);
+        spawnNormal = float3(cosA, sinA, 0.0f);
+    }
+    else if (spawnShape == 4) {
+        // ── Cone: particles on cone surface or volume
+        // shapeParam1 = half-angle (radians), shapeParam2 = height along Z
+        float angle = RandomFloat(seed, 0.0f, VFX_TWO_PI);
+        float coneAngle = clamp(shapeParam1, 0.001f, 1.5707f); // clamp to (0, pi/2)
+        float coneHeight = max(shapeParam2, 0.01f);
+        float t = RandomFloat01(seed);
+
+        // For uniform distribution on cone surface, weight by radius (linear in t)
+        if (spawnOnSurface == 0) {
+            // Volume fill: sqrt for uniform area distribution within cone cross-section
+            t = sqrt(t);
+        }
+
+        float r = t * coneHeight * tan(coneAngle);
+        float cosA = cos(angle);
+        float sinA = sin(angle);
+        pos = emitterPos + float3(cosA * r, sinA * r, t * coneHeight);
+
+        // Normal perpendicular to cone surface
+        float sinCone = sin(coneAngle);
+        float cosCone = cos(coneAngle);
+        spawnNormal = normalize(float3(cosA * cosCone, sinA * cosCone, sinCone));
+    }
+    else if (spawnShape == 5) {
+        // ── Cylinder: height along Z, radius = spawnRadius, height = shapeParam1
+        float angle = RandomFloat(seed, 0.0f, VFX_TWO_PI);
+        float cosA = cos(angle);
+        float sinA = sin(angle);
+        float cylHeight = max(shapeParam1, 0.01f);
+        float h = RandomFloat(seed, -cylHeight * 0.5f, cylHeight * 0.5f);
+
+        if (spawnOnSurface != 0) {
+            // Surface only: particles on the cylindrical shell
+            pos = emitterPos + float3(cosA * spawnRadius, sinA * spawnRadius, h);
+        } else {
+            // Volume: sqrt-corrected radius for uniform area distribution
+            float r = sqrt(RandomFloat01(seed)) * spawnRadius;
+            pos = emitterPos + float3(cosA * r, sinA * r, h);
+        }
+        spawnNormal = float3(cosA, sinA, 0.0f);
+    }
+    else if (spawnShape == 6) {
+        // ── Disc: flat circle in XY plane at emitter origin
+        float angle = RandomFloat(seed, 0.0f, VFX_TWO_PI);
+        float r;
+        if (spawnOnSurface != 0) {
+            // Edge only: particles on the circumference
+            r = spawnRadius;
+        } else {
+            // Area: sqrt-corrected for uniform distribution
+            r = sqrt(RandomFloat01(seed)) * spawnRadius;
+        }
+        pos = emitterPos + float3(cos(angle) * r, sin(angle) * r, 0.0f);
+        // Normal is up for disc
+    }
+    else if (spawnShape == 7) {
+        // ── Line: along X axis, length = shapeParam1
+        float lineLen = max(shapeParam1, 0.01f);
+        float t = RandomFloat(seed, -0.5f, 0.5f);
+        pos = emitterPos + float3(t * lineLen, 0.0f, 0.0f);
+        spawnNormal = float3(0, 0, 1); // perpendicular to line
+    }
 
     // ── Velocity: base direction + cone spread + speed variation ────────
     float  baseSpeed = length(spawnVelocity);
@@ -212,12 +358,25 @@ void main(uint3 dtid : SV_DispatchThreadID)
                      ? spawnVelocity / baseSpeed
                      : float3(0, 1, 0);  // Default upward if zero velocity
 
+    // For shapes with meaningful normals (Ring, Cone, Cylinder), blend
+    // spawnNormal into the velocity direction when spread is used.
+    // This makes particles emit outward from the shape surface.
+    float3 emitDir = baseDir;
+    if (spawnShape >= 3 && spawnShape <= 5 && baseSpeed < 0.001f) {
+        // If no explicit velocity set, use the shape surface normal
+        emitDir = spawnNormal;
+    }
+
     float3 dir = (spreadAngle > 0.001f)
-               ? RandomInCone(seed, baseDir, spreadAngle)
-               : baseDir;
+               ? RandomInCone(seed, emitDir, spreadAngle)
+               : emitDir;
 
     float finalSpeed = baseSpeed + RandomFloat(seed, -velocityVariation,
                                                       velocityVariation);
+    // For shapes with normals and no explicit velocity, give a default outward speed
+    if (baseSpeed < 0.001f && spawnShape >= 3 && spawnShape <= 5) {
+        finalSpeed = max(finalSpeed, 1.0f);
+    }
     float3 vel = dir * max(finalSpeed, 0.0f);
 
     // ── Lifetime: uniform random between min and max ────────────────────
