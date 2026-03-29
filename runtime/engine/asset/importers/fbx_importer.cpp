@@ -740,7 +740,10 @@ AssetImportResult FbxImporter::Import(
            sourceName, finalVertexCount, optimizedIndices.size(),
            submeshCount, result.materials.size(), lodCount, result.data.size());
 
-    // ── Generate SDF sidecar ──
+    // ── Generate SDF sidecar (skip for large meshes — too slow on CPU) ──
+    if (optimizedIndices.size() > 50000) {
+        return result;
+    }
     {
         std::vector<float> positions(finalVertexCount * 3);
         for (size_t i = 0; i < finalVertexCount; ++i) {
