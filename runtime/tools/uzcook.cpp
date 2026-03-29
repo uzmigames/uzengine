@@ -474,11 +474,11 @@ int main(int argc, char** argv) {
             std::string outputExt = ".bin";
             uz::AssetType assetType = uz::AssetType::Generic;
             if (importerName == "shader") { outputExt = ".uzshader"; assetType = uz::AssetType::Shader; }
-            else if (importerName == "mesh") { outputExt = ".uzmesh"; assetType = uz::AssetType::Mesh; }
+            else if (importerName == "mesh" || importerName == "fbx") { outputExt = ".uzmesh"; assetType = uz::AssetType::Mesh; }
             else if (importerName == "texture") { outputExt = ".uztexture"; assetType = uz::AssetType::Texture; }
 
             // Write companion file (filesystem, no lock needed — unique per file)
-            if (importerName == "texture" || importerName == "mesh") {
+            if (importerName == "texture" || importerName == "mesh" || importerName == "fbx") {
                 std::string companionPath = t->sourcePath;
                 auto compDot = companionPath.rfind('.');
                 if (compDot != std::string::npos) {
@@ -488,6 +488,10 @@ int main(int argc, char** argv) {
                 if (out.is_open()) {
                     out.write(reinterpret_cast<const char*>(result.data.data()),
                               static_cast<std::streamsize>(result.data.size()));
+                    UZ_LOG(Cook, Info, "Wrote companion: '{}' ({} bytes)",
+                           companionPath, result.data.size());
+                } else {
+                    UZ_LOG(Cook, Error, "Failed to write companion: '{}'", companionPath);
                 }
             }
 

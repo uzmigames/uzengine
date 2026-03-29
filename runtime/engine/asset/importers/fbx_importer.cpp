@@ -774,6 +774,14 @@ AssetImportResult FbxImporter::Import(
             positions[i * 3 + 2] = optimizedVertices[i].position[2];
         }
 
+        // Skip SDF baking for large meshes (>50K indices) — too slow for interactive use.
+        // SDF is generated at runtime via the GPU SDF baker instead.
+        if (optimizedIndices.size() > 50000) {
+            UZ_LOG(Asset, Info, "Skipping CPU SDF bake for '{}' ({} indices > 50K threshold)",
+                   sourceName, optimizedIndices.size());
+            return result;
+        }
+
         SdfBakerConfig sdfConfig;
         sdfConfig.maxResolution = 64;
 

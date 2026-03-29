@@ -59,6 +59,8 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
                 // the LODGroup so screen-size selection is activated.
                 if (loaded < static_cast<uint32_t>(m_meshes.size())) {
                     const auto& gpu = m_meshes[loaded];
+                    UZ_LOG(Renderer, Info, "Mesh '{}' loaded: meshId={}, gpu.lodCount={}, gpu.indexCount={}",
+                           meshComp.meshPath, loaded, gpu.lodCount, gpu.indexCount);
                     if (gpu.lodCount > 1 && meshComp.lodGroup.numLevels <= 1) {
                         meshComp.lodGroup.numLevels = gpu.lodCount;
                         // All in-file LODs share the same meshIndex — the draw
