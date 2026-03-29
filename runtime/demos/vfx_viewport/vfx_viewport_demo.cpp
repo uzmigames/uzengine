@@ -2113,6 +2113,13 @@ void VFXViewportDemo::RenderVFXPass(IRHICommandList* cmd, uint64_t perFrameGpu,
 
     const uint32_t spriteSrvIdx = GetSpriteTextureForPreset(m_vfxPresetIndex);
 
+    if (GetFrameIndex() < 3) {
+        UZ_LOG(App, Info, "VFX Draw: sprite={} flipbook={}x{} frames={} fps={:.0f} blend={} preset={}",
+               spriteSrvIdx, m_vfxEmitter.flipbookRows, m_vfxEmitter.flipbookCols,
+               m_vfxEmitter.flipbookTotalFrames, m_vfxEmitter.flipbookFPS,
+               m_vfxEmitter.blendMode, m_vfxPresetIndex);
+    }
+
     m_vfxSystem.DrawBillboards(cmd, GetCBRing(), perFrameGpu,
                                 GetCamera().GetView(), emitterPos,
                                 m_prevViewProj,

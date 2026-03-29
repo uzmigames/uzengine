@@ -285,9 +285,7 @@ float4 main(PSInput input) : SV_Target {
         // Remap billboard [0,1] UV into the atlas sub-rectangle for the current frame.
         float2 uv0 = SampleFlipbookUV(input.texcoord, fb.uv0, fb.frameSize);
 
-        // DEBUG: Uncomment to visualize flipbook UVs as color (R=U, G=V, B=frame/total).
-        // This verifies that the flipbook sub-rectangle is correctly computed.
-        // return float4(uv0.x, uv0.y, (float)((uint)(max(input.age,0) * flipbookFPS) % flipbookTotalFrames) / (float)flipbookTotalFrames, 1.0f);
+        // Flipbook UV debug removed — sampling sprite texture below.
 
 #ifdef UZ_BINDLESS
         Texture2D<float4> spriteTex = ResourceDescriptorHeap[vfxConstants.spriteTextureIdx];
