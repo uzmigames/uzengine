@@ -146,6 +146,14 @@ cbuffer VFXBillboardCB : register(b2) {
     uint     _fbPad0;
     uint     _fbPad1;
     uint     _fbPad2;
+    // ── Size over lifetime (declared for layout, not read by PS, 16 bytes) ──
+    float    sizeOverLifeStart;
+    float    sizeOverLifePeak;
+    float    sizeOverLifeEnd;
+    float    sizeOverLifePeakTime;
+    // ── Color over lifetime (linear interpolation, 32 bytes) ──
+    float4   colorLifeStart;       ///< RGBA color at birth.
+    float4   colorLifeEnd;         ///< RGBA color at death.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -302,8 +310,13 @@ float4 main(PSInput input) : SV_Target {
 #endif
     }
 
-    // ── Combine sprite with particle color ──
-    float4 finalColor = spriteColor * input.color;
+    // ── Evaluate color over lifetime (linear interpolation start→end) ──
+    // normalizedAge in [0,1] maps the particle's age to its full lifespan.
+    float normalizedAge = saturate(input.age / max(input.lifetime, 0.0001f));
+    float4 colorLifeScale = lerp(colorLifeStart, colorLifeEnd, normalizedAge);
+
+    // ── Combine sprite with particle color and lifetime color ──
+    float4 finalColor = spriteColor * input.color * colorLifeScale;
 
     // ── Apply alpha erosion (subtractive dissolution) ──
     finalColor.a = saturate(finalColor.a - alphaErosion);

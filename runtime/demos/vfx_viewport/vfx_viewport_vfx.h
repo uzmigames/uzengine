@@ -51,6 +51,20 @@ struct VFXEmitterConfig {
     uint32_t flipbookTotalFrames = 1;    ///< Total valid frames.
     float    flipbookFPS         = 0.0f; ///< Playback speed (frames/sec). 0 = static.
     uint32_t flipbookBlendMode   = 0;    ///< 0=None, 1=Linear, 2=Random.
+    // Size over lifetime (analytical piecewise-linear curve)
+    float    sizeOverLifeStart    = 1.0f;  ///< Size multiplier at birth (t=0).
+    float    sizeOverLifePeak     = 1.0f;  ///< Size multiplier at peak time.
+    float    sizeOverLifeEnd      = 0.0f;  ///< Size multiplier at death (t=1).
+    float    sizeOverLifePeakTime = 0.3f;  ///< Normalized age [0,1] where peak occurs.
+    // Color over lifetime (linear interpolation start→end)
+    float    colorLifeStartR = 1.0f;  ///< Start color red.
+    float    colorLifeStartG = 1.0f;  ///< Start color green.
+    float    colorLifeStartB = 1.0f;  ///< Start color blue.
+    float    colorLifeStartA = 1.0f;  ///< Start color alpha.
+    float    colorLifeEndR   = 1.0f;  ///< End color red.
+    float    colorLifeEndG   = 1.0f;  ///< End color green.
+    float    colorLifeEndB   = 1.0f;  ///< End color blue.
+    float    colorLifeEndA   = 0.0f;  ///< End color alpha (fade to transparent).
 };
 
 /// Named emitter preset with a spawn rate.
@@ -168,8 +182,16 @@ struct VFXBillboardCB {
     uint32_t _fbPad0             = 0;
     uint32_t _fbPad1             = 0;
     uint32_t _fbPad2             = 0;
+    // ── Size over lifetime (analytical piecewise-linear curve, 16 bytes) ──
+    float    sizeOverLifeStart    = 1.0f;          ///< Size multiplier at birth (t=0).
+    float    sizeOverLifePeak     = 1.0f;          ///< Size multiplier at peak time.
+    float    sizeOverLifeEnd      = 0.0f;          ///< Size multiplier at death (t=1).
+    float    sizeOverLifePeakTime = 0.3f;          ///< Normalized age [0,1] where peak occurs.
+    // ── Color over lifetime (linear interpolation, 32 bytes) ──
+    float    colorLifeStart[4]    = {1,1,1,1};     ///< RGBA color at birth.
+    float    colorLifeEnd[4]      = {1,1,1,0};     ///< RGBA color at death.
 };
-static_assert(sizeof(VFXBillboardCB) == 208, "VFXBillboardCB must be 208 bytes (160 VS + 48 PS)");
+static_assert(sizeof(VFXBillboardCB) == 256, "VFXBillboardCB must be 256 bytes (208 base + 48 curve)");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VFX GPU Particle System

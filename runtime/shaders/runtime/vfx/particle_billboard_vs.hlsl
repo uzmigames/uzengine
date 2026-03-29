@@ -184,6 +184,14 @@ cbuffer VFXBillboardCB : register(b2) {
     uint     _fbPad0;
     uint     _fbPad1;
     uint     _fbPad2;
+    // ── Size over lifetime (analytical piecewise-linear curve, 16 bytes) ──
+    float    sizeOverLifeStart;    ///< Size multiplier at birth (t=0).
+    float    sizeOverLifePeak;     ///< Size multiplier at peak time.
+    float    sizeOverLifeEnd;      ///< Size multiplier at death (t=1).
+    float    sizeOverLifePeakTime; ///< Normalized age [0,1] where peak occurs.
+    // ── Color over lifetime (linear interpolation, 32 bytes) ──
+    float4   colorLifeStart;       ///< RGBA color at birth.
+    float4   colorLifeEnd;         ///< RGBA color at death.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -272,8 +280,29 @@ VSOutput main(uint vertexID : SV_VertexID) {
         return output;
     }
 
+    // ── Evaluate size over lifetime (piecewise-linear: start→peak→end) ──
+    // normalizedAge in [0,1] maps the particle's age to its full lifespan.
+    // Before peakTime: lerp from start to peak size.
+    // After peakTime: lerp from peak to end size.
+    float normalizedAge = saturate(particleAge / max(particleLife, 0.0001f));
+    float sizeLifeScale;
+    if (normalizedAge < sizeOverLifePeakTime) {
+        // Rising phase: birth → peak
+        float t = (sizeOverLifePeakTime > 0.0001f)
+                ? (normalizedAge / sizeOverLifePeakTime)
+                : 1.0f;
+        sizeLifeScale = lerp(sizeOverLifeStart, sizeOverLifePeak, t);
+    } else {
+        // Falling phase: peak → death
+        float remaining = 1.0f - sizeOverLifePeakTime;
+        float t = (remaining > 0.0001f)
+                ? ((normalizedAge - sizeOverLifePeakTime) / remaining)
+                : 1.0f;
+        sizeLifeScale = lerp(sizeOverLifePeak, sizeOverLifeEnd, t);
+    }
+
     // ── Apply global emitter overrides ──
-    float  finalSize  = particleSize * globalSizeMultiplier;
+    float  finalSize  = particleSize * globalSizeMultiplier * sizeLifeScale;
     float4 finalColor = particleColor * globalColorTint;
 
     // ── Extract camera right/up from inverse view matrix ──

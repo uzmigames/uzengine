@@ -29,7 +29,10 @@ static const VFXPreset s_presets[] = {
         /*color*/ {1.0f, 0.7f, 0.3f, 0.9f},
         /*gravity*/ {0.0f, 0.0f, -5.0f}, /*damping*/ 0.15f,
         /*softFade*/ 0.5f, /*emissive*/ 1.5f,
-        /*flipbook*/ 1, 1, 1, 0.0f, 0
+        /*flipbook*/ 1, 1, 1, 0.0f, 0,
+        /*sizeOverLife*/ 1.0f, 1.2f, 0.0f, 0.2f,
+        /*colorLifeStart*/ 1.0f, 1.0f, 1.0f, 1.0f,
+        /*colorLifeEnd*/ 1.0f, 0.5f, 0.1f, 0.0f
     }, 500.0f },
     { "Smoke Plume", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.2f,
@@ -38,7 +41,10 @@ static const VFXPreset s_presets[] = {
         /*color*/ {0.4f, 0.4f, 0.4f, 0.6f},
         /*gravity*/ {0.0f, 0.0f, -1.0f}, /*damping*/ 0.2f,
         /*softFade*/ 0.5f, /*emissive*/ 0.0f,
-        /*flipbook*/ 1, 1, 1, 0.0f, 0
+        /*flipbook*/ 1, 1, 1, 0.0f, 0,
+        /*sizeOverLife*/ 0.5f, 2.0f, 2.5f, 0.3f,
+        /*colorLifeStart*/ 0.6f, 0.6f, 0.6f, 0.8f,
+        /*colorLifeEnd*/ 0.3f, 0.3f, 0.3f, 0.0f
     }, 200.0f },
     { "Sparks", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.1f,
@@ -47,7 +53,10 @@ static const VFXPreset s_presets[] = {
         /*color*/ {1.0f, 0.9f, 0.5f, 1.0f},
         /*gravity*/ {0.0f, 0.0f, -15.0f}, /*damping*/ 0.05f,
         /*softFade*/ 0.3f, /*emissive*/ 3.0f,
-        /*flipbook*/ 1, 1, 1, 0.0f, 0
+        /*flipbook*/ 1, 1, 1, 0.0f, 0,
+        /*sizeOverLife*/ 1.0f, 1.0f, 0.1f, 0.0f,
+        /*colorLifeStart*/ 1.0f, 1.0f, 0.8f, 1.0f,
+        /*colorLifeEnd*/ 1.0f, 0.3f, 0.0f, 0.0f
     }, 1000.0f },
     { "Magic Orb", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.8f,
@@ -56,7 +65,10 @@ static const VFXPreset s_presets[] = {
         /*color*/ {0.2f, 0.6f, 1.0f, 0.9f},
         /*gravity*/ {0.0f, 0.0f, 0.0f}, /*damping*/ 0.3f,
         /*softFade*/ 0.3f, /*emissive*/ 0.5f,
-        /*flipbook*/ 2, 2, 4, 0.0f, 2
+        /*flipbook*/ 2, 2, 4, 0.0f, 2,
+        /*sizeOverLife*/ 0.8f, 1.0f, 0.3f, 0.5f,
+        /*colorLifeStart*/ 0.3f, 0.7f, 1.0f, 1.0f,
+        /*colorLifeEnd*/ 0.1f, 0.3f, 1.0f, 0.0f
     }, 300.0f },
     { "Explosion Debris", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.3f,
@@ -65,7 +77,10 @@ static const VFXPreset s_presets[] = {
         /*color*/ {1.0f, 0.4f, 0.1f, 0.9f},
         /*gravity*/ {0.0f, 0.0f, -20.0f}, /*damping*/ 0.08f,
         /*softFade*/ 0.3f, /*emissive*/ 1.5f,
-        /*flipbook*/ 1, 1, 1, 0.0f, 0
+        /*flipbook*/ 1, 1, 1, 0.0f, 0,
+        /*sizeOverLife*/ 1.0f, 1.5f, 0.2f, 0.1f,
+        /*colorLifeStart*/ 1.0f, 0.8f, 0.3f, 1.0f,
+        /*colorLifeEnd*/ 0.5f, 0.1f, 0.0f, 0.0f
     }, 2000.0f },
     { "Fireball", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.4f,
@@ -74,7 +89,10 @@ static const VFXPreset s_presets[] = {
         /*color*/ {1.0f, 0.4f, 0.05f, 0.85f},
         /*gravity*/ {0.0f, 0.0f, 1.0f}, /*damping*/ 0.5f,
         /*softFade*/ 0.4f, /*emissive*/ 4.0f,
-        /*flipbook*/ 1, 1, 1, 0.0f, 0
+        /*flipbook*/ 1, 1, 1, 0.0f, 0,
+        /*sizeOverLife*/ 0.8f, 1.3f, 0.5f, 0.2f,
+        /*colorLifeStart*/ 1.0f, 0.6f, 0.1f, 1.0f,
+        /*colorLifeEnd*/ 0.8f, 0.2f, 0.05f, 0.3f
     }, 800.0f },
 };
 
@@ -655,6 +673,20 @@ void VFXParticleSystem::DrawBillboards(IRHICommandList* cmdList, CBRingAllocator
     billboardCB.flipbookTotalFrames = config.flipbookTotalFrames;
     billboardCB.flipbookFPS         = config.flipbookFPS;
     billboardCB.flipbookBlendMode   = config.flipbookBlendMode;
+    // Size over lifetime curve parameters
+    billboardCB.sizeOverLifeStart    = config.sizeOverLifeStart;
+    billboardCB.sizeOverLifePeak     = config.sizeOverLifePeak;
+    billboardCB.sizeOverLifeEnd      = config.sizeOverLifeEnd;
+    billboardCB.sizeOverLifePeakTime = config.sizeOverLifePeakTime;
+    // Color over lifetime parameters
+    billboardCB.colorLifeStart[0] = config.colorLifeStartR;
+    billboardCB.colorLifeStart[1] = config.colorLifeStartG;
+    billboardCB.colorLifeStart[2] = config.colorLifeStartB;
+    billboardCB.colorLifeStart[3] = config.colorLifeStartA;
+    billboardCB.colorLifeEnd[0]   = config.colorLifeEndR;
+    billboardCB.colorLifeEnd[1]   = config.colorLifeEndG;
+    billboardCB.colorLifeEnd[2]   = config.colorLifeEndB;
+    billboardCB.colorLifeEnd[3]   = config.colorLifeEndA;
 
     auto cbAlloc = cbRing->Allocate(sizeof(VFXBillboardCB));
     std::memcpy(cbAlloc.cpuPtr, &billboardCB, sizeof(VFXBillboardCB));
