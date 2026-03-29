@@ -32,7 +32,8 @@ static const VFXPreset s_presets[] = {
         /*flipbook*/ 1, 1, 1, 0.0f, 0,
         /*sizeOverLife*/ 1.0f, 1.2f, 0.0f, 0.2f,
         /*colorLifeStart*/ 1.0f, 1.0f, 1.0f, 1.0f,
-        /*colorLifeEnd*/ 1.0f, 0.5f, 0.1f, 0.0f
+        /*colorLifeEnd*/ 1.0f, 0.5f, 0.1f, 0.0f,
+        /*alignment*/ 0, /*stretch*/ 0.0f
     }, 500.0f },
     { "Smoke Plume", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.2f,
@@ -44,7 +45,8 @@ static const VFXPreset s_presets[] = {
         /*flipbook*/ 1, 1, 1, 0.0f, 0,
         /*sizeOverLife*/ 0.5f, 2.0f, 2.5f, 0.3f,
         /*colorLifeStart*/ 0.6f, 0.6f, 0.6f, 0.8f,
-        /*colorLifeEnd*/ 0.3f, 0.3f, 0.3f, 0.0f
+        /*colorLifeEnd*/ 0.3f, 0.3f, 0.3f, 0.0f,
+        /*alignment*/ 0, /*stretch*/ 0.0f
     }, 200.0f },
     { "Sparks", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.1f,
@@ -56,7 +58,8 @@ static const VFXPreset s_presets[] = {
         /*flipbook*/ 1, 1, 1, 0.0f, 0,
         /*sizeOverLife*/ 1.0f, 1.0f, 0.1f, 0.0f,
         /*colorLifeStart*/ 1.0f, 1.0f, 0.8f, 1.0f,
-        /*colorLifeEnd*/ 1.0f, 0.3f, 0.0f, 0.0f
+        /*colorLifeEnd*/ 1.0f, 0.3f, 0.0f, 0.0f,
+        /*alignment*/ 1, /*stretch*/ 3.0f
     }, 1000.0f },
     { "Magic Orb", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.8f,
@@ -68,7 +71,8 @@ static const VFXPreset s_presets[] = {
         /*flipbook*/ 2, 2, 4, 0.0f, 2,
         /*sizeOverLife*/ 0.8f, 1.0f, 0.3f, 0.5f,
         /*colorLifeStart*/ 0.3f, 0.7f, 1.0f, 1.0f,
-        /*colorLifeEnd*/ 0.1f, 0.3f, 1.0f, 0.0f
+        /*colorLifeEnd*/ 0.1f, 0.3f, 1.0f, 0.0f,
+        /*alignment*/ 0, /*stretch*/ 0.0f
     }, 300.0f },
     { "Explosion Debris", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.3f,
@@ -80,7 +84,8 @@ static const VFXPreset s_presets[] = {
         /*flipbook*/ 1, 1, 1, 0.0f, 0,
         /*sizeOverLife*/ 1.0f, 1.5f, 0.2f, 0.1f,
         /*colorLifeStart*/ 1.0f, 0.8f, 0.3f, 1.0f,
-        /*colorLifeEnd*/ 0.5f, 0.1f, 0.0f, 0.0f
+        /*colorLifeEnd*/ 0.5f, 0.1f, 0.0f, 0.0f,
+        /*alignment*/ 1, /*stretch*/ 2.0f
     }, 2000.0f },
     { "Fireball", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.4f,
@@ -92,7 +97,8 @@ static const VFXPreset s_presets[] = {
         /*flipbook*/ 1, 1, 1, 0.0f, 0,
         /*sizeOverLife*/ 0.8f, 1.3f, 0.5f, 0.2f,
         /*colorLifeStart*/ 1.0f, 0.6f, 0.1f, 1.0f,
-        /*colorLifeEnd*/ 0.8f, 0.2f, 0.05f, 0.3f
+        /*colorLifeEnd*/ 0.8f, 0.2f, 0.05f, 0.3f,
+        /*alignment*/ 0, /*stretch*/ 0.5f
     }, 800.0f },
 };
 
@@ -687,6 +693,9 @@ void VFXParticleSystem::DrawBillboards(IRHICommandList* cmdList, CBRingAllocator
     billboardCB.colorLifeEnd[1]   = config.colorLifeEndG;
     billboardCB.colorLifeEnd[2]   = config.colorLifeEndB;
     billboardCB.colorLifeEnd[3]   = config.colorLifeEndA;
+    // Billboard alignment and stretching
+    billboardCB.alignmentMode = config.alignmentMode;
+    billboardCB.stretchFactor = config.stretchFactor;
 
     auto cbAlloc = cbRing->Allocate(sizeof(VFXBillboardCB));
     std::memcpy(cbAlloc.cpuPtr, &billboardCB, sizeof(VFXBillboardCB));

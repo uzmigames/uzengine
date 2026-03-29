@@ -192,6 +192,11 @@ cbuffer VFXBillboardCB : register(b2) {
     // ── Color over lifetime (linear interpolation, 32 bytes) ──
     float4   colorLifeStart;       ///< RGBA color at birth.
     float4   colorLifeEnd;         ///< RGBA color at death.
+    // ── Billboard alignment and stretching (16 bytes) ──
+    uint     alignmentMode;        ///< 0=CameraFacing, 1=VelocityAligned.
+    float    stretchFactor;        ///< Velocity stretch multiplier. 0=no stretch.
+    float    _solPad0;
+    float    _solPad1;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -320,11 +325,65 @@ VSOutput main(uint vertexID : SV_VertexID) {
     // Scale by half-size (offset is [-1,+1], so multiply by half to get world units)
     float halfSize = finalSize * 0.5f;
 
+    // ── Billboard orientation and stretching ──
+    // Determine right/up axes and per-axis half-extents based on alignment mode.
+    //
+    // @ref Niagara GPU sprite rendering — velocity-aligned billboard orientation
+    // Camera-facing: right/up from inverse view matrix (standard billboard).
+    // Velocity-aligned: tangent along velocity, bitangent perpendicular in the
+    // plane formed by velocity and camera-to-particle direction. Falls back to
+    // camera-facing when velocity is near zero to avoid degenerate normals.
+    float3 billboardRight;
+    float3 billboardUp;
+    float  halfW = halfSize; // horizontal half-extent (perpendicular to velocity)
+    float  halfH = halfSize; // vertical half-extent (along velocity / up)
+
+    float  speed = length(particleVel);
+
+    if (alignmentMode == 1 && speed > 0.01f) {
+        // Velocity-aligned: tangent along velocity direction
+        float3 velDir = particleVel / speed; // normalize without recomputing length
+        float3 camToParticle = normalize(cameraPos.xyz - particlePos);
+
+        // Compute side vector perpendicular to both velocity and camera direction.
+        // If velocity is nearly parallel to camera direction, fall back to camera up.
+        float3 side = cross(velDir, camToParticle);
+        float sideLen = length(side);
+        if (sideLen > 0.001f) {
+            side /= sideLen;
+        } else {
+            side = cameraRight; // fallback for degenerate case
+        }
+
+        billboardRight = side;
+        billboardUp    = velDir;
+
+        // Stretch along velocity direction (up axis) proportional to speed.
+        // stretchFactor controls how aggressively particles elongate.
+        // 0.1 scaling keeps the multiplier reasonable at typical game velocities.
+        // Clamped to 10x particle size to prevent extremely thin triangles.
+        if (stretchFactor > 0.0f) {
+            halfH = halfSize + halfSize * speed * stretchFactor * 0.1f;
+            halfH = min(halfH, halfSize * 10.0f);
+        }
+    } else {
+        // Camera-facing (default behavior)
+        billboardRight = cameraRight;
+        billboardUp    = cameraUp;
+
+        // In camera-facing mode, stretch projects along camera up axis when moving.
+        // This gives a subtle motion-blur feel without changing billboard orientation.
+        if (stretchFactor > 0.0f && speed > 0.01f) {
+            halfH = halfSize + halfSize * speed * stretchFactor * 0.1f;
+            halfH = min(halfH, halfSize * 10.0f);
+        }
+    }
+
     // ── Compute world-space vertex position ──
-    // Billboard: offset particle center by camera-aligned right/up vectors
+    // Billboard: offset particle center by orientation-aligned axes with per-axis extents
     float3 worldPos = particlePos
-                    + cameraRight * (cornerOffset.x * halfSize)
-                    + cameraUp    * (cornerOffset.y * halfSize);
+                    + billboardRight * (cornerOffset.x * halfW)
+                    + billboardUp    * (cornerOffset.y * halfH);
 
     output.positionWS = worldPos;
 
@@ -341,8 +400,8 @@ VSOutput main(uint vertexID : SV_VertexID) {
     float dt = timeParams.y; // deltaTime from PerFrameCB
     float3 prevParticlePos = particlePos - particleVel * dt;
     float3 prevWorldPos = prevParticlePos
-                        + cameraRight * (cornerOffset.x * halfSize)
-                        + cameraUp    * (cornerOffset.y * halfSize);
+                        + billboardRight * (cornerOffset.x * halfW)
+                        + billboardUp    * (cornerOffset.y * halfH);
     output.prevPositionCS = mul(float4(prevWorldPos, 1.0f), prevViewProj);
 
     // ── Pass UV and color to pixel shader ──

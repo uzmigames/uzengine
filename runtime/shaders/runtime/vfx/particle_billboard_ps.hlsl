@@ -154,6 +154,11 @@ cbuffer VFXBillboardCB : register(b2) {
     // ── Color over lifetime (linear interpolation, 32 bytes) ──
     float4   colorLifeStart;       ///< RGBA color at birth.
     float4   colorLifeEnd;         ///< RGBA color at death.
+    // ── Billboard alignment and stretching (16 bytes, declared for layout) ──
+    uint     alignmentMode;        ///< 0=CameraFacing, 1=VelocityAligned (not read by PS).
+    float    stretchFactor;        ///< Velocity stretch multiplier (not read by PS).
+    float    _solPad0;
+    float    _solPad1;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

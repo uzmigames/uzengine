@@ -65,6 +65,9 @@ struct VFXEmitterConfig {
     float    colorLifeEndG   = 1.0f;  ///< End color green.
     float    colorLifeEndB   = 1.0f;  ///< End color blue.
     float    colorLifeEndA   = 0.0f;  ///< End color alpha (fade to transparent).
+    // Billboard alignment and stretching
+    uint32_t alignmentMode   = 0;     ///< 0=CameraFacing, 1=VelocityAligned.
+    float    stretchFactor   = 0.0f;  ///< Velocity stretch multiplier. 0=no stretch, >0=elongate along velocity.
 };
 
 /// Named emitter preset with a spawn rate.
@@ -190,8 +193,13 @@ struct VFXBillboardCB {
     // ── Color over lifetime (linear interpolation, 32 bytes) ──
     float    colorLifeStart[4]    = {1,1,1,1};     ///< RGBA color at birth.
     float    colorLifeEnd[4]      = {1,1,1,0};     ///< RGBA color at death.
+    // ── Billboard alignment and stretching (16 bytes) ──
+    uint32_t alignmentMode        = 0;              ///< 0=CameraFacing, 1=VelocityAligned.
+    float    stretchFactor        = 0.0f;           ///< Velocity stretch multiplier. 0=no stretch.
+    float    _solPad0             = 0.0f;
+    float    _solPad1             = 0.0f;
 };
-static_assert(sizeof(VFXBillboardCB) == 256, "VFXBillboardCB must be 256 bytes (208 base + 48 curve)");
+static_assert(sizeof(VFXBillboardCB) == 272, "VFXBillboardCB must be 272 bytes (256 base + 16 alignment/stretch)");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VFX GPU Particle System
