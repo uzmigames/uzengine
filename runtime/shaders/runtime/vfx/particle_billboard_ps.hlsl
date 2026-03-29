@@ -25,7 +25,7 @@
 /// - b1: PerFrameCB (nearPlane, farPlane for depth linearization)
 /// - b2: VFXBillboardCB (unified VS emitter params + PS rendering params)
 /// - s0: linearSampler (bilinear, clamp — for sprite texture)
-/// - s1: pointSampler (point, clamp — for depth buffer sampling)
+/// - s1: linearSampler (point, clamp — for depth buffer sampling)
 ///
 /// @ref GPU Gems 3 "Soft Particles" — distance-based alpha fade near surfaces
 /// @ref Nguyen 2007 "GPU Gems 3" ch. 23 — flipbook/SubUV sprite sheet animation
@@ -168,15 +168,10 @@ cbuffer VFXBillboardCB : register(b2) {
 // Samplers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Bilinear sampler with clamp addressing for sprite texture sampling.
-/// Uses s2 from the global root signature (bilinear + clamp).
-/// s0 = anisotropic wrap (wrong for sprites), s1 = comparison (shadow PCF).
-SamplerState linearSampler : register(s2);
-
-/// Depth buffer sampling reuses the bilinear clamp sampler (s2).
-/// No point sampler exists in the root signature; bilinear is acceptable
-/// for the approximate soft-particle depth fade calculation.
-SamplerState pointSampler  : register(s2);
+/// Anisotropic wrap sampler from the global root signature (s0).
+/// Used for both sprite texture and depth buffer sampling.
+/// Flipbook UV sub-rectangle computation handles clamping.
+SamplerState linearSampler : register(s0);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper Functions
@@ -209,9 +204,9 @@ float ComputeSoftParticleFade(float4 screenPos, float2 screenSize, float fadeDis
     float sceneDepthRaw;
 #ifdef UZ_BINDLESS
     Texture2D<float> depthTex = ResourceDescriptorHeap[vfxConstants.depthBufferIdx];
-    sceneDepthRaw = depthTex.SampleLevel(pointSampler, depthUV, 0);
+    sceneDepthRaw = depthTex.SampleLevel(linearSampler, depthUV, 0);
 #else
-    sceneDepthRaw = depthBuffer.SampleLevel(pointSampler, depthUV, 0);
+    sceneDepthRaw = depthBuffer.SampleLevel(linearSampler, depthUV, 0);
 #endif
 
     // Skip fade for sky pixels (far plane in reversed-Z = 0)
