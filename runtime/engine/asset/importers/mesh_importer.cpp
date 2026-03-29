@@ -665,7 +665,9 @@ AssetImportResult MeshImporter::Import(
     // Generate LOD1..3 with increasing simplification
     constexpr float kLodReductions[] = { 0.50f, 0.25f, 0.125f };
     constexpr float kLodThresholds[] = { 0.50f, 0.25f, 0.12f };
-    constexpr float kMaxError = 0.05f; // 5% error relative to mesh scale
+    // Use generous error threshold so meshopt_simplify focuses on reaching
+    // the target index count rather than early-stopping at a low error.
+    constexpr float kMaxError = 1e10f;
 
     for (int lod = 0; lod < 3; ++lod) {
         const size_t targetIndexCount =

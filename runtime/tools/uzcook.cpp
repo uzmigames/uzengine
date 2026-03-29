@@ -291,7 +291,7 @@ static void SelectTextureFormat(const std::string& filename,
 // ─────────────────────────────────────────────────────────────────────────────
 
 int main(int argc, char** argv) {
-    // Logging auto-initializes via static constructors
+    uz::LogInit();
 
     CookArgs args;
     if (!ParseArgs(argc, argv, args)) {
