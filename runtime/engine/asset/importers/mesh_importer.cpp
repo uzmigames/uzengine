@@ -639,31 +639,103 @@ AssetImportResult MeshImporter::Import(
         }
     }
 
-    // ── Build .uzmesh ──
+    // ── Auto-generate LODs via meshoptimizer ──
+    // Uses meshopt_simplify to progressively reduce triangle count.
+    // LOD0 = original, LOD1 = 50%, LOD2 = 25%, LOD3 = 12.5%
+    // Screen-height thresholds match UE5 defaults.
+    struct AutoLOD {
+        std::vector<uint32_t> indices;
+        float screenThreshold;
+    };
+
+    std::vector<AutoLOD> autoLODs;
+    // LOD0 = full mesh
+    autoLODs.push_back({optimizedIndices, 0.0f});
+
+    // Extract positions for meshopt_simplify (needs float3 stride)
+    std::vector<float> positionsFlat(finalVertexCount * 3);
+    for (size_t i = 0; i < finalVertexCount; ++i) {
+        positionsFlat[i * 3 + 0] = optimizedVertices[i].position[0];
+        positionsFlat[i * 3 + 1] = optimizedVertices[i].position[1];
+        positionsFlat[i * 3 + 2] = optimizedVertices[i].position[2];
+    }
+    const float simplifyScale = meshopt_simplifyScale(
+        positionsFlat.data(), finalVertexCount, sizeof(float) * 3);
+
+    // Generate LOD1..3 with increasing simplification
+    constexpr float kLodReductions[] = { 0.50f, 0.25f, 0.125f };
+    constexpr float kLodThresholds[] = { 0.50f, 0.25f, 0.12f };
+    constexpr float kMaxError = 0.05f; // 5% error relative to mesh scale
+
+    for (int lod = 0; lod < 3; ++lod) {
+        const size_t targetIndexCount =
+            static_cast<size_t>(static_cast<float>(optimizedIndices.size()) * kLodReductions[lod]);
+        if (targetIndexCount < 3) break; // Too few triangles
+
+        std::vector<uint32_t> lodIndices(optimizedIndices.size());
+        float resultError = 0.0f;
+        const size_t actualCount = meshopt_simplify(
+            lodIndices.data(),
+            optimizedIndices.data(),
+            optimizedIndices.size(),
+            positionsFlat.data(),
+            finalVertexCount,
+            sizeof(float) * 3,
+            targetIndexCount,
+            kMaxError * simplifyScale,
+            0, // options
+            &resultError);
+
+        if (actualCount < 3) break;
+        lodIndices.resize(actualCount);
+
+        // Optimize the simplified LOD for vertex cache
+        meshopt_optimizeVertexCache(
+            lodIndices.data(), lodIndices.data(),
+            lodIndices.size(), finalVertexCount);
+
+        autoLODs.push_back({std::move(lodIndices), kLodThresholds[lod]});
+
+        UZ_LOG(Asset, Debug, "LOD{}: {} → {} indices ({:.0f}% reduction, error={:.4f})",
+               lod + 1, optimizedIndices.size(), actualCount,
+               100.0f * (1.0f - static_cast<float>(actualCount) / static_cast<float>(optimizedIndices.size())),
+               resultError / simplifyScale);
+    }
+
+    // ── Build .uzmesh with all LODs ──
     const uint32_t submeshCount = static_cast<uint32_t>(submeshes.size());
+    const uint32_t lodCount = static_cast<uint32_t>(autoLODs.size());
+
+    // Concatenate all LOD index buffers
+    std::vector<uint32_t> allLodIndices;
+    std::vector<UzMeshLOD> lods;
+    for (uint32_t i = 0; i < lodCount; ++i) {
+        UzMeshLOD lodEntry;
+        lodEntry.lodLevel = i;
+        lodEntry.submeshOffset = 0;
+        lodEntry.submeshCount = submeshCount;
+        lodEntry.screenHeightThreshold = autoLODs[i].screenThreshold;
+        lods.push_back(lodEntry);
+        allLodIndices.insert(allLodIndices.end(),
+                             autoLODs[i].indices.begin(), autoLODs[i].indices.end());
+    }
 
     UzMeshHeader header;
-    header.lodCount = 1;
-    header.totalSubmeshCount = submeshCount;
+    header.lodCount = lodCount;
+    header.totalSubmeshCount = submeshCount * lodCount;
     header.vertexCount = static_cast<uint32_t>(finalVertexCount);
-    header.indexCount = static_cast<uint32_t>(optimizedIndices.size());
+    header.indexCount = static_cast<uint32_t>(allLodIndices.size());
     header.vertexStride = sizeof(VertexPosNormUV);
     header.indexStride = sizeof(uint32_t);
-
-    UzMeshLOD lod;
-    lod.lodLevel = 0;
-    lod.submeshOffset = 0;
-    lod.submeshCount = submeshCount;
-    lod.screenHeightThreshold = 0.0f;
 
     // Serialize vertex/index data as raw byte arrays
     std::vector<uint8_t> vertexData(finalVertexCount * sizeof(VertexPosNormUV));
     std::memcpy(vertexData.data(), optimizedVertices.data(), vertexData.size());
 
-    std::vector<uint8_t> indexData(optimizedIndices.size() * sizeof(uint32_t));
-    std::memcpy(indexData.data(), optimizedIndices.data(), indexData.size());
+    std::vector<uint8_t> indexData(allLodIndices.size() * sizeof(uint32_t));
+    std::memcpy(indexData.data(), allLodIndices.data(), indexData.size());
 
-    result.data = WriteUzMesh(header, {lod}, submeshes, vertexData, indexData);
+    result.data = WriteUzMesh(header, lods, submeshes, vertexData, indexData);
     result.success = true;
 
     UZ_LOG(Asset, Info,
