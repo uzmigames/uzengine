@@ -567,6 +567,47 @@ AssetImportResult FbxImporter::Import(
         }
     }
 
+    // ── Auto-generate LODs via meshoptimizer ──
+    // Uses meshopt_simplify to progressively reduce triangle count.
+    // LOD0 = original, LOD1 = 50%, LOD2 = 25%, LOD3 = 12.5%
+    struct AutoLOD {
+        std::vector<uint32_t> indices;
+    };
+    std::vector<AutoLOD> autoLODs;
+    autoLODs.push_back({optimizedIndices}); // LOD0 = full mesh
+
+    {
+        std::vector<float> posFlat(finalVertexCount * 3);
+        for (size_t i = 0; i < finalVertexCount; ++i) {
+            posFlat[i * 3 + 0] = optimizedVertices[i].position[0];
+            posFlat[i * 3 + 1] = optimizedVertices[i].position[1];
+            posFlat[i * 3 + 2] = optimizedVertices[i].position[2];
+        }
+        const float scale = meshopt_simplifyScale(posFlat.data(), finalVertexCount, sizeof(float) * 3);
+        constexpr float kReductions[] = { 0.50f, 0.25f, 0.125f };
+
+        for (int lod = 0; lod < 3; ++lod) {
+            const size_t target = static_cast<size_t>(
+                static_cast<float>(optimizedIndices.size()) * kReductions[lod]);
+            if (target < 3) break;
+
+            std::vector<uint32_t> lodIdx(optimizedIndices.size());
+            float err = 0.0f;
+            const size_t actual = meshopt_simplify(
+                lodIdx.data(), optimizedIndices.data(), optimizedIndices.size(),
+                posFlat.data(), finalVertexCount, sizeof(float) * 3,
+                target, 0.05f * scale, 0, &err);
+            if (actual < 3) break;
+            lodIdx.resize(actual);
+            meshopt_optimizeVertexCache(lodIdx.data(), lodIdx.data(), lodIdx.size(), finalVertexCount);
+            autoLODs.push_back({std::move(lodIdx)});
+
+            UZ_LOG(Asset, Debug, "FBX LOD{}: {} → {} indices ({:.0f}%)",
+                   lod + 1, optimizedIndices.size(), actual,
+                   100.0f * (1.0f - float(actual) / float(optimizedIndices.size())));
+        }
+    }
+
     // ── Convert to runtime Vertex format (48 bytes with tangents) ──
     // The extraction pipeline uses VertexPosNormUV (32 bytes) for meshopt
     // compatibility. Now combine with remapped tangent data into the runtime
@@ -604,7 +645,17 @@ AssetImportResult FbxImporter::Import(
     }
 
     // ── Build Mesh struct with MeshHeader (UZMH, 128 bytes) ──
-    // The runtime mesh loader (LoadMeshFromMemory) only understands UZMH format.
+    // UZMH v1 stores only one LOD (LOD0). Auto-generated LOD indices are logged
+    // for verification but not yet embedded — multi-LOD UZMH format is planned.
+    // The LOD system in scene_sync.cpp handles screen-size switching at runtime
+    // when separate LOD mesh files are provided via StaticMeshComponent::lodMeshPaths.
+    if (autoLODs.size() > 1) {
+        UZ_LOG(Asset, Info, "FBX '{}': generated {} LODs (LOD0={} tris{})",
+               sourceName, autoLODs.size(),
+               optimizedIndices.size() / 3,
+               autoLODs.size() > 1 ? (", LOD1=" + std::to_string(autoLODs[1].indices.size() / 3) + " tris") : "");
+    }
+
     const uint32_t submeshCount = static_cast<uint32_t>(submeshes.size());
     const size_t vertexDataBytes = finalVertexCount * sizeof(Vertex);
     const size_t indexDataBytes = optimizedIndices.size() * sizeof(uint32_t);
