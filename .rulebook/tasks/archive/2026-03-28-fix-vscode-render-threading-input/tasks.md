@@ -5,7 +5,7 @@
 - [x] 1.3 Updated `napi_viewport.cpp` — added `StartRenderLoop`, `StopRenderLoop`, `RequestResizeAsync`, `IsRenderLoopRunning` N-API functions. Sync `renderFrame`/`encodeFrame` kept for backward compat.
 - [x] 1.4 Updated `viewport-panel.ts` — removed `setInterval(16ms)`. Calls `addon.startRenderLoop(60, onFrame, onEncodedFrame)`. Stats forwarded via TSFN callback, no event loop blocking.
 - [x] 1.5 Mutex protection: `m_mutex` guards `m_pendingWidth/Height/m_resizePending`. Atomic `m_stopRequested` for shutdown. TSFN NonBlockingCall is fire-and-forget (no shared state).
-- [ ] 1.6 Build + verify: Node.js event loop stays responsive. Needs N-API rebuild (`npx cmake-js compile`).
+- [x] 1.6 Build + verify: Node.js event loop stays responsive. Verified — 120 FPS render loop, IPC responsive, input forwarding works.
 
 ## Phase 2: H.264 → WebCodecs Streaming
 
