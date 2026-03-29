@@ -14,8 +14,13 @@
 #include "material_interface.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <string>
+
+// Diagnostic counter: mesh entities found by SyncWorldToDrawList.
+// Read by runtime.cpp to report in uz_frame_stats.
+std::atomic<uint32_t> g_lastSyncMeshEntityCount{0};
 
 namespace uz {
 
@@ -33,6 +38,11 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
     // Use mutable registry view — we need to write meshLoaded/materialLoaded flags
     // back into the components after lazy-loading assets.
     auto meshView = world->GetRegistry().view<StaticMeshComponent, SceneComponent>();
+
+    // Count entities and update global diagnostic counter.
+    uint32_t meshEntityCount = 0;
+    for ([[maybe_unused]] auto e : meshView) meshEntityCount++;
+    g_lastSyncMeshEntityCount.store(meshEntityCount, std::memory_order_relaxed);
 
     for (auto [enttEntity, meshComp, sceneComp] : meshView.each()) {
 

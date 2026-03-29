@@ -49,8 +49,7 @@ RHIPipelineHandle PipelineLibrary::GetShadowDepth(bool bindless) {
     RHIGraphicsPipelineDesc desc{};
     desc.vertexShader  = m_shadowVS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
-    desc.rasterizer.cullMode              = RHICullMode::Back;
-    desc.rasterizer.frontCounterClockwise = false;
+    desc.rasterizer.cullMode              = RHICullMode::Back; // Shadow casters — cull back faces
     // standard: slope-scaled depth bias in rasterizer state.
     // Source: ShadowRendering.cpp:38 — CSMSlopeScaleDepthBias default 3.0
     // standard: CSMSlopeScaleDepthBias=3.0 (ShadowRendering.cpp:38)
@@ -88,6 +87,11 @@ RHIPipelineHandle PipelineLibrary::GetShadowDepth(bool bindless) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool PipelineLibrary::EnsureInstancedMeshShaders() {
+    // GPU instancing requires bindless (StructuredBuffer vertex/instance fetch via
+    // ResourceDescriptorHeap). On non-bindless (SM6.0/DX11), instancing is not
+    // available — the engine falls back to per-object draw calls.
+    if (!m_device->IsBindless()) return false;
+
     if (!m_instancedMeshVS.IsValid()) {
         m_instancedMeshVS = m_shaderMgr->CreateShaderWithDefines(
             EngineShader::MeshVS, RHIShaderStage::Vertex, "UZ_INSTANCED=1");
@@ -100,6 +104,8 @@ bool PipelineLibrary::EnsureInstancedMeshShaders() {
 }
 
 bool PipelineLibrary::EnsureInstancedShadowShaders() {
+    if (!m_device->IsBindless()) return false;
+
     if (!m_instancedShadowVS.IsValid()) {
         m_instancedShadowVS = m_shaderMgr->CreateShaderWithDefines(
             EngineShader::ShadowDepthVS, RHIShaderStage::Vertex, "UZ_INSTANCED=1");
@@ -129,8 +135,7 @@ RHIPipelineHandle PipelineLibrary::GetGBufferInstanced() {
     desc.vertexShader  = m_instancedMeshVS;
     desc.pixelShader   = m_gbufferPS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
-    desc.rasterizer.cullMode              = RHICullMode::Back;
-    desc.rasterizer.frontCounterClockwise = false;
+    desc.rasterizer.cullMode              = RHICullMode::Back; // Opaque instanced geometry — cull back faces
     desc.depthStencil.depthEnable         = true;
     desc.depthStencil.depthWrite          = true;
     desc.renderTargetFormats[0]           = RHIFormat::RGBA8Unorm;
@@ -168,8 +173,7 @@ RHIPipelineHandle PipelineLibrary::GetShadowDepthInstanced() {
     RHIGraphicsPipelineDesc desc{};
     desc.vertexShader  = m_instancedShadowVS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
-    desc.rasterizer.cullMode              = RHICullMode::Back;
-    desc.rasterizer.frontCounterClockwise = false;
+    desc.rasterizer.cullMode              = RHICullMode::Back; // Shadow casters — cull back faces
     // standard: same bias as non-instanced shadow PSO
     desc.rasterizer.slopeScaledDepthBias  = 3.0f;
     desc.rasterizer.depthBias             = 10.0f;

@@ -83,6 +83,20 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
             perFrame.skyLightColorG     = sl.lightColor.y;
             perFrame.skyLightColorB     = sl.lightColor.z;
             perFrame.skyLightMinAmbient = sl.minOcclusion;
+
+            // ── SkyLight occlusion parameters ──
+            perFrame.slOcclusionMaxDistance    = sl.occlusionMaxDistance;
+            perFrame.slOcclusionExponent       = sl.occlusionExponent;
+            perFrame.slOcclusionTintR          = sl.occlusionTint.x;
+            perFrame.slOcclusionTintG          = sl.occlusionTint.y;
+            perFrame.slOcclusionTintB          = sl.occlusionTint.z;
+            perFrame.slCloudAmbientOcclusion   = sl.cloudAmbientOcclusion ? 1u : 0u;
+            perFrame.slCloudAOStrength         = sl.cloudAmbientOcclusionStrength;
+            perFrame.slCloudAOExtent           = sl.cloudAmbientOcclusionExtent;
+            perFrame.slCloudAOMapResolutionScale = sl.cloudAmbientOcclusionMapResolutionScale;
+            perFrame.slCloudAOApertureScale    = sl.cloudAmbientOcclusionApertureScale;
+            perFrame.slSkyDistanceThreshold    = sl.skyDistanceThreshold;
+            perFrame.slOcclusionContrast       = sl.occlusionContrast;
             break;  // First SkyLightComponent only
         }
     }
@@ -131,6 +145,36 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     ctx.sunColor     = ctx.lightData.sunColor;
     ctx.ambientColor = ctx.lightData.ambientColor;
     ctx.lightingAlloc = ctx.lightData.lightingCBAlloc;
+
+    // ── Extract cloud shadow & light shaft parameters from primary DirectionalLight ──
+    if (ctx.world) {
+        auto dirLightView = ctx.world->GetRegistry().view<DirectionalLightComponent>();
+        for (auto enttEntity : dirLightView) {
+            auto& dl = dirLightView.get<DirectionalLightComponent>(enttEntity);
+            perFrame.cloudShadowStrength              = dl.cloudShadowStrength;
+            perFrame.cloudShadowOnAtmosphereStrength  = dl.cloudShadowOnAtmosphereStrength;
+            perFrame.cloudShadowOnSurfaceStrength     = dl.cloudShadowOnSurfaceStrength;
+            perFrame.cloudShadowDepthBias             = dl.cloudShadowDepthBias;
+            perFrame.cloudShadowExtent                = dl.cloudShadowExtent;
+            perFrame.cloudShadowMapResolutionScale    = dl.cloudShadowMapResolutionScale;
+            perFrame.cloudShadowRaySampleCountScale   = dl.cloudShadowRaySampleCountScale;
+            perFrame.cloudScatteredLuminanceScaleR     = dl.cloudScatteredLuminanceScale.x;
+            perFrame.cloudScatteredLuminanceScaleG     = dl.cloudScatteredLuminanceScale.y;
+            perFrame.cloudScatteredLuminanceScaleB     = dl.cloudScatteredLuminanceScale.z;
+            perFrame.castCloudShadows                 = dl.castCloudShadows ? 1u : 0u;
+            perFrame.castShadowsOnClouds              = dl.castShadowsOnClouds ? 1u : 0u;
+            perFrame.castShadowsOnAtmosphere          = dl.castShadowsOnAtmosphere ? 1u : 0u;
+            perFrame.enableLightShaftOcclusion        = dl.enableLightShaftOcclusion ? 1u : 0u;
+            perFrame.occlusionMaskDarkness            = dl.occlusionMaskDarkness;
+            perFrame.occlusionDepthRange              = dl.occlusionDepthRange;
+            perFrame.lightShaftOverrideDirectionX     = dl.lightShaftOverrideDirection.x;
+            perFrame.lightShaftOverrideDirectionY     = dl.lightShaftOverrideDirection.y;
+            perFrame.lightShaftOverrideDirectionZ     = dl.lightShaftOverrideDirection.z;
+            perFrame.shadowSourceAngleFactor          = dl.shadowSourceAngleFactor;
+            perFrame.shadowCascadeBiasDistribution    = dl.shadowCascadeBiasDistribution;
+            break;  // First DirectionalLightComponent only
+        }
+    }
 
     perFrame.lightDir     = {ctx.sunDir.x, ctx.sunDir.y, ctx.sunDir.z, 0.f};
     perFrame.lightColor   = {ctx.sunColor.x, ctx.sunColor.y, ctx.sunColor.z, 0.f};

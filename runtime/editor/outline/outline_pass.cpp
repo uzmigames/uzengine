@@ -16,6 +16,7 @@
 #include "rhi.h"
 #include "root_slots.h"
 #include "shader_pipeline.h"
+#include "vertex_layout.h"
 
 #include <cstring>
 
@@ -130,13 +131,21 @@ bool OutlinePass::Init(IRHIDevice* device, ShaderPipeline& pipeline,
         desc.renderTargetCount = 1;
         desc.depthStencilFormat = dsvFormat;
 
-        // Depth: test against GBuffer depth (read-only) to only mark visible pixels.
-        desc.depthStencil.depthEnable = true;
+        // Depth disabled: outline must render on top of ALL geometry (UE5 behavior).
+        // The outline should be visible even when the selected object is occluded.
+        desc.depthStencil.depthEnable = false;
         desc.depthStencil.depthWrite  = false;
-        desc.depthStencil.depthFunc   = RHICompareFunc::GreaterEqual; // Reversed-Z
 
         // No culling — render both sides for correct outline on all geometry.
         desc.rasterizer.cullMode = RHICullMode::None;
+
+        // Non-bindless (SM6.0/DX11): mesh_vs uses Input Assembler, needs vertex layout.
+        if (!device->IsBindless()) {
+            const auto layout = VertexLayout::Standard();
+            desc.inputElements     = layout.elements;
+            desc.inputElementCount = layout.count;
+            desc.vertexStride      = layout.stride;
+        }
 
         desc.debugName = "OutlineMaskPipeline";
 

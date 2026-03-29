@@ -45,7 +45,7 @@ RHIPipelineHandle PipelineLibrary::GetTonemap() {
     desc.vertexShader  = m_fullscreenVS;
     desc.pixelShader   = m_tonemapPS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
-    desc.rasterizer.cullMode      = RHICullMode::None;
+    desc.rasterizer.cullMode      = RHICullMode::None; // Fullscreen triangle — no geometry to cull
     desc.depthStencil.depthEnable = false;
     desc.depthStencil.depthWrite  = false;
     desc.renderTargetFormats[0]   = RHIFormat::RGBA8Unorm;
@@ -95,7 +95,7 @@ RHIPipelineHandle PipelineLibrary::GetVelocityPass() {
     desc.vertexShader                = m_fullscreenVS;
     desc.pixelShader                 = m_velocityPS;
     desc.topology                    = RHIPrimitiveTopology::TriangleList;
-    desc.rasterizer.cullMode         = RHICullMode::None;
+    desc.rasterizer.cullMode         = RHICullMode::None; // Fullscreen triangle — no geometry to cull
     desc.depthStencil.depthEnable    = false;
     desc.depthStencil.depthWrite     = false;
     desc.renderTargetFormats[0]      = RHIFormat::RG16Float;
@@ -670,7 +670,7 @@ RHIPipelineHandle PipelineLibrary::GetFxaa() {
     desc.vertexShader  = m_fullscreenVS;
     desc.pixelShader   = m_fxaaPS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
-    desc.rasterizer.cullMode      = RHICullMode::None;
+    desc.rasterizer.cullMode      = RHICullMode::None; // Fullscreen triangle — no geometry to cull
     desc.depthStencil.depthEnable = false;
     desc.depthStencil.depthWrite  = false;
     desc.renderTargetFormats[0]   = RHIFormat::RGBA8Unorm;
@@ -721,7 +721,7 @@ RHIPipelineHandle PipelineLibrary::GetCasSharpen() {
     desc.vertexShader  = m_fullscreenVS;
     desc.pixelShader   = m_casSharpenPS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
-    desc.rasterizer.cullMode      = RHICullMode::None;
+    desc.rasterizer.cullMode      = RHICullMode::None; // Fullscreen triangle — no geometry to cull
     desc.depthStencil.depthEnable = false;
     desc.depthStencil.depthWrite  = false;
     desc.renderTargetFormats[0]   = RHIFormat::RGBA8Unorm;

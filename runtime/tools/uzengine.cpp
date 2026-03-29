@@ -34,6 +34,7 @@
 #include "../engine/scripting/core/lua_input_api.h"
 #include "../editor/input/editor_input_handler.h"
 #include "../editor/selection/selection_manager.h"
+#include "../engine/renderer/camera/fly_camera_controller.h"
 #include "../engine/scripting/editor/lua_editor_api.h"
 #endif
 
@@ -107,7 +108,7 @@ static Config BuildConfig(int argc, char** argv) {
 /// Logs the resolved RHI configuration for diagnostics.
 static void LogResolvedConfig(const RHIConfig& rhiCfg, bool headless, int frames, int width, int height) {
     UZ_LOG(Engine, Info, "RHI backend:       {}", RHIBackendToString(rhiCfg.backend));
-    UZ_LOG(Engine, Info, "Shader model:      {}", ShaderModelToString(rhiCfg.shaderModel));
+    UZ_LOG(Engine, Info, "Shader model:      {}", rhiCfg.shaderModel.has_value() ? ShaderModelToString(*rhiCfg.shaderModel) : "auto");
     UZ_LOG(Engine, Info, "Validation:        {}", rhiCfg.enableValidation ? "on" : "off");
     UZ_LOG(Engine, Info, "GPU validation:    {}", rhiCfg.enableGpuValidation ? "on" : "off");
     UZ_LOG(Engine, Info, "Breadcrumbs:       {}", rhiCfg.enableBreadcrumbs ? "on" : "off");
@@ -306,6 +307,8 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         editorInput.Init(sceneRenderer.GetInput(), &selectionManager,
                          &sceneRenderer.GetCamera(), &world);
         editorInput.SetSceneRenderer(&sceneRenderer);
+        // UE5 behavior: WASD moves camera only while RMB held in editor mode.
+        sceneRenderer.GetCameraController().SetEditorMode(true);
         UZ_LOG(Engine, Info, "Editor input handler initialized");
     }
 
@@ -480,6 +483,20 @@ int main(int argc, char** argv) {
 
     // Config: project file + CLI overrides
     uz::Config config = uz::BuildConfig(argc, argv);
+
+    // Apply log level filter (--log-level trace|debug|info|warning|error)
+    {
+        const std::string ll = config.GetString("log-level",
+            config.GetString("log_level", ""));
+        if (!ll.empty()) {
+            if (ll == "trace")        uz::LogSetLevel(uz::LogLevel::Trace);
+            else if (ll == "debug")   uz::LogSetLevel(uz::LogLevel::Debug);
+            else if (ll == "info")    uz::LogSetLevel(uz::LogLevel::Info);
+            else if (ll == "warning") uz::LogSetLevel(uz::LogLevel::Warning);
+            else if (ll == "error")   uz::LogSetLevel(uz::LogLevel::Error);
+            else UZ_LOG(Engine, Warning, "Unknown log level '{}', using default", ll);
+        }
+    }
 
     // Resolve RHI settings from config
     const uz::RHIConfig rhiCfg = uz::ResolveRHIConfig(config);

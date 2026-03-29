@@ -13,7 +13,9 @@
 #include "vulkan_command_list.h"
 #include "vulkan_device.h"
 #include "vulkan_format_helpers.h"
+#include "vulkan_resources.h"
 
+#include <vk_mem_alloc.h>
 #include <tracy/TracyVulkan.hpp>
 
 #include "log.h"
@@ -79,7 +81,7 @@ static VkPipelineStageFlags2 ToVkPipelineStage(RHIResourceState state) {
         case RHIResourceState::VertexBuffer:      return VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT;
         case RHIResourceState::IndexBuffer:       return VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT;
         case RHIResourceState::ConstantBuffer:    return VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
-        case RHIResourceState::ShaderResource:    return VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+        case RHIResourceState::ShaderResource:    return VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
         case RHIResourceState::UnorderedAccess:   return VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
         case RHIResourceState::RenderTarget:      return VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
         case RHIResourceState::DepthStencilWrite: return VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
@@ -117,6 +119,16 @@ VulkanCommandList::~VulkanCommandList() {
             vkDestroyCommandPool(device, m_commandPools[i], nullptr);
         }
     }
+
+    // Release scratch UBOs used by SetRootConstants.
+    VmaAllocator allocator = m_device->GetAllocator();
+    for (uint32_t i = 0; i < kMaxScratchUBOSlots; ++i) {
+        if (m_scratchUBOs[i].buffer != VK_NULL_HANDLE) {
+            vmaDestroyBuffer(allocator, m_scratchUBOs[i].buffer, m_scratchUBOs[i].allocation);
+            m_scratchUBOs[i] = {};
+        }
+    }
+
     UZ_LOG(RHI, Info, "VulkanCommandList destroyed");
 }
 
@@ -354,15 +366,95 @@ void VulkanCommandList::SetDescriptorIndex(uint32_t rootParamIndex, uint32_t des
 
 void VulkanCommandList::SetRootConstants(uint32_t rootParamIndex, const uint32_t* data,
                                           uint32_t count, uint32_t offsetIn32BitValues) {
-    uint32_t pushOffset = rootParamIndex * sizeof(uint32_t) + offsetIn32BitValues * sizeof(uint32_t);
-    uint32_t pushSize = count * sizeof(uint32_t);
-    if (pushOffset + pushSize > 128) {
-        UZ_LOG(RHI, Warning, "SetRootConstants: exceeds 128-byte push constant range");
-        return;
+    // Vulkan shaders compiled with DXC `-fvk-b-shift 32 0` map cbuffer register(bN)
+    // to a UBO descriptor at binding 32+N. Push constants are a separate mechanism
+    // that the shader never reads. We emulate DX12 root constants by writing the
+    // data into a scratch UBO and binding it as VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+    // matching the DX11 scratch constant buffer pattern.
+    if (!data || count == 0) return;
+
+    // Total size must cover offset + count, aligned to 16 bytes (Vulkan minUniformBufferOffsetAlignment).
+    const uint32_t totalDwords = offsetIn32BitValues + count;
+    const uint32_t alignedSize = (totalDwords * sizeof(uint32_t) + 15u) & ~15u;
+
+    ScratchUBO scratch = GetOrCreateScratchUBO(rootParamIndex, alignedSize);
+    if (scratch.buffer == VK_NULL_HANDLE) return;
+
+    // Copy inline data into the persistently-mapped scratch buffer.
+    // HOST_COHERENT memory — no explicit flush required.
+    auto* dst = static_cast<uint32_t*>(scratch.mappedPtr);
+    std::memcpy(dst + offsetIn32BitValues, data, count * sizeof(uint32_t));
+
+    // Translate root param index → HLSL register via root layout, then apply the
+    // -fvk-b-shift 32 0 convention: Vulkan binding = 32 + hlslRegister.
+    const uint32_t hlslRegister = m_device->GetRootLayout().params[rootParamIndex].shaderRegister;
+    const uint32_t binding = 32 + hlslRegister;
+
+    VkDescriptorBufferInfo bufInfo = {};
+    bufInfo.buffer = scratch.buffer;
+    bufInfo.offset = 0;
+    bufInfo.range = alignedSize;
+
+    VkWriteDescriptorSet write = {};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = m_descriptorSets[m_frameIndex];
+    write.dstBinding = binding;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    write.pBufferInfo = &bufInfo;
+
+    vkUpdateDescriptorSets(m_device->GetVkDevice(), 1, &write, 0, nullptr);
+    UZ_STAT_INCREMENT(RHI, VkDescriptorWrites);
+    m_writtenBindingsMask |= (uint64_t(1) << binding);
+    m_descriptorsDirty = true;
+}
+
+VulkanCommandList::ScratchUBO VulkanCommandList::GetOrCreateScratchUBO(uint32_t slot, uint32_t requiredSize) {
+    if (slot >= kMaxScratchUBOSlots) {
+        UZ_LOG(RHI, Error, "GetOrCreateScratchUBO: slot {} exceeds max {}", slot, kMaxScratchUBOSlots);
+        return {};
     }
-    vkCmdPushConstants(m_commandBuffers[m_frameIndex], m_device->GetPipelineLayout(),
-                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT,
-                       pushOffset, pushSize, data);
+
+    // Reuse existing buffer if large enough.
+    ScratchUBO& existing = m_scratchUBOs[slot];
+    if (existing.buffer != VK_NULL_HANDLE && existing.sizeBytes >= requiredSize) {
+        return existing;
+    }
+
+    // Release old buffer if it exists but is too small.
+    VmaAllocator allocator = m_device->GetAllocator();
+    if (existing.buffer != VK_NULL_HANDLE) {
+        vmaDestroyBuffer(allocator, existing.buffer, existing.allocation);
+        existing = {};
+    }
+
+    // Create a new host-visible, host-coherent UBO via VMA.
+    // CPU_TO_GPU + MAPPED gives us a persistently-mapped pointer.
+    VkBufferCreateInfo bufCI = {};
+    bufCI.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufCI.size = requiredSize;
+    bufCI.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+    bufCI.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    VmaAllocationCreateInfo allocCI = {};
+    allocCI.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+    allocCI.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VmaAllocation allocation = nullptr;
+    VmaAllocationInfo allocInfo = {};
+    VkResult result = vmaCreateBuffer(allocator, &bufCI, &allocCI, &buffer, &allocation, &allocInfo);
+    if (result != VK_SUCCESS) {
+        UZ_LOG(RHI, Error, "GetOrCreateScratchUBO: vmaCreateBuffer failed, slot={}, size={}, result={}",
+               slot, requiredSize, static_cast<int>(result));
+        return {};
+    }
+
+    existing.buffer = buffer;
+    existing.allocation = allocation;
+    existing.mappedPtr = allocInfo.pMappedData;
+    existing.sizeBytes = requiredSize;
+    return existing;
 }
 
 void VulkanCommandList::SetRootCBV(uint32_t rootParamIndex, uint64_t gpuAddress) {
@@ -991,7 +1083,19 @@ void VulkanCommandList::CopyBufferToTexture(RHIBufferHandle srcBuffer, uint64_t 
 
     VkBufferImageCopy region = {};
     region.bufferOffset = srcOffset;
-    region.bufferRowLength = srcRowPitch / BytesPerTexel(tex->desc.format);
+    const uint32_t bpt = BytesPerTexel(tex->desc.format);
+    if (bpt > 0) {
+        region.bufferRowLength = srcRowPitch / bpt;
+    } else {
+        // Block-compressed format (BC1-BC7): bufferRowLength is in texels.
+        // srcRowPitch is bytes per row of blocks. Each block covers 4 texels wide.
+        // BC1/BC4 = 8 bytes/block, BC3/BC5/BC7 = 16 bytes/block.
+        const bool is8ByteBlock = (tex->desc.format == RHIFormat::BC1Unorm
+                                || tex->desc.format == RHIFormat::BC1Srgb
+                                || tex->desc.format == RHIFormat::BC4Unorm);
+        const uint32_t blockBytes = is8ByteBlock ? 8 : 16;
+        region.bufferRowLength = (srcRowPitch / blockBytes) * 4;
+    }
     region.bufferImageHeight = 0; // Tightly packed rows
     region.imageSubresource.aspectMask = GetAspectFlags(tex->desc.format);
     region.imageSubresource.mipLevel = mipLevel;
@@ -1053,7 +1157,16 @@ void VulkanCommandList::CopyTextureToBuffer(RHITextureHandle srcTexture, uint32_
     VkBufferImageCopy region = {};
     region.bufferOffset = dstOffset;
     // bufferRowLength is in texels, not bytes
-    region.bufferRowLength = dstRowPitch / texelSize;
+    if (texelSize > 0) {
+        region.bufferRowLength = dstRowPitch / texelSize;
+    } else {
+        // Block-compressed: compute texels from block count
+        const bool is8ByteBlock = (tex->desc.format == RHIFormat::BC1Unorm
+                                || tex->desc.format == RHIFormat::BC1Srgb
+                                || tex->desc.format == RHIFormat::BC4Unorm);
+        const uint32_t blockBytes = is8ByteBlock ? 8 : 16;
+        region.bufferRowLength = (dstRowPitch / blockBytes) * 4;
+    }
     region.bufferImageHeight = mipHeight;
     region.imageSubresource.aspectMask = GetAspectFlags(tex->desc.format);
     region.imageSubresource.mipLevel = mipLevel;

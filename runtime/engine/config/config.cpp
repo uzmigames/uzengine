@@ -93,8 +93,12 @@ void Config::RebuildMerged() {
 
 std::string Config::GetString(const std::string& key, const std::string& defaultVal) const {
     auto* val = Resolve(key);
-    if (val && val->is_string())
-        return val->get<std::string>();
+    if (!val) return defaultVal;
+    if (val->is_string()) return val->get<std::string>();
+    // CLI values like "6.0" are parsed as JSON numbers by nlohmann::json::parse().
+    // Convert back to string so callers like ParseShaderModel("6.0") work.
+    // Use dump() which produces "6.0" not "6.000000" (unlike std::to_string).
+    if (val->is_number() || val->is_boolean()) return val->dump();
     return defaultVal;
 }
 

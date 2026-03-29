@@ -493,16 +493,14 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
     }
 
     // ── LDR intermediate import ─────────────────────────────────────────
-    // Import LDR intermediate into the render graph if CAS or FXAA is active.
-    // When either is active, tonemap writes here instead of to the backbuffer.
-    // The intermediate is shared between CAS and FXAA (both are fullscreen
-    // LDR passes that read from it).
-    const bool needsLdrIntermediate = ctx.casActive || ctx.fxaaActive;
-    if (needsLdrIntermediate) {
-        ctx.fxaaLdrRes = rgBuilder.ImportTexture("LDR_Intermediate",
-                                                  m_fxaaLdrIntermediate,
-                                                  RHIResourceState::ShaderResource);
-    }
+    // Always import the LDR intermediate — tonemap writes here, then either
+    // CAS/FXAA or a raw CopyTexture forwards the result to the backbuffer.
+    // This guarantees a stable, engine-owned texture for H.264 readback
+    // (never read back from the swapchain backbuffer — it rotates after Present).
+    const bool needsLdrIntermediate = true;
+    ctx.fxaaLdrRes = rgBuilder.ImportTexture("LDR_Intermediate",
+                                              m_fxaaLdrIntermediate,
+                                              RHIResourceState::ShaderResource);
 
     // ── Tonemap pass (HDR → LDR) ────────────────────────────────────────
     // Reads HDR scene color (RGBA16F) + optional bloom result, applies
@@ -559,14 +557,33 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 lensFlareSrvIdx = m_lensFlarePass->GetOutputSrv();
             }
 
-            // Read from the final post-process output (DOF > motion blur > TAA > raw HDR).
-            uint32_t indices[4] = { ctx.postDofSrvForTonemap, bloomSrvIdx, bloomIntensityBits, lensFlareSrvIdx };
-            cmd->SetRootConstants(kSlotRootConstants, indices, 4);
+            // Color grading LUT SRV (0 = no LUT, shader bypasses LUT sampling)
+            const uint32_t lutSrvIdx = (m_colorGradingLut.IsValid() && m_colorGradingLutSrv != UINT32_MAX)
+                                         ? m_colorGradingLutSrv : 0u;
 
-            // SM5: bind HDR scene color texture at t0 directly
-            // (TAA not available on SM5 path since it requires ctx.bindless)
+            // Read from the final post-process output (DOF > motion blur > TAA > raw HDR).
+            uint32_t indices[5] = { ctx.postDofSrvForTonemap, bloomSrvIdx, bloomIntensityBits, lensFlareSrvIdx, lutSrvIdx };
+            cmd->SetRootConstants(kSlotRootConstants, indices, 5);
+
+            // SM5/SM6.0: bind all textures via SetFragmentTexture.
+            // CRITICAL: every slot the shader reads MUST be explicitly bound —
+            // stale descriptors from previous passes persist in the DX12 staging
+            // block. If t1 (bloom) is not bound, it contains the transmittance LUT
+            // from the sky atmosphere pass, which gets ADDED to every pixel and
+            // produces the orange/pink sky bug.
             if (!ctx.bindless) {
                 cmd->SetFragmentTexture(0, m_hdrSceneColor);
+                // t1: bloom result — MUST always be bound. Use black fallback when
+                // bloom is not available to prevent stale descriptor reads.
+                if (ctx.bloomEnabled && m_bloomPass
+                    && m_bloomPass->GetBloomResultTexture().IsValid()) {
+                    cmd->SetFragmentTexture(1, m_bloomPass->GetBloomResultTexture());
+                } else {
+                    cmd->SetFragmentTexture(1, m_fallbackBlack);
+                }
+                if (m_colorGradingLut.IsValid()) {
+                    cmd->SetFragmentTexture(2, m_colorGradingLut);
+                }
             }
 
             // PerFrameCB at b1 — contains exposure from auto-exposure
@@ -711,6 +728,28 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 cmd->EndRenderPass();
             });
         });
+    }
+
+    // ── LDR → Backbuffer copy (when neither CAS nor FXAA writes to bb) ──
+    // Both CAS and FXAA read from LDR intermediate and write to the backbuffer.
+    // When neither is active, the backbuffer is untouched — copy the intermediate
+    // to the backbuffer via a GPU copy. Both textures are RGBA8Unorm (same format),
+    // so CopyTexture is a valid, zero-overhead GPU memcpy.
+    if (!ctx.casActive && !ctx.fxaaActive) {
+        rgBuilder.AddPass("LDR_Blit", [&](rg::RgPassBuilder& pb) {
+            pb.Read(ctx.fxaaLdrRes, RHIResourceState::CopySrc);
+            pb.Write(ctx.bbRes, RHIResourceState::CopyDst);
+
+            pb.SetExecutionCallback([&ctx](IRHICommandList* cmd, const rg::RgPassResources& res) {
+                UZ_PROFILE_SCOPE("LDR_Blit::Execute");
+                auto ldr = res.GetTexture(ctx.fxaaLdrRes);
+                auto bb  = res.GetTexture(ctx.bbRes);
+                cmd->CopyTexture(ldr, bb);
+            });
+        });
+        m_ldrFinalState = RHIResourceState::CopySrc;
+    } else {
+        m_ldrFinalState = RHIResourceState::ShaderResource;
     }
 
     // ── PassInspector: register post-process targets ─────────────────────

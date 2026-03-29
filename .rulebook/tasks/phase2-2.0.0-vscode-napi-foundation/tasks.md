@@ -50,6 +50,32 @@
 - [x] D.2 Updated `scripts/build.ps1` — added `-Ddll=true` to zig build step, DLL+Agility SDK copy to `extension/native/`.
 - [x] D.3 Updated `.vscode/tasks.json` — 5 tasks: build:all (full pipeline), build:runtime, build:napi, build:extension, build:runtime:debug.
 
+## Phase E: Lazy Addon Loading
+
+- [x] E.1 `extension.ts` — removed immediate `loadNativeAddon()` from `activate()`. Added `ensureAddon()` that lazy-loads and caches the addon on first call, runs one-time init (setEngineDir, getVersion, attachAddon) and throws on failure. Language features (syntax highlighting, icons) now work without loading the .node DLL.
+- [x] E.2 `panels/console-panel.ts` — removed addon from constructor. OutputChannel created immediately. Added `attachAddon(addon)` method called by `ensureAddon()` to defer `setLogCallback` registration.
+- [x] E.3 `panels/scene-tree-panel.ts` — changed constructor from `UzEngineAddon` to `() => UzEngineAddon | undefined` getter. `refresh()` checks if addon is loaded before calling `getSceneTree()`; clears tree silently if not yet loaded.
+- [x] E.4 `panels/scene-editor-provider.ts` — changed constructor from `UzEngineAddon` to `() => UzEngineAddon` getter. All `this.addon.` calls replaced with per-method resolution via `this.getAddon()`.
+- [x] E.5 `panels/viewport-panel.ts` — changed constructor from `UzEngineAddon` to `() => UzEngineAddon` getter. Added private `get addon()` accessor so all existing `this.addon.` call sites remain unchanged.
+- [x] E.6 TypeScript compiles with zero errors (`tsc -p .`). No new lint violations introduced.
+
+## Phase F: Runtime Process Isolation
+
+- [x] F.1 Created `extension/src/runtime-worker.ts` — standalone Node.js child process that loads `uzengine.node` in isolation. Handles all `WorkerCommand` IPC messages, sends `WorkerResponse` replies plus push events (log, stats, frame). Frame NAL bytes serialised as base64 for JSON-safe IPC. Uncaught exception handler forwards fatal errors before exit.
+- [x] F.2 Created `extension/src/runtime-client.ts` — `RuntimeClient` class that spawns `out/runtime-worker.js` via `child_process.fork()`. Provides async Promise-based API mirroring `UzEngineAddon`. Fire-and-forget input forwarding (mouseMove, mouseButton, key, scroll) for zero-latency input. Worker crash detection → rejects pending Promises, shows "Restart" notification.
+- [x] F.3 Updated `extension/src/panels/console-panel.ts` — changed `attachAddon(addon)` to `attachClient(client)`. Wires `RuntimeClient.setLogListener()` instead of `addon.setLogCallback()`. Previous client listener cleared on re-attach.
+- [x] F.4 Updated `extension/src/panels/scene-tree-panel.ts` — changed getter type from `() => UzEngineAddon | undefined` to `() => RuntimeClient | undefined`. `refresh()` is now fire-and-async (does not need to be awaited) using Promise chaining.
+- [x] F.5 Updated `extension/src/panels/scene-editor-provider.ts` — constructor now accepts `() => RuntimeClient`. All addon calls replaced with async `client.*()` calls. `resolveCustomTextEditor` uses `void handleReady()` for the async init sequence.
+- [x] F.6 Updated `extension/src/panels/viewport-panel.ts` — constructor now accepts `RuntimeClient` (or lazy getter). `startRenderLoop`/`stopRenderLoop`/`handleWebViewMessage`/`autoLoadProjectScene` are all async.
+- [x] F.7 Updated `extension/src/extension.ts` — removed `loadNativeAddon`/`ensureAddon`. Added `ensureClient()` that lazily creates `RuntimeClient`, wires console, and calls `setEngineDir`. All command handlers use async/await. `deactivate()` calls `client.dispose()`.
+- [x] F.8 TypeScript compiles with zero errors (`npm run build` passes). Worker entry-point guard (`require.main === module`) preserved in compiled output.
+
+## Phase G: Extension Lifecycle Bug Fixes
+
+- [x] G.1 Fixed VFS path bug in `scene-editor-provider.ts`: `setContentRoot` now called BEFORE `ensureViewport()` (which triggers `init()`+`createViewport()`) so the VFS is initialized with the project directory, not the VSCode install dir. Previously the content root was only set in `loadScene()` after viewport creation.
+- [x] G.2 Fixed multiple `handleReady` on tab reopen: added `sessionId` counter incremented in `resolveCustomTextEditor`. Each async `handleReady` invocation captures its session ID; stale sessions abort after each `await` resumption. Webview message handler also drops messages from stale sessions.
+- [x] G.3 Changed render loop from 60 FPS to 30 FPS: updated `startRenderLoop(60, ...)` → `startRenderLoop(30, ...)` and frame timestamp increment from 16666µs to 33333µs in webview VideoDecoder. IPC base64 overhead makes 60 FPS impractical.
+
 ## Testing
 
 - [x] T.1 C API tests: `test_runtime_api.cpp` — 14 tests covering lifecycle, viewport create/destroy, render, scene load/tree, entity CRUD, log callback, editor mode, content root. 4 basic tests PASS (no GPU). Viewport tests PASS but require GPU + window.

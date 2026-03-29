@@ -78,6 +78,12 @@ DX12Device::~DX12Device() {
         m_rootSignature = nullptr;
     }
 
+    // Free the Agility SDK D3D12Core.dll module
+    if (m_agilityCoreModule) {
+        FreeLibrary(m_agilityCoreModule);
+        m_agilityCoreModule = nullptr;
+    }
+
     // Report any live allocations before releasing the allocator
     if (m_allocator) {
         D3D12MA::TotalStatistics stats{};
@@ -157,6 +163,11 @@ bool DX12Device::Init(const RHIDeviceDesc& desc) {
     UZ_PROFILE_FUNCTION();
     m_validationEnabled = desc.enableValidation;
 
+    // Try to load Agility SDK programmatically (DLL-hosted mode on Win10).
+    // Must happen BEFORE any D3D12 device/factory creation so the runtime
+    // picks up our D3D12Core.dll instead of the system one.
+    TryLoadAgilitySdk();
+
     // Order matters: debug layer must be enabled before device creation
     if (desc.enableValidation) {
         if (!EnableDebugLayer(desc.enableGpuValidation)) {
@@ -170,13 +181,41 @@ bool DX12Device::Init(const RHIDeviceDesc& desc) {
 
     NegotiateShaderModel(desc.forceShaderModel);
 
+    // Detect root signature version support (1.0 vs 1.1).
+    // D3DX12SerializeVersionedRootSignature uses this to automatically downgrade
+    // 1.1 descriptors to 1.0 on older drivers that lack 1.1 support.
+    {
+        D3D12_FEATURE_DATA_ROOT_SIGNATURE rootSigCaps = {};
+        rootSigCaps.HighestVersion = D3D_ROOT_SIGNATURE_VERSION_1_1;
+        if (FAILED(m_device->CheckFeatureSupport(D3D12_FEATURE_ROOT_SIGNATURE,
+                                                  &rootSigCaps, sizeof(rootSigCaps)))) {
+            rootSigCaps.HighestVersion = D3D_ROOT_SIGNATURE_VERSION_1_0;
+        }
+        m_rootSigVersion = rootSigCaps.HighestVersion;
+
+        // When the Agility SDK was loaded via CreateDeviceFactory, the device
+        // reports root signature 1.1 support, but the GLOBAL serialization API
+        // (D3D12SerializeVersionedRootSignature from system d3d12.dll) still
+        // rejects SM6.6 flags (DIRECTLY_INDEXED). Force 1.0 so the d3dx12
+        // helper uses D3D12SerializeRootSignature (1.0 API) which accepts
+        // arbitrary flags in the Flags field without validation.
+        if (m_deviceFactory && m_rootSigVersion >= D3D_ROOT_SIGNATURE_VERSION_1_1) {
+            m_rootSigVersion = D3D_ROOT_SIGNATURE_VERSION_1_0;
+            UZ_LOG(RHI, Info, "Root signature version: 1.0 (forced — Agility SDK device factory mode)");
+        } else {
+            UZ_LOG(RHI, Info, "Root signature version: {}",
+                   m_rootSigVersion == D3D_ROOT_SIGNATURE_VERSION_1_1 ? "1.1" : "1.0");
+        }
+    }
+
     if (!CreateAllocator())                     return false;
     if (!CreateDescriptorHeaps())               return false;
     InitDescriptorAllocators();
     if (!CreateCommandQueues())                 return false;
 
     // Global root signature (adapts to negotiated shader model)
-    m_rootSignature = CreateBindlessRootSignature(m_device.Get(), m_shaderModel);
+    m_rootSignature = CreateBindlessRootSignature(m_device.Get(), m_shaderModel,
+                                                    m_rootSigVersion);
     if (!m_rootSignature) return false;
 
     // Indirect command signatures for GPU-driven rendering
@@ -266,6 +305,98 @@ bool DX12Device::Init(const RHIDeviceDesc& desc) {
 // Initialization Steps
 // ─────────────────────────────────────────────────────────────────────────────
 
+bool DX12Device::TryLoadAgilitySdk() {
+    // Use the programmatic SDK configuration API (Win10 20H2+ / Build 19042+)
+    // to point the D3D12 runtime at our bundled D3D12Core.dll. This is the only
+    // way to get SM6.6+ when running as a DLL inside a host process (VSCode),
+    // because the __declspec(dllexport) D3D12SDKVersion trick requires the
+    // symbols to be exported from the main EXE.
+
+    // Load D3D12GetInterface via GetProcAddress for compatibility with older
+    // Win10 builds where the function does not exist in d3d12.dll.
+    HMODULE d3d12Module = GetModuleHandleA("d3d12.dll");
+    if (!d3d12Module) {
+        d3d12Module = LoadLibraryA("d3d12.dll");
+    }
+    if (!d3d12Module) {
+        UZ_LOG(RHI, Info, "Agility SDK: d3d12.dll not loaded, skipping programmatic configuration");
+        return false;
+    }
+
+    auto pfnGetInterface = reinterpret_cast<PFN_D3D12_GET_INTERFACE>(
+        GetProcAddress(d3d12Module, "D3D12GetInterface"));
+    if (!pfnGetInterface) {
+        // D3D12GetInterface is unavailable — pre-20H2 Windows 10.
+        // Fall back to the system D3D12 runtime (dllexport path may still work for EXE builds).
+        UZ_LOG(RHI, Info, "Agility SDK: D3D12GetInterface not found, using system D3D12");
+        return false;
+    }
+
+    // Query the SDK configuration interface
+    ID3D12SDKConfiguration* sdkConfig = nullptr;
+    HRESULT hr = pfnGetInterface(CLSID_D3D12SDKConfiguration,
+                                 IID_ID3D12SDKConfiguration,
+                                 reinterpret_cast<void**>(&sdkConfig));
+    if (FAILED(hr) || !sdkConfig) {
+        UZ_LOG(RHI, Info, "Agility SDK: ID3D12SDKConfiguration unavailable (hr=0x{:08X})",
+               static_cast<uint32_t>(hr));
+        return false;
+    }
+
+    // Try ID3D12SDKConfiguration1 which supports CreateDeviceFactory.
+    // This works even when another D3D12 device already exists in the process
+    // (e.g., VSCode/Electron), where SetSDKVersion fails with 0x887A0001
+    // because the global SDK version is already locked by the host's device.
+    ID3D12SDKConfiguration1* sdkConfig1 = nullptr;
+    hr = sdkConfig->QueryInterface(IID_ID3D12SDKConfiguration1,
+                                   reinterpret_cast<void**>(&sdkConfig1));
+    sdkConfig->Release();
+
+    if (FAILED(hr) || !sdkConfig1) {
+        UZ_LOG(RHI, Info, "Agility SDK: ID3D12SDKConfiguration1 not available — using system D3D12");
+        return false;
+    }
+
+    // Build the SDK path — the directory containing D3D12Core.dll.
+    // GetExeDir() respects the SetEngineDir() override, so in DLL-hosted mode
+    // it returns the addon directory (where D3D12Core.dll is deployed), not
+    // the host process directory (e.g., VS Code's install dir).
+    std::string sdkPath = GetExeDir().string() + "\\";
+
+    // Create a device factory scoped to our Agility SDK version.
+    // This bypasses the global SetSDKVersion limitation where another device
+    // in the process (VSCode/Electron) prevents SDK version changes.
+    ID3D12DeviceFactory* factory = nullptr;
+    hr = sdkConfig1->CreateDeviceFactory(D3D12_SDK_VERSION, sdkPath.c_str(),
+                                         IID_ID3D12DeviceFactory,
+                                         reinterpret_cast<void**>(&factory));
+    sdkConfig1->Release();
+
+    if (FAILED(hr) || !factory) {
+        UZ_LOG(RHI, Warning, "Agility SDK CreateDeviceFactory failed (hr=0x{:08X}), "
+               "falling back to system D3D12", static_cast<uint32_t>(hr));
+        return false;
+    }
+
+    m_deviceFactory.Attach(factory);
+    UZ_LOG(RHI, Info, "Agility SDK loaded via CreateDeviceFactory (version={}, path='{}')",
+           D3D12_SDK_VERSION, sdkPath);
+
+    // Keep the D3D12Core.dll loaded so the Agility SDK runtime remains active
+    // for the lifetime of the device. Root signature serialization is now handled
+    // by D3DX12SerializeVersionedRootSignature (d3dx12 helper) which automatically
+    // falls back from 1.1 to 1.0 when needed — no manual DLL function resolution required.
+    std::string coreDllPath = sdkPath + "D3D12Core.dll";
+    m_agilityCoreModule = LoadLibraryA(coreDllPath.c_str());
+    if (m_agilityCoreModule) {
+        UZ_LOG(RHI, Info, "Loaded D3D12Core.dll from '{}'", coreDllPath);
+    } else {
+        UZ_LOG(RHI, Warning, "Failed to load D3D12Core.dll from '{}'", coreDllPath);
+    }
+
+    return true;
+}
+
 bool DX12Device::EnableDebugLayer(bool gpuValidation) {
     UZ_PROFILE_FUNCTION();
     ComPtr<ID3D12Debug3> debug;
@@ -353,11 +484,20 @@ bool DX12Device::CreateDevice() {
     };
 
     for (D3D_FEATURE_LEVEL level : kFeatureLevels) {
-        HRESULT hr = D3D12CreateDevice(m_adapter.Get(), level, IID_PPV_ARGS(&m_device));
+        HRESULT hr;
+        if (m_deviceFactory) {
+            // Use the Agility SDK device factory — this creates a device using our
+            // bundled D3D12Core.dll even when a host process (VSCode/Electron)
+            // already has a device on the system runtime.
+            hr = m_deviceFactory->CreateDevice(m_adapter.Get(), level, IID_PPV_ARGS(&m_device));
+        } else {
+            hr = D3D12CreateDevice(m_adapter.Get(), level, IID_PPV_ARGS(&m_device));
+        }
         if (SUCCEEDED(hr)) {
             m_featureLevel = level;
             m_featureLevelStr = FeatureLevelToString(level);
-            UZ_LOG(RHI, Info, "D3D12 device created at {}", m_featureLevelStr);
+            UZ_LOG(RHI, Info, "D3D12 device created at {}{}", m_featureLevelStr,
+                   m_deviceFactory ? " (via Agility SDK factory)" : "");
             return true;
         }
         UZ_LOG(RHI, Warning, "D3D12CreateDevice failed at {}, hr=0x{:08X}",
@@ -430,8 +570,9 @@ void DX12Device::NegotiateShaderModel(std::optional<ShaderModel> forceModel) {
         m_shaderModel = ShaderModel::SM5_0;
     }
 
-    // Force override — clamps to a lower shader model for testing fallback paths
-    if (forceModel.has_value() && *forceModel < m_shaderModel) {
+    // Force override — allows both downgrade (testing fallback paths) and upgrade
+    // (Win10 without Agility SDK reports SM6.5 max but hardware supports SM6.6+).
+    if (forceModel.has_value() && *forceModel != m_shaderModel) {
         UZ_LOG(RHI, Warning, "Shader model forced: {} → {} (override active)",
                ShaderModelToString(m_shaderModel), ShaderModelToString(*forceModel));
         m_shaderModel = *forceModel;
@@ -604,6 +745,12 @@ static const char* BreadcrumbOpToString(D3D12_AUTO_BREADCRUMB_OP op) {
 
 void DX12Device::LogDeviceRemoved() {
     UZ_PROFILE_FUNCTION();
+
+    // Guard: only log device removal diagnostics once. Subsequent calls are
+    // no-ops to prevent infinite log spam when the render loop hasn't stopped yet.
+    if (m_deviceRemoved) return;
+    m_deviceRemoved = true;
+
     HRESULT removedReason = m_device->GetDeviceRemovedReason();
     UZ_LOG(RHI, Error, "=== DEVICE REMOVED ===");
     UZ_LOG(RHI, Error, "Adapter: '{}'", m_adapterName);

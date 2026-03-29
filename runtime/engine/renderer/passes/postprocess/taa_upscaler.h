@@ -71,6 +71,7 @@ public:
     void Execute(IRHICommandList* cmd, const UpscalerInput& input) override;
 
 private:
+    IRHIDevice*      m_device    = nullptr;
     PipelineLibrary* m_pipelines = nullptr;
     CBRingAllocator* m_cbRing    = nullptr;
 };

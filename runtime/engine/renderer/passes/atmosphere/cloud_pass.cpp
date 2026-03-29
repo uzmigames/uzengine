@@ -369,7 +369,24 @@ struct alignas(16) CloudCB {
     uint32_t lightSteps;       // 4 bytes  (offset 176)
     uint32_t shapeNoiseSrv;    // 4 bytes  (offset 180)
     float globalCoverage;      // 4 bytes  (offset 184)
-    float _pad[17];            // 68 bytes (offset 188 -> 256 total)
+    // ── Additional tracing/quality parameters ────────────────────────
+    float cloudType;                                          // 4 bytes  (offset 188)
+    float tracingMaxDistanceKm;                               // 4 bytes  (offset 192)
+    float viewSampleCountScale;                               // 4 bytes  (offset 196)
+    float reflectionViewSampleCountScale;                     // 4 bytes  (offset 200)
+    float shadowViewSampleCountScale;                         // 4 bytes  (offset 204)
+    float shadowReflectionViewSampleCountScale;               // 4 bytes  (offset 208)
+    float shadowTracingDistance;                               // 4 bytes  (offset 212)
+    float stopTracingTransmittanceThreshold;                  // 4 bytes  (offset 216)
+    float aerialPerspectiveRayleighScatteringStartDistance;    // 4 bytes  (offset 220)
+    float aerialPerspectiveRayleighScatteringFadeDistance;     // 4 bytes  (offset 224)
+    float aerialPerspectiveMieScatteringStartDistance;         // 4 bytes  (offset 228)
+    float aerialPerspectiveMieScatteringFadeDistance;          // 4 bytes  (offset 232)
+    float skyLightCloudBottomOcclusion;                       // 4 bytes  (offset 236)
+    uint32_t tracingMaxDistanceMode;                          // 4 bytes  (offset 240)
+    float tracingStartMaxDistance;                             // 4 bytes  (offset 244)
+    float tracingStartDistanceFromCamera;                     // 4 bytes  (offset 248)
+    float _pad[1];             // 4 bytes  (offset 252 -> 256 total)
 };
 
 static_assert(sizeof(CloudCB) == 256, "CloudCB must be 256 bytes for CBV alignment");
@@ -451,6 +468,22 @@ void CloudPass::Execute(IRHICommandList* cmdList, CBRingAllocator& cbRing,
     cb.lightSteps      = input.lightSteps;
     cb.shapeNoiseSrv   = m_shapeNoiseSrvIndex;
     cb.globalCoverage  = input.globalCoverage;
+    cb.cloudType       = input.cloudType;
+    cb.tracingMaxDistanceKm = input.tracingMaxDistanceKm;
+    cb.viewSampleCountScale = input.viewSampleCountScale;
+    cb.reflectionViewSampleCountScale = input.reflectionViewSampleCountScale;
+    cb.shadowViewSampleCountScale = input.shadowViewSampleCountScale;
+    cb.shadowReflectionViewSampleCountScale = input.shadowReflectionViewSampleCountScale;
+    cb.shadowTracingDistance = input.shadowTracingDistance;
+    cb.stopTracingTransmittanceThreshold = input.stopTracingTransmittanceThreshold;
+    cb.aerialPerspectiveRayleighScatteringStartDistance = input.aerialPerspectiveRayleighScatteringStartDistance;
+    cb.aerialPerspectiveRayleighScatteringFadeDistance = input.aerialPerspectiveRayleighScatteringFadeDistance;
+    cb.aerialPerspectiveMieScatteringStartDistance = input.aerialPerspectiveMieScatteringStartDistance;
+    cb.aerialPerspectiveMieScatteringFadeDistance = input.aerialPerspectiveMieScatteringFadeDistance;
+    cb.skyLightCloudBottomOcclusion = input.skyLightCloudBottomOcclusion;
+    cb.tracingMaxDistanceMode = input.tracingMaxDistanceMode;
+    cb.tracingStartMaxDistance = input.tracingStartMaxDistance;
+    cb.tracingStartDistanceFromCamera = input.tracingStartDistanceFromCamera;
     std::memset(cb._pad, 0, sizeof(cb._pad));
 
     auto cbAlloc = cbRing.Allocate(sizeof(CloudCB));

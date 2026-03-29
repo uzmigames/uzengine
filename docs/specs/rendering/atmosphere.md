@@ -104,9 +104,24 @@ RayOriginTerms.y = fogHeightFalloff;
 - **Reads**: Depth buffer SRV, `PerFrameCB`, `HeightFogCB`
 - **Supports**: Two-layer fog, directional inscattering (sun halo, Mie-style)
 
-`HeightFogComponent` parameters: `fogColor`, `fogDensity`, `fogBaseHeight`,
+`HeightFogComponent` parameters (Phase 2.22.0):
+
+**Core exponential fog** (Phase 1): `fogColor`, `fogDensity`, `fogBaseHeight`,
 `fogHeightFalloff`, `fogCutoffDistance`, `fogInscatteringColor`, `dirInscatteringExponent`,
 `dirInscatteringStartDistance`, and a second layer with independent density and height.
+
+**Volumetric fog** (Phase 2.22.0, UE5 parity): `bEnableVolumetricFog`, `VolumetricFogScatteringDistribution`,
+`VolumetricFogAlbedo`, `VolumetricFogEmissive`, `VolumetricFogExtinctionScale`,
+`VolumetricFogDistance`, `VolumetricFogStartDistance`, `VolumetricFogNearFadeInDistance`.
+Enables full volumetric fog rendering in the froxel grid, with phase function control,
+emissive contribution, and distance-based fade. Single-layer volumetric fog (Phase 3 planned:
+multi-layer volumetric support via dedicated VolumetricFogComponent).
+
+**Inscattering texture** (Phase 2.22.0, UE5 parity): `InscatteringColorCubemap`,
+`InscatteringColorCubemapAngle`, `InscatteringTextureTint`, `FullyDirectionalInscatteringColorDistance`,
+`NonDirectionalInscatteringColorDistance`. Allows directional inscattering to be driven by
+an external cubemap (e.g., captured sky) with rotation and tinting. Complements sky
+atmosphere contribution with directional lighting information.
 
 ### Sky Cubemap Capture
 
@@ -152,8 +167,12 @@ The captured cubemap is passed to `IBLBaker::BakeEnvironment()` after graph exec
 | Height fog (single layer) | Done |
 | Height fog (two layers) | Done |
 | Height fog directional inscattering | Done |
+| Volumetric fog parameters (Phase 2.22.0) | Done |
+| Inscattering texture cubemap parameters (Phase 2.22.0) | Done |
 | Aerial perspective (`aerial_perspective.hlsli`) | Done |
 | Aerial perspective in deferred lighting | Done |
 | Full Bruneton froxel volumetric aerial perspective | Planned (Phase 3) |
+| SkyAtmosphereComponent trace quality parameters (Phase 2.22.0) | Done |
 | SkyAtmosphereComponent full parameter set | Done |
 | HeightFogComponent ECS integration | Done |
+| HeightFogComponent full UE5 property parity (Phase 2.22.0) | Done |

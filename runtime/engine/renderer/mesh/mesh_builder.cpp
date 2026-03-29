@@ -86,7 +86,7 @@ Mesh GenerateSphereMesh(uint32_t sectorCount, uint32_t stackCount) {
         for (uint32_t j = 0; j < sectorCount; ++j, ++k1, ++k2) {
             // Skip degenerate triangles at poles.
             // Songho reference (CCW/OpenGL): k1→k2→k1+1 and k1+1→k2→k2+1
-            // DX12 frontCounterClockwise=false → CW = front face → reverse winding
+            // CCW winding (matches frontCounterClockwise = true, DX12/UE5 standard)
             if (i != 0) {
                 indices.push_back(k1);
                 indices.push_back(k2);
@@ -133,8 +133,8 @@ Mesh GeneratePlaneMesh(float uvScale) {
         {{-1.f,  1.f, 0.f}, normal, {0.f,       uvScale  }, tangent},
     };
 
-    // Two CCW triangles: 0-1-2 and 0-2-3
-    const std::vector<uint32_t> indices = {0, 1, 2, 0, 2, 3};
+    // Two CCW triangles (screen-space): 0-2-1 and 0-3-2.
+    const std::vector<uint32_t> indices = {0, 2, 1, 0, 3, 2};
 
     return MeshBuilder::CreateFromVertices(vertices, indices);
 }
@@ -225,10 +225,10 @@ Mesh GenerateConeMesh(float radius, float height, uint32_t segments) {
         const uint32_t b1 = sideBaseStart + i + 1;
         const uint32_t a0 = sideApexStart + i;
 
-        // Triangle: apex, base[i+1], base[i] — CW winding when viewed from outside
+        // Triangle: apex, base[i], base[i+1] — CCW winding when viewed from outside
         indices.push_back(a0);
-        indices.push_back(b1);
         indices.push_back(b0);
+        indices.push_back(b1);
     }
 
     // --- Base cap ---
@@ -259,11 +259,11 @@ Mesh GenerateConeMesh(float radius, float height, uint32_t segments) {
     }
 
     // Base cap indices: triangle fan from center, wound so -Z normal faces outward
-    // When viewed from below (looking in +Z direction), winding should be CW
+    // CCW winding when viewed from below (matches frontCounterClockwise = true)
     for (uint32_t i = 0; i < segments; ++i) {
         indices.push_back(capCenterIdx);
-        indices.push_back(capRingStart + i);
         indices.push_back(capRingStart + i + 1);
+        indices.push_back(capRingStart + i);
     }
 
     return MeshBuilder::CreateFromVertices(vertices, indices);
@@ -339,14 +339,14 @@ Mesh GenerateCylinderMesh(float radius, float height, uint32_t segments) {
         const uint32_t t0 = sideTopStart + i;
         const uint32_t t1 = sideTopStart + i + 1;
 
-        // Two triangles per quad — CW winding from outside
+        // Two triangles per quad — CCW winding from outside
         indices.push_back(b0);
-        indices.push_back(t0);
         indices.push_back(t1);
+        indices.push_back(t0);
 
         indices.push_back(b0);
-        indices.push_back(t1);
         indices.push_back(b1);
+        indices.push_back(t1);
     }
 
     // --- Top cap (Z = +halfH, normal = +Z) ---
@@ -374,11 +374,11 @@ Mesh GenerateCylinderMesh(float radius, float height, uint32_t segments) {
         vertices.push_back(vert);
     }
 
-    // Top cap: CCW from above (+Z looking down) so front face is +Z
+    // Top cap: CCW winding so +Z normal is front face
     for (uint32_t i = 0; i < segments; ++i) {
         indices.push_back(topCenterIdx);
-        indices.push_back(topCapRingStart + i + 1);
         indices.push_back(topCapRingStart + i);
+        indices.push_back(topCapRingStart + i + 1);
     }
 
     // --- Bottom cap (Z = -halfH, normal = -Z) ---
@@ -406,11 +406,11 @@ Mesh GenerateCylinderMesh(float radius, float height, uint32_t segments) {
         vertices.push_back(vert);
     }
 
-    // Bottom cap: CW from below (-Z looking up) so front face is -Z
+    // Bottom cap: CCW winding so -Z normal is front face
     for (uint32_t i = 0; i < segments; ++i) {
         indices.push_back(botCenterIdx);
-        indices.push_back(botCapRingStart + i);
         indices.push_back(botCapRingStart + i + 1);
+        indices.push_back(botCapRingStart + i);
     }
 
     return MeshBuilder::CreateFromVertices(vertices, indices);
@@ -722,7 +722,8 @@ Mesh MeshBuilder::CreateCube(float size, uint32_t subdivisions) {
             }
         }
 
-        // Generate indices: two triangles per quad, same winding as original
+        // Generate indices: two triangles per quad, CCW screen-space winding
+        // (matches frontCounterClockwise = true convention).
         for (uint32_t row = 0; row < subs; ++row) {
             for (uint32_t col = 0; col < subs; ++col) {
                 const uint32_t i00 = baseVertex + row * vertsPerEdge + col;
@@ -730,15 +731,15 @@ Mesh MeshBuilder::CreateCube(float size, uint32_t subdivisions) {
                 const uint32_t i01 = i00 + vertsPerEdge;
                 const uint32_t i11 = i01 + 1;
 
-                // Triangle 1: (0,0)→(1,0)→(1,1)  — matches original base+0, base+1, base+2
+                // Triangle 1: (0,0)→(1,1)→(1,0)
                 indices.push_back(i00);
+                indices.push_back(i11);
                 indices.push_back(i10);
-                indices.push_back(i11);
 
-                // Triangle 2: (0,0)→(1,1)→(0,1)  — matches original base+0, base+2, base+3
+                // Triangle 2: (0,0)→(0,1)→(1,1)
                 indices.push_back(i00);
-                indices.push_back(i11);
                 indices.push_back(i01);
+                indices.push_back(i11);
             }
         }
     }
@@ -780,7 +781,7 @@ Mesh MeshBuilder::CreateSphere(float radius, uint32_t stacks, uint32_t slices) {
         }
     }
 
-    // CW winding order (matches frontCounterClockwise = false)
+    // CCW winding order (matches frontCounterClockwise = true, DX12/UE5 standard)
     std::vector<uint32_t> indices;
     indices.reserve(stacks * slices * 6);
     for (uint32_t i = 0; i < stacks; ++i) {
@@ -788,11 +789,11 @@ Mesh MeshBuilder::CreateSphere(float radius, uint32_t stacks, uint32_t slices) {
             uint32_t a = i * (slices + 1) + j;
             uint32_t b = a + slices + 1;
             indices.push_back(a);
-            indices.push_back(a + 1);
             indices.push_back(b);
             indices.push_back(a + 1);
+            indices.push_back(a + 1);
+            indices.push_back(b);
             indices.push_back(b + 1);
-            indices.push_back(b);
         }
     }
 

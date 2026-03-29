@@ -27,7 +27,7 @@ pub const DemoConfig = struct {
     /// C++ source files relative to the demo directory.
     sources: []const []const u8,
     /// Extra C++ source file groups: each entry is { root_path, &.{ files... } }.
-    /// Use for shared sources like fps_camera_controller, editor_grid, etc.
+    /// Use for shared sources like fly_camera_controller, editor_grid, etc.
     extra_sources: []const ExtraSource = &.{},
     /// Extra include paths beyond the standard engine/thirdparty set.
     extra_includes: []const []const u8 = &.{},

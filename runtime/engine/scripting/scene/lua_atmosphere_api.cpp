@@ -778,6 +778,97 @@ static int SceneSetSkyAtmosphereEnabled(lua_State* L) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Lua C functions — tracing and aerial perspective properties
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// uz.scene.set_atmosphere_trace_sample_count_scale(entity, scale)
+///
+/// Sets the multiplier for ray-march samples when rendering the atmosphere. Default: 1.0.
+static int SceneSetSkyTraceSampleCountScale(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_atmosphere_trace_sample_count_scale: World not set"); return 0; }
+    const Entity entity = CheckEntity(L, 1, "set_atmosphere_trace_sample_count_scale");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+    if (!world->HasComponent<SkyAtmosphereComponent>(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.set_atmosphere_trace_sample_count_scale: entity {} has no SkyAtmosphereComponent", entity.id);
+        return 0;
+    }
+    world->GetComponent<SkyAtmosphereComponent>(entity).traceSampleCountScale =
+        static_cast<float>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+/// uz.scene.get_atmosphere_trace_sample_count_scale(entity) -> number | nil
+static int SceneGetSkyTraceSampleCountScale(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_atmosphere_trace_sample_count_scale");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<SkyAtmosphereComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(
+        world->GetComponent<SkyAtmosphereComponent>(entity).traceSampleCountScale));
+    return 1;
+}
+
+/// uz.scene.set_atmosphere_aerial_perspective_start_depth(entity, km)
+///
+/// Sets the start depth for the aerial perspective effect in kilometers. Default: 0.1 km.
+static int SceneSetSkyAerialPerspectiveStartDepth(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_atmosphere_aerial_perspective_start_depth: World not set"); return 0; }
+    const Entity entity = CheckEntity(L, 1, "set_atmosphere_aerial_perspective_start_depth");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+    if (!world->HasComponent<SkyAtmosphereComponent>(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.set_atmosphere_aerial_perspective_start_depth: entity {} has no SkyAtmosphereComponent", entity.id);
+        return 0;
+    }
+    world->GetComponent<SkyAtmosphereComponent>(entity).aerialPerspectiveStartDepth =
+        static_cast<float>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+/// uz.scene.get_atmosphere_aerial_perspective_start_depth(entity) -> number | nil
+static int SceneGetSkyAerialPerspectiveStartDepth(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_atmosphere_aerial_perspective_start_depth");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<SkyAtmosphereComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(
+        world->GetComponent<SkyAtmosphereComponent>(entity).aerialPerspectiveStartDepth));
+    return 1;
+}
+
+/// uz.scene.set_atmosphere_transmittance_min_light_elevation_angle(entity, degrees)
+///
+/// Sets the minimum sun elevation angle for transmittance LUT computation in degrees. Default: -90.0.
+static int SceneSetSkyTransmittanceMinLightElevationAngle(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_atmosphere_transmittance_min_light_elevation_angle: World not set"); return 0; }
+    const Entity entity = CheckEntity(L, 1, "set_atmosphere_transmittance_min_light_elevation_angle");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+    if (!world->HasComponent<SkyAtmosphereComponent>(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.set_atmosphere_transmittance_min_light_elevation_angle: entity {} has no SkyAtmosphereComponent", entity.id);
+        return 0;
+    }
+    world->GetComponent<SkyAtmosphereComponent>(entity).transmittanceMinLightElevationAngle =
+        static_cast<float>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+/// uz.scene.get_atmosphere_transmittance_min_light_elevation_angle(entity) -> number | nil
+static int SceneGetSkyTransmittanceMinLightElevationAngle(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_atmosphere_transmittance_min_light_elevation_angle");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<SkyAtmosphereComponent>(entity)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, static_cast<double>(
+        world->GetComponent<SkyAtmosphereComponent>(entity).transmittanceMinLightElevationAngle));
+    return 1;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Registration
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -849,6 +940,14 @@ void LuaRegisterAtmosphereAPI(lua_State* L) {
     lua_pushcfunction(L, SceneSetSkySunDiskIntensity);       lua_setfield(L, -2, "set_atmosphere_sun_disk_intensity");
     lua_pushcfunction(L, SceneGetSkySunDiskIntensity);       lua_setfield(L, -2, "get_atmosphere_sun_disk_intensity");
     lua_pushcfunction(L, SceneSetSkyAtmosphereEnabled);      lua_setfield(L, -2, "set_atmosphere_enabled");
+
+    // Tracing and aerial perspective properties
+    lua_pushcfunction(L, SceneSetSkyTraceSampleCountScale);             lua_setfield(L, -2, "set_atmosphere_trace_sample_count_scale");
+    lua_pushcfunction(L, SceneGetSkyTraceSampleCountScale);             lua_setfield(L, -2, "get_atmosphere_trace_sample_count_scale");
+    lua_pushcfunction(L, SceneSetSkyAerialPerspectiveStartDepth);       lua_setfield(L, -2, "set_atmosphere_aerial_perspective_start_depth");
+    lua_pushcfunction(L, SceneGetSkyAerialPerspectiveStartDepth);       lua_setfield(L, -2, "get_atmosphere_aerial_perspective_start_depth");
+    lua_pushcfunction(L, SceneSetSkyTransmittanceMinLightElevationAngle); lua_setfield(L, -2, "set_atmosphere_transmittance_min_light_elevation_angle");
+    lua_pushcfunction(L, SceneGetSkyTransmittanceMinLightElevationAngle); lua_setfield(L, -2, "get_atmosphere_transmittance_min_light_elevation_angle");
 
     lua_pop(L, 2);
 

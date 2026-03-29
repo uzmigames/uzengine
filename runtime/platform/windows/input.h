@@ -362,7 +362,7 @@ class InputSystem {
     /// Registers for WM_INPUT raw mouse messages on the given window.
     ///
     /// Raw input bypasses mouse acceleration and provides hardware-level
-    /// deltas, ideal for FPS camera control. Call once after window creation.
+    /// deltas, ideal for fly camera control. Call once after window creation.
     ///
     /// # Arguments
     /// * `hwnd` — The window handle to receive WM_INPUT messages.
@@ -591,6 +591,23 @@ class InputSystem {
     /// # Returns
     /// `false` if the action name is not registered.
     [[nodiscard]] bool IsActionJustPressed(const std::string& name) const;
+
+    // ── Modifier State (Editor Injection) ──────────────────────────────
+
+    /// Sets modifier key state explicitly from the editor host.
+    ///
+    /// When the engine viewport runs as a child window inside VSCode, the
+    /// HWND does not receive native WM_KEYDOWN for modifier keys because
+    /// the editor consumes them.  The N-API layer calls this with the
+    /// modifier bitmask extracted from the DOM KeyboardEvent so that
+    /// `IsKeyDown(Key::LeftShift)` etc. reflect the true state.
+    ///
+    /// # Arguments
+    /// * `shift` — true if Shift is held.
+    /// * `ctrl`  — true if Ctrl is held.
+    /// * `alt`   — true if Alt is held.
+    /// * `meta`  — true if Meta (Win key) is held.
+    void SetModifierState(bool shift, bool ctrl, bool alt, bool meta);
 
     // ── Platform Callbacks (called by WndProc) ──────────────────────────
 

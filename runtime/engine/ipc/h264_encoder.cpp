@@ -208,10 +208,10 @@ static AVCodecContext* TryOpenEncoder(const char* name, const H264Encoder::Confi
     // Hardware encoders ignore this (they use GPU parallelism internally).
     ctx->thread_count = 1;
 
-    // Global header: emit SPS/PPS in extradata rather than in-band.
-    // WebCodecs VideoDecoder expects SPS/PPS in the codec description, not
-    // prepended to every IDR frame.
-    ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+    // Emit SPS/PPS in-band (Annex-B start codes before every IDR) rather
+    // than in extradata. The WebCodecs VideoDecoder is configured without a
+    // codec 'description' so it relies on in-band parameter sets.
+    // Do NOT set AV_CODEC_FLAG_GLOBAL_HEADER.
 
     // Apply encoder-specific low-latency tuning options.
     ApplyEncoderOptions(ctx, name);

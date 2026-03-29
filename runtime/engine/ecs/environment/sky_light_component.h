@@ -112,6 +112,49 @@ struct SkyLightComponent {
     /// Equivalent: OcclusionExponent. Default: 1.0.
     float occlusionExponent = 1.0f;
 
+    // ── Cloud Ambient Occlusion ────────────────────────────────────────────
+
+    /// @ref Hillaire 2020 "A Scalable and Production Ready Sky and Atmosphere Rendering Technique"
+    /// Enable cloud-based ambient occlusion on the sky light. Default: true.
+    bool cloudAmbientOcclusion = true;
+
+    /// @ref Hillaire 2020 — cloud AO strength
+    /// Strength of the cloud ambient occlusion effect [0,1]. Default: 0.5.
+    float cloudAmbientOcclusionStrength = 0.5f;
+
+    /// @ref Hillaire 2020 — cloud AO extent
+    /// World-space extent of the cloud AO map in kilometers. Default: 64.0 km.
+    float cloudAmbientOcclusionExtent = 64.0f;
+
+    /// @ref Hillaire 2020 — cloud AO map resolution scale
+    /// Multiplier for the cloud AO map resolution. Default: 1.0 (full resolution).
+    float cloudAmbientOcclusionMapResolutionScale = 1.0f;
+
+    /// @ref Hillaire 2020 — cloud AO aperture scale
+    /// Controls the cone aperture for cloud AO sampling. Default: 0.0.
+    float cloudAmbientOcclusionApertureScale = 0.0f;
+
+    // ── Distance & Capture ──────────────────────────────────────────────────
+
+    /// @ref IBL sky light — sky distance threshold
+    /// Maximum distance at which geometry contributes to the sky light cubemap capture
+    /// in centimeters. Geometry beyond this distance is treated as sky. Default: 150000.0 cm.
+    float skyDistanceThreshold = 150000.0f;
+
+    /// @ref IBL sky light — occlusion contrast
+    /// Contrast adjustment for sky light occlusion. Higher = sharper AO transitions. Default: 0.2.
+    float occlusionContrast = 0.2f;
+
+    /// @ref IBL sky light — capture emissive only
+    /// When true, the sky cubemap capture only includes emissive surfaces (no direct lighting).
+    /// Useful for specific artistic effects. Default: false.
+    bool captureEmissiveOnly = false;
+
+    /// @ref IBL sky light — source cubemap rotation angle
+    /// Rotation angle for the specified cubemap source in degrees. Only used when
+    /// sourceType is SpecifiedCubemap. Default: 0.0 degrees.
+    float sourceCubemapAngle = 0.0f;
+
     // ── Control ───────────────────────────────────────────────────────────
 
     /// Whether this sky light is enabled.

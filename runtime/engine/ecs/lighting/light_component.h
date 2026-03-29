@@ -76,6 +76,21 @@ public:
     /// Equivalent: ShadowSlopeBias (range 0.0–10.0). Source: LightComponent.h:115.
     float shadowSlopeBias = 0.5f;
 
+    // ── Contact Shadows ─────────────────────────────────────────────────────
+
+    /// @ref Ubisoft 2015 "Screen-Space Contact Shadows" — per-light contact shadow controls
+    /// Whether the contact shadow ray length is in world-space units (true) or
+    /// screen-space fraction (false). Default: false (screen-space).
+    bool contactShadowLengthInWorldSpace = false;
+
+    /// @ref Ubisoft 2015 "Screen-Space Contact Shadows" — casting intensity
+    /// Shadow intensity for surfaces that cast contact shadows. Default: 1.0.
+    float contactShadowCastingIntensity = 1.0f;
+
+    /// @ref Ubisoft 2015 "Screen-Space Contact Shadows" — non-casting intensity
+    /// Shadow intensity for surfaces that do not cast contact shadows. Default: 0.0.
+    float contactShadowNonCastingIntensity = 0.0f;
+
 protected:
     /// Writes `color` and `intensity` into the proxy's `light` union.
     ///
@@ -169,6 +184,92 @@ public:
     /// Tint color applied to the sun disk in the sky atmosphere.
     /// Equivalent: AtmosphereSunDiskColorScale. Default: (1,1,1).
     Vec3 atmosphereSunDiskColorScale = {1.f, 1.f, 1.f};
+
+    // ── Cloud Shadows ───────────────────────────────────────────────────────
+
+    /// @ref Hillaire 2020 "A Scalable and Production Ready Sky and Atmosphere Rendering Technique"
+    /// Whether this light casts shadows through volumetric clouds. Default: true.
+    bool castCloudShadows = true;
+
+    /// @ref Hillaire 2020 — cloud self-shadowing toggle
+    /// Whether this light casts shadows onto the volumetric cloud layer itself. Default: true.
+    bool castShadowsOnClouds = true;
+
+    /// @ref Hillaire 2020 — atmospheric shadow toggle
+    /// Whether cloud shadows darken the atmosphere (aerial perspective). Default: true.
+    bool castShadowsOnAtmosphere = true;
+
+    /// @ref Hillaire 2020 — cloud shadow overall strength
+    /// Overall cloud shadow strength multiplier [0,1]. Default: 1.0.
+    float cloudShadowStrength = 1.0f;
+
+    /// @ref Hillaire 2020 — cloud shadow on atmosphere strength
+    /// Strength of cloud shadows applied to atmosphere. Default: 1.0.
+    float cloudShadowOnAtmosphereStrength = 1.0f;
+
+    /// @ref Hillaire 2020 — cloud shadow on surface strength
+    /// Strength of cloud shadows applied to opaque surfaces. Default: 1.0.
+    float cloudShadowOnSurfaceStrength = 1.0f;
+
+    /// @ref Hillaire 2020 — cloud shadow depth bias
+    /// Depth bias for cloud shadow map sampling to reduce self-shadowing artifacts. Default: 0.0.
+    float cloudShadowDepthBias = 0.0f;
+
+    /// @ref Hillaire 2020 — cloud shadow map extent
+    /// World-space extent of the cloud shadow map in kilometers. Default: 128.0 km.
+    float cloudShadowExtent = 128.0f;
+
+    /// @ref Hillaire 2020 — cloud shadow map resolution scale
+    /// Multiplier for the cloud shadow map resolution. Default: 1.0 (full resolution).
+    float cloudShadowMapResolutionScale = 1.0f;
+
+    /// @ref Hillaire 2020 — cloud shadow ray sample count scale
+    /// Multiplier for the number of ray-march samples when tracing cloud shadows. Default: 1.0.
+    float cloudShadowRaySampleCountScale = 1.0f;
+
+    /// @ref Hillaire 2020 — cloud scattered luminance scale
+    /// Per-channel multiplier for the luminance scattered by clouds toward the light. Default: (1,1,1).
+    Vec3 cloudScatteredLuminanceScale = {1.0f, 1.0f, 1.0f};
+
+    // ── Light Shaft Occlusion ───────────────────────────────────────────────
+
+    /// @ref Volumetric light shaft occlusion — standard screen-space light shaft technique
+    /// Enable light shaft occlusion (screen-space radial blur from occluded sun). Default: true.
+    bool enableLightShaftOcclusion = true;
+
+    /// @ref Screen-space light shafts — occlusion mask darkness
+    /// How dark the occlusion mask can get. 0 = fully transparent, 1 = fully opaque. Default: 0.5.
+    float occlusionMaskDarkness = 0.5f;
+
+    /// @ref Screen-space light shafts — occlusion depth range
+    /// Maximum depth range for occlusion in centimeters. Default: 10000.0 cm.
+    float occlusionDepthRange = 10000.0f;
+
+    /// @ref Screen-space light shafts — override direction
+    /// Manual light shaft direction override. (0,0,0) = use light direction. Default: (0,0,0).
+    Vec3 lightShaftOverrideDirection = {0.0f, 0.0f, 0.0f};
+
+    // ── Far Shadow & Miscellaneous ──────────────────────────────────────────
+
+    /// @ref PCSS / CSM — source angle factor
+    /// Multiplier for the light source angle used in shadow penumbra calculation. Default: 1.0.
+    float shadowSourceAngleFactor = 1.0f;
+
+    /// @ref PSSM — cascade bias distribution
+    /// Controls how shadow bias is distributed across cascades. Default: 1.0.
+    float shadowCascadeBiasDistribution = 1.0f;
+
+    /// @ref Distance Field Shadows — maximum shadow distance
+    /// Maximum distance for distance field shadows in centimeters. 0 = disabled. Default: 0.0 cm.
+    float distanceFieldShadowDistance = 0.0f;
+
+    /// @ref Distance Field Shadows — trace distance
+    /// Maximum ray trace distance for distance field shadow tracing in centimeters. Default: 100000.0 cm.
+    float traceDistance = 100000.0f;
+
+    /// @ref Forward rendering — shadow priority
+    /// Priority for this light in forward rendering shadow allocation. Higher = more likely to get shadows. Default: 0.
+    int32_t forwardShadingPriority = 0;
 
     /// Returns the world-space unit direction vector of this light.
     ///

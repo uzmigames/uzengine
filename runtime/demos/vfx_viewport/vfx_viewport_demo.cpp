@@ -15,7 +15,7 @@
 #include "stats_overlay.h"
 #include "screenshot_capture.h"
 #include "camera.h"
-#include "fps_camera_controller.h"
+#include "fly_camera_controller.h"
 #include "rhi_device.h"
 #include "rhi_command_list.h"
 #include "rhi_swapchain.h"

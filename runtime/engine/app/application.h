@@ -56,7 +56,7 @@ class PlatformWindow;
 class InputSystem;
 class SceneRenderer;
 class Camera;
-class FPSCameraController;
+class FlyCameraController;
 class IVFS;
 class World;
 

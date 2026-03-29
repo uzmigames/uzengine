@@ -40,6 +40,7 @@
 #pragma once
 
 #include <cstdint>
+#include "rhi_types.h"   // RHITextureHandle for CaptureFromTexture()
 
 namespace uz {
 
@@ -98,6 +99,20 @@ public:
     /// * `cmdList`   — Command list to record the copy on.
     /// * `swapChain` — Swap chain providing the current backbuffer.
     void CaptureFrame(IRHICommandList* cmdList, IRHISwapChain* swapChain);
+
+    /// Record GPU commands to copy the given texture (already in CopySrc state)
+    /// into the current write buffer. The caller is responsible for barrier
+    /// transitions before and after this call.
+    ///
+    /// This is the preferred capture path — avoids reading from the swapchain
+    /// backbuffer (which rotates after Present and may cause DEVICE_REMOVED).
+    ///
+    /// Advances the write index internally.
+    ///
+    /// # Arguments
+    /// * `cmdList`    — Command list in recording state.
+    /// * `srcTexture` — Texture to copy from (must be in CopySrc state).
+    void CaptureFromTexture(IRHICommandList* cmdList, RHITextureHandle srcTexture);
 
     /// Signal the fence for the most recently written buffer.
     ///

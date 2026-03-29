@@ -66,6 +66,7 @@
 #include "render_graph_types.h"   // rg::RgResourceId
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -90,7 +91,7 @@ class OutlinePass;
 class GizmoRenderer;
 class UploadContext;
 class Camera;
-class FPSCameraController;
+class FlyCameraController;
 class World;
 class AsyncTextureDecoder;
 
@@ -157,7 +158,7 @@ public:
     /// Initializes all rendering infrastructure.
     ///
     /// Creates ShaderManager, PipelineLibrary, CBRingAllocator (3 frames, 2MB),
-    /// EditorGrid, Camera, FPSCameraController, RgResourcePool, GBuffer, and
+    /// EditorGrid, Camera, FlyCameraController, RgResourcePool, GBuffer, and
     /// shadow atlas (4096x4096 D32F).
     ///
     /// StatsOverlay initialization is deferred to the first `RenderFrame()` call
@@ -211,6 +212,28 @@ public:
     /// * `frameIndex` — Monotonic frame counter (for CB ring triple-buffering).
     void RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapChain,
                      World* world, IVFS* vfs, float dt, uint32_t frameIndex);
+
+    /// Callback invoked just before the command list is ended and executed.
+    /// Used by the host to inject GPU readback copies into the same submission
+    /// (e.g., copy the LDR intermediate to a readback buffer for H.264 encoding).
+    using PreEndCallback = std::function<void(IRHICommandList*)>;
+
+    /// Renders one frame with an optional pre-End callback. Identical to
+    /// `RenderFrame()` above, but invokes `preEndCb` after all render graph
+    /// passes and atmosphere bake, just before `cmdList->End()`.
+    void RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapChain,
+                     World* world, IVFS* vfs, float dt, uint32_t frameIndex,
+                     PreEndCallback preEndCb);
+
+    /// Returns the LDR intermediate texture handle for frame readback.
+    /// Valid after Init(). The texture is RGBA8Unorm at viewport resolution.
+    /// After RenderFrame(), it contains the tonemapped LDR frame.
+    [[nodiscard]] RHITextureHandle GetLdrIntermediate() const;
+
+    /// Returns the resource state of the LDR intermediate after the render
+    /// graph has executed. ShaderResource when CAS/FXAA is active, CopySrc
+    /// when the LDR_Blit fallback path ran.
+    [[nodiscard]] RHIResourceState GetLdrIntermediateState() const;
 
     /// Releases all GPU resources and resets to default state.
     ///
@@ -479,8 +502,8 @@ public:
     /// Const overload — returns a const reference to the render camera.
     [[nodiscard]] const Camera& GetCamera() const;
 
-    /// Returns the FPS camera controller. Must only be called after `Init()`.
-    [[nodiscard]] FPSCameraController& GetCameraController();
+    /// Returns the fly camera controller. Must only be called after `Init()`.
+    [[nodiscard]] FlyCameraController& GetCameraController();
 
     /// Returns the input system. May return null if `Init()` has not been called.
     [[nodiscard]] InputSystem* GetInput() const;

@@ -132,7 +132,7 @@ GBufferOutput main(PSInput input) {
         ao = orm.r; roughness = orm.g; metallic = orm.b;
     } else {
         roughness = roughnessTexture.SampleBias(linearSampler, uv, mipBias).r;
-        metallic  = metallicTexture.SampleLevel(clampSampler, uv, 0).r;
+        metallic  = metallicTexture.SampleBias(linearSampler, uv, mipBias).r;
         ao        = aoTexture.SampleBias(linearSampler, uv, mipBias).r;
     }
 #endif

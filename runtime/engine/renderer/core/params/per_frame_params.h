@@ -183,7 +183,46 @@ struct PerFrameParams {
     float    colorSaturation   = 1.1f;              ///< Color saturation multiplier (0=grayscale, 1=unchanged, >1=vivid).
     float    colorContrast     = 1.0f;              ///< Contrast power exponent (1=unchanged, >1=higher contrast).
 
-    float    _pad2[55]            = {};              ///< Pad scalar section to 768 bytes.
+    // ── Cloud Shadow parameters (from primary DirectionalLightComponent) ──
+    float    cloudShadowStrength = 1.0f;            ///< Overall cloud shadow strength multiplier [0,1].
+    float    cloudShadowOnAtmosphereStrength = 1.0f; ///< Cloud shadow strength on atmosphere.
+    float    cloudShadowOnSurfaceStrength = 1.0f;   ///< Cloud shadow strength on opaque surfaces.
+    float    cloudShadowDepthBias = 0.0f;           ///< Depth bias for cloud shadow map sampling.
+    float    cloudShadowExtent = 128.0f;            ///< World-space extent of cloud shadow map (km).
+    float    cloudShadowMapResolutionScale = 1.0f;  ///< Multiplier for cloud shadow map resolution.
+    float    cloudShadowRaySampleCountScale = 1.0f; ///< Multiplier for cloud shadow ray-march samples.
+    float    cloudScatteredLuminanceScaleR = 1.0f;  ///< Cloud scattered luminance scale R.
+    float    cloudScatteredLuminanceScaleG = 1.0f;  ///< Cloud scattered luminance scale G.
+    float    cloudScatteredLuminanceScaleB = 1.0f;  ///< Cloud scattered luminance scale B.
+    uint32_t castCloudShadows = 1;                  ///< 1 = light casts shadows through volumetric clouds.
+    uint32_t castShadowsOnClouds = 1;               ///< 1 = light casts shadows onto the cloud layer itself.
+    uint32_t castShadowsOnAtmosphere = 1;           ///< 1 = cloud shadows darken the atmosphere (aerial perspective).
+
+    // ── Light Shaft Occlusion (from primary DirectionalLightComponent) ──
+    uint32_t enableLightShaftOcclusion = 1;         ///< 1 = screen-space light shaft occlusion enabled.
+    float    occlusionMaskDarkness = 0.5f;          ///< How dark the occlusion mask can get [0,1].
+    float    occlusionDepthRange = 10000.0f;        ///< Max depth range for occlusion (cm).
+    float    lightShaftOverrideDirectionX = 0.0f;   ///< Manual light shaft direction override X.
+    float    lightShaftOverrideDirectionY = 0.0f;   ///< Manual light shaft direction override Y.
+    float    lightShaftOverrideDirectionZ = 0.0f;   ///< Manual light shaft direction override Z.
+    float    shadowSourceAngleFactor = 1.0f;        ///< Multiplier for light source angle in shadow penumbra.
+    float    shadowCascadeBiasDistribution = 1.0f;  ///< Controls shadow bias distribution across cascades.
+
+    // ── SkyLight Occlusion parameters ─────────────────────────────────
+    float    slOcclusionMaxDistance = 1000.0f;      ///< Max influence distance for AO/DFAO occlusion (cm).
+    float    slOcclusionExponent = 1.0f;            ///< Exponent for occlusion falloff curve.
+    float    slOcclusionTintR = 0.0f;               ///< Tint color for occluded areas R.
+    float    slOcclusionTintG = 0.0f;               ///< Tint color for occluded areas G.
+    float    slOcclusionTintB = 0.0f;               ///< Tint color for occluded areas B.
+    uint32_t slCloudAmbientOcclusion = 1;           ///< 1 = cloud-based ambient occlusion on sky light.
+    float    slCloudAOStrength = 0.5f;              ///< Cloud ambient occlusion strength [0,1].
+    float    slCloudAOExtent = 64.0f;               ///< World-space extent of cloud AO map (km).
+    float    slCloudAOMapResolutionScale = 1.0f;    ///< Cloud AO map resolution multiplier.
+    float    slCloudAOApertureScale = 0.0f;         ///< Cone aperture for cloud AO sampling.
+    float    slSkyDistanceThreshold = 150000.0f;    ///< Max distance for sky light cubemap capture (cm).
+    float    slOcclusionContrast = 0.2f;            ///< Contrast adjustment for sky light occlusion.
+
+    float    _pad2[22]            = {};              ///< Pad scalar section to 768 bytes.
 
     // ── Resource handles (NOT copied to CB) ──────────────────────────────
     // These are bound by ShaderParameterBinder at their HLSL register slots.

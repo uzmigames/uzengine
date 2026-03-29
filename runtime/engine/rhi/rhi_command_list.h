@@ -157,6 +157,20 @@ public:
     /// * `descriptorIndex` — Index into the global CBV_SRV_UAV descriptor heap.
     virtual void SetDescriptorTable(uint32_t rootParamIndex, uint32_t descriptorIndex) = 0;
 
+    /// Binds a buffer SRV to the vertex shader at the specified HLSL register slot.
+    ///
+    /// On DX11, calls `VSSetShaderResources(slot, 1, &srv)` to bind the buffer's
+    /// SRV for vertex shader access (e.g., StructuredBuffer<T> at register(tN)).
+    /// On DX12 (SM6.6+), this is a no-op — bindless access via ResourceDescriptorHeap[].
+    /// On Vulkan/Metal, this is a no-op — resources bound via descriptor sets/argument buffers.
+    ///
+    /// # Arguments
+    /// * `slot` — HLSL register index (maps to `register(t<slot>)` in the vertex shader).
+    /// * `buffer` — Buffer handle with an SRV (created with `RHIBufferUsage::ShaderResource`).
+    virtual void SetVertexSRV(uint32_t slot, RHIBufferHandle buffer) {
+        (void)slot; (void)buffer;
+    }
+
     /// Binds a texture to the fragment/pixel shader at the specified slot.
     ///
     /// On Metal, this calls `[encoder setFragmentTexture:atIndex:]` directly.
@@ -171,6 +185,12 @@ public:
     virtual void SetFragmentTexture(uint32_t slot, RHITextureHandle texture) {
         (void)slot; (void)texture;
     }
+
+    /// Forces the next SetFragmentTexture call to allocate a fresh descriptor
+    /// block. Call this before each draw call that binds different textures to
+    /// the same slots (e.g., per-material texture binding in the GBuffer pass).
+    /// No-op on backends that don't use descriptor staging (bindless, Vulkan, DX11).
+    virtual void InvalidateDescriptorBlock() {}
 
     /// Binds a sampler to the fragment/pixel shader at the specified slot.
     ///

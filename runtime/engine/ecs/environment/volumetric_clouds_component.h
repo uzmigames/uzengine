@@ -40,6 +40,18 @@
 
 namespace uz {
 
+/// Tracing max distance interpretation mode for volumetric clouds.
+///
+/// Controls whether the ray-march distance limit is measured from the cloud
+/// layer entry point or from the camera position.
+/// @ref Schneider & Vos 2015 "Real-Time Volumetric Cloudscapes of Horizon Zero Dawn"
+enum class TracingMaxDistanceMode : uint8_t {
+    /// Distance measured from the point where the view ray enters the cloud layer.
+    DistanceFromCloudLayerEntryPoint = 0,
+    /// Distance measured from the camera (point of view).
+    DistanceFromPointOfView = 1,
+};
+
 /// Volumetric cloud layer configuration for the cloud ray-march pass.
 ///
 /// All altitude and distance fields are in **kilometers** to match reference
@@ -127,6 +139,74 @@ struct VolumetricCloudsComponent {
     /// Number of light march steps toward the sun at each primary step.
     /// Used to compute in-scattering and shadow self-occlusion. 6 is typical.
     uint32_t lightSteps = 6;
+
+    // ── Tracing Quality ────────────────────────────────────────────────────
+
+    /// @ref Schneider & Vos 2015 — view ray sample count scale
+    /// Multiplier for the number of primary ray-march samples during main view rendering.
+    /// Lower values improve performance at the cost of quality. Default: 0.5.
+    float viewSampleCountScale = 0.5f;
+
+    /// @ref Schneider & Vos 2015 — reflection view sample count scale
+    /// Multiplier for sample count when tracing clouds in reflections. Default: 0.1.
+    float reflectionViewSampleCountScale = 0.1f;
+
+    /// @ref Schneider & Vos 2015 — shadow view sample count scale
+    /// Multiplier for sample count when tracing cloud shadows. Default: 0.5.
+    float shadowViewSampleCountScale = 0.5f;
+
+    /// @ref Schneider & Vos 2015 — shadow reflection sample count scale
+    /// Multiplier for sample count when tracing cloud shadow reflections. Default: 0.1.
+    float shadowReflectionViewSampleCountScale = 0.1f;
+
+    /// @ref Schneider & Vos 2015 — shadow tracing distance
+    /// Maximum distance for shadow ray tracing in kilometers. Default: 10.0 km.
+    float shadowTracingDistance = 10.0f;
+
+    /// @ref Schneider & Vos 2015 — early termination transmittance threshold
+    /// Stop tracing when accumulated transmittance drops below this value. Default: 0.01.
+    float stopTracingTransmittanceThreshold = 0.01f;
+
+    // ── Aerial Perspective Scattering ───────────────────────────────────────
+
+    /// @ref Hillaire 2020 "A Scalable and Production Ready Sky and Atmosphere Rendering Technique"
+    /// Distance from camera where Rayleigh scattering on clouds begins in kilometers. Default: 0.0 km.
+    float aerialPerspectiveRayleighScatteringStartDistance = 0.0f;
+
+    /// @ref Hillaire 2020 — Rayleigh scattering fade distance
+    /// Distance over which Rayleigh scattering on clouds fades in, in kilometers. Default: 10.0 km.
+    float aerialPerspectiveRayleighScatteringFadeDistance = 10.0f;
+
+    /// @ref Hillaire 2020 — Mie scattering start distance
+    /// Distance from camera where Mie scattering on clouds begins in kilometers. Default: 0.0 km.
+    float aerialPerspectiveMieScatteringStartDistance = 0.0f;
+
+    /// @ref Hillaire 2020 — Mie scattering fade distance
+    /// Distance over which Mie scattering on clouds fades in, in kilometers. Default: 10.0 km.
+    float aerialPerspectiveMieScatteringFadeDistance = 10.0f;
+
+    // ── Sky Light Occlusion ─────────────────────────────────────────────────
+
+    /// @ref Schneider & Vos 2015 — sky light cloud bottom occlusion
+    /// Occlusion factor applied to sky light at the bottom of the cloud layer [0,1].
+    /// Simulates reduced ambient light under thick clouds. Default: 0.2.
+    float skyLightCloudBottomOcclusion = 0.2f;
+
+    // ── Tracing Distance Mode ───────────────────────────────────────────────
+
+    /// @ref Schneider & Vos 2015 — tracing max distance mode
+    /// How the maximum tracing distance is interpreted. Default: DistanceFromCloudLayerEntryPoint.
+    TracingMaxDistanceMode tracingMaxDistanceMode = TracingMaxDistanceMode::DistanceFromCloudLayerEntryPoint;
+
+    /// @ref Schneider & Vos 2015 — tracing start max distance
+    /// Maximum distance from the tracing origin (per tracingMaxDistanceMode) in kilometers.
+    /// Default: 350.0 km.
+    float tracingStartMaxDistance = 350.0f;
+
+    /// @ref Schneider & Vos 2015 — tracing start distance from camera
+    /// Minimum distance from camera before cloud tracing begins in kilometers.
+    /// Default: 0.0 km.
+    float tracingStartDistanceFromCamera = 0.0f;
 
     // ── Control ──────────────────────────────────────────────────────────
 

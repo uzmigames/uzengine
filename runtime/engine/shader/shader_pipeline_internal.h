@@ -93,10 +93,16 @@ inline void ApplyBindlessConfig(ShaderCompileDesc& desc, bool bindless) {
             desc.model = ShaderModelCompile::SM6_6;
         }
     } else {
-        // DX12 without bindless: use SM6_0 (system d3d12.dll on Win10 supports up to SM6.5).
-        // SM5.0 bytecode is incompatible with SM5.1+ root signatures (descriptor tables).
-        // Vulkan requires DXC (FXC cannot emit SPIR-V), so also SM6_0 minimum.
-        desc.model = ShaderModelCompile::SM6_0;
+        const bool isDX11 = (GetActiveRHIBackend() == RHIBackend::DX11);
+        if (isDX11) {
+            // DX11 requires DXBC bytecode via FXC (SM5.0). DXIL (SM6.0+) is rejected
+            // by ID3D11Device::CreateVertexShader/CreatePixelShader with E_INVALIDARG.
+            desc.model = ShaderModelCompile::SM5_0;
+        } else {
+            // DX12 without bindless: use SM6_0 (system d3d12.dll supports SM6.0+ root sigs).
+            // Vulkan requires DXC (FXC cannot emit SPIR-V), so also SM6_0 minimum.
+            desc.model = ShaderModelCompile::SM6_0;
+        }
     }
 
     if (isVulkan) {

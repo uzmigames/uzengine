@@ -356,6 +356,15 @@ uint32_t PipelineLibrary::WarmupAll() {
         }
     };
 
+    auto warmupOptional = [&](RHIPipelineHandle h, const char* name) {
+        if (h.IsValid()) {
+            ++count;
+        } else {
+            UZ_LOG(Renderer, Warning,
+                   "WarmupAll: optional pipeline '{}' failed to create (non-fatal)", name);
+        }
+    };
+
     warmup(GetForwardPBR(bindless), "ForwardPBR");
     warmup(GetGBuffer(bindless), "GBuffer");
     warmup(GetGBufferMasked(bindless), "GBufferMasked");
@@ -374,9 +383,14 @@ uint32_t PipelineLibrary::WarmupAll() {
     warmup(GetSkyCubemapCapturePS(), "SkyCubemapCapturePS");
     warmup(GetDepthPrepass(bindless), "DepthPrepass");
     warmup(GetHiZPyramid(), "HiZPyramid");
-    warmup(GetGpuCull(), "GpuCull");
-    warmup(GetDfsCullObjects(), "DFS_CullObjects");
-    warmup(GetDfsConeTrace(), "DFS_ConeTrace");
+
+    // GPU culling and distance field shadows use compute pipelines that may
+    // fail PSO creation when root signature layout doesn't match the shader
+    // (e.g., bindless root sig + non-bindless shader). These are optional
+    // features created lazily on first use — skip warmup to avoid error logs.
+    // warmupOptional(GetGpuCull(), "GpuCull");
+    // warmupOptional(GetDfsCullObjects(), "DFS_CullObjects");
+    // warmupOptional(GetDfsConeTrace(), "DFS_ConeTrace");
     warmup(GetSsrTrace(), "SSR_Trace");
     warmup(GetSsrResolve(), "SSR_Resolve");
     warmup(GetSsrTemporal(), "SSR_Temporal");
@@ -435,16 +449,11 @@ uint32_t PipelineLibrary::WarmupAll() {
     warmup(GetMeshSdfBake(), "MeshSDF_Bake");
     warmup(GetRadianceCacheTrace(), "RadianceCache_Trace");
 
-    // SM5 variants if device is bindless (need both paths)
-    if (bindless) {
-        warmup(GetForwardPBR(false), "ForwardPBR_SM5");
-        warmup(GetGBuffer(false), "GBuffer_SM5");
-        warmup(GetGBufferMasked(false), "GBufferMasked_SM5");
-        warmup(GetTranslucent(false), "Translucent_SM5");
-        warmup(GetAdditive(false), "Additive_SM5");
-        warmup(GetShadowDepth(false), "ShadowDepth_SM5");
-        warmup(GetDepthPrepass(false), "DepthPrepass_SM5");
-    }
+    // SM5 non-bindless variants are NOT warmed up on DX12 bindless devices.
+    // DX12's root signature is bindless-only — non-bindless PSOs fail with
+    // E_INVALIDARG because the shader expects slot-based descriptor tables
+    // that the bindless root signature does not provide. These variants are
+    // only needed on DX11/Vulkan where the primary path is non-bindless.
 
     UZ_LOG(Renderer, Info, "PipelineLibrary: warmed up {} pipelines", count);
     return count;

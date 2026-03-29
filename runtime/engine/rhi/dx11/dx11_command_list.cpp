@@ -88,13 +88,20 @@ void DX11CommandList::Begin() {
     ID3D11UnorderedAccessView* nullUAVs[8] = {};
     m_ctx->CSSetUnorderedAccessViews(0, 8, nullUAVs, nullptr);
 
-    // Bind default samplers matching DX12 static samplers s0 (linear wrap) and s1 (shadow comparison)
-    ID3D11SamplerState* defaultSamplers[2] = {
+    // Bind all 4 default samplers matching DX12 static samplers s0-s3:
+    //   s0 — anisotropic wrap (material textures)
+    //   s1 — shadow PCF comparison (shadow atlas)
+    //   s2 — bilinear clamp (post-process, LUT, IBL BRDF)
+    //   s3 — bilinear wrap (3D noise, weather maps)
+    ID3D11SamplerState* defaultSamplers[4] = {
         m_device->GetDefaultSampler(),
         m_device->GetShadowComparisonSampler(),
+        m_device->GetBilinearClampSampler(),
+        m_device->GetBilinearWrapSampler(),
     };
-    m_ctx->PSSetSamplers(0, 2, defaultSamplers);
-    m_ctx->CSSetSamplers(0, 2, defaultSamplers);
+    m_ctx->PSSetSamplers(0, 4, defaultSamplers);
+    m_ctx->VSSetSamplers(0, 4, defaultSamplers);
+    m_ctx->CSSetSamplers(0, 4, defaultSamplers);
 }
 
 void DX11CommandList::End() {
@@ -374,25 +381,40 @@ void DX11CommandList::SetDescriptorTable(uint32_t rootParamIndex, uint32_t descr
     }
 
     // SRV binding — descriptorIndex is a logical SRV index from GetTextureSRVIndex.
+    // Use shaderRegister from the root layout as the HLSL texture slot (t<N>), so that
+    // t0-t13 in the deferred lighting pass all bind to their correct registers.
     ID3D11ShaderResourceView* srv = m_device->FindTextureSRVByIndex(descriptorIndex);
     if (srv) {
+        const uint32_t hlslSlot = (rootParamIndex < rootLayout.paramCount)
+            ? rootLayout.params[rootParamIndex].shaderRegister
+            : 0u;
         if (m_computePipelineBound) {
-            m_ctx->CSSetShaderResources(0, 1, &srv);
-            ID3D11SamplerState* sampler = m_device->FindSamplerByIndex(0);
-            if (sampler) {
-                m_ctx->CSSetSamplers(0, 1, &sampler);
-            }
+            m_ctx->CSSetShaderResources(hlslSlot, 1, &srv);
         } else {
-            m_ctx->PSSetShaderResources(0, 1, &srv);
-            ID3D11SamplerState* sampler = m_device->FindSamplerByIndex(0);
-            if (sampler) {
-                m_ctx->PSSetSamplers(0, 1, &sampler);
-            }
+            m_ctx->PSSetShaderResources(hlslSlot, 1, &srv);
         }
     } else {
         UZ_LOG(RHI, Warning, "SetDescriptorTable: no SRV found for index {} (rootParam={})",
                descriptorIndex, rootParamIndex);
     }
+}
+
+void DX11CommandList::SetVertexSRV(uint32_t slot, RHIBufferHandle buffer) {
+    if (!m_ctx) return;
+
+    if (!buffer.IsValid()) {
+        ID3D11ShaderResourceView* nullSrv = nullptr;
+        m_ctx->VSSetShaderResources(slot, 1, &nullSrv);
+        return;
+    }
+
+    auto* dx11Buffer = m_device->GetBufferPool().Get(buffer.index, buffer.generation);
+    if (!dx11Buffer || !dx11Buffer->srv) {
+        UZ_LOG(RHI, Warning, "SetVertexSRV: buffer has no SRV at slot {}", slot);
+        return;
+    }
+
+    m_ctx->VSSetShaderResources(slot, 1, &dx11Buffer->srv);
 }
 
 void DX11CommandList::SetFragmentTexture(uint32_t slot, RHITextureHandle texture) {
@@ -465,6 +487,12 @@ void DX11CommandList::Dispatch(uint32_t groupCountX, uint32_t groupCountY,
                                 uint32_t groupCountZ) {
     if (!m_ctx) return;
     m_ctx->Dispatch(groupCountX, groupCountY, groupCountZ);
+
+    // Unbind all UAVs after dispatch to prevent SRV-UAV conflicts.
+    // DX11 forces SRV to NULL if the same resource is still bound as UAV.
+    // Without this, the next pass reading the compute output as SRV gets zeros.
+    ID3D11UnorderedAccessView* nullUAVs[8] = {};
+    m_ctx->CSSetUnorderedAccessViews(0, 8, nullUAVs, nullptr);
 }
 
 void DX11CommandList::DrawIndexedIndirect(RHIBufferHandle argsBuffer, uint64_t argsOffset,
@@ -614,12 +642,12 @@ void DX11CommandList::CopyTexture(RHITextureHandle src, RHITextureHandle dst) {
 
     auto* srcTex = m_device->GetTexturePool().Get(src.index, src.generation);
     auto* dstTex = m_device->GetTexturePool().Get(dst.index, dst.generation);
-    if (!srcTex || !srcTex->texture || !dstTex || !dstTex->texture) {
+    if (!srcTex || !srcTex->GetResource() || !dstTex || !dstTex->GetResource()) {
         UZ_LOG(RHI, Warning, "CopyTexture — could not resolve texture handles");
         return;
     }
 
-    m_ctx->CopyResource(dstTex->texture, srcTex->texture);
+    m_ctx->CopyResource(dstTex->GetResource(), srcTex->GetResource());
 }
 
 void DX11CommandList::CopyBufferToTexture(RHIBufferHandle srcBuffer, uint64_t srcOffset,
@@ -630,12 +658,14 @@ void DX11CommandList::CopyBufferToTexture(RHIBufferHandle srcBuffer, uint64_t sr
 
     auto* buf = m_device->GetBufferPool().Get(srcBuffer.index, srcBuffer.generation);
     auto* tex = m_device->GetTexturePool().Get(dstTexture.index, dstTexture.generation);
-    if (!buf || !buf->buffer || !tex || !tex->texture) {
+    if (!buf || !buf->buffer || !tex || !tex->GetResource()) {
         UZ_LOG(RHI, Warning, "CopyBufferToTexture — could not resolve handles");
         return;
     }
 
-    // Map the staging buffer, then UpdateSubresource to the texture
+    // Map the staging buffer, then UpdateSubresource to the texture.
+    // For 3D textures the depth-row-pitch (depthPitch) is passed as 0, which lets
+    // D3D11 infer it from the resource dimensions — correct for mip 0.
     const uint32_t subresource = D3D11CalcSubresource(mipLevel, arraySlice, tex->desc.mipLevels);
 
     D3D11_MAPPED_SUBRESOURCE mapped = {};
@@ -647,7 +677,7 @@ void DX11CommandList::CopyBufferToTexture(RHIBufferHandle srcBuffer, uint64_t sr
     }
 
     const auto* srcData = static_cast<const uint8_t*>(mapped.pData) + srcOffset;
-    m_ctx->UpdateSubresource(tex->texture, subresource, nullptr,
+    m_ctx->UpdateSubresource(tex->GetResource(), subresource, nullptr,
                                       srcData, srcRowPitch, 0);
     m_ctx->Unmap(buf->buffer, 0);
 }
@@ -660,7 +690,7 @@ void DX11CommandList::CopyTextureToBuffer(RHITextureHandle srcTexture, uint32_t 
 
     auto* tex = m_device->GetTexturePool().Get(srcTexture.index, srcTexture.generation);
     auto* buf = m_device->GetBufferPool().Get(dstBuffer.index, dstBuffer.generation);
-    if (!tex || !tex->texture || !buf || !buf->buffer) {
+    if (!tex || !tex->GetResource() || !buf || !buf->buffer) {
         UZ_LOG(RHI, Warning, "CopyTextureToBuffer — could not resolve handles");
         return;
     }
@@ -668,40 +698,71 @@ void DX11CommandList::CopyTextureToBuffer(RHITextureHandle srcTexture, uint32_t 
     // DX11 cannot copy texture→buffer directly. Use a staging texture as
     // intermediate: copy src texture → staging texture, then map staging
     // and memcpy into readback buffer.
+    // Dimensions are read from the typed D3D11 descriptor so we get the exact
+    // DXGI_FORMAT that was created (avoiding a separate format-map function).
     auto* d3dDevice = m_device->GetDevice();
 
-    D3D11_TEXTURE2D_DESC srcDesc = {};
-    tex->texture->GetDesc(&srcDesc);
+    // Subresource index — for 3D textures arraySlice is ignored (must be 0)
+    const uint32_t srcSubresource = D3D11CalcSubresource(mipLevel, arraySlice, tex->desc.mipLevels);
 
-    const uint32_t mipWidth  = std::max(1u, srcDesc.Width >> mipLevel);
-    const uint32_t mipHeight = std::max(1u, srcDesc.Height >> mipLevel);
+    // Create a staging resource matching the source mip dimensions.
+    // For 3D sources we need ID3D11Texture3D staging; for 2D we use ID3D11Texture2D.
+    ID3D11Resource* staging = nullptr;
+    HRESULT hr = S_OK;
 
-    // Create a staging texture matching the source mip dimensions
-    D3D11_TEXTURE2D_DESC stagingDesc = {};
-    stagingDesc.Width = mipWidth;
-    stagingDesc.Height = mipHeight;
-    stagingDesc.MipLevels = 1;
-    stagingDesc.ArraySize = 1;
-    stagingDesc.Format = srcDesc.Format;
-    stagingDesc.SampleDesc.Count = 1;
-    stagingDesc.Usage = D3D11_USAGE_STAGING;
-    stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    if (tex->desc.is3D) {
+        D3D11_TEXTURE3D_DESC srcDesc = {};
+        tex->texture3D->GetDesc(&srcDesc);
 
-    ID3D11Texture2D* staging = nullptr;
-    HRESULT hr = d3dDevice->CreateTexture2D(&stagingDesc, nullptr, &staging);
-    if (FAILED(hr)) {
+        const uint32_t mipWidth  = std::max(1u, srcDesc.Width  >> mipLevel);
+        const uint32_t mipHeight = std::max(1u, srcDesc.Height >> mipLevel);
+        const uint32_t mipDepth  = std::max(1u, srcDesc.Depth  >> mipLevel);
+
+        D3D11_TEXTURE3D_DESC stagingDesc = {};
+        stagingDesc.Width          = mipWidth;
+        stagingDesc.Height         = mipHeight;
+        stagingDesc.Depth          = mipDepth;
+        stagingDesc.MipLevels      = 1;
+        stagingDesc.Format         = srcDesc.Format;
+        stagingDesc.Usage          = D3D11_USAGE_STAGING;
+        stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+
+        ID3D11Texture3D* staging3D = nullptr;
+        hr = d3dDevice->CreateTexture3D(&stagingDesc, nullptr, &staging3D);
+        staging = staging3D;
+    } else {
+        D3D11_TEXTURE2D_DESC srcDesc = {};
+        tex->texture->GetDesc(&srcDesc);
+
+        const uint32_t mipWidth  = std::max(1u, srcDesc.Width  >> mipLevel);
+        const uint32_t mipHeight = std::max(1u, srcDesc.Height >> mipLevel);
+
+        D3D11_TEXTURE2D_DESC stagingDesc = {};
+        stagingDesc.Width            = mipWidth;
+        stagingDesc.Height           = mipHeight;
+        stagingDesc.MipLevels        = 1;
+        stagingDesc.ArraySize        = 1;
+        stagingDesc.Format           = srcDesc.Format;
+        stagingDesc.SampleDesc.Count = 1;
+        stagingDesc.Usage            = D3D11_USAGE_STAGING;
+        stagingDesc.CPUAccessFlags   = D3D11_CPU_ACCESS_READ;
+
+        ID3D11Texture2D* staging2D = nullptr;
+        hr = d3dDevice->CreateTexture2D(&stagingDesc, nullptr, &staging2D);
+        staging = staging2D;
+    }
+
+    if (FAILED(hr) || !staging) {
         UZ_LOG(RHI, Error, "CopyTextureToBuffer: failed to create staging texture, hr=0x{:08X}",
                static_cast<uint32_t>(hr));
         return;
     }
 
-    // Copy the source subresource to staging (immediate context — executes now)
-    // DX11 subresource index = mipLevel + arraySlice * mipLevels
-    const uint32_t srcSubresource = D3D11CalcSubresource(mipLevel, arraySlice, srcDesc.MipLevels);
+    // Copy the source subresource into the staging resource (executes immediately)
     m_ctx->CopySubresourceRegion(staging, 0, 0, 0, 0,
-                                 tex->texture, srcSubresource, nullptr);
+                                 tex->GetResource(), srcSubresource, nullptr);
 
-    // Map the staging texture for reading
+    // Map the staging resource for CPU reading
     D3D11_MAPPED_SUBRESOURCE stagingMapped = {};
     hr = m_ctx->Map(staging, 0, D3D11_MAP_READ, 0, &stagingMapped);
     if (FAILED(hr)) {
@@ -722,6 +783,11 @@ void DX11CommandList::CopyTextureToBuffer(RHITextureHandle srcTexture, uint32_t 
         return;
     }
 
+    // Derive mip-level dimensions from the RHI descriptor (same values used above
+    // inside the typed-GetDesc branches, hoisted here for the copy loop).
+    const uint32_t mipWidth  = std::max(1u, static_cast<uint32_t>(tex->desc.width)  >> mipLevel);
+    const uint32_t mipHeight = std::max(1u, static_cast<uint32_t>(tex->desc.height) >> mipLevel);
+
     const uint32_t texelSize = BytesPerTexel(tex->desc.format);
     const uint32_t copyBytes = mipWidth * texelSize;
     const auto* srcPtr = static_cast<const uint8_t*>(stagingMapped.pData);
@@ -732,7 +798,6 @@ void DX11CommandList::CopyTextureToBuffer(RHITextureHandle srcTexture, uint32_t 
                     srcPtr + row * stagingMapped.RowPitch,
                     copyBytes);
     }
-
 
     m_ctx->Unmap(buf->buffer, 0);
     m_ctx->Unmap(staging, 0);
@@ -768,6 +833,7 @@ void DX11CommandList::BeginRenderPass(const RHIRenderPassDesc& desc) {
         if (!att.texture.IsValid()) continue;
 
         auto* tex = m_device->GetTexturePool().Get(att.texture.index, att.texture.generation);
+        // 3D textures cannot be render targets; tex->texture is the 2D path used here
         if (!tex || !tex->texture) {
             UZ_LOG(RHI, Warning, "BeginRenderPass — color attachment {} has no texture", i);
             continue;

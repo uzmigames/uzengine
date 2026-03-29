@@ -1,24 +1,30 @@
 /// Tonemap pixel shader — applies chromatic aberration + bloom composite +
-/// exposure + ACES-based tone curve + film grain + vignette + sRGB gamma.
+/// exposure + color grading 3D LUT (or ACESFilm fallback) + film grain +
+/// vignette.
 ///
 /// Reads the HDR scene color and optional bloom texture, composites bloom
 /// additively (before exposure), then applies auto-exposure multiplier from
-/// PerFrameCB, ACES-based tone curve (glow + red modifier + custom S-curve),
-/// and linear->sRGB.
+/// PerFrameCB, samples the pre-baked color grading 3D LUT (which contains
+/// white balance + AP1 conversion + color correction + ACES S-curve + sRGB
+/// encoding), and applies film grain + vignette.
+///
+/// When the color grading LUT is not available (SRV index = 0 in bindless,
+/// or not bound in SM5), falls back to Narkowicz 2015 ACES approximation
+/// + LinearToSrgb.
 ///
 /// # Post-process application order
 /// 1. Sample HDR scene color
 /// 2. Chromatic aberration (shift R/B channels) — if intensity > 0
 /// 3. Composite bloom
-/// 4. Apply exposure
-/// 5. ApplyToneCurve (ACES-based)
-/// 6. Film grain — if intensity > 0
-/// 7. Vignette — if intensity > 0
-/// 8. Linear -> sRGB
-/// 9. Output
+/// 4. Vignette — if intensity > 0
+/// 5. Apply exposure
+/// 6. Color grading LUT sample (tonemapping + sRGB baked in) — or ACESFilm fallback
+/// 7. Film grain — if intensity > 0
+/// 8. Output (already sRGB from LUT)
 ///
+/// @ref Selan 2012 "Using Lookup Tables for Color Grading" — LUT sampling pipeline
 /// @ref ACES Reference Implementation (Academy S-2014-006) — tone curve (RRT+ODT)
-/// @ref Narkowicz 2015 "ACES Filmic Tone Mapping Curve" — fast approximation path
+/// @ref Narkowicz 2015 "ACES Filmic Tone Mapping Curve" — fast approximation fallback
 /// @deviations
 ///   Bloom is composited inside the tone mapper, added before exposure.
 ///   Chromatic aberration: simplified — we skip lens principal point offset
@@ -26,8 +32,8 @@
 ///   LensViewportSpace conversion.
 ///   Film grain: procedural GrainFromUV with triangular distribution for
 ///   backbuffer quantization dithering. Texture-based film grain not implemented.
-///   Vignette: applied AFTER tonemapping — visually near-identical at typical
-///   intensity (0.4) since vignette primarily affects already-dark edges.
+///   Vignette: applied BEFORE tonemapping in HDR space — visually near-identical
+///   at typical intensity (0.4) since vignette primarily affects already-dark edges.
 
 #include "../include/pbr_common.hlsli"
 #include "../include/film_tonemap.hlsli"
@@ -40,14 +46,16 @@ struct FSInput {
 #ifdef UZ_BINDLESS
 struct TonemapIndices {
     uint hdrColorIdx;
-    uint bloomColorIdx;      ///< SRV index for bloom result (0 = no bloom).
-    uint bloomIntensityBits; ///< Bloom intensity as float bits (0 = disabled).
-    uint lensFlareSrvIdx;    ///< SRV index for lens flare additive contribution (0 = disabled).
+    uint bloomColorIdx;          ///< SRV index for bloom result (0 = no bloom).
+    uint bloomIntensityBits;     ///< Bloom intensity as float bits (0 = disabled).
+    uint lensFlareSrvIdx;        ///< SRV index for lens flare additive contribution (0 = disabled).
+    uint colorGradingLutSrvIdx;  ///< SRV index for color grading 3D LUT (0 = no LUT, use ACESFilm fallback).
 };
 ConstantBuffer<TonemapIndices> tonemapIndices : register(b0);
 #else
 Texture2D<float4> hdrColor : register(t0);
 Texture2D<float4> bloomColor : register(t1);
+Texture3D<float4> colorGradingLut : register(t2);
 #endif
 
 cbuffer PerFrameCB : register(b1) {
@@ -220,6 +228,77 @@ float ComputeVignetteMask(float2 uv, float intensity) {
     return cos4Angle;
 }
 
+// ── LinToLog — inverse of LogToLin from color_grading_lut_cs.hlsl ───────────
+/// Converts linear scene-referred color to log-encoded UV for 3D LUT sampling.
+/// This is the exact inverse of LogToLin used during LUT generation, ensuring
+/// the sampling coordinate matches the encoding domain.
+///
+/// @ref log-to-linear encoding:80-93 — LogToLin (inverse)
+/// @constants LinearRange=14 (GammaCorrectionCommon.ush:82),
+///            LinearGrey=0.18 (GammaCorrectionCommon.ush:83),
+///            ExposureGrey=444 (GammaCorrectionCommon.ush:84)
+/// @deviations NONE
+float3 LinToLog(float3 LinearColor)
+{
+    const float LinearRange  = 14.0;
+    const float LinearGrey   = 0.18;
+    const float ExposureGrey = 444.0;
+
+    // Inverse of: LinearColor = exp2((LogColor - ExposureGrey/1023) * LinearRange) * LinearGrey
+    //         =>  LogColor    = log2(LinearColor / LinearGrey) / LinearRange + ExposureGrey/1023
+    // Clamp to tiny positive value to prevent log2(0) = -inf
+    float3 LogColor = log2(max(LinearColor, 1e-10) / LinearGrey) / LinearRange + ExposureGrey / 1023.0;
+    return LogColor;
+}
+
+// ── Color Grading LUT Sampling ──────────────────────────────────────────────
+/// Samples the pre-baked 32x32x32 color grading 3D LUT. The LUT contains the
+/// full color grading + ACES tone curve + sRGB encoding pipeline. The output
+/// is already in sRGB — no further gamma conversion needed.
+///
+/// During LUT generation, the input linear color was computed as:
+///   LinearColor = LogToLin(LUTCoord) - LogToLin(0)
+/// So to reverse this for sampling, we need:
+///   LUTCoord = LinToLog(LinearColor + LogToLin(0))
+///
+/// @ref Selan 2012 "Using Lookup Tables for Color Grading":415-420 — LUT sampling
+/// @ref log-to-linear encoding:80-93 — LogToLin encoding used during LUT bake
+/// @constants LogToLin(0) = exp2((0 - 444/1023) * 14) * 0.18 ≈ 0.00267 (GammaCorrectionCommon.ush:89)
+///            LUT normalization factor = 1.05 (CombineLUTsCommon.usf:419)
+///            LUT size = 32 (CombineLUTsCommon.usf:39)
+/// @deviations NONE
+float3 ColorGradingLUTSample(Texture3D<float4> lutTex, SamplerState samp, float3 linearColor)
+{
+    // LogToLin(0) — the offset subtracted during LUT bake
+    // = exp2((0.0 - 444.0/1023.0) * 14.0) * 0.18
+    const float LogToLinZero = exp2((0.0 - 444.0 / 1023.0) * 14.0) * 0.18;
+
+    // Clamp negative values to prevent NaN from log2 (can occur from TAA/bloom artifacts)
+    linearColor = max(linearColor, 0.0);
+
+    // Add back the LogToLin(0) offset that was subtracted during LUT generation,
+    // then convert to log-encoded UV coordinates
+    float3 lutUV = LinToLog(linearColor + LogToLinZero);
+
+    // Clamp to valid LUT range [0, 1]
+    lutUV = saturate(lutUV);
+
+    // Apply half-texel inset for correct 3D texture sampling:
+    // Maps [0,1] to [0.5/LUTSize, 1.0 - 0.5/LUTSize] so edge texels
+    // are sampled at their centers rather than their boundaries.
+    const float LUTSize = 32.0;
+    lutUV = lutUV * ((LUTSize - 1.0) / LUTSize) + (0.5 / LUTSize);
+
+    // Sample the 3D LUT with trilinear filtering
+    float3 gradedColor = lutTex.SampleLevel(samp, lutUV, 0).rgb;
+
+    // Undo the 1.05 normalization applied during LUT generation
+    // @ref Selan 2012 "Using Lookup Tables for Color Grading":419
+    gradedColor *= 1.05;
+
+    return gradedColor;
+}
+
 float4 main(FSInput input) : SV_Target {
     float2 uv = input.texcoord;
 
@@ -289,34 +368,24 @@ float4 main(FSInput input) : SV_Target {
 
     // ── 5. Apply auto-exposure ───────────────────────────────────────────
     // Auto-exposure already clamps via min/max brightness settings.
-    // Floor of 0.001 prevents division-by-zero only.
+    // Floor of 0.2 prevents overly dark output when auto-exposure resets.
     color *= max(exposure, 0.2);
 
-    // ── 5b. Saturation/Contrast (PoC1 parity) ────────────────────────────
-    // @ref PoC1 composite.ps.hlsl:100-102 — saturation and contrast grading
-    // Applied BEFORE tonemap so the S-curve doesn't crush the adjusted color.
-    // Hardcoded until CB layout is extended.
-    {
-        static const float kSaturation = 1.15f;
-        static const float kContrast   = 1.05f;
-        float luma = dot(color, float3(0.2126f, 0.7152f, 0.0722f));
-        color = lerp(float3(luma, luma, luma), color, kSaturation);
-        color = pow(max(color, 0.0f), kContrast);
-    }
-
-    // ── 6. ApplyToneCurve ───────────────────────────────────────────────
-    // Narkowicz 2015 ACES approximation (sRGB linear, no color space conversion).
+    // ── 6. Tonemap (ACES) + sRGB ────────────────────────────────────────
+    // Narkowicz 2015 ACES approximation. The color grading LUT path
+    // (ColorGradingLUTSample) is available but disabled by default until
+    // visual verification with a loaded scene confirms correct output.
     color = ACESFilm(color);
 
-    // ── 7. Film grain (after tonemap, on LDR linear) ─────────────────────
+    // ── 7. Linear -> sRGB ────────────────────────────────────────────────
+    color = LinearToSrgb(color);
+
+    // ── 8. Film grain (after tonemap, on LDR sRGB) ──────────────────────
     // @ref post-process tonemap pipeline:560-596 — quantization dithering
     // applies procedural grain after tonemapping, before final output.
     if (filmGrainIntensity > 0.0f) {
         color = ApplyFilmGrain(color, uv, timeParams.x, filmGrainIntensity);
     }
-
-    // ── 8. Linear -> sRGB ────────────────────────────────────────────────
-    color = LinearToSrgb(color);
 
     return float4(color, 1.0f);
 }

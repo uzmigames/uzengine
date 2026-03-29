@@ -23,6 +23,9 @@
 #include "scene_loader.h"
 #include "scene_renderer.h"
 #include "screenshot_capture.h"
+#include "editor_input_handler.h"
+#include "selection_manager.h"
+#include "lua_editor_api.h"
 #include "vfs.h"
 #include "lua_vm.h"
 #include "lua_scene_api.h"
@@ -36,10 +39,12 @@
 #include "paths.h"
 #include "h264_encoder.h"
 #include "frame_readback.h"
+#include "file_system.h"
 
 #ifdef _WIN32
 #include "platform_window.h"
 #include "crash_handler.h"
+#include <objbase.h>  // CoInitializeEx
 #endif
 
 #include <json.hpp>
@@ -127,6 +132,7 @@ struct RuntimeState {
     std::unique_ptr<uz::IRHIDevice> device;
     uz::IRHISwapChain* swapChain = nullptr;
     uz::IRHICommandList* cmdList = nullptr;
+    // encodeCmdList removed — readback now uses the main cmdList via preEndCb.
     uz::IRHIFence* frameFences[kFramesInFlight] = {};
     uint64_t fenceValues[kFramesInFlight] = {};
     uint64_t globalFenceValue = 0;
@@ -144,6 +150,12 @@ struct RuntimeState {
     // Renderer
     uz::SceneRenderer sceneRenderer;
     bool sceneRendererReady = false;
+    bool editorModeRequested = false;
+
+    // Editor systems (selection, gizmos, input routing)
+    uz::SelectionManager selectionManager;
+    uz::EditorInputHandler editorInput;
+    bool editorInputReady = false;
 
     // Lua scripting
     bool luaReady = false;
@@ -236,13 +248,25 @@ void uz_set_engine_dir(const char* path) {
 }
 
 int uz_runtime_init(void) {
-    uz::LogInit();
+#ifdef _WIN32
+    // Initialize COM for this thread. DX12 device creation, DXGI enumeration,
+    // and Media Foundation (H.264 encoder) all require COM. When running as a
+    // child process (runtime-worker.js), COM is not initialized by default.
+    // STA is required for DXGI (swapchain Present() pumps messages internally).
+    // S_FALSE means COM was already initialized — that's fine (Electron host).
+    ::CoInitializeEx(nullptr, 0x2 /*COINIT_APARTMENTTHREADED*/ | 0x4 /*COINIT_DISABLE_OLE1DDE*/);
+#endif
 
-    // When called via C API (from a .node addon inside VSCode/Electron), use
-    // library mode: VEH writes crash reports but lets __try/__except blocks
-    // catch the exception gracefully instead of terminating the host process.
-    uz::CrashHandler_SetLibraryMode(true);
-    uz::InstallCrashHandler();
+    uz::LogInit();
+    UZ_LOG(RuntimeAPI, Info, "Log file: {}", uz::LogGetFilePath());
+
+    // In isolated worker mode, the crash handler's Vectored Exception Handler
+    // can interfere with GPU driver exceptions (NVIDIA thread naming, etc.) and
+    // cause false-positive stack buffer overrun (/GS) terminations. Since the
+    // worker is a separate process, the OS will handle crashes natively — no need
+    // for our VEH. Only install the crash handler when NOT running as a library.
+    // uz::CrashHandler_SetLibraryMode(true);
+    // uz::InstallCrashHandler();
 
     UZ_LOG(RuntimeAPI, Info, "UzEngine Runtime C API initializing (v{})", uz_runtime_version());
     return 1;
@@ -325,6 +349,10 @@ int uz_create_viewport(void* parent_hwnd, int width, int height) {
     // ── Device ──────────────────────────────────────────────────────────
     uz::RHIDeviceDesc deviceDesc{};
     deviceDesc.backend = uz::RHIBackend::DX12;
+    // Debug layer disabled in DLL mode — the SM5/non-bindless path has
+    // known validation errors (barrier state mismatches, CPU-only heap copies)
+    // that the debug layer promotes to fatal CommandList::Close failures.
+    // Enable manually for debugging specific issues.
     deviceDesc.enableValidation = false;
     deviceDesc.enableGpuValidation = false;
     deviceDesc.adapterIndex = 0;
@@ -396,6 +424,19 @@ int uz_create_viewport(void* parent_hwnd, int width, int height) {
 
     if (!state->sceneRendererReady) {
         UZ_LOG(RuntimeAPI, Warning, "SceneRenderer init failed — only clear-screen available");
+    } else if (state->editorModeRequested) {
+        // Apply editor mode that was requested before the renderer was ready.
+        state->sceneRenderer.SetEditorMode(true);
+    }
+
+    // ── Editor input (selection, gizmos) ────────────────────────────────
+    if (state->sceneRendererReady && state->editorModeRequested) {
+        state->editorInput.Init(
+            state->sceneRenderer.GetInput(), &state->selectionManager,
+            &state->sceneRenderer.GetCamera(), &state->world);
+        state->editorInput.SetSceneRenderer(&state->sceneRenderer);
+        state->editorInputReady = true;
+        UZ_LOG(RuntimeAPI, Info, "Editor input handler initialized (selection + gizmos)");
     }
 
     // Connect Lua to the scene renderer for uz.renderer / uz.mesh / uz.texture APIs.
@@ -403,6 +444,11 @@ int uz_create_viewport(void* parent_hwnd, int width, int height) {
         uz::LuaSetSceneRenderer(uz::LuaVM::GetState(), &state->sceneRenderer);
         uz::LuaSetInputSystem(uz::LuaVM::GetState(), state->sceneRenderer.GetInput());
         UZ_LOG(RuntimeAPI, Info, "Lua renderer + input API connected");
+    }
+
+    // Wire editor state into Lua for uz.editor.* APIs.
+    if (state->editorInputReady && state->luaReady) {
+        uz::LuaSetEditorState(uz::LuaVM::GetState(), &state->selectionManager, &state->editorInput);
     }
 
     // ── Screenshot capture ──────────────────────────────────────────────
@@ -588,6 +634,13 @@ uz_frame_stats uz_render_frame(void) {
 
     auto* state = s_state;
 
+    // Fatal: GPU device was removed. Stop rendering immediately — all GPU
+    // operations will fail. The caller must break the render loop and exit.
+    if (state->device->IsDeviceRemoved()) {
+        stats.device_removed = 1;
+        return stats;
+    }
+
 #ifdef _WIN32
     // Pump OS messages (input, resize, close).
     state->window.PumpMessages();
@@ -619,8 +672,10 @@ uz_frame_stats uz_render_frame(void) {
     // Update timing.
     auto now = std::chrono::high_resolution_clock::now();
     const float totalTime = std::chrono::duration<float>(now - state->startTime).count();
-    const float dt = std::chrono::duration<float>(now - state->prevTime).count();
+    float dt = std::chrono::duration<float>(now - state->prevTime).count();
     state->prevTime = now;
+    // Clamp dt to avoid huge jumps on first frame or after hitches (shader compile, etc.)
+    if (dt > 0.1f) dt = 0.016f;
 
     // Update Lua scripts.
     if (state->luaReady) {
@@ -628,12 +683,68 @@ uz_frame_stats uz_render_frame(void) {
         uz::ScriptSystem::Update(dt);
     }
 
+    // Update editor input (selection picking, gizmo interaction).
+    if (state->editorInputReady) {
+        state->editorInput.Update(dt);
+        // Sync selection + gizmo state to renderer for outline/gizmo passes.
+        state->sceneRenderer.SetSelectedEntity(state->selectionManager.GetSelected());
+        state->sceneRenderer.SetGizmoMode(static_cast<uint8_t>(state->editorInput.GetGizmoMode()));
+        state->sceneRenderer.SetGizmoSpace(static_cast<uint8_t>(state->editorInput.GetGizmoSpace()));
+        state->sceneRenderer.SetGizmoHoveredAxis(state->editorInput.GetGizmoHoveredAxis());
+        state->sceneRenderer.SetGizmoActiveAxis(state->editorInput.GetGizmoActiveAxis());
+    }
+
     // Render the frame.
     if (state->sceneRendererReady) {
+        // Build a pre-End callback that copies the LDR intermediate to the
+        // readback buffer inside the same command list submission. This avoids
+        // the post-Present backbuffer ambiguity and the double-WaitIdle stall
+        // that caused DXGI_ERROR_DEVICE_REMOVED in the old encode path.
+        uz::SceneRenderer::PreEndCallback readbackCb = nullptr;
+
+        if (state->frameReadback.IsInitialized()) {
+            readbackCb = [state](uz::IRHICommandList* cmd) {
+                // Capture the backbuffer (which includes editor overlays: grid,
+                // stats, gizmos) instead of the LDR intermediate (which doesn't).
+                // This ensures the H.264 stream sent to the webview shows the
+                // complete editor UI, not just the scene color.
+                uz::RHITextureHandle bb = state->swapChain->GetCurrentBackBuffer();
+                if (!bb.IsValid()) return;
+
+                // The render graph leaves the backbuffer in Present state after
+                // the final overlay pass. Transition to CopySrc for readback.
+                const uz::RHIBarrierDesc toCopySrc{
+                    .texture     = bb,
+                    .stateBefore = uz::RHIResourceState::Present,
+                    .stateAfter  = uz::RHIResourceState::CopySrc,
+                };
+                cmd->ResourceBarrier(&toCopySrc, 1);
+
+                state->frameReadback.CaptureFromTexture(cmd, bb);
+
+                // Transition back to Present for SwapChain::Present().
+                const uz::RHIBarrierDesc toPresent{
+                    .texture     = bb,
+                    .stateBefore = uz::RHIResourceState::CopySrc,
+                    .stateAfter  = uz::RHIResourceState::Present,
+                };
+                cmd->ResourceBarrier(&toPresent, 1);
+            };
+        }
+
         state->sceneRenderer.RenderFrame(
             state->cmdList, state->swapChain,
             &state->world, state->vfs.get(),
-            dt, state->frameIndex);
+            dt, state->frameIndex, readbackCb);
+
+        // Log first 3 frames to diagnose draw call issues.
+        if (state->frameIndex < 3) {
+            UZ_LOG(RuntimeAPI, Info,
+                   "Frame {}: sceneRendererReady=true, entityCount={}, contentRoot='{}'",
+                   state->frameIndex,
+                   static_cast<uint32_t>(state->world.GetRegistry().storage<entt::entity>().size()),
+                   state->contentRoot);
+        }
     } else {
         // Fallback: animated clear screen (same as uzengine.cpp).
         float color[4];
@@ -663,6 +774,14 @@ uz_frame_stats uz_render_frame(void) {
         state->cmdList->Execute();
     }
 
+    // ── Signal readback fence (after Execute, before Present) ──────────
+    // The readback copy was already recorded inside the RenderFrame command
+    // list via the pre-End callback. Signal the fence so the CPU can map
+    // the buffer after the GPU finishes the copy.
+    if (state->frameReadback.IsInitialized()) {
+        state->frameReadback.SignalFence();
+    }
+
     // Present + signal fence.
     state->swapChain->Present(false);
     state->globalFenceValue++;
@@ -676,8 +795,11 @@ uz_frame_stats uz_render_frame(void) {
     stats.fps = (frameMs > 0.0f) ? (1000.0f / frameMs) : 0.0f;
     stats.frame_ms = frameMs;
     stats.frame_index = state->frameIndex;
-    // draw_calls, vertices, triangles are zero for now — will be populated
-    // when SceneRenderer exposes per-frame counters.
+    // Real stats from the renderer (entity count + mesh count as placeholder
+    // until the renderer exposes actual draw call / triangle counters).
+    extern std::atomic<uint32_t> g_lastSyncMeshEntityCount;
+    stats.draw_calls = static_cast<uint32_t>(state->world.GetRegistry().storage<entt::entity>().size());
+    stats.triangles = g_lastSyncMeshEntityCount.load(std::memory_order_relaxed);
 
     return stats;
 }
@@ -685,14 +807,38 @@ uz_frame_stats uz_render_frame(void) {
 // ── Scene Management ────────────────────────────────────────────────────────
 
 int uz_load_scene(const char* path) {
-    if (!HasViewport() || !path) return 0;
-
-    auto* state = s_state;
-    auto sceneBytes = state->vfs->Read(path);
-    if (sceneBytes.empty()) {
-        UZ_LOG(RuntimeAPI, Error, "uz_load_scene: failed to read '{}'", path);
+    if (!path) {
+        UZ_LOG(RuntimeAPI, Error, "uz_load_scene: path is null");
         return 0;
     }
+    if (!s_state) {
+        UZ_LOG(RuntimeAPI, Error, "uz_load_scene: runtime not initialized (s_state=null)");
+        return 0;
+    }
+    if (!s_state->initialized) {
+        UZ_LOG(RuntimeAPI, Error, "uz_load_scene: viewport not created (initialized=false)");
+        return 0;
+    }
+
+    auto* state = s_state;
+    UZ_LOG(RuntimeAPI, Info, "uz_load_scene: path='{}' contentRoot='{}'", path, state->contentRoot);
+
+    // Support both absolute and relative paths.
+    // If absolute, read directly from disk. If relative, go through VFS.
+    std::vector<uint8_t> sceneBytes;
+    const std::filesystem::path fsPath(path);
+    if (fsPath.is_absolute()) {
+        UZ_LOG(RuntimeAPI, Info, "uz_load_scene: reading absolute path");
+        sceneBytes = uz::FileReadAll(path);
+    } else {
+        UZ_LOG(RuntimeAPI, Info, "uz_load_scene: reading via VFS");
+        sceneBytes = state->vfs->Read(path);
+    }
+    if (sceneBytes.empty()) {
+        UZ_LOG(RuntimeAPI, Error, "uz_load_scene: file read returned 0 bytes for '{}'", path);
+        return 0;
+    }
+    UZ_LOG(RuntimeAPI, Info, "uz_load_scene: read {} bytes", sceneBytes.size());
 
     const size_t count = uz::LoadScene(state->world, sceneBytes, path);
     UZ_LOG(RuntimeAPI, Info, "uz_load_scene: loaded {} entities from '{}'", count, path);
@@ -826,12 +972,13 @@ void uz_on_mouse_button(int button, int pressed) {
     auto* input = s_state->sceneRenderer.GetInput();
     if (!input) return;
 
+    // Web API MouseEvent.button: 0=Left, 1=Middle, 2=Right
     uz::MouseButton btn = uz::MouseButton::Left;
     switch (button) {
         case 0: btn = uz::MouseButton::Left; break;
-        case 1: btn = uz::MouseButton::Right; break;
-        case 2: btn = uz::MouseButton::Middle; break;
-        default: return; // Unknown button — ignore.
+        case 1: btn = uz::MouseButton::Middle; break;
+        case 2: btn = uz::MouseButton::Right; break;
+        default: return;
     }
     input->OnMouseButton(btn, pressed != 0);
 }
@@ -841,6 +988,26 @@ void uz_on_key(int keycode, int pressed) {
 
     auto* input = s_state->sceneRenderer.GetInput();
     if (!input) return;
+
+    if (pressed) {
+        input->OnKeyDown(static_cast<uint16_t>(keycode));
+    } else {
+        input->OnKeyUp(static_cast<uint16_t>(keycode));
+    }
+}
+
+void uz_on_key_ex(int keycode, int pressed, int modifiers) {
+    if (!HasViewport() || !s_state->sceneRendererReady) return;
+
+    auto* input = s_state->sceneRenderer.GetInput();
+    if (!input) return;
+
+    // Modifier keys are handled via their own keydown/keyup events
+    // (ShiftLeft → VK_SHIFT, ControlLeft → VK_CONTROL, etc.) which
+    // flow through the normal OnKeyDown/OnKeyUp path. We do NOT call
+    // SetModifierState here because the DOM modifier flags on non-modifier
+    // key events can be stale (e.g., keyup of 'W' may report shiftKey=false
+    // even if Shift is still held, causing premature modifier clearing).
 
     if (pressed) {
         input->OnKeyDown(static_cast<uint16_t>(keycode));
@@ -867,13 +1034,14 @@ void uz_set_log_callback(uz_log_callback callback) {
         s_logCallback = callback;
         if (!s_callbackSink) {
             s_callbackSink = std::make_shared<CallbackSink>();
-            // The callback sink will be picked up by new loggers.
-            // For existing loggers, spdlog doesn't support adding sinks
-            // after creation, so the callback only receives messages from
-            // loggers created after this point. For full coverage, register
-            // the callback before uz_create_viewport().
+            // Add the sink to ALL existing loggers (fixes BUG-8).
+            // LogAddSink rebuilds every cached logger to include this sink.
+            uz::LogAddSink(s_callbackSink);
         }
     } else {
+        if (s_callbackSink) {
+            uz::LogRemoveSink(s_callbackSink);
+        }
         s_logCallback = nullptr;
         s_callbackSink.reset();
     }
@@ -992,69 +1160,22 @@ int uz_encode_frame(const uint8_t** out_data, uint32_t* out_size) {
 
     auto* state = s_state;
     if (!state->h264Encoder.IsInitialized()) return 0;
+    if (!state->frameReadback.IsInitialized()) return 0;
 
-    // ── Triple-buffered path with async encoder ─────────────────────────
-    // Uses FrameReadback to avoid WaitIdle() stalls. Three readback buffers
-    // rotate: the GPU copies into buffer N, buffer N-1 is in flight, and
-    // buffer N-2 is ready for CPU read. The first two frames return 0
-    // (pipeline filling).
-    //
-    // Encoding is offloaded to a background thread via SubmitFrameAsync().
-    // GetEncodedFrame() returns the result from the PREVIOUS submission,
-    // adding one extra frame of latency but removing 3-5ms of encode cost
-    // from the render thread at 1080p.
-    if (state->frameReadback.IsInitialized()) {
-        // Step 1: Kick off GPU copy of the current backbuffer into the
-        // write buffer. The backbuffer is in Present state after the
-        // render graph's Present transition.
-        state->cmdList->Begin();
-        state->frameReadback.CaptureFrame(state->cmdList, state->swapChain);
-        state->cmdList->End();
-        state->cmdList->Execute();
-        state->frameReadback.SignalFence();
-
-        // Step 2: Read the OLDEST buffer (N-2) — no stall if its fence
-        // has been signaled by the GPU.
-        if (state->frameReadback.IsReadReady()) {
-            const uint8_t* rgbaData = nullptr;
-            uint32_t rgbaStride = 0;
-            if (state->frameReadback.MapRead(&rgbaData, &rgbaStride)) {
-                // Submit to the encoder thread (non-blocking memcpy + signal).
-                state->h264Encoder.SubmitFrameAsync(rgbaData, rgbaStride);
-                state->frameReadback.UnmapRead();
-                state->frameReadback.AdvanceRead();
-            } else {
-                UZ_LOG(RuntimeAPI, Error, "uz_encode_frame: failed to map readback buffer");
-            }
+    // The GPU readback copy was recorded inside uz_render_frame() via the
+    // pre-End callback (same command list, same submission — no separate
+    // command list, no WaitIdle, no post-Present backbuffer ambiguity).
+    // Here we only read the oldest triple-buffered readback and encode it.
+    if (state->frameReadback.IsReadReady()) {
+        const uint8_t* rgbaData = nullptr;
+        uint32_t rgbaStride = 0;
+        if (state->frameReadback.MapRead(&rgbaData, &rgbaStride)) {
+            state->h264Encoder.SubmitFrameAsync(rgbaData, rgbaStride);
+            state->frameReadback.UnmapRead();
+            state->frameReadback.AdvanceRead();
         }
-
-        // Return the most recently completed encoded frame from the
-        // encoder thread. This is typically the frame submitted on the
-        // PREVIOUS call, providing one frame of decoupled latency.
-        return state->h264Encoder.GetEncodedFrame(out_data, out_size) ? 1 : 0;
     }
-
-    // ── Fallback path (no triple-buffered readback) ─────────────────────
-    // Uses the screenshot capture system with WaitIdle(). This path is only
-    // reached if FrameReadback::Init() failed.
-    state->cmdList->Begin();
-    state->screenshotCapture.CaptureFromPresent(state->cmdList, state->swapChain);
-    state->cmdList->End();
-    state->cmdList->Execute();
-
-    state->device->WaitIdle();
-
-    const uint8_t* rgbaData = nullptr;
-    uint32_t rgbaStride = 0;
-    if (!state->screenshotCapture.MapReadback(&rgbaData, &rgbaStride)) {
-        UZ_LOG(RuntimeAPI, Error, "uz_encode_frame: fallback map failed");
-        return 0;
-    }
-
-    const bool ok = state->h264Encoder.EncodeFrame(rgbaData, rgbaStride, out_data, out_size);
-    state->screenshotCapture.UnmapReadback();
-
-    return ok ? 1 : 0;
+    return state->h264Encoder.GetEncodedFrame(out_data, out_size) ? 1 : 0;
 }
 
 void uz_request_keyframe(void) {
@@ -1082,8 +1203,26 @@ int uz_get_codec_extradata(const uint8_t** out_data, uint32_t* out_size) {
 // ── Editor Configuration ────────────────────────────────────────────────────
 
 void uz_set_editor_mode(int enabled) {
-    if (!HasViewport() || !s_state->sceneRendererReady) return;
-    s_state->sceneRenderer.SetEditorMode(enabled != 0);
+    if (!HasViewport()) return;
+    s_state->editorModeRequested = (enabled != 0);
+    if (s_state->sceneRendererReady) {
+        s_state->sceneRenderer.SetEditorMode(enabled != 0);
+
+        // Initialize editor input handler (selection, gizmos) on first enable.
+        if (enabled && !s_state->editorInputReady) {
+            s_state->editorInput.Init(
+                s_state->sceneRenderer.GetInput(), &s_state->selectionManager,
+                &s_state->sceneRenderer.GetCamera(), &s_state->world);
+            s_state->editorInput.SetSceneRenderer(&s_state->sceneRenderer);
+            s_state->editorInputReady = true;
+            UZ_LOG(RuntimeAPI, Info, "Editor input handler initialized (selection + gizmos)");
+
+            if (s_state->luaReady) {
+                uz::LuaSetEditorState(uz::LuaVM::GetState(),
+                    &s_state->selectionManager, &s_state->editorInput);
+            }
+        }
+    }
 }
 
 void uz_set_content_root(const char* path) {

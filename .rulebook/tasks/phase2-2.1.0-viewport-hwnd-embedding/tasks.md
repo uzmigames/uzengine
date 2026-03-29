@@ -88,6 +88,13 @@
 - [ ] T.5 Benchmark: measure encode latency (target <4ms), total latency (target <7ms).
 - [ ] T.6 Benchmark: measure sustained FPS at 1280x720 (target 120 FPS).
 
+## Phase G: Viewport Panel Polish (viewport-panel.ts)
+
+- [x] G.1 Focus tracking (3.4): `viewportFocused` flag, focus/blur listeners on `#viewport-container`. Keyboard events only forwarded while viewport is focused; prevents interfering with VSCode text inputs.
+- [x] G.2 Mouse pointer lock for camera orbit (3.5): right-click on `#viewport-canvas` calls `requestPointerLock()`; sends `mouseDelta {dx,dy}` while locked instead of `mouseMove {x,y}`; releases lock on right-mouseup. Context menu suppressed. `mouseDelta` added to `WebViewMessage` union; `handleWebViewMessage` routes it to `addon.onMouseMove(dx, dy)`.
+- [x] G.3 JPEG fallback (2.6): `hasWebCodecs` / `usingJpegFallback` flags. If `VideoDecoder` is absent or `configure()` throws, switches permanently to JPEG mode. `jpeg {data, width?, height?}` message decoded via a shared `<img>` element blit. H.264 `frame` and `init` messages are no-ops in JPEG mode.
+- [x] G.4 Extended stats overlay (4.3-4.4): stats bar now shows optional `encoder` and `resolution` fields when provided by the extension host. Falls back to canvas pixel dimensions (`canvas.width × canvas.height`) when `resolution` is absent. Parts joined with en-space separators.
+
 ## Documentation
 
 - [x] Doc.1 Update `docs/engine/28-ipc-protocol/03-frame-streaming.md` — marked Phase 1 as DONE, noted FFmpeg libavcodec instead of MF, added implementation notes.

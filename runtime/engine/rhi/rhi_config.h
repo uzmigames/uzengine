@@ -44,7 +44,7 @@ enum class ShaderModel : uint8_t {
 /// Not stored long-term; the device remembers its own backend and shader model.
 struct RHIConfig {
     RHIBackend backend = RHIBackend::DX12;           ///< GPU API backend to initialize.
-    ShaderModel shaderModel = ShaderModel::SM6_6;    ///< Target shader model (may be clamped by GPU caps).
+    std::optional<ShaderModel> shaderModel;          ///< Force shader model (nullopt = auto-negotiate highest).
     bool enableValidation = false;                   ///< Enable API validation layer (DX12 debug, Vulkan VK_LAYER_KHRONOS_validation).
     bool enableGpuValidation = false;                ///< Enable GPU-based validation (DX12 only; expensive, catches shader errors).
     bool enableBreadcrumbs = false;                  ///< Enable DRED auto-breadcrumbs for device-removed diagnosis (DX12 only).

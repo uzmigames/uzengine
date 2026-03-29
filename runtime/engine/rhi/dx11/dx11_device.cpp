@@ -67,11 +67,12 @@ DX11Device::~DX11Device() {
         if (buf.shadowCopy) { delete[] buf.shadowCopy; buf.shadowCopy = nullptr; }
     }
     for (auto& tex : m_texturePool.Slots()) {
-        if (tex.uav) { tex.uav->Release(); tex.uav = nullptr; }
-        if (tex.dsv) { tex.dsv->Release(); tex.dsv = nullptr; }
-        if (tex.rtv) { tex.rtv->Release(); tex.rtv = nullptr; }
-        if (tex.srv) { tex.srv->Release(); tex.srv = nullptr; }
-        if (tex.texture) { tex.texture->Release(); tex.texture = nullptr; }
+        if (tex.uav)      { tex.uav->Release();      tex.uav      = nullptr; }
+        if (tex.dsv)      { tex.dsv->Release();      tex.dsv      = nullptr; }
+        if (tex.rtv)      { tex.rtv->Release();      tex.rtv      = nullptr; }
+        if (tex.srv)      { tex.srv->Release();      tex.srv      = nullptr; }
+        if (tex.texture3D){ tex.texture3D->Release(); tex.texture3D = nullptr; }
+        if (tex.texture)  { tex.texture->Release();  tex.texture  = nullptr; }
     }
     for (auto& shader : m_shaderPool.Slots()) {
         if (shader.vs) { shader.vs->Release(); shader.vs = nullptr; }
@@ -90,6 +91,8 @@ DX11Device::~DX11Device() {
 
     if (m_defaultSampler) { m_defaultSampler->Release(); m_defaultSampler = nullptr; }
     if (m_shadowComparisonSampler) { m_shadowComparisonSampler->Release(); m_shadowComparisonSampler = nullptr; }
+    if (m_bilinearClampSampler) { m_bilinearClampSampler->Release(); m_bilinearClampSampler = nullptr; }
+    if (m_bilinearWrapSampler) { m_bilinearWrapSampler->Release(); m_bilinearWrapSampler = nullptr; }
 
     m_immediateContext.Reset();
     m_device.Reset();
@@ -163,6 +166,32 @@ bool DX11Device::Init(const RHIDeviceDesc& desc) {
         sd.BorderColor[3] = 0.0f;
         sd.MaxLOD = D3D11_FLOAT32_MAX;
         m_device->CreateSamplerState(&sd, &m_shadowComparisonSampler);
+    }
+    {
+        // s2: bilinear clamp — for post-process reads, LUT lookups, IBL BRDF LUT.
+        // Matches DX12 static sampler s2: MIN_MAG_MIP_LINEAR + CLAMP on all axes.
+        D3D11_SAMPLER_DESC sd = {};
+        sd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+        sd.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+        sd.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+        sd.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+        sd.MaxAnisotropy = 1;
+        sd.ComparisonFunc = D3D11_COMPARISON_NEVER;
+        sd.MaxLOD = D3D11_FLOAT32_MAX;
+        m_device->CreateSamplerState(&sd, &m_bilinearClampSampler);
+    }
+    {
+        // s3: bilinear wrap — for 3D noise textures, weather maps, tiling volumetric data.
+        // Matches DX12 static sampler s3: MIN_MAG_MIP_LINEAR + WRAP on all axes.
+        D3D11_SAMPLER_DESC sd = {};
+        sd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+        sd.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
+        sd.AddressV = D3D11_TEXTURE_ADDRESS_WRAP;
+        sd.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
+        sd.MaxAnisotropy = 1;
+        sd.ComparisonFunc = D3D11_COMPARISON_NEVER;
+        sd.MaxLOD = D3D11_FLOAT32_MAX;
+        m_device->CreateSamplerState(&sd, &m_bilinearWrapSampler);
     }
 
     // Build root layout mirroring DX12 root signature parameter → HLSL register mapping.

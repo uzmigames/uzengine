@@ -46,6 +46,7 @@ add_library(${PROJECT_NAME} SHARED
   src/napi_scene.cpp
   src/napi_input.cpp
   src/napi_diagnostics.cpp
+  src/render_thread.cpp
   ${CMAKE_JS_SRC}
 )
 
@@ -69,6 +70,7 @@ endif()
 target_link_libraries(${PROJECT_NAME}
   ${CMAKE_JS_LIB}
   ${UZENGINE_DLL_IMPORT}
+  delayimp.lib
 )
 
 # Copy DLL + dependencies alongside uzengine.node

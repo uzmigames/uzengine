@@ -27,7 +27,8 @@ TaaUpscaler::~TaaUpscaler() {
     Shutdown();
 }
 
-void TaaUpscaler::Init(IRHIDevice* /*device*/, PipelineLibrary* pipelines, CBRingAllocator* cbRing) {
+void TaaUpscaler::Init(IRHIDevice* device, PipelineLibrary* pipelines, CBRingAllocator* cbRing) {
+    m_device    = device;
     m_pipelines = pipelines;
     m_cbRing    = cbRing;
     UZ_LOG(Renderer, Info, "TaaUpscaler initialized (single-pass resolve)");
@@ -35,6 +36,7 @@ void TaaUpscaler::Init(IRHIDevice* /*device*/, PipelineLibrary* pipelines, CBRin
 
 void TaaUpscaler::Shutdown() {
     // TAA owns no GPU resources — pipeline and CB ring are external.
+    m_device    = nullptr;
     m_pipelines = nullptr;
     m_cbRing    = nullptr;
 }
@@ -97,6 +99,17 @@ void TaaUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
 
     // Bind output UAV at descriptor table slot 4 (u0).
     cmd->SetDescriptorTable(4, input.historyWriteUav);
+
+    // On non-bindless backends (DX11/SM5) the shader reads textures via explicit
+    // register(tN) declarations rather than ResourceDescriptorHeap[]. Bind them
+    // individually: slot 5 covers t0 via the root layout's SRV_Table entry, and
+    // SetFragmentTexture binds the remaining slots t1-t3 directly.
+    if (m_device && !m_device->IsBindless()) {
+        cmd->SetDescriptorTable(5, input.sceneColorSrv);           // t0 — scene color
+        cmd->SetFragmentTexture(1, input.depthTexture);            // t1 — depth
+        cmd->SetFragmentTexture(2, input.historyReadTexture);      // t2 — history
+        cmd->SetFragmentTexture(3, input.velocityTexture);         // t3 — velocity
+    }
 
     // Dispatch 8x8 thread groups covering the full display resolution.
     const uint32_t groupsX = (static_cast<uint32_t>(input.outputWidth)  + 7) / 8;

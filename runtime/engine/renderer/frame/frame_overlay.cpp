@@ -10,7 +10,7 @@
 #include "components.h"
 
 #include "camera.h"
-#include "fps_camera_controller.h"
+#include "fly_camera_controller.h"
 #include "gpu_mesh.h"
 #include "render_graph_builder.h"
 #include "render_graph_resources.h"

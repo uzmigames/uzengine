@@ -37,6 +37,19 @@ static Napi::Value OnKey(const Napi::CallbackInfo& info) {
     return env.Undefined();
 }
 
+static Napi::Value OnKeyEx(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 3 || !info[0].IsNumber() || !info[1].IsBoolean() || !info[2].IsNumber()) {
+        Napi::TypeError::New(env, "onKeyEx(keycode: number, pressed: boolean, modifiers: number) expected")
+            .ThrowAsJavaScriptException();
+        return env.Undefined();
+    }
+    uz_on_key_ex(info[0].As<Napi::Number>().Int32Value(),
+                 info[1].As<Napi::Boolean>().Value() ? 1 : 0,
+                 info[2].As<Napi::Number>().Int32Value());
+    return env.Undefined();
+}
+
 static Napi::Value OnScroll(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     if (info.Length() < 1 || !info[0].IsNumber()) {
@@ -51,5 +64,6 @@ void RegisterInputBindings(Napi::Env env, Napi::Object exports) {
     exports.Set("onMouseMove",   Napi::Function::New(env, OnMouseMove));
     exports.Set("onMouseButton", Napi::Function::New(env, OnMouseButton));
     exports.Set("onKey",         Napi::Function::New(env, OnKey));
+    exports.Set("onKeyEx",       Napi::Function::New(env, OnKeyEx));
     exports.Set("onScroll",      Napi::Function::New(env, OnScroll));
 }

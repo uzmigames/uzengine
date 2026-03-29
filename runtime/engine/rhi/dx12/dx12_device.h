@@ -264,6 +264,12 @@ public:
     /// Returns the command signature for indirect dispatch calls.
     ID3D12CommandSignature* GetDispatchIndirectSignature() const { return m_dispatchIndirectSig.Get(); }
 
+    /// Returns the maximum root signature version supported by this device.
+    ///
+    /// Detected at init time via `CheckFeatureSupport(D3D12_FEATURE_ROOT_SIGNATURE)`.
+    /// Used by `D3DX12SerializeVersionedRootSignature` for automatic 1.1→1.0 fallback.
+    [[nodiscard]] D3D_ROOT_SIGNATURE_VERSION GetRootSignatureVersion() const { return m_rootSigVersion; }
+
     /// Returns the negotiated shader model for this device.
     ///
     /// Determined during device creation by probing GPU capabilities.
@@ -272,6 +278,9 @@ public:
 
     /// Returns `RHIBackend::DX12`. See `IRHIDevice::GetBackend`.
     RHIBackend GetBackend() const override { return RHIBackend::DX12; }
+
+    /// Returns true if the DX12 device has been lost. See `IRHIDevice::IsDeviceRemoved`.
+    bool IsDeviceRemoved() const override { return m_deviceRemoved; }
 
     /// Queries DXGI for tearing/VRR support. See `IRHIDevice::SupportsVariableRefreshRate`.
     bool SupportsVariableRefreshRate() const override;
@@ -313,6 +322,7 @@ public:
     TracyD3D12Ctx GetTracyGpuContext() const { return m_tracyD3D12Ctx; }
 
 private:
+    bool TryLoadAgilitySdk();
     bool EnableDebugLayer(bool gpuValidation);
     bool CreateFactory(bool validation);
     bool SelectAdapter(uint32_t adapterIndex);
@@ -332,6 +342,8 @@ private:
     ComPtr<IDXGIFactory6>          m_factory;
     ComPtr<IDXGIAdapter4>          m_adapter;
     ComPtr<ID3D12Device>           m_device;
+    ComPtr<ID3D12DeviceFactory>    m_deviceFactory;  ///< Agility SDK device factory (DLL mode).
+    HMODULE                        m_agilityCoreModule = nullptr;  ///< D3D12Core.dll handle (Agility SDK).
     D3D12MA::Allocator*            m_allocator = nullptr;
 
     ComPtr<ID3D12CommandQueue>     m_directQueue;
@@ -378,11 +390,17 @@ private:
     DX12GpuProfiler                m_gpuProfiler;
     TracyD3D12Ctx                  m_tracyD3D12Ctx = nullptr;
 
+    D3D_ROOT_SIGNATURE_VERSION     m_rootSigVersion = D3D_ROOT_SIGNATURE_VERSION_1_0;
     ShaderModel                    m_shaderModel = ShaderModel::SM5_0;
     std::string                    m_adapterName;
     std::string                    m_featureLevelStr;
     D3D_FEATURE_LEVEL              m_featureLevel = D3D_FEATURE_LEVEL_12_0;
     bool                           m_validationEnabled = false;
+
+    /// Set to true by `LogDeviceRemoved()` on first call. Once set, subsequent
+    /// calls to `LogDeviceRemoved()` are no-ops to prevent log spam, and
+    /// `IsDeviceRemoved()` returns true so the render loop can exit.
+    bool                           m_deviceRemoved = false;
 };
 
 } // namespace uz

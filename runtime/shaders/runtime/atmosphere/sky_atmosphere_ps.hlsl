@@ -272,6 +272,7 @@ float4 main(FSInput input) : SV_Target {
     if (depth > 0.0001f)
         discard;
 
+
     // ── Reconstruct world-space ray direction ────────────────────────────────
     /// @ref TranslatedWorldToClip (camera-relative rendering)
     /// @deviations Near/far clip subtraction used instead of the reference engine's TranslatedWorld

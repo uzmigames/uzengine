@@ -151,16 +151,23 @@ void DestroyDX12Sampler(DX12Sampler& sampler,
 /// - SM6.6+: Uses `DIRECTLY_INDEXED` flags for bindless `ResourceDescriptorHeap[]` access.
 /// - SM < 6.6: Standard root signature without bindless flags.
 ///
+/// Uses `D3DX12SerializeVersionedRootSignature` (d3dx12 helper) which automatically
+/// handles 1.1→1.0 downgrade when the driver only supports root signature version 1.0.
+///
 /// Layout: one root constant (`uint descriptorIndex` at register `b0`, space 0).
 ///
 /// # Arguments
 /// * `device` — D3D12 device to create the root signature on.
 /// * `sm` — Negotiated shader model (determines root signature flags).
+/// * `maxVersion` — Maximum root signature version supported by the device
+///   (from `CheckFeatureSupport(D3D12_FEATURE_ROOT_SIGNATURE)`).
 ///
 /// # Returns
 /// A valid `ID3D12RootSignature*` on success (caller owns the COM reference),
 /// or `nullptr` on failure.
-[[nodiscard]] ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device, ShaderModel sm);
+[[nodiscard]] ID3D12RootSignature* CreateBindlessRootSignature(
+    ID3D12Device* device, ShaderModel sm,
+    D3D_ROOT_SIGNATURE_VERSION maxVersion = D3D_ROOT_SIGNATURE_VERSION_1_1);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pipeline Creation

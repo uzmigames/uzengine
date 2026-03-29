@@ -176,6 +176,24 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
             cloudInput.globalCoverage    = cloudComp.coverage;
             cloudInput.temporalBlendFactor = 1.0f; // DEBUG: 100% current, skip temporal history
 
+            // ── Additional tracing/quality parameters from VolumetricCloudsComponent ──
+            cloudInput.cloudType = cloudComp.cloudType;
+            cloudInput.tracingMaxDistanceKm = cloudComp.tracingMaxDistanceKm;
+            cloudInput.viewSampleCountScale = cloudComp.viewSampleCountScale;
+            cloudInput.reflectionViewSampleCountScale = cloudComp.reflectionViewSampleCountScale;
+            cloudInput.shadowViewSampleCountScale = cloudComp.shadowViewSampleCountScale;
+            cloudInput.shadowReflectionViewSampleCountScale = cloudComp.shadowReflectionViewSampleCountScale;
+            cloudInput.shadowTracingDistance = cloudComp.shadowTracingDistance;
+            cloudInput.stopTracingTransmittanceThreshold = cloudComp.stopTracingTransmittanceThreshold;
+            cloudInput.aerialPerspectiveRayleighScatteringStartDistance = cloudComp.aerialPerspectiveRayleighScatteringStartDistance;
+            cloudInput.aerialPerspectiveRayleighScatteringFadeDistance = cloudComp.aerialPerspectiveRayleighScatteringFadeDistance;
+            cloudInput.aerialPerspectiveMieScatteringStartDistance = cloudComp.aerialPerspectiveMieScatteringStartDistance;
+            cloudInput.aerialPerspectiveMieScatteringFadeDistance = cloudComp.aerialPerspectiveMieScatteringFadeDistance;
+            cloudInput.skyLightCloudBottomOcclusion = cloudComp.skyLightCloudBottomOcclusion;
+            cloudInput.tracingMaxDistanceMode = static_cast<uint32_t>(cloudComp.tracingMaxDistanceMode);
+            cloudInput.tracingStartMaxDistance = cloudComp.tracingStartMaxDistance;
+            cloudInput.tracingStartDistanceFromCamera = cloudComp.tracingStartDistanceFromCamera;
+
             // Store cloud input for deferred execution after render graph.
             // CloudPass::Execute() manages its own barriers on internally-owned
             // textures (noise, weather, cloud output). Running it inside a render
@@ -188,7 +206,7 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
             // Cloud composite pass — fullscreen triangle that alpha-blends
             // the half-res cloud output over the HDR scene color using
             // premultiplied-alpha: final.rgb = cloud.rgb + scene.rgb * transmittance
-            if (m_cloudOutputSrv != UINT32_MAX)
+            if (m_cloudOutputSrv != UINT32_MAX && ctx.bindless)
             rgBuilder.AddPass("CloudComposite", [this, &ctx](rg::RgPassBuilder& pb) {
                 pb.Write(ctx.hdrRes, RHIResourceState::RenderTarget);
 
@@ -202,8 +220,8 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
 
                     static bool loggedOnce = false;
                     if (!loggedOnce) {
-                        UZ_LOG(Renderer, Info, "CloudComposite: executing — cloudSRV={}, depthSRV={}",
-                               m_cloudOutputSrv, m_gbuffer.depthSRV);
+                        UZ_LOG(Renderer, Info, "CloudComposite: executing — cloudSRV={}, depthSRV={}, bindless={}",
+                               m_cloudOutputSrv, m_gbuffer.depthSRV, ctx.bindless);
                         loggedOnce = true;
                     }
 
@@ -221,9 +239,18 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
 
                     cmd->SetPipeline(compositePSO);
 
-                    // Root constants: cloud SRV index + depth SRV index
-                    const uint32_t rootConst[4] = { m_cloudOutputSrv, m_gbuffer.depthSRV, 0, 0 };
-                    cmd->SetRootConstants(kSlotRootConstants, rootConst, 4);
+                    if (ctx.bindless) {
+                        // SM6.6 bindless: push descriptor indices via root constants.
+                        const uint32_t rootConst[4] = { m_cloudOutputSrv, m_gbuffer.depthSRV, 0, 0 };
+                        cmd->SetRootConstants(kSlotRootConstants, rootConst, 4);
+                    } else {
+                        // SM5 non-bindless: bind textures directly at register slots.
+                        // t0 = cloud output, t1 = scene depth
+                        if (m_cloudPass) {
+                            cmd->SetFragmentTexture(0, m_cloudPass->GetCloudOutputTexture());
+                        }
+                        cmd->SetFragmentTexture(1, m_gbuffer.depth);
+                    }
                     cmd->SetRootCBV(kSlotPerFrame, ctx.perFrameAlloc.bufferHandle,
                                     ctx.perFrameAlloc.offsetBytes, ctx.perFrameAlloc.cpuPtr,
                                     sizeof(PerFrameCB));

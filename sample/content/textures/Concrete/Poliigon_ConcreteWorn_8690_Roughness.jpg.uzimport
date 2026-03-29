@@ -4,11 +4,13 @@
     "options": {
         "entry_point": "",
         "model": "",
-        "stage": ""
+        "stage": "",
+        "texture_format": "BC4",
+        "texture_srgb": "false"
     },
     "outputs": {
-        "": "e:/UzEngine/sample/content_cooked/.cache/imported/f1d0b4e4e9cc32aa.bin"
+        "": "sample/content/.cache/imported/361ae870bd393641.bin"
     },
     "source_hash": "379f32dfda429487",
-    "version": 1
+    "version": 2
 }

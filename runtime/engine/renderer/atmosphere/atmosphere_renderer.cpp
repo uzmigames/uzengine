@@ -279,7 +279,12 @@ void AddAtmospherePasses(
         skyCB.bottomRadiusKm        = skyComp.bottomRadiusKm;
         skyCB.atmosphereHeightKm    = skyComp.atmosphereHeightKm;
         skyCB.sunDiskIntensity      = skySunDiskIntensity;
-        skyCB.multiScatteringFactor = skyComp.multiScatteringFactor;
+        // Multi-scattering LUT is only precomputed on bindless (SM6.6+).
+        // On non-bindless, the LUT texture exists but is uninitialized — set
+        // factor to 0 so the sky PS skips the multi-scatter contribution and
+        // avoids sampling garbage data (which causes orange/pink sky).
+        skyCB.multiScatteringFactor = ctx.bindless
+            ? skyComp.multiScatteringFactor : 0.0f;
         skyCB.rayleighScatteringScale = skyComp.rayleighScatteringScale;
         skyCB.mieScatteringScale    = skyComp.mieScatteringScale;
         skyCB.mieAbsorptionScale    = skyComp.mieAbsorptionScale;

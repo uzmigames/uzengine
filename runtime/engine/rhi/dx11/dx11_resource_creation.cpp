@@ -409,15 +409,106 @@ uint64_t DX11Device::GetBufferGPUAddress(RHIBufferHandle handle) const {
 RHITextureHandle DX11Device::CreateTexture(const RHITextureDesc& desc) {
     UZ_PROFILE_FUNCTION();
 
-    // DX11 backend does not support 3D (volume) textures — they require
-    // ID3D11Texture3D which is a separate creation path. The color grading
-    // LUT and other 3D textures are only used on the DX12 bindless path.
+    // ── 3D (volume) texture path ─────────────────────────────────────────────
+    // ID3D11Texture3D is a separate object from ID3D11Texture2D; create it on its
+    // own path and store in slot->texture3D (slot->texture stays null).
     if (desc.is3D) {
-        UZ_LOG(RHI, Warning, "DX11: 3D textures not supported, skipping '{}' ({}x{}x{})",
-               desc.debugName ? desc.debugName : "<unnamed>",
-               desc.width, desc.height, desc.depthOrArraySize);
-        return RHITextureHandle::Invalid();
+        // 3D textures do not support depth-stencil or render-target usage — those
+        // are invalid flag combinations in DX11 for ID3D11Texture3D.
+        if (IsDepthFormat(desc.format)
+            || HasFlag(desc.usage, RHITextureUsage::DepthStencil)
+            || HasFlag(desc.usage, RHITextureUsage::RenderTarget)) {
+            UZ_LOG(RHI, Error,
+                   "DX11 CreateTexture (3D): depth-stencil and render-target usage are "
+                   "not valid for 3D textures ('{}')",
+                   desc.debugName ? desc.debugName : "<unnamed>");
+            return RHITextureHandle::Invalid();
+        }
+
+        D3D11_TEXTURE3D_DESC td3 = {};
+        td3.Width      = desc.width;
+        td3.Height     = desc.height;
+        td3.Depth      = desc.depthOrArraySize;
+        td3.MipLevels  = desc.mipLevels;
+        td3.Format     = ToDxgiFormat(desc.format);
+        td3.Usage      = D3D11_USAGE_DEFAULT;
+        td3.CPUAccessFlags = 0;
+
+        if (HasFlag(desc.usage, RHITextureUsage::ShaderResource))  td3.BindFlags |= D3D11_BIND_SHADER_RESOURCE;
+        if (HasFlag(desc.usage, RHITextureUsage::UnorderedAccess)) td3.BindFlags |= D3D11_BIND_UNORDERED_ACCESS;
+
+        ID3D11Texture3D* texture3D = nullptr;
+        HRESULT hr = m_device->CreateTexture3D(&td3, nullptr, &texture3D);
+        if (FAILED(hr)) {
+            UZ_LOG(RHI, Error, "DX11 CreateTexture3D failed: {}x{}x{} '{}', hr=0x{:08X}",
+                   desc.width, desc.height, desc.depthOrArraySize,
+                   desc.debugName ? desc.debugName : "<unnamed>",
+                   static_cast<uint32_t>(hr));
+            return RHITextureHandle::Invalid();
+        }
+
+        if (desc.debugName) {
+            texture3D->SetPrivateData(WKPDID_D3DDebugObjectName,
+                                      static_cast<UINT>(strlen(desc.debugName)), desc.debugName);
+        }
+
+        uint32_t generation = 0;
+        uint32_t index = m_texturePool.Allocate(generation);
+        DX11Texture* slot = m_texturePool.Get(index, generation);
+        if (!slot) {
+            texture3D->Release();
+            UZ_LOG(RHI, Error, "CreateTexture (3D): pool allocation failed");
+            return RHITextureHandle::Invalid();
+        }
+
+        slot->texture3D = texture3D;
+        slot->desc      = desc;
+        slot->generation = generation;
+
+        // SRV — Texture3D dimension
+        if (HasFlag(desc.usage, RHITextureUsage::ShaderResource)) {
+            D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+            srvDesc.Format                     = ToDxgiFormat(desc.format);
+            srvDesc.ViewDimension              = D3D11_SRV_DIMENSION_TEXTURE3D;
+            srvDesc.Texture3D.MostDetailedMip  = 0;
+            srvDesc.Texture3D.MipLevels        = desc.mipLevels;
+
+            hr = m_device->CreateShaderResourceView(texture3D, &srvDesc, &slot->srv);
+            if (SUCCEEDED(hr)) {
+                slot->srvIndex = m_nextSrvIndex++;
+            } else {
+                UZ_LOG(RHI, Warning, "DX11 CreateSRV for Texture3D failed, hr=0x{:08X}",
+                       static_cast<uint32_t>(hr));
+            }
+        }
+
+        // UAV — Texture3D dimension; WSize covers the full depth at mip 0
+        if (HasFlag(desc.usage, RHITextureUsage::UnorderedAccess)) {
+            D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+            uavDesc.Format                     = ToDxgiFormat(desc.format);
+            uavDesc.ViewDimension              = D3D11_UAV_DIMENSION_TEXTURE3D;
+            uavDesc.Texture3D.MipSlice         = 0;
+            uavDesc.Texture3D.FirstWSlice      = 0;
+            // WSize must equal the full depth at the chosen mip level (mip 0 here)
+            uavDesc.Texture3D.WSize            = desc.depthOrArraySize;
+
+            hr = m_device->CreateUnorderedAccessView(texture3D, &uavDesc, &slot->uav);
+            if (FAILED(hr)) {
+                UZ_LOG(RHI, Error,
+                       "DX11 CreateUAV for Texture3D failed ({}x{}x{}, fmt={}, hr=0x{:08X})",
+                       desc.width, desc.height, desc.depthOrArraySize,
+                       static_cast<int>(desc.format), static_cast<uint32_t>(hr));
+            }
+        }
+
+        UZ_LOG(RHI, Debug, "CreateTexture (3D): {}x{}x{}, mips={} (name='{}')",
+               desc.width, desc.height, desc.depthOrArraySize, desc.mipLevels,
+               desc.debugName ? desc.debugName : "");
+
+        return {index, generation};
     }
+
+    // ── 2D / cubemap / array texture path ────────────────────────────────────
 
     D3D11_TEXTURE2D_DESC td = {};
     td.Width = desc.width;
@@ -561,11 +652,12 @@ void DX11Device::DestroyTexture(RHITextureHandle handle) {
                handle.index, handle.generation);
         return;
     }
-    if (tex->uav) { tex->uav->Release(); tex->uav = nullptr; }
-    if (tex->dsv) { tex->dsv->Release(); tex->dsv = nullptr; }
-    if (tex->rtv) { tex->rtv->Release(); tex->rtv = nullptr; }
-    if (tex->srv) { tex->srv->Release(); tex->srv = nullptr; }
-    if (tex->texture) { tex->texture->Release(); tex->texture = nullptr; }
+    if (tex->uav)      { tex->uav->Release();      tex->uav      = nullptr; }
+    if (tex->dsv)      { tex->dsv->Release();      tex->dsv      = nullptr; }
+    if (tex->rtv)      { tex->rtv->Release();      tex->rtv      = nullptr; }
+    if (tex->srv)      { tex->srv->Release();      tex->srv      = nullptr; }
+    if (tex->texture3D){ tex->texture3D->Release(); tex->texture3D = nullptr; }
+    if (tex->texture)  { tex->texture->Release();  tex->texture  = nullptr; }
     m_texturePool.Free(handle.index);
 }
 

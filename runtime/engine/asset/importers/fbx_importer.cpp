@@ -492,6 +492,14 @@ AssetImportResult FbxImporter::Import(
             continue;
         }
 
+        // Reverse triangle winding from CW to CCW.
+        // ufbx MODIFY_GEOMETRY converts positions to left-handed Z-up but does
+        // not flip triangle winding, leaving faces CW. Our rasterizer uses
+        // frontCounterClockwise = true (CCW = front), so we must reverse.
+        for (size_t t = 0; t + 2 < groupIndices.size(); t += 3) {
+            std::swap(groupIndices[t + 1], groupIndices[t + 2]);
+        }
+
         // Generate flat normals if the FBX had no normal layer
         if (!hasNormals) {
             GenerateFlatNormals(groupVertices, groupIndices);

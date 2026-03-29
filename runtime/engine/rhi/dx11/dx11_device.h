@@ -265,6 +265,14 @@ public:
     /// Returns the default shadow comparison sampler (matches DX12 static sampler s1).
     ID3D11SamplerState* GetShadowComparisonSampler() const { return m_shadowComparisonSampler; }
 
+    /// Returns the bilinear-clamp sampler (matches DX12 static sampler s2).
+    /// Used for post-process reads, LUT lookups, and IBL BRDF LUT sampling.
+    ID3D11SamplerState* GetBilinearClampSampler() const { return m_bilinearClampSampler; }
+
+    /// Returns the bilinear-wrap sampler (matches DX12 static sampler s3).
+    /// Used for 3D noise textures, weather maps, and tiling volumetric data.
+    ID3D11SamplerState* GetBilinearWrapSampler() const { return m_bilinearWrapSampler; }
+
 private:
     bool EnableDebugLayer();
     bool CreateFactory();
@@ -309,6 +317,14 @@ private:
 
     /// Shadow PCF comparison sampler (equivalent to DX12 static sampler s1).
     ID3D11SamplerState*            m_shadowComparisonSampler = nullptr;
+
+    /// Bilinear-clamp sampler (equivalent to DX12 static sampler s2).
+    /// Used for post-process reads, LUT lookups, and IBL BRDF LUT sampling.
+    ID3D11SamplerState*            m_bilinearClampSampler = nullptr;
+
+    /// Bilinear-wrap sampler (equivalent to DX12 static sampler s3).
+    /// Used for 3D noise textures, weather maps, and tiling volumetric data.
+    ID3D11SamplerState*            m_bilinearWrapSampler = nullptr;
 
     /// Root signature layout mirroring DX12 root parameter → HLSL register mapping.
     /// Built during Init() so DX11 command list can translate rootParamIndex to

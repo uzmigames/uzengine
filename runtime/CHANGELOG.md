@@ -2,6 +2,196 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.3.0] — 2026-03-28
+
+### VSCode Viewport — Full DX12 Rendering Inside the Editor
+
+#### Agility SDK (Win10 DLL Mode)
+- **feat(rhi):** Programmatic Agility SDK loading via `ID3D12SDKConfiguration1::CreateDeviceFactory()` — bypasses the `dllexport` limitation when running as a DLL inside VSCode/Electron on Win10.
+- **feat(rhi):** DXC-based root signature compilation fallback — when system d3d12.dll rejects `DIRECTLY_INDEXED` flags, compiles root signature HLSL via DXC with `-T rootsig_1_1`. Enables SM6.8 bindless rendering in DLL mode.
+- **feat(rhi):** Root signature version detection via `CheckFeatureSupport(D3D12_FEATURE_ROOT_SIGNATURE)` with `D3DX12SerializeVersionedRootSignature` helper for automatic 1.1→1.0 downgrade (UE5 pattern).
+- **Result:** Feature Level 12_2, SM6.8, bindless ON, RTX 4090 @ 108+ FPS inside VSCode.
+
+#### Viewport Rendering
+- **feat(renderer):** H.264 frame readback captures backbuffer (includes editor overlays: grid, stats, gizmos) instead of LDR intermediate.
+- **feat(renderer):** Editor mode applied even when `setEditorMode()` is called before SceneRenderer init completes.
+- **feat(renderer):** Render loop target increased from 30 to 120 FPS.
+- **feat(renderer):** Stats overlay shows real entity/mesh counts.
+
+#### Input System (VSCode Webview)
+- **fix(input):** Mouse button mapping corrected for Web API (`e.button`: 0=Left, 1=Middle, 2=Right).
+- **fix(input):** Key events forwarded with `preventDefault + stopPropagation` to prevent VSCode from capturing WASD.
+- **fix(input):** ECS camera synced every frame in editor mode — Lua scripts (camera_test_controller.lua) drive camera input via `uz.input` + `uz.camera` APIs instead of C++ FlyCameraController.
+
+#### GPU Device Removed Protection
+- **feat(rhi):** `IRHIDevice::IsDeviceRemoved()` — stops render loop on first device removal, logs DRED once, terminates worker with `_exit(1)`.
+- **feat(runtime):** `device_removed` field in `uz_frame_stats` — render thread breaks loop immediately.
+
+#### DLL Build
+- **fix(build):** Environment components (`sky_atmosphere`, `sky_light`, `height_fog`, `volumetric_clouds`, etc.) compiled directly into DLL to preserve static initializer auto-registration.
+- **fix(build):** Debug layer disabled in DLL mode (SM5 validation errors promoted to fatal failures).
+
+## [0.2.58] — 2026-03-28
+
+### Centralized Logging, GPU Crash Protection, Auto-Exposure Fix
+
+#### Centralized Logging
+- **feat(logging):** `LogInit()` now writes to `%LOCALAPPDATA%/UzEngine/logs/uzengine_YYYY-MM-DD_HH-MM-SS.log` by default. Explicit paths (used by tests) still work via `LogInit(path)`.
+- **feat(logging):** Added `LogGetFilePath()` to query the resolved log file path at runtime.
+- **feat(logging):** Worker process log (`worker.log`) also centralized to `%LOCALAPPDATA%/UzEngine/logs/`.
+
+#### GPU Device Removed Protection
+- **feat(rhi):** Added `IRHIDevice::IsDeviceRemoved()` virtual method (default false). DX12 backend sets `m_deviceRemoved = true` on first `LogDeviceRemoved()` call.
+- **fix(rhi):** `LogDeviceRemoved()` now executes only once — subsequent calls are no-ops, preventing per-frame error log spam.
+- **feat(runtime):** `uz_render_frame()` returns immediately with `device_removed = 1` in stats when the GPU device is lost.
+- **feat(runtime):** Added `device_removed` field to `uz_frame_stats` struct.
+- **fix(runtime):** Render thread (`RenderThread::ThreadMain`) breaks the loop on `device_removed` and calls `_exit(1)` to terminate the worker process cleanly. Extension shows restart dialog.
+
+#### Auto-Exposure Fix (SM5/SM6.0 Non-Bindless)
+- **fix(renderer):** Auto-exposure histogram compute shader was dispatching without binding the HDR SRV descriptor table (root param 5) on non-bindless backends. This caused the GPU to read an unbound descriptor, resulting in DEVICE REMOVED on frame 2.
+- **fix(renderer):** Average pass also now binds histogram SRV at root param 5 for non-bindless.
+- **fix(renderer):** Added pipeline failure latch (`m_pipelineFailed`) to avoid per-frame retry spam when compute pipeline creation fails.
+
+#### DX12 Debug Layer
+- **fix(runtime):** Disabled D3D12 debug layer in DLL mode. The SM5/non-bindless path has known validation errors (barrier state mismatches, CPU-only descriptor heap copies) that the debug layer promotes to fatal `CommandList::Close` failures.
+
+#### IPC & Frame Readback
+- **feat(ipc):** Frame readback GPU copy pipeline for H.264 encoding.
+- **feat(ipc):** Media Foundation H.264 encoder integration.
+
+#### Crash Handler
+- **fix(crash):** Improved library mode (VEH) for DLL-hosted scenarios.
+
+## [0.2.57] — 2026-03-27
+
+### DX11 Black Screen Fix + Error Cleanup
+
+#### DX11 Rendering (was black screen → fully functional)
+- **fix(renderer):** CloudComposite pass zeroed out entire HDR scene color on DX11.
+  Premultiplied-alpha blend (`dstColor=SrcAlpha`) with empty cloud output (alpha=0)
+  multiplied the scene by zero every frame. Added SM5 non-bindless path with explicit
+  `SetFragmentTexture(0/1)` for cloud output + depth textures.
+- **fix(rhi):** Added `SetVertexSRV(slot, buffer)` to RHI command list interface.
+  DX11 implementation calls `VSSetShaderResources()` for structured buffer binding.
+- **fix(editor):** Gizmo renderer now binds vertex buffer SRV at VS register(t0)
+  on non-bindless backends via `SetVertexSRV`. Gizmos were invisible on DX11 because
+  the StructuredBuffer was declared but never bound.
+
+#### Error Log Cleanup (zero errors on both DX11 and DX12)
+- **fix(pipeline):** Removed SM5 non-bindless pipeline warmup on DX12 bindless devices.
+  Root signature mismatch caused E_INVALIDARG for 7 pipelines (ForwardPBR, GBuffer,
+  ShadowDepth, etc.). These variants are never used on bindless devices.
+- **fix(pipeline):** Skipped warmup for optional compute pipelines (GpuCull,
+  DFS_CullObjects, DFS_ConeTrace) — created lazily on first use instead.
+- **fix(vfx):** Guarded `RegisterTrailLuaBindings`/`RegisterDecalLuaBindings` with
+  null checks. Trail system and decal manager are set externally and may be null
+  during initialization.
+
+## [0.2.56] — 2026-03-27
+
+### Backend Visual Parity — DX11 + SM6.0 + Vulkan (29 issues, 24 fixed)
+
+#### DX11 (was 100% broken → functional)
+- **fix(rhi):** DX11 shader compilation via FXC/SM5.0 instead of DXC/SM6.0.
+  All `CreateShader E_INVALIDARG` errors resolved.
+- **feat(rhi):** DX11 3D texture support — `CreateTexture3D` + SRV + UAV for
+  atmosphere volumes, color grading LUT, global distance field.
+- **fix(rhi):** DX11 missing samplers s2 (bilinear clamp) + s3 (bilinear wrap)
+  added and bound to PS/VS/CS slots 0-3 in Begin().
+- **fix(rhi):** DX11 SRV multi-bind — `SetDescriptorTable` SRV path now reads
+  hlslSlot from root layout instead of hardcoding slot 0. t0-t13 all bind correctly.
+
+#### SM6.0 DX12 non-bindless (was crashing → visual parity with SM6.8)
+- **fix(rhi):** SM6.0 instanced pipelines gracefully skip (require bindless).
+- **fix(editor):** OutlineMaskPipeline provides VertexLayout on non-bindless path.
+- **fix(shader):** GBuffer SM5 metallic sampling: `SampleBias(linearSampler, mipBias)`.
+- **fix(shader):** Deferred lighting SM5 IBL null-guard via SRV index from PerFrameCB.
+- **fix(rhi):** Per-frame/per-draw descriptor ring allocator (4096 desc/frame × 3 frames).
+  Replaced shared 16-descriptor staging block that caused cross-frame race conditions,
+  stale descriptor carryover between passes, and per-draw texture clobbering.
+  Based on UE5 online descriptor heap pattern.
+- **fix(rhi):** `InvalidateDescriptorBlock()` API for per-draw descriptor isolation
+  in GBuffer pass. Each draw call gets a fresh 16-descriptor block.
+- **fix(tonemap):** Bind bloom result (or black fallback) at t1 on non-bindless.
+  Stale transmittance LUT from sky pass was being added as bloom, causing orange sky.
+- **fix(text):** Font atlas binding uses `m_bindless` flag, not `SetDescriptorTable(4)`
+  which targeted UAV table instead of SRV table.
+- **fix(atmosphere):** `multiScatteringFactor=0` on non-bindless (LUT not precomputed).
+- **fix(pipeline):** SkyCubemapCapturePS pipeline skipped on bindless (register(t0)
+  conflicts with DIRECTLY_INDEXED root signature).
+
+#### Vulkan
+- **fix(rhi):** `CopyBufferToTexture` division by zero on BC compressed textures.
+  `BytesPerTexel()` returns 0 for BC1-BC7; now computes from block size.
+- **fix(rhi):** Added immutable samplers s2 (bilinear clamp) + s3 (bilinear wrap)
+  to Vulkan descriptor set layout. Missing s2 caused black IBL ambient on
+  surfaces not directly lit.
+
+#### TAA + Bloom (were bindless-only → work on all backends)
+- **feat(renderer):** TAA enabled on non-bindless — removed `IsBindless()` gate,
+  added `SetDescriptorTable`/`SetFragmentTexture` binds for t0-t3.
+- **feat(renderer):** Bloom enabled on non-bindless — removed early-exit gate,
+  added SRV/UAV descriptor table binds per dispatch.
+
+#### CLI / Config
+- **fix(config):** `--sm 6.0` CLI flag now works (JSON number parsing fix +
+  `ToDeviceDesc` forwarding).
+- **fix(config):** `Config::GetString` handles JSON-parsed numbers from CLI args
+  via `json::dump()`.
+- **feat(cli):** Added `--log-level` flag (trace/debug/info/warning/error).
+- **fix(camera):** Editor camera init delayed to frame 3 (after Lua on_start).
+
+## [0.2.55] — 2026-03-26
+
+### Editor: gizmo/outline always-on-top, fly camera rename, WASD input routing
+
+- **fix(outline):** Disable depth test on outline mask pass so selection
+  outline always renders on top of all geometry (UE5 behavior). Previously
+  outline was occluded by meshes in front of the selected object.
+- **fix(gizmo):** Disable depth test on gizmo line and triangle pipelines
+  so transform gizmo always renders on top of scene geometry.
+- **feat(gizmo):** Increase gizmo screen-space size from 120px to 180px
+  at 720p reference (closer to UE5 ~150-200px). Updated in renderer,
+  interaction hit-testing, and editor input handler.
+- **fix(camera):** In editor mode, skip ECS CameraComponent (driven by
+  Lua scripts with their own WASD handling) and use the built-in fly
+  camera controller instead. Lua camera scripts were bypassing the
+  editor input gate entirely.
+- **feat(camera):** Add editor mode to FlyCameraController — WASD
+  movement only allowed while RMB is held (UE5 viewport behavior).
+  Without RMB, W/E/R switch gizmo modes instead of moving the camera.
+- **refactor(camera):** Rename `FPSCameraController` → `FlyCameraController`
+  and `fps_camera_controller.h/.cpp` → `fly_camera_controller.h/.cpp`
+  across ~15 files. "Fly camera" accurately describes the free-flight
+  behavior vs misleading "FPS" label.
+
+## [0.2.54] — 2026-03-26
+
+### Fix: LDR tonemap color shift + CCW mesh winding across all sources
+
+- **fix(tonemap):** Remove hardcoded saturation (1.15) and contrast (1.05)
+  boost that caused red/brown/magenta tint in LDR output. ACESFilm
+  tonemap now runs clean without pre-grading hacks.
+- **feat(tonemap):** Wire color grading 3D LUT infrastructure into
+  tonemap pass — `LinToLog`, `ColorGradingLUTSample`, SRV routing via
+  5th root constant (bindless) and `t2` (SM5). LUT path disabled by
+  default; ACESFilm fallback active.
+- **fix(mesh):** Correct `CreateCube` and `GeneratePlaneMesh` winding
+  order to CCW (screen-space) to match `frontCounterClockwise = true` +
+  `cullMode = Back` convention from commit db420aff.
+- **fix(fbx):** Reverse triangle winding in both `fbx_importer.cpp` and
+  `uzfbx` tool after axis remap (Y-up→Z-up odd permutation flips
+  handedness). Winding swap placed AFTER `ufbx_generate_indices`
+  deduplication to avoid being overwritten.
+- **feat(uzfbx):** Add `--builtin cube|sphere` mode for generating
+  procedural .uzmesh files with correct winding.
+- **fix(gizmo):** Correct AppendCube, AppendCone, AppendQuad winding
+  CW→CCW in gizmo renderer.
+- **fix(assets):** Regenerated `cube.uzmesh` and
+  `MushroomMonster_Low.uzmesh` with correct CCW winding.
+- **fix(demos):** Update `mock_device.h` — add missing includes for
+  `ShaderModel`, `RHIBackend`, remove stale `GpuProfilerResult` overrides.
+
 ## [0.2.53] — 2026-03-26
 
 ### GPU-Driven VFX System (PR #6 + post-merge integration)

@@ -529,6 +529,27 @@ bool InputSystem::IsActionJustPressed(const std::string& name) const {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Modifier State (Editor Injection)
+// ─────────────────────────────────────────────────────────────────────────────
+
+void InputSystem::SetModifierState(bool shift, bool ctrl, bool alt, bool meta) {
+    // VK_LSHIFT = 0xA0, VK_RSHIFT = 0xA1, VK_SHIFT = 0x10
+    m_keyCurrent[0xA0] = shift;   // VK_LSHIFT
+    m_keyCurrent[0x10] = shift;   // VK_SHIFT (generic)
+
+    // VK_LCONTROL = 0xA2, VK_RCONTROL = 0xA3, VK_CONTROL = 0x11
+    m_keyCurrent[0xA2] = ctrl;    // VK_LCONTROL
+    m_keyCurrent[0x11] = ctrl;    // VK_CONTROL (generic)
+
+    // VK_LMENU = 0xA4, VK_RMENU = 0xA5, VK_MENU = 0x12
+    m_keyCurrent[0xA4] = alt;     // VK_LMENU (Alt)
+    m_keyCurrent[0x12] = alt;     // VK_MENU (generic)
+
+    // VK_LWIN = 0x5B, VK_RWIN = 0x5C
+    m_keyCurrent[0x5B] = meta;    // VK_LWIN
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Platform Callbacks
 // ─────────────────────────────────────────────────────────────────────────────
 

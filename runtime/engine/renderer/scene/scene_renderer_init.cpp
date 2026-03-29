@@ -9,7 +9,7 @@
 #include "async_texture_decoder.h"
 #include "camera.h"
 #include "units.h"
-#include "fps_camera_controller.h"
+#include "fly_camera_controller.h"
 #include "render_graph_resources.h"
 #include "shadow_atlas.h"
 #include "shadow_pass.h"
@@ -134,14 +134,14 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
 
     // ── Camera ──────────────────────────────────────────────────────────
     m_camera = std::make_unique<Camera>();
-    m_cameraCtrl = std::make_unique<FPSCameraController>();
+    m_cameraCtrl = std::make_unique<FlyCameraController>();
 
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
     m_camera->SetHorizontalFOV(90.f, aspect, uz::Units::kDefaultNearPlaneCm, uz::Units::kDefaultFarPlaneCm);
     m_camera->SetPosition({0.f, 200.f, -500.f});
     m_camera->LookAt({0.f, 0.f, 0.f}, Vec3::Up());
     m_cameraCtrl->InitFromCamera(*m_camera);
-    m_cameraCtrl->SetMoveSpeed(500.f);  // 500 cm/s = 5 m/s
+    m_cameraCtrl->SetMoveSpeed(5.f);  // 5 cm/s — matches Lua pbr_showcase_controller default
 
     // ── GBuffer (at render resolution — upscaled to display res by TAA) ──
     if (!m_gbuffer.Create(device, m_renderWidth, m_renderHeight)) {
@@ -656,8 +656,12 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         auto* L = uz::LuaVM::GetState();
         if (L && m_vfxSystem) {
             RegisterVFXLuaBindings(L, m_vfxSystem.get());
-            RegisterTrailLuaBindings(L, m_trailSystem);
-            RegisterDecalLuaBindings(L, m_decalManager);
+            if (m_trailSystem) {
+                RegisterTrailLuaBindings(L, m_trailSystem);
+            }
+            if (m_decalManager) {
+                RegisterDecalLuaBindings(L, m_decalManager);
+            }
             UZ_LOG(Renderer, Info, "SceneRenderer: uz.vfx Lua API registered");
         }
     }

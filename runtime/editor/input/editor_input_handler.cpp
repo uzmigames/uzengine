@@ -114,7 +114,7 @@ void EditorInputHandler::Update(float /*dt*/) {
         const float dz = entityPos.z - camPos.z;
         const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
         const float tanHalfFov = std::tan(m_camera->GetFovY() * 0.5f);
-        const float screenScale = dist * tanHalfFov * (120.0f / 720.0f);
+        const float screenScale = dist * tanHalfFov * (180.0f / 720.0f);
 
         const GizmoHitResult hovered = m_gizmoInteraction.HitTest(
             mx, my, vpWidth, vpHeight, *m_camera,
@@ -142,7 +142,7 @@ void EditorInputHandler::Update(float /*dt*/) {
             const float dz = entityPos.z - camPos.z;
             const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
             const float tanHalfFov = std::tan(m_camera->GetFovY() * 0.5f);
-            const float screenScale = dist * tanHalfFov * (120.0f / 720.0f);
+            const float screenScale = dist * tanHalfFov * (180.0f / 720.0f);
 
             m_gizmoInteraction.BeginDrag(
                 hovered, mx, my, vpWidth, vpHeight, *m_camera,

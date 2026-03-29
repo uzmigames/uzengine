@@ -22,7 +22,7 @@ TEST(RHIConfig, DefaultConfigUsesPlatformBackend) {
 #else
     EXPECT_EQ(rhi.backend, RHIBackend::Vulkan);
 #endif
-    EXPECT_EQ(rhi.shaderModel, ShaderModel::SM6_6);
+    EXPECT_FALSE(rhi.shaderModel.has_value()); // auto-negotiate by default
     EXPECT_FALSE(rhi.enableValidation);
     EXPECT_FALSE(rhi.enableGpuValidation);
     EXPECT_FALSE(rhi.enableBreadcrumbs);
@@ -94,42 +94,42 @@ TEST(RHIConfig, ShaderModelSM5) {
     Config config;
     const char* argv[] = {"test", "--shader-model=sm5"};
     config.ApplyCLIOverrides(2, argv);
-    EXPECT_EQ(ResolveRHIConfig(config).shaderModel, ShaderModel::SM5_0);
+    EXPECT_EQ(*ResolveRHIConfig(config).shaderModel, ShaderModel::SM5_0);
 }
 
 TEST(RHIConfig, ShaderModelSM5_0Explicit) {
     Config config;
     const char* argv[] = {"test", "--shader-model=sm5.0"};
     config.ApplyCLIOverrides(2, argv);
-    EXPECT_EQ(ResolveRHIConfig(config).shaderModel, ShaderModel::SM5_0);
+    EXPECT_EQ(*ResolveRHIConfig(config).shaderModel, ShaderModel::SM5_0);
 }
 
 TEST(RHIConfig, ShaderModelSM5_1) {
     Config config;
     const char* argv[] = {"test", "--shader-model=sm5.1"};
     config.ApplyCLIOverrides(2, argv);
-    EXPECT_EQ(ResolveRHIConfig(config).shaderModel, ShaderModel::SM5_1);
+    EXPECT_EQ(*ResolveRHIConfig(config).shaderModel, ShaderModel::SM5_1);
 }
 
 TEST(RHIConfig, ShaderModelSM6) {
     Config config;
     const char* argv[] = {"test", "--shader-model=sm6"};
     config.ApplyCLIOverrides(2, argv);
-    EXPECT_EQ(ResolveRHIConfig(config).shaderModel, ShaderModel::SM6_0);
+    EXPECT_EQ(*ResolveRHIConfig(config).shaderModel, ShaderModel::SM6_0);
 }
 
 TEST(RHIConfig, ShaderModelSM6_6) {
     Config config;
     const char* argv[] = {"test", "--shader-model=sm6.6"};
     config.ApplyCLIOverrides(2, argv);
-    EXPECT_EQ(ResolveRHIConfig(config).shaderModel, ShaderModel::SM6_6);
+    EXPECT_EQ(*ResolveRHIConfig(config).shaderModel, ShaderModel::SM6_6);
 }
 
 TEST(RHIConfig, ShaderModelCaseInsensitive) {
     Config config;
     const char* argv[] = {"test", "--shader-model=SM6.6"};
     config.ApplyCLIOverrides(2, argv);
-    EXPECT_EQ(ResolveRHIConfig(config).shaderModel, ShaderModel::SM6_6);
+    EXPECT_EQ(*ResolveRHIConfig(config).shaderModel, ShaderModel::SM6_6);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -145,7 +145,7 @@ TEST(RHIConfig, ProjectConfigFallbackBackend) {
 TEST(RHIConfig, ProjectConfigFallbackShaderModel) {
     Config config;
     config.LoadFromString(R"({"render":{"shader_model":"sm5.1"}})");
-    EXPECT_EQ(ResolveRHIConfig(config).shaderModel, ShaderModel::SM5_1);
+    EXPECT_EQ(*ResolveRHIConfig(config).shaderModel, ShaderModel::SM5_1);
 }
 
 TEST(RHIConfig, CLIOverridesProjectConfig) {
@@ -270,7 +270,7 @@ TEST(RHIConfig, UnknownShaderModelKeepsDefault) {
     Config config;
     const char* argv[] = {"test", "--shader-model=sm7"};
     config.ApplyCLIOverrides(2, argv);
-    EXPECT_EQ(ResolveRHIConfig(config).shaderModel, ShaderModel::SM6_6);
+    EXPECT_EQ(*ResolveRHIConfig(config).shaderModel, ShaderModel::SM6_6);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -286,7 +286,7 @@ TEST(RHIConfig, MultipleCliFlags) {
     config.ApplyCLIOverrides(6, argv);
     const auto rhi = ResolveRHIConfig(config);
     EXPECT_EQ(rhi.backend, RHIBackend::Vulkan);
-    EXPECT_EQ(rhi.shaderModel, ShaderModel::SM5_1);
+    EXPECT_EQ(*rhi.shaderModel, ShaderModel::SM5_1);
     EXPECT_TRUE(rhi.enableValidation);
     EXPECT_TRUE(rhi.enableBreadcrumbs);
     EXPECT_EQ(rhi.adapterIndex, 1u);

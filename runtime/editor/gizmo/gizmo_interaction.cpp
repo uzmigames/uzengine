@@ -20,27 +20,28 @@ UZ_DEFINE_LOG_CATEGORY(GizmoInteraction, Trace);
 // Constants — must match gizmo_renderer.cpp geometry
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Length of axis stems in unit gizmo space (same as gizmo_renderer.cpp kAxisLength).
-static constexpr float kAxisLength = 0.8f;
+/// Length of axis stems in unit gizmo space (must match gizmo_renderer.cpp).
+static constexpr float kAxisLength = 0.70f;
 
 /// Position along each axis pair for the plane translate handles.
-static constexpr float kPlaneHandleOffset = 0.3f;
+static constexpr float kPlaneHandleOffset = 0.55f;
 
 /// Size of the plane translate handle rectangles.
 static constexpr float kPlaneHandleSize = 0.15f;
 
-/// Circle radius for rotate gizmo (same as gizmo_renderer.cpp kCircleRadius).
-static constexpr float kCircleRadius = 0.85f;
+/// Circle radius for rotate gizmo (must match gizmo_renderer.cpp).
+static constexpr float kCircleRadius = 0.70f;
 
-/// Center cube half-size (same as gizmo_renderer.cpp kCenterCubeHalfSize).
-static constexpr float kCenterCubeHalfSize = 0.06f;
+/// Center cube half-size (must match gizmo_renderer.cpp).
+static constexpr float kCenterCubeHalfSize = 0.08f;
 
-/// Hit testing threshold in screen pixels. Handles within this distance
-/// from the mouse cursor are considered "hit".
-static constexpr float kHitThresholdPx = 15.0f;
+/// Hit testing threshold in screen pixels for axis stems/circles.
+/// Increased from 7px (UE5 base) to account for screen-space projection
+/// and to make clicking 3D cylinders/rings easier.
+static constexpr float kHitThresholdPx = 20.0f;
 
 /// Hit threshold for center cube (slightly larger since it is small).
-static constexpr float kCenterHitThresholdPx = 20.0f;
+static constexpr float kCenterHitThresholdPx = 25.0f;
 
 /// Minimum mouse delta in pixels before a drag produces a transform change.
 /// Prevents jitter from sub-pixel mouse movement.
@@ -167,8 +168,8 @@ static float ComputeScreenScale(const Vec3& gizmoPos, const Camera& camera) {
     if (dist < 0.001f) return 0.f;
 
     const float tanHalfFov = std::tan(camera.GetFovY() * 0.5f);
-    // Same formula as gizmo_renderer.cpp: kTargetScreenPx=120, reference height=720.
-    return dist * tanHalfFov * (120.0f / 720.0f);
+    // Same formula as gizmo_renderer.cpp: kTargetScreenPx=180, reference height=720.
+    return dist * tanHalfFov * (180.0f / 720.0f);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

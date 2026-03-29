@@ -383,11 +383,11 @@ private:
     /// Semaphore to signal when rendering completes — Present() waits on this.
     VkSemaphore                    m_pendingRenderFinishedSem = VK_NULL_HANDLE;
 
-    /// Static samplers matching DX12 root signature static samplers.
-    /// s0 (binding 16): linear wrap — general texturing.
-    /// s1 (binding 17): comparison LESS, border black — shadow PCF.
-    VkSampler                      m_staticSamplerLinear = VK_NULL_HANDLE;
-    VkSampler                      m_staticSamplerShadow = VK_NULL_HANDLE;
+    /// Static samplers matching DX12 root signature static samplers (s0-s3).
+    VkSampler                      m_staticSamplerLinear = VK_NULL_HANDLE;        ///< s0: aniso 16x wrap
+    VkSampler                      m_staticSamplerShadow = VK_NULL_HANDLE;        ///< s1: PCF comparison LESS
+    VkSampler                      m_staticSamplerBilinearClamp = VK_NULL_HANDLE;  ///< s2: bilinear clamp
+    VkSampler                      m_staticSamplerBilinearWrap = VK_NULL_HANDLE;   ///< s3: bilinear wrap
 
     // ── Async queue synchronization (timeline semaphores) ──────────────
     VkSemaphore                    m_copyTimelineSemaphore = VK_NULL_HANDLE;

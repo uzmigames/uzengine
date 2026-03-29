@@ -10,9 +10,58 @@
 #include "D3D12MemAlloc.h"
 #include "d3dx12.h"
 #include "log.h"
+#include "paths.h"
 #include "profiler.h"
 
 #include <vector>
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DXC API for root signature compilation fallback
+//
+// On Win10 without Agility SDK dllexport, the system d3d12.dll's serializer
+// rejects DIRECTLY_INDEXED root signature flags. DXC can compile an HLSL root
+// signature definition with -T rootsig_1_1 which handles these flags natively.
+//
+// We use the same CROSS_PLATFORM_UUIDOF override trick as shader_compiler.cpp
+// because zig-clang does not support __declspec(uuid).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Parses a hex character to its 4-bit value at compile time.
+static constexpr uint8_t DxcHexVal(char c) {
+    return (c >= '0' && c <= '9') ? static_cast<uint8_t>(c - '0') :
+           (c >= 'a' && c <= 'f') ? static_cast<uint8_t>(c - 'a' + 10) :
+           (c >= 'A' && c <= 'F') ? static_cast<uint8_t>(c - 'A' + 10) : 0;
+}
+
+/// Parses two hex characters into a byte at compile time.
+static constexpr uint8_t DxcHexByte(const char* s, int i) {
+    return static_cast<uint8_t>((DxcHexVal(s[i]) << 4) | DxcHexVal(s[i + 1]));
+}
+
+/// Parses a UUID string "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX" into a GUID.
+static constexpr GUID DxcParseUUID(const char* s) {
+    return GUID{
+        static_cast<uint32_t>(DxcHexVal(s[0]) << 28 | DxcHexVal(s[1]) << 24 |
+                   DxcHexVal(s[2]) << 20 | DxcHexVal(s[3]) << 16 |
+                   DxcHexVal(s[4]) << 12 | DxcHexVal(s[5]) << 8  |
+                   DxcHexVal(s[6]) << 4  | DxcHexVal(s[7])),
+        static_cast<uint16_t>(DxcHexVal(s[9]) << 12 | DxcHexVal(s[10]) << 8 |
+                   DxcHexVal(s[11]) << 4 | DxcHexVal(s[12])),
+        static_cast<uint16_t>(DxcHexVal(s[14]) << 12 | DxcHexVal(s[15]) << 8 |
+                   DxcHexVal(s[16]) << 4 | DxcHexVal(s[17])),
+        {DxcHexByte(s, 19), DxcHexByte(s, 21),
+         DxcHexByte(s, 24), DxcHexByte(s, 26), DxcHexByte(s, 28),
+         DxcHexByte(s, 30), DxcHexByte(s, 32), DxcHexByte(s, 34)}
+    };
+}
+
+// Override the macro so dxcapi.h forward-declares structs and generates IID constants.
+#undef CROSS_PLATFORM_UUIDOF
+#define CROSS_PLATFORM_UUIDOF(iface, spec)                  \
+    struct iface;                                            \
+    static constexpr IID IID_##iface = DxcParseUUID(spec);
+
+#include "dxcapi.h"
 
 namespace uz {
 
@@ -120,7 +169,9 @@ void DestroyDX12Sampler(DX12Sampler& sampler, DescriptorAllocator& samplerHeap) 
 ///   [2] Root CBV at b2 (per-object data)
 ///   [3] Root CBV at b4 (shadow data)
 ///   [4] SRV descriptor table at t0, space0, unbounded (textures + structured buffers)
-ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device, ShaderModel sm) {
+ID3D12RootSignature* CreateBindlessRootSignature(
+        ID3D12Device* device, ShaderModel sm,
+        D3D_ROOT_SIGNATURE_VERSION maxVersion) {
     UZ_PROFILE_FUNCTION();
     const bool bindless = (sm >= ShaderModel::SM6_6);
 
@@ -267,9 +318,156 @@ ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device, ShaderMod
     versionedDesc.Desc_1_1.pStaticSamplers = staticSamplers;
     versionedDesc.Desc_1_1.Flags = flags;
 
+    // Serialize with the d3dx12 helper which auto-downgrades 1.1→1.0.
     ComPtr<ID3DBlob> serialized;
     ComPtr<ID3DBlob> error;
-    HRESULT hr = D3D12SerializeVersionedRootSignature(&versionedDesc, &serialized, &error);
+    HRESULT hr = D3DX12SerializeVersionedRootSignature(&versionedDesc, maxVersion,
+                                                        &serialized, &error);
+
+    // On Win10 without Agility SDK dllexport, the system d3d12.dll serializer rejects
+    // DIRECTLY_INDEXED flags (0xC00). Fall back to DXC which can compile an HLSL root
+    // signature definition with -T rootsig_1_1 — DXC ships with SM6.6 support and
+    // handles these flags natively. The resulting bytecode is accepted by the Agility
+    // SDK device created via CreateDeviceFactory.
+    if (FAILED(hr) && bindless) {
+        UZ_LOG(RHI, Info, "System serializer rejected bindless flags (hr=0x{:08X}) — "
+               "compiling root signature via DXC", static_cast<uint32_t>(hr));
+        error.Reset();
+        serialized.Reset();
+
+        // HLSL root signature definition — must match the C++ layout EXACTLY:
+        //   [0] 16x root constants at b0
+        //   [1] CBV at b1 (DATA_STATIC_WHILE_SET_AT_EXECUTE)
+        //   [2] CBV at b2 (DATA_STATIC_WHILE_SET_AT_EXECUTE)
+        //   [3] CBV at b4 (DATA_STATIC_WHILE_SET_AT_EXECUTE)
+        //   [4] UAV table u0..u3 (DESCRIPTORS_VOLATILE)
+        //   s0: aniso16 wrap, s1: comparison linear/point border (shadow PCF),
+        //   s2: trilinear clamp, s3: trilinear wrap
+        static const char kRootSigHLSL[] =
+            "#define RS \""
+            "RootFlags(CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED | SAMPLER_HEAP_DIRECTLY_INDEXED),"
+            "RootConstants(num32BitConstants=16, b0, visibility=SHADER_VISIBILITY_ALL),"
+            "CBV(b1, flags=DATA_STATIC_WHILE_SET_AT_EXECUTE, visibility=SHADER_VISIBILITY_ALL),"
+            "CBV(b2, flags=DATA_STATIC_WHILE_SET_AT_EXECUTE, visibility=SHADER_VISIBILITY_ALL),"
+            "CBV(b4, flags=DATA_STATIC_WHILE_SET_AT_EXECUTE, visibility=SHADER_VISIBILITY_ALL),"
+            "DescriptorTable(UAV(u0, numDescriptors=4, flags=DESCRIPTORS_VOLATILE), visibility=SHADER_VISIBILITY_ALL),"
+            "StaticSampler(s0, filter=FILTER_ANISOTROPIC, maxAnisotropy=16, "
+                "addressU=TEXTURE_ADDRESS_WRAP, addressV=TEXTURE_ADDRESS_WRAP, addressW=TEXTURE_ADDRESS_WRAP, "
+                "comparisonFunc=COMPARISON_NEVER, borderColor=STATIC_BORDER_COLOR_OPAQUE_BLACK, "
+                "maxLOD=3.402823466e+38),"
+            "StaticSampler(s1, filter=FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT, "
+                "addressU=TEXTURE_ADDRESS_BORDER, addressV=TEXTURE_ADDRESS_BORDER, addressW=TEXTURE_ADDRESS_BORDER, "
+                "comparisonFunc=COMPARISON_LESS, borderColor=STATIC_BORDER_COLOR_OPAQUE_BLACK, "
+                "maxLOD=3.402823466e+38),"
+            "StaticSampler(s2, filter=FILTER_MIN_MAG_MIP_LINEAR, "
+                "addressU=TEXTURE_ADDRESS_CLAMP, addressV=TEXTURE_ADDRESS_CLAMP, addressW=TEXTURE_ADDRESS_CLAMP, "
+                "comparisonFunc=COMPARISON_NEVER, borderColor=STATIC_BORDER_COLOR_OPAQUE_BLACK, "
+                "maxLOD=3.402823466e+38),"
+            "StaticSampler(s3, filter=FILTER_MIN_MAG_MIP_LINEAR, "
+                "addressU=TEXTURE_ADDRESS_WRAP, addressV=TEXTURE_ADDRESS_WRAP, addressW=TEXTURE_ADDRESS_WRAP, "
+                "comparisonFunc=COMPARISON_NEVER, borderColor=STATIC_BORDER_COLOR_OPAQUE_BLACK, "
+                "maxLOD=3.402823466e+38)"
+            "\"\n";
+
+        // DXC may already be loaded by ShaderCompiler — check first.
+        HMODULE dxcModule = GetModuleHandleA("dxcompiler.dll");
+        if (!dxcModule) {
+            // ShaderCompiler hasn't initialized yet (root sig creation runs before
+            // ShaderManager). Load dxcompiler.dll from the engine directory where
+            // it's deployed alongside uzengine_runtime.dll and D3D12Core.dll.
+            std::string dxcPath = GetExeDir().string() + "\\dxcompiler.dll";
+            dxcModule = LoadLibraryA(dxcPath.c_str());
+        }
+
+        if (dxcModule) {
+            auto pfnDxcCreateInstance = reinterpret_cast<DxcCreateInstanceProc>(
+                GetProcAddress(dxcModule, "DxcCreateInstance"));
+
+            if (pfnDxcCreateInstance) {
+                ComPtr<IDxcUtils> dxcUtils;
+                ComPtr<IDxcCompiler3> dxcCompiler;
+                pfnDxcCreateInstance(CLSID_DxcUtils, IID_IDxcUtils,
+                                     reinterpret_cast<void**>(dxcUtils.GetAddressOf()));
+                pfnDxcCreateInstance(CLSID_DxcCompiler, IID_IDxcCompiler3,
+                                     reinterpret_cast<void**>(dxcCompiler.GetAddressOf()));
+
+                if (dxcUtils && dxcCompiler) {
+                    ComPtr<IDxcBlobEncoding> sourceBlob;
+                    dxcUtils->CreateBlobFromPinned(
+                        kRootSigHLSL, sizeof(kRootSigHLSL) - 1,
+                        DXC_CP_UTF8, sourceBlob.GetAddressOf());
+
+                    // Compile with rootsig_1_1 target — DXC produces valid bytecode
+                    // that includes DIRECTLY_INDEXED flags regardless of system d3d12.dll version.
+                    LPCWSTR args[] = {
+                        L"-T", L"rootsig_1_1",
+                        L"-E", L"RS",
+                    };
+                    DxcBuffer sourceBuffer = {
+                        sourceBlob->GetBufferPointer(),
+                        sourceBlob->GetBufferSize(),
+                        DXC_CP_UTF8
+                    };
+
+                    ComPtr<IDxcResult> dxcResult;
+                    HRESULT dxcHr = dxcCompiler->Compile(
+                        &sourceBuffer, args, _countof(args),
+                        nullptr, IID_IDxcResult,
+                        reinterpret_cast<void**>(dxcResult.GetAddressOf()));
+
+                    if (SUCCEEDED(dxcHr) && dxcResult) {
+                        HRESULT status;
+                        dxcResult->GetStatus(&status);
+
+                        if (SUCCEEDED(status)) {
+                            ComPtr<IDxcBlob> rootSigBlob;
+                            dxcResult->GetOutput(DXC_OUT_OBJECT, IID_IDxcBlob,
+                                reinterpret_cast<void**>(rootSigBlob.GetAddressOf()),
+                                nullptr);
+
+                            if (rootSigBlob && rootSigBlob->GetBufferSize() > 0) {
+                                ID3D12RootSignature* rootSig = nullptr;
+                                hr = device->CreateRootSignature(0,
+                                    rootSigBlob->GetBufferPointer(),
+                                    rootSigBlob->GetBufferSize(),
+                                    IID_ID3D12RootSignature,
+                                    reinterpret_cast<void**>(&rootSig));
+
+                                if (SUCCEEDED(hr)) {
+                                    UZ_LOG(RHI, Info, "Root signature created via DXC "
+                                           "(SM6.6 DIRECTLY_INDEXED, rootsig_1_1)");
+                                    return rootSig;
+                                }
+                                UZ_LOG(RHI, Error, "CreateRootSignature failed with DXC "
+                                       "blob, hr=0x{:08X}", static_cast<uint32_t>(hr));
+                            }
+                        } else {
+                            ComPtr<IDxcBlobUtf8> errors;
+                            dxcResult->GetOutput(DXC_OUT_ERRORS, IID_IDxcBlobUtf8,
+                                reinterpret_cast<void**>(errors.GetAddressOf()),
+                                nullptr);
+                            if (errors && errors->GetStringLength() > 0) {
+                                UZ_LOG(RHI, Error, "DXC root sig compile failed: {}",
+                                       errors->GetStringPointer());
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            UZ_LOG(RHI, Warning, "dxcompiler.dll not available for root sig compilation");
+        }
+
+        // Last resort: strip bindless flags so at least a non-bindless root signature
+        // can be created. Shaders compiled for SM6.6 may still work if the device
+        // supports bindless without the root signature flags (device factory mode).
+        UZ_LOG(RHI, Warning, "DXC root sig path failed — stripping DIRECTLY_INDEXED "
+               "for serialization (device factory mode)");
+        error.Reset();
+        versionedDesc.Desc_1_1.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
+        hr = D3DX12SerializeVersionedRootSignature(&versionedDesc, maxVersion,
+                                                    &serialized, &error);
+    }
     if (FAILED(hr)) {
         const char* errMsg = error ? static_cast<const char*>(error->GetBufferPointer()) : "unknown";
         UZ_LOG(RHI, Error, "Failed to serialize root signature: {}", errMsg);
@@ -286,8 +484,12 @@ ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device, ShaderMod
         return nullptr;
     }
 
-    const char* mode = (sm >= ShaderModel::SM6_6) ? "SM6.6 DIRECTLY_INDEXED" : "standard";
-    UZ_LOG(RHI, Info, "Root signature created ({})", mode);
+    if (bindless) {
+        UZ_LOG(RHI, Info, "Root signature created (SM6.6, serialized as v{}, flags stripped)",
+               maxVersion == D3D_ROOT_SIGNATURE_VERSION_1_1 ? "1.1" : "1.0");
+    } else {
+        UZ_LOG(RHI, Info, "Root signature created (standard)");
+    }
     return rootSig;
 }
 

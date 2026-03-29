@@ -96,6 +96,9 @@ public:
     /// Binds SRV/UAV descriptors by index (translated from root param to HLSL register).
     void SetDescriptorTable(uint32_t rootParamIndex, uint32_t descriptorIndex) override;
 
+    /// Binds a buffer SRV to a vertex shader slot via `VSSetShaderResources`.
+    void SetVertexSRV(uint32_t slot, RHIBufferHandle buffer) override;
+
     /// Binds a texture SRV to a pixel shader slot.
     void SetFragmentTexture(uint32_t slot, RHITextureHandle texture) override;
 

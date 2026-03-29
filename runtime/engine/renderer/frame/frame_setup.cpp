@@ -11,7 +11,7 @@
 
 // Individual includes needed by setup logic
 #include "camera.h"
-#include "fps_camera_controller.h"
+#include "fly_camera_controller.h"
 #include "gpu_mesh.h"
 #include "render_graph_builder.h"
 #include "render_graph_resources.h"
@@ -143,24 +143,24 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
                RenderPathToString(m_renderPath));
     }
 
-    // ── Camera: prefer ECS CameraComponent, fallback to FPS controller ──
+    // ── Camera: ECS camera (game mode) or fly controller (editor mode) ──
     bool cameraFromECS = false;
+
+    // Sync camera from ECS CameraComponent every frame.
+    // Lua scripts (camera_test_controller.lua, etc.) update CameraComponent
+    // via uz.camera.set_position/look_at in on_update — we read that here.
+    // This works in both editor and game mode, driven by the Lua script.
     if (ctx.world) {
         auto cameraView = ctx.world->View<CameraComponent>();
         for (auto [enttEntity, cam] : cameraView.each()) {
             if (cam.isActive) {
-                // Sync ECS camera into our Camera object.
-                // Camera::LookAt handles Z-up → Y-up conversion internally.
                 const Vec3 camPos = cam.GetWorldPosition();
                 m_camera->SetPosition(camPos);
                 if (cam.hasLookTarget) {
                     m_camera->LookAt(cam.lookTarget);
                 } else {
-                    // Fallback: use rotation quaternion to derive forward direction.
-                    // Note: FromEuler produces Y-up quaternions, so we convert via
-                    // the same yaw/pitch extraction that FPSCameraController uses.
                     const Vec3 fwd = (cam.GetRotation() * Vec3::Forward()).Normalized();
-                    m_camera->LookAt(camPos + fwd * 1000.f);  // 10m ahead in cm
+                    m_camera->LookAt(camPos + fwd * 1000.f);
                 }
                 m_camera->SetPerspective(
                     cam.fov * (3.14159265f / 180.f),
@@ -172,6 +172,7 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
         }
     }
 
+    // Fallback: FlyCameraController when no ECS camera is active.
     if (!cameraFromECS) {
         m_cameraCtrl->Update(*m_camera, *m_input, ctx.dt);
     }
@@ -185,10 +186,17 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     ctx.jitterX = 0.f;
     ctx.jitterY = 0.f;
 
+    // TAA runs on both bindless (DX12/SM6.6) and non-bindless (DX11/SM5) backends.
+    // On SM5 the TAA upscaler binds textures via SetDescriptorTable/SetFragmentTexture
+    // instead of ResourceDescriptorHeap indexing.
+    // DX11: disable TAA — compute SRV/UAV resource conflicts on DX11's
+    // immediate context cause the HDR scene color to go black after frame 1.
+    // DX11 SM5.1 is below SM6.0, so use shader model as the backend check.
+    const bool taaBackendOk = (m_device->GetShaderModel() >= ShaderModel::SM6_0);
     ctx.taaActive = m_taaEnabled
                  && m_taaHistory[0].IsValid()
                  && m_taaHistory[1].IsValid()
-                 && m_device->IsBindless()
+                 && taaBackendOk
                  && m_passInspector.IsPassEnabled("taa");
 
     if (ctx.taaActive) {

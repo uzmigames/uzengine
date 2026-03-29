@@ -38,16 +38,37 @@ static std::vector<uint8_t> ReadFileBytes(const std::string& path) {
 }
 
 int main(int argc, char** argv) {
-    std::string inputPath, outputPath;
+    std::string inputPath, outputPath, builtinName;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        if (arg == "--input" && i + 1 < argc)  inputPath = argv[++i];
-        if (arg == "--output" && i + 1 < argc) outputPath = argv[++i];
+        if (arg == "--input" && i + 1 < argc)   inputPath = argv[++i];
+        if (arg == "--output" && i + 1 < argc)  outputPath = argv[++i];
+        if (arg == "--builtin" && i + 1 < argc) builtinName = argv[++i];
+    }
+
+    // ── Builtin mesh generation mode ─────────────────────────────────────
+    if (!builtinName.empty() && !outputPath.empty()) {
+        uz::Mesh cpuMesh{};
+        if (builtinName == "cube")        cpuMesh = uz::MeshBuilder::CreateCube();
+        else if (builtinName == "sphere") cpuMesh = uz::MeshBuilder::CreateSphere();
+        else {
+            std::cerr << "Unknown builtin: " << builtinName << " (supported: cube, sphere)\n";
+            return 1;
+        }
+        if (!uz::SaveMesh(outputPath, cpuMesh)) {
+            std::cerr << "Error: failed to write " << outputPath << "\n";
+            return 1;
+        }
+        std::cout << "Generated builtin:" << builtinName << " → " << outputPath
+                  << " (" << cpuMesh.header.vertexCount << " verts, "
+                  << cpuMesh.header.indexCount << " indices)\n";
+        return 0;
     }
 
     if (inputPath.empty() || outputPath.empty()) {
-        std::cerr << "Usage: uzfbx --input <path.fbx> --output <path.uzmesh>\n";
+        std::cerr << "Usage: uzfbx --input <path.fbx> --output <path.uzmesh>\n"
+                  << "       uzfbx --builtin <cube|sphere> --output <path.uzmesh>\n";
         return 1;
     }
 
@@ -170,6 +191,13 @@ int main(int argc, char** argv) {
 
         std::cout << "Deduplicated: " << vertices.size() << " → " << uniqueCount << " vertices\n";
         vertices.resize(uniqueCount);
+    }
+
+    // Reverse triangle winding from CW to CCW (AFTER deduplication).
+    // The manual axis remap (FBX Y-up → UzEngine Z-up) is an odd permutation
+    // that flips handedness, inverting the winding order.
+    for (size_t t = 0; t + 2 < indices.size(); t += 3) {
+        std::swap(indices[t + 1], indices[t + 2]);
     }
 
     const uint32_t vertexCount = static_cast<uint32_t>(vertices.size());

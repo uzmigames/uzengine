@@ -796,6 +796,12 @@ pub fn build(b: *std.Build) void {
         dll_mod.addIncludePath(b.path("engine/rhi/vulkan"));
         dll_mod.addIncludePath(b.path(tp ++ "d3d12ma/src"));
 
+        // Component serializers compiled directly into DLL (not from static lib)
+        // to preserve static initializers for auto-registration.
+        // Without this, environment components (sky_atmosphere, sky_light,
+        // height_fog, volumetric_clouds, etc.) are stripped by the linker.
+        addCppDir(dll_mod, b, "engine/ecs/environment", dll_cpp_flags);
+
         // runtime.lib — C++ internals referenced by runtime.cpp.
         // lld-link uses the DLL's own runtime.cpp object for uz_* definitions
         // and extracts other members from this archive to satisfy remaining
@@ -877,6 +883,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(test_mod, b, "tests/engine/property", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/scripting", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/vfx", cpp_flags);
+    addCppDir(test_mod, b, "tests/editor", cpp_flags);
     // Thirdparty image lib tests — disable alignment sanitizer for stb_image_resize2
     test_mod.addCSourceFiles(.{
         .root = b.path("tests/thirdparty"),

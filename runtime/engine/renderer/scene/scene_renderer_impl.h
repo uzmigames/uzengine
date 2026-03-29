@@ -10,6 +10,7 @@
 
     IRHIDevice* m_device = nullptr;
     bool m_editorMode = false;            ///< When true, editor grid + stats overlay are rendered.
+    uint32_t m_editorCameraInitFrame = 0;   ///< Frame counter for deferred editor camera init (waits for Lua scripts).
     Entity m_selectedEntity{};            ///< Currently selected entity for editor outline/gizmo rendering.
     uint8_t m_gizmoMode = 0;             ///< GizmoMode: 0=Translate, 1=Rotate, 2=Scale.
     uint8_t m_gizmoSpace = 0;            ///< GizmoSpace: 0=World, 1=Local.
@@ -27,7 +28,7 @@
     std::unique_ptr<GizmoRenderer> m_gizmoRenderer;
     std::unique_ptr<StatsOverlay> m_statsOverlay;
     std::unique_ptr<Camera> m_camera;
-    std::unique_ptr<FPSCameraController> m_cameraCtrl;
+    std::unique_ptr<FlyCameraController> m_cameraCtrl;
     std::unique_ptr<rg::RgResourcePool> m_rgPool;
 
     // ── Fallback Textures (SM5 unconditional sampling) ────────────────────
@@ -228,6 +229,7 @@
 
     RHITextureHandle m_fxaaLdrIntermediate;             ///< RGBA8Unorm LDR intermediate for CAS/FXAA input.
     uint32_t m_fxaaLdrIntermediateSrv = UINT32_MAX;     ///< SRV for CAS/FXAA to read tonemap output.
+    RHIResourceState m_ldrFinalState = RHIResourceState::ShaderResource; ///< LDR state after render graph.
 
     /// Creates the FXAA LDR intermediate texture at the given resolution.
     /// Called from Init() and Resize().

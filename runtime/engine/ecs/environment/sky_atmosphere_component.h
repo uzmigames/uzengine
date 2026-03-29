@@ -165,6 +165,23 @@ struct SkyAtmosphereComponent {
     /// When a linked DirectionalLight exists, its intensity is used instead.
     float sunDiskIntensity = 1.0f;
 
+    // ── Tracing & Aerial Perspective ────────────────────────────────────────
+
+    /// @ref Bruneton 2008 "Precomputed Atmospheric Scattering" — trace sample count scale
+    /// Multiplier for the number of ray-march samples when rendering the atmosphere.
+    /// Higher = more accurate but more expensive. Default: 1.0.
+    float traceSampleCountScale = 1.0f;
+
+    /// @ref Hillaire 2020 "A Scalable and Production Ready Sky and Atmosphere Rendering Technique"
+    /// Start depth for the aerial perspective effect in kilometers.
+    /// Objects closer than this receive no aerial perspective. Default: 0.1 km.
+    float aerialPerspectiveStartDepth = 0.1f;
+
+    /// @ref Bruneton 2008 — transmittance minimum light elevation angle
+    /// Minimum sun elevation angle (degrees) for transmittance LUT computation.
+    /// Allows transmittance below the horizon for twilight effects. Default: -90.0 degrees.
+    float transmittanceMinLightElevationAngle = -90.0f;
+
     // ── Deprecated (use SkyLightComponent instead) ────────────────────────
 
     /// @deprecated Use SkyLightComponent::intensity instead.

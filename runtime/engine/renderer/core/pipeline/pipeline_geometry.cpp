@@ -42,8 +42,7 @@ RHIPipelineHandle PipelineLibrary::GetForwardPBR(bool bindless) {
     desc.vertexShader  = m_meshVS;
     desc.pixelShader   = m_meshPS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
-    desc.rasterizer.cullMode              = RHICullMode::None;
-    desc.rasterizer.frontCounterClockwise = false;
+    desc.rasterizer.cullMode              = RHICullMode::Back; // Opaque geometry — cull back faces to halve overdraw
     desc.depthStencil.depthEnable         = true;
     desc.depthStencil.depthWrite          = true;
     desc.renderTargetFormats[0]           = RHIFormat::RGBA16Float;
@@ -93,8 +92,7 @@ RHIPipelineHandle PipelineLibrary::GetGBuffer(bool bindless) {
     desc.vertexShader  = m_meshVS;
     desc.pixelShader   = m_gbufferPS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
-    desc.rasterizer.cullMode              = RHICullMode::None;
-    desc.rasterizer.frontCounterClockwise = false;
+    desc.rasterizer.cullMode              = RHICullMode::Back; // Opaque geometry — cull back faces to halve overdraw
     desc.depthStencil.depthEnable         = true;
     desc.depthStencil.depthWrite          = true;
     // G-Buffer render targets — must match GBuffer::Create() texture formats exactly
@@ -160,8 +158,7 @@ RHIPipelineHandle PipelineLibrary::GetGBufferMasked(bool bindless) {
     desc.vertexShader  = m_meshVS;
     desc.pixelShader   = m_gbufferPS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
-    desc.rasterizer.cullMode              = RHICullMode::None; // Two-sided for masked materials
-    desc.rasterizer.frontCounterClockwise = false;
+    desc.rasterizer.cullMode              = RHICullMode::None; // Two-sided for masked materials (foliage, fences)
     desc.depthStencil.depthEnable         = true;
     desc.depthStencil.depthWrite          = true;
     desc.renderTargetFormats[0]           = RHIFormat::RGBA8Unorm;    // albedo+AO
@@ -224,8 +221,7 @@ RHIPipelineHandle PipelineLibrary::GetTranslucent(bool bindless) {
     desc.vertexShader  = m_meshVS;
     desc.pixelShader   = m_meshPS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
-    desc.rasterizer.cullMode              = RHICullMode::None; // Translucent is typically two-sided
-    desc.rasterizer.frontCounterClockwise = false;
+    desc.rasterizer.cullMode              = RHICullMode::None; // Two-sided for translucent (glass, particles)
     desc.depthStencil.depthEnable         = true;
     desc.depthStencil.depthWrite          = false;  // Read depth, do NOT write
     desc.renderTargetBlend[0].blendEnable = true;
@@ -291,8 +287,7 @@ RHIPipelineHandle PipelineLibrary::GetAdditive(bool bindless) {
     desc.vertexShader  = m_meshVS;
     desc.pixelShader   = m_meshPS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
-    desc.rasterizer.cullMode              = RHICullMode::None; // Additive typically two-sided
-    desc.rasterizer.frontCounterClockwise = false;
+    desc.rasterizer.cullMode              = RHICullMode::None; // Two-sided for additive effects (particles, glow)
     desc.depthStencil.depthEnable         = true;
     desc.depthStencil.depthWrite          = false;  // Read depth, do NOT write
     desc.renderTargetBlend[0].blendEnable = true;
@@ -343,7 +338,7 @@ RHIPipelineHandle PipelineLibrary::GetLighting() {
     desc.vertexShader  = m_fullscreenVS;
     desc.pixelShader   = m_lightingPS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
-    desc.rasterizer.cullMode      = RHICullMode::None;
+    desc.rasterizer.cullMode      = RHICullMode::None; // Fullscreen triangle — no geometry to cull
     desc.depthStencil.depthEnable = false;
     desc.depthStencil.depthWrite  = false;
     desc.renderTargetFormats[0]   = RHIFormat::RGBA16Float;  // HDR output (tonemapped separately)
@@ -379,7 +374,7 @@ RHIPipelineHandle PipelineLibrary::GetGBufferDebug() {
     desc.vertexShader  = m_fullscreenVS;
     desc.pixelShader   = m_gbufferDebugPS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
-    desc.rasterizer.cullMode      = RHICullMode::None;
+    desc.rasterizer.cullMode      = RHICullMode::None; // Fullscreen triangle — no geometry to cull
     desc.depthStencil.depthEnable = false;
     desc.depthStencil.depthWrite  = false;
     desc.renderTargetFormats[0]   = RHIFormat::RGBA16Float;
@@ -414,7 +409,7 @@ RHIPipelineHandle PipelineLibrary::GetDebugView() {
     desc.vertexShader  = m_fullscreenVS;
     desc.pixelShader   = m_debugViewPS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
-    desc.rasterizer.cullMode      = RHICullMode::None;
+    desc.rasterizer.cullMode      = RHICullMode::None; // Fullscreen triangle — no geometry to cull
     desc.depthStencil.depthEnable = false;
     desc.depthStencil.depthWrite  = false;
     desc.renderTargetFormats[0]   = RHIFormat::RGBA16Float;
@@ -461,11 +456,9 @@ RHIPipelineHandle PipelineLibrary::GetDepthPrepass(bool bindless) {
     RHIGraphicsPipelineDesc desc{};
     desc.vertexShader  = m_shadowVS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
-    desc.rasterizer.cullMode              = RHICullMode::None;
-    desc.rasterizer.frontCounterClockwise = false;
+    desc.rasterizer.cullMode              = RHICullMode::Back; // Opaque depth — cull back faces
     // No depth bias — unlike the shadow pass, the depth prepass writes to the
     // GBuffer depth and does not need bias to prevent self-shadowing.
-    /// Depth prepass uses no depth bias (unlike shadow depth).
     desc.rasterizer.slopeScaledDepthBias  = 0.0f;
     desc.rasterizer.depthBias             = 0.0f;
     desc.depthStencil.depthEnable         = true;
@@ -509,8 +502,7 @@ RHIPipelineHandle PipelineLibrary::GetDepthPrepassInstanced() {
     RHIGraphicsPipelineDesc desc{};
     desc.vertexShader  = m_instancedShadowVS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
-    desc.rasterizer.cullMode              = RHICullMode::None;
-    desc.rasterizer.frontCounterClockwise = false;
+    desc.rasterizer.cullMode              = RHICullMode::Back; // Opaque depth — cull back faces
     // No depth bias — same as non-instanced depth prepass.
     desc.rasterizer.slopeScaledDepthBias  = 0.0f;
     desc.rasterizer.depthBias             = 0.0f;

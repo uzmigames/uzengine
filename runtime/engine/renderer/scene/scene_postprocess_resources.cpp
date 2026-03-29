@@ -369,8 +369,8 @@ void SceneRenderer::CreateFxaaResources(uint32_t width, uint32_t height) {
     RHITextureDesc desc{};
     desc.width     = width;
     desc.height    = height;
-    desc.format    = RHIFormat::RGBA8Unorm;
-    desc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::RenderTarget;
+    desc.format    = RHIFormat::RGBA8Unorm;   // Must match swapchain format AND tonemap PSO output format.
+    desc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::RenderTarget | RHITextureUsage::CopySrc;
     desc.debugName = "FXAA_LdrIntermediate";
 
     m_fxaaLdrIntermediate = m_device->CreateTexture(desc);

@@ -1,17 +1,26 @@
 /// UzEngine VSCode extension entry point.
 ///
-/// Activates the native addon, wires up all panels (viewport, scene tree,
-/// console), registers commands and keybindings, and manages clean shutdown.
+/// Activates language features (syntax highlighting, icons) immediately and
+/// defers all native addon access until it is actually needed. The native
+/// addon now runs inside an isolated child process managed by `RuntimeClient`.
+/// This prevents GPU driver crashes or SEH exceptions from killing the VSCode
+/// Extension Host process — only the worker process dies.
+///
+/// Isolation architecture:
+///   Extension Host  →  RuntimeClient (IPC)  →  runtime-worker.js  →  uzengine.node
 ///
 /// Panel ownership model:
 ///  - `EngineConsole` — permanent; lives for the full extension lifetime.
+///    Its output channel is created immediately; log forwarding is wired once
+///    a `RuntimeClient` is live via `attachClient()`.
 ///  - `SceneTreeProvider` — permanent; drives the "Scene Hierarchy" tree view.
+///    Registered immediately; only queries the client when `refresh()` is called.
 ///  - `ViewportPanel` — created on demand; at most one instance at a time.
 ///    Set to `undefined` after the panel is closed so a new one can be opened.
 ///  - `EngineMode` — permanent; drives the status bar toggle.
 
 import * as vscode from 'vscode';
-import type { UzEngineAddon } from './uzengine';
+import { RuntimeClient } from './runtime-client';
 import { ViewportPanel } from './panels/viewport-panel';
 import { SceneTreeProvider } from './panels/scene-tree-panel';
 import { EngineConsole } from './panels/console-panel';
@@ -26,28 +35,47 @@ let sceneTree: SceneTreeProvider;
 let viewport: ViewportPanel | undefined;
 let engineMode: EngineMode;
 
-// ── Native addon helpers ──────────────────────────────────────────────────────
+// ── RuntimeClient singleton ───────────────────────────────────────────────────
 
-/// Lazily loads the native .node addon. Called inside activate() — NOT at
-/// module scope — because require() of a .node triggers DllMain and other
-/// native init that can block the Extension Host event loop long enough to
-/// trip the 10-s debugger timeout.
-function loadNativeAddon(): { addon?: UzEngineAddon; error?: string } {
-    try {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const nodePath = require('path') as typeof import('path');
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const mod = require(
-            nodePath.join(__dirname, '..', 'native', 'uzengine.node')
-        ) as UzEngineAddon;
-        return { addon: mod };
-    } catch (e: unknown) {
-        return { error: e instanceof Error ? e.message : String(e) };
-    }
+/// The single RuntimeClient for this extension session.
+///
+/// Created lazily on the first call to `ensureClient()`. Using a singleton
+/// ensures that at most one worker process is alive at a time, which is
+/// required because the native viewport is also a singleton inside the engine.
+let _client: RuntimeClient | undefined;
+
+/// Lazily creates and initialises the RuntimeClient.
+///
+/// The first call spawns the worker process and configures the engine directory.
+/// Subsequent calls return the cached client immediately.
+///
+/// IMPORTANT: This function only creates the client and sets the engine dir.
+/// It does NOT call `client.init()` — that is done lazily by the callers that
+/// need the full engine (viewport creation, scene load, etc.) so that the addon
+/// loads as late as possible without blocking the Extension Host startup.
+function ensureClient(): RuntimeClient {
+    if (_client) return _client;
+
+    log.info('[Extension] ensureClient: creating RuntimeClient + spawning worker');
+    _client = new RuntimeClient(log);
+
+    // Wire up console log forwarding.
+    engineConsole.attachClient(_client);
+
+    // Point the worker at the native/ directory immediately so dxcompiler.dll
+    // etc. can be found as soon as the addon loads inside the worker.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const nodePath = require('path') as typeof import('path');
+    const nativeDir = nodePath.join(__dirname, '..', 'native');
+    log.info(`[Extension] ensureClient: setEngineDir("${nativeDir}")`);
+    void _client.setEngineDir(nativeDir).then(() => {
+        log.info('[Extension] ensureClient: setEngineDir OK');
+    }).catch((e: unknown) => {
+        log.error(`[Extension] ensureClient: setEngineDir FAILED: ${e instanceof Error ? e.message : String(e)}`);
+    });
+
+    return _client;
 }
-
-/// Cached addon reference — populated once during activate().
-let _addon: UzEngineAddon | undefined;
 
 // ── Activation ────────────────────────────────────────────────────────────────
 
@@ -56,6 +84,10 @@ let _addon: UzEngineAddon | undefined;
 /// Called by VSCode when one of the extension's activation events fires
 /// (e.g. the user opens a `.uzscene` file or runs an `uzengine.*` command).
 ///
+/// Language features (syntax highlighting, icons) are available immediately.
+/// The native addon is NOT loaded here — it is loaded lazily inside the
+/// worker process via `ensureClient()` when the engine is first needed.
+///
 /// # Arguments
 /// * `context` - Extension context used to register disposables and persist state.
 export function activate(context: vscode.ExtensionContext): void {
@@ -63,44 +95,23 @@ export function activate(context: vscode.ExtensionContext): void {
     log = vscode.window.createOutputChannel('UzEngine', { log: true });
     context.subscriptions.push(log);
 
-    // ── Load native addon (lazy — not at module scope) ────────────────────────
-    const result = loadNativeAddon();
-    if (!result.addon) {
-        const msg = `UzEngine native addon failed to load: ${result.error}`;
-        log.error(msg);
-        vscode.window.showErrorMessage(msg);
-        return;
-    }
-    _addon = result.addon;
-    const addon: UzEngineAddon = _addon;
-
-    // Point the engine at the native/ directory so it finds dxcompiler.dll,
-    // dxil.dll, etc. instead of looking in the Electron exe dir.
-    const nodePath = require('path') as typeof import('path');
-    const nativeDir = nodePath.join(__dirname, '..', 'native');
-    addon.setEngineDir(nativeDir);
-
-    const version = addon.getVersion();
-    const backend = addon.getBackend();
-    log.info(`UzEngine v${version} (${backend})`);
-
-    // ── Console panel — runtime log stream ────────────────────────────────────
-    engineConsole = new EngineConsole(addon);
+    // ── Console panel — output channel created immediately, callback deferred ─
+    engineConsole = new EngineConsole();
     context.subscriptions.push(engineConsole);
 
-    // ── Scene tree provider ───────────────────────────────────────────────────
-    sceneTree = new SceneTreeProvider(addon);
+    // ── Scene tree provider — registered immediately, queries client lazily ───
+    sceneTree = new SceneTreeProvider(() => _client);
     const treeView = vscode.window.createTreeView('uzengine.sceneTree', {
         treeDataProvider: sceneTree,
         showCollapseAll: true,
     });
     context.subscriptions.push(treeView);
 
-    // ── Scene editor — opens .uzscene files in the viewport ─────────────────
+    // ── Scene editor — opens .uzscene files in the viewport ──────────────────
     context.subscriptions.push(
         vscode.window.registerCustomEditorProvider(
             SceneEditorProvider.viewType,
-            new SceneEditorProvider(addon, sceneTree),
+            new SceneEditorProvider(ensureClient, sceneTree, log),
             { supportsMultipleEditorsPerDocument: false }
         )
     );
@@ -111,29 +122,33 @@ export function activate(context: vscode.ExtensionContext): void {
     // ── Commands ──────────────────────────────────────────────────────────────
     context.subscriptions.push(
 
-        // uzengine.start — initialise the runtime (useful for testing the addon
-        // without opening the full viewport).
+        // uzengine.start — initialise the runtime (useful for testing without
+        // opening the full viewport).
         vscode.commands.registerCommand('uzengine.start', () => {
-            try {
-                addon.init();
-                log.info('Runtime initialized');
-                vscode.window.showInformationMessage(
-                    `UzEngine ${version} initialized`
-                );
-            } catch (e: unknown) {
-                const msg = e instanceof Error ? e.message : String(e);
-                log.error(`Runtime init failed: ${msg}`);
-                vscode.window.showErrorMessage(`UzEngine init failed: ${msg}`);
-            }
+            const client = ensureClient();
+            client.init()
+                .then(() => client.getVersion())
+                .then((version) => {
+                    log.info(`[Extension] Runtime initialized — v${version}`);
+                    void vscode.window.showInformationMessage(
+                        `UzEngine ${version} initialized`
+                    );
+                })
+                .catch((e: unknown) => {
+                    const msg = e instanceof Error ? e.message : String(e);
+                    log.error(`[Extension] Runtime init failed: ${msg}`);
+                    void vscode.window.showErrorMessage(`UzEngine init failed: ${msg}`);
+                });
         }),
 
         // uzengine.openViewport — create the viewport panel (or reveal if already open).
         vscode.commands.registerCommand('uzengine.openViewport', () => {
+            const client = ensureClient();
             if (viewport) {
                 viewport.reveal();
                 return;
             }
-            viewport = new ViewportPanel(context.extensionUri, addon, sceneTree);
+            viewport = new ViewportPanel(context.extensionUri, client, sceneTree);
             viewport.onDidDispose(() => {
                 viewport = undefined;
             });
@@ -153,11 +168,11 @@ export function activate(context: vscode.ExtensionContext): void {
                     uri = files[0];
                 }
 
+                const client = ensureClient();
+
                 // Ensure viewport is open so the scene has somewhere to render.
                 if (!viewport) {
-                    viewport = new ViewportPanel(
-                        context.extensionUri, addon, sceneTree
-                    );
+                    viewport = new ViewportPanel(context.extensionUri, client, sceneTree);
                     viewport.onDidDispose(() => {
                         viewport = undefined;
                     });
@@ -166,15 +181,13 @@ export function activate(context: vscode.ExtensionContext): void {
                 }
 
                 try {
-                    addon.loadScene(uri.fsPath);
+                    await client.loadScene(uri.fsPath);
                     sceneTree.refresh();
-                    log.info(`Scene loaded: ${uri.fsPath}`);
+                    log.info(`[Extension] Scene loaded: ${uri.fsPath}`);
                 } catch (e: unknown) {
                     const msg = e instanceof Error ? e.message : String(e);
-                    log.error(`Failed to load scene: ${msg}`);
-                    vscode.window.showErrorMessage(
-                        `Failed to load scene: ${msg}`
-                    );
+                    log.error(`[Extension] Failed to load scene: ${msg}`);
+                    void vscode.window.showErrorMessage(`Failed to load scene: ${msg}`);
                 }
             }
         ),
@@ -190,7 +203,7 @@ export function activate(context: vscode.ExtensionContext): void {
         })
     );
 
-    log.info('UzEngine extension activated');
+    log.info('[Extension] UzEngine extension activated (worker deferred until first scene open)');
 }
 
 // ── Deactivation ──────────────────────────────────────────────────────────────
@@ -198,16 +211,15 @@ export function activate(context: vscode.ExtensionContext): void {
 /// Deactivates the UzEngine extension.
 ///
 /// Called by VSCode before the extension host process exits or when the
-/// extension is explicitly disabled. Resources must be released synchronously
-/// because the host may exit immediately after this function returns.
+/// extension is explicitly disabled. Resources must be released promptly.
+/// The RuntimeClient sends a graceful shutdown to the worker and then kills it.
 export function deactivate(): void {
     if (viewport) {
         viewport.dispose();
         viewport = undefined;
     }
-    if (!_addon) return;
-    // Unregister the log callback before the addon shuts down.
-    try { _addon.setLogCallback(null); } catch { /* ignore */ }
-    try { _addon.destroyViewport(); } catch { /* ignore */ }
-    try { _addon.shutdown(); } catch { /* ignore */ }
+    if (_client) {
+        _client.dispose();
+        _client = undefined;
+    }
 }
