@@ -54,6 +54,24 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
                 meshComp.meshLoaded = true;
                 // LOD0 always uses the base meshId in the LOD group.
                 meshComp.lodGroup.levels[0].meshIndex = loaded;
+
+                // If the loaded mesh has in-file LODs (UZMH v2), populate
+                // the LODGroup so screen-size selection is activated.
+                if (loaded < static_cast<uint32_t>(m_meshes.size())) {
+                    const auto& gpu = m_meshes[loaded];
+                    if (gpu.lodCount > 1 && meshComp.lodGroup.numLevels <= 1) {
+                        meshComp.lodGroup.numLevels = gpu.lodCount;
+                        // All in-file LODs share the same meshIndex — the draw
+                        // command uses lodIndexByteOffset/Count to select the LOD.
+                        for (uint32_t li = 1; li < gpu.lodCount && li < kMaxLODs; ++li) {
+                            meshComp.lodGroup.levels[li].meshIndex = loaded;
+                            // Auto screen-size thresholds (UE5 defaults)
+                            constexpr float kAutoThresholds[] = {1.0f, 0.5f, 0.25f, 0.12f, 0.06f, 0.03f, 0.015f, 0.0f};
+                            meshComp.lodGroup.levels[li].screenSizeThreshold =
+                                (li < 8) ? kAutoThresholds[li] : 0.0f;
+                        }
+                    }
+                }
             } else {
                 // Mark loaded to avoid retrying every frame
                 meshComp.meshLoaded = true;
