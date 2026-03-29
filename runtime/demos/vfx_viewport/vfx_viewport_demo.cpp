@@ -467,6 +467,27 @@ void VFXViewportDemo::OnInit() {
         }
     }
 
+    // ── Load custom sprite sheet from file (overrides procedural fire) ──
+    if (!m_customSpritePath.empty()) {
+        auto result = TextureLoader::Load(device, cmd, m_customSpritePath, false);
+        if (result.handle.IsValid()) {
+            m_customSpriteTex = result.handle;
+            m_customSpriteSrvIdx = result.srvIndex;
+            m_fireSpriteSrvIdx = m_customSpriteSrvIdx; // override fire sprite
+            // Update current emitter flipbook to 6x6 for the custom sprite
+            m_vfxEmitter.flipbookRows = 6;
+            m_vfxEmitter.flipbookCols = 6;
+            m_vfxEmitter.flipbookTotalFrames = 36;
+            m_vfxEmitter.flipbookFPS = 30.0f;
+            m_vfxEmitter.flipbookBlendMode = 1; // linear blend
+            UZ_LOG(App, Info, "VFXViewport: Custom sprite loaded '{}' (SRV={}, 6x6 30fps)",
+                   m_customSpritePath, m_customSpriteSrvIdx);
+        } else {
+            UZ_LOG(App, Error, "VFXViewport: Failed to load custom sprite '{}'",
+                   m_customSpritePath);
+        }
+    }
+
     // ── Bloom pass ──────────────────────────────────────────────────────
     if (!m_bloomPass.Init(device, shaders, GetWidth(), GetHeight())) {
         UZ_LOG(App, Error, "VFXViewport: Failed to initialize bloom pass");
@@ -844,6 +865,14 @@ void VFXViewportDemo::HandleInput(float dt) {
                 m_vfxPresetIndex = i;
                 m_vfxEmitter = presets[i].config;
                 m_vfxSpawnRate = presets[i].spawnRate;
+                // Re-apply custom sprite flipbook config
+                if (m_customSpriteSrvIdx != UINT32_MAX) {
+                    m_vfxEmitter.flipbookRows = 6;
+                    m_vfxEmitter.flipbookCols = 6;
+                    m_vfxEmitter.flipbookTotalFrames = 36;
+                    m_vfxEmitter.flipbookFPS = 30.0f;
+                    m_vfxEmitter.flipbookBlendMode = 1;
+                }
                 break;
             }
         }
@@ -878,6 +907,15 @@ void VFXViewportDemo::HandleInput(float dt) {
             m_vfxEmitter = presets[m_vfxPresetIndex].config;
             m_vfxSpawnRate = presets[m_vfxPresetIndex].spawnRate;
             m_vfxSpawnAccum = 0.0f;
+            // Re-apply custom sprite flipbook config for fire presets
+            if (m_customSpriteSrvIdx != UINT32_MAX &&
+                GetSpriteTextureForPreset(m_vfxPresetIndex) == m_fireSpriteSrvIdx) {
+                m_vfxEmitter.flipbookRows = 6;
+                m_vfxEmitter.flipbookCols = 6;
+                m_vfxEmitter.flipbookTotalFrames = 36;
+                m_vfxEmitter.flipbookFPS = 30.0f;
+                m_vfxEmitter.flipbookBlendMode = 1;
+            }
             UZ_LOG(App, Info, "VFX preset: {}", presets[m_vfxPresetIndex].name);
         }
     }

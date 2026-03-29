@@ -43,6 +43,7 @@ int main(int argc, char* argv[]) {
     std::string albedoPath;
     std::string normalPath;
     std::string roughnessPath;
+    std::string spritePath;
     for (int i = 1; i < argc - 1; ++i) {
         if (std::strcmp(argv[i], "--albedo") == 0) {
             albedoPath = argv[++i];
@@ -50,11 +51,16 @@ int main(int argc, char* argv[]) {
             normalPath = argv[++i];
         } else if (std::strcmp(argv[i], "--roughness") == 0) {
             roughnessPath = argv[++i];
+        } else if (std::strcmp(argv[i], "--sprite") == 0) {
+            spritePath = argv[++i];
         }
     }
 
     uz::VFXViewportDemo demo(config);
     demo.SetTexturePaths(albedoPath, normalPath, roughnessPath);
+    if (!spritePath.empty()) {
+        demo.SetSpritePath(spritePath);
+    }
     int result = demo.Run();
 
     uz::LogShutdown();

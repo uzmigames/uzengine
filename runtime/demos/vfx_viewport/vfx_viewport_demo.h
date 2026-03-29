@@ -94,6 +94,10 @@ public:
                          const std::string& normal,
                          const std::string& roughness);
 
+    /// Sets a custom sprite sheet path (TGA/PNG) for flipbook particles.
+    /// Overrides the procedural fire sprite for all fire presets.
+    void SetSpritePath(const std::string& path) { m_customSpritePath = path; }
+
 protected:
     void OnInit() override;
     void OnFrame(float dt) override;
@@ -226,6 +230,11 @@ private:
     uint32_t m_albedoSrvIndex  = UINT32_MAX;  ///< Bindless SRV index for loaded albedo texture.
     uint32_t m_normalSrvIndex  = UINT32_MAX;  ///< Bindless SRV index for loaded normal texture.
     uint32_t m_roughnessSrvIndex = UINT32_MAX; ///< Bindless SRV index for loaded roughness texture.
+
+    // ── Custom sprite sheet (loaded from file) ────────────────────────
+    std::string m_customSpritePath;
+    RHITextureHandle m_customSpriteTex;
+    uint32_t m_customSpriteSrvIdx = UINT32_MAX;
 
     // ── Procedural sprite sheet textures for flipbook animation ────────
     RHITextureHandle m_fireSpriteTex;           ///< 256x256 RGBA8 4x4 fire sprite sheet.
