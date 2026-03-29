@@ -47,6 +47,7 @@
 #include <array>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace uz {
 
@@ -226,6 +227,12 @@ private:
     uint32_t m_normalSrvIndex  = UINT32_MAX;  ///< Bindless SRV index for loaded normal texture.
     uint32_t m_roughnessSrvIndex = UINT32_MAX; ///< Bindless SRV index for loaded roughness texture.
 
+    // ── Procedural sprite sheet textures for flipbook animation ────────
+    RHITextureHandle m_fireSpriteTex;           ///< 256x256 RGBA8 4x4 fire sprite sheet.
+    uint32_t m_fireSpriteSrvIdx = UINT32_MAX;   ///< Bindless SRV index for fire sprite sheet.
+    RHITextureHandle m_smokeSpriteTex;          ///< 256x256 RGBA8 4x4 smoke sprite sheet.
+    uint32_t m_smokeSpriteSrvIdx = UINT32_MAX;  ///< Bindless SRV index for smoke sprite sheet.
+
     // ── Sky dummy LUTs (1x1 textures for ray march fallback) ──────────
     RHITextureHandle m_dummyTransmittanceLut;   ///< 1x1 white RGBA16F (transmittance=1, no extinction).
     RHITextureHandle m_dummyMultiScatterLut;    ///< 1x1 black R11G11B10F (no multi-scatter contribution).
@@ -251,6 +258,22 @@ private:
 
     /// Builds the world matrix for the mesh at the given transform index.
     Mat4 BuildMeshWorldMatrix(uint32_t meshIndex) const;
+
+    /// Generates a 4x4 procedural fire sprite sheet (256x256 RGBA8).
+    /// Each frame shows a soft radial glow transitioning from yellow-white
+    /// (birth) through orange to dim red (death).
+    static void GenerateFireSpriteSheet(std::vector<uint32_t>& pixels,
+                                        uint32_t cellSize, uint32_t rows, uint32_t cols);
+
+    /// Generates a 4x4 procedural smoke sprite sheet (256x256 RGBA8).
+    /// Each frame shows a soft puff transitioning from small dense white
+    /// (birth) to large diffuse transparent gray (death).
+    static void GenerateSmokeSpriteSheet(std::vector<uint32_t>& pixels,
+                                         uint32_t cellSize, uint32_t rows, uint32_t cols);
+
+    /// Returns the sprite sheet SRV index for the current VFX preset.
+    /// Fire-like presets get the fire sprite, smoke gets smoke, others get UINT32_MAX.
+    uint32_t GetSpriteTextureForPreset(int presetIndex) const;
 };
 
 } // namespace uz
