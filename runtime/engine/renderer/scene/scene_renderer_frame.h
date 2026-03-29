@@ -6,6 +6,7 @@
 #pragma once
 
 #include "per_frame_params.h"
+#include "post_process_volume.h"
 #include "shadow_data_params.h"
 #include "cb_ring_allocator.h"   // CBAllocation
 #include "instance_batcher.h"    // InstanceBatch, InstanceData
@@ -124,6 +125,13 @@ struct FrameContext {
     uint32_t taaSrvForTonemap = UINT32_MAX;
     uint32_t motionBlurSrvForTonemap = UINT32_MAX;
     uint32_t postDofSrvForTonemap = UINT32_MAX;
+
+    // ── PostProcess Volume blended settings ────────────────────────
+    /// Blended post-process settings from all active PostProcessVolumeComponents.
+    /// Valid only when hasBlendedPP is true. Subsystems (bloom, DOF, etc.) should
+    /// check hasBlendedPP and use these instead of CVar defaults when set.
+    PostProcessSettings blendedPP;
+    bool hasBlendedPP = false;
 
     // ── Post-process activation flags ───────────────────────────────
     bool bloomEnabled = false;

@@ -10,6 +10,7 @@
 #include "components.h"
 
 #include "camera.h"
+#include "post_process_volume.h"
 #include "gpu_mesh.h"
 #include "sh_projection.h"
 #include "profiler.h"
@@ -225,6 +226,100 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     perFrame.colorSaturation     = cv_ColorSaturation->value;
     perFrame.colorContrast       = cv_ColorContrast->value;
     perFrame.contactShadowLength = cv_ContactShadowLen->value;
+
+    // ── PostProcess Volume blending ─────────────────────────────────────
+    // Gather all PostProcessVolumeComponents from the ECS, build transient
+    // PostProcessVolume objects, compute the blended settings for the current
+    // camera position, and apply overridden fields to the per-frame params.
+    // This runs after CVar defaults so that volume overrides take precedence.
+    if (ctx.world) {
+        const Vec3 camWorldPos = camera.GetPosition();
+
+        PostProcessVolumeManager ppvManager;
+        auto ppvView = ctx.world->GetRegistry().view<PostProcessVolumeComponent>();
+        for (auto enttEntity : ppvView) {
+            const auto& ppvComp = ppvView.get<PostProcessVolumeComponent>(enttEntity);
+            if (!ppvComp.enabled) continue;
+
+            PostProcessVolume vol;
+            vol.priority    = ppvComp.priority;
+            vol.blendRadius = ppvComp.blendRadius;
+            vol.blendWeight = ppvComp.blendWeight;
+            vol.isUnbound   = ppvComp.isUnbound;
+            vol.enabled     = true;
+
+            // Compute world-space AABB from entity transform + local extents.
+            if (!ppvComp.isUnbound) {
+                Vec3 entityPos{};
+                if (ctx.world->GetRegistry().all_of<SceneComponent>(enttEntity)) {
+                    auto& scene = ctx.world->GetRegistry().get<SceneComponent>(enttEntity);
+                    entityPos = scene.GetWorldPosition();
+                }
+                vol.boundsMin = {entityPos.x - ppvComp.extents.x,
+                                 entityPos.y - ppvComp.extents.y,
+                                 entityPos.z - ppvComp.extents.z};
+                vol.boundsMax = {entityPos.x + ppvComp.extents.x,
+                                 entityPos.y + ppvComp.extents.y,
+                                 entityPos.z + ppvComp.extents.z};
+            }
+
+            // Convert per-field override bools into the bitmask + settings.
+            auto& s = vol.settings;
+
+            if (ppvComp.overrideBloomIntensity)                { s.SetOverride(PostProcessOverride::BloomIntensity);                s.bloomIntensity                = ppvComp.bloomIntensity; }
+            if (ppvComp.overrideBloomThreshold)                { s.SetOverride(PostProcessOverride::BloomThreshold);                s.bloomThreshold                = ppvComp.bloomThreshold; }
+            if (ppvComp.overrideAutoExposureMinBrightness)     { s.SetOverride(PostProcessOverride::AutoExposureMinBrightness);     s.autoExposureMinBrightness     = ppvComp.autoExposureMinBrightness; }
+            if (ppvComp.overrideAutoExposureMaxBrightness)     { s.SetOverride(PostProcessOverride::AutoExposureMaxBrightness);     s.autoExposureMaxBrightness     = ppvComp.autoExposureMaxBrightness; }
+            if (ppvComp.overrideAutoExposureBias)              { s.SetOverride(PostProcessOverride::AutoExposureBias);              s.autoExposureBias              = ppvComp.autoExposureBias; }
+            if (ppvComp.overrideAutoExposureSpeedUp)           { s.SetOverride(PostProcessOverride::AutoExposureSpeedUp);           s.autoExposureSpeedUp           = ppvComp.autoExposureSpeedUp; }
+            if (ppvComp.overrideAutoExposureSpeedDown)         { s.SetOverride(PostProcessOverride::AutoExposureSpeedDown);         s.autoExposureSpeedDown         = ppvComp.autoExposureSpeedDown; }
+            if (ppvComp.overrideDofFocalDistance)               { s.SetOverride(PostProcessOverride::DepthOfFieldFocalDistance);     s.depthOfFieldFocalDistance      = ppvComp.dofFocalDistance; }
+            if (ppvComp.overrideDofFocalRegion)                 { s.SetOverride(PostProcessOverride::DepthOfFieldFocalRegion);       s.depthOfFieldFocalRegion        = ppvComp.dofFocalRegion; }
+            if (ppvComp.overrideDofNearTransition)              { s.SetOverride(PostProcessOverride::DepthOfFieldNearTransition);    s.depthOfFieldNearTransition     = ppvComp.dofNearTransition; }
+            if (ppvComp.overrideDofFarTransition)               { s.SetOverride(PostProcessOverride::DepthOfFieldFarTransition);     s.depthOfFieldFarTransition      = ppvComp.dofFarTransition; }
+            if (ppvComp.overrideDofFstop)                       { s.SetOverride(PostProcessOverride::DepthOfFieldFstop);             s.depthOfFieldFstop              = ppvComp.dofFstop; }
+            if (ppvComp.overrideMotionBlurAmount)              { s.SetOverride(PostProcessOverride::MotionBlurAmount);              s.motionBlurAmount              = ppvComp.motionBlurAmount; }
+            if (ppvComp.overrideMotionBlurMax)                 { s.SetOverride(PostProcessOverride::MotionBlurMax);                 s.motionBlurMax                 = ppvComp.motionBlurMax; }
+            if (ppvComp.overrideMotionBlurTargetFPS)           { s.SetOverride(PostProcessOverride::MotionBlurTargetFPS);           s.motionBlurTargetFPS           = ppvComp.motionBlurTargetFPS; }
+            if (ppvComp.overrideWhiteTemp)                     { s.SetOverride(PostProcessOverride::WhiteTemp);                     s.whiteTemp                     = ppvComp.whiteTemp; }
+            if (ppvComp.overrideWhiteTint)                     { s.SetOverride(PostProcessOverride::WhiteTint);                     s.whiteTint                     = ppvComp.whiteTint; }
+            if (ppvComp.overrideFilmSlope)                     { s.SetOverride(PostProcessOverride::FilmSlope);                     s.filmSlope                     = ppvComp.filmSlope; }
+            if (ppvComp.overrideFilmToe)                       { s.SetOverride(PostProcessOverride::FilmToe);                       s.filmToe                       = ppvComp.filmToe; }
+            if (ppvComp.overrideFilmShoulder)                  { s.SetOverride(PostProcessOverride::FilmShoulder);                  s.filmShoulder                  = ppvComp.filmShoulder; }
+            if (ppvComp.overrideFilmBlackClip)                 { s.SetOverride(PostProcessOverride::FilmBlackClip);                 s.filmBlackClip                 = ppvComp.filmBlackClip; }
+            if (ppvComp.overrideFilmWhiteClip)                 { s.SetOverride(PostProcessOverride::FilmWhiteClip);                 s.filmWhiteClip                 = ppvComp.filmWhiteClip; }
+            if (ppvComp.overrideVignetteIntensity)             { s.SetOverride(PostProcessOverride::VignetteIntensity);             s.vignetteIntensity             = ppvComp.vignetteIntensity; }
+            if (ppvComp.overrideAmbientOcclusionIntensity)     { s.SetOverride(PostProcessOverride::AmbientOcclusionIntensity);     s.ambientOcclusionIntensity     = ppvComp.ambientOcclusionIntensity; }
+            if (ppvComp.overrideAmbientOcclusionRadius)        { s.SetOverride(PostProcessOverride::AmbientOcclusionRadius);        s.ambientOcclusionRadius        = ppvComp.ambientOcclusionRadius; }
+            if (ppvComp.overrideAmbientOcclusionPower)         { s.SetOverride(PostProcessOverride::AmbientOcclusionPower);         s.ambientOcclusionPower         = ppvComp.ambientOcclusionPower; }
+            if (ppvComp.overrideScreenSpaceReflectionIntensity){ s.SetOverride(PostProcessOverride::ScreenSpaceReflectionIntensity);s.screenSpaceReflectionIntensity = ppvComp.screenSpaceReflectionIntensity; }
+            if (ppvComp.overrideScreenSpaceReflectionQuality)  { s.SetOverride(PostProcessOverride::ScreenSpaceReflectionQuality);  s.screenSpaceReflectionQuality  = ppvComp.screenSpaceReflectionQuality; }
+
+            ppvManager.AddVolume(vol);
+        }
+
+        // Compute the final blended settings and apply overridden fields to perFrame.
+        if (ppvManager.GetVolumeCount() > 0) {
+            const PostProcessSettings blended = ppvManager.ComputeBlendedSettings(camWorldPos);
+
+            // Apply only fields whose override bits are set in the blended result.
+            // This preserves CVar defaults for non-overridden fields.
+            // Apply blended ACES tonemap parameters to perFrame (overrides CVar defaults).
+            if (blended.HasOverride(PostProcessOverride::FilmSlope))                     perFrame.toneCurveSlope      = blended.filmSlope;
+            if (blended.HasOverride(PostProcessOverride::FilmToe))                       perFrame.toneCurveToe        = blended.filmToe;
+            if (blended.HasOverride(PostProcessOverride::FilmShoulder))                  perFrame.toneCurveShoulder   = blended.filmShoulder;
+            if (blended.HasOverride(PostProcessOverride::FilmBlackClip))                 perFrame.toneCurveBlackClip  = blended.filmBlackClip;
+            if (blended.HasOverride(PostProcessOverride::FilmWhiteClip))                 perFrame.toneCurveWhiteClip  = blended.filmWhiteClip;
+            if (blended.HasOverride(PostProcessOverride::VignetteIntensity))             perFrame.vignetteIntensity   = blended.vignetteIntensity;
+            // Exposure bias: apply as 2^bias multiplier on the current exposure value.
+            if (blended.HasOverride(PostProcessOverride::AutoExposureBias))              perFrame.exposure           *= std::pow(2.0f, blended.autoExposureBias);
+
+            // Store the full blended settings in the frame context for subsystems
+            // (bloom, DOF, motion blur, AO, SSR) that read from ctx directly.
+            ctx.blendedPP = blended;
+            ctx.hasBlendedPP = true;
+        }
+    }
 
     // ── GTAO SRV index (set early — actual compute runs in render graph) ──
     if (m_gtaoPass && m_gtaoPass->IsInitialized() && m_gtaoPass->settings.enabled) {

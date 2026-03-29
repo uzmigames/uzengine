@@ -22,6 +22,7 @@
 #include "environment/sky_light_component.h"
 #include "environment/height_fog_component.h"
 #include "environment/volumetric_clouds_component.h"
+#include "environment/postprocess_volume_component.h"
 #include "environment/vfx_emitter_component.h"
 
 // Metadata components

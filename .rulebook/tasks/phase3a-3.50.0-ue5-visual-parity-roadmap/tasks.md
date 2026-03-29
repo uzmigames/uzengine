@@ -147,7 +147,7 @@
 - [x] 3.6.1 Core implemented — LensFlarePass with screen-space ghosts, halo, chromatic shift. CVars: r.LensFlare.Intensity/GhostIntensity/HaloRadius/ChromaticShift. Integrated in frame_postprocess.cpp. Disabled by default (r.LensFlare=0).
 
 ### 3.7 PostProcess Volumes → task `phase3a-3.25.0-postprocess-volumes` (existing)
-- [ ] 3.7.1 Implement — AABB volumes, per-setting override + blend weight.
+- [x] 3.7.1 Implement — AABB volumes, per-setting override + blend weight. Added PostProcessVolumeComponent (ECS, 28 overridable settings), component serializer (JSON round-trip), wired into frame_constants.cpp (gathers from ECS, builds PostProcessVolumeManager, blends by priority/distance/weight, applies tonemap+vignette+exposure overrides to PerFrameCB, stores full blended settings in FrameContext for subsystems).
 
 ---
 
