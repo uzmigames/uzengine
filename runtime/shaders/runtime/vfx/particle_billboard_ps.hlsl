@@ -166,10 +166,14 @@ cbuffer VFXBillboardCB : register(b2) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Bilinear sampler with clamp addressing for sprite texture sampling.
-SamplerState linearSampler : register(s0);
+/// Uses s2 from the global root signature (bilinear + clamp).
+/// s0 = anisotropic wrap (wrong for sprites), s1 = comparison (shadow PCF).
+SamplerState linearSampler : register(s2);
 
-/// Point sampler for depth buffer reads (no filtering on depth values).
-SamplerState pointSampler  : register(s1);
+/// Depth buffer sampling reuses the bilinear clamp sampler (s2).
+/// No point sampler exists in the root signature; bilinear is acceptable
+/// for the approximate soft-particle depth fade calculation.
+SamplerState pointSampler  : register(s2);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper Functions
