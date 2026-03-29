@@ -13,6 +13,7 @@
 #include "name_component.h"
 #include "scene_component.h"
 #include "static_mesh_component.h"
+#include "lod_group.h"
 #include "camera_component.h"
 #include "light_component.h"
 #include "material/material_asset.h"
@@ -244,10 +245,46 @@ void ParseLightComponent(World& world,
     }
 }
 
+/// Reads a float array from a JSON value into a C array.
+///
+/// Returns the number of elements actually read (up to `maxCount`).
+/// Missing, non-array, or non-number elements are filled with `defaultVal`.
+uint32_t ReadFloatArray(const nlohmann::json& obj,
+                        const char* key,
+                        float* out,
+                        uint32_t maxCount,
+                        float defaultVal) {
+    auto it = obj.find(key);
+    if (it == obj.end() || !it->is_array()) {
+        for (uint32_t i = 0; i < maxCount; ++i) out[i] = defaultVal;
+        return 0;
+    }
+    const auto& arr = *it;
+    const uint32_t count = std::min(maxCount, static_cast<uint32_t>(arr.size()));
+    for (uint32_t i = 0; i < count; ++i) {
+        out[i] = arr[i].is_number() ? arr[i].get<float>() : defaultVal;
+    }
+    for (uint32_t i = count; i < maxCount; ++i) {
+        out[i] = defaultVal;
+    }
+    return count;
+}
+
 /// Parses the `"mesh"` component JSON and emplaces a `StaticMeshComponent`.
 ///
 /// Requires an `"asset"` field with the VFS-relative mesh path. Skips with a
 /// warning if the field is absent or empty.
+///
+/// # LOD Fields (optional)
+/// - `"lod1"` .. `"lod7"`: VFS-relative paths to LOD meshes (progressively simpler).
+/// - `"lodScreenSizes"`: Array of up to 8 screen size thresholds (LOD0..LOD7).
+///   Overrides the auto-computed thresholds from `LODGroup::InitAutoThresholds()`.
+/// - `"forcedLOD"`: Integer to force a specific LOD level (-1 = automatic).
+/// - `"boundingSphereRadius"`: Override for LOD screen-size computation.
+///
+/// When any LOD path is present, `lodGroup.numLevels` is set to the highest
+/// LOD index + 1, and auto-thresholds are applied for any levels without
+/// explicit screen sizes.
 void ParseMeshComponent(World& world,
                          Entity entity,
                          const nlohmann::json& comp) {
@@ -261,6 +298,49 @@ void ParseMeshComponent(World& world,
     auto enttEntity = static_cast<entt::entity>(static_cast<uint32_t>(entity.id));
     auto& mesh = world.GetRegistry().emplace<StaticMeshComponent>(enttEntity);
     mesh.meshPath = asset;
+
+    // ── LOD mesh paths (LOD1..LOD7) ─────────────────────────────────────
+    // Keys "lod1" through "lod7" map to lodMeshPaths[0..6].
+    static constexpr const char* kLodKeys[] = {
+        "lod1", "lod2", "lod3", "lod4", "lod5", "lod6", "lod7"
+    };
+    uint32_t highestLodWithPath = 0; // Highest LOD level that has a mesh path (0 = LOD0 only)
+    for (uint32_t i = 0; i < kMaxLODs - 1; ++i) {
+        mesh.lodMeshPaths[i] = ReadString(comp, kLodKeys[i]);
+        if (!mesh.lodMeshPaths[i].empty()) {
+            highestLodWithPath = i + 1; // lodMeshPaths[i] = LOD level i+1
+        }
+    }
+
+    // If any LOD paths were specified, configure the LOD group.
+    if (highestLodWithPath > 0) {
+        const uint32_t numLevels = highestLodWithPath + 1;
+
+        // Build mesh index array for InitAutoThresholds. All indices start at
+        // 0 (LOD0 mesh) — the actual LOD mesh indices are assigned during
+        // lazy-load in SyncWorldToDrawList when the meshes are uploaded to GPU.
+        uint32_t meshIndices[kMaxLODs] = {};
+        mesh.lodGroup.InitAutoThresholds(meshIndices, numLevels);
+
+        // Override screen size thresholds if explicitly provided.
+        float screenSizes[kMaxLODs] = {};
+        const uint32_t readCount = ReadFloatArray(comp, "lodScreenSizes",
+                                                   screenSizes, kMaxLODs, 0.0f);
+        if (readCount > 0) {
+            for (uint32_t i = 0; i < numLevels && i < readCount; ++i) {
+                mesh.lodGroup.levels[i].screenSizeThreshold = screenSizes[i];
+            }
+        }
+    }
+
+    // ── Optional LOD overrides ──────────────────────────────────────────
+    {
+        auto forcedIt = comp.find("forcedLOD");
+        if (forcedIt != comp.end() && forcedIt->is_number_integer()) {
+            mesh.forcedLOD = forcedIt->get<int32_t>();
+        }
+    }
+    mesh.boundingSphereRadius = ReadFloat(comp, "boundingSphereRadius", 0.0f);
 }
 
 /// Parses the `"material"` component JSON and writes texture paths into an
@@ -497,6 +577,36 @@ nlohmann::json SerializeEntity(const World& world, entt::entity enttEntity) {
         if (!mesh->meshPath.empty()) {
             nlohmann::json meshJson;
             meshJson["asset"] = mesh->meshPath;
+
+            // ── Serialize LOD mesh paths (LOD1..LOD7) ───────────────────
+            static constexpr const char* kLodKeys[] = {
+                "lod1", "lod2", "lod3", "lod4", "lod5", "lod6", "lod7"
+            };
+            for (uint32_t i = 0; i < kMaxLODs - 1; ++i) {
+                if (!mesh->lodMeshPaths[i].empty()) {
+                    meshJson[kLodKeys[i]] = mesh->lodMeshPaths[i];
+                }
+            }
+
+            // Serialize LOD screen size thresholds if multiple levels exist.
+            if (mesh->lodGroup.numLevels > 1) {
+                nlohmann::json screenSizes = nlohmann::json::array();
+                for (uint32_t i = 0; i < mesh->lodGroup.numLevels; ++i) {
+                    screenSizes.push_back(mesh->lodGroup.levels[i].screenSizeThreshold);
+                }
+                meshJson["lodScreenSizes"] = std::move(screenSizes);
+            }
+
+            // Serialize forcedLOD if not automatic.
+            if (mesh->forcedLOD >= 0) {
+                meshJson["forcedLOD"] = mesh->forcedLOD;
+            }
+
+            // Serialize bounding sphere radius if overridden.
+            if (mesh->boundingSphereRadius > 0.0f) {
+                meshJson["boundingSphereRadius"] = mesh->boundingSphereRadius;
+            }
+
             components["mesh"] = std::move(meshJson);
         }
 
