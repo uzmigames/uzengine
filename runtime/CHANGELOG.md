@@ -4,16 +4,19 @@
 
 ## [0.3.2] — 2026-03-29
 
-### FBX Auto-LOD Generation & Cook Cache Invalidation
+### FBX Auto-LOD Generation, Cook Cache Invalidation & Axis Fix
 
 #### Auto-LOD
 - **feat(fbx):** Auto-LOD generation in FBX importer — generates LOD1 (50%), LOD2 (25%), LOD3 (12.5%) via meshopt_simplify with position-only welding and reverse index remapping to preserve the original vertex buffer.
 - **feat(fbx):** SDF baker guard — skips SDF generation for meshes with >50K indices to prevent hangs.
-- **feat(fbx):** FbxImporter version bumped to v2 (UZMH v2 multi-LOD header).
+- **feat(fbx):** FbxImporter version bumped to v5 (UZMH v2 multi-LOD header + axis fix).
 
 #### Cook Cache Invalidation
 - **fix(cook):** Binary timestamp staleness check — uzcook now compares its own modification time against .uzimport sidecars; if the binary is newer (importer code changed), reimport is forced without requiring a manual version bump.
 - **fix(cook):** Companion file existence check — if the output .uzmesh/.uztexture was deleted but the .uzimport sidecar still exists, reimport is forced instead of silently skipping.
+
+#### FBX Axis Orientation Fix
+- **fix(fbx):** Correct axis orientation for FBX meshes — raw FBX data has Y=height; apply cyclic permutation `(pos.z, pos.x, pos.y)` in vertex extraction to map Y→Z (height), Z→X, X→Y. Determinant=+1 (proper rotation), preserves winding order. Verified: character stands upright with Z-up bounds (-13.7 to +224.6 cm).
 
 ## [0.3.1] — 2026-03-28
 

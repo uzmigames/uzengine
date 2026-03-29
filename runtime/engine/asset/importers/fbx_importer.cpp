@@ -641,7 +641,7 @@ const char* FbxImporter::Name() const {
 }
 
 uint32_t FbxImporter::Version() const {
-    return 2; // v2: auto-LOD generation (LOD1-3 via UZMH v2 header)
+    return 5; // v5: axis remap (FBX.Z,X,Y) → (UE.X,Y,Z) — Z-up correct orientation
 }
 
 const std::vector<std::string>& FbxImporter::Extensions() const {
@@ -663,11 +663,12 @@ AssetImportResult FbxImporter::Import(
     }
 
     // ── Parse FBX via ufbx ──
-    // Convert to UzEngine coordinate system: Z-up, left-handed, centimeters.
-    // MODIFY_GEOMETRY bakes the transform into vertex data directly.
+    // Do NOT set target_axes — the FBX file already uses Z-up vertex positions.
+    // Any axis conversion via target_axes remaps the axes and breaks orientation.
+    // MODIFY_GEOMETRY bakes all node transforms (scale, rotation, translation) into
+    // vertex positions so we get a clean, flat vertex buffer without a scene hierarchy.
     ufbx_load_opts loadOpts = {};
-    loadOpts.target_axes = ufbx_axes_left_handed_z_up;
-    loadOpts.target_unit_meters = 0.01f; // centimeters
+    loadOpts.target_unit_meters = 0.01f; // normalize to centimeters
     loadOpts.space_conversion = UFBX_SPACE_CONVERSION_MODIFY_GEOMETRY;
     loadOpts.generate_missing_normals = true;
 
@@ -832,17 +833,20 @@ AssetImportResult FbxImporter::Import(
                 VertexPosNormUV vert = {};
 
                 // Position — always present
+                // Axis remap: FBX raw data is (X=lateral, Y=height, Z=depth).
+                // UzEngine is Z-up: map FBX.Y→UE.Z, FBX.Z→UE.X, FBX.X→UE.Y.
+                // Cyclic permutation (det=+1), preserves winding order.
                 const ufbx_vec3 pos = ufbx_get_vertex_vec3(&mesh->vertex_position, cornerIdx);
-                vert.position[0] = static_cast<float>(pos.x);
-                vert.position[1] = static_cast<float>(pos.y);
-                vert.position[2] = static_cast<float>(pos.z);
+                vert.position[0] = static_cast<float>(pos.z);
+                vert.position[1] = static_cast<float>(pos.x);
+                vert.position[2] = static_cast<float>(pos.y);
 
-                // Normal — may not exist
+                // Normal — may not exist (same axis remap as position)
                 if (hasNormals) {
                     const ufbx_vec3 norm = ufbx_get_vertex_vec3(&mesh->vertex_normal, cornerIdx);
-                    vert.normal[0] = static_cast<float>(norm.x);
-                    vert.normal[1] = static_cast<float>(norm.y);
-                    vert.normal[2] = static_cast<float>(norm.z);
+                    vert.normal[0] = static_cast<float>(norm.z);
+                    vert.normal[1] = static_cast<float>(norm.x);
+                    vert.normal[2] = static_cast<float>(norm.y);
                 }
                 // else: normals will be generated as flat normals after all faces
 
