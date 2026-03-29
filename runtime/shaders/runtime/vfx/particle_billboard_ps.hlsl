@@ -12,13 +12,13 @@
 ///
 /// Uses reversed-Z depth convention (near=1.0, far=0.0) via depth_common.hlsli.
 ///
-/// # Alpha Blending
-/// This shader outputs premultiplied alpha (RGB *= alpha before return).
-/// The PSO blend state MUST be:
-///   SrcBlend = One, DestBlend = InvSrcAlpha (premultiplied alpha)
-///   DepthTest = enabled, DepthWrite = disabled, Cull = None
-/// This allows emissive particles to add light (additive glow from emissive term)
-/// while transparent edges blend correctly via alpha.
+/// # Alpha Blending (Blend Mode Aware)
+/// The shader supports 3 blend modes via `blendModeHint` in VFXBillboardCB:
+///   - 0 AlphaBlend: SrcAlpha/InvSrcAlpha — outputs straight alpha (no premultiply).
+///   - 1 Additive:   One/One — outputs straight RGB, alpha unused by blend state.
+///   - 2 PremulAlpha: One/InvSrcAlpha — outputs premultiplied alpha (RGB *= alpha).
+/// All modes: DepthTest = enabled, DepthWrite = disabled, Cull = None.
+/// The CPU selects the matching PSO; the PS adjusts its alpha output accordingly.
 ///
 /// # Root Signature
 /// - b0: VFXBillboardConstants (unified bindless indices for VS buffers + PS textures)
@@ -160,7 +160,7 @@ cbuffer VFXBillboardCB : register(b2) {
     // ── Billboard alignment and stretching (16 bytes, declared for layout) ──
     uint     alignmentMode;        ///< 0=CameraFacing, 1=VelocityAligned (not read by PS).
     float    stretchFactor;        ///< Velocity stretch multiplier (not read by PS).
-    float    _solPad0;
+    uint     blendModeHint;        ///< 0=AlphaBlend, 1=Additive, 2=PremulAlpha — controls PS alpha output.
     float    _solPad1;
 };
 
@@ -379,18 +379,26 @@ float4 main(PSInput input) : SV_Target {
     // ── Add emissive contribution ──
     // Emissive brightens the particle using its own tinted color (not raw sprite white).
     // This preserves the color-over-lifetime tint in the glow.
-    // Applied BEFORE premultiply so the emissive term gets baked into the premultiplied
-    // RGB, producing additive glow through the framebuffer's One/InvSrcAlpha blend.
     finalColor.rgb += finalColor.rgb * emissiveIntensity;
 
-    // ── Premultiply alpha ──
-    // The PSO uses premultiplied alpha blend (SrcOne / InvSrcAlpha).
-    // Premultiplying RGB by alpha here enables dual behavior:
-    //   - Transparent edges: alpha < 1 reduces both RGB and coverage correctly.
-    //   - Additive glow: emissive contribution (above) adds energy through SrcOne,
-    //     while alpha controls how much of the background is preserved via InvSrcAlpha.
-    // Without this premultiply, colors would appear too bright (double-multiplied by alpha).
-    finalColor.rgb *= finalColor.a;
+    // ── Output alpha handling based on blend mode ──
+    // Each blend mode requires a different alpha treatment to produce correct results
+    // with its corresponding PSO blend state.
+    if (blendModeHint == 2) {
+        // PremulAlpha (One / InvSrcAlpha): RGB must be premultiplied by alpha.
+        // Transparent edges: alpha < 1 reduces both RGB and coverage correctly.
+        // Additive glow: emissive contribution adds energy through SrcOne,
+        // while alpha controls how much background is preserved via InvSrcAlpha.
+        finalColor.rgb *= finalColor.a;
+    } else if (blendModeHint == 1) {
+        // Additive (One / One): RGB adds directly to the framebuffer.
+        // No premultiply — alpha controls particle opacity through the color
+        // itself (already modulated by vertex color and color-over-lifetime).
+        // The blend state ignores alpha entirely (One/One on both channels).
+    }
+    // else blendModeHint == 0: AlphaBlend (SrcAlpha / InvSrcAlpha)
+    // No premultiply — the blend state multiplies RGB by alpha automatically.
+    // Output straight alpha so the hardware blend produces correct transparency.
 
     return finalColor;
 }

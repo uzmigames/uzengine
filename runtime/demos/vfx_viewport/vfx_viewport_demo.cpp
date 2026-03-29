@@ -2117,6 +2117,7 @@ void VFXViewportDemo::RenderVFXPass(IRHICommandList* cmd, uint64_t perFrameGpu,
                                 GetCamera().GetView(), emitterPos,
                                 m_prevViewProj,
                                 m_vfxEmitter,
+                                m_vfxEmitter.blendMode,
                                 depthSrvIdx,
                                 spriteSrvIdx);
 

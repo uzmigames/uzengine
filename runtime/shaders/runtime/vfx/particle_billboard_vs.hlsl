@@ -195,7 +195,7 @@ cbuffer VFXBillboardCB : register(b2) {
     // ── Billboard alignment and stretching (16 bytes) ──
     uint     alignmentMode;        ///< 0=CameraFacing, 1=VelocityAligned.
     float    stretchFactor;        ///< Velocity stretch multiplier. 0=no stretch.
-    float    _solPad0;
+    uint     blendModeHint;        ///< 0=AlphaBlend, 1=Additive, 2=PremulAlpha (read by PS, declared for layout).
     float    _solPad1;
 };
 

@@ -74,6 +74,8 @@ struct VFXEmitterConfig {
     float    shapeParam1     = 0.0f;  ///< Ring: ring width, Cone: half-angle (rad), Cylinder: height, Line: length.
     float    shapeParam2     = 0.0f;  ///< Cone: height, Box: (unused).
     float    shapeParam3     = 0.0f;  ///< Reserved for future shapes.
+    // Material blend mode
+    uint32_t blendMode       = 2;     ///< 0=AlphaBlend (SrcAlpha/InvSrcAlpha), 1=Additive (One/One), 2=PremulAlpha (One/InvSrcAlpha).
 };
 
 /// Named emitter preset with a spawn rate.
@@ -204,7 +206,7 @@ struct VFXBillboardCB {
     // ── Billboard alignment and stretching (16 bytes) ──
     uint32_t alignmentMode        = 0;              ///< 0=CameraFacing, 1=VelocityAligned.
     float    stretchFactor        = 0.0f;           ///< Velocity stretch multiplier. 0=no stretch.
-    float    _solPad0             = 0.0f;
+    uint32_t blendModeHint        = 2;              ///< 0=AlphaBlend, 1=Additive, 2=PremulAlpha — tells PS how to output alpha.
     float    _solPad1             = 0.0f;
 };
 static_assert(sizeof(VFXBillboardCB) == 272, "VFXBillboardCB must be 272 bytes (256 base + 16 alignment/stretch)");
@@ -274,6 +276,7 @@ public:
     /// * `emitterPos` — World-space emitter position.
     /// * `prevViewProj` — Previous frame's view-projection (for TAA motion vectors).
     /// * `config` — Emitter config (flipbook, soft fade, emissive params).
+    /// * `blendMode` — 0=AlphaBlend, 1=Additive, 2=PremulAlpha. Selects PSO and PS behavior.
     /// * `depthBufferSrvIdx` — SRV index for the scene depth buffer (soft fade).
     /// * `spriteTextureSrvIdx` — SRV index for the sprite atlas (UINT32_MAX = none).
     void DrawBillboards(IRHICommandList* cmdList, CBRingAllocator* cbRing,
@@ -281,10 +284,20 @@ public:
                         const Mat4& viewMat, const Vec3& emitterPos,
                         const Mat4& prevViewProj,
                         const VFXEmitterConfig& config,
+                        uint32_t blendMode,
                         uint32_t depthBufferSrvIdx,
                         uint32_t spriteTextureSrvIdx = UINT32_MAX);
 
-    /// Returns the billboard graphics pipeline handle.
+    /// Returns the billboard graphics pipeline handle for the given blend mode.
+    ///
+    /// # Arguments
+    /// * `blendMode` — 0=AlphaBlend, 1=Additive, 2=PremulAlpha (default).
+    ///
+    /// # Returns
+    /// Pipeline handle for the requested blend mode.
+    [[nodiscard]] RHIPipelineHandle GetBillboardPSOForBlendMode(uint32_t blendMode) const;
+
+    /// Returns the default (PremulAlpha) billboard graphics pipeline handle.
     [[nodiscard]] RHIPipelineHandle GetBillboardPSO() const { return m_billboardPSO; }
 
     /// Returns the maximum particle count.
@@ -332,8 +345,10 @@ private:
     RHIPipelineHandle m_indirectArgsPSO;
     RHIPipelineHandle m_sortPSO;
 
-    // Graphics pipeline for billboard rendering
-    RHIPipelineHandle m_billboardPSO;
+    // Graphics pipelines for billboard rendering (one per blend mode)
+    RHIPipelineHandle m_billboardPSO;                ///< PremulAlpha: One/InvSrcAlpha (default).
+    RHIPipelineHandle m_billboardPSO_Additive;       ///< Additive: One/One (fire, sparks).
+    RHIPipelineHandle m_billboardPSO_AlphaBlend;     ///< AlphaBlend: SrcAlpha/InvSrcAlpha (smoke).
 
     /// Returns the element stride in bytes for the given channel index.
     [[nodiscard]] static uint32_t ChannelStride(uint32_t channel);

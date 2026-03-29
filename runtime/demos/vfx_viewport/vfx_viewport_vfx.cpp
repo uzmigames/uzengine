@@ -33,7 +33,10 @@ static const VFXPreset s_presets[] = {
         /*sizeOverLife*/ 0.3f, 1.2f, 0.0f, 0.25f,
         /*colorLifeStart*/ 1.0f, 0.9f, 0.5f, 1.0f,
         /*colorLifeEnd*/ 1.0f, 0.3f, 0.05f, 0.0f,
-        /*alignment*/ 0, /*stretch*/ 0.0f
+        /*alignment*/ 0, /*stretch*/ 0.0f,
+        /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
+        /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
+        /*blendMode*/ 1 // Additive — fire burst glows
     }, 500.0f },
     { "Smoke Plume", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.2f,
@@ -46,7 +49,10 @@ static const VFXPreset s_presets[] = {
         /*sizeOverLife*/ 0.3f, 1.5f, 2.5f, 0.3f,
         /*colorLifeStart*/ 0.7f, 0.6f, 0.5f, 0.8f,
         /*colorLifeEnd*/ 0.2f, 0.2f, 0.2f, 0.0f,
-        /*alignment*/ 0, /*stretch*/ 0.0f
+        /*alignment*/ 0, /*stretch*/ 0.0f,
+        /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
+        /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
+        /*blendMode*/ 0 // AlphaBlend — smoke is translucent, not additive
     }, 200.0f },
     { "Sparks", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.15f,
@@ -59,7 +65,10 @@ static const VFXPreset s_presets[] = {
         /*sizeOverLife*/ 1.0f, 1.0f, 0.3f, 0.0f,
         /*colorLifeStart*/ 1.0f, 0.95f, 0.7f, 1.0f,
         /*colorLifeEnd*/ 1.0f, 0.3f, 0.0f, 0.2f,
-        /*alignment*/ 1, /*stretch*/ 2.0f
+        /*alignment*/ 1, /*stretch*/ 2.0f,
+        /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
+        /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
+        /*blendMode*/ 1 // Additive — bright spark streaks
     }, 800.0f },
     { "Magic Orb", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.8f,
@@ -72,7 +81,10 @@ static const VFXPreset s_presets[] = {
         /*sizeOverLife*/ 0.5f, 1.0f, 0.2f, 0.4f,
         /*colorLifeStart*/ 0.4f, 0.8f, 1.0f, 1.0f,
         /*colorLifeEnd*/ 0.1f, 0.2f, 0.8f, 0.0f,
-        /*alignment*/ 0, /*stretch*/ 0.0f
+        /*alignment*/ 0, /*stretch*/ 0.0f,
+        /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
+        /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
+        /*blendMode*/ 1 // Additive — glowing magical particles
     }, 300.0f },
     { "Explosion Debris", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.3f,
@@ -85,7 +97,10 @@ static const VFXPreset s_presets[] = {
         /*sizeOverLife*/ 0.8f, 1.5f, 0.1f, 0.1f,
         /*colorLifeStart*/ 1.0f, 0.8f, 0.4f, 1.0f,
         /*colorLifeEnd*/ 0.4f, 0.08f, 0.0f, 0.0f,
-        /*alignment*/ 1, /*stretch*/ 2.0f
+        /*alignment*/ 1, /*stretch*/ 2.0f,
+        /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
+        /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
+        /*blendMode*/ 1 // Additive — hot glowing debris
     }, 2000.0f },
     { "Fireball", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.4f,
@@ -100,7 +115,8 @@ static const VFXPreset s_presets[] = {
         /*colorLifeEnd*/ 0.7f, 0.15f, 0.02f, 0.3f,
         /*alignment*/ 0, /*stretch*/ 0.5f,
         /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
-        /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f
+        /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
+        /*blendMode*/ 1 // Additive — intense fireball glow
     }, 800.0f },
     // ── Spawn Shape Presets ──────────────────────────────────────────────
     { "Ring of Fire", {
@@ -116,7 +132,8 @@ static const VFXPreset s_presets[] = {
         /*colorLifeEnd*/ 1.0f, 0.2f, 0.0f, 0.0f,
         /*alignment*/ 0, /*stretch*/ 0.0f,
         /*spawnShape*/ 3, /*spawnOnSurface*/ 0,
-        /*shapeParam1*/ 0.3f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f
+        /*shapeParam1*/ 0.3f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
+        /*blendMode*/ 1 // Additive — ring of fire glow
     }, 400.0f },
     { "Cone Jet", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.1f,
@@ -131,7 +148,8 @@ static const VFXPreset s_presets[] = {
         /*colorLifeEnd*/ 0.1f, 0.3f, 0.8f, 0.0f,
         /*alignment*/ 1, /*stretch*/ 1.5f,
         /*spawnShape*/ 4, /*spawnOnSurface*/ 1,
-        /*shapeParam1*/ 0.5f, /*shapeParam2*/ 2.0f, /*shapeParam3*/ 0.0f
+        /*shapeParam1*/ 0.5f, /*shapeParam2*/ 2.0f, /*shapeParam3*/ 0.0f,
+        /*blendMode*/ 1 // Additive — bright energy jet
     }, 600.0f },
     { "Cylinder Volume", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 2.0f,
@@ -146,7 +164,8 @@ static const VFXPreset s_presets[] = {
         /*colorLifeEnd*/ 0.1f, 0.5f, 0.1f, 0.0f,
         /*alignment*/ 0, /*stretch*/ 0.0f,
         /*spawnShape*/ 5, /*spawnOnSurface*/ 0,
-        /*shapeParam1*/ 4.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f
+        /*shapeParam1*/ 4.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
+        /*blendMode*/ 0 // AlphaBlend — translucent volume particles
     }, 300.0f },
 };
 
@@ -356,7 +375,34 @@ bool VFXParticleSystem::Init(IRHIDevice* device, ShaderManager* shaderMgr,
         desc.debugName = "VFX_BillboardPSO";
         m_billboardPSO = device->CreateGraphicsPipeline(desc);
         if (!m_billboardPSO.IsValid()) {
-            UZ_LOG(App, Error, "VFX: Failed to create billboard graphics PSO");
+            UZ_LOG(App, Error, "VFX: Failed to create billboard graphics PSO (PremulAlpha)");
+            return false;
+        }
+
+        // Additive PSO (blend mode 1): One/One — pure additive for fire, sparks, glow.
+        // RGB adds directly to the framebuffer. Alpha channel adds too (usually ignored).
+        desc.renderTargetBlend[0].srcColor = RHIBlendFactor::One;
+        desc.renderTargetBlend[0].dstColor = RHIBlendFactor::One;
+        desc.renderTargetBlend[0].srcAlpha = RHIBlendFactor::One;
+        desc.renderTargetBlend[0].dstAlpha = RHIBlendFactor::One;
+        desc.debugName = "VFX_BillboardPSO_Additive";
+        m_billboardPSO_Additive = device->CreateGraphicsPipeline(desc);
+        if (!m_billboardPSO_Additive.IsValid()) {
+            UZ_LOG(App, Error, "VFX: Failed to create billboard graphics PSO (Additive)");
+            return false;
+        }
+
+        // AlphaBlend PSO (blend mode 0): SrcAlpha/InvSrcAlpha — standard transparency
+        // for smoke, dust, soft translucent particles. The blend state handles the
+        // alpha multiplication, so the PS outputs straight (non-premultiplied) alpha.
+        desc.renderTargetBlend[0].srcColor = RHIBlendFactor::SrcAlpha;
+        desc.renderTargetBlend[0].dstColor = RHIBlendFactor::InvSrcAlpha;
+        desc.renderTargetBlend[0].srcAlpha = RHIBlendFactor::One;
+        desc.renderTargetBlend[0].dstAlpha = RHIBlendFactor::InvSrcAlpha;
+        desc.debugName = "VFX_BillboardPSO_AlphaBlend";
+        m_billboardPSO_AlphaBlend = device->CreateGraphicsPipeline(desc);
+        if (!m_billboardPSO_AlphaBlend.IsValid()) {
+            UZ_LOG(App, Error, "VFX: Failed to create billboard graphics PSO (AlphaBlend)");
             return false;
         }
     }
@@ -507,6 +553,8 @@ void VFXParticleSystem::Shutdown(IRHIDevice* device) {
     destroyPso(m_indirectArgsPSO);
     destroyPso(m_sortPSO);
     destroyPso(m_billboardPSO);
+    destroyPso(m_billboardPSO_Additive);
+    destroyPso(m_billboardPSO_AlphaBlend);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -683,6 +731,19 @@ void VFXParticleSystem::DispatchCompute(IRHICommandList* cmdList, CBRingAllocato
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Blend Mode PSO Selection
+// ─────────────────────────────────────────────────────────────────────────────
+
+RHIPipelineHandle VFXParticleSystem::GetBillboardPSOForBlendMode(uint32_t mode) const {
+    switch (mode) {
+        case 0:  return m_billboardPSO_AlphaBlend;   // SrcAlpha / InvSrcAlpha
+        case 1:  return m_billboardPSO_Additive;     // One / One
+        case 2:  // PremulAlpha (default) — fall through
+        default: return m_billboardPSO;              // One / InvSrcAlpha
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Draw Billboards
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -691,6 +752,7 @@ void VFXParticleSystem::DrawBillboards(IRHICommandList* cmdList, CBRingAllocator
                                         const Mat4& viewMat, const Vec3& emitterPos,
                                         const Mat4& prevViewProj,
                                         const VFXEmitterConfig& config,
+                                        uint32_t blendMode,
                                         uint32_t depthBufferSrvIdx,
                                         uint32_t spriteTextureSrvIdx) {
     const int write = 1 - m_pingPong; // Freshly written data is in the write set
@@ -710,7 +772,7 @@ void VFXParticleSystem::DrawBillboards(IRHICommandList* cmdList, CBRingAllocator
     indices.spriteTextureIdx = spriteTextureSrvIdx;
     indices.depthBufferIdx = depthBufferSrvIdx;
 
-    cmdList->SetPipeline(m_billboardPSO);
+    cmdList->SetPipeline(GetBillboardPSOForBlendMode(blendMode));
     cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&indices),
                               sizeof(indices) / sizeof(uint32_t));
 
@@ -756,6 +818,8 @@ void VFXParticleSystem::DrawBillboards(IRHICommandList* cmdList, CBRingAllocator
     // Billboard alignment and stretching
     billboardCB.alignmentMode = config.alignmentMode;
     billboardCB.stretchFactor = config.stretchFactor;
+    // Blend mode hint tells the PS how to handle alpha output
+    billboardCB.blendModeHint = blendMode;
 
     auto cbAlloc = cbRing->Allocate(sizeof(VFXBillboardCB));
     std::memcpy(cbAlloc.cpuPtr, &billboardCB, sizeof(VFXBillboardCB));

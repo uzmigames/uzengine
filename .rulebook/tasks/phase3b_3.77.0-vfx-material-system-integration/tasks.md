@@ -27,12 +27,9 @@ Particle Color, SubUV, Dynamic Parameter nodes.
 
 ## 2. Multiple Blend Mode PSOs
 
-- [ ] 2.1 In VFXParticleSystem, create 3 billboard PSOs during Init():
-  - `m_billboardPSO_PremulAlpha` — One/InvSrcAlpha (current, for translucent particles)
-  - `m_billboardPSO_Additive` — One/One (pure additive for fire/sparks)
-  - `m_billboardPSO_AlphaBlend` — SrcAlpha/InvSrcAlpha (standard alpha for smoke/soft particles)
-- [ ] 2.2 Add `EBlendMode` field to VFXBillboardCB so the PS can adjust behavior per blend mode (e.g., skip premultiply for pure additive).
-- [ ] 2.3 In DrawBillboards(), select PSO based on material blend mode before setting pipeline.
+- [x] 2.1 In VFXParticleSystem, create 3 billboard PSOs during Init(). m_billboardPSO (PremulAlpha One/InvSrcAlpha), m_billboardPSO_Additive (One/One), m_billboardPSO_AlphaBlend (SrcAlpha/InvSrcAlpha). Added GetBillboardPSOForBlendMode() selector.
+- [x] 2.2 Added `uint32_t blendModeHint` to VFXBillboardCB (replaced `_solPad0` padding — CB stays 272 bytes). Tells PS which alpha output mode to use.
+- [x] 2.3 DrawBillboards() now takes `uint32_t blendMode` parameter, selects PSO via GetBillboardPSOForBlendMode(), and sets blendModeHint in CB.
 
 ## 3. Material Slot on Emitter Config
 
@@ -42,9 +39,9 @@ Particle Color, SubUV, Dynamic Parameter nodes.
 
 ## 4. Billboard PS Material Awareness
 
-- [ ] 4.1 Add `uint blendModeHint` to VFXBillboardCB: 0=PremulAlpha, 1=Additive, 2=AlphaBlend.
-- [ ] 4.2 In particle_billboard_ps.hlsl: when blendModeHint == 1 (Additive), skip the premultiply step (`rgb *= alpha`) since additive blend doesn't need it.
-- [ ] 4.3 When blendModeHint == 2 (AlphaBlend), output straight alpha (no premultiply, blend state does SrcAlpha/InvSrcAlpha).
+- [x] 4.1 Added `uint blendModeHint` to VFXBillboardCB in both VS and PS HLSL (replaced `_solPad0`). Values: 0=AlphaBlend, 1=Additive, 2=PremulAlpha.
+- [x] 4.2 In particle_billboard_ps.hlsl: when blendModeHint==1 (Additive), skip premultiply — RGB adds directly via One/One blend.
+- [x] 4.3 When blendModeHint==0 (AlphaBlend), output straight alpha — blend state does SrcAlpha/InvSrcAlpha. PremulAlpha (mode 2) retains existing RGB *= alpha behavior.
 - [ ] 4.4 Verify all 3 modes produce correct visual results with both procedural and sprite textures.
 
 ## 5. Texture Loading Pipeline
