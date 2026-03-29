@@ -366,10 +366,9 @@ float4 main(PSInput input) : SV_Target {
     }
 
     // ── Add emissive contribution ──
-    // Emissive adds to RGB without affecting alpha (brightens fire/spark particles).
-    // The emissive term is the sprite RGB scaled by the emissive intensity,
-    // allowing the texture to control the emission pattern.
-    finalColor.rgb += spriteColor.rgb * emissiveIntensity;
+    // Emissive brightens the particle using its own tinted color (not raw sprite white).
+    // This preserves the color-over-lifetime tint in the glow.
+    finalColor.rgb += finalColor.rgb * emissiveIntensity;
 
     return finalColor;
 }
