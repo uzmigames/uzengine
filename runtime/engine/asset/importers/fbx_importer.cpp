@@ -708,7 +708,9 @@ AssetImportResult FbxImporter::Import(
     const bool hasUVs = mesh->vertex_uv.exists;
 
     // ── Detect skinned mesh and extract skeleton ──
-    const bool isSkinned = mesh->skin_deformers.count > 0;
+    // Skinned import disabled until GPU skinning pipeline is complete.
+    // Force static mesh path (UZMH) so mesh renders correctly without bone transforms.
+    const bool isSkinned = false; // mesh->skin_deformers.count > 0;
     SkeletonExtractResult skelResult;
     const ufbx_skin_deformer* skin = nullptr;
 
