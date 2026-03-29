@@ -301,6 +301,18 @@ int main(int argc, char** argv) {
     UZ_LOG(Cook, Info, "Cook starting: source='{}', output='{}'",
            args.sourceDir, args.outputDir);
 
+    // Get uzcook binary modification time for stale-cache detection.
+    // If uzcook was recompiled (importer code changed), sidecars older
+    // than the binary are stale even if source hash and version match.
+    fs::file_time_type cookBinaryTime{};
+    {
+        std::error_code ec;
+        cookBinaryTime = fs::last_write_time(fs::path(argv[0]), ec);
+        if (ec) {
+            UZ_LOG(Cook, Warning, "Cannot stat uzcook binary — staleness check disabled");
+        }
+    }
+
     // Check if source dir contains any shaders before initializing DXC.
     // DXC LoadLibrary can hang if dxcompiler.dll isn't in the search path,
     // so we skip it entirely when there are no .hlsl files to compile.
@@ -399,8 +411,42 @@ int main(int argc, char** argv) {
         // Check sidecar for skip
         std::string sidecarPath = sourcePath + ".uzimport";
         auto sidecarResult = uz::ReadSidecarFile(sidecarPath);
-        if (sidecarResult.success &&
-            !uz::NeedsReimport(sidecarResult.sidecar, sourceHashHex, importer->Version())) {
+        bool canSkip = sidecarResult.success &&
+            !uz::NeedsReimport(sidecarResult.sidecar, sourceHashHex, importer->Version());
+
+        // Binary staleness: if uzcook was recompiled after the sidecar was
+        // written, importer code may have changed — force reimport.
+        if (canSkip) {
+            std::error_code ec;
+            auto sidecarTime = fs::last_write_time(sidecarPath, ec);
+            if (!ec && cookBinaryTime > sidecarTime) {
+                UZ_LOG(Cook, Info, "Reimport: uzcook binary newer than sidecar for '{}'",
+                       logicalPath);
+                canSkip = false;
+            }
+        }
+
+        // Companion file check: if the output .uzmesh/.uztexture was deleted
+        // but the sidecar still exists, the cache is stale.
+        if (canSkip) {
+            std::string importerName = importer->Name();
+            std::string companionExt;
+            if (importerName == "mesh" || importerName == "fbx") companionExt = ".uzmesh";
+            else if (importerName == "texture") companionExt = ".uztexture";
+
+            if (!companionExt.empty()) {
+                auto dot = sourcePath.rfind('.');
+                std::string companionPath = (dot != std::string::npos)
+                    ? sourcePath.substr(0, dot) + companionExt
+                    : sourcePath + companionExt;
+                if (!fs::exists(companionPath)) {
+                    UZ_LOG(Cook, Info, "Reimport: companion file missing '{}'", companionPath);
+                    canSkip = false;
+                }
+            }
+        }
+
+        if (canSkip) {
             ++skipped;
             std::lock_guard<std::mutex> lock(cookedMutex);
             for (const auto& [variant, outputPath] : sidecarResult.sidecar.outputs) {
