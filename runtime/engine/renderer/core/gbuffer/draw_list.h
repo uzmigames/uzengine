@@ -162,6 +162,13 @@ struct DrawCommand {
     /// outline pass to find draw commands for the selected entity. Not sent
     /// to the GPU — CPU-side metadata only.
     uint32_t entityId = UINT32_MAX;
+
+    /// LOD index override — byte offset into the mesh's index buffer.
+    /// When non-zero, DrawIndexed uses this offset + lodIndexCount instead
+    /// of the mesh's default indexCount. Set by LOD selection in scene_sync.
+    uint32_t lodIndexByteOffset = 0;
+    /// Number of indices for the selected LOD (0 = use mesh default).
+    uint32_t lodIndexCount = 0;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

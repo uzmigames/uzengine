@@ -165,8 +165,16 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
             // Update per-object LOD selection state (tracks transitions).
             meshComp.lodSelection.Update(selectedLOD);
 
-            // Use the LOD level's mesh index for rendering.
-            meshId = meshComp.lodGroup.levels[selectedLOD].meshIndex;
+            // For multi-LOD meshes stored in a single file (UZMH v2),
+            // all LODs share the same meshId but use different index ranges.
+            // Check if the selected LOD has a different meshIndex (separate file)
+            // or if we should use the in-file LOD index offset.
+            const uint32_t lodMeshIdx = meshComp.lodGroup.levels[selectedLOD].meshIndex;
+            if (lodMeshIdx != meshComp.lodGroup.levels[0].meshIndex && lodMeshIdx != UINT32_MAX) {
+                // Separate LOD mesh file — use that mesh ID
+                meshId = lodMeshIdx;
+            }
+            // else: same mesh file with multi-LOD — set index offset below
         }
 
         // Validate mesh index is within loaded meshes
@@ -180,6 +188,17 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
         cmd.normalMatrix = cmd.worldMatrix.NormalMatrix();
         cmd.meshId       = meshId;
         cmd.entityId     = static_cast<uint32_t>(enttEntity);
+
+        // Multi-LOD index override: when the GPUMesh has in-file LODs (UZMH v2),
+        // use the LOD's index offset/count instead of the full mesh indexCount.
+        const auto& gpuMesh = m_meshes[meshId];
+        if (gpuMesh.lodCount > 1 && meshComp.lodSelection.currentLOD > 0) {
+            const uint32_t lod = meshComp.lodSelection.currentLOD;
+            if (lod <= 3 && gpuMesh.lodInfo[lod - 1].indexCount > 0) {
+                cmd.lodIndexByteOffset = gpuMesh.lodInfo[lod - 1].indexOffset;
+                cmd.lodIndexCount = gpuMesh.lodInfo[lod - 1].indexCount;
+            }
+        }
 
         // Map ECS mobility to renderer-side EMobility for shadow cache filtering.
         // Stationary is treated as Static for shadow caching (standard).

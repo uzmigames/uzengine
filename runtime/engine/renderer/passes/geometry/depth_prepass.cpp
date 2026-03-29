@@ -183,7 +183,11 @@ void AddDepthPrepass(rg::RgBuilder& builder, const DepthPrepassDesc& desc)
                                         objAlloc.cpuPtr, sizeof(PerObjectCB));
                     }
 
-                    cmd->DrawIndexed(mesh.indexCount);
+                    if (drawCmd.lodIndexCount > 0) {
+                        cmd->DrawIndexed(drawCmd.lodIndexCount, 1, drawCmd.lodIndexByteOffset / 4);
+                    } else {
+                        cmd->DrawIndexed(mesh.indexCount);
+                    }
                     ++drawCallCount;
                 }
             }
