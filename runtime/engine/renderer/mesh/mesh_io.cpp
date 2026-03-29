@@ -3,9 +3,11 @@
 #include "mesh.h"
 #include "log.h"
 #include "profiler.h"
+#include "uzmesh_format.h"
 
 #include "file_system.h"
 
+#include <cfloat>
 #include <cstring>
 #include <fstream>
 
@@ -33,8 +35,17 @@ Mesh LoadMesh(const std::string& path) {
         return mesh;
     }
 
-    // Validate magic
+    // Validate magic — try UZMS fallback for skinned meshes
     if (mesh.header.magic != kMeshMagic) {
+        if (mesh.header.magic == kUzMeshMagic) {
+            // Skinned mesh (UZMS) — load entire file and delegate to LoadMeshFromMemory
+            file.seekg(0, std::ios::end);
+            const auto fileSize = file.tellg();
+            file.seekg(0);
+            std::vector<uint8_t> allData(static_cast<size_t>(fileSize));
+            file.read(reinterpret_cast<char*>(allData.data()), fileSize);
+            return LoadMeshFromMemory(allData, path);
+        }
         UZ_LOG(Renderer, Error,
                "Invalid mesh magic: expected=0x{:08X}, got=0x{:08X}, path='{}'",
                kMeshMagic, mesh.header.magic, path);
@@ -107,6 +118,117 @@ Mesh LoadMeshFromMemory(const std::vector<uint8_t>& data, const std::string& nam
     std::memcpy(&mesh.header, data.data(), sizeof(MeshHeader));
 
     if (mesh.header.magic != kMeshMagic) {
+        // ── UZMS fallback: convert skinned mesh to static for rendering ──
+        // Skinned meshes use UZMS format (magic 0x534D5A55). Strip bone data
+        // from each vertex (last 8 bytes) to convert SkinnedVertex (56B) → Vertex (48B).
+        uint32_t probe = 0;
+        if (data.size() >= 4) std::memcpy(&probe, data.data(), 4);
+        if (probe == kUzMeshMagic) {
+            auto uzResult = ReadUzMesh(data);
+            if (!uzResult.success) {
+                UZ_LOG(Renderer, Error, "Failed to parse UZMS: {}, name='{}'",
+                       uzResult.error, name);
+                mesh.header.magic = 0;
+                return mesh;
+            }
+            const auto& uz = uzResult.file;
+            const uint32_t srcStride = uz.header.vertexStride;
+            const uint32_t dstStride = sizeof(Vertex);
+            const uint32_t vertCount = uz.header.vertexCount;
+
+            // Strip bone data: copy first 48 bytes per vertex
+            if (srcStride > dstStride && vertCount > 0) {
+                mesh.vertexData.resize(static_cast<size_t>(vertCount) * dstStride);
+                for (uint32_t i = 0; i < vertCount; ++i) {
+                    std::memcpy(mesh.vertexData.data() + static_cast<size_t>(i) * dstStride,
+                                uz.vertexData.data() + static_cast<size_t>(i) * srcStride,
+                                dstStride);
+                }
+            } else {
+                mesh.vertexData = uz.vertexData;
+            }
+            mesh.indexData = uz.indexData;
+
+            // LOD0 index count from submesh descriptors
+            uint32_t lod0IndexCount = 0;
+            if (!uz.lods.empty()) {
+                for (uint32_t si = uz.lods[0].submeshOffset;
+                     si < uz.lods[0].submeshOffset + uz.lods[0].submeshCount
+                     && si < static_cast<uint32_t>(uz.submeshes.size()); ++si) {
+                    lod0IndexCount += uz.submeshes[si].indexCount;
+                }
+            } else {
+                lod0IndexCount = uz.header.indexCount;
+            }
+
+            // Compute AABB from vertex positions
+            Vec3 bMin{FLT_MAX, FLT_MAX, FLT_MAX};
+            Vec3 bMax{-FLT_MAX, -FLT_MAX, -FLT_MAX};
+            for (uint32_t i = 0; i < vertCount; ++i) {
+                const auto* pos = reinterpret_cast<const float*>(
+                    mesh.vertexData.data() + static_cast<size_t>(i) * dstStride);
+                if (pos[0] < bMin.x) bMin.x = pos[0];
+                if (pos[1] < bMin.y) bMin.y = pos[1];
+                if (pos[2] < bMin.z) bMin.z = pos[2];
+                if (pos[0] > bMax.x) bMax.x = pos[0];
+                if (pos[1] > bMax.y) bMax.y = pos[1];
+                if (pos[2] > bMax.z) bMax.z = pos[2];
+            }
+
+            // Build UZMH header from UZMS data
+            mesh.header.magic = kMeshMagic;
+            mesh.header.version = kMeshVersion;
+            mesh.header.vertexFormat = MeshVertexFormat::Standard;
+            mesh.header.vertexStride = dstStride;
+            mesh.header.vertexCount = vertCount;
+            mesh.header.indexFormat = (uz.header.indexStride == 2)
+                ? MeshIndexFormat::UInt16 : MeshIndexFormat::UInt32;
+            mesh.header.indexCount = lod0IndexCount;
+            mesh.header.submeshCount = uz.lods.empty() ? 0 : uz.lods[0].submeshCount;
+            mesh.header.boundsMin = bMin;
+            mesh.header.boundsMax = bMax;
+            mesh.header.vertexDataOffset = sizeof(MeshHeader);
+            mesh.header.indexDataOffset = sizeof(MeshHeader) + mesh.vertexData.size();
+            std::memset(mesh.header.reserved, 0, sizeof(mesh.header.reserved));
+
+            // Map LOD descriptors (UZMS LOD → UZMH header lods[])
+            mesh.header.lodCount = uz.header.lodCount;
+            std::memset(mesh.header.lods, 0, sizeof(mesh.header.lods));
+            if (uz.header.lodCount > 1) {
+                uint32_t lodByteOff = lod0IndexCount * uz.header.indexStride;
+                for (uint32_t li = 1; li < uz.header.lodCount && li <= 3; ++li) {
+                    if (li >= uz.lods.size()) break;
+                    uint32_t lodIdxCount = 0;
+                    for (uint32_t si = uz.lods[li].submeshOffset;
+                         si < uz.lods[li].submeshOffset + uz.lods[li].submeshCount
+                         && si < static_cast<uint32_t>(uz.submeshes.size()); ++si) {
+                        lodIdxCount += uz.submeshes[si].indexCount;
+                    }
+                    mesh.header.lods[li - 1].indexOffset = lodByteOff;
+                    mesh.header.lods[li - 1].indexCount = lodIdxCount;
+                    lodByteOff += lodIdxCount * uz.header.indexStride;
+                }
+            }
+
+            // LOD0 submeshes
+            if (!uz.lods.empty()) {
+                for (uint32_t si = uz.lods[0].submeshOffset;
+                     si < uz.lods[0].submeshOffset + uz.lods[0].submeshCount
+                     && si < static_cast<uint32_t>(uz.submeshes.size()); ++si) {
+                    SubMesh sm;
+                    sm.startIndex = uz.submeshes[si].indexOffset;
+                    sm.indexCount = uz.submeshes[si].indexCount;
+                    sm.materialIndex = uz.submeshes[si].materialIndex;
+                    mesh.submeshes.push_back(sm);
+                }
+            }
+
+            UZ_LOG(Renderer, Info,
+                   "Loaded UZMS mesh as static: vertices={}, indices={}, lods={}, name='{}'",
+                   vertCount, lod0IndexCount, mesh.header.lodCount, name);
+            return mesh;
+        }
+
         UZ_LOG(Renderer, Error, "Invalid mesh magic: expected=0x{:08X}, got=0x{:08X}, name='{}'",
                kMeshMagic, mesh.header.magic, name);
         mesh.header.magic = 0;
