@@ -534,111 +534,101 @@ AssetImportResult FbxImporter::Import(
     std::vector<float> allTangents;
     GenerateTangentsForPosNormUV(allVertices, allIndices, allTangents);
 
-    // ── Meshopt: optimize vertex cache ordering ──
-    std::vector<uint32_t> optimizedIndices(allIndices.size());
-    meshopt_optimizeVertexCache(
-        optimizedIndices.data(), allIndices.data(),
-        allIndices.size(), allVertices.size());
+    // ── Vertex welding — deduplicate identical vertices ──
+    // FBX meshes often have unique vertices per-triangle. Welding merges
+    // identical verts (same pos+normal+uv) so the index buffer shares vertices.
+    // This is essential for both mesh optimization and LOD simplification.
+    std::vector<uint32_t> weldRemap(allVertices.size());
+    const size_t weldedVertexCount = meshopt_generateVertexRemap(
+        weldRemap.data(), allIndices.data(), allIndices.size(),
+        allVertices.data(), allVertices.size(), sizeof(VertexPosNormUV));
 
-    // ── Meshopt: optimize vertex fetch (reorders vertices for cache locality) ──
-    std::vector<VertexPosNormUV> optimizedVertices(allVertices.size());
+    std::vector<uint32_t> weldedIndices(allIndices.size());
+    meshopt_remapIndexBuffer(weldedIndices.data(), allIndices.data(),
+                             allIndices.size(), weldRemap.data());
+
+    std::vector<VertexPosNormUV> weldedVertices(weldedVertexCount);
+    meshopt_remapVertexBuffer(weldedVertices.data(), allVertices.data(),
+                              allVertices.size(), sizeof(VertexPosNormUV), weldRemap.data());
+
+    // Remap tangents to match welded vertex order
+    std::vector<float> weldedTangents(weldedVertexCount * 4, 0.f);
+    for (size_t oldIdx = 0; oldIdx < allVertices.size(); ++oldIdx) {
+        const uint32_t newIdx = weldRemap[oldIdx];
+        if (newIdx < weldedVertexCount) {
+            weldedTangents[newIdx * 4 + 0] = allTangents[oldIdx * 4 + 0];
+            weldedTangents[newIdx * 4 + 1] = allTangents[oldIdx * 4 + 1];
+            weldedTangents[newIdx * 4 + 2] = allTangents[oldIdx * 4 + 2];
+            weldedTangents[newIdx * 4 + 3] = allTangents[oldIdx * 4 + 3];
+        }
+    }
+
+    UZ_LOG(Asset, Debug, "FBX vertex weld: {} → {} vertices ({:.0f}% reduction)",
+           allVertices.size(), weldedVertexCount,
+           100.0f * (1.0f - float(weldedVertexCount) / float(allVertices.size())));
+
+    // ── Meshopt: optimize vertex cache ordering ──
+    std::vector<uint32_t> optimizedIndices(weldedIndices.size());
+    meshopt_optimizeVertexCache(
+        optimizedIndices.data(), weldedIndices.data(),
+        weldedIndices.size(), weldedVertexCount);
+
+    // ── Meshopt: optimize vertex fetch ──
+    std::vector<VertexPosNormUV> optimizedVertices(weldedVertexCount);
     const size_t finalVertexCount = meshopt_optimizeVertexFetch(
         optimizedVertices.data(), optimizedIndices.data(),
-        optimizedIndices.size(), allVertices.data(),
-        allVertices.size(), sizeof(VertexPosNormUV));
-
+        optimizedIndices.size(), weldedVertices.data(),
+        weldedVertexCount, sizeof(VertexPosNormUV));
     optimizedVertices.resize(finalVertexCount);
 
-    // Remap tangent data to match the new vertex order using the explicit
-    // remap table from meshopt.
-    std::vector<uint32_t> remap(allVertices.size());
+    // Remap tangents again for vertex fetch reorder
+    std::vector<uint32_t> fetchRemap(weldedVertexCount);
     meshopt_optimizeVertexFetchRemap(
-        remap.data(), optimizedIndices.data(),
-        optimizedIndices.size(), allVertices.size());
+        fetchRemap.data(), optimizedIndices.data(),
+        optimizedIndices.size(), weldedVertexCount);
 
     std::vector<float> remappedTangents(finalVertexCount * 4, 0.f);
-    for (size_t oldIdx = 0; oldIdx < allVertices.size(); ++oldIdx) {
-        const uint32_t newIdx = remap[oldIdx];
+    for (size_t oldIdx = 0; oldIdx < weldedVertexCount; ++oldIdx) {
+        const uint32_t newIdx = fetchRemap[oldIdx];
         if (newIdx < finalVertexCount) {
-            remappedTangents[newIdx * 4 + 0] = allTangents[oldIdx * 4 + 0];
-            remappedTangents[newIdx * 4 + 1] = allTangents[oldIdx * 4 + 1];
-            remappedTangents[newIdx * 4 + 2] = allTangents[oldIdx * 4 + 2];
-            remappedTangents[newIdx * 4 + 3] = allTangents[oldIdx * 4 + 3];
+            remappedTangents[newIdx * 4 + 0] = weldedTangents[oldIdx * 4 + 0];
+            remappedTangents[newIdx * 4 + 1] = weldedTangents[oldIdx * 4 + 1];
+            remappedTangents[newIdx * 4 + 2] = weldedTangents[oldIdx * 4 + 2];
+            remappedTangents[newIdx * 4 + 3] = weldedTangents[oldIdx * 4 + 3];
         }
     }
 
     // ── Auto-generate LODs via meshoptimizer ──
-    // Uses meshopt_simplify to progressively reduce triangle count.
-    // LOD0 = original, LOD1 = 50%, LOD2 = 25%, LOD3 = 12.5%
-    struct AutoLOD {
-        std::vector<uint32_t> indices;
-    };
+    // All LODs share the same welded+optimized vertex buffer.
+    struct AutoLOD { std::vector<uint32_t> indices; };
     std::vector<AutoLOD> autoLODs;
-    autoLODs.push_back({optimizedIndices}); // LOD0 = full mesh
+    autoLODs.push_back({optimizedIndices}); // LOD0
 
     {
-        // meshopt_simplify needs welded (deduplicated) vertices to collapse edges.
-        // FBX meshes often have unique vertices per-triangle (no sharing), which
-        // prevents any simplification. Remap to welded positions first.
-        std::vector<uint32_t> welded(finalVertexCount);
-        const size_t weldedCount = meshopt_generateVertexRemap(
-            welded.data(), optimizedIndices.data(), optimizedIndices.size(),
-            optimizedVertices.data(), finalVertexCount, sizeof(VertexPosNormUV));
-
-        std::vector<uint32_t> weldedIndices(optimizedIndices.size());
-        meshopt_remapIndexBuffer(weldedIndices.data(), optimizedIndices.data(),
-                                 optimizedIndices.size(), welded.data());
-
-        std::vector<VertexPosNormUV> weldedVerts(weldedCount);
-        meshopt_remapVertexBuffer(weldedVerts.data(), optimizedVertices.data(),
-                                  finalVertexCount, sizeof(VertexPosNormUV), welded.data());
-
-        UZ_LOG(Asset, Debug, "FBX vertex weld: {} → {} vertices ({:.0f}% reduction)",
-               finalVertexCount, weldedCount,
-               100.0f * (1.0f - float(weldedCount) / float(finalVertexCount)));
-
-        // Extract positions for meshopt_simplify
-        std::vector<float> posFlat(weldedCount * 3);
-        for (size_t i = 0; i < weldedCount; ++i) {
-            posFlat[i * 3 + 0] = weldedVerts[i].position[0];
-            posFlat[i * 3 + 1] = weldedVerts[i].position[1];
-            posFlat[i * 3 + 2] = weldedVerts[i].position[2];
+        std::vector<float> posFlat(finalVertexCount * 3);
+        for (size_t i = 0; i < finalVertexCount; ++i) {
+            posFlat[i * 3 + 0] = optimizedVertices[i].position[0];
+            posFlat[i * 3 + 1] = optimizedVertices[i].position[1];
+            posFlat[i * 3 + 2] = optimizedVertices[i].position[2];
         }
-
         constexpr float kReductions[] = { 0.50f, 0.25f, 0.125f };
-
         for (int lod = 0; lod < 3; ++lod) {
             const size_t target = static_cast<size_t>(
-                static_cast<float>(weldedIndices.size()) * kReductions[lod]);
+                static_cast<float>(optimizedIndices.size()) * kReductions[lod]);
             if (target < 3) break;
-
-            std::vector<uint32_t> lodIdx(weldedIndices.size());
+            std::vector<uint32_t> lodIdx(optimizedIndices.size());
             float err = 0.0f;
             const size_t actual = meshopt_simplify(
-                lodIdx.data(), weldedIndices.data(), weldedIndices.size(),
-                posFlat.data(), weldedCount, sizeof(float) * 3,
+                lodIdx.data(), optimizedIndices.data(), optimizedIndices.size(),
+                posFlat.data(), finalVertexCount, sizeof(float) * 3,
                 target, 1e10f, 0, &err);
             if (actual < 3) break;
             lodIdx.resize(actual);
-
-            // Remap back to original (unwelded) vertex indices so the LOD
-            // uses the same vertex buffer as LOD0.
-            // meshopt_simplify outputs indices into the welded vertex buffer.
-            // We need to un-remap: for each welded index, find an original
-            // vertex that maps to it. Build a reverse lookup.
-            // Actually, we can just keep the welded indices — the LOD uses
-            // the welded vertex buffer which is a subset of the original.
-            // But the runtime expects a single shared vertex buffer...
-            // Simplest: the LOD indices reference the welded vertex buffer.
-            // We'll append the welded vertices after finalVertices and offset indices.
-            // For now, just store the simplified index count for stats.
-
-            meshopt_optimizeVertexCache(lodIdx.data(), lodIdx.data(), lodIdx.size(), weldedCount);
+            meshopt_optimizeVertexCache(lodIdx.data(), lodIdx.data(), lodIdx.size(), finalVertexCount);
             autoLODs.push_back({std::move(lodIdx)});
-
             UZ_LOG(Asset, Debug, "FBX LOD{}: {} → {} indices ({:.0f}% reduction)",
-                   lod + 1, weldedIndices.size(), actual,
-                   100.0f * (1.0f - float(actual) / float(weldedIndices.size())));
+                   lod + 1, optimizedIndices.size(), actual,
+                   100.0f * (1.0f - float(actual) / float(optimizedIndices.size())));
         }
     }
 
