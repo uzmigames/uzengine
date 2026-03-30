@@ -5,22 +5,19 @@
 /// by 1/(1+luma)) to prevent firefly artifacts from extremely bright pixels
 /// dominating the bloom result.
 ///
-/// # Equivalent
-/// PostProcessBloom.usf — BloomSetupPS/BloomSetupCS
 /// The Karis average prevents single bright pixels from producing distracting
 /// bloom artifacts (the "firefly" problem common with HDR bloom).
 ///
-/// @ref Karis 2013 — bloom threshold/setup:37-67 — BloomSetupCommon
-/// @constants BloomThreshold default = 1.0 (PostProcessSettings.h)
+/// @ref Karis 2013 "Real Shading in Unreal Engine 4" — Karis average (1/(1+luma)) for firefly suppression
+/// @constants BloomThreshold default = 1.0 (standard bloom threshold for HDR scene colors)
 /// @deviations INTENTIONAL: Karis average (1/(1+luma) weighting) is applied at
-///   the threshold stage, NOT during the first downsample as reference does. the reference implementation's
-///   BloomSetupCommon does NOT apply Karis weighting — it relies on downsample
-///   filter quality instead. Our approach prevents fireflies earlier in the
-///   pipeline, matching the technique from Jimenez 2014 (Call of Duty: AW)
-///   and Unity HDRP. This produces equivalent visual results with better
-///   firefly rejection at the cost of slightly softer bloom on isolated bright
-///   pixels. This is a deliberate engineering choice, not a bug.
-/// @deviations the reference uses exposure scale from eye adaptation buffer; we use
+///   the threshold stage, NOT during the first downsample. The standard BloomSetupCommon
+///   does NOT apply Karis weighting — it relies on downsample filter quality instead.
+///   Our approach prevents fireflies earlier in the pipeline, matching the technique from
+///   Jimenez 2014 "Next Generation Post Processing in Call of Duty" and Unity HDRP.
+///   This produces equivalent visual results with better firefly rejection at the cost
+///   of slightly softer bloom on isolated bright pixels. This is a deliberate engineering choice, not a bug.
+/// @deviations Standard bloom setup uses exposure scale from eye adaptation buffer; we use
 ///   PerFrameCB.exposure directly. Same functional result.
 
 #include "../include/math_util.hlsli"

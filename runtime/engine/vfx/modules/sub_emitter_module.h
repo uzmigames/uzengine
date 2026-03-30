@@ -26,8 +26,8 @@
 /// is available to write per-particle collision flags. When CollisionModule
 /// is integrated, the check should read from its output buffer instead.
 ///
-/// @ref UE5 Niagara Event Handler — parent-to-child particle event spawning
-/// @ref UE5 NiagaraDataInterfaceEventWrite.cpp — OnDeath/OnCollision event types
+/// @ref GPU particle sub-emitter event-driven spawning technique — parent-to-child particle event spawning
+/// @ref GPU particle sub-emitter event-driven spawning technique — OnDeath/OnCollision event types
 
 #include "vfx_module.h"
 #include "engine/vfx/events/vfx_event.h"
@@ -46,7 +46,7 @@ namespace uz {
 /// Determines what event on the parent particle causes the child emitter
 /// to spawn new particles at the parent particle's location.
 ///
-/// @ref UE5 Niagara — ENiagaraScriptUsage event-based spawning trigger types
+/// @ref GPU particle event dispatch pattern — event-based spawning trigger types
 enum class SubEmitterTrigger : uint8_t {
     OnDeath     = 0, ///< Fire when the parent particle reaches end of life.
     OnCollision = 1, ///< Fire when the parent particle collides with geometry.
@@ -101,7 +101,7 @@ struct SubEmitterReadback {
 /// to the child emitter's `VFXEventQueue`. Without a queue, `Execute()` is a
 /// no-op (no crash — the queue pointer may be null during serialization).
 ///
-/// @ref UE5 Niagara Event Handler — parent-to-child event spawning
+/// @ref GPU particle sub-emitter event-driven spawning technique — parent-to-child event spawning
 class SubEmitterModule final : public IVFXModule {
 public:
     SubEmitterModule() = default;

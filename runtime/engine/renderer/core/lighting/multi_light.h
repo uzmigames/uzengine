@@ -150,7 +150,8 @@ struct LightCPU {
 
 /// Computes inverse-square attenuation for a point or spot light.
 ///
-/// Formula (Frostbite / UE4-compatible):
+/// @ref Lagarde 2014 "Moving Frostbite to Physically Based Rendering" — smooth distance attenuation window
+/// Formula:
 /// ```
 ///   distRatio   = clamp(dist / range, 0, 1)
 ///   windowFn    = (1 - distRatio^2)^2

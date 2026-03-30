@@ -1,7 +1,7 @@
 /// GTAO Temporal Accumulation — reprojects previous frame AO via velocity buffer
 /// and blends with the current frame's denoised AO to reduce temporal noise.
 ///
-/// Implements the reference engine's GTAOTemporalFilterPSAndCS as a compute shader. The algorithm:
+/// Implements the GTAO temporal filter as a compute shader (Jimenez 2016, Salvi 2016). The algorithm:
 /// 1. Sample the current frame's denoised AO at the pixel UV.
 /// 2. Read screen-space velocity from the velocity buffer (RG16F, in pixels).
 /// 3. Compute the reprojected UV from the velocity.
@@ -23,7 +23,7 @@
 /// @ref Salvi 2016 "An Excursion in Temporal Supersampling" — temporal filter
 /// @ref Jimenez 2016 "GTAO" — neighbourhood clamp, history clamp, velocity compare
 /// @ref Karis 2014 "High Quality Temporal Supersampling" — variance clipping
-/// @constants BlendWeight=0.1 (Scene.cpp:535 AmbientOcclusionTemporalBlendWeight),
+/// @constants BlendWeight=0.1 (Jimenez 2016 "Practical Realtime Strategies for Accurate Indirect Occlusion" AmbientOcclusionTemporalBlendWeight),
 ///            NeighbourhoodClamp dUV scale=1.5,
 ///            VarianceClipping sigma=0.8,
 ///            CompareVeloc scale=100,
@@ -42,10 +42,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Root constants — exactly 8 DWORDs (32 bytes).
-/// Matches the 8-DWORD root constant limit in dx12_pso_creation.cpp:135.
+/// Matches the 8-DWORD root constant limit.
 ///
-/// @ref Salvi 2016 / Jimenez 2016 —1263 — GTAOParams[4].x = BlendWeight
-/// @ref Salvi 2016 — temporal blend weight default 0.1
+/// @ref Jimenez 2016 "Practical Realtime Strategies for Accurate Indirect Occlusion" — GTAOParams blend weight
+/// @ref Salvi 2016 "An Excursion in Temporal Supersampling" — temporal blend weight default 0.1
 cbuffer GTAOTemporalRootCB : register(b0) {
     uint  currentAOSrvIndex;   // DWORD 0 — current frame denoised AO SRV
     uint  historyAOSrvIndex;   // DWORD 1 — previous frame accumulated AO SRV
@@ -244,8 +244,8 @@ float CompareVeloc(float2 v1, float2 v2) {
 /// neighbourhood variance clamping, velocity consistency rejection, and
 /// blends current + history with a configurable blend weight.
 ///
-/// @ref Salvi 2016 / Jimenez 2016 —1319-1337 — GTAOTemporalFilterCS
-/// @ref Salvi 2016 / Jimenez 2016 —1261-1308 — GTAOTemporalFilterPSAndCS
+/// @ref Salvi 2016 "An Excursion in Temporal Supersampling" — GTAOTemporalFilterCS temporal filter
+/// @ref Jimenez 2016 "Practical Realtime Strategies for Accurate Indirect Occlusion" — GTAOTemporalFilterPSAndCS
 /// @deviations Uses velocity buffer (pixels) instead of ClipToPrevClip matrix.
 ///             The velocity data is equivalent; UzEngine precomputes it in velocity_ps.hlsl.
 

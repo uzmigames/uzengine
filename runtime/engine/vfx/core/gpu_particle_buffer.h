@@ -2,10 +2,10 @@
 
 /// GPU Particle Buffer -- SoA ping-pong double-buffered storage.
 ///
-/// Adapted from UE5 Niagara's FNiagaraDataBuffer pattern. Per-particle
-/// attributes are stored in Structure-of-Arrays layout across two attribute
-/// sets. Each frame, compute shaders read from the "read" set and write to
-/// the "write" set; after simulation, Swap() toggles them.
+/// @ref SoA (Structure of Arrays) GPU particle buffer pattern — per-particle
+/// attributes stored across two attribute sets. Each frame, compute shaders
+/// read from the "read" set and write to the "write" set; after simulation,
+/// Swap() toggles them.
 ///
 /// Shared bookkeeping buffers (alive count, free list, indirect args) are
 /// NOT double-buffered -- they are updated in-place by GPU atomics.

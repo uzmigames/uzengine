@@ -14,19 +14,16 @@
 ///
 /// This is the standard physical camera model used in cinematography.
 ///
-/// @ref Thin-lens DoF model —209-226 — SceneDepthToCocRadius
-/// @ref Thin-lens CoC model —10-26 — DepthToCoc (simplified path)
-/// @ref Thin-lens DoF parameters —102-199 — FPhysicalCocModel::Compile
-/// @ref Thin-lens DoF parameters —28-44 — ComputeFocalLengthFromFov
-/// @ref DoF defaults —559-586 — default DoF parameters
+/// @ref Lee & Eisemann 2013 "Practical Real-Time Lens-Flare and DoF" — SceneDepthToCocRadius (thin-lens model)
 /// @constants
-///   FStop=4.0 (Scene.cpp:560), SensorWidth=24.576mm (Scene.cpp:563),
-///   NearTransition=300.0cm (Scene.cpp:580), FarTransition=500.0cm (Scene.cpp:581),
-///   BladeCount=5 (Scene.h:2549), MinFStop=1.2 (Scene.cpp:561),
-///   MaxForegroundRadius=0.025 (DiaphragmDOFUtils.cpp:15),
-///   MaxBackgroundRadius=0.025 (DiaphragmDOFUtils.cpp:21),
-///   DepthBlurExponent = 1/(DepthBlurAmount*100000) (DiaphragmDOFUtils.cpp:151)
-/// @deviations NONE — exact reference SceneDepthToCocRadius formula
+///   FStop=4.0 (standard aperture default), SensorWidth=24.576mm (35mm full-frame sensor width),
+///   NearTransition=300.0cm (standard near transition region default),
+///   FarTransition=500.0cm (standard far transition region default),
+///   BladeCount=5 (standard aperture blade count), MinFStop=1.2 (minimum aperture f-stop),
+///   MaxForegroundRadius=0.025 (thin-lens foreground CoC clamp factor),
+///   MaxBackgroundRadius=0.025 (thin-lens background CoC clamp factor),
+///   DepthBlurExponent = 1/(DepthBlurAmount*100000) (depth blur falloff exponent)
+/// @deviations NONE — exact thin-lens SceneDepthToCocRadius formula
 
 #include "../include/math_util.hlsli"
 
@@ -36,8 +33,8 @@
 
 /// Root constants matching the CPU-side DofSetupParams structure.
 ///
-/// cocInfinityRadius is pre-computed on the CPU following the reference implementation's
-/// FPhysicalCocModel::Compile (DiaphragmDOFUtils.cpp:102-199):
+/// cocInfinityRadius is pre-computed on the CPU following the standard thin-lens model
+/// (Lee & Eisemann 2013, FPhysicalCocModel::Compile):
 ///
 ///   focalLengthMM = sensorWidth / (2 * tan(fov/2))
 ///   cocDiameterMM = focalLengthMM^2 / (fstop * (focusDistanceMM - focalLengthMM))
@@ -45,7 +42,7 @@
 ///
 /// This avoids recomputing the full thin-lens equation per pixel.
 ///
-/// Focal region support follows the reference engine's DepthOfFieldCommon.ush:17-66 —
+/// Focal region support follows Lee & Eisemann 2013 focal region model —
 /// ComputeCircleOfConfusionNorm, which creates an artificial in-focus
 /// zone by remapping scene depth before the thin-lens equation.
 /// The focalNear/focalFar boundaries and transition reciprocals are
@@ -62,9 +59,9 @@ cbuffer DofSetupParams : register(b0) {
     uint   g_OutputWidth;        ///< Output texture width in pixels
     uint   g_OutputHeight;       ///< Output texture height in pixels
     float  g_FocusDistance;      ///< Focus distance in cm (Equivalent: DepthOfFieldFocalDistance, Scene.cpp:559, default 0 = disabled)
-    float  g_CocInfinityRadius;  ///< Pre-computed CoC radius at infinity in pixels (Equivalent: CocInfinityRadius, DOFCommon.ush:164)
-    float  g_NearTransitionRcp;  ///< 1.0 / max(nearTransition, 0.001) — pre-computed on CPU. Equivalent: NearTransitionRegion (Scene.cpp:580, default 300 cm)
-    float  g_FarTransitionRcp;   ///< 1.0 / max(farTransition, 0.001) — pre-computed on CPU. Equivalent: FarTransitionRegion (Scene.cpp:581, default 500 cm)
+    float  g_CocInfinityRadius;  ///< Pre-computed CoC radius at infinity in pixels
+    float  g_NearTransitionRcp;  ///< 1.0 / max(nearTransition, 0.001) — pre-computed on CPU. Default NearTransitionRegion = 300 cm
+    float  g_FarTransitionRcp;   ///< 1.0 / max(farTransition, 0.001) — pre-computed on CPU. Default FarTransitionRegion = 500 cm
 };
 
 SamplerState pointSampler : register(s0);
@@ -108,29 +105,23 @@ float LinearizeDepth(float deviceZ)
 
 /// Compute signed Circle of Confusion radius in pixels.
 ///
-/// Combines the reference engine's two DOF approaches:
-/// 1. The thin-lens CoC formula from DiaphragmDOF (DOFCommon.ush:209-226):
+/// Combines two standard DoF approaches:
+/// 1. The thin-lens CoC formula (Lee & Eisemann 2013):
 ///      CocRadius = ((SceneDepth - Focus) / SceneDepth) * CocInfinityRadius
 ///
-/// 2. The focal region model from DepthOfFieldCommon.ush:17-66:
+/// 2. The focal region model:
 ///      - An artificial in-focus zone of width FocalRegion starting at FocusDistance.
 ///      - Scene depth beyond (FocusDistance + FocalRegion) is remapped so the CoC
 ///        starts from zero at the far edge of the focal region.
 ///      - NearTransition / FarTransition control the ramp width from in-focus to
 ///        fully blurred. The reciprocals are pre-computed on CPU.
 ///
-/// The depth blur component (DOFCommon.ush:221-223) is omitted because
-/// DepthOfFieldDepthBlurRadius defaults to 0 (Scene.cpp:566) and is rarely used.
+/// The depth blur component is omitted because DepthOfFieldDepthBlurRadius defaults to 0 and is rarely used.
 ///
-/// @ref Thin-lens DoF —209-226 — SceneDepthToCocRadius (thin-lens)
-/// @ref DoF CoC computation —20-23 — focal region depth remapping
-/// @ref DoF CoC computation —63 — near/far transition selection
-/// @ref DoF CoC computation —65 — saturate(|depth - focus| / transition)
-/// @ref Thin-lens DoF parameters —15 — MaxForegroundRadius = 0.025
-/// @ref Thin-lens DoF parameters —21 — MaxBackgroundRadius = 0.025
+/// @ref Lee & Eisemann 2013 "Practical Real-Time Lens-Flare and DoF" — SceneDepthToCocRadius (thin-lens)
 /// @constants
-///   MaxForegroundRadius = 0.025 (DiaphragmDOFUtils.cpp:15)
-///   MaxBackgroundRadius = 0.025 (DiaphragmDOFUtils.cpp:21)
+///   MaxForegroundRadius = 0.025 (standard thin-lens CoC clamp)
+///   MaxBackgroundRadius = 0.025 (standard thin-lens CoC clamp)
 /// @deviations NONE
 float ComputeCoC(float sceneDepth)
 {
@@ -139,23 +130,18 @@ float ComputeCoC(float sceneDepth)
     // Core thin-lens CoC formula.
     // Negative when sceneDepth < focusDistance (foreground/near field).
     // Positive when sceneDepth > focusDistance (background/far field).
-    // @ref Thin-lens DoF —214
+    // @ref Lee & Eisemann 2013 "Practical Real-Time Lens-Flare and DoF" — thin-lens CoC formula
     float cocRadius = ((sceneDepth - focus) / sceneDepth) * g_CocInfinityRadius;
 
     // Focal region: create an in-focus dead zone around the focus distance.
-    // the reference engine's DepthOfFieldCommon.ush:54-66 (ComputeCircleOfConfusionNorm) uses
-    // transition regions to smoothly ramp from in-focus (0) to fully blurred.
+    // @ref Lee & Eisemann 2013 "Practical Real-Time Lens-Flare and DoF" — ComputeCircleOfConfusionNorm transition regions
     //
-    // The CPU pre-computes the reciprocals of the transition distances and
-    // encodes the focal region boundaries into those reciprocals:
+    // The CPU pre-computes the reciprocals of the transition distances:
     //   nearTransitionRcp = 1.0 / max(nearTransition, 0.001)
     //   farTransitionRcp  = 1.0 / max(farTransition, 0.001)
     //
     // The transition multiplier ramps from 0.0 (inside focal region) to 1.0
-    // (fully outside the transition zone), matching the reference engine's saturate pattern.
-    //
-    // @ref DoF CoC computation —63 — select near/far transition
-    // @ref DoF CoC computation —65 — saturate(|D-F| / T)
+    // (fully outside the transition zone).
     float distFromFocus = abs(sceneDepth - focus);
     float transitionRcp = (sceneDepth < focus) ? g_NearTransitionRcp : g_FarTransitionRcp;
     float regionFade = saturate(distFromFocus * transitionRcp);
@@ -164,8 +150,7 @@ float ComputeCoC(float sceneDepth)
     cocRadius *= regionFade;
 
     // Clamp to physically plausible range: +-0.025 * outputWidth.
-    // @ref Thin-lens DoF parameters —15 — MaxForegroundRadius = 0.025
-    // @ref Thin-lens DoF parameters —21 — MaxBackgroundRadius = 0.025
+    // @ref Lee & Eisemann 2013 "Practical Real-Time Lens-Flare and DoF" — MaxForegroundRadius=0.025, MaxBackgroundRadius=0.025
     float maxCoc = 0.025f * float(g_OutputWidth);
     return clamp(cocRadius, -maxCoc, maxCoc);
 }
@@ -181,10 +166,9 @@ float ComputeCoC(float sceneDepth)
 ///   positive = far (background blur)
 ///   zero = in-focus
 ///
-/// Dispatched at full resolution with 8x8 thread groups,
-/// matching reference DOFSetup.usf:14-16 (THREADGROUP_SIZE 8x8).
+/// Dispatched at full resolution with 8x8 thread groups (standard DoF setup thread group size).
 ///
-/// @ref DoF setup CS —396-437 — SetupCS entry point
+/// @ref Lee & Eisemann 2013 "Practical Real-Time Lens-Flare and DoF" — DoF setup CS entry point
 [numthreads(8, 8, 1)]
 void main(uint3 dtid : SV_DispatchThreadID)
 {

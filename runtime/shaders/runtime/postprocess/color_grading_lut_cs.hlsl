@@ -163,7 +163,7 @@ static const float3x3 ACES_D60_2_D65_CAT =
 };
 
 // ── Derived matrices ─────────────────────────────────────────────────────────
-// These are computed inline in reference engines CombineLUTsCommon at line 192-194.
+// These are computed inline from ACES matrix compositions.
 // We precompute them as static constants for clarity.
 
 /// AP1 -> sRGB = XYZ_2_sRGB * D60_2_D65 * AP1_2_XYZ
@@ -194,10 +194,10 @@ static const float3x3 ACES_sRGB_2_AP1 = {
 /// across the HDR range. The encoding uses a "pure log" formula parameterized
 /// by a grey point and dynamic range.
 ///
-/// @ref log-to-linear encoding:80-93 — LogToLin
-/// @constants LinearRange=14 (GammaCorrectionCommon.ush:82),
-///            LinearGrey=0.18 (GammaCorrectionCommon.ush:83),
-///            ExposureGrey=444 (GammaCorrectionCommon.ush:84)
+/// @ref Selan 2012 "Using Lookup Tables to Accelerate Color Transformations" — LogToLin encoding
+/// @constants LinearRange=14 (log exposure range in stops),
+///            LinearGrey=0.18 (scene-referred grey value),
+///            ExposureGrey=444 (log-space grey reference, out of 1023)
 /// @deviations NONE
 float3 LogToLin(float3 LogColor)
 {
@@ -219,8 +219,8 @@ float3 LogToLin(float3 LogColor)
 /// Compute CIE 1931 xy chromaticity from Planckian locus.
 /// Accurate for 1000K < Temp < 15000K.
 ///
-/// @ref Krystek 1985 / CIE colorimetry:529-538 — PlanckianLocusChromaticity
-/// @constants [Krystek 1985] polynomial coefficients (TonemapCommon.ush:531-532)
+/// @ref Krystek 1985 "An Algorithm to Calculate Correlated Color Temperature" — PlanckianLocusChromaticity
+/// @constants polynomial coefficients from Krystek 1985, Table 1
 /// @deviations NONE
 float2 PlanckianLocusChromaticity(float Temp)
 {
@@ -238,8 +238,8 @@ float2 PlanckianLocusChromaticity(float Temp)
 /// Compute CIE 1931 xy chromaticity for D-illuminant series.
 /// Accurate for 4000K < Temp < 25000K.
 ///
-/// @ref Krystek 1985 / CIE colorimetry:543-556 — D_IlluminantChromaticity
-/// @constants Planck's law correction factor 1.4388/1.438 (TonemapCommon.ush:547)
+/// @ref Judd et al. 1964 "Spectral Distribution of Typical Daylight" — D_IlluminantChromaticity
+/// @constants Planck's law correction factor 1.4388/1.438 (standard CIE 1968 revision)
 /// @deviations NONE
 float2 D_IlluminantChromaticity(float Temp)
 {
@@ -257,8 +257,8 @@ float2 D_IlluminantChromaticity(float Temp)
 
 /// Compute Planckian isothermal offset for tint control.
 ///
-/// @ref Krystek 1985 / CIE colorimetry:566-584 — PlanckianIsothermal
-/// @constants Tint scale 0.05 (TonemapCommon.ush:577-578) — "CCT meaningful within +/- 0.05"
+/// @ref Krystek 1985 "An Algorithm to Calculate Correlated Color Temperature" — PlanckianIsothermal
+/// @constants Tint scale 0.05 — "CCT meaningful within +/- 0.05" (standard CIE isothermal line spacing)
 /// @deviations NONE
 float2 PlanckianIsothermal(float Temp, float Tint)
 {
@@ -299,8 +299,8 @@ float3 xyY_2_XYZ(float3 xyY)
 
 /// Bradford chromatic adaptation matrix between two white points.
 ///
-/// @ref ACES CTL Reference Implementation (Academy S-2014-006):199-231 — BradfordAdapt
-/// @constants Bradford cone response matrix (ACESCommon.ush:204-215)
+/// @ref ACES Reference Implementation (Academy S-2014-006) — BradfordAdapt chromatic adaptation
+/// @constants Bradford cone response matrix (CIE TC 1-32 report)
 /// @deviations NONE
 float3x3 BradfordAdapt(float2 src_xy, float2 dst_xy)
 {
@@ -338,8 +338,8 @@ float3x3 BradfordAdapt(float2 src_xy, float2 dst_xy)
 
 /// Full white balance transform using D-illuminant or Planckian locus.
 ///
-/// @ref Krystek 1985 / CIE colorimetry:586-611 — ApplyWhiteBalance
-/// @constants D65White = (0.31270, 0.32900) (TonemapCommon.ush:592)
+/// @ref Krystek 1985 "An Algorithm to Calculate Correlated Color Temperature" — ApplyWhiteBalance
+/// @constants D65White = (0.31270, 0.32900) (CIE standard illuminant D65)
 /// @deviations bIsTemperatureApplyWhiteBalance always true (we only support temperature mode).
 ///   reference supports both temperature mode and manual white point mode; we use temperature
 ///   which is the more common artist workflow. The WCS_2_XYZ and XYZ_2_WCS matrices
@@ -506,9 +506,9 @@ float4 CombineLUTsCommon(float2 InUV, uint InLayerIndex)
 
     // ── White balance ────────────────────────────────────────────────────
     // @ref Selan 2012 "Using Lookup Tables for Color Grading":218-221
-    // @constants DefaultTemperature=6500.0 (PostProcessCombineLUTs.usf:84),
-    //            DefaultTint=0.0 (PostProcessCombineLUTs.usf:85),
-    //            Epsilon=1e-8 (PostProcessCombineLUTs.usf:86)
+    // @constants DefaultTemperature=6500.0 (standard D65 illuminant temperature),
+    //            DefaultTint=0.0 (neutral tint, no isothermal offset),
+    //            Epsilon=1e-8 (numerical comparison threshold)
     static const float DefaultTemperature = 6500.0;
     static const float DefaultTint = 0.0;
     static const float Epsilon = 1e-8;

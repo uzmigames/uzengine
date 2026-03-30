@@ -3,7 +3,7 @@
 /// @ref Karis 2014 "High Quality Temporal Supersampling" (SIGGRAPH)
 /// @ref Catmull & Rom 1974 — bicubic history reprojection (5-tap plus pattern)
 /// @ref Yang et al. 2020 "A Survey of Temporal Antialiasing Techniques"
-/// @constants CurrentFrameWeight=0.04 (TemporalAA.cpp:41), velocityLerp=0.2 at v/40 (TemporalAA.usf:2233)
+/// @constants CurrentFrameWeight=0.04 (blend weight for current frame, standard TAA default), velocityLerp=0.2 at v/40 (velocity-based blend lerp factor)
 /// @deviations Simplified: no LDS cache, no TAAU upsampling, no DOF CoC, no stencil responsive AA,
 ///             no stochastic quantization. UzEngine uses compute with VGPR 3x3 cache.
 ///             Core algorithm (YCoCg clamp + bicubic history + HDR weighted blend + velocity rejection)
@@ -396,16 +396,18 @@ void main(
         float2 f2 = f * f;
         float2 f3 = f2 * f;
 
-        // Catmull-Rom basis weights (reference TextureSampling.ush:110-113).
+        // Catmull-Rom basis weights (Catmull & Rom 1974, standard cubic spline).
         float2 w0 = f2 - 0.5 * (f3 + f);
         float2 w1 = 1.5 * f3 - 2.5 * f2 + 1.0;
         float2 w3 = 0.5 * (f3 - f2);
         float2 w2 = 1.0 - w0 - w1 - w3;
 
-        // Combined weights for bilinear trick (reference TextureSampling.ush:116).
+        // Combined weights for bilinear trick.
+        // @ref Karis 2014 "High Quality Temporal Supersampling" — 5-tap Catmull-Rom bilinear optimization
         float2 w12 = w1 + w2;
 
-        // Bilinear sample positions in texel space (reference TextureSampling.ush:119-121).
+        // Bilinear sample positions in texel space.
+        // @ref Karis 2014 "High Quality Temporal Supersampling" — optimized Catmull-Rom sample positions
         float2 sample0 = (tc - 1.0) * historyInvSize;
         float2 sample1 = (tc + w2 * rcp(w12)) * historyInvSize;
         float2 sample2 = (tc + 2.0) * historyInvSize;

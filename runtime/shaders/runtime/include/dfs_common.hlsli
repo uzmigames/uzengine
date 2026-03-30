@@ -1,9 +1,9 @@
 /// Distance Field Shadow — Shared Types and SDF Sampling Functions
 ///
 /// Contains the GPU-side data structures and sampling functions used by both
-/// the object culling and cone tracing compute shaders. Translates the reference implementation's
-/// DistanceFieldLightingShared.ush SDF sampling into UzEngine's simpler
-/// sparse brick atlas scheme.
+/// the object culling and cone tracing compute shaders. Implements
+/// @ref Wright 2015 "Dynamic Occlusion with Signed Distance Fields" SDF sampling
+/// in UzEngine's sparse brick atlas scheme.
 ///
 /// # Atlas Layout
 /// The SDF atlas is a single Texture3D (R8_UNORM) divided into 8x8x8 bricks.
@@ -34,12 +34,12 @@
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @ref Wright 2015 "DFS" — SDF atlas:100
-/// @constants INVALID_BRICK_INDEX=0xFFFFFFFF (DistanceFieldLightingShared.ush:100)
+/// @ref Wright 2015 "Dynamic Occlusion with Signed Distance Fields" — SDF atlas brick index sentinel
+/// @constants INVALID_BRICK_INDEX=0xFFFFFFFF
 static const uint INVALID_BRICK_INDEX = 0xFFFFFFFF;
 
-/// @ref Wright 2015 "DFS" — SDF atlas:97-98
-/// @constants DF_MAX_NUM_MIPS=3 (DistanceFieldLightingShared.ush:98)
+/// @ref Wright 2015 "Dynamic Occlusion with Signed Distance Fields" — SDF mip level count
+/// @constants DF_MAX_NUM_MIPS=3
 static const uint DF_MAX_NUM_MIPS = 3;
 
 /// Brick voxel size — 8x8x8 voxels per brick.
@@ -51,8 +51,8 @@ static const uint SDF_BRICK_SIZE = 8;
 /// @ref Wright 2015 "DFS" — SDF atlas:49 — DistanceFieldUniqueDataBrickSize
 static const uint SDF_UNIQUE_BRICK_SIZE = 7;
 
-/// @ref Wright 2015 — DFS dispatch:22
-/// @constants MAX_TRACE_SPHERE_RADIUS=100 (DistanceFieldShadowing.usf:22)
+/// @ref Wright 2015 "Dynamic Occlusion with Signed Distance Fields" — max cone trace sphere radius
+/// @constants MAX_TRACE_SPHERE_RADIUS=100
 static const float MAX_TRACE_SPHERE_RADIUS = 100.0f;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -187,19 +187,17 @@ float3 BrickIndexToAtlasUV(uint brickIndex, float3 localUV, uint3 atlasSizeInBri
 /// visual quality. When the cone is narrow (near the surface), we need the
 /// highest resolution MIP for accurate shadow edges.
 ///
-/// the reference engine's shadow tracing (DistanceFieldShadowingShared.ush:132) always uses
-/// the highest resolution MIP via `LoadDFAssetDataHighestResolution`. However,
-/// the standalone distance query (DistanceFieldLightingShared.ush:458-469)
-/// cascades from coarse to fine: it starts at MIP 0 (coarsest) and refines
-/// only when the distance is within 25% of the band width.
+/// The reference technique (Wright 2015) for shadow tracing always uses the highest resolution MIP.
+/// However, the standalone distance query technique cascades from coarse to fine:
+/// it starts at MIP 0 (coarsest) and refines only when the distance is within 25% of the band width.
 ///
 /// For cone tracing, we select MIP based on the ratio of step distance to
 /// voxel size: when the step is large relative to the voxel grid, a coarser
 /// MIP provides the same information at lower cost.
 ///
-/// @ref Wright 2015 "DFS" — shadow ray trace:132 — LoadDFAssetDataHighestResolution (shadow always uses highest)
-/// @ref Wright 2015 "DFS" — SDF atlas:458-469 — MIP cascade for culling queries
-/// @constants DF_MAX_NUM_MIPS=3 (DistanceFieldLightingShared.ush:98)
+/// @ref Wright 2015 "Dynamic Occlusion with Signed Distance Fields" — shadow tracing uses highest MIP
+/// @ref Hart 1996 "Sphere Tracing" — MIP cascade for coarse-to-fine distance queries
+/// @constants DF_MAX_NUM_MIPS=3
 /// @deviations reference shadow tracing uses highest MIP only; we add optional MIP
 ///             selection for coarse tracing optimization. When numMips==1, this
 ///             returns 0 and behaves identically to reference.
@@ -229,9 +227,8 @@ uint SelectSdfMipLevel(float stepDistance, float voxelSize, uint numMips) {
 /// (empty space far from any surface), returns the maximum encodable distance.
 ///
 /// @ref Wright 2015 "DFS" — SDF atlas:392-436 — SampleSparseMeshSignedDistanceField
-/// @constants INVALID_BRICK_INDEX=0xFFFFFFFF (DistanceFieldLightingShared.ush:100)
-/// @deviations Simplified indirection: uses flat 3D table indexed by (z*resY+y)*resX+x,
-///             same as reference OFFSET_DATA_STRUCT==0 path (ByteAddressBuffer).
+/// @constants INVALID_BRICK_INDEX=0xFFFFFFFF
+/// @deviations Simplified indirection: uses flat 3D table indexed by (z*resY+y)*resX+x.
 ///             ScaleBias computed from voxelSize instead of per-mip FDFAssetData.
 float SampleSparseMeshSdf(
     float3 volumePos,
@@ -259,9 +256,8 @@ float SampleSparseMeshSdf(
 
     // Guard: if the sample position is outside the SDF volume [0,1]^3,
     // return max encoded distance (far from any surface).
-    // handles this via VolumePositionExtent clamping in the caller
-    // (DistanceFieldShadowingShared.ush:164) and relies on the indirection
-    // table boundary; we add an explicit early-out for safety.
+    // The reference technique relies on caller clamping of VolumePositionExtent;
+    // we add an explicit early-out for safety.
     /// @ref Wright 2015 "DFS" — SDF atlas:413-416 — out-of-bounds returns MaxEncodedDistance
     /// @deviations Explicit bounds check added as safety guard; reference relies on caller clamping
     if (any(normalizedPos < 0.0f) || any(normalizedPos > 1.0f)) {

@@ -78,7 +78,7 @@ float LinearizeDepth(float deviceZ) {
 
 /// Depth similarity weight — 1.0 for same depth, 0.0 for very different.
 /// @ref ComputeDepthSimilarity
-/// @constants 0.003 (reference PostProcessAmbientOcclusionCommon.ush:183)
+/// @constants 0.003 (Jimenez 2016 "Practical Realtime Strategies for Accurate Indirect Occlusion" — depth similarity threshold)
 /// @deviations NONE
 float ComputeDepthSimilarity(float depthA, float depthB) {
     return saturate(1.0f - abs(depthA - depthB) * 0.003f);

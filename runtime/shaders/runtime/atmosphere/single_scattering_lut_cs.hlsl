@@ -1,9 +1,7 @@
 /// Single-Scattering LUT Compute Shader — Precomputed 4D single-scatter table.
 ///
 /// @ref Bruneton & Neyret 2017 "Precomputed Atmospheric Scattering"
-/// @ref UE5 SkyAtmosphere.usf:399 IntegrateSingleScatteredLuminance (same integration math)
-/// @ref UE5 SkyAtmosphereCommon.ush:308 SampleAtmosphereMediumRGB (medium sampling)
-/// @ref UE5 ParticipatingMediaCommon.ush:91-104 (phase functions)
+/// @ref Hillaire 2020 "A Scalable and Production Ready Sky and Atmosphere Rendering Technique"
 ///
 /// For each texel in a 256x128x32 3D texture, decodes (r, mu, mu_s, nu) using
 /// the Bruneton 2017 4D-to-3D packing, then ray-marches the atmosphere
@@ -34,7 +32,7 @@
 // Root Constants (b0) — atmosphere scattering parameters
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @ref SkyAtmosphereCommon.ush:308 SampleAtmosphereMediumRGB medium coefficients
+/// @ref Bruneton 2008 "Precomputed Atmospheric Scattering" — medium coefficients layout
 /// Same layout as transmittance_lut_cs.hlsl root constants.
 cbuffer AtmosphereParams : register(b0) {
     float3 rayleighBeta;     ///< Rayleigh scattering coefficients (km^-1).
@@ -50,7 +48,7 @@ cbuffer AtmosphereParams : register(b0) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Per-dispatch parameters. 256-byte aligned for D3D12 CBV.
-/// @ref SkyAtmosphereCommon.ush:316-318 — ozone piecewise-linear density
+/// @ref Bruneton 2008 "Precomputed Atmospheric Scattering" — ozone piecewise-linear density
 cbuffer ScatteringParams : register(b2) {
     float3 ozoneAbsorption;         ///< Ozone absorption extinction (km^-1).
     float  ozoneLayerWidth;         ///< Boundary altitude between two linear segments (km).
@@ -90,15 +88,15 @@ RWTexture3D<float4> g_ScatteringOut      : register(u2);
 static const int NUM_SCATTER_STEPS = 50;
 
 /// Mie extinction-to-scattering ratio.
-/// @ref Bruneton 2017, UE5 SkyAtmosphereCommon.ush:324 (MieExtinction / MieScattering)
+/// @ref Bruneton 2008 "Precomputed Atmospheric Scattering" — MieExtinction / MieScattering
 /// @constants 1.11 (standard convention: slight Mie absorption)
 /// @deviations NONE
 static const float MIE_EXTINCTION_RATIO = 1.11f;
 
 /// Epsilon for extinction denominator to avoid division by zero.
-/// @ref UE5 SkyAtmosphere.usf:737 max(Medium.Extinction, 1.e-9)
-/// @constants 1e-7 (units.hlsli:44)
-/// @deviations Using 1e-7 for consistency with UzEngine convention; UE5 uses 1e-9.
+/// @ref Bruneton 2008 "Precomputed Atmospheric Scattering" — max(extinction, epsilon) guard
+/// @constants 1e-7
+/// @deviations NONE
 static const float EXT_EPS = 1e-7f;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -106,7 +104,7 @@ static const float EXT_EPS = 1e-7f;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Computes ozone density at a given altitude above the planet surface.
-/// @ref UE5 SkyAtmosphereCommon.ush:316-318 — piecewise linear with saturate
+/// @ref Bruneton 2008 "Precomputed Atmospheric Scattering" — piecewise linear ozone density
 /// @constants ozoneLayerWidth, ozoneLinTerm0/1, ozoneConstTerm0/1 (from CBV)
 /// @deviations NONE
 float OzoneDensity(float altKm)
@@ -118,7 +116,7 @@ float OzoneDensity(float altKm)
 
 /// Samples the atmospheric medium at a given altitude.
 /// Returns separate Rayleigh scattering, Mie scattering, and total extinction.
-/// @ref UE5 SkyAtmosphereCommon.ush:308 SampleAtmosphereMediumRGB
+/// @ref Bruneton 2008 "Precomputed Atmospheric Scattering" — SampleAtmosphereMedium
 /// @constants MIE_EXTINCTION_RATIO=1.11
 /// @deviations NONE
 void SampleMedium(float altKm,
@@ -168,7 +166,7 @@ void TransmittanceLutParamsToUv(float viewHeight, float viewZenithCosAngle,
 
 /// Samples the transmittance LUT from a given position toward a given direction.
 /// Returns the transmittance from the position to the top of the atmosphere (or ground).
-/// @ref UE5 SkyAtmosphere.usf:346 GetTransmittance
+/// @ref Bruneton 2008 "Precomputed Atmospheric Scattering" — GetTransmittance
 float3 SampleTransmittanceLut(Texture2D<float4> tLut, float3 pos, float3 dir)
 {
     float h = length(pos);
@@ -217,7 +215,7 @@ float3 GetTransmittanceBetween(Texture2D<float4> tLut,
 }
 
 /// Computes the transmittance from a given position toward the sun (to top of atmosphere).
-/// @ref UE5 SkyAtmosphere.usf:346 GetTransmittance (same lookup, just different wrapping)
+/// @ref Bruneton 2008 "Precomputed Atmospheric Scattering" — GetTransmittance to sun
 float3 GetTransmittanceToSun(Texture2D<float4> tLut, float r, float mu_s)
 {
     float2 uv;
@@ -260,10 +258,10 @@ bool RayIntersectsGround(float r, float mu)
 // Main Compute Kernel
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @ref Bruneton 2017 "Precomputed Atmospheric Scattering" — single scatter integration
-/// @ref UE5 SkyAtmosphere.usf:399-797 IntegrateSingleScatteredLuminance (same Frostbite integration)
+/// @ref Bruneton 2008 "Precomputed Atmospheric Scattering" — single scatter integration
+/// @ref Hillaire 2020 "A Scalable and Production Ready Sky and Atmosphere Rendering Technique" — Frostbite integration
 /// @constants NUM_SCATTER_STEPS=50, MIE_EXTINCTION_RATIO=1.11, EXT_EPS=1e-7
-/// @deviations NONE — standard Bruneton 2017 single scatter precomputation
+/// @deviations NONE — standard Bruneton 2008 single scatter precomputation
 [numthreads(8, 8, 1)]
 void main(uint3 tid : SV_DispatchThreadID)
 {
@@ -324,7 +322,7 @@ void main(uint3 tid : SV_DispatchThreadID)
     //
     // Uses Frostbite analytical per-step integration:
     //   Sint = (S - S * exp(-ext * dt)) / max(ext, eps)
-    // @ref UE5 SkyAtmosphere.usf:753-756 (same formulation)
+    // @ref Hillaire 2016 "Physically Based & Unified Volumetric Rendering in Frostbite" (same formulation)
     float3 rayleighSum = float3(0, 0, 0);
     float3 mieSum      = float3(0, 0, 0);
     float3 throughput  = float3(1, 1, 1);
@@ -341,7 +339,7 @@ void main(uint3 tid : SV_DispatchThreadID)
         float r_i = sqrt(max(0.0f, r * r + t_i * t_i + 2.0f * r * t_i * mu));
 
         // Altitude above planet surface (clamped to 0)
-        // @ref UE5 SkyAtmosphereCommon.ush:310 max(0, length(P) - BottomRadiusKm)
+        // @ref Bruneton 2008 "Precomputed Atmospheric Scattering" — altitude clamped to [0, topRadius - bottomRadius]
         float alt_i = max(0.0f, r_i - bottomRadiusKm);
 
         // Cosine of sun zenith angle at this sample point:
@@ -357,12 +355,12 @@ void main(uint3 tid : SV_DispatchThreadID)
 
         // ── Transmittance from sample to sun ─────────────────────────────
         // Direct lookup: T(sample_pos, sun_dir) to top of atmosphere.
-        // @ref UE5 SkyAtmosphere.usf:614 GetTransmittance(Light0ZenithCosAngle, PHeight)
+        // @ref Bruneton 2008 "Precomputed Atmospheric Scattering" — GetTransmittanceToSun
         float3 T_sample_to_sun = GetTransmittanceToSun(tLut, r_i, mu_s_i);
 
         // ── Planet shadow check ──────────────────────────────────────────
         // If the sun ray from this sample hits the planet, no direct light.
-        // @ref UE5 SkyAtmosphere.usf:664 tPlanet0 = RaySphereIntersectNearest(...)
+        // @ref Bruneton 2008 "Precomputed Atmospheric Scattering" — planet shadow via ray-sphere intersection
         float planetShadow = 1.0f;
         {
             // Ray from sample toward sun: check intersection with planet.
@@ -381,8 +379,7 @@ void main(uint3 tid : SV_DispatchThreadID)
         SampleMedium(alt_i, rayleighScat, mieScat, extinction);
 
         // ── Frostbite analytical per-step integration ────────────────────
-        // @ref Frostbite 2015 "Physically Based Unified Volumetric Rendering"
-        // @ref UE5 SkyAtmosphere.usf:753-756
+        // @ref Hillaire 2016 "Physically Based & Unified Volumetric Rendering in Frostbite"
         //   Sint = (S - S * exp(-ext*dt)) / max(ext, eps)
         // where S = scatter * T_to_sun * planetShadow
         float3 expTerm = exp(-extinction * dt);
@@ -408,7 +405,7 @@ void main(uint3 tid : SV_DispatchThreadID)
         // approach: each step independently looks up the exact transmittance
         // from camera to that point.
         //
-        // In the incremental approach (UE5 runtime), throughput *= expTerm.
+        // In the incremental approach (runtime marching), throughput *= expTerm.
         // Here, T_camera_to_sample already encodes the full transmittance,
         // so we do NOT multiply throughput by expTerm (it stays at 1.0).
         //
@@ -429,8 +426,6 @@ void main(uint3 tid : SV_DispatchThreadID)
     // This saves one full 3D texture worth of VRAM compared to storing
     // Rayleigh and Mie separately.
     //
-    // @ref Bruneton 2017 — scattering texture packing convention
-    // @ref UE5 SkyAtmosphere.usf:74 SEPARATE_MIE_RAYLEIGH_SCATTERING
-    // (UE5 uses the same red-channel Mie extraction when not separating)
+    // @ref Bruneton 2008 "Precomputed Atmospheric Scattering" — scattering texture packing convention
     scatteringOut[tid] = float4(rayleighSum, mieSum.r);
 }

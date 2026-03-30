@@ -120,7 +120,8 @@ struct Material : public MaterialInterface {
     /// Dielectric specular reflectance scale. F0 = 0.08 * specular.
     /// Default 0.5 produces F0 = 0.04 (standard IOR ~1.5 for most dielectrics).
     /// Range [0, 1]. Organic materials (skin, fabric, wood) typically use 0.25-0.5.
-    /// @ref UE5 "Material Inputs — Specular" — same 0.08 * specular formula.
+    /// @ref Schlick 1994 "An Inexpensive BRDF Model for Physically-based Rendering" — F0 for dielectrics
+    /// @ref Lagarde 2014 "Moving Frostbite to Physically Based Rendering" — 0.08 * specular formula
     float specular = 0.5f;
 
     /// Per-material IBL intensity multiplier. Controls how much environment

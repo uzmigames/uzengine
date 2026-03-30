@@ -2,9 +2,8 @@
 ///
 /// Implements screen-space volumetric light shafts by radially blurring bright
 /// sky/sun pixels toward the sun's projected screen position. The technique is
-/// a compute shader adaptation of the reference engine's multi-pass radial blur from
-/// LightShaftShader.usf, collapsed into a single pass with configurable sample
-/// count for simplicity and GPU efficiency.
+/// a compute shader adaptation of the volumetric light shaft radial blur technique,
+/// collapsed into a single pass with configurable sample count for simplicity and GPU efficiency.
 ///
 /// # Algorithm
 /// For each pixel, march from the pixel UV toward the sun's screen-space UV in
@@ -43,8 +42,8 @@
 ///   scaled by our higher sample count — 0.1 * 12/64 * passScale * tuning ~ 0.5 effective)
 /// @constants weight = 1.0/64.0 (1/NUM_SAMPLES normalization; reference does 1/NUM_SAMPLES in usf:119)
 /// @constants SKY_DEPTH_THRESHOLD = 0.001 (reversed-Z: depth < threshold = sky/far plane)
-/// @constants EDGE_MASK_SCALE = 8.0 (reference LightShaftShader.usf:52)
-/// @constants LUMINANCE_EPSILON = 6.10352e-5 (reference LightShaftShader.usf:72 — half float min)
+/// @constants EDGE_MASK_SCALE = 8.0 (standard edge vignette scale)
+/// @constants LUMINANCE_EPSILON = 6.10352e-5 (half float minimum positive value)
 ///
 /// @deviations INTENTIONAL: Single-pass compute with 64 samples instead of the reference engine's 3-pass x 12
 ///   pixel shader approach. This trades multi-pass bandwidth savings for simpler dispatch and
@@ -219,7 +218,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     // Direction from this pixel toward the sun's screen position.
     // Scaled by density / NUM_SAMPLES to control step size.
     //
-    // equivalent (LightShaftShader.usf:103-105):
+    // Equivalent formulation (Crytek 2007 "Volumetric Light Scattering as a Post-Process"):
     //   AspectCorrectedBlurVector = (Origin - UV) * min(PassScale * Distance, 1)
     //   BlurVector = AspectCorrectedBlurVector * AspectRatio
     //

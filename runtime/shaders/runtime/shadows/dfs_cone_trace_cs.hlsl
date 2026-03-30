@@ -95,9 +95,7 @@ SamplerState               g_LinearSampler     : register(s0);
 /// - Per-object indirection offset for correct brick lookup in the global indirection buffer
 ///
 /// @ref Wright 2015 "DFS" — shadow ray trace:66-221 — ShadowRayTraceThroughCulledObjects
-/// @constants MinSphereRadius=0.4 (DistanceFieldShadowing.usf:681)
-///            MinConeVisibility_threshold=0.01 (DistanceFieldShadowingShared.ush:201,213)
-///            MinStepSize=1/(4*MaxSteps) (DistanceFieldShadowingShared.ush:156)
+/// @constants MinSphereRadius=0.4, MinConeVisibility_threshold=0.01, MinStepSize=1/(4*MaxSteps)
 /// @deviations NONE — exact reference algorithm with same constants and logic flow
 float TraceSdfObject(
     float3 worldRayStart,
@@ -122,7 +120,7 @@ float TraceSdfObject(
     float worldToVolumeScale = maxVolumeExtent > 0.0001f ? 1.0f : 0.0f;
 
     /// @ref Wright 2015 "DFS" — shadow ray trace:119-120 — VolumeMinSphereRadius, VolumeMaxSphereRadius
-    /// @constants MinSphereRadius=0.4 (DistanceFieldShadowing.usf:681), MAX_TRACE_SPHERE_RADIUS=100 (DistanceFieldShadowing.usf:22)
+    /// @constants MinSphereRadius=0.4, MAX_TRACE_SPHERE_RADIUS=100
     float volumeMinSphereRadius = 0.4f;
     float volumeMaxSphereRadius = MAX_TRACE_SPHERE_RADIUS;
 
@@ -228,9 +226,7 @@ float TraceSdfObject(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// @ref Wright 2015 "DFS" — cone trace dispatch:612-811 — DistanceFieldShadowingCS
-/// @constants THREADGROUP_SIZEX=8, THREADGROUP_SIZEY=8 (DistanceFieldShadowing.cpp:380-381)
-///            RayStartOffset=2 (DistanceFieldShadowing.usf:696)
-///            RayStartOffsetDepthScale (DistanceFieldShadowing.usf:696)
+/// @constants THREADGROUP_SIZEX=8, THREADGROUP_SIZEY=8, RayStartOffset=2
 /// @deviations No full tile-based scatter culling (reference ScatterObjectsToShadowTiles). Instead uses
 ///             per-pixel sphere-vs-ray + AABB early-out to reject non-overlapping objects cheaply.
 ///             No heightfield support, no SSS transmission.
@@ -265,7 +261,7 @@ void main(uint3 DTid : SV_DispatchThreadID) {
 
         // World-space offset along ray start to avoid self-shadowing
         /// @ref Wright 2015 "DFS" — cone trace dispatch:696 — RayStartOffset = 2 + RayStartOffsetDepthScale * SceneDepth
-        /// @constants RayStartOffset_base=2.0 (DistanceFieldShadowing.usf:696)
+        /// @constants RayStartOffset_base=2.0 (Wright 2015 "Dynamic Occlusion with Signed Distance Fields")
         float rayStartOffset = 2.0f + g_RayStartOffsetDepthScale * sceneDepth;
 
         float3 rayStart = worldPos + g_LightDir * rayStartOffset;

@@ -333,7 +333,7 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
             // Pack specular and envMultiplier into materialFlags unused bits.
             // bits[8:15]  = specular * 255 (range 0.0-1.0, 8-bit precision)
             // bits[16:23] = envMultiplier * 127.5 (range 0.0-2.0, 128 = 1.0)
-            // @ref UE5 "Material Inputs — Specular" — F0 = 0.08 * specular
+            // @ref Lagarde 2014 "Moving Frostbite to Physically Based Rendering" — F0 = 0.08 * specular
             const uint32_t specU8 = std::min(255u, static_cast<uint32_t>(mat->GetSpecular() * 255.0f));
             const uint32_t envU8  = std::min(255u, static_cast<uint32_t>(mat->GetEnvMultiplier() * 127.5f));
             cmd.materialFlags |= (specU8 << 8) | (envU8 << 16);
