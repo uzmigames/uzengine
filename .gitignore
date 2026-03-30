@@ -70,6 +70,7 @@ cache/
 **/cache/textures/
 **/cache/cooked/
 screenshots
+backup
 
 # Cooked assets (build output)
 *.uzpak
