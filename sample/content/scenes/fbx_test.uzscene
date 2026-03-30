@@ -12,8 +12,8 @@
             920
           ],
           "rotation": [
-            45,
-            -45,
+            60,
+            -30,
             0
           ],
           "scale": [
@@ -97,17 +97,17 @@
         "transform": {
           "position": [
             0,
-            -300,
-            150
+            -350,
+            120
           ],
           "rotation": [
-            -15,
+            -8,
             0,
             0
           ]
         },
         "camera": {
-          "fov": 75,
+          "fov": 55,
           "near": 1,
           "far": 100000,
           "active": true
@@ -138,7 +138,7 @@
           ]
         },
         "sky_light": {
-          "intensity": 0.8,
+          "intensity": 1.0,
           "light_color": [
             0.85,
             0.9,
