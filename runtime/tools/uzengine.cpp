@@ -224,6 +224,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     if (!screenshotPath.empty() && maxFrames == kInfiniteFrames) {
         effectiveMaxFrames = 500;
     }
+    bool screenshotRequested = false;
 
     // ── Window ──────────────────────────────────────────────────────────
     WindowDesc winDesc{};
@@ -467,10 +468,18 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
             RenderClearFrame(cmdList, swapChain, t);
         }
 
-        // Screenshot capture (request on screenshotFrame, captured next frame by RenderFrame)
-        if (sceneRendererReady && !screenshotPath.empty()
-            && frameIndex == static_cast<uint32_t>(screenshotFrame)) {
+        // Screenshot capture — waits for all assets (meshes, textures) to finish loading
+        // before capturing, so async-loaded scenes appear fully rendered.
+        if (sceneRendererReady && !screenshotPath.empty() && !screenshotRequested
+            && frameIndex >= static_cast<uint32_t>(screenshotFrame)) {
+            // Log asset loading state once per frame until ready
+            if (frameIndex % 30 == 0) sceneRenderer.IsSceneFullyLoadedDebug();
+        }
+        if (sceneRendererReady && !screenshotPath.empty() && !screenshotRequested
+            && frameIndex >= static_cast<uint32_t>(screenshotFrame)
+            && (sceneRenderer.IsSceneFullyLoaded() || frameIndex >= static_cast<uint32_t>(screenshotFrame) + 120)) {
             sceneRenderer.RequestScreenshot(screenshotPath);
+            screenshotRequested = true;
         }
 
         // Present + signal fence

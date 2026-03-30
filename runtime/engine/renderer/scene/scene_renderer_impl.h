@@ -619,7 +619,7 @@
     uint32_t m_instanceBufferSrvIndices[kInstanceBufferCount] = {UINT32_MAX, UINT32_MAX, UINT32_MAX};
 
     // Shadow constants moved to shadow_atlas.h (kShadowResolution, kShadowAtlasSize)
-    static constexpr uint32_t kCBRingFrames = 3;
+    static constexpr uint32_t kCBRingFrames = 4; ///< 4 frames prevents stale data race (3 was insufficient — Frame N overwritten by N+3 before GPU read)
     static constexpr uint64_t kCBRingBytesPerFrame = 2 * 1024 * 1024;
 
     // ── Internal Helpers ───────────────────────────────────────────────────

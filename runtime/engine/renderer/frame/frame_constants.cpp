@@ -458,9 +458,10 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
 
     // ── Shadow cascades — delegated to shadow_renderer ─────────────────
     // Determine shadow cache status early so ShadowDataCB gets the right fields.
-    ctx.shadowCacheEnabled = m_shadowCacheManager.GetConfig().enabled
-                           && m_staticShadowAtlas.IsValid()
-                           && m_staticShadowAtlasSrv != UINT32_MAX;
+    // Shadow cache disabled — static+dynamic atlas composition not yet implemented.
+    // All shadow-casting geometry renders into the per-frame atlas every frame.
+    // Re-enable after implementing static atlas → per-frame atlas copy/compose.
+    ctx.shadowCacheEnabled = false;
     ctx.shadowFrame = SetupShadowFrame(
         camera, ctx.sunDir,
         ctx.lightData.perLightShadowBias, ctx.lightData.perLightShadowSlopeBias,

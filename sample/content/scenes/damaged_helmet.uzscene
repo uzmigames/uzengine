@@ -42,8 +42,8 @@
       "name": "MainCamera",
       "components": {
         "transform": {
-          "position": [0, -400, 100],
-          "rotation": [-10, 0, 0]
+          "position": [0, -8, 3],
+          "rotation": [0, 0, 0]
         },
         "camera": {
           "fov": 60,
