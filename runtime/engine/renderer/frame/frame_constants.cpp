@@ -141,7 +141,7 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     }
 
     // ── Extract lighting from ECS (directional + point lights) ─────────
-    ctx.lightData = ExtractLightingFromECS(ctx.world, *m_cbRing);
+    ctx.lightData = ExtractLightingFromECS(ctx.world, *m_cbRing, camera.GetPosition());
     ctx.sunDir       = ctx.lightData.sunDir;
     ctx.sunColor     = ctx.lightData.sunColor;
     ctx.ambientColor = ctx.lightData.ambientColor;

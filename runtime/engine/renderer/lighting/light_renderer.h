@@ -96,14 +96,19 @@ struct LightFrameData {
 /// to build the point light array (up to 64 lights) and SpotLightComponent to
 /// build the spot light array (up to 16 lights). Uploads LightingCB to the CB ring.
 ///
+/// Shadow candidates are sorted by visual importance (intensity * radius^2 / distance^2)
+/// so the most impactful lights receive shadow atlas tiles first.
+///
 /// # Arguments
-/// * `world`  — The ECS World to query. May be null (uses defaults).
-/// * `cbRing` — CB ring allocator for uploading LightingCB.
+/// * `world`          — The ECS World to query. May be null (uses defaults).
+/// * `cbRing`         — CB ring allocator for uploading LightingCB.
+/// * `cameraPosition` — World-space camera position for shadow importance ranking.
 ///
 /// # Returns
 /// LightFrameData with extracted light parameters and CB allocation.
 [[nodiscard]] LightFrameData ExtractLightingFromECS(
     World* world,
-    CBRingAllocator& cbRing);
+    CBRingAllocator& cbRing,
+    const Vec3& cameraPosition);
 
 } // namespace uz

@@ -15,6 +15,7 @@ Complete analysis of UE5 shadow mapping systems, cascaded shadows, soft shadows 
 
 ## Files
 
+- [local-light-shadows.md](local-light-shadows.md) — **UzEngine implementation** of local light shadow system, atlas allocation, importance sorting, PCF sampling
 - [local-light-shadows-ue5-architecture.md](local-light-shadows-ue5-architecture.md) — UE5 architecture for point and spot light shadows, dual-paraboloid and perspective projections
 - [skylight-fog-parity.md](skylight-fog-parity.md) — Parity analysis between SkyLight ambient and height fog lighting contributions
 - [ue5-environment-component-defaults.md](ue5-environment-component-defaults.md) — Default values for all environment components (lights, fog, sky, atmosphere)
@@ -54,7 +55,8 @@ Complete analysis of UE5 shadow mapping systems, cascaded shadows, soft shadows 
 - [ue5-shadows/shadow-shader-templates.md](ue5-shadows/shadow-shader-templates.md) — HLSL templates
 
 ### Point/Spot Light Shadows?
-- [local-light-shadows-ue5-architecture.md](local-light-shadows-ue5-architecture.md) — Architecture and projections
+- [local-light-shadows.md](local-light-shadows.md) — **UzEngine implementation**: atlas, allocation, sampling
+- [local-light-shadows-ue5-architecture.md](local-light-shadows-ue5-architecture.md) — UE5 reference architecture and projections
 
 ### Fixing Cascade Artifacts?
 - [ue5-shadows/cascade-shadow-flickering-fix.md](ue5-shadows/cascade-shadow-flickering-fix.md) — Temporal stability improvements

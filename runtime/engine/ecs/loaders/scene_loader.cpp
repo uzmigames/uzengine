@@ -200,9 +200,11 @@ void ApplyDirectionalLightFields(DirectionalLightComponent& light,
 /// Parses a `"point"` light sub-object into the given component.
 void ApplyPointLightFields(PointLightComponent& light,
                             const nlohmann::json& comp) {
-    light.color     = ReadVec3(comp, "color", 1.f, 1.f, 1.f);
-    light.intensity = ReadFloat(comp, "intensity",  1.f);
-    light.range     = ReadFloat(comp, "range",     10.f);
+    light.color            = ReadVec3(comp, "color", 1.f, 1.f, 1.f);
+    light.intensity        = ReadFloat(comp, "intensity",  1.f);
+    light.range            = ReadFloat(comp, "range",     10.f);
+    light.castShadows      = ReadBool(comp, "castShadows", false);
+    light.pointShadowBias  = ReadFloat(comp, "shadowBias", 0.5f);
 }
 
 /// Parses a `"spot"` light sub-object into the given component.
@@ -210,11 +212,13 @@ void ApplyPointLightFields(PointLightComponent& light,
 /// `innerAngle` and `outerAngle` are expected in degrees; stored as radians.
 void ApplySpotLightFields(SpotLightComponent& light,
                            const nlohmann::json& comp) {
-    light.color      = ReadVec3(comp, "color", 1.f, 1.f, 1.f);
-    light.intensity  = ReadFloat(comp, "intensity",    1.f);
-    light.range      = ReadFloat(comp, "range",       10.f);
+    light.color         = ReadVec3(comp, "color", 1.f, 1.f, 1.f);
+    light.intensity     = ReadFloat(comp, "intensity",    1.f);
+    light.range         = ReadFloat(comp, "range",       10.f);
     light.innerAngleDeg = ReadFloat(comp, "innerAngle", 30.f);
     light.outerAngleDeg = ReadFloat(comp, "outerAngle", 45.f);
+    light.castShadows   = ReadBool(comp, "castShadows", false);
+    light.spotShadowBias = ReadFloat(comp, "shadowBias", 0.5f);
 }
 
 /// Parses the `"light"` component JSON and emplaces the appropriate light type.
@@ -672,10 +676,12 @@ nlohmann::json SerializeEntity(const World& world, entt::entity enttEntity) {
     if (const auto* light = registry.try_get<PointLightComponent>(enttEntity);
         light && !registry.all_of<SpotLightComponent>(enttEntity)) {
         nlohmann::json lightJson;
-        lightJson["type"]      = "point";
-        lightJson["color"]     = WriteVec3(light->color);
-        lightJson["intensity"] = light->intensity;
-        lightJson["range"]     = light->range;
+        lightJson["type"]        = "point";
+        lightJson["color"]       = WriteVec3(light->color);
+        lightJson["intensity"]   = light->intensity;
+        lightJson["range"]       = light->range;
+        lightJson["castShadows"] = light->castShadows;
+        lightJson["shadowBias"]  = light->pointShadowBias;
         components["light"] = std::move(lightJson);
 
         nlohmann::json transform;
@@ -688,12 +694,14 @@ nlohmann::json SerializeEntity(const World& world, entt::entity enttEntity) {
     // Spot Light (inherits from PointLightComponent)
     if (const auto* light = registry.try_get<SpotLightComponent>(enttEntity)) {
         nlohmann::json lightJson;
-        lightJson["type"]       = "spot";
-        lightJson["color"]      = WriteVec3(light->color);
-        lightJson["intensity"]  = light->intensity;
-        lightJson["range"]      = light->range;
-        lightJson["innerAngle"] = light->innerAngleDeg;
-        lightJson["outerAngle"] = light->outerAngleDeg;
+        lightJson["type"]        = "spot";
+        lightJson["color"]       = WriteVec3(light->color);
+        lightJson["intensity"]   = light->intensity;
+        lightJson["range"]       = light->range;
+        lightJson["innerAngle"]  = light->innerAngleDeg;
+        lightJson["outerAngle"]  = light->outerAngleDeg;
+        lightJson["castShadows"] = light->castShadows;
+        lightJson["shadowBias"]  = light->spotShadowBias;
         components["light"] = std::move(lightJson);
 
         nlohmann::json transform;
