@@ -234,6 +234,15 @@ private:
 
     bool m_pointLightsEnabled = false;             ///< Point light toggle (L key).
 
+    // ── Sub-emitter state (Task 3.87.0 — CPU-side simplified sub-emitter) ──
+    bool  m_subEmitterEnabled = false;   ///< E key toggles sub-emitter mode.
+    float m_subEmitterTimer   = 0.0f;    ///< Countdown timer; fires secondary burst when <= 0.
+    static constexpr float kSubEmitterDelay = 0.4f; ///< Delay (s) from primary to secondary burst.
+
+    // ── Frustum culling state (Task 3.89.0) ─────────────────────────────────
+    bool     m_frustumCullingEnabled = false; ///< Ctrl+F toggles CPU frustum cull check.
+    uint32_t m_culledFrameCount = 0;          ///< Frames where VFX was frustum-culled.
+
     // ── Environment rotation ───────────────────────────────────────────
     float m_envRotation = 0.0f;                    ///< Environment (sun/sky) Y-axis rotation in degrees (R key).
 

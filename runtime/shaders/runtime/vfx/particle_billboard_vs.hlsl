@@ -177,7 +177,7 @@ cbuffer VFXBillboardCB : register(b2) {
     float    softFadeDistance;         ///< World-space distance for soft particle depth fade.
     float    alphaErosion;            ///< Subtractive alpha erosion [0, 1].
     float    emissiveIntensity;       ///< Multiplier for additive emissive contribution.
-    float    _psPad0;
+    uint     litMode;                ///< 0=Unlit, 1=Lit. Not used by VS, declared for layout.
     float    _pad1;
     float    _pad2;
     float    _pad3;

@@ -174,8 +174,10 @@ cbuffer VFXUpdateConstants : register(b1) {
     /// @ref Ericson 2005 "Real-Time Collision Detection" Ch.4
     uint     killVolumeSrvIndex;         ///< SRV for StructuredBuffer<KillVolume>.  192
     uint     activeKillVolumeCount;      ///< Active volume count [0..16].           196
-    uint     _padKV0;                    ///<                                        200
-    uint     _padKV1;                    ///<                                        204
+    // ── Ground Plane Collision ───────────────────────────────────────────── (repurposed from pad)
+    /// @ref Müller 2006 "Position Based Dynamics" — restitution coefficients
+    uint     groundCollision;            ///< 0=disabled, 1=bounce off Z=0 ground.  200
+    float    restitution;                ///< Bounce coefficient [0,1].              204
 #endif
 };
 
@@ -365,6 +367,24 @@ void main(uint3 dtid : SV_DispatchThreadID)
 
     // ── Integrate position (explicit Euler) ─────────────────────────────
     pos += vel * dt;
+
+    // ── Ground plane collision (Z=0 in Z-up, optional) ───────────────────
+    // A simple inelastic bounce with configurable restitution coefficient.
+    // Applies friction to the tangential (XY) velocity component on contact.
+    // Guarded by groundCollision != 0 to have zero cost when disabled.
+    //
+    /// @ref Müller 2006 "Position Based Dynamics" — restitution + friction response
+#ifdef UZ_BINDLESS
+    if (groundCollision != 0u && pos.z < 0.0f) {
+        // Reflect Z position above ground to prevent tunnelling.
+        pos.z = abs(pos.z) * 0.01f;
+        // Reflect Z velocity with restitution (energy loss on bounce).
+        vel.z = abs(vel.z) * restitution;
+        // Friction damps XY velocity on contact (models sliding friction).
+        vel.x *= 0.8f;
+        vel.y *= 0.8f;
+    }
+#endif
 
     // ── Kill volume test ──────────────────────────────────────────────────
     // Tests the updated position against all active kill volumes (AABB + sphere).

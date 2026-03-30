@@ -261,6 +261,28 @@ static const VFXPreset s_presets[] = {
         /*vortexTangential*/ 0.0f, /*vortexRadial*/ 0.0f, /*vortexMaxRadius*/ 5.0f,
         /*windDir*/ {1,0,0}, /*windStrength*/ 5.0f // 5 m/s ambient wind (+X)
     }, 200.0f },
+    // ── Lit Particle Preset ────────────────────────────────────────────
+    /// @ref Pharr 2023 "Physically Based Rendering" Ch.12 — Lambertian diffuse NdotL
+    { "Lit Smoke", {
+        /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.3f,
+        /*velocity*/ {0.0f, 0.0f, 2.0f}, /*velVariation*/ 0.5f,
+        /*spread*/ 0.6f, /*minLife*/ 3.0f, /*maxLife*/ 6.0f, /*size*/ 1.0f,
+        /*color*/ {0.8f, 0.8f, 0.8f, 1.0f},
+        /*gravity*/ {0.0f, 0.0f, 0.0f}, /*damping*/ 0.1f,
+        /*softFade*/ 0.5f, /*emissive*/ 0.0f,
+        /*sizeOverLife*/ 0.3f, 1.5f, 2.0f, 0.3f,
+        /*colorLifeStart*/ 0.8f, 0.8f, 0.8f, 1.0f,
+        /*colorLifeEnd*/ 0.3f, 0.3f, 0.3f, 0.0f,
+        /*alignment*/ 0, /*stretch*/ 0.0f,
+        /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
+        /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
+        /*blendMode*/ 0, // AlphaBlend — lit smoke is translucent, not additive
+        /*curlStrength*/ 0.5f, /*curlFrequency*/ 0.3f, /*curlSpeed*/ 0.1f,
+        /*vortexAxisOrigin*/ {0,0,0}, /*vortexAxisDir*/ {0,0,1},
+        /*vortexTangential*/ 0.0f, /*vortexRadial*/ 0.0f, /*vortexMaxRadius*/ 5.0f,
+        /*windDir*/ {1,0,0}, /*windStrength*/ 0.0f,
+        /*litMode*/ 1 // Lit particles — NdotL directional + ambient
+    }, 200.0f },
 };
 
 const VFXPreset* GetVFXPresets(int& outCount) {
@@ -531,6 +553,21 @@ bool VFXParticleSystem::Init(IRHIDevice* device, ShaderManager* shaderMgr,
             UZ_LOG(App, Error, "VFX: Failed to create billboard graphics PSO (AlphaBlend)");
             return false;
         }
+
+        // Lit PremulAlpha PSO: uses the lit pixel shader for NdotL directional + ambient.
+        // Same blend state as the default PremulAlpha PSO (One / InvSrcAlpha).
+        // @ref Pharr 2023 "Physically Based Rendering" Ch.12 — Lambertian diffuse NdotL
+        desc.pixelShader = shaderMgr->CreateShader(EngineShader::ParticleBillboardLitPS, RHIShaderStage::Pixel);
+        desc.renderTargetBlend[0].srcColor = RHIBlendFactor::One;
+        desc.renderTargetBlend[0].dstColor = RHIBlendFactor::InvSrcAlpha;
+        desc.renderTargetBlend[0].srcAlpha = RHIBlendFactor::Zero;
+        desc.renderTargetBlend[0].dstAlpha = RHIBlendFactor::InvSrcAlpha;
+        desc.debugName = "VFX_BillboardPSO_Lit";
+        m_billboardPSO_Lit = device->CreateGraphicsPipeline(desc);
+        if (!m_billboardPSO_Lit.IsValid()) {
+            UZ_LOG(App, Error, "VFX: Failed to create billboard graphics PSO (Lit)");
+            return false;
+        }
     }
 
     UZ_LOG(App, Info, "VFX: Initialized particle system — maxParticles={}", maxParticles);
@@ -683,6 +720,7 @@ void VFXParticleSystem::Shutdown(IRHIDevice* device) {
     destroyPso(m_billboardPSO);
     destroyPso(m_billboardPSO_Additive);
     destroyPso(m_billboardPSO_AlphaBlend);
+    destroyPso(m_billboardPSO_Lit);
 
     // Destroy color ramp LUT texture
     if (m_colorRampLUT.IsValid()) {
@@ -906,6 +944,11 @@ void VFXParticleSystem::DispatchCompute(IRHICommandList* cmdList, CBRingAllocato
         cb.killVolumeSrvIndex    = m_killVolumeSrvIndex;
         cb.activeKillVolumeCount = m_activeKillVolumes;
 
+        // Ground plane collision parameters
+        // @ref Müller 2006 "Position Based Dynamics" — restitution coefficients
+        cb.groundCollision = config.groundCollision;
+        cb.restitution     = config.restitution;
+
         auto alloc = cbRing->Allocate(sizeof(VFXUpdateCB));
         std::memcpy(alloc.cpuPtr, &cb, sizeof(VFXUpdateCB));
 
@@ -1089,7 +1132,12 @@ void VFXParticleSystem::DrawBillboards(IRHICommandList* cmdList, CBRingAllocator
     indices.spriteTextureIdx = UINT32_MAX;
     indices.depthBufferIdx = depthBufferSrvIdx;
 
-    cmdList->SetPipeline(GetBillboardPSOForBlendMode(blendMode));
+    // Select PSO: lit particles use the dedicated lit PSO; unlit use standard blend PSOs.
+    if (config.litMode == 1) {
+        cmdList->SetPipeline(m_billboardPSO_Lit);
+    } else {
+        cmdList->SetPipeline(GetBillboardPSOForBlendMode(blendMode));
+    }
     cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&indices),
                               sizeof(indices) / sizeof(uint32_t));
 
@@ -1113,6 +1161,7 @@ void VFXParticleSystem::DrawBillboards(IRHICommandList* cmdList, CBRingAllocator
     billboardCB.softFadeDistance   = config.softFadeDistance;
     billboardCB.alphaErosion      = 0.0f;
     billboardCB.emissiveIntensity = config.emissiveIntensity;
+    billboardCB.litMode           = config.litMode;
     // Size over lifetime curve parameters
     billboardCB.sizeOverLifeStart    = config.sizeOverLifeStart;
     billboardCB.sizeOverLifePeak     = config.sizeOverLifePeak;
@@ -1143,6 +1192,116 @@ void VFXParticleSystem::DrawBillboards(IRHICommandList* cmdList, CBRingAllocator
     // and outputs degenerate triangles for dead particles (age >= lifespan).
     // 6 vertices per particle (2 triangles per billboard quad).
     cmdList->Draw(m_maxParticles * 6, 1, 0, 0);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Frustum Culling — Task 3.89.0
+// ─────────────────────────────────────────────────────────────────────────────
+
+void VFXParticleSystem::UpdateCullState(const Mat4& viewProj, const VFXEmitterConfig& config) {
+    // ── Extract 6 frustum planes from VP matrix (Gribb & Hartmann 2001) ────────
+    // Each plane is stored as (normal.xyz, d) where the frustum inside half-space is:
+    //   dot(normal, point) + d >= 0.
+    // Direct extraction from row arithmetic on the clip-space VP matrix.
+    //
+    /// @ref Gribb 2001 "Fast Extraction of Viewing Frustum Planes"
+    float planes[6][4]; // [plane][x, y, z, d]
+
+    // Access VP matrix as row-major float array.
+    const float* m = reinterpret_cast<const float*>(&viewProj);
+    auto row = [&](int r, int c) -> float { return m[r * 4 + c]; };
+
+    // Left:   row3 + row0
+    planes[0][0] = row(3,0) + row(0,0);
+    planes[0][1] = row(3,1) + row(0,1);
+    planes[0][2] = row(3,2) + row(0,2);
+    planes[0][3] = row(3,3) + row(0,3);
+    // Right:  row3 - row0
+    planes[1][0] = row(3,0) - row(0,0);
+    planes[1][1] = row(3,1) - row(0,1);
+    planes[1][2] = row(3,2) - row(0,2);
+    planes[1][3] = row(3,3) - row(0,3);
+    // Bottom: row3 + row1
+    planes[2][0] = row(3,0) + row(1,0);
+    planes[2][1] = row(3,1) + row(1,1);
+    planes[2][2] = row(3,2) + row(1,2);
+    planes[2][3] = row(3,3) + row(1,3);
+    // Top:    row3 - row1
+    planes[3][0] = row(3,0) - row(1,0);
+    planes[3][1] = row(3,1) - row(1,1);
+    planes[3][2] = row(3,2) - row(1,2);
+    planes[3][3] = row(3,3) - row(1,3);
+    // Near:   row3 + row2
+    planes[4][0] = row(3,0) + row(2,0);
+    planes[4][1] = row(3,1) + row(2,1);
+    planes[4][2] = row(3,2) + row(2,2);
+    planes[4][3] = row(3,3) + row(2,3);
+    // Far:    row3 - row2
+    planes[5][0] = row(3,0) - row(2,0);
+    planes[5][1] = row(3,1) - row(2,1);
+    planes[5][2] = row(3,2) - row(2,2);
+    planes[5][3] = row(3,3) - row(2,3);
+
+    // Normalize plane normals so signed distance is in world-space units.
+    for (int i = 0; i < 6; ++i) {
+        const float len = std::sqrt(planes[i][0] * planes[i][0]
+                                  + planes[i][1] * planes[i][1]
+                                  + planes[i][2] * planes[i][2]);
+        if (len > 1e-6f) {
+            planes[i][0] /= len;
+            planes[i][1] /= len;
+            planes[i][2] /= len;
+            planes[i][3] /= len;
+        }
+    }
+
+    // ── Conservative bounding sphere radius ───────────────────────────────────
+    // Worst-case sphere: start from spawnRadius, expand by max reachable distance.
+    // maxSpeed = |spawnVelocity| + velocityVariation + |gravity| * maxLifetime
+    // radius   = spawnRadius + maxSpeed * maxLifetime
+    //
+    /// @ref Assarsson 2000 "Optimized View Frustum Culling Algorithms" — conservative sphere
+    const float vx = config.spawnVelocity[0];
+    const float vy = config.spawnVelocity[1];
+    const float vz = config.spawnVelocity[2];
+    const float velMag  = std::sqrt(vx*vx + vy*vy + vz*vz);
+    const float gx = config.gravity[0];
+    const float gy = config.gravity[1];
+    const float gz = config.gravity[2];
+    const float gravMag = std::sqrt(gx*gx + gy*gy + gz*gz);
+    const float maxSpeed = velMag + config.velocityVariation + gravMag * config.maxLifetime;
+    const float radius   = config.spawnRadius + maxSpeed * config.maxLifetime;
+
+    // ── Sphere-plane frustum test ─────────────────────────────────────────────
+    // If signed distance of center < -radius for ANY plane, sphere is outside.
+    //
+    /// @ref Assarsson 2000 "Optimized View Frustum Culling Algorithms" — sphere-plane test
+    const float cx = config.position[0];
+    const float cy = config.position[1];
+    const float cz = config.position[2];
+
+    bool outside = false;
+    for (int i = 0; i < 6; ++i) {
+        const float dist = planes[i][0] * cx
+                         + planes[i][1] * cy
+                         + planes[i][2] * cz
+                         + planes[i][3];
+        if (dist < -radius) {
+            outside = true;
+            break;
+        }
+    }
+
+    // ── Two-frame delay to prevent single-frame edge pop-in ───────────────────
+    // Only cull when two consecutive frames detect the emitter outside the frustum.
+    m_culledPrevFrame = m_culledThisFrame;
+    m_culledThisFrame = outside;
+
+    if (IsCulled()) {
+        ++m_framesSinceCulled;
+    } else {
+        m_framesSinceCulled = 0;
+    }
 }
 
 } // namespace uz

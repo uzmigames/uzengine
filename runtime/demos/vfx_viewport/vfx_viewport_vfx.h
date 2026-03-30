@@ -90,6 +90,13 @@ struct VFXEmitterConfig {
     /// @ref Stam 1999 "Stable Fluids" — global wind field
     float    windDir[3]               = {1.0f, 0.0f, 0.0f};  ///< Normalized wind direction.
     float    windStrength             = 0.0f;  ///< Base wind speed (m/s). 0 = disabled.
+    // ── Lit particle mode ────────────────────────────────────────────────
+    /// @ref Pharr 2023 "Physically Based Rendering" Ch.12 — Lambertian diffuse NdotL
+    uint32_t litMode                  = 0;     ///< 0=Unlit (default), 1=Lit (NdotL directional + ambient).
+    // ── Ground plane collision ───────────────────────────────────────────────
+    /// @ref Müller 2006 "Position Based Dynamics" — restitution coefficients
+    uint32_t groundCollision          = 0;     ///< 0=disabled, 1=bounce off Z=0 ground plane.
+    float    restitution              = 0.3f;  ///< Bounce coefficient [0,1]. 0=inelastic, 1=elastic.
 };
 
 /// Named emitter preset with a spawn rate.
@@ -184,7 +191,9 @@ struct VFXUpdateCB {
     // ── Kill volume GPU buffer ───────────────────────────────────────────────
     /// @ref Ericson 2005 "Real-Time Collision Detection" Ch.4
     uint32_t killVolumeSrvIndex;      uint32_t activeKillVolumeCount;
-    uint32_t _padKV0;                 uint32_t _padKV1;            // 16 bytes (offset 192)
+    // ── Ground plane collision (repurposed from _padKV0/_padKV1) ────────────
+    /// @ref Müller 2006 "Position Based Dynamics" — restitution coefficients
+    uint32_t groundCollision;         float    restitution;        // 16 bytes (offset 192)
 };
 static_assert(sizeof(VFXUpdateCB) == 208, "VFXUpdateCB must be 208 bytes (13 x float4)");
 
@@ -230,7 +239,7 @@ struct VFXBillboardCB {
     float    softFadeDistance   = 0.3f;            ///< Soft particle depth fade distance.
     float    alphaErosion      = 0.0f;             ///< Subtractive alpha erosion [0, 1].
     float    emissiveIntensity = 0.0f;             ///< Additive emissive multiplier.
-    float    _psPad0           = 0.0f;
+    uint32_t litMode           = 0;               ///< 0=Unlit, 1=Lit (NdotL + ambient). @ref Pharr 2023 Ch.12.
     float    _pad1                = 0.0f;
     float    _pad2                = 0.0f;
     float    _pad3                = 0.0f;
@@ -404,6 +413,26 @@ public:
     /// Clears the current color ramp LUT (resets to legacy lerp mode).
     void ClearColorRampLUT();
 
+    /// Updates per-emitter frustum cull state from a view-projection matrix.
+    ///
+    /// Extracts frustum planes via Gribb & Hartmann 2001 direct VP extraction and
+    /// tests the emitter's conservative bounding sphere. Requires two consecutive
+    /// cull frames before skipping simulation (prevents single-frame edge pop-in).
+    ///
+    /// # Arguments
+    /// * `viewProj` — Current frame view-projection matrix.
+    /// * `config`   — Active emitter configuration (position, lifetime, velocity).
+    ///
+    /// @ref Assarsson 2000 "Optimized View Frustum Culling Algorithms"
+    /// @ref Gribb 2001 "Fast Extraction of Viewing Frustum Planes from the WorldView-Projection Matrix"
+    void UpdateCullState(const Mat4& viewProj, const VFXEmitterConfig& config);
+
+    /// Returns true if this emitter should be skipped (culled for 2+ consecutive frames).
+    [[nodiscard]] bool IsCulled() const { return m_culledThisFrame && m_culledPrevFrame; }
+
+    /// Returns number of frames since the emitter was last visible.
+    [[nodiscard]] uint32_t GetFramesSinceCulled() const { return m_framesSinceCulled; }
+
 private:
     static constexpr uint32_t kChannelCount = 7; // pos, vel, age, life, size, color, rotation
     static constexpr uint32_t kSpawnGroupSize = 256;
@@ -456,10 +485,17 @@ private:
     RHIPipelineHandle m_billboardPSO;                ///< PremulAlpha: One/InvSrcAlpha (default).
     RHIPipelineHandle m_billboardPSO_Additive;       ///< Additive: One/One (fire, sparks).
     RHIPipelineHandle m_billboardPSO_AlphaBlend;     ///< AlphaBlend: SrcAlpha/InvSrcAlpha (smoke).
+    RHIPipelineHandle m_billboardPSO_Lit;           ///< Lit PremulAlpha: One/InvSrcAlpha + NdotL lighting.
 
     // Color ramp LUT texture
     RHITextureHandle  m_colorRampLUT;                ///< 256x1 RGBA16F LUT for color-over-life gradient.
     uint32_t          m_colorRampSrvIndex = UINT32_MAX; ///< Bindless SRV index for the LUT.
+
+    // ── Frustum cull state (Task 3.89.0) ─────────────────────────────────────
+    /// @ref Assarsson 2000 "Optimized View Frustum Culling Algorithms" — sphere-plane test
+    bool     m_culledThisFrame   = false;  ///< True when frustum culled this frame (skip dispatch+draw).
+    bool     m_culledPrevFrame   = false;  ///< Previous frame's cull state (requires 2 consecutive frames to skip).
+    uint32_t m_framesSinceCulled = 0;      ///< Frames elapsed since last visible (for respawn logic).
 
     /// Returns the element stride in bytes for the given channel index.
     [[nodiscard]] static uint32_t ChannelStride(uint32_t channel);

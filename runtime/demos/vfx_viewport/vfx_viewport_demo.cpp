@@ -674,6 +674,13 @@ void VFXViewportDemo::HandleInput(float dt) {
         UZ_LOG(App, Info, "Bloom: {}", m_bloomEnabled ? "on" : "off");
     }
 
+    // Lit particles toggle (J key)
+    // @ref Pharr 2023 "Physically Based Rendering" Ch.12 — Lambertian diffuse NdotL
+    if (input->IsKeyJustPressed(Key::J)) {
+        m_vfxEmitter.litMode = (m_vfxEmitter.litMode == 0) ? 1u : 0u;
+        UZ_LOG(App, Info, "[J] Lit particles: {}", m_vfxEmitter.litMode ? "ON" : "OFF");
+    }
+
     // VFX restart (Delete key) — clears all particles and fires new burst/restarts
     if (input->IsKeyJustPressed(Key::Delete)) {
         auto* cmd = GetCommandList();
@@ -1136,6 +1143,7 @@ void VFXViewportDemo::HandleInput(float dt) {
         UZ_LOG(App, Info, "  Y                    — Toggle trails");
         UZ_LOG(App, Info, "  D                    — Toggle decals");
         UZ_LOG(App, Info, "  X                    — Toggle distortion");
+        UZ_LOG(App, Info, "  J                    — Toggle lit particles (NdotL + ambient)");
         UZ_LOG(App, Info, "  --- VFX Controls (number keys) ---");
         UZ_LOG(App, Info, "  1/2                  — Spawn rate ↑/↓");
         UZ_LOG(App, Info, "  3/4                  — Particle size ↑/↓");

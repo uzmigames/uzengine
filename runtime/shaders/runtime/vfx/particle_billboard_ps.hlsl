@@ -134,7 +134,8 @@ cbuffer VFXBillboardCB : register(b2) {
                                    ///< 0.0 = no erosion. Range [0, 1].
     float    emissiveIntensity;    ///< Multiplier for additive emissive contribution.
                                    ///< 0.0 = no emission (default). Used for fire/sparks.
-    float    _psPad0;
+    uint     litMode;              ///< 0=Unlit (default), 1=Lit. Not used by this unlit PS variant,
+                                   ///< declared for layout consistency with the lit PS variant.
 
     float    _pad1;
     float    _pad2;
