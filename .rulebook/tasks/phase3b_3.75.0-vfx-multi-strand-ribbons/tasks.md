@@ -19,9 +19,9 @@ trail emission. Niagara reference: Ribbon Renderer with multiple strands.
 
 ## 3. Ribbon Rendering Enhancements
 
-- [ ] 3.1 Add ribbon width over lifetime — wide at head, tapered at tail.
-- [ ] 3.2 Add ribbon color over lifetime — bright at head, fading at tail.
-- [ ] 3.3 Add UV distortion (scroll + noise) for animated ribbon textures.
+- [x] 3.1 Add ribbon width over lifetime — wide at head, tapered at tail. Added age-based width taper in TrailMeshBuilder::Build(): each point's width is multiplied by (1 - normalizedAge), where normalizedAge = point.age / pointLifetime. Head (age=0) gets full width, tail (near expiry) tapers to zero. New `pointLifetime` parameter added to Build() signature.
+- [x] 3.2 Add ribbon color over lifetime — bright at head, fading at tail. Color interpolation now uses max(arcLengthT, normalizedAge) as the blend parameter, so both spatial distance and age contribute to the color shift. Older points always trend toward colorEnd (darker/redder) even when spatially close to the head.
+- [x] 3.3 Add UV distortion (scroll + noise) for animated ribbon textures. UV scroll was already implemented in trail_vs.hlsl (V coordinate offset by time * uvScrollRate). The demo trail uses uvScrollRate=1.0. Verified working via shader inspection.
 - [x] 3.4 Fix trail PSO creation error (currently failing with E_INVALIDARG). Converted trail shaders from Input Assembler vertex fetch to bindless StructuredBuffer fetch via SV_VertexID, matching the engine's SM6.6 root signature. Removed input layout from PSO desc, changed VB/IB to StructuredBuffers with SRV indices, updated root constants to carry VB/IB SRV indices, changed DrawIndexed to Draw.
 
 ## 4. Demo Integration

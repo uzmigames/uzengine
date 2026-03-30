@@ -140,7 +140,8 @@ TrailMeshData TrailMeshBuilder::Build(
     float widthEnd,
     const Vec4& colorStart,
     const Vec4& colorEnd,
-    float totalDistance
+    float totalDistance,
+    float pointLifetime
 ) const {
     if (points == nullptr) {
         UZ_LOG(VFX, Warning, "TrailMeshBuilder::Build: points array is null");
@@ -159,6 +160,10 @@ TrailMeshData TrailMeshBuilder::Build(
 
     const uint32_t lastIndex = pointCount - 1u;
     const float safeDistance = std::max(totalDistance, kMinTotalDistance);
+    // Safe lifetime denominator for age normalization. When pointLifetime is
+    // zero or negative, age-based modulation is disabled (ageFactor = 1.0).
+    const float safeLifetime = std::max(pointLifetime, kMinTotalDistance);
+    const bool  useAgeTaper  = (pointLifetime > 0.0f);
 
     TrailMeshData mesh;
     // Each point produces one left vertex and one right vertex.
@@ -178,8 +183,27 @@ TrailMeshData TrailMeshBuilder::Build(
         const Vec3 toCamera = (cameraPosition - pointPos).normalize();
         const Vec3 right    = ComputeRight(tangent, toCamera);
 
-        const float halfWidth = std::max(0.0f, widthStart + (widthEnd - widthStart) * t) * 0.5f;
-        const Vec4  color     = LerpColor(colorStart, colorEnd, t);
+        // ── Age-based taper ────────────────────────────────────────────────
+        // normalizedAge: 0 at emission (age=0), 1 at expiry (age=pointLifetime).
+        // ageFactor: 1 at emission, 0 at expiry — used to taper width.
+        // When age-based modulation is disabled, ageFactor stays 1.0 and the
+        // width/color fallback to pure arc-length interpolation.
+        const float normalizedAge = useAgeTaper
+            ? std::clamp(points[i].age / safeLifetime, 0.0f, 1.0f)
+            : 0.0f;
+        const float ageFactor = 1.0f - normalizedAge;
+
+        // Width: arc-length interpolation between widthStart and widthEnd,
+        // then scaled by ageFactor so the ribbon tapers to zero as it ages.
+        const float baseWidth = std::max(0.0f, widthStart + (widthEnd - widthStart) * t);
+        const float halfWidth = baseWidth * ageFactor * 0.5f;
+
+        // Color: blend colorStart -> colorEnd using the MAXIMUM of arc-length t
+        // and normalizedAge. This ensures both spatial position and point age
+        // contribute to the color shift (older points are always darker/redder
+        // even if they are spatially close to the head).
+        const float colorParam = std::max(t, normalizedAge);
+        const Vec4  color      = LerpColor(colorStart, colorEnd, colorParam);
 
         // Left vertex: u=0, ribbon left edge.
         TrailVertex& leftVert  = mesh.vertices.emplace_back();

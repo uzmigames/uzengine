@@ -119,7 +119,7 @@ TEST(UZ_TrailMeshBuilder, Build_ZeroPoints_ReturnsEmptyMesh) {
         pts.data(), 0u, kCamera,
         1.0f, 0.1f,
         Vec4{1,1,1,1}, Vec4{1,1,1,0},
-        0.0f
+        0.0f, 2.0f
     );
     EXPECT_TRUE(mesh.IsEmpty());
     EXPECT_EQ(mesh.GetVertexCount(), 0u);
@@ -137,7 +137,7 @@ TEST(UZ_TrailMeshBuilder, Build_OnePoint_ReturnsEmptyMesh) {
         pts.data(), 1u, kCamera,
         1.0f, 0.1f,
         Vec4{1,1,1,1}, Vec4{1,1,1,0},
-        1.0f
+        1.0f, 2.0f
     );
     EXPECT_TRUE(mesh.IsEmpty());
     EXPECT_EQ(mesh.GetVertexCount(), 0u);
@@ -156,7 +156,7 @@ TEST(UZ_TrailMeshBuilder, Build_TwoPoints_FourVertices) {
         pts.data(), 2u, kCamera,
         1.0f, 0.1f,
         Vec4{1,1,1,1}, Vec4{1,1,1,0},
-        1.0f
+        1.0f, 2.0f
     );
     EXPECT_EQ(mesh.GetVertexCount(), 4u)
         << "2 points produce 2 vertices per point = 4 total";
@@ -169,7 +169,7 @@ TEST(UZ_TrailMeshBuilder, Build_TwoPoints_SixIndices) {
         pts.data(), 2u, kCamera,
         1.0f, 0.1f,
         Vec4{1,1,1,1}, Vec4{1,1,1,0},
-        1.0f
+        1.0f, 2.0f
     );
     EXPECT_EQ(mesh.GetIndexCount(), 6u)
         << "2 points produce 1 segment = 2 triangles = 6 indices";
@@ -182,7 +182,7 @@ TEST(UZ_TrailMeshBuilder, Build_TwoPoints_TwoTriangles) {
         pts.data(), 2u, kCamera,
         1.0f, 0.1f,
         Vec4{1,1,1,1}, Vec4{1,1,1,0},
-        1.0f
+        1.0f, 2.0f
     );
     EXPECT_EQ(mesh.GetTriangleCount(), 2u);
 }
@@ -198,7 +198,7 @@ TEST(UZ_TrailMeshBuilder, Build_ThreePoints_SixVertices) {
         pts.data(), 3u, kCamera,
         1.0f, 0.1f,
         Vec4{1,1,1,1}, Vec4{1,1,1,0},
-        2.0f
+        2.0f, 2.0f
     );
     EXPECT_EQ(mesh.GetVertexCount(), 6u);
 }
@@ -210,7 +210,7 @@ TEST(UZ_TrailMeshBuilder, Build_ThreePoints_TwelveIndices) {
         pts.data(), 3u, kCamera,
         1.0f, 0.1f,
         Vec4{1,1,1,1}, Vec4{1,1,1,0},
-        2.0f
+        2.0f, 2.0f
     );
     EXPECT_EQ(mesh.GetIndexCount(), 12u)
         << "3 points = 2 segments = 4 triangles = 12 indices";
@@ -231,7 +231,7 @@ TEST(UZ_TrailMeshBuilder, Build_NPoints_VertexAndIndexFormula) {
 
         const TrailMeshData mesh = builder.Build(
             pts.data(), n, kCamera,
-            1.0f, 0.1f, cs, ce, totalDist
+            1.0f, 0.1f, cs, ce, totalDist, 2.0f
         );
 
         EXPECT_EQ(mesh.GetVertexCount(), n * 2u)
@@ -252,7 +252,7 @@ TEST(UZ_TrailMeshBuilder, Build_TwoPoints_LeftVertices_U_IsZero) {
         pts.data(), 2u, kCamera,
         1.0f, 0.1f,
         Vec4{1,1,1,1}, Vec4{1,1,1,0},
-        1.0f
+        1.0f, 2.0f
     );
     ASSERT_GE(mesh.GetVertexCount(), 2u);
     // Left vertices are at even indices: 0, 2, 4, ...
@@ -268,7 +268,7 @@ TEST(UZ_TrailMeshBuilder, Build_TwoPoints_RightVertices_U_IsOne) {
         pts.data(), 2u, kCamera,
         1.0f, 0.1f,
         Vec4{1,1,1,1}, Vec4{1,1,1,0},
-        1.0f
+        1.0f, 2.0f
     );
     // Right vertices are at odd indices: 1, 3, 5, ...
     EXPECT_NEAR(mesh.vertices[1].u, 1.0f, 1e-5f)
@@ -284,7 +284,7 @@ TEST(UZ_TrailMeshBuilder, Build_HeadVertices_V_IsZero) {
         pts.data(), 3u, kCamera,
         1.0f, 0.1f,
         Vec4{1,1,1,1}, Vec4{1,1,1,0},
-        2.0f
+        2.0f, 2.0f
     );
     // Vertices 0 (left) and 1 (right) correspond to point 0 (head).
     EXPECT_NEAR(mesh.vertices[0].v, 0.0f, 1e-4f)
@@ -303,7 +303,7 @@ TEST(UZ_TrailMeshBuilder, Build_TailVertices_V_IsOne) {
         pts.data(), n, kCamera,
         1.0f, 0.1f,
         Vec4{1,1,1,1}, Vec4{1,1,1,0},
-        totalDist
+        totalDist, 2.0f
     );
     // Tail vertices: indices 2*(n-1) and 2*(n-1)+1 = 4 and 5.
     EXPECT_NEAR(mesh.vertices[4].v, 1.0f, 1e-4f)
@@ -329,7 +329,7 @@ TEST(UZ_TrailMeshBuilder, Build_WidthInterpolation_HeadIsWiderThanTail) {
         2.0f,  // widthStart
         0.0f,  // widthEnd
         cs, ce,
-        totalDist
+        totalDist, 2.0f
     );
 
     // For each point i, left and right vertices are 2i and 2i+1.
@@ -362,7 +362,7 @@ TEST(UZ_TrailMeshBuilder, Build_ColorInterpolation_HeadColorMatchesStart) {
 
     const TrailMeshData mesh = builder.Build(
         pts.data(), 3u, kCamera,
-        1.0f, 0.1f, cs, ce, 2.0f
+        1.0f, 0.1f, cs, ce, 2.0f, 2.0f
     );
 
     ASSERT_GE(mesh.GetVertexCount(), 2u);
@@ -382,7 +382,7 @@ TEST(UZ_TrailMeshBuilder, Build_ColorInterpolation_TailColorMatchesEnd) {
 
     const TrailMeshData mesh = builder.Build(
         pts.data(), n, kCamera,
-        1.0f, 0.1f, cs, ce, 2.0f
+        1.0f, 0.1f, cs, ce, 2.0f, 2.0f
     );
 
     // Tail left vertex is at index 2*(n-1) = 4
@@ -412,7 +412,7 @@ TEST(UZ_TrailMeshBuilder, Build_AllPointsSamePosition_DoesNotCrash) {
         pts.data(), n, kCamera,
         1.0f, 0.1f,
         Vec4{1,1,1,1}, Vec4{1,1,1,0},
-        0.0f
+        0.0f, 2.0f
     );
     // Geometry may still be generated — all we verify is no crash and correct counts.
     EXPECT_EQ(mesh.GetVertexCount(), n * 2u);
@@ -430,7 +430,7 @@ TEST(UZ_TrailMeshBuilder, Build_ZeroTotalDistance_NoCrash_MeshIsValid) {
         pts.data(), 3u, kCamera,
         1.0f, 0.1f,
         Vec4{1,1,1,1}, Vec4{1,1,1,0},
-        0.0f  // totalDistance=0 — must clamp to kMinTotalDistance internally
+        0.0f, 2.0f  // totalDistance=0 — must clamp to kMinTotalDistance internally
     );
     // Result must be a valid mesh with 6 vertices and 12 indices.
     EXPECT_EQ(mesh.GetVertexCount(), 6u);
@@ -447,7 +447,7 @@ TEST(UZ_TrailMeshBuilder, Build_NullPoints_ReturnsEmptyMesh_NoCrash) {
         nullptr, 5u, kCamera,
         1.0f, 0.1f,
         Vec4{1,1,1,1}, Vec4{1,1,1,0},
-        4.0f
+        4.0f, 2.0f
     );
     EXPECT_TRUE(mesh.IsEmpty());
 }
@@ -481,7 +481,7 @@ TEST(UZ_TrailMeshBuilder, Build_CameraFacing_LeftAndRight_SymmetricAboutPoint) {
         Vec3{0.0f, 10.0f, 0.0f},  // camera directly above
         2.0f, 2.0f,                // uniform width for easy symmetry check
         Vec4{1,1,1,1}, Vec4{1,1,1,1},
-        1.0f
+        1.0f, 2.0f
     );
 
     ASSERT_EQ(mesh.GetVertexCount(), 4u);
@@ -511,7 +511,7 @@ TEST(UZ_TrailMeshBuilder, Build_Indices_AreWithinVertexRange) {
         pts.data(), n, kCamera,
         1.0f, 0.1f,
         Vec4{1,1,1,1}, Vec4{1,1,1,0},
-        4.0f
+        4.0f, 2.0f
     );
 
     const uint32_t vertexCount = mesh.GetVertexCount();
