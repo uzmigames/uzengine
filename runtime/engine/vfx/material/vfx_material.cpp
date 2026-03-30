@@ -85,9 +85,10 @@ bool VFXMaterial::LoadTexture(IRHIDevice* device, IRHICommandList* cmdList) {
     }
 
     // Load via the synchronous TextureLoader pipeline (stb_image -> staging -> GPU).
-    // isSRGB = false: particle sprites are authored in linear or use manual
-    // gamma in the shader (emissive/additive blending operates in linear space).
-    auto result = TextureLoader::Load(device, cmdList, spriteTexturePath, false);
+    // isSRGB = true: particle sprite sheets are color textures authored in sRGB space.
+    // The GPU hardware converts sRGB→linear on sample, ensuring correct blending in
+    // linear space. Without sRGB, colors appear washed out / incorrectly bright.
+    auto result = TextureLoader::Load(device, cmdList, spriteTexturePath, true);
     if (!result.handle.IsValid()) {
         UZ_LOG(VFX, Error, "VFXMaterial: Failed to load sprite texture '{}'",
                spriteTexturePath);

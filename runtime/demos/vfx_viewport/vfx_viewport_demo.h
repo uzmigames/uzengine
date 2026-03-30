@@ -166,7 +166,7 @@ private:
     VFXEmitterConfig m_vfxEmitter;
     Mat4  m_prevViewProj;
     bool  m_vfxBurstMode = true;        ///< true = single burst, false = continuous emission.
-    uint32_t m_vfxBurstCount = 200;     ///< Number of particles per burst.
+    uint32_t m_vfxBurstCount = 500;     ///< Number of particles per burst.
     bool  m_vfxBurstPending = true;     ///< true = fire burst on next frame.
     VFXMaterial m_vfxMaterial;           ///< Material for custom sprite (--sprite CLI).
 
@@ -226,7 +226,7 @@ private:
     float m_objectPitch = 0.0f;                    ///< Object X-axis rotation in degrees (Alt+LMB vertical drag).
 
     // ── Background presets (C key cycles) ──────────────────────────────
-    int m_bgPreset = 0;                            ///< Background mode: 0=Sky, 1=Dark Gray, 2=Black, 3=White, 4=Neutral Gray.
+    int m_bgPreset = 2;                            ///< Background mode: 0=Sky, 1=Dark Gray, 2=Black, 3=White, 4=Neutral Gray.
     static constexpr int kBgPresetCount = 5;
 
     // ── Loaded PBR textures (from --albedo/--normal/--roughness CLI) ────

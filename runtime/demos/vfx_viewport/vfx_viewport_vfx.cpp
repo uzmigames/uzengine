@@ -25,20 +25,20 @@ static const VFXPreset s_presets[] = {
     { "Simple Burst", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.2f,
         /*velocity*/ {0.0f, 0.0f, 6.0f}, /*velVariation*/ 3.0f,
-        /*spread*/ 0.5f, /*minLife*/ 2.0f, /*maxLife*/ 4.0f, /*size*/ 1.5f,
+        /*spread*/ 1.0f, /*minLife*/ 1.0f, /*maxLife*/ 2.5f, /*size*/ 1.0f,
         /*color*/ {1.0f, 0.8f, 0.4f, 1.0f},
-        /*gravity*/ {0.0f, 0.0f, -1.0f}, /*damping*/ 0.3f,
-        /*softFade*/ 0.5f, /*emissive*/ 0.5f,
-        /*flipbook*/ 4, 4, 16, 24.0f, 1,
-        /*sizeOverLife*/ 0.3f, 1.2f, 0.0f, 0.25f,
+        /*gravity*/ {0.0f, 0.0f, -3.0f}, /*damping*/ 0.15f,
+        /*softFade*/ 0.5f, /*emissive*/ 1.0f,
+        /*flipbook*/ 6, 6, 36, 30.0f, 1,
+        /*sizeOverLife*/ 0.5f, 1.2f, 0.0f, 0.3f,
         /*colorLifeStart*/ 1.0f, 0.9f, 0.5f, 1.0f,
         /*colorLifeEnd*/ 1.0f, 0.3f, 0.05f, 0.0f,
         /*alignment*/ 0, /*stretch*/ 0.0f,
         /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
         /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
-        /*blendMode*/ 0, // AlphaBlend — debug: see texture against bright sky
-        /*spriteChannelMask*/ 0 // RGBA — use full texture (debug)
-    }, 500.0f },
+        /*blendMode*/ 1, // Additive — fire glow on dark backgrounds
+        /*spriteChannelMask*/ 0 // RGBA — use full texture color
+    }, 300.0f },
     { "Smoke Plume", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.2f,
         /*velocity*/ {0.0f, 0.0f, 3.0f}, /*velVariation*/ 0.5f,
