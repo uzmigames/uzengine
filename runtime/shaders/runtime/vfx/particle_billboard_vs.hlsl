@@ -100,7 +100,11 @@ struct VSOutput {
 /// Contains SRV descriptor heap indices for particle attribute buffers (VS)
 /// and texture resources (PS). Both stages read from the same b0 memory,
 /// so the layout MUST be identical in VS and PS.
-struct VFXBillboardConstants {
+///
+/// Uses plain cbuffer syntax instead of ConstantBuffer<T> to ensure correct
+/// DXIL code generation with DXC for root constants. See particle_billboard_ps.hlsl
+/// for the detailed rationale.
+cbuffer VFXBillboardConstants : register(b0) {
     // VS indices (bytes 0-31)
     uint positionBufferIdx;    ///< SRV index: StructuredBuffer<float4> (xyz=pos, w=unused).
     uint sizeBufferIdx;        ///< SRV index: StructuredBuffer<float> (uniform scale).
@@ -113,10 +117,9 @@ struct VFXBillboardConstants {
     // PS indices (bytes 32-47)
     uint spriteTextureIdx;     ///< SRV index: Texture2D<float4> sprite/atlas (PS only).
     uint depthBufferIdx;       ///< SRV index: Texture2D<float> scene depth reversed-Z (PS only).
-    uint _pad0;
-    uint _pad1;
+    uint _vfxPad0;
+    uint _vfxPad1;
 };
-ConstantBuffer<VFXBillboardConstants> vfxConstants : register(b0);
 #else
 /// SM5 fallback: explicit SRV bindings for particle attribute buffers.
 StructuredBuffer<float4> particlePositions  : register(t0);
@@ -247,13 +250,13 @@ VSOutput main(uint vertexID : SV_VertexID) {
 
     // ── Read particle attributes from structured buffers ──
 #ifdef UZ_BINDLESS
-    StructuredBuffer<float4> positions  = ResourceDescriptorHeap[vfxConstants.positionBufferIdx];
-    StructuredBuffer<float>  sizes      = ResourceDescriptorHeap[vfxConstants.sizeBufferIdx];
-    StructuredBuffer<float4> colors     = ResourceDescriptorHeap[vfxConstants.colorBufferIdx];
-    StructuredBuffer<float>  rotations  = ResourceDescriptorHeap[vfxConstants.rotationBufferIdx];
-    StructuredBuffer<float4> velocities = ResourceDescriptorHeap[vfxConstants.velocityBufferIdx];
-    StructuredBuffer<float>  ages       = ResourceDescriptorHeap[vfxConstants.agesBufferIdx];
-    StructuredBuffer<float>  lifespans  = ResourceDescriptorHeap[vfxConstants.lifespansBufferIdx];
+    StructuredBuffer<float4> positions  = ResourceDescriptorHeap[positionBufferIdx];
+    StructuredBuffer<float>  sizes      = ResourceDescriptorHeap[sizeBufferIdx];
+    StructuredBuffer<float4> colors     = ResourceDescriptorHeap[colorBufferIdx];
+    StructuredBuffer<float>  rotations  = ResourceDescriptorHeap[rotationBufferIdx];
+    StructuredBuffer<float4> velocities = ResourceDescriptorHeap[velocityBufferIdx];
+    StructuredBuffer<float>  ages       = ResourceDescriptorHeap[agesBufferIdx];
+    StructuredBuffer<float>  lifespans  = ResourceDescriptorHeap[lifespansBufferIdx];
 
     float3 particlePos   = positions[particleID].xyz;
     float  particleSize  = sizes[particleID];

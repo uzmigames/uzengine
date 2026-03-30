@@ -73,7 +73,15 @@ struct PSInput {
 /// Unified root constants for bindless resource access (shared by VS and PS).
 /// Layout MUST match VFXBillboardConstants in particle_billboard_vs.hlsl exactly.
 /// PS reads spriteTextureIdx and depthBufferIdx from bytes 32-39.
-struct VFXBillboardConstants {
+///
+/// Uses plain cbuffer syntax instead of ConstantBuffer<T> to ensure correct
+/// DXIL code generation with DXC for root constants. ConstantBuffer<T> can
+/// produce incorrect cbufferLoadLegacy offsets when the PS only reads members
+/// in the latter half of the struct (DWORDs 8+), because DXC may eliminate
+/// the "dead" prefix members and shift the surviving members' byte offsets.
+/// Plain cbuffer declares all members as global-scope variables with fixed
+/// offsets, which DXC handles correctly regardless of usage patterns.
+cbuffer VFXBillboardConstants : register(b0) {
     // VS indices (bytes 0-31) — not read by PS, declared for layout correctness.
     uint positionBufferIdx;
     uint sizeBufferIdx;
@@ -86,10 +94,9 @@ struct VFXBillboardConstants {
     // PS indices (bytes 32-47)
     uint spriteTextureIdx;     ///< SRV index: Texture2D<float4> sprite/atlas.
     uint depthBufferIdx;       ///< SRV index: Texture2D<float> scene depth (reversed-Z).
-    uint _pad0;
-    uint _pad1;
+    uint _vfxPad0;
+    uint _vfxPad1;
 };
-ConstantBuffer<VFXBillboardConstants> vfxConstants : register(b0);
 #else
 /// SM5 fallback: explicit texture bindings.
 Texture2D<float4> spriteTexture : register(t0);
@@ -203,7 +210,7 @@ float ComputeSoftParticleFade(float4 screenPos, float2 screenSize, float fadeDis
     // Sample scene depth from the depth buffer
     float sceneDepthRaw;
 #ifdef UZ_BINDLESS
-    Texture2D<float> depthTex = ResourceDescriptorHeap[vfxConstants.depthBufferIdx];
+    Texture2D<float> depthTex = ResourceDescriptorHeap[depthBufferIdx];
     sceneDepthRaw = depthTex.SampleLevel(linearSampler, depthUV, 0);
 #else
     sceneDepthRaw = depthBuffer.SampleLevel(linearSampler, depthUV, 0);
@@ -252,7 +259,7 @@ float4 main(PSInput input) : SV_Target {
     // When no sprite texture is bound (spriteTextureIdx == 0xFFFFFFFF),
     // use solid white — the particle's vertex color alone determines appearance.
 #ifdef UZ_BINDLESS
-    bool hasSpriteTexture = (vfxConstants.spriteTextureIdx != 0xFFFFFFFF);
+    bool hasSpriteTexture = (spriteTextureIdx != 0xFFFFFFFF);
 #else
     bool hasSpriteTexture = true; // SM5 path always has explicit texture binding
 #endif
@@ -288,7 +295,7 @@ float4 main(PSInput input) : SV_Target {
         // Flipbook UV debug removed — sampling sprite texture below.
 
 #ifdef UZ_BINDLESS
-        Texture2D<float4> spriteTex = ResourceDescriptorHeap[vfxConstants.spriteTextureIdx];
+        Texture2D<float4> spriteTex = ResourceDescriptorHeap[spriteTextureIdx];
 #endif
 
         // Sample the current frame.
@@ -312,7 +319,7 @@ float4 main(PSInput input) : SV_Target {
     } else {
         // No flipbook — standard single-frame sprite sampling (original path).
 #ifdef UZ_BINDLESS
-        Texture2D<float4> spriteTex = ResourceDescriptorHeap[vfxConstants.spriteTextureIdx];
+        Texture2D<float4> spriteTex = ResourceDescriptorHeap[spriteTextureIdx];
         spriteColor = spriteTex.Sample(linearSampler, input.texcoord);
 #else
         spriteColor = spriteTexture.Sample(linearSampler, input.texcoord);
@@ -348,7 +355,7 @@ float4 main(PSInput input) : SV_Target {
     float2 screenSize;
 #ifdef UZ_BINDLESS
     {
-        Texture2D<float> depthTex = ResourceDescriptorHeap[vfxConstants.depthBufferIdx];
+        Texture2D<float> depthTex = ResourceDescriptorHeap[depthBufferIdx];
         uint w, h;
         depthTex.GetDimensions(w, h);
         screenSize = float2(w, h);
