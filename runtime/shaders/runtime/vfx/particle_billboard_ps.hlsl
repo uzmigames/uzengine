@@ -299,30 +299,37 @@ float4 main(PSInput input) : SV_Target {
 #endif
 
         // Sample the current frame.
+        float4 rawSample;
 #ifdef UZ_BINDLESS
-        spriteColor = spriteTex.Sample(linearSampler, uv0);
+        rawSample = spriteTex.Sample(linearSampler, uv0);
 #else
-        spriteColor = spriteTexture.Sample(linearSampler, uv0);
+        rawSample = spriteTexture.Sample(linearSampler, uv0);
 #endif
+        // Use Green channel as alpha mask (Niagara convention for grayscale sprite sheets).
+        // RGB = white (particle color applied later via multiplication), A = green channel intensity.
+        spriteColor = float4(1.0f, 1.0f, 1.0f, rawSample.g);
 
         if (flipbookBlendMode == kFlipbookBlendLinear) {
             // Linear blend: sample the next frame and interpolate for smooth transitions.
             float2 uv1 = SampleFlipbookUV(input.texcoord, fb.uv1, fb.frameSize);
-            float4 nextColor;
+            float4 nextSample;
 #ifdef UZ_BINDLESS
-            nextColor = spriteTex.Sample(linearSampler, uv1);
+            nextSample = spriteTex.Sample(linearSampler, uv1);
 #else
-            nextColor = spriteTexture.Sample(linearSampler, uv1);
+            nextSample = spriteTexture.Sample(linearSampler, uv1);
 #endif
+            float4 nextColor = float4(1.0f, 1.0f, 1.0f, nextSample.g);
             spriteColor = lerp(spriteColor, nextColor, fb.blendFactor);
         }
     } else {
         // No flipbook — standard single-frame sprite sampling (original path).
 #ifdef UZ_BINDLESS
         Texture2D<float4> spriteTex = ResourceDescriptorHeap[spriteTextureIdx];
-        spriteColor = spriteTex.Sample(linearSampler, input.texcoord);
+        float4 rawSingle = spriteTex.Sample(linearSampler, input.texcoord);
+        spriteColor = float4(1.0f, 1.0f, 1.0f, rawSingle.g);
 #else
-        spriteColor = spriteTexture.Sample(linearSampler, input.texcoord);
+        float4 rawSm5 = spriteTexture.Sample(linearSampler, input.texcoord);
+        spriteColor = float4(1.0f, 1.0f, 1.0f, rawSm5.g);
 #endif
     }
 
