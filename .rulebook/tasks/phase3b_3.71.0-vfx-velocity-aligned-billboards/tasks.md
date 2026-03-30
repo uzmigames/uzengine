@@ -18,15 +18,15 @@ of movement instead of always facing the camera. Niagara reference: Alignment = 
 
 ## 3. Preset Updates
 
-- [x] 3.1 Sparks preset: default to velocity-aligned (alignmentMode=1, stretch=3.0).
+- [x] 3.1 Sparks preset: default to velocity-aligned (alignmentMode=1, stretch=2.0). Increased lifetime 0.5-1.5s, wider spread 1.0, non-zero end alpha 0.2 for visibility.
 - [x] 3.2 Fireball preset: keep camera-facing (alignmentMode=0, stretch=0.5).
 - [x] 3.3 Simple Burst: camera-facing (alignmentMode=0, stretch=0.0).
 
 ## 4. Visual Verification
 
-- [ ] 4.1 Screenshot with velocity-aligned sparks — particles stretch in movement direction.
-- [ ] 4.2 Compare camera-facing vs velocity-aligned side by side.
-- [ ] 4.3 Verify no artifacts at extreme or zero velocity.
+- [x] 4.1 Screenshot with velocity-aligned sparks — particles stretch in movement direction. Verified working in VFX viewport demo.
+- [x] 4.2 Compare camera-facing vs velocity-aligned side by side. Verified working in VFX viewport demo.
+- [x] 4.3 Verify no artifacts at extreme or zero velocity. Zero-velocity fallback to camera-facing implemented and verified.
 
 ## 5. Documentation
 
