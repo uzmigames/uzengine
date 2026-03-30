@@ -6,14 +6,30 @@
       "name": "Sun",
       "components": {
         "transform": {
-          "position": [0, 0, 920],
-          "rotation": [50, -30, 0],
-          "scale": [1, 1, 1]
+          "position": [
+            0,
+            0,
+            920
+          ],
+          "rotation": [
+            50,
+            -30,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
         },
         "light": {
           "type": "directional",
-          "color": [1.0, 1.0, 0.95],
-          "intensity": 1.5
+          "color": [
+            1.0,
+            1.0,
+            0.95
+          ],
+          "intensity": 1.95
         }
       }
     },
@@ -21,9 +37,21 @@
       "name": "DamagedHelmet",
       "components": {
         "transform": {
-          "position": [0, 0, 0],
-          "rotation": [90, 0, 0],
-          "scale": [100, 100, 100]
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            90,
+            0,
+            0
+          ],
+          "scale": [
+            100,
+            100,
+            100
+          ]
         },
         "mesh": {
           "asset": "meshes/DamagedHelmet.uzmesh"
@@ -42,8 +70,16 @@
       "name": "MainCamera",
       "components": {
         "transform": {
-          "position": [0, -8, 3],
-          "rotation": [0, 0, 0]
+          "position": [
+            0,
+            -8,
+            3
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
         },
         "camera": {
           "fov": 60,
@@ -57,7 +93,11 @@
       "name": "SkyAtmosphere",
       "components": {
         "transform": {
-          "position": [0, 0, 1020]
+          "position": [
+            0,
+            0,
+            1020
+          ]
         },
         "sky_atmosphere": {}
       }
@@ -66,11 +106,19 @@
       "name": "SkyLight",
       "components": {
         "transform": {
-          "position": [0, 0, 690]
+          "position": [
+            0,
+            0,
+            690
+          ]
         },
         "sky_light": {
           "intensity": 1.0,
-          "light_color": [0.85, 0.9, 1.0]
+          "light_color": [
+            0.85,
+            0.9,
+            1.0
+          ]
         }
       }
     },
@@ -78,7 +126,11 @@
       "name": "HeightFog",
       "components": {
         "transform": {
-          "position": [0, 0, -5000]
+          "position": [
+            0,
+            0,
+            -5000
+          ]
         },
         "height_fog": {}
       }
@@ -87,7 +139,11 @@
       "name": "ReflectionProbe",
       "components": {
         "transform": {
-          "position": [0, 0, 100]
+          "position": [
+            0,
+            0,
+            100
+          ]
         },
         "reflection_probe": {
           "influence_radius": 2000.0,

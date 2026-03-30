@@ -29,7 +29,7 @@
             0.96,
             0.88
           ],
-          "intensity": 10.0
+          "intensity": 13.0
         }
       }
     },
@@ -526,9 +526,21 @@
       "name": "VolumetricClouds",
       "components": {
         "transform": {
-          "position": [0, 0, 0],
-          "rotation": [0, 0, 0],
-          "scale": [1, 1, 1]
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
         },
         "volumetric_clouds": {
           "coverage": 0.7,
