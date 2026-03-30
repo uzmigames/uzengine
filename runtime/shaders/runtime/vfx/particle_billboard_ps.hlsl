@@ -276,6 +276,8 @@ float4 ApplyChannelMask(float4 rawSample, uint channelMask) {
 /// # Returns
 /// Final RGBA color for alpha-blended compositing.
 float4 main(PSInput input) : SV_Target {
+    // Flipbook debug removed — sprite sampling verified working.
+
     // ── Sample sprite texture (with optional flipbook/SubUV animation) ──
     //
     // When flipbook is active (rows*cols > 1), we compute frame UVs from

@@ -25,10 +25,10 @@ static const VFXPreset s_presets[] = {
     { "Simple Burst", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.2f,
         /*velocity*/ {0.0f, 0.0f, 6.0f}, /*velVariation*/ 3.0f,
-        /*spread*/ 3.14159f, /*minLife*/ 1.0f, /*maxLife*/ 2.5f, /*size*/ 0.4f,
+        /*spread*/ 0.5f, /*minLife*/ 2.0f, /*maxLife*/ 4.0f, /*size*/ 1.5f,
         /*color*/ {1.0f, 0.8f, 0.4f, 1.0f},
-        /*gravity*/ {0.0f, 0.0f, -5.0f}, /*damping*/ 0.15f,
-        /*softFade*/ 0.5f, /*emissive*/ 0.8f,
+        /*gravity*/ {0.0f, 0.0f, -1.0f}, /*damping*/ 0.3f,
+        /*softFade*/ 0.5f, /*emissive*/ 0.5f,
         /*flipbook*/ 4, 4, 16, 24.0f, 1,
         /*sizeOverLife*/ 0.3f, 1.2f, 0.0f, 0.25f,
         /*colorLifeStart*/ 1.0f, 0.9f, 0.5f, 1.0f,
@@ -36,8 +36,8 @@ static const VFXPreset s_presets[] = {
         /*alignment*/ 0, /*stretch*/ 0.0f,
         /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
         /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
-        /*blendMode*/ 1, // Additive — fire burst glows
-        /*spriteChannelMask*/ 2 // Green channel as alpha (procedural fire sprite sheet)
+        /*blendMode*/ 0, // AlphaBlend — debug: see texture against bright sky
+        /*spriteChannelMask*/ 0 // RGBA — use full texture (debug)
     }, 500.0f },
     { "Smoke Plume", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.2f,

@@ -482,7 +482,7 @@ void VFXViewportDemo::OnInit() {
             m_vfxEmitter.flipbookBlendMode = m_vfxMaterial.flipbookBlendMode;
             // Default to Green channel mask for custom sprite sheets — most fire/smoke
             // PNGs store intensity in the green channel. User can cycle with Shift+M.
-            m_vfxEmitter.spriteChannelMask = 2;
+            m_vfxEmitter.spriteChannelMask = 0; // RGBA — use full texture color + alpha
             UZ_LOG(App, Info,
                    "VFXViewport: VFXMaterial loaded '{}' (SRV={}, {}x{} {:.0f}fps blend={} channelMask=G)",
                    m_customSpritePath, m_customSpriteSrvIdx,
@@ -1775,6 +1775,55 @@ void VFXViewportDemo::OnFrame(float dt) {
 
         cmd->Draw(3, 1, 0, 0);
         cmd->EndRenderPass();
+    }
+
+    // ── Sprite sheet debug overlay (top-right 384x384) ─────────────────
+    // Shows the raw sprite sheet texture to verify it loads and samples correctly,
+    // independent of the particle system. Uses the same tonemap PSO trick.
+    {
+        uint32_t debugSpriteSrv = UINT32_MAX;
+        if (m_vfxMaterial.HasSprite()) {
+            debugSpriteSrv = m_vfxMaterial.spriteTextureSrvIndex;
+        } else if (m_fireSpriteSrvIdx != UINT32_MAX) {
+            debugSpriteSrv = m_fireSpriteSrvIdx;
+        }
+
+        if (debugSpriteSrv != UINT32_MAX && m_tonemapPSO.IsValid()) {
+            auto* swapChain = GetSwapChain();
+            auto backBuffer = swapChain->GetCurrentBackBuffer();
+
+            RHIRenderPassDesc rpDesc{};
+            rpDesc.colorAttachmentCount = 1;
+            rpDesc.colorAttachments[0].texture = backBuffer;
+            cmd->BeginRenderPass(rpDesc);
+
+            constexpr uint32_t kSpriteDebugSize = 384;
+            RHIViewport sprVp{};
+            sprVp.x = static_cast<float>(GetWidth() - kSpriteDebugSize);
+            sprVp.y = 0.0f;
+            sprVp.width = static_cast<float>(kSpriteDebugSize);
+            sprVp.height = static_cast<float>(kSpriteDebugSize);
+            sprVp.minDepth = 0.0f;
+            sprVp.maxDepth = 1.0f;
+            cmd->SetViewport(sprVp);
+
+            RHIScissorRect sprSc{};
+            sprSc.left = static_cast<int32_t>(GetWidth() - kSpriteDebugSize);
+            sprSc.top = 0;
+            sprSc.right = static_cast<int32_t>(GetWidth());
+            sprSc.bottom = static_cast<int32_t>(kSpriteDebugSize);
+            cmd->SetScissor(sprSc);
+
+            cmd->SetPipeline(m_tonemapPSO);
+            cmd->SetRootCBV(kSlotPerFrame, perFrameGpu);
+
+            if (IsBindless()) {
+                cmd->SetRootConstants(0, &debugSpriteSrv, 1);
+            }
+
+            cmd->Draw(3, 1, 0, 0);
+            cmd->EndRenderPass();
+        }
     }
 
     // ── Screenshot capture ───────────────────────────────────────────────

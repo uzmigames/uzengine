@@ -166,7 +166,7 @@ private:
     VFXEmitterConfig m_vfxEmitter;
     Mat4  m_prevViewProj;
     bool  m_vfxBurstMode = true;        ///< true = single burst, false = continuous emission.
-    uint32_t m_vfxBurstCount = 500;     ///< Number of particles per burst.
+    uint32_t m_vfxBurstCount = 200;     ///< Number of particles per burst.
     bool  m_vfxBurstPending = true;     ///< true = fire burst on next frame.
     VFXMaterial m_vfxMaterial;           ///< Material for custom sprite (--sprite CLI).
 
