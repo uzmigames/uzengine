@@ -536,7 +536,9 @@ void VFXViewportDemo::OnInit() {
 
     // ── Trail ribbon PSO ───────────────────────────────────────────────
     // Premultiplied alpha blend, depth test (no write), double-sided.
-    // Uses Input Assembler vertex buffer (TrailVertex, 36 bytes stride).
+    // No Input Assembler — bindless vertex fetch via SV_VertexID + StructuredBuffer.
+    // This matches the engine's SM6.6 bindless root signature which does not
+    // declare IA support (E_INVALIDARG if input layout is specified).
     {
         RHIGraphicsPipelineDesc desc{};
         desc.vertexShader = shaders->CreateShader(EngineShader::TrailVS, RHIShaderStage::Vertex);
@@ -556,16 +558,10 @@ void VFXViewportDemo::OnInit() {
         desc.renderTargetBlend[0].srcAlpha = RHIBlendFactor::One;
         desc.renderTargetBlend[0].dstAlpha = RHIBlendFactor::InvSrcAlpha;
         desc.renderTargetBlend[0].alphaOp  = RHIBlendOp::Add;
-        // Input layout: TrailVertex (36 bytes)
-        // POSITION float3 offset 0, TEXCOORD0 float2 offset 12, COLOR0 float4 offset 20
-        static const RHIInputElementDesc kTrailInputLayout[] = {
-            { RHIInputSemantic::Position, 0, RHIFormat::RGB32Float, 0, 0 },
-            { RHIInputSemantic::Texcoord, 0, RHIFormat::RG32Float,  0, 12 },
-            { RHIInputSemantic::Color,    0, RHIFormat::RGBA32Float, 0, 20 },
-        };
-        desc.inputElements = kTrailInputLayout;
-        desc.inputElementCount = 3;
-        desc.vertexStride = 36; // sizeof(TrailVertex) = 36
+        // No input layout — bindless vertex fetch via StructuredBuffer + SV_VertexID
+        desc.inputElements = nullptr;
+        desc.inputElementCount = 0;
+        desc.vertexStride = 0;
         desc.debugName = "VFX_TrailPSO";
         m_trailPSO = device->CreateGraphicsPipeline(desc);
         if (!m_trailPSO.IsValid()) {
@@ -574,25 +570,29 @@ void VFXViewportDemo::OnInit() {
         }
     }
 
-    // ── Trail dynamic vertex / index upload buffers ─────────────────────
+    // ── Trail dynamic vertex / index upload buffers (StructuredBuffer for bindless) ──
+    // Created as StructuredBuffers so the VS can read via bindless SRV (SV_VertexID).
+    // No Input Assembler is used — the engine's SM6.6 root signature does not support IA.
     if (m_trailEnabled) {
         {
             RHIBufferDesc vbDesc{};
             vbDesc.sizeBytes = kMaxTrailVertices * 36; // sizeof(TrailVertex) = 36 bytes
-            vbDesc.stride = 36;
-            vbDesc.usage = RHIBufferUsage::VertexBuffer;
+            vbDesc.stride = 36;                        // StructuredBuffer element stride
+            vbDesc.usage = RHIBufferUsage::StructuredBuffer;
             vbDesc.memory = RHIMemoryType::Upload;
             vbDesc.debugName = "Trail_DynamicVB";
             m_trailVB = device->CreateBuffer(vbDesc);
+            m_trailVBSrvIndex = device->GetBufferSRVIndex(m_trailVB);
         }
         {
             RHIBufferDesc ibDesc{};
             ibDesc.sizeBytes = kMaxTrailIndices * sizeof(uint32_t);
-            ibDesc.stride = sizeof(uint32_t);
-            ibDesc.usage = RHIBufferUsage::IndexBuffer;
+            ibDesc.stride = sizeof(uint32_t);          // StructuredBuffer<uint> element stride
+            ibDesc.usage = RHIBufferUsage::StructuredBuffer;
             ibDesc.memory = RHIMemoryType::Upload;
             ibDesc.debugName = "Trail_DynamicIB";
             m_trailIB = device->CreateBuffer(ibDesc);
+            m_trailIBSrvIndex = device->GetBufferSRVIndex(m_trailIB);
         }
     }
 
@@ -2138,6 +2138,7 @@ void VFXViewportDemo::RenderVFXPass(IRHICommandList* cmd, uint64_t perFrameGpu,
 void VFXViewportDemo::RenderTrailPass(IRHICommandList* cmd, uint64_t perFrameGpu) {
     if (!m_trailPSO.IsValid()) return;
     if (!m_trailVB.IsValid() || !m_trailIB.IsValid()) return;
+    if (m_trailVBSrvIndex == UINT32_MAX || m_trailIBSrvIndex == UINT32_MAX) return;
 
     auto renderData = m_trailSystem.GetRenderData();
     if (renderData.empty()) return;
@@ -2174,29 +2175,34 @@ void VFXViewportDemo::RenderTrailPass(IRHICommandList* cmd, uint64_t perFrameGpu
         if (trail.vertexCount == 0 || trail.vertexCount > kMaxTrailVertices) continue;
         if (trail.indexCount == 0 || trail.indexCount > kMaxTrailIndices) continue;
 
-        // Upload vertices to the dynamic upload VB
+        // Upload vertices to the StructuredBuffer (bindless SRV)
         void* vbPtr = device->MapBuffer(m_trailVB);
         std::memcpy(vbPtr, trail.vertices, trail.vertexCount * sizeof(TrailVertex));
         device->UnmapBuffer(m_trailVB);
 
-        // Upload indices to the dynamic upload IB
+        // Upload indices to the StructuredBuffer<uint> (bindless SRV)
         void* ibPtr = device->MapBuffer(m_trailIB);
         std::memcpy(ibPtr, trail.indices, trail.indexCount * sizeof(uint32_t));
         device->UnmapBuffer(m_trailIB);
 
         // Set trail root constants at b0 (root param 0)
+        // Includes bindless SRV indices for vertex/index buffers so the VS
+        // can fetch vertex data via ResourceDescriptorHeap[srvIndex].
         TrailRootConstants rootConsts{};
-        rootConsts.uvScrollRate       = 1.0f;
-        rootConsts.softDepthRange     = 0.3f;
-        rootConsts.alphaClipThreshold = 1.0f / 255.0f; // kTrailAlphaClipMin
-        rootConsts.trailTexSrvIndex   = UINT32_MAX;    // No trail texture — vertex color only
-        rootConsts.depthBufferSrvIndex = depthSrvIdx;
+        rootConsts.uvScrollRate         = 1.0f;
+        rootConsts.softDepthRange       = 0.3f;
+        rootConsts.alphaClipThreshold   = 1.0f / 255.0f; // kTrailAlphaClipMin
+        rootConsts.trailTexSrvIndex     = UINT32_MAX;     // No trail texture — vertex color only
+        rootConsts.depthBufferSrvIndex  = depthSrvIdx;
+        rootConsts.vertexBufferSrvIndex = m_trailVBSrvIndex;
+        rootConsts.indexBufferSrvIndex  = m_trailIBSrvIndex;
         cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rootConsts),
                               sizeof(rootConsts) / sizeof(uint32_t));
 
-        cmd->SetVertexBuffer(0, m_trailVB);
-        cmd->SetIndexBuffer(m_trailIB, RHIIndexFormat::Uint32);
-        cmd->DrawIndexed(trail.indexCount);
+        // Draw with bindless vertex fetch: SV_VertexID [0, indexCount) maps into
+        // the index buffer SRV, which then indexes into the vertex buffer SRV.
+        // No SetVertexBuffer or SetIndexBuffer needed — no IA is used.
+        cmd->Draw(trail.indexCount);
     }
 
     cmd->EndRenderPass();

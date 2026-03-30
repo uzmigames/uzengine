@@ -368,14 +368,14 @@ private:
 /// Uploaded via `SetRootConstants(0, ...)` before each trail draw call. Shared
 /// by the trail vertex and pixel shaders through root parameter 0 (b0).
 struct TrailRootConstants {
-    float    uvScrollRate;        ///< U-axis scroll speed (UV-units/second).
-    float    softDepthRange;      ///< Soft-fade radius in metres. 0 = disabled.
-    float    alphaClipThreshold;  ///< Alpha discard threshold [0, 1].
-    uint32_t trailTexSrvIndex;    ///< Bindless SRV index for trail texture (UINT32_MAX = none).
-    uint32_t depthBufferSrvIndex; ///< Bindless SRV index for scene depth buffer.
-    uint32_t _pad0 = 0;          ///< Alignment pad — unused.
-    uint32_t _pad1 = 0;          ///< Alignment pad — unused.
-    uint32_t _pad2 = 0;          ///< Alignment pad — unused.
+    float    uvScrollRate;          ///< U-axis scroll speed (UV-units/second).
+    float    softDepthRange;        ///< Soft-fade radius in metres. 0 = disabled.
+    float    alphaClipThreshold;    ///< Alpha discard threshold [0, 1].
+    uint32_t trailTexSrvIndex;      ///< Bindless SRV index for trail texture (UINT32_MAX = none).
+    uint32_t depthBufferSrvIndex;   ///< Bindless SRV index for scene depth buffer.
+    uint32_t vertexBufferSrvIndex;  ///< Bindless SRV index for trail StructuredBuffer<TrailVertexData>.
+    uint32_t indexBufferSrvIndex;   ///< Bindless SRV index for trail StructuredBuffer<uint>.
+    uint32_t _pad0 = 0;            ///< Alignment pad — unused.
 };
 static_assert(sizeof(TrailRootConstants) == 32, "TrailRootConstants must be 32 bytes (8 x uint32)");
 

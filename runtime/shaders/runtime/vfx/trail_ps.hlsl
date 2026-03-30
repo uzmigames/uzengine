@@ -46,14 +46,14 @@
 /// Expanded inline for SM5.0 compatibility (cbuffer syntax required by DX11).
 /// Layout MUST match TrailRootConstants in trail_common.hlsli exactly.
 cbuffer TrailRootCB : register(b0) {
-    float uvScrollRate;        ///< U-axis scroll speed (VS-only, declared for layout).
-    float softDepthRange;      ///< Soft-fade radius in metres. 0 = disabled.
-    float alphaClipThreshold;  ///< Alpha discard threshold [0, 1].
-    uint  trailTexSrvIndex;    ///< Bindless SRV index for trail texture (0xFFFFFFFF = none).
-    uint  depthBufferSrvIndex; ///< Bindless SRV index for scene depth buffer.
+    float uvScrollRate;          ///< U-axis scroll speed (VS-only, declared for layout).
+    float softDepthRange;        ///< Soft-fade radius in metres. 0 = disabled.
+    float alphaClipThreshold;    ///< Alpha discard threshold [0, 1].
+    uint  trailTexSrvIndex;      ///< Bindless SRV index for trail texture (0xFFFFFFFF = none).
+    uint  depthBufferSrvIndex;   ///< Bindless SRV index for scene depth buffer.
+    uint  vertexBufferSrvIndex;  ///< Bindless SRV index for trail VB (VS-only, declared for layout).
+    uint  indexBufferSrvIndex;   ///< Bindless SRV index for trail IB (VS-only, declared for layout).
     uint  _cbPad0;
-    uint  _cbPad1;
-    uint  _cbPad2;
 };
 
 /// Per-frame constant buffer at b1 — standard engine layout.

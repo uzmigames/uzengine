@@ -180,8 +180,10 @@ private:
     TrailSystem m_trailSystem;                                ///< CPU trail simulation and mesh generation.
     TrailSystem::TrailHandle m_trailHandle = TrailSystem::kInvalidHandle; ///< Handle for the demo orbit trail.
     RHIPipelineHandle m_trailPSO;                             ///< Trail ribbon graphics PSO.
-    RHIBufferHandle   m_trailVB;                              ///< Dynamic upload VB for trail vertices.
-    RHIBufferHandle   m_trailIB;                              ///< Dynamic upload IB for trail indices.
+    RHIBufferHandle   m_trailVB;                              ///< StructuredBuffer for trail vertices (bindless SRV).
+    RHIBufferHandle   m_trailIB;                              ///< StructuredBuffer<uint> for trail indices (bindless SRV).
+    uint32_t          m_trailVBSrvIndex = UINT32_MAX;         ///< Bindless SRV index for trail vertex buffer.
+    uint32_t          m_trailIBSrvIndex = UINT32_MAX;         ///< Bindless SRV index for trail index buffer.
     static constexpr uint32_t kMaxTrailVertices = 1024;       ///< 512 points * 2 verts per point.
     static constexpr uint32_t kMaxTrailIndices  = 3072;       ///< 511 segments * 6 indices per segment.
     bool m_trailEnabled = true;                               ///< Trail toggle (Y key).

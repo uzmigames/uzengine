@@ -22,7 +22,7 @@ trail emission. Niagara reference: Ribbon Renderer with multiple strands.
 - [ ] 3.1 Add ribbon width over lifetime — wide at head, tapered at tail.
 - [ ] 3.2 Add ribbon color over lifetime — bright at head, fading at tail.
 - [ ] 3.3 Add UV distortion (scroll + noise) for animated ribbon textures.
-- [ ] 3.4 Fix trail PSO creation error (currently failing with E_INVALIDARG).
+- [x] 3.4 Fix trail PSO creation error (currently failing with E_INVALIDARG). Converted trail shaders from Input Assembler vertex fetch to bindless StructuredBuffer fetch via SV_VertexID, matching the engine's SM6.6 root signature. Removed input layout from PSO desc, changed VB/IB to StructuredBuffers with SRV indices, updated root constants to carry VB/IB SRV indices, changed DrawIndexed to Draw.
 
 ## 4. Demo Integration
 
