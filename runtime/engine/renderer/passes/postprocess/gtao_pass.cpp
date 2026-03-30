@@ -852,7 +852,9 @@ uint32_t GTAOPass::Execute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
         rc.numTaps        = static_cast<uint32_t>(cv_GTAONumTaps->value);
         rc.worldRadius    = settings.worldRadius;
         rc.aoIntensity    = settings.intensity;
-        rc.thicknessBlend = settings.thicknessBlend;
+        // @ref UE5 PostProcessAmbientOcclusion.cpp:442-443
+        // Transform: ThicknessBlend = clamp(1 - t*t, 0, 0.99)
+        { float t = settings.thicknessBlend; rc.thicknessBlend = std::clamp(1.0f - t * t, 0.0f, 0.99f); }
         rc.fadeStart      = settings.fadeStartDist;
         rc.fadeEnd        = settings.fadeEndDist;
         rc.aoPower        = settings.aoPower;

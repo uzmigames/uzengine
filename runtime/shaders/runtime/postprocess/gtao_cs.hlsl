@@ -499,7 +499,9 @@ float IntegrateHorizonArc(
     float cosAng = dot(projNormal, perp) * recipMag;
     float gamma = acosFast(cosAng) - M_PI_2;
     float cosGamma = dot(projNormal, viewDir) * recipMag;
-    float sinGamma = cosAng * -2.0f;
+    /// @ref Jimenez 2016 "GTAO" §785 — sin(gamma) where gamma = acos(cosAng) - PI/2
+    /// sin(acos(x) - PI/2) = -x (trigonometric identity)
+    float sinGamma = -cosAng;
 
     /// @ref Jimenez 2016 "GTAO" §787-788
     angles.x = gamma + max(-angles.x - gamma, -M_PI_2);
@@ -671,12 +673,12 @@ void main(
     // shallow ones (high ao), matching the energy loss from missing inter-
     // reflections. At ao=1.0 the exponent is 3.5 but the base is 1.0 so the
     // result is unchanged; at ao=0.3 the exponent ~1.75 produces visibly deeper
-    // occlusion that better matches path-traced ground truth.
-    //
+    // Multi-bounce AO: adds back inter-reflected light in occluded areas.
+    // Without this, deep crevices appear too dark. The correction LIGHTENS
+    // occluded areas (adds energy), never darkens unoccluded areas.
     // @ref Jimenez 2016 "Practical Realtime Strategies for Accurate Indirect Occlusion"
-    // @constants exponent = 1.0 + 2.5 * ao (Jimenez 2016 multi-bounce approximation)
-    // @deviations NONE
-    ao = pow(ao, 1.0f + 2.5f * ao);
+    // Formula: ao_mb = ao + ao*(1-ao)*albedo_estimate (albedo ~0.2 for generic surfaces)
+    ao = ao + ao * (1.0f - ao) * 0.2f;
 
     // ── Bent normal finalization ──
     // Normalize the accumulated bent direction from all slices. The resulting
