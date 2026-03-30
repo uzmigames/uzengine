@@ -146,6 +146,12 @@ void DemoApplication::ParseCommonArgs(int argc, char* argv[], DemoConfig& config
             config.cameraYawDeg = static_cast<float>(std::atof(argv[++i]));
         } else if (std::strcmp(argv[i], "--camera-pitch") == 0 && i + 1 < argc) {
             config.cameraPitchDeg = static_cast<float>(std::atof(argv[++i]));
+        } else if (std::strcmp(argv[i], "--diag") == 0) {
+            config.diagMode = true;
+        } else if (std::strcmp(argv[i], "--pixel-debug") == 0 && i + 2 < argc) {
+            config.pixelDebugX = static_cast<uint32_t>(std::atoi(argv[++i]));
+            config.pixelDebugY = static_cast<uint32_t>(std::atoi(argv[++i]));
+            config.pixelDebugEnabled = true;
         } else if (std::strcmp(argv[i], "--cvar") == 0 && i + 1 < argc) {
             // Parse "name=value" format (e.g., "r.TAA=0", "r.Bloom=1")
             std::string arg = argv[++i];
@@ -176,6 +182,16 @@ void DemoApplication::ParseCommonArgs(int argc, char* argv[], DemoConfig& config
     if (!config.screenshotPath.empty() && config.maxFrames == 0) {
         config.screenshotFrame = std::max(config.screenshotFrame, 5u);
         config.maxFrames = config.screenshotFrame + 2;
+    }
+
+    // --diag implies auto-exit so CI pipelines don't hang
+    if (config.diagMode && config.maxFrames == 0) {
+        config.maxFrames = 120;
+    }
+
+    // --pixel-debug implies auto-exit
+    if (config.pixelDebugEnabled && config.maxFrames == 0) {
+        config.maxFrames = 120;
     }
 }
 

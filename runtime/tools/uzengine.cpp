@@ -28,6 +28,8 @@
 #include "../editor/selection/selection_manager.h"
 #include "../engine/renderer/camera/fly_camera_controller.h"
 #include "../engine/scripting/editor/lua_editor_api.h"
+#include "../engine/renderer/passes/debug/pixel_debug.h"
+#include "../engine/renderer/passes/debug/inspector_pass.h"
 
 #ifdef _WIN32
 #include "platform_window.h"
@@ -36,6 +38,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <string>
@@ -206,7 +209,22 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
                        const std::string& screenshotPath = {},
                        int screenshotFrame = 5,
                        int shadowDebugMode = 0,
-                       bool editorMode = false) {
+                       bool editorMode = false,
+                       bool diagMode = false,
+                       bool pixelDebugEnabled = false,
+                       int pixelDebugX = 960,
+                       int pixelDebugY = 540) {
+    // --diag / --pixel-debug: enforce a frame limit so the process never hangs
+    int effectiveMaxFrames = maxFrames;
+    if ((diagMode || pixelDebugEnabled) && maxFrames == kInfiniteFrames) {
+        effectiveMaxFrames = 120;
+        UZ_LOG(Engine, Info, "Diagnostic mode: auto-limiting to {} frames (use --frames to override)", effectiveMaxFrames);
+    }
+    // Safety net: --screenshot without --frames also gets a limit
+    if (!screenshotPath.empty() && maxFrames == kInfiniteFrames) {
+        effectiveMaxFrames = 500;
+    }
+
     // ── Window ──────────────────────────────────────────────────────────
     WindowDesc winDesc{};
     winDesc.title = windowTitle.empty() ? "UzEngine Runtime" : windowTitle.c_str();
@@ -335,6 +353,24 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         LuaSetEditorState(LuaVM::GetState(), &selectionManager, &editorInput);
     }
 
+    // ── Pixel Debug (GPU printf) ────────────────────────────────────────
+    std::unique_ptr<PixelDebugSystem> pixelDebug;
+    if (pixelDebugEnabled && sceneRendererReady) {
+        pixelDebug = std::make_unique<PixelDebugSystem>();
+        PixelDebugConfig pdConfig;
+        pdConfig.pixelX     = static_cast<uint32_t>(pixelDebugX);
+        pdConfig.pixelY     = static_cast<uint32_t>(pixelDebugY);
+        pdConfig.maxRecords = 256;
+        pdConfig.enabled    = true;
+        if (pixelDebug->Init(device, pdConfig)) {
+            sceneRenderer.SetPixelDebugSystem(pixelDebug.get());
+            UZ_LOG(Engine, Info, "PixelDebug enabled: pixel=({},{})", pixelDebugX, pixelDebugY);
+        } else {
+            UZ_LOG(Engine, Error, "PixelDebug initialization failed");
+            pixelDebug.reset();
+        }
+    }
+
     // ── Pre-load: drain async texture decodes before the render loop ──────
     // Render one frame to trigger lazy material texture loads (SyncWorldToDrawList
     // → LoadTexture → async decoder submit), then drain all pending decodes via
@@ -371,8 +407,9 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     auto prevTime = startTime;
 
     // frameLimit accounts for pre-load frames so --frames N means N frames after pre-load.
-    const uint32_t frameLimit = maxFrames == kInfiniteFrames ? 0 : (frameIndex + static_cast<uint32_t>(maxFrames));
-    UZ_LOG(Engine, Info, "Starting render loop (frames={})", maxFrames);
+    const uint32_t frameLimit = effectiveMaxFrames == kInfiniteFrames
+        ? 0 : (frameIndex + static_cast<uint32_t>(effectiveMaxFrames));
+    UZ_LOG(Engine, Info, "Starting render loop (frames={})", effectiveMaxFrames);
 
     while (window.PumpMessages() && window.IsOpen()) {
         // Skip rendering while minimized — swapchain surface is 0x0
@@ -453,6 +490,23 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
 
     device->WaitIdle();
 
+    // ── Diagnostic output (JSON to stdout) ──────────────────────────────
+    if (diagMode && sceneRendererReady) {
+        auto& inspector = sceneRenderer.GetPassInspector();
+        DiagnosticReport report = inspector.GenerateReport(device, cmdList, frameIndex);
+        std::printf("DIAG_JSON:%s\n", report.ToJSON().c_str());
+        std::fflush(stdout);
+    }
+
+    if (pixelDebug && pixelDebug->IsEnabled()) {
+        auto records = pixelDebug->ReadResults(device);
+        const std::string json = PixelDebugSystem::ToJSON(
+            records, static_cast<uint32_t>(pixelDebugX),
+            static_cast<uint32_t>(pixelDebugY), frameIndex);
+        std::printf("PIXEL_DEBUG_JSON:%s\n", json.c_str());
+        std::fflush(stdout);
+    }
+
     if (sceneRendererReady) {
         sceneRenderer.Shutdown();
     }
@@ -460,6 +514,12 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     auto endTime = std::chrono::high_resolution_clock::now();
     const float totalMs = std::chrono::duration<float, std::milli>(endTime - startTime).count();
     LogRenderStats(frameIndex, totalMs);
+
+    // ── Pixel Debug cleanup ────────────────────────────────────────────
+    if (pixelDebug) {
+        pixelDebug->Shutdown(device);
+        pixelDebug.reset();
+    }
 
     for (uint32_t i = kFramesInFlight; i > 0; --i) {
         device->DestroyFence(frameFences[i - 1]);
@@ -547,9 +607,14 @@ int main(int argc, char** argv) {
         const int ssFrame = config.GetInt("screenshot-frame", 5);
         const int shadowDebug = config.GetInt("shadow-debug", 0);
         const bool editorMode = config.GetBool("editor", false);
+        const bool diagMode = config.GetBool("diag", false);
+        const bool pixelDebugEnabled = config.GetBool("pixel-debug", false);
+        const int pixelDebugX = config.GetInt("pixel-debug-x", 960);
+        const int pixelDebugY = config.GetInt("pixel-debug-y", 540);
         exitCode = uz::RunWindowed(deviceDesc, width, height, maxFrames,
                                     windowTitle, projectDir, contentRoot, defaultScene,
-                                    ssPath, ssFrame, shadowDebug, editorMode);
+                                    ssPath, ssFrame, shadowDebug, editorMode,
+                                    diagMode, pixelDebugEnabled, pixelDebugX, pixelDebugY);
 #else
         UZ_LOG(Engine, Error, "Windowed mode not supported on this platform yet");
         exitCode = uz::kExitRenderError;

@@ -35,13 +35,23 @@ EngineConfig ParseCommandLine(int argc, char* argv[]) {
             config.maxFrames = std::atoi(argv[++i]);
         } else if (std::strcmp(argv[i], "--shadow-debug") == 0 && i + 1 < argc) {
             config.shadowDebugMode = std::atoi(argv[++i]);
-        } else if (std::strcmp(argv[i], "--renderdoc-capture") == 0 && i + 1 < argc) {
-            // --renderdoc-capture <frame_number>
-            // When EngineLoop consumers render via a renderer integration, they
-            // can read this field and call RenderDocTriggerCapture() on the
-            // appropriate frame boundary.
-            config.renderdocCaptureFrame = std::atoi(argv[++i]);
+        } else if (std::strcmp(argv[i], "--diag") == 0) {
+            config.diagMode = true;
+        } else if (std::strcmp(argv[i], "--pixel-debug") == 0 && i + 2 < argc) {
+            config.pixelDebugX = static_cast<uint32_t>(std::atoi(argv[++i]));
+            config.pixelDebugY = static_cast<uint32_t>(std::atoi(argv[++i]));
+            config.pixelDebugEnabled = true;
         }
+    }
+
+    // --diag implies auto-exit so CI pipelines don't hang
+    if (config.diagMode && config.maxFrames == 0) {
+        config.maxFrames = 120;
+    }
+
+    // --pixel-debug implies auto-exit
+    if (config.pixelDebugEnabled && config.maxFrames == 0) {
+        config.maxFrames = 120;
     }
 
     return config;

@@ -59,6 +59,7 @@ class Camera;
 class FlyCameraController;
 class IVFS;
 class World;
+class PixelDebugSystem;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // UZ_APPLICATION_MAIN — Entry point macro
@@ -239,17 +240,19 @@ private:
     bool        m_passDumpRequested = false;  ///< --pass-dump: dump all targets when scene is fully loaded.
     std::string m_passToggle;          ///< --pass-toggle <name>: toggle a pass off at startup.
     std::string m_passCompare;         ///< --pass-compare <name>: compare mode for a pass.
+    bool        m_diagMode = false;  ///< --diag: run diagnostics and output JSON to stdout.
+
+    // ── Pixel Debug ──────────────────────────────────────────────────────
+    bool     m_pixelDebugEnabled = false;  ///< --pixel-debug: enable GPU printf for a pixel.
+    uint32_t m_pixelDebugX = 0;            ///< Debug pixel X coordinate.
+    uint32_t m_pixelDebugY = 0;            ///< Debug pixel Y coordinate.
+    std::unique_ptr<PixelDebugSystem> m_pixelDebug;  ///< GPU printf system (optional).
 
     // ── CVar CLI overrides ────────────────────────────────────────────────
     std::vector<std::pair<std::string, float>> m_cvarOverrides; ///< --cvar name=value pairs.
 
     // ── Deferred scene load ───────────────────────────────────────────────
     std::string m_pendingScenePath;
-
-    // ── RenderDoc integration ─────────────────────────────────────────────
-    /// Frame on which to auto-trigger a RenderDoc capture (UINT32_MAX = disabled).
-    /// Set by the `--renderdoc-capture <N>` CLI flag.
-    uint32_t m_renderdocCaptureFrame = UINT32_MAX;
 
     // ── All-modes capture state ───────────────────────────────────────────
     bool     m_allModesActive    = false;

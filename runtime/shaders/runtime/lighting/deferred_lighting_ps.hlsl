@@ -12,7 +12,6 @@
 #include "../include/pbr_common.hlsli"
 #include "../include/sh_irradiance.hlsli"
 #include "../include/ibl.hlsli"
-#include "../include/pixel_debug.hlsli"
 
 // shadow_common.hlsli and contact_shadows.hlsli are included AFTER sampler/texture
 // declarations because they reference shadowSampler, shadowAtlasTexture, etc.
@@ -29,14 +28,6 @@ struct GBufferIndices {
     uint depthIdx;
     uint positionIdx;
     uint emissiveIdx;
-#ifdef PIXEL_DEBUG_ENABLED
-    uint pdCounterUavIdx;   ///< Descriptor heap index for debug counter UAV.
-    uint pdRecordsUavIdx;   ///< Descriptor heap index for debug records UAV.
-    uint pdPixelX;          ///< Debug pixel X coordinate.
-    uint pdPixelY;          ///< Debug pixel Y coordinate.
-    uint pdMaxRecords;      ///< Maximum number of debug records.
-    uint pdFrameId;         ///< Frame number for record correlation.
-#endif
 };
 ConstantBuffer<GBufferIndices> gBufIndices : register(b0);
 #endif
@@ -261,12 +252,6 @@ float SpotConeAttenuation(float3 lightDir, float3 toLight, float cosOuterAngle, 
 float4 main(FSInput input) : SV_Target {
     int2 px = int2(input.positionCS.xy);
 
-    // ── Pixel Debug Init ──────────────────────────────────────────────────
-#if defined(PIXEL_DEBUG_ENABLED) && defined(UZ_BINDLESS)
-    PDEBUG_DECL(uint2(px), gBufIndices);
-    PDEBUG(99, float(px.x));  // Canary: should produce id=99, value=960.0 for pixel (960,540)
-#endif
-
     // ── GBuffer Load ──────────────────────────────────────────────────────
 #ifdef UZ_BINDLESS
     Texture2D<float4> gbAlbedo = ResourceDescriptorHeap[gBufIndices.albedoIdx];
@@ -356,7 +341,6 @@ float4 main(FSInput input) : SV_Target {
     {
         float3 L   = normalize(lightDir.xyz);
         float  NoL = max(dot(N, L), 0.0);
-        PDEBUG(1, NoL);       // id=1: directional light NdotL
         if (NoL > 0.0) {
             float3 H   = normalize(V + L);
             float  NoH = saturate(dot(N, H));
@@ -374,8 +358,6 @@ float4 main(FSInput input) : SV_Target {
             // @ref Engel 2006 "Cascaded Shadow Maps" — cascade selection + PCF
             shadow = SampleShadowMapFull(worldPos, N, NoL, viewDepth,
                                          input.positionCS.xy);
-
-            PDEBUG(0, shadow);    // id=0: CSM shadow factor
 
             // ── Contact shadows ─────────────────────────────────────
             // @ref Wihlidal 2017 — screen-space ray march for small-scale
@@ -596,7 +578,7 @@ float4 main(FSInput input) : SV_Target {
         }
 #endif
 
-        /// @ref Karis 2013, UE5 BRDF.ush:EnvBRDF()
+        /// @ref Karis 2013 "Real Shading in Unreal Engine 4" — EnvBRDF() approximation
         float  F90 = saturate(50.0 * F0.g);
         float3 specularAmbient = prefilteredColor * (F0 * envBRDF.x + F90 * envBRDF.y);
 
@@ -764,13 +746,6 @@ float4 main(FSInput input) : SV_Target {
 
     // ── Final composite: ambient + direct + emissive ────────────────────
     float3 color = ambient + Lo + emissive;
-
-    PDEBUG_VEC3(2, color);    // id=2,3,4: final composited color (RGB)
-    PDEBUG_VEC3(5, ambient);  // id=5,6,7: ambient/IBL contribution (RGB)
-    PDEBUG(8, roughness);     // id=8: surface roughness
-    PDEBUG(9, metallic);      // id=9: surface metallic
-
-    PDEBUG_FLUSH();
 
     return float4(max(color, 0.0), 1.0);
 }

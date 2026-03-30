@@ -12,16 +12,17 @@
 #endif
 
 #include "application.h"
+#include "pixel_debug.h"
 #include "crash_handler.h"
 #include "units.h"
 #include "uzengine.h"
 #include "scene_renderer.h"
 #include "compare_grid.h"
-#include "renderdoc_capture.h"
 #include "world.h"
 #include "cvar.h"
 
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -62,15 +63,6 @@ int Application::Run(int argc, char** argv) {
     // ── 1. Configuration ──────────────────────────────────────────────────
     m_config = Configure();
     ParseArgs(argc, argv);
-
-    // ── 2a. RenderDoc — must be initialised BEFORE device creation so that
-    //        its API hooks are in place when D3D12/Vulkan is initialised.
-    if (RenderDocInit()) {
-        RenderDocSetCaptureOptions();
-        UZ_LOG(App, Info, "RenderDoc: connected={}", RenderDocIsConnected());
-    } else {
-        UZ_LOG(App, Info, "RenderDoc: not available (launch from RenderDoc GUI to enable)");
-    }
 
     // ── 2. Platform (window, device, swapchain, fences, cmdlist) ─────────
     if (!InitPlatform()) {
@@ -163,6 +155,25 @@ int Application::Run(int argc, char** argv) {
 
     // Clear spurious WM_SIZE fired on first ShowWindow
     m_window->ClearResizedFlag();
+
+    // ── 4b. Pixel debug initialization ───────────────────────────────────
+    if (m_pixelDebugEnabled) {
+        m_pixelDebug = std::make_unique<PixelDebugSystem>();
+        PixelDebugConfig pdConfig;
+        pdConfig.pixelX     = m_pixelDebugX;
+        pdConfig.pixelY     = m_pixelDebugY;
+        pdConfig.maxRecords = 256;
+        pdConfig.enabled    = true;
+        if (!m_pixelDebug->Init(m_device.get(), pdConfig)) {
+            UZ_LOG(App, Error, "PixelDebug initialization failed");
+            m_pixelDebug.reset();
+        }
+        // Wire pixel debug system into SceneRenderer so the deferred lighting
+        // pass can push UAV descriptor indices as root constants for shader access.
+        if (m_pixelDebug && m_renderer) {
+            m_renderer->SetPixelDebugSystem(m_pixelDebug.get());
+        }
+    }
 
     // ── 5. Game OnStart ───────────────────────────────────────────────────
     OnStart();
@@ -258,36 +269,6 @@ int Application::Run(int argc, char** argv) {
         // ── Game update ───────────────────────────────────────────────────
         OnUpdate(dt);
 
-        // ── RenderDoc: F12 single-frame capture ───────────────────────────
-        // Checked via raw Win32 GetAsyncKeyState so we have no dependency on
-        // the higher-level InputSystem (which may not be initialised yet in
-        // some code paths, and F12 is a debug-only binding).
-#ifdef _WIN32
-        if (RenderDocIsLoaded()) {
-            // VK_F12 = 0x7B. GetAsyncKeyState returns negative when pressed.
-            static bool s_f12WasDown = false;
-            const bool  f12Down      = (GetAsyncKeyState(0x7B) & 0x8000) != 0;
-            // Edge-detect: only trigger on the press edge, not while held.
-            if (f12Down && !s_f12WasDown) {
-                UZ_LOG(App, Info,
-                       "F12 pressed — triggering RenderDoc capture on frame {}",
-                       m_frameIndex);
-                RenderDocTriggerCapture();
-            }
-            s_f12WasDown = f12Down;
-        }
-#endif
-
-        // ── RenderDoc: auto-capture on the requested frame ────────────────
-        if (m_renderdocCaptureFrame != UINT32_MAX
-            && m_frameIndex == m_renderdocCaptureFrame
-            && RenderDocIsLoaded()) {
-            UZ_LOG(App, Info,
-                   "Auto-triggering RenderDoc capture on frame {} (--renderdoc-capture)",
-                   m_frameIndex);
-            RenderDocTriggerCapture();
-        }
-
         // ── Request screenshot only after scene is fully loaded ──────────
         // Never capture before all meshes, textures, and async decodes complete.
         // This prevents black/missing textures in automated screenshots.
@@ -360,8 +341,27 @@ int Application::Run(int argc, char** argv) {
     // ── Shutdown ──────────────────────────────────────────────────────────
     m_device->WaitIdle();
 
+    // ── Pixel debug output (JSON to stdout — for LLM agent consumption) ──
+    if (m_pixelDebug && m_pixelDebug->IsEnabled()) {
+        auto records = m_pixelDebug->ReadResults(m_device.get());
+        std::string json = PixelDebugSystem::ToJSON(
+            records, m_pixelDebugX, m_pixelDebugY, m_frameIndex);
+        std::printf("PIXEL_DEBUG_JSON:%s\n", json.c_str());
+        std::fflush(stdout);
+    }
+
+    // ── Diagnostic report (JSON to stdout — for LLM agent consumption) ──
+    if (m_diagMode && m_renderer) {
+        auto report = m_renderer->GetPassInspector().GenerateReport(
+            m_device.get(), m_cmdList, m_frameIndex);
+        // Output JSON to stdout with a parseable prefix.
+        // Mirrors the SCREENSHOT_BASE64: pattern used by --screenshot-stdout.
+        std::printf("DIAG_JSON:%s\n", report.ToJSON().c_str());
+        std::fflush(stdout);
+    }
+
     // ── Pass validation (after GPU idle, before shutdown) ─────────────
-    if (m_passValidate && m_renderer) {
+    if (m_passValidate && !m_diagMode && m_renderer) {
         UZ_LOG(App, Info, "Running pass validation...");
         auto results = m_renderer->GetPassInspector().Validate(m_device.get(), m_cmdList);
         bool anyFail = false;
@@ -383,13 +383,18 @@ int Application::Run(int argc, char** argv) {
 
     OnStop();
 
+    // ── Pixel debug cleanup ──────────────────────────────────────────────
+    if (m_pixelDebug) {
+        m_pixelDebug->Shutdown(m_device.get());
+        m_pixelDebug.reset();
+    }
+
     m_renderer->Shutdown();
     m_renderer.reset();
     m_world.reset();
     m_vfs.reset();
     ShutdownPlatform();
 
-    RenderDocShutdown();
     return 0;
 }
 

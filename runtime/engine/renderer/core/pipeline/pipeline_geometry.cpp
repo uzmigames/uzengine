@@ -356,6 +356,34 @@ RHIPipelineHandle PipelineLibrary::GetLighting() {
     return m_lighting;
 }
 
+RHIPipelineHandle PipelineLibrary::GetPixelDebugCompute() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetPixelDebugCompute called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_pixelDebugCompute.IsValid()) {
+        return m_pixelDebugCompute;
+    }
+
+    if (!EnsurePixelDebugComputeShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_pixelDebugCS;
+    desc.debugName     = "PixelDebugCompute";
+
+    m_pixelDebugCompute = m_device->CreateComputePipeline(desc);
+    if (!m_pixelDebugCompute.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create PixelDebugCompute pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created PixelDebugCompute pipeline");
+    }
+
+    return m_pixelDebugCompute;
+}
+
 RHIPipelineHandle PipelineLibrary::GetGBufferDebug() {
     if (!m_initialized) {
         UZ_LOG(Renderer, Error, "PipelineLibrary::GetGBufferDebug called before Init()");

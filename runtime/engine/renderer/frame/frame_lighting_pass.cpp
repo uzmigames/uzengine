@@ -99,6 +99,7 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
         lightDesc.perFrameParams    = &ctx.perFrame;
         lightDesc.shadowDataParams  = &ctx.shadowDataParams;
         lightDesc.cbRingAllocator   = m_cbRing.get();
+
         AddLightingPass(rgBuilder, lightDesc);
     } else {
         GBufferDebugPassDesc dbgDesc{};

@@ -103,6 +103,7 @@ class VFXSystem;
 class VFXHotReload;
 class DecalManager;
 class TrailSystem;
+class PixelDebugSystem;
 struct ParticleEmitter;
 namespace rg { class RgResourcePool; }
 
@@ -276,6 +277,19 @@ public:
     /// # Parameters
     /// - `sys`: Non-owning pointer to the TrailSystem, or nullptr.
     void SetTrailSystem(TrailSystem* sys) { m_trailSystem = sys; }
+
+    /// Sets the pixel debug system reference for GPU printf diagnostics.
+    ///
+    /// When set, a compute post-pass (PixelDebugCS) dispatches after the render
+    /// graph, reading GBuffer + HDR textures at the selected pixel and writing
+    /// debug records to the PixelDebug UAV buffers.
+    ///
+    /// # Parameters
+    /// - `pds`: Non-owning pointer to the PixelDebugSystem, or nullptr.
+    void SetPixelDebugSystem(PixelDebugSystem* pds) noexcept { m_pixelDebugSystem = pds; }
+
+    /// Returns the current pixel debug system, or nullptr if not set.
+    [[nodiscard]] PixelDebugSystem* GetPixelDebugSystem() const noexcept { return m_pixelDebugSystem; }
 
     // ── Configuration ──────────────────────────────────────────────────────
 
@@ -735,6 +749,7 @@ private:
     VFXSystem* m_vfxSystemOverride = nullptr;
     DecalManager* m_decalManager = nullptr;
     TrailSystem* m_trailSystem = nullptr;
+    PixelDebugSystem* m_pixelDebugSystem = nullptr;
     RHIBufferHandle m_decalCubeVB;
     RHIBufferHandle m_decalCubeIB;
 

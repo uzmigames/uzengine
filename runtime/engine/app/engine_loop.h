@@ -39,13 +39,10 @@ struct EngineConfig {
     std::string configPath;            ///< Override path for the engine config file.
     int maxFrames = 0;                 ///< Maximum frames to run before auto-exit (0 = unlimited).
     int shadowDebugMode = 0;           ///< Shadow/buffer debug visualization (0=off, 1=buffer grid). See shadow_debug.hlsli.
-
-    /// Frame on which to auto-trigger a RenderDoc GPU capture (-1 = disabled).
-    ///
-    /// Set via `--renderdoc-capture <N>` CLI flag. When `RenderDocIsLoaded()`
-    /// is true and the frame counter reaches this value, `RenderDocTriggerCapture()`
-    /// is called automatically. Useful for reproducible captures in CI pipelines.
-    int renderdocCaptureFrame = -1;
+    bool diagMode = false;             ///< --diag: run diagnostics, output JSON to stdout.
+    bool pixelDebugEnabled = false;    ///< --pixel-debug: enable GPU printf for a pixel.
+    uint32_t pixelDebugX = 0;          ///< Debug pixel X coordinate.
+    uint32_t pixelDebugY = 0;          ///< Debug pixel Y coordinate.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -62,7 +59,6 @@ struct EngineConfig {
 /// | `--screenshot-frame <N>`      | Sets `screenshotFrame` to `<N>`                     |
 /// | `--config <path>`             | Sets `configPath` to `<path>`                       |
 /// | `--frames <N>`                | Sets `maxFrames` to `<N>`                           |
-/// | `--renderdoc-capture <N>`     | Sets `renderdocCaptureFrame` to `<N>`               |
 ///
 /// Unknown flags are silently ignored. `argv[0]` (program name) is skipped.
 ///

@@ -106,6 +106,42 @@ struct PassGridConfig {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// DiagnosticReport — structured diagnostic output for automation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Complete diagnostic report for one frame, serializable to JSON.
+///
+/// Designed for machine consumption by LLM agents. The `ToJSON()` method
+/// produces a compact single-line JSON string with a well-defined schema.
+/// Agents parse stdout for the `DIAG_JSON:` prefix followed by this JSON.
+///
+/// # Schema
+/// ```json
+/// {
+///   "frame": <uint>,
+///   "targetCount": <uint>,
+///   "hasFailure": <bool>,    // true if any target has NaN or Inf
+///   "hasWarning": <bool>,    // true if any target is all-zeros
+///   "targets": [{ "name": <str>, "status": <str>, "min": <float>, "max": <float>, "avg": <float> }],
+///   "timing": [{ "name": <str>, "gpuMs": <float> }]
+/// }
+/// ```
+struct DiagnosticReport {
+    uint32_t frameNumber = 0;              ///< Frame at which diagnostics were collected.
+    uint32_t targetCount = 0;              ///< Number of registered render targets.
+    std::vector<ValidationResult> targets; ///< Per-target validation results.
+    std::vector<PassTimingEntry> timing;   ///< Per-pass GPU timing (may be empty).
+    bool hasAnyFailure = false;            ///< True if any target has NaN or Inf.
+    bool hasAnyWarning = false;            ///< True if any target is all-zeros.
+
+    /// Formats the report as a JSON string.
+    /// Output is a single object printed to one continuous string (no pretty-print).
+    /// NaN and Inf float values are encoded as JSON strings ("NaN", "Inf")
+    /// since JSON does not support these as numeric literals.
+    [[nodiscard]] std::string ToJSON() const;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // PassInspector
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -217,6 +253,24 @@ public:
 
     /// Enables or disables pass validation.
     void SetValidationEnabled(bool enabled) { m_validationEnabled = enabled; }
+
+    // ── Diagnostic Report ────────────────────────────────────────────────
+
+    /// Runs validation and generates a complete diagnostic report.
+    ///
+    /// This is the primary entry point for automated diagnostics (`--diag`).
+    /// Runs `Validate()`, collects timing data, and packages everything
+    /// into a `DiagnosticReport` that can be serialized to JSON via `ToJSON()`.
+    ///
+    /// # Arguments
+    /// * `device` — RHI device for readback buffer creation and mapping.
+    /// * `cmdList` — Command list in recording state for copy commands.
+    /// * `frameNumber` — Current frame number (included in report).
+    ///
+    /// # Returns
+    /// Complete `DiagnosticReport` with validation + timing data.
+    [[nodiscard]] DiagnosticReport GenerateReport(IRHIDevice* device, IRHICommandList* cmdList,
+                                                   uint32_t frameNumber);
 
     // ── Pass Toggle (Phase 4) ────────────────────────────────────────────
 

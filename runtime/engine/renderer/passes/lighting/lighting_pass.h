@@ -90,6 +90,7 @@ struct LightingPassDesc {
     const PerFrameParams*  perFrameParams   = nullptr; ///< If set, binder uploads this instead of perFrameAlloc.
     CBRingAllocator*       cbRingAllocator   = nullptr; ///< Required when perFrameParams is set.
     const ShadowDataParams* shadowDataParams = nullptr; ///< If set, binder uploads this instead of shadowAlloc.
+
 };
 
 /// Registers a deferred lighting pass in the render graph.
