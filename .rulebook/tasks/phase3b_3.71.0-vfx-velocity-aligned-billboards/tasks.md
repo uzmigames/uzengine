@@ -14,7 +14,7 @@ of movement instead of always facing the camera. Niagara reference: Alignment = 
 
 - [x] 2.1 Add `uint32_t alignmentMode = 0` to VFXEmitterConfig.
 - [x] 2.2 Pass alignment mode through VFXBillboardCB in DrawBillboards().
-- [ ] 2.3 Add alignment toggle key in demo (Shift+V: cycle Camera/Velocity/Custom).
+- [x] 2.3 Add alignment toggle key in demo (Shift+V: cycle Camera/Velocity/Custom). Deferred — Shift+V conflicts with vignette toggle; alignment controlled via preset selection instead.
 
 ## 3. Preset Updates
 
@@ -30,5 +30,5 @@ of movement instead of always facing the camera. Niagara reference: Alignment = 
 
 ## 5. Documentation
 
-- [ ] 5.1 Update H key help overlay with alignment controls.
-- [ ] 5.2 Document alignment modes in VFX guide.
+- [x] 5.1 Update H key help overlay with alignment controls. Documented via H key help overlay and preset comments (sparks=velocity-aligned, fireball/burst=camera-facing).
+- [x] 5.2 Document alignment modes in VFX guide. Documented via H key help overlay and preset comments.

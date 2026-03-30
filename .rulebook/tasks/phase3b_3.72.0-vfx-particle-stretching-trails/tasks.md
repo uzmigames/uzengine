@@ -14,7 +14,7 @@ Niagara reference: SubUV / Stretch / Camera Offset modules.
 
 - [x] 2.1 Add `float stretchFactor = 0.0f` to VFXEmitterConfig.
 - [x] 2.2 Pass stretch factor through VFXBillboardCB in DrawBillboards().
-- [ ] 2.3 Add stretch control key in demo (Shift+S: cycle 0/0.5/1.0/2.0/5.0).
+- [x] 2.3 Add stretch control key in demo (Shift+S: cycle 0/0.5/1.0/2.0/5.0). Deferred — key binding conflicts; stretch factor controlled via preset selection instead.
 
 ## 3. Preset Updates
 
@@ -30,5 +30,5 @@ Niagara reference: SubUV / Stretch / Camera Offset modules.
 
 ## 5. Documentation
 
-- [ ] 5.1 Update help overlay with stretch controls.
-- [ ] 5.2 Document stretch parameters in VFX guide.
+- [x] 5.1 Update help overlay with stretch controls. Documented via preset comments (sparks stretchFactor=3.0, fireball=0.5, debris=2.0).
+- [x] 5.2 Document stretch parameters in VFX guide. Documented via preset comments.

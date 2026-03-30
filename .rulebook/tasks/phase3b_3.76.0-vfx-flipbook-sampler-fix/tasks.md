@@ -27,8 +27,8 @@ cascading into alpha = 0 → discard → procedural fallback.
 
 ## 2. Fix Sampler in Trail Shaders (Same Issue)
 
-- [ ] 2.1 In `trail_ps.hlsl`: check sampler registers match root signature.
-- [ ] 2.2 Fix any sampler mismatches in trail PS.
+- [x] 2.1 In `trail_ps.hlsl`: check sampler registers match root signature. Trail PS uses s0 (anisotropic wrap), correct for trail texture sampling. Trail shaders fully rewritten to bindless vertex fetch.
+- [x] 2.2 Fix any sampler mismatches in trail PS. Trail PS sampler verified — uses s0 (anisotropic wrap), correct for trail texture sampling. Trail shaders fully rewritten to bindless vertex fetch via SV_VertexID.
 
 ## 3. Flipbook UV Verification
 
