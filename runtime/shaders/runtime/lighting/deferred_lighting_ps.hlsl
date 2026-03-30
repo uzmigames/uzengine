@@ -515,14 +515,15 @@ float4 main(FSInput input) : SV_Target {
 
         float3 irradiance = float3(0, 0, 0);
 #ifdef UZ_BINDLESS
-        if (irradianceSrvIndex > 0) {
+        // Guard: UINT32_MAX (0xFFFFFFFF) = IBL not baked yet → use SH fallback.
+        // Old check (> 0) was WRONG: UINT32_MAX > 0 is true → sampled invalid descriptor → zero.
+        if (irradianceSrvIndex != 0xFFFFFFFFu) {
             TextureCube<float4> irrTex = ResourceDescriptorHeap[irradianceSrvIndex];
             irradiance = irrTex.SampleLevel(clampSampler, WorldToCubemap(N), 0).rgb;
         } else {
             irradiance = GetSkySHDiffuse(N, skyIrradianceSH);
         }
 #else
-        // SM5: use irradianceSrvIndex from PerFrameCB as null-guard (0 = IBL not ready).
         if (irradianceSrvIndex > 0) {
             irradiance = iblIrradiance.SampleLevel(clampSampler, WorldToCubemap(N), 0).rgb;
         } else {
@@ -540,19 +541,19 @@ float4 main(FSInput input) : SV_Target {
         float3 prefilteredColor = float3(0, 0, 0);
         float2 envBRDF = float2(0, 0);
 #ifdef UZ_BINDLESS
-        if (prefilteredSrvIndex > 0) {
+        if (prefilteredSrvIndex != 0xFFFFFFFFu) {
             TextureCube<float4> prefTex = ResourceDescriptorHeap[prefilteredSrvIndex];
             prefilteredColor = prefTex.SampleLevel(clampSampler, WorldToCubemap(R), mipLevel).rgb;
         }
-        if (brdfLutSrvIndex > 0) {
+        if (brdfLutSrvIndex != 0xFFFFFFFFu) {
             Texture2D<float2> brdfTex = ResourceDescriptorHeap[brdfLutSrvIndex];
             envBRDF = brdfTex.SampleLevel(clampSampler, float2(NoV, roughness), 0).rg;
         }
 #else
-        if (prefilteredSrvIndex > 0) {
+        if (prefilteredSrvIndex != 0xFFFFFFFFu) {
             prefilteredColor = iblPrefiltered.SampleLevel(clampSampler, WorldToCubemap(R), mipLevel).rgb;
         }
-        if (brdfLutSrvIndex > 0) {
+        if (brdfLutSrvIndex != 0xFFFFFFFFu) {
             envBRDF = iblBrdfLut.SampleLevel(clampSampler, float2(NoV, roughness), 0).rg;
         }
 #endif
@@ -713,7 +714,7 @@ float4 main(FSInput input) : SV_Target {
         float  coatMip = clearCoatRough * float(prefilteredMipLevels - 1);
         float3 coatRefl = float3(0, 0, 0);
 #ifdef UZ_BINDLESS
-        if (prefilteredSrvIndex > 0) {
+        if (prefilteredSrvIndex != 0xFFFFFFFFu) {
             TextureCube<float4> prefTex = ResourceDescriptorHeap[prefilteredSrvIndex];
             coatRefl = prefTex.SampleLevel(clampSampler, WorldToCubemap(R_cc), coatMip).rgb;
         }
