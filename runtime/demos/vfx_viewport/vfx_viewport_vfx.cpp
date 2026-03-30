@@ -554,20 +554,7 @@ bool VFXParticleSystem::Init(IRHIDevice* device, ShaderManager* shaderMgr,
             return false;
         }
 
-        // Lit PremulAlpha PSO: uses the lit pixel shader for NdotL directional + ambient.
-        // Same blend state as the default PremulAlpha PSO (One / InvSrcAlpha).
-        // @ref Pharr 2023 "Physically Based Rendering" Ch.12 — Lambertian diffuse NdotL
-        desc.pixelShader = shaderMgr->CreateShader(EngineShader::ParticleBillboardLitPS, RHIShaderStage::Pixel);
-        desc.renderTargetBlend[0].srcColor = RHIBlendFactor::One;
-        desc.renderTargetBlend[0].dstColor = RHIBlendFactor::InvSrcAlpha;
-        desc.renderTargetBlend[0].srcAlpha = RHIBlendFactor::Zero;
-        desc.renderTargetBlend[0].dstAlpha = RHIBlendFactor::InvSrcAlpha;
-        desc.debugName = "VFX_BillboardPSO_Lit";
-        m_billboardPSO_Lit = device->CreateGraphicsPipeline(desc);
-        if (!m_billboardPSO_Lit.IsValid()) {
-            UZ_LOG(App, Error, "VFX: Failed to create billboard graphics PSO (Lit)");
-            return false;
-        }
+        // Lit PSO removed — lit mode uses the standard PS with litMode CB flag.
     }
 
     UZ_LOG(App, Info, "VFX: Initialized particle system — maxParticles={}", maxParticles);
@@ -720,7 +707,7 @@ void VFXParticleSystem::Shutdown(IRHIDevice* device) {
     destroyPso(m_billboardPSO);
     destroyPso(m_billboardPSO_Additive);
     destroyPso(m_billboardPSO_AlphaBlend);
-    destroyPso(m_billboardPSO_Lit);
+    // m_billboardPSO_Lit removed — lit mode uses standard PSO with CB flag.
 
     // Destroy color ramp LUT texture
     if (m_colorRampLUT.IsValid()) {
@@ -1132,12 +1119,8 @@ void VFXParticleSystem::DrawBillboards(IRHICommandList* cmdList, CBRingAllocator
     indices.spriteTextureIdx = UINT32_MAX;
     indices.depthBufferIdx = depthBufferSrvIdx;
 
-    // Select PSO: lit particles use the dedicated lit PSO; unlit use standard blend PSOs.
-    if (config.litMode == 1) {
-        cmdList->SetPipeline(m_billboardPSO_Lit);
-    } else {
-        cmdList->SetPipeline(GetBillboardPSOForBlendMode(blendMode));
-    }
+    // Select PSO based on blend mode (lit mode uses standard PSO with CB flag).
+    cmdList->SetPipeline(GetBillboardPSOForBlendMode(blendMode));
     cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&indices),
                               sizeof(indices) / sizeof(uint32_t));
 

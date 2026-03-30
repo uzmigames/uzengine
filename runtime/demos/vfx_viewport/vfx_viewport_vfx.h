@@ -485,7 +485,7 @@ private:
     RHIPipelineHandle m_billboardPSO;                ///< PremulAlpha: One/InvSrcAlpha (default).
     RHIPipelineHandle m_billboardPSO_Additive;       ///< Additive: One/One (fire, sparks).
     RHIPipelineHandle m_billboardPSO_AlphaBlend;     ///< AlphaBlend: SrcAlpha/InvSrcAlpha (smoke).
-    RHIPipelineHandle m_billboardPSO_Lit;           ///< Lit PremulAlpha: One/InvSrcAlpha + NdotL lighting.
+    // Lit PSO removed — litMode handled via CB flag in standard PS.
 
     // Color ramp LUT texture
     RHITextureHandle  m_colorRampLUT;                ///< 256x1 RGBA16F LUT for color-over-life gradient.
