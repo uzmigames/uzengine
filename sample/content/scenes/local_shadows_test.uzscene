@@ -161,6 +161,12 @@
         "transform": { "position": [0, 0, -5000] },
         "height_fog": {}
       }
+    },
+    {
+      "name": "Controller",
+      "components": {
+        "script": { "path": "scripts/camera_test_controller.lua" }
+      }
     }
   ]
 }
