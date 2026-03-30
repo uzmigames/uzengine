@@ -467,23 +467,26 @@ void VFXViewportDemo::OnInit() {
         }
     }
 
-    // ── Load custom sprite sheet from file (overrides procedural fire) ──
+    // ── Load custom sprite sheet via VFXMaterial (overrides procedural fire) ──
     if (!m_customSpritePath.empty()) {
-        auto result = TextureLoader::Load(device, cmd, m_customSpritePath, false);
-        if (result.handle.IsValid()) {
-            m_customSpriteTex = result.handle;
-            m_customSpriteSrvIdx = result.srvIndex;
+        m_vfxMaterial.spriteTexturePath = m_customSpritePath;
+        if (m_vfxMaterial.LoadTexture(device, cmd)) {
+            m_customSpriteTex = {}; // VFXMaterial owns the sprite now
+            m_customSpriteSrvIdx = m_vfxMaterial.spriteTextureSrvIndex;
             m_fireSpriteSrvIdx = m_customSpriteSrvIdx; // override fire sprite
-            // Update current emitter flipbook to 6x6 for the custom sprite
-            m_vfxEmitter.flipbookRows = 6;
-            m_vfxEmitter.flipbookCols = 6;
-            m_vfxEmitter.flipbookTotalFrames = 36;
-            m_vfxEmitter.flipbookFPS = 30.0f;
-            m_vfxEmitter.flipbookBlendMode = 1; // linear blend
-            UZ_LOG(App, Info, "VFXViewport: Custom sprite loaded '{}' (SRV={}, 6x6 30fps)",
-                   m_customSpritePath, m_customSpriteSrvIdx);
+            // Apply material's auto-detected flipbook config to the emitter
+            m_vfxEmitter.flipbookRows = m_vfxMaterial.flipbookRows;
+            m_vfxEmitter.flipbookCols = m_vfxMaterial.flipbookCols;
+            m_vfxEmitter.flipbookTotalFrames = m_vfxMaterial.flipbookTotalFrames;
+            m_vfxEmitter.flipbookFPS = m_vfxMaterial.flipbookFPS;
+            m_vfxEmitter.flipbookBlendMode = m_vfxMaterial.flipbookBlendMode;
+            UZ_LOG(App, Info,
+                   "VFXViewport: VFXMaterial loaded '{}' (SRV={}, {}x{} {:.0f}fps blend={})",
+                   m_customSpritePath, m_customSpriteSrvIdx,
+                   m_vfxMaterial.flipbookRows, m_vfxMaterial.flipbookCols,
+                   m_vfxMaterial.flipbookFPS, m_vfxMaterial.flipbookBlendMode);
         } else {
-            UZ_LOG(App, Error, "VFXViewport: Failed to load custom sprite '{}'",
+            UZ_LOG(App, Error, "VFXViewport: Failed to load custom sprite via VFXMaterial '{}'",
                    m_customSpritePath);
         }
     }
@@ -865,13 +868,13 @@ void VFXViewportDemo::HandleInput(float dt) {
                 m_vfxPresetIndex = i;
                 m_vfxEmitter = presets[i].config;
                 m_vfxSpawnRate = presets[i].spawnRate;
-                // Re-apply custom sprite flipbook config
-                if (m_customSpriteSrvIdx != UINT32_MAX) {
-                    m_vfxEmitter.flipbookRows = 6;
-                    m_vfxEmitter.flipbookCols = 6;
-                    m_vfxEmitter.flipbookTotalFrames = 36;
-                    m_vfxEmitter.flipbookFPS = 30.0f;
-                    m_vfxEmitter.flipbookBlendMode = 1;
+                // Re-apply VFXMaterial flipbook config if a custom sprite is loaded
+                if (m_vfxMaterial.HasSprite()) {
+                    m_vfxEmitter.flipbookRows = m_vfxMaterial.flipbookRows;
+                    m_vfxEmitter.flipbookCols = m_vfxMaterial.flipbookCols;
+                    m_vfxEmitter.flipbookTotalFrames = m_vfxMaterial.flipbookTotalFrames;
+                    m_vfxEmitter.flipbookFPS = m_vfxMaterial.flipbookFPS;
+                    m_vfxEmitter.flipbookBlendMode = m_vfxMaterial.flipbookBlendMode;
                 }
                 break;
             }
@@ -907,14 +910,14 @@ void VFXViewportDemo::HandleInput(float dt) {
             m_vfxEmitter = presets[m_vfxPresetIndex].config;
             m_vfxSpawnRate = presets[m_vfxPresetIndex].spawnRate;
             m_vfxSpawnAccum = 0.0f;
-            // Re-apply custom sprite flipbook config for fire presets
-            if (m_customSpriteSrvIdx != UINT32_MAX &&
+            // Re-apply VFXMaterial flipbook config for fire presets
+            if (m_vfxMaterial.HasSprite() &&
                 GetSpriteTextureForPreset(m_vfxPresetIndex) == m_fireSpriteSrvIdx) {
-                m_vfxEmitter.flipbookRows = 6;
-                m_vfxEmitter.flipbookCols = 6;
-                m_vfxEmitter.flipbookTotalFrames = 36;
-                m_vfxEmitter.flipbookFPS = 30.0f;
-                m_vfxEmitter.flipbookBlendMode = 1;
+                m_vfxEmitter.flipbookRows = m_vfxMaterial.flipbookRows;
+                m_vfxEmitter.flipbookCols = m_vfxMaterial.flipbookCols;
+                m_vfxEmitter.flipbookTotalFrames = m_vfxMaterial.flipbookTotalFrames;
+                m_vfxEmitter.flipbookFPS = m_vfxMaterial.flipbookFPS;
+                m_vfxEmitter.flipbookBlendMode = m_vfxMaterial.flipbookBlendMode;
             }
             UZ_LOG(App, Info, "VFX preset: {}", presets[m_vfxPresetIndex].name);
         }
@@ -2111,20 +2114,28 @@ void VFXViewportDemo::RenderVFXPass(IRHICommandList* cmd, uint64_t perFrameGpu,
 
     const uint32_t depthSrvIdx = GetDevice()->GetTextureSRVIndex(m_depthBuffer);
 
-    const uint32_t spriteSrvIdx = GetSpriteTextureForPreset(m_vfxPresetIndex);
+    // When a VFXMaterial has a sprite loaded, prefer its SRV and blend mode.
+    // This allows the material to override the preset's inline sprite selection.
+    const uint32_t spriteSrvIdx = m_vfxMaterial.HasSprite()
+        ? m_vfxMaterial.spriteTextureSrvIndex
+        : GetSpriteTextureForPreset(m_vfxPresetIndex);
+
+    const uint32_t blendMode = m_vfxMaterial.HasSprite()
+        ? m_vfxMaterial.blendMode
+        : m_vfxEmitter.blendMode;
 
     if (GetFrameIndex() < 3) {
         UZ_LOG(App, Info, "VFX Draw: sprite={} flipbook={}x{} frames={} fps={:.0f} blend={} preset={}",
                spriteSrvIdx, m_vfxEmitter.flipbookRows, m_vfxEmitter.flipbookCols,
                m_vfxEmitter.flipbookTotalFrames, m_vfxEmitter.flipbookFPS,
-               m_vfxEmitter.blendMode, m_vfxPresetIndex);
+               blendMode, m_vfxPresetIndex);
     }
 
     m_vfxSystem.DrawBillboards(cmd, GetCBRing(), perFrameGpu,
                                 GetCamera().GetView(), emitterPos,
                                 m_prevViewProj,
                                 m_vfxEmitter,
-                                m_vfxEmitter.blendMode,
+                                blendMode,
                                 depthSrvIdx,
                                 spriteSrvIdx);
 

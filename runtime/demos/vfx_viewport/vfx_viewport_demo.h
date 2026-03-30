@@ -39,6 +39,7 @@
 #include "engine/vfx/trails/trail_system.h"
 #include "engine/vfx/trails/trail_component.h"
 #include "engine/vfx/decals/decal_component.h"
+#include "engine/vfx/material/vfx_material.h"
 #include "outline_pass.h"
 #include "gizmo_renderer.h"
 #include "gizmo_interaction.h"
@@ -167,6 +168,7 @@ private:
     bool  m_vfxBurstMode = true;        ///< true = single burst, false = continuous emission.
     uint32_t m_vfxBurstCount = 500;     ///< Number of particles per burst.
     bool  m_vfxBurstPending = true;     ///< true = fire burst on next frame.
+    VFXMaterial m_vfxMaterial;           ///< Material for custom sprite (--sprite CLI).
 
     // ── Fireball projectile ─────────────────────────────────────────────
     bool  m_fireballActive = false;     ///< true = fireball projectile is flying.

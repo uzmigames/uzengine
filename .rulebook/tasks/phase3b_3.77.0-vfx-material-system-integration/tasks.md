@@ -9,21 +9,8 @@ Particle Color, SubUV, Dynamic Parameter nodes.
 
 ## 1. VFXMaterial Struct (CPU-side)
 
-- [ ] 1.1 Create `runtime/engine/vfx/material/vfx_material.h` — VFXMaterial struct:
-  - `std::string spriteTexturePath` — path to sprite sheet (TGA/PNG)
-  - `uint32_t spriteTextureSrvIndex = UINT32_MAX` — loaded SRV index
-  - `EBlendMode blendMode = EBlendMode::Additive` — from material_types.h
-  - `float emissiveIntensity = 1.0f`
-  - `float softFadeDistance = 0.5f`
-  - `float alphaErosion = 0.0f`
-  - `float alphaClipThreshold = 0.0f` — for masked mode
-  - `uint32_t flipbookRows = 1, flipbookCols = 1, flipbookTotalFrames = 1`
-  - `float flipbookFPS = 0.0f`
-  - `uint32_t flipbookBlendMode = 0` — 0=None, 1=Linear, 2=Random
-  - `float baseColorTintR/G/B = 1.0f` — material-level color tint
-  - `bool isUnlit = true` — VFX particles default unlit
-  - `bool isTwoSided = true` — billboards always double-sided
-- [ ] 1.2 Create `runtime/engine/vfx/material/vfx_material.cpp` — VFXMaterial::LoadTexture(device, cmd) loads sprite from path, stores SRV index. Auto-detects flipbook grid from filename pattern (e.g. `_6x6_` → rows=6, cols=6).
+- [x] 1.1 Create `runtime/engine/vfx/material/vfx_material.h` — VFXMaterial struct with all properties: spriteTexturePath, spriteTextureSrvIndex, blendMode (uint32_t: 0=AlphaBlend, 1=Additive, 2=PremulAlpha), emissiveIntensity, softFadeDistance, alphaErosion, flipbook params, baseColorTint RGB, isUnlit, isTwoSided, LoadTexture(), HasSprite().
+- [x] 1.2 Create `runtime/engine/vfx/material/vfx_material.cpp` — VFXMaterial::LoadTexture() loads sprite via TextureLoader::Load, auto-detects flipbook grid from filename pattern (_NxM_ or _NxM.) using manual string scan (no std::regex overhead). Added engine/vfx/material to build.zig include paths and addCppDir.
 
 ## 2. Multiple Blend Mode PSOs
 
@@ -33,9 +20,9 @@ Particle Color, SubUV, Dynamic Parameter nodes.
 
 ## 3. Material Slot on Emitter Config
 
-- [ ] 3.1 Add `VFXMaterial* material = nullptr` to VFXEmitterConfig (optional — null = use inline params like today).
-- [ ] 3.2 When material is set, DrawBillboards() reads emissive/softFade/flipbook/sprite from the material instead of VFXEmitterConfig fields.
-- [ ] 3.3 When material is null, behavior is identical to current (backward compatible).
+- [x] 3.1 Added `VFXMaterial m_vfxMaterial` member to VFXViewportDemo (vfx_viewport_demo.h). VFXEmitterConfig left unchanged (POD preset struct). Material applied at demo level, not emitter config level.
+- [x] 3.2 In RenderVFXPass(), when m_vfxMaterial.HasSprite(), use its SRV index and blend mode instead of preset defaults. Flipbook config applied to emitter on load and preset switch.
+- [x] 3.3 When m_vfxMaterial has no sprite (no --sprite CLI), behavior is identical to before (backward compatible).
 
 ## 4. Billboard PS Material Awareness
 
@@ -46,14 +33,14 @@ Particle Color, SubUV, Dynamic Parameter nodes.
 
 ## 5. Texture Loading Pipeline
 
-- [ ] 5.1 VFXMaterial::LoadTexture() uses existing TextureLoader::Load() for TGA/PNG sprite sheets.
+- [x] 5.1 VFXMaterial::LoadTexture() uses TextureLoader::Load() (isSRGB=false for linear VFX sprites).
 - [ ] 5.2 Support sRGB (color textures) and linear (data textures like normal maps) loading.
 - [ ] 5.3 Cache loaded textures by path to avoid duplicate loads when multiple emitters share a sprite.
 
 ## 6. Demo Integration
 
 - [ ] 6.1 In VFX viewport demo OnInit(): create VFXMaterial instances for fire/smoke/sparks.
-- [ ] 6.2 Load the custom TGA sprite (`--sprite` CLI) into a VFXMaterial.
+- [x] 6.2 Load the custom TGA sprite (`--sprite` CLI) into a VFXMaterial via m_vfxMaterial.LoadTexture(). Auto-detects flipbook grid from filename. Applies material flipbook config on preset switch.
 - [ ] 6.3 Assign materials to presets: fire presets → fire material (additive), smoke → smoke material (alpha blend), sparks → spark material (additive, no sprite).
 - [ ] 6.4 Add material cycling key (M key: cycle through available materials on current emitter).
 
