@@ -58,12 +58,12 @@ RHIPipelineHandle PipelineLibrary::GetShadowDepth(bool bindless) {
     desc.rasterizer.depthBias             = 10.0f;
     desc.depthStencil.depthEnable         = true;
     desc.depthStencil.depthWrite          = true;
-    // Shadow maps use reversed-Z (1=near, 0=far) — matches all camera projections.
-    // GreaterEqual comparison: SampleCmpLevelZero returns 1 if (storedDepth >= compareDepth).
-    // Reversed-Z: near plane stores 1.0, far plane stores 0.0.
-    // When compareDepth (fragment depth - bias) is close to camera, storedDepth >> compareDepth → lit.
-    // When fragment is far from light, compareDepth >> storedDepth → shadowed.
-    desc.depthStencil.depthFunc           = RHICompareFunc::GreaterEqual;
+    // Shadow maps use STANDARD-Z (0=near, 1=far) — orthographic light projection via
+    // XMMatrixOrthographicOffCenterLH produces standard-Z naturally.
+    // Less comparison: fragment closer to light (smaller Z) overwrites farther fragments.
+    // Clear value kShadowDepthClear=1.0 (far plane). SCF_Less for SampleCmpLevelZero.
+    // @ref shadow_cascade.cpp:295 — standard-Z documentation
+    desc.depthStencil.depthFunc           = RHICompareFunc::Less;
     desc.renderTargetCount                = 0;
     desc.depthStencilFormat               = RHIFormat::D32Float;
     desc.debugName                        = bindless ? "ShadowDepth_Bindless" : "ShadowDepth";
@@ -182,9 +182,8 @@ RHIPipelineHandle PipelineLibrary::GetShadowDepthInstanced() {
     desc.rasterizer.depthBias             = 10.0f;
     desc.depthStencil.depthEnable         = true;
     desc.depthStencil.depthWrite          = true;
-    // Shadow maps use reversed-Z (1=near, 0=far) — matches all camera projections.
-    // GreaterEqual comparison: SampleCmpLevelZero returns 1 if (storedDepth >= compareDepth).
-    desc.depthStencil.depthFunc           = RHICompareFunc::GreaterEqual;
+    // Shadow maps use STANDARD-Z (0=near, 1=far) — same as non-instanced path.
+    desc.depthStencil.depthFunc           = RHICompareFunc::Less;
     desc.renderTargetCount                = 0;
     desc.depthStencilFormat               = RHIFormat::D32Float;
     desc.debugName                        = "ShadowDepth_Instanced";
