@@ -40,6 +40,7 @@
 #include "engine/vfx/trails/trail_component.h"
 #include "engine/vfx/decals/decal_component.h"
 #include "engine/vfx/material/vfx_material.h"
+#include "engine/vfx/curves/vfx_color_ramp.h"
 #include "outline_pass.h"
 #include "gizmo_renderer.h"
 #include "gizmo_interaction.h"
@@ -169,6 +170,11 @@ private:
     VFXMaterial m_vfxMaterials[kVFXMaterialCount]; ///< Preset VFX materials (M key cycles).
     int m_currentMaterialIndex = 0;                ///< Active material preset index.
 
+    // ── Color ramp LUT presets (N key cycles) ──────────────────────────
+    static constexpr int kColorRampCount = 3;         ///< Fire, Ice, Rainbow.
+    VFXColorRamp m_colorRamps[kColorRampCount];        ///< Predefined color ramp gradients.
+    int m_currentRampIndex = -1;                       ///< -1 = legacy lerp, 0-2 = ramp index.
+
     // ── Fireball projectile ─────────────────────────────────────────────
     bool  m_fireballActive = false;     ///< true = fireball projectile is flying.
     Vec3  m_fireballPos = {};           ///< Current fireball world position.
@@ -210,6 +216,22 @@ private:
     float m_distortionStrength = 0.5f;             ///< Heat-haze strength [0, 1].
 
     // ── Point lights ───────────────────────────────────────────────────
+    // ── Vortex force state (F key cycles modes) ─────────────────────
+    /// @ref Stomakhin 2013 "A Material Point Method for Snow Simulation" App.A
+    int m_vortexMode = 0;  ///< 0=Off, 1=Tornado, 2=Whirlpool. F key cycles.
+
+    // ── Wind zone state (N key cycles modes) ──────────────────────
+    /// @ref Stam 1999 "Stable Fluids" -- wind zone accumulation
+    int       m_windMode       = 0;    ///< 0=Off, 1=Ambient, 2=Gust. N key cycles.
+    WindZone  m_windZones[kMaxWindZones]      = {};  ///< Active wind zone descriptors.
+    uint32_t  m_windZoneCount                 = 0u; ///< Number of active wind zones this frame.
+
+    // ── Kill volume state (K key cycles modes) ─────────────────────
+    /// @ref Ericson 2005 "Real-Time Collision Detection" Ch.4
+    int        m_killVolumeMode = 0;   ///< 0=Off, 1=InvWall, 2=Ground, 3=Sphere. K key cycles.
+    KillVolume m_killVolumes[kMaxKillVolumes]  = {};  ///< Active kill volume descriptors.
+    uint32_t   m_killVolumeCount               = 0u; ///< Number of active kill volumes this frame.
+
     bool m_pointLightsEnabled = false;             ///< Point light toggle (L key).
 
     // ── Environment rotation ───────────────────────────────────────────

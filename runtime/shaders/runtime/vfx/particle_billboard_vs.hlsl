@@ -198,7 +198,7 @@ cbuffer VFXBillboardCB : register(b2) {
     uint     alignmentMode;        ///< 0=CameraFacing, 1=VelocityAligned.
     float    stretchFactor;        ///< Velocity stretch multiplier. 0=no stretch.
     uint     blendModeHint;        ///< 0=AlphaBlend, 1=Additive, 2=PremulAlpha (read by PS, declared for layout).
-    uint     _pad9;
+    uint     colorRampLutSrvIndex; ///< Bindless SRV for color ramp 256x1 LUT. 0xFFFFFFFF = legacy lerp (read by PS).
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

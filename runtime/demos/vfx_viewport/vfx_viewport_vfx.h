@@ -13,6 +13,9 @@
 #include "rhi_types.h"
 #include "vector3.h"
 #include "mat4.h"
+#include "engine/vfx/curves/vfx_color_ramp.h"
+#include "engine/vfx/modules/wind_zone.h"
+#include "engine/vfx/modules/kill_volume.h"
 
 #include <cstdint>
 
@@ -23,6 +26,7 @@ class IRHICommandList;
 class ShaderManager;
 class PipelineLibrary;
 class CBRingAllocator;
+class UploadContext;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VFX Emitter Configuration
@@ -70,6 +74,22 @@ struct VFXEmitterConfig {
     float    shapeParam3     = 0.0f;  ///< Reserved for future shapes.
     // Material blend mode
     uint32_t blendMode       = 2;     ///< 0=AlphaBlend (SrcAlpha/InvSrcAlpha), 1=Additive (One/One), 2=PremulAlpha (One/InvSrcAlpha).
+    // Curl noise force parameters
+    /// @ref Bridson 2007 "Curl-Noise for Procedural Fluid Flow"
+    float    curlStrength    = 0.0f;  ///< Curl force multiplier. 0 = disabled. Typical smoke: 1.5-3.0.
+    float    curlFrequency   = 0.5f;  ///< Spatial scale. Higher = tighter swirls.
+    float    curlSpeed       = 0.2f;  ///< Animation scroll speed (world units/second).
+    // ── Vortex force parameters ──────────────────────────────────────────────
+    /// @ref Stomakhin 2013 "A Material Point Method for Snow Simulation" App.A — vortex field
+    float    vortexAxisOrigin[3]      = {0.0f, 0.0f, 0.0f};  ///< World-space origin of the vortex axis.
+    float    vortexAxisDir[3]         = {0.0f, 1.0f, 0.0f};  ///< World-space axis direction (normalized). Default: +Y up.
+    float    vortexTangentialStrength = 0.0f;  ///< Swirl force (m/s^2). 0 = disabled. Positive = CCW viewed from axis tip.
+    float    vortexRadialStrength     = 0.0f;  ///< Radial force (m/s^2). >0 pulls inward, <0 pushes outward.
+    float    vortexMaxRadius          = 5.0f;  ///< World-space cutoff radius. Particles beyond receive no force.
+    // ── Wind zone parameters (per-emitter simple wind override) ─────────────
+    /// @ref Stam 1999 "Stable Fluids" — global wind field
+    float    windDir[3]               = {1.0f, 0.0f, 0.0f};  ///< Normalized wind direction.
+    float    windStrength             = 0.0f;  ///< Base wind speed (m/s). 0 = disabled.
 };
 
 /// Named emitter preset with a spawn rate.
@@ -78,6 +98,16 @@ struct VFXPreset {
     VFXEmitterConfig config;
     float spawnRate;
 };
+
+/// Builds a fire gradient: black -> orange -> yellow -> white -> transparent.
+/// @ref GDC 2019 "Niagara: Building the Future of FX in Unreal Engine"
+VFXColorRamp BuildFireRamp();
+
+/// Builds an ice gradient: dark blue -> cyan -> white -> transparent.
+VFXColorRamp BuildIceRamp();
+
+/// Builds a rainbow gradient: red -> yellow -> green -> cyan -> blue.
+VFXColorRamp BuildRainbowRamp();
 
 /// Returns the built-in emitter presets array and its count.
 ///
@@ -135,8 +165,28 @@ struct VFXUpdateCB {
     uint32_t writeRotationsUav;       uint32_t _padWrite;         // 16 bytes
     uint32_t freeListUavIndex;        uint32_t freeListHeadUavIndex;
     uint32_t aliveCountUavIndex;      uint32_t _padAtomic;        // 16 bytes
+    // Curl noise force parameters
+    /// @ref Bridson 2007 "Curl-Noise for Procedural Fluid Flow"
+    float    curlStrength;            float    curlFrequency;
+    float    curlSpeed;               float    totalTime;          // 16 bytes (offset 112)
+    // ── Vortex force parameters ──────────────────────────────────────────────
+    /// @ref Stomakhin 2013 "A Material Point Method for Snow Simulation" App.A
+    float    vortexAxisOriginX;       float vortexAxisOriginY;
+    float    vortexAxisOriginZ;       float vortexTangentialStrength; // 16 bytes (offset 128)
+    float    vortexAxisDirX;          float vortexAxisDirY;
+    float    vortexAxisDirZ;          float vortexRadialStrength;  // 16 bytes (offset 144)
+    float    vortexMaxRadius;         float _padVortex0;
+    float    _padVortex1;             float _padVortex2;           // 16 bytes (offset 160)
+    // ── Wind zone GPU buffer ─────────────────────────────────────────────────
+    /// @ref Stam 1999 "Stable Fluids" — wind zone accumulation
+    uint32_t windZoneSrvIndex;        uint32_t activeWindZoneCount;
+    uint32_t _padWind0;               uint32_t _padWind1;          // 16 bytes (offset 176)
+    // ── Kill volume GPU buffer ───────────────────────────────────────────────
+    /// @ref Ericson 2005 "Real-Time Collision Detection" Ch.4
+    uint32_t killVolumeSrvIndex;      uint32_t activeKillVolumeCount;
+    uint32_t _padKV0;                 uint32_t _padKV1;            // 16 bytes (offset 192)
 };
-static_assert(sizeof(VFXUpdateCB) == 112, "VFXUpdateCB must be 112 bytes (7 x float4)");
+static_assert(sizeof(VFXUpdateCB) == 208, "VFXUpdateCB must be 208 bytes (13 x float4)");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VFX Billboard Root Constants (matches VFXBillboardConstants in b0)
@@ -201,7 +251,7 @@ struct VFXBillboardCB {
     uint32_t alignmentMode        = 0;              ///< 0=CameraFacing, 1=VelocityAligned.
     float    stretchFactor        = 0.0f;           ///< Velocity stretch multiplier. 0=no stretch.
     uint32_t blendModeHint        = 2;              ///< 0=AlphaBlend, 1=Additive, 2=PremulAlpha — tells PS how to output alpha.
-    uint32_t _pad9                = 0;
+    uint32_t colorRampLutSrvIndex = UINT32_MAX;     ///< Bindless SRV index for color ramp 256x1 LUT. UINT32_MAX = legacy lerp.
 };
 static_assert(sizeof(VFXBillboardCB) == 272, "VFXBillboardCB must be 272 bytes (256 base + 16 alignment/stretch)");
 
@@ -245,6 +295,36 @@ public:
     /// Destroys all GPU resources. Safe to call multiple times.
     void Shutdown(IRHIDevice* device);
 
+    /// Uploads wind zone descriptors to the GPU StructuredBuffer for this frame.
+    ///
+    /// Must be called before DispatchCompute() each frame. Wind zones are consumed
+    /// by the update compute shader via AccumulateWindForce().
+    ///
+    /// # Arguments
+    /// * `cmd` — Command list in recording state (for CopyBufferRegion).
+    /// * `cbRing` — CB ring allocator used as per-frame staging source.
+    /// * `zones` — Array of WindZone descriptors. May be null if count == 0.
+    /// * `count` — Number of active zones [0..kMaxWindZones]. Clamped internally.
+    ///
+    /// @ref Stam 1999 "Stable Fluids" — wind field accumulation
+    void UploadWindZones(IRHICommandList* cmd, CBRingAllocator* cbRing,
+                         const WindZone* zones, uint32_t count);
+
+    /// Uploads kill volume descriptors to the GPU StructuredBuffer for this frame.
+    ///
+    /// Must be called before DispatchCompute() each frame. Kill volumes are tested
+    /// in the update compute shader via TestAllKillVolumes().
+    ///
+    /// # Arguments
+    /// * `cmd` — Command list in recording state (for CopyBufferRegion).
+    /// * `cbRing` — CB ring allocator used as per-frame staging source.
+    /// * `volumes` — Array of KillVolume descriptors. May be null if count == 0.
+    /// * `count` — Number of active volumes [0..kMaxKillVolumes]. Clamped internally.
+    ///
+    /// @ref Ericson 2005 "Real-Time Collision Detection" Ch.4
+    void UploadKillVolumes(IRHICommandList* cmd, CBRingAllocator* cbRing,
+                           const KillVolume* volumes, uint32_t count);
+
     /// Records spawn, update, indirect args, and sort compute dispatches.
     ///
     /// # Arguments
@@ -254,9 +334,10 @@ public:
     /// * `spawnCount` — Number of particles to spawn this frame.
     /// * `dt` — Frame delta time in seconds.
     /// * `frameNumber` — Monotonically increasing frame counter.
+    /// * `totalTime` — Total elapsed simulation time in seconds (for curl noise animation).
     void DispatchCompute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
                          const VFXEmitterConfig& config, uint32_t spawnCount,
-                         float dt, uint32_t frameNumber);
+                         float dt, uint32_t frameNumber, float totalTime);
 
     /// Records billboard draw commands using ExecuteIndirect.
     ///
@@ -301,6 +382,28 @@ public:
     /// Returns the current ping-pong index (0 or 1).
     [[nodiscard]] int GetPingPong() const { return m_pingPong; }
 
+    /// Uploads a color ramp LUT as a 256x1 RGBA16F texture for GPU sampling.
+    ///
+    /// Bakes the ramp to half-float pixel data, creates a GPU texture via the
+    /// RHI device, and uploads via the provided UploadContext. The resulting
+    /// SRV index is stored in `m_colorRampSrvIndex` for use in VFXBillboardCB.
+    ///
+    /// # Arguments
+    /// * `upload` — Upload context for staging buffer management.
+    /// * `cmd` — Command list in recording state for the copy command.
+    /// * `ramp` — Color ramp to bake and upload.
+    ///
+    /// # Returns
+    /// `true` on success, `false` if texture creation or upload fails.
+    bool UploadColorRampLUT(UploadContext& upload, IRHICommandList* cmd,
+                            const VFXColorRamp& ramp);
+
+    /// Returns the current color ramp LUT SRV index (UINT32_MAX if none).
+    [[nodiscard]] uint32_t GetColorRampSrvIndex() const { return m_colorRampSrvIndex; }
+
+    /// Clears the current color ramp LUT (resets to legacy lerp mode).
+    void ClearColorRampLUT();
+
 private:
     static constexpr uint32_t kChannelCount = 7; // pos, vel, age, life, size, color, rotation
     static constexpr uint32_t kSpawnGroupSize = 256;
@@ -331,6 +434,18 @@ private:
     RHIBufferHandle m_aliveCountStaging;   ///< Staging buffer for alive count init.
     RHIBufferHandle m_zeroInitStaging;     ///< Staging buffer for zeroing particle attributes.
 
+    // ── Wind zone GPU buffer ──────────────────────────────────────────────
+    /// @ref Stam 1999 "Stable Fluids" — wind field accumulation
+    RHIBufferHandle m_windZoneBuffer;        ///< StructuredBuffer<WindZone>[kMaxWindZones] on GPU.
+    uint32_t        m_windZoneSrvIndex  = 0; ///< Bindless SRV descriptor index for m_windZoneBuffer.
+    uint32_t        m_activeWindZones   = 0; ///< Number of active wind zones this frame.
+
+    // ── Kill volume GPU buffer ────────────────────────────────────────────
+    /// @ref Ericson 2005 "Real-Time Collision Detection" Ch.4
+    RHIBufferHandle m_killVolumeBuffer;        ///< StructuredBuffer<KillVolume>[kMaxKillVolumes] on GPU.
+    uint32_t        m_killVolumeSrvIndex = 0;  ///< Bindless SRV descriptor index for m_killVolumeBuffer.
+    uint32_t        m_activeKillVolumes  = 0;  ///< Number of active kill volumes this frame.
+
     // Compute pipelines
     RHIPipelineHandle m_spawnPSO;
     RHIPipelineHandle m_updatePSO;
@@ -341,6 +456,10 @@ private:
     RHIPipelineHandle m_billboardPSO;                ///< PremulAlpha: One/InvSrcAlpha (default).
     RHIPipelineHandle m_billboardPSO_Additive;       ///< Additive: One/One (fire, sparks).
     RHIPipelineHandle m_billboardPSO_AlphaBlend;     ///< AlphaBlend: SrcAlpha/InvSrcAlpha (smoke).
+
+    // Color ramp LUT texture
+    RHITextureHandle  m_colorRampLUT;                ///< 256x1 RGBA16F LUT for color-over-life gradient.
+    uint32_t          m_colorRampSrvIndex = UINT32_MAX; ///< Bindless SRV index for the LUT.
 
     /// Returns the element stride in bytes for the given channel index.
     [[nodiscard]] static uint32_t ChannelStride(uint32_t channel);

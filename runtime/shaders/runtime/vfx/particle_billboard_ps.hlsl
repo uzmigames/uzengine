@@ -156,7 +156,7 @@ cbuffer VFXBillboardCB : register(b2) {
     uint     alignmentMode;        ///< 0=CameraFacing, 1=VelocityAligned (not read by PS).
     float    stretchFactor;        ///< Velocity stretch multiplier (not read by PS).
     uint     blendModeHint;        ///< 0=AlphaBlend, 1=Additive, 2=PremulAlpha — controls PS alpha output.
-    uint     _pad9;
+    uint     colorRampLutSrvIndex; ///< Bindless SRV for color ramp 256x1 LUT. 0xFFFFFFFF = legacy lerp.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -243,10 +243,23 @@ float4 main(PSInput input) : SV_Target {
     alpha *= alpha; // quadratic for softer look
     float4 spriteColor = float4(1.0f, 1.0f, 1.0f, alpha);
 
-    // ── Evaluate color over lifetime (linear interpolation start→end) ──
+    // ── Evaluate color over lifetime ──
     // normalizedAge in [0,1] maps the particle's age to its full lifespan.
     float normalizedAge = saturate(input.age / max(input.lifetime, 0.0001f));
-    float4 colorLifeScale = lerp(colorLifeStart, colorLifeEnd, normalizedAge);
+
+    /// @ref GDC 2019 "Niagara: Building the Future of FX in Unreal Engine"
+    ///     — LUT sample at normalizedAge replaces linear lerp when ramp is available
+    float4 colorLifeScale;
+#ifdef UZ_BINDLESS
+    if (colorRampLutSrvIndex != 0xFFFFFFFF) {
+        Texture2D<float4> rampTex = ResourceDescriptorHeap[colorRampLutSrvIndex];
+        colorLifeScale = rampTex.SampleLevel(depthSampler, float2(normalizedAge, 0.5f), 0);
+    } else {
+        colorLifeScale = lerp(colorLifeStart, colorLifeEnd, normalizedAge);
+    }
+#else
+    colorLifeScale = lerp(colorLifeStart, colorLifeEnd, normalizedAge);
+#endif
 
     // ── Material output: emissive + opacity (Niagara Unlit pattern) ──
     float3 emissive = spriteColor.rgb * input.color.rgb * colorLifeScale.rgb;

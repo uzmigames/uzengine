@@ -9,8 +9,12 @@
 #include "shader_manager.h"
 #include "cb_ring_allocator.h"
 #include "engine_shaders.h"
+#include "engine/vfx/curves/vfx_color_ramp.h"
+#include "engine/renderer/upload/upload_context.h"
 #include "log.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 
 UZ_DECLARE_LOG_CATEGORY(App);
@@ -158,6 +162,105 @@ static const VFXPreset s_presets[] = {
         /*shapeParam1*/ 4.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
         /*blendMode*/ 0 // AlphaBlend — translucent volume particles
     }, 300.0f },
+    // ── Curl Noise Preset ───────────────────────────────────────────────
+    { "Curl Smoke", {
+        /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.5f,
+        /*velocity*/ {0.0f, 0.0f, 1.5f}, /*velVariation*/ 0.5f,
+        /*spread*/ 0.6f, /*minLife*/ 2.0f, /*maxLife*/ 5.0f, /*size*/ 0.6f,
+        /*color*/ {0.6f, 0.6f, 0.6f, 0.8f},
+        /*gravity*/ {0.0f, 0.0f, 0.0f}, /*damping*/ 0.1f,
+        /*softFade*/ 0.5f, /*emissive*/ 0.0f,
+        /*sizeOverLife*/ 0.3f, 1.5f, 2.0f, 0.3f,
+        /*colorLifeStart*/ 0.7f, 0.7f, 0.7f, 0.8f,
+        /*colorLifeEnd*/ 0.3f, 0.3f, 0.3f, 0.0f,
+        /*alignment*/ 0, /*stretch*/ 0.0f,
+        /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
+        /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
+        /*blendMode*/ 0, // AlphaBlend — smoke is translucent
+        /*curlStrength*/ 2.0f, /*curlFrequency*/ 0.4f, /*curlSpeed*/ 0.15f,
+        /*vortexAxisOrigin*/ {0,0,0}, /*vortexAxisDir*/ {0,0,1},
+        /*vortexTangential*/ 0.0f, /*vortexRadial*/ 0.0f, /*vortexMaxRadius*/ 5.0f,
+        /*windDir*/ {1,0,0}, /*windStrength*/ 0.0f
+    }, 200.0f },
+    // ── Color Ramp LUT Preset ──────────────────────────────────────────
+    // Designed to showcase the color ramp LUT feature (N key to activate).
+    // White initial color lets the LUT gradient define the full color curve.
+    { "Fire Ramp", {
+        /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.3f,
+        /*velocity*/ {0.0f, 0.0f, 5.0f}, /*velVariation*/ 2.0f,
+        /*spread*/ 0.8f, /*minLife*/ 0.5f, /*maxLife*/ 2.0f, /*size*/ 0.8f,
+        /*color*/ {1.0f, 1.0f, 1.0f, 1.0f},
+        /*gravity*/ {0.0f, 0.0f, -2.0f}, /*damping*/ 0.15f,
+        /*softFade*/ 0.5f, /*emissive*/ 1.5f,
+        /*sizeOverLife*/ 0.5f, 1.3f, 0.0f, 0.3f,
+        /*colorLifeStart*/ 1.0f, 1.0f, 1.0f, 1.0f,
+        /*colorLifeEnd*/ 1.0f, 1.0f, 1.0f, 0.0f,
+        /*alignment*/ 0, /*stretch*/ 0.0f,
+        /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
+        /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
+        /*blendMode*/ 1 // Additive — fire glow
+    }, 500.0f },
+    // ── Vortex Force Presets ──────────────────────────────────────────
+    /// @ref Stomakhin 2013 "A Material Point Method for Snow Simulation" App.A
+    { "Tornado", {
+        /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 2.0f,
+        /*velocity*/ {1.0f, 0.0f, 4.0f}, /*velVariation*/ 1.5f,
+        /*spread*/ 1.2f, /*minLife*/ 2.0f, /*maxLife*/ 4.0f, /*size*/ 0.25f,
+        /*color*/ {0.7f, 0.6f, 0.5f, 0.7f},
+        /*gravity*/ {0.0f, 0.0f, -0.5f}, /*damping*/ 0.05f,
+        /*softFade*/ 0.4f, /*emissive*/ 0.0f,
+        /*sizeOverLife*/ 0.4f, 1.2f, 2.0f, 0.3f,
+        /*colorLifeStart*/ 0.8f, 0.7f, 0.5f, 0.9f,
+        /*colorLifeEnd*/ 0.4f, 0.4f, 0.35f, 0.0f,
+        /*alignment*/ 0, /*stretch*/ 0.0f,
+        /*spawnShape*/ 1, /*spawnOnSurface*/ 0,
+        /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
+        /*blendMode*/ 0, // AlphaBlend — dust/debris is translucent
+        /*curlStrength*/ 0.0f, /*curlFrequency*/ 0.5f, /*curlSpeed*/ 0.2f,
+        /*vortexAxisOrigin*/ {0,0,0}, /*vortexAxisDir*/ {0,0,1},
+        /*vortexTangential*/ 8.0f, /*vortexRadial*/ 2.0f, /*vortexMaxRadius*/ 3.0f,
+        /*windDir*/ {1,0,0}, /*windStrength*/ 0.0f
+    }, 300.0f },
+    { "Whirlpool", {
+        /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 1.0f,
+        /*velocity*/ {0.0f, 0.0f, 0.5f}, /*velVariation*/ 0.5f,
+        /*spread*/ 0.8f, /*minLife*/ 2.0f, /*maxLife*/ 4.0f, /*size*/ 0.3f,
+        /*color*/ {0.2f, 0.5f, 0.9f, 0.7f},
+        /*gravity*/ {0.0f, 0.0f, -9.81f}, /*damping*/ 0.15f,
+        /*softFade*/ 0.4f, /*emissive*/ 0.0f,
+        /*sizeOverLife*/ 0.5f, 1.0f, 0.5f, 0.4f,
+        /*colorLifeStart*/ 0.3f, 0.6f, 1.0f, 0.8f,
+        /*colorLifeEnd*/ 0.1f, 0.3f, 0.7f, 0.0f,
+        /*alignment*/ 0, /*stretch*/ 0.0f,
+        /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
+        /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
+        /*blendMode*/ 0, // AlphaBlend — water-like particles
+        /*curlStrength*/ 0.0f, /*curlFrequency*/ 0.5f, /*curlSpeed*/ 0.2f,
+        /*vortexAxisOrigin*/ {0,0,0}, /*vortexAxisDir*/ {0,0,1},
+        /*vortexTangential*/ 5.0f, /*vortexRadial*/ -1.0f, /*vortexMaxRadius*/ 4.0f,
+        /*windDir*/ {1,0,0}, /*windStrength*/ 0.0f
+    }, 250.0f },
+    // ── Wind Zone Preset ───────────────────────────────────────────────
+    /// @ref Stam 1999 "Stable Fluids" -- wind field accumulation
+    { "Windy Smoke", {
+        /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.3f,
+        /*velocity*/ {0.0f, 0.0f, 2.0f}, /*velVariation*/ 0.5f,
+        /*spread*/ 0.5f, /*minLife*/ 3.0f, /*maxLife*/ 6.0f, /*size*/ 0.8f,
+        /*color*/ {0.5f, 0.5f, 0.5f, 0.6f},
+        /*gravity*/ {0.0f, 0.0f, -0.3f}, /*damping*/ 0.12f,
+        /*softFade*/ 0.5f, /*emissive*/ 0.0f,
+        /*sizeOverLife*/ 0.4f, 1.5f, 2.8f, 0.3f,
+        /*colorLifeStart*/ 0.6f, 0.6f, 0.6f, 0.7f,
+        /*colorLifeEnd*/ 0.2f, 0.2f, 0.2f, 0.0f,
+        /*alignment*/ 0, /*stretch*/ 0.0f,
+        /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
+        /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
+        /*blendMode*/ 0, // AlphaBlend — smoke
+        /*curlStrength*/ 0.5f, /*curlFrequency*/ 0.3f, /*curlSpeed*/ 0.1f,
+        /*vortexAxisOrigin*/ {0,0,0}, /*vortexAxisDir*/ {0,0,1},
+        /*vortexTangential*/ 0.0f, /*vortexRadial*/ 0.0f, /*vortexMaxRadius*/ 5.0f,
+        /*windDir*/ {1,0,0}, /*windStrength*/ 5.0f // 5 m/s ambient wind (+X)
+    }, 200.0f },
 };
 
 const VFXPreset* GetVFXPresets(int& outCount) {
@@ -292,6 +395,38 @@ bool VFXParticleSystem::Init(IRHIDevice* device, ShaderManager* shaderMgr,
         desc.memory = RHIMemoryType::Default;
         desc.debugName = "VFX_SortIndices";
         m_sortIndices = device->CreateBuffer(desc);
+    }
+
+    // Wind zone GPU buffer (StructuredBuffer<WindZone>[kMaxWindZones])
+    {
+        RHIBufferDesc desc{};
+        desc.sizeBytes = static_cast<uint64_t>(kMaxWindZones) * sizeof(WindZone);
+        desc.stride    = sizeof(WindZone);
+        desc.usage     = RHIBufferUsage::StructuredBuffer | RHIBufferUsage::CopyDst;
+        desc.memory    = RHIMemoryType::Default;
+        desc.debugName = "VFX_WindZones";
+        m_windZoneBuffer = device->CreateBuffer(desc);
+        if (!m_windZoneBuffer.IsValid()) {
+            UZ_LOG(App, Error, "VFX: Failed to create wind zone buffer");
+            return false;
+        }
+        m_windZoneSrvIndex = device->GetBufferSRVIndex(m_windZoneBuffer);
+    }
+
+    // Kill volume GPU buffer (StructuredBuffer<KillVolume>[kMaxKillVolumes])
+    {
+        RHIBufferDesc desc{};
+        desc.sizeBytes = static_cast<uint64_t>(kMaxKillVolumes) * sizeof(KillVolume);
+        desc.stride    = sizeof(KillVolume);
+        desc.usage     = RHIBufferUsage::StructuredBuffer | RHIBufferUsage::CopyDst;
+        desc.memory    = RHIMemoryType::Default;
+        desc.debugName = "VFX_KillVolumes";
+        m_killVolumeBuffer = device->CreateBuffer(desc);
+        if (!m_killVolumeBuffer.IsValid()) {
+            UZ_LOG(App, Error, "VFX: Failed to create kill volume buffer");
+            return false;
+        }
+        m_killVolumeSrvIndex = device->GetBufferSRVIndex(m_killVolumeBuffer);
     }
 
     // Compile compute pipelines via RHIComputePipelineDesc + CreateComputePipeline
@@ -535,6 +670,8 @@ void VFXParticleSystem::Shutdown(IRHIDevice* device) {
     destroyBuf(m_freeListHeadStaging);
     destroyBuf(m_aliveCountStaging);
     destroyBuf(m_zeroInitStaging);
+    destroyBuf(m_windZoneBuffer);
+    destroyBuf(m_killVolumeBuffer);
 
     auto destroyPso = [device](RHIPipelineHandle& h) {
         if (h.IsValid()) { device->DestroyPipeline(h); h = {}; }
@@ -546,6 +683,62 @@ void VFXParticleSystem::Shutdown(IRHIDevice* device) {
     destroyPso(m_billboardPSO);
     destroyPso(m_billboardPSO_Additive);
     destroyPso(m_billboardPSO_AlphaBlend);
+
+    // Destroy color ramp LUT texture
+    if (m_colorRampLUT.IsValid()) {
+        device->DestroyTexture(m_colorRampLUT);
+        m_colorRampLUT = {};
+        m_colorRampSrvIndex = UINT32_MAX;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Upload Wind Zones
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// @ref Stam 1999 "Stable Fluids" -- wind field accumulation
+void VFXParticleSystem::UploadWindZones(IRHICommandList* cmd, CBRingAllocator* cbRing,
+                                         const WindZone* zones, uint32_t count) {
+    // Clamp to the GPU buffer capacity
+    count = std::min(count, kMaxWindZones);
+    m_activeWindZones = count;
+
+    if (count == 0u || !m_windZoneBuffer.IsValid()) {
+        return;
+    }
+
+    // Allocate a per-frame staging region from the CB ring allocator.
+    // The ring allocator is backed by upload-heap memory (CPU-visible + GPU-readable),
+    // so we write zone data directly and issue a CopyBuffer to the Default-heap buffer.
+    const uint32_t uploadBytes = count * sizeof(WindZone);
+    auto alloc = cbRing->Allocate(uploadBytes);
+    std::memcpy(alloc.cpuPtr, zones, uploadBytes);
+
+    // Copy from staging (upload heap, cb ring) to GPU wind zone buffer (Default heap).
+    // The command list must be in a state that allows copy commands (pre-render-pass).
+    cmd->CopyBuffer(alloc.bufferHandle, alloc.offsetBytes, m_windZoneBuffer, 0, uploadBytes);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Upload Kill Volumes
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// @ref Ericson 2005 "Real-Time Collision Detection" Ch.4
+void VFXParticleSystem::UploadKillVolumes(IRHICommandList* cmd, CBRingAllocator* cbRing,
+                                           const KillVolume* volumes, uint32_t count) {
+    // Clamp to the GPU buffer capacity
+    count = std::min(count, kMaxKillVolumes);
+    m_activeKillVolumes = count;
+
+    if (count == 0u || !m_killVolumeBuffer.IsValid()) {
+        return;
+    }
+
+    const uint32_t uploadBytes = count * sizeof(KillVolume);
+    auto alloc = cbRing->Allocate(uploadBytes);
+    std::memcpy(alloc.cpuPtr, volumes, uploadBytes);
+
+    cmd->CopyBuffer(alloc.bufferHandle, alloc.offsetBytes, m_killVolumeBuffer, 0, uploadBytes);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -554,7 +747,7 @@ void VFXParticleSystem::Shutdown(IRHIDevice* device) {
 
 void VFXParticleSystem::DispatchCompute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
                                          const VFXEmitterConfig& config, uint32_t spawnCount,
-                                         float dt, uint32_t frameNumber) {
+                                         float dt, uint32_t frameNumber, float totalTime) {
     const int read = m_pingPong;
     const int write = 1 - m_pingPong;
 
@@ -672,6 +865,47 @@ void VFXParticleSystem::DispatchCompute(IRHICommandList* cmdList, CBRingAllocato
         cb.freeListUavIndex = m_device->GetBufferUAVIndex(m_freeList);
         cb.freeListHeadUavIndex = m_device->GetBufferUAVIndex(m_freeListHead);
 
+        // Curl noise force parameters
+        cb.curlStrength = config.curlStrength;
+        cb.curlFrequency = config.curlFrequency;
+        cb.curlSpeed = config.curlSpeed;
+        cb.totalTime = totalTime;
+
+        // Vortex force parameters
+        // @ref Stomakhin 2013 "A Material Point Method for Snow Simulation" App.A
+        cb.vortexAxisOriginX = config.vortexAxisOrigin[0];
+        cb.vortexAxisOriginY = config.vortexAxisOrigin[1];
+        cb.vortexAxisOriginZ = config.vortexAxisOrigin[2];
+        cb.vortexTangentialStrength = config.vortexTangentialStrength;
+        // Normalize vortex axis direction on CPU (guard against zero-length input)
+        {
+            const float ax = config.vortexAxisDir[0];
+            const float ay = config.vortexAxisDir[1];
+            const float az = config.vortexAxisDir[2];
+            const float axisLen = std::sqrt(ax*ax + ay*ay + az*az);
+            if (axisLen > 1e-4f) {
+                cb.vortexAxisDirX = ax / axisLen;
+                cb.vortexAxisDirY = ay / axisLen;
+                cb.vortexAxisDirZ = az / axisLen;
+            } else {
+                cb.vortexAxisDirX = 0.0f;
+                cb.vortexAxisDirY = 1.0f; // fallback: +Y up
+                cb.vortexAxisDirZ = 0.0f;
+            }
+        }
+        cb.vortexRadialStrength = config.vortexRadialStrength;
+        cb.vortexMaxRadius = config.vortexMaxRadius;
+
+        // Wind zone GPU buffer SRV index and active zone count
+        // @ref Stam 1999 "Stable Fluids" -- wind zone accumulation
+        cb.windZoneSrvIndex      = m_windZoneSrvIndex;
+        cb.activeWindZoneCount   = m_activeWindZones;
+
+        // Kill volume GPU buffer SRV index and active volume count
+        // @ref Ericson 2005 "Real-Time Collision Detection" Ch.4
+        cb.killVolumeSrvIndex    = m_killVolumeSrvIndex;
+        cb.activeKillVolumeCount = m_activeKillVolumes;
+
         auto alloc = cbRing->Allocate(sizeof(VFXUpdateCB));
         std::memcpy(alloc.cpuPtr, &cb, sizeof(VFXUpdateCB));
 
@@ -735,6 +969,99 @@ RHIPipelineHandle VFXParticleSystem::GetBillboardPSOForBlendMode(uint32_t mode) 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Color Ramp LUT Upload
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool VFXParticleSystem::UploadColorRampLUT(UploadContext& upload, IRHICommandList* cmd,
+                                            const VFXColorRamp& ramp) {
+    // Destroy previous LUT if one exists
+    if (m_colorRampLUT.IsValid() && m_device) {
+        m_device->DestroyTexture(m_colorRampLUT);
+        m_colorRampLUT = {};
+        m_colorRampSrvIndex = UINT32_MAX;
+    }
+
+    // Bake ramp to RGBA16F pixel data
+    const auto pixels = ramp.BakeToRGBA16F();
+
+    // Create 256x1 RGBA16F texture
+    RHITextureDesc desc{};
+    desc.width = VFXColorRamp::kLutWidth;
+    desc.height = 1;
+    desc.depthOrArraySize = 1;
+    desc.mipLevels = 1;
+    desc.format = RHIFormat::RGBA16Float;
+    desc.usage = RHITextureUsage::ShaderResource | RHITextureUsage::CopyDst;
+    desc.debugName = "VFXColorRampLUT";
+    m_colorRampLUT = m_device->CreateTexture(desc);
+    if (!m_colorRampLUT.IsValid()) {
+        UZ_LOG(App, Error, "VFX: Failed to create color ramp LUT texture");
+        return false;
+    }
+
+    // Upload pixel data via staging buffer
+    const uint64_t dataSize = VFXColorRamp::kLutWidth * 4 * sizeof(uint16_t);
+    if (!upload.UploadTexture(cmd, m_colorRampLUT, pixels.data(), dataSize)) {
+        UZ_LOG(App, Error, "VFX: Failed to upload color ramp LUT data");
+        m_device->DestroyTexture(m_colorRampLUT);
+        m_colorRampLUT = {};
+        return false;
+    }
+
+    m_colorRampSrvIndex = m_device->GetTextureSRVIndex(m_colorRampLUT);
+    UZ_LOG(App, Info, "VFX: Uploaded color ramp LUT — SRV index={}", m_colorRampSrvIndex);
+    return true;
+}
+
+void VFXParticleSystem::ClearColorRampLUT() {
+    if (m_colorRampLUT.IsValid() && m_device) {
+        m_device->DestroyTexture(m_colorRampLUT);
+        m_colorRampLUT = {};
+    }
+    m_colorRampSrvIndex = UINT32_MAX;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Predefined Color Ramp Factory Functions
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Builds a fire gradient: black -> orange -> yellow -> white -> transparent.
+///
+/// @ref GDC 2019 "Niagara: Building the Future of FX in Unreal Engine"
+///     — Color over Life with multi-stop fire gradient
+VFXColorRamp BuildFireRamp() {
+    VFXColorRamp ramp;
+    ramp.AddStop(0.0f,  0.0f,  0.0f,  0.0f,  1.0f); // black, opaque
+    ramp.AddStop(0.3f,  1.0f,  0.4f,  0.0f,  1.0f); // orange
+    ramp.AddStop(0.6f,  1.0f,  0.9f,  0.2f,  0.9f); // yellow
+    ramp.AddStop(0.85f, 1.0f,  1.0f,  1.0f,  0.6f); // white
+    ramp.AddStop(1.0f,  1.0f,  1.0f,  1.0f,  0.0f); // transparent
+    return ramp;
+}
+
+/// Builds an ice gradient: dark blue -> cyan -> white -> transparent.
+VFXColorRamp BuildIceRamp() {
+    VFXColorRamp ramp;
+    ramp.AddStop(0.0f,  0.0f,  0.05f, 0.3f,  1.0f); // dark blue
+    ramp.AddStop(0.4f,  0.1f,  0.7f,  0.9f,  1.0f); // cyan
+    ramp.AddStop(0.8f,  0.9f,  0.95f, 1.0f,  0.7f); // white-ish
+    ramp.AddStop(1.0f,  1.0f,  1.0f,  1.0f,  0.0f); // transparent
+    return ramp;
+}
+
+/// Builds a rainbow gradient: red -> yellow -> green -> cyan -> blue.
+/// All stops at full alpha, fading to zero at t=1 for a clean fadeout.
+VFXColorRamp BuildRainbowRamp() {
+    VFXColorRamp ramp;
+    ramp.AddStop(0.0f,  1.0f,  0.0f,  0.0f,  1.0f); // red
+    ramp.AddStop(0.25f, 1.0f,  1.0f,  0.0f,  1.0f); // yellow
+    ramp.AddStop(0.5f,  0.0f,  1.0f,  0.0f,  1.0f); // green
+    ramp.AddStop(0.75f, 0.0f,  1.0f,  1.0f,  0.8f); // cyan
+    ramp.AddStop(1.0f,  0.0f,  0.0f,  1.0f,  0.0f); // blue, transparent
+    return ramp;
+}
+
 // Draw Billboards
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -805,6 +1132,8 @@ void VFXParticleSystem::DrawBillboards(IRHICommandList* cmdList, CBRingAllocator
     billboardCB.stretchFactor = config.stretchFactor;
     // Blend mode hint tells the PS how to handle alpha output
     billboardCB.blendModeHint = blendMode;
+    // Color ramp LUT SRV index (UINT32_MAX = legacy two-point lerp)
+    billboardCB.colorRampLutSrvIndex = m_colorRampSrvIndex;
 
     auto cbAlloc = cbRing->Allocate(sizeof(VFXBillboardCB));
     std::memcpy(cbAlloc.cpuPtr, &billboardCB, sizeof(VFXBillboardCB));

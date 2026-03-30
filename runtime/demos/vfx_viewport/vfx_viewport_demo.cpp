@@ -293,6 +293,16 @@ void VFXViewportDemo::OnInit() {
     UZ_LOG(App, Info, "VFXViewport: {} VFX material presets initialized (M key to cycle)",
            kVFXMaterialCount);
 
+    // ── Color ramp LUT presets ──────────────────────────────────────────
+    // Build predefined color ramp gradients for color-over-lifetime LUT sampling.
+    // These are baked to RGBA16F textures on demand when the user activates them (N key).
+    m_colorRamps[0] = BuildFireRamp();
+    m_colorRamps[1] = BuildIceRamp();
+    m_colorRamps[2] = BuildRainbowRamp();
+    m_currentRampIndex = -1; // Start in legacy lerp mode
+    UZ_LOG(App, Info, "VFXViewport: {} color ramp presets ready (N key to cycle)",
+           kColorRampCount);
+
     // ── Bloom pass ──────────────────────────────────────────────────────
     if (!m_bloomPass.Init(device, shaders, GetWidth(), GetHeight())) {
         UZ_LOG(App, Error, "VFXViewport: Failed to initialize bloom pass");
@@ -616,6 +626,30 @@ void VFXViewportDemo::HandleInput(float dt) {
         UZ_LOG(App, Info, "Exposure: {:.2f}", m_exposure);
     }
 
+    // Vortex force mode cycle (F key)
+    // @ref Stomakhin 2013 "A Material Point Method for Snow Simulation" App.A
+    if (input->IsKeyJustPressed(Key::F)) {
+        m_vortexMode = (m_vortexMode + 1) % 3; // 0=Off, 1=Tornado, 2=Whirlpool
+        static const char* kVortexModeNames[] = { "OFF", "TORNADO", "WHIRLPOOL" };
+        UZ_LOG(App, Info, "[F] Vortex mode: {}", kVortexModeNames[m_vortexMode]);
+    }
+
+    // Wind zone mode cycle (N key)
+    // @ref Stam 1999 "Stable Fluids" -- wind zone accumulation
+    if (input->IsKeyJustPressed(Key::N)) {
+        m_windMode = (m_windMode + 1) % 3; // 0=Off, 1=Ambient, 2=Gust
+        static const char* kWindModeNames[] = { "OFF", "AMBIENT", "GUST" };
+        UZ_LOG(App, Info, "[N] Wind mode: {}", kWindModeNames[m_windMode]);
+    }
+
+    // Kill volume mode cycle (K key)
+    // @ref Ericson 2005 "Real-Time Collision Detection" Ch.4
+    if (input->IsKeyJustPressed(Key::K)) {
+        m_killVolumeMode = (m_killVolumeMode + 1) % 4; // 0=Off, 1=InvWall, 2=Ground, 3=Sphere
+        static const char* kKillModeNames[] = { "OFF", "INVISIBLE_WALL", "GROUND_BOUNDARY", "SPHERE_ZONE" };
+        UZ_LOG(App, Info, "[K] Kill volume mode: {}", kKillModeNames[m_killVolumeMode]);
+    }
+
     // Vignette (V key)
     if (input->IsKeyJustPressed(Key::V)) {
         m_vignetteIntensity = (m_vignetteIntensity > 0.01f) ? 0.0f : 0.4f;
@@ -673,6 +707,32 @@ void VFXViewportDemo::HandleInput(float dt) {
                m_vfxMaterials[m_currentMaterialIndex].baseColorTintR,
                m_vfxMaterials[m_currentMaterialIndex].baseColorTintG,
                m_vfxMaterials[m_currentMaterialIndex].baseColorTintB);
+    }
+
+    // Color ramp LUT cycling (N key) — Off -> Fire -> Ice -> Rainbow -> Off
+    if (input->IsKeyJustPressed(Key::N)) {
+        m_currentRampIndex = (m_currentRampIndex + 1);
+        if (m_currentRampIndex >= kColorRampCount) {
+            m_currentRampIndex = -1; // wrap back to legacy lerp
+        }
+
+        if (m_currentRampIndex < 0) {
+            // Disable LUT — fall back to legacy two-point lerp
+            m_vfxSystem.ClearColorRampLUT();
+            UZ_LOG(App, Info, "[VFX] Color ramp: Off (legacy lerp)");
+        } else {
+            // Upload the selected ramp as a 256x1 RGBA16F LUT
+            auto* device = GetDevice();
+            auto* cmd = GetCommandList();
+            UploadContext upload(device);
+            if (m_vfxSystem.UploadColorRampLUT(upload, cmd, m_colorRamps[m_currentRampIndex])) {
+                static const char* kRampNames[] = {"Fire", "Ice", "Rainbow"};
+                UZ_LOG(App, Info, "[VFX] Color ramp: {}", kRampNames[m_currentRampIndex]);
+            } else {
+                UZ_LOG(App, Error, "[VFX] Failed to upload color ramp LUT");
+                m_currentRampIndex = -1;
+            }
+        }
     }
 
     // Launch fireball projectile (Space key) — switches to Fireball preset,
@@ -885,6 +945,17 @@ void VFXViewportDemo::HandleInput(float dt) {
     if (input->IsKeyJustPressed(Key::O)) {
         m_outlineEnabled = !m_outlineEnabled;
         UZ_LOG(App, Info, "Outline: {}", m_outlineEnabled ? "enabled" : "disabled");
+    }
+
+    // Curl noise toggle (N key) — toggles curl noise force on/off for active emitter
+    if (input->IsKeyJustPressed(Key::N)) {
+        if (m_vfxEmitter.curlStrength > 0.0f) {
+            m_vfxEmitter.curlStrength = 0.0f;
+            UZ_LOG(App, Info, "[N] Curl noise: OFF");
+        } else {
+            m_vfxEmitter.curlStrength = 2.0f;
+            UZ_LOG(App, Info, "[N] Curl noise: ON  strength=2.0");
+        }
     }
 
     // Escape — deselect
@@ -1224,8 +1295,107 @@ void VFXViewportDemo::OnFrame(float dt) {
             m_vfxSpawnAccum -= static_cast<float>(spawnCount);
         }
 
+        // Apply vortex force configuration from current mode
+        // @ref Stomakhin 2013 "A Material Point Method for Snow Simulation" App.A
+        if (m_vortexMode == 0) {
+            m_vfxEmitter.vortexTangentialStrength = 0.0f;
+            m_vfxEmitter.vortexRadialStrength     = 0.0f;
+        } else if (m_vortexMode == 1) {
+            // Tornado: strong CCW swirl + inward pull
+            m_vfxEmitter.vortexAxisOrigin[0] = m_vfxEmitter.position[0];
+            m_vfxEmitter.vortexAxisOrigin[1] = m_vfxEmitter.position[1];
+            m_vfxEmitter.vortexAxisOrigin[2] = m_vfxEmitter.position[2];
+            m_vfxEmitter.vortexAxisDir[0] = 0.0f;
+            m_vfxEmitter.vortexAxisDir[1] = 0.0f;
+            m_vfxEmitter.vortexAxisDir[2] = 1.0f;  // Z-up axis
+            m_vfxEmitter.vortexTangentialStrength = 8.0f;
+            m_vfxEmitter.vortexRadialStrength     = 2.0f; // inward pull
+            m_vfxEmitter.vortexMaxRadius          = 3.0f;
+        } else {
+            // Whirlpool: moderate swirl + slight outward push
+            m_vfxEmitter.vortexAxisOrigin[0] = m_vfxEmitter.position[0];
+            m_vfxEmitter.vortexAxisOrigin[1] = m_vfxEmitter.position[1];
+            m_vfxEmitter.vortexAxisOrigin[2] = m_vfxEmitter.position[2];
+            m_vfxEmitter.vortexAxisDir[0] = 0.0f;
+            m_vfxEmitter.vortexAxisDir[1] = 0.0f;
+            m_vfxEmitter.vortexAxisDir[2] = 1.0f;  // Z-up axis
+            m_vfxEmitter.vortexTangentialStrength = 5.0f;
+            m_vfxEmitter.vortexRadialStrength     = -1.0f; // outward push
+            m_vfxEmitter.vortexMaxRadius          = 4.0f;
+        }
+
+        // Build wind zone configuration from current mode
+        // @ref Stam 1999 "Stable Fluids" -- wind zone accumulation
+        m_windZoneCount = 0u;
+        if (m_windMode == 1) {
+            // Ambient: single global zone, steady wind in +X direction
+            m_windZones[0].position[0]   = 0.0f; m_windZones[0].position[1] = 0.0f; m_windZones[0].position[2] = 0.0f;
+            m_windZones[0].radius        = 0.0f;  // global
+            m_windZones[0].direction[0]  = 1.0f; m_windZones[0].direction[1] = 0.0f; m_windZones[0].direction[2] = 0.0f;
+            m_windZones[0].strength      = 2.0f;
+            m_windZones[0].gustFrequency = 0.3f;
+            m_windZones[0].gustAmplitude = 3.0f;
+            m_windZoneCount = 1u;
+        } else if (m_windMode == 2) {
+            // Gust: global ambient + strong local zone
+            m_windZones[0].position[0]   = 0.0f; m_windZones[0].position[1] = 0.0f; m_windZones[0].position[2] = 0.0f;
+            m_windZones[0].radius        = 0.0f;  // global ambient
+            m_windZones[0].direction[0]  = 0.707f; m_windZones[0].direction[1] = 0.0f; m_windZones[0].direction[2] = 0.707f;
+            m_windZones[0].strength      = 1.0f;
+            m_windZones[0].gustFrequency = 0.1f;
+            m_windZones[0].gustAmplitude = 0.5f;
+            m_windZones[1].position[0]   = m_vfxEmitter.position[0];
+            m_windZones[1].position[1]   = m_vfxEmitter.position[1];
+            m_windZones[1].position[2]   = m_vfxEmitter.position[2];
+            m_windZones[1].radius        = 5.0f;  // local strong gust
+            m_windZones[1].direction[0]  = 1.0f; m_windZones[1].direction[1] = 0.2f; m_windZones[1].direction[2] = 0.0f;
+            m_windZones[1].strength      = 8.0f;
+            m_windZones[1].gustFrequency = 1.0f;
+            m_windZones[1].gustAmplitude = 4.0f;
+            m_windZoneCount = 2u;
+        }
+
+        // Build kill volume configuration from current mode
+        // @ref Ericson 2005 "Real-Time Collision Detection" Ch.4
+        m_killVolumeCount = 0u;
+        if (m_killVolumeMode == 1) {
+            // Invisible wall: thin AABB at x=3 blocking rightward drift
+            m_killVolumes[0].position[0]   = m_vfxEmitter.position[0] + 3.0f;
+            m_killVolumes[0].position[1]   = m_vfxEmitter.position[1];
+            m_killVolumes[0].position[2]   = m_vfxEmitter.position[2];
+            m_killVolumes[0].shape         = static_cast<uint32_t>(KillVolumeShape::AABB);
+            m_killVolumes[0].halfExtents[0] = 0.3f;
+            m_killVolumes[0].halfExtents[1] = 5.0f;
+            m_killVolumes[0].halfExtents[2] = 5.0f;
+            m_killVolumeCount = 1u;
+        } else if (m_killVolumeMode == 2) {
+            // Ground boundary: wide flat AABB that kills particles below emitter
+            m_killVolumes[0].position[0]   = m_vfxEmitter.position[0];
+            m_killVolumes[0].position[1]   = m_vfxEmitter.position[1] - 2.0f;
+            m_killVolumes[0].position[2]   = m_vfxEmitter.position[2];
+            m_killVolumes[0].shape         = static_cast<uint32_t>(KillVolumeShape::AABB);
+            m_killVolumes[0].halfExtents[0] = 10.0f;
+            m_killVolumes[0].halfExtents[1] = 0.5f;
+            m_killVolumes[0].halfExtents[2] = 10.0f;
+            m_killVolumeCount = 1u;
+        } else if (m_killVolumeMode == 3) {
+            // Sphere zone: kills particles passing through upper emitter region
+            m_killVolumes[0].position[0]   = m_vfxEmitter.position[0];
+            m_killVolumes[0].position[1]   = m_vfxEmitter.position[1];
+            m_killVolumes[0].position[2]   = m_vfxEmitter.position[2] + 2.0f;
+            m_killVolumes[0].shape         = static_cast<uint32_t>(KillVolumeShape::Sphere);
+            m_killVolumes[0].halfExtents[0] = 1.5f; // radius
+            m_killVolumes[0].halfExtents[1] = 1.5f;
+            m_killVolumes[0].halfExtents[2] = 1.5f;
+            m_killVolumeCount = 1u;
+        }
+
+        // Upload wind zones and kill volumes to GPU before dispatch
+        m_vfxSystem.UploadWindZones(cmd, cbRing, m_windZones, m_windZoneCount);
+        m_vfxSystem.UploadKillVolumes(cmd, cbRing, m_killVolumes, m_killVolumeCount);
+
         m_vfxSystem.DispatchCompute(cmd, cbRing, m_vfxEmitter, spawnCount,
-                                    dt, GetFrameIndex());
+                                    dt, GetFrameIndex(), m_totalTime);
     }
 
     // ── Shadow pass ──────────────────────────────────────────────────────
