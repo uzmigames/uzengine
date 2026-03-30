@@ -55,174 +55,6 @@ static constexpr int kMaterialCount = static_cast<int>(sizeof(kMaterials) / size
 static const char* kMeshNames[] = {"Sphere", "Cube", "Plane", "Cylinder", "Torus"};
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Procedural Sprite Sheet Generation
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Packs RGBA8 channels into a single uint32_t (ABGR layout for DXGI_FORMAT_R8G8B8A8_UNORM).
-static uint32_t PackRGBA8(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
-    return static_cast<uint32_t>(r)
-         | (static_cast<uint32_t>(g) << 8)
-         | (static_cast<uint32_t>(b) << 16)
-         | (static_cast<uint32_t>(a) << 24);
-}
-
-/// Attempt a simple pseudo-noise based on sin/cos for texture variation.
-/// Returns a value in [0, 1].
-static float PseudoNoise(float x, float y, float seed) {
-    float v = std::sin(x * 12.9898f + y * 78.233f + seed * 43758.5453f);
-    v = v - std::floor(v); // fract
-    return v;
-}
-
-void VFXViewportDemo::GenerateFireSpriteSheet(std::vector<uint32_t>& pixels,
-                                               uint32_t cellSize, uint32_t rows, uint32_t cols) {
-    const uint32_t texWidth  = cellSize * cols;
-    const uint32_t texHeight = cellSize * rows;
-    pixels.resize(texWidth * texHeight);
-
-    const uint32_t totalFrames = rows * cols;
-    const float halfCell = static_cast<float>(cellSize) * 0.5f;
-
-    for (uint32_t frame = 0; frame < totalFrames; ++frame) {
-        const uint32_t cellX = frame % cols;
-        const uint32_t cellY = frame / cols;
-        const float t = static_cast<float>(frame) / static_cast<float>(totalFrames - 1); // [0, 1]
-
-        // Fire evolution: early frames are small bright yellow-white cores,
-        // mid frames are medium orange with turbulent edges,
-        // late frames are large dim red, mostly transparent.
-        const float radiusScale = 0.25f + 0.75f * t; // radius grows from 25% to 100%
-        const float alphaMax    = 1.0f - 0.7f * t;   // alpha fades from 1.0 to 0.3
-
-        // Color transitions: yellow-white (0) -> orange (0.5) -> dark red (1.0)
-        float colorR, colorG, colorB;
-        if (t < 0.5f) {
-            // Yellow-white to orange
-            float s = t * 2.0f;
-            colorR = 1.0f;
-            colorG = 1.0f - 0.5f * s;     // 1.0 -> 0.5
-            colorB = 0.8f - 0.75f * s;    // 0.8 -> 0.05
-        } else {
-            // Orange to dark red
-            float s = (t - 0.5f) * 2.0f;
-            colorR = 1.0f - 0.3f * s;     // 1.0 -> 0.7
-            colorG = 0.5f - 0.4f * s;     // 0.5 -> 0.1
-            colorB = 0.05f - 0.03f * s;   // 0.05 -> 0.02
-        }
-
-        for (uint32_t py = 0; py < cellSize; ++py) {
-            for (uint32_t px = 0; px < cellSize; ++px) {
-                float dx = (static_cast<float>(px) + 0.5f - halfCell) / halfCell; // [-1, 1]
-                float dy = (static_cast<float>(py) + 0.5f - halfCell) / halfCell;
-                float dist = std::sqrt(dx * dx + dy * dy);
-
-                // Add pseudo-noise turbulence to the edge for organic fire shape
-                float noise = PseudoNoise(dx * 3.0f, dy * 3.0f, static_cast<float>(frame) * 1.7f);
-                float edgeNoise = 0.15f * (noise - 0.5f); // [-0.075, 0.075]
-                dist += edgeNoise;
-
-                // Soft radial falloff within the frame's radius
-                float normDist = dist / radiusScale;
-                float alpha = 0.0f;
-                if (normDist < 1.0f) {
-                    // Smooth cubic falloff: 1 at center, 0 at edge
-                    float x = 1.0f - normDist;
-                    alpha = x * x * (3.0f - 2.0f * x); // smoothstep
-                    alpha *= alphaMax;
-                }
-
-                // Bright core: boost brightness near center
-                float coreBrightness = 1.0f;
-                if (normDist < 0.3f) {
-                    float coreT = 1.0f - normDist / 0.3f;
-                    coreBrightness = 1.0f + 0.5f * coreT; // brighter core
-                }
-
-                auto r = static_cast<uint8_t>(std::min(255.0f, colorR * coreBrightness * 255.0f));
-                auto g = static_cast<uint8_t>(std::min(255.0f, colorG * coreBrightness * 255.0f));
-                auto b = static_cast<uint8_t>(std::min(255.0f, colorB * coreBrightness * 255.0f));
-                auto a = static_cast<uint8_t>(alpha * 255.0f);
-
-                const uint32_t texX = cellX * cellSize + px;
-                const uint32_t texY = cellY * cellSize + py;
-                pixels[texY * texWidth + texX] = PackRGBA8(r, g, b, a);
-            }
-        }
-    }
-}
-
-void VFXViewportDemo::GenerateSmokeSpriteSheet(std::vector<uint32_t>& pixels,
-                                                uint32_t cellSize, uint32_t rows, uint32_t cols) {
-    const uint32_t texWidth  = cellSize * cols;
-    const uint32_t texHeight = cellSize * rows;
-    pixels.resize(texWidth * texHeight);
-
-    const uint32_t totalFrames = rows * cols;
-    const float halfCell = static_cast<float>(cellSize) * 0.5f;
-
-    for (uint32_t frame = 0; frame < totalFrames; ++frame) {
-        const uint32_t cellX = frame % cols;
-        const uint32_t cellY = frame / cols;
-        const float t = static_cast<float>(frame) / static_cast<float>(totalFrames - 1);
-
-        // Smoke evolution: small dense white puffs -> expanding gray -> large diffuse transparent.
-        const float radiusScale = 0.3f + 0.7f * t;   // grows from 30% to 100%
-        const float alphaMax    = 0.9f - 0.8f * t;    // fades from 0.9 to 0.1
-        const float brightness  = 0.9f - 0.5f * t;    // white (0.9) -> gray (0.4)
-
-        for (uint32_t py = 0; py < cellSize; ++py) {
-            for (uint32_t px = 0; px < cellSize; ++px) {
-                float dx = (static_cast<float>(px) + 0.5f - halfCell) / halfCell;
-                float dy = (static_cast<float>(py) + 0.5f - halfCell) / halfCell;
-                float dist = std::sqrt(dx * dx + dy * dy);
-
-                // Softer noise for smoke: billowy, less sharp than fire
-                float noise = PseudoNoise(dx * 2.5f, dy * 2.5f, static_cast<float>(frame) * 2.3f);
-                float edgeNoise = 0.1f * (noise - 0.5f);
-                dist += edgeNoise;
-
-                float normDist = dist / radiusScale;
-                float alpha = 0.0f;
-                if (normDist < 1.0f) {
-                    // Very soft Gaussian-like falloff for smoke
-                    float x = 1.0f - normDist;
-                    alpha = x * x; // quadratic — softer than smoothstep
-                    alpha *= alphaMax;
-                }
-
-                auto val = static_cast<uint8_t>(brightness * 255.0f);
-                auto a   = static_cast<uint8_t>(alpha * 255.0f);
-
-                const uint32_t texX = cellX * cellSize + px;
-                const uint32_t texY = cellY * cellSize + py;
-                pixels[texY * texWidth + texX] = PackRGBA8(val, val, val, a);
-            }
-        }
-    }
-}
-
-uint32_t VFXViewportDemo::GetSpriteTextureForPreset(int presetIndex) const {
-    int presetCount = 0;
-    const VFXPreset* presets = GetVFXPresets(presetCount);
-    if (presetIndex < 0 || presetIndex >= presetCount) return UINT32_MAX;
-
-    const char* name = presets[presetIndex].name;
-    // Fire-based presets use the fire sprite sheet
-    if (std::strcmp(name, "Simple Burst") == 0 ||
-        std::strcmp(name, "Fireball") == 0 ||
-        std::strcmp(name, "Ring of Fire") == 0 ||
-        std::strcmp(name, "Explosion Debris") == 0) {
-        return m_fireSpriteSrvIdx;
-    }
-    // Smoke preset uses the smoke sprite sheet
-    if (std::strcmp(name, "Smoke Plume") == 0) {
-        return m_smokeSpriteSrvIdx;
-    }
-    // Sparks, Magic Orb, Cone Jet, Cylinder Volume — procedural circle is fine
-    return UINT32_MAX;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Construction
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -409,102 +241,11 @@ void VFXViewportDemo::OnInit() {
         m_vfxSystem.UploadInitialFreeList(cmd);
     }
 
-    // ── Procedural sprite sheet textures for flipbook animation ─────────
-    {
-        constexpr uint32_t kCellSize = 64;
-        constexpr uint32_t kRows = 4;
-        constexpr uint32_t kCols = 4;
-        constexpr uint32_t kTexSize = kCellSize * kCols; // 256
-
-        // Fire sprite sheet: 4x4 frames, yellow-white -> orange -> dark red
-        {
-            std::vector<uint32_t> firePixels;
-            GenerateFireSpriteSheet(firePixels, kCellSize, kRows, kCols);
-
-            RHITextureDesc texDesc{};
-            texDesc.width  = kTexSize;
-            texDesc.height = kTexSize;
-            texDesc.format = RHIFormat::RGBA8Unorm;
-            texDesc.usage  = RHITextureUsage::ShaderResource | RHITextureUsage::CopyDst;
-            texDesc.debugName = "VFX_FireSpriteSheet";
-            m_fireSpriteTex = device->CreateTexture(texDesc);
-
-            if (m_fireSpriteTex.IsValid()) {
-                upload.UploadTexture(cmd, m_fireSpriteTex,
-                                     firePixels.data(),
-                                     firePixels.size() * sizeof(uint32_t));
-                m_fireSpriteSrvIdx = device->GetTextureSRVIndex(m_fireSpriteTex);
-                UZ_LOG(App, Info, "VFXViewport: Fire sprite sheet created (SRV={})",
-                       m_fireSpriteSrvIdx);
-            } else {
-                UZ_LOG(App, Error, "VFXViewport: Failed to create fire sprite sheet texture");
-            }
-        }
-
-        // Smoke sprite sheet: 4x4 frames, dense white -> diffuse gray -> transparent
-        {
-            std::vector<uint32_t> smokePixels;
-            GenerateSmokeSpriteSheet(smokePixels, kCellSize, kRows, kCols);
-
-            RHITextureDesc texDesc{};
-            texDesc.width  = kTexSize;
-            texDesc.height = kTexSize;
-            texDesc.format = RHIFormat::RGBA8Unorm;
-            texDesc.usage  = RHITextureUsage::ShaderResource | RHITextureUsage::CopyDst;
-            texDesc.debugName = "VFX_SmokeSpriteSheet";
-            m_smokeSpriteTex = device->CreateTexture(texDesc);
-
-            if (m_smokeSpriteTex.IsValid()) {
-                upload.UploadTexture(cmd, m_smokeSpriteTex,
-                                     smokePixels.data(),
-                                     smokePixels.size() * sizeof(uint32_t));
-                m_smokeSpriteSrvIdx = device->GetTextureSRVIndex(m_smokeSpriteTex);
-                UZ_LOG(App, Info, "VFXViewport: Smoke sprite sheet created (SRV={})",
-                       m_smokeSpriteSrvIdx);
-            } else {
-                UZ_LOG(App, Error, "VFXViewport: Failed to create smoke sprite sheet texture");
-            }
-        }
-    }
-
-    // ── Load custom sprite sheet via VFXMaterial (overrides procedural fire) ──
-    if (!m_customSpritePath.empty()) {
-        m_vfxMaterial.spriteTexturePath = m_customSpritePath;
-        if (m_vfxMaterial.LoadTexture(device, cmd)) {
-            m_customSpriteTex = {}; // VFXMaterial owns the sprite now
-            m_customSpriteSrvIdx = m_vfxMaterial.spriteTextureSrvIndex;
-            m_fireSpriteSrvIdx = m_customSpriteSrvIdx; // override fire sprite
-            // Apply material's auto-detected flipbook config to the emitter
-            m_vfxEmitter.flipbookRows = m_vfxMaterial.flipbookRows;
-            m_vfxEmitter.flipbookCols = m_vfxMaterial.flipbookCols;
-            m_vfxEmitter.flipbookTotalFrames = m_vfxMaterial.flipbookTotalFrames;
-            m_vfxEmitter.flipbookFPS = m_vfxMaterial.flipbookFPS;
-            m_vfxEmitter.flipbookBlendMode = m_vfxMaterial.flipbookBlendMode;
-            // Default to Green channel mask for custom sprite sheets — most fire/smoke
-            // PNGs store intensity in the green channel. User can cycle with Shift+M.
-            m_vfxEmitter.spriteChannelMask = 0; // RGBA — use full texture color + alpha
-            UZ_LOG(App, Info,
-                   "VFXViewport: VFXMaterial loaded '{}' (SRV={}, {}x{} {:.0f}fps blend={} channelMask=G)",
-                   m_customSpritePath, m_customSpriteSrvIdx,
-                   m_vfxMaterial.flipbookRows, m_vfxMaterial.flipbookCols,
-                   m_vfxMaterial.flipbookFPS, m_vfxMaterial.flipbookBlendMode);
-        } else {
-            UZ_LOG(App, Error, "VFXViewport: Failed to load custom sprite via VFXMaterial '{}'",
-                   m_customSpritePath);
-        }
-    }
-
     // ── VFX material presets (ready-to-use material configurations) ──────
-    // M_VFX_Fire_Additive: bright additive fire with flipbook animation
+    // M_VFX_Fire_Additive: bright additive fire (procedural circles)
     m_vfxMaterials[0].blendMode            = 1; // Additive
     m_vfxMaterials[0].emissiveIntensity    = 2.0f;
     m_vfxMaterials[0].softFadeDistance     = 0.5f;
-    m_vfxMaterials[0].flipbookRows         = 4;
-    m_vfxMaterials[0].flipbookCols         = 4;
-    m_vfxMaterials[0].flipbookTotalFrames  = 16;
-    m_vfxMaterials[0].flipbookFPS          = 24.0f;
-    m_vfxMaterials[0].flipbookBlendMode    = 1; // Linear interpolation
-    m_vfxMaterials[0].spriteTextureSrvIndex = m_fireSpriteSrvIdx;
     m_vfxMaterials[0].baseColorTintR       = 1.0f;
     m_vfxMaterials[0].baseColorTintG       = 0.7f;
     m_vfxMaterials[0].baseColorTintB       = 0.3f;
@@ -513,12 +254,6 @@ void VFXViewportDemo::OnInit() {
     m_vfxMaterials[1].blendMode            = 0; // AlphaBlend
     m_vfxMaterials[1].emissiveIntensity    = 0.0f;
     m_vfxMaterials[1].softFadeDistance     = 1.0f;
-    m_vfxMaterials[1].flipbookRows         = 4;
-    m_vfxMaterials[1].flipbookCols         = 4;
-    m_vfxMaterials[1].flipbookTotalFrames  = 16;
-    m_vfxMaterials[1].flipbookFPS          = 12.0f;
-    m_vfxMaterials[1].flipbookBlendMode    = 1; // Linear interpolation
-    m_vfxMaterials[1].spriteTextureSrvIndex = m_smokeSpriteSrvIdx;
     m_vfxMaterials[1].baseColorTintR       = 0.6f;
     m_vfxMaterials[1].baseColorTintG       = 0.6f;
     m_vfxMaterials[1].baseColorTintB       = 0.6f;
@@ -924,35 +659,20 @@ void VFXViewportDemo::HandleInput(float dt) {
                m_vfxBurstMode ? "Burst" : "Continuous", m_vfxBurstCount);
     }
 
-    // Sprite channel mask cycling (Shift+M) — cycles RGBA/R/G/B/A
-    if (input->IsKeyJustPressed(Key::M) &&
-        (input->IsKeyDown(Key::LeftShift) || input->IsKeyDown(Key::RightShift))) {
-        m_vfxEmitter.spriteChannelMask = (m_vfxEmitter.spriteChannelMask + 1) % 5;
-        static const char* kChannelNames[] = {"RGBA", "R", "G", "B", "A"};
-        UZ_LOG(App, Info, "[VFX] Channel mask: {} ({})",
-               kChannelNames[m_vfxEmitter.spriteChannelMask],
-               m_vfxEmitter.spriteChannelMask);
-    }
-
-    // VFX material preset cycling (M key, no shift) — only when no custom sprite loaded
-    if (input->IsKeyJustPressed(Key::M) &&
-        !(input->IsKeyDown(Key::LeftShift) || input->IsKeyDown(Key::RightShift))) {
-        if (!m_vfxMaterial.HasSprite()) {
-            m_currentMaterialIndex = (m_currentMaterialIndex + 1) % kVFXMaterialCount;
-            static const char* kVFXMaterialNames[] = {
-                "Fire_Additive", "Smoke_Translucent", "Sparks_Additive",
-                "Magic_Additive", "Debris_AlphaBlend", "Distortion_PremulAlpha"
-            };
-            UZ_LOG(App, Info, "[VFX] Material: {} (blend={}, emissive={:.1f}, tint=[{:.1f},{:.1f},{:.1f}])",
-                   kVFXMaterialNames[m_currentMaterialIndex],
-                   m_vfxMaterials[m_currentMaterialIndex].blendMode,
-                   m_vfxMaterials[m_currentMaterialIndex].emissiveIntensity,
-                   m_vfxMaterials[m_currentMaterialIndex].baseColorTintR,
-                   m_vfxMaterials[m_currentMaterialIndex].baseColorTintG,
-                   m_vfxMaterials[m_currentMaterialIndex].baseColorTintB);
-        } else {
-            UZ_LOG(App, Info, "[VFX] Material cycling disabled — custom sprite active (--sprite)");
-        }
+    // VFX material preset cycling (M key)
+    if (input->IsKeyJustPressed(Key::M)) {
+        m_currentMaterialIndex = (m_currentMaterialIndex + 1) % kVFXMaterialCount;
+        static const char* kVFXMaterialNames[] = {
+            "Fire_Additive", "Smoke_Translucent", "Sparks_Additive",
+            "Magic_Additive", "Debris_AlphaBlend", "Distortion_PremulAlpha"
+        };
+        UZ_LOG(App, Info, "[VFX] Material: {} (blend={}, emissive={:.1f}, tint=[{:.1f},{:.1f},{:.1f}])",
+               kVFXMaterialNames[m_currentMaterialIndex],
+               m_vfxMaterials[m_currentMaterialIndex].blendMode,
+               m_vfxMaterials[m_currentMaterialIndex].emissiveIntensity,
+               m_vfxMaterials[m_currentMaterialIndex].baseColorTintR,
+               m_vfxMaterials[m_currentMaterialIndex].baseColorTintG,
+               m_vfxMaterials[m_currentMaterialIndex].baseColorTintB);
     }
 
     // Launch fireball projectile (Space key) — switches to Fireball preset,
@@ -966,14 +686,6 @@ void VFXViewportDemo::HandleInput(float dt) {
                 m_vfxPresetIndex = i;
                 m_vfxEmitter = presets[i].config;
                 m_vfxSpawnRate = presets[i].spawnRate;
-                // Re-apply VFXMaterial flipbook config if a custom sprite is loaded
-                if (m_vfxMaterial.HasSprite()) {
-                    m_vfxEmitter.flipbookRows = m_vfxMaterial.flipbookRows;
-                    m_vfxEmitter.flipbookCols = m_vfxMaterial.flipbookCols;
-                    m_vfxEmitter.flipbookTotalFrames = m_vfxMaterial.flipbookTotalFrames;
-                    m_vfxEmitter.flipbookFPS = m_vfxMaterial.flipbookFPS;
-                    m_vfxEmitter.flipbookBlendMode = m_vfxMaterial.flipbookBlendMode;
-                }
                 break;
             }
         }
@@ -1008,15 +720,6 @@ void VFXViewportDemo::HandleInput(float dt) {
             m_vfxEmitter = presets[m_vfxPresetIndex].config;
             m_vfxSpawnRate = presets[m_vfxPresetIndex].spawnRate;
             m_vfxSpawnAccum = 0.0f;
-            // Re-apply VFXMaterial flipbook config for fire presets
-            if (m_vfxMaterial.HasSprite() &&
-                GetSpriteTextureForPreset(m_vfxPresetIndex) == m_fireSpriteSrvIdx) {
-                m_vfxEmitter.flipbookRows = m_vfxMaterial.flipbookRows;
-                m_vfxEmitter.flipbookCols = m_vfxMaterial.flipbookCols;
-                m_vfxEmitter.flipbookTotalFrames = m_vfxMaterial.flipbookTotalFrames;
-                m_vfxEmitter.flipbookFPS = m_vfxMaterial.flipbookFPS;
-                m_vfxEmitter.flipbookBlendMode = m_vfxMaterial.flipbookBlendMode;
-            }
             UZ_LOG(App, Info, "VFX preset: {}", presets[m_vfxPresetIndex].name);
         }
     }
@@ -1358,7 +1061,6 @@ void VFXViewportDemo::HandleInput(float dt) {
         UZ_LOG(App, Info, "  Delete               — Reset particles + fire burst");
         UZ_LOG(App, Info, "  Insert               — Toggle Burst / Continuous mode");
         UZ_LOG(App, Info, "  M                    — Cycle VFX material presets");
-        UZ_LOG(App, Info, "  Shift+M              — Cycle sprite channel mask (RGBA/R/G/B/A)");
         UZ_LOG(App, Info, "  Space                — Launch fireball projectile (with trail)");
         UZ_LOG(App, Info, "  Y                    — Toggle trails");
         UZ_LOG(App, Info, "  D                    — Toggle decals");
@@ -1775,55 +1477,6 @@ void VFXViewportDemo::OnFrame(float dt) {
 
         cmd->Draw(3, 1, 0, 0);
         cmd->EndRenderPass();
-    }
-
-    // ── Sprite sheet debug overlay (top-right 384x384) ─────────────────
-    // Shows the raw sprite sheet texture to verify it loads and samples correctly,
-    // independent of the particle system. Uses the same tonemap PSO trick.
-    {
-        uint32_t debugSpriteSrv = UINT32_MAX;
-        if (m_vfxMaterial.HasSprite()) {
-            debugSpriteSrv = m_vfxMaterial.spriteTextureSrvIndex;
-        } else if (m_fireSpriteSrvIdx != UINT32_MAX) {
-            debugSpriteSrv = m_fireSpriteSrvIdx;
-        }
-
-        if (debugSpriteSrv != UINT32_MAX && m_tonemapPSO.IsValid()) {
-            auto* swapChain = GetSwapChain();
-            auto backBuffer = swapChain->GetCurrentBackBuffer();
-
-            RHIRenderPassDesc rpDesc{};
-            rpDesc.colorAttachmentCount = 1;
-            rpDesc.colorAttachments[0].texture = backBuffer;
-            cmd->BeginRenderPass(rpDesc);
-
-            constexpr uint32_t kSpriteDebugSize = 384;
-            RHIViewport sprVp{};
-            sprVp.x = static_cast<float>(GetWidth() - kSpriteDebugSize);
-            sprVp.y = 0.0f;
-            sprVp.width = static_cast<float>(kSpriteDebugSize);
-            sprVp.height = static_cast<float>(kSpriteDebugSize);
-            sprVp.minDepth = 0.0f;
-            sprVp.maxDepth = 1.0f;
-            cmd->SetViewport(sprVp);
-
-            RHIScissorRect sprSc{};
-            sprSc.left = static_cast<int32_t>(GetWidth() - kSpriteDebugSize);
-            sprSc.top = 0;
-            sprSc.right = static_cast<int32_t>(GetWidth());
-            sprSc.bottom = static_cast<int32_t>(kSpriteDebugSize);
-            cmd->SetScissor(sprSc);
-
-            cmd->SetPipeline(m_tonemapPSO);
-            cmd->SetRootCBV(kSlotPerFrame, perFrameGpu);
-
-            if (IsBindless()) {
-                cmd->SetRootConstants(0, &debugSpriteSrv, 1);
-            }
-
-            cmd->Draw(3, 1, 0, 0);
-            cmd->EndRenderPass();
-        }
     }
 
     // ── Screenshot capture ───────────────────────────────────────────────
@@ -2263,47 +1916,16 @@ void VFXViewportDemo::RenderVFXPass(IRHICommandList* cmd, uint64_t perFrameGpu,
 
     const uint32_t depthSrvIdx = GetDevice()->GetTextureSRVIndex(m_depthBuffer);
 
-    // Material priority: custom sprite (--sprite CLI) > preset material (M key) > inline preset.
-    // When a VFXMaterial has a sprite loaded via --sprite, it takes full priority.
-    // Otherwise, the active preset material (cycled with M) provides sprite, blend, and flipbook.
-    uint32_t spriteSrvIdx;
-    uint32_t blendMode;
-
-    if (m_vfxMaterial.HasSprite()) {
-        // Custom sprite from --sprite CLI takes full priority
-        spriteSrvIdx = m_vfxMaterial.spriteTextureSrvIndex;
-        blendMode    = m_vfxMaterial.blendMode;
-    } else {
-        // Use the active preset material's sprite and blend mode
-        const auto& mat = m_vfxMaterials[m_currentMaterialIndex];
-        spriteSrvIdx = mat.spriteTextureSrvIndex;
-        blendMode    = mat.blendMode;
-
-        // Apply preset material's flipbook config to the emitter
-        // so the billboard shader animates correctly for this material
-        if (mat.flipbookRows > 1 || mat.flipbookCols > 1) {
-            m_vfxEmitter.flipbookRows       = mat.flipbookRows;
-            m_vfxEmitter.flipbookCols        = mat.flipbookCols;
-            m_vfxEmitter.flipbookTotalFrames = mat.flipbookTotalFrames;
-            m_vfxEmitter.flipbookFPS         = mat.flipbookFPS;
-            m_vfxEmitter.flipbookBlendMode   = mat.flipbookBlendMode;
-        }
-    }
-
-    if (GetFrameIndex() < 3) {
-        UZ_LOG(App, Info, "VFX Draw: sprite={} flipbook={}x{} frames={} fps={:.0f} blend={} preset={} mat={}",
-               spriteSrvIdx, m_vfxEmitter.flipbookRows, m_vfxEmitter.flipbookCols,
-               m_vfxEmitter.flipbookTotalFrames, m_vfxEmitter.flipbookFPS,
-               blendMode, m_vfxPresetIndex, m_currentMaterialIndex);
-    }
+    // Use the active preset material's blend mode
+    const auto& mat = m_vfxMaterials[m_currentMaterialIndex];
+    const uint32_t blendMode = mat.blendMode;
 
     m_vfxSystem.DrawBillboards(cmd, GetCBRing(), perFrameGpu,
                                 GetCamera().GetView(), emitterPos,
                                 m_prevViewProj,
                                 m_vfxEmitter,
                                 blendMode,
-                                depthSrvIdx,
-                                spriteSrvIdx);
+                                depthSrvIdx);
 
     cmd->EndRenderPass();
 }

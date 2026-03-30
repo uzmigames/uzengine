@@ -35,7 +35,6 @@
 ///
 /// # Outputs
 /// In addition to clip-space position, UV, and color, this shader outputs:
-/// - age/lifetime/particleIdx for flipbook animation in the pixel shader
 /// - prevPositionCS for TAA motion vector computation
 ///
 /// @ref Niagara GPU sprite rendering — billboard expansion from SV_VertexID
@@ -44,7 +43,6 @@
 /// @deviations NONE
 
 #include "../include/depth_common.hlsli"
-#include "vfx_flipbook.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -83,16 +81,13 @@ static const float2 kCornerOffsets[6] = {
 /// Interpolants passed to the billboard pixel shader.
 struct VSOutput {
     float4 positionCS     : SV_Position; ///< Clip-space position for rasterization.
-    float2 texcoord       : TEXCOORD0;   ///< UV for sprite texture sampling.
+    float2 texcoord       : TEXCOORD0;   ///< UV for procedural circle generation.
     float4 color          : COLOR0;      ///< Particle color (RGBA), interpolated per-vertex.
     float3 positionWS     : TEXCOORD1;   ///< World-space position for soft particle depth fade.
-    float  age            : TEXCOORD2;   ///< Particle age in seconds (for flipbook animation in PS).
+    float  age            : TEXCOORD2;   ///< Particle age in seconds.
     float  lifetime       : TEXCOORD3;   ///< Particle total lifetime in seconds.
-    uint   particleIdx    : TEXCOORD4;   ///< Particle index for flipbook deterministic random frame.
+    uint   particleIdx    : TEXCOORD4;   ///< Particle index (reserved for future use).
     float4 prevPositionCS : TEXCOORD5;   ///< Previous frame clip-space position for TAA motion vectors.
-    float2 subUV0         : TEXCOORD6;   ///< Atlas UV for current flipbook frame (or texcoord if no flipbook).
-    float2 subUV1         : TEXCOORD7;   ///< Atlas UV for next flipbook frame (for inter-frame blend).
-    float  subUVLerp      : TEXCOORD8;   ///< Inter-frame blend factor [0,1) for flipbook animation.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -183,14 +178,14 @@ cbuffer VFXBillboardCB : register(b2) {
     float    alphaErosion;            ///< Subtractive alpha erosion [0, 1].
     float    emissiveIntensity;       ///< Multiplier for additive emissive contribution.
     float    _psPad0;
-    uint     flipbookRows;            ///< Rows in sprite sheet. 1 = no flipbook.
-    uint     flipbookCols;            ///< Columns in sprite sheet. 1 = no flipbook.
-    uint     flipbookTotalFrames;     ///< Total valid frames (rows * cols or less).
-    float    flipbookFPS;             ///< Playback speed in frames per second.
-    uint     flipbookBlendMode;       ///< 0 = None, 1 = Linear, 2 = Random.
-    uint     _fbPad0;
-    uint     _fbPad1;
-    uint     _fbPad2;
+    float    _pad1;
+    float    _pad2;
+    float    _pad3;
+    float    _pad4;
+    float    _pad5;
+    float    _pad6;
+    float    _pad7;
+    float    _pad8;
     // ── Size over lifetime (analytical piecewise-linear curve, 16 bytes) ──
     float    sizeOverLifeStart;    ///< Size multiplier at birth (t=0).
     float    sizeOverLifePeak;     ///< Size multiplier at peak time.
@@ -203,7 +198,7 @@ cbuffer VFXBillboardCB : register(b2) {
     uint     alignmentMode;        ///< 0=CameraFacing, 1=VelocityAligned.
     float    stretchFactor;        ///< Velocity stretch multiplier. 0=no stretch.
     uint     blendModeHint;        ///< 0=AlphaBlend, 1=Additive, 2=PremulAlpha (read by PS, declared for layout).
-    uint     spriteChannelMask;  ///< 0=RGBA, 1=R as alpha, 2=G as alpha, 3=B as alpha, 4=A as alpha.
+    uint     _pad9;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -289,9 +284,6 @@ VSOutput main(uint vertexID : SV_VertexID) {
         output.lifetime       = 0;
         output.particleIdx    = particleID;
         output.prevPositionCS = float4(0, 0, 0, 1);
-        output.subUV0         = float2(0, 0);
-        output.subUV1         = float2(0, 0);
-        output.subUVLerp      = 0;
         return output;
     }
 
@@ -418,32 +410,10 @@ VSOutput main(uint vertexID : SV_VertexID) {
     output.texcoord = kCornerUVs[vertexInQuad];
     output.color    = finalColor;
 
-    // ── Pass flipbook attributes to pixel shader ──
+    // ── Pass particle lifetime attributes to pixel shader ──
     output.age         = particleAge;
     output.lifetime    = particleLife;
     output.particleIdx = particleID;
-
-    // ── Compute SubUV atlas coordinates in VS (Niagara pattern) ──
-    // When flipbook is active (rows*cols > 1), compute the atlas sub-rectangle
-    // UVs here to avoid per-pixel flipbook math in the PS. The PS only needs
-    // to sample at the interpolated subUV0/subUV1 and lerp by subUVLerp.
-    if (flipbookRows > 1 || flipbookCols > 1) {
-        float frameFloat = max(particleAge, 0.0f) * flipbookFPS;
-        uint totalFrames = flipbookTotalFrames;
-        uint frame0 = (uint)frameFloat % totalFrames;
-        uint frame1 = (frame0 + 1u) % totalFrames;
-        float2 invSize = float2(1.0f / (float)flipbookCols, 1.0f / (float)flipbookRows);
-        float2 cellUV0 = float2((float)(frame0 % flipbookCols), (float)(frame0 / flipbookCols));
-        float2 cellUV1 = float2((float)(frame1 % flipbookCols), (float)(frame1 / flipbookCols));
-        output.subUV0    = cellUV0 * invSize + kCornerUVs[vertexInQuad] * invSize;
-        output.subUV1    = cellUV1 * invSize + kCornerUVs[vertexInQuad] * invSize;
-        output.subUVLerp = frac(frameFloat);
-    } else {
-        // No flipbook — pass through raw corner UVs for single-frame sprite sampling.
-        output.subUV0    = kCornerUVs[vertexInQuad];
-        output.subUV1    = kCornerUVs[vertexInQuad];
-        output.subUVLerp = 0.0f;
-    }
 
     return output;
 }

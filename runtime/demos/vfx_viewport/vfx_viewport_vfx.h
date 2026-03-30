@@ -45,12 +45,6 @@ struct VFXEmitterConfig {
     // Billboard rendering parameters
     float    softFadeDistance  = 0.3f;  ///< World-space soft particle fade distance.
     float    emissiveIntensity = 0.0f; ///< Additive emissive multiplier.
-    // Flipbook / SubUV sprite sheet parameters
-    uint32_t flipbookRows        = 1;    ///< Rows in sprite sheet. 1 = no flipbook.
-    uint32_t flipbookCols        = 1;    ///< Columns in sprite sheet. 1 = no flipbook.
-    uint32_t flipbookTotalFrames = 1;    ///< Total valid frames.
-    float    flipbookFPS         = 0.0f; ///< Playback speed (frames/sec). 0 = static.
-    uint32_t flipbookBlendMode   = 0;    ///< 0=None, 1=Linear, 2=Random.
     // Size over lifetime (analytical piecewise-linear curve)
     float    sizeOverLifeStart    = 1.0f;  ///< Size multiplier at birth (t=0).
     float    sizeOverLifePeak     = 1.0f;  ///< Size multiplier at peak time.
@@ -76,8 +70,6 @@ struct VFXEmitterConfig {
     float    shapeParam3     = 0.0f;  ///< Reserved for future shapes.
     // Material blend mode
     uint32_t blendMode       = 2;     ///< 0=AlphaBlend (SrcAlpha/InvSrcAlpha), 1=Additive (One/One), 2=PremulAlpha (One/InvSrcAlpha).
-    // Sprite channel mask — selects how to interpret sprite texture channels.
-    uint32_t spriteChannelMask = 0;   ///< 0=RGBA (full texture), 1=R as alpha, 2=G as alpha, 3=B as alpha, 4=A as alpha.
 };
 
 /// Named emitter preset with a spawn rate.
@@ -189,14 +181,14 @@ struct VFXBillboardCB {
     float    alphaErosion      = 0.0f;             ///< Subtractive alpha erosion [0, 1].
     float    emissiveIntensity = 0.0f;             ///< Additive emissive multiplier.
     float    _psPad0           = 0.0f;
-    uint32_t flipbookRows        = 1;              ///< Sprite sheet rows. 1 = no flipbook.
-    uint32_t flipbookCols        = 1;              ///< Sprite sheet columns. 1 = no flipbook.
-    uint32_t flipbookTotalFrames = 1;              ///< Total valid frames.
-    float    flipbookFPS         = 0.0f;           ///< Playback speed (frames/sec).
-    uint32_t flipbookBlendMode   = 0;              ///< 0=None, 1=Linear, 2=Random.
-    uint32_t _fbPad0             = 0;
-    uint32_t _fbPad1             = 0;
-    uint32_t _fbPad2             = 0;
+    float    _pad1                = 0.0f;
+    float    _pad2                = 0.0f;
+    float    _pad3                = 0.0f;
+    float    _pad4                = 0.0f;
+    float    _pad5                = 0.0f;
+    float    _pad6                = 0.0f;
+    float    _pad7                = 0.0f;
+    float    _pad8                = 0.0f;
     // ── Size over lifetime (analytical piecewise-linear curve, 16 bytes) ──
     float    sizeOverLifeStart    = 1.0f;          ///< Size multiplier at birth (t=0).
     float    sizeOverLifePeak     = 1.0f;          ///< Size multiplier at peak time.
@@ -209,7 +201,7 @@ struct VFXBillboardCB {
     uint32_t alignmentMode        = 0;              ///< 0=CameraFacing, 1=VelocityAligned.
     float    stretchFactor        = 0.0f;           ///< Velocity stretch multiplier. 0=no stretch.
     uint32_t blendModeHint        = 2;              ///< 0=AlphaBlend, 1=Additive, 2=PremulAlpha — tells PS how to output alpha.
-    uint32_t spriteChannelMask    = 0;              ///< 0=RGBA, 1=R as alpha, 2=G as alpha, 3=B as alpha, 4=A as alpha.
+    uint32_t _pad9                = 0;
 };
 static_assert(sizeof(VFXBillboardCB) == 272, "VFXBillboardCB must be 272 bytes (256 base + 16 alignment/stretch)");
 
@@ -277,18 +269,16 @@ public:
     /// * `viewMat` — Current view matrix (for billboard orientation).
     /// * `emitterPos` — World-space emitter position.
     /// * `prevViewProj` — Previous frame's view-projection (for TAA motion vectors).
-    /// * `config` — Emitter config (flipbook, soft fade, emissive params).
+    /// * `config` — Emitter config (soft fade, emissive params).
     /// * `blendMode` — 0=AlphaBlend, 1=Additive, 2=PremulAlpha. Selects PSO and PS behavior.
     /// * `depthBufferSrvIdx` — SRV index for the scene depth buffer (soft fade).
-    /// * `spriteTextureSrvIdx` — SRV index for the sprite atlas (UINT32_MAX = none).
     void DrawBillboards(IRHICommandList* cmdList, CBRingAllocator* cbRing,
                         uint64_t perFrameCBGpuAddr,
                         const Mat4& viewMat, const Vec3& emitterPos,
                         const Mat4& prevViewProj,
                         const VFXEmitterConfig& config,
                         uint32_t blendMode,
-                        uint32_t depthBufferSrvIdx,
-                        uint32_t spriteTextureSrvIdx = UINT32_MAX);
+                        uint32_t depthBufferSrvIdx);
 
     /// Returns the billboard graphics pipeline handle for the given blend mode.
     ///

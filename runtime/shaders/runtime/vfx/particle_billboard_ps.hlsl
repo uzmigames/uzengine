@@ -1,8 +1,8 @@
 /// Billboard pixel shader for GPU particle rendering.
 ///
-/// Samples the sprite texture at the interpolated UV from the vertex shader,
-/// multiplies by the particle's vertex-interpolated color, and applies
-/// soft-particle depth fading to avoid hard intersections with scene geometry.
+/// Generates a procedural soft circle, multiplies by the particle's
+/// vertex-interpolated color, and applies soft-particle depth fading
+/// to avoid hard intersections with scene geometry.
 ///
 /// # Soft Particle Depth Fade
 /// Compares the particle's linear depth with the scene depth buffer to produce
@@ -24,13 +24,10 @@
 /// - b0: VFXBillboardConstants (unified bindless indices for VS buffers + PS textures)
 /// - b1: PerFrameCB (nearPlane, farPlane for depth linearization)
 /// - b2: VFXBillboardCB (unified VS emitter params + PS rendering params)
-/// - s0: linearSampler (bilinear, clamp — for sprite texture)
-/// - s1: linearSampler (point, clamp — for depth buffer sampling)
+/// - s2: depthSampler (bilinear, clamp — for depth buffer sampling)
 ///
 /// @ref GPU Gems 3 "Soft Particles" — distance-based alpha fade near surfaces
-/// @ref Nguyen 2007 "GPU Gems 3" ch. 23 — flipbook/SubUV sprite sheet animation
 /// @constants SOFT_FADE_MIN_ALPHA=0.001 (discard threshold to skip transparent pixels)
-///            kFlipbookBlendNone=0, kFlipbookBlendLinear=1, kFlipbookBlendRandom=2
 /// @deviations NONE
 
 #include "../include/depth_common.hlsli"
@@ -51,16 +48,13 @@ static const float SOFT_FADE_MIN_ALPHA = 0.001f;
 /// Interpolants from the billboard vertex shader.
 struct PSInput {
     float4 positionCS     : SV_Position; ///< Screen-space position (used for depth buffer UV).
-    float2 texcoord       : TEXCOORD0;   ///< Sprite UV in [0,1].
+    float2 texcoord       : TEXCOORD0;   ///< UV in [0,1] for procedural circle generation.
     float4 color          : COLOR0;      ///< Particle RGBA color, vertex-interpolated.
     float3 positionWS     : TEXCOORD1;   ///< World-space position for depth calculations.
-    float  age            : TEXCOORD2;   ///< Particle age in seconds (for flipbook animation).
+    float  age            : TEXCOORD2;   ///< Particle age in seconds.
     float  lifetime       : TEXCOORD3;   ///< Particle total lifetime in seconds.
-    uint   particleIdx    : TEXCOORD4;   ///< Particle index for deterministic random frame hash.
+    uint   particleIdx    : TEXCOORD4;   ///< Particle index (reserved for future use).
     float4 prevPositionCS : TEXCOORD5;   ///< Previous frame clip-space position (for motion vector PS).
-    float2 subUV0         : TEXCOORD6;   ///< Atlas UV for current flipbook frame (computed in VS).
-    float2 subUV1         : TEXCOORD7;   ///< Atlas UV for next flipbook frame (computed in VS).
-    float  subUVLerp      : TEXCOORD8;   ///< Inter-frame blend factor [0,1) (computed in VS).
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -70,7 +64,7 @@ struct PSInput {
 #ifdef UZ_BINDLESS
 /// Unified root constants for bindless resource access (shared by VS and PS).
 /// Layout MUST match VFXBillboardConstants in particle_billboard_vs.hlsl exactly.
-/// PS reads spriteTextureIdx and depthBufferIdx from bytes 32-39.
+/// PS reads depthBufferIdx from bytes 36-39. spriteTextureIdx is reserved but unused.
 ///
 /// Uses plain cbuffer syntax instead of ConstantBuffer<T> to ensure correct
 /// DXIL code generation with DXC for root constants. ConstantBuffer<T> can
@@ -90,14 +84,13 @@ cbuffer VFXBillboardConstants : register(b0) {
     uint agesBufferIdx;
     uint lifespansBufferIdx;
     // PS indices (bytes 32-47)
-    uint spriteTextureIdx;     ///< SRV index: Texture2D<float4> sprite/atlas.
+    uint spriteTextureIdx;     ///< Reserved (always UINT32_MAX, no sprite texture).
     uint depthBufferIdx;       ///< SRV index: Texture2D<float> scene depth (reversed-Z).
     uint _vfxPad0;
     uint _vfxPad1;
 };
 #else
 /// SM5 fallback: explicit texture bindings.
-Texture2D<float4> spriteTexture : register(t0);
 Texture2D<float>  depthBuffer   : register(t4);
 #endif
 
@@ -143,17 +136,14 @@ cbuffer VFXBillboardCB : register(b2) {
                                    ///< 0.0 = no emission (default). Used for fire/sparks.
     float    _psPad0;
 
-    // Flipbook / SubUV sprite sheet parameters.
-    // When flipbookRows == 1 && flipbookCols == 1, no flipbook logic runs
-    // and the shader behaves identically to a single-frame sprite.
-    uint     flipbookRows;         ///< Rows in sprite sheet. 1 = no flipbook (default).
-    uint     flipbookCols;         ///< Columns in sprite sheet. 1 = no flipbook (default).
-    uint     flipbookTotalFrames;  ///< Total valid frames (rows * cols or less if partially filled).
-    float    flipbookFPS;          ///< Playback speed in frames per second. Typical: 24-60.
-    uint     flipbookBlendMode;    ///< 0 = None (snap), 1 = Linear (lerp), 2 = Random (per-particle).
-    uint     _fbPad0;
-    uint     _fbPad1;
-    uint     _fbPad2;
+    float    _pad1;
+    float    _pad2;
+    float    _pad3;
+    float    _pad4;
+    float    _pad5;
+    float    _pad6;
+    float    _pad7;
+    float    _pad8;
     // ── Size over lifetime (declared for layout, not read by PS, 16 bytes) ──
     float    sizeOverLifeStart;
     float    sizeOverLifePeak;
@@ -166,16 +156,12 @@ cbuffer VFXBillboardCB : register(b2) {
     uint     alignmentMode;        ///< 0=CameraFacing, 1=VelocityAligned (not read by PS).
     float    stretchFactor;        ///< Velocity stretch multiplier (not read by PS).
     uint     blendModeHint;        ///< 0=AlphaBlend, 1=Additive, 2=PremulAlpha — controls PS alpha output.
-    uint     spriteChannelMask;  ///< 0=RGBA, 1=R as alpha, 2=G as alpha, 3=B as alpha, 4=A as alpha.
+    uint     _pad9;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Samplers
 // ─────────────────────────────────────────────────────────────────────────────
-
-/// Bilinear clamp sampler for sprite sheet atlas sampling (s4).
-/// CLAMP addressing prevents bleeding across atlas cell boundaries.
-SamplerState spriteSampler : register(s4);
 
 /// Bilinear clamp sampler for depth buffer reads (s2).
 /// Uses the global post-process sampler already in the root signature.
@@ -237,39 +223,11 @@ float ComputeSoftParticleFade(float4 screenPos, float2 screenSize, float fadeDis
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Channel Mask Helper
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Applies the sprite channel mask to a raw texture sample.
-///
-/// When spriteChannelMask == 0, returns the full RGBA sample as-is.
-/// When spriteChannelMask == 1..4, extracts R/G/B/A respectively as an alpha
-/// mask with white RGB. This is the standard approach for grayscale sprite
-/// sheets where shape data is stored in a single channel.
-///
-/// # Parameters
-/// - rawSample: the RGBA texture sample.
-/// - channelMask: 0=RGBA, 1=R as alpha, 2=G as alpha, 3=B as alpha, 4=A as alpha.
-///
-/// # Returns
-/// Masked sprite color.
-float4 ApplyChannelMask(float4 rawSample, uint channelMask) {
-    if (channelMask == 0) {
-        return rawSample;
-    }
-    // Extract the selected channel as alpha; RGB becomes white so particle
-    // color (applied later via multiplication) fully controls hue.
-    float channels[4] = { rawSample.r, rawSample.g, rawSample.b, rawSample.a };
-    float alpha = channels[channelMask - 1];
-    return float4(1.0f, 1.0f, 1.0f, alpha);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Pixel Shader Entry Point
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Samples the particle sprite texture, applies vertex color, and computes
-/// soft-particle depth fade.
+/// Generates a procedural soft circle, applies vertex color, color over
+/// lifetime, and computes soft-particle depth fade.
 ///
 /// # Parameters
 /// - input: interpolated vertex data from the billboard VS.
@@ -277,43 +235,13 @@ float4 ApplyChannelMask(float4 rawSample, uint channelMask) {
 /// # Returns
 /// Final RGBA color for alpha-blended compositing.
 float4 main(PSInput input) : SV_Target {
-    // ── Sample sprite texture using VS-computed SubUV coordinates ──
-    //
-    // SubUV atlas coordinates are computed in the vertex shader (Niagara pattern).
-    // The PS only samples at the interpolated subUV0/subUV1 and lerps by subUVLerp.
-    // This eliminates per-pixel flipbook computation and simplifies the PS significantly.
-    float4 spriteColor;
-
-    // When no sprite texture is bound (spriteTextureIdx == 0xFFFFFFFF),
-    // generate a soft procedural circle — particle vertex color alone determines appearance.
-#ifdef UZ_BINDLESS
-    bool hasSpriteTexture = (spriteTextureIdx != 0xFFFFFFFF);
-#else
-    bool hasSpriteTexture = true; // SM5 path always has explicit texture binding
-#endif
-
-    if (!hasSpriteTexture) {
-        // No sprite texture — generate a soft radial circle procedurally.
-        // Maps UV [0,1] to [-1,+1] centered, then applies smooth falloff.
-        float2 center = input.texcoord * 2.0f - 1.0f;
-        float dist = dot(center, center); // squared distance from center
-        float alpha = saturate(1.0f - dist); // linear falloff: 1 at center, 0 at edge
-        alpha *= alpha; // quadratic for softer look
-        spriteColor = float4(1.0f, 1.0f, 1.0f, alpha);
-    } else {
-        // Sample sprite at VS-computed SubUV coordinates (handles both flipbook and single-frame).
-        // spriteSampler (s4) uses CLAMP addressing to prevent bleeding across atlas cells.
-#ifdef UZ_BINDLESS
-        Texture2D<float4> spriteTex = ResourceDescriptorHeap[spriteTextureIdx];
-        float4 sampleA = spriteTex.Sample(spriteSampler, input.subUV0);
-        float4 sampleB = spriteTex.Sample(spriteSampler, input.subUV1);
-#else
-        float4 sampleA = spriteTexture.Sample(spriteSampler, input.subUV0);
-        float4 sampleB = spriteTexture.Sample(spriteSampler, input.subUV1);
-#endif
-        float4 rawSample = lerp(sampleA, sampleB, input.subUVLerp);
-        spriteColor = ApplyChannelMask(rawSample, spriteChannelMask);
-    }
+    // ── Procedural soft circle ──
+    // Maps UV [0,1] to [-1,+1] centered, then applies smooth falloff.
+    float2 center = input.texcoord * 2.0f - 1.0f;
+    float dist = dot(center, center); // squared distance from center
+    float alpha = saturate(1.0f - dist); // linear falloff: 1 at center, 0 at edge
+    alpha *= alpha; // quadratic for softer look
+    float4 spriteColor = float4(1.0f, 1.0f, 1.0f, alpha);
 
     // ── Evaluate color over lifetime (linear interpolation start→end) ──
     // normalizedAge in [0,1] maps the particle's age to its full lifespan.
