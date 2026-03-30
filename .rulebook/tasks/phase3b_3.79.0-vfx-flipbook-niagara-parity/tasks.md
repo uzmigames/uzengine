@@ -40,10 +40,19 @@ expression, NiagaraSpriteVertexFactory. See docs/analysis/particles/ for full an
       ```
 - [ ] 3.2 For linear blend: compute next frame UV the same way with `frameIndex + 1`.
       `spriteColor = lerp(sample(uv0), sample(uv1), blendFactor)`.
-- [ ] 3.3 Sample the FULL RGBA from the sprite texture — do NOT extract a single channel.
-      The sprite color multiplies with particle color: `finalColor = spriteRGBA * particleColor`.
-      If the texture has alpha, use it. If it's RGB-only (alpha=1), the shape comes from RGB.
-- [ ] 3.4 Remove the green-channel-only hack. Use the texture as-is (RGBA).
+- [ ] 3.3 Add `uint spriteChannelMask` to VFXBillboardCB: 0=RGBA (use full texture), 1=R as alpha,
+      2=G as alpha, 3=B as alpha, 4=A as alpha. Default=0 (full RGBA).
+      When channelMask > 0: extract the selected channel as alpha, set RGB to white:
+      ```
+      float4 raw = spriteTex.Sample(sampler, uv);
+      float channels[4] = { raw.r, raw.g, raw.b, raw.a };
+      float mask = channels[spriteChannelMask - 1];
+      spriteColor = float4(1, 1, 1, mask); // particle color applied later
+      ```
+      When channelMask == 0: use full RGBA as-is: `spriteColor = raw`.
+- [ ] 3.4 Add `uint32_t spriteChannelMask = 0` to VFXEmitterConfig. Pass through CB.
+- [ ] 3.5 Add channel mask cycling key in demo (Shift+M: cycle RGBA/R/G/B/A).
+- [ ] 3.6 Remove the hardcoded green-channel-only hack from current PS code.
 
 ## 4. Fix Texture Sampling
 
