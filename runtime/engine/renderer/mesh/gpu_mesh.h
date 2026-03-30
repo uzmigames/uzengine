@@ -20,6 +20,7 @@
 #include "rhi_types.h"
 #include "upload_context.h"
 #include "gi/mesh_sdf_baker.h"
+#include "vector3.h"
 
 #include <cstdint>
 #include <vector>
@@ -51,6 +52,10 @@ struct GPUMesh {
     /// LOD1..3 use these fields. All LOD indices are in the same index buffer.
     uint32_t lodCount = 1;
     struct { uint32_t indexOffset; uint32_t indexCount; } lodInfo[3] = {};
+
+    /// World-space AABB from the source mesh (used for bounding sphere / LOD radius).
+    Vec3 boundsMin;
+    Vec3 boundsMax;
 
     /// Baked signed distance field for this mesh (used by GDF composite for GI).
     /// Valid only after MeshSdfBaker::UploadToGPU succeeds during mesh loading.

@@ -4,12 +4,21 @@
 
 ## [0.3.2] — 2026-03-29
 
-### FBX Auto-LOD Generation, Cook Cache Invalidation & Axis Fix
+### FBX Auto-LOD Generation, Cook Cache Invalidation, Axis Fix & Runtime LOD Switching
 
 #### Auto-LOD
 - **feat(fbx):** Auto-LOD generation in FBX importer — generates LOD1 (50%), LOD2 (25%), LOD3 (12.5%) via meshopt_simplify with position-only welding and reverse index remapping to preserve the original vertex buffer.
 - **feat(fbx):** SDF baker guard — skips SDF generation for meshes with >50K indices to prevent hangs.
 - **feat(fbx):** FbxImporter version bumped to v5 (UZMH v2 multi-LOD header + axis fix).
+
+#### Runtime LOD Switching
+- **fix(renderer):** `UploadMeshDeferred` now populates `lodCount`, `lodInfo[3]`, `boundsMin`, and `boundsMax` from the CPU mesh header — was missing, causing `gpu.lodCount=1` and no LOD switching.
+- **feat(renderer):** Auto-computed bounding sphere radius from mesh AABB on load (pivot-based sphere, farthest corner from origin). Replaces the hardcoded 50cm fallback that made LOD thresholds too aggressive.
+- **feat(renderer):** `GPUMesh` now carries `boundsMin`/`boundsMax` fields propagated from the mesh header.
+
+#### Stats Overlay LOD Display
+- **feat(editor):** Stats overlay shows active LOD level (`LOD: X / Y`) — green for LOD0 (full detail), yellow for reduced LODs.
+- **fix(editor):** Vertex and triangle counts in stats overlay now reflect the active LOD's index count instead of always showing LOD0 totals.
 
 #### Cook Cache Invalidation
 - **fix(cook):** Binary timestamp staleness check — uzcook now compares its own modification time against .uzimport sidecars; if the binary is newer (importer code changed), reimport is forced without requiring a manual version bump.

@@ -303,6 +303,16 @@ void StatsOverlay::BuildTextPanel() {
     m_textRenderer.AddText(m_font, buf, textX, textY, dimGray);
     textY += kLineH;
 
+    // LOD info (only shown when mesh has multiple LODs)
+    if (m_totalLODs > 1) {
+        snprintf(buf, sizeof(buf), "LOD: %u / %u", m_activeLOD, m_totalLODs - 1);
+        const Vec4 lodColor = (m_activeLOD == 0)
+            ? Vec4{0.4f, 1.0f, 0.4f, 1.0f}   // green  = full detail
+            : Vec4{1.0f, 0.8f, 0.2f, 1.0f};  // yellow = reduced
+        m_textRenderer.AddText(m_font, buf, textX, textY, lodColor);
+        textY += kLineH;
+    }
+
     // Camera info
     textY += kLineH * 0.5f; // half-line gap
     m_textRenderer.AddText(m_font, "CAMERA", textX, textY, header);

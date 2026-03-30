@@ -22,6 +22,8 @@
 // Read by runtime.cpp to report in uz_frame_stats.
 std::atomic<uint32_t> g_lastSyncMeshEntityCount{0};
 
+
+
 namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -61,6 +63,25 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
                     const auto& gpu = m_meshes[loaded];
                     UZ_LOG(Renderer, Info, "Mesh '{}' loaded: meshId={}, gpu.lodCount={}, gpu.indexCount={}",
                            meshComp.meshPath, loaded, gpu.lodCount, gpu.indexCount);
+
+                    // Auto-compute bounding sphere radius from mesh AABB so LOD
+                    // screen-size thresholds use the correct object size.
+                    // Use max extent from origin (pivot-based sphere).
+                    if (meshComp.boundingSphereRadius <= 0.0f) {
+                        const Vec3& bMin = gpu.boundsMin;
+                        const Vec3& bMax = gpu.boundsMax;
+                        // Farthest AABB corner from pivot (origin of the mesh).
+                        const float rx = std::max(std::abs(bMin.x), std::abs(bMax.x));
+                        const float ry = std::max(std::abs(bMin.y), std::abs(bMax.y));
+                        const float rz = std::max(std::abs(bMin.z), std::abs(bMax.z));
+                        const float autoRadius = std::sqrt(rx * rx + ry * ry + rz * rz);
+                        if (autoRadius > 0.0f) {
+                            meshComp.boundingSphereRadius = autoRadius;
+                            UZ_LOG(Renderer, Info, "Mesh '{}': auto-computed boundingSphereRadius={:.1f}cm",
+                                   meshComp.meshPath, autoRadius);
+                        }
+                    }
+
                     if (gpu.lodCount > 1 && meshComp.lodGroup.numLevels <= 1) {
                         meshComp.lodGroup.numLevels = gpu.lodCount;
                         // All in-file LODs share the same meshIndex — the draw
@@ -72,6 +93,8 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
                             meshComp.lodGroup.levels[li].screenSizeThreshold =
                                 (li < 8) ? kAutoThresholds[li] : 0.0f;
                         }
+                        UZ_LOG(Renderer, Info, "Mesh '{}': LOD group set up — {} levels, thresholds [2.0, 0.5, 0.25, 0.12]",
+                               meshComp.meshPath, gpu.lodCount);
                     }
                 }
             } else {

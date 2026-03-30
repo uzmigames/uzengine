@@ -127,6 +127,10 @@ GPUMesh UploadMesh(IRHIDevice* device, IRHICommandList* cmdList, const Mesh& mes
         result.lodInfo[i].indexCount  = mesh.GetLODIndexCount(i + 1);
     }
 
+    // -- Mesh AABB bounds (used for bounding sphere / LOD screen-size computation) --
+    result.boundsMin = mesh.header.boundsMin;
+    result.boundsMax = mesh.header.boundsMax;
+
     // -- Bindless SRV index --
     if (device->IsBindless()) {
         result.vbSrvIndex = device->GetBufferSRVIndex(result.vertexBuffer);
@@ -206,6 +210,10 @@ DeferredMeshUpload UploadMeshDeferred(IRHIDevice* device, IRHICommandList* cmdLi
         result.mesh.lodInfo[i].indexOffset = mesh.GetLODIndexOffset(i + 1);
         result.mesh.lodInfo[i].indexCount  = mesh.GetLODIndexCount(i + 1);
     }
+
+    // -- Mesh AABB bounds (used for bounding sphere / LOD screen-size computation) --
+    result.mesh.boundsMin = mesh.header.boundsMin;
+    result.mesh.boundsMax = mesh.header.boundsMax;
 
     // -- Bindless SRV index --
     if (device->IsBindless()) {

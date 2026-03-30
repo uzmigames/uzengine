@@ -43,12 +43,12 @@
 - [x] 5B.3 Bump `kUzMeshVersion` to 2 — v2 reader accepts v1 (backward compat) + v2 with optional skinned flag. Updated ReadUzMesh/WriteUzMesh. Added skeletonPath to UzMeshFile.
 
 ### 5C. FBX Skeleton Extraction
-- [ ] 5C.1 Extract skeleton hierarchy from FBX — iterate `ufbx_scene->skin_deformers`, get first skin deformer's clusters. Each `ufbx_skin_cluster` has a `bone_node`. Walk bone_node hierarchy to build parent-child tree. Joint names from `bone_node->name`. Bind pose from `cluster->bind_to_world`.
-- [ ] 5C.2 Compute inverse bind matrices — For each cluster: `inverse_bind = inverse(cluster->geometry_to_world)`. Store in Skeleton::BoneInfo.
-- [ ] 5C.3 Extract per-vertex bone weights from `ufbx_skin_deformer` — For each vertex: collect all (bone_index, weight) pairs from skin_deformer->vertices[v]. Sort by weight descending. Keep top 4. Normalize weights to sum=1.0. Pack to uint8 (weight * 255, round). Validate sum == 255 (adjust largest if off-by-one).
-- [ ] 5C.4 Write .uzskel file — FBX import produces both .uzmesh (skinned) and .uzskel (skeleton) side by side. Skeleton path stored in .uzmesh header.
-- [ ] 5C.5 Detect static vs skinned — If FBX has no `ufbx_skin_deformer`, import as static mesh (current behavior, Vertex 48B). If has skin, import as skinned (SkinnedVertex 56B + .uzskel).
-- [ ] 5C.6 Verify: load skinned FBX, log skeleton joint count + hierarchy + per-vertex weight distribution
+- [x] 5C.1 Extract skeleton hierarchy from FBX — ExtractSkeleton() collects bone_nodes from skin->clusters, builds node-to-candidate map, resolves parents by walking bone_node->parent chain, topological sort by depth, extracts bind-pose local TRS via ufbx_matrix_to_transform + ComputeLocalFromWorldTRS (inverts ComposeWith). All in fbx_importer.cpp anonymous namespace.
+- [x] 5C.2 Compute inverse bind matrices — Handled automatically by Skeleton::ComputeInverseBindMatrices() called at end of ExtractSkeleton(). Walks hierarchy forward computing world = local * parent, then inverts.
+- [x] 5C.3 Extract per-vertex bone weights from ufbx_skin_deformer — PackBoneWeights() reads skin->vertices[vertexIdx].weight_begin/num_weights, takes top 4 (pre-sorted descending by ufbx), normalizes to uint8 sum=255, adjusts largest weight for rounding. Parallel arrays (allBoneIndices/allBoneWeights) remapped alongside tangents via meshopt remap table.
+- [x] 5C.4 Write .uzskel file — WriteSkeleton() serializes skeleton as AssetImportSidecar with extension=".uzskel". Skeleton path derived from sourceName (.fbx -> .uzskel) and stored in UZMS header via WriteUzMesh(skeletonPath).
+- [x] 5C.5 Detect static vs skinned — `mesh->skin_deformers.count > 0` triggers skinned path (SkinnedVertex 56B + UZMS format). Static meshes keep exact original UZMH format (Vertex 48B, unchanged behavior).
+- [x] 5C.6 Verify: logs skeleton bone count, root name, max depth. Logs weight distribution (1/2/3/4-bone influence counts). Final import log includes stride, [SKINNED] tag.
 
 ## 6. GPU Skinning
 - [ ] 6.1 Create skinned vertex shader (`runtime/shaders/runtime/skinned_vs.hlsl`) — linear blend skinning with 4 bone influences, joint palette via StructuredBuffer or cbuffer (max 128 joints)
