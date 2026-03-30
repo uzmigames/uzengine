@@ -213,10 +213,11 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
                        bool diagMode = false,
                        bool pixelDebugEnabled = false,
                        int pixelDebugX = 960,
-                       int pixelDebugY = 540) {
-    // --diag / --pixel-debug: enforce a frame limit so the process never hangs
+                       int pixelDebugY = 540,
+                       bool passDump = false) {
+    // --diag / --pixel-debug / --pass-dump: enforce a frame limit
     int effectiveMaxFrames = maxFrames;
-    if ((diagMode || pixelDebugEnabled) && maxFrames == kInfiniteFrames) {
+    if ((diagMode || pixelDebugEnabled || passDump) && maxFrames == kInfiniteFrames) {
         effectiveMaxFrames = 120;
         UZ_LOG(Engine, Info, "Diagnostic mode: auto-limiting to {} frames (use --frames to override)", effectiveMaxFrames);
     }
@@ -499,6 +500,12 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
 
     device->WaitIdle();
 
+    // ── Pass dump — all targets as PNGs + INDEX.html ──────────────────
+    if (passDump && sceneRendererReady) {
+        auto& inspector = sceneRenderer.GetPassInspector();
+        inspector.ExecuteDump(device, cmdList, frameIndex, ".screenshots");
+    }
+
     // ── Diagnostic output (JSON to stdout) ──────────────────────────────
     if (diagMode && sceneRendererReady) {
         auto& inspector = sceneRenderer.GetPassInspector();
@@ -620,10 +627,12 @@ int main(int argc, char** argv) {
         const bool pixelDebugEnabled = config.GetBool("pixel-debug", false);
         const int pixelDebugX = config.GetInt("pixel-debug-x", 960);
         const int pixelDebugY = config.GetInt("pixel-debug-y", 540);
+        const bool passDump = config.GetBool("pass-dump", false);
         exitCode = uz::RunWindowed(deviceDesc, width, height, maxFrames,
                                     windowTitle, projectDir, contentRoot, defaultScene,
                                     ssPath, ssFrame, shadowDebug, editorMode,
-                                    diagMode, pixelDebugEnabled, pixelDebugX, pixelDebugY);
+                                    diagMode, pixelDebugEnabled, pixelDebugX, pixelDebugY,
+                                    passDump);
 #else
         UZ_LOG(Engine, Error, "Windowed mode not supported on this platform yet");
         exitCode = uz::kExitRenderError;
