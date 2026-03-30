@@ -58,9 +58,12 @@ RHIPipelineHandle PipelineLibrary::GetShadowDepth(bool bindless) {
     desc.rasterizer.depthBias             = 10.0f;
     desc.depthStencil.depthEnable         = true;
     desc.depthStencil.depthWrite          = true;
-    // Shadow maps use standard-Z (0=near, 1=far). LessEqual matches reference CF_LessEqual
-    // (ShadowDepthRendering.cpp:760) — avoids self-shadow acne on coplanar surfaces.
-    desc.depthStencil.depthFunc           = RHICompareFunc::LessEqual;
+    // Shadow maps use reversed-Z (1=near, 0=far) — matches all camera projections.
+    // GreaterEqual comparison: SampleCmpLevelZero returns 1 if (storedDepth >= compareDepth).
+    // Reversed-Z: near plane stores 1.0, far plane stores 0.0.
+    // When compareDepth (fragment depth - bias) is close to camera, storedDepth >> compareDepth → lit.
+    // When fragment is far from light, compareDepth >> storedDepth → shadowed.
+    desc.depthStencil.depthFunc           = RHICompareFunc::GreaterEqual;
     desc.renderTargetCount                = 0;
     desc.depthStencilFormat               = RHIFormat::D32Float;
     desc.debugName                        = bindless ? "ShadowDepth_Bindless" : "ShadowDepth";
@@ -179,9 +182,9 @@ RHIPipelineHandle PipelineLibrary::GetShadowDepthInstanced() {
     desc.rasterizer.depthBias             = 10.0f;
     desc.depthStencil.depthEnable         = true;
     desc.depthStencil.depthWrite          = true;
-    // Shadow maps use standard-Z (0=near, 1=far). LessEqual matches reference CF_LessEqual
-    // (ShadowDepthRendering.cpp:760) — avoids self-shadow acne on coplanar surfaces.
-    desc.depthStencil.depthFunc           = RHICompareFunc::LessEqual;
+    // Shadow maps use reversed-Z (1=near, 0=far) — matches all camera projections.
+    // GreaterEqual comparison: SampleCmpLevelZero returns 1 if (storedDepth >= compareDepth).
+    desc.depthStencil.depthFunc           = RHICompareFunc::GreaterEqual;
     desc.renderTargetCount                = 0;
     desc.depthStencilFormat               = RHIFormat::D32Float;
     desc.debugName                        = "ShadowDepth_Instanced";

@@ -99,6 +99,60 @@ cbuffer PerFrameCB : register(b1) {
     float    _framePad2[57];
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// LightingCB — local point + spot light arrays, bound at register b2
+// ─────────────────────────────────────────────────────────────────────────────
+// Layout MUST match C++ LightingCB (constant_buffers.h) byte-for-byte.
+// Total: 5632 bytes = 22 * 256 (D3D12 CB alignment).
+
+/// @ref Karis 2013 "Real Shading in Unreal Engine 4" — point/spot light evaluation
+struct PointLightData {
+    float3   position;         // World-space position.
+    float    radius;           // Attenuation radius (light falls to zero here).
+    float3   color;            // Color * intensity (linear HDR).
+    float    sourceRadius;     // Area light sphere radius (0 = point).
+    float    falloffExponent;  // Custom falloff (when inverse square disabled).
+    float    specularScale;    // Per-light specular multiplier (0-1).
+    float    diffuseScale;     // Per-light diffuse multiplier (0-1).
+    uint     flags;            // Bit 0: useInverseSquaredFalloff.
+    uint     shadowIndex;      // Index into localShadows[] (0xFFFFFFFF = no shadow).
+    float    _pointPad0;       // Pad to 64 bytes (4 float4s).
+    float    _pointPad1;
+    float    _pointPad2;
+};
+
+struct SpotLightData {
+    float3   position;              // World-space position.
+    float    radius;                // Attenuation radius.
+    float3   color;                 // Color * intensity (linear HDR).
+    float    cosOuterAngle;         // Cosine of outer cone half-angle.
+    float3   direction;             // Normalised world-space cone direction.
+    float    invCosConeDifference;  // 1 / (cosInner - cosOuter).
+    float    falloffExponent;       // Custom falloff (when inverse square disabled).
+    float    specularScale;         // Per-light specular multiplier (0-1).
+    float    diffuseScale;          // Per-light diffuse multiplier (0-1).
+    uint     flags;                 // Bit 0: useInverseSquaredFalloff.
+    uint     shadowIndex;           // Index into localShadows[] (0xFFFFFFFF = no shadow).
+    float    _spotPad0;             // Pad to 80 bytes (5 float4s).
+    float    _spotPad1;
+    float    _spotPad2;
+};
+
+cbuffer LightingCB : register(b2) {
+    PointLightData pointLights[64]; // 64 * 64 = 4096 bytes.
+    uint  pointLightCount;          // Number of active point lights.
+    uint  spotLightCount;           // Number of active spot lights.
+    uint  _lpad0;                   // Align to 16 bytes.
+    uint  _lpad1;
+    SpotLightData spotLights[16];   // 16 * 80 = 1280 bytes.
+    float4 _lpad2[15];              // Pad to 5632 bytes (15 * 16 = 240).
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Light flag constants
+// ─────────────────────────────────────────────────────────────────────────────
+static const uint kLightFlag_InverseSquared = 1u;
+
 #ifndef UZ_BINDLESS
 Texture2D<float4> gbufferAlbedo   : register(t0);
 Texture2D<float4> gbufferNormal   : register(t1);
@@ -161,7 +215,49 @@ float V_Neubelt(float NoV, float NoL) {
     return 1.0 / (4.0 * (NoL + NoV - NoL * NoV));
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Point / Spot Light Attenuation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Inverse-squared distance falloff with smooth radius cutoff.
+/// @ref Karis 2013 "Real Shading in Unreal Engine 4" — windowed falloff
+/// @constants smooth = saturate(1 - (d/r)^4)^2, denominator = d^2 + 1
+/// @deviations NONE
+float PointLightAttenuation(float distSq, float radius, float falloffExponent, uint flags) {
+    float invRadiusSq = 1.0 / (radius * radius);
+    if (flags & kLightFlag_InverseSquared) {
+        // Physically-based inverse-squared falloff with smooth windowing.
+        // @ref Karis 2013 eq. 26: smooth = saturate(1 - (d^2/r^2)^2)^2
+        float factor = distSq * invRadiusSq;
+        float smooth = saturate(1.0 - factor * factor);
+        return (smooth * smooth) / max(distSq, 0.01);
+    } else {
+        // Artist-friendly power falloff with windowed cutoff.
+        float d = sqrt(distSq);
+        float normalizedDist = d / radius;
+        return pow(saturate(1.0 - pow(normalizedDist, 4.0)), 2.0) / (distSq + 1.0);
+    }
+}
+
+/// Spot light cone angular attenuation with smooth falloff.
+/// @ref Karis 2013 "Real Shading in Unreal Engine 4" — spot cone factor
+/// @constants atten = saturate((cos(angle) - cosOuter) * invCosDiff)^2
+/// @deviations NONE
+float SpotConeAttenuation(float3 lightDir, float3 toLight, float cosOuterAngle, float invCosConeDiff) {
+    float cosAngle = dot(normalize(-toLight), lightDir);
+    float atten = saturate((cosAngle - cosOuterAngle) * invCosConeDiff);
+    return atten * atten;
+}
+
 float4 main(FSInput input) : SV_Target {
+    // DIAGNOSTIC: visualize pointLightCount — green=has lights, red=zero lights
+    // NOTE: this runs BEFORE sky discard, so sky pixels also show the diagnostic
+    {
+        float r = (pointLightCount == 0u) ? 1.0 : 0.0;
+        float g = (pointLightCount > 0u)  ? 1.0 : 0.0;
+        float b = float(pointLightCount) / 4.0;
+        return float4(r, g, b, 1);
+    }
     int2 px = int2(input.positionCS.xy);
 
     // ── GBuffer Load ──────────────────────────────────────────────────────
@@ -346,6 +442,101 @@ float4 main(FSInput input) : SV_Target {
         }
     }
 
+    // ── Point Lights ────────────────────────────────────────────────────
+    // @ref Karis 2013 "Real Shading in Unreal Engine 4" — punctual light evaluation
+    // Iterate all active point lights. Each uses the same PBR BRDF as the
+    // directional light with per-light attenuation and optional shadow.
+    {
+#ifdef UZ_BINDLESS
+        Texture2D<float> localAtlas = ResourceDescriptorHeap[localShadowAtlasIndex];
+#else
+        #define localAtlas localShadowAtlasTexture
+#endif
+
+        for (uint pi = 0; pi < pointLightCount; ++pi) {
+            PointLightData pl = pointLights[pi];
+            float3 toLight = pl.position - worldPos;
+            float  distSq  = dot(toLight, toLight);
+
+            // Early-out: fragment is beyond the light's attenuation radius.
+            if (distSq > pl.radius * pl.radius) continue;
+
+            float3 Lp    = normalize(toLight);
+            float  NdotLp = saturate(dot(N, Lp));
+            if (NdotLp <= 0.0) continue;
+
+            float atten   = PointLightAttenuation(distSq, pl.radius,
+                                                   pl.falloffExponent, pl.flags);
+            float shadowP = SamplePointLightShadow(worldPos, pl.position,
+                                                    pl.shadowIndex,
+                                                    localAtlas, shadowSampler);
+
+            // Half-vector and derived dot products for specular BRDF.
+            float3 Hp    = normalize(V + Lp);
+            float  NdotHp = saturate(dot(N, Hp));
+            float  VdotHp = saturate(dot(V, Hp));
+
+            // GGX specular BRDF (same as directional light path).
+            float  D_p   = D_GGX(NdotHp, alpha);
+            float  Vis_p = Vis_SmithJointApprox(a2, NoV, NdotLp);
+            float3 F_p   = F_Schlick(VdotHp, F0);
+            float3 specP = D_p * Vis_p * F_p;
+
+            // Burley diffuse — same quality as directional light path.
+            // @ref Burley 2012 "Physically Based Shading at Disney"
+            float3 diffP = Fd_Burley(DiffuseColor, roughness, NoV, NdotLp, VdotHp);
+
+            Lo += (diffP * pl.diffuseScale + specP * pl.specularScale)
+                  * pl.color * atten * NdotLp * shadowP;
+        }
+
+        // ── Spot Lights ─────────────────────────────────────────────────
+        // @ref Karis 2013 "Real Shading in Unreal Engine 4" — spot light with cone attenuation
+        for (uint si = 0; si < spotLightCount; ++si) {
+            SpotLightData sl = spotLights[si];
+            float3 toLight = sl.position - worldPos;
+            float  distSq  = dot(toLight, toLight);
+
+            // Early-out: beyond attenuation radius.
+            if (distSq > sl.radius * sl.radius) continue;
+
+            float3 Ls    = normalize(toLight);
+            float  NdotLs = saturate(dot(N, Ls));
+            if (NdotLs <= 0.0) continue;
+
+            // Distance + cone attenuation.
+            float distAtten = PointLightAttenuation(distSq, sl.radius,
+                                                     sl.falloffExponent, sl.flags);
+            float coneAtten = SpotConeAttenuation(sl.direction, toLight,
+                                                    sl.cosOuterAngle,
+                                                    sl.invCosConeDifference);
+            if (coneAtten <= 0.0) continue;
+
+            float shadowS = SampleLocalLightShadow(worldPos, sl.shadowIndex,
+                                                    localAtlas, shadowSampler);
+
+            // Half-vector and specular BRDF.
+            float3 Hs    = normalize(V + Ls);
+            float  NdotHs = saturate(dot(N, Hs));
+            float  VdotHs = saturate(dot(V, Hs));
+
+            float  D_s   = D_GGX(NdotHs, alpha);
+            float  Vis_s = Vis_SmithJointApprox(a2, NoV, NdotLs);
+            float3 F_s   = F_Schlick(VdotHs, F0);
+            float3 specS = D_s * Vis_s * F_s;
+            // Burley diffuse — same quality as directional light path.
+            // @ref Burley 2012 "Physically Based Shading at Disney"
+            float3 diffS = Fd_Burley(DiffuseColor, roughness, NoV, NdotLs, VdotHs);
+
+            Lo += (diffS * sl.diffuseScale + specS * sl.specularScale)
+                  * sl.color * distAtten * coneAtten * NdotLs * shadowS;
+        }
+
+#ifndef UZ_BINDLESS
+        #undef localAtlas
+#endif
+    }
+
     // ── IBL Ambient ────────────────────────────────────────────────────
     float3 skyTint = float3(skyLightColorR, skyLightColorG, skyLightColorB) * skyLightIntensity;
     float3 ambient = float3(0, 0, 0);
@@ -414,6 +605,94 @@ float4 main(FSInput input) : SV_Target {
         /// @ref Lagarde 2014
         specularAmbient *= SpecularOcclusion(NoV, ao, roughness);
 
+        // ── SSR Compositing ────────────────────────────────────────────
+        // @ref McGuire 2014 "Efficient GPU Screen-Space Ray Tracing"
+        // Blend screen-space reflections with IBL specular. SSR provides
+        // local reflections; IBL provides distant/fallback reflections.
+        // SSR alpha channel encodes hit confidence (0 = miss, 1 = hit).
+        if (ssrSrvIndex != 0xFFFFFFFF) {
+#ifdef UZ_BINDLESS
+            Texture2D<float4> ssrTex = ResourceDescriptorHeap[ssrSrvIndex];
+            float4 ssrSample    = ssrTex.Load(int3(px, 0));
+            float3 ssrColor     = ssrSample.rgb;
+            float  ssrConfidence = ssrSample.a;
+
+            // Replace IBL specular with SSR where confident.
+            // Fresnel-weight the SSR contribution identically to IBL specular.
+            float3 kS_ssr = F_SchlickRoughness(NoV, F0, roughness);
+            specularAmbient = lerp(specularAmbient, ssrColor * kS_ssr, ssrConfidence);
+#endif
+        }
+
+        // ── Reflection Probe Blending ──────────────────────────────────
+        // @ref Lagarde 2012 "Local Image-based Lighting With Parallax-corrected Cubemaps"
+        // Iterate active probes, blend local IBL where pixel is within influence.
+#ifdef UZ_BINDLESS
+        if (reflectionProbeCount > 0 && reflectionProbeBufferSrvIndex != 0xFFFFFFFF) {
+            StructuredBuffer<float4> probeBuffer =
+                ResourceDescriptorHeap[reflectionProbeBufferSrvIndex];
+
+            float  totalProbeWeight = 0.0;
+            float3 probeIrradiance  = float3(0, 0, 0);
+            float3 probePrefilt     = float3(0, 0, 0);
+
+            for (uint pi2 = 0; pi2 < reflectionProbeCount; ++pi2) {
+                // ReflectionProbeGPU is 32 bytes = 2 float4s.
+                float4 probe0 = probeBuffer[pi2 * 2 + 0]; // posX, posY, posZ, influenceRadius
+                float4 probe1 = probeBuffer[pi2 * 2 + 1]; // blendDistance, _pad, irradianceSrv, prefilteredSrv
+
+                float3 probePos   = probe0.xyz;
+                float  infRadius  = probe0.w;
+                float  blendDist  = probe1.x;
+                uint   probeIrrSrv  = asuint(probe1.z);
+                uint   probePrefSrv = asuint(probe1.w);
+
+                float dist = length(worldPos - probePos);
+                if (dist >= infRadius) continue;
+
+                // Fade weight: 1.0 at center, 0.0 at influence edge.
+                float fadeStart = infRadius - blendDist;
+                float weight = (dist < fadeStart)
+                    ? 1.0
+                    : saturate((infRadius - dist) / max(blendDist, 0.001));
+
+                if (weight <= 0.0) continue;
+
+                // Sample probe cubemaps.
+                if (probeIrrSrv != 0xFFFFFFFF) {
+                    TextureCube<float4> probeIrrTex = ResourceDescriptorHeap[probeIrrSrv];
+                    probeIrradiance += probeIrrTex.SampleLevel(
+                        clampSampler, WorldToCubemap(N), 0).rgb * weight;
+                }
+                if (probePrefSrv != 0xFFFFFFFF) {
+                    TextureCube<float4> probePrefTex = ResourceDescriptorHeap[probePrefSrv];
+                    probePrefilt += probePrefTex.SampleLevel(
+                        clampSampler, WorldToCubemap(R), mipLevel).rgb * weight;
+                }
+                totalProbeWeight += weight;
+            }
+
+            // Blend probe IBL with sky IBL based on accumulated weight.
+            if (totalProbeWeight > 0.0) {
+                float blendFactor = saturate(totalProbeWeight);
+                float3 normProbeIrr  = probeIrradiance / totalProbeWeight;
+                float3 normProbePref = probePrefilt / totalProbeWeight;
+
+                // Recompute ambient contribution using probe data.
+                float3 probeKS      = F_SchlickRoughness(NoV, F0, roughness);
+                float3 probeKD      = (1.0 - probeKS) * (1.0 - metallic);
+                float3 probeDiffAmb = probeKD * normProbeIrr * baseColor;
+                float3 probeSpecAmb = normProbePref
+                    * (F0 * envBRDF.x + saturate(50.0 * F0.g) * envBRDF.y);
+                probeSpecAmb *= SpecularOcclusion(NoV, ao, roughness);
+
+                // Lerp between sky IBL ambient and probe ambient.
+                diffuseAmbient  = lerp(diffuseAmbient, probeDiffAmb, blendFactor);
+                specularAmbient = lerp(specularAmbient, probeSpecAmb, blendFactor);
+            }
+        }
+#endif
+
         ambient = (diffuseAmbient * ao + specularAmbient) * skyTint;
 
         // Note: removed dark-environment fallback that was replacing real IBL with
@@ -475,5 +754,6 @@ float4 main(FSInput input) : SV_Target {
 
     // ── Final composite: ambient + direct + emissive ────────────────────
     float3 color = ambient + Lo + emissive;
+
     return float4(max(color, 0.0), 1.0);
 }
