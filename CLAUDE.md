@@ -129,6 +129,7 @@ The following rules are equally important but less frequently violated. Full det
 - **Rendering Parity** — every component replicates ALL standard parameters, defaults, and logic. No simplification. See `.claude/rules/ue5-component-parity.md`
 - **Visual Verification** — rendering features need demo + screenshot. **Prefer `--screenshot-stdout`** (base64 to stdout, no disk I/O) over `--screenshot <path>`. See `.claude/rules/visual-verification.md`
 - **Shader Testing Pipeline** — 3-tier validation: (1) CPU math parity tests for every HLSL function, (2) visual regression via PSNR against golden references, (3) FLIP perceptual comparison. See `.claude/rules/shader-testing-pipeline.md`
+- **Pass Dump FIRST** — for ANY visual bug, run `--pass-dump` BEFORE anything else. Inspect every pass output. See `.claude/rules/pass-dump-first.md`
 - **GPU Debugging** — never guess, use `--diag` / `--pixel-debug` / `--vis`. See `.claude/rules/gpu-debugging.md`
 - **Rendering Diagnostics** — MUST run diagnostic tools BEFORE editing any shader. See `.claude/rules/rendering-diagnostics.md`
 - **Demo Build Order** — always rebuild runtime static lib before demo. See `.claude/rules/build-order.md`
