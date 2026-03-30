@@ -65,25 +65,30 @@ Does disabling the pass fix the bug? Now you know WHICH pass is the culprit.
 
 ### Step 5: Pixel-level GPU printf (10 seconds, zero rebuilds)
 
-If you need to know the EXACT VALUE of a shader variable at a specific pixel:
+If you need to know the EXACT VALUE of GBuffer data at a specific pixel:
 
 ```bash
+# uzengine.exe format (Config key-value CLI):
+uzengine.exe --pixel-debug --pixel-debug-x 960 --pixel-debug-y 540 --project ... --editor
+
+# DemoApplication format (positional args):
 demo.exe --pixel-debug 960 540
 ```
 
-Output: `PIXEL_DEBUG_JSON:{...}` on stdout. The deferred lighting shader is pre-instrumented with:
-- id 0: shadowFactor
-- id 1: NdotL
-- id 2-4: finalColor (xyz)
-- id 5-7: ambient (xyz)
+Output: `PIXEL_DEBUG_JSON:{...}` on stdout. A compute post-pass reads GBuffer + HDR at the pixel:
+- id 0: depth (reversed-Z)
+- id 1: AO
+- id 2-4: albedo RGB
+- id 5-7: HDR color RGB (after lighting)
 - id 8: roughness
 - id 9: metallic
+- id 10-12: emissive RGB
 
 ```json
-{"pixel":[960,540],"frame":120,"recordCount":10,"records":[
-  {"id":0,"type":"float","value":0.000000},
-  {"id":1,"type":"float","value":0.732051},
-  {"id":2,"type":"float","value":0.450000}
+{"pixel":[960,540],"frame":11,"recordCount":13,"records":[
+  {"id":0,"type":"float","value":0.001753},
+  {"id":1,"type":"float","value":1.000000},
+  {"id":2,"type":"float","value":0.321569}
 ]}
 ```
 
