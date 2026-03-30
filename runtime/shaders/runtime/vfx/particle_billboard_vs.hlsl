@@ -44,6 +44,7 @@
 /// @deviations NONE
 
 #include "../include/depth_common.hlsli"
+#include "vfx_flipbook.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -89,6 +90,9 @@ struct VSOutput {
     float  lifetime       : TEXCOORD3;   ///< Particle total lifetime in seconds.
     uint   particleIdx    : TEXCOORD4;   ///< Particle index for flipbook deterministic random frame.
     float4 prevPositionCS : TEXCOORD5;   ///< Previous frame clip-space position for TAA motion vectors.
+    float2 subUV0         : TEXCOORD6;   ///< Atlas UV for current flipbook frame (or texcoord if no flipbook).
+    float2 subUV1         : TEXCOORD7;   ///< Atlas UV for next flipbook frame (for inter-frame blend).
+    float  subUVLerp      : TEXCOORD8;   ///< Inter-frame blend factor [0,1) for flipbook animation.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -285,6 +289,9 @@ VSOutput main(uint vertexID : SV_VertexID) {
         output.lifetime       = 0;
         output.particleIdx    = particleID;
         output.prevPositionCS = float4(0, 0, 0, 1);
+        output.subUV0         = float2(0, 0);
+        output.subUV1         = float2(0, 0);
+        output.subUVLerp      = 0;
         return output;
     }
 
@@ -415,6 +422,28 @@ VSOutput main(uint vertexID : SV_VertexID) {
     output.age         = particleAge;
     output.lifetime    = particleLife;
     output.particleIdx = particleID;
+
+    // ── Compute SubUV atlas coordinates in VS (Niagara pattern) ──
+    // When flipbook is active (rows*cols > 1), compute the atlas sub-rectangle
+    // UVs here to avoid per-pixel flipbook math in the PS. The PS only needs
+    // to sample at the interpolated subUV0/subUV1 and lerp by subUVLerp.
+    if (flipbookRows > 1 || flipbookCols > 1) {
+        float frameFloat = max(particleAge, 0.0f) * flipbookFPS;
+        uint totalFrames = flipbookTotalFrames;
+        uint frame0 = (uint)frameFloat % totalFrames;
+        uint frame1 = (frame0 + 1u) % totalFrames;
+        float2 invSize = float2(1.0f / (float)flipbookCols, 1.0f / (float)flipbookRows);
+        float2 cellUV0 = float2((float)(frame0 % flipbookCols), (float)(frame0 / flipbookCols));
+        float2 cellUV1 = float2((float)(frame1 % flipbookCols), (float)(frame1 / flipbookCols));
+        output.subUV0    = cellUV0 * invSize + kCornerUVs[vertexInQuad] * invSize;
+        output.subUV1    = cellUV1 * invSize + kCornerUVs[vertexInQuad] * invSize;
+        output.subUVLerp = frac(frameFloat);
+    } else {
+        // No flipbook — pass through raw corner UVs for single-frame sprite sampling.
+        output.subUV0    = kCornerUVs[vertexInQuad];
+        output.subUV1    = kCornerUVs[vertexInQuad];
+        output.subUVLerp = 0.0f;
+    }
 
     return output;
 }

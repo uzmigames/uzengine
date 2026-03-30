@@ -249,7 +249,7 @@ ID3D12RootSignature* CreateBindlessRootSignature(
     }
 
     // Static sampler s0: anisotropic wrap (used by mesh_ps and any textured shader)
-    D3D12_STATIC_SAMPLER_DESC staticSamplers[4] = {};
+    D3D12_STATIC_SAMPLER_DESC staticSamplers[5] = {};
     /// 16x anisotropic filtering — standard quality for material textures.
     staticSamplers[0].Filter = D3D12_FILTER_ANISOTROPIC;
     staticSamplers[0].AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
@@ -310,11 +310,26 @@ ID3D12RootSignature* CreateBindlessRootSignature(
     staticSamplers[3].RegisterSpace = 0;
     staticSamplers[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
+    // Static sampler s4: bilinear clamp (VFX sprite sheet atlas — prevents frame bleeding)
+    staticSamplers[4].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    staticSamplers[4].AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    staticSamplers[4].AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    staticSamplers[4].AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    staticSamplers[4].MipLODBias = 0.f;
+    staticSamplers[4].MaxAnisotropy = 1;
+    staticSamplers[4].ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+    staticSamplers[4].BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_BLACK;
+    staticSamplers[4].MinLOD = 0.f;
+    staticSamplers[4].MaxLOD = D3D12_FLOAT32_MAX;
+    staticSamplers[4].ShaderRegister = 4;  // s4
+    staticSamplers[4].RegisterSpace = 0;
+    staticSamplers[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
     D3D12_VERSIONED_ROOT_SIGNATURE_DESC versionedDesc = {};
     versionedDesc.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
     versionedDesc.Desc_1_1.NumParameters = numParams;
     versionedDesc.Desc_1_1.pParameters = rootParams;
-    versionedDesc.Desc_1_1.NumStaticSamplers = 4;
+    versionedDesc.Desc_1_1.NumStaticSamplers = 5;
     versionedDesc.Desc_1_1.pStaticSamplers = staticSamplers;
     versionedDesc.Desc_1_1.Flags = flags;
 

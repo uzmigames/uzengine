@@ -12,64 +12,35 @@ and material blend pipeline. See docs/analysis/vfx/niagara-sprite-rendering-pipe
 
 ## 1. Add Static Sampler s4 — Bilinear CLAMP for Sprites
 
-- [ ] 1.1 In `runtime/engine/rhi/dx12/dx12_pso_creation.cpp`: add a 5th static sampler at register s4:
-      Filter=MIN_MAG_MIP_LINEAR, Address=CLAMP, no comparison. This is dedicated for sprite sheets.
-- [ ] 1.2 In `particle_billboard_ps.hlsl`: declare `SamplerState spriteSampler : register(s4)`.
-      Use s4 for ALL sprite texture sampling (flipbook + single-frame). Keep s0 for depth.
-- [ ] 1.3 Rebuild runtime (`cd runtime && zig build`) to update root signature.
+- [x] 1.1 In `runtime/engine/rhi/dx12/dx12_pso_creation.cpp`: add a 5th static sampler at register s4:
+      Filter=MIN_MAG_MIP_LINEAR, Address=CLAMP, no comparison. Array size 4->5, NumStaticSamplers 4->5.
+- [x] 1.2 In `particle_billboard_ps.hlsl`: declare `SamplerState spriteSampler : register(s4)`.
+      s4 for sprite sampling, s2 (depthSampler) for depth. Removed s0 usage from PS.
+- [x] 1.3 Rebuild runtime (`cd runtime && zig build`) to update root signature.
 - [ ] 1.4 Verify: sprite samples no longer bleed across atlas cell boundaries.
 
 ## 2. Move SubUV Computation to Vertex Shader (Niagara Pattern)
 
-- [ ] 2.1 In `particle_billboard_vs.hlsl`: compute SubUV coords in VS, not PS.
-      Read `flipbookRows`, `flipbookCols`, `flipbookFPS`, `flipbookTotalFrames` from VFXBillboardCB.
-      Compute:
-      ```
-      float frameFloat = max(age, 0) * flipbookFPS;
-      float subImageLerp = frac(frameFloat);
-      uint frame0 = (uint)frameFloat % flipbookTotalFrames;
-      uint frame1 = (frame0 + 1) % flipbookTotalFrames;
-      float2 invSize = float2(1.0/flipbookCols, 1.0/flipbookRows);
-      float2 uv0 = float2(frame0 % flipbookCols, frame0 / flipbookCols) * invSize + texcoord * invSize;
-      float2 uv1 = float2(frame1 % flipbookCols, frame1 / flipbookCols) * invSize + texcoord * invSize;
-      ```
-      Pass uv0, uv1, subImageLerp to PS via interpolants.
-- [ ] 2.2 Add new VS outputs: `float2 subUV0 : TEXCOORD6`, `float2 subUV1 : TEXCOORD7`,
-      `float subUVLerp : TEXCOORD8`. When flipbook is inactive (rows*cols <= 1), set
-      subUV0 = texcoord, subUV1 = texcoord, subUVLerp = 0.
-- [ ] 2.3 In PS: remove ALL flipbook computation. Just sample at input.subUV0 and input.subUV1,
-      lerp by input.subUVLerp. Much simpler PS code.
+- [x] 2.1 In `particle_billboard_vs.hlsl`: compute SubUV coords in VS. Added flipbook frame
+      computation after billboard expansion, reads flipbook CB params, outputs atlas UVs.
+- [x] 2.2 Add new VS outputs: `float2 subUV0 : TEXCOORD6`, `float2 subUV1 : TEXCOORD7`,
+      `float subUVLerp : TEXCOORD8`. Dead particles and non-flipbook path set defaults.
+- [x] 2.3 In PS: removed ALL flipbook computation and vfx_flipbook.hlsli include. PS now just
+      samples at input.subUV0/subUV1 and lerps by input.subUVLerp.
 
 ## 3. Fix Blend Mode Output (Niagara Exact Match)
 
-- [ ] 3.1 **Additive** PSO: SrcColor=One, DstColor=One, SrcAlpha=Zero, DstAlpha=InvSrcAlpha.
-      PS output: `float4(emissiveRGB, opacity)`. The RGB adds directly. Alpha preserves background.
-- [ ] 3.2 **Translucent** PSO: SrcColor=SrcAlpha, DstColor=InvSrcAlpha, SrcAlpha=Zero, DstAlpha=InvSrcAlpha.
-      PS output: `float4(emissiveRGB, opacity)`. Standard alpha blend.
-- [ ] 3.3 **AlphaComposite** PSO: SrcColor=One, DstColor=InvSrcAlpha, SrcAlpha=Zero, DstAlpha=InvSrcAlpha.
-      PS output: `float4(emissiveRGB * opacity, opacity)`. Premultiplied alpha.
-- [ ] 3.4 Update all 3 PSO blend state configs in `vfx_viewport_vfx.cpp` Init() to match above.
+- [x] 3.1 **Additive** PSO: SrcColor=One, DstColor=One, SrcAlpha=Zero, DstAlpha=InvSrcAlpha.
+- [x] 3.2 **Translucent** PSO: SrcColor=SrcAlpha, DstColor=InvSrcAlpha, SrcAlpha=Zero, DstAlpha=InvSrcAlpha.
+- [x] 3.3 **AlphaComposite** PSO: SrcColor=One, DstColor=InvSrcAlpha, SrcAlpha=Zero, DstAlpha=InvSrcAlpha.
+- [x] 3.4 Updated all 3 PSO blend states in `vfx_viewport_vfx.cpp` Init() — alpha channel now Zero/InvSrcAlpha on all modes (Niagara match).
 
 ## 4. Fix PS Material Output (Niagara Unlit Pattern)
 
-- [ ] 4.1 For Unlit particles (default), the PS output formula is:
-      ```
-      float4 texSample = lerp(tex.Sample(s4, subUV0), tex.Sample(s4, subUV1), subUVLerp);
-      float3 emissive = texSample.rgb * particleColor.rgb * colorLifeScale.rgb * emissiveIntensity;
-      float opacity = texSample.a * particleColor.a * colorLifeScale.a;
-      ```
-      When channel mask > 0: extract single channel as both emissive intensity AND opacity.
-- [ ] 4.2 Apply `spriteChannelMask` BEFORE the material computation:
-      ```
-      if (channelMask == 0) { emissive = texSample.rgb; opacity = texSample.a; }
-      else { float ch = texSample[channelMask-1]; emissive = float3(ch,ch,ch); opacity = ch; }
-      ```
-      Then multiply by particle color: `emissive *= particleColor.rgb; opacity *= particleColor.a;`
-- [ ] 4.3 For RGB-only textures (alpha=1 everywhere): with Additive blend, RGB is the light
-      contribution and alpha=1 means full contribution. The black (0,0,0) pixels contribute nothing
-      because One*0 = 0. This is why Niagara fire works with RGB-only textures + Additive.
-- [ ] 4.4 Remove soft particle fade for Additive mode — soft fade makes no visual sense for
-      additive particles (they add light, not block it).
+- [x] 4.1 PS output formula rewritten: emissive = sprite.rgb * color * colorLife, opacity = sprite.a * color.a * colorLife.a, emissive *= (1+emissiveIntensity). Blend-mode-aware output (premul for mode 2, straight for 0/1).
+- [x] 4.2 ApplyChannelMask applied to raw lerped sample before material computation.
+- [x] 4.3 RGB-only textures with Additive blend work correctly — black pixels add zero light.
+- [x] 4.4 Soft particle fade skipped for Additive mode (blendModeHint != 1 guard).
 
 ## 5. Fix Texture Loading
 

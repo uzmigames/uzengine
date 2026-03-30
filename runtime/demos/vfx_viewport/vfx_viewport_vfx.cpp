@@ -366,17 +366,15 @@ bool VFXParticleSystem::Init(IRHIDevice* device, ShaderManager* shaderMgr,
         desc.depthStencil.depthWrite = false; // Particles don't write depth
         // depthFunc defaults to Greater (reversed-Z)
         desc.rasterizer.cullMode = RHICullMode::None;
-        // Premultiplied alpha blend: One / InvSrcAlpha
-        // The pixel shader outputs premultiplied RGB (rgb *= alpha before return).
-        // This supports both additive glow (emissive adds to pre-multiplied RGB)
-        // AND proper alpha transparency at particle edges, avoiding the full-white
-        // washout that pure additive (SrcAlpha/One) causes.
-        // Reference: Niagara uses premultiplied alpha for translucent/emissive materials.
+        // AlphaComposite / PremulAlpha (blend mode 2): One / InvSrcAlpha
+        // The pixel shader outputs premultiplied RGB (rgb *= opacity before return).
+        // SrcAlpha=Zero, DstAlpha=InvSrcAlpha preserves correct destination alpha
+        // compositing (Niagara exact match for alpha channel handling).
         desc.renderTargetBlend[0].blendEnable = true;
         desc.renderTargetBlend[0].srcColor = RHIBlendFactor::One;
         desc.renderTargetBlend[0].dstColor = RHIBlendFactor::InvSrcAlpha;
         desc.renderTargetBlend[0].colorOp = RHIBlendOp::Add;
-        desc.renderTargetBlend[0].srcAlpha = RHIBlendFactor::One;
+        desc.renderTargetBlend[0].srcAlpha = RHIBlendFactor::Zero;
         desc.renderTargetBlend[0].dstAlpha = RHIBlendFactor::InvSrcAlpha;
         desc.renderTargetBlend[0].alphaOp = RHIBlendOp::Add;
         // No input layout — billboard VS reads from structured buffers via SV_VertexID
@@ -389,11 +387,12 @@ bool VFXParticleSystem::Init(IRHIDevice* device, ShaderManager* shaderMgr,
         }
 
         // Additive PSO (blend mode 1): One/One — pure additive for fire, sparks, glow.
-        // RGB adds directly to the framebuffer. Alpha channel adds too (usually ignored).
+        // RGB adds directly to the framebuffer. Alpha: Zero/InvSrcAlpha preserves
+        // destination alpha correctly (Niagara exact match).
         desc.renderTargetBlend[0].srcColor = RHIBlendFactor::One;
         desc.renderTargetBlend[0].dstColor = RHIBlendFactor::One;
-        desc.renderTargetBlend[0].srcAlpha = RHIBlendFactor::One;
-        desc.renderTargetBlend[0].dstAlpha = RHIBlendFactor::One;
+        desc.renderTargetBlend[0].srcAlpha = RHIBlendFactor::Zero;
+        desc.renderTargetBlend[0].dstAlpha = RHIBlendFactor::InvSrcAlpha;
         desc.debugName = "VFX_BillboardPSO_Additive";
         m_billboardPSO_Additive = device->CreateGraphicsPipeline(desc);
         if (!m_billboardPSO_Additive.IsValid()) {
@@ -401,12 +400,13 @@ bool VFXParticleSystem::Init(IRHIDevice* device, ShaderManager* shaderMgr,
             return false;
         }
 
-        // AlphaBlend PSO (blend mode 0): SrcAlpha/InvSrcAlpha — standard transparency
-        // for smoke, dust, soft translucent particles. The blend state handles the
-        // alpha multiplication, so the PS outputs straight (non-premultiplied) alpha.
+        // Translucent / AlphaBlend PSO (blend mode 0): SrcAlpha/InvSrcAlpha — standard
+        // transparency for smoke, dust, soft translucent particles. The blend state
+        // multiplies RGB by alpha automatically. Alpha: Zero/InvSrcAlpha preserves
+        // destination alpha correctly (Niagara exact match).
         desc.renderTargetBlend[0].srcColor = RHIBlendFactor::SrcAlpha;
         desc.renderTargetBlend[0].dstColor = RHIBlendFactor::InvSrcAlpha;
-        desc.renderTargetBlend[0].srcAlpha = RHIBlendFactor::One;
+        desc.renderTargetBlend[0].srcAlpha = RHIBlendFactor::Zero;
         desc.renderTargetBlend[0].dstAlpha = RHIBlendFactor::InvSrcAlpha;
         desc.debugName = "VFX_BillboardPSO_AlphaBlend";
         m_billboardPSO_AlphaBlend = device->CreateGraphicsPipeline(desc);

@@ -34,7 +34,6 @@
 /// @deviations NONE
 
 #include "../include/depth_common.hlsli"
-#include "vfx_flipbook.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -44,10 +43,6 @@
 /// Avoids blending near-invisible fragments that waste bandwidth.
 static const float SOFT_FADE_MIN_ALPHA = 0.001f;
 
-/// Flipbook blend mode constants matching VFXBillboardCB::flipbookBlendMode.
-static const uint kFlipbookBlendNone   = 0; ///< No inter-frame blending; snap to nearest frame.
-static const uint kFlipbookBlendLinear = 1; ///< Linearly interpolate between adjacent frames.
-static const uint kFlipbookBlendRandom = 2; ///< Deterministic per-particle random frame (no animation).
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Input Structure
@@ -63,6 +58,9 @@ struct PSInput {
     float  lifetime       : TEXCOORD3;   ///< Particle total lifetime in seconds.
     uint   particleIdx    : TEXCOORD4;   ///< Particle index for deterministic random frame hash.
     float4 prevPositionCS : TEXCOORD5;   ///< Previous frame clip-space position (for motion vector PS).
+    float2 subUV0         : TEXCOORD6;   ///< Atlas UV for current flipbook frame (computed in VS).
+    float2 subUV1         : TEXCOORD7;   ///< Atlas UV for next flipbook frame (computed in VS).
+    float  subUVLerp      : TEXCOORD8;   ///< Inter-frame blend factor [0,1) (computed in VS).
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -175,10 +173,13 @@ cbuffer VFXBillboardCB : register(b2) {
 // Samplers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Anisotropic wrap sampler from the global root signature (s0).
-/// Used for both sprite texture and depth buffer sampling.
-/// Flipbook UV sub-rectangle computation handles clamping.
-SamplerState linearSampler : register(s0);
+/// Bilinear clamp sampler for sprite sheet atlas sampling (s4).
+/// CLAMP addressing prevents bleeding across atlas cell boundaries.
+SamplerState spriteSampler : register(s4);
+
+/// Bilinear clamp sampler for depth buffer reads (s2).
+/// Uses the global post-process sampler already in the root signature.
+SamplerState depthSampler : register(s2);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper Functions
@@ -211,9 +212,9 @@ float ComputeSoftParticleFade(float4 screenPos, float2 screenSize, float fadeDis
     float sceneDepthRaw;
 #ifdef UZ_BINDLESS
     Texture2D<float> depthTex = ResourceDescriptorHeap[depthBufferIdx];
-    sceneDepthRaw = depthTex.SampleLevel(linearSampler, depthUV, 0);
+    sceneDepthRaw = depthTex.SampleLevel(depthSampler, depthUV, 0);
 #else
-    sceneDepthRaw = depthBuffer.SampleLevel(linearSampler, depthUV, 0);
+    sceneDepthRaw = depthBuffer.SampleLevel(depthSampler, depthUV, 0);
 #endif
 
     // Skip fade for sky pixels (far plane in reversed-Z = 0)
@@ -276,18 +277,15 @@ float4 ApplyChannelMask(float4 rawSample, uint channelMask) {
 /// # Returns
 /// Final RGBA color for alpha-blended compositing.
 float4 main(PSInput input) : SV_Target {
-    // Flipbook debug removed — sprite sampling verified working.
-
-    // ── Sample sprite texture (with optional flipbook/SubUV animation) ──
+    // ── Sample sprite texture using VS-computed SubUV coordinates ──
     //
-    // When flipbook is active (rows*cols > 1), we compute frame UVs from
-    // the particle's age/lifetime and sample the correct sub-rectangle of
-    // the sprite sheet atlas. When flipbook is inactive (1x1), we fall
-    // through to the standard single-frame sample for zero overhead.
+    // SubUV atlas coordinates are computed in the vertex shader (Niagara pattern).
+    // The PS only samples at the interpolated subUV0/subUV1 and lerps by subUVLerp.
+    // This eliminates per-pixel flipbook computation and simplifies the PS significantly.
     float4 spriteColor;
 
     // When no sprite texture is bound (spriteTextureIdx == 0xFFFFFFFF),
-    // use solid white — the particle's vertex color alone determines appearance.
+    // generate a soft procedural circle — particle vertex color alone determines appearance.
 #ifdef UZ_BINDLESS
     bool hasSpriteTexture = (spriteTextureIdx != 0xFFFFFFFF);
 #else
@@ -302,63 +300,19 @@ float4 main(PSInput input) : SV_Target {
         float alpha = saturate(1.0f - dist); // linear falloff: 1 at center, 0 at edge
         alpha *= alpha; // quadratic for softer look
         spriteColor = float4(1.0f, 1.0f, 1.0f, alpha);
-    } else if (flipbookRows > 1 || flipbookCols > 1) {
-        // Flipbook active — compute frame UVs based on blend mode.
-        FlipbookResult fb;
-        if (flipbookBlendMode == kFlipbookBlendRandom) {
-            // Random mode: deterministic per-particle frame via Wang hash.
-            // Not animated — each particle shows a fixed frame for its lifetime.
-            fb = ComputeFlipbookFrameRandom(
-                input.particleIdx,
-                flipbookRows, flipbookCols, flipbookTotalFrames);
-        } else {
-            // Animated mode (None or Linear): frame advances with particle age.
-            fb = ComputeFlipbookFrame(
-                input.age, input.lifetime,
-                flipbookRows, flipbookCols,
-                flipbookFPS, flipbookTotalFrames);
-        }
-
-        // Remap billboard [0,1] UV into the atlas sub-rectangle for the current frame.
-        float2 uv0 = SampleFlipbookUV(input.texcoord, fb.uv0, fb.frameSize);
-
-        // Flipbook UV debug removed — sampling sprite texture below.
-
-#ifdef UZ_BINDLESS
-        Texture2D<float4> spriteTex = ResourceDescriptorHeap[spriteTextureIdx];
-#endif
-
-        // Sample the current frame and apply channel mask.
-        float4 rawSample;
-#ifdef UZ_BINDLESS
-        rawSample = spriteTex.Sample(linearSampler, uv0);
-#else
-        rawSample = spriteTexture.Sample(linearSampler, uv0);
-#endif
-        spriteColor = ApplyChannelMask(rawSample, spriteChannelMask);
-
-        if (flipbookBlendMode == kFlipbookBlendLinear) {
-            // Linear blend: sample the next frame and interpolate for smooth transitions.
-            float2 uv1 = SampleFlipbookUV(input.texcoord, fb.uv1, fb.frameSize);
-            float4 nextSample;
-#ifdef UZ_BINDLESS
-            nextSample = spriteTex.Sample(linearSampler, uv1);
-#else
-            nextSample = spriteTexture.Sample(linearSampler, uv1);
-#endif
-            float4 nextColor = ApplyChannelMask(nextSample, spriteChannelMask);
-            spriteColor = lerp(spriteColor, nextColor, fb.blendFactor);
-        }
     } else {
-        // No flipbook — standard single-frame sprite sampling (original path).
+        // Sample sprite at VS-computed SubUV coordinates (handles both flipbook and single-frame).
+        // spriteSampler (s4) uses CLAMP addressing to prevent bleeding across atlas cells.
 #ifdef UZ_BINDLESS
         Texture2D<float4> spriteTex = ResourceDescriptorHeap[spriteTextureIdx];
-        float4 rawSingle = spriteTex.Sample(linearSampler, input.texcoord);
-        spriteColor = ApplyChannelMask(rawSingle, spriteChannelMask);
+        float4 sampleA = spriteTex.Sample(spriteSampler, input.subUV0);
+        float4 sampleB = spriteTex.Sample(spriteSampler, input.subUV1);
 #else
-        float4 rawSm5 = spriteTexture.Sample(linearSampler, input.texcoord);
-        spriteColor = ApplyChannelMask(rawSm5, spriteChannelMask);
+        float4 sampleA = spriteTexture.Sample(spriteSampler, input.subUV0);
+        float4 sampleB = spriteTexture.Sample(spriteSampler, input.subUV1);
 #endif
+        float4 rawSample = lerp(sampleA, sampleB, input.subUVLerp);
+        spriteColor = ApplyChannelMask(rawSample, spriteChannelMask);
     }
 
     // ── Evaluate color over lifetime (linear interpolation start→end) ──
@@ -366,27 +320,27 @@ float4 main(PSInput input) : SV_Target {
     float normalizedAge = saturate(input.age / max(input.lifetime, 0.0001f));
     float4 colorLifeScale = lerp(colorLifeStart, colorLifeEnd, normalizedAge);
 
-    // ── Combine sprite with particle color and lifetime color ──
-    float4 finalColor = spriteColor * input.color * colorLifeScale;
+    // ── Material output: emissive + opacity (Niagara Unlit pattern) ──
+    float3 emissive = spriteColor.rgb * input.color.rgb * colorLifeScale.rgb;
+    float  opacity  = spriteColor.a   * input.color.a   * colorLifeScale.a;
+
+    // Apply emissive intensity boost.
+    // Multiplies by (1 + intensity) so intensity=0 is neutral (no change),
+    // and positive values brighten the particle emission.
+    emissive *= (1.0f + emissiveIntensity);
 
     // ── Apply alpha erosion (subtractive dissolution) ──
-    finalColor.a = saturate(finalColor.a - alphaErosion);
+    opacity = saturate(opacity - alphaErosion);
 
     // ── Early discard for nearly-invisible pixels ──
-    // Saves blend bandwidth for fully transparent regions of the sprite
-    if (finalColor.a < SOFT_FADE_MIN_ALPHA) {
+    // Saves blend bandwidth for fully transparent regions of the sprite.
+    if (opacity < SOFT_FADE_MIN_ALPHA) {
         discard;
     }
 
     // ── Soft particle depth fade ──
-    // Retrieve render target size from SV_Position (DX12 guarantees this is valid)
-    // Note: screen dimensions come from the viewport, but we need the actual RT size
-    // for correct UV mapping. We derive it from the integer pixel coords.
-    // The CPU must set the viewport to match the RT dimensions exactly.
-    //
-    // For the soft fade, we need screen dimensions. These are passed via the
-    // PerFrameCB or derived from the depth buffer dimensions. Here we use
-    // GetDimensions() on the depth texture for robustness.
+    // Skip soft fade for additive particles — they add light, not block it,
+    // so depth-based fading makes no visual sense.
     float2 screenSize;
 #ifdef UZ_BINDLESS
     {
@@ -404,36 +358,26 @@ float4 main(PSInput input) : SV_Target {
 #endif
 
     float softFade = ComputeSoftParticleFade(input.positionCS, screenSize, softFadeDistance);
-    finalColor.a *= softFade;
+    if (blendModeHint != 1) { // not additive
+        opacity *= softFade;
+    }
 
     // ── Final discard after soft fade ──
-    if (finalColor.a < SOFT_FADE_MIN_ALPHA) {
+    if (opacity < SOFT_FADE_MIN_ALPHA) {
         discard;
     }
 
-    // ── Add emissive contribution ──
-    // Emissive brightens the particle using its own tinted color (not raw sprite white).
-    // This preserves the color-over-lifetime tint in the glow.
-    finalColor.rgb += finalColor.rgb * emissiveIntensity;
-
-    // ── Output alpha handling based on blend mode ──
-    // Each blend mode requires a different alpha treatment to produce correct results
-    // with its corresponding PSO blend state.
+    // ── Blend mode output (Niagara exact match) ──
+    // Each blend mode requires a different alpha treatment to produce correct
+    // results with its corresponding PSO blend state.
     if (blendModeHint == 2) {
-        // PremulAlpha (One / InvSrcAlpha): RGB must be premultiplied by alpha.
-        // Transparent edges: alpha < 1 reduces both RGB and coverage correctly.
-        // Additive glow: emissive contribution adds energy through SrcOne,
-        // while alpha controls how much background is preserved via InvSrcAlpha.
-        finalColor.rgb *= finalColor.a;
-    } else if (blendModeHint == 1) {
-        // Additive (One / One): RGB adds directly to the framebuffer.
-        // No premultiply — alpha controls particle opacity through the color
-        // itself (already modulated by vertex color and color-over-lifetime).
-        // The blend state ignores alpha entirely (One/One on both channels).
+        // AlphaComposite (One / InvSrcAlpha): premultiplied alpha output.
+        // RGB is pre-multiplied by opacity so the One src factor is correct.
+        return float4(emissive * opacity, opacity);
+    } else {
+        // Additive (One / One) and Translucent (SrcAlpha / InvSrcAlpha):
+        // Output straight alpha. Additive ignores alpha in blend (One/One on color),
+        // Translucent uses SrcAlpha to modulate RGB in the blend hardware.
+        return float4(emissive, opacity);
     }
-    // else blendModeHint == 0: AlphaBlend (SrcAlpha / InvSrcAlpha)
-    // No premultiply — the blend state multiplies RGB by alpha automatically.
-    // Output straight alpha so the hardware blend produces correct transparency.
-
-    return finalColor;
 }
