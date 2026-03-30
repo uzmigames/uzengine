@@ -36,7 +36,8 @@ static const VFXPreset s_presets[] = {
         /*alignment*/ 0, /*stretch*/ 0.0f,
         /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
         /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
-        /*blendMode*/ 1 // Additive — fire burst glows
+        /*blendMode*/ 1, // Additive — fire burst glows
+        /*spriteChannelMask*/ 2 // Green channel as alpha (procedural fire sprite sheet)
     }, 500.0f },
     { "Smoke Plume", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.2f,
@@ -52,7 +53,8 @@ static const VFXPreset s_presets[] = {
         /*alignment*/ 0, /*stretch*/ 0.0f,
         /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
         /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
-        /*blendMode*/ 0 // AlphaBlend — smoke is translucent, not additive
+        /*blendMode*/ 0, // AlphaBlend — smoke is translucent, not additive
+        /*spriteChannelMask*/ 2 // Green channel as alpha (procedural smoke sprite sheet)
     }, 200.0f },
     { "Sparks", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.15f,
@@ -68,7 +70,8 @@ static const VFXPreset s_presets[] = {
         /*alignment*/ 1, /*stretch*/ 2.0f,
         /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
         /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
-        /*blendMode*/ 1 // Additive — bright spark streaks
+        /*blendMode*/ 1, // Additive — bright spark streaks
+        /*spriteChannelMask*/ 0 // RGBA — sparks use procedural circles (no flipbook)
     }, 800.0f },
     { "Magic Orb", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.8f,
@@ -84,7 +87,8 @@ static const VFXPreset s_presets[] = {
         /*alignment*/ 0, /*stretch*/ 0.0f,
         /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
         /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
-        /*blendMode*/ 1 // Additive — glowing magical particles
+        /*blendMode*/ 1, // Additive — glowing magical particles
+        /*spriteChannelMask*/ 0 // RGBA — magic uses procedural circles
     }, 300.0f },
     { "Explosion Debris", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.3f,
@@ -100,7 +104,8 @@ static const VFXPreset s_presets[] = {
         /*alignment*/ 1, /*stretch*/ 2.0f,
         /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
         /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
-        /*blendMode*/ 1 // Additive — hot glowing debris
+        /*blendMode*/ 1, // Additive — hot glowing debris
+        /*spriteChannelMask*/ 2 // Green channel as alpha (fire sprite sheet)
     }, 2000.0f },
     { "Fireball", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.4f,
@@ -116,7 +121,8 @@ static const VFXPreset s_presets[] = {
         /*alignment*/ 0, /*stretch*/ 0.5f,
         /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
         /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
-        /*blendMode*/ 1 // Additive — intense fireball glow
+        /*blendMode*/ 1, // Additive — intense fireball glow
+        /*spriteChannelMask*/ 2 // Green channel as alpha (fire sprite sheet)
     }, 800.0f },
     // ── Spawn Shape Presets ──────────────────────────────────────────────
     { "Ring of Fire", {
@@ -133,7 +139,8 @@ static const VFXPreset s_presets[] = {
         /*alignment*/ 0, /*stretch*/ 0.0f,
         /*spawnShape*/ 3, /*spawnOnSurface*/ 0,
         /*shapeParam1*/ 0.3f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
-        /*blendMode*/ 1 // Additive — ring of fire glow
+        /*blendMode*/ 1, // Additive — ring of fire glow
+        /*spriteChannelMask*/ 2 // Green channel as alpha (fire sprite sheet)
     }, 400.0f },
     { "Cone Jet", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.1f,
@@ -149,7 +156,8 @@ static const VFXPreset s_presets[] = {
         /*alignment*/ 1, /*stretch*/ 1.5f,
         /*spawnShape*/ 4, /*spawnOnSurface*/ 1,
         /*shapeParam1*/ 0.5f, /*shapeParam2*/ 2.0f, /*shapeParam3*/ 0.0f,
-        /*blendMode*/ 1 // Additive — bright energy jet
+        /*blendMode*/ 1, // Additive — bright energy jet
+        /*spriteChannelMask*/ 0 // RGBA — no flipbook, procedural circles
     }, 600.0f },
     { "Cylinder Volume", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 2.0f,
@@ -165,7 +173,8 @@ static const VFXPreset s_presets[] = {
         /*alignment*/ 0, /*stretch*/ 0.0f,
         /*spawnShape*/ 5, /*spawnOnSurface*/ 0,
         /*shapeParam1*/ 4.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
-        /*blendMode*/ 0 // AlphaBlend — translucent volume particles
+        /*blendMode*/ 0, // AlphaBlend — translucent volume particles
+        /*spriteChannelMask*/ 0 // RGBA — no flipbook, procedural circles
     }, 300.0f },
 };
 
@@ -820,6 +829,8 @@ void VFXParticleSystem::DrawBillboards(IRHICommandList* cmdList, CBRingAllocator
     billboardCB.stretchFactor = config.stretchFactor;
     // Blend mode hint tells the PS how to handle alpha output
     billboardCB.blendModeHint = blendMode;
+    // Sprite channel mask — selects how to interpret sprite texture channels
+    billboardCB.spriteChannelMask = config.spriteChannelMask;
 
     auto cbAlloc = cbRing->Allocate(sizeof(VFXBillboardCB));
     std::memcpy(cbAlloc.cpuPtr, &billboardCB, sizeof(VFXBillboardCB));

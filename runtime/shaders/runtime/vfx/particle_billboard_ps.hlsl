@@ -168,7 +168,7 @@ cbuffer VFXBillboardCB : register(b2) {
     uint     alignmentMode;        ///< 0=CameraFacing, 1=VelocityAligned (not read by PS).
     float    stretchFactor;        ///< Velocity stretch multiplier (not read by PS).
     uint     blendModeHint;        ///< 0=AlphaBlend, 1=Additive, 2=PremulAlpha — controls PS alpha output.
-    float    _solPad1;
+    uint     spriteChannelMask;  ///< 0=RGBA, 1=R as alpha, 2=G as alpha, 3=B as alpha, 4=A as alpha.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -236,6 +236,34 @@ float ComputeSoftParticleFade(float4 screenPos, float2 screenSize, float fadeDis
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Channel Mask Helper
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Applies the sprite channel mask to a raw texture sample.
+///
+/// When spriteChannelMask == 0, returns the full RGBA sample as-is.
+/// When spriteChannelMask == 1..4, extracts R/G/B/A respectively as an alpha
+/// mask with white RGB. This is the standard approach for grayscale sprite
+/// sheets where shape data is stored in a single channel.
+///
+/// # Parameters
+/// - rawSample: the RGBA texture sample.
+/// - channelMask: 0=RGBA, 1=R as alpha, 2=G as alpha, 3=B as alpha, 4=A as alpha.
+///
+/// # Returns
+/// Masked sprite color.
+float4 ApplyChannelMask(float4 rawSample, uint channelMask) {
+    if (channelMask == 0) {
+        return rawSample;
+    }
+    // Extract the selected channel as alpha; RGB becomes white so particle
+    // color (applied later via multiplication) fully controls hue.
+    float channels[4] = { rawSample.r, rawSample.g, rawSample.b, rawSample.a };
+    float alpha = channels[channelMask - 1];
+    return float4(1.0f, 1.0f, 1.0f, alpha);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Pixel Shader Entry Point
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -298,16 +326,14 @@ float4 main(PSInput input) : SV_Target {
         Texture2D<float4> spriteTex = ResourceDescriptorHeap[spriteTextureIdx];
 #endif
 
-        // Sample the current frame.
+        // Sample the current frame and apply channel mask.
         float4 rawSample;
 #ifdef UZ_BINDLESS
         rawSample = spriteTex.Sample(linearSampler, uv0);
 #else
         rawSample = spriteTexture.Sample(linearSampler, uv0);
 #endif
-        // Use Green channel as alpha mask (Niagara convention for grayscale sprite sheets).
-        // RGB = white (particle color applied later via multiplication), A = green channel intensity.
-        spriteColor = float4(1.0f, 1.0f, 1.0f, rawSample.g);
+        spriteColor = ApplyChannelMask(rawSample, spriteChannelMask);
 
         if (flipbookBlendMode == kFlipbookBlendLinear) {
             // Linear blend: sample the next frame and interpolate for smooth transitions.
@@ -318,7 +344,7 @@ float4 main(PSInput input) : SV_Target {
 #else
             nextSample = spriteTexture.Sample(linearSampler, uv1);
 #endif
-            float4 nextColor = float4(1.0f, 1.0f, 1.0f, nextSample.g);
+            float4 nextColor = ApplyChannelMask(nextSample, spriteChannelMask);
             spriteColor = lerp(spriteColor, nextColor, fb.blendFactor);
         }
     } else {
@@ -326,10 +352,10 @@ float4 main(PSInput input) : SV_Target {
 #ifdef UZ_BINDLESS
         Texture2D<float4> spriteTex = ResourceDescriptorHeap[spriteTextureIdx];
         float4 rawSingle = spriteTex.Sample(linearSampler, input.texcoord);
-        spriteColor = float4(1.0f, 1.0f, 1.0f, rawSingle.g);
+        spriteColor = ApplyChannelMask(rawSingle, spriteChannelMask);
 #else
         float4 rawSm5 = spriteTexture.Sample(linearSampler, input.texcoord);
-        spriteColor = float4(1.0f, 1.0f, 1.0f, rawSm5.g);
+        spriteColor = ApplyChannelMask(rawSm5, spriteChannelMask);
 #endif
     }
 

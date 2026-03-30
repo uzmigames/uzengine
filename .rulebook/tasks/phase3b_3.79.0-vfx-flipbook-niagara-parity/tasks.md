@@ -40,19 +40,17 @@ expression, NiagaraSpriteVertexFactory. See docs/analysis/particles/ for full an
       ```
 - [ ] 3.2 For linear blend: compute next frame UV the same way with `frameIndex + 1`.
       `spriteColor = lerp(sample(uv0), sample(uv1), blendFactor)`.
-- [ ] 3.3 Add `uint spriteChannelMask` to VFXBillboardCB: 0=RGBA (use full texture), 1=R as alpha,
+- [x] 3.3 Add `uint spriteChannelMask` to VFXBillboardCB: 0=RGBA (use full texture), 1=R as alpha,
       2=G as alpha, 3=B as alpha, 4=A as alpha. Default=0 (full RGBA).
-      When channelMask > 0: extract the selected channel as alpha, set RGB to white:
-      ```
-      float4 raw = spriteTex.Sample(sampler, uv);
-      float channels[4] = { raw.r, raw.g, raw.b, raw.a };
-      float mask = channels[spriteChannelMask - 1];
-      spriteColor = float4(1, 1, 1, mask); // particle color applied later
-      ```
-      When channelMask == 0: use full RGBA as-is: `spriteColor = raw`.
-- [ ] 3.4 Add `uint32_t spriteChannelMask = 0` to VFXEmitterConfig. Pass through CB.
-- [ ] 3.5 Add channel mask cycling key in demo (Shift+M: cycle RGBA/R/G/B/A).
-- [ ] 3.6 Remove the hardcoded green-channel-only hack from current PS code.
+      Implemented ApplyChannelMask() helper in PS, replaced _solPad1 with spriteChannelMask in
+      VFXBillboardCB (C++ header, VS, PS). All 3 sampling paths now use ApplyChannelMask().
+- [x] 3.4 Add `uint32_t spriteChannelMask = 0` to VFXEmitterConfig. Pass through CB.
+      Added field to VFXEmitterConfig after blendMode. DrawBillboards() passes config.spriteChannelMask to billboardCB.
+- [x] 3.5 Add channel mask cycling key in demo (Shift+M: cycle RGBA/R/G/B/A).
+      Added Shift+M handler before M key handler. M key now only fires without shift. Help overlay updated.
+- [x] 3.6 Remove the hardcoded green-channel-only hack from current PS code.
+      Replaced all 3 `float4(1,1,1, rawSample.g)` hacks with `ApplyChannelMask(rawSample, spriteChannelMask)`.
+      Fire presets default to spriteChannelMask=2 (Green), custom --sprite defaults to Green, user cycles with Shift+M.
 
 ## 4. Fix Texture Sampling
 

@@ -480,8 +480,11 @@ void VFXViewportDemo::OnInit() {
             m_vfxEmitter.flipbookTotalFrames = m_vfxMaterial.flipbookTotalFrames;
             m_vfxEmitter.flipbookFPS = m_vfxMaterial.flipbookFPS;
             m_vfxEmitter.flipbookBlendMode = m_vfxMaterial.flipbookBlendMode;
+            // Default to Green channel mask for custom sprite sheets — most fire/smoke
+            // PNGs store intensity in the green channel. User can cycle with Shift+M.
+            m_vfxEmitter.spriteChannelMask = 2;
             UZ_LOG(App, Info,
-                   "VFXViewport: VFXMaterial loaded '{}' (SRV={}, {}x{} {:.0f}fps blend={})",
+                   "VFXViewport: VFXMaterial loaded '{}' (SRV={}, {}x{} {:.0f}fps blend={} channelMask=G)",
                    m_customSpritePath, m_customSpriteSrvIdx,
                    m_vfxMaterial.flipbookRows, m_vfxMaterial.flipbookCols,
                    m_vfxMaterial.flipbookFPS, m_vfxMaterial.flipbookBlendMode);
@@ -921,8 +924,19 @@ void VFXViewportDemo::HandleInput(float dt) {
                m_vfxBurstMode ? "Burst" : "Continuous", m_vfxBurstCount);
     }
 
-    // VFX material preset cycling (M key) — only when no custom sprite loaded
-    if (input->IsKeyJustPressed(Key::M)) {
+    // Sprite channel mask cycling (Shift+M) — cycles RGBA/R/G/B/A
+    if (input->IsKeyJustPressed(Key::M) &&
+        (input->IsKeyDown(Key::LeftShift) || input->IsKeyDown(Key::RightShift))) {
+        m_vfxEmitter.spriteChannelMask = (m_vfxEmitter.spriteChannelMask + 1) % 5;
+        static const char* kChannelNames[] = {"RGBA", "R", "G", "B", "A"};
+        UZ_LOG(App, Info, "[VFX] Channel mask: {} ({})",
+               kChannelNames[m_vfxEmitter.spriteChannelMask],
+               m_vfxEmitter.spriteChannelMask);
+    }
+
+    // VFX material preset cycling (M key, no shift) — only when no custom sprite loaded
+    if (input->IsKeyJustPressed(Key::M) &&
+        !(input->IsKeyDown(Key::LeftShift) || input->IsKeyDown(Key::RightShift))) {
         if (!m_vfxMaterial.HasSprite()) {
             m_currentMaterialIndex = (m_currentMaterialIndex + 1) % kVFXMaterialCount;
             static const char* kVFXMaterialNames[] = {
@@ -1344,6 +1358,7 @@ void VFXViewportDemo::HandleInput(float dt) {
         UZ_LOG(App, Info, "  Delete               — Reset particles + fire burst");
         UZ_LOG(App, Info, "  Insert               — Toggle Burst / Continuous mode");
         UZ_LOG(App, Info, "  M                    — Cycle VFX material presets");
+        UZ_LOG(App, Info, "  Shift+M              — Cycle sprite channel mask (RGBA/R/G/B/A)");
         UZ_LOG(App, Info, "  Space                — Launch fireball projectile (with trail)");
         UZ_LOG(App, Info, "  Y                    — Toggle trails");
         UZ_LOG(App, Info, "  D                    — Toggle decals");

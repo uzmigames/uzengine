@@ -76,6 +76,8 @@ struct VFXEmitterConfig {
     float    shapeParam3     = 0.0f;  ///< Reserved for future shapes.
     // Material blend mode
     uint32_t blendMode       = 2;     ///< 0=AlphaBlend (SrcAlpha/InvSrcAlpha), 1=Additive (One/One), 2=PremulAlpha (One/InvSrcAlpha).
+    // Sprite channel mask — selects how to interpret sprite texture channels.
+    uint32_t spriteChannelMask = 0;   ///< 0=RGBA (full texture), 1=R as alpha, 2=G as alpha, 3=B as alpha, 4=A as alpha.
 };
 
 /// Named emitter preset with a spawn rate.
@@ -207,7 +209,7 @@ struct VFXBillboardCB {
     uint32_t alignmentMode        = 0;              ///< 0=CameraFacing, 1=VelocityAligned.
     float    stretchFactor        = 0.0f;           ///< Velocity stretch multiplier. 0=no stretch.
     uint32_t blendModeHint        = 2;              ///< 0=AlphaBlend, 1=Additive, 2=PremulAlpha — tells PS how to output alpha.
-    float    _solPad1             = 0.0f;
+    uint32_t spriteChannelMask    = 0;              ///< 0=RGBA, 1=R as alpha, 2=G as alpha, 3=B as alpha, 4=A as alpha.
 };
 static_assert(sizeof(VFXBillboardCB) == 272, "VFXBillboardCB must be 272 bytes (256 base + 16 alignment/stretch)");
 

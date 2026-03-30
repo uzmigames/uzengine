@@ -199,7 +199,7 @@ cbuffer VFXBillboardCB : register(b2) {
     uint     alignmentMode;        ///< 0=CameraFacing, 1=VelocityAligned.
     float    stretchFactor;        ///< Velocity stretch multiplier. 0=no stretch.
     uint     blendModeHint;        ///< 0=AlphaBlend, 1=Additive, 2=PremulAlpha (read by PS, declared for layout).
-    float    _solPad1;
+    uint     spriteChannelMask;  ///< 0=RGBA, 1=R as alpha, 2=G as alpha, 3=B as alpha, 4=A as alpha.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
