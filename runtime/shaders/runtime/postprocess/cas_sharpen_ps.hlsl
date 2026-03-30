@@ -1,5 +1,8 @@
 /// CAS (Contrast Adaptive Sharpening) — AMD FidelityFX
 ///
+/// Copyright (c) 2020 Advanced Micro Devices, Inc. All rights reserved.
+/// Licensed under the MIT License. See https://github.com/GPUOpen-Effects/FidelityFX-CAS
+///
 /// Single-pass adaptive sharpening filter. Enhances edges without
 /// amplifying noise by reducing sharpening in low-contrast regions.
 ///

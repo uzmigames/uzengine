@@ -14,6 +14,7 @@
 ///   with direct L2 SH accumulation for simpler integration with existing SH-based
 ///   deferred lighting path.
 
+#include "../include/math_util.hlsli"
 #include "../include/sdf_common.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -110,7 +111,7 @@ float3 SphericalFibonacci(uint sampleIndex, uint totalSamples, uint seed)
     float i = float(sampleIndex) + float(seed % 97) * 0.618f;
     float n = float(totalSamples);
 
-    float phi = 2.0f * 3.14159265f * frac(i / kGoldenRatio);
+    float phi = M_2PI * frac(i / kGoldenRatio);
     float cosTheta = 1.0f - (2.0f * i + 1.0f) / n;
     float sinTheta = sqrt(max(1.0f - cosTheta * cosTheta, 0.0f));
 
@@ -342,7 +343,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     /// The SH projection integral over the sphere is approximated by
     /// (4 * pi / N) * sum(radiance * basis). The 4*pi factor accounts for
     /// the full sphere solid angle.
-    float normFactor = (4.0f * 3.14159265f) / float(g_raysPerProbe);
+    float normFactor = (4.0f * PI) / float(g_raysPerProbe);
     for (uint shIdx = 0; shIdx < 9; shIdx++)
     {
         shR[shIdx] *= normFactor;

@@ -17,6 +17,8 @@
 /// @ref Valient 2014 "Deferred Rendering in Killzone: Shadow Fall" — DBuffer decals
 /// @ref Pesce 2014 "Rendering Decals in Screen Space"
 
+#include "../include/math_util.hlsli"
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Constant Buffers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -194,7 +196,7 @@ DecalPSOutput main(DecalPSInput input) {
         float3 decalDir = normalize(float3(decalWorld[2].xyz));
 
         float cosAngle = abs(dot(surfNormal, decalDir));
-        float cosThreshold = cos(decalAngleFade * 3.14159265 / 180.0);
+        float cosThreshold = cos(decalAngleFade * PI / 180.0);
         angleFade = saturate((cosAngle - cosThreshold) / max(1.0 - cosThreshold, 0.001));
     }
 

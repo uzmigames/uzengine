@@ -382,14 +382,12 @@ bool OverlapsLight(
 /// Computes an exclusive prefix sum across the thread group, returning the
 /// per-thread offset and (via groupCount) the total sum.
 ///
-/// This replaces the reference engine's ThreadGroupPrefixSum.ush inclusion. The algorithm is
-/// a standard Hillis-Steele scan in shared memory.
+/// Standard Hillis-Steele exclusive prefix sum in shared memory.
 ///
-/// @ref ThreadGroupPrefixSum
+/// @ref Hillis & Steele 1986 "Data Parallel Algorithms" — parallel prefix sum
 /// @constants NONE
-/// @deviations Implementation detail differs (reference uses a separate .ush with
-///   wave-op optimisations), but the interface is identical: returns exclusive
-///   offset for this thread and total groupCount.
+/// @deviations Standard scan without wave-op optimisations. Interface is identical:
+///   returns exclusive offset for this thread and total groupCount.
 uint ThreadGroupPrefixSum(uint value, uint threadIndex, out uint groupCount)
 {
     gs_PrefixScratch[threadIndex] = value;

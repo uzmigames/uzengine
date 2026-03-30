@@ -1,21 +1,29 @@
-/// BRDF Integration LUT compute shader — generates split-sum scale+bias terms.
+/// BRDF Integration LUT compute shader — generates split-sum scale+bias+Ems terms.
 ///
 /// Precomputes a 2D lookup table where:
 ///   - X axis = NdotV (cosine of view angle)
 ///   - Y axis = roughness
-///   - Output R = scale factor for F0
-///   - Output G = bias (added to F0 * scale)
+///   - Output R = scale factor for F0 (Ess scale)
+///   - Output G = bias (added to F0 * scale) (Ess bias)
+///   - Output B = multi-scatter energy compensation Ems = 1 - (R + G)
 ///
-/// The LUT is used at runtime as: envBRDF = F0 * lut.r + lut.g
+/// The LUT is used at runtime as:
+///   Ess = F0 * lut.r + lut.g                     (single-scatter)
+///   Ems = lut.b                                    (multi-scatter complement)
+///   Fms = F0 * (1 - Ess) / max(Ess, 1e-4)        (multi-scatter Fresnel)
+///   energyCompensation = 1.0 + Fms * Ems / (1 - Ems) (Turquin 2019)
 ///
-/// Uses 1024 Hammersley samples per pixel with GGX importance sampling
-/// for high-quality integration. Output format: R16G16_FLOAT (512x512).
+/// Uses 1024 Hammersley samples with VNDF importance sampling for lower
+/// variance at grazing angles compared to standard NDF sampling.
 ///
-/// # References
-/// - Karis 2013, "Real Shading in Unreal Engine 4" — split-sum approximation
-/// - Epic Games, "Real Shading in Unreal Engine 4" course notes
+/// Output format: RGBA16F (R=scale, G=bias, B=Ems, A=unused).
+///
+/// @ref Karis 2013 "Real Shading in Unreal Engine 4" — split-sum approximation
+/// @ref Heitz 2018 "Sampling the GGX Distribution of Visible Normals" — VNDF sampling
+/// @ref Turquin 2019 "Practical Multiple Scattering Compensation for Microfacet Models" — Ems
 
 #include "../include/ibl.hlsli"
+#include "../include/pbr_common.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Resources
@@ -27,7 +35,7 @@ cbuffer RootConstants : register(b0) {
     uint outputHeight;
 };
 
-RWTexture2D<float2> outputLUT : register(u0);
+RWTexture2D<float4> outputLUT : register(u0);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Geometry Term for IBL
@@ -62,23 +70,21 @@ float GeometrySmithIBL(float NdotV, float NdotL, float roughness) {
 
 /// Integrates the split-sum BRDF for a given NdotV and roughness.
 ///
-/// Performs Monte Carlo integration of the GGX specular BRDF, separating
-/// the F0-dependent scale term from the F0-independent bias term.
+/// Uses VNDF importance sampling for lower variance at grazing angles.
+/// Computes multi-scatter energy compensation (Ems) in the B channel.
 ///
-/// # Parameters
-/// - NdotV:     cosine of view angle [0, 1].
-/// - roughness: perceptual roughness [0, 1].
+/// @ref Heitz 2018 "Sampling the GGX Distribution of Visible Normals"
+/// @ref Turquin 2019 "Practical Multiple Scattering Compensation for Microfacet Models"
 ///
 /// # Returns
-/// float2(scale, bias) — the two terms of the split-sum approximation.
-float2 IntegrateBRDF(float NdotV, float roughness) {
-    // Reconstruct V from NdotV (assume N = (0,0,1) in tangent space)
+/// float3(scale, bias, Ems) — split-sum terms + multi-scatter complement.
+float3 IntegrateBRDF(float NdotV, float roughness) {
     float3 V;
-    V.x = sqrt(1.0f - NdotV * NdotV); // sin(theta)
+    V.x = sqrt(1.0f - NdotV * NdotV);
     V.y = 0.0f;
-    V.z = NdotV;                        // cos(theta)
+    V.z = NdotV;
 
-    float3 N = float3(0.0f, 0.0f, 1.0f);
+    float alpha = roughness * roughness;
 
     float scale = 0.0f;
     float bias  = 0.0f;
@@ -87,8 +93,11 @@ float2 IntegrateBRDF(float NdotV, float roughness) {
 
     for (uint i = 0u; i < SAMPLE_COUNT; ++i) {
         float2 Xi = Hammersley(i, SAMPLE_COUNT);
-        float3 H  = ImportanceSampleGGX(Xi, N, roughness);
-        float3 L  = normalize(2.0f * dot(V, H) * H - V);
+
+        /// @ref Heitz 2018 — VNDF sampling produces half-vectors proportional to
+        /// D(h)*G1(v,h), drastically reducing variance at grazing angles.
+        float3 H = ImportanceSampleGGX_VNDF(Xi, V, alpha, alpha);
+        float3 L = normalize(2.0f * dot(V, H) * H - V);
 
         float NdotL = max(L.z, 0.0f);
         float NdotH = max(H.z, 0.0f);
@@ -104,7 +113,14 @@ float2 IntegrateBRDF(float NdotV, float roughness) {
         }
     }
 
-    return float2(scale, bias) / float(SAMPLE_COUNT);
+    scale /= float(SAMPLE_COUNT);
+    bias  /= float(SAMPLE_COUNT);
+
+    /// @ref Turquin 2019 — Ems = 1 - Ess, where Ess = scale + bias (single-scatter energy)
+    float Ess = scale + bias;
+    float Ems = 1.0f - Ess;
+
+    return float3(scale, bias, Ems);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -125,5 +141,6 @@ void main(uint3 dtid : SV_DispatchThreadID) {
     // Clamp roughness to avoid degenerate GGX lobe at roughness=0
     roughness = max(roughness, MIN_ROUGHNESS);
 
-    outputLUT[dtid.xy] = IntegrateBRDF(NdotV, roughness);
+    float3 result = IntegrateBRDF(NdotV, roughness);
+    outputLUT[dtid.xy] = float4(result, 0.0f);
 }

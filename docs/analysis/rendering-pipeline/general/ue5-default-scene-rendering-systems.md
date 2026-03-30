@@ -34,8 +34,8 @@ UE5 uses a **multi-layer deferred rendering pipeline**:
 ### 1.1 GBuffer Layout
 
 **Source Files**:
-- `W:/UE_5.6_Source/Engine/Source/Runtime/RenderCore/Public/GBufferInfo.h` (lines 12–44)
-- `W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Internal/SceneTextures.h` (lines 131–136)
+- `W:/UE_5.6_Source/RenderCore/Public/GBufferInfo.h` (lines 12–44)
+- `W:/UE_5.6_Source/Renderer/Internal/SceneTextures.h` (lines 131–136)
 
 **Pattern**: UE5 uses a **flexible slot-based GBuffer layout** that maps logical "slots" (EGBufferSlot enum) to physical render targets (GBufferA–F). This decouples shader code from RT layout.
 
@@ -103,8 +103,8 @@ struct FSceneTextures {
 ### 1.2 Base Pass Rendering
 
 **Source Files**:
-- `W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/BasePassRendering.h` (lines 78–175)
-- `W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/BasePassRendering.h` (lines 209–255)
+- `W:/UE_5.6_Source/Renderer/Private/BasePassRendering.h` (lines 78–175)
+- `W:/UE_5.6_Source/Renderer/Private/BasePassRendering.h` (lines 209–255)
 
 **Pattern**: The **base pass** writes GBuffer targets. It is a **mesh pass processor** that iterates opaque geometry and outputs GBuffer slots.
 
@@ -144,8 +144,8 @@ struct FOpaqueBasePassUniformParameters {
 ### 2.1 Directional Light (Sun)
 
 **Source Files**:
-- `W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/Shadows/ShadowSceneRenderer.h` (lines 70–71)
-- `W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/DeferredShadingRenderer.cpp` (lines 227–231)
+- `W:/UE_5.6_Source/Renderer/Private/Shadows/ShadowSceneRenderer.h` (lines 70–71)
+- `W:/UE_5.6_Source/Renderer/Private/DeferredShadingRenderer.cpp` (lines 227–231)
 
 **Pattern**: Directional lights use **cascaded shadow maps (CSM)** with multiple cascades per view.
 
@@ -182,8 +182,8 @@ class FShadowSceneRenderer {
 ### 2.2 Sky Light (IBL)
 
 **Source Files**:
-- `W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/ReflectionEnvironment.h` (lines 25–35)
-- `W:/UE_5.6_Source/Engine/Source/Runtime/Engine/Classes/Components/SkyLightComponent.h` (ref in memory)
+- `W:/UE_5.6_Source/Renderer/Private/ReflectionEnvironment.h` (lines 25–35)
+- `W:/UE_5.6_Source/Engine/Classes/Components/SkyLightComponent.h` (ref in memory)
 
 **Pattern**: Sky light uses **image-based lighting (IBL)** with pre-integrated specular and diffuse.
 
@@ -223,7 +223,7 @@ struct FReflectionUniformParameters {
 ### 2.3 Reflection Captures (Probes)
 
 **Source Files**:
-- `W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/ReflectionEnvironmentCapture.h`
+- `W:/UE_5.6_Source/Renderer/Private/ReflectionEnvironmentCapture.h`
 
 **Pattern**: **Reflection capture probes** are placed in the scene to override/blend IBL in local regions.
 
@@ -245,7 +245,7 @@ struct FReflectionUniformParameters {
 ### 2.4 Point/Spot Light Shadows
 
 **Source Files**:
-- `W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/Shadows/ShadowSceneRenderer.h` (lines 67, 231–238)
+- `W:/UE_5.6_Source/Renderer/Private/Shadows/ShadowSceneRenderer.h` (lines 67, 231–238)
 
 **Pattern**: Local lights (point, spot) use **virtual shadow maps (VSM)** or traditional shadow maps on a **per-light basis**.
 
@@ -280,7 +280,7 @@ struct FReflectionUniformParameters {
 ### 3.2 Contact Shadows (Screen-Space)
 
 **Source Files**:
-- `W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/Shadows/ScreenSpaceShadows.h`
+- `W:/UE_5.6_Source/Renderer/Private/Shadows/ScreenSpaceShadows.h`
 
 **Pattern**: **Screen-space contact shadows** trace a cone from the surface toward the sun in screen space to detect occlusion.
 
@@ -305,8 +305,8 @@ struct FReflectionUniformParameters {
 ### 3.3 Subsurface Scattering Shadows
 
 **Source Files**:
-- `W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/PostProcess/PostProcessSubsurface.h`
-- `W:/UE_5.6_Source/Engine/Source/Runtime/Engine/Classes/Components/SkyLightComponent.h` (sky light AO)
+- `W:/UE_5.6_Source/Renderer/Private/PostProcess/PostProcessSubsurface.h`
+- `W:/UE_5.6_Source/Engine/Classes/Components/SkyLightComponent.h` (sky light AO)
 
 **Pattern**: For materials with subsurface scattering, shadows are pre-blurred to simulate light transmission.
 
@@ -328,7 +328,7 @@ struct FReflectionUniformParameters {
 ### 4.1 Tone Mapping
 
 **Source Files**:
-- `W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/PostProcess/PostProcessTonemap.h` (lines 15–78)
+- `W:/UE_5.6_Source/Renderer/Private/PostProcess/PostProcessTonemap.h` (lines 15–78)
 
 **Pattern**: **ACES tone mapping** (Academy Color Encoding System) is the default.
 
@@ -369,7 +369,7 @@ struct FTonemapInputs {
 ### 4.2 Bloom / Light Bloom
 
 **Source Files**:
-- `W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/PostProcess/PostProcessBloomSetup.h` (lines 11–50)
+- `W:/UE_5.6_Source/Renderer/Private/PostProcess/PostProcessBloomSetup.h` (lines 11–50)
 
 **Pattern**: **Gaussian bloom via downsampling chain and separable blur**.
 
@@ -403,7 +403,7 @@ struct FBloomSetupInputs {
 ### 4.3 Anti-Aliasing (TAA)
 
 **Source Files**:
-- `W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/PostProcess/TemporalAA.h` (lines 14–93)
+- `W:/UE_5.6_Source/Renderer/Private/PostProcess/TemporalAA.h` (lines 14–93)
 
 **Pattern**: **Temporal Anti-Aliasing (TAA)** or **Temporal Super-Resolution (TSR)** is the default AA.
 
@@ -471,7 +471,7 @@ struct FTAAPassParameters {
 ### 5.1 Sky Atmosphere (Bruneton/Hillaire)
 
 **Source Files**:
-- `W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/SkyAtmosphereRendering.h` (lines 36–68)
+- `W:/UE_5.6_Source/Renderer/Private/SkyAtmosphereRendering.h` (lines 36–68)
 
 **Pattern**: **Bruneton et al. sky model** with precomputed lookup tables (LUTs).
 
@@ -506,7 +506,7 @@ struct FAtmosphereUniformShaderParameters {
 ### 5.2 Volumetric Clouds
 
 **Source Files**:
-- `W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/VolumetricCloudRendering.h` (referenced in includes)
+- `W:/UE_5.6_Source/Renderer/Private/VolumetricCloudRendering.h` (referenced in includes)
 
 **Pattern**: **Froxel-based volumetric rendering** via structured buffers.
 
@@ -533,7 +533,7 @@ struct FAtmosphereUniformShaderParameters {
 ### 5.3 Fog (Exponential Height Fog)
 
 **Source Files**:
-- `W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/BasePassRendering.h` (line 25: includes FogRendering.h)
+- `W:/UE_5.6_Source/Renderer/Private/BasePassRendering.h` (line 25: includes FogRendering.h)
 
 **Pattern**: **Per-vertex or per-pixel exponential height fog**.
 
@@ -561,7 +561,7 @@ FogAmount = exp(-(Height - CameraHeight) * FogDensity)
 ### 6.1 Default Material Model (PBR)
 
 **Source Files**:
-- `W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/BasePassRendering.h` (GBuffer slots)
+- `W:/UE_5.6_Source/Renderer/Private/BasePassRendering.h` (GBuffer slots)
 
 **Pattern**: **Physically-Based Rendering (PBR)** with Cook-Torrance BRDF.
 
@@ -606,7 +606,7 @@ float SubsurfaceDensity;  // For SSS materials
 ### 6.2 Subsurface Scattering
 
 **Source Files**:
-- `W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/PostProcess/PostProcessSubsurface.h`
+- `W:/UE_5.6_Source/Renderer/Private/PostProcess/PostProcessSubsurface.h`
 
 **Pattern**: **Screen-space subsurface scattering (SSSS)** via separable Gaussian blur.
 
@@ -639,7 +639,7 @@ float IORDensity;  // Material density (affects blur)
 
 **Source Files**:
 - UE5 uses **Lumen** (baked and dynamic global illumination) instead of traditional light probes in modern setups
-- `W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/IndirectLightingCache.cpp` (legacy system)
+- `W:/UE_5.6_Source/Renderer/Private/IndirectLightingCache.cpp` (legacy system)
 
 **Pattern**: **Spherical Harmonics (SH) Light Probes** placed in a 3D grid.
 
@@ -663,7 +663,7 @@ float IORDensity;  // Material density (affects blur)
 ### 7.2 Lumen Global Illumination (Modern Default)
 
 **Source Files**:
-- `W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/Lumen/` (extensive system)
+- `W:/UE_5.6_Source/Renderer/Private/Lumen/` (extensive system)
 
 **Pattern**: **Real-time hierarchical global illumination** via surface cache cards and hardware ray tracing.
 

@@ -91,7 +91,7 @@ SamplerState       g_PointSampler  : register(s0);  // Point sampler for explici
 /// @deviations NONE — exact same bilateral math, just in compute form
 
 [numthreads(8, 8, 1)]
-void CSMain(uint3 DTid : SV_DispatchThreadID) {
+void main(uint3 DTid : SV_DispatchThreadID) {
     // Skip out-of-bounds threads
     if (DTid.x >= g_OutputWidth || DTid.y >= g_OutputHeight) {
         return;

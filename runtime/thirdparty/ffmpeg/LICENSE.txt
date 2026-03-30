@@ -1,0 +1,15 @@
+FFmpeg — LGPL v2.1+
+
+This project uses FFmpeg libraries (libavcodec, libavformat, libavutil, libswscale,
+libswresample) in their shared library (DLL) form under the GNU Lesser General
+Public License version 2.1 or later.
+
+FFmpeg is copyright (c) the FFmpeg developers.
+https://ffmpeg.org/
+
+The full text of the LGPL v2.1 is available at:
+https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
+
+UzEngine links dynamically to FFmpeg shared libraries (.dll) and does not
+modify or distribute FFmpeg source code. Per LGPL v2.1 Section 6, dynamic
+linking to LGPL libraries does not impose LGPL obligations on the application.

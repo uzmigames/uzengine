@@ -155,19 +155,25 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         MeshSdfDesc mesh = g_meshSDFs[m];
 
         // Quick AABB rejection: skip meshes whose volume doesn't overlap
-        // the voxel's neighborhood. The overlap test uses the mesh volume
-        // expanded by the current minimum distance (early-out optimization).
+        // the voxel's neighborhood. The overlap test uses the mesh's local-space
+        // AABB, so we must transform worldPos to local space first.
+        // (mesh.origin and mesh.extent are in local space, not world space.)
+        float3 localPos;
+        localPos.x = dot(mesh.invTransformRow0.xyz, worldPos) + mesh.invTransformRow0.w;
+        localPos.y = dot(mesh.invTransformRow1.xyz, worldPos) + mesh.invTransformRow1.w;
+        localPos.z = dot(mesh.invTransformRow2.xyz, worldPos) + mesh.invTransformRow2.w;
+
         float3 meshMin = mesh.origin - mesh.extent;
         float3 meshMax = mesh.origin + mesh.extent;
 
-        // Transform world position to mesh local for sampling
-        // (the local-space AABB test is done inside SampleMeshSdfLocal
-        // via UV range check — returns 1e6 for out-of-volume points)
+        // Coarse local-space AABB culling: skip if voxel is far from mesh
+        float3 closestOnBox = clamp(localPos, meshMin, meshMax);
+        float localBoxDist = length(localPos - closestOnBox);
 
-        // Coarse world-space AABB culling: skip if voxel is far from mesh
-        float3 closestOnBox = clamp(worldPos, meshMin, meshMax);
-        float boxDist = length(worldPos - closestOnBox);
-        if (boxDist > minDist)
+        // Use the max mesh extent as cull distance — generous to avoid
+        // false rejections from world/local scale differences.
+        float cullDist = max(mesh.extent.x, max(mesh.extent.y, mesh.extent.z));
+        if (localBoxDist > cullDist)
         {
             continue;
         }

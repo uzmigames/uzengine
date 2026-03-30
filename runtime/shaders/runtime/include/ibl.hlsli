@@ -3,21 +3,7 @@
 #ifndef IBL_HLSLI
 #define IBL_HLSLI
 #include "math_util.hlsli"
-
-static const float IBL_MIN_ROUGHNESS = 0.045;
-
-float RadicalInverseVdC(uint bits) {
-    bits = (bits << 16u) | (bits >> 16u);
-    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
-    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
-    bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
-    bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
-    return float(bits) * 2.3283064365386963e-10;
-}
-
-float2 Hammersley(uint i, uint N) {
-    return float2(float(i) / float(N), RadicalInverseVdC(i));
-}
+#include "sampling.hlsli"
 
 float3 ImportanceSampleGGX(float2 Xi, float3 N, float roughness) {
     float a = roughness * roughness;
@@ -55,7 +41,27 @@ float3 WorldToCubemap(float3 dir) {
     return float3(dir.x, -dir.z, dir.y);
 }
 
-// Legacy alias
-#define MIN_ROUGHNESS IBL_MIN_ROUGHNESS
+// ─────────────────────────────────────────────────────────────────────────────
+// LOD / Solid Angle Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Solid angle subtended by a single importance sample.
+/// @ref Pharr, Jakob, Humphreys 2016 "PBR" — Monte Carlo integration
+/// @constants omega_s = 1 / (N * pdf)
+float SolidAngleSample(uint numSamples, float pdf) {
+    return 1.0f / (float(numSamples) * max(pdf, 1e-8f));
+}
+
+/// Compute cubemap mip level for importance-sampled environment lookup.
+/// Uses the ratio of sample solid angle to texel solid angle for proper
+/// pre-filtering that avoids undersampling at low sample counts.
+/// @ref Pharr, Jakob, Humphreys 2016 — Section 13.10, env map filtering
+/// @ref Karis 2013 — split-sum IBL with roughness-dependent mip selection
+/// @constants omega_p = 4*PI / (6 * texWidth^2) — solid angle of one cubemap texel
+float ComputeEnvLOD(float pdf, uint texWidth, uint numSamples) {
+    float omegaS = SolidAngleSample(numSamples, pdf);
+    float omegaP = 4.0f * PI / (6.0f * float(texWidth) * float(texWidth));
+    return max(0.5f * log2(omegaS / omegaP), 0.0f);
+}
 
 #endif

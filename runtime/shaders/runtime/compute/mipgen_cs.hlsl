@@ -38,7 +38,7 @@ SamplerState        linearSampler : register(s0);
 // ─────────────────────────────────────────────────────────────────────────────
 
 [numthreads(8, 8, 1)]
-void CSMain(uint3 dtid : SV_DispatchThreadID)
+void main(uint3 dtid : SV_DispatchThreadID)
 {
     if (dtid.x >= g_OutputSize.x || dtid.y >= g_OutputSize.y)
         return;

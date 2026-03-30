@@ -295,6 +295,10 @@ void main(uint3 dtid : SV_DispatchThreadID)
         // InstanceCount (offset 4) will be written by the alive-particle loop below.
     }
 
+    // Ensure thread 0's UAV init writes are visible to all threads in this group
+    // before any thread proceeds to InterlockedAdd on instanceCount.
+    GroupMemoryBarrierWithGroupSync();
+
     // ── Early exit for excess threads ────────────────────────────────────────
     if (particleIdx >= aliveCount) return;
 

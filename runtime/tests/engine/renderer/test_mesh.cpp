@@ -27,8 +27,8 @@ TEST(MeshHeaderTest, MagicConstant) {
     EXPECT_EQ(bytes[3], 'H');
 }
 
-TEST(MeshHeaderTest, VersionIs1) {
-    EXPECT_EQ(kMeshVersion, 1u);
+TEST(MeshHeaderTest, VersionIs2) {
+    EXPECT_EQ(kMeshVersion, 2u);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

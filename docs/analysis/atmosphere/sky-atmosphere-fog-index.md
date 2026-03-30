@@ -192,7 +192,7 @@ To verify this analysis in actual UE5:
 2. Find line 175 (sky ambient contribution)
 3. Find line 319 (directional atmosphere light)
 4. Check line 375 (final fog color assembly)
-5. Open `W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/SceneRendering.cpp`
+5. Open `W:/UE_5.6_Source/Renderer/Private/SceneRendering.cpp`
 6. Find line 1440, 1451, 1452 (view uniform setup)
 
 All line numbers are exact for UE5.6.

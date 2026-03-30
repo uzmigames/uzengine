@@ -213,6 +213,18 @@ VSOutput main(uint vertexID : SV_VertexID) {
     uint particleID   = vertexID / VERTICES_PER_PARTICLE;
     uint vertexInQuad = vertexID % VERTICES_PER_PARTICLE;
 
+    // ── Resolve sorted index for back-to-front transparency ordering ──
+    // The simulation/sort pass produces a sortedIndices buffer that maps
+    // draw-order particle ID to the actual attribute buffer index.
+    // Reading through this indirection ensures back-to-front rendering.
+    uint sortedIdx = particleID;
+#ifdef UZ_BINDLESS
+    if (vfxIndices.sortedIndicesSrvIndex > 0) {
+        StructuredBuffer<uint> sortedIndices = ResourceDescriptorHeap[vfxIndices.sortedIndicesSrvIndex];
+        sortedIdx = sortedIndices[particleID];
+    }
+#endif
+
     // ── Read particle attributes from structured buffers ──
 #ifdef UZ_BINDLESS
     StructuredBuffer<float4> positions  = ResourceDescriptorHeap[vfxIndices.positionBufferIdx];
@@ -223,21 +235,21 @@ VSOutput main(uint vertexID : SV_VertexID) {
     StructuredBuffer<float>  ages       = ResourceDescriptorHeap[vfxIndices.agesBufferIdx];
     StructuredBuffer<float>  lifespans  = ResourceDescriptorHeap[vfxIndices.lifespansBufferIdx];
 
-    float3 particlePos   = positions[particleID].xyz;
-    float  particleSize  = sizes[particleID];
-    float4 particleColor = colors[particleID];
-    float  particleRot   = rotations[particleID];
-    float3 particleVel   = velocities[particleID].xyz;
-    float  particleAge   = ages[particleID];
-    float  particleLife  = lifespans[particleID];
+    float3 particlePos   = positions[sortedIdx].xyz;
+    float  particleSize  = sizes[sortedIdx];
+    float4 particleColor = colors[sortedIdx];
+    float  particleRot   = rotations[sortedIdx];
+    float3 particleVel   = velocities[sortedIdx].xyz;
+    float  particleAge   = ages[sortedIdx];
+    float  particleLife  = lifespans[sortedIdx];
 #else
-    float3 particlePos   = particlePositions[particleID].xyz;
-    float  particleSize  = particleSizes[particleID];
-    float4 particleColor = particleColors[particleID];
-    float  particleRot   = particleRotations[particleID];
-    float3 particleVel   = particleVelocities[particleID].xyz;
-    float  particleAge   = particleAges[particleID];
-    float  particleLife  = particleLifespans[particleID];
+    float3 particlePos   = particlePositions[sortedIdx].xyz;
+    float  particleSize  = particleSizes[sortedIdx];
+    float4 particleColor = particleColors[sortedIdx];
+    float  particleRot   = particleRotations[sortedIdx];
+    float3 particleVel   = particleVelocities[sortedIdx].xyz;
+    float  particleAge   = particleAges[sortedIdx];
+    float  particleLife  = particleLifespans[sortedIdx];
 #endif
 
     // ── Apply global emitter overrides ──

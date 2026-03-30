@@ -252,9 +252,9 @@ PHYSICS ASSET (variant):
 
 ### UE5 Source References
 
-- **`Engine/Source/Runtime/Engine/Classes/Components/SkeletalMeshComponent.h`** — Parent class pattern
-- **`Engine/Source/Runtime/Engine/Classes/Engine/SkeletalMesh.h`** — Asset structure
-- **`Engine/Source/Runtime/Engine/Classes/Engine/Skeleton.h`** — Joint hierarchy storage
+- **`Engine/Classes/Components/SkeletalMeshComponent.h`** — Parent class pattern
+- **`Engine/Classes/Engine/SkeletalMesh.h`** — Asset structure
+- **`Engine/Classes/Engine/Skeleton.h`** — Joint hierarchy storage
 
 ---
 

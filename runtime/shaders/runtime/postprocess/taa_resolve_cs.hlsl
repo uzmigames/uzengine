@@ -436,9 +436,29 @@ void main(
     // @ref Karis 2014 "TAA" —1926 — TransformSceneColor(HistoryPayload.Color)
     float3 historyYCoCg = RGBToYCoCg(rawHistory);
 
-    // ── Clamp History to Neighborhood Box ───────────────────────────────────
-    // @ref Karis 2014 "TAA" —1957-1961 — ClampHistory (AA_CLIP=0 path)
-    float3 clampedHistory = clamp(historyYCoCg, neighborMin, neighborMax);
+    // ── Variance Clip History to Neighborhood ──────────────────────────────
+    // @ref Salvi 2016 "An Excursion in Temporal Supersampling" — variance clipping
+    // Replace AABB min/max clamp with μ ± γ·σ clip. Tighter than min/max AABB
+    // at oblique angles, significantly reduces ghosting on disocclusion edges.
+    // @constants γ (gamma) = 1.25 — standard variance clip multiplier
+    float3 neighborMu = float3(0, 0, 0);
+    float3 neighborSigma = float3(0, 0, 0);
+    [unroll] for (int ni = 0; ni < 9; ++ni) {
+        neighborMu    += neighbors[ni];
+        neighborSigma += neighbors[ni] * neighbors[ni];
+    }
+    neighborMu    /= 9.0;
+    neighborSigma = sqrt(abs(neighborSigma / 9.0 - neighborMu * neighborMu));
+
+    static const float kVarianceClipGamma = 1.25;
+    float3 varianceMin = neighborMu - kVarianceClipGamma * neighborSigma;
+    float3 varianceMax = neighborMu + kVarianceClipGamma * neighborSigma;
+
+    // Intersect variance box with AABB for robustness (prevents extreme outliers)
+    float3 clipMin = max(neighborMin, varianceMin);
+    float3 clipMax = min(neighborMax, varianceMax);
+
+    float3 clampedHistory = clamp(historyYCoCg, clipMin, clipMax);
 
     // ── Compute Blend Weight ────────────────────────────────────────────────
     // @ref Karis 2014 "TAA" —2225-2272 — COMPUTE BLEND AMOUNT

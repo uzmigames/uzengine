@@ -14,10 +14,10 @@ UE5 uses a consistent winding and culling convention across all rendering backen
 
 | Question | Answer | Source |
 |----------|--------|--------|
-| **FrontCounterClockwise in D3D12?** | `true` | `Engine/Source/Runtime/D3D12RHI/Private/D3D12State.cpp:357` |
+| **FrontCounterClockwise in D3D12?** | `true` | `D3D12RHI/Private/D3D12State.cpp:357` |
 | **Procedural mesh winding order?** | **CCW** (counter-clockwise) when viewed from front | Tested and confirmed in all reference sources |
-| **Opaque rasterizer cull mode default?** | `CM_CW` (cull clockwise = keep CCW triangles) | `Engine/Source/Runtime/RHI/Public/RHIDefinitions.h:351-352` |
-| **D3D12 cull mode translation** | `CM_CW` → `D3D12_CULL_MODE_BACK` | `Engine/Source/Runtime/D3D12RHI/Private/D3D12State.cpp:34` |
+| **Opaque rasterizer cull mode default?** | `CM_CW` (cull clockwise = keep CCW triangles) | `RHI/Public/RHIDefinitions.h:351-352` |
+| **D3D12 cull mode translation** | `CM_CW` → `D3D12_CULL_MODE_BACK` | `D3D12RHI/Private/D3D12State.cpp:34` |
 | **glTF import handling** | Unchanged — glTF meshes (CCW by spec) are rendered as-is | No conversion layer in UE5 |
 
 ---

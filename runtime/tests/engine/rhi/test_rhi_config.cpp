@@ -270,7 +270,8 @@ TEST(RHIConfig, UnknownShaderModelKeepsDefault) {
     Config config;
     const char* argv[] = {"test", "--shader-model=sm7"};
     config.ApplyCLIOverrides(2, argv);
-    EXPECT_EQ(*ResolveRHIConfig(config).shaderModel, ShaderModel::SM6_6);
+    // ParseShaderModel returns false for unknown "sm7", so the optional stays empty.
+    EXPECT_FALSE(ResolveRHIConfig(config).shaderModel.has_value());
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

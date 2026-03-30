@@ -115,11 +115,18 @@ void main(uint3 dtid : SV_DispatchThreadID)
     float wSum = w0 + w1 + w2 + w3;
     float3 color = (s0 * w0 + s1 * w1 + s2 * w2 + s3 * w3) / wSum;
 
-    // Apply threshold: subtract threshold from luminance, scale remaining contribution
-    // @ref Karis 2013 — bloom threshold/setup:59-63 — threshold and saturate pattern
+    // Smooth quadratic knee threshold — avoids hard cutoff flicker.
+    // @ref Karis 2013 — bloom setup with soft knee
+    // @ref Jimenez 2014 "Next Generation Post Processing in Call of Duty" — soft threshold
+    // @constants knee = 0.5 * threshold (half-width of transition band)
     float totalLuminance = Luminance(color) * g_Exposure;
-    float bloomLuminance = totalLuminance - g_BloomThreshold;
-    float bloomAmount = saturate(bloomLuminance * 0.5f);
+    float knee = g_BloomThreshold * 0.5f;
+    float soft = max(0.0f, totalLuminance - g_BloomThreshold + knee);
+    float bloomAmount = (knee > 1e-5f) ? (soft * soft) / (4.0f * knee + 1e-5f) : max(0.0f, totalLuminance - g_BloomThreshold);
+    bloomAmount = min(bloomAmount, totalLuminance);
 
-    outputTex[dtid.xy] = float4(bloomAmount * color, 1.0f);
+    // Normalize: scale color by the ratio of bloom contribution to total luminance
+    float bloomScale = (totalLuminance > 1e-5f) ? (bloomAmount / totalLuminance) : 0.0f;
+
+    outputTex[dtid.xy] = float4(bloomScale * color, 1.0f);
 }

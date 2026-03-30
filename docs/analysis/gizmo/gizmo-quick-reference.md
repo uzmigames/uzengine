@@ -246,7 +246,7 @@ Opacity:               Modify alpha values per state
 ### SOURCE FILES (UE5.6)
 
 ```
-Colors:             Engine/Source/Runtime/Core/Private/Misc/AxisDisplayInfo.cpp:104-115
+Colors:             Core/Private/Misc/AxisDisplayInfo.cpp:104-115
 Legacy Constants:   Engine/Source/Editor/UnrealEd/Public/UnrealWidget.h:22-29
 Modern Gizmo:       Engine/Source/Editor/Experimental/EditorInteractiveToolsFramework/
                     Public/EditorGizmos/TransformGizmo.h:152-210

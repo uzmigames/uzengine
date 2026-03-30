@@ -2,25 +2,16 @@
 ///
 /// Generates one mip level of a prefiltered environment cubemap by
 /// importance-sampling the GGX NDF at a given roughness. Each mip stores
-/// the pre-integrated specular radiance for that roughness level:
+/// the pre-integrated specular radiance for that roughness level.
 ///
-///   mip 0 = roughness 0.0 (mirror reflection)
-///   mip 1 = roughness 0.25
-///   mip 2 = roughness 0.5
-///   mip 3 = roughness 0.75
-///   mip 4 = roughness 1.0
+/// Uses mip-biased sampling (ComputeEnvLOD) to suppress fireflies from
+/// bright HDR texels that dominate low sample counts at high roughness.
 ///
-/// At runtime, the renderer samples this cubemap at the reflection
-/// direction R with mip level = roughness * maxMipLevel.
-///
-/// Dispatched once per mip level from the CPU with the appropriate
-/// roughness and face size.
-///
-/// # References
-/// - Karis 2013, "Real Shading in Unreal Engine 4" — split-sum, prefiltered env
-/// - Lagarde & de Rousiers 2014, "Moving Frostbite to PBR"
+/// @ref Karis 2013 "Real Shading in Unreal Engine 4" — split-sum, prefiltered env
+/// @ref Lagarde 2014 "Moving Frostbite to PBR" — mip-biased firefly suppression
 
 #include "../include/ibl.hlsli"
+#include "../include/pbr_common.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Resources
@@ -32,6 +23,8 @@ cbuffer RootConstants : register(b0) {
     uint  faceSize;     // output face resolution for this mip level
     float roughness;    // target roughness for this mip [0, 1]
     uint  sampleCount;  // number of importance samples (e.g., 256)
+    uint  envMapSize;   // source env cubemap face resolution (for mip-bias computation)
+    uint3 _pad;
 };
 
 #ifdef UZ_BINDLESS
@@ -82,10 +75,20 @@ void main(uint3 dtid : SV_DispatchThreadID) {
         float3 L  = normalize(2.0f * dot(V, H) * H - V);
 
         float NdotL = dot(N, L);
+        float NdotH = max(dot(N, H), 0.0f);
         if (NdotL > 0.0f) {
-            // Weight by NdotL to reduce variance from samples near the
-            // horizon where the cosine term is small
-            prefilteredColor += envCube.SampleLevel(linearSampler, L, 0.0f).rgb * NdotL;
+            // Mip-biased sampling: use the GGX PDF to compute the appropriate
+            // source cubemap mip level. This effectively pre-filters bright
+            // HDR texels and suppresses fireflies at high roughness.
+            // @ref Lagarde 2014 — mip-biased env sampling for firefly suppression
+            float alpha = clampedRoughness * clampedRoughness;
+            float D = D_GGX(NdotH, alpha);
+            float pdf = max(D * NdotH / (4.0f * max(dot(V, H), 0.001f)), 1e-8f);
+            float mipLevel = (clampedRoughness < MIN_ROUGHNESS + 0.001f)
+                           ? 0.0f
+                           : ComputeEnvLOD(pdf, envMapSize, sampleCount);
+
+            prefilteredColor += envCube.SampleLevel(linearSampler, L, mipLevel).rgb * NdotL;
             totalWeight += NdotL;
         }
     }

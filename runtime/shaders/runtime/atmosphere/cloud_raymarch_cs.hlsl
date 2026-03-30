@@ -14,6 +14,7 @@
 /// - RGB: premultiplied cloud color
 /// - A: transmittance (1 = transparent, 0 = opaque)
 
+#include "../include/math_util.hlsli"
 #include "../include/units.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -61,11 +62,6 @@ SamplerState linearSampler : register(s0);
 #ifndef UZ_BINDLESS
 Texture3D<float>    g_ShapeNoiseTex : register(t0);
 RWTexture2D<float4> g_OutputTex     : register(u0);
-#endif
-
-#ifndef UZ_PI_DEFINED
-#define UZ_PI_DEFINED
-static const float PI = 3.14159265359f;
 #endif
 
 /// @ref Bruneton 2017 — Earth radius = 6360 km

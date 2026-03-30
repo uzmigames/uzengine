@@ -94,7 +94,7 @@ void HistogramSetupPS(
 ### Parameter Computation (C++)
 
 ```cpp
-// File: W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/PostProcess/PostProcessEyeAdaptation.cpp:467-475
+// File: W:/UE_5.6_Source/Renderer/Private/PostProcess/PostProcessEyeAdaptation.cpp:467-475
 
 float histogram_log_min = -8.0f;   // or -10.0f if ExtendedLuminanceRange
 float histogram_log_max = 4.0f;    // or 20.0f if ExtendedLuminanceRange

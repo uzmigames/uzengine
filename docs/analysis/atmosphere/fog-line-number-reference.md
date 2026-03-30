@@ -17,11 +17,11 @@ All file paths are exact as of `W:/UE_5.6_Source/`.
 
 | Source | File | Line | Code |
 |--------|------|------|------|
-| Default value | `Engine/Source/Runtime/Engine/Private/Components/SkyAtmosphereComponent.cpp` | 585 | `HeightFogContribution = 1.0f;` |
-| Scene proxy init | `Engine/Source/Runtime/Engine/Private/Components/SkyAtmosphereComponent.cpp` | 603 | `HeightFogContribution = InComponent->HeightFogContribution;` |
-| Dynamic state init | `Engine/Source/Runtime/Engine/Private/Components/SkyAtmosphereComponent.cpp` | 619 | `HeightFogContribution = Ds.HeightFogContribution;` |
-| Scene proxy class | `Engine/Source/Runtime/Engine/Public/SceneProxies/SkyAtmosphereSceneProxy.h` | 27 | `float GetHeightFogContribution() const { return HeightFogContribution; }` |
-| Member variable | `Engine/Source/Runtime/Engine/Public/SceneProxies/SkyAtmosphereSceneProxy.h` | 50 | `float HeightFogContribution;` |
+| Default value | `Engine/Private/Components/SkyAtmosphereComponent.cpp` | 585 | `HeightFogContribution = 1.0f;` |
+| Scene proxy init | `Engine/Private/Components/SkyAtmosphereComponent.cpp` | 603 | `HeightFogContribution = InComponent->HeightFogContribution;` |
+| Dynamic state init | `Engine/Private/Components/SkyAtmosphereComponent.cpp` | 619 | `HeightFogContribution = Ds.HeightFogContribution;` |
+| Scene proxy class | `Engine/Public/SceneProxies/SkyAtmosphereSceneProxy.h` | 27 | `float GetHeightFogContribution() const { return HeightFogContribution; }` |
+| Member variable | `Engine/Public/SceneProxies/SkyAtmosphereSceneProxy.h` | 50 | `float HeightFogContribution;` |
 
 ---
 
@@ -29,8 +29,8 @@ All file paths are exact as of `W:/UE_5.6_Source/`.
 
 | Source | File | Line | Code |
 |--------|------|------|------|
-| Transmittance LUT | `Engine/Source/Runtime/Renderer/Private/SkyAtmosphereRendering.cpp` | 454 | `const FLinearColor TransmittanceTowardSun = SkyAtmosphereSceneProxy.GetAtmosphereSetup().GetTransmittanceAtGroundLevel(AtmosphereLightDirection);` |
-| Store in proxy | `Engine/Source/Runtime/Renderer/Private/SkyAtmosphereRendering.cpp` | 458 | `AtmosphereLight.Proxy->SetAtmosphereRelatedProperties(TransmittanceTowardSun, SunDiskOuterSpaceLuminance);` |
+| Transmittance LUT | `Renderer/Private/SkyAtmosphereRendering.cpp` | 454 | `const FLinearColor TransmittanceTowardSun = SkyAtmosphereSceneProxy.GetAtmosphereSetup().GetTransmittanceAtGroundLevel(AtmosphereLightDirection);` |
+| Store in proxy | `Renderer/Private/SkyAtmosphereRendering.cpp` | 458 | `AtmosphereLight.Proxy->SetAtmosphereRelatedProperties(TransmittanceTowardSun, SunDiskOuterSpaceLuminance);` |
 
 ---
 
@@ -199,12 +199,12 @@ All file paths are exact as of `W:/UE_5.6_Source/`.
 ## File Paths (Absolute)
 
 ```
-W:/UE_5.6_Source/Engine/Source/Runtime/Engine/Private/Components/SkyAtmosphereComponent.cpp
-W:/UE_5.6_Source/Engine/Source/Runtime/Engine/Private/Components/DirectionalLightComponent.cpp
-W:/UE_5.6_Source/Engine/Source/Runtime/Engine/Public/SceneProxies/SkyAtmosphereSceneProxy.h
-W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/FogRendering.cpp
-W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/SkyAtmosphereRendering.cpp
-W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/SceneRendering.cpp
+W:/UE_5.6_Source/Engine/Private/Components/SkyAtmosphereComponent.cpp
+W:/UE_5.6_Source/Engine/Private/Components/DirectionalLightComponent.cpp
+W:/UE_5.6_Source/Engine/Public/SceneProxies/SkyAtmosphereSceneProxy.h
+W:/UE_5.6_Source/Renderer/Private/FogRendering.cpp
+W:/UE_5.6_Source/Renderer/Private/SkyAtmosphereRendering.cpp
+W:/UE_5.6_Source/Renderer/Private/SceneRendering.cpp
 W:/UE_5.6_Source/Engine/Shaders/Private/HeightFogCommon.ush
 ```
 

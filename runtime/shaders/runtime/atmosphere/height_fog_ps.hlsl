@@ -29,6 +29,8 @@
 /// Output: float4(inscatterColor, fogOpacity)
 /// Blend: SrcAlpha, InvSrcAlpha (premultiplied inscattering + opacity)
 
+#include "../include/math_util.hlsli"
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Input Structure
 // ─────────────────────────────────────────────────────────────────────────────
@@ -188,7 +190,7 @@ static const float FLT_EPSILON2 = 0.01f;
 
 /// Normalization constant for the isotropic (uniform) phase function: 1 / (4 * PI).
 /// Applied after the directional cosine-power phase when not matching volumetric fog.
-static const float UNIFORM_PHASE_FUNCTION = 1.0f / (4.0f * 3.14159265359f);
+static const float UNIFORM_PHASE_FUNCTION = 1.0f / (4.0f * PI);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // IntegrateExponentialFogRay

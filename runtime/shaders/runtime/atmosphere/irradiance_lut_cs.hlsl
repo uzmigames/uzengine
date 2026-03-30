@@ -33,6 +33,7 @@
 /// @constants NUM_HEMISPHERE_DIRECTIONS=32, PI=3.14159265358979323846
 /// @deviations NONE
 
+#include "../include/math_util.hlsli"
 #include "../include/atmosphere_lut.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -99,9 +100,6 @@ RWTexture2D<float4> g_DeltaIrradianceUav   : register(u1);
 /// @constants 32
 /// @deviations NONE
 static const int NUM_HEMISPHERE_DIRECTIONS = 32;
-
-/// PI for phase function and hemisphere integration.
-static const float PI = 3.14159265358979323846f;
 
 /// Golden ratio for Fibonacci sampling.
 static const float GOLDEN_RATIO = 0.6180339887498949f;

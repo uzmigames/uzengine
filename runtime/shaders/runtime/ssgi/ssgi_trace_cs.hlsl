@@ -57,8 +57,6 @@
 /// Far depth sentinel. Reversed-Z: 0 = far plane.
 #define FAR_DEPTH_VALUE 0.0f
 
-#define PI 3.14159265358979323846f
-
 /// Batched sample count for the screen-space march inner loop.
 /// @ref Stachowiak 2015 — batch size 4 for march efficiency
 #define SAMPLE_BATCH_SIZE 4

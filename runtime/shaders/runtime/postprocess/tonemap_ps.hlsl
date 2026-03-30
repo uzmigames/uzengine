@@ -107,6 +107,10 @@ cbuffer PerFrameCB : register(b1) {
     float    filmGrainIntensity;       // 468
     float    vignetteIntensity;        // 472
     float    chromaAbIntensity;        // 476
+    uint     tonemapOperator;          // 480 — 0=ACES, 1=Reinhard, 2=ReinhardMod, 3=HableUC2, 4=None
+    float    whiteBalanceKelvin;       // 484 — color temperature in Kelvin (6500 = D65 neutral)
+    float    _pfPad10;                 // 488
+    float    _pfPad11;                 // 492
 };
 
 SamplerState linearSampler : register(s0);
@@ -362,11 +366,23 @@ float4 main(FSInput input) : SV_Target {
     // Floor of 0.2 prevents overly dark output when auto-exposure resets.
     color *= max(exposure, 0.2);
 
-    // ── 6. Tonemap (ACES) + sRGB ────────────────────────────────────────
-    // Narkowicz 2015 ACES approximation. The color grading LUT path
-    // (ColorGradingLUTSample) is available but disabled by default until
-    // visual verification with a loaded scene confirms correct output.
-    color = ACESFilm(color);
+    // ── 5b. White balance (before tonemap, in linear HDR) ─────────────────
+    // @ref Krystek 1985, Bradford chromatic adaptation
+    if (abs(whiteBalanceKelvin - 6500.0) > 10.0) {
+        color = WhiteBalance(color, whiteBalanceKelvin);
+    }
+
+    // ── 6. Tonemap ────────────────────────────────────────────────────────
+    // Selectable tone mapping operator via tonemapOperator field in PerFrameCB.
+    // 0=ACES (default), 1=Reinhard, 2=ReinhardModified, 3=HableUC2, 4=None
+    // @ref Narkowicz 2015, Reinhard 2002, Hable 2010
+    switch (tonemapOperator) {
+    case 1:  color = ReinhardTonemap(color); break;
+    case 2:  color = ReinhardModifiedTonemap(color, 4.0); break;
+    case 3:  color = HableUC2Tonemap(color); break;
+    case 4:  break; // No tonemap (linear output for debugging)
+    default: color = ACESFilm(color); break;
+    }
 
     // ── 7. Linear -> sRGB ────────────────────────────────────────────────
     color = LinearToSrgb(color);

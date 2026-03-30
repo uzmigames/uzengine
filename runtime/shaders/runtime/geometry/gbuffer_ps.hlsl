@@ -5,6 +5,8 @@
 ///
 /// RT0 (R8G8B8A8_UNORM): rgb = albedo, a = 1.0
 
+#include "../include/octahedral.hlsli"
+
 struct PSInput {
     float4 positionCS : SV_Position;
     float3 normalWS   : NORMAL;
@@ -172,15 +174,7 @@ GBufferOutput main(PSInput input) {
 #endif
 
     // ── Octahedral encode normal ──────────────────────────────────────────
-    // Inline to avoid include dependency. Will extract to include later.
-    float3 na = abs(N);
-    float  nt = na.x + na.y + na.z;
-    float2 octN = N.xy / nt;
-    if (N.z < 0.0) {
-        float2 octSign = float2(octN.x >= 0.0 ? 1.0 : -1.0, octN.y >= 0.0 ? 1.0 : -1.0);
-        octN = (1.0 - abs(octN.yx)) * octSign;
-    }
-    octN = octN * 0.5 + 0.5;
+    float2 octN = OctEncode(N);
 
     // ── Pack specular + shadingModelID into RT3.a ─────────────────────────
     float specularVal = float((materialFlags >> 8u) & 0xFFu) / 255.0;

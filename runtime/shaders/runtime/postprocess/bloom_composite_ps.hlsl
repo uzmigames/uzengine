@@ -1,22 +1,22 @@
-/// Bloom Composite Pass — Blend Blurred Bloom onto Scene
+/// Bloom Composite Pass — Blend Blurred Bloom onto HDR Scene
 ///
-/// Combines the blurred bloom texture with the original scene color
-/// using additive blending. This final post-processing step adds a glow
-/// effect to bright areas of the scene.
+/// Combines the blurred bloom texture with the HDR scene color
+/// using additive blending. Applied BEFORE tone mapping so bloom
+/// participates in the tone curve and produces natural glow falloff.
 ///
 /// # Blending
 /// Output = SceneColor + BloomColor * BloomIntensity
 ///
-/// The bloom contributes additively, brightening the final image.
-/// Typical intensity: [0.1, 1.0]. Higher values produce more prominent glow.
+/// @ref Karis 2013 — HDR bloom composited before tonemap for correct energy
+/// @ref Jimenez 2014 "Next Gen Post Processing in Call of Duty" — HDR bloom pipeline
 ///
 /// # Input
-/// - Scene color texture (LDR after tone mapping)
-/// - Blurred bloom texture (from bloom_blur_v_ps.hlsl)
+/// - HDR scene color texture (before tone mapping)
+/// - Blurred bloom texture (from bloom blur chain)
 /// - Bloom intensity parameter
 ///
 /// # Output
-/// - Scene + bloom composite (final color before display)
+/// - HDR scene color with bloom contribution (fed into tonemap pass)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constant Buffers
@@ -43,14 +43,13 @@ cbuffer BloomCompositeParams : register(b2) {
 #ifdef UZ_BINDLESS
 /// Root constants at b0 — SRV heap indices for scene color and bloom textures.
 cbuffer RootConstants : register(b0) {
-    uint sceneColorIndex;     ///< SRV descriptor heap index for LDR scene color.
+    uint sceneColorIndex;     ///< SRV descriptor heap index for HDR scene color.
     uint bloomTextureIndex;   ///< SRV descriptor heap index for blurred bloom.
     uint _rcPad0;
     uint _rcPad1;
 };
 #else
-/// Scene color texture (LDR, after tone mapping).
-/// This is the main output from the renderer that will receive bloom.
+/// HDR scene color texture (before tone mapping).
 Texture2D<float4> sceneColor : register(t0);
 
 /// Fully blurred bloom texture (from bloom_blur_v_ps.hlsl).

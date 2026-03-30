@@ -2,8 +2,10 @@
 #ifndef SH_IRRADIANCE_HLSLI
 #define SH_IRRADIANCE_HLSLI
 
+#include "math_util.hlsli"
+
 float3 GetSkySHDiffuse(float3 N, float4 SH[7]) {
-    static const float kA0 = 3.14159265;  // pi
+    static const float kA0 = PI;  // pi
     static const float kA1 = 2.09439510;  // 2pi/3
     static const float c1  = 0.42904276;
     static const float c3  = 0.24770795;

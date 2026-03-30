@@ -448,7 +448,7 @@ void FTextureImportSettings::GetCompressedTextureCookInfo(
 
 ### 2.2 Runtime: Mip Streaming
 
-**File**: `Engine/Source/Runtime/Engine/Private/Streaming/StreamingManager.cpp`
+**File**: `Engine/Private/Streaming/StreamingManager.cpp`
 
 #### Streaming Pipeline
 
@@ -529,7 +529,7 @@ enum ETextureStreamingPriority {
 
 ### 2.3 Virtual Textures (Nanite-Era)
 
-**File**: `Engine/Source/Runtime/Engine/Private/VT/VirtualTextureBuilder.cpp`
+**File**: `Engine/Private/VT/VirtualTextureBuilder.cpp`
 
 Virtual Textures bypass traditional streaming:
 
@@ -826,7 +826,7 @@ UE5's virtual textures require:
 
 - **Godot 4 Texture System**: `Engine/editor/import/resource_importer_texture.cpp`, `Engine/scene/resources/compressed_texture.cpp`, `Engine/core/io/resource_loader.h`
 - **Godot Streaming Hooks**: Line 759 `"Support for texture streaming is not implemented yet"`
-- **UE5 Streaming Manager**: `Engine/Source/Runtime/Engine/Private/Streaming/StreamingManager.cpp`
+- **UE5 Streaming Manager**: `Engine/Private/Streaming/StreamingManager.cpp`
 - **Unity Texture Streaming**: Quality Settings → Texture Streaming, `Modules/Texture/Public/TextureImporterSettings.cpp`
 - **Format Comparison**: Godot `.ctex` vs UE5 `.uasset`/`.ubulk` vs Unity `.asset`
 
@@ -841,9 +841,9 @@ UE5's virtual textures require:
 - **Format Header**: `.ctex` format defined in `compressed_texture.h:43-61`
 
 ### UE5 (W:\UE_5.6_Source)
-- **Streaming Manager**: `Engine/Source/Runtime/Engine/Private/Streaming/StreamingManager.cpp`
-- **Texture Format**: `Engine/Source/Runtime/Engine/Private/UnrealEd/Kismet2/BlueprintEditorUtils.cpp`
-- **Virtual Textures**: `Engine/Source/Runtime/Engine/Private/VT/VirtualTextureBuilder.cpp`
+- **Streaming Manager**: `Engine/Private/Streaming/StreamingManager.cpp`
+- **Texture Format**: `Engine/Private/UnrealEd/Kismet2/BlueprintEditorUtils.cpp`
+- **Virtual Textures**: `Engine/Private/VT/VirtualTextureBuilder.cpp`
 - **Cook System**: `Engine/Source/Editor/UnrealEd/Private/Kismet/SGraphEditorCommands.cpp`
 
 ### Unity

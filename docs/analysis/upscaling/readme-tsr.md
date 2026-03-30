@@ -195,10 +195,10 @@ See: blend-factors.md §Blend Factor Computation
 All line numbers reference `W:\UE_5.6_Source`:
 
 **Header**:
-- `Engine/Source/Runtime/Renderer/Public/TemporalUpscaler.h` — Interface definition
+- `Renderer/Public/TemporalUpscaler.h` — Interface definition
 
 **C++**:
-- `Engine/Source/Runtime/Renderer/Private/PostProcess/TemporalSuperResolution.cpp` — All shader classes, CVars, pass setup
+- `Renderer/Private/PostProcess/TemporalSuperResolution.cpp` — All shader classes, CVars, pass setup
 
 **Shaders** (all in `Engine/Shaders/Private/TemporalSuperResolution/`):
 - `TSRDilateVelocity.usf` — Velocity dilation with reprojection field

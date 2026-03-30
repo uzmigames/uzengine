@@ -1,3 +1,5 @@
+#include "../include/math_util.hlsli"
+
 /// Multi-Scattering LUT Compute Shader — Precomputed infinite-bounce correction.
 ///
 /// @ref NewMultiScatCS
@@ -65,7 +67,6 @@ SamplerState        linearClampSamp  : register(s0);
 static const uint  MS_LUT_SIZE      = 32;
 static const int   NUM_DIRECTIONS   = 64;
 static const int   NUM_STEPS        = 20;
-static const float PI               = 3.14159265358979323846f;
 static const float GOLDEN_RATIO     = 0.6180339887498949f;
 
 // ─────────────────────────────────────────────────────────────────────────────

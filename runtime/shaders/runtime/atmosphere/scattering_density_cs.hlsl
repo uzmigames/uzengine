@@ -27,6 +27,7 @@
 /// @constants NUM_SPHERE_DIRECTIONS=16, MIE_EXTINCTION_RATIO=1.11
 /// @deviations NONE
 
+#include "../include/math_util.hlsli"
 #include "../include/atmosphere_lut.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -93,9 +94,6 @@ RWTexture3D<float4> g_DensityOut           : register(u0);
 /// @constants 16 (precompute quality)
 /// @deviations NONE
 static const int NUM_SPHERE_DIRECTIONS = 16;
-
-/// PI for phase function computations.
-static const float PI = 3.14159265358979323846f;
 
 /// Golden ratio for Fibonacci sphere sampling.
 static const float GOLDEN_RATIO = 0.6180339887498949f;

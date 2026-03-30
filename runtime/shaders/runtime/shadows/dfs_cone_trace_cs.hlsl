@@ -113,11 +113,12 @@ float TraceSdfObject(
     float  volumeRayLength = length(volumeRayDir);
     volumeRayDir /= max(volumeRayLength, 0.0001f);
 
-    // Compute world-to-volume scale (use max axis scale to avoid over-dilating penumbra)
+    // Compute world-to-volume scale from the ratio of volume-space to world-space ray lengths.
+    // For non-unit-scale objects, world distances differ from volume (local) distances.
+    // This scale factor converts the world-space cone angle (tanLightAngle) to volume space.
     /// @ref Wright 2015 "DFS" — shadow ray trace:118 — WorldToVolumeScale = 1/max3(VolumeToWorldScale)
-    float3 volumeExtent = obj.localBoundsMax - obj.localBoundsMin;
-    float maxVolumeExtent = max(volumeExtent.x, max(volumeExtent.y, volumeExtent.z));
-    float worldToVolumeScale = maxVolumeExtent > 0.0001f ? 1.0f : 0.0f;
+    float worldRayLength = length(worldRayEnd - worldRayStart);
+    float worldToVolumeScale = worldRayLength > 0.0001f ? (volumeRayLength / worldRayLength) : 1.0f;
 
     /// @ref Wright 2015 "DFS" — shadow ray trace:119-120 — VolumeMinSphereRadius, VolumeMaxSphereRadius
     /// @constants MinSphereRadius=0.4, MAX_TRACE_SPHERE_RADIUS=100
@@ -130,7 +131,7 @@ float TraceSdfObject(
     // Expand intersection box by cone radius at object center distance
     /// @ref Wright 2015 "DFS" — shadow ray trace:124-125
     float objectCenterDistanceAlongRay = dot(-volumeRayStart, volumeRayDir);
-    float localConeRadiusAtObject = min(tanLightAngle * max(objectCenterDistanceAlongRay, 0.0f), volumeMaxSphereRadius);
+    float localConeRadiusAtObject = min(tanLightAngle * worldToVolumeScale * max(objectCenterDistanceAlongRay, 0.0f), volumeMaxSphereRadius);
 
     // Ray-AABB intersection in local space
     /// @ref Wright 2015 "DFS" — shadow ray trace:127
@@ -139,7 +140,7 @@ float TraceSdfObject(
     float3 localBoxMin = volumeCenter - volumePosExtent - localConeRadiusAtObject;
     float3 localBoxMax = volumeCenter + volumePosExtent + localConeRadiusAtObject;
 
-    float2 intersectionTimes = LineBoxIntersect(volumeRayStart, volumeRayEnd, localBoxMin, localBoxMax);
+    float2 intersectionTimes = LineBoxIntersect(volumeRayStart, volumeRayEnd - volumeRayStart, localBoxMin, localBoxMax);
 
     // No intersection
     if (intersectionTimes.x >= intersectionTimes.y) {
@@ -194,7 +195,7 @@ float TraceSdfObject(
 
         // Compute cone radius at current ray time
         /// @ref Wright 2015 "DFS" — shadow ray trace:179
-        float sphereRadius = clamp(tanLightAngle * sampleRayTime, volumeMinSphereRadius, volumeMaxSphereRadius);
+        float sphereRadius = clamp(tanLightAngle * worldToVolumeScale * sampleRayTime, volumeMinSphereRadius, volumeMaxSphereRadius);
 
         // Compute step visibility: ratio of distance to cone radius, clamped by self-shadow
         /// @ref Wright 2015 "DFS" — shadow ray trace:180

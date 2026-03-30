@@ -29,8 +29,8 @@ This document covers the histogram method in detail.
 - `W:/UE_5.6_Source/Engine/Shaders/Private/PostProcessEyeAdaptationUtils.usf` — Utility shaders
 
 **C++ implementation:**
-- `W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/PostProcess/PostProcessEyeAdaptation.cpp` — Main pass
-- `W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/PostProcess/PostProcessEyeAdaptation.h` — Interface
+- `W:/UE_5.6_Source/Renderer/Private/PostProcess/PostProcessEyeAdaptation.cpp` — Main pass
+- `W:/UE_5.6_Source/Renderer/Private/PostProcess/PostProcessEyeAdaptation.h` — Interface
 
 ### Histogram Size & Binning
 

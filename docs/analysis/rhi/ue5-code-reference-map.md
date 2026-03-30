@@ -277,7 +277,7 @@ if (sdk != nullptr) {
 
 ## Build System Integration
 
-**File**: `Engine/Source/Runtime/D3D12RHI/D3D12RHI.Build.cs`
+**File**: `D3D12RHI/D3D12RHI.Build.cs`
 
 ```csharp
 public D3D12RHI(ReadOnlyTargetRules Target) : base(Target)

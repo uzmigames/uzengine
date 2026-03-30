@@ -64,6 +64,43 @@
 #define UZ_SAMPLE_TEX3D_LOD(srvIndex, samp, uvw, lod) \
     ResourceDescriptorHeap[srvIndex].SampleLevel(samp, uvw, lod)
 
+#else
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Register path (SM5 / non-bindless): first argument is the texture object
+// itself (e.g., a Texture2D declared at register(tN)), not a descriptor index.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#define UZ_SAMPLE_TEX2D(tex, samp, uv) \
+    (tex).Sample(samp, uv)
+
+#define UZ_SAMPLE_TEX2D_LOD(tex, samp, uv, lod) \
+    (tex).SampleLevel(samp, uv, lod)
+
+#define UZ_SAMPLE_TEX2D_BIAS(tex, samp, uv, bias) \
+    (tex).SampleBias(samp, uv, bias)
+
+#define UZ_SAMPLE_TEX2D_GRAD(tex, samp, uv, ddx, ddy) \
+    (tex).SampleGrad(samp, uv, ddx, ddy)
+
+#define UZ_SAMPLE_TEX2D_CMP(tex, cmpSamp, uv, ref) \
+    (tex).SampleCmpLevelZero(cmpSamp, uv, ref)
+
+#define UZ_LOAD_TEX2D(tex, coord) \
+    (tex).Load(coord)
+
+#define UZ_SAMPLE_TEXCUBE(tex, samp, dir) \
+    (tex).Sample(samp, dir)
+
+#define UZ_SAMPLE_TEXCUBE_LOD(tex, samp, dir, lod) \
+    (tex).SampleLevel(samp, dir, lod)
+
+#define UZ_SAMPLE_TEX3D(tex, samp, uvw) \
+    (tex).Sample(samp, uvw)
+
+#define UZ_SAMPLE_TEX3D_LOD(tex, samp, uvw, lod) \
+    (tex).SampleLevel(samp, uvw, lod)
+
 #endif // UZ_BINDLESS
 
 #endif // TEXTURE_BINDING_HLSLI

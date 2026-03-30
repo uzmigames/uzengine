@@ -86,7 +86,7 @@ float3 SpecularBRDF(FBxDFContext Context)
 
 ### Decompose GBuffer (CPU Side)
 
-**File**: `Engine/Source/Runtime/Renderer/Private/DeferredShadingRenderer.cpp`
+**File**: `Renderer/Private/DeferredShadingRenderer.cpp`
 
 When reading from GBuffer texture:
 ```cpp
@@ -108,7 +108,7 @@ float3 SpecularColor = ComputeF0(GBuffer.Specular, GBuffer.BaseColor, GBuffer.Me
 
 ### Sky Light Existence Check
 
-**File**: `Engine/Source/Runtime/Renderer/Private/IndirectLightRendering.cpp:1987-1991`
+**File**: `Renderer/Private/IndirectLightRendering.cpp:1987-1991`
 
 ```cpp
 const bool bSkyLight = Scene->SkyLight
@@ -128,7 +128,7 @@ const bool bSkyLight = Scene->SkyLight
 
 ### Apply Sky Light & Reflections
 
-**File**: `Engine/Source/Runtime/Renderer/Private/IndirectLightRendering.cpp:2146-2159`
+**File**: `Renderer/Private/IndirectLightRendering.cpp:2146-2159`
 
 ```cpp
 void FDeferredShadingSceneRenderer::RenderDeferredReflectionsAndSkyLighting(
@@ -163,7 +163,7 @@ DeferredShadingRenderer::Render()
 
 ### Reflection Capture Query
 
-**File**: `Engine/Source/Runtime/Renderer/Private/ReflectionEnvironment.cpp`
+**File**: `Renderer/Private/ReflectionEnvironment.cpp`
 
 ```cpp
 bool ShouldDoReflectionEnvironment(const FScene* Scene, const FEngineShowFlags& EngineShowFlags)
@@ -218,7 +218,7 @@ void DeferredLightPixelMain(
 
 ### Pass 2: Sky Light Pass (Indirect)
 
-**File**: `Engine/Source/Runtime/Renderer/Private/CompositionLighting/...`
+**File**: `Renderer/Private/CompositionLighting/...`
 
 **Conceptual code** (not exact source):
 ```cpp
@@ -315,9 +315,9 @@ if (World && World->Scene) {
 
 ## Related Reading
 
-- **Metallic property documentation**: `Engine/Source/Runtime/Engine/Classes/Materials/MaterialExpressionMaterialParameter.h`
+- **Metallic property documentation**: `Engine/Classes/Materials/MaterialExpressionMaterialParameter.h`
 - **GBuffer layout**: `Engine/Shaders/Private/DeferredShadingCommon.ush` (FGBufferData struct)
 - **BRDF functions**: `Engine/Shaders/Private/BRDF.ush`
-- **Sky light implementation**: `Engine/Source/Runtime/Renderer/Classes/SkyLightSceneProxy.h`
-- **Reflection environment**: `Engine/Source/Runtime/Renderer/Private/ReflectionEnvironment.cpp`
+- **Sky light implementation**: `Renderer/Classes/SkyLightSceneProxy.h`
+- **Reflection environment**: `Renderer/Private/ReflectionEnvironment.cpp`
 

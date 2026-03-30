@@ -204,15 +204,16 @@ TEST(GPUParticleBuffer, Create_Success_CapacityMatchesRequested) {
 /// Two sets: 14 attribute buffers.
 /// Shared: aliveCount, freeList, freeListHead, idToIndex, indirectDrawArgs,
 ///          indirectDispatchArgs = 6 shared buffers.
-/// Total: 14 + 6 = 20 CreateBuffer calls.
+/// Sort: sortKeys, sortIndices = 2 sort buffers.
+/// Total: 14 + 6 + 2 = 22 CreateBuffer calls.
 TEST(GPUParticleBuffer, Create_AllocatesCorrectBufferCount) {
     MockRHIDevice device;
     GPUParticleBuffer buf;
 
     buf.Create(&device, 100u);
 
-    EXPECT_EQ(device.buffersCreated.load(), 20u)
-        << "Create() must allocate exactly 20 GPU buffers (14 attribute + 6 shared)";
+    EXPECT_EQ(device.buffersCreated.load(), 22u)
+        << "Create() must allocate exactly 22 GPU buffers (14 attribute + 6 shared + 2 sort)";
 
     buf.Destroy(&device);
 }

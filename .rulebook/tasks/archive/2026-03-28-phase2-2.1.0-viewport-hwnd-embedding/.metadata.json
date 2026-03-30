@@ -1,9 +1,0 @@
-{
-  "id": "phase2-2.1.0-viewport-hwnd-embedding",
-  "title": "Viewport Frame Streaming — H.264 DX12→WebView Canvas Inside VSCode",
-  "status": "approved",
-  "priority": "P0",
-  "phase": 2,
-  "created": "2026-03-25",
-  "dependencies": ["phase2-2.0.0-vscode-napi-foundation"]
-}

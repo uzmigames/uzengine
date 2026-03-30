@@ -34,6 +34,8 @@
 
 #include "../include/math_util.hlsli"
 #include "../include/octahedral.hlsli"
+#include "../include/sampling.hlsli"
+#include "../include/ibl.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Quality Defines
@@ -42,6 +44,18 @@
 /// @ref McGuire & Mara 2014 — SSR_QUALITY==2 (Medium): 16 steps, 1 ray
 #ifndef SSR_NUM_STEPS
 #define SSR_NUM_STEPS 16
+#endif
+
+/// Number of GGX importance-sampled rays per pixel for stochastic SSR.
+/// When SSR_NUM_RAYS == 1 (default), the existing single-ray mirror reflection
+/// path is used for backward compatibility. When SSR_NUM_RAYS > 1, multiple
+/// rays are traced with GGX-distributed directions based on surface roughness,
+/// and results are averaged. Higher values reduce noise but cost linearly.
+///
+/// @ref Stachowiak 2015 "Stochastic Screen-Space Reflections" — multi-ray GGX sampling
+/// @constants default=1 (single ray, backward compatible)
+#ifndef SSR_NUM_RAYS
+#define SSR_NUM_RAYS 1
 #endif
 
 /// Number of samples batched in the inner loop.
@@ -61,8 +75,6 @@
 
 /// Far depth sentinel. Reversed-Z: 0.0 = far plane.
 #define FAR_DEPTH_VALUE 0.0f
-
-#define PI 3.14159265358979323846f
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Root Constants (b0, 8 DWORDs = 32 bytes)
@@ -462,22 +474,33 @@ void main(
     float3 V = normalize(cameraPos.xyz - worldPos);
     float  sceneDepth = LinearizeDepth(deviceZ);
 
-    // ── Compute reflection direction ──
+    // ── Per-pixel step offset base using Interleaved Gradient Noise ──
+    float frameIndex = timeParams.z; // frame count
+
+    // ── Multi-ray loop ──
+    // When SSR_NUM_RAYS == 1, this is the standard single mirror-reflection ray.
+    // When SSR_NUM_RAYS > 1, multiple rays are importance-sampled from the GGX
+    // distribution based on roughness, traced independently, and averaged.
+    // This produces smoother reflections for rough surfaces at the cost of
+    // SSR_NUM_RAYS * SSR_NUM_STEPS Hi-Z samples per pixel.
+    //
+    // @ref Stachowiak 2015 "Stochastic Screen-Space Reflections" — multi-ray GGX sampling
+    // @ref Karis 2013 "Real Shading in Unreal Engine 4" — GGX importance sampling
+    float4 result = 0.0f;
+
+#if SSR_NUM_RAYS == 1
+    // ── Single-ray fast path (backward compatible) ──
+    // Mirror reflection — no importance sampling overhead.
     float3 L = reflect(-V, worldNormal);
 
-    // ── Per-pixel step offset using Interleaved Gradient Noise ──
-    float frameIndex = timeParams.z; // frame count
     float stepOffset = InterleavedGradientNoise(pixelCenter, fmod(frameIndex, 8.0f));
     stepOffset += STEP_OFFSET_BIAS;
 
-    // ── Initialize screen-space ray ──
-    // WorldTMax = SceneDepth (limits ray length to current scene depth distance)
     SSRTRay ray = InitScreenSpaceRayFromWorldSpace(
         worldPos, L,
         /* WorldTMax */ sceneDepth,
         /* SceneDepth */ sceneDepth);
 
-    // ── Cast ray through Hi-Z pyramid ──
     float3 hitUVz;
     float  hitLevel;
     bool   bHit;
@@ -491,22 +514,98 @@ void main(
         /* out */ hitLevel,
         /* out */ bHit);
 
-    // ── Resolve hit ──
-    float4 result = 0.0f;
-
     [branch]
     if (bHit) {
-        // Screen-edge vignette to fade out near viewport borders
         float vignette = ComputeHitVignette(hitUVz.xy);
-
-        // Skip if vignette faded to zero
         if (vignette > 0.0f) {
-            // Sample scene color at hit UV
             float4 hitColor = SampleSceneColor(hitUVz.xy);
-
             result = hitColor * vignette;
         }
     }
+
+#else // SSR_NUM_RAYS > 1
+    // ── Stochastic multi-ray path ──
+    // For each ray, generate a GGX importance-sampled half-vector using
+    // Hammersley stratification, compute the reflection direction, and trace.
+    // The alpha channel of the result accumulates the hit confidence
+    // (vignette) across all rays for proper weighting in the composite pass.
+    //
+    // @ref Stachowiak 2015 "Stochastic Screen-Space Reflections"
+    // @ref Karis 2013 "Real Shading in Unreal Engine 4" — ImportanceSampleGGX
+
+    // Build a tangent frame around the world normal for GGX sampling.
+    // Use a stable "up" vector that avoids degenerate cross products.
+    float3 T, B;
+    {
+        float3 up = abs(worldNormal.z) < 0.999f ? float3(0.0f, 0.0f, 1.0f)
+                                                  : float3(1.0f, 0.0f, 0.0f);
+        T = normalize(cross(up, worldNormal));
+        B = cross(worldNormal, T);
+    }
+
+    float totalWeight = 0.0f;
+    float4 accumColor = 0.0f;
+
+    [loop]
+    for (uint rayIdx = 0; rayIdx < SSR_NUM_RAYS; rayIdx++)
+    {
+        // Stratified 2D sample for this ray using Hammersley sequence.
+        // @ref Karis 2013 — Hammersley low-discrepancy sequence
+        float2 Xi = Hammersley(rayIdx, SSR_NUM_RAYS);
+
+        // Importance-sample GGX to get a half-vector H oriented around the normal.
+        // @ref Karis 2013 — ImportanceSampleGGX: generates H from roughness + Xi
+        float3 H = ImportanceSampleGGX(Xi, worldNormal, roughness);
+
+        // Compute the reflection direction from V and H.
+        float3 L = reflect(-V, H);
+
+        // Ensure the reflection is above the surface (NdotL > 0).
+        float NdotL = dot(worldNormal, L);
+        if (NdotL <= 0.0f)
+            continue;
+
+        // Per-ray step offset — vary by ray index to avoid coherent artifacts.
+        float stepOffset = InterleavedGradientNoise(
+            pixelCenter, fmod(frameIndex + float(rayIdx) * 1.618f, 8.0f));
+        stepOffset += STEP_OFFSET_BIAS;
+
+        SSRTRay ray = InitScreenSpaceRayFromWorldSpace(
+            worldPos, L,
+            /* WorldTMax */ sceneDepth,
+            /* SceneDepth */ sceneDepth);
+
+        float3 hitUVz;
+        float  hitLevel;
+        bool   bHit;
+        CastScreenSpaceRay(
+            START_MIP_LEVEL,
+            ray,
+            roughness,
+            SSR_NUM_STEPS,
+            stepOffset,
+            /* out */ hitUVz,
+            /* out */ hitLevel,
+            /* out */ bHit);
+
+        float rayWeight = NdotL; // GGX PDF cancels with BRDF, leaving NdotL
+
+        [branch]
+        if (bHit) {
+            float vignette = ComputeHitVignette(hitUVz.xy);
+            if (vignette > 0.0f) {
+                float4 hitColor = SampleSceneColor(hitUVz.xy);
+                accumColor += hitColor * vignette * rayWeight;
+                totalWeight += rayWeight;
+            }
+        }
+    }
+
+    // Normalize by total weight (handles rays that missed or were below-horizon).
+    if (totalWeight > 0.0f)
+        result = accumColor / totalWeight;
+
+#endif // SSR_NUM_RAYS
 
     // ── Apply roughness fade and intensity ──
     result *= roughnessFade;

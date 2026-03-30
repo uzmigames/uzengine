@@ -18,7 +18,8 @@
 #ifndef PCSS_HLSLI
 #define PCSS_HLSLI
 
-#include "pbr_common.hlsli" // for PI constant
+#include "pbr_common.hlsli"
+#include "sampling.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -96,27 +97,7 @@ uint2 SobolPixel(float2 svPosition) {
     return uint2(packed & 0xFFFFu, (packed >> 16u) ^ (packed & 0xFFFFu));
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Disk Sampling
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// @ref Reynolds 2017 "Square/Disc Mappings" — concentric disk approximation
-/// Approximate equal-area square-to-disk mapping.
-/// Based on Marc B. Reynolds' method:
-/// http://marc-b-reynolds.github.io/math/2017/01/08/SquareDisc.html
-/// @constants sqrt(2.0), sqrt(0.5) — mathematical constants
-/// @deviations NONE
-float2 UniformSampleDiskConcentricApprox(float2 E) {
-    float2 sf = E * sqrt(2.0f) - sqrt(0.5f); // map 0..1 to -sqrt(0.5)..sqrt(0.5)
-    float2 sq = sf * sf;
-    float root = sqrt(2.0f * max(sq.x, sq.y) - min(sq.x, sq.y));
-    if (sq.x > sq.y) {
-        sf.x = sf.x > 0 ? root : -root;
-    } else {
-        sf.y = sf.y > 0 ? root : -root;
-    }
-    return sf;
-}
+// UniformSampleDiskConcentricApprox — now in sampling.hlsli
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PCSS Filter — Directional Light
@@ -137,8 +118,8 @@ float2 UniformSampleDiskConcentricApprox(float2 E) {
 /// @constants AverageSampleDistance=sqrt(1/(32*PI))
 /// @deviations
 ///   - No pixel quad message passing (PCSS_SHARE_PER_PIXEL_QUAD=0 equivalent).
-///     reference shares blocker search and PCF results across 2x2 pixel quads via
-///     PixelQuadMessagePassing.ush. We skip this for simplicity — it only
+///     Some implementations share blocker search and PCF results across 2x2 pixel
+///     quads via quad-lane message passing. We skip this for simplicity — it only
 ///     affects performance, not correctness.
 ///   - No elliptical kernel (PCSS_ANTI_ALIASING_METHOD=0 equivalent).
 ///     the reference uses covariance-based elliptical PCF kernels for anisotropic

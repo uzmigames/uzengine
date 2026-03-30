@@ -15,7 +15,7 @@ Complete trace of how sky atmosphere data flows from components to GPU in UE5 5.
 
 ### SkyAtmosphere Component → Scene Proxy
 
-**File**: `W:/UE_5.6_Source/Engine/Source/Runtime/Engine/Private/Components/SkyAtmosphereComponent.cpp`
+**File**: `W:/UE_5.6_Source/Engine/Private/Components/SkyAtmosphereComponent.cpp`
 
 #### Line 603: Copy HeightFogContribution
 
@@ -38,7 +38,7 @@ HeightFogContribution = 1.0f;
 
 ### SkyAtmosphere Rendering Pass
 
-**File**: `W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/SkyAtmosphereRendering.cpp`
+**File**: `W:/UE_5.6_Source/Renderer/Private/SkyAtmosphereRendering.cpp`
 
 #### Line 454: Sample Transmittance from Atmosphere LUT
 
@@ -76,7 +76,7 @@ AtmosphereLight.Proxy->SetAtmosphereRelatedProperties(TransmittanceTowardSun, Su
 
 ## Phase 3: View Uniform Setup (Before Rendering)
 
-**File**: `W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/SceneRendering.cpp`
+**File**: `W:/UE_5.6_Source/Renderer/Private/SceneRendering.cpp`
 
 ### Step 1: Copy SkyAtmosphereHeightFogContribution to ViewUniformShaderParameters
 
@@ -141,7 +141,7 @@ for (uint8 Index = 0; Index < NUM_ATMOSPHERE_LIGHTS; ++Index)
 
 ## Phase 4: Fog Constants Setup
 
-**File**: `W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/FogRendering.cpp`
+**File**: `W:/UE_5.6_Source/Renderer/Private/FogRendering.cpp`
 
 ### Line 267: Set SkyAtmosphereAmbientContributionColorScale
 
@@ -167,7 +167,7 @@ if (Scene->ExponentialFogs.Num() > 0)
 
 ### Line 85: Pack SkyAtmosphereAmbientContributionColorScale into Uniform Buffer
 
-**File**: `W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/FogRendering.cpp`
+**File**: `W:/UE_5.6_Source/Renderer/Private/FogRendering.cpp`
 
 ```cpp
 // Function: SetupFogUniformParameters(...)
@@ -186,7 +186,7 @@ float4 SkyAtmosphereAmbientContributionColorScale;
 
 ## Phase 5: Light Proxy Storage of Transmittance
 
-**File**: `W:/UE_5.6_Source/Engine/Source/Runtime/Engine/Private/Components/DirectionalLightComponent.cpp`
+**File**: `W:/UE_5.6_Source/Engine/Private/Components/DirectionalLightComponent.cpp`
 
 ### Line 582-584: SetAtmosphereRelatedProperties Called
 
@@ -243,7 +243,7 @@ virtual FLinearColor GetSunIlluminanceOnGroundPostTransmittance() const override
 
 ## Phase 6: Shader Parameter Binding
 
-**File**: `W:/UE_5.6_Source/Engine/Source/Runtime/Renderer/Private/FogRendering.cpp`
+**File**: `W:/UE_5.6_Source/Renderer/Private/FogRendering.cpp`
 
 ### Lines 117-122: Create Fog Uniform Buffer
 

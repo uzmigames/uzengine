@@ -105,7 +105,7 @@ float RgbToHue(float3 rgb)
         hue = 0;
     }
     else {
-        hue = (180.0 / 3.14159265359) * atan2(sqrt(3.0) * (rgb[1] - rgb[2]), 2 * rgb[0] - rgb[1] - rgb[2]);
+        hue = (180.0 * M_1_PI) * atan2(sqrt(3.0) * (rgb[1] - rgb[2]), 2 * rgb[0] - rgb[1] - rgb[2]);
     }
 
     if (hue < 0.0) hue = hue + 360;
@@ -292,6 +292,119 @@ half3 ApplyToneCurve(half3 LinearColor,
 half3 ApplyToneCurve(half3 LinearColor)
 {
     return ApplyToneCurve(LinearColor, 0.88, 0.55, 0.26, 0.0, 0.04);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Alternative Tone Mapping Operators
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Simple Reinhard tonemap: x / (1 + x).
+/// @ref Reinhard et al. 2002 "Photographic Tone Reproduction for Digital Images"
+float3 ReinhardTonemap(float3 x) {
+    return x / (1.0 + x);
+}
+
+/// Modified Reinhard with white point: x * (1 + x/whitePoint²) / (1 + x).
+/// Allows highlights above whitePoint to clip to white.
+/// @ref Reinhard et al. 2002 — extended operator with white point
+float3 ReinhardModifiedTonemap(float3 x, float whitePoint) {
+    float wp2 = whitePoint * whitePoint;
+    return x * (1.0 + x / wp2) / (1.0 + x);
+}
+
+/// Uncharted 2 filmic S-curve (Hable tone mapping).
+/// @ref Hable 2010 "Filmic Tonemapping Operators" GDC
+/// @constants A=0.15 ShoulderStrength, B=0.50 LinearStrength, C=0.10 LinearAngle,
+///   D=0.20 ToeStrength, E=0.02 ToeNumerator, F=0.30 ToeDenominator
+float3 HableUC2Curve(float3 x) {
+    const float A = 0.15, B = 0.50, C = 0.10, D = 0.20, E = 0.02, F = 0.30;
+    return ((x * (A * x + C * B) + D * E) / (x * (A * x + B) + D * F)) - E / F;
+}
+
+float3 HableUC2Tonemap(float3 x) {
+    const float W = 11.2; // Linear white point
+    float3 curr = HableUC2Curve(x);
+    float3 whiteScale = 1.0 / HableUC2Curve(float3(W, W, W));
+    return curr * whiteScale;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// White Balance (D-illuminant + Bradford chromatic adaptation)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Compute CIE D-illuminant chromaticity from color temperature in Kelvin.
+/// @ref Krystek 1985 "An Algorithm to Calculate Correlated Colour Temperature"
+/// @constants Polynomial fit valid for 4000K-25000K range
+float2 D_IlluminantChromaticity(float kelvin) {
+    float t = kelvin;
+    float t2 = t * t;
+    float x;
+    if (t <= 7000.0)
+        x = -4.6070e9 / (t2 * t) + 2.9678e6 / t2 + 0.09911e3 / t + 0.244063;
+    else
+        x = -2.0064e9 / (t2 * t) + 1.9018e6 / t2 + 0.24748e3 / t + 0.237040;
+    float y = -3.0 * x * x + 2.87 * x - 0.275;
+    return float2(x, y);
+}
+
+/// White balance via Bradford chromatic adaptation matrix.
+/// Adapts from source illuminant (kelvin) to D65 reference.
+/// @ref Bradford 1985 — chromatic adaptation transform
+/// @ref Lindbloom — Bradford matrix coefficients
+float3 WhiteBalance(float3 color, float kelvin) {
+    // D65 reference white point chromaticity
+    float2 srcXY = D_IlluminantChromaticity(kelvin);
+    float2 dstXY = float2(0.31271, 0.32902); // D65
+
+    // Chromaticity to XYZ white point (Y=1)
+    float3 srcXYZ = float3(srcXY.x / srcXY.y, 1.0, (1.0 - srcXY.x - srcXY.y) / srcXY.y);
+    float3 dstXYZ = float3(dstXY.x / dstXY.y, 1.0, (1.0 - dstXY.x - dstXY.y) / dstXY.y);
+
+    // Bradford cone response
+    static const float3x3 M_A = float3x3(
+         0.8951,  0.2664, -0.1614,
+        -0.7502,  1.7135,  0.0367,
+         0.0389, -0.0685,  1.0296);
+
+    float3 srcLMS = mul(M_A, srcXYZ);
+    float3 dstLMS = mul(M_A, dstXYZ);
+
+    // Diagonal adaptation
+    float3 scale = dstLMS / srcLMS;
+
+    // Simplified: apply scale in LMS space directly to the linear RGB
+    // For a full implementation, we'd go RGB→XYZ→LMS→scale→LMS→XYZ→RGB.
+    // This approximation works well for moderate white balance shifts.
+    float3x3 M_A_inv = float3x3(
+         0.9870, -0.1471,  0.1600,
+         0.4323,  0.5184,  0.0493,
+        -0.0085,  0.0400,  0.9685);
+
+    float3x3 adapt = mul(M_A_inv, float3x3(
+        scale.x, 0, 0,
+        0, scale.y, 0,
+        0, 0, scale.z));
+    adapt = mul(adapt, M_A);
+
+    return mul(adapt, color);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Physical Camera Exposure
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Compute EV100 from physical camera settings.
+/// @ref ISO 12232:2006 — Saturation-based speed (SBS) exposure value
+/// @constants EV100 = log2(N² / t * 100 / S)
+float EV100(float aperture, float shutterSpeed, float ISO) {
+    return log2((aperture * aperture) / shutterSpeed * 100.0 / ISO);
+}
+
+/// Convert EV100 to linear exposure multiplier.
+/// @ref Lagarde 2014 "Moving Frostbite to PBR" — exposure from EV100
+/// @constants exposure = 1 / (1.2 * 2^EV100)
+float EV100ToExposure(float ev100) {
+    return 1.0 / (1.2 * exp2(ev100));
 }
 
 #endif // FILM_TONEMAP_HLSLI

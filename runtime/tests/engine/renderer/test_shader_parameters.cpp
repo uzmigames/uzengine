@@ -511,7 +511,9 @@ TEST(ShadowDataParams, MetadataCBSizeIs2304) {
 
 TEST(ShadowDataParams, MetadataTextureCount) {
     const auto& meta = ShadowDataParams::GetMetadata();
-    EXPECT_EQ(meta.textureCount, 4u);
+    // Only shadowAtlas (t3) and localShadowAtlas (t11) are SM5 bound textures.
+    // staticShadowAtlas and dfsOutputTexture are bindless-only.
+    EXPECT_EQ(meta.textureCount, 2u);
 }
 
 TEST(ShadowDataParams, MetadataSamplerAndUAVCounts) {
@@ -558,8 +560,7 @@ TEST(ShadowDataParams, ResourceMembersHaveCorrectSlots) {
     const auto& meta = ShadowDataParams::GetMetadata();
 
     bool foundAtlas = false;
-    bool foundStatic = false;
-    bool foundDfs = false;
+    bool foundLocalAtlas = false;
 
     for (uint32_t i = 0; i < meta.memberCount; ++i) {
         const auto& m = meta.members[i];
@@ -567,20 +568,15 @@ TEST(ShadowDataParams, ResourceMembersHaveCorrectSlots) {
             EXPECT_EQ(m.type, ShaderParamType::Texture2D);
             EXPECT_EQ(m.resourceSlot, 3u);
             foundAtlas = true;
-        } else if (std::string(m.name) == "staticShadowAtlas") {
+        } else if (std::string(m.name) == "localShadowAtlas") {
             EXPECT_EQ(m.type, ShaderParamType::Texture2D);
-            EXPECT_EQ(m.resourceSlot, 8u);
-            foundStatic = true;
-        } else if (std::string(m.name) == "dfsOutputTexture") {
-            EXPECT_EQ(m.type, ShaderParamType::Texture2D);
-            EXPECT_EQ(m.resourceSlot, 9u);
-            foundDfs = true;
+            EXPECT_EQ(m.resourceSlot, 11u);
+            foundLocalAtlas = true;
         }
     }
 
     EXPECT_TRUE(foundAtlas);
-    EXPECT_TRUE(foundStatic);
-    EXPECT_TRUE(foundDfs);
+    EXPECT_TRUE(foundLocalAtlas);
 }
 
 TEST(ShadowDataParams, AllScalarMembersBeforeCBBoundary) {
@@ -613,8 +609,7 @@ TEST(ShadowDataParams, HLSLGenerationContainsShadowAtlas) {
 
     EXPECT_NE(hlsl.find("cbuffer ShadowDataCB : register(b4)"), std::string::npos);
     EXPECT_NE(hlsl.find("Texture2D shadowAtlas : register(t3)"), std::string::npos);
-    EXPECT_NE(hlsl.find("Texture2D staticShadowAtlas : register(t8)"), std::string::npos);
-    EXPECT_NE(hlsl.find("Texture2D dfsOutputTexture : register(t9)"), std::string::npos);
+    EXPECT_NE(hlsl.find("Texture2D localShadowAtlas : register(t11)"), std::string::npos);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

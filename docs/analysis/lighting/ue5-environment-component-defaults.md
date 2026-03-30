@@ -13,7 +13,7 @@ Complete extraction from UE5 5.6 source (`W:\UE_5.6_Source`) with exact file pat
 
 ## 1. USkyAtmosphereComponent Constructor
 
-**Source:** `Engine/Source/Runtime/Engine/Private/Components/SkyAtmosphereComponent.cpp:89-142`
+**Source:** `Engine/Private/Components/SkyAtmosphereComponent.cpp:89-142`
 
 ### Core Atmosphere Parameters
 
@@ -77,7 +77,7 @@ Complete extraction from UE5 5.6 source (`W:\UE_5.6_Source`) with exact file pat
 
 ## 2. USkyLightComponent Constructor
 
-**Source:** `Engine/Source/Runtime/Engine/Private/Components/SkyLightComponent.cpp:285-333`
+**Source:** `Engine/Private/Components/SkyLightComponent.cpp:285-333`
 
 | Parameter | Default Value | File:Line |
 |-----------|---------------|-----------|
@@ -115,7 +115,7 @@ Complete extraction from UE5 5.6 source (`W:\UE_5.6_Source`) with exact file pat
 
 ## 3. UExponentialHeightFogComponent Constructor
 
-**Source:** `Engine/Source/Runtime/Engine/Private/Components/ExponentialHeightFogComponent.cpp:64-103`
+**Source:** `Engine/Private/Components/ExponentialHeightFogComponent.cpp:64-103`
 
 | Parameter | Default Value | File:Line |
 |-----------|---------------|-----------|
@@ -150,7 +150,7 @@ Complete extraction from UE5 5.6 source (`W:\UE_5.6_Source`) with exact file pat
 
 ## 4. UDirectionalLightComponent Constructor
 
-**Source:** `Engine/Source/Runtime/Engine/Private/Components/DirectionalLightComponent.cpp:988-1057`
+**Source:** `Engine/Private/Components/DirectionalLightComponent.cpp:988-1057`
 
 | Parameter | Default Value | File:Line |
 |-----------|---------------|-----------|
@@ -201,7 +201,7 @@ Complete extraction from UE5 5.6 source (`W:\UE_5.6_Source`) with exact file pat
 
 ## 5. FPostProcessSettings Constructor
 
-**Source:** `Engine/Source/Runtime/Engine/Private/Scene.cpp:367-657`
+**Source:** `Engine/Private/Scene.cpp:367-657`
 
 ### Color Temperature
 

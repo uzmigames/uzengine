@@ -118,6 +118,6 @@ If replicating this in UzEngine:
 
 - **Core deferred lighting**: `Engine/Shaders/Private/DeferredLightingCommon.ush:420,454`
 - **GBuffer decomposition**: `Engine/Shaders/Private/DeferredShadingCommon.ush:750-751`
-- **Sky + reflection pass**: `Engine/Source/Runtime/Renderer/Private/IndirectLightRendering.cpp:2146-2159`
-- **IBL application**: `Engine/Source/Runtime/Renderer/Private/IndirectLightRendering.cpp:1987-2010`
+- **Sky + reflection pass**: `Renderer/Private/IndirectLightRendering.cpp:2146-2159`
+- **IBL application**: `Renderer/Private/IndirectLightRendering.cpp:1987-2010`
 

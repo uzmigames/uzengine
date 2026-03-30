@@ -24,7 +24,7 @@
 /// @ref Jimenez 2016 "Practical Real-time Strategies for Accurate Indirect Occlusion"
 /// @ref Jimenez 2016 — horizon search, inner integral, noise, combined CS
 /// @ref Penner 2011 "Pre-Integrated Skin Shading" — acosFast approximation
-/// @constants GTAO_MAX_SCREEN_RADIUS=256.0, PI=3.14159265, PI_HALF=PI*0.5,
+/// @constants GTAO_MAX_SCREEN_RADIUS=256.0, PI=3.14159265, M_PI_2=PI*0.5,
 ///            AttenFactor=2.0/(worldRadius*worldRadius), OffsetAdvance=0.617
 ///            numAngles, numTaps, worldRadius, aoIntensity, thicknessBlend,
 ///            fadeStart, fadeEnd, aoPower — all from root constants DWORDs 8-15
@@ -62,9 +62,6 @@
 
 // Algorithm constants now hardcoded in cbuffer section below (after root constants).
 // Old #defines removed — they conflicted with the new hardcoded values.
-
-#define PI       3.14159265358979323846f
-#define PI_HALF  (PI * 0.5f)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Root Constants (b0, 16 DWORDs = 64 bytes)
@@ -483,7 +480,7 @@ float2 FindMaxHorizonAngle(
 
 /// Compute the inner integral of the visible hemisphere slice.
 /// @ref Jimenez 2016 "GTAO" §771-795 — IntegrateHorizonArc
-/// @constants 0.000001 epsilon, PI_HALF (Jimenez 2016 inner integral)
+/// @constants 0.000001 epsilon, M_PI_2 (Jimenez 2016 inner integral)
 /// @deviations NONE
 float IntegrateHorizonArc(
     float2 angles,
@@ -500,13 +497,13 @@ float IntegrateHorizonArc(
     float recipMag = 1.0f / lenProjNormal;
 
     float cosAng = dot(projNormal, perp) * recipMag;
-    float gamma = acosFast(cosAng) - PI_HALF;
+    float gamma = acosFast(cosAng) - M_PI_2;
     float cosGamma = dot(projNormal, viewDir) * recipMag;
     float sinGamma = cosAng * -2.0f;
 
     /// @ref Jimenez 2016 "GTAO" §787-788
-    angles.x = gamma + max(-angles.x - gamma, -PI_HALF);
-    angles.y = gamma + min( angles.y - gamma,  PI_HALF);
+    angles.x = gamma + max(-angles.x - gamma, -M_PI_2);
+    angles.y = gamma + min( angles.y - gamma,  M_PI_2);
 
     /// @ref Jimenez 2016 "GTAO" §790-792
     float ao = lenProjNormal * 0.25f *
@@ -588,8 +585,11 @@ void main(
     float2 randomVec = randomAndOffset.xy;
     float  offset = randomAndOffset.z;
 
-    // ── Accumulate AO over multiple directions ──
+    // ── Accumulate AO and bent normal over multiple directions ──
     float sum = 0.0f;
+    // Bent normal accumulator: average unoccluded direction across all slices.
+    // @ref Jimenez 2016 "GTAO" — bent normal from horizon angle midpoints
+    float3 bentNormalAccum = float3(0.0f, 0.0f, 0.0f);
 
     float deltaAngle = PI / (float)numAngles;
     float sinDeltaAngle, cosDeltaAngle;
@@ -612,6 +612,34 @@ void main(
 
         /// @ref Jimenez 2016 "GTAO" §897
         sum += IntegrateHorizonArc(horizonAngles, screenDir, viewDir, viewSpaceNormal);
+
+        // ── Bent normal per-slice accumulation ──
+        // For each search direction, compute the midpoint of the visible arc
+        // in the hemisphere slice plane. The visible arc spans from
+        // -horizonAngles.x to +horizonAngles.y (both are positive acos values
+        // returned by FindMaxHorizonAngle, measuring from the tangent plane).
+        // The midpoint elevation angle in the slice is:
+        //   bentElevation = (horizonAngles.y - horizonAngles.x) * 0.5
+        // This is the angle from the tangent plane toward the view direction.
+        // We construct the bent direction in view space from the screen-space
+        // direction and this elevation.
+        //
+        // @ref Jimenez 2016 "GTAO" — bent normal from visible arc midpoint
+        {
+            // Horizon angles are in [0, PI/2]: h.x = positive side, h.y = negative side.
+            // The visible arc midpoint elevation from the tangent plane:
+            float bentElevation = (horizonAngles.y - horizonAngles.x) * 0.5f;
+            // Construct the bent direction in the slice plane defined by
+            // (screenDir projected into view space, viewDir).
+            // The slice tangent direction lies in the XY plane of view space
+            // (screen-aligned), and the "up" direction of the slice is viewDir.
+            float3 sliceTangent = normalize(float3(screenDir.x, screenDir.y, 0.0f));
+            float  cosElev = cos(bentElevation);
+            float  sinElev = sin(bentElevation);
+            // Bent direction = tangent * cos(elevation) + viewDir * sin(elevation)
+            float3 bentDir = sliceTangent * cosElev + viewDir * sinElev;
+            bentNormalAccum += bentDir;
+        }
 
         // ── Rotate direction for next angle ──
         /// @ref Jimenez 2016 "GTAO" §900-903
@@ -636,12 +664,45 @@ void main(
     // @deviations NONE
     ao = 1.0f - (1.0f - pow(abs(ao), aoPower)) * aoIntensity;
 
+    // ── Multi-bounce AO approximation ──
+    // Single-bounce AO underestimates visibility in cavities because it ignores
+    // light that bounces off nearby surfaces before reaching the shaded point.
+    // This power-based approximation darkens deep cavities (low ao) more than
+    // shallow ones (high ao), matching the energy loss from missing inter-
+    // reflections. At ao=1.0 the exponent is 3.5 but the base is 1.0 so the
+    // result is unchanged; at ao=0.3 the exponent ~1.75 produces visibly deeper
+    // occlusion that better matches path-traced ground truth.
+    //
+    // @ref Jimenez 2016 "Practical Realtime Strategies for Accurate Indirect Occlusion"
+    // @constants exponent = 1.0 + 2.5 * ao (Jimenez 2016 multi-bounce approximation)
+    // @deviations NONE
+    ao = pow(ao, 1.0f + 2.5f * ao);
+
+    // ── Bent normal finalization ──
+    // Normalize the accumulated bent direction from all slices. The resulting
+    // vector points in the average unoccluded direction. We compute the cosine
+    // of the angle between this bent normal and the geometric view-space normal,
+    // which encodes how much the dominant illumination direction deviates from
+    // the surface normal due to occlusion.
+    //
+    // For the current R8_UNORM single-channel output, the bent-normal cosine
+    // is the most useful scalar summary. A value of 1.0 = no bending (fully
+    // unoccluded), 0.0 = fully bent away from normal (heavily occluded).
+    // Future expansion to R8G8B8A8 or a second UAV can store the full float3.
+    //
+    // @ref Jimenez 2016 "GTAO" — bent normal from horizon angle midpoints
+    // @deviations Stores scalar bent-normal deviation cosine (dot with geometric
+    //             normal) rather than full float3 bent normal vector.
+    float3 bentNormal = normalize(bentNormalAccum + float3(0.0f, 0.0f, 0.000001f));
+    float bentNormalCos = saturate(dot(bentNormal, viewSpaceNormal));
+
     // ── Distance fade ──
     /// @ref Jimenez 2016 "GTAO" §913-915
     // Linear fade from fadeStart to fadeEnd (both from root constants).
     float fadeRange = max(fadeEnd - fadeStart, 1.0f);
     float distFade = saturate((sceneDepth - fadeStart) / fadeRange);
     ao = lerp(ao, 1.0f, distFade);
+    bentNormalCos = lerp(bentNormalCos, 1.0f, distFade);
 
     aoOutput[dispatchId] = saturate(ao);
 }

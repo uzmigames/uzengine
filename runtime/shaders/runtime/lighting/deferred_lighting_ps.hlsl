@@ -8,10 +8,12 @@
 /// @ref Engel 2006 "Cascaded Shadow Maps" (ShaderX5) — CSM shadow sampling
 /// @ref Wihlidal 2017 "4K Checkerboard Rendering in Battlefield 1" — contact shadows
 
+#include "../include/math_util.hlsli"
 #include "../include/octahedral.hlsli"
 #include "../include/pbr_common.hlsli"
 #include "../include/sh_irradiance.hlsli"
 #include "../include/ibl.hlsli"
+#include "../include/sheen.hlsli"
 
 // shadow_common.hlsli and contact_shadows.hlsli are included AFTER sampler/texture
 // declarations because they reference shadowSampler, shadowAtlasTexture, etc.
@@ -183,37 +185,14 @@ float3 ReconstructWorldPosition(float2 uv, float depth) {
     return wp.xyz / wp.w;
 }
 
-/// Smith Joint Approximation (Epic). @ref Karis 2013 "Real Shading in Unreal Engine 4"
-float Vis_SmithJointApprox(float a2, float NoV, float NoL) {
-    float a = sqrt(a2);
-    float Vis_SmithV = NoL * (NoV * (1.0 - a) + a);
-    float Vis_SmithL = NoV * (NoL * (1.0 - a) + a);
-    return 0.5 / (Vis_SmithV + Vis_SmithL + 1e-5);
-}
+// V_SmithGGXCorrelated — now in pbr_common.hlsli (exact height-correlated form)
 
 /// Specular occlusion from AO. @ref Lagarde 2014
 float SpecularOcclusion(float NoV, float ao, float roughness) {
     return saturate(pow(NoV + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao);
 }
 
-/// Charlie sheen NDF — fabric/velvet specular distribution.
-/// @ref Estevez & Kulla 2017 "Production Friendly Microfacet Sheen BRDF"
-/// @constants Uses sin(theta) instead of cos(theta) for fabric highlight at grazing
-/// @deviations NONE
-float D_Charlie(float roughness, float NoH) {
-    float sin2h = max(1.0 - NoH * NoH, 0.0078125);  // 2^(-14/2) min to avoid zero
-    float sinH  = sqrt(sin2h);
-    // Inverted Gaussian: peaks at grazing angles (fabric sheen behavior)
-    float invR = 1.0 / max(roughness, 0.001);
-    return (2.0 + invR) * pow(sinH, invR) / (2.0 * 3.14159265);
-}
-
-/// Neubelt visibility for cloth — simplified geometric term for sheen.
-/// @ref Neubelt 2013, Estevez & Kulla 2017 "Production Friendly Microfacet Sheen BRDF"
-/// @deviations NONE
-float V_Neubelt(float NoV, float NoL) {
-    return 1.0 / (4.0 * (NoL + NoV - NoL * NoV));
-}
+// D_Charlie, V_Neubelt — now in sheen.hlsli
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Point / Spot Light Attenuation
@@ -347,7 +326,7 @@ float4 main(FSInput input) : SV_Target {
             float  VoH = saturate(dot(V, H));
 
             float  D   = D_GGX(NoH, alpha);
-            float  Vis = Vis_SmithJointApprox(a2, NoV, NoL);
+            float  Vis = V_SmithGGXCorrelated(a2, NoV, NoL);
             float3 F   = F_SchlickF90(VoH, F0, saturate(50.0 * F0.g));
             float3 specBRDF = D * Vis * F;
             float3 diffuse  = Fd_Burley(DiffuseColor, roughness, NoV, NoL, VoH);
@@ -388,7 +367,7 @@ float4 main(FSInput input) : SV_Target {
                 float wrap   = (shadingModelID == 5) ? 0.5 : 0.3;
                 float rawNoL = dot(N, L);
                 float wrapNoL = max((rawNoL + wrap) / ((1.0 + wrap) * (1.0 + wrap)), 0.0);
-                Lo = (DiffuseColor / 3.14159265 + specBRDF) * lightColor.rgb
+                Lo = (DiffuseColor * M_1_PI + specBRDF) * lightColor.rgb
                      * wrapNoL * microShadow * shadow * contact;
             } else if (shadingModelID == 7) {
                 // ── Cloth sheen specular (smID == 7) ──────────────────
@@ -399,7 +378,7 @@ float4 main(FSInput input) : SV_Target {
                 float  D_sheen   = D_Charlie(roughness, NoH);
                 float  V_sheen   = V_Neubelt(NoV, NoL);
                 float3 sheenSpec = sheenColor * D_sheen * V_sheen;
-                float3 clothDiffuse = DiffuseColor / 3.14159265;
+                float3 clothDiffuse = DiffuseColor * M_1_PI;
                 Lo = (clothDiffuse + sheenSpec) * lightColor.rgb
                      * NoL * microShadow * shadow * contact;
             } else {
@@ -470,7 +449,7 @@ float4 main(FSInput input) : SV_Target {
 
             // GGX specular BRDF (same as directional light path).
             float  D_p   = D_GGX(NdotHp, alpha);
-            float  Vis_p = Vis_SmithJointApprox(a2, NoV, NdotLp);
+            float  Vis_p = V_SmithGGXCorrelated(a2, NoV, NdotLp);
             float3 F_p   = F_Schlick(VdotHp, F0);
             float3 specP = D_p * Vis_p * F_p;
 
@@ -513,7 +492,7 @@ float4 main(FSInput input) : SV_Target {
             float  VdotHs = saturate(dot(V, Hs));
 
             float  D_s   = D_GGX(NdotHs, alpha);
-            float  Vis_s = Vis_SmithJointApprox(a2, NoV, NdotLs);
+            float  Vis_s = V_SmithGGXCorrelated(a2, NoV, NdotLs);
             float3 F_s   = F_Schlick(VdotHs, F0);
             float3 specS = D_s * Vis_s * F_s;
             // Burley diffuse — same quality as directional light path.
@@ -714,7 +693,7 @@ float4 main(FSInput input) : SV_Target {
             // Schlick Fresnel for dielectric coat (F0 = 0.04)
             float coatF   = 0.04 + 0.96 * pow(1.0 - coatVoH, 5.0);
             // Smith visibility for coat
-            float coatVis = Vis_SmithJointApprox(coatA2, NoV, NdotL_cc);
+            float coatVis = V_SmithGGXCorrelated(coatA2, NoV, NdotL_cc);
 
             float  coatSpec = coatD * coatF * coatVis;
             float3 coatLo   = float3(coatSpec, coatSpec, coatSpec)

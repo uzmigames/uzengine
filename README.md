@@ -105,10 +105,10 @@ cd extension && npx tsc
 ### Test
 
 ```bash
-scripts/test.ps1                         # Zig (default)
-scripts/test.ps1 --compiler=msvc         # MSVC
-scripts/test.ps1 --compiler=clang        # Clang
-scripts/test.ps1 --coverage              # With coverage (TS modules)
+scripts/tools/test.ps1                         # Zig (default)
+scripts/tools/test.ps1 --compiler=msvc         # MSVC
+scripts/tools/test.ps1 --compiler=clang        # Clang
+scripts/tools/test.ps1 --coverage              # With coverage (TS modules)
 ```
 
 ### Run
@@ -168,11 +168,11 @@ scripts/build.ps1 [--compiler=zig|msvc|clang]
 | **Test** | GoogleTest 1.15 | — | Vitest 4 | Vitest 4 |
 
 ```bash
-scripts/lint.ps1                   # clang-tidy + eslint
-scripts/format.ps1                 # clang-format + prettier
-scripts/format.ps1 --check         # CI mode (check only)
-scripts/test.ps1                   # zig test + vitest
-scripts/test.ps1 --compiler=msvc   # MSVC tests
+scripts/tools/lint.ps1             # clang-tidy + eslint
+scripts/tools/format.ps1           # clang-format + prettier
+scripts/tools/format.ps1 --check   # CI mode (check only)
+scripts/tools/test.ps1                   # zig test + vitest
+scripts/tools/test.ps1 --compiler=msvc   # MSVC tests
 ```
 
 - **Zero warnings** — all warnings promoted to errors across every module

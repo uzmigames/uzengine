@@ -141,7 +141,7 @@ but indicates the implementation may be a derivative work.
 
 | File | Source Path Density |
 |---|---|
-| `docs/analysis/atmosphere/fog-line-number-reference.md` | 10+ `Engine/Source/Runtime/...` citations with line numbers |
+| `docs/analysis/atmosphere/fog-line-number-reference.md` | 10+ `...` citations with line numbers |
 | `docs/analysis/atmosphere/ue5/ue5-skyatmosphere-coordinate-system.md` | 8 citations |
 | `docs/analysis/atmosphere/ue5-fog-cpp-data-flow.md` | 6 citations with inline code blocks |
 | `docs/architecture/ue5-rhi-dx11-dx12-analysis.md` | 6 citations |
@@ -152,7 +152,7 @@ but indicates the implementation may be a derivative work.
 
 ### Additional files with UE5 source path references
 
-All files listed below contain `Engine/Source/Runtime/...` path citations as implementation
+All files listed below contain `...` path citations as implementation
 references. These are analysis-only docs and do not contain verbatim code blocks (lower risk),
 but should be reviewed to ensure UzEngine implementations were derived from published papers
 rather than from these cited proprietary paths:
