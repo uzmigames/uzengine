@@ -170,6 +170,11 @@ private:
     bool  m_vfxBurstPending = true;     ///< true = fire burst on next frame.
     VFXMaterial m_vfxMaterial;           ///< Material for custom sprite (--sprite CLI).
 
+    // ── Predefined VFX material presets ─────────────────────────────────
+    static constexpr int kVFXMaterialCount = 6;
+    VFXMaterial m_vfxMaterials[kVFXMaterialCount]; ///< Preset VFX materials (M key cycles).
+    int m_currentMaterialIndex = 0;                ///< Active material preset index.
+
     // ── Fireball projectile ─────────────────────────────────────────────
     bool  m_fireballActive = false;     ///< true = fireball projectile is flying.
     Vec3  m_fireballPos = {};           ///< Current fireball world position.

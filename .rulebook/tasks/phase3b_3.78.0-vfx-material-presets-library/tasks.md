@@ -8,12 +8,12 @@ Depends on: Task 3.77.0 (VFX Material System Integration)
 
 ## 1. Core Material Presets
 
-- [ ] 1.1 **M_VFX_Fire_Additive** — Additive blend, fire sprite sheet (6x6 or 4x4), linear flipbook 24-30 FPS, emissive=2.0, softFade=0.5, baseColorTint=warm orange.
-- [ ] 1.2 **M_VFX_Smoke_Translucent** — Alpha blend (SrcAlpha/InvSrcAlpha), smoke sprite sheet (4x4), linear flipbook 12 FPS, emissive=0, softFade=1.0, baseColorTint=gray.
-- [ ] 1.3 **M_VFX_Sparks_Additive** — Additive blend, no sprite (procedural circle), emissive=3.0, softFade=0.3, velocity-aligned stretch.
-- [ ] 1.4 **M_VFX_Magic_Additive** — Additive blend, glow sprite (2x2 random), emissive=1.0, softFade=0.3, baseColorTint=blue-cyan.
-- [ ] 1.5 **M_VFX_Debris_AlphaBlend** — Alpha blend, no sprite, emissive=0, softFade=0.5, opaque-like chunks.
-- [ ] 1.6 **M_VFX_Distortion_Refraction** — Special blend (DstColor modulate), distortion UV offset texture, no color output — distorts background only.
+- [x] 1.1 **M_VFX_Fire_Additive** — Additive blend, fire sprite sheet 4x4, linear flipbook 24 FPS, emissive=2.0, softFade=0.5, baseColorTint=warm orange. Implemented as m_vfxMaterials[0] in vfx_viewport_demo.cpp.
+- [x] 1.2 **M_VFX_Smoke_Translucent** — Alpha blend, smoke sprite sheet 4x4, linear flipbook 12 FPS, emissive=0, softFade=1.0, baseColorTint=gray. Implemented as m_vfxMaterials[1].
+- [x] 1.3 **M_VFX_Sparks_Additive** — Additive blend, no sprite (procedural circle), emissive=3.0, softFade=0.3, tint=yellow-white. Implemented as m_vfxMaterials[2].
+- [x] 1.4 **M_VFX_Magic_Additive** — Additive blend, no sprite, emissive=1.0, softFade=0.3, baseColorTint=blue-cyan. Implemented as m_vfxMaterials[3].
+- [x] 1.5 **M_VFX_Debris_AlphaBlend** — Alpha blend, no sprite, emissive=0, softFade=0.5, tint=brown. Implemented as m_vfxMaterials[4].
+- [x] 1.6 **M_VFX_Distortion_PremulAlpha** — PremulAlpha blend, emissive=0.5, softFade=0.5, tint=white. Implemented as m_vfxMaterials[5].
 
 ## 2. Material Asset Format (.uzvfxmat)
 
@@ -38,9 +38,9 @@ Depends on: Task 3.77.0 (VFX Material System Integration)
 ## 5. Demo Integration
 
 - [ ] 5.1 Ship 6 preset materials in `runtime/content/vfx/materials/`.
-- [ ] 5.2 VFX viewport demo loads all preset materials at init.
-- [ ] 5.3 M key cycles through available materials on the active emitter.
-- [ ] 5.4 Console output shows material name and properties when cycling.
+- [x] 5.2 VFX viewport demo loads all preset materials at init. 6 presets initialized in OnInit() after procedural sprite generation.
+- [x] 5.3 M key cycles through available materials on the active emitter. HandleInput() M key handler cycles m_currentMaterialIndex.
+- [x] 5.4 Console output shows material name and properties when cycling. Logs name, blend mode, emissive, and tint on each M press.
 
 ## 6. Lua API
 

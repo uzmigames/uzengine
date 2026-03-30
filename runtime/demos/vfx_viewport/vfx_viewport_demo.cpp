@@ -491,6 +491,70 @@ void VFXViewportDemo::OnInit() {
         }
     }
 
+    // ── VFX material presets (ready-to-use material configurations) ──────
+    // M_VFX_Fire_Additive: bright additive fire with flipbook animation
+    m_vfxMaterials[0].blendMode            = 1; // Additive
+    m_vfxMaterials[0].emissiveIntensity    = 2.0f;
+    m_vfxMaterials[0].softFadeDistance     = 0.5f;
+    m_vfxMaterials[0].flipbookRows         = 4;
+    m_vfxMaterials[0].flipbookCols         = 4;
+    m_vfxMaterials[0].flipbookTotalFrames  = 16;
+    m_vfxMaterials[0].flipbookFPS          = 24.0f;
+    m_vfxMaterials[0].flipbookBlendMode    = 1; // Linear interpolation
+    m_vfxMaterials[0].spriteTextureSrvIndex = m_fireSpriteSrvIdx;
+    m_vfxMaterials[0].baseColorTintR       = 1.0f;
+    m_vfxMaterials[0].baseColorTintG       = 0.7f;
+    m_vfxMaterials[0].baseColorTintB       = 0.3f;
+
+    // M_VFX_Smoke_Translucent: soft alpha-blended smoke puffs
+    m_vfxMaterials[1].blendMode            = 0; // AlphaBlend
+    m_vfxMaterials[1].emissiveIntensity    = 0.0f;
+    m_vfxMaterials[1].softFadeDistance     = 1.0f;
+    m_vfxMaterials[1].flipbookRows         = 4;
+    m_vfxMaterials[1].flipbookCols         = 4;
+    m_vfxMaterials[1].flipbookTotalFrames  = 16;
+    m_vfxMaterials[1].flipbookFPS          = 12.0f;
+    m_vfxMaterials[1].flipbookBlendMode    = 1; // Linear interpolation
+    m_vfxMaterials[1].spriteTextureSrvIndex = m_smokeSpriteSrvIdx;
+    m_vfxMaterials[1].baseColorTintR       = 0.6f;
+    m_vfxMaterials[1].baseColorTintG       = 0.6f;
+    m_vfxMaterials[1].baseColorTintB       = 0.6f;
+
+    // M_VFX_Sparks_Additive: bright hot sparks, no sprite (procedural circle)
+    m_vfxMaterials[2].blendMode            = 1; // Additive
+    m_vfxMaterials[2].emissiveIntensity    = 3.0f;
+    m_vfxMaterials[2].softFadeDistance     = 0.3f;
+    m_vfxMaterials[2].baseColorTintR       = 1.0f;
+    m_vfxMaterials[2].baseColorTintG       = 0.9f;
+    m_vfxMaterials[2].baseColorTintB       = 0.5f;
+
+    // M_VFX_Magic_Additive: cool blue-cyan magic glow
+    m_vfxMaterials[3].blendMode            = 1; // Additive
+    m_vfxMaterials[3].emissiveIntensity    = 1.0f;
+    m_vfxMaterials[3].softFadeDistance     = 0.3f;
+    m_vfxMaterials[3].baseColorTintR       = 0.3f;
+    m_vfxMaterials[3].baseColorTintG       = 0.6f;
+    m_vfxMaterials[3].baseColorTintB       = 1.0f;
+
+    // M_VFX_Debris_AlphaBlend: opaque-like debris chunks
+    m_vfxMaterials[4].blendMode            = 0; // AlphaBlend
+    m_vfxMaterials[4].emissiveIntensity    = 0.0f;
+    m_vfxMaterials[4].softFadeDistance     = 0.5f;
+    m_vfxMaterials[4].baseColorTintR       = 0.8f;
+    m_vfxMaterials[4].baseColorTintG       = 0.4f;
+    m_vfxMaterials[4].baseColorTintB       = 0.2f;
+
+    // M_VFX_Distortion_PremulAlpha: premultiplied alpha for distortion effects
+    m_vfxMaterials[5].blendMode            = 2; // PremulAlpha
+    m_vfxMaterials[5].emissiveIntensity    = 0.5f;
+    m_vfxMaterials[5].softFadeDistance     = 0.5f;
+    m_vfxMaterials[5].baseColorTintR       = 1.0f;
+    m_vfxMaterials[5].baseColorTintG       = 1.0f;
+    m_vfxMaterials[5].baseColorTintB       = 1.0f;
+
+    UZ_LOG(App, Info, "VFXViewport: {} VFX material presets initialized (M key to cycle)",
+           kVFXMaterialCount);
+
     // ── Bloom pass ──────────────────────────────────────────────────────
     if (!m_bloomPass.Init(device, shaders, GetWidth(), GetHeight())) {
         UZ_LOG(App, Error, "VFXViewport: Failed to initialize bloom pass");
@@ -855,6 +919,26 @@ void VFXViewportDemo::HandleInput(float dt) {
         }
         UZ_LOG(App, Info, "[VFX] Mode: {} (burst count={})",
                m_vfxBurstMode ? "Burst" : "Continuous", m_vfxBurstCount);
+    }
+
+    // VFX material preset cycling (M key) — only when no custom sprite loaded
+    if (input->IsKeyJustPressed(Key::M)) {
+        if (!m_vfxMaterial.HasSprite()) {
+            m_currentMaterialIndex = (m_currentMaterialIndex + 1) % kVFXMaterialCount;
+            static const char* kVFXMaterialNames[] = {
+                "Fire_Additive", "Smoke_Translucent", "Sparks_Additive",
+                "Magic_Additive", "Debris_AlphaBlend", "Distortion_PremulAlpha"
+            };
+            UZ_LOG(App, Info, "[VFX] Material: {} (blend={}, emissive={:.1f}, tint=[{:.1f},{:.1f},{:.1f}])",
+                   kVFXMaterialNames[m_currentMaterialIndex],
+                   m_vfxMaterials[m_currentMaterialIndex].blendMode,
+                   m_vfxMaterials[m_currentMaterialIndex].emissiveIntensity,
+                   m_vfxMaterials[m_currentMaterialIndex].baseColorTintR,
+                   m_vfxMaterials[m_currentMaterialIndex].baseColorTintG,
+                   m_vfxMaterials[m_currentMaterialIndex].baseColorTintB);
+        } else {
+            UZ_LOG(App, Info, "[VFX] Material cycling disabled — custom sprite active (--sprite)");
+        }
     }
 
     // Launch fireball projectile (Space key) — switches to Fireball preset,
@@ -1259,6 +1343,7 @@ void VFXViewportDemo::HandleInput(float dt) {
         UZ_LOG(App, Info, "  Tab                  — Cycle VFX presets (Shift+Tab = toggle)");
         UZ_LOG(App, Info, "  Delete               — Reset particles + fire burst");
         UZ_LOG(App, Info, "  Insert               — Toggle Burst / Continuous mode");
+        UZ_LOG(App, Info, "  M                    — Cycle VFX material presets");
         UZ_LOG(App, Info, "  Space                — Launch fireball projectile (with trail)");
         UZ_LOG(App, Info, "  Y                    — Toggle trails");
         UZ_LOG(App, Info, "  D                    — Toggle decals");
@@ -2114,21 +2199,38 @@ void VFXViewportDemo::RenderVFXPass(IRHICommandList* cmd, uint64_t perFrameGpu,
 
     const uint32_t depthSrvIdx = GetDevice()->GetTextureSRVIndex(m_depthBuffer);
 
-    // When a VFXMaterial has a sprite loaded, prefer its SRV and blend mode.
-    // This allows the material to override the preset's inline sprite selection.
-    const uint32_t spriteSrvIdx = m_vfxMaterial.HasSprite()
-        ? m_vfxMaterial.spriteTextureSrvIndex
-        : GetSpriteTextureForPreset(m_vfxPresetIndex);
+    // Material priority: custom sprite (--sprite CLI) > preset material (M key) > inline preset.
+    // When a VFXMaterial has a sprite loaded via --sprite, it takes full priority.
+    // Otherwise, the active preset material (cycled with M) provides sprite, blend, and flipbook.
+    uint32_t spriteSrvIdx;
+    uint32_t blendMode;
 
-    const uint32_t blendMode = m_vfxMaterial.HasSprite()
-        ? m_vfxMaterial.blendMode
-        : m_vfxEmitter.blendMode;
+    if (m_vfxMaterial.HasSprite()) {
+        // Custom sprite from --sprite CLI takes full priority
+        spriteSrvIdx = m_vfxMaterial.spriteTextureSrvIndex;
+        blendMode    = m_vfxMaterial.blendMode;
+    } else {
+        // Use the active preset material's sprite and blend mode
+        const auto& mat = m_vfxMaterials[m_currentMaterialIndex];
+        spriteSrvIdx = mat.spriteTextureSrvIndex;
+        blendMode    = mat.blendMode;
+
+        // Apply preset material's flipbook config to the emitter
+        // so the billboard shader animates correctly for this material
+        if (mat.flipbookRows > 1 || mat.flipbookCols > 1) {
+            m_vfxEmitter.flipbookRows       = mat.flipbookRows;
+            m_vfxEmitter.flipbookCols        = mat.flipbookCols;
+            m_vfxEmitter.flipbookTotalFrames = mat.flipbookTotalFrames;
+            m_vfxEmitter.flipbookFPS         = mat.flipbookFPS;
+            m_vfxEmitter.flipbookBlendMode   = mat.flipbookBlendMode;
+        }
+    }
 
     if (GetFrameIndex() < 3) {
-        UZ_LOG(App, Info, "VFX Draw: sprite={} flipbook={}x{} frames={} fps={:.0f} blend={} preset={}",
+        UZ_LOG(App, Info, "VFX Draw: sprite={} flipbook={}x{} frames={} fps={:.0f} blend={} preset={} mat={}",
                spriteSrvIdx, m_vfxEmitter.flipbookRows, m_vfxEmitter.flipbookCols,
                m_vfxEmitter.flipbookTotalFrames, m_vfxEmitter.flipbookFPS,
-               blendMode, m_vfxPresetIndex);
+               blendMode, m_vfxPresetIndex, m_currentMaterialIndex);
     }
 
     m_vfxSystem.DrawBillboards(cmd, GetCBRing(), perFrameGpu,
