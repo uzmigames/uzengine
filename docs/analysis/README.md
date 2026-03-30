@@ -1,4 +1,4 @@
-<!-- doc-meta: analysis-directory-index; date: 2026-03-27 -->
+<!-- doc-meta: analysis-directory-index; date: 2026-03-30 -->
 
 # Analysis Documents
 
@@ -24,8 +24,10 @@ Reference analysis documents organized by subsystem. Used for architectural rese
 | [renderer/](renderer/) | Debug visualization, general pipeline analysis, mesh winding | 3+ |
 | [rendering-pipeline/](rendering-pipeline/) | Debug visualization, general pipeline analysis | 2+ |
 | [rhi/](rhi/) | RHI abstraction: cbuffer layouts, bindless, SM5 patterns, Vulkan analysis | 12 |
+| [skeletal/](skeletal/) | Skeletal mesh architecture, retargeting, animation integration, UE5 analysis | 6 |
 | [upscaling/](upscaling/) | TSR, Godot 4K upscaling, temporal super-resolution | 8 |
 | [vfx/](vfx/) | VFX system gaps, implementation roadmap, architectural analysis | 5 |
+| [vscode/](vscode/) | VSCode extension integration, viewport, IPC | 2+ |
 
 ## Key Documents
 
