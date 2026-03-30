@@ -1,4 +1,14 @@
-# Shader Testing Pipeline — 3-Tier Validation (MANDATORY)
+# Shader Testing Pipeline — 4-Tier Validation (MANDATORY)
+
+## Baseline: Falcor is the Reference Renderer
+
+**NVIDIA Falcor (E:/Falcor) is UzEngine's rendering quality baseline.**
+Every BRDF, tone mapping, and lighting implementation in UzEngine MUST be compared
+against Falcor's output to ensure equivalent or better visual quality.
+
+The goal is NOT pixel-perfect matching (different pipelines), but that UzEngine's
+rasterized output is **perceptually indistinguishable** from Falcor's path-traced
+ground truth at standard viewing conditions.
 
 ## Rule (applies to ALL agents touching shaders or render passes)
 
@@ -48,13 +58,13 @@ uzengine.exe --screenshot-stdout --screenshot-frame 5 --frames 8 \
   --project ./sample/projects/pbr_showcase.uzproject --editor
 
 # Compare against golden reference
-uzengine.exe --diff runtime/tests/golden/pbr_showcase/default.png <captured.png>
+uzengine.exe --diff .sandbox/golden/pbr_showcase/default.png <captured.png>
 ```
 
 ### Golden Reference Storage
 
 ```
-runtime/tests/golden/
+.sandbox/golden/
   pbr_showcase/
     default.png           # Default camera position
     manifest.json         # Camera params, resolution, PSNR threshold
@@ -163,7 +173,7 @@ m.clock.pause()
 for frame in [1, 8, 16]:
     m.clock.frame = frame
     m.renderFrame()
-    m.frameCapture.outputDir = "../../runtime/tests/golden/falcor_reference/"
+    m.frameCapture.outputDir = "../../.sandbox/falcor_reference/"
     m.frameCapture.capture()
 ```
 

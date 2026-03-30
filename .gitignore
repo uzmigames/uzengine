@@ -1,3 +1,6 @@
+# Sandbox — test outputs, Falcor references, temp captures (never committed)
+.sandbox/
+
 # Rulebook - ignore runtime data, keep specs and tasks
 /.rulebook/*
 !/.rulebook/specs/

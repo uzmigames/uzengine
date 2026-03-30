@@ -15,6 +15,20 @@ This project uses @hivehub/rulebook standards. All code generation should follow
 
 These are the most important rules. They override everything else. If you remember nothing else, remember these:
 
+### RULE 0: Falcor is the Rendering Quality Baseline
+
+**NVIDIA Falcor (E:/Falcor) is UzEngine's ground truth renderer.** Every BRDF, tone mapping, IBL, and lighting shader MUST be compared against Falcor's path-traced output. The goal: UzEngine's rasterized result must be **perceptually indistinguishable** from Falcor's ground truth.
+
+**After implementing or modifying any rendering shader:**
+1. Run `python scripts/falcor/test_bsdf_sphere.py` to generate Falcor reference
+2. Capture UzEngine output at the same scene/camera
+3. Compare via PSNR (>= 35 dB = pass) or visual inspection
+4. If UzEngine output diverges, **adjust UzEngine to match Falcor**, not the other way around
+
+**Falcor binary**: `E:/Falcor/build/windows-vs2022/bin/Release/Mogwai.exe`
+**Test scripts**: `scripts/falcor/`
+**Reference images**: `.sandbox/brdf_comparison/` (gitignored, local only)
+
 ### RULE 1: Industry-Standard Rendering Parity — Components, Parameters, Defaults, Logic
 
 Every UzEngine rendering component, system, and feature MUST implement the **correct behavior, ALL relevant parameters, ALL standard defaults, and ALL computation logic** as described in published papers and industry-standard implementations.

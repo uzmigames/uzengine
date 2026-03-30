@@ -10,7 +10,7 @@ Or from Python:
                   "--script", "scripts/falcor/reference_pbr.py",
                   "--headless", "--width", "1280", "--height", "720"])
 
-Outputs reference PNGs to runtime/tests/golden/falcor_reference/
+Outputs reference PNGs to .sandbox/falcor_reference/
 """
 
 import falcor
@@ -21,7 +21,7 @@ import os
 # ─────────────────────────────────────────────────────────────────────────────
 
 SCENE_PATH = "../../sample/scenes/pbr_showcase.gltf"
-OUTPUT_DIR = "../../runtime/tests/golden/falcor_reference/"
+OUTPUT_DIR = "../../.sandbox/falcor_reference/"
 RESOLUTION = (1280, 720)
 CAPTURE_FRAMES = [1, 5, 8]
 
