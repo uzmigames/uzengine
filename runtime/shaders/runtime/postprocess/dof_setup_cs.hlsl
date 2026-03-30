@@ -58,7 +58,7 @@ cbuffer DofSetupParams : register(b0) {
     uint   g_OutputUavIndex;     ///< Bindless UAV index for R16F CoC output
     uint   g_OutputWidth;        ///< Output texture width in pixels
     uint   g_OutputHeight;       ///< Output texture height in pixels
-    float  g_FocusDistance;      ///< Focus distance in cm (Equivalent: DepthOfFieldFocalDistance, Scene.cpp:559, default 0 = disabled)
+    float  g_FocusDistance;      ///< Focus distance in cm (default 0 = disabled)
     float  g_CocInfinityRadius;  ///< Pre-computed CoC radius at infinity in pixels
     float  g_NearTransitionRcp;  ///< 1.0 / max(nearTransition, 0.001) — pre-computed on CPU. Default NearTransitionRegion = 300 cm
     float  g_FarTransitionRcp;   ///< 1.0 / max(farTransition, 0.001) — pre-computed on CPU. Default FarTransitionRegion = 500 cm

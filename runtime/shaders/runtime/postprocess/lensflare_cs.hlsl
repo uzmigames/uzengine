@@ -31,7 +31,7 @@
 ///   spec for Gaussian blur along ring).
 /// @deviations INTENTIONAL: This shader implements the John Chapman ghost-based
 ///   technique, not the reference engine's bokeh-tile rasterization. the reference engine's approach rasterizes one
-///   bokeh quad per bright pixel (PostProcessLensFlares.usf:LensFlareBlurVS), which
+///   bokeh quad per bright pixel (the reference bokeh-tile rasterization approach), which
 ///   requires vertex buffer setup and instanced draw calls. The ghost-based approach
 ///   is a single compute dispatch, simpler to integrate, and produces a different
 ///   (complementary) artistic look. Both are valid real-time lens flare techniques.

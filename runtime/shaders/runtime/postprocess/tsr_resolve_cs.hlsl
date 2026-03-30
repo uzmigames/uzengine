@@ -238,7 +238,7 @@ static const float2 kPlusOffsets[5] = {
 
 /// @ref TSR velocity dilation —148-417 — MainCS
 /// @ref TSR depth/velocity analysis —271-322 — FindClosestDepthOffset
-/// @constants TILE_SIZE=8 (TSRDilateVelocity.usf:19)
+/// @constants TILE_SIZE=8 (Wihlidal 2019 "Temporal Super-Resolution" — velocity dilation tile size)
 /// @deviations the reference uses packed uint encoding (PackDepthAndOffset) for register efficiency
 ///             and supports butterfly kernels, reprojection field, motion blur flatten,
 ///             closest occluder scatter, and thin geometry edge reprojection.

@@ -146,7 +146,6 @@ pub fn build(b: *std.Build) void {
         tp ++ "meshoptimizer/src",
         tp ++ "entt/single_include",
         tp ++ "luajit/src",
-        tp ++ "renderdoc",
         tp ++ "ufbx",
         tp ++ "etcpak",
         tp ++ "xatlas/source/xatlas",

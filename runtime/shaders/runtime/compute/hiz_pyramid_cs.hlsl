@@ -1,5 +1,6 @@
-/// @ref Screen-space hierarchical Z-buffer construction (HZB mip-chain downsample)
-/// @constants GROUP_TILE_SIZE=8 (HZB.usf:10), gather offset -0.25 (HZB.usf:29)
+/// @ref Greene et al. 1993 "Hierarchical Z-Buffer Visibility" — hierarchical Z-buffer mip-chain construction
+/// @ref Wihlidal 2015 "Optimizing the Graphics Pipeline with Compute" — Hi-Z pyramid generation
+/// @constants GROUP_TILE_SIZE=8 (standard 8x8 thread group for 2x downsample), gather offset -0.25 (bilinear gather texel offset)
 /// @deviations Single-mip dispatch (no LDS multi-mip batch); uses Load instead of
 ///             GatherRed (explicit 4-tap for clarity and odd-dimension clamping);
 ///             no ClosestHZB output (only furthest/conservative needed for culling).

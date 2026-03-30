@@ -103,8 +103,8 @@ RWTexture2D<float4> outputTex   : register(u0);
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// @ref Jimenez 2016 "Interleaved Gradient Noise" —11-18 — InterleavedGradientNoise
-/// @constants magic = (0.06711056, 0.00583715, 52.9829189) (RandomInterleavedGradientNoise.ush:16)
-///            frameJitter = FrameId * float2(47, 17) * 0.695 (RandomInterleavedGradientNoise.ush:14)
+/// @constants magic = (0.06711056, 0.00583715, 52.9829189) (Jimenez 2016 "Interleaved Gradient Noise" constants)
+///            frameJitter = FrameId * float2(47, 17) * 0.695 (Jimenez 2016 temporal frame jitter)
 /// @deviations NONE
 ///
 /// Temporal dithering noise (Jimenez 2014). Returns [0,1].

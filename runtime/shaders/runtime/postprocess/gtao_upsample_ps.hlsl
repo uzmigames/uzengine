@@ -56,7 +56,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Root constants — exactly 8 DWORDs (32 bytes).
-/// Matches the 8-DWORD root constant limit in dx12_pso_creation.cpp:135.
+/// Matches the 8-DWORD root constant limit.
 ///
 /// @ref GTAOUpsamplePixelSize
 cbuffer GTAOUpsampleRootCB : register(b0) {
