@@ -366,11 +366,8 @@ float4 main(FSInput input) : SV_Target {
     // Floor of 0.2 prevents overly dark output when auto-exposure resets.
     color *= max(exposure, 0.2);
 
-    // ── 5b. White balance (before tonemap, in linear HDR) ─────────────────
-    // @ref Krystek 1985, Bradford chromatic adaptation
-    if (abs(whiteBalanceKelvin - 6500.0) > 10.0) {
-        color = WhiteBalance(color, whiteBalanceKelvin);
-    }
+    // ── 5b. White balance — handled by color grading LUT pipeline
+    // (D_IlluminantChromaticity + Bradford adaptation in color_grading_lut_cs.hlsl)
 
     // ── 6. Tonemap ────────────────────────────────────────────────────────
     // Selectable tone mapping operator via tonemapOperator field in PerFrameCB.

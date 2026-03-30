@@ -328,66 +328,10 @@ float3 HableUC2Tonemap(float3 x) {
     return curr * whiteScale;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// White Balance (D-illuminant + Bradford chromatic adaptation)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Compute CIE D-illuminant chromaticity from color temperature in Kelvin.
-/// @ref Krystek 1985 "An Algorithm to Calculate Correlated Colour Temperature"
-/// @constants Polynomial fit valid for 4000K-25000K range
-float2 D_IlluminantChromaticity(float kelvin) {
-    float t = kelvin;
-    float t2 = t * t;
-    float x;
-    if (t <= 7000.0)
-        x = -4.6070e9 / (t2 * t) + 2.9678e6 / t2 + 0.09911e3 / t + 0.244063;
-    else
-        x = -2.0064e9 / (t2 * t) + 1.9018e6 / t2 + 0.24748e3 / t + 0.237040;
-    float y = -3.0 * x * x + 2.87 * x - 0.275;
-    return float2(x, y);
-}
-
-/// White balance via Bradford chromatic adaptation matrix.
-/// Adapts from source illuminant (kelvin) to D65 reference.
-/// @ref Bradford 1985 — chromatic adaptation transform
-/// @ref Lindbloom — Bradford matrix coefficients
-float3 WhiteBalance(float3 color, float kelvin) {
-    // D65 reference white point chromaticity
-    float2 srcXY = D_IlluminantChromaticity(kelvin);
-    float2 dstXY = float2(0.31271, 0.32902); // D65
-
-    // Chromaticity to XYZ white point (Y=1)
-    float3 srcXYZ = float3(srcXY.x / srcXY.y, 1.0, (1.0 - srcXY.x - srcXY.y) / srcXY.y);
-    float3 dstXYZ = float3(dstXY.x / dstXY.y, 1.0, (1.0 - dstXY.x - dstXY.y) / dstXY.y);
-
-    // Bradford cone response
-    static const float3x3 M_A = float3x3(
-         0.8951,  0.2664, -0.1614,
-        -0.7502,  1.7135,  0.0367,
-         0.0389, -0.0685,  1.0296);
-
-    float3 srcLMS = mul(M_A, srcXYZ);
-    float3 dstLMS = mul(M_A, dstXYZ);
-
-    // Diagonal adaptation
-    float3 scale = dstLMS / srcLMS;
-
-    // Simplified: apply scale in LMS space directly to the linear RGB
-    // For a full implementation, we'd go RGB→XYZ→LMS→scale→LMS→XYZ→RGB.
-    // This approximation works well for moderate white balance shifts.
-    float3x3 M_A_inv = float3x3(
-         0.9870, -0.1471,  0.1600,
-         0.4323,  0.5184,  0.0493,
-        -0.0085,  0.0400,  0.9685);
-
-    float3x3 adapt = mul(M_A_inv, float3x3(
-        scale.x, 0, 0,
-        0, scale.y, 0,
-        0, 0, scale.z));
-    adapt = mul(adapt, M_A);
-
-    return mul(adapt, color);
-}
+// White balance: D_IlluminantChromaticity + WhiteBalance are defined in
+// color_grading_lut_cs.hlsl (Judd 1964 corrected version). Use that shader's
+// implementation for color grading. For tonemap_ps.hlsl white balance,
+// use the color grading LUT pipeline instead of inline computation.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Physical Camera Exposure
