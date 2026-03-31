@@ -46,9 +46,10 @@ struct HeightFogComponent {
     float heightFalloff = 0.2f;
 
     /// World-space height at which fog density is at its maximum (cm).
-    /// -5000 = 50m below ground. With heightFalloff=0.2, this produces
-    /// visible fog at ground level that persists at camera altitude.
-    float baseHeight = -5000.f;
+    /// -10 = just below ground. The exponential height fog integrates
+    /// density along the view ray — rays going toward the ground pass
+    /// through dense fog near baseHeight even if camera is above it.
+    float baseHeight = -10.f;
 
     /// Maximum fog opacity (0 to 1). Prevents fog from fully obscuring distant objects.
     float maxOpacity = 1.0f;

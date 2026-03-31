@@ -508,7 +508,7 @@
           "position": [
             0,
             0,
-            -5000
+            0
           ],
           "rotation": [
             0,
@@ -520,8 +520,10 @@
             1,
             1
           ]
-        },
-        "height_fog": {}
+        },        
+        "height_fog": {
+          "base_height": -10
+        }
       }
     },
     {

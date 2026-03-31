@@ -94,7 +94,7 @@ GBufferOutput main(PSInput input) {
 
     // ── PBR params ────────────────────────────────────────────────────────
     float metallic  = 0.0;
-    float roughness = 0.5;
+    float roughness = 1.0;
     float ao        = 1.0;
 
     bool isORM = (materialFlags & 0x4u) != 0;

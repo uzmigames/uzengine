@@ -246,6 +246,10 @@ float4 main(FSInput input) : SV_Target {
         float horizon = saturate(1.0 + dot(R, N));
         specularAmbient *= horizon * horizon;
 
+        // Attenuate specular IBL in shadowed areas — prevents bright reflections
+        // appearing inside shadow regions (sun specular leaking through IBL)
+        specularAmbient *= shadow;
+
         ambient = (diffuseAmbient * ao + specularAmbient) * skyTint;
     }
 
