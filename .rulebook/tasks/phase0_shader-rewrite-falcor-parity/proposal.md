@@ -26,6 +26,29 @@ The entire shader system (135 .hlsl + 26 .hlsli) was deleted to break from the a
 - `scene_renderer_init.cpp` — re-enable `WarmupAll()` after all core shaders pass
 - `frame_lighting.cpp` — re-enable sub-passes (GTAO, DFS, SSGI, SSR, atmosphere) one by one
 
+## Directory Structure
+
+AAA standard — modular by subsystem:
+
+```
+runtime/shaders/runtime/
+├── common/        — constants, math, color, encoding, sampling, bindless (6 headers)
+├── material/      — brdf, diffuse, specular, sheen, clearcoat, subsurface, pom, standard_material (8 headers)
+├── gbuffer/       — mesh_vs, gbuffer_ps, mesh_ps, gbuffer_debug_ps, decal_vs, decal_ps (6 shaders)
+├── lighting/      — light_types, shadow, ibl (3 headers) + fullscreen_vs, shadow_depth_vs, deferred_lighting_ps, cluster_assign_cs (4 shaders)
+├── atmosphere/    — sky_common (1 header) + 18 compute/pixel shaders
+├── postprocess/   — 34 shaders (bloom, GTAO, TAA, TSR, SSR, exposure, velocity, motion blur, DOF, FXAA, SMAA, CAS, LUT, lens flare, FSR)
+├── ibl/           — brdf_lut_cs, irradiance_cs, prefilter_cs, equirect_to_cubemap_cs (4 shaders)
+├── compute/       — gpu_cull_cs, hiz_pyramid_cs, draw_compact_cs, mipgen_cs, decal_apply_cs (5 shaders)
+├── gi/            — sdf_common (1 header) + global_sdf_composite_cs, mesh_sdf_bake_cs, radiance_cache_trace_cs (3 shaders)
+├── ssgi/          — 5 shaders (trace, temporal, denoise, upsample, prev_color_reduce)
+├── shadows/       — dfs_common (1 header) + 3 shaders (cone_trace, cull_objects, upsample)
+├── vfx/           — 8 headers + 12 shaders (particles, trails, decals, distortion)
+└── debug/         — 3 shaders (debug_view, pixel_debug, vis_fullscreen)
+```
+
+Total: 26 headers + 109 shaders = 135 files.
+
 ## Impact
 - Affected specs: `docs/specs/shader-library.md`, `docs/specs/shader-variants.md`, `docs/specs/renderer.md`
 - Affected code: `runtime/shaders/runtime/**`, `runtime/engine/renderer/scene/scene_render_frame.cpp`, `scene_renderer_init.cpp`, `frame/frame_lighting.cpp`
