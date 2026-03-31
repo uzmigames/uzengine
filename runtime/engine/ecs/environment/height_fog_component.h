@@ -32,8 +32,8 @@ namespace uz {
 /// fog density along the view ray, and blends the fog color over the scene.
 struct HeightFogComponent {
     /// Fog inscattering luminance in linear space.
-    /// FogInscatteringLuminance default = black
-    Vec3 color = {0.0f, 0.0f, 0.0f};
+    /// @ref Hillaire 2016 — default white-ish for physically plausible haze
+    Vec3 color = {0.45f, 0.55f, 0.65f};
 
     /// Base fog density factor. Higher = thicker fog. Typical range: 0.001 to 0.1.
     float density = 0.0436f;
@@ -43,7 +43,8 @@ struct HeightFogComponent {
     float heightFalloff = 0.2f;
 
     /// World-space height at which fog density is at its maximum (cm).
-    float baseHeight = -5000.f;
+    /// 0 = ground level. Negative = below ground (fog from underground up).
+    float baseHeight = 0.f;
 
     /// Maximum fog opacity (0 to 1). Prevents fog from fully obscuring distant objects.
     float maxOpacity = 1.0f;
@@ -68,8 +69,8 @@ struct HeightFogComponent {
     // ── Directional Inscattering (sun-facing fog glow) ────────────────────
 
     /// Color of the directional inscattering (sun-facing fog glow).
-    /// DirectionalInscatteringLuminance default = black
-    Vec3 directionalInscatteringColor = {0.0f, 0.0f, 0.0f};
+    /// @ref Hillaire 2016 — warm sun glow through fog
+    Vec3 directionalInscatteringColor = {1.0f, 0.85f, 0.5f};
 
     /// Exponent controlling the tightness of the directional inscattering cone.
     /// Higher = tighter sun halo.
