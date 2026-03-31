@@ -222,7 +222,7 @@ float4 main(FSInput input) : SV_Target {
         // cos-weighted radiance over the hemisphere, producing values in
         // units of irradiance (W/m²). Dividing by PI converts to exitant
         // radiance for a Lambertian surface.
-        float3 diffuseAmbient = kD_env * irradiance * baseColor * M_1_PI;
+        float3 diffuseAmbient = kD_env * irradiance * baseColor;
 
         // Specular: prefiltered env + BRDF LUT
         float3 R = reflect(-V, N);

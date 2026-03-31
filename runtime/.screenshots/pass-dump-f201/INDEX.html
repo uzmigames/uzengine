@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Pass Dump — Frame 201</title>
+<style>
+body { background: #1a1a1a; color: #e0e0e0; font-family: monospace; margin: 20px; }
+h1 { color: #80ff80; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; }
+.cell { background: #2a2a2a; padding: 10px; border-radius: 6px; }
+.cell img { width: 100%; cursor: pointer; }
+.cell .label { font-size: 13px; margin-bottom: 5px; color: #80ff80; }
+.fullscreen { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 100; cursor: pointer; }
+.fullscreen img { max-width: 95%; max-height: 95%; margin: auto; display: block; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); }
+</style>
+</head>
+<body>
+<h1>Pass Dump — Frame 201 (15 targets)</h1>
+<div class="grid">
+  <div class="cell">
+    <div class="label">00-gbuffer-albedo.png</div>
+    <img src="00-gbuffer-albedo.png" onclick="showFull(this.src)">
+  </div>
+  <div class="cell">
+    <div class="label">01-gbuffer-normal.png</div>
+    <img src="01-gbuffer-normal.png" onclick="showFull(this.src)">
+  </div>
+  <div class="cell">
+    <div class="label">03-gbuffer-velocity.png</div>
+    <img src="03-gbuffer-velocity.png" onclick="showFull(this.src)">
+  </div>
+  <div class="cell">
+    <div class="label">04-gbuffer-emissive.png</div>
+    <img src="04-gbuffer-emissive.png" onclick="showFull(this.src)">
+  </div>
+  <div class="cell">
+    <div class="label">06-gtao-result.png</div>
+    <img src="06-gtao-result.png" onclick="showFull(this.src)">
+  </div>
+  <div class="cell">
+    <div class="label">07-ssr-trace.png</div>
+    <img src="07-ssr-trace.png" onclick="showFull(this.src)">
+  </div>
+  <div class="cell">
+    <div class="label">08-ssr-resolve.png</div>
+    <img src="08-ssr-resolve.png" onclick="showFull(this.src)">
+  </div>
+  <div class="cell">
+    <div class="label">09-ssr-temporal.png</div>
+    <img src="09-ssr-temporal.png" onclick="showFull(this.src)">
+  </div>
+  <div class="cell">
+    <div class="label">10-hdr.png</div>
+    <img src="10-hdr.png" onclick="showFull(this.src)">
+  </div>
+  <div class="cell">
+    <div class="label">11-atmo-transmittance.png</div>
+    <img src="11-atmo-transmittance.png" onclick="showFull(this.src)">
+  </div>
+  <div class="cell">
+    <div class="label">12-atmo-multiscatter.png</div>
+    <img src="12-atmo-multiscatter.png" onclick="showFull(this.src)">
+  </div>
+  <div class="cell">
+    <div class="label">13-atmo-ap_volume.png</div>
+    <img src="13-atmo-ap_volume.png" onclick="showFull(this.src)">
+  </div>
+  <div class="cell">
+    <div class="label">14-atmo-sky_cubemap.png</div>
+    <img src="14-atmo-sky_cubemap.png" onclick="showFull(this.src)">
+  </div>
+  <div class="cell">
+    <div class="label">15-hiz-mip0.png</div>
+    <img src="15-hiz-mip0.png" onclick="showFull(this.src)">
+  </div>
+  <div class="cell">
+    <div class="label">16-taa-history.png</div>
+    <img src="16-taa-history.png" onclick="showFull(this.src)">
+  </div>
+</div>
+<div class="fullscreen" id="fullview" onclick="this.style.display='none'">
+  <img id="fullimg">
+</div>
+<script>
+function showFull(src) {
+  document.getElementById('fullimg').src = src;
+  document.getElementById('fullview').style.display = 'block';
+}
+</script>
+</body>
+</html>

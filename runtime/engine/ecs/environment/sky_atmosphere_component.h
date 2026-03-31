@@ -163,9 +163,10 @@ struct SkyAtmosphereComponent {
     /// When a linked DirectionalLight exists, lightSourceAngle is used instead.
     float sunAngularRadius = 0.00872665f;
 
-    /// Fallback sun disk intensity multiplier.
-    /// When a linked DirectionalLight exists, its intensity is used instead.
-    float sunDiskIntensity = 1.0f;
+    /// Sun disk brightness multiplier. Scales the visible sun circle in the sky.
+    /// sunIlluminance (20) * sunDiskIntensity gives the HDR value of the sun disk.
+    /// 0.1 = sun disk HDR ~2.0 (visible bright spot, not blown out without bloom).
+    float sunDiskIntensity = 0.1f;
 
     // ── Tracing & Aerial Perspective ────────────────────────────────────────
 

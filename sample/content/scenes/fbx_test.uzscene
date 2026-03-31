@@ -29,7 +29,7 @@
             0.96,
             0.88
           ],
-          "intensity": 13.0
+          "intensity": 10
         }
       }
     },
@@ -87,7 +87,8 @@
           "asset": "meshes/cube.uzmesh"
         },
         "material": {
-          "albedo": "textures/checker.png"
+          "albedo": "textures/checker.png",
+          "roughnessMultiplier": 0.95
         }
       }
     },
