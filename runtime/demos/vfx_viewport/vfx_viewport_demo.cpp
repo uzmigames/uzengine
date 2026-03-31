@@ -612,6 +612,42 @@ void VFXViewportDemo::OnInit() {
     upload.ReleaseStaging();
     cmd->Begin();
 
+    // ── VFX editor UI (mouse-driven visual overlay) ────────────────────────
+    // Needs UploadContext for BitmapFont atlas upload. Create a second upload
+    // context, init the UI, flush, and re-open the command list for the caller.
+    {
+        UploadContext uiUpload(device);
+        if (!m_editorUI.Init(device, cmd, uiUpload, shaders->GetPipeline(),
+                             RHIFormat::RGBA8Unorm, GetWidth(), GetHeight(),
+                             IsBindless())) {
+            UZ_LOG(App, Error, "VFXViewport: Failed to init VFXEditorUI");
+        }
+        cmd->End();
+        cmd->Execute();
+        device->WaitIdle();
+        uiUpload.ReleaseStaging();
+        cmd->Begin();
+    }
+
+    // Wire up editor UI callbacks
+    m_editorUI.onRestart = [this]() {
+        auto* c = GetCommandList();
+        m_vfxSystem.UploadInitialFreeList(c);
+        m_vfxSpawnAccum = 0.0f;
+        m_vfxBurstPending = true;
+    };
+    m_editorUI.onBurst = [this]() {
+        m_vfxBurstPending = true;
+    };
+    m_editorUI.onFireball = [this]() {
+        const auto& cam = GetCamera();
+        m_fireballPos = cam.GetPosition();
+        m_fireballVel = cam.GetForward() * kFireballSpeed;
+        m_fireballLife = 0.0f;
+        m_fireballActive = true;
+    };
+    m_editorUI.onLoadPreset = [this](int idx) { LoadPreset(idx); };
+
     // ── VFX parameter panel (console-based, no GPU rendering) ────────────
     m_paramPanel.Init(&m_vfxEmitter, &m_vfxSpawnRate, &m_vfxBurstCount,
                       &m_vfxBurstMode, &m_subEmitterEnabled, &m_frustumCullingEnabled);
@@ -628,6 +664,7 @@ void VFXViewportDemo::OnInit() {
     // Wire up the panel's Presets browser.
     m_paramPanel.SetPresetList(m_presetNames);
     m_paramPanel.SetPresetLoadCallback([this](int idx) { LoadPreset(idx); });
+    m_editorUI.SetPresetNames(m_presetNames);
 
     UZ_LOG(App, Info, "VFXViewport: Init complete — {} meshes, {} materials, VFX={}, Trails={}, Decals={}, Distortion={}",
            kMeshNames[0], kMaterialCount, m_vfxEnabled ? "on" : "off",
@@ -643,6 +680,13 @@ void VFXViewportDemo::OnInit() {
 
 void VFXViewportDemo::HandleInput(float dt) {
     const auto* input = GetInput();
+
+    // ── VFX editor UI (mouse-driven overlay — consumes mouse when hovered) ──
+    m_editorUI.HandleMouse(input, dt);
+    if (m_editorUI.WantsMouseInput()) {
+        // UI consumed the mouse — still allow keyboard input to pass through
+        // but skip camera/gizmo mouse handling below.
+    }
 
     // ── VFX parameter panel (F10 toggles, consumes input when visible) ──
     if (input->IsKeyJustPressed(Key::F10)) {
@@ -1921,6 +1965,36 @@ void VFXViewportDemo::OnFrame(float dt) {
         }
     }
 
+    // ── VFX editor UI overlay ───────────────────────────────────────────
+    {
+        auto* swapChain = GetSwapChain();
+        if (swapChain) {
+            RHIRenderPassDesc rpDesc{};
+            rpDesc.colorAttachmentCount = 1;
+            rpDesc.colorAttachments[0].texture = swapChain->GetCurrentBackBuffer();
+            cmd->BeginRenderPass(rpDesc);
+
+            RHIViewport vp{};
+            vp.width = static_cast<float>(GetWidth());
+            vp.height = static_cast<float>(GetHeight());
+            vp.minDepth = 0.0f;
+            vp.maxDepth = 1.0f;
+            cmd->SetViewport(vp);
+
+            RHIScissorRect sc{};
+            sc.right = static_cast<int32_t>(GetWidth());
+            sc.bottom = static_cast<int32_t>(GetHeight());
+            cmd->SetScissor(sc);
+
+            m_editorUI.BeginFrame(GetFrameIndex());
+            m_editorUI.BuildUI(&m_vfxEmitter, &m_vfxSpawnRate, &m_vfxBurstMode,
+                               &m_vfxBurstCount, &m_vfxEnabled);
+            m_editorUI.Render(cmd, *cbRing);
+
+            cmd->EndRenderPass();
+        }
+    }
+
     // ── Shadow map debug overlay ─────────────────────────────────────────
     // Renders the shadow depth map as a small grayscale quad in the
     // bottom-left corner, reusing the tonemap PSO (which samples a
@@ -2804,6 +2878,8 @@ void VFXViewportDemo::OnResize(uint32_t width, uint32_t height) {
     if (m_outlineEnabled) {
         m_outlinePass.Resize(width, height);
     }
+
+    m_editorUI.SetScreenSize(width, height);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2813,6 +2889,7 @@ void VFXViewportDemo::OnResize(uint32_t width, uint32_t height) {
 void VFXViewportDemo::OnShutdown() {
     auto* device = GetDevice();
 
+    m_editorUI.Shutdown();
     m_outlinePass.Shutdown();
     m_gizmoRenderer.Shutdown();
     m_bloomPass.Shutdown();
@@ -2903,6 +2980,7 @@ void VFXViewportDemo::RefreshPresetList(const std::string& dir) {
     // (panel has no categories yet) because SetPresetList is also called
     // explicitly after the first RefreshPresetList() call in OnInit.
     m_paramPanel.SetPresetList(m_presetNames);
+    m_editorUI.SetPresetNames(m_presetNames);
 }
 
 void VFXViewportDemo::LoadPreset(int idx) {

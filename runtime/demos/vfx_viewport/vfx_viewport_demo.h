@@ -49,6 +49,7 @@
 #include "editor_input_handler.h"
 #include "vfx_parameter_panel.h"
 #include "vfx_module_stack.h"
+#include "vfx_editor_ui.h"
 
 #include "vfx_preset_serializer.h"
 
@@ -269,6 +270,9 @@ private:
 
     // ── VFX module stack panel (Q key toggles) ───────────────────────────────
     VFXModuleStackPanel m_moduleStack;        ///< Console-based simulation module visibility and toggle UI.
+
+    // ── VFX editor UI (mouse-driven visual overlay) ─────────────────────────
+    VFXEditorUI m_editorUI;                   ///< Clickable menu bar, panels, sliders, buttons.
 
     // ── Environment rotation ───────────────────────────────────────────
     float m_envRotation = 0.0f;                    ///< Environment (sun/sky) Y-axis rotation in degrees (R key).

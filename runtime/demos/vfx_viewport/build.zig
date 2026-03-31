@@ -12,6 +12,7 @@ pub fn build(b: *std.Build) void {
             "vfx_parameter_panel.cpp",
             "vfx_preset_serializer.cpp",
             "vfx_module_stack.cpp",
+            "vfx_editor_ui.cpp",
         },
         .use_demo_application = true,
         .deploy_fxc = true,
