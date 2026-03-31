@@ -160,6 +160,19 @@ GBufferOutput main(PSInput input) {
     }
 #endif
 
+    // ── Geometric specular anti-aliasing ────────────────────────────────
+    // @ref Kaplanyan 2016 "Stable Geometric Specular Antialiasing with
+    //      Projected-Space NDF Filtering"
+    // Increases roughness when normal varies rapidly across the pixel,
+    // preventing specular highlight aliasing at grazing angles.
+    {
+        float3 dNdx = ddx(N);
+        float3 dNdy = ddy(N);
+        float variance = max(dot(dNdx, dNdx), dot(dNdy, dNdy));
+        float kernelRoughness = min(variance * 2.0, 0.18); // clamped to prevent over-blur
+        roughness = saturate(roughness + kernelRoughness);
+    }
+
     // ── Pack specular + shadingModelID into RT3.a ─────────────────────────
     float specularVal = float((materialFlags >> 8u) & 0xFFu) / 255.0;
     uint  smID        = (materialFlags >> 24u) & 0xFu;

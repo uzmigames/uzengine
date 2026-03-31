@@ -83,8 +83,12 @@ float SampleShadowCascade(float3 worldPos, float3 N, float NdotL, uint cascadeId
     float2 atlasUV = tileOffset + shadowUV * tileSize;
     if (any(shadowUV < 0.0) || any(shadowUV > 1.0)) return 1.0;
 
-    float depthBias = GetCascadeDepthBias(cascadeIdx);
-    float cmpDepth = proj.z - depthBias;
+    // Depth bias: use CB value with a minimum floor to prevent shadow acne.
+    // @ref Holbert 2011 "Normal Offset Shadows" — constant + slope-scaled bias
+    float depthBias = max(GetCascadeDepthBias(cascadeIdx), 0.0005);
+    // Slope-scaled depth bias: surfaces at grazing angles need more bias
+    float slopeBias = depthBias * slopeScale;
+    float cmpDepth = proj.z - depthBias - slopeBias;
     float texelSize = 1.0 / shadowMapSize;
     float penumbra = clamp(proj.z * 3.5, 0.5, 2.5) * (1.0 + float(cascadeIdx) * 0.3);
 
