@@ -65,32 +65,16 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
 
     if (m_renderPath != RenderPath::Deferred) return;
 
-    // ── DBuffer Apply (after GBuffer fill, before GTAO/lighting) ──
-    RegisterDBufferApplyPass(rgBuilder, ctx);
-
-    // ── GTAO (after GBuffer, before lighting) ──
-    RegisterGTAOPass(rgBuilder, ctx);
-
-    // ── Distance Field Shadows (after GBuffer + GTAO, before lighting) ──
-    RegisterDFSPasses(rgBuilder, ctx);
-
-    // ── SSGI (after GTAO, before SSR and lighting) ──
-    RegisterSSGIPasses(rgBuilder, ctx);
-
-    // ── SDF GI: GDF Composite + Radiance Cache (after SSGI, before lighting) ──
-    RegisterSDFGIPasses(rgBuilder, ctx);
-
-    // ── SSR: Trace + Resolve + Temporal (after GBuffer + HiZ, before lighting) ──
-    RegisterSSRPasses(rgBuilder, ctx);
-
-    // ── Deferred Lighting / Debug View / GBuffer Debug ──
+    // SHADER DEBUG: all sub-passes commented. Uncomment one by one.
+    // RegisterDBufferApplyPass(rgBuilder, ctx);
+    // RegisterGTAOPass(rgBuilder, ctx);
+    // RegisterDFSPasses(rgBuilder, ctx);
+    // RegisterSSGIPasses(rgBuilder, ctx);
+    // RegisterSDFGIPasses(rgBuilder, ctx);
+    // RegisterSSRPasses(rgBuilder, ctx);
     RegisterDeferredLightingPass(rgBuilder, ctx);
-
-    // ── Atmosphere + Fog + Cloud Composite (HDR, before postprocess) ──
     RegisterAtmosphereFogCloudPasses(rgBuilder, ctx);
-
-    // ── SSGI Previous Frame Color Copy (after all scene color, before postprocess) ──
-    RegisterSSGIPrevColorCopy(rgBuilder, ctx);
+    // RegisterSSGIPrevColorCopy(rgBuilder, ctx);
 
     // ── PassInspector: register intermediate targets for visualization ──
     RegisterPassInspectorTargets(ctx);

@@ -11,6 +11,21 @@ This project uses @hivehub/rulebook standards. All code generation should follow
 
 ---
 
+## RULE -1: OBEY THE USER — DO EXACTLY WHAT IS ASKED
+
+**When the user gives a direct instruction, DO IT EXACTLY. No reinterpretation, no "better" alternatives, no creative solutions.**
+
+- If the user says "comment out all passes", comment out ALL passes — not some.
+- If the user says "disable X", disable X — don't restore old files instead.
+- If the user says "go one by one", go ONE BY ONE — not skip steps.
+- **NEVER substitute the user's approach with your own.** The user knows their codebase.
+- **NEVER "improve" on the user's instruction.** Do what was asked, report back, wait.
+- If you're unsure what the user means, ASK — don't guess and do something different.
+
+**This rule overrides all other rules.** The user's explicit instruction is always the highest priority.
+
+---
+
 ## TOP 5 RULES (HIGHEST PRECEDENCE — READ THESE FIRST)
 
 These are the most important rules. They override everything else. If you remember nothing else, remember these:
@@ -100,15 +115,9 @@ See `.claude/rules/incremental-implementation.md` for details.
 - No simplified algorithms where the correct one is known
 - If GPU readback fails, FIX the readback — don't invent a fallback
 
-### RULE 5: ALWAYS Delegate to Specialist Agents
+### RULE 5: Implement Directly — Agents Only When User Requests
 
-Never write C++/shaders/docs directly in the main conversation. Delegate to the appropriate agent:
-- **Shaders** → `shader-engineer` (opus)
-- **C++ engine code** → `cpp-core-expert` (opus)
-- **RHI backends** → `rhi-engineer` (opus)
-- **Architecture analysis** → `unreal-architect` (haiku)
-- **Docs** → `docs-operator` (haiku)
-- **Tests** → `test-engineer` (sonnet)
+Implement C++, shaders, and docs **directly in the main conversation**. Do NOT delegate to agents unless the user explicitly asks for it. Agents are available but opt-in only.
 
 ### RULE 6: File Locations — NEVER create new directories
 

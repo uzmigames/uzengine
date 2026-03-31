@@ -92,7 +92,8 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     // main command list before the render graph. The cloud pass manages
     // its own barriers internally (SRV→UAV→SRV on the output texture),
     // so no external synchronization is needed.
-    if (m_pendingCloudDispatch && m_cloudPass && m_cloudPass->IsInitialized()
+    // SHADER DEBUG: cloud dispatch disabled
+    if (false && m_pendingCloudDispatch && m_cloudPass && m_cloudPass->IsInitialized()
         && m_pendingCloudInput) {
 
         if (m_gpuProfileEnabled) {
@@ -134,11 +135,12 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     }
 
     // ── Register render graph passes in pipeline order ──────────────────
+    // SHADER DEBUG: ALL passes commented out. Uncomment one by one to find crash.
     RegisterShadowPasses(rgBuilder, ctx);
     RegisterGeometryPasses(rgBuilder, ctx);
-    RegisterDecalPasses(rgBuilder, ctx);
+    // RegisterDecalPasses(rgBuilder, ctx);
     RegisterLightingPasses(rgBuilder, ctx);
-    RegisterParticlePasses(rgBuilder, ctx);
+    // RegisterParticlePasses(rgBuilder, ctx);
     RegisterPostProcessPasses(rgBuilder, ctx);
     RegisterOverlayPasses(rgBuilder, ctx);
 

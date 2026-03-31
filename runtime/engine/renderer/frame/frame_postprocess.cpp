@@ -45,6 +45,59 @@ namespace uz {
 void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
     UZ_PROFILE_FUNCTION();
 
+    // SHADER DEBUG: Simplified pipeline — ONLY tonemap, direct to backbuffer.
+    // GBuffer → Deferred Lighting (HDR) → Tonemap → backbuffer
+    // No bloom, no TAA, no CAS, no FXAA, no motion blur, no DOF.
+    {
+        rgBuilder.AddPass("Tonemap", [&](rg::RgPassBuilder& pb) {
+            pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
+            pb.Write(ctx.bbRes, RHIResourceState::RenderTarget);
+
+            pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& res) {
+                UZ_PROFILE_SCOPE("Tonemap::Execute");
+
+                auto bb = res.GetTexture(ctx.bbRes);
+
+                RHIRenderPassDesc passDesc{};
+                passDesc.colorAttachmentCount        = 1;
+                passDesc.colorAttachments[0].texture = bb;
+                passDesc.colorAttachments[0].clear   = false;
+                cmd->BeginRenderPass(passDesc);
+
+                cmd->SetPipeline(ctx.pipelines->GetTonemap());
+
+                RHIViewport vp{};
+                vp.width    = static_cast<uint32_t>(ctx.vpWidth);
+                vp.height   = static_cast<uint32_t>(ctx.vpHeight);
+                vp.maxDepth = 1.0f;
+                cmd->SetViewport(vp);
+
+                RHIScissorRect sc{};
+                sc.right  = static_cast<int32_t>(ctx.swapChain->GetWidth());
+                sc.bottom = static_cast<int32_t>(ctx.swapChain->GetHeight());
+                cmd->SetScissor(sc);
+
+                // Root constants: HDR SRV only, no bloom/lensflare/LUT
+                uint32_t indices[5] = { m_hdrSceneColorSrv, 0, 0, 0, 0 };
+                cmd->SetRootConstants(kSlotRootConstants, indices, 5);
+
+                if (!ctx.bindless) {
+                    cmd->SetFragmentTexture(0, m_hdrSceneColor);
+                }
+
+                cmd->SetRootCBV(kSlotPerFrame, ctx.perFrameAlloc.bufferHandle,
+                                ctx.perFrameAlloc.offsetBytes, ctx.perFrameAlloc.cpuPtr,
+                                ctx.perFrameAlloc.sizeBytes);
+
+                cmd->Draw(3);
+                cmd->EndRenderPass();
+            });
+        });
+        return; // Skip everything else
+    }
+
+    // ═══════ ORIGINAL CODE BELOW (skipped by return above) ═══════
+
     // All locals (pipelines, bindless, vpWidth, etc.) are accessed via ctx.*
     // to avoid dangling references in deferred execution callbacks.
 
@@ -497,7 +550,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
     // CAS/FXAA or a raw CopyTexture forwards the result to the backbuffer.
     // This guarantees a stable, engine-owned texture for H.264 readback
     // (never read back from the swapchain backbuffer — it rotates after Present).
-    const bool needsLdrIntermediate = true;
+    const bool needsLdrIntermediate = false; // SHADER DEBUG: tonemap writes directly to backbuffer
     ctx.fxaaLdrRes = rgBuilder.ImportTexture("LDR_Intermediate",
                                               m_fxaaLdrIntermediate,
                                               RHIResourceState::ShaderResource);
