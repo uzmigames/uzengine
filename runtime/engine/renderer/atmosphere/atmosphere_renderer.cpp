@@ -160,7 +160,10 @@ void AddAtmospherePasses(
                     skySunColor = skyComp.sunIlluminance * lightTint;
                     static constexpr float kDegToRad2 = 3.14159265358979323846f / 180.f;
                     skySunAngularRadius = dl2.lightSourceAngle * kDegToRad2;
-                    skySunDiskIntensity = dl2.intensity;
+                    // Sun disk intensity uses the component's artistic control,
+                    // NOT the directional light intensity (which would double-multiply
+                    // with sunIlluminance, producing HDR values of 200+).
+                    skySunDiskIntensity = skyComp.sunDiskIntensity;
                     break;
                 }
             }
