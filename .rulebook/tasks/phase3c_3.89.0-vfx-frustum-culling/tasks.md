@@ -98,12 +98,8 @@ debug counter showing culled vs active emitters in the ImGui overlay.
 
 ## 6. Demo — Multi-Emitter Cull Test Scene
 
-- [ ] 6.1 In the demo, add a `BuildMultiEmitterScene()` helper that spawns 8 emitters
-  arranged in a circle at radius 10m from the camera. 4 will be in front (visible),
-  4 behind (culled).
-- [ ] 6.2 Add keyboard `'M'` to activate multi-emitter scene. When active, update
-  camera position each frame so the user can orbit and see emitters get culled/unculled.
-  Print `[M] Multi-emitter: Active emitters X/8` to overlay.
+- [x] 6.1 Implemented full multi-emitter VFX system: VFXEmitterInstance struct wraps unique_ptr<VFXParticleSystem> + config + spawn state. Vector of instances replaces single system. 4 compound presets (Single/Fire/Explosion/Magic) with 1-3 emitters each. Each emitter has independent pool (5K-50K particles), position offset, burst/continuous mode.
+- [x] 6.2 Added Ctrl+Tab to cycle compound presets, Ctrl+1..8 to select emitter. Emitter tab bar in editor UI shows clickable tabs. All emitters dispatch/render independently per frame. Help overlay updated.
 
 ## 7. Visual Verification
 

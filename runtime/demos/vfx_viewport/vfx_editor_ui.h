@@ -117,11 +117,23 @@ public:
     /// Sets the list of preset names for the Presets dropdown menu.
     void SetPresetNames(const std::vector<std::string>& names) { m_presetNames = names; }
 
+    /// Sets the list of emitter names and the active emitter index for the
+    /// emitter selector bar displayed between the menu bar and property panels.
+    void SetEmitterNames(const std::vector<std::string>& names, int activeIndex) {
+        m_emitterNames = names;
+        m_activeEmitterIdx = activeIndex;
+    }
+
+    /// Returns the emitter index selected by the user via the emitter bar.
+    /// Returns -1 if no emitter was clicked this frame.
+    [[nodiscard]] int GetSelectedEmitterIndex() const { return m_selectedEmitterIdx; }
+
     // ── Callbacks ────────────────────────────────────────────────────────
     std::function<void()>  onRestart;      ///< Called when Restart button is clicked.
     std::function<void()>  onBurst;        ///< Called when Burst button is clicked.
     std::function<void()>  onFireball;     ///< Called when Fireball button is clicked.
     std::function<void(int)> onLoadPreset; ///< Called with preset index when a preset is selected.
+    std::function<void(int)> onSelectEmitter; ///< Called with emitter index when an emitter tab is clicked.
 
 private:
     // ── GPU resources ────────────────────────────────────────────────────
@@ -167,6 +179,11 @@ private:
     // ── Preset names ─────────────────────────────────────────────────────
     std::vector<std::string> m_presetNames;
 
+    // ── Multi-emitter selector state ─────────────────────────────────────
+    std::vector<std::string> m_emitterNames;   ///< Names of active emitters.
+    int  m_activeEmitterIdx  = 0;              ///< Currently selected emitter tab.
+    int  m_selectedEmitterIdx = -1;            ///< Emitter clicked this frame (-1 = none).
+
     // ── Theme colors ─────────────────────────────────────────────────────
     static constexpr Vec4 kColorBarBg     = {0.12f, 0.12f, 0.16f, 0.95f};
     static constexpr Vec4 kColorPanelBg   = {0.15f, 0.15f, 0.20f, 0.95f};
@@ -183,7 +200,8 @@ private:
     static constexpr Vec4 kColorDropBg    = {0.14f, 0.14f, 0.18f, 1.00f}; // Fully opaque — must cover panels beneath
 
     // ── Layout constants ─────────────────────────────────────────────────
-    static constexpr float kMenuBarH      = 30.0f;
+    static constexpr float kMenuBarH       = 30.0f;
+    static constexpr float kEmitterBarH   = 26.0f; ///< Emitter selector tab bar height.
     static constexpr float kToolbarH      = 40.0f;
     static constexpr float kLeftPanelW    = 280.0f;
     static constexpr float kRightPanelW   = 240.0f;
@@ -221,6 +239,10 @@ private:
     /// Builds the top menu bar and any open dropdown menus.
     void BuildMenuBar();
     void BuildMenuDropdowns(); ///< Renders open menu dropdown AFTER panels (z-order on top).
+
+    /// Builds the emitter selector bar (below menu bar, above panels).
+    /// Shows clickable tabs for each emitter with an active highlight.
+    void BuildEmitterBar();
 
     /// Builds the bottom toolbar with action buttons and preset navigation.
     void BuildToolbar(bool* burstMode, bool* vfxEnabled);

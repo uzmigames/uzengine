@@ -62,11 +62,9 @@ static const char* kMeshNames[] = {"Sphere", "Cube", "Plane", "Cylinder", "Torus
 
 VFXViewportDemo::VFXViewportDemo(const DemoConfig& config)
     : DemoApplication(config) {
-    // Initialize the VFX emitter from the first preset
-    int presetCount = 0;
-    const VFXPreset* presets = GetVFXPresets(presetCount);
-    m_vfxEmitter = presets[0].config;
-    m_vfxSpawnRate = presets[0].spawnRate;
+    // Initialize with a single emitter preset (backward-compatible default).
+    // BuildCompoundPreset populates m_emitters but does NOT init GPU resources.
+    BuildCompoundPreset(VFXCompoundPreset::Single);
     m_prevViewProj = Mat4::Identity();
 
     // ── Sub-emitter secondary "sparks" config (Task 3.87.0) ──────────────
@@ -287,14 +285,10 @@ void VFXViewportDemo::OnInit() {
         UZ_LOG(App, Error, "VFXViewport: Failed to get tonemap PSO");
     }
 
-    // ── VFX particle system ──────────────────────────────────────────────
-    if (!m_vfxSystem.Init(device, shaders, 50000)) {
-        UZ_LOG(App, Error, "VFXViewport: Failed to initialize VFX particle system");
-        m_vfxEnabled = false;
-    }
-    if (m_vfxEnabled) {
-        m_vfxSystem.UploadInitialFreeList(cmd);
-    }
+    // ── Multi-emitter VFX system initialization ─────────────────────────
+    // BuildCompoundPreset was already called in the constructor. Now init
+    // GPU resources for each emitter (buffers, compute/graphics pipelines).
+    InitAllEmitters(device, shaders, cmd);
 
     // ── VFX material presets (ready-to-use material configurations) ──────
     // M_VFX_Fire_Additive: bright additive fire (procedural circles)
@@ -632,12 +626,10 @@ void VFXViewportDemo::OnInit() {
     // Wire up editor UI callbacks
     m_editorUI.onRestart = [this]() {
         auto* c = GetCommandList();
-        m_vfxSystem.UploadInitialFreeList(c);
-        m_vfxSpawnAccum = 0.0f;
-        m_vfxBurstPending = true;
+        ResetAllEmitters(c);
     };
     m_editorUI.onBurst = [this]() {
-        m_vfxBurstPending = true;
+        for (auto& e : m_emitters) e.burstPending = true;
     };
     m_editorUI.onFireball = [this]() {
         const auto& cam = GetCamera();
@@ -647,13 +639,27 @@ void VFXViewportDemo::OnInit() {
         m_fireballActive = true;
     };
     m_editorUI.onLoadPreset = [this](int idx) { LoadPreset(idx); };
+    m_editorUI.onSelectEmitter = [this](int idx) {
+        if (idx >= 0 && idx < static_cast<int>(m_emitters.size())) {
+            m_activeEmitterIndex = idx;
+            auto& ae = ActiveEmitter();
+            m_paramPanel.Init(&ae.config, &ae.spawnRate, &ae.burstCount,
+                              &ae.burstMode, &m_subEmitterEnabled, &m_frustumCullingEnabled);
+            m_moduleStack.Init(&ae.config, &m_subEmitterEnabled, &m_frustumCullingEnabled);
+        }
+    };
 
     // ── VFX parameter panel (console-based, no GPU rendering) ────────────
-    m_paramPanel.Init(&m_vfxEmitter, &m_vfxSpawnRate, &m_vfxBurstCount,
-                      &m_vfxBurstMode, &m_subEmitterEnabled, &m_frustumCullingEnabled);
+    // Points to the active emitter's config. The panel reads/writes these
+    // pointers directly, so we refresh them when the active emitter changes.
+    {
+        auto& ae = ActiveEmitter();
+        m_paramPanel.Init(&ae.config, &ae.spawnRate, &ae.burstCount,
+                          &ae.burstMode, &m_subEmitterEnabled, &m_frustumCullingEnabled);
+    }
 
     // ── VFX module stack panel (console-based module visibility + toggle) ──
-    m_moduleStack.Init(&m_vfxEmitter, &m_subEmitterEnabled, &m_frustumCullingEnabled);
+    m_moduleStack.Init(&ActiveEmitter().config, &m_subEmitterEnabled, &m_frustumCullingEnabled);
 
     // ── Preset management — export built-in presets and scan directory ───────
     // Export each built-in preset to content/vfx/presets/ on first run (skips
@@ -697,9 +703,7 @@ void VFXViewportDemo::HandleInput(float dt) {
         if (m_paramPanel.HandleInput(input, needsRestart)) {
             if (needsRestart) {
                 auto* cmd = GetCommandList();
-                m_vfxSystem.UploadInitialFreeList(cmd);
-                m_vfxSpawnAccum = 0.0f;
-                m_vfxBurstPending = true;
+                ResetAllEmitters(cmd);
             }
             return; // Panel consumed the input — skip all other handlers.
         }
@@ -815,19 +819,18 @@ void VFXViewportDemo::HandleInput(float dt) {
         UZ_LOG(App, Info, "Bloom: {}", m_bloomEnabled ? "on" : "off");
     }
 
-    // Lit particles toggle (J key)
+    // Lit particles toggle (J key) — applies to all emitters
     // @ref Pharr 2023 "Physically Based Rendering" Ch.12 — Lambertian diffuse NdotL
     if (input->IsKeyJustPressed(Key::J)) {
-        m_vfxEmitter.litMode = (m_vfxEmitter.litMode == 0) ? 1u : 0u;
-        UZ_LOG(App, Info, "[J] Lit particles: {}", m_vfxEmitter.litMode ? "ON" : "OFF");
+        const uint32_t newMode = (ActiveEmitter().config.litMode == 0) ? 1u : 0u;
+        for (auto& e : m_emitters) e.config.litMode = newMode;
+        UZ_LOG(App, Info, "[J] Lit particles: {}", newMode ? "ON" : "OFF");
     }
 
     // VFX restart (Delete key) — clears all particles and fires new burst/restarts
     if (input->IsKeyJustPressed(Key::Delete)) {
         auto* cmd = GetCommandList();
-        m_vfxSystem.UploadInitialFreeList(cmd);
-        m_vfxSpawnAccum = 0.0f;
-        m_vfxBurstPending = true;
+        ResetAllEmitters(cmd);
         // Start sub-emitter countdown if enabled — fires secondary sparks burst
         // after kSubEmitterDelay seconds at the same world position.
         if (m_subEmitterEnabled) {
@@ -837,14 +840,15 @@ void VFXViewportDemo::HandleInput(float dt) {
                m_subEmitterEnabled ? " (sub-emitter armed)" : "");
     }
 
-    // Toggle burst/continuous mode (Insert key)
+    // Toggle burst/continuous mode (Insert key) — applies to all emitters
     if (input->IsKeyJustPressed(Key::Insert)) {
-        m_vfxBurstMode = !m_vfxBurstMode;
-        if (m_vfxBurstMode) {
-            m_vfxBurstPending = true;
+        const bool newMode = !ActiveEmitter().burstMode;
+        for (auto& e : m_emitters) {
+            e.burstMode = newMode;
+            if (newMode) e.burstPending = true;
         }
-        UZ_LOG(App, Info, "[VFX] Mode: {} (burst count={})",
-               m_vfxBurstMode ? "Burst" : "Continuous", m_vfxBurstCount);
+        UZ_LOG(App, Info, "[VFX] Mode: {} (active emitter burst count={})",
+               newMode ? "Burst" : "Continuous", ActiveEmitter().burstCount);
     }
 
     // VFX material preset cycling (M key)
@@ -864,6 +868,7 @@ void VFXViewportDemo::HandleInput(float dt) {
     }
 
     // Color ramp LUT cycling (N key) — Off -> Fire -> Ice -> Rainbow -> Off
+    // Applies the same ramp to ALL emitters so the compound effect is consistent.
     if (input->IsKeyJustPressed(Key::N)) {
         m_currentRampIndex = (m_currentRampIndex + 1);
         if (m_currentRampIndex >= kColorRampCount) {
@@ -871,15 +876,19 @@ void VFXViewportDemo::HandleInput(float dt) {
         }
 
         if (m_currentRampIndex < 0) {
-            // Disable LUT — fall back to legacy two-point lerp
-            m_vfxSystem.ClearColorRampLUT();
+            for (auto& e : m_emitters) e.system->ClearColorRampLUT();
             UZ_LOG(App, Info, "[VFX] Color ramp: Off (legacy lerp)");
         } else {
-            // Upload the selected ramp as a 256x1 RGBA16F LUT
             auto* device = GetDevice();
             auto* cmd = GetCommandList();
             UploadContext upload(device);
-            if (m_vfxSystem.UploadColorRampLUT(upload, cmd, m_colorRamps[m_currentRampIndex])) {
+            bool ok = true;
+            for (auto& e : m_emitters) {
+                if (!e.system->UploadColorRampLUT(upload, cmd, m_colorRamps[m_currentRampIndex])) {
+                    ok = false;
+                }
+            }
+            if (ok) {
                 static const char* kRampNames[] = {"Fire", "Ice", "Rainbow"};
                 UZ_LOG(App, Info, "[VFX] Color ramp: {}", kRampNames[m_currentRampIndex]);
             } else {
@@ -889,25 +898,28 @@ void VFXViewportDemo::HandleInput(float dt) {
         }
     }
 
-    // Launch fireball projectile (Space key) — switches to Fireball preset,
-    // continuous mode, and launches a moving emitter in the camera's forward direction.
+    // Launch fireball projectile (Space key) — switches to Fireball preset on
+    // the first emitter, continuous mode, and launches a moving emitter.
     if (input->IsKeyJustPressed(Key::Space) && !m_fireballActive) {
-        // Switch to Fireball preset
+        // Switch the first emitter to Fireball preset
         int presetCount = 0;
         const VFXPreset* presets = GetVFXPresets(presetCount);
         for (int i = 0; i < presetCount; ++i) {
             if (std::strcmp(presets[i].name, "Fireball") == 0) {
                 m_vfxPresetIndex = i;
-                m_vfxEmitter = presets[i].config;
-                m_vfxSpawnRate = presets[i].spawnRate;
+                if (!m_emitters.empty()) {
+                    m_emitters[0].config = presets[i].config;
+                    m_emitters[0].spawnRate = presets[i].spawnRate;
+                }
                 break;
             }
         }
         // Reset particles and start fireball
         auto* cmd = GetCommandList();
-        m_vfxSystem.UploadInitialFreeList(cmd);
-        m_vfxSpawnAccum = 0.0f;
-        m_vfxBurstMode = false; // continuous emission for trail
+        ResetAllEmitters(cmd);
+        for (auto& e : m_emitters) {
+            e.burstMode = false; // continuous emission for trail
+        }
         m_vfxEnabled = true;
         m_trailEnabled = true;
 
@@ -920,118 +932,159 @@ void VFXViewportDemo::HandleInput(float dt) {
         UZ_LOG(App, Info, "[VFX] Fireball launched!");
     }
 
-    // VFX preset cycling (Tab / Shift+Tab)
-    if (input->IsKeyJustPressed(Key::Tab)) {
+    // VFX preset cycling (Tab / Shift+Tab) — skip if Ctrl is held (Ctrl+Tab = compound preset)
+    const bool ctrlDown = input->IsKeyDown(Key::LeftCtrl) || input->IsKeyDown(Key::RightCtrl);
+    if (input->IsKeyJustPressed(Key::Tab) && !ctrlDown) {
         if (input->IsKeyDown(Key::LeftShift) || input->IsKeyDown(Key::RightShift)) {
             // Toggle VFX on/off
             m_vfxEnabled = !m_vfxEnabled;
             UZ_LOG(App, Info, "VFX: {}", m_vfxEnabled ? "enabled" : "disabled");
         } else {
-            // Cycle through file-based presets (populated from content/vfx/presets/).
-            // Fall back to built-in presets if the list is empty (e.g., content dir
-            // missing at launch time).
+            // Cycle through file-based presets (applied to the active emitter).
+            // Fall back to built-in presets if the list is empty.
             if (!m_presetFiles.empty()) {
                 const int nextIdx = (m_vfxPresetIndex + 1) % static_cast<int>(m_presetFiles.size());
-                m_vfxSpawnAccum = 0.0f;
+                ActiveEmitter().spawnAccum = 0.0f;
                 LoadPreset(nextIdx);
             } else {
                 int presetCount = 0;
                 const VFXPreset* presets = GetVFXPresets(presetCount);
                 m_vfxPresetIndex = (m_vfxPresetIndex + 1) % presetCount;
-                m_vfxEmitter    = presets[m_vfxPresetIndex].config;
-                m_vfxSpawnRate  = presets[m_vfxPresetIndex].spawnRate;
-                m_vfxSpawnAccum = 0.0f;
+                auto& ae = ActiveEmitter();
+                ae.config = presets[m_vfxPresetIndex].config;
+                ae.spawnRate = presets[m_vfxPresetIndex].spawnRate;
+                ae.spawnAccum = 0.0f;
                 UZ_LOG(App, Info, "VFX preset: {} (built-in fallback)", presets[m_vfxPresetIndex].name);
             }
         }
     }
 
+    // Compound preset cycling (Ctrl+Tab) — Single -> Fire -> Explosion -> Magic
+    if (input->IsKeyJustPressed(Key::Tab) &&
+        (input->IsKeyDown(Key::LeftCtrl) || input->IsKeyDown(Key::RightCtrl))) {
+        const int next = (static_cast<int>(m_compoundPreset) + 1)
+                         % static_cast<int>(VFXCompoundPreset::Count);
+        auto* device = GetDevice();
+        auto* shaders = GetShaderManager();
+        auto* cmd = GetCommandList();
+        ShutdownAllEmitters(device);
+        BuildCompoundPreset(static_cast<VFXCompoundPreset>(next));
+        InitAllEmitters(device, shaders, cmd);
+        // Re-point the parameter panel to the new active emitter
+        {
+            auto& ae = ActiveEmitter();
+            m_paramPanel.Init(&ae.config, &ae.spawnRate, &ae.burstCount,
+                              &ae.burstMode, &m_subEmitterEnabled, &m_frustumCullingEnabled);
+            m_moduleStack.Init(&ae.config, &m_subEmitterEnabled, &m_frustumCullingEnabled);
+        }
+        static const char* kCompoundNames[] = {"Single", "Fire", "Explosion", "Magic"};
+        UZ_LOG(App, Info, "[VFX] Compound preset: {} ({} emitters)",
+               kCompoundNames[next], static_cast<int>(m_emitters.size()));
+    }
+
+    // Emitter selection cycling (Ctrl+1..8 selects emitter index)
+    for (int i = 0; i < static_cast<int>(m_emitters.size()) && i < kMaxEmitters; ++i) {
+        const Key numKey = static_cast<Key>(static_cast<int>(Key::Num1) + i);
+        if (input->IsKeyJustPressed(numKey) &&
+            (input->IsKeyDown(Key::LeftCtrl) || input->IsKeyDown(Key::RightCtrl))) {
+            m_activeEmitterIndex = i;
+            auto& ae = ActiveEmitter();
+            // Re-point the parameter panel to the new active emitter
+            m_paramPanel.Init(&ae.config, &ae.spawnRate, &ae.burstCount,
+                              &ae.burstMode, &m_subEmitterEnabled, &m_frustumCullingEnabled);
+            m_moduleStack.Init(&ae.config, &m_subEmitterEnabled, &m_frustumCullingEnabled);
+            UZ_LOG(App, Info, "[VFX] Active emitter: {} ({})",
+                   i, ae.name.c_str());
+        }
+    }
+
     // VFX parameter tweaking (number keys — plain = basic, Shift = advanced)
+    // Ctrl+number is reserved for emitter selection, so skip tweaking when Ctrl is held.
     const bool shift = input->IsKeyDown(Key::LeftShift) || input->IsKeyDown(Key::RightShift);
-    if (!shift) {
+    if (!shift && !ctrlDown) {
         // 1/2: Spawn rate ↑/↓
         if (input->IsKeyJustPressed(Key::Num1)) {
-            m_vfxSpawnRate = std::min(5000.0f, m_vfxSpawnRate * 1.5f);
-            UZ_LOG(App, Info, "[VFX] Spawn rate: {:.0f}/s", m_vfxSpawnRate);
+            ActiveEmitter().spawnRate = std::min(5000.0f, ActiveEmitter().spawnRate * 1.5f);
+            UZ_LOG(App, Info, "[VFX] Spawn rate: {:.0f}/s", ActiveEmitter().spawnRate);
         }
         if (input->IsKeyJustPressed(Key::Num2)) {
-            m_vfxSpawnRate = std::max(10.0f, m_vfxSpawnRate / 1.5f);
-            UZ_LOG(App, Info, "[VFX] Spawn rate: {:.0f}/s", m_vfxSpawnRate);
+            ActiveEmitter().spawnRate = std::max(10.0f, ActiveEmitter().spawnRate / 1.5f);
+            UZ_LOG(App, Info, "[VFX] Spawn rate: {:.0f}/s", ActiveEmitter().spawnRate);
         }
         // 3/4: Particle size ↑/↓
         if (input->IsKeyJustPressed(Key::Num3)) {
-            m_vfxEmitter.initialSize = std::min(5.0f, m_vfxEmitter.initialSize * 1.3f);
-            UZ_LOG(App, Info, "[VFX] Size: {:.3f}", m_vfxEmitter.initialSize);
+            ActiveEmitter().config.initialSize = std::min(5.0f, ActiveEmitter().config.initialSize * 1.3f);
+            UZ_LOG(App, Info, "[VFX] Size: {:.3f}", ActiveEmitter().config.initialSize);
         }
         if (input->IsKeyJustPressed(Key::Num4)) {
-            m_vfxEmitter.initialSize = std::max(0.02f, m_vfxEmitter.initialSize / 1.3f);
-            UZ_LOG(App, Info, "[VFX] Size: {:.3f}", m_vfxEmitter.initialSize);
+            ActiveEmitter().config.initialSize = std::max(0.02f, ActiveEmitter().config.initialSize / 1.3f);
+            UZ_LOG(App, Info, "[VFX] Size: {:.3f}", ActiveEmitter().config.initialSize);
         }
         // 5/6: Gravity Z ↑/↓ (Z-up)
         if (input->IsKeyJustPressed(Key::Num5)) {
-            m_vfxEmitter.gravity[2] -= 2.0f;
-            UZ_LOG(App, Info, "[VFX] Gravity Z: {:.1f}", m_vfxEmitter.gravity[2]);
+            ActiveEmitter().config.gravity[2] -= 2.0f;
+            UZ_LOG(App, Info, "[VFX] Gravity Z: {:.1f}", ActiveEmitter().config.gravity[2]);
         }
         if (input->IsKeyJustPressed(Key::Num6)) {
-            m_vfxEmitter.gravity[2] += 2.0f;
-            UZ_LOG(App, Info, "[VFX] Gravity Z: {:.1f}", m_vfxEmitter.gravity[2]);
+            ActiveEmitter().config.gravity[2] += 2.0f;
+            UZ_LOG(App, Info, "[VFX] Gravity Z: {:.1f}", ActiveEmitter().config.gravity[2]);
         }
         // 7/8: Velocity speed ↑/↓
         if (input->IsKeyJustPressed(Key::Num7)) {
-            m_vfxEmitter.spawnVelocity[2] = std::min(30.0f, m_vfxEmitter.spawnVelocity[2] * 1.3f);
-            UZ_LOG(App, Info, "[VFX] Velocity Z: {:.1f}", m_vfxEmitter.spawnVelocity[2]);
+            ActiveEmitter().config.spawnVelocity[2] = std::min(30.0f, ActiveEmitter().config.spawnVelocity[2] * 1.3f);
+            UZ_LOG(App, Info, "[VFX] Velocity Z: {:.1f}", ActiveEmitter().config.spawnVelocity[2]);
         }
         if (input->IsKeyJustPressed(Key::Num8)) {
-            m_vfxEmitter.spawnVelocity[2] = std::max(0.5f, m_vfxEmitter.spawnVelocity[2] / 1.3f);
-            UZ_LOG(App, Info, "[VFX] Velocity Z: {:.1f}", m_vfxEmitter.spawnVelocity[2]);
+            ActiveEmitter().config.spawnVelocity[2] = std::max(0.5f, ActiveEmitter().config.spawnVelocity[2] / 1.3f);
+            UZ_LOG(App, Info, "[VFX] Velocity Z: {:.1f}", ActiveEmitter().config.spawnVelocity[2]);
         }
         // 9/0: Spread angle ↑/↓
         if (input->IsKeyJustPressed(Key::Num9)) {
-            m_vfxEmitter.spreadAngle = std::min(3.14159f, m_vfxEmitter.spreadAngle + 0.1f);
-            UZ_LOG(App, Info, "[VFX] Spread: {:.2f} rad", m_vfxEmitter.spreadAngle);
+            ActiveEmitter().config.spreadAngle = std::min(3.14159f, ActiveEmitter().config.spreadAngle + 0.1f);
+            UZ_LOG(App, Info, "[VFX] Spread: {:.2f} rad", ActiveEmitter().config.spreadAngle);
         }
         if (input->IsKeyJustPressed(Key::Num0)) {
-            m_vfxEmitter.spreadAngle = std::max(0.0f, m_vfxEmitter.spreadAngle - 0.1f);
-            UZ_LOG(App, Info, "[VFX] Spread: {:.2f} rad", m_vfxEmitter.spreadAngle);
+            ActiveEmitter().config.spreadAngle = std::max(0.0f, ActiveEmitter().config.spreadAngle - 0.1f);
+            UZ_LOG(App, Info, "[VFX] Spread: {:.2f} rad", ActiveEmitter().config.spreadAngle);
         }
     }
     // Shift+1/Shift+2: Lifetime ↑/↓
     if (input->IsKeyJustPressed(Key::Num1) && (input->IsKeyDown(Key::LeftShift) || input->IsKeyDown(Key::RightShift))) {
-        m_vfxEmitter.minLifetime = std::min(10.0f, m_vfxEmitter.minLifetime * 1.3f);
-        m_vfxEmitter.maxLifetime = std::min(15.0f, m_vfxEmitter.maxLifetime * 1.3f);
-        UZ_LOG(App, Info, "[VFX] Lifetime: {:.1f}-{:.1f}s", m_vfxEmitter.minLifetime, m_vfxEmitter.maxLifetime);
+        ActiveEmitter().config.minLifetime = std::min(10.0f, ActiveEmitter().config.minLifetime * 1.3f);
+        ActiveEmitter().config.maxLifetime = std::min(15.0f, ActiveEmitter().config.maxLifetime * 1.3f);
+        UZ_LOG(App, Info, "[VFX] Lifetime: {:.1f}-{:.1f}s", ActiveEmitter().config.minLifetime, ActiveEmitter().config.maxLifetime);
     }
     if (input->IsKeyJustPressed(Key::Num2) && (input->IsKeyDown(Key::LeftShift) || input->IsKeyDown(Key::RightShift))) {
-        m_vfxEmitter.minLifetime = std::max(0.1f, m_vfxEmitter.minLifetime / 1.3f);
-        m_vfxEmitter.maxLifetime = std::max(0.2f, m_vfxEmitter.maxLifetime / 1.3f);
-        UZ_LOG(App, Info, "[VFX] Lifetime: {:.1f}-{:.1f}s", m_vfxEmitter.minLifetime, m_vfxEmitter.maxLifetime);
+        ActiveEmitter().config.minLifetime = std::max(0.1f, ActiveEmitter().config.minLifetime / 1.3f);
+        ActiveEmitter().config.maxLifetime = std::max(0.2f, ActiveEmitter().config.maxLifetime / 1.3f);
+        UZ_LOG(App, Info, "[VFX] Lifetime: {:.1f}-{:.1f}s", ActiveEmitter().config.minLifetime, ActiveEmitter().config.maxLifetime);
     }
     // Shift+3/Shift+4: Emissive intensity ↑/↓
     if (input->IsKeyJustPressed(Key::Num3) && (input->IsKeyDown(Key::LeftShift) || input->IsKeyDown(Key::RightShift))) {
-        m_vfxEmitter.emissiveIntensity = std::min(10.0f, m_vfxEmitter.emissiveIntensity + 0.5f);
-        UZ_LOG(App, Info, "[VFX] Emissive: {:.1f}", m_vfxEmitter.emissiveIntensity);
+        ActiveEmitter().config.emissiveIntensity = std::min(10.0f, ActiveEmitter().config.emissiveIntensity + 0.5f);
+        UZ_LOG(App, Info, "[VFX] Emissive: {:.1f}", ActiveEmitter().config.emissiveIntensity);
     }
     if (input->IsKeyJustPressed(Key::Num4) && (input->IsKeyDown(Key::LeftShift) || input->IsKeyDown(Key::RightShift))) {
-        m_vfxEmitter.emissiveIntensity = std::max(0.0f, m_vfxEmitter.emissiveIntensity - 0.5f);
-        UZ_LOG(App, Info, "[VFX] Emissive: {:.1f}", m_vfxEmitter.emissiveIntensity);
+        ActiveEmitter().config.emissiveIntensity = std::max(0.0f, ActiveEmitter().config.emissiveIntensity - 0.5f);
+        UZ_LOG(App, Info, "[VFX] Emissive: {:.1f}", ActiveEmitter().config.emissiveIntensity);
     }
     // Shift+5/Shift+6: Damping ↑/↓
     if (input->IsKeyJustPressed(Key::Num5) && (input->IsKeyDown(Key::LeftShift) || input->IsKeyDown(Key::RightShift))) {
-        m_vfxEmitter.damping = std::min(2.0f, m_vfxEmitter.damping + 0.1f);
-        UZ_LOG(App, Info, "[VFX] Damping: {:.2f}", m_vfxEmitter.damping);
+        ActiveEmitter().config.damping = std::min(2.0f, ActiveEmitter().config.damping + 0.1f);
+        UZ_LOG(App, Info, "[VFX] Damping: {:.2f}", ActiveEmitter().config.damping);
     }
     if (input->IsKeyJustPressed(Key::Num6) && (input->IsKeyDown(Key::LeftShift) || input->IsKeyDown(Key::RightShift))) {
-        m_vfxEmitter.damping = std::max(0.0f, m_vfxEmitter.damping - 0.1f);
-        UZ_LOG(App, Info, "[VFX] Damping: {:.2f}", m_vfxEmitter.damping);
+        ActiveEmitter().config.damping = std::max(0.0f, ActiveEmitter().config.damping - 0.1f);
+        UZ_LOG(App, Info, "[VFX] Damping: {:.2f}", ActiveEmitter().config.damping);
     }
     // Shift+7/Shift+8: Spawn radius ↑/↓
     if (input->IsKeyJustPressed(Key::Num7) && (input->IsKeyDown(Key::LeftShift) || input->IsKeyDown(Key::RightShift))) {
-        m_vfxEmitter.spawnRadius = std::min(5.0f, m_vfxEmitter.spawnRadius + 0.2f);
-        UZ_LOG(App, Info, "[VFX] Spawn radius: {:.1f}", m_vfxEmitter.spawnRadius);
+        ActiveEmitter().config.spawnRadius = std::min(5.0f, ActiveEmitter().config.spawnRadius + 0.2f);
+        UZ_LOG(App, Info, "[VFX] Spawn radius: {:.1f}", ActiveEmitter().config.spawnRadius);
     }
     if (input->IsKeyJustPressed(Key::Num8) && (input->IsKeyDown(Key::LeftShift) || input->IsKeyDown(Key::RightShift))) {
-        m_vfxEmitter.spawnRadius = std::max(0.0f, m_vfxEmitter.spawnRadius - 0.2f);
-        UZ_LOG(App, Info, "[VFX] Spawn radius: {:.1f}", m_vfxEmitter.spawnRadius);
+        ActiveEmitter().config.spawnRadius = std::max(0.0f, ActiveEmitter().config.spawnRadius - 0.2f);
+        UZ_LOG(App, Info, "[VFX] Spawn radius: {:.1f}", ActiveEmitter().config.spawnRadius);
     }
 
     // Trail toggle (Y key)
@@ -1127,11 +1180,11 @@ void VFXViewportDemo::HandleInput(float dt) {
 
     // Curl noise toggle (N key) — toggles curl noise force on/off for active emitter
     if (input->IsKeyJustPressed(Key::N)) {
-        if (m_vfxEmitter.curlStrength > 0.0f) {
-            m_vfxEmitter.curlStrength = 0.0f;
+        if (ActiveEmitter().config.curlStrength > 0.0f) {
+            ActiveEmitter().config.curlStrength = 0.0f;
             UZ_LOG(App, Info, "[N] Curl noise: OFF");
         } else {
-            m_vfxEmitter.curlStrength = 2.0f;
+            ActiveEmitter().config.curlStrength = 2.0f;
             UZ_LOG(App, Info, "[N] Curl noise: ON  strength=2.0");
         }
     }
@@ -1315,6 +1368,8 @@ void VFXViewportDemo::HandleInput(float dt) {
         UZ_LOG(App, Info, "  P                    — Toggle post-processing (ACES/linear)");
         UZ_LOG(App, Info, "  G                    — Toggle shadow debug overlay");
         UZ_LOG(App, Info, "  Tab                  — Cycle VFX presets (Shift+Tab = toggle)");
+        UZ_LOG(App, Info, "  Ctrl+Tab             — Cycle compound presets (Single/Fire/Explosion/Magic)");
+        UZ_LOG(App, Info, "  Ctrl+1..8            — Select emitter (multi-emitter mode)");
         UZ_LOG(App, Info, "  Delete               — Reset particles + fire burst");
         UZ_LOG(App, Info, "  Insert               — Toggle Burst / Continuous mode");
         UZ_LOG(App, Info, "  E (no selection)     — Toggle sub-emitter (secondary sparks burst after {:.2f}s)",
@@ -1385,7 +1440,7 @@ void VFXViewportDemo::HandleInput(float dt) {
         std::strftime(nameBuf, sizeof(nameBuf), "preset_%Y%m%d_%H%M%S", &tm_buf);
 
         const std::string filePath = std::string("content/vfx/presets/") + nameBuf + ".json";
-        if (VFXPresetSerializer::Save(m_vfxEmitter, m_vfxSpawnRate, nameBuf, filePath)) {
+        if (VFXPresetSerializer::Save(ActiveEmitter().config, ActiveEmitter().spawnRate, nameBuf, filePath)) {
             UZ_LOG(App, Info, "VFX: Saved preset '{}'", filePath.c_str());
             // Rescan so the new file is immediately available in Tab cycling.
             RefreshPresetList("content/vfx/presets/");
@@ -1544,47 +1599,32 @@ void VFXViewportDemo::OnFrame(float dt) {
     }
 
     // ── VFX frustum culling (sphere-frustum test in clip space) ──────────
-    // Conservative bounding sphere centred on the emitter with a radius large
-    // enough to contain the maximum particle travel distance. We project the
-    // sphere centre into clip space and check whether the sphere overlaps the
-    // NDC cube [-1,1]^2. Particles behind the camera (w < -r) are culled
-    // immediately. The test is intentionally conservative: false positives
-    // (visible emitters that are not culled) are acceptable; false negatives
-    // (culled emitters that were actually visible) are not.
+    // Conservative bounding sphere centred on the emitter origin with a radius
+    // large enough to contain the maximum particle travel distance. We project
+    // the sphere centre into clip space and check whether it overlaps NDC.
     bool vfxCulled = false;
     if (m_frustumCullingEnabled && m_vfxEnabled) {
-        // Emitter position mirrors the logic in the dispatch block below.
         const Vec3 emitterPos = m_fireballActive
             ? m_fireballPos
             : Vec3(m_meshTransforms[m_currentMesh].position.x,
                    m_meshTransforms[m_currentMesh].position.y,
                    m_meshTransforms[m_currentMesh].position.z + 3.0f);
 
-        // Conservative bounding radius: covers spawn radius + max particle lifetime
-        // × max initial speed + size so no living particle can escape this sphere.
         constexpr float kMaxParticleRadius = 30.0f;
-
-        // Project emitter centre through the view-projection matrix.
         const Vec4 clipPos = viewProj * Vec4(emitterPos.x, emitterPos.y, emitterPos.z, 1.0f);
 
         if (clipPos.w < -kMaxParticleRadius) {
-            // Entire bounding sphere is behind the near plane — definitely off-screen.
             vfxCulled = true;
         } else if (clipPos.w > 0.0f) {
-            // Sphere is in front of the camera; compare NDC extents to [-1, 1].
             const float rcpW      = 1.0f / clipPos.w;
             const float ndcX      = clipPos.x * rcpW;
             const float ndcY      = clipPos.y * rcpW;
-            // Conservative NDC radius: world-space radius divided by w gives a
-            // screen-space approximation (exact only on-axis, conservative off-axis).
             const float ndcRadius = kMaxParticleRadius * rcpW;
             if (ndcX < -1.0f - ndcRadius || ndcX > 1.0f + ndcRadius ||
                 ndcY < -1.0f - ndcRadius || ndcY > 1.0f + ndcRadius) {
                 vfxCulled = true;
             }
         }
-        // When clipPos.w <= 0 and >= -kMaxParticleRadius the sphere straddles the
-        // near plane; we conservatively treat it as visible (vfxCulled stays false).
 
         if (vfxCulled) {
             ++m_culledFrameCount;
@@ -1592,86 +1632,39 @@ void VFXViewportDemo::OnFrame(float dt) {
         }
     }
 
-    // ── VFX compute dispatch ─────────────────────────────────────────────
+    // ── VFX compute dispatch (per-emitter loop) ─────────────────────────
     if (m_vfxEnabled && !vfxCulled) {
-        // Emitter follows fireball if active, otherwise follows mesh
+        // Compute the shared emitter origin — fireball or mesh position
+        Vec3 baseOrigin;
         if (m_fireballActive) {
-            m_vfxEmitter.position[0] = m_fireballPos.x;
-            m_vfxEmitter.position[1] = m_fireballPos.y;
-            m_vfxEmitter.position[2] = m_fireballPos.z;
+            baseOrigin = m_fireballPos;
         } else {
             const auto& meshPos = m_meshTransforms[m_currentMesh].position;
-            m_vfxEmitter.position[0] = meshPos.x;
-            m_vfxEmitter.position[1] = meshPos.y;
-            m_vfxEmitter.position[2] = meshPos.z + 3.0f;
+            baseOrigin = Vec3(meshPos.x, meshPos.y, meshPos.z + 3.0f);
         }
 
-        // Calculate spawn count — burst or continuous
-        uint32_t spawnCount = 0;
-        if (m_vfxBurstMode) {
-            if (m_vfxBurstPending) {
-                spawnCount = m_vfxBurstCount;
-                m_vfxBurstPending = false;
-            }
-        } else {
-            m_vfxSpawnAccum += m_vfxSpawnRate * dt;
-            spawnCount = static_cast<uint32_t>(m_vfxSpawnAccum);
-            m_vfxSpawnAccum -= static_cast<float>(spawnCount);
-        }
-
-        // Apply vortex force configuration from current mode
-        // @ref Stomakhin 2013 "A Material Point Method for Snow Simulation" App.A
-        if (m_vortexMode == 0) {
-            m_vfxEmitter.vortexTangentialStrength = 0.0f;
-            m_vfxEmitter.vortexRadialStrength     = 0.0f;
-        } else if (m_vortexMode == 1) {
-            // Tornado: strong CCW swirl + inward pull
-            m_vfxEmitter.vortexAxisOrigin[0] = m_vfxEmitter.position[0];
-            m_vfxEmitter.vortexAxisOrigin[1] = m_vfxEmitter.position[1];
-            m_vfxEmitter.vortexAxisOrigin[2] = m_vfxEmitter.position[2];
-            m_vfxEmitter.vortexAxisDir[0] = 0.0f;
-            m_vfxEmitter.vortexAxisDir[1] = 0.0f;
-            m_vfxEmitter.vortexAxisDir[2] = 1.0f;  // Z-up axis
-            m_vfxEmitter.vortexTangentialStrength = 8.0f;
-            m_vfxEmitter.vortexRadialStrength     = 2.0f; // inward pull
-            m_vfxEmitter.vortexMaxRadius          = 3.0f;
-        } else {
-            // Whirlpool: moderate swirl + slight outward push
-            m_vfxEmitter.vortexAxisOrigin[0] = m_vfxEmitter.position[0];
-            m_vfxEmitter.vortexAxisOrigin[1] = m_vfxEmitter.position[1];
-            m_vfxEmitter.vortexAxisOrigin[2] = m_vfxEmitter.position[2];
-            m_vfxEmitter.vortexAxisDir[0] = 0.0f;
-            m_vfxEmitter.vortexAxisDir[1] = 0.0f;
-            m_vfxEmitter.vortexAxisDir[2] = 1.0f;  // Z-up axis
-            m_vfxEmitter.vortexTangentialStrength = 5.0f;
-            m_vfxEmitter.vortexRadialStrength     = -1.0f; // outward push
-            m_vfxEmitter.vortexMaxRadius          = 4.0f;
-        }
-
-        // Build wind zone configuration from current mode
+        // Build wind zone configuration from current mode (shared across all emitters).
         // @ref Stam 1999 "Stable Fluids" -- wind zone accumulation
         m_windZoneCount = 0u;
         if (m_windMode == 1) {
-            // Ambient: single global zone, steady wind in +X direction
             m_windZones[0].position[0]   = 0.0f; m_windZones[0].position[1] = 0.0f; m_windZones[0].position[2] = 0.0f;
-            m_windZones[0].radius        = 0.0f;  // global
+            m_windZones[0].radius        = 0.0f;
             m_windZones[0].direction[0]  = 1.0f; m_windZones[0].direction[1] = 0.0f; m_windZones[0].direction[2] = 0.0f;
             m_windZones[0].strength      = 2.0f;
             m_windZones[0].gustFrequency = 0.3f;
             m_windZones[0].gustAmplitude = 3.0f;
             m_windZoneCount = 1u;
         } else if (m_windMode == 2) {
-            // Gust: global ambient + strong local zone
             m_windZones[0].position[0]   = 0.0f; m_windZones[0].position[1] = 0.0f; m_windZones[0].position[2] = 0.0f;
-            m_windZones[0].radius        = 0.0f;  // global ambient
+            m_windZones[0].radius        = 0.0f;
             m_windZones[0].direction[0]  = 0.707f; m_windZones[0].direction[1] = 0.0f; m_windZones[0].direction[2] = 0.707f;
             m_windZones[0].strength      = 1.0f;
             m_windZones[0].gustFrequency = 0.1f;
             m_windZones[0].gustAmplitude = 0.5f;
-            m_windZones[1].position[0]   = m_vfxEmitter.position[0];
-            m_windZones[1].position[1]   = m_vfxEmitter.position[1];
-            m_windZones[1].position[2]   = m_vfxEmitter.position[2];
-            m_windZones[1].radius        = 5.0f;  // local strong gust
+            m_windZones[1].position[0]   = baseOrigin.x;
+            m_windZones[1].position[1]   = baseOrigin.y;
+            m_windZones[1].position[2]   = baseOrigin.z;
+            m_windZones[1].radius        = 5.0f;
             m_windZones[1].direction[0]  = 1.0f; m_windZones[1].direction[1] = 0.2f; m_windZones[1].direction[2] = 0.0f;
             m_windZones[1].strength      = 8.0f;
             m_windZones[1].gustFrequency = 1.0f;
@@ -1679,71 +1672,113 @@ void VFXViewportDemo::OnFrame(float dt) {
             m_windZoneCount = 2u;
         }
 
-        // Build kill volume configuration from current mode
+        // Build kill volume configuration from current mode (shared across all emitters).
         // @ref Ericson 2005 "Real-Time Collision Detection" Ch.4
         m_killVolumeCount = 0u;
         if (m_killVolumeMode == 1) {
-            // Invisible wall: thin AABB at x=3 blocking rightward drift
-            m_killVolumes[0].position[0]   = m_vfxEmitter.position[0] + 3.0f;
-            m_killVolumes[0].position[1]   = m_vfxEmitter.position[1];
-            m_killVolumes[0].position[2]   = m_vfxEmitter.position[2];
+            m_killVolumes[0].position[0]   = baseOrigin.x + 3.0f;
+            m_killVolumes[0].position[1]   = baseOrigin.y;
+            m_killVolumes[0].position[2]   = baseOrigin.z;
             m_killVolumes[0].shape         = static_cast<uint32_t>(KillVolumeShape::AABB);
             m_killVolumes[0].halfExtents[0] = 0.3f;
             m_killVolumes[0].halfExtents[1] = 5.0f;
             m_killVolumes[0].halfExtents[2] = 5.0f;
             m_killVolumeCount = 1u;
         } else if (m_killVolumeMode == 2) {
-            // Ground boundary: wide flat AABB that kills particles below emitter
-            m_killVolumes[0].position[0]   = m_vfxEmitter.position[0];
-            m_killVolumes[0].position[1]   = m_vfxEmitter.position[1] - 2.0f;
-            m_killVolumes[0].position[2]   = m_vfxEmitter.position[2];
+            m_killVolumes[0].position[0]   = baseOrigin.x;
+            m_killVolumes[0].position[1]   = baseOrigin.y - 2.0f;
+            m_killVolumes[0].position[2]   = baseOrigin.z;
             m_killVolumes[0].shape         = static_cast<uint32_t>(KillVolumeShape::AABB);
             m_killVolumes[0].halfExtents[0] = 10.0f;
             m_killVolumes[0].halfExtents[1] = 0.5f;
             m_killVolumes[0].halfExtents[2] = 10.0f;
             m_killVolumeCount = 1u;
         } else if (m_killVolumeMode == 3) {
-            // Sphere zone: kills particles passing through upper emitter region
-            m_killVolumes[0].position[0]   = m_vfxEmitter.position[0];
-            m_killVolumes[0].position[1]   = m_vfxEmitter.position[1];
-            m_killVolumes[0].position[2]   = m_vfxEmitter.position[2] + 2.0f;
+            m_killVolumes[0].position[0]   = baseOrigin.x;
+            m_killVolumes[0].position[1]   = baseOrigin.y;
+            m_killVolumes[0].position[2]   = baseOrigin.z + 2.0f;
             m_killVolumes[0].shape         = static_cast<uint32_t>(KillVolumeShape::Sphere);
-            m_killVolumes[0].halfExtents[0] = 1.5f; // radius
+            m_killVolumes[0].halfExtents[0] = 1.5f;
             m_killVolumes[0].halfExtents[1] = 1.5f;
             m_killVolumes[0].halfExtents[2] = 1.5f;
             m_killVolumeCount = 1u;
         }
 
-        // Upload wind zones and kill volumes to GPU before dispatch
-        m_vfxSystem.UploadWindZones(cmd, cbRing, m_windZones, m_windZoneCount);
-        m_vfxSystem.UploadKillVolumes(cmd, cbRing, m_killVolumes, m_killVolumeCount);
+        // Dispatch each emitter independently
+        for (auto& emitter : m_emitters) {
+            if (!emitter.enabled) continue;
 
-        m_vfxSystem.DispatchCompute(cmd, cbRing, m_vfxEmitter, spawnCount,
-                                    dt, GetFrameIndex(), m_totalTime);
+            // Update emitter position: base origin + per-emitter offset
+            emitter.config.position[0] = baseOrigin.x + emitter.positionOffset.x;
+            emitter.config.position[1] = baseOrigin.y + emitter.positionOffset.y;
+            emitter.config.position[2] = baseOrigin.z + emitter.positionOffset.z;
+
+            // Apply vortex force configuration from current mode
+            // @ref Stomakhin 2013 "A Material Point Method for Snow Simulation" App.A
+            if (m_vortexMode == 0) {
+                emitter.config.vortexTangentialStrength = 0.0f;
+                emitter.config.vortexRadialStrength     = 0.0f;
+            } else if (m_vortexMode == 1) {
+                emitter.config.vortexAxisOrigin[0] = emitter.config.position[0];
+                emitter.config.vortexAxisOrigin[1] = emitter.config.position[1];
+                emitter.config.vortexAxisOrigin[2] = emitter.config.position[2];
+                emitter.config.vortexAxisDir[0] = 0.0f;
+                emitter.config.vortexAxisDir[1] = 0.0f;
+                emitter.config.vortexAxisDir[2] = 1.0f;
+                emitter.config.vortexTangentialStrength = 8.0f;
+                emitter.config.vortexRadialStrength     = 2.0f;
+                emitter.config.vortexMaxRadius          = 3.0f;
+            } else {
+                emitter.config.vortexAxisOrigin[0] = emitter.config.position[0];
+                emitter.config.vortexAxisOrigin[1] = emitter.config.position[1];
+                emitter.config.vortexAxisOrigin[2] = emitter.config.position[2];
+                emitter.config.vortexAxisDir[0] = 0.0f;
+                emitter.config.vortexAxisDir[1] = 0.0f;
+                emitter.config.vortexAxisDir[2] = 1.0f;
+                emitter.config.vortexTangentialStrength = 5.0f;
+                emitter.config.vortexRadialStrength     = -1.0f;
+                emitter.config.vortexMaxRadius          = 4.0f;
+            }
+
+            // Calculate spawn count — burst or continuous
+            uint32_t spawnCount = 0;
+            if (emitter.burstMode) {
+                if (emitter.burstPending) {
+                    spawnCount = emitter.burstCount;
+                    emitter.burstPending = false;
+                }
+            } else {
+                emitter.spawnAccum += emitter.spawnRate * dt;
+                spawnCount = static_cast<uint32_t>(emitter.spawnAccum);
+                emitter.spawnAccum -= static_cast<float>(spawnCount);
+            }
+
+            // Upload wind zones and kill volumes to GPU for this emitter
+            emitter.system->UploadWindZones(cmd, cbRing, m_windZones, m_windZoneCount);
+            emitter.system->UploadKillVolumes(cmd, cbRing, m_killVolumes, m_killVolumeCount);
+
+            emitter.system->DispatchCompute(cmd, cbRing, emitter.config, spawnCount,
+                                           dt, GetFrameIndex(), m_totalTime);
+        }
 
         // ── Sub-emitter secondary burst (Task 3.87.0) ───────────────────
-        // Count down the sub-emitter timer (set by Delete key when enabled).
-        // When it fires, dispatch a second DispatchCompute using the sparks
-        // config at the same world position as the primary emitter.
-        // The secondary dispatch runs on the same VFXParticleSystem so sparks
-        // share the same particle pool budget as the primary particles.
+        // Count down the sub-emitter timer. When it fires, dispatch a second
+        // DispatchCompute on the first emitter's system using the sparks config.
         if (m_subEmitterTimer > 0.0f) {
             m_subEmitterTimer -= dt;
             if (m_subEmitterTimer <= 0.0f) {
-                m_subEmitterTimer = -1.0f;   // Deactivate timer
+                m_subEmitterTimer = -1.0f;
 
-                // Build the secondary config at the primary emitter's position
-                // so sparks originate from the same world location.
                 VFXEmitterConfig subCfg = m_subEmitterConfig;
-                subCfg.position[0] = m_vfxEmitter.position[0];
-                subCfg.position[1] = m_vfxEmitter.position[1];
-                subCfg.position[2] = m_vfxEmitter.position[2];
+                subCfg.position[0] = baseOrigin.x;
+                subCfg.position[1] = baseOrigin.y;
+                subCfg.position[2] = baseOrigin.z;
 
-                // Sparks are a brief burst — wind/kill volumes are intentionally
-                // not applied here so the sparks fly freely without deflection.
-                m_vfxSystem.DispatchCompute(cmd, cbRing, subCfg,
-                                            m_subEmitterCount,
-                                            dt, GetFrameIndex(), m_totalTime);
+                if (!m_emitters.empty()) {
+                    m_emitters[0].system->DispatchCompute(cmd, cbRing, subCfg,
+                                                         m_subEmitterCount,
+                                                         dt, GetFrameIndex(), m_totalTime);
+                }
                 UZ_LOG(App, Info, "[VFX] Sub-emitter fired {} sparks at ({:.1f},{:.1f},{:.1f})",
                        m_subEmitterCount,
                        subCfg.position[0], subCfg.position[1], subCfg.position[2]);
@@ -1872,7 +1907,9 @@ void VFXViewportDemo::OnFrame(float dt) {
 
     if (m_vfxEnabled && !vfxCulled) {
         RenderVFXPass(cmd, perFrameGpu, dt);
-        m_vfxSystem.FlipPingPong();
+        for (auto& e : m_emitters) {
+            if (e.enabled) e.system->FlipPingPong();
+        }
     }
 
     // ── Trail ribbon update + rendering ──────────────────────────────────
@@ -1884,10 +1921,11 @@ void VFXViewportDemo::OnFrame(float dt) {
         } else {
             constexpr float kOrbitRadius = 1.5f;
             constexpr float kOrbitSpeed  = 2.0f;
+            const auto& aePos = ActiveEmitter().config.position;
             trailPos = Vec3(
-                m_vfxEmitter.position[0] + kOrbitRadius * std::cos(m_totalTime * kOrbitSpeed),
-                m_vfxEmitter.position[1] + 0.5f,
-                m_vfxEmitter.position[2] + kOrbitRadius * std::sin(m_totalTime * kOrbitSpeed)
+                aePos[0] + kOrbitRadius * std::cos(m_totalTime * kOrbitSpeed),
+                aePos[1] + 0.5f,
+                aePos[2] + kOrbitRadius * std::sin(m_totalTime * kOrbitSpeed)
             );
         }
 
@@ -1991,8 +2029,27 @@ void VFXViewportDemo::OnFrame(float dt) {
             cmd->SetScissor(sc);
 
             m_editorUI.BeginFrame(GetFrameIndex());
-            m_editorUI.BuildUI(&m_vfxEmitter, &m_vfxSpawnRate, &m_vfxBurstMode,
-                               &m_vfxBurstCount, &m_vfxEnabled);
+            {
+                // Update emitter names for the selector bar
+                std::vector<std::string> emitterNames;
+                emitterNames.reserve(m_emitters.size());
+                for (const auto& e : m_emitters) emitterNames.push_back(e.name);
+                m_editorUI.SetEmitterNames(emitterNames, m_activeEmitterIndex);
+
+                auto& ae = ActiveEmitter();
+                m_editorUI.BuildUI(&ae.config, &ae.spawnRate, &ae.burstMode,
+                                   &ae.burstCount, &m_vfxEnabled);
+
+                // Handle emitter selection from UI tab bar
+                const int selIdx = m_editorUI.GetSelectedEmitterIndex();
+                if (selIdx >= 0 && selIdx < static_cast<int>(m_emitters.size())) {
+                    m_activeEmitterIndex = selIdx;
+                    auto& newAe = ActiveEmitter();
+                    m_paramPanel.Init(&newAe.config, &newAe.spawnRate, &newAe.burstCount,
+                                      &newAe.burstMode, &m_subEmitterEnabled, &m_frustumCullingEnabled);
+                    m_moduleStack.Init(&newAe.config, &m_subEmitterEnabled, &m_frustumCullingEnabled);
+                }
+            }
             m_editorUI.Render(cmd, *cbRing);
 
             cmd->EndRenderPass();
@@ -2451,8 +2508,15 @@ void VFXViewportDemo::RenderScenePass(IRHICommandList* cmd, uint64_t perFrameGpu
 
 void VFXViewportDemo::RenderVFXPass(IRHICommandList* cmd, uint64_t perFrameGpu,
                                       float /*dt*/) {
-    auto billboardPSO = m_vfxSystem.GetBillboardPSO();
-    if (!billboardPSO.IsValid()) return;
+    // Early-out if no emitters have a valid billboard PSO
+    bool anyValid = false;
+    for (const auto& e : m_emitters) {
+        if (e.enabled && e.system->GetBillboardPSO().IsValid()) {
+            anyValid = true;
+            break;
+        }
+    }
+    if (!anyValid) return;
 
     // Render into HDR target with depth read (no write — particles are translucent)
     RHIRenderPassDesc rpDesc{};
@@ -2474,22 +2538,28 @@ void VFXViewportDemo::RenderVFXPass(IRHICommandList* cmd, uint64_t perFrameGpu,
     sc.bottom = static_cast<int32_t>(GetHeight());
     cmd->SetScissor(sc);
 
-    const Vec3 emitterPos(m_vfxEmitter.position[0],
-                           m_vfxEmitter.position[1],
-                           m_vfxEmitter.position[2]);
-
     const uint32_t depthSrvIdx = GetDevice()->GetTextureSRVIndex(m_depthBuffer);
 
     // Use the active preset material's blend mode
     const auto& mat = m_vfxMaterials[m_currentMaterialIndex];
     const uint32_t blendMode = mat.blendMode;
 
-    m_vfxSystem.DrawBillboards(cmd, GetCBRing(), perFrameGpu,
-                                GetCamera().GetView(), emitterPos,
-                                m_prevViewProj,
-                                m_vfxEmitter,
-                                blendMode,
-                                depthSrvIdx);
+    // Draw each emitter's particles
+    for (auto& emitter : m_emitters) {
+        if (!emitter.enabled) continue;
+        if (!emitter.system->GetBillboardPSO().IsValid()) continue;
+
+        const Vec3 emitterPos(emitter.config.position[0],
+                               emitter.config.position[1],
+                               emitter.config.position[2]);
+
+        emitter.system->DrawBillboards(cmd, GetCBRing(), perFrameGpu,
+                                       GetCamera().GetView(), emitterPos,
+                                       m_prevViewProj,
+                                       emitter.config,
+                                       blendMode,
+                                       depthSrvIdx);
+    }
 
     cmd->EndRenderPass();
 }
@@ -2650,9 +2720,9 @@ void VFXViewportDemo::RenderDistortionPass(IRHICommandList* cmd, uint64_t /*perF
     // Project emitter world position through viewProj to get screen UV.
     const Camera& cam = GetCamera();
     const Mat4 viewProj = cam.GetViewProjection();
-    const Vec3 emitterWorld(m_vfxEmitter.position[0],
-                            m_vfxEmitter.position[1],
-                            m_vfxEmitter.position[2]);
+    const Vec3 emitterWorld(ActiveEmitter().config.position[0],
+                            ActiveEmitter().config.position[1],
+                            ActiveEmitter().config.position[2]);
     const Vec4 emitterClip = viewProj * Vec4(emitterWorld, 1.0f);
 
     // Perspective divide + NDC to UV
@@ -2897,7 +2967,7 @@ void VFXViewportDemo::OnShutdown() {
     m_outlinePass.Shutdown();
     m_gizmoRenderer.Shutdown();
     m_bloomPass.Shutdown();
-    m_vfxSystem.Shutdown(device);
+    ShutdownAllEmitters(device);
 
     // ── Trail system cleanup ─────────────────────────────────────────────
     m_trailSystem.Clear();
@@ -2994,16 +3064,505 @@ void VFXViewportDemo::LoadPreset(int idx) {
         return;
     }
 
+    auto& ae = ActiveEmitter();
     std::string name;
-    float spawnRate = m_vfxSpawnRate;
-    if (!VFXPresetSerializer::Load(m_presetFiles[idx], m_vfxEmitter, spawnRate, name)) {
+    float spawnRate = ae.spawnRate;
+    if (!VFXPresetSerializer::Load(m_presetFiles[idx], ae.config, spawnRate, name)) {
         UZ_LOG(App, Warning, "VFX: Failed to load preset '{}'", m_presetFiles[idx].c_str());
         return;
     }
-    m_vfxSpawnRate    = spawnRate;
-    m_vfxPresetIndex  = idx;
-    m_vfxBurstPending = true;
+    ae.spawnRate     = spawnRate;
+    m_vfxPresetIndex = idx;
+    ae.burstPending  = true;
     UZ_LOG(App, Info, "VFX: Loaded preset '{}'", name.c_str());
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Multi-Emitter Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+VFXEmitterInstance& VFXViewportDemo::ActiveEmitter() {
+    if (m_activeEmitterIndex < 0 || m_activeEmitterIndex >= static_cast<int>(m_emitters.size())) {
+        m_activeEmitterIndex = 0;
+    }
+    return m_emitters[m_activeEmitterIndex];
+}
+
+const VFXEmitterInstance& VFXViewportDemo::ActiveEmitter() const {
+    const int idx = (m_activeEmitterIndex >= 0 &&
+                     m_activeEmitterIndex < static_cast<int>(m_emitters.size()))
+                        ? m_activeEmitterIndex : 0;
+    return m_emitters[idx];
+}
+
+void VFXViewportDemo::InitAllEmitters(IRHIDevice* device, ShaderManager* shaders,
+                                       IRHICommandList* cmd) {
+    for (auto& e : m_emitters) {
+        if (!e.system->Init(device, shaders, e.poolSize)) {
+            UZ_LOG(App, Error, "VFX: Failed to init emitter '{}'", e.name.c_str());
+            e.enabled = false;
+        } else {
+            e.system->UploadInitialFreeList(cmd);
+        }
+    }
+}
+
+void VFXViewportDemo::ShutdownAllEmitters(IRHIDevice* device) {
+    for (auto& e : m_emitters) {
+        e.system->Shutdown(device);
+    }
+    m_emitters.clear();
+}
+
+void VFXViewportDemo::ResetAllEmitters(IRHICommandList* cmd) {
+    for (auto& e : m_emitters) {
+        e.system->UploadInitialFreeList(cmd);
+        e.burstPending = true;
+        e.spawnAccum = 0.0f;
+    }
+}
+
+void VFXViewportDemo::BuildCompoundPreset(VFXCompoundPreset preset) {
+    m_emitters.clear();
+    m_activeEmitterIndex = 0;
+
+    switch (preset) {
+    case VFXCompoundPreset::Single: {
+        // Single emitter — backward-compatible with legacy behavior.
+        // Uses the first built-in preset config and full 50K pool.
+        auto& e = m_emitters.emplace_back();
+        e.name = "Default";
+        int presetCount = 0;
+        const VFXPreset* presets = GetVFXPresets(presetCount);
+        e.config = presets[0].config;
+        e.spawnRate = presets[0].spawnRate;
+        e.burstCount = 500;
+        e.poolSize = 50000;
+        break;
+    }
+
+    case VFXCompoundPreset::Fire: {
+        // Flame core: warm orange upward, medium size, additive glow
+        {
+            auto& flame = m_emitters.emplace_back();
+            flame.name = "Flame";
+            flame.config = {};
+            flame.config.spawnVelocity[0] = 0.0f;
+            flame.config.spawnVelocity[1] = 0.0f;
+            flame.config.spawnVelocity[2] = 4.0f;  // Z-up
+            flame.config.velocityVariation = 1.0f;
+            flame.config.spreadAngle = 0.4f;
+            flame.config.minLifetime = 0.5f;
+            flame.config.maxLifetime = 1.5f;
+            flame.config.initialSize = 0.08f;
+            flame.config.initialColor[0] = 1.0f;
+            flame.config.initialColor[1] = 0.5f;
+            flame.config.initialColor[2] = 0.1f;
+            flame.config.initialColor[3] = 0.9f;
+            flame.config.gravity[0] = 0.0f;
+            flame.config.gravity[1] = 0.0f;
+            flame.config.gravity[2] = 2.0f; // buoyancy
+            flame.config.damping = 0.3f;
+            flame.config.emissiveIntensity = 3.0f;
+            flame.config.blendMode = 1; // Additive
+            flame.config.sizeOverLifeStart = 0.5f;
+            flame.config.sizeOverLifePeak = 1.0f;
+            flame.config.sizeOverLifeEnd = 0.0f;
+            flame.config.sizeOverLifePeakTime = 0.3f;
+            flame.config.colorLifeStartR = 1.0f;
+            flame.config.colorLifeStartG = 0.7f;
+            flame.config.colorLifeStartB = 0.2f;
+            flame.config.colorLifeStartA = 1.0f;
+            flame.config.colorLifeEndR = 1.0f;
+            flame.config.colorLifeEndG = 0.2f;
+            flame.config.colorLifeEndB = 0.0f;
+            flame.config.colorLifeEndA = 0.0f;
+            flame.config.softFadeDistance = 0.3f;
+            flame.burstCount = 200;
+            flame.spawnRate = 400.0f;
+            flame.burstMode = false; // continuous
+            flame.burstPending = false;
+            flame.poolSize = 10000;
+        }
+
+        // Smoke: gray, slower, bigger, alpha blend, curl noise
+        {
+            auto& smoke = m_emitters.emplace_back();
+            smoke.name = "Smoke";
+            smoke.config = {};
+            smoke.config.spawnVelocity[0] = 0.0f;
+            smoke.config.spawnVelocity[1] = 0.0f;
+            smoke.config.spawnVelocity[2] = 1.5f;
+            smoke.config.velocityVariation = 0.5f;
+            smoke.config.spreadAngle = 0.6f;
+            smoke.config.minLifetime = 1.5f;
+            smoke.config.maxLifetime = 3.5f;
+            smoke.config.initialSize = 0.15f;
+            smoke.config.initialColor[0] = 0.4f;
+            smoke.config.initialColor[1] = 0.4f;
+            smoke.config.initialColor[2] = 0.4f;
+            smoke.config.initialColor[3] = 0.5f;
+            smoke.config.gravity[0] = 0.0f;
+            smoke.config.gravity[1] = 0.0f;
+            smoke.config.gravity[2] = 0.5f; // slight buoyancy
+            smoke.config.damping = 0.5f;
+            smoke.config.emissiveIntensity = 0.0f;
+            smoke.config.blendMode = 0; // AlphaBlend
+            smoke.config.curlStrength = 2.0f;
+            smoke.config.curlFrequency = 0.3f;
+            smoke.config.curlSpeed = 0.15f;
+            smoke.config.sizeOverLifeStart = 0.3f;
+            smoke.config.sizeOverLifePeak = 1.0f;
+            smoke.config.sizeOverLifeEnd = 1.2f;
+            smoke.config.sizeOverLifePeakTime = 0.5f;
+            smoke.config.colorLifeStartR = 0.5f;
+            smoke.config.colorLifeStartG = 0.5f;
+            smoke.config.colorLifeStartB = 0.5f;
+            smoke.config.colorLifeStartA = 0.6f;
+            smoke.config.colorLifeEndR = 0.3f;
+            smoke.config.colorLifeEndG = 0.3f;
+            smoke.config.colorLifeEndB = 0.3f;
+            smoke.config.colorLifeEndA = 0.0f;
+            smoke.config.softFadeDistance = 0.8f;
+            smoke.positionOffset = {0.0f, 0.0f, 1.0f}; // above flame
+            smoke.burstCount = 100;
+            smoke.spawnRate = 150.0f;
+            smoke.burstMode = false;
+            smoke.burstPending = false;
+            smoke.poolSize = 10000;
+        }
+
+        // Sparks: bright, fast, velocity-aligned stretch
+        {
+            auto& sparks = m_emitters.emplace_back();
+            sparks.name = "Sparks";
+            sparks.config = {};
+            sparks.config.spawnVelocity[0] = 0.0f;
+            sparks.config.spawnVelocity[1] = 0.0f;
+            sparks.config.spawnVelocity[2] = 8.0f;
+            sparks.config.velocityVariation = 5.0f;
+            sparks.config.spreadAngle = 1.5f;
+            sparks.config.minLifetime = 0.3f;
+            sparks.config.maxLifetime = 0.8f;
+            sparks.config.initialSize = 0.02f;
+            sparks.config.spawnRadius = 0.05f;
+            sparks.config.initialColor[0] = 1.0f;
+            sparks.config.initialColor[1] = 0.8f;
+            sparks.config.initialColor[2] = 0.3f;
+            sparks.config.initialColor[3] = 1.0f;
+            sparks.config.gravity[0] = 0.0f;
+            sparks.config.gravity[1] = 0.0f;
+            sparks.config.gravity[2] = -5.0f; // gravity pulls sparks down
+            sparks.config.damping = 0.05f;
+            sparks.config.emissiveIntensity = 4.0f;
+            sparks.config.blendMode = 1; // Additive
+            sparks.config.alignmentMode = 1; // VelocityAligned
+            sparks.config.stretchFactor = 0.6f;
+            sparks.config.sizeOverLifeStart = 1.0f;
+            sparks.config.sizeOverLifePeak = 0.8f;
+            sparks.config.sizeOverLifeEnd = 0.0f;
+            sparks.config.sizeOverLifePeakTime = 0.2f;
+            sparks.config.colorLifeStartR = 1.0f;
+            sparks.config.colorLifeStartG = 0.9f;
+            sparks.config.colorLifeStartB = 0.5f;
+            sparks.config.colorLifeStartA = 1.0f;
+            sparks.config.colorLifeEndR = 1.0f;
+            sparks.config.colorLifeEndG = 0.3f;
+            sparks.config.colorLifeEndB = 0.0f;
+            sparks.config.colorLifeEndA = 0.0f;
+            sparks.config.softFadeDistance = 0.1f;
+            sparks.burstCount = 50;
+            sparks.spawnRate = 80.0f;
+            sparks.burstMode = false;
+            sparks.burstPending = false;
+            sparks.poolSize = 5000;
+        }
+        break;
+    }
+
+    case VFXCompoundPreset::Explosion: {
+        // Flash: brief bright burst at center
+        {
+            auto& flash = m_emitters.emplace_back();
+            flash.name = "Flash";
+            flash.config = {};
+            flash.config.spawnVelocity[0] = 0.0f;
+            flash.config.spawnVelocity[1] = 0.0f;
+            flash.config.spawnVelocity[2] = 0.5f;
+            flash.config.velocityVariation = 0.3f;
+            flash.config.spreadAngle = 3.14159f; // full sphere
+            flash.config.minLifetime = 0.1f;
+            flash.config.maxLifetime = 0.3f;
+            flash.config.initialSize = 0.3f;
+            flash.config.initialColor[0] = 1.0f;
+            flash.config.initialColor[1] = 0.9f;
+            flash.config.initialColor[2] = 0.7f;
+            flash.config.initialColor[3] = 1.0f;
+            flash.config.gravity[0] = 0.0f;
+            flash.config.gravity[1] = 0.0f;
+            flash.config.gravity[2] = 0.0f;
+            flash.config.damping = 0.0f;
+            flash.config.emissiveIntensity = 8.0f;
+            flash.config.blendMode = 1; // Additive
+            flash.config.sizeOverLifeStart = 0.5f;
+            flash.config.sizeOverLifePeak = 1.0f;
+            flash.config.sizeOverLifeEnd = 2.0f;
+            flash.config.sizeOverLifePeakTime = 0.3f;
+            flash.config.colorLifeStartR = 1.0f;
+            flash.config.colorLifeStartG = 1.0f;
+            flash.config.colorLifeStartB = 0.9f;
+            flash.config.colorLifeStartA = 1.0f;
+            flash.config.colorLifeEndR = 1.0f;
+            flash.config.colorLifeEndG = 0.5f;
+            flash.config.colorLifeEndB = 0.1f;
+            flash.config.colorLifeEndA = 0.0f;
+            flash.burstCount = 80;
+            flash.burstMode = true;
+            flash.burstPending = true;
+            flash.poolSize = 5000;
+        }
+
+        // Debris: heavy chunks flying outward
+        {
+            auto& debris = m_emitters.emplace_back();
+            debris.name = "Debris";
+            debris.config = {};
+            debris.config.spawnVelocity[0] = 0.0f;
+            debris.config.spawnVelocity[1] = 0.0f;
+            debris.config.spawnVelocity[2] = 10.0f;
+            debris.config.velocityVariation = 6.0f;
+            debris.config.spreadAngle = 2.0f;
+            debris.config.minLifetime = 0.5f;
+            debris.config.maxLifetime = 2.0f;
+            debris.config.initialSize = 0.04f;
+            debris.config.initialColor[0] = 0.8f;
+            debris.config.initialColor[1] = 0.4f;
+            debris.config.initialColor[2] = 0.2f;
+            debris.config.initialColor[3] = 1.0f;
+            debris.config.gravity[0] = 0.0f;
+            debris.config.gravity[1] = 0.0f;
+            debris.config.gravity[2] = -9.81f;
+            debris.config.damping = 0.1f;
+            debris.config.emissiveIntensity = 1.0f;
+            debris.config.blendMode = 0; // AlphaBlend
+            debris.config.alignmentMode = 1; // VelocityAligned
+            debris.config.stretchFactor = 0.4f;
+            debris.config.groundCollision = 1;
+            debris.config.restitution = 0.4f;
+            debris.config.sizeOverLifeStart = 1.0f;
+            debris.config.sizeOverLifePeak = 0.8f;
+            debris.config.sizeOverLifeEnd = 0.2f;
+            debris.config.sizeOverLifePeakTime = 0.1f;
+            debris.burstCount = 120;
+            debris.burstMode = true;
+            debris.burstPending = true;
+            debris.poolSize = 8000;
+        }
+
+        // Shockwave smoke: expanding outward ring
+        {
+            auto& shock = m_emitters.emplace_back();
+            shock.name = "Shockwave";
+            shock.config = {};
+            shock.config.spawnVelocity[0] = 0.0f;
+            shock.config.spawnVelocity[1] = 0.0f;
+            shock.config.spawnVelocity[2] = 2.0f;
+            shock.config.velocityVariation = 1.0f;
+            shock.config.spreadAngle = 3.14159f;
+            shock.config.minLifetime = 1.0f;
+            shock.config.maxLifetime = 3.0f;
+            shock.config.initialSize = 0.1f;
+            shock.config.spawnShape = 3; // Ring
+            shock.config.shapeParam1 = 0.5f; // ring width
+            shock.config.spawnRadius = 0.5f;
+            shock.config.initialColor[0] = 0.5f;
+            shock.config.initialColor[1] = 0.45f;
+            shock.config.initialColor[2] = 0.4f;
+            shock.config.initialColor[3] = 0.6f;
+            shock.config.gravity[0] = 0.0f;
+            shock.config.gravity[1] = 0.0f;
+            shock.config.gravity[2] = 0.3f;
+            shock.config.damping = 0.4f;
+            shock.config.emissiveIntensity = 0.0f;
+            shock.config.blendMode = 0; // AlphaBlend
+            shock.config.curlStrength = 1.5f;
+            shock.config.curlFrequency = 0.4f;
+            shock.config.curlSpeed = 0.2f;
+            shock.config.sizeOverLifeStart = 0.5f;
+            shock.config.sizeOverLifePeak = 1.0f;
+            shock.config.sizeOverLifeEnd = 1.5f;
+            shock.config.sizeOverLifePeakTime = 0.4f;
+            shock.config.colorLifeStartR = 0.6f;
+            shock.config.colorLifeStartG = 0.55f;
+            shock.config.colorLifeStartB = 0.5f;
+            shock.config.colorLifeStartA = 0.7f;
+            shock.config.colorLifeEndR = 0.3f;
+            shock.config.colorLifeEndG = 0.3f;
+            shock.config.colorLifeEndB = 0.3f;
+            shock.config.colorLifeEndA = 0.0f;
+            shock.config.softFadeDistance = 0.6f;
+            shock.burstCount = 150;
+            shock.burstMode = true;
+            shock.burstPending = true;
+            shock.poolSize = 10000;
+        }
+        break;
+    }
+
+    case VFXCompoundPreset::Magic: {
+        // Core glow: concentrated bright orb
+        {
+            auto& core = m_emitters.emplace_back();
+            core.name = "Core Glow";
+            core.config = {};
+            core.config.spawnVelocity[0] = 0.0f;
+            core.config.spawnVelocity[1] = 0.0f;
+            core.config.spawnVelocity[2] = 0.5f;
+            core.config.velocityVariation = 0.3f;
+            core.config.spreadAngle = 3.14159f;
+            core.config.minLifetime = 0.8f;
+            core.config.maxLifetime = 1.5f;
+            core.config.initialSize = 0.06f;
+            core.config.spawnRadius = 0.15f;
+            core.config.initialColor[0] = 0.3f;
+            core.config.initialColor[1] = 0.5f;
+            core.config.initialColor[2] = 1.0f;
+            core.config.initialColor[3] = 0.8f;
+            core.config.gravity[0] = 0.0f;
+            core.config.gravity[1] = 0.0f;
+            core.config.gravity[2] = 0.0f;
+            core.config.damping = 0.8f;
+            core.config.emissiveIntensity = 2.5f;
+            core.config.blendMode = 1; // Additive
+            core.config.sizeOverLifeStart = 0.5f;
+            core.config.sizeOverLifePeak = 1.0f;
+            core.config.sizeOverLifeEnd = 0.0f;
+            core.config.sizeOverLifePeakTime = 0.3f;
+            core.config.colorLifeStartR = 0.4f;
+            core.config.colorLifeStartG = 0.6f;
+            core.config.colorLifeStartB = 1.0f;
+            core.config.colorLifeStartA = 1.0f;
+            core.config.colorLifeEndR = 0.2f;
+            core.config.colorLifeEndG = 0.3f;
+            core.config.colorLifeEndB = 0.8f;
+            core.config.colorLifeEndA = 0.0f;
+            core.config.softFadeDistance = 0.2f;
+            core.burstCount = 150;
+            core.spawnRate = 200.0f;
+            core.burstMode = false;
+            core.burstPending = false;
+            core.poolSize = 8000;
+        }
+
+        // Orbiting particles: swirling ring around core
+        {
+            auto& orbit = m_emitters.emplace_back();
+            orbit.name = "Orbiting";
+            orbit.config = {};
+            orbit.config.spawnVelocity[0] = 0.0f;
+            orbit.config.spawnVelocity[1] = 0.0f;
+            orbit.config.spawnVelocity[2] = 1.0f;
+            orbit.config.velocityVariation = 0.5f;
+            orbit.config.spreadAngle = 0.8f;
+            orbit.config.minLifetime = 1.0f;
+            orbit.config.maxLifetime = 2.5f;
+            orbit.config.initialSize = 0.03f;
+            orbit.config.spawnRadius = 0.8f;
+            orbit.config.spawnShape = 3; // Ring
+            orbit.config.shapeParam1 = 0.2f; // ring width
+            orbit.config.initialColor[0] = 0.5f;
+            orbit.config.initialColor[1] = 0.8f;
+            orbit.config.initialColor[2] = 1.0f;
+            orbit.config.initialColor[3] = 1.0f;
+            orbit.config.gravity[0] = 0.0f;
+            orbit.config.gravity[1] = 0.0f;
+            orbit.config.gravity[2] = 0.0f;
+            orbit.config.damping = 0.2f;
+            orbit.config.emissiveIntensity = 3.0f;
+            orbit.config.blendMode = 1; // Additive
+            // Vortex makes particles orbit the core
+            orbit.config.vortexAxisDir[0] = 0.0f;
+            orbit.config.vortexAxisDir[1] = 0.0f;
+            orbit.config.vortexAxisDir[2] = 1.0f;
+            orbit.config.vortexTangentialStrength = 6.0f;
+            orbit.config.vortexRadialStrength = 1.5f; // inward pull
+            orbit.config.vortexMaxRadius = 2.0f;
+            orbit.config.sizeOverLifeStart = 1.0f;
+            orbit.config.sizeOverLifePeak = 0.8f;
+            orbit.config.sizeOverLifeEnd = 0.0f;
+            orbit.config.sizeOverLifePeakTime = 0.2f;
+            orbit.config.colorLifeStartR = 0.6f;
+            orbit.config.colorLifeStartG = 0.9f;
+            orbit.config.colorLifeStartB = 1.0f;
+            orbit.config.colorLifeStartA = 1.0f;
+            orbit.config.colorLifeEndR = 0.2f;
+            orbit.config.colorLifeEndG = 0.4f;
+            orbit.config.colorLifeEndB = 1.0f;
+            orbit.config.colorLifeEndA = 0.0f;
+            orbit.config.softFadeDistance = 0.15f;
+            orbit.burstCount = 80;
+            orbit.spawnRate = 100.0f;
+            orbit.burstMode = false;
+            orbit.burstPending = false;
+            orbit.poolSize = 8000;
+        }
+
+        // Dust: ambient sparkle motes
+        {
+            auto& dust = m_emitters.emplace_back();
+            dust.name = "Dust";
+            dust.config = {};
+            dust.config.spawnVelocity[0] = 0.0f;
+            dust.config.spawnVelocity[1] = 0.0f;
+            dust.config.spawnVelocity[2] = 0.3f;
+            dust.config.velocityVariation = 0.2f;
+            dust.config.spreadAngle = 3.14159f;
+            dust.config.minLifetime = 2.0f;
+            dust.config.maxLifetime = 4.0f;
+            dust.config.initialSize = 0.01f;
+            dust.config.spawnRadius = 2.0f;
+            dust.config.initialColor[0] = 0.6f;
+            dust.config.initialColor[1] = 0.8f;
+            dust.config.initialColor[2] = 1.0f;
+            dust.config.initialColor[3] = 0.5f;
+            dust.config.gravity[0] = 0.0f;
+            dust.config.gravity[1] = 0.0f;
+            dust.config.gravity[2] = 0.1f; // slow float upward
+            dust.config.damping = 0.3f;
+            dust.config.emissiveIntensity = 1.0f;
+            dust.config.blendMode = 1; // Additive
+            dust.config.curlStrength = 0.5f;
+            dust.config.curlFrequency = 0.2f;
+            dust.config.curlSpeed = 0.1f;
+            dust.config.sizeOverLifeStart = 0.0f;
+            dust.config.sizeOverLifePeak = 1.0f;
+            dust.config.sizeOverLifeEnd = 0.0f;
+            dust.config.sizeOverLifePeakTime = 0.5f;
+            dust.config.colorLifeStartR = 0.5f;
+            dust.config.colorLifeStartG = 0.7f;
+            dust.config.colorLifeStartB = 1.0f;
+            dust.config.colorLifeStartA = 0.0f;
+            dust.config.colorLifeEndR = 0.3f;
+            dust.config.colorLifeEndG = 0.5f;
+            dust.config.colorLifeEndB = 0.8f;
+            dust.config.colorLifeEndA = 0.0f;
+            dust.config.softFadeDistance = 0.2f;
+            dust.burstCount = 60;
+            dust.spawnRate = 40.0f;
+            dust.burstMode = false;
+            dust.burstPending = false;
+            dust.poolSize = 5000;
+        }
+        break;
+    }
+
+    default:
+        break;
+    }
+
+    m_compoundPreset = preset;
+    UZ_LOG(App, Info, "VFX: Built compound preset '{}' with {} emitter(s)",
+           static_cast<int>(preset), static_cast<int>(m_emitters.size()));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

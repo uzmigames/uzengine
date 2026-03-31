@@ -55,6 +55,7 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -86,6 +87,48 @@ struct MaterialPreset {
 /// Note: The VFX compute and billboard shaders use their own CB layouts
 /// (VFXSpawnCB, VFXUpdateCB, VFXBillboardIndicesCB, VFXEmitterCB) defined
 /// in vfx_viewport_vfx.h, matching the engine's VFX shader layouts.
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Multi-Emitter Instance
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Encapsulates a single emitter within a compound VFX effect.
+///
+/// Each instance owns an independent VFXParticleSystem (GPU particle pool)
+/// and its own VFXEmitterConfig. Multiple instances combine to form compound
+/// effects like Fire (flame + smoke + sparks) or Explosion (flash + debris +
+/// shockwave). Analogous to Niagara's Emitter within a System.
+///
+/// Uses unique_ptr for the particle system because VFXParticleSystem has
+/// deleted copy/move constructors (it manages GPU handles). This allows
+/// VFXEmitterInstance to be movable for std::vector reallocation.
+struct VFXEmitterInstance {
+    std::string                          name;                        ///< Display name for the UI.
+    std::unique_ptr<VFXParticleSystem>   system;                     ///< Independent GPU particle pool.
+    VFXEmitterConfig                     config;                      ///< Per-emitter simulation/render config.
+    float                                spawnRate      = 300.0f;     ///< Particles per second (continuous mode).
+    float                                spawnAccum     = 0.0f;       ///< Sub-frame spawn accumulator.
+    bool                                 enabled        = true;       ///< Per-emitter enable/disable toggle.
+    bool                                 burstMode      = true;       ///< true = single burst, false = continuous.
+    bool                                 burstPending   = true;       ///< true = fire burst on next frame.
+    uint32_t                             burstCount     = 300;        ///< Number of particles per burst.
+    Vec3                                 positionOffset = {0, 0, 0};  ///< Offset from the shared emitter origin.
+    uint32_t                             poolSize       = 10000;      ///< Max particles in this emitter's pool.
+
+    VFXEmitterInstance() : system(std::make_unique<VFXParticleSystem>()) {}
+    ~VFXEmitterInstance() = default;
+    VFXEmitterInstance(VFXEmitterInstance&&) noexcept = default;
+    VFXEmitterInstance& operator=(VFXEmitterInstance&&) noexcept = default;
+};
+
+/// Identifies a compound VFX preset (multiple emitters forming one effect).
+enum class VFXCompoundPreset : int {
+    Single    = 0,  ///< Single emitter — backward-compatible with legacy behavior.
+    Fire      = 1,  ///< Flame core + smoke + sparks (3 emitters).
+    Explosion = 2,  ///< Flash + debris + shockwave smoke (3 emitters).
+    Magic     = 3,  ///< Core glow + orbiting particles + dust (3 emitters).
+    Count
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Demo Class
@@ -162,14 +205,14 @@ private:
     BloomPass m_bloomPass;             ///< GPU compute bloom (threshold + downsample + upsample).
     bool      m_bloomEnabled = true;   ///< Bloom toggle (B key).
 
-    // ── VFX particle system ─────────────────────────────────────────────
-    VFXParticleSystem m_vfxSystem;
-    bool  m_vfxEnabled = true;
-    float m_vfxSpawnRate = 500.0f;
-    float m_vfxSpawnAccum = 0.0f;
-    int   m_vfxPresetIndex = 0;
-    VFXEmitterConfig m_vfxEmitter;
-    Mat4  m_prevViewProj;
+    // ── Multi-emitter VFX system ────────────────────────────────────────
+    static constexpr int kMaxEmitters = 8;         ///< Hard limit on simultaneous emitters.
+    std::vector<VFXEmitterInstance> m_emitters;     ///< Active emitter instances.
+    int  m_activeEmitterIndex = 0;                 ///< Which emitter the UI edits.
+    bool m_vfxEnabled = true;                      ///< Global VFX enable/disable.
+    int  m_vfxPresetIndex = 0;                     ///< File-based preset index.
+    VFXCompoundPreset m_compoundPreset = VFXCompoundPreset::Single; ///< Active compound preset.
+    Mat4 m_prevViewProj;
 
     // ── File-based preset list (loaded/refreshed via ScanDirectory) ─────────
     std::vector<std::string> m_presetFiles;  ///< Sorted absolute paths to .json preset files.
@@ -178,9 +221,8 @@ private:
     bool  m_deleteConfirmPending = false;    ///< True while waiting for second Delete keypress.
     int   m_deleteConfirmIdx     = -1;       ///< Preset index targeted by the pending delete.
     float m_deleteConfirmTimer   = 0.0f;     ///< Countdown (s) for delete confirmation window.
-    bool  m_vfxBurstMode = true;        ///< true = single burst, false = continuous emission.
-    uint32_t m_vfxBurstCount = 500;     ///< Number of particles per burst.
-    bool  m_vfxBurstPending = true;     ///< true = fire burst on next frame.
+    // Burst/spawn state moved into VFXEmitterInstance. These aliases point to
+    // the active emitter for backward-compatible keyboard/UI controls.
     // ── Predefined VFX material presets ─────────────────────────────────
     static constexpr int kVFXMaterialCount = 6;
     VFXMaterial m_vfxMaterials[kVFXMaterialCount]; ///< Preset VFX materials (M key cycles).
@@ -334,6 +376,28 @@ private:
     /// * `dir` — Relative path to the presets directory (e.g. "content/vfx/presets/").
     void RefreshPresetList(const std::string& dir);
 
+    /// Creates compound emitter configurations for the given preset type.
+    /// Clears existing emitters and populates m_emitters with the new set.
+    /// Does NOT call Init/UploadInitialFreeList — caller must do that.
+    void BuildCompoundPreset(VFXCompoundPreset preset);
+
+    /// Initializes all emitter GPU resources and uploads initial free lists.
+    /// Requires device + command list in recording state.
+    void InitAllEmitters(IRHIDevice* device, ShaderManager* shaders,
+                         IRHICommandList* cmd);
+
+    /// Shuts down all emitter GPU resources.
+    void ShutdownAllEmitters(IRHIDevice* device);
+
+    /// Resets all emitters: uploads initial free lists and arms bursts.
+    void ResetAllEmitters(IRHICommandList* cmd);
+
+    /// Returns a mutable reference to the currently selected emitter.
+    /// Clamps m_activeEmitterIndex to a valid range.
+    VFXEmitterInstance& ActiveEmitter();
+
+    /// Returns a const reference to the currently selected emitter.
+    const VFXEmitterInstance& ActiveEmitter() const;
 };
 
 } // namespace uz

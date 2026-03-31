@@ -213,8 +213,12 @@ void VFXEditorUI::BuildUI(VFXEmitterConfig* config, float* spawnRate, bool* burs
                           uint32_t* burstCount, bool* vfxEnabled) {
     if (!m_initialized) return;
 
+    // Reset per-frame emitter selection state
+    m_selectedEmitterIdx = -1;
+
     // Layer 1: Background panels + toolbar (drawn first = behind)
     BuildMenuBar();
+    BuildEmitterBar();
     BuildToolbar(burstMode, vfxEnabled);
 
     if (m_leftPanelOpen) {
@@ -553,6 +557,55 @@ void VFXEditorUI::BuildMenuDropdowns() {
             }
             default: break;
         }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Emitter Selector Bar
+// ─────────────────────────────────────────────────────────────────────────────
+
+void VFXEditorUI::BuildEmitterBar() {
+    if (m_emitterNames.empty()) return;
+    if (m_emitterNames.size() <= 1) return; // No bar needed for single emitter
+
+    const float sw = static_cast<float>(m_screenW);
+    const float barY = kMenuBarH;
+
+    // Bar background
+    m_textRenderer.AddRect(0.0f, barY, sw, kEmitterBarH, kColorBarBg);
+
+    float x = 10.0f;
+    constexpr float tabH = 22.0f;
+    const float tabY = barY + (kEmitterBarH - tabH) * 0.5f;
+
+    for (int i = 0; i < static_cast<int>(m_emitterNames.size()); ++i) {
+        const float tabW = 8.0f + static_cast<float>(m_emitterNames[i].size()) * 8.0f;
+        const bool isActive = (i == m_activeEmitterIdx);
+        const bool hovered = HitTest(x, tabY, tabW, tabH);
+
+        Vec4 color;
+        if (isActive) {
+            color = kColorAccent;
+        } else if (hovered && m_mouseDown) {
+            color = kColorBtnPress;
+        } else if (hovered) {
+            color = kColorBtnHover;
+        } else {
+            color = kColorBtnNormal;
+        }
+
+        m_textRenderer.AddRect(x, tabY, tabW, tabH, color);
+        m_textRenderer.AddText(m_font, m_emitterNames[i].c_str(),
+                               x + 4.0f, tabY + (tabH - 14.0f) * 0.5f, kColorText);
+
+        if (hovered) m_wantsInput = true;
+
+        if (hovered && m_mouseJustPressed && !isActive) {
+            m_selectedEmitterIdx = i;
+            if (onSelectEmitter) onSelectEmitter(i);
+        }
+
+        x += tabW + 4.0f;
     }
 }
 
