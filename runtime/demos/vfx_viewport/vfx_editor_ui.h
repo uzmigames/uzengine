@@ -179,7 +179,7 @@ private:
     static constexpr Vec4 kColorCatHeader = {0.18f, 0.18f, 0.24f, 1.00f};
     static constexpr Vec4 kColorMenuHover = {0.30f, 0.30f, 0.40f, 1.00f};
     static constexpr Vec4 kColorMenuActive= {0.25f, 0.40f, 0.70f, 1.00f};
-    static constexpr Vec4 kColorDropBg    = {0.14f, 0.14f, 0.18f, 0.98f};
+    static constexpr Vec4 kColorDropBg    = {0.14f, 0.14f, 0.18f, 1.00f}; // Fully opaque — must cover panels beneath
 
     // ── Layout constants ─────────────────────────────────────────────────
     static constexpr float kMenuBarH      = 30.0f;
@@ -219,6 +219,7 @@ private:
 
     /// Builds the top menu bar and any open dropdown menus.
     void BuildMenuBar();
+    void BuildMenuDropdowns(); ///< Renders open menu dropdown AFTER panels (z-order on top).
 
     /// Builds the bottom toolbar with action buttons and preset navigation.
     void BuildToolbar(bool* burstMode, bool* vfxEnabled);

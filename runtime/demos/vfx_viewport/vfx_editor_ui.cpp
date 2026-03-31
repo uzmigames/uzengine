@@ -198,6 +198,7 @@ void VFXEditorUI::BuildUI(VFXEmitterConfig* config, float* spawnRate, bool* burs
                           uint32_t* burstCount, bool* vfxEnabled) {
     if (!m_initialized) return;
 
+    // Layer 1: Background panels + toolbar (drawn first = behind)
     BuildMenuBar();
     BuildToolbar(burstMode, vfxEnabled);
 
@@ -209,7 +210,10 @@ void VFXEditorUI::BuildUI(VFXEmitterConfig* config, float* spawnRate, bool* burs
         BuildRightPanel(config);
     }
 
-    // Dropdown overlay drawn last (on top of everything)
+    // Layer 2: ALL dropdowns drawn LAST (on top of everything).
+    // Menu dropdowns and property dropdowns must render after panels
+    // so they visually cover any overlapping content beneath.
+    BuildMenuDropdowns();
     BuildDropdownOverlay();
 }
 
@@ -422,8 +426,14 @@ void VFXEditorUI::BuildMenuBar() {
         x += kMenuItemW + kMenuItemGap;
     }
 
-    // Render the dropdown content for the open menu
-    if (m_openMenu >= 0) {
+    // Menu dropdown content is rendered by BuildMenuDropdowns() AFTER panels
+    // so it visually covers any overlapping panel content beneath.
+}
+
+void VFXEditorUI::BuildMenuDropdowns() {
+    if (m_openMenu < 0) return;
+
+    {
         const float dropX = kMenuItemPadX + m_openMenu * (kMenuItemW + kMenuItemGap);
         constexpr float kDropW = 160.0f;
         float dropY = kMenuBarH;
