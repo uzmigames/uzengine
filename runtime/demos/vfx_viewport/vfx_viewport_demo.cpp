@@ -1752,7 +1752,9 @@ void VFXViewportDemo::OnFrame(float dt) {
     }
 
     // ── Shadow pass ──────────────────────────────────────────────────────
-    RenderShadowPass(cmd);
+    if (m_meshVisible) {
+        RenderShadowPass(cmd);
+    }
 
     // ── HDR scene rendering ──────────────────────────────────────────────
     {
@@ -1768,7 +1770,9 @@ void VFXViewportDemo::OnFrame(float dt) {
     RenderSkyPass(cmd, perFrameGpu);
 
     // ── Scene pass (PBR mesh into HDR target with depth) ─────────────────
-    RenderScenePass(cmd, perFrameGpu);
+    if (m_meshVisible) {
+        RenderScenePass(cmd, perFrameGpu);
+    }
 
     // ── Copy HDR for grid ground reflection ────────────────────────────
     // The grid shader uses the pre-grid HDR content for screen-space

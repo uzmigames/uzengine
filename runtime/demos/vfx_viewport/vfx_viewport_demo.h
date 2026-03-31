@@ -155,6 +155,7 @@ private:
     float m_vignetteIntensity = 0.4f;  ///< Vignette effect strength.
     bool  m_postProcessEnabled = true; ///< ACES tonemap enabled (P key toggles).
     bool  m_showShadowDebug = false;   ///< Shadow map debug overlay (G key toggles).
+    bool  m_meshVisible = false;       ///< Show/hide the emitter mesh (sphere). Off by default.
     float m_totalTime = 0.0f;          ///< Accumulated elapsed time.
 
     // ── Bloom pass ─────────────────────────────────────────────────────
@@ -208,7 +209,7 @@ private:
     uint32_t          m_trailIBSrvIndex = UINT32_MAX;         ///< Bindless SRV index for trail index buffer.
     static constexpr uint32_t kMaxTrailVertices = 1024;       ///< 512 points * 2 verts per point.
     static constexpr uint32_t kMaxTrailIndices  = 3072;       ///< 511 segments * 6 indices per segment.
-    bool m_trailEnabled = true;                               ///< Trail toggle (Y key).
+    bool m_trailEnabled = false;                              ///< Trail toggle (Y key). Off by default.
 
     // ── Decal projection system ─────────────────────────────────────────────
     RHIPipelineHandle m_decalPSO;                            ///< Forward decal graphics PSO.
