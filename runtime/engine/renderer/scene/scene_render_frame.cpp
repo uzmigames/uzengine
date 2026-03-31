@@ -138,9 +138,9 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     // SHADER DEBUG: ALL passes commented out. Uncomment one by one to find crash.
     RegisterShadowPasses(rgBuilder, ctx);
     RegisterGeometryPasses(rgBuilder, ctx);
-    // RegisterDecalPasses(rgBuilder, ctx);
+    RegisterDecalPasses(rgBuilder, ctx);
     RegisterLightingPasses(rgBuilder, ctx);
-    // RegisterParticlePasses(rgBuilder, ctx);
+    RegisterParticlePasses(rgBuilder, ctx);
     RegisterPostProcessPasses(rgBuilder, ctx);
     RegisterOverlayPasses(rgBuilder, ctx);
 
