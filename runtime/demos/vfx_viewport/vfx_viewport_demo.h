@@ -228,7 +228,7 @@ private:
     RHITextureHandle  m_preDistortionCopy;         ///< Copy of HDR before distortion resolve.
     RHIPipelineHandle m_distortionHazePSO;         ///< Fullscreen heat-haze accumulation PSO.
     RHIPipelineHandle m_distortionResolvePSO;      ///< Fullscreen distortion resolve PSO.
-    bool m_distortionEnabled = true;               ///< Distortion toggle (X key).
+    bool m_distortionEnabled = false;              ///< Distortion toggle (X key). Off by default.
     float m_distortionStrength = 0.5f;             ///< Heat-haze strength [0, 1].
 
     // ── Point lights ───────────────────────────────────────────────────
