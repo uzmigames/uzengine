@@ -45,10 +45,24 @@ namespace uz {
 void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
     UZ_PROFILE_FUNCTION();
 
-    // SHADER DEBUG: Simplified pipeline — ONLY tonemap, direct to backbuffer.
-    // GBuffer → Deferred Lighting (HDR) → Tonemap → backbuffer
-    // No bloom, no TAA, no CAS, no FXAA, no motion blur, no DOF.
+    // SHADER DEBUG: Simplified pipeline — Bloom + Tonemap direct to backbuffer.
+    // No TAA, no CAS, no FXAA, no motion blur, no DOF.
     {
+        // ── Bloom pass (if enabled) ─────────────────────────────────────
+        if (ctx.bloomEnabled && m_bloomPass && m_bloomPass->IsInitialized()) {
+            rgBuilder.AddPass("Bloom", [&](rg::RgPassBuilder& pb) {
+                pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
+                pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources&) {
+                    UZ_PROFILE_SCOPE("Bloom::Execute");
+                    m_bloomPass->Execute(cmd, m_hdrSceneColorSrv,
+                                         static_cast<uint32_t>(ctx.renderWidth),
+                                         static_cast<uint32_t>(ctx.renderHeight),
+                                         ctx.perFrame.exposure);
+                });
+            });
+        }
+
+        // ── Tonemap pass (direct to backbuffer) ─────────────────────────
         rgBuilder.AddPass("Tonemap", [&](rg::RgPassBuilder& pb) {
             pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
             pb.Write(ctx.bbRes, RHIResourceState::RenderTarget);
@@ -77,12 +91,30 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 sc.bottom = static_cast<int32_t>(ctx.swapChain->GetHeight());
                 cmd->SetScissor(sc);
 
-                // Root constants: HDR SRV only, no bloom/lensflare/LUT
-                uint32_t indices[5] = { m_hdrSceneColorSrv, 0, 0, 0, 0 };
+                // Root constants: HDR SRV + bloom SRV + bloom intensity
+                uint32_t bloomSrvIdx = 0;
+                float bloomIntensity = 0.0f;
+                if (ctx.bloomEnabled && m_bloomPass && m_bloomPass->GetBloomResultSrvIndex() != UINT32_MAX) {
+                    bloomSrvIdx = m_bloomPass->GetBloomResultSrvIndex();
+                    bloomIntensity = m_bloomPass->settings.intensity;
+                }
+                uint32_t bloomIntensityBits = 0;
+                std::memcpy(&bloomIntensityBits, &bloomIntensity, sizeof(float));
+
+                uint32_t indices[5] = { m_hdrSceneColorSrv, bloomSrvIdx, bloomIntensityBits, 0, 0 };
                 cmd->SetRootConstants(kSlotRootConstants, indices, 5);
+
+                static bool loggedOnce = false;
+                if (!loggedOnce) {
+                    UZ_LOG(Renderer, Info, "Tonemap root constants: hdrSRV={}, bloomSRV={}, bloomIntensity={:.3f}, bloomEnabled={}",
+                           m_hdrSceneColorSrv, bloomSrvIdx, bloomIntensity, ctx.bloomEnabled);
+                    loggedOnce = true;
+                }
 
                 if (!ctx.bindless) {
                     cmd->SetFragmentTexture(0, m_hdrSceneColor);
+                    if (m_bloomPass && m_bloomPass->GetBloomResultTexture().IsValid())
+                        cmd->SetFragmentTexture(1, m_bloomPass->GetBloomResultTexture());
                 }
 
                 cmd->SetRootCBV(kSlotPerFrame, ctx.perFrameAlloc.bufferHandle,

@@ -118,6 +118,9 @@ float4 main(PSIn i) : SV_Target
 
     // ── Bloom composite ───────────────────────────────────────────────────
     float bloomIntensity = asfloat(bloomIntensityBits);
+
+    // Bloom composite
+
 #ifdef UZ_BINDLESS
     if (bloomSrvIndex > 0 && bloomIntensity > 0.0)
     {
