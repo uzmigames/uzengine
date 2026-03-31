@@ -56,6 +56,8 @@ static const VFXPreset s_presets[] = {
         /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
         /*blendMode*/ 0 // AlphaBlend — smoke is translucent, not additive
     }, 200.0f },
+    // ── Ground Collision Preset ────────────────────────────────────────────
+    /// @ref Müller 2006 "Position Based Dynamics" — restitution + friction response
     { "Sparks", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.15f,
         /*velocity*/ {0.0f, 0.0f, 10.0f}, /*velVariation*/ 4.0f,
@@ -69,7 +71,14 @@ static const VFXPreset s_presets[] = {
         /*alignment*/ 1, /*stretch*/ 2.0f,
         /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
         /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
-        /*blendMode*/ 1 // Additive — bright spark streaks
+        /*blendMode*/ 1, // Additive — bright spark streaks
+        /*curlStrength*/ 0.0f, /*curlFrequency*/ 0.5f, /*curlSpeed*/ 0.2f,
+        /*vortexAxisOrigin*/ {0,0,0}, /*vortexAxisDir*/ {0,0,1},
+        /*vortexTangential*/ 0.0f, /*vortexRadial*/ 0.0f, /*vortexMaxRadius*/ 5.0f,
+        /*windDir*/ {1,0,0}, /*windStrength*/ 0.0f,
+        /*litMode*/ 0,
+        /*groundCollision*/ 1,  // Sparks bounce off Z=0 ground plane
+        /*restitution*/ 0.5f    // Fairly elastic bounce (hot metal spark energy)
     }, 800.0f },
     { "Magic Orb", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.8f,
@@ -99,7 +108,14 @@ static const VFXPreset s_presets[] = {
         /*alignment*/ 1, /*stretch*/ 2.0f,
         /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
         /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
-        /*blendMode*/ 1 // Additive — hot glowing debris
+        /*blendMode*/ 1, // Additive — hot glowing debris
+        /*curlStrength*/ 0.0f, /*curlFrequency*/ 0.5f, /*curlSpeed*/ 0.2f,
+        /*vortexAxisOrigin*/ {0,0,0}, /*vortexAxisDir*/ {0,0,1},
+        /*vortexTangential*/ 0.0f, /*vortexRadial*/ 0.0f, /*vortexMaxRadius*/ 5.0f,
+        /*windDir*/ {1,0,0}, /*windStrength*/ 0.0f,
+        /*litMode*/ 0,
+        /*groundCollision*/ 1,  // Debris bounces off Z=0 ground plane
+        /*restitution*/ 0.3f    // Low restitution — heavy debris loses most energy on impact
     }, 2000.0f },
     { "Fireball", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.4f,
@@ -283,6 +299,28 @@ static const VFXPreset s_presets[] = {
         /*windDir*/ {1,0,0}, /*windStrength*/ 0.0f,
         /*litMode*/ 1 // Lit particles — NdotL directional + ambient
     }, 200.0f },
+    /// @ref Pharr 2023 "Physically Based Rendering" Ch.12 — Lambertian diffuse NdotL
+    { "Lit Debris", {
+        /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.3f,
+        /*velocity*/ {0.0f, 0.0f, 8.0f}, /*velVariation*/ 4.0f,
+        /*spread*/ 1.5f, /*minLife*/ 0.5f, /*maxLife*/ 2.0f, /*size*/ 0.4f,
+        /*color*/ {0.7f, 0.6f, 0.5f, 1.0f},
+        /*gravity*/ {0.0f, 0.0f, -20.0f}, /*damping*/ 0.08f,
+        /*softFade*/ 0.3f, /*emissive*/ 0.2f,
+        /*sizeOverLife*/ 0.8f, 1.2f, 0.1f, 0.1f,
+        /*colorLifeStart*/ 0.8f, 0.7f, 0.5f, 1.0f,
+        /*colorLifeEnd*/ 0.4f, 0.35f, 0.25f, 0.0f,
+        /*alignment*/ 1, /*stretch*/ 1.5f,
+        /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
+        /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
+        /*blendMode*/ 0, // AlphaBlend — lit debris is translucent, shows directional shading
+        /*curlStrength*/ 0.0f, /*curlFrequency*/ 0.5f, /*curlSpeed*/ 0.2f,
+        /*vortexAxisOrigin*/ {0,0,0}, /*vortexAxisDir*/ {0,0,1},
+        /*vortexTangential*/ 0.0f, /*vortexRadial*/ 0.0f, /*vortexMaxRadius*/ 5.0f,
+        /*windDir*/ {1,0,0}, /*windStrength*/ 0.0f,
+        /*litMode*/ 1, // Lit particles — NdotL directional + ambient
+        /*groundCollision*/ 1, /*restitution*/ 0.3f // Bounce off ground
+    }, 1500.0f },
 };
 
 const VFXPreset* GetVFXPresets(int& outCount) {

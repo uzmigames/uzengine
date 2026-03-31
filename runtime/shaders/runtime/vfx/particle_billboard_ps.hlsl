@@ -27,6 +27,8 @@
 /// - s2: depthSampler (bilinear, clamp — for depth buffer sampling)
 ///
 /// @ref GPU Gems 3 "Soft Particles" — distance-based alpha fade near surfaces
+/// @ref Pharr 2023 "Physically Based Rendering" Ch.12 — Lambertian diffuse NdotL for lit mode
+/// @ref Harada 2012 "A 2.5D Culling for Forward+" — lit particle integration
 /// @constants SOFT_FADE_MIN_ALPHA=0.001 (discard threshold to skip transparent pixels)
 /// @deviations NONE
 
@@ -105,9 +107,9 @@ cbuffer PerFrameCB : register(b1) {
     row_major float4x4 viewProj;        ///< View * Projection (unused in PS, declared for layout).
     float4   cameraPos;                 ///< xyz = camera world position, w = unused.
     float4   timeParams;                ///< x = totalTime (unused here).
-    float4   lightDir;                  ///< Unused in particle PS.
-    float4   lightColor;                ///< Unused in particle PS.
-    float4   ambientColor;              ///< Unused in particle PS.
+    float4   lightDir;                  ///< xyz = direction toward light, w = unused.
+    float4   lightColor;                ///< xyz = light color * intensity, w = unused.
+    float4   ambientColor;              ///< xyz = ambient radiance, w = unused.
     row_major float4x4 invViewProj;     ///< Unused in particle PS.
     float    nearPlane;                 ///< Camera near plane distance (for depth linearization).
     float    farPlane;                  ///< Camera far plane distance (for depth linearization).
@@ -134,8 +136,8 @@ cbuffer VFXBillboardCB : register(b2) {
                                    ///< 0.0 = no erosion. Range [0, 1].
     float    emissiveIntensity;    ///< Multiplier for additive emissive contribution.
                                    ///< 0.0 = no emission (default). Used for fire/sparks.
-    uint     litMode;              ///< 0=Unlit (default), 1=Lit. Not used by this unlit PS variant,
-                                   ///< declared for layout consistency with the lit PS variant.
+    uint     litMode;              ///< 0=Unlit (default), 1=Lit (NdotL directional + ambient).
+                                   ///< @ref Pharr 2023 "Physically Based Rendering" Ch.12 — Lambertian diffuse.
 
     float    _pad1;
     float    _pad2;
@@ -270,6 +272,31 @@ float4 main(PSInput input) : SV_Target {
     // Multiplies by (1 + intensity) so intensity=0 is neutral (no change),
     // and positive values brighten the particle emission.
     emissive *= (1.0f + emissiveIntensity);
+
+    // ── Lit particle lighting (directional + ambient) ──
+    // When litMode == 1, modulate emissive by a Lambertian NdotL directional
+    // light contribution plus an ambient term from PerFrameCB. The billboard
+    // normal is approximated as the camera-facing direction (since camera-facing
+    // billboards have their surface normal pointing toward the viewer).
+    //
+    // @ref Pharr 2023 "Physically Based Rendering" Ch.12 — Lambertian diffuse: L = kd * (N·L) * Lc
+    // @ref Harada 2012 "A 2.5D Culling for Forward+" — lit particle integration
+    if (litMode == 1) {
+        // Billboard normal: for camera-facing billboards the surface normal
+        // is the direction from the particle toward the camera.
+        float3 normalWS = normalize(cameraPos.xyz - input.positionWS);
+
+        // Directional light NdotL (Lambertian diffuse).
+        // lightDir.xyz = direction toward light (engine convention).
+        float NdotL = saturate(dot(normalWS, normalize(lightDir.xyz)));
+
+        // Combine ambient radiance with directional contribution.
+        float3 litColor = ambientColor.rgb + lightColor.rgb * NdotL;
+
+        // Modulate base color by lighting. Emissive intensity boost (above)
+        // still applies, so emissiveIntensity > 0 brightens lit particles too.
+        emissive *= litColor;
+    }
 
     // ── Apply alpha erosion (subtractive dissolution) ──
     opacity = saturate(opacity - alphaErosion);
