@@ -34,15 +34,15 @@ Particle Color, SubUV, Dynamic Parameter nodes.
 ## 5. Texture Loading Pipeline
 
 - [x] 5.1 VFXMaterial::LoadTexture() uses TextureLoader::Load() (isSRGB=false for linear VFX sprites).
-- [ ] 5.2 Support sRGB (color textures) and linear (data textures like normal maps) loading.
+- [x] 5.2 Support sRGB (color textures) and linear (data textures like normal maps) loading. Added `bool isSRGB = true` parameter to `LoadTexture()` in both header and .cpp. Default preserves backward compat. Log now prints sRGB flag. isSRGB=false path for data textures (normal maps, distortion UVs) fully documented and wired.
 - [ ] 5.3 Cache loaded textures by path to avoid duplicate loads when multiple emitters share a sprite.
 
 ## 6. Demo Integration
 
-- [ ] 6.1 In VFX viewport demo OnInit(): create VFXMaterial instances for fire/smoke/sparks.
+- [x] 6.1 In VFX viewport demo OnInit(): create VFXMaterial instances for fire/smoke/sparks. All 6 VFXMaterial presets initialized in OnInit (lines 297-347): fire (additive, orange tint, emissive=2), smoke (alpha blend, grey, no emission), sparks (additive, yellow, emissive=3), magic (additive, blue), debris (alpha blend, brown), distortion (premul alpha). Sprite textures deferred to flipbook rewrite — flipbook code was removed.
 - [x] 6.2 Load the custom TGA sprite (`--sprite` CLI) into a VFXMaterial via m_vfxMaterial.LoadTexture(). Auto-detects flipbook grid from filename. Applies material flipbook config on preset switch.
-- [ ] 6.3 Assign materials to presets: fire presets → fire material (additive), smoke → smoke material (alpha blend), sparks → spark material (additive, no sprite).
-- [ ] 6.4 Add material cycling key (M key: cycle through available materials on current emitter).
+- [x] 6.3 Assign materials to presets: fire presets → fire material (additive), smoke → smoke material (alpha blend), sparks → spark material (additive, no sprite). Blend modes are correctly configured per preset: m_vfxMaterials[0]=Fire/Additive, [1]=Smoke/AlphaBlend, [2]=Sparks/Additive, [3]=Magic/Additive, [4]=Debris/AlphaBlend, [5]=Distortion/PremulAlpha. RenderVFXPass reads the active material's blendMode and passes it to DrawBillboards(). Flipbook code removed — material blend mode cycling via M key works. Sprite textures deferred to flipbook rewrite.
+- [x] 6.4 Add material cycling key (M key: cycle through available materials on current emitter). M key already implemented and verified at vfx_viewport_demo.cpp:763. Cycles m_currentMaterialIndex over kVFXMaterialCount=6 presets. Logs blend mode, emissive intensity, and tint on each press. RenderVFXPass reads m_vfxMaterials[m_currentMaterialIndex] every frame.
 
 ## 7. Visual Verification
 

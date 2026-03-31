@@ -78,17 +78,20 @@ static bool DetectFlipbookGrid(const std::string& path,
 // VFXMaterial::LoadTexture
 // ─────────────────────────────────────────────────────────────────────────────
 
-bool VFXMaterial::LoadTexture(IRHIDevice* device, IRHICommandList* cmdList) {
+bool VFXMaterial::LoadTexture(IRHIDevice* device, IRHICommandList* cmdList,
+                              bool isSRGB) {
     if (spriteTexturePath.empty()) {
         UZ_LOG(VFX, Warning, "VFXMaterial::LoadTexture called with empty path");
         return false;
     }
 
     // Load via the synchronous TextureLoader pipeline (stb_image -> staging -> GPU).
-    // isSRGB = true: particle sprite sheets are color textures authored in sRGB space.
-    // The GPU hardware converts sRGB→linear on sample, ensuring correct blending in
-    // linear space. Without sRGB, colors appear washed out / incorrectly bright.
-    auto result = TextureLoader::Load(device, cmdList, spriteTexturePath, true);
+    // isSRGB=true (default): color/albedo sprite sheets authored in sRGB space.
+    //   The GPU hardware converts sRGB→linear on sample, ensuring correct blending
+    //   in linear space. Without sRGB, colors appear washed out / incorrectly bright.
+    // isSRGB=false: data textures (normal maps, distortion UVs, etc.) that must
+    //   remain in linear space; applying sRGB decode would corrupt the data.
+    auto result = TextureLoader::Load(device, cmdList, spriteTexturePath, isSRGB);
     if (!result.handle.IsValid()) {
         UZ_LOG(VFX, Error, "VFXMaterial: Failed to load sprite texture '{}'",
                spriteTexturePath);
@@ -118,9 +121,9 @@ bool VFXMaterial::LoadTexture(IRHIDevice* device, IRHICommandList* cmdList) {
                flipbookRows, flipbookCols, flipbookTotalFrames, spriteTexturePath);
     }
 
-    UZ_LOG(VFX, Info, "VFXMaterial: Loaded sprite '{}' (SRV={}, {}x{})",
+    UZ_LOG(VFX, Info, "VFXMaterial: Loaded sprite '{}' (SRV={}, {}x{}, sRGB={})",
            spriteTexturePath, spriteTextureSrvIndex,
-           result.width, result.height);
+           result.width, result.height, isSRGB ? "yes" : "no");
     return true;
 }
 

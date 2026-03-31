@@ -76,6 +76,11 @@ struct VFXMaterial {
     /// # Arguments
     /// * `device`  -- RHI device for texture creation. Must not be null.
     /// * `cmdList` -- Command list in recording state. Must not be null.
+    /// * `isSRGB`  -- When `true` (default), the hardware converts sRGB→linear
+    ///               on sample, which is correct for color/albedo sprite sheets
+    ///               authored in sRGB. Pass `false` for data textures (e.g.,
+    ///               normal maps, distortion vectors) that must stay in linear
+    ///               space throughout the pipeline.
     ///
     /// # Returns
     /// `true` on success (texture loaded and SRV bound).
@@ -85,7 +90,8 @@ struct VFXMaterial {
     /// - Creates one GPU texture resource (caller owns lifetime).
     /// - Flushes the command list internally (TextureLoader::Load is synchronous).
     /// - Logs success/failure at VFX::Info/Error level.
-    bool LoadTexture(IRHIDevice* device, IRHICommandList* cmdList);
+    bool LoadTexture(IRHIDevice* device, IRHICommandList* cmdList,
+                     bool isSRGB = true);
 
     /// Returns true if a sprite texture has been successfully loaded.
     [[nodiscard]] bool HasSprite() const noexcept {
