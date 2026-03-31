@@ -208,6 +208,7 @@ static void PopulateHeightFogCB(
     fogCB.maxObserverHeight = maxObserverHeight;
     fogCB.rawDensity = fogComp.density;
 
+
     // ── Fill CB — Second layer ──────────────────────────────────────────
     fogCB.secondFogDensity       = rayOriginTerms1;
     fogCB.secondFogHeightFalloff = (fogComp.secondFogDensity > 0.0f)

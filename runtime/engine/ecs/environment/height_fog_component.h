@@ -35,17 +35,20 @@ struct HeightFogComponent {
     /// @ref Hillaire 2016 — default white-ish for physically plausible haze
     Vec3 color = {0.45f, 0.55f, 0.65f};
 
-    /// Base fog density factor. Higher = thicker fog. Typical range: 0.001 to 0.1.
-    float density = 0.0436f;
+    /// Base fog density factor. Higher = thicker fog. Typical range: 0.02 to 0.5.
+    /// 0.15 = clearly visible fog at ~100m distance.
+    float density = 0.15f;
 
-    /// Height falloff coefficient (per cm). Controls how quickly fog thins with altitude.
-    /// Engine uses cm units. 0.002 = fog halves every ~346cm (~3.5m).
-    /// @ref Hillaire 2016 — typical range 0.001 to 0.01 in cm-based engines.
-    float heightFalloff = 0.002f;
+    /// Height falloff coefficient. Controls how quickly fog thins with altitude.
+    /// Works in conjunction with baseHeight: fog is densest at baseHeight and
+    /// decays exponentially above it. With baseHeight=-5000 and falloff=0.2,
+    /// fog is visible at ground level (Z=0) with gradual falloff upward.
+    float heightFalloff = 0.2f;
 
     /// World-space height at which fog density is at its maximum (cm).
-    /// 0 = ground level. Negative = below ground (fog from underground up).
-    float baseHeight = 0.f;
+    /// -5000 = 50m below ground. With heightFalloff=0.2, this produces
+    /// visible fog at ground level that persists at camera altitude.
+    float baseHeight = -5000.f;
 
     /// Maximum fog opacity (0 to 1). Prevents fog from fully obscuring distant objects.
     float maxOpacity = 1.0f;
