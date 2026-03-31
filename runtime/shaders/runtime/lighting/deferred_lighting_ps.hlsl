@@ -241,6 +241,13 @@ float4 main(FSInput input) : SV_Target {
 #endif
         float3 specularAmbient = prefilteredColor * (F0 * envBRDF.x + envBRDF.y);
 
+        // Roughness attenuation — for very rough dielectrics the BRDF LUT bias
+        // term produces visible specular from intense HDR environments (sun hotspot).
+        // Attenuate specular contribution for rough non-metallic surfaces.
+        // @ref Fdez-Aguera 2019 "A Multiple-Scattering Microfacet Model"
+        float roughAtten = saturate(1.0 - roughness * roughness * (1.0 - metallic));
+        specularAmbient *= roughAtten;
+
         // Horizon occlusion — prevent reflections below surface
         // @ref Lagarde 2012 "Horizon Occlusion for Normal Mapped Reflections"
         float horizon = saturate(1.0 + dot(R, N));
