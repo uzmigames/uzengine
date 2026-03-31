@@ -218,7 +218,11 @@ float4 main(FSInput input) : SV_Target {
         }
 #endif
         irradiance = max(irradiance, skyLightMinAmbient);
-        float3 diffuseAmbient = kD_env * irradiance * baseColor;
+        // Lambertian BRDF = albedo / PI. The irradiance cubemap integrates
+        // cos-weighted radiance over the hemisphere, producing values in
+        // units of irradiance (W/m²). Dividing by PI converts to exitant
+        // radiance for a Lambertian surface.
+        float3 diffuseAmbient = kD_env * irradiance * baseColor * M_1_PI;
 
         // Specular: prefiltered env + BRDF LUT
         float3 R = reflect(-V, N);

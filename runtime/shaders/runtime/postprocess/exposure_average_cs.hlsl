@@ -72,7 +72,7 @@ void main() {
     float avgLum = pow(2.0, avgLogLum);
     avgLum = clamp(avgLum, g_MinBrightness, g_MaxBrightness);
 
-    // Exposure = key / avgLuminance (Reinhard key=0.18, Falcor key=0.042)
+    // Exposure = key / avgLuminance (Reinhard key=0.18)
     float exposureBiasLinear = pow(2.0, g_ExposureBias);
     float targetExposure = exposureBiasLinear * 0.18 / avgLum;
 
