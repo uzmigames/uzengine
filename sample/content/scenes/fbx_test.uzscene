@@ -88,7 +88,7 @@
         },
         "material": {
           "albedo": "textures/checker.png",
-          "roughnessMultiplier": 0.95
+          "roughnessMultiplier": 1.0
         }
       }
     },
@@ -155,10 +155,12 @@
           "position": [
             0,
             0,
-            -5000
+            0
           ]
         },
-        "height_fog": {}
+        "height_fog": {
+          "base_height": -5000
+        }
       }
     },
     {
@@ -181,7 +183,7 @@
       "name": "Controller",
       "components": {
         "script": {
-          "path": "scripts/camera_test_controller.lua"
+          "path": "scripts/fly_camera.lua"
         }
       }
     }

@@ -64,11 +64,27 @@ void main(uint3 DTid : SV_DispatchThreadID) {
         float NdotL = max(dot(N, L), 0.0);
 
         if (NdotL > 0.0) {
+            // @ref Lagarde 2014 "Moving Frostbite to PBR" — mip selection from PDF
+            // Without mip bias, high-roughness mips retain HDR hotspots (sun in HDRI)
+            // because limited samples can't integrate them. Sampling a higher source mip
+            // pre-filters the hotspot, eliminating fireflies and false reflections.
+            float NdotH = max(dot(N, H), 0.0);
+            float HdotV = max(dot(H, V), 0.0);
+            float a2 = roughness * roughness;
+            a2 = a2 * a2; // alpha = roughness^2, a2 = alpha^2
+            float denom = NdotH * NdotH * (a2 - 1.0) + 1.0;
+            float D = a2 / (PI * denom * denom + 0.0001);
+            float pdf = D * NdotH / (4.0 * HdotV) + 0.0001;
+            float saTexel  = 4.0 * PI / (6.0 * faceSize * faceSize);
+            float saSample = 1.0 / (float(sampleCount) * pdf + 0.0001);
+            float mipBias = roughness == 0.0 ? 0.0 : 0.5 * log2(saSample / saTexel);
+            mipBias = max(mipBias, 0.0);
+
 #ifdef UZ_BINDLESS
             TextureCube<float4> envTex = ResourceDescriptorHeap[envCubemapSrvIndex];
-            prefilteredColor += envTex.SampleLevel(linearSampler, L, 0).rgb * NdotL;
+            prefilteredColor += envTex.SampleLevel(linearSampler, L, mipBias).rgb * NdotL;
 #else
-            prefilteredColor += envMap.SampleLevel(linearSampler, L, 0).rgb * NdotL;
+            prefilteredColor += envMap.SampleLevel(linearSampler, L, mipBias).rgb * NdotL;
 #endif
             totalWeight += NdotL;
         }

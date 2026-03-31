@@ -358,9 +358,10 @@ void SceneRenderer::RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContex
         // @ref camera-only velocity pass
         if (m_prevViewProjValid && m_gbuffer.velocity.IsValid()) {
             VelocityCB velCB{};
-            velCB.prevViewProj = m_prevViewProj;
-            velCB.screenWidth  = vpWidth;
-            velCB.screenHeight = vpHeight;
+            velCB.prevViewProj          = m_prevViewProj;
+            velCB.unjitteredInvViewProj = ctx.unjitteredViewProj.Inverse();
+            velCB.screenWidth           = vpWidth;
+            velCB.screenHeight          = vpHeight;
 
             CBAllocation velCBAlloc = m_cbRing->Allocate(sizeof(VelocityCB));
             std::memcpy(velCBAlloc.cpuPtr, &velCB, sizeof(VelocityCB));

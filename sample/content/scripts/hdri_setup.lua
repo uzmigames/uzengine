@@ -28,7 +28,7 @@ function on_start(entity)
     for i, mat in ipairs(materials) do
         local x = -half_width + (i - 1) * spacing
         local e = uz.scene.create_entity("Sphere_" .. i)
-        uz.scene.set_position(e, x, 0, 100)
+        uz.scene.set_position(e, x, 200, 100)
         uz.scene.set_scale(e, 100, 100, 100)
         uz.scene.set_mesh(e, sphere_id)
         uz.scene.set_material(e, {

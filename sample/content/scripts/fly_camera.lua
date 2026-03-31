@@ -1,5 +1,4 @@
--- camera_test_controller.lua — FPS camera with render path toggle
--- Migrated from runtime/demos/camera_test/camera_test.cpp
+-- fly_camera.lua — Universal FPS fly camera controller
 -- Z-UP coordinate system: X=forward, Y=right, Z=up
 --
 -- Controls:
@@ -9,18 +8,29 @@
 --   Scroll      — zoom (adjust speed)
 --   F1          — deferred render path
 --   F2          — forward render path
+--   F           — toggle deferred/forward
+--   0           — disable debug mode (normal lit)
+--   1-7         — GBuffer debug channels
+--   Tab         — cycle debug view modes
 --   Escape      — quit
 
 local camera_speed = 500.0
 local mouse_sensitivity = 0.15
 local yaw = 90.0
 local pitch = -20.0
--- Camera starts at Y=-500 (behind), Z=200 (above), looking toward origin
 local cam_x, cam_y, cam_z = 0, -500, 200
+local render_path = "deferred"
+
+local debug_views = {
+    "Lit", "Albedo", "Normal", "Metallic", "Roughness",
+    "AO", "Depth", "WorldPos", "Velocity", "Wireframe", "Overdraw"
+}
+local debug_view_index = 1
 
 function on_start(entity)
-    uz.log("=== Camera Test (Lua) ===")
-    uz.log("WASD: move | QE: up/down | Right-click+Mouse: look | F1/F2: render path")
+    uz.log("=== Fly Camera ===")
+    uz.log("WASD: move | QE: up/down | Right-click+Mouse: look | Scroll: speed")
+    uz.log("F/F1/F2: render path | Tab: cycle views | 0-7: debug channels")
 end
 
 function on_update(entity, dt)
@@ -30,13 +40,46 @@ function on_update(entity, dt)
     end
 
     -- Render path toggle
+    if uz.input.is_key_just_pressed("F") then
+        if render_path == "deferred" then
+            render_path = "forward"
+        else
+            render_path = "deferred"
+        end
+        uz.renderer.set_render_path(render_path)
+        uz.log("Render path: " .. render_path)
+    end
     if uz.input.is_key_just_pressed("F1") then
-        uz.renderer.set_render_path("deferred")
+        render_path = "deferred"
+        uz.renderer.set_render_path(render_path)
         uz.log("Render path: Deferred")
     end
     if uz.input.is_key_just_pressed("F2") then
-        uz.renderer.set_render_path("forward")
+        render_path = "forward"
+        uz.renderer.set_render_path(render_path)
         uz.log("Render path: Forward")
+    end
+
+    -- Debug mode keys 0-7
+    for i = 0, 7 do
+        if uz.input.is_key_just_pressed(tostring(i)) then
+            uz.renderer.set_debug_mode(i == 0 and 8 or (i - 1))
+            if i == 0 then
+                uz.log("Debug mode: off")
+            else
+                uz.log("Debug mode: " .. i)
+            end
+        end
+    end
+
+    -- Cycle debug view with Tab
+    if uz.input.is_key_just_pressed("Tab") then
+        debug_view_index = debug_view_index + 1
+        if debug_view_index > #debug_views then
+            debug_view_index = 1
+        end
+        uz.renderer.set_debug_view(debug_views[debug_view_index])
+        uz.log("Debug view: " .. debug_views[debug_view_index])
     end
 
     -- Camera speed via scroll
@@ -103,5 +146,5 @@ function on_update(entity, dt)
 end
 
 function on_stop(entity)
-    uz.log("Camera Test stopped")
+    uz.log("Fly Camera stopped")
 end

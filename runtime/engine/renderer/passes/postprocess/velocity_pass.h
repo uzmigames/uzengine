@@ -59,11 +59,12 @@ namespace uz {
 ///
 /// Per-pixel motion vector pass parameters for TAA and motion blur.
 struct VelocityCB {
-    Mat4  prevViewProj;        ///< Previous frame's view-projection matrix.
-    float screenWidth  = 0.f;  ///< Render target width in pixels.
-    float screenHeight = 0.f;  ///< Render target height in pixels.
-    float _pad0[2]     = {};   ///< Align to 16-byte boundary after screen dims.
-    float _pad1[44]    = {};   ///< Pad to 256-byte alignment.
+    Mat4  prevViewProj;           ///< Previous frame's unjittered view-projection.
+    Mat4  unjitteredInvViewProj;  ///< Current frame's unjittered inverse VP (depth → world).
+    float screenWidth  = 0.f;    ///< Render target width in pixels.
+    float screenHeight = 0.f;    ///< Render target height in pixels.
+    float _pad0[2]     = {};     ///< Align to 16-byte boundary after screen dims.
+    float _pad1[28]    = {};     ///< Pad to 256-byte alignment.
 };
 
 static_assert(sizeof(VelocityCB) == 256, "VelocityCB must be 256 bytes (D3D12 CB alignment)");
