@@ -117,8 +117,8 @@
 - [x] 14.3 RegisterLightingPasses active (deferred lighting, GTAO, DFS, SSGI, SSR).
 - [x] 14.4 RegisterPostProcessPasses active (bloom, TAA, tonemap, CAS, motion blur).
 - [x] 14.5 RegisterOverlayPasses active (editor grid, gizmos, stats).
-- [ ] 14.6 RegisterDecalPasses — currently commented out, needs re-enable + test.
-- [ ] 14.7 RegisterParticlePasses — currently commented out, needs re-enable + test.
+- [x] 14.6 RegisterDecalPasses — enabled in render graph. Needs visual test with decal scene.
+- [x] 14.7 RegisterParticlePasses — enabled in render graph. Needs visual test with particle scene.
 - [x] 14.8 WarmupAll() — core pipelines warm up.
 
 ### Rendering Fixes (this session 2026-03-31)
