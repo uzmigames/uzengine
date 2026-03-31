@@ -138,7 +138,7 @@ float4 main(PSIn i) : SV_Target
 #endif
 
     // ── Exposure ──────────────────────────────────────────────────────────
-    color *= max(exposure, 1.0);
+    color *= exposure;
 
     // ── Saturation ────────────────────────────────────────────────────────
     float luma = Luminance(color);
