@@ -24,6 +24,7 @@
 /// - Debug view modes (F1-F11)
 /// - Editor grid overlay
 /// - Stats overlay (FPS, draw calls, frame time)
+/// - [F10] VFX parameter panel (keyboard-navigable emitter config editor)
 /// - Screenshot capture (F5 / --screenshot)
 
 #pragma once
@@ -45,6 +46,7 @@
 #include "gizmo_renderer.h"
 #include "gizmo_interaction.h"
 #include "editor_input_handler.h"
+#include "vfx_parameter_panel.h"
 
 #include <array>
 #include <cstdint>
@@ -249,6 +251,9 @@ private:
     // ── Frustum culling state (Task 3.89.0) ─────────────────────────────────
     bool     m_frustumCullingEnabled = false; ///< Ctrl+F toggles CPU frustum cull check.
     uint32_t m_culledFrameCount = 0;          ///< Frames where VFX was frustum-culled.
+
+    // ── VFX parameter panel (F10 key toggles) ───────────────────────────────
+    VFXParameterPanel m_paramPanel;           ///< Keyboard-navigable emitter parameter editor.
 
     // ── Environment rotation ───────────────────────────────────────────
     float m_envRotation = 0.0f;                    ///< Environment (sun/sky) Y-axis rotation in degrees (R key).

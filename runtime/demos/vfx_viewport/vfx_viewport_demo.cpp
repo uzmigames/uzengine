@@ -610,6 +610,10 @@ void VFXViewportDemo::OnInit() {
     upload.ReleaseStaging();
     cmd->Begin();
 
+    // ── VFX parameter panel (console-based, no GPU rendering) ────────────
+    m_paramPanel.Init(&m_vfxEmitter, &m_vfxSpawnRate, &m_vfxBurstCount,
+                      &m_vfxBurstMode, &m_subEmitterEnabled, &m_frustumCullingEnabled);
+
     UZ_LOG(App, Info, "VFXViewport: Init complete — {} meshes, {} materials, VFX={}, Trails={}, Decals={}, Distortion={}",
            kMeshNames[0], kMaterialCount, m_vfxEnabled ? "on" : "off",
            m_trailEnabled ? "on" : "off", m_decalEnabled ? "on" : "off",
@@ -624,6 +628,23 @@ void VFXViewportDemo::OnInit() {
 
 void VFXViewportDemo::HandleInput(float dt) {
     const auto* input = GetInput();
+
+    // ── VFX parameter panel (F10 toggles, consumes input when visible) ──
+    if (input->IsKeyJustPressed(Key::F10)) {
+        m_paramPanel.Toggle();
+    }
+    if (m_paramPanel.IsVisible()) {
+        bool needsRestart = false;
+        if (m_paramPanel.HandleInput(input, needsRestart)) {
+            if (needsRestart) {
+                auto* cmd = GetCommandList();
+                m_vfxSystem.UploadInitialFreeList(cmd);
+                m_vfxSpawnAccum = 0.0f;
+                m_vfxBurstPending = true;
+            }
+            return; // Panel consumed the input — skip all other handlers.
+        }
+    }
 
     // Debug view mode (F1-F11)
     ApplyDebugViewKeyboard(input);
