@@ -29,6 +29,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <ctime>
+#include <filesystem>
 #include <unordered_map>
 #include <vector>
 
@@ -614,6 +616,19 @@ void VFXViewportDemo::OnInit() {
     m_paramPanel.Init(&m_vfxEmitter, &m_vfxSpawnRate, &m_vfxBurstCount,
                       &m_vfxBurstMode, &m_subEmitterEnabled, &m_frustumCullingEnabled);
 
+    // ── VFX module stack panel (console-based module visibility + toggle) ──
+    m_moduleStack.Init(&m_vfxEmitter, &m_subEmitterEnabled, &m_frustumCullingEnabled);
+
+    // ── Preset management — export built-in presets and scan directory ───────
+    // Export each built-in preset to content/vfx/presets/ on first run (skips
+    // existing files), then scan the directory to build the file-based preset
+    // list. Tab key cycling and LoadPreset() both use m_presetFiles.
+    RefreshPresetList("content/vfx/presets/");
+
+    // Wire up the panel's Presets browser.
+    m_paramPanel.SetPresetList(m_presetNames);
+    m_paramPanel.SetPresetLoadCallback([this](int idx) { LoadPreset(idx); });
+
     UZ_LOG(App, Info, "VFXViewport: Init complete — {} meshes, {} materials, VFX={}, Trails={}, Decals={}, Distortion={}",
            kMeshNames[0], kMaterialCount, m_vfxEnabled ? "on" : "off",
            m_trailEnabled ? "on" : "off", m_decalEnabled ? "on" : "off",
@@ -644,6 +659,14 @@ void VFXViewportDemo::HandleInput(float dt) {
             }
             return; // Panel consumed the input — skip all other handlers.
         }
+    }
+
+    // ── VFX module stack panel (Q toggles, consumes input when visible) ──
+    if (input->IsKeyJustPressed(Key::Q) && !m_paramPanel.IsVisible()) {
+        m_moduleStack.Toggle();
+    }
+    if (m_moduleStack.HandleInput(input)) {
+        return; // Module stack consumed the input — skip all other handlers.
     }
 
     // Debug view mode (F1-F11)
@@ -860,14 +883,22 @@ void VFXViewportDemo::HandleInput(float dt) {
             m_vfxEnabled = !m_vfxEnabled;
             UZ_LOG(App, Info, "VFX: {}", m_vfxEnabled ? "enabled" : "disabled");
         } else {
-            // Cycle preset
-            int presetCount = 0;
-            const VFXPreset* presets = GetVFXPresets(presetCount);
-            m_vfxPresetIndex = (m_vfxPresetIndex + 1) % presetCount;
-            m_vfxEmitter = presets[m_vfxPresetIndex].config;
-            m_vfxSpawnRate = presets[m_vfxPresetIndex].spawnRate;
-            m_vfxSpawnAccum = 0.0f;
-            UZ_LOG(App, Info, "VFX preset: {}", presets[m_vfxPresetIndex].name);
+            // Cycle through file-based presets (populated from content/vfx/presets/).
+            // Fall back to built-in presets if the list is empty (e.g., content dir
+            // missing at launch time).
+            if (!m_presetFiles.empty()) {
+                const int nextIdx = (m_vfxPresetIndex + 1) % static_cast<int>(m_presetFiles.size());
+                m_vfxSpawnAccum = 0.0f;
+                LoadPreset(nextIdx);
+            } else {
+                int presetCount = 0;
+                const VFXPreset* presets = GetVFXPresets(presetCount);
+                m_vfxPresetIndex = (m_vfxPresetIndex + 1) % presetCount;
+                m_vfxEmitter    = presets[m_vfxPresetIndex].config;
+                m_vfxSpawnRate  = presets[m_vfxPresetIndex].spawnRate;
+                m_vfxSpawnAccum = 0.0f;
+                UZ_LOG(App, Info, "VFX preset: {} (built-in fallback)", presets[m_vfxPresetIndex].name);
+            }
         }
     }
 
@@ -1263,6 +1294,8 @@ void VFXViewportDemo::HandleInput(float dt) {
         UZ_LOG(App, Info, "  Shift+7/8            — Spawn radius ↑/↓");
         UZ_LOG(App, Info, "  F1-F8                — Debug view modes");
         UZ_LOG(App, Info, "  F5                   — Screenshot");
+        UZ_LOG(App, Info, "  F10                  — VFX parameter panel (emitter config editor)");
+        UZ_LOG(App, Info, "  Q                    — VFX module stack panel (module visibility + toggle)");
         UZ_LOG(App, Info, "  Alt+Enter            — Toggle fullscreen");
         UZ_LOG(App, Info, "  H                    — Show this help");
     }
@@ -1289,6 +1322,89 @@ void VFXViewportDemo::HandleInput(float dt) {
             UZ_LOG(App, Info, "RenderDoc: capture triggered");
         } else {
             UZ_LOG(App, Warning, "RenderDoc: not loaded (install RenderDoc and relaunch)");
+        }
+    }
+
+    // Save current preset to JSON (Shift+S)
+    // Generates a timestamped filename and writes to content/vfx/presets/.
+    // After saving, rescans the directory so the new file appears in Tab cycling.
+    const bool shiftHeld = input->IsKeyDown(Key::LeftShift) || input->IsKeyDown(Key::RightShift);
+    if (shiftHeld && input->IsKeyJustPressed(Key::S)) {
+        std::time_t now = std::time(nullptr);
+        struct tm tm_buf{};
+#if defined(_WIN32)
+        localtime_s(&tm_buf, &now);
+#else
+        localtime_r(&now, &tm_buf);
+#endif
+        char nameBuf[64];
+        std::strftime(nameBuf, sizeof(nameBuf), "preset_%Y%m%d_%H%M%S", &tm_buf);
+
+        const std::string filePath = std::string("content/vfx/presets/") + nameBuf + ".json";
+        if (VFXPresetSerializer::Save(m_vfxEmitter, m_vfxSpawnRate, nameBuf, filePath)) {
+            UZ_LOG(App, Info, "VFX: Saved preset '{}'", filePath.c_str());
+            // Rescan so the new file is immediately available in Tab cycling.
+            RefreshPresetList("content/vfx/presets/");
+            m_saveHintTimer = 2.0f;
+        } else {
+            UZ_LOG(App, Warning, "VFX: Failed to save preset to '{}'", filePath.c_str());
+        }
+    }
+
+    // Preset directory refresh (F6)
+    // Rescans content/vfx/presets/ and updates m_presetFiles/m_presetNames.
+    if (input->IsKeyJustPressed(Key::F6)) {
+        RefreshPresetList("content/vfx/presets/");
+        UZ_LOG(App, Info, "VFX: Presets refreshed — {} found",
+               static_cast<int>(m_presetFiles.size()));
+    }
+
+    // Delete confirmation for the currently-selected file preset (Delete key).
+    // First press shows a log prompt; second press within 2 seconds deletes it.
+    if (input->IsKeyJustPressed(Key::Delete) && !m_presetFiles.empty() &&
+        m_vfxPresetIndex >= 0 && m_vfxPresetIndex < static_cast<int>(m_presetFiles.size())) {
+        if (m_deleteConfirmPending && m_deleteConfirmIdx == m_vfxPresetIndex &&
+            m_deleteConfirmTimer > 0.0f) {
+            // Second press — perform deletion.
+            const std::string path = m_presetFiles[m_vfxPresetIndex];
+            std::error_code ec;
+            std::filesystem::remove(path, ec);
+            if (!ec) {
+                UZ_LOG(App, Info, "VFX: Deleted preset '{}'", path.c_str());
+            } else {
+                UZ_LOG(App, Warning, "VFX: Failed to delete '{}': {}",
+                       path.c_str(), ec.message().c_str());
+            }
+            RefreshPresetList("content/vfx/presets/");
+            // Clamp index after deletion.
+            if (!m_presetFiles.empty()) {
+                m_vfxPresetIndex = std::min(m_vfxPresetIndex,
+                                            static_cast<int>(m_presetFiles.size()) - 1);
+            } else {
+                m_vfxPresetIndex = 0;
+            }
+            m_deleteConfirmPending = false;
+            m_deleteConfirmIdx     = -1;
+        } else {
+            // First press — start confirmation window.
+            m_deleteConfirmPending = true;
+            m_deleteConfirmIdx     = m_vfxPresetIndex;
+            m_deleteConfirmTimer   = 2.0f;
+            UZ_LOG(App, Info, "VFX: Delete '{}'? Press Del again within 2 seconds to confirm",
+                   m_presetNames[m_vfxPresetIndex].c_str());
+        }
+    }
+
+    // Tick save hint and delete confirm countdowns (using dt from HandleInput's caller).
+    // dt is available because HandleInput receives it as a parameter.
+    if (m_saveHintTimer > 0.0f) {
+        m_saveHintTimer = std::max(0.0f, m_saveHintTimer - dt);
+    }
+    if (m_deleteConfirmTimer > 0.0f) {
+        m_deleteConfirmTimer = std::max(0.0f, m_deleteConfirmTimer - dt);
+        if (m_deleteConfirmTimer <= 0.0f) {
+            m_deleteConfirmPending = false;
+            m_deleteConfirmIdx     = -1;
         }
     }
 }
@@ -1703,6 +1819,9 @@ void VFXViewportDemo::OnFrame(float dt) {
     // FlipPingPong is intentionally omitted for culled frames: the GPU
     // simulation was also skipped, so the live particle buffer is unchanged
     // and the previous frame's read/write assignment remains correct.
+    // ── Update module stack kill-volume count (needed for isActive logic) ───
+    m_moduleStack.SetKillVolumeCount(m_killVolumeCount);
+
     if (m_vfxEnabled && !vfxCulled) {
         RenderVFXPass(cmd, perFrameGpu, dt);
         m_vfxSystem.FlipPingPong();
@@ -2733,6 +2852,76 @@ void VFXViewportDemo::OnShutdown() {
         if (mesh.indexBuffer.IsValid()) device->DestroyBuffer(mesh.indexBuffer);
         mesh = {};
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Preset Management
+// ─────────────────────────────────────────────────────────────────────────────
+
+void VFXViewportDemo::RefreshPresetList(const std::string& dir) {
+    // Export built-in presets to JSON files (skip any that already exist so
+    // user-edited presets are not overwritten on every launch).
+    int builtInCount = 0;
+    const VFXPreset* builtIns = GetVFXPresets(builtInCount);
+    int written = 0;
+    for (int i = 0; i < builtInCount; ++i) {
+        // Derive a safe filename: lowercase name, spaces → underscores.
+        std::string stem(builtIns[i].name);
+        for (char& ch : stem) {
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            if (ch == ' ') ch = '_';
+        }
+        const std::string path = dir + stem + ".json";
+
+        // Only write if the file does not already exist.
+        std::error_code ec;
+        if (!std::filesystem::exists(path, ec)) {
+            if (VFXPresetSerializer::Save(builtIns[i].config,
+                                          builtIns[i].spawnRate,
+                                          builtIns[i].name,
+                                          path)) {
+                ++written;
+            }
+        }
+    }
+    if (written > 0) {
+        UZ_LOG(App, Info, "VFX: Wrote {} built-in preset(s) to '{}'", written, dir.c_str());
+    }
+
+    // Rescan the directory to populate m_presetFiles and m_presetNames.
+    m_presetFiles = VFXPresetSerializer::ScanDirectory(dir);
+    m_presetNames.clear();
+    m_presetNames.reserve(m_presetFiles.size());
+    for (const auto& p : m_presetFiles) {
+        m_presetNames.push_back(std::filesystem::path(p).stem().string());
+    }
+
+    UZ_LOG(App, Info, "VFX: {} preset(s) available in '{}'",
+           static_cast<int>(m_presetFiles.size()), dir.c_str());
+
+    // Keep the panel's Presets browser in sync. This is a no-op before Init
+    // (panel has no categories yet) because SetPresetList is also called
+    // explicitly after the first RefreshPresetList() call in OnInit.
+    m_paramPanel.SetPresetList(m_presetNames);
+}
+
+void VFXViewportDemo::LoadPreset(int idx) {
+    if (idx < 0 || idx >= static_cast<int>(m_presetFiles.size())) {
+        UZ_LOG(App, Warning, "VFX: LoadPreset({}) — index out of range ({} presets)",
+               idx, static_cast<int>(m_presetFiles.size()));
+        return;
+    }
+
+    std::string name;
+    float spawnRate = m_vfxSpawnRate;
+    if (!VFXPresetSerializer::Load(m_presetFiles[idx], m_vfxEmitter, spawnRate, name)) {
+        UZ_LOG(App, Warning, "VFX: Failed to load preset '{}'", m_presetFiles[idx].c_str());
+        return;
+    }
+    m_vfxSpawnRate    = spawnRate;
+    m_vfxPresetIndex  = idx;
+    m_vfxBurstPending = true;
+    UZ_LOG(App, Info, "VFX: Loaded preset '{}'", name.c_str());
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

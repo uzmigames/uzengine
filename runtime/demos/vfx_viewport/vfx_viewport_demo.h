@@ -25,6 +25,7 @@
 /// - Editor grid overlay
 /// - Stats overlay (FPS, draw calls, frame time)
 /// - [F10] VFX parameter panel (keyboard-navigable emitter config editor)
+/// - [Q]   VFX module stack panel (simulation module visibility and toggle UI)
 /// - Screenshot capture (F5 / --screenshot)
 
 #pragma once
@@ -47,6 +48,9 @@
 #include "gizmo_interaction.h"
 #include "editor_input_handler.h"
 #include "vfx_parameter_panel.h"
+#include "vfx_module_stack.h"
+
+#include "vfx_preset_serializer.h"
 
 #include <array>
 #include <cstdint>
@@ -164,6 +168,14 @@ private:
     int   m_vfxPresetIndex = 0;
     VFXEmitterConfig m_vfxEmitter;
     Mat4  m_prevViewProj;
+
+    // ── File-based preset list (loaded/refreshed via ScanDirectory) ─────────
+    std::vector<std::string> m_presetFiles;  ///< Sorted absolute paths to .json preset files.
+    std::vector<std::string> m_presetNames;  ///< Filename stems for display (no dir, no .json).
+    float m_saveHintTimer        = 0.0f;     ///< Countdown (s) for "Saved preset..." hint display.
+    bool  m_deleteConfirmPending = false;    ///< True while waiting for second Delete keypress.
+    int   m_deleteConfirmIdx     = -1;       ///< Preset index targeted by the pending delete.
+    float m_deleteConfirmTimer   = 0.0f;     ///< Countdown (s) for delete confirmation window.
     bool  m_vfxBurstMode = true;        ///< true = single burst, false = continuous emission.
     uint32_t m_vfxBurstCount = 500;     ///< Number of particles per burst.
     bool  m_vfxBurstPending = true;     ///< true = fire burst on next frame.
@@ -255,6 +267,9 @@ private:
     // ── VFX parameter panel (F10 key toggles) ───────────────────────────────
     VFXParameterPanel m_paramPanel;           ///< Keyboard-navigable emitter parameter editor.
 
+    // ── VFX module stack panel (Q key toggles) ───────────────────────────────
+    VFXModuleStackPanel m_moduleStack;        ///< Console-based simulation module visibility and toggle UI.
+
     // ── Environment rotation ───────────────────────────────────────────
     float m_envRotation = 0.0f;                    ///< Environment (sun/sky) Y-axis rotation in degrees (R key).
 
@@ -302,6 +317,17 @@ private:
 
     /// Builds the world matrix for the mesh at the given transform index.
     Mat4 BuildMeshWorldMatrix(uint32_t meshIndex) const;
+
+    /// Loads the preset at `idx` from `m_presetFiles` into the live emitter config.
+    /// Clamps idx to valid range; logs a warning and returns if out of range.
+    void LoadPreset(int idx);
+
+    /// Exports all built-in presets to JSON files in `dir` (skips existing files)
+    /// and then rescans the directory to populate `m_presetFiles`/`m_presetNames`.
+    ///
+    /// # Arguments
+    /// * `dir` — Relative path to the presets directory (e.g. "content/vfx/presets/").
+    void RefreshPresetList(const std::string& dir);
 
 };
 

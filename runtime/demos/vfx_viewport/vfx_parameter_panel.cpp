@@ -216,6 +216,18 @@ void VFXParameterPanel::BuildCategories(VFXEmitterConfig* cfg, float* spawnRate,
     m_burstMode = burstMode;
     m_subEmitter = subEmitter;
     m_frustumCull = frustumCull;
+
+    // ── Category 8: Presets ──────────────────────────────────────────────
+    // This category holds no VFXParamEntry rows — the preset list is stored
+    // separately in m_presetNames and rendered via LogCurrentCategory override.
+    // Navigation (Up/Down) changes m_selectedPreset; Enter triggers m_onPresetLoad.
+    {
+        VFXParamCategory cat;
+        cat.name = "Presets";
+        cat.expanded = false;
+        // No params — managed via m_presetNames vector.
+        m_categories.push_back(std::move(cat));
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -232,6 +244,21 @@ void VFXParameterPanel::Toggle() {
     } else {
         UZ_LOG(App, Info, "──── VFX Parameter Panel CLOSED ────");
     }
+}
+
+void VFXParameterPanel::SetPresetList(const std::vector<std::string>& names) {
+    m_presetNames = names;
+    // Clamp selected preset cursor to valid range after list change.
+    if (!m_presetNames.empty()) {
+        m_selectedPreset = std::min(m_selectedPreset, static_cast<int>(m_presetNames.size()) - 1);
+        m_selectedPreset = std::max(m_selectedPreset, 0);
+    } else {
+        m_selectedPreset = 0;
+    }
+}
+
+void VFXParameterPanel::SetPresetLoadCallback(std::function<void(int)> cb) {
+    m_onPresetLoad = std::move(cb);
 }
 
 void VFXParameterPanel::SetVisible(bool visible) {
@@ -295,6 +322,49 @@ bool VFXParameterPanel::HandleInput(const InputSystem* input, bool& needsRestart
         needsRestart = true;
         UZ_LOG(App, Info, "[VFX Panel] Restarting emission...");
         return true;
+    }
+
+    // ── Presets category special handling (index 8) ──────────────────────
+    // Up/Down moves the preset row cursor; Enter fires the load callback.
+    // The footer hint (Shift+S / F6 / Del) is always shown in LogCurrentCategory.
+    if (m_selectedCategory == 8) {
+        if (cat.expanded) {
+            const int presetCount = static_cast<int>(m_presetNames.size());
+            if (presetCount > 0) {
+                if (input->IsKeyJustPressed(Key::Up)) {
+                    m_selectedPreset = (m_selectedPreset + presetCount - 1) % presetCount;
+                    UZ_LOG(App, Info, "  >> [{}] {}", m_selectedPreset + 1,
+                           m_presetNames[static_cast<size_t>(m_selectedPreset)].c_str());
+                    return true;
+                }
+                if (input->IsKeyJustPressed(Key::Down)) {
+                    m_selectedPreset = (m_selectedPreset + 1) % presetCount;
+                    UZ_LOG(App, Info, "  >> [{}] {}", m_selectedPreset + 1,
+                           m_presetNames[static_cast<size_t>(m_selectedPreset)].c_str());
+                    return true;
+                }
+                if (input->IsKeyJustPressed(Key::Enter)) {
+                    if (m_onPresetLoad) {
+                        UZ_LOG(App, Info, "[Presets] Loading '{}'...",
+                               m_presetNames[static_cast<size_t>(m_selectedPreset)].c_str());
+                        m_onPresetLoad(m_selectedPreset);
+                        needsRestart = true;
+                    }
+                    return true;
+                }
+            } else {
+                if (input->IsKeyJustPressed(Key::Up) ||
+                    input->IsKeyJustPressed(Key::Down) ||
+                    input->IsKeyJustPressed(Key::Enter)) {
+                    UZ_LOG(App, Info, "[Presets] No presets found. Press Shift+S to save one.");
+                    return true;
+                }
+            }
+        }
+        // Consume Left/Right (no adjustable values in Presets category).
+        if (input->IsKeyJustPressed(Key::Left) || input->IsKeyJustPressed(Key::Right)) {
+            return true;
+        }
     }
 
     // Up/Down: navigate within expanded category
@@ -517,6 +587,21 @@ void VFXParameterPanel::LogCurrentCategory() const {
 
     if (!cat.expanded) {
         UZ_LOG(App, Info, "  Press Enter to expand");
+        return;
+    }
+
+    // ── Presets category: show preset name list + footer ─────────────────
+    if (m_selectedCategory == 8) {
+        if (m_presetNames.empty()) {
+            UZ_LOG(App, Info, "  (no presets found — press Shift+S to save the current emitter)");
+        } else {
+            for (int i = 0; i < static_cast<int>(m_presetNames.size()); ++i) {
+                const char* marker = (i == m_selectedPreset) ? " >> " : "    ";
+                UZ_LOG(App, Info, "{}[{}] {}", marker, i + 1, m_presetNames[static_cast<size_t>(i)].c_str());
+            }
+        }
+        UZ_LOG(App, Info, "  {} preset(s)  [Enter: load]  [Shift+S: save]  [Del: delete]  [F6: refresh]",
+               static_cast<int>(m_presetNames.size()));
         return;
     }
 

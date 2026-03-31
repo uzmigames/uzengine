@@ -37,6 +37,8 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
+#include <string>
 #include <vector>
 
 namespace uz {
@@ -129,6 +131,24 @@ public:
     /// Sets panel visibility explicitly.
     void SetVisible(bool visible);
 
+    /// Supplies the list of preset names shown in Category 9 "Presets".
+    ///
+    /// # Arguments
+    /// * `names` — Filename stems of the available presets (no directory, no .json).
+    ///
+    /// Call this after `RefreshPresetList()` to keep the browser in sync.
+    void SetPresetList(const std::vector<std::string>& names);
+
+    /// Registers a callback invoked when the user presses Enter on a preset row.
+    ///
+    /// # Arguments
+    /// * `cb` — Called with the zero-based index of the selected preset.
+    void SetPresetLoadCallback(std::function<void(int)> cb);
+
+    /// Returns the currently selected preset index within the Presets category.
+    /// Returns -1 if no presets are available or the Presets category is not active.
+    [[nodiscard]] int GetSelectedPresetIndex() const { return m_selectedPreset; }
+
 private:
     bool m_visible = false;                          ///< Panel open/closed state.
     int  m_selectedCategory = 0;                     ///< Currently focused category index.
@@ -140,6 +160,11 @@ private:
     bool* m_burstMode  = nullptr;  ///< Pointer to burst mode flag.
     bool* m_subEmitter = nullptr;  ///< Pointer to sub-emitter enabled flag.
     bool* m_frustumCull = nullptr; ///< Pointer to frustum culling flag.
+
+    // ── Presets category (Category 9, index 8) ────────────────────────
+    std::vector<std::string>      m_presetNames;      ///< Display names supplied by the demo.
+    std::function<void(int)>      m_onPresetLoad;     ///< Callback: load preset at given index.
+    int                           m_selectedPreset = 0; ///< Row cursor in the Presets category.
 
     /// Builds the full category tree with pointers into config fields.
     void BuildCategories(VFXEmitterConfig* config, float* spawnRate, uint32_t* burstCount,
