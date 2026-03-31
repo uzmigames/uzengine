@@ -38,9 +38,10 @@ struct HeightFogComponent {
     /// Base fog density factor. Higher = thicker fog. Typical range: 0.001 to 0.1.
     float density = 0.0436f;
 
-    /// Height falloff coefficient. Controls how quickly fog thins with altitude.
-    /// Higher = fog concentrated closer to baseHeight. Typical: 0.2 to 2.0.
-    float heightFalloff = 0.2f;
+    /// Height falloff coefficient (per cm). Controls how quickly fog thins with altitude.
+    /// Engine uses cm units. 0.002 = fog halves every ~346cm (~3.5m).
+    /// @ref Hillaire 2016 — typical range 0.001 to 0.01 in cm-based engines.
+    float heightFalloff = 0.002f;
 
     /// World-space height at which fog density is at its maximum (cm).
     /// 0 = ground level. Negative = below ground (fog from underground up).
