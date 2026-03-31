@@ -14,13 +14,18 @@
       "components": {
         "transform": { "position": [0, 0, -1], "scale": [800, 800, 2] },
         "mesh": { "asset": "meshes/cube.uzmesh" },
-        "material": { "albedo": "textures/checker.png", "roughnessMultiplier": 1.0 }
+        "material": {
+          "albedo": "textures/Concrete/Poliigon_ConcreteWorn_8690_BaseColor.jpg",
+          "normal": "textures/Concrete/Poliigon_ConcreteWorn_8690_Normal.png",
+          "roughness": "textures/Concrete/Poliigon_ConcreteWorn_8690_Roughness.jpg",
+          "roughnessMultiplier": 1.0
+        }
       }
     },
     {
       "name": "BackWall",
       "components": {
-        "transform": { "position": [0, 300, 150], "scale": [600, 4, 300] },
+        "transform": { "position": [0, 400, 200], "scale": [800, 4, 400] },
         "mesh": { "asset": "meshes/cube.uzmesh" },
         "material": {
           "albedo": "textures/Concrete/Poliigon_ConcreteWorn_8690_BaseColor.jpg",
@@ -32,7 +37,7 @@
     {
       "name": "Pillar_Left",
       "components": {
-        "transform": { "position": [-150, 100, 75], "scale": [60, 60, 150] },
+        "transform": { "position": [-200, 100, 100], "scale": [80, 80, 200] },
         "mesh": { "asset": "meshes/cube.uzmesh" },
         "material": {
           "albedo": "textures/Stonebricks/stonebricks_albedo.jpg",
@@ -46,7 +51,7 @@
     {
       "name": "Pillar_Right",
       "components": {
-        "transform": { "position": [150, 100, 75], "scale": [60, 60, 150] },
+        "transform": { "position": [200, 100, 100], "scale": [80, 80, 200] },
         "mesh": { "asset": "meshes/cube.uzmesh" },
         "material": {
           "albedo": "textures/Stonebricks/stonebricks_albedo.jpg",
@@ -60,7 +65,7 @@
     {
       "name": "Decal_LeakingStain_Floor",
       "components": {
-        "transform": { "position": [-100, 50, 1], "rotation": [0, 0, 0], "scale": [200, 200, 50] },
+        "transform": { "position": [-150, 50, 1], "rotation": [0, 0, 0], "scale": [300, 300, 50] },
         "decal": {
           "albedo": "textures/decals/leaking_stain_color.png",
           "normal": "textures/decals/leaking_stain_normal.png",
@@ -71,7 +76,7 @@
     {
       "name": "Decal_RustStain_Floor",
       "components": {
-        "transform": { "position": [100, -50, 1], "rotation": [0, 0, 45], "scale": [150, 150, 50] },
+        "transform": { "position": [150, -50, 1], "rotation": [0, 0, 45], "scale": [250, 250, 50] },
         "decal": {
           "albedo": "textures/decals/rust_stain_color.png",
           "normal": "textures/decals/rust_stain_normal.png",
@@ -82,7 +87,7 @@
     {
       "name": "Decal_RustStain_Wall",
       "components": {
-        "transform": { "position": [0, 298, 120], "rotation": [90, 0, 0], "scale": [200, 200, 50] },
+        "transform": { "position": [0, 398, 150], "rotation": [90, 0, 0], "scale": [300, 300, 50] },
         "decal": {
           "albedo": "textures/decals/rust_stain_color.png",
           "normal": "textures/decals/rust_stain_normal.png",
@@ -93,7 +98,7 @@
     {
       "name": "Decal_Manhole_Floor",
       "components": {
-        "transform": { "position": [0, 100, 1], "rotation": [0, 0, 0], "scale": [120, 120, 30] },
+        "transform": { "position": [0, 150, 1], "rotation": [0, 0, 0], "scale": [200, 200, 30] },
         "decal": {
           "albedo": "textures/decals/manhole_color.png",
           "normal": "textures/decals/manhole_normal.png",
@@ -105,7 +110,7 @@
     {
       "name": "Decal_LeakingStain_Pillar",
       "components": {
-        "transform": { "position": [-150, 98, 100], "rotation": [90, 0, 0], "scale": [80, 80, 30] },
+        "transform": { "position": [-200, 98, 120], "rotation": [90, 0, 0], "scale": [120, 120, 30] },
         "decal": {
           "albedo": "textures/decals/leaking_stain_color.png",
           "normal": "textures/decals/leaking_stain_normal.png",
