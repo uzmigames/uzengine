@@ -120,19 +120,18 @@ float4 main(FSInput input) : SV_Target {
             float  NoH = saturate(dot(N, H));
             float  VoH = saturate(dot(V, H));
 
-            // Specular: Falcor StandardBSDF pattern — F*D*G / (4*NdotV)
-            // @ref Falcor SpecularMicrofacet.slang eval()
+            // Specular: D * V * F where V = G / (4*NdotV*NdotL)
+            // V_SmithGGXCorrelated is numerically stable (no division by NdotV)
+            // @ref Heitz 2014 + Hammon 2017 — optimized correlated Smith visibility
             float  D = D_GGX(alpha, NoH);
-            float  G = G_SmithGGXCorrelated(alpha, NoV, NoL);
-            float3 F = F_Schlick(F0, float3(1, 1, 1), VoH); // F90 = 1.0 per Falcor
-            float3 spec = F * D * G * 0.25 / max(NoV, 1e-4);
+            float  Vis = V_SmithGGXCorrelated(alpha, NoV, NoL);
+            float3 F = F_Schlick(F0, float3(1, 1, 1), VoH);
+            float3 spec = D * Vis * F;
 
-            // Diffuse: Falcor FrostbiteDiffuseBRDF — evalWeight * M_1_PI * NdotL
-            // diffColor already = baseColor * (1 - metallic), so metallic separation is implicit
-            // @ref Falcor FrostbiteDiffuseBRDF.slang eval()
-            float3 diff = EvalFrostbiteDiffuse(diffColor, roughness, NoV, NoL, VoH) * NoL;
+            // Diffuse: Frostbite energy-conserving (already divided by PI)
+            float3 diff = EvalFrostbiteDiffuse(diffColor, roughness, NoV, NoL, VoH);
 
-            Lo = (diff + spec * NoL) * lightColor.xyz * shadow;
+            Lo = (diff + spec) * lightColor.xyz * NoL * shadow;
         }
     }
 
@@ -157,12 +156,12 @@ float4 main(FSInput input) : SV_Target {
         float  VoHp = saturate(dot(V, Hp));
 
         float  Dp   = D_GGX(alpha, NoHp);
-        float  Gp   = G_SmithGGXCorrelated(alpha, NoV, NoLp);
+        float  Visp = V_SmithGGXCorrelated(alpha, NoV, NoLp);
         float3 Fp   = F_Schlick(F0, float3(1,1,1), VoHp);
-        float3 specp = Fp * Dp * Gp * 0.25 / max(NoV, 1e-4);
+        float3 specp = Dp * Visp * Fp;
         float3 diffp = EvalFrostbiteDiffuse(diffColor, roughness, NoV, NoLp, VoHp);
 
-        Lo += (diffp * NoLp + specp * NoLp) * pl.color * atten;
+        Lo += (diffp + specp) * pl.color * NoLp * atten;
     }
 
     // ── Spot lights ───────────────────────────────────────────────────────
@@ -191,12 +190,12 @@ float4 main(FSInput input) : SV_Target {
         float  VoHs = saturate(dot(V, Hs));
 
         float  Ds   = D_GGX(alpha, NoHs);
-        float  Gs   = G_SmithGGXCorrelated(alpha, NoV, NoLs);
+        float  Viss = V_SmithGGXCorrelated(alpha, NoV, NoLs);
         float3 Fs   = F_Schlick(F0, float3(1,1,1), VoHs);
-        float3 specs = Fs * Ds * Gs * 0.25 / max(NoV, 1e-4);
+        float3 specs = Ds * Viss * Fs;
         float3 diffs = EvalFrostbiteDiffuse(diffColor, roughness, NoV, NoLs, VoHs);
 
-        Lo += (diffs * NoLs + specs * NoLs) * sl.color * atten;
+        Lo += (diffs + specs) * sl.color * NoLs * atten;
     }
 
     // ── IBL ambient (Falcor split-sum pattern) ──────────────────────────
