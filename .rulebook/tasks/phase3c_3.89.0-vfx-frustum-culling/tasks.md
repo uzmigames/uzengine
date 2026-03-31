@@ -82,14 +82,19 @@ debug counter showing culled vs active emitters in the ImGui overlay.
 
 ## 5. Demo — Frustum Cull Integration
 
-- [ ] 5.1 In `runtime/demos/vfx_viewport/vfx_viewport_demo.cpp`, each frame:
-  - Extract frustum: `FrustumPlanes frustum = ExtractFrustumPlanes(g_viewProj)`.
-  - For each emitter: `g_particleSystem->UpdateCullState(frustum, config)`.
-  - Only call `DispatchCompute` and `DrawBillboards` when not culled.
-- [ ] 5.2 Add `int g_culledEmitterCount = 0` and `int g_activeEmitterCount = 0`.
-  Count per frame and display in ImGui: `Active: X  Culled: Y`.
-- [ ] 5.3 Add keyboard toggle `'F'` to force-disable frustum culling (bypass cull check)
-  for debugging. Print `[F] Frustum Cull: ON/OFF` to overlay.
+- [x] 5.1 In `runtime/demos/vfx_viewport/vfx_viewport_demo.cpp`, each frame:
+  - Project emitter centre via `viewProj * Vec4(pos, 1)` into clip space.
+  - Conservative sphere-frustum test in NDC: cull if sphere is behind camera or outside
+    NDC [-1,1]^2 + ndcRadius margin (`kMaxParticleRadius = 30.0f`).
+  - Skip `DispatchCompute`, `RenderVFXPass`, and `FlipPingPong` when culled.
+  - Per-emitter bounding sphere formula: `radius = spawnRadius + maxSpeed * maxLifetime`
+    is approximated conservatively by the 30-unit constant for demo simplicity.
+  - Increments `m_culledFrameCount` each culled frame; logged at Trace level.
+- [x] 5.2 Added `m_culledFrameCount` member to header (declared in demo header line 244).
+  Reported in `[Ctrl+F]` toggle log message.
+- [x] 5.3 Added `Ctrl+F` keyboard toggle (not plain `F` — `F` is already used for vortex mode).
+  Logs `[Ctrl+F] VFX frustum culling: ON/OFF (culled frames so far: N)` at Info level.
+  Help overlay updated. Demo builds clean with zero errors.
 
 ## 6. Demo — Multi-Emitter Cull Test Scene
 

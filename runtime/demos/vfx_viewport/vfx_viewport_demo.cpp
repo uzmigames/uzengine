@@ -66,6 +66,59 @@ VFXViewportDemo::VFXViewportDemo(const DemoConfig& config)
     m_vfxEmitter = presets[0].config;
     m_vfxSpawnRate = presets[0].spawnRate;
     m_prevViewProj = Mat4::Identity();
+
+    // ── Sub-emitter secondary "sparks" config (Task 3.87.0) ──────────────
+    // Orange-yellow sparks that fire after kSubEmitterDelay seconds following
+    // the primary burst. High initial velocity, wide cone spread, short
+    // lifetime, additive blending, velocity-aligned stretch — reads as hot
+    // sparks flying outward from an explosion origin.
+    // Position is set at dispatch time from the primary emitter's location.
+    m_subEmitterConfig = {};
+    // Small, fast particles
+    m_subEmitterConfig.initialSize        = 0.02f;    // Much smaller than primary
+    m_subEmitterConfig.spawnRadius        = 0.05f;    // Tight origin cluster
+    // High velocity — sparks fly outward fast in all directions
+    m_subEmitterConfig.spawnVelocity[0]   = 0.0f;
+    m_subEmitterConfig.spawnVelocity[1]   = 0.0f;
+    m_subEmitterConfig.spawnVelocity[2]   = 12.0f;    // Z-up mean velocity
+    m_subEmitterConfig.velocityVariation  = 8.0f;     // Large spread
+    m_subEmitterConfig.spreadAngle        = 3.14159f; // Full sphere spread
+    // Short lifetime — sparks burn out quickly
+    m_subEmitterConfig.minLifetime        = 0.3f;
+    m_subEmitterConfig.maxLifetime        = 0.8f;
+    // Orange-yellow base color
+    m_subEmitterConfig.initialColor[0]    = 1.0f;     // R
+    m_subEmitterConfig.initialColor[1]    = 0.55f;    // G (orange-yellow)
+    m_subEmitterConfig.initialColor[2]    = 0.05f;    // B
+    m_subEmitterConfig.initialColor[3]    = 1.0f;     // A
+    // Color fades from bright orange to dark red then transparent over lifetime
+    m_subEmitterConfig.colorLifeStartR    = 1.0f;
+    m_subEmitterConfig.colorLifeStartG    = 0.6f;
+    m_subEmitterConfig.colorLifeStartB    = 0.1f;
+    m_subEmitterConfig.colorLifeStartA    = 1.0f;
+    m_subEmitterConfig.colorLifeEndR      = 0.6f;
+    m_subEmitterConfig.colorLifeEndG      = 0.1f;
+    m_subEmitterConfig.colorLifeEndB      = 0.0f;
+    m_subEmitterConfig.colorLifeEndA      = 0.0f;    // Fade to transparent
+    // Size over lifetime: born full size, shrink to nothing
+    m_subEmitterConfig.sizeOverLifeStart    = 1.0f;
+    m_subEmitterConfig.sizeOverLifePeak     = 0.8f;
+    m_subEmitterConfig.sizeOverLifeEnd      = 0.0f;
+    m_subEmitterConfig.sizeOverLifePeakTime = 0.2f;  // Peak early, then shrink fast
+    // High emissive — sparks are self-illuminating hot particles
+    m_subEmitterConfig.emissiveIntensity  = 4.0f;
+    // Velocity-aligned stretch so sparks elongate along their trajectory
+    m_subEmitterConfig.alignmentMode      = 1;        // VelocityAligned
+    m_subEmitterConfig.stretchFactor      = 0.8f;
+    // Light gravity — sparks arc downward but slowly
+    m_subEmitterConfig.gravity[0]         = 0.0f;
+    m_subEmitterConfig.gravity[1]         = 0.0f;
+    m_subEmitterConfig.gravity[2]         = -4.0f;   // Gentle Z-down pull
+    m_subEmitterConfig.damping            = 0.05f;    // Low air resistance
+    // Additive blending so sparks glow over the background
+    m_subEmitterConfig.blendMode          = 1;        // Additive (One/One)
+    // Soft particle fade for smooth edge at depth intersections
+    m_subEmitterConfig.softFadeDistance   = 0.1f;
 }
 
 void VFXViewportDemo::SetTexturePaths(const std::string& albedo,
@@ -687,7 +740,13 @@ void VFXViewportDemo::HandleInput(float dt) {
         m_vfxSystem.UploadInitialFreeList(cmd);
         m_vfxSpawnAccum = 0.0f;
         m_vfxBurstPending = true;
-        UZ_LOG(App, Info, "[VFX] Particles reset — emission restarted");
+        // Start sub-emitter countdown if enabled — fires secondary sparks burst
+        // after kSubEmitterDelay seconds at the same world position.
+        if (m_subEmitterEnabled) {
+            m_subEmitterTimer = kSubEmitterDelay;
+        }
+        UZ_LOG(App, Info, "[VFX] Particles reset — emission restarted{}",
+               m_subEmitterEnabled ? " (sub-emitter armed)" : "");
     }
 
     // Toggle burst/continuous mode (Insert key)
@@ -930,6 +989,22 @@ void VFXViewportDemo::HandleInput(float dt) {
             m_envRotation = std::fmod(m_envRotation + 360.0f, 360.0f);
             UZ_LOG(App, Info, "Environment rotation: {:.0f} deg", m_envRotation);
         }
+        // Sub-emitter toggle (E key — no selection) — Task 3.87.0
+        // When enabled, pressing Delete fires the primary burst AND starts a
+        // kSubEmitterDelay-second countdown that dispatches a secondary sparks
+        // burst at the same world position. This is a CPU-side mechanism: no
+        // GPU readback, no per-particle death flags.
+        if (input->IsKeyJustPressed(Key::E)) {
+            m_subEmitterEnabled = !m_subEmitterEnabled;
+            // Cancel any in-flight countdown when disabling, so a stale timer
+            // from a previous burst does not fire after the mode is turned off.
+            if (!m_subEmitterEnabled) {
+                m_subEmitterTimer = -1.0f;
+            }
+            UZ_LOG(App, Info, "[VFX] Sub-emitter: {} ({} sparks after {:.2f}s)",
+                   m_subEmitterEnabled ? "ON" : "OFF",
+                   m_subEmitterCount, kSubEmitterDelay);
+        }
     }
 
     // Object rotation (Alt + LMB drag) — only when NOT dragging gizmo
@@ -1110,6 +1185,14 @@ void VFXViewportDemo::HandleInput(float dt) {
         }
     }
 
+    // Frustum culling toggle (Ctrl+F) — skips VFX dispatch/render when emitter is off-screen
+    if (input->IsKeyJustPressed(Key::F) &&
+        (input->IsKeyDown(Key::LeftCtrl) || input->IsKeyDown(Key::RightCtrl))) {
+        m_frustumCullingEnabled = !m_frustumCullingEnabled;
+        UZ_LOG(App, Info, "[Ctrl+F] VFX frustum culling: {} (culled frames so far: {})",
+               m_frustumCullingEnabled ? "ON" : "OFF", m_culledFrameCount);
+    }
+
     // Help overlay (H key) — prints keyboard shortcut reference to console
     if (input->IsKeyJustPressed(Key::H)) {
         UZ_LOG(App, Info, "=== VFX Viewport Controls ===");
@@ -1138,12 +1221,15 @@ void VFXViewportDemo::HandleInput(float dt) {
         UZ_LOG(App, Info, "  Tab                  — Cycle VFX presets (Shift+Tab = toggle)");
         UZ_LOG(App, Info, "  Delete               — Reset particles + fire burst");
         UZ_LOG(App, Info, "  Insert               — Toggle Burst / Continuous mode");
+        UZ_LOG(App, Info, "  E (no selection)     — Toggle sub-emitter (secondary sparks burst after {:.2f}s)",
+               kSubEmitterDelay);
         UZ_LOG(App, Info, "  M                    — Cycle VFX material presets");
         UZ_LOG(App, Info, "  Space                — Launch fireball projectile (with trail)");
         UZ_LOG(App, Info, "  Y                    — Toggle trails");
         UZ_LOG(App, Info, "  D                    — Toggle decals");
         UZ_LOG(App, Info, "  X                    — Toggle distortion");
         UZ_LOG(App, Info, "  J                    — Toggle lit particles (NdotL + ambient)");
+        UZ_LOG(App, Info, "  Ctrl+F               — Toggle VFX frustum culling (sphere-frustum test)");
         UZ_LOG(App, Info, "  --- VFX Controls (number keys) ---");
         UZ_LOG(App, Info, "  1/2                  — Spawn rate ↑/↓");
         UZ_LOG(App, Info, "  3/4                  — Particle size ↑/↓");
@@ -1276,8 +1362,57 @@ void VFXViewportDemo::OnFrame(float dt) {
         }
     }
 
+    // ── VFX frustum culling (sphere-frustum test in clip space) ──────────
+    // Conservative bounding sphere centred on the emitter with a radius large
+    // enough to contain the maximum particle travel distance. We project the
+    // sphere centre into clip space and check whether the sphere overlaps the
+    // NDC cube [-1,1]^2. Particles behind the camera (w < -r) are culled
+    // immediately. The test is intentionally conservative: false positives
+    // (visible emitters that are not culled) are acceptable; false negatives
+    // (culled emitters that were actually visible) are not.
+    bool vfxCulled = false;
+    if (m_frustumCullingEnabled && m_vfxEnabled) {
+        // Emitter position mirrors the logic in the dispatch block below.
+        const Vec3 emitterPos = m_fireballActive
+            ? m_fireballPos
+            : Vec3(m_meshTransforms[m_currentMesh].position.x,
+                   m_meshTransforms[m_currentMesh].position.y,
+                   m_meshTransforms[m_currentMesh].position.z + 3.0f);
+
+        // Conservative bounding radius: covers spawn radius + max particle lifetime
+        // × max initial speed + size so no living particle can escape this sphere.
+        constexpr float kMaxParticleRadius = 30.0f;
+
+        // Project emitter centre through the view-projection matrix.
+        const Vec4 clipPos = viewProj * Vec4(emitterPos.x, emitterPos.y, emitterPos.z, 1.0f);
+
+        if (clipPos.w < -kMaxParticleRadius) {
+            // Entire bounding sphere is behind the near plane — definitely off-screen.
+            vfxCulled = true;
+        } else if (clipPos.w > 0.0f) {
+            // Sphere is in front of the camera; compare NDC extents to [-1, 1].
+            const float rcpW      = 1.0f / clipPos.w;
+            const float ndcX      = clipPos.x * rcpW;
+            const float ndcY      = clipPos.y * rcpW;
+            // Conservative NDC radius: world-space radius divided by w gives a
+            // screen-space approximation (exact only on-axis, conservative off-axis).
+            const float ndcRadius = kMaxParticleRadius * rcpW;
+            if (ndcX < -1.0f - ndcRadius || ndcX > 1.0f + ndcRadius ||
+                ndcY < -1.0f - ndcRadius || ndcY > 1.0f + ndcRadius) {
+                vfxCulled = true;
+            }
+        }
+        // When clipPos.w <= 0 and >= -kMaxParticleRadius the sphere straddles the
+        // near plane; we conservatively treat it as visible (vfxCulled stays false).
+
+        if (vfxCulled) {
+            ++m_culledFrameCount;
+            UZ_LOG(App, Trace, "[VFX] Frustum-culled (frame {})", m_culledFrameCount);
+        }
+    }
+
     // ── VFX compute dispatch ─────────────────────────────────────────────
-    if (m_vfxEnabled) {
+    if (m_vfxEnabled && !vfxCulled) {
         // Emitter follows fireball if active, otherwise follows mesh
         if (m_fireballActive) {
             m_vfxEmitter.position[0] = m_fireballPos.x;
@@ -1404,6 +1539,35 @@ void VFXViewportDemo::OnFrame(float dt) {
 
         m_vfxSystem.DispatchCompute(cmd, cbRing, m_vfxEmitter, spawnCount,
                                     dt, GetFrameIndex(), m_totalTime);
+
+        // ── Sub-emitter secondary burst (Task 3.87.0) ───────────────────
+        // Count down the sub-emitter timer (set by Delete key when enabled).
+        // When it fires, dispatch a second DispatchCompute using the sparks
+        // config at the same world position as the primary emitter.
+        // The secondary dispatch runs on the same VFXParticleSystem so sparks
+        // share the same particle pool budget as the primary particles.
+        if (m_subEmitterTimer > 0.0f) {
+            m_subEmitterTimer -= dt;
+            if (m_subEmitterTimer <= 0.0f) {
+                m_subEmitterTimer = -1.0f;   // Deactivate timer
+
+                // Build the secondary config at the primary emitter's position
+                // so sparks originate from the same world location.
+                VFXEmitterConfig subCfg = m_subEmitterConfig;
+                subCfg.position[0] = m_vfxEmitter.position[0];
+                subCfg.position[1] = m_vfxEmitter.position[1];
+                subCfg.position[2] = m_vfxEmitter.position[2];
+
+                // Sparks are a brief burst — wind/kill volumes are intentionally
+                // not applied here so the sparks fly freely without deflection.
+                m_vfxSystem.DispatchCompute(cmd, cbRing, subCfg,
+                                            m_subEmitterCount,
+                                            dt, GetFrameIndex(), m_totalTime);
+                UZ_LOG(App, Info, "[VFX] Sub-emitter fired {} sparks at ({:.1f},{:.1f},{:.1f})",
+                       m_subEmitterCount,
+                       subCfg.position[0], subCfg.position[1], subCfg.position[2]);
+            }
+        }
     }
 
     // ── Shadow pass ──────────────────────────────────────────────────────
@@ -1514,7 +1678,11 @@ void VFXViewportDemo::OnFrame(float dt) {
     }
 
     // ── VFX billboard rendering ──────────────────────────────────────────
-    if (m_vfxEnabled) {
+    // Skip render (and ping-pong flip) when the emitter was frustum-culled.
+    // FlipPingPong is intentionally omitted for culled frames: the GPU
+    // simulation was also skipped, so the live particle buffer is unchanged
+    // and the previous frame's read/write assignment remains correct.
+    if (m_vfxEnabled && !vfxCulled) {
         RenderVFXPass(cmd, perFrameGpu, dt);
         m_vfxSystem.FlipPingPong();
     }

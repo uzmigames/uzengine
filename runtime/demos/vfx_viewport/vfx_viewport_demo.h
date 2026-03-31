@@ -235,9 +235,16 @@ private:
     bool m_pointLightsEnabled = false;             ///< Point light toggle (L key).
 
     // ── Sub-emitter state (Task 3.87.0 — CPU-side simplified sub-emitter) ──
-    bool  m_subEmitterEnabled = false;   ///< E key toggles sub-emitter mode.
-    float m_subEmitterTimer   = 0.0f;    ///< Countdown timer; fires secondary burst when <= 0.
-    static constexpr float kSubEmitterDelay = 0.4f; ///< Delay (s) from primary to secondary burst.
+    /// When enabled, each primary burst fires a secondary "sparks" burst after
+    /// kSubEmitterDelay seconds using a separate emitter configuration. This is
+    /// a pure CPU-side implementation: no GPU readback, no death-event flags.
+    /// The secondary burst is dispatched as an independent DispatchCompute call
+    /// on the same VFXParticleSystem with a temporary emitter config override.
+    bool  m_subEmitterEnabled = false;   ///< E key (no selection) toggles sub-emitter mode.
+    float m_subEmitterTimer   = -1.0f;   ///< Countdown (s). < 0 = inactive. Fires when it crosses 0.
+    static constexpr float kSubEmitterDelay  = 0.4f;  ///< Delay (s) from primary burst to secondary.
+    uint32_t m_subEmitterCount = 100;    ///< Number of secondary "sparks" particles per burst.
+    VFXEmitterConfig m_subEmitterConfig; ///< Secondary burst emitter config (orange sparks).
 
     // ── Frustum culling state (Task 3.89.0) ─────────────────────────────────
     bool     m_frustumCullingEnabled = false; ///< Ctrl+F toggles CPU frustum cull check.
