@@ -99,6 +99,7 @@ void VFXEditorUI::SetScreenSize(uint32_t w, uint32_t h) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void VFXEditorUI::BeginFrame(uint32_t frameIndex) {
+    m_lastFrameIndex = frameIndex;
     m_textRenderer.BeginFrame(frameIndex);
 }
 
@@ -187,7 +188,21 @@ bool VFXEditorUI::HandleMouse(const InputSystem* input, float dt) {
 
 void VFXEditorUI::Render(IRHICommandList* cmdList, CBRingAllocator& cbRing) {
     if (!m_initialized) return;
+    // Pass 1: render base UI (menu bar, panels, toolbar)
     m_textRenderer.Render(cmdList, cbRing, m_font);
+
+    // Pass 2: render dropdown overlays ON TOP in a separate batch.
+    // By calling BeginFrame again (same frame index → same buffer slot), we
+    // clear the vertex arrays and rebuild with ONLY dropdown content. This
+    // second Render() draws dropdown rects+text after all base UI rects+text,
+    // ensuring dropdowns visually cover everything beneath them.
+    bool hasDropdown = (m_dropdownPtr != nullptr) || (m_openMenu >= 0);
+    if (hasDropdown) {
+        m_textRenderer.BeginFrame(m_lastFrameIndex);
+        BuildMenuDropdowns();
+        BuildDropdownOverlay();
+        m_textRenderer.Render(cmdList, cbRing, m_font);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -210,11 +225,8 @@ void VFXEditorUI::BuildUI(VFXEmitterConfig* config, float* spawnRate, bool* burs
         BuildRightPanel(config);
     }
 
-    // Layer 2: ALL dropdowns drawn LAST (on top of everything).
-    // Menu dropdowns and property dropdowns must render after panels
-    // so they visually cover any overlapping content beneath.
-    BuildMenuDropdowns();
-    BuildDropdownOverlay();
+    // Layer 2: Dropdowns are rendered in a SEPARATE batch in Render()
+    // so both their rects AND text appear on top of panel content.
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

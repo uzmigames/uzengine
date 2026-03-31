@@ -128,6 +128,7 @@ private:
     TextRenderer m_textRenderer;
     BitmapFont   m_font;
     bool         m_initialized = false;
+    uint32_t     m_lastFrameIndex = 0; ///< Saved for dropdown overlay second render pass.
 
     // ── Screen dimensions ────────────────────────────────────────────────
     uint32_t m_screenW = 1280;
