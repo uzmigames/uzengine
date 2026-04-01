@@ -49,7 +49,7 @@ struct HeightFogComponent {
     /// -10 = just below ground. The exponential height fog integrates
     /// density along the view ray — rays going toward the ground pass
     /// through dense fog near baseHeight even if camera is above it.
-    float baseHeight = -10.f;
+    float baseHeight = -5000.f;
 
     /// Maximum fog opacity (0 to 1). Prevents fog from fully obscuring distant objects.
     float maxOpacity = 1.0f;

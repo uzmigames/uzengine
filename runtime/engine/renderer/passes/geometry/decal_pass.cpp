@@ -53,22 +53,12 @@ void AddDecalRenderPass(rg::RgBuilder& builder, const DecalRenderPassDesc& desc)
         // Read the depth buffer for world position reconstruction.
         pb.Read(desc.depthRes, RHIResourceState::ShaderResource);
 
-        // Read the GBuffer normal for angle fade.
-        pb.Read(desc.normalRes, RHIResourceState::ShaderResource);
-
         pb.SetExecutionCallback([desc](IRHICommandList* cmd, const rg::RgPassResources& res) {
             UZ_PROFILE_SCOPE("Decal::Render");
 
             auto dbufA = res.GetTexture(desc.dbufferARes);
             auto dbufB = res.GetTexture(desc.dbufferBRes);
             auto dbufC = res.GetTexture(desc.dbufferCRes);
-
-            // ── Clear DBuffer targets to (0,0,0,0) ──────────────────────
-            // Zero alpha = no decal contribution at any pixel.
-            constexpr float kClearZero[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-            cmd->ClearRenderTarget(dbufA, kClearZero);
-            cmd->ClearRenderTarget(dbufB, kClearZero);
-            cmd->ClearRenderTarget(dbufC, kClearZero);
 
             // ── Begin render pass with 3 color attachments, no depth ────
             // Decals use the depth buffer as a read-only SRV, not as a

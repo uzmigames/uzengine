@@ -380,6 +380,26 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
         drawIndex++;
     }
 
+    // ── Preload decal textures from DecalComponent paths ────────────────
+    // DecalComponent stores VFS-relative texture paths (set by scene file).
+    // Load them into the texture map so the decal gathering pass in
+    // frame_geometry.cpp can resolve paths → SRV indices.
+    {
+        auto decalView = world->GetRegistry().view<DecalComponent>();
+        for (auto [enttEntity, decal] : decalView.each()) {
+            if (!decal.enabled) continue;
+            auto tryLoadDecalTex = [&](const std::string& path, bool srgb) {
+                if (path.empty()) return;
+                if (m_textureMap.find(path) != m_textureMap.end()) return;
+                LoadTexture(path, vfs, cmdList, srgb);
+            };
+            tryLoadDecalTex(decal.albedoPath,    true);   // albedo is sRGB
+            tryLoadDecalTex(decal.normalPath,    false);  // normal is linear
+            tryLoadDecalTex(decal.roughnessPath, false);  // roughness is linear
+            tryLoadDecalTex(decal.metallicPath,  false);  // metallic is linear
+        }
+    }
+
     // ── Flush batched mesh uploads ───────────────────────────────────────
     // All meshes loaded during this sync pass were deferred — submit all
     // copy commands in a single GPU submission instead of one per mesh.

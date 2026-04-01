@@ -33,6 +33,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace uz {
 
@@ -71,6 +72,21 @@ struct DecalComponent {
     /// R = roughness, G = metallic, B = AO override.
     /// UINT32_MAX = no material modification.
     uint32_t materialTextureId = UINT32_MAX;
+
+    // ── Texture Paths (for scene-file loading) ───────────────────────────
+
+    /// VFS-relative path to the albedo texture. Resolved to albedoTextureId
+    /// at render time via the SceneRenderer texture map.
+    std::string albedoPath;
+
+    /// VFS-relative path to the normal map texture.
+    std::string normalPath;
+
+    /// VFS-relative path to the roughness texture.
+    std::string roughnessPath;
+
+    /// VFS-relative path to the metallic texture.
+    std::string metallicPath;
 
     // ── Material Properties ───────────────────────────────────────────────
 

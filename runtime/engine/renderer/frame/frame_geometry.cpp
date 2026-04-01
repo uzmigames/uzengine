@@ -231,77 +231,79 @@ void SceneRenderer::RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContex
                 }
             }
 
-            // ── DBuffer Decal Render Pass (after depth prepass, before GBuffer) ──
-            // @ref Valient 2014 "Deferred Rendering in Killzone: Shadow Fall"
-            // Gathers all DecalComponent entities, sorts by priority, and renders
-            // into three DBuffer targets. Requires depth for world pos reconstruction.
-            if (ctx.dbufferARes.IsValid() && ctx.world) {
-                // Gather decals from ECS
+            // ── Decal gathering (used after GBuffer pass) ─────────────────
+            if (ctx.world) {
                 std::vector<DecalInfo> decalInfos;
                 auto decalView = ctx.world->View<DecalComponent, SceneComponent>();
                 for (auto [enttEntity, decal, scene] : decalView.each()) {
                     if (!decal.enabled) continue;
 
-                    const Mat4& worldMat = scene.GetWorldMatrix();
+                    // The decal OBB is defined by the entity's transform scale.
+                    // The unit cube [-0.5, 0.5]^3 maps to the decal volume when
+                    // transformed by the world matrix (position + rotation + scale).
+                    // No additional extents multiplication — the scale IS the size.
+                    const Mat4& decalWorldMat = scene.GetWorldMatrix();
 
-                    // Build decal world matrix incorporating extents as scale.
-                    // The unit cube [-0.5, 0.5]^3 is scaled by 2*extents to form
-                    // the decal OBB. We bake the extents into the world matrix
-                    // by pre-multiplying a scale matrix.
-                    Vec3 extentScale(decal.extentsX * 2.0f,
-                                     decal.extentsY * 2.0f,
-                                     decal.extentsZ * 2.0f);
-                    Mat4 scaleMat = Mat4::TRS(Vec3(0.0f, 0.0f, 0.0f),
-                                              Quat::Identity(),
-                                              extentScale);
-                    Mat4 decalWorldMat = scaleMat * worldMat;
+                    auto resolveDecalTex = [&](uint32_t explicitSrv, const std::string& path) -> uint32_t {
+                        if (explicitSrv != UINT32_MAX) return explicitSrv;
+                        if (path.empty()) return UINT32_MAX;
+                        auto texIt = m_textureMap.find(path);
+                        if (texIt != m_textureMap.end() && texIt->second < static_cast<uint32_t>(m_textures.size())) {
+                            return m_textures[texIt->second].srvIndex;
+                        }
+                        return UINT32_MAX;
+                    };
+
+                    // Precompute SvPositionToDecal: pixel coords + depth → decal local [-1,1]³
+                    // @ref UE5 DeferredDecal: SvPositionToDecal = ScreenToNDC × InvViewProj × WorldToDecal
+                    // ScreenToNDC transforms pixel (x,y,depth,1) → NDC (ndc_x, ndc_y, depth, 1):
+                    //   ndc_x = x * (2/w) - 1
+                    //   ndc_y = y * (-2/h) + 1   (flip Y: screen Y-down, NDC Y-up)
+                    //   ndc_z = depth             (pass through)
+                    const float w = ctx.renderWidth;
+                    const float h = ctx.renderHeight;
+                    // Row-vector convention: v_out = v_in × M
+                    // x_ndc = x_pixel * (2/w) + 1 * (-1) → M[0][0]=2/w, M[3][0]=-1
+                    // y_ndc = y_pixel * (-2/h) + 1 * (1) → M[1][1]=-2/h, M[3][1]=1
+                    // z_ndc = depth → M[2][2]=1
+                    // w_out = 1 → M[3][3]=1
+                    Mat4 screenToNDC{};
+                    screenToNDC(0,0) =  2.0f / w;
+                    screenToNDC(1,1) = -2.0f / h;
+                    screenToNDC(2,2) =  1.0f;
+                    screenToNDC(3,0) = -1.0f;
+                    screenToNDC(3,1) =  1.0f;
+                    screenToNDC(3,3) =  1.0f;
+
+                    Mat4 invWorldDecal = decalWorldMat.Inverse();
+                    // SvPositionToDecal = ScreenToNDC * InvViewProj * InvWorld
+                    Mat4 svPosToDecal = screenToNDC * ctx.perFrame.invViewProj * invWorldDecal;
 
                     DecalInfo info{};
                     info.cb.world         = decalWorldMat;
-                    info.cb.invWorld      = decalWorldMat.Inverse();
+                    info.cb.svPosToDecal  = svPosToDecal;
+                    info.cb.viewProj      = ctx.perFrame.viewProj;
                     info.cb.opacity       = decal.opacity;
                     info.cb.normalBlend   = decal.normalBlend;
                     info.cb.roughness     = decal.roughness;
                     info.cb.metallic      = decal.metallic;
                     info.cb.fadeDistance   = decal.fadeDistance;
                     info.cb.angleFade     = decal.angleFadeStart;
-                    info.cb.albedoSrv     = decal.albedoTextureId;
-                    info.cb.normalSrv     = decal.normalTextureId;
-                    info.cb.materialSrv   = decal.materialTextureId;
+                    info.cb.albedoSrv     = resolveDecalTex(decal.albedoTextureId, decal.albedoPath);
+                    info.cb.normalSrv     = resolveDecalTex(decal.normalTextureId, decal.normalPath);
+                    info.cb.materialSrv   = resolveDecalTex(decal.materialTextureId, decal.roughnessPath);
                     info.cb.depthSrv      = m_gbuffer.depthSRV;
                     info.cb.normalGbufSrv = m_gbuffer.normalSRV;
                     info.priority         = decal.priority;
 
                     decalInfos.push_back(info);
                 }
-
-                // Sort decals by priority (ascending — higher priority renders last).
                 std::sort(decalInfos.begin(), decalInfos.end(),
                     [](const DecalInfo& a, const DecalInfo& b) {
                         return a.priority < b.priority;
                     });
-
                 if (!decalInfos.empty()) {
-                    // Store sorted decals in a member to keep them alive until Execute.
                     m_frameDecals = std::move(decalInfos);
-
-                    DecalRenderPassDesc decalDesc{};
-                    decalDesc.dbufferARes    = ctx.dbufferARes;
-                    decalDesc.dbufferBRes    = ctx.dbufferBRes;
-                    decalDesc.dbufferCRes    = ctx.dbufferCRes;
-                    decalDesc.dbufferATex    = m_dbufferA;
-                    decalDesc.dbufferBTex    = m_dbufferB;
-                    decalDesc.dbufferCTex    = m_dbufferC;
-                    decalDesc.depthRes       = ctx.depthRes;
-                    decalDesc.normalRes      = ctx.normalRes;
-                    decalDesc.pipeline       = pipelines->GetDecalRender();
-                    decalDesc.cbAllocator    = m_cbRing.get();
-                    decalDesc.decals         = m_frameDecals.data();
-                    decalDesc.decalCount     = static_cast<uint32_t>(m_frameDecals.size());
-                    decalDesc.viewportWidth  = vpWidth;
-                    decalDesc.viewportHeight = vpHeight;
-
-                    AddDecalRenderPass(rgBuilder, decalDesc);
                 }
             }
 
@@ -350,6 +352,33 @@ void SceneRenderer::RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContex
                 }
             }
             AddGBufferPass(rgBuilder, gbDesc);
+        }
+
+        // ── Decal Direct Render (after GBuffer — alpha blends onto GBuffer) ──
+        // Renders decal OBBs directly into GBuffer albedo with alpha blending.
+        // Depth is read-only (SRV) for world pos reconstruction.
+        if (!m_frameDecals.empty()) {
+            auto decalPipeline = pipelines->GetDecalRender();
+            if (decalPipeline.IsValid()) {
+                DecalRenderPassDesc decalDesc{};
+                // Render directly into GBuffer targets (not DBuffer).
+                decalDesc.dbufferARes    = ctx.albedoRes;
+                decalDesc.dbufferBRes    = ctx.normalRes;
+                decalDesc.dbufferCRes    = ctx.emissiveRes; // Unused but must be valid for 3-RT PSO
+                decalDesc.dbufferATex    = m_gbuffer.albedo;
+                decalDesc.dbufferBTex    = m_gbuffer.normal;
+                decalDesc.dbufferCTex    = m_gbuffer.emissive;
+                decalDesc.depthRes       = ctx.depthRes;
+                decalDesc.normalRes      = ctx.normalRes;
+                decalDesc.pipeline       = decalPipeline;
+                decalDesc.cbAllocator    = m_cbRing.get();
+                decalDesc.decals         = m_frameDecals.data();
+                decalDesc.decalCount     = static_cast<uint32_t>(m_frameDecals.size());
+                decalDesc.viewportWidth  = vpWidth;
+                decalDesc.viewportHeight = vpHeight;
+
+                AddDecalRenderPass(rgBuilder, decalDesc);
+            }
         }
 
         // ── Velocity Buffer Pass (after GBuffer, before GTAO) ─────────

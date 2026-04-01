@@ -30,11 +30,18 @@ UZ_REGISTER_COMPONENT_SERIALIZER(decal, uz::DecalComponent,
         c.extentsY = uz::json::Float(j, "extents_y", defaults.extentsY);
         c.extentsZ = uz::json::Float(j, "extents_z", defaults.extentsZ);
 
-        // Textures — SRV indices are runtime-only; deserialized as UINT32_MAX
-        // unless explicitly stored (e.g., for editor re-association by asset path).
+        // Textures — SRV indices (runtime-only) OR string paths (scene file).
+        // When a string path is provided (e.g., "albedo": "textures/decals/stain.png"),
+        // the renderer resolves it to an SRV index at render time via the texture map.
         c.albedoTextureId   = uz::json::Uint(j, "albedo_texture_id", defaults.albedoTextureId);
         c.normalTextureId   = uz::json::Uint(j, "normal_texture_id", defaults.normalTextureId);
         c.materialTextureId = uz::json::Uint(j, "material_texture_id", defaults.materialTextureId);
+
+        // Texture paths — resolved to SRV indices by the renderer.
+        c.albedoPath    = uz::json::String(j, "albedo", "");
+        c.normalPath    = uz::json::String(j, "normal", "");
+        c.roughnessPath = uz::json::String(j, "roughness", "");
+        c.metallicPath  = uz::json::String(j, "metallic", "");
 
         // Material properties
         c.opacity     = uz::json::Float(j, "opacity", defaults.opacity);
@@ -62,10 +69,16 @@ UZ_REGISTER_COMPONENT_SERIALIZER(decal, uz::DecalComponent,
         j["extents_y"] = c->extentsY;
         j["extents_z"] = c->extentsZ;
 
-        // Textures
+        // Textures — SRV indices
         j["albedo_texture_id"]   = c->albedoTextureId;
         j["normal_texture_id"]   = c->normalTextureId;
         j["material_texture_id"] = c->materialTextureId;
+
+        // Texture paths
+        if (!c->albedoPath.empty())    j["albedo"]    = c->albedoPath;
+        if (!c->normalPath.empty())    j["normal"]    = c->normalPath;
+        if (!c->roughnessPath.empty()) j["roughness"] = c->roughnessPath;
+        if (!c->metallicPath.empty())  j["metallic"]  = c->metallicPath;
 
         // Material properties
         j["opacity"]      = c->opacity;

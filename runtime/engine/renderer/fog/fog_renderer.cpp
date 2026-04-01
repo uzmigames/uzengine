@@ -178,9 +178,15 @@ static void PopulateHeightFogCB(
     const float observerHeight = std::min(camZ, maxObserverHeight);
 
     // ── Layer 1: CollapsedFogParameter (RayOriginTerms) ─────────────────
+    // HeightFalloff is authored per-meter but world units are centimeters.
+    // Scale by 0.01 so the exponential decay operates in cm space.
+    constexpr float kMeterPerCm = 0.01f;
+    const float falloff0 = fogComp.heightFalloff * kMeterPerCm;
+    const float falloff1 = fogComp.secondFogHeightFalloff * kMeterPerCm;
+
     // Clamp exponent to IEEE float safe range: [-125, +126] (= -126+1, +127-1).
     const float clampedPower0 = std::clamp(
-        -fogComp.heightFalloff * (observerHeight - fogComp.baseHeight),
+        -falloff0 * (observerHeight - fogComp.baseHeight),
         -126.0f + 1.0f,
         +127.0f - 1.0f);
     const float rayOriginTerms0 = fogComp.density * std::pow(2.0f, clampedPower0);
@@ -189,7 +195,7 @@ static void PopulateHeightFogCB(
     float rayOriginTerms1 = 0.0f;
     if (fogComp.secondFogDensity > 0.0f) {
         const float clampedPower1 = std::clamp(
-            -fogComp.secondFogHeightFalloff * (observerHeight - fogComp.secondFogBaseHeight),
+            -falloff1 * (observerHeight - fogComp.secondFogBaseHeight),
             -126.0f + 1.0f,
             +127.0f - 1.0f);
         rayOriginTerms1 = fogComp.secondFogDensity * std::pow(2.0f, clampedPower1);
@@ -198,7 +204,7 @@ static void PopulateHeightFogCB(
     // ── Fill CB — Primary layer ─────────────────────────────────────────
     fogCB.fogColor = {fogComp.color.x, fogComp.color.y, fogComp.color.z, 0.0f};
     fogCB.fogDensity       = rayOriginTerms0;
-    fogCB.fogHeightFalloff = fogComp.heightFalloff;
+    fogCB.fogHeightFalloff = falloff0;  // already scaled to cm
     fogCB.fogBaseHeight    = fogComp.baseHeight;
 
     // Store FogMaxOpacity directly; the shader computes (1 - fogMaxOpacity).
@@ -212,7 +218,7 @@ static void PopulateHeightFogCB(
     // ── Fill CB — Second layer ──────────────────────────────────────────
     fogCB.secondFogDensity       = rayOriginTerms1;
     fogCB.secondFogHeightFalloff = (fogComp.secondFogDensity > 0.0f)
-        ? fogComp.secondFogHeightFalloff : 0.0f;
+        ? falloff1 : 0.0f;  // already scaled to cm
     fogCB.secondFogRawDensity    = fogComp.secondFogDensity;
     fogCB.secondFogBaseHeight    = fogComp.secondFogBaseHeight;
 

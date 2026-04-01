@@ -785,7 +785,7 @@ void SceneRenderer::ApplyCVars() {
     }
 
     // Anti-aliasing method → upscaler type
-    const auto aaMethod = static_cast<UpscalerType>(cvars.GetInt("r.AntiAliasingMethod", 2));
+    const auto aaMethod = static_cast<UpscalerType>(cvars.GetInt("r.AntiAliasingMethod", 1));
     if (aaMethod != m_upscalerType) {
         SetUpscalerType(aaMethod);
     }

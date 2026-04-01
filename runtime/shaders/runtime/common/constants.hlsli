@@ -34,6 +34,15 @@ static const float FLT_MAX = 3.402823466e+38f;
 /// Unit conversion: centimeters per meter (UzEngine uses cm world units)
 static const float kCmPerMeter = 100.0f;
 
+/// Unit conversion: meters per centimeter
+static const float kMeterPerCm = 0.01f;
+
+/// Unit conversion: kilometers per centimeter (atmosphere uses km)
+static const float kKmPerCm = 1e-5f;
+
+/// Unit conversion: centimeters per kilometer
+static const float kCmPerKm = 1e5f;
+
 /// Minimum cosine of angle between normal and light/view direction.
 /// Prevents division by zero in BRDF evaluation.
 static const float kMinCosTheta = 1e-6f;
