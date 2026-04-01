@@ -70,7 +70,7 @@ Pattern: StatsOverlay (runtime/editor/stats/stats_overlay.cpp)
       label text (left), value text (right, formatted to 2 decimal places).
 - [x] 6.3 Interaction: on mouse down inside slider rect, set m_dragSliderPtr. While mouse down,
       update value from mouse X position. On mouse up, clear m_dragSliderPtr.
-- [ ] 6.4 Step snapping: hold Ctrl while dragging for fine control (0.001 step). **Not yet implemented** — no Ctrl modifier check in drag handler.
+- [x] 6.4 Ctrl fine-step drag: m_ctrlDown captured in HandleMouse, Slider blends 90% old + 10% new when Ctrl held for smooth micro-adjustment.
 
 ## 7. Button Widget Implementation
 
@@ -86,7 +86,7 @@ Pattern: StatsOverlay (runtime/editor/stats/stats_overlay.cpp)
 - [x] 8.2 Rendered AFTER stats overlay (on top of scene + stats). Uses backbuffer render pass.
 - [x] 8.3 Mouse interaction: HandleMouse() at top of HandleInput(). WantsMouseInput() returns
       true when mouse is over menu bar, toolbar, panels, or dropdown.
-- [ ] 8.4 Remove conflicting hotkeys: Space (was fireball, conflicts with camera), replace with UI button. **Not yet done** — Space key still used for fireball in `vfx_viewport_demo.cpp` at line 903.
+- [x] 8.4 Removed Space key fireball handler from HandleInput(). Fireball now only via toolbar button or File menu. Help overlay updated.
 - [x] 8.5 Keep essential hotkeys: RMB camera look, WASD movement, Delete restart.
 
 ## 9. Visual Style

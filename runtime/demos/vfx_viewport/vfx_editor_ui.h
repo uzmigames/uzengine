@@ -153,6 +153,7 @@ private:
     bool  m_mouseJustPressed = false;
     bool  m_mouseJustReleased = false;
     bool  m_wantsInput = false;
+    bool  m_ctrlDown = false; ///< Ctrl held — enables fine-step slider drag (0.1x delta).
 
     // ── Menu bar state ───────────────────────────────────────────────────
     static constexpr int kMenuCount = 5;

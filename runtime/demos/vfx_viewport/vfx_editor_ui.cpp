@@ -122,6 +122,7 @@ bool VFXEditorUI::HandleMouse(const InputSystem* input, float dt) {
     m_mouseDown = input->IsMouseDown(MouseButton::Left);
     m_mouseJustPressed = input->IsMouseJustPressed(MouseButton::Left);
     m_mouseJustReleased = input->IsMouseJustReleased(MouseButton::Left);
+    m_ctrlDown = input->IsKeyDown(Key::LeftCtrl) || input->IsKeyDown(Key::RightCtrl);
 
     // Release slider drag on mouse up
     if (m_mouseJustReleased && m_dragSliderPtr != nullptr) {
@@ -305,7 +306,13 @@ bool VFXEditorUI::Slider(float x, float y, float w, float* value, float minVal, 
     if (m_dragSliderPtr == value && m_mouseDown) {
         float t = (m_mouseX - x) / w;
         t = std::clamp(t, 0.0f, 1.0f);
-        *value = minVal + t * range;
+        const float rawVal = minVal + t * range;
+        // Ctrl = fine control: blend 90% current + 10% target for smooth micro-adjustment
+        if (m_ctrlDown) {
+            *value = *value * 0.9f + rawVal * 0.1f;
+        } else {
+            *value = rawVal;
+        }
         return true;
     }
 

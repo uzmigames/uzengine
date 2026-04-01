@@ -427,13 +427,16 @@ void VFXModuleStackPanel::LogSubPanelInfo(int idx) const {
                    m_config->windDir[2]);
             break;
 
-        case VFXModule::GroundCollision:
+        case VFXModule::GroundCollision: {
+            static const char* const kResponseNames[] = {"Bounce", "Stick", "Kill"};
+            const uint32_t resp = m_config->collisionResponse;
+            const char* respName = (resp < 3) ? kResponseNames[resp] : "Unknown";
             UZ_LOG(App, Info, "    groundCollision    = %u", m_config->groundCollision);
             UZ_LOG(App, Info, "    restitution        = %.3f", m_config->restitution);
-            UZ_LOG(App, Info, "    collisionResponse  = %u (0=Bounce 1=Stick 2=Kill)",
-                   m_config->collisionResponse);
+            UZ_LOG(App, Info, "    collisionResponse  = %s (%u)", respName, resp);
             UZ_LOG(App, Info, "    collisionFriction  = %.3f", m_config->collisionFriction);
             break;
+        }
 
         case VFXModule::SubEmitter:
             UZ_LOG(App, Info, "    Use E key to toggle sub-emitter");

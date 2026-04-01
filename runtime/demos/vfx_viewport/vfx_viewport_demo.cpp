@@ -898,39 +898,8 @@ void VFXViewportDemo::HandleInput(float dt) {
         }
     }
 
-    // Launch fireball projectile (Space key) — switches to Fireball preset on
-    // the first emitter, continuous mode, and launches a moving emitter.
-    if (input->IsKeyJustPressed(Key::Space) && !m_fireballActive) {
-        // Switch the first emitter to Fireball preset
-        int presetCount = 0;
-        const VFXPreset* presets = GetVFXPresets(presetCount);
-        for (int i = 0; i < presetCount; ++i) {
-            if (std::strcmp(presets[i].name, "Fireball") == 0) {
-                m_vfxPresetIndex = i;
-                if (!m_emitters.empty()) {
-                    m_emitters[0].config = presets[i].config;
-                    m_emitters[0].spawnRate = presets[i].spawnRate;
-                }
-                break;
-            }
-        }
-        // Reset particles and start fireball
-        auto* cmd = GetCommandList();
-        ResetAllEmitters(cmd);
-        for (auto& e : m_emitters) {
-            e.burstMode = false; // continuous emission for trail
-        }
-        m_vfxEnabled = true;
-        m_trailEnabled = true;
-
-        // Launch from mesh position in Y direction (forward in our scene)
-        const auto& meshPos = m_meshTransforms[m_currentMesh].position;
-        m_fireballPos = Vec3(meshPos.x, meshPos.y, meshPos.z + 3.0f);
-        m_fireballVel = Vec3(0.0f, kFireballSpeed, 0.0f);
-        m_fireballLife = 0.0f;
-        m_fireballActive = true;
-        UZ_LOG(App, Info, "[VFX] Fireball launched!");
-    }
+    // Space key fireball removed — conflicts with camera jump/movement.
+    // Use the [Fireball] button in the bottom toolbar or File menu instead.
 
     // VFX preset cycling (Tab / Shift+Tab) — skip if Ctrl is held (Ctrl+Tab = compound preset)
     const bool ctrlDown = input->IsKeyDown(Key::LeftCtrl) || input->IsKeyDown(Key::RightCtrl);
@@ -1375,7 +1344,7 @@ void VFXViewportDemo::HandleInput(float dt) {
         UZ_LOG(App, Info, "  E (no selection)     — Toggle sub-emitter (secondary sparks burst after {:.2f}s)",
                kSubEmitterDelay);
         UZ_LOG(App, Info, "  M                    — Cycle VFX material presets");
-        UZ_LOG(App, Info, "  Space                — Launch fireball projectile (with trail)");
+        UZ_LOG(App, Info, "  Fireball             — Use toolbar [Fireball] button or File menu");
         UZ_LOG(App, Info, "  Y                    — Toggle trails");
         UZ_LOG(App, Info, "  D                    — Toggle decals");
         UZ_LOG(App, Info, "  X                    — Toggle distortion");
