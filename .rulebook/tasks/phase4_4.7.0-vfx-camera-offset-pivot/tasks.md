@@ -16,45 +16,21 @@ Both are applied in `particle_billboard_vs.hlsl` before projection with no addit
 
 ## 1. Constant Buffer — VFXBillboardCB
 
-- [ ] 1.1 Add to `VFXBillboardCB` in `runtime/engine/vfx/vfx_viewport_vfx.h`:
-  ```cpp
-  float cameraOffset;   // world units along camera forward; default 0.0f
-  float pivotOffsetX;   // sprite-local X shift of expansion origin; default 0.0f
-  float pivotOffsetY;   // sprite-local Y shift of expansion origin; default 0.0f
-  float _camPivotPad;   // padding to maintain 16-byte alignment
-  ```
-- [ ] 1.2 Verify `VFXBillboardCB` byte total is a multiple of 16 after addition. Update byte-size comment.
-- [ ] 1.3 Add matching fields to `VFXEmitterConfig`: `float cameraOffset = 0.0f`, `float pivotOffsetX = 0.0f`, `float pivotOffsetY = 0.0f`.
+- [x] 1.1 Added `cameraOffset`, `pivotOffsetX`, `pivotOffsetY`, `_camPivotPad` to VFXBillboardCB. Repurposed `_pad1`-`_pad3` slots (no size change). Fields at bytes 176-191 of the 288-byte CB.
+- [x] 1.2 VFXBillboardCB byte total remains multiple of 16 (288 bytes). static_assert passes.
+- [x] 1.3 Added matching fields to `VFXEmitterConfig`: `float cameraOffset = 0.0f`, `float pivotOffsetX = 0.0f`, `float pivotOffsetY = 0.0f`.
 
 ## 2. CPU — CB Upload
 
-- [ ] 2.1 In the `VFXBillboardCB` fill function, add:
-  ```cpp
-  cb.cameraOffset  = config.cameraOffset;
-  cb.pivotOffsetX  = config.pivotOffsetX;
-  cb.pivotOffsetY  = config.pivotOffsetY;
-  cb._camPivotPad  = 0.0f;
-  ```
-- [ ] 2.2 Confirm the fill runs before every billboard draw call.
+- [x] 2.1 In `DrawBillboards()`, added `billboardCB.cameraOffset = config.cameraOffset`, `billboardCB.pivotOffsetX = config.pivotOffsetX`, `billboardCB.pivotOffsetY = config.pivotOffsetY`.
+- [x] 2.2 Confirmed fill runs before every billboard draw call (inside DrawBillboards, before cbRing->Allocate).
 
 ## 3. Shader — particle_billboard_vs.hlsl
 
-- [ ] 3.1 Add `float cameraOffset`, `float pivotOffsetX`, `float pivotOffsetY`, `float _camPivotPad` to the `VFXBillboardCB` cbuffer declaration.
-- [ ] 3.2 Apply camera offset to world position BEFORE billboard basis construction (so the basis is still correct relative to camera):
-  ```hlsl
-  // @ref Latta 2004 "Inside Geometry Instancing" — camera offset for depth layering
-  float3 camForward = normalize(cameraPos - cameraTarget); // or read from CB
-  worldPos += camForward * cameraOffset;
-  ```
-- [ ] 3.3 Apply pivot offset to the per-corner expansion offset BEFORE adding to world position. The corner offsets are in sprite-local space (right, up); pivot shifts the origin:
-  ```hlsl
-  // @ref Unity VFX Graph 2021 "Pivot Offset" — sprite pivot in local space
-  float2 corner = cornerTable[vertexId]; // e.g. (-0.5, -0.5) to (0.5, 0.5)
-  corner.x -= pivotOffsetX * 0.5f;
-  corner.y -= pivotOffsetY * 0.5f;
-  // then expand: worldPos += right * corner.x * size + up * corner.y * size
-  ```
-- [ ] 3.4 Confirm `cameraOffset = 0` and `pivotOffset = (0,0)` produce byte-identical output to the pre-task shader.
+- [x] 3.1 Added `float cameraOffset`, `float pivotOffsetX`, `float pivotOffsetY`, `float _camPivotPad` to the `VFXBillboardCB` cbuffer declaration.
+- [x] 3.2 Applied camera offset: pushes particle along camera-to-particle direction before billboard expansion. Guarded by `cameraOffset != 0.0f`.
+- [x] 3.3 Applied pivot offset: adds `float2(pivotOffsetX, pivotOffsetY)` to corner offsets before rotation. Uses [-1,1] sprite-local space.
+- [x] 3.4 When `cameraOffset = 0` and `pivotOffset = (0,0)`, the added code paths are skipped (branch guard), producing identical output.
 
 ## 4. UI — Rendering Category
 

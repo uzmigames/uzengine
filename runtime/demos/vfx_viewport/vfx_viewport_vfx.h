@@ -63,8 +63,13 @@ struct VFXEmitterConfig {
     float    colorLifeEndG   = 1.0f;  ///< End color green.
     float    colorLifeEndB   = 1.0f;  ///< End color blue.
     float    colorLifeEndA   = 0.0f;  ///< End color alpha (fade to transparent).
-    // Billboard alignment and stretching
-    uint32_t alignmentMode   = 0;     ///< 0=CameraFacing, 1=VelocityAligned.
+    // Billboard facing mode and stretching
+    /// @ref Latta 2004 "Inside Geometry Instancing" — camera-position billboard
+    /// @ref Valve 2006 "Rendering in Left 4 Dead" — axis-aligned billboard
+    uint32_t facingMode      = 0;     ///< 0=FaceCamera, 1=VelocityAligned, 2=FaceCameraPlane, 3=CustomVector, 4=FaceCameraPosition.
+    float    customFacingX   = 0.0f;  ///< Custom facing direction X (mode 3 only).
+    float    customFacingY   = 0.0f;  ///< Custom facing direction Y (mode 3 only).
+    float    customFacingZ   = 1.0f;  ///< Custom facing direction Z (mode 3 only). Default: world Z-up.
     float    stretchFactor   = 0.0f;  ///< Velocity stretch multiplier. 0=no stretch, >0=elongate along velocity.
     // Spawn shape parameters
     uint32_t spawnShape      = 0;     ///< 0=Point, 1=Sphere, 2=Box, 3=Ring, 4=Cone, 5=Cylinder, 6=Disc, 7=Line.
@@ -97,6 +102,27 @@ struct VFXEmitterConfig {
     /// @ref Müller 2006 "Position Based Dynamics" — restitution coefficients
     uint32_t groundCollision          = 0;     ///< 0=disabled, 1=bounce off Z=0 ground plane.
     float    restitution              = 0.3f;  ///< Bounce coefficient [0,1]. 0=inelastic, 1=elastic.
+    // ── Orbit around point ───────────────────────────────────────────────────
+    /// @ref Christensen 2018 "Fibonacci Sphere Sampling" — golden angle for uniform spread
+    uint32_t orbitEnabled             = 0;     ///< 0=disabled, 1=particles orbit around emitter origin.
+    float    orbitRadius              = 0.0f;  ///< Orbit circle radius in world units.
+    float    orbitSpeed               = 0.0f;  ///< Angular speed in radians per second.
+    float    orbitAxisX               = 0.0f;  ///< Orbit plane normal X. Default axis: Z-up (XY plane).
+    float    orbitAxisY               = 0.0f;  ///< Orbit plane normal Y.
+    float    orbitAxisZ               = 1.0f;  ///< Orbit plane normal Z.
+    // ── Quadratic drag (air resistance) ─────────────────────────────────────
+    /// @ref Witkin & Baraff 2001 "Physically Based Modeling" — quadratic drag F=-k|v|^2*dir
+    float    dragCoefficient          = 0.0f;  ///< Quadratic drag coefficient. 0=disabled. Higher=faster deceleration.
+    // ── Camera offset & pivot offset (billboard VS) ─────────────────────────
+    /// @ref Latta 2004 "Inside Geometry Instancing" — camera offset for depth layering
+    float    cameraOffset             = 0.0f;  ///< Push/pull along camera forward (world units). 0=disabled.
+    float    pivotOffsetX             = 0.0f;  ///< Sprite-local X pivot shift [-1,1]. 0=center.
+    float    pivotOffsetY             = 0.0f;  ///< Sprite-local Y pivot shift [-1,1]. 0=center. -1=bottom anchor.
+    // ── Size by speed (billboard VS) ─────────────────────────────────────────
+    uint32_t sizeBySpeedEnabled       = 0;     ///< 0=off, 1=on. Maps speed to size multiplier.
+    float    sizeBySpeedMin           = 0.5f;  ///< Size multiplier at zero speed.
+    float    sizeBySpeedMax           = 2.0f;  ///< Size multiplier at speedRangeMax.
+    float    speedRangeMax            = 10.0f; ///< Speed that maps to t=1 for size-by-speed.
 };
 
 /// Named emitter preset with a spawn rate.
@@ -182,20 +208,26 @@ struct VFXUpdateCB {
     float    vortexAxisOriginZ;       float vortexTangentialStrength; // 16 bytes (offset 128)
     float    vortexAxisDirX;          float vortexAxisDirY;
     float    vortexAxisDirZ;          float vortexRadialStrength;  // 16 bytes (offset 144)
-    float    vortexMaxRadius;         float _padVortex0;
-    float    _padVortex1;             float _padVortex2;           // 16 bytes (offset 160)
+    float    vortexMaxRadius;         uint32_t orbitEnabled;
+    float    orbitRadius;             float    orbitSpeed;         // 16 bytes (offset 160) — vortex pads repurposed
+    float    orbitAxisX;              float    orbitAxisY;
+    float    orbitAxisZ;              float    _orbitAxisPad;      // 16 bytes (offset 176)
     // ── Wind zone GPU buffer ─────────────────────────────────────────────────
     /// @ref Stam 1999 "Stable Fluids" — wind zone accumulation
     uint32_t windZoneSrvIndex;        uint32_t activeWindZoneCount;
-    uint32_t _padWind0;               uint32_t _padWind1;          // 16 bytes (offset 176)
+    uint32_t _padWind0;               uint32_t _padWind1;          // 16 bytes (offset 192)
     // ── Kill volume GPU buffer ───────────────────────────────────────────────
     /// @ref Ericson 2005 "Real-Time Collision Detection" Ch.4
     uint32_t killVolumeSrvIndex;      uint32_t activeKillVolumeCount;
     // ── Ground plane collision (repurposed from _padKV0/_padKV1) ────────────
     /// @ref Müller 2006 "Position Based Dynamics" — restitution coefficients
-    uint32_t groundCollision;         float    restitution;        // 16 bytes (offset 192)
+    uint32_t groundCollision;         float    restitution;        // 16 bytes (offset 208)
+    // ── Quadratic drag (air resistance) ──────────────────────────────────────
+    /// @ref Witkin & Baraff 2001 "Physically Based Modeling" — quadratic drag F=-k|v|^2*dir
+    float    dragCoefficient;         float    _padDrag0;
+    float    _padDrag1;               float    _padDrag2;           // 16 bytes (offset 224)
 };
-static_assert(sizeof(VFXUpdateCB) == 208, "VFXUpdateCB must be 208 bytes (13 x float4)");
+static_assert(sizeof(VFXUpdateCB) == 240, "VFXUpdateCB must be 240 bytes (15 x float4)");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VFX Billboard Root Constants (matches VFXBillboardConstants in b0)
@@ -240,14 +272,17 @@ struct VFXBillboardCB {
     float    alphaErosion      = 0.0f;             ///< Subtractive alpha erosion [0, 1].
     float    emissiveIntensity = 0.0f;             ///< Additive emissive multiplier.
     uint32_t litMode           = 0;               ///< 0=Unlit, 1=Lit (NdotL + ambient). @ref Pharr 2023 Ch.12.
-    float    _pad1                = 0.0f;
-    float    _pad2                = 0.0f;
-    float    _pad3                = 0.0f;
-    float    _pad4                = 0.0f;
-    float    _pad5                = 0.0f;
-    float    _pad6                = 0.0f;
-    float    _pad7                = 0.0f;
-    float    _pad8                = 0.0f;
+    // ── Camera offset & pivot offset (Task 4.7.0) ─────────────────────────
+    /// @ref Latta 2004 "Inside Geometry Instancing" — camera offset for depth layering
+    float    cameraOffset         = 0.0f;          ///< Push/pull along camera forward (world units).
+    float    pivotOffsetX         = 0.0f;          ///< Sprite-local X pivot shift [-1,1]. 0=center.
+    float    pivotOffsetY         = 0.0f;          ///< Sprite-local Y pivot shift [-1,1]. 0=center.
+    float    _camPivotPad         = 0.0f;
+    // ── Size by speed (Task 4.8.0) ──────────────────────────────────────────
+    uint32_t sizeBySpeedEnabled   = 0;             ///< 0=off, 1=on. Maps particle speed to size multiplier.
+    float    sizeBySpeedMin       = 0.5f;          ///< Size multiplier at zero speed.
+    float    sizeBySpeedMax       = 2.0f;          ///< Size multiplier at speedRangeMax.
+    float    speedRangeMax        = 10.0f;         ///< Speed that maps to t=1 for size-by-speed.
     // ── Size over lifetime (analytical piecewise-linear curve, 16 bytes) ──
     float    sizeOverLifeStart    = 1.0f;          ///< Size multiplier at birth (t=0).
     float    sizeOverLifePeak     = 1.0f;          ///< Size multiplier at peak time.
@@ -256,13 +291,20 @@ struct VFXBillboardCB {
     // ── Color over lifetime (linear interpolation, 32 bytes) ──
     float    colorLifeStart[4]    = {1,1,1,1};     ///< RGBA color at birth.
     float    colorLifeEnd[4]      = {1,1,1,0};     ///< RGBA color at death.
-    // ── Billboard alignment and stretching (16 bytes) ──
-    uint32_t alignmentMode        = 0;              ///< 0=CameraFacing, 1=VelocityAligned.
+    // ── Billboard facing mode + custom direction (16 bytes) ──
+    /// @ref Latta 2004 "Inside Geometry Instancing" — camera-position billboard
+    /// @ref Valve 2006 "Rendering in Left 4 Dead" — axis-aligned billboard
+    uint32_t facingMode           = 0;              ///< 0=FaceCamera, 1=VelocityAligned, 2=FaceCameraPlane, 3=CustomVector, 4=FaceCameraPosition.
+    float    customFacingX        = 0.0f;           ///< Custom facing direction X (facingMode 3 only).
+    float    customFacingY        = 0.0f;           ///< Custom facing direction Y (facingMode 3 only).
+    float    customFacingZ        = 1.0f;           ///< Custom facing direction Z (facingMode 3 only). Default: world Z-up.
+    // ── Billboard stretching + blend (16 bytes) ──
     float    stretchFactor        = 0.0f;           ///< Velocity stretch multiplier. 0=no stretch.
     uint32_t blendModeHint        = 2;              ///< 0=AlphaBlend, 1=Additive, 2=PremulAlpha — tells PS how to output alpha.
     uint32_t colorRampLutSrvIndex = UINT32_MAX;     ///< Bindless SRV index for color ramp 256x1 LUT. UINT32_MAX = legacy lerp.
+    float    _alignPad            = 0.0f;           ///< Padding to maintain 16-byte alignment.
 };
-static_assert(sizeof(VFXBillboardCB) == 272, "VFXBillboardCB must be 272 bytes (256 base + 16 alignment/stretch)");
+static_assert(sizeof(VFXBillboardCB) == 288, "VFXBillboardCB must be 288 bytes (18 x float4)");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VFX GPU Particle System

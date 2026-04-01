@@ -37,10 +37,13 @@ static const char* const kBlendModeNames[] = {
 };
 static constexpr uint32_t kBlendModeCount = 3;
 
+/// Facing mode names for the Rendering dropdown in the editor canvas UI.
+/// @ref Latta 2004 "Inside Geometry Instancing" — camera-position billboard
+/// @ref Valve 2006 "Rendering in Left 4 Dead" — axis-aligned billboard
 static const char* const kAlignmentModeNames[] = {
-    "CameraFacing", "VelocityAligned"
+    "Face Camera", "Velocity Aligned", "Camera Plane", "Custom Vector", "Camera Position"
 };
-static constexpr uint32_t kAlignmentModeCount = 2;
+static constexpr uint32_t kAlignmentModeCount = 5;
 
 static const char* const kLitModeNames[] = {
     "Unlit", "Lit"
@@ -889,8 +892,8 @@ void VFXEditorUI::BuildLeftPanel(VFXEmitterConfig* cfg, float* spawnRate, uint32
                 y += kSliderH + 2.0f;
                 Slider(cx, y, contentW, &cfg->softFadeDistance, 0.0f, 5.0f, "SoftFade");
                 y += kSliderH + 2.0f;
-                DropdownTrigger(cx, y, contentW, &cfg->alignmentMode,
-                                kAlignmentModeNames, kAlignmentModeCount, "Align");
+                DropdownTrigger(cx, y, contentW, &cfg->facingMode,
+                                kAlignmentModeNames, kAlignmentModeCount, "Facing");
                 y += kRowH + 2.0f;
                 Slider(cx, y, contentW, &cfg->stretchFactor, 0.0f, 5.0f, "Stretch");
                 y += kSliderH + 2.0f;

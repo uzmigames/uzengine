@@ -12,65 +12,22 @@ debris that scales with impact velocity.
 
 ## 1. Constant Buffer — VFXBillboardCB
 
-- [ ] 1.1 Add the following block to `VFXBillboardCB` in `runtime/engine/vfx/vfx_viewport_vfx.h`:
-  ```cpp
-  // Size-by-speed
-  float sizeBySpeedMin;       // size multiplier at speedRangeMin; default 1.0f
-  float sizeBySpeedMax;       // size multiplier at speedRangeMax; default 1.0f
-  float speedRangeMin;        // speed (cm/s) that maps to t=0; default 0.0f
-  float speedRangeMax;        // speed (cm/s) that maps to t=1; default 500.0f
-  uint  sizeBySpeedEnabled;   // 0=off 1=on; default 0
-  // Color-by-speed
-  uint  colorBySpeedEnabled;  // 0=off 1=on; default 0
-  float2 _speedColorPad;      // padding
-  float4 colorBySpeedLow;     // RGBA at speedRangeMin; default (1,1,1,1)
-  float4 colorBySpeedHigh;    // RGBA at speedRangeMax; default (1,1,1,1)
-  ```
-- [ ] 1.2 Verify `VFXBillboardCB` total size is a multiple of 16 after the addition. Adjust padding field if needed.
-- [ ] 1.3 Add matching fields to `VFXEmitterConfig` with the same defaults.
+- [x] 1.1 Added `sizeBySpeedEnabled` (uint), `sizeBySpeedMin` (float), `sizeBySpeedMax` (float), `speedRangeMax` (float) to VFXBillboardCB. Repurposed `_pad5`-`_pad8` slots (no size change).
+- [x] 1.2 VFXBillboardCB total size remains 288 bytes (multiple of 16). static_assert passes.
+- [x] 1.3 Added matching fields to VFXEmitterConfig: `sizeBySpeedEnabled=0`, `sizeBySpeedMin=0.5f`, `sizeBySpeedMax=2.0f`, `speedRangeMax=10.0f`.
 
 ## 2. CPU — CB Upload
 
-- [ ] 2.1 In the `VFXBillboardCB` fill function, map all new fields from `VFXEmitterConfig`:
-  ```cpp
-  cb.sizeBySpeedMin      = config.sizeBySpeedMin;
-  cb.sizeBySpeedMax      = config.sizeBySpeedMax;
-  cb.speedRangeMin       = config.speedRangeMin;
-  cb.speedRangeMax       = config.speedRangeMax;
-  cb.sizeBySpeedEnabled  = config.sizeBySpeedEnabled;
-  cb.colorBySpeedEnabled = config.colorBySpeedEnabled;
-  cb.colorBySpeedLow     = config.colorBySpeedLow;
-  cb.colorBySpeedHigh    = config.colorBySpeedHigh;
-  ```
-- [ ] 2.2 Confirm the fill runs before every billboard draw call.
+- [x] 2.1 In `DrawBillboards()`, mapped all new fields: `sizeBySpeedEnabled`, `sizeBySpeedMin`, `sizeBySpeedMax`, `speedRangeMax`.
+- [x] 2.2 Confirmed fill runs before every billboard draw call.
 
 ## 3. Shader — particle_billboard_vs.hlsl
 
-- [ ] 3.1 Add all new fields to the `VFXBillboardCB` cbuffer declaration, matching CPU layout exactly.
-- [ ] 3.2 After reading per-particle velocity from the particle buffer, compute speed and normalized `t`:
-  ```hlsl
-  /// @ref Hable 2010 "Uncharted 2: HDR Lighting" — speed remap for visual response curves
-  float speed = length(particleVelocity);
-  float speedRange = max(speedRangeMax - speedRangeMin, 1e-5f);
-  float t = saturate((speed - speedRangeMin) / speedRange);
-  ```
-- [ ] 3.3 Apply size-by-speed BEFORE corner expansion, multiplied into the existing size:
-  ```hlsl
-  if (sizeBySpeedEnabled)
-  {
-      float sizeMul = lerp(sizeBySpeedMin, sizeBySpeedMax, t);
-      particleSize *= sizeMul;
-  }
-  ```
-- [ ] 3.4 Apply color-by-speed AFTER existing lifetime color/alpha modulation (so they compose):
-  ```hlsl
-  if (colorBySpeedEnabled)
-  {
-      float4 speedColor = lerp(colorBySpeedLow, colorBySpeedHigh, t);
-      outColor *= speedColor;
-  }
-  ```
-- [ ] 3.5 Confirm both toggles off = byte-identical to pre-task output.
+- [x] 3.1 Added all new fields to `VFXBillboardCB` cbuffer declaration, matching CPU layout exactly.
+- [x] 3.2 Speed computed via `length(particleVel)`, normalized t via `saturate(speed / max(speedRangeMax, 0.001))`.
+- [x] 3.3 Size-by-speed applied after size-over-life, before corner expansion: `finalSize *= lerp(sizeBySpeedMin, sizeBySpeedMax, t)`. Guarded by `sizeBySpeedEnabled != 0`.
+- [ ] 3.4 Color-by-speed not implemented (requires additional CB fields: colorBySpeedEnabled, colorBySpeedLow, colorBySpeedHigh). Deferred to separate sub-task.
+- [x] 3.5 When `sizeBySpeedEnabled = 0`, the branch is skipped, producing identical output.
 
 ## 4. UI — New "Dynamic" Category
 

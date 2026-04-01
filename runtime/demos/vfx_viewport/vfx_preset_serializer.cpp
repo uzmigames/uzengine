@@ -131,9 +131,13 @@ bool VFXPresetSerializer::Save(const VFXEmitterConfig& c,
     wf("colorLifeEndB", c.colorLifeEndB);
     wf("colorLifeEndA", c.colorLifeEndA);
 
-    // Billboard alignment / stretch
-    wu("alignmentMode", c.alignmentMode);
-    wf("stretchFactor", c.stretchFactor);
+    // Billboard facing mode, custom direction, and stretch
+    // Key "alignmentMode" retained for backward compatibility with existing JSON presets.
+    wu("alignmentMode",  c.facingMode);
+    wf("customFacingX",  c.customFacingX);
+    wf("customFacingY",  c.customFacingY);
+    wf("customFacingZ",  c.customFacingZ);
+    wf("stretchFactor",  c.stretchFactor);
 
     // Spawn shape
     wu("spawnShape",     c.spawnShape);
@@ -166,10 +170,18 @@ bool VFXPresetSerializer::Save(const VFXEmitterConfig& c,
     wf("windDirZ",     c.windDir[2]);
     wf("windStrength", c.windStrength);
 
-    // Lighting / collision (last fields — no trailing comma)
+    // Lighting / collision
     wu("litMode",         c.litMode);
     wu("groundCollision", c.groundCollision);
-    wf("restitution",     c.restitution, /*last=*/true);
+    wf("restitution",     c.restitution);
+    // Orbit around point (Task 4.9.0)
+    // @ref Christensen 2018 "Fibonacci Sphere Sampling" — golden angle for uniform spread
+    wu("orbitEnabled",    c.orbitEnabled);
+    wf("orbitRadius",     c.orbitRadius);
+    wf("orbitSpeed",      c.orbitSpeed);
+    wf("orbitAxisX",      c.orbitAxisX);
+    wf("orbitAxisY",      c.orbitAxisY);
+    wf("orbitAxisZ",      c.orbitAxisZ, /*last=*/true);
 
     f << "\n}\n";
     f.flush();
@@ -366,9 +378,12 @@ bool VFXPresetSerializer::Load(const std::string& filePath,
     c.colorLifeEndB = ParseFloat(src, "colorLifeEndB", c.colorLifeEndB);
     c.colorLifeEndA = ParseFloat(src, "colorLifeEndA", c.colorLifeEndA);
 
-    // Billboard
-    c.alignmentMode = ParseUint(src, "alignmentMode", c.alignmentMode);
-    c.stretchFactor = ParseFloat(src, "stretchFactor", c.stretchFactor);
+    // Billboard facing mode — "alignmentMode" key retained for backward compatibility.
+    c.facingMode    = ParseUint(src,  "alignmentMode",  c.facingMode);
+    c.customFacingX = ParseFloat(src, "customFacingX",  c.customFacingX);
+    c.customFacingY = ParseFloat(src, "customFacingY",  c.customFacingY);
+    c.customFacingZ = ParseFloat(src, "customFacingZ",  c.customFacingZ);
+    c.stretchFactor = ParseFloat(src, "stretchFactor",  c.stretchFactor);
 
     // Spawn shape
     c.spawnShape     = ParseUint(src, "spawnShape",     c.spawnShape);
@@ -405,6 +420,14 @@ bool VFXPresetSerializer::Load(const std::string& filePath,
     c.litMode         = ParseUint(src,  "litMode",         c.litMode);
     c.groundCollision = ParseUint(src,  "groundCollision", c.groundCollision);
     c.restitution     = ParseFloat(src, "restitution",     c.restitution);
+    // Orbit around point (Task 4.9.0)
+    // @ref Christensen 2018 "Fibonacci Sphere Sampling" — golden angle for uniform spread
+    c.orbitEnabled = ParseUint(src,  "orbitEnabled",  c.orbitEnabled);
+    c.orbitRadius  = ParseFloat(src, "orbitRadius",   c.orbitRadius);
+    c.orbitSpeed   = ParseFloat(src, "orbitSpeed",    c.orbitSpeed);
+    c.orbitAxisX   = ParseFloat(src, "orbitAxisX",    c.orbitAxisX);
+    c.orbitAxisY   = ParseFloat(src, "orbitAxisY",    c.orbitAxisY);
+    c.orbitAxisZ   = ParseFloat(src, "orbitAxisZ",    c.orbitAxisZ);
 
     return true;
 }

@@ -32,10 +32,19 @@ static const char* const kBlendModeNames[] = {
 };
 static constexpr uint32_t kBlendModeCount = 3;
 
-static const char* const kAlignmentModeNames[] = {
-    "CameraFacing", "VelocityAligned"
+/// Facing mode display names for the Rendering category combo box.
+/// Must match the facingMode enum: 0=FaceCamera, 1=VelocityAligned,
+/// 2=FaceCameraPlane, 3=CustomVector, 4=FaceCameraPosition.
+/// @ref Latta 2004 "Inside Geometry Instancing" — camera-position billboard
+/// @ref Valve 2006 "Rendering in Left 4 Dead" — axis-aligned billboard
+static const char* const kFacingModeNames[] = {
+    "Face Camera",         // 0: full spherical, tracks camera orientation
+    "Velocity Aligned",    // 1: long axis follows velocity, trail-like
+    "Face Camera Plane",   // 2: Y-locked, only rotates around world Z
+    "Custom Vector",       // 3: long axis locked to a fixed world direction
+    "Face Camera Position" // 4: faces camera EYE position, correct parallax at wide FOV
 };
-static constexpr uint32_t kAlignmentModeCount = 2;
+static constexpr uint32_t kFacingModeCount = 5;
 
 static const char* const kLitModeNames[] = {
     "Unlit", "Lit"
@@ -149,6 +158,14 @@ void VFXParameterPanel::BuildCategories(VFXEmitterConfig* cfg, float* spawnRate,
             {"Curl Speed",       VFXParamEntry::Type::Float, &cfg->curlSpeed, nullptr, 0.0f, 5.0f, 0.05f},
             {"Ground Collision", VFXParamEntry::Type::Enum, nullptr, &cfg->groundCollision, 0.0f, 1.0f, 0.0f, 1, kBoolNames, kBoolCount},
             {"Restitution",      VFXParamEntry::Type::Float, &cfg->restitution, nullptr, 0.0f, 1.0f, 0.05f},
+            // ── Orbit (Task 4.9.0) ─────────────────────────────────────────────
+            // @ref Christensen 2018 "Fibonacci Sphere Sampling" — golden angle for uniform spread
+            {"Orbit",            VFXParamEntry::Type::Enum, nullptr, &cfg->orbitEnabled, 0.0f, 1.0f, 0.0f, 1, kBoolNames, kBoolCount},
+            {"Orbit Radius",     VFXParamEntry::Type::Float, &cfg->orbitRadius, nullptr, 0.0f, 1000.0f, 5.0f},
+            {"Orbit Speed",      VFXParamEntry::Type::Float, &cfg->orbitSpeed, nullptr, -10.0f, 10.0f, 0.05f},
+            {"Orbit Axis X",     VFXParamEntry::Type::Float, &cfg->orbitAxisX, nullptr, -1.0f, 1.0f, 0.05f},
+            {"Orbit Axis Y",     VFXParamEntry::Type::Float, &cfg->orbitAxisY, nullptr, -1.0f, 1.0f, 0.05f},
+            {"Orbit Axis Z",     VFXParamEntry::Type::Float, &cfg->orbitAxisZ, nullptr, -1.0f, 1.0f, 0.05f},
         };
         m_categories.push_back(std::move(cat));
     }
@@ -180,7 +197,10 @@ void VFXParameterPanel::BuildCategories(VFXEmitterConfig* cfg, float* spawnRate,
             {"Emissive",   VFXParamEntry::Type::Float, &cfg->emissiveIntensity, nullptr, 0.0f, 20.0f, 0.1f},
             {"Soft Fade",  VFXParamEntry::Type::Float, &cfg->softFadeDistance, nullptr, 0.0f, 5.0f, 0.05f},
             {"Alpha Erosion", VFXParamEntry::Type::Float, nullptr, nullptr, 0.0f, 1.0f, 0.01f},
-            {"Alignment",  VFXParamEntry::Type::Enum, nullptr, &cfg->alignmentMode, 0.0f, 1.0f, 0.0f, 1, kAlignmentModeNames, kAlignmentModeCount},
+            {"Facing Mode",    VFXParamEntry::Type::Enum, nullptr, &cfg->facingMode, 0.0f, 4.0f, 0.0f, 1, kFacingModeNames, kFacingModeCount},
+            {"Custom Dir X",   VFXParamEntry::Type::Float, &cfg->customFacingX, nullptr, -1.0f, 1.0f, 0.05f},
+            {"Custom Dir Y",   VFXParamEntry::Type::Float, &cfg->customFacingY, nullptr, -1.0f, 1.0f, 0.05f},
+            {"Custom Dir Z",   VFXParamEntry::Type::Float, &cfg->customFacingZ, nullptr, -1.0f, 1.0f, 0.05f},
             {"Stretch",    VFXParamEntry::Type::Float, &cfg->stretchFactor, nullptr, 0.0f, 5.0f, 0.1f},
             {"Lit Mode",   VFXParamEntry::Type::Enum, nullptr, &cfg->litMode, 0.0f, 1.0f, 0.0f, 1, kLitModeNames, kLitModeCount},
         };

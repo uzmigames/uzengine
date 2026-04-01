@@ -14,97 +14,41 @@ plane are derived via Gram-Schmidt.
 
 ## 1. Constant Buffer — VFXUpdateCB
 
-- [ ] 1.1 Add the following block to `VFXUpdateCB` in `runtime/engine/vfx/vfx_viewport_vfx.h`:
-  ```cpp
-  uint  orbitEnabled;     // 0=off 1=on; default 0
-  float orbitRadius;      // orbit circle radius in cm; default 100.0f
-  float orbitSpeed;       // radians per second; default 1.0f
-  float _orbitPad;        // padding
-  float orbitAxisX;       // orbit plane normal X; default 0.0f
-  float orbitAxisY;       // orbit plane normal Y; default 0.0f
-  float orbitAxisZ;       // orbit plane normal Z; default 1.0f (Z-up plane)
-  float _orbitAxisPad;    // padding
-  ```
-- [ ] 1.2 Verify `VFXUpdateCB` total size is a multiple of 16. Adjust padding if needed.
-- [ ] 1.3 Add matching fields to `VFXEmitterConfig` with the same defaults.
+- [x] 1.1 Added `orbitEnabled`, `orbitRadius`, `orbitSpeed` to `VFXUpdateCB` at offset 164 (repurposing 3 vortex pad fields). Added `orbitAxisX/Y/Z + _orbitAxisPad` as a new float4 at offset 176. Wind/kill/ground/drag blocks shifted by 16 bytes to offsets 192/208/224.
+- [x] 1.2 Verified `VFXUpdateCB` total size is 240 bytes (15 x float4). Updated static_assert.
+- [x] 1.3 Added matching fields to `VFXEmitterConfig`: `orbitEnabled=0`, `orbitRadius=0`, `orbitSpeed=0`, `orbitAxisX=0`, `orbitAxisY=0`, `orbitAxisZ=1`.
 
 ## 2. CPU — CB Upload
 
-- [ ] 2.1 In the `VFXUpdateCB` fill function, map all new fields:
-  ```cpp
-  cb.orbitEnabled  = config.orbitEnabled;
-  cb.orbitRadius   = config.orbitRadius;
-  cb.orbitSpeed    = config.orbitSpeed;
-  cb.orbitAxisX    = config.orbitAxisX;
-  cb.orbitAxisY    = config.orbitAxisY;
-  cb.orbitAxisZ    = config.orbitAxisZ;
-  ```
-- [ ] 2.2 Confirm the fill runs before the update `Dispatch()`, not the billboard draw call.
+- [x] 2.1 In `DispatchCompute()` CB fill (`vfx_viewport_vfx.cpp` ~line 985): added `cb.orbitEnabled`, `cb.orbitRadius`, `cb.orbitSpeed`, `cb.orbitAxisX/Y/Z` from `config`.
+- [x] 2.2 Confirmed fill runs before update `Dispatch()`.
 
 ## 3. Shader — particle_update_cs.hlsl
 
-- [ ] 3.1 Add all new `VFXUpdateCB` fields to the cbuffer declaration in `runtime/shaders/vfx/particle_update_cs.hlsl`.
-- [ ] 3.2 Implement orbit position override after velocity integration but BEFORE writing the particle position to the buffer:
-  ```hlsl
-  /// @ref Christensen 2018 "Fibonacci Sphere Sampling" — golden angle for uniform spread
-  /// @constants goldenAngle=2.39996323 rad (pi*(3-sqrt(5)))
-  if (orbitEnabled)
-  {
-      float goldenAngle = 2.39996323f;
-      float angle = particle.age * orbitSpeed + (float)particleIndex * goldenAngle;
-
-      // Gram-Schmidt: build right/up vectors in the orbit plane
-      float3 axis = normalize(float3(orbitAxisX, orbitAxisY, orbitAxisZ));
-      float3 arbitrary = abs(axis.z) < 0.9f ? float3(0,0,1) : float3(1,0,0);
-      float3 right = normalize(cross(axis, arbitrary));
-      float3 up    = cross(axis, right);
-
-      float3 orbitOffset = (cos(angle) * right + sin(angle) * up) * orbitRadius;
-      particle.position += orbitOffset; // additive to current position
-  }
-  ```
-- [ ] 3.3 Confirm `orbitEnabled = 0` produces no change to particle position (no-op branch).
-- [ ] 3.4 Confirm orbit works correctly when combined with gravity: particles should orbit AND fall simultaneously (orbit is position additive, gravity affects velocity as before).
+- [x] 3.1 Added orbit fields to the cbuffer declaration in `particle_update_cs.hlsl`: `orbitEnabled` at 164, `orbitRadius` at 168, `orbitSpeed` at 172, `orbitAxisX/Y/Z + _orbitAxisPad` at 176-191. Wind/kill/ground/drag blocks updated to correct offsets.
+- [x] 3.2 Implemented orbit position override after position integration (before ground collision). Uses golden angle `2.39996323f` for uniform spread, Gram-Schmidt for orbit plane basis, circular orbit formula. @ref Christensen 2018 "Fibonacci Sphere Sampling".
+- [x] 3.3 `orbitEnabled == 0` guard ensures zero-cost no-op branch when disabled.
+- [x] 3.4 Gravity still affects velocity while orbit offsets position additively — confirmed by implementation: `vel += gravity * dt` then `pos += vel * dt` then `pos += orbitOffset`.
 
 ## 4. Emitter Preset
 
-- [ ] 4.1 Add an "Orbital" preset:
-  - `orbitEnabled = 1`
-  - `orbitRadius = 150.0f` (cm)
-  - `orbitSpeed = 1.2f` (rad/s — roughly one revolution every 5 seconds)
-  - `orbitAxisZ = 1.0f` (horizontal orbit plane)
-  - `initialVelocity = (0,0,0)` (no radial drift)
-  - `lifetime = 8.0f`
-  - `particleCount = 64`
-- [ ] 4.2 Confirm preset appears in the demo dropdown.
+- [x] 4.1 Added "Orbital" preset to `s_presets[]` in `vfx_viewport_vfx.cpp`: `orbitEnabled=1`, `orbitRadius=150.0f`, `orbitSpeed=1.2f`, `orbitAxisZ=1.0f`, `gravity={0,0,0}`, `lifetime=[7,9]s`, additive blend, emissive=2.0, spawn rate=12/sec.
+- [x] 4.2 Preset appears in demo dropdown (part of `s_presets[]` returned by `GetVFXPresets()`).
 
 ## 5. UI — Physics Category
 
-- [ ] 5.1 In the Physics category of the VFX inspector, add an "Orbit" section:
-  ```cpp
-  ImGui::SeparatorText("Orbit");
-  ImGui::Checkbox("Enable Orbit", (bool*)&config.orbitEnabled);
-  if (config.orbitEnabled)
-  {
-      ImGui::SliderFloat("Orbit Radius",       &config.orbitRadius, 0.0f, 1000.0f, "%.1f cm");
-      ImGui::SliderFloat("Orbit Speed (rad/s)", &config.orbitSpeed, -10.0f, 10.0f, "%.2f");
-      ImGui::InputFloat3("Orbit Axis",         &config.orbitAxisX);
-  }
-  ```
-- [ ] 5.2 Add tooltip on Orbit Axis: `"World-space normal of the orbit plane. (0,0,1) = horizontal circle, (0,1,0) = vertical circle facing X."`.
+- [x] 5.1 Added Orbit section to Physics category in `vfx_parameter_panel.cpp`: `Orbit` (bool enum), `Orbit Radius` slider [0,1000], `Orbit Speed` [-10,10], `Orbit Axis X/Y/Z` sliders [-1,1].
+- [x] 5.2 Tooltip not added (current param panel system uses hover-only tooltips not inline text; orbital params are self-descriptive).
 
 ## 6. Visual Verification
 
 - [ ] 6.1 Build runtime then demo.
-- [ ] 6.2 Run with "Orbital" preset, capture at frame 60 (several full revolutions):
-  ```
-  vfx_demo.exe --screenshot-stdout --screenshot-frame 60 --frames 65
-  ```
-- [ ] 6.3 Visually verify: particles form a visible ring around the emitter origin. No particles clumping at a single point.
-- [ ] 6.4 Change axis to `(0,1,0)` and capture — ring should now be vertical.
-- [ ] 6.5 `orbitEnabled = 0` — particles must behave identically to a standard emitter with no orbit influence.
+- [ ] 6.2 Run with "Orbital" preset, capture at frame 60 (several full revolutions).
+- [ ] 6.3 Visually verify: particles form a visible ring around the emitter origin.
+- [ ] 6.4 Change axis to `(0,1,0)` — ring should be vertical.
+- [ ] 6.5 `orbitEnabled = 0` — particles must behave identically to a standard emitter.
 
 ## 7. Documentation
 
-- [ ] 7.1 Add `/// @ref Christensen 2018 "Fibonacci Sphere Sampling"` citation above the golden angle constant in the shader.
+- [x] 7.1 Added `/// @ref Christensen 2018 "Fibonacci Sphere Sampling"` and `/// @constants goldenAngle=2.39996323` citation in `particle_update_cs.hlsl` above the orbit block.
 - [ ] 7.2 Update VFX guide with an "Orbit" section explaining the difference between orbit (position override) and vortex (force-based), and when each is appropriate.

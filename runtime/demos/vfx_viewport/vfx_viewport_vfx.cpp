@@ -36,7 +36,7 @@ static const VFXPreset s_presets[] = {
         /*sizeOverLife*/ 0.5f, 1.2f, 0.0f, 0.3f,
         /*colorLifeStart*/ 1.0f, 0.9f, 0.5f, 1.0f,
         /*colorLifeEnd*/ 1.0f, 0.3f, 0.05f, 0.0f,
-        /*alignment*/ 0, /*stretch*/ 0.0f,
+        /*facingMode*/ 0, /*customFacingX*/ 0.0f, /*customFacingY*/ 0.0f, /*customFacingZ*/ 1.0f, /*stretchFactor*/ 0.0f,
         /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
         /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
         /*blendMode*/ 1 // Additive — fire glow on dark backgrounds
@@ -51,7 +51,7 @@ static const VFXPreset s_presets[] = {
         /*sizeOverLife*/ 0.3f, 1.5f, 2.5f, 0.3f,
         /*colorLifeStart*/ 0.7f, 0.6f, 0.5f, 0.8f,
         /*colorLifeEnd*/ 0.2f, 0.2f, 0.2f, 0.0f,
-        /*alignment*/ 0, /*stretch*/ 0.0f,
+        /*facingMode*/ 0, /*customFacingX*/ 0.0f, /*customFacingY*/ 0.0f, /*customFacingZ*/ 1.0f, /*stretchFactor*/ 0.0f,
         /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
         /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
         /*blendMode*/ 0 // AlphaBlend — smoke is translucent, not additive
@@ -68,7 +68,7 @@ static const VFXPreset s_presets[] = {
         /*sizeOverLife*/ 1.0f, 1.0f, 0.3f, 0.0f,
         /*colorLifeStart*/ 1.0f, 0.95f, 0.7f, 1.0f,
         /*colorLifeEnd*/ 1.0f, 0.3f, 0.0f, 0.2f,
-        /*alignment*/ 1, /*stretch*/ 2.0f,
+        /*facingMode*/ 1, /*customFacingX*/ 0.0f, /*customFacingY*/ 0.0f, /*customFacingZ*/ 1.0f, /*stretchFactor*/ 2.0f,
         /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
         /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
         /*blendMode*/ 1, // Additive — bright spark streaks
@@ -90,7 +90,7 @@ static const VFXPreset s_presets[] = {
         /*sizeOverLife*/ 0.5f, 1.0f, 0.2f, 0.4f,
         /*colorLifeStart*/ 0.4f, 0.8f, 1.0f, 1.0f,
         /*colorLifeEnd*/ 0.1f, 0.2f, 0.8f, 0.0f,
-        /*alignment*/ 0, /*stretch*/ 0.0f,
+        /*facingMode*/ 0, /*customFacingX*/ 0.0f, /*customFacingY*/ 0.0f, /*customFacingZ*/ 1.0f, /*stretchFactor*/ 0.0f,
         /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
         /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
         /*blendMode*/ 1 // Additive — glowing magical particles
@@ -105,7 +105,7 @@ static const VFXPreset s_presets[] = {
         /*sizeOverLife*/ 0.8f, 1.5f, 0.1f, 0.1f,
         /*colorLifeStart*/ 1.0f, 0.8f, 0.4f, 1.0f,
         /*colorLifeEnd*/ 0.4f, 0.08f, 0.0f, 0.0f,
-        /*alignment*/ 1, /*stretch*/ 2.0f,
+        /*facingMode*/ 1, /*customFacingX*/ 0.0f, /*customFacingY*/ 0.0f, /*customFacingZ*/ 1.0f, /*stretchFactor*/ 2.0f,
         /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
         /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
         /*blendMode*/ 1, // Additive — hot glowing debris
@@ -127,7 +127,7 @@ static const VFXPreset s_presets[] = {
         /*sizeOverLife*/ 0.5f, 1.3f, 0.4f, 0.2f,
         /*colorLifeStart*/ 1.0f, 0.7f, 0.2f, 1.0f,
         /*colorLifeEnd*/ 0.7f, 0.15f, 0.02f, 0.3f,
-        /*alignment*/ 0, /*stretch*/ 0.5f,
+        /*facingMode*/ 0, /*customFacingX*/ 0.0f, /*customFacingY*/ 0.0f, /*customFacingZ*/ 1.0f, /*stretchFactor*/ 0.5f,
         /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
         /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
         /*blendMode*/ 1 // Additive — intense fireball glow
@@ -143,7 +143,7 @@ static const VFXPreset s_presets[] = {
         /*sizeOverLife*/ 0.5f, 1.0f, 0.0f, 0.3f,
         /*colorLifeStart*/ 1.0f, 0.8f, 0.3f, 1.0f,
         /*colorLifeEnd*/ 1.0f, 0.2f, 0.0f, 0.0f,
-        /*alignment*/ 0, /*stretch*/ 0.0f,
+        /*facingMode*/ 0, /*customFacingX*/ 0.0f, /*customFacingY*/ 0.0f, /*customFacingZ*/ 1.0f, /*stretchFactor*/ 0.0f,
         /*spawnShape*/ 3, /*spawnOnSurface*/ 0,
         /*shapeParam1*/ 0.3f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
         /*blendMode*/ 1 // Additive — ring of fire glow
@@ -158,7 +158,7 @@ static const VFXPreset s_presets[] = {
         /*sizeOverLife*/ 0.3f, 1.0f, 0.0f, 0.3f,
         /*colorLifeStart*/ 0.5f, 0.8f, 1.0f, 1.0f,
         /*colorLifeEnd*/ 0.1f, 0.3f, 0.8f, 0.0f,
-        /*alignment*/ 1, /*stretch*/ 1.5f,
+        /*facingMode*/ 1, /*customFacingX*/ 0.0f, /*customFacingY*/ 0.0f, /*customFacingZ*/ 1.0f, /*stretchFactor*/ 1.5f,
         /*spawnShape*/ 4, /*spawnOnSurface*/ 1,
         /*shapeParam1*/ 0.5f, /*shapeParam2*/ 2.0f, /*shapeParam3*/ 0.0f,
         /*blendMode*/ 1 // Additive — bright energy jet
@@ -173,7 +173,7 @@ static const VFXPreset s_presets[] = {
         /*sizeOverLife*/ 0.5f, 1.2f, 0.3f, 0.4f,
         /*colorLifeStart*/ 0.3f, 1.0f, 0.4f, 1.0f,
         /*colorLifeEnd*/ 0.1f, 0.5f, 0.1f, 0.0f,
-        /*alignment*/ 0, /*stretch*/ 0.0f,
+        /*facingMode*/ 0, /*customFacingX*/ 0.0f, /*customFacingY*/ 0.0f, /*customFacingZ*/ 1.0f, /*stretchFactor*/ 0.0f,
         /*spawnShape*/ 5, /*spawnOnSurface*/ 0,
         /*shapeParam1*/ 4.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
         /*blendMode*/ 0 // AlphaBlend — translucent volume particles
@@ -189,7 +189,7 @@ static const VFXPreset s_presets[] = {
         /*sizeOverLife*/ 0.3f, 1.5f, 2.0f, 0.3f,
         /*colorLifeStart*/ 0.7f, 0.7f, 0.7f, 0.8f,
         /*colorLifeEnd*/ 0.3f, 0.3f, 0.3f, 0.0f,
-        /*alignment*/ 0, /*stretch*/ 0.0f,
+        /*facingMode*/ 0, /*customFacingX*/ 0.0f, /*customFacingY*/ 0.0f, /*customFacingZ*/ 1.0f, /*stretchFactor*/ 0.0f,
         /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
         /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
         /*blendMode*/ 0, // AlphaBlend — smoke is translucent
@@ -211,7 +211,7 @@ static const VFXPreset s_presets[] = {
         /*sizeOverLife*/ 0.5f, 1.3f, 0.0f, 0.3f,
         /*colorLifeStart*/ 1.0f, 1.0f, 1.0f, 1.0f,
         /*colorLifeEnd*/ 1.0f, 1.0f, 1.0f, 0.0f,
-        /*alignment*/ 0, /*stretch*/ 0.0f,
+        /*facingMode*/ 0, /*customFacingX*/ 0.0f, /*customFacingY*/ 0.0f, /*customFacingZ*/ 1.0f, /*stretchFactor*/ 0.0f,
         /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
         /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
         /*blendMode*/ 1 // Additive — fire glow
@@ -228,7 +228,7 @@ static const VFXPreset s_presets[] = {
         /*sizeOverLife*/ 0.4f, 1.2f, 2.0f, 0.3f,
         /*colorLifeStart*/ 0.8f, 0.7f, 0.5f, 0.9f,
         /*colorLifeEnd*/ 0.4f, 0.4f, 0.35f, 0.0f,
-        /*alignment*/ 0, /*stretch*/ 0.0f,
+        /*facingMode*/ 0, /*customFacingX*/ 0.0f, /*customFacingY*/ 0.0f, /*customFacingZ*/ 1.0f, /*stretchFactor*/ 0.0f,
         /*spawnShape*/ 1, /*spawnOnSurface*/ 0,
         /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
         /*blendMode*/ 0, // AlphaBlend — dust/debris is translucent
@@ -247,7 +247,7 @@ static const VFXPreset s_presets[] = {
         /*sizeOverLife*/ 0.5f, 1.0f, 0.5f, 0.4f,
         /*colorLifeStart*/ 0.3f, 0.6f, 1.0f, 0.8f,
         /*colorLifeEnd*/ 0.1f, 0.3f, 0.7f, 0.0f,
-        /*alignment*/ 0, /*stretch*/ 0.0f,
+        /*facingMode*/ 0, /*customFacingX*/ 0.0f, /*customFacingY*/ 0.0f, /*customFacingZ*/ 1.0f, /*stretchFactor*/ 0.0f,
         /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
         /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
         /*blendMode*/ 0, // AlphaBlend — water-like particles
@@ -268,7 +268,7 @@ static const VFXPreset s_presets[] = {
         /*sizeOverLife*/ 0.4f, 1.5f, 2.8f, 0.3f,
         /*colorLifeStart*/ 0.6f, 0.6f, 0.6f, 0.7f,
         /*colorLifeEnd*/ 0.2f, 0.2f, 0.2f, 0.0f,
-        /*alignment*/ 0, /*stretch*/ 0.0f,
+        /*facingMode*/ 0, /*customFacingX*/ 0.0f, /*customFacingY*/ 0.0f, /*customFacingZ*/ 1.0f, /*stretchFactor*/ 0.0f,
         /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
         /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
         /*blendMode*/ 0, // AlphaBlend — smoke
@@ -289,7 +289,7 @@ static const VFXPreset s_presets[] = {
         /*sizeOverLife*/ 0.3f, 1.5f, 2.0f, 0.3f,
         /*colorLifeStart*/ 0.8f, 0.8f, 0.8f, 1.0f,
         /*colorLifeEnd*/ 0.3f, 0.3f, 0.3f, 0.0f,
-        /*alignment*/ 0, /*stretch*/ 0.0f,
+        /*facingMode*/ 0, /*customFacingX*/ 0.0f, /*customFacingY*/ 0.0f, /*customFacingZ*/ 1.0f, /*stretchFactor*/ 0.0f,
         /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
         /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
         /*blendMode*/ 0, // AlphaBlend — lit smoke is translucent, not additive
@@ -310,7 +310,7 @@ static const VFXPreset s_presets[] = {
         /*sizeOverLife*/ 0.8f, 1.2f, 0.1f, 0.1f,
         /*colorLifeStart*/ 0.8f, 0.7f, 0.5f, 1.0f,
         /*colorLifeEnd*/ 0.4f, 0.35f, 0.25f, 0.0f,
-        /*alignment*/ 1, /*stretch*/ 1.5f,
+        /*facingMode*/ 1, /*customFacingX*/ 0.0f, /*customFacingY*/ 0.0f, /*customFacingZ*/ 1.0f, /*stretchFactor*/ 1.5f,
         /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
         /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
         /*blendMode*/ 0, // AlphaBlend — lit debris is translucent, shows directional shading
@@ -321,6 +321,63 @@ static const VFXPreset s_presets[] = {
         /*litMode*/ 1, // Lit particles — NdotL directional + ambient
         /*groundCollision*/ 1, /*restitution*/ 0.3f // Bounce off ground
     }, 1500.0f },
+
+    // ── Orbital preset (Task 4.9.0) ────────────────────────────────────────────
+    // Particles orbit the emitter origin on a horizontal circle. No radial drift —
+    // initial velocity is zero so particles stay on the ring. The golden angle spread
+    // (baked into the shader) guarantees uniform distribution at any particle count.
+    // @ref Christensen 2018 "Fibonacci Sphere Sampling" — golden angle for uniform spread
+    { "Orbital", VFXEmitterConfig{
+        .position        = {0.0f, 0.0f, 0.0f},
+        .spawnRadius     = 0.01f,          // spawn near center — orbit overrides position
+        .spawnVelocity   = {0.0f, 0.0f, 0.0f}, // no initial velocity; orbit sets position
+        .velocityVariation = 0.0f,
+        .spreadAngle     = 0.0f,
+        .minLifetime     = 7.0f,           // ~1.8 full revolutions at 1.6 rad/s
+        .maxLifetime     = 9.0f,
+        .initialSize     = 0.5f,
+        .initialColor    = {0.4f, 0.8f, 1.0f, 1.0f}, // cyan-blue
+        .gravity         = {0.0f, 0.0f, 0.0f},        // no gravity — clean orbit
+        .damping         = 0.0f,
+        .softFadeDistance = 0.3f,
+        .emissiveIntensity = 2.0f,         // glow effect for orbiting energy particles
+        .sizeOverLifeStart    = 0.3f,
+        .sizeOverLifePeak     = 1.0f,
+        .sizeOverLifeEnd      = 0.0f,
+        .sizeOverLifePeakTime = 0.2f,
+        .colorLifeStartR = 0.4f, .colorLifeStartG = 0.8f, .colorLifeStartB = 1.0f, .colorLifeStartA = 1.0f,
+        .colorLifeEndR   = 0.1f, .colorLifeEndG   = 0.3f, .colorLifeEndB   = 0.8f, .colorLifeEndA   = 0.0f,
+        .facingMode      = 0,              // FaceCamera — spherical facing for glow orbs
+        .customFacingX   = 0.0f,
+        .customFacingY   = 0.0f,
+        .customFacingZ   = 1.0f,
+        .stretchFactor   = 0.0f,
+        .spawnShape      = 0,              // Point spawn — orbit radius controls ring size
+        .spawnOnSurface  = 0,
+        .shapeParam1     = 0.0f,
+        .shapeParam2     = 0.0f,
+        .shapeParam3     = 0.0f,
+        .blendMode       = 1,              // Additive — glowing energy orbs composite nicely
+        .curlStrength    = 0.0f,
+        .curlFrequency   = 0.5f,
+        .curlSpeed       = 0.2f,
+        .vortexAxisOrigin = {0,0,0},
+        .vortexAxisDir    = {0,0,1},
+        .vortexTangentialStrength = 0.0f,
+        .vortexRadialStrength     = 0.0f,
+        .vortexMaxRadius          = 5.0f,
+        .windDir         = {1,0,0},
+        .windStrength    = 0.0f,
+        .litMode         = 0,              // Unlit — emissive glow doesn't need directional
+        .groundCollision = 0,
+        .restitution     = 0.0f,
+        .orbitEnabled    = 1,              // activate orbit
+        .orbitRadius     = 150.0f,         // 150 world units radius
+        .orbitSpeed      = 1.2f,           // ~1 revolution / 5.2 seconds
+        .orbitAxisX      = 0.0f,
+        .orbitAxisY      = 0.0f,
+        .orbitAxisZ      = 1.0f,           // Z-up axis → horizontal orbit in XY plane
+    }, 12.0f },  // 12 particles/sec → 84-108 alive at steady state, fills the ring
 };
 
 const VFXPreset* GetVFXPresets(int& outCount) {
@@ -974,6 +1031,19 @@ void VFXParticleSystem::DispatchCompute(IRHICommandList* cmdList, CBRingAllocato
         cb.groundCollision = config.groundCollision;
         cb.restitution     = config.restitution;
 
+        // Quadratic drag (air resistance)
+        // @ref Witkin & Baraff 2001 "Physically Based Modeling" — quadratic drag
+        cb.dragCoefficient = config.dragCoefficient;
+
+        // Orbit around emitter origin
+        // @ref Christensen 2018 "Fibonacci Sphere Sampling" — golden angle for uniform spread
+        cb.orbitEnabled = config.orbitEnabled;
+        cb.orbitRadius  = config.orbitRadius;
+        cb.orbitSpeed   = config.orbitSpeed;
+        cb.orbitAxisX   = config.orbitAxisX;
+        cb.orbitAxisY   = config.orbitAxisY;
+        cb.orbitAxisZ   = config.orbitAxisZ;
+
         auto alloc = cbRing->Allocate(sizeof(VFXUpdateCB));
         std::memcpy(alloc.cpuPtr, &cb, sizeof(VFXUpdateCB));
 
@@ -1197,13 +1267,27 @@ void VFXParticleSystem::DrawBillboards(IRHICommandList* cmdList, CBRingAllocator
     billboardCB.colorLifeEnd[1]   = config.colorLifeEndG;
     billboardCB.colorLifeEnd[2]   = config.colorLifeEndB;
     billboardCB.colorLifeEnd[3]   = config.colorLifeEndA;
-    // Billboard alignment and stretching
-    billboardCB.alignmentMode = config.alignmentMode;
-    billboardCB.stretchFactor = config.stretchFactor;
+    // Billboard facing mode and custom direction
+    billboardCB.facingMode      = config.facingMode;
+    billboardCB.customFacingX   = config.customFacingX;
+    billboardCB.customFacingY   = config.customFacingY;
+    billboardCB.customFacingZ   = config.customFacingZ;
+    // Billboard stretching + blend
+    billboardCB.stretchFactor   = config.stretchFactor;
     // Blend mode hint tells the PS how to handle alpha output
-    billboardCB.blendModeHint = blendMode;
+    billboardCB.blendModeHint   = blendMode;
     // Color ramp LUT SRV index (UINT32_MAX = legacy two-point lerp)
     billboardCB.colorRampLutSrvIndex = m_colorRampSrvIndex;
+    // Camera offset & pivot offset (Task 4.7.0)
+    // @ref Latta 2004 "Inside Geometry Instancing" — camera offset for depth layering
+    billboardCB.cameraOffset    = config.cameraOffset;
+    billboardCB.pivotOffsetX    = config.pivotOffsetX;
+    billboardCB.pivotOffsetY    = config.pivotOffsetY;
+    // Size by speed (Task 4.8.0)
+    billboardCB.sizeBySpeedEnabled = config.sizeBySpeedEnabled;
+    billboardCB.sizeBySpeedMin    = config.sizeBySpeedMin;
+    billboardCB.sizeBySpeedMax    = config.sizeBySpeedMax;
+    billboardCB.speedRangeMax     = config.speedRangeMax;
 
     auto cbAlloc = cbRing->Allocate(sizeof(VFXBillboardCB));
     std::memcpy(cbAlloc.cpuPtr, &billboardCB, sizeof(VFXBillboardCB));

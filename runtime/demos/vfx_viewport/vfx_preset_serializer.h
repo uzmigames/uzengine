@@ -26,7 +26,7 @@
 ///   softFadeDistance, emissiveIntensity,
 ///   sizeOverLifeStart/Peak/End/PeakTime,
 ///   colorLifeStartR/G/B/A, colorLifeEndR/G/B/A,
-///   alignmentMode, stretchFactor,
+///   alignmentMode (= facingMode, key retained for BC), customFacingX/Y/Z, stretchFactor,
 ///   spawnShape, spawnOnSurface,
 ///   shapeParam1/2/3,
 ///   blendMode,
@@ -34,7 +34,8 @@
 ///   vortexOriginX/Y/Z, vortexDirX/Y/Z,
 ///   vortexTangential, vortexRadial, vortexMaxRadius,
 ///   windDirX/Y/Z, windStrength,
-///   litMode, groundCollision, restitution
+///   litMode, groundCollision, restitution,
+///   orbitEnabled, orbitRadius, orbitSpeed, orbitAxisX/Y/Z
 ///
 /// # Thread Safety
 /// NOT thread-safe. Call all methods from the main/render thread only.

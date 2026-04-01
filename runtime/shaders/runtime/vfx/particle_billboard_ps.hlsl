@@ -139,14 +139,16 @@ cbuffer VFXBillboardCB : register(b2) {
     uint     litMode;              ///< 0=Unlit (default), 1=Lit (NdotL directional + ambient).
                                    ///< @ref Pharr 2023 "Physically Based Rendering" Ch.12 — Lambertian diffuse.
 
-    float    _pad1;
-    float    _pad2;
-    float    _pad3;
-    float    _pad4;
-    float    _pad5;
-    float    _pad6;
-    float    _pad7;
-    float    _pad8;
+    // ── Camera offset & pivot offset (declared for layout, not read by PS) ──
+    float    cameraOffset;
+    float    pivotOffsetX;
+    float    pivotOffsetY;
+    float    _camPivotPad;
+    // ── Size by speed (declared for layout, not read by PS) ──
+    uint     sizeBySpeedEnabled;
+    float    sizeBySpeedMin;
+    float    sizeBySpeedMax;
+    float    speedRangeMax;
     // ── Size over lifetime (declared for layout, not read by PS, 16 bytes) ──
     float    sizeOverLifeStart;
     float    sizeOverLifePeak;
@@ -155,11 +157,16 @@ cbuffer VFXBillboardCB : register(b2) {
     // ── Color over lifetime (linear interpolation, 32 bytes) ──
     float4   colorLifeStart;       ///< RGBA color at birth.
     float4   colorLifeEnd;         ///< RGBA color at death.
-    // ── Billboard alignment and stretching (16 bytes, declared for layout) ──
-    uint     alignmentMode;        ///< 0=CameraFacing, 1=VelocityAligned (not read by PS).
+    // ── Billboard facing mode + custom direction (16 bytes, declared for layout) ──
+    uint     facingMode;           ///< 0=FaceCamera, 1=VelocityAligned, 2=FaceCameraPlane, 3=CustomVector, 4=FaceCameraPosition (not read by PS).
+    float    customFacingX;        ///< Custom facing direction X (not read by PS).
+    float    customFacingY;        ///< Custom facing direction Y (not read by PS).
+    float    customFacingZ;        ///< Custom facing direction Z (not read by PS).
+    // ── Billboard stretching + blend (16 bytes) ──
     float    stretchFactor;        ///< Velocity stretch multiplier (not read by PS).
     uint     blendModeHint;        ///< 0=AlphaBlend, 1=Additive, 2=PremulAlpha — controls PS alpha output.
     uint     colorRampLutSrvIndex; ///< Bindless SRV for color ramp 256x1 LUT. 0xFFFFFFFF = legacy lerp.
+    float    _alignPad;            ///< Padding to maintain 16-byte boundary.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

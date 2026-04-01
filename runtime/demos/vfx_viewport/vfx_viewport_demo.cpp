@@ -108,7 +108,7 @@ VFXViewportDemo::VFXViewportDemo(const DemoConfig& config)
     // High emissive — sparks are self-illuminating hot particles
     m_subEmitterConfig.emissiveIntensity  = 4.0f;
     // Velocity-aligned stretch so sparks elongate along their trajectory
-    m_subEmitterConfig.alignmentMode      = 1;        // VelocityAligned
+    m_subEmitterConfig.facingMode      = 1;        // VelocityAligned
     m_subEmitterConfig.stretchFactor      = 0.8f;
     // Light gravity — sparks arc downward but slowly
     m_subEmitterConfig.gravity[0]         = 0.0f;
@@ -3256,7 +3256,7 @@ void VFXViewportDemo::BuildCompoundPreset(VFXCompoundPreset preset) {
             sparks.config.damping = 0.05f;
             sparks.config.emissiveIntensity = 4.0f;
             sparks.config.blendMode = 1; // Additive
-            sparks.config.alignmentMode = 1; // VelocityAligned
+            sparks.config.facingMode = 1; // VelocityAligned
             sparks.config.stretchFactor = 0.6f;
             sparks.config.sizeOverLifeStart = 1.0f;
             sparks.config.sizeOverLifePeak = 0.8f;
@@ -3345,7 +3345,7 @@ void VFXViewportDemo::BuildCompoundPreset(VFXCompoundPreset preset) {
             debris.config.damping = 0.1f;
             debris.config.emissiveIntensity = 1.0f;
             debris.config.blendMode = 0; // AlphaBlend
-            debris.config.alignmentMode = 1; // VelocityAligned
+            debris.config.facingMode = 1; // VelocityAligned
             debris.config.stretchFactor = 0.4f;
             debris.config.groundCollision = 1;
             debris.config.restitution = 0.4f;

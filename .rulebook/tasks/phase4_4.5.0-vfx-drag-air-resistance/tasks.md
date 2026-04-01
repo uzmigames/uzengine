@@ -8,30 +8,20 @@ This produces physically plausible arcs for projectiles, embers, and debris.
 
 ## 1. Constant Buffer — VFXUpdateCB
 
-- [ ] 1.1 Add `float dragCoefficient` to `VFXUpdateCB` struct in `runtime/engine/vfx/vfx_viewport_vfx.h`. Place after the existing damping field. Default value `0.0f`. Comment: `// quadratic drag coefficient k in F=-k|v|^2*dir`.
-- [ ] 1.2 Verify `VFXUpdateCB` total byte size is still a multiple of 16 (add `float _dragPad` or pack with a nearby field if alignment breaks). Update the byte-size comment if present.
-- [ ] 1.3 Add `float dragCoefficient` to `VFXEmitterConfig` struct in the same header, default `0.0f`, matching field order with the CB.
+- [x] 1.1 Add `float dragCoefficient` to `VFXUpdateCB` struct. Added at offset 224 with 3 pad floats, growing CB from 224 to 240 bytes (15 x float4).
+- [x] 1.2 Verify `VFXUpdateCB` total byte size is still a multiple of 16. static_assert updated to 240.
+- [x] 1.3 Add `float dragCoefficient` to `VFXEmitterConfig` struct, default `0.0f`.
 
 ## 2. CPU — CB Upload
 
-- [ ] 2.1 In the function that fills `VFXUpdateCB` from `VFXEmitterConfig` (search for where `damping` or `VFXUpdateCB` is populated on CPU), add: `cb.dragCoefficient = config.dragCoefficient;`.
-- [ ] 2.2 Confirm the upload path reaches the mapped constant buffer before `Dispatch()` is called for `particle_update_cs.hlsl`.
+- [x] 2.1 In `DispatchCompute()`, added `cb.dragCoefficient = config.dragCoefficient;` before CB upload.
+- [x] 2.2 Confirmed upload path fills CB before `Dispatch()` call.
 
 ## 3. Shader — particle_update_cs.hlsl
 
-- [ ] 3.1 Add `float dragCoefficient` to the `VFXUpdateCB` cbuffer declaration in `runtime/shaders/vfx/particle_update_cs.hlsl`, matching the CPU-side layout exactly.
-- [ ] 3.2 Implement quadratic drag after any force accumulation but BEFORE position integration. Exact formula:
-  ```hlsl
-  /// @ref Witkin & Baraff 2001 "Physically Based Modeling" — quadratic drag
-  /// @constants dragCoefficient=user (default 0.0), clamp prevents velocity reversal
-  float speed = length(vel);
-  if (speed > 1e-5f && dragCoefficient > 0.0f)
-  {
-      float dragMag = dragCoefficient * speed * speed;
-      vel -= (vel / speed) * min(dragMag * dt, speed);
-  }
-  ```
-- [ ] 3.3 Confirm the drag step executes every update tick for every alive particle, not only on spawn.
+- [x] 3.1 Add `float dragCoefficient` to the `VFXUpdateConstants` cbuffer declaration at offset 224, matching CPU layout exactly. Also fixed orbit fields (offset 160-188) that were missing from HLSL but present in C++ CB.
+- [x] 3.2 Implemented quadratic drag after damping, before position integration, inside `#ifdef UZ_BINDLESS`. Uses `min(dragMag * dt, speed)` clamp to prevent velocity reversal.
+- [x] 3.3 Confirmed drag executes every update tick for every alive particle (not spawn-only).
 
 ## 4. Emitter Preset
 

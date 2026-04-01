@@ -39,6 +39,8 @@
 ///
 /// @ref Niagara GPU sprite rendering — billboard expansion from SV_VertexID
 /// @ref Karis 2014 "High Quality Temporal Supersampling" — per-object motion vectors
+/// @ref Latta 2004 "Inside Geometry Instancing" — camera-position billboard (mode 4)
+/// @ref Valve 2006 "Rendering in Left 4 Dead" — axis-aligned billboard (mode 2)
 /// @constants VERTICES_PER_PARTICLE=6
 /// @deviations NONE
 
@@ -178,14 +180,17 @@ cbuffer VFXBillboardCB : register(b2) {
     float    alphaErosion;            ///< Subtractive alpha erosion [0, 1].
     float    emissiveIntensity;       ///< Multiplier for additive emissive contribution.
     uint     litMode;                ///< 0=Unlit, 1=Lit. Not used by VS, declared for layout.
-    float    _pad1;
-    float    _pad2;
-    float    _pad3;
-    float    _pad4;
-    float    _pad5;
-    float    _pad6;
-    float    _pad7;
-    float    _pad8;
+    // ── Camera offset & pivot offset (Task 4.7.0) ─────────────────────────
+    /// @ref Latta 2004 "Inside Geometry Instancing" — camera offset for depth layering
+    float    cameraOffset;             ///< Push/pull along camera forward (world units). 0=disabled.
+    float    pivotOffsetX;             ///< Sprite-local X pivot shift [-1,1]. 0=center.
+    float    pivotOffsetY;             ///< Sprite-local Y pivot shift [-1,1]. 0=center.
+    float    _camPivotPad;
+    // ── Size by speed (Task 4.8.0) ──────────────────────────────────────────
+    uint     sizeBySpeedEnabled;       ///< 0=off, 1=on. Maps particle speed to size multiplier.
+    float    sizeBySpeedMin;           ///< Size multiplier at zero speed.
+    float    sizeBySpeedMax;           ///< Size multiplier at speedRangeMax.
+    float    speedRangeMax;            ///< Speed that maps to t=1 for size-by-speed.
     // ── Size over lifetime (analytical piecewise-linear curve, 16 bytes) ──
     float    sizeOverLifeStart;    ///< Size multiplier at birth (t=0).
     float    sizeOverLifePeak;     ///< Size multiplier at peak time.
@@ -194,11 +199,18 @@ cbuffer VFXBillboardCB : register(b2) {
     // ── Color over lifetime (linear interpolation, 32 bytes) ──
     float4   colorLifeStart;       ///< RGBA color at birth.
     float4   colorLifeEnd;         ///< RGBA color at death.
-    // ── Billboard alignment and stretching (16 bytes) ──
-    uint     alignmentMode;        ///< 0=CameraFacing, 1=VelocityAligned.
+    // ── Billboard facing mode + custom direction (16 bytes) ──────────────
+    /// @ref Latta 2004 "Inside Geometry Instancing" — camera-position billboard
+    /// @ref Valve 2006 "Rendering in Left 4 Dead" — axis-aligned billboard
+    uint     facingMode;           ///< 0=FaceCamera, 1=VelocityAligned, 2=FaceCameraPlane, 3=CustomVector, 4=FaceCameraPosition.
+    float    customFacingX;        ///< Custom facing direction X (facingMode 3 only).
+    float    customFacingY;        ///< Custom facing direction Y (facingMode 3 only).
+    float    customFacingZ;        ///< Custom facing direction Z (facingMode 3 only). Default: world Z-up.
+    // ── Billboard stretching + blend (16 bytes) ──────────────────────────
     float    stretchFactor;        ///< Velocity stretch multiplier. 0=no stretch.
     uint     blendModeHint;        ///< 0=AlphaBlend, 1=Additive, 2=PremulAlpha (read by PS, declared for layout).
     uint     colorRampLutSrvIndex; ///< Bindless SRV for color ramp 256x1 LUT. 0xFFFFFFFF = legacy lerp (read by PS).
+    float    _alignPad;            ///< Padding to maintain 16-byte boundary.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -223,6 +235,111 @@ float2 RotateOffset(float2 offset, float rotationRad) {
         offset.x * cosR - offset.y * sinR,
         offset.x * sinR + offset.y * cosR
     );
+}
+
+/// Builds billboard right/up axes for mode 0: FaceCamera.
+/// Standard spherical billboard — fully tracks camera orientation in all axes.
+/// Extracts right/up directly from the inverse view matrix rows.
+///
+/// @ref Niagara GPU sprite rendering — inverse view row extraction
+void BasisFaceCamera(out float3 right, out float3 up)
+{
+    // For row-major storage: invView row 0 = camera right, row 1 = camera up.
+    right = invView[0].xyz;
+    up    = invView[1].xyz;
+}
+
+/// Builds billboard right/up axes for mode 1: VelocityAligned.
+/// Long axis (up) follows the particle velocity direction. Produces stretched
+/// trail-like sprites aligned with motion direction.
+///
+/// Falls back to camera-facing when velocity is near zero to avoid degenerate normals.
+///
+/// @ref Niagara GPU sprite rendering — velocity-aligned billboard orientation
+///
+/// # Parameters
+/// - velDir: normalized particle velocity direction.
+/// - camRight: camera right vector (fallback for degenerate cases).
+/// - side: out — billboard right (perpendicular to velocity in screen plane).
+/// - up: out — billboard up (along velocity direction).
+void BasisVelocityAligned(float3 velDir, float3 camRight, out float3 side, out float3 up)
+{
+    float3 camToParticleHint = normalize(cameraPos.xyz - float3(0, 0, 0)); // generic hint
+    float3 s = cross(velDir, cameraPos.xyz);
+    float sideLen = length(s);
+    side = (sideLen > 0.001f) ? (s / sideLen) : camRight;
+    up   = velDir;
+}
+
+/// Builds billboard right/up axes for mode 2: FaceCameraPlane.
+/// Y axis is locked to world up (Z in Z-up convention). The billboard rotates
+/// only around the vertical axis to face the camera — never tilts sideways.
+/// Ideal for upright sprites, ground decals, or signs that should remain vertical.
+///
+/// @ref Valve 2006 "Rendering in Left 4 Dead" — axis-aligned billboard (Y-locked)
+///
+/// # Parameters
+/// - particlePos: world-space particle center.
+/// - right: out — billboard right (in world XY plane).
+/// - up: out — billboard up (world Z, locked).
+void BasisFaceCameraPlane(float3 particlePos, out float3 right, out float3 up)
+{
+    // Compute the horizontal vector from particle to camera, zeroing the Z component.
+    // This projects the look direction onto the XY plane (horizontal facing only).
+    float3 toCam = cameraPos.xyz - particlePos;
+    toCam.z = 0.0f; // zero out Z component (Z-up convention)
+    float horizLen = length(toCam);
+    // If particle is directly below/above camera, fall back to camera forward projected.
+    float3 fwd = (horizLen > 0.001f) ? (toCam / horizLen) : float3(1.0f, 0.0f, 0.0f);
+    // Right: perpendicular to fwd in horizontal plane, using world Z-up as the cross axis.
+    right = normalize(cross(float3(0.0f, 0.0f, 1.0f), fwd));
+    // Up: always world Z-up — billboard never tilts.
+    up = float3(0.0f, 0.0f, 1.0f);
+}
+
+/// Builds billboard right/up axes for mode 3: CustomVector.
+/// Long axis (up) is aligned to a fixed world-space direction regardless of camera.
+/// Useful for sparks that fly upward, rain streaks falling down, or any effect
+/// where the billboard should have a fixed world-space orientation.
+///
+/// @ref GDC 2019 "Niagara: Building the Future of FX in Unreal Engine" — fixed-axis sprites
+///
+/// # Parameters
+/// - customDir: normalized world-space direction for the billboard long axis.
+/// - right: out — billboard right (perpendicular to customDir and camera direction).
+/// - up: out — billboard up (along customDir).
+void BasisCustomVector(float3 customDir, out float3 right, out float3 up)
+{
+    // Use camera forward to compute the right vector perpendicular to the custom axis.
+    // camera forward = -invView[2].xyz (row 2 of inverse view = camera forward in world space)
+    float3 camFwd = -invView[2].xyz;
+    float3 r = cross(customDir, camFwd);
+    float rLen = length(r);
+    // If customDir is parallel to camera forward, fall back to camera right to avoid NaN.
+    right = (rLen > 0.001f) ? (r / rLen) : invView[0].xyz;
+    up    = customDir; // long axis locked to custom direction
+}
+
+/// Builds billboard right/up axes for mode 4: FaceCameraPosition.
+/// The billboard faces the actual camera POSITION rather than the camera view direction.
+/// This produces correct parallax at wide FOV angles — edge particles rotate toward the
+/// camera eye point rather than the screen center. Matches UE5 "Camera Facing" behavior.
+///
+/// @ref Latta 2004 "Inside Geometry Instancing" — camera-position facing billboard
+///
+/// # Parameters
+/// - particlePos: world-space particle center.
+/// - right: out — billboard right vector.
+/// - up: out — billboard up vector.
+void BasisFaceCameraPosition(float3 particlePos, out float3 right, out float3 up)
+{
+    // Vector from particle to camera eye — this is the billboard's facing direction.
+    float3 toCamera = normalize(cameraPos.xyz - particlePos);
+    // World up (Z-up convention). If toCamera is nearly parallel to world up,
+    // fall back to world X to avoid degenerate cross product.
+    float3 worldUp = (abs(toCamera.z) < 0.99f) ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f);
+    right = normalize(cross(worldUp, toCamera));
+    up    = cross(toCamera, right); // re-orthogonalize: guaranteed perpendicular and unit length
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -312,6 +429,26 @@ VSOutput main(uint vertexID : SV_VertexID) {
     float  finalSize  = particleSize * globalSizeMultiplier * sizeLifeScale;
     float4 finalColor = particleColor * globalColorTint;
 
+    // ── Size by speed (Task 4.8.0) ──
+    // Maps particle speed to a size multiplier via linear remap [0, speedRangeMax] → [sizeBySpeedMin, sizeBySpeedMax].
+    // Applied after size-over-life so both effects compose multiplicatively.
+    if (sizeBySpeedEnabled != 0u) {
+        float speedForSize = length(particleVel);
+        float speedT = saturate(speedForSize / max(speedRangeMax, 0.001f));
+        float speedSizeMul = lerp(sizeBySpeedMin, sizeBySpeedMax, speedT);
+        finalSize *= speedSizeMul;
+    }
+
+    // ── Camera offset (Task 4.7.0) ──
+    // Push/pull the particle along the camera-to-particle direction before billboard
+    // expansion. Positive values push away from camera (depth layering), negative
+    // values pull toward camera (prevent z-fighting with geometry).
+    /// @ref Latta 2004 "Inside Geometry Instancing" — camera offset for depth layering
+    if (cameraOffset != 0.0f) {
+        float3 viewDir = normalize(cameraPos.xyz - particlePos);
+        particlePos += viewDir * cameraOffset;
+    }
+
     // ── Extract camera right/up from inverse view matrix ──
     // For row-major storage, row 0 = right vector, row 1 = up vector.
     // These vectors are unit-length in world space, forming the billboard plane.
@@ -321,6 +458,13 @@ VSOutput main(uint vertexID : SV_VertexID) {
     // ── Compute billboard corner offset ──
     float2 cornerOffset = kCornerOffsets[vertexInQuad];
 
+    // ── Pivot offset (Task 4.7.0) ──
+    // Shift the billboard expansion origin in sprite-local space before rotation.
+    // pivotOffsetX/Y in [-1,1]: (0,-1)=bottom anchor, (0,1)=top anchor.
+    // The corner offsets are in [-1,+1], so we add the pivot shift directly.
+    /// @ref Unity VFX Graph 2021 "Pivot Offset" — sprite pivot in local space
+    cornerOffset += float2(pivotOffsetX, pivotOffsetY);
+
     // Apply per-particle rotation around the billboard's facing axis
     cornerOffset = RotateOffset(cornerOffset, particleRot);
 
@@ -328,56 +472,69 @@ VSOutput main(uint vertexID : SV_VertexID) {
     float halfSize = finalSize * 0.5f;
 
     // ── Billboard orientation and stretching ──
-    // Determine right/up axes and per-axis half-extents based on alignment mode.
+    // Selects right/up axes based on facingMode. Each mode calls a dedicated
+    // helper function that returns a consistent (right, up) pair in world space.
+    // stretchFactor elongates the vertical (up) axis proportional to speed for
+    // both velocity-aligned and camera-facing modes.
     //
+    // @ref Latta 2004 "Inside Geometry Instancing" — camera-position billboard
+    // @ref Valve 2006 "Rendering in Left 4 Dead" — axis-aligned billboard
     // @ref Niagara GPU sprite rendering — velocity-aligned billboard orientation
-    // Camera-facing: right/up from inverse view matrix (standard billboard).
-    // Velocity-aligned: tangent along velocity, bitangent perpendicular in the
-    // plane formed by velocity and camera-to-particle direction. Falls back to
-    // camera-facing when velocity is near zero to avoid degenerate normals.
     float3 billboardRight;
     float3 billboardUp;
-    float  halfW = halfSize; // horizontal half-extent (perpendicular to velocity)
-    float  halfH = halfSize; // vertical half-extent (along velocity / up)
+    float  halfW = halfSize; // horizontal half-extent
+    float  halfH = halfSize; // vertical half-extent (elongated by stretchFactor)
 
     float  speed = length(particleVel);
 
-    if (alignmentMode == 1 && speed > 0.01f) {
-        // Velocity-aligned: tangent along velocity direction
-        float3 velDir = particleVel / speed; // normalize without recomputing length
-        float3 camToParticle = normalize(cameraPos.xyz - particlePos);
-
-        // Compute side vector perpendicular to both velocity and camera direction.
-        // If velocity is nearly parallel to camera direction, fall back to camera up.
-        float3 side = cross(velDir, camToParticle);
-        float sideLen = length(side);
-        if (sideLen > 0.001f) {
-            side /= sideLen;
-        } else {
-            side = cameraRight; // fallback for degenerate case
+    switch (facingMode)
+    {
+        case 1: // VelocityAligned — long axis follows particle velocity
+        {
+            if (speed > 0.01f) {
+                float3 velDir = particleVel / speed; // already normalized via stored length
+                BasisVelocityAligned(velDir, cameraRight, billboardRight, billboardUp);
+                // Stretch along velocity direction (up axis) proportional to speed.
+                // 0.1f scaling keeps the multiplier reasonable at typical game velocities.
+                // Clamped to 10x to prevent degenerate thin triangles.
+                if (stretchFactor > 0.0f) {
+                    halfH = halfSize + halfSize * speed * stretchFactor * 0.1f;
+                    halfH = min(halfH, halfSize * 10.0f);
+                }
+            } else {
+                // Degenerate case: velocity too small — fall back to camera-facing.
+                BasisFaceCamera(billboardRight, billboardUp);
+            }
+            break;
         }
-
-        billboardRight = side;
-        billboardUp    = velDir;
-
-        // Stretch along velocity direction (up axis) proportional to speed.
-        // stretchFactor controls how aggressively particles elongate.
-        // 0.1 scaling keeps the multiplier reasonable at typical game velocities.
-        // Clamped to 10x particle size to prevent extremely thin triangles.
-        if (stretchFactor > 0.0f) {
-            halfH = halfSize + halfSize * speed * stretchFactor * 0.1f;
-            halfH = min(halfH, halfSize * 10.0f);
+        case 2: // FaceCameraPlane — billboard rotates around world Z, never tilts
+        {
+            BasisFaceCameraPlane(particlePos, billboardRight, billboardUp);
+            break;
         }
-    } else {
-        // Camera-facing (default behavior)
-        billboardRight = cameraRight;
-        billboardUp    = cameraUp;
-
-        // In camera-facing mode, stretch projects along camera up axis when moving.
-        // This gives a subtle motion-blur feel without changing billboard orientation.
-        if (stretchFactor > 0.0f && speed > 0.01f) {
-            halfH = halfSize + halfSize * speed * stretchFactor * 0.1f;
-            halfH = min(halfH, halfSize * 10.0f);
+        case 3: // CustomVector — long axis locked to a fixed world-space direction
+        {
+            // Normalize on GPU as a safety net; CPU should upload a unit vector.
+            float3 customDir = float3(customFacingX, customFacingY, customFacingZ);
+            float  dirLen    = length(customDir);
+            customDir = (dirLen > 0.001f) ? (customDir / dirLen) : float3(0.0f, 0.0f, 1.0f);
+            BasisCustomVector(customDir, billboardRight, billboardUp);
+            break;
+        }
+        case 4: // FaceCameraPosition — faces camera EYE position, not view direction
+        {
+            BasisFaceCameraPosition(particlePos, billboardRight, billboardUp);
+            break;
+        }
+        default: // 0: FaceCamera — standard full-spherical camera-facing billboard
+        {
+            BasisFaceCamera(billboardRight, billboardUp);
+            // In camera-facing mode, stretch projects along camera up axis when moving.
+            if (stretchFactor > 0.0f && speed > 0.01f) {
+                halfH = halfSize + halfSize * speed * stretchFactor * 0.1f;
+                halfH = min(halfH, halfSize * 10.0f);
+            }
+            break;
         }
     }
 

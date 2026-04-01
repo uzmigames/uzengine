@@ -36,9 +36,10 @@
 #include "../editor/selection/selection_manager.h"
 #include "../engine/renderer/camera/fly_camera_controller.h"
 #include "../engine/scripting/editor/lua_editor_api.h"
+#endif
+
 #include "../engine/renderer/passes/debug/pixel_debug.h"
 #include "../engine/renderer/passes/debug/inspector_pass.h"
-#endif
 
 #ifdef _WIN32
 #include "platform_window.h"

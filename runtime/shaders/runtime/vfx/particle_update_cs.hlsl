@@ -47,6 +47,7 @@
 /// @ref Stomakhin 2013 "A Material Point Method for Snow Simulation" App.A — vortex
 /// @ref Stam 1999 "Stable Fluids" — wind zone accumulation
 /// @ref Ericson 2005 "Real-Time Collision Detection" Ch.4 — kill volume containment
+/// @ref Christensen 2018 "Fibonacci Sphere Sampling" — golden angle orbit spread (Task 4.9.0)
 /// @constants UPDATE_GROUP_SIZE=256
 /// @deviations Linear damping approximation instead of exponential decay.
 ///             Linear vortex radial falloff instead of quadratic (GPU efficiency).
@@ -93,7 +94,7 @@ static const uint UPDATE_GROUP_SIZE = 256;
 /// Update constants uploaded by the CPU each frame. Contains physics parameters
 /// and descriptor heap indices for both READ (SRV) and WRITE (UAV) buffer sets.
 ///
-/// Layout is 16-byte aligned per HLSL packing rules. Total: 208 bytes (13 float4).
+/// Layout is 16-byte aligned per HLSL packing rules. Total: 240 bytes (15 float4).
 /// Must match VFXUpdateCB in runtime/demos/vfx_viewport/vfx_viewport_vfx.h exactly.
 cbuffer VFXUpdateConstants : register(b1) {
     // ── Simulation Parameters ───────────────────────────────────────────── offset 0
@@ -159,25 +160,38 @@ cbuffer VFXUpdateConstants : register(b1) {
     float    vortexRadialStrength;       ///< Radial pull (>0) or push (<0).         156
 
     float    vortexMaxRadius;            ///< Cutoff radius in world units.          160
-    float    _padVortex0;                ///<                                        164
-    float    _padVortex1;                ///<                                        168
-    float    _padVortex2;                ///<                                        172
+    uint     orbitEnabled;               ///< 0=disabled, 1=orbit around emitter.   164
+    float    orbitRadius;                ///< Orbit circle radius in world units.    168
+    float    orbitSpeed;                 ///< Angular speed in radians/sec.          172
 
-    // ── Wind Zone GPU Buffer ─────────────────────────────────────────────── offset 176
+    // ── Orbit Axis ───────────────────────────────────────────────────────── offset 176
+    float    orbitAxisX;                 ///< Orbit plane normal X.                  176
+    float    orbitAxisY;                 ///< Orbit plane normal Y.                  180
+    float    orbitAxisZ;                 ///< Orbit plane normal Z.                  184
+    float    _orbitAxisPad;              ///<                                        188
+
+    // ── Wind Zone GPU Buffer ─────────────────────────────────────────────── offset 192
     /// @ref Stam 1999 "Stable Fluids" — wind field accumulation
-    uint     windZoneSrvIndex;           ///< SRV for StructuredBuffer<WindZone>.    176
-    uint     activeWindZoneCount;        ///< Active zone count [0..kMaxWindZones].  180
-    uint     _padWind0;                  ///<                                        184
-    uint     _padWind1;                  ///<                                        188
+    uint     windZoneSrvIndex;           ///< SRV for StructuredBuffer<WindZone>.    192
+    uint     activeWindZoneCount;        ///< Active zone count [0..kMaxWindZones].  196
+    uint     _padWind0;                  ///<                                        200
+    uint     _padWind1;                  ///<                                        204
 
-    // ── Kill Volume GPU Buffer ───────────────────────────────────────────── offset 192
+    // ── Kill Volume GPU Buffer ───────────────────────────────────────────── offset 208
     /// @ref Ericson 2005 "Real-Time Collision Detection" Ch.4
-    uint     killVolumeSrvIndex;         ///< SRV for StructuredBuffer<KillVolume>.  192
-    uint     activeKillVolumeCount;      ///< Active volume count [0..16].           196
-    // ── Ground Plane Collision ───────────────────────────────────────────── (repurposed from pad)
+    uint     killVolumeSrvIndex;         ///< SRV for StructuredBuffer<KillVolume>.  208
+    uint     activeKillVolumeCount;      ///< Active volume count [0..16].           212
+    // ── Ground Plane Collision ───────────────────────────────────────────── offset 216
     /// @ref Müller 2006 "Position Based Dynamics" — restitution coefficients
-    uint     groundCollision;            ///< 0=disabled, 1=bounce off Z=0 ground.  200
-    float    restitution;                ///< Bounce coefficient [0,1].              204
+    uint     groundCollision;            ///< 0=disabled, 1=bounce off Z=0 ground.  216
+    float    restitution;                ///< Bounce coefficient [0,1].              220
+
+    // ── Quadratic Drag (Air Resistance) ──────────────────────────────────── offset 224
+    /// @ref Witkin & Baraff 2001 "Physically Based Modeling" — quadratic drag F=-k|v|^2*dir
+    float    dragCoefficient;            ///< Quadratic drag coefficient. 0=disabled. 224
+    float    _padDrag0;                  ///<                                        228
+    float    _padDrag1;                  ///<                                        232
+    float    _padDrag2;                  ///<                                        236
 #endif
 };
 
@@ -315,6 +329,26 @@ void main(uint3 dtid : SV_DispatchThreadID)
     float dampFactor = saturate(1.0f - damping * dt);
     vel *= dampFactor;
 
+    // ── Quadratic drag (air resistance) ─────────────────────────────────
+    // Unlike constant damping, drag force scales with speed squared:
+    //   F_drag = -k * |v|^2 * normalize(v)
+    // This produces physically plausible arcs where fast particles decelerate
+    // much faster than slow ones (e.g. embers, projectiles, debris).
+    // The min() clamp prevents velocity reversal at large timesteps.
+    /// @ref Witkin & Baraff 2001 "Physically Based Modeling" — quadratic drag
+    /// @constants dragCoefficient=user (default 0.0), speed threshold=0.001
+    /// @deviations NONE
+#ifdef UZ_BINDLESS
+    if (dragCoefficient > 0.0f) {
+        float speed = length(vel);
+        if (speed > 0.001f) {
+            float dragMag = dragCoefficient * speed * speed;
+            // Clamp drag impulse to current speed to prevent velocity reversal
+            vel -= (vel / speed) * min(dragMag * dt, speed);
+        }
+    }
+#endif
+
     // ── Curl noise force ────────────────────────────────────────────────
     // Divergence-free velocity perturbation for organic swirling motion.
     // Guarded by curlStrength > 0 to skip the expensive FBM evaluation
@@ -367,6 +401,49 @@ void main(uint3 dtid : SV_DispatchThreadID)
 
     // ── Integrate position (explicit Euler) ─────────────────────────────
     pos += vel * dt;
+
+    // ── Orbit around emitter origin (additive position override) ─────────
+    // Directly sets a circular orbit position additive to the integrated position.
+    // Angular position is derived from particle age * speed + golden angle spread,
+    // guaranteeing a perfect circle at any orbit speed (unlike force-based vortex).
+    // The golden angle (2π/φ²) ensures uniform angular distribution across particles.
+    //
+    /// @ref Christensen 2018 "Fibonacci Sphere Sampling" — golden angle uniform spread
+    /// @constants goldenAngle=2.39996323 rad (exact: 2π*(2-φ) where φ=(1+√5)/2)
+#ifdef UZ_BINDLESS
+    if (orbitEnabled != 0u && orbitRadius > 0.001f)
+    {
+        // Golden angle: irrational fraction of 2π that prevents clumping at any count.
+        // Value: 2π * (2 - (1+√5)/2) ≈ 2.39996323 rad ≈ 137.508°
+        static const float kGoldenAngle = 2.39996323f;
+
+        // Compute angular position: age-based revolution + per-particle phase offset.
+        // Using threadIdx as the particle index for the golden angle spread ensures
+        // uniform distribution across the orbital ring at any point in time.
+        float angle = age * orbitSpeed + (float)threadIdx * kGoldenAngle;
+
+        // Build an orthonormal frame in the orbit plane using Gram-Schmidt process.
+        // The orbit axis (plane normal) defines which plane particles circle in.
+        // Default: Z-up axis → particles orbit horizontally in the XY plane.
+        float3 axis = float3(orbitAxisX, orbitAxisY, orbitAxisZ);
+        float  axisLen = length(axis);
+        // Guard against degenerate axis uploads (zero-length → fall back to Z-up).
+        axis = (axisLen > 0.001f) ? (axis / axisLen) : float3(0.0f, 0.0f, 1.0f);
+
+        // Gram-Schmidt: choose an arbitrary vector not parallel to axis, then
+        // cross-product gives an in-plane vector that is guaranteed perpendicular.
+        float3 arbitrary = (abs(axis.z) < 0.9f) ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f);
+        float3 right = normalize(cross(axis, arbitrary)); // in-plane right vector
+        float3 up    = cross(axis, right);                // in-plane up vector (already unit length)
+
+        // Circular orbit: position on ring = cos(angle)*right + sin(angle)*up, scaled by radius.
+        float3 orbitOffset = (cos(angle) * right + sin(angle) * up) * orbitRadius;
+
+        // Additive: particle can still drift (via velocity) while orbiting.
+        // Gravity and other forces affect velocity; orbit directly offsets position.
+        pos += orbitOffset;
+    }
+#endif // UZ_BINDLESS
 
     // ── Ground plane collision (Z=0 in Z-up, optional) ───────────────────
     // A simple inelastic bounce with configurable restitution coefficient.
