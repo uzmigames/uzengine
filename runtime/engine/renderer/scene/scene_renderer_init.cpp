@@ -68,9 +68,8 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     m_width = width;
     m_height = height;
 
-    // ── Quality Presets (must be before any resource creation) ────────
+    // ── Quality Presets (default Ultra, overridable via CVar quality=N) ──
     QualityPresetManager::Get().Init();
-    // CLI quality is applied in first RenderFrame (after CVar overrides are processed).
 
     // Compute internal render resolution from screen percentage.
     // At 100% (default), render resolution equals display resolution.

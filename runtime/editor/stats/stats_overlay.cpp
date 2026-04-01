@@ -244,6 +244,11 @@ void StatsOverlay::BuildTextPanel() {
     m_textRenderer.AddText(m_font, buf, textX, textY, cyan);
     textY += kLineH;
 
+    // Quality preset
+    snprintf(buf, sizeof(buf), "Quality: %s", m_qualityPreset.c_str());
+    m_textRenderer.AddText(m_font, buf, textX, textY, cyan);
+    textY += kLineH;
+
     // ── Separator ────────────────────────────────────────────────────────
     m_textRenderer.AddRect(textX, textY + 2.f, kPanelWidth - kPanelPadding * 2.f, 1.f,
                            {0.3f, 0.3f, 0.4f, 0.6f});

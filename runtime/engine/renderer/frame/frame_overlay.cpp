@@ -2,6 +2,7 @@
 /// stats overlay, screenshot capture, and present transition.
 
 #include "scene_renderer.h"
+#include "quality_presets.h"
 
 // Umbrella headers
 #include "renderer_core.h"
@@ -194,6 +195,8 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
                 m_statsOverlay->SetCameraInfo(camPos.x, camPos.y, camPos.z, yawDeg, pitchDeg);
                 m_statsOverlay->SetRenderResolution(m_renderWidth, m_renderHeight, m_screenPercentage);
                 m_statsOverlay->SetUpscalerName(m_upscaler ? m_upscaler->GetName() : "None");
+                m_statsOverlay->SetQualityPreset(
+                    QualityLevelName(QualityPresetManager::Get().GetOverallLevel()));
 
                 m_statsOverlay->Render(cmd, *m_cbRing, ctx.frameIndex);
             }

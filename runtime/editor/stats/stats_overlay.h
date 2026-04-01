@@ -124,6 +124,9 @@ public:
     /// Sets the name of the active temporal upscaler for display.
     void SetUpscalerName(const char* name) { m_upscalerName = name ? name : "None"; }
 
+    /// Sets the active quality preset name for display.
+    void SetQualityPreset(const char* name) { m_qualityPreset = name ? name : "Custom"; }
+
     /// Sets camera position and rotation for display.
     void SetCameraInfo(float x, float y, float z, float yawDeg, float pitchDeg) {
         m_camX = x; m_camY = y; m_camZ = z;
@@ -188,6 +191,7 @@ private:
     uint64_t m_vramTotalMB = 0;      ///< Total VRAM in MB
     bool m_bindless = false;         ///< Whether bindless is active
     std::string m_upscalerName = "TAA"; ///< Active temporal upscaler name
+    std::string m_qualityPreset = "Ultra"; ///< Active quality preset name
 
     /// Captures static system info from the device (called once in Init).
     void CaptureSystemInfo(IRHIDevice* device);
