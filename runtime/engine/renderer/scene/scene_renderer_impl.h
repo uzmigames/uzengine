@@ -280,7 +280,7 @@
     // ── Temporal Upscaler (ITemporalUpscaler) ────────────────────────────────
 
     std::unique_ptr<ITemporalUpscaler> m_upscaler;         ///< Active temporal upscaler (TAA or TSR).
-    UpscalerType m_upscalerType = UpscalerType::TSR;        ///< Temporal super resolution (default).
+    UpscalerType m_upscalerType = UpscalerType::TAA;        ///< Legacy TAA (single-pass, robust).
 
     // ── Dynamic Resolution ───────────────────────────────────────────────────
 
