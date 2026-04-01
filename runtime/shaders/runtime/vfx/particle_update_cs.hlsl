@@ -62,6 +62,7 @@
 /// - t4: StructuredBuffer<float>            sizesIn
 /// - t5: StructuredBuffer<float4>           colorsIn
 /// - t6: StructuredBuffer<float>            rotationsIn
+/// - t7: StructuredBuffer<float4>           dynParamsIn
 /// UAV (WRITE set + shared):
 /// - u0: RWStructuredBuffer<float4>         positionsOut  (xyz=pos, w=unused)
 /// - u1: RWStructuredBuffer<float4>         velocitiesOut (xyz=vel, w=unused)
@@ -73,6 +74,7 @@
 /// - u7: RWStructuredBuffer<uint>           freeList
 /// - u8: RWStructuredBuffer<uint>           freeListHead (1 element)
 /// - u9: RWStructuredBuffer<uint>           aliveCountNew (1 element)
+/// - u10: RWStructuredBuffer<float4>        dynParamsOut
 
 #include "../include/vfx_common.hlsli"
 #include "vfx_curl_noise.hlsli"
@@ -112,7 +114,7 @@ static const uint UPDATE_GROUP_SIZE = 256;
 /// Update constants uploaded by the CPU each frame. Contains physics parameters
 /// and descriptor heap indices for both READ (SRV) and WRITE (UAV) buffer sets.
 ///
-/// Layout is 16-byte aligned per HLSL packing rules. Total: 288 bytes (18 float4).
+/// Layout is 16-byte aligned per HLSL packing rules. Total: 304 bytes (19 float4).
 /// Must match VFXUpdateCB in runtime/demos/vfx_viewport/vfx_viewport_vfx.h exactly.
 cbuffer VFXUpdateConstants : register(b1) {
     // ── Simulation Parameters ───────────────────────────────────────────── offset 0
@@ -231,6 +233,12 @@ cbuffer VFXUpdateConstants : register(b1) {
     /// @ref Bender 2014 "Position-Based Simulation Methods in Computer Graphics" — friction model
     uint     collisionResponse;          ///< 0=Bounce, 1=Stick, 2=Kill.               280
     float    collisionFriction;          ///< Tangential friction [0,1].                284
+
+    // ── Dynamic Material Parameters (Task 4.14.0) ──────────────────────── offset 288
+    uint     readDynParamsSrv;           ///< SRV for StructuredBuffer<float4> dynamic params (READ set). 288
+    uint     writeDynParamsUav;          ///< UAV for RWStructuredBuffer<float4> dynamic params (WRITE set). 292
+    uint     _padDynParams0;             ///<                                          296
+    uint     _padDynParams1;             ///<                                          300
 #endif
 };
 
@@ -243,6 +251,7 @@ StructuredBuffer<float>            sm5_lifespansIn   : register(t3);
 StructuredBuffer<float>            sm5_sizesIn       : register(t4);
 StructuredBuffer<float4>           sm5_colorsIn      : register(t5);
 StructuredBuffer<float>            sm5_rotationsIn   : register(t6);
+StructuredBuffer<float4>           sm5_dynParamsIn   : register(t7);
 
 /// SM5 fallback: explicit register bindings for WRITE set (UAV) + shared.
 RWStructuredBuffer<float4>         sm5_positionsOut   : register(u0);
@@ -255,6 +264,7 @@ RWStructuredBuffer<float>          sm5_rotationsOut   : register(u6);
 RWStructuredBuffer<uint>           sm5_freeList       : register(u7);
 RWStructuredBuffer<uint>           sm5_freeListHead   : register(u8);
 RWStructuredBuffer<uint>           sm5_aliveCountNew  : register(u9);
+RWStructuredBuffer<float4>         sm5_dynParamsOut   : register(u10);
 #endif
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -299,6 +309,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     StructuredBuffer<float>  sizesIn      = ResourceDescriptorHeap[sizesSrvIndex];
     StructuredBuffer<float4> colorsIn     = ResourceDescriptorHeap[colorsSrvIndex];
     StructuredBuffer<float>  rotationsIn  = ResourceDescriptorHeap[rotationsSrvIndex];
+    StructuredBuffer<float4> dynParamsIn = ResourceDescriptorHeap[readDynParamsSrv];
 #else
     #define positionsIn   sm5_positionsIn
     #define velocitiesIn  sm5_velocitiesIn
@@ -307,6 +318,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     #define sizesIn       sm5_sizesIn
     #define colorsIn      sm5_colorsIn
     #define rotationsIn   sm5_rotationsIn
+    #define dynParamsIn   sm5_dynParamsIn
 #endif
 
     // ── Read current particle state ─────────────────────────────────────
@@ -615,6 +627,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     RWStructuredBuffer<float>  sizesOut      = ResourceDescriptorHeap[sizesUavIndex];
     RWStructuredBuffer<float4> colorsOut     = ResourceDescriptorHeap[colorsUavIndex];
     RWStructuredBuffer<float>  rotationsOut  = ResourceDescriptorHeap[rotationsUavIndex];
+    RWStructuredBuffer<float4> dynParamsOut = ResourceDescriptorHeap[writeDynParamsUav];
     RWStructuredBuffer<uint>   aliveCountNew = ResourceDescriptorHeap[aliveCountNewUavIndex];
 #else
     #define positionsOut   sm5_positionsOut
@@ -624,6 +637,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     #define sizesOut       sm5_sizesOut
     #define colorsOut      sm5_colorsOut
     #define rotationsOut   sm5_rotationsOut
+    #define dynParamsOut   sm5_dynParamsOut
     #define aliveCountNew  sm5_aliveCountNew
 #endif
 
@@ -648,6 +662,15 @@ void main(uint3 dtid : SV_DispatchThreadID)
     colorsOut[threadIdx]     = color;
     rotationsOut[threadIdx]  = rotation;
 
+    // ── Dynamic material parameters (Task 4.14.0) ──────────────────────
+    // Read from previous frame, evolve .x to normalizedAge (useful for shader
+    // effects that need a 0→1 lifetime ramp), pass through .yzw unchanged.
+    {
+        float4 dynParams = dynParamsIn[threadIdx];
+        dynParams.x = age / max(lifespan, 0.0001f); // normalizedAge [0,1]
+        dynParamsOut[threadIdx] = dynParams;
+    }
+
     // ── Increment new alive count ───────────────────────────────────────
     uint dummy;
     InterlockedAdd(aliveCountNew[0], 1, dummy);
@@ -667,6 +690,8 @@ void main(uint3 dtid : SV_DispatchThreadID)
     #undef sizesOut
     #undef colorsOut
     #undef rotationsOut
+    #undef dynParamsIn
+    #undef dynParamsOut
     #undef aliveCountNew
 #endif
 }

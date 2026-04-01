@@ -204,6 +204,15 @@ struct VFXEmitterConfig {
     /// @ref GDC 2019 "Niagara: Building the Future of FX in Unreal Engine" — emitter lifetime
     float    emitterDuration = 0.0f;  ///< Auto-disable after this many seconds. 0 = infinite (default).
     uint32_t loopCount       = 0;     ///< Restart count before stopping. 0 = infinite (default).
+    // ── Mesh particle mode (Task 4.12.0) ────────────────────────────────────
+    uint32_t meshParticleEnabled = 0; ///< 0=billboard (default), 1=mesh particles (future).
+    // ── Dynamic material parameters (Task 4.14.0) ───────────────────────────
+    /// Per-particle float4 that flows spawn→update→VS→PS for shader-driven effects.
+    /// X component is auto-set to normalizedAge during update; Y/Z/W user-defined.
+    float    dynamicParam0 = 0.0f;    ///< Default dynamic param channel 0 (overwritten to normalizedAge in update).
+    float    dynamicParam1 = 0.0f;    ///< Default dynamic param channel 1 (user-defined).
+    float    dynamicParam2 = 0.0f;    ///< Default dynamic param channel 2 (user-defined).
+    float    dynamicParam3 = 0.0f;    ///< Default dynamic param channel 3 (user-defined).
 };
 
 /// Named emitter preset with a spawn rate.
@@ -260,9 +269,11 @@ struct VFXSpawnCB {
     float    initialRotationMin;      float    initialRotationMax;
     float    emitterVelocityX;        float    emitterVelocityY;  // 16 bytes (offset 144)
     float    emitterVelocityZ;        float    velocityInheritance;
-    uint32_t _padSpawnNew0;           uint32_t _padSpawnNew1;     // 16 bytes (offset 160)
+    uint32_t dynamicParamsUavIndex;   float    defaultDynParam0;  // 16 bytes (offset 160)
+    float    defaultDynParam1;        float    defaultDynParam2;
+    float    defaultDynParam3;        uint32_t _padSpawnNew1;     // 16 bytes (offset 176)
 };
-static_assert(sizeof(VFXSpawnCB) == 176, "VFXSpawnCB must be 176 bytes (11 x float4)");
+static_assert(sizeof(VFXSpawnCB) == 192, "VFXSpawnCB must be 192 bytes (12 x float4)");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VFX Update Constant Buffer (matches particle_update_cs.hlsl b0 layout)
@@ -324,8 +335,11 @@ struct VFXUpdateCB {
     /// @ref Müller 2006 "Position Based Dynamics" — multi-mode collision response
     /// @ref Bender 2014 "Position-Based Simulation Methods in Computer Graphics" — friction
     uint32_t collisionResponse;       float    collisionFriction;       // 16 bytes (offset 272)
+    // ── Dynamic material parameters (Task 4.14.0) ───────────────────────────
+    uint32_t readDynParamsSrv;        uint32_t writeDynParamsUav;
+    uint32_t _padDynParams0;          uint32_t _padDynParams1;            // 16 bytes (offset 288)
 };
-static_assert(sizeof(VFXUpdateCB) == 288, "VFXUpdateCB must be 288 bytes (18 x float4)");
+static_assert(sizeof(VFXUpdateCB) == 304, "VFXUpdateCB must be 304 bytes (19 x float4)");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VFX Death Spawn Constant Buffer (matches particle_death_spawn_cs.hlsl b1)
@@ -364,7 +378,7 @@ struct VFXDeathSpawnCB {
     uint32_t freeListHeadUavIndex;      ///< RWStructuredBuffer<uint> freeListHead.     64
     uint32_t aliveCountUavIndex;        ///< RWStructuredBuffer<uint> aliveCount.       68
     uint32_t frameNumber;               ///< Frame counter (RNG seed).                  72
-    uint32_t _pad2;                     ///<                                            76
+    uint32_t dynamicParamsUavIndex;     ///< RWStructuredBuffer<float4> dynamicParams (Task 4.14.0). 76
 
     // Child emitter lifetime + size (color inherited from DeathEvent)
     float    childLifetime;             ///< Lifespan for child particles (seconds).    80
@@ -394,7 +408,7 @@ struct VFXBillboardIndicesCB {
     // PS indices (bytes 32-47)
     uint32_t spriteTextureIdx;
     uint32_t depthBufferIdx;
-    uint32_t _pad0 = 0;
+    uint32_t dynamicParamsBufferIdx = 0; ///< SRV index for StructuredBuffer<float4> dynamic params (Task 4.14.0).
     uint32_t _pad1 = 0;
 };
 static_assert(sizeof(VFXBillboardIndicesCB) == 48, "VFXBillboardIndicesCB must be 48 bytes (12 x uint32)");
@@ -471,8 +485,8 @@ static_assert(sizeof(VFXBillboardCB) == 304, "VFXBillboardCB must be 304 bytes (
 
 /// Manages all GPU resources and pipelines for the particle system.
 ///
-/// Particle data uses SoA layout with 7 channels (positions, velocities,
-/// ages, lifespans, sizes, colors, rotations). Each channel has two copies
+/// Particle data uses SoA layout with 8 channels (positions, velocities,
+/// ages, lifespans, sizes, colors, rotations, dynamicParams). Each channel has two copies
 /// (ping-pong) to allow simultaneous read and write without hazards.
 ///
 /// Bookkeeping buffers: alive count, free list, free list head, indirect args.
@@ -635,7 +649,7 @@ public:
     [[nodiscard]] uint32_t GetFramesSinceCulled() const { return m_framesSinceCulled; }
 
 private:
-    static constexpr uint32_t kChannelCount = 7; // pos, vel, age, life, size, color, rotation
+    static constexpr uint32_t kChannelCount = 8; // pos, vel, age, life, size, color, rotation, dynamicParams
     static constexpr uint32_t kSpawnGroupSize = 256;
     static constexpr uint32_t kUpdateGroupSize = 256;
 
@@ -645,7 +659,8 @@ private:
 
     // Particle SoA buffers: [channel][pingPongSet]
     // Channels: 0=positions(float4), 1=velocities(float4), 2=ages(float),
-    //           3=lifespans(float), 4=sizes(float), 5=colors(float4), 6=rotations(float)
+    //           3=lifespans(float), 4=sizes(float), 5=colors(float4), 6=rotations(float),
+    //           7=dynamicParams(float4)
     RHIBufferHandle m_particleBuffers[kChannelCount][2] = {};
 
     // Bookkeeping buffers

@@ -58,6 +58,7 @@ struct PSInput {
     uint   particleIdx    : TEXCOORD4;   ///< Particle index (reserved for future use).
     float4 prevPositionCS : TEXCOORD5;   ///< Previous frame clip-space position (for motion vector PS).
     float  speedFactor    : TEXCOORD6;   ///< Normalized speed [0,1] from VS for color-by-speed.
+    float4 dynamicParams  : TEXCOORD7;   ///< Per-particle dynamic material parameters (Task 4.14.0). X=normalizedAge, YZW=user.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -89,7 +90,7 @@ cbuffer VFXBillboardConstants : register(b0) {
     // PS indices (bytes 32-47)
     uint spriteTextureIdx;     ///< Reserved (always UINT32_MAX, no sprite texture).
     uint depthBufferIdx;       ///< SRV index: Texture2D<float> scene depth (reversed-Z).
-    uint _vfxPad0;
+    uint dynamicParamsBufferIdx; ///< SRV index: StructuredBuffer<float4> dynamic params (Task 4.14.0). Not read by PS.
     uint _vfxPad1;
 };
 #else

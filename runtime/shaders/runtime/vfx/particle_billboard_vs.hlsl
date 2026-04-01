@@ -91,6 +91,7 @@ struct VSOutput {
     uint   particleIdx    : TEXCOORD4;   ///< Particle index (reserved for future use).
     float4 prevPositionCS : TEXCOORD5;   ///< Previous frame clip-space position for TAA motion vectors.
     float  speedFactor    : TEXCOORD6;   ///< Normalized speed [0,1] = saturate(speed / speedRangeMax). Used by PS for color-by-speed.
+    float4 dynamicParams  : TEXCOORD7;   ///< Per-particle dynamic material parameters (Task 4.14.0). X=normalizedAge, YZW=user.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -119,7 +120,7 @@ cbuffer VFXBillboardConstants : register(b0) {
     // PS indices (bytes 32-47)
     uint spriteTextureIdx;     ///< SRV index: Texture2D<float4> sprite/atlas (PS only).
     uint depthBufferIdx;       ///< SRV index: Texture2D<float> scene depth reversed-Z (PS only).
-    uint _vfxPad0;
+    uint dynamicParamsBufferIdx; ///< SRV index: StructuredBuffer<float4> dynamic material params (Task 4.14.0).
     uint _vfxPad1;
 };
 #else
@@ -395,6 +396,10 @@ VSOutput main(uint vertexID : SV_VertexID) {
     float3 particleVel   = velocities[particleID].xyz;
     float  particleAge   = ages[particleID];
     float  particleLife  = lifespans[particleID];
+
+    // Dynamic material parameters (Task 4.14.0)
+    StructuredBuffer<float4> dynParams = ResourceDescriptorHeap[dynamicParamsBufferIdx];
+    float4 particleDynParams = dynParams[particleID];
 #else
     float3 particlePos   = particlePositions[particleID].xyz;
     float  particleSize  = particleSizes[particleID];
@@ -403,6 +408,7 @@ VSOutput main(uint vertexID : SV_VertexID) {
     float3 particleVel   = particleVelocities[particleID].xyz;
     float  particleAge   = particleAges[particleID];
     float  particleLife  = particleLifespans[particleID];
+    float4 particleDynParams = float4(0, 0, 0, 0); // SM5: no dynamic params buffer
 #endif
 
     // ── Cull dead/uninitialized particles ──
@@ -416,6 +422,7 @@ VSOutput main(uint vertexID : SV_VertexID) {
         output.particleIdx    = particleID;
         output.prevPositionCS = float4(0, 0, 0, 1);
         output.speedFactor    = 0;
+        output.dynamicParams  = float4(0, 0, 0, 0);
         return output;
     }
 
@@ -635,6 +642,10 @@ VSOutput main(uint vertexID : SV_VertexID) {
     // speed is already computed above for billboard stretching/size-by-speed.
     // Always write the interpolant; PS checks colorBySpeedEnabled to use it.
     output.speedFactor = saturate(speed / max(speedRangeMax, 0.001f));
+
+    // ── Dynamic material parameters (Task 4.14.0) ──
+    // Pass through per-particle float4 to PS for shader-driven effects.
+    output.dynamicParams = particleDynParams;
 
     return output;
 }

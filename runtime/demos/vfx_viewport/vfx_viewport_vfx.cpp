@@ -438,7 +438,8 @@ const VFXPreset* GetVFXPresets(int& outCount) {
 
 uint32_t VFXParticleSystem::ChannelStride(uint32_t channel) {
     // Channels: 0=positions(float4=16), 1=velocities(float4=16), 2=ages(float=4),
-    //           3=lifespans(float=4), 4=sizes(float=4), 5=colors(float4=16), 6=rotations(float=4)
+    //           3=lifespans(float=4), 4=sizes(float=4), 5=colors(float4=16), 6=rotations(float=4),
+    //           7=dynamicParams(float4=16)
     switch (channel) {
         case 0: return 16; // float4 positions (xyz + padding)
         case 1: return 16; // float4 velocities (xyz + padding)
@@ -447,6 +448,7 @@ uint32_t VFXParticleSystem::ChannelStride(uint32_t channel) {
         case 4: return 4;  // float sizes
         case 5: return 16; // float4 colors (rgba)
         case 6: return 4;  // float rotations
+        case 7: return 16; // float4 dynamicParams (Task 4.14.0)
         default: return 4;
     }
 }
@@ -480,7 +482,8 @@ bool VFXParticleSystem::Init(IRHIDevice* device, ShaderManager* shaderMgr,
     // Channel names for debug labels
     static const char* kChannelNames[] = {
         "VFX_Positions", "VFX_Velocities", "VFX_Ages",
-        "VFX_Lifespans", "VFX_Sizes", "VFX_Colors", "VFX_Rotations"
+        "VFX_Lifespans", "VFX_Sizes", "VFX_Colors", "VFX_Rotations",
+        "VFX_DynamicParams"
     };
 
     // Create SoA ping-pong buffers
@@ -1089,6 +1092,13 @@ void VFXParticleSystem::DispatchCompute(IRHICommandList* cmdList, CBRingAllocato
         cb.emitterVelocityZ    = config.emitterVelocity[2];
         cb.velocityInheritance = config.velocityInheritance;
 
+        // Dynamic material parameters (Task 4.14.0)
+        cb.dynamicParamsUavIndex = m_device->GetBufferUAVIndex(m_particleBuffers[7][write]);
+        cb.defaultDynParam0      = config.dynamicParam0;
+        cb.defaultDynParam1      = config.dynamicParam1;
+        cb.defaultDynParam2      = config.dynamicParam2;
+        cb.defaultDynParam3      = config.dynamicParam3;
+
         auto alloc = cbRing->Allocate(sizeof(VFXSpawnCB));
         std::memcpy(alloc.cpuPtr, &cb, sizeof(VFXSpawnCB));
 
@@ -1223,6 +1233,10 @@ void VFXParticleSystem::DispatchCompute(IRHICommandList* cmdList, CBRingAllocato
         cb.accelY = config.accelY;
         cb.accelZ = config.accelZ;
 
+        // Dynamic material parameters (Task 4.14.0)
+        cb.readDynParamsSrv  = m_device->GetBufferSRVIndex(m_particleBuffers[7][read]);
+        cb.writeDynParamsUav = m_device->GetBufferUAVIndex(m_particleBuffers[7][write]);
+
         auto alloc = cbRing->Allocate(sizeof(VFXUpdateCB));
         std::memcpy(alloc.cpuPtr, &cb, sizeof(VFXUpdateCB));
 
@@ -1296,6 +1310,7 @@ void VFXParticleSystem::DispatchCompute(IRHICommandList* cmdList, CBRingAllocato
         dsCb.freeListHeadUavIndex     = m_device->GetBufferUAVIndex(m_freeListHead);
         dsCb.aliveCountUavIndex       = m_device->GetBufferUAVIndex(m_aliveCount);
         dsCb.frameNumber              = frameNumber;
+        dsCb.dynamicParamsUavIndex    = m_device->GetBufferUAVIndex(m_particleBuffers[7][write]);
         // Child lifetime and size: use parent emitter's lifetime/size as defaults.
         // For sparks/debris effects, shorter lifetime than parent is typical.
         dsCb.childLifetime            = (config.minLifetime + config.maxLifetime) * 0.5f * 0.5f;
@@ -1484,6 +1499,8 @@ void VFXParticleSystem::DrawBillboards(IRHICommandList* cmdList, CBRingAllocator
     // PS indices — no sprite texture, always procedural circles
     indices.spriteTextureIdx = UINT32_MAX;
     indices.depthBufferIdx = depthBufferSrvIdx;
+    // Dynamic material parameters SRV (Task 4.14.0)
+    indices.dynamicParamsBufferIdx = m_device->GetBufferSRVIndex(m_particleBuffers[7][write]);
 
     // Select PSO based on blend mode (lit mode uses standard PSO with CB flag).
     cmdList->SetPipeline(GetBillboardPSOForBlendMode(blendMode));

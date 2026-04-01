@@ -49,6 +49,7 @@
 /// - u6: RWStructuredBuffer<float>          rotations
 /// - u7: RWStructuredBuffer<uint>           freeListHead (1 element)
 /// - u8: RWStructuredBuffer<uint>           aliveCount   (1 element)
+/// - u9: RWStructuredBuffer<float4>         dynamicParams
 
 #include "../include/vfx_common.hlsli"
 
@@ -69,7 +70,7 @@ static const uint SPAWN_GROUP_SIZE = 256;
 /// buffer access.
 ///
 /// Layout is tightly packed with explicit padding for 16-byte CBV alignment.
-/// Total: 176 bytes (11 x float4).
+/// Total: 192 bytes (12 x float4).
 cbuffer VFXSpawnConstants : register(b1) {
     // ── Emitter Parameters ──────────────────────────────────────────────
     float3   emitterPos;           ///< World-space emitter origin.              0
@@ -126,8 +127,13 @@ cbuffer VFXSpawnConstants : register(b1) {
 
     float    emitterVelocityZ;     ///< Emitter movement velocity Z (m/s).       160
     float    velocityInheritance;  ///< Fraction of emitter vel added [0,1].     164
-    uint     _padSpawnNew0;        ///<                                          168
-    uint     _padSpawnNew1;        ///<                                          172
+    uint     dynamicParamsUavIndex; ///< UAV for RWStructuredBuffer<float4> dynamic params. 168
+    float    defaultDynParam0;     ///< Default dynamic param X (overwritten to normalizedAge in update). 172
+
+    float    defaultDynParam1;     ///< Default dynamic param Y (user-defined).  176
+    float    defaultDynParam2;     ///< Default dynamic param Z (user-defined).  180
+    float    defaultDynParam3;     ///< Default dynamic param W (user-defined).  184
+    uint     _padSpawnNew1;        ///<                                          188
 #endif
 };
 
@@ -143,6 +149,7 @@ RWStructuredBuffer<float4>         sm5_colors        : register(u5);
 RWStructuredBuffer<float>          sm5_rotations     : register(u6);
 RWStructuredBuffer<uint>           sm5_freeListHead  : register(u7);
 RWStructuredBuffer<uint>           sm5_aliveCount    : register(u8);
+RWStructuredBuffer<float4>         sm5_dynamicParams : register(u9);
 #endif
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -181,6 +188,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     RWStructuredBuffer<float4> colors       = ResourceDescriptorHeap[colorsUavIndex];
     RWStructuredBuffer<float>  rotations    = ResourceDescriptorHeap[rotationsUavIndex];
     RWStructuredBuffer<uint>   aliveCountUav = ResourceDescriptorHeap[aliveCountUavIndex];
+    RWStructuredBuffer<float4> dynamicParams = ResourceDescriptorHeap[dynamicParamsUavIndex];
 #else
     #define freeListHead  sm5_freeListHead
     #define freeList      sm5_freeList
@@ -192,6 +200,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     #define colors        sm5_colors
     #define rotations     sm5_rotations
     #define aliveCountUav sm5_aliveCount
+    #define dynamicParams sm5_dynamicParams
 #endif
 
     // ── Acquire a free slot from the stack ──────────────────────────────
@@ -419,6 +428,16 @@ void main(uint3 dtid : SV_DispatchThreadID)
     colors[particleIdx]     = initialColor;
     rotations[particleIdx]  = rotation;
 
+    // ── Dynamic material parameters (Task 4.14.0) ──────────────────────
+    // Initialize per-particle float4 from emitter defaults. The update CS
+    // overwrites .x with normalizedAge each frame; .yzw remain user-defined.
+#ifdef UZ_BINDLESS
+    dynamicParams[particleIdx] = float4(defaultDynParam0, defaultDynParam1,
+                                        defaultDynParam2, defaultDynParam3);
+#else
+    dynamicParams[particleIdx] = float4(0.0f, 0.0f, 0.0f, 0.0f);
+#endif
+
     // ── Increment alive count ───────────────────────────────────────────
     uint dummy;
     InterlockedAdd(aliveCountUav[0], 1, dummy);
@@ -434,5 +453,6 @@ void main(uint3 dtid : SV_DispatchThreadID)
     #undef colors
     #undef rotations
     #undef aliveCountUav
+    #undef dynamicParams
 #endif
 }

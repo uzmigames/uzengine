@@ -107,7 +107,7 @@ cbuffer VFXDeathSpawnConstants : register(b1) {
     uint     freeListHeadUavIndex;       ///< RWStructuredBuffer<uint> freeListHead.  64
     uint     aliveCountUavIndex;         ///< RWStructuredBuffer<uint> aliveCount.    68
     uint     frameNumber;                ///< Frame counter (used in RNG seed).       72
-    uint     _pad2;                      ///<                                         76
+    uint     dynamicParamsUavIndex;      ///< RWStructuredBuffer<float4> dynamicParams (Task 4.14.0). 76
 
     // ── Child emitter lifetime + size ─────────────────────────────────── offset 80
     float    childLifetime;              ///< Lifespan for child particles (seconds). 80
@@ -231,6 +231,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     RWStructuredBuffer<float>      sizes        = ResourceDescriptorHeap[sizesUavIndex];
     RWStructuredBuffer<float4>     colors       = ResourceDescriptorHeap[colorsUavIndex];
     RWStructuredBuffer<float>      rotations    = ResourceDescriptorHeap[rotationsUavIndex];
+    RWStructuredBuffer<float4>     dynParams    = ResourceDescriptorHeap[dynamicParamsUavIndex];
     RWStructuredBuffer<uint>       freeList     = ResourceDescriptorHeap[freeListUavIndex];
     RWStructuredBuffer<uint>       freeListHead = ResourceDescriptorHeap[freeListHeadUavIndex];
     RWStructuredBuffer<uint>       aliveCount   = ResourceDescriptorHeap[aliveCountUavIndex];
@@ -307,6 +308,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
         sizes[particleIdx]      = childSize;
         colors[particleIdx]     = evt.color;   // Inherit parent's death color.
         rotations[particleIdx]  = childRotation;
+        dynParams[particleIdx]  = float4(0.0f, 0.0f, 0.0f, 0.0f); // Child starts with zeroed dynamic params.
 
         // ── Increment alive count ──────────────────────────────────────
         uint dummy;

@@ -48,6 +48,7 @@ the SoA particle buffers; the render pass issues a single
 
 ## 3. CPU-Side Module Wiring
 
+- [x] 3.0 Added `uint32_t meshParticleEnabled = 0;` to VFXEmitterConfig in vfx_viewport_vfx.h. 0=billboard (default), 1=mesh particles (future). Config field only — no rendering path yet.
 - [ ] 3.1 In `mesh_render_module.h`, add `uint32_t maxInstances = 4096;` and
       `MeshRotationMode rotationMode = MeshRotationMode::None;`.
 - [ ] 3.2 In `mesh_render_module.cpp`, implement `CreateGPUBuffers(IRHIDevice*)`:
