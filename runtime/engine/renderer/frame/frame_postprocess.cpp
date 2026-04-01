@@ -45,87 +45,9 @@ namespace uz {
 void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
     UZ_PROFILE_FUNCTION();
 
-    // SHADER DEBUG: Simplified pipeline — TAA + Bloom + Tonemap direct to backbuffer.
-    // No CAS, no FXAA, no motion blur, no DOF.
+    // SHADER DEBUG: Simplified pipeline — Bloom + Tonemap direct to backbuffer.
+    // No TAA, no CAS, no FXAA, no motion blur, no DOF.
     {
-        // ── TAA / Temporal Upscaler (before tonemap) ────────────────────
-        // The upscaler removes sub-pixel jitter from the HDR scene color.
-        // Without this, all meshes tremble visibly.
-        uint32_t tonemapInputSrv = m_hdrSceneColorSrv;
-        if (ctx.taaActive && m_upscaler && m_shadowDebugMode != 1) {
-            const uint32_t writeIdx = ctx.taaWriteIdx;
-            const uint32_t readIdx  = ctx.taaReadIdx;
-            const float jitterX = ctx.jitterX;
-            const float jitterY = ctx.jitterY;
-
-            const char* passName = m_upscaler->GetName();
-            rgBuilder.AddPass(passName, [&, writeIdx, readIdx, jitterX, jitterY](rg::RgPassBuilder& pb) {
-                pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
-
-                pb.SetExecutionCallback([this, &ctx, writeIdx, readIdx, jitterX, jitterY](IRHICommandList* cmd, const rg::RgPassResources&) {
-                    UZ_PROFILE_SCOPE("Upscaler::Execute");
-
-                    // Transition TAA history textures
-                    {
-                        RHIBarrierDesc barriers[2]{};
-                        barriers[0].texture     = m_taaHistory[writeIdx];
-                        barriers[0].buffer      = RHIBufferHandle::Invalid();
-                        barriers[0].stateBefore = RHIResourceState::ShaderResource;
-                        barriers[0].stateAfter  = RHIResourceState::UnorderedAccess;
-
-                        barriers[1].texture     = m_taaHistory[readIdx];
-                        barriers[1].buffer      = RHIBufferHandle::Invalid();
-                        barriers[1].stateBefore = RHIResourceState::UnorderedAccess;
-                        barriers[1].stateAfter  = RHIResourceState::ShaderResource;
-
-                        cmd->ResourceBarrier(barriers, 2);
-                    }
-
-                    UpscalerInput input{};
-                    input.sceneColorSrv       = m_hdrSceneColorSrv;
-                    input.depthSrv            = m_gbuffer.depthSRV;
-                    input.velocitySrv         = m_gbuffer.velocitySRV;
-                    input.historyReadSrv      = m_taaHistorySrv[readIdx];
-                    input.historyWriteUav     = m_taaHistoryUav[writeIdx];
-                    input.sceneColorTexture   = m_hdrSceneColor;
-                    input.depthTexture        = m_gbuffer.depth;
-                    input.velocityTexture     = m_gbuffer.velocity;
-                    input.historyReadTexture  = m_taaHistory[readIdx];
-                    input.historyWriteTexture = m_taaHistory[writeIdx];
-                    input.jitterX      = jitterX;
-                    input.jitterY      = jitterY;
-                    input.renderWidth  = ctx.renderWidth;
-                    input.renderHeight = ctx.renderHeight;
-                    input.outputWidth  = ctx.vpWidth;
-                    input.outputHeight = ctx.vpHeight;
-                    input.firstFrame   = !m_prevViewProjValid;
-                    input.exposure     = ctx.perFrame.exposure;
-
-                    m_upscaler->Execute(cmd, input);
-
-                    // Transition write target back to SRV for tonemap to read
-                    {
-                        RHIBarrierDesc barrier{};
-                        barrier.texture     = m_taaHistory[writeIdx];
-                        barrier.buffer      = RHIBufferHandle::Invalid();
-                        barrier.stateBefore = RHIResourceState::UnorderedAccess;
-                        barrier.stateAfter  = RHIResourceState::ShaderResource;
-                        cmd->ResourceBarrier(&barrier, 1);
-                    }
-                });
-            });
-
-            // Tonemap reads from TAA output instead of raw jittered HDR
-            tonemapInputSrv = m_taaHistorySrv[writeIdx];
-
-            // Flip ping-pong
-            m_taaHistoryIndex = 1 - m_taaHistoryIndex;
-        }
-
-        // Store unjittered viewProj for next frame's reprojection
-        m_prevViewProj = ctx.unjitteredViewProj;
-        m_prevViewProjValid = true;
-
         // ── Bloom pass (if enabled) ─────────────────────────────────────
         if (ctx.bloomEnabled && m_bloomPass && m_bloomPass->IsInitialized()) {
             rgBuilder.AddPass("Bloom", [&](rg::RgPassBuilder& pb) {
@@ -141,12 +63,11 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
         }
 
         // ── Tonemap pass (direct to backbuffer) ─────────────────────────
-        const uint32_t capturedTonemapSrv = tonemapInputSrv;
-        rgBuilder.AddPass("Tonemap", [&, capturedTonemapSrv](rg::RgPassBuilder& pb) {
+        rgBuilder.AddPass("Tonemap", [&](rg::RgPassBuilder& pb) {
             pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
             pb.Write(ctx.bbRes, RHIResourceState::RenderTarget);
 
-            pb.SetExecutionCallback([this, &ctx, capturedTonemapSrv](IRHICommandList* cmd, const rg::RgPassResources& res) {
+            pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& res) {
                 UZ_PROFILE_SCOPE("Tonemap::Execute");
 
                 auto bb = res.GetTexture(ctx.bbRes);
@@ -170,7 +91,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 sc.bottom = static_cast<int32_t>(ctx.swapChain->GetHeight());
                 cmd->SetScissor(sc);
 
-                // Root constants: HDR SRV (from TAA or raw) + bloom SRV + bloom intensity
+                // Root constants: HDR SRV + bloom SRV + bloom intensity
                 uint32_t bloomSrvIdx = 0;
                 float bloomIntensity = 0.0f;
                 if (ctx.bloomEnabled && m_bloomPass && m_bloomPass->GetBloomResultSrvIndex() != UINT32_MAX) {
@@ -180,13 +101,13 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 uint32_t bloomIntensityBits = 0;
                 std::memcpy(&bloomIntensityBits, &bloomIntensity, sizeof(float));
 
-                uint32_t indices[5] = { capturedTonemapSrv, bloomSrvIdx, bloomIntensityBits, 0, 0 };
+                uint32_t indices[5] = { m_hdrSceneColorSrv, bloomSrvIdx, bloomIntensityBits, 0, 0 };
                 cmd->SetRootConstants(kSlotRootConstants, indices, 5);
 
                 static bool loggedOnce = false;
                 if (!loggedOnce) {
-                    UZ_LOG(Renderer, Info, "Tonemap root constants: hdrSRV={}, bloomSRV={}, bloomIntensity={:.3f}, bloomEnabled={}, taaActive={}",
-                           capturedTonemapSrv, bloomSrvIdx, bloomIntensity, ctx.bloomEnabled, ctx.taaActive);
+                    UZ_LOG(Renderer, Info, "Tonemap root constants: hdrSRV={}, bloomSRV={}, bloomIntensity={:.3f}, bloomEnabled={}",
+                           m_hdrSceneColorSrv, bloomSrvIdx, bloomIntensity, ctx.bloomEnabled);
                     loggedOnce = true;
                 }
 
@@ -204,7 +125,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 cmd->EndRenderPass();
             });
         });
-        return; // Skip the full pipeline below (CAS, FXAA, motion blur, DOF)
+        return; // Skip everything else
     }
 
     // ═══════ ORIGINAL CODE BELOW (skipped by return above) ═══════
