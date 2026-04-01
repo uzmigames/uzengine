@@ -18,6 +18,9 @@ runtime/build/bin/uzengine.exe --project sample/projects/pbr_showcase.uzproject 
 # With screenshot capture:
 runtime/build/bin/uzengine.exe --project sample/projects/deferred_test.uzproject --screenshot output.png
 
+# With quality preset (0=Low, 1=Medium, 2=High, 3=Ultra, 4=Cinematic):
+runtime/build/bin/uzengine.exe --project sample/projects/pbr_showcase.uzproject --cvar quality=3
+
 # Available demos:
 runtime/build/bin/uzengine.exe --project sample/projects/camera_test.uzproject
 runtime/build/bin/uzengine.exe --project sample/projects/mesh_test.uzproject
