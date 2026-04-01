@@ -397,6 +397,7 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
             tryLoadDecalTex(mat->GetNormalPath(),     false);
             tryLoadDecalTex(mat->GetRoughnessPath(),  false);
             tryLoadDecalTex(mat->GetMetallicPath(),   false);
+            tryLoadDecalTex(mat->GetTexturePath("Opacity"), false);
         }
     }
 

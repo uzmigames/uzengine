@@ -62,6 +62,7 @@ struct Material : public MaterialInterface {
     std::string metallicPath;    ///< Metallic map (R channel). Fallback: black (metallic=0.0).
     std::string aoPath;          ///< Ambient occlusion map (R channel). Fallback: white (ao=1.0).
     std::string emissivePath;    ///< Emissive map (RGB, HDR). Fallback: black (no emission).
+    std::string opacityPath;     ///< Opacity/alpha mask texture (R channel). Fallback: white (fully opaque).
     std::string ormPath;         ///< Packed ORM map (R=AO, G=Roughness, B=Metallic). When set, overrides separate R/M/AO.
     uint32_t    ormSrvIndex = 0; ///< SRV heap index for loaded ORM texture.
 
@@ -296,6 +297,7 @@ struct Material : public MaterialInterface {
         if (name == "Metallic")  return metallicPath;
         if (name == "Ao")        return aoPath;
         if (name == "Emissive")  return emissivePath;
+        if (name == "Opacity")   return opacityPath;
         if (name == "ORM")       return ormPath;
         if (name == "Thickness") return thicknessPath;
         if (name == "ClearCoatNormal") return clearCoatNormalPath;

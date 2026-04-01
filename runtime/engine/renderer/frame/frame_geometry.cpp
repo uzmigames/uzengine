@@ -291,6 +291,7 @@ void SceneRenderer::RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContex
                     info.cb.materialSrv   = resolveSrv(mat->GetRoughnessSrvIndex(), mat->GetRoughnessPath());
                     info.cb.depthSrv      = m_gbuffer.depthSRV;
                     info.cb.normalGbufSrv = m_gbuffer.normalSRV;
+                    info.cb.opacitySrv    = resolveSrv(mat->GetOpacitySrvIndex(), mat->GetTexturePath("Opacity"));
                     info.priority         = decal.priority;
 
                     decalInfos.push_back(info);

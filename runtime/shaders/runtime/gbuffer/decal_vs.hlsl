@@ -20,7 +20,7 @@ cbuffer DecalObjectCB : register(b2) {
     uint     materialSrv;
     uint     depthSrv;
     uint     normalGbufSrv;
-    float    _pad0;
+    uint     opacitySrv;
 };
 
 struct VSOutput {

@@ -48,6 +48,7 @@ UZ_REGISTER_COMPONENT_SERIALIZER(decal, uz::DecalComponent,
         mat->metallicPath  = uz::json::String(j, "metallic", "");
         mat->aoPath        = uz::json::String(j, "ao", "");
         mat->emissivePath  = uz::json::String(j, "emissive", "");
+        mat->opacityPath   = uz::json::String(j, "opacity_mask", "");
 
         // Material properties
         mat->opacity             = uz::json::Float(j, "opacity", 1.0f);

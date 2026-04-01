@@ -29,7 +29,7 @@ cbuffer DecalObjectCB : register(b2) {
     uint     materialSrv;      // 224
     uint     depthSrv;         // 228
     uint     normalGbufSrv;    // 232
-    float    _pad0;            // 236
+    uint     opacitySrv;       // 236
 };
 
 SamplerState linearSampler : register(s0);
@@ -77,30 +77,30 @@ PSOutput main(float4 svPosition : SV_Position) {
     /// @ref UE5 line 185: saturate(4 - 4 * abs(axis * 2 - 1))
     float DecalFading = saturate(4.0 - 4.0 * abs(DecalVector.z * 2.0 - 1.0));
 
-    // ── Step 6: Sample decal albedo texture ──────────────────────────────
+    // ── Step 6: Sample decal textures ───────────────────────────────────
     float3 BaseColor = float3(1, 1, 1);
-    float TexOpacity = 1.0;
+    float OpacityMask = 1.0;
 #ifdef UZ_BINDLESS
+    // Albedo texture
     if (albedoSrv != kSentinelSrvIndex) {
         Texture2D<float4> albedoTex = ResourceDescriptorHeap[albedoSrv];
-        float4 sample = albedoTex.Sample(linearSampler, DecalUVs);
-        BaseColor = sample.rgb;
-        // Use texture alpha as opacity mask when it has meaningful values (> 0).
-        // Grayscale PNGs loaded as RGBA may have alpha=0 — treat as "no mask".
-        if (sample.a > 0.001) {
-            TexOpacity = sample.a;
-        }
+        BaseColor = albedoTex.Sample(linearSampler, DecalUVs).rgb;
     } else {
-        // No albedo texture = no visible decal
-        clip(-1);
+        clip(-1); // No albedo = no decal
+    }
+
+    // Opacity mask texture (separate grayscale texture)
+    if (opacitySrv != kSentinelSrvIndex) {
+        Texture2D<float4> opacityTex = ResourceDescriptorHeap[opacitySrv];
+        OpacityMask = opacityTex.Sample(linearSampler, DecalUVs).r;
     }
 #else
-    clip(-1); // Decals require bindless
+    clip(-1);
 #endif
 
-    // ── Step 7: Final opacity = material opacity × texture mask × fade ───
+    // ── Step 7: Final opacity = material opacity × mask × fade ───────────
     /// @ref UE5 line 266: Opacity = GetMaterialOpacity() * DecalFading
-    float FinalOpacity = opacity * TexOpacity * DecalFading;
+    float FinalOpacity = opacity * OpacityMask * DecalFading;
     if (FinalOpacity <= 0.001) {
         clip(-1);
     }

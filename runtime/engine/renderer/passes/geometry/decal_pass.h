@@ -67,7 +67,7 @@ struct DecalObjectCB {
     uint32_t materialSrv;      ///< Material texture SRV index (UINT32_MAX = none).
     uint32_t depthSrv;         ///< GBuffer depth SRV index.
     uint32_t normalGbufSrv;    ///< GBuffer normal SRV index (for angle fade).
-    float    _pad0 = 0.0f;
+    uint32_t opacitySrv;       ///< Opacity mask texture SRV index (UINT32_MAX = no mask).
 };
 
 static_assert(sizeof(DecalObjectCB) % 16 == 0, "DecalObjectCB must be 16-byte aligned");

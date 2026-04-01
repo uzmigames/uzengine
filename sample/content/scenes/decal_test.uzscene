@@ -168,7 +168,8 @@
         "decal": {
           "albedo": "textures/decals/manhole_color.png",
           "normal": "textures/decals/manhole_normal.png",
-          "roughness": "textures/decals/manhole_roughness.png"
+          "roughness": "textures/decals/manhole_roughness.png",
+          "opacity_mask": "textures/decals/manhole_opacity.png"
         }
       }
     },
@@ -183,7 +184,8 @@
         "decal": {
           "albedo": "textures/decals/manhole_color.png",
           "normal": "textures/decals/manhole_normal.png",
-          "roughness": "textures/decals/manhole_roughness.png"
+          "roughness": "textures/decals/manhole_roughness.png",
+          "opacity_mask": "textures/decals/manhole_opacity.png"
         }
       }
     },
@@ -199,7 +201,9 @@
           "albedo": "textures/decals/manhole_color.png",
           "normal": "textures/decals/manhole_normal.png",
           "roughness": "textures/decals/manhole_roughness.png",
-          "metallic": "textures/decals/manhole_metallic.png"
+          "opacity_mask": "textures/decals/manhole_opacity.png",
+          "metallic": "textures/decals/manhole_metallic.png",
+          "opacity_mask": "textures/decals/manhole_opacity.png"
         }
       }
     }
