@@ -207,6 +207,11 @@ struct Material : public MaterialInterface {
     /// Default: Opaque (deferred G-buffer, no blending).
     EBlendMode blendMode = EBlendMode::Opaque;
 
+    /// Decal blend mode — controls which DBuffer channels this decal writes.
+    /// Only meaningful when materialDomain == EMaterialDomain::Decal.
+    /// @ref UE5 EDecalBlendMode — selectively write color/normal/roughness.
+    EDecalBlendMode decalBlendMode = EDecalBlendMode::DBuffer_ColorNormalRoughness;
+
     // ── Rendering flags ──────────────────────────────────────────────────
 
     /// When true, disables backface culling. Used for foliage, cloth, thin geometry.
@@ -359,6 +364,7 @@ struct Material : public MaterialInterface {
     [[nodiscard]] EShadingModel GetShadingModel() const override { return shadingModel; }
     [[nodiscard]] EMaterialDomain GetMaterialDomain() const override { return materialDomain; }
     [[nodiscard]] EBlendMode GetBlendMode() const override { return blendMode; }
+    [[nodiscard]] EDecalBlendMode GetDecalBlendMode() const override { return decalBlendMode; }
 
     [[nodiscard]] bool IsORM() const override { return useORM; }
     [[nodiscard]] bool IsGpuResourcesLoaded() const override { return gpuResourcesLoaded; }

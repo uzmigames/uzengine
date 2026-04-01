@@ -31,6 +31,7 @@
 #include "profiler.h"
 #include "rhi.h"
 #include "log.h"
+#include "material_interface.h"
 
 #include <algorithm>
 #include <cstring>
@@ -232,20 +233,32 @@ void SceneRenderer::RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContex
             }
 
             // ── Decal gathering (used after GBuffer pass) ─────────────────
+            // @ref UE5 FDeferredDecalProxy — gathers material params at render time
             if (ctx.world) {
                 std::vector<DecalInfo> decalInfos;
                 auto decalView = ctx.world->View<DecalComponent, SceneComponent>();
+
+                // Precompute ScreenToNDC (shared by all decals this frame)
+                const float w = ctx.renderWidth;
+                const float h = ctx.renderHeight;
+                Mat4 screenToNDC{};
+                screenToNDC(0,0) =  2.0f / w;
+                screenToNDC(1,1) = -2.0f / h;
+                screenToNDC(2,2) =  1.0f;
+                screenToNDC(3,0) = -1.0f;
+                screenToNDC(3,1) =  1.0f;
+                screenToNDC(3,3) =  1.0f;
+
                 for (auto [enttEntity, decal, scene] : decalView.each()) {
                     if (!decal.enabled) continue;
+                    if (!decal.material) continue; // No material = no visual
 
-                    // The decal OBB is defined by the entity's transform scale.
-                    // The unit cube [-0.5, 0.5]^3 maps to the decal volume when
-                    // transformed by the world matrix (position + rotation + scale).
-                    // No additional extents multiplication — the scale IS the size.
+                    const auto* mat = decal.material;
                     const Mat4& decalWorldMat = scene.GetWorldMatrix();
 
-                    auto resolveDecalTex = [&](uint32_t explicitSrv, const std::string& path) -> uint32_t {
-                        if (explicitSrv != UINT32_MAX) return explicitSrv;
+                    // Resolve texture paths → SRV indices via the texture map
+                    auto resolveSrv = [&](uint32_t gpuSrv, const std::string& path) -> uint32_t {
+                        if (gpuSrv > 0) return gpuSrv;
                         if (path.empty()) return UINT32_MAX;
                         auto texIt = m_textureMap.find(path);
                         if (texIt != m_textureMap.end() && texIt->second < static_cast<uint32_t>(m_textures.size())) {
@@ -254,44 +267,25 @@ void SceneRenderer::RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContex
                         return UINT32_MAX;
                     };
 
-                    // Precompute SvPositionToDecal: pixel coords + depth → decal local [-1,1]³
-                    // @ref UE5 DeferredDecal: SvPositionToDecal = ScreenToNDC × InvViewProj × WorldToDecal
-                    // ScreenToNDC transforms pixel (x,y,depth,1) → NDC (ndc_x, ndc_y, depth, 1):
-                    //   ndc_x = x * (2/w) - 1
-                    //   ndc_y = y * (-2/h) + 1   (flip Y: screen Y-down, NDC Y-up)
-                    //   ndc_z = depth             (pass through)
-                    const float w = ctx.renderWidth;
-                    const float h = ctx.renderHeight;
-                    // Row-vector convention: v_out = v_in × M
-                    // x_ndc = x_pixel * (2/w) + 1 * (-1) → M[0][0]=2/w, M[3][0]=-1
-                    // y_ndc = y_pixel * (-2/h) + 1 * (1) → M[1][1]=-2/h, M[3][1]=1
-                    // z_ndc = depth → M[2][2]=1
-                    // w_out = 1 → M[3][3]=1
-                    Mat4 screenToNDC{};
-                    screenToNDC(0,0) =  2.0f / w;
-                    screenToNDC(1,1) = -2.0f / h;
-                    screenToNDC(2,2) =  1.0f;
-                    screenToNDC(3,0) = -1.0f;
-                    screenToNDC(3,1) =  1.0f;
-                    screenToNDC(3,3) =  1.0f;
-
+                    // SvPositionToDecal = ScreenToNDC × InvViewProj × InvWorld
                     Mat4 invWorldDecal = decalWorldMat.Inverse();
-                    // SvPositionToDecal = ScreenToNDC * InvViewProj * InvWorld
                     Mat4 svPosToDecal = screenToNDC * ctx.perFrame.invViewProj * invWorldDecal;
 
                     DecalInfo info{};
                     info.cb.world         = decalWorldMat;
                     info.cb.svPosToDecal  = svPosToDecal;
                     info.cb.viewProj      = ctx.perFrame.viewProj;
-                    info.cb.opacity       = decal.opacity;
-                    info.cb.normalBlend   = decal.normalBlend;
-                    info.cb.roughness     = decal.roughness;
-                    info.cb.metallic      = decal.metallic;
+                    // Read material parameters
+                    info.cb.opacity       = mat->GetOpacity();
+                    info.cb.normalBlend   = mat->GetNormalIntensity();
+                    info.cb.roughness     = mat->GetRoughnessMultiplier();
+                    info.cb.metallic      = mat->GetMetallicMultiplier();
                     info.cb.fadeDistance   = decal.fadeDistance;
                     info.cb.angleFade     = decal.angleFadeStart;
-                    info.cb.albedoSrv     = resolveDecalTex(decal.albedoTextureId, decal.albedoPath);
-                    info.cb.normalSrv     = resolveDecalTex(decal.normalTextureId, decal.normalPath);
-                    info.cb.materialSrv   = resolveDecalTex(decal.materialTextureId, decal.roughnessPath);
+                    // Read texture SRV indices from material
+                    info.cb.albedoSrv     = resolveSrv(mat->GetAlbedoSrvIndex(), mat->GetAlbedoPath());
+                    info.cb.normalSrv     = resolveSrv(mat->GetNormalSrvIndex(), mat->GetNormalPath());
+                    info.cb.materialSrv   = resolveSrv(mat->GetRoughnessSrvIndex(), mat->GetRoughnessPath());
                     info.cb.depthSrv      = m_gbuffer.depthSRV;
                     info.cb.normalGbufSrv = m_gbuffer.normalSRV;
                     info.priority         = decal.priority;

@@ -95,7 +95,7 @@ PSOutput main(float4 svPosition : SV_Position) {
 #endif
 
     // ── Output to GBuffer with alpha blending ────────────────────────────
-    output.target0 = float4(albedoSample.rgb, albedoSample.a * finalAlpha);
+    output.target0 = float4(albedoSample.rgb, finalAlpha);
 
     // Normal: pass through (flat normal = no modification) unless texture bound
     float3 decalNormalTS = float3(0.5, 0.5, 1.0);

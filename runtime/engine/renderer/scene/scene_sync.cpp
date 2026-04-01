@@ -380,23 +380,23 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
         drawIndex++;
     }
 
-    // ── Preload decal textures from DecalComponent paths ────────────────
-    // DecalComponent stores VFS-relative texture paths (set by scene file).
-    // Load them into the texture map so the decal gathering pass in
-    // frame_geometry.cpp can resolve paths → SRV indices.
+    // ── Preload decal textures from DecalComponent materials ─────────────
+    // DecalComponent references a MaterialInterface* whose texture paths need
+    // to be loaded into m_textureMap so the decal gather can resolve → SRV.
     {
         auto decalView = world->GetRegistry().view<DecalComponent>();
         for (auto [enttEntity, decal] : decalView.each()) {
-            if (!decal.enabled) continue;
+            if (!decal.enabled || !decal.material) continue;
+            const auto* mat = decal.material;
             auto tryLoadDecalTex = [&](const std::string& path, bool srgb) {
                 if (path.empty()) return;
                 if (m_textureMap.find(path) != m_textureMap.end()) return;
                 LoadTexture(path, vfs, cmdList, srgb);
             };
-            tryLoadDecalTex(decal.albedoPath,    true);   // albedo is sRGB
-            tryLoadDecalTex(decal.normalPath,    false);  // normal is linear
-            tryLoadDecalTex(decal.roughnessPath, false);  // roughness is linear
-            tryLoadDecalTex(decal.metallicPath,  false);  // metallic is linear
+            tryLoadDecalTex(mat->GetAlbedoPath(),    true);
+            tryLoadDecalTex(mat->GetNormalPath(),     false);
+            tryLoadDecalTex(mat->GetRoughnessPath(),  false);
+            tryLoadDecalTex(mat->GetMetallicPath(),   false);
         }
     }
 
