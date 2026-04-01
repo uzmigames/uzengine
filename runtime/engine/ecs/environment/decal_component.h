@@ -1,13 +1,13 @@
 /// UzEngine DecalComponent — ECS data for deferred DBuffer decals.
 ///
-/// Like UE5's UDecalComponent, this is a projection volume + material reference.
+/// This is a projection volume + material reference for deferred decals.
 /// The DecalComponent does NOT store textures or material properties directly.
 /// Instead, it references a MaterialInterface* (with domain == Decal) that
 /// defines the visual appearance. The renderer reads texture SRV indices and
 /// scalar parameters from the material during the decal gather step.
 ///
 /// @ref Valient 2014 "Deferred Rendering in Killzone: Shadow Fall" — DBuffer technique
-/// @ref UE5 UDecalComponent — material reference + projection volume + sort order
+/// @ref Valient 2014 "Deferred Rendering in Killzone: Shadow Fall" — DBuffer decal pattern
 ///
 /// # How Decals Work
 /// A unit cube [-0.5, 0.5]^3 is transformed by the decal's world matrix to form
@@ -44,7 +44,7 @@ class MaterialInterface;
 /// and renders them after the GBuffer fill pass.
 ///
 /// @ref Valient 2014 "Deferred Rendering in Killzone: Shadow Fall"
-/// @ref UE5 UDecalComponent — material + projection + sort
+/// @ref Valient 2014 "Deferred Rendering in Killzone: Shadow Fall"
 struct DecalComponent {
     // ── Material Reference ───────────────────────────────────────────────
 

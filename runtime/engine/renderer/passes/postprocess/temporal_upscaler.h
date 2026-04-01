@@ -13,8 +13,8 @@
 ///             IRHICommandList and bindless SRV/UAV indices. The reference FInputs
 ///             bundles SceneTextures with dozens of fields; we use a minimal
 ///             UpscalerInput struct with only the textures temporal upscaling
-///             needs. Reference integrates with FSceneViewState for history
-///             management; we manage history externally and pass handles in.
+///             needs. History textures are managed externally and passed in
+///             via the UpscalerInput struct.
 
 #pragma once
 

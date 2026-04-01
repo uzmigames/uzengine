@@ -1,9 +1,8 @@
 /// UzEngine Decal Pixel Shader — deferred decal projection onto GBuffer.
 ///
-/// @ref UE5 DeferredDecal.usf — exact projection pattern
-/// @ref Valient 2014 "Deferred Rendering in Killzone: Shadow Fall"
+/// @ref Valient 2014 "Deferred Rendering in Killzone: Shadow Fall" — DBuffer decal projection
 ///
-/// Key steps (matching UE5 exactly):
+/// Key steps:
 /// 1. Replace SvPosition.z with scene depth from depth buffer
 /// 2. Transform (SvPosition.xy, sceneDepth, 1) → decal local space via SvPositionToDecal
 /// 3. Clip to [-1,1]³
@@ -47,7 +46,7 @@ PSOutput main(float4 svPosition : SV_Position) {
     output.target2 = float4(0, 0, 0, 0);
 
     // ── Step 1: Replace SvPosition.z with scene depth ────────────────────
-    /// @ref UE5 DeferredDecal.usf line 134: In.SvPosition.z = LookupDeviceZ(ScreenUV)
+    /// Replace SvPosition.z with scene depth from depth buffer lookup
     float sceneDepth = svPosition.z;
 #ifdef UZ_BINDLESS
     if (depthSrv != kSentinelSrvIndex) {
@@ -57,24 +56,23 @@ PSOutput main(float4 svPosition : SV_Position) {
 #endif
 
     // ── Step 2: SvPosition → decal local space [-1,1]³ ───────────────────
-    /// @ref UE5 line 139: mul(float4(In.SvPosition.xyz, 1), SvPositionToDecal)
+    /// Transform screen position to decal object space via SvPositionToDecal matrix
     float4 DecalVectorHom = mul(float4(svPosition.xy, sceneDepth, 1.0), svPosToDecal);
     float3 OSPosition = DecalVectorHom.xyz / DecalVectorHom.w;
 
     // ── Step 3: Clip outside [-1,1]³ ─────────────────────────────────────
-    /// @ref UE5 line 144-145
+    /// Clip fragments outside the decal volume
     clip(OSPosition.xyz + 1.0);
     clip(1.0 - OSPosition.xyz);
 
     // ── Step 4: UV mapping ──────────────────────────────────────────────
-    /// @ref UE5 line 152-158: DecalVector.zyx swizzle — adapted for Z-up.
-    /// UE5 (Y-up): projects along X, UVs from ZY → swizzle .zyx
+    /// Map object-space position to [0,1] UV range.
     /// UzEngine (Z-up): projects along Z, UVs from XY → no swizzle needed.
     float3 DecalVector = OSPosition * 0.5 + 0.5;
     float2 DecalUVs = DecalVector.xy;
 
     // ── Step 5: Fade along projection axis (Z in our Z-up system) ────────
-    /// @ref UE5 line 185: saturate(4 - 4 * abs(axis * 2 - 1))
+    /// Smooth fade near projection boundaries: saturate(4 - 4 * abs(axis * 2 - 1))
     float DecalFading = saturate(4.0 - 4.0 * abs(DecalVector.z * 2.0 - 1.0));
 
     // ── Step 6: Sample decal textures ───────────────────────────────────
@@ -99,7 +97,7 @@ PSOutput main(float4 svPosition : SV_Position) {
 #endif
 
     // ── Step 7: Final opacity = material opacity × mask × fade ───────────
-    /// @ref UE5 line 266: Opacity = GetMaterialOpacity() * DecalFading
+    /// Final opacity combines material opacity, mask texture, and edge fade
     float FinalOpacity = opacity * OpacityMask * DecalFading;
     if (FinalOpacity <= 0.001) {
         clip(-1);

@@ -74,7 +74,7 @@ public:
     /// Returns the current sprint multiplier.
     [[nodiscard]] float GetSprintMultiplier() const { return m_sprintMultiplier; }
 
-    /// Enables editor mode: WASD movement requires RMB held (UE5 behavior).
+    /// Enables editor mode: WASD movement requires RMB held.
     /// When disabled (game mode), WASD always moves the camera.
     void SetEditorMode(bool enabled) { m_editorMode = enabled; }
 
@@ -96,7 +96,7 @@ private:
     float m_sprintMultiplier = 3.0f;
     float m_yaw = 0.f;    ///< Horizontal rotation (radians, around world Z)
     float m_pitch = 0.f;  ///< Vertical rotation (radians, around local Y)
-    bool m_editorMode = false; ///< When true, WASD requires RMB held (UE5 editor behavior).
+    bool m_editorMode = false; ///< When true, WASD requires RMB held.
 
     static constexpr float kMaxPitch = 1.5533f;  ///< ~89 degrees in radians
 };

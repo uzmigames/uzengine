@@ -48,7 +48,7 @@ void FlyCameraController::Update(Camera& camera, const InputSystem& input, float
     camera.LookAt(pos + forward, Vec3::Up());
 
     // ── WASD movement — Fly camera ─────────────────────────────────────────────
-    // In editor mode (UE5 behavior): WASD moves camera ONLY while RMB is held.
+    // In editor mode: WASD moves camera ONLY while RMB is held.
     // Without RMB, W/E/R are gizmo hotkeys handled by EditorInputHandler.
     // In game mode: WASD always moves the camera.
     const bool allowMovement = !m_editorMode || input.IsMouseDown(MouseButton::Right);

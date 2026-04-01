@@ -338,7 +338,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         editorInput.Init(sceneRenderer.GetInput(), &selectionManager,
                          &sceneRenderer.GetCamera(), &world);
         editorInput.SetSceneRenderer(&sceneRenderer);
-        // UE5 behavior: WASD moves camera only while RMB held in editor mode.
+        // Editor mode: WASD moves camera only while RMB held.
         sceneRenderer.GetCameraController().SetEditorMode(true);
         UZ_LOG(Engine, Info, "Editor input handler initialized");
     }

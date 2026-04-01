@@ -24,7 +24,7 @@ namespace uz {
 UZ_DEFINE_LOG_CATEGORY(Gizmo, Info);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Constants — UE5 parity values
+// Constants — gizmo rendering values
 // ─────────────────────────────────────────────────────────────────────────────
 
 static constexpr float kPi = 3.14159265358979323846f;
@@ -68,7 +68,7 @@ static constexpr float kCircleRadius = 0.70f;
 /// Torus minor radius for thick rotate rings.
 static constexpr float kCircleThickness = 0.025f;
 
-/// Axis colors: UE5 muted tones (linear RGB).
+/// Axis colors: muted tones (linear RGB).
 static constexpr float kAxisColors[3][3] = {
     {0.594f, 0.0197f, 0.0f},   // X: Muted red
     {0.1349f, 0.3959f, 0.0f},  // Y: Muted green
@@ -78,13 +78,13 @@ static constexpr float kAxisColors[3][3] = {
 /// Highlight color when hovering over an axis — yellow.
 static constexpr float kHoverColor[3] = {1.0f, 1.0f, 0.0f};
 
-/// Active (dragging) color — yellow (same as hover per UE5).
+/// Active (dragging) color — yellow (same as hover).
 static constexpr float kActiveColor[3] = {1.0f, 1.0f, 0.0f};
 
 /// Center handle color — light grey.
 static constexpr float kCenterColor[3] = {0.765f, 0.765f, 0.765f};
 
-/// Normal alpha for non-hovered axes — UE5 gizmos are slightly transparent.
+/// Normal alpha for non-hovered axes — gizmos are slightly transparent.
 static constexpr float kNormalAlpha = 0.8f;
 
 /// Inactive alpha when another axis is being dragged.
@@ -799,7 +799,7 @@ bool GizmoRenderer::Init(IRHIDevice* device, ShaderPipeline& pipeline,
     triDesc.renderTargetCount = 1;
     triDesc.depthStencilFormat = dsvFormat;
 
-    // Depth disabled: gizmo ALWAYS renders on top of all scene geometry (UE5 behavior).
+    // Depth disabled: gizmo ALWAYS renders on top of all scene geometry.
     triDesc.depthStencil.depthEnable = false;
     triDesc.depthStencil.depthWrite = false;
 

@@ -210,7 +210,7 @@ struct Material : public MaterialInterface {
 
     /// Decal blend mode — controls which DBuffer channels this decal writes.
     /// Only meaningful when materialDomain == EMaterialDomain::Decal.
-    /// @ref UE5 EDecalBlendMode — selectively write color/normal/roughness.
+    /// Selectively write color/normal/roughness DBuffer channels.
     EDecalBlendMode decalBlendMode = EDecalBlendMode::DBuffer_ColorNormalRoughness;
 
     // ── Rendering flags ──────────────────────────────────────────────────

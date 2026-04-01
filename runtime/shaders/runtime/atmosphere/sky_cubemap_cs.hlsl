@@ -157,6 +157,6 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     // integrates over the hemisphere but the raw sky values include sunIntensity
     // which makes them too bright for IBL. Divide by PI to match the convention
     // where SkyLightIntensity=1.0 produces physically balanced ambient.
-    // @ref UE5 SkyLightColor normalization — SH * SkyLightColor.rgb
+    // Normalize sky radiance by 1/PI for SH energy conservation
     outputCubemap[uint3(texel, face)] = float4(L * M_1_PI, 1.0);
 }

@@ -233,7 +233,7 @@ void SceneRenderer::RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContex
             }
 
             // ── Decal gathering (used after GBuffer pass) ─────────────────
-            // @ref UE5 FDeferredDecalProxy — gathers material params at render time
+            // @ref Valient 2014 "Deferred Rendering in Killzone" — gathers material params at render time
             if (ctx.world) {
                 std::vector<DecalInfo> decalInfos;
                 auto decalView = ctx.world->View<DecalComponent, SceneComponent>();
@@ -268,7 +268,7 @@ void SceneRenderer::RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContex
                     };
 
                     // SvPositionToDecal = ScreenToNDC × InvViewProj × InvWorld × Scale2
-                    // InvWorld maps world → [-0.5, 0.5]³ (unit cube). UE5 clips in [-1,1]³,
+                    // InvWorld maps world → [-0.5, 0.5]³ (unit cube). Clip in [-1,1]³,
                     // so scale by 2 to map [-0.5, 0.5] → [-1, 1].
                     Mat4 invWorldDecal = decalWorldMat.Inverse();
                     Mat4 scale2 = Mat4::TRS(Vec3(0.0f, 0.0f, 0.0f), Vec3(2.0f, 2.0f, 2.0f));

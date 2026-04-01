@@ -85,7 +85,7 @@ enum class EBlendMode : uint8_t {
 
 /// Selects which G-buffer channels a decal material modifies.
 ///
-/// @ref UE5 EDecalBlendMode — decals can selectively write to color, normal,
+/// @ref Valient 2014 "Deferred Rendering in Killzone: Shadow Fall" — decals can selectively write to color, normal,
 ///      and/or roughness channels. This avoids unnecessary G-buffer writes
 ///      (e.g., a blood splatter only needs color, not normal/roughness).
 ///

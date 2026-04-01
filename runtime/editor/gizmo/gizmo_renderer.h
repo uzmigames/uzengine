@@ -10,7 +10,7 @@
 /// - **Scale**: 3 axis cylinders + 3 tip cubes + center cube for uniform scale.
 ///
 /// All geometry is 3D solid TriangleList with per-vertex normals for N-dot-L
-/// diffuse shading. Colors match UE5 muted tones (not pure RGB).
+/// diffuse shading. Colors use muted tones (not pure RGB) for readability.
 ///
 /// # Rendering
 /// Uses a single TriangleList pipeline with depth disabled + alpha blending.
@@ -202,7 +202,7 @@ private:
     bool m_initialized = false;
 
     /// Constant screen-space gizmo size in pixels.
-    /// @ref UE5 viewport gizmo is ~150-200px at 720p. 180px gives good visibility.
+    /// Industry-standard viewport gizmo is ~150-200px at 720p. 180px gives good visibility.
     static constexpr float kTargetScreenPx = 180.0f;
 };
 

@@ -548,7 +548,7 @@ IBLBaker::BakeResult IBLBaker::BakeEnvironment(uint32_t envCubemapSrvIndex, RHIT
         const float mipRoughness = static_cast<float>(mip) /
                                     static_cast<float>(kPrefilteredMipLevels - 1);
         // 4096 samples ensures convergence of HDR hotspots (sun in HDRI).
-        // UE5 uses only 64 samples but relies on source mip selection.
+        // Some engines use fewer samples with source mip selection.
         // We use more samples to compensate for single-mip source cubemaps.
         const uint32_t sampleCount = 4096;
 

@@ -281,7 +281,7 @@ public:
 
     /// Decal blend mode — controls which DBuffer channels a decal material writes.
     /// Only meaningful when GetMaterialDomain() == EMaterialDomain::Decal.
-    /// @ref UE5 EDecalBlendMode
+    /// @ref Valient 2014 "Deferred Rendering in Killzone: Shadow Fall" — DBuffer decal blend modes
     [[nodiscard]] virtual EDecalBlendMode GetDecalBlendMode() const { return EDecalBlendMode::DBuffer_ColorNormalRoughness; }
 
     // ── ORM packed mode ─────────────────────────────────────────────────────

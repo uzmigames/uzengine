@@ -2,8 +2,7 @@
 ///
 /// Creates a Material asset (domain=Decal) from the scene file's texture
 /// paths and material properties, then assigns it to the DecalComponent.
-/// This follows UE5's pattern: DecalComponent references a MaterialInterface,
-/// NOT raw textures.
+/// DecalComponent references a MaterialInterface, NOT raw textures.
 
 #include "decal_component.h"
 #include "component_serializer.h"

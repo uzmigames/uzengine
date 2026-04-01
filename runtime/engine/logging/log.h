@@ -3,7 +3,7 @@
 /// UzEngine Structured Logging System
 ///
 /// Provides category-based, compile-time filtered logging via spdlog backend.
-/// Inspired by Unreal Engine 5's UE_LOG macro pattern with format string support.
+/// Category-based log macro pattern with format string support.
 ///
 /// # Design
 /// - **Categories**: Each subsystem defines its own LogCategory for filtering

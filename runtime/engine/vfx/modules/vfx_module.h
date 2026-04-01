@@ -8,7 +8,7 @@
 /// snippet that the ModuleCompositor stitches into a single compute shader.
 ///
 /// # Design
-/// Inspired by UE5 Niagara's module stack: each module declares its parameters
+/// Module stack architecture: each module declares its parameters
 /// (for UI/serialization) and emits a self-contained HLSL function body.
 /// The compositor concatenates snippets and wraps them in a dispatch kernel.
 ///

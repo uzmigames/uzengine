@@ -88,7 +88,7 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
                         // command uses lodIndexByteOffset/Count to select the LOD.
                         for (uint32_t li = 1; li < gpu.lodCount && li < kMaxLODs; ++li) {
                             meshComp.lodGroup.levels[li].meshIndex = loaded;
-                            // Auto screen-size thresholds (UE5 defaults)
+                            // Auto screen-size thresholds (industry-standard defaults)
                             constexpr float kAutoThresholds[] = {1.0f, 0.5f, 0.25f, 0.12f, 0.06f, 0.03f, 0.015f, 0.0f};
                             meshComp.lodGroup.levels[li].screenSizeThreshold =
                                 (li < 8) ? kAutoThresholds[li] : 0.0f;

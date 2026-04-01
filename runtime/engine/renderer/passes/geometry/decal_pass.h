@@ -51,7 +51,7 @@ namespace uz {
 /// Must match the HLSL `DecalObjectCB` at register b2 in decal_vs.hlsl and
 /// decal_ps.hlsl exactly.
 /// @ref Valient 2014 "Deferred Rendering in Killzone: Shadow Fall"
-/// @ref UE5 DeferredDecal pattern: SvPositionToDecal = ScreenToNDC × InvViewProj × WorldToDecal
+/// Projection: SvPositionToDecal = ScreenToNDC × InvViewProj × WorldToDecal
 struct DecalObjectCB {
     Mat4     world;            ///< Decal world transform (OBB = unit cube × world).
     Mat4     svPosToDecal;     ///< SvPosition → decal local [-1,1]³ (precomputed).
