@@ -24,7 +24,9 @@
         "transform": {
           "position": [0, 0, 1020]
         },
-        "sky_atmosphere": {}
+        "sky_atmosphere": {
+          "sun_illuminance": [12, 12, 12]
+        }
       }
     },
     {
@@ -61,17 +63,17 @@
           "position": [0, 0, 0]
         },
         "volumetric_clouds": {
-          "coverage": 0.45,
-          "density": 0.8,
-          "extinction": 0.03,
+          "coverage": 0.5,
+          "density": 1.2,
+          "extinction": 0.04,
           "scattering_albedo": 0.99,
-          "phase_g": 0.5,
+          "phase_g": 0.6,
           "phase_g2": -0.3,
           "phase_blend": 0.7,
-          "ambient_multiplier": 6.0,
-          "layer_bottom_altitude_km": 5.0,
-          "layer_height_km": 4.0,
-          "primary_steps": 64,
+          "ambient_multiplier": 4.0,
+          "layer_bottom_altitude_km": 3.0,
+          "layer_height_km": 6.0,
+          "primary_steps": 48,
           "light_steps": 6
         }
       }

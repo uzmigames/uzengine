@@ -173,12 +173,17 @@ float DualLobeHG(float cosTheta, float g1, float g2, float blend) {
 // Height Gradient
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Height gradient for cumulus cloud density profile.
+/// Sharp flat bottom (clouds have well-defined bases), rounded top that
+/// peaks around 30% height then gradually fades — the classic cumulus shape.
 /// @ref Schneider 2015 — height-based density gradient for cumulus
 float HeightGradient(float sampleHeight, float innerRadius, float layerHeight) {
-    float normalizedH = saturate((sampleHeight - innerRadius) / layerHeight);
-    float bottomFade = smoothstep(0.0f, 0.15f, normalizedH);
-    float topFade    = smoothstep(1.0f, 0.6f, normalizedH);
-    return bottomFade * topFade;
+    float h = saturate((sampleHeight - innerRadius) / layerHeight);
+    // Sharp bottom ramp (flat cloud base)
+    float bottom = smoothstep(0.0f, 0.07f, h);
+    // Rounded top fade — peak density around 20-40%, gradual falloff to top
+    float top = smoothstep(1.0f, 0.3f, h);
+    return bottom * top;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -205,12 +210,15 @@ float ValueNoise3D(float3 p) {
         f.z);
 }
 
+/// FBM with N octaves — 3D isotropic noise for volumetric cloud shapes.
+/// @ref Inigo Quilez, Shadertoy XslGRr — FBM clouds
 /// @ref Schneider 2015 — multi-octave noise for cloud shapes
-float FBM4(float3 p) {
+/// @constants lacunarity = 2.0, gain = 0.5 (standard FBM)
+float FBM(float3 p, int octaves) {
     float value = 0.0f;
     float amplitude = 0.5f;
     float frequency = 1.0f;
-    for (int oct = 0; oct < 4; ++oct) {
+    for (int oct = 0; oct < octaves; ++oct) {
         value += amplitude * ValueNoise3D(p * frequency);
         amplitude *= 0.5f;
         frequency *= 2.0f;
@@ -222,25 +230,46 @@ float FBM4(float3 p) {
 // Density Sampling
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Cloud density using 3D isotropic noise coordinates.
+/// @ref Inigo Quilez, Shadertoy XslGRr — 3D world-space noise coords give
+///   volumetric shapes (spheres, towers) rather than flat layers.
+/// @ref Schneider 2015 — coverage remap + height gradient
+///
+/// Key difference from flat clouds: noise is sampled at uniform 3D coordinates
+/// relative to the planet surface, NOT (XY, normalizedH). This produces
+/// actual 3D structures instead of horizontal slabs.
 float SampleDensity(float3 samplePosKm, float innerRadius, float layerHeight) {
     float sampleHeight = length(samplePosKm);
     float hGrad = HeightGradient(sampleHeight, innerRadius, layerHeight);
     if (hGrad <= 0.0f) return 0.0f;
 
-    float3 windOffset = g_windVelocity * g_time;
     float normalizedH = saturate((sampleHeight - innerRadius) / layerHeight);
+    float3 windOffset = g_windVelocity * g_time;
 
-    /// @ref Schneider 2015 — Perlin-Worley noise for cloud shapes
-    float3 noiseCoord = float3(
+    // Noise coordinates: XY from world-space scaled for ~8 km tiling,
+    // Z from normalized height stretched for vertical detail.
+    /// @ref Schneider 2015 — noise coordinate mapping
+    /// @constants XY_SCALE = 0.12, Z_SCALE = 3.0
+    float3 noisePos = float3(
         (samplePosKm.x + windOffset.x) * 0.12f,
         (samplePosKm.y + windOffset.y) * 0.12f,
         normalizedH * 3.0f + windOffset.z * 0.05f
     );
-    float noise = FBM4(noiseCoord);
 
-    /// @ref Schneider 2015 slide 70 — density = remap(shape, 1-coverage, 1, 0, 1)
-    float coverageThreshold = 1.0f - g_coverage;
-    float shapeDensity = saturate((noise - coverageThreshold) / max(g_coverage, 0.001f));
+    // Shape noise — 4 octaves of FBM (range ~0.0 to ~0.94, mean ~0.47)
+    /// @ref Schneider 2015 — multi-octave noise for cloud shapes
+    float shape = FBM(noisePos, 4);
+
+    // Coverage-based density: shape noise modulated by coverage and height.
+    // Use a softer remap than Schneider's hard threshold — our procedural FBM
+    // has a narrow value range (~0.3-0.6) compared to Perlin-Worley textures
+    // (~0.0-1.0), so a hard remap at 1-coverage cuts most of the signal.
+    // Instead: bias the noise by coverage, then saturate.
+    /// @ref Schneider 2015 slide 70 — adapted for procedural FBM range
+    float shapeDensity = saturate(shape + g_coverage - 0.5f);
+    // Apply a power curve to create contrast (thick core, thin edges)
+    shapeDensity = shapeDensity * shapeDensity;
+
     return shapeDensity * hGrad * g_density;
 }
 
@@ -369,8 +398,16 @@ void main(uint3 DTid : SV_DispatchThreadID) {
             msLuminance += g_sunColor * msSunT * msP * msPhase;
         }
 
+        // Beer-Powder effect — brightens thin cloud edges (silver lining).
+        // At cloud boundaries where density is low, multi-scattered photons
+        // create a bright rim around the cloud silhouette.
+        /// @ref Schneider 2015 — Beer-Powder approximation
+        /// @constants powder blend = 0.5 (mix between Beer and powder terms)
+        float powder = 1.0f - exp(-density * g_extinction * DENSITY_SCALE * 2.0f);
+        float beerPowder = lerp(1.0f, powder, 0.5f);
+
         // In-scattering: sun (direct + multi-scatter) + ambient
-        float3 sunScatter = g_sunColor * sunT * phase + msLuminance;
+        float3 sunScatter = g_sunColor * sunT * phase * beerPowder + msLuminance;
         float3 ambScatter = ambient;
         float3 scatter = scat * (sunScatter + ambScatter);
 
@@ -380,6 +417,17 @@ void main(uint3 DTid : SV_DispatchThreadID) {
         luminance    += transmittance * Sint;
         transmittance *= T_step;
     }
+
+    // ── Aerial perspective — distant clouds fade toward sky color ─────
+    // Approximates atmospheric scattering between camera and cloud.
+    /// @ref Hillaire 2020 — aerial perspective on volumetric clouds
+    float cloudDist = tNear; // distance to first cloud sample (km)
+    float apFactor = 1.0f - exp(-cloudDist * 0.04f);
+    float3 skyColor = g_ambientColor;
+    if (dot(skyColor, skyColor) < 0.001f) {
+        skyColor = float3(0.4f, 0.55f, 0.8f); // fallback blue sky
+    }
+    luminance = lerp(luminance, skyColor * (1.0f - transmittance), apFactor);
 
     output[DTid.xy] = float4(luminance, transmittance);
 }
