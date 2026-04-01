@@ -72,14 +72,32 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
     // RegisterSSGIPasses(rgBuilder, ctx);
     // RegisterSDFGIPasses(rgBuilder, ctx);
     // RegisterSSRPasses(rgBuilder, ctx);
-    // ── Env MIS temporal accumulation ──────────────────────────────────
-    // DISABLED: dispatching a separate command list outside the render graph
-    // causes GPU stalls and potential resource state conflicts (GBuffer textures
-    // may not be in ShaderResource state). Needs to be integrated as a proper
-    // render graph compute pass with declared resource dependencies.
-    // Infrastructure ready: EnvMISPass, env_mis_temporal_cs.hlsl, ping-pong buffers.
-    // TODO: register as rgBuilder.AddComputePass("EnvMIS_Temporal", ...) with
-    //       pb.Read(albedo/normal/depth/position) dependencies.
+    // ── Env MIS temporal accumulation (render graph compute pass) ───────
+    if (m_envMISPass && m_envMISPass->IsInitialized()
+        && m_envMapSampler && m_envMapSampler->IsReady()) {
+
+        rgBuilder.AddPass("EnvMIS_Temporal", [&](rg::RgPassBuilder& pb) {
+            pb.Read(ctx.albedoRes,   RHIResourceState::ShaderResource);
+            pb.Read(ctx.normalRes,   RHIResourceState::ShaderResource);
+            pb.Read(ctx.depthRes,    RHIResourceState::ShaderResource);
+            pb.Read(ctx.positionRes, RHIResourceState::ShaderResource);
+
+            pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources&) {
+                UZ_PROFILE_SCOPE("EnvMIS::Execute");
+
+                EnvMISPass::DispatchParams misParams;
+                misParams.albedoSrvIdx     = m_gbuffer.albedoSRV;
+                misParams.normalSrvIdx     = m_gbuffer.normalSRV;
+                misParams.depthSrvIdx      = m_gbuffer.depthSRV;
+                misParams.positionSrvIdx   = m_gbuffer.positionWSSRV;
+                misParams.envCubemapSrvIdx = m_hdriActive ? m_hdriCubemapSrv : m_skyCubemapSrv;
+                misParams.frameIndex       = ctx.frameIndex;
+                misParams.temporalAlpha    = 0.05f;
+
+                m_envMISPass->Execute(cmd, *m_envMapSampler, misParams);
+            });
+        });
+    }
 
     RegisterDeferredLightingPass(rgBuilder, ctx);
     RegisterAtmosphereFogCloudPasses(rgBuilder, ctx);
