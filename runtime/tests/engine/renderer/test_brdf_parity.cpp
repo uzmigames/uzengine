@@ -641,3 +641,110 @@ TEST(BRDFHelpers, Saturate_InRange_IsIdentity) {
     EXPECT_FLOAT_EQ(Saturate(0.5f),  0.5f);
     EXPECT_FLOAT_EQ(Saturate(1.0f),  1.0f);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// D_GGX — Trowbridge-Reitz Normal Distribution Function
+// @ref Walter et al. 2007 "Microfacet Models for Refraction through Rough Surfaces"
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// At NdotH=1 (half-vector aligned with normal), D_GGX = 1 / (PI * alpha^2).
+/// This is the peak of the distribution.
+TEST(GGX_NDF, PeakAtNdotH1) {
+    const float alpha = 0.5f;
+    const float result = D_GGX(alpha, 1.0f);
+    const float expected = 1.0f / (kPI * alpha * alpha);
+    EXPECT_NEAR(result, expected, kEps);
+}
+
+/// Very smooth surface (alpha → 0): D_GGX becomes very large at NdotH=1
+/// (approaching a delta function). alpha=0.01 → D ≈ 1/(PI*0.0001) ≈ 3183.
+TEST(GGX_NDF, SmoothSurface_HighPeak) {
+    const float result = D_GGX(0.01f, 1.0f);
+    EXPECT_GT(result, 3000.0f);
+}
+
+/// Very rough surface (alpha=1): D_GGX at NdotH=1 = 1/PI ≈ 0.318.
+TEST(GGX_NDF, RoughSurface_LowPeak) {
+    const float result = D_GGX(1.0f, 1.0f);
+    EXPECT_NEAR(result, 1.0f / kPI, kEps);
+}
+
+/// D_GGX is always non-negative.
+TEST(GGX_NDF, AlwaysNonNegative) {
+    for (float alpha : {0.01f, 0.1f, 0.5f, 1.0f}) {
+        for (float NdotH : {0.0f, 0.1f, 0.5f, 0.9f, 1.0f}) {
+            EXPECT_GE(D_GGX(alpha, NdotH), 0.0f);
+        }
+    }
+}
+
+/// Known value: alpha=0.25, NdotH=0.8.
+/// a2 = 0.0625, d = ((0.8*0.0625 - 0.8)*0.8 + 1) = (0.05-0.8)*0.8+1 = -0.6+1 = 0.4
+/// Wait: d = (NdotH*a2 - NdotH)*NdotH + 1 = (0.8*0.0625 - 0.8)*0.8 + 1
+///       = (0.05 - 0.8)*0.8 + 1 = -0.75*0.8 + 1 = -0.6 + 1 = 0.4
+/// D = a2 / (d*d*PI) = 0.0625 / (0.16 * PI) = 0.0625 / 0.5027 ≈ 0.1243
+TEST(GGX_NDF, KnownValue) {
+    const float result = D_GGX(0.25f, 0.8f);
+    EXPECT_NEAR(result, 0.1243f, 1e-3f);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// F_Schlick — Fresnel Approximation
+// @ref Schlick 1994 "An Inexpensive BRDF Model for Physically-Based Rendering"
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// At normal incidence (cosTheta=1), Fresnel = f0 exactly.
+TEST(Fresnel_Schlick, NormalIncidence_EqualsF0) {
+    const Vec3 f0 = {0.04f, 0.04f, 0.04f}; // dielectric
+    const Vec3 result = F_Schlick(f0, 1.0f);
+    EXPECT_NEAR(result.x, 0.04f, kEps);
+    EXPECT_NEAR(result.y, 0.04f, kEps);
+    EXPECT_NEAR(result.z, 0.04f, kEps);
+}
+
+/// At grazing incidence (cosTheta=0), Fresnel → f90 (= 1.0 by default).
+TEST(Fresnel_Schlick, GrazingIncidence_EqualsF90) {
+    const Vec3 f0 = {0.04f, 0.04f, 0.04f};
+    const Vec3 result = F_Schlick(f0, 0.0f);
+    EXPECT_NEAR(result.x, 1.0f, kEps);
+    EXPECT_NEAR(result.y, 1.0f, kEps);
+    EXPECT_NEAR(result.z, 1.0f, kEps);
+}
+
+/// Metallic F0 at normal incidence: gold (0.96, 0.69, 0.22).
+TEST(Fresnel_Schlick, Metallic_NormalIncidence) {
+    const Vec3 f0 = {0.96f, 0.69f, 0.22f}; // gold
+    const Vec3 result = F_Schlick(f0, 1.0f);
+    EXPECT_NEAR(result.x, 0.96f, kEps);
+    EXPECT_NEAR(result.y, 0.69f, kEps);
+    EXPECT_NEAR(result.z, 0.22f, kEps);
+}
+
+/// Scalar version: f0=0.04, f90=1.0, cosTheta=0.5.
+/// F = 0.04 + (1 - 0.04) * (1-0.5)^5 = 0.04 + 0.96 * 0.03125 = 0.04 + 0.03 = 0.07
+TEST(Fresnel_Schlick, ScalarKnownValue) {
+    const float result = F_SchlickScalar(0.04f, 1.0f, 0.5f);
+    const float expected = 0.04f + 0.96f * Pow5(0.5f);
+    EXPECT_NEAR(result, expected, kEps);
+}
+
+/// Fresnel with explicit f90: F_Schlick(f0, f90, cosTheta).
+TEST(Fresnel_Schlick, ExplicitF90) {
+    const Vec3 f0 = {0.04f, 0.04f, 0.04f};
+    const Vec3 f90 = {0.5f, 0.5f, 0.5f};
+    const Vec3 result = F_Schlick(f0, f90, 0.0f); // grazing → f90
+    EXPECT_NEAR(result.x, 0.5f, kEps);
+    EXPECT_NEAR(result.y, 0.5f, kEps);
+    EXPECT_NEAR(result.z, 0.5f, kEps);
+}
+
+/// Monotonicity: Fresnel increases as cosTheta decreases (approaching grazing).
+TEST(Fresnel_Schlick, Monotonicity) {
+    const Vec3 f0 = {0.04f, 0.04f, 0.04f};
+    float prev = 0.0f;
+    for (float cos = 1.0f; cos >= 0.0f; cos -= 0.1f) {
+        const Vec3 r = F_Schlick(f0, cos);
+        EXPECT_GE(r.x, prev - kEps);
+        prev = r.x;
+    }
+}
