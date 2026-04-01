@@ -114,6 +114,20 @@ struct VFXEmitterInstance {
     uint32_t                             burstCount     = 300;        ///< Number of particles per burst.
     Vec3                                 positionOffset = {0, 0, 0};  ///< Offset from the shared emitter origin.
     uint32_t                             poolSize       = 10000;      ///< Max particles in this emitter's pool.
+    float                                prevPositionX  = 0.0f;       ///< Previous frame emitter X (for velocity inheritance).
+    float                                prevPositionY  = 0.0f;       ///< Previous frame emitter Y (for velocity inheritance).
+    float                                prevPositionZ  = 0.0f;       ///< Previous frame emitter Z (for velocity inheritance).
+    bool                                 prevPositionValid = false;    ///< False on first frame (no delta yet).
+    // ── Emitter lifecycle (Feature: duration, loop count, auto-disable) ─────────
+    /// Tracks how long this emitter instance has been active in the current loop
+    /// iteration.  Reset to 0 when the emitter restarts.  The duration and loop
+    /// count configuration lives in VFXEmitterConfig (emitterDuration, loopCount)
+    /// so that the config remains stateless — only the mutable per-instance counters
+    /// live here.
+    ///
+    /// @ref GDC 2019 "Niagara: Building the Future of FX in Unreal Engine" — emitter lifetime
+    float    emitterAge   = 0.0f;   ///< Accumulated active age (seconds) in current loop iteration.
+    uint32_t currentLoop  = 0;      ///< Number of full loop cycles completed so far.
 
     VFXEmitterInstance() : system(std::make_unique<VFXParticleSystem>()) {}
     ~VFXEmitterInstance() = default;

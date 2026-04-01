@@ -1030,6 +1030,18 @@ void VFXParticleSystem::DispatchCompute(IRHICommandList* cmdList, CBRingAllocato
         cb.shapeParam2 = config.shapeParam2;
         cb.shapeParam3 = config.shapeParam3;
 
+        // Initial rotation range
+        cb.initialRotationMin = config.initialRotationMin;
+        cb.initialRotationMax = config.initialRotationMax;
+
+        // Velocity inheritance — emitter velocity is pre-computed by the caller
+        // (OnFrame) and stored in config.emitterVelocity before DispatchCompute.
+        // The spawn shader adds emitterVelocity * velocityInheritance to spawn vel.
+        cb.emitterVelocityX    = config.emitterVelocity[0];
+        cb.emitterVelocityY    = config.emitterVelocity[1];
+        cb.emitterVelocityZ    = config.emitterVelocity[2];
+        cb.velocityInheritance = config.velocityInheritance;
+
         auto alloc = cbRing->Allocate(sizeof(VFXSpawnCB));
         std::memcpy(alloc.cpuPtr, &cb, sizeof(VFXSpawnCB));
 
@@ -1148,6 +1160,18 @@ void VFXParticleSystem::DispatchCompute(IRHICommandList* cmdList, CBRingAllocato
         cb.deathSpawnCount            = config.deathSpawnCount;
         cb.deathEventBufferUavIndex   = m_deathEventBufferUavIndex;
         cb.deathEventCountUavIndex    = m_deathEventCountUavIndex;
+
+        // Rotation rate (continuous spin)
+        cb.rotationRate = config.rotationRate;
+
+        // Rotation over lifetime (lerped rotation rate)
+        cb.rotationOverLifeStart = config.rotationOverLifeStart;
+        cb.rotationOverLifeEnd   = config.rotationOverLifeEnd;
+
+        // Acceleration force (independent per-axis, additive with gravity)
+        cb.accelX = config.accelX;
+        cb.accelY = config.accelY;
+        cb.accelZ = config.accelZ;
 
         auto alloc = cbRing->Allocate(sizeof(VFXUpdateCB));
         std::memcpy(alloc.cpuPtr, &cb, sizeof(VFXUpdateCB));
@@ -1472,6 +1496,10 @@ void VFXParticleSystem::DrawBillboards(IRHICommandList* cmdList, CBRingAllocator
     billboardCB.sizeBySpeedMin    = config.sizeBySpeedMin;
     billboardCB.sizeBySpeedMax    = config.sizeBySpeedMax;
     billboardCB.speedRangeMax     = config.speedRangeMax;
+    // Screen-space size: constant-pixel-coverage mode.
+    // @ref Valve 2006 "Rendering in Left 4 Dead" — constant-screen-size sprites
+    billboardCB.screenSpaceSizeEnabled = config.screenSpaceSizeEnabled;
+    billboardCB.screenSpacePixelSize   = config.screenSpacePixelSize;
 
     auto cbAlloc = cbRing->Allocate(sizeof(VFXBillboardCB));
     std::memcpy(cbAlloc.cpuPtr, &billboardCB, sizeof(VFXBillboardCB));

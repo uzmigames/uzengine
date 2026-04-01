@@ -37,6 +37,9 @@
   "colorLifeEndB": 1,
   "colorLifeEndA": 0,
   "alignmentMode": 0,
+  "customFacingX": 0,
+  "customFacingY": 0,
+  "customFacingZ": 1,
   "stretchFactor": 0,
   "spawnShape": 0,
   "spawnOnSurface": 0,
@@ -62,5 +65,14 @@
   "windStrength": 0,
   "litMode": 0,
   "groundCollision": 0,
-  "restitution": 0.30000001
+  "restitution": 0.30000001,
+  "orbitEnabled": 0,
+  "orbitRadius": 0,
+  "orbitSpeed": 0,
+  "orbitAxisX": 0,
+  "orbitAxisY": 0,
+  "orbitAxisZ": 1,
+  "particleLightEnabled": 0,
+  "particleLightRadius": 500,
+  "particleLightIntensity": 2
 }

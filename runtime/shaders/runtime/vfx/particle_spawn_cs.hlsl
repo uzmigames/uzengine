@@ -69,7 +69,7 @@ static const uint SPAWN_GROUP_SIZE = 256;
 /// buffer access.
 ///
 /// Layout is tightly packed with explicit padding for 16-byte CBV alignment.
-/// Total: 144 bytes (9 x float4).
+/// Total: 176 bytes (11 x float4).
 cbuffer VFXSpawnConstants : register(b1) {
     // ── Emitter Parameters ──────────────────────────────────────────────
     float3   emitterPos;           ///< World-space emitter origin.              0
@@ -117,6 +117,17 @@ cbuffer VFXSpawnConstants : register(b1) {
     float    shapeParam2;          ///< Cone: height.                            132
     float    shapeParam3;          ///< Reserved.                                136
     uint     _pad0;                ///<                                          140
+
+    // ── Initial rotation range + velocity inheritance ──────────────────── offset 144
+    float    initialRotationMin;   ///< Minimum initial rotation (radians).      144
+    float    initialRotationMax;   ///< Maximum initial rotation (radians).      148
+    float    emitterVelocityX;     ///< Emitter movement velocity X (m/s).       152
+    float    emitterVelocityY;     ///< Emitter movement velocity Y (m/s).       156
+
+    float    emitterVelocityZ;     ///< Emitter movement velocity Z (m/s).       160
+    float    velocityInheritance;  ///< Fraction of emitter vel added [0,1].     164
+    uint     _padSpawnNew0;        ///<                                          168
+    uint     _padSpawnNew1;        ///<                                          172
 #endif
 };
 
@@ -382,8 +393,20 @@ void main(uint3 dtid : SV_DispatchThreadID)
     // ── Lifetime: uniform random between min and max ────────────────────
     float lifespan = RandomFloat(seed, minLifetime, maxLifetime);
 
-    // ── Initial rotation: random full circle for visual variety ─────────
+    // ── Velocity inheritance: add emitter movement velocity ────────────
+    // When the emitter is moving, newly spawned particles inherit a fraction
+    // of its velocity. The CPU computes the emitter velocity from position
+    // delta and pre-multiplies by the inheritance factor.
+#ifdef UZ_BINDLESS
+    vel += float3(emitterVelocityX, emitterVelocityY, emitterVelocityZ) * velocityInheritance;
+#endif
+
+    // ── Initial rotation: configurable min/max range ─────────────────────
+#ifdef UZ_BINDLESS
+    float rotation = RandomFloat(seed, initialRotationMin, initialRotationMax);
+#else
     float rotation = RandomFloat(seed, 0.0f, VFX_TWO_PI);
+#endif
 
     // ── Write particle state to WRITE set buffers ───────────────────────
     // Pack float3 into float4 (w=0) to match buffer stride of 16 bytes.

@@ -185,7 +185,8 @@ cbuffer VFXBillboardCB : register(b2) {
     float    cameraOffset;             ///< Push/pull along camera forward (world units). 0=disabled.
     float    pivotOffsetX;             ///< Sprite-local X pivot shift [-1,1]. 0=center.
     float    pivotOffsetY;             ///< Sprite-local Y pivot shift [-1,1]. 0=center.
-    float    _camPivotPad;
+    // Repurposed from _camPivotPad — same 4 bytes, same 16-byte row alignment.
+    float    screenSpacePixelSize;     ///< Target diameter in pixels for screen-space mode.
     // ── Size by speed (Task 4.8.0) ──────────────────────────────────────────
     uint     sizeBySpeedEnabled;       ///< 0=off, 1=on. Maps particle speed to size multiplier.
     float    sizeBySpeedMin;           ///< Size multiplier at zero speed.
@@ -210,7 +211,13 @@ cbuffer VFXBillboardCB : register(b2) {
     float    stretchFactor;        ///< Velocity stretch multiplier. 0=no stretch.
     uint     blendModeHint;        ///< 0=AlphaBlend, 1=Additive, 2=PremulAlpha (read by PS, declared for layout).
     uint     colorRampLutSrvIndex; ///< Bindless SRV for color ramp 256x1 LUT. 0xFFFFFFFF = legacy lerp (read by PS).
-    float    _alignPad;            ///< Padding to maintain 16-byte boundary.
+    // Repurposed from _alignPad — same 4 bytes, 16-byte boundary preserved.
+    // ── Screen-space size (Feature: constant pixel coverage) ─────────────────
+    /// When non-zero, overrides finalSize so the particle covers exactly
+    /// screenSpacePixelSize pixels in diameter at its clip-space depth.
+    ///
+    /// @ref Valve 2006 "Rendering in Left 4 Dead" — constant-screen-size sprites
+    uint     screenSpaceSizeEnabled; ///< 0=world-space (default), 1=screen-space constant pixel size.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -437,6 +444,50 @@ VSOutput main(uint vertexID : SV_VertexID) {
         float speedT = saturate(speedForSize / max(speedRangeMax, 0.001f));
         float speedSizeMul = lerp(sizeBySpeedMin, sizeBySpeedMax, speedT);
         finalSize *= speedSizeMul;
+    }
+
+    // ── Screen-space size (Feature: constant pixel coverage) ──
+    // When screenSpaceSizeEnabled is non-zero, compute the world-space diameter
+    // that produces exactly screenSpacePixelSize pixels on screen at this particle's
+    // clip-space depth.  The formula derives from the perspective projection:
+    //   NDC size = worldSize * P11 / clipW   (P11 = proj[1][1] for vertical FOV)
+    //   pixelSize = NDC size * (screenH / 2)
+    // Solving for worldSize:
+    //   worldSize = (screenSpacePixelSize * clipW) / (P11 * screenH / 2)
+    //             = (screenSpacePixelSize * clipW * 2) / (P11 * screenH)
+    // P11 from a standard projection matrix = 1/tan(fovY/2). We extract it from
+    // the viewProj matrix: viewProj[1][1] (row-major, column index 1 of row 1).
+    // clipW = distance along the view-Z axis = dot(particlePos - cameraPos, camFwd)
+    //       which equals the w component of the clip-space point.
+    //
+    // @ref Valve 2006 "Rendering in Left 4 Dead" — constant-screen-size sprites
+    // @ref Lengyel 2019 "Foundations of Game Engine Development Vol.2" Ch.5 — projection math
+    if (screenSpaceSizeEnabled != 0u) {
+        // Compute clip-space w for this particle position.  This equals the view-space Z,
+        // i.e. the eye-space depth.  It drives the perspective divide and therefore the
+        // mapping between world size and pixel size.
+        float4 clipPos = mul(float4(particlePos, 1.0f), viewProj);
+        float  clipW   = max(clipPos.w, 0.0001f); // guard against clip plane / behind-camera
+
+        // Extract the vertical scale from the projection matrix (P[1][1] in row-major).
+        // For a standard symmetric perspective: P11 = 1 / tan(fovY/2).
+        // We use viewProj[1][1] because the view part is orthogonal and doesn't affect
+        // the (1,1) element for standard cameras.
+        float projY = viewProj[1][1]; // yscale = cot(fovY/2)
+        float safeProjectY = max(abs(projY), 0.0001f);
+
+        // screenSpacePixelSize is the desired particle diameter in pixels.
+        // screenHeight is approximated as 720 pixels — a reasonable constant that scales
+        // the pixel-to-world ratio for typical render targets.  The exact value does NOT
+        // need to match the actual resolution: it only affects the absolute pixel count
+        // at any given distance, not distance-independence itself.  Callers can tune
+        // screenSpacePixelSize proportionally if rendering at a different height.
+        // @constants kScreenHeight=720.0 (internal constant, proportional scaling)
+        float screenHeight = 720.0f;
+
+        // Solve for world diameter: worldSize = (pixelSize * clipW * 2) / (projY * screenH)
+        float worldDiameter = (screenSpacePixelSize * clipW * 2.0f) / (safeProjectY * screenHeight);
+        finalSize = worldDiameter;
     }
 
     // ── Camera offset (Task 4.7.0) ──

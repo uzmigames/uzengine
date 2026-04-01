@@ -162,6 +162,39 @@ struct VFXEmitterConfig {
     uint32_t deathSpawnCount          = 4;     ///< Children emitted per dead particle [1..32]. Default: 4.
     float    deathSpawnSpread         = 0.5f;  ///< Cone half-angle (rad) for child velocity spread [0, pi]. Default: 0.5.
     float    deathSpawnSpeedScale     = 0.3f;  ///< Child speed = parent death speed * scale [0, 2]. Default: 0.3.
+    // ── Rotation rate (continuous spin) ──────────────────────────────────────
+    float    rotationRate             = 0.0f;  ///< Rotation speed in radians/sec. 0 = no spin.
+    // ── Initial rotation range ───────────────────────────────────────────────
+    float    initialRotationMin       = 0.0f;  ///< Minimum initial rotation (radians). Default: 0.
+    float    initialRotationMax       = 6.28318f; ///< Maximum initial rotation (radians). Default: 2*pi.
+    // ── Velocity inheritance ─────────────────────────────────────────────────
+    float    velocityInheritance      = 0.0f;  ///< Fraction of emitter velocity added to spawn velocity [0, 1]. 0 = none.
+    float    emitterVelocity[3]       = {0.0f, 0.0f, 0.0f}; ///< Transient: emitter movement velocity (m/s), set by OnFrame each frame.
+    // ── Acceleration force (independent of gravity) ─────────────────────────
+    float    accelX                   = 0.0f;  ///< Per-axis acceleration X (m/s^2). 0 = none.
+    float    accelY                   = 0.0f;  ///< Per-axis acceleration Y (m/s^2). 0 = none.
+    float    accelZ                   = 0.0f;  ///< Per-axis acceleration Z (m/s^2). 0 = none.
+    // ── Rotation over lifetime ───────────────────────────────────────────────
+    float    rotationOverLifeStart    = 0.0f;  ///< Rotation rate at birth (rad/s). Lerped to end over lifetime.
+    float    rotationOverLifeEnd      = 0.0f;  ///< Rotation rate at death (rad/s). Lerped from start over lifetime.
+    // ── Screen-space size (billboard VS) ────────────────────────────────────
+    /// When enabled the particle always covers a fixed number of pixels on screen
+    /// regardless of its world-space distance from the camera.  The VS computes
+    /// the world-space size needed to cover screenSpacePixelSize pixels at the
+    /// particle's clip-space depth, replacing the normal world-space finalSize.
+    ///
+    /// @ref Valve 2006 "Rendering in Left 4 Dead" — constant-screen-size sprites
+    uint32_t screenSpaceSizeEnabled = 0;     ///< 0=world-space (default), 1=screen-space constant pixel size.
+    float    screenSpacePixelSize   = 8.0f;  ///< Target diameter in pixels when screen-space mode is enabled.
+    // ── Emitter lifecycle ────────────────────────────────────────────────────
+    /// Controls automatic disable/restart of the emitter after a fixed duration.
+    /// emitterDuration==0 means the emitter runs forever (default).  loopCount==0
+    /// means infinite restarts.  Age and loop counters are tracked in
+    /// VFXEmitterInstance so that the config itself remains stateless.
+    ///
+    /// @ref GDC 2019 "Niagara: Building the Future of FX in Unreal Engine" — emitter lifetime
+    float    emitterDuration = 0.0f;  ///< Auto-disable after this many seconds. 0 = infinite (default).
+    uint32_t loopCount       = 0;     ///< Restart count before stopping. 0 = infinite (default).
 };
 
 /// Named emitter preset with a spawn rate.
@@ -195,7 +228,7 @@ const VFXPreset* GetVFXPresets(int& outCount);
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Constant buffer uploaded each frame for the spawn compute shader.
-/// Layout matches VFXSpawnConstants in particle_spawn_cs.hlsl (128 bytes).
+/// Layout matches VFXSpawnConstants in particle_spawn_cs.hlsl (176 bytes).
 struct VFXSpawnCB {
     float    emitterPos[3];           float spawnRadius;          // 16 bytes
     float    spawnVelocity[3];        float velocityVariation;    // 16 bytes
@@ -214,8 +247,13 @@ struct VFXSpawnCB {
     uint32_t spawnShape;              uint32_t spawnOnSurface;    // 16 bytes
     float    shapeParam1;             float    shapeParam2;
     float    shapeParam3;             uint32_t _pad0;             // 16 bytes
+    // ── Initial rotation range + velocity inheritance ───────────────────────
+    float    initialRotationMin;      float    initialRotationMax;
+    float    emitterVelocityX;        float    emitterVelocityY;  // 16 bytes (offset 144)
+    float    emitterVelocityZ;        float    velocityInheritance;
+    uint32_t _padSpawnNew0;           uint32_t _padSpawnNew1;     // 16 bytes (offset 160)
 };
-static_assert(sizeof(VFXSpawnCB) == 144, "VFXSpawnCB must be 144 bytes (9 x float4)");
+static_assert(sizeof(VFXSpawnCB) == 176, "VFXSpawnCB must be 176 bytes (11 x float4)");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VFX Update Constant Buffer (matches particle_update_cs.hlsl b0 layout)
@@ -269,8 +307,13 @@ struct VFXUpdateCB {
     /// @ref Shopf 2008 "GPU Particles" — death event driven sub-emitter spawn
     float    deathSpawnSpeedScale;    uint32_t deathSpawnCount;
     uint32_t deathEventBufferUavIndex; uint32_t deathEventCountUavIndex; // 16 bytes (offset 240)
+    // ── Rotation rate + acceleration + rotation over lifetime ────────────────
+    float    rotationRate;            float    rotationOverLifeStart;
+    float    rotationOverLifeEnd;     float    accelX;                  // 16 bytes (offset 256)
+    float    accelY;                  float    accelZ;
+    uint32_t _padNewFeatures0;        uint32_t _padNewFeatures1;        // 16 bytes (offset 272)
 };
-static_assert(sizeof(VFXUpdateCB) == 256, "VFXUpdateCB must be 256 bytes (16 x float4)");
+static_assert(sizeof(VFXUpdateCB) == 288, "VFXUpdateCB must be 288 bytes (18 x float4)");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VFX Death Spawn Constant Buffer (matches particle_death_spawn_cs.hlsl b1)
@@ -367,7 +410,8 @@ struct VFXBillboardCB {
     float    cameraOffset         = 0.0f;          ///< Push/pull along camera forward (world units).
     float    pivotOffsetX         = 0.0f;          ///< Sprite-local X pivot shift [-1,1]. 0=center.
     float    pivotOffsetY         = 0.0f;          ///< Sprite-local Y pivot shift [-1,1]. 0=center.
-    float    _camPivotPad         = 0.0f;
+    // NOTE: _camPivotPad repurposed as screenSpacePixelSize — no padding loss (both float, 4 bytes).
+    float    screenSpacePixelSize = 8.0f;          ///< Target particle diameter in pixels (screen-space mode).
     // ── Size by speed (Task 4.8.0) ──────────────────────────────────────────
     uint32_t sizeBySpeedEnabled   = 0;             ///< 0=off, 1=on. Maps particle speed to size multiplier.
     float    sizeBySpeedMin       = 0.5f;          ///< Size multiplier at zero speed.
@@ -392,7 +436,13 @@ struct VFXBillboardCB {
     float    stretchFactor        = 0.0f;           ///< Velocity stretch multiplier. 0=no stretch.
     uint32_t blendModeHint        = 2;              ///< 0=AlphaBlend, 1=Additive, 2=PremulAlpha — tells PS how to output alpha.
     uint32_t colorRampLutSrvIndex = UINT32_MAX;     ///< Bindless SRV index for color ramp 256x1 LUT. UINT32_MAX = legacy lerp.
-    float    _alignPad            = 0.0f;           ///< Padding to maintain 16-byte alignment.
+    // NOTE: _alignPad repurposed as screenSpaceSizeEnabled — no padding loss (both 4 bytes, alignment preserved).
+    // ── Screen-space size (Feature: constant pixel coverage) ─────────────────
+    /// When non-zero, overrides finalSize so the particle covers exactly
+    /// screenSpacePixelSize pixels in diameter at its clip-space depth.
+    ///
+    /// @ref Valve 2006 "Rendering in Left 4 Dead" — constant-screen-size sprites
+    uint32_t screenSpaceSizeEnabled = 0;            ///< 0=world-space (default), 1=screen-space constant pixel size.
 };
 static_assert(sizeof(VFXBillboardCB) == 288, "VFXBillboardCB must be 288 bytes (18 x float4)");
 

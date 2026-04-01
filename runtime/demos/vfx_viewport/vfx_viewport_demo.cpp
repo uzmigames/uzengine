@@ -1758,10 +1758,65 @@ void VFXViewportDemo::OnFrame(float dt) {
         for (auto& emitter : m_emitters) {
             if (!emitter.enabled) continue;
 
+            // ── Emitter lifecycle: duration and loop count ─────────────────────
+            // When emitterDuration > 0 the emitter accumulates age each frame and
+            // either restarts (loopCount==0 or currentLoop < loopCount) or disables
+            // itself permanently when the loop budget is exhausted.
+            //
+            // loopCount == 0  → infinite restarts (run until manually disabled).
+            // loopCount >  0  → restart at most loopCount times then stop.
+            //
+            // @ref GDC 2019 "Niagara: Building the Future of FX in Unreal Engine" — emitter lifetime
+            if (emitter.config.emitterDuration > 0.0f) {
+                emitter.emitterAge += dt;
+                if (emitter.emitterAge >= emitter.config.emitterDuration) {
+                    // Age exceeded duration — decide whether to loop or stop.
+                    bool canLoop = (emitter.config.loopCount == 0)
+                                || (emitter.currentLoop < emitter.config.loopCount);
+                    if (canLoop) {
+                        // Restart: reset age, increment loop counter, arm burst.
+                        emitter.emitterAge   = 0.0f;
+                        emitter.currentLoop += 1;
+                        emitter.burstPending = true;
+                        emitter.spawnAccum   = 0.0f;
+                        // Re-upload free list so the pool is clean for the new loop.
+                        emitter.system->UploadInitialFreeList(cmd);
+                        UZ_LOG(App, Info,
+                            "[VFX] Emitter '{}' restarted (loop {}/{})",
+                            emitter.name, emitter.currentLoop,
+                            emitter.config.loopCount);
+                    } else {
+                        // Budget exhausted — disable permanently until manual reset.
+                        emitter.enabled = false;
+                        UZ_LOG(App, Info,
+                            "[VFX] Emitter '{}' expired after {} loop(s), disabling.",
+                            emitter.name, emitter.currentLoop);
+                        continue;
+                    }
+                }
+            }
+
             // Update emitter position: base origin + per-emitter offset
             emitter.config.position[0] = baseOrigin.x + emitter.positionOffset.x;
             emitter.config.position[1] = baseOrigin.y + emitter.positionOffset.y;
             emitter.config.position[2] = baseOrigin.z + emitter.positionOffset.z;
+
+            // Compute emitter velocity for velocity inheritance (position delta / dt).
+            // On the first frame (prevPositionValid == false), velocity is zero to
+            // avoid a huge spike from the initial position jump.
+            if (emitter.prevPositionValid && dt > 0.0f) {
+                emitter.config.emitterVelocity[0] = (emitter.config.position[0] - emitter.prevPositionX) / dt;
+                emitter.config.emitterVelocity[1] = (emitter.config.position[1] - emitter.prevPositionY) / dt;
+                emitter.config.emitterVelocity[2] = (emitter.config.position[2] - emitter.prevPositionZ) / dt;
+            } else {
+                emitter.config.emitterVelocity[0] = 0.0f;
+                emitter.config.emitterVelocity[1] = 0.0f;
+                emitter.config.emitterVelocity[2] = 0.0f;
+            }
+            emitter.prevPositionX     = emitter.config.position[0];
+            emitter.prevPositionY     = emitter.config.position[1];
+            emitter.prevPositionZ     = emitter.config.position[2];
+            emitter.prevPositionValid = true;
 
             // Apply vortex force configuration from current mode
             // @ref Stomakhin 2013 "A Material Point Method for Snow Simulation" App.A
@@ -3169,6 +3224,11 @@ void VFXViewportDemo::ResetAllEmitters(IRHICommandList* cmd) {
         e.system->UploadInitialFreeList(cmd);
         e.burstPending = true;
         e.spawnAccum = 0.0f;
+        // Reset lifecycle counters so the emitter starts fresh.
+        // @ref GDC 2019 "Niagara: Building the Future of FX in Unreal Engine" — emitter lifetime
+        e.emitterAge  = 0.0f;
+        e.currentLoop = 0;
+        e.enabled     = true;  // re-enable in case it had auto-disabled.
     }
 }
 

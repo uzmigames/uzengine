@@ -112,7 +112,7 @@ static const uint UPDATE_GROUP_SIZE = 256;
 /// Update constants uploaded by the CPU each frame. Contains physics parameters
 /// and descriptor heap indices for both READ (SRV) and WRITE (UAV) buffer sets.
 ///
-/// Layout is 16-byte aligned per HLSL packing rules. Total: 240 bytes (15 float4).
+/// Layout is 16-byte aligned per HLSL packing rules. Total: 288 bytes (18 float4).
 /// Must match VFXUpdateCB in runtime/demos/vfx_viewport/vfx_viewport_vfx.h exactly.
 cbuffer VFXUpdateConstants : register(b1) {
     // ── Simulation Parameters ───────────────────────────────────────────── offset 0
@@ -217,6 +217,17 @@ cbuffer VFXUpdateConstants : register(b1) {
     uint     deathSpawnCount;            ///< Children spawned per event [1..32].       244
     uint     deathEventBufferUavIndex;   ///< UAV for RWStructuredBuffer<DeathEvent>.   248
     uint     deathEventCountUavIndex;    ///< UAV for RWBuffer<uint> death event count. 252
+
+    // ── Rotation rate + acceleration + rotation over lifetime ─────────────── offset 256
+    float    rotationRate;               ///< Constant rotation speed (rad/s). 0=none. 256
+    float    rotationOverLifeStart;      ///< Rotation rate at birth (rad/s).          260
+    float    rotationOverLifeEnd;        ///< Rotation rate at death (rad/s).          264
+    float    accelX;                     ///< Per-axis acceleration X (m/s^2).         268
+
+    float    accelY;                     ///< Per-axis acceleration Y (m/s^2).         272
+    float    accelZ;                     ///< Per-axis acceleration Z (m/s^2).         276
+    uint     _padNewFeatures0;           ///<                                          280
+    uint     _padNewFeatures1;           ///<                                          284
 #endif
 };
 
@@ -379,6 +390,11 @@ void main(uint3 dtid : SV_DispatchThreadID)
 
     // Gravity: constant acceleration
     vel += gravity * dt;
+
+    // Acceleration force: independent per-axis acceleration (configurable second force).
+#ifdef UZ_BINDLESS
+    vel += float3(accelX, accelY, accelZ) * dt;
+#endif
 
     // Damping: multiplicative decay, linear approximation of exp(-damping * dt).
     // Clamp to [0, 1] to prevent velocity reversal at very large dt * damping.
@@ -561,6 +577,18 @@ void main(uint3 dtid : SV_DispatchThreadID)
     #define colorsOut      sm5_colorsOut
     #define rotationsOut   sm5_rotationsOut
     #define aliveCountNew  sm5_aliveCountNew
+#endif
+
+    // ── Rotation rate + rotation over lifetime ─────────────────────────────
+    // Constant rotation rate plus an age-varying rotation rate that lerps
+    // between rotationOverLifeStart and rotationOverLifeEnd over the particle's
+    // normalized lifetime. Both contribute additively to the rotation delta.
+#ifdef UZ_BINDLESS
+    {
+        float normalizedAge = age / max(lifespan, 0.0001f);
+        float ageRotRate = lerp(rotationOverLifeStart, rotationOverLifeEnd, normalizedAge);
+        rotation += (rotationRate + ageRotRate) * dt;
+    }
 #endif
 
     // Pack float3 into float4 (w=0) to match buffer stride of 16 bytes.

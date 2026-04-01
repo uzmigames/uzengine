@@ -956,8 +956,17 @@ void VFXEditorUI::BuildRightPanel(VFXEmitterConfig* cfg) {
         {"Restitution",      &cfg->restitution,               0.0f,    1.0f},
         {"Emissive",         &cfg->emissiveIntensity,         0.0f,    20.0f},
         {"Soft Fade",        &cfg->softFadeDistance,           0.0f,    5.0f},
+        {"Rotation Rate",    &cfg->rotationRate,              -20.0f,  20.0f},
+        {"Rot Min",          &cfg->initialRotationMin,         0.0f,   6.284f},
+        {"Rot Max",          &cfg->initialRotationMax,         0.0f,   6.284f},
+        {"Vel Inherit",      &cfg->velocityInheritance,        0.0f,   1.0f},
+        {"Accel X",          &cfg->accelX,                   -50.0f,  50.0f},
+        {"Accel Y",          &cfg->accelY,                   -50.0f,  50.0f},
+        {"Accel Z",          &cfg->accelZ,                   -50.0f,  50.0f},
+        {"Rot Life Start",   &cfg->rotationOverLifeStart,    -20.0f,  20.0f},
+        {"Rot Life End",     &cfg->rotationOverLifeEnd,      -20.0f,  20.0f},
     };
-    constexpr int kModuleCount = 9;
+    constexpr int kModuleCount = 18;
 
     for (int i = 0; i < kModuleCount; ++i) {
         if (y > static_cast<float>(m_screenH) - kToolbarH - kRowH) break;

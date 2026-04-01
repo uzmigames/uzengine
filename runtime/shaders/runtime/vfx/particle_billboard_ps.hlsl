@@ -143,7 +143,8 @@ cbuffer VFXBillboardCB : register(b2) {
     float    cameraOffset;
     float    pivotOffsetX;
     float    pivotOffsetY;
-    float    _camPivotPad;
+    // Repurposed from _camPivotPad — screenSpacePixelSize (declared for layout, not read by PS).
+    float    screenSpacePixelSize;
     // ── Size by speed (declared for layout, not read by PS) ──
     uint     sizeBySpeedEnabled;
     float    sizeBySpeedMin;
@@ -166,7 +167,9 @@ cbuffer VFXBillboardCB : register(b2) {
     float    stretchFactor;        ///< Velocity stretch multiplier (not read by PS).
     uint     blendModeHint;        ///< 0=AlphaBlend, 1=Additive, 2=PremulAlpha — controls PS alpha output.
     uint     colorRampLutSrvIndex; ///< Bindless SRV for color ramp 256x1 LUT. 0xFFFFFFFF = legacy lerp.
-    float    _alignPad;            ///< Padding to maintain 16-byte boundary.
+    // Repurposed from _alignPad — screenSpaceSizeEnabled (declared for layout, not read by PS).
+    // @ref Valve 2006 "Rendering in Left 4 Dead" — constant-screen-size sprites
+    uint     screenSpaceSizeEnabled; ///< 0=world-space (default), 1=screen-space. Not read by PS.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
