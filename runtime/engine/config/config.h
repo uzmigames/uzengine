@@ -123,6 +123,15 @@ class Config {
     nlohmann::json m_cli = nlohmann::json::object();      ///< CLI overrides
     nlohmann::json m_merged = nlohmann::json::object();   ///< Cascaded result
 
+    /// Pending CVar overrides from --cvar CLI args (applied after CVarRegistry is initialized).
+    std::vector<std::pair<std::string, float>> m_pendingCvarOverrides;
+
+public:
+    /// Flush pending --cvar overrides to CVarRegistry.
+    /// Call after CVarRegistry has all CVars registered (after SceneRenderer::Init).
+    void FlushCvarOverrides();
+
+private:
     /// Rebuilds m_merged from all sources (called after any load/override).
     void RebuildMerged();
 

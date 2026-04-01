@@ -214,7 +214,8 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
                        bool pixelDebugEnabled = false,
                        int pixelDebugX = 960,
                        int pixelDebugY = 540,
-                       bool passDump = false) {
+                       bool passDump = false,
+                       Config* configPtr = nullptr) {
     // --diag / --pixel-debug / --pass-dump: enforce a frame limit
     int effectiveMaxFrames = maxFrames;
     if ((diagMode || pixelDebugEnabled || passDump) && maxFrames == kInfiniteFrames) {
@@ -319,6 +320,9 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     if (!sceneRendererReady) {
         UZ_LOG(Engine, Warning, "SceneRenderer init failed — falling back to clear screen");
     }
+
+    // Flush pending --cvar overrides to CVarRegistry (after CVars are registered by SceneRenderer::Init)
+    if (configPtr) configPtr->FlushCvarOverrides();
 
     // Apply shadow debug mode from CLI (--shadow-debug <0-8>)
     if (shadowDebugMode > 0 && sceneRendererReady) {
@@ -632,7 +636,7 @@ int main(int argc, char** argv) {
                                     windowTitle, projectDir, contentRoot, defaultScene,
                                     ssPath, ssFrame, shadowDebug, editorMode,
                                     diagMode, pixelDebugEnabled, pixelDebugX, pixelDebugY,
-                                    passDump);
+                                    passDump, &config);
 #else
         UZ_LOG(Engine, Error, "Windowed mode not supported on this platform yet");
         exitCode = uz::kExitRenderError;

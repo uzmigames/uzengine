@@ -7,6 +7,7 @@
 /// 4. Expose via typed getters with dot-notation paths
 
 #include "config.h"
+#include "cvar.h"
 
 #include "../logging/log.h"
 #include "profiler.h"
@@ -80,9 +81,32 @@ void Config::ApplyCLIOverrides(int argc, const char* const* argv) {
             m_cli[key] = value;
         }
 
+        // --cvar name=value → forward to CVarRegistry for runtime access.
+        // The Config system stores it as key="cvar", value="name=value".
+        // We parse it here and apply to CVarRegistry so systems like
+        // QualityPresetManager can poll CVars directly.
+        if (key == "cvar") {
+            auto cvarEq = value.find('=');
+            if (cvarEq != std::string::npos) {
+                std::string cvarName = value.substr(0, cvarEq);
+                float cvarValue = static_cast<float>(std::atof(value.substr(cvarEq + 1).c_str()));
+                m_pendingCvarOverrides.emplace_back(cvarName, cvarValue);
+            }
+        }
+
         UZ_LOG(Config, Debug, "CLI override: {}={}", key, value);
     }
     RebuildMerged();
+}
+
+void Config::FlushCvarOverrides() {
+    if (m_pendingCvarOverrides.empty()) return;
+    auto& cvars = CVarRegistry::Get();
+    for (const auto& [name, value] : m_pendingCvarOverrides) {
+        cvars.Set(name, value);
+        UZ_LOG(Config, Info, "CVar applied: {} = {}", name, value);
+    }
+    m_pendingCvarOverrides.clear();
 }
 
 void Config::RebuildMerged() {
