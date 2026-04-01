@@ -70,7 +70,7 @@ Pattern: StatsOverlay (runtime/editor/stats/stats_overlay.cpp)
       label text (left), value text (right, formatted to 2 decimal places).
 - [x] 6.3 Interaction: on mouse down inside slider rect, set m_dragSliderPtr. While mouse down,
       update value from mouse X position. On mouse up, clear m_dragSliderPtr.
-- [ ] 6.4 Step snapping: hold Ctrl while dragging for fine control (0.001 step).
+- [ ] 6.4 Step snapping: hold Ctrl while dragging for fine control (0.001 step). **Not yet implemented** — no Ctrl modifier check in drag handler.
 
 ## 7. Button Widget Implementation
 
@@ -86,7 +86,7 @@ Pattern: StatsOverlay (runtime/editor/stats/stats_overlay.cpp)
 - [x] 8.2 Rendered AFTER stats overlay (on top of scene + stats). Uses backbuffer render pass.
 - [x] 8.3 Mouse interaction: HandleMouse() at top of HandleInput(). WantsMouseInput() returns
       true when mouse is over menu bar, toolbar, panels, or dropdown.
-- [ ] 8.4 Remove conflicting hotkeys: Space (was fireball, conflicts with camera), replace with UI button.
+- [ ] 8.4 Remove conflicting hotkeys: Space (was fireball, conflicts with camera), replace with UI button. **Not yet done** — Space key still used for fireball in `vfx_viewport_demo.cpp` at line 903.
 - [x] 8.5 Keep essential hotkeys: RMB camera look, WASD movement, Delete restart.
 
 ## 9. Visual Style
@@ -99,8 +99,8 @@ Pattern: StatsOverlay (runtime/editor/stats/stats_overlay.cpp)
 
 ## 10. Testing
 
-- [ ] 10.1 Screenshot with all panels open — verify layout doesn't overlap scene excessively.
-- [ ] 10.2 Test slider dragging — values update in real-time on particles.
-- [ ] 10.3 Test dropdown menus — blendMode, spawnShape changes take effect.
-- [ ] 10.4 Test preset loading via menu — same as Tab key.
-- [ ] 10.5 Test with different window sizes — panels adjust position.
+- [ ] 10.1 Screenshot with all panels open — deferred to user (requires GPU with display).
+- [ ] 10.2 Test slider dragging — deferred to user (requires GPU with display).
+- [ ] 10.3 Test dropdown menus — deferred to user (requires GPU with display).
+- [ ] 10.4 Test preset loading via menu — deferred to user (requires GPU with display).
+- [ ] 10.5 Test with different window sizes — deferred to user (requires GPU with display).

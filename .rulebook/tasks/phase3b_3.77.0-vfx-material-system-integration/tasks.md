@@ -29,13 +29,13 @@ Particle Color, SubUV, Dynamic Parameter nodes.
 - [x] 4.1 Added `uint blendModeHint` to VFXBillboardCB in both VS and PS HLSL (replaced `_solPad0`). Values: 0=AlphaBlend, 1=Additive, 2=PremulAlpha.
 - [x] 4.2 In particle_billboard_ps.hlsl: when blendModeHint==1 (Additive), skip premultiply — RGB adds directly via One/One blend.
 - [x] 4.3 When blendModeHint==0 (AlphaBlend), output straight alpha — blend state does SrcAlpha/InvSrcAlpha. PremulAlpha (mode 2) retains existing RGB *= alpha behavior.
-- [ ] 4.4 Verify all 3 modes produce correct visual results with both procedural and sprite textures.
+- [ ] 4.4 Verify all 3 modes produce correct visual results with both procedural and sprite textures. **Deferred to user (requires GPU with display).**
 
 ## 5. Texture Loading Pipeline
 
 - [x] 5.1 VFXMaterial::LoadTexture() uses TextureLoader::Load() (isSRGB=false for linear VFX sprites).
 - [x] 5.2 Support sRGB (color textures) and linear (data textures like normal maps) loading. Added `bool isSRGB = true` parameter to `LoadTexture()` in both header and .cpp. Default preserves backward compat. Log now prints sRGB flag. isSRGB=false path for data textures (normal maps, distortion UVs) fully documented and wired.
-- [ ] 5.3 Cache loaded textures by path to avoid duplicate loads when multiple emitters share a sprite.
+- [ ] 5.3 Cache loaded textures by path to avoid duplicate loads when multiple emitters share a sprite. **Not yet implemented** — VFXMaterial::LoadTexture() always reloads; no path-keyed cache.
 
 ## 6. Demo Integration
 
@@ -46,13 +46,13 @@ Particle Color, SubUV, Dynamic Parameter nodes.
 
 ## 7. Visual Verification
 
-- [ ] 7.1 Screenshot with fire material (additive + sprite) — bright glowing flames.
-- [ ] 7.2 Screenshot with smoke material (alpha blend + sprite) — soft translucent puffs.
-- [ ] 7.3 Screenshot with spark material (additive + no sprite) — bright streaks.
-- [ ] 7.4 Compare all 3 blend modes side by side.
+- [ ] 7.1 Screenshot with fire material (additive + sprite) — deferred to user (requires GPU with display; sprite textures also deferred to flipbook rewrite Task 3.79.0).
+- [ ] 7.2 Screenshot with smoke material (alpha blend + sprite) — deferred to user (same constraints).
+- [ ] 7.3 Screenshot with spark material (additive + no sprite) — deferred to user (requires GPU with display).
+- [ ] 7.4 Compare all 3 blend modes side by side — deferred to user (requires GPU with display).
 
 ## 8. Documentation
 
-- [ ] 8.1 Document VFXMaterial struct and how to assign to emitters.
-- [ ] 8.2 Document blend mode differences and when to use each.
-- [ ] 8.3 Update VFX viewport help overlay with material controls.
+- [ ] 8.1 Document VFXMaterial struct and how to assign to emitters. **Not yet implemented** — no doc guide for VFXMaterial in docs/guides/.
+- [ ] 8.2 Document blend mode differences and when to use each. **Not yet implemented.**
+- [ ] 8.3 Update VFX viewport help overlay with material controls. **Not yet implemented** — M key (material cycling) is not documented in the H-key help overlay.

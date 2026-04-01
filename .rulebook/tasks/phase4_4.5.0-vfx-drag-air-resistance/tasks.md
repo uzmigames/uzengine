@@ -25,28 +25,28 @@ This produces physically plausible arcs for projectiles, embers, and debris.
 
 ## 4. Emitter Preset
 
-- [ ] 4.1 Add an "Air Resistance" preset entry in the preset list (wherever existing presets are defined — search for `"Smoke"` or `"Fire"` strings in the VFX demo or config). Set: `dragCoefficient = 0.5f`, `damping = 0.0f` (no constant damping), standard lifetime/size defaults.
-- [ ] 4.2 Confirm the preset name appears in the demo preset dropdown at runtime.
+- [ ] 4.1 Add an "Air Resistance" preset entry in `s_presets[]` in `vfx_viewport_vfx.cpp`.
+  **Not yet implemented** — no "Air Resistance" preset exists in s_presets[].
+- [ ] 4.2 Confirm the preset name appears in the demo preset dropdown at runtime. **Blocked on 4.1.**
 
 ## 5. UI — Physics Category
 
-- [ ] 5.1 In the VFX inspector/panel UI code (search for `"Physics"` ImGui category or where the damping slider is drawn), add an ImGui slider for `dragCoefficient`:
-  ```cpp
-  ImGui::SliderFloat("Drag Coefficient", &config.dragCoefficient, 0.0f, 5.0f, "%.3f");
-  ```
-- [ ] 5.2 Add a tooltip: `"Quadratic air resistance: F = -k * speed^2 * dir. Higher values decelerate fast particles more aggressively."`.
+- [ ] 5.1 Add `dragCoefficient` slider to the Physics category in `vfx_parameter_panel.cpp`.
+  **Not yet implemented** — Physics category has Gravity/Damping/Curl/Ground/Restitution/Orbit/
+  DeathSpawn entries but no dragCoefficient entry. The demo uses no ImGui.
+- [ ] 5.2 Add tooltip text. **Not yet implemented.**
 
 ## 6. Visual Verification
 
-- [ ] 6.1 Build runtime, then build VFX demo (`cd runtime && zig build && cd demos/vfx_demo && zig build`).
-- [ ] 6.2 Run demo with "Air Resistance" preset, capture screenshot at frame 30:
-  ```
-  vfx_demo.exe --screenshot-stdout --screenshot-frame 30 --frames 35
-  ```
-- [ ] 6.3 Visually verify: particles launched upward curve and stall plausibly; toggling `dragCoefficient` from 0 to 2.0 produces visibly different arc lengths.
-- [ ] 6.4 Set `dragCoefficient = 0.0f` — behavior must be identical to no drag (regression check).
+- [ ] 6.1 Build runtime, then build VFX demo. **Deferred to user (requires GPU with display).**
+- [ ] 6.2 Run demo with "Air Resistance" preset, capture screenshot at frame 30. **Blocked on 4.1 and 6.1.**
+- [ ] 6.3 Verify particles stall plausibly; toggling coefficient produces visibly different arcs. **Deferred to user.**
+- [ ] 6.4 Set `dragCoefficient = 0.0f` — regression check. **Deferred to user.**
 
 ## 7. Documentation
 
-- [ ] 7.1 Add `/// @ref Witkin & Baraff 2001 "Physically Based Modeling" — quadratic drag F=-k|v|^2*dir` doc comment above the `dragCoefficient` field in `VFXEmitterConfig`.
-- [ ] 7.2 Update `docs/guides/vfx-system.md` (or equivalent VFX guide) with a "Drag / Air Resistance" section describing the formula, parameter range, and typical use cases.
+- [x] 7.1 `/// @ref Witkin & Baraff 2001 "Physically Based Modeling" — quadratic drag F=-k|v|^2*dir`
+  already present above `dragCoefficient` in `VFXEmitterConfig` (vfx_viewport_vfx.h line 137)
+  and in `particle_update_cs.hlsl` above the drag computation block.
+- [ ] 7.2 Update VFX guide with a "Drag / Air Resistance" section. **Not yet implemented** —
+  no vfx-system.md exists in docs/guides/; existing guides do not cover drag.

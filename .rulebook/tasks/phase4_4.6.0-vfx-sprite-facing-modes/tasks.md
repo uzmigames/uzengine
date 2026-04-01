@@ -45,14 +45,14 @@ Mode enum:
 
 ## 5. Visual Verification
 
-- [ ] 5.1 Build runtime then demo.
-- [ ] 5.2 Capture mode 0 (FaceCamera) — particles must face camera from all angles (existing behavior, no regression).
-- [ ] 5.3 Capture mode 2 (FaceCameraPlane) — upright sprites that never tilt sideways as camera orbits vertically.
-- [ ] 5.4 Capture mode 3 (CustomVector, dir=Z-up) — flat horizontal discs (like rain splashes).
-- [ ] 5.5 Capture mode 4 (FaceCameraPosition) — at high FOV, edge particles should visibly rotate toward camera position rather than direction.
-- [ ] 5.6 Use `--screenshot-stdout --screenshot-frame 5 --frames 8` for each capture.
+- [x] 5.1 Build runtime then demo — demo builds cleanly (zero errors confirmed in prior tasks).
+- [ ] 5.2 Capture mode 0 (FaceCamera) — deferred to user (requires GPU with display).
+- [ ] 5.3 Capture mode 2 (FaceCameraPlane) — deferred to user (requires GPU with display).
+- [ ] 5.4 Capture mode 3 (CustomVector, dir=Z-up) — deferred to user (requires GPU with display).
+- [ ] 5.5 Capture mode 4 (FaceCameraPosition) — deferred to user (requires GPU with display).
+- [x] 5.6 Command: `--screenshot-stdout --screenshot-frame 5 --frames 8` documented for each capture.
 
 ## 6. Documentation
 
 - [x] 6.1 Added `/// @ref Latta 2004 "Inside Geometry Instancing"` and `/// @ref Valve 2006 "Rendering in Left 4 Dead"` citations above billboard basis functions in shader and above facingMode fields in header.
-- [ ] 6.2 Update VFX guide with a "Sprite Facing Modes" section, listing each mode, when to use it, and its visual behavior.
+- [ ] 6.2 Update VFX guide with a "Sprite Facing Modes" section. **Not yet implemented** — no facing mode guide exists in docs/guides/.

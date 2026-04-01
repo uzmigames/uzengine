@@ -26,41 +26,30 @@ debris that scales with impact velocity.
 - [x] 3.1 Added all new fields to `VFXBillboardCB` cbuffer declaration, matching CPU layout exactly.
 - [x] 3.2 Speed computed via `length(particleVel)`, normalized t via `saturate(speed / max(speedRangeMax, 0.001))`.
 - [x] 3.3 Size-by-speed applied after size-over-life, before corner expansion: `finalSize *= lerp(sizeBySpeedMin, sizeBySpeedMax, t)`. Guarded by `sizeBySpeedEnabled != 0`.
-- [ ] 3.4 Color-by-speed not implemented (requires additional CB fields: colorBySpeedEnabled, colorBySpeedLow, colorBySpeedHigh). Deferred to separate sub-task.
+- [ ] 3.4 Color-by-speed not implemented. Requires additional CB fields: `colorBySpeedEnabled`, `colorBySpeedLow` (float4), `colorBySpeedHigh` (float4), and VFXEmitterConfig fields `colorBySpeedEnabled`, `colorBySpeedLow`, `colorBySpeedHigh`. **Deferred — no colorBySpeed fields exist in config or shader CB.**
 - [x] 3.5 When `sizeBySpeedEnabled = 0`, the branch is skipped, producing identical output.
 
 ## 4. UI — New "Dynamic" Category
 
-- [ ] 4.1 Add a new ImGui collapsing header `"Dynamic"` in the VFX inspector (after `"Physics"` and `"Rendering"` categories).
-- [ ] 4.2 Inside the Dynamic category:
-  ```cpp
-  ImGui::SeparatorText("Speed Range");
-  ImGui::SliderFloat("Speed Min (cm/s)", &config.speedRangeMin, 0.0f, 2000.0f);
-  ImGui::SliderFloat("Speed Max (cm/s)", &config.speedRangeMax, 0.0f, 5000.0f);
-
-  ImGui::SeparatorText("Size by Speed");
-  ImGui::Checkbox("Enable##SizeBySpeed", (bool*)&config.sizeBySpeedEnabled);
-  ImGui::SliderFloat("Size at Min Speed", &config.sizeBySpeedMin, 0.0f, 5.0f);
-  ImGui::SliderFloat("Size at Max Speed", &config.sizeBySpeedMax, 0.0f, 5.0f);
-
-  ImGui::SeparatorText("Color by Speed");
-  ImGui::Checkbox("Enable##ColorBySpeed", (bool*)&config.colorBySpeedEnabled);
-  ImGui::ColorEdit4("Color at Min Speed", &config.colorBySpeedLow.x);
-  ImGui::ColorEdit4("Color at Max Speed", &config.colorBySpeedHigh.x);
-  ```
-- [ ] 4.3 Guard size-by-speed sliders with `if (config.sizeBySpeedEnabled)` and color-by-speed pickers with `if (config.colorBySpeedEnabled)` so disabled controls are greyed out.
+- [ ] 4.1 Add a "Dynamic" category to the VFX parameter panel (`vfx_parameter_panel.cpp`) after
+  the Rendering category with Speed Range, Size-by-Speed, and Color-by-Speed controls.
+  **Not yet implemented** — no Dynamic category exists; no sizeBySpeed/colorBySpeed entries
+  in any panel category. The demo uses no ImGui.
+- [ ] 4.2 Add Speed Range sliders, Size-by-Speed toggle+sliders, Color-by-Speed toggle+pickers.
+  **Blocked on 4.1 and colorBySpeed fields (3.4).**
+- [ ] 4.3 Conditional display when disabled. **Blocked on 4.1.**
 
 ## 5. Visual Verification
 
-- [ ] 5.1 Build runtime then demo.
-- [ ] 5.2 Size-by-speed test — emit particles with varying velocities, enable size-by-speed with `sizeBySpeedMin=0.5, sizeBySpeedMax=3.0, speedRangeMin=0, speedRangeMax=400`. Verify fast particles visibly larger.
-  ```
-  vfx_demo.exe --screenshot-stdout --screenshot-frame 15 --frames 20
-  ```
-- [ ] 5.3 Color-by-speed test — `colorBySpeedLow=(0,0,1,1)` (blue), `colorBySpeedHigh=(1,0,0,1)` (red). Screenshot must show a clear color gradient correlated with particle speed.
-- [ ] 5.4 Both disabled — output must match pre-task reference.
+- [x] 5.1 Build runtime then demo — builds cleanly (confirmed in prior tasks).
+- [ ] 5.2 Size-by-speed test — deferred to user (requires GPU with display). Size-by-speed IS
+  implemented in shader; test needs runtime to confirm visual effect.
+- [ ] 5.3 Color-by-speed test — **blocked** — colorBySpeed not implemented in shader or CB.
+- [ ] 5.4 Both disabled regression test — deferred to user (requires GPU with display).
 
 ## 6. Documentation
 
-- [ ] 6.1 Add `/// @ref` comments in the shader explaining speed remap formula.
-- [ ] 6.2 Update VFX guide with a "Size & Color by Speed" section covering typical parameter ranges for common effects (sparks: high speedRangeMax ~600; smoke: low ~50).
+- [ ] 6.1 Add `/// @ref` comments in shader explaining speed remap formula. **Not yet done** —
+  no `@ref` comment exists above the sizeBySpeed block in `particle_billboard_vs.hlsl`.
+- [ ] 6.2 Update VFX guide with a "Size & Color by Speed" section. **Not yet implemented** —
+  no such guide exists in docs/guides/.

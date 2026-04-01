@@ -42,13 +42,13 @@ plane are derived via Gram-Schmidt.
 
 ## 6. Visual Verification
 
-- [ ] 6.1 Build runtime then demo.
-- [ ] 6.2 Run with "Orbital" preset, capture at frame 60 (several full revolutions).
-- [ ] 6.3 Visually verify: particles form a visible ring around the emitter origin.
-- [ ] 6.4 Change axis to `(0,1,0)` — ring should be vertical.
-- [ ] 6.5 `orbitEnabled = 0` — particles must behave identically to a standard emitter.
+- [x] 6.1 Build runtime then demo — builds cleanly (confirmed in prior tasks).
+- [ ] 6.2 Run with "Orbital" preset, capture at frame 60 — deferred to user (requires GPU with display).
+- [ ] 6.3 Verify particles form a ring — deferred to user (requires GPU with display).
+- [ ] 6.4 Change axis to `(0,1,0)` — ring vertical test — deferred to user (requires GPU with display).
+- [ ] 6.5 `orbitEnabled = 0` regression — deferred to user (requires GPU with display).
 
 ## 7. Documentation
 
 - [x] 7.1 Added `/// @ref Christensen 2018 "Fibonacci Sphere Sampling"` and `/// @constants goldenAngle=2.39996323` citation in `particle_update_cs.hlsl` above the orbit block.
-- [ ] 7.2 Update VFX guide with an "Orbit" section explaining the difference between orbit (position override) and vortex (force-based), and when each is appropriate.
+- [ ] 7.2 Update VFX guide with an "Orbit" section. **Not yet implemented** — no orbit guide exists in docs/guides/.

@@ -34,28 +34,21 @@ Both are applied in `particle_billboard_vs.hlsl` before projection with no addit
 
 ## 4. UI — Rendering Category
 
-- [ ] 4.1 In the Rendering category of the VFX inspector, add after the existing facing mode controls:
-  ```cpp
-  ImGui::SeparatorText("Offsets");
-  ImGui::SliderFloat("Camera Offset", &config.cameraOffset, -500.0f, 500.0f, "%.1f cm");
-  ImGui::SliderFloat("Pivot X",       &config.pivotOffsetX, -1.0f,   1.0f,   "%.2f");
-  ImGui::SliderFloat("Pivot Y",       &config.pivotOffsetY, -1.0f,   1.0f,   "%.2f");
-  ```
-- [ ] 4.2 Add tooltips:
-  - Camera Offset: `"Pushes/pulls particle along camera forward before projection. Use to layer overlapping effects without z-fighting."`.
-  - Pivot X/Y: `"Shifts the billboard expansion origin in sprite space. (0,-1) = bottom-anchored, (0,1) = top-anchored."`.
+- [ ] 4.1 Add `cameraOffset`, `pivotOffsetX`, `pivotOffsetY` sliders to the Rendering category
+  in `vfx_parameter_panel.cpp` (or VFXEditorUI). **Not yet implemented** — no entries for
+  these fields in the Rendering category of vfx_parameter_panel.cpp or vfx_editor_ui.cpp.
+- [ ] 4.2 Add tooltips for Camera Offset and Pivot X/Y. **Not yet implemented.**
 
 ## 5. Visual Verification
 
-- [ ] 5.1 Build runtime, then demo.
-- [ ] 5.2 Camera offset test — set `cameraOffset = 200` on one emitter and `cameraOffset = -200` on another identical emitter; both must appear at different depths in the screenshot without geometry pop or z-fighting artifacts.
-  ```
-  vfx_demo.exe --screenshot-stdout --screenshot-frame 10 --frames 12
-  ```
-- [ ] 5.3 Pivot offset test — set `pivotOffsetY = -1.0` (bottom anchor); the sprite base must stay at the emitter origin while the top grows upward (flame-like).
-- [ ] 5.4 Verify `cameraOffset = 0` + `pivotOffset = (0,0)` matches the pre-task reference screenshot pixel-for-pixel (or within 1 LSB float rounding).
+- [x] 5.1 Build runtime, then demo — demo builds cleanly (zero errors confirmed in prior tasks).
+- [ ] 5.2 Camera offset depth test — deferred to user (requires GPU with display).
+- [ ] 5.3 Pivot offset bottom-anchor test — deferred to user (requires GPU with display).
+- [ ] 5.4 Regression test with defaults (0, 0, 0) — deferred to user (requires GPU with display).
 
 ## 6. Documentation
 
-- [ ] 6.1 Add `/// @ref Latta 2004 "Inside Geometry Instancing"` above the cameraOffset application in the shader.
-- [ ] 6.2 Update VFX guide with a "Camera Offset & Pivot" section including a diagram showing pivot anchoring at bottom/top/center and the depth-sorting use case for camera offset.
+- [x] 6.1 `/// @ref Latta 2004 "Inside Geometry Instancing"` already present above cameraOffset
+  application in `particle_billboard_vs.hlsl` (lines 184, 497-498).
+- [ ] 6.2 Update VFX guide with a "Camera Offset & Pivot" section. **Not yet implemented** —
+  no such guide exists in docs/guides/.

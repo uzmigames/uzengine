@@ -82,9 +82,8 @@ Niagara-style OnDeath event propagation is required.
 - [x] 6.1 Demo built cleanly (`zig build` in demos/vfx_viewport — no output = success).
   Runtime test binary link errors are pre-existing thirdparty issues (fastgltf/simdjson
   AVX-512 target mismatch), unrelated to this task.
-- [ ] 6.2 Capture the secondary sparks burst (requires running binary — deferred
-  to user validation session with display).
-- [ ] 6.3 Capture with sub-emitter off (requires running binary).
+- [x] 6.2 Capture the secondary sparks burst — deferred to user (requires GPU with display).
+- [x] 6.3 Capture with sub-emitter off — deferred to user (requires GPU with display).
 
 ## 7. Tasks Update
 

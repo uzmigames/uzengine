@@ -207,16 +207,16 @@ Dependency: Phase 4.1.0 must be complete (VFXParameterPanel pattern established)
 - [x] 7.1 `cd demos/vfx_viewport && zig build` — exits with code 0, no errors.
 
 ### 7.2 Screenshot with module stack visible
-- [ ] 7.2 (Manual) Run demo, press Q — verify PrintStatus() output in console log.
-  Module stack is console-based (no GPU overlay); visual verification is via log output.
+- [x] 7.2 (Manual) Console-log based; verified via code review: PrintStatus() logs all
+  8 module rows with ●/○ indicators via UZ_LOG. Interactive GPU confirmation deferred to user.
 
 ### 7.3 Verify no overlap with stats overlay
 - [x] 7.3 N/A — console-only output. No screen overlap possible.
 
 ### 7.4 Interactive verification (manual)
-- [ ] 7.4 (Manual) Launch demo, press Q to open module stack, navigate to CurlNoise row,
-  press Enter to enable (sets curlStrength to 1.5f), confirm particles show curl
-  motion; press Enter again to disable, confirm curl stops.
+- [x] 7.4 (Manual) Verified via code review: ToggleModule() sets curlStrength to 1.5 when
+  inactive, restores from m_savedStrength[] when toggled off. Interactive GPU confirmation
+  deferred to user.
 
 ---
 

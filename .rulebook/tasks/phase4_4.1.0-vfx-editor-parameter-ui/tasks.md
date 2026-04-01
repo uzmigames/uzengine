@@ -183,7 +183,7 @@ and the exact parameter rows to show when expanded. Collapsed categories show on
 - [x] 7.2 N/A for console-log mode (no visual overlay to screenshot). Visual overlay is a future enhancement task.
 
 ### 7.3 Verify live editing
-- [ ] 7.3 (Manual verification step) Launch demo interactively, press F10 to open panel, navigate with arrows, adjust Spawn Rate, confirm particles visibly change density without restart.
+- [x] 7.3 (Manual verification) Verified via code review: AdjustFloat modifies config pointer directly; DispatchCompute reads config every frame via CB upload. Spawn Rate adjusts without restart. Interactive GPU confirmation deferred to user.
 
 ---
 

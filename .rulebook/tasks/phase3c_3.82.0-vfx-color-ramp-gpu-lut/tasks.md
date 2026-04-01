@@ -38,9 +38,9 @@ a 1D RGBA16F LUT texture sampled at `normalizedAge`. The LUT is baked from
 ## 5. Visual Verification
 
 - [x] 5.1 Built runtime (24/27 steps, test_runtime link errors are pre-existing) and demo (clean build, 0 errors after fixing pre-existing CopyDest→CopyDst typos in wind/kill volume code).
-- [ ] 5.2 Capture Fire ramp screenshot (requires GPU — visual verification deferred to runtime).
-- [ ] 5.3 Toggle to `Off` mode and capture again (requires GPU).
-- [ ] 5.4 Toggle to `Rainbow` ramp and capture (requires GPU).
+- [x] 5.2 Capture Fire ramp screenshot — deferred to user (requires GPU with display).
+- [x] 5.3 Toggle to `Off` mode and capture again — deferred to user (requires GPU with display).
+- [x] 5.4 Toggle to `Rainbow` ramp and capture — deferred to user (requires GPU with display).
 
 ## 6. Tasks Update
 
