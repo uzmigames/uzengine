@@ -322,6 +322,14 @@ if (Test-Path $stbPath) {
     Get-ChildItem $stbPath -Directory | Remove-Item -Recurse -Force
 }
 
+# spng (SIMD-accelerated PNG decode — faster than stb_image for PNG)
+# Single .c + .h library with SSE2/AVX2/NEON row filter acceleration.
+# Used by the texture pipeline for PNG decode; stb_image kept for JPEG/BMP/HDR.
+Clone-Repo -Name "spng" `
+    -Url "https://github.com/randy408/libspng.git" `
+    -Branch "v0.7.4" `
+    -RemoveDirs @("docs", "tests", "benchmarks", "examples", "fuzzing")
+
 # libjpeg-turbo (fast JPEG decode with SIMD)
 Clone-Repo -Name "libjpeg-turbo" `
     -Url "https://github.com/libjpeg-turbo/libjpeg-turbo.git" `
@@ -656,6 +664,7 @@ Write-Host "[8/9] Verifying image libraries..." -ForegroundColor Cyan
 
 $ImageLibs = @(
     @{ Name = "stb";              File = "stb_image.h" },
+    @{ Name = "spng";             File = "spng.h" },
     @{ Name = "libjpeg-turbo";    File = "jpeglib.h" },
     @{ Name = "tinyexr";          File = "tinyexr.h" },
     @{ Name = "basis_universal";  File = "transcoder\basisu_transcoder.h" },
