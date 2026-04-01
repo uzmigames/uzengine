@@ -166,6 +166,14 @@ void VFXParameterPanel::BuildCategories(VFXEmitterConfig* cfg, float* spawnRate,
             {"Orbit Axis X",     VFXParamEntry::Type::Float, &cfg->orbitAxisX, nullptr, -1.0f, 1.0f, 0.05f},
             {"Orbit Axis Y",     VFXParamEntry::Type::Float, &cfg->orbitAxisY, nullptr, -1.0f, 1.0f, 0.05f},
             {"Orbit Axis Z",     VFXParamEntry::Type::Float, &cfg->orbitAxisZ, nullptr, -1.0f, 1.0f, 0.05f},
+            // ── Death Spawn / Sub-Emitters (Task 4.11.0) ──────────────────────
+            // @ref Shopf 2008 "GPU Particles" — death event driven sub-emitter spawn
+            // Tooltip: "When particles die, spawn child particles at the death position.
+            //           Use for sparks, debris, or secondary smoke."
+            {"Death Spawn",      VFXParamEntry::Type::Enum, nullptr, &cfg->deathSpawnEnabled, 0.0f, 1.0f, 0.0f, 1, kBoolNames, kBoolCount},
+            {"Death Children",   VFXParamEntry::Type::Uint, nullptr, &cfg->deathSpawnCount, 1.0f, 32.0f, 1.0f},
+            {"Death Spread",     VFXParamEntry::Type::Float, &cfg->deathSpawnSpread, nullptr, 0.0f, 3.14159f, 0.05f},
+            {"Death Spd Scale",  VFXParamEntry::Type::Float, &cfg->deathSpawnSpeedScale, nullptr, 0.0f, 2.0f, 0.05f},
         };
         m_categories.push_back(std::move(cat));
     }
@@ -207,7 +215,20 @@ void VFXParameterPanel::BuildCategories(VFXEmitterConfig* cfg, float* spawnRate,
         m_categories.push_back(std::move(cat));
     }
 
-    // ── Category 7: System ───────────────────────────────────────────────
+    // ── Category 7: Particle Lights ─────────────────────────────────────
+    {
+        VFXParamCategory cat;
+        cat.name = "Particle Lights";
+        cat.expanded = false;
+        cat.params = {
+            {"Enabled",   VFXParamEntry::Type::Enum,  nullptr, &cfg->particleLightEnabled, 0.0f, 1.0f, 0.0f, 1, kBoolNames, kBoolCount},
+            {"Radius",    VFXParamEntry::Type::Float, &cfg->particleLightRadius, nullptr, 0.0f, 5000.0f, 50.0f},
+            {"Intensity", VFXParamEntry::Type::Float, &cfg->particleLightIntensity, nullptr, 0.0f, 20.0f, 0.1f},
+        };
+        m_categories.push_back(std::move(cat));
+    }
+
+    // ── Category 8: System ───────────────────────────────────────────────
     // burstMode and subEmitter are bool*, not uint32_t*, so we need to handle
     // them specially. We cast bool* to uint32_t* indirectly via a wrapper.
     // Since bool is 1 byte and uint32_t is 4 bytes, we cannot safely cast.

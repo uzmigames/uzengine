@@ -1552,7 +1552,7 @@ void VFXViewportDemo::OnFrame(float dt) {
     perFrame.farPlane = 100000.0f;
     perFrame.exposure = m_exposure;
 
-    // ── Point lights (3 colored lights around the scene) ──────────────
+    // ── Point lights (scene lights OR VFX particle lights) ──────────────
     if (m_pointLightsEnabled) {
         perFrame.numPointLights = 3;
         // Red light — right side
@@ -1582,6 +1582,56 @@ void VFXViewportDemo::OnFrame(float dt) {
         perFrame.pointLight2ColorG    = 1.0f;
         perFrame.pointLight2ColorB    = 0.2f;
         perFrame.pointLight2Intensity = 2.0f;
+    }
+
+    // ── VFX particle lights (emitter-position point lights) ──────────────
+    // When scene point lights are not active, enabled emitters inject dynamic
+    // point lights at their emitter position using their color and emissive
+    // intensity. Up to 3 lights total (PerFrameCB limit).
+    if (!m_pointLightsEnabled && m_vfxEnabled) {
+        uint32_t lightIdx = 0;
+        for (const auto& emitter : m_emitters) {
+            if (!emitter.enabled || !emitter.config.particleLightEnabled || lightIdx >= 3)
+                continue;
+
+            // Pointers to the per-light fields in PerFrameCB (contiguous layout)
+            float* posPtr       = nullptr;
+            float* colorPtr     = nullptr;
+            float* radiusPtr    = nullptr;
+            float* intensityPtr = nullptr;
+
+            if (lightIdx == 0) {
+                posPtr       = &perFrame.pointLight0PosX;
+                radiusPtr    = &perFrame.pointLight0Radius;
+                colorPtr     = &perFrame.pointLight0ColorR;
+                intensityPtr = &perFrame.pointLight0Intensity;
+            } else if (lightIdx == 1) {
+                posPtr       = &perFrame.pointLight1PosX;
+                radiusPtr    = &perFrame.pointLight1Radius;
+                colorPtr     = &perFrame.pointLight1ColorR;
+                intensityPtr = &perFrame.pointLight1Intensity;
+            } else {
+                posPtr       = &perFrame.pointLight2PosX;
+                radiusPtr    = &perFrame.pointLight2Radius;
+                colorPtr     = &perFrame.pointLight2ColorR;
+                intensityPtr = &perFrame.pointLight2Intensity;
+            }
+
+            // Position: emitter origin + per-emitter offset
+            posPtr[0] = emitter.config.position[0] + emitter.positionOffset.x;
+            posPtr[1] = emitter.config.position[1] + emitter.positionOffset.y;
+            posPtr[2] = emitter.config.position[2] + emitter.positionOffset.z;
+            *radiusPtr = emitter.config.particleLightRadius;
+
+            // Color: emitter initial color scaled by emissive intensity
+            colorPtr[0] = emitter.config.initialColor[0];
+            colorPtr[1] = emitter.config.initialColor[1];
+            colorPtr[2] = emitter.config.initialColor[2];
+            *intensityPtr = emitter.config.particleLightIntensity;
+
+            lightIdx++;
+        }
+        perFrame.numPointLights = lightIdx;
     }
 
     auto perFrameAlloc = cbRing->Allocate(sizeof(PerFrameCB));
@@ -3178,6 +3228,9 @@ void VFXViewportDemo::BuildCompoundPreset(VFXCompoundPreset preset) {
             flame.config.colorLifeEndB = 0.0f;
             flame.config.colorLifeEndA = 0.0f;
             flame.config.softFadeDistance = 0.3f;
+            flame.config.particleLightEnabled = 1;
+            flame.config.particleLightRadius = 800.0f;
+            flame.config.particleLightIntensity = 3.0f;
             flame.burstCount = 200;
             flame.spawnRate = 400.0f;
             flame.burstMode = false; // continuous
@@ -3316,6 +3369,9 @@ void VFXViewportDemo::BuildCompoundPreset(VFXCompoundPreset preset) {
             flash.config.colorLifeEndG = 0.5f;
             flash.config.colorLifeEndB = 0.1f;
             flash.config.colorLifeEndA = 0.0f;
+            flash.config.particleLightEnabled = 1;
+            flash.config.particleLightRadius = 1200.0f;
+            flash.config.particleLightIntensity = 5.0f;
             flash.burstCount = 80;
             flash.burstMode = true;
             flash.burstPending = true;

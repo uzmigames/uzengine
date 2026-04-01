@@ -546,6 +546,65 @@ bool VFXParticleSystem::Init(IRHIDevice* device, ShaderManager* shaderMgr,
         m_killVolumeSrvIndex = device->GetBufferSRVIndex(m_killVolumeBuffer);
     }
 
+    // Death event buffer (RWStructuredBuffer<DeathEvent>[VFX_MAX_DEATH_EVENTS])
+    // Written by the update CS on particle death; read by the death spawn CS.
+    // @ref Shopf 2008 "GPU Particles" — death event buffer for sub-emitter spawning
+    {
+        RHIBufferDesc desc{};
+        desc.sizeBytes = static_cast<uint64_t>(VFX_MAX_DEATH_EVENTS) * sizeof(DeathEvent);
+        desc.stride    = sizeof(DeathEvent);
+        desc.usage     = RHIBufferUsage::StructuredBuffer | RHIBufferUsage::UnorderedAccess;
+        desc.memory    = RHIMemoryType::Default;
+        desc.debugName = "VFX_DeathEventBuffer";
+        m_deathEventBuffer = device->CreateBuffer(desc);
+        if (!m_deathEventBuffer.IsValid()) {
+            UZ_LOG(App, Error, "VFX: Failed to create death event buffer");
+            return false;
+        }
+        m_deathEventBufferUavIndex = device->GetBufferUAVIndex(m_deathEventBuffer);
+        m_deathEventBufferSrvIndex = device->GetBufferSRVIndex(m_deathEventBuffer);
+    }
+
+    // Death event count buffer (RWBuffer<uint>, 1 element, atomic counter).
+    // Reset to 0 each frame via CopyBuffer from m_deathEventCountZeroStaging.
+    {
+        RHIBufferDesc desc{};
+        desc.sizeBytes = sizeof(uint32_t);
+        desc.stride    = sizeof(uint32_t);
+        desc.usage     = RHIBufferUsage::StructuredBuffer | RHIBufferUsage::UnorderedAccess;
+        desc.memory    = RHIMemoryType::Default;
+        desc.debugName = "VFX_DeathEventCount";
+        m_deathEventCountBuffer = device->CreateBuffer(desc);
+        if (!m_deathEventCountBuffer.IsValid()) {
+            UZ_LOG(App, Error, "VFX: Failed to create death event count buffer");
+            return false;
+        }
+        m_deathEventCountUavIndex = device->GetBufferUAVIndex(m_deathEventCountBuffer);
+        m_deathEventCountSrvIndex = device->GetBufferSRVIndex(m_deathEventCountBuffer);
+
+        // Persistent zero staging buffer for per-frame atomic counter reset.
+        // Created once; CopyBuffer(zero_staging -> death_event_count) each frame.
+        RHIBufferDesc zeroDesc{};
+        zeroDesc.sizeBytes = sizeof(uint32_t);
+        zeroDesc.stride    = sizeof(uint32_t);
+        zeroDesc.usage     = RHIBufferUsage::StructuredBuffer;
+        zeroDesc.memory    = RHIMemoryType::Upload;
+        zeroDesc.debugName = "VFX_DeathEventCount_ZeroStaging";
+        m_deathEventCountZeroStaging = device->CreateBuffer(zeroDesc);
+        if (!m_deathEventCountZeroStaging.IsValid()) {
+            UZ_LOG(App, Error, "VFX: Failed to create death event count zero staging buffer");
+            return false;
+        }
+        // Write zero into staging — stays mapped permanently (upload heap).
+        void* mapped = device->MapBuffer(m_deathEventCountZeroStaging);
+        if (mapped) {
+            *static_cast<uint32_t*>(mapped) = 0u;
+            // Do NOT unmap upload-heap buffers used as persistent staging — RHI keeps
+            // them CPU-visible for the duration of the buffer's lifetime.
+            device->UnmapBuffer(m_deathEventCountZeroStaging);
+        }
+    }
+
     // Compile compute pipelines via RHIComputePipelineDesc + CreateComputePipeline
     {
         RHIComputePipelineDesc desc{};
@@ -584,6 +643,18 @@ bool VFXParticleSystem::Init(IRHIDevice* device, ShaderManager* shaderMgr,
         m_sortPSO = device->CreateComputePipeline(desc);
         if (!m_sortPSO.IsValid()) {
             UZ_LOG(App, Error, "VFX: Failed to create sort compute PSO");
+            return false;
+        }
+    }
+    {
+        // Death spawn CS: secondary spawn pass for sub-emitter children on particle death.
+        // @ref Shopf 2008 "GPU Particles" — death event driven sub-emitter spawn
+        RHIComputePipelineDesc desc{};
+        desc.computeShader = shaderMgr->CreateShader(EngineShader::ParticleDeathSpawnCS, RHIShaderStage::Compute);
+        desc.debugName = "VFX_DeathSpawnCS";
+        m_deathSpawnPSO = device->CreateComputePipeline(desc);
+        if (!m_deathSpawnPSO.IsValid()) {
+            UZ_LOG(App, Error, "VFX: Failed to create death spawn compute PSO");
             return false;
         }
     }
@@ -791,6 +862,9 @@ void VFXParticleSystem::Shutdown(IRHIDevice* device) {
     destroyBuf(m_zeroInitStaging);
     destroyBuf(m_windZoneBuffer);
     destroyBuf(m_killVolumeBuffer);
+    destroyBuf(m_deathEventBuffer);
+    destroyBuf(m_deathEventCountBuffer);
+    destroyBuf(m_deathEventCountZeroStaging);
 
     auto destroyPso = [device](RHIPipelineHandle& h) {
         if (h.IsValid()) { device->DestroyPipeline(h); h = {}; }
@@ -799,6 +873,7 @@ void VFXParticleSystem::Shutdown(IRHIDevice* device) {
     destroyPso(m_updatePSO);
     destroyPso(m_indirectArgsPSO);
     destroyPso(m_sortPSO);
+    destroyPso(m_deathSpawnPSO);
     destroyPso(m_billboardPSO);
     destroyPso(m_billboardPSO_Additive);
     destroyPso(m_billboardPSO_AlphaBlend);
@@ -879,6 +954,16 @@ void VFXParticleSystem::DispatchCompute(IRHICommandList* cmdList, CBRingAllocato
         cmdList->CopyBuffer(m_aliveCountStaging, 0, m_aliveCount, 0, sizeof(uint32_t));
     }
 
+    // ── Reset death event counter to 0 (per-frame) ─────────────────────
+    // The update CS atomically increments this counter when writing death events.
+    // Must be reset BEFORE the update dispatch so the counter starts at 0 each frame.
+    // Uses the persistent zero staging buffer (upload heap, CPU-mapped once in Init).
+    // @ref Shopf 2008 "GPU Particles" — per-frame event buffer reset via copy
+    if (m_deathEventCountBuffer.IsValid() && m_deathEventCountZeroStaging.IsValid()) {
+        cmdList->CopyBuffer(m_deathEventCountZeroStaging, 0,
+                            m_deathEventCountBuffer, 0, sizeof(uint32_t));
+    }
+
     // ── UAV barriers before compute ──────────────────────────────────────
     // Transition all write-set buffers to UAV state. Read-set already in SRV
     // from the previous frame's billboard draw.
@@ -894,6 +979,16 @@ void VFXParticleSystem::DispatchCompute(IRHICommandList* cmdList, CBRingAllocato
     {
         RHIBarrierDesc barrier{};
         barrier.buffer = m_aliveCount;
+        barrier.stateBefore = RHIResourceState::CopyDst;
+        barrier.stateAfter = RHIResourceState::UnorderedAccess;
+        cmdList->ResourceBarrier(&barrier, 1);
+    }
+
+    // Transition deathEventCountBuffer to UAV after the zero-reset copy.
+    // The update CS writes to it via InterlockedAdd; must be in UAV state.
+    if (m_deathEventCountBuffer.IsValid()) {
+        RHIBarrierDesc barrier{};
+        barrier.buffer = m_deathEventCountBuffer;
         barrier.stateBefore = RHIResourceState::CopyDst;
         barrier.stateAfter = RHIResourceState::UnorderedAccess;
         cmdList->ResourceBarrier(&barrier, 1);
@@ -1044,12 +1139,101 @@ void VFXParticleSystem::DispatchCompute(IRHICommandList* cmdList, CBRingAllocato
         cb.orbitAxisY   = config.orbitAxisY;
         cb.orbitAxisZ   = config.orbitAxisZ;
 
+        // Death spawn parameters (sub-emitter on particle death, Task 4.11.0)
+        // @ref Shopf 2008 "GPU Particles" — death event driven sub-emitter spawn
+        cb.deathSpawnEnabled          = config.deathSpawnEnabled;
+        cb.maxDeathEvents             = VFX_MAX_DEATH_EVENTS;
+        cb.deathSpawnSpread           = config.deathSpawnSpread;
+        cb.deathSpawnSpeedScale       = config.deathSpawnSpeedScale;
+        cb.deathSpawnCount            = config.deathSpawnCount;
+        cb.deathEventBufferUavIndex   = m_deathEventBufferUavIndex;
+        cb.deathEventCountUavIndex    = m_deathEventCountUavIndex;
+
         auto alloc = cbRing->Allocate(sizeof(VFXUpdateCB));
         std::memcpy(alloc.cpuPtr, &cb, sizeof(VFXUpdateCB));
 
         cmdList->SetPipeline(m_updatePSO);
         cmdList->SetRootCBV(1, alloc.gpuAddr); // b1 = root param 1 (CBV)
         cmdList->Dispatch((m_maxParticles + kUpdateGroupSize - 1) / kUpdateGroupSize, 1, 1);
+    }
+
+    // ── UAV barrier between update and death spawn ─────────────────────────
+    // The update CS writes to deathEventBuffer and deathEventCountBuffer.
+    // The death spawn CS reads these. A UAV barrier ensures the writes are
+    // visible before the death spawn CS reads them.
+    // @ref Shopf 2008 "GPU Particles" — UAV barrier between producer and consumer passes
+    {
+        RHIBarrierDesc barrier{};
+        barrier.buffer = m_aliveCount;
+        barrier.stateBefore = RHIResourceState::UnorderedAccess;
+        barrier.stateAfter = RHIResourceState::UnorderedAccess;
+        cmdList->ResourceBarrier(&barrier, 1);
+    }
+    if (m_deathEventBuffer.IsValid()) {
+        RHIBarrierDesc barrier{};
+        barrier.buffer = m_deathEventBuffer;
+        barrier.stateBefore = RHIResourceState::UnorderedAccess;
+        barrier.stateAfter = RHIResourceState::UnorderedAccess;
+        cmdList->ResourceBarrier(&barrier, 1);
+    }
+    if (m_deathEventCountBuffer.IsValid()) {
+        RHIBarrierDesc barrier{};
+        barrier.buffer = m_deathEventCountBuffer;
+        barrier.stateBefore = RHIResourceState::UnorderedAccess;
+        barrier.stateAfter = RHIResourceState::UnorderedAccess;
+        cmdList->ResourceBarrier(&barrier, 1);
+    }
+
+    // ── Death Spawn Pass (optional, only when deathSpawnEnabled) ────────────
+    // Reads the death event buffer written by the update CS and spawns child
+    // particles at each death position. Dispatched over death events (not particles),
+    // so the group size is 64 (smaller than spawn/update 256 — events are sparser).
+    //
+    // We conservatively dispatch VFX_MAX_DEATH_EVENTS / 64 groups when enabled.
+    // Threads beyond the actual event count exit via early return in the shader.
+    // This avoids a CPU readback of the atomic event counter (which would require
+    // 1-frame latency) while keeping the dispatch cost bounded at ~64 groups.
+    //
+    // @ref Shopf 2008 "GPU Particles" — death event driven sub-emitter spawn
+    if (config.deathSpawnEnabled != 0u && m_deathSpawnPSO.IsValid()) {
+        static constexpr uint32_t kDeathSpawnGroupSize = 64u;
+
+        VFXDeathSpawnCB dsCb{};
+        dsCb.deathEventBufferSrvIndex = m_deathEventBufferSrvIndex;
+        // The actual death event count is written by the update CS via InterlockedAdd.
+        // The death spawn CS reads it directly from the GPU counter buffer (SRV).
+        // We conservatively dispatch VFX_MAX_DEATH_EVENTS / 64 groups and let the
+        // shader's early-exit guard (evtIdx >= actualEventCount) discard excess threads.
+        // This avoids CPU readback latency entirely.
+        dsCb.deathEventCountSrvIndex  = m_deathEventCountSrvIndex;
+        dsCb.deathSpawnCount          = config.deathSpawnCount;
+        dsCb.deathSpawnSpread         = config.deathSpawnSpread;
+        dsCb.deathSpawnSpeedScale     = config.deathSpawnSpeedScale;
+        dsCb.maxParticles             = m_maxParticles;
+        dsCb.maxDeathEvents           = VFX_MAX_DEATH_EVENTS;
+        dsCb.positionsUavIndex        = m_device->GetBufferUAVIndex(m_particleBuffers[0][write]);
+        dsCb.velocitiesUavIndex       = m_device->GetBufferUAVIndex(m_particleBuffers[1][write]);
+        dsCb.agesUavIndex             = m_device->GetBufferUAVIndex(m_particleBuffers[2][write]);
+        dsCb.lifespansUavIndex        = m_device->GetBufferUAVIndex(m_particleBuffers[3][write]);
+        dsCb.sizesUavIndex            = m_device->GetBufferUAVIndex(m_particleBuffers[4][write]);
+        dsCb.colorsUavIndex           = m_device->GetBufferUAVIndex(m_particleBuffers[5][write]);
+        dsCb.rotationsUavIndex        = m_device->GetBufferUAVIndex(m_particleBuffers[6][write]);
+        dsCb.freeListUavIndex         = m_device->GetBufferUAVIndex(m_freeList);
+        dsCb.freeListHeadUavIndex     = m_device->GetBufferUAVIndex(m_freeListHead);
+        dsCb.aliveCountUavIndex       = m_device->GetBufferUAVIndex(m_aliveCount);
+        dsCb.frameNumber              = frameNumber;
+        // Child lifetime and size: use parent emitter's lifetime/size as defaults.
+        // For sparks/debris effects, shorter lifetime than parent is typical.
+        dsCb.childLifetime            = (config.minLifetime + config.maxLifetime) * 0.5f * 0.5f;
+        dsCb.childSize                = config.initialSize * 0.5f;
+
+        auto alloc = cbRing->Allocate(sizeof(VFXDeathSpawnCB));
+        std::memcpy(alloc.cpuPtr, &dsCb, sizeof(VFXDeathSpawnCB));
+
+        cmdList->SetPipeline(m_deathSpawnPSO);
+        cmdList->SetRootCBV(1, alloc.gpuAddr); // b1 = root param 1 (CBV)
+        const uint32_t deathGroups = (VFX_MAX_DEATH_EVENTS + kDeathSpawnGroupSize - 1) / kDeathSpawnGroupSize;
+        cmdList->Dispatch(deathGroups, 1, 1);
     }
 
     // ── UAV barrier before indirect args ─────────────────────────────────

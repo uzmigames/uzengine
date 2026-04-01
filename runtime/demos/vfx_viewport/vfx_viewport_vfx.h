@@ -29,6 +29,29 @@ class CBRingAllocator;
 class UploadContext;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Death Event — GPU sub-emitter spawn trigger
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Single death event written by the update CS when a particle expires.
+/// Packed as three float4 for efficient GPU StructuredBuffer layout.
+///
+/// @ref Shopf 2008 "GPU Particles" — death event buffer for sub-emitter spawning
+struct DeathEvent {
+    float position[3]; ///< World-space position at death (cm).
+    float _pad0;       ///< Alignment padding.
+    float velocity[3]; ///< Velocity at death (cm/s) — seed for child spawn direction.
+    float _pad1;       ///< Alignment padding.
+    float color[4];    ///< RGBA color at death — inherited by child particles.
+};
+static_assert(sizeof(DeathEvent) == 48, "DeathEvent must be 48 bytes (3 x float4)");
+
+/// Hard cap on death events per emitter per frame. 4096 events x 48 bytes = 192 KB GPU.
+/// Chosen to cover worst-case simultaneous particle deaths without overflow.
+///
+/// @ref Shopf 2008 "GPU Particles" — fixed-size event ring buffer pattern
+static constexpr uint32_t VFX_MAX_DEATH_EVENTS = 4096u;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // VFX Emitter Configuration
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -123,6 +146,22 @@ struct VFXEmitterConfig {
     float    sizeBySpeedMin           = 0.5f;  ///< Size multiplier at zero speed.
     float    sizeBySpeedMax           = 2.0f;  ///< Size multiplier at speedRangeMax.
     float    speedRangeMax            = 10.0f; ///< Speed that maps to t=1 for size-by-speed.
+    // ── Particle light emission ─────────────────────────────────────────────
+    /// When enabled, the emitter injects a dynamic point light at the emitter
+    /// position using the emitter's initial color and emissive intensity.
+    /// The light is written into PerFrameCB point light slots (max 3 total).
+    uint32_t particleLightEnabled     = 0;     ///< 0=off, 1=emit a point light at emitter position.
+    float    particleLightRadius      = 500.0f; ///< Point light radius in world units (cm).
+    float    particleLightIntensity   = 2.0f;  ///< Point light intensity multiplier.
+    // ── Death spawn (sub-emitter on particle death) ───────────────────────────
+    /// When enabled, dying particles write a DeathEvent to the GPU buffer.
+    /// A secondary spawn pass reads these events and emits child particles.
+    ///
+    /// @ref Shopf 2008 "GPU Particles" — death event driven sub-emitter spawn
+    uint32_t deathSpawnEnabled        = 0;     ///< 0=off, 1=spawn children at each particle death. Default: off.
+    uint32_t deathSpawnCount          = 4;     ///< Children emitted per dead particle [1..32]. Default: 4.
+    float    deathSpawnSpread         = 0.5f;  ///< Cone half-angle (rad) for child velocity spread [0, pi]. Default: 0.5.
+    float    deathSpawnSpeedScale     = 0.3f;  ///< Child speed = parent death speed * scale [0, 2]. Default: 0.3.
 };
 
 /// Named emitter preset with a spawn rate.
@@ -222,12 +261,63 @@ struct VFXUpdateCB {
     // ── Ground plane collision (repurposed from _padKV0/_padKV1) ────────────
     /// @ref Müller 2006 "Position Based Dynamics" — restitution coefficients
     uint32_t groundCollision;         float    restitution;        // 16 bytes (offset 208)
-    // ── Quadratic drag (air resistance) ──────────────────────────────────────
+    // ── Quadratic drag + death spawn parameters ───────────────────────────────
     /// @ref Witkin & Baraff 2001 "Physically Based Modeling" — quadratic drag F=-k|v|^2*dir
-    float    dragCoefficient;         float    _padDrag0;
-    float    _padDrag1;               float    _padDrag2;           // 16 bytes (offset 224)
+    float    dragCoefficient;         uint32_t deathSpawnEnabled;
+    uint32_t maxDeathEvents;          float    deathSpawnSpread;    // 16 bytes (offset 224)
+    // ── Death spawn child parameters ─────────────────────────────────────────
+    /// @ref Shopf 2008 "GPU Particles" — death event driven sub-emitter spawn
+    float    deathSpawnSpeedScale;    uint32_t deathSpawnCount;
+    uint32_t deathEventBufferUavIndex; uint32_t deathEventCountUavIndex; // 16 bytes (offset 240)
 };
-static_assert(sizeof(VFXUpdateCB) == 240, "VFXUpdateCB must be 240 bytes (15 x float4)");
+static_assert(sizeof(VFXUpdateCB) == 256, "VFXUpdateCB must be 256 bytes (16 x float4)");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VFX Death Spawn Constant Buffer (matches particle_death_spawn_cs.hlsl b1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Constant buffer for the death spawn compute shader.
+/// Each thread handles one death event and spawns `deathSpawnCount` children.
+///
+/// Layout: 64 bytes (4 x float4).
+///
+/// @ref Shopf 2008 "GPU Particles" — death event driven sub-emitter spawn
+struct VFXDeathSpawnCB {
+    // Event buffer bindless indices
+    uint32_t deathEventBufferSrvIndex;  ///< SRV for StructuredBuffer<DeathEvent>.    0
+    uint32_t deathEventCountSrvIndex;   ///< SRV for StructuredBuffer<uint> event counter (GPU-read count). 4
+    uint32_t deathSpawnCount;           ///< Children spawned per event [1..32].       8
+    float    deathSpawnSpread;          ///< Cone half-angle (rad) for child velocity. 12
+
+    // Child particle parameters
+    float    deathSpawnSpeedScale;      ///< child_speed = parent_speed * scale.       16
+    uint32_t maxParticles;              ///< Total particle pool capacity.              20
+    uint32_t maxDeathEvents;            ///< Hard cap on events per frame (guard).      24
+    uint32_t _pad0;                     ///<                                            28
+
+    // Bindless UAV indices (write set — same ping-pong set as update CS)
+    uint32_t positionsUavIndex;         ///< RWStructuredBuffer<float4> positions.     32
+    uint32_t velocitiesUavIndex;        ///< RWStructuredBuffer<float4> velocities.    36
+    uint32_t agesUavIndex;              ///< RWStructuredBuffer<float> ages.            40
+    uint32_t lifespansUavIndex;         ///< RWStructuredBuffer<float> lifespans.       44
+
+    uint32_t sizesUavIndex;             ///< RWStructuredBuffer<float> sizes.           48
+    uint32_t colorsUavIndex;            ///< RWStructuredBuffer<float4> colors.         52
+    uint32_t rotationsUavIndex;         ///< RWStructuredBuffer<float> rotations.       56
+    uint32_t freeListUavIndex;          ///< RWStructuredBuffer<uint> freeList.         60
+
+    uint32_t freeListHeadUavIndex;      ///< RWStructuredBuffer<uint> freeListHead.     64
+    uint32_t aliveCountUavIndex;        ///< RWStructuredBuffer<uint> aliveCount.       68
+    uint32_t frameNumber;               ///< Frame counter (RNG seed).                  72
+    uint32_t _pad2;                     ///<                                            76
+
+    // Child emitter lifetime + size (color inherited from DeathEvent)
+    float    childLifetime;             ///< Lifespan for child particles (seconds).    80
+    float    childSize;                 ///< Initial billboard size for children.       84
+    float    _pad3;                     ///<                                            88
+    float    _pad4;                     ///<                                            92
+};
+static_assert(sizeof(VFXDeathSpawnCB) == 96, "VFXDeathSpawnCB must be 96 bytes (6 x float4)");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VFX Billboard Root Constants (matches VFXBillboardConstants in b0)
@@ -517,11 +607,22 @@ private:
     uint32_t        m_killVolumeSrvIndex = 0;  ///< Bindless SRV descriptor index for m_killVolumeBuffer.
     uint32_t        m_activeKillVolumes  = 0;  ///< Number of active kill volumes this frame.
 
+    // ── Death event GPU buffers (Task 4.11.0) ────────────────────────────
+    /// @ref Shopf 2008 "GPU Particles" — death event buffer for sub-emitter spawning
+    RHIBufferHandle m_deathEventBuffer;           ///< RWStructuredBuffer<DeathEvent>[VFX_MAX_DEATH_EVENTS].
+    RHIBufferHandle m_deathEventCountBuffer;      ///< RWBuffer<uint> — atomic event counter (1 element).
+    RHIBufferHandle m_deathEventCountZeroStaging; ///< Upload-heap zero buffer for per-frame counter reset.
+    uint32_t        m_deathEventBufferUavIndex = 0; ///< UAV descriptor index for m_deathEventBuffer.
+    uint32_t        m_deathEventCountUavIndex  = 0; ///< UAV descriptor index for m_deathEventCountBuffer.
+    uint32_t        m_deathEventBufferSrvIndex = 0; ///< SRV descriptor index (read by death spawn CS).
+    uint32_t        m_deathEventCountSrvIndex  = 0; ///< SRV descriptor index for count (read by death spawn CS).
+
     // Compute pipelines
     RHIPipelineHandle m_spawnPSO;
     RHIPipelineHandle m_updatePSO;
     RHIPipelineHandle m_indirectArgsPSO;
     RHIPipelineHandle m_sortPSO;
+    RHIPipelineHandle m_deathSpawnPSO;            ///< Secondary spawn CS for sub-emitter children on death.
 
     // Graphics pipelines for billboard rendering (one per blend mode)
     RHIPipelineHandle m_billboardPSO;                ///< PremulAlpha: One/InvSrcAlpha (default).

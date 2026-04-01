@@ -181,7 +181,11 @@ bool VFXPresetSerializer::Save(const VFXEmitterConfig& c,
     wf("orbitSpeed",      c.orbitSpeed);
     wf("orbitAxisX",      c.orbitAxisX);
     wf("orbitAxisY",      c.orbitAxisY);
-    wf("orbitAxisZ",      c.orbitAxisZ, /*last=*/true);
+    wf("orbitAxisZ",      c.orbitAxisZ);
+    // Particle lights (Task 4.10.0)
+    wu("particleLightEnabled",   c.particleLightEnabled);
+    wf("particleLightRadius",    c.particleLightRadius);
+    wf("particleLightIntensity", c.particleLightIntensity, /*last=*/true);
 
     f << "\n}\n";
     f.flush();
@@ -428,6 +432,10 @@ bool VFXPresetSerializer::Load(const std::string& filePath,
     c.orbitAxisX   = ParseFloat(src, "orbitAxisX",    c.orbitAxisX);
     c.orbitAxisY   = ParseFloat(src, "orbitAxisY",    c.orbitAxisY);
     c.orbitAxisZ   = ParseFloat(src, "orbitAxisZ",    c.orbitAxisZ);
+    // Particle lights (Task 4.10.0)
+    c.particleLightEnabled   = ParseUint(src,  "particleLightEnabled",   c.particleLightEnabled);
+    c.particleLightRadius    = ParseFloat(src, "particleLightRadius",    c.particleLightRadius);
+    c.particleLightIntensity = ParseFloat(src, "particleLightIntensity", c.particleLightIntensity);
 
     return true;
 }

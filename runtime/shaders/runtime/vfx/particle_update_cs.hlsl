@@ -81,6 +81,24 @@
 #include "vfx_kill_volumes.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Death Event Struct (GPU-side mirror of DeathEvent in vfx_viewport_vfx.h)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Written by the update CS when a particle's age >= lifespan (Task 4.11.0).
+/// Consumed by particle_death_spawn_cs.hlsl to birth child particles.
+///
+/// @ref Shopf 2008 "GPU Particles" — death event buffer for sub-emitter spawning
+/// @constants VFX_MAX_DEATH_EVENTS=4096 (VFXUpdateConstants::maxDeathEvents)
+/// @deviations NONE
+struct DeathEvent {
+    float3 position; ///< World-space position at death.
+    float  _pad0;
+    float3 velocity; ///< Velocity at death — used as child spawn direction seed.
+    float  _pad1;
+    float4 color;    ///< RGBA color at death — inherited by child particles.
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Thread Group Configuration
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -186,12 +204,19 @@ cbuffer VFXUpdateConstants : register(b1) {
     uint     groundCollision;            ///< 0=disabled, 1=bounce off Z=0 ground.  216
     float    restitution;                ///< Bounce coefficient [0,1].              220
 
-    // ── Quadratic Drag (Air Resistance) ──────────────────────────────────── offset 224
+    // ── Quadratic Drag + Death Spawn Setup ───────────────────────────────── offset 224
     /// @ref Witkin & Baraff 2001 "Physically Based Modeling" — quadratic drag F=-k|v|^2*dir
     float    dragCoefficient;            ///< Quadratic drag coefficient. 0=disabled. 224
-    float    _padDrag0;                  ///<                                        228
-    float    _padDrag1;                  ///<                                        232
-    float    _padDrag2;                  ///<                                        236
+    uint     deathSpawnEnabled;          ///< 0=off, 1=write DeathEvent on particle death. 228
+    uint     maxDeathEvents;             ///< Hard cap on events per frame (= VFX_MAX_DEATH_EVENTS). 232
+    float    deathSpawnSpread;           ///< Cone half-angle (rad) for child velocity spread. 236
+
+    // ── Death Spawn Child Parameters ─────────────────────────────────────── offset 240
+    /// @ref Shopf 2008 "GPU Particles" — death event driven sub-emitter spawn
+    float    deathSpawnSpeedScale;       ///< Child speed = parent_death_speed * scale. 240
+    uint     deathSpawnCount;            ///< Children spawned per event [1..32].       244
+    uint     deathEventBufferUavIndex;   ///< UAV for RWStructuredBuffer<DeathEvent>.   248
+    uint     deathEventCountUavIndex;    ///< UAV for RWBuffer<uint> death event count. 252
 #endif
 };
 
@@ -294,6 +319,37 @@ void main(uint3 dtid : SV_DispatchThreadID)
 
     // ── Death check: recycle expired particles ──────────────────────────
     if (age >= lifespan) {
+        // ── Death event write (sub-emitter, Task 4.11.0) ─────────────────
+        // Before recycling the slot, record the particle's final state in the
+        // death event buffer so the secondary spawn pass can birth children.
+        // The InterlockedAdd on the counter guarantees each event gets a unique
+        // slot with no thread-group synchronisation required (all updates run
+        // in parallel; we only need intra-buffer atomics here).
+        //
+        /// @ref Shopf 2008 "GPU Particles" — death event buffer for sub-emitter spawning
+        /// @constants maxDeathEvents=VFX_MAX_DEATH_EVENTS=4096
+        /// @deviations NONE
+#ifdef UZ_BINDLESS
+        if (deathSpawnEnabled != 0u) {
+            RWStructuredBuffer<DeathEvent> deathEvents  = ResourceDescriptorHeap[deathEventBufferUavIndex];
+            RWStructuredBuffer<uint>       deathCounter = ResourceDescriptorHeap[deathEventCountUavIndex];
+
+            uint slot;
+            InterlockedAdd(deathCounter[0], 1u, slot);
+
+            // Guard: discard event if hard cap exceeded (prevents buffer overflow).
+            if (slot < maxDeathEvents) {
+                DeathEvent evt;
+                evt.position = pos;
+                evt._pad0    = 0.0f;
+                evt.velocity = vel;
+                evt._pad1    = 0.0f;
+                evt.color    = color;
+                deathEvents[slot] = evt;
+            }
+        }
+#endif // UZ_BINDLESS
+
         // Return this slot to the free list stack.
         // Atomically increment free_list_head to get the push index.
 #ifdef UZ_BINDLESS
