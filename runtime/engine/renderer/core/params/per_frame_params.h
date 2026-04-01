@@ -229,8 +229,9 @@ struct PerFrameParams {
     uint32_t envSamplerTexelCount = 0;              ///< Texel count of luminance mip 0.
     uint32_t envSamplerLumWidth = 0;                ///< Width of luminance mip 0.
     uint32_t envSamplerLumHeight = 0;               ///< Height of luminance mip 0.
+    uint32_t envMisAccumulatedSrv = UINT32_MAX;     ///< SRV for temporally-accumulated env MIS specular.
 
-    float    _pad2[16]            = {};              ///< Pad scalar section to 768 bytes.
+    float    _pad2[15]            = {};              ///< Pad scalar section to 768 bytes.
 
     // ── Resource handles (NOT copied to CB) ──────────────────────────────
     // These are bound by ShaderParameterBinder at their HLSL register slots.

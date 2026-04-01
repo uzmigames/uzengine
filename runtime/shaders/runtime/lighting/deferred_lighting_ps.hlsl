@@ -19,6 +19,7 @@ struct GBufferIndices {
     uint depthIdx;
     uint positionIdx;
     uint emissiveIdx;
+    uint envMisSrvIdx;  ///< Temporally-accumulated env MIS specular (kSentinelSrvIndex = disabled).
 };
 ConstantBuffer<GBufferIndices> gBufIndices : register(b0);
 #else
@@ -260,11 +261,19 @@ float4 main(FSInput input) : SV_Target {
         ambient = (diffuseAmbient * ao + specularAmbient) * skyTint;
     }
 
+    // ── Environment MIS (temporally accumulated) ───────────────────────
+    // The env MIS compute pass (env_mis_temporal_cs.hlsl) runs before this pass
+    // and produces a clean temporally-accumulated specular contribution. We just
+    // read the result texture and add it to ambient.
+#ifdef UZ_BINDLESS
+    if (gBufIndices.envMisSrvIdx != kSentinelSrvIndex) {
+        Texture2D<float4> envMisTex = ResourceDescriptorHeap[gBufIndices.envMisSrvIdx];
+        float3 envMIS = envMisTex.Load(int3(px, 0)).rgb;
+        ambient += envMIS;
+    }
+#endif
+
     // ── Final ─────────────────────────────────────────────────────────────
-    // NOTE: Environment MIS path (alias table importance sampling) is implemented
-    // in envmap_sampling.hlsli but requires temporal accumulation to converge
-    // without noise. The infrastructure (EnvMapSampler, alias table, luminance
-    // pyramid) is ready — wire temporal buffer then add MIS loop here.
     float3 color = Lo + ambient + emissive;
     return float4(max(color, 0.0), 1.0);
 }

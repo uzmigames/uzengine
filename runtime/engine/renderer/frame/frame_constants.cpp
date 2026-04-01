@@ -76,6 +76,9 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
         perFrame.envSamplerLumWidth       = m_envMapSampler->GetLuminanceWidth();
         perFrame.envSamplerLumHeight      = m_envMapSampler->GetLuminanceHeight();
     }
+    if (m_envMISPass && m_envMISPass->IsInitialized()) {
+        perFrame.envMisAccumulatedSrv = m_envMISPass->GetAccumulatedSrv();
+    }
 
     // ── Extract SkyLight from SkyLightComponent (standard) ──────────
     // Must be done BEFORE SH upload so intensity can be baked into the SH coefficients.

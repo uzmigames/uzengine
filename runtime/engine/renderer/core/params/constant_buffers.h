@@ -213,8 +213,10 @@ struct PerFrameCB {
     uint32_t envSamplerLumWidth = 0;
     /// Height of luminance pyramid mip 0.
     uint32_t envSamplerLumHeight = 0;
+    /// SRV index for temporally-accumulated env MIS specular (RGBA16F). UINT32_MAX = disabled.
+    uint32_t envMisAccumulatedSrv = UINT32_MAX;
 
-    float    _pad2[16] = {};                        ///< Pad to 768 bytes.
+    float    _pad2[15] = {};                        ///< Pad to 768 bytes.
 };
 
 static_assert(sizeof(PerFrameCB) == 768, "PerFrameCB must be 768 bytes (D3D12 CB alignment)");

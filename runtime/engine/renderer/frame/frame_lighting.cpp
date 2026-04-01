@@ -72,6 +72,25 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
     // RegisterSSGIPasses(rgBuilder, ctx);
     // RegisterSDFGIPasses(rgBuilder, ctx);
     // RegisterSSRPasses(rgBuilder, ctx);
+    // ── Env MIS temporal accumulation (before deferred lighting) ────────
+    if (m_envMISPass && m_envMISPass->IsInitialized()
+        && m_envMapSampler && m_envMapSampler->IsReady()) {
+        EnvMISPass::DispatchParams misParams;
+        misParams.albedoSrvIdx     = m_gbuffer.albedoSRV;
+        misParams.normalSrvIdx     = m_gbuffer.normalSRV;
+        misParams.depthSrvIdx      = m_gbuffer.depthSRV;
+        misParams.positionSrvIdx   = m_gbuffer.positionWSSRV;
+        misParams.envCubemapSrvIdx = m_hdriActive ? m_hdriCubemapSrv : m_skyCubemapSrv;
+        misParams.frameIndex       = ctx.frameIndex;
+        misParams.temporalAlpha    = 0.05f; // 95% history, 5% new → ~20 frames to converge
+
+        auto* cmdList = m_device->CreateCommandList();
+        cmdList->Begin();
+        m_envMISPass->Execute(cmdList, *m_envMapSampler, misParams);
+        cmdList->End();
+        cmdList->Execute();
+    }
+
     RegisterDeferredLightingPass(rgBuilder, ctx);
     RegisterAtmosphereFogCloudPasses(rgBuilder, ctx);
     // RegisterSSGIPrevColorCopy(rgBuilder, ctx);

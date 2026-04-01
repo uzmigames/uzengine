@@ -489,6 +489,14 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         UZ_LOG(Renderer, Warning, "SceneRenderer: EnvMapSampler init failed (MIS disabled)");
     }
 
+    // ── Environment MIS Temporal Accumulation ────────────────────────
+    m_envMISPass = std::make_unique<EnvMISPass>();
+    if (m_envMISPass->Init(device, m_shaderMgr.get(), width, height)) {
+        UZ_LOG(Renderer, Info, "SceneRenderer: EnvMISPass initialized ({}x{})", width, height);
+    } else {
+        UZ_LOG(Renderer, Warning, "SceneRenderer: EnvMISPass init failed (env MIS disabled)");
+    }
+
     // ── Reflection Probes ─────────────────────────────────────────────
     if (m_iblBaker) {
         if (m_reflectionProbes.Init(device, m_iblBaker.get())) {
@@ -1126,7 +1134,8 @@ void SceneRenderer::Shutdown() {
     // ── Reflection Probes (must shut down before IBLBaker it references) ──
     m_reflectionProbes.Shutdown();
 
-    // ── Env Map Sampler ──────────────────────────────────────────────────
+    // ── Env MIS Pass + Sampler ──────────────────────────────────────────
+    if (m_envMISPass) m_envMISPass->Shutdown();
     if (m_envMapSampler) m_envMapSampler->Shutdown();
 
     // ── IBL resources ──────────────────────────────────────────────────

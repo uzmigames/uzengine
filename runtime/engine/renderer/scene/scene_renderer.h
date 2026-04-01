@@ -41,6 +41,7 @@
 #include "ibl/ibl_baker.h"
 #include "ibl/env_map_sampler.h"
 #include "ibl/sh_projection.h"
+#include "env_mis_pass.h"
 #include "probes/reflection_probe_renderer.h"
 #include "postprocess/auto_exposure.h"
 #include "postprocess/bloom_pass.h"
