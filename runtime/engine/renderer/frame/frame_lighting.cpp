@@ -72,24 +72,14 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
     // RegisterSSGIPasses(rgBuilder, ctx);
     // RegisterSDFGIPasses(rgBuilder, ctx);
     // RegisterSSRPasses(rgBuilder, ctx);
-    // ── Env MIS temporal accumulation (before deferred lighting) ────────
-    if (m_envMISPass && m_envMISPass->IsInitialized()
-        && m_envMapSampler && m_envMapSampler->IsReady()) {
-        EnvMISPass::DispatchParams misParams;
-        misParams.albedoSrvIdx     = m_gbuffer.albedoSRV;
-        misParams.normalSrvIdx     = m_gbuffer.normalSRV;
-        misParams.depthSrvIdx      = m_gbuffer.depthSRV;
-        misParams.positionSrvIdx   = m_gbuffer.positionWSSRV;
-        misParams.envCubemapSrvIdx = m_hdriActive ? m_hdriCubemapSrv : m_skyCubemapSrv;
-        misParams.frameIndex       = ctx.frameIndex;
-        misParams.temporalAlpha    = 0.05f; // 95% history, 5% new → ~20 frames to converge
-
-        auto* cmdList = m_device->CreateCommandList();
-        cmdList->Begin();
-        m_envMISPass->Execute(cmdList, *m_envMapSampler, misParams);
-        cmdList->End();
-        cmdList->Execute();
-    }
+    // ── Env MIS temporal accumulation ──────────────────────────────────
+    // DISABLED: dispatching a separate command list outside the render graph
+    // causes GPU stalls and potential resource state conflicts (GBuffer textures
+    // may not be in ShaderResource state). Needs to be integrated as a proper
+    // render graph compute pass with declared resource dependencies.
+    // Infrastructure ready: EnvMISPass, env_mis_temporal_cs.hlsl, ping-pong buffers.
+    // TODO: register as rgBuilder.AddComputePass("EnvMIS_Temporal", ...) with
+    //       pb.Read(albedo/normal/depth/position) dependencies.
 
     RegisterDeferredLightingPass(rgBuilder, ctx);
     RegisterAtmosphereFogCloudPasses(rgBuilder, ctx);
