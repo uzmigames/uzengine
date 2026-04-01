@@ -9,19 +9,33 @@
 #include "../material/brdf.hlsli"
 
 /// Evaluate L2 spherical harmonics for irradiance.
-/// Matches sh_projection.cpp compact 7-float4 packing.
+///
+/// Uses compact 7-float4 packing from sh_projection.cpp PackSHToCompactFormat().
+/// This is the same evaluation as UE5's GetSkySHDiffuse() — the packing
+/// pre-multiplies cosine convolution weights, so evaluation is just dot products.
+///
+/// @ref Sloan 2008 "Stupid Spherical Harmonics (SH) Tricks"
+/// @ref UE5 ReflectionEnvironmentShared.ush — GetSkySHDiffuse()
 float3 EvalSH_L2(float3 N, float4 shCoeffs[7])
 {
-    // L0
-    float3 result = shCoeffs[0].xyz * 0.282095;
-    // L1
-    result += shCoeffs[1].xyz * 0.488603 * N.y;
-    result += shCoeffs[2].xyz * 0.488603 * N.z;
-    result += shCoeffs[3].xyz * 0.488603 * N.x;
-    // L2
-    result += shCoeffs[4].xyz * 1.092548 * (N.x * N.y);
-    result += shCoeffs[5].xyz * 1.092548 * (N.y * N.z);
-    result += shCoeffs[6].xyz * 0.315392 * (3.0 * N.z * N.z - 1.0);
+    float4 NormalVector = float4(N, 1.0);
+
+    // L0 + L1: dot(coeffs[channel], (N, 1))
+    float3 result;
+    result.r = dot(shCoeffs[0], NormalVector);
+    result.g = dot(shCoeffs[1], NormalVector);
+    result.b = dot(shCoeffs[2], NormalVector);
+
+    // L2: dot(coeffs[channel], N.xyzz * N.yzzx)
+    float4 vB = NormalVector.xyzz * NormalVector.yzzx;
+    result.r += dot(shCoeffs[3], vB);
+    result.g += dot(shCoeffs[4], vB);
+    result.b += dot(shCoeffs[5], vB);
+
+    // L2 last term: coeffs[6].xyz * (N.x^2 - N.y^2)
+    float vC = N.x * N.x - N.y * N.y;
+    result += shCoeffs[6].xyz * vC;
+
     return max(result, 0.0);
 }
 
