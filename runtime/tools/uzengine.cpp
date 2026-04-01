@@ -18,6 +18,8 @@
 #include "shader_compiler_fxc.h"
 #include "shader_manager.h"
 
+#include <spng.h>
+#include <jpeglib.h>
 #include <stb_image.h>
 
 #include "../engine/app/project_loader.h"
@@ -222,8 +224,75 @@ static uint32_t LoadImageToGPU(IRHIDevice* device, const std::string& path,
     }
 
     int w = 0, h = 0, ch = 0;
-    uint8_t* pixels = stbi_load_from_memory(data.data(), static_cast<int>(data.size()),
-                                             &w, &h, &ch, 4);
+    uint8_t* pixels = nullptr;
+
+    // PNG: spng (SIMD-accelerated)
+    static constexpr uint8_t kPngSig[8] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+    if (data.size() >= 8 && std::memcmp(data.data(), kPngSig, 8) == 0) {
+        spng_ctx* ctx = spng_ctx_new(0);
+        if (ctx) {
+            spng_set_png_buffer(ctx, data.data(), data.size());
+            struct spng_ihdr ihdr;
+            if (spng_get_ihdr(ctx, &ihdr) == SPNG_OK) {
+                size_t outSize = 0;
+                if (spng_decoded_image_size(ctx, SPNG_FMT_RGBA8, &outSize) == SPNG_OK) {
+                    auto* px = static_cast<uint8_t*>(std::malloc(outSize));
+                    if (px && spng_decode_image(ctx, px, outSize, SPNG_FMT_RGBA8, 0) == SPNG_OK) {
+                        w = static_cast<int>(ihdr.width);
+                        h = static_cast<int>(ihdr.height);
+                        pixels = px;
+                    } else {
+                        std::free(px);
+                    }
+                }
+            }
+            spng_ctx_free(ctx);
+        }
+    }
+
+    // JPEG: libjpeg-turbo
+    if (!pixels && data.size() >= 2 && data[0] == 0xFF && data[1] == 0xD8) {
+        struct jpeg_decompress_struct cinfo;
+        struct jpeg_error_mgr jerr;
+        cinfo.err = jpeg_std_error(&jerr);
+        jpeg_create_decompress(&cinfo);
+        jpeg_mem_src(&cinfo, data.data(), static_cast<unsigned long>(data.size()));
+        if (jpeg_read_header(&cinfo, TRUE) == JPEG_HEADER_OK) {
+            cinfo.out_color_space = JCS_RGB;
+            jpeg_start_decompress(&cinfo);
+            w = static_cast<int>(cinfo.output_width);
+            h = static_cast<int>(cinfo.output_height);
+            const size_t rgbaSize = static_cast<size_t>(w) * h * 4;
+            auto* px = static_cast<uint8_t*>(std::malloc(rgbaSize));
+            auto* rgbRow = static_cast<uint8_t*>(std::malloc(static_cast<size_t>(w) * 3));
+            if (px && rgbRow) {
+                unsigned char* rowPtr = rgbRow;
+                while (cinfo.output_scanline < cinfo.output_height) {
+                    jpeg_read_scanlines(&cinfo, &rowPtr, 1);
+                    uint8_t* dst = px + static_cast<size_t>(cinfo.output_scanline - 1) * w * 4;
+                    for (int x = 0; x < w; ++x) {
+                        dst[x * 4 + 0] = rgbRow[x * 3 + 0];
+                        dst[x * 4 + 1] = rgbRow[x * 3 + 1];
+                        dst[x * 4 + 2] = rgbRow[x * 3 + 2];
+                        dst[x * 4 + 3] = 255;
+                    }
+                }
+                pixels = px;
+            } else {
+                std::free(px);
+            }
+            std::free(rgbRow);
+            jpeg_finish_decompress(&cinfo);
+        }
+        jpeg_destroy_decompress(&cinfo);
+    }
+
+    // Fallback: stb_image (TGA, BMP, HDR, etc.)
+    if (!pixels) {
+        pixels = stbi_load_from_memory(data.data(), static_cast<int>(data.size()),
+                                       &w, &h, &ch, 4);
+    }
+
     if (!pixels) {
         UZ_LOG(Engine, Error, "FLIP: failed to decode '{}'", path);
         return UINT32_MAX;
@@ -257,7 +326,7 @@ static uint32_t LoadImageToGPU(IRHIDevice* device, const std::string& path,
         std::memcpy(mapped + row * alignedRowPitch, pixels + row * rowPitch, rowPitch);
     }
     device->UnmapBuffer(staging);
-    stbi_image_free(pixels);
+    std::free(pixels);  // works for spng, jpeglib, and stbi (all use malloc)
 
     auto* cmdList = device->CreateCommandList();
     cmdList->Begin();

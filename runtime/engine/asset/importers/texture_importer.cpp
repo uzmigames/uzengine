@@ -11,6 +11,8 @@
 
 #include <ProcessDxtc.hpp>
 #include <bc7enc.h>
+#include <spng.h>
+#include <jpeglib.h>
 #include <stb_image.h>
 
 #include <algorithm>
@@ -238,21 +240,91 @@ AssetImportResult TextureImporter::Import(
         return result;
     }
 
-    // Decode image with stb_image
+    // Decode image — try spng for PNG, jpeglib for JPEG, stb_image for the rest.
     int width = 0;
     int height = 0;
     int channels = 0;
 
-    // RAII wrapper for stbi-allocated memory
-    auto stbiDeleter = [](unsigned char* p) { if (p) stbi_image_free(p); };
-    std::unique_ptr<unsigned char, decltype(stbiDeleter)> pixels(
-        stbi_load_from_memory(
+    auto freeDeleter = [](unsigned char* p) { if (p) std::free(p); };
+    std::unique_ptr<unsigned char, decltype(freeDeleter)> pixels(nullptr, freeDeleter);
+
+    // PNG: spng (SIMD-accelerated, ~3x faster than stb_image)
+    static constexpr uint8_t kPngSig[8] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+    if (sourceData.size() >= 8 && std::memcmp(sourceData.data(), kPngSig, 8) == 0) {
+        spng_ctx* ctx = spng_ctx_new(0);
+        if (ctx) {
+            spng_set_png_buffer(ctx, sourceData.data(), sourceData.size());
+            struct spng_ihdr ihdr;
+            if (spng_get_ihdr(ctx, &ihdr) == SPNG_OK) {
+                size_t outSize = 0;
+                if (spng_decoded_image_size(ctx, SPNG_FMT_RGBA8, &outSize) == SPNG_OK) {
+                    auto* px = static_cast<unsigned char*>(std::malloc(outSize));
+                    if (px && spng_decode_image(ctx, px, outSize, SPNG_FMT_RGBA8, 0) == SPNG_OK) {
+                        width  = static_cast<int>(ihdr.width);
+                        height = static_cast<int>(ihdr.height);
+                        pixels.reset(px);
+                    } else {
+                        std::free(px);
+                    }
+                }
+            }
+            spng_ctx_free(ctx);
+        }
+    }
+
+    // JPEG: libjpeg-turbo (SIMD-accelerated)
+    if (!pixels && sourceData.size() >= 2 &&
+        sourceData[0] == 0xFF && sourceData[1] == 0xD8) {
+        struct jpeg_decompress_struct cinfo;
+        struct jpeg_error_mgr jerr;
+        cinfo.err = jpeg_std_error(&jerr);
+        jpeg_create_decompress(&cinfo);
+        jpeg_mem_src(&cinfo, sourceData.data(),
+                     static_cast<unsigned long>(sourceData.size()));
+        if (jpeg_read_header(&cinfo, TRUE) == JPEG_HEADER_OK) {
+            cinfo.out_color_space = JCS_RGB;
+            jpeg_start_decompress(&cinfo);
+            width  = static_cast<int>(cinfo.output_width);
+            height = static_cast<int>(cinfo.output_height);
+            const size_t rgbaSize = static_cast<size_t>(width) * height * 4;
+            auto* px = static_cast<unsigned char*>(std::malloc(rgbaSize));
+            if (px) {
+                auto* rgbRow = static_cast<unsigned char*>(
+                    std::malloc(static_cast<size_t>(width) * 3));
+                if (rgbRow) {
+                    unsigned char* rowPtr = rgbRow;
+                    while (cinfo.output_scanline < cinfo.output_height) {
+                        jpeg_read_scanlines(&cinfo, &rowPtr, 1);
+                        unsigned char* dst = px + static_cast<size_t>(
+                            cinfo.output_scanline - 1) * width * 4;
+                        for (int x = 0; x < width; ++x) {
+                            dst[x * 4 + 0] = rgbRow[x * 3 + 0];
+                            dst[x * 4 + 1] = rgbRow[x * 3 + 1];
+                            dst[x * 4 + 2] = rgbRow[x * 3 + 2];
+                            dst[x * 4 + 3] = 255;
+                        }
+                    }
+                    std::free(rgbRow);
+                    pixels.reset(px);
+                } else {
+                    std::free(px);
+                }
+            }
+            jpeg_finish_decompress(&cinfo);
+        }
+        jpeg_destroy_decompress(&cinfo);
+    }
+
+    // Fallback: stb_image (TGA, BMP, HDR, PSD, GIF, etc.)
+    if (!pixels) {
+        auto* px = stbi_load_from_memory(
             sourceData.data(), static_cast<int>(sourceData.size()),
-            &width, &height, &channels, kDesiredChannels),
-        stbiDeleter);
+            &width, &height, &channels, kDesiredChannels);
+        if (px) pixels.reset(px);
+    }
 
     if (!pixels) {
-        result.error = std::string("stb_image decode failed: ") + stbi_failure_reason();
+        result.error = std::string("Image decode failed for '") + sourceName + "'";
         UZ_LOG(Asset, Error, "Import failed for '{}': {}", sourceName, result.error);
         return result;
     }
