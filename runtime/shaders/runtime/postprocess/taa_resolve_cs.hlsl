@@ -325,9 +325,14 @@ void main(uint2 DTid : SV_DispatchThreadID)
     blendFinal = lerp(blendFinal, 0.2, saturate(velocityMag / 40.0));
 
     /// @ref Karis 2014 — anti-flicker minimum contribution guard
+    /// Added epsilon to prevent near-zero denominator in static scenes.
+    /// Without epsilon, abs(lumaFiltered - lumaHistory) → 0 when scene is static,
+    /// causing blendFinal → 1.0 which reintroduces jitter (current frame dominates).
     float lumaFiltered = filteredColor.x;
     float lumaHistory  = clampedHistory.x;
-    blendFinal = max(blendFinal, saturate(0.01 * lumaHistory / abs(lumaFiltered - lumaHistory)));
+    float lumaDiff = abs(lumaFiltered - lumaHistory);
+    float antiFlicker = saturate(0.01 * lumaHistory / max(lumaDiff, 0.001));
+    blendFinal = max(blendFinal, min(antiFlicker, 0.3));
 
     // NaN guard
     blendFinal = -min(-blendFinal, 0.0);
