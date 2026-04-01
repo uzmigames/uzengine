@@ -61,19 +61,36 @@ collision with depth-buffer normals. Müller et al. 2006 "Position Based Dynamic
 - [x] 5.1 Ground plane collision (Z=0) already implemented in `particle_update_cs.hlsl`
   via `groundCollision`/`restitution` fields. Verified `VFXUpdateCB` struct (208 bytes),
   `VFXEmitterConfig`, and wiring in `DispatchComputeUpdate()` all correct.
-- [x] 5.2 Updated "Sparks" preset in `runtime/demos/vfx_viewport/vfx_viewport_vfx.cpp`:
-  `groundCollision=1`, `restitution=0.5f` — fairly elastic bounce (hot metal spark energy).
-  All intermediate fields from `blendMode` → `groundCollision` explicitly initialized to
-  preserve aggregate initialization correctness.
-- [x] 5.3 Updated "Explosion Debris" preset: `groundCollision=1`, `restitution=0.3f` —
-  low restitution for heavy debris losing most energy on impact.
-  @ref Müller 2006 "Position Based Dynamics" — restitution + friction response.
+- [x] 5.2 Updated "Sparks" preset: `groundCollision=1`, `restitution=0.5f`,
+  `collisionResponse=0` (Bounce), `collisionFriction=0.7f`.
+- [x] 5.3 Updated "Explosion Debris" preset: `groundCollision=1`, `restitution=0.3f`,
+  `collisionResponse=0` (Bounce), `collisionFriction=0.8f`.
+- [x] 5.4 Updated "Lit Debris" preset: `groundCollision=1`, `restitution=0.0f`,
+  `collisionResponse=1` (Stick) — lit debris embeds into surface on impact.
+- [x] 5.5 Added `collisionResponse` (uint32, 0=Bounce/1=Stick/2=Kill) and
+  `collisionFriction` (float, default 0.8) to `VFXEmitterConfig` in `vfx_viewport_vfx.h`.
+- [x] 5.6 Replaced `_padNewFeatures0/1` in `VFXUpdateCB` with `collisionResponse` +
+  `collisionFriction` (sizeof stays 288 bytes, static_assert verified by demo build).
+- [x] 5.7 Added `collisionResponse`/`collisionFriction` cbuffer fields to
+  `particle_update_cs.hlsl` HLSL cbuffer (replacing `_padNewFeatures0/1`).
+- [x] 5.8 Rewrote ground collision block in `particle_update_cs.hlsl`:
+  Bounce (reflect Z + friction), Stick (pos.z=0.001, vel=0), Kill (age=lifespan + recycle).
+  Friction now uses `collisionFriction` instead of hardcoded 0.8f.
+- [x] 5.9 Updated CPU CB fill in `vfx_viewport_vfx.cpp:DispatchComputeUpdate()` to pass
+  `cb.collisionResponse` and `cb.collisionFriction` from config.
+- [x] 5.10 Added `kCollisionResponseNames[]` (Bounce/Stick/Kill) and two new param entries
+  to `vfx_parameter_panel.cpp` (Coll. Response enum + Coll. Friction slider).
+- [x] 5.11 Added collision response dropdown + friction slider to `vfx_editor_ui.cpp`
+  ground collision section with `kCollisionResponseNames` table.
+- [x] 5.12 Updated `vfx_preset_serializer.cpp` write+read paths for
+  `collisionResponse` and `collisionFriction`.
+- [x] 5.13 Updated `vfx_module_stack.cpp` ground collision log to print new fields.
 
 ## 6. Visual Verification
 
 - [x] 6.1 Built runtime (runtime.lib compiled: 24/27 build steps succeeded — test_runtime
   linker failure is pre-existing, unrelated to demo changes). Built
-  `runtime/demos/vfx_viewport/` successfully: `vfx_viewport.exe` produced.
+  `runtime/demos/vfx_viewport/` successfully: `vfx_viewport.exe` produced with zero errors.
 
 ## 7. Tasks Update
 

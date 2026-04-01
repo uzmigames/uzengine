@@ -57,6 +57,7 @@ struct PSInput {
     float  lifetime       : TEXCOORD3;   ///< Particle total lifetime in seconds.
     uint   particleIdx    : TEXCOORD4;   ///< Particle index (reserved for future use).
     float4 prevPositionCS : TEXCOORD5;   ///< Previous frame clip-space position (for motion vector PS).
+    float  speedFactor    : TEXCOORD6;   ///< Normalized speed [0,1] from VS for color-by-speed.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -170,6 +171,13 @@ cbuffer VFXBillboardCB : register(b2) {
     // Repurposed from _alignPad — screenSpaceSizeEnabled (declared for layout, not read by PS).
     // @ref Valve 2006 "Rendering in Left 4 Dead" — constant-screen-size sprites
     uint     screenSpaceSizeEnabled; ///< 0=world-space (default), 1=screen-space. Not read by PS.
+    // ── Color by speed (VS→PS, 16 bytes) ──────────────────────────────────
+    /// When non-zero, the PS uses input.speedFactor instead of normalizedAge
+    /// to drive the colorLifeStart→End lerp (or LUT sample).
+    uint     colorBySpeedEnabled;   ///< 0=off, 1=on. PS uses speed instead of age for color lerp.
+    uint     _cbsPad0;              ///< Padding for 16-byte alignment.
+    uint     _cbsPad1;              ///< Padding for 16-byte alignment.
+    uint     _cbsPad2;              ///< Padding for 16-byte alignment.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -260,18 +268,25 @@ float4 main(PSInput input) : SV_Target {
     // normalizedAge in [0,1] maps the particle's age to its full lifespan.
     float normalizedAge = saturate(input.age / max(input.lifetime, 0.0001f));
 
+    // ── Color by speed override ──
+    // When colorBySpeedEnabled is non-zero, replace normalizedAge with the
+    // VS-computed speed factor for the color lerp/LUT lookup. This causes
+    // colorLifeStart to represent "slow" color and colorLifeEnd "fast" color
+    // (or the LUT to be indexed by speed instead of age).
+    float colorParam = (colorBySpeedEnabled != 0u) ? input.speedFactor : normalizedAge;
+
     /// @ref GDC 2019 "Niagara: Building the Future of FX in Unreal Engine"
-    ///     — LUT sample at normalizedAge replaces linear lerp when ramp is available
+    ///     — LUT sample at colorParam replaces linear lerp when ramp is available
     float4 colorLifeScale;
 #ifdef UZ_BINDLESS
     if (colorRampLutSrvIndex != 0xFFFFFFFF) {
         Texture2D<float4> rampTex = ResourceDescriptorHeap[colorRampLutSrvIndex];
-        colorLifeScale = rampTex.SampleLevel(depthSampler, float2(normalizedAge, 0.5f), 0);
+        colorLifeScale = rampTex.SampleLevel(depthSampler, float2(colorParam, 0.5f), 0);
     } else {
-        colorLifeScale = lerp(colorLifeStart, colorLifeEnd, normalizedAge);
+        colorLifeScale = lerp(colorLifeStart, colorLifeEnd, colorParam);
     }
 #else
-    colorLifeScale = lerp(colorLifeStart, colorLifeEnd, normalizedAge);
+    colorLifeScale = lerp(colorLifeStart, colorLifeEnd, colorParam);
 #endif
 
     // ── Material output: emissive + opacity (Niagara Unlit pattern) ──

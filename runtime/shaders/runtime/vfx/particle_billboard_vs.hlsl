@@ -90,6 +90,7 @@ struct VSOutput {
     float  lifetime       : TEXCOORD3;   ///< Particle total lifetime in seconds.
     uint   particleIdx    : TEXCOORD4;   ///< Particle index (reserved for future use).
     float4 prevPositionCS : TEXCOORD5;   ///< Previous frame clip-space position for TAA motion vectors.
+    float  speedFactor    : TEXCOORD6;   ///< Normalized speed [0,1] = saturate(speed / speedRangeMax). Used by PS for color-by-speed.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -218,6 +219,12 @@ cbuffer VFXBillboardCB : register(b2) {
     ///
     /// @ref Valve 2006 "Rendering in Left 4 Dead" — constant-screen-size sprites
     uint     screenSpaceSizeEnabled; ///< 0=world-space (default), 1=screen-space constant pixel size.
+    // ── Color by speed (VS→PS, 16 bytes) ──────────────────────────────────
+    /// When non-zero, VS passes speed-normalized factor to PS for color lerp.
+    uint     colorBySpeedEnabled;   ///< 0=off, 1=on. PS uses speed instead of age for color lerp.
+    uint     _cbsPad0;              ///< Padding for 16-byte alignment.
+    uint     _cbsPad1;              ///< Padding for 16-byte alignment.
+    uint     _cbsPad2;              ///< Padding for 16-byte alignment.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -408,6 +415,7 @@ VSOutput main(uint vertexID : SV_VertexID) {
         output.lifetime       = 0;
         output.particleIdx    = particleID;
         output.prevPositionCS = float4(0, 0, 0, 1);
+        output.speedFactor    = 0;
         return output;
     }
 
@@ -622,6 +630,11 @@ VSOutput main(uint vertexID : SV_VertexID) {
     output.age         = particleAge;
     output.lifetime    = particleLife;
     output.particleIdx = particleID;
+
+    // ── Color by speed: pass normalized speed factor to PS ──
+    // speed is already computed above for billboard stretching/size-by-speed.
+    // Always write the interpolant; PS checks colorBySpeedEnabled to use it.
+    output.speedFactor = saturate(speed / max(speedRangeMax, 0.001f));
 
     return output;
 }

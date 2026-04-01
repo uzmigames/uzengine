@@ -55,6 +55,14 @@ static const char* const kBoolEnumNames[] = {
 };
 static constexpr uint32_t kBoolEnumCount = 2;
 
+/// Collision response mode names for the editor dropdown.
+/// Indices match VFXEmitterConfig::collisionResponse (0=Bounce, 1=Stick, 2=Kill).
+/// @ref Müller 2006 "Position Based Dynamics" — multi-mode collision response
+static const char* const kCollisionResponseNames[] = {
+    "Bounce", "Stick", "Kill"
+};
+static constexpr uint32_t kCollisionResponseCount = 3;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Init / Shutdown
 // ─────────────────────────────────────────────────────────────────────────────
@@ -865,6 +873,24 @@ void VFXEditorUI::BuildLeftPanel(VFXEmitterConfig* cfg, float* spawnRate, uint32
                 y += kRowH + 2.0f;
                 Slider(cx, y, contentW, &cfg->restitution, 0.0f, 1.0f, "Bounce");
                 y += kSliderH + 2.0f;
+                // ── Enhanced collision response + friction (Task 3.85.0) ─────────
+                // Response: Bounce (reflect with restitution), Stick (rest on surface), Kill (die on contact).
+                // Friction: tangential (XY) velocity damping on bounce contact [0=full stop, 1=frictionless].
+                // @ref Müller 2006 "Position Based Dynamics" — multi-mode collision response
+                // @ref Bender 2014 "Position-Based Simulation Methods in Computer Graphics" — friction
+                DropdownTrigger(cx, y, contentW, &cfg->collisionResponse,
+                                kCollisionResponseNames, kCollisionResponseCount, "Response");
+                y += kRowH + 2.0f;
+                Slider(cx, y, contentW, &cfg->collisionFriction, 0.0f, 1.0f, "Friction");
+                y += kSliderH + 2.0f;
+                Slider(cx, y, contentW, &cfg->dragCoefficient, 0.0f, 10.0f, "Drag");
+                y += kSliderH + 2.0f;
+                Slider(cx, y, contentW, &cfg->accelX, -50.0f, 50.0f, "AccelX");
+                y += kSliderH + 2.0f;
+                Slider(cx, y, contentW, &cfg->accelY, -50.0f, 50.0f, "AccelY");
+                y += kSliderH + 2.0f;
+                Slider(cx, y, contentW, &cfg->accelZ, -50.0f, 50.0f, "AccelZ");
+                y += kSliderH + 2.0f;
                 break;
             }
             case 5: { // Forces
@@ -900,6 +926,29 @@ void VFXEditorUI::BuildLeftPanel(VFXEmitterConfig* cfg, float* spawnRate, uint32
                 DropdownTrigger(cx, y, contentW, &cfg->litMode,
                                 kLitModeNames, kLitModeCount, "Lit");
                 y += kRowH + 2.0f;
+                Slider(cx, y, contentW, &cfg->cameraOffset, -5.0f, 5.0f, "CamOff");
+                y += kSliderH + 2.0f;
+                Slider(cx, y, contentW, &cfg->pivotOffsetX, -1.0f, 1.0f, "PivotX");
+                y += kSliderH + 2.0f;
+                Slider(cx, y, contentW, &cfg->pivotOffsetY, -1.0f, 1.0f, "PivotY");
+                y += kSliderH + 2.0f;
+                DropdownTrigger(cx, y, contentW, &cfg->screenSpaceSizeEnabled,
+                                kBoolEnumNames, kBoolEnumCount, "ScrSize");
+                y += kRowH + 2.0f;
+                Slider(cx, y, contentW, &cfg->screenSpacePixelSize, 1.0f, 64.0f, "PxSize");
+                y += kSliderH + 2.0f;
+                DropdownTrigger(cx, y, contentW, &cfg->colorBySpeedEnabled,
+                                kBoolEnumNames, kBoolEnumCount, "ClrSpd");
+                y += kRowH + 2.0f;
+                Slider(cx, y, contentW, &cfg->emitterDuration, 0.0f, 30.0f, "Duration");
+                y += kSliderH + 2.0f;
+                {
+                    float fLoop = static_cast<float>(cfg->loopCount);
+                    if (Slider(cx, y, contentW, &fLoop, 0.0f, 100.0f, "Loops")) {
+                        cfg->loopCount = static_cast<uint32_t>(std::clamp(fLoop, 0.0f, 100.0f));
+                    }
+                }
+                y += kSliderH + 2.0f;
                 break;
             }
             default: break;
@@ -965,8 +1014,14 @@ void VFXEditorUI::BuildRightPanel(VFXEmitterConfig* cfg) {
         {"Accel Z",          &cfg->accelZ,                   -50.0f,  50.0f},
         {"Rot Life Start",   &cfg->rotationOverLifeStart,    -20.0f,  20.0f},
         {"Rot Life End",     &cfg->rotationOverLifeEnd,      -20.0f,  20.0f},
+        {"Drag",             &cfg->dragCoefficient,           0.0f,   10.0f},
+        {"Camera Offset",    &cfg->cameraOffset,             -5.0f,   5.0f},
+        {"Pivot X",          &cfg->pivotOffsetX,             -1.0f,   1.0f},
+        {"Pivot Y",          &cfg->pivotOffsetY,             -1.0f,   1.0f},
+        {"Screen Px Size",   &cfg->screenSpacePixelSize,      1.0f,  64.0f},
+        {"Emitter Dur",      &cfg->emitterDuration,           0.0f,  30.0f},
     };
-    constexpr int kModuleCount = 18;
+    constexpr int kModuleCount = 24;
 
     for (int i = 0; i < kModuleCount; ++i) {
         if (y > static_cast<float>(m_screenH) - kToolbarH - kRowH) break;

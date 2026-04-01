@@ -226,8 +226,11 @@ cbuffer VFXUpdateConstants : register(b1) {
 
     float    accelY;                     ///< Per-axis acceleration Y (m/s^2).         272
     float    accelZ;                     ///< Per-axis acceleration Z (m/s^2).         276
-    uint     _padNewFeatures0;           ///<                                          280
-    uint     _padNewFeatures1;           ///<                                          284
+    // ── Enhanced collision response ────────────────────────────────────── offset 280
+    /// @ref Müller 2006 "Position Based Dynamics" — multi-mode collision response
+    /// @ref Bender 2014 "Position-Based Simulation Methods in Computer Graphics" — friction model
+    uint     collisionResponse;          ///< 0=Bounce, 1=Stick, 2=Kill.               280
+    float    collisionFriction;          ///< Tangential friction [0,1].                284
 #endif
 };
 
@@ -518,20 +521,65 @@ void main(uint3 dtid : SV_DispatchThreadID)
 #endif // UZ_BINDLESS
 
     // ── Ground plane collision (Z=0 in Z-up, optional) ───────────────────
-    // A simple inelastic bounce with configurable restitution coefficient.
-    // Applies friction to the tangential (XY) velocity component on contact.
-    // Guarded by groundCollision != 0 to have zero cost when disabled.
+    // Three response modes controlled by collisionResponse:
+    //   0 = Bounce: reflect Z with restitution, apply friction to XY tangential velocity.
+    //   1 = Stick:  position clamped to surface, velocity zeroed — particle rests on ground.
+    //   2 = Kill:   age set to lifespan, particle recycled on the death path below.
+    //
+    // Friction uses collisionFriction instead of a hardcoded constant so it can
+    // differ per-emitter (e.g. ice surface vs. rough terrain). The coefficient
+    // is in [0,1] where 1 = no friction (frictionless), 0 = full stop on contact.
+    // This matches the Coulomb friction impulse model described in Müller 2006.
     //
     /// @ref Müller 2006 "Position Based Dynamics" — restitution + friction response
+    /// @ref Bender 2014 "Position-Based Simulation Methods in Computer Graphics" — friction impulse
+    /// @constants surfaceEpsilon=0.001 (prevents Z=0 clipping precision issues)
+    /// @deviations NONE
 #ifdef UZ_BINDLESS
     if (groundCollision != 0u && pos.z < 0.0f) {
-        // Reflect Z position above ground to prevent tunnelling.
-        pos.z = abs(pos.z) * 0.01f;
-        // Reflect Z velocity with restitution (energy loss on bounce).
-        vel.z = abs(vel.z) * restitution;
-        // Friction damps XY velocity on contact (models sliding friction).
-        vel.x *= 0.8f;
-        vel.y *= 0.8f;
+        if (collisionResponse == 0u) {
+            // ── Bounce ────────────────────────────────────────────────────
+            // Reflect Z position above ground (prevent tunnelling through plane).
+            // The small epsilon (0.01 factor on abs(pos.z)) pulls the particle
+            // back just above the surface rather than exactly to Z=0, avoiding
+            // repeated sub-surface penetrations caused by floating-point noise.
+            pos.z = abs(pos.z) * 0.01f;
+            // Reflect Z velocity and scale by restitution coefficient.
+            vel.z = abs(vel.z) * restitution;
+            // Apply tangential friction to XY (Coulomb impulse approximation).
+            vel.xy *= collisionFriction;
+        } else if (collisionResponse == 1u) {
+            // ── Stick ─────────────────────────────────────────────────────
+            // Clamp particle to a small positive Z to keep it on the surface
+            // without falling through. The epsilon prevents Z-fighting when
+            // the particle is rendered against the ground geometry.
+            pos.z = 0.001f;
+            // Zero all velocity: the particle comes to rest on impact.
+            // This models an inelastic collision with coefficient of restitution = 0
+            // and maximum static friction (no sliding after contact).
+            vel = float3(0.0f, 0.0f, 0.0f);
+        } else {
+            // ── Kill (collisionResponse == 2) ─────────────────────────────
+            // Advance age to lifespan so the particle is treated as expired.
+            // The death path below (free-list recycle) will handle cleanup.
+            // This is equivalent to an instant-kill volume at Z=0.
+            age = lifespan;
+        }
+    }
+    // ── Kill-mode death flush ─────────────────────────────────────────────
+    // If collisionResponse==2 set age=lifespan above, recycle the particle now
+    // (mirrors the age-death logic at the top of the function). We must duplicate
+    // the recycle logic here because the age check at the top already ran for this
+    // frame (before physics integration), so we need a second death gate.
+    if (groundCollision != 0u && collisionResponse == 2u && age >= lifespan) {
+        RWStructuredBuffer<uint> freeListKill     = ResourceDescriptorHeap[freeListUavIndex];
+        RWStructuredBuffer<uint> freeListHeadKill = ResourceDescriptorHeap[freeListHeadUavIndex];
+        uint killIdx;
+        InterlockedAdd(freeListHeadKill[0], 1u, killIdx);
+        if (killIdx < maxParticles) {
+            freeListKill[killIdx] = threadIdx;
+        }
+        return; // skip write-back for this dead particle
     }
 #endif
 

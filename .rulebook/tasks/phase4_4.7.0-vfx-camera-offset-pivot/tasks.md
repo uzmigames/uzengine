@@ -34,10 +34,8 @@ Both are applied in `particle_billboard_vs.hlsl` before projection with no addit
 
 ## 4. UI — Rendering Category
 
-- [ ] 4.1 Add `cameraOffset`, `pivotOffsetX`, `pivotOffsetY` sliders to the Rendering category
-  in `vfx_parameter_panel.cpp` (or VFXEditorUI). **Not yet implemented** — no entries for
-  these fields in the Rendering category of vfx_parameter_panel.cpp or vfx_editor_ui.cpp.
-- [ ] 4.2 Add tooltips for Camera Offset and Pivot X/Y. **Not yet implemented.**
+- [x] 4.1 Added `cameraOffset` (Slider "CamOff" -5..5), `pivotOffsetX` (Slider "PivotX" -1..1), `pivotOffsetY` (Slider "PivotY" -1..1) to Rendering category in left panel. Also added to right panel modules.
+- [ ] 4.2 Tooltip text not applicable — demo UI uses AddText labels, not tooltip widgets.
 
 ## 5. Visual Verification
 

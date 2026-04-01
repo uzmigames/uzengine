@@ -25,16 +25,13 @@ This produces physically plausible arcs for projectiles, embers, and debris.
 
 ## 4. Emitter Preset
 
-- [ ] 4.1 Add an "Air Resistance" preset entry in `s_presets[]` in `vfx_viewport_vfx.cpp`.
-  **Not yet implemented** — no "Air Resistance" preset exists in s_presets[].
-- [ ] 4.2 Confirm the preset name appears in the demo preset dropdown at runtime. **Blocked on 4.1.**
+- [x] 4.1 Added "Air Resist" preset in s_presets[] using designated initializers. High dragCoefficient=3.0, zero damping, high initial velocity=15 Z, colorBySpeedEnabled=1.
+- [ ] 4.2 Confirm the preset name appears in the demo preset dropdown at runtime. Requires running demo on GPU.
 
 ## 5. UI — Physics Category
 
-- [ ] 5.1 Add `dragCoefficient` slider to the Physics category in `vfx_parameter_panel.cpp`.
-  **Not yet implemented** — Physics category has Gravity/Damping/Curl/Ground/Restitution/Orbit/
-  DeathSpawn entries but no dragCoefficient entry. The demo uses no ImGui.
-- [ ] 5.2 Add tooltip text. **Not yet implemented.**
+- [x] 5.1 Added `dragCoefficient` slider to Physics category in left panel (Slider "Drag", 0-10) and right panel modules (Slider "Drag", 0-10).
+- [ ] 5.2 Tooltip text not applicable — demo UI uses AddText labels, not tooltip widgets.
 
 ## 6. Visual Verification
 

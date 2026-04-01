@@ -428,8 +428,11 @@ void VFXModuleStackPanel::LogSubPanelInfo(int idx) const {
             break;
 
         case VFXModule::GroundCollision:
-            UZ_LOG(App, Info, "    groundCollision = %u", m_config->groundCollision);
-            UZ_LOG(App, Info, "    restitution     = %.3f", m_config->restitution);
+            UZ_LOG(App, Info, "    groundCollision    = %u", m_config->groundCollision);
+            UZ_LOG(App, Info, "    restitution        = %.3f", m_config->restitution);
+            UZ_LOG(App, Info, "    collisionResponse  = %u (0=Bounce 1=Stick 2=Kill)",
+                   m_config->collisionResponse);
+            UZ_LOG(App, Info, "    collisionFriction  = %.3f", m_config->collisionFriction);
             break;
 
         case VFXModule::SubEmitter:

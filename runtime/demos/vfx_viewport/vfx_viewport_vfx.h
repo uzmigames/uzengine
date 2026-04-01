@@ -122,9 +122,12 @@ struct VFXEmitterConfig {
     /// @ref Pharr 2023 "Physically Based Rendering" Ch.12 — Lambertian diffuse NdotL
     uint32_t litMode                  = 0;     ///< 0=Unlit (default), 1=Lit (NdotL directional + ambient).
     // ── Ground plane collision ───────────────────────────────────────────────
-    /// @ref Müller 2006 "Position Based Dynamics" — restitution coefficients
+    /// @ref Müller 2006 "Position Based Dynamics" — restitution + friction coefficients
+    /// @ref Bender 2014 "Position-Based Simulation Methods in Computer Graphics" — friction model
     uint32_t groundCollision          = 0;     ///< 0=disabled, 1=bounce off Z=0 ground plane.
     float    restitution              = 0.3f;  ///< Bounce coefficient [0,1]. 0=inelastic, 1=elastic.
+    uint32_t collisionResponse        = 0;     ///< 0=Bounce, 1=Stick (stop on surface), 2=Kill (instant death).
+    float    collisionFriction        = 0.8f;  ///< Friction coefficient [0,1] applied to tangential (XY) velocity on contact.
     // ── Orbit around point ───────────────────────────────────────────────────
     /// @ref Christensen 2018 "Fibonacci Sphere Sampling" — golden angle for uniform spread
     uint32_t orbitEnabled             = 0;     ///< 0=disabled, 1=particles orbit around emitter origin.
@@ -146,6 +149,12 @@ struct VFXEmitterConfig {
     float    sizeBySpeedMin           = 0.5f;  ///< Size multiplier at zero speed.
     float    sizeBySpeedMax           = 2.0f;  ///< Size multiplier at speedRangeMax.
     float    speedRangeMax            = 10.0f; ///< Speed that maps to t=1 for size-by-speed.
+    // ── Color by speed (billboard VS→PS) ────────────────────────────────────
+    /// When enabled, the normalized speed factor (speed / speedRangeMax) replaces
+    /// normalizedAge as the parameter for the color-over-lifetime lerp in the PS.
+    /// This reuses the existing colorLifeStart/colorLifeEnd fields without adding
+    /// extra float4 color parameters.
+    uint32_t colorBySpeedEnabled      = 0;     ///< 0=off, 1=on. PS uses speed instead of age for color lerp.
     // ── Particle light emission ─────────────────────────────────────────────
     /// When enabled, the emitter injects a dynamic point light at the emitter
     /// position using the emitter's initial color and emissive intensity.
@@ -311,7 +320,10 @@ struct VFXUpdateCB {
     float    rotationRate;            float    rotationOverLifeStart;
     float    rotationOverLifeEnd;     float    accelX;                  // 16 bytes (offset 256)
     float    accelY;                  float    accelZ;
-    uint32_t _padNewFeatures0;        uint32_t _padNewFeatures1;        // 16 bytes (offset 272)
+    // ── Enhanced collision response (repurposed from _padNewFeatures0/1) ────
+    /// @ref Müller 2006 "Position Based Dynamics" — multi-mode collision response
+    /// @ref Bender 2014 "Position-Based Simulation Methods in Computer Graphics" — friction
+    uint32_t collisionResponse;       float    collisionFriction;       // 16 bytes (offset 272)
 };
 static_assert(sizeof(VFXUpdateCB) == 288, "VFXUpdateCB must be 288 bytes (18 x float4)");
 
@@ -443,8 +455,15 @@ struct VFXBillboardCB {
     ///
     /// @ref Valve 2006 "Rendering in Left 4 Dead" — constant-screen-size sprites
     uint32_t screenSpaceSizeEnabled = 0;            ///< 0=world-space (default), 1=screen-space constant pixel size.
+    // ── Color by speed (VS→PS, 16 bytes) ──────────────────────────────────
+    /// When non-zero, the VS passes a speed-normalized-to-[0,1] factor to the PS
+    /// which replaces normalizedAge in the colorLifeStart→End lerp.
+    uint32_t colorBySpeedEnabled   = 0;             ///< 0=off, 1=on. PS uses speed instead of age for color lerp.
+    uint32_t _cbsPad0              = 0;             ///< Padding for 16-byte alignment.
+    uint32_t _cbsPad1              = 0;             ///< Padding for 16-byte alignment.
+    uint32_t _cbsPad2              = 0;             ///< Padding for 16-byte alignment.
 };
-static_assert(sizeof(VFXBillboardCB) == 288, "VFXBillboardCB must be 288 bytes (18 x float4)");
+static_assert(sizeof(VFXBillboardCB) == 304, "VFXBillboardCB must be 304 bytes (19 x float4)");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VFX GPU Particle System

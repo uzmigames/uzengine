@@ -77,23 +77,33 @@ static const VFXPreset s_presets[] = {
         /*vortexTangential*/ 0.0f, /*vortexRadial*/ 0.0f, /*vortexMaxRadius*/ 5.0f,
         /*windDir*/ {1,0,0}, /*windStrength*/ 0.0f,
         /*litMode*/ 0,
-        /*groundCollision*/ 1,  // Sparks bounce off Z=0 ground plane
-        /*restitution*/ 0.5f    // Fairly elastic bounce (hot metal spark energy)
+        /*groundCollision*/ 1,   // Sparks bounce off Z=0 ground plane
+        /*restitution*/ 0.5f,    // Fairly elastic bounce (hot metal spark energy)
+        /*collisionResponse*/ 0, // Bounce — sparks ricochet off the surface
+        /*collisionFriction*/ 0.7f // Moderate friction: sparks slide briefly then stop
     }, 800.0f },
-    { "Magic Orb", {
-        /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.8f,
-        /*velocity*/ {0.0f, 0.0f, 1.0f}, /*velVariation*/ 0.6f,
-        /*spread*/ 3.14159f, /*minLife*/ 1.0f, /*maxLife*/ 2.0f, /*size*/ 0.5f,
-        /*color*/ {0.3f, 0.6f, 1.0f, 0.9f},
-        /*gravity*/ {0.0f, 0.0f, 0.0f}, /*damping*/ 0.3f,
-        /*softFade*/ 0.3f, /*emissive*/ 0.5f,
-        /*sizeOverLife*/ 0.5f, 1.0f, 0.2f, 0.4f,
-        /*colorLifeStart*/ 0.4f, 0.8f, 1.0f, 1.0f,
-        /*colorLifeEnd*/ 0.1f, 0.2f, 0.8f, 0.0f,
-        /*facingMode*/ 0, /*customFacingX*/ 0.0f, /*customFacingY*/ 0.0f, /*customFacingZ*/ 1.0f, /*stretchFactor*/ 0.0f,
-        /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
-        /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,
-        /*blendMode*/ 1 // Additive — glowing magical particles
+    { "Magic Orb", VFXEmitterConfig{
+        .position        = {0.0f, 0.0f, 0.0f},
+        .spawnRadius     = 0.8f,
+        .spawnVelocity   = {0.0f, 0.0f, 1.0f},
+        .velocityVariation = 0.6f,
+        .spreadAngle     = 3.14159f,
+        .minLifetime     = 1.0f,
+        .maxLifetime     = 2.0f,
+        .initialSize     = 0.5f,
+        .initialColor    = {0.3f, 0.6f, 1.0f, 0.9f},
+        .gravity         = {0.0f, 0.0f, 0.0f},
+        .damping         = 0.3f,
+        .softFadeDistance = 0.3f,
+        .emissiveIntensity = 0.5f,
+        .sizeOverLifeStart    = 0.5f,
+        .sizeOverLifePeak     = 1.0f,
+        .sizeOverLifeEnd      = 0.2f,
+        .sizeOverLifePeakTime = 0.4f,
+        .colorLifeStartR = 0.4f, .colorLifeStartG = 0.8f, .colorLifeStartB = 1.0f, .colorLifeStartA = 1.0f,
+        .colorLifeEndR   = 0.1f, .colorLifeEndG   = 0.2f, .colorLifeEndB   = 0.8f, .colorLifeEndA   = 0.0f,
+        .blendMode       = 1, // Additive — glowing magical particles
+        .rotationRate    = 1.5f, // slow spin — magical particles gently rotate
     }, 300.0f },
     { "Explosion Debris", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.3f,
@@ -114,8 +124,10 @@ static const VFXPreset s_presets[] = {
         /*vortexTangential*/ 0.0f, /*vortexRadial*/ 0.0f, /*vortexMaxRadius*/ 5.0f,
         /*windDir*/ {1,0,0}, /*windStrength*/ 0.0f,
         /*litMode*/ 0,
-        /*groundCollision*/ 1,  // Debris bounces off Z=0 ground plane
-        /*restitution*/ 0.3f    // Low restitution — heavy debris loses most energy on impact
+        /*groundCollision*/ 1,   // Debris bounces off Z=0 ground plane
+        /*restitution*/ 0.3f,    // Low restitution — heavy debris loses most energy on impact
+        /*collisionResponse*/ 0, // Bounce — debris ricochets, energy is mostly absorbed
+        /*collisionFriction*/ 0.8f // High friction: debris tumbles to a slow stop
     }, 2000.0f },
     { "Fireball", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.4f,
@@ -318,8 +330,11 @@ static const VFXPreset s_presets[] = {
         /*vortexAxisOrigin*/ {0,0,0}, /*vortexAxisDir*/ {0,0,1},
         /*vortexTangential*/ 0.0f, /*vortexRadial*/ 0.0f, /*vortexMaxRadius*/ 5.0f,
         /*windDir*/ {1,0,0}, /*windStrength*/ 0.0f,
-        /*litMode*/ 1, // Lit particles — NdotL directional + ambient
-        /*groundCollision*/ 1, /*restitution*/ 0.3f // Bounce off ground
+        /*litMode*/ 1,           // Lit particles — NdotL directional + ambient
+        /*groundCollision*/ 1,   // Lit debris collides with Z=0 ground plane
+        /*restitution*/ 0.0f,    // No bounce energy — stick mode ignores restitution
+        /*collisionResponse*/ 1, // Stick — lit debris embeds into surface on impact
+        /*collisionFriction*/ 0.8f // Friction irrelevant in stick mode (vel=0 on contact)
     }, 1500.0f },
 
     // ── Orbital preset (Task 4.9.0) ────────────────────────────────────────────
@@ -378,6 +393,38 @@ static const VFXPreset s_presets[] = {
         .orbitAxisY      = 0.0f,
         .orbitAxisZ      = 1.0f,           // Z-up axis → horizontal orbit in XY plane
     }, 12.0f },  // 12 particles/sec → 84-108 alive at steady state, fills the ring
+
+    // ── Air Resist preset (Task 4.5.0/4.8.0) ──────────────────────────────────
+    // High drag coefficient, zero damping, high initial velocity. Demonstrates
+    // quadratic drag decelerating fast-moving particles to a near stop.
+    // Color-by-speed ON: fast=bright yellow, slow=dark red.
+    // @ref Witkin & Baraff 2001 "Physically Based Modeling" — quadratic drag
+    { "Air Resist", VFXEmitterConfig{
+        .position        = {0.0f, 0.0f, 0.0f},
+        .spawnRadius     = 0.1f,
+        .spawnVelocity   = {0.0f, 0.0f, 15.0f},  // high initial upward velocity
+        .velocityVariation = 3.0f,
+        .spreadAngle     = 1.2f,
+        .minLifetime     = 2.0f,
+        .maxLifetime     = 4.0f,
+        .initialSize     = 0.3f,
+        .initialColor    = {1.0f, 0.9f, 0.3f, 1.0f},  // bright yellow
+        .gravity         = {0.0f, 0.0f, -5.0f},         // mild gravity
+        .damping         = 0.0f,                          // NO linear damping — drag only
+        .softFadeDistance = 0.3f,
+        .emissiveIntensity = 1.0f,
+        .sizeOverLifeStart    = 0.8f,
+        .sizeOverLifePeak     = 1.2f,
+        .sizeOverLifeEnd      = 0.3f,
+        .sizeOverLifePeakTime = 0.15f,
+        .colorLifeStartR = 1.0f, .colorLifeStartG = 0.9f, .colorLifeStartB = 0.3f, .colorLifeStartA = 1.0f,  // fast = bright yellow
+        .colorLifeEndR   = 0.6f, .colorLifeEndG   = 0.1f, .colorLifeEndB   = 0.0f, .colorLifeEndA   = 0.3f,  // slow = dark red
+        .facingMode      = 0,
+        .stretchFactor   = 0.0f,
+        .blendMode       = 1,   // Additive
+        .dragCoefficient = 3.0f, // high quadratic drag — particles decelerate rapidly
+        .colorBySpeedEnabled = 1, // color-by-speed ON — fast=start color, slow=end color
+    }, 500.0f },
 };
 
 const VFXPreset* GetVFXPresets(int& outCount) {
@@ -1134,9 +1181,12 @@ void VFXParticleSystem::DispatchCompute(IRHICommandList* cmdList, CBRingAllocato
         cb.activeKillVolumeCount = m_activeKillVolumes;
 
         // Ground plane collision parameters
-        // @ref Müller 2006 "Position Based Dynamics" — restitution coefficients
-        cb.groundCollision = config.groundCollision;
-        cb.restitution     = config.restitution;
+        // @ref Müller 2006 "Position Based Dynamics" — restitution + friction response
+        // @ref Bender 2014 "Position-Based Simulation Methods in Computer Graphics" — friction
+        cb.groundCollision   = config.groundCollision;
+        cb.restitution       = config.restitution;
+        cb.collisionResponse = config.collisionResponse;
+        cb.collisionFriction = config.collisionFriction;
 
         // Quadratic drag (air resistance)
         // @ref Witkin & Baraff 2001 "Physically Based Modeling" — quadratic drag
@@ -1500,6 +1550,8 @@ void VFXParticleSystem::DrawBillboards(IRHICommandList* cmdList, CBRingAllocator
     // @ref Valve 2006 "Rendering in Left 4 Dead" — constant-screen-size sprites
     billboardCB.screenSpaceSizeEnabled = config.screenSpaceSizeEnabled;
     billboardCB.screenSpacePixelSize   = config.screenSpacePixelSize;
+    // Color by speed: VS passes speed factor to PS for color lerp.
+    billboardCB.colorBySpeedEnabled    = config.colorBySpeedEnabled;
 
     auto cbAlloc = cbRing->Allocate(sizeof(VFXBillboardCB));
     std::memcpy(cbAlloc.cpuPtr, &billboardCB, sizeof(VFXBillboardCB));

@@ -56,6 +56,14 @@ static const char* const kBoolNames[] = {
 };
 static constexpr uint32_t kBoolCount = 2;
 
+/// Collision response mode names for the Ground Collision section.
+/// Indices match VFXEmitterConfig::collisionResponse values (0=Bounce, 1=Stick, 2=Kill).
+/// @ref Müller 2006 "Position Based Dynamics" — multi-mode collision response
+static const char* const kCollisionResponseNames[] = {
+    "Bounce", "Stick", "Kill"
+};
+static constexpr uint32_t kCollisionResponseCount = 3;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Init
 // ─────────────────────────────────────────────────────────────────────────────
@@ -158,6 +166,11 @@ void VFXParameterPanel::BuildCategories(VFXEmitterConfig* cfg, float* spawnRate,
             {"Curl Speed",       VFXParamEntry::Type::Float, &cfg->curlSpeed, nullptr, 0.0f, 5.0f, 0.05f},
             {"Ground Collision", VFXParamEntry::Type::Enum, nullptr, &cfg->groundCollision, 0.0f, 1.0f, 0.0f, 1, kBoolNames, kBoolCount},
             {"Restitution",      VFXParamEntry::Type::Float, &cfg->restitution, nullptr, 0.0f, 1.0f, 0.05f},
+            // ── Enhanced collision response + friction (Task 3.85.0) ────────────
+            // @ref Müller 2006 "Position Based Dynamics" — multi-mode response
+            // @ref Bender 2014 "Position-Based Simulation Methods in Computer Graphics" — friction
+            {"Coll. Response",   VFXParamEntry::Type::Enum, nullptr, &cfg->collisionResponse, 0.0f, 2.0f, 0.0f, 1, kCollisionResponseNames, kCollisionResponseCount},
+            {"Coll. Friction",   VFXParamEntry::Type::Float, &cfg->collisionFriction, nullptr, 0.0f, 1.0f, 0.05f},
             // ── Orbit (Task 4.9.0) ─────────────────────────────────────────────
             // @ref Christensen 2018 "Fibonacci Sphere Sampling" — golden angle for uniform spread
             {"Orbit",            VFXParamEntry::Type::Enum, nullptr, &cfg->orbitEnabled, 0.0f, 1.0f, 0.0f, 1, kBoolNames, kBoolCount},

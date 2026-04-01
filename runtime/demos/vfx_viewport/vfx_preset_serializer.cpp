@@ -171,9 +171,13 @@ bool VFXPresetSerializer::Save(const VFXEmitterConfig& c,
     wf("windStrength", c.windStrength);
 
     // Lighting / collision
-    wu("litMode",         c.litMode);
-    wu("groundCollision", c.groundCollision);
-    wf("restitution",     c.restitution);
+    // @ref Müller 2006 "Position Based Dynamics" — restitution + friction response
+    // @ref Bender 2014 "Position-Based Simulation Methods in Computer Graphics" — friction
+    wu("litMode",            c.litMode);
+    wu("groundCollision",    c.groundCollision);
+    wf("restitution",        c.restitution);
+    wu("collisionResponse",  c.collisionResponse);
+    wf("collisionFriction",  c.collisionFriction);
     // Orbit around point (Task 4.9.0)
     // @ref Christensen 2018 "Fibonacci Sphere Sampling" — golden angle for uniform spread
     wu("orbitEnabled",    c.orbitEnabled);
@@ -421,9 +425,13 @@ bool VFXPresetSerializer::Load(const std::string& filePath,
     c.windStrength  = ParseFloat(src, "windStrength", c.windStrength);
 
     // Lighting / collision
-    c.litMode         = ParseUint(src,  "litMode",         c.litMode);
-    c.groundCollision = ParseUint(src,  "groundCollision", c.groundCollision);
-    c.restitution     = ParseFloat(src, "restitution",     c.restitution);
+    // @ref Müller 2006 "Position Based Dynamics" — restitution + friction response
+    // @ref Bender 2014 "Position-Based Simulation Methods in Computer Graphics" — friction
+    c.litMode            = ParseUint(src,  "litMode",            c.litMode);
+    c.groundCollision    = ParseUint(src,  "groundCollision",    c.groundCollision);
+    c.restitution        = ParseFloat(src, "restitution",        c.restitution);
+    c.collisionResponse  = ParseUint(src,  "collisionResponse",  c.collisionResponse);
+    c.collisionFriction  = ParseFloat(src, "collisionFriction",  c.collisionFriction);
     // Orbit around point (Task 4.9.0)
     // @ref Christensen 2018 "Fibonacci Sphere Sampling" — golden angle for uniform spread
     c.orbitEnabled = ParseUint(src,  "orbitEnabled",  c.orbitEnabled);
