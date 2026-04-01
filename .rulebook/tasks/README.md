@@ -8,7 +8,6 @@
 
 | Status | Task | Progress | Description |
 |--------|------|----------|-------------|
-| ⬚ | phase0_falcor-envmap-importance-sampling | 0/12 | falcor envmap importance sampling |
 | ⬚ | phase0_falcor-flip-quality-metric | 0/11 | falcor flip quality metric |
 | ⬚ | phase0_falcor-gi-shadows-fixes | 0/20 | falcor gi shadows fixes |
 | ⬚ | phase0_falcor-multiple-camera-system | 0/10 | falcor multiple camera system |
@@ -16,7 +15,7 @@
 | ⬚ | phase0_falcor-shader-variant-system | 0/14 | falcor shader variant system |
 | ⬚ | phase0_falcor-updateflags-propagation | 0/10 | falcor updateflags propagation |
 | ⬚ | phase0_falcor-vfx-compute-fixes | 0/24 | falcor vfx compute fixes |
-| ⬚ | phase0_shader-rewrite-falcor-parity | 0/6 | shader rewrite falcor parity |
+| ⬚ | phase0_shader-rewrite-falcor-parity | 107/114 | shader rewrite falcor parity |
 
 ## phase1
 
@@ -49,6 +48,7 @@
 | Status | Task | Progress | Description |
 |--------|------|----------|-------------|
 | ⬚ | phase0-3.1.0-volumetric-clouds-rewrite | 11/75 | phase0 3.1.0 volumetric clouds rewrite |
+| ⬚ | phase2-volumetric-clouds-ue5-parity | 0/130 | phase2 volumetric clouds ue5 parity |
 | ⬚ | phase3-3.0.0-fbx-skeletal-animation-pipeline | 30/81 | phase3 3.0.0 fbx skeletal animation pipeline |
 | ⬚ | phase3a-3.24.0-lens-flare | 4/16 | phase3a 3.24.0 lens flare |
 | ⬚ | phase3a-3.30.0-point-spot-light-shadows | 24/24 | phase3a 3.30.0 point spot light shadows |
