@@ -114,8 +114,6 @@ struct VFXEmitterInstance {
     uint32_t                             burstCount     = 300;        ///< Number of particles per burst.
     Vec3                                 positionOffset = {0, 0, 0};  ///< Offset from the shared emitter origin.
     uint32_t                             poolSize       = 10000;      ///< Max particles in this emitter's pool.
-    float                                startDelay     = 0.0f;       ///< Delay (s) before this emitter starts. 0 = immediate.
-    float                                startTimer     = 0.0f;       ///< Countdown timer (s). Emitter starts when ≤ 0.
 
     VFXEmitterInstance() : system(std::make_unique<VFXParticleSystem>()) {}
     ~VFXEmitterInstance() = default;
@@ -125,11 +123,10 @@ struct VFXEmitterInstance {
 
 /// Identifies a compound VFX preset (multiple emitters forming one effect).
 enum class VFXCompoundPreset : int {
-    Single        = 0,  ///< Single emitter — backward-compatible with legacy behavior.
-    Fire          = 1,  ///< Flame core + smoke + sparks (3 emitters).
-    Explosion     = 2,  ///< Flash + debris + shockwave smoke (3 emitters).
-    Magic         = 3,  ///< Core glow + orbiting particles + dust (3 emitters).
-    FlameToSmoke  = 4,  ///< Flame + sparks burst → delayed smoke after flame dies.
+    Single    = 0,  ///< Single emitter — backward-compatible with legacy behavior.
+    Fire      = 1,  ///< Flame core + smoke + sparks (3 emitters).
+    Explosion = 2,  ///< Flash + debris + shockwave smoke (3 emitters).
+    Magic     = 3,  ///< Core glow + orbiting particles + dust (3 emitters).
     Count
 };
 

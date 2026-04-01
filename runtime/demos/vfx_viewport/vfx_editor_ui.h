@@ -132,8 +132,7 @@ public:
     std::function<void()>  onRestart;      ///< Called when Restart button is clicked.
     std::function<void()>  onBurst;        ///< Called when Burst button is clicked.
     std::function<void()>  onFireball;     ///< Called when Fireball button is clicked.
-    std::function<void(int)> onLoadPreset; ///< Called with file preset index when a saved preset is selected.
-    std::function<void(int)> onLoadCompoundPreset; ///< Called with compound preset index (Single/Fire/Explosion/Magic/FlameToSmoke).
+    std::function<void(int)> onLoadPreset; ///< Called with preset index when a preset is selected.
     std::function<void(int)> onSelectEmitter; ///< Called with emitter index when an emitter tab is clicked.
 
 private:

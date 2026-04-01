@@ -639,20 +639,6 @@ void VFXViewportDemo::OnInit() {
         m_fireballActive = true;
     };
     m_editorUI.onLoadPreset = [this](int idx) { LoadPreset(idx); };
-    m_editorUI.onLoadCompoundPreset = [this](int idx) {
-        auto* device = GetDevice();
-        auto* shaders = GetShaderManager();
-        auto* cmd = GetCommandList();
-        ShutdownAllEmitters(device);
-        BuildCompoundPreset(static_cast<VFXCompoundPreset>(idx));
-        InitAllEmitters(device, shaders, cmd);
-        ResetAllEmitters(cmd);
-        // Update UI emitter names
-        std::vector<std::string> names;
-        for (const auto& e : m_emitters) names.push_back(e.name);
-        m_editorUI.SetEmitterNames(names, m_activeEmitterIndex);
-        UZ_LOG(App, Info, "[VFX] Loaded compound preset {}", idx);
-    };
     m_editorUI.onSelectEmitter = [this](int idx) {
         if (idx >= 0 && idx < static_cast<int>(m_emitters.size())) {
             m_activeEmitterIndex = idx;
@@ -1720,16 +1706,6 @@ void VFXViewportDemo::OnFrame(float dt) {
 
         // Dispatch each emitter independently
         for (auto& emitter : m_emitters) {
-            // Delayed start: countdown timer enables emitter after delay expires
-            if (emitter.startDelay > 0.0f && emitter.startTimer > 0.0f) {
-                emitter.startTimer -= dt;
-                if (emitter.startTimer <= 0.0f) {
-                    emitter.enabled = true;
-                    emitter.burstPending = true;
-                    UZ_LOG(App, Info, "[VFX] Emitter '{}' started after {:.1f}s delay",
-                           emitter.name, emitter.startDelay);
-                }
-            }
             if (!emitter.enabled) continue;
 
             // Update emitter position: base origin + per-emitter offset
@@ -3141,15 +3117,8 @@ void VFXViewportDemo::ShutdownAllEmitters(IRHIDevice* device) {
 void VFXViewportDemo::ResetAllEmitters(IRHICommandList* cmd) {
     for (auto& e : m_emitters) {
         e.system->UploadInitialFreeList(cmd);
+        e.burstPending = true;
         e.spawnAccum = 0.0f;
-        // Reset delay timer and enable/pending state
-        if (e.startDelay > 0.0f) {
-            e.startTimer = e.startDelay;
-            e.enabled = false;
-            e.burstPending = false;
-        } else {
-            e.burstPending = true;
-        }
     }
 }
 
@@ -3583,127 +3552,6 @@ void VFXViewportDemo::BuildCompoundPreset(VFXCompoundPreset preset) {
             dust.burstMode = false;
             dust.burstPending = false;
             dust.poolSize = 5000;
-        }
-        break;
-    }
-
-    case VFXCompoundPreset::FlameToSmoke: {
-        // Phase 1: Flame burst — bright orange fire, short life, additive glow
-        {
-            auto& flame = m_emitters.emplace_back();
-            flame.name = "Flame";
-            flame.config = {};
-            flame.config.spawnRadius = 0.3f;
-            flame.config.spawnVelocity[2] = 5.0f;
-            flame.config.velocityVariation = 2.0f;
-            flame.config.spreadAngle = 0.6f;
-            flame.config.minLifetime = 0.4f;
-            flame.config.maxLifetime = 1.2f;
-            flame.config.initialSize = 0.12f;
-            flame.config.initialColor[0] = 1.0f;
-            flame.config.initialColor[1] = 0.6f;
-            flame.config.initialColor[2] = 0.1f;
-            flame.config.initialColor[3] = 1.0f;
-            flame.config.gravity[2] = 1.5f; // buoyancy
-            flame.config.damping = 0.2f;
-            flame.config.emissiveIntensity = 3.0f;
-            flame.config.blendMode = 1; // Additive
-            flame.config.sizeOverLifeStart = 0.4f;
-            flame.config.sizeOverLifePeak = 1.2f;
-            flame.config.sizeOverLifeEnd = 0.0f;
-            flame.config.sizeOverLifePeakTime = 0.3f;
-            flame.config.colorLifeStartR = 1.0f; flame.config.colorLifeStartG = 0.8f;
-            flame.config.colorLifeStartB = 0.3f; flame.config.colorLifeStartA = 1.0f;
-            flame.config.colorLifeEndR = 1.0f; flame.config.colorLifeEndG = 0.1f;
-            flame.config.colorLifeEndB = 0.0f; flame.config.colorLifeEndA = 0.0f;
-            flame.config.softFadeDistance = 0.3f;
-            flame.burstMode = true;
-            flame.burstPending = true;
-            flame.burstCount = 400;
-            flame.poolSize = 10000;
-            flame.startDelay = 0.0f; // immediate
-        }
-
-        // Phase 1b: Sparks — fast bright streaks alongside the flame
-        {
-            auto& sparks = m_emitters.emplace_back();
-            sparks.name = "Sparks";
-            sparks.config = {};
-            sparks.config.spawnRadius = 0.1f;
-            sparks.config.spawnVelocity[2] = 10.0f;
-            sparks.config.velocityVariation = 5.0f;
-            sparks.config.spreadAngle = 1.2f;
-            sparks.config.minLifetime = 0.2f;
-            sparks.config.maxLifetime = 0.6f;
-            sparks.config.initialSize = 0.02f;
-            sparks.config.initialColor[0] = 1.0f;
-            sparks.config.initialColor[1] = 0.9f;
-            sparks.config.initialColor[2] = 0.4f;
-            sparks.config.initialColor[3] = 1.0f;
-            sparks.config.gravity[2] = -8.0f; // gravity pulls down
-            sparks.config.damping = 0.03f;
-            sparks.config.emissiveIntensity = 5.0f;
-            sparks.config.blendMode = 1; // Additive
-            sparks.config.alignmentMode = 1; // VelocityAligned
-            sparks.config.stretchFactor = 1.0f;
-            sparks.config.sizeOverLifeStart = 1.0f;
-            sparks.config.sizeOverLifePeak = 0.8f;
-            sparks.config.sizeOverLifeEnd = 0.0f;
-            sparks.config.sizeOverLifePeakTime = 0.1f;
-            sparks.config.colorLifeStartR = 1.0f; sparks.config.colorLifeStartG = 1.0f;
-            sparks.config.colorLifeStartB = 0.7f; sparks.config.colorLifeStartA = 1.0f;
-            sparks.config.colorLifeEndR = 1.0f; sparks.config.colorLifeEndG = 0.3f;
-            sparks.config.colorLifeEndB = 0.0f; sparks.config.colorLifeEndA = 0.0f;
-            sparks.config.groundCollision = 1;
-            sparks.config.restitution = 0.4f;
-            sparks.burstMode = true;
-            sparks.burstPending = true;
-            sparks.burstCount = 100;
-            sparks.poolSize = 5000;
-            sparks.startDelay = 0.0f; // immediate with flame
-        }
-
-        // Phase 2: Smoke — appears AFTER the flame dies (~1.5s delay)
-        // Gray, slow, expanding, curl noise for organic swirl
-        {
-            auto& smoke = m_emitters.emplace_back();
-            smoke.name = "Smoke";
-            smoke.config = {};
-            smoke.config.spawnRadius = 0.5f;
-            smoke.config.spawnVelocity[2] = 2.0f;
-            smoke.config.velocityVariation = 0.8f;
-            smoke.config.spreadAngle = 0.8f;
-            smoke.config.minLifetime = 2.0f;
-            smoke.config.maxLifetime = 4.0f;
-            smoke.config.initialSize = 0.2f;
-            smoke.config.initialColor[0] = 0.4f;
-            smoke.config.initialColor[1] = 0.4f;
-            smoke.config.initialColor[2] = 0.4f;
-            smoke.config.initialColor[3] = 0.6f;
-            smoke.config.gravity[2] = 0.3f; // slight buoyancy
-            smoke.config.damping = 0.4f;
-            smoke.config.emissiveIntensity = 0.0f;
-            smoke.config.blendMode = 0; // AlphaBlend
-            smoke.config.curlStrength = 3.0f;
-            smoke.config.curlFrequency = 0.3f;
-            smoke.config.curlSpeed = 0.2f;
-            smoke.config.sizeOverLifeStart = 0.3f;
-            smoke.config.sizeOverLifePeak = 1.0f;
-            smoke.config.sizeOverLifeEnd = 1.5f;
-            smoke.config.sizeOverLifePeakTime = 0.4f;
-            smoke.config.colorLifeStartR = 0.5f; smoke.config.colorLifeStartG = 0.5f;
-            smoke.config.colorLifeStartB = 0.5f; smoke.config.colorLifeStartA = 0.7f;
-            smoke.config.colorLifeEndR = 0.2f; smoke.config.colorLifeEndG = 0.2f;
-            smoke.config.colorLifeEndB = 0.2f; smoke.config.colorLifeEndA = 0.0f;
-            smoke.config.softFadeDistance = 1.0f;
-            smoke.positionOffset = {0.0f, 0.0f, 0.5f};
-            smoke.burstMode = true;
-            smoke.burstPending = false; // NOT pending — waits for delay
-            smoke.burstCount = 200;
-            smoke.poolSize = 10000;
-            smoke.startDelay = 1.5f;  // fires 1.5s after effect starts
-            smoke.startTimer = 1.5f;  // countdown starts at delay value
-            smoke.enabled = false;    // disabled until timer expires
         }
         break;
     }
