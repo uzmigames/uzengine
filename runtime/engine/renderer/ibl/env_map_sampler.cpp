@@ -48,7 +48,7 @@ bool EnvMapSampler::EnsurePipelines() {
     if (!m_mip0Pipeline.IsValid()) {
         auto source = EngineShaders::GetSource(EngineShader::EnvmapLuminancePyramidCS);
         auto bytecode = m_shaderMgr->GetPipeline().LoadBytecodeFromSource(
-            "envmap_luminance_pyramid_mip0", source, "PYRAMID_MIP0=1");
+            "envmap_luminance_pyramid_mip0_cs", source, "PYRAMID_MIP0=1");
 
         if (bytecode.empty()) {
             UZ_LOG(Renderer, Error, "EnvMapSampler: failed to compile mip0 shader");
@@ -77,7 +77,7 @@ bool EnvMapSampler::EnsurePipelines() {
     if (!m_reducePipeline.IsValid()) {
         auto source = EngineShaders::GetSource(EngineShader::EnvmapLuminancePyramidCS);
         auto bytecode = m_shaderMgr->GetPipeline().LoadBytecodeFromSource(
-            "envmap_luminance_pyramid_reduce", source, "PYRAMID_REDUCE=1");
+            "envmap_luminance_pyramid_reduce_cs", source, "PYRAMID_REDUCE=1");
 
         if (bytecode.empty()) {
             UZ_LOG(Renderer, Error, "EnvMapSampler: failed to compile reduce shader");
