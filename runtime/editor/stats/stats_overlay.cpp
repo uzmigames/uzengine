@@ -160,7 +160,11 @@ void StatsOverlay::Render(IRHICommandList* cmdList, CBRingAllocator& cbRing, uin
 void StatsOverlay::BuildTextPanel() {
     constexpr float kPanelWidth = 280.f;
     float panelX = static_cast<float>(m_screenWidth) - kPanelWidth - kPanelPadding;
-    float panelY = kPanelPadding;
+    // Vertically centered on the right side
+    constexpr float kLineH_est = 16.f;
+    constexpr int kLineCount_est = 23;
+    float panelH_est = kLineH_est * kLineCount_est + 6.f * 3.f + kPanelPadding * 2.f;
+    float panelY = (static_cast<float>(m_screenHeight) - panelH_est) * 0.5f;
 
 
     constexpr float kLineH = 16.f;
