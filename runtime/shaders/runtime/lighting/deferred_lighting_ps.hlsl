@@ -347,28 +347,34 @@ float4 main(FSInput input) : SV_Target {
     // ── Environment importance sampling (MIS for metallic specular) ──────
     // @ref Pharr & Humphreys 2004 "Physically Based Rendering" — MIS balance heuristic
     // @ref Veach 1997 "Robust Monte Carlo Methods for Light Transport Simulation"
-    // For metallic surfaces, the prefiltered split-sum is a low-frequency
-    // approximation that misses narrow bright environment sources (sun through
-    // glass, neon signs). Importance sampling the env map via the alias table
-    // and combining with the BRDF PDF via MIS produces sharper highlights.
-#ifdef UZ_BINDLESS
+    //
+    // DISABLED by default — requires temporal accumulation to converge without
+    // visible noise/stripe artifacts. Enable via #define ENV_MIS_ENABLED 1.
+    // The alias table + luminance pyramid infrastructure is ready; the deferred
+    // lighting MIS loop needs a temporal filter (accumulate over N frames) before
+    // the per-pixel stochastic estimator produces clean results at 4 spp.
+    //
+    // TODO(env-mis): Wire temporal accumulation buffer, then re-enable this path.
+    // The split-sum IBL above handles the common case well — MIS is only needed
+    // for HDR environments with very bright point sources (sun through glass, neon).
+#if defined(UZ_BINDLESS) && defined(ENV_MIS_ENABLED)
     if (envSamplerAliasSrv != kSentinelSrvIndex && metallic > 0.3 && roughness < 0.7) {
         StructuredBuffer<AliasEntry> aliasTable = ResourceDescriptorHeap[envSamplerAliasSrv];
 
         float3 envMISContrib = float3(0, 0, 0);
 
-        // Use 4 environment samples per pixel (low count, MIS makes them effective).
+        // Use 4 environment samples per pixel — needs temporal accumulation to converge.
         // Seed from pixel position + frame count for temporal variation.
-        uint pixelSeed = px.x + px.y * 1920 + uint(timeParams.z);
+        uint pixelSeed = px.x * 73856093u ^ px.y * 19349663u ^ uint(timeParams.z) * 83492791u;
         const uint kEnvSamples = 4;
 
         for (uint ei = 0; ei < kEnvSamples; ++ei) {
             // Low-discrepancy sample via Hammersley sequence
             float2 u = Hammersley(ei, kEnvSamples);
-            // Decorrelate across pixels with golden ratio offset
+            // Decorrelate across pixels with hash-based offset (avoids row-correlated stripes)
             u = frac(u + float2(
                 frac(float(pixelSeed) * 0.6180339887),
-                frac(float(pixelSeed ^ 0x9E3779B9) * 0.6180339887)));
+                frac(float(pixelSeed * 2654435761u) * 0.6180339887)));
 
             EnvSample envS = SampleEnvironment(
                 u, aliasTable, envSamplerTexelCount,
@@ -402,9 +408,7 @@ float4 main(FSInput input) : SV_Target {
         }
         envMISContrib /= float(kEnvSamples);
 
-        // Blend: replace part of split-sum specular with MIS result for metallic surfaces.
-        // The MIS contribution adds sharp highlights from bright env regions that
-        // the prefiltered mip chain would blur away.
+        // Additive contribution from bright env regions the prefiltered mip chain blurs away.
         ambient += envMISContrib * skyTint;
     }
 #endif
