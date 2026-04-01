@@ -664,7 +664,7 @@ Write-Host "[8/9] Verifying image libraries..." -ForegroundColor Cyan
 
 $ImageLibs = @(
     @{ Name = "stb";              File = "stb_image.h" },
-    @{ Name = "spng";             File = "spng.h" },
+    @{ Name = "spng";             File = "spng\spng.h" },
     @{ Name = "libjpeg-turbo";    File = "jpeglib.h" },
     @{ Name = "tinyexr";          File = "tinyexr.h" },
     @{ Name = "basis_universal";  File = "transcoder\basisu_transcoder.h" },

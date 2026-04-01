@@ -134,6 +134,7 @@ pub fn build(b: *std.Build) void {
         tp ++ "xxhash",
         tp ++ "lz4/lib",
         tp ++ "stb",
+        tp ++ "spng/spng",
         tp ++ "tinyexr",
         tp ++ "libjpeg-turbo",
         tp ++ "basis_universal/transcoder",
@@ -369,6 +370,13 @@ pub fn build(b: *std.Build) void {
         .root = b.path(tp ++ "fastgltf/src"),
         .files = &.{ "fastgltf.cpp", "base64.cpp", "io.cpp" },
         .flags = &.{"-std=c++17"},
+    });
+
+    // Thirdparty — spng (SIMD-accelerated PNG decode)
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path(tp ++ "spng/spng"),
+        .files = &.{"spng.c"},
+        .flags = &.{ "-std=c99", "-DSPNG_USE_MINIZ=0" },
     });
 
     // Thirdparty — meshoptimizer (mesh optimization library)
