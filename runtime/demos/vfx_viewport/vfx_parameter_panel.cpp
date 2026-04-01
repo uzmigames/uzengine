@@ -204,6 +204,12 @@ void VFXParameterPanel::BuildCategories(VFXEmitterConfig* cfg, float* spawnRate,
             {"Wind Dir X",      VFXParamEntry::Type::Float, &cfg->windDir[0], nullptr, -1.0f, 1.0f, 0.05f},
             {"Wind Dir Y",      VFXParamEntry::Type::Float, &cfg->windDir[1], nullptr, -1.0f, 1.0f, 0.05f},
             {"Wind Dir Z",      VFXParamEntry::Type::Float, &cfg->windDir[2], nullptr, -1.0f, 1.0f, 0.05f},
+            // ── Vector field (Task 4.15.0) ────────────────────────────────
+            /// @ref Stam 1999 "Stable Fluids" — vector field advection
+            {"VecField",        VFXParamEntry::Type::Enum,  nullptr, &cfg->vectorFieldEnabled, 0.0f, 1.0f, 0.0f, 1, kBoolNames, kBoolCount},
+            {"VecField Str",    VFXParamEntry::Type::Float, &cfg->vectorFieldStrength, nullptr, 0.0f, 20.0f, 0.5f},
+            {"VecField Tight",  VFXParamEntry::Type::Float, &cfg->vectorFieldTightness, nullptr, 0.0f, 1.0f, 0.05f},
+            {"VecField Scale",  VFXParamEntry::Type::Float, &cfg->vectorFieldScale, nullptr, 0.01f, 5.0f, 0.05f},
         };
         m_categories.push_back(std::move(cat));
     }

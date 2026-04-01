@@ -213,6 +213,13 @@ struct VFXEmitterConfig {
     float    dynamicParam1 = 0.0f;    ///< Default dynamic param channel 1 (user-defined).
     float    dynamicParam2 = 0.0f;    ///< Default dynamic param channel 2 (user-defined).
     float    dynamicParam3 = 0.0f;    ///< Default dynamic param channel 3 (user-defined).
+    // ── Vector field (procedural 3D flow) (Task 4.15.0) ─────────────────
+    /// @ref Stam 1999 "Stable Fluids" — vector field advection fundamentals
+    /// @ref Bridson 2007 "Fluid Simulation for Computer Graphics" — velocity field sampling
+    uint32_t vectorFieldEnabled   = 0;    ///< 0=disabled, 1=procedural vector field active.
+    float    vectorFieldStrength  = 0.0f; ///< Blend factor: 0=ignore field, 1=full field influence. Typical: 1-10.
+    float    vectorFieldTightness = 0.0f; ///< 0=additive (field adds to velocity), 1=directive (velocity replaced by field).
+    float    vectorFieldScale     = 1.0f; ///< Spatial scale of the procedural noise field. Higher=tighter detail.
 };
 
 /// Named emitter preset with a spawn rate.
@@ -337,9 +344,14 @@ struct VFXUpdateCB {
     uint32_t collisionResponse;       float    collisionFriction;       // 16 bytes (offset 272)
     // ── Dynamic material parameters (Task 4.14.0) ───────────────────────────
     uint32_t readDynParamsSrv;        uint32_t writeDynParamsUav;
-    uint32_t _padDynParams0;          uint32_t _padDynParams1;            // 16 bytes (offset 288)
+    // ── Vector field parameters (Task 4.15.0) ───────────────────────────────
+    /// @ref Stam 1999 "Stable Fluids" — vector field advection fundamentals
+    /// @ref Bridson 2007 "Fluid Simulation for Computer Graphics" — velocity field sampling
+    uint32_t vectorFieldEnabled;      float    vectorFieldStrength;       // 16 bytes (offset 288)
+    float    vectorFieldTightness;    float    vectorFieldScale;
+    uint32_t _padVF0;                 uint32_t _padVF1;                   // 16 bytes (offset 304)
 };
-static_assert(sizeof(VFXUpdateCB) == 304, "VFXUpdateCB must be 304 bytes (19 x float4)");
+static_assert(sizeof(VFXUpdateCB) == 320, "VFXUpdateCB must be 320 bytes (20 x float4)");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VFX Death Spawn Constant Buffer (matches particle_death_spawn_cs.hlsl b1)

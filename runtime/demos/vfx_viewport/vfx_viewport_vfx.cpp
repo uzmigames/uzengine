@@ -425,6 +425,41 @@ static const VFXPreset s_presets[] = {
         .dragCoefficient = 3.0f, // high quadratic drag — particles decelerate rapidly
         .colorBySpeedEnabled = 1, // color-by-speed ON — fast=start color, slow=end color
     }, 500.0f },
+
+    // ── Vector Flow preset (Task 4.15.0) ──────────────────────────────────
+    // Slow-moving particles influenced by a procedural 3D noise vector field.
+    // Low initial velocity + long lifetime lets the field drive organic flow.
+    // Low tightness (0.3) means the field steers without fully replacing momentum.
+    // @ref Stam 1999 "Stable Fluids" — vector field advection fundamentals
+    // @ref Bridson 2007 "Fluid Simulation for Computer Graphics" — velocity field
+    { "Vector Flow", VFXEmitterConfig{
+        .position        = {0.0f, 0.0f, 0.0f},
+        .spawnRadius     = 1.0f,           // wide spawn area to showcase field variation
+        .spawnVelocity   = {0.0f, 0.0f, 1.0f},  // minimal initial upward velocity
+        .velocityVariation = 0.5f,
+        .spreadAngle     = 3.14159f,       // full hemisphere spawn
+        .minLifetime     = 3.0f,
+        .maxLifetime     = 6.0f,
+        .initialSize     = 0.15f,
+        .initialColor    = {0.3f, 0.7f, 1.0f, 0.8f},  // cool blue
+        .gravity         = {0.0f, 0.0f, 0.0f},          // no gravity — pure field motion
+        .damping         = 0.05f,                         // very light damping
+        .softFadeDistance = 0.3f,
+        .emissiveIntensity = 0.5f,
+        .sizeOverLifeStart    = 0.5f,
+        .sizeOverLifePeak     = 1.0f,
+        .sizeOverLifeEnd      = 0.0f,
+        .sizeOverLifePeakTime = 0.3f,
+        .colorLifeStartR = 0.3f, .colorLifeStartG = 0.7f, .colorLifeStartB = 1.0f, .colorLifeStartA = 0.9f,
+        .colorLifeEndR   = 0.1f, .colorLifeEndG   = 0.3f, .colorLifeEndB   = 0.8f, .colorLifeEndA   = 0.0f,
+        .facingMode      = 0,
+        .stretchFactor   = 0.0f,
+        .blendMode       = 0,   // AlphaBlend — soft translucent flow
+        .vectorFieldEnabled   = 1,
+        .vectorFieldStrength  = 5.0f,   // moderate field influence
+        .vectorFieldTightness = 0.3f,   // mostly additive, slight direction lock
+        .vectorFieldScale     = 0.5f,   // large-scale flow structures
+    }, 200.0f },
 };
 
 const VFXPreset* GetVFXPresets(int& outCount) {
@@ -1236,6 +1271,14 @@ void VFXParticleSystem::DispatchCompute(IRHICommandList* cmdList, CBRingAllocato
         // Dynamic material parameters (Task 4.14.0)
         cb.readDynParamsSrv  = m_device->GetBufferSRVIndex(m_particleBuffers[7][read]);
         cb.writeDynParamsUav = m_device->GetBufferUAVIndex(m_particleBuffers[7][write]);
+
+        // Vector field parameters (Task 4.15.0)
+        // @ref Stam 1999 "Stable Fluids" — vector field advection
+        // @ref Bridson 2007 "Fluid Simulation for Computer Graphics" — velocity field
+        cb.vectorFieldEnabled   = config.vectorFieldEnabled;
+        cb.vectorFieldStrength  = config.vectorFieldStrength;
+        cb.vectorFieldTightness = config.vectorFieldTightness;
+        cb.vectorFieldScale     = config.vectorFieldScale;
 
         auto alloc = cbRing->Allocate(sizeof(VFXUpdateCB));
         std::memcpy(alloc.cpuPtr, &cb, sizeof(VFXUpdateCB));

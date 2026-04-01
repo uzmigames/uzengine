@@ -1,7 +1,8 @@
 /// GPU Particle Update Compute Shader
 ///
 /// Advances particle simulation by one time step: applies gravity, damping,
-/// optional curl noise, optional vortex force, optional wind zone force, kill
+/// optional curl noise, optional vortex force, optional wind zone force,
+/// optional procedural vector field, kill
 /// volume containment test, and Euler integration, then tests for particle
 /// death (age >= lifespan). Dead particles are recycled back to the free list.
 ///
@@ -15,7 +16,7 @@
 /// 2. Advance age by dt. If age >= lifespan, particle is dead.
 /// 3. Dead particles: push index onto free list via InterlockedAdd, mark dead.
 /// 4. Alive particles: apply gravity, damping, curl noise, vortex force,
-///    wind zone force. Integrate position.
+///    wind zone force, procedural vector field. Integrate position.
 /// 5. Kill volume test: if inside any active kill volume, instantly kill.
 /// 6. Write to WRITE set, increment alive_count_new.
 ///
@@ -237,8 +238,17 @@ cbuffer VFXUpdateConstants : register(b1) {
     // ── Dynamic Material Parameters (Task 4.14.0) ──────────────────────── offset 288
     uint     readDynParamsSrv;           ///< SRV for StructuredBuffer<float4> dynamic params (READ set). 288
     uint     writeDynParamsUav;          ///< UAV for RWStructuredBuffer<float4> dynamic params (WRITE set). 292
-    uint     _padDynParams0;             ///<                                          296
-    uint     _padDynParams1;             ///<                                          300
+
+    // ── Vector Field Parameters (Task 4.15.0) ────────────────────────── offset 296
+    /// @ref Stam 1999 "Stable Fluids" — vector field advection fundamentals
+    /// @ref Bridson 2007 "Fluid Simulation for Computer Graphics" — velocity field sampling
+    uint     vectorFieldEnabled;         ///< 0=disabled, 1=procedural vector field active. 296
+    float    vectorFieldStrength;        ///< Magnitude multiplier for sampled field velocity. 300
+
+    float    vectorFieldTightness;       ///< 0=additive (field as force), 1=directive (replace vel). 304
+    float    vectorFieldScale;           ///< Spatial scale of the procedural noise field.             308
+    uint     _padVF0;                    ///<                                          312
+    uint     _padVF1;                    ///<                                          316
 #endif
 };
 
@@ -483,6 +493,55 @@ void main(uint3 dtid : SV_DispatchThreadID)
         StructuredBuffer<WindZone> windZones = ResourceDescriptorHeap[windZoneSrvIndex];
         float3 windForce = AccumulateWindForce(pos, totalTime, windZones, activeWindZoneCount);
         vel += windForce * dt;
+    }
+
+    // ── Procedural vector field (3D noise-driven flow) ──────────────────
+    // Generates a 3D velocity field using three offset SimplexNoise3D samples
+    // as XYZ components. The offsets (prime-ish values) decorrelate the three
+    // channels so they don't produce aligned motion. The result is normalized
+    // and scaled by vectorFieldStrength to produce the field velocity.
+    //
+    // Tightness controls how the field blends with existing particle velocity:
+    //   tightness == 0  → additive: velocity += fieldVel * dt  (field as force)
+    //   tightness == 1  → directive: velocity = fieldVel        (full replacement)
+    //   intermediate   → lerp between (vel + fieldVel * dt) and fieldVel
+    //
+    /// @ref Stam 1999 "Stable Fluids" — 3D velocity field representation
+    /// @ref Bridson 2007 "Fluid Simulation for Computer Graphics" — velocity field sampling
+    /// @ref Bridson 2007 "Curl-Noise for Procedural Fluid Flow" — noise-based flow
+    /// @constants fieldOffset.x=17.3, fieldOffset.y=47.1, fieldOffset.z=73.9
+    ///            (prime-ish decorrelation offsets, not from any specific paper)
+    /// @deviations Uses 3 uncorrelated simplex noise samples instead of a 3D texture.
+    ///             This is a procedural approximation; the field is NOT divergence-free
+    ///             (unlike curl noise). Suitable for artistic flow effects, not
+    ///             physically accurate fluid simulation.
+    if (vectorFieldEnabled != 0u && vectorFieldStrength > 0.0f) {
+        // Scale position into the noise field's spatial domain.
+        float3 fieldPos = pos * vectorFieldScale;
+
+        // Sample three decorrelated noise channels as XYZ field velocity.
+        // Each channel uses a different spatial offset to avoid correlation.
+        // SimplexNoise3D returns values in [-1, 1].
+        float3 fieldVel;
+        fieldVel.x = SimplexNoise3D(fieldPos + float3(17.3f,  31.7f,  0.0f));
+        fieldVel.y = SimplexNoise3D(fieldPos + float3(0.0f,   61.3f, 47.1f));
+        fieldVel.z = SimplexNoise3D(fieldPos + float3(73.9f,   0.0f, 89.2f));
+
+        // Normalize the field direction and scale by strength.
+        // Guard against zero-length field vectors (degenerate noise).
+        float fieldLen = length(fieldVel);
+        if (fieldLen > 0.001f) {
+            fieldVel = (fieldVel / fieldLen) * vectorFieldStrength;
+        } else {
+            fieldVel = float3(0.0f, 0.0f, 0.0f);
+        }
+
+        // Apply tightness blending:
+        //   tightness=0: additive — treat field as acceleration (vel += fieldVel * dt)
+        //   tightness=1: directive — velocity fully replaced by field value
+        //   intermediate: lerp between additive result and pure field velocity
+        float3 additiveVel = vel + fieldVel * dt;
+        vel = lerp(additiveVel, fieldVel, saturate(vectorFieldTightness));
     }
 #endif // UZ_BINDLESS
 
