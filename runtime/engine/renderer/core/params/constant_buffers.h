@@ -200,7 +200,21 @@ struct PerFrameCB {
     float    slSkyDistanceThreshold = 150000.0f;    ///< Max distance for sky light cubemap capture (cm).
     float    slOcclusionContrast = 0.2f;            ///< Contrast adjustment for sky light occlusion.
 
-    float    _pad2[22] = {};                        ///< Pad to 768 bytes.
+    // ── Environment Map Importance Sampling ─────────────────────────────
+    /// SRV index for StructuredBuffer<AliasEntry> (O(1) env sampling). UINT32_MAX = disabled.
+    uint32_t envSamplerAliasSrv = UINT32_MAX;
+    /// SRV index for luminance pyramid mip 0 (equirect R32F, for PDF evaluation). UINT32_MAX = disabled.
+    uint32_t envSamplerLumMip0Srv = UINT32_MAX;
+    /// Total luminance sum from environment map (for PDF normalization). 0 = disabled.
+    float    envSamplerTotalLuminance = 0.0f;
+    /// Texel count of luminance mip 0 (width * height). 0 = disabled.
+    uint32_t envSamplerTexelCount = 0;
+    /// Width of luminance pyramid mip 0 (for texel index → UV conversion).
+    uint32_t envSamplerLumWidth = 0;
+    /// Height of luminance pyramid mip 0.
+    uint32_t envSamplerLumHeight = 0;
+
+    float    _pad2[16] = {};                        ///< Pad to 768 bytes.
 };
 
 static_assert(sizeof(PerFrameCB) == 768, "PerFrameCB must be 768 bytes (D3D12 CB alignment)");

@@ -67,6 +67,16 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     perFrame.brdfLutSrvIndex     = m_brdfLutSrvIndex;
     perFrame.prefilteredMipLevels = IBLBaker::kPrefilteredMipLevels;
 
+    // ── Environment Map Importance Sampling (MIS) ─────────────────────
+    if (m_envMapSampler && m_envMapSampler->IsReady()) {
+        perFrame.envSamplerAliasSrv       = m_envMapSampler->GetAliasSrv();
+        perFrame.envSamplerLumMip0Srv     = m_envMapSampler->GetLuminanceMip0Srv();
+        perFrame.envSamplerTotalLuminance = m_envMapSampler->GetTotalLuminance();
+        perFrame.envSamplerTexelCount     = m_envMapSampler->GetTexelCount();
+        perFrame.envSamplerLumWidth       = m_envMapSampler->GetLuminanceWidth();
+        perFrame.envSamplerLumHeight      = m_envMapSampler->GetLuminanceHeight();
+    }
+
     // ── Extract SkyLight from SkyLightComponent (standard) ──────────
     // Must be done BEFORE SH upload so intensity can be baked into the SH coefficients.
     // SkyLight extraction: intensity, color, minOcclusion from first SkyLightComponent.

@@ -481,6 +481,14 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         UZ_LOG(Renderer, Error, "SceneRenderer: failed to init IBL baker");
     }
 
+    // ── Environment Map Importance Sampler ────────────────────────────
+    m_envMapSampler = std::make_unique<EnvMapSampler>();
+    if (m_envMapSampler->Init(device, m_shaderMgr.get())) {
+        UZ_LOG(Renderer, Info, "SceneRenderer: EnvMapSampler initialized");
+    } else {
+        UZ_LOG(Renderer, Warning, "SceneRenderer: EnvMapSampler init failed (MIS disabled)");
+    }
+
     // ── Reflection Probes ─────────────────────────────────────────────
     if (m_iblBaker) {
         if (m_reflectionProbes.Init(device, m_iblBaker.get())) {
@@ -1117,6 +1125,9 @@ void SceneRenderer::Shutdown() {
 
     // ── Reflection Probes (must shut down before IBLBaker it references) ──
     m_reflectionProbes.Shutdown();
+
+    // ── Env Map Sampler ──────────────────────────────────────────────────
+    if (m_envMapSampler) m_envMapSampler->Shutdown();
 
     // ── IBL resources ──────────────────────────────────────────────────
     if (m_iblBaker) m_iblBaker->Shutdown();

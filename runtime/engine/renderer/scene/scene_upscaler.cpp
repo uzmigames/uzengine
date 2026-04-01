@@ -106,6 +106,11 @@ bool SceneRenderer::SetHDRIEnvironment(uint32_t equirectSrvIndex, uint32_t cubem
     m_iblResult = bakeResult;
     m_hdriActive = true;
 
+    // Rebuild env map importance sampler from HDRI cubemap
+    if (m_envMapSampler) {
+        m_envMapSampler->Rebuild(m_hdriCubemapSrv);
+    }
+
     // Project SH irradiance from the HDRI cubemap for diffuse lighting + fog color.
     // Without this, m_skyIrradianceSH retains stale procedural sky values.
     {

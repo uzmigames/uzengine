@@ -39,6 +39,7 @@
 #include "shadow_cache.h"
 #include "local_light_shadow_atlas.h"
 #include "ibl/ibl_baker.h"
+#include "ibl/env_map_sampler.h"
 #include "ibl/sh_projection.h"
 #include "probes/reflection_probe_renderer.h"
 #include "postprocess/auto_exposure.h"

@@ -130,6 +130,9 @@
     uint32_t m_brdfLutSrvIndex = UINT32_MAX;       ///< BRDF LUT SRV (baked once at init).
     SHCoefficients m_skyIrradianceSH;              ///< L2 SH for sky diffuse irradiance.
 
+    // ── Environment Map Importance Sampling ──────────────────────────────
+    std::unique_ptr<EnvMapSampler> m_envMapSampler;  ///< Alias table + luminance pyramid for MIS.
+
     // ── HDRI environment override ────────────────────────────────────────
     RHITextureHandle m_hdriCubemap;            ///< Cubemap converted from HDRI equirect (owned, must destroy).
     uint32_t m_hdriCubemapSrv = UINT32_MAX;    ///< SRV for the HDRI cubemap.

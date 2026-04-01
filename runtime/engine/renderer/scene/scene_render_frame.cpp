@@ -193,6 +193,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         atmoCtx.iblBaker            = m_iblBaker.get();
         atmoCtx.iblResult           = &m_iblResult;
         atmoCtx.brdfLutSrvIndex     = m_brdfLutSrvIndex;
+        atmoCtx.envMapSampler       = m_envMapSampler.get();
         atmoCtx.skyIrradianceSH     = &m_skyIrradianceSH;
         atmoCtx.depthSrvIndex       = m_gbuffer.depthSRV;
         atmoCtx.depthTexture        = m_gbuffer.depth;

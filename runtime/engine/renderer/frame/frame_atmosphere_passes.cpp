@@ -82,6 +82,7 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
     atmoCtx.iblBaker            = m_iblBaker.get();
     atmoCtx.iblResult           = &m_iblResult;
     atmoCtx.brdfLutSrvIndex     = m_brdfLutSrvIndex;
+    atmoCtx.envMapSampler       = m_envMapSampler.get();
     atmoCtx.skyIrradianceSH     = &m_skyIrradianceSH;
     atmoCtx.apVolume            = m_apVolume;
     atmoCtx.apVolumeSrv         = m_apVolumeSrv;

@@ -5,10 +5,12 @@
 
 #include "../common/constants.hlsli"
 #include "../common/encoding.hlsli"
+#include "../common/sampling.hlsli"
 #include "../material/brdf.hlsli"
 #include "../material/diffuse.hlsli"
 #include "light_types.hlsli"
 #include "shadow.hlsli"
+#include "../include/envmap_sampling.hlsli"
 
 // ─── Root constants at b0 ──────────────────────────────────────────────────
 
@@ -32,21 +34,103 @@ Texture2D<float4> gbufferEmissive  : register(t10);
 // ─── PerFrameCB at b1 (768 bytes) ─────────────────────────────────────────
 
 cbuffer PerFrameCB : register(b1) {
-    row_major float4x4 viewProj;
-    float4 cameraPos;
-    float4 timeParams;
-    float4 lightDir;
-    float4 lightColor;
-    float4 ambientColor;
-    row_major float4x4 invViewProj;
-    float  nearPlane, farPlane;
-    uint   irradianceSrvIndex, prefilteredSrvIndex;
-    uint   brdfLutSrvIndex, prefilteredMipLevels;
-    float  skyLightIntensity, skyLightColorR, skyLightColorG, skyLightColorB;
-    float  skyLightMinAmbient, exposure;
-    float4 skyIrradianceSH[7];
-    uint   shadowDebugMode;
-    // rest of 768 bytes not needed — padding implicit
+    row_major float4x4 viewProj;           // 64
+    float4 cameraPos;                      // 16
+    float4 timeParams;                     // 16
+    float4 lightDir;                       // 16
+    float4 lightColor;                     // 16
+    float4 ambientColor;                   // 16
+    row_major float4x4 invViewProj;        // 64 = 208
+    float  nearPlane, farPlane;            // 8
+    uint   irradianceSrvIndex, prefilteredSrvIndex; // 8 = 224
+    uint   brdfLutSrvIndex, prefilteredMipLevels;   // 8
+    float  skyLightIntensity, skyLightColorR, skyLightColorG, skyLightColorB; // 16 = 248
+    float  skyLightMinAmbient, exposure;   // 8
+    float4 skyIrradianceSH[7];             // 112 = 368
+    uint   shadowDebugMode;                // 4
+    uint   aerialPerspectiveEnabled;       // 4
+    uint   transmittanceLutSrvIndex;       // 4
+    float  apBottomRadiusKm;               // 4 = 384
+    float  apTopRadiusKm;                  // 4
+    float  apRayleighBetaX, apRayleighBetaY, apRayleighBetaZ; // 12 = 400
+    float  apRayleighScaleH;               // 4
+    float  apMieBeta;                      // 4
+    float  apMieScaleH;                    // 4
+    float  apMieAnisotropy;                // 4 = 416
+    float  apSunIntensity;                 // 4
+    float  apRayleighScale;                // 4
+    float  apMieScale;                     // 4
+    float  toneCurveSlope;                 // 4 = 432
+    float  toneCurveToe;                   // 4
+    float  toneCurveShoulder;              // 4
+    float  toneCurveBlackClip;             // 4
+    float  toneCurveWhiteClip;             // 4 = 448
+    uint   gtaoSrvIndex;                   // 4
+    uint   brdfDebugMode;                  // 4
+    float  heightFogContribution;          // 4
+    float  filmGrainIntensity;             // 4 = 464
+    float  vignetteIntensity;              // 4
+    float  chromaAbIntensity;              // 4
+    float  contactShadowLength;            // 4
+    uint   ssrSrvIndex;                    // 4 = 480
+    float  mipBias;                        // 4
+    uint   ssgiSrvIndex;                   // 4
+    uint   ssgiAOSrvIndex;                 // 4
+    uint   ssgiEnabled;                    // 4 = 496
+    uint   radianceCacheEnabled;           // 4
+    uint   rcProbeSHBufferSrv;             // 4
+    uint   rcProbesPerAxis;                // 4
+    float  rcGridExtent;                   // 4 = 512
+    float  rcGridOriginX;                  // 4
+    float  rcGridOriginY;                  // 4
+    float  rcGridOriginZ;                  // 4
+    float  rcGiIntensity;                  // 4 = 528
+    uint   apVolumeSrvIndex;               // 4
+    uint   reflectionProbeCount;           // 4
+    uint   reflectionProbeBufferSrvIndex;  // 4
+    float  colorSaturation;                // 4 = 544
+    float  colorContrast;                  // 4
+    float  cloudShadowStrength;            // 4
+    float  cloudShadowOnAtmosphereStrength; // 4
+    float  cloudShadowOnSurfaceStrength;   // 4 = 560
+    float  cloudShadowDepthBias;           // 4
+    float  cloudShadowExtent;              // 4
+    float  cloudShadowMapResolutionScale;  // 4
+    float  cloudShadowRaySampleCountScale; // 4 = 576
+    float  cloudScatteredLuminanceScaleR;  // 4
+    float  cloudScatteredLuminanceScaleG;  // 4
+    float  cloudScatteredLuminanceScaleB;  // 4
+    uint   castCloudShadows;               // 4 = 592
+    uint   castShadowsOnClouds;            // 4
+    uint   castShadowsOnAtmosphere;        // 4
+    uint   enableLightShaftOcclusion;      // 4
+    float  occlusionMaskDarkness;          // 4 = 608
+    float  occlusionDepthRange;            // 4
+    float  lightShaftOverrideDirectionX;   // 4
+    float  lightShaftOverrideDirectionY;   // 4
+    float  lightShaftOverrideDirectionZ;   // 4 = 624
+    float  shadowSourceAngleFactor;        // 4
+    float  shadowCascadeBiasDistribution;  // 4
+    float  slOcclusionMaxDistance;          // 4
+    float  slOcclusionExponent;            // 4 = 640
+    float  slOcclusionTintR;               // 4
+    float  slOcclusionTintG;               // 4
+    float  slOcclusionTintB;               // 4
+    uint   slCloudAmbientOcclusion;        // 4 = 656
+    float  slCloudAOStrength;              // 4
+    float  slCloudAOExtent;                // 4
+    float  slCloudAOMapResolutionScale;    // 4
+    float  slCloudAOApertureScale;         // 4 = 672
+    float  slSkyDistanceThreshold;         // 4
+    float  slOcclusionContrast;            // 4 = 680
+    // ── Environment Map Importance Sampling (offset 680) ──
+    uint   envSamplerAliasSrv;             // 4
+    uint   envSamplerLumMip0Srv;           // 4
+    float  envSamplerTotalLuminance;       // 4
+    uint   envSamplerTexelCount;           // 4 = 696
+    uint   envSamplerLumWidth;             // 4
+    uint   envSamplerLumHeight;            // 4 = 704
+    // _pad2[16] = 64 bytes → total 768
 };
 
 // LightingCB at b2 via light_types.hlsli (already declared above)
@@ -259,6 +343,71 @@ float4 main(FSInput input) : SV_Target {
 
         ambient = (diffuseAmbient * ao + specularAmbient) * skyTint;
     }
+
+    // ── Environment importance sampling (MIS for metallic specular) ──────
+    // @ref Pharr & Humphreys 2004 "Physically Based Rendering" — MIS balance heuristic
+    // @ref Veach 1997 "Robust Monte Carlo Methods for Light Transport Simulation"
+    // For metallic surfaces, the prefiltered split-sum is a low-frequency
+    // approximation that misses narrow bright environment sources (sun through
+    // glass, neon signs). Importance sampling the env map via the alias table
+    // and combining with the BRDF PDF via MIS produces sharper highlights.
+#ifdef UZ_BINDLESS
+    if (envSamplerAliasSrv != kSentinelSrvIndex && metallic > 0.3 && roughness < 0.7) {
+        StructuredBuffer<AliasEntry> aliasTable = ResourceDescriptorHeap[envSamplerAliasSrv];
+
+        float3 envMISContrib = float3(0, 0, 0);
+
+        // Use 4 environment samples per pixel (low count, MIS makes them effective).
+        // Seed from pixel position + frame count for temporal variation.
+        uint pixelSeed = px.x + px.y * 1920 + uint(timeParams.z);
+        const uint kEnvSamples = 4;
+
+        for (uint ei = 0; ei < kEnvSamples; ++ei) {
+            // Low-discrepancy sample via Hammersley sequence
+            float2 u = Hammersley(ei, kEnvSamples);
+            // Decorrelate across pixels with golden ratio offset
+            u = frac(u + float2(
+                frac(float(pixelSeed) * 0.6180339887),
+                frac(float(pixelSeed ^ 0x9E3779B9) * 0.6180339887)));
+
+            EnvSample envS = SampleEnvironment(
+                u, aliasTable, envSamplerTexelCount,
+                envSamplerLumMip0Srv, envSamplerTotalLuminance,
+                prefilteredSrvIndex != kSentinelSrvIndex ? prefilteredSrvIndex : irradianceSrvIndex,
+                envSamplerLumWidth, envSamplerLumHeight,
+                clampSampler);
+
+            // Evaluate GGX BRDF for the environment sample direction
+            float3 Le = envS.direction;
+            float  eNoL = max(dot(N, Le), 0.0);
+            if (eNoL > 0.0 && envS.pdf > 0.0) {
+                float3 He = normalize(V + Le);
+                float  eNoH = saturate(dot(N, He));
+                float  eVoH = saturate(dot(V, He));
+
+                float  De   = D_GGX(alpha, eNoH);
+                float  Vise = V_SmithGGXCorrelated(alpha, NoV, eNoL);
+                float3 Fe   = F_Schlick(F0, float3(1,1,1), eVoH);
+                float3 brdf = De * Vise * Fe;
+
+                // BRDF PDF: D * NoH / (4 * VoH)
+                float pdfBrdf = De * eNoH / max(4.0 * eVoH, 1e-6);
+                float pdfEnv  = envS.pdf;
+
+                // Balance heuristic MIS weight: w_env = pdfEnv / (pdfEnv + pdfBrdf)
+                float misWeight = pdfEnv / (pdfEnv + pdfBrdf);
+
+                envMISContrib += brdf * envS.color * eNoL * misWeight / pdfEnv;
+            }
+        }
+        envMISContrib /= float(kEnvSamples);
+
+        // Blend: replace part of split-sum specular with MIS result for metallic surfaces.
+        // The MIS contribution adds sharp highlights from bright env regions that
+        // the prefiltered mip chain would blur away.
+        ambient += envMISContrib * skyTint;
+    }
+#endif
 
     // ── Final ─────────────────────────────────────────────────────────────
     float3 color = Lo + ambient + emissive;

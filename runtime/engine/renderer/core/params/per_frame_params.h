@@ -222,7 +222,15 @@ struct PerFrameParams {
     float    slSkyDistanceThreshold = 150000.0f;    ///< Max distance for sky light cubemap capture (cm).
     float    slOcclusionContrast = 0.2f;            ///< Contrast adjustment for sky light occlusion.
 
-    float    _pad2[22]            = {};              ///< Pad scalar section to 768 bytes.
+    // ── Environment Map Importance Sampling ─────────────────────────────
+    uint32_t envSamplerAliasSrv = UINT32_MAX;       ///< SRV for alias table StructuredBuffer (UINT32_MAX = disabled).
+    uint32_t envSamplerLumMip0Srv = UINT32_MAX;     ///< SRV for luminance pyramid mip 0 (UINT32_MAX = disabled).
+    float    envSamplerTotalLuminance = 0.0f;       ///< Total luminance sum for PDF normalization.
+    uint32_t envSamplerTexelCount = 0;              ///< Texel count of luminance mip 0.
+    uint32_t envSamplerLumWidth = 0;                ///< Width of luminance mip 0.
+    uint32_t envSamplerLumHeight = 0;               ///< Height of luminance mip 0.
+
+    float    _pad2[16]            = {};              ///< Pad scalar section to 768 bytes.
 
     // ── Resource handles (NOT copied to CB) ──────────────────────────────
     // These are bound by ShaderParameterBinder at their HLSL register slots.
