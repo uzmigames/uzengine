@@ -158,47 +158,32 @@
       }
     },
     {
-      "name": "Decal_LeakingStain_Floor",
+      "name": "Decal_Manhole_Floor_Left",
       "components": {
         "transform": {
-          "position": [-150, 50, 1],
+          "position": [-200, 50, 1],
           "rotation": [0, 0, 0],
-          "scale": [300, 300, 50]
+          "scale": [200, 200, 30]
         },
         "decal": {
-          "albedo": "textures/decals/leaking_stain_color.png",
-          "normal": "textures/decals/leaking_stain_normal.png",
-          "roughness": "textures/decals/leaking_stain_roughness.png"
+          "albedo": "textures/decals/manhole_color.png",
+          "normal": "textures/decals/manhole_normal.png",
+          "roughness": "textures/decals/manhole_roughness.png"
         }
       }
     },
     {
-      "name": "Decal_RustStain_Floor",
+      "name": "Decal_Manhole_Floor_Right",
       "components": {
         "transform": {
-          "position": [150, -50, 1],
-          "rotation": [0, 0, 45],
-          "scale": [250, 250, 50]
+          "position": [200, -50, 1],
+          "rotation": [0, 0, 30],
+          "scale": [150, 150, 30]
         },
         "decal": {
-          "albedo": "textures/decals/rust_stain_color.png",
-          "normal": "textures/decals/rust_stain_normal.png",
-          "roughness": "textures/decals/rust_stain_roughness.png"
-        }
-      }
-    },
-    {
-      "name": "Decal_RustStain_Wall",
-      "components": {
-        "transform": {
-          "position": [0, 398, 150],
-          "rotation": [90, 0, 0],
-          "scale": [300, 300, 50]
-        },
-        "decal": {
-          "albedo": "textures/decals/rust_stain_color.png",
-          "normal": "textures/decals/rust_stain_normal.png",
-          "roughness": "textures/decals/rust_stain_roughness.png"
+          "albedo": "textures/decals/manhole_color.png",
+          "normal": "textures/decals/manhole_normal.png",
+          "roughness": "textures/decals/manhole_roughness.png"
         }
       }
     },

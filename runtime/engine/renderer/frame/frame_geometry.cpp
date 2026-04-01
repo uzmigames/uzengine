@@ -267,9 +267,12 @@ void SceneRenderer::RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContex
                         return UINT32_MAX;
                     };
 
-                    // SvPositionToDecal = ScreenToNDC × InvViewProj × InvWorld
+                    // SvPositionToDecal = ScreenToNDC × InvViewProj × InvWorld × Scale2
+                    // InvWorld maps world → [-0.5, 0.5]³ (unit cube). UE5 clips in [-1,1]³,
+                    // so scale by 2 to map [-0.5, 0.5] → [-1, 1].
                     Mat4 invWorldDecal = decalWorldMat.Inverse();
-                    Mat4 svPosToDecal = screenToNDC * ctx.perFrame.invViewProj * invWorldDecal;
+                    Mat4 scale2 = Mat4::TRS(Vec3(0.0f, 0.0f, 0.0f), Vec3(2.0f, 2.0f, 2.0f));
+                    Mat4 svPosToDecal = screenToNDC * ctx.perFrame.invViewProj * invWorldDecal * scale2;
 
                     DecalInfo info{};
                     info.cb.world         = decalWorldMat;

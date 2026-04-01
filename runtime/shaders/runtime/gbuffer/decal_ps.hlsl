@@ -1,16 +1,16 @@
 /// UzEngine Decal Pixel Shader — deferred decal projection onto GBuffer.
 ///
-/// @ref Valient 2014 "Deferred Rendering in Killzone: Shadow Fall" — DBuffer technique
-/// @ref Pesce 2014 "Rendering Decals in Screen Space"
+/// @ref UE5 DeferredDecal.usf — exact projection pattern
+/// @ref Valient 2014 "Deferred Rendering in Killzone: Shadow Fall"
 ///
-/// Uses a precomputed SvPositionToDecal matrix that transforms pixel coordinates
-/// + scene depth directly to decal local space [-1,1]³ in a single matrix multiply.
-/// SvPositionToDecal = ScreenToNDC × InvViewProj × WorldToDecal
-///
-/// Outputs to 3 GBuffer targets (rendered AFTER GBuffer fill with alpha blending):
-///   MRT0: decal albedo RGB + opacity A
-///   MRT1: decal normal [0,1] RGB + normal blend A
-///   MRT2: unused (roughness would go here in a DBuffer approach)
+/// Key steps (matching UE5 exactly):
+/// 1. Replace SvPosition.z with scene depth from depth buffer
+/// 2. Transform (SvPosition.xy, sceneDepth, 1) → decal local space via SvPositionToDecal
+/// 3. Clip to [-1,1]³
+/// 4. UV = (OSPosition * 0.5 + 0.5).zyx.xy — swizzle so XY are perpendicular to projection
+/// 5. Fade along projection axis (Z)
+/// 6. Sample material textures at DecalUVs
+/// 7. Output with opacity * fade
 
 #include "../common/constants.hlsli"
 
@@ -35,9 +35,9 @@ cbuffer DecalObjectCB : register(b2) {
 SamplerState linearSampler : register(s0);
 
 struct PSOutput {
-    float4 target0 : SV_Target0;  // GBuffer albedo (alpha-blended)
-    float4 target1 : SV_Target1;  // GBuffer normal (alpha-blended)
-    float4 target2 : SV_Target2;  // GBuffer emissive (unused, output zero)
+    float4 target0 : SV_Target0;
+    float4 target1 : SV_Target1;
+    float4 target2 : SV_Target2;
 };
 
 PSOutput main(float4 svPosition : SV_Position) {
@@ -46,9 +46,9 @@ PSOutput main(float4 svPosition : SV_Position) {
     output.target1 = float4(0, 0, 0, 0);
     output.target2 = float4(0, 0, 0, 0);
 
-    // ── Read scene depth at this pixel ───────────────────────────────────
-    /// @ref reversed-Z: near=1, far=0
-    float sceneDepth = 0.0;
+    // ── Step 1: Replace SvPosition.z with scene depth ────────────────────
+    /// @ref UE5 DeferredDecal.usf line 134: In.SvPosition.z = LookupDeviceZ(ScreenUV)
+    float sceneDepth = svPosition.z;
 #ifdef UZ_BINDLESS
     if (depthSrv != kSentinelSrvIndex) {
         Texture2D<float> depthTex = ResourceDescriptorHeap[depthSrv];
@@ -56,58 +56,68 @@ PSOutput main(float4 svPosition : SV_Position) {
     }
 #endif
 
-    // ── Project SvPosition + depth → decal local space ───────────────────
-    /// @ref UE5 DeferredDecal: single matrix multiply SvPositionToDecal
-    /// @constants svPosToDecal = ScreenToNDC × InvViewProj × WorldToDecal
-    float4 svPosWithDepth = float4(svPosition.xy, sceneDepth, 1.0);
-    float4 decalLocalH = mul(svPosWithDepth, svPosToDecal);
-    float3 decalLocal = decalLocalH.xyz / decalLocalH.w;
+    // ── Step 2: SvPosition → decal local space [-1,1]³ ───────────────────
+    /// @ref UE5 line 139: mul(float4(In.SvPosition.xyz, 1), SvPositionToDecal)
+    float4 DecalVectorHom = mul(float4(svPosition.xy, sceneDepth, 1.0), svPosToDecal);
+    float3 OSPosition = DecalVectorHom.xyz / DecalVectorHom.w;
 
-    // ── Clip to decal OBB [-0.5, 0.5]³ ─────────────────────────────────
-    // The unit cube spans [-0.5, 0.5]³ in local space (world matrix includes scale).
-    clip(decalLocal + 0.5);
-    clip(0.5 - decalLocal);
+    // ── Step 3: Clip outside [-1,1]³ ─────────────────────────────────────
+    /// @ref UE5 line 144-145
+    clip(OSPosition.xyz + 1.0);
+    clip(1.0 - OSPosition.xyz);
 
-    // ── UV from local position: [-0.5, 0.5] → [0, 1] ────────────────────
-    float2 decalUV = decalLocal.xy + 0.5;
+    // ── Step 4: UV mapping ──────────────────────────────────────────────
+    /// @ref UE5 line 152-158: DecalVector.zyx swizzle — adapted for Z-up.
+    /// UE5 (Y-up): projects along X, UVs from ZY → swizzle .zyx
+    /// UzEngine (Z-up): projects along Z, UVs from XY → no swizzle needed.
+    float3 DecalVector = OSPosition * 0.5 + 0.5;
+    float2 DecalUVs = DecalVector.xy;
 
-    // ── Edge fade — smooth falloff near OBB boundaries ───────────────────
-    /// @ref Valient 2014 — edge attenuation prevents hard cutoff
-    float edgeFade = 1.0;
-    if (fadeDistance > 0.0) {
-        float3 edgeDist = 0.5 - abs(decalLocal);
-        float minEdge = min(min(edgeDist.x, edgeDist.y), edgeDist.z);
-        edgeFade = saturate(minEdge / fadeDistance);
-    }
+    // ── Step 5: Fade along projection axis (Z in our Z-up system) ────────
+    /// @ref UE5 line 185: saturate(4 - 4 * abs(axis * 2 - 1))
+    float DecalFading = saturate(4.0 - 4.0 * abs(DecalVector.z * 2.0 - 1.0));
 
-    float finalAlpha = opacity * edgeFade;
-    if (finalAlpha <= 0.001) {
-        clip(-1);
-    }
-
-    // ── Sample decal albedo texture ──────────────────────────────────────
-    float4 albedoSample = float4(1, 1, 1, 1);
+    // ── Step 6: Sample decal albedo texture ──────────────────────────────
+    float3 BaseColor = float3(1, 1, 1);
+    float TexOpacity = 1.0;
 #ifdef UZ_BINDLESS
     if (albedoSrv != kSentinelSrvIndex) {
         Texture2D<float4> albedoTex = ResourceDescriptorHeap[albedoSrv];
-        albedoSample = albedoTex.Sample(linearSampler, decalUV);
+        float4 sample = albedoTex.Sample(linearSampler, DecalUVs);
+        BaseColor = sample.rgb;
+        // Use texture alpha as opacity mask when it has meaningful values (> 0).
+        // Grayscale PNGs loaded as RGBA may have alpha=0 — treat as "no mask".
+        if (sample.a > 0.001) {
+            TexOpacity = sample.a;
+        }
+    } else {
+        // No albedo texture = no visible decal
+        clip(-1);
     }
+#else
+    clip(-1); // Decals require bindless
 #endif
 
-    // ── Output to GBuffer with alpha blending ────────────────────────────
-    output.target0 = float4(albedoSample.rgb, finalAlpha);
+    // ── Step 7: Final opacity = material opacity × texture mask × fade ───
+    /// @ref UE5 line 266: Opacity = GetMaterialOpacity() * DecalFading
+    float FinalOpacity = opacity * TexOpacity * DecalFading;
+    if (FinalOpacity <= 0.001) {
+        clip(-1);
+    }
 
-    // Normal: pass through (flat normal = no modification) unless texture bound
-    float3 decalNormalTS = float3(0.5, 0.5, 1.0);
+    // ── Output to GBuffer with alpha blending ────────────────────────────
+    output.target0 = float4(BaseColor, FinalOpacity);
+
+    // Normal channel
+    float3 decalNormal = float3(0.5, 0.5, 1.0);
 #ifdef UZ_BINDLESS
     if (normalSrv != kSentinelSrvIndex) {
         Texture2D<float4> normalTex = ResourceDescriptorHeap[normalSrv];
-        decalNormalTS = normalTex.Sample(linearSampler, decalUV).xyz;
+        decalNormal = normalTex.Sample(linearSampler, DecalUVs).xyz;
     }
 #endif
-    output.target1 = float4(decalNormalTS, normalBlend * finalAlpha);
+    output.target1 = float4(decalNormal, normalBlend * FinalOpacity);
 
-    // Target2: pass zero alpha (no modification to emissive channel)
     output.target2 = float4(0, 0, 0, 0);
 
     return output;
