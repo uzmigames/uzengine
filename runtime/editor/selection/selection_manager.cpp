@@ -6,6 +6,7 @@
 #include "world.h"
 #include "scene_component.h"
 #include "static_mesh_component.h"
+#include "environment/decal_component.h"
 #include "scene_renderer.h"
 #include "mat4.h"
 #include "log.h"
@@ -193,6 +194,41 @@ void SelectionManager::SelectAtScreenPos(float screenX, float screenY,
             if (tMin < closestT) {
                 closestT = tMin;
                 closestEntity = world->EntityFromEntt(enttEntity);
+            }
+        }
+    }
+
+    // ── Also test DecalComponent entities (no mesh — use transform scale as AABB)
+    {
+        auto decalView = world->View<SceneComponent, DecalComponent>();
+        for (auto [enttEntity, scene, decal] : decalView.each()) {
+            if (!decal.enabled) continue;
+
+            const Vec3 worldPos = scene.GetWorldPosition();
+            const Vec3 localScale = scene.GetScale();
+
+            // Decal OBB = unit cube [-0.5, 0.5]³ × scale
+            const Vec3 halfExtent{
+                localScale.x * 0.5f,
+                localScale.y * 0.5f,
+                localScale.z * 0.5f
+            };
+
+            const Vec3 aabbMin{worldPos.x - std::abs(halfExtent.x),
+                               worldPos.y - std::abs(halfExtent.y),
+                               worldPos.z - std::abs(halfExtent.z)};
+            const Vec3 aabbMax{worldPos.x + std::abs(halfExtent.x),
+                               worldPos.y + std::abs(halfExtent.y),
+                               worldPos.z + std::abs(halfExtent.z)};
+
+            float tMin = 0.0f;
+            float tMax = 0.0f;
+            if (RayIntersectsAABB(rayOrigin, rayDir, aabbMin, aabbMax, tMin, tMax)) {
+                if (tMin < 0.0f) continue;
+                if (tMin < closestT) {
+                    closestT = tMin;
+                    closestEntity = world->EntityFromEntt(enttEntity);
+                }
             }
         }
     }
