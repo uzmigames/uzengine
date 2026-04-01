@@ -12,6 +12,13 @@
 #include "rhi_config.h"
 #include "rhi_backend.h"
 #include "log.h"
+#include "flip_pass.h"
+#include "file_system.h"
+#include "shader_compiler.h"
+#include "shader_compiler_fxc.h"
+#include "shader_manager.h"
+
+#include <stb_image.h>
 
 #include "../engine/app/project_loader.h"
 #include "world.h"
@@ -198,6 +205,143 @@ static void LogRenderStats(uint32_t frameIndex, float totalMs) {
     const float fps = avgMs > 0.0f ? 1000.0f / avgMs : 0.0f;
     UZ_LOG(Engine, Info, "Render loop finished: {} frames, {:.1f}ms total, {:.2f}ms/frame ({:.0f} FPS)",
            frameIndex, totalMs, avgMs, fps);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FLIP Headless Evaluation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Loads a PNG/JPG via VFS + stbi, creates a GPU texture, returns SRV index.
+static uint32_t LoadImageToGPU(IRHIDevice* device, const std::string& path,
+                                uint32_t& outWidth, uint32_t& outHeight) {
+    // Read file bytes via filesystem
+    auto data = FileReadAll(path.c_str());
+    if (data.empty()) {
+        UZ_LOG(Engine, Error, "FLIP: failed to read '{}'", path);
+        return UINT32_MAX;
+    }
+
+    int w = 0, h = 0, ch = 0;
+    uint8_t* pixels = stbi_load_from_memory(data.data(), static_cast<int>(data.size()),
+                                             &w, &h, &ch, 4);
+    if (!pixels) {
+        UZ_LOG(Engine, Error, "FLIP: failed to decode '{}'", path);
+        return UINT32_MAX;
+    }
+    outWidth  = static_cast<uint32_t>(w);
+    outHeight = static_cast<uint32_t>(h);
+
+    // Create RGBA8 texture
+    RHITextureDesc texDesc;
+    texDesc.width     = outWidth;
+    texDesc.height    = outHeight;
+    texDesc.format    = RHIFormat::RGBA8Unorm;
+    texDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::CopyDst;
+    texDesc.debugName = path.c_str();
+    auto texture = device->CreateTexture(texDesc);
+
+    // Upload via staging buffer
+    const uint32_t rowPitch = outWidth * 4;
+    const uint32_t alignedRowPitch = (rowPitch + 255) & ~255u;
+    const uint32_t uploadSize = alignedRowPitch * outHeight;
+
+    RHIBufferDesc stagingDesc;
+    stagingDesc.sizeBytes = uploadSize;
+    stagingDesc.usage     = RHIBufferUsage::CopySrc;
+    stagingDesc.memory    = RHIMemoryType::Upload;
+    stagingDesc.debugName = "FLIP_ImageStaging";
+    auto staging = device->CreateBuffer(stagingDesc);
+
+    auto* mapped = static_cast<uint8_t*>(device->MapBuffer(staging));
+    for (uint32_t row = 0; row < outHeight; ++row) {
+        std::memcpy(mapped + row * alignedRowPitch, pixels + row * rowPitch, rowPitch);
+    }
+    device->UnmapBuffer(staging);
+    stbi_image_free(pixels);
+
+    auto* cmdList = device->CreateCommandList();
+    cmdList->Begin();
+
+    RHIBarrierDesc toCopyDst;
+    toCopyDst.texture     = texture;
+    toCopyDst.stateBefore = RHIResourceState::Common;
+    toCopyDst.stateAfter  = RHIResourceState::CopyDst;
+    cmdList->ResourceBarrier(&toCopyDst, 1);
+
+    cmdList->CopyBufferToTexture(staging, 0, alignedRowPitch, texture, 0);
+
+    RHIBarrierDesc toSrv;
+    toSrv.texture     = texture;
+    toSrv.stateBefore = RHIResourceState::CopyDst;
+    toSrv.stateAfter  = RHIResourceState::ShaderResource;
+    cmdList->ResourceBarrier(&toSrv, 1);
+
+    cmdList->End();
+    cmdList->Execute();
+    device->WaitIdle();
+    device->DestroyBuffer(staging);
+
+    return device->GetTextureSRVIndex(texture);
+}
+
+/// Runs FLIP comparison between two images. Prints JSON to stdout, returns exit code.
+static int RunFlip(const RHIDeviceDesc& deviceDesc,
+                    const std::string& refPath, const std::string& testPath,
+                    const std::string& outputPath, float threshold) {
+    UZ_LOG(Engine, Info, "FLIP: comparing '{}' vs '{}'", refPath, testPath);
+
+    // Create headless device
+    auto device = CreateRHIDevice(deviceDesc);
+    auto* devicePtr = device.get();
+    if (!device) {
+        UZ_LOG(Engine, Error, "FLIP: failed to create RHI device");
+        return kExitRenderError;
+    }
+
+    // Load images
+    uint32_t refW = 0, refH = 0, testW = 0, testH = 0;
+    uint32_t refSrv  = LoadImageToGPU(devicePtr, refPath, refW, refH);
+    uint32_t testSrv = LoadImageToGPU(devicePtr, testPath, testW, testH);
+
+    if (refSrv == UINT32_MAX || testSrv == UINT32_MAX) {
+        UZ_LOG(Engine, Error, "FLIP: failed to load images");
+        return kExitRenderError;
+    }
+
+    if (refW != testW || refH != testH) {
+        UZ_LOG(Engine, Error, "FLIP: image dimensions mismatch ({}x{} vs {}x{})",
+               refW, refH, testW, testH);
+        return kExitRenderError;
+    }
+
+    // Shader manager for FLIP compute pipeline
+    auto shaderMgr = std::make_unique<ShaderManager>();
+    if (!shaderMgr->Init(devicePtr)) {
+        UZ_LOG(Engine, Error, "FLIP: failed to init shader manager");
+        return kExitRenderError;
+    }
+
+    // Run FLIP evaluation
+    FlipPass flipPass;
+    if (!flipPass.Init(devicePtr, shaderMgr.get())) {
+        UZ_LOG(Engine, Error, "FLIP: failed to init FlipPass");
+        return kExitRenderError;
+    }
+
+    auto* cmdList = devicePtr->CreateCommandList();
+    cmdList->Begin();
+    auto result = flipPass.Evaluate(cmdList, refSrv, testSrv, refW, refH, threshold);
+
+    // Print JSON to stdout
+    std::printf("FLIP_JSON:{\"mean_flip\":%.6f,\"max_flip\":%.6f,\"threshold\":%.4f,"
+                "\"pass\":%s,\"ref\":\"%s\",\"test\":\"%s\",\"width\":%u,\"height\":%u}\n",
+                result.meanFlip, result.maxFlip, threshold,
+                result.pass ? "true" : "false",
+                refPath.c_str(), testPath.c_str(), refW, refH);
+
+    flipPass.Shutdown();
+
+    return result.pass ? kExitSuccess : 1;
 }
 
 /// Runs the windowed render loop with animated clear screen, optional scene + Lua scripting.
@@ -478,7 +622,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         if (sceneRendererReady && !screenshotPath.empty() && !screenshotRequested
             && frameIndex >= static_cast<uint32_t>(screenshotFrame)) {
             // Log asset loading state once per frame until ready
-            if (frameIndex % 30 == 0) sceneRenderer.IsSceneFullyLoadedDebug();
+            if (frameIndex % 30 == 0) (void)sceneRenderer.IsSceneFullyLoadedDebug();
         }
         if (sceneRendererReady && !screenshotPath.empty() && !screenshotRequested
             && frameIndex >= static_cast<uint32_t>(screenshotFrame)
@@ -618,6 +762,18 @@ int main(int argc, char** argv) {
     uz::LogResolvedConfig(rhiCfg, headless, maxFrames, width, height);
 
     int exitCode = uz::kExitSuccess;
+
+    // ── FLIP comparison mode ────────────────────────────────────────────
+    const std::string flipRef  = config.GetString("flip-ref");
+    const std::string flipTest = config.GetString("flip-test");
+    if (!flipRef.empty() && !flipTest.empty()) {
+        const std::string flipOutput = config.GetString("flip-output");
+        const float flipThreshold = config.GetFloat("flip-threshold", 0.05f);
+        exitCode = uz::RunFlip(deviceDesc, flipRef, flipTest, flipOutput, flipThreshold);
+        UZ_LOG(Engine, Info, "UzEngine Runtime exiting with code {}", exitCode);
+        uz::LogShutdown();
+        return exitCode;
+    }
 
     if (headless) {
         exitCode = uz::RunHeadless(deviceDesc);
