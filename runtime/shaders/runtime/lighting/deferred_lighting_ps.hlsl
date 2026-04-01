@@ -9,6 +9,7 @@
 #include "../material/diffuse.hlsli"
 #include "light_types.hlsli"
 #include "shadow.hlsli"
+#include "ibl.hlsli"
 
 // ─── Root constants at b0 ──────────────────────────────────────────────────
 
@@ -202,6 +203,10 @@ float4 main(FSInput input) : SV_Target {
     // ── IBL ambient (Falcor split-sum pattern) ──────────────────────────
     // @ref Karis 2013 "Real Shading in Unreal Engine 4" — split-sum IBL
     // @ref Falcor StandardBSDF — F_SchlickRoughness for env Fresnel
+    //
+    // IBL (indirect lighting) is NOT attenuated by directional shadow.
+    // @ref UE5 DeferredLightingCommon.ush — IndirectLighting is independent of shadow.
+    // Only AO affects indirect; shadows only affect direct lights.
     float3 skyTint = float3(skyLightColorR, skyLightColorG, skyLightColorB) * skyLightIntensity;
     float3 ambient = float3(0, 0, 0);
     {
@@ -210,19 +215,19 @@ float4 main(FSInput input) : SV_Target {
         float3 kS_env = F0 + (max(float3(s, s, s), F0) - F0) * Pow5(1.0 - NoV);
         float3 kD_env = (1.0 - kS_env) * (1.0 - metallic);
 
-        // Diffuse irradiance from cubemap
-        float3 irradiance = ambientColor.xyz; // fallback
+        // Diffuse irradiance: SH evaluation → cubemap fallback
+        // @ref Ramamoorthi & Hanrahan 2001 — L2 SH is sufficient for diffuse irradiance
+        float3 irradiance = EvalSH_L2(N, skyIrradianceSH);
+
+        // Cubemap fallback if SH is zero (not yet baked)
 #ifdef UZ_BINDLESS
-        if (irradianceSrvIndex != kSentinelSrvIndex) {
+        if (IsSHZero(skyIrradianceSH) && irradianceSrvIndex != kSentinelSrvIndex) {
             TextureCube<float4> irrTex = ResourceDescriptorHeap[irradianceSrvIndex];
             irradiance = irrTex.SampleLevel(clampSampler, N, 0).rgb;
         }
 #endif
         irradiance = max(irradiance, skyLightMinAmbient);
-        // Lambertian BRDF = albedo / PI. The irradiance cubemap integrates
-        // cos-weighted radiance over the hemisphere, producing values in
-        // units of irradiance (W/m²). Dividing by PI converts to exitant
-        // radiance for a Lambertian surface.
+
         float3 diffuseAmbient = kD_env * irradiance * baseColor;
 
         // Specular: prefiltered env + BRDF LUT
@@ -244,7 +249,6 @@ float4 main(FSInput input) : SV_Target {
 
         // Roughness attenuation — for very rough dielectrics the BRDF LUT bias
         // term produces visible specular from intense HDR environments (sun hotspot).
-        // Attenuate specular contribution for rough non-metallic surfaces.
         // @ref Fdez-Aguera 2019 "A Multiple-Scattering Microfacet Model"
         float roughAtten = saturate(1.0 - roughness * roughness * (1.0 - metallic));
         specularAmbient *= roughAtten;
@@ -254,9 +258,9 @@ float4 main(FSInput input) : SV_Target {
         float horizon = saturate(1.0 + dot(R, N));
         specularAmbient *= horizon * horizon;
 
-        // Attenuate specular IBL in shadowed areas — prevents bright reflections
-        // appearing inside shadow regions (sun specular leaking through IBL)
-        specularAmbient *= shadow;
+        // NOTE: IBL specular is NOT multiplied by sun shadow. In UE5 and Falcor,
+        // indirect lighting (both diffuse and specular) is independent of directional
+        // shadow. Only AO affects indirect; shadows only affect direct lights.
 
         ambient = (diffuseAmbient * ao + specularAmbient) * skyTint;
     }
