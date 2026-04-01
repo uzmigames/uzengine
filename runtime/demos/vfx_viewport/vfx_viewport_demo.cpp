@@ -639,6 +639,20 @@ void VFXViewportDemo::OnInit() {
         m_fireballActive = true;
     };
     m_editorUI.onLoadPreset = [this](int idx) { LoadPreset(idx); };
+    m_editorUI.onLoadCompoundPreset = [this](int idx) {
+        auto* device = GetDevice();
+        auto* shaders = GetShaderManager();
+        auto* cmd = GetCommandList();
+        ShutdownAllEmitters(device);
+        BuildCompoundPreset(static_cast<VFXCompoundPreset>(idx));
+        InitAllEmitters(device, shaders, cmd);
+        ResetAllEmitters(cmd);
+        // Update UI emitter names
+        std::vector<std::string> names;
+        for (const auto& e : m_emitters) names.push_back(e.name);
+        m_editorUI.SetEmitterNames(names, m_activeEmitterIndex);
+        UZ_LOG(App, Info, "[VFX] Loaded compound preset {}", idx);
+    };
     m_editorUI.onSelectEmitter = [this](int idx) {
         if (idx >= 0 && idx < static_cast<int>(m_emitters.size())) {
             m_activeEmitterIndex = idx;

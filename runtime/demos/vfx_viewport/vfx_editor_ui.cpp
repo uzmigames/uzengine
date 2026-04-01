@@ -505,18 +505,51 @@ void VFXEditorUI::BuildMenuDropdowns() {
                 }
                 break;
             }
-            case 3: { // Presets
-                const int count = static_cast<int>(m_presetNames.size());
-                const int totalItems = count > 0 ? count : 1;
+            case 3: { // Presets — compound presets + file presets
+                static const char* kCompoundNames[] = {
+                    "Single", "Fire", "Explosion", "Magic", "Flame->Smoke"
+                };
+                constexpr int kCompoundCount = 5;
+                const int fileCount = static_cast<int>(m_presetNames.size());
+
+                // Separator between compound and file presets
+                const int sepRow = kCompoundCount; // 1 separator row
+                const int totalItems = kCompoundCount + 1 + (fileCount > 0 ? fileCount : 1);
                 const float totalH = totalItems * kDropItemH;
                 m_textRenderer.AddRect(dropX, dropY, kDropW, totalH, kColorDropBg);
 
-                if (count == 0) {
-                    m_textRenderer.AddText(m_font, "(no presets)", dropX + 8.0f, dropY + 4.0f,
+                // Compound presets section
+                for (int j = 0; j < kCompoundCount; ++j) {
+                    const float iy = dropY + j * kDropItemH;
+                    const bool ih = HitTest(dropX, iy, kDropW, kDropItemH);
+                    if (ih) {
+                        m_textRenderer.AddRect(dropX, iy, kDropW, kDropItemH, kColorBtnHover);
+                    }
+                    m_textRenderer.AddText(m_font, kCompoundNames[j],
+                                           dropX + 8.0f, iy + 4.0f, kColorAccent);
+                    if (ih && m_mouseJustPressed) {
+                        if (onLoadCompoundPreset) onLoadCompoundPreset(j);
+                        m_openMenu = -1;
+                    }
+                }
+
+                // Separator line
+                {
+                    const float sepY = dropY + kCompoundCount * kDropItemH;
+                    m_textRenderer.AddRect(dropX + 8.0f, sepY + kDropItemH * 0.45f,
+                                           kDropW - 16.0f, 1.0f, {0.4f, 0.4f, 0.5f, 1.0f});
+                    m_textRenderer.AddText(m_font, "Saved:", dropX + 8.0f, sepY + 4.0f,
                                            {0.6f, 0.6f, 0.6f, 1.0f});
+                }
+
+                // File presets section
+                const float fileStartY = dropY + (kCompoundCount + 1) * kDropItemH;
+                if (fileCount == 0) {
+                    m_textRenderer.AddText(m_font, "(no saved presets)", dropX + 8.0f,
+                                           fileStartY + 4.0f, {0.5f, 0.5f, 0.5f, 1.0f});
                 } else {
-                    for (int j = 0; j < count; ++j) {
-                        const float iy = dropY + j * kDropItemH;
+                    for (int j = 0; j < fileCount; ++j) {
+                        const float iy = fileStartY + j * kDropItemH;
                         const bool ih = HitTest(dropX, iy, kDropW, kDropItemH);
                         if (ih) {
                             m_textRenderer.AddRect(dropX, iy, kDropW, kDropItemH, kColorBtnHover);
