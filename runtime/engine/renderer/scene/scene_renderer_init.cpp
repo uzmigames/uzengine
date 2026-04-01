@@ -1,6 +1,7 @@
 /// UzEngine Scene Renderer — Lifecycle (Init, Resize, Shutdown, CVar registration).
 
 #include "scene_renderer.h"
+#include "quality_presets.h"
 
 #include "renderer_core.h"
 #include "subsystems.h"
@@ -66,6 +67,10 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     m_device = device;
     m_width = width;
     m_height = height;
+
+    // ── Quality Presets (must be before any resource creation) ────────
+    QualityPresetManager::Get().Init();
+    // CLI quality is applied in first RenderFrame (after CVar overrides are processed).
 
     // Compute internal render resolution from screen percentage.
     // At 100% (default), render resolution equals display resolution.
@@ -793,6 +798,17 @@ void SceneRenderer::RegisterCVars() {
 
 void SceneRenderer::ApplyCVars() {
     auto& cvars = CVarRegistry::Get();
+
+    // ── Quality Presets (check if --cvar quality=N was set) ──────────
+    {
+        const int qualityLevel = cvars.GetInt("quality", -1);
+        static int lastAppliedQuality = -1;
+        if (qualityLevel >= 0 && qualityLevel != lastAppliedQuality) {
+            auto level = static_cast<QualityLevel>(std::clamp(qualityLevel, 0, 4));
+            QualityPresetManager::Get().ApplyPreset(level);
+            lastAppliedQuality = qualityLevel;
+        }
+    }
 
     // Screen percentage
     const float pct = cvars.GetFloat("r.ScreenPercentage", 100.f);
