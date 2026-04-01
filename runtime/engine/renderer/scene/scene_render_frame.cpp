@@ -92,8 +92,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     // main command list before the render graph. The cloud pass manages
     // its own barriers internally (SRV→UAV→SRV on the output texture),
     // so no external synchronization is needed.
-    // SHADER DEBUG: cloud dispatch disabled
-    if (false && m_pendingCloudDispatch && m_cloudPass && m_cloudPass->IsInitialized()
+    if (m_pendingCloudDispatch && m_cloudPass && m_cloudPass->IsInitialized()
         && m_pendingCloudInput) {
 
         if (m_gpuProfileEnabled) {

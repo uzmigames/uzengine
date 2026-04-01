@@ -175,9 +175,11 @@ void ParseCameraComponent(World& world,
     // CameraComponent is non-copyable — use registry.emplace directly.
     auto& cam = registry.emplace<CameraComponent>(enttEntity);
     cam.fov       = ReadFloat(comp, "fov",    60.f);
-    cam.nearPlane = ReadFloat(comp, "near",    0.1f);
-    cam.farPlane  = ReadFloat(comp, "far",  1000.f);
-    cam.isActive  = ReadBool (comp, "active", false);
+    cam.nearPlane = comp.contains("near_clip") ? ReadFloat(comp, "near_clip", 0.1f)
+                                               : ReadFloat(comp, "near",      0.1f);
+    cam.farPlane  = comp.contains("far_clip")  ? ReadFloat(comp, "far_clip", 1000.f)
+                                               : ReadFloat(comp, "far",      1000.f);
+    cam.isActive  = ReadBool (comp, "active", true);
 
     // Copy transform into the CameraComponent's SceneComponent base.
     if (hasTransform) {
@@ -186,6 +188,13 @@ void ParseCameraComponent(World& world,
         cam.SetScale(scale);
         // Remove standalone SceneComponent — CameraComponent IS a SceneComponent.
         registry.erase<SceneComponent>(enttEntity);
+    }
+
+    // Optional look_at target — bypasses quaternion rotation entirely.
+    // Avoids Euler-to-quaternion convention mismatches with the fly controller.
+    if (comp.contains("look_at")) {
+        cam.lookTarget = ReadVec3(comp, "look_at", 0.f, 0.f, 0.f);
+        cam.hasLookTarget = true;
     }
 }
 
