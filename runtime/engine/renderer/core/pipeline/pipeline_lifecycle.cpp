@@ -161,6 +161,7 @@ void PipelineLibrary::Shutdown() {
     destroyShader(m_fullscreenVS);
     destroyShader(m_gbufferPS);
     destroyShader(m_lightingPS);
+    destroyShader(m_pixelDebugCS);
     destroyShader(m_gbufferDebugPS);
     destroyShader(m_debugViewPS);
     destroyShader(m_instancedMeshVS);
@@ -246,6 +247,17 @@ bool PipelineLibrary::EnsureLightingPixelShader() {
         m_lightingPS = m_shaderMgr->CreateShader(EngineShader::DeferredLightingPS, RHIShaderStage::Pixel);
         if (!m_lightingPS.IsValid()) {
             UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile DeferredLightingPS");
+            return false;
+        }
+    }
+    return true;
+}
+
+bool PipelineLibrary::EnsurePixelDebugComputeShader() {
+    if (!m_pixelDebugCS.IsValid()) {
+        m_pixelDebugCS = m_shaderMgr->CreateShader(EngineShader::PixelDebugCS, RHIShaderStage::Compute);
+        if (!m_pixelDebugCS.IsValid()) {
+            UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile PixelDebugCS");
             return false;
         }
     }

@@ -115,10 +115,21 @@ GPUMesh UploadMesh(IRHIDevice* device, IRHICommandList* cmdList, const Mesh& mes
 
     // -- Populate metadata --
     result.vertexCount = mesh.GetVertexCount();
-    result.indexCount  = mesh.GetIndexCount();
+    result.indexCount  = mesh.header.indexCount; // LOD0 index count
     result.indexFormat  = (mesh.header.indexFormat == MeshIndexFormat::UInt16)
                              ? RHIIndexFormat::Uint16
                              : RHIIndexFormat::Uint32;
+
+    // -- LOD info --
+    result.lodCount = mesh.GetLODCount();
+    for (uint32_t i = 0; i < 3; ++i) {
+        result.lodInfo[i].indexOffset = mesh.GetLODIndexOffset(i + 1);
+        result.lodInfo[i].indexCount  = mesh.GetLODIndexCount(i + 1);
+    }
+
+    // -- Mesh AABB bounds (used for bounding sphere / LOD screen-size computation) --
+    result.boundsMin = mesh.header.boundsMin;
+    result.boundsMax = mesh.header.boundsMax;
 
     // -- Bindless SRV index --
     if (device->IsBindless()) {
@@ -193,13 +204,24 @@ DeferredMeshUpload UploadMeshDeferred(IRHIDevice* device, IRHICommandList* cmdLi
                                   ? RHIIndexFormat::Uint16
                                   : RHIIndexFormat::Uint32;
 
+    // -- LOD metadata --
+    result.mesh.lodCount = mesh.GetLODCount();
+    for (uint32_t i = 0; i < 3; ++i) {
+        result.mesh.lodInfo[i].indexOffset = mesh.GetLODIndexOffset(i + 1);
+        result.mesh.lodInfo[i].indexCount  = mesh.GetLODIndexCount(i + 1);
+    }
+
+    // -- Mesh AABB bounds (used for bounding sphere / LOD screen-size computation) --
+    result.mesh.boundsMin = mesh.header.boundsMin;
+    result.mesh.boundsMax = mesh.header.boundsMax;
+
     // -- Bindless SRV index --
     if (device->IsBindless()) {
         result.mesh.vbSrvIndex = device->GetBufferSRVIndex(result.mesh.vertexBuffer);
     }
 
-    UZ_LOG(Renderer, Info, "UploadMeshDeferred: queued {} vertices, {} indices (bindless SRV={})",
-           result.mesh.vertexCount, result.mesh.indexCount,
+    UZ_LOG(Renderer, Info, "UploadMeshDeferred: queued {} vertices, {} indices, {} LODs (bindless SRV={})",
+           result.mesh.vertexCount, result.mesh.indexCount, result.mesh.lodCount,
            result.mesh.vbSrvIndex != UINT32_MAX ? static_cast<int>(result.mesh.vbSrvIndex) : -1);
 
     return result;

@@ -1,7 +1,7 @@
 /// uz::Application — CLI argument parsing.
 ///
 /// Handles --backend, --sm, --screenshot, --frames, --cvar, --camera-*,
-/// --renderdoc-capture, --vis, --pass-*, and other command-line flags.
+/// --vis, --pass-*, and other command-line flags.
 /// See application.h for the full Application interface.
 
 #include "application.h"
@@ -76,18 +76,6 @@ void Application::ParseArgs(int argc, char* argv[]) {
             m_config.allModesOutputPath = argv[++i];
         } else if (std::strcmp(argv[i], "--shadow-debug") == 0 && i + 1 < argc) {
             m_shadowDebugMode = static_cast<uint32_t>(std::atoi(argv[++i]));
-        } else if (std::strcmp(argv[i], "--renderdoc-capture") == 0 && i + 1 < argc) {
-            // --renderdoc-capture <frame_number>
-            // Automatically triggers a RenderDoc capture on the specified frame.
-            // Useful for headless CI pipelines or reproducible captures.
-            const int frameNum = std::atoi(argv[++i]);
-            if (frameNum >= 0) {
-                m_renderdocCaptureFrame = static_cast<uint32_t>(frameNum);
-            } else {
-                UZ_LOG(App, Warning,
-                       "--renderdoc-capture requires a non-negative frame number, got '{}'",
-                       argv[i]);
-            }
         } else if (std::strcmp(argv[i], "--camera-x") == 0 && i + 1 < argc) {
             m_config.cameraPositionX = static_cast<float>(std::atof(argv[++i]));
         } else if (std::strcmp(argv[i], "--camera-y") == 0 && i + 1 < argc) {
@@ -112,6 +100,12 @@ void Application::ParseArgs(int argc, char* argv[]) {
             m_passToggle = argv[++i];
         } else if (std::strcmp(argv[i], "--pass-compare") == 0 && i + 1 < argc) {
             m_passCompare = argv[++i];
+        } else if (std::strcmp(argv[i], "--pixel-debug") == 0 && i + 2 < argc) {
+            m_pixelDebugX = static_cast<uint32_t>(std::atoi(argv[++i]));
+            m_pixelDebugY = static_cast<uint32_t>(std::atoi(argv[++i]));
+            m_pixelDebugEnabled = true;
+        } else if (std::strcmp(argv[i], "--diag") == 0) {
+            m_diagMode = true;
         } else if (std::strcmp(argv[i], "--gpu-profile") == 0) {
             m_config.gpuProfile = true;
         } else if (std::strcmp(argv[i], "--force-loose") == 0) {
@@ -160,6 +154,27 @@ void Application::ParseArgs(int argc, char* argv[]) {
     // --pass-validate: default to 120 frames then exit
     if (m_passValidate && m_config.maxFrames == 0) {
         m_config.maxFrames = 120;
+    }
+
+    // --diag: run diagnostics and output JSON to stdout, then exit.
+    // Implies headless mode and suppresses console logging so stdout
+    // contains only the DIAG_JSON: prefixed output.
+    if (m_diagMode) {
+        m_headless = true;
+        if (m_config.maxFrames == 0) {
+            m_config.maxFrames = 120;
+        }
+        LogSuppressConsole();
+    }
+
+    // --pixel-debug: implies headless + limited frames + suppressed console.
+    // Output goes to stdout as PIXEL_DEBUG_JSON: prefix.
+    if (m_pixelDebugEnabled) {
+        m_headless = true;
+        if (m_config.maxFrames == 0) {
+            m_config.maxFrames = 120;
+        }
+        LogSuppressConsole();
     }
 }
 

@@ -41,6 +41,9 @@ publication, authors, where it is used in the engine, and a URL when available.
 22. [God Rays](#22-god-rays)
 23. [Geometry & Math](#23-geometry--math)
 24. [Standards & Specifications](#24-standards--specifications)
+25. [Volumetric Clouds (Advanced)](#25-volumetric-clouds-advanced)
+26. [Open-Source Reference Implementations](#26-open-source-reference-implementations)
+27. [Falcor Paper References (adopted or planned)](#27-falcor-paper-references-adopted-or-planned)
 
 ---
 
@@ -645,3 +648,192 @@ See [Ramamoorthi & Hanrahan 2001](#ramamoorthi--hanrahan-2001--sh-irradiance) in
 - **Analysis**: `docs/analysis/rendering/three-geospatial-clouds-adaptation.md`
 - **Used as reference for**: Adaptive stepping, multi-scattering octaves, Beer Shadow Maps, Bayer temporal upscale, aerial perspective on clouds, multi-layer cloud system.
 - **Note**: MIT-licensed. UzEngine reimplements techniques independently in DX12/HLSL compute shaders; no code is copied.
+
+### NVIDIA Falcor — Rendering Research Framework
+- **Title**: "Falcor — Real-Time Rendering Framework"
+- **Authors**: NVIDIA GameWorks
+- **License**: BSD 3-Clause (permissive, commercial use allowed with attribution)
+- **URL**: https://github.com/NVIDIAGameWorks/Falcor
+- **Analysis**: `docs/analysis/falcor/` (architecture, render passes, shaders, GI, post-processing)
+- **Used as reference for**: Shader utility library improvements, BSDF implementations, material system design, render graph architecture, sampling functions, tone mapping operators, denoising techniques.
+- **Note**: BSD-3-Clause licensed. Third-party SDKs bundled by Falcor (DLSS, RTXDI, NRD) have separate, more restrictive licenses. UzEngine references Falcor's open-source algorithms only.
+
+---
+
+## 27. Falcor Paper References (adopted or planned)
+
+Papers cited in NVIDIA Falcor that are relevant to UzEngine improvements.
+References already listed in sections 1–26 are not duplicated here.
+
+### Oren & Nayar 1994 — Rough Diffuse BRDF
+- **Title**: "Generalization of Lambert's Reflectance Model"
+- **Authors**: Michael Oren, Shree K. Nayar
+- **Venue**: SIGGRAPH 1994
+- **URL**: https://doi.org/10.1145/192161.192213
+- **Referenced in**: Falcor `OrenNayarBRDF.slang`
+- **Key contribution**: Microfacet-based diffuse model for rough surfaces (concrete, clay, fabric). A = 1 − 0.5σ²/(σ²+0.33), B = 0.45σ²/(σ²+0.09). Replaces Lambertian for surfaces with roughness > 0.3.
+- **UzEngine status**: Not implemented. Target: `pbr_common.hlsli`
+
+### Estevez & Kulla 2017 — Sheen/Cloth BSDF
+- **Title**: "Production Friendly Microfacet Sheen BRDF"
+- **Authors**: Alejandro Conty Estevez, Christopher Kulla
+- **Venue**: SIGGRAPH 2017 (Sony Pictures Imageworks)
+- **URL**: https://blog.selfshadow.com/publications/s2017-shading-course/imageworks/s2017_pbs_imageworks_sheen.pdf
+- **Referenced in**: Falcor `SheenBSDF.slang`
+- **Key contribution**: Microfacet sheen lobe for cloth/velvet using inverse-power NDF D(h) = (2+1/α)/(2π) · sin(θ)^(1/α). LUT-based albedo scaling for energy conservation.
+- **UzEngine status**: Partial (`D_Charlie` + `V_Neubelt` in `deferred_lighting_ps.hlsl`, not shared). Target: extract to `sheen.hlsli`
+
+### Chiang et al. 2016 — Hair Scattering
+- **Title**: "A Practical and Controllable Hair and Fur Model for Production Path Tracing"
+- **Authors**: Matt Jen-Yuan Chiang, Benedikt Bitterli, Chuck Tappan, Brent Burley
+- **Venue**: EGSR 2016 (Walt Disney Animation Studios)
+- **URL**: https://benedikt-bitterli.me/pchfm/pchfm.pdf
+- **Referenced in**: Falcor `HairChiang16.slang`
+- **Key contribution**: Multi-lobe hair scattering (R, TT, TRT lobes) with Bessel-function longitudinal scattering. Ap() azimuthal attenuation, Mp() longitudinal, Np() azimuthal.
+- **UzEngine status**: Not implemented. Long-term (requires hair geometry pipeline).
+
+### Shirley 1997 — Conductor Fresnel
+- **Title**: "Physically Based Lighting Calculations for Computer Graphics"
+- **Authors**: Peter Shirley
+- **Venue**: PhD Thesis / PBR Book derivation
+- **Referenced in**: Falcor `Fresnel.slang: evalFresnelConductor`
+- **Key contribution**: Complex Fresnel for metals with real IOR (η) and extinction coefficient (k). Accurate spectral behavior for gold, copper, aluminum, iron. Replaces Schlick approximation for physical metals.
+- **UzEngine status**: Not implemented. Target: `pbr_common.hlsli`
+
+### PBR Book 2018 — Dielectric Fresnel
+- **Title**: "Physically Based Rendering: From Theory to Implementation" (3rd ed.)
+- **Authors**: Matt Pharr, Wenzel Jakob, Greg Humphreys
+- **Venue**: MIT Press, 2018
+- **URL**: https://www.pbr-book.org/
+- **Referenced in**: Falcor `Fresnel.slang: evalFresnelDielectric`
+- **Key contribution**: Full Snell's law Fresnel for dielectrics: average of s-polarized (Rs) and p-polarized (Rp) reflectance. Accurate for glass (η=1.5), water (η=1.33), ice (η=1.31).
+- **UzEngine status**: Not implemented. Target: `pbr_common.hlsli`
+
+### Heitz 2018 — VNDF Importance Sampling
+- **Title**: "Sampling the GGX Distribution of Visible Normals"
+- **Authors**: Eric Heitz
+- **Venue**: JCGT, Vol. 7, No. 4, 2018
+- **URL**: https://jcgt.org/published/0007/04/01/
+- **Referenced in**: Falcor `SpecularMicrofacet.slang: sampleGGX_VNDF`
+- **Key contribution**: Visible Normal Distribution Function sampling — proportional to D_wi(wm) instead of D(wm)·cos(θ). 2-4× lower variance than NDF sampling, especially at grazing angles. Standard for path tracing and high-quality IBL baking.
+- **UzEngine status**: Not implemented. Target: `ibl.hlsli`, `ssr_trace_cs.hlsl`
+
+### Matusik et al. 2003 — MERL Measured BRDFs
+- **Title**: "A Data-Driven Reflectance Model"
+- **Authors**: Wojciech Matusik, Hanspeter Pfister, Matt Brand, Leonard McMillan
+- **Venue**: SIGGRAPH 2003
+- **URL**: https://people.csail.mit.edu/wojciech/BRDF/
+- **Referenced in**: Falcor `MERLMaterial.slang`
+- **Key contribution**: 100 measured isotropic BRDFs (metals, plastics, fabrics) stored as 90×90×180 RGB tables. Ground-truth reference for BRDF model validation.
+- **UzEngine status**: Not needed (research tool). Useful for validation only.
+
+### Dupuy & Jakob 2018 — RGL Measured BRDFs
+- **Title**: "An Adaptive Parameterization for Efficient Material Acquisition and Rendering"
+- **Authors**: Jonathan Dupuy, Wenzel Jakob
+- **Venue**: SIGGRAPH Asia 2018
+- **Referenced in**: Falcor `RGLMaterial.slang`
+- **Key contribution**: Compact measured BRDF representation via learned basis functions.
+- **UzEngine status**: Not needed (research tool).
+
+### Duff et al. 2017 — Pixar Branchless ONB
+- **Title**: "Building an Orthonormal Basis, Revisited"
+- **Authors**: Tom Duff, James Burgess, Per Christensen, Christophe Hery, Andrew Kensler, Max Liani, Ryusuke Villemin
+- **Venue**: JCGT, Vol. 6, No. 1, 2017
+- **URL**: https://jcgt.org/published/0006/01/01/
+- **Referenced in**: Falcor `MathHelpers.slang: branchlessONB`
+- **Key contribution**: Branchless orthonormal basis construction from a single normal vector. No sqrt, no normalization, no singularity at poles. Superior to Frisvad 2012 (which has a singularity at z=-1).
+- **UzEngine status**: Not implemented. Target: `math_util.hlsli`
+
+### Meyer et al. 2006 — Equal-Area Octahedral Mapping
+- **Title**: "On Floating-Point Normal Vectors"
+- **Authors**: Quirin Meyer, Jochen Süssmuth, Gerd Sußner, Marc Stamminger, Günther Greiner
+- **Venue**: Computer Graphics Forum, 2010 (builds on Lambert 1772 equal-area projection)
+- **Referenced in**: Falcor `MathHelpers.slang: ndir_to_oct_equal_area_unorm`
+- **Key contribution**: Equal-area variant of octahedral normal encoding that distributes quantization error uniformly across the sphere. Standard non-equal-area variant has error peaks at octahedron edges. Recommended for GBuffer normal storage.
+- **UzEngine status**: Not implemented (uses non-equal-area). Target: `octahedral.hlsli`
+
+### Moreau 2019 — Light BVH
+- **Title**: "Dynamic Many-Light Sampling for Real-Time Ray Tracing"
+- **Authors**: Pierre Moreau
+- **Venue**: Ray Tracing Gems, Chapter 18, 2019
+- **Referenced in**: Falcor `LightBVH.slang`
+- **Key contribution**: Bounding Volume Hierarchy for importance sampling emissive triangles. Enables efficient sampling of 100K+ light sources.
+- **UzEngine status**: Not implemented. Long-term (requires RT infrastructure).
+
+### Heitz et al. 2016 — Real-Time Polygonal Area Lights (LTC)
+- **Title**: "Real-Time Polygonal-Light Shading with Linearly Transformed Cosines"
+- **Authors**: Eric Heitz, Jonathan Dupuy, Stephen Hill, David Neubelt
+- **Venue**: SIGGRAPH 2016
+- **URL**: https://eheitzresearch.wordpress.com/415-2/
+- **Referenced in**: Falcor `LightHelpers.slang` (rect/disc area lights)
+- **Key contribution**: Analytic shading of polygonal area lights via linearly transformed cosine lobes. Precomputed LUT (64×64 RGBA) maps roughness+angle to transform matrix.
+- **UzEngine status**: Not implemented. Target: Phase 3 (area-lights-ltc task exists in roadmap).
+
+### Schied et al. 2017 — SVGF Denoising
+- **Title**: "Spatiotemporal Variance-Guided Filtering"
+- **Authors**: Christoph Schied et al.
+- **Venue**: HPG 2017
+- **URL**: https://research.nvidia.com/publication/2017-07_spatiotemporal-variance-guided-filtering
+- **Referenced in**: Falcor `SVGFPass` render pass
+- **Key contribution**: 5-pass denoiser: temporal reproject → filter moments → 4× à-trous spatial filter → final modulate. Edge-stopping functions on depth, normal, luminance variance. Self-contained (no SDK dependency).
+- **UzEngine status**: Partial (SSGI uses à-trous + temporal from same paper). Full standalone SVGF pass not implemented.
+
+### Bitterli et al. 2020 — ReSTIR DI
+- **Title**: "Spatiotemporal Reservoir Resampling for Real-Time Ray Tracing with Dynamic Direct Lighting"
+- **Authors**: Benedikt Bitterli, Chris Wyman, Matt Pharr, Peter Shirley, Aaron Lefohn, Wojciech Jarosz
+- **Venue**: SIGGRAPH 2020
+- **URL**: https://research.nvidia.com/publication/2020-07_spatiotemporal-reservoir-resampling-real-time-ray-tracing-dynamic-direct
+- **Referenced in**: Falcor `RTXDIPass` (via RTXDI SDK)
+- **Key contribution**: Weighted Importance Sampling with spatiotemporal reservoir reuse for direct lighting. Handles millions of lights in real time. 20-frame temporal + 5-iteration spatial reuse.
+- **UzEngine status**: Not implemented. Requires DXR infrastructure (Phase 4).
+
+### Lin et al. 2022 — ReSTIR GI
+- **Title**: "Generalized Resampled Importance Sampling: Foundations of ReSTIR"
+- **Authors**: Daqi Lin, Markus Kettunen, Benedikt Bitterli, Jacopo Pantaleoni, Cem Yuksel, Chris Wyman
+- **Venue**: SIGGRAPH 2022
+- **Referenced in**: Falcor ReSTIR GI implementation
+- **Key contribution**: Extends ReSTIR to indirect illumination (GI). Path-space reservoir resampling with shift mapping for multi-bounce global illumination.
+- **UzEngine status**: Not implemented. Long-term (requires DXR + path tracer).
+
+### Salvi 2016 — Variance Clipping for TAA
+- **Title**: "An Excursion in Temporal Supersampling"
+- **Authors**: Marco Salvi
+- **Venue**: GDC 2016
+- **Referenced in**: Falcor TAA pass (variance-based history clipping)
+- **Key contribution**: Replace min/max AABB clamping with variance-based clipping: μ ± γ·σ. Reduces ghosting artifacts compared to AABB clamp while preserving temporal stability. γ typically 1.0–1.25.
+- **UzEngine status**: Used in GTAO/SSGI temporal, but TAA (`taa_resolve_cs.hlsl`) still uses AABB min/max clamp. Target: upgrade TAA to variance clip.
+
+### Bridson 2007 — Analytical Curl Noise
+- **Title**: "Curl-Noise for Procedural Fluid Flow"
+- **Authors**: Robert Bridson, Jim Hourihan, Marcus Nordenstam
+- **Venue**: SIGGRAPH 2007
+- **URL**: https://doi.org/10.1145/1276377.1276435
+- **Referenced in**: Falcor (not directly, but standard technique)
+- **Key contribution**: Analytical curl of 3D noise field produces divergence-free velocity fields for fluid simulation. 3×FBM evaluations vs 6×FBM for finite-difference curl (50% savings).
+- **UzEngine status**: Uses finite-difference curl in `vfx_common.hlsli`. Target: upgrade to analytical curl.
+
+### AMD 2020 — Single Pass Downsampler (SPD)
+- **Title**: "FidelityFX Single Pass Downsampler"
+- **Authors**: AMD GPUOpen
+- **Venue**: 2020
+- **URL**: https://gpuopen.com/fidelityfx-spd/
+- **Referenced in**: Falcor (mip generation)
+- **Key contribution**: Generate full mip chain in a single compute dispatch using `groupshared` memory and wave intrinsics. Replaces N dispatches (one per mip level) with 1. Significant bandwidth savings.
+- **UzEngine status**: Uses multi-dispatch in `hiz_pyramid_cs.hlsl` and `mipgen_cs.hlsl`. Target: upgrade to SPD.
+
+### Lagarde 2015 — Frostbite Energy-Conserving Diffuse
+- **Title**: "Moving Frostbite to Physically Based Rendering" (energy conservation addendum)
+- **Authors**: Sébastien Lagarde, Charles de Rousiers
+- **Venue**: SIGGRAPH 2014/2015 addendum
+- **Referenced in**: Falcor `FrostbiteDiffuseBRDF.slang`
+- **Key contribution**: Energy conservation factor for Disney Burley diffuse: `energyFactor = lerp(1.0, 1.0/1.51, roughness)`. Without this, rough surfaces are ~51% over-bright due to uncompensated energy loss in the Fresnel terms.
+- **UzEngine status**: Missing in `pbr_common.hlsli` `Fd_Burley`. Target: add `/1.51` factor.
+
+### Andersson 2018 — FLIP Image Quality Metric
+- **Title**: "FLIP: A Difference Evaluator for Alternating Images"
+- **Authors**: Pontus Andersson, Jim Nilsson, Tomas Akenine-Möller, Magnus Oskarsson, Kalle Åström, Mark D. Fairchild
+- **Venue**: SIGGRAPH 2020 (preprint 2018)
+- **URL**: https://research.nvidia.com/publication/2020-07_flip
+- **Referenced in**: Falcor `FLIPPass` render pass
+- **Key contribution**: Perceptual image difference metric combining color and edge differences. Superior to PSNR/SSIM for detecting rendering artifacts. Useful for automated visual regression testing.
+- **UzEngine status**: Not implemented. Target: automated backend parity testing (DX12 vs Vulkan).

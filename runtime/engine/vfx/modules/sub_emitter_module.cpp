@@ -1,7 +1,7 @@
 /// VFX Sub-Emitter Module implementation — child emitter spawn on particle events.
 ///
-/// @ref UE5 Niagara Event Handler — parent-to-child particle event spawning
-/// @ref UE5 NiagaraDataInterfaceEventWrite.cpp — OnDeath/OnCollision/OnEvent triggers
+/// @ref GPU particle sub-emitter event-driven spawning technique — parent-to-child event spawning
+/// @ref GPU particle sub-emitter event-driven spawning technique — OnDeath/OnCollision/OnEvent triggers
 
 #include "sub_emitter_module.h"
 

@@ -368,7 +368,12 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                         }
                     }
 
-                    cmd->DrawIndexed(mesh.indexCount);
+                    // Use LOD-specific index range if available (UZMH v2 multi-LOD).
+                    if (drawCmd.lodIndexCount > 0) {
+                        cmd->DrawIndexed(drawCmd.lodIndexCount, 1, drawCmd.lodIndexByteOffset / 4);
+                    } else {
+                        cmd->DrawIndexed(mesh.indexCount);
+                    }
 
                     // Restore default GBuffer PSO if we switched for material graph or masked
                     if (drawCmd.materialGraphPipeline.IsValid() || isMasked) {

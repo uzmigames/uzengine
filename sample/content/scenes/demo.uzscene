@@ -145,7 +145,7 @@
             0.85,
             0.6
           ],
-          "intensity": 8.0,
+          "intensity": 800.0,
           "range": 20
         }
       }
@@ -167,7 +167,7 @@
             0.8,
             1.0
           ],
-          "intensity": 8.0,
+          "intensity": 800.0,
           "range": 20
         }
       }

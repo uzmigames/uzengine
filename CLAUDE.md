@@ -114,7 +114,8 @@ The following rules are equally important but less frequently violated. Full det
 - **Task Decomposition** — break multi-file tasks into 1-2 file sub-tasks per subsystem. See `.claude/rules/task-decomposition.md`
 - **Rendering Parity** — every component replicates ALL standard parameters, defaults, and logic. No simplification. See `.claude/rules/ue5-component-parity.md`
 - **Visual Verification** — rendering features need demo + screenshot. **Prefer `--screenshot-stdout`** (base64 to stdout, no disk I/O) over `--screenshot <path>`. See `.claude/rules/visual-verification.md`
-- **GPU Debugging** — never guess, use readback + RenderDoc/PIX. See `.claude/rules/gpu-debugging.md`
+- **GPU Debugging** — never guess, use `--diag` / `--pixel-debug` / `--vis`. See `.claude/rules/gpu-debugging.md`
+- **Rendering Diagnostics** — MUST run diagnostic tools BEFORE editing any shader. See `.claude/rules/rendering-diagnostics.md`
 - **Demo Build Order** — always rebuild runtime static lib before demo. See `.claude/rules/build-order.md`
 - **File Editing** — edit files sequentially, one at a time. See `.claude/rules/editing.md`
 - **Architecture** — Z-up, cm units, engine APIs (UZ_LOG/UZ_CHECK), SOLID. See `.claude/rules/architecture.md`
@@ -238,5 +239,31 @@ npm run type-check    # TypeScript type checking
 npm run lint          # Run linter
 npm test              # Run tests
 ```
+
+## Rendering Diagnostics (MANDATORY before any shader debug)
+
+When a rendering bug is reported, run these commands BEFORE editing any code.
+Full details in `.claude/rules/rendering-diagnostics.md`.
+
+```bash
+# 1. Which render target is broken? (JSON, auto-exits 120 frames)
+uzengine.exe --diag --project ./sample/projects/<name>.uzproject --editor
+
+# 2. Exact GBuffer values at a pixel (13 values: depth, AO, albedo, HDR, roughness, metallic, emissive)
+uzengine.exe --pixel-debug --pixel-debug-x 960 --pixel-debug-y 540 --project ... --editor
+
+# 3. Visualize a target / GBuffer channel
+uzengine.exe --vis shadow.atlas --screenshot-stdout --frames 8 --project ... --editor
+uzengine.exe --view-mode overview --screenshot-stdout --frames 8 --project ... --editor
+
+# 4. Dump all pass outputs as PNGs
+uzengine.exe --pass-dump --frames 120 --project ... --editor
+
+# 5. Disable a pass to isolate the problem
+uzengine.exe --pass-toggle bloom --screenshot-stdout --frames 120 --project ... --editor
+```
+
+Parse stdout for `DIAG_JSON:{...}` and `PIXEL_DEBUG_JSON:{...}`.
+**NEVER edit shaders to add debug output** — the tools above replace that workflow entirely.
 
 When in doubt, check AGENTS.md for guidance.

@@ -141,13 +141,13 @@
 - [x] 3.4.1 Implemented — scene cubemap capture (6 faces RGBA16F), IBLBaker integration, StructuredBuffer<ReflectionProbeGPU> upload, deferred lighting probe blending (under-operator). Parallax correction pending as future enhancement.
 
 ### 3.5 LOD System → task `phase3a-3.38.0-lod-system` (existing)
-- [ ] 3.5.1 Implement — per-mesh LOD levels, screen-size switching, dithered transition.
+- [x] 3.5.1 Implement — per-mesh LOD levels, screen-size switching. LODGroup/LODSelector/LODSelection already existed (1.1-1.4, 1.6). Added: LOD mesh path fields (lodMeshPaths[7], lodMeshLoaded[7]) on StaticMeshComponent, lazy-load of LOD1-7 meshes in SyncWorldToDrawList, forcedLOD override (-1=auto), full scene serialization (lod1..lod7, lodScreenSizes, forcedLOD, boundingSphereRadius). Dithered crossfade deferred to 1.5.
 
 ### 3.6 Lens Flare → task `phase3a-3.24.0-lens-flare` (25% done)
 - [x] 3.6.1 Core implemented — LensFlarePass with screen-space ghosts, halo, chromatic shift. CVars: r.LensFlare.Intensity/GhostIntensity/HaloRadius/ChromaticShift. Integrated in frame_postprocess.cpp. Disabled by default (r.LensFlare=0).
 
 ### 3.7 PostProcess Volumes → task `phase3a-3.25.0-postprocess-volumes` (existing)
-- [ ] 3.7.1 Implement — AABB volumes, per-setting override + blend weight.
+- [x] 3.7.1 Implement — AABB volumes, per-setting override + blend weight. Added PostProcessVolumeComponent (ECS, 28 overridable settings), component serializer (JSON round-trip), wired into frame_constants.cpp (gathers from ECS, builds PostProcessVolumeManager, blends by priority/distance/weight, applies tonemap+vignette+exposure overrides to PerFrameCB, stores full blended settings in FrameContext for subsystems).
 
 ---
 

@@ -1,134 +1,88 @@
 # GPU Debugging — Never Guess, Always Diagnose
 
-When rendering produces wrong output, follow this exact diagnostic order:
+When rendering produces wrong output, follow this exact diagnostic order.
+The full step-by-step sequence is in `.claude/rules/rendering-diagnostics.md`.
 
-1. **Buffer Visualization Grid First** — `--shadow-debug 1` renders a 3x3 diagnostic grid showing Albedo, Normal, Raw Atlas, Shadow, LIT, Depth, Cascade, AO, Roughness in a single frame. This is the fastest way to identify which stage is broken.
-
-2. **RenderDoc Capture** — capture a frame and analyze programmatically via CLI. NEVER open the GUI manually — use automated scripts.
-
-3. **CPU Readback** — if shader-side visualization is insufficient, add a render graph pass that copies GPU data to a readback buffer. NEVER do readback outside the render graph (causes device removed).
-
-4. **Validate Against Known-Good Values** — compare with mathematically predictable values from reference reference.
-
-## Buffer Visualization Grid
-
-The grid is a permanent debug tool built into the deferred lighting shader. It shows 9 buffers simultaneously at the original scene resolution.
+## Quick Reference — Diagnostic Commands
 
 ```bash
-# Activate grid mode
-demo.exe --shadow-debug 1
+# Step 1: Which render target is broken? (JSON report, auto-exits)
+uzengine.exe --diag --project ./sample/projects/<name>.uzproject --editor
 
-# Capture grid as base64 (PREFERRED — no disk I/O)
-demo.exe --shadow-debug 1 --screenshot-stdout --screenshot-frame 5 --frames 8
+# Step 2: What are the exact GBuffer values at a pixel? (13 values, auto-exits)
+uzengine.exe --pixel-debug --pixel-debug-x 960 --pixel-debug-y 540 --project ... --editor
 
-# Capture grid to disk (when you need to compose grids)
-demo.exe --shadow-debug 1 --screenshot e:/UzEngine/.screenshots/grid.png --screenshot-frame 5 --frames 8
+# Step 3: Visualize a specific target
+uzengine.exe --vis shadow.atlas --screenshot-stdout --frames 8 --project ... --editor
+
+# Step 4: GBuffer overview grid (all channels at once)
+uzengine.exe --view-mode overview --screenshot-stdout --frames 8 --project ... --editor
+
+# Step 5: Dump ALL pass targets as PNGs
+uzengine.exe --pass-dump --frames 120 --project ... --editor
+
+# Step 6: Disable a suspected pass
+uzengine.exe --pass-toggle bloom --screenshot-stdout --frames 120 --project ... --editor
 ```
 
-**Grid layout (3x3):**
-| (0,0) Albedo | (1,0) Normal | (2,0) Raw Atlas |
-|---|---|---|
-| **(0,1) Shadow** | **(1,1) LIT** | **(2,1) Depth** |
-| (0,2) Cascade | (1,2) AO | (2,2) Roughness |
+## Parsing JSON Output
 
-- **Tile 2 (Raw Atlas)**: Shows shadow depth texture content directly — geometry should be visible as darker regions. If the tile is all white (1.0), the shadow pass isn't writing.
-- **Tile 3 (Shadow)**: Shows the final shadow value per pixel (white=lit, black=shadowed). If all white, the shadow sampling is broken.
-- **Tile 6 (Cascade)**: Color-coded cascade indices — red/green/blue/yellow = cascade 0/1/2/3.
+### `--diag` → `DIAG_JSON:{...}`
 
-**Implementation**: `runtime/shaders/runtime/include/shadow_debug.hlsli` + integration in `deferred_lighting_ps.hlsl`. Activated via `PerFrameCB::shadowDebugMode` (uint, 0=off, 1=grid).
+```json
+{"frame":11,"targetCount":21,"hasFailure":false,"hasWarning":true,"targets":[
+  {"name":"gbuffer.albedo","status":"OK","min":0.20,"max":1.00,"avg":0.53},
+  {"name":"shadow.atlas","status":"WARN_ZERO","min":0.00,"max":0.00,"avg":0.00}
+]}
+```
+- `hasFailure: true` → NaN or Inf in a target (shader math bug)
+- `hasWarning: true` → a target is all zeros (pass not writing)
+- Status: `OK`, `FAIL_NAN`, `FAIL_INF`, `WARN_ZERO`, `SKIPPED`
 
-## RenderDoc Integration
+### `--pixel-debug` → `PIXEL_DEBUG_JSON:{...}`
 
-RenderDoc is fully integrated into UzEngine. The API is loaded at runtime from `renderdoc.dll`.
+```json
+{"pixel":[960,540],"frame":11,"recordCount":13,"records":[
+  {"id":0,"type":"float","value":0.001753},
+  {"id":1,"type":"float","value":1.000000},
+  {"id":2,"type":"float","value":0.321569}
+]}
+```
+- id 0: depth (reversed-Z)
+- id 1: AO
+- id 2-4: albedo RGB
+- id 5-7: HDR color RGB (after lighting)
+- id 8: roughness
+- id 9: metallic
+- id 10-12: emissive RGB
 
-### Capture Methods
+## DX12 Validation Stack
 
 ```bash
-# Method 1: Auto-capture specific frame (best for CI/automated debugging)
-demo.exe --renderdoc-capture 10 --frames 15
+# GPU-based validation (catches resource state, descriptor mismatches)
+uzengine.exe --gpu-validation --project ... --editor
 
-# Method 2: Capture via renderdoccmd (external, no code changes needed)
-renderdoccmd capture \
-  -c ".captures/shadow" \
-  -w \
-  --opt-ref-all-resources \
-  demo.exe --frames 15
+# DRED breadcrumbs (diagnoses device removal / TDR crashes)
+uzengine.exe --gpu-breadcrumbs --project ... --editor
 
-# Method 3: F12 key at runtime (when renderdoc.dll is loaded)
-# Press F12 while running — capture saved to working directory
-
-# Method 4: Launch from RenderDoc GUI
-# File → Launch Application → select exe → F12 to capture
+# GPU timestamp profiling (per-pass timing)
+uzengine.exe --gpu-profile --project ... --editor
 ```
 
-### Headless Analysis via Python
+## ABSOLUTELY FORBIDDEN
 
-RenderDoc's Python API runs inside `qrenderdoc --python`. Write scripts that open the `.rdc`, replay, and extract data:
+- **Editing shader source for diagnostics** — use `--diag` / `--pixel-debug` / `--vis` instead
+- Iterating blindly by changing shader code and hoping it works
+- Guessing at parameter values to "fix" visual bugs
+- Adding `return float4(value, 0, 0, 1)` debug outputs to shaders
+- Adding `UZ_LOG` in the renderer to print CB values
+- Compensation factors to make wrong output look right
+- GPU readback outside the render graph (causes device removed / hang)
 
-```bash
-# Run analysis script (qrenderdoc executes Python then exits)
-qrenderdoc --python analyze.py capture.rdc
-```
+## Implementation Details
 
-**Script pattern:**
-```python
-import renderdoc as rd
-
-rd.InitialiseReplay(rd.GlobalEnvironment(), [])
-cap = rd.OpenCaptureFile()
-cap.OpenFile('capture.rdc', '', None)
-result, ctrl = cap.OpenCapture(rd.ReplayOptions(), None)
-
-# List actions
-for a in ctrl.GetRootActions():
-    print(f"EID {a.eventId}: idx={a.numIndices}")
-
-# Go to specific event
-ctrl.SetFrameEvent(40, True)
-pipe = ctrl.GetPipelineState()
-vp = pipe.GetViewport(0)
-
-# Read pixel from texture
-sub = rd.Subresource(0, 0, 0)
-px = ctrl.PickPixel(resource_id, x, y, sub, rd.CompType.Float)
-depth = px.floatValue[0]
-
-ctrl.Shutdown()
-cap.Shutdown()
-rd.ShutdownReplay()
-```
-
-**Important**: The Python module only works inside qrenderdoc's embedded Python 3.6, NOT with the system Python. Always use `qrenderdoc --python script.py`.
-
-### RenderDoc Capture Options
-
-- `--opt-ref-all-resources`: Include all resources (needed for texture inspection). Do NOT use `--opt-api-validation` — it requires D3D12 Debug Layer which causes E_INVALIDARG on replay.
-- Captures are saved as `.rdc` files in the specified directory.
-- Use `renderdoccmd thumb --out thumb.jpg capture.rdc` for quick visual check.
-
-### Shader Debugging in RenderDoc
-
-For HLSL step-through in RenderDoc GUI, compile shaders with:
-- `-Zi` (debug info symbols)
-- `-Od` (disable optimizations)
-
-These flags are available via `ShaderCompileFlags::generateDebugInfo` and `ShaderCompileFlags::disableOptimizations`.
-
-## Required Infrastructure
-
-- PIX Event Markers on every render/compute pass (via `UZ_PROFILE_SCOPE`)
-- Buffer visualization grid (permanent, `--shadow-debug 1`)
-- RenderDoc integration (`renderdoc_capture.h`) — always available
-- DX12 Debug Layer + GPU-Based Validation in debug builds
-- DRED Breadcrumbs for device-removed crashes
-- Shadow atlas readback (TODO: integrate into render graph as a proper pass)
-
-## NEVER
-
-- Iterate blindly by changing shader code and hoping it works
-- Guess at parameter values to "fix" visual bugs
-- Add compensation factors to make wrong output look right
-- Do GPU readback outside the render graph (causes device removed / hang)
-- Use `--opt-api-validation` with renderdoccmd capture (breaks replay)
-- Destroy readback buffers before GPU is done with them (triple-buffer fence wait required)
-- Open RenderDoc GUI manually — use `renderdoccmd` + `qrenderdoc --python` for automated analysis
+- `--diag`: `PassInspector::GenerateReport()` → readback 4x4 center sample from each target
+- `--pixel-debug`: `pixel_debug_cs.hlsl` compute shader, [numthreads(1,1,1)] dispatch, reads GBuffer via `ResourceDescriptorHeap[idx]`
+- `--vis`: `vis_fullscreen_ps.hlsl` with 6 display modes (Color, Grayscale, Depth, HDR, Normal, Velocity)
+- `--pass-dump`: copies all registered targets to PNG + INDEX.html gallery
+- All diagnostic flags auto-exit after 120 frames to prevent process hangs

@@ -122,6 +122,15 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
         m_statsOverlay->BeginFrame(ctx.dt);
     }
 
+    // ── Shader hot-reload (poll every frame, recompile if .hlsl changed) ──
+    if (m_shaderMgr) {
+        auto recompiled = m_shaderMgr->GetPipeline().PollHotReload();
+        if (!recompiled.empty()) {
+            UZ_LOG(Renderer, Info, "Shader hot-reload: {} shader(s) recompiled", recompiled.size());
+            // PSO cache invalidation happens lazily — next GetBytecode() returns new code
+        }
+    }
+
     // ── Input ───────────────────────────────────────────────────────────
     m_input->BeginFrame();
 

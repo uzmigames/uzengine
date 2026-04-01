@@ -2,6 +2,54 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.3.2] — 2026-03-29
+
+### FBX Auto-LOD Generation, Cook Cache Invalidation, Axis Fix & Runtime LOD Switching
+
+#### Auto-LOD
+- **feat(fbx):** Auto-LOD generation in FBX importer — generates LOD1 (50%), LOD2 (25%), LOD3 (12.5%) via meshopt_simplify with position-only welding and reverse index remapping to preserve the original vertex buffer.
+- **feat(fbx):** SDF baker guard — skips SDF generation for meshes with >50K indices to prevent hangs.
+- **feat(fbx):** FbxImporter version bumped to v5 (UZMH v2 multi-LOD header + axis fix).
+
+#### Runtime LOD Switching
+- **fix(renderer):** `UploadMeshDeferred` now populates `lodCount`, `lodInfo[3]`, `boundsMin`, and `boundsMax` from the CPU mesh header — was missing, causing `gpu.lodCount=1` and no LOD switching.
+- **feat(renderer):** Auto-computed bounding sphere radius from mesh AABB on load (pivot-based sphere, farthest corner from origin). Replaces the hardcoded 50cm fallback that made LOD thresholds too aggressive.
+- **feat(renderer):** `GPUMesh` now carries `boundsMin`/`boundsMax` fields propagated from the mesh header.
+
+#### Stats Overlay LOD Display
+- **feat(editor):** Stats overlay shows active LOD level (`LOD: X / Y`) — green for LOD0 (full detail), yellow for reduced LODs.
+- **fix(editor):** Vertex and triangle counts in stats overlay now reflect the active LOD's index count instead of always showing LOD0 totals.
+
+#### Cook Cache Invalidation
+- **fix(cook):** Binary timestamp staleness check — uzcook now compares its own modification time against .uzimport sidecars; if the binary is newer (importer code changed), reimport is forced without requiring a manual version bump.
+- **fix(cook):** Companion file existence check — if the output .uzmesh/.uztexture was deleted but the .uzimport sidecar still exists, reimport is forced instead of silently skipping.
+
+#### FBX Axis Orientation Fix
+- **fix(fbx):** Correct axis orientation for FBX meshes — raw FBX data has Y=height; apply cyclic permutation `(pos.z, pos.x, pos.y)` in vertex extraction to map Y→Z (height), Z→X, X→Y. Determinant=+1 (proper rotation), preserves winding order. Verified: character stands upright with Z-up bounds (-13.7 to +224.6 cm).
+
+## [0.3.1] — 2026-03-28
+
+### Runtime APIs for Editor Integration
+
+#### Component Introspection
+- **feat(api):** `uz_get_component_json(entity_id, type)` — real JSON serialization for transform, camera, mesh, light, script, name, and all registry-based environment components.
+- **feat(api):** `uz_set_component_property(entity_id, type, prop, value)` — real property mutation for transform, camera, light properties.
+- **feat(api):** `uz_get_entity_components(entity_id)` — returns JSON array of all component type names on an entity.
+
+#### Entity Selection
+- **feat(api):** `uz_select_entity(entity_id)` / `uz_get_selected_entity()` — programmatic entity selection with outline + gizmo sync.
+
+#### Shader Hot-Reload
+- **feat(shader):** Wired `ShaderPipeline::PollHotReload()` into the render loop. FileWatcher polls shader source directories every frame; dirty shaders are recompiled on the fly.
+- **feat(shader):** `ShaderPipeline::Init()` now starts the FileWatcher automatically when `enableHotReload=true`.
+
+#### Play/Stop Mode
+- **feat(api):** `uz_play()` / `uz_stop()` / `uz_is_playing()` — toggles between editor mode (camera control, gizmos, grid) and play mode (game camera, no overlays).
+
+#### Bug Fixes
+- **fix(startup):** Eliminated race condition where `setEngineDir` failed on first scene open (worker killed before IPC completed).
+- **fix(shader):** Shader cache stored in engine dir (`GetExeDir()/cache/shaders/`) instead of CWD, which was wrong in DLL mode.
+
 ## [0.3.0] — 2026-03-28
 
 ### VSCode Viewport — Full DX12 Rendering Inside the Editor

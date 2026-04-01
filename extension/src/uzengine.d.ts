@@ -300,6 +300,56 @@ export interface UzEngineAddon {
         valueJson: string
     ): boolean;
 
+    /**
+     * Returns a JSON string listing all component types attached to an entity.
+     *
+     * Format:
+     * ```json
+     * ["transform","mesh","light"]
+     * ```
+     *
+     * @param entityId - Entity slot index.
+     * @returns JSON array string, or `null` if the entity was not found.
+     */
+    getEntityComponents(entityId: number): string | null;
+
+    /**
+     * Sets the editor selection to the specified entity.
+     *
+     * Updates gizmo rendering and inspector panels. Pass `0` to deselect.
+     *
+     * @param entityId - Entity slot index, or `0` to clear selection.
+     */
+    selectEntity(entityId: number): void;
+
+    /**
+     * Returns the currently selected entity ID.
+     *
+     * @returns Entity slot index, or `0` if nothing is selected.
+     */
+    getSelectedEntity(): number;
+
+    // ── Play Mode ─────────────────────────────────────────────────────────────
+
+    /**
+     * Enters play mode — starts Lua script ticking and physics simulation.
+     *
+     * @returns `true` if play mode was entered successfully.
+     */
+    play(): boolean;
+
+    /**
+     * Exits play mode — stops Lua scripts and resets to editor state.
+     *
+     * @returns `true` if play mode was exited successfully.
+     */
+    stop(): boolean;
+
+    /**
+     * Returns whether the engine is currently in play mode.
+     */
+    isPlaying(): boolean;
+
     // ── Input Forwarding ───────────────────────────────────────────────────────
 
     /**

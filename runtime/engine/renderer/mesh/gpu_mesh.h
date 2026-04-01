@@ -20,6 +20,7 @@
 #include "rhi_types.h"
 #include "upload_context.h"
 #include "gi/mesh_sdf_baker.h"
+#include "vector3.h"
 
 #include <cstdint>
 #include <vector>
@@ -43,9 +44,18 @@ struct GPUMesh {
     RHIBufferHandle vertexBuffer;                       ///< GPU vertex buffer handle.
     RHIBufferHandle indexBuffer;                        ///< GPU index buffer handle (invalid if non-indexed).
     uint32_t        vbSrvIndex  = UINT32_MAX;           ///< Bindless SRV descriptor index for vertex buffer (SM6.6). UINT32_MAX if not bindless.
-    uint32_t        indexCount  = 0;                    ///< Number of indices (0 = non-indexed mesh).
+    uint32_t        indexCount  = 0;                    ///< Number of indices for LOD0 (0 = non-indexed mesh).
     uint32_t        vertexCount = 0;                    ///< Number of vertices.
     RHIIndexFormat  indexFormat = RHIIndexFormat::Uint32; ///< Index element format (`Uint16` or `Uint32`).
+
+    /// LOD index data — LOD0 uses indexCount at offset 0.
+    /// LOD1..3 use these fields. All LOD indices are in the same index buffer.
+    uint32_t lodCount = 1;
+    struct { uint32_t indexOffset; uint32_t indexCount; } lodInfo[3] = {};
+
+    /// World-space AABB from the source mesh (used for bounding sphere / LOD radius).
+    Vec3 boundsMin;
+    Vec3 boundsMax;
 
     /// Baked signed distance field for this mesh (used by GDF composite for GI).
     /// Valid only after MeshSdfBaker::UploadToGPU succeeds during mesh loading.

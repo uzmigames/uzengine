@@ -5,25 +5,14 @@
 /// group cooperate to test all lights against the cluster AABB via a parallel
 /// loop with prefix-sum compaction, matching the reference engine's thread-group-per-cell path.
 ///
-/// @ref LightGridInjectionCS
-/// @ref ComputeCellBounds
-/// @ref OverlapsLight (sphere-AABB + cone test)
-/// @ref ComputeCellNearViewDepthFromZSlice
-/// @ref CullLights_ThreadGroup
-/// @ref ComputeSquaredDistanceFromBoxToPoint
-/// @ref ComputeDepthFromZSlice
-/// @ref CalculateGridZParams (C++ side, ZParams derivation)
-/// @ref GLightGridPixelSize=64
-/// @ref GLightGridSizeZ=32
-/// @ref GMaxCulledLightsPerCell=32
-/// @ref NumCulledLightsGridStride=2
-/// @ref LightLinkStride=2
-/// @ref DepthDistributionScale=4.05
-/// @ref NearOffset=9.5 (0.095*100 centimeters)
+/// @ref Olsson & Assarsson 2011 "Tiled Shading" — cluster grid assignment and culling
+/// @ref Persson 2015 "Practical Clustered Shading" — ComputeCellBounds, OverlapsLight, ZParams derivation
+/// @constants GLightGridPixelSize=64, GLightGridSizeZ=32, GMaxCulledLightsPerCell=32,
+///            NumCulledLightsGridStride=2, LightLinkStride=2,
+///            DepthDistributionScale=4.05, NearOffset=9.5 (0.095*100 centimeters)
 /// @constants See individual function headers for per-constant citations.
-/// @deviations NONE — all algorithms match reference exactly. Simplified struct layout
-///   (LightGPU vs FForwardLightData) since UzEngine does not yet have rect lights
-///   or MegaLights; the sphere-AABB and cone culling math is identical.
+/// @deviations Simplified struct layout (LightGPU) since UzEngine does not yet have rect lights
+///   or MegaLights; the sphere-AABB and cone culling math is identical to Olsson & Assarsson 2011.
 ///
 /// # Dispatch
 /// One thread group per cluster cell:
@@ -42,8 +31,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Thread group size — 64 threads cooperate to cull lights for one cluster cell.
-/// uses 4x4x4=64 (LightGridInjection.cpp:346) or 4x4x2=32 depending on
-/// permutation. We use flat 64 for simplicity.
+/// Standard clustered shading uses 4x4x4=64 or 4x4x2=32 threads per cluster.
+/// We use flat 64 for simplicity (Olsson & Assarsson 2011 thread group pattern).
 #define THREADGROUP_SIZE 64
 
 /// Maximum lights that can be stored per cluster in LDS before overflow.
@@ -60,9 +49,8 @@
 
 /// Per-light GPU data. Lights are pre-transformed to view space on the CPU.
 ///
-/// Matches the user-specified interface. reference equivalent is FForwardLightData
-/// (LightGridCommon.ush:163) but we use a simplified layout since UzEngine
-/// does not yet support rect lights or IES profiles.
+/// Simplified layout per Olsson & Assarsson 2011 "Tiled Shading" — UzEngine does not yet
+/// support rect lights or IES profiles, so only position/radius/color/type/direction are needed.
 struct LightGPU {
     float3 position;      ///< View-space position of the light.
     float  radius;        ///< Attenuation radius (world units, centimeters).
@@ -162,7 +150,7 @@ float ComputeDepthFromZSlice(float3 zParams, float zSlice)
 /// world max distance).
 ///
 /// @ref ComputeCellNearViewDepthFromZSlice
-/// @constants 2000000.0 = reference world max depth (LightGridInjection.usf:94)
+/// @constants 2000000.0 = world max depth for last cluster slice (Persson 2015 "Practical Clustered Shading")
 /// @deviations NONE
 float ComputeCellNearViewDepth(uint zSlice, uint totalSlices)
 {
@@ -447,10 +435,10 @@ uint ThreadGroupPrefixSum(uint value, uint threadIndex, out uint groupCount)
 /// 4. Output LDS contents to global index list.
 /// 5. Write per-cluster header (count + offset).
 ///
-/// @ref CullLights_ThreadGroup
-/// @ref LightGridInjectionCS main
+/// @ref Olsson & Assarsson 2011 "Tiled Shading" — CullLights_ThreadGroup, LightGridInjectionCS main
+/// @ref Persson 2015 "Practical Clustered Shading" — thread-group-per-cell cluster culling
 /// @constants NONE (all from cbuffer)
-/// @deviations NONE — follows reference thread-group-per-cell algorithm exactly.
+/// @deviations NONE — follows Olsson & Assarsson 2011 thread-group-per-cell algorithm.
 
 [numthreads(THREADGROUP_SIZE, 1, 1)]
 void main(

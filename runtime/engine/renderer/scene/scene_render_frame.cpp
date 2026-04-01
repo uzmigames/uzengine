@@ -11,6 +11,7 @@
 ///   - RegisterOverlayPasses()   → frame/frame_overlay.cpp
 
 #include "scene_renderer.h"
+#include "pixel_debug.h"
 
 // Umbrella headers
 #include "renderer_core.h"
@@ -56,6 +57,11 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
 
     // ── Begin command list ──────────────────────────────────────────────
     cmdList->Begin();
+
+    // ── Pixel Debug: clear counter buffer ────────────────────────────────
+    if (m_pixelDebugSystem && m_pixelDebugSystem->IsEnabled()) {
+        m_pixelDebugSystem->BeginFrame(cmdList);
+    }
 
     // ── GPU Profiler: begin frame ───────────────────────────────────────
     if (m_gpuProfileEnabled) {
@@ -197,6 +203,38 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
 
     if (m_gpuProfileEnabled) {
         m_device->GpuProfilerEndTimestamp(cmdList, "AtmosphereBake");
+    }
+
+    // ── Pixel Debug: compute post-pass (reads GBuffer + HDR, writes records) ─
+    // Dispatched as a single-thread compute shader after the render graph so
+    // all GBuffer/HDR textures are in SRV state. Must run BEFORE EndFrame()
+    // which copies the records buffer to the readback staging buffer.
+    if (m_pixelDebugSystem && m_pixelDebugSystem->IsEnabled() && ctx.bindless) {
+        auto pdPipeline = ctx.pipelines->GetPixelDebugCompute();
+        if (pdPipeline.IsValid()) {
+            const auto& pdConfig = m_pixelDebugSystem->GetConfig();
+            const uint32_t pdConstants[10] = {
+                m_gbuffer.albedoSRV,
+                m_gbuffer.normalSRV,
+                m_gbuffer.depthSRV,
+                m_hdrSceneColorSrv,
+                m_pixelDebugSystem->GetCounterUavIndex(),
+                m_pixelDebugSystem->GetRecordsUavIndex(),
+                pdConfig.pixelX,
+                pdConfig.pixelY,
+                pdConfig.maxRecords,
+                m_gbuffer.emissiveSRV
+            };
+
+            cmdList->SetPipeline(pdPipeline);
+            cmdList->SetRootConstants(0, pdConstants, 10);
+            cmdList->Dispatch(1, 1, 1);
+        }
+    }
+
+    // ── Pixel Debug: copy records to readback buffer ───────────────────
+    if (m_pixelDebugSystem && m_pixelDebugSystem->IsEnabled()) {
+        m_pixelDebugSystem->EndFrame(cmdList);
     }
 
     // ── Screenshot capture (after all passes, before End) ───────────────

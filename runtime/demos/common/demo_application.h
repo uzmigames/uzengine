@@ -69,6 +69,8 @@ class CBRingAllocator;
 class EditorGrid;
 class StatsOverlay;
 class ScreenshotCapture;
+class PixelDebugSystem;
+class PassInspector;
 class Camera;
 class FlyCameraController;
 enum class RHIBackend : uint8_t;
@@ -116,6 +118,12 @@ struct DemoConfig {
     /// CVar overrides from `--cvar name=value` CLI args.
     /// Applied after renderer init (RegisterCVars), before the first frame.
     std::vector<std::pair<std::string, float>> cvarOverrides;
+
+    // ── Diagnostic flags ───────────────────────────────────────────────
+    bool diagMode = false;               ///< --diag: run diagnostics, output JSON to stdout.
+    bool pixelDebugEnabled = false;      ///< --pixel-debug: enable GPU printf for a pixel.
+    uint32_t pixelDebugX = 0;            ///< Debug pixel X coordinate.
+    uint32_t pixelDebugY = 0;            ///< Debug pixel Y coordinate.
 };
 
 /// Abstract base class that eliminates GPU and engine boilerplate from demos.
@@ -379,6 +387,13 @@ protected:
             && (m_frameIndex - m_readyFrame) >= m_config.screenshotFrame;
     }
 
+    /// Returns the pass inspector for target registration and validation.
+    /// May be null if diagnostics are not initialized.
+    [[nodiscard]] PassInspector* GetPassInspector() const { return m_passInspector.get(); }
+
+    /// Returns the pixel debug system (null if --pixel-debug was not specified).
+    [[nodiscard]] PixelDebugSystem* GetPixelDebug() const { return m_pixelDebug.get(); }
+
 private:
     static constexpr uint32_t kFramesInFlight = 3;
 
@@ -409,6 +424,10 @@ private:
     std::unique_ptr<Camera> m_camera;
     std::unique_ptr<FlyCameraController> m_cameraCtrl;
     std::unique_ptr<rg::RgResourcePool> m_rgPool;
+
+    // ── Diagnostic systems (optional) ──────────────────────────────────
+    std::unique_ptr<PixelDebugSystem> m_pixelDebug;  ///< GPU printf (null unless --pixel-debug).
+    std::unique_ptr<PassInspector> m_passInspector;  ///< Pass validation (null unless --diag).
 
     // ── Debug view mode ────────────────────────────────────────────────
     DebugViewMode m_debugViewMode = DebugViewMode::Lit;

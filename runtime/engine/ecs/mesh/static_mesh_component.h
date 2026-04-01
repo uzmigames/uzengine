@@ -152,6 +152,28 @@ public:
     /// overrides the mesh-derived bounds for LOD selection only.
     float boundingSphereRadius = 0.0f;
 
+    /// VFS-relative paths for LOD mesh assets (LOD1 through LOD7).
+    ///
+    /// LOD0 always uses `meshPath`. Higher LOD indices are progressively
+    /// simpler meshes. Empty strings mean that LOD level uses the same
+    /// mesh as the previous level (falls back to LOD0 if all are empty).
+    ///
+    /// Up to `kMaxLODs - 1` additional LOD paths can be specified (LOD 1..7).
+    /// Index 0 of this array corresponds to LOD1, index 1 to LOD2, etc.
+    std::string lodMeshPaths[kMaxLODs - 1] = {};
+
+    /// Tracks whether each LOD mesh has been loaded (lazy-load status).
+    ///
+    /// Index 0 = LOD1, index 1 = LOD2, etc. LOD0 uses `meshLoaded`.
+    bool lodMeshLoaded[kMaxLODs - 1] = {};
+
+    /// Forces a specific LOD level for this mesh. -1 = automatic (screen-size based).
+    ///
+    /// When >= 0, bypasses screen-size computation and always renders at
+    /// the specified LOD index (clamped to [0, numLevels-1]).
+    /// Useful for debugging or for objects that should always render at a fixed LOD.
+    int32_t forcedLOD = -1;
+
 protected:
     /// Returns `RenderProxyType::StaticMesh`.
     [[nodiscard]] RenderProxyType GetProxyType() const override {

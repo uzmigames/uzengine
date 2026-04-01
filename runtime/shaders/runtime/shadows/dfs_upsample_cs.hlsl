@@ -5,9 +5,8 @@
 /// at the output pixel. This preserves sharp shadow edges at geometry boundaries
 /// while smoothly interpolating in flat regions.
 ///
-/// implements this as a pixel shader (DistanceFieldShadowingUpsamplePS) that
-/// calls UpsampleShadowFactors() from ShadowFactorsUpsampleCommon.ush. We
-/// implement the same algorithm as a compute shader since our DFS pipeline is
+/// The reference technique implements this as a pixel shader (bilateral upsample pass).
+/// We implement the same algorithm as a compute shader since our DFS pipeline is
 /// entirely compute-based.
 ///
 /// # Pipeline
@@ -31,8 +30,8 @@
 ///
 /// @ref Bilateral upsampling for shadow factors — depth-aware 2x2 interpolation
 /// @ref Wright 2015 "Dynamic Occlusion with SDFs" — DFS upsample pass
-/// @constants Epsilon=0.0001 (ShadowFactorsUpsampleCommon.ush:65)
-///            BILATERAL_UPSAMPLE=1 (ShadowFactorsUpsampleCommon.ush:37)
+/// @ref Wright 2015 "Dynamic Occlusion with Signed Distance Fields" — bilateral upsample
+/// @constants Epsilon=0.0001, BILATERAL_UPSAMPLE=1
 /// @deviations Compute shader instead of pixel shader. UV computation uses
 ///             dispatch thread ID instead of SV_POSITION. Same bilateral math.
 
@@ -71,7 +70,7 @@ SamplerState       g_PointSampler  : register(s0);  // Point sampler for explici
 // Bilateral Upsample
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Implements the bilateral upsample from reference ShadowFactorsUpsampleCommon.ush.
+/// Implements the bilateral upsample from Wright 2015 "Dynamic Occlusion with Signed Distance Fields".
 ///
 /// The algorithm:
 /// 1. Find the 4 low-res texels covering this full-res pixel (2x2 neighborhood)
@@ -87,8 +86,8 @@ SamplerState       g_PointSampler  : register(s0);  // Point sampler for explici
 /// white into valid shadow regions, while allowing shadowed pixels from heightfield
 /// traces that may be outside the standard range.
 ///
-/// @ref Bilateral upsample —38-91 — BILATERAL_UPSAMPLE path
-/// @constants Epsilon=0.0001 (ShadowFactorsUpsampleCommon.ush:65)
+/// @ref Wright 2015 "Dynamic Occlusion with Signed Distance Fields" — bilateral upsample path
+/// @constants Epsilon=0.0001
 /// @deviations NONE — exact same bilateral math, just in compute form
 
 [numthreads(8, 8, 1)]

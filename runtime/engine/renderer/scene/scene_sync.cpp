@@ -22,6 +22,8 @@
 // Read by runtime.cpp to report in uz_frame_stats.
 std::atomic<uint32_t> g_lastSyncMeshEntityCount{0};
 
+
+
 namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -46,15 +48,76 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
 
     for (auto [enttEntity, meshComp, sceneComp] : meshView.each()) {
 
-        // ── Lazy-load mesh from path ────────────────────────────────────────
+        // ── Lazy-load mesh from path (LOD0) ────────────────────────────────
         if (!meshComp.meshLoaded && !meshComp.meshPath.empty()) {
             const uint32_t loaded = LoadMesh(meshComp.meshPath, vfs, cmdList);
             if (loaded != UINT32_MAX) {
                 meshComp.meshId     = loaded;
                 meshComp.meshLoaded = true;
+                // LOD0 always uses the base meshId in the LOD group.
+                meshComp.lodGroup.levels[0].meshIndex = loaded;
+
+                // If the loaded mesh has in-file LODs (UZMH v2), populate
+                // the LODGroup so screen-size selection is activated.
+                if (loaded < static_cast<uint32_t>(m_meshes.size())) {
+                    const auto& gpu = m_meshes[loaded];
+                    UZ_LOG(Renderer, Info, "Mesh '{}' loaded: meshId={}, gpu.lodCount={}, gpu.indexCount={}",
+                           meshComp.meshPath, loaded, gpu.lodCount, gpu.indexCount);
+
+                    // Auto-compute bounding sphere radius from mesh AABB so LOD
+                    // screen-size thresholds use the correct object size.
+                    // Use max extent from origin (pivot-based sphere).
+                    if (meshComp.boundingSphereRadius <= 0.0f) {
+                        const Vec3& bMin = gpu.boundsMin;
+                        const Vec3& bMax = gpu.boundsMax;
+                        // Farthest AABB corner from pivot (origin of the mesh).
+                        const float rx = std::max(std::abs(bMin.x), std::abs(bMax.x));
+                        const float ry = std::max(std::abs(bMin.y), std::abs(bMax.y));
+                        const float rz = std::max(std::abs(bMin.z), std::abs(bMax.z));
+                        const float autoRadius = std::sqrt(rx * rx + ry * ry + rz * rz);
+                        if (autoRadius > 0.0f) {
+                            meshComp.boundingSphereRadius = autoRadius;
+                            UZ_LOG(Renderer, Info, "Mesh '{}': auto-computed boundingSphereRadius={:.1f}cm",
+                                   meshComp.meshPath, autoRadius);
+                        }
+                    }
+
+                    if (gpu.lodCount > 1 && meshComp.lodGroup.numLevels <= 1) {
+                        meshComp.lodGroup.numLevels = gpu.lodCount;
+                        // All in-file LODs share the same meshIndex — the draw
+                        // command uses lodIndexByteOffset/Count to select the LOD.
+                        for (uint32_t li = 1; li < gpu.lodCount && li < kMaxLODs; ++li) {
+                            meshComp.lodGroup.levels[li].meshIndex = loaded;
+                            // Auto screen-size thresholds (UE5 defaults)
+                            constexpr float kAutoThresholds[] = {1.0f, 0.5f, 0.25f, 0.12f, 0.06f, 0.03f, 0.015f, 0.0f};
+                            meshComp.lodGroup.levels[li].screenSizeThreshold =
+                                (li < 8) ? kAutoThresholds[li] : 0.0f;
+                        }
+                        UZ_LOG(Renderer, Info, "Mesh '{}': LOD group set up — {} levels, thresholds [2.0, 0.5, 0.25, 0.12]",
+                               meshComp.meshPath, gpu.lodCount);
+                    }
+                }
             } else {
                 // Mark loaded to avoid retrying every frame
                 meshComp.meshLoaded = true;
+            }
+        }
+
+        // ── Lazy-load LOD meshes (LOD1..LOD7) ──────────────────────────────
+        // Each non-empty lodMeshPaths entry is loaded on first encounter.
+        // Successfully loaded meshes update the LODGroup's meshIndex for
+        // that level so the LOD selector uses the correct geometry.
+        for (uint32_t lodIdx = 0; lodIdx < kMaxLODs - 1; ++lodIdx) {
+            if (!meshComp.lodMeshLoaded[lodIdx] && !meshComp.lodMeshPaths[lodIdx].empty()) {
+                const uint32_t loaded = LoadMesh(meshComp.lodMeshPaths[lodIdx], vfs, cmdList);
+                meshComp.lodMeshLoaded[lodIdx] = true; // Mark to avoid retrying
+                if (loaded != UINT32_MAX) {
+                    // lodIdx 0 in lodMeshPaths = LOD level 1 in lodGroup
+                    const uint32_t lodLevel = lodIdx + 1;
+                    if (lodLevel < meshComp.lodGroup.numLevels) {
+                        meshComp.lodGroup.levels[lodLevel].meshIndex = loaded;
+                    }
+                }
             }
         }
 
@@ -100,44 +163,61 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
         uint32_t meshId = meshComp.meshId;
 
         // ── LOD Selection ──────────────────────────────────────────────────
-        // LOD selection — GetLOD() + ComputeStaticMeshLOD from screen size
+        // LOD selection — forcedLOD override or screen-size based automatic.
         //
         // When multiple LOD levels are defined, compute the object's screen
         // size from its bounding sphere and camera distance, then select the
         // appropriate LOD level. The LOD's meshIndex overrides meshId so the
         // draw call uses the correct vertex/index buffers.
         if (meshComp.lodGroup.numLevels > 1 && m_camera) {
-            const Mat4& worldMatrix = sceneComp.GetWorldMatrix();
-            const Vec3 objectPosition = worldMatrix.getTranslation();
-            const Vec3& cameraPosition = m_camera->GetPosition();
+            uint32_t selectedLOD = 0;
 
-            const float dx = objectPosition.x - cameraPosition.x;
-            const float dy = objectPosition.y - cameraPosition.y;
-            const float dz = objectPosition.z - cameraPosition.z;
-            const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (meshComp.forcedLOD >= 0) {
+                // Forced LOD — bypass screen-size computation.
+                selectedLOD = static_cast<uint32_t>(
+                    std::min(meshComp.forcedLOD,
+                             static_cast<int32_t>(meshComp.lodGroup.numLevels - 1)));
+            } else {
+                // Automatic LOD — compute from screen-space projected size.
+                const Mat4& worldMatrix = sceneComp.GetWorldMatrix();
+                const Vec3 objectPosition = worldMatrix.getTranslation();
+                const Vec3& cameraPosition = m_camera->GetPosition();
 
-            // Use component-specified bounding sphere radius, or default to
-            // a unit sphere (50 cm radius) if none was set.
-            const float sphereRadius = meshComp.boundingSphereRadius > 0.0f
-                                       ? meshComp.boundingSphereRadius
-                                       : 50.0f;
+                const float dx = objectPosition.x - cameraPosition.x;
+                const float dy = objectPosition.y - cameraPosition.y;
+                const float dz = objectPosition.z - cameraPosition.z;
+                const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
 
-            // ScreenMultiple from projection matrix — computes screen size
-            const Mat4& projMatrix = m_camera->GetProjection();
-            const float projM00 = projMatrix.m._11;
-            const float projM11 = projMatrix.m._22;
+                // Use component-specified bounding sphere radius, or default to
+                // a unit sphere (50 cm radius) if none was set.
+                const float sphereRadius = meshComp.boundingSphereRadius > 0.0f
+                                           ? meshComp.boundingSphereRadius
+                                           : 50.0f;
 
-            const float screenSize = ComputeScreenSize(sphereRadius, distance,
-                                                        projM00, projM11);
+                // ScreenMultiple from projection matrix — computes screen size
+                const Mat4& projMatrix = m_camera->GetProjection();
+                const float projM00 = projMatrix.m._11;
+                const float projM11 = projMatrix.m._22;
 
-            const uint32_t selectedLOD = SelectLOD(meshComp.lodGroup, screenSize,
-                                                    m_lodBias);
+                const float screenSize = ComputeScreenSize(sphereRadius, distance,
+                                                            projM00, projM11);
+
+                selectedLOD = SelectLOD(meshComp.lodGroup, screenSize, m_lodBias);
+            }
 
             // Update per-object LOD selection state (tracks transitions).
             meshComp.lodSelection.Update(selectedLOD);
 
-            // Use the LOD level's mesh index for rendering.
-            meshId = meshComp.lodGroup.levels[selectedLOD].meshIndex;
+            // For multi-LOD meshes stored in a single file (UZMH v2),
+            // all LODs share the same meshId but use different index ranges.
+            // Check if the selected LOD has a different meshIndex (separate file)
+            // or if we should use the in-file LOD index offset.
+            const uint32_t lodMeshIdx = meshComp.lodGroup.levels[selectedLOD].meshIndex;
+            if (lodMeshIdx != meshComp.lodGroup.levels[0].meshIndex && lodMeshIdx != UINT32_MAX) {
+                // Separate LOD mesh file — use that mesh ID
+                meshId = lodMeshIdx;
+            }
+            // else: same mesh file with multi-LOD — set index offset below
         }
 
         // Validate mesh index is within loaded meshes
@@ -151,6 +231,17 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
         cmd.normalMatrix = cmd.worldMatrix.NormalMatrix();
         cmd.meshId       = meshId;
         cmd.entityId     = static_cast<uint32_t>(enttEntity);
+
+        // Multi-LOD index override: when the GPUMesh has in-file LODs (UZMH v2),
+        // use the LOD's index offset/count instead of the full mesh indexCount.
+        const auto& gpuMesh = m_meshes[meshId];
+        if (gpuMesh.lodCount > 1 && meshComp.lodSelection.currentLOD > 0) {
+            const uint32_t lod = meshComp.lodSelection.currentLOD;
+            if (lod <= 3 && gpuMesh.lodInfo[lod - 1].indexCount > 0) {
+                cmd.lodIndexByteOffset = gpuMesh.lodInfo[lod - 1].indexOffset;
+                cmd.lodIndexCount = gpuMesh.lodInfo[lod - 1].indexCount;
+            }
+        }
 
         // Map ECS mobility to renderer-side EMobility for shadow cache filtering.
         // Stationary is treated as Static for shadow caching (standard).
@@ -242,7 +333,7 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
             // Pack specular and envMultiplier into materialFlags unused bits.
             // bits[8:15]  = specular * 255 (range 0.0-1.0, 8-bit precision)
             // bits[16:23] = envMultiplier * 127.5 (range 0.0-2.0, 128 = 1.0)
-            // @ref UE5 "Material Inputs — Specular" — F0 = 0.08 * specular
+            // @ref Lagarde 2014 "Moving Frostbite to Physically Based Rendering" — F0 = 0.08 * specular
             const uint32_t specU8 = std::min(255u, static_cast<uint32_t>(mat->GetSpecular() * 255.0f));
             const uint32_t envU8  = std::min(255u, static_cast<uint32_t>(mat->GetEnvMultiplier() * 127.5f));
             cmd.materialFlags |= (specU8 << 8) | (envU8 << 16);

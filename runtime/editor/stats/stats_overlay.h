@@ -130,6 +130,12 @@ public:
         m_camYaw = yawDeg; m_camPitch = pitchDeg;
     }
 
+    /// Sets the active LOD level and total LOD count for the primary mesh in view.
+    void SetActiveLOD(uint32_t currentLOD, uint32_t totalLODs) {
+        m_activeLOD = currentLOD;
+        m_totalLODs = totalLODs;
+    }
+
     /// Renders the stats overlay (text panel + graphs).
     ///
     /// # Arguments
@@ -198,6 +204,10 @@ private:
     // ── Camera info ─────────────────────────────────────────────────────
     float m_camX = 0.f, m_camY = 0.f, m_camZ = 0.f;
     float m_camYaw = 0.f, m_camPitch = 0.f;
+
+    // ── LOD info ────────────────────────────────────────────────────────
+    uint32_t m_activeLOD = 0;
+    uint32_t m_totalLODs = 1;
 
     // ── Smoothed FPS (EMA) ───────────────────────────────────────────────
     float m_smoothedFPS = 0.f;

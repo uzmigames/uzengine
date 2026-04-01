@@ -255,3 +255,4 @@ UZ_DECLARE_LOG_CATEGORY(App);          ///< Demo/application framework (lifecycl
 UZ_DECLARE_LOG_CATEGORY(Scripting);    ///< Lua scripting VM (sandbox, bindings, hot-reload)
 UZ_DECLARE_LOG_CATEGORY(Material);     ///< Material graph system (expressions, compiler, serialization)
 UZ_DECLARE_LOG_CATEGORY(VFX);          ///< VFX / GPU particle system (emitters, budget, simulation)
+UZ_DECLARE_LOG_CATEGORY(Animation);    ///< Skeletal animation (skeleton, clips, state machine, skinning)

@@ -371,8 +371,8 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
                                         IRHICommandList* cmd, const rg::RgPassResources& res) {
                 UZ_PROFILE_SCOPE("LocalShadowDepth::Execute");
 
-                // Clear the entire local shadow atlas to max depth (standard-Z far=1.0)
-                cmd->ClearDepthStencil(localAtlasTex, 1.0f, 0);
+                // Clear the entire local shadow atlas to 0.0 (reversed-Z far = max distance = no occlusion)
+                cmd->ClearDepthStencil(localAtlasTex, 0.0f, 0);
 
                 const auto& commands = localDrawListPtr->GetCommands();
                 uint32_t totalDrawCalls = 0;

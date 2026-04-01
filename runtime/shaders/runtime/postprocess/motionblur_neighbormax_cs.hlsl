@@ -11,7 +11,7 @@
 /// 3. Keep the velocity with the largest squared magnitude.
 /// 4. Output the winning velocity to the neighbor max texture.
 ///
-/// uses a more sophisticated approach in MotionBlurTileGather.usf that
+/// McGuire et al. 2012 uses a more sophisticated approach that
 /// considers velocity direction and projects tile offsets onto the velocity
 /// vector to determine which neighbors are relevant (scatter-as-gather with
 /// oriented quad intersection). Our simplified 3x3 approach is sufficient
@@ -25,10 +25,9 @@
 ///
 /// @ref McGuire et al. 2012 — neighbor max tile gather:24-91 — MainCS
 /// @ref Motion blur common —24 — VELOCITY_FLATTEN_TILE_SIZE = 16
-/// @constants TILE_SIZE=16 (MotionBlurCommon.ush:24)
-/// @deviations the reference uses a 7x7 neighborhood (-3..+3) with velocity-direction-aware
-///             quad intersection test to determine which neighbors contribute
-///             (MotionBlurTileGather.usf:37-83). UzEngine uses a simpler 3x3
+/// @constants TILE_SIZE=16 (McGuire et al. 2012 "A Reconstruction Filter for Plausible Motion Blur")
+/// @deviations McGuire et al. 2012 uses a 7x7 neighborhood (-3..+3) with velocity-direction-aware
+///             quad intersection test to determine which neighbors contribute. UzEngine uses a simpler 3x3
 ///             neighborhood (-1..+1) with unconditional max, which is conservative
 ///             (may include slightly more tiles) but correct for preventing
 ///             tile-boundary blur cutoff.

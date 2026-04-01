@@ -53,7 +53,7 @@ struct VFXEventDef {
 /// uses this data to spawn particles at the parent's location with inherited
 /// properties.
 ///
-/// @ref UE5 Niagara event-based spawning — parent particle data inheritance
+/// @ref GPU particle event dispatch pattern — parent particle data inheritance for inter-emitter events
 struct EventPayload {
     /// World-space position of the triggering particle.
     Vec3 position = {0.0f, 0.0f, 0.0f};

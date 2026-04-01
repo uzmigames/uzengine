@@ -291,7 +291,7 @@ static void SelectTextureFormat(const std::string& filename,
 // ─────────────────────────────────────────────────────────────────────────────
 
 int main(int argc, char** argv) {
-    // Logging auto-initializes via static constructors
+    uz::LogInit();
 
     CookArgs args;
     if (!ParseArgs(argc, argv, args)) {
@@ -300,6 +300,18 @@ int main(int argc, char** argv) {
 
     UZ_LOG(Cook, Info, "Cook starting: source='{}', output='{}'",
            args.sourceDir, args.outputDir);
+
+    // Get uzcook binary modification time for stale-cache detection.
+    // If uzcook was recompiled (importer code changed), sidecars older
+    // than the binary are stale even if source hash and version match.
+    fs::file_time_type cookBinaryTime{};
+    {
+        std::error_code ec;
+        cookBinaryTime = fs::last_write_time(fs::path(argv[0]), ec);
+        if (ec) {
+            UZ_LOG(Cook, Warning, "Cannot stat uzcook binary — staleness check disabled");
+        }
+    }
 
     // Check if source dir contains any shaders before initializing DXC.
     // DXC LoadLibrary can hang if dxcompiler.dll isn't in the search path,
@@ -399,8 +411,42 @@ int main(int argc, char** argv) {
         // Check sidecar for skip
         std::string sidecarPath = sourcePath + ".uzimport";
         auto sidecarResult = uz::ReadSidecarFile(sidecarPath);
-        if (sidecarResult.success &&
-            !uz::NeedsReimport(sidecarResult.sidecar, sourceHashHex, importer->Version())) {
+        bool canSkip = sidecarResult.success &&
+            !uz::NeedsReimport(sidecarResult.sidecar, sourceHashHex, importer->Version());
+
+        // Binary staleness: if uzcook was recompiled after the sidecar was
+        // written, importer code may have changed — force reimport.
+        if (canSkip) {
+            std::error_code ec;
+            auto sidecarTime = fs::last_write_time(sidecarPath, ec);
+            if (!ec && cookBinaryTime > sidecarTime) {
+                UZ_LOG(Cook, Info, "Reimport: uzcook binary newer than sidecar for '{}'",
+                       logicalPath);
+                canSkip = false;
+            }
+        }
+
+        // Companion file check: if the output .uzmesh/.uztexture was deleted
+        // but the sidecar still exists, the cache is stale.
+        if (canSkip) {
+            std::string importerName = importer->Name();
+            std::string companionExt;
+            if (importerName == "mesh" || importerName == "fbx") companionExt = ".uzmesh";
+            else if (importerName == "texture") companionExt = ".uztexture";
+
+            if (!companionExt.empty()) {
+                auto dot = sourcePath.rfind('.');
+                std::string companionPath = (dot != std::string::npos)
+                    ? sourcePath.substr(0, dot) + companionExt
+                    : sourcePath + companionExt;
+                if (!fs::exists(companionPath)) {
+                    UZ_LOG(Cook, Info, "Reimport: companion file missing '{}'", companionPath);
+                    canSkip = false;
+                }
+            }
+        }
+
+        if (canSkip) {
             ++skipped;
             std::lock_guard<std::mutex> lock(cookedMutex);
             for (const auto& [variant, outputPath] : sidecarResult.sidecar.outputs) {
@@ -474,11 +520,11 @@ int main(int argc, char** argv) {
             std::string outputExt = ".bin";
             uz::AssetType assetType = uz::AssetType::Generic;
             if (importerName == "shader") { outputExt = ".uzshader"; assetType = uz::AssetType::Shader; }
-            else if (importerName == "mesh") { outputExt = ".uzmesh"; assetType = uz::AssetType::Mesh; }
+            else if (importerName == "mesh" || importerName == "fbx") { outputExt = ".uzmesh"; assetType = uz::AssetType::Mesh; }
             else if (importerName == "texture") { outputExt = ".uztexture"; assetType = uz::AssetType::Texture; }
 
             // Write companion file (filesystem, no lock needed — unique per file)
-            if (importerName == "texture" || importerName == "mesh") {
+            if (importerName == "texture" || importerName == "mesh" || importerName == "fbx") {
                 std::string companionPath = t->sourcePath;
                 auto compDot = companionPath.rfind('.');
                 if (compDot != std::string::npos) {
@@ -488,6 +534,10 @@ int main(int argc, char** argv) {
                 if (out.is_open()) {
                     out.write(reinterpret_cast<const char*>(result.data.data()),
                               static_cast<std::streamsize>(result.data.size()));
+                    UZ_LOG(Cook, Info, "Wrote companion: '{}' ({} bytes)",
+                           companionPath, result.data.size());
+                } else {
+                    UZ_LOG(Cook, Error, "Failed to write companion: '{}'", companionPath);
                 }
             }
 

@@ -16,9 +16,27 @@
 
 namespace uz {
 
+/// Computes shadow importance for a light based on visual impact.
+///
+/// The metric is `intensity * radius^2 / max(1.0, distance^2)` where:
+/// - `intensity` = magnitude of the light's color vector (already pre-multiplied by intensity)
+/// - `radius`    = attenuation radius (coverage area proxy via radius^2)
+/// - `distance`  = distance from camera to light position
+///
+/// Nearby bright lights with large radii are ranked highest, ensuring they
+/// receive shadow atlas tiles before dim/distant/small lights.
+static float ComputeShadowImportance(const Vec3& lightColor, float radius,
+                                     const Vec3& lightPos, const Vec3& cameraPos)
+{
+    const float intensity = lightColor.Length();
+    const float distSq = (lightPos - cameraPos).LengthSq();
+    return intensity * (radius * radius) / std::max(1.0f, distSq);
+}
+
 LightFrameData ExtractLightingFromECS(
     World* world,
-    CBRingAllocator& cbRing)
+    CBRingAllocator& cbRing,
+    const Vec3& cameraPosition)
 {
     LightFrameData result{};
 
@@ -54,6 +72,15 @@ LightFrameData ExtractLightingFromECS(
     // ── Build LightingCB from ECS point and spot lights ─────────────────
     LightingCB lightingData{};
     if (world) {
+        // Temporary candidate arrays for importance sorting before budget trimming.
+        // All shadow-casting lights are collected first, then sorted by visual
+        // importance, and only the top-N by budget get atlas tiles.
+        PointLightShadowInfo pointShadowCandidates[kMaxPointLights]{};
+        uint32_t pointShadowCandidateCount = 0;
+
+        SpotLightShadowInfo spotShadowCandidates[kMaxSpotLights]{};
+        uint32_t spotShadowCandidateCount = 0;
+
         // ── Point lights ──
         auto pointLightView = world->GetRegistry().view<PointLightComponent>();
         for (auto enttEntity : pointLightView) {
@@ -92,19 +119,15 @@ LightFrameData ExtractLightingFromECS(
             pld.flags           = pl.useInverseSquaredFalloff ? kLightFlag_InverseSquared : 0u;
             pld.shadowIndex     = UINT32_MAX; // Assigned below after spot shadow count is known
 
-            // Collect shadow candidate — final shadowIndex assigned after spot lights
-            // are processed, since point lights occupy indices after spot shadows.
-            if (pl.castShadows) {
-                // Record candidate; budget check deferred until spot shadow count is known.
-                constexpr uint32_t kMaxPointShadows = kMaxLocalLightShadows / kPointLightShadowFaces;
-                if (result.pointShadowCount < kMaxPointShadows) {
-                    PointLightShadowInfo& shadowInfo = result.pointShadows[result.pointShadowCount];
-                    shadowInfo.position   = pos;
-                    shadowInfo.radius     = pl.range;
-                    shadowInfo.bias       = pl.pointShadowBias;
-                    shadowInfo.lightIndex = idx;
-                    result.pointShadowCount++;
-                }
+            // Collect shadow candidate unconditionally — importance sorting and
+            // budget trimming happen after all lights are collected.
+            if (pl.castShadows && pointShadowCandidateCount < kMaxPointLights) {
+                PointLightShadowInfo& shadowInfo = pointShadowCandidates[pointShadowCandidateCount];
+                shadowInfo.position   = pos;
+                shadowInfo.radius     = pl.range;
+                shadowInfo.bias       = pl.pointShadowBias;
+                shadowInfo.lightIndex = idx;
+                pointShadowCandidateCount++;
             }
 
             lightingData.pointLightCount++;
@@ -164,27 +187,57 @@ LightFrameData ExtractLightingFromECS(
             sld.diffuseScale          = sl.diffuseScale;
             sld.flags                 = sl.useInverseSquaredFalloff ? kLightFlag_InverseSquared : 0u;
 
-            // Shadow index — if the spot light casts shadows and we have room
-            // in the local shadow array, assign a shadow slot index. Otherwise
-            // mark as unshadowed (0xFFFFFFFF).
-            if (sl.castShadows && result.spotShadowCount < kMaxLocalLightShadows) {
-                const uint32_t shadowIdx = result.spotShadowCount;
-                sld.shadowIndex = shadowIdx;
-
-                SpotLightShadowInfo& shadowInfo = result.spotShadows[shadowIdx];
+            // Collect shadow candidate unconditionally — importance sorting and
+            // budget trimming happen after all spot lights are collected.
+            sld.shadowIndex = UINT32_MAX; // Updated after sorting
+            if (sl.castShadows && spotShadowCandidateCount < kMaxSpotLights) {
+                SpotLightShadowInfo& shadowInfo = spotShadowCandidates[spotShadowCandidateCount];
                 shadowInfo.position   = pos;
                 shadowInfo.direction  = dir;
                 shadowInfo.outerAngle = outerRad;
                 shadowInfo.radius     = sl.range;
                 shadowInfo.bias       = sl.spotShadowBias;
                 shadowInfo.lightIndex = idx;
-                result.spotShadowCount++;
-            } else {
-                sld.shadowIndex = UINT32_MAX;
+                spotShadowCandidateCount++;
             }
 
             lightingData.spotLightCount++;
         }
+
+        // ── Sort spot shadow candidates by importance (descending) ──────
+        // Importance = intensity * radius^2 / max(1, distance^2).
+        // Highest-importance lights get shadow atlas tiles first.
+        std::sort(spotShadowCandidates, spotShadowCandidates + spotShadowCandidateCount,
+            [&](const SpotLightShadowInfo& a, const SpotLightShadowInfo& b) {
+                const float ia = ComputeShadowImportance(
+                    lightingData.spotLights[a.lightIndex].color, a.radius,
+                    a.position, cameraPosition);
+                const float ib = ComputeShadowImportance(
+                    lightingData.spotLights[b.lightIndex].color, b.radius,
+                    b.position, cameraPosition);
+                return ia > ib;
+            });
+
+        // Copy sorted winners into result and assign shadowIndex in lightingData
+        result.spotShadowCount = std::min(spotShadowCandidateCount,
+                                          static_cast<uint32_t>(kMaxLocalLightShadows));
+        for (uint32_t si = 0; si < result.spotShadowCount; ++si) {
+            result.spotShadows[si] = spotShadowCandidates[si];
+            const uint32_t lightIdx = result.spotShadows[si].lightIndex;
+            lightingData.spotLights[lightIdx].shadowIndex = si;
+        }
+
+        // ── Sort point shadow candidates by importance (descending) ──────
+        std::sort(pointShadowCandidates, pointShadowCandidates + pointShadowCandidateCount,
+            [&](const PointLightShadowInfo& a, const PointLightShadowInfo& b) {
+                const float ia = ComputeShadowImportance(
+                    lightingData.pointLights[a.lightIndex].color, a.radius,
+                    a.position, cameraPosition);
+                const float ib = ComputeShadowImportance(
+                    lightingData.pointLights[b.lightIndex].color, b.radius,
+                    b.position, cameraPosition);
+                return ia > ib;
+            });
 
         // ── Assign point light shadow indices (after spot shadow count is known) ──
         // Point light shadow faces are stored consecutively in the localShadows[]
@@ -199,13 +252,12 @@ LightFrameData ExtractLightingFromECS(
             ? (kMaxLocalLightShadows - tilesUsedBySpots) : 0;
         const uint32_t maxPointShadowsAfterSpots = tilesRemaining / kPointLightShadowFaces;
 
-        // Trim point shadow count if not enough tiles remain after spot lights
-        if (result.pointShadowCount > maxPointShadowsAfterSpots) {
-            result.pointShadowCount = maxPointShadowsAfterSpots;
-        }
+        // Trim sorted candidates to budget
+        result.pointShadowCount = std::min(pointShadowCandidateCount, maxPointShadowsAfterSpots);
 
-        // Write shadowIndex into PointLightData entries in the lighting CB
+        // Copy sorted winners into result and assign shadowIndex in lightingData
         for (uint32_t pi = 0; pi < result.pointShadowCount; ++pi) {
+            result.pointShadows[pi] = pointShadowCandidates[pi];
             const uint32_t baseIdx = tilesUsedBySpots + pi * kPointLightShadowFaces;
             const uint32_t lightIdx = result.pointShadows[pi].lightIndex;
             lightingData.pointLights[lightIdx].shadowIndex = baseIdx;

@@ -13,8 +13,11 @@
 #include "uzengine.h"
 #include "compare_grid.h"
 #include "cvar.h"
+#include "pixel_debug.h"
+#include "inspector_pass.h"
 
 #include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <string>
 #include <thread>
@@ -95,6 +98,24 @@ int DemoApplication::Run() {
         for (const auto& [name, value] : m_config.cvarOverrides) {
             cvars.Set(name, value);
             UZ_LOG(App, Info, "CVar override: {} = {}", name, value);
+        }
+    }
+
+    // ── Diagnostic systems ────────────────────────────────────────────────
+    if (m_config.diagMode) {
+        m_passInspector = std::make_unique<PassInspector>();
+    }
+
+    if (m_config.pixelDebugEnabled) {
+        m_pixelDebug = std::make_unique<PixelDebugSystem>();
+        PixelDebugConfig pdConfig;
+        pdConfig.pixelX     = m_config.pixelDebugX;
+        pdConfig.pixelY     = m_config.pixelDebugY;
+        pdConfig.maxRecords = 256;
+        pdConfig.enabled    = true;
+        if (!m_pixelDebug->Init(m_device.get(), pdConfig)) {
+            UZ_LOG(App, Error, "PixelDebug initialization failed");
+            m_pixelDebug.reset();
         }
     }
 
@@ -279,6 +300,30 @@ int DemoApplication::Run() {
 
     // Shutdown
     m_device->WaitIdle();
+
+    // ── Pixel debug output (JSON to stdout) ─────────────────────────────
+    if (m_pixelDebug && m_pixelDebug->IsEnabled()) {
+        auto records = m_pixelDebug->ReadResults(m_device.get());
+        std::string json = PixelDebugSystem::ToJSON(
+            records, m_config.pixelDebugX, m_config.pixelDebugY, m_frameIndex);
+        std::printf("PIXEL_DEBUG_JSON:%s\n", json.c_str());
+        std::fflush(stdout);
+    }
+
+    // ── Diagnostic report (JSON to stdout) ──────────────────────────────
+    if (m_config.diagMode && m_passInspector) {
+        auto report = m_passInspector->GenerateReport(
+            m_device.get(), m_cmdList, m_frameIndex);
+        std::printf("DIAG_JSON:%s\n", report.ToJSON().c_str());
+        std::fflush(stdout);
+    }
+
+    // ── Diagnostic cleanup ──────────────────────────────────────────────
+    if (m_pixelDebug) {
+        m_pixelDebug->Shutdown(m_device.get());
+        m_pixelDebug.reset();
+    }
+    m_passInspector.reset();
 
     // Log stats
     auto loopEnd = std::chrono::high_resolution_clock::now();

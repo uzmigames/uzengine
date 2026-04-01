@@ -23,20 +23,18 @@
 /// @ref McGuire et al. 2012 — tile max velocity flatten:79-165 — MainCS
 /// @ref McGuire et al. 2012 — velocity tile reduce:67-135 — ReduceVelocityFlattenTile
 /// @ref Motion blur common —24 — VELOCITY_FLATTEN_TILE_SIZE = 16
-/// @constants TILE_SIZE=16 (MotionBlurCommon.ush:24),
+/// @constants TILE_SIZE=16 (standard motion blur tile size, McGuire et al. 2012),
 ///            THREAD_COUNT=256 (VELOCITY_FLATTEN_TILE_SIZE^2)
-/// @deviations the reference uses polar velocity encoding and multi-direction range tracking
-///             (FVelocityRange with CONFIG_MAX_RANGE_SIZE directions). UzEngine uses
-///             a simplified Cartesian max-magnitude approach since we only need a
+/// @deviations McGuire et al. 2012 uses polar velocity encoding and multi-direction range tracking.
+///             UzEngine uses a simplified Cartesian max-magnitude approach since we only need a
 ///             single dominant velocity direction per tile for the neighbor max pass.
-///             reference also encodes velocity+depth into a flattened texture
-///             (MotionBlurVelocityFlatten.ush:137-145); we output raw Cartesian velocity.
+///             Reference also encodes velocity+depth into a flattened texture; we output raw Cartesian velocity.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @ref Motion blur common —24 — VELOCITY_FLATTEN_TILE_SIZE
+/// @ref McGuire et al. 2012 "A Reconstruction Filter for Plausible Motion Blur" — VELOCITY_FLATTEN_TILE_SIZE = 16
 static const uint TILE_SIZE = 16;
 static const uint THREAD_COUNT = TILE_SIZE * TILE_SIZE; // 256
 

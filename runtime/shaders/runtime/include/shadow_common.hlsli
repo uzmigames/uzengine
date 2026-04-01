@@ -86,6 +86,15 @@ cbuffer ShadowDataCB : register(b4) {
     uint     localShadowAtlasIndex;          // Offset 696
     uint     localShadowCount;               // Offset 700
     float4   _shadowPad[4];                  // Offset 704, pad to 768
+
+    // ── Local Light Shadow Data (offset 768) ────────────────────────────
+    // 16 entries * 80 bytes = 1280 bytes. Each entry is 5 float4s:
+    //   float4 row0-row3 = viewProj matrix (row_major)
+    //   float4 atlasRect = (atlasOffsetX, atlasOffsetY, atlasScale, bias)
+    // Flattened as 80 float4s to avoid HLSL struct-in-cbuffer padding issues.
+    float4   localShadowRaw[80];             // Offset 768, 80 * 16 = 1280 bytes
+
+    float4   _shadowPad3[16];                // Offset 2048, pad to 2304
 };
 
 // Helper accessors to unpack float4[2] → float[index]
@@ -93,6 +102,108 @@ float GetCascadeSplit(uint i)      { return cascadeSplitsPacked[i >> 2][i & 3]; 
 float GetCascadeFadeStart(uint i)  { return cascadeFadeStartsPacked[i >> 2][i & 3]; }
 float GetCascadeDepthBias(uint i)  { return cascadeDepthBiasPacked[i >> 2][i & 3]; }
 float GetCascadeNormalBias(uint i) { return cascadeNormalBiasPacked[i >> 2][i & 3]; }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Local Shadow Accessors — read from localShadowRaw[80] flat array
+// ─────────────────────────────────────────────────────────────────────────────
+// Each local shadow entry is 5 float4s (80 bytes):
+//   [base+0..base+3] = row_major viewProj rows
+//   [base+4]         = (atlasOffsetX, atlasOffsetY, atlasScale, bias)
+
+/// Reconstructs the light-space view-projection matrix for local shadow entry i.
+float4x4 GetLocalShadowViewProj(uint i) {
+    uint base = i * 5;
+    return float4x4(
+        localShadowRaw[base + 0],
+        localShadowRaw[base + 1],
+        localShadowRaw[base + 2],
+        localShadowRaw[base + 3]
+    );
+}
+
+/// Returns (atlasOffsetX, atlasOffsetY, atlasScale, bias) for local shadow entry i.
+float4 GetLocalShadowAtlasRect(uint i) {
+    return localShadowRaw[i * 5 + 4];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Local Light Shadow Sampling
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Samples shadow visibility for a world-space position from a local (point/spot)
+/// light's shadow map tile in the local shadow atlas.
+///
+/// @ref Donnelly & Lauritzen 2006 — PCF shadow comparison
+///
+/// @param worldPos     World-space position of the shaded fragment.
+/// @param shadowIdx    Index into localShadowRaw[] (0..localShadowCount-1).
+///                     0xFFFFFFFF means no shadow — returns 1.0 (fully lit).
+/// @param localAtlas   The local shadow atlas depth texture.
+/// @param smplr        SamplerComparisonState for hardware PCF.
+/// @return Shadow visibility in [0, 1]. 1 = fully lit, 0 = fully shadowed.
+float SampleLocalLightShadow(float3 worldPos, uint shadowIdx,
+                             Texture2D<float> localAtlas,
+                             SamplerComparisonState smplr) {
+    if (shadowIdx == 0xFFFFFFFF || shadowIdx >= localShadowCount) return 1.0;
+
+    float4x4 lvp = GetLocalShadowViewProj(shadowIdx);
+    float4 lightClip = mul(float4(worldPos, 1.0), lvp);
+    float3 lightNDC = lightClip.xyz / lightClip.w;
+
+    // Fragment is outside the light's frustum — not shadowed by this light.
+    if (any(lightNDC.xy < -1.0) || any(lightNDC.xy > 1.0) || lightNDC.z < 0.0)
+        return 1.0;
+
+    // NDC [-1,1] -> UV [0,1], flip Y for top-left UV origin.
+    float2 shadowUV = lightNDC.xy * 0.5 + 0.5;
+    shadowUV.y = 1.0 - shadowUV.y;
+
+    // Map to atlas tile using per-entry offset and scale.
+    float4 atlasRect = GetLocalShadowAtlasRect(shadowIdx);
+    float2 atlasOffset = atlasRect.xy;
+    float  atlasScale  = atlasRect.z;
+    float  bias        = atlasRect.w * 0.001;
+
+    float2 atlasUV = atlasOffset + shadowUV * atlasScale;
+    float  depth   = lightNDC.z - bias;
+
+    return localAtlas.SampleCmpLevelZero(smplr, atlasUV, depth);
+}
+
+/// Selects the cubemap face for a direction vector.
+/// Used for point light shadow lookup — each face is a separate shadow tile.
+///
+/// @param dir  Direction from light to fragment (unnormalized is fine).
+/// @return Face index 0-5: +X, -X, +Y, -Y, +Z, -Z.
+uint SelectCubeFace(float3 dir) {
+    float3 a = abs(dir);
+    if (a.x >= a.y && a.x >= a.z)
+        return (dir.x > 0.0) ? 0 : 1;
+    else if (a.y >= a.x && a.y >= a.z)
+        return (dir.y > 0.0) ? 2 : 3;
+    else
+        return (dir.z > 0.0) ? 4 : 5;
+}
+
+/// Samples point light shadow by selecting the correct cubemap face tile.
+/// Point lights store 6 consecutive shadow entries (one per face) starting
+/// at baseShadowIdx.
+///
+/// @param worldPos        World-space position of the shaded fragment.
+/// @param lightPos        World-space position of the point light.
+/// @param baseShadowIdx   Base index into localShadowRaw[] for face 0.
+///                        0xFFFFFFFF means no shadow.
+/// @param localAtlas      The local shadow atlas depth texture.
+/// @param smplr           SamplerComparisonState for hardware PCF.
+/// @return Shadow visibility in [0, 1].
+float SamplePointLightShadow(float3 worldPos, float3 lightPos, uint baseShadowIdx,
+                             Texture2D<float> localAtlas,
+                             SamplerComparisonState smplr) {
+    if (baseShadowIdx == 0xFFFFFFFF) return 1.0;
+    float3 lightToPos = worldPos - lightPos;
+    uint face = SelectCubeFace(lightToPos);
+    return SampleLocalLightShadow(worldPos, baseShadowIdx + face, localAtlas, smplr);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Atlas UV Helpers

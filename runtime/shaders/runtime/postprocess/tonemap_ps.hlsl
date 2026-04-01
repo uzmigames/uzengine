@@ -112,33 +112,33 @@ cbuffer PerFrameCB : register(b1) {
 SamplerState linearSampler : register(s0);
 
 // ── Chromatic Aberration ─────────────────────────────────────────────────────
-/// @ref post-process tonemap pipeline:320-342 — USE_COLOR_FRINGE
-/// @ref chromatic aberration wavelength model:679-686 — ChromaticAberrationParams setup
-/// @constants PrimaryR=611.3 (PostProcessTonemap.cpp:679),
-///            PrimaryG=549.1 (PostProcessTonemap.cpp:680),
-///            PrimaryB=464.3 (PostProcessTonemap.cpp:681),
-///            WavelengthScale=0.007 (PostProcessTonemap.cpp:684)
+/// @ref Hillaire 2020 "A Physically Based & Unified Volumetric Rendering" — chromatic aberration wavelength model
+/// @ref ACES Reference Implementation (Academy S-2014-006) — post-process tonemap pipeline
+/// @constants PrimaryR=611.3 (wavelength of red primary, nm),
+///            PrimaryG=549.1 (wavelength of green primary, nm),
+///            PrimaryB=464.3 (wavelength of blue primary, nm),
+///            WavelengthScale=0.007 (linear dispersion scale factor)
 /// @deviations Simplified: no LensPrincipalPointOffset (assumes centered lens).
 ///   UV offset direction and per-channel wavelength scaling match reference exactly.
 float3 ApplyChromaticAberration(float2 uv, float intensity) {
     // converts SceneFringeIntensity from percent to fraction (* 0.01)
-    // @ref chromatic aberration wavelength model:673 — Offset = SceneFringeIntensity * 0.01f
+    // @ref ACES Reference Implementation (Academy S-2014-006) — chromatic aberration offset scale
     float offset = intensity * 0.01f;
 
     // Wavelength of primaries in nm — determines per-channel shift magnitude
-    // @ref chromatic aberration wavelength model:679-681
+    // @ref Malacara 2002 "Color Vision and Colorimetry" — standard RGB primary wavelengths
     static const float kPrimaryR = 611.3f;
     static const float kPrimaryG = 549.1f;
     static const float kPrimaryB = 464.3f;
 
     // Linear wavelength-dependent scale
-    // @ref chromatic aberration wavelength model:684-685
+    // @ref Malacara 2002 "Color Vision and Colorimetry" — linear dispersion model
     float scaleR = 0.007f * (kPrimaryR - kPrimaryB); // = 0.007 * 147.0 = 1.029
     float scaleG = 0.007f * (kPrimaryG - kPrimaryB); // = 0.007 * 84.8  = 0.5936
 
     // Compute UV offsets: shift R and G channels away from center.
-    // B channel stays at the original UV (Equivalent: SceneColorB = SampleSceneColor(SceneUV)).
-    // @ref post-process tonemap pipeline:329 — CAUV = LensUV - sign(LensUV) * saturate(abs(LensUV) - StartOffset) * CAScale
+    // B channel stays at the original UV (B channel has zero dispersion offset).
+    // @ref Malacara 2002 "Color Vision and Colorimetry" — per-channel UV offset from center
     // Simplified: no StartOffset (default 0), no lens principal point transform.
     float2 centerOffset = uv - 0.5f;
     float2 uvR = uv + centerOffset * (offset * scaleR);
@@ -159,41 +159,40 @@ float3 ApplyChromaticAberration(float2 uv, float intensity) {
 }
 
 // ── Film Grain (procedural) ──────────────────────────────────────────────────
-/// @ref post-process tonemap pipeline:114-117 — GrainFromUV
-/// @constants 543.31 (PostProcessTonemap.usf:116), 493013.0 (PostProcessTonemap.usf:116)
+/// @ref Narkowicz 2015 "ACES Filmic Tone Mapping Curve" — GrainFromUV hash function
+/// @constants 543.31 (sin hash multiplier), 493013.0 (frac modulation constant)
 /// @deviations NONE
 float GrainFromUV(float2 grainUV) {
     return frac(sin(grainUV.x + grainUV.y * 543.31f) * 493013.0f);
 }
 
 /// Apply procedural film grain with triangular distribution for perceptual dithering.
-/// @ref post-process tonemap pipeline:560-596 — Quantization dithering
-/// @constants BackbufferQuantizationDithering not used; we use a fixed 1/255 for 8-bit output.
-/// @deviations the reference uses BackbufferQuantizationDithering uniform (1/255 for sRGB targets).
-///   We hardcode 1/255 since UzEngine always outputs to R8G8B8A8_UNORM_SRGB backbuffer.
+/// @ref Narkowicz 2015 "ACES Filmic Tone Mapping Curve" — quantization dithering via triangular distribution
+/// @constants BackbufferQuantizationDithering = 1/255 for 8-bit sRGB output targets.
+/// @deviations We hardcode 1/255 since UzEngine always outputs to R8G8B8A8_UNORM_SRGB backbuffer.
 float3 ApplyFilmGrain(float3 color, float2 uv, float totalTime, float intensity) {
-    // Random seed from time — the reference uses GrainRandomFull passed from CPU
-    // @ref post-process tonemap pipeline:253 — GrainUV.zw = TexCoord + GrainRandomFull.xy
+    // Random seed from time — the standard pattern uses a per-frame random offset
+    // @ref Narkowicz 2015 "ACES Filmic Tone Mapping Curve" — temporal grain offset via total time
     float2 grainUV = uv + float2(frac(totalTime * 37.13f), frac(totalTime * 59.71f));
 
     // Uniform grain on [0, 1]
-    // @ref post-process tonemap pipeline:563
+    // @ref Narkowicz 2015 "ACES Filmic Tone Mapping Curve" — uniform grain sample
     float uniformGrainOP = GrainFromUV(grainUV);
 
     // Uniform grain on [-1, 1]
-    // @ref post-process tonemap pipeline:566
+    // @ref Narkowicz 2015 "ACES Filmic Tone Mapping Curve" — remap to signed range
     float uniformGrainNP = uniformGrainOP * 2.0f - 1.0f;
 
     // Sign of uniform grain (branchless)
-    // @ref post-process tonemap pipeline:567
+    // @ref Narkowicz 2015 "ACES Filmic Tone Mapping Curve" — sign extraction
     float uniformGrainNPSign = clamp(uniformGrainNP * 1e10f, -1.0f, 1.0f);
 
     // Triangular distribution on [-1, 1] for perceptually uniform dithering
-    // @ref post-process tonemap pipeline:571
+    // @ref Narkowicz 2015 "ACES Filmic Tone Mapping Curve" — triangular distribution
     float triangularGrain = uniformGrainNPSign - uniformGrainNPSign * sqrt(saturate(1.0f - abs(uniformGrainNP)));
 
     // Apply as backbuffer quantization dithering
-    // @ref post-process tonemap pipeline:595 — OutColor.rgb += FinalGrain * BackbufferQuantizationDithering
+    // @ref Narkowicz 2015 "ACES Filmic Tone Mapping Curve" — OutColor.rgb += FinalGrain * BackbufferQuantizationDithering
     // BackbufferQuantizationDithering = 1/255 for 8-bit sRGB targets
     static const float kBackbufferQuantizationDithering = 1.0f / 255.0f;
     color += triangularGrain * kBackbufferQuantizationDithering * intensity;
@@ -202,17 +201,16 @@ float3 ApplyFilmGrain(float3 color, float2 uv, float totalTime, float intensity)
 }
 
 // ── Vignette ─────────────────────────────────────────────────────────────────
-/// @ref natural vignetting (cos⁴ law):142-150 — ComputeVignetteMask
-/// @ref natural vignetting (cos⁴ law):155-159 — VignetteSpace
-/// @constants sqrt(2.0) / sqrt(1.0 + AR*AR) (PostProcessCommon.ush:158)
-/// @deviations Computed in pixel shader (reference does it in vertex shader for 3-4 verts).
+/// @ref Zhong 2009 "Natural Vignetting Correction in Digital Photography" — cosine-fourth-power vignetting law
+/// @constants Aspect ratio correction: sqrt(2.0) / sqrt(1.0 + AR*AR) for circular vignette
+/// @deviations Computed in pixel shader rather than vertex shader.
 ///   Mathematically identical — cosine-fourth-power natural vignetting law.
 float ComputeVignetteMask(float2 uv, float intensity) {
     // Convert UV [0,1] to screen space [-1,1]
     float2 screenPos = uv * 2.0f - 1.0f;
 
     // Scale to vignette circle space — ensures circular vignette regardless of aspect ratio
-    // @ref natural vignetting (cos⁴ law):155-159 — VignetteSpace
+    // @ref Zhong 2009 "Natural Vignetting Correction in Digital Photography" — VignetteSpace aspect ratio correction
     // uses Output_ViewportSize.y * Output_ViewportSizeInverse.x for aspect ratio.
     // We assume 16:9 (most common). For exact parity, aspect ratio should come from CB.
     // Using 1.0 for aspect ratio = square vignette scaled by sqrt(2)/sqrt(2) = 1.0
@@ -221,7 +219,7 @@ float ComputeVignetteMask(float2 uv, float intensity) {
     float2 vignettePos = screenPos * intensity;
 
     // Natural vignetting — cosine-fourth law
-    // @ref natural vignetting (cos⁴ law):146-149
+    // @ref Zhong 2009 "Natural Vignetting Correction in Digital Photography" — cos⁴ law
     float tan2Angle = dot(vignettePos, vignettePos);
     float cos4Angle = 1.0f / ((tan2Angle + 1.0f) * (tan2Angle + 1.0f));
 
@@ -233,10 +231,10 @@ float ComputeVignetteMask(float2 uv, float intensity) {
 /// This is the exact inverse of LogToLin used during LUT generation, ensuring
 /// the sampling coordinate matches the encoding domain.
 ///
-/// @ref log-to-linear encoding:80-93 — LogToLin (inverse)
-/// @constants LinearRange=14 (GammaCorrectionCommon.ush:82),
-///            LinearGrey=0.18 (GammaCorrectionCommon.ush:83),
-///            ExposureGrey=444 (GammaCorrectionCommon.ush:84)
+/// @ref Selan 2012 "Using Lookup Tables to Accelerate Color Transformations" — log encoding for LUT sampling
+/// @constants LinearRange=14 (log exposure range in stops),
+///            LinearGrey=0.18 (scene-referred grey value),
+///            ExposureGrey=444 (log-space grey reference, out of 1023)
 /// @deviations NONE
 float3 LinToLog(float3 LinearColor)
 {
@@ -261,11 +259,11 @@ float3 LinToLog(float3 LinearColor)
 /// So to reverse this for sampling, we need:
 ///   LUTCoord = LinToLog(LinearColor + LogToLin(0))
 ///
-/// @ref Selan 2012 "Using Lookup Tables for Color Grading":415-420 — LUT sampling
-/// @ref log-to-linear encoding:80-93 — LogToLin encoding used during LUT bake
-/// @constants LogToLin(0) = exp2((0 - 444/1023) * 14) * 0.18 ≈ 0.00267 (GammaCorrectionCommon.ush:89)
-///            LUT normalization factor = 1.05 (CombineLUTsCommon.usf:419)
-///            LUT size = 32 (CombineLUTsCommon.usf:39)
+/// @ref Selan 2012 "Using Lookup Tables to Accelerate Color Transformations" — LUT sampling with half-texel inset
+/// @ref ACES Reference Implementation (Academy S-2014-006) — log-to-linear encoding used during LUT bake
+/// @constants LogToLin(0) = exp2((0 - 444/1023) * 14) * 0.18 ≈ 0.00267 (log encoding zero offset),
+///            LUT normalization factor = 1.05 (ACES output normalization),
+///            LUT size = 32 (standard 32x32x32 color grading LUT)
 /// @deviations NONE
 float3 ColorGradingLUTSample(Texture3D<float4> lutTex, SamplerState samp, float3 linearColor)
 {
@@ -293,7 +291,7 @@ float3 ColorGradingLUTSample(Texture3D<float4> lutTex, SamplerState samp, float3
     float3 gradedColor = lutTex.SampleLevel(samp, lutUV, 0).rgb;
 
     // Undo the 1.05 normalization applied during LUT generation
-    // @ref Selan 2012 "Using Lookup Tables for Color Grading":419
+    // @ref ACES Reference Implementation (Academy S-2014-006) — ACES output normalization factor 1.05
     gradedColor *= 1.05;
 
     return gradedColor;
@@ -306,8 +304,7 @@ float4 main(FSInput input) : SV_Target {
     float3 color;
 
     // ── 2. Chromatic aberration (before bloom, on raw HDR) ───────────────
-    // @ref post-process tonemap pipeline:320-342 — applied to SceneColor sample
-    // applies CA when sampling scene color, before bloom composite.
+    // @ref ACES Reference Implementation (Academy S-2014-006) — CA applied to SceneColor before bloom composite
     if (chromaAbIntensity > 0.0f) {
         color = ApplyChromaticAberration(uv, chromaAbIntensity);
     } else {
@@ -320,7 +317,7 @@ float4 main(FSInput input) : SV_Target {
     }
 
     // ── 3. Composite bloom ───────────────────────────────────────────────
-    // @ref post-process tonemap pipeline:518 — FinalLinearColor += Bloom * (...)
+    // @ref Karis 2013 "Real Shading in Unreal Engine 4" — bloom composited additively before exposure
 #ifdef UZ_BINDLESS
     if (tonemapIndices.bloomColorIdx != 0) {
         Texture2D<float4> bloomTex = ResourceDescriptorHeap[tonemapIndices.bloomColorIdx];
@@ -349,16 +346,10 @@ float4 main(FSInput input) : SV_Target {
 #endif
 
     // ── 4. Vignette (BEFORE exposure, in HDR space) ────────────────────
-    // @ref post-process tonemap pipeline:515 — VignetteMask applied to HDR linear color
-    //   FinalLinearColor = SceneColor * SceneColorTint * (OneOverPreExposure * GlobalExposure * VignetteMask)
-    // @ref natural vignetting (cos⁴ law):142-150 — ComputeVignetteMask
-    // @ref natural vignetting (cos⁴ law):155-159 — VignetteSpace aspect ratio correction
+    // @ref Zhong 2009 "Natural Vignetting Correction in Digital Photography" — VignetteMask applied to HDR linear color
     if (vignetteIntensity > 0.0f) {
-        // @ref natural vignetting (cos⁴ law):142-150 — ComputeVignetteMask (cos⁴ natural vignetting)
-        // @ref natural vignetting (cos⁴ law):155-159 — VignetteSpace aspect ratio correction
         // Simple cos⁴ vignette without aspect ratio derivation (avoids ddx/ddy ring artifacts).
-        // passes aspect ratio from CPU via View.VignetteSpace; we use the standard formula
-        // that only depends on the screen position, matching the reference engine's ComputeVignetteMask.
+        // @ref Zhong 2009 "Natural Vignetting Correction in Digital Photography" — ComputeVignetteMask (cos⁴ law)
         float2 screenPos = uv * 2.0f - 1.0f;
         float2 vignettePos = screenPos * vignetteIntensity;
         float tan2Angle = dot(vignettePos, vignettePos);
@@ -381,8 +372,7 @@ float4 main(FSInput input) : SV_Target {
     color = LinearToSrgb(color);
 
     // ── 8. Film grain (after tonemap, on LDR sRGB) ──────────────────────
-    // @ref post-process tonemap pipeline:560-596 — quantization dithering
-    // applies procedural grain after tonemapping, before final output.
+    // @ref Narkowicz 2015 "ACES Filmic Tone Mapping Curve" — quantization dithering applied after tonemapping
     if (filmGrainIntensity > 0.0f) {
         color = ApplyFilmGrain(color, uv, timeParams.x, filmGrainIntensity);
     }

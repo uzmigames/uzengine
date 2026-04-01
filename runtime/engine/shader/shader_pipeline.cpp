@@ -55,6 +55,21 @@ void ShaderPipeline::Init(const Config& config) {
 
     UZ_LOG(IO, Info, "ShaderPipeline: initialized (backend='{}', cache='{}', bindless={})",
            m_impl->config.targetBackend, config.cacheDir, config.bindless ? "true" : "false");
+
+    // Start shader hot-reload if enabled. Watches shader source directories
+    // for changes (timestamp polling). Dirty shaders are recompiled lazily
+    // on the next PollHotReload() call from the render loop.
+    if (config.enableHotReload) {
+        std::vector<std::filesystem::path> watchDirs;
+        for (const auto& mount : m_impl->vfs.GetMounts()) {
+            watchDirs.push_back(mount.realDirectory);
+        }
+        if (!watchDirs.empty()) {
+            m_impl->hotReload.Start(watchDirs);
+            UZ_LOG(IO, Info, "ShaderPipeline: hot-reload watching {} director{}",
+                   watchDirs.size(), watchDirs.size() == 1 ? "y" : "ies");
+        }
+    }
 }
 
 void ShaderPipeline::Shutdown() {

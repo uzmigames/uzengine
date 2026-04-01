@@ -154,13 +154,38 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
                 for (const auto& dc : ctx.drawList.GetCommands()) {
                     if (dc.meshId < m_meshes.size() && m_meshes[dc.meshId].IsValid()) {
                         const GPUMesh& m = m_meshes[dc.meshId];
-                        totalVertices  += m.vertexCount;
-                        totalTriangles += m.indexCount / 3;
+                        // Use the active LOD's index count when a LOD override is in effect.
+                        const uint32_t activeIndexCount = (dc.lodIndexCount > 0)
+                            ? dc.lodIndexCount
+                            : m.indexCount;
+                        totalVertices  += activeIndexCount;
+                        totalTriangles += activeIndexCount / 3;
                     }
                 }
                 m_statsOverlay->SetDrawCalls(drawCount);
                 m_statsOverlay->SetVertexCount(totalVertices);
                 m_statsOverlay->SetTriangleCount(totalTriangles);
+
+                // LOD info: report the active LOD of the first multi-LOD mesh.
+                for (const auto& dc : ctx.drawList.GetCommands()) {
+                    if (dc.meshId < m_meshes.size()) {
+                        const GPUMesh& gm = m_meshes[dc.meshId];
+                        if (gm.lodCount > 1) {
+                            uint32_t activeLOD = 0;
+                            if (dc.lodIndexCount > 0) {
+                                // Determine which LOD by matching index count
+                                for (uint32_t li = 0; li < 3; ++li) {
+                                    if (gm.lodInfo[li].indexCount == dc.lodIndexCount) {
+                                        activeLOD = li + 1;
+                                        break;
+                                    }
+                                }
+                            }
+                            m_statsOverlay->SetActiveLOD(activeLOD, gm.lodCount);
+                            break;
+                        }
+                    }
+                }
 
                 // Camera position + rotation for artist positioning
                 const auto& camPos = m_camera->GetPosition();

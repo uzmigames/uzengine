@@ -30,7 +30,7 @@
 
 /// @ref Wright 2015 "DFS" — cull dispatch:34-37,82-97 — CullObjectsForShadowCS parameters
 /// @constants UPDATEOBJECTS_THREADGROUP_SIZE=64 (reference default in C++, DistanceFieldShadowing.cpp:196)
-///            NumShadowHullPlanes=up to 12 (DistanceFieldShadowing.usf:36)
+///            NumShadowHullPlanes=up to 12
 /// @deviations Combined convex hull + bounding sphere into single cbuffer.
 ///             Bound at register(b1) via SetRootCBV (kSlotPerFrame) because the data
 ///             exceeds the 8-DWORD root constant limit at b0.

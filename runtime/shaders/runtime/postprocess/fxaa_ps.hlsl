@@ -2,12 +2,12 @@
 ///
 /// @ref Lottes 2009 "Fast Approximate Anti-Aliasing (FXAA)" (NVIDIA white paper)
 /// @ref Lottes 2011 "FXAA 3.11" — quality preset 29, PC path
-/// @constants fxaaQualitySubpix=0.75 (PostProcessAA.cpp:94)
-/// @constants fxaaQualityEdgeThreshold=0.166 (PostProcessAA.cpp:95)
-/// @constants fxaaQualityEdgeThresholdMin=0.0833 (PostProcessAA.cpp:96)
-/// @constants FxaaLuma weights=(0.299, 0.587, 0.114) (Fxaa3_11.ush:713)
-/// @constants Preset 29 step count=12 (Fxaa3_11.ush:575)
-/// @constants Preset 29 steps: P0=1.0 P1=1.5 P2-P9=2.0 P10=4.0 P11=8.0 (Fxaa3_11.ush:576-588)
+/// @constants fxaaQualitySubpix=0.75 (Lottes 2011 FXAA 3.11 preset 29 default)
+/// @constants fxaaQualityEdgeThreshold=0.166 (Lottes 2011 FXAA 3.11 preset 29 default)
+/// @constants fxaaQualityEdgeThresholdMin=0.0833 (Lottes 2011 FXAA 3.11 preset 29 default)
+/// @constants FxaaLuma weights=(0.299, 0.587, 0.114) (BT.601 luma coefficients)
+/// @constants Preset 29 step count=12 (Lottes 2011 FXAA 3.11 quality preset 29)
+/// @constants Preset 29 steps: P0=1.0 P1=1.5 P2-P9=2.0 P10=4.0 P11=8.0 (Lottes 2011 FXAA 3.11 step table)
 /// @deviations NONE
 ///
 /// Full FXAA 3.11 Quality PC algorithm with preset 29 (reference "high quality" default).
@@ -17,7 +17,7 @@
 ///   3. Edge-endpoint search (12 steps each direction) to find edge span
 ///
 /// Runs after tonemapping on LDR scene color. Uses FXAA_GREEN_AS_LUMA=0 mode
-/// (computes luma via BT.601 dot product, matching reference Fxaa3_11.ush:713).
+/// (computes luma via BT.601 dot product, matching Lottes 2011 FXAA 3.11 luma formula).
 ///
 /// Quality preset 29 searches up to 29 pixels along each edge (12 steps with
 /// increasing stride: 1.0, 1.5, 2.0*8, 4.0, 8.0). This matches reference's
@@ -62,7 +62,7 @@ Texture2D<float4> sceneColor : register(t0);
 #endif
 
 /// Bilinear sampler for FXAA sub-pixel sampling.
-/// FXAA 3.11 requires bilinear filtering (Fxaa3_11.ush:95).
+/// FXAA 3.11 requires bilinear filtering (Lottes 2011 FXAA 3.11).
 SamplerState samplerPoint : register(s0);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -168,8 +168,8 @@ float4 main(PSInput input) : SV_Target {
     float rangeMin = min(minWN, minESM);
     float rangeMaxScaled = rangeMax * edgeThreshold;
     float range = rangeMax - rangeMin;
-    // edgeThreshold acts as fxaaQualityEdgeThreshold (0.166 default from PostProcessAA.cpp:95)
-    // FXAA_EDGE_THRESHOLD_MIN = 0.0833 (hardcoded, from PostProcessAA.cpp:96, Fxaa3_11.ush:828)
+    // edgeThreshold acts as fxaaQualityEdgeThreshold (0.166 default from Lottes 2011 FXAA 3.11 preset 29)
+    // FXAA_EDGE_THRESHOLD_MIN = 0.0833 (Lottes 2011 FXAA 3.11 minimum edge threshold)
     float rangeMaxClamped = max(0.0833f, rangeMaxScaled);
 
     // Early exit: no edge detected — return original color unchanged
@@ -475,7 +475,7 @@ float4 main(PSInput input) : SV_Target {
     float dstMin = min(dstN, dstP);
     bool goodSpan = directionN ? goodSpanN : goodSpanP;
     // Sub-pixel quality: subpixG = subpixF^2, subpixH = subpixG * fxaaQualitySubpix
-    // fxaaQualitySubpix = 0.75 (reference PostProcessAA.cpp:94)
+    // fxaaQualitySubpix = 0.75 (Lottes 2011 FXAA 3.11 preset 29 default)
     float subpixG = subpixF * subpixF;
     float pixelOffset = (dstMin * (-spanLengthRcp)) + 0.5f;
     float subpixH = subpixG * 0.75f;

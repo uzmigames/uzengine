@@ -13,9 +13,8 @@
 /// ```
 ///
 /// # Reference
-/// - reference ReflectionEnvironmentCapture.cpp: SetupSkyIrradianceEnvironmentMapConstantsFromSkyIrradiance
-/// - reference ReflectionEnvironmentShared.ush: GetSkySHDiffuse
-/// - Peter-Pike Sloan, "Stupid Spherical Harmonics (SH) Tricks"
+/// - @ref Sloan 2008 "Stupid Spherical Harmonics (SH) Tricks" — L2 SH projection and packing
+/// - @ref L2 SH sky irradiance environment map packing technique — cosine-lobe baked coefficients
 
 #pragma once
 

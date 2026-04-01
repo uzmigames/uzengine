@@ -56,7 +56,13 @@ export type WorkerCommand =
     | { id: number; cmd: 'mouseButton'; button: number; pressed: boolean }
     | { id: number; cmd: 'key'; keycode: number; pressed: boolean }
     | { id: number; cmd: 'keyEx'; keycode: number; pressed: boolean; modifiers: number }
-    | { id: number; cmd: 'scroll'; delta: number };
+    | { id: number; cmd: 'scroll'; delta: number }
+    | { id: number; cmd: 'getEntityComponents'; entityId: number }
+    | { id: number; cmd: 'selectEntity'; entityId: number }
+    | { id: number; cmd: 'getSelectedEntity' }
+    | { id: number; cmd: 'play' }
+    | { id: number; cmd: 'stop' }
+    | { id: number; cmd: 'isPlaying' };
 
 /**
  * Responses sent from this worker to the parent (RuntimeClient).
@@ -446,6 +452,40 @@ function runWorker(): void {
                 case 'scroll': {
                     requireAddon().onScroll(msg.delta);
                     reply(id);
+                    break;
+                }
+
+                // ── Entity introspection + selection ─────────────────────────
+                case 'getEntityComponents': {
+                    const json = requireAddon().getEntityComponents(msg.entityId);
+                    reply(id, json);
+                    break;
+                }
+                case 'selectEntity': {
+                    requireAddon().selectEntity(msg.entityId);
+                    reply(id);
+                    break;
+                }
+                case 'getSelectedEntity': {
+                    const entityId = requireAddon().getSelectedEntity();
+                    reply(id, entityId);
+                    break;
+                }
+
+                // ── Play mode ────────────────────────────────────────────────
+                case 'play': {
+                    const ok = requireAddon().play();
+                    reply(id, ok);
+                    break;
+                }
+                case 'stop': {
+                    const ok = requireAddon().stop();
+                    reply(id, ok);
+                    break;
+                }
+                case 'isPlaying': {
+                    const playing = requireAddon().isPlaying();
+                    reply(id, playing);
                     break;
                 }
 

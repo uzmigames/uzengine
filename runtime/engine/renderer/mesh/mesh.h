@@ -41,7 +41,7 @@ namespace uz {
 static constexpr uint32_t kMeshMagic = 0x484D5A55; // "UZMH" little-endian
 
 /// Current .uzmesh format version.
-static constexpr uint32_t kMeshVersion = 1;
+static constexpr uint32_t kMeshVersion = 2; ///< v2: multi-LOD support (lodCount + lods[3] in header)
 
 /// Vertex format identifier stored in the header.
 enum class MeshVertexFormat : uint32_t {
@@ -75,9 +75,19 @@ struct MeshHeader {
 
     // Data offsets (relative to file start)
     uint64_t         vertexDataOffset; ///< Byte offset to vertex data
-    uint64_t         indexDataOffset;  ///< Byte offset to index data
+    uint64_t         indexDataOffset;  ///< Byte offset to index data (LOD0)
 
-    uint8_t          reserved[56];     ///< Reserved for future use, must be zero
+    // ── LOD data (v2+) ──
+    // LOD0 uses indexDataOffset + indexCount above.
+    // LOD1..3 use these fields. All LOD indices are concatenated after LOD0.
+    // Unused LODs have indexCount = 0.
+    uint32_t         lodCount;         ///< Number of LOD levels (1 = no extra LODs)
+    struct {
+        uint32_t indexOffset;          ///< Byte offset from indexDataOffset to this LOD's indices
+        uint32_t indexCount;           ///< Number of indices for this LOD
+    } lods[3];                         ///< LOD1, LOD2, LOD3 descriptors
+
+    uint8_t          reserved[28];     ///< Reserved for future use, must be zero
 };
 
 static_assert(sizeof(MeshHeader) == 128, "MeshHeader must be exactly 128 bytes");
@@ -120,10 +130,33 @@ struct Mesh {
         return static_cast<uint64_t>(header.vertexCount) * header.vertexStride;
     }
 
-    /// Returns total index data size in bytes.
+    /// Returns total index data size in bytes (all LODs combined).
     [[nodiscard]] uint64_t GetIndexDataSize() const {
         uint32_t indexSize = (header.indexFormat == MeshIndexFormat::UInt32) ? 4 : 2;
-        return static_cast<uint64_t>(header.indexCount) * indexSize;
+        uint64_t total = static_cast<uint64_t>(header.indexCount) * indexSize;
+        for (uint32_t i = 0; i < 3 && i + 1 < header.lodCount; ++i) {
+            total += static_cast<uint64_t>(header.lods[i].indexCount) * indexSize;
+        }
+        return total;
+    }
+
+    /// Returns the number of LOD levels (1 = LOD0 only, up to 4).
+    [[nodiscard]] uint32_t GetLODCount() const {
+        return header.lodCount > 0 ? header.lodCount : 1;
+    }
+
+    /// Returns index count for a specific LOD level.
+    [[nodiscard]] uint32_t GetLODIndexCount(uint32_t lod) const {
+        if (lod == 0) return header.indexCount;
+        if (lod <= 3 && lod < header.lodCount) return header.lods[lod - 1].indexCount;
+        return 0;
+    }
+
+    /// Returns byte offset (relative to indexData start) for a specific LOD's indices.
+    [[nodiscard]] uint32_t GetLODIndexOffset(uint32_t lod) const {
+        if (lod == 0) return 0;
+        if (lod <= 3 && lod < header.lodCount) return header.lods[lod - 1].indexOffset;
+        return 0;
     }
 
     /// Returns true if the mesh has valid data.

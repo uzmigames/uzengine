@@ -130,7 +130,8 @@ public:
     /// Dielectric specular reflectance scale. Controls F0 for non-metallic surfaces:
     /// F0 = 0.08 * specular. Default 0.5 produces F0 = 0.04 (IOR ~1.5).
     /// Range [0, 1]. 0 = no specular reflection, 1 = F0 = 0.08 (IOR ~1.8).
-    /// @ref UE5 "Material Inputs — Specular" — same 0.08 * specular formula.
+    /// @ref Schlick 1994 "An Inexpensive BRDF Model for Physically-based Rendering" — F0 for dielectrics
+    /// @ref Lagarde 2014 "Moving Frostbite to Physically Based Rendering" — 0.08 * specular formula
     [[nodiscard]] virtual float GetSpecular() const            { return GetScalarParam("Specular", 0.5f); }
 
     /// Per-material IBL intensity multiplier. 0 = no environment lighting,

@@ -1,6 +1,6 @@
 /// Auto-Exposure Average + Temporal Adaptation — Compute Shader
 ///
-/// Eye Adaptation parity (PostProcessEyeAdaptation.usf).
+/// Eye Adaptation based on Reinhard et al. 2002 photographic tone reproduction.
 ///
 /// Reads the 64-bin luminance histogram, applies percentile filtering,
 /// computes weighted average log2 luminance, clamps to brightness bounds,
@@ -141,9 +141,9 @@ void main()
     // ── Temporal adaptation (reference dual exponential/linear model in log2 space) ──
     /// @ref Reinhard 2002 — exposure adaptation:192-219 — ComputeEyeAdaptation
     /// @ref Eye adaptation —491-505 — ExponentialUpM/DownM computation
-    /// @constants g_StartDistance=1.5 (PostProcessEyeAdaptation.cpp:48)
-    /// @constants g_SpeedUp=3.0 (Scene.cpp:484), g_SpeedDown=1.0 (Scene.cpp:485)
-    /// @constants kFrameTimeEps=1/60 (PostProcessEyeAdaptation.cpp:503)
+    /// @constants g_StartDistance=1.5 (f-stop transition threshold for exponential-to-linear switch)
+    /// @constants g_SpeedUp=3.0 (f-stops/sec upward adaptation rate), g_SpeedDown=1.0 (f-stops/sec downward)
+    /// @constants kFrameTimeEps=1/60 (minimum frame time epsilon for adaptation stability)
     /// @deviations NONE
     float prevExposure = g_ExposureUAV[0];
 

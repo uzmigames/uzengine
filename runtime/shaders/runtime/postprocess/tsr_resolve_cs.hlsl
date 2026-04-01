@@ -10,12 +10,12 @@
 /// @ref Yang et al. 2020 "A Survey of Temporal Antialiasing Techniques"
 /// @ref Catmull & Rom 1974 — bicubic interpolation for history reprojection
 /// @ref Wihlidal 2019 "Temporal Super-Resolution" — multi-pass TSR pipeline
-/// @constants MaxHistorySampleCount=16.0 (TemporalSuperResolution.cpp:44),
-///            TheoricBlendFactor=1/(1+16/resFracSq) (TemporalSuperResolution.cpp:2858),
-///            WeightClampingPixelSpeed=1.0 (TemporalSuperResolution.cpp:301),
-///            WeightClampingSampleCount=4.0 (TemporalSuperResolution.cpp:286),
-///            HistoryRejectionSampleCount=2.0 (TemporalSuperResolution.cpp:122),
-///            Sigma=0.47 -> exp(-2.29*d^2) (TemporalAA.cpp:449)
+/// @constants MaxHistorySampleCount=16.0 (maximum history sample accumulation count),
+///            TheoricBlendFactor=1/(1+16/resFracSq) (theoretic blend factor based on history count),
+///            WeightClampingPixelSpeed=1.0 (pixel speed threshold for weight clamping),
+///            WeightClampingSampleCount=4.0 (sample count for weight clamping under motion),
+///            HistoryRejectionSampleCount=2.0 (sample count used during history rejection),
+///            Sigma=0.47 -> exp(-2.29*d^2) (Gaussian filter sigma for temporal weighting)
 /// @deviations reference TSR uses 12+ separate passes with LDS spill, tensor half types,
 ///             reprojection fields, moire detection, history resurrection, dual-pixel
 ///             vectorization, and butterfly kernels. UzEngine consolidates the core
@@ -238,7 +238,7 @@ static const float2 kPlusOffsets[5] = {
 
 /// @ref TSR velocity dilation —148-417 — MainCS
 /// @ref TSR depth/velocity analysis —271-322 — FindClosestDepthOffset
-/// @constants TILE_SIZE=8 (TSRDilateVelocity.usf:19)
+/// @constants TILE_SIZE=8 (Wihlidal 2019 "Temporal Super-Resolution" — velocity dilation tile size)
 /// @deviations the reference uses packed uint encoding (PackDepthAndOffset) for register efficiency
 ///             and supports butterfly kernels, reprojection field, motion blur flatten,
 ///             closest occluder scatter, and thin geometry edge reprojection.
@@ -493,9 +493,9 @@ void main(
 /// @ref TSR parameters —3070 — WeightClampingPixelSpeedAmplitude
 /// @ref TSR parameters —3071 — InvWeightClampingPixelSpeed
 /// @ref AMD CAS 2019 —60-120 — CAS/RCAS sharpening pattern
-/// @constants Sigma=0.47->exp(-2.29*d^2) (TemporalAA.cpp:449),
-///            WeightClampingPixelSpeed=1.0 (TemporalSuperResolution.cpp:301),
-///            WeightClampingSampleCount=4.0 (TemporalSuperResolution.cpp:286)
+/// @constants Sigma=0.47->exp(-2.29*d^2) (Gaussian sigma for temporal kernel),
+///            WeightClampingPixelSpeed=1.0 (pixel speed threshold for weight clamping),
+///            WeightClampingSampleCount=4.0 (sample count for weight clamping)
 /// @deviations reference TSRUpdateHistory uses reprojection field with Jacobian,
 ///             dual-pixel vectorization, LDS shared arrays, wave broadcasts,
 ///             lens distortion support, history resurrection, configurable
@@ -677,16 +677,18 @@ void main(
         float2 f2 = f * f;
         float2 f3 = f2 * f;
 
-        // Catmull-Rom basis weights (reference TextureSampling.ush:110-113).
+        // Catmull-Rom basis weights (Catmull & Rom 1974, standard cubic spline).
         float2 w0 = f2 - 0.5 * (f3 + f);
         float2 w1 = 1.5 * f3 - 2.5 * f2 + 1.0;
         float2 w3 = 0.5 * (f3 - f2);
         float2 w2 = 1.0 - w0 - w1 - w3;
 
-        // Combined weights for bilinear trick (reference TextureSampling.ush:116).
+        // Combined weights for bilinear trick.
+        // @ref Karis 2014 "High Quality Temporal Supersampling" — 5-tap Catmull-Rom bilinear optimization
         float2 w12 = w1 + w2;
 
-        // Bilinear sample positions in texel space (reference TextureSampling.ush:119-121).
+        // Bilinear sample positions in texel space.
+        // @ref Karis 2014 "High Quality Temporal Supersampling" — optimized Catmull-Rom sample positions
         float2 sample0 = (tc - 1.0) * historyInvSize;
         float2 sample1 = (tc + w2 * rcp(w12)) * historyInvSize;
         float2 sample2 = (tc + 2.0) * historyInvSize;
@@ -746,7 +748,7 @@ void main(
     // At default settings (WeightClampingSampleCount=4, WeightClampingPixelSpeed=1.0),
     // the maximum blend factor under motion is approximately 1/4 = 0.25.
     //
-    // The weight clamping formula from reference (TemporalSuperResolution.cpp:3070):
+    // The weight clamping formula from Wihlidal 2019 "Temporal Super-Resolution":
     //   WeightClampingPixelSpeedAmplitude = clamp(1.0 - VelocityWeightClampingSampleCount * HistoryHisteresis, 0, 1)
     //   MaxValidity = 1.0 - WeightClampingPixelSpeedAmplitude * saturate(OutputPixelVelocity * InvWeightClampingPixelSpeed)
     //

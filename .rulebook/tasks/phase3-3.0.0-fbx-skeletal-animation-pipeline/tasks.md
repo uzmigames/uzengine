@@ -28,15 +28,27 @@
 - [ ] 4.3 Apply material to mesh — render with full PBR lighting
 - [ ] 4.4 Visual verification: screenshot shows textured MushroomMonster with correct PBR
 
-## 5. Skeletal Mesh — Bones & Weights
-- [ ] 5.1 Extend `uzmesh_format.h` with `VertexSkinnedPosNormUV` struct (position[3], normal[3], uv[2], bone_ids[4] as uint8, bone_weights[4] as uint8) — 40 bytes
-- [ ] 5.2 Add `UzMeshHeader::flags` bit 0 = skinned mesh flag, add skeleton joint count field in reserved space
-- [ ] 5.3 Extract skeleton from FBX: `ufbx_bone` hierarchy, joint names, parent indices, bind pose transforms
-- [ ] 5.4 Compute inverse bind matrices from ufbx skin cluster bind transforms
-- [ ] 5.5 Extract per-vertex bone weights from `ufbx_skin_deformer` — limit to 4 influences, normalize weights to sum=1.0, pack to uint8
-- [ ] 5.6 Create `Skeleton` class (`runtime/engine/animation/skeleton.h/.cpp`) — joint hierarchy, bind pose, inverse bind matrices, `ComputeJointMatrices()`
-- [ ] 5.7 Write skinned .uzmesh with `VertexSkinnedPosNormUV` layout
-- [ ] 5.8 Verify: load FBX, print skeleton joint count and hierarchy to log
+## 5. Asset Format Architecture (3 separate assets: .uzskel + .uzmesh + .uzanim)
+
+### 5A. Skeleton Asset (.uzskel) — shared across meshes + animations
+- [x] 5A.1 Create `runtime/engine/animation/skeleton.h` — Skeleton class with BoneInfo (name, parentIndex, bindTranslation/Rotation/Scale, inverseBindWorld). kMaxBones=256. FindBoneIndex, GetBone, GetRootBoneIndex, GetChildBoneIndices. Name-to-index hash map.
+- [x] 5A.2 Create `runtime/engine/animation/skeleton.cpp` — ComputeInverseBindMatrices() walks hierarchy forward (topological order), computes world = local * parent, inverseBindWorld = inverse(world). BuildNameIndex() with duplicate name warning.
+- [x] 5A.3 Create `runtime/engine/animation/skeleton_io.h/.cpp` — .uzskel binary format: magic 'UZSK', version 1, 16B header. Per-bone: nameLen(uint16) + name + parentIndex(int16) + TRS(3+4+3 floats). SaveSkeleton/LoadSkeleton (disk), WriteSkeleton/ReadSkeleton (memory). Auto-calls BuildNameIndex + ComputeInverseBindMatrices on load.
+- [x] 5A.4 Create `runtime/engine/animation/bone_transform.h` — BoneTransform: Vec3 position, Quat rotation, Vec3 scale. Identity(), ToMatrix() via Mat4::TRS, Interpolate(a,b,t) with lerp/slerp, ComposeWith(parent).
+- [x] 5A.5 Add `engine/animation` to build.zig include paths + addCppDir. Add UZ_DECLARE_LOG_CATEGORY(Animation) to log.h.
+
+### 5B. Skinned Vertex Format — extend .uzmesh for bone data
+- [x] 5B.1 Add `SkinnedVertex` to `runtime/engine/renderer/mesh/vertex.h` — 56 bytes: Vec3 position, Vec3 normal, Vec2 texcoord, Vec4 tangent, uint8_t boneIndices[4], uint8_t boneWeights[4]. static_assert(sizeof==56).
+- [x] 5B.2 Extend `UzMeshHeader::flags` — kUzMeshFlag_Skinned (0x1). When set: vertexStride=56, reserved[0]=skeletonPathLength. Skeleton filepath string appended after index data.
+- [x] 5B.3 Bump `kUzMeshVersion` to 2 — v2 reader accepts v1 (backward compat) + v2 with optional skinned flag. Updated ReadUzMesh/WriteUzMesh. Added skeletonPath to UzMeshFile.
+
+### 5C. FBX Skeleton Extraction
+- [x] 5C.1 Extract skeleton hierarchy from FBX — ExtractSkeleton() collects bone_nodes from skin->clusters, builds node-to-candidate map, resolves parents by walking bone_node->parent chain, topological sort by depth, extracts bind-pose local TRS via ufbx_matrix_to_transform + ComputeLocalFromWorldTRS (inverts ComposeWith). All in fbx_importer.cpp anonymous namespace.
+- [x] 5C.2 Compute inverse bind matrices — Handled automatically by Skeleton::ComputeInverseBindMatrices() called at end of ExtractSkeleton(). Walks hierarchy forward computing world = local * parent, then inverts.
+- [x] 5C.3 Extract per-vertex bone weights from ufbx_skin_deformer — PackBoneWeights() reads skin->vertices[vertexIdx].weight_begin/num_weights, takes top 4 (pre-sorted descending by ufbx), normalizes to uint8 sum=255, adjusts largest weight for rounding. Parallel arrays (allBoneIndices/allBoneWeights) remapped alongside tangents via meshopt remap table.
+- [x] 5C.4 Write .uzskel file — WriteSkeleton() serializes skeleton as AssetImportSidecar with extension=".uzskel". Skeleton path derived from sourceName (.fbx -> .uzskel) and stored in UZMS header via WriteUzMesh(skeletonPath).
+- [x] 5C.5 Detect static vs skinned — `mesh->skin_deformers.count > 0` triggers skinned path (SkinnedVertex 56B + UZMS format). Static meshes keep exact original UZMH format (Vertex 48B, unchanged behavior).
+- [x] 5C.6 Verify: logs skeleton bone count, root name, max depth. Logs weight distribution (1/2/3/4-bone influence counts). Final import log includes stride, [SKINNED] tag.
 
 ## 6. GPU Skinning
 - [ ] 6.1 Create skinned vertex shader (`runtime/shaders/runtime/skinned_vs.hlsl`) — linear blend skinning with 4 bone influences, joint palette via StructuredBuffer or cbuffer (max 128 joints)
@@ -45,14 +57,26 @@
 - [ ] 6.4 Render skinned mesh in bind pose using skinned vertex shader
 - [ ] 6.5 Visual verification: screenshot shows MushroomMonster in bind pose (should look identical to static mesh)
 
-## 7. Animation Sequence
-- [ ] 7.1 Create `AnimSequence` class (`runtime/engine/animation/anim_sequence.h/.cpp`) — per-joint keyframes (time, position, rotation, scale), duration, sample rate
-- [ ] 7.2 Parse FBX animation from separate animation FBX files using `ufbx_load_memory()` — extract `ufbx_anim_stack`, `ufbx_anim_layer`, per-bone animation curves
-- [ ] 7.3 Implement `AnimSequence::Sample(float time)` — interpolate keyframes (lerp position/scale, slerp rotation), return array of local joint transforms
-- [ ] 7.4 Compute final joint matrices: `world_matrix[i] = parent_world[i] * local_pose[i]`, then `final[i] = world_matrix[i] * inverse_bind[i]`
-- [ ] 7.5 Upload animated joint matrices to GPU each frame
-- [ ] 7.6 Load `Mushroom_Idle.FBX` animation file, play on MushroomMonster mesh
-- [ ] 7.7 Visual verification: screenshot (or multiple frames) shows MushroomMonster playing idle animation
+## 7. Animation Asset (.uzanim) — separate files, linked to skeleton by joint names
+
+### 7A. Animation Clip Data Structure
+- [ ] 7A.1 Create `runtime/engine/animation/animation_clip.h` — AnimationClip: name (string), duration (float), sample_rate (float), loop (bool), skeleton_name (string, for validation). Vector<BoneChannel> channels. BoneChannel: bone_name (string, matched by name not index), vector<Keyframe<Vec3>> pos_keys, vector<Keyframe<Quat>> rot_keys, vector<Keyframe<Vec3>> scl_keys. Keyframe<T>: time (float), value (T).
+- [ ] 7A.2 Create `runtime/engine/animation/animation_clip.cpp` — SamplePose(time, Skeleton&) → Pose (vector<BoneTransform>). For each channel: find bone index by name in skeleton, find bracketing keyframes, interpolate (lerp pos/scale, slerp rotation). Looping: wrap time via fmod. Missing channels use bind pose.
+- [ ] 7A.3 Create `runtime/engine/animation/pose.h` — Pose: vector<BoneTransform> local_transforms (indexed by bone). BlendPoses(a, b, alpha) → lerp/slerp each bone. Identity pose from Skeleton bind.
+
+### 7B. .uzanim Binary Format
+- [ ] 7B.1 Create `runtime/engine/animation/animation_io.h/.cpp` — .uzanim format: magic 'ZNAN' (4B), version (4B), duration (4B float), sample_rate (4B float), channel_count (4B), flags (4B, bit 0=loop) = 24B header. Per channel: bone_name_length (uint16), bone_name (chars), pos_key_count (uint16), rot_key_count (uint16), scl_key_count (uint16). Then keyframe arrays (time float + value). SaveAnimation(clip, path), LoadAnimation(path) → AnimationClip.
+
+### 7C. FBX Animation Extraction
+- [ ] 7C.1 Extract animation from FBX — Parse `ufbx_anim_stack` (first stack). For each bone in skeleton: evaluate `ufbx_anim_layer` animation curves at baked sample rate (30fps). Extract position/rotation/scale per sample. Store as BoneChannel with bone_name matching skeleton joint name.
+- [ ] 7C.2 Support separate animation FBX files — Load animation-only FBX (no mesh geometry needed). Match bone names against existing .uzskel. Write .uzanim.
+- [ ] 7C.3 Bake animation curves — ufbx provides raw curves; bake to uniform samples at sample_rate for runtime simplicity. Key reduction: remove keyframes where interpolation error < epsilon.
+
+### 7D. Runtime Animation Playback
+- [ ] 7D.1 Compute bone palette — For each bone: world_matrix[i] = parent_world * local_pose[i], then palette[i] = world_matrix[i] * inverse_bind[i]. Upload as StructuredBuffer<float4x4>.
+- [ ] 7D.2 Upload animated joint matrices to GPU each frame via CBRingAllocator or staging buffer.
+- [ ] 7D.3 Load Mushroom_Idle.FBX animation, play on MushroomMonster mesh.
+- [ ] 7D.4 Visual verification: screenshot shows MushroomMonster playing idle animation
 
 ## 8. Animation Controller (Basic State Machine)
 - [ ] 8.1 Create `AnimationController` class (`runtime/engine/animation/anim_controller.h/.cpp`) — states, transitions, parameters (float, bool, trigger)

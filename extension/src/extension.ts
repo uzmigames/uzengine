@@ -62,16 +62,15 @@ function ensureClient(): RuntimeClient {
     // Wire up console log forwarding.
     engineConsole.attachClient(_client);
 
-    // Point the worker at the native/ directory immediately so dxcompiler.dll
-    // etc. can be found as soon as the addon loads inside the worker.
+    // Remember the engine dir so RuntimeClient.init() can apply it.
+    // Don't call setEngineDir here — the worker hasn't loaded the addon yet,
+    // and the SceneEditorProvider may restart it immediately. The setEngineDir
+    // is applied inside client.init() via rememberedEngineDir.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const nodePath = require('path') as typeof import('path');
     const nativeDir = nodePath.join(__dirname, '..', 'native');
-    log.info(`[Extension] ensureClient: setEngineDir("${nativeDir}")`);
-    void _client.setEngineDir(nativeDir).then(() => {
-        log.info('[Extension] ensureClient: setEngineDir OK');
-    }).catch((e: unknown) => {
-        log.error(`[Extension] ensureClient: setEngineDir FAILED: ${e instanceof Error ? e.message : String(e)}`);
+    _client.setEngineDir(nativeDir).catch(() => {
+        // Expected to fail on first create — init() will re-apply.
     });
 
     return _client;

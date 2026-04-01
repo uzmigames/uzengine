@@ -182,6 +182,17 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetLighting();
 
+    /// Returns the PixelDebug compute pipeline (pixel_debug_cs, 1x1x1 dispatch).
+    ///
+    /// A single-thread compute shader that reads GBuffer + HDR textures at a
+    /// specific pixel and writes debug records to the PixelDebug UAV buffers.
+    /// Replaces the inline PDEBUG writes in the pixel shader (which DXC
+    /// dead-code-eliminates). Dispatched after the render graph executes.
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetPixelDebugCompute();
+
     /// Returns the G-Buffer debug visualization pipeline (fullscreen_vs + gbuffer_debug_ps, 1 RT).
     ///
     /// Rasterizer: no cull (fullscreen triangle).

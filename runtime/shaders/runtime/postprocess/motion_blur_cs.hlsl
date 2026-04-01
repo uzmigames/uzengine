@@ -1,13 +1,13 @@
 /// Per-Pixel Motion Blur — Compute Shader
 ///
 /// Implements per-pixel directional motion blur using the existing velocity
-/// buffer (RG16F, pixel-space). Follows industry-standard's MotionBlurApply.usf gather
+/// buffer (RG16F, pixel-space). Follows McGuire et al. 2012 gather
 /// path: for each pixel, samples scene color along the velocity vector in
 /// both directions (forward and backward), weights by depth comparison
 /// to prevent background bleeding through foreground, and blends with the
 /// center pixel based on coverage.
 ///
-/// # Algorithm (simplified from reference MotionBlurApply.usf MainCS):
+/// # Algorithm (McGuire et al. 2012 gather path):
 /// 1. Read per-pixel velocity from velocity buffer.
 /// 2. Skip blur if velocity magnitude < CONFIG_MINIMAL_PIXEL_VELOCITY (0.5 px).
 /// 3. Clamp velocity to maxBlurPixels to prevent excessive blur.
@@ -17,29 +17,21 @@
 ///    a. Jitter offset with InterleavedGradientNoise.
 ///    b. Sample scene color at offset UV.
 ///    c. Sample depth at offset for depth-aware weighting.
-///    d. Compute weight using the reference engine's depth comparison (SOFT_Z_EXTENT).
+///    d. Compute weight using depth comparison (SOFT_Z_EXTENT from McGuire et al. 2012).
 /// 7. Normalize accumulated color, blend with center based on coverage.
 ///
 /// # Resources
 /// - Root constants at b0 (8 DWORDs): SRV/UAV indices + blur parameters.
 /// - s0: Linear clamp sampler for bilinear scene color sampling.
 ///
-/// @ref McGuire et al. 2012 "A Reconstruction Filter for Plausible Motion Blur" —269-714 — MainCS (gather path)
-/// @ref Motion blur common —34 — CONFIG_MINIMAL_PIXEL_VELOCITY = 0.5
-/// @ref McGuire et al. 2012 "A Reconstruction Filter for Plausible Motion Blur" —54 — SOFT_Z_EXTENT = 1
-/// @ref McGuire et al. 2012 "A Reconstruction Filter for Plausible Motion Blur" —341 — SampleCountFactor = 4
-/// @ref McGuire et al. 2012 "A Reconstruction Filter for Plausible Motion Blur" —345 — RecommendedSampleCount = clamp(SampleCountFactor * ceil(MaxPixelLength / SampleCountFactor), SampleCountFactor, MaxSampleCount)
-/// @ref McGuire et al. 2012 "A Reconstruction Filter for Plausible Motion Blur" —373 — bSkip = MaxPixelLength < CONFIG_MINIMAL_PIXEL_VELOCITY
-/// @ref McGuire et al. 2012 "A Reconstruction Filter for Plausible Motion Blur" —438-450 — Fast path: bidirectional sampling along SearchVector
-/// @ref McGuire et al. 2012 "A Reconstruction Filter for Plausible Motion Blur" —453 — MotionBlurColor = ColorAccum * InvSampleCount
-/// @ref Motion blur defaults —598-600 — MotionBlurAmount=0.5, MotionBlurMax=5.0, MotionBlurTargetFPS=30
-/// @ref Motion blur parameters —613 — VelocityScale = MotionBlurTimeScale * MotionBlurAmount * 0.5
-/// @ref Motion blur time scale —5428-5431 — MotionBlurTimeScale = (1/TargetFPS) / DeltaRealTime
-/// @ref Jimenez 2016 "Interleaved Gradient Noise" —11-18 — InterleavedGradientNoise
-/// @constants CONFIG_MINIMAL_PIXEL_VELOCITY=0.5 (MotionBlurCommon.ush:34),
-///            SOFT_Z_EXTENT=1 (MotionBlurApply.usf:54),
-///            SampleCountFactor=4 (MotionBlurApply.usf:341),
-///            IGN magic=(0.06711056, 0.00583715, 52.9829189) (RandomInterleavedGradientNoise.ush:16)
+/// @ref McGuire et al. 2012 "A Reconstruction Filter for Plausible Motion Blur" — MainCS gather path
+/// @ref Jimenez 2016 "Interleaved Gradient Noise" — InterleavedGradientNoise for sample jitter
+/// @constants CONFIG_MINIMAL_PIXEL_VELOCITY=0.5 (minimum velocity threshold to skip blur),
+///            SOFT_Z_EXTENT=1 (depth comparison soft threshold, McGuire et al. 2012),
+///            SampleCountFactor=4 (sample count scaling factor),
+///            IGN magic=(0.06711056, 0.00583715, 52.9829189) (Jimenez 2016 IGN constants),
+///            MotionBlurAmount=0.5, MotionBlurMax=5.0, MotionBlurTargetFPS=30 (standard defaults),
+///            VelocityScale = MotionBlurTimeScale * MotionBlurAmount * 0.5
 /// @deviations Uses simplified single-direction gather (no tile classification, no scatter path,
 ///             no half-res gather, no post-motion-blur translucency). UzEngine velocity buffer
 ///             stores pixel-space velocity directly (reference uses encoded polar velocity via VelocityFlatten).
@@ -111,8 +103,8 @@ RWTexture2D<float4> outputTex   : register(u0);
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// @ref Jimenez 2016 "Interleaved Gradient Noise" —11-18 — InterleavedGradientNoise
-/// @constants magic = (0.06711056, 0.00583715, 52.9829189) (RandomInterleavedGradientNoise.ush:16)
-///            frameJitter = FrameId * float2(47, 17) * 0.695 (RandomInterleavedGradientNoise.ush:14)
+/// @constants magic = (0.06711056, 0.00583715, 52.9829189) (Jimenez 2016 "Interleaved Gradient Noise" constants)
+///            frameJitter = FrameId * float2(47, 17) * 0.695 (Jimenez 2016 temporal frame jitter)
 /// @deviations NONE
 ///
 /// Temporal dithering noise (Jimenez 2014). Returns [0,1].
@@ -129,9 +121,8 @@ float InterleavedGradientNoise(float2 pixelPos, float frameId)
 
 /// Converts reversed-Z hardware depth [0,1] to linear [0,1] depth for
 /// depth comparison. In reversed-Z, near=1.0 and far=0.0.
-/// We use the raw depth directly for comparison since the reference engine's motion blur
-/// also operates on device-Z for its depth comparisons
-/// (MotionBlurVelocityFlatten.ush:144 — ConvertFromDeviceZ).
+/// We use the raw depth directly for comparison since motion blur depth comparisons
+/// operate on device-Z (McGuire et al. 2012 — ConvertFromDeviceZ pattern).
 ///
 /// For our simplified depth-aware weighting, we just use raw depth directly.
 /// Reversed-Z preserves relative ordering which is all we need.
@@ -141,7 +132,7 @@ float InterleavedGradientNoise(float2 pixelPos, float frameId)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// @ref McGuire et al. 2012 "A Reconstruction Filter for Plausible Motion Blur" —229-249 — ComputeCenterOrSampleWeight
-/// @constants DepthScale = SOFT_Z_EXTENT = 1 (MotionBlurApply.usf:54)
+/// @constants DepthScale = SOFT_Z_EXTENT = 1 (McGuire et al. 2012 "A Reconstruction Filter for Plausible Motion Blur")
 /// @deviations Simplified: uses single weight combining center vs sample depth
 ///             priority, without separate convolution weight and hole-fill weight.
 ///
@@ -352,10 +343,9 @@ void main(uint3 dtid : SV_DispatchThreadID)
     // @ref McGuire et al. 2012 "A Reconstruction Filter for Plausible Motion Blur" —453 — MotionBlurColor = ColorAccum * InvSampleCount
     // @ref McGuire et al. 2012 "A Reconstruction Filter for Plausible Motion Blur" —1038 — OutputColor = CenterColor * FullResBlend + MotionBlurColor
     //
-    // In the reference engine's fast path (MotionBlurApply.usf:454), FullResBlend = 0.0 when
-    // blur is fully active. In the depth-aware path (line 702-706),
-    // FullResBlend = 1.0 - DirectionalColorWeight, allowing the center pixel
-    // to show through where blur coverage is insufficient.
+    // McGuire et al. 2012 fast path: FullResBlend = 0.0 when blur is fully active.
+    // In the depth-aware path, FullResBlend = 1.0 - DirectionalColorWeight,
+    // allowing the center pixel to show through where blur coverage is insufficient.
     //
     // We compute coverage from the accumulated weight vs expected weight.
     // If all samples contributed fully, weightAccum = sampleCount.

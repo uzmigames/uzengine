@@ -310,6 +310,46 @@ UZ_API const char* uz_get_component_json(uint32_t entity_id, const char* compone
 UZ_API int uz_set_component_property(uint32_t entity_id, const char* component_type,
                                      const char* property_name, const char* value_json);
 
+/// Returns a JSON array of component type names attached to an entity.
+///
+/// # Arguments
+/// * `entity_id` — Entity slot index.
+///
+/// # Returns
+/// JSON array string, e.g. `["transform","mesh","material","light"]`.
+/// Empty array `"[]"` if entity not found. Static buffer valid until next call.
+UZ_API const char* uz_get_entity_components(uint32_t entity_id);
+
+/// Selects an entity in the editor (outline + gizmo).
+///
+/// # Arguments
+/// * `entity_id` — Entity slot index. Pass UINT32_MAX to deselect.
+UZ_API void uz_select_entity(uint32_t entity_id);
+
+/// Returns the currently selected entity ID, or UINT32_MAX if none selected.
+UZ_API uint32_t uz_get_selected_entity(void);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Play Mode
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Enters play mode — switches from editor camera to game camera,
+/// re-runs Lua on_start scripts, and hides editor overlays (grid, gizmos).
+///
+/// # Returns
+/// 1 on success, 0 if no viewport or already in play mode.
+UZ_API int uz_play(void);
+
+/// Exits play mode — restores editor camera, stops game scripts,
+/// and re-enables editor overlays.
+///
+/// # Returns
+/// 1 on success, 0 if no viewport or not in play mode.
+UZ_API int uz_stop(void);
+
+/// Returns 1 if currently in play mode, 0 otherwise.
+UZ_API int uz_is_playing(void);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Input Forwarding
 // ─────────────────────────────────────────────────────────────────────────────

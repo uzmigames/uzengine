@@ -43,8 +43,7 @@ cbuffer AtmosphereLutParams : register(b0) {
 };
 
 /// Ozone absorption parameters at b2 — CBV (256-byte aligned).
-/// @ref implementation detail
-/// @ref SampleAtmosphereMediumRGB
+/// @ref Bruneton 2008 "Precomputed Atmospheric Scattering" — ozone tent distribution
 /// Tent distribution for ozone density converted to piecewise-linear coefficients.
 cbuffer OzoneParams : register(b2) {
     float3 ozoneAbsorption;  // Ozone absorption extinction (km^-1)
@@ -159,8 +158,8 @@ void TransmittanceLutParamsToUv(float viewHeight, float viewZenithCosAngle,
 }
 
 /// Computes ozone density at a given altitude using the reference tent distribution.
-/// @ref SampleAtmosphereMediumRGB
-/// @constants ozoneLayerWidth=25.0 (SkyAtmosphereCommonData.cpp:38), ozoneLinTerm0=1/15 (cpp:39), etc.
+/// @ref Bruneton 2008 "Precomputed Atmospheric Scattering" — ozone piecewise-linear density
+/// @constants ozoneLayerWidth=25.0, ozoneLinTerm0=1/15
 /// @deviations NONE
 float OzoneDensity(float altKm)
 {
@@ -175,7 +174,7 @@ float OzoneDensity(float altKm)
 /// in direction `dir` until it exits the atmosphere sphere or hits the planet.
 /// Uses midpoint quadrature with NUM_TRANSMITTANCE_STEPS samples.
 ///
-/// @ref FAtmosphereSetup::ComputeTransmittance
+/// @ref Bruneton 2008 "Precomputed Atmospheric Scattering" — ComputeTransmittance
 /// @constants Mie extinction ratio = 1.11 (MieExtinction/MieScattering, standard convention)
 /// @deviations NONE
 ///
@@ -218,10 +217,10 @@ float3 ComputeTransmittanceToTopAtmosphere(float3 pos, float3 dir,
         float densR = exp(-altKm / scaleHR);
         float densM = exp(-altKm / scaleHM);
 
-        // @ref ozone density (tent distribution)
+        // @ref Bruneton 2008 "Precomputed Atmospheric Scattering" — ozone density (tent distribution)
         float densO = OzoneDensity(altKm);
 
-        // @ref implementation detail
+        // @ref Bruneton 2008 "Precomputed Atmospheric Scattering"
         // Total extinction = Rayleigh + Mie (1.11x for absorption) + Ozone absorption
         // Mie extinction = 1.11 * Mie scattering (same ratio as sky_atmosphere_ps.hlsl)
         opticalDepth += (betaR * densR + betaM_ * 1.11f * densM + ozoneAbsorption * densO) * dt;

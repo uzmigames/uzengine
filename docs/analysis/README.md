@@ -1,10 +1,40 @@
+<<<<<<< HEAD
+=======
+<!-- doc-meta: analysis-directory-index; date: 2026-03-30 -->
+
+>>>>>>> origin/main
 # Analysis Documents
 
 Reference implementations and architectural patterns extracted from engine source code.
 
 ## VFX System — Niagara Editor Analysis
 
+<<<<<<< HEAD
 Complete analysis of UE5 Niagara's editor architecture for real-time VFX parameter editing.
+=======
+| Directory | Contents | Files |
+|-----------|----------|-------|
+| [architecture/](architecture/) | Engine architecture decisions and patterns | 2+ |
+| [asset-pipeline/](asset-pipeline/) | Asset loading architecture, texture benchmarks, bottleneck analysis | 5 |
+| [atmosphere/](atmosphere/) | Sky, fog, volumetric clouds, aerial perspective, transmittance LUTs | 17 |
+| [backend-parity/](backend-parity/) | DX11/SM6.0 vs SM6.6 rendering parity: gap analysis, fix tracking | 2 |
+| [dataflow/](dataflow/) | Data flow documents for multi-subsystem features (SDF GI, SSGI, radiance cache) | 5 |
+| [dx12-descriptors/](dx12-descriptors/) | DX12 descriptor management: UE5/Godot patterns, non-bindless issues | 5 |
+| [engine-comparison/](engine-comparison/) | Cross-engine architecture analysis (Godot, Unity, Three.js) | 8+ |
+| [gi/](gi/) | Global illumination: Lumen radiance cache, SDF GI, ground radiance | 3 |
+| [gizmo/](gizmo/) | Editor gizmo specifications: UE5 geometry, colors, interaction, gap analysis | 6 |
+| [lighting/](lighting/) | Shadows, sky light, local lights, reversed-Z depth | 5 |
+| [materials/](materials/) | Material system architecture, parameter layouts, struct definitions | 12 |
+| [parity/](parity/) | UE5 vs UzEngine rendering parity: gap analysis, property inventory, roadmap | 10 |
+| [post-process/](post-process/) | Auto-exposure, histogram, tonemapping | 5 |
+| [renderer/](renderer/) | Debug visualization, general pipeline analysis, mesh winding | 3+ |
+| [rendering-pipeline/](rendering-pipeline/) | Debug visualization, general pipeline analysis | 2+ |
+| [rhi/](rhi/) | RHI abstraction: cbuffer layouts, bindless, SM5 patterns, Vulkan analysis | 12 |
+| [skeletal/](skeletal/) | Skeletal mesh architecture, retargeting, animation integration, UE5 analysis | 6 |
+| [upscaling/](upscaling/) | TSR, Godot 4K upscaling, temporal super-resolution | 8 |
+| [vfx/](vfx/) | VFX system gaps, implementation roadmap, architectural analysis | 5 |
+| [vscode/](vscode/) | VSCode extension integration, viewport, IPC | 2+ |
+>>>>>>> origin/main
 
 ### Documents
 

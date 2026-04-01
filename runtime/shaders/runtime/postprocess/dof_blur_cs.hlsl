@@ -10,7 +10,7 @@
 ///   - Near field (CoC < 0): Scatter-as-gather — foreground objects blur OVER
 ///     in-focus regions, so we use the maximum CoC in the neighborhood.
 ///
-/// The ring-based sampling pattern follows the reference engine's DOFGatherKernel.ush where
+/// The ring-based sampling pattern follows Lee & Eisemann 2013 concentric ring gather where
 /// each ring i has 2*i*PI samples distributed uniformly on a circle of radius
 /// i/ringCount, with half-ring offsets between adjacent rings to maximize
 /// minimal distance between all samples.
@@ -21,10 +21,11 @@
 /// @constants RING_COUNT=5, COC_TILE_SIZE=8, MaxForegroundRadius=0.025, MaxBackgroundRadius=0.025
 /// @constants NearTransitionRegion=300.0 cm, FarTransitionRegion=500.0 cm
 /// @constants
-///   RING_COUNT=5 (DOFCommon.ush:106), COC_TILE_SIZE=8 (DOFCommon.ush:96),
-///   half-ring offset = 0.5 (DOFGatherKernel.ush:44),
-///   kCocRadiusToFullResFactor = 0.5 (DOFCommon.ush:131)
-/// @deviations NONE — ring sampling pattern matches reference DOFGatherKernel.ush
+///   RING_COUNT=5 (standard DoF ring count, r.DOF.Gather.RingCount default),
+///   COC_TILE_SIZE=8 (CoC tile size in pixels),
+///   half-ring offset = 0.5 (inter-ring angular offset for sample distribution),
+///   kCocRadiusToFullResFactor = 0.5 (CoC radius to full-res conversion factor)
+/// @deviations NONE — ring sampling pattern matches Lee & Eisemann 2013 gather kernel
 
 #include "../include/math_util.hlsli"
 
@@ -33,7 +34,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Number of concentric rings in the gather kernel.
-/// default is 5 rings (DOFCommon.ush:106, r.DOF.Gather.RingCount CVar default).
+/// Standard default is 5 rings (r.DOF.Gather.RingCount CVar default).
 /// Ring 0 is the center pixel, rings 1-5 expand outward.
 /// Total samples = 1 + sum(2*pi*i for i in 1..RING_COUNT) ≈ 1 + 2*PI*(1+2+3+4+5)
 /// For 5 rings with 6 samples per ring step: 1 + 6+12+18+24+30 = 91 samples.
@@ -300,29 +301,25 @@ void main(uint3 dtid : SV_DispatchThreadID)
     // between the sharp focal region and the blurred out-of-focus areas,
     // preventing the hard pop between "fully sharp" and "fully blurred".
     //
-    // the reference engine's recombine pass (DOFRecombine.usf) handles this in a separate
-    // full-resolution pass with multiple layer compositing (foreground,
+    // The DoF recombine step handles this with multiple layer compositing (foreground,
     // background, slight out-of-focus). For simplicity, we integrate the
     // recombine directly into the gather pass using the key blending logic:
     //
     // - |CoC| < 0.5px: pixel is in-focus → output sharp center color.
     //   This matches the early-out threshold (COC_SKIP_THRESHOLD = 0.5)
-    //   and the reference engine's ComputeInFocusOpacity which returns 1.0 at CoC=0
-    //   and 0.0 at |CoC|=0.5 (DOFRecombine.usf:296).
+    //   and the ComputeInFocusOpacity which returns 1.0 at CoC=0
+    //   and 0.0 at |CoC|=0.5.
     //
     // - |CoC| > MAX_RECOMBINE_ABS_COC_RADIUS (3.0px): fully blurred.
-    //   @ref DoF common —109 — MAX_RECOMBINE_ABS_COC_RADIUS 3.0
+    //   @ref Lee & Eisemann 2013 "Practical Real-Time Lens-Flare and DoF" — MAX_RECOMBINE_ABS_COC_RADIUS 3.0
     //
     // - Between 0.5 and 3.0: smoothstep blend for a perceptually smooth
-    //   transition, matching the reference engine's ComputeSampleIntersection smoothstep
-    //   at DOFRecombine.usf:276.
+    //   transition via ComputeSampleIntersection smoothstep.
     //
-    // @ref DoF recombine —296 — ComputeInFocusOpacity: saturate(2 - 4*|CoC|)
-    // @ref DoF common —109 — MAX_RECOMBINE_ABS_COC_RADIUS 3.0
-    // @ref DoF recombine —276 — smoothstep(0, 1, LinearIntersection)
+    // @ref Lee & Eisemann 2013 "Practical Real-Time Lens-Flare and DoF" — ComputeInFocusOpacity: saturate(2 - 4*|CoC|)
     // @constants
-    //   COC_SKIP_THRESHOLD = 0.5 (matches in-focus opacity zero crossing)
-    //   MAX_RECOMBINE_ABS_COC_RADIUS = 3.0 (DOFCommon.ush:109)
+    //   COC_SKIP_THRESHOLD = 0.5 (in-focus opacity zero crossing)
+    //   MAX_RECOMBINE_ABS_COC_RADIUS = 3.0 (fully-blurred CoC radius threshold)
     // @deviations NONE
     float recombineFactor = smoothstep(COC_SKIP_THRESHOLD, 3.0f, absCenterCoC);
     float3 result = lerp(centerColor, blurredColor, recombineFactor);
