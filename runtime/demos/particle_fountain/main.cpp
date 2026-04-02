@@ -13,11 +13,10 @@
 
 #include <chrono>
 #include <cstdio>
-#include <fstream>
-#include <sstream>
 #include <algorithm>
+#include "file_system.h"
 
-static std::string ReadFile(const char* path) {
+static std::string uz::FileReadAllText(const char* path) {
     std::ifstream f(path);
     if (!f.is_open()) return {};
     std::ostringstream ss;
@@ -32,7 +31,7 @@ int main() {
     std::printf("╚══════════════════════════════════════════════════════╝\n\n");
 
     // ── Load .uzfx asset ────────────────────────────────────────────────
-    auto json = ReadFile("assets/particle_fountain.uzfx");
+    auto json = uz::FileReadAllText("assets/particle_fountain.uzfx");
     if (json.empty()) {
         std::fprintf(stderr, "[Error] Cannot read assets/particle_fountain.uzfx\n");
         return 1;

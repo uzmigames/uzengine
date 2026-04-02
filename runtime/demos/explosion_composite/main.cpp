@@ -17,13 +17,12 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <fstream>
-#include <sstream>
 #include <algorithm>
 #include <string>
 #include <vector>
+#include "file_system.h"
 
-static std::string ReadFile(const char* path) {
+static std::string uz::FileReadAllText(const char* path) {
     std::ifstream f(path);
     if (!f.is_open()) return {};
     std::ostringstream ss;
@@ -120,7 +119,7 @@ int main() {
 
     std::vector<uz::UzfxDesc> descs;
     for (const auto& asset : kAssets) {
-        auto json = ReadFile(asset.path);
+        auto json = uz::FileReadAllText(asset.path);
         if (json.empty()) {
             std::fprintf(stderr, "[Error] Cannot read %s\n", asset.path);
             return 1;

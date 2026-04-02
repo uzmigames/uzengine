@@ -18,14 +18,13 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <fstream>
-#include <sstream>
 #include <algorithm>
 #include <memory>
 #include <string>
 #include <string_view>
+#include "file_system.h"
 
-static std::string ReadFile(const char* path) {
+static std::string uz::FileReadAllText(const char* path) {
     std::ifstream f(path);
     if (!f.is_open()) return {};
     std::ostringstream ss;
@@ -100,7 +99,7 @@ int main() {
     std::printf("==========================================================\n\n");
 
     // ── Load .uzfx asset ──────────────────────────────────────────────
-    auto json = ReadFile("assets/flipbook_animation.uzfx");
+    auto json = uz::FileReadAllText("assets/flipbook_animation.uzfx");
     if (json.empty()) {
         std::fprintf(stderr, "[Error] Cannot read assets/flipbook_animation.uzfx\n");
         return 1;

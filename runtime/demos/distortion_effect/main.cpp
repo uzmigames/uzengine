@@ -20,13 +20,12 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <fstream>
-#include <sstream>
 #include <algorithm>
 #include <memory>
 #include <string>
+#include "file_system.h"
 
-static std::string ReadFile(const char* path) {
+static std::string uz::FileReadAllText(const char* path) {
     std::ifstream f(path);
     if (!f.is_open()) return {};
     std::ostringstream ss;
@@ -54,7 +53,7 @@ int main() {
     std::printf("==========================================================\n\n");
 
     // ── Load .uzfx assets ────────────────────────────────────────────────
-    auto heatJson = ReadFile("assets/distortion_heat_shimmer.uzfx");
+    auto heatJson = uz::FileReadAllText("assets/distortion_heat_shimmer.uzfx");
     if (heatJson.empty()) {
         std::fprintf(stderr, "[Error] Cannot read assets/distortion_heat_shimmer.uzfx\n");
         return 1;
@@ -66,7 +65,7 @@ int main() {
     }
     std::printf("[Asset] Loaded '%s' (version %u)\n", heatDesc.name.c_str(), heatDesc.version);
 
-    auto glassJson = ReadFile("assets/distortion_glass_sphere.uzfx");
+    auto glassJson = uz::FileReadAllText("assets/distortion_glass_sphere.uzfx");
     if (glassJson.empty()) {
         std::fprintf(stderr, "[Error] Cannot read assets/distortion_glass_sphere.uzfx\n");
         return 1;

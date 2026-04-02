@@ -14,14 +14,13 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <fstream>
-#include <sstream>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
+#include "file_system.h"
 
-static std::string ReadFile(const char* path) {
+static std::string uz::FileReadAllText(const char* path) {
     std::ifstream f(path);
     if (!f.is_open()) return {};
     std::ostringstream ss;
@@ -89,7 +88,7 @@ int main() {
 
     std::vector<uz::UzfxDesc> descs;
     for (const char* path : kAssetPaths) {
-        auto json = ReadFile(path);
+        auto json = uz::FileReadAllText(path);
         if (json.empty()) {
             std::fprintf(stderr, "[Error] Cannot read %s\n", path);
             return 1;

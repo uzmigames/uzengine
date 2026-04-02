@@ -18,14 +18,13 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <fstream>
-#include <sstream>
 #include <algorithm>
 #include <memory>
 #include <string>
 #include <string_view>
+#include "file_system.h"
 
-static std::string ReadFile(const char* path) {
+static std::string uz::FileReadAllText(const char* path) {
     std::ifstream f(path);
     if (!f.is_open()) return {};
     std::ostringstream ss;
@@ -95,7 +94,7 @@ int main() {
     std::printf("==========================================================\n\n");
 
     // ── Load .uzfx asset ──────────────────────────────────────────────
-    auto json = ReadFile("assets/vector_field_demo.uzfx");
+    auto json = uz::FileReadAllText("assets/vector_field_demo.uzfx");
     if (json.empty()) {
         std::fprintf(stderr, "[Error] Cannot read assets/vector_field_demo.uzfx\n");
         return 1;
