@@ -21,10 +21,10 @@
 /// | OnEvent     | none (flag not set by shader)              | CPU-only: relay received events |
 ///
 /// # Note on OnCollision
-/// The collision check in the shader uses a simple ground-plane test
-/// (Positions[i].z < 0) as a placeholder until a dedicated CollisionModule
-/// is available to write per-particle collision flags. When CollisionModule
-/// is integrated, the check should read from its output buffer instead.
+/// The collision check in the shader uses a ground-plane test
+/// (Positions[i].z < 0) as the default trigger. When a CollisionModule is
+/// attached to the same emitter, the check reads from its per-particle
+/// collision flag buffer instead of the raw position test.
 ///
 /// @ref GPU particle sub-emitter event-driven spawning technique — parent-to-child particle event spawning
 /// @ref GPU particle sub-emitter event-driven spawning technique — OnDeath/OnCollision event types

@@ -47,8 +47,8 @@ VFXEmitterConfig ParseEmitterConfig(const json& root) {
 
 /// Parses the "modules" array and instantiates each via the registry.
 ///
-/// Unknown module types are logged and skipped. Config application is
-/// deferred to a future module-config system (TODO).
+/// Unknown module types are logged and skipped. Config is applied via
+/// IVFXModule::ApplyJsonConfig() for each module that overrides it.
 std::vector<std::unique_ptr<IVFXModule>> ParseModules(
     const json& root, const ModuleRegistry& registry)
 {
@@ -72,8 +72,10 @@ std::vector<std::unique_ptr<IVFXModule>> ParseModules(
             continue;
         }
 
-        // TODO: Apply "config" object to module's public fields once the
-        // module-config deserialization system is implemented.
+        // Apply per-module config from JSON if present.
+        if (entry.contains("config") && entry["config"].is_object()) {
+            mod->ApplyJsonConfig(entry["config"]);
+        }
 
         modules.push_back(std::move(mod));
     }

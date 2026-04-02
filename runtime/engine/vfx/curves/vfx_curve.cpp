@@ -296,16 +296,30 @@ bool VFXCurve::BakeToTexture(IRHIDevice* device, uint32_t texelCount) {
         return false;
     }
 
-    // TODO(vfx): Upload sampled curve data to the texture.
-    // Currently the texture is created but not filled because the mock RHI
-    // device returns nullptr from MapBuffer. When real upload support is
-    // available, sample the curve at each texel center and write the data:
-    //   for (uint32_t x = 0; x < texelCount; ++x) {
-    //       float t = static_cast<float>(x) / static_cast<float>(texelCount - 1);
-    //       if (isFloat) texels[x] = SampleFloat(t);
-    //       else         vec4Texels[x] = SampleVec4(t);
-    //   }
-    //   device->UpdateTexture(handle, texelData, dataSize);
+    // Sample the curve at each texel center and upload to the GPU texture.
+    if (isFloat) {
+        std::vector<float> texels(texelCount);
+        for (uint32_t x = 0; x < texelCount; ++x) {
+            const float t = (texelCount > 1)
+                ? static_cast<float>(x) / static_cast<float>(texelCount - 1)
+                : 0.0f;
+            texels[x] = SampleFloat(t);
+        }
+        device->UpdateTexture(handle, texels.data(),
+                              texelCount * sizeof(float));
+    } else {
+        struct Float4 { float r, g, b, a; };
+        std::vector<Float4> texels(texelCount);
+        for (uint32_t x = 0; x < texelCount; ++x) {
+            const float t = (texelCount > 1)
+                ? static_cast<float>(x) / static_cast<float>(texelCount - 1)
+                : 0.0f;
+            const auto v = SampleVec4(t);
+            texels[x] = {v.x, v.y, v.z, v.w};
+        }
+        device->UpdateTexture(handle, texels.data(),
+                              texelCount * sizeof(Float4));
+    }
 
     bakedTexture_ = handle;
 

@@ -45,6 +45,9 @@ public:
     /// Returns parameter definitions for physics configuration.
     [[nodiscard]] std::vector<ParameterDef> GetParameters() const override;
 
+    /// Applies JSON config: "gravity" [x,y,z], "drag" float, "angular_velocity" float.
+    void ApplyJsonConfig(const nlohmann::json& config) override;
+
     /// No-op. Compute shader handles all integration on the GPU.
     void Execute(const ExecuteContext& ctx) override;
 

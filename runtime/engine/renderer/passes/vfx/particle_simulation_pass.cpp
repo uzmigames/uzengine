@@ -352,11 +352,13 @@ bool ComposeEmitterShaders(EmitterModuleStack& stack,
            stack.composedSpawnHLSL.size(),
            stack.composedCacheKey);
 
-    // TODO(3.61.0): Compile composed HLSL via DXC runtime compilation when available.
-    // Once DXC is integrated, the composed HLSL should be compiled into a PSO here
-    // and stored in the EmitterModuleStack (or a PipelineLibrary cache keyed by
-    // composedCacheKey). Until then, the pass falls through to the hardcoded
-    // pipelines in ParticleSimulationPassDesc.
+    // Composed HLSL runtime compilation is tracked in task 3.61.0.
+    // When DXC runtime is available, compile composedUpdateHLSL/composedSpawnHLSL
+    // into compute PSOs and cache them by composedCacheKey. Until then, the pass
+    // uses the hardcoded pipelines from ParticleSimulationPassDesc.
+    UZ_LOG(VFX, Info,
+           "ComposeEmitterShaders: HLSL generated but runtime PSO compilation "
+           "not yet available (task 3.61.0). Using hardcoded pipelines.");
 
     return true;
 }

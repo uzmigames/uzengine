@@ -19,6 +19,8 @@
 #include "engine/math/vector3.h"
 #include "engine/math/vector4.h"
 
+#include <json.hpp>
+
 #include <cstdint>
 #include <string_view>
 #include <vector>
@@ -163,6 +165,17 @@ public:
     /// Vector of parameter definitions. May be empty if the module
     /// has no configurable inputs.
     [[nodiscard]] virtual std::vector<ParameterDef> GetParameters() const = 0;
+
+    /// Applies configuration from a JSON object to the module's public fields.
+    ///
+    /// Called during asset loading when a "config" block is present for
+    /// this module in the .uzfx file. Modules override this to map JSON
+    /// keys to their public fields. The default implementation is a no-op
+    /// for modules that have no configurable parameters.
+    ///
+    /// # Parameters
+    /// - `config`: JSON object with key-value pairs matching parameter names.
+    virtual void ApplyJsonConfig(const nlohmann::json& config) { (void)config; }
 
     /// CPU-side execution hook called before GPU dispatch.
     ///
