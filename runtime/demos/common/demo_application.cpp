@@ -23,7 +23,8 @@
 #include <thread>
 #include <vector>
 
-UZ_DEFINE_LOG_CATEGORY(App, Trace);
+// LogApp is defined in engine/app/application.cpp — just declare extern here.
+UZ_DECLARE_LOG_CATEGORY(App);
 
 namespace uz {
 
