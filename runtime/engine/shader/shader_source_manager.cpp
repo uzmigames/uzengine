@@ -13,6 +13,7 @@
 #include <xxhash.h>
 
 #include <algorithm>
+#include <vector>
 #include <sstream>
 
 namespace uz {
@@ -42,8 +43,25 @@ std::string ShaderSourceManager::ResolveIncludePath(const std::string& baseDir,
     }
 
     // Relative path — resolve against base directory
-    if (baseDir.empty()) return "/" + includePath;
-    return baseDir + "/" + includePath;
+    std::string raw = baseDir.empty() ? "/" + includePath : baseDir + "/" + includePath;
+
+    // Collapse ".." segments (e.g., "/engine/vfx/../include/x.hlsli" -> "/engine/include/x.hlsli")
+    std::vector<std::string> parts;
+    std::istringstream ss(raw);
+    std::string segment;
+    while (std::getline(ss, segment, '/')) {
+        if (segment == ".." && !parts.empty() && parts.back() != "..") {
+            parts.pop_back();
+        } else if (segment != "." && !segment.empty()) {
+            parts.push_back(segment);
+        }
+    }
+    std::string result = "/";
+    for (size_t i = 0; i < parts.size(); ++i) {
+        if (i > 0) result += "/";
+        result += parts[i];
+    }
+    return result;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
