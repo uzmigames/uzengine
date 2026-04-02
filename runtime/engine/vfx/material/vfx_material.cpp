@@ -75,8 +75,14 @@ static bool DetectFlipbookGrid(const std::string& path,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// VFXMaterial::LoadTexture
+// VFXMaterial::LoadTexture — convenience wrapper for TextureLoader
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// NOTE: This is a thin wrapper around the engine's TextureLoader. The only
+// VFX-specific logic is flipbook auto-detection from the filename. In future,
+// this should be replaced by MaterialManager integration where the texture
+// path is set via MaterialInterface::SetTexturePath("Albedo", path) and
+// loading happens async via the standard asset pipeline.
 
 bool VFXMaterial::LoadTexture(IRHIDevice* device, IRHICommandList* cmdList,
                               bool isSRGB) {
@@ -85,12 +91,6 @@ bool VFXMaterial::LoadTexture(IRHIDevice* device, IRHICommandList* cmdList,
         return false;
     }
 
-    // Load via the synchronous TextureLoader pipeline (stb_image -> staging -> GPU).
-    // isSRGB=true (default): color/albedo sprite sheets authored in sRGB space.
-    //   The GPU hardware converts sRGB→linear on sample, ensuring correct blending
-    //   in linear space. Without sRGB, colors appear washed out / incorrectly bright.
-    // isSRGB=false: data textures (normal maps, distortion UVs, etc.) that must
-    //   remain in linear space; applying sRGB decode would corrupt the data.
     auto result = TextureLoader::Load(device, cmdList, spriteTexturePath, isSRGB);
     if (!result.handle.IsValid()) {
         UZ_LOG(VFX, Error, "VFXMaterial: Failed to load sprite texture '{}'",
@@ -99,6 +99,7 @@ bool VFXMaterial::LoadTexture(IRHIDevice* device, IRHICommandList* cmdList,
     }
 
     spriteTextureSrvIndex = result.srvIndex;
+    gpuLoaded = true;
 
     // Auto-detect flipbook grid from filename pattern (e.g., _6x6_ -> 6 rows, 6 cols).
     uint32_t detectedRows = 0;

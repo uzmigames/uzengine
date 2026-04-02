@@ -8,7 +8,8 @@
 
 #include <json.hpp>
 
-#include <fstream>
+#include "file_system.h"
+
 #include <sstream>
 
 UZ_DECLARE_LOG_CATEGORY(VFX);
@@ -182,16 +183,15 @@ std::vector<VFXEventDef> ParseEvents(const json& root) {
 std::unique_ptr<VFXGraph> VFXGraph::Load(
     const std::string& path, const ModuleRegistry& registry)
 {
-    std::ifstream file(path, std::ios::in | std::ios::binary);
-    if (!file.is_open()) {
-        UZ_LOG(VFX, Error, "VFXGraph::Load: failed to open file: path='{}'", path);
+    // Read file via engine FileSystem (supports VFS paths).
+    auto fileData = FileReadAll(path.c_str());
+    if (fileData.empty()) {
+        UZ_LOG(VFX, Error, "VFXGraph::Load: failed to read file: path='{}'", path);
         return nullptr;
     }
 
-    std::ostringstream buf;
-    buf << file.rdbuf();
-
-    auto graph = LoadFromString(buf.str(), registry);
+    std::string jsonStr(fileData.begin(), fileData.end());
+    auto graph = LoadFromString(jsonStr, registry);
     if (graph) {
         graph->sourcePath_ = path;
 
