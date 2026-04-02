@@ -58,7 +58,8 @@ enum class EMaterialDomain : uint8_t {
     LightFunction = 3,  ///< Light attenuation modifier (IES profile, gobo, etc.).
     UI            = 4,  ///< 2D user interface element — screen-space, no lighting.
     Volume        = 5,  ///< Volumetric material (fog cards, participating media).
-    Count         = 6, ///< Total number of material domains. Not a valid domain.
+    Particle      = 6,  ///< VFX particle (billboard, mesh, trail) — forward blended pass.
+    Count         = 7, ///< Total number of material domains. Not a valid domain.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

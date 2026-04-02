@@ -127,4 +127,56 @@ bool VFXMaterial::LoadTexture(IRHIDevice* device, IRHICommandList* cmdList,
     return true;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// MaterialInterface overrides
+// ─────────────────────────────────────────────────────────────────────────────
+
+const std::string VFXMaterial::kEmptyString;
+
+float VFXMaterial::GetScalarParam(const std::string& name, float defaultVal) const {
+    if (name == "EmissiveIntensity") return emissiveIntensity;
+    if (name == "Opacity") return 1.0f - alphaErosion;
+    if (name == "SoftFadeDistance") return softFadeDistance;
+    if (name == "AlphaErosion") return alphaErosion;
+    if (name == "FlipbookFPS") return flipbookFPS;
+    return defaultVal;
+}
+
+void VFXMaterial::GetVectorParam(const std::string& name,
+                                  float& outR, float& outG, float& outB,
+                                  float defaultR, float defaultG, float defaultB) const {
+    if (name == "BaseColorTint") {
+        outR = baseColorTintR; outG = baseColorTintG; outB = baseColorTintB;
+        return;
+    }
+    if (name == "EmissiveColor") {
+        outR = emissiveIntensity; outG = emissiveIntensity; outB = emissiveIntensity;
+        return;
+    }
+    outR = defaultR; outG = defaultG; outB = defaultB;
+}
+
+const std::string& VFXMaterial::GetTexturePath(const std::string& name) const {
+    if (name == "Albedo" || name == "Sprite") return spriteTexturePath;
+    return kEmptyString;
+}
+
+uint32_t VFXMaterial::GetTextureSrvIndex(const std::string& name) const {
+    if (name == "Albedo" || name == "Sprite") return spriteTextureSrvIndex;
+    return 0;
+}
+
+EBlendMode VFXMaterial::GetBlendMode() const {
+    switch (blendMode) {
+        case 0: return EBlendMode::Translucent;
+        case 1: return EBlendMode::Additive;
+        case 2: return EBlendMode::Translucent; // PremulAlpha → Translucent
+        default: return EBlendMode::Additive;
+    }
+}
+
+EShadingModel VFXMaterial::GetShadingModel() const {
+    return isUnlit ? EShadingModel::Unlit : EShadingModel::DefaultLit;
+}
+
 } // namespace uz

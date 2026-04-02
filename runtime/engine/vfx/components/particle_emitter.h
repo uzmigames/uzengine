@@ -38,6 +38,7 @@
 namespace uz {
 
 class IRHIDevice;
+class MaterialInterface;
 
 // ---------------------------------------------------------------------------
 // ParticleEmitter -- GPU particle emitter ECS component (pure data + methods)
@@ -161,6 +162,13 @@ struct ParticleEmitter {
     /// Number of particles actually allocated from the budget.
     /// May be less than maxParticles if the budget was constrained.
     uint32_t allocatedFromBudget = 0;
+
+    // -- Material ------------------------------------------------------------
+
+    /// Material for this emitter's rendered particles. Accepts any MaterialInterface
+    /// subclass: VFXMaterial, Material (reuse mesh material), or MaterialInstance
+    /// (per-emitter overrides). When null, uses default unlit white.
+    MaterialInterface* material = nullptr;
 
     // -- Module Stack ---------------------------------------------------------
 
