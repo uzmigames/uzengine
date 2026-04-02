@@ -87,13 +87,12 @@ static void DrawEmitterBillboards(IRHICommandList* cmd,
 {
     const auto& gpuBuf = *emitter.buffer;
 
-    // Bind b0: VFXBillboardIndices -- bindless descriptor indices for particle attributes.
+    // Bind b0: VFXBillboardIndices as root constants (slot 0 is 32-bit root constants, not CBV).
     if (emitter.indicesCB.cpuPtr) {
-        cmd->SetRootCBV(kSlotBindlessIndices,
-                        emitter.indicesCB.bufferHandle,
-                        emitter.indicesCB.offsetBytes,
-                        reinterpret_cast<const uint8_t*>(emitter.indicesCB.cpuPtr),
-                        emitter.indicesCB.sizeBytes);
+        const uint32_t numDwords = emitter.indicesCB.sizeBytes / sizeof(uint32_t);
+        cmd->SetRootConstants(kSlotBindlessIndices,
+                              reinterpret_cast<const uint32_t*>(emitter.indicesCB.cpuPtr),
+                              numDwords, 0);
     }
 
     // Bind per-emitter billboard constants (view/proj matrices, viewport, etc.)
@@ -105,7 +104,7 @@ static void DrawEmitterBillboards(IRHICommandList* cmd,
 
     // Bind SRV table: particle attributes (positions, sizes, colors, rotations)
     // + sprite texture + scene depth texture.
-    cmd->SetDescriptorTable(kSlotSRVTable, emitter.readSetSrvIndex);
+    // Bindless: SRV accessed via ResourceDescriptorHeap[index], no descriptor table needed.
 
     // Issue indirect draw. The args buffer was filled by the simulation pass's
     // indirect args CS and is in IndirectArgument state.

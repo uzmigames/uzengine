@@ -77,7 +77,7 @@ static void DrawTrailRibbon(IRHICommandList* cmd, const TrailPassRenderItem& ite
                     item.constantBuffer.sizeBytes);
 
     // Bind SRV table: t0 = vertex buffer structured SRV, t1 = index buffer SRV.
-    cmd->SetDescriptorTable(kSlotSRVTable, item.vertexBufferSrvIndex);
+    // Bindless: SRV accessed via ResourceDescriptorHeap[index], no descriptor table needed.
 
     // Draw the ribbon quad strip (one DrawIndexed per trail).
     cmd->DrawIndexed(item.indexCount,
