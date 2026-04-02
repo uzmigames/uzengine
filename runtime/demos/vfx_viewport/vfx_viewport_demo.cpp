@@ -1740,6 +1740,40 @@ void VFXViewportDemo::OnFrame(float dt) {
         for (auto& emitter : m_emitters) {
             if (!emitter.enabled) continue;
 
+            // ── Warmup simulation (Task 4.26.0) ─────────────────────────────
+            // Simulate N frames at a fixed 60fps timestep without rendering so
+            // the particle system appears pre-filled on first display. The warmup
+            // dispatches both spawn and update passes per simulated frame, using
+            // the emitter's current config. Only runs once per emitter lifetime.
+            //
+            /// @ref Latta 2004 "Inside Geometry Instancing" — pre-warm particle pools
+            if (!emitter.warmupDone && emitter.warmupFrames > 0) {
+                const float warmupDt = 1.0f / 60.0f; // fixed 60fps step
+                for (uint32_t wi = 0; wi < emitter.warmupFrames; ++wi) {
+                    // Accumulate spawn count for this warmup frame
+                    emitter.spawnAccum += emitter.spawnRate * warmupDt;
+                    uint32_t warmupSpawn = static_cast<uint32_t>(emitter.spawnAccum);
+                    emitter.spawnAccum -= static_cast<float>(warmupSpawn);
+
+                    // Upload wind/kill volumes (may be zero during warmup, that is fine)
+                    emitter.system->UploadWindZones(cmd, cbRing, m_windZones, m_windZoneCount);
+                    emitter.system->UploadKillVolumes(cmd, cbRing, m_killVolumes, m_killVolumeCount);
+
+                    const Vec3 warmCamP = cam.GetPosition();
+                    const Vec3 warmCamF = cam.GetForward();
+                    const float warmCamPos[3] = { warmCamP.x, warmCamP.y, warmCamP.z };
+                    const float warmCamFwd[3] = { warmCamF.x, warmCamF.y, warmCamF.z };
+                    emitter.system->DispatchCompute(cmd, cbRing, emitter.config,
+                                                   warmupSpawn, warmupDt,
+                                                   wi, // frame index for warmup
+                                                   static_cast<float>(wi) * warmupDt,
+                                                   warmCamPos, warmCamFwd);
+                }
+                emitter.warmupDone = true;
+                UZ_LOG(App, Info, "[VFX] Emitter '{}' warmup: {} frames simulated",
+                       emitter.name, emitter.warmupFrames);
+            }
+
             // ── Emitter lifecycle: duration and loop count ─────────────────────
             // When emitterDuration > 0 the emitter accumulates age each frame and
             // either restarts (loopCount==0 or currentLoop < loopCount) or disables
@@ -1827,17 +1861,13 @@ void VFXViewportDemo::OnFrame(float dt) {
                 emitter.config.vortexMaxRadius          = 4.0f;
             }
 
-            // Calculate spawn count — burst or continuous
-            uint32_t spawnCount = 0;
-            if (emitter.burstMode) {
-                if (emitter.burstPending) {
-                    spawnCount = emitter.burstCount;
-                    emitter.burstPending = false;
-                }
-            } else {
-                emitter.spawnAccum += emitter.spawnRate * dt;
-                spawnCount = static_cast<uint32_t>(emitter.spawnAccum);
-                emitter.spawnAccum -= static_cast<float>(spawnCount);
+            // ── Feature 4.30.0: Local space simulation ────────────────────────
+            // When localSpaceEnabled, force full velocity inheritance so newly
+            // spawned particles co-move with the emitter rather than streaming
+            // from a fixed world position.  We write this each frame so toggling
+            // the flag takes effect immediately without resetting the emitter.
+            if (emitter.config.localSpaceEnabled) {
+                emitter.config.velocityInheritance = 1.0f;
             }
 
             // Upload wind zones and kill volumes to GPU for this emitter
@@ -1848,9 +1878,93 @@ void VFXViewportDemo::OnFrame(float dt) {
             const Vec3 camF = cam.GetForward();
             const float camPosArr[3]  = { camP.x, camP.y, camP.z };
             const float camFwdArr[3]  = { camF.x, camF.y, camF.z };
-            emitter.system->DispatchCompute(cmd, cbRing, emitter.config, spawnCount,
-                                           dt, GetFrameIndex(), m_totalTime,
-                                           camPosArr, camFwdArr);
+
+            // ── Feature 4.28.0: Fixed timestep accumulator ────────────────────
+            // @ref Fiedler 2004 "Fix Your Timestep!" — decoupled simulation accumulator
+            //
+            // When fixedTimestep > 0, we accumulate real dt and drain it in
+            // fixed-size sub-steps.  Each sub-step computes its own spawn count
+            // and dispatches an independent DispatchCompute.  This makes particle
+            // physics framerate-independent: the same number of sub-steps execute
+            // per wall-clock second regardless of display refresh rate.
+            //
+            // When fixedTimestep == 0 (default), we fall through to the single
+            // variable-dt dispatch below — identical to pre-4.28 behaviour.
+            if (emitter.config.fixedTimestep > 0.0f) {
+                emitter.timeAccumulator += dt;
+                while (emitter.timeAccumulator >= emitter.config.fixedTimestep) {
+                    const float stepDt = emitter.config.fixedTimestep;
+
+                    // ── Feature 4.29.0: Spawn rate curves (inside sub-step) ──────
+                    // @ref GDC 2019 "Niagara: Building the Future of FX in Unreal Engine"
+                    uint32_t stepSpawnCount = 0;
+                    if (emitter.burstMode) {
+                        if (emitter.burstPending) {
+                            stepSpawnCount = emitter.burstCount;
+                            emitter.burstPending = false;
+                        }
+                    } else {
+                        float rateMultiplier = 1.0f;
+                        if (emitter.config.spawnRateRampUpTime > 0.0f &&
+                            emitter.emitterAge < emitter.config.spawnRateRampUpTime) {
+                            rateMultiplier = emitter.emitterAge / emitter.config.spawnRateRampUpTime;
+                        }
+                        if (emitter.config.spawnRateRampDownTime > 0.0f &&
+                            emitter.config.emitterDuration > 0.0f) {
+                            const float timeToEnd = emitter.config.emitterDuration - emitter.emitterAge;
+                            if (timeToEnd < emitter.config.spawnRateRampDownTime) {
+                                rateMultiplier *= timeToEnd / emitter.config.spawnRateRampDownTime;
+                            }
+                        }
+                        const float effectiveRate = emitter.spawnRate *
+                                                    std::max(rateMultiplier, 0.0f);
+                        emitter.spawnAccum += effectiveRate * stepDt;
+                        stepSpawnCount = static_cast<uint32_t>(emitter.spawnAccum);
+                        emitter.spawnAccum -= static_cast<float>(stepSpawnCount);
+                    }
+
+                    emitter.system->DispatchCompute(cmd, cbRing, emitter.config,
+                                                    stepSpawnCount,
+                                                    stepDt, GetFrameIndex(),
+                                                    m_totalTime,
+                                                    camPosArr, camFwdArr);
+                    emitter.timeAccumulator -= stepDt;
+                }
+            } else {
+                // ── Variable dt path (default, pre-4.28 behaviour) ────────────
+                // Calculate spawn count — burst or continuous
+                // ── Feature 4.29.0: Spawn rate curves ────────────────────────
+                // @ref GDC 2019 "Niagara: Building the Future of FX in Unreal Engine"
+                uint32_t spawnCount = 0;
+                if (emitter.burstMode) {
+                    if (emitter.burstPending) {
+                        spawnCount = emitter.burstCount;
+                        emitter.burstPending = false;
+                    }
+                } else {
+                    float rateMultiplier = 1.0f;
+                    if (emitter.config.spawnRateRampUpTime > 0.0f &&
+                        emitter.emitterAge < emitter.config.spawnRateRampUpTime) {
+                        rateMultiplier = emitter.emitterAge / emitter.config.spawnRateRampUpTime;
+                    }
+                    if (emitter.config.spawnRateRampDownTime > 0.0f &&
+                        emitter.config.emitterDuration > 0.0f) {
+                        const float timeToEnd = emitter.config.emitterDuration - emitter.emitterAge;
+                        if (timeToEnd < emitter.config.spawnRateRampDownTime) {
+                            rateMultiplier *= timeToEnd / emitter.config.spawnRateRampDownTime;
+                        }
+                    }
+                    const float effectiveRate = emitter.spawnRate *
+                                                std::max(rateMultiplier, 0.0f);
+                    emitter.spawnAccum += effectiveRate * dt;
+                    spawnCount = static_cast<uint32_t>(emitter.spawnAccum);
+                    emitter.spawnAccum -= static_cast<float>(spawnCount);
+                }
+
+                emitter.system->DispatchCompute(cmd, cbRing, emitter.config, spawnCount,
+                                                dt, GetFrameIndex(), m_totalTime,
+                                                camPosArr, camFwdArr);
+            }
         }
 
         // ── Sub-emitter secondary burst (Task 3.87.0) ───────────────────
@@ -3290,6 +3404,9 @@ void VFXViewportDemo::BuildCompoundPreset(VFXCompoundPreset preset) {
             flame.burstMode = false; // continuous
             flame.burstPending = false;
             flame.poolSize = 10000;
+            // Warmup: 30 frames at 60fps = 0.5 seconds of pre-simulation.
+            // Fire appears fully lit from the first visible frame.
+            flame.warmupFrames = 30;
         }
 
         // Smoke: gray, slower, bigger, alpha blend, curl noise

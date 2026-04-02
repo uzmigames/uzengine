@@ -1241,6 +1241,10 @@ void VFXParticleSystem::DispatchCompute(IRHICommandList* cmdList, CBRingAllocato
         cb.defaultDynParam2      = config.dynamicParam2;
         cb.defaultDynParam3      = config.dynamicParam3;
 
+        // Deterministic simulation seed (Task 4.27.0)
+        // @ref Salmon 2011 "Parallel Random Numbers" — counter-based RNG
+        cb.emitterSeed           = config.emitterSeed;
+
         auto alloc = cbRing->Allocate(sizeof(VFXSpawnCB));
         std::memcpy(alloc.cpuPtr, &cb, sizeof(VFXSpawnCB));
 
@@ -1402,6 +1406,11 @@ void VFXParticleSystem::DispatchCompute(IRHICommandList* cmdList, CBRingAllocato
         cb.terrainAmplitude        = config.terrainAmplitude;
         cb.terrainFrequency        = config.terrainFrequency;
         cb.terrainBaseHeight       = config.terrainBaseHeight;
+
+        // Collision event spawn (Task 4.25.0)
+        // @ref Shopf 2008 "GPU Particles" — collision event for child spawning
+        cb.collisionSpawnEnabled   = config.collisionSpawnEnabled;
+        cb.collisionSpawnCount     = config.collisionSpawnCount;
 
         auto alloc = cbRing->Allocate(sizeof(VFXUpdateCB));
         std::memcpy(alloc.cpuPtr, &cb, sizeof(VFXUpdateCB));

@@ -289,6 +289,50 @@ struct VFXEmitterConfig {
     ///
     /// @ref Green 2010 "Screen-Space Fluid Rendering for Games" — depth buffer particle collision
     uint32_t depthCollisionEnabled   = 0;    ///< 0=disabled (default), 1=depth buffer collision (future).
+    // ── Collision event spawn (Task 4.25.0) ─────────────────────────────────
+    /// When enabled, particles that collide with the ground plane or procedural
+    /// terrain write a death event (reusing the existing death event buffer) so
+    /// that child particles spawn at the collision point. This produces splash/
+    /// debris effects on impact without requiring particle death.
+    ///
+    /// @ref Shopf 2008 "GPU Particles" — event buffer for sub-emitter spawning
+    uint32_t collisionSpawnEnabled   = 0;    ///< 0=off, 1=write collision event to death event buffer.
+    uint32_t collisionSpawnCount     = 3;    ///< Children spawned per collision event [1..32]. Default: 3.
+    // ── Deterministic simulation seed (Task 4.27.0) ─────────────────────────
+    /// Allows reproducible particle spawns by providing a fixed seed to the
+    /// spawn CS RNG. When 0, the spawn CS uses frameNumber (non-deterministic).
+    /// When > 0, the seed replaces frameNumber in the RNG, making spawn patterns
+    /// identical across runs.
+    ///
+    /// @ref Salmon 2011 "Parallel Random Numbers: As Easy as 1, 2, 3" — counter-based RNG
+    uint32_t emitterSeed             = 0;    ///< 0=use frameNumber (non-deterministic), >0=fixed seed.
+    // ── Fixed timestep simulation (Task 4.28.0) ──────────────────────────────
+    /// Decouples GPU simulation from display framerate using an accumulator
+    /// pattern. The simulation integrates in steps of exactly fixedTimestep
+    /// seconds, so physics behaves identically regardless of the display refresh
+    /// rate (30, 60, 144 Hz, etc.).  0 = use the variable frame dt (default).
+    ///
+    /// @ref Fiedler 2004 "Fix Your Timestep!" — decoupled simulation accumulator
+    float fixedTimestep = 0.0f;  ///< Step size in seconds. 0 = variable (default). E.g. 1.0f/60.0f for 60 Hz.
+    // ── Spawn rate curves (Task 4.29.0) ──────────────────────────────────────
+    /// Linear ramp-up at the start of emitter life and ramp-down before the end.
+    /// When both values are 0 the spawn rate is constant throughout (default).
+    /// During ramp-up: effectiveRate = spawnRate * (emitterAge / rampUpTime).
+    /// During ramp-down: effectiveRate *= (timeToEnd / rampDownTime).
+    /// The two curves multiply together when both are active simultaneously.
+    ///
+    /// @ref GDC 2019 "Niagara: Building the Future of FX in Unreal Engine" — spawn rate modules
+    float spawnRateRampUpTime   = 0.0f;  ///< Seconds to ramp from 0 to full spawn rate. 0 = instant (default).
+    float spawnRateRampDownTime = 0.0f;  ///< Seconds before emitterDuration end to ramp down to 0. 0 = instant (default).
+    // ── Local space simulation (Task 4.30.0) ─────────────────────────────────
+    /// When enabled, newly spawned particles inherit full emitter velocity so
+    /// they appear to move with the emitter rather than streaming from a fixed
+    /// world position.  This is implemented by forcing velocityInheritance = 1.0
+    /// each frame the emitter moves, giving the visual result of local-space
+    /// simulation without requiring a shader-side coordinate transform.
+    ///
+    /// @ref GDC 2019 "Niagara: Building the Future of FX in Unreal Engine" — local space emitters
+    uint32_t localSpaceEnabled = 0;  ///< 0=world space (default), 1=particles co-move with emitter.
 };
 
 /// Named emitter preset with a spawn rate.
@@ -347,7 +391,8 @@ struct VFXSpawnCB {
     float    emitterVelocityZ;        float    velocityInheritance;
     uint32_t dynamicParamsUavIndex;   float    defaultDynParam0;  // 16 bytes (offset 160)
     float    defaultDynParam1;        float    defaultDynParam2;
-    float    defaultDynParam3;        uint32_t _padSpawnNew1;     // 16 bytes (offset 176)
+    float    defaultDynParam3;        uint32_t emitterSeed;       // 16 bytes (offset 176)
+    ///< @ref Salmon 2011 "Parallel Random Numbers" — 0=use frameNumber, >0=fixed seed.
 };
 static_assert(sizeof(VFXSpawnCB) == 192, "VFXSpawnCB must be 192 bytes (12 x float4)");
 
@@ -432,9 +477,16 @@ struct VFXUpdateCB {
     /// @ref Müller 2006 "Position Based Dynamics" — restitution + friction on terrain
     uint32_t terrainCollisionEnabled; float    terrainAmplitude;           // 16 bytes (offset 344) — in row starting at 336
     float    terrainFrequency;        float    terrainBaseHeight;          // 16 bytes (offset 352) — in row starting at 352
-    uint32_t _padTerrain0;            uint32_t _padTerrain1;               // alignment padding (offset 360)
+    // ── Collision event spawn (Task 4.25.0) ─────────────────────────────────
+    /// When enabled, ground/terrain collision writes a death event for child spawning.
+    /// @ref Shopf 2008 "GPU Particles" — event buffer for sub-emitter spawning
+    // Row 23 (offset 352): terrainFrequency(352) + terrainBaseHeight(356) + collisionSpawnEnabled(360) + collisionSpawnCount(364) = 16 bytes → 368
+    // Row 24 (offset 368): _padCollEvt0(368) + _padCollEvt1(372) + _padCollEvt2(376) + _padCollEvt3(380) = 16 bytes → 384 total
+    uint32_t collisionSpawnEnabled;   uint32_t collisionSpawnCount;         // Task 4.25.0 — offset 360
+    uint32_t _padCollEvt0;            uint32_t _padCollEvt1;                // alignment padding — offset 368
+    uint32_t _padCollEvt2;            uint32_t _padCollEvt3;                // alignment padding — offset 376
 };
-static_assert(sizeof(VFXUpdateCB) == 368, "VFXUpdateCB must be 368 bytes (23 x float4)");
+static_assert(sizeof(VFXUpdateCB) == 384, "VFXUpdateCB must be 384 bytes (24 x float4)");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VFX Death Spawn Constant Buffer (matches particle_death_spawn_cs.hlsl b1)

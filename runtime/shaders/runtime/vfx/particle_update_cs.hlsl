@@ -115,7 +115,7 @@ static const uint UPDATE_GROUP_SIZE = 256;
 /// Update constants uploaded by the CPU each frame. Contains physics parameters
 /// and descriptor heap indices for both READ (SRV) and WRITE (UAV) buffer sets.
 ///
-/// Layout is 16-byte aligned per HLSL packing rules. Total: 368 bytes (23 float4).
+/// Layout is 16-byte aligned per HLSL packing rules. Total: 384 bytes (24 float4).
 /// Must match VFXUpdateCB in runtime/demos/vfx_viewport/vfx_viewport_vfx.h exactly.
 cbuffer VFXUpdateConstants : register(b1) {
     // ── Simulation Parameters ───────────────────────────────────────────── offset 0
@@ -274,8 +274,15 @@ cbuffer VFXUpdateConstants : register(b1) {
     float    terrainAmplitude;          ///< Max height variation (world units).          348
     float    terrainFrequency;          ///< Spatial frequency of hills. Lower=broader.  352
     float    terrainBaseHeight;         ///< Base terrain Z level (world units).          356
-    uint     _padTerrain0;              ///< Alignment padding.                           360
-    uint     _padTerrain1;              ///< Alignment padding.                           364
+
+    // ── Collision Event Spawn (Task 4.25.0) ─────────────────────────────── offset 360
+    /// @ref Shopf 2008 "GPU Particles" — event buffer for sub-emitter spawning
+    uint     collisionSpawnEnabled;     ///< 0=off, 1=write collision event on impact.   360
+    uint     collisionSpawnCount;       ///< Children per collision event [1..32].        364
+    uint     _padCollEvt0;              ///< Alignment padding.                           368
+    uint     _padCollEvt1;              ///< Alignment padding.                           372
+    uint     _padCollEvt2;              ///< Alignment padding.                           376
+    uint     _padCollEvt3;              ///< Alignment padding.                           380
 #endif
 };
 
@@ -667,6 +674,30 @@ void main(uint3 dtid : SV_DispatchThreadID)
             vel.z = abs(vel.z) * restitution;
             // Apply tangential friction to XY (Coulomb impulse approximation).
             vel.xy *= collisionFriction;
+            // ── Collision event spawn (Task 4.25.0) ──────────────────────
+            // Write a death event at the collision point so child particles
+            // (sparks, debris) can be spawned at the impact location. Reuses
+            // the existing death event buffer and counter. Child velocity is
+            // halved to give children a gentler arc.
+            //
+            /// @ref Shopf 2008 "GPU Particles" — event buffer for sub-emitter
+            /// @constants velocityScale=0.5 (children inherit half parent speed)
+            /// @deviations NONE
+            if (collisionSpawnEnabled != 0u) {
+                RWStructuredBuffer<DeathEvent> collEvents  = ResourceDescriptorHeap[deathEventBufferUavIndex];
+                RWStructuredBuffer<uint>       collCounter = ResourceDescriptorHeap[deathEventCountUavIndex];
+                uint collSlot;
+                InterlockedAdd(collCounter[0], 1u, collSlot);
+                if (collSlot < maxDeathEvents) {
+                    DeathEvent collEvt;
+                    collEvt.position = pos;
+                    collEvt._pad0    = 0.0f;
+                    collEvt.velocity = vel * 0.5f; // half speed for children
+                    collEvt._pad1    = 0.0f;
+                    collEvt.color    = color;
+                    collEvents[collSlot] = collEvt;
+                }
+            }
         } else if (collisionResponse == 1u) {
             // ── Stick ─────────────────────────────────────────────────────
             // Clamp particle to a small positive Z to keep it on the surface
@@ -745,6 +776,28 @@ void main(uint3 dtid : SV_DispatchThreadID)
                 // Reflect Z velocity with restitution and apply tangential friction.
                 vel.z = abs(vel.z) * restitution;
                 vel.xy *= collisionFriction;
+                // ── Collision event spawn on terrain (Task 4.25.0) ────────
+                // Same as ground plane collision events — write death event at
+                // impact point for child particle spawning.
+                //
+                /// @ref Shopf 2008 "GPU Particles" — event buffer for sub-emitter
+                /// @constants velocityScale=0.5 (children inherit half parent speed)
+                /// @deviations NONE
+                if (collisionSpawnEnabled != 0u) {
+                    RWStructuredBuffer<DeathEvent> tCollEvents  = ResourceDescriptorHeap[deathEventBufferUavIndex];
+                    RWStructuredBuffer<uint>       tCollCounter = ResourceDescriptorHeap[deathEventCountUavIndex];
+                    uint tCollSlot;
+                    InterlockedAdd(tCollCounter[0], 1u, tCollSlot);
+                    if (tCollSlot < maxDeathEvents) {
+                        DeathEvent tCollEvt;
+                        tCollEvt.position = pos;
+                        tCollEvt._pad0    = 0.0f;
+                        tCollEvt.velocity = vel * 0.5f;
+                        tCollEvt._pad1    = 0.0f;
+                        tCollEvt.color    = color;
+                        tCollEvents[tCollSlot] = tCollEvt;
+                    }
+                }
             } else if (collisionResponse == 1u) {
                 // ── Stick to terrain surface ──────────────────────────────
                 // Position the particle just above the terrain surface.

@@ -133,7 +133,8 @@ cbuffer VFXSpawnConstants : register(b1) {
     float    defaultDynParam1;     ///< Default dynamic param Y (user-defined).  176
     float    defaultDynParam2;     ///< Default dynamic param Z (user-defined).  180
     float    defaultDynParam3;     ///< Default dynamic param W (user-defined).  184
-    uint     _padSpawnNew1;        ///<                                          188
+    /// @ref Salmon 2011 "Parallel Random Numbers" — deterministic seed override
+    uint     emitterSeed;          ///< 0=use frameNumber (non-deterministic), >0=fixed seed. 188
 #endif
 };
 
@@ -228,7 +229,18 @@ void main(uint3 dtid : SV_DispatchThreadID)
     // Unique seed per particle per frame prevents correlated spawns.
     // Adding spawnIdx provides extra entropy when the same particleIdx
     // is recycled across different spawn batches.
-    uint seed = VFXSeed(particleIdx + spawnIdx, frameNumber);
+    //
+    // When emitterSeed > 0, the fixed seed replaces frameNumber so that
+    // spawn patterns are identical across runs (deterministic simulation).
+    // When emitterSeed == 0, frameNumber provides frame-varying randomness.
+    //
+    /// @ref Salmon 2011 "Parallel Random Numbers: As Easy as 1, 2, 3" — counter-based RNG
+#ifdef UZ_BINDLESS
+    uint baseSeed = (emitterSeed != 0u) ? emitterSeed : frameNumber;
+#else
+    uint baseSeed = frameNumber;
+#endif
+    uint seed = VFXSeed(particleIdx + spawnIdx, baseSeed);
 
     // ── Position: shape-dependent spawn location ──────────────────────
     // spawnShape: 0=Point, 1=Sphere, 2=Box, 3=Ring, 4=Cone,

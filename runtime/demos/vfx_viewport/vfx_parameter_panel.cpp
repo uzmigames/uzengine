@@ -195,6 +195,10 @@ void VFXParameterPanel::BuildCategories(VFXEmitterConfig* cfg, float* spawnRate,
             {"Terrain Ampl",     VFXParamEntry::Type::Float, &cfg->terrainAmplitude,    nullptr, 0.0f, 50.0f, 0.5f},
             {"Terrain Freq",     VFXParamEntry::Type::Float, &cfg->terrainFrequency,    nullptr, 0.01f, 2.0f, 0.01f},
             {"Terrain Base Z",   VFXParamEntry::Type::Float, &cfg->terrainBaseHeight,   nullptr, -100.0f, 100.0f, 1.0f},
+            // ── Collision event spawn (Task 4.25.0) ────────────────────
+            /// @ref Shopf 2008 "GPU Particles" — event buffer for sub-emitter
+            {"Coll Spawn",       VFXParamEntry::Type::Enum,  nullptr, &cfg->collisionSpawnEnabled, 0.0f, 1.0f, 0.0f, 1, kBoolNames, kBoolCount},
+            {"Coll Spawn Cnt",   VFXParamEntry::Type::Uint,  nullptr, &cfg->collisionSpawnCount,   1.0f, 32.0f, 1.0f},
         };
         m_categories.push_back(std::move(cat));
     }
@@ -273,6 +277,30 @@ void VFXParameterPanel::BuildCategories(VFXEmitterConfig* cfg, float* spawnRate,
             {"Center Z", VFXParamEntry::Type::Float, &cfg->pointForceZ, nullptr, -100.0f, 100.0f, 0.1f},
             {"Strength", VFXParamEntry::Type::Float, &cfg->pointForceStrength, nullptr, -50.0f, 50.0f, 0.5f},
             {"Radius",   VFXParamEntry::Type::Float, &cfg->pointForceRadius, nullptr, 0.1f, 100.0f, 0.5f},
+        };
+        m_categories.push_back(std::move(cat));
+    }
+
+    // ── Category: Simulation Timing (Tasks 4.28–4.30) ───────────────────────
+    {
+        VFXParamCategory cat;
+        cat.name = "Simulation";
+        cat.expanded = false;
+        cat.params = {
+            // Fixed timestep (Task 4.28.0)
+            // @ref Fiedler 2004 "Fix Your Timestep!" — decoupled simulation accumulator
+            // 0 = variable dt (default). Set to e.g. 0.01667 for 60 Hz fixed step.
+            {"Fixed Step",      VFXParamEntry::Type::Float, &cfg->fixedTimestep,         nullptr, 0.0f, 0.1f,  0.001f},
+            // Spawn rate curves (Task 4.29.0)
+            // @ref GDC 2019 "Niagara: Building the Future of FX in Unreal Engine"
+            {"Ramp Up (s)",     VFXParamEntry::Type::Float, &cfg->spawnRateRampUpTime,   nullptr, 0.0f, 10.0f, 0.1f},
+            {"Ramp Down (s)",   VFXParamEntry::Type::Float, &cfg->spawnRateRampDownTime, nullptr, 0.0f, 10.0f, 0.1f},
+            // Local space simulation (Task 4.30.0)
+            // @ref GDC 2019 "Niagara: Building the Future of FX in Unreal Engine"
+            {"Local Space",     VFXParamEntry::Type::Enum,  nullptr, &cfg->localSpaceEnabled, 0.0f, 1.0f, 0.0f, 1, kBoolNames, kBoolCount},
+            // ── Deterministic simulation seed (Task 4.27.0) ───────────────
+            /// @ref Salmon 2011 "Parallel Random Numbers" — counter-based RNG
+            {"Emitter Seed",    VFXParamEntry::Type::Uint,  nullptr, &cfg->emitterSeed, 0.0f, 99999.0f, 1.0f},
         };
         m_categories.push_back(std::move(cat));
     }

@@ -129,6 +129,19 @@ struct VFXEmitterInstance {
     float    emitterAge   = 0.0f;   ///< Accumulated active age (seconds) in current loop iteration.
     uint32_t currentLoop  = 0;      ///< Number of full loop cycles completed so far.
 
+    // ── Warmup simulation (Task 4.26.0) ────────────────────────────────────
+    /// Simulates N frames at startup (fixed 60fps timestep) without rendering,
+    /// so the particle system appears pre-filled when first displayed.
+    ///
+    /// @ref Latta 2004 "Inside Geometry Instancing" — pre-warm particle pools
+    uint32_t warmupFrames = 0;      ///< Number of warmup frames to simulate. 0 = no warmup.
+    bool     warmupDone   = false;  ///< True after warmup simulation has completed.
+    // ── Fixed timestep (Task 4.28.0) ─────────────────────────────────────────
+    /// Time not yet consumed by the fixed-step integrator.  Accumulates real dt
+    /// every frame; the dispatch loop drains it in config.fixedTimestep-sized
+    /// chunks.  Only meaningful when config.fixedTimestep > 0.
+    float timeAccumulator = 0.0f;  ///< Surplus dt from the previous frame (seconds).
+
     VFXEmitterInstance() : system(std::make_unique<VFXParticleSystem>()) {}
     ~VFXEmitterInstance() = default;
     VFXEmitterInstance(VFXEmitterInstance&&) noexcept = default;

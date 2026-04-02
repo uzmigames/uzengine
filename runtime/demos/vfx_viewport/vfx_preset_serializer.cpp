@@ -212,7 +212,19 @@ bool VFXPresetSerializer::Save(const VFXEmitterConfig& c,
     // Render target feedback (Task 4.22.0)
     wu("renderTargetFeedbackEnabled", c.renderTargetFeedbackEnabled);
     // Depth buffer collision (Task 4.23.0)
-    wu("depthCollisionEnabled",     c.depthCollisionEnabled, /*last=*/true);
+    wu("depthCollisionEnabled",       c.depthCollisionEnabled);
+    // Fixed timestep simulation (Task 4.28.0)
+    wf("fixedTimestep",               c.fixedTimestep);
+    // Spawn rate curves (Task 4.29.0)
+    wf("spawnRateRampUpTime",         c.spawnRateRampUpTime);
+    wf("spawnRateRampDownTime",       c.spawnRateRampDownTime);
+    // Local space simulation (Task 4.30.0)
+    wu("localSpaceEnabled",           c.localSpaceEnabled);
+    // Collision event spawn (Task 4.25.0)
+    wu("collisionSpawnEnabled",      c.collisionSpawnEnabled);
+    wu("collisionSpawnCount",        c.collisionSpawnCount);
+    // Deterministic simulation seed (Task 4.27.0)
+    wu("emitterSeed",                c.emitterSeed, /*last=*/true);
 
     f << "\n}\n";
     f.flush();
@@ -490,6 +502,18 @@ bool VFXPresetSerializer::Load(const std::string& filePath,
     c.renderTargetFeedbackEnabled    = ParseUint(src,  "renderTargetFeedbackEnabled",    c.renderTargetFeedbackEnabled);
     // Depth buffer collision (Task 4.23.0)
     c.depthCollisionEnabled          = ParseUint(src,  "depthCollisionEnabled",          c.depthCollisionEnabled);
+    // Fixed timestep simulation (Task 4.28.0)
+    c.fixedTimestep                  = ParseFloat(src, "fixedTimestep",                  c.fixedTimestep);
+    // Spawn rate curves (Task 4.29.0)
+    c.spawnRateRampUpTime            = ParseFloat(src, "spawnRateRampUpTime",            c.spawnRateRampUpTime);
+    c.spawnRateRampDownTime          = ParseFloat(src, "spawnRateRampDownTime",          c.spawnRateRampDownTime);
+    // Local space simulation (Task 4.30.0)
+    c.localSpaceEnabled              = ParseUint(src,  "localSpaceEnabled",              c.localSpaceEnabled);
+    // Collision event spawn (Task 4.25.0)
+    c.collisionSpawnEnabled          = ParseUint(src,  "collisionSpawnEnabled",          c.collisionSpawnEnabled);
+    c.collisionSpawnCount            = ParseUint(src,  "collisionSpawnCount",            c.collisionSpawnCount);
+    // Deterministic simulation seed (Task 4.27.0)
+    c.emitterSeed                    = ParseUint(src,  "emitterSeed",                    c.emitterSeed);
 
     return true;
 }
