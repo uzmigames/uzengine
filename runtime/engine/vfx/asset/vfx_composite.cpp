@@ -4,6 +4,7 @@
 
 #include "engine/logging/log.h"
 #include "file_system.h"
+#include "vfs.h"
 
 #include <json.hpp>
 
@@ -124,8 +125,15 @@ std::unique_ptr<VFXComposite> VFXComposite::LoadFromString(const std::string& js
 // VFXComposite::Load
 // ─────────────────────────────────────────────────────────────────────────────
 
-std::unique_ptr<VFXComposite> VFXComposite::Load(const std::string& path) {
-    const std::string content = FileReadAllText(path.c_str());
+std::unique_ptr<VFXComposite> VFXComposite::Load(const std::string& path, IVFS* vfs) {
+    // Read via VFS when available (supports .uzpak), fallback to disk.
+    std::string content;
+    if (vfs) {
+        auto data = vfs->Read(path);
+        content.assign(data.begin(), data.end());
+    } else {
+        content = FileReadAllText(path.c_str());
+    }
     if (content.empty()) {
         UZ_LOG(VFX, Error, "VFXComposite: failed to read file '{}'", path);
         return nullptr;

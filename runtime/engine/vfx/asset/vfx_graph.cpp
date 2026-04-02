@@ -9,6 +9,7 @@
 #include <json.hpp>
 
 #include "file_system.h"
+#include "vfs.h"
 
 #include <sstream>
 
@@ -181,12 +182,19 @@ std::vector<VFXEventDef> ParseEvents(const json& root) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 std::unique_ptr<VFXGraph> VFXGraph::Load(
-    const std::string& path, const ModuleRegistry& registry)
+    const std::string& path, const ModuleRegistry& registry,
+    IVFS* vfs)
 {
-    // Read file via engine FileSystem (supports VFS paths).
-    auto fileData = FileReadAll(path.c_str());
+    // Read via VFS when available (supports .uzpak), fallback to disk FileReadAll.
+    std::vector<uint8_t> fileData;
+    if (vfs) {
+        fileData = vfs->Read(path);
+    } else {
+        fileData = FileReadAll(path.c_str());
+    }
     if (fileData.empty()) {
-        UZ_LOG(VFX, Error, "VFXGraph::Load: failed to read file: path='{}'", path);
+        UZ_LOG(VFX, Error, "VFXGraph::Load: failed to read '{}' (vfs={})",
+               path, vfs ? vfs->Name() : "disk");
         return nullptr;
     }
 

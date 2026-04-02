@@ -39,6 +39,7 @@
 
 namespace uz {
 
+class IVFS;
 class ModuleRegistry;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -115,7 +116,8 @@ public:
     /// # Side Effects
     /// Logs `VFX/Error` on parse failure with the file path and reason.
     [[nodiscard]] static std::unique_ptr<VFXGraph> Load(
-        const std::string& path, const ModuleRegistry& registry);
+        const std::string& path, const ModuleRegistry& registry,
+        IVFS* vfs = nullptr);
 
     /// Loads a VFXGraph from a JSON string (primarily for testing).
     ///

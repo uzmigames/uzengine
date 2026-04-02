@@ -4,6 +4,7 @@
 
 #include "engine/logging/log.h"
 #include "file_system.h"
+#include "vfs.h"
 
 #include <json.hpp>
 
@@ -226,8 +227,14 @@ std::optional<VFXCurve> LoadFromJson(const std::string& jsonString) {
 // LoadFromFile
 // ─────────────────────────────────────────────────────────────────────────────
 
-std::optional<VFXCurve> LoadFromFile(const std::string& path) {
-    const std::string content = FileReadAllText(path.c_str());
+std::optional<VFXCurve> LoadFromFile(const std::string& path, IVFS* vfs) {
+    std::string content;
+    if (vfs) {
+        auto data = vfs->Read(path);
+        content.assign(data.begin(), data.end());
+    } else {
+        content = FileReadAllText(path.c_str());
+    }
     if (content.empty()) {
         UZ_LOG(VFX, Error, "VFXCurveLoader: failed to read file '{}'", path);
         return std::nullopt;

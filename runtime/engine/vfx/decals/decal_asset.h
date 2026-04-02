@@ -32,6 +32,7 @@
 #include <string>
 
 namespace uz {
+class IVFS;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DecalAsset -- loaded .uzdecal data
@@ -107,7 +108,7 @@ struct DecalAsset {
     ///
     /// # Errors
     /// Logs `VFX::Error` with path and reason on failure.
-    [[nodiscard]] static std::unique_ptr<DecalAsset> Load(const std::string& path);
+    [[nodiscard]] static std::unique_ptr<DecalAsset> Load(const std::string& path, IVFS* vfs = nullptr);
 
     /// Loads a DecalAsset from a JSON string (no disk I/O).
     ///
