@@ -1,0 +1,16 @@
+{
+  "name": "VFX Showcase",
+  "version": "1.0",
+  "engine_version": "0.4.0",
+  "default_scene": "scenes/vfx_showcase.uzscene",
+  "content_root": "../content/",
+  "window": {
+    "title": "UzEngine — VFX Particle Showcase",
+    "width": 1920,
+    "height": 1080,
+    "fullscreen": false
+  },
+  "rendering": {
+    "backend": "dx12"
+  }
+}
