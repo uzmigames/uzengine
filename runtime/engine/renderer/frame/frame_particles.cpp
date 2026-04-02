@@ -24,6 +24,7 @@
 #include "engine/vfx/vfx_system.h"
 #include "engine/vfx/components/particle_emitter.h"
 #include "engine/vfx/core/gpu_particle_buffer.h"
+#include "engine/vfx/core/vfx_cb_structs.h"
 #include "engine/vfx/core/gpu_particle_sort.h"
 #include "engine/vfx/modules/mesh_render_module.h"
 #include "engine/vfx/trails/trail_system.h"
@@ -241,43 +242,91 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
             auto& gpuBuf = emitter->buffer;
             if (!gpuBuf.IsValid()) continue;
 
-            // Spawn constants.
-            ParticleSpawnConstants spawnCBData{};
+            // ── Spawn CB (192 bytes, matches VFXSpawnConstants in particle_spawn_cs.hlsl) ──
+            VFXSpawnCB spawnCBData{};
             spawnCBData.spawnCount = emitter->CalculateSpawnCount(ctx.dt);
-            spawnCBData.randomSeed = ctx.frameIndex;
-            spawnCBData.capacity   = gpuBuf.capacity;
+            spawnCBData.frameNumber = ctx.frameIndex;
+            spawnCBData.maxParticles = gpuBuf.capacity;
+            spawnCBData.dt = ctx.dt;
+            spawnCBData.minLifetime = emitter->lifetime * 0.5f;
+            spawnCBData.maxLifetime = emitter->lifetime;
+            spawnCBData.initialSize = 50.0f; // cm
+            spawnCBData.spawnVelocityX = emitter->spawnVelocity.x;
+            spawnCBData.spawnVelocityY = emitter->spawnVelocity.y;
+            spawnCBData.spawnVelocityZ = emitter->spawnVelocity.z;
+            spawnCBData.velocityVariation = emitter->velocityVariation;
+            spawnCBData.spreadAngle = emitter->spreadAngle * 0.01745329f; // deg→rad
+            // Bindless descriptor indices
+            const auto& ws = gpuBuf.WriteSet();
+            spawnCBData.freeListSrvIndex = m_device->GetBufferSRVIndex(gpuBuf.freeList);
+            spawnCBData.positionsUavIndex = m_device->GetBufferUAVIndex(ws.positions);
+            spawnCBData.velocitiesUavIndex = m_device->GetBufferUAVIndex(ws.velocities);
+            spawnCBData.agesUavIndex = m_device->GetBufferUAVIndex(ws.ages);
+            spawnCBData.lifespansUavIndex = m_device->GetBufferUAVIndex(ws.lifespans);
+            spawnCBData.sizesUavIndex = m_device->GetBufferUAVIndex(ws.sizes);
+            spawnCBData.colorsUavIndex = m_device->GetBufferUAVIndex(ws.colors);
+            spawnCBData.rotationsUavIndex = m_device->GetBufferUAVIndex(ws.rotations);
+            spawnCBData.freeListHeadUavIndex = m_device->GetBufferUAVIndex(gpuBuf.freeListHead);
+            spawnCBData.aliveCountUavIndex = m_device->GetBufferUAVIndex(gpuBuf.aliveCount);
 
             const CBAllocation spawnAlloc = m_cbRing->Allocate(sizeof(spawnCBData));
             if (!spawnAlloc.cpuPtr) {
-                UZ_LOG(VFX, Warning,
-                       "RegisterParticlePasses: CB ring full, skipping emitter sim (spawn)");
+                UZ_LOG(VFX, Warning, "RegisterParticlePasses: CB ring full, skipping spawn");
                 continue;
             }
             std::memcpy(spawnAlloc.cpuPtr, &spawnCBData, sizeof(spawnCBData));
 
-            // Update constants.
-            ParticleUpdateConstants updateCBData{};
-            updateCBData.deltaTime  = ctx.dt;
+            // ── Update CB (320 bytes, matches VFXUpdateConstants in particle_update_cs.hlsl) ──
+            VFXUpdateCB updateCBData{};
+            updateCBData.dt = ctx.dt;
             updateCBData.aliveCount = emitter->cpuAliveCount;
-            updateCBData.capacity   = gpuBuf.capacity;
+            updateCBData.maxParticles = gpuBuf.capacity;
+            updateCBData.frameNumber = ctx.frameIndex;
+            updateCBData.gravityX = emitter->gravity.x;
+            updateCBData.gravityY = emitter->gravity.y;
+            updateCBData.gravityZ = emitter->gravity.z;
+            updateCBData.damping = emitter->damping;
+            // Read-set SRV indices
+            const auto& rs = gpuBuf.ReadSet();
+            updateCBData.rdPositionsSrvIndex = m_device->GetBufferSRVIndex(rs.positions);
+            updateCBData.rdVelocitiesSrvIndex = m_device->GetBufferSRVIndex(rs.velocities);
+            updateCBData.rdAgesSrvIndex = m_device->GetBufferSRVIndex(rs.ages);
+            updateCBData.rdLifespansSrvIndex = m_device->GetBufferSRVIndex(rs.lifespans);
+            updateCBData.rdSizesSrvIndex = m_device->GetBufferSRVIndex(rs.sizes);
+            updateCBData.rdColorsSrvIndex = m_device->GetBufferSRVIndex(rs.colors);
+            updateCBData.rdRotationsSrvIndex = m_device->GetBufferSRVIndex(rs.rotations);
+            // Write-set UAV indices
+            updateCBData.wrPositionsUavIndex = m_device->GetBufferUAVIndex(ws.positions);
+            updateCBData.wrVelocitiesUavIndex = m_device->GetBufferUAVIndex(ws.velocities);
+            updateCBData.wrAgesUavIndex = m_device->GetBufferUAVIndex(ws.ages);
+            updateCBData.wrLifespansUavIndex = m_device->GetBufferUAVIndex(ws.lifespans);
+            updateCBData.wrSizesUavIndex = m_device->GetBufferUAVIndex(ws.sizes);
+            updateCBData.wrColorsUavIndex = m_device->GetBufferUAVIndex(ws.colors);
+            updateCBData.wrRotationsUavIndex = m_device->GetBufferUAVIndex(ws.rotations);
+            // Shared buffers
+            updateCBData.aliveCountUavIndex = m_device->GetBufferUAVIndex(gpuBuf.aliveCount);
+            updateCBData.freeListUavIndex = m_device->GetBufferUAVIndex(gpuBuf.freeList);
+            updateCBData.freeListHeadUavIndex = m_device->GetBufferUAVIndex(gpuBuf.freeListHead);
+            updateCBData.idToIndexUavIndex = m_device->GetBufferUAVIndex(gpuBuf.idToIndex);
 
             const CBAllocation updateAlloc = m_cbRing->Allocate(sizeof(updateCBData));
             if (!updateAlloc.cpuPtr) {
-                UZ_LOG(VFX, Warning,
-                       "RegisterParticlePasses: CB ring full, skipping emitter sim (update)");
+                UZ_LOG(VFX, Warning, "RegisterParticlePasses: CB ring full, skipping update");
                 continue;
             }
             std::memcpy(updateAlloc.cpuPtr, &updateCBData, sizeof(updateCBData));
 
-            // Indirect args constants.
-            ParticleIndirectArgsConstants indirectCBData{};
-            indirectCBData.verticesPerParticle = 6;
-            indirectCBData.threadGroupSize     = 64;
+            // ── Indirect args CB (16 bytes, matches VFXIndirectArgsConstants at b0) ──
+            // NOTE: This shader uses register(b0) but DispatchIndirectArgs binds to slot 1.
+            // RC7 fix: the indirect args CS should be updated to use b1, or dispatch changed to slot 0.
+            // For now, binding to slot 1 since that's what DispatchIndirectArgs does.
+            VFXIndirectArgsCB indirectCBData{};
+            indirectCBData.aliveCountSrvIndex = m_device->GetBufferSRVIndex(gpuBuf.aliveCount);
+            indirectCBData.indirectArgsUavIndex = m_device->GetBufferUAVIndex(gpuBuf.indirectDrawArgs);
 
             const CBAllocation indirectAlloc = m_cbRing->Allocate(sizeof(indirectCBData));
             if (!indirectAlloc.cpuPtr) {
-                UZ_LOG(VFX, Warning,
-                       "RegisterParticlePasses: CB ring full, skipping emitter sim (indirect)");
+                UZ_LOG(VFX, Warning, "RegisterParticlePasses: CB ring full, skipping indirect");
                 continue;
             }
             std::memcpy(indirectAlloc.cpuPtr, &indirectCBData, sizeof(indirectCBData));
