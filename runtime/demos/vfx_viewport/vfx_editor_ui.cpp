@@ -123,6 +123,7 @@ bool VFXEditorUI::HandleMouse(const InputSystem* input, float dt) {
     m_mouseJustPressed = input->IsMouseJustPressed(MouseButton::Left);
     m_mouseJustReleased = input->IsMouseJustReleased(MouseButton::Left);
     m_ctrlDown = input->IsKeyDown(Key::LeftCtrl) || input->IsKeyDown(Key::RightCtrl);
+    m_scrollDelta = input->GetScrollDelta();
 
     // Release slider drag on mouse up
     if (m_mouseJustReleased && m_dragSliderPtr != nullptr) {
@@ -234,7 +235,12 @@ void VFXEditorUI::BuildUI(VFXEmitterConfig* config, float* spawnRate, bool* burs
     BuildToolbar(burstMode, vfxEnabled);
 
     if (m_leftPanelOpen) {
-        BuildLeftPanel(config, spawnRate, burstCount);
+        // Rebuild module list when config pointer changes (emitter switch)
+        if (config != m_lastConfig) {
+            BuildModuleList(config, spawnRate, burstCount);
+            m_lastConfig = config;
+        }
+        BuildStageTree(config, spawnRate, burstCount);
     }
 
     if (m_rightPanelOpen) {
@@ -722,7 +728,382 @@ void VFXEditorUI::BuildToolbar(bool* burstMode, bool* vfxEnabled) {
 // Left Panel — Emitter Properties
 // ─────────────────────────────────────────────────────────────────────────────
 
-void VFXEditorUI::BuildLeftPanel(VFXEmitterConfig* cfg, float* spawnRate, uint32_t* burstCount) {
+// ─────────────────────────────────────────────────────────────────────────────
+// VfxModuleDef helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool VFXEditorUI::VfxModuleDef::IsActive() const {
+    // If there is a uint enable flag, it takes priority
+    if (enablePtr != nullptr) return *enablePtr != 0;
+    // Otherwise check the float strength pointer
+    if (strengthPtr != nullptr) return *strengthPtr > 0.0f;
+    // Modules with no enable mechanism are always active
+    return true;
+}
+
+void VFXEditorUI::VfxModuleDef::FormatSummary(char* buf, int bufSize) const {
+    buf[0] = '\0';
+    if (params.empty()) return;
+
+    // Show the first param's current value as the summary
+    const auto& p = params[0];
+    switch (p.type) {
+        case VfxModuleParam::Float:
+            if (p.fPtr != nullptr) {
+                std::snprintf(buf, static_cast<size_t>(bufSize), "%.2f", static_cast<double>(*p.fPtr));
+            }
+            break;
+        case VfxModuleParam::Uint:
+            if (p.uPtr != nullptr) {
+                std::snprintf(buf, static_cast<size_t>(bufSize), "%u", *p.uPtr);
+            }
+            break;
+        case VfxModuleParam::Bool:
+            if (p.uPtr != nullptr) {
+                std::snprintf(buf, static_cast<size_t>(bufSize), "%s", *p.uPtr ? "On" : "Off");
+            }
+            break;
+        case VfxModuleParam::Enum:
+            if (p.uPtr != nullptr && p.enumNames != nullptr && *p.uPtr < p.enumCount) {
+                std::snprintf(buf, static_cast<size_t>(bufSize), "%s", p.enumNames[*p.uPtr]);
+            }
+            break;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BuildModuleList — populate m_modules from VFXEmitterConfig pointers
+// ─────────────────────────────────────────────────────────────────────────────
+
+void VFXEditorUI::BuildModuleList(VFXEmitterConfig* cfg, float* spawnRate, uint32_t* burstCount) {
+    m_modules.clear();
+    m_expandedModuleIndex = -1;
+
+    // Helper lambdas for adding params
+    auto addFloat = [](std::vector<VfxModuleParam>& v, const char* label, float* ptr,
+                       float mn, float mx) {
+        VfxModuleParam p;
+        p.label = label; p.type = VfxModuleParam::Float;
+        p.fPtr = ptr; p.min = mn; p.max = mx;
+        v.push_back(p);
+    };
+    auto addEnum = [](std::vector<VfxModuleParam>& v, const char* label, uint32_t* ptr,
+                      const char* const* names, uint32_t count) {
+        VfxModuleParam p;
+        p.label = label; p.type = VfxModuleParam::Enum;
+        p.uPtr = ptr; p.enumNames = names; p.enumCount = count;
+        v.push_back(p);
+    };
+    auto addBool = [](std::vector<VfxModuleParam>& v, const char* label, uint32_t* ptr) {
+        VfxModuleParam p;
+        p.label = label; p.type = VfxModuleParam::Bool;
+        p.uPtr = ptr;
+        v.push_back(p);
+    };
+
+    // ── Emitter Spawn ────────────────────────────────────────────────────
+    {
+        VfxModuleDef m;
+        m.name = "Burst Config"; m.stage = VfxStage::EmitterSpawn;
+        addFloat(m.params, "Rate", spawnRate, 1.0f, 5000.0f);
+        // burstCount is uint32 — wrap as float param with helper in BuildStageTree
+        m.params.push_back({});
+        auto& bp = m.params.back();
+        bp.label = "Burst Count"; bp.type = VfxModuleParam::Uint;
+        bp.uPtr = burstCount; bp.min = 1.0f; bp.max = 5000.0f;
+        m_modules.push_back(std::move(m));
+    }
+
+    // ── Emitter Update ───────────────────────────────────────────────────
+    {
+        VfxModuleDef m;
+        m.name = "Emitter Lifecycle"; m.stage = VfxStage::EmitterUpdate;
+        addFloat(m.params, "Duration", &cfg->emitterDuration, 0.0f, 30.0f);
+        m.params.push_back({});
+        auto& lp = m.params.back();
+        lp.label = "Loop Count"; lp.type = VfxModuleParam::Uint;
+        lp.uPtr = &cfg->loopCount; lp.min = 0.0f; lp.max = 100.0f;
+        m_modules.push_back(std::move(m));
+    }
+
+    // ── Particle Spawn ───────────────────────────────────────────────────
+    {
+        VfxModuleDef m;
+        m.name = "Initialize Particle"; m.stage = VfxStage::ParticleSpawn;
+        addFloat(m.params, "Size", &cfg->initialSize, 0.001f, 5.0f);
+        addFloat(m.params, "Min Life", &cfg->minLifetime, 0.1f, 30.0f);
+        addFloat(m.params, "Max Life", &cfg->maxLifetime, 0.1f, 30.0f);
+        addFloat(m.params, "Color R", &cfg->initialColor[0], 0.0f, 1.0f);
+        addFloat(m.params, "Color G", &cfg->initialColor[1], 0.0f, 1.0f);
+        addFloat(m.params, "Color B", &cfg->initialColor[2], 0.0f, 1.0f);
+        addFloat(m.params, "Color A", &cfg->initialColor[3], 0.0f, 1.0f);
+        m_modules.push_back(std::move(m));
+    }
+    {
+        VfxModuleDef m;
+        m.name = "Shape Location"; m.stage = VfxStage::ParticleSpawn;
+        addEnum(m.params, "Shape", &cfg->spawnShape, kSpawnShapeNames, kSpawnShapeCount);
+        addFloat(m.params, "Radius", &cfg->spawnRadius, 0.0f, 10.0f);
+        addBool(m.params, "Surface", &cfg->spawnOnSurface);
+        addFloat(m.params, "Param1", &cfg->shapeParam1, -20.0f, 20.0f);
+        addFloat(m.params, "Param2", &cfg->shapeParam2, -20.0f, 20.0f);
+        addFloat(m.params, "Param3", &cfg->shapeParam3, -20.0f, 20.0f);
+        m_modules.push_back(std::move(m));
+    }
+    {
+        VfxModuleDef m;
+        m.name = "Init Velocity"; m.stage = VfxStage::ParticleSpawn;
+        addFloat(m.params, "Vel Z", &cfg->spawnVelocity[2], -50.0f, 50.0f);
+        addFloat(m.params, "Vel Y", &cfg->spawnVelocity[1], -50.0f, 50.0f);
+        addFloat(m.params, "Vel X", &cfg->spawnVelocity[0], -50.0f, 50.0f);
+        addFloat(m.params, "Variation", &cfg->velocityVariation, 0.0f, 20.0f);
+        addFloat(m.params, "Spread", &cfg->spreadAngle, 0.0f, 3.14159f);
+        m_modules.push_back(std::move(m));
+    }
+    {
+        VfxModuleDef m;
+        m.name = "Init Rotation"; m.stage = VfxStage::ParticleSpawn;
+        addFloat(m.params, "Rot Min", &cfg->initialRotationMin, 0.0f, 6.284f);
+        addFloat(m.params, "Rot Max", &cfg->initialRotationMax, 0.0f, 6.284f);
+        m_modules.push_back(std::move(m));
+    }
+    {
+        VfxModuleDef m;
+        m.name = "Velocity Inherit"; m.stage = VfxStage::ParticleSpawn;
+        m.strengthPtr = &cfg->velocityInheritance;
+        addFloat(m.params, "Factor", &cfg->velocityInheritance, 0.0f, 1.0f);
+        m_modules.push_back(std::move(m));
+    }
+
+    // ── Particle Update ──────────────────────────────────────────────────
+    {
+        VfxModuleDef m;
+        m.name = "Gravity"; m.stage = VfxStage::ParticleUpdate;
+        addFloat(m.params, "Gravity Z", &cfg->gravity[2], -100.0f, 100.0f);
+        addFloat(m.params, "Gravity Y", &cfg->gravity[1], -100.0f, 100.0f);
+        addFloat(m.params, "Gravity X", &cfg->gravity[0], -100.0f, 100.0f);
+        m_modules.push_back(std::move(m));
+    }
+    {
+        VfxModuleDef m;
+        m.name = "Damping"; m.stage = VfxStage::ParticleUpdate;
+        m.strengthPtr = &cfg->damping;
+        addFloat(m.params, "Damping", &cfg->damping, 0.0f, 2.0f);
+        m_modules.push_back(std::move(m));
+    }
+    {
+        VfxModuleDef m;
+        m.name = "Drag"; m.stage = VfxStage::ParticleUpdate;
+        m.strengthPtr = &cfg->dragCoefficient;
+        addFloat(m.params, "Drag", &cfg->dragCoefficient, 0.0f, 10.0f);
+        m_modules.push_back(std::move(m));
+    }
+    {
+        VfxModuleDef m;
+        m.name = "Curl Noise"; m.stage = VfxStage::ParticleUpdate;
+        m.strengthPtr = &cfg->curlStrength;
+        addFloat(m.params, "Strength", &cfg->curlStrength, 0.0f, 10.0f);
+        addFloat(m.params, "Frequency", &cfg->curlFrequency, 0.01f, 5.0f);
+        addFloat(m.params, "Speed", &cfg->curlSpeed, 0.0f, 5.0f);
+        m_modules.push_back(std::move(m));
+    }
+    {
+        VfxModuleDef m;
+        m.name = "Vortex Force"; m.stage = VfxStage::ParticleUpdate;
+        m.strengthPtr = &cfg->vortexTangentialStrength;
+        addFloat(m.params, "Tangential", &cfg->vortexTangentialStrength, -20.0f, 20.0f);
+        addFloat(m.params, "Radial", &cfg->vortexRadialStrength, -20.0f, 20.0f);
+        addFloat(m.params, "Max Radius", &cfg->vortexMaxRadius, 0.1f, 50.0f);
+        m_modules.push_back(std::move(m));
+    }
+    {
+        VfxModuleDef m;
+        m.name = "Wind"; m.stage = VfxStage::ParticleUpdate;
+        m.strengthPtr = &cfg->windStrength;
+        addFloat(m.params, "Strength", &cfg->windStrength, 0.0f, 50.0f);
+        addFloat(m.params, "Dir X", &cfg->windDir[0], -1.0f, 1.0f);
+        addFloat(m.params, "Dir Y", &cfg->windDir[1], -1.0f, 1.0f);
+        addFloat(m.params, "Dir Z", &cfg->windDir[2], -1.0f, 1.0f);
+        m_modules.push_back(std::move(m));
+    }
+    {
+        VfxModuleDef m;
+        m.name = "Point Force"; m.stage = VfxStage::ParticleUpdate;
+        m.enablePtr = &cfg->pointForceEnabled;
+        m.strengthPtr = &cfg->pointForceStrength;
+        addFloat(m.params, "Strength", &cfg->pointForceStrength, -50.0f, 50.0f);
+        addFloat(m.params, "Pos X", &cfg->pointForceX, -50.0f, 50.0f);
+        addFloat(m.params, "Pos Y", &cfg->pointForceY, -50.0f, 50.0f);
+        addFloat(m.params, "Pos Z", &cfg->pointForceZ, -50.0f, 50.0f);
+        addFloat(m.params, "Radius", &cfg->pointForceRadius, 0.1f, 100.0f);
+        m_modules.push_back(std::move(m));
+    }
+    {
+        VfxModuleDef m;
+        m.name = "Vector Field"; m.stage = VfxStage::ParticleUpdate;
+        m.enablePtr = &cfg->vectorFieldEnabled;
+        m.strengthPtr = &cfg->vectorFieldStrength;
+        addFloat(m.params, "Strength", &cfg->vectorFieldStrength, 0.0f, 20.0f);
+        addFloat(m.params, "Tightness", &cfg->vectorFieldTightness, 0.0f, 1.0f);
+        addFloat(m.params, "Scale", &cfg->vectorFieldScale, 0.01f, 10.0f);
+        m_modules.push_back(std::move(m));
+    }
+    {
+        VfxModuleDef m;
+        m.name = "Orbit"; m.stage = VfxStage::ParticleUpdate;
+        m.enablePtr = &cfg->orbitEnabled;
+        addFloat(m.params, "Radius", &cfg->orbitRadius, 0.0f, 20.0f);
+        addFloat(m.params, "Speed", &cfg->orbitSpeed, -20.0f, 20.0f);
+        m_modules.push_back(std::move(m));
+    }
+    {
+        VfxModuleDef m;
+        m.name = "Ground Collision"; m.stage = VfxStage::ParticleUpdate;
+        m.enablePtr = &cfg->groundCollision;
+        addEnum(m.params, "Response", &cfg->collisionResponse,
+                kCollisionResponseNames, kCollisionResponseCount);
+        addFloat(m.params, "Restitution", &cfg->restitution, 0.0f, 1.0f);
+        addFloat(m.params, "Friction", &cfg->collisionFriction, 0.0f, 1.0f);
+        m_modules.push_back(std::move(m));
+    }
+    {
+        VfxModuleDef m;
+        m.name = "Terrain Collision"; m.stage = VfxStage::ParticleUpdate;
+        m.enablePtr = &cfg->terrainCollisionEnabled;
+        addFloat(m.params, "Amplitude", &cfg->terrainAmplitude, 0.0f, 20.0f);
+        addFloat(m.params, "Frequency", &cfg->terrainFrequency, 0.001f, 2.0f);
+        addFloat(m.params, "Base Height", &cfg->terrainBaseHeight, -20.0f, 20.0f);
+        m_modules.push_back(std::move(m));
+    }
+    {
+        VfxModuleDef m;
+        m.name = "Rotation Rate"; m.stage = VfxStage::ParticleUpdate;
+        m.strengthPtr = &cfg->rotationRate;
+        addFloat(m.params, "Rate", &cfg->rotationRate, -20.0f, 20.0f);
+        addFloat(m.params, "Life Start", &cfg->rotationOverLifeStart, -20.0f, 20.0f);
+        addFloat(m.params, "Life End", &cfg->rotationOverLifeEnd, -20.0f, 20.0f);
+        m_modules.push_back(std::move(m));
+    }
+    {
+        VfxModuleDef m;
+        m.name = "Acceleration"; m.stage = VfxStage::ParticleUpdate;
+        addFloat(m.params, "Accel X", &cfg->accelX, -50.0f, 50.0f);
+        addFloat(m.params, "Accel Y", &cfg->accelY, -50.0f, 50.0f);
+        addFloat(m.params, "Accel Z", &cfg->accelZ, -50.0f, 50.0f);
+        m_modules.push_back(std::move(m));
+    }
+    {
+        VfxModuleDef m;
+        m.name = "Death Spawn"; m.stage = VfxStage::ParticleUpdate;
+        m.enablePtr = &cfg->deathSpawnEnabled;
+        m.params.push_back({});
+        auto& dc = m.params.back();
+        dc.label = "Count"; dc.type = VfxModuleParam::Uint;
+        dc.uPtr = &cfg->deathSpawnCount; dc.min = 1.0f; dc.max = 32.0f;
+        addFloat(m.params, "Spread", &cfg->deathSpawnSpread, 0.0f, 3.14159f);
+        addFloat(m.params, "Speed Scale", &cfg->deathSpawnSpeedScale, 0.0f, 2.0f);
+        m_modules.push_back(std::move(m));
+    }
+
+    // ── Render ───────────────────────────────────────────────────────────
+    {
+        VfxModuleDef m;
+        m.name = "Billboard"; m.stage = VfxStage::Render;
+        addEnum(m.params, "Facing", &cfg->facingMode, kAlignmentModeNames, kAlignmentModeCount);
+        addFloat(m.params, "Stretch", &cfg->stretchFactor, 0.0f, 5.0f);
+        addFloat(m.params, "Camera Offset", &cfg->cameraOffset, -5.0f, 5.0f);
+        addFloat(m.params, "Pivot X", &cfg->pivotOffsetX, -1.0f, 1.0f);
+        addFloat(m.params, "Pivot Y", &cfg->pivotOffsetY, -1.0f, 1.0f);
+        m_modules.push_back(std::move(m));
+    }
+    {
+        VfxModuleDef m;
+        m.name = "Size Over Life"; m.stage = VfxStage::Render;
+        addFloat(m.params, "Start", &cfg->sizeOverLifeStart, 0.0f, 5.0f);
+        addFloat(m.params, "Peak", &cfg->sizeOverLifePeak, 0.0f, 5.0f);
+        addFloat(m.params, "End", &cfg->sizeOverLifeEnd, 0.0f, 5.0f);
+        addFloat(m.params, "Peak Time", &cfg->sizeOverLifePeakTime, 0.0f, 1.0f);
+        m_modules.push_back(std::move(m));
+    }
+    {
+        VfxModuleDef m;
+        m.name = "Color Over Life"; m.stage = VfxStage::Render;
+        addFloat(m.params, "Start R", &cfg->colorLifeStartR, 0.0f, 1.0f);
+        addFloat(m.params, "Start G", &cfg->colorLifeStartG, 0.0f, 1.0f);
+        addFloat(m.params, "Start B", &cfg->colorLifeStartB, 0.0f, 1.0f);
+        addFloat(m.params, "Start A", &cfg->colorLifeStartA, 0.0f, 1.0f);
+        addFloat(m.params, "End R", &cfg->colorLifeEndR, 0.0f, 1.0f);
+        addFloat(m.params, "End G", &cfg->colorLifeEndG, 0.0f, 1.0f);
+        addFloat(m.params, "End B", &cfg->colorLifeEndB, 0.0f, 1.0f);
+        addFloat(m.params, "End A", &cfg->colorLifeEndA, 0.0f, 1.0f);
+        m_modules.push_back(std::move(m));
+    }
+    {
+        VfxModuleDef m;
+        m.name = "Size by Speed"; m.stage = VfxStage::Render;
+        m.enablePtr = &cfg->sizeBySpeedEnabled;
+        addFloat(m.params, "Min Size", &cfg->sizeBySpeedMin, 0.0f, 5.0f);
+        addFloat(m.params, "Max Size", &cfg->sizeBySpeedMax, 0.0f, 10.0f);
+        addFloat(m.params, "Speed Max", &cfg->speedRangeMax, 0.1f, 100.0f);
+        m_modules.push_back(std::move(m));
+    }
+    {
+        VfxModuleDef m;
+        m.name = "Color by Speed"; m.stage = VfxStage::Render;
+        m.enablePtr = &cfg->colorBySpeedEnabled;
+        m_modules.push_back(std::move(m));
+    }
+    {
+        VfxModuleDef m;
+        m.name = "Emissive"; m.stage = VfxStage::Render;
+        m.strengthPtr = &cfg->emissiveIntensity;
+        addFloat(m.params, "Intensity", &cfg->emissiveIntensity, 0.0f, 20.0f);
+        m_modules.push_back(std::move(m));
+    }
+    {
+        VfxModuleDef m;
+        m.name = "Soft Fade"; m.stage = VfxStage::Render;
+        addFloat(m.params, "Distance", &cfg->softFadeDistance, 0.0f, 5.0f);
+        m_modules.push_back(std::move(m));
+    }
+    {
+        VfxModuleDef m;
+        m.name = "Lit Mode"; m.stage = VfxStage::Render;
+        m.enablePtr = &cfg->litMode;
+        m_modules.push_back(std::move(m));
+    }
+    {
+        VfxModuleDef m;
+        m.name = "Blend Mode"; m.stage = VfxStage::Render;
+        addEnum(m.params, "Mode", &cfg->blendMode, kBlendModeNames, kBlendModeCount);
+        m_modules.push_back(std::move(m));
+    }
+    {
+        VfxModuleDef m;
+        m.name = "Screen Space Size"; m.stage = VfxStage::Render;
+        m.enablePtr = &cfg->screenSpaceSizeEnabled;
+        addFloat(m.params, "Pixel Size", &cfg->screenSpacePixelSize, 1.0f, 64.0f);
+        m_modules.push_back(std::move(m));
+    }
+    {
+        VfxModuleDef m;
+        m.name = "Particle Light"; m.stage = VfxStage::Render;
+        m.enablePtr = &cfg->particleLightEnabled;
+        addFloat(m.params, "Radius", &cfg->particleLightRadius, 1.0f, 2000.0f);
+        addFloat(m.params, "Intensity", &cfg->particleLightIntensity, 0.0f, 20.0f);
+        addFloat(m.params, "Flicker", &cfg->particleLightFlicker, 0.0f, 1.0f);
+        addFloat(m.params, "Flicker Speed", &cfg->particleLightFlickerSpeed, 0.1f, 30.0f);
+        m_modules.push_back(std::move(m));
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BuildStageTree — Niagara-style hierarchical stage/module panel
+// ─────────────────────────────────────────────────────────────────────────────
+
+void VFXEditorUI::BuildStageTree(VFXEmitterConfig* cfg, float* spawnRate, uint32_t* burstCount) {
+    (void)cfg; (void)spawnRate; (void)burstCount;
+
     const float panelX = 0.0f;
     const float panelY = kMenuBarH;
     const float panelH = static_cast<float>(m_screenH) - kMenuBarH - kToolbarH;
@@ -733,7 +1114,7 @@ void VFXEditorUI::BuildLeftPanel(VFXEmitterConfig* cfg, float* spawnRate, uint32
 
     // Title bar
     m_textRenderer.AddRect(panelX, panelY, kLeftPanelW, kCatHeaderH, kColorBarBg);
-    m_textRenderer.AddText(m_font, "Emitter Properties", panelX + 8.0f, panelY + 5.0f, kColorText);
+    m_textRenderer.AddText(m_font, "Module Stack", panelX + 8.0f, panelY + 5.0f, kColorText);
 
     // Close button [X]
     {
@@ -741,224 +1122,201 @@ void VFXEditorUI::BuildLeftPanel(VFXEmitterConfig* cfg, float* spawnRate, uint32
         const float closeY = panelY + 2.0f;
         if (Button(closeX, closeY, 20.0f, 20.0f, "X")) {
             m_leftPanelOpen = false;
+            return;
         }
     }
 
-    float y = panelY + kCatHeaderH + kPanelPadY;
-    const float cx = panelX + kPanelPadX;
+    // Scrollable content area
+    const float contentTop = panelY + kCatHeaderH + kPanelPadY;
+    const float contentBot = static_cast<float>(m_screenH) - kToolbarH;
+    const float visibleH = contentBot - contentTop;
 
-    // Category definitions with their parameters
-    struct CatDef {
-        const char* name;
-        int id;
-    };
-    static const CatDef kCategories[] = {
-        {"Spawn",        0},
-        {"Particle",     1},
-        {"Color",        2},
-        {"Size Over Life", 3},
-        {"Physics",      4},
-        {"Forces",       5},
-        {"Rendering",    6},
-    };
-    constexpr int kCatCount = 7;
+    // Handle scroll wheel when mouse is over left panel
+    if (HitTest(panelX, contentTop, kLeftPanelW, visibleH) && m_scrollDelta != 0.0f) {
+        m_leftPanelScroll -= m_scrollDelta * kScrollSpeed;
+    }
 
-    for (int ci = 0; ci < kCatCount; ++ci) {
-        if (y > static_cast<float>(m_screenH) - kToolbarH - kCatHeaderH) break;
+    // First pass: compute total content height for scroll clamping
+    float totalH = 0.0f;
+    {
+        static const char* kStageNames[] = {
+            "Emitter Spawn", "Emitter Update", "Particle Spawn", "Particle Update", "Render"
+        };
 
-        // Category header
-        const bool catHovered = HitTest(cx, y, contentW, kCatHeaderH);
-        const Vec4 catColor = catHovered ? kColorBtnHover : kColorCatHeader;
-        m_textRenderer.AddRect(cx, y, contentW, kCatHeaderH, catColor);
-
-        const char* arrow = (m_expandedCategory == ci) ? "[-]" : "[+]";
-        char catLabel[64];
-        std::snprintf(catLabel, sizeof(catLabel), "%s %s", arrow, kCategories[ci].name);
-        m_textRenderer.AddText(m_font, catLabel, cx + 4.0f, y + 5.0f, kColorText);
-
-        if (catHovered && m_mouseJustPressed) {
-            m_expandedCategory = (m_expandedCategory == ci) ? -1 : ci;
+        for (int si = 0; si < kStageCount; ++si) {
+            (void)kStageNames[si];
+            totalH += kStageHeaderH + 2.0f;
+            if (!m_stageExpanded[si]) continue;
+            for (int mi = 0; mi < static_cast<int>(m_modules.size()); ++mi) {
+                if (static_cast<int>(m_modules[mi].stage) != si) continue;
+                totalH += kModuleRowH + 1.0f;
+                if (mi == m_expandedModuleIndex) {
+                    totalH += static_cast<float>(m_modules[mi].params.size()) * (kSliderH + 2.0f);
+                }
+            }
         }
+    }
+    m_leftPanelContentH = totalH;
 
-        y += kCatHeaderH + 2.0f;
+    // Clamp scroll so content doesn't overscroll
+    const float maxScroll = std::max(0.0f, totalH - visibleH);
+    m_leftPanelScroll = std::clamp(m_leftPanelScroll, 0.0f, maxScroll);
 
-        // Skip parameters if category is collapsed
-        if (m_expandedCategory != ci) continue;
+    // Second pass: render content with scroll offset
+    const float cx = panelX + kPanelPadX;
+    float y = contentTop - m_leftPanelScroll;
 
-        // Render category parameters based on ID
-        switch (ci) {
-            case 0: { // Spawn
-                Slider(cx, y, contentW, spawnRate, 1.0f, 5000.0f, "Rate");
-                y += kSliderH + 2.0f;
+    static const char* kStageNames[] = {
+        "Emitter Spawn", "Emitter Update", "Particle Spawn", "Particle Update", "Render"
+    };
 
-                // Burst count as slider (cast uint32 to float, write back)
-                {
-                    float fBurst = static_cast<float>(*burstCount);
-                    if (Slider(cx, y, contentW, &fBurst, 1.0f, 5000.0f, "Burst#")) {
-                        *burstCount = static_cast<uint32_t>(std::clamp(fBurst, 1.0f, 5000.0f));
+    for (int si = 0; si < kStageCount; ++si) {
+        const VfxStage stage = static_cast<VfxStage>(si);
+
+        // ── Stage header ─────────────────────────────────────────────
+        if (y + kStageHeaderH > contentTop && y < contentBot) {
+            const bool hdrHovered = HitTest(cx, std::max(y, contentTop), contentW,
+                                            std::min(kStageHeaderH, contentBot - y));
+            const Vec4 hdrColor = hdrHovered ? kColorBtnHover : kColorStageHdr;
+            m_textRenderer.AddRect(cx, y, contentW, kStageHeaderH, hdrColor);
+
+            const char* arrow = m_stageExpanded[si] ? "\xE2\x96\xBC" : "\xE2\x96\xB6"; // ▼ / ▶
+            char hdrLabel[80];
+            std::snprintf(hdrLabel, sizeof(hdrLabel), "%s  %s", arrow, kStageNames[si]);
+            m_textRenderer.AddText(m_font, hdrLabel, cx + 4.0f, y + 6.0f, kColorText);
+
+            if (hdrHovered && m_mouseJustPressed) {
+                m_stageExpanded[si] = !m_stageExpanded[si];
+            }
+        }
+        y += kStageHeaderH + 2.0f;
+
+        if (!m_stageExpanded[si]) continue;
+
+        // ── Module rows for this stage ───────────────────────────────
+        for (int mi = 0; mi < static_cast<int>(m_modules.size()); ++mi) {
+            auto& mod = m_modules[mi];
+            if (mod.stage != stage) continue;
+
+            const bool isExpanded = (mi == m_expandedModuleIndex);
+            const bool isActive = mod.IsActive();
+
+            // Module row: checkbox + name + summary
+            if (y + kModuleRowH > contentTop && y < contentBot) {
+                const Vec4 rowBg = isExpanded ? kColorModuleExp : kColorModuleRow;
+                m_textRenderer.AddRect(cx + 2.0f, y, contentW - 4.0f, kModuleRowH, rowBg);
+
+                // Checkbox (14x14)
+                const float cbX = cx + 6.0f;
+                const float cbY = y + (kModuleRowH - kCheckboxSize) * 0.5f;
+                const Vec4 cbColor = isActive ? kColorCheckOn : kColorCheckOff;
+                m_textRenderer.AddRect(cbX, cbY, kCheckboxSize, kCheckboxSize, cbColor);
+
+                // Checkmark indicator when active
+                if (isActive) {
+                    m_textRenderer.AddRect(cbX + 3.0f, cbY + 3.0f,
+                                           kCheckboxSize - 6.0f, kCheckboxSize - 6.0f,
+                                           kColorText);
+                }
+
+                // Checkbox click
+                if (HitTest(cbX, cbY, kCheckboxSize + 4.0f, kCheckboxSize + 4.0f) && m_mouseJustPressed) {
+                    if (isActive) {
+                        // Deactivate: save and zero
+                        if (mod.enablePtr != nullptr) {
+                            mod.savedEnable = *mod.enablePtr;
+                            if (mod.savedEnable == 0) mod.savedEnable = 1;
+                            *mod.enablePtr = 0;
+                        }
+                        if (mod.strengthPtr != nullptr) {
+                            mod.savedStrength = *mod.strengthPtr;
+                            if (mod.savedStrength == 0.0f) mod.savedStrength = 1.0f;
+                            *mod.strengthPtr = 0.0f;
+                        }
+                    } else {
+                        // Reactivate: restore saved
+                        if (mod.enablePtr != nullptr) {
+                            *mod.enablePtr = (mod.savedEnable != 0) ? mod.savedEnable : 1u;
+                        }
+                        if (mod.strengthPtr != nullptr) {
+                            *mod.strengthPtr = (mod.savedStrength > 0.0f) ? mod.savedStrength : 1.0f;
+                        }
                     }
                 }
-                y += kSliderH + 2.0f;
 
-                Slider(cx, y, contentW, &cfg->spawnRadius, 0.0f, 10.0f, "Radius");
-                y += kSliderH + 2.0f;
+                // Module name — click to expand/collapse
+                const float nameX = cbX + kCheckboxSize + 6.0f;
+                const Vec4 nameColor = isActive ? kColorText : kColorTextDim;
+                m_textRenderer.AddText(m_font, mod.name, nameX, y + 4.0f, nameColor);
 
-                DropdownTrigger(cx, y, contentW, &cfg->spawnShape,
-                                kSpawnShapeNames, kSpawnShapeCount, "Shape");
-                y += kRowH + 2.0f;
-
-                DropdownTrigger(cx, y, contentW, &cfg->spawnOnSurface,
-                                kBoolEnumNames, kBoolEnumCount, "Surface");
-                y += kRowH + 2.0f;
-
-                Slider(cx, y, contentW, &cfg->shapeParam1, -20.0f, 20.0f, "Param1");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->shapeParam2, -20.0f, 20.0f, "Param2");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->shapeParam3, -20.0f, 20.0f, "Param3");
-                y += kSliderH + 2.0f;
-                break;
-            }
-            case 1: { // Particle
-                Slider(cx, y, contentW, &cfg->minLifetime, 0.1f, 30.0f, "MinLife");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->maxLifetime, 0.1f, 30.0f, "MaxLife");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->initialSize, 0.001f, 5.0f, "Size");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->velocityVariation, 0.0f, 20.0f, "VelVar");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->spreadAngle, 0.0f, 3.14159f, "Spread");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->spawnVelocity[2], -50.0f, 50.0f, "VelZ");
-                y += kSliderH + 2.0f;
-                break;
-            }
-            case 2: { // Color
-                Slider(cx, y, contentW, &cfg->colorLifeStartR, 0.0f, 1.0f, "Start R");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->colorLifeStartG, 0.0f, 1.0f, "Start G");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->colorLifeStartB, 0.0f, 1.0f, "Start B");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->colorLifeStartA, 0.0f, 1.0f, "Start A");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->colorLifeEndR, 0.0f, 1.0f, "End R");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->colorLifeEndG, 0.0f, 1.0f, "End G");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->colorLifeEndB, 0.0f, 1.0f, "End B");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->colorLifeEndA, 0.0f, 1.0f, "End A");
-                y += kSliderH + 2.0f;
-                break;
-            }
-            case 3: { // Size Over Life
-                Slider(cx, y, contentW, &cfg->sizeOverLifeStart, 0.0f, 5.0f, "Start");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->sizeOverLifePeak, 0.0f, 5.0f, "Peak");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->sizeOverLifeEnd, 0.0f, 5.0f, "End");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->sizeOverLifePeakTime, 0.0f, 1.0f, "PeakT");
-                y += kSliderH + 2.0f;
-                break;
-            }
-            case 4: { // Physics
-                Slider(cx, y, contentW, &cfg->gravity[2], -100.0f, 100.0f, "GravZ");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->damping, 0.0f, 2.0f, "Damping");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->curlStrength, 0.0f, 10.0f, "Curl");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->curlFrequency, 0.01f, 5.0f, "CurlFreq");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->curlSpeed, 0.0f, 5.0f, "CurlSpd");
-                y += kSliderH + 2.0f;
-                DropdownTrigger(cx, y, contentW, &cfg->groundCollision,
-                                kBoolEnumNames, kBoolEnumCount, "Ground");
-                y += kRowH + 2.0f;
-                Slider(cx, y, contentW, &cfg->restitution, 0.0f, 1.0f, "Bounce");
-                y += kSliderH + 2.0f;
-                // ── Enhanced collision response + friction (Task 3.85.0) ─────────
-                // Response: Bounce (reflect with restitution), Stick (rest on surface), Kill (die on contact).
-                // Friction: tangential (XY) velocity damping on bounce contact [0=full stop, 1=frictionless].
-                // @ref Müller 2006 "Position Based Dynamics" — multi-mode collision response
-                // @ref Bender 2014 "Position-Based Simulation Methods in Computer Graphics" — friction
-                DropdownTrigger(cx, y, contentW, &cfg->collisionResponse,
-                                kCollisionResponseNames, kCollisionResponseCount, "Response");
-                y += kRowH + 2.0f;
-                Slider(cx, y, contentW, &cfg->collisionFriction, 0.0f, 1.0f, "Friction");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->dragCoefficient, 0.0f, 10.0f, "Drag");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->accelX, -50.0f, 50.0f, "AccelX");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->accelY, -50.0f, 50.0f, "AccelY");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->accelZ, -50.0f, 50.0f, "AccelZ");
-                y += kSliderH + 2.0f;
-                break;
-            }
-            case 5: { // Forces
-                Slider(cx, y, contentW, &cfg->vortexTangentialStrength, -20.0f, 20.0f, "Swirl");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->vortexRadialStrength, -20.0f, 20.0f, "Radial");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->vortexMaxRadius, 0.1f, 50.0f, "VortRad");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->windStrength, 0.0f, 50.0f, "Wind");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->windDir[0], -1.0f, 1.0f, "WndX");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->windDir[1], -1.0f, 1.0f, "WndY");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->windDir[2], -1.0f, 1.0f, "WndZ");
-                y += kSliderH + 2.0f;
-                break;
-            }
-            case 6: { // Rendering
-                DropdownTrigger(cx, y, contentW, &cfg->blendMode,
-                                kBlendModeNames, kBlendModeCount, "Blend");
-                y += kRowH + 2.0f;
-                Slider(cx, y, contentW, &cfg->emissiveIntensity, 0.0f, 20.0f, "Emissive");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->softFadeDistance, 0.0f, 5.0f, "SoftFade");
-                y += kSliderH + 2.0f;
-                DropdownTrigger(cx, y, contentW, &cfg->facingMode,
-                                kAlignmentModeNames, kAlignmentModeCount, "Facing");
-                y += kRowH + 2.0f;
-                Slider(cx, y, contentW, &cfg->stretchFactor, 0.0f, 5.0f, "Stretch");
-                y += kSliderH + 2.0f;
-                DropdownTrigger(cx, y, contentW, &cfg->litMode,
-                                kLitModeNames, kLitModeCount, "Lit");
-                y += kRowH + 2.0f;
-                Slider(cx, y, contentW, &cfg->cameraOffset, -5.0f, 5.0f, "CamOff");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->pivotOffsetX, -1.0f, 1.0f, "PivotX");
-                y += kSliderH + 2.0f;
-                Slider(cx, y, contentW, &cfg->pivotOffsetY, -1.0f, 1.0f, "PivotY");
-                y += kSliderH + 2.0f;
-                DropdownTrigger(cx, y, contentW, &cfg->screenSpaceSizeEnabled,
-                                kBoolEnumNames, kBoolEnumCount, "ScrSize");
-                y += kRowH + 2.0f;
-                Slider(cx, y, contentW, &cfg->screenSpacePixelSize, 1.0f, 64.0f, "PxSize");
-                y += kSliderH + 2.0f;
-                DropdownTrigger(cx, y, contentW, &cfg->colorBySpeedEnabled,
-                                kBoolEnumNames, kBoolEnumCount, "ClrSpd");
-                y += kRowH + 2.0f;
-                Slider(cx, y, contentW, &cfg->emitterDuration, 0.0f, 30.0f, "Duration");
-                y += kSliderH + 2.0f;
-                {
-                    float fLoop = static_cast<float>(cfg->loopCount);
-                    if (Slider(cx, y, contentW, &fLoop, 0.0f, 100.0f, "Loops")) {
-                        cfg->loopCount = static_cast<uint32_t>(std::clamp(fLoop, 0.0f, 100.0f));
-                    }
+                // Summary text on the right side of the row
+                char summary[32];
+                mod.FormatSummary(summary, sizeof(summary));
+                if (summary[0] != '\0') {
+                    // Right-align the summary roughly
+                    const float sumX = cx + contentW - 8.0f - static_cast<float>(std::strlen(summary)) * 7.0f;
+                    m_textRenderer.AddText(m_font, summary, std::max(sumX, nameX + 80.0f),
+                                           y + 4.0f, kColorSummary);
                 }
-                y += kSliderH + 2.0f;
-                break;
+
+                // Expand indicator
+                if (isExpanded && !mod.params.empty()) {
+                    m_textRenderer.AddText(m_font, "\xE2\x96\xBC", cx + contentW - 16.0f, y + 4.0f, kColorAccent);
+                }
+
+                // Click name area to expand/collapse params (accordion)
+                const float nameHitW = contentW - kCheckboxSize - 20.0f;
+                if (HitTest(nameX, y, nameHitW, kModuleRowH) && m_mouseJustPressed) {
+                    m_expandedModuleIndex = isExpanded ? -1 : mi;
+                }
             }
-            default: break;
+            y += kModuleRowH + 1.0f;
+
+            // ── Expanded module parameters ───────────────────────────
+            if (isExpanded) {
+                for (auto& param : mod.params) {
+                    if (y + kSliderH + 2.0f <= contentTop || y >= contentBot) {
+                        y += kSliderH + 2.0f;
+                        continue;
+                    }
+
+                    const float px = cx + kModuleIndent;
+                    const float pw = contentW - kModuleIndent - 4.0f;
+
+                    switch (param.type) {
+                        case VfxModuleParam::Float:
+                            if (param.fPtr != nullptr) {
+                                Slider(px, y, pw, param.fPtr, param.min, param.max, param.label);
+                            }
+                            break;
+                        case VfxModuleParam::Uint:
+                            if (param.uPtr != nullptr) {
+                                // Render uint as float slider, write back clamped
+                                float fVal = static_cast<float>(*param.uPtr);
+                                if (Slider(px, y, pw, &fVal, param.min, param.max, param.label)) {
+                                    *param.uPtr = static_cast<uint32_t>(
+                                        std::clamp(fVal, param.min, param.max));
+                                }
+                            }
+                            break;
+                        case VfxModuleParam::Bool:
+                            if (param.uPtr != nullptr) {
+                                bool bVal = (*param.uPtr != 0);
+                                if (Toggle(px, y, &bVal, param.label)) {
+                                    *param.uPtr = bVal ? 1u : 0u;
+                                }
+                            }
+                            break;
+                        case VfxModuleParam::Enum:
+                            if (param.uPtr != nullptr && param.enumNames != nullptr) {
+                                DropdownTrigger(px, y, pw, param.uPtr,
+                                                param.enumNames, param.enumCount, param.label);
+                            }
+                            break;
+                    }
+                    y += kSliderH + 2.0f;
+                }
+            }
         }
     }
 }
@@ -968,6 +1326,8 @@ void VFXEditorUI::BuildLeftPanel(VFXEmitterConfig* cfg, float* spawnRate, uint32
 // ─────────────────────────────────────────────────────────────────────────────
 
 void VFXEditorUI::BuildRightPanel(VFXEmitterConfig* cfg) {
+    (void)cfg;
+
     const float sw = static_cast<float>(m_screenW);
     const float panelX = sw - kRightPanelW;
     const float panelY = kMenuBarH;
@@ -980,7 +1340,6 @@ void VFXEditorUI::BuildRightPanel(VFXEmitterConfig* cfg) {
 
     // Title bar
     m_textRenderer.AddRect(panelX, panelY, kRightPanelW, kCatHeaderH, kColorBarBg);
-    m_textRenderer.AddText(m_font, "Modules", panelX + 8.0f, panelY + 5.0f, kColorText);
 
     // Close button [X]
     {
@@ -992,57 +1351,70 @@ void VFXEditorUI::BuildRightPanel(VFXEmitterConfig* cfg) {
     }
 
     float y = panelY + kCatHeaderH + kPanelPadY;
+    const float contentBot = static_cast<float>(m_screenH) - kToolbarH;
 
-    // Module rows — each is a toggle + label + optional inline param
-    struct ModuleDef {
-        const char* name;
-        float* strengthPtr;   ///< Float param to show, or nullptr.
-        float  minVal;
-        float  maxVal;
-    };
+    // Show expanded module's parameters as large sliders, or a hint
+    if (m_expandedModuleIndex < 0 ||
+        m_expandedModuleIndex >= static_cast<int>(m_modules.size())) {
+        m_textRenderer.AddText(m_font, "Module Detail", panelX + 8.0f, panelY + 5.0f, kColorText);
+        m_textRenderer.AddText(m_font, "Select a module", cx, y + 4.0f, kColorTextDim);
+        return;
+    }
 
-    // We use the config pointers directly for inline editing
-    const ModuleDef modules[] = {
-        {"Gravity Z",        &cfg->gravity[2],                -100.0f, 100.0f},
-        {"Damping",          &cfg->damping,                   0.0f,    2.0f},
-        {"Curl Noise",       &cfg->curlStrength,              0.0f,    10.0f},
-        {"Vortex Swirl",     &cfg->vortexTangentialStrength,  -20.0f,  20.0f},
-        {"Vortex Radial",    &cfg->vortexRadialStrength,      -20.0f,  20.0f},
-        {"Wind",             &cfg->windStrength,              0.0f,    50.0f},
-        {"Restitution",      &cfg->restitution,               0.0f,    1.0f},
-        {"Emissive",         &cfg->emissiveIntensity,         0.0f,    20.0f},
-        {"Soft Fade",        &cfg->softFadeDistance,           0.0f,    5.0f},
-        {"Rotation Rate",    &cfg->rotationRate,              -20.0f,  20.0f},
-        {"Rot Min",          &cfg->initialRotationMin,         0.0f,   6.284f},
-        {"Rot Max",          &cfg->initialRotationMax,         0.0f,   6.284f},
-        {"Vel Inherit",      &cfg->velocityInheritance,        0.0f,   1.0f},
-        {"Accel X",          &cfg->accelX,                   -50.0f,  50.0f},
-        {"Accel Y",          &cfg->accelY,                   -50.0f,  50.0f},
-        {"Accel Z",          &cfg->accelZ,                   -50.0f,  50.0f},
-        {"Rot Life Start",   &cfg->rotationOverLifeStart,    -20.0f,  20.0f},
-        {"Rot Life End",     &cfg->rotationOverLifeEnd,      -20.0f,  20.0f},
-        {"Drag",             &cfg->dragCoefficient,           0.0f,   10.0f},
-        {"Camera Offset",    &cfg->cameraOffset,             -5.0f,   5.0f},
-        {"Pivot X",          &cfg->pivotOffsetX,             -1.0f,   1.0f},
-        {"Pivot Y",          &cfg->pivotOffsetY,             -1.0f,   1.0f},
-        {"Screen Px Size",   &cfg->screenSpacePixelSize,      1.0f,  64.0f},
-        {"Emitter Dur",      &cfg->emitterDuration,           0.0f,  30.0f},
-    };
-    constexpr int kModuleCount = 24;
+    auto& mod = m_modules[m_expandedModuleIndex];
 
-    for (int i = 0; i < kModuleCount; ++i) {
-        if (y > static_cast<float>(m_screenH) - kToolbarH - kRowH) break;
+    // Title shows the module name
+    char title[64];
+    std::snprintf(title, sizeof(title), "%s", mod.name);
+    m_textRenderer.AddText(m_font, title, panelX + 8.0f, panelY + 5.0f, kColorText);
 
-        // Module name label
-        m_textRenderer.AddText(m_font, modules[i].name, cx, y + 3.0f, kColorText);
+    // Active state indicator
+    const bool isActive = mod.IsActive();
+    const Vec4 statusColor = isActive ? kColorCheckOn : kColorCheckOff;
+    m_textRenderer.AddRect(cx, y, 8.0f, 8.0f, statusColor);
+    m_textRenderer.AddText(m_font, isActive ? "Active" : "Inactive",
+                           cx + 14.0f, y, isActive ? kColorText : kColorTextDim);
+    y += kRowH + 4.0f;
+
+    // Render all parameters as full-width sliders
+    for (auto& param : mod.params) {
+        if (y + kSliderH + 6.0f > contentBot) break;
+
+        // Parameter label
+        m_textRenderer.AddText(m_font, param.label, cx, y + 2.0f, kColorText);
         y += kRowH;
 
-        // Inline slider for the strength parameter
-        if (modules[i].strengthPtr != nullptr) {
-            Slider(cx, y, contentW, modules[i].strengthPtr,
-                   modules[i].minVal, modules[i].maxVal, "");
-            y += kSliderH + 4.0f;
+        switch (param.type) {
+            case VfxModuleParam::Float:
+                if (param.fPtr != nullptr) {
+                    Slider(cx, y, contentW, param.fPtr, param.min, param.max, "");
+                }
+                break;
+            case VfxModuleParam::Uint:
+                if (param.uPtr != nullptr) {
+                    float fVal = static_cast<float>(*param.uPtr);
+                    if (Slider(cx, y, contentW, &fVal, param.min, param.max, "")) {
+                        *param.uPtr = static_cast<uint32_t>(
+                            std::clamp(fVal, param.min, param.max));
+                    }
+                }
+                break;
+            case VfxModuleParam::Bool:
+                if (param.uPtr != nullptr) {
+                    bool bVal = (*param.uPtr != 0);
+                    if (Toggle(cx, y, &bVal, param.label)) {
+                        *param.uPtr = bVal ? 1u : 0u;
+                    }
+                }
+                break;
+            case VfxModuleParam::Enum:
+                if (param.uPtr != nullptr && param.enumNames != nullptr) {
+                    DropdownTrigger(cx, y, contentW, param.uPtr,
+                                    param.enumNames, param.enumCount, "");
+                }
+                break;
         }
+        y += kSliderH + 6.0f;
     }
 }
 

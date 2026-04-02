@@ -135,6 +135,55 @@ public:
     std::function<void(int)> onLoadPreset; ///< Called with preset index when a preset is selected.
     std::function<void(int)> onSelectEmitter; ///< Called with emitter index when an emitter tab is clicked.
 
+    // ── Stage Tree Data Model ────────────────────────────────────────────
+
+    /// Stages in the Niagara-style module stack. Controls grouping and
+    /// visual hierarchy in the left panel tree view.
+    enum class VfxStage : uint8_t {
+        EmitterSpawn,    ///< Emitter-level spawn settings (burst, rate).
+        EmitterUpdate,   ///< Emitter-level update (lifecycle, duration).
+        ParticleSpawn,   ///< Per-particle initialization (position, velocity, size).
+        ParticleUpdate,  ///< Per-particle simulation (forces, collision).
+        Render,          ///< Visual output (billboard, color, size curves).
+        Count
+    };
+    static constexpr int kStageCount = static_cast<int>(VfxStage::Count);
+
+    /// A single editable parameter inside a module. Holds a typed pointer
+    /// directly into the live VFXEmitterConfig so changes take effect immediately.
+    struct VfxModuleParam {
+        const char* label = nullptr;
+        enum Type : uint8_t { Float, Uint, Bool, Enum } type = Float;
+        float*    fPtr      = nullptr;  ///< For Float params.
+        uint32_t* uPtr      = nullptr;  ///< For Uint/Bool/Enum params.
+        float     min       = 0.0f;
+        float     max       = 1.0f;
+        float     step      = 0.01f;
+        const char* const* enumNames = nullptr; ///< For Enum params.
+        uint32_t  enumCount = 0;                ///< For Enum params.
+    };
+
+    /// A module groups related parameters under a stage. The `strengthPtr`
+    /// is the "main enable" value — when zero the module is visually grayed
+    /// out and can be toggled off/on via the checkbox. Modules with no
+    /// strengthPtr (nullptr) are always considered active.
+    struct VfxModuleDef {
+        const char* name     = nullptr;
+        VfxStage    stage    = VfxStage::ParticleUpdate;
+        float*      strengthPtr = nullptr;  ///< Float enable (0=off). Null=always on.
+        uint32_t*   enablePtr   = nullptr;  ///< Uint enable flag (0=off). Null=n/a.
+        float       savedStrength = 0.0f;   ///< Saved value for toggle restore (float path).
+        uint32_t    savedEnable   = 0;      ///< Saved value for toggle restore (uint path).
+        std::vector<VfxModuleParam> params;
+
+        /// Returns a short summary string for the module row (e.g., "Z:-3.0").
+        /// Writes into the provided buffer.
+        void FormatSummary(char* buf, int bufSize) const;
+
+        /// Returns true when the module is considered active.
+        [[nodiscard]] bool IsActive() const;
+    };
+
 private:
     // ── GPU resources ────────────────────────────────────────────────────
     TextRenderer m_textRenderer;
@@ -154,6 +203,7 @@ private:
     bool  m_mouseJustReleased = false;
     bool  m_wantsInput = false;
     bool  m_ctrlDown = false; ///< Ctrl held — enables fine-step slider drag (0.1x delta).
+    float m_scrollDelta = 0.0f; ///< Mouse wheel delta this frame (positive=up).
 
     // ── Menu bar state ───────────────────────────────────────────────────
     static constexpr int kMenuCount = 5;
@@ -163,6 +213,14 @@ private:
     bool m_leftPanelOpen = false;
     bool m_rightPanelOpen = false;
     int  m_expandedCategory = 0; ///< Expanded category index in left panel.
+
+    // ── Stage tree state ─────────────────────────────────────────────────
+    std::vector<VfxModuleDef> m_modules;           ///< All modules, grouped by stage.
+    bool  m_stageExpanded[kStageCount] = {true, true, true, true, true}; ///< Per-stage expand state.
+    int   m_expandedModuleIndex = -1;              ///< Which module shows full params (accordion).
+    float m_leftPanelScroll = 0.0f;                ///< Scroll offset for left panel content.
+    float m_leftPanelContentH = 0.0f;              ///< Total content height (computed each frame).
+    VFXEmitterConfig* m_lastConfig = nullptr;       ///< Tracks config pointer for rebuild.
 
     // ── Slider drag state ────────────────────────────────────────────────
     float* m_dragSliderPtr = nullptr; ///< Pointer to the float being dragged, or nullptr.
@@ -199,6 +257,13 @@ private:
     static constexpr Vec4 kColorMenuHover = {0.30f, 0.30f, 0.40f, 1.00f};
     static constexpr Vec4 kColorMenuActive= {0.25f, 0.40f, 0.70f, 1.00f};
     static constexpr Vec4 kColorDropBg    = {0.14f, 0.14f, 0.18f, 1.00f}; // Fully opaque — must cover panels beneath
+    static constexpr Vec4 kColorStageHdr  = {0.10f, 0.10f, 0.14f, 1.00f}; ///< Stage header row background.
+    static constexpr Vec4 kColorModuleRow = {0.16f, 0.16f, 0.21f, 1.00f}; ///< Module row background.
+    static constexpr Vec4 kColorModuleExp = {0.19f, 0.22f, 0.30f, 1.00f}; ///< Expanded module highlight.
+    static constexpr Vec4 kColorCheckOn   = {0.25f, 0.65f, 0.35f, 1.00f}; ///< Green checkbox fill (active).
+    static constexpr Vec4 kColorCheckOff  = {0.35f, 0.35f, 0.40f, 1.00f}; ///< Gray checkbox border (inactive).
+    static constexpr Vec4 kColorTextDim   = {0.50f, 0.50f, 0.55f, 1.00f}; ///< Dimmed text for disabled modules.
+    static constexpr Vec4 kColorSummary   = {0.65f, 0.70f, 0.80f, 1.00f}; ///< Summary value text color.
 
     // ── Layout constants ─────────────────────────────────────────────────
     static constexpr float kMenuBarH       = 30.0f;
@@ -216,6 +281,11 @@ private:
     static constexpr float kPanelPadX     = 6.0f;
     static constexpr float kPanelPadY     = 4.0f;
     static constexpr float kDropItemH     = 22.0f;
+    static constexpr float kStageHeaderH  = 26.0f;  ///< Stage header row height.
+    static constexpr float kModuleRowH    = 22.0f;  ///< Module row height (checkbox + name + summary).
+    static constexpr float kCheckboxSize  = 14.0f;  ///< Module checkbox size (pixels).
+    static constexpr float kModuleIndent  = 12.0f;  ///< Param indent under expanded module.
+    static constexpr float kScrollSpeed   = 30.0f;  ///< Pixels per scroll wheel notch.
 
     // ── Widget helpers ───────────────────────────────────────────────────
 
@@ -248,10 +318,17 @@ private:
     /// Builds the bottom toolbar with action buttons and preset navigation.
     void BuildToolbar(bool* burstMode, bool* vfxEnabled);
 
-    /// Builds the left panel with emitter property sliders/toggles.
-    void BuildLeftPanel(VFXEmitterConfig* config, float* spawnRate, uint32_t* burstCount);
+    /// Populates m_modules from the given VFXEmitterConfig pointer.
+    /// Called once on init and whenever the active emitter changes.
+    void BuildModuleList(VFXEmitterConfig* config, float* spawnRate, uint32_t* burstCount);
 
-    /// Builds the right panel with module toggles and inline params.
+    /// Builds the left panel as a Niagara-style stage tree with collapsible
+    /// stages and toggleable modules. Replaces the old flat BuildLeftPanel.
+    void BuildStageTree(VFXEmitterConfig* config, float* spawnRate, uint32_t* burstCount);
+
+    /// Builds the right panel showing expanded module detail sliders.
+    /// When a module is expanded in the left tree, right panel shows its
+    /// full parameter set as large sliders. Otherwise shows "Select a module".
     void BuildRightPanel(VFXEmitterConfig* config);
 
     /// Renders an open dropdown overlay (drawn last, on top of everything).
