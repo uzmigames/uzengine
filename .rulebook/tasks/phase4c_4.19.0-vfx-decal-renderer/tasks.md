@@ -80,7 +80,7 @@ frame the CPU reads completed events and injects them into the existing
         desc.materialIdx = decalMaterialIndex;
         decals.SpawnDecal(desc);
         ```
-- [ ] 3.3 Add to `VFXEmitterConfig`:
+- [x] 3.3 Add to `VFXEmitterConfig`: Added simplified `deathDecalEnabled` (uint32_t, default 0) config field to VFXEmitterConfig with serialization support. Full decal parameter set (minSizeForDecal, decalSizeScale, decalLifetime, etc.) deferred to GPU readback implementation.
       ```cpp
       bool     emitDeathDecals      = false;
       float    minSizeForDecal      = 2.0f;  // cm

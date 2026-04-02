@@ -206,7 +206,13 @@ bool VFXPresetSerializer::Save(const VFXEmitterConfig& c,
     wu("terrainCollisionEnabled",  c.terrainCollisionEnabled);
     wf("terrainAmplitude",         c.terrainAmplitude);
     wf("terrainFrequency",         c.terrainFrequency);
-    wf("terrainBaseHeight",        c.terrainBaseHeight, /*last=*/true);
+    wf("terrainBaseHeight",        c.terrainBaseHeight);
+    // Death decal spawn (Task 4.19.0)
+    wu("deathDecalEnabled",         c.deathDecalEnabled);
+    // Render target feedback (Task 4.22.0)
+    wu("renderTargetFeedbackEnabled", c.renderTargetFeedbackEnabled);
+    // Depth buffer collision (Task 4.23.0)
+    wu("depthCollisionEnabled",     c.depthCollisionEnabled, /*last=*/true);
 
     f << "\n}\n";
     f.flush();
@@ -478,6 +484,12 @@ bool VFXPresetSerializer::Load(const std::string& filePath,
     c.terrainAmplitude         = ParseFloat(src, "terrainAmplitude",         c.terrainAmplitude);
     c.terrainFrequency         = ParseFloat(src, "terrainFrequency",         c.terrainFrequency);
     c.terrainBaseHeight        = ParseFloat(src, "terrainBaseHeight",        c.terrainBaseHeight);
+    // Death decal spawn (Task 4.19.0)
+    c.deathDecalEnabled              = ParseUint(src,  "deathDecalEnabled",              c.deathDecalEnabled);
+    // Render target feedback (Task 4.22.0)
+    c.renderTargetFeedbackEnabled    = ParseUint(src,  "renderTargetFeedbackEnabled",    c.renderTargetFeedbackEnabled);
+    // Depth buffer collision (Task 4.23.0)
+    c.depthCollisionEnabled          = ParseUint(src,  "depthCollisionEnabled",          c.depthCollisionEnabled);
 
     return true;
 }

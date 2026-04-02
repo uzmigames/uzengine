@@ -263,6 +263,32 @@ struct VFXEmitterConfig {
     float    terrainAmplitude        = 2.0f; ///< Max height variation above/below terrainBaseHeight (world units).
     float    terrainFrequency        = 0.1f; ///< Spatial frequency of hills. Lower = broader hills.
     float    terrainBaseHeight       = 0.0f; ///< Base terrain Z level (world units). Hills peak above this.
+    // ── Death decal spawn (Task 4.19.0) ─────────────────────────────────────
+    /// When enabled, particle death events trigger decal placement on surfaces.
+    /// Currently simplified: decals are spawned at the emitter position with
+    /// random offsets when bursts complete. Full GPU readback of per-particle
+    /// death positions is planned for a future iteration.
+    ///
+    /// @ref Lagarde & de Rousiers 2014 "Moving Frostbite to PBR" — deferred decal projection
+    uint32_t deathDecalEnabled       = 0;    ///< 0=no decals, 1=spawn decals on particle death events.
+    // ── Render target feedback (Task 4.22.0) ────────────────────────────────
+    /// Infrastructure flag for persistent trail accumulation into a render target.
+    /// When enabled, particle positions would be accumulated into a persistent
+    /// render target each frame, allowing trail/heat-map effects that outlive
+    /// individual particles. Rendering deferred — requires dedicated RT allocation
+    /// and a separate accumulation compute pass.
+    ///
+    /// @ref Tchou 2017 "Rendering Naughty Dog's Uncharted 4" — persistent particle RT feedback
+    uint32_t renderTargetFeedbackEnabled = 0; ///< 0=disabled (default), 1=persistent trail accumulation (future).
+    // ── Depth buffer collision (Task 4.23.0) ────────────────────────────────
+    /// Infrastructure flag for depth buffer ray-surface intersection collision.
+    /// When enabled, particles would test against the scene depth buffer for
+    /// arbitrary geometry collision instead of only the Z=0 ground plane or
+    /// procedural terrain. Requires wiring the depth buffer SRV into the
+    /// update compute shader and performing screen-space reprojection.
+    ///
+    /// @ref Green 2010 "Screen-Space Fluid Rendering for Games" — depth buffer particle collision
+    uint32_t depthCollisionEnabled   = 0;    ///< 0=disabled (default), 1=depth buffer collision (future).
 };
 
 /// Named emitter preset with a spawn rate.
