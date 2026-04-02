@@ -16,6 +16,7 @@
 /// Not thread-safe. All methods must be called on the main/render thread.
 
 #include "engine/vfx/modules/vfx_module.h"
+#include "engine/rhi/rhi_types.h"
 
 #include <cstdint>
 #include <memory>
@@ -62,6 +63,12 @@ struct EmitterModuleStack {
 
     /// Cache key for the current module combination (0 = not composed yet).
     uint64_t composedCacheKey = 0;
+
+    /// Compiled compute PSO for the composed update shader (invalid = not compiled).
+    RHIPipelineHandle composedUpdatePSO;
+
+    /// Compiled compute PSO for the composed spawn shader (invalid = not compiled).
+    RHIPipelineHandle composedSpawnPSO;
 
     /// Whether the composed shaders need recomposition (modules changed).
     bool dirty = true;

@@ -8,6 +8,7 @@
 #include "render_graph_builder.h"
 #include "render_graph_pass.h"
 #include "engine/rhi/rhi.h"
+#include "engine/shader/shader_compiler.h"
 #include "engine/vfx/core/gpu_particle_buffer.h"
 #include "engine/vfx/modules/emitter_module_stack.h"
 #include "engine/vfx/modules/module_compositor.h"
@@ -309,8 +310,64 @@ static void DispatchIndirectArgs(IRHICommandList* cmd,
 // ComposeEmitterShaders -- module composition integration
 // ---------------------------------------------------------------------------
 
+/// Compiles an HLSL source string into a compute PSO via DXC runtime compilation.
+///
+/// # Returns
+/// Valid pipeline handle on success, invalid handle on failure (logged).
+static RHIPipelineHandle CompileComposedCS(
+    IRHIDevice* device, ShaderCompiler& compiler,
+    const std::string& hlslSource, const char* debugName)
+{
+    if (hlslSource.empty()) return {};
+
+    ShaderCompileDesc compileDesc;
+    compileDesc.source = hlslSource;
+    compileDesc.entryPoint = "main";
+    compileDesc.sourceName = debugName;
+    compileDesc.stage = ShaderStageCompile::Compute;
+    compileDesc.model = ShaderModelCompile::SM6_6;
+    compileDesc.output = ShaderOutputFormat::DXIL;
+
+    auto result = compiler.Compile(compileDesc);
+    if (!result.success) {
+        UZ_LOG(VFX, Error,
+               "CompileComposedCS: DXC compilation failed for '{}': {}",
+               debugName, result.errors);
+        return {};
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode = result.bytecode.data();
+    shaderDesc.bytecodeSize = result.bytecode.size();
+    shaderDesc.stage = RHIShaderStage::Compute;
+    shaderDesc.entryPoint = "main";
+    shaderDesc.debugName = debugName;
+
+    auto shaderHandle = device->CreateShader(shaderDesc);
+    if (!shaderHandle.IsValid()) {
+        UZ_LOG(VFX, Error, "CompileComposedCS: CreateShader failed for '{}'", debugName);
+        return {};
+    }
+
+    RHIComputePipelineDesc psoDesc{};
+    psoDesc.computeShader = shaderHandle;
+    psoDesc.debugName = debugName;
+
+    auto pso = device->CreateComputePipeline(psoDesc);
+    if (!pso.IsValid()) {
+        UZ_LOG(VFX, Error, "CompileComposedCS: CreateComputePipeline failed for '{}'", debugName);
+        return {};
+    }
+
+    UZ_LOG(VFX, Info, "CompileComposedCS: compiled '{}' ({} bytes DXIL)",
+           debugName, result.bytecode.size());
+    return pso;
+}
+
 bool ComposeEmitterShaders(EmitterModuleStack& stack,
-                           const ModuleCompositor& compositor)
+                           const ModuleCompositor& compositor,
+                           IRHIDevice* device,
+                           ShaderCompiler& compiler)
 {
     // No modules means fallback to hardcoded shaders -- not an error.
     if (!stack.HasModules()) {
@@ -352,13 +409,18 @@ bool ComposeEmitterShaders(EmitterModuleStack& stack,
            stack.composedSpawnHLSL.size(),
            stack.composedCacheKey);
 
-    // Composed HLSL runtime compilation is tracked in task 3.61.0.
-    // When DXC runtime is available, compile composedUpdateHLSL/composedSpawnHLSL
-    // into compute PSOs and cache them by composedCacheKey. Until then, the pass
-    // uses the hardcoded pipelines from ParticleSimulationPassDesc.
-    UZ_LOG(VFX, Info,
-           "ComposeEmitterShaders: HLSL generated but runtime PSO compilation "
-           "not yet available (task 3.61.0). Using hardcoded pipelines.");
+    // Compile composed HLSL into compute PSOs via DXC runtime compilation.
+    if (!stack.composedUpdateHLSL.empty()) {
+        stack.composedUpdatePSO = CompileComposedCS(
+            device, compiler, stack.composedUpdateHLSL,
+            "VFX_ComposedUpdate");
+    }
+
+    if (!stack.composedSpawnHLSL.empty()) {
+        stack.composedSpawnPSO = CompileComposedCS(
+            device, compiler, stack.composedSpawnHLSL,
+            "VFX_ComposedSpawn");
+    }
 
     return true;
 }
