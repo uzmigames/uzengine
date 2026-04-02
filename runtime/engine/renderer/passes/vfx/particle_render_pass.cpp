@@ -106,12 +106,15 @@ static void DrawEmitterBillboards(IRHICommandList* cmd,
     // + sprite texture + scene depth texture.
     // Bindless: SRV accessed via ResourceDescriptorHeap[index], no descriptor table needed.
 
-    // Draw particles using CPU-side alive count estimate.
-    // TODO: switch to GPU-driven DrawIndirect for exact count.
-    const uint32_t vertexCount = emitter.cpuAliveCount * 6;
-    if (vertexCount > 0) {
-        cmd->Draw(vertexCount, 1, 0, 0);
-    }
+    // Skip draw — the billboard VS reads particle positions from structured buffers
+    // via ResourceDescriptorHeap[index], but the spawn CS CB layout doesn't match
+    // the HLSL layout byte-for-byte yet (RC1 partial fix). Drawing with garbage
+    // positions causes device removed. Disabled until CB alignment is verified.
+    //
+    // const uint32_t vertexCount = emitter.cpuAliveCount * 6;
+    // if (vertexCount > 0) {
+    //     cmd->Draw(vertexCount, 1, 0, 0);
+    // }
 }
 
 // ---------------------------------------------------------------------------
