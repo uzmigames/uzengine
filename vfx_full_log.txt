@@ -1,0 +1,528 @@
+[2026-04-02 10:49:09.146] [Engine] [info] UzEngine Runtime starting
+[2026-04-02 10:49:09.147] [Config] [debug] CLI override: project=e:/UzEngine/sample/projects/vfx_showcase.uzproject
+[2026-04-02 10:49:09.147] [Config] [debug] CLI override: editor=true
+[2026-04-02 10:49:09.147] [Config] [debug] CLI override: frames=10
+[2026-04-02 10:49:09.147] [Engine] [info] Loading project: e:/UzEngine/sample/projects/vfx_showcase.uzproject
+[2026-04-02 10:49:09.147] [Config] [info] Loaded config: e:/UzEngine/sample/projects/vfx_showcase.uzproject
+[2026-04-02 10:49:09.147] [Config] [debug] CLI override: project=e:/UzEngine/sample/projects/vfx_showcase.uzproject
+[2026-04-02 10:49:09.147] [Config] [debug] CLI override: editor=true
+[2026-04-02 10:49:09.247] [Config] [debug] CLI override: frames=10
+[2026-04-02 10:49:09.247] [RHI] [info] Resolved RHI config: backend=DX12, shader_model=auto, validation=false, breadcrumbs=false, adapter=0
+[2026-04-02 10:49:09.248] [Config] [info] LoadProject: loaded 'VFX Showcase' (version='1.0', defaultScene='scenes/vfx_showcase.uzscene', backend='dx12')
+[2026-04-02 10:49:09.248] [Engine] [info] RHI backend:       DX12
+[2026-04-02 10:49:09.248] [Engine] [info] Shader model:      auto
+[2026-04-02 10:49:09.248] [Engine] [info] Validation:        off
+[2026-04-02 10:49:09.248] [Engine] [info] GPU validation:    off
+[2026-04-02 10:49:09.248] [Engine] [info] Breadcrumbs:       off
+[2026-04-02 10:49:09.248] [Engine] [info] Adapter index:     0
+[2026-04-02 10:49:09.248] [Engine] [info] Headless:          no
+[2026-04-02 10:49:09.248] [Engine] [info] Frame limit:       10
+[2026-04-02 10:49:09.248] [Engine] [info] Window size:       1920x1080
+[2026-04-02 10:49:09.549] [Window] [info] Window created: 1920x1080 (windowed)
+[2026-04-02 10:49:09.553] [Window] [info] Application focus: gained
+[2026-04-02 10:49:09.576] [RHI] [info] Agility SDK loaded via CreateDeviceFactory (version=619, path='E:\UzEngine\runtime\build\bin\')
+[2026-04-02 10:49:09.576] [RHI] [info] Loaded D3D12Core.dll from 'E:\UzEngine\runtime\build\bin\D3D12Core.dll'
+[2026-04-02 10:49:09.577] [RHI] [info]   GPU [0]: 'NVIDIA GeForce RTX 4090' VRAM=24138 MB
+[2026-04-02 10:49:09.578] [RHI] [info]   GPU [1]: 'Microsoft Basic Render Driver' VRAM=0 MB (SOFTWARE)
+[2026-04-02 10:49:09.578] [RHI] [info] Selected adapter [0]: 'NVIDIA GeForce RTX 4090'
+[2026-04-02 10:49:09.874] [RHI] [info] D3D12 device created at D3D_FEATURE_LEVEL_12_2 (via Agility SDK factory)
+[2026-04-02 10:49:09.874] [RHI] [info] Shader model negotiated: SM6.8 (binding tier=3, device max=0x68)
+[2026-04-02 10:49:09.874] [RHI] [info] Root signature version: 1.0 (forced — Agility SDK device factory mode)
+[2026-04-02 10:49:09.874] [RHI] [info] D3D12MA allocator created
+[2026-04-02 10:49:09.891] [RHI] [info] Descriptor heaps created: CBV_SRV_UAV=1000000, Sampler=2048, RTV=256, DSV=64
+[2026-04-02 10:49:09.943] [RHI] [info] Command queues created: Direct + Copy + Compute (with fences)
+[2026-04-02 10:49:09.943] [RHI] [info] Root signature created (SM6.6, serialized as v1.0, flags stripped)
+[2026-04-02 10:49:09.943] [RHI] [info] Created indirect command signatures (DrawIndexed + Dispatch)
+[2026-04-02 10:49:09.944] [RHI] [info] GPU profiler initialized: frequency=1000000000Hz, maxScopes=64/frame
+[2026-04-02 10:49:09.944] [RHI] [info] DX12Device initialized: adapter='NVIDIA GeForce RTX 4090', featureLevel=D3D_FEATURE_LEVEL_12_2, VRAM=23370MB (used 51MB)
+[2026-04-02 10:49:09.944] [RHI] [info] DXGI tearing (variable refresh rate) supported
+[2026-04-02 10:49:09.947] [RHI] [info] DX12SwapChain created: 1920x1080, 3 buffers, tearing=true
+[2026-04-02 10:49:09.947] [RHI] [info] Frame limiter: 500 FPS cap (2.00ms/frame)
+[2026-04-02 10:49:09.948] [RHI] [info] Allocated per-frame descriptor ring at heap index 0 (4096 descriptors/frame x 3 frames = 12288 total)
+[2026-04-02 10:49:09.948] [RHI] [info] DX12CommandList created, type=0
+[2026-04-02 10:49:09.948] [RHI] [trace] DX12Fence created
+[2026-04-02 10:49:09.948] [RHI] [trace] DX12Fence created
+[2026-04-02 10:49:09.948] [RHI] [trace] DX12Fence created
+[2026-04-02 10:49:09.948] [Asset] [debug] LooseFileVFS mounted: root='e:/UzEngine/sample/projects/../content/'
+[2026-04-02 10:49:09.948] [ECS] [trace] CreateEntity: id=0, generation=1
+[2026-04-02 10:49:09.948] [ECS] [trace] CreateEntity: id=1, generation=1
+[2026-04-02 10:49:09.948] [ECS] [trace] CreateEntity: id=2, generation=1
+[2026-04-02 10:49:09.949] [ECS] [trace] CreateEntity: id=3, generation=1
+[2026-04-02 10:49:09.949] [ECS] [trace] CreateEntity: id=4, generation=1
+[2026-04-02 10:49:09.949] [Scene] [info] LoadScene: 'scenes/vfx_showcase.uzscene': loaded 5 entities
+[2026-04-02 10:49:09.949] [Engine] [info] Loaded 5 entities from 'scenes/vfx_showcase.uzscene'
+[2026-04-02 10:49:09.949] [Scripting] [info] Lua sandbox applied - 11 globals removed
+[2026-04-02 10:49:09.949] [Scripting] [info] uz.scene API registered
+[2026-04-02 10:49:09.949] [Scripting] [info] uz.scene material/mesh API registered
+[2026-04-02 10:49:09.949] [Scripting] [info] uz.scene I/O API registered
+[2026-04-02 10:49:09.949] [Scripting] [info] uz.camera API registered
+[2026-04-02 10:49:09.949] [Scripting] [info] uz.input API registered
+[2026-04-02 10:49:09.949] [Scripting] [info] uz.renderer / uz.debug API registered
+[2026-04-02 10:49:09.949] [Scripting] [info] uz.cvar API registered
+[2026-04-02 10:49:09.949] [Scripting] [info] uz.mesh / uz.texture API registered
+[2026-04-02 10:49:09.949] [Scripting] [info] uz.pass_inspector API registered
+[2026-04-02 10:49:09.949] [Scripting] [info] uz.scene entity API registered
+[2026-04-02 10:49:09.949] [Scripting] [info] uz.scene light extended API registered
+[2026-04-02 10:49:09.949] [Scripting] [info] uz.scene light API registered
+[2026-04-02 10:49:09.949] [Scripting] [info] uz.scene fog API registered
+[2026-04-02 10:49:09.949] [Scripting] [info] uz.scene sky light API registered
+[2026-04-02 10:49:09.949] [Scripting] [info] uz.scene atmosphere API registered
+[2026-04-02 10:49:09.949] [Scripting] [info] uz.scene clouds API registered
+[2026-04-02 10:49:09.949] [Scripting] [info] uz.time API registered
+[2026-04-02 10:49:09.949] [Scripting] [info] uz.math API registered (Vec3 included)
+[2026-04-02 10:49:09.949] [Scripting] [info] uz.math Quat API registered (uz.Quat metatable installed)
+[2026-04-02 10:49:09.949] [Scripting] [info] uz.window API registered
+[2026-04-02 10:49:09.949] [Scripting] [info] uz.vfs API registered
+[2026-04-02 10:49:09.949] [Scripting] [info] uz.scene decal API registered (material-based)
+[2026-04-02 10:49:09.949] [Scripting] [info] uz.scene reflection probe API registered
+[2026-04-02 10:49:09.949] [Scripting] [info] uz.postprocess API registered
+[2026-04-02 10:49:09.949] [Scripting] [info] uz.editor API registered
+[2026-04-02 10:49:09.949] [Scripting] [info] LuaVM initialized (LuaJIT 2.1)
+[2026-04-02 10:49:09.949] [Scripting] [info] ScriptSystem initialized
+[2026-04-02 10:49:09.949] [Engine] [info] Lua scripting initialized
+[2026-04-02 10:49:09.949] [Engine] [info] QualityPresetManager: initialized with 7 groups, 5 levels
+[2026-04-02 10:49:09.949] [Input] [info] Input system initialized
+[2026-04-02 10:49:09.949] [Renderer] [info] ShaderCompiler: loading 'E:\UzEngine\runtime\build\bin\dxcompiler.dll'
+[2026-04-02 10:49:09.951] [Renderer] [info] ShaderCompiler: loaded 'E:\UzEngine\runtime\build\bin\dxcompiler.dll', version: 1.9
+[2026-04-02 10:49:09.951] [Renderer] [info] ShaderCompilerFXC: loading 'E:\UzEngine\runtime\build\bin\d3dcompiler_47.dll'
+[2026-04-02 10:49:09.952] [Renderer] [info] ShaderCompilerFXC: loaded 'E:\UzEngine\runtime\build\bin\d3dcompiler_47.dll' successfully
+[2026-04-02 10:49:09.952] [IO] [info] ShaderCache: directory 'E:\UzEngine\runtime\build\bin\cache\shaders'
+[2026-04-02 10:49:09.952] [IO] [info] ShaderPipeline: initialized (backend='dx12_sm68', cache='E:\UzEngine\runtime\build\bin\cache\shaders', bindless=true)
+[2026-04-02 10:49:09.952] [IO] [info] ShaderVFS: mount '/engine' → 'E:/UzEngine/runtime/build/bin/shaders/runtime'
+[2026-04-02 10:49:09.952] [Renderer] [info] ShaderManager initialized: bindless=true, backend='dx12_sm68'
+[2026-04-02 10:49:09.952] [RHI] [info] PsoCache initialized with capacity 256
+[2026-04-02 10:49:09.953] [Renderer] [info] PipelineLibrary initialized (PSOs will be created lazily)
+[2026-04-02 10:49:09.953] [Renderer] [warning] SceneRenderer: WarmupAll DISABLED for shader debugging
+[2026-04-02 10:49:09.955] [RHI] [debug] CreateBuffer: size=8388608, memory=1, srv=4294967295, uav=4294967295 (name='CBRingBuffer')
+[2026-04-02 10:49:09.955] [Renderer] [info] CBRingAllocator: 4 frames x 2097152 bytes = 8388608 total
+[2026-04-02 10:49:09.956] [IO] [debug] ShaderCache: hit 56c0b90d994987c7 (3092 bytes)
+[2026-04-02 10:49:09.956] [IO] [debug] ShaderCache: hit b156a45222c784c2 (6448 bytes)
+[2026-04-02 10:49:09.956] [RHI] [debug] CreateShader: stage=0, size=3092 (name='grid_vs')
+[2026-04-02 10:49:09.956] [RHI] [debug] CreateShader: stage=1, size=6448 (name='grid_ps')
+[2026-04-02 10:49:09.957] [RHI] [info] Graphics pipeline created (name='EditorGridPipeline')
+[2026-04-02 10:49:09.958] [RHI] [info] Graphics pipeline created (name='EditorGridPipeline_NoDepth')
+[2026-04-02 10:49:09.958] [EditorGrid] [info] Editor grid initialized (spacing=100, major=10, fade=5000)
+[2026-04-02 10:49:09.958] [IO] [debug] ShaderCache: hit ccf562665d71e3c1 (6548 bytes)
+[2026-04-02 10:49:09.958] [IO] [debug] ShaderCache: hit 779cd6c789ddf115 (2728 bytes)
+[2026-04-02 10:49:09.958] [IO] [debug] ShaderCache: hit 014bef85dd256543 (3100 bytes)
+[2026-04-02 10:49:09.958] [IO] [debug] ShaderCache: hit f1e7e697f66bb90e (5512 bytes)
+[2026-04-02 10:49:09.958] [RHI] [debug] CreateShader: stage=0, size=6548 (name='outline_mask_vs')
+[2026-04-02 10:49:09.958] [RHI] [debug] CreateShader: stage=1, size=2728 (name='outline_mask_ps')
+[2026-04-02 10:49:09.958] [RHI] [debug] CreateShader: stage=0, size=3100 (name='outline_detect_vs')
+[2026-04-02 10:49:09.958] [RHI] [debug] CreateShader: stage=1, size=5512 (name='outline_detect_ps')
+[2026-04-02 10:49:09.959] [RHI] [info] Graphics pipeline created (name='OutlineMaskPipeline')
+[2026-04-02 10:49:09.960] [RHI] [info] Graphics pipeline created (name='OutlineDetectPipeline')
+[2026-04-02 10:49:09.961] [RHI] [debug] CreateTexture: 1920x1080 fmt=1, srv=12288, rtv=3, dsv=4294967295 (name='OutlineMask')
+[2026-04-02 10:49:09.961] [OutlinePass] [info] Editor outline pass initialized (1920x1080, color=(1.00,0.55,0.00), thickness=2)
+[2026-04-02 10:49:09.961] [IO] [debug] ShaderCache: hit 8cd421f4118585e7 (5472 bytes)
+[2026-04-02 10:49:09.961] [IO] [debug] ShaderCache: hit b359d135b88ba01a (3612 bytes)
+[2026-04-02 10:49:09.962] [RHI] [debug] CreateShader: stage=0, size=5472 (name='gizmo_vs')
+[2026-04-02 10:49:09.962] [RHI] [debug] CreateShader: stage=1, size=3612 (name='gizmo_ps')
+[2026-04-02 10:49:09.963] [RHI] [info] Graphics pipeline created (name='GizmoTrianglePipeline')
+[2026-04-02 10:49:09.963] [RHI] [debug] CreateBuffer: size=11988, memory=1, srv=12289, uav=4294967295 (name='GizmoTranslateTriVB')
+[2026-04-02 10:49:09.963] [RHI] [debug] CreateBuffer: size=1548, memory=1, srv=4294967295, uav=4294967295 (name='GizmoTranslateTriIB')
+[2026-04-02 10:49:09.963] [RHI] [debug] CreateBuffer: size=28080, memory=1, srv=12290, uav=4294967295 (name='GizmoRotateTriVB')
+[2026-04-02 10:49:09.964] [RHI] [debug] CreateBuffer: size=4608, memory=1, srv=4294967295, uav=4294967295 (name='GizmoRotateTriIB')
+[2026-04-02 10:49:09.964] [RHI] [debug] CreateBuffer: size=8856, memory=1, srv=12291, uav=4294967295 (name='GizmoScaleTriVB')
+[2026-04-02 10:49:09.964] [RHI] [debug] CreateBuffer: size=1152, memory=1, srv=4294967295, uav=4294967295 (name='GizmoScaleTriIB')
+[2026-04-02 10:49:09.964] [Gizmo] [info] Gizmo renderer initialized
+[2026-04-02 10:49:09.966] [RHI] [debug] CreateTexture: 1920x1080 fmt=3, srv=12292, rtv=4, dsv=4294967295 (name='GBuffer_Albedo')
+[2026-04-02 10:49:09.966] [RHI] [debug] CreateTexture: 1920x1080 fmt=3, srv=12294, rtv=5, dsv=4294967295 (name='GBuffer_Normal')
+[2026-04-02 10:49:09.966] [RHI] [debug] CreateTexture: 1920x1080 fmt=26, srv=12296, rtv=4294967295, dsv=0 (name='GBuffer_Depth')
+[2026-04-02 10:49:09.969] [RHI] [debug] CreateTexture: 1920x1080 fmt=8, srv=12297, rtv=6, dsv=4294967295 (name='GBuffer_Velocity')
+[2026-04-02 10:49:09.970] [RHI] [debug] CreateTexture: 1920x1080 fmt=13, srv=12298, rtv=7, dsv=4294967295 (name='GBuffer_PositionWS')
+[2026-04-02 10:49:09.971] [RHI] [debug] CreateTexture: 1920x1080 fmt=9, srv=12299, rtv=8, dsv=4294967295 (name='GBuffer_Emissive')
+[2026-04-02 10:49:09.971] [Renderer] [info] GBuffer created: 1920x1080
+[2026-04-02 10:49:09.971] [RHI] [debug] CreateTexture: 1920x1080 fmt=3, srv=12300, rtv=9, dsv=4294967295 (name='DBuffer_A_AlbedoOpacity')
+[2026-04-02 10:49:09.971] [RHI] [debug] CreateTexture: 1920x1080 fmt=3, srv=12301, rtv=10, dsv=4294967295 (name='DBuffer_B_NormalBlend')
+[2026-04-02 10:49:09.971] [RHI] [debug] CreateTexture: 1920x1080 fmt=3, srv=12302, rtv=11, dsv=4294967295 (name='DBuffer_C_MaterialBlend')
+[2026-04-02 10:49:09.971] [Renderer] [info] SceneRenderer: DBuffer created (1920x1080, 3x RGBA8Unorm, SRV=12300/12301/12302)
+[2026-04-02 10:49:09.974] [RHI] [debug] CreateTexture: 1920x1080 fmt=9, srv=12303, rtv=12, dsv=4294967295 (name='HDR_SceneColor')
+[2026-04-02 10:49:09.974] [Renderer] [info] SceneRenderer: HDR scene color created (1920x1080, RGBA16F, SRV=12303)
+[2026-04-02 10:49:09.976] [RHI] [debug] CreateTexture: 4096x4096 fmt=26, srv=12304, rtv=4294967295, dsv=1 (name='ShadowAtlas')
+[2026-04-02 10:49:09.976] [Shadow] [info] ShadowAtlas: created 4096x4096 D32Float (srv=12304, cascades=4, grid=2x2)
+[2026-04-02 10:49:09.978] [RHI] [debug] CreateTexture: 4096x4096 fmt=26, srv=12305, rtv=4294967295, dsv=2 (name='LocalLightShadowAtlas')
+[2026-04-02 10:49:09.978] [Shadow] [info] LocalLightShadowAtlas: created 4096x4096 D32Float (srv=12305, tileSize=1024, maxTiles=16)
+[2026-04-02 10:49:09.978] [Shadow] [info] Shadow cache initialized: budget=150MB, enabled=true
+[2026-04-02 10:49:09.980] [RHI] [debug] CreateTexture: 4096x4096 fmt=26, srv=12306, rtv=4294967295, dsv=3 (name='StaticShadowAtlas')
+[2026-04-02 10:49:09.980] [Renderer] [info] SceneRenderer: Static shadow atlas created (4096x4096, D32F, SRV=12306)
+[2026-04-02 10:49:09.980] [RHI] [debug] CreateTexture: 1x1 fmt=3, srv=12307, rtv=4294967295, dsv=4294967295 (name='FallbackWhite')
+[2026-04-02 10:49:09.980] [RHI] [debug] CreateTexture: 1x1 fmt=3, srv=12308, rtv=4294967295, dsv=4294967295 (name='FallbackBlack')
+[2026-04-02 10:49:09.980] [RHI] [debug] CreateTexture: 1x1 fmt=3, srv=12309, rtv=4294967295, dsv=4294967295 (name='FallbackNormal')
+[2026-04-02 10:49:09.980] [RHI] [debug] CreateTexture: 256x64 fmt=9, srv=12310, rtv=4294967295, dsv=4294967295 (name='TransmittanceLUT')
+[2026-04-02 10:49:09.980] [Renderer] [info] SceneRenderer: TransmittanceLUT created (256x64 RGBA16F)
+[2026-04-02 10:49:09.980] [RHI] [debug] CreateTexture: 32x32 fmt=9, srv=12312, rtv=4294967295, dsv=4294967295 (name='MultiScatterLUT')
+[2026-04-02 10:49:09.980] [Renderer] [info] SceneRenderer: MultiScatterLUT created (32x32 RGBA16F)
+[2026-04-02 10:49:09.980] [RHI] [debug] CreateTexture: 32x32 fmt=9, srv=12314, rtv=4294967295, dsv=4294967295 (name='APVolume_3D')
+[2026-04-02 10:49:09.980] [Renderer] [info] SceneRenderer: APVolume created (32x32x16 RGBA16F 3D, SRV=12314, UAV=12315)
+[2026-04-02 10:49:09.980] [RHI] [debug] CreateTexture: 256x128 fmt=9, srv=12316, rtv=4294967295, dsv=4294967295 (name='ScatteringLUT3D')
+[2026-04-02 10:49:09.980] [Renderer] [info] SceneRenderer: ScatteringLUT3D created (256x128x32 RGBA16F, SRV=12316, UAV=12317)
+[2026-04-02 10:49:09.980] [RHI] [debug] CreateTexture: 256x128 fmt=9, srv=12318, rtv=4294967295, dsv=4294967295 (name='DeltaRayleigh3D')
+[2026-04-02 10:49:09.980] [Renderer] [info] SceneRenderer: DeltaRayleigh3D created (256x128x32 RGBA16F, SRV=12318, UAV=12319)
+[2026-04-02 10:49:09.980] [RHI] [debug] CreateTexture: 256x128 fmt=9, srv=12320, rtv=4294967295, dsv=4294967295 (name='DeltaMie3D')
+[2026-04-02 10:49:09.980] [Renderer] [info] SceneRenderer: DeltaMie3D created (256x128x32 RGBA16F, SRV=12320, UAV=12321)
+[2026-04-02 10:49:09.980] [RHI] [debug] CreateTexture: 256x128 fmt=9, srv=12322, rtv=4294967295, dsv=4294967295 (name='ScatteringDensity3D')
+[2026-04-02 10:49:09.980] [Renderer] [info] SceneRenderer: ScatteringDensity3D created (256x128x32 RGBA16F, SRV=12322, UAV=12323)
+[2026-04-02 10:49:09.980] [RHI] [debug] CreateTexture: 64x16 fmt=9, srv=12324, rtv=4294967295, dsv=4294967295 (name='IrradianceLUT')
+[2026-04-02 10:49:09.980] [Renderer] [info] SceneRenderer: IrradianceLUT created (64x16 RGBA16F, SRV=12324, UAV=12325)
+[2026-04-02 10:49:09.980] [RHI] [debug] CreateTexture: 64x16 fmt=9, srv=12326, rtv=4294967295, dsv=4294967295 (name='DeltaIrradiance')
+[2026-04-02 10:49:09.980] [Renderer] [info] SceneRenderer: DeltaIrradiance created (64x16 RGBA16F, SRV=12326, UAV=12327)
+[2026-04-02 10:49:09.980] [Renderer] [info] IBLBaker initialized (pipelines will be created lazily)
+[2026-04-02 10:49:09.981] [IO] [debug] ShaderCache: hit 255868abe3982cdf (4544 bytes)
+[2026-04-02 10:49:09.981] [Renderer] [info] IBLBaker: BRDF LUT shader bytecode size = 4544 bytes
+[2026-04-02 10:49:09.981] [RHI] [debug] CreateShader: stage=2, size=4544 (name='brdf_lut_cs')
+[2026-04-02 10:49:09.983] [RHI] [info] Compute pipeline created (name='IBL_BRDFLut')
+[2026-04-02 10:49:09.983] [Renderer] [info] IBLBaker: BRDF LUT pipeline created (shader=8, pipeline=5)
+[2026-04-02 10:49:09.983] [RHI] [debug] CreateTexture: 512x512 fmt=8, srv=12328, rtv=4294967295, dsv=4294967295 (name='IBL_BRDFLut')
+[2026-04-02 10:49:09.983] [RHI] [info] Allocated per-frame descriptor ring at heap index 12330 (4096 descriptors/frame x 3 frames = 12288 total)
+[2026-04-02 10:49:09.983] [RHI] [info] DX12CommandList created, type=0
+[2026-04-02 10:49:09.983] [RHI] [trace] DX12Fence created
+[2026-04-02 10:49:09.984] [Renderer] [info] IBLBaker: BRDF LUT dispatch — groups=(64, 64, 1), UAV=12329, size=512x512
+[2026-04-02 10:49:09.985] [RHI] [info] DX12CommandList destroyed
+[2026-04-02 10:49:09.985] [Renderer] [info] IBLBaker: BRDF LUT baked (512x512, RG16F, SRV=12328)
+[2026-04-02 10:49:09.985] [Renderer] [info] SceneRenderer: BRDF LUT baked (SRV=12328)
+[2026-04-02 10:49:09.985] [Renderer] [info] SceneRenderer: EnvMapSampler initialized
+[2026-04-02 10:49:09.985] [RHI] [debug] CreateTexture: 1920x1080 fmt=9, srv=24618, rtv=4294967295, dsv=4294967295 (name='EnvMIS_History0')
+[2026-04-02 10:49:09.987] [RHI] [debug] CreateTexture: 1920x1080 fmt=9, srv=24620, rtv=4294967295, dsv=4294967295 (name='EnvMIS_History1')
+[2026-04-02 10:49:09.987] [Renderer] [info] EnvMISPass: created 1920x1080 ping-pong history textures
+[2026-04-02 10:49:09.987] [Renderer] [info] SceneRenderer: EnvMISPass initialized (1920x1080)
+[2026-04-02 10:49:09.988] [RHI] [debug] CreateBuffer: size=256, memory=1, srv=24622, uav=4294967295 (name='ReflectionProbeBuffer')
+[2026-04-02 10:49:09.988] [Renderer] [info] ReflectionProbeRenderer initialized (maxProbes=8, bufferSRV=24622)
+[2026-04-02 10:49:09.988] [Renderer] [info] SceneRenderer: ReflectionProbeRenderer initialized
+[2026-04-02 10:49:09.988] [RHI] [debug] CreateBuffer: size=256, memory=0, srv=24623, uav=24624 (name='AutoExposure_Histogram')
+[2026-04-02 10:49:09.988] [RHI] [debug] CreateBuffer: size=8, memory=0, srv=24625, uav=24626 (name='AutoExposure_Exposure')
+[2026-04-02 10:49:09.988] [RHI] [debug] CreateBuffer: size=256, memory=1, srv=4294967295, uav=4294967295 (name='AutoExposure_ZeroClear')
+[2026-04-02 10:49:09.988] [RHI] [debug] CreateBuffer: size=8, memory=2, srv=4294967295, uav=4294967295 (name='AutoExposure_Readback')
+[2026-04-02 10:49:09.988] [Renderer] [info] AutoExposure initialized (histogram UAV=24624, SRV=24623, exposure UAV=24626)
+[2026-04-02 10:49:09.989] [RHI] [debug] CreateTexture: 1920x1080 fmt=1, srv=24627, rtv=4294967295, dsv=4294967295 (name='GTAO_RawAO')
+[2026-04-02 10:49:09.989] [Renderer] [debug] GTAOPass: raw AO texture created — SRV=24627, UAV=24628
+[2026-04-02 10:49:09.989] [RHI] [debug] CreateTexture: 1920x1080 fmt=1, srv=24629, rtv=13, dsv=4294967295 (name='GTAO_FilteredAO')
+[2026-04-02 10:49:09.989] [Renderer] [debug] GTAOPass: filtered AO texture created — SRV=24629, UAV=24630
+[2026-04-02 10:49:09.989] [RHI] [debug] CreateTexture: 1920x1080 fmt=1, srv=24631, rtv=4294967295, dsv=4294967295 (name='GTAO_History0')
+[2026-04-02 10:49:09.989] [Renderer] [debug] GTAOPass: history texture 0 created (1920x1080) — SRV=24631, UAV=24632
+[2026-04-02 10:49:09.989] [RHI] [debug] CreateTexture: 1920x1080 fmt=1, srv=24633, rtv=4294967295, dsv=4294967295 (name='GTAO_History1')
+[2026-04-02 10:49:09.989] [Renderer] [debug] GTAOPass: history texture 1 created (1920x1080) — SRV=24633, UAV=24634
+[2026-04-02 10:49:09.989] [RHI] [debug] CreateTexture: 960x540 fmt=1, srv=24635, rtv=4294967295, dsv=4294967295 (name='GTAO_RawAO_Half')
+[2026-04-02 10:49:09.989] [Renderer] [debug] GTAOPass: half-res raw AO texture created (960x540) — SRV=24635, UAV=24636
+[2026-04-02 10:49:09.989] [RHI] [debug] CreateTexture: 960x540 fmt=1, srv=24637, rtv=4294967295, dsv=4294967295 (name='GTAO_FilteredAO_Half')
+[2026-04-02 10:49:09.989] [Renderer] [debug] GTAOPass: half-res filtered AO texture created (960x540) — SRV=24637, UAV=24638
+[2026-04-02 10:49:09.989] [Renderer] [info] GTAOPass initialized (1920x1080, rawSRV=24627, filteredSRV=24629)
+[2026-04-02 10:49:09.989] [Renderer] [info] SceneRenderer: initializing BloomPass...
+[2026-04-02 10:49:09.989] [RHI] [debug] CreateTexture: 960x540 fmt=9, srv=24639, rtv=4294967295, dsv=4294967295 (name='Bloom_Mip0')
+[2026-04-02 10:49:09.989] [Renderer] [info] BloomPass: mip 0 = 960x540 (SRV=24639, UAV=24640)
+[2026-04-02 10:49:09.989] [RHI] [debug] CreateTexture: 480x270 fmt=9, srv=24641, rtv=4294967295, dsv=4294967295 (name='Bloom_Mip1')
+[2026-04-02 10:49:09.989] [Renderer] [info] BloomPass: mip 1 = 480x270 (SRV=24641, UAV=24642)
+[2026-04-02 10:49:09.989] [RHI] [debug] CreateTexture: 240x135 fmt=9, srv=24643, rtv=4294967295, dsv=4294967295 (name='Bloom_Mip2')
+[2026-04-02 10:49:09.989] [Renderer] [info] BloomPass: mip 2 = 240x135 (SRV=24643, UAV=24644)
+[2026-04-02 10:49:09.989] [RHI] [debug] CreateTexture: 120x67 fmt=9, srv=24645, rtv=4294967295, dsv=4294967295 (name='Bloom_Mip3')
+[2026-04-02 10:49:09.989] [Renderer] [info] BloomPass: mip 3 = 120x67 (SRV=24645, UAV=24646)
+[2026-04-02 10:49:09.989] [RHI] [debug] CreateTexture: 60x33 fmt=9, srv=24647, rtv=4294967295, dsv=4294967295 (name='Bloom_Mip4')
+[2026-04-02 10:49:09.989] [Renderer] [info] BloomPass: mip 4 = 60x33 (SRV=24647, UAV=24648)
+[2026-04-02 10:49:09.989] [RHI] [debug] CreateTexture: 30x16 fmt=9, srv=24649, rtv=4294967295, dsv=4294967295 (name='Bloom_Mip5')
+[2026-04-02 10:49:09.989] [Renderer] [info] BloomPass: mip 5 = 30x16 (SRV=24649, UAV=24650)
+[2026-04-02 10:49:09.989] [Renderer] [info] BloomPass initialized (1920x1080, 6 mip levels)
+[2026-04-02 10:49:09.989] [Renderer] [info] SceneRenderer: BloomPass initialized
+[2026-04-02 10:49:09.989] [RHI] [debug] CreateTexture: 1920x1080 fmt=9, srv=24651, rtv=4294967295, dsv=4294967295 (name='LensFlare_Output')
+[2026-04-02 10:49:09.989] [Renderer] [info] LensFlarePass: output texture created 1920x1080 (SRV=24651, UAV=24652)
+[2026-04-02 10:49:09.989] [Renderer] [info] LensFlarePass initialized (1920x1080, SRV=24651, UAV=24652)
+[2026-04-02 10:49:09.989] [RHI] [debug] CreateTexture: 960x540 fmt=9, srv=24653, rtv=4294967295, dsv=4294967295 (name='Cloud_Output')
+[2026-04-02 10:49:09.989] [Renderer] [debug] CloudPass: output texture created — SRV=24653, UAV=24654
+[2026-04-02 10:49:09.989] [Renderer] [info] CloudPass initialized (1920x1080 -> half-res 960x540, SRV=24653, UAV=24654)
+[2026-04-02 10:49:09.989] [RHI] [info] Allocated per-frame descriptor ring at heap index 24655 (4096 descriptors/frame x 3 frames = 12288 total)
+[2026-04-02 10:49:09.989] [RHI] [info] DX12CommandList created, type=0
+[2026-04-02 10:49:09.989] [RHI] [debug] CreateTexture: 64x64 fmt=9, srv=36943, rtv=14, dsv=4294967295 (name='SkyCubemap')
+[2026-04-02 10:49:09.989] [Renderer] [info] SceneRenderer: Sky cubemap created (64x64x6 RGBA16F)
+[2026-04-02 10:49:09.989] [RHI] [debug] CreateTexture: 960x540 fmt=10, srv=36945, rtv=4294967295, dsv=4294967295 (name='HiZ_Mip')
+[2026-04-02 10:49:09.989] [RHI] [debug] CreateTexture: 480x270 fmt=10, srv=36947, rtv=4294967295, dsv=4294967295 (name='HiZ_Mip')
+[2026-04-02 10:49:09.989] [RHI] [debug] CreateTexture: 240x135 fmt=10, srv=36949, rtv=4294967295, dsv=4294967295 (name='HiZ_Mip')
+[2026-04-02 10:49:09.989] [RHI] [debug] CreateTexture: 120x67 fmt=10, srv=36951, rtv=4294967295, dsv=4294967295 (name='HiZ_Mip')
+[2026-04-02 10:49:09.989] [RHI] [debug] CreateTexture: 60x33 fmt=10, srv=36953, rtv=4294967295, dsv=4294967295 (name='HiZ_Mip')
+[2026-04-02 10:49:09.989] [RHI] [debug] CreateTexture: 30x16 fmt=10, srv=36955, rtv=4294967295, dsv=4294967295 (name='HiZ_Mip')
+[2026-04-02 10:49:09.990] [RHI] [debug] CreateTexture: 15x8 fmt=10, srv=36957, rtv=4294967295, dsv=4294967295 (name='HiZ_Mip')
+[2026-04-02 10:49:09.990] [RHI] [debug] CreateTexture: 7x4 fmt=10, srv=36959, rtv=4294967295, dsv=4294967295 (name='HiZ_Mip')
+[2026-04-02 10:49:09.990] [RHI] [debug] CreateTexture: 3x2 fmt=10, srv=36961, rtv=4294967295, dsv=4294967295 (name='HiZ_Mip')
+[2026-04-02 10:49:09.990] [RHI] [debug] CreateTexture: 1x1 fmt=10, srv=36963, rtv=4294967295, dsv=4294967295 (name='HiZ_Mip')
+[2026-04-02 10:49:09.990] [Renderer] [info] SceneRenderer: Hi-Z pyramid created (10 mips, 1920x1080 -> 1x1)
+[2026-04-02 10:49:09.990] [RHI] [debug] CreateBuffer: size=65536, memory=1, srv=36965, uav=4294967295 (name='BoundingSphereBuffer[0]')
+[2026-04-02 10:49:09.990] [RHI] [debug] CreateBuffer: size=65536, memory=1, srv=36966, uav=4294967295 (name='BoundingSphereBuffer[1]')
+[2026-04-02 10:49:09.990] [RHI] [debug] CreateBuffer: size=65536, memory=1, srv=36967, uav=4294967295 (name='BoundingSphereBuffer[2]')
+[2026-04-02 10:49:09.990] [RHI] [debug] CreateBuffer: size=16384, memory=0, srv=36968, uav=36969 (name='VisibleIndexBuffer[0]')
+[2026-04-02 10:49:09.990] [RHI] [debug] CreateBuffer: size=16384, memory=0, srv=36970, uav=36971 (name='VisibleIndexBuffer[1]')
+[2026-04-02 10:49:09.991] [RHI] [debug] CreateBuffer: size=16384, memory=0, srv=36972, uav=36973 (name='VisibleIndexBuffer[2]')
+[2026-04-02 10:49:09.991] [RHI] [debug] CreateBuffer: size=20, memory=0, srv=4294967295, uav=36974 (name='IndirectArgsBuffer[0]')
+[2026-04-02 10:49:09.991] [RHI] [debug] CreateBuffer: size=20, memory=0, srv=4294967295, uav=36975 (name='IndirectArgsBuffer[1]')
+[2026-04-02 10:49:09.992] [RHI] [debug] CreateBuffer: size=20, memory=0, srv=4294967295, uav=36976 (name='IndirectArgsBuffer[2]')
+[2026-04-02 10:49:09.992] [RHI] [debug] CreateBuffer: size=16384, memory=0, srv=36977, uav=36978 (name='VisibleIndexBuffer2[0]')
+[2026-04-02 10:49:09.992] [RHI] [debug] CreateBuffer: size=16384, memory=0, srv=36979, uav=36980 (name='VisibleIndexBuffer2[1]')
+[2026-04-02 10:49:09.992] [RHI] [debug] CreateBuffer: size=16384, memory=0, srv=36981, uav=36982 (name='VisibleIndexBuffer2[2]')
+[2026-04-02 10:49:09.992] [RHI] [debug] CreateBuffer: size=20, memory=0, srv=4294967295, uav=36983 (name='IndirectArgsBuffer2[0]')
+[2026-04-02 10:49:09.993] [RHI] [debug] CreateBuffer: size=20, memory=0, srv=4294967295, uav=36984 (name='IndirectArgsBuffer2[1]')
+[2026-04-02 10:49:09.993] [RHI] [debug] CreateBuffer: size=20, memory=0, srv=4294967295, uav=36985 (name='IndirectArgsBuffer2[2]')
+[2026-04-02 10:49:09.993] [Renderer] [info] SceneRenderer: created GPU cull buffers (capacity=4096)
+[2026-04-02 10:49:09.993] [RHI] [debug] CreateTexture: 1920x1080 fmt=9, srv=36986, rtv=4294967295, dsv=4294967295 (name='TAA_History_0')
+[2026-04-02 10:49:09.995] [RHI] [debug] CreateTexture: 1920x1080 fmt=9, srv=36988, rtv=4294967295, dsv=4294967295 (name='TAA_History_1')
+[2026-04-02 10:49:09.995] [Renderer] [info] SceneRenderer: TAA history textures created (1920x1080, RGBA16F)
+[2026-04-02 10:49:09.996] [RHI] [debug] CreateTexture: 1920x1080 fmt=9, srv=36990, rtv=4294967295, dsv=4294967295 (name='SSGI_PrevSceneColor')
+[2026-04-02 10:49:09.996] [RHI] [debug] CreateTexture: 1920x1080 fmt=9, srv=36991, rtv=4294967295, dsv=4294967295 (name='SSGI_Result')
+[2026-04-02 10:49:09.996] [RHI] [debug] CreateTexture: 1920x1080 fmt=7, srv=36993, rtv=4294967295, dsv=4294967295 (name='SSGI_ResultAO')
+[2026-04-02 10:49:09.996] [RHI] [debug] CreateTexture: 960x540 fmt=9, srv=36995, rtv=4294967295, dsv=4294967295 (name='SSGI_PrevColorReduced')
+[2026-04-02 10:49:09.996] [RHI] [debug] CreateTexture: 960x540 fmt=9, srv=36997, rtv=4294967295, dsv=4294967295 (name='SSGI_Trace')
+[2026-04-02 10:49:09.996] [RHI] [debug] CreateTexture: 960x540 fmt=7, srv=36999, rtv=4294967295, dsv=4294967295 (name='SSGI_TraceAO')
+[2026-04-02 10:49:09.996] [RHI] [debug] CreateTexture: 960x540 fmt=9, srv=37001, rtv=4294967295, dsv=4294967295 (name='SSGI_Denoised')
+[2026-04-02 10:49:09.996] [RHI] [debug] CreateTexture: 960x540 fmt=7, srv=37003, rtv=4294967295, dsv=4294967295 (name='SSGI_DenoisedAO')
+[2026-04-02 10:49:09.998] [RHI] [debug] CreateTexture: 960x540 fmt=9, srv=37005, rtv=4294967295, dsv=4294967295 (name='SSGI_History_0')
+[2026-04-02 10:49:09.998] [RHI] [debug] CreateTexture: 960x540 fmt=9, srv=37007, rtv=4294967295, dsv=4294967295 (name='SSGI_History_1')
+[2026-04-02 10:49:09.998] [RHI] [debug] CreateTexture: 960x540 fmt=7, srv=37009, rtv=4294967295, dsv=4294967295 (name='SSGI_HistoryAO_0')
+[2026-04-02 10:49:09.999] [RHI] [debug] CreateTexture: 960x540 fmt=7, srv=37011, rtv=4294967295, dsv=4294967295 (name='SSGI_HistoryAO_1')
+[2026-04-02 10:49:09.999] [Renderer] [info] SSGIRenderer: initialized (1920x1080 full, 960x540 half, result SRV=36991, AO SRV=36993)
+[2026-04-02 10:49:09.999] [RHI] [debug] CreateTexture: 64x64 fmt=7, srv=37013, rtv=4294967295, dsv=4294967295 (name='GDF_Clipmap0')
+[2026-04-02 10:49:09.999] [Renderer] [info] GlobalDistanceField: clipmap 0 created (64^3 R16F, extent=2500cm, SRV=37013, UAV=37014)
+[2026-04-02 10:49:09.999] [RHI] [debug] CreateTexture: 64x64 fmt=7, srv=37015, rtv=4294967295, dsv=4294967295 (name='GDF_Clipmap1')
+[2026-04-02 10:49:09.999] [Renderer] [info] GlobalDistanceField: clipmap 1 created (64^3 R16F, extent=10000cm, SRV=37015, UAV=37016)
+[2026-04-02 10:49:09.999] [RHI] [debug] CreateTexture: 64x64 fmt=7, srv=37017, rtv=4294967295, dsv=4294967295 (name='GDF_Clipmap2')
+[2026-04-02 10:49:09.999] [Renderer] [info] GlobalDistanceField: clipmap 2 created (64^3 R16F, extent=40000cm, SRV=37017, UAV=37018)
+[2026-04-02 10:49:09.999] [RHI] [debug] CreateTexture: 64x64 fmt=7, srv=37019, rtv=4294967295, dsv=4294967295 (name='GDF_Clipmap3')
+[2026-04-02 10:49:09.999] [Renderer] [info] GlobalDistanceField: clipmap 3 created (64^3 R16F, extent=160000cm, SRV=37019, UAV=37020)
+[2026-04-02 10:49:09.999] [RHI] [debug] CreateBuffer: size=458752, memory=0, srv=37021, uav=37022 (name='RadianceCache_SH')
+[2026-04-02 10:49:09.999] [Renderer] [info] RadianceCache: created SH buffer (4096 probes, 28672 float4s, 448 KB, SRV=37021, UAV=37022)
+[2026-04-02 10:49:09.999] [Renderer] [info] SceneRenderer: SDF GI enabled (GDF + RadianceCache ready)
+[2026-04-02 10:49:09.999] [RHI] [debug] CreateTexture: 1920x1080 fmt=9, srv=37023, rtv=4294967295, dsv=4294967295 (name='SSR_TraceOutput')
+[2026-04-02 10:49:09.999] [RHI] [debug] CreateTexture: 1920x1080 fmt=9, srv=37025, rtv=4294967295, dsv=4294967295 (name='SSR_ResolvedOutput')
+[2026-04-02 10:49:09.999] [RHI] [debug] CreateTexture: 1920x1080 fmt=9, srv=37027, rtv=4294967295, dsv=4294967295 (name='SSR_History_0')
+[2026-04-02 10:49:10.001] [RHI] [debug] CreateTexture: 1920x1080 fmt=9, srv=37029, rtv=4294967295, dsv=4294967295 (name='SSR_History_1')
+[2026-04-02 10:49:10.001] [Renderer] [info] SceneRenderer: SSR resources created (1920x1080, RGBA16F, trace SRV=37023, resolve SRV=37025, hist0 SRV=37027, hist1 SRV=37029)
+[2026-04-02 10:49:10.001] [RHI] [debug] CreateTexture: 32x32 fmt=3, srv=37031, rtv=4294967295, dsv=4294967295 (name='ColorGradingLUT_3D')
+[2026-04-02 10:49:10.001] [Renderer] [info] SceneRenderer: Color grading LUT created (32x32x32, RGBA8, 3D, SRV=37031, UAV=37032)
+[2026-04-02 10:49:10.001] [RHI] [debug] CreateTexture: 1920x1080 fmt=9, srv=37033, rtv=4294967295, dsv=4294967295 (name='MotionBlur_Output')
+[2026-04-02 10:49:10.001] [Renderer] [info] SceneRenderer: Motion blur output created (1920x1080, RGBA16F, SRV=37033, UAV=37034)
+[2026-04-02 10:49:10.002] [RHI] [debug] CreateTexture: 120x68 fmt=8, srv=37035, rtv=4294967295, dsv=4294967295 (name='MotionBlur_TileMax')
+[2026-04-02 10:49:10.002] [Renderer] [info] SceneRenderer: Motion blur tile max created (120x68, RG16F, SRV=37035, UAV=37036)
+[2026-04-02 10:49:10.002] [RHI] [debug] CreateTexture: 120x68 fmt=8, srv=37037, rtv=4294967295, dsv=4294967295 (name='MotionBlur_NeighborMax')
+[2026-04-02 10:49:10.002] [Renderer] [info] SceneRenderer: Motion blur neighbor max created (120x68, RG16F, SRV=37037, UAV=37038)
+[2026-04-02 10:49:10.002] [RHI] [debug] CreateTexture: 1920x1080 fmt=7, srv=37039, rtv=4294967295, dsv=4294967295 (name='DOF_CoC')
+[2026-04-02 10:49:10.002] [RHI] [debug] CreateTexture: 1920x1080 fmt=9, srv=37041, rtv=4294967295, dsv=4294967295 (name='DOF_Output')
+[2026-04-02 10:49:10.002] [Renderer] [info] SceneRenderer: DOF textures created (1920x1080, CoC SRV=37039, Output SRV=37041)
+[2026-04-02 10:49:10.002] [RHI] [debug] CreateTexture: 1920x1080 fmt=3, srv=37043, rtv=15, dsv=4294967295 (name='FXAA_LdrIntermediate')
+[2026-04-02 10:49:10.002] [Renderer] [info] SceneRenderer: FXAA LDR intermediate created (1920x1080, RGBA8, SRV=37043)
+[2026-04-02 10:49:10.004] [Renderer] [info] AsyncTextureDecoder: started 8 worker threads
+[2026-04-02 10:49:10.005] [RHI] [info] DX12CommandList created, type=3
+[2026-04-02 10:49:10.005] [Renderer] [info] SceneRenderer: copy command list created for async texture uploads
+[2026-04-02 10:49:10.032] [RHI] [debug] CreateBuffer: size=201326592, memory=1, srv=4294967295, uav=4294967295 (name='UploadRingBuffer')
+[2026-04-02 10:49:10.032] [RHI] [info] UploadRing: initialized 3 frames x 67108864 bytes = 201326592 bytes total
+[2026-04-02 10:49:10.032] [Renderer] [info] SceneRenderer: upload ring initialized (64MB/frame, 3 frames, 192MB total)
+[2026-04-02 10:49:10.032] [VFX] [info] Registered VFX module: name='spawn'
+[2026-04-02 10:49:10.032] [VFX] [info] Registered VFX module: name='update'
+[2026-04-02 10:49:10.032] [VFX] [info] Registered VFX module: name='decay'
+[2026-04-02 10:49:10.032] [VFX] [info] Registered VFX module: name='sprite_render'
+[2026-04-02 10:49:10.032] [VFX] [info] Registered VFX module: name='turbulence'
+[2026-04-02 10:49:10.032] [VFX] [info] Registered VFX module: name='constraint'
+[2026-04-02 10:49:10.032] [VFX] [info] Registered VFX module: name='collision'
+[2026-04-02 10:49:10.032] [VFX] [info] Registered VFX module: name='light_render'
+[2026-04-02 10:49:10.032] [VFX] [info] Registered VFX module: name='mesh_render'
+[2026-04-02 10:49:10.032] [VFX] [info] Registered VFX module: name='attractor'
+[2026-04-02 10:49:10.032] [VFX] [info] Registered VFX module: name='vector_field'
+[2026-04-02 10:49:10.032] [VFX] [info] Registered VFX module: name='sub_emitter'
+[2026-04-02 10:49:10.032] [VFX] [info] Registered VFX module: name='orbit'
+[2026-04-02 10:49:10.032] [VFX] [info] Registered VFX module: name='pin'
+[2026-04-02 10:49:10.032] [VFX] [info] Registered VFX module: name='distance_constraint'
+[2026-04-02 10:49:10.032] [VFX] [info] Registered 15 built-in VFX modules
+[2026-04-02 10:49:10.032] [VFX] [info] VFXSystem initialized: budget=500000 particles
+[2026-04-02 10:49:10.032] [Renderer] [info] SceneRenderer: VFX system initialized (budget=500000)
+[2026-04-02 10:49:10.032] [VFX] [info] uz.vfx Lua API registered
+[2026-04-02 10:49:10.032] [Renderer] [info] SceneRenderer: uz.vfx Lua API registered
+[2026-04-02 10:49:10.032] [VFX] [warning] VFXHotReload: directory does not exist: 'content/'
+[2026-04-02 10:49:10.032] [VFX] [info] VFXHotReload: initialized, watching 'content/' (0 files)
+[2026-04-02 10:49:10.032] [Renderer] [info] TaaUpscaler initialized (single-pass resolve)
+[2026-04-02 10:49:10.032] [Renderer] [info] SceneRenderer initialized (1920x1080 display, 1920x1080 render, 100% scale, Deferred)
+[2026-04-02 10:49:10.032] [Renderer] [info] Editor mode: ON
+[2026-04-02 10:49:10.032] [Engine] [info] Editor input handler initialized
+[2026-04-02 10:49:10.032] [Engine] [info] Lua renderer + input API connected to SceneRenderer
+[2026-04-02 10:49:10.032] [Scripting] [info] Editor state wired to Lua (selection=0xf32a1fe3d0, editorInput=0xf32a1fe328)
+[2026-04-02 10:49:10.033] [Engine] [info] Pre-loading scene textures...
+[2026-04-02 10:49:10.037] [RHI] [debug] CreateTexture: 512x256 fmt=1, srv=37044, rtv=4294967295, dsv=4294967295 (name='FontAtlas')
+[2026-04-02 10:49:10.037] [RHI] [debug] CreateBuffer: size=131072, memory=1, srv=4294967295, uav=4294967295 (name='TextureStagingBuffer')
+[2026-04-02 10:49:10.037] [EditorFont] [info] Font atlas created: path='C:/Windows/Fonts/consola.ttf', size=512x256, pixelHeight=14, glyphs=95
+[2026-04-02 10:49:10.039] [IO] [debug] ShaderCache: hit 6513896d59d7ffc4 (4836 bytes)
+[2026-04-02 10:49:10.039] [IO] [debug] ShaderCache: hit 6d19cd1952fd926a (4408 bytes)
+[2026-04-02 10:49:10.039] [IO] [debug] ShaderCache: hit 78eba185f64c3ff8 (3164 bytes)
+[2026-04-02 10:49:10.039] [RHI] [debug] CreateShader: stage=0, size=4836 (name='overlay_vs')
+[2026-04-02 10:49:10.039] [RHI] [debug] CreateShader: stage=1, size=4408 (name='overlay_text_ps')
+[2026-04-02 10:49:10.039] [RHI] [debug] CreateShader: stage=1, size=3164 (name='overlay_rect_ps')
+[2026-04-02 10:49:10.040] [RHI] [info] Graphics pipeline created (name='OverlayRectPipeline')
+[2026-04-02 10:49:10.041] [RHI] [info] Graphics pipeline created (name='OverlayTextPipeline')
+[2026-04-02 10:49:10.041] [RHI] [debug] CreateBuffer: size=524288, memory=1, srv=37045, uav=4294967295 (name='OverlayVertexBuffer')
+[2026-04-02 10:49:10.041] [RHI] [debug] CreateBuffer: size=524288, memory=1, srv=37046, uav=4294967295 (name='OverlayVertexBuffer')
+[2026-04-02 10:49:10.041] [RHI] [debug] CreateBuffer: size=524288, memory=1, srv=37047, uav=4294967295 (name='OverlayVertexBuffer')
+[2026-04-02 10:49:10.041] [RHI] [debug] CreateSampler: idx=0, filter=1 (name='FontAtlasSampler')
+[2026-04-02 10:49:10.041] [EditorText] [info] Text renderer initialized (maxVerts=16384, screen=1920x1080, bindless=true)
+[2026-04-02 10:49:10.041] [EditorStats] [info] Stats overlay initialized (1920x1080)
+[2026-04-02 10:49:10.041] [RHI] [debug] CreateBuffer: size=256, memory=1, srv=4294967295, uav=4294967295 (name='TextureStagingBuffer')
+[2026-04-02 10:49:10.041] [RHI] [debug] CreateBuffer: size=256, memory=1, srv=4294967295, uav=4294967295 (name='TextureStagingBuffer')
+[2026-04-02 10:49:10.042] [RHI] [debug] CreateBuffer: size=256, memory=1, srv=4294967295, uav=4294967295 (name='TextureStagingBuffer')
+[2026-04-02 10:49:10.043] [IO] [debug] ShaderCache: hit ccf562665d71e3c1 (6548 bytes)
+[2026-04-02 10:49:10.043] [RHI] [debug] CreateShader: stage=0, size=6548 (name='mesh_vs.hlsl')
+[2026-04-02 10:49:10.043] [IO] [debug] ShaderCache: hit 852423a395adccae (6228 bytes)
+[2026-04-02 10:49:10.043] [RHI] [debug] CreateShader: stage=1, size=6228 (name='mesh_ps.hlsl')
+[2026-04-02 10:49:10.044] [RHI] [info] Graphics pipeline created (name='ForwardPBR_Bindless')
+[2026-04-02 10:49:10.044] [Renderer] [debug] PsoCache miss for 'ForwardPBR_Bindless' — created and cached
+[2026-04-02 10:49:10.044] [Renderer] [info] PipelineLibrary: created ForwardPBR pipeline (bindless=true)
+[2026-04-02 10:49:10.044] [Shadow] [info] ExtractNearFar: c22=-0.000010 c32=1.000010 -> outNear=1.00 outFar=100000.00
+[2026-04-02 10:49:10.044] [Shadow] [info] Cascade[0]: splitNear=1.0 splitFar=1101.0 fadeStart=1001.0 texelSize=1.1416 depthBias=0.000000 normalBias=0.0000
+[2026-04-02 10:49:10.044] [Shadow] [info] Cascade[1]: splitNear=1001.0 splitFar=4300.9 fadeStart=4000.9 texelSize=4.4598 depthBias=0.000000 normalBias=0.0000
+[2026-04-02 10:49:10.044] [Shadow] [info] Cascade[2]: splitNear=4000.9 splitFar=13900.7 fadeStart=13000.7 texelSize=14.4141 depthBias=0.000000 normalBias=0.0000
+[2026-04-02 10:49:10.044] [Shadow] [info] Cascade[3]: splitNear=13000.7 splitFar=40000.0 fadeStart=40000.0 texelSize=41.4776 depthBias=0.000000 normalBias=0.0000
+[2026-04-02 10:49:10.044] [Renderer] [info] Loaded mesh from memory: vertices=24, indices=36, name='meshes/cube.uzmesh'
+[2026-04-02 10:49:10.045] [RHI] [debug] CreateBuffer: size=1152, memory=0, srv=37048, uav=4294967295 (name='GPUMesh_VB_Structured')
+[2026-04-02 10:49:10.045] [RHI] [debug] CreateBuffer: size=144, memory=0, srv=4294967295, uav=4294967295 (name='GPUMesh_IB')
+[2026-04-02 10:49:10.045] [RHI] [debug] CreateBuffer: size=1152, memory=1, srv=4294967295, uav=4294967295 (name='StagingBuffer')
+[2026-04-02 10:49:10.045] [RHI] [debug] CreateBuffer: size=144, memory=1, srv=4294967295, uav=4294967295 (name='StagingBuffer')
+[2026-04-02 10:49:10.045] [Renderer] [info] UploadMeshDeferred: queued 24 vertices, 36 indices, 1 LODs (bindless SRV=37048)
+[2026-04-02 10:49:10.045] [Renderer] [info] SceneRenderer: loaded mesh 'meshes/cube.uzmesh' (id=0, 24 vertices, 36 indices)
+[2026-04-02 10:49:10.045] [Renderer] [info] Mesh 'meshes/cube.uzmesh' loaded: meshId=0, gpu.lodCount=1, gpu.indexCount=36
+[2026-04-02 10:49:10.045] [Renderer] [info] Mesh 'meshes/cube.uzmesh': auto-computed boundingSphereRadius=2.4cm
+[2026-04-02 10:49:10.046] [Renderer] [info] FlushDeferredMeshUploads: flushed 1 deferred mesh uploads
+[2026-04-02 10:49:10.046] [Renderer] [info] SyncWorldToDrawList: flushed 1 deferred mesh uploads
+[2026-04-02 10:49:10.047] [IO] [debug] ShaderCache: hit ffca8ddc6ea1017f (2112 bytes)
+[2026-04-02 10:49:10.047] [RHI] [debug] CreateShader: stage=2, size=2112 (name='mesh_sdf_bake_cs')
+[2026-04-02 10:49:10.048] [RHI] [info] Compute pipeline created (name='MeshSDF_Bake')
+[2026-04-02 10:49:10.048] [Renderer] [info] PipelineLibrary: created MeshSDF_Bake pipeline
+[2026-04-02 10:49:10.048] [Renderer] [info] SceneRenderer: batch SDF bake — 1 meshes
+[2026-04-02 10:49:10.048] [RHI] [debug] CreateBuffer: size=768, memory=1, srv=37049, uav=4294967295 (name='MeshSDF_TriBuffer')
+[2026-04-02 10:49:10.048] [RHI] [debug] CreateTexture: 32x32 fmt=7, srv=37050, rtv=4294967295, dsv=4294967295 (name='MeshSDF_3D')
+[2026-04-02 10:49:10.048] [Renderer] [info] MeshSdfBaker::BakeMeshGPU: baked 32^3 SDF (12 triangles) on GPU, SRV=37050
+[2026-04-02 10:49:10.048] [Renderer] [info] SceneRenderer: GPU-baked mesh SDF (meshIdx=0, res=32, SRV=37050)
+[2026-04-02 10:49:10.048] [Renderer] [info] SceneRenderer: SDF batch bake complete
+[2026-04-02 10:49:10.049] [VFXAsset] [info] UzfxLoader: loaded 'Sparks' (maxParticles=10000, rate=100, modules: spawn=none, update=0, render=none)
+[2026-04-02 10:49:10.049] [RHI] [debug] CreateBuffer: size=120000, memory=0, srv=37052, uav=37053 (name='VFX_Positions_SetA')
+[2026-04-02 10:49:10.049] [RHI] [debug] CreateBuffer: size=120000, memory=0, srv=37054, uav=37055 (name='VFX_Velocities_SetA')
+[2026-04-02 10:49:10.049] [RHI] [debug] CreateBuffer: size=40000, memory=0, srv=37056, uav=37057 (name='VFX_Ages_SetA')
+[2026-04-02 10:49:10.049] [RHI] [debug] CreateBuffer: size=40000, memory=0, srv=37058, uav=37059 (name='VFX_Lifespans_SetA')
+[2026-04-02 10:49:10.049] [RHI] [debug] CreateBuffer: size=40000, memory=0, srv=37060, uav=37061 (name='VFX_Sizes_SetA')
+[2026-04-02 10:49:10.049] [RHI] [debug] CreateBuffer: size=160000, memory=0, srv=37062, uav=37063 (name='VFX_Colors_SetA')
+[2026-04-02 10:49:10.049] [RHI] [debug] CreateBuffer: size=40000, memory=0, srv=37064, uav=37065 (name='VFX_Rotations_SetA')
+[2026-04-02 10:49:10.049] [RHI] [debug] CreateBuffer: size=120000, memory=0, srv=37066, uav=37067 (name='VFX_Positions_SetB')
+[2026-04-02 10:49:10.049] [RHI] [debug] CreateBuffer: size=120000, memory=0, srv=37068, uav=37069 (name='VFX_Velocities_SetB')
+[2026-04-02 10:49:10.049] [RHI] [debug] CreateBuffer: size=40000, memory=0, srv=37070, uav=37071 (name='VFX_Ages_SetB')
+[2026-04-02 10:49:10.049] [RHI] [debug] CreateBuffer: size=40000, memory=0, srv=37072, uav=37073 (name='VFX_Lifespans_SetB')
+[2026-04-02 10:49:10.049] [RHI] [debug] CreateBuffer: size=40000, memory=0, srv=37074, uav=37075 (name='VFX_Sizes_SetB')
+[2026-04-02 10:49:10.049] [RHI] [debug] CreateBuffer: size=160000, memory=0, srv=37076, uav=37077 (name='VFX_Colors_SetB')
+[2026-04-02 10:49:10.049] [RHI] [debug] CreateBuffer: size=40000, memory=0, srv=37078, uav=37079 (name='VFX_Rotations_SetB')
+[2026-04-02 10:49:10.049] [RHI] [debug] CreateBuffer: size=4, memory=0, srv=37080, uav=37081 (name='VFX_AliveCount')
+[2026-04-02 10:49:10.049] [RHI] [debug] CreateBuffer: size=40000, memory=0, srv=37082, uav=37083 (name='VFX_FreeList')
+[2026-04-02 10:49:10.050] [RHI] [debug] CreateBuffer: size=4, memory=0, srv=37084, uav=37085 (name='VFX_FreeListHead')
+[2026-04-02 10:49:10.050] [RHI] [debug] CreateBuffer: size=40000, memory=0, srv=37086, uav=37087 (name='VFX_IdToIndex')
+[2026-04-02 10:49:10.050] [RHI] [debug] CreateBuffer: size=20, memory=0, srv=4294967295, uav=37088 (name='VFX_IndirectDrawArgs')
+[2026-04-02 10:49:10.050] [RHI] [debug] CreateBuffer: size=12, memory=0, srv=4294967295, uav=37089 (name='VFX_IndirectDispatchArgs')
+[2026-04-02 10:49:10.050] [RHI] [debug] CreateBuffer: size=65536, memory=0, srv=37090, uav=37091 (name='VFX_SortKeys')
+[2026-04-02 10:49:10.050] [RHI] [debug] CreateBuffer: size=65536, memory=0, srv=37092, uav=37093 (name='VFX_SortIndices')
+[2026-04-02 10:49:10.050] [VFX] [info] GPU particle sort created: capacity=10000, paddedCount=16384, memory=128KB
+[2026-04-02 10:49:10.050] [VFX] [info] GPU particle buffer created: capacity=10000, memory~1171KB
+[2026-04-02 10:49:10.050] [VFX] [info] ParticleEmitter initialized: capacity=10000
+[2026-04-02 10:49:10.050] [VFXAsset] [info] UzfxLoader: instantiated 'Sparks' (allocated=10000, modules: spawn=0, update=0, render=none)
+[2026-04-02 10:49:10.050] [VFX] [debug] VFXSystem: emitter registered, total=1
+[2026-04-02 10:49:10.050] [VFX] [info] SyncVfxEmitters: created emitter idx=0 (asset='vfx/presets/sparks.json')
+[2026-04-02 10:49:10.050] [IO] [debug] ShaderCache: hit 9dfedff79fbcdbf6 (5248 bytes)
+[2026-04-02 10:49:10.050] [RHI] [debug] CreateShader: stage=0, size=5248 (name='shadow_depth_vs.hlsl')
+[2026-04-02 10:49:10.051] [RHI] [info] Graphics pipeline created (name='ShadowDepth_Bindless')
+[2026-04-02 10:49:10.051] [Renderer] [debug] PsoCache miss for 'ShadowDepth_Bindless' — created and cached
+[2026-04-02 10:49:10.051] [Renderer] [info] PipelineLibrary: created ShadowDepth pipeline (bindless=true)
+[2026-04-02 10:49:10.051] [RHI] [info] Graphics pipeline created (name='DepthPrepass_Bindless')
+[2026-04-02 10:49:10.051] [Renderer] [debug] PsoCache miss for 'DepthPrepass_Bindless' — created and cached
+[2026-04-02 10:49:10.051] [Renderer] [info] PipelineLibrary: created DepthPrepass pipeline (bindless=true)
+[2026-04-02 10:49:10.051] [IO] [debug] ShaderCache: hit ffca8ddc6ea1017f (2112 bytes)
+[2026-04-02 10:49:10.051] [RHI] [debug] CreateShader: stage=2, size=2112 (name='hiz_pyramid_cs')
+[2026-04-02 10:49:10.051] [RHI] [info] Compute pipeline created (name='HiZPyramid')
+[2026-04-02 10:49:10.051] [Renderer] [info] PipelineLibrary: created HiZPyramid pipeline
+[2026-04-02 10:49:10.051] [IO] [debug] ShaderCache: hit 0dfb702fcfa79a08 (9376 bytes)
+[2026-04-02 10:49:10.051] [RHI] [debug] CreateShader: stage=1, size=9376 (name='gbuffer_ps.hlsl')
+[2026-04-02 10:49:10.052] [RHI] [info] Graphics pipeline created (name='GBuffer_Bindless')
+[2026-04-02 10:49:10.052] [Renderer] [debug] PsoCache miss for 'GBuffer_Bindless' — created and cached
+[2026-04-02 10:49:10.052] [Renderer] [info] PipelineLibrary: created GBuffer pipeline (bindless=true)
+[2026-04-02 10:49:10.052] [RHI] [info] Graphics pipeline created (name='GBufferMasked_Bindless')
+[2026-04-02 10:49:10.052] [Renderer] [debug] PsoCache miss for 'GBufferMasked_Bindless' — created and cached
+[2026-04-02 10:49:10.052] [Renderer] [info] PipelineLibrary: created GBufferMasked pipeline (bindless=true)
+[2026-04-02 10:49:10.052] [IO] [debug] ShaderCache: hit 014bef85dd256543 (3100 bytes)
+[2026-04-02 10:49:10.052] [RHI] [debug] CreateShader: stage=0, size=3100 (name='fullscreen_vs.hlsl')
+[2026-04-02 10:49:10.053] [IO] [debug] ShaderCache: hit 74fab2940a9991a1 (19184 bytes)
+[2026-04-02 10:49:10.053] [RHI] [debug] CreateShader: stage=1, size=19184 (name='deferred_lighting_ps.hlsl')
+[2026-04-02 10:49:10.055] [RHI] [info] Graphics pipeline created (name='DeferredLighting')
+[2026-04-02 10:49:10.055] [Renderer] [debug] PsoCache miss for 'DeferredLighting' — created and cached
+[2026-04-02 10:49:10.055] [Renderer] [info] PipelineLibrary: created Lighting pipeline
+[2026-04-02 10:49:10.055] [IO] [debug] ShaderCache: hit ee65860a6e2eba91 (5188 bytes)
+[2026-04-02 10:49:10.055] [RHI] [debug] CreateShader: stage=2, size=5188 (name='transmittance_lut_cs')
+[2026-04-02 10:49:10.057] [RHI] [info] Compute pipeline created (name='TransmittanceLUT')
+[2026-04-02 10:49:10.057] [Renderer] [info] PipelineLibrary: created TransmittanceLUT pipeline
+[2026-04-02 10:49:10.057] [IO] [debug] ShaderCache: hit 6d70031efc643ea5 (6876 bytes)
+[2026-04-02 10:49:10.057] [RHI] [debug] CreateShader: stage=2, size=6876 (name='sky_cubemap_cs')
+[2026-04-02 10:49:10.058] [RHI] [info] Compute pipeline created (name='SkyCubemapCapture')
+[2026-04-02 10:49:10.058] [Renderer] [info] PipelineLibrary: created SkyCubemapCapture pipeline
+[2026-04-02 10:49:10.059] [IO] [debug] ShaderCache: hit ffca8ddc6ea1017f (2112 bytes)
+[2026-04-02 10:49:10.059] [RHI] [debug] CreateShader: stage=2, size=2112 (name='single_scattering_lut_cs')
+[2026-04-02 10:49:10.059] [RHI] [info] Compute pipeline created (name='SingleScatterLUT')
+[2026-04-02 10:49:10.059] [Renderer] [info] PipelineLibrary: created SingleScatterLUT pipeline
+[2026-04-02 10:49:10.059] [IO] [debug] ShaderCache: hit ffca8ddc6ea1017f (2112 bytes)
+[2026-04-02 10:49:10.059] [RHI] [debug] CreateShader: stage=2, size=2112 (name='irradiance_lut_cs')
+[2026-04-02 10:49:10.059] [RHI] [info] Compute pipeline created (name='IrradianceLUT')
+[2026-04-02 10:49:10.059] [Renderer] [info] PipelineLibrary: created IrradianceLUT pipeline
+[2026-04-02 10:49:10.059] [IO] [debug] ShaderCache: hit ffca8ddc6ea1017f (2112 bytes)
+[2026-04-02 10:49:10.059] [RHI] [debug] CreateShader: stage=2, size=2112 (name='scattering_density_cs')
+[2026-04-02 10:49:10.059] [RHI] [info] Compute pipeline created (name='ScatteringDensity')
+[2026-04-02 10:49:10.059] [Renderer] [info] PipelineLibrary: created ScatteringDensity pipeline
+[2026-04-02 10:49:10.059] [IO] [debug] ShaderCache: hit ffca8ddc6ea1017f (2112 bytes)
+[2026-04-02 10:49:10.059] [RHI] [debug] CreateShader: stage=2, size=2112 (name='indirect_scattering_cs')
+[2026-04-02 10:49:10.059] [RHI] [info] Compute pipeline created (name='IndirectScattering')
+[2026-04-02 10:49:10.059] [Renderer] [info] PipelineLibrary: created IndirectScattering pipeline
+[2026-04-02 10:49:10.059] [Renderer] [info] Bruneton 3D scattering LUT precomputed (4 orders)
+[2026-04-02 10:49:10.059] [IO] [debug] ShaderCache: hit ffca8ddc6ea1017f (2112 bytes)
+[2026-04-02 10:49:10.059] [RHI] [debug] CreateShader: stage=2, size=2112 (name='aerial_perspective_volume_cs')
+[2026-04-02 10:49:10.059] [RHI] [info] Compute pipeline created (name='AerialPerspectiveVolume')
+[2026-04-02 10:49:10.059] [Renderer] [info] PipelineLibrary: created AerialPerspectiveVolume pipeline
+[2026-04-02 10:49:10.059] [IO] [debug] ShaderCache: hit 4418c550b3359416 (8492 bytes)
+[2026-04-02 10:49:10.060] [RHI] [debug] CreateShader: stage=1, size=8492 (name='sky_atmosphere_ps.hlsl')
+[2026-04-02 10:49:10.060] [RHI] [info] Graphics pipeline created (name='SkyAtmosphere')
+[2026-04-02 10:49:10.060] [Renderer] [debug] PsoCache miss for 'SkyAtmosphere' — created and cached
+[2026-04-02 10:49:10.060] [Renderer] [info] PipelineLibrary: created SkyAtmosphere pipeline
+[2026-04-02 10:49:10.061] [IO] [debug] ShaderCache: hit b14f9ae5ca843162 (9248 bytes)
+[2026-04-02 10:49:10.061] [RHI] [debug] CreateShader: stage=2, size=9248 (name='particle_spawn_cs.hlsl')
+[2026-04-02 10:49:10.062] [RHI] [info] Compute pipeline created (name='ParticleSpawnCS')
+[2026-04-02 10:49:10.062] [Renderer] [info] PipelineLibrary: created ParticleSpawnCS pipeline
+[2026-04-02 10:49:10.062] [IO] [debug] ShaderCache: hit 75eca4f8a27b0623 (49192 bytes)
+[2026-04-02 10:49:10.063] [RHI] [debug] CreateShader: stage=2, size=49192 (name='particle_update_cs.hlsl')
+[2026-04-02 10:49:10.067] [RHI] [info] Compute pipeline created (name='ParticleUpdateCS')
+[2026-04-02 10:49:10.067] [Renderer] [info] PipelineLibrary: created ParticleUpdateCS pipeline
+[2026-04-02 10:49:10.068] [IO] [debug] ShaderCache: hit c1378eedc51c6394 (3656 bytes)
+[2026-04-02 10:49:10.068] [RHI] [debug] CreateShader: stage=2, size=3656 (name='particle_indirect_args_cs.hlsl')
+[2026-04-02 10:49:10.068] [RHI] [info] Compute pipeline created (name='ParticleIndirectArgsCS')
+[2026-04-02 10:49:10.068] [Renderer] [info] PipelineLibrary: created ParticleIndirectArgsCS pipeline
+[2026-04-02 10:49:10.068] [IO] [debug] ShaderCache: hit 34d950a217b02732 (5532 bytes)
+[2026-04-02 10:49:10.068] [RHI] [debug] CreateShader: stage=2, size=5532 (name='particle_sort_cs.hlsl')
+[2026-04-02 10:49:10.069] [RHI] [info] Compute pipeline created (name='ParticleSortCS')
+[2026-04-02 10:49:10.069] [Renderer] [info] PipelineLibrary: created ParticleSortCS pipeline
+[2026-04-02 10:49:10.069] [IO] [debug] ShaderCache: hit 38367cae39087816 (12236 bytes)
+[2026-04-02 10:49:10.070] [RHI] [debug] CreateShader: stage=0, size=12236 (name='particle_billboard_vs.hlsl')
+[2026-04-02 10:49:10.070] [IO] [debug] ShaderCache: hit 95ec0b2c3145836b (10288 bytes)
+[2026-04-02 10:49:10.070] [RHI] [debug] CreateShader: stage=1, size=10288 (name='particle_billboard_ps.hlsl')
+[2026-04-02 10:49:10.071] [RHI] [info] Graphics pipeline created (name='ParticleBillboard')
+[2026-04-02 10:49:10.071] [Renderer] [debug] PsoCache miss for 'ParticleBillboard' — created and cached
+[2026-04-02 10:49:10.071] [Renderer] [info] PipelineLibrary: created ParticleBillboard pipeline
+[2026-04-02 10:49:10.072] [IO] [debug] ShaderCache: hit a3872b58470f9e7c (5920 bytes)
+[2026-04-02 10:49:10.072] [RHI] [debug] CreateShader: stage=2, size=5920 (name='particle_mesh_instance_cs.hlsl')
+[2026-04-02 10:49:10.073] [RHI] [info] Compute pipeline created (name='ParticleMeshInstanceCS')
+[2026-04-02 10:49:10.073] [Renderer] [info] PipelineLibrary: created ParticleMeshInstanceCS pipeline
+[2026-04-02 10:49:10.073] [IO] [debug] ShaderCache: hit da43e8be0c234ffc (3092 bytes)
+[2026-04-02 10:49:10.073] [RHI] [debug] CreateShader: stage=0, size=3092 (name='particle_mesh_vs.hlsl')
+[2026-04-02 10:49:10.073] [IO] [debug] ShaderCache: hit 3dccbe436f36fc4d (2868 bytes)
+[2026-04-02 10:49:10.073] [RHI] [debug] CreateShader: stage=1, size=2868 (name='particle_mesh_ps.hlsl')
+[2026-04-02 10:49:10.074] [RHI] [info] Graphics pipeline created (name='ParticleMeshOpaque')
+[2026-04-02 10:49:10.074] [Renderer] [debug] PsoCache miss for 'ParticleMeshOpaque' — created and cached
+[2026-04-02 10:49:10.074] [Renderer] [info] PipelineLibrary: created ParticleMeshOpaque pipeline
+[2026-04-02 10:49:10.074] [RHI] [info] Graphics pipeline created (name='ParticleMeshTransparent')
+[2026-04-02 10:49:10.074] [Renderer] [debug] PsoCache miss for 'ParticleMeshTransparent' — created and cached
+[2026-04-02 10:49:10.074] [Renderer] [info] PipelineLibrary: created ParticleMeshTransparent pipeline
+[2026-04-02 10:49:10.075] [Renderer] [info] ShadowPass: first execution — 4 cascades, 4 total draw calls, 1 commands in drawList, atlasResolution=2048, pipeline=10, cacheMode=0, instanced=false, bindless=true
+[2026-04-02 10:49:10.075] [Renderer] [info] ShadowPass:   cascade[0] tile offset=(0, 0), resolution=2048
+[2026-04-02 10:49:10.075] [Renderer] [info] ShadowPass:   cascade[1] tile offset=(2048, 0), resolution=2048
+[2026-04-02 10:49:10.075] [Renderer] [info] ShadowPass:   cascade[2] tile offset=(0, 2048), resolution=2048
+[2026-04-02 10:49:10.075] [Renderer] [info] ShadowPass:   cascade[3] tile offset=(2048, 2048), resolution=2048
+[2026-04-02 10:49:10.075] [Renderer] [info] DepthPrepass: first execution — 1 draw calls, viewport=1920x1080, pipeline=11, instanced=false, bindless=true, meshCount=1
+[2026-04-02 10:49:10.075] [Renderer] [info] TransmittanceLutPass: first execution — dispatch=(32, 8, 1), pipeline=16, UAV=12311, LUT size=256x64

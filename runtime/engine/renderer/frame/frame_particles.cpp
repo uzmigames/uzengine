@@ -225,17 +225,12 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
         simDesc.emitters.reserve(emitters.size());
 
         // Upload initial free list state for newly created emitters.
-        // Must happen before the simulation pass reads the free list.
-        for (auto* emitter : emitters) {
-            if (emitter && emitter->needsInitialUpload && emitter->buffer.IsValid()) {
-                rgBuilder.AddPass("VFX_InitFreeList", [emitter, device = m_device](rg::RgPassBuilder& pb) {
-                    pb.SetExecutionCallback([emitter, device](IRHICommandList* cmd, const rg::RgPassResources&) {
-                        emitter->buffer.UploadInitialState(device, cmd);
-                        emitter->needsInitialUpload = false;
-                    });
-                });
-            }
-        }
+        // Disabled temporarily — segfault investigation.
+        // for (auto* emitter : emitters) {
+        //     if (emitter && emitter->needsInitialUpload && emitter->buffer.IsValid()) {
+        //         ...
+        //     }
+        // }
 
         for (auto* emitter : emitters) {
             if (!emitter || !emitter->initialized) continue;

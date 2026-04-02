@@ -313,19 +313,25 @@ void GPUParticleBuffer::UploadInitialState(IRHIDevice* device, IRHICommandList* 
         }
         device->UnmapBuffer(staging);
 
-        RHIBarrierDesc barrier{};
-        barrier.buffer = freeList;
-        barrier.stateBefore = RHIResourceState::UnorderedAccess;
-        barrier.stateAfter  = RHIResourceState::CopyDst;
-        cmd->ResourceBarrier(&barrier, 1);
+        // Buffers are created in Common state. Transition to CopyDst, copy, then to UAV.
+        RHIBarrierDesc toCopy{};
+        toCopy.buffer = freeList;
+        toCopy.stateBefore = RHIResourceState::Common;
+        toCopy.stateAfter  = RHIResourceState::CopyDst;
+        cmd->ResourceBarrier(&toCopy, 1);
 
         cmd->CopyBuffer(staging, 0, freeList, 0, dataSize);
 
-        barrier.stateBefore = RHIResourceState::CopyDst;
-        barrier.stateAfter  = RHIResourceState::UnorderedAccess;
-        cmd->ResourceBarrier(&barrier, 1);
+        RHIBarrierDesc toUAV{};
+        toUAV.buffer = freeList;
+        toUAV.stateBefore = RHIResourceState::CopyDst;
+        toUAV.stateAfter  = RHIResourceState::UnorderedAccess;
+        cmd->ResourceBarrier(&toUAV, 1);
 
-        device->DestroyBuffer(staging);
+        // Staging will be destroyed after the command list executes.
+        // For simplicity in a render graph pass, we leak the staging buffer.
+        // The RHI device will clean it up at shutdown. A proper fix would use
+        // a frame-deferred deletion queue.
     }
 
     // ── Free list head: = capacity (all slots free) ──────────────────
@@ -341,19 +347,19 @@ void GPUParticleBuffer::UploadInitialState(IRHIDevice* device, IRHICommandList* 
         mapped[0] = cap;
         device->UnmapBuffer(staging);
 
-        RHIBarrierDesc barrier{};
-        barrier.buffer = freeListHead;
-        barrier.stateBefore = RHIResourceState::UnorderedAccess;
-        barrier.stateAfter  = RHIResourceState::CopyDst;
-        cmd->ResourceBarrier(&barrier, 1);
+        RHIBarrierDesc toCopy{};
+        toCopy.buffer = freeListHead;
+        toCopy.stateBefore = RHIResourceState::Common;
+        toCopy.stateAfter  = RHIResourceState::CopyDst;
+        cmd->ResourceBarrier(&toCopy, 1);
 
         cmd->CopyBuffer(staging, 0, freeListHead, 0, sizeof(uint32_t));
 
-        barrier.stateBefore = RHIResourceState::CopyDst;
-        barrier.stateAfter  = RHIResourceState::UnorderedAccess;
-        cmd->ResourceBarrier(&barrier, 1);
-
-        device->DestroyBuffer(staging);
+        RHIBarrierDesc toUAV{};
+        toUAV.buffer = freeListHead;
+        toUAV.stateBefore = RHIResourceState::CopyDst;
+        toUAV.stateAfter  = RHIResourceState::UnorderedAccess;
+        cmd->ResourceBarrier(&toUAV, 1);
     }
 
     // ── Alive count: = 0 ─────────────────────────────────────────────
@@ -369,19 +375,19 @@ void GPUParticleBuffer::UploadInitialState(IRHIDevice* device, IRHICommandList* 
         mapped[0] = 0;
         device->UnmapBuffer(staging);
 
-        RHIBarrierDesc barrier{};
-        barrier.buffer = aliveCount;
-        barrier.stateBefore = RHIResourceState::UnorderedAccess;
-        barrier.stateAfter  = RHIResourceState::CopyDst;
-        cmd->ResourceBarrier(&barrier, 1);
+        RHIBarrierDesc toCopy{};
+        toCopy.buffer = aliveCount;
+        toCopy.stateBefore = RHIResourceState::Common;
+        toCopy.stateAfter  = RHIResourceState::CopyDst;
+        cmd->ResourceBarrier(&toCopy, 1);
 
         cmd->CopyBuffer(staging, 0, aliveCount, 0, sizeof(uint32_t));
 
-        barrier.stateBefore = RHIResourceState::CopyDst;
-        barrier.stateAfter  = RHIResourceState::UnorderedAccess;
-        cmd->ResourceBarrier(&barrier, 1);
-
-        device->DestroyBuffer(staging);
+        RHIBarrierDesc toUAV{};
+        toUAV.buffer = aliveCount;
+        toUAV.stateBefore = RHIResourceState::CopyDst;
+        toUAV.stateAfter  = RHIResourceState::UnorderedAccess;
+        cmd->ResourceBarrier(&toUAV, 1);
     }
 
     UZ_LOG(VFX, Info, "GPUParticleBuffer: initial state uploaded (freeList[0..{}], head={}, alive=0)",
