@@ -1,8 +1,14 @@
 {
   "name": "VFX Showcase",
   "version": "1.0",
-  "description": "Demonstrates all VFX particle presets in a single scene",
   "entities": [
+    {
+      "name": "MainCamera",
+      "components": {
+        "transform": { "position": [0, -500, 300], "rotation": [0, 0, 0] },
+        "camera": { "fov": 55, "near": 1, "far": 100000, "active": true }
+      }
+    },
     {
       "name": "Sun",
       "components": {
@@ -25,122 +31,10 @@
       }
     },
     {
-      "name": "Fireball",
-      "components": {
-        "transform": { "position": [-600, 0, 200] },
-        "vfx_emitter": { "asset": "vfx/presets/fireball.json", "emitting": true }
-      }
-    },
-    {
-      "name": "SmokeColumn",
-      "components": {
-        "transform": { "position": [-300, 0, 100] },
-        "vfx_emitter": { "asset": "vfx/presets/smoke_plume.json", "emitting": true }
-      }
-    },
-    {
       "name": "Sparks",
       "components": {
         "transform": { "position": [0, 0, 150] },
         "vfx_emitter": { "asset": "vfx/presets/sparks.json", "emitting": true }
-      }
-    },
-    {
-      "name": "MagicOrb",
-      "components": {
-        "transform": { "position": [300, 0, 250] },
-        "vfx_emitter": { "asset": "vfx/presets/magic_orb.json", "emitting": true }
-      }
-    },
-    {
-      "name": "Tornado",
-      "components": {
-        "transform": { "position": [600, 0, 100] },
-        "vfx_emitter": { "asset": "vfx/presets/tornado.json", "emitting": true }
-      }
-    },
-    {
-      "name": "ExplosionDebris",
-      "components": {
-        "transform": { "position": [-600, 500, 200] },
-        "vfx_emitter": { "asset": "vfx/presets/explosion_debris.json", "emitting": true }
-      }
-    },
-    {
-      "name": "CurlSmoke",
-      "components": {
-        "transform": { "position": [-300, 500, 100] },
-        "vfx_emitter": { "asset": "vfx/presets/curl_smoke.json", "emitting": true }
-      }
-    },
-    {
-      "name": "RingOfFire",
-      "components": {
-        "transform": { "position": [0, 500, 100] },
-        "vfx_emitter": { "asset": "vfx/presets/ring_of_fire.json", "emitting": true }
-      }
-    },
-    {
-      "name": "Whirlpool",
-      "components": {
-        "transform": { "position": [300, 500, 100] },
-        "vfx_emitter": { "asset": "vfx/presets/whirlpool.json", "emitting": true }
-      }
-    },
-    {
-      "name": "ConeJet",
-      "components": {
-        "transform": { "position": [600, 500, 100] },
-        "vfx_emitter": { "asset": "vfx/presets/cone_jet.json", "emitting": true }
-      }
-    },
-    {
-      "name": "WindySmoke",
-      "components": {
-        "transform": { "position": [-450, 250, 100] },
-        "vfx_emitter": { "asset": "vfx/presets/windy_smoke.json", "emitting": true }
-      }
-    },
-    {
-      "name": "LitDebris",
-      "components": {
-        "transform": { "position": [-150, 250, 200] },
-        "vfx_emitter": { "asset": "vfx/presets/lit_debris.json", "emitting": true }
-      }
-    },
-    {
-      "name": "LitSmoke",
-      "components": {
-        "transform": { "position": [150, 250, 100] },
-        "vfx_emitter": { "asset": "vfx/presets/lit_smoke.json", "emitting": true }
-      }
-    },
-    {
-      "name": "Orbital",
-      "components": {
-        "transform": { "position": [450, 250, 200] },
-        "vfx_emitter": { "asset": "vfx/presets/orbital.json", "emitting": true }
-      }
-    },
-    {
-      "name": "FireRamp",
-      "components": {
-        "transform": { "position": [0, -300, 200] },
-        "vfx_emitter": { "asset": "vfx/presets/fire_ramp.json", "emitting": true }
-      }
-    },
-    {
-      "name": "SimpleBurst",
-      "components": {
-        "transform": { "position": [-300, -300, 200] },
-        "vfx_emitter": { "asset": "vfx/presets/simple_burst.json", "emitting": true }
-      }
-    },
-    {
-      "name": "CylinderVolume",
-      "components": {
-        "transform": { "position": [300, -300, 100] },
-        "vfx_emitter": { "asset": "vfx/presets/cylinder_volume.json", "emitting": true }
       }
     }
   ]

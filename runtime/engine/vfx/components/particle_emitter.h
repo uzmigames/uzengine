@@ -159,6 +159,10 @@ struct ParticleEmitter {
     /// Whether this emitter has been initialized (GPU buffers allocated).
     bool initialized = false;
 
+    /// Whether the GPU free list/alive count need initial upload.
+    /// Set to true by SyncVfxEmitters, consumed by RegisterParticlePasses.
+    bool needsInitialUpload = false;
+
     /// Number of particles actually allocated from the budget.
     /// May be less than maxParticles if the budget was constrained.
     uint32_t allocatedFromBudget = 0;

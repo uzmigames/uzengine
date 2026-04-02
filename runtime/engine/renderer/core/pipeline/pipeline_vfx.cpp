@@ -660,15 +660,9 @@ RHIPipelineHandle PipelineLibrary::GetParticleMeshOpaque() {
     desc.pixelShader   = m_particleMeshPS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
 
-    // Vertex input: mesh position data from vertex buffer slot 0
-    RHIInputElementDesc inputElements[1] = {};
-    inputElements[0].semantic      = RHIInputSemantic::Position;
-    inputElements[0].semanticIndex = 0;
-    inputElements[0].format        = RHIFormat::RGB32Float;
-    inputElements[0].inputSlot     = 0;
-    inputElements[0].byteOffset    = 0;
-    desc.inputElements     = inputElements;
-    desc.inputElementCount = 1;
+    // No vertex input layout — mesh VS uses SV_VertexID + SV_InstanceID
+    // with bindless structured buffers for vertex data.
+    desc.inputElementCount = 0;
 
     // Opaque particle meshes — cull back faces
     desc.rasterizer.cullMode              = RHICullMode::Back;
@@ -722,15 +716,9 @@ RHIPipelineHandle PipelineLibrary::GetParticleMeshTransparent() {
     desc.pixelShader   = m_particleMeshPS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
 
-    // Vertex input: mesh position data from vertex buffer slot 0
-    RHIInputElementDesc inputElements[1] = {};
-    inputElements[0].semantic      = RHIInputSemantic::Position;
-    inputElements[0].semanticIndex = 0;
-    inputElements[0].format        = RHIFormat::RGB32Float;
-    inputElements[0].inputSlot     = 0;
-    inputElements[0].byteOffset    = 0;
-    desc.inputElements     = inputElements;
-    desc.inputElementCount = 1;
+    // No vertex input layout — mesh VS uses SV_VertexID + SV_InstanceID
+    // with bindless structured buffers for vertex data.
+    desc.inputElementCount = 0;
 
     // Two-sided: transparent meshes visible from both sides
     desc.rasterizer.cullMode              = RHICullMode::None;

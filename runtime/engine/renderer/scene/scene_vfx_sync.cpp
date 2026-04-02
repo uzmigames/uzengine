@@ -92,6 +92,12 @@ void SceneRenderer::SyncVfxEmitters(World* world, IVFS* vfs) {
                        "SyncVfxEmitters: failed to initialize inline emitter — skipping");
                 continue;
             }
+
+            // Mark emitter as needing initial GPU state upload.
+            // The upload happens in RegisterParticlePasses when the render
+            // command list is available (avoids creating a temp cmd list here
+            // which can deadlock with the fence on the direct queue).
+            emitter->needsInitialUpload = true;
         }
 
         emitter->isEmitting = emitterComp.emitting;

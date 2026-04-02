@@ -286,4 +286,106 @@ void GPUParticleBuffer::Destroy(IRHIDevice* device)
     writeIndex = 1;
 }
 
+// ---------------------------------------------------------------------------
+// GPUParticleBuffer::UploadInitialState
+// ---------------------------------------------------------------------------
+
+void GPUParticleBuffer::UploadInitialState(IRHIDevice* device, IRHICommandList* cmd) {
+    UZ_CHECKF(device != nullptr, "UploadInitialState: device is null");
+    UZ_CHECKF(cmd != nullptr, "UploadInitialState: cmd is null");
+    UZ_CHECKF(IsValid(), "UploadInitialState: buffer not allocated");
+
+    const uint32_t cap = capacity;
+
+    // ── Free list: freeList[i] = i for all i ─────────────────────────
+    {
+        const uint64_t dataSize = static_cast<uint64_t>(cap) * sizeof(uint32_t);
+        RHIBufferDesc stagingDesc{};
+        stagingDesc.sizeBytes = dataSize;
+        stagingDesc.usage     = RHIBufferUsage::CopySrc;
+        stagingDesc.memory    = RHIMemoryType::Upload;
+        stagingDesc.debugName = "VFX_FreeList_Staging";
+        auto staging = device->CreateBuffer(stagingDesc);
+
+        auto* mapped = static_cast<uint32_t*>(device->MapBuffer(staging));
+        for (uint32_t i = 0; i < cap; ++i) {
+            mapped[i] = i;
+        }
+        device->UnmapBuffer(staging);
+
+        RHIBarrierDesc barrier{};
+        barrier.buffer = freeList;
+        barrier.stateBefore = RHIResourceState::UnorderedAccess;
+        barrier.stateAfter  = RHIResourceState::CopyDst;
+        cmd->ResourceBarrier(&barrier, 1);
+
+        cmd->CopyBuffer(staging, 0, freeList, 0, dataSize);
+
+        barrier.stateBefore = RHIResourceState::CopyDst;
+        barrier.stateAfter  = RHIResourceState::UnorderedAccess;
+        cmd->ResourceBarrier(&barrier, 1);
+
+        device->DestroyBuffer(staging);
+    }
+
+    // ── Free list head: = capacity (all slots free) ──────────────────
+    {
+        RHIBufferDesc stagingDesc{};
+        stagingDesc.sizeBytes = sizeof(uint32_t);
+        stagingDesc.usage     = RHIBufferUsage::CopySrc;
+        stagingDesc.memory    = RHIMemoryType::Upload;
+        stagingDesc.debugName = "VFX_FreeListHead_Staging";
+        auto staging = device->CreateBuffer(stagingDesc);
+
+        auto* mapped = static_cast<uint32_t*>(device->MapBuffer(staging));
+        mapped[0] = cap;
+        device->UnmapBuffer(staging);
+
+        RHIBarrierDesc barrier{};
+        barrier.buffer = freeListHead;
+        barrier.stateBefore = RHIResourceState::UnorderedAccess;
+        barrier.stateAfter  = RHIResourceState::CopyDst;
+        cmd->ResourceBarrier(&barrier, 1);
+
+        cmd->CopyBuffer(staging, 0, freeListHead, 0, sizeof(uint32_t));
+
+        barrier.stateBefore = RHIResourceState::CopyDst;
+        barrier.stateAfter  = RHIResourceState::UnorderedAccess;
+        cmd->ResourceBarrier(&barrier, 1);
+
+        device->DestroyBuffer(staging);
+    }
+
+    // ── Alive count: = 0 ─────────────────────────────────────────────
+    {
+        RHIBufferDesc stagingDesc{};
+        stagingDesc.sizeBytes = sizeof(uint32_t);
+        stagingDesc.usage     = RHIBufferUsage::CopySrc;
+        stagingDesc.memory    = RHIMemoryType::Upload;
+        stagingDesc.debugName = "VFX_AliveCount_Staging";
+        auto staging = device->CreateBuffer(stagingDesc);
+
+        auto* mapped = static_cast<uint32_t*>(device->MapBuffer(staging));
+        mapped[0] = 0;
+        device->UnmapBuffer(staging);
+
+        RHIBarrierDesc barrier{};
+        barrier.buffer = aliveCount;
+        barrier.stateBefore = RHIResourceState::UnorderedAccess;
+        barrier.stateAfter  = RHIResourceState::CopyDst;
+        cmd->ResourceBarrier(&barrier, 1);
+
+        cmd->CopyBuffer(staging, 0, aliveCount, 0, sizeof(uint32_t));
+
+        barrier.stateBefore = RHIResourceState::CopyDst;
+        barrier.stateAfter  = RHIResourceState::UnorderedAccess;
+        cmd->ResourceBarrier(&barrier, 1);
+
+        device->DestroyBuffer(staging);
+    }
+
+    UZ_LOG(VFX, Info, "GPUParticleBuffer: initial state uploaded (freeList[0..{}], head={}, alive=0)",
+           cap - 1, cap);
+}
+
 }  // namespace uz

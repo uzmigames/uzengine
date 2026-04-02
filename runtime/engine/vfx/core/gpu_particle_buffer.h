@@ -276,6 +276,17 @@ struct GPUParticleBuffer {
     /// # Parameters
     /// - `device`: RHI device for deallocation. May be null (no-op).
     void Destroy(IRHIDevice* device);
+
+    /// Initializes the free list, alive count, and attribute buffers on the GPU.
+    ///
+    /// Must be called ONCE after Create() and BEFORE any compute dispatch.
+    /// Uploads: freeList[i] = i, freeListHead = capacity, aliveCount = 0,
+    /// and zero-initializes all attribute buffers.
+    ///
+    /// # Parameters
+    /// - `device`: RHI device for staging buffer creation.
+    /// - `cmd`: Command list in recording state for copy commands.
+    void UploadInitialState(IRHIDevice* device, IRHICommandList* cmd);
 };
 
 }  // namespace uz
