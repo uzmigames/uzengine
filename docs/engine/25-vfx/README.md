@@ -1,12 +1,15 @@
 # VFX System
 
-GPU particle system, VFX modules, VFX graph, and decals.
+GPU particle system, VFX modules, VFX graph, decals, trails, and advanced effects.
 
-> **Status**: Planned
-> **Source**: `runtime/engine/vfx/`
+> **Status**: Implemented (Phases 3.60–3.69 Complete; 3.66–5.3 Mostly Complete)
+> **Source**: `runtime/engine/vfx/` + `runtime/shaders/runtime/vfx/`
+> **Viewport**: `runtime/demos/vfx_viewport/` (standalone VFX preview demo with full rendering stack)
 
 | Document | Topic |
 |----------|-------|
+| [VFX Viewport Controls](../../guides/vfx-viewport-controls.md) | Keyboard shortcuts, mouse controls, CLI arguments for the VFX viewport demo |
+| [VFX Viewport Architecture](../../guides/vfx-viewport-architecture.md) | Rendering pipeline, shader structure, buffer layout, VFX compute pipeline |
 | [01-overview.md](01-overview.md) | VFX system overview, .uzfx asset format |
 | [02-particle-system.md](02-particle-system.md) | GPU compute particle simulation — up to 65536 particles per emitter |
 | [03-vfx-modules.md](03-vfx-modules.md) | Modular VFX components overview (architecture, concepts) |

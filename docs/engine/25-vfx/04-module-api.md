@@ -1,7 +1,7 @@
 ---
 title: VFX Module System API Reference
-status: Done (Phase 3.61.0)
-last-updated: 2026-03-24
+status: Done (Phase 3.65.0)
+last-updated: 2026-03-26
 ---
 
 # VFX Module System API Reference
@@ -441,6 +441,140 @@ auto constraintModule = static_cast<ConstraintModule*>(constraint.get());
 constraintModule->boundsMin = Vec3{-5.0f, -5.0f, -5.0f};
 constraintModule->boundsMax = Vec3{5.0f, 5.0f, 5.0f};
 ```
+
+---
+
+### AttractorModule
+
+Point-based force field (pull particles toward a point).
+
+**Name**: `"attractor"`
+
+**Parameters**:
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `attractor_position` | Vec3 | (0, 0, 0) | World-space force center |
+| `strength` | Float | 10.0 | Force magnitude multiplier |
+| `falloff_radius` | Float | 100.0 | Distance at which force becomes zero |
+| `falloff_power` | Float | 1.0 | Falloff curve (1 = linear, 2 = quadratic) |
+
+**Behavior**:
+- Computes per-particle distance to attractor center
+- Applies inverse falloff: force = strength / (1 + distance^falloffPower)
+- Adds resulting force to particle velocity each frame
+
+---
+
+### VectorFieldModule
+
+Samples a 3D vector field texture for velocity perturbation.
+
+**Name**: `"vector_field"`
+
+**Parameters**:
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `vector_field_texture` | Uint (handle) | 0 | 3D texture asset handle (128³ typical) |
+| `scale` | Float | 1.0 | Force magnitude multiplier |
+| `frequency` | Float | 1.0 | Spatial tiling frequency |
+| `time_scale` | Float | 1.0 | Temporal animation speed |
+
+**Behavior**:
+- Normalizes particle position to texture space [0,1]³
+- Samples 3D vector field at position + time offset
+- Adds scaled vector to particle velocity
+
+---
+
+### SubEmitterModule
+
+Spawns secondary emitters from particle death or events (readback-based).
+
+**Name**: `"sub_emitter"`
+
+**Parameters**:
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `emitter_template` | Handle | 0 | Secondary ParticleEmitter to spawn |
+| `spawn_on_death` | Bool | true | Trigger on particle lifespan expiry |
+| `count_per_event` | Int | 1 | Particles per death event |
+
+**Behavior**:
+- GPU readback buffer collects indices of particles to trigger sub-emission
+- CPU-side handler spawns secondary emitters at those positions
+- Enables recursive, hierarchical VFX (sparks from explosions, etc.)
+
+---
+
+### OrbitModule
+
+Circular motion around a center point.
+
+**Name**: `"orbit"`
+
+**Parameters**:
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `orbit_center` | Vec3 | (0, 0, 0) | Center of orbital rotation |
+| `orbit_radius` | Float | 10.0 | Distance from center to orbit |
+| `orbit_speed` | Float | 1.0 | Radians per second |
+| `orbit_axis` | Vec3 | (0, 1, 0) | Rotation axis (normalized) |
+
+**Behavior**:
+- Maintains particle at fixed distance from orbit center
+- Rotates position around center using quaternion rotation
+- Particle velocity follows tangential direction (perpendicular to radius vector)
+
+---
+
+### PinModule
+
+Anchors particles to fixed world positions (tethering).
+
+**Name**: `"pin"`
+
+**Parameters**:
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `pin_position` | Vec3 | (0, 0, 0) | Anchor world position |
+| `stiffness` | Float | 0.9 | Spring stiffness [0, 1] (1 = rigid) |
+| `damping` | Float | 0.1 | Velocity damping [0, 1] |
+
+**Behavior**:
+- Pulls particle toward pin position with spring force
+- Stiffness controls how strongly pinned (1.0 = zero offset, 0.0 = free)
+- Damping reduces oscillation
+
+**Use Cases**:
+- Flag/cloth anchoring to poles
+- Hanging vine/rope particles
+- Constrained particle chains
+
+---
+
+### DistanceConstraintModule
+
+Maintains fixed distance between particles and a target.
+
+**Name**: `"distance_constraint"`
+
+**Parameters**:
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `target_position` | Vec3 | (0, 0, 0) | Constraint target |
+| `target_distance` | Float | 5.0 | Maintained distance (m) |
+| `constraint_stiffness` | Float | 1.0 | How strictly to enforce distance |
+
+**Behavior**:
+- Moves particle to maintain exact distance from target
+- Preserves tangential velocity (particle orbits target at fixed radius)
+- Useful for circular motion, chain constraints
 
 ---
 

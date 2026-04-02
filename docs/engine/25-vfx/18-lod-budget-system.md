@@ -1,7 +1,8 @@
 # LOD & Budget System
 
-> **Status**: Planned (Phase 3.68.0)
-> **References**: [VFX System Overview](01-overview.md), [Particle System](02-particle-system.md), [Significance Manager](budget/vfx_significance_manager.h)
+> **Status**: Implemented (Phase 3.65.0)
+> **References**: [VFX System Overview](01-overview.md), [Particle System](02-particle-system.md)
+> **Source**: `runtime/engine/vfx/budget/vfx_budget.h/.cpp`, `runtime/engine/vfx/budget/vfx_significance_manager.h/.cpp`
 
 ## Purpose
 
@@ -352,6 +353,6 @@ void SetVFXQuality(VFXQualityMode mode) {
 
 | Phase | Milestone | Status |
 |-------|-----------|--------|
-| 3.68.0 | LOD & budget system implementation | Planned |
-| 3.69.0 | Hysteresis & temporal stability | Planned |
-| 3.70.0 | Lua API for dynamic quality change | Planned |
+| 3.65.0 | LOD & budget system implementation | Complete |
+| 3.66.0 | Hysteresis & temporal stability | Planned |
+| 3.67.0 | Lua API for dynamic quality change | Planned |

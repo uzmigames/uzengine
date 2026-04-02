@@ -1,7 +1,8 @@
 # Light Particles (Particle-Emitted Lights)
 
-> **Status**: Planned (Phase 3.75.0)
+> **Status**: Implemented (Phase 3.65.0)
 > **References**: [VFX Modules](03-vfx-modules.md), [Particle System](02-particle-system.md), [Clustered Lighting](../12-rendering-architecture/03-clustered-lighting.md)
+> **Source**: `runtime/engine/vfx/modules/light_render/`, `runtime/engine/vfx/readback/vfx_particle_readback.h/.cpp`
 
 ## Purpose
 
@@ -392,7 +393,7 @@ This ensures nearby particle lights take precedence over distant ones.
 
 | Phase | Milestone | Status |
 |-------|-----------|--------|
-| 3.75.0 | Light render module & readback pipeline | Planned |
-| 3.76.0 | Clustered light integration & testing | Planned |
-| 3.77.0 | Selective light culling per-cluster | Planned |
-| 3.78.0 | Lua API for dynamic light control | Planned |
+| 3.65.0 | Light render module & readback pipeline | Complete |
+| 3.66.0 | Clustered light integration & testing | Complete |
+| 3.67.0 | Selective light culling per-cluster | Planned |
+| 3.68.0 | Lua API for dynamic light control | Planned |

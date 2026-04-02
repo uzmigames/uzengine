@@ -119,6 +119,14 @@ struct EmitterSimDispatch {
     /// Pre-filled CB allocation for the indirect args shader constants.
     CBAllocation indirectCB = {};
 
+    /// Per-emitter composed spawn PSO (from module compositor). When valid,
+    /// overrides desc.spawnPipeline for this emitter.
+    RHIPipelineHandle composedSpawnPSO;
+
+    /// Per-emitter composed update PSO (from module compositor). When valid,
+    /// overrides desc.updatePipeline for this emitter.
+    RHIPipelineHandle composedUpdatePSO;
+
     /// Number of particles to spawn this frame. May be 0 (skip spawn dispatch).
     uint32_t spawnCount = 0;
 

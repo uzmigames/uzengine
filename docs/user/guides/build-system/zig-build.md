@@ -85,7 +85,7 @@ Include paths are split into four tables:
 | `engine_include_dirs` | Cross-platform engine | `src`, `engine/logging`, `engine/math` |
 | `thirdparty_include_dirs` | Cross-platform deps | `spdlog/include`, `directxmath/Inc` |
 | `windows_engine_include_dirs` | Windows-only engine | `platform/windows` |
-| `windows_thirdparty_include_dirs` | Windows-only deps | `d3d12ma/include`, `agility/include` |
+| `windows_thirdparty_include_dirs` | Windows-only deps | `d3d12ma/include`, `directx-headers/include` |
 
 ## Agility SDK Deployment
 

@@ -69,10 +69,11 @@ pub const DemoHandle = struct {
     exe: *std.Build.Step.Compile,
     config: DemoConfig,
 
-    /// Finalize: install artifact, deploy DLLs, cook textures, pack assets, create run step.
+    /// Finalize: install artifact, deploy DLLs, shaders, cook textures, pack assets, create run step.
     pub fn install(self: *DemoHandle) void {
         self.b.installArtifact(self.exe);
         self.deployDlls();
+        self.deployShaders();
         if (self.config.cook_textures) self.cookTextures();
         self.packAssets();
         self.createRunStep();
@@ -80,8 +81,8 @@ pub const DemoHandle = struct {
 
     fn deployDlls(self: *DemoHandle) void {
         const dlls = [_]struct { src: []const u8, dst: []const u8 }{
-            .{ .src = "../../thirdparty/agility/bin/x64/D3D12Core.dll", .dst = "D3D12Core.dll" },
-            .{ .src = "../../thirdparty/agility/bin/x64/d3d12SDKLayers.dll", .dst = "d3d12SDKLayers.dll" },
+            .{ .src = "../../thirdparty/agility/bin/x64/D3D12Core.dll", .dst = "D3D12/D3D12Core.dll" },
+            .{ .src = "../../thirdparty/agility/bin/x64/d3d12SDKLayers.dll", .dst = "D3D12/d3d12SDKLayers.dll" },
             .{ .src = "../../thirdparty/dxc/bin/x64/dxcompiler.dll", .dst = "dxcompiler.dll" },
             .{ .src = "../../thirdparty/dxc/bin/x64/dxil.dll", .dst = "dxil.dll" },
             .{ .src = "../../thirdparty/luajit/src/lua51.dll", .dst = "lua51.dll" },
@@ -89,7 +90,7 @@ pub const DemoHandle = struct {
         for (dlls) |dll| {
             self.b.getInstallStep().dependOn(&self.b.addInstallFileWithDir(
                 self.b.path(dll.src),
-                .{ .custom = "lib" },
+                .bin,
                 dll.dst,
             ).step);
         }
@@ -97,7 +98,7 @@ pub const DemoHandle = struct {
         if (self.config.deploy_fxc) {
             self.b.getInstallStep().dependOn(&self.b.addInstallFileWithDir(
                 self.b.path("../../thirdparty/fxc/bin/x64/d3dcompiler_47.dll"),
-                .{ .custom = "lib" },
+                .bin,
                 "d3dcompiler_47.dll",
             ).step);
         }
@@ -109,6 +110,15 @@ pub const DemoHandle = struct {
                 deploy.dest,
             ).step);
         }
+    }
+
+    fn deployShaders(self: *DemoHandle) void {
+        // Deploy engine shader sources (HLSL/HLSLI) so runtime compilation works.
+        self.b.getInstallStep().dependOn(&self.b.addInstallDirectory(.{
+            .source_dir = self.b.path("../../shaders/runtime"),
+            .install_dir = .bin,
+            .install_subdir = "shaders/runtime",
+        }).step);
     }
 
     fn cookTextures(self: *DemoHandle) void {
@@ -302,6 +312,8 @@ pub fn createDemo(b: *std.Build, config: DemoConfig) DemoHandle {
         "../../engine/profiling",
         "../../engine/memory",
         "../../engine/config",
+        "../../engine/core",
+        "../../engine/debug",
         "../../engine/math",
         "../../engine/containers",
         "../../engine/random",
@@ -365,6 +377,10 @@ pub fn createDemo(b: *std.Build, config: DemoConfig) DemoHandle {
         "../../editor/grid",
         "../../editor/font",
         "../../editor/stats",
+        "../../editor/outline",
+        "../../editor/gizmo",
+        "../../editor/input",
+        "../../editor/selection",
         "../../build/generated/shaders",
     };
     for (engine_dirs) |dir| mod.addIncludePath(b.path(dir));
@@ -409,6 +425,9 @@ pub fn createDemo(b: *std.Build, config: DemoConfig) DemoHandle {
     // Link pre-compiled runtime + editor libs
     mod.addObjectFile(b.path("../../build/lib/runtime.lib"));
     mod.addObjectFile(b.path("../../build/lib/editor.lib"));
+
+    // LuaJIT (runtime.lib depends on Lua symbols)
+    mod.addObjectFile(b.path("../../thirdparty/luajit/src/lua51.lib"));
 
     // Application icon
     mod.addWin32ResourceFile(.{ .file = b.path("../common/app.rc") });

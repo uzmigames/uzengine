@@ -1,8 +1,9 @@
-# VFX Modules — Spawn, Update, Render, Light, Collision Modules
+# VFX Modules — 15 Builtin Modules (Spawn, Update, Render, Physics, Forces, Constraints)
 
 > **Depends on**: Particle system (§25.2), VFX graph (§25.4)
 > **Used by**: VFX authoring, emitter behavior customization
-> **Extensible**: Custom modules via virtual interface
+> **Extensible**: Custom modules via virtual IVFXModule interface
+> **Status**: ✓ Complete (Phase 3.61.0–3.65.0)
 
 ## Purpose
 
@@ -400,39 +401,47 @@ class WindModule : public uz::VFX::Module {
 uz::VFX::ModuleRegistry::Register<WindModule>("wind");
 ```
 
-## Module Table Reference
+## Module Table Reference (15 Builtin Modules)
 
-| Module Type | Input | Output | Phase |
-|-------------|-------|--------|-------|
-| **Spawn** | Rate, velocity, lifespan | Position, velocity, age | 3 (Phase 3) |
-| **Update** | Velocity, gravity, drag | Velocity, position | 3 |
-| **Decay** | Age, lifespan | Kill flag | 3 |
-| **SpriteRender** | Position, size, color curves | Size, color, UV | 3 |
-| **Collision** | Position, velocity, physics world | Velocity, position, kill flag | 4 (Phase 4) |
-| **Light** | Position, color, intensity | Light list | 4 |
-| **Turbulence** | Position, time | Velocity delta | 4 |
-| **Constraint** | Position, bounds | Clamped position | 4 |
-| **MeshRender** | Position, rotation, scale | Instanced draw | 4 |
-| **RibbonRender** | Position history, width | Ribbon mesh | 4 |
+| Module | Category | Input | Output | Status |
+|--------|----------|-------|--------|--------|
+| **Spawn** | Emission | Rate, velocity, lifespan, shape | Position, velocity, age, lifespan | ✓ Done |
+| **Update** | Physics | Velocity, gravity, drag, angular vel | Velocity, position, rotation | ✓ Done |
+| **Decay** | Lifecycle | Age, lifespan | Kill flag (age=-1) | ✓ Done |
+| **Turbulence** | Forces | Position, time, frequency, octaves | Velocity delta (FBM noise) | ✓ Done |
+| **Constraint** | Bounds | Position, bounds box | Clamped position | ✓ Done |
+| **Collision** | Physics | Position, velocity, depth buffer | Velocity, position, kill/bounce | ✓ Done |
+| **Attractor** | Forces | Position, attractor data | Velocity delta (pull toward point) | ✓ Done |
+| **Vector Field** | Forces | Position, vector field texture | Velocity delta (field sampled) | ✓ Done |
+| **Orbit** | Forces | Position, center, radius, speed | Circular motion around point | ✓ Done |
+| **Pin** | Constraints | Position, pin location | Anchored position (tethered) | ✓ Done |
+| **Distance Constraint** | Constraints | Position, target, distance | Position clamped to distance | ✓ Done |
+| **Sub-Emitter** | Spawning | Position, age, event triggers | GPU readback for CPU spawning | ✓ Done |
+| **Sprite Render** | Rendering | Position, size, color, age | Billboard size/color (curves TBD) | ✓ Done |
+| **Mesh Render** | Rendering | Position, rotation, scale, mesh | Instanced mesh batch data | ✓ Done |
+| **Light Render** | Rendering | Position, color, intensity, age | Transient point light injection | ✓ Done |
 
 ## Performance Guidelines
 
-Module overhead scales linearly with particle count:
+Module overhead scales linearly with particle count (SM6.6, bindless indexing):
 
 ```
-Spawn Module:       ~0.01 ms (100K particles)
-Update Module:      ~0.05 ms (gravity, drag)
-Collision Module:   ~0.3 ms (raycast per particle)
-Render Module:      ~0.2 ms (curve sampling)
-─────────────────────────────────
-Total per 100K:     ~0.6 ms (on SM6.6 GPU)
+Spawn Module:          ~0.01 ms (100K particles, atomic free list)
+Update Module:         ~0.05 ms (gravity, damping, Euler integration)
+Turbulence Module:     ~0.1 ms (FBM 3D noise, 3 octaves)
+Collision Module:      ~0.3 ms (depth-buffer raycast per particle)
+Attractor/VectorField: ~0.2 ms (texture sampling + force accumulation)
+Light Render Module:   ~0.05 ms (light structure copy)
+─────────────────────────────────────────────────────────────────
+Total typical stack (100K): ~0.75 ms (spawn+update+turbulence+render)
 ```
 
-Optimization:
+Optimization strategies:
 
-- **Combine simple modules**: Multiple small modules overhead, combine when possible
-- **Batch raycasts**: Collision module batches all particles' raycasts in one compute dispatch
-- **Curve caching**: Pre-sample curves if unchanged per frame
+- **Module stacking order**: Physics modules run before rendering (better cache locality)
+- **Batch raycasts**: Collision module groups particles into 256-thread groups (atomic workload)
+- **Bindless indexing**: All buffers accessed via SM6.6 descriptor heap (no descriptor copy overhead)
+- **Shared memory optimization**: Turbulence uses LDS for noise lookup tables (256 threads/group)
 
 ## Comparison
 
@@ -443,10 +452,12 @@ Optimization:
 | Composition | Node graph | Inspector | **`.uzvfx` JSON + programmatic** |
 | Performance | High (optimized) | Medium | **High (SoA, compute)** |
 
-## Implementation Phase
+## Implementation Phase (All Complete)
 
-| Phase | What Ships |
-|-------|-----------|
-| **Phase 3** | Spawn, Update, Decay, SpriteRender modules |
-| **Phase 4** | Collision, Light, Turbulence, Constraint, MeshRender, RibbonRender modules |
-| **Phase 5** | Custom module API, module profiling tools |
+| Phase | Status | Modules |
+|-------|--------|---------|
+| **3.61.0** | ✓ DONE | Core 9: Spawn, Update, Decay, SpriteRender, Turbulence, Constraint, Collision, LightRender, MeshRender |
+| **3.62.0** | ✓ DONE | Graph/asset system, module compositor, module registry |
+| **3.64.0** | ✓ DONE | SubEmitter (readback + CPU spawning), RibbonRender (spline tessellation), Attractor (force field) |
+| **3.65.0** | ✓ DONE | VectorField, Orbit, Pin, DistanceConstraint modules + full integration |
+| **Future** | Planned | Module profiling tools, curve system integration (size-over-life, color-over-life), custom module editor UI |

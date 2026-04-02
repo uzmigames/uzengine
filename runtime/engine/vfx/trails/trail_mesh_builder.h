@@ -163,6 +163,13 @@ public:
     /// Iterates over `points[0..pointCount-1]` (head-to-tail order, index 0 is
     /// the newest point) and generates a camera-facing quad-strip ribbon mesh.
     ///
+    /// Width and color are modulated by **normalized age** (`point.age /
+    /// pointLifetime`), which gives a natural time-based taper and color shift:
+    /// - Width: multiplied by `(1 - normalizedAge)`, tapering from full width
+    ///   at age=0 (freshly emitted) to zero at age=pointLifetime (about to expire).
+    /// - Color: interpolated from `colorStart` toward `colorEnd` as points age,
+    ///   combined with the arc-length parameter `t` for smooth spatial gradient.
+    ///
     /// # Parameters
     /// * `points` - Pointer to an array of TrailPoints in head-to-tail order.
     ///              Must be non-null and have at least `pointCount` elements.
@@ -181,6 +188,11 @@ public:
     ///                     Used to normalize `distanceFromHead` into [0,1] UV V.
     ///                     Clamped to a minimum of 0.0001 internally to avoid
     ///                     divide-by-zero on zero-length trails.
+    /// * `pointLifetime` - Maximum lifetime of trail points (seconds). Used to
+    ///                     compute normalized age for width taper and color shift.
+    ///                     Clamped to a minimum of 0.0001 internally to avoid
+    ///                     divide-by-zero. Pass 0 or negative to disable
+    ///                     age-based modulation (falls back to arc-length only).
     ///
     /// # Returns
     /// A `TrailMeshData` with `pointCount * 2` vertices and
@@ -197,7 +209,8 @@ public:
         float widthEnd,
         const Vec4& colorStart,
         const Vec4& colorEnd,
-        float totalDistance
+        float totalDistance,
+        float pointLifetime
     ) const;
 };
 

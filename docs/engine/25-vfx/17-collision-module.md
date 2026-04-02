@@ -1,7 +1,8 @@
 # Depth-Buffer Collision Module
 
-> **Status**: Planned (Phase 3.65.0)
+> **Status**: Implemented (Phase 3.65.0)
 > **References**: [VFX Modules](03-vfx-modules.md), [Module API Reference](04-module-api.md), [.uzvfx Format](07-uzvfx-format.md)
+> **Source**: `runtime/engine/vfx/modules/collision/`, `runtime/shaders/runtime/vfx/vfx_collision.hlsli`
 
 ## Purpose
 
@@ -297,6 +298,6 @@ For **100k particles/frame**: Expect 5–10% GPU time on modern hardware (RTX 30
 
 | Phase | Milestone | Status |
 |-------|-----------|--------|
-| 3.65.0 | Collision module implementation | Planned |
+| 3.65.0 | Collision module implementation | Complete |
 | 3.66.0 | Screen-space normal GBuffer optimization | Planned |
 | 3.67.0 | Collision events & Lua API | Planned |

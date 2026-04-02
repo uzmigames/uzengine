@@ -38,6 +38,7 @@
 namespace uz {
 
 class IRHIDevice;
+class MaterialInterface;
 
 // ---------------------------------------------------------------------------
 // ParticleEmitter -- GPU particle emitter ECS component (pure data + methods)
@@ -82,8 +83,9 @@ struct ParticleEmitter {
     /// Clamped so the result is never negative.
     float lifetimeVariation = 0.0f;
 
-    /// Initial spawn velocity direction and magnitude (world space).
-    Vec3 spawnVelocity = {0.0f, 10.0f, 0.0f};
+    /// Initial spawn velocity direction and magnitude (world space, cm/s).
+    /// Z-up: positive Z = upward.
+    Vec3 spawnVelocity = {0.0f, 0.0f, 1000.0f};
 
     /// Random velocity spread magnitude added to spawnVelocity.
     /// Each component gets `random(-velocityVariation, +velocityVariation)`.
@@ -92,14 +94,15 @@ struct ParticleEmitter {
     /// Spread cone half-angle in degrees (0 = straight line, 90 = hemisphere).
     float spreadAngle = 30.0f;
 
-    /// Soft particle fade distance in world units.
+    /// Soft particle fade distance in world units (cm).
     /// Controls the range over which particles fade when intersecting scene depth.
     /// Larger values produce a softer, more gradual fade. Zero disables soft particles.
     /// @ref Lorach 2007 "Soft Particles" — depth-based alpha fade at geometry intersections.
-    float softParticleFadeRange = 1.0f;
+    float softParticleFadeRange = 100.0f;
 
-    /// Gravity acceleration applied each frame (world space, m/s^2).
-    Vec3 gravity = {0.0f, -9.81f, 0.0f};
+    /// Gravity acceleration applied each frame (world space, cm/s^2).
+    /// Z-up: negative Z = downward. 981 cm/s^2 = 9.81 m/s^2.
+    Vec3 gravity = {0.0f, 0.0f, -981.0f};
 
     /// Velocity damping per frame (0 = full stop, 1 = no damping).
     /// Applied multiplicatively: `velocity *= damping` each tick.
@@ -159,6 +162,13 @@ struct ParticleEmitter {
     /// Number of particles actually allocated from the budget.
     /// May be less than maxParticles if the budget was constrained.
     uint32_t allocatedFromBudget = 0;
+
+    // -- Material ------------------------------------------------------------
+
+    /// Material for this emitter's rendered particles. Accepts any MaterialInterface
+    /// subclass: VFXMaterial, Material (reuse mesh material), or MaterialInstance
+    /// (per-emitter overrides). When null, uses default unlit white.
+    MaterialInterface* material = nullptr;
 
     // -- Module Stack ---------------------------------------------------------
 

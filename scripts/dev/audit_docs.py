@@ -328,6 +328,9 @@ def scan_header(filepath: str) -> FileReport:
             if line.rstrip().endswith("\\"):
                 continue
             prev_idx, prev_line = _prev_content_line(lines, i)
+            # Bridge template<...> declarations — the doc block is above the template line
+            if prev_idx >= 0 and re.match(r"^\s*template\s*<", prev_line.strip()):
+                prev_idx, prev_line = _prev_content_line(lines, prev_idx)
             if prev_idx >= 0 and not _is_doc_line(prev_line):
                 func_m = _RE_FUNC_DECL.match(stripped)
                 fname = func_m.group(1) if func_m else "?"

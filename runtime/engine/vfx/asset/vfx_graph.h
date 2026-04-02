@@ -14,7 +14,7 @@
 ///   "emitter": { "max_particles": 10000, "lifespan_default": 5.0 },
 ///   "modules": [
 ///     { "type": "spawn", "config": { "rate": 500 } },
-///     { "type": "update", "config": { "gravity": [0,-9.81,0] } },
+///     { "type": "update", "config": { "gravity": [0,0,-981] } },
 ///     { "type": "decay" }
 ///   ],
 ///   "parameters": [

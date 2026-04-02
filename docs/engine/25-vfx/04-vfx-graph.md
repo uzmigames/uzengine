@@ -1,8 +1,10 @@
 # VFX Graph — Node-Based Authoring, .uzvfx Format, Parameter Curves, Events
 
+> **Status**: Implemented (Phase 3.62.0)
 > **Depends on**: VFX modules (§25.3), Asset cooking (§43)
 > **Format**: `.uzvfx` JSON, `.uzcurve` JSON (parameter curves)
 > **Editor**: Visual graph editor (Phase 4), or JSON editing (Phase 3)
+> **Source**: `runtime/engine/vfx/graphs/`, `runtime/engine/vfx/loader/vfx_graph_loader.h/.cpp`, `runtime/engine/vfx/validator/vfx_graph_validator.h/.cpp`
 
 ## Purpose
 

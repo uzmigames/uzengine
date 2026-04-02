@@ -40,7 +40,7 @@ UzEngine vendors all thirdparty dependencies as Git submodules under `runtime/th
 |---------|---------|---------|----------|-------|
 | **D3D12MA** | 3.1.0 | GPU memory allocation (Microsoft) | Yes (`dx12_d3d12ma.cpp`) | Special flags: `-fno-sanitize=undefined` |
 | **directx-headers** | SDK 614 | DX12 headers for Clang/MinGW | Header-only | Overrides Zig's MinGW d3d12.h (SDK 602) |
-| **Agility SDK** | 1.614+ | DX12 runtime + debug layers | **Pre-built DLLs** | Deployed to `build/bin/D3D12/` |
+| **Agility SDK** | 1.619.1 | DX12 runtime + debug layers | **Pre-built DLLs** | Downloaded by `setup.ps1`, deployed to `build/bin/D3D12/` |
 | **DXC** | Latest | DirectX Shader Compiler | **Pre-built DLLs** | `dxcompiler.dll` + `dxil.dll` |
 | **SPIRV-Reflect** | Latest | Shader binding reflection (SPIR-V) | Yes (`spirv_reflect.c`, C11) | Auto-extracts resource bindings |
 

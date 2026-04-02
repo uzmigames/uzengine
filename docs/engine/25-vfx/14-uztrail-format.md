@@ -1,8 +1,9 @@
 # .uztrail JSON Format Specification
 
-> **Status**: Planned (Phase 3.64.0)
+> **Status**: Implemented (Phase 3.64.0)
 > **Format**: JSON
 > **References**: [Trail Rendering Pipeline](15-trail-rendering-pipeline.md), [Trail Configuration Guide](16-trail-configuration-guide.md)
+> **Source**: `runtime/engine/vfx/trails/trail_asset.{h,cpp}`
 
 ## Purpose
 

@@ -143,7 +143,8 @@ void TrailSystem::Update(float dt,
                 instance.component.widthEnd,
                 instance.component.colorStart,
                 instance.component.colorEnd,
-                instance.component.totalDistance
+                instance.component.totalDistance,
+                instance.component.pointLifetime
             );
         } else {
             instance.meshData.Clear();

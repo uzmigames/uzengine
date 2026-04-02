@@ -36,7 +36,7 @@ enum class FlipbookBlendMode : uint8_t {
 ///
 /// The HLSL snippet computes normalized age and writes final size/color to
 /// the particle attribute buffers. Curve-based size-over-life and
-/// color-over-life are planned (tracked via placeholder curve IDs).
+/// color-over-life are supported via VFXCurve IDs (0 = disabled, use flat value).
 ///
 /// # Parameters
 /// | Name          | Type | Default | Description                          |
@@ -78,10 +78,10 @@ public:
     /// Whether to sort particles back-to-front for correct alpha blending.
     bool depthSort = true;
 
-    /// Placeholder curve ID for size-over-life (0 = no curve, use flat value).
+    /// VFXCurve ID for size-over-life (0 = disabled, use flat spriteWidth/Height).
     uint32_t sizeOverLifeCurveId = 0;
 
-    /// Placeholder curve ID for color-over-life (0 = no curve, use flat value).
+    /// VFXCurve ID for color-over-life (0 = disabled, use particle color as-is).
     uint32_t colorOverLifeCurveId = 0;
 
     // -- Flipbook / SubUV animation ------------------------------------------

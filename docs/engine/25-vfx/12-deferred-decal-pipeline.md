@@ -1,8 +1,10 @@
 # Deferred Decal Rendering Pipeline
 
-> **Status**: Planned (Phase 3.63.0)
+> **Status**: Implemented (Phase 3.63.0)
 > **Category**: Rendering, VFX
 > **References**: [Decal System Overview](05-decals.md), [.uzdecal Format](11-uzdecal-format.md), [G-Buffer](../02-rendering/04-gbuffer.md)
+> **Source**: `runtime/engine/vfx/decals/decal_component.h/.cpp`, `runtime/engine/vfx/decals/decal_manager.{h,cpp}`
+> **Shaders**: `runtime/shaders/runtime/vfx/decal_deferred_vs.hlsl`, `decal_deferred_ps.hlsl`
 
 ## Purpose
 

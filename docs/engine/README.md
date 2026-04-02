@@ -56,7 +56,7 @@
 | [22-developer-layer/](22-developer-layer/) | Developer Layer | 6 | **Planned** | Profiling, debug draw, hot-reload, automation, console |
 | [23-localization/](23-localization/) | Localization | 5 | **Planned** | String tables, ICU formatting, text shaping, asset localization |
 | [24-networking/](24-networking/) | Networking | 5 | **Planned** | Server architecture, replication, RPCs, lag compensation |
-| [25-vfx/](25-vfx/) | VFX System | 5 | **Planned** | GPU particles, VFX modules, VFX graph, decals |
+| [25-vfx/](25-vfx/) | VFX System | 5 | **Done** | GPU particles (65K/emitter), 15 VFX modules, VFX graph, decals, trails, collision, lights |
 | [33-vfx-ai-tool/](33-vfx-ai-tool/) | **VFX AI Tool** | **6** | **Planned** | **Natural language VFX generation, Claude shaders, ComfyUI textures, TRELLIS.2 meshes, orchestrator, user workflow** |
 | [26-ai-content-pipeline/](26-ai-content-pipeline/) | AI Content Pipeline | 3 | **Planned** | LLM content generation, validation |
 | [27-platform-services/](27-platform-services/) | Platform Services | 3 | **Planned** | Steam integration, upscaling (DLSS/FSR/XeSS) |

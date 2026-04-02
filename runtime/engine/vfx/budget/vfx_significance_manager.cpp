@@ -14,9 +14,9 @@ namespace uz {
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Distance attenuation coefficient: 1% falloff per metre.
-/// At 100 m the distance factor is ~0.5 (half of the 0-m value).
-static constexpr float kDistanceFalloff = 0.01f;
+/// Distance attenuation coefficient: 1% falloff per 100 cm (1 metre).
+/// At 10000 cm (100 m) the distance factor is ~0.5 (half of the 0-cm value).
+static constexpr float kDistanceFalloff = 0.0001f;
 
 /// Significance multiplier applied to off-screen emitters.
 /// A factor of 0.1 heavily penalises culled emitters without zeroing their score,

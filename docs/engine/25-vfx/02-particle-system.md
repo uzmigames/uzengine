@@ -900,6 +900,9 @@ namespace uz::VFX {
 | Phase | Status | Details |
 |-------|--------|---------|
 | **3.60.0** | ✓ COMPLETE | **GPU Particle Core System**: ParticleEmitter, GPUParticleBuffer (ping-pong SoA + bookkeeping), ParticleBudget (lock-free), VFXSystem, simulation passes (spawn/update/indirect-args), render pass (indirect billboard), soft depth fade |
-| **3.60.1** | TODO | Decal system (raycast placement, deferred pass, fade curves) |
-| **3.60.2** | TODO | Trail/Beam system (spline tessellation, width curves, UV scroll) |
-| **4.0+** | Planned | VFX node graph editor, advanced modules (collision, lights, constraints), LOD system, atlasing, profiling |
+| **3.61.0** | ✓ COMPLETE | **Module system** (15 modules: spawn, update, decay, sprite_render, collision, light_render, mesh_render, turbulence, constraint, attractor, vector_field, sub_emitter, orbit, pin, distance_constraint) + ModuleRegistry + ModuleCompositor |
+| **3.62.0** | ✓ COMPLETE | **VFX graph/asset system** (vfx_composite, vfx_graph, vfx_hot_reload), VFX significance budgeting, particle sort (bitonic merge, SM6.6 bindless) |
+| **3.63.0** | ✓ COMPLETE | **Decal system** (GPU raycast placement, depth-aware fade, deferred rendering) |
+| **3.64.0** | ✓ COMPLETE | **Trail/Ribbon system** (spline tessellation, width curves, UV scroll, indexed triangle rendering) |
+| **3.65.0** | ✓ COMPLETE | **Advanced features**: collision depth-buffer raycast, light emission from particles, mesh instancing, sub-emitter spawning, orbit/pin/attractor forces, vector field sampling |
+| **4.0+** | Planned | LOD system, texture atlasing, GPU profiling counters, multi-emitter batching optimization |

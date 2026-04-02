@@ -61,6 +61,12 @@ public:
     /// Number of FBM octaves (clamped to [1, 8] to bound GPU cost).
     int32_t octaves = 3;
 
+    /// When true, uses curl noise (divergence-free) instead of raw FBM.
+    /// Curl noise produces swirling, volume-preserving motion ideal for
+    /// smoke, fire, and fluid-like effects.
+    /// @ref Bridson 2007 "Curl-Noise for Procedural Fluid Flow"
+    bool useCurlMode = false;
+
     /// Minimum allowed octave count.
     static constexpr int32_t kMinOctaves = 1;
 

@@ -1,8 +1,9 @@
 # .uzvfx JSON Format Specification
 
-> **Status**: Planned (Phase 2.5)
+> **Status**: Implemented (Phase 3.62.0)
 > **Format**: JSON
 > **References**: [VFX System Overview](01-overview.md), [VFX Modules](03-vfx-modules.md), [Module API](04-module-api.md)
+> **Source**: `runtime/engine/vfx/loader/vfx_graph_loader.h/.cpp`, `runtime/engine/vfx/validator/vfx_graph_validator.h/.cpp`
 
 ## Purpose
 

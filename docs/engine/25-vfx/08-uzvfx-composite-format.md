@@ -1,8 +1,9 @@
 # .uzvfx_composite Format Specification
 
-> **Status**: Planned (Phase 2.5)
+> **Status**: Implemented (Phase 3.62.0)
 > **Format**: JSON
 > **References**: [.uzvfx Format](07-uzvfx-format.md), [VFX Modules](03-vfx-modules.md)
+> **Source**: `runtime/engine/vfx/loader/vfx_composite_loader.h/.cpp`, `runtime/engine/vfx/composite/vfx_composite.h/.cpp`
 
 ## Purpose
 
