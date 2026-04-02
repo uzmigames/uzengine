@@ -606,7 +606,7 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
 
     if (!renderDesc.emitters.empty()) {
         fprintf(stderr, "[VFX-DBG] adding render pass\n"); fflush(stderr);
-        AddParticleRenderPass(rgBuilder, renderDesc);
+        // AddParticleRenderPass(rgBuilder, renderDesc); // DISABLED: device removed on render — needs RC6 barrier fix
         fprintf(stderr, "[VFX-DBG] render pass added OK\n"); fflush(stderr);
     }
 
