@@ -162,6 +162,15 @@ struct VFXEmitterConfig {
     uint32_t particleLightEnabled     = 0;     ///< 0=off, 1=emit a point light at emitter position.
     float    particleLightRadius      = 500.0f; ///< Point light radius in world units (cm).
     float    particleLightIntensity   = 2.0f;  ///< Point light intensity multiplier.
+    // ── Advanced light flicker (Task 4.13.0) ────────────────────────────────
+    /// Sinusoidal intensity modulation for dynamic flame-like lighting effects.
+    /// When particleLightFlicker > 0, the emitter light intensity oscillates:
+    ///   intensity *= 1.0 + sin(totalTime * flickerSpeed * 2pi) * flicker
+    /// Clamped to a minimum of 0.1 to prevent full blackout.
+    ///
+    /// @ref Perlin 1985 "An Image Synthesizer" — noise-based procedural animation
+    float    particleLightFlicker      = 0.0f;  ///< Flicker amplitude [0,1]. 0=steady, >0=oscillate.
+    float    particleLightFlickerSpeed = 5.0f;  ///< Flicker oscillation frequency in Hz.
     // ── Death spawn (sub-emitter on particle death) ───────────────────────────
     /// When enabled, dying particles write a DeathEvent to the GPU buffer.
     /// A secondary spawn pass reads these events and emits child particles.
@@ -220,6 +229,40 @@ struct VFXEmitterConfig {
     float    vectorFieldStrength  = 0.0f; ///< Blend factor: 0=ignore field, 1=full field influence. Typical: 1-10.
     float    vectorFieldTightness = 0.0f; ///< 0=additive (field adds to velocity), 1=directive (velocity replaced by field).
     float    vectorFieldScale     = 1.0f; ///< Spatial scale of the procedural noise field. Higher=tighter detail.
+    // ── Point force attractor/repulsor (Task 4.18.0) ────────────────────────
+    /// Applies a radial force toward (positive strength) or away from (negative
+    /// strength) a configurable world-space point. Force falls off linearly
+    /// from full strength at the center to zero at pointForceRadius.
+    ///
+    /// @ref Witkin & Baraff 2001 "Physically Based Modeling" — point forces
+    uint32_t pointForceEnabled  = 0;     ///< 0=disabled, 1=point force active.
+    float    pointForceX        = 0.0f;  ///< Force center X in world units (cm).
+    float    pointForceY        = 0.0f;  ///< Force center Y in world units (cm).
+    float    pointForceZ        = 0.0f;  ///< Force center Z in world units (cm).
+    float    pointForceStrength = 0.0f;  ///< Force magnitude (m/s^2). Positive=attract, negative=repel.
+    float    pointForceRadius   = 10.0f; ///< Maximum influence radius (world units). Beyond this, no force.
+    // ── Camera distance sort (Task 4.20.0) ──────────────────────────────────
+    /// When enabled, the sort CS runs back-to-front to produce correct alpha
+    /// blending for transparent particles. Should be ON for alpha/premul blend
+    /// modes and OFF for additive (additive is order-independent).
+    ///
+    /// @ref Batcher 1968 "Sorting Networks and Their Applications" — bitonic sort
+    uint32_t sortEnabled          = 1;    ///< 0=skip sort dispatch (additive OK), 1=sort back-to-front (default ON).
+    // ── Procedural terrain collision (Task 4.21.0) ───────────────────────────
+    /// Simplified heightmap collision using a procedural sine-wave terrain so
+    /// artists can visualise particles bouncing over rolling hills without
+    /// loading a heightmap texture.  The terrain height at (x,y) is:
+    ///   h = terrainBaseHeight
+    ///     + sin(x * terrainFrequency) * cos(y * terrainFrequency) * terrainAmplitude
+    ///     + sin(x * terrainFrequency * 2.3 + 1.7) * terrainAmplitude * 0.3
+    /// Collision response reuses the same collisionResponse/restitution/friction
+    /// parameters as the flat ground plane.
+    ///
+    /// @ref Müller 2006 "Position Based Dynamics" — restitution + friction response
+    uint32_t terrainCollisionEnabled = 0;    ///< 0=disabled, 1=procedural terrain collision active.
+    float    terrainAmplitude        = 2.0f; ///< Max height variation above/below terrainBaseHeight (world units).
+    float    terrainFrequency        = 0.1f; ///< Spatial frequency of hills. Lower = broader hills.
+    float    terrainBaseHeight       = 0.0f; ///< Base terrain Z level (world units). Hills peak above this.
 };
 
 /// Named emitter preset with a spawn rate.
@@ -349,9 +392,23 @@ struct VFXUpdateCB {
     /// @ref Bridson 2007 "Fluid Simulation for Computer Graphics" — velocity field sampling
     uint32_t vectorFieldEnabled;      float    vectorFieldStrength;       // 16 bytes (offset 288)
     float    vectorFieldTightness;    float    vectorFieldScale;
-    uint32_t _padVF0;                 uint32_t _padVF1;                   // 16 bytes (offset 304)
+    // ── Point force attractor/repulsor (Task 4.18.0) ────────────────────────
+    /// @ref Witkin & Baraff 2001 "Physically Based Modeling" — point forces
+    uint32_t pointForceEnabled;       float    pointForceX;               // 16 bytes (offset 304)
+    float    pointForceY;             float    pointForceZ;
+    float    pointForceStrength;      float    pointForceRadius;           // 16 bytes (offset 320)
+    uint32_t _padPF0;                 uint32_t _padPF1;                    // alignment padding (offset 328)
+    // ── Procedural terrain collision (Task 4.21.0) ──────────────────────────
+    // Row layout (23 × 16 = 368 bytes total):
+    //   Row 21 (offset 336): _padPF0(336) + _padPF1(340) + terrainCollisionEnabled(344) + terrainAmplitude(348)
+    //   Row 22 (offset 352): terrainFrequency(352) + terrainBaseHeight(356) + _padTerrain0(360) + _padTerrain1(364)
+    //
+    /// @ref Müller 2006 "Position Based Dynamics" — restitution + friction on terrain
+    uint32_t terrainCollisionEnabled; float    terrainAmplitude;           // 16 bytes (offset 344) — in row starting at 336
+    float    terrainFrequency;        float    terrainBaseHeight;          // 16 bytes (offset 352) — in row starting at 352
+    uint32_t _padTerrain0;            uint32_t _padTerrain1;               // alignment padding (offset 360)
 };
-static_assert(sizeof(VFXUpdateCB) == 320, "VFXUpdateCB must be 320 bytes (20 x float4)");
+static_assert(sizeof(VFXUpdateCB) == 368, "VFXUpdateCB must be 368 bytes (23 x float4)");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VFX Death Spawn Constant Buffer (matches particle_death_spawn_cs.hlsl b1)
@@ -571,9 +628,13 @@ public:
     /// * `dt` — Frame delta time in seconds.
     /// * `frameNumber` — Monotonically increasing frame counter.
     /// * `totalTime` — Total elapsed simulation time in seconds (for curl noise animation).
+    /// * `cameraPos` — World-space camera position (float[3]), used by sort CS for depth key gen.
+    /// * `cameraForward` — World-space camera forward direction (float[3], normalized), used by sort CS.
+    ///   When config.sortEnabled == 0, both camera params are unused (safe to pass zeros).
     void DispatchCompute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
                          const VFXEmitterConfig& config, uint32_t spawnCount,
-                         float dt, uint32_t frameNumber, float totalTime);
+                         float dt, uint32_t frameNumber, float totalTime,
+                         const float* cameraPos, const float* cameraForward);
 
     /// Records billboard draw commands using ExecuteIndirect.
     ///

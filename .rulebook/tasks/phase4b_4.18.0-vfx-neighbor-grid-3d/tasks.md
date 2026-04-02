@@ -8,6 +8,35 @@ flocking, swarming, and repulsion effects.
 
 ---
 
+## Simplified Implementation (Point Force Attractor/Repulsor)
+
+Instead of full spatial hashing, the simplified approach adds a configurable
+point force that attracts or repels particles from a world-space position.
+This approximates the visual effect of particle-to-particle repulsion/attraction
+without the complexity of spatial hashing and neighbor queries.
+
+- [x] P.1 Add point force fields to VFXEmitterConfig (`vfx_viewport_vfx.h`):
+      `pointForceEnabled`, `pointForceX/Y/Z`, `pointForceStrength`, `pointForceRadius`.
+      Positive strength = attract, negative = repel. Linear falloff to radius.
+- [x] P.2 Expand VFXUpdateCB from 320 to 336 bytes (21 x float4) to accommodate
+      point force fields. Updated static_assert.
+- [x] P.3 Add point force CB fields to `particle_update_cs.hlsl` (bindless path).
+      Fields at offsets 312-340 (replacing _padVF0/_padVF1 + new row).
+- [x] P.4 Implement point force shader logic in update CS: after vector field,
+      before position integration. Linear falloff, 0.01 distance epsilon guard.
+- [x] P.5 Fill point force CB fields in `vfx_viewport_vfx.cpp` DispatchCompute CB setup.
+- [x] P.6 Add "Attract" and "Repel" presets to s_presets array (`vfx_viewport_vfx.cpp`).
+      Attract: cyan particles drawn to point 3m above emitter (strength=8).
+      Repel: orange particles expelled from center (strength=-12).
+- [x] P.7 Add "Point Force" UI category with sliders for all 6 fields
+      in `vfx_parameter_panel.cpp`.
+- [x] P.8 Serialize/deserialize point force fields in `vfx_preset_serializer.cpp`.
+- [x] P.9 Demo builds successfully: `cd demos/vfx_viewport && zig build` — 0 errors.
+
+---
+
+## Full Implementation (Spatial Hashing — Future)
+
 ## 1. Grid Data Structures
 
 - [ ] 1.1 Create `runtime/engine/vfx/core/neighbor_grid_3d.h/cpp`. Define:

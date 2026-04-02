@@ -187,6 +187,14 @@ void VFXParameterPanel::BuildCategories(VFXEmitterConfig* cfg, float* spawnRate,
             {"Death Children",   VFXParamEntry::Type::Uint, nullptr, &cfg->deathSpawnCount, 1.0f, 32.0f, 1.0f},
             {"Death Spread",     VFXParamEntry::Type::Float, &cfg->deathSpawnSpread, nullptr, 0.0f, 3.14159f, 0.05f},
             {"Death Spd Scale",  VFXParamEntry::Type::Float, &cfg->deathSpawnSpeedScale, nullptr, 0.0f, 2.0f, 0.05f},
+            // ── Procedural terrain collision (Task 4.21.0) ──────────────────────
+            // Sine-wave heightmap collision: particles bounce off rolling hills.
+            // Uses the same collisionResponse / restitution / friction as flat ground.
+            // @ref Müller 2006 "Position Based Dynamics" — restitution + friction
+            {"Terrain Coll",     VFXParamEntry::Type::Enum,  nullptr, &cfg->terrainCollisionEnabled, 0.0f, 1.0f, 0.0f, 1, kBoolNames, kBoolCount},
+            {"Terrain Ampl",     VFXParamEntry::Type::Float, &cfg->terrainAmplitude,    nullptr, 0.0f, 50.0f, 0.5f},
+            {"Terrain Freq",     VFXParamEntry::Type::Float, &cfg->terrainFrequency,    nullptr, 0.01f, 2.0f, 0.01f},
+            {"Terrain Base Z",   VFXParamEntry::Type::Float, &cfg->terrainBaseHeight,   nullptr, -100.0f, 100.0f, 1.0f},
         };
         m_categories.push_back(std::move(cat));
     }
@@ -230,6 +238,10 @@ void VFXParameterPanel::BuildCategories(VFXEmitterConfig* cfg, float* spawnRate,
             {"Custom Dir Z",   VFXParamEntry::Type::Float, &cfg->customFacingZ, nullptr, -1.0f, 1.0f, 0.05f},
             {"Stretch",    VFXParamEntry::Type::Float, &cfg->stretchFactor, nullptr, 0.0f, 5.0f, 0.1f},
             {"Lit Mode",   VFXParamEntry::Type::Enum, nullptr, &cfg->litMode, 0.0f, 1.0f, 0.0f, 1, kLitModeNames, kLitModeCount},
+            // ── Depth sort (Task 4.20.0) ───────────────────────────────────────────
+            // ON by default; disable for additive blend (order-independent).
+            // @ref Batcher 1968 "Sorting Networks and Their Applications" — bitonic sort
+            {"Sort (BtoF)", VFXParamEntry::Type::Enum, nullptr, &cfg->sortEnabled, 0.0f, 1.0f, 0.0f, 1, kBoolNames, kBoolCount},
         };
         m_categories.push_back(std::move(cat));
     }
@@ -240,9 +252,27 @@ void VFXParameterPanel::BuildCategories(VFXEmitterConfig* cfg, float* spawnRate,
         cat.name = "Particle Lights";
         cat.expanded = false;
         cat.params = {
-            {"Enabled",   VFXParamEntry::Type::Enum,  nullptr, &cfg->particleLightEnabled, 0.0f, 1.0f, 0.0f, 1, kBoolNames, kBoolCount},
-            {"Radius",    VFXParamEntry::Type::Float, &cfg->particleLightRadius, nullptr, 0.0f, 5000.0f, 50.0f},
-            {"Intensity", VFXParamEntry::Type::Float, &cfg->particleLightIntensity, nullptr, 0.0f, 20.0f, 0.1f},
+            {"Enabled",      VFXParamEntry::Type::Enum,  nullptr, &cfg->particleLightEnabled, 0.0f, 1.0f, 0.0f, 1, kBoolNames, kBoolCount},
+            {"Radius",       VFXParamEntry::Type::Float, &cfg->particleLightRadius, nullptr, 0.0f, 5000.0f, 50.0f},
+            {"Intensity",    VFXParamEntry::Type::Float, &cfg->particleLightIntensity, nullptr, 0.0f, 20.0f, 0.1f},
+            {"Flicker",      VFXParamEntry::Type::Float, &cfg->particleLightFlicker, nullptr, 0.0f, 1.0f, 0.01f},
+            {"Flicker Speed",VFXParamEntry::Type::Float, &cfg->particleLightFlickerSpeed, nullptr, 0.1f, 30.0f, 0.5f},
+        };
+        m_categories.push_back(std::move(cat));
+    }
+
+    // ── Category: Point Force (Task 4.18.0) ─────────────────────────────
+    {
+        VFXParamCategory cat;
+        cat.name = "Point Force";
+        cat.expanded = false;
+        cat.params = {
+            {"Enabled",  VFXParamEntry::Type::Enum,  nullptr, &cfg->pointForceEnabled, 0.0f, 1.0f, 0.0f, 1, kBoolNames, kBoolCount},
+            {"Center X", VFXParamEntry::Type::Float, &cfg->pointForceX, nullptr, -100.0f, 100.0f, 0.1f},
+            {"Center Y", VFXParamEntry::Type::Float, &cfg->pointForceY, nullptr, -100.0f, 100.0f, 0.1f},
+            {"Center Z", VFXParamEntry::Type::Float, &cfg->pointForceZ, nullptr, -100.0f, 100.0f, 0.1f},
+            {"Strength", VFXParamEntry::Type::Float, &cfg->pointForceStrength, nullptr, -50.0f, 50.0f, 0.5f},
+            {"Radius",   VFXParamEntry::Type::Float, &cfg->pointForceRadius, nullptr, 0.1f, 100.0f, 0.5f},
         };
         m_categories.push_back(std::move(cat));
     }

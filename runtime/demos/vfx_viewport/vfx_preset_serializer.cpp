@@ -189,7 +189,24 @@ bool VFXPresetSerializer::Save(const VFXEmitterConfig& c,
     // Particle lights (Task 4.10.0)
     wu("particleLightEnabled",   c.particleLightEnabled);
     wf("particleLightRadius",    c.particleLightRadius);
-    wf("particleLightIntensity", c.particleLightIntensity, /*last=*/true);
+    wf("particleLightIntensity", c.particleLightIntensity);
+    // Advanced light flicker (Task 4.13.0)
+    wf("particleLightFlicker",      c.particleLightFlicker);
+    wf("particleLightFlickerSpeed", c.particleLightFlickerSpeed);
+    // Point force (Task 4.18.0)
+    wu("pointForceEnabled",  c.pointForceEnabled);
+    wf("pointForceX",        c.pointForceX);
+    wf("pointForceY",        c.pointForceY);
+    wf("pointForceZ",        c.pointForceZ);
+    wf("pointForceStrength", c.pointForceStrength);
+    wf("pointForceRadius",   c.pointForceRadius);
+    // Camera distance sort (Task 4.20.0)
+    wu("sortEnabled",              c.sortEnabled);
+    // Procedural terrain collision (Task 4.21.0)
+    wu("terrainCollisionEnabled",  c.terrainCollisionEnabled);
+    wf("terrainAmplitude",         c.terrainAmplitude);
+    wf("terrainFrequency",         c.terrainFrequency);
+    wf("terrainBaseHeight",        c.terrainBaseHeight, /*last=*/true);
 
     f << "\n}\n";
     f.flush();
@@ -444,6 +461,23 @@ bool VFXPresetSerializer::Load(const std::string& filePath,
     c.particleLightEnabled   = ParseUint(src,  "particleLightEnabled",   c.particleLightEnabled);
     c.particleLightRadius    = ParseFloat(src, "particleLightRadius",    c.particleLightRadius);
     c.particleLightIntensity = ParseFloat(src, "particleLightIntensity", c.particleLightIntensity);
+    // Advanced light flicker (Task 4.13.0)
+    c.particleLightFlicker      = ParseFloat(src, "particleLightFlicker",      c.particleLightFlicker);
+    c.particleLightFlickerSpeed = ParseFloat(src, "particleLightFlickerSpeed", c.particleLightFlickerSpeed);
+    // Point force (Task 4.18.0)
+    c.pointForceEnabled  = ParseUint(src,  "pointForceEnabled",  c.pointForceEnabled);
+    c.pointForceX        = ParseFloat(src, "pointForceX",        c.pointForceX);
+    c.pointForceY        = ParseFloat(src, "pointForceY",        c.pointForceY);
+    c.pointForceZ        = ParseFloat(src, "pointForceZ",        c.pointForceZ);
+    c.pointForceStrength = ParseFloat(src, "pointForceStrength", c.pointForceStrength);
+    c.pointForceRadius   = ParseFloat(src, "pointForceRadius",   c.pointForceRadius);
+    // Camera distance sort (Task 4.20.0)
+    c.sortEnabled              = ParseUint(src,  "sortEnabled",              c.sortEnabled);
+    // Procedural terrain collision (Task 4.21.0)
+    c.terrainCollisionEnabled  = ParseUint(src,  "terrainCollisionEnabled",  c.terrainCollisionEnabled);
+    c.terrainAmplitude         = ParseFloat(src, "terrainAmplitude",         c.terrainAmplitude);
+    c.terrainFrequency         = ParseFloat(src, "terrainFrequency",         c.terrainFrequency);
+    c.terrainBaseHeight        = ParseFloat(src, "terrainBaseHeight",        c.terrainBaseHeight);
 
     return true;
 }

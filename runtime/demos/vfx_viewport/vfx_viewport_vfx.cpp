@@ -10,6 +10,7 @@
 #include "cb_ring_allocator.h"
 #include "engine_shaders.h"
 #include "engine/vfx/curves/vfx_color_ramp.h"
+#include "engine/vfx/core/gpu_particle_sort.h"
 #include "engine/renderer/upload/upload_context.h"
 #include "log.h"
 
@@ -460,6 +461,111 @@ static const VFXPreset s_presets[] = {
         .vectorFieldTightness = 0.3f,   // mostly additive, slight direction lock
         .vectorFieldScale     = 0.5f,   // large-scale flow structures
     }, 200.0f },
+    // ── Point Force: Attract preset (Task 4.18.0) ──────────────────────────
+    /// Particles are drawn toward a point above the emitter, creating a
+    /// converging vortex-like visual. Demonstrates positive pointForceStrength.
+    /// @ref Witkin & Baraff 2001 "Physically Based Modeling" — point forces
+    { "Attract", VFXEmitterConfig{
+        .position        = {0.0f, 0.0f, 0.0f},
+        .spawnRadius     = 3.0f,                  // wide spawn area so attraction is visible
+        .spawnVelocity   = {0.0f, 0.0f, 2.0f},   // slight upward initial velocity
+        .velocityVariation = 1.5f,
+        .spreadAngle     = 3.14159f,               // full hemisphere
+        .minLifetime     = 2.0f,
+        .maxLifetime     = 4.0f,
+        .initialSize     = 0.3f,
+        .initialColor    = {0.2f, 0.8f, 1.0f, 0.9f},  // cyan
+        .gravity         = {0.0f, 0.0f, 0.0f},         // no gravity — pure force
+        .damping         = 0.15f,
+        .softFadeDistance = 0.3f,
+        .emissiveIntensity = 1.5f,
+        .sizeOverLifeStart    = 0.5f,
+        .sizeOverLifePeak     = 1.0f,
+        .sizeOverLifeEnd      = 0.0f,
+        .sizeOverLifePeakTime = 0.3f,
+        .colorLifeStartR = 0.2f, .colorLifeStartG = 0.8f, .colorLifeStartB = 1.0f, .colorLifeStartA = 1.0f,
+        .colorLifeEndR   = 0.1f, .colorLifeEndG   = 0.3f, .colorLifeEndB   = 0.5f, .colorLifeEndA   = 0.0f,
+        .facingMode      = 0,
+        .blendMode       = 1,   // Additive
+        .pointForceEnabled  = 1,
+        .pointForceX        = 0.0f,
+        .pointForceY        = 0.0f,
+        .pointForceZ        = 3.0f,   // attract point 3m above emitter
+        .pointForceStrength = 8.0f,   // positive = attract
+        .pointForceRadius   = 10.0f,  // 10m influence radius
+    }, 300.0f },
+    // ── Point Force: Repel preset (Task 4.18.0) ────────────────────────────
+    /// Particles are repelled from a central point, creating an expanding
+    /// explosion-like burst. Demonstrates negative pointForceStrength.
+    /// @ref Witkin & Baraff 2001 "Physically Based Modeling" — point forces
+    { "Repel", VFXEmitterConfig{
+        .position        = {0.0f, 0.0f, 1.5f},    // spawn at the force center
+        .spawnRadius     = 0.2f,                    // tight cluster
+        .spawnVelocity   = {0.0f, 0.0f, 0.5f},    // minimal initial velocity
+        .velocityVariation = 0.3f,
+        .spreadAngle     = 3.14159f,                // full sphere
+        .minLifetime     = 1.5f,
+        .maxLifetime     = 3.0f,
+        .initialSize     = 0.4f,
+        .initialColor    = {1.0f, 0.4f, 0.1f, 1.0f},  // orange
+        .gravity         = {0.0f, 0.0f, -2.0f},         // slight gravity pull-down
+        .damping         = 0.1f,
+        .softFadeDistance = 0.3f,
+        .emissiveIntensity = 2.0f,
+        .sizeOverLifeStart    = 1.0f,
+        .sizeOverLifePeak     = 1.2f,
+        .sizeOverLifeEnd      = 0.0f,
+        .sizeOverLifePeakTime = 0.2f,
+        .colorLifeStartR = 1.0f, .colorLifeStartG = 0.6f, .colorLifeStartB = 0.2f, .colorLifeStartA = 1.0f,
+        .colorLifeEndR   = 1.0f, .colorLifeEndG   = 0.1f, .colorLifeEndB   = 0.0f, .colorLifeEndA   = 0.0f,
+        .facingMode      = 0,
+        .blendMode       = 1,   // Additive
+        .pointForceEnabled  = 1,
+        .pointForceX        = 0.0f,
+        .pointForceY        = 0.0f,
+        .pointForceZ        = 1.5f,   // repel from emitter center
+        .pointForceStrength = -12.0f,  // negative = repel
+        .pointForceRadius   = 8.0f,    // 8m influence radius
+    }, 500.0f },
+
+    // ── Hilly Terrain preset (Task 4.21.0) ────────────────────────────────
+    // Particles rain down from above and collide with a procedural sine-wave
+    // terrain.  Bounce mode with moderate restitution produces a hailstorm-
+    // on-hills effect.  sortEnabled=1 because alpha blend needs correct order.
+    //
+    // @ref Müller 2006 "Position Based Dynamics" — restitution + friction
+    { "Hilly Terrain", VFXEmitterConfig{
+        .position           = {0.0f, 0.0f, 30.0f},   // spawn high above terrain
+        .spawnRadius        = 8.0f,                    // wide footprint over hills
+        .spawnVelocity      = {0.0f, 0.0f, -5.0f},    // fall straight down
+        .velocityVariation  = 2.0f,
+        .spreadAngle        = 0.2f,
+        .minLifetime        = 4.0f,
+        .maxLifetime        = 8.0f,
+        .initialSize        = 0.12f,
+        .initialColor       = {0.4f, 0.8f, 1.0f, 0.9f},
+        .gravity            = {0.0f, 0.0f, -9.81f},   // z-down gravity
+        .damping            = 0.05f,
+        .softFadeDistance   = 0.2f,
+        .emissiveIntensity  = 0.0f,
+        .sizeOverLifeStart  = 1.0f,
+        .sizeOverLifePeak   = 1.0f,
+        .sizeOverLifeEnd    = 0.5f,
+        .sizeOverLifePeakTime = 0.5f,
+        .colorLifeStartR = 0.4f, .colorLifeStartG = 0.8f, .colorLifeStartB = 1.0f, .colorLifeStartA = 0.9f,
+        .colorLifeEndR   = 0.2f, .colorLifeEndG   = 0.5f, .colorLifeEndB   = 0.8f, .colorLifeEndA   = 0.3f,
+        .facingMode         = 0,
+        .blendMode          = 0,   // AlphaBlend — solid bouncing particles
+        .groundCollision    = 0,   // disable flat ground; terrain replaces it
+        .restitution        = 0.4f,
+        .collisionResponse  = 0,   // Bounce
+        .collisionFriction  = 0.6f,
+        .sortEnabled             = 1,
+        .terrainCollisionEnabled = 1,
+        .terrainAmplitude        = 4.0f,  // tall hills
+        .terrainFrequency        = 0.08f, // broad wavelength
+        .terrainBaseHeight       = 0.0f,
+    }, 150.0f },
 };
 
 const VFXPreset* GetVFXPresets(int& outCount) {
@@ -1027,7 +1133,8 @@ void VFXParticleSystem::UploadKillVolumes(IRHICommandList* cmd, CBRingAllocator*
 
 void VFXParticleSystem::DispatchCompute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
                                          const VFXEmitterConfig& config, uint32_t spawnCount,
-                                         float dt, uint32_t frameNumber, float totalTime) {
+                                         float dt, uint32_t frameNumber, float totalTime,
+                                         const float* cameraPos, const float* cameraForward) {
     const int read = m_pingPong;
     const int write = 1 - m_pingPong;
 
@@ -1280,6 +1387,22 @@ void VFXParticleSystem::DispatchCompute(IRHICommandList* cmdList, CBRingAllocato
         cb.vectorFieldTightness = config.vectorFieldTightness;
         cb.vectorFieldScale     = config.vectorFieldScale;
 
+        // Point force attractor/repulsor (Task 4.18.0)
+        // @ref Witkin & Baraff 2001 "Physically Based Modeling" — point forces
+        cb.pointForceEnabled  = config.pointForceEnabled;
+        cb.pointForceX        = config.pointForceX;
+        cb.pointForceY        = config.pointForceY;
+        cb.pointForceZ        = config.pointForceZ;
+        cb.pointForceStrength = config.pointForceStrength;
+        cb.pointForceRadius   = config.pointForceRadius;
+
+        // Procedural terrain collision (Task 4.21.0)
+        // @ref Müller 2006 "Position Based Dynamics" — restitution + friction on terrain
+        cb.terrainCollisionEnabled = config.terrainCollisionEnabled;
+        cb.terrainAmplitude        = config.terrainAmplitude;
+        cb.terrainFrequency        = config.terrainFrequency;
+        cb.terrainBaseHeight       = config.terrainBaseHeight;
+
         auto alloc = cbRing->Allocate(sizeof(VFXUpdateCB));
         std::memcpy(alloc.cpuPtr, &cb, sizeof(VFXUpdateCB));
 
@@ -1397,6 +1520,108 @@ void VFXParticleSystem::DispatchCompute(IRHICommandList* cmdList, CBRingAllocato
         barrier.stateBefore = RHIResourceState::UnorderedAccess;
         barrier.stateAfter = RHIResourceState::Common; // IndirectArgument
         cmdList->ResourceBarrier(&barrier, 1);
+    }
+
+    // ── Sort Pass (Task 4.20.0) ───────────────────────────────────────────
+    // Two-phase bitonic merge sort for depth-ordered back-to-front rendering.
+    // Phase 0: local sort + key generation — ceil(paddedCount / 256) groups.
+    // Phase 1: global merge passes — (blockSize, subBlockSize) sweep.
+    //
+    // Only dispatched when config.sortEnabled != 0 (alpha/premul blend modes).
+    // For additive blending, sorting is order-independent and the dispatch cost
+    // is avoided (saves ~0.1-0.3 ms for large emitters at 60k particles).
+    //
+    // Positions are still in UAV state from the update pass. A UAV barrier before
+    // the sort ensures all position writes from the update/spawn passes are visible
+    // to the sort CS (no simultaneous write hazard — sort CS only reads positions).
+    //
+    // @ref Batcher 1968 "Sorting Networks and Their Applications" — bitonic merge sort
+    // @ref Peters & Schulz-Hildebrandt 2023 "Fast GPU-based sorting"
+    if (config.sortEnabled != 0u && m_sortPSO.IsValid() &&
+        m_sortKeys.IsValid() && m_sortIndices.IsValid() &&
+        cameraPos != nullptr && cameraForward != nullptr)
+    {
+        // UAV barrier: ensure update-pass position writes are visible to sort CS reads.
+        {
+            RHIBarrierDesc posBarrier{};
+            posBarrier.buffer = m_particleBuffers[0][write]; // positions channel
+            posBarrier.stateBefore = RHIResourceState::UnorderedAccess;
+            posBarrier.stateAfter  = RHIResourceState::UnorderedAccess;
+            cmdList->ResourceBarrier(&posBarrier, 1);
+        }
+
+        const uint32_t particleCount = m_maxParticles;
+        // Pad count to next power-of-two (bitonic sort requirement).
+        uint32_t paddedCount = 1;
+        while (paddedCount < particleCount) { paddedCount <<= 1; }
+
+        const uint32_t groupCount = (paddedCount + kSortGroupSize - 1) / kSortGroupSize;
+
+        const uint32_t positionsSrvIdx = m_device->GetBufferSRVIndex(m_particleBuffers[0][write]);
+        const uint32_t sortKeysUavIdx  = m_device->GetBufferUAVIndex(m_sortKeys);
+        const uint32_t sortIndicesUavIdx = m_device->GetBufferUAVIndex(m_sortIndices);
+
+        // Helper lambda: fill and upload VFXSortConstants, then dispatch.
+        auto dispatchSort = [&](uint32_t sortPhase,
+                                uint32_t bitonicBlockSize,
+                                uint32_t bitonicSubBlockSize) {
+            VFXSortConstants sc{};
+            sc.particleCount       = particleCount;
+            sc.sortPhase           = sortPhase;
+            sc.paddedCount         = paddedCount;
+            sc._pad0               = 0;
+            sc.cameraPosX          = cameraPos[0];
+            sc.cameraPosY          = cameraPos[1];
+            sc.cameraPosZ          = cameraPos[2];
+            sc._pad1               = 0.0f;
+            sc.cameraForwardX      = cameraForward[0];
+            sc.cameraForwardY      = cameraForward[1];
+            sc.cameraForwardZ      = cameraForward[2];
+            sc._pad2               = 0.0f;
+            sc.positionsSrvIndex   = positionsSrvIdx;
+            sc.sortKeysUavIndex    = sortKeysUavIdx;
+            sc.sortIndicesUavIndex = sortIndicesUavIdx;
+            sc._pad3               = 0;
+            sc.bitonicBlockSize    = bitonicBlockSize;
+            sc.bitonicSubBlockSize = bitonicSubBlockSize;
+            sc._pad4               = 0;
+            sc._pad5               = 0;
+
+            auto alloc = cbRing->Allocate(sizeof(VFXSortConstants));
+            std::memcpy(alloc.cpuPtr, &sc, sizeof(VFXSortConstants));
+
+            cmdList->SetPipeline(m_sortPSO);
+            cmdList->SetRootCBV(0, alloc.gpuAddr); // b0 = root param 0 (CBV)
+            cmdList->Dispatch(groupCount, 1, 1);
+        };
+
+        // Phase 0: local sort + key generation.
+        dispatchSort(0, 0, 0);
+
+        // UAV barrier between phase 0 and phase 1.
+        {
+            RHIBarrierDesc sortBarrier{};
+            sortBarrier.buffer = m_sortKeys;
+            sortBarrier.stateBefore = RHIResourceState::UnorderedAccess;
+            sortBarrier.stateAfter  = RHIResourceState::UnorderedAccess;
+            cmdList->ResourceBarrier(&sortBarrier, 1);
+        }
+
+        // Phase 1: global merge passes — sweep all (blockSize, subBlockSize) pairs.
+        for (uint32_t blockSize = kSortGroupSize * 2; blockSize <= paddedCount; blockSize <<= 1) {
+            for (uint32_t subBlockSize = blockSize >> 1; subBlockSize > 0; subBlockSize >>= 1) {
+                dispatchSort(1, blockSize, subBlockSize);
+
+                // UAV barrier between each phase-1 dispatch.
+                {
+                    RHIBarrierDesc phaseBarrier{};
+                    phaseBarrier.buffer = m_sortKeys;
+                    phaseBarrier.stateBefore = RHIResourceState::UnorderedAccess;
+                    phaseBarrier.stateAfter  = RHIResourceState::UnorderedAccess;
+                    cmdList->ResourceBarrier(&phaseBarrier, 1);
+                }
+            }
+        }
     }
 
     // ── Transition write-set to SRV for billboard rendering ─────────────

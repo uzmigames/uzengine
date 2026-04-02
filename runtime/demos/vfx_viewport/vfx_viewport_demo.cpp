@@ -1596,7 +1596,20 @@ void VFXViewportDemo::OnFrame(float dt) {
             colorPtr[0] = emitter.config.initialColor[0];
             colorPtr[1] = emitter.config.initialColor[1];
             colorPtr[2] = emitter.config.initialColor[2];
-            *intensityPtr = emitter.config.particleLightIntensity;
+
+            // Advanced light flicker modulation (Task 4.13.0)
+            // Sinusoidal intensity oscillation for dynamic flame-like lighting.
+            // When flicker amplitude > 0, intensity = base * (1 + sin(t*f*2pi) * amplitude).
+            // Clamped to minimum 0.1 to prevent complete blackout.
+            // @ref Perlin 1985 "An Image Synthesizer" — noise-based procedural animation
+            float flicker = 1.0f;
+            if (emitter.config.particleLightFlicker > 0.0f) {
+                constexpr float kTwoPi = 6.28318530718f;
+                flicker = 1.0f + std::sin(m_totalTime * emitter.config.particleLightFlickerSpeed * kTwoPi)
+                          * emitter.config.particleLightFlicker;
+                flicker = std::max(flicker, 0.1f);
+            }
+            *intensityPtr = emitter.config.particleLightIntensity * flicker;
 
             lightIdx++;
         }
@@ -1831,8 +1844,13 @@ void VFXViewportDemo::OnFrame(float dt) {
             emitter.system->UploadWindZones(cmd, cbRing, m_windZones, m_windZoneCount);
             emitter.system->UploadKillVolumes(cmd, cbRing, m_killVolumes, m_killVolumeCount);
 
+            const Vec3 camP = cam.GetPosition();
+            const Vec3 camF = cam.GetForward();
+            const float camPosArr[3]  = { camP.x, camP.y, camP.z };
+            const float camFwdArr[3]  = { camF.x, camF.y, camF.z };
             emitter.system->DispatchCompute(cmd, cbRing, emitter.config, spawnCount,
-                                           dt, GetFrameIndex(), m_totalTime);
+                                           dt, GetFrameIndex(), m_totalTime,
+                                           camPosArr, camFwdArr);
         }
 
         // ── Sub-emitter secondary burst (Task 3.87.0) ───────────────────
@@ -1849,9 +1867,14 @@ void VFXViewportDemo::OnFrame(float dt) {
                 subCfg.position[2] = baseOrigin.z;
 
                 if (!m_emitters.empty()) {
+                    const Vec3 subCamP = cam.GetPosition();
+                    const Vec3 subCamF = cam.GetForward();
+                    const float subCamPos[3] = { subCamP.x, subCamP.y, subCamP.z };
+                    const float subCamFwd[3] = { subCamF.x, subCamF.y, subCamF.z };
                     m_emitters[0].system->DispatchCompute(cmd, cbRing, subCfg,
                                                          m_subEmitterCount,
-                                                         dt, GetFrameIndex(), m_totalTime);
+                                                         dt, GetFrameIndex(), m_totalTime,
+                                                         subCamPos, subCamFwd);
                 }
                 UZ_LOG(App, Info, "[VFX] Sub-emitter fired {} sparks at ({:.1f},{:.1f},{:.1f})",
                        m_subEmitterCount,
@@ -3260,6 +3283,8 @@ void VFXViewportDemo::BuildCompoundPreset(VFXCompoundPreset preset) {
             flame.config.particleLightEnabled = 1;
             flame.config.particleLightRadius = 800.0f;
             flame.config.particleLightIntensity = 3.0f;
+            flame.config.particleLightFlicker = 0.3f;       // 30% intensity oscillation
+            flame.config.particleLightFlickerSpeed = 8.0f;   // 8 Hz for rapid flame flicker
             flame.burstCount = 200;
             flame.spawnRate = 400.0f;
             flame.burstMode = false; // continuous
@@ -3401,6 +3426,8 @@ void VFXViewportDemo::BuildCompoundPreset(VFXCompoundPreset preset) {
             flash.config.particleLightEnabled = 1;
             flash.config.particleLightRadius = 1200.0f;
             flash.config.particleLightIntensity = 5.0f;
+            flash.config.particleLightFlicker = 0.5f;       // Strong flicker for explosion flash
+            flash.config.particleLightFlickerSpeed = 12.0f;  // Rapid flash strobe
             flash.burstCount = 80;
             flash.burstMode = true;
             flash.burstPending = true;

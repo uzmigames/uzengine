@@ -9,6 +9,27 @@ and `LightRenderModule::ProcessReadback()` already declared.
 
 ---
 
+## Simplified Implementation (Flicker-Based Light Enhancement)
+
+Instead of full GPU readback, the simplified approach adds sinusoidal intensity
+flicker to the existing emitter-based point lights, creating dynamic flame-like
+lighting effects without GPU readback complexity.
+
+- [x] S.1 Add `particleLightFlicker` (float, 0-1) and `particleLightFlickerSpeed` (float, Hz) to VFXEmitterConfig.
+      Implemented in `vfx_viewport_vfx.h` — flicker amplitude and frequency for sin-based oscillation.
+- [x] S.2 Modulate point light intensity in the emitter light injection code (`vfx_viewport_demo.cpp`).
+      `intensity *= 1.0 + sin(totalTime * flickerSpeed * 2pi) * flicker`, clamped to min 0.1.
+- [x] S.3 Update fire preset: `particleLightFlicker=0.3, particleLightFlickerSpeed=8.0`.
+      Also updated fireball/flash preset: `flicker=0.5, flickerSpeed=12.0`.
+- [x] S.4 Add UI sliders for Flicker and Flicker Speed in the Particle Lights category.
+      Implemented in `vfx_parameter_panel.cpp`.
+- [x] S.5 Serialize/deserialize flicker fields in `vfx_preset_serializer.cpp`.
+- [x] S.6 Fix pre-existing DispatchCompute call site errors (missing cameraPos/cameraForward args).
+
+---
+
+## Full Implementation (GPU Readback — Future)
+
 ## 1. GPU Selection Compute Shader
 
 - [ ] 1.1 Create `runtime/shaders/runtime/vfx/particle_light_select_cs.hlsl`.

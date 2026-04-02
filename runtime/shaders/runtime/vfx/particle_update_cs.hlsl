@@ -2,7 +2,7 @@
 ///
 /// Advances particle simulation by one time step: applies gravity, damping,
 /// optional curl noise, optional vortex force, optional wind zone force,
-/// optional procedural vector field, kill
+/// optional procedural vector field, optional point force attractor/repulsor, kill
 /// volume containment test, and Euler integration, then tests for particle
 /// death (age >= lifespan). Dead particles are recycled back to the free list.
 ///
@@ -115,7 +115,7 @@ static const uint UPDATE_GROUP_SIZE = 256;
 /// Update constants uploaded by the CPU each frame. Contains physics parameters
 /// and descriptor heap indices for both READ (SRV) and WRITE (UAV) buffer sets.
 ///
-/// Layout is 16-byte aligned per HLSL packing rules. Total: 304 bytes (19 float4).
+/// Layout is 16-byte aligned per HLSL packing rules. Total: 368 bytes (23 float4).
 /// Must match VFXUpdateCB in runtime/demos/vfx_viewport/vfx_viewport_vfx.h exactly.
 cbuffer VFXUpdateConstants : register(b1) {
     // ── Simulation Parameters ───────────────────────────────────────────── offset 0
@@ -247,8 +247,35 @@ cbuffer VFXUpdateConstants : register(b1) {
 
     float    vectorFieldTightness;       ///< 0=additive (field as force), 1=directive (replace vel). 304
     float    vectorFieldScale;           ///< Spatial scale of the procedural noise field.             308
-    uint     _padVF0;                    ///<                                          312
-    uint     _padVF1;                    ///<                                          316
+
+    // ── Point Force Attractor/Repulsor (Task 4.18.0) ────────────────────── offset 312
+    /// @ref Witkin & Baraff 2001 "Physically Based Modeling" — point forces
+    uint     pointForceEnabled;          ///< 0=disabled, 1=point force active.        312
+    float    pointForceX;                ///< Force center X (world units, cm).         316
+
+    float    pointForceY;                ///< Force center Y (world units, cm).         320
+    float    pointForceZ;                ///< Force center Z (world units, cm).         324
+    float    pointForceStrength;         ///< Force magnitude (m/s^2). >0=attract, <0=repel. 328
+    float    pointForceRadius;           ///< Max influence radius (world units).       332
+    uint     _padPF0;                    ///< Alignment padding.                         336
+    uint     _padPF1;                    ///< Alignment padding.                         340
+
+    // ── Procedural Terrain Collision (Task 4.21.0) ──────────────────────── offset 344
+    /// Evaluates a two-octave sine-wave heightmap at the particle's XY position:
+    ///   h = terrainBaseHeight
+    ///     + sin(x*f) * cos(y*f) * terrainAmplitude          (primary wave)
+    ///     + sin(x*f*2.3 + 1.7) * terrainAmplitude * 0.3    (secondary detail)
+    /// where f = terrainFrequency.
+    /// Collision response reuses collisionResponse / restitution / collisionFriction
+    /// from the ground-plane collision section.
+    ///
+    /// @ref Müller 2006 "Position Based Dynamics" — restitution + friction on terrain
+    uint     terrainCollisionEnabled;   ///< 0=disabled, 1=procedural terrain collision. 344
+    float    terrainAmplitude;          ///< Max height variation (world units).          348
+    float    terrainFrequency;          ///< Spatial frequency of hills. Lower=broader.  352
+    float    terrainBaseHeight;         ///< Base terrain Z level (world units).          356
+    uint     _padTerrain0;              ///< Alignment padding.                           360
+    uint     _padTerrain1;              ///< Alignment padding.                           364
 #endif
 };
 
@@ -543,6 +570,27 @@ void main(uint3 dtid : SV_DispatchThreadID)
         float3 additiveVel = vel + fieldVel * dt;
         vel = lerp(additiveVel, fieldVel, saturate(vectorFieldTightness));
     }
+
+    // ── Point force attractor/repulsor (Task 4.18.0) ────────────────────
+    // Applies a radial force toward (positive strength) or away from (negative
+    // strength) a world-space point. Linear falloff from full strength at the
+    // force center to zero at pointForceRadius. Particles beyond the radius
+    // are unaffected. The distance epsilon (0.01) prevents division by zero
+    // when a particle is exactly at the force center.
+    //
+    /// @ref Witkin & Baraff 2001 "Physically Based Modeling" — point forces
+    /// @constants distEpsilon=0.01 (singularity guard), falloff=linear
+    /// @deviations NONE
+    if (pointForceEnabled != 0u) {
+        float3 forceCenter = float3(pointForceX, pointForceY, pointForceZ);
+        float3 toCenter    = forceCenter - pos;
+        float  dist        = length(toCenter);
+        if (dist > 0.01f && dist < pointForceRadius) {
+            float falloff  = 1.0f - (dist / pointForceRadius);
+            float3 forceDir = toCenter / dist; // normalize(toCenter)
+            vel += forceDir * pointForceStrength * falloff * dt;
+        }
+    }
 #endif // UZ_BINDLESS
 
     // ── Integrate position (explicit Euler) ─────────────────────────────
@@ -651,6 +699,77 @@ void main(uint3 dtid : SV_DispatchThreadID)
             freeListKill[killIdx] = threadIdx;
         }
         return; // skip write-back for this dead particle
+    }
+
+    // ── Procedural terrain collision (Task 4.21.0) ───────────────────────
+    // Evaluates a sine-wave procedural heightmap at the particle's XY position
+    // and resolves penetration using the same Bounce/Stick/Kill response modes
+    // as the flat ground plane.
+    //
+    // Terrain height formula (two octaves for visual interest):
+    //   h = terrainBaseHeight
+    //       + sin(x*f) * cos(y*f) * A              // primary hill wave
+    //       + sin(x*f*2.3 + 1.7) * A * 0.3         // secondary detail wave
+    // where f = terrainFrequency, A = terrainAmplitude.
+    // The 2.3 scale factor and 1.7 phase offset are irrational fractions that
+    // prevent the two sine terms from aligning, producing irregular hill shapes.
+    //
+    // Normal at the contact point is approximated as world Z-up (+Z) since the
+    // terrain is gently rolling; this avoids the cost of evaluating partial
+    // derivatives (which would require two extra sin/cos calls per particle).
+    // For steep terrain this is imprecise but visually acceptable for VFX.
+    //
+    /// @ref Müller 2006 "Position Based Dynamics" — restitution + friction response
+    /// @ref Bender 2014 "Position-Based Simulation Methods in Computer Graphics" — friction
+    /// @constants terrainDetailScale=2.3 (irrational ratio preventing wave alignment),
+    ///            terrainDetailPhase=1.7 (phase offset for decorrelation),
+    ///            terrainDetailAtten=0.3 (detail amplitude attenuation)
+    /// @deviations Uses Z-up surface normal approximation instead of gradient-derived
+    ///             normal. Physically exact would compute dh/dx and dh/dy to form the
+    ///             true outward normal. Omitted for GPU efficiency in VFX use.
+    if (terrainCollisionEnabled != 0u) {
+        // Evaluate terrain height at current XY position.
+        float tf = terrainFrequency;
+        float terrainH = terrainBaseHeight
+            + sin(pos.x * tf) * cos(pos.y * tf) * terrainAmplitude
+            + sin(pos.x * tf * 2.3f + 1.7f) * terrainAmplitude * 0.3f;
+
+        if (pos.z < terrainH) {
+            if (collisionResponse == 0u) {
+                // ── Bounce off terrain ────────────────────────────────────
+                // Mirror Z above the terrain surface (depth = terrainH - pos.z).
+                // Scale overshoot by 0.01 to pull particle back just above surface
+                // (same epsilon as flat ground plane) preventing repeated penetrations.
+                float overshoot = terrainH - pos.z;
+                pos.z = terrainH + overshoot * 0.01f;
+                // Reflect Z velocity with restitution and apply tangential friction.
+                vel.z = abs(vel.z) * restitution;
+                vel.xy *= collisionFriction;
+            } else if (collisionResponse == 1u) {
+                // ── Stick to terrain surface ──────────────────────────────
+                // Position the particle just above the terrain surface.
+                pos.z = terrainH + 0.001f;
+                // Zero velocity: inelastic collision, particle rests on surface.
+                vel = float3(0.0f, 0.0f, 0.0f);
+            } else {
+                // ── Kill (collisionResponse == 2) ─────────────────────────
+                // Expire the particle immediately.
+                age = lifespan;
+            }
+        }
+    }
+    // ── Terrain kill-mode death flush ────────────────────────────────────
+    // Same pattern as flat ground kill-mode: a second gate is needed because
+    // the primary age-death path at the top of main() already ran this frame.
+    if (terrainCollisionEnabled != 0u && collisionResponse == 2u && age >= lifespan) {
+        RWStructuredBuffer<uint> freeListT     = ResourceDescriptorHeap[freeListUavIndex];
+        RWStructuredBuffer<uint> freeListHeadT = ResourceDescriptorHeap[freeListHeadUavIndex];
+        uint terrainKillIdx;
+        InterlockedAdd(freeListHeadT[0], 1u, terrainKillIdx);
+        if (terrainKillIdx < maxParticles) {
+            freeListT[terrainKillIdx] = threadIdx;
+        }
+        return;
     }
 #endif
 
