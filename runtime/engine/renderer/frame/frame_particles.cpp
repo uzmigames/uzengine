@@ -48,7 +48,6 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
     if (!activeVFX || !activeVFX->IsInitialized()) return;
 
     const auto& emitters = activeVFX->GetActiveEmitters();
-    fprintf(stderr, "[VFX-DBG] emitters.size()=%zu\n", emitters.size()); fflush(stderr);
     if (emitters.empty()) return;
 
     // ── Swap ping-pong buffers at the TOP of frame registration ────────
@@ -208,10 +207,8 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
                 "VFX_MeshIndDraw", gpuBuf.meshIndirectDrawArgs, meshIndirectState);
         }
 
-        fprintf(stderr, "[VFX-DBG] imported emitter %zu OK\n", importedIds.size()); fflush(stderr);
         importedIds.push_back(ids);
     }
-    fprintf(stderr, "[VFX-DBG] all imports done, count=%zu\n", importedIds.size()); fflush(stderr);
 
     // ── Simulation pass (compute) ──────────────────────────────────────
     // Dispatches spawn, update, and indirect args compute shaders for
@@ -375,11 +372,9 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
             simDesc.emitters.push_back(simData);
         }
 
-        fprintf(stderr, "[VFX-DBG] sim emitters=%zu, adding sim pass\n", simDesc.emitters.size()); fflush(stderr);
         if (!simDesc.emitters.empty()) {
             AddParticleSimulationPass(rgBuilder, simDesc);
         }
-        fprintf(stderr, "[VFX-DBG] sim pass added OK\n"); fflush(stderr);
     }
 
     // ── Sort pass (compute) ──────────────────────────────────────────
@@ -605,9 +600,7 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
     }
 
     if (!renderDesc.emitters.empty()) {
-        fprintf(stderr, "[VFX-DBG] adding render pass\n"); fflush(stderr);
-        // AddParticleRenderPass(rgBuilder, renderDesc); // DISABLED: device removed on render — needs RC6 barrier fix
-        fprintf(stderr, "[VFX-DBG] render pass added OK\n"); fflush(stderr);
+        AddParticleRenderPass(rgBuilder, renderDesc);
     }
 
     // ── Trail render pass (transparent phase) ─────────────────────────────
@@ -874,12 +867,15 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
                                 // UAV barrier between emitter dispatches to
                                 // prevent write-after-write hazards on the
                                 // mesh output buffers.
-                                if (i + 1 < dispatches.size()) {
-                                    RHIBarrierDesc barrier{};
-                                    barrier.stateBefore = RHIResourceState::UnorderedAccess;
-                                    barrier.stateAfter  = RHIResourceState::UnorderedAccess;
-                                    cmd->ResourceBarrier(&barrier, 1);
-                                }
+                                // Global UAV barrier between mesh instance CS dispatches.
+                                // No resource handle = global UAV flush (DX12 null resource).
+                                // Disabled: render graph handles inter-pass barriers.
+                                // if (i + 1 < dispatches.size()) {
+                                //     RHIBarrierDesc barrier{};
+                                //     barrier.stateBefore = RHIResourceState::UnorderedAccess;
+                                //     barrier.stateAfter  = RHIResourceState::UnorderedAccess;
+                                //     cmd->ResourceBarrier(&barrier, 1);
+                                // }
                             }
                         });
                 });

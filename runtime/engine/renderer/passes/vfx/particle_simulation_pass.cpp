@@ -231,19 +231,13 @@ static void DispatchSpawn(IRHICommandList* cmd,
     // Use per-emitter composed PSO if available, otherwise fall back to hardcoded.
     const auto spawnPSO = emitter.composedSpawnPSO.IsValid()
         ? emitter.composedSpawnPSO : desc.spawnPipeline;
-    fprintf(stderr, "[VFX-SPAWN] SetPipeline pso=%u\n", spawnPSO.IsValid()); fflush(stderr);
     cmd->SetPipeline(spawnPSO);
-    fprintf(stderr, "[VFX-SPAWN] SetPipeline OK\n"); fflush(stderr);
 
-    fprintf(stderr, "[VFX-SPAWN] SetRootCBV buf=%u off=%llu ptr=%p sz=%u\n",
-            emitter.spawnCB.bufferHandle.IsValid(), emitter.spawnCB.offsetBytes,
-            emitter.spawnCB.cpuPtr, emitter.spawnCB.sizeBytes); fflush(stderr);
     cmd->SetRootCBV(kSlotPerDispatch,
                     emitter.spawnCB.bufferHandle,
                     emitter.spawnCB.offsetBytes,
                     reinterpret_cast<const uint8_t*>(emitter.spawnCB.cpuPtr),
                     emitter.spawnCB.sizeBytes);
-    fprintf(stderr, "[VFX-SPAWN] SetRootCBV OK\n"); fflush(stderr);
 
     // In bindless mode (SM6.6), SRV/UAV indices are passed as root constants
     // in b0 — no descriptor tables needed. The VFX shaders read buffer indices
@@ -251,9 +245,7 @@ static void DispatchSpawn(IRHICommandList* cmd,
     // SetDescriptorTable is only needed for SM5 non-bindless path.
 
     const uint32_t groups = DivRoundUp(emitter.spawnCount, kParticleThreadGroupSize);
-    fprintf(stderr, "[VFX-SPAWN] Dispatch groups=%u\n", groups); fflush(stderr);
     cmd->Dispatch(groups, 1, 1);
-    fprintf(stderr, "[VFX-SPAWN] Dispatch OK\n"); fflush(stderr);
 }
 
 /// Dispatches the update compute shader for a single emitter.
@@ -486,39 +478,21 @@ void AddParticleSimulationPass(rg::RgBuilder& builder,
 
         pb.SetExecutionCallback([desc](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
             UZ_PROFILE_SCOPE("VFX::ParticleSimulation");
-            fprintf(stderr, "[VFX-EXEC] SimPass begin, emitters=%zu, cmd=%p\n", desc.emitters.size(), (void*)cmd); fflush(stderr);
 
             if (desc.emitters.empty()) return;
 
             for (size_t i = 0; i < desc.emitters.size(); ++i) {
                 const auto& emitter = desc.emitters[i];
-                fprintf(stderr, "[VFX-EXEC] emitter[%zu] buffer=%p\n", i, (void*)emitter.buffer); fflush(stderr);
-                if (!emitter.buffer) { fprintf(stderr, "[VFX-EXEC] NULL BUFFER!\n"); fflush(stderr); return; }
-                const auto& gpuBuf  = *emitter.buffer;
+                if (!emitter.buffer) continue;
 
-                // Frame-boundary barriers (SRV->UAV for write set, IndirectArgument->UAV
-                // for indirect args) are handled by the render graph's automatic barrier
-                // scheduling via the imported resource declarations. Only intra-pass UAV
-                // barriers between spawn/update/indirect stages remain manual below.
+                // ALL barriers (UAV→SRV, UAV→IndirectArgument, etc.) are handled
+                // by the render graph. NO manual barriers inside this pass.
+                // UAV→UAV sync between spawn/update/indirect is implicit on
+                // the same command list (DX12 guarantees sequential dispatch ordering).
 
-                fprintf(stderr, "[VFX-EXEC] Stage1: Spawn (count=%u)\n", emitter.spawnCount); fflush(stderr);
                 DispatchSpawn(cmd, desc, emitter);
-                fprintf(stderr, "[VFX-EXEC] Stage1: Spawn done\n"); fflush(stderr);
-
-                if (emitter.spawnCount > 0) {
-                    EmitSimulationUAVBarriers(cmd, gpuBuf);
-                }
-
-                fprintf(stderr, "[VFX-EXEC] Stage2: Update\n"); fflush(stderr);
                 DispatchUpdate(cmd, desc, emitter);
-                fprintf(stderr, "[VFX-EXEC] Stage2: Update done\n"); fflush(stderr);
-                EmitSimulationUAVBarriers(cmd, gpuBuf);
-
-                fprintf(stderr, "[VFX-EXEC] Stage3: IndirectArgs\n"); fflush(stderr);
                 DispatchIndirectArgs(cmd, desc, emitter);
-                fprintf(stderr, "[VFX-EXEC] Stage3: IndirectArgs done\n"); fflush(stderr);
-                EmitIndirectArgsBarriers(cmd, gpuBuf);
-                fprintf(stderr, "[VFX-EXEC] Emitter[%zu] complete\n", i); fflush(stderr);
             }
 
             // Log first execution for diagnostics.
