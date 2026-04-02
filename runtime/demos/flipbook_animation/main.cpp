@@ -17,6 +17,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include "engine_loop.h"
+#include "log.h"
+
 #include <cstdio>
 #include <algorithm>
 #include <memory>
@@ -92,8 +95,17 @@ void PrintModuleParams(const uz::IVFXModule* mod) {
 // Main
 // ─────────────────────────────────────────────────────────────────────────────
 
-int main() {
-    std::printf("==========================================================\n");
+namespace {
+
+/// Wraps the flipbook_animation demo as an EngineLoop subsystem.
+class FlipbookAnimationSubsystem final : public uz::ISubsystem {
+public:
+    [[nodiscard]] const char* GetName() const override { return "FlipbookAnimation"; }
+    [[nodiscard]] uz::InitPhase GetInitPhase() const override { return uz::InitPhase::Init; }
+    [[nodiscard]] uz::TickGroup GetTickGroup() const override { return uz::TickGroup::None; }
+
+    [[nodiscard]] bool Init() override {
+std::printf("==========================================================\n");
     std::printf("      UzEngine -- Flipbook Animation Demo\n");
     std::printf("  Headless VFX flipbook sprite sheet (no GPU required)\n");
     std::printf("==========================================================\n\n");
@@ -102,12 +114,12 @@ int main() {
     auto json = uz::FileReadAllText("assets/flipbook_animation.uzfx");
     if (json.empty()) {
         std::fprintf(stderr, "[Error] Cannot read assets/flipbook_animation.uzfx\n");
-        return 1;
+        return false;
     }
     auto desc = uz::UzfxLoader::Load(json);
     if (desc.name.empty()) {
         std::fprintf(stderr, "[Error] Failed to parse flipbook_animation.uzfx\n");
-        return 1;
+        return false;
     }
     std::printf("[Asset] Loaded '%s' (version %u)\n\n", desc.name.c_str(), desc.version);
 
@@ -133,7 +145,7 @@ int main() {
     if (!uz::UzfxLoader::Instantiate(desc, emitter, &device, vfxSystem.GetBudget())) {
         std::fprintf(stderr, "[Error] Failed to instantiate emitter\n");
         vfxSystem.Shutdown(&device);
-        return 1;
+        return false;
     }
 
     std::printf("[Init] Emitter initialized -- capacity: %u, budget used: %u/%u\n",
@@ -352,9 +364,28 @@ int main() {
 
     if (pass) {
         std::printf("[PASS] Flipbook animation demo completed successfully.\n");
-        return 0;
+        return true;
     } else {
         std::fprintf(stderr, "\n[FAIL] One or more validation checks failed.\n");
-        return 1;
+        return false;
     }
+    }
+
+    void Shutdown() override {}
+};
+
+} // anonymous namespace
+
+int main(int argc, char* argv[]) {
+    uz::LogInit();
+
+    uz::EngineLoop loop;
+    loop.RegisterSubsystem(std::make_unique<FlipbookAnimationSubsystem>());
+
+    uz::EngineConfig config = uz::ParseCommandLine(argc, argv);
+    config.maxFrames = 1;
+    int result = loop.Run(config);
+
+    uz::LogShutdown();
+    return result;
 }

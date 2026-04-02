@@ -39,6 +39,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include "engine_loop.h"
+#include "log.h"
+
 #include <cstdio>
 #include <memory>
 #include <string>
@@ -631,8 +634,17 @@ static bool RunPerformancePhase() {
 // Main
 // ─────────────────────────────────────────────────────────────────────────────
 
-int main() {
-    std::printf("==========================================================\n");
+namespace {
+
+/// Wraps the trails demo as an EngineLoop subsystem.
+class TrailsSubsystem final : public uz::ISubsystem {
+public:
+    [[nodiscard]] const char* GetName() const override { return "Trails"; }
+    [[nodiscard]] uz::InitPhase GetInitPhase() const override { return uz::InitPhase::Init; }
+    [[nodiscard]] uz::TickGroup GetTickGroup() const override { return uz::TickGroup::None; }
+
+    [[nodiscard]] bool Init() override {
+std::printf("==========================================================\n");
     std::printf("         UzEngine -- Trail/Ribbon VFX System Demo\n");
     std::printf("   Projectile, sword swipe, and 50-trail performance test\n");
     std::printf("==========================================================\n");
@@ -660,9 +672,28 @@ int main() {
     std::printf("\n==========================================================\n");
     if (allPass) {
         std::printf("[PASS] Trail system demo completed successfully.\n");
-        return 0;
+        return true;
     }
 
     std::fprintf(stderr, "[FAIL] One or more phases failed.\n");
     return 1;
+    }
+
+    void Shutdown() override {}
+};
+
+} // anonymous namespace
+
+int main(int argc, char* argv[]) {
+    uz::LogInit();
+
+    uz::EngineLoop loop;
+    loop.RegisterSubsystem(std::make_unique<TrailsSubsystem>());
+
+    uz::EngineConfig config = uz::ParseCommandLine(argc, argv);
+    config.maxFrames = 1;
+    int result = loop.Run(config);
+
+    uz::LogShutdown();
+    return result;
 }

@@ -18,6 +18,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include "engine_loop.h"
+#include "log.h"
+
 #include <cstdio>
 #include <cstring>
 #include <algorithm>
@@ -46,8 +49,17 @@ static constexpr uint32_t kBudgetMax      = 500000u;
 // Main
 // ─────────────────────────────────────────────────────────────────────────────
 
-int main() {
-    std::printf("==========================================================\n");
+namespace {
+
+/// Wraps the distortion_effect demo as an EngineLoop subsystem.
+class DistortionEffectSubsystem final : public uz::ISubsystem {
+public:
+    [[nodiscard]] const char* GetName() const override { return "DistortionEffect"; }
+    [[nodiscard]] uz::InitPhase GetInitPhase() const override { return uz::InitPhase::Init; }
+    [[nodiscard]] uz::TickGroup GetTickGroup() const override { return uz::TickGroup::None; }
+
+    [[nodiscard]] bool Init() override {
+std::printf("==========================================================\n");
     std::printf("      UzEngine -- Distortion Effect Demo\n");
     std::printf("  Heat shimmer + glass sphere (headless, no GPU)\n");
     std::printf("==========================================================\n\n");
@@ -56,24 +68,24 @@ int main() {
     auto heatJson = uz::FileReadAllText("assets/distortion_heat_shimmer.uzfx");
     if (heatJson.empty()) {
         std::fprintf(stderr, "[Error] Cannot read assets/distortion_heat_shimmer.uzfx\n");
-        return 1;
+        return false;
     }
     auto heatDesc = uz::UzfxLoader::Load(heatJson);
     if (heatDesc.name.empty()) {
         std::fprintf(stderr, "[Error] Failed to parse distortion_heat_shimmer.uzfx\n");
-        return 1;
+        return false;
     }
     std::printf("[Asset] Loaded '%s' (version %u)\n", heatDesc.name.c_str(), heatDesc.version);
 
     auto glassJson = uz::FileReadAllText("assets/distortion_glass_sphere.uzfx");
     if (glassJson.empty()) {
         std::fprintf(stderr, "[Error] Cannot read assets/distortion_glass_sphere.uzfx\n");
-        return 1;
+        return false;
     }
     auto glassDesc = uz::UzfxLoader::Load(glassJson);
     if (glassDesc.name.empty()) {
         std::fprintf(stderr, "[Error] Failed to parse distortion_glass_sphere.uzfx\n");
-        return 1;
+        return false;
     }
     std::printf("[Asset] Loaded '%s' (version %u)\n\n", glassDesc.name.c_str(), glassDesc.version);
 
@@ -89,7 +101,7 @@ int main() {
     if (!uz::UzfxLoader::Instantiate(heatDesc, heatEmitter, &device, vfxSystem.GetBudget())) {
         std::fprintf(stderr, "[Error] Failed to instantiate heat_shimmer emitter\n");
         vfxSystem.Shutdown(&device);
-        return 1;
+        return false;
     }
 
     std::printf("[Init] heat_shimmer emitter initialized\n");
@@ -102,7 +114,7 @@ int main() {
         std::fprintf(stderr, "[Error] Failed to instantiate glass_sphere emitter\n");
         heatEmitter.Shutdown(&device, vfxSystem.GetBudget());
         vfxSystem.Shutdown(&device);
-        return 1;
+        return false;
     }
 
     std::printf("[Init] glass_sphere emitter initialized\n");
@@ -373,9 +385,28 @@ int main() {
 
     if (pass) {
         std::printf("[PASS] Distortion effect demo completed successfully.\n");
-        return 0;
+        return true;
     } else {
         std::fprintf(stderr, "\n[FAIL] One or more validation checks failed.\n");
-        return 1;
+        return false;
     }
+    }
+
+    void Shutdown() override {}
+};
+
+} // anonymous namespace
+
+int main(int argc, char* argv[]) {
+    uz::LogInit();
+
+    uz::EngineLoop loop;
+    loop.RegisterSubsystem(std::make_unique<DistortionEffectSubsystem>());
+
+    uz::EngineConfig config = uz::ParseCommandLine(argc, argv);
+    config.maxFrames = 1;
+    int result = loop.Run(config);
+
+    uz::LogShutdown();
+    return result;
 }

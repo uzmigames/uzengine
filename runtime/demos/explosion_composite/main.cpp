@@ -16,6 +16,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include "engine_loop.h"
+#include "log.h"
+
 #include <cstdio>
 #include <algorithm>
 #include <string>
@@ -101,8 +104,17 @@ void PrintFrameStats(int frame,
 // Main
 // ─────────────────────────────────────────────────────────────────────────────
 
-int main() {
-    std::printf("==========================================================\n");
+namespace {
+
+/// Wraps the explosion_composite demo as an EngineLoop subsystem.
+class ExplosionCompositeSubsystem final : public uz::ISubsystem {
+public:
+    [[nodiscard]] const char* GetName() const override { return "ExplosionComposite"; }
+    [[nodiscard]] uz::InitPhase GetInitPhase() const override { return uz::InitPhase::Init; }
+    [[nodiscard]] uz::TickGroup GetTickGroup() const override { return uz::TickGroup::None; }
+
+    [[nodiscard]] bool Init() override {
+std::printf("==========================================================\n");
     std::printf("       UzEngine -- Explosion Composite Demo\n");
     std::printf("   Headless multi-emitter VFX system (no GPU required)\n");
     std::printf("==========================================================\n\n");
@@ -122,12 +134,12 @@ int main() {
         auto json = uz::FileReadAllText(asset.path);
         if (json.empty()) {
             std::fprintf(stderr, "[Error] Cannot read %s\n", asset.path);
-            return 1;
+            return false;
         }
         auto desc = uz::UzfxLoader::Load(json);
         if (desc.name.empty()) {
             std::fprintf(stderr, "[Error] Failed to parse %s\n", asset.path);
-            return 1;
+            return false;
         }
         std::printf("[Asset] Loaded '%s' (version %u) from %s\n",
                     desc.name.c_str(), desc.version, asset.path);
@@ -159,7 +171,7 @@ int main() {
             std::fprintf(stderr, "[Error] Failed to instantiate emitter '%s'\n",
                          descs[i].name.c_str());
             vfxSystem.Shutdown(&device);
-            return 1;
+            return false;
         }
 
         std::printf("[Init] Emitter '%s' initialized -- capacity=%u, budget=%u/%u\n",
@@ -307,9 +319,28 @@ int main() {
 
     if (pass) {
         std::printf("[PASS] Explosion composite demo completed successfully.\n");
-        return 0;
+        return true;
     } else {
         std::fprintf(stderr, "\n[FAIL] One or more validation checks failed.\n");
-        return 1;
+        return false;
     }
+    }
+
+    void Shutdown() override {}
+};
+
+} // anonymous namespace
+
+int main(int argc, char* argv[]) {
+    uz::LogInit();
+
+    uz::EngineLoop loop;
+    loop.RegisterSubsystem(std::make_unique<ExplosionCompositeSubsystem>());
+
+    uz::EngineConfig config = uz::ParseCommandLine(argc, argv);
+    config.maxFrames = 1;
+    int result = loop.Run(config);
+
+    uz::LogShutdown();
+    return result;
 }

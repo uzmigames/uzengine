@@ -43,6 +43,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include "engine_loop.h"
+#include "log.h"
+
 #include <cstdio>
 #include <memory>
 #include <string>
@@ -789,8 +792,17 @@ static bool RunSimulationPhase(uz::DemoMockDevice& device,
 // Main
 // ─────────────────────────────────────────────────────────────────────────────
 
-int main() {
-    std::printf("==========================================================\n");
+namespace {
+
+/// Wraps the decals demo as an EngineLoop subsystem.
+class DecalsSubsystem final : public uz::ISubsystem {
+public:
+    [[nodiscard]] const char* GetName() const override { return "Decals"; }
+    [[nodiscard]] uz::InitPhase GetInitPhase() const override { return uz::InitPhase::Init; }
+    [[nodiscard]] uz::TickGroup GetTickGroup() const override { return uz::TickGroup::None; }
+
+    [[nodiscard]] bool Init() override {
+std::printf("==========================================================\n");
     std::printf("         UzEngine -- Decal System Demo\n");
     std::printf("   Bullet holes, blend modes, pool management (headless)\n");
     std::printf("==========================================================\n");
@@ -802,7 +814,7 @@ int main() {
     std::unique_ptr<uz::DecalAsset> bulletHole, opaqueShowcase, additive, multiply, screen;
     if (!RunAssetLoadingPhase(bulletHole, opaqueShowcase, additive, multiply, screen)) {
         std::fprintf(stderr, "\n[FAIL] Phase 1 (Asset Loading) failed -- aborting\n");
-        return 1;
+        return false;
     }
 
     // Phase 2: Direct pool exhaustion and recovery.
@@ -825,9 +837,28 @@ int main() {
 
     if (allPass) {
         std::printf("\n[PASS] Decal system demo completed successfully.\n");
-        return 0;
+        return true;
     }
 
     std::fprintf(stderr, "\n[FAIL] One or more phases failed.\n");
     return 1;
+    }
+
+    void Shutdown() override {}
+};
+
+} // anonymous namespace
+
+int main(int argc, char* argv[]) {
+    uz::LogInit();
+
+    uz::EngineLoop loop;
+    loop.RegisterSubsystem(std::make_unique<DecalsSubsystem>());
+
+    uz::EngineConfig config = uz::ParseCommandLine(argc, argv);
+    config.maxFrames = 1;
+    int result = loop.Run(config);
+
+    uz::LogShutdown();
+    return result;
 }

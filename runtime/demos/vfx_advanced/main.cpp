@@ -43,6 +43,9 @@
 
 #include <algorithm>
 #include <cstdint>
+#include "engine_loop.h"
+#include "log.h"
+
 #include <cstdio>
 #include <memory>
 #include <string>
@@ -406,8 +409,17 @@ static bool RunMeshRenderPhase() {
 // Main entry point
 // ─────────────────────────────────────────────────────────────────────────────
 
-int main() {
-    std::printf("══════════════════════════════════════════════════════════════\n");
+namespace {
+
+/// Wraps the vfx_advanced demo as an EngineLoop subsystem.
+class VfxAdvancedSubsystem final : public uz::ISubsystem {
+public:
+    [[nodiscard]] const char* GetName() const override { return "VfxAdvanced"; }
+    [[nodiscard]] uz::InitPhase GetInitPhase() const override { return uz::InitPhase::Init; }
+    [[nodiscard]] uz::TickGroup GetTickGroup() const override { return uz::TickGroup::None; }
+
+    [[nodiscard]] bool Init() override {
+std::printf("══════════════════════════════════════════════════════════════\n");
     std::printf("         UzEngine -- VFX Advanced Modules Demo\n");
     std::printf("  Collision · Mesh Render · LOD · Significance Budget\n");
     std::printf("══════════════════════════════════════════════════════════════\n");
@@ -440,9 +452,28 @@ int main() {
     std::printf("\n══════════════════════════════════════════════════════════════\n");
     if (allPass) {
         std::printf("[PASS] VFX advanced modules demo completed successfully.\n");
-        return 0;
+        return true;
     }
 
     std::fprintf(stderr, "[FAIL] One or more phases failed.\n");
     return 1;
+    }
+
+    void Shutdown() override {}
+};
+
+} // anonymous namespace
+
+int main(int argc, char* argv[]) {
+    uz::LogInit();
+
+    uz::EngineLoop loop;
+    loop.RegisterSubsystem(std::make_unique<VfxAdvancedSubsystem>());
+
+    uz::EngineConfig config = uz::ParseCommandLine(argc, argv);
+    config.maxFrames = 1;
+    int result = loop.Run(config);
+
+    uz::LogShutdown();
+    return result;
 }

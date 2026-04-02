@@ -13,6 +13,9 @@
 
 #include <cmath>
 #include <cstdint>
+#include "engine_loop.h"
+#include "log.h"
+
 #include <cstdio>
 #include <memory>
 #include <string>
@@ -73,8 +76,17 @@ void PrintSection(const char* title) {
 // Main
 // ─────────────────────────────────────────────────────────────────────────────
 
-int main() {
-    std::printf("==========================================================\n");
+namespace {
+
+/// Wraps the sub_emitter_demo demo as an EngineLoop subsystem.
+class SubEmitterDemoSubsystem final : public uz::ISubsystem {
+public:
+    [[nodiscard]] const char* GetName() const override { return "SubEmitterDemo"; }
+    [[nodiscard]] uz::InitPhase GetInitPhase() const override { return uz::InitPhase::Init; }
+    [[nodiscard]] uz::TickGroup GetTickGroup() const override { return uz::TickGroup::None; }
+
+    [[nodiscard]] bool Init() override {
+std::printf("==========================================================\n");
     std::printf("       UzEngine -- Sub-Emitter Firework Demo\n");
     std::printf("  Headless cascade: Rocket -> Burst -> Sparkle\n");
     std::printf("==========================================================\n");
@@ -91,12 +103,12 @@ int main() {
         auto json = uz::FileReadAllText(path);
         if (json.empty()) {
             std::fprintf(stderr, "[Error] Cannot read %s\n", path);
-            return 1;
+            return false;
         }
         auto desc = uz::UzfxLoader::Load(json);
         if (desc.name.empty()) {
             std::fprintf(stderr, "[Error] Failed to parse %s\n", path);
-            return 1;
+            return false;
         }
         std::printf("[Asset] Loaded '%s' (version %u) from %s\n",
                     desc.name.c_str(), desc.version, path);
@@ -513,10 +525,29 @@ int main() {
         std::printf("  Rocket -> Burst -> Sparkle\n");
         std::printf("  [PASS] Sub-emitter firework demo completed successfully.\n");
         std::printf("==========================================================\n");
-        return 0;
+        return true;
     } else {
         std::fprintf(stderr, "  [FAIL] One or more validation checks failed.\n");
         std::printf("==========================================================\n");
-        return 1;
+        return false;
     }
+    }
+
+    void Shutdown() override {}
+};
+
+} // anonymous namespace
+
+int main(int argc, char* argv[]) {
+    uz::LogInit();
+
+    uz::EngineLoop loop;
+    loop.RegisterSubsystem(std::make_unique<SubEmitterDemoSubsystem>());
+
+    uz::EngineConfig config = uz::ParseCommandLine(argc, argv);
+    config.maxFrames = 1;
+    int result = loop.Run(config);
+
+    uz::LogShutdown();
+    return result;
 }
