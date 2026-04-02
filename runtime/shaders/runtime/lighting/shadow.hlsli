@@ -161,7 +161,7 @@ float2 GetCascadeTileOffset(uint idx, uint cols, out float2 tileSize) {
 /// @param frameIdx Current frame index (for temporal noise variation).
 float SampleShadowCascade(float3 worldPos, float3 N, float NdotL, uint cascadeIdx,
                           Texture2D<float> shadowAtlas, SamplerComparisonState smplr,
-                          float2 pixelPos = float2(0, 0), uint frameIdx = 0) {
+                          float2 pixelPos, uint frameIdx) {
     float normalBias = GetCascadeNormalBias(cascadeIdx);
     float slopeScale = clamp(tan(acos(max(NdotL, 0.001))), 0.0, 10.0);
     float3 biasedPos = worldPos + N * normalBias * slopeScale;
@@ -250,7 +250,9 @@ float CascadeShadow(float3 worldPos, float viewDepth) {
         if (viewDepth < GetCascadeSplit(c)) { sel = c; break; }
     }
 
-    float shadow = SampleShadowCascade(worldPos, N, NdotL, sel, shadowAtlas, shadowSampler);
+    float2 defaultPixelPos = float2(0, 0);
+    uint   defaultFrameIdx = 0;
+    float shadow = SampleShadowCascade(worldPos, N, NdotL, sel, shadowAtlas, shadowSampler, defaultPixelPos, defaultFrameIdx);
 
     if (sel < cascadeCount - 1) {
         float splitDist = GetCascadeSplit(sel);
@@ -258,7 +260,7 @@ float CascadeShadow(float3 worldPos, float viewDepth) {
         float blendRange = splitDist - fadeStart;
         if (blendRange > 0.0 && viewDepth > fadeStart) {
             float bf = saturate((viewDepth - fadeStart) / blendRange);
-            float next = SampleShadowCascade(worldPos, N, NdotL, sel + 1, shadowAtlas, shadowSampler);
+            float next = SampleShadowCascade(worldPos, N, NdotL, sel + 1, shadowAtlas, shadowSampler, defaultPixelPos, defaultFrameIdx);
             shadow = lerp(shadow, next, bf);
         }
     }
