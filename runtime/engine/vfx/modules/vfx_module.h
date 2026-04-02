@@ -82,7 +82,7 @@ enum class ParameterType : uint8_t {
 /// ParameterDef def;
 /// def.name = "Gravity";
 /// def.type = ParameterType::Vec3;
-/// def.defaultVec3 = Vec3{0.0f, 0.0f, -9.81f};
+/// def.defaultVec3 = Vec3{0.0f, 0.0f, -981.0f};
 /// ```
 struct ParameterDef {
     /// Display name shown in the editor (must be a string literal or

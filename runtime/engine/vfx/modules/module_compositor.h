@@ -52,7 +52,7 @@ struct ComposedShader {
 /// 1. Common header (`#include "vfx_common.hlsli"`)
 /// 2. Standard buffer declarations (positions, velocities, ages, etc.)
 /// 3. Per-module HLSL snippets (in order)
-/// 4. `[numthreads(256,1,1)] void CSMain(...)` dispatch wrapper
+/// 4. `[numthreads(256,1,1)] void main(...)` dispatch wrapper
 ///
 /// # Examples
 /// ```cpp

@@ -1,5 +1,3 @@
-#pragma once
-
 /// UzEngine SkyAtmosphereComponent — ECS data for physical atmosphere rendering.
 ///
 /// Follows industry-standard SkyAtmosphereComponent parameter conventions:
@@ -31,6 +29,8 @@
 /// auto& atmo = world.AddComponent<SkyAtmosphereComponent>(sky);
 /// // Earth-like defaults — just add a DirectionalLight with atmosphereSunLight=true.
 /// ```
+
+#pragma once
 
 #include "vector3.h"
 
@@ -146,8 +146,10 @@ struct SkyAtmosphereComponent {
     /// How the planet center is positioned relative to the world.
     /// Equivalent: TransformMode.
     enum class TransformMode : uint8_t {
-        PlanetTopAtComponentTransform = 0,    ///< Planet center at (0, 0, -bottomRadiusKm * 1000). World origin = sea level.
-        PlanetCenterAtComponentTransform = 1, ///< Planet center at component world position. Useful for space views.
+        /// Planet center at (0, 0, -bottomRadiusKm * 1000). World origin = sea level.
+        PlanetTopAtComponentTransform = 0,
+        /// Planet center at component world position. Useful for space views.
+        PlanetCenterAtComponentTransform = 1,
     };
     TransformMode transformMode = TransformMode::PlanetTopAtComponentTransform;
 

@@ -21,15 +21,6 @@ cbuffer PerFrameCB : register(b1) {
     float4   lightDir            : packoffset(c6);
     float4   lightColor          : packoffset(c7);
     float4   ambientColor        : packoffset(c8);
-
-    // Point lights (up to 3), packed at end of 768-byte CB
-    uint     numPointLights              : packoffset(c33.w);
-    float4   pointLight0_posRadius       : packoffset(c34);   // xyz=world position, w=radius (cm)
-    float4   pointLight0_colorIntensity  : packoffset(c35);   // xyz=linear color, w=intensity
-    float4   pointLight1_posRadius       : packoffset(c36);
-    float4   pointLight1_colorIntensity  : packoffset(c37);
-    float4   pointLight2_posRadius       : packoffset(c38);
-    float4   pointLight2_colorIntensity  : packoffset(c39);
 };
 
 cbuffer PerObjectCB : register(b2) {
@@ -77,48 +68,11 @@ float4 main(PSInput input) : SV_Target {
 #endif
     albedo *= baseColorTint;
 
-    // Simple NdotL for minimum visibility (directional light)
+    // Simple NdotL for minimum visibility
     float3 N = normalize(input.normalWS);
     float3 L = normalize(lightDir.xyz);
     float NdotL = max(dot(N, L), 0.0);
     float3 color = albedo * (NdotL * lightColor.xyz + ambientColor.xyz);
-
-    // ── Point light evaluation ───────────────────────────────────────────
-    /// @ref Karis 2013 "Real Shading in Unreal Engine 4" — point light attenuation
-    /// @constants inverse-square falloff with smooth radius windowing:
-    ///   attenuation = saturate(1 - (d/r)^2)^2 / (d^2 + 1)
-    ///   The +1 in the denominator prevents division-by-zero at distance=0.
-
-    // Pack light data into arrays so we can loop without branch divergence
-    float4 plPosRadius[3]       = { pointLight0_posRadius,      pointLight1_posRadius,      pointLight2_posRadius };
-    float4 plColorIntensity[3]  = { pointLight0_colorIntensity,  pointLight1_colorIntensity,  pointLight2_colorIntensity };
-
-    uint lightCount = min(numPointLights, 3u);
-    for (uint i = 0; i < lightCount; ++i) {
-        float3 lightPos   = plPosRadius[i].xyz;
-        float  lightRadius = plPosRadius[i].w;
-        float3 lightColor_i = plColorIntensity[i].xyz;
-        float  intensity  = plColorIntensity[i].w;
-
-        // Light vector from surface to light
-        float3 Lp    = lightPos - input.positionWS;
-        float  dist2 = dot(Lp, Lp);
-        float  dist  = sqrt(dist2);
-        float3 Ln    = Lp / max(dist, 1e-6); // normalized direction, guard against zero
-
-        // Inverse-square attenuation with smooth radius falloff (Karis 2013, slide 12)
-        // Window function: saturate(1 - (d/r)^2)^2  — smoothly goes to zero at radius
-        // Physical falloff: 1 / (d^2 + 1)           — prevents singularity at d=0
-        float distOverRadius = dist / max(lightRadius, 1e-6);
-        float distOverRadius2 = distOverRadius * distOverRadius;
-        float windowTerm = saturate(1.0 - distOverRadius2);
-        float attenuation = (windowTerm * windowTerm) / (dist2 + 1.0);
-
-        // Lambertian diffuse for this point light
-        float NdotLp = max(dot(N, Ln), 0.0);
-
-        color += albedo * NdotLp * lightColor_i * intensity * attenuation;
-    }
 
     // ── Opacity texture modulation (forward/translucent path) ──────────
     float finalOpacity = matOpacity;

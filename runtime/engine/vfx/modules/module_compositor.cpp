@@ -50,17 +50,18 @@ constexpr const char* kBufferDeclarations =
     "    uint  _pad0;\n"
     "};\n\n";
 
-/// Update dispatch wrapper -- opens the CSMain function.
+/// Update dispatch wrapper -- opens the main entry point function.
+/// UzEngine ShaderManager compiles all HLSL with entryPoint = "main".
 constexpr const char* kUpdateDispatchHeader =
     "[numthreads(256, 1, 1)]\n"
-    "void CSMain(uint3 tid : SV_DispatchThreadID) {\n"
+    "void main(uint3 tid : SV_DispatchThreadID) {\n"
     "    uint idx = tid.x;\n"
     "    if (idx >= numParticles) return;\n\n";
 
-/// Spawn dispatch wrapper -- opens the CSMain function.
+/// Spawn dispatch wrapper -- opens the main entry point function.
 constexpr const char* kSpawnDispatchHeader =
     "[numthreads(256, 1, 1)]\n"
-    "void CSMain(uint3 tid : SV_DispatchThreadID) {\n"
+    "void main(uint3 tid : SV_DispatchThreadID) {\n"
     "    uint idx = tid.x;\n"
     "    if (idx >= numParticles) return;\n\n"
     "    // Initialize defaults before spawn modules.\n"
@@ -69,7 +70,7 @@ constexpr const char* kSpawnDispatchHeader =
     "    colors[idx] = float4(1, 1, 1, 1);\n"
     "    sizes[idx] = 1.0;\n\n";
 
-/// Closing brace for CSMain.
+/// Closing brace for main.
 constexpr const char* kDispatchFooter = "}\n";
 
 // ---------------------------------------------------------------------------

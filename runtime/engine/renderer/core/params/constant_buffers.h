@@ -157,44 +157,6 @@ struct PerFrameCB {
     /// UINT32_MAX = no probes uploaded (fall back to global sky IBL).
     uint32_t reflectionProbeBufferSrvIndex = UINT32_MAX;
 
-    // ── Point Lights (forward PBR, up to 3) ────────────────────────────
-    /// Number of active point lights (0-3). Added for forward PBR multi-light.
-    /// @ref Karis 2013 "Real Shading in Unreal Engine 4" — point light attenuation
-    uint32_t numPointLights = 0;
-
-    /// Point light 0: xyz = world position (cm), w = radius (cm).
-    float    pointLight0PosX = 0.0f;
-    float    pointLight0PosY = 0.0f;
-    float    pointLight0PosZ = 0.0f;
-    float    pointLight0Radius = 500.0f;
-    /// Point light 0: xyz = linear RGB color, w = intensity multiplier.
-    float    pointLight0ColorR = 0.0f;
-    float    pointLight0ColorG = 0.0f;
-    float    pointLight0ColorB = 0.0f;
-    float    pointLight0Intensity = 0.0f;
-
-    /// Point light 1: xyz = world position (cm), w = radius (cm).
-    float    pointLight1PosX = 0.0f;
-    float    pointLight1PosY = 0.0f;
-    float    pointLight1PosZ = 0.0f;
-    float    pointLight1Radius = 500.0f;
-    /// Point light 1: xyz = linear RGB color, w = intensity multiplier.
-    float    pointLight1ColorR = 0.0f;
-    float    pointLight1ColorG = 0.0f;
-    float    pointLight1ColorB = 0.0f;
-    float    pointLight1Intensity = 0.0f;
-
-    /// Point light 2: xyz = world position (cm), w = radius (cm).
-    float    pointLight2PosX = 0.0f;
-    float    pointLight2PosY = 0.0f;
-    float    pointLight2PosZ = 0.0f;
-    float    pointLight2Radius = 500.0f;
-    /// Point light 2: xyz = linear RGB color, w = intensity multiplier.
-    float    pointLight2ColorR = 0.0f;
-    float    pointLight2ColorG = 0.0f;
-    float    pointLight2ColorB = 0.0f;
-    float    pointLight2Intensity = 0.0f;
-
     // ── Color grading (at end of scalar section) ──────────────────────
     float    colorSaturation   = 1.1f;              ///< Color saturation multiplier (0=grayscale, 1=unchanged, >1=vivid).
     float    colorContrast     = 1.0f;              ///< Contrast power exponent (1=unchanged, >1=higher contrast).
@@ -238,10 +200,10 @@ struct PerFrameCB {
     float    slSkyDistanceThreshold = 150000.0f;    ///< Max distance for sky light cubemap capture (cm).
     float    slOcclusionContrast = 0.2f;            ///< Contrast adjustment for sky light occlusion.
 
-    float    _pad2[61] = {};                        ///< Pad to 1024 bytes.
+    float    _pad2[22] = {};                        ///< Pad to 768 bytes.
 };
 
-static_assert(sizeof(PerFrameCB) == 1024, "PerFrameCB must be 1024 bytes (D3D12 CB alignment)");
+static_assert(sizeof(PerFrameCB) == 768, "PerFrameCB must be 768 bytes (D3D12 CB alignment)");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PerObjectCB — bound at b2 (root CBV, updated per draw call)

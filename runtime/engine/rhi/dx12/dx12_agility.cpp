@@ -13,7 +13,7 @@
 
 #include <d3d12.h>
 
-extern "C" __declspec(dllexport) const unsigned int D3D12SDKVersion = 619;
-extern "C" __declspec(dllexport) const char* D3D12SDKPath = ".\\D3D12\\";
+extern "C" __declspec(dllexport) const unsigned int D3D12SDKVersion = D3D12_SDK_VERSION;
+extern "C" __declspec(dllexport) const char* D3D12SDKPath = ".\\";
 
 #endif // _WIN32
