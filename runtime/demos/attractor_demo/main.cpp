@@ -24,14 +24,6 @@
 #include <string_view>
 #include "file_system.h"
 
-static std::string uz::FileReadAllText(const char* path) {
-    std::ifstream f(path);
-    if (!f.is_open()) return {};
-    std::ostringstream ss;
-    ss << f.rdbuf();
-    return ss.str();
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
