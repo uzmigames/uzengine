@@ -226,12 +226,19 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
         simDesc.emitters.reserve(emitters.size());
 
         // Upload initial free list state for newly created emitters.
-        // Disabled temporarily — segfault investigation.
-        // for (auto* emitter : emitters) {
-        //     if (emitter && emitter->needsInitialUpload && emitter->buffer.IsValid()) {
-        //         ...
-        //     }
-        // }
+        // Must run BEFORE simulation so the spawn CS can allocate from the free list.
+        for (auto* emitter : emitters) {
+            if (emitter && emitter->needsInitialUpload && emitter->buffer.IsValid()) {
+                auto* device = m_device;
+                auto* em = emitter;
+                rgBuilder.AddPass("VFX_InitFreeList", [em, device](rg::RgPassBuilder& pb) {
+                    pb.SetExecutionCallback([em, device](IRHICommandList* cmd, const rg::RgPassResources&) {
+                        em->buffer.UploadInitialState(device, cmd);
+                        em->needsInitialUpload = false;
+                    });
+                });
+            }
+        }
 
         for (auto* emitter : emitters) {
             if (!emitter || !emitter->initialized) continue;
@@ -478,7 +485,10 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
     // shader compilation error), skip the render pass. Also skip marking
     // hasCompletedCycle because the render pass didn't run -- the read-set
     // buffers won't be left in the expected SRV state for next frame's import.
-    if (!billboardPipeline.IsValid()) return;
+    if (!billboardPipeline.IsValid()) {
+        UZ_LOG(VFX, Warning, "RegisterParticlePasses: billboard pipeline not valid, skipping render");
+        return;
+    }
 
     ParticleRenderPassDesc renderDesc{};
     renderDesc.billboardPipeline  = billboardPipeline;
@@ -601,6 +611,7 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
 
     if (!renderDesc.emitters.empty()) {
         AddParticleRenderPass(rgBuilder, renderDesc);
+    } else {
     }
 
     // ── Trail render pass (transparent phase) ─────────────────────────────

@@ -106,14 +106,17 @@ static void DrawEmitterBillboards(IRHICommandList* cmd,
     // + sprite texture + scene depth texture.
     // Bindless: SRV accessed via ResourceDescriptorHeap[index], no descriptor table needed.
 
-    // Draw particles using CPU-side alive count.
-    // Each alive particle expands to 6 vertices (2 triangles) in the billboard VS
-    // via SV_VertexID. No index buffer is needed.
-    // TODO: switch to GPU-driven DrawIndirect once the RHI supports non-indexed indirect.
-    const uint32_t vertexCount = emitter.cpuAliveCount * 6;
-    if (vertexCount > 0) {
-        cmd->Draw(vertexCount, 1, 0, 0);
+    // Draw particles. Use CPU alive count when available, otherwise force a
+    // minimum draw to verify the billboard pipeline works.
+    // TODO: implement GPU readback of alive count, or switch to DrawIndirect.
+    uint32_t aliveCount = emitter.cpuAliveCount;
+    if (aliveCount == 0) {
+        // Force draw 100 particles to test billboard rendering while GPU
+        // readback is not yet implemented. Remove when readback works.
+        aliveCount = 100;
     }
+    const uint32_t vertexCount = aliveCount * 6;
+    cmd->Draw(vertexCount, 1, 0, 0);
 }
 
 // ---------------------------------------------------------------------------
