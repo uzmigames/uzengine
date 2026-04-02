@@ -106,12 +106,14 @@ static void DrawEmitterBillboards(IRHICommandList* cmd,
     // + sprite texture + scene depth texture.
     // Bindless: SRV accessed via ResourceDescriptorHeap[index], no descriptor table needed.
 
-    // Issue indirect draw. The args buffer was filled by the simulation pass's
-    // indirect args CS and is in IndirectArgument state.
-    cmd->DrawIndexedIndirect(gpuBuf.indirectDrawArgs,
-                             0,               // argsOffset
-                             1,               // drawCount (1 draw per emitter)
-                             kIndirectDrawArgsStride);
+    // Draw particles using CPU-side alive count.
+    // Each alive particle expands to 6 vertices (2 triangles) in the billboard VS
+    // via SV_VertexID. No index buffer is needed.
+    // TODO: switch to GPU-driven DrawIndirect once the RHI supports non-indexed indirect.
+    const uint32_t vertexCount = emitter.cpuAliveCount * 6;
+    if (vertexCount > 0) {
+        cmd->Draw(vertexCount, 1, 0, 0);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -126,9 +128,9 @@ void AddParticleRenderPass(rg::RgBuilder& builder,
 
     for (size_t i = 0; i < desc.emitters.size(); ++i) {
         UZ_CHECKF(desc.emitters[i].buffer != nullptr,
-                  "ParticleRenderPass: emitter[{}] has null GPUParticleBuffer", i);
+                  "ParticleRenderPass: emitter has null GPUParticleBuffer");
         UZ_CHECKF(desc.emitters[i].buffer->IsValid(),
-                  "ParticleRenderPass: emitter[{}] GPUParticleBuffer is not allocated", i);
+                  "ParticleRenderPass: emitter GPUParticleBuffer is not allocated");
     }
 
     // Copy desc so we can sort emitters inside the lambda.
@@ -177,27 +179,50 @@ void AddParticleRenderPass(rg::RgBuilder& builder,
 
             if (passDesc.emitters.empty()) return;
 
+            // ── Begin render pass with color + depth targets ─────────────
+            RHIRenderPassDesc rpDesc{};
+            rpDesc.colorAttachmentCount = 1;
+            if (passDesc.colorTarget.IsValid()) {
+                rpDesc.colorAttachments[0].texture = res.GetTexture(passDesc.colorTarget);
+            }
+            if (passDesc.depthTarget.IsValid()) {
+                rpDesc.hasDepth = true;
+                rpDesc.depthAttachment.texture = res.GetTexture(passDesc.depthTarget);
+            }
+            cmd->BeginRenderPass(rpDesc);
+
+            // Set viewport + scissor from the color target dimensions.
+            if (passDesc.viewportWidth > 0 && passDesc.viewportHeight > 0) {
+                RHIViewport vp{};
+                vp.width = static_cast<float>(passDesc.viewportWidth);
+                vp.height = static_cast<float>(passDesc.viewportHeight);
+                vp.minDepth = 0.0f;
+                vp.maxDepth = 1.0f;
+                cmd->SetViewport(vp);
+
+                RHIScissorRect sc{};
+                sc.right = static_cast<int32_t>(passDesc.viewportWidth);
+                sc.bottom = static_cast<int32_t>(passDesc.viewportHeight);
+                cmd->SetScissor(sc);
+            }
+
             // Bind the billboard graphics pipeline once for all emitters.
-            // All particle emitters share the same PSO (billboard VS + alpha-blend PS).
             cmd->SetPipeline(passDesc.billboardPipeline);
 
-            // Read-set attribute buffer transitions (UAV->SRV) and indirect
-            // draw args transitions (UAV->IndirectArgument) are handled by the
-            // render graph's automatic barrier scheduling via the pb.Read()
-            // declarations above. No manual barriers needed here.
-
-            // Draw each emitter (already sorted back-to-front).
+            // Draw each emitter using CPU-side alive count (not indirect draw).
+            // TODO: switch to DrawIndirect once the RHI supports non-indexed indirect draw.
             for (const auto& emitter : passDesc.emitters) {
-                EnsureIndirectArgsReadable(cmd, *emitter.buffer);
                 DrawEmitterBillboards(cmd, emitter);
             }
+
+            cmd->EndRenderPass();
 
             // Log first execution for diagnostics.
             static bool loggedOnce = false;
             if (!loggedOnce) {
                 UZ_LOG(VFX, Info,
-                       "ParticleRenderPass: first execution -- {} emitters",
-                       passDesc.emitters.size());
+                       "ParticleRenderPass: first execution -- {} emitters, viewport={}x{}",
+                       passDesc.emitters.size(), passDesc.viewportWidth, passDesc.viewportHeight);
                 loggedOnce = true;
             }
         });

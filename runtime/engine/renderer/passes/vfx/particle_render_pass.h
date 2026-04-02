@@ -102,6 +102,9 @@ struct EmitterRenderData {
     /// Bound as an SRV in the pixel shader.
     RHITextureHandle spriteTexture;
 
+    /// CPU-side alive particle count for non-indirect draw fallback.
+    uint32_t cpuAliveCount = 0;
+
     /// Signed distance from camera to emitter origin, used for back-to-front sorting.
     /// Larger values are drawn first (farther from camera).
     float distanceToCamera = 0.0f;
@@ -174,6 +177,10 @@ struct ParticleRenderPassDesc {
 
     /// The depth buffer for depth testing (read-only, no depth write).
     rg::RgResourceId depthTarget;
+
+    /// Viewport dimensions for setting viewport/scissor in the render pass.
+    uint32_t viewportWidth = 0;
+    uint32_t viewportHeight = 0;
 
     // -- Per-emitter render data -----------------------------------------------
 

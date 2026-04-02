@@ -489,6 +489,8 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
     renderDesc.billboardPipeline  = billboardPipeline;
     renderDesc.colorTarget        = ctx.hdrRes;
     renderDesc.depthTarget        = ctx.depthRes;
+    renderDesc.viewportWidth      = m_width;
+    renderDesc.viewportHeight     = m_height;
     renderDesc.sceneDepthTexture  = m_gbuffer.depth;
 
     // Camera position for distance sorting (Vec4 -> Vec3 xyz).
@@ -528,6 +530,7 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
 
         EmitterRenderData renderData{};
         renderData.buffer          = &gpuBuf;
+        renderData.cpuAliveCount   = emitter->cpuAliveCount;
         renderData.renderCB        = bbAlloc;
 
         // Bindless indices CB (b0) -- SRV indices for read-set attribute buffers.
@@ -603,7 +606,7 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
 
     if (!renderDesc.emitters.empty()) {
         fprintf(stderr, "[VFX-DBG] adding render pass\n"); fflush(stderr);
-        // AddParticleRenderPass(rgBuilder, renderDesc); // DISABLED: RC3+RC4 — needs BeginRenderPass + DrawIndirect fix
+        AddParticleRenderPass(rgBuilder, renderDesc);
         fprintf(stderr, "[VFX-DBG] render pass added OK\n"); fflush(stderr);
     }
 
