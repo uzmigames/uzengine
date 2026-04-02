@@ -19,6 +19,13 @@
 /// PerFrameCB at b1 (standard 768-byte layout)
 /// s0: linear sampler, s2: clamp sampler
 
+// Env MIS requires 7+ bindless SRV/UAV bindings which exceeds SM5.0 limits.
+// On SM5 this shader is a no-op; env MIS is only available with bindless (SM6.6).
+#ifndef UZ_BINDLESS
+[numthreads(1, 1, 1)]
+void main(uint3 DTid : SV_DispatchThreadID) {}
+#else
+
 #include "../common/constants.hlsli"
 #include "../common/encoding.hlsli"
 #include "../common/sampling.hlsli"
@@ -176,3 +183,5 @@ void main(uint3 DTid : SV_DispatchThreadID) {
 
     outputTex[px] = float4(result, 1.0);
 }
+
+#endif // UZ_BINDLESS

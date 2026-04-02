@@ -341,8 +341,16 @@ RHIPipelineHandle PipelineLibrary::CreateCachedPipeline(const RHIGraphicsPipelin
         }
 
         UZ_LOG(Renderer, Debug, "PsoCache miss for '{}' — created and cached", desc.debugName ? desc.debugName : "<unnamed>");
+        return handle;
     }
-    return handle;
+
+    // Return Failed sentinel so callers never retry this pipeline.
+    // Without this, a failed PSO creation would be retried every frame,
+    // producing an infinite error log loop and eventual device removal.
+    UZ_LOG(Renderer, Error, "CreateCachedPipeline: permanently failed for '{}' — will not retry",
+           desc.debugName ? desc.debugName : "<unnamed>");
+    ++m_failedPipelineCount;
+    return RHIPipelineHandle::Failed();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

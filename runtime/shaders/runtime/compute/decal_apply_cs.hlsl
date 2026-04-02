@@ -8,6 +8,7 @@
 /// Root constants (b0): DBuffer SRV indices, GBuffer UAV indices, dimensions.
 
 cbuffer DecalApplyConstants : register(b0) {
+#ifdef UZ_BINDLESS
     uint dbufferASrvIndex;       // DBuffer A (albedo + opacity)
     uint dbufferBSrvIndex;       // DBuffer B (normal + normal blend)
     uint dbufferCSrvIndex;       // DBuffer C (roughness + metallic + blend)
@@ -16,9 +17,18 @@ cbuffer DecalApplyConstants : register(b0) {
     uint _pad0;
     uint _pad1;
     uint _pad2;
+#endif
     uint texWidth;               // Render target width
     uint texHeight;              // Render target height
 };
+
+#ifndef UZ_BINDLESS
+Texture2D<float4>   t_dbufA      : register(t0);
+Texture2D<float4>   t_dbufB      : register(t1);
+Texture2D<float4>   t_dbufC      : register(t2);
+RWTexture2D<float4> u_gbufAlbedo : register(u0);
+RWTexture2D<float4> u_gbufNormal : register(u1);
+#endif
 
 [numthreads(8, 8, 1)]
 void main(uint3 DTid : SV_DispatchThreadID) {
@@ -27,9 +37,15 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     int2 coord = int2(DTid.xy);
 
     // ── Load DBuffer values ──────────────────────────────────────────────
+#ifdef UZ_BINDLESS
     Texture2D<float4> dbufA = ResourceDescriptorHeap[dbufferASrvIndex];
     Texture2D<float4> dbufB = ResourceDescriptorHeap[dbufferBSrvIndex];
     Texture2D<float4> dbufC = ResourceDescriptorHeap[dbufferCSrvIndex];
+#else
+    Texture2D<float4> dbufA = t_dbufA;
+    Texture2D<float4> dbufB = t_dbufB;
+    Texture2D<float4> dbufC = t_dbufC;
+#endif
 
     float4 dA = dbufA.Load(int3(coord, 0));
     float4 dB = dbufB.Load(int3(coord, 0));
@@ -39,8 +55,13 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     if (dA.a < 0.001 && dB.a < 0.001 && dC.a < 0.001) return;
 
     // ── Load current GBuffer values ──────────────────────────────────────
+#ifdef UZ_BINDLESS
     RWTexture2D<float4> gbufAlbedo = ResourceDescriptorHeap[gbufferAlbedoUavIndex];
     RWTexture2D<float4> gbufNormal = ResourceDescriptorHeap[gbufferNormalUavIndex];
+#else
+    RWTexture2D<float4> gbufAlbedo = u_gbufAlbedo;
+    RWTexture2D<float4> gbufNormal = u_gbufNormal;
+#endif
 
     float4 curAlbedo = gbufAlbedo[coord];
     float4 curNormal = gbufNormal[coord];

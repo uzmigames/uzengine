@@ -230,6 +230,18 @@ private:
     /// for array slice or mip level targeting. Freed in EndRenderPass.
     uint32_t m_tempRtvIndices[kMaxTempRtvs] = {};
     uint32_t m_tempRtvCount = 0;
+
+    // ── Error loop detection ─────────────────────────────────────────────
+    /// Counts consecutive frames where End() (Close) or Begin() (Reset) fails.
+    /// When this exceeds kMaxConsecutiveErrors, the engine writes a crash
+    /// report and terminates to prevent infinite error log spam and device
+    /// removal cascades (e.g., the VelocityBuffer PSO loop bug).
+    static constexpr uint32_t kMaxConsecutiveErrors = 5;
+    uint32_t m_consecutiveErrors = 0;
+
+    /// Triggers crash report and process termination when the RHI enters
+    /// an unrecoverable error loop.
+    [[noreturn]] void FatalErrorLoop(const char* operation, uint32_t hresult);
 };
 
 } // namespace uz

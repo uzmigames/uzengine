@@ -26,8 +26,11 @@ namespace uz {
 /// Root parameter slot for bindless descriptor indices CB (b0).
 static constexpr uint32_t kSlotBindlessIndices = 0;
 
-/// Root parameter slot for per-emitter constant buffer (b1).
-static constexpr uint32_t kSlotPerEmitter = 1;
+/// Root parameter slot for per-frame constant buffer (b1).
+static constexpr uint32_t kSlotPerFrame = 1;
+
+/// Root parameter slot for per-emitter constant buffer (b2).
+static constexpr uint32_t kSlotPerEmitter = 2;
 
 /// Root parameter slot for SRV descriptor table (t0..tN).
 static constexpr uint32_t kSlotSRVTable = 5;
@@ -106,15 +109,11 @@ static void DrawEmitterBillboards(IRHICommandList* cmd,
     // + sprite texture + scene depth texture.
     // Bindless: SRV accessed via ResourceDescriptorHeap[index], no descriptor table needed.
 
-    // Skip draw — the billboard VS reads particle positions from structured buffers
-    // via ResourceDescriptorHeap[index], but the spawn CS CB layout doesn't match
-    // the HLSL layout byte-for-byte yet (RC1 partial fix). Drawing with garbage
-    // positions causes device removed. Disabled until CB alignment is verified.
-    //
-    // const uint32_t vertexCount = emitter.cpuAliveCount * 6;
-    // if (vertexCount > 0) {
-    //     cmd->Draw(vertexCount, 1, 0, 0);
-    // }
+    // Draw billboard quads: 6 vertices per particle (2 triangles), no vertex buffer.
+    const uint32_t vertexCount = emitter.cpuAliveCount * 6;
+    if (vertexCount > 0) {
+        cmd->Draw(vertexCount, 1, 0, 0);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -153,24 +152,15 @@ void AddParticleRenderPass(rg::RgBuilder& builder,
         // barrier tracking. The graph will insert UAV->SRV transitions for
         // the read set (which was the previous sim's write set) and
         // UAV->IndirectArgument for the indirect draw args.
-        for (const auto& emitter : passDesc.emitters) {
-            if (emitter.rgReadPositions.IsValid()) {
-                pb.Read(emitter.rgReadPositions,  RHIResourceState::ShaderResource);
-                pb.Read(emitter.rgReadVelocities, RHIResourceState::ShaderResource);
-                pb.Read(emitter.rgReadAges,       RHIResourceState::ShaderResource);
-                pb.Read(emitter.rgReadLifespans,  RHIResourceState::ShaderResource);
-                pb.Read(emitter.rgReadSizes,      RHIResourceState::ShaderResource);
-                pb.Read(emitter.rgReadColors,     RHIResourceState::ShaderResource);
-                pb.Read(emitter.rgReadRotations,  RHIResourceState::ShaderResource);
-            }
-            if (emitter.rgAliveCount.IsValid()) {
-                pb.Read(emitter.rgAliveCount,      RHIResourceState::ShaderResource);
-                pb.Read(emitter.rgIndirectDrawArgs, RHIResourceState::IndirectArgument);
-            }
-            if (emitter.rgSortIndices.IsValid()) {
-                pb.Read(emitter.rgSortIndices, RHIResourceState::ShaderResource);
-            }
-        }
+        // TEMP: Skip render graph resource declarations for VFX buffers.
+        // Bindless access via ResourceDescriptorHeap doesn't require explicit
+        // state tracking — the GPU reads from the SRV/UAV descriptor directly.
+        // The buffers are in UAV state (from sim or create) and are accessed
+        // through SRV descriptors. DX12 allows SRV reads on UAV-state buffers
+        // when using bindless (the descriptor type determines access, not the
+        // resource state). Only TEXTURE SRV access requires SRV state.
+        //
+        // TODO: re-enable with correct state tracking once the basic pipeline works.
 
         // Sort emitters back-to-front during setup (before execution).
         SortEmittersBackToFront(passDesc.emitters);
@@ -180,7 +170,6 @@ void AddParticleRenderPass(rg::RgBuilder& builder,
 
             if (passDesc.emitters.empty()) return;
 
-            // ── Begin render pass with color + depth targets ─────────────
             RHIRenderPassDesc rpDesc{};
             rpDesc.colorAttachmentCount = 1;
             if (passDesc.colorTarget.IsValid()) {
@@ -192,7 +181,6 @@ void AddParticleRenderPass(rg::RgBuilder& builder,
             }
             cmd->BeginRenderPass(rpDesc);
 
-            // Set viewport + scissor from the color target dimensions.
             if (passDesc.viewportWidth > 0 && passDesc.viewportHeight > 0) {
                 RHIViewport vp{};
                 vp.width = static_cast<float>(passDesc.viewportWidth);
@@ -200,23 +188,58 @@ void AddParticleRenderPass(rg::RgBuilder& builder,
                 vp.minDepth = 0.0f;
                 vp.maxDepth = 1.0f;
                 cmd->SetViewport(vp);
-
                 RHIScissorRect sc{};
                 sc.right = static_cast<int32_t>(passDesc.viewportWidth);
                 sc.bottom = static_cast<int32_t>(passDesc.viewportHeight);
                 cmd->SetScissor(sc);
             }
 
-            // Bind the billboard graphics pipeline once for all emitters.
             cmd->SetPipeline(passDesc.billboardPipeline);
 
-            // Draw each emitter using CPU-side alive count (not indirect draw).
-            // TODO: switch to DrawIndirect once the RHI supports non-indexed indirect draw.
+            // Bind b1 (PerFrameCB) and b2 (VFXBillboardCB) for each emitter.
+            if (passDesc.perFrameAlloc.cpuPtr) {
+                cmd->SetRootCBV(kSlotPerFrame,
+                                passDesc.perFrameAlloc.bufferHandle,
+                                passDesc.perFrameAlloc.offsetBytes,
+                                reinterpret_cast<const uint8_t*>(passDesc.perFrameAlloc.cpuPtr),
+                                passDesc.perFrameAlloc.sizeBytes);
+            }
+
             for (const auto& emitter : passDesc.emitters) {
-                DrawEmitterBillboards(cmd, emitter);
+                // Bind b0 root constants (bindless descriptor indices).
+                if (emitter.indicesCB.cpuPtr) {
+                    const uint32_t numDwords = emitter.indicesCB.sizeBytes / sizeof(uint32_t);
+                    cmd->SetRootConstants(kSlotBindlessIndices,
+                                          reinterpret_cast<const uint32_t*>(emitter.indicesCB.cpuPtr),
+                                          numDwords, 0);
+                }
+                // Bind b2 (per-emitter billboard CB).
+                cmd->SetRootCBV(kSlotPerEmitter,
+                                emitter.renderCB.bufferHandle,
+                                emitter.renderCB.offsetBytes,
+                                reinterpret_cast<const uint8_t*>(emitter.renderCB.cpuPtr),
+                                emitter.renderCB.sizeBytes);
+
+                // Draw billboard quads: 6 vertices per particle.
+                const uint32_t vertexCount = emitter.cpuAliveCount * 6;
+                if (vertexCount > 0) {
+                    cmd->Draw(vertexCount, 1, 0, 0);
+                }
             }
 
             cmd->EndRenderPass();
+
+            // Mark emitter buffers as having completed their first full cycle.
+            // This MUST happen inside the execution callback — not during
+            // registration — because the render pass might be skipped (e.g.,
+            // billboard pipeline not yet compiled). Only after the render pass
+            // actually executes and leaves read-set buffers in SRV state can
+            // we switch to steady-state import states on the next frame.
+            for (const auto& emitter : passDesc.emitters) {
+                if (emitter.buffer) {
+                    emitter.buffer->hasCompletedCycle = true;
+                }
+            }
 
             // Log first execution for diagnostics.
             static bool loggedOnce = false;

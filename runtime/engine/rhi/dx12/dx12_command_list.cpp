@@ -11,10 +11,12 @@
 #include "dx12_resource_creation.h"
 #include "d3dx12.h"
 
+#include "crash_handler.h"
 #include "log.h"
 #include "profiler.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <string_view>
 #include <vector>
 
@@ -176,6 +178,10 @@ void DX12CommandList::Begin() {
     if (FAILED(hr)) {
         UZ_LOG(RHI, Error, "CommandAllocator::Reset failed, HRESULT=0x{:08X}",
                static_cast<uint32_t>(hr));
+        ++m_consecutiveErrors;
+        if (m_consecutiveErrors >= kMaxConsecutiveErrors) {
+            FatalErrorLoop("CommandAllocator::Reset", static_cast<uint32_t>(hr));
+        }
         return;
     }
 
@@ -183,8 +189,15 @@ void DX12CommandList::Begin() {
     if (FAILED(hr)) {
         UZ_LOG(RHI, Error, "CommandList::Reset failed, HRESULT=0x{:08X}",
                static_cast<uint32_t>(hr));
+        ++m_consecutiveErrors;
+        if (m_consecutiveErrors >= kMaxConsecutiveErrors) {
+            FatalErrorLoop("CommandList::Reset", static_cast<uint32_t>(hr));
+        }
         return;
     }
+
+    // Frame completed Begin() successfully — reset consecutive error counter
+    m_consecutiveErrors = 0;
 
     // Reset the per-frame descriptor bump allocator. The current frame's slice
     // starts at m_frameRingBase + m_currentFrame * kDescriptorsPerFrame.
@@ -217,6 +230,11 @@ void DX12CommandList::End() {
     if (FAILED(hr)) {
         UZ_LOG(RHI, Error, "CommandList::Close failed, HRESULT=0x{:08X}",
                static_cast<uint32_t>(hr));
+
+        ++m_consecutiveErrors;
+        if (m_consecutiveErrors >= kMaxConsecutiveErrors) {
+            FatalErrorLoop("CommandList::Close", static_cast<uint32_t>(hr));
+        }
 
         // Dump D3D12 debug layer messages for diagnosis
         ComPtr<ID3D12InfoQueue> infoQueue;
@@ -990,6 +1008,31 @@ void DX12CommandList::EndRenderPass() {
         }
         m_tempRtvCount = 0;
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fatal Error Loop Detection
+// ─────────────────────────────────────────────────────────────────────────────
+
+void DX12CommandList::FatalErrorLoop(const char* operation, uint32_t hresult) {
+    UZ_LOG(RHI, Error,
+           "FATAL: {} consecutive RHI errors detected (last: {} HRESULT=0x{:08X}). "
+           "The GPU is in an unrecoverable error state. Generating crash report and terminating.",
+           m_consecutiveErrors, operation, hresult);
+
+    // Update crash context so the crash report includes RHI state
+    CrashHandler_SetLastRhiOp(operation);
+    CrashHandler_SetGpuDeviceRemoved(hresult == 0x887A0005u); // DXGI_ERROR_DEVICE_REMOVED
+
+    // Flush log before termination
+    UZ_LOG(RHI, Error,
+           "RHI Error Loop Summary: {} errors, operation='{}', HRESULT=0x{:08X}. "
+           "Check crash report for GPU adapter info and stack trace.",
+           m_consecutiveErrors, operation, hresult);
+
+    // Use abort() to trigger the crash handler (SEH exception filter)
+    // which writes the minidump, crash.txt, and crash.json.
+    std::abort();
 }
 
 } // namespace uz

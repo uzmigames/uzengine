@@ -25,8 +25,8 @@ namespace uz {
 // Constants
 // ---------------------------------------------------------------------------
 
-/// Thread group size matching [numthreads(64, 1, 1)] in particle compute shaders.
-static constexpr uint32_t kParticleThreadGroupSize = 64;
+/// Thread group size matching [numthreads(256, 1, 1)] in particle compute shaders.
+static constexpr uint32_t kParticleThreadGroupSize = 256;
 
 /// Root parameter slot for per-dispatch constant buffer (b1).
 static constexpr uint32_t kSlotPerDispatch = 1;
@@ -485,14 +485,59 @@ void AddParticleSimulationPass(rg::RgBuilder& builder,
                 const auto& emitter = desc.emitters[i];
                 if (!emitter.buffer) continue;
 
-                // ALL barriers (UAV→SRV, UAV→IndirectArgument, etc.) are handled
-                // by the render graph. NO manual barriers inside this pass.
-                // UAV→UAV sync between spawn/update/indirect is implicit on
-                // the same command list (DX12 guarantees sequential dispatch ordering).
+                // Inter-pass barriers (UAV→SRV for render, UAV→IndirectArgument)
+                // are handled by the render graph. Intra-pass barriers between
+                // sequential dispatches on the same command list are manual.
+
+                // freeList transitions UAV→SRV for spawn CS which reads it
+                // via StructuredBuffer<uint> (SRV descriptor). The buffer is
+                // in UAV from Create/UploadInitialState.
+                {
+                    RHIBarrierDesc barrier{};
+                    barrier.buffer      = emitter.buffer->freeList;
+                    barrier.stateBefore = RHIResourceState::UnorderedAccess;
+                    barrier.stateAfter  = RHIResourceState::ShaderResource;
+                    cmd->ResourceBarrier(&barrier, 1);
+                }
 
                 DispatchSpawn(cmd, desc, emitter);
+
+                // freeList back to UAV for update CS (which may recycle dead
+                // particles back to the free list via RWStructuredBuffer).
+                {
+                    RHIBarrierDesc barrier{};
+                    barrier.buffer      = emitter.buffer->freeList;
+                    barrier.stateBefore = RHIResourceState::ShaderResource;
+                    barrier.stateAfter  = RHIResourceState::UnorderedAccess;
+                    cmd->ResourceBarrier(&barrier, 1);
+                }
+
                 DispatchUpdate(cmd, desc, emitter);
+
+                // aliveCount transitions from UAV (written by spawn+update via
+                // atomics) to SRV (read by indirect args CS via bindless
+                // StructuredBuffer<uint>). DX12 does NOT auto-insert UAV→SRV
+                // barriers between dispatches on the same command list.
+                {
+                    RHIBarrierDesc barrier{};
+                    barrier.buffer      = emitter.buffer->aliveCount;
+                    barrier.stateBefore = RHIResourceState::UnorderedAccess;
+                    barrier.stateAfter  = RHIResourceState::ShaderResource;
+                    cmd->ResourceBarrier(&barrier, 1);
+                }
+
                 DispatchIndirectArgs(cmd, desc, emitter);
+
+                // Transition aliveCount back to UAV so the render graph's
+                // tracked exit state remains correct (the graph expects all
+                // sim-pass buffers to end in UAV).
+                {
+                    RHIBarrierDesc barrier{};
+                    barrier.buffer      = emitter.buffer->aliveCount;
+                    barrier.stateBefore = RHIResourceState::ShaderResource;
+                    barrier.stateAfter  = RHIResourceState::UnorderedAccess;
+                    cmd->ResourceBarrier(&barrier, 1);
+                }
             }
 
             // Log first execution for diagnostics.

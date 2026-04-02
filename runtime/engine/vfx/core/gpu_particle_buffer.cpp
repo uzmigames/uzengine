@@ -90,8 +90,11 @@ bool CreateAttributeSet(IRHIDevice* device, ParticleAttributeSet& set,
 {
     const auto cap = static_cast<uint64_t>(capacity);
 
-    set.positions  = CreateVFXBuffer(device, cap * 12, 12, FormatDebugName("Positions", suffix));
-    set.velocities = CreateVFXBuffer(device, cap * 12, 12, FormatDebugName("Velocities", suffix));
+    // Positions and velocities: HLSL uses RWStructuredBuffer<float4> (stride 16),
+    // NOT float3 (stride 12). The .w component is unused but the structured buffer
+    // stride must match the HLSL template type exactly.
+    set.positions  = CreateVFXBuffer(device, cap * 16, 16, FormatDebugName("Positions", suffix));
+    set.velocities = CreateVFXBuffer(device, cap * 16, 16, FormatDebugName("Velocities", suffix));
     set.ages       = CreateVFXBuffer(device, cap * 4,  4,  FormatDebugName("Ages", suffix));
     set.lifespans  = CreateVFXBuffer(device, cap * 4,  4,  FormatDebugName("Lifespans", suffix));
     set.sizes      = CreateVFXBuffer(device, cap * 4,  4,  FormatDebugName("Sizes", suffix));

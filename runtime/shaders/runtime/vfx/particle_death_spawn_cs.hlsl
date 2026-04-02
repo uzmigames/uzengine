@@ -48,6 +48,13 @@
 /// @constants DEATH_SPAWN_GROUP_SIZE=64, golden_angle_2d=2.39996323 rad
 /// @deviations Fibonacci spiral instead of random hemisphere: deterministic, no RNG state.
 
+// Death spawn requires 14+ bindless UAV/SRV bindings which exceeds SM5.0's
+// 8-UAV limit. On SM5 this shader is a no-op; death spawning is disabled.
+#ifndef UZ_BINDLESS
+[numthreads(1, 1, 1)]
+void main(uint3 dtid : SV_DispatchThreadID) {}
+#else
+
 #include "../include/vfx_common.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -315,3 +322,5 @@ void main(uint3 dtid : SV_DispatchThreadID)
         InterlockedAdd(aliveCount[0], 1u, dummy);
     }
 }
+
+#endif // UZ_BINDLESS

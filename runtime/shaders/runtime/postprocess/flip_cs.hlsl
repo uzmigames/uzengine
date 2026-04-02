@@ -16,10 +16,12 @@
 #include "../common/constants.hlsli"
 
 cbuffer RootConstants : register(b0) {
+#ifdef UZ_BINDLESS
     uint g_refSrvIdx;
     uint g_testSrvIdx;
     uint g_outputUavIdx;
     uint g_statsUavIdx;
+#endif
     uint g_width;
     uint g_height;
     uint g_monitorWidthPx;    ///< Monitor width in pixels (default 3840).
@@ -27,6 +29,13 @@ cbuffer RootConstants : register(b0) {
 };
 
 SamplerState linearSampler : register(s0);
+
+#ifndef UZ_BINDLESS
+Texture2D<float4>      t_ref    : register(t0);
+Texture2D<float4>      t_test   : register(t1);
+RWTexture2D<float4>    u_output : register(u0);
+RWByteAddressBuffer    u_stats  : register(u1);
+#endif
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Color Space Transforms
@@ -171,10 +180,17 @@ void main(uint3 DTid : SV_DispatchThreadID) {
 
     uint2 pixel = DTid.xy;
 
+#ifdef UZ_BINDLESS
     Texture2D<float4> refTex  = ResourceDescriptorHeap[g_refSrvIdx];
     Texture2D<float4> testTex = ResourceDescriptorHeap[g_testSrvIdx];
     RWTexture2D<float4> output = ResourceDescriptorHeap[g_outputUavIdx];
     RWByteAddressBuffer stats  = ResourceDescriptorHeap[g_statsUavIdx];
+#else
+    Texture2D<float4> refTex  = t_ref;
+    Texture2D<float4> testTex = t_test;
+    RWTexture2D<float4> output = u_output;
+    RWByteAddressBuffer stats  = u_stats;
+#endif
 
     // Pixels per degree
     float monitorDist = asfloat(g_monitorDistBits);

@@ -77,6 +77,7 @@ void SceneRenderer::SyncVfxEmitters(World* world, IVFS* vfs) {
             }
 
             emitter->graphPath = emitterComp.assetPath;
+            emitter->needsInitialUpload = true;
         } else {
             // Inline parameters: configure from component fields
             emitter->maxParticles    = emitterComp.maxParticles;

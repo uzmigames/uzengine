@@ -120,10 +120,11 @@ struct VFXUpdateCB {
     uint32_t wrDynamicParamsUavIndex = 0; // 92
 
     // ── Shared buffer UAV indices (bytes 96-111) ────────────────────────
-    uint32_t aliveCountUavIndex = 0;    // 96
-    uint32_t freeListUavIndex = 0;      // 100
-    uint32_t freeListHeadUavIndex = 0;  // 104
-    uint32_t idToIndexUavIndex = 0;     // 108
+    // Order MUST match HLSL VFXUpdateConstants: freeList, freeListHead, aliveCount, pad.
+    uint32_t freeListUavIndex = 0;      // 96
+    uint32_t freeListHeadUavIndex = 0;  // 100
+    uint32_t aliveCountUavIndex = 0;    // 104
+    uint32_t _padShared0 = 0;           // 108
 
     // ── Curl noise params (bytes 112-127) ───────────────────────────────
     float curlStrength = 0.0f;          // 112

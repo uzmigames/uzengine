@@ -23,8 +23,9 @@
 ///
 /// # Pipeline Root Signature Layout
 /// Matches the global engine root signature:
-/// - Slot 0 (b0): Root CBV for VFXBillboardIndices (bindless SRV descriptor indices).
-/// - Slot 1 (b1): Root CBV for per-emitter billboard constants.
+/// - Slot 0 (b0): Root constants for VFXBillboardIndices (bindless SRV descriptor indices).
+/// - Slot 1 (b1): PerFrameCB (viewProj, camera — inherited from previous passes, NOT set here).
+/// - Slot 2 (b2): Root CBV for per-emitter VFXBillboardCB (invView, emitter params, rendering params).
 /// - Slot 4 (u0..u3): UAV descriptor table (unused by this pass).
 /// - Slot 5 (t0..tN): SRV descriptor table for particle attributes + sprite texture.
 ///
@@ -54,24 +55,76 @@ class RgBuilder;
 namespace uz {
 
 // ---------------------------------------------------------------------------
-// ParticleBillboardConstants -- CPU-side mirror of billboard shader CB
+// VFXBillboardCB -- CPU-side mirror of VFXBillboardCB in particle_billboard_vs.hlsl (register b2)
 // ---------------------------------------------------------------------------
 
-/// CPU-side mirror of the billboard vertex shader's constant buffer (register b1).
+/// CPU-side mirror of the unified billboard constant buffer at register(b2).
 ///
-/// Contains the matrices needed to orient billboards toward the camera and
-/// project them to clip space, plus the viewport dimensions for soft particle
-/// depth comparison.
-///
-/// Total size: 144 bytes (256-byte aligned by CBRingAllocator).
-struct ParticleBillboardConstants {
-    float viewMatrix[16]       = {};  ///< 0:   View matrix (world -> view), column-major.
-    float projMatrix[16]       = {};  ///< 64:  Projection matrix (view -> clip), column-major.
-    float viewportWidth        = 0.0f; ///< 128: Viewport width in pixels (for soft particles).
-    float viewportHeight       = 0.0f; ///< 132: Viewport height in pixels.
-    float softParticleFadeRange = 1.0f; ///< 136: Depth range for soft particle fade (world units).
-    float _pad0                = 0.0f; ///< 140: Padding to 144 bytes (16-byte aligned).
+/// Layout MUST match the HLSL cbuffer VFXBillboardCB byte-for-byte.
+/// VS reads invView + emitter params; PS reads rendering params.
+/// Total: 304 bytes (19 x float4).
+struct VFXBillboardCB {
+    // ── VS data: emitter parameters (bytes 0-159) ───────────────────────
+    float invView[16]              = {};    ///<  0: Inverse view matrix (rows 0,1 = camera right/up).
+    float emitterPositionX         = 0.0f;  ///< 64: World-space emitter origin X.
+    float emitterPositionY         = 0.0f;  ///< 68: World-space emitter origin Y.
+    float emitterPositionZ         = 0.0f;  ///< 72: World-space emitter origin Z.
+    float globalSizeMultiplier     = 1.0f;  ///< 76: Multiplied with per-particle size.
+    float globalColorTintR         = 1.0f;  ///< 80: Global color tint RGBA.
+    float globalColorTintG         = 1.0f;  ///< 84
+    float globalColorTintB         = 1.0f;  ///< 88
+    float globalColorTintA         = 1.0f;  ///< 92
+    float prevViewProj[16]         = {};    ///< 96: Previous frame viewProj for TAA motion vectors.
+
+    // ── PS data: rendering parameters (bytes 160-207) ───────────────────
+    float softFadeDistance         = 50.0f; ///< 160: Soft particle depth fade distance (world units).
+    float alphaErosion             = 0.0f;  ///< 164: Subtractive alpha erosion [0, 1].
+    float emissiveIntensity        = 0.0f;  ///< 168: Emissive multiplier.
+    uint32_t litMode               = 0;     ///< 172: 0=Unlit, 1=Lit.
+    float cameraOffset             = 0.0f;  ///< 176: Push/pull along camera forward.
+    float pivotOffsetX             = 0.0f;  ///< 180: Sprite pivot X [-1,1].
+    float pivotOffsetY             = 0.0f;  ///< 184: Sprite pivot Y [-1,1].
+    float screenSpacePixelSize     = 0.0f;  ///< 188: Screen-space pixel diameter (0=disabled).
+
+    // ── Size by speed (bytes 192-207) ───────────────────────────────────
+    uint32_t sizeBySpeedEnabled    = 0;     ///< 192
+    float sizeBySpeedMin           = 1.0f;  ///< 196
+    float sizeBySpeedMax           = 2.0f;  ///< 200
+    float speedRangeMax            = 100.0f;///< 204
+
+    // ── Size over lifetime (bytes 208-223) ──────────────────────────────
+    float sizeOverLifeStart        = 1.0f;  ///< 208
+    float sizeOverLifePeak         = 1.0f;  ///< 212
+    float sizeOverLifeEnd          = 0.0f;  ///< 216
+    float sizeOverLifePeakTime     = 0.3f;  ///< 220
+
+    // ── Color over lifetime (bytes 224-255) ─────────────────────────────
+    float colorLifeStartR          = 1.0f;  ///< 224
+    float colorLifeStartG          = 1.0f;  ///< 228
+    float colorLifeStartB          = 1.0f;  ///< 232
+    float colorLifeStartA          = 1.0f;  ///< 236
+    float colorLifeEndR            = 1.0f;  ///< 240
+    float colorLifeEndG            = 1.0f;  ///< 244
+    float colorLifeEndB            = 1.0f;  ///< 248
+    float colorLifeEndA            = 0.0f;  ///< 252
+
+    // ── Billboard facing + stretching (bytes 256-287) ───────────────────
+    uint32_t facingMode            = 0;     ///< 256: 0=FaceCamera.
+    float customFacingX            = 0.0f;  ///< 260
+    float customFacingY            = 0.0f;  ///< 264
+    float customFacingZ            = 1.0f;  ///< 268
+    float stretchFactor            = 0.0f;  ///< 272
+    uint32_t blendModeHint         = 0;     ///< 276: 0=AlphaBlend, 1=Additive.
+    uint32_t colorRampLutSrvIndex  = 0xFFFFFFFF; ///< 280
+    uint32_t screenSpaceSizeEnabled = 0;    ///< 284
+
+    // ── Color by speed (bytes 288-303) ──────────────────────────────────
+    uint32_t colorBySpeedEnabled   = 0;     ///< 288
+    uint32_t _cbsPad0              = 0;     ///< 292
+    uint32_t _cbsPad1              = 0;     ///< 296
+    uint32_t _cbsPad2              = 0;     ///< 300
 };
+static_assert(sizeof(VFXBillboardCB) == 304, "VFXBillboardCB must be 304 bytes to match HLSL layout");
 
 // ---------------------------------------------------------------------------
 // EmitterRenderData -- per-emitter data for the render pass
@@ -181,6 +234,13 @@ struct ParticleRenderPassDesc {
     /// Viewport dimensions for setting viewport/scissor in the render pass.
     uint32_t viewportWidth = 0;
     uint32_t viewportHeight = 0;
+
+    // -- Per-frame constant buffer (b1) ----------------------------------------
+
+    /// Per-frame CB allocation (viewProj, camera, time, lighting).
+    /// Must be set so the billboard VS can read viewProj at register(b1).
+    /// SetPipeline resets root signature bindings, so each pass must re-bind.
+    CBAllocation perFrameAlloc = {};
 
     // -- Per-emitter render data -----------------------------------------------
 

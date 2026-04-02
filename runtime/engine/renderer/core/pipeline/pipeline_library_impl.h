@@ -75,6 +75,7 @@
     IRHIDevice*    m_device    = nullptr;
     ShaderManager* m_shaderMgr = nullptr;
     bool           m_initialized = false;
+    uint32_t       m_failedPipelineCount = 0; ///< Number of pipelines that permanently failed creation.
 
     // ── PSO content-hash cache ─────────────────────────────────────────
     PsoCache m_psoCache;

@@ -17,6 +17,13 @@
 /// to create a ping-pong history buffer and dispatch this shader after the
 /// ray march and before the composite.
 
+// Cloud temporal reprojection uses bindless descriptors for input/output/history.
+// On SM5 this shader is a no-op; cloud temporal filtering is disabled.
+#ifndef UZ_BINDLESS
+[numthreads(1, 1, 1)]
+void main(uint3 DTid : SV_DispatchThreadID) {}
+#else
+
 #include "../common/constants.hlsli"
 #include "../common/bindless.hlsli"
 
@@ -167,3 +174,5 @@ void main(uint3 DTid : SV_DispatchThreadID) {
 
     outputTex[DTid.xy] = float4(max(finalRGB, float3(0, 0, 0)), saturate(finalA));
 }
+
+#endif // UZ_BINDLESS

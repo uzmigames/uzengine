@@ -56,7 +56,8 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
     // was written last frame (left in UAV by the sim pass). The render graph
     // import below uses these post-swap states.
     for (auto* emitter : emitters) {
-        if (emitter && emitter->initialized && emitter->buffer.IsValid()) {
+        if (emitter && emitter->initialized && emitter->buffer.IsValid()
+            && !emitter->needsInitialUpload) {
             emitter->buffer.Swap();
         }
     }
@@ -121,6 +122,11 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
     for (auto* emitter : emitters) {
         if (!emitter || !emitter->initialized) continue;
 
+        // Skip emitters needing initial upload — their buffers will be
+        // transitioned by InitFreeList this frame. Don't import them into
+        // the render graph to avoid conflicting barrier insertions.
+        if (emitter->needsInitialUpload) continue;
+
         auto& gpuBuf = emitter->buffer;
         if (!gpuBuf.IsValid()) continue;
 
@@ -142,11 +148,12 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
             ? RHIResourceState::UnorderedAccess
             : RHIResourceState::ShaderResource;
 
-        // Indirect args: on frame 0, UAV. Subsequent frames, IndirectArgument
-        // (sim's EmitIndirectArgsBarriers left them there for the render pass).
-        const RHIResourceState indirectState = firstCycle
-            ? RHIResourceState::UnorderedAccess
-            : RHIResourceState::IndirectArgument;
+        // Indirect args: always UAV. The sim pass writes them as UAV and
+        // the render pass currently uses CPU alive count (not DrawIndirect),
+        // so they stay in UAV across frames. EmitIndirectArgsBarriers was
+        // removed in RC6, so the UAV→IndirectArgument transition no longer
+        // happens at the end of the sim pass.
+        const RHIResourceState indirectState = RHIResourceState::UnorderedAccess;
 
         ImportedEmitterIds ids{};
         ids.buffer = &gpuBuf;
@@ -226,7 +233,11 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
         simDesc.emitters.reserve(emitters.size());
 
         // Upload initial free list state for newly created emitters.
-        // Must run BEFORE simulation so the spawn CS can allocate from the free list.
+        // This pass does manual Common→CopyDst→UAV barriers, so it MUST NOT
+        // coexist with render graph imports of the same buffers (the graph
+        // would insert conflicting barriers). Emitters needing upload are
+        // excluded from sim/render this frame; they'll participate next frame
+        // when their buffers are in UAV state.
         for (auto* emitter : emitters) {
             if (emitter && emitter->needsInitialUpload && emitter->buffer.IsValid()) {
                 auto* device = m_device;
@@ -242,6 +253,11 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
 
         for (auto* emitter : emitters) {
             if (!emitter || !emitter->initialized) continue;
+
+            // Skip emitters still needing initial upload — their buffers are
+            // being transitioned by InitFreeList this frame and must not be
+            // imported into the render graph simultaneously.
+            if (emitter->needsInitialUpload) continue;
 
             auto& gpuBuf = emitter->buffer;
             if (!gpuBuf.IsValid()) continue;
@@ -307,11 +323,10 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
             updateCBData.wrSizesUavIndex = m_device->GetBufferUAVIndex(ws.sizes);
             updateCBData.wrColorsUavIndex = m_device->GetBufferUAVIndex(ws.colors);
             updateCBData.wrRotationsUavIndex = m_device->GetBufferUAVIndex(ws.rotations);
-            // Shared buffers
-            updateCBData.aliveCountUavIndex = m_device->GetBufferUAVIndex(gpuBuf.aliveCount);
+            // Shared buffers — order must match HLSL: freeList, freeListHead, aliveCount.
             updateCBData.freeListUavIndex = m_device->GetBufferUAVIndex(gpuBuf.freeList);
             updateCBData.freeListHeadUavIndex = m_device->GetBufferUAVIndex(gpuBuf.freeListHead);
-            updateCBData.idToIndexUavIndex = m_device->GetBufferUAVIndex(gpuBuf.idToIndex);
+            updateCBData.aliveCountUavIndex = m_device->GetBufferUAVIndex(gpuBuf.aliveCount);
 
             const CBAllocation updateAlloc = m_cbRing->Allocate(sizeof(updateCBData));
             if (!updateAlloc.cpuPtr) {
@@ -416,6 +431,7 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
 
         for (auto* emitter : emitters) {
             if (!emitter || !emitter->initialized) continue;
+            if (emitter->needsInitialUpload) continue;
 
             auto& gpuBuf = emitter->buffer;
             if (!gpuBuf.IsValid() || !gpuBuf.sort.IsValid()) continue;
@@ -497,6 +513,7 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
     renderDesc.viewportWidth      = m_width;
     renderDesc.viewportHeight     = m_height;
     renderDesc.sceneDepthTexture  = m_gbuffer.depth;
+    renderDesc.perFrameAlloc      = ctx.perFrameAlloc;
 
     // Camera position for distance sorting (Vec4 -> Vec3 xyz).
     const Vec3 camPos{
@@ -513,17 +530,36 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
 
     for (auto* emitter : emitters) {
         if (!emitter || !emitter->initialized) continue;
+        if (emitter->needsInitialUpload) continue; // Skip first-frame emitters
 
         auto& gpuBuf = emitter->buffer;
         if (!gpuBuf.IsValid()) continue;
 
-        // Billboard constant buffer: view/proj matrices + viewport dims.
-        ParticleBillboardConstants bbCBData{};
-        std::memcpy(bbCBData.viewMatrix, &viewMatrix, sizeof(float) * 16);
-        std::memcpy(bbCBData.projMatrix, &projMatrix, sizeof(float) * 16);
-        bbCBData.viewportWidth         = ctx.renderWidth;
-        bbCBData.viewportHeight        = ctx.renderHeight;
-        bbCBData.softParticleFadeRange = emitter->softParticleFadeRange;
+        // Billboard constant buffer (b2): invView + emitter params + rendering params.
+        // Must match VFXBillboardCB in particle_billboard_vs.hlsl byte-for-byte.
+        VFXBillboardCB bbCBData{};
+
+        // Inverse view matrix — rows 0,1 give camera right/up for billboard orientation.
+        const Mat4 invView = viewMatrix.Inverse();
+        std::memcpy(bbCBData.invView, &invView, sizeof(float) * 16);
+
+        // Emitter position (world-space origin — entity transform wiring pending).
+        bbCBData.emitterPositionX = 0.0f;
+        bbCBData.emitterPositionY = 0.0f;
+        bbCBData.emitterPositionZ = 0.0f;
+        bbCBData.globalSizeMultiplier = 1.0f;
+
+        // Global color tint (default white — no tinting).
+        bbCBData.globalColorTintR = 1.0f;
+        bbCBData.globalColorTintG = 1.0f;
+        bbCBData.globalColorTintB = 1.0f;
+        bbCBData.globalColorTintA = 1.0f;
+
+        // Previous frame viewProj for TAA motion vectors.
+        std::memcpy(bbCBData.prevViewProj, &m_prevViewProj, sizeof(float) * 16);
+
+        // Soft particle depth fade distance (0 = disabled, skip depth read in PS).
+        bbCBData.softFadeDistance = 0.0f;
 
         const CBAllocation bbAlloc = m_cbRing->Allocate(sizeof(bbCBData));
         if (!bbAlloc.cpuPtr) {
@@ -541,7 +577,10 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
         // Bindless indices CB (b0) -- SRV indices for read-set attribute buffers.
         // The billboard vertex shader reads these via ConstantBuffer<VFXBillboardIndices>
         // at register(b0) and uses ResourceDescriptorHeap[] to access particle data.
+        // Must match VFXBillboardConstants in particle_billboard_vs.hlsl (b0).
+        // 12 fields = 48 bytes. VS reads [0..31], PS reads [32..47].
         struct VFXBillboardIndices {
+            // VS indices (bytes 0-31)
             uint32_t positionBufferIdx;
             uint32_t sizeBufferIdx;
             uint32_t colorBufferIdx;
@@ -550,6 +589,11 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
             uint32_t velocityBufferIdx;
             uint32_t agesBufferIdx;
             uint32_t lifespansBufferIdx;
+            // PS indices (bytes 32-47)
+            uint32_t spriteTextureIdx;
+            uint32_t depthBufferIdx;
+            uint32_t dynamicParamsBufferIdx;
+            uint32_t _vfxPad1;
         };
 
         const auto& readSet = gpuBuf.ReadSet();
@@ -564,6 +608,12 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
         indicesData.velocityBufferIdx    = m_device->GetBufferSRVIndex(readSet.velocities);
         indicesData.agesBufferIdx        = m_device->GetBufferSRVIndex(readSet.ages);
         indicesData.lifespansBufferIdx   = m_device->GetBufferSRVIndex(readSet.lifespans);
+        // PS indices — UINT32_MAX = no texture bound (PS handles gracefully).
+        indicesData.spriteTextureIdx     = UINT32_MAX;
+        indicesData.depthBufferIdx       = m_gbuffer.depth.IsValid()
+            ? m_device->GetTextureSRVIndex(m_gbuffer.depth) : UINT32_MAX;
+        indicesData.dynamicParamsBufferIdx = UINT32_MAX; // Not yet wired
+        indicesData._vfxPad1             = 0;
 
         const CBAllocation indicesAlloc = m_cbRing->Allocate(sizeof(indicesData));
         if (indicesAlloc.cpuPtr) {
@@ -898,17 +948,11 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
         }
     }
 
-    // Mark all emitter buffers as having completed their first sim+render
-    // cycle. After this point, the render graph import will use steady-state
-    // resource states (SRV for write set, IndirectArgument for indirect args)
-    // instead of the first-frame UAV-everywhere state.
-    // Note: Swap() was moved to the TOP of this function so the render graph
-    // import sees post-swap buffer assignments.
-    for (auto* emitter : emitters) {
-        if (emitter && emitter->initialized && emitter->buffer.IsValid()) {
-            emitter->buffer.hasCompletedCycle = true;
-        }
-    }
+    // NOTE: hasCompletedCycle is set inside the render pass execution callback
+    // (particle_render_pass.cpp), NOT here. Setting it during registration
+    // would be wrong because the render pass might be skipped (billboard
+    // pipeline not compiled yet), leaving buffers in UAV state. Frame N+1
+    // would then import with SRV initial state on a UAV buffer → E_INVALIDARG.
 }
 
 } // namespace uz

@@ -39,7 +39,7 @@
 /// [1, 1, 1] -- single thread. Dispatch exactly (1, 1, 1) groups.
 ///
 /// # Root Signature
-/// - b0: VFXIndirectArgsConstants (bindless descriptor indices)
+/// - b1: VFXIndirectArgsConstants (bindless descriptor indices, root param slot 1)
 ///
 /// @ref D3D12 ExecuteIndirect argument buffer layout
 /// @constants VERTICES_PER_PARTICLE=6, UPDATE_GROUP_SIZE=256
@@ -78,7 +78,7 @@ static const uint DISPATCH_GROUP_Y_OFFSET        = 24;  ///< ThreadGroupCountY
 static const uint DISPATCH_GROUP_Z_OFFSET        = 28;  ///< ThreadGroupCountZ
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Constant Buffer (b0) -- Bindless Descriptor Indices
+// Constant Buffer (b1) -- Bindless Descriptor Indices
 // ─────────────────────────────────────────────────────────────────────────────
 
 #ifdef UZ_BINDLESS
@@ -86,7 +86,7 @@ static const uint DISPATCH_GROUP_Z_OFFSET        = 28;  ///< ThreadGroupCountZ
 /// read the alive count and write the indirect argument buffer.
 ///
 /// Total: 16 bytes (1 x float4).
-cbuffer VFXIndirectArgsConstants : register(b0) {
+cbuffer VFXIndirectArgsConstants : register(b1) {
     uint     aliveCountSrvIndex;   ///< SRV index: StructuredBuffer<uint> (1 elem). 0
     uint     indirectArgsUavIndex; ///< UAV index: RWByteAddressBuffer (32 bytes).  4
     uint     _pad0;                ///<                                              8

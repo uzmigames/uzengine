@@ -18,14 +18,22 @@
 #include "../common/constants.hlsli"
 
 cbuffer RootConstants : register(b0) {
+#ifdef UZ_BINDLESS
     uint g_envSrvIndex;     ///< SRV index of source cubemap (pass 0) or previous mip (pass 1+).
     uint g_outputUavIndex;  ///< UAV index of output mip level.
     uint g_inputSrvIndex;   ///< SRV index of previous mip (pass 1+ only, unused in pass 0).
+#endif
     uint g_mipWidth;        ///< Output mip width in texels.
     uint g_mipHeight;       ///< Output mip height in texels.
 };
 
 SamplerState linearSampler : register(s0);
+
+#ifndef UZ_BINDLESS
+TextureCube<float4>  t_envMap    : register(t0);
+Texture2D<float>     t_prevMip   : register(t0);
+RWTexture2D<float>   u_outputMip : register(u0);
+#endif
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pass 0: Cubemap → equirectangular luminance (mip 0)
@@ -64,6 +72,8 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     // Sample environment cubemap
 #ifdef UZ_BINDLESS
     TextureCube<float4> envMap = ResourceDescriptorHeap[g_envSrvIndex];
+#else
+    TextureCube<float4> envMap = t_envMap;
 #endif
     float3 rgb = envMap.SampleLevel(linearSampler, dir, 0).rgb;
 
@@ -75,7 +85,11 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     float weight = Luminance(rgb) * sinTheta;
 
     // Write to mip 0
+#ifdef UZ_BINDLESS
     RWTexture2D<float> outputMip = ResourceDescriptorHeap[g_outputUavIndex];
+#else
+    RWTexture2D<float> outputMip = u_outputMip;
+#endif
     outputMip[DTid.xy] = weight;
 }
 
@@ -92,7 +106,11 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     if (DTid.x >= g_mipWidth || DTid.y >= g_mipHeight) return;
 
     // Read 2x2 block from previous mip
+#ifdef UZ_BINDLESS
     Texture2D<float> prevMip = ResourceDescriptorHeap[g_inputSrvIndex];
+#else
+    Texture2D<float> prevMip = t_prevMip;
+#endif
     uint2 srcBase = DTid.xy * 2;
 
     float a = prevMip.Load(int3(srcBase + uint2(0, 0), 0));
@@ -103,8 +121,12 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     // Sum (NOT average) — preserves total luminance for PDF normalization.
     float sum = a + b + c + d;
 
-    RWTexture2D<float> outputMip = ResourceDescriptorHeap[g_outputUavIndex];
-    outputMip[DTid.xy] = sum;
+#ifdef UZ_BINDLESS
+    RWTexture2D<float> outputMip2 = ResourceDescriptorHeap[g_outputUavIndex];
+#else
+    RWTexture2D<float> outputMip2 = u_outputMip;
+#endif
+    outputMip2[DTid.xy] = sum;
 }
 
 #endif // PYRAMID_REDUCE
