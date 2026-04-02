@@ -1,0 +1,49 @@
+{
+  "name": "Lit Smoke",
+  "version": 2,
+  "emitters": [
+    {
+      "name": "Lit Smoke",
+      "max_particles": 10000,
+      "emission_rate": 200,
+      "lifetime": 6,
+      "looping": true,
+      "modules": {
+        "spawn": {
+          "type": "spawn",
+          "rate": 200,
+          "velocity": [
+            0,
+            0,
+            200
+          ],
+          "spread_angle": 34.377481145916,
+          "lifespan_min": 3,
+          "lifespan_max": 6
+        },
+        "update": [
+          {
+            "type": "update",
+            "gravity": [
+              0,
+              0,
+              0
+            ],
+            "drag": 0.1
+          },
+          {
+            "type": "turbulence",
+            "strength": 50.0,
+            "frequency": 0.30000001
+          }
+        ],
+        "render": {
+          "type": "sprite",
+          "width": 100,
+          "height": 100,
+          "blend_mode": "alpha_blend"
+        }
+      }
+    }
+  ]
+}

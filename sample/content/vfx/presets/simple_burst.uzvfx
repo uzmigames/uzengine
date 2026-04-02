@@ -1,0 +1,44 @@
+{
+  "name": "Simple Burst",
+  "version": 2,
+  "emitters": [
+    {
+      "name": "Simple Burst",
+      "max_particles": 10000,
+      "emission_rate": 300,
+      "lifetime": 2.5,
+      "looping": true,
+      "modules": {
+        "spawn": {
+          "type": "spawn",
+          "rate": 300,
+          "velocity": [
+            0,
+            0,
+            600
+          ],
+          "spread_angle": 57.2958,
+          "lifespan_min": 1,
+          "lifespan_max": 2.5
+        },
+        "update": [
+          {
+            "type": "update",
+            "gravity": [
+              0,
+              0,
+              -300
+            ],
+            "drag": 0.15000001
+          }
+        ],
+        "render": {
+          "type": "sprite",
+          "width": 100,
+          "height": 100,
+          "blend_mode": "additive"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "name": "Magic Orb",
+  "version": 2,
+  "emitters": [
+    {
+      "name": "Magic Orb",
+      "max_particles": 10000,
+      "emission_rate": 300,
+      "lifetime": 2,
+      "looping": true,
+      "modules": {
+        "spawn": {
+          "type": "spawn",
+          "rate": 300,
+          "velocity": [
+            0,
+            0,
+            100
+          ],
+          "spread_angle": 179.99991805158,
+          "lifespan_min": 1,
+          "lifespan_max": 2
+        },
+        "update": [
+          {
+            "type": "update",
+            "gravity": [
+              0,
+              0,
+              0
+            ],
+            "drag": 0.30000001
+          }
+        ],
+        "render": {
+          "type": "sprite",
+          "width": 50.0,
+          "height": 50.0,
+          "blend_mode": "additive"
+        }
+      }
+    }
+  ]
+}

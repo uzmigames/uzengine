@@ -100,7 +100,7 @@
       "name": "Sparks",
       "components": {
         "transform": { "position": [0, 0, 150] },
-        "vfx_emitter": { "asset": "vfx/presets/sparks.json", "emitting": true }
+        "vfx_emitter": { "asset": "vfx/presets/sparks.uzvfx", "emitting": true }
       }
     }
   ]

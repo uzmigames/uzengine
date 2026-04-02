@@ -138,8 +138,11 @@ void AddParticleRenderPass(rg::RgBuilder& builder,
 
     builder.AddPass("VFX_ParticleRender", [passDesc](rg::RgPassBuilder& pb) mutable {
         // Declare render graph resource dependencies.
-        // Color target: we write to it (render target blend).
+        // Color target: read-modify-write (alpha blend on top of existing scene).
+        // The Read creates a DAG edge from the previous writer (lighting pass),
+        // ensuring particles are composited AFTER the scene is lit.
         if (passDesc.colorTarget.IsValid()) {
+            pb.Read(passDesc.colorTarget, RHIResourceState::RenderTarget);
             pb.Write(passDesc.colorTarget, RHIResourceState::RenderTarget);
         }
 
@@ -169,6 +172,27 @@ void AddParticleRenderPass(rg::RgBuilder& builder,
             UZ_PROFILE_SCOPE("VFX::ParticleRender");
 
             if (passDesc.emitters.empty()) return;
+
+            // Transition read-set attribute buffers from UAV → SRV.
+            // The sim pass leaves all buffers in UAV state. Bindless SRV
+            // reads require the resource to be in SRV state on DX12.
+            for (const auto& emitter : passDesc.emitters) {
+                if (!emitter.buffer) continue;
+                const auto& rs = emitter.buffer->ReadSet();
+                RHIBarrierDesc barriers[7] = {};
+                uint32_t bc = 0;
+                auto addB = [&](RHIBufferHandle h) {
+                    if (h.IsValid()) {
+                        barriers[bc].buffer = h;
+                        barriers[bc].stateBefore = RHIResourceState::UnorderedAccess;
+                        barriers[bc].stateAfter  = RHIResourceState::ShaderResource;
+                        ++bc;
+                    }
+                };
+                addB(rs.positions); addB(rs.velocities); addB(rs.ages);
+                addB(rs.lifespans); addB(rs.sizes); addB(rs.colors); addB(rs.rotations);
+                if (bc > 0) cmd->ResourceBarrier(barriers, bc);
+            }
 
             RHIRenderPassDesc rpDesc{};
             rpDesc.colorAttachmentCount = 1;
@@ -224,6 +248,12 @@ void AddParticleRenderPass(rg::RgBuilder& builder,
                 const uint32_t vertexCount = emitter.cpuAliveCount * 6;
                 if (vertexCount > 0) {
                     cmd->Draw(vertexCount, 1, 0, 0);
+                }
+                static uint32_t drawLogCount = 0;
+                if (drawLogCount < 3) {
+                    UZ_LOG(VFX, Info, "ParticleRender: Draw {} verts (alive={})",
+                           vertexCount, emitter.cpuAliveCount);
+                    ++drawLogCount;
                 }
             }
 

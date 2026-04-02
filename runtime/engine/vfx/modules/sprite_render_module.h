@@ -12,6 +12,7 @@
 #include "vfx_module.h"
 
 #include <cstdint>
+#include <string>
 
 namespace uz {
 
@@ -68,6 +69,10 @@ public:
     void Execute(const ExecuteContext& ctx) override;
 
     // -- Configuration (public for editor/serialization) ---------------------
+
+    /// Path to the sprite texture (e.g., "vfx/fireball_6x6.png").
+    /// Empty = procedural circle (no texture sampling).
+    std::string texturePath;
 
     /// Billboard width in world units.
     float spriteWidth = 1.0f;

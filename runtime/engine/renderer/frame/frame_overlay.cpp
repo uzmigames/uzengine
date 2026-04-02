@@ -24,6 +24,8 @@
 #include "gizmo_renderer.h"
 #include "outline_pass.h"
 #include "stats_overlay.h"
+#include "engine/vfx/vfx_system.h"
+#include "engine/vfx/components/particle_emitter.h"
 
 #include <cstdio>
 #include <cstring>
@@ -197,6 +199,29 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
                 m_statsOverlay->SetUpscalerName(m_upscaler ? m_upscaler->GetName() : "None");
                 m_statsOverlay->SetQualityPreset(
                     QualityLevelName(QualityPresetManager::Get().GetOverallLevel()));
+
+                // VFX emitter world-space markers
+                {
+                    VFXSystem* vfx = m_vfxSystemOverride ? m_vfxSystemOverride : m_vfxSystem.get();
+                    if (vfx && vfx->IsInitialized()) {
+                        const auto& emitters = vfx->GetActiveEmitters();
+                        const Mat4 vp = m_camera->GetProjection() * m_camera->GetView();
+                        for (const auto* em : emitters) {
+                            if (!em || !em->initialized) continue;
+                            Vec4 clip = vp * Vec4(em->worldPosition.x, em->worldPosition.y,
+                                                   em->worldPosition.z, 1.0f);
+                            if (clip.w <= 0.01f) continue; // behind camera
+                            float ndcX = clip.x / clip.w;
+                            float ndcY = clip.y / clip.w;
+                            float sx = (ndcX * 0.5f + 0.5f) * ctx.vpWidth;
+                            float sy = (1.0f - (ndcY * 0.5f + 0.5f)) * ctx.vpHeight;
+                            char buf[64];
+                            std::snprintf(buf, sizeof(buf), "%.0f VFX [%u alive]",
+                                          em->emissionRate, em->cpuAliveCount);
+                            m_statsOverlay->AddWorldLabel(sx - 40.0f, sy - 8.0f, buf);
+                        }
+                    }
+                }
 
                 m_statsOverlay->Render(cmd, *m_cbRing, ctx.frameIndex);
             }

@@ -753,6 +753,7 @@ private:
     TrailSystem* m_trailSystem = nullptr;
     PixelDebugSystem* m_pixelDebugSystem = nullptr;
     RHIBufferHandle m_decalCubeVB;
+    RHIBufferHandle m_vfxZeroBuffer; ///< 4-byte upload buffer containing uint32 0. Used to zero-clear aliveCount.
     RHIBufferHandle m_decalCubeIB;
 
     /// Registers deferred decal passes that project decals onto the G-Buffer.

@@ -669,6 +669,19 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     UZ_LOG(Renderer, Info,
            "SceneRenderer: VFX system initialized (budget={})", kVFXParticleBudget);
 
+    // Create a 4-byte upload buffer containing uint32 zero.
+    // Used by the sim pass to clear aliveCount each frame via CopyBuffer.
+    {
+        RHIBufferDesc zeroDesc{};
+        zeroDesc.sizeBytes = sizeof(uint32_t);
+        zeroDesc.usage     = RHIBufferUsage::CopySrc;
+        zeroDesc.memory    = RHIMemoryType::Upload;
+        zeroDesc.debugName = "VFX_ZeroBuffer";
+        m_vfxZeroBuffer = m_device->CreateBuffer(zeroDesc);
+        auto* mapped = static_cast<uint32_t*>(m_device->MapBuffer(m_vfxZeroBuffer));
+        if (mapped) { *mapped = 0; m_device->UnmapBuffer(m_vfxZeroBuffer); }
+    }
+
     // Register uz.vfx Lua API now that VFXSystem is available.
     // Must be called after LuaVM::Init() (which registers uz.scene etc.)
     // and after VFXSystem::Initialize().

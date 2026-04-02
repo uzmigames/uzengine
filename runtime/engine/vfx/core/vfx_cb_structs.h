@@ -43,18 +43,20 @@ struct VFXSpawnCB {
     uint32_t maxParticles = 0;          // 76
 
     // ── Bindless Descriptor Indices (bytes 80-171) ──────────────────────
-    uint32_t freeListSrvIndex = 0;      // 80
-    uint32_t positionsUavIndex = 0;     // 84
-    uint32_t velocitiesUavIndex = 0;    // 88
-    uint32_t agesUavIndex = 0;          // 92
+    // UINT32_MAX = no descriptor bound. Shaders MUST guard with != 0xFFFFFFFF.
+    // Default 0 is WRONG — slot 0 is a valid descriptor (m_dbufferA SRV).
+    uint32_t freeListSrvIndex = UINT32_MAX;      // 80
+    uint32_t positionsUavIndex = UINT32_MAX;     // 84
+    uint32_t velocitiesUavIndex = UINT32_MAX;    // 88
+    uint32_t agesUavIndex = UINT32_MAX;          // 92
 
-    uint32_t lifespansUavIndex = 0;     // 96
-    uint32_t sizesUavIndex = 0;         // 100
-    uint32_t colorsUavIndex = 0;        // 104
-    uint32_t rotationsUavIndex = 0;     // 108
+    uint32_t lifespansUavIndex = UINT32_MAX;     // 96
+    uint32_t sizesUavIndex = UINT32_MAX;         // 100
+    uint32_t colorsUavIndex = UINT32_MAX;        // 104
+    uint32_t rotationsUavIndex = UINT32_MAX;     // 108
 
-    uint32_t freeListHeadUavIndex = 0;  // 112
-    uint32_t aliveCountUavIndex = 0;    // 116
+    uint32_t freeListHeadUavIndex = UINT32_MAX;  // 112
+    uint32_t aliveCountUavIndex = UINT32_MAX;    // 116
 
     // ── Spawn shape (bytes 120-143) ─────────────────────────────────────
     uint32_t spawnShape = 0;            // 120 (0=Point)
@@ -72,7 +74,7 @@ struct VFXSpawnCB {
 
     float emitterVelocityZ = 0.0f;      // 160
     float velocityInheritance = 0.0f;   // 164
-    uint32_t dynamicParamsUavIndex = 0; // 168
+    uint32_t dynamicParamsUavIndex = UINT32_MAX; // 168
     uint32_t _pad1 = 0;                // 172
 
     // ── Padding to 192 bytes (12 x float4) ──────────────────────────────
@@ -85,8 +87,11 @@ static_assert(sizeof(VFXSpawnCB) == 192, "VFXSpawnCB must be 192 bytes to match 
 // Total: 320 bytes (20 x float4)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// MUST match VFXUpdateConstants in particle_update_cs.hlsl BYTE-FOR-BYTE.
+/// The HLSL cbuffer is the ground truth. If you add a field to HLSL, add it
+/// here at the SAME offset. Use UINT32_MAX for unbound descriptor indices.
 struct VFXUpdateCB {
-    // ── Physics (bytes 0-31) ────────────────────────────────────────────
+    // ── Simulation Parameters (bytes 0-31) ──────────────────────────────
     float gravityX = 0.0f;              // 0
     float gravityY = 0.0f;              // 4
     float gravityZ = -981.0f;           // 8
@@ -97,104 +102,108 @@ struct VFXUpdateCB {
     uint32_t frameNumber = 0;           // 24
     uint32_t maxParticles = 0;          // 28
 
-    // ── Read-set SRV indices (bytes 32-59) ──────────────────────────────
-    uint32_t rdPositionsSrvIndex = 0;   // 32
-    uint32_t rdVelocitiesSrvIndex = 0;  // 36
-    uint32_t rdAgesSrvIndex = 0;        // 40
-    uint32_t rdLifespansSrvIndex = 0;   // 44
+    // ── Read-set SRV indices (bytes 32-63) ──────────────────────────────
+    uint32_t positionsSrvIndex = UINT32_MAX;    // 32
+    uint32_t velocitiesSrvIndex = UINT32_MAX;   // 36
+    uint32_t agesSrvIndex = UINT32_MAX;         // 40
+    uint32_t lifespansSrvIndex = UINT32_MAX;    // 44
 
-    uint32_t rdSizesSrvIndex = 0;       // 48
-    uint32_t rdColorsSrvIndex = 0;      // 52
-    uint32_t rdRotationsSrvIndex = 0;   // 56
-    uint32_t rdDynamicParamsSrvIndex = 0; // 60
+    uint32_t sizesSrvIndex = UINT32_MAX;        // 48
+    uint32_t colorsSrvIndex = UINT32_MAX;       // 52
+    uint32_t rotationsSrvIndex = UINT32_MAX;    // 56
+    uint32_t _padSrv0 = 0;                     // 60
 
     // ── Write-set UAV indices (bytes 64-95) ─────────────────────────────
-    uint32_t wrPositionsUavIndex = 0;   // 64
-    uint32_t wrVelocitiesUavIndex = 0;  // 68
-    uint32_t wrAgesUavIndex = 0;        // 72
-    uint32_t wrLifespansUavIndex = 0;   // 76
+    uint32_t positionsUavIndex = UINT32_MAX;    // 64
+    uint32_t velocitiesUavIndex = UINT32_MAX;   // 68
+    uint32_t agesUavIndex = UINT32_MAX;         // 72
+    uint32_t lifespansUavIndex = UINT32_MAX;    // 76
 
-    uint32_t wrSizesUavIndex = 0;       // 80
-    uint32_t wrColorsUavIndex = 0;      // 84
-    uint32_t wrRotationsUavIndex = 0;   // 88
-    uint32_t wrDynamicParamsUavIndex = 0; // 92
+    uint32_t sizesUavIndex = UINT32_MAX;        // 80
+    uint32_t colorsUavIndex = UINT32_MAX;       // 84
+    uint32_t rotationsUavIndex = UINT32_MAX;    // 88
+    uint32_t _padUav0 = 0;                     // 92
 
     // ── Shared buffer UAV indices (bytes 96-111) ────────────────────────
-    // Order MUST match HLSL VFXUpdateConstants: freeList, freeListHead, aliveCount, pad.
-    uint32_t freeListUavIndex = 0;      // 96
-    uint32_t freeListHeadUavIndex = 0;  // 100
-    uint32_t aliveCountUavIndex = 0;    // 104
-    uint32_t _padShared0 = 0;           // 108
+    uint32_t freeListUavIndex = UINT32_MAX;     // 96
+    uint32_t freeListHeadUavIndex = UINT32_MAX; // 100
+    uint32_t aliveCountNewUavIndex = UINT32_MAX; // 104
+    uint32_t _padShared0 = 0;                   // 108
 
-    // ── Curl noise params (bytes 112-127) ───────────────────────────────
+    // ── Curl noise (bytes 112-127) ──────────────────────────────────────
     float curlStrength = 0.0f;          // 112
     float curlFrequency = 1.0f;         // 116
-    uint32_t curlOctaves = 1;           // 120
-    float curlTime = 0.0f;             // 124
+    float curlSpeed = 0.0f;             // 120  (was curlOctaves — HLSL has curlSpeed)
+    float totalTime = 0.0f;             // 124  (was curlTime — HLSL has totalTime)
 
-    // ── Vortex params (bytes 128-159) ───────────────────────────────────
-    float vortexCenterX = 0.0f;         // 128
-    float vortexCenterY = 0.0f;         // 132
-    float vortexCenterZ = 0.0f;         // 136
-    float vortexStrength = 0.0f;        // 140
+    // ── Vortex force (bytes 128-163) ────────────────────────────────────
+    float vortexAxisOriginX = 0.0f;     // 128
+    float vortexAxisOriginY = 0.0f;     // 132
+    float vortexAxisOriginZ = 0.0f;     // 136
+    float vortexTangentialStrength = 0.0f; // 140
 
-    float vortexAxisX = 0.0f;           // 144
-    float vortexAxisY = 0.0f;           // 148
-    float vortexAxisZ = 1.0f;           // 152
-    float vortexRadialPull = 0.0f;      // 156
+    float vortexAxisDirX = 0.0f;        // 144
+    float vortexAxisDirY = 0.0f;        // 148
+    float vortexAxisDirZ = 1.0f;        // 152
+    float vortexRadialStrength = 0.0f;  // 156
 
-    // ── Wind + kill volume (bytes 160-191) ──────────────────────────────
-    float windDirX = 0.0f;              // 160
-    float windDirY = 0.0f;              // 164
-    float windDirZ = 0.0f;              // 168
-    float windStrength = 0.0f;          // 172
+    float vortexMaxRadius = 0.0f;       // 160
+    uint32_t orbitEnabled = 0;          // 164
+    float orbitRadius = 0.0f;           // 168
+    float orbitSpeed = 0.0f;            // 172
 
-    float killMinX = -1e10f;            // 176
-    float killMinY = -1e10f;            // 180
-    float killMinZ = -1e10f;            // 184
-    float killMaxX = 1e10f;             // 188
+    // ── Orbit axis (bytes 176-191) ──────────────────────────────────────
+    float orbitAxisX = 0.0f;            // 176
+    float orbitAxisY = 0.0f;            // 180
+    float orbitAxisZ = 1.0f;            // 184
+    float _orbitAxisPad = 0.0f;         // 188
 
-    // ── More params (bytes 192-255) ─────────────────────────────────────
-    float killMaxY = 1e10f;             // 192
-    float killMaxZ = 1e10f;             // 196
-    uint32_t killVolumeEnabled = 0;     // 200
-    uint32_t collisionEnabled = 0;      // 204
+    // ── Wind zone (bytes 192-207) ───────────────────────────────────────
+    uint32_t windZoneSrvIndex = UINT32_MAX; // 192
+    uint32_t activeWindZoneCount = 0;   // 196
+    uint32_t _padWind0 = 0;             // 200
+    uint32_t _padWind1 = 0;             // 204
 
-    float collisionBounceFactor = 0.6f; // 208
-    float collisionOffset = 1.0f;       // 212
-    float drag = 0.0f;                  // 216
-    uint32_t deathSpawnEnabled = 0;     // 220
+    // ── Kill volume (bytes 208-223) ─────────────────────────────────────
+    uint32_t killVolumeSrvIndex = UINT32_MAX; // 208
+    uint32_t activeKillVolumeCount = 0; // 212
+    uint32_t groundCollision = 0;       // 216
+    float restitution = 0.6f;           // 220
 
-    float rotationRate = 0.0f;          // 224
-    float accelerationX = 0.0f;         // 228
-    float accelerationY = 0.0f;         // 232
-    float accelerationZ = 0.0f;         // 236
+    // ── Drag + death spawn (bytes 224-255) ──────────────────────────────
+    float dragCoefficient = 0.0f;       // 224
+    uint32_t deathSpawnEnabled = 0;     // 228
+    uint32_t maxDeathEvents = 0;        // 232
+    float deathSpawnSpread = 0.0f;      // 236
 
-    // ── Dynamic params + vector field (bytes 240-319) ───────────────────
-    uint32_t rdDynParamsSrvIdx2 = 0;    // 240
-    uint32_t wrDynParamsUavIdx2 = 0;    // 244
-    float vectorFieldStrength = 0.0f;   // 248
-    uint32_t vectorFieldSrvIndex = UINT32_MAX; // 252
+    float deathSpawnSpeedScale = 1.0f;  // 240
+    uint32_t deathSpawnCount = 1;       // 244
+    uint32_t deathEventBufferUavIndex = UINT32_MAX; // 248
+    uint32_t deathEventCountUavIndex = UINT32_MAX;  // 252
 
-    float vectorFieldScaleX = 1.0f;     // 256
-    float vectorFieldScaleY = 1.0f;     // 260
-    float vectorFieldScaleZ = 1.0f;     // 264
-    float vectorFieldOffsetX = 0.0f;    // 268
+    // ── Rotation + acceleration + collision (bytes 256-287) ─────────────
+    float rotationRate = 0.0f;          // 256
+    float rotationOverLifeStart = 0.0f; // 260
+    float rotationOverLifeEnd = 0.0f;   // 264
+    float accelX = 0.0f;                // 268
 
-    float vectorFieldOffsetY = 0.0f;    // 272
-    float vectorFieldOffsetZ = 0.0f;    // 276
-    uint32_t sizeOverLifeEnabled = 0;   // 280
-    float sizeOverLifeStart = 1.0f;     // 284
+    float accelY = 0.0f;                // 272
+    float accelZ = 0.0f;                // 276
+    uint32_t collisionResponse = 0;     // 280
+    float collisionFriction = 0.5f;     // 284
 
-    float sizeOverLifePeak = 1.0f;      // 288
-    float sizeOverLifeEnd = 0.0f;       // 292
-    float sizeOverLifePeakTime = 0.3f;  // 296
-    uint32_t colorOverLifeEnabled = 0;  // 300
+    // ── Dynamic material params (bytes 288-295) ─────────────────────────
+    uint32_t readDynParamsSrv = UINT32_MAX;  // 288
+    uint32_t writeDynParamsUav = UINT32_MAX; // 292
 
-    float colorLifeStartR = 1.0f;       // 304
-    float colorLifeStartG = 1.0f;       // 308
-    float colorLifeStartB = 1.0f;       // 312
-    float colorLifeStartA = 1.0f;       // 316
+    // ── Vector field (bytes 296-319) ────────────────────────────────────
+    uint32_t vectorFieldEnabled = 0;    // 296
+    float vectorFieldStrength = 0.0f;   // 300
+
+    float vectorFieldTightness = 0.0f;  // 304
+    float vectorFieldScale = 1.0f;      // 308
+    uint32_t _padVF0 = 0;              // 312
+    uint32_t _padVF1 = 0;              // 316
 };
 static_assert(sizeof(VFXUpdateCB) == 320, "VFXUpdateCB must be 320 bytes to match HLSL layout");
 

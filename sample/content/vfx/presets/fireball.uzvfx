@@ -1,0 +1,61 @@
+{
+  "name": "Fireball",
+  "version": 2,
+  "emitters": [
+    {
+      "name": "Flames",
+      "max_particles": 5000,
+      "emission_rate": 400,
+      "lifetime": 1.0,
+      "looping": true,
+      "modules": {
+        "spawn": {
+          "type": "spawn",
+          "velocity": [0, 0, 200],
+          "spread_angle": 90,
+          "lifespan_min": 0.3,
+          "lifespan_max": 0.8
+        },
+        "update": [
+          { "type": "update", "gravity": [0, 0, 300], "drag": 0.5 },
+          { "type": "turbulence", "strength": 150, "frequency": 0.8 }
+        ],
+        "render": {
+          "type": "sprite",
+          "width": 300,
+          "height": 300,
+          "texture": "vfx/fireball_6x6.png",
+          "blend_mode": "additive",
+          "flipbook_rows": 6,
+          "flipbook_cols": 6,
+          "flipbook_fps": 24
+        }
+      }
+    },
+    {
+      "name": "Sparks",
+      "max_particles": 2000,
+      "emission_rate": 200,
+      "lifetime": 2.0,
+      "looping": true,
+      "modules": {
+        "spawn": {
+          "type": "spawn",
+          "velocity": [0, 0, 800],
+          "spread_angle": 30,
+          "lifespan_min": 0.5,
+          "lifespan_max": 1.5
+        },
+        "update": [
+          { "type": "update", "gravity": [0, 0, -981], "drag": 0.02 }
+        ],
+        "render": {
+          "type": "sprite",
+          "width": 40,
+          "height": 40,
+          "blend_mode": "additive"
+        }
+      }
+    }
+  ]
+}

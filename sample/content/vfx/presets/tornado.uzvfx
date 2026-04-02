@@ -1,0 +1,44 @@
+{
+  "name": "Tornado",
+  "version": 2,
+  "emitters": [
+    {
+      "name": "Tornado",
+      "max_particles": 10000,
+      "emission_rate": 300,
+      "lifetime": 4,
+      "looping": true,
+      "modules": {
+        "spawn": {
+          "type": "spawn",
+          "rate": 300,
+          "velocity": [
+            100,
+            0,
+            400
+          ],
+          "spread_angle": 68.75496,
+          "lifespan_min": 2,
+          "lifespan_max": 4
+        },
+        "update": [
+          {
+            "type": "update",
+            "gravity": [
+              0,
+              0,
+              -50.0
+            ],
+            "drag": 0.050000001
+          }
+        ],
+        "render": {
+          "type": "sprite",
+          "width": 25.0,
+          "height": 25.0,
+          "blend_mode": "alpha_blend"
+        }
+      }
+    }
+  ]
+}

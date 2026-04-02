@@ -1,0 +1,44 @@
+{
+  "name": "Whirlpool",
+  "version": 2,
+  "emitters": [
+    {
+      "name": "Whirlpool",
+      "max_particles": 10000,
+      "emission_rate": 250,
+      "lifetime": 4,
+      "looping": true,
+      "modules": {
+        "spawn": {
+          "type": "spawn",
+          "rate": 250,
+          "velocity": [
+            0,
+            0,
+            50.0
+          ],
+          "spread_angle": 45.836640572958,
+          "lifespan_min": 2,
+          "lifespan_max": 4
+        },
+        "update": [
+          {
+            "type": "update",
+            "gravity": [
+              0,
+              0,
+              -981.00004
+            ],
+            "drag": 0.15000001
+          }
+        ],
+        "render": {
+          "type": "sprite",
+          "width": 30.000000999999997,
+          "height": 30.000000999999997,
+          "blend_mode": "alpha_blend"
+        }
+      }
+    }
+  ]
+}

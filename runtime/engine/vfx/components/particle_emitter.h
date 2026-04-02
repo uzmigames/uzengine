@@ -83,6 +83,9 @@ struct ParticleEmitter {
     /// Clamped so the result is never negative.
     float lifetimeVariation = 0.0f;
 
+    /// World-space position of the emitter (synced from entity TransformComponent).
+    Vec3 worldPosition = {0.0f, 0.0f, 0.0f};
+
     /// Initial spawn velocity direction and magnitude (world space, cm/s).
     /// Z-up: positive Z = upward.
     Vec3 spawnVelocity = {0.0f, 0.0f, 1000.0f};
@@ -144,6 +147,9 @@ struct ParticleEmitter {
     /// Fractional spawn accumulator for sub-frame emission smoothing.
     /// Carries leftover fractional particles to the next frame.
     float spawnAccumulator = 0.0f;
+
+    /// Fractional death accumulator — prevents truncation-to-zero at high FPS.
+    float deathAccumulator = 0.0f;
 
     /// Delay before this emitter starts spawning (seconds).
     /// Used by composite effects to stagger sub-emitter activation.

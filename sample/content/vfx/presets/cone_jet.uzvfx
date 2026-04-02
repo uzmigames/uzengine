@@ -1,0 +1,44 @@
+{
+  "name": "Cone Jet",
+  "version": 2,
+  "emitters": [
+    {
+      "name": "Cone Jet",
+      "max_particles": 10000,
+      "emission_rate": 600,
+      "lifetime": 1.5,
+      "looping": true,
+      "modules": {
+        "spawn": {
+          "type": "spawn",
+          "rate": 600,
+          "velocity": [
+            0,
+            0,
+            1000
+          ],
+          "spread_angle": 17.188740572958,
+          "lifespan_min": 0.5,
+          "lifespan_max": 1.5
+        },
+        "update": [
+          {
+            "type": "update",
+            "gravity": [
+              0,
+              0,
+              -500
+            ],
+            "drag": 0.1
+          }
+        ],
+        "render": {
+          "type": "sprite",
+          "width": 20.0,
+          "height": 20.0,
+          "blend_mode": "additive"
+        }
+      }
+    }
+  ]
+}

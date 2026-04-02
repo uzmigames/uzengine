@@ -139,7 +139,12 @@ public:
         m_totalLODs = totalLODs;
     }
 
-    /// Renders the stats overlay (text panel + graphs).
+    /// Adds a world-space label at a given screen position.
+    /// Call before Render(). The label is drawn as text with a small background.
+    void AddWorldLabel(float screenX, float screenY, const std::string& text,
+                       const Vec4& color = {1.0f, 0.8f, 0.2f, 1.0f});
+
+    /// Renders the stats overlay (text panel + graphs + world labels).
     ///
     /// # Arguments
     /// * `cmdList` — Command list with render target already set.
@@ -170,6 +175,13 @@ private:
 
     /// Builds the frame time graph and adds it to the text renderer.
     void BuildGraph();
+
+    struct WorldLabel {
+        float x, y;
+        std::string text;
+        Vec4 color;
+    };
+    std::vector<WorldLabel> m_worldLabels;
 
     IRHIDevice* m_device = nullptr;
     BitmapFont m_font;

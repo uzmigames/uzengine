@@ -45,26 +45,29 @@ TEST(UzfxLoader, LoadValidJson) {
 
     auto desc = UzfxLoader::Load(json);
     EXPECT_EQ(desc.name, "Test Effect");
-    EXPECT_EQ(desc.version, 1u);
-    EXPECT_EQ(desc.maxParticles, 5000u);
-    EXPECT_FLOAT_EQ(desc.emissionRate, 200.0f);
-    EXPECT_FLOAT_EQ(desc.lifetime, 3.0f);
-    EXPECT_TRUE(desc.looping);
-    EXPECT_EQ(desc.spawnModule.type, "spawn");
-    EXPECT_EQ(desc.updateModules.size(), 3u);
-    EXPECT_EQ(desc.updateModules[0].type, "update");
-    EXPECT_EQ(desc.updateModules[1].type, "turbulence");
-    EXPECT_EQ(desc.updateModules[2].type, "decay");
-    EXPECT_EQ(desc.renderModule.type, "sprite");
+    ASSERT_EQ(desc.emitters.size(), 1u);
+    const auto& em = desc.emitters[0];
+    EXPECT_EQ(em.maxParticles, 5000u);
+    EXPECT_FLOAT_EQ(em.emissionRate, 200.0f);
+    EXPECT_FLOAT_EQ(em.lifetime, 3.0f);
+    EXPECT_TRUE(em.looping);
+    EXPECT_EQ(em.spawnModule.type, "spawn");
+    EXPECT_EQ(em.updateModules.size(), 3u);
+    EXPECT_EQ(em.updateModules[0].type, "update");
+    EXPECT_EQ(em.updateModules[1].type, "turbulence");
+    EXPECT_EQ(em.updateModules[2].type, "decay");
+    EXPECT_EQ(em.renderModule.type, "sprite");
 }
 
 TEST(UzfxLoader, LoadEmptyJson) {
     auto desc = UzfxLoader::Load("{}");
     EXPECT_EQ(desc.name, "unnamed");
-    EXPECT_EQ(desc.maxParticles, 10000u);
-    EXPECT_TRUE(desc.spawnModule.type.empty());
-    EXPECT_TRUE(desc.updateModules.empty());
-    EXPECT_TRUE(desc.renderModule.type.empty());
+    ASSERT_EQ(desc.emitters.size(), 1u);
+    const auto& em = desc.emitters[0];
+    EXPECT_EQ(em.maxParticles, 10000u);
+    EXPECT_TRUE(em.spawnModule.type.empty());
+    EXPECT_TRUE(em.updateModules.empty());
+    EXPECT_TRUE(em.renderModule.type.empty());
 }
 
 TEST(UzfxLoader, LoadInvalidJson) {
@@ -80,9 +83,10 @@ TEST(UzfxLoader, LoadEmitterOnlyNoModules) {
 
     auto desc = UzfxLoader::Load(json);
     EXPECT_EQ(desc.name, "Minimal");
-    EXPECT_EQ(desc.maxParticles, 100u);
-    EXPECT_FLOAT_EQ(desc.emissionRate, 10.0f);
-    EXPECT_FLOAT_EQ(desc.lifetime, 2.0f);  // default
+    ASSERT_EQ(desc.emitters.size(), 1u);
+    EXPECT_EQ(desc.emitters[0].maxParticles, 100u);
+    EXPECT_FLOAT_EQ(desc.emitters[0].emissionRate, 10.0f);
+    EXPECT_FLOAT_EQ(desc.emitters[0].lifetime, 2.0f);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

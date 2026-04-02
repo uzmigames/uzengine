@@ -1,0 +1,49 @@
+{
+  "name": "Curl Smoke",
+  "version": 2,
+  "emitters": [
+    {
+      "name": "Curl Smoke",
+      "max_particles": 10000,
+      "emission_rate": 200,
+      "lifetime": 5,
+      "looping": true,
+      "modules": {
+        "spawn": {
+          "type": "spawn",
+          "rate": 200,
+          "velocity": [
+            0,
+            0,
+            150.0
+          ],
+          "spread_angle": 34.377481145916,
+          "lifespan_min": 2,
+          "lifespan_max": 5
+        },
+        "update": [
+          {
+            "type": "update",
+            "gravity": [
+              0,
+              0,
+              0
+            ],
+            "drag": 0.1
+          },
+          {
+            "type": "turbulence",
+            "strength": 200,
+            "frequency": 0.40000001
+          }
+        ],
+        "render": {
+          "type": "sprite",
+          "width": 60.000001999999995,
+          "height": 60.000001999999995,
+          "blend_mode": "alpha_blend"
+        }
+      }
+    }
+  ]
+}

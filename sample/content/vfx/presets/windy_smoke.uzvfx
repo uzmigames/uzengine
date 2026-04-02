@@ -1,0 +1,49 @@
+{
+  "name": "Windy Smoke",
+  "version": 2,
+  "emitters": [
+    {
+      "name": "Windy Smoke",
+      "max_particles": 10000,
+      "emission_rate": 200,
+      "lifetime": 6,
+      "looping": true,
+      "modules": {
+        "spawn": {
+          "type": "spawn",
+          "rate": 200,
+          "velocity": [
+            0,
+            0,
+            200
+          ],
+          "spread_angle": 28.6479,
+          "lifespan_min": 3,
+          "lifespan_max": 6
+        },
+        "update": [
+          {
+            "type": "update",
+            "gravity": [
+              0,
+              0,
+              -30.000000999999997
+            ],
+            "drag": 0.12
+          },
+          {
+            "type": "turbulence",
+            "strength": 50.0,
+            "frequency": 0.30000001
+          }
+        ],
+        "render": {
+          "type": "sprite",
+          "width": 80.000001,
+          "height": 80.000001,
+          "blend_mode": "alpha_blend"
+        }
+      }
+    }
+  ]
+}

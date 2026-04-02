@@ -144,12 +144,30 @@ void StatsOverlay::SetScreenSize(uint32_t width, uint32_t height) {
 // Render
 // ─────────────────────────────────────────────────────────────────────────────
 
+void StatsOverlay::AddWorldLabel(float screenX, float screenY,
+                                  const std::string& text, const Vec4& color) {
+    if (!m_visible) return;
+    m_worldLabels.push_back({screenX, screenY, text, color});
+}
+
 void StatsOverlay::Render(IRHICommandList* cmdList, CBRingAllocator& cbRing, uint32_t frameIndex) {
     if (!m_visible) return;
 
     m_textRenderer.BeginFrame(frameIndex);
     BuildTextPanel();
     BuildGraph();
+
+    // Draw world-space labels (VFX emitter markers, etc.)
+    for (const auto& label : m_worldLabels) {
+        const float bgPad = 4.0f;
+        const float textW = static_cast<float>(label.text.size()) * 8.0f;
+        m_textRenderer.AddRect(label.x - bgPad, label.y - bgPad,
+                               textW + bgPad * 2, 16.0f + bgPad * 2,
+                               {0.0f, 0.0f, 0.0f, 0.6f});
+        m_textRenderer.AddText(m_font, label.text, label.x, label.y, label.color);
+    }
+    m_worldLabels.clear();
+
     m_textRenderer.Render(cmdList, cbRing, m_font);
 }
 

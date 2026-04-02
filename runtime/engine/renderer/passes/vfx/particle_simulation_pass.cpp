@@ -489,6 +489,29 @@ void AddParticleSimulationPass(rg::RgBuilder& builder,
                 // are handled by the render graph. Intra-pass barriers between
                 // sequential dispatches on the same command list are manual.
 
+                // Zero the alive count buffer before this frame's sim.
+                // The update CS atomically increments this for each surviving
+                // particle. Without the reset, alive count accumulates across
+                // frames → indirect args uses stale count → particles stop spawning.
+                //
+                // UAV→CopyDst → copy zero → CopyDst→UAV + UAV barrier.
+                if (emitter.buffer->aliveCount.IsValid() && desc.zeroBuffer.IsValid()) {
+                    RHIBarrierDesc toCopy{};
+                    toCopy.buffer = emitter.buffer->aliveCount;
+                    toCopy.stateBefore = RHIResourceState::UnorderedAccess;
+                    toCopy.stateAfter  = RHIResourceState::CopyDst;
+                    cmd->ResourceBarrier(&toCopy, 1);
+
+                    cmd->CopyBuffer(desc.zeroBuffer, 0,
+                                    emitter.buffer->aliveCount, 0, sizeof(uint32_t));
+
+                    RHIBarrierDesc toUav{};
+                    toUav.buffer = emitter.buffer->aliveCount;
+                    toUav.stateBefore = RHIResourceState::CopyDst;
+                    toUav.stateAfter  = RHIResourceState::UnorderedAccess;
+                    cmd->ResourceBarrier(&toUav, 1);
+                }
+
                 // freeList transitions UAV→SRV for spawn CS which reads it
                 // via StructuredBuffer<uint> (SRV descriptor). The buffer is
                 // in UAV from Create/UploadInitialState.

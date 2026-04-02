@@ -27,6 +27,12 @@
 #include "engine/vfx/core/vfx_cb_structs.h"
 #include "engine/vfx/core/gpu_particle_sort.h"
 #include "engine/vfx/modules/mesh_render_module.h"
+#include "engine/vfx/modules/sprite_render_module.h"
+#include "engine/vfx/modules/spawn_module.h"
+#include "engine/vfx/modules/update_module.h"
+#include "engine/vfx/modules/turbulence_module.h"
+#include "engine/vfx/modules/orbit_module.h"
+#include "engine/vfx/modules/emitter_module_stack.h"
 #include "engine/vfx/trails/trail_system.h"
 
 #include <algorithm>
@@ -130,29 +136,28 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
         auto& gpuBuf = emitter->buffer;
         if (!gpuBuf.IsValid()) continue;
 
+        // Skip render graph imports for VFX buffers. The VFX shaders use
+        // bindless access (ResourceDescriptorHeap[index]) and don't need
+        // render graph state tracking. Manual barriers in the sim pass
+        // handle all intra-pass transitions. Importing buffers into the
+        // graph caused conflicting barriers and TDR on first frame.
+        continue;
+
         const bool firstCycle = !gpuBuf.hasCompletedCycle;
 
-        // Write set: on frame 0, UAV (from Create); subsequent frames, SRV
-        // (render pass read this set last frame before swap made it the write set).
+        // After TransitionAllToUAV, all buffers start in UAV on frame 0.
+        // On subsequent frames, write set is SRV (render pass read it last frame),
+        // read set stays UAV (sim wrote it last frame).
         const RHIResourceState writeSetState = firstCycle
             ? RHIResourceState::UnorderedAccess
             : RHIResourceState::ShaderResource;
 
-        // Read set: always UAV. On frame 0, UAV from Create. On subsequent
-        // frames, UAV because the sim wrote to this set last frame (before
-        // swap made it the read set).
         const RHIResourceState readSetState = RHIResourceState::UnorderedAccess;
 
-        // aliveCount: on frame 0, UAV. Subsequent frames, SRV (render read it).
         const RHIResourceState aliveState = firstCycle
             ? RHIResourceState::UnorderedAccess
             : RHIResourceState::ShaderResource;
 
-        // Indirect args: always UAV. The sim pass writes them as UAV and
-        // the render pass currently uses CPU alive count (not DrawIndirect),
-        // so they stay in UAV across frames. EmitIndirectArgsBarriers was
-        // removed in RC6, so the UAV→IndirectArgument transition no longer
-        // happens at the end of the sim pass.
         const RHIResourceState indirectState = RHIResourceState::UnorderedAccess;
 
         ImportedEmitterIds ids{};
@@ -226,6 +231,7 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
     simDesc.spawnPipeline        = ctx.pipelines->GetParticleSpawnCS();
     simDesc.updatePipeline       = ctx.pipelines->GetParticleUpdateCS();
     simDesc.indirectArgsPipeline = ctx.pipelines->GetParticleIndirectArgsCS();
+    simDesc.zeroBuffer           = m_vfxZeroBuffer;
 
     if (simDesc.spawnPipeline.IsValid() && simDesc.updatePipeline.IsValid()
         && simDesc.indirectArgsPipeline.IsValid()) {
@@ -238,16 +244,13 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
         // would insert conflicting barriers). Emitters needing upload are
         // excluded from sim/render this frame; they'll participate next frame
         // when their buffers are in UAV state.
+        // Mark emitters as ready — their GPU init (UploadInitialState +
+        // TransitionAllToUAV) is now done in SyncVfxEmitters, before the
+        // render graph frame begins, to avoid deadlocking on WaitIdle
+        // during command list recording.
         for (auto* emitter : emitters) {
-            if (emitter && emitter->needsInitialUpload && emitter->buffer.IsValid()) {
-                auto* device = m_device;
-                auto* em = emitter;
-                rgBuilder.AddPass("VFX_InitFreeList", [em, device](rg::RgPassBuilder& pb) {
-                    pb.SetExecutionCallback([em, device](IRHICommandList* cmd, const rg::RgPassResources&) {
-                        em->buffer.UploadInitialState(device, cmd);
-                        em->needsInitialUpload = false;
-                    });
-                });
+            if (emitter && emitter->needsInitialUpload) {
+                emitter->needsInitialUpload = false;
             }
         }
 
@@ -266,16 +269,47 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
             VFXSpawnCB spawnCBData{};
             spawnCBData.spawnCount = emitter->CalculateSpawnCount(ctx.dt);
             spawnCBData.frameNumber = ctx.frameIndex;
+
+            if (ctx.frameIndex % 60 == 0) {
+                UZ_LOG(VFX, Info, "Spawn: count={} alive={} rate={} pos=({:.0f},{:.0f},{:.0f}) frame={}",
+                       spawnCBData.spawnCount, emitter->cpuAliveCount,
+                       emitter->emissionRate,
+                       emitter->worldPosition.x, emitter->worldPosition.y, emitter->worldPosition.z,
+                       ctx.frameIndex);
+            }
             spawnCBData.maxParticles = gpuBuf.capacity;
             spawnCBData.dt = ctx.dt;
-            spawnCBData.minLifetime = emitter->lifetime * 0.5f;
-            spawnCBData.maxLifetime = emitter->lifetime;
-            spawnCBData.initialSize = 50.0f; // cm
-            spawnCBData.spawnVelocityX = emitter->spawnVelocity.x;
-            spawnCBData.spawnVelocityY = emitter->spawnVelocity.y;
-            spawnCBData.spawnVelocityZ = emitter->spawnVelocity.z;
-            spawnCBData.velocityVariation = emitter->velocityVariation;
-            spawnCBData.spreadAngle = emitter->spreadAngle * 0.01745329f; // deg→rad
+            spawnCBData.emitterPosX = emitter->worldPosition.x;
+            spawnCBData.emitterPosY = emitter->worldPosition.y;
+            spawnCBData.emitterPosZ = emitter->worldPosition.z;
+
+            // Read spawn parameters from SpawnModule if present.
+            const auto& spawnMods = emitter->moduleStack.spawnModules;
+            if (!spawnMods.empty()) {
+                auto* sm = dynamic_cast<SpawnModule*>(spawnMods[0].get());
+                if (sm) {
+                    spawnCBData.minLifetime      = sm->lifespanMin;
+                    spawnCBData.maxLifetime       = sm->lifespanMax;
+                    spawnCBData.initialSize        = 1.0f; // unit size, scaled by billboard globalSizeMultiplier
+                    spawnCBData.spawnVelocityX    = sm->velocity.x;
+                    spawnCBData.spawnVelocityY    = sm->velocity.y;
+                    spawnCBData.spawnVelocityZ    = sm->velocity.z;
+                    spawnCBData.velocityVariation = sm->velocityVariation;
+                    spawnCBData.spreadAngle       = sm->spreadAngle * 0.01745329f;
+                    spawnCBData.spawnRadius        = sm->spawnRadius;
+                    spawnCBData.spawnShape         = static_cast<uint32_t>(sm->spawnShape);
+                }
+            } else {
+                // Fallback: use emitter-level defaults
+                spawnCBData.minLifetime      = emitter->lifetime * 0.5f;
+                spawnCBData.maxLifetime       = emitter->lifetime;
+                spawnCBData.initialSize        = 1.0f;
+                spawnCBData.spawnVelocityX    = emitter->spawnVelocity.x;
+                spawnCBData.spawnVelocityY    = emitter->spawnVelocity.y;
+                spawnCBData.spawnVelocityZ    = emitter->spawnVelocity.z;
+                spawnCBData.velocityVariation = emitter->velocityVariation;
+                spawnCBData.spreadAngle       = emitter->spreadAngle * 0.01745329f;
+            }
             // Bindless descriptor indices
             const auto& ws = gpuBuf.WriteSet();
             spawnCBData.freeListSrvIndex = m_device->GetBufferSRVIndex(gpuBuf.freeList);
@@ -288,6 +322,19 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
             spawnCBData.rotationsUavIndex = m_device->GetBufferUAVIndex(ws.rotations);
             spawnCBData.freeListHeadUavIndex = m_device->GetBufferUAVIndex(gpuBuf.freeListHead);
             spawnCBData.aliveCountUavIndex = m_device->GetBufferUAVIndex(gpuBuf.aliveCount);
+
+            // Log descriptor indices once for validation.
+            static bool loggedSpawnIndices = false;
+            if (!loggedSpawnIndices) {
+                UZ_LOG(VFX, Info, "SpawnCB indices: freeListSrv={} posUav={} velUav={} ageUav={} lifeUav={} szUav={} colUav={} rotUav={} headUav={} aliveUav={} dynUav={}",
+                       spawnCBData.freeListSrvIndex, spawnCBData.positionsUavIndex,
+                       spawnCBData.velocitiesUavIndex, spawnCBData.agesUavIndex,
+                       spawnCBData.lifespansUavIndex, spawnCBData.sizesUavIndex,
+                       spawnCBData.colorsUavIndex, spawnCBData.rotationsUavIndex,
+                       spawnCBData.freeListHeadUavIndex, spawnCBData.aliveCountUavIndex,
+                       spawnCBData.dynamicParamsUavIndex);
+                loggedSpawnIndices = true;
+            }
 
             const CBAllocation spawnAlloc = m_cbRing->Allocate(sizeof(spawnCBData));
             if (!spawnAlloc.cpuPtr) {
@@ -302,31 +349,56 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
             updateCBData.aliveCount = emitter->cpuAliveCount;
             updateCBData.maxParticles = gpuBuf.capacity;
             updateCBData.frameNumber = ctx.frameIndex;
-            updateCBData.gravityX = emitter->gravity.x;
-            updateCBData.gravityY = emitter->gravity.y;
-            updateCBData.gravityZ = emitter->gravity.z;
-            updateCBData.damping = emitter->damping;
+            updateCBData.totalTime = ctx.perFrame.timeParams.x; // totalTime from PerFrameCB
+
+            // Read update parameters from modules.
+            for (const auto& mod : emitter->moduleStack.updateModules) {
+                if (auto* um = dynamic_cast<UpdateModule*>(mod.get())) {
+                    updateCBData.gravityX = um->gravity.x;
+                    updateCBData.gravityY = um->gravity.y;
+                    updateCBData.gravityZ = um->gravity.z;
+                    updateCBData.damping  = um->drag;
+                } else if (auto* tm = dynamic_cast<TurbulenceModule*>(mod.get())) {
+                    updateCBData.curlStrength  = tm->strength;
+                    updateCBData.curlFrequency = tm->frequency;
+                } else if (auto* om = dynamic_cast<OrbitModule*>(mod.get())) {
+                    updateCBData.orbitEnabled = 1;
+                    updateCBData.orbitRadius  = om->orbitRadius;
+                    updateCBData.orbitSpeed   = om->speed;
+                    updateCBData.orbitAxisX   = om->axis.x;
+                    updateCBData.orbitAxisY   = om->axis.y;
+                    updateCBData.orbitAxisZ   = om->axis.z;
+                }
+            }
+            // Fallback if no UpdateModule found
+            if (emitter->moduleStack.updateModules.empty()) {
+                updateCBData.gravityX = emitter->gravity.x;
+                updateCBData.gravityY = emitter->gravity.y;
+                updateCBData.gravityZ = emitter->gravity.z;
+                updateCBData.damping  = emitter->damping;
+            }
             // Read-set SRV indices
             const auto& rs = gpuBuf.ReadSet();
-            updateCBData.rdPositionsSrvIndex = m_device->GetBufferSRVIndex(rs.positions);
-            updateCBData.rdVelocitiesSrvIndex = m_device->GetBufferSRVIndex(rs.velocities);
-            updateCBData.rdAgesSrvIndex = m_device->GetBufferSRVIndex(rs.ages);
-            updateCBData.rdLifespansSrvIndex = m_device->GetBufferSRVIndex(rs.lifespans);
-            updateCBData.rdSizesSrvIndex = m_device->GetBufferSRVIndex(rs.sizes);
-            updateCBData.rdColorsSrvIndex = m_device->GetBufferSRVIndex(rs.colors);
-            updateCBData.rdRotationsSrvIndex = m_device->GetBufferSRVIndex(rs.rotations);
+            // Read-set SRV indices (match HLSL field names without rd/wr prefix)
+            updateCBData.positionsSrvIndex = m_device->GetBufferSRVIndex(rs.positions);
+            updateCBData.velocitiesSrvIndex = m_device->GetBufferSRVIndex(rs.velocities);
+            updateCBData.agesSrvIndex = m_device->GetBufferSRVIndex(rs.ages);
+            updateCBData.lifespansSrvIndex = m_device->GetBufferSRVIndex(rs.lifespans);
+            updateCBData.sizesSrvIndex = m_device->GetBufferSRVIndex(rs.sizes);
+            updateCBData.colorsSrvIndex = m_device->GetBufferSRVIndex(rs.colors);
+            updateCBData.rotationsSrvIndex = m_device->GetBufferSRVIndex(rs.rotations);
             // Write-set UAV indices
-            updateCBData.wrPositionsUavIndex = m_device->GetBufferUAVIndex(ws.positions);
-            updateCBData.wrVelocitiesUavIndex = m_device->GetBufferUAVIndex(ws.velocities);
-            updateCBData.wrAgesUavIndex = m_device->GetBufferUAVIndex(ws.ages);
-            updateCBData.wrLifespansUavIndex = m_device->GetBufferUAVIndex(ws.lifespans);
-            updateCBData.wrSizesUavIndex = m_device->GetBufferUAVIndex(ws.sizes);
-            updateCBData.wrColorsUavIndex = m_device->GetBufferUAVIndex(ws.colors);
-            updateCBData.wrRotationsUavIndex = m_device->GetBufferUAVIndex(ws.rotations);
-            // Shared buffers — order must match HLSL: freeList, freeListHead, aliveCount.
+            updateCBData.positionsUavIndex = m_device->GetBufferUAVIndex(ws.positions);
+            updateCBData.velocitiesUavIndex = m_device->GetBufferUAVIndex(ws.velocities);
+            updateCBData.agesUavIndex = m_device->GetBufferUAVIndex(ws.ages);
+            updateCBData.lifespansUavIndex = m_device->GetBufferUAVIndex(ws.lifespans);
+            updateCBData.sizesUavIndex = m_device->GetBufferUAVIndex(ws.sizes);
+            updateCBData.colorsUavIndex = m_device->GetBufferUAVIndex(ws.colors);
+            updateCBData.rotationsUavIndex = m_device->GetBufferUAVIndex(ws.rotations);
+            // Shared buffers — order must match HLSL: freeList, freeListHead, aliveCountNew.
             updateCBData.freeListUavIndex = m_device->GetBufferUAVIndex(gpuBuf.freeList);
             updateCBData.freeListHeadUavIndex = m_device->GetBufferUAVIndex(gpuBuf.freeListHead);
-            updateCBData.aliveCountUavIndex = m_device->GetBufferUAVIndex(gpuBuf.aliveCount);
+            updateCBData.aliveCountNewUavIndex = m_device->GetBufferUAVIndex(gpuBuf.aliveCount);
 
             const CBAllocation updateAlloc = m_cbRing->Allocate(sizeof(updateCBData));
             if (!updateAlloc.cpuPtr) {
@@ -543,11 +615,15 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
         const Mat4 invView = viewMatrix.Inverse();
         std::memcpy(bbCBData.invView, &invView, sizeof(float) * 16);
 
-        // Emitter position (world-space origin — entity transform wiring pending).
-        bbCBData.emitterPositionX = 0.0f;
-        bbCBData.emitterPositionY = 0.0f;
-        bbCBData.emitterPositionZ = 0.0f;
+        bbCBData.emitterPositionX = emitter->worldPosition.x;
+        bbCBData.emitterPositionY = emitter->worldPosition.y;
+        bbCBData.emitterPositionZ = emitter->worldPosition.z;
+        // Size multiplier from sprite render module (width as scale factor).
         bbCBData.globalSizeMultiplier = 1.0f;
+        if (emitter->moduleStack.renderModule) {
+            auto* sr = dynamic_cast<SpriteRenderModule*>(emitter->moduleStack.renderModule.get());
+            if (sr) bbCBData.globalSizeMultiplier = sr->spriteWidth;
+        }
 
         // Global color tint (default white — no tinting).
         bbCBData.globalColorTintR = 1.0f;
@@ -608,12 +684,46 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
         indicesData.velocityBufferIdx    = m_device->GetBufferSRVIndex(readSet.velocities);
         indicesData.agesBufferIdx        = m_device->GetBufferSRVIndex(readSet.ages);
         indicesData.lifespansBufferIdx   = m_device->GetBufferSRVIndex(readSet.lifespans);
-        // PS indices — UINT32_MAX = no texture bound (PS handles gracefully).
+        // PS sprite texture — load from render module's texturePath via VFS.
+        // Only bind the SRV once the texture is FullyLoaded (not CopyInFlight).
         indicesData.spriteTextureIdx     = UINT32_MAX;
+        if (emitter->moduleStack.renderModule && ctx.vfs) {
+            auto* sr = dynamic_cast<SpriteRenderModule*>(emitter->moduleStack.renderModule.get());
+            if (sr && !sr->texturePath.empty()) {
+                const uint32_t texIdx = LoadTexture(sr->texturePath, ctx.vfs, nullptr, false);
+                static bool loggedTex = false;
+                if (!loggedTex && texIdx != UINT32_MAX) {
+                    UZ_LOG(VFX, Info, "Sprite texture '{}': texIdx={}, state={}, srv={}",
+                           sr->texturePath, texIdx,
+                           static_cast<int>(m_textures[texIdx].loadState),
+                           m_textures[texIdx].srvIndex);
+                    loggedTex = true;
+                }
+                if (texIdx != UINT32_MAX && texIdx < static_cast<uint32_t>(m_textures.size())
+                    && m_textures[texIdx].loadState == TextureLoadState::FullyLoaded
+                    && m_textures[texIdx].srvIndex != UINT32_MAX) {
+                    indicesData.spriteTextureIdx = m_textures[texIdx].srvIndex;
+                }
+            }
+        }
         indicesData.depthBufferIdx       = m_gbuffer.depth.IsValid()
             ? m_device->GetTextureSRVIndex(m_gbuffer.depth) : UINT32_MAX;
         indicesData.dynamicParamsBufferIdx = UINT32_MAX; // Not yet wired
         indicesData._vfxPad1             = 0;
+
+        // Log descriptor indices once for diagnostics.
+        static bool loggedIndices = false;
+        if (!loggedIndices) {
+            UZ_LOG(VFX, Info,
+                   "BillboardIndices: pos={} sz={} col={} rot={} sort={} vel={} age={} life={} sprite={} depth={} dynParams={}",
+                   indicesData.positionBufferIdx, indicesData.sizeBufferIdx,
+                   indicesData.colorBufferIdx, indicesData.rotationBufferIdx,
+                   indicesData.sortedIndicesSrvIndex, indicesData.velocityBufferIdx,
+                   indicesData.agesBufferIdx, indicesData.lifespansBufferIdx,
+                   indicesData.spriteTextureIdx, indicesData.depthBufferIdx,
+                   indicesData.dynamicParamsBufferIdx);
+            loggedIndices = true;
+        }
 
         const CBAllocation indicesAlloc = m_cbRing->Allocate(sizeof(indicesData));
         if (indicesAlloc.cpuPtr) {
@@ -661,7 +771,6 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
 
     if (!renderDesc.emitters.empty()) {
         AddParticleRenderPass(rgBuilder, renderDesc);
-    } else {
     }
 
     // ── Trail render pass (transparent phase) ─────────────────────────────

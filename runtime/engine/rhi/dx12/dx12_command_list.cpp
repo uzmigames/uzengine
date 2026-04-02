@@ -231,6 +231,21 @@ void DX12CommandList::End() {
         UZ_LOG(RHI, Error, "CommandList::Close failed, HRESULT=0x{:08X}",
                static_cast<uint32_t>(hr));
 
+        // Check if the device was removed — if so, flush DRED breadcrumbs
+        // and page fault data BEFORE anything else. Without this, the DRED
+        // data (which identifies the exact GPU command that faulted) is lost
+        // because LogDeviceRemoved() was previously only called from Present().
+        if (m_device) {
+            ComPtr<ID3D12Device> d3dDevice;
+            m_cmdList->GetDevice(IID_PPV_ARGS(&d3dDevice));
+            if (d3dDevice) {
+                HRESULT removedReason = d3dDevice->GetDeviceRemovedReason();
+                if (removedReason != S_OK) {
+                    m_device->LogDeviceRemoved();
+                }
+            }
+        }
+
         ++m_consecutiveErrors;
         if (m_consecutiveErrors >= kMaxConsecutiveErrors) {
             FatalErrorLoop("CommandList::Close", static_cast<uint32_t>(hr));

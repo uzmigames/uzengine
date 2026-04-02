@@ -1,0 +1,36 @@
+{
+  "name": "Sparks",
+  "version": 2,
+  "emitters": [
+    {
+      "name": "Sparks",
+      "max_particles": 10000,
+      "emission_rate": 800,
+      "lifetime": 1.5,
+      "looping": true,
+      "modules": {
+        "spawn": {
+          "type": "spawn",
+          "rate": 800,
+          "velocity": [0.0, 0.0, 1000.0],
+          "spread_angle": 60.0,
+          "lifespan_min": 0.5,
+          "lifespan_max": 1.5
+        },
+        "update": [
+          {
+            "type": "update",
+            "gravity": [0.0, 0.0, -1200.0],
+            "drag": 0.03
+          }
+        ],
+        "render": {
+          "type": "sprite",
+          "width": 100.0,
+          "height": 100.0,
+          "blend_mode": "additive"
+        }
+      }
+    }
+  ]
+}

@@ -203,6 +203,10 @@ struct ParticleSimulationPassDesc {
     /// Array of active emitters to simulate this frame.
     /// Empty means the pass is a no-op (but still registered for graph consistency).
     std::vector<EmitterSimDispatch> emitters;
+
+    /// Small upload-heap buffer containing a single uint32 = 0.
+    /// Used to zero-clear aliveCount each frame via CopyBuffer.
+    RHIBufferHandle zeroBuffer;
 };
 
 // ---------------------------------------------------------------------------

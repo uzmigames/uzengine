@@ -37,11 +37,15 @@ void SceneRenderer::SyncVfxEmitters(World* world, IVFS* vfs) {
     auto view = registry.view<VfxEmitterComponent>();
 
     for (auto [enttEntity, emitterComp] : view.each()) {
-        // ── Already created — just sync emitting state ──────────────────
+        // ── Already created — sync emitting state + world position ──────
         if (emitterComp.runtimeEmitterIdx >= 0) {
             const auto idx = static_cast<size_t>(emitterComp.runtimeEmitterIdx);
             if (idx < m_runtimeEmitters.size() && m_runtimeEmitters[idx]) {
                 m_runtimeEmitters[idx]->isEmitting = emitterComp.emitting;
+                // Sync world position from entity transform.
+                if (auto* sc = registry.try_get<SceneComponent>(enttEntity)) {
+                    m_runtimeEmitters[idx]->worldPosition = sc->GetPosition();
+                }
             }
             continue;
         }
@@ -68,8 +72,9 @@ void SceneRenderer::SyncVfxEmitters(World* world, IVFS* vfs) {
                 continue;
             }
 
-            if (!UzfxLoader::Instantiate(desc, *emitter, m_device,
-                                          activeVFX->GetBudget())) {
+            // Instantiate first emitter into the already-created slot.
+            if (!UzfxLoader::InstantiateEmitter(desc.emitters[0], *emitter, m_device,
+                                                 activeVFX->GetBudget())) {
                 UZ_LOG(VFX, Error,
                        "SyncVfxEmitters: failed to instantiate emitter from '{}' — skipping",
                        emitterComp.assetPath);
@@ -77,7 +82,66 @@ void SceneRenderer::SyncVfxEmitters(World* world, IVFS* vfs) {
             }
 
             emitter->graphPath = emitterComp.assetPath;
-            emitter->needsInitialUpload = true;
+            Vec3 worldPos{};
+            if (auto* sc = registry.try_get<SceneComponent>(enttEntity)) {
+                worldPos = sc->GetPosition();
+            }
+            emitter->worldPosition = worldPos;
+
+            // GPU init: upload free list + transition buffers to UAV.
+            // Done here (before render graph) to avoid WaitIdle deadlock.
+            {
+                auto* initCmd = m_device->CreateCommandList(RHIQueueType::Graphics);
+                if (initCmd) {
+                    initCmd->Begin();
+                    emitter->buffer.UploadInitialState(m_device, initCmd);
+                    emitter->buffer.TransitionAllToUAV(initCmd);
+                    initCmd->End();
+                    initCmd->Execute();
+                    m_device->WaitIdle();
+                    m_device->DestroyCommandList(initCmd);
+                    for (auto h : emitter->buffer.pendingStagingBuffers) {
+                        m_device->DestroyBuffer(h);
+                    }
+                    emitter->buffer.pendingStagingBuffers.clear();
+                }
+            }
+            emitter->needsInitialUpload = false;
+
+            // Multi-emitter: instantiate additional emitters from the same system.
+            for (size_t ei = 1; ei < desc.emitters.size(); ++ei) {
+                auto extra = std::make_unique<ParticleEmitter>();
+                if (!UzfxLoader::InstantiateEmitter(desc.emitters[ei], *extra, m_device,
+                                                     activeVFX->GetBudget())) {
+                    UZ_LOG(VFX, Warning,
+                           "SyncVfxEmitters: failed to instantiate sub-emitter [{}] '{}' — skipping",
+                           ei, desc.emitters[ei].name);
+                    continue;
+                }
+                extra->graphPath = emitterComp.assetPath;
+                extra->worldPosition = worldPos;
+                extra->isEmitting = emitterComp.emitting;
+                // GPU init for sub-emitter
+                {
+                    auto* initCmd = m_device->CreateCommandList(RHIQueueType::Graphics);
+                    if (initCmd) {
+                        initCmd->Begin();
+                        extra->buffer.UploadInitialState(m_device, initCmd);
+                        extra->buffer.TransitionAllToUAV(initCmd);
+                        initCmd->End();
+                        initCmd->Execute();
+                        m_device->WaitIdle();
+                        m_device->DestroyCommandList(initCmd);
+                        for (auto h : extra->buffer.pendingStagingBuffers) {
+                            m_device->DestroyBuffer(h);
+                        }
+                        extra->buffer.pendingStagingBuffers.clear();
+                    }
+                }
+                extra->needsInitialUpload = false;
+                activeVFX->RegisterEmitter(extra.get());
+                m_runtimeEmitters.push_back(std::move(extra));
+            }
         } else {
             // Inline parameters: configure from component fields
             emitter->maxParticles    = emitterComp.maxParticles;

@@ -1,0 +1,48 @@
+{
+  "name": "Explosion Debris",
+  "version": 2,
+  "emitters": [
+    {
+      "name": "Explosion Debris",
+      "max_particles": 10000,
+      "emission_rate": 2000,
+      "lifetime": 2,
+      "looping": true,
+      "modules": {
+        "spawn": {
+          "type": "spawn",
+          "rate": 2000,
+          "velocity": [
+            0,
+            0,
+            800
+          ],
+          "spread_angle": 85.9437,
+          "lifespan_min": 0.5,
+          "lifespan_max": 2
+        },
+        "update": [
+          {
+            "type": "update",
+            "gravity": [
+              0,
+              0,
+              -2000
+            ],
+            "drag": 0.079999998
+          },
+          {
+            "type": "collision",
+            "bounce_factor": 0.30000001
+          }
+        ],
+        "render": {
+          "type": "sprite",
+          "width": 50.0,
+          "height": 50.0,
+          "blend_mode": "additive"
+        }
+      }
+    }
+  ]
+}

@@ -222,6 +222,7 @@ float ComputeSoftParticleFade(float4 screenPos, float2 screenSize, float fadeDis
     // Sample scene depth from the depth buffer
     float sceneDepthRaw;
 #ifdef UZ_BINDLESS
+    if (depthBufferIdx == 0xFFFFFFFF) return 1.0f;
     Texture2D<float> depthTex = ResourceDescriptorHeap[depthBufferIdx];
     sceneDepthRaw = depthTex.SampleLevel(depthSampler, depthUV, 0);
 #else
@@ -386,9 +387,9 @@ float4 main(PSInput input) : SV_Target {
     // ── Soft particle depth fade ──
     // Skip soft fade for additive particles — they add light, not block it,
     // so depth-based fading makes no visual sense.
-    float2 screenSize;
+    float2 screenSize = float2(1920.0f, 1080.0f); // fallback
 #ifdef UZ_BINDLESS
-    {
+    if (depthBufferIdx != 0xFFFFFFFF) {
         Texture2D<float> depthTex = ResourceDescriptorHeap[depthBufferIdx];
         uint w, h;
         depthTex.GetDimensions(w, h);
