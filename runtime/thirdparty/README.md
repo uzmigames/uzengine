@@ -544,6 +544,24 @@ Files extracted from upstream source:
 - `LICENSE.txt`
 
 
+## slang
+
+- Upstream: https://github.com/shader-slang/slang
+- Version: 2025.x (pre-built binaries)
+- License: MIT
+
+Slang shader language compiler. Used as an alternative shader compilation
+backend on macOS/Linux where DXC is not available. Compiles HLSL source
+to SPIR-V and Metal MSL via the Slang C API (`slang_compiler.cpp`).
+On Windows, DXC remains the primary compiler; Slang is optional.
+
+Files from pre-built package:
+
+- `include/` (slang.h, slang-com-ptr.h, etc.)
+- `bin/` (slang.dll / libslang.so — loaded at runtime via dlopen/LoadLibrary)
+- `LICENSE`
+
+
 ## spdlog
 
 - Upstream: https://github.com/gabime/spdlog

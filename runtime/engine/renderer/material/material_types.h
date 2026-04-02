@@ -111,6 +111,7 @@ enum class EBlendMode : uint8_t {
         case EMaterialDomain::LightFunction: return "LightFunction";
         case EMaterialDomain::UI:            return "UI";
         case EMaterialDomain::Volume:        return "Volume";
+        case EMaterialDomain::Particle:     return "Particle";
         case EMaterialDomain::Count:         return "Count";
     }
     return "Unknown";

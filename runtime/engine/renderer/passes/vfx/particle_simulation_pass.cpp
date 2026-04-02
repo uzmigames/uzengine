@@ -228,7 +228,10 @@ static void DispatchSpawn(IRHICommandList* cmd,
 {
     if (emitter.spawnCount == 0) return;
 
-    cmd->SetPipeline(desc.spawnPipeline);
+    // Use per-emitter composed PSO if available, otherwise fall back to hardcoded.
+    const auto spawnPSO = emitter.composedSpawnPSO.IsValid()
+        ? emitter.composedSpawnPSO : desc.spawnPipeline;
+    cmd->SetPipeline(spawnPSO);
 
     cmd->SetRootCBV(kSlotPerDispatch,
                     emitter.spawnCB.bufferHandle,
@@ -258,7 +261,10 @@ static void DispatchUpdate(IRHICommandList* cmd,
                            const ParticleSimulationPassDesc& desc,
                            const EmitterSimDispatch& emitter)
 {
-    cmd->SetPipeline(desc.updatePipeline);
+    // Use per-emitter composed PSO if available, otherwise fall back to hardcoded.
+    const auto updatePSO = emitter.composedUpdatePSO.IsValid()
+        ? emitter.composedUpdatePSO : desc.updatePipeline;
+    cmd->SetPipeline(updatePSO);
 
     cmd->SetRootCBV(kSlotPerDispatch,
                     emitter.updateCB.bufferHandle,
