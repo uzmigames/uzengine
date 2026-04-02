@@ -1,9 +1,0 @@
-.{
-    .name = .fire_effect,
-    .version = "0.1.0",
-    .fingerprint = 0x6a752eaee8b7a8e9,
-    .dependencies = .{
-        .uz_demo_common = .{ .path = "../common" },
-    },
-    .paths = .{"build.zig"},
-}

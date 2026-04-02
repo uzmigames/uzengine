@@ -1,9 +1,0 @@
-.{
-    .name = .particle_fountain,
-    .version = "0.1.0",
-    .fingerprint = 0xd4c0959a27607493,
-    .dependencies = .{
-        .uz_demo_common = .{ .path = "../common" },
-    },
-    .paths = .{"build.zig"},
-}
