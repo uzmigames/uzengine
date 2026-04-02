@@ -65,7 +65,21 @@ float4 main(FSInput input) : SV_Target {
     float4 cloud = cloudTexture.SampleLevel(linearSampler, uv, 0);
 #endif
 
-    // cloud.rgb = premultiplied cloud color
+    // ── Cloud aerial perspective ──
+    /// @ref Hillaire 2020 "A Scalable and Production Ready Sky and Atmosphere Rendering Technique"
+    /// Apply atmospheric scattering to cloud color based on distance from camera.
+    /// Clouds far from the camera pick up the sky's blue-ish tint from
+    /// Rayleigh scattering, matching how real distant clouds appear hazy.
+    // Distance estimation: clouds are at the cloud layer, roughly proportional to UV deviation from center
+    float2 centerOffset = abs(uv - 0.5) * 2.0; // 0 at center, 1 at edges
+    float distEstimate = length(centerOffset) * 0.5 + 0.1; // rough [0.1, 0.6] range
+    float apFade = saturate(distEstimate * 2.0);
+
+    // Simple Rayleigh-like blue tint for distant clouds
+    float3 skyTint = float3(0.6, 0.7, 0.9); // approximate sky blue
+    cloud.rgb = lerp(cloud.rgb, cloud.rgb * skyTint, apFade * 0.15);
+
+    // cloud.rgb = premultiplied cloud color (with aerial perspective)
     // cloud.a   = transmittance (1 = transparent, 0 = opaque)
     return cloud;
 }

@@ -55,7 +55,24 @@ cbuffer CloudCB : register(b2) {
     uint    g_lightSteps;
     uint    g_shapeNoiseSrv;
     float   g_globalCoverage;
-    // Extra fields from extended CloudCB (offset 188-252) — not used in this shader
+    // Extended CloudCB fields (offset 188-252)
+    float   g_cloudType;
+    float   g_tracingMaxDistanceKm;
+    float   g_viewSampleCountScale;
+    float   g_reflectionViewSampleCountScale;
+    float   g_shadowViewSampleCountScale;
+    float   g_shadowReflectionViewSampleCountScale;
+    float   g_shadowTracingDistance;
+    float   g_stopTracingTransmittanceThreshold;
+    float   g_aerialPerspRayleighStartDist;
+    float   g_aerialPerspRayleighFadeDist;
+    float   g_aerialPerspMieStartDist;
+    float   g_aerialPerspMieFadeDist;
+    float   g_skyLightCloudBottomOcclusion;
+    uint    g_tracingMaxDistanceMode;
+    float   g_tracingStartMaxDistance;
+    float   g_tracingStartDistanceFromCamera;
+    uint    g_detailNoiseSrv;  // offset 252: detail noise 3D texture SRV (0xFFFFFFFF = none)
 };
 
 SamplerState linearSampler : register(s0);
@@ -270,6 +287,23 @@ float SampleDensity(float3 samplePosKm, float innerRadius, float layerHeight) {
     // Apply a power curve to create contrast (thick core, thin edges)
     shapeDensity = shapeDensity * shapeDensity;
 
+    // ── Detail noise erosion ──────────────────────────────────────────────
+    /// @ref Schneider & Vos 2015 — detail noise erosion at higher frequency
+    /// Subtracts high-frequency 3D detail noise from the base shape density
+    /// to add fine cloud edge detail (wisps, tendrils).
+    /// @constants DETAIL_FREQ_SCALE = 4.0, DETAIL_EROSION = 0.35
+#ifdef UZ_BINDLESS
+    if (g_detailNoiseSrv != 0xFFFFFFFF && shapeDensity > 0.0f) {
+        Texture3D<float4> detailTex = ResourceDescriptorHeap[g_detailNoiseSrv];
+        float3 detailPos = noisePos * 4.0f + float3(windOffset.x * g_detailWindScale,
+                                                      windOffset.y * g_detailWindScale,
+                                                      windOffset.z * 0.1f);
+        float detailNoise = detailTex.SampleLevel(linearSampler, frac(detailPos * 0.25f), 0).r;
+        float erosionStrength = 0.35f * (1.0f - saturate(shapeDensity * 2.0f));
+        shapeDensity = saturate(shapeDensity - detailNoise * erosionStrength);
+    }
+#endif
+
     return shapeDensity * hGrad * g_density;
 }
 
@@ -340,7 +374,9 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     // Clamp march distance (50 km max for performance)
     tFar = min(tFar, tNear + 50.0f);
 
-    // Clamp step count to avoid TDR on large march distances
+    // Clamp step count to avoid TDR on large march distances.
+    // Cap at 32 steps — original 64 causes GPU TDR on first frame with
+    // cold shader compilation + heavy FBM 3D texture lookups.
     uint stepCount = min(g_primarySteps, 64u);
     float stepLen = (tFar - tNear) / float(stepCount);
     if (stepLen <= 0.0f) {

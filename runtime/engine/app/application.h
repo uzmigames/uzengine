@@ -248,6 +248,13 @@ private:
     uint32_t m_pixelDebugY = 0;            ///< Debug pixel Y coordinate.
     std::unique_ptr<PixelDebugSystem> m_pixelDebug;  ///< GPU printf system (optional).
 
+    // ── FLIP perceptual comparison ──────────────────────────────────────
+    bool        m_flipMode = false;          ///< --flip: run FLIP comparison and exit.
+    std::string m_flipRefPath;               ///< --flip-ref <path>: reference image file.
+    std::string m_flipTestPath;              ///< --flip-test <path>: test image file.
+    std::string m_flipOutputPath;            ///< --flip-output <path>: heatmap output (optional).
+    float       m_flipThreshold = 0.05f;     ///< --flip-threshold <float>: pass/fail threshold.
+
     // ── CVar CLI overrides ────────────────────────────────────────────────
     std::vector<std::pair<std::string, float>> m_cvarOverrides; ///< --cvar name=value pairs.
 
@@ -269,6 +276,11 @@ private:
     /// # Returns
     /// `true` on success, `false` on any failure (logged).
     [[nodiscard]] bool InitPlatform();
+
+    /// Runs FLIP perceptual comparison in headless mode.
+    /// Loads two PNG images, runs FlipPass compute shader, outputs FLIP_JSON
+    /// to stdout, optionally saves heatmap PNG, and returns exit code.
+    [[nodiscard]] int RunFlipComparison();
 
     /// Creates VFS backed by m_config.vfsRoot (defaults to exeDir/assets/).
     void InitVFS();

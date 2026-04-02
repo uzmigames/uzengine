@@ -2,6 +2,9 @@
 /// @ref Engel 2006 "Cascaded Shadow Maps" (ShaderX5)
 /// @ref Donnelly & Lauritzen 2006 "Variance Shadow Maps" — PCF
 /// @ref Jimenez 2016 — normal-offset bias
+/// @ref Fernando 2005 "Percentage-Closer Soft Shadows" — PCSS
+/// @ref Annen et al. 2008 "Exponential Shadow Maps" — ESM
+/// @ref Jimenez et al. 2016 "Practical Real-Time Strategies for Accurate Indirect Occlusion" — IGN
 
 #ifndef UZ_SHADOW_HLSLI
 #define UZ_SHADOW_HLSLI
@@ -55,6 +58,95 @@ float GetCascadeNormalBias(uint i) { return cascadeNormalBiasPacked[i >> 2][i & 
 
 SamplerComparisonState shadowSampler : register(s1);
 
+// ─── Per-pixel Poisson disk rotation ─────────────────────────────────────
+
+/// @ref Jimenez et al. 2016 — Interleaved Gradient Noise
+/// Returns a pseudo-random value in [0, 1) unique per pixel + frame.
+#ifndef UZ_COMMON_MATH_HLSLI
+float InterleavedGradientNoise_Shadow(float2 pixelPos, uint frameIndex) {
+    pixelPos += float(frameIndex) * float2(5.588238, 5.588238);
+    return frac(52.9829189 * frac(0.06711056 * pixelPos.x + 0.00583715 * pixelPos.y));
+}
+#define IGN_SHADOW(p, f) InterleavedGradientNoise_Shadow(p, f)
+#else
+#define IGN_SHADOW(p, f) InterleavedGradientNoise(p, f)
+#endif
+
+/// @ref Jimenez et al. 2016 — Interleaved Gradient Noise for per-pixel rotation.
+/// Rotates Poisson disk samples by a unique angle per pixel to eliminate
+/// visible banding on shadow edges.
+float2 RotatePoissonSample(float2 sample, float angle) {
+    float s = sin(angle);
+    float c = cos(angle);
+    return float2(sample.x * c - sample.y * s,
+                  sample.x * s + sample.y * c);
+}
+
+// ─── PCSS Blocker Search ─────────────────────────────────────────────────
+
+/// @ref Fernando 2005 "Percentage-Closer Soft Shadows" — blocker search
+/// Searches a region for occluding texels and returns their average depth.
+/// The search radius is derived from the light source angular size.
+///
+/// @param atlasUV      Shadow atlas UV for the receiver.
+/// @param receiverDepth Receiver's projected depth.
+/// @param searchRadius  Search radius in atlas UV space.
+/// @param shadowAtlas   Shadow depth texture.
+/// @param atlasMin/Max  Tile bounds to clamp UV.
+/// @param rotAngle      Per-pixel rotation angle for noise.
+/// @return x = average blocker depth, y = blocker count (0 = no blockers = fully lit)
+float2 BlockerSearchPCSS(float2 atlasUV, float receiverDepth, float searchRadius,
+                          Texture2D<float> shadowAtlas, float atlasSize,
+                          float2 atlasMin, float2 atlasMax, float rotAngle) {
+    float blockerSum  = 0.0;
+    float blockerCount = 0.0;
+
+    [unroll] for (uint i = 0; i < 16; ++i) {
+        float2 offset = RotatePoissonSample(kPoissonDisk[i], rotAngle) * searchRadius;
+        float2 sUV = clamp(atlasUV + offset, atlasMin, atlasMax);
+        int2 loadPx = int2(sUV * atlasSize);
+        float sampledDepth = shadowAtlas.Load(int3(loadPx, 0));
+
+        // Blocker = texel closer to light than receiver
+        if (sampledDepth < receiverDepth) {
+            blockerSum += sampledDepth;
+            blockerCount += 1.0;
+        }
+    }
+
+    return float2(blockerCount > 0.0 ? blockerSum / blockerCount : 0.0,
+                  blockerCount);
+}
+
+/// @ref Fernando 2005 — PCSS penumbra estimation from blocker depth
+/// @param receiverDepth Receiver's projected depth.
+/// @param avgBlockerDepth Average depth of found blockers.
+/// @param lightSize Light source size (in shadow map UV units).
+/// @return Penumbra radius (in texels) for PCF filter.
+float EstimatePenumbraPCSS(float receiverDepth, float avgBlockerDepth, float lightSize) {
+    float penumbra = lightSize * (receiverDepth - avgBlockerDepth) / max(avgBlockerDepth, 1e-6);
+    return clamp(penumbra, 0.5, 16.0); // clamp to reasonable range
+}
+
+// ─── Exponential Shadow Map (ESM) ────────────────────────────────────────
+
+/// @ref Annen et al. 2008 "Exponential Shadow Maps"
+/// @constants c = 80.0 (exponential warp constant, higher = sharper but more artifacts)
+///
+/// ESM provides soft shadow edges without multiple depth comparisons.
+/// Uses a single texture lookup + exponential depth difference.
+/// The shadow map must be pre-blurred for soft penumbra.
+float SampleShadowESM(float2 atlasUV, float receiverDepth,
+                       Texture2D<float> shadowAtlas, float atlasSize,
+                       float2 atlasMin, float2 atlasMax) {
+    float2 sUV = clamp(atlasUV, atlasMin, atlasMax);
+    int2 loadPx = int2(sUV * atlasSize);
+    float occluderDepth = shadowAtlas.Load(int3(loadPx, 0));
+
+    const float c = 80.0;
+    return saturate(exp(-c * (receiverDepth - occluderDepth)));
+}
+
 // ─── Atlas tile helpers ───────────────────────────────────────────────────
 
 float2 GetCascadeTileOffset(uint idx, uint cols, out float2 tileSize) {
@@ -65,8 +157,11 @@ float2 GetCascadeTileOffset(uint idx, uint cols, out float2 tileSize) {
 
 // ─── Single cascade PCF ──────────────────────────────────────────────────
 
+/// @param pixelPos Screen-space pixel position (for per-pixel noise).
+/// @param frameIdx Current frame index (for temporal noise variation).
 float SampleShadowCascade(float3 worldPos, float3 N, float NdotL, uint cascadeIdx,
-                          Texture2D<float> shadowAtlas, SamplerComparisonState smplr) {
+                          Texture2D<float> shadowAtlas, SamplerComparisonState smplr,
+                          float2 pixelPos = float2(0, 0), uint frameIdx = 0) {
     float normalBias = GetCascadeNormalBias(cascadeIdx);
     float slopeScale = clamp(tan(acos(max(NdotL, 0.001))), 0.0, 10.0);
     float3 biasedPos = worldPos + N * normalBias * slopeScale;
@@ -99,9 +194,35 @@ float SampleShadowCascade(float3 worldPos, float3 N, float NdotL, uint cascadeId
     float2 atlasMin = tileOffset + halfTexel;
     float2 atlasMax = tileOffset + tileSize - halfTexel;
 
+    // Per-pixel Poisson disk rotation via IGN to eliminate shadow edge banding
+    /// @ref Jimenez et al. 2016 — Interleaved Gradient Noise rotation
+    float rotAngle = IGN_SHADOW(pixelPos, frameIdx) * 6.28318530718;
+
+    // PCSS: variable penumbra based on blocker depth (when filterMethod == 1)
+    float filterPenumbra = penumbra;
+    if (filterMethod == 1 && tanLightSourceAngle > 0.0) {
+        float searchRadius = maxSoftKernelSize * texelSize;
+        float2 blockerResult = BlockerSearchPCSS(atlasUV, cmpDepth, searchRadius,
+                                                  shadowAtlas, shadowMapSize,
+                                                  atlasMin, atlasMax, rotAngle);
+        if (blockerResult.y > 0.0) {
+            filterPenumbra = EstimatePenumbraPCSS(cmpDepth, blockerResult.x, tanLightSourceAngle);
+            filterPenumbra = clamp(filterPenumbra, 0.5, maxSoftKernelSize);
+        } else {
+            return 1.0; // No blockers found — fully lit
+        }
+    }
+
+    // ESM mode (filterMethod == 2)
+    if (filterMethod == 2) {
+        return SampleShadowESM(atlasUV, cmpDepth, shadowAtlas, shadowMapSize, atlasMin, atlasMax);
+    }
+
+    // Standard PCF with rotated Poisson disk
     float shadow = 0.0;
     [unroll] for (uint i = 0; i < 16; ++i) {
-        float2 offset = kPoissonDisk[i] * penumbra * texelSize;
+        float2 rotated = RotatePoissonSample(kPoissonDisk[i], rotAngle);
+        float2 offset = rotated * filterPenumbra * texelSize;
         float2 sUV = clamp(atlasUV + offset, atlasMin, atlasMax);
         shadow += shadowAtlas.SampleCmpLevelZero(smplr, sUV, cmpDepth);
     }

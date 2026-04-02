@@ -61,6 +61,10 @@
     [[nodiscard]] bool EnsureSsgiSpatialDenoiseShader();
     [[nodiscard]] bool EnsureSsgiTemporalAccumShader();
     [[nodiscard]] bool EnsureSsgiBilateralUpsampleShader();
+    [[nodiscard]] bool EnsureSvgfReprojectShader();
+    [[nodiscard]] bool EnsureSvgfFilterMomentsShader();
+    [[nodiscard]] bool EnsureSvgfAtrousShader();
+    [[nodiscard]] bool EnsureGodRaysShader();
     [[nodiscard]] bool EnsureVisFullscreenPixelShader();
     [[nodiscard]] bool EnsureGdfCompositeShader();
     [[nodiscard]] bool EnsureMeshSdfBakeShader();
@@ -134,6 +138,10 @@
     RHIShaderHandle m_ssgiSpatialDenoiseCS     = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssgiTemporalAccumCS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssgiBilateralUpsampleCS  = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_svgfReprojectCS          = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_svgfFilterMomentsCS      = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_svgfAtrousCS             = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_godRaysCS                = RHIShaderHandle::Invalid();
     RHIShaderHandle m_visFullscreenPS           = RHIShaderHandle::Invalid();
     RHIShaderHandle m_gdfCompositeCS            = RHIShaderHandle::Invalid();
     RHIShaderHandle m_meshSdfBakeCS             = RHIShaderHandle::Invalid();
@@ -199,6 +207,10 @@
     RHIPipelineHandle m_ssgiSpatialDenoise    = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssgiTemporalAccum     = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssgiBilateralUpsample = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_svgfReproject         = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_svgfFilterMoments     = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_svgfAtrous            = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_godRays               = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_visFullscreen         = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_gdfComposite          = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_meshSdfBake           = RHIPipelineHandle::Invalid();

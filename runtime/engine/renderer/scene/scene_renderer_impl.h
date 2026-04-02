@@ -165,6 +165,7 @@
     uint32_t m_cloudOutputSrv = UINT32_MAX;           ///< SRV of the final cloud output for compositing.
     std::unique_ptr<CloudPassInput> m_pendingCloudInput; ///< Deferred cloud input for pre-graph compute dispatch.
     bool m_pendingCloudDispatch = false;               ///< True when cloud compute should run before render graph.
+    bool m_cloudOutputReady = false;                   ///< True after the first cloud compute dispatch has completed.
 
     // ── Distance Field Shadows ───────────────────────────────────────────
 

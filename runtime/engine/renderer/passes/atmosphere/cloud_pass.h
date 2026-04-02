@@ -182,9 +182,11 @@ private:
     RHIShaderHandle   m_raymarchCS       = RHIShaderHandle::Invalid();
     RHIPipelineHandle m_raymarchPipeline = RHIPipelineHandle::Invalid();
 
-    // ── 3D shape noise texture (128^3 RGBA8) ──
-    RHITextureHandle m_shapeNoiseTexture = RHITextureHandle::Invalid();
+    // ── 3D noise textures ──
+    RHITextureHandle m_shapeNoiseTexture  = RHITextureHandle::Invalid();
     uint32_t         m_shapeNoiseSrvIndex = UINT32_MAX;
+    RHITextureHandle m_detailNoiseTexture = RHITextureHandle::Invalid();
+    uint32_t         m_detailNoiseSrvIndex = UINT32_MAX;
 
     // ── Staging buffers kept alive until GPU finishes ──
     std::vector<RHIBufferHandle> m_stagingBuffers;

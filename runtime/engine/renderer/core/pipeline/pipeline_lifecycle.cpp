@@ -465,6 +465,10 @@ uint32_t PipelineLibrary::WarmupAll() {
     warmup(GetSsgiSpatialDenoise(), "SSGI_SpatialDenoise");
     warmup(GetSsgiTemporalAccum(), "SSGI_TemporalAccum");
     warmup(GetSsgiBilateralUpsample(), "SSGI_BilateralUpsample");
+    warmup(GetSvgfReproject(), "SVGF_Reproject");
+    warmup(GetSvgfFilterMoments(), "SVGF_FilterMoments");
+    warmup(GetSvgfAtrous(), "SVGF_ATrous");
+    warmup(GetGodRays(), "GodRays");
     warmup(GetGdfComposite(), "GDF_Composite");
     warmup(GetMeshSdfBake(), "MeshSDF_Bake");
     warmup(GetRadianceCacheTrace(), "RadianceCache_Trace");

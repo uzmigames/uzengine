@@ -20,12 +20,19 @@
 #include "compare_grid.h"
 #include "world.h"
 #include "cvar.h"
+#include "flip_pass.h"
+#include "texture_loader.h"
+#include "shader_manager.h"
+#include "png_codec.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <string>
 #include <thread>
 #include <vector>
@@ -73,6 +80,13 @@ int Application::Run(int argc, char** argv) {
 
     m_width  = static_cast<uint32_t>(m_window->GetWidth());
     m_height = static_cast<uint32_t>(m_window->GetHeight());
+
+    // ── 2b. FLIP comparison mode (early exit — no scene/renderer needed) ──
+    if (m_flipMode) {
+        int exitCode = RunFlipComparison();
+        ShutdownPlatform();
+        return exitCode;
+    }
 
     // ── 3. Asset system ───────────────────────────────────────────────────
     InitVFS();
@@ -535,6 +549,138 @@ int Application::TryDiffImages(int argc, char* argv[]) {
     }
 
     return 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RunFlipComparison — Headless FLIP perceptual image comparison
+// ─────────────────────────────────────────────────────────────────────────────
+
+int Application::RunFlipComparison() {
+    // 1. Create a standalone ShaderManager for the compute shader
+    ShaderManager shaderMgr;
+    if (!shaderMgr.Init(m_device.get())) {
+        UZ_LOG(App, Error, "FLIP: failed to initialize ShaderManager");
+        return 1;
+    }
+
+    // 2. Load reference and test images as sRGB GPU textures
+    m_cmdList->Begin();
+    auto refResult = TextureLoader::Load(m_device.get(), m_cmdList, m_flipRefPath, true);
+    if (!refResult.handle.IsValid()) {
+        UZ_LOG(App, Error, "FLIP: failed to load reference image '{}'", m_flipRefPath);
+        shaderMgr.Shutdown();
+        return 1;
+    }
+
+    m_cmdList->Begin();
+    auto testResult = TextureLoader::Load(m_device.get(), m_cmdList, m_flipTestPath, true);
+    if (!testResult.handle.IsValid()) {
+        UZ_LOG(App, Error, "FLIP: failed to load test image '{}'", m_flipTestPath);
+        m_device->DestroyTexture(refResult.handle);
+        shaderMgr.Shutdown();
+        return 1;
+    }
+
+    // Validate dimensions match
+    if (refResult.width != testResult.width || refResult.height != testResult.height) {
+        UZ_LOG(App, Error, "FLIP: image dimensions mismatch — ref {}x{} vs test {}x{}",
+               refResult.width, refResult.height, testResult.width, testResult.height);
+        m_device->DestroyTexture(refResult.handle);
+        m_device->DestroyTexture(testResult.handle);
+        shaderMgr.Shutdown();
+        return 1;
+    }
+
+    const uint32_t w = refResult.width;
+    const uint32_t h = refResult.height;
+
+    // 3. Init and run FlipPass
+    FlipPass flip;
+    if (!flip.Init(m_device.get(), &shaderMgr)) {
+        UZ_LOG(App, Error, "FLIP: failed to initialize FlipPass");
+        m_device->DestroyTexture(refResult.handle);
+        m_device->DestroyTexture(testResult.handle);
+        shaderMgr.Shutdown();
+        return 1;
+    }
+
+    m_cmdList->Begin();
+    FlipResult result = flip.Evaluate(m_cmdList, refResult.srvIndex, testResult.srvIndex,
+                                       w, h, m_flipThreshold);
+
+    // 4. Save heatmap PNG if --flip-output was specified
+    if (!m_flipOutputPath.empty() && result.heatmap.IsValid()) {
+        // Readback RGBA16F heatmap → CPU → convert to RGBA8 → save PNG
+        const uint32_t rowPitch = w * 8; // 4 channels * 2 bytes (float16)
+        const uint32_t bufSize  = rowPitch * h;
+
+        RHIBufferDesc rbDesc;
+        rbDesc.sizeBytes = bufSize;
+        rbDesc.usage     = RHIBufferUsage::CopyDst;
+        rbDesc.memory    = RHIMemoryType::Readback;
+        rbDesc.debugName = "FLIP_HeatmapReadback";
+        auto readbackBuf = m_device->CreateBuffer(rbDesc);
+
+        m_cmdList->Begin();
+
+        RHIBarrierDesc toCopy;
+        toCopy.texture     = result.heatmap;
+        toCopy.stateBefore = RHIResourceState::ShaderResource;
+        toCopy.stateAfter  = RHIResourceState::CopySrc;
+        m_cmdList->ResourceBarrier(&toCopy, 1);
+
+        m_cmdList->CopyTextureToBuffer(result.heatmap, 0, readbackBuf, 0, rowPitch);
+
+        m_cmdList->End();
+        m_cmdList->Execute();
+        m_device->WaitIdle();
+
+        // Map and convert float16 to uint8
+        const auto* src = static_cast<const uint16_t*>(m_device->MapBuffer(readbackBuf));
+        std::vector<uint8_t> rgba8(w * h * 4);
+        for (uint32_t i = 0; i < w * h * 4; ++i) {
+            // Convert float16 to float32 then to uint8
+            uint16_t fp16 = src[i];
+            uint32_t sign = (fp16 >> 15) & 0x1;
+            uint32_t exp  = (fp16 >> 10) & 0x1F;
+            uint32_t man  = fp16 & 0x3FF;
+            float f;
+            if (exp == 0) {
+                f = (man == 0) ? 0.0f : (std::ldexp(static_cast<float>(man), -24));
+            } else if (exp == 31) {
+                f = (man == 0) ? std::numeric_limits<float>::infinity() : std::numeric_limits<float>::quiet_NaN();
+            } else {
+                f = std::ldexp(static_cast<float>(man + 1024), static_cast<int>(exp) - 25);
+            }
+            if (sign) f = -f;
+            f = std::clamp(f, 0.0f, 1.0f);
+            rgba8[i] = static_cast<uint8_t>(f * 255.0f + 0.5f);
+        }
+        m_device->UnmapBuffer(readbackBuf);
+        m_device->DestroyBuffer(readbackBuf);
+
+        if (PngCodec::EncodeFile(m_flipOutputPath, rgba8.data(), w, h, 4)) {
+            UZ_LOG(App, Info, "FLIP: heatmap saved to '{}'", m_flipOutputPath);
+        } else {
+            UZ_LOG(App, Error, "FLIP: failed to save heatmap to '{}'", m_flipOutputPath);
+        }
+    }
+
+    // 5. Output JSON to stdout
+    std::printf("FLIP_JSON:{\"mean_flip\":%.6f,\"max_flip\":%.6f,\"threshold\":%.4f,"
+                "\"pass\":%s,\"ref\":\"%s\",\"test\":\"%s\",\"width\":%u,\"height\":%u}\n",
+                result.meanFlip, result.maxFlip, m_flipThreshold,
+                result.pass ? "true" : "false",
+                m_flipRefPath.c_str(), m_flipTestPath.c_str(), w, h);
+    std::fflush(stdout);
+
+    // 6. Cleanup
+    flip.Shutdown();
+    m_device->DestroyTexture(refResult.handle);
+    m_device->DestroyTexture(testResult.handle);
+    shaderMgr.Shutdown();
+
+    return result.pass ? 0 : 1;
 }
 
 } // namespace uz

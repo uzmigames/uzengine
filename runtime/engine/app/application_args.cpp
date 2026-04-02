@@ -112,6 +112,16 @@ void Application::ParseArgs(int argc, char* argv[]) {
             m_config.forceLooseVFS = true;
         } else if (std::strcmp(argv[i], "--pak-cache-mb") == 0 && i + 1 < argc) {
             m_config.pakCacheMB = static_cast<uint32_t>(std::atoi(argv[++i]));
+        } else if (std::strcmp(argv[i], "--flip") == 0) {
+            m_flipMode = true;
+        } else if (std::strcmp(argv[i], "--flip-ref") == 0 && i + 1 < argc) {
+            m_flipRefPath = argv[++i];
+        } else if (std::strcmp(argv[i], "--flip-test") == 0 && i + 1 < argc) {
+            m_flipTestPath = argv[++i];
+        } else if (std::strcmp(argv[i], "--flip-output") == 0 && i + 1 < argc) {
+            m_flipOutputPath = argv[++i];
+        } else if (std::strcmp(argv[i], "--flip-threshold") == 0 && i + 1 < argc) {
+            m_flipThreshold = static_cast<float>(std::atof(argv[++i]));
         } else if (std::strcmp(argv[i], "--cvar") == 0 && i + 1 < argc) {
             std::string arg = argv[++i];
             const auto eqPos = arg.find('=');
@@ -175,6 +185,20 @@ void Application::ParseArgs(int argc, char* argv[]) {
             m_config.maxFrames = 120;
         }
         LogSuppressConsole();
+    }
+
+    // --flip: headless FLIP comparison mode.
+    // Loads two images, runs FlipPass compute shader, outputs FLIP_JSON to stdout.
+    // Does NOT require a scene or rendering pipeline — uses device + compute only.
+    if (m_flipMode) {
+        m_headless = true;
+        m_config.maxFrames = 1; // Exit after one frame
+        LogSuppressConsole();
+
+        if (m_flipRefPath.empty() || m_flipTestPath.empty()) {
+            UZ_LOG(App, Error, "--flip requires --flip-ref <path> and --flip-test <path>");
+            m_flipMode = false;
+        }
     }
 }
 

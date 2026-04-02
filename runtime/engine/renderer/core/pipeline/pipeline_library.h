@@ -625,6 +625,22 @@ public:
     ///
     [[nodiscard]] RHIPipelineHandle GetSsgiBilateralUpsample();
 
+    // ── SVGF Denoiser Compute Pipelines ─────────────────────────────────
+
+    /// Returns the SVGF temporal reprojection compute pipeline.
+    [[nodiscard]] RHIPipelineHandle GetSvgfReproject();
+
+    /// Returns the SVGF moments spatial filter compute pipeline.
+    [[nodiscard]] RHIPipelineHandle GetSvgfFilterMoments();
+
+    /// Returns the SVGF à-trous wavelet filter compute pipeline.
+    [[nodiscard]] RHIPipelineHandle GetSvgfAtrous();
+
+    // ── God Rays Compute Pipeline ────────────────────────────────────────
+
+    /// Returns the god rays radial blur compute pipeline.
+    [[nodiscard]] RHIPipelineHandle GetGodRays();
+
     // ── GDF + Radiance Cache Compute Pipelines ─────────────────────────
 
     /// Returns the GDF composite compute pipeline (global_sdf_composite_cs.hlsl).

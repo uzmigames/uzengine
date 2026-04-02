@@ -207,7 +207,7 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
             // Cloud composite pass — fullscreen triangle that alpha-blends
             // the half-res cloud output over the HDR scene color using
             // premultiplied-alpha: final.rgb = cloud.rgb + scene.rgb * transmittance
-            if (m_cloudOutputSrv != UINT32_MAX && ctx.bindless)
+            if (m_cloudOutputSrv != UINT32_MAX && m_cloudOutputReady && ctx.bindless)
             rgBuilder.AddPass("CloudComposite", [this, &ctx](rg::RgPassBuilder& pb) {
                 pb.Write(ctx.hdrRes, RHIResourceState::RenderTarget);
 

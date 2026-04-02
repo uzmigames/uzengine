@@ -192,114 +192,27 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     RWByteAddressBuffer stats  = u_stats;
 #endif
 
-    // Pixels per degree
-    float monitorDist = asfloat(g_monitorDistBits);
-    if (monitorDist <= 0.0) monitorDist = 0.7;
-    float monitorWidthM = 0.7; // ~27" monitor
-    float pixPerDeg = monitorDist * (float(g_monitorWidthPx) / monitorWidthM) * (PI / 180.0);
-    float dx = 1.0 / pixPerDeg;
+    // Per-pixel Hunt-adjusted HyAB color difference.
+    // Full FLIP spatial filtering (CSF + feature detection) deferred to
+    // multi-pass implementation to avoid TDR on single-dispatch.
+    float3 refLin  = sRGBToLinear(refTex.Load(int3(pixel, 0)).rgb);
+    float3 testLin = sRGBToLinear(testTex.Load(int3(pixel, 0)).rgb);
 
-    // CSF filter constants
-    /// @ref Andersson 2020 Table 1 — CSF Gaussian parameters
-    const float4 abA  = float4(1.0, 0.0, 0.0047, 1e-5);
-    const float4 abRG = float4(1.0, 0.0, 0.0053, 1e-5);
-    const float4 abBY = float4(34.1, 13.5, 0.04, 0.025);
+    float3 refLab  = HuntAdjust(linearRGBToCIELab(refLin));
+    float3 testLab = HuntAdjust(linearRGBToCIELab(testLin));
+    float colorDiff = HyAB(refLab, testLab);
 
-    // Feature detection sigma
-    /// @ref Andersson 2020 — gw = 0.082
-    float sigmaF = 0.5 * 0.082 * pixPerDeg;
-    float sigmaF2 = sigmaF * sigmaF;
-
-    // Kernel radius
-    int radius = (int)ceil(3.0 * sqrt(0.04 / (2.0 * PI * PI)) * pixPerDeg);
-    radius = min(radius, 16); // cap for perf
-
-    // Accumulate CSF filtered color + feature gradients
-    float3 csfSum = float3(0, 0, 0);
-    float3 refColorSum = float3(0, 0, 0);
-    float3 testColorSum = float3(0, 0, 0);
-    float2 refEdgeGrad = float2(0, 0);
-    float2 testEdgeGrad = float2(0, 0);
-    float2 refPointGrad = float2(0, 0);
-    float2 testPointGrad = float2(0, 0);
-    float posKernSum = 0, negKernSum = 0, edgeKernSum = 0;
-
-    // Pre-pass: compute kernel sums for normalization
-    for (int py = -radius; py <= radius; ++py) {
-        for (int px = -radius; px <= radius; ++px) {
-            float g = exp(-(px*px + py*py) / (2.0 * sigmaF2));
-            float2 pw = (float2(px*px, py*py) / sigmaF2 - 1.0) * g;
-            posKernSum += max(pw.x, 0.0);
-            negKernSum += max(-pw.x, 0.0);
-            edgeKernSum += max(-float(px) * g, 0.0);
-        }
-    }
-    if (posKernSum == 0) posKernSum = 1;
-    if (negKernSum == 0) negKernSum = 1;
-    if (edgeKernSum == 0) edgeKernSum = 1;
-
-    // Main kernel loop
-    for (int ky = -radius; ky <= radius; ++ky) {
-        for (int kx = -radius; kx <= radius; ++kx) {
-            int2 np = clamp(int2(pixel) + int2(kx, ky), int2(0,0), int2(g_width-1, g_height-1));
-
-            float3 refLin  = sRGBToLinear(refTex.Load(int3(np, 0)).rgb);
-            float3 testLin = sRGBToLinear(testTex.Load(int3(np, 0)).rgb);
-            float3 refYCxCz  = linearRGBToYCxCz(refLin);
-            float3 testYCxCz = linearRGBToYCxCz(testLin);
-
-            // Color pipeline — CSF spatial filter
-            float2 p = float2(kx, ky) * dx;
-            float dist2 = -(p.x*p.x + p.y*p.y) * PI * PI;
-            float3 w = float3(calculateWeight(dist2, abA),
-                              calculateWeight(dist2, abRG),
-                              calculateWeight(dist2, abBY));
-            csfSum += w;
-            refColorSum  += w * refYCxCz;
-            testColorSum += w * testYCxCz;
-
-            // Feature pipeline — Gaussian-weighted edge/point detection
-            float g = exp(-(kx*kx + ky*ky) / (2.0 * sigmaF2));
-            float2 pw = (float2(kx*kx, ky*ky) / sigmaF2 - 1.0) * g;
-            float2 pn = 1.0 / float2(pw.x >= 0 ? posKernSum : negKernSum,
-                                      pw.y >= 0 ? posKernSum : negKernSum);
-            float2 ew = -float2(kx, ky) * g;
-            float2 en = 1.0 / float2(edgeKernSum, edgeKernSum);
-
-            float refLum  = (refYCxCz.x + 16.0) / 116.0;
-            float testLum = (testYCxCz.x + 16.0) / 116.0;
-            refPointGrad  += refLum * pw * pn;
-            refEdgeGrad   += refLum * ew * en;
-            testPointGrad += testLum * pw * pn;
-            testEdgeGrad  += testLum * ew * en;
-        }
-    }
-
-    // Color difference
-    float3 filtRef  = clamp(YCxCzToLinearRGB(refColorSum / csfSum), 0, 1);
-    float3 filtTest = clamp(YCxCzToLinearRGB(testColorSum / csfSum), 0, 1);
-    float colorDiff = HyAB(HuntAdjust(linearRGBToCIELab(filtRef)),
-                           HuntAdjust(linearRGBToCIELab(filtTest)));
-
-    // Feature difference
-    float edgeDiff  = abs(length(refEdgeGrad) - length(testEdgeGrad));
-    float pointDiff = abs(length(refPointGrad) - length(testPointGrad));
-    float featureDiff = pow(max(pointDiff, edgeDiff) * 0.70710678 /*1/sqrt(2)*/, 0.5);
-
-    // Max perceptual distance (green vs blue after Hunt adjustment)
-    float maxDist = pow(HyAB(HuntAdjust(linearRGBToCIELab(float3(0, 1, 0))),
-                             HuntAdjust(linearRGBToCIELab(float3(0, 0, 1)))), 0.7);
-
-    // Final FLIP score
-    float flipScore = redistributeErrors(colorDiff, featureDiff, maxDist);
-    flipScore = saturate(flipScore);
+    // Normalize by max perceptual distance (green vs blue after Hunt adjustment)
+    float maxDist = HyAB(HuntAdjust(linearRGBToCIELab(float3(0, 1, 0))),
+                         HuntAdjust(linearRGBToCIELab(float3(0, 0, 1))));
+    float flipScore = saturate(pow(colorDiff / max(maxDist, 1e-6), 0.7));
 
     // Write heatmap (magma colormap)
     output[pixel] = float4(magmaColor(flipScore), flipScore);
 
     // Atomic accumulate stats: [0]=sum, [4]=max, [8]=count
     uint scoreBits = asuint(flipScore);
-    stats.InterlockedAdd(0, scoreBits);  // sum (approximate — float add via uint)
-    stats.InterlockedMax(4, scoreBits);  // max (works for positive floats via uint compare)
-    stats.InterlockedAdd(8, 1u);         // pixel count
+    stats.InterlockedAdd(0, scoreBits);
+    stats.InterlockedMax(4, scoreBits);
+    stats.InterlockedAdd(8, 1u);
 }

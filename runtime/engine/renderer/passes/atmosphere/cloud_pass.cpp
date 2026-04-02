@@ -130,6 +130,12 @@ void CloudPass::Shutdown() {
     }
     m_shapeNoiseSrvIndex = UINT32_MAX;
 
+    if (m_detailNoiseTexture.IsValid()) {
+        m_device->DestroyTexture(m_detailNoiseTexture);
+        m_detailNoiseTexture = RHITextureHandle::Invalid();
+    }
+    m_detailNoiseSrvIndex = UINT32_MAX;
+
     // Destroy staging buffers
     for (auto& buf : m_stagingBuffers) {
         if (buf.IsValid()) {
@@ -338,8 +344,102 @@ void CloudPass::LoadNoiseTextures(IRHICommandList* cmdList, IVFS* vfs) {
     // Keep staging buffer alive — will be destroyed in Shutdown()
     m_stagingBuffers.push_back(stagingBuf);
 
-    m_hasNoiseTextures = true;
     UZ_LOG(Renderer, Info, "CloudPass: shape noise loaded (128^3 RGBA8, SRV={})", m_shapeNoiseSrvIndex);
+
+    // ── Load detail noise — 32^3 R8 (32,768 bytes) ──
+    // VFS asset from runtime/content/atmosphere/shape_detail.bin
+    const std::string detailPath = "atmosphere/shape_detail.bin";
+    constexpr uint32_t kDetailRes = 32;
+    constexpr uint64_t kDetailExpSize = kDetailRes * kDetailRes * kDetailRes; // 32768
+
+    std::vector<uint8_t> detailR8;
+    if (vfs) {
+        detailR8 = vfs->Read(detailPath);
+    }
+    if (detailR8.empty()) {
+        static bool loggedOnce = false;
+        if (!loggedOnce) {
+            UZ_LOG(Renderer, Warning, "CloudPass: could not load {} via VFS — detail noise erosion disabled", detailPath);
+            loggedOnce = true;
+        }
+    }
+
+    if (detailR8.size() == kDetailExpSize) {
+        // Expand R8 -> RGBA8
+        // DX12 requires D3D12_TEXTURE_DATA_PITCH_ALIGNMENT = 256 bytes per row.
+        // 32 texels * 4 bytes = 128 bytes/row — must pad to 256 for staging buffer.
+        constexpr uint32_t kDetRowPitch        = kDetailRes * 4;       // 128 bytes (source)
+        constexpr uint32_t kDetAlignedRowPitch = (kDetRowPitch + 255u) & ~255u; // 256 bytes (aligned)
+        constexpr uint64_t kDetAlignedSlice    = kDetAlignedRowPitch * kDetailRes;
+        constexpr uint64_t kDetStagingSize     = kDetAlignedSlice * kDetailRes;
+
+        // Expand R8 -> RGBA8 with row padding for DX12 alignment
+        std::vector<uint8_t> detailStaged(kDetStagingSize, 0);
+        for (uint32_t z = 0; z < kDetailRes; ++z) {
+            for (uint32_t y = 0; y < kDetailRes; ++y) {
+                uint64_t srcRow = (z * kDetailRes + y) * kDetailRes;
+                uint64_t dstRow = z * kDetAlignedSlice + y * kDetAlignedRowPitch;
+                for (uint32_t x = 0; x < kDetailRes; ++x) {
+                    uint8_t v = detailR8[srcRow + x];
+                    detailStaged[dstRow + x * 4 + 0] = v;
+                    detailStaged[dstRow + x * 4 + 1] = v;
+                    detailStaged[dstRow + x * 4 + 2] = v;
+                    detailStaged[dstRow + x * 4 + 3] = v;
+                }
+            }
+        }
+
+        RHITextureDesc detTexDesc{};
+        detTexDesc.width            = kDetailRes;
+        detTexDesc.height           = kDetailRes;
+        detTexDesc.depthOrArraySize = kDetailRes;
+        detTexDesc.format           = RHIFormat::RGBA8Unorm;
+        detTexDesc.usage            = RHITextureUsage::ShaderResource | RHITextureUsage::CopyDst;
+        detTexDesc.is3D             = true;
+        detTexDesc.debugName        = "Cloud_DetailNoise";
+
+        m_detailNoiseTexture = m_device->CreateTexture(detTexDesc);
+        if (m_detailNoiseTexture.IsValid()) {
+            m_detailNoiseSrvIndex = m_device->GetTextureSRVIndex(m_detailNoiseTexture);
+
+            RHIBufferDesc detBufDesc{};
+            detBufDesc.sizeBytes = kDetStagingSize;
+            detBufDesc.usage     = RHIBufferUsage::CopySrc;
+            detBufDesc.memory    = RHIMemoryType::Upload;
+            detBufDesc.debugName = "Cloud_DetailNoise_Staging";
+
+            auto detStaging = m_device->CreateBuffer(detBufDesc);
+            if (detStaging.IsValid()) {
+                void* detMapped = m_device->MapBuffer(detStaging);
+                if (detMapped) {
+                    std::memcpy(detMapped, detailStaged.data(), kDetStagingSize);
+                    m_device->UnmapBuffer(detStaging);
+
+                    RHIBarrierDesc detBarrier{};
+                    detBarrier.texture     = m_detailNoiseTexture;
+                    detBarrier.stateBefore = RHIResourceState::Common;
+                    detBarrier.stateAfter  = RHIResourceState::CopyDst;
+                    cmdList->ResourceBarrier(&detBarrier, 1);
+
+                    cmdList->CopyBufferToTexture(detStaging, 0, kDetAlignedRowPitch,
+                                                 m_detailNoiseTexture, 0, 0);
+
+                    detBarrier.stateBefore = RHIResourceState::CopyDst;
+                    detBarrier.stateAfter  = RHIResourceState::ShaderResource;
+                    cmdList->ResourceBarrier(&detBarrier, 1);
+
+                    m_stagingBuffers.push_back(detStaging);
+                    UZ_LOG(Renderer, Info, "CloudPass: detail noise loaded (32^3 RGBA8, SRV={})",
+                           m_detailNoiseSrvIndex);
+                }
+            }
+        }
+    } else if (!detailR8.empty()) {
+        UZ_LOG(Renderer, Warning, "CloudPass: shape_detail.bin size mismatch (expected {}, got {})",
+               kDetailExpSize, detailR8.size());
+    }
+
+    m_hasNoiseTextures = true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -386,7 +486,7 @@ struct alignas(16) CloudCB {
     uint32_t tracingMaxDistanceMode;                          // 4 bytes  (offset 240)
     float tracingStartMaxDistance;                             // 4 bytes  (offset 244)
     float tracingStartDistanceFromCamera;                     // 4 bytes  (offset 248)
-    float _pad[1];             // 4 bytes  (offset 252 -> 256 total)
+    uint32_t detailNoiseSrv;   // 4 bytes  (offset 252) — detail noise 3D texture SRV
 };
 
 static_assert(sizeof(CloudCB) == 256, "CloudCB must be 256 bytes for CBV alignment");
@@ -484,7 +584,7 @@ void CloudPass::Execute(IRHICommandList* cmdList, CBRingAllocator& cbRing,
     cb.tracingMaxDistanceMode = input.tracingMaxDistanceMode;
     cb.tracingStartMaxDistance = input.tracingStartMaxDistance;
     cb.tracingStartDistanceFromCamera = input.tracingStartDistanceFromCamera;
-    std::memset(cb._pad, 0, sizeof(cb._pad));
+    cb.detailNoiseSrv  = m_detailNoiseSrvIndex;
 
     auto cbAlloc = cbRing.Allocate(sizeof(CloudCB));
     std::memcpy(cbAlloc.cpuPtr, &cb, sizeof(CloudCB));

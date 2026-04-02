@@ -462,28 +462,28 @@ void SSGIRenderer::DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParam
 
     cmdList->SetPipeline(pso);
 
-    // Root constants: 8 DWORDs matching SSGIRootCB
+    // Root constants: 8 DWORDs matching ssgi_trace_cs.hlsl RootConstants
     struct SSGITraceRC {
         uint32_t depthSrvIndex;
         uint32_t normalSrvIndex;
         uint32_t prevColorSrvIndex;
         uint32_t outputUavIndex;
         uint32_t aoOutputUavIndex;
-        uint32_t outputWidth;
-        uint32_t outputHeight;
+        uint32_t packedDimensions;  // low16 = width, high16 = height
         uint32_t frameIndex;
+        uint32_t hizSrvIndex;      // 0xFFFF = disabled
     };
     static_assert(sizeof(SSGITraceRC) == 32, "Must be 8 DWORDs");
 
     SSGITraceRC rc{};
-    rc.depthSrvIndex    = params.depthSrvIndex;
-    rc.normalSrvIndex   = params.normalSrvIndex;
+    rc.depthSrvIndex     = params.depthSrvIndex;
+    rc.normalSrvIndex    = params.normalSrvIndex;
     rc.prevColorSrvIndex = m_prevColorReducedSrv;
-    rc.outputUavIndex   = m_ssgiTraceUav;
-    rc.aoOutputUavIndex = m_ssgiTraceAOUav;
-    rc.outputWidth      = m_halfWidth;
-    rc.outputHeight     = m_halfHeight;
-    rc.frameIndex       = params.frameIndex;
+    rc.outputUavIndex    = m_ssgiTraceUav;
+    rc.aoOutputUavIndex  = m_ssgiTraceAOUav;
+    rc.packedDimensions  = (m_halfWidth & 0xFFFF) | ((m_halfHeight & 0xFFFF) << 16);
+    rc.frameIndex        = params.frameIndex;
+    rc.hizSrvIndex       = 0xFFFF; // Hi-Z disabled for now (linear march)
 
     cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
 

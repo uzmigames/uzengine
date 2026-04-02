@@ -108,6 +108,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
 
         m_cloudOutputSrv = m_cloudPass->GetCloudOutputSrv();
         m_pendingCloudDispatch = false;
+        m_cloudOutputReady = true;
     }
 
     // ── VFX Emitter Sync ───────────────────────────────────────────────
