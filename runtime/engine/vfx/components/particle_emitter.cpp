@@ -123,7 +123,19 @@ uint32_t ParticleEmitter::CalculateSpawnCount(float dt) noexcept {
                                    ? (capacity - cpuAliveCount)
                                    : 0;
 
-    return std::min(spawnCount, available);
+    const uint32_t clamped = std::min(spawnCount, available);
+
+    // Update CPU-side alive count estimate.
+    // This is an approximation — the actual alive count is on the GPU.
+    // Each frame: add new spawns, subtract estimated deaths (1/lifetime per particle per second).
+    cpuAliveCount += clamped;
+    if (lifetime > 0.0f && cpuAliveCount > 0) {
+        const float deathRate = dt / lifetime;
+        const auto deaths = static_cast<uint32_t>(static_cast<float>(cpuAliveCount) * deathRate);
+        cpuAliveCount = (cpuAliveCount > deaths) ? (cpuAliveCount - deaths) : 0;
+    }
+
+    return clamped;
 }
 
 } // namespace uz
