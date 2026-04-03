@@ -37,44 +37,27 @@ Texture2D<float4> ssgiTextureT12   : register(t12);
 // ─── PerFrameCB at b1 (768 bytes) ─────────────────────────────────────────
 
 cbuffer PerFrameCB : register(b1) {
-    row_major float4x4 viewProj;
-    float4 cameraPos;
-    float4 timeParams;
-    float4 lightDir;
-    float4 lightColor;
-    float4 ambientColor;
-    row_major float4x4 invViewProj;
-    float  nearPlane, farPlane;
-    uint   irradianceSrvIndex, prefilteredSrvIndex;
-    uint   brdfLutSrvIndex, prefilteredMipLevels;
-    float  skyLightIntensity, skyLightColorR, skyLightColorG, skyLightColorB;
-    float  skyLightMinAmbient, exposure;
-    float4 skyIrradianceSH[7];
-    uint   shadowDebugMode;
-    // Aerial perspective (offset 372)
-    uint   aerialPerspectiveEnabled;
-    uint   transmittanceLutSrvIndex;
-    float  apBottomRadiusKm, apTopRadiusKm;
-    float  apRayleighBetaX, apRayleighBetaY, apRayleighBetaZ, apRayleighScaleH;
-    float  apMieBeta, apMieScaleH, apMieAnisotropy, apSunIntensity;
-    float  apRayleighScale, apMieScale;
-    // Tone curve (offset 436)
-    float  toneCurveSlope, toneCurveToe, toneCurveShoulder, toneCurveBlackClip, toneCurveWhiteClip;
-    // GTAO + post-process (offset 456)
-    uint   gtaoSrvIndex;
-    uint   brdfDebugMode;
-    float  heightFogContribution;
-    float  filmGrainIntensity;
-    float  vignetteIntensity;
-    float  chromaAbIntensity;
-    float  contactShadowLength;
-    // SSR (offset 484)
-    uint   ssrSrvIndex;
-    float  mipBias_pf;
-    // SSGI (offset 492)
-    uint   ssgiSrvIndex;
-    uint   ssgiAOSrvIndex;
-    uint   ssgiEnabled;
+    row_major float4x4 viewProj;    // c0-c3   (0-63)
+    float4 cameraPos;               // c4      (64-79)
+    float4 timeParams;              // c5      (80-95)
+    float4 lightDir;                // c6      (96-111)
+    float4 lightColor;              // c7      (112-127)
+    float4 ambientColor;            // c8      (128-143)
+    row_major float4x4 invViewProj; // c9-c12  (144-207)
+    float  nearPlane;               // c13.x   (208)
+    float  farPlane;                // c13.y   (212)
+    uint   irradianceSrvIndex;      // c13.z   (216)
+    uint   prefilteredSrvIndex;     // c13.w   (220)
+    uint   brdfLutSrvIndex;         // c14.x   (224)
+    uint   prefilteredMipLevels;    // c14.y   (228)
+    float  skyLightIntensity;       // c14.z   (232)
+    float  skyLightColorR;          // c14.w   (236)
+    float  skyLightColorG;          // c15.x   (240)
+    float  skyLightColorB;          // c15.y   (244)
+    float  skyLightMinAmbient;      // c15.z   (248)
+    float  exposure;                // c15.w   (252)
+    float4 skyIrradianceSH[7];      // c16-c22 (256-367)
+    uint   shadowDebugMode;         // c23.x   (368)
 };
 
 // LightingCB at b2 via light_types.hlsli (already declared above)
@@ -122,18 +105,11 @@ float4 main(FSInput input) : SV_Target {
     float3 baseColor = rt0.rgb;
     float  ao        = rt0.a;  // mesh AO from GBuffer
 
-    // Combine screen-space GTAO with mesh AO (conservative min)
-    // @ref UE5 DeferredLightingCommon.ush — SSAO * baked AO
-#ifdef UZ_BINDLESS
-    if (gtaoSrvIndex != kSentinelSrvIndex) {
-        Texture2D<float> gtaoTex = ResourceDescriptorHeap[gtaoSrvIndex];
-        float gtao = gtaoTex.Load(int3(px, 0)).r;
-        ao = min(ao, gtao);
-    }
-#else
+    // GTAO: combine with mesh AO when available (SM5: t9, bindless: gtaoSrvIndex in PerFrameCB)
+#ifndef UZ_BINDLESS
     {
         float gtao = gtaoTextureT9.Load(int3(px, 0)).r;
-        if (gtao > 0.001) ao = min(ao, gtao); // skip if texture not bound (reads 0)
+        if (gtao > 0.01) ao = min(ao, gtao);
     }
 #endif
 
@@ -291,13 +267,7 @@ float4 main(FSInput input) : SV_Target {
 
         // SSR: blend screen-space reflections with IBL specular
         // @ref Stachowiak 2015 — SSR overrides IBL where confident
-#ifdef UZ_BINDLESS
-        if (ssrSrvIndex != kSentinelSrvIndex) {
-            Texture2D<float4> ssrTex = ResourceDescriptorHeap[ssrSrvIndex];
-            float4 ssrData = ssrTex.Load(int3(px, 0));
-            specularAmbient = lerp(specularAmbient, ssrData.rgb, ssrData.a);
-        }
-#else
+#ifndef UZ_BINDLESS
         {
             float4 ssrData = ssrTextureT11.Load(int3(px, 0));
             if (ssrData.a > 0.001)
@@ -311,13 +281,7 @@ float4 main(FSInput input) : SV_Target {
         specularAmbient *= horizon * horizon;
 
         // SSGI: add screen-space indirect diffuse if available
-#ifdef UZ_BINDLESS
-        if (ssgiEnabled != 0 && ssgiSrvIndex != kSentinelSrvIndex) {
-            Texture2D<float4> ssgiTex = ResourceDescriptorHeap[ssgiSrvIndex];
-            float3 ssgiColor = ssgiTex.Load(int3(px, 0)).rgb;
-            diffuseAmbient += kD_env * ssgiColor * baseColor;
-        }
-#else
+#ifndef UZ_BINDLESS
         {
             float3 ssgiColor = ssgiTextureT12.Load(int3(px, 0)).rgb;
             if (any(ssgiColor > 0.001))
