@@ -392,14 +392,6 @@
       }
     },
     {
-      "name": "Controller",
-      "components": {
-        "script": {
-          "path": "scripts/fly_camera.lua"
-        }
-      }
-    },
-    {
       "name": "CubeRotator",
       "components": {
         "script": {

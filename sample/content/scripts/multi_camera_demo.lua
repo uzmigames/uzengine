@@ -88,11 +88,17 @@ function on_update(entity, dt)
 end
 
 function on_stop(entity)
-    uz.log("Multi-Camera Demo: cleaning up cameras")
-    -- Switch back to Main camera (id=0) before destroying
-    uz.camera.mgr_switch(0)
-    for _, cam in ipairs(cameras) do
-        uz.camera.mgr_destroy(cam.id)
+    -- Don't switch back to Main here — on_stop is also called during
+    -- resize/reload, and switching to Main then causes a visible glitch.
+    -- Only destroy cameras if we're actually shutting down (cameras exist).
+    if #cameras > 0 then
+        uz.log("Multi-Camera Demo: cleaning up cameras")
+        uz.camera.mgr_switch(0)
+        for _, cam in ipairs(cameras) do
+            uz.camera.mgr_destroy(cam.id)
+        end
+        cameras = {}
+        current_index = 1
+        timer = 0.0
     end
-    cameras = {}
 end
