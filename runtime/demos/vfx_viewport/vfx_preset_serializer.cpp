@@ -24,33 +24,13 @@ UZ_DECLARE_LOG_CATEGORY(App);
 namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Save
+// SerializeToString — core serialization (no I/O)
 // ─────────────────────────────────────────────────────────────────────────────
 
-bool VFXPresetSerializer::Save(const VFXEmitterConfig& c,
-                                float spawnRate,
-                                const std::string& name,
-                                const std::string& filePath) {
-    // Ensure parent directory exists before opening.
-    {
-        std::filesystem::path p(filePath);
-        if (p.has_parent_path()) {
-            std::error_code ec;
-            std::filesystem::create_directories(p.parent_path(), ec);
-            if (ec) {
-                UZ_LOG(App, Warning, "VFXPresetSerializer::Save — failed to create directory '{}': {}",
-                       p.parent_path().string().c_str(), ec.message().c_str());
-                return false;
-            }
-        }
-    }
-
-    std::ofstream f(filePath);
-    if (!f.is_open()) {
-        UZ_LOG(App, Warning, "VFXPresetSerializer::Save — cannot open '{}' for writing",
-               filePath.c_str());
-        return false;
-    }
+std::string VFXPresetSerializer::SerializeToString(const std::string& name,
+                                                    const VFXEmitterConfig& c,
+                                                    float spawnRate) {
+    std::ostringstream f;
 
     // Helper lambda — writes a float with enough decimal places to round-trip.
     auto wf = [&](const char* key, float v, bool last = false) {
@@ -227,6 +207,47 @@ bool VFXPresetSerializer::Save(const VFXEmitterConfig& c,
     wu("emitterSeed",                c.emitterSeed, /*last=*/true);
 
     f << "\n}\n";
+
+    return f.str();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Save — file-based wrapper around SerializeToString
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool VFXPresetSerializer::Save(const VFXEmitterConfig& c,
+                                float spawnRate,
+                                const std::string& name,
+                                const std::string& filePath) {
+    // Ensure parent directory exists before opening.
+    {
+        std::filesystem::path p(filePath);
+        if (p.has_parent_path()) {
+            std::error_code ec;
+            std::filesystem::create_directories(p.parent_path(), ec);
+            if (ec) {
+                UZ_LOG(App, Warning, "VFXPresetSerializer::Save — failed to create directory '{}': {}",
+                       p.parent_path().string().c_str(), ec.message().c_str());
+                return false;
+            }
+        }
+    }
+
+    const std::string json = SerializeToString(name, c, spawnRate);
+    if (json.empty()) {
+        UZ_LOG(App, Warning, "VFXPresetSerializer::Save — serialization failed for '{}'",
+               filePath.c_str());
+        return false;
+    }
+
+    std::ofstream f(filePath, std::ios::out | std::ios::trunc);
+    if (!f.is_open()) {
+        UZ_LOG(App, Warning, "VFXPresetSerializer::Save — cannot open '{}' for writing",
+               filePath.c_str());
+        return false;
+    }
+
+    f.write(json.data(), static_cast<std::streamsize>(json.size()));
     f.flush();
 
     if (!f.good()) {
@@ -329,39 +350,34 @@ static bool ParseString(const std::string& src, const char* key, std::string& ou
 
 } // anonymous namespace
 
-bool VFXPresetSerializer::Load(const std::string& filePath,
-                                VFXEmitterConfig& c,
-                                float& outSpawnRate,
-                                std::string& outName) {
-    std::ifstream f(filePath);
-    if (!f.is_open()) {
-        UZ_LOG(App, Warning, "VFXPresetSerializer::Load — cannot open '{}'",
-               filePath.c_str());
+// ─────────────────────────────────────────────────────────────────────────────
+// LoadFromMemory — core deserialization (no I/O)
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool VFXPresetSerializer::LoadFromMemory(const void* data,
+                                          size_t size,
+                                          std::string& outName,
+                                          VFXEmitterConfig& c,
+                                          float& outSpawnRate) {
+    if (data == nullptr || size == 0) {
+        UZ_LOG(App, Warning, "VFXPresetSerializer::LoadFromMemory — null or empty buffer");
         return false;
     }
 
-    std::ostringstream ss;
-    ss << f.rdbuf();
-    const std::string src = ss.str();
-
-    if (src.empty()) {
-        UZ_LOG(App, Warning, "VFXPresetSerializer::Load — '{}' is empty", filePath.c_str());
-        return false;
-    }
+    // Construct a std::string from the raw byte buffer. The buffer need not
+    // be null-terminated — std::string(ptr, len) handles this correctly.
+    const std::string src(static_cast<const char*>(data), size);
 
     // Version check — warn but continue loading.
     const uint32_t version = ParseUint(src, "version", 0);
     if (version != 1) {
         UZ_LOG(App, Warning,
-               "VFXPresetSerializer::Load — '{}' has unexpected version {}, expected 1. Continuing.",
-               filePath.c_str(), version);
+               "VFXPresetSerializer::LoadFromMemory — unexpected version {}, expected 1. Continuing.",
+               version);
     }
 
-    // Name
-    if (!ParseString(src, "name", outName)) {
-        // Fall back to filename stem if no name key found.
-        outName = std::filesystem::path(filePath).stem().string();
-    }
+    // Name — if no "name" key found, leave outName unchanged (caller provides fallback).
+    ParseString(src, "name", outName);
 
     // Spawn rate
     outSpawnRate = ParseFloat(src, "spawnRate", 500.0f);
@@ -516,6 +532,37 @@ bool VFXPresetSerializer::Load(const std::string& filePath,
     c.emitterSeed                    = ParseUint(src,  "emitterSeed",                    c.emitterSeed);
 
     return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Load — file-based wrapper around LoadFromMemory
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool VFXPresetSerializer::Load(const std::string& filePath,
+                                VFXEmitterConfig& c,
+                                float& outSpawnRate,
+                                std::string& outName) {
+    std::ifstream f(filePath);
+    if (!f.is_open()) {
+        UZ_LOG(App, Warning, "VFXPresetSerializer::Load — cannot open '{}'",
+               filePath.c_str());
+        return false;
+    }
+
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    const std::string src = ss.str();
+
+    if (src.empty()) {
+        UZ_LOG(App, Warning, "VFXPresetSerializer::Load — '{}' is empty", filePath.c_str());
+        return false;
+    }
+
+    // Provide filename stem as fallback name before calling LoadFromMemory,
+    // which will overwrite outName only if a "name" key is found in the JSON.
+    outName = std::filesystem::path(filePath).stem().string();
+
+    return LoadFromMemory(src.data(), src.size(), outName, c, outSpawnRate);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

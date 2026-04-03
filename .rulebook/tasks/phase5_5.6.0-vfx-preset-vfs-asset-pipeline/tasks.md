@@ -7,6 +7,10 @@
 
 ## 2. VFXPresetSerializer VFS adapter
 
+- [x] 2.1a Added `SerializeToString(name, cfg, spawnRate) -> string` — pure in-memory serialization core. Refactored `Save()` to use it internally. VFS consumers can call `SerializeToString()` + `vfs.ResolvePath()` + file write. VFS `IVFS&` overload of `Save` deferred until `VFXViewportApp` exists to provide VFS context.
+- [x] 2.2a Added `LoadFromMemory(data, size, outName, outCfg, outSpawnRate) -> bool` — pure in-memory deserialization core. Refactored `Load()` to use it internally. VFS consumers can call `vfs.Read()` + `LoadFromMemory()`. VFS `IVFS&` overload of `Load` deferred until `VFXViewportApp` exists.
+- [x] 2.2b Added `kVFXPresetMountPath` and `kVFXShaderMountPath` constants in `vfx_preset_serializer.h` for VFS mount path convention.
+- [x] 2.2c Added `@note` to `ScanDirectory` documenting PakVFS limitation (no directory enumeration).
 - [ ] 2.1 Add a new static overload to `VFXPresetSerializer` in `vfx_preset_serializer.h`: `static bool Save(const VFXEmitterConfig& cfg, float spawnRate, const std::string& name, const std::string& logicalPath, IVFS& vfs)`. This overload resolves `logicalPath` to a real filesystem path using `vfs.ResolvePath(logicalPath)` (works for `LooseFileVFS`; logs `Asset::Error` and returns false for `PakVFS` because pak archives are read-only).
 - [ ] 2.2 Add a new static overload: `static bool Load(const std::string& logicalPath, IVFS& vfs, VFXEmitterConfig& outCfg, float& outSpawnRate, std::string& outName)`. Reads the file bytes via `vfs.Read(logicalPath)`. Parses the JSON from the byte buffer in-memory — no `std::ifstream` used. The parse logic is identical to the existing `Load(filePath, ...)` overload; only the I/O source changes.
 - [ ] 2.3 Add a new static method: `static std::vector<std::string> ScanDirectory(const std::string& logicalPrefix, IVFS& vfs)`. Because `IVFS` has no `ListFiles()` method, this must use the VFS-resolved real path via `LooseFileVFS::ResolvePath()` for `std::filesystem::directory_iterator`, falling back to an empty list for `PakVFS`. Document this limitation with a `/// @note` on the method.

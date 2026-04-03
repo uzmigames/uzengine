@@ -92,5 +92,12 @@
   "terrainBaseHeight": 0,
   "deathDecalEnabled": 0,
   "renderTargetFeedbackEnabled": 0,
-  "depthCollisionEnabled": 0
+  "depthCollisionEnabled": 0,
+  "fixedTimestep": 0,
+  "spawnRateRampUpTime": 0,
+  "spawnRateRampDownTime": 0,
+  "localSpaceEnabled": 0,
+  "collisionSpawnEnabled": 0,
+  "collisionSpawnCount": 3,
+  "emitterSeed": 0
 }

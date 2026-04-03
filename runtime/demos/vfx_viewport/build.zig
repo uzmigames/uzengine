@@ -13,6 +13,7 @@ pub fn build(b: *std.Build) void {
             "vfx_preset_serializer.cpp",
             "vfx_module_stack.cpp",
             "vfx_editor_ui.cpp",
+            "emitter_config_bridge.cpp",
         },
         .use_demo_application = true,
         .deploy_fxc = true,
