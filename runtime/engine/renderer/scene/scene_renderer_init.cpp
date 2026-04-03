@@ -1261,6 +1261,10 @@ void SceneRenderer::Shutdown() {
         m_vfxSystem->Shutdown(m_device);
         m_vfxSystem.reset();
     }
+    if (m_vfxZeroBuffer.IsValid()) {
+        m_device->DestroyBuffer(m_vfxZeroBuffer);
+        m_vfxZeroBuffer = RHIBufferHandle{};
+    }
 
     // ── Upload ring cleanup ─────────────────────────────────────────
     if (m_uploadRing) {
