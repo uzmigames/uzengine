@@ -1,17 +1,21 @@
 /// VFX Viewport Application — Engine Application Implementation
 ///
-/// Creates VFX emitter entities via ECS and lets SceneRenderer handle all
-/// GPU particle simulation and rendering automatically.
+/// Creates a visible scene with directional light, sky atmosphere, and VFX
+/// emitter entities via ECS. SceneRenderer handles all GPU particle simulation
+/// and rendering automatically through SyncVfxEmitters().
 
 #include "vfx_viewport_app.h"
 
 #include "engine/app/application.h"
 #include "engine/ecs/components.h"
 #include "engine/ecs/core/world.h"
+#include "engine/math/quaternion.h"
 #include "input.h"
 #include "camera.h"
 #include "log.h"
 #include "paths.h"
+
+#include <DirectXMath.h>
 
 #include <cmath>
 #include <filesystem>
@@ -56,18 +60,93 @@ ApplicationConfig VFXViewportApp::Configure() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void VFXViewportApp::OnStart() {
-    // NOTE: VFX emitter entities are NOT created here because the SceneRenderer
-    // does not yet have a VFX sync pass (SyncVfxEmitters). Creating ECS entities
-    // with VfxEmitterComponent would have no visual effect and may cause crashes.
-    //
-    // TODO (Task 5.5.0): Once SceneRenderer has ParticleSimulationPass and
-    // ParticleRenderPass integrated, uncomment the emitter entity creation below.
-    //
-    // For now, the Application-based VFX viewport demonstrates the engine game
-    // loop, SceneRenderer pipeline (sky, grid, GTAO, deferred lighting, tonemap),
-    // and camera controls — but without GPU particles.
+    World& world = GetWorld();
 
-    UZ_LOG(App, Info, "VFXViewportApp: started (VFX emitters deferred until SceneRenderer integration)");
+    // ── Directional light (sun) — required for deferred lighting output ──────
+    //
+    // Without a directional light, the deferred lighting pass has no light
+    // source and outputs black. The rotation aims the sun 50 degrees below
+    // the horizontal (typical midday-ish angle) around the Y (Right) axis.
+    {
+        Entity sunEntity = world.CreateEntity();
+        world.AddComponent<CName>(sunEntity, CName{"Sun"});
+        auto& sun = world.AddComponent<DirectionalLightComponent>(sunEntity);
+        sun.color = {1.0f, 0.95f, 0.85f};   // warm sunlight tint
+        sun.intensity = 10.0f;               // 10 lux (default)
+        sun.shadowCascades = 4;
+        sun.SetRotation(Quat::FromAxisAngle(Vec3::Right(),
+                                            -50.0f * DirectX::XM_PI / 180.0f));
+    }
+
+    // ── Sky atmosphere — provides a visible sky background ────────────────────
+    //
+    // SkyAtmosphereComponent is a plain data struct with Earth-like defaults.
+    // The atmosphere pass reads the DirectionalLight with atmosphereSunLight=true
+    // (which is the default) to determine the sun direction and color.
+    {
+        Entity skyEntity = world.CreateEntity();
+        world.AddComponent<CName>(skyEntity, CName{"SkyAtmosphere"});
+        world.AddComponent<SkyAtmosphereComponent>(skyEntity);
+    }
+
+    // ── VFX Emitter 1: Fountain ──────────────────────────────────────────────
+    //
+    // Billboard particles launched upward with gravity pulling them down,
+    // creating a fountain arc. SceneRenderer::SyncVfxEmitters() picks up the
+    // VfxEmitterComponent each frame and creates the GPU ParticleEmitter.
+    {
+        Entity e = world.CreateEntity();
+        world.AddComponent<CName>(e, CName{"Fountain"});
+        auto& sc = world.AddComponent<SceneComponent>(e);
+        sc.SetPosition({0.0f, 0.0f, 0.0f});
+        auto& em = world.AddComponent<VfxEmitterComponent>(e);
+        em.maxParticles = 10000;
+        em.emissionRate = 300.0f;
+        em.lifetime = 3.0f;
+        em.gravity = {0.0f, 0.0f, -981.0f};
+        em.spawnVelocity = {0.0f, 0.0f, 500.0f};
+        em.emitting = true;
+        m_emitterEntities.push_back(e);
+    }
+
+    // ── VFX Emitter 2: Side burst ────────────────────────────────────────────
+    //
+    // Offset to the right, fires particles diagonally upward and to the side.
+    {
+        Entity e = world.CreateEntity();
+        world.AddComponent<CName>(e, CName{"SideBurst"});
+        auto& sc = world.AddComponent<SceneComponent>(e);
+        sc.SetPosition({400.0f, 0.0f, 0.0f});
+        auto& em = world.AddComponent<VfxEmitterComponent>(e);
+        em.maxParticles = 5000;
+        em.emissionRate = 150.0f;
+        em.lifetime = 2.5f;
+        em.gravity = {0.0f, 0.0f, -981.0f};
+        em.spawnVelocity = {200.0f, 0.0f, 400.0f};
+        em.emitting = true;
+        m_emitterEntities.push_back(e);
+    }
+
+    // ── VFX Emitter 3: Slow rain ─────────────────────────────────────────────
+    //
+    // Offset to the left and elevated, drops particles downward slowly.
+    {
+        Entity e = world.CreateEntity();
+        world.AddComponent<CName>(e, CName{"SlowRain"});
+        auto& sc = world.AddComponent<SceneComponent>(e);
+        sc.SetPosition({-400.0f, 0.0f, 500.0f});
+        auto& em = world.AddComponent<VfxEmitterComponent>(e);
+        em.maxParticles = 8000;
+        em.emissionRate = 200.0f;
+        em.lifetime = 4.0f;
+        em.gravity = {0.0f, 0.0f, -300.0f};
+        em.spawnVelocity = {0.0f, 0.0f, -50.0f};
+        em.emitting = true;
+        m_emitterEntities.push_back(e);
+    }
+
+    UZ_LOG(App, Info, "VFXViewportApp: started — {} emitter entities, sun + sky atmosphere",
+           m_emitterEntities.size());
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -78,6 +157,7 @@ void VFXViewportApp::OnUpdate(float dt) {
     m_totalTime += dt;
 
     InputSystem& input = GetInput();
+    World& world = GetWorld();
 
     // ── Escape-hold-to-quit gesture (1 second hold) ──────────────────────
     if (input.IsKeyDown(Key::Escape)) {
@@ -90,8 +170,33 @@ void VFXViewportApp::OnUpdate(float dt) {
         m_escapeHoldTime = 0.0f;
     }
 
-    // VFX emitter animation and toggling deferred until SceneRenderer
-    // has VFX sync pass (Task 5.5.0).
+    // ── Toggle emitters with Space key ───────────────────────────────────
+    if (input.IsKeyJustPressed(Key::Space)) {
+        for (const Entity& e : m_emitterEntities) {
+            if (!world.IsValid(e)) continue;
+            auto& em = world.GetComponent<VfxEmitterComponent>(e);
+            em.emitting = !em.emitting;
+        }
+    }
+
+    // ── Orbit the side burst emitter around the origin ───────────────────
+    //
+    // The second emitter (index 1) orbits at a 400cm radius in the XY plane,
+    // giving a visual sense of dynamic movement in the scene.
+    if (m_emitterEntities.size() >= 2) {
+        const Entity& orbitEntity = m_emitterEntities[1];
+        if (world.IsValid(orbitEntity) && world.HasComponent<SceneComponent>(orbitEntity)) {
+            constexpr float kOrbitRadius = 400.0f; // cm
+            constexpr float kOrbitSpeed = 0.5f;    // radians/second
+            const float angle = m_totalTime * kOrbitSpeed;
+            auto& sc = world.GetComponent<SceneComponent>(orbitEntity);
+            sc.SetPosition({
+                kOrbitRadius * std::cos(angle),
+                kOrbitRadius * std::sin(angle),
+                0.0f
+            });
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
