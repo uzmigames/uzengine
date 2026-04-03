@@ -174,10 +174,11 @@ bool ScreenSpaceCollision(
 
     // Collision: the particle depth exceeds the scene surface depth (particle
     // is at or behind the surface, within the standoff tolerance).
-    // The collisionOffset is converted to a depth-space tolerance using a
-    // linear approximation. A full linearization would require znear/zfar, but
-    // for small offsets this approximation is sufficient.
-    if (particleDepth >= sceneDepth - collisionOffset * 0.001) {
+    // The collisionOffset is in world units (cm). Convert to NDC depth space
+    // using clip-space w (perspective depth at this pixel). This gives correct
+    // scale at any distance, unlike the previous hardcoded * 0.001 approximation.
+    float depthTolerance = collisionOffset / max(clipPos.w, 0.001);
+    if (particleDepth >= sceneDepth - depthTolerance) {
         // Estimate the surface normal at the collision point.
         float2 texelSize = 1.0 / screenDimensions;
 
