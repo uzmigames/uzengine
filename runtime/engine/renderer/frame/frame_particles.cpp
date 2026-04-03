@@ -232,7 +232,6 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
     simDesc.updatePipeline       = ctx.pipelines->GetParticleUpdateCS();
     simDesc.indirectArgsPipeline = ctx.pipelines->GetParticleIndirectArgsCS();
     simDesc.zeroBuffer           = m_vfxZeroBuffer;
-    simDesc.device               = m_device;
 
     if (simDesc.spawnPipeline.IsValid() && simDesc.updatePipeline.IsValid()
         && simDesc.indirectArgsPipeline.IsValid()) {
@@ -426,7 +425,6 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
             // Build per-emitter dispatch data.
             EmitterSimDispatch simData{};
             simData.buffer     = &gpuBuf;
-            simData.emitter    = emitter;
             simData.spawnCB    = spawnAlloc;
             simData.updateCB   = updateAlloc;
             simData.indirectCB = indirectAlloc;

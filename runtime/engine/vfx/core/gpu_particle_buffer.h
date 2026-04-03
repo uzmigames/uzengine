@@ -130,10 +130,6 @@ struct GPUParticleBuffer {
     /// once per frame for budget tracking.
     RHIBufferHandle aliveCount = RHIBufferHandle::Invalid();
 
-    /// Readback buffer for alive count (single uint32, Readback heap).
-    /// Used to copy aliveCount → CPU every frame with 1-frame latency.
-    RHIBufferHandle aliveCountReadback = RHIBufferHandle::Invalid();
-
     /// GPU free list: recycled particle indices stored as a stack.
     /// Size: capacity * sizeof(uint32_t).
     RHIBufferHandle freeList = RHIBufferHandle::Invalid();

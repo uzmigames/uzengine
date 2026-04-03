@@ -50,8 +50,6 @@ class RgBuilder;
 
 namespace uz {
 
-class ParticleEmitter;
-
 // ---------------------------------------------------------------------------
 // ParticleSimConstants -- CPU-side mirror of particle sim constant buffers
 // ---------------------------------------------------------------------------
@@ -111,9 +109,6 @@ struct ParticleIndirectArgsConstants {
 struct EmitterSimDispatch {
     /// The emitter's GPU particle storage (ping-pong attribute sets + bookkeeping).
     GPUParticleBuffer* buffer = nullptr;
-
-    /// Back-pointer to the owning emitter (for cpuAliveCount writeback from readback).
-    ParticleEmitter* emitter = nullptr;
 
     /// Pre-filled CB allocation for the spawn shader constants.
     CBAllocation spawnCB = {};
@@ -208,9 +203,6 @@ struct ParticleSimulationPassDesc {
     /// Array of active emitters to simulate this frame.
     /// Empty means the pass is a no-op (but still registered for graph consistency).
     std::vector<EmitterSimDispatch> emitters;
-
-    /// RHI device for readback buffer mapping.
-    IRHIDevice* device = nullptr;
 
     /// Small upload-heap buffer containing a single uint32 = 0.
     /// Used to zero-clear aliveCount each frame via CopyBuffer.
