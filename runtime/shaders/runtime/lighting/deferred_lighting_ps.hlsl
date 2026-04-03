@@ -57,8 +57,21 @@ cbuffer PerFrameCB : register(b1) {
     float  apRayleighScale, apMieScale;
     // Tone curve (offset 436)
     float  toneCurveSlope, toneCurveToe, toneCurveShoulder, toneCurveBlackClip, toneCurveWhiteClip;
-    // GTAO (offset 456)
+    // GTAO + post-process (offset 456)
     uint   gtaoSrvIndex;
+    uint   brdfDebugMode;
+    float  heightFogContribution;
+    float  filmGrainIntensity;
+    float  vignetteIntensity;
+    float  chromaAbIntensity;
+    float  contactShadowLength;
+    // SSR (offset 484)
+    uint   ssrSrvIndex;
+    float  mipBias_pf;
+    // SSGI (offset 492)
+    uint   ssgiSrvIndex;
+    uint   ssgiAOSrvIndex;
+    uint   ssgiEnabled;
 };
 
 // LightingCB at b2 via light_types.hlsli (already declared above)
@@ -268,14 +281,31 @@ float4 main(FSInput input) : SV_Target {
 #endif
         float3 specularAmbient = prefilteredColor * (F0 * envBRDF.x + envBRDF.y);
 
+        // SSR: blend screen-space reflections with IBL specular
+        // @ref Stachowiak 2015 — SSR overrides IBL where confident
+#ifdef UZ_BINDLESS
+        if (ssrSrvIndex != kSentinelSrvIndex) {
+            Texture2D<float4> ssrTex = ResourceDescriptorHeap[ssrSrvIndex];
+            float4 ssrData = ssrTex.Load(int3(px, 0));
+            // ssrData.rgb = hit color * confidence, ssrData.a = confidence
+            // Blend: lerp from IBL toward SSR based on confidence
+            specularAmbient = lerp(specularAmbient, ssrData.rgb, ssrData.a);
+        }
+#endif
+
         // Horizon occlusion — prevent reflections below surface
         // @ref Lagarde 2012 "Horizon Occlusion for Normal Mapped Reflections"
         float horizon = saturate(1.0 + dot(R, N));
         specularAmbient *= horizon * horizon;
 
-        // NOTE: IBL specular is NOT multiplied by sun shadow. In UE5 and Falcor,
-        // indirect lighting (both diffuse and specular) is independent of directional
-        // shadow. Only AO affects indirect; shadows only affect direct lights.
+        // SSGI: add screen-space indirect diffuse if available
+#ifdef UZ_BINDLESS
+        if (ssgiEnabled != 0 && ssgiSrvIndex != kSentinelSrvIndex) {
+            Texture2D<float4> ssgiTex = ResourceDescriptorHeap[ssgiSrvIndex];
+            float3 ssgiColor = ssgiTex.Load(int3(px, 0)).rgb;
+            diffuseAmbient += kD_env * ssgiColor * baseColor;
+        }
+#endif
 
         ambient = (diffuseAmbient * ao + specularAmbient) * skyTint;
     }
