@@ -486,7 +486,7 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
             ctx.perFrame.cameraPos.y,
             ctx.perFrame.cameraPos.z
         };
-        const Vec3 sortCamFwd = m_camera->GetForward();
+        const Vec3 sortCamFwd = m_cameraManager->GetActiveCamera().GetForward();
 
         // Per-emitter sort dispatch data for the render graph compute pass.
         struct SortEmitterDispatch {
@@ -595,8 +595,8 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
     };
 
     // View and projection matrices for billboard orientation.
-    const Mat4& viewMatrix = m_camera->GetView();
-    const Mat4& projMatrix = m_camera->GetProjection();
+    const Mat4& viewMatrix = m_cameraManager->GetActiveCamera().GetView();
+    const Mat4& projMatrix = m_cameraManager->GetActiveCamera().GetProjection();
 
     renderDesc.emitters.reserve(emitters.size());
 

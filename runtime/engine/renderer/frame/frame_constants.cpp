@@ -46,7 +46,7 @@ namespace uz {
 void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     UZ_PROFILE_FUNCTION();
 
-    auto& camera = *m_camera;
+    auto& camera = m_cameraManager->GetActiveCamera();
 
     // ── Build PerFrameParams (scalar section byte-identical to PerFrameCB) ──
     auto& perFrame = ctx.perFrame;

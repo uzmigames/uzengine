@@ -603,7 +603,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 // Physical CoC model: thin-lens approximation with APS-C sensor.
                 // SensorWidth = 24.576mm (APS-C standard).
                 const float sensorW = 24.576f;
-                const float fovRad = m_camera->GetFovY();
+                const float fovRad = m_cameraManager->GetActiveCamera().GetFovY();
                 const float fMM = sensorW / (2.0f * std::tan(fovRad * 0.5f));
                 const float dMM = m_dofFocusDistance * 10.0f;
                 const float cocInf = (fMM*fMM) / (m_dofAperture * (dMM - fMM)) * static_cast<float>(static_cast<uint32_t>(ctx.renderWidth)) / sensorW * 0.5f;

@@ -69,7 +69,7 @@ void SceneRenderer::RegisterGTAOPass(rg::RgBuilder& rgBuilder, FrameContext& ctx
                 UZ_PROFILE_SCOPE("GTAO::Execute");
 
                 // Get view matrix from the camera.
-                const auto& cam = *m_camera;
+                const auto& cam = m_cameraManager->GetActiveCamera();
                 float viewMatrixData[16];
                 const auto& viewMat = cam.GetView();
                 std::memcpy(viewMatrixData, &viewMat, 16 * sizeof(float));
@@ -373,7 +373,7 @@ void SceneRenderer::RegisterDFSPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
             DfsConeTraceCB traceCB{};
 
             // Compute inverse view-projection matrix
-            const auto& camera = *m_camera;
+            const auto& camera = m_cameraManager->GetActiveCamera();
             const Mat4 viewProj = camera.GetView() * camera.GetProjection();
             Mat4 invViewProj = viewProj.Inverse();
             std::memcpy(traceCB.invViewProj, &invViewProj, 64);

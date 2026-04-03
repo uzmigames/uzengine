@@ -164,14 +164,14 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
         for (auto [enttEntity, cam] : cameraView.each()) {
             if (cam.isActive) {
                 const Vec3 camPos = cam.GetWorldPosition();
-                m_camera->SetPosition(camPos);
+                m_cameraManager->GetActiveCamera().SetPosition(camPos);
                 if (cam.hasLookTarget) {
-                    m_camera->LookAt(cam.lookTarget);
+                    m_cameraManager->GetActiveCamera().LookAt(cam.lookTarget);
                 } else {
                     const Vec3 fwd = (cam.GetRotation() * Vec3::Forward()).Normalized();
-                    m_camera->LookAt(camPos + fwd * 1000.f);
+                    m_cameraManager->GetActiveCamera().LookAt(camPos + fwd * 1000.f);
                 }
-                m_camera->SetPerspective(
+                m_cameraManager->GetActiveCamera().SetPerspective(
                     cam.fov * (3.14159265f / 180.f),
                     static_cast<float>(m_width) / static_cast<float>(m_height),
                     cam.nearPlane, cam.farPlane);
@@ -183,10 +183,10 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
 
     // Fallback: FlyCameraController when no ECS camera is active.
     if (!cameraFromECS) {
-        m_cameraCtrl->Update(*m_camera, *m_input, ctx.dt);
+        m_cameraCtrl->Update(m_cameraManager->GetActiveCamera(), *m_input, ctx.dt);
     }
 
-    auto& camera = *m_camera;
+    auto& camera = m_cameraManager->GetActiveCamera();
 
     // ── TAA Jitter — Halton(2,3) sub-pixel offset on the projection matrix ──
     // TAA jitter: Halton(2,3) sub-pixel offset applied to the projection matrix.

@@ -3,6 +3,7 @@
 #include "scene_renderer.h"
 
 #include "camera.h"
+#include "camera_manager.h"
 #include "fly_camera_controller.h"
 #include "shadow_atlas.h"
 #include "shadow_pass.h"
@@ -35,8 +36,10 @@ void SceneRenderer::RequestScreenshotBase64() {
 // Accessors
 // ─────────────────────────────────────────────────────────────────────────────
 
-Camera& SceneRenderer::GetCamera() { return *m_camera; }
-const Camera& SceneRenderer::GetCamera() const { return *m_camera; }
+Camera& SceneRenderer::GetCamera() { return m_cameraManager->GetActiveCamera(); }
+const Camera& SceneRenderer::GetCamera() const { return m_cameraManager->GetActiveCamera(); }
+CameraManager& SceneRenderer::GetCameraManager() { return *m_cameraManager; }
+const CameraManager& SceneRenderer::GetCameraManager() const { return *m_cameraManager; }
 FlyCameraController& SceneRenderer::GetCameraController() { return *m_cameraCtrl; }
 InputSystem* SceneRenderer::GetInput() const { return m_input.get(); }
 StatsOverlay* SceneRenderer::GetStatsOverlay() const { return m_statsOverlay.get(); }

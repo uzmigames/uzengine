@@ -183,7 +183,7 @@ void SceneRenderer::SyncDrawListAndInstances(FrameContext& ctx) {
             }
         }
 
-        auto& camera = *m_camera;
+        auto& camera = m_cameraManager->GetActiveCamera();
 
         // ── Phase 1 Cull Constants — use previous frame's HiZ ─────────────
         // Phase 1 tests against last frame's HiZ pyramid to identify objects

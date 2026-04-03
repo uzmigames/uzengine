@@ -9,6 +9,7 @@
 #include "atmosphere/cloud_pass.h"
 #include "async_texture_decoder.h"
 #include "camera.h"
+#include "camera_manager.h"
 #include "units.h"
 #include "fly_camera_controller.h"
 #include "render_graph_resources.h"
@@ -137,14 +138,15 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     m_rgPool = std::make_unique<rg::RgResourcePool>(device);
 
     // ── Camera ──────────────────────────────────────────────────────────
-    m_camera = std::make_unique<Camera>();
+    m_cameraManager = std::make_unique<CameraManager>();
     m_cameraCtrl = std::make_unique<FlyCameraController>();
 
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
-    m_camera->SetHorizontalFOV(90.f, aspect, uz::Units::kDefaultNearPlaneCm, uz::Units::kDefaultFarPlaneCm);
-    m_camera->SetPosition({0.f, 200.f, -500.f});
-    m_camera->LookAt({0.f, 0.f, 0.f}, Vec3::Up());
-    m_cameraCtrl->InitFromCamera(*m_camera);
+    Camera& cam = m_cameraManager->GetActiveCamera();
+    cam.SetHorizontalFOV(90.f, aspect, uz::Units::kDefaultNearPlaneCm, uz::Units::kDefaultFarPlaneCm);
+    cam.SetPosition({0.f, 200.f, -500.f});
+    cam.LookAt({0.f, 0.f, 0.f}, Vec3::Up());
+    m_cameraCtrl->InitFromCamera(cam);
     m_cameraCtrl->SetMoveSpeed(5.f);  // 5 cm/s — matches Lua pbr_showcase_controller default
 
     // ── GBuffer (at render resolution — upscaled to display res by TAA) ──
@@ -1034,7 +1036,7 @@ void SceneRenderer::Resize(uint32_t width, uint32_t height) {
     m_colorGradingLutDirty = true;
 
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
-    m_camera->SetAspectRatio(aspect);
+    m_cameraManager->GetActiveCamera().SetAspectRatio(aspect);
 
     if (m_outlinePass) {
         m_outlinePass->Resize(width, height);
@@ -1306,7 +1308,7 @@ void SceneRenderer::Shutdown() {
 
     m_rgPool.reset();
     m_cameraCtrl.reset();
-    m_camera.reset();
+    m_cameraManager.reset();
     m_statsOverlay.reset();
     m_gizmoRenderer.reset();
     m_outlinePass.reset();

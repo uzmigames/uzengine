@@ -57,7 +57,7 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
                     auto depth = res.GetTexture(ctx.depthRes);
 
                     m_outlinePass->Draw(
-                        cmd, *m_cbRing, *m_camera,
+                        cmd, *m_cbRing, m_cameraManager->GetActiveCamera(),
                         ctx.drawList.GetCommands(), m_meshes,
                         m_selectedEntity.id,
                         ctx.vpWidth, ctx.vpHeight,
@@ -121,7 +121,7 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
             // Otherwise pass the scene depth SRV for manual shader-based occlusion.
             const uint32_t depthSrv = attachDepth ? UINT32_MAX : m_gbuffer.depthSRV;
             if (m_editorMode) {
-                m_editorGrid->Draw(cmd, *m_cbRing, *m_camera,
+                m_editorGrid->Draw(cmd, *m_cbRing, m_cameraManager->GetActiveCamera(),
                                    depthSrv, ctx.vpWidth, ctx.vpHeight);
             }
 
@@ -138,7 +138,7 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
                         break;
                     }
                 }
-                m_gizmoRenderer->Draw(cmd, *m_cbRing, *m_camera,
+                m_gizmoRenderer->Draw(cmd, *m_cbRing, m_cameraManager->GetActiveCamera(),
                                        entityPos, entityRot,
                                        static_cast<GizmoMode>(ctx.gizmoModeRaw),
                                        static_cast<GizmoSpace>(ctx.gizmoSpaceRaw),
@@ -191,7 +191,7 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
                 }
 
                 // Camera position + rotation for artist positioning
-                const auto& camPos = m_camera->GetPosition();
+                const auto& camPos = m_cameraManager->GetActiveCamera().GetPosition();
                 float yawDeg   = m_cameraCtrl->GetYaw()   * (180.0f / 3.14159265f);
                 float pitchDeg = m_cameraCtrl->GetPitch() * (180.0f / 3.14159265f);
                 m_statsOverlay->SetCameraInfo(camPos.x, camPos.y, camPos.z, yawDeg, pitchDeg);
@@ -205,7 +205,7 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
                     VFXSystem* vfx = m_vfxSystemOverride ? m_vfxSystemOverride : m_vfxSystem.get();
                     if (vfx && vfx->IsInitialized()) {
                         const auto& emitters = vfx->GetActiveEmitters();
-                        const Mat4 vp = m_camera->GetProjection() * m_camera->GetView();
+                        const Mat4 vp = m_cameraManager->GetActiveCamera().GetProjection() * m_cameraManager->GetActiveCamera().GetView();
                         for (const auto* em : emitters) {
                             if (!em || !em->initialized) continue;
                             Vec4 clip = vp * Vec4(em->worldPosition.x, em->worldPosition.y,

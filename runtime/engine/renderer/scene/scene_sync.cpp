@@ -5,6 +5,7 @@
 #include "components.h"
 
 #include "camera.h"
+#include "camera_manager.h"
 #include "gpu_mesh.h"
 #include "texture_loader.h"
 #include "lod_selector.h"
@@ -169,7 +170,7 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
         // size from its bounding sphere and camera distance, then select the
         // appropriate LOD level. The LOD's meshIndex overrides meshId so the
         // draw call uses the correct vertex/index buffers.
-        if (meshComp.lodGroup.numLevels > 1 && m_camera) {
+        if (meshComp.lodGroup.numLevels > 1 && m_cameraManager) {
             uint32_t selectedLOD = 0;
 
             if (meshComp.forcedLOD >= 0) {
@@ -181,7 +182,7 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
                 // Automatic LOD — compute from screen-space projected size.
                 const Mat4& worldMatrix = sceneComp.GetWorldMatrix();
                 const Vec3 objectPosition = worldMatrix.getTranslation();
-                const Vec3& cameraPosition = m_camera->GetPosition();
+                const Vec3& cameraPosition = m_cameraManager->GetActiveCamera().GetPosition();
 
                 const float dx = objectPosition.x - cameraPosition.x;
                 const float dy = objectPosition.y - cameraPosition.y;
@@ -195,7 +196,7 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
                                            : 50.0f;
 
                 // ScreenMultiple from projection matrix — computes screen size
-                const Mat4& projMatrix = m_camera->GetProjection();
+                const Mat4& projMatrix = m_cameraManager->GetActiveCamera().GetProjection();
                 const float projM00 = projMatrix.m._11;
                 const float projM11 = projMatrix.m._22;
 

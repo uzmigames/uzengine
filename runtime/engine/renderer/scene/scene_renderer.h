@@ -50,6 +50,7 @@
 #include "postprocess/gtao_pass.h"
 #include "postprocess/hiz_pyramid_pass.h"
 #include "shadows/distance_field_shadow_config.h"
+#include "camera_manager.h"
 #include "gi/ssgi_renderer.h"
 #include "gi/global_distance_field.h"
 #include "gi/radiance_cache.h"
@@ -513,10 +514,14 @@ public:
 
     // ── Accessors ──────────────────────────────────────────────────────────
 
-    /// Returns the camera used for rendering. Must only be called after `Init()`.
+    /// Returns the active camera used for rendering. Must only be called after `Init()`.
     [[nodiscard]] Camera& GetCamera();
-    /// Const overload — returns a const reference to the render camera.
+    /// Const overload — returns a const reference to the active render camera.
     [[nodiscard]] const Camera& GetCamera() const;
+
+    /// Returns the camera manager. Must only be called after `Init()`.
+    [[nodiscard]] CameraManager& GetCameraManager();
+    [[nodiscard]] const CameraManager& GetCameraManager() const;
 
     /// Returns the fly camera controller. Must only be called after `Init()`.
     [[nodiscard]] FlyCameraController& GetCameraController();

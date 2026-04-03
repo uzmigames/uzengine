@@ -112,7 +112,7 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
 
     if (m_passInspector.IsPassEnabled("fog")) {
         AddHeightFogFromECS(rgBuilder, ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc,
-                            ctx.world, *m_camera, ctx.pipelines, *m_cbRing,
+                            ctx.world, m_cameraManager->GetActiveCamera(), ctx.pipelines, *m_cbRing,
                             m_gbuffer.depthSRV, m_gbuffer.depth,
                             ctx.bindless, ctx.renderWidth, ctx.renderHeight,
                             skyFogR, skyFogG, skyFogB);

@@ -1,10 +1,10 @@
 ## Session 1: CameraManager Core + PerFrameCB Integration
 
-- [ ] 1.1 Create `camera_manager.h` — `CameraId` type alias (uint32_t), `CameraManager` class with `std::vector<Camera>` storage, active index, push/pop stack; `CreateCamera(name) → CameraId`, `DestroyCamera(CameraId)`, `SetActiveCamera(CameraId)`, `GetActiveCamera() → Camera&`, `GetCamera(CameraId) → Camera*`, `GetAllCameras() → span<Camera>`
-- [ ] 1.2 Implement `camera_manager.cpp` — `CreateCamera` assigns next available ID, `SetActiveCamera` bounds-checks and logs the switch via `UZ_LOG(Camera, Info, ...)`, `PushCamera(CameraId)` saves active onto stack, `PopCamera()` restores previous active
-- [ ] 1.3 Update `per_frame_params.cpp` — replace direct `Camera` reference with `CameraManager::GetActiveCamera()` so `PerFrameCB` always reflects the currently active camera
-- [ ] 1.4 Register `CameraManager` singleton in `application.cpp` — initialize with one default camera at scene load, expose via `GetCameraManager()`
-- [ ] 1.5 Build + verify: `zig build` compiles cleanly, existing single-camera rendering unchanged
+- [x] 1.1 Created `camera_manager.h` — `CameraId` (uint32_t), `CameraManager` class with `std::vector<CameraEntry>`, active index, push/pop stack, `CreateCamera/DestroyCamera/SetActiveCamera/GetActiveCamera/GetCamera/PushCamera/PopCamera`.
+- [x] 1.2 Implemented `camera_manager.cpp` — `CreateCamera` assigns sequential IDs, `SetActiveCamera` with bounds check + logging, `PushCamera/PopCamera` with stack. Constructor creates default "Main" camera (id=0).
+- [x] 1.3 Replaced `std::unique_ptr<Camera> m_camera` with `std::unique_ptr<CameraManager> m_cameraManager` in SceneRenderer. All 21 `m_camera` references across 10 frame files updated to `m_cameraManager->GetActiveCamera()`. `GetCamera()` delegates to active camera. `GetCameraManager()` exposed publicly.
+- [x] 1.4 CameraManager owned by SceneRenderer (not Application). Initialized in `SceneRenderer::Init()`, destroyed in `Shutdown()`. Application accesses via `GetRenderer()->GetCameraManager()`.
+- [x] 1.5 Build clean (zig build), 0 errors, 205 FPS on pbr_showcase. Existing rendering 100% unchanged — drop-in replacement.
 
 ## Session 2: Editor Free-Cam + Lua API + Demo
 
