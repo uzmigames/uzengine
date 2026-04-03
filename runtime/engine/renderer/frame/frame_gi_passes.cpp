@@ -215,8 +215,10 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
             SsrTraceConstants rc{};
             rc.depthSrvIdx      = m_gbuffer.depthSRV;
             rc.normalSrvIdx     = m_gbuffer.normalSRV;
-            rc.hizSrvIdx        = (m_hizMipCount > 0 && m_hizMipLevels[0].srvIndex != UINT32_MAX)
-                                ? m_hizMipLevels[0].srvIndex : m_gbuffer.depthSRV;
+            // SSR linear march uses the full-resolution depth buffer directly.
+            // Hi-Z min-depth pyramid is for hierarchical acceleration (future),
+            // not for precise hit testing — using it causes missed intersections.
+            rc.hizSrvIdx        = m_gbuffer.depthSRV;
             rc.sceneColorSrvIdx = m_hdrSceneColorSrv;
             rc.outputWidth      = m_renderWidth;
             rc.outputHeight     = m_renderHeight;
