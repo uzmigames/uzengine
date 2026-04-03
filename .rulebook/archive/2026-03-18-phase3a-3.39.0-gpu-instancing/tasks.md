@@ -1,0 +1,23 @@
+## 1. Implementation
+
+- [x] 1.1 Define InstanceData struct — float4x4 world, float4x4 normalMatrix (128 bytes). Created in `instance_batcher.h`.
+- [x] 1.2 Implement InstanceBatcher — iterates sorted draw list, groups consecutive entries with same (meshId, material SRV indices) into instance batches. Created `instance_batcher.cpp`.
+- [x] 1.3 Allocate per-frame instance buffer — Persistent StructuredBuffer with power-of-two capacity, resized on demand. Upload heap with WaitIdle sync.
+- [x] 1.4 Upload instance data — Map/memcpy/unmap pattern on persistent Upload buffer. WaitIdle before write to prevent race with in-flight frames.
+- [x] 1.5 Create INSTANCED vertex shader variant — `#ifdef UZ_INSTANCED` in mesh_vs.hlsl and shadow_depth_vs.hlsl. Reads InstanceData[SV_InstanceID] via ResourceDescriptorHeap (SM6.6 bindless only).
+- [x] 1.6 Emit DrawIndexedInstanced — GBufferPass and ShadowPass both have instanced code paths. Per-batch PerObjectCB for shared material, DrawIndexedInstanced(indexCount, batchInstanceCount, 0, 0, firstInstance).
+- [x] 1.7 Fallback path — non-instanced path preserved in both passes. SM5 (non-bindless) always uses per-object CB path. Instancing only activates when bindless=true.
+- [x] 1.8 Integrate with GBuffer and shadow passes — both passes support instanced drawing via `instanced` flag + `batchData`/`batchCount` in pass desc.
+- [x] 1.9 Create instancing demo — 1000 identical cubes in 10x10x10 grid. Stats overlay shows Draw calls: 2 (1000 cubes = 1 batch + 1 ground = 1 batch). Demo at `demos/instancing_test/`.
+
+## 2. Visual Verification
+
+- [x] 2.1 Screenshot: 1000 instanced cubes — correct world transforms, Stonebricks PBR textures, no visual artifacts. 310 FPS at 3.22ms/frame on RTX 4090.
+- [x] 2.2 Screenshot: instanced objects with shadows — CSM shadows correct per-instance in both pbr_test and instancing_test.
+- [x] 2.3 Performance: draw calls measured — 1001 objects collapse to 2 draw calls (1000 same-material cubes + 1 different-material ground). Stats overlay confirms "Draw calls: 2".
+- [x] 2.4 Regression: pbr_test scene (5 cubes + ground) renders correctly with instancing active, no artifacts.
+
+## 3. Documentation
+
+- [x] 3.1 Update `docs/engine/12-rendering/07-sort-key-architecture.md` with instancing batch logic. Added comprehensive "GPU Instancing Integration" section covering InstanceData struct (128 bytes: world + normalMatrix), instance buffer management (triple-buffered, power-of-two growth), batching criteria, shader integration (SM6.6 bindless + SM5 fallback), and performance characteristics.
+- [x] 3.2 Document instance buffer layout and shader access pattern. Verified `docs/engine/12-rendering/08-gpu-instancing.md` is complete with InstanceData layout, InstanceBatch struct, BuildInstanceBatches algorithm, shader variants (-DUZ_INSTANCED), vertex shader integration (StructuredBuffer<InstanceData> via SV_InstanceID), and integration checklist.
