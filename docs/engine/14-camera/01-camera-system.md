@@ -1,6 +1,6 @@
 # Camera System
 
-> **Status**: Planned (Phase 2)
+> **Status**: Done (v0.5.0 — CameraManager with push/pop stack, editor free-cam, per-camera render targets, Lua API)
 > **Source**: `engine/components/camera_component.h`, `engine/components/spring_arm_component.h`
 > **Depends on**: SceneComponent (§10), RenderWorld sync (§12)
 

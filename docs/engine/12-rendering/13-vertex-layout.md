@@ -1,6 +1,6 @@
 # Rendering — Vertex Layout & Format System
 
-> **Status**: Planned
+> **Status**: Done (v0.2.0+)
 > **Source**: `runtime/engine/renderer/`, `runtime/engine/rhi/`
 > **Depends on**: RHI (§03), Mesh Pipeline (§08-06)
 

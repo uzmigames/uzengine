@@ -46,7 +46,7 @@ runtime/shaders/runtime/
 | SSGI | 5 | HiZ trace, SVGF denoise |
 | VFX | 14 | Billboard, mesh, trail, decal, distortion |
 | Debug | 3 | 15 view modes, pixel debug, visualization |
-| **Total** | **~99 shaders** | |
+| **Total** | **~145 shaders** | |
 
 ## Bindless vs SM5
 

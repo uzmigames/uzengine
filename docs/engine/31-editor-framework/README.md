@@ -2,7 +2,7 @@
 
 All VSCode editor panels, tools, and editor-specific systems.
 
-> **Status**: Planned (Phase 5)
+> **Status**: Partial (Phase 5 — Extension + IPC ✅, Viewport ✅, Hierarchy/Inspector/Gizmos planned)
 > **Source**: `extension/src/panels/`, `runtime/engine/editor/`
 
 | Document | Topic |

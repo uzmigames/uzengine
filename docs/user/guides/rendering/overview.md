@@ -1,19 +1,22 @@
 # Rendering
 
-> **Status**: The rendering pipeline is under active development. This page
-> describes the current state and planned architecture.
+> **Status**: The rendering pipeline is fully functional with 145 shaders across
+> GBuffer, lighting, shadows, atmosphere, post-process, VFX, GI, and raytracing.
 
-## Current State
+## Current State (v0.6.0)
 
-The runtime currently renders an animated clear-screen loop via DX12:
+The runtime ships a full AAA deferred renderer with:
 
-1. Triple-buffered swapchain (FLIP_DISCARD)
-2. Per-frame fence synchronization
-3. Command list: barrier → clear RTV → barrier → present
-4. Resize handling with swapchain recreation
-
-This validates the full RHI stack (device, swapchain, command list, fences,
-barriers) and serves as the foundation for the renderer.
+- **GBuffer pass** — albedo, normals (octahedral), metallic/roughness, depth (reversed-Z)
+- **Deferred lighting** — directional + 64 point + 16 spot lights, IBL (SH L2 + prefiltered specular)
+- **Shadows** — 4-cascade CSM, PCSS, contact shadows, distance field shadows, static shadow cache
+- **Atmosphere** — Bruneton sky, multi-scatter LUT, volumetric clouds, height fog, god rays
+- **Post-process** — TAA, SSR, GTAO, bloom, ACES tonemap, auto-exposure, DOF, motion blur, color grading LUT
+- **GI** — SSGI (5 compute passes), SVGF denoiser (3 passes)
+- **VFX** — GPU compute particles (65K/emitter), trails, decals, flipbook SubUV
+- **Raytracing** — DXR infrastructure (BLAS/TLAS, shader table, RT pipeline)
+- **Quality** — 5-tier scalability (Low/Medium/High/Ultra/Cinematic)
+- **Diagnostics** — FLIP metric, pass dump, pixel debug, GPU profiling
 
 ## Shader Pipeline
 
@@ -25,7 +28,7 @@ The engine includes a full shader compilation pipeline (`runtime/engine/shader/`
 | `ShaderSourceManager` | `#include` parsing, xxHash64 content-based identity hashing |
 | `ShaderDependencyGraph` | Bidirectional dependency tracking for hot-reload |
 | `ShaderCache` | Disk-based bytecode cache keyed by content hash |
-| `ShaderCompiler` | DXC integration — HLSL → DXIL (SM5.1–SM6.7) and SPIRV (Vulkan 1.3) |
+| `ShaderCompiler` | DXC integration — HLSL → DXIL (SM5.0–SM6.8) and SPIRV (Vulkan 1.3) |
 | `ShaderPipeline` | High-level orchestrator — combines VFS, source, cache, compiler |
 | `ShaderPermutation` | Feature flag variant expansion (`#pragma uz_permutation`) |
 | `ShaderReflection` | SPIRV-Reflect binding extraction (CBV/SRV/UAV/sampler) |

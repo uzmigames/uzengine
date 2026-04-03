@@ -4,7 +4,7 @@ Welcome to the [UzEngine](https://github.com/uzmigames/uzengine) developer docum
 UzEngine is a AAA-quality game engine designed for autonomous AI-assisted development,
 embedded inside Visual Studio Code.
 
-> **Current version**: 0.2.0 — Runtime render foundation (DX12 SM6.6 bindless)
+> **Current version**: 0.6.0 — AAA deferred renderer (DX12 SM6.8 bindless, 145 shaders, SSGI, VFX, DXR)
 > **Repository**: https://github.com/uzmigames/uzengine
 
 ---
