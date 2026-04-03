@@ -65,12 +65,12 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
 
     if (m_renderPath != RenderPath::Deferred) return;
 
-    // RegisterDBufferApplyPass(rgBuilder, ctx);
-    // RegisterGTAOPass(rgBuilder, ctx);
-    // RegisterDFSPasses(rgBuilder, ctx);
+    RegisterDBufferApplyPass(rgBuilder, ctx);
+    RegisterGTAOPass(rgBuilder, ctx);
+    RegisterDFSPasses(rgBuilder, ctx);
     RegisterSSGIPasses(rgBuilder, ctx);
-    // RegisterSDFGIPasses(rgBuilder, ctx);
-    // RegisterSSRPasses(rgBuilder, ctx);
+    RegisterSDFGIPasses(rgBuilder, ctx);
+    RegisterSSRPasses(rgBuilder, ctx);
     // ── Env MIS temporal accumulation (render graph compute pass) ───────
     if (m_envMISPass && m_envMISPass->IsInitialized()
         && m_envMapSampler && m_envMapSampler->IsReady()) {
