@@ -117,34 +117,13 @@ uint32_t ParticleEmitter::CalculateSpawnCount(float dt) noexcept {
     const auto spawnCount = static_cast<uint32_t>(integerPart);
     spawnAccumulator -= integerPart;
 
-    // Clamp to available capacity (capacity - currently alive).
-    const uint32_t capacity = buffer.capacity;
-    const uint32_t available = (capacity > cpuAliveCount)
-                                   ? (capacity - cpuAliveCount)
-                                   : 0;
+    // Godot pattern: CPU doesn't track alive count. Dispatch = capacity.
+    // The GPU free-list handles slot allocation — spawn shader pops from
+    // freeList and guards against overflow (freeListHead >= capacity → skip).
+    // CPU just passes the spawn count; GPU decides if slots are available.
+    cpuAliveCount = buffer.capacity;
 
-    const uint32_t clamped = std::min(spawnCount, available);
-
-    // Update CPU-side alive count estimate.
-    // The steady-state alive count is rate * lifetime. Clamp to prevent the
-    // estimate from diverging to capacity (which blocks all future spawns).
-    cpuAliveCount += clamped;
-    if (lifetime > 0.0f && cpuAliveCount > 0) {
-        // Deaths per frame = alive * dt / lifetime (expected uniform age distribution)
-        deathAccumulator += static_cast<float>(cpuAliveCount) * (dt / lifetime);
-        const auto deaths = static_cast<uint32_t>(deathAccumulator);
-        deathAccumulator -= static_cast<float>(deaths);
-        cpuAliveCount = (cpuAliveCount > deaths) ? (cpuAliveCount - deaths) : 0;
-
-        // Clamp to theoretical steady-state maximum to prevent runaway growth.
-        // Steady state = emissionRate * lifetime (all particles alive at once).
-        const auto steadyState = static_cast<uint32_t>(emissionRate * lifetime * 1.5f); // 50% headroom
-        if (cpuAliveCount > steadyState && steadyState > 0) {
-            cpuAliveCount = steadyState;
-        }
-    }
-
-    return clamped;
+    return spawnCount;
 }
 
 } // namespace uz

@@ -346,7 +346,10 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
             // ── Update CB (320 bytes, matches VFXUpdateConstants in particle_update_cs.hlsl) ──
             VFXUpdateCB updateCBData{};
             updateCBData.dt = ctx.dt;
-            updateCBData.aliveCount = emitter->cpuAliveCount;
+            // Godot pattern: dispatch ALL capacity threads. Dead slots (lifespan==0)
+            // do early return in the shader. This avoids the alive count divergence
+            // bug where cpuAliveCount was an estimate that grew unbounded.
+            updateCBData.aliveCount = gpuBuf.capacity;
             updateCBData.maxParticles = gpuBuf.capacity;
             updateCBData.frameNumber = ctx.frameIndex;
             updateCBData.totalTime = ctx.perFrame.timeParams.x; // totalTime from PerFrameCB
