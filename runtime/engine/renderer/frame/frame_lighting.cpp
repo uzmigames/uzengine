@@ -65,11 +65,10 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
 
     if (m_renderPath != RenderPath::Deferred) return;
 
-    // SHADER DEBUG: all sub-passes commented. Uncomment one by one.
     // RegisterDBufferApplyPass(rgBuilder, ctx);
     // RegisterGTAOPass(rgBuilder, ctx);
     // RegisterDFSPasses(rgBuilder, ctx);
-    // RegisterSSGIPasses(rgBuilder, ctx);
+    RegisterSSGIPasses(rgBuilder, ctx);
     // RegisterSDFGIPasses(rgBuilder, ctx);
     // RegisterSSRPasses(rgBuilder, ctx);
     // ── Env MIS temporal accumulation (render graph compute pass) ───────
@@ -101,7 +100,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
 
     RegisterDeferredLightingPass(rgBuilder, ctx);
     RegisterAtmosphereFogCloudPasses(rgBuilder, ctx);
-    // RegisterSSGIPrevColorCopy(rgBuilder, ctx);
+    RegisterSSGIPrevColorCopy(rgBuilder, ctx);
 
     // ── PassInspector: register intermediate targets for visualization ──
     RegisterPassInspectorTargets(ctx);

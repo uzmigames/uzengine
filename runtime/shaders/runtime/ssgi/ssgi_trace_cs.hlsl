@@ -69,7 +69,8 @@ float3 OctDecode(float2 f) {
     f = f * 2.0 - 1.0;
     float3 n = float3(f.x, f.y, 1.0 - abs(f.x) - abs(f.y));
     float t = saturate(-n.z);
-    n.xy += (n.xy >= 0.0) ? -t : t;
+    n.x += (n.x >= 0.0) ? -t : t;
+    n.y += (n.y >= 0.0) ? -t : t;
     return normalize(n);
 }
 
