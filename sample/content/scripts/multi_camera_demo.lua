@@ -10,7 +10,7 @@
 
 local cameras = {}
 local current_index = 1
-local switch_interval = 3.0
+local switch_interval = 2.0
 local timer = 0.0
 
 -- Camera definitions: {name, x, y, z, yaw_deg, pitch_deg}
@@ -65,6 +65,12 @@ function switch_to(index)
 end
 
 function on_update(entity, dt)
+    -- Re-apply camera transform every frame to prevent other scripts
+    -- (fly_camera.lua) from overwriting via ECS CameraComponent
+    if cameras[current_index] then
+        apply_camera_transform(cameras[current_index].def)
+    end
+
     -- Auto-cycle
     timer = timer + dt
     if timer >= switch_interval then
