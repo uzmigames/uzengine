@@ -32,14 +32,14 @@
           "emissiveColorR": 1.0,
           "emissiveColorG": 1.0,
           "emissiveColorB": 1.0,
-          "emissiveIntensity": 2.0
+          "emissiveIntensity": 5.0
         }
       }
     },
     {
       "name": "MainCamera",
       "components": {
-        "transform": { "position": [0, -250, 140], "rotation": [-5, 0, 0] },
+        "transform": { "position": [177, -186, 143], "rotation": [68, -90, 0] },
         "camera": { "fov": 45, "near": 1, "far": 100000, "active": true }
       }
     },

@@ -250,8 +250,9 @@ GBufferOutput main(PSInput input) {
 #else
     emissive = emissiveTexture.SampleBias(linearSampler, uv, mipBias).rgb;
 #endif
-    emissive *= emissiveColor * emissiveIntensity;
 #endif // !UZ_MATERIAL_GRAPH
+    // Apply per-object emissive tint and intensity (both fixed PBR and material graph paths).
+    emissive *= emissiveColor * emissiveIntensity;
 
     // ── Alpha test ────────────────────────────────────────────────────────
     if ((materialFlags & 0x3u) == 1) {
