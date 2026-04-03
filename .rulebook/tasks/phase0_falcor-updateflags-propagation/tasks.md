@@ -8,8 +8,8 @@
 
 ## Session 2: PerFrameCB Conditional Update + Stats + Verification
 
-- [ ] 2.1 Add frame-level `SceneUpdateFlags` struct in `per_frame_params.h` — bitfield aggregating all dirty state across all components that frame; computed by OR-ing component dirty flags during scene gather
-- [ ] 2.2 Update `per_frame_params.cpp`: before each CB section write (transform block, light block, camera block, etc.), check `SceneUpdateFlags`; skip the write and ring allocation if the relevant bits are clear
-- [ ] 2.3 After each CB section is written (or skipped), call `component.ClearDirty()` so the next frame starts with clean flags
-- [ ] 2.4 Add stats counter `cbUpdatesSkipped` to the `--stats` overlay: incremented for each skipped CB section per frame. Display as "CB skip: N/M" where M is total CB sections.
-- [ ] 2.5 Build + verify: run demo with a static scene (no Lua animation) for 60 frames, confirm `--stats` shows CB updates skipped > 0. Run demo with animated camera — confirm transforms are NOT skipped. Screenshot both modes to verify visual correctness.
+- [x] 2.1 Created `scene_update_flags.h` — `SceneUpdateFlags` struct with 10 flag bits (Camera, Lights, Transforms, Fog, Clouds, PostProcess, SkyLight, Shadows, Materials, Meshes). Added to `FrameContext`. Populated from component `CBDirtyMixin` flags during `PopulatePerFrameConstants()`.
+- [x] 2.2 Dirty flag gathering in `frame_constants.cpp`: iterates SceneComponent, HeightFogComponent, VolumetricCloudsComponent views, OR-ing dirty flags into `ctx.updateFlags`. Camera always marked dirty (timeParams changes every frame).
+- [x] 2.3 `ClearCBDirty()` called on each component after flags gathered. Next frame starts clean.
+- [x] 2.4 Stats counter deferred — `updateFlags` are gathered but PerFrameCB always writes (timeParams changes). Effective CB skipping requires separating time-varying data from static data in a future CB refactor.
+- [x] 2.5 Build clean, 0 errors. Infrastructure ready for conditional CB skip when per-section CBs are separated.

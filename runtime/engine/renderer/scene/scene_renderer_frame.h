@@ -6,6 +6,7 @@
 #pragma once
 
 #include "per_frame_params.h"
+#include "scene_update_flags.h"
 #include "post_process_volume.h"
 #include "shadow_data_params.h"
 #include "cb_ring_allocator.h"   // CBAllocation
@@ -47,6 +48,9 @@ struct FrameContext {
     float            renderWidth = 0.f;      ///< Internal render resolution width (screen percentage applied).
     float            renderHeight = 0.f;     ///< Internal render resolution height (screen percentage applied).
     bool             bindless = false;
+
+    // ── Scene update flags (aggregated component dirty state) ─────
+    SceneUpdateFlags updateFlags{};
 
     // ── CB allocations ──────────────────────────────────────────────
     CBAllocation     perFrameAlloc{};

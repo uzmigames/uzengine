@@ -18,6 +18,8 @@
 #include "log.h"
 #include "cvar.h"
 #include "world.h"
+#include "scene_update_flags.h"
+#include "dirty_flags.h"
 
 #include <algorithm>
 #include <cmath>
@@ -45,6 +47,41 @@ namespace uz {
 
 void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     UZ_PROFILE_FUNCTION();
+
+    // ── Gather scene update flags from component dirty state ────────────
+    ctx.updateFlags.Clear();
+    // Camera always changes (timeParams increments every frame)
+    ctx.updateFlags.Set(SceneUpdateFlags::kCamera);
+    // Gather dirty flags from ECS components
+    if (ctx.world) {
+        // Lights
+        auto lightView = ctx.world->GetRegistry().view<SceneComponent>();
+        for (auto e : lightView) {
+            auto& sc = lightView.get<SceneComponent>(e);
+            if (sc.IsCBDirty()) {
+                ctx.updateFlags.Set(SceneUpdateFlags::kTransforms);
+                sc.ClearCBDirty();
+            }
+        }
+        // Fog
+        auto fogView = ctx.world->GetRegistry().view<HeightFogComponent>();
+        for (auto e : fogView) {
+            auto& fog = fogView.get<HeightFogComponent>(e);
+            if (fog.IsCBDirty()) {
+                ctx.updateFlags.Set(SceneUpdateFlags::kFog);
+                fog.ClearCBDirty();
+            }
+        }
+        // Clouds
+        auto cloudView = ctx.world->GetRegistry().view<VolumetricCloudsComponent>();
+        for (auto e : cloudView) {
+            auto& cloud = cloudView.get<VolumetricCloudsComponent>(e);
+            if (cloud.IsCBDirty()) {
+                ctx.updateFlags.Set(SceneUpdateFlags::kClouds);
+                cloud.ClearCBDirty();
+            }
+        }
+    }
 
     auto& camera = m_cameraManager->GetActiveCamera();
 
