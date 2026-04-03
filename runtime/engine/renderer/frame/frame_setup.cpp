@@ -174,11 +174,12 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     // ── Camera: ECS camera (game mode) or fly controller (editor mode) ──
     bool cameraFromECS = false;
 
-    // Sync camera from ECS CameraComponent every frame.
-    // Lua scripts (camera_test_controller.lua, etc.) update CameraComponent
-    // via uz.camera.set_position/look_at in on_update — we read that here.
-    // This works in both editor and game mode, driven by the Lua script.
-    if (ctx.world) {
+    // Sync camera from ECS CameraComponent every frame — but ONLY when the
+    // active camera is the default Main camera (id=0). When CameraManager has
+    // switched to a non-default camera (via mgr_switch or PushCamera), the ECS
+    // CameraComponent is ignored so Lua scripts can control cameras directly
+    // via mgr_set_position/mgr_look_at without being overwritten.
+    if (ctx.world && m_cameraManager->GetActiveCameraId() == 0) {
         auto cameraView = ctx.world->View<CameraComponent>();
         for (auto [enttEntity, cam] : cameraView.each()) {
             if (cam.isActive) {
@@ -200,8 +201,10 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
         }
     }
 
-    // Fallback: FlyCameraController when no ECS camera is active.
-    if (!cameraFromECS) {
+    // Fallback: FlyCameraController when no ECS camera is active AND
+    // we're on the default Main camera (id=0). Non-default cameras are
+    // controlled by Lua scripts via mgr_set_position/mgr_look_at.
+    if (!cameraFromECS && m_cameraManager->GetActiveCameraId() == 0) {
         m_cameraCtrl->Update(m_cameraManager->GetActiveCamera(), *m_input, ctx.dt);
     }
 

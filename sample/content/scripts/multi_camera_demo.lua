@@ -40,7 +40,9 @@ function on_start(entity)
 end
 
 function apply_camera_transform(def)
-    uz.camera.set_position(def.x, def.y, def.z)
+    -- Use mgr_set_position/mgr_look_at to act directly on the CameraManager's
+    -- active camera, bypassing ECS CameraComponent (which fly_camera.lua overwrites).
+    uz.camera.mgr_set_position(def.x, def.y, def.z)
 
     -- Compute look direction from yaw/pitch
     local deg2rad = 3.14159265 / 180.0
@@ -50,7 +52,7 @@ function apply_camera_transform(def)
     local target_x = def.x + math.cos(yaw_rad) * cos_p * 1000
     local target_y = def.y + math.sin(yaw_rad) * cos_p * 1000
     local target_z = def.z + math.sin(pitch_rad) * 1000
-    uz.camera.look_at(target_x, target_y, target_z)
+    uz.camera.mgr_look_at(target_x, target_y, target_z)
 end
 
 function switch_to(index)

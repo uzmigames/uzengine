@@ -607,6 +607,28 @@ static int CameraMgrDestroy(lua_State* L) {
     return 1;
 }
 
+/// uz.camera.mgr_set_position(x, y, z) — sets position on the active CameraManager camera directly
+static int CameraMgrSetPosition(lua_State* L) {
+    auto* mgr = GetCameraManager(L);
+    if (!mgr) return 0;
+    const float x = static_cast<float>(luaL_checknumber(L, 1));
+    const float y = static_cast<float>(luaL_checknumber(L, 2));
+    const float z = static_cast<float>(luaL_checknumber(L, 3));
+    mgr->GetActiveCamera().SetPosition({x, y, z});
+    return 0;
+}
+
+/// uz.camera.mgr_look_at(x, y, z) — sets look-at on the active CameraManager camera directly
+static int CameraMgrLookAt(lua_State* L) {
+    auto* mgr = GetCameraManager(L);
+    if (!mgr) return 0;
+    const float tx = static_cast<float>(luaL_checknumber(L, 1));
+    const float ty = static_cast<float>(luaL_checknumber(L, 2));
+    const float tz = static_cast<float>(luaL_checknumber(L, 3));
+    mgr->GetActiveCamera().LookAt({tx, ty, tz}, Vec3::Up());
+    return 0;
+}
+
 void LuaRegisterCameraManagerAPI(lua_State* L) {
     lua_getglobal(L, "uz");
     if (!lua_istable(L, -1)) { lua_pop(L, 1); return; }
@@ -629,6 +651,12 @@ void LuaRegisterCameraManagerAPI(lua_State* L) {
 
     lua_pushcfunction(L, CameraMgrDestroy);
     lua_setfield(L, -2, "mgr_destroy");
+
+    lua_pushcfunction(L, CameraMgrSetPosition);
+    lua_setfield(L, -2, "mgr_set_position");
+
+    lua_pushcfunction(L, CameraMgrLookAt);
+    lua_setfield(L, -2, "mgr_look_at");
 
     lua_pop(L, 2); // pop camera table + uz table
 
