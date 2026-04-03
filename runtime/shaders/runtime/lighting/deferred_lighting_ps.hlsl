@@ -28,7 +28,10 @@ Texture2D<float4> gbufferAlbedo    : register(t0);
 Texture2D<float4> gbufferNormal    : register(t1);
 Texture2D<float>  gbufferDepth     : register(t2);
 Texture2D<float4> gbufferPositionWS : register(t4);
+Texture2D<float>  gtaoTextureT9    : register(t9);
 Texture2D<float4> gbufferEmissive  : register(t10);
+Texture2D<float4> ssrTextureT11    : register(t11);
+Texture2D<float4> ssgiTextureT12   : register(t12);
 #endif
 
 // ─── PerFrameCB at b1 (768 bytes) ─────────────────────────────────────────
@@ -119,13 +122,18 @@ float4 main(FSInput input) : SV_Target {
     float3 baseColor = rt0.rgb;
     float  ao        = rt0.a;  // mesh AO from GBuffer
 
-    // Combine screen-space GTAO with mesh AO (multiplicative)
+    // Combine screen-space GTAO with mesh AO (conservative min)
     // @ref UE5 DeferredLightingCommon.ush — SSAO * baked AO
 #ifdef UZ_BINDLESS
     if (gtaoSrvIndex != kSentinelSrvIndex) {
         Texture2D<float> gtaoTex = ResourceDescriptorHeap[gtaoSrvIndex];
         float gtao = gtaoTex.Load(int3(px, 0)).r;
-        ao = min(ao, gtao); // conservative: take the darker of mesh AO and GTAO
+        ao = min(ao, gtao);
+    }
+#else
+    {
+        float gtao = gtaoTextureT9.Load(int3(px, 0)).r;
+        if (gtao > 0.001) ao = min(ao, gtao); // skip if texture not bound (reads 0)
     }
 #endif
 
@@ -287,9 +295,13 @@ float4 main(FSInput input) : SV_Target {
         if (ssrSrvIndex != kSentinelSrvIndex) {
             Texture2D<float4> ssrTex = ResourceDescriptorHeap[ssrSrvIndex];
             float4 ssrData = ssrTex.Load(int3(px, 0));
-            // ssrData.rgb = hit color * confidence, ssrData.a = confidence
-            // Blend: lerp from IBL toward SSR based on confidence
             specularAmbient = lerp(specularAmbient, ssrData.rgb, ssrData.a);
+        }
+#else
+        {
+            float4 ssrData = ssrTextureT11.Load(int3(px, 0));
+            if (ssrData.a > 0.001)
+                specularAmbient = lerp(specularAmbient, ssrData.rgb, ssrData.a);
         }
 #endif
 
@@ -304,6 +316,12 @@ float4 main(FSInput input) : SV_Target {
             Texture2D<float4> ssgiTex = ResourceDescriptorHeap[ssgiSrvIndex];
             float3 ssgiColor = ssgiTex.Load(int3(px, 0)).rgb;
             diffuseAmbient += kD_env * ssgiColor * baseColor;
+        }
+#else
+        {
+            float3 ssgiColor = ssgiTextureT12.Load(int3(px, 0)).rgb;
+            if (any(ssgiColor > 0.001))
+                diffuseAmbient += kD_env * ssgiColor * baseColor;
         }
 #endif
 

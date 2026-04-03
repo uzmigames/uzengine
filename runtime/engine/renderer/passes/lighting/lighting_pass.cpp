@@ -144,8 +144,14 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
                     cmd->SetFragmentTexture(9, desc.gtaoTexture);
                 }
                 cmd->SetFragmentTexture(10, desc.emissiveTexture);
-                // t11 (local shadow atlas) is bound by ShaderParameterBinder
-                // via ShadowDataParams metadata above.
+                // t11: SSR temporal output
+                if (desc.ssrTexture.IsValid()) {
+                    cmd->SetFragmentTexture(11, desc.ssrTexture);
+                }
+                // t12: SSGI upsampled indirect diffuse
+                if (desc.ssgiTexture.IsValid()) {
+                    cmd->SetFragmentTexture(12, desc.ssgiTexture);
+                }
             }
 
             // ── Viewport and scissor ─────────────────────────────────────

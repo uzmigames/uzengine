@@ -79,6 +79,8 @@ struct LightingPassDesc {
     RHITextureHandle  iblBrdfLut;       ///< BRDF integration LUT (SM5 fallback, bound at t7).
     RHITextureHandle  transmittanceLutTexture; ///< Atmosphere transmittance LUT (SM5 fallback, bound at t8).
     RHITextureHandle  gtaoTexture;     ///< GTAO filtered AO texture (SM5 fallback, bound at t9).
+    RHITextureHandle  ssrTexture;      ///< SSR temporal output (SM5 fallback, bound at t11).
+    RHITextureHandle  ssgiTexture;     ///< SSGI upsampled indirect diffuse (SM5 fallback, bound at t12).
     bool              bindless;         ///< True if SM6.6 bindless path is active.
     float             viewportWidth;    ///< Viewport width in pixels.
     float             viewportHeight;   ///< Viewport height in pixels.

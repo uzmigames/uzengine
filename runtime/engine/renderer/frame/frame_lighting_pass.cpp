@@ -92,6 +92,19 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
         if (m_gtaoPass && m_gtaoPass->IsInitialized() && m_gtaoPass->settings.enabled) {
             lightDesc.gtaoTexture = m_gtaoPass->GetFilteredAOTexture();
         }
+        // SSR temporal output for SM5 fallback (t11)
+        if (ctx.ssrActive) {
+            const uint32_t ssrWriteIdx = m_ssrHistoryIndex;
+            if (m_ssrHistory[ssrWriteIdx].IsValid()) {
+                lightDesc.ssrTexture = m_ssrHistory[ssrWriteIdx];
+            } else if (m_ssrResolvedOutput.IsValid()) {
+                lightDesc.ssrTexture = m_ssrResolvedOutput;
+            }
+        }
+        // SSGI upsampled indirect diffuse for SM5 fallback (t12)
+        if (m_ssgiRenderer.IsReady()) {
+            lightDesc.ssgiTexture = m_ssgiRenderer.GetResultTexture();
+        }
         lightDesc.bindless            = ctx.bindless;
         lightDesc.viewportWidth       = ctx.renderWidth;
         lightDesc.viewportHeight      = ctx.renderHeight;
