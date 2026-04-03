@@ -756,6 +756,11 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
             const RHIPipelineHandle meshPipeline = meshOpaquePipeline.IsValid()
                 ? meshOpaquePipeline : meshTransparentPipeline;
 
+            // Skip mesh particle rendering if neither PSO compiled successfully.
+            if (!meshPipeline.IsValid()) {
+                continue;
+            }
+
             ParticleMeshBatchItem batch{};
             batch.pipeline         = meshPipeline;
             batch.meshVertexBuffer = RHIBufferHandle::Invalid(); // Mesh asset not yet wired.
