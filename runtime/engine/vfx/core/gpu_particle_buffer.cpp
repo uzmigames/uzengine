@@ -152,6 +152,16 @@ bool GPUParticleBuffer::Create(IRHIDevice* device, uint32_t particleCapacity)
     aliveCount = CreateVFXBuffer(device, sizeof(uint32_t), sizeof(uint32_t),
                                  "VFX_AliveCount");
 
+    // Readback buffer for alive count (CPU reads this after GPU writes aliveCount)
+    {
+        RHIBufferDesc rbDesc{};
+        rbDesc.sizeBytes = sizeof(uint32_t);
+        rbDesc.usage     = RHIBufferUsage::CopyDst;
+        rbDesc.memory    = RHIMemoryType::Readback;
+        rbDesc.debugName = "VFX_AliveCountReadback";
+        aliveCountReadback = device->CreateBuffer(rbDesc);
+    }
+
     // Shared: free list stack (capacity entries, each uint32 particle index)
     freeList = CreateVFXBuffer(device, cap * sizeof(uint32_t), sizeof(uint32_t),
                                "VFX_FreeList");
@@ -272,6 +282,7 @@ void GPUParticleBuffer::Destroy(IRHIDevice* device)
     sort.Destroy(device);
 
     if (aliveCount.IsValid())           device->DestroyBuffer(aliveCount);
+    if (aliveCountReadback.IsValid())   device->DestroyBuffer(aliveCountReadback);
     if (freeList.IsValid())             device->DestroyBuffer(freeList);
     if (freeListHead.IsValid())         device->DestroyBuffer(freeListHead);
     if (idToIndex.IsValid())            device->DestroyBuffer(idToIndex);

@@ -12,6 +12,7 @@
 #include "engine/vfx/core/gpu_particle_buffer.h"
 #include "engine/vfx/modules/emitter_module_stack.h"
 #include "engine/vfx/modules/module_compositor.h"
+#include "engine/vfx/components/particle_emitter.h"
 
 #include "engine_assert.h"
 #include "log.h"
@@ -446,9 +447,9 @@ void AddParticleSimulationPass(rg::RgBuilder& builder,
 
     for (size_t i = 0; i < desc.emitters.size(); ++i) {
         UZ_CHECKF(desc.emitters[i].buffer != nullptr,
-                  "ParticleSimulationPass: emitter[{}] has null GPUParticleBuffer", i);
+                  "ParticleSimulationPass: emitter has null GPUParticleBuffer");
         UZ_CHECKF(desc.emitters[i].buffer->IsValid(),
-                  "ParticleSimulationPass: emitter[{}] GPUParticleBuffer is not allocated", i);
+                  "ParticleSimulationPass: emitter GPUParticleBuffer is not allocated");
     }
 
     builder.AddPass("VFX_ParticleSimulation", [desc](rg::RgPassBuilder& pb) {
@@ -551,10 +552,35 @@ void AddParticleSimulationPass(rg::RgBuilder& builder,
 
                 DispatchIndirectArgs(cmd, desc, emitter);
 
-                // Transition aliveCount back to UAV so the render graph's
-                // tracked exit state remains correct (the graph expects all
-                // sim-pass buffers to end in UAV).
-                {
+                // ── Readback alive count for CPU (1-frame latency) ──────────
+                // Read the PREVIOUS frame's readback (written last frame).
+                // Then copy THIS frame's alive count to the readback buffer.
+                if (emitter.buffer->aliveCountReadback.IsValid()) {
+                    // Read previous frame result (available because GPU finished it)
+                    const auto* mapped = static_cast<const uint32_t*>(
+                        desc.device->MapBuffer(emitter.buffer->aliveCountReadback));
+                    if (mapped) {
+                        emitter.emitter->cpuAliveCount = *mapped;
+                        desc.device->UnmapBuffer(emitter.buffer->aliveCountReadback);
+                    }
+
+                    // Copy this frame's alive count → readback buffer
+                    RHIBarrierDesc toCopy{};
+                    toCopy.buffer      = emitter.buffer->aliveCount;
+                    toCopy.stateBefore = RHIResourceState::ShaderResource;
+                    toCopy.stateAfter  = RHIResourceState::CopySrc;
+                    cmd->ResourceBarrier(&toCopy, 1);
+
+                    cmd->CopyBuffer(emitter.buffer->aliveCount, 0,
+                                    emitter.buffer->aliveCountReadback, 0, sizeof(uint32_t));
+
+                    RHIBarrierDesc toUav{};
+                    toUav.buffer      = emitter.buffer->aliveCount;
+                    toUav.stateBefore = RHIResourceState::CopySrc;
+                    toUav.stateAfter  = RHIResourceState::UnorderedAccess;
+                    cmd->ResourceBarrier(&toUav, 1);
+                } else {
+                    // No readback — transition SRV→UAV as before
                     RHIBarrierDesc barrier{};
                     barrier.buffer      = emitter.buffer->aliveCount;
                     barrier.stateBefore = RHIResourceState::ShaderResource;
