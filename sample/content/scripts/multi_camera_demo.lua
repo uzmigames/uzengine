@@ -81,9 +81,9 @@ function on_update(entity, dt)
 
     -- Manual switch: keys 1, 2, 3
     if uz.input and uz.input.is_key_just_pressed then
-        if uz.input.is_key_just_pressed(0x31) then switch_to(1) end  -- '1'
-        if uz.input.is_key_just_pressed(0x32) then switch_to(2) end  -- '2'
-        if uz.input.is_key_just_pressed(0x33) then switch_to(3) end  -- '3'
+        if uz.input.is_key_just_pressed("1") then switch_to(1) end
+        if uz.input.is_key_just_pressed("2") then switch_to(2) end
+        if uz.input.is_key_just_pressed("3") then switch_to(3) end
     end
 end
 
