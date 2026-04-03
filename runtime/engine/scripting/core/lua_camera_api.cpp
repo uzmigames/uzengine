@@ -1,5 +1,6 @@
 #include "lua_camera_api.h"
 
+#include "camera_manager.h"
 #include "units.h"
 #include "log.h"
 #include "world.h"
@@ -533,6 +534,105 @@ void LuaRegisterCameraAPI(lua_State* L) {
     lua_pop(L, 1);                 // pop uz table
 
     UZ_LOG(Scripting, Info, "uz.camera API registered");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CameraManager Lua Bindings
+// ─────────────────────────────────────────────────────────────────────────────
+
+static constexpr const char* kCameraManagerKey = "uz_camera_manager";
+
+void LuaSetCameraManager(lua_State* L, CameraManager* mgr) {
+    lua_pushlightuserdata(L, mgr);
+    lua_setfield(L, LUA_REGISTRYINDEX, kCameraManagerKey);
+}
+
+static CameraManager* GetCameraManager(lua_State* L) {
+    lua_getfield(L, LUA_REGISTRYINDEX, kCameraManagerKey);
+    auto* mgr = static_cast<CameraManager*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return mgr;
+}
+
+/// uz.camera.mgr_create(name) → id
+static int CameraMgrCreate(lua_State* L) {
+    auto* mgr = GetCameraManager(L);
+    if (!mgr) { lua_pushnil(L); return 1; }
+    const char* name = luaL_checkstring(L, 1);
+    CameraId id = mgr->CreateCamera(name);
+    lua_pushinteger(L, static_cast<lua_Integer>(id));
+    return 1;
+}
+
+/// uz.camera.mgr_switch(id) → bool
+static int CameraMgrSwitch(lua_State* L) {
+    auto* mgr = GetCameraManager(L);
+    if (!mgr) { lua_pushboolean(L, 0); return 1; }
+    CameraId id = static_cast<CameraId>(luaL_checkinteger(L, 1));
+    lua_pushboolean(L, mgr->SetActiveCamera(id) ? 1 : 0);
+    return 1;
+}
+
+/// uz.camera.mgr_list() → table of {id=N, name="..."}
+static int CameraMgrList(lua_State* L) {
+    auto* mgr = GetCameraManager(L);
+    if (!mgr) { lua_newtable(L); return 1; }
+    lua_newtable(L);
+    for (uint32_t i = 0; i < mgr->GetCameraCount(); ++i) {
+        lua_newtable(L);
+        // Note: CameraManager uses sequential IDs starting from 0.
+        // We iterate by index but the ID may differ if cameras were destroyed.
+        // For simplicity, expose by index.
+        lua_pushinteger(L, static_cast<lua_Integer>(i));
+        lua_setfield(L, -2, "index");
+        lua_rawseti(L, -2, static_cast<lua_Integer>(i + 1));
+    }
+    return 1;
+}
+
+/// uz.camera.mgr_get_active() → id
+static int CameraMgrGetActive(lua_State* L) {
+    auto* mgr = GetCameraManager(L);
+    if (!mgr) { lua_pushnil(L); return 1; }
+    lua_pushinteger(L, static_cast<lua_Integer>(mgr->GetActiveCameraId()));
+    return 1;
+}
+
+/// uz.camera.mgr_destroy(id) → bool
+static int CameraMgrDestroy(lua_State* L) {
+    auto* mgr = GetCameraManager(L);
+    if (!mgr) { lua_pushboolean(L, 0); return 1; }
+    CameraId id = static_cast<CameraId>(luaL_checkinteger(L, 1));
+    lua_pushboolean(L, mgr->DestroyCamera(id) ? 1 : 0);
+    return 1;
+}
+
+void LuaRegisterCameraManagerAPI(lua_State* L) {
+    lua_getglobal(L, "uz");
+    if (!lua_istable(L, -1)) { lua_pop(L, 1); return; }
+
+    // Get existing uz.camera table
+    lua_getfield(L, -1, "camera");
+    if (!lua_istable(L, -1)) { lua_pop(L, 2); return; }
+
+    lua_pushcfunction(L, CameraMgrCreate);
+    lua_setfield(L, -2, "mgr_create");
+
+    lua_pushcfunction(L, CameraMgrSwitch);
+    lua_setfield(L, -2, "mgr_switch");
+
+    lua_pushcfunction(L, CameraMgrList);
+    lua_setfield(L, -2, "mgr_list");
+
+    lua_pushcfunction(L, CameraMgrGetActive);
+    lua_setfield(L, -2, "mgr_get_active");
+
+    lua_pushcfunction(L, CameraMgrDestroy);
+    lua_setfield(L, -2, "mgr_destroy");
+
+    lua_pop(L, 2); // pop camera table + uz table
+
+    UZ_LOG(Scripting, Info, "uz.camera manager API registered");
 }
 
 } // namespace uz

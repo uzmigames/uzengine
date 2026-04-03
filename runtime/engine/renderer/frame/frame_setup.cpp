@@ -152,6 +152,25 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
                RenderPathToString(m_renderPath));
     }
 
+    // ── Editor Free-Cam Toggle (F5) ──
+    if (m_input && m_input->IsKeyJustPressed(Key::F5)) {
+        if (m_editorFreeCamId == kInvalidCameraId) {
+            // Push: create a free-cam at the current camera's position
+            m_editorFreeCamId = m_cameraManager->CreateCamera("EditorFreeCam");
+            Camera* freeCam = m_cameraManager->GetCamera(m_editorFreeCamId);
+            if (freeCam) {
+                const Camera& current = m_cameraManager->GetActiveCamera();
+                *freeCam = current; // Copy position, orientation, projection
+            }
+            m_cameraManager->PushCamera(m_editorFreeCamId);
+        } else {
+            // Pop: restore previous camera, destroy free-cam
+            m_cameraManager->PopCamera();
+            m_cameraManager->DestroyCamera(m_editorFreeCamId);
+            m_editorFreeCamId = kInvalidCameraId;
+        }
+    }
+
     // ── Camera: ECS camera (game mode) or fly controller (editor mode) ──
     bool cameraFromECS = false;
 

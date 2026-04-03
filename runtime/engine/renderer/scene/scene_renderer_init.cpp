@@ -10,6 +10,8 @@
 #include "async_texture_decoder.h"
 #include "camera.h"
 #include "camera_manager.h"
+#include "lua_camera_api.h"
+#include "../engine/scripting/lua_vm.h"
 #include "units.h"
 #include "fly_camera_controller.h"
 #include "render_graph_resources.h"
@@ -148,6 +150,12 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     cam.LookAt({0.f, 0.f, 0.f}, Vec3::Up());
     m_cameraCtrl->InitFromCamera(cam);
     m_cameraCtrl->SetMoveSpeed(5.f);  // 5 cm/s — matches Lua pbr_showcase_controller default
+
+    // ── Register CameraManager with Lua VM ──
+    if (auto* L = uz::LuaVM::GetState()) {
+        LuaSetCameraManager(L, m_cameraManager.get());
+        LuaRegisterCameraManagerAPI(L);
+    }
 
     // ── GBuffer (at render resolution — upscaled to display res by TAA) ──
     if (!m_gbuffer.Create(device, m_renderWidth, m_renderHeight)) {

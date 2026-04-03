@@ -29,6 +29,7 @@
     std::unique_ptr<StatsOverlay> m_statsOverlay;
     std::unique_ptr<CameraManager> m_cameraManager;
     std::unique_ptr<FlyCameraController> m_cameraCtrl;
+    CameraId m_editorFreeCamId = kInvalidCameraId;     ///< Editor free-cam ID (kInvalidCameraId = not active).
     std::unique_ptr<rg::RgResourcePool> m_rgPool;
 
     // ── Fallback Textures (SM5 unconditional sampling) ────────────────────
