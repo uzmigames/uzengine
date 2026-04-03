@@ -48,6 +48,10 @@ namespace uz {
 void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     UZ_PROFILE_FUNCTION();
 
+    // ── Reset per-frame CB skip counters ──────────────────────────────
+    m_cbUpdatesSkipped = 0;
+    m_cbUpdatesTotal   = 0;
+
     // ── Gather scene update flags from component dirty state ────────────
     ctx.updateFlags.Clear();
     // Camera always changes (timeParams increments every frame)
@@ -507,23 +511,44 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     std::memcpy(ctx.perFrameAlloc.cpuPtr, &perFrame, sizeof(PerFrameCB));
 
     // ── Shadow cascades — delegated to shadow_renderer ─────────────────
-    // Determine shadow cache status early so ShadowDataCB gets the right fields.
-    // Shadow cache disabled — static+dynamic atlas composition not yet implemented.
-    // All shadow-casting geometry renders into the per-frame atlas every frame.
-    // Re-enable after implementing static atlas → per-frame atlas copy/compose.
+    // Skip cascade recompute when camera + lights + transforms haven't changed.
+    // The cascade ViewProj matrices depend on camera position/direction and light
+    // direction — if none changed, the previous frame's ShadowDataCB is still valid.
+    m_cbUpdatesTotal++;
     ctx.shadowCacheEnabled = false;
-    ctx.shadowFrame = SetupShadowFrame(
-        camera, ctx.sunDir,
-        ctx.lightData.perLightShadowBias, ctx.lightData.perLightShadowSlopeBias,
-        ctx.lightData.lightSourceAngleDeg,
-        m_shadowAtlas.GetSrvIndex(), kShadowResolution, *m_cbRing,
-        ctx.lightData.farShadowCascadeCount,
-        ctx.lightData.farShadowDistance,
-        ctx.lightData.farShadowLodBias,
-        ctx.shadowCacheEnabled,
-        m_staticShadowAtlasSrv);
-    ctx.totalCascadeCount = ctx.shadowFrame.totalCascadeCount;
-    ctx.shadowAlloc = ctx.shadowFrame.cbAllocation;
+    const bool shadowsDirty = ctx.updateFlags.AreShadowsDirty() || !m_prevShadowValid;
+
+    if (shadowsDirty) {
+        ctx.shadowFrame = SetupShadowFrame(
+            camera, ctx.sunDir,
+            ctx.lightData.perLightShadowBias, ctx.lightData.perLightShadowSlopeBias,
+            ctx.lightData.lightSourceAngleDeg,
+            m_shadowAtlas.GetSrvIndex(), kShadowResolution, *m_cbRing,
+            ctx.lightData.farShadowCascadeCount,
+            ctx.lightData.farShadowDistance,
+            ctx.lightData.farShadowLodBias,
+            ctx.shadowCacheEnabled,
+            m_staticShadowAtlasSrv);
+        ctx.totalCascadeCount = ctx.shadowFrame.totalCascadeCount;
+        ctx.shadowAlloc = ctx.shadowFrame.cbAllocation;
+
+        // Cache for next frame comparison
+        if (ctx.shadowAlloc.cpuPtr) {
+            std::memcpy(&m_prevShadowCB, ctx.shadowAlloc.cpuPtr, sizeof(ShadowDataCB));
+            m_prevShadowAlloc = ctx.shadowAlloc;
+            m_prevShadowValid = true;
+        }
+    } else {
+        // Shadow data unchanged — skip expensive cascade recompute.
+        // Still allocate a fresh CB slot (ring is triple-buffered, old slot
+        // will be overwritten) but copy from cache instead of recomputing.
+        ctx.shadowAlloc = m_cbRing->Allocate(sizeof(ShadowDataCB));
+        std::memcpy(ctx.shadowAlloc.cpuPtr, &m_prevShadowCB, sizeof(ShadowDataCB));
+        ctx.totalCascadeCount = m_prevShadowCB.cascadeCount;
+        ctx.shadowFrame.totalCascadeCount = m_prevShadowCB.cascadeCount;
+        ctx.shadowFrame.cbAllocation = ctx.shadowAlloc;
+        m_cbUpdatesSkipped++;
+    }
 
     // ── Build ShadowDataParams for binder path ──────────────────────────
     // Copy the 768-byte scalar section from the CB allocation, then attach

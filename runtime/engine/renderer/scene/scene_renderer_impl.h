@@ -279,6 +279,13 @@
     Mat4     m_prevViewProj;                   ///< Previous frame's unjittered viewProj for reprojection.
     bool     m_prevViewProjValid = false;      ///< False on first frame (no valid previous viewProj).
 
+    // ── CB Update Optimization (dirty flag skip) ────────────────────────
+    ShadowDataCB m_prevShadowCB{};              ///< Cached previous frame shadow CB for memcmp skip.
+    CBAllocation m_prevShadowAlloc{};            ///< Previous frame shadow CB allocation (reused when skipped).
+    bool         m_prevShadowValid = false;      ///< False on first frame.
+    uint32_t     m_cbUpdatesSkipped = 0;         ///< Per-frame counter: number of CB sections skipped.
+    uint32_t     m_cbUpdatesTotal   = 0;         ///< Per-frame counter: total CB sections considered.
+
     // ── Temporal Upscaler (ITemporalUpscaler) ────────────────────────────────
 
     std::unique_ptr<ITemporalUpscaler> m_upscaler;         ///< Active temporal upscaler (TAA or TSR).
