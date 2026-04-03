@@ -895,7 +895,7 @@ void SceneRenderer::ApplyCVars() {
 
     // ── Render Pass Toggles ─────────────────────────────────────────────
     m_taaEnabled        = cvars.GetBool("r.TAA", false);
-    m_ssrEnabled        = cvars.GetBool("r.SSR", false);
+    m_ssrEnabled        = cvars.GetBool("r.SSR", true);
     m_motionBlurEnabled = cvars.GetBool("r.MotionBlur", true);
     m_casEnabled        = cvars.GetBool("r.CAS", true);
     m_lensFlareEnabled  = cvars.GetBool("r.LensFlare", false);
@@ -918,7 +918,7 @@ void SceneRenderer::ApplyCVars() {
     m_passInspector.SetPassEnabled("aerial_persp", cvars.GetBool("r.AerialPerspective", true));
     m_passInspector.SetPassEnabled("ssgi", cvars.GetBool("r.SSGI", true));
     m_passInspector.SetPassEnabled("sdf_gi", cvars.GetBool("r.RadianceCache", false));
-    m_passInspector.SetPassEnabled("ssr", cvars.GetBool("r.SSR", false));
+    m_passInspector.SetPassEnabled("ssr", cvars.GetBool("r.SSR", true));
     m_passInspector.SetPassEnabled("motionblur", cvars.GetBool("r.MotionBlur", true));
     m_passInspector.SetPassEnabled("dof", cvars.GetBool("r.DOF", false));
     m_passInspector.SetPassEnabled("cas", cvars.GetBool("r.CAS", true));
