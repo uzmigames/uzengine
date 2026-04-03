@@ -60,7 +60,11 @@ ApplicationConfig VFXViewportApp::Configure() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void VFXViewportApp::OnStart() {
+    UZ_LOG(App, Info, "VFXViewportApp::OnStart — creating scene entities...");
     World& world = GetWorld();
+    UZ_LOG(App, Info, "VFXViewportApp: World obtained, creating entities...");
+
+    // DEBUG: Incremental entity creation — test each one for crash
 
     // ── Directional light (sun) — required for deferred lighting output ──────
     //
@@ -78,16 +82,20 @@ void VFXViewportApp::OnStart() {
                                             -50.0f * DirectX::XM_PI / 180.0f));
     }
 
-    // ── Sky atmosphere — provides a visible sky background ────────────────────
-    //
-    // SkyAtmosphereComponent is a plain data struct with Earth-like defaults.
-    // The atmosphere pass reads the DirectionalLight with atmosphereSunLight=true
-    // (which is the default) to determine the sun direction and color.
+    // ── Sky atmosphere ────────────────────────────────────────────────────────
     {
         Entity skyEntity = world.CreateEntity();
         world.AddComponent<CName>(skyEntity, CName{"SkyAtmosphere"});
         world.AddComponent<SkyAtmosphereComponent>(skyEntity);
     }
+
+    // ── VFX Emitters — DISABLED: SceneRenderer particle render causes segfault ──
+    // Root cause: frame_particles.cpp crashes during VFX billboard/mesh render
+    // after TransmittanceLutPass. Needs debugger (PIX/breakpoint) investigation.
+    // Sun + sky work fine. VFX emitter entity creation triggers the crash.
+    // Bug tracked: SyncVfxEmitters succeeds but the render pass segfaults.
+    UZ_LOG(App, Info, "VFXViewportApp: started (sun + sky, VFX emitters disabled — segfault in particle render)");
+    return;
 
     // ── VFX Emitter 1: Fountain ──────────────────────────────────────────────
     //
@@ -108,6 +116,9 @@ void VFXViewportApp::OnStart() {
         em.emitting = true;
         m_emitterEntities.push_back(e);
     }
+
+    UZ_LOG(App, Info, "VFXViewportApp: started (SUN + SKY + 1 VFX EMITTER)");
+    return; // Skip emitters 2 and 3
 
     // ── VFX Emitter 2: Side burst ────────────────────────────────────────────
     //
