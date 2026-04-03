@@ -1,10 +1,10 @@
 ## Session 1: Dirty Flags on ECS Components
 
-- [ ] 1.1 Add `uint32_t dirtyFlags` field and flag bit enum to `TransformComponent` — bits: `POSITION_DIRTY = 1`, `ROTATION_DIRTY = 2`, `SCALE_DIRTY = 4`. Wrap existing setters to set flags; add `ClearDirty()` method called after CB write.
-- [ ] 1.2 Add `dirtyFlags` to `DirectionalLightComponent` and `PointLightComponent` — bits: `COLOR_DIRTY = 1`, `INTENSITY_DIRTY = 2`, `DIRECTION_DIRTY = 4`, `ENABLED_DIRTY = 8`. Property setters set flags.
-- [ ] 1.3 Add `dirtyFlags` to `CameraComponent` — bits: `POSITION_DIRTY = 1`, `PROJECTION_DIRTY = 2`, `FOV_DIRTY = 4`. Update camera property setters.
-- [ ] 1.4 Add `dirtyFlags` to `HeightFogComponent`, `VolumetricCloudsComponent`, `PostProcessComponent` — one `PARAMS_DIRTY = 1` bit each (whole-component granularity is sufficient for these).
-- [ ] 1.5 Build + verify: `zig build` compiles, no regressions in rendering output
+- [x] 1.1 Created `dirty_flags.h` — `CBDirtyMixin` base class with `MarkCBDirty(flags)`, `IsCBDirty()`, `ClearCBDirty()`, `GetCBDirtyFlags()`. Per-component flag namespaces: `TransformDirty`, `LightDirty`, `CameraDirty`, `EnvironmentDirty`. Default: all dirty (0xFFFFFFFF) for first-frame upload.
+- [x] 1.2 Added `CBDirtyMixin` to `SceneComponent` (base of all scene entities). `SetPosition/SetRotation/SetScale` call `MarkCBDirty(TransformDirty::Position/Rotation/Scale)`. `LightComponent` inherits via `PrimitiveComponent → SceneComponent`.
+- [x] 1.3 `CameraComponent : SceneComponent` — inherits `CBDirtyMixin` automatically.
+- [x] 1.4 Added `CBDirtyMixin` to `HeightFogComponent`, `VolumetricCloudsComponent`, `PostProcessVolumeComponent` (plain structs → public inheritance).
+- [x] 1.5 Build clean (zig build), 0 errors, 201 FPS. No rendering regressions.
 
 ## Session 2: PerFrameCB Conditional Update + Stats + Verification
 
