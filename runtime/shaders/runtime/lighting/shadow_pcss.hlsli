@@ -140,4 +140,50 @@ float SampleShadowCascadePCSS(float3 worldPos, float3 N, float NdotL, uint casca
     return shadow / 16.0;
 }
 
+// ─── Full cascade shadow with PCSS/ESM (mirrors CascadeShadow) ───────────
+
+/// Drop-in replacement for CascadeShadow() with PCSS/ESM/IGN support.
+/// Uses filterMethod from ShadowDataCB to select algorithm.
+float CascadeShadowPCSS(float3 worldPos, float viewDepth, float3 N, float NdotL,
+                         float2 pixelPos, uint frameIdx) {
+    if (cascadeCount == 0) return 1.0;
+
+#ifdef UZ_BINDLESS
+    Texture2D<float> sa = ResourceDescriptorHeap[shadowAtlasIndex];
+#else
+    #define sa shadowAtlasTexture
+#endif
+
+    uint sel = cascadeCount - 1;
+    [unroll] for (uint c = 0; c < kMaxCascades; ++c) {
+        if (c >= cascadeCount) break;
+        if (viewDepth < GetCascadeSplit(c)) { sel = c; break; }
+    }
+
+    float shadow = SampleShadowCascadePCSS(worldPos, N, NdotL, sel, sa, shadowSampler,
+                                            pixelPos, frameIdx);
+
+    if (sel < cascadeCount - 1) {
+        float splitDist = GetCascadeSplit(sel);
+        float fadeStart = GetCascadeFadeStart(sel);
+        float blendRange = splitDist - fadeStart;
+        if (blendRange > 0.0 && viewDepth > fadeStart) {
+            float bf = saturate((viewDepth - fadeStart) / blendRange);
+            float next = SampleShadowCascadePCSS(worldPos, N, NdotL, sel + 1, sa, shadowSampler,
+                                                  pixelPos, frameIdx);
+            shadow = lerp(shadow, next, bf);
+        }
+    }
+
+    if (shadowFadeEnd > shadowFadeStart && viewDepth > shadowFadeStart) {
+        float ff = saturate((viewDepth - shadowFadeStart) / (shadowFadeEnd - shadowFadeStart));
+        shadow = lerp(shadow, 1.0, ff);
+    }
+
+#ifndef UZ_BINDLESS
+    #undef sa
+#endif
+    return shadow;
+}
+
 #endif // UZ_SHADOW_PCSS_HLSLI
