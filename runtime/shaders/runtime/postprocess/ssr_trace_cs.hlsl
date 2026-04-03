@@ -6,10 +6,17 @@
 #include "../common/encoding.hlsli"
 
 cbuffer SsrTraceRootCB : register(b0) {
+#ifdef UZ_BINDLESS
     uint   depthSrvIdx;         // 0
     uint   normalSrvIdx;        // 1
     uint   hizSrvIdx;           // 2
     uint   sceneColorSrvIdx;    // 3
+#else
+    uint   _srvPad0;            // 0
+    uint   _srvPad1;            // 1
+    uint   _srvPad2;            // 2
+    uint   _srvPad3;            // 3
+#endif
     uint   outputWidth;         // 4
     uint   outputHeight;        // 5
     float  intensity;           // 6
@@ -28,6 +35,12 @@ cbuffer PerFrameCB : register(b1) {
 };
 
 RWTexture2D<float4> outputSSR : register(u0);
+#ifndef UZ_BINDLESS
+Texture2D<float>  t_depth      : register(t0);
+Texture2D<float4> t_normal     : register(t1);
+Texture2D<float>  t_hiz        : register(t2);
+Texture2D<float4> t_sceneColor : register(t3);
+#endif
 SamplerState pointClamp  : register(s0);
 SamplerState linearClamp : register(s2);
 
@@ -81,10 +94,17 @@ void main(uint3 DTid : SV_DispatchThreadID)
     float2 texelSize = 1.0 / float2(outputWidth, outputHeight);
     float2 uv = (float2(DTid.xy) + 0.5) * texelSize;
 
+#ifdef UZ_BINDLESS
     Texture2D<float>  depthTex  = ResourceDescriptorHeap[depthSrvIdx];
     Texture2D<float4> normalTex = ResourceDescriptorHeap[normalSrvIdx];
     Texture2D<float4> colorTex  = ResourceDescriptorHeap[sceneColorSrvIdx];
     Texture2D<float>  hizTex    = ResourceDescriptorHeap[hizSrvIdx];
+#else
+    Texture2D<float>  depthTex  = t_depth;
+    Texture2D<float4> normalTex = t_normal;
+    Texture2D<float4> colorTex  = t_sceneColor;
+    Texture2D<float>  hizTex    = t_hiz;
+#endif
 
     float deviceZ = depthTex.SampleLevel(pointClamp, uv, 0).r;
 

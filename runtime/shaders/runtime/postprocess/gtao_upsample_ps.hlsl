@@ -3,9 +3,15 @@
 /// @constants depthSimilarity threshold = 0.003
 
 cbuffer GTAOUpsampleRootCB : register(b0) {
+#ifdef UZ_BINDLESS
     uint   halfResAOSrvIndex;     // 0
     uint   halfResDepthSrvIndex;  // 1
     uint   fullResDepthSrvIndex;  // 2
+#else
+    uint   _srvPad0;              // 0
+    uint   _srvPad1;              // 1
+    uint   _srvPad2;              // 2
+#endif
     uint   _pad0;                 // 3
     float  halfResTexelSizeX;     // 4
     float  halfResTexelSizeY;     // 5
@@ -13,6 +19,11 @@ cbuffer GTAOUpsampleRootCB : register(b0) {
     float  fullResTexelSizeY;     // 7
 };
 
+#ifndef UZ_BINDLESS
+Texture2D<float> t_halfAO    : register(t0);
+Texture2D<float> t_halfDepth : register(t1);
+Texture2D<float> t_fullDepth : register(t2);
+#endif
 SamplerState linearClamp : register(s0);
 SamplerState pointClamp  : register(s1);
 
@@ -22,16 +33,20 @@ float DepthSimilarity(float dA, float dB) {
 
 float4 main(float4 posCS : SV_Position, float2 uv : TEXCOORD0) : SV_Target
 {
+#ifdef UZ_BINDLESS
     Texture2D<float> halfAOTex    = ResourceDescriptorHeap[halfResAOSrvIndex];
     Texture2D<float> halfDepthTex = ResourceDescriptorHeap[halfResDepthSrvIndex];
     Texture2D<float> fullDepthTex = ResourceDescriptorHeap[fullResDepthSrvIndex];
+#else
+    Texture2D<float> halfAOTex    = t_halfAO;
+    Texture2D<float> halfDepthTex = t_halfDepth;
+    Texture2D<float> fullDepthTex = t_fullDepth;
+#endif
 
     float2 halfTexelSize = float2(halfResTexelSizeX, halfResTexelSizeY);
 
-    // Full-res depth at this pixel
     float fullDepth = fullDepthTex.SampleLevel(pointClamp, uv, 0).r;
 
-    // 4 diagonal corners in half-res space at ±0.25 texel offset
     static const float2 offsets[4] = {
         float2(-0.25, -0.25), float2(0.25, -0.25),
         float2(-0.25,  0.25), float2(0.25,  0.25)
@@ -55,7 +70,6 @@ float4 main(float4 posCS : SV_Position, float2 uv : TEXCOORD0) : SV_Target
     if (weightSum > 0.0001) {
         ao = aoSum / weightSum;
     } else {
-        // Fallback: conservative min of all 4 samples (prevents halo lightening)
         ao = 1.0;
         [unroll]
         for (uint j = 0; j < 4; j++) {

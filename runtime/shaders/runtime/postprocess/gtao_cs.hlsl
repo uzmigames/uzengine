@@ -5,8 +5,13 @@
 
 // ── Root constants at b0 (16 DWORDs = 64 bytes) ─────────────────────────────
 cbuffer GTAORootCB : register(b0) {
+#ifdef UZ_BINDLESS
     uint   depthSrvIndex;     // 0
     uint   normalSrvIndex;    // 1
+#else
+    uint   _srvPad0;          // 0 (unused in SM5 — textures bound via register)
+    uint   _srvPad1;          // 1
+#endif
     uint   outputWidth;       // 2
     uint   outputHeight;      // 3
     float  invTanHalfFov;     // 4
@@ -24,6 +29,10 @@ cbuffer GTAORootCB : register(b0) {
 };
 
 RWTexture2D<float> outputAO : register(u0);
+#ifndef UZ_BINDLESS
+Texture2D<float>  t_depth  : register(t0);
+Texture2D<float4> t_normal : register(t1);
+#endif
 SamplerState pointClamp : register(s0);
 
 static const float PI       = 3.14159265359;
@@ -45,7 +54,11 @@ float3 ScreenToViewPos(float2 uv, float linearZ) {
 }
 
 float SampleDepth(float2 uv) {
+#ifdef UZ_BINDLESS
     Texture2D<float> depthTex = ResourceDescriptorHeap[depthSrvIndex];
+#else
+    Texture2D<float> depthTex = t_depth;
+#endif
     return depthTex.SampleLevel(pointClamp, uv, 0).r;
 }
 

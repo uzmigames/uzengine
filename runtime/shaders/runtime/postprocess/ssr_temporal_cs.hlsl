@@ -4,10 +4,17 @@
 /// @constants TEMPORAL_BLEND_ALPHA = 0.05, VELOCITY_THRESHOLD = 0.01
 
 cbuffer SsrTemporalRootCB : register(b0) {
+#ifdef UZ_BINDLESS
     uint   currentSsrSrvIdx;  // 0
     uint   historySsrSrvIdx;  // 1
     uint   velocitySrvIdx;    // 2
     uint   depthSrvIdx;       // 3
+#else
+    uint   _srvPad0;          // 0
+    uint   _srvPad1;          // 1
+    uint   _srvPad2;          // 2
+    uint   _srvPad3;          // 3
+#endif
     uint   outputWidth;       // 4
     uint   outputHeight;      // 5
     uint   firstFrame;        // 6: 1 = no valid history
@@ -26,6 +33,11 @@ cbuffer PerFrameCB : register(b1) {
 };
 
 RWTexture2D<float4> outputSSR : register(u0);
+#ifndef UZ_BINDLESS
+Texture2D<float4> t_currentSsr : register(t0);
+Texture2D<float4> t_historySsr : register(t1);
+Texture2D<float2> t_velocity   : register(t2);
+#endif
 SamplerState linearClamp : register(s0);
 SamplerState pointClamp  : register(s1);
 
@@ -40,9 +52,15 @@ void main(uint3 DTid : SV_DispatchThreadID)
     float2 texelSize = 1.0 / float2(outputWidth, outputHeight);
     float2 uv = (float2(DTid.xy) + 0.5) * texelSize;
 
+#ifdef UZ_BINDLESS
     Texture2D<float4> currentTex  = ResourceDescriptorHeap[currentSsrSrvIdx];
     Texture2D<float4> historyTex  = ResourceDescriptorHeap[historySsrSrvIdx];
     Texture2D<float2> velocityTex = ResourceDescriptorHeap[velocitySrvIdx];
+#else
+    Texture2D<float4> currentTex  = t_currentSsr;
+    Texture2D<float4> historyTex  = t_historySsr;
+    Texture2D<float2> velocityTex = t_velocity;
+#endif
 
     float4 currentSSR = currentTex.SampleLevel(pointClamp, uv, 0);
 

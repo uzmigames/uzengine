@@ -7,13 +7,22 @@ cbuffer DenoiseParams : register(b0) {
     float  texelSizeY;       // 1
     float  nearPlane;        // 2
     float  farPlane;         // 3
+#ifdef UZ_BINDLESS
     uint   rawAOSrvIndex;    // 4
     uint   depthSrvIndex;    // 5
+#else
+    uint   _srvPad0;         // 4
+    uint   _srvPad1;         // 5
+#endif
     uint   _pad0;            // 6
     uint   _pad1;            // 7
 };
 
 RWTexture2D<float> filteredAO : register(u0);
+#ifndef UZ_BINDLESS
+Texture2D<float> t_rawAO : register(t0);
+Texture2D<float> t_depth : register(t1);
+#endif
 SamplerState linearClamp : register(s0);
 
 float LinearizeDepth(float deviceZ) {
@@ -36,8 +45,13 @@ void main(uint3 DTid : SV_DispatchThreadID)
     float2 texelSize = float2(texelSizeX, texelSizeY);
     float2 uv = (float2(DTid.xy) + 0.5) * texelSize;
 
+#ifdef UZ_BINDLESS
     Texture2D<float> rawAOTex = ResourceDescriptorHeap[rawAOSrvIndex];
     Texture2D<float> depthTex = ResourceDescriptorHeap[depthSrvIndex];
+#else
+    Texture2D<float> rawAOTex = t_rawAO;
+    Texture2D<float> depthTex = t_depth;
+#endif
 
     float centerAO    = rawAOTex.SampleLevel(linearClamp, uv, 0).r;
     float centerDepth = LinearizeDepth(depthTex.SampleLevel(linearClamp, uv, 0).r);
@@ -59,9 +73,9 @@ void main(uint3 DTid : SV_DispatchThreadID)
         float  sampleAO    = rawAOTex.SampleLevel(linearClamp, sampleUV, 0).r;
         float  sampleDepth = LinearizeDepth(depthTex.SampleLevel(linearClamp, sampleUV, 0).r);
 
-        float w = DepthSimilarity(centerDepth, sampleDepth);
-        aoSum    += sampleAO * w;
-        weightSum += w;
+        float dw = DepthSimilarity(centerDepth, sampleDepth);
+        aoSum    += sampleAO * dw;
+        weightSum += dw;
     }
 
     filteredAO[DTid.xy] = aoSum / max(weightSum, 0.0001);
