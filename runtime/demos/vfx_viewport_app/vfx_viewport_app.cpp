@@ -56,77 +56,18 @@ ApplicationConfig VFXViewportApp::Configure() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void VFXViewportApp::OnStart() {
-    World& world = GetWorld();
+    // NOTE: VFX emitter entities are NOT created here because the SceneRenderer
+    // does not yet have a VFX sync pass (SyncVfxEmitters). Creating ECS entities
+    // with VfxEmitterComponent would have no visual effect and may cause crashes.
+    //
+    // TODO (Task 5.5.0): Once SceneRenderer has ParticleSimulationPass and
+    // ParticleRenderPass integrated, uncomment the emitter entity creation below.
+    //
+    // For now, the Application-based VFX viewport demonstrates the engine game
+    // loop, SceneRenderer pipeline (sky, grid, GTAO, deferred lighting, tonemap),
+    // and camera controls — but without GPU particles.
 
-    // ── Primary emitter: upward fountain at the world origin ─────────────
-    {
-        Entity entity = world.CreateEntity();
-
-        auto& scene = world.AddComponent<SceneComponent>(entity);
-        scene.SetPosition({0.f, 0.f, 0.f});
-
-        auto& name = world.AddComponent<CName>(entity);
-        name.name = "VFX_Fountain";
-
-        auto& emitter = world.AddComponent<VfxEmitterComponent>(entity);
-        emitter.maxParticles = 10000;
-        emitter.emissionRate = 300.0f;
-        emitter.lifetime     = 3.0f;
-        emitter.gravity      = {0.0f, 0.0f, -981.0f}; // Z-down gravity in cm/s^2
-        emitter.damping      = 0.98f;
-        emitter.spawnVelocity = {0.0f, 0.0f, 500.0f};  // Upward Z in cm/s
-        emitter.emitting     = true;
-
-        m_emitterEntities.push_back(entity);
-    }
-
-    // ── Secondary emitter: orbiting sparkles ─────────────────────────────
-    {
-        Entity entity = world.CreateEntity();
-
-        auto& scene = world.AddComponent<SceneComponent>(entity);
-        scene.SetPosition({300.f, 0.f, 200.f});
-
-        auto& name = world.AddComponent<CName>(entity);
-        name.name = "VFX_Orbiter";
-
-        auto& emitter = world.AddComponent<VfxEmitterComponent>(entity);
-        emitter.maxParticles = 5000;
-        emitter.emissionRate = 150.0f;
-        emitter.lifetime     = 2.0f;
-        emitter.gravity      = {0.0f, 0.0f, -490.5f}; // Half gravity
-        emitter.damping      = 0.95f;
-        emitter.spawnVelocity = {100.0f, 100.0f, 300.0f};
-        emitter.emitting     = true;
-
-        m_emitterEntities.push_back(entity);
-    }
-
-    // ── Third emitter: ground-level radial burst ─────────────────────────
-    {
-        Entity entity = world.CreateEntity();
-
-        auto& scene = world.AddComponent<SceneComponent>(entity);
-        scene.SetPosition({-300.f, 0.f, 50.f});
-
-        auto& name = world.AddComponent<CName>(entity);
-        name.name = "VFX_Radial";
-
-        auto& emitter = world.AddComponent<VfxEmitterComponent>(entity);
-        emitter.maxParticles = 8000;
-        emitter.emissionRate = 200.0f;
-        emitter.lifetime     = 2.5f;
-        emitter.gravity      = {0.0f, 0.0f, -981.0f};
-        emitter.damping      = 0.96f;
-        emitter.spawnVelocity = {200.0f, 200.0f, 100.0f}; // Mostly horizontal spread
-        emitter.emitting     = true;
-
-        m_emitterEntities.push_back(entity);
-    }
-
-    UZ_LOG(App, Info,
-           "VFXViewportApp: created {} emitter entities",
-           m_emitterEntities.size());
+    UZ_LOG(App, Info, "VFXViewportApp: started (VFX emitters deferred until SceneRenderer integration)");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -149,42 +90,8 @@ void VFXViewportApp::OnUpdate(float dt) {
         m_escapeHoldTime = 0.0f;
     }
 
-    // ── Animate the orbiting emitter around the origin ───────────────────
-    // The second emitter (index 1) orbits at radius 300 cm, period ~6 seconds.
-    if (m_emitterEntities.size() >= 2) {
-        World& world = GetWorld();
-        if (world.HasComponent<SceneComponent>(m_emitterEntities[1])) {
-            constexpr float kOrbitRadius = 300.0f; // cm
-            constexpr float kOrbitSpeed  = 1.0f;   // radians/second
-            const float angle = m_totalTime * kOrbitSpeed;
-
-            auto& scene = world.GetComponent<SceneComponent>(m_emitterEntities[1]);
-            scene.SetPosition({
-                kOrbitRadius * std::cos(angle),
-                kOrbitRadius * std::sin(angle),
-                200.0f // Elevated above ground
-            });
-        }
-    }
-
-    // ── Toggle emitters with number keys 1-3 ─────────────────────────────
-    for (uint32_t i = 0; i < m_emitterEntities.size() && i < 3; ++i) {
-        // Key::Num1='1', Num2='2', Num3='3' — sequential char values
-        const auto key = static_cast<Key>(
-            static_cast<uint16_t>(Key::Num1) + i);
-
-        if (input.IsKeyJustPressed(key)) {
-            World& world = GetWorld();
-            if (world.HasComponent<VfxEmitterComponent>(m_emitterEntities[i])) {
-                auto& emitter = world.GetComponent<VfxEmitterComponent>(
-                    m_emitterEntities[i]);
-                emitter.emitting = !emitter.emitting;
-
-                const char* state = emitter.emitting ? "ON" : "OFF";
-                UZ_LOG(App, Info, "Emitter {} toggled {}", i, state);
-            }
-        }
-    }
+    // VFX emitter animation and toggling deferred until SceneRenderer
+    // has VFX sync pass (Task 5.5.0).
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
