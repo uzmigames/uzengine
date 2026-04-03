@@ -6,7 +6,7 @@
       "name": "Sun",
       "components": {
         "transform": { "position": [0, 0, 920], "rotation": [60, -30, 0] },
-        "light": { "type": "directional", "color": [1.0, 0.96, 0.88], "intensity": 10 }
+        "light": { "type": "directional", "color": [1.0, 0.96, 0.88], "intensity": 14 }
       }
     },
     {
@@ -21,14 +21,12 @@
       "name": "DamagedHelmet",
       "components": {
         "transform": { "position": [0, 0, 100], "rotation": [75, 90, 0], "scale": [100, 100, 100] },
-        "mesh": { "asset": "meshes/DamagedHelmet.uzmesh" },
+        "mesh": { "asset": "meshes/DamagedHelmetHQ.uzmesh" },
         "material": {
-          "material_graph": "materials/damaged_helmet.uzmat",
-          "albedo": "textures/Default_albedo.jpg",
-          "normal": "textures/Default_normal.jpg",
-          "roughness": "textures/Default_metalRoughness.jpg",
-          "ao": "textures/Default_AO.jpg",
-          "emissive": "textures/Default_emissive.jpg",
+          "albedo": "textures/DH_HQ_BaseColor.jpg",
+          "normal": "textures/DH_HQ_Normal.jpg",
+          "orm": "textures/DH_HQ_ORM.png",
+          "emissive": "textures/DH_HQ_Emissive.jpg",
           "emissiveColorR": 1.0,
           "emissiveColorG": 1.0,
           "emissiveColorB": 1.0,
@@ -54,7 +52,7 @@
       "name": "SkyLight",
       "components": {
         "transform": { "position": [0, 0, 690] },
-        "sky_light": { "intensity": 1.0, "light_color": [0.85, 0.9, 1.0] }
+        "sky_light": { "intensity": 1.8, "light_color": [0.85, 0.9, 1.0] }
       }
     },
     {
