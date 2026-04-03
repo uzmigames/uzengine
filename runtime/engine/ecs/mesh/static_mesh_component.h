@@ -80,6 +80,14 @@ public:
     /// Set to `true` by `SceneRenderer` after all material textures have been uploaded.
     bool materialLoaded = false;
 
+    /// Material graph ID from MaterialManager (UINT32_MAX = no graph, use fixed-PBR path).
+    /// When valid, the renderer resolves the graph via MaterialManager and
+    /// compiles a per-material PSO via MaterialPipeline.
+    uint32_t materialGraphId = UINT32_MAX;
+
+    /// VFS-relative path to the .uzmat file (for editor display / hot-reload).
+    std::string materialGraphPath;
+
     // ── Material Slot System ─────────────────────────────────────────────
 
     /// Per-slot material overrides. Each entry corresponds to a mesh section.

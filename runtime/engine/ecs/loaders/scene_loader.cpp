@@ -372,7 +372,18 @@ void ParseMaterialComponent(World& world,
     }
     auto& mesh = world.GetRegistry().get<StaticMeshComponent>(enttEntity);
 
-    // Create a Material asset owned by the scene loader and assign it to slot 0.
+    // Material graph path (.uzmat) — stored on the component for lazy-loading
+    // by the renderer. The graph material will take precedence once the
+    // MaterialPipeline compiles its PSO. Until then, the fixed-PBR textures
+    // below serve as fallback so the mesh isn't invisible.
+    const std::string matGraphPath = ReadString(comp, "material_graph");
+    if (!matGraphPath.empty()) {
+        mesh.materialGraphPath = matGraphPath;
+        UZ_LOG(Scene, Info, "Material graph assigned: '{}'", matGraphPath);
+    }
+
+    // Fixed-PBR path: Create a Material asset owned by the scene loader and assign it to slot 0.
+    // Also serves as texture-loading fallback when material_graph is set but not yet compiled.
     auto mat = std::make_unique<Material>();
     mat->albedoPath    = ReadString(comp, "albedo");
     mat->normalPath    = ReadString(comp, "normal");
@@ -388,6 +399,10 @@ void ParseMaterialComponent(World& world,
     mat->emissiveColorG    = ReadFloat(comp, "emissiveColorG", 0.0f);
     mat->emissiveColorB    = ReadFloat(comp, "emissiveColorB", 0.0f);
     mat->emissiveIntensity = ReadFloat(comp, "emissiveIntensity", 0.0f);
+    mat->ormPath           = ReadString(comp, "orm");
+    if (!mat->ormPath.empty()) {
+        mat->useORM = true;
+    }
 
     mesh.SetMaterial(0, mat.get());
     s_sceneLoadedMaterials.push_back(std::move(mat));

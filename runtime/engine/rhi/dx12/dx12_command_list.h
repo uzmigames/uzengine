@@ -151,6 +151,24 @@ public:
     /// Ends the render pass. Frees any temporary per-slice/mip RTVs.
     void EndRenderPass() override;
 
+    // ── IRHICommandList: Ray tracing commands ──────────────────────────
+
+    /// Builds a DX12 BLAS via `BuildRaytracingAccelerationStructure`.
+    void BuildBLAS(RHIBLASHandle blas, RHIBufferHandle scratchBuffer,
+                   bool update) override;
+
+    /// Builds a DX12 TLAS via `BuildRaytracingAccelerationStructure`.
+    void BuildTLAS(RHITLASHandle tlas, RHIBufferHandle instanceBuffer,
+                   uint32_t instanceCount, RHIBufferHandle scratchBuffer,
+                   bool update) override;
+
+    /// Dispatches rays via `DispatchRays` on an `ID3D12GraphicsCommandList4`.
+    void DispatchRays(RHIRTPipelineHandle pipeline,
+                      const RHIDispatchRaysDesc& desc) override;
+
+    /// Inserts a UAV barrier for acceleration structures (null resource barrier).
+    void UAVBarrierAS() override;
+
     // ── DX12-specific methods (pre-texture-pool) ─────────────────────────
 
     /// Transitions a resource between D3D12 states (low-level, for swap chain back buffers).

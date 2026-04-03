@@ -122,6 +122,14 @@ struct DrawCommand {
     /// Number of active material parameter float4 slots (0-16).
     uint32_t materialParamCount = 0;
 
+    /// Material graph texture SRV indices (uploaded to b4 MaterialTextureCB).
+    /// Each slot corresponds to a TextureSample node in the graph, ordered by
+    /// the translator's allocation order. 0 = no texture bound.
+    uint32_t materialTexIndices[16] = {};
+
+    /// Number of active material texture slots (0-16).
+    uint32_t materialTexCount = 0;
+
     /// Shading model for this draw command. Determines which BRDF path the
     /// lighting shader evaluates. Written to GBuffer for deferred dispatch.
     /// Default: DefaultLit (standard Cook-Torrance GGX PBR).

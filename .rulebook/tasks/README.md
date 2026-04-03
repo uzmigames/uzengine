@@ -9,14 +9,13 @@
 | Status | Task | Progress | Description |
 |--------|------|----------|-------------|
 | ⬚ | phase0_editor-viewport-toolbar | 0/34 | editor viewport toolbar |
-| ⬚ | phase0_falcor-vfx-compute-fixes | 0/24 | falcor vfx compute fixes |
 
 ## phase1
 
 | Status | Task | Progress | Description |
 |--------|------|----------|-------------|
 | ⬚ | phase1_falcor-dlss-integration | 0/11 | falcor dlss integration |
-| ⬚ | phase1_falcor-dxr-rt-infrastructure | 0/23 | falcor dxr rt infrastructure |
+| ⬚ | phase1_falcor-dxr-rt-infrastructure | 21/23 | falcor dxr rt infrastructure |
 | ⬚ | phase1_falcor-hair-rendering | 0/17 | falcor hair rendering |
 | ⬚ | phase1_falcor-layered-materials | 0/9 | falcor layered materials |
 | ⬚ | phase1_falcor-light-bvh | 0/13 | falcor light bvh |
@@ -30,6 +29,7 @@
 | Status | Task | Progress | Description |
 |--------|------|----------|-------------|
 | ⬚ | phase2_anti-tiling-material | 0/27 | anti tiling material |
+| ⬚ | phase2_material-graph-pipeline | 0/6 | material graph pipeline |
 
 ## phase3b
 

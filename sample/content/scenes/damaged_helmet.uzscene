@@ -20,23 +20,27 @@
     {
       "name": "DamagedHelmet",
       "components": {
-        "transform": { "position": [0, 0, 0], "rotation": [90, 0, 0], "scale": [100, 100, 100] },
+        "transform": { "position": [0, 0, 100], "rotation": [75, 90, 0], "scale": [100, 100, 100] },
         "mesh": { "asset": "meshes/DamagedHelmet.uzmesh" },
         "material": {
+          "material_graph": "materials/damaged_helmet.uzmat",
           "albedo": "textures/Default_albedo.jpg",
           "normal": "textures/Default_normal.jpg",
           "roughness": "textures/Default_metalRoughness.jpg",
           "ao": "textures/Default_AO.jpg",
           "emissive": "textures/Default_emissive.jpg",
-          "emissiveIntensity": 1.0
+          "emissiveColorR": 1.0,
+          "emissiveColorG": 1.0,
+          "emissiveColorB": 1.0,
+          "emissiveIntensity": 2.0
         }
       }
     },
     {
       "name": "MainCamera",
       "components": {
-        "transform": { "position": [0, -350, 120], "rotation": [-8, 0, 0] },
-        "camera": { "fov": 55, "near": 1, "far": 100000, "active": true }
+        "transform": { "position": [0, -250, 140], "rotation": [-5, 0, 0] },
+        "camera": { "fov": 45, "near": 1, "far": 100000, "active": true }
       }
     },
     {
@@ -71,6 +75,12 @@
       "name": "Controller",
       "components": {
         "script": { "path": "scripts/fly_camera.lua" }
+      }
+    },
+    {
+      "name": "HDRILoader",
+      "components": {
+        "script": { "path": "scripts/load_hdri.lua" }
       }
     }
   ]

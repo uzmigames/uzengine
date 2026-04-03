@@ -13,6 +13,10 @@
 #include "log.h"
 #include "world.h"
 #include "material_interface.h"
+#include "material_pipeline.h"
+#include "engine/material/material_manager.h"
+#include "engine/material/material_graph.h"
+#include "vfs.h"
 
 #include <algorithm>
 #include <atomic>
@@ -259,6 +263,70 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
                 break;
         }
 
+        // ── Material Graph path (.uzmat) ───────────────────────────────────
+        // When a mesh has a materialGraphPath set (from scene_loader), resolve
+        // the graph via MaterialManager, compile the PSO via MaterialPipeline,
+        // and set it on the draw command. The GBuffer pass will use this PSO
+        // instead of the default one, calling ComputeMaterialOutputs() in the
+        // shader to evaluate the graph.
+        if (!meshComp.materialGraphPath.empty() && m_materialManager && m_materialPipeline) {
+            // Lazy-load the graph on first encounter
+            if (meshComp.materialGraphId == UINT32_MAX) {
+                // Resolve VFS-relative path to absolute filesystem path
+                const std::string absPath = vfs ? vfs->ResolvePath(meshComp.materialGraphPath)
+                                                : meshComp.materialGraphPath;
+                meshComp.materialGraphId = m_materialManager->LoadMaterial(absPath);
+                if (meshComp.materialGraphId == UINT32_MAX) {
+                    UZ_LOG(Renderer, Warning, "Failed to load material graph: '{}'",
+                           meshComp.materialGraphPath);
+                    meshComp.materialGraphPath.clear(); // Don't retry
+                }
+            }
+
+            if (meshComp.materialGraphId != UINT32_MAX) {
+                const auto* graph = m_materialManager->GetGraph(meshComp.materialGraphId);
+                if (graph) {
+                    auto pso = m_materialPipeline->GetOrCreatePSO(*graph);
+                    if (pso.IsValid()) {
+                        cmd.materialGraphPipeline = pso;
+
+                        // Resolve texture SRV indices for MaterialTextureCB.
+                        // Use the compile result's textureSlots (ordered by translator
+                        // allocation = topological sort order) to match slot indices
+                        // correctly. The defaultPath in each slot is the VFS-relative
+                        // texture path from the TextureSample node.
+                        const uint64_t matHash = graph->ComputeContentHash();
+                        const auto* compResult = m_materialPipeline->GetCompileResult(matHash);
+                        if (compResult && !compResult->textureSlots.empty()) {
+                            static bool loggedSlots = false;
+                            if (!loggedSlots) {
+                                loggedSlots = true;
+                                for (size_t si = 0; si < compResult->textureSlots.size(); ++si) {
+                                    const auto& ts = compResult->textureSlots[si];
+                                    auto ti = m_textureMap.find(ts.defaultPath);
+                                    uint32_t srv = 0;
+                                    if (ti != m_textureMap.end() && ti->second < m_textures.size())
+                                        srv = m_textures[ti->second].srvIndex;
+                                    UZ_LOG(Renderer, Info, "MatGraph texSlot[{}] path='{}' srv={}",
+                                           si, ts.defaultPath, srv);
+                                }
+                            }
+                            cmd.materialTexCount = static_cast<uint32_t>(
+                                std::min(compResult->textureSlots.size(), size_t(16)));
+                            for (uint32_t ti = 0; ti < cmd.materialTexCount; ++ti) {
+                                const auto& texPath = compResult->textureSlots[ti].defaultPath;
+                                auto texIt = m_textureMap.find(texPath);
+                                if (texIt != m_textureMap.end() &&
+                                    texIt->second < static_cast<uint32_t>(m_textures.size())) {
+                                    cmd.materialTexIndices[ti] = m_textures[texIt->second].srvIndex;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Map materialId to texture SRV indices if textures are loaded
         if (!m_textures.empty() && meshComp.materialId < static_cast<uint32_t>(m_textures.size())) {
             const auto& tex = m_textures[meshComp.materialId];
@@ -353,6 +421,7 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
             if (mat->IsTwoSided()) {
                 cmd.materialFlags |= 0x8u; // bit 3
             }
+
 
             // Opacity texture SRV index — used for alpha mask sampling in the shader.
             cmd.opacitySrvIndex = mat->GetOpacitySrvIndex();

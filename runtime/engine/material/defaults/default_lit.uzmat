@@ -6,21 +6,21 @@
     "expressions": [
         {
             "id": 1,
-            "type": "PBROutput"
+            "type": "PBROutput",
+            "inputs": [
+                { "pin": 0, "srcExpr": 2, "srcPin": 0 },
+                { "pin": 2, "srcExpr": 3, "srcPin": 0 }
+            ]
         },
         {
             "id": 2,
-            "type": "VectorConstant",
-            "params": { "x": 0.8, "y": 0.8, "z": 0.8 }
+            "type": "Vector3Constant",
+            "scalarParams": { "x": 0.8, "y": 0.8, "z": 0.8 }
         },
         {
             "id": 3,
             "type": "ScalarConstant",
-            "params": { "value": 0.5 }
+            "scalarParams": { "value": 0.5 }
         }
-    ],
-    "connections": [
-        { "fromId": 2, "fromPin": 0, "toId": 1, "toPin": 0 },
-        { "fromId": 3, "fromPin": 0, "toId": 1, "toPin": 2 }
     ]
 }

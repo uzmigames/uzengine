@@ -122,6 +122,15 @@ struct ShaderTag {};
 /// Tag type for `RHIHandle` — identifies texture sampler states.
 struct SamplerTag {};
 
+/// Tag type for `RHIHandle` — identifies bottom-level acceleration structures (BLAS).
+struct BLASTag {};
+
+/// Tag type for `RHIHandle` — identifies top-level acceleration structures (TLAS).
+struct TLASTag {};
+
+/// Tag type for `RHIHandle` — identifies ray tracing pipeline state objects.
+struct RTPipelineTag {};
+
 /// Handle to a GPU buffer (vertex, index, constant, structured, etc.).
 using RHIBufferHandle = RHIHandle<BufferTag>;
 
@@ -136,6 +145,15 @@ using RHIShaderHandle = RHIHandle<ShaderTag>;
 
 /// Handle to a texture sampler state.
 using RHISamplerHandle = RHIHandle<SamplerTag>;
+
+/// Handle to a bottom-level acceleration structure (per-mesh geometry).
+using RHIBLASHandle = RHIHandle<BLASTag>;
+
+/// Handle to a top-level acceleration structure (scene instance list).
+using RHITLASHandle = RHIHandle<TLASTag>;
+
+/// Handle to a ray tracing pipeline state object (state object with shader tables).
+using RHIRTPipelineHandle = RHIHandle<RTPipelineTag>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Enums
@@ -259,6 +277,8 @@ enum class RHIBufferUsage : uint32_t {
     IndirectArgs     = 1 << 5,   ///< Indirect draw/dispatch argument buffer.
     CopySrc          = 1 << 6,   ///< Source for GPU copy operations.
     CopyDst          = 1 << 7,   ///< Destination for GPU copy operations.
+    AccelerationStructure = 1 << 8, ///< DXR acceleration structure buffer (BLAS/TLAS result).
+    ShaderBindingTable    = 1 << 9, ///< Shader binding table (SBT) for DispatchRays.
 };
 
 inline RHIBufferUsage operator|(RHIBufferUsage a, RHIBufferUsage b) {
@@ -323,6 +343,7 @@ enum class RHIResourceState : uint32_t {
     CopyDst           = 1 << 10,  ///< Destination of a GPU copy operation.
     Present           = 1 << 11,  ///< Ready for presentation (swap chain back buffer).
     IndirectArgument  = 1 << 12,  ///< Used as indirect draw/dispatch argument buffer.
+    RaytracingAccelerationStructure = 1 << 13, ///< Acceleration structure (BLAS/TLAS) for DXR.
 };
 
 /// Primitive topology for draw calls.
@@ -400,6 +421,7 @@ enum class RHIShaderStage : uint8_t {
     Vertex,   ///< Vertex shader stage.
     Pixel,    ///< Pixel (fragment) shader stage.
     Compute,  ///< Compute shader stage.
+    Library,  ///< DXR library shader (lib_6_x) — contains ray gen, miss, hit group exports.
 };
 
 /// GPU command queue type.
@@ -800,5 +822,154 @@ struct RHIRootSignatureDesc {
     RHIRootParamDesc params[kMaxParams] = {};
     uint32_t paramCount = 0;
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Ray Tracing Descriptor Structs (DXR 1.0 / VK_KHR_ray_tracing_pipeline)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Acceleration structure type (bottom-level or top-level).
+enum class RHIAccelerationStructureType : uint8_t {
+    BottomLevel,  ///< Per-mesh geometry (BLAS).
+    TopLevel,     ///< Scene instance list (TLAS).
+};
+
+/// Build flags for acceleration structure construction.
+/// @ref Microsoft DXR spec — D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS.
+enum class RHIASBuildFlags : uint32_t {
+    None            = 0,
+    AllowUpdate     = 1 << 0,  ///< TLAS can be updated in-place (refit) without full rebuild.
+    AllowCompaction = 1 << 1,  ///< BLAS can be compacted after build to reduce memory.
+    PreferFastTrace = 1 << 2,  ///< Optimize for trace performance (larger build, faster trace).
+    PreferFastBuild = 1 << 3,  ///< Optimize for build speed (faster build, slower trace).
+};
+
+inline RHIASBuildFlags operator|(RHIASBuildFlags a, RHIASBuildFlags b) {
+    return static_cast<RHIASBuildFlags>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
+}
+inline bool HasFlag(RHIASBuildFlags flags, RHIASBuildFlags test) {
+    return (static_cast<uint32_t>(flags) & static_cast<uint32_t>(test)) != 0;
+}
+
+/// Describes triangle geometry for BLAS construction.
+///
+/// One BLAS may contain multiple geometry descs (sub-meshes with different materials).
+/// Each geometry maps to a separate hit group index in the shader table.
+/// @ref Microsoft DXR spec — D3D12_RAYTRACING_GEOMETRY_TRIANGLES_DESC.
+struct RHIRTGeometryDesc {
+    RHIBufferHandle vertexBuffer;                   ///< Buffer containing vertex positions.
+    uint32_t        vertexCount  = 0;               ///< Number of vertices.
+    uint32_t        vertexStride = 0;               ///< Byte stride between vertices.
+    RHIFormat       vertexFormat = RHIFormat::RGB32Float; ///< Position format (must be R32G32B32_FLOAT).
+    RHIBufferHandle indexBuffer;                     ///< Buffer containing indices (optional).
+    uint32_t        indexCount   = 0;               ///< Number of indices (0 if no index buffer).
+    RHIIndexFormat  indexFormat  = RHIIndexFormat::Uint32; ///< Index element format.
+    bool            isOpaque     = true;             ///< If true, skip any-hit shader invocation.
+};
+
+/// Describes a BLAS to create via `IRHIDevice::CreateBLAS()`.
+///
+/// Contains one or more triangle geometry descriptions. After creation, the
+/// BLAS must be built on a command list via `BuildBLAS()` before use.
+struct RHIBLASDesc {
+    const RHIRTGeometryDesc* geometries = nullptr;  ///< Array of geometry descriptions.
+    uint32_t geometryCount              = 0;        ///< Number of geometries.
+    RHIASBuildFlags buildFlags          = RHIASBuildFlags::PreferFastTrace
+                                        | RHIASBuildFlags::AllowCompaction;
+    const char* debugName               = nullptr;  ///< Debug label.
+};
+
+/// Describes a TLAS to create via `IRHIDevice::CreateTLAS()`.
+///
+/// The TLAS references BLAS instances. After creation, the TLAS must be built
+/// on a command list via `BuildTLAS()` before use.
+struct RHITLASDesc {
+    uint32_t maxInstanceCount   = 0;                ///< Maximum number of instances (allocates space).
+    RHIASBuildFlags buildFlags  = RHIASBuildFlags::PreferFastTrace
+                                | RHIASBuildFlags::AllowUpdate;
+    const char* debugName       = nullptr;          ///< Debug label.
+};
+
+/// Describes a single instance in the TLAS.
+///
+/// Written into the instance buffer by CPU, consumed by `BuildTLAS()`.
+/// Layout matches `D3D12_RAYTRACING_INSTANCE_DESC` (64 bytes, tightly packed).
+struct RHIRTInstanceDesc {
+    float    transform[3][4] = {};    ///< 3x4 row-major affine transform (object → world).
+    uint32_t instanceID      = 0;    ///< 24-bit user instance ID (accessible in shader via InstanceID()).
+    uint8_t  instanceMask    = 0xFF; ///< 8-bit visibility mask for TraceRay() InstanceInclusionMask.
+    uint32_t hitGroupIndex   = 0;    ///< 24-bit offset into the shader table hit group array.
+    uint8_t  flags           = 0;    ///< Instance flags (D3D12_RAYTRACING_INSTANCE_FLAGS).
+    uint64_t blasAddress     = 0;    ///< GPU virtual address of the BLAS for this instance.
+};
+
+/// Shader record address and stride for DispatchRays.
+///
+/// Each shader table (raygen, miss, hit group) is described by a GPU address
+/// range: start address, size of the table, and stride between records.
+struct RHIShaderTableRange {
+    uint64_t startAddress  = 0;  ///< GPU VA of the first record in this table.
+    uint64_t sizeInBytes   = 0;  ///< Total size of the table in bytes.
+    uint64_t strideInBytes = 0;  ///< Stride between records (0 for raygen, which has exactly 1).
+};
+
+/// Describes a DispatchRays call.
+///
+/// Specifies the three shader tables (raygen, miss, hit group) and the
+/// dispatch dimensions (width x height x depth).
+/// @ref Microsoft DXR spec — D3D12_DISPATCH_RAYS_DESC.
+struct RHIDispatchRaysDesc {
+    RHIShaderTableRange rayGenShaderTable;    ///< Ray generation shader table (exactly 1 record).
+    RHIShaderTableRange missShaderTable;      ///< Miss shader table.
+    RHIShaderTableRange hitGroupTable;        ///< Hit group shader table.
+    uint32_t width  = 0;                      ///< Dispatch width (typically render width).
+    uint32_t height = 0;                      ///< Dispatch height (typically render height).
+    uint32_t depth  = 1;                      ///< Dispatch depth (typically 1).
+};
+
+/// Describes a hit group for RT pipeline creation.
+///
+/// A hit group bundles a closest-hit shader (required), optional any-hit shader,
+/// and optional intersection shader (for procedural geometry).
+struct RHIRTHitGroupDesc {
+    const wchar_t* hitGroupName       = nullptr; ///< Export name for this hit group.
+    const wchar_t* closestHitExport   = nullptr; ///< Closest-hit shader export name.
+    const wchar_t* anyHitExport       = nullptr; ///< Any-hit shader export name (optional).
+    const wchar_t* intersectionExport = nullptr; ///< Intersection shader export name (optional, procedural).
+};
+
+/// Describes a ray tracing pipeline state object (RTPSO).
+///
+/// Combines DXIL library shaders with hit group definitions, payload/attribute
+/// sizes, and max recursion depth into an immutable state object.
+/// @ref Microsoft DXR spec — D3D12_STATE_OBJECT_DESC.
+struct RHIRTPipelineDesc {
+    /// DXIL library shader handles (compiled with `lib_6_x` profile).
+    /// Each library may export multiple entry points (raygen, miss, closest-hit, etc.).
+    const RHIShaderHandle* libraryShaders = nullptr;
+    uint32_t libraryCount                 = 0;
+
+    /// Hit group definitions. Each hit group binds a closest-hit (and optionally
+    /// any-hit/intersection) shader from the libraries above.
+    const RHIRTHitGroupDesc* hitGroups    = nullptr;
+    uint32_t hitGroupCount                = 0;
+
+    /// Maximum payload size in bytes across all shaders in the pipeline.
+    /// @ref Microsoft DXR spec: payload is the user-defined struct passed between
+    /// raygen → closest-hit → miss shaders. Minimum 4 bytes.
+    uint32_t maxPayloadSizeInBytes        = 16;
+
+    /// Maximum attribute size in bytes (built-in triangle barycentrics = 8 bytes).
+    uint32_t maxAttributeSizeInBytes      = 8;
+
+    /// Maximum ray recursion depth. 1 = primary rays only (no recursive TraceRay).
+    /// @ref Microsoft DXR spec: maximum is 31, but most engines use 1-2.
+    uint32_t maxRecursionDepth            = 1;
+
+    const char* debugName                 = nullptr; ///< Debug label.
+};
+
+/// Size of a DXR shader identifier (D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES).
+/// Each shader record in the SBT starts with this 32-byte identifier.
+static constexpr uint32_t kShaderIdentifierSizeInBytes = 32;
 
 } // namespace uz

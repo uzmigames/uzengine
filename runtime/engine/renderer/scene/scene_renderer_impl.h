@@ -143,6 +143,13 @@
     // ── Reflection Probes ────────────────────────────────────────────────
     ReflectionProbeRenderer m_reflectionProbes;   ///< Per-probe cubemap capture, IBL bake, and GPU upload.
 
+    // ── Material Graph Pipeline ──────────────────────────────────────────
+    std::unique_ptr<MaterialPipeline> m_materialPipeline; ///< Compiles .uzmat graphs into GBuffer PSOs.
+    std::unique_ptr<MaterialManager>  m_materialManager;  ///< Loads and caches .uzmat graph files.
+
+    // ── Ray Tracing (DXR) ────────────────────────────────────────────────
+    std::unique_ptr<RTManager> m_rtManager;          ///< BLAS/TLAS/SBT lifecycle, gated by r.RayTracing CVar.
+
     // ── Auto-Exposure ──────────────────────────────────────────────────────
     std::unique_ptr<AutoExposure> m_autoExposure;   ///< GPU histogram-based eye adaptation.
 

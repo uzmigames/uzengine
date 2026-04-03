@@ -276,12 +276,10 @@ static void DispatchUpdate(IRHICommandList* cmd,
 
     // Bindless: SRV/UAV indices passed via CB, not descriptor tables.
 
-    // Dispatch at least 1 group so newly spawned particles get updated.
-    const uint32_t totalCount = emitter.aliveCount + emitter.spawnCount;
-    const uint32_t groups = (totalCount > 0)
-        ? DivRoundUp(totalCount, kParticleThreadGroupSize)
-        : 1;
-    cmd->Dispatch(groups, 1, 1);
+    // With Godot pattern (aliveCount = capacity), dispatch covers all slots.
+    // Update runs BEFORE spawn, so spawnCount is not added here.
+    const uint32_t groups = DivRoundUp(emitter.aliveCount, kParticleThreadGroupSize);
+    cmd->Dispatch(groups > 0 ? groups : 1, 1, 1);
 }
 
 /// Dispatches the indirect args compute shader for a single emitter.
@@ -512,9 +510,27 @@ void AddParticleSimulationPass(rg::RgBuilder& builder,
                     cmd->ResourceBarrier(&toUav, 1);
                 }
 
-                // freeList transitions UAV→SRV for spawn CS which reads it
-                // via StructuredBuffer<uint> (SRV descriptor). The buffer is
-                // in UAV from Create/UploadInitialState.
+                // ── Dispatch UPDATE first ────────────────────────────
+                // Update reads from READ set (SRV) and writes to WRITE set
+                // (UAV). Dead particles are pushed to freeList (UAV).
+                // freeList and freeListHead are already in UAV state.
+                //
+                // Running update BEFORE spawn prevents a critical race:
+                // if spawn ran first, it would write lifespan=1.5 to a
+                // recycled slot in the WRITE set, then update would read
+                // the same slot from the READ set (where it's dead) and
+                // clobber the lifespan with 0.0 — killing the just-spawned
+                // particle. By running update first, spawn always gets the
+                // last word on recycled slots.
+                DispatchUpdate(cmd, desc, emitter);
+
+                // UAV barrier: ensure update's writes to WRITE set and
+                // freeList are visible before spawn reads freeList and
+                // writes to the same WRITE set buffers at recycled indices.
+                EmitSimulationUAVBarriers(cmd, *emitter.buffer);
+
+                // freeList UAV→SRV for spawn CS which reads it via
+                // StructuredBuffer<uint> (SRV descriptor).
                 {
                     RHIBarrierDesc barrier{};
                     barrier.buffer      = emitter.buffer->freeList;
@@ -523,10 +539,14 @@ void AddParticleSimulationPass(rg::RgBuilder& builder,
                     cmd->ResourceBarrier(&barrier, 1);
                 }
 
+                // ── Dispatch SPAWN second ────────────────────────────
+                // Spawn pops from freeList (SRV), writes fresh particle
+                // state to WRITE set (UAV). Its writes at recycled indices
+                // override update's death marker (lifespan=0), which is
+                // correct: the particle was just born.
                 DispatchSpawn(cmd, desc, emitter);
 
-                // freeList back to UAV for update CS (which may recycle dead
-                // particles back to the free list via RWStructuredBuffer).
+                // freeList back to UAV for next frame's update dispatch.
                 {
                     RHIBarrierDesc barrier{};
                     barrier.buffer      = emitter.buffer->freeList;
@@ -534,8 +554,6 @@ void AddParticleSimulationPass(rg::RgBuilder& builder,
                     barrier.stateAfter  = RHIResourceState::UnorderedAccess;
                     cmd->ResourceBarrier(&barrier, 1);
                 }
-
-                DispatchUpdate(cmd, desc, emitter);
 
                 // aliveCount transitions from UAV (written by spawn+update via
                 // atomics) to SRV (read by indirect args CS via bindless

@@ -12,6 +12,7 @@
 
 #include "scene_renderer.h"
 #include "pixel_debug.h"
+#include "raytracing/rt_manager.h"
 
 // Umbrella headers
 #include "renderer_core.h"
@@ -85,6 +86,23 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     ctx.gizmoHoveredAxis = m_gizmoHoveredAxis;
     ctx.gizmoActiveAxis  = m_gizmoActiveAxis;
     SetupFrameData(ctx, rgBuilder);
+
+    // ── Ray Tracing: build BLAS + TLAS from draw list ─────────────────
+    if (m_rtManager && m_rtManager->IsEnabled()) {
+        if (m_gpuProfileEnabled) {
+            m_device->GpuProfilerBeginTimestamp(cmdList, "RT_BLAS_TLAS");
+        }
+
+        const auto& cmds = ctx.drawList.GetCommands();
+        m_rtManager->BeginFrame(
+            cmds.data(), static_cast<uint32_t>(cmds.size()),
+            m_meshes.data(), static_cast<uint32_t>(m_meshes.size()),
+            cmdList);
+
+        if (m_gpuProfileEnabled) {
+            m_device->GpuProfilerEndTimestamp(cmdList, "RT_BLAS_TLAS");
+        }
+    }
 
     // ── Volumetric Cloud Compute (inline on main command list) ─────────
     // Noise textures are loaded from disk (precomputed .bin files).

@@ -4,10 +4,16 @@
 /// simulation pipeline for every active emitter in the scene. For each emitter
 /// the pass dispatches three compute shaders in sequence:
 ///
-/// 1. **Spawn CS** -- emits `spawnCount` new particles into the write attribute set.
-/// 2. **Update CS** -- steps physics, aging, and module evaluation for all alive particles.
+/// 1. **Update CS** -- steps physics, aging, and module evaluation for all alive
+///    particles. Dead particles are recycled to the free list.
+/// 2. **Spawn CS** -- emits `spawnCount` new particles into the write attribute set
+///    by popping indices from the free list (which now includes just-died slots).
 /// 3. **Indirect Args CS** -- fills the indirect draw/dispatch argument buffers
 ///    from the alive count so subsequent rendering can use `DrawIndexedIndirect`.
+///
+/// Update runs BEFORE spawn to prevent a write-after-write race: both shaders
+/// write to the same WRITE set buffers, and if spawn ran first, update would
+/// clobber freshly-spawned lifespan values with the death marker (0.0).
 ///
 /// UAV barriers are inserted between each stage to prevent read-after-write hazards
 /// on the particle attribute buffers and bookkeeping counters.
@@ -216,12 +222,15 @@ struct ParticleSimulationPassDesc {
 /// Registers the GPU particle simulation compute pass in the render graph.
 ///
 /// For each emitter in `desc.emitters`, the pass executes:
-/// 1. Bind spawn pipeline, set spawn CB, dispatch ceil(spawnCount / 64) groups.
-/// 2. UAV barrier on all written buffers (attribute set, alive count, free list).
-/// 3. Bind update pipeline, set update CB, dispatch ceil(aliveCount / 64) groups.
-/// 4. UAV barrier on all written buffers.
-/// 5. Bind indirect args pipeline, set indirect CB, dispatch 1 group.
-/// 6. UAV barrier on indirect args buffers.
+/// 1. Zero-clear aliveCount via CopyBuffer.
+/// 2. Bind update pipeline, set update CB, dispatch ceil(capacity / 256) groups.
+/// 3. UAV barrier on all written buffers (attribute set, alive count, free list).
+/// 4. freeList UAV→SRV transition.
+/// 5. Bind spawn pipeline, set spawn CB, dispatch ceil(spawnCount / 256) groups.
+/// 6. freeList SRV→UAV transition.
+/// 7. aliveCount UAV→SRV transition.
+/// 8. Bind indirect args pipeline, set indirect CB, dispatch 1 group.
+/// 9. aliveCount SRV→UAV transition.
 ///
 /// Emitters with `spawnCount == 0` skip the spawn dispatch but still run
 /// update and indirect args.

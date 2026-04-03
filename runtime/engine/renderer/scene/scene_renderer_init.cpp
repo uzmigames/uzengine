@@ -31,6 +31,9 @@
 #include "shader_compiler_fxc.h"
 #include "dynamic_resolution.h"
 #include "cvar.h"
+#include "raytracing/rt_manager.h"
+#include "material_pipeline.h"
+#include "engine/material/material_manager.h"
 #include "engine/vfx/vfx_system.h"
 #include "engine/vfx/asset/vfx_hot_reload.h"
 #include "engine/vfx/components/particle_emitter.h"
@@ -515,6 +518,23 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         } else {
             UZ_LOG(Renderer, Warning, "SceneRenderer: ReflectionProbeRenderer init failed (probes disabled)");
         }
+    }
+
+    // ── Material Graph Pipeline (non-fatal) ────────────────────────
+    m_materialManager = std::make_unique<MaterialManager>();
+    m_materialPipeline = std::make_unique<MaterialPipeline>();
+    if (m_materialPipeline->Init(device, &m_shaderMgr->GetPipeline())) {
+        UZ_LOG(Renderer, Info, "SceneRenderer: MaterialPipeline initialized");
+    } else {
+        UZ_LOG(Renderer, Warning, "SceneRenderer: MaterialPipeline init failed — graph materials disabled");
+        m_materialPipeline.reset();
+    }
+
+    // ── Ray Tracing (DXR) — non-fatal, gated by r.RayTracing CVar ──
+    m_rtManager = std::make_unique<RTManager>();
+    if (!m_rtManager->Init(device)) {
+        UZ_LOG(Renderer, Info, "SceneRenderer: RT init skipped (no DXR support or r.RayTracing=0)");
+        m_rtManager.reset();
     }
 
     // ── Auto-Exposure ────────────────────────────────────────────────
@@ -1084,6 +1104,19 @@ void SceneRenderer::Shutdown() {
     if (m_shadowReadbackBuffer.IsValid()) {
         m_device->DestroyBuffer(m_shadowReadbackBuffer);
         m_shadowReadbackBuffer = RHIBufferHandle{};
+    }
+
+    // Destroy material graph pipeline
+    if (m_materialPipeline) {
+        m_materialPipeline->Shutdown();
+        m_materialPipeline.reset();
+    }
+    m_materialManager.reset();
+
+    // Destroy RT infrastructure
+    if (m_rtManager) {
+        m_rtManager->Shutdown();
+        m_rtManager.reset();
     }
 
     DestroyAssets();

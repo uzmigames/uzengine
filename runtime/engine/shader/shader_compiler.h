@@ -39,6 +39,7 @@ enum class ShaderStageCompile : uint8_t {
     Domain,         ///< Domain/tessellation evaluation shader (ds_X_Y)
     Amplification,  ///< Amplification shader (as_X_Y) — mesh shader pipeline
     Mesh,           ///< Mesh shader (ms_X_Y) — mesh shader pipeline
+    Library,        ///< DXR shader library (lib_X_Y) — contains raygen/miss/hit exports
 };
 
 /// Shader model version for compilation target profile.

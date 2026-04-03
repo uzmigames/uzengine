@@ -38,4 +38,8 @@ static constexpr uint32_t kSlotPerObject = 2;
 /// Root parameter slot 3 — shadow data constant buffer (ShadowDataCB/ShadowCB at register b4).
 static constexpr uint32_t kSlotShadow = 3;
 
+/// Root parameter slot 5 — material graph params + texture indices (MaterialParamsCB at register b3).
+/// Only bound when rendering with a material-graph-compiled PSO.
+static constexpr uint32_t kSlotMaterialParams = 5;
+
 } // namespace uz

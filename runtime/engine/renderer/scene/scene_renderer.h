@@ -107,6 +107,9 @@ class VFXHotReload;
 class DecalManager;
 class TrailSystem;
 class PixelDebugSystem;
+class RTManager;
+class MaterialPipeline;
+class MaterialManager;
 struct ParticleEmitter;
 namespace rg { class RgResourcePool; }
 
