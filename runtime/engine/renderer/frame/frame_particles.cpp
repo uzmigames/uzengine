@@ -152,6 +152,14 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
 
         // Import write-set attribute buffers.
         const auto& ws = gpuBuf.WriteSet();
+
+        // Validate required buffer handles before importing (null → segfault).
+        if (!ws.positions.IsValid() || !gpuBuf.aliveCount.IsValid() ||
+            !gpuBuf.freeList.IsValid() || !gpuBuf.indirectDrawArgs.IsValid()) {
+            UZ_LOG(Renderer, Error, "RegisterParticlePasses: emitter has invalid GPU buffers, skipping");
+            continue;
+        }
+
         ids.wrPositions  = rgBuilder.ImportBuffer("VFX_WrPos",  ws.positions,  writeSetState);
         ids.wrVelocities = rgBuilder.ImportBuffer("VFX_WrVel",  ws.velocities, writeSetState);
         ids.wrAges       = rgBuilder.ImportBuffer("VFX_WrAge",  ws.ages,       writeSetState);

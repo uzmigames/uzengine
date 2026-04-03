@@ -89,13 +89,7 @@ void VFXViewportApp::OnStart() {
         world.AddComponent<SkyAtmosphereComponent>(skyEntity);
     }
 
-    // ── VFX Emitters — DISABLED: SceneRenderer particle render causes segfault ──
-    // Root cause: frame_particles.cpp crashes during VFX billboard/mesh render
-    // after TransmittanceLutPass. Needs debugger (PIX/breakpoint) investigation.
-    // Sun + sky work fine. VFX emitter entity creation triggers the crash.
-    // Bug tracked: SyncVfxEmitters succeeds but the render pass segfaults.
-    UZ_LOG(App, Info, "VFXViewportApp: started (sun + sky, VFX emitters disabled — segfault in particle render)");
-    return;
+    // VFX emitters re-enabled with buffer validation guard in frame_particles.cpp.
 
     // ── VFX Emitter 1: Fountain ──────────────────────────────────────────────
     //
