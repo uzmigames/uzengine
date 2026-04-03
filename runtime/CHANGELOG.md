@@ -2,6 +2,40 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.6.0] — 2026-04-03
+
+### DXR Raytracing Infrastructure
+- **BLAS/TLAS managers** (`raytracing/blas_manager.h/.cpp`, `tlas_manager.h/.cpp`): acceleration structure build/rebuild
+- **Shader table builder** (`shader_table_builder.h/.cpp`): ray generation, miss, hit group record packing
+- **RT manager** (`rt_manager.h/.cpp`): top-level orchestration of DXR pipeline
+- **RHI raytracing types** (`rhi_types.h`): acceleration structure, shader table, ray dispatch descriptors
+- **RHI command list** (`rhi_command_list.h`): `BuildAccelerationStructure`, `DispatchRays`, `SetRayTracingPipeline`
+- **RHI device** (`rhi_device.h`): `CreateAccelerationStructure`, `CreateRayTracingPipeline`, `CreateShaderTable`
+
+### DamagedHelmet glTF Scene
+- **uzgltf importer** (`runtime/tools/uzgltf.cpp`): standalone glTF-to-.uzmesh converter using fastgltf
+- **DamagedHelmet scene** (`sample/content/scenes/damaged_helmet.uzscene`): multi-material PBR with HDRI environment
+- **Material graph** (`sample/content/materials/damaged_helmet.uzmat`): 5-texture PBR graph (albedo, metalRoughness, normal, emissive, AO) with correct channel mapping (G=roughness, B=metallic)
+- **HDRI loader** (`sample/content/scripts/load_hdri.lua`): Lua script for environment map loading
+
+### Material Graph Pipeline (Phase 2)
+- **Task & spec created** (`.rulebook/tasks/phase2_material-graph-pipeline/`): material graph compilation, node types, PSO generation
+
+### Emissive Fix
+- **Material graph emissive intensity** (`gbuffer_ps.hlsl`): `emissiveColor * emissiveIntensity` multiplier was inside `#ifndef UZ_MATERIAL_GRAPH` block — now applied to both fixed-PBR and material graph paths
+
+### IBL Specular Quality
+- **Removed roughness attenuation** (`deferred_lighting_ps.hlsl`): `roughAtten = saturate(1.0 - roughness² * (1-metallic))` was incorrectly reducing IBL specular for metallic surfaces — the BRDF LUT split-sum already handles roughness in the Fresnel/visibility terms. Horizon occlusion (Lagarde 2012) retained.
+
+### VFX Compute Fixes (archived)
+- **Particle simulation** (`particle_simulation_pass.cpp/.h`): capacity-based dispatch with lifespan gate (Godot pattern)
+- **Alive count**: GPU readback replaced divergent CPU estimate, clamped to steady-state
+
+### Bug Fixes
+- **GBuffer per-mesh material binding**: extended for emissive, texture maps, ORM packed mode
+- **Shader compiler**: SM6.6 forced override for material graph variant compilation
+- **DX12 PSO creation**: material graph pipeline state support with `UZ_MATERIAL_GRAPH` define
+
 ## [0.5.0] — 2026-04-03
 
 ### FLIP Perceptual Quality Metric

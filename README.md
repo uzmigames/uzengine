@@ -1,7 +1,7 @@
 # UzEngine
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)]()
+[![C++23](https://img.shields.io/badge/C%2B%2B-23-blue.svg)]()
 [![Zig](https://img.shields.io/badge/Zig-0.15-orange.svg)]()
 [![MSVC](https://img.shields.io/badge/MSVC-17.14-blue.svg)]()
 [![Clang](https://img.shields.io/badge/Clang-21-green.svg)]()
@@ -20,26 +20,32 @@ AAA-quality game engine embedded in VSCode, with open file formats designed for 
 - **No GC** — deterministic memory via Rust-inspired ownership and borrow checking in C++
 - **AI-First** — MCP server integration for autonomous development workflows
 
-## Rendering Features (v0.4.0)
+## Rendering Features (v0.6.0)
 
 | System | Features |
 |--------|----------|
-| **PBR** | GGX + Burley diffuse + SmithJoint + multiscatter energy compensation |
-| **Shadows** | 4-cascade CSM, per-cascade PCF, distance field shadows, contact shadows |
-| **Lighting** | Directional + point (64) + spot (16) lights, IBL (SH L2 + environment map importance sampling + prefiltered specular) |
-| **Atmosphere** | Bruneton sky, multi-scatter LUT, ozone, aerial perspective, height fog (2-layer + sky injection) |
-| **Post-Process** | TAA (with MIS temporal accumulation), SSR, GTAO, bloom (6-mip Karis), FilmToneMap ACES, auto-exposure, DOF, motion blur |
+| **PBR** | GGX + Burley diffuse + SmithJoint + multiscatter energy compensation, anisotropic GGX, sheen (Estevez & Kulla 2017), 5 metal IOR presets |
+| **Shadows** | 4-cascade CSM, PCSS blocker search, ESM, contact shadows, distance field shadows, static shadow cache |
+| **Lighting** | Directional + point (64) + spot (16) lights, IBL (SH L2 + env map importance sampling + prefiltered specular + VNDF), clustered shading |
+| **Atmosphere** | Bruneton sky, multi-scatter LUT, ozone, aerial perspective, height fog (2-layer + sky injection), volumetric clouds (UE5 parity), god rays |
+| **GI** | SSGI (5 compute passes: trace, spatial denoise, temporal accum, bilateral upsample, prev color reduce), SVGF denoiser (3 passes) |
+| **Post-Process** | TAA (variance clipping), SSR (stochastic multi-ray), GTAO (multi-bounce + bent normals), bloom (6-mip Karis smooth knee), FilmToneMap ACES, auto-exposure, DOF (near/far/sharp layers), motion blur |
 | **Anti-Aliasing** | TAA, SMAA (1x/T2x/S2x/4x), FXAA |
 | **Upscaling** | FSR 1.0 (spatial), FSR 2.x (temporal with motion vectors) |
-| **Film Effects** | Film grain, vignette, chromatic aberration, color grading LUT (32x32x32) |
+| **Film Effects** | Film grain, vignette, chromatic aberration, color grading LUT (32x32x32), white balance (Bradford adaptation) |
 | **Quality** | 5-tier scalability (Low/Medium/High/Ultra/Cinematic) with per-group controls (shadows, textures, effects, GI, screen, view distance, post-process) |
+| **VFX** | GPU compute particle system (65K/emitter), collision, flipbook SubUV, trails, decals, attractor forces, vector fields, sub-emitters |
+| **Raytracing** | DXR infrastructure (BLAS/TLAS managers, shader table builder, RT pipeline) |
+| **Camera** | CameraManager with push/pop stack, editor free-cam (F5), per-camera render targets, multi-camera switching |
+| **Diagnostics** | FLIP perceptual metric, pass dump, pixel debug, per-pass GPU profiling, GPU validation, DRED breadcrumbs |
 | **Backends** | DX12 SM6.8 (bindless), DX12 SM5, DX11, Vulkan |
 
 ## Monorepo Structure
 
 | Package | Description | Build |
 |---------|------------|-------|
-| [`runtime/`](runtime/) | Engine core (C++) | Zig / CMake (MSVC, Clang) |
+| [`runtime/`](runtime/) | Engine core (C++23, 145 shaders) | Zig / CMake (MSVC, Clang) |
+| [`sample/`](sample/) | 22 demo scenes with Lua scripts | `.uzproject` / `.uzscene` |
 | [`napi/`](napi/) | N-API bridge to Electron | cmake-js / MSVC |
 | [`extension/`](extension/) | VSCode extension | TypeScript |
 | [`mcp/`](mcp/) | MCP server for AI workflows | TypeScript |
@@ -186,11 +192,13 @@ All thirdparty libraries are **committed to the repo** under `runtime/thirdparty
 
 ## Documentation
 
-- [Architecture](docs/ARCHITECTURE.md) — system design, layers, execution model
-- [Roadmap](docs/ROADMAP.md) — development phases and milestones
-- [DAG](docs/DAG.md) — milestone dependency graph
-- [PDR](docs/PDR.md) — project design record
+- [Architecture](docs/architecture.md) — system design, layers, execution model
+- [Roadmap](docs/roadmap.md) — development phases and milestones
+- [DAG](docs/dag.md) — milestone dependency graph
+- [PDR](docs/pdr.md) — project design record
 - [Specs](docs/specs/) — per-milestone specifications
+- [Guides](docs/guides/) — implementation guides (build, shaders, materials, VFX, Lua, etc.)
+- [Changelog](runtime/CHANGELOG.md) — detailed per-version changelog
 
 ## License
 

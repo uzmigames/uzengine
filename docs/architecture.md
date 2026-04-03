@@ -5,7 +5,7 @@
 
 ---
 
-# UzEngine 0.2 - Architecture
+# UzEngine 0.6 - Architecture
 
 > **Repository**: https://github.com/uzmigames/uzengine
 

@@ -1,9 +1,9 @@
-# UzEngine 0.2 — Project Design Review (PDR)
+# UzEngine 0.6 — Project Design Review (PDR)
 
 > **Repository**: https://github.com/uzmigames/uzengine
-> **Date**: 2026-03-22 (last updated)
-> **Status**: Phases 1-3 COMPLETED, Phase 4 IN PROGRESS (Physics next)
-> **POC Status**: POC 0.2 validated (N-API + DX12 + H.264 streaming @ 120 FPS)
+> **Date**: 2026-04-03 (last updated)
+> **Status**: Phases 1-3 COMPLETED, Phase 4 IN PROGRESS, Phase 5 PARTIAL (viewport ✅), Phase 7 PARTIAL (post-process ✅, VFX ✅, DXR ✅)
+> **POC Status**: POC 0.2 validated → Production 0.6 (DX12 SM6.8 bindless, 145 shaders, 22 demo scenes)
 
 ---
 
@@ -32,7 +32,7 @@
 | Electron ABI matching | ✅ POC 0.2: `--runtime=electron --runtime-version=39.6.0`, delay-load hook, `NAPI_DISABLE_CPP_EXCEPTIONS` | ABI must match exactly; documented in MEMORY.md |
 | H.264 frame streaming (webview panels) | ✅ POC 0.2: MF HW encoder 2.2ms + WebCodecs 3.3ms = 120 FPS sustained | Only for preview/remote panels — viewport uses shared GPU surface |
 | Shader pipeline (DXC + FXC dual compiler) | ✅ Milestone 1.3: DXC for SM6.6+, FXC for SM5.0 fallback, 90 tests passing, 5 demos | Cache differentiated by ShaderTarget enum, no stale-cache risk |
-| Viewport via native HWND | Design decision — runtime creates own DX12 swapchain window | **NOT YET VALIDATED** — critical for Phase 5.1 |
+| Viewport via native HWND | ✅ v0.3.0: native HWND inside VSCode, DX12 SM6.8 at 108+ FPS (RTX 4090), Agility SDK DLL-hosted loading | **VALIDATED** — shipping in v0.3.0+ |
 
 ### 2.2 — Technology Choices: **REVIEWED**
 
@@ -74,9 +74,9 @@ The project uses a 9-phase structure for better granularity. Phases 1-3 are comp
 | Phase 2 | Runtime Framework | ✅ COMPLETED | Done |
 | Phase 3 | First Pixels | ✅ COMPLETED | Done |
 | Phase 4 | Playable Scene | 🔨 IN PROGRESS (Input + Camera done, Physics next) | In progress |
-| Phase 5 | Editor | Planned (overlaps 4) | 4-5 months |
-| Phase 6 | Advanced Gameplay | Partial (Lua scripting done early) | 3-4 months |
-| Phase 7 | Content & Polish | Planned | 3-4 months |
+| Phase 5 | Editor | PARTIAL ✅ (Extension + IPC ✅, Viewport ✅) | In progress |
+| Phase 6 | Advanced Gameplay | PARTIAL ✅ (Lua scripting done early) | In progress |
+| Phase 7 | Content & Polish | PARTIAL ✅ (Post-process ✅, VFX ✅, Advanced rendering partial) | In progress |
 | Phase 8 | MCP & AI | Planned | 2-3 months |
 | Phase 9 | Shipping | Planned | 2-3 months |
 

@@ -1,10 +1,10 @@
-# UzEngine 0.2 — Roadmap
+# UzEngine 0.6 — Roadmap
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
 > Complete development roadmap from zero to AAA-ready engine.
 > Each milestone has clear deliverables and acceptance criteria.
-> Detailed design docs: [engine/README.md](engine/README.md) (183 files, 32 sections).
+> Detailed design docs: [engine/README.md](engine/README.md) (189 files, 33 sections).
 > Analysis report: [roadmap-analysis-report.md](research/roadmap-analysis-report.md).
 
 ---
@@ -26,15 +26,15 @@ Phase 3: First Pixels (DONE ✅) ───────────────�
 Phase 4: Playable Scene (IN PROGRESS 🔨) ─────────────────────────►
   4.0 Input ✅ ► 4.1 Camera ✅ ► 4.2 Physics ► 4.3 Animation ► 4.4 Audio ► 4.5 Prefabs
 
-Phase 5: Editor (incremental, overlaps Phase 4) ───────────────────►
-  5.0 Extension + IPC ► 5.1 Viewport ► 5.2 Hierarchy + Inspector ► 5.3 Asset Browser
+Phase 5: Editor (PARTIAL ✅, overlaps Phase 4) ────────────────────►
+  5.0 Extension + IPC ✅ ► 5.1 Viewport ✅ ► 5.2 Hierarchy + Inspector ► 5.3 Asset Browser
   5.4 Gizmos ► 5.5 Node-Graph Framework ► 5.6 Material Editor ► 5.7+ Advanced Editors
 
 Phase 6: Advanced Gameplay (PARTIAL — Lua done ✅) ────────────────►
   6.0 Navigation ► 6.1 Behavior Trees ► 6.2 C++ Hot-Reload ► 6.3 Lua ✅ ► 6.4 UI ► 6.5 Save
 
-Phase 7: Content & Polish ─────────────────────────────────────────►
-  7.0 Asset Cooking ► 7.1 Advanced Post-Process ► 7.2 Streaming ► 7.3 Terrain ► 7.4 VFX ► 7.5 Advanced Rendering
+Phase 7: Content & Polish (PARTIAL ✅) ────────────────────────────►
+  7.0 Asset Cooking ► 7.1 Advanced Post-Process ✅ ► 7.2 Streaming ► 7.3 Terrain ► 7.4 VFX ✅ ► 7.5 Advanced Rendering (partial ✅)
 
 Phase 8: MCP & AI ─────────────────────────────────────────────────►
   8.0 MCP Server ► 8.1 AI Tools ► 8.2 AI Content Pipeline
@@ -405,10 +405,10 @@ Phase 9: Shipping ────────────────────�
 
 ---
 
-### 4.1 — Camera System ✅ (basic)
+### 4.1 — Camera System ✅
 
 **Goal**: Third-person camera with SpringArm, collision avoidance, and modes.
-**Status**: Camera component + Lua camera API implemented. SpringArm and collision avoidance planned.
+**Status**: CameraManager (named cameras, push/pop stack), editor free-cam (F5), per-camera render targets, Lua camera manager API, multi-camera switching with hotkeys. SpringArm and collision avoidance planned.
 **Docs**: [14-camera/](engine/14-camera/)
 
 | Task | Details | Acceptance Criteria |
@@ -504,17 +504,18 @@ Phase 9: Shipping ────────────────────�
 
 ---
 
-## Phase 5: Editor (Incremental)
+## Phase 5: Editor (Incremental) — PARTIAL ✅
 
 > **Starts during Phase 4** — extension scaffold has zero runtime deps.
 > Each panel ships as soon as its runtime dependency is met.
 > Reference: [40-editor-framework/](engine/40-editor-framework/) (21 detailed docs).
+> **Status**: 5.0 (Extension + IPC) ✅, 5.1 (Viewport) ✅ — DX12 rendering inside VSCode at 120 FPS.
 
-### 5.0 — Extension + IPC Foundation
+### 5.0 — Extension + IPC Foundation ✅
 
 **Goal**: VSCode extension scaffold, N-API bridge, IPC message protocol.
 **Docs**: [40-editor-framework/01-overview.md](engine/40-editor-framework/01-overview.md), [20-editor-ipc.md](engine/40-editor-framework/20-editor-ipc.md)
-**When**: Parallel with Phase 4.0
+**Status**: N-API addon (MSVC), IPC message dispatch, console log streaming, play/stop mode, component introspection API, entity selection API, shader hot-reload.
 
 | Task | Details | Acceptance Criteria |
 |------|---------|-------------------|
@@ -529,11 +530,11 @@ Phase 9: Shipping ────────────────────�
 
 ---
 
-### 5.1 — Viewport Panel
+### 5.1 — Viewport Panel ✅
 
 **Goal**: 3D scene renders inside VSCode with camera controls.
 **Docs**: [40-editor-framework/18-viewport-modes.md](engine/40-editor-framework/18-viewport-modes.md)
-**When**: After 3.5b (render bridge)
+**Status**: Native HWND viewport inside VSCode, DX12 SM6.8 bindless rendering at 108+ FPS (RTX 4090), Agility SDK DLL-hosted loading, mouse/keyboard input forwarding, editor overlays (grid, stats, gizmos), H.264 frame readback for webview panels.
 
 | Task | Details | Acceptance Criteria |
 |------|---------|-------------------|
@@ -762,7 +763,7 @@ Phase 9: Shipping ────────────────────�
 
 ---
 
-## Phase 7: Content & Polish
+## Phase 7: Content & Polish — PARTIAL ✅
 
 ### 7.0 — Asset Cooking (Full)
 
@@ -781,18 +782,24 @@ Phase 9: Shipping ────────────────────�
 
 ---
 
-### 7.1 — Advanced Post-Processing
+### 7.1 — Advanced Post-Processing ✅
 
 **Goal**: Ship each effect as an independent micro-milestone.
+**Status**: All effects implemented and shipping.
 
-| Effect | Dependencies | Acceptance Criteria |
-|--------|-------------|-------------------|
-| SSAO (GTAO) | 3.5 (render graph) | Occlusion in corners |
-| TAA | 3.5 (render graph, velocity buffer) | Stable image, reduced aliasing |
-| SSR | 3.3 (deferred, depth + normal) | Reflections on glossy surfaces |
-| DOF | 3.5 (render graph) | Bokeh blur based on focus |
-| Motion blur | 3.5 (velocity buffer) | Moving objects blur |
-| Color grading | 3.5 (LUT texture) | LUT applies correctly |
+| Effect | Dependencies | Status |
+|--------|-------------|--------|
+| SSAO (GTAO) | 3.5 (render graph) | ✅ Multi-bounce + bent normals |
+| TAA | 3.5 (render graph, velocity buffer) | ✅ Variance clipping (Salvi 2016) |
+| SSR | 3.3 (deferred, depth + normal) | ✅ Stochastic multi-ray (Stachowiak 2015) |
+| DOF | 3.5 (render graph) | ✅ Near/far/sharp layer separation |
+| Motion blur | 3.5 (velocity buffer) | ✅ Per-object velocity |
+| Color grading | 3.5 (LUT texture) | ✅ 32x32x32 LUT + white balance (Bradford) |
+| SSGI | 3.3 (deferred, GBuffer) | ✅ 5 compute passes, temporal + spatial denoise |
+| SVGF denoiser | 3.5 (render graph) | ✅ 3 passes: reproject, filter moments, a-trous |
+| FLIP metric | 3.5 (render graph) | ✅ Perceptual quality comparison |
+| Auto-exposure | 3.5 (render graph) | ✅ Histogram + EV100 (ISO 12232) |
+| Bloom | 3.5 (render graph) | ✅ 6-mip Karis with smooth quadratic knee |
 
 ---
 
@@ -827,34 +834,44 @@ Phase 9: Shipping ────────────────────�
 
 ---
 
-### 7.4 — VFX / Particles
+### 7.4 — VFX / Particles ✅
 
 **Docs**: [25-vfx/](engine/25-vfx/)
+**Status**: Full GPU compute particle pipeline shipping with 65K particles/emitter, collision, trails, decals, flipbook SubUV, attractor forces, vector fields, sub-emitters, and Lua API.
 
-| Task | Details | Acceptance Criteria |
-|------|---------|-------------------|
-| GPU particle system | Compute shader spawn/update/render | 1M particles at 60fps |
-| Emitter modules | Spawn, velocity, lifetime, size/color curves | Fire/smoke VFX |
-| Force modules | Gravity, wind, turbulence, vortex | Particles react to forces |
-| Depth collision | Particles bounce off depth buffer | Sparks bounce off surfaces |
-| Ribbons | Trail renderer | Sword slash trail |
-| .uzvfx loader | JSON system definition | VFX loads and plays |
+| Task | Details | Status |
+|------|---------|--------|
+| GPU particle system | Compute shader spawn/update/render | ✅ Capacity-based dispatch (Godot pattern) |
+| Emitter modules | Spawn, velocity, lifetime, size/color curves | ✅ Preset library + showcase scene |
+| Force modules | Gravity, wind, turbulence, vortex, attractors | ✅ 3 falloff modes, kill-on-arrival |
+| Depth collision | Particles bounce off depth buffer | ✅ Collision standoff fix |
+| Ribbons | Trail renderer | ✅ Trail system with Lua API |
+| Decals | Deferred decal projection | ✅ DBuffer decals, opacity mask |
+| .uzvfx loader | JSON system definition | ✅ VFX presets in sample/content/ |
+| Flipbook SubUV | Sprite sheet animation | ✅ Billboard PS integration |
+| Vector fields | 3D texture sampling | ✅ UVW mapping, tightness blend |
+| Sub-emitters | GPU→CPU readback cascade | ✅ Event payloads, multi-level |
 
 **Dependencies**: 3.3 (depth buffer for collision), 3.1 (render graph for compute)
 
 ---
 
-### 7.5 — Advanced Rendering
+### 7.5 — Advanced Rendering — PARTIAL ✅
 
-| Task | Details | Acceptance Criteria |
-|------|---------|-------------------|
-| DLSS integration | NVIDIA DLSS SDK | Upscaled quality ≈ native |
-| FSR integration | AMD FSR, any GPU | FSR modes work |
-| XeSS integration | Intel XeSS SDK | Auto-fallback chain (DLSS→XeSS→FSR) |
-| Virtual shadow maps | Clipmap pages | Stable shadows at distance |
-| Volumetric fog | Ray-marched | God rays visible |
-| Sky / Atmosphere | Hillaire model | Physically correct scattering |
-| Reflection probes | Baked cubemaps, parallax correction | Reflections on non-planar surfaces |
+| Task | Details | Status |
+|------|---------|--------|
+| FSR integration | AMD FSR 1.0 (spatial) + FSR 2.x (temporal) | ✅ |
+| Volumetric clouds | UE5-parity ray marching, detail noise, aerial perspective | ✅ |
+| Volumetric fog | Height fog (2-layer + sky injection) | ✅ |
+| God rays | 16-sample radial blur with exponential decay | ✅ |
+| Sky / Atmosphere | Bruneton model, multi-scatter LUT, ozone, aerial perspective | ✅ |
+| Reflection probes | Baked cubemaps, parallax correction | ✅ |
+| DXR raytracing | BLAS/TLAS managers, shader table, RT pipeline | ✅ (infrastructure) |
+| LOD system | FBX auto-LOD, GPU LOD switching, stats overlay | ✅ |
+| CB dirty optimization | Per-component dirty flags, shadow CB skip | ✅ |
+| DLSS integration | NVIDIA DLSS SDK | Planned |
+| XeSS integration | Intel XeSS SDK | Planned |
+| Virtual shadow maps | Clipmap pages | Planned |
 
 **Dependencies**: 3.5 (post-processing stack), 3.4 (shadow system)
 

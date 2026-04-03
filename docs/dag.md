@@ -1,9 +1,9 @@
-# UzEngine 0.2 — Dependency Acyclic Graph (DAG)
+# UzEngine 0.6 — Dependency Acyclic Graph (DAG)
 
 > **Repository**: https://github.com/uzmigames/uzengine
 > Milestone dependency graph. Arrows mean "depends on". Read top-to-bottom.
-> **Last updated**: 2026-03-24
-> Phases 1-3 are complete (✅). Phase 4 is in progress. Lua scripting (6.3) was implemented early.
+> **Last updated**: 2026-04-03
+> Phases 1-3 complete (✅). Phase 4 in progress. Lua scripting (6.3) done early. Editor viewport (5.0-5.1) ✅. VFX (7.4) ✅. Advanced post-process (7.1) ✅. DXR infrastructure (7.5) ✅.
 
 ---
 
