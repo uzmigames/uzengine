@@ -48,7 +48,17 @@ cbuffer PerFrameCB : register(b1) {
     float  skyLightMinAmbient, exposure;
     float4 skyIrradianceSH[7];
     uint   shadowDebugMode;
-    // rest of 768 bytes not needed — padding implicit
+    // Aerial perspective (offset 372)
+    uint   aerialPerspectiveEnabled;
+    uint   transmittanceLutSrvIndex;
+    float  apBottomRadiusKm, apTopRadiusKm;
+    float  apRayleighBetaX, apRayleighBetaY, apRayleighBetaZ, apRayleighScaleH;
+    float  apMieBeta, apMieScaleH, apMieAnisotropy, apSunIntensity;
+    float  apRayleighScale, apMieScale;
+    // Tone curve (offset 436)
+    float  toneCurveSlope, toneCurveToe, toneCurveShoulder, toneCurveBlackClip, toneCurveWhiteClip;
+    // GTAO (offset 456)
+    uint   gtaoSrvIndex;
 };
 
 // LightingCB at b2 via light_types.hlsli (already declared above)
@@ -94,7 +104,18 @@ float4 main(FSInput input) : SV_Target {
 
     // ── Decode GBuffer ────────────────────────────────────────────────────
     float3 baseColor = rt0.rgb;
-    float  ao        = rt0.a;
+    float  ao        = rt0.a;  // mesh AO from GBuffer
+
+    // Combine screen-space GTAO with mesh AO (multiplicative)
+    // @ref UE5 DeferredLightingCommon.ush — SSAO * baked AO
+#ifdef UZ_BINDLESS
+    if (gtaoSrvIndex != kSentinelSrvIndex) {
+        Texture2D<float> gtaoTex = ResourceDescriptorHeap[gtaoSrvIndex];
+        float gtao = gtaoTex.Load(int3(px, 0)).r;
+        ao = min(ao, gtao); // conservative: take the darker of mesh AO and GTAO
+    }
+#endif
+
     float3 N         = OctDecode(rt1.rg);
     float  metallic  = rt1.b;
     float  roughness = max(rt1.a, 0.04);

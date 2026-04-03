@@ -216,8 +216,11 @@ void main(uint3 DTid : SV_DispatchThreadID)
     float baseAngle  = noise * PI + temporalAngle;
     float stepOffset = frac(noise + temporalOffset);
 
-    // Screen-space search radius from world-space radius
+    // Screen-space search radius: world-space radius → NDC → pixels
+    // invTanHalfFov = proj[1][1], so (R * invTanHalfFov / Z) gives NDC half-height units.
+    // Multiply by half screen width to convert to pixel radius.
     float screenRadius = (worldRadius * invTanHalfFov) / linearZ;
+    screenRadius *= 0.5 * float(outputWidth); // NDC → pixels
     screenRadius = min(screenRadius, 256.0); // clamp max pixel radius
 
     // Attenuation factor: inverse-square falloff from worldRadius

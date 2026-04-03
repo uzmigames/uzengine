@@ -84,8 +84,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
     Texture2D<float>  depthTex  = ResourceDescriptorHeap[depthSrvIdx];
     Texture2D<float4> normalTex = ResourceDescriptorHeap[normalSrvIdx];
     Texture2D<float4> colorTex  = ResourceDescriptorHeap[sceneColorSrvIdx];
-    // Use depth buffer directly for ray march (Hi-Z pyramid may not be available)
-    Texture2D<float>  hizTex    = ResourceDescriptorHeap[depthSrvIdx];
+    Texture2D<float>  hizTex    = ResourceDescriptorHeap[hizSrvIdx];
 
     float deviceZ = depthTex.SampleLevel(pointClamp, uv, 0).r;
 

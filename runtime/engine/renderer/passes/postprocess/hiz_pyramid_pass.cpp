@@ -86,6 +86,26 @@ void AddHiZPyramidPass(rg::RgBuilder& builder, const HiZPyramidPassDesc& desc)
 
             cmd->SetPipeline(desc.pipeline);
 
+            // ── Initial barriers: transition all mip textures to UAV ─────
+            // On the first frame, textures are in Common state. On subsequent
+            // frames, they are in SRV state (left there by the UAV→SRV barrier
+            // at the end of each mip dispatch). Either way, transition to UAV.
+            {
+                static bool firstExecution = true;
+                const RHIResourceState fromState = firstExecution
+                    ? RHIResourceState::Common
+                    : RHIResourceState::ShaderResource;
+
+                RHIBarrierDesc initBarriers[kHiZMaxMipLevels]{};
+                for (uint32_t m = 0; m < desc.mipCount; ++m) {
+                    initBarriers[m].texture     = desc.mipLevels[m].texture;
+                    initBarriers[m].stateBefore = fromState;
+                    initBarriers[m].stateAfter  = RHIResourceState::UnorderedAccess;
+                }
+                cmd->ResourceBarrier(initBarriers, desc.mipCount);
+                firstExecution = false;
+            }
+
             // Track the current input SRV index and dimensions. For mip 0,
             // the input is the depth prepass output at full resolution.
             uint32_t inputSrvIndex = desc.depthSourceSrvIndex;
