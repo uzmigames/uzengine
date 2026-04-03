@@ -1,4 +1,9 @@
-/// VFX Viewport Demo — DemoApplication Subclass
+/// VFX Viewport Demo — DemoApplication Subclass (Legacy Baseline)
+///
+/// NOTE: The canonical engine-integrated version is `demos/vfx_viewport_app/`
+/// which uses `uz::Application` and ECS-driven VFX emitters. This file is
+/// the legacy DemoApplication baseline, retained for standalone testing and
+/// as a reference for direct-RHI VFX workflows.
 ///
 /// Renders procedural PBR meshes, a procedural sky atmosphere, shadow mapping,
 /// HDR tonemapping, and GPU-driven particle effects. Uses the DemoApplication
