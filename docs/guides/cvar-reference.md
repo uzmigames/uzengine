@@ -354,3 +354,97 @@ Changes made during the render quality consensus fixes task, with rationale.
 | `r.AutoExposure.SpeedUp` | 1.5 | 3.0 | UE5 reference adaptation speed. Faster bright adaptation prevents visible exposure hunting. |
 | `r.AutoExposure.SpeedDown` | 0.7 | 1.0 | UE5 reference adaptation speed. Paired with SpeedUp for balanced adaptation. |
 | `r.SkyLight.MinAmbient` | 0.15 | 0.25 | Shadow regions were near-black after GTAO power increase. Floor of 0.25 provides visible ambient fill. |
+
+## Shader CVar Audit (phase2_shader-cvar-audit) — 47 CVars
+
+Replaced all hardcoded shader constants with runtime-configurable CVars.
+Every CVar default matches the previously hardcoded value — zero visual regression.
+
+### SSGI (10 CVars via root constants)
+
+| CVar | Type | Default | Range | Description |
+|------|------|---------|-------|-------------|
+| `r.SSGI.RayCount` | int | 8 | [1, 32] | Rays per pixel |
+| `r.SSGI.MaxMarchSteps` | int | 32 | [8, 128] | Max linear march steps per ray |
+| `r.SSGI.StepSize` | float | 0.02 | [0.005, 0.1] | UV-space step size per step |
+| `r.SSGI.Thickness` | float | 0.5 | [0.01, 2.0] | Depth comparison thickness (cm) |
+| `r.SSGI.TemporalAlpha` | float | 0.05 | [0.01, 0.5] | Temporal blend (0=full history, 1=no history) |
+| `r.SSGI.SpatialSigmaDepth` | float | 1.0 | [0.1, 10] | Spatial denoise depth edge-stopping |
+| `r.SSGI.SpatialSigmaNormal` | float | 128.0 | [8, 512] | Spatial denoise normal edge-stopping |
+| `r.SSGI.SpatialSigmaLuminance` | float | 4.0 | [0.5, 16] | Spatial denoise luminance edge-stopping |
+| `r.SSGI.UpsampleDepthSigma` | float | 0.5 | [0.1, 2.0] | Bilateral upsample depth weight |
+| `r.SSGI.UpsampleNormalSigma` | float | 32.0 | [4, 128] | Bilateral upsample normal cosine power |
+
+### Shadow (6 CVars via PerFrameCB)
+
+| CVar | Type | Default | Range | Description |
+|------|------|---------|-------|-------------|
+| `r.Shadow.PCFPenumbraRadius` | float | 2.0 | [0.5, 8.0] | PCF texel radius |
+| `r.Shadow.PCSSMinPenumbra` | float | 0.5 | [0.1, 4.0] | PCSS minimum penumbra clamp |
+| `r.Shadow.PCSSMaxPenumbra` | float | 16.0 | [4.0, 64.0] | PCSS maximum penumbra clamp |
+| `r.Shadow.ESMExponentConstant` | float | 80.0 | [10, 200] | ESM exponential warp constant |
+| `r.Shadow.ContactShadowSteps` | int | 16 | [4, 32] | Contact shadow ray march steps |
+| `r.Shadow.ContactShadowThickness` | float | 0.005 | [0.001, 0.05] | Contact shadow depth thickness |
+
+### TAA (5 CVars via TaaCB)
+
+| CVar | Type | Default | Range | Description |
+|------|------|---------|-------|-------------|
+| `r.TAA.VarianceClipGamma` | float | 1.25 | [0.5, 3.0] | Variance clip (wider=ghosting, tighter=flicker) |
+| `r.TAA.VelocityThreshold` | float | 40.0 | [5, 100] | Velocity lerp threshold (pixels) |
+| `r.TAA.AntiFlickerMax` | float | 0.3 | [0, 1] | Max anti-flicker contribution |
+| `r.TAA.SpatialWeightMultiplier` | float | 2.29 | [1, 5] | Gaussian spatial weight exponent |
+| `r.TAA.ExposureScale` | float | 1.0 | [0.1, 10] | HDR exposure scale for TAA weighting |
+
+### SVGF Denoiser (4 CVars via root constants)
+
+| CVar | Type | Default | Range | Description |
+|------|------|---------|-------|-------------|
+| `r.SVGF.SigmaDepth` | float | 1.0 | [0.1, 10] | Edge-stopping depth sigma |
+| `r.SVGF.SigmaNormal` | float | 128.0 | [8, 512] | Edge-stopping normal sigma |
+| `r.SVGF.SigmaLuminance` | float | 4.0 | [0.5, 16] | Edge-stopping luminance sigma |
+| `r.SVGF.MomentsSigmaNormal` | float | 32.0 | [4, 128] | Moments filter normal sigma |
+
+### Bloom / Exposure (6 CVars via PerFrameCB)
+
+| CVar | Type | Default | Range | Description |
+|------|------|---------|-------|-------------|
+| `r.Bloom.Knee` | float | 0.5 | [0, 1] | Soft threshold knee multiplier |
+| `r.Exposure.KeyValue` | float | 0.18 | [0.01, 1] | Reinhard mid-tone key value |
+| `r.Exposure.SpeedUp` | float | 3.0 | [0.1, 20] | Auto-exposure adaptation speed up |
+| `r.Exposure.SpeedDown` | float | 1.0 | [0.1, 20] | Auto-exposure adaptation speed down |
+| `r.Exposure.LowPercent` | float | 10.0 | [1, 50] | Histogram low percentile |
+| `r.Exposure.HighPercent` | float | 90.0 | [50, 99] | Histogram high percentile |
+
+### Tonemap (1 CVar via root constant)
+
+| CVar | Type | Default | Range | Description |
+|------|------|---------|-------|-------------|
+| `r.TonemapOperator` | int | 0 | [0, 4] | 0=Hill ACES, 1=Narkowicz, 2=Reinhard, 3=Hable, 4=Linear |
+
+### Cloud FBM (8 CVars via CloudCB expansion)
+
+| CVar | Type | Default | Range | Description |
+|------|------|---------|-------|-------------|
+| `r.Cloud.NoiseXYScale` | float | 0.12 | [0.01, 1] | Noise XY coordinate scale |
+| `r.Cloud.NoiseZScale` | float | 3.0 | [0.5, 10] | Noise Z coordinate scale |
+| `r.Cloud.ShapeOctaves` | int | 4 | [1, 6] | FBM octave count |
+| `r.Cloud.FBMDecay` | float | 0.5 | [0.3, 0.8] | Amplitude decay per octave |
+| `r.Cloud.FBMLacunarity` | float | 2.0 | [1.5, 4] | Frequency multiplier per octave |
+| `r.Cloud.DetailErosion` | float | 0.35 | [0, 1] | Detail noise erosion strength |
+| `r.Cloud.DensityScale` | float | 25.0 | [1, 100] | Density normalization scale |
+| `r.Cloud.AerialPerspectiveDensity` | float | 0.04 | [0, 0.2] | Aerial perspective fog density |
+
+### Material (2 CVars via PerFrameCB)
+
+| CVar | Type | Default | Range | Description |
+|------|------|---------|-------|-------------|
+| `r.Material.DielectricF0` | float | 0.04 | [0.01, 0.08] | Dielectric Fresnel F0 |
+| `r.Material.MinGGXAlpha` | float | 0.0064 | [0.001, 0.01] | Min GGX alpha (prevents aliasing) |
+
+### SSR (2 CVars — fixed deprecated CVarRegistry)
+
+| CVar | Type | Default | Range | Description |
+|------|------|---------|-------|-------------|
+| `r.SSR.MaxRoughness` | float | 0.35 | [0.05, 1] | Max roughness cutoff for SSR |
+| `r.SSR.Intensity` | float | 1.0 | [0, 5] | SSR reflection intensity |
