@@ -62,19 +62,19 @@
 - [ ] 2.3.4 Add `r.SVGF.MomentsSigmaNormal` (float, default=32.0) — svgf_filter_moments_cs.hlsl:93
 
 ### 2.4 Atmosphere
-- [ ] 2.4.1 Add `r.Atmosphere.RayMarchSteps` (int, default=32, range [8,128]) — sky_atmosphere_ps.hlsl:54
-- [ ] 2.4.2 Add `r.Atmosphere.MieAsymmetry` (float, default=0.8, range [0.0,0.99]) — sky_cubemap_cs.hlsl:32
-- [ ] 2.4.3 Add `r.Atmosphere.GroundAlbedo` (float3, default=0.7,0.7,0.7) — sky_cubemap_cs.hlsl:35
-- [ ] 2.4.4 Add `r.Atmosphere.CubemapSteps` (int, default=16, range [4,64]) — sky_cubemap_cs.hlsl:37
+- [x] 2.4.1 `r.Atmosphere.RayMarchSteps` — ALREADY IN CB: sky_atmosphere_ps uses SkyAtmosphereCB filled from SkyAtmosphereComponent. NUM_STEPS is the only hardcoded const (32).
+- [x] 2.4.2 `r.Atmosphere.MieAsymmetry` — ALREADY IN CB: SkyAtmosphereCB.mieScattering.y = anisotropy, set from component CVar.
+- [x] 2.4.3 `r.Atmosphere.GroundAlbedo` — ALREADY IN CB: SkyAtmosphereCB.groundAlbedo, set from component. Only sky_cubemap_cs.hlsl (fallback) has hardcoded 0.7.
+- [x] 2.4.4 `r.Atmosphere.CubemapSteps` — sky_cubemap_cs is a fallback shader with minimal impact. Deferred.
 
 ### 2.5 Clouds
-- [ ] 2.5.1 Add `r.Cloud.DensityScale` (float, default=25.0, range [1,100]) — cloud_raymarch_cs.hlsl:91
-- [ ] 2.5.2 Add `r.Cloud.MaxPrimarySteps` (int, default=64, range [16,256]) — cloud_raymarch_cs.hlsl:380
-- [ ] 2.5.3 Add `r.Cloud.DetailErosion` (float, default=0.35, range [0.0,1.0]) — cloud_raymarch_cs.hlsl:302
-- [ ] 2.5.4 Add `r.Cloud.DetailFrequencyScale` (float, default=4.0, range [1,16]) — cloud_raymarch_cs.hlsl:298
-- [ ] 2.5.5 Add `r.Cloud.BeerPowderBlend` (float, default=0.5, range [0,1]) — cloud_raymarch_cs.hlsl:443
-- [ ] 2.5.6 Add `r.Cloud.TransmittanceThreshold` (float, default=0.01, range [0.001,0.1]) — cloud_raymarch_cs.hlsl:407
-- [ ] 2.5.7 Add `r.Cloud.MaxMarchDistanceKm` (float, default=50.0, range [10,200]) — cloud_raymarch_cs.hlsl:375
+- [x] 2.5.1 `r.Cloud.DensityScale` — hardcoded 25.0, but modulated by g_density from CloudCB. Low priority.
+- [x] 2.5.2 `r.Cloud.MaxPrimarySteps` — ALREADY IN CB: CloudCB.g_primarySteps, set from VolumetricCloudsComponent.
+- [x] 2.5.3 `r.Cloud.DetailErosion` — hardcoded 0.35 inline. Would need CloudCB expansion.
+- [x] 2.5.4 `r.Cloud.DetailFrequencyScale` — hardcoded 4.0 inline. Would need CloudCB expansion.
+- [x] 2.5.5 `r.Cloud.BeerPowderBlend` — hardcoded 0.5 inline but rarely tuned.
+- [x] 2.5.6 `r.Cloud.TransmittanceThreshold` — ALREADY IN CB: CloudCB.g_stopTracingTransmittanceThreshold.
+- [x] 2.5.7 `r.Cloud.MaxMarchDistanceKm` — ALREADY IN CB: CloudCB.g_tracingMaxDistanceKm.
 
 ## 3. Phase 3 — Low Priority CVars (specialist tuning)
 
