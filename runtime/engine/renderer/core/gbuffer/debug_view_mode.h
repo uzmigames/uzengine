@@ -48,7 +48,9 @@ enum class DebugViewMode : uint32_t {
     Wireframe     = 10, ///< Not implemented in post-process — handled by rasterizer state.
     Unlit         = 11, ///< Alias for Albedo (same G-Buffer read, no lighting).
     Overview      = 12, ///< Composite grid of all channels (2x3 or similar layout).
-    Count         = 13, ///< Sentinel — number of valid modes (not a displayable mode).
+    Tangent       = 13, ///< Derived tangent direction (cross(N, up) approximation).
+    Faceted       = 14, ///< Highlight hard edges — pixels where adjacent normals diverge.
+    Count         = 15, ///< Sentinel — number of valid modes (not a displayable mode).
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -77,6 +79,8 @@ inline const char* DebugViewModeName(DebugViewMode mode) {
         case DebugViewMode::Wireframe:     return "Wireframe";
         case DebugViewMode::Unlit:         return "Unlit";
         case DebugViewMode::Overview:      return "Overview";
+        case DebugViewMode::Tangent:       return "Tangent";
+        case DebugViewMode::Faceted:       return "Faceted";
         case DebugViewMode::Count:         return "Count";
     }
     return "Unknown";
@@ -115,6 +119,8 @@ inline DebugViewMode DebugViewModeFromString(std::string_view name) {
     if (iequals(name, "wireframe"))     return DebugViewMode::Wireframe;
     if (iequals(name, "unlit"))         return DebugViewMode::Unlit;
     if (iequals(name, "overview"))      return DebugViewMode::Overview;
+    if (iequals(name, "tangent"))       return DebugViewMode::Tangent;
+    if (iequals(name, "faceted"))       return DebugViewMode::Faceted;
 
     return DebugViewMode::Lit;
 }

@@ -46,6 +46,36 @@ struct Vertex {
 static_assert(sizeof(Vertex) == 48, "Vertex must be 48 bytes for GPU struct alignment");
 
 // ─────────────────────────────────────────────────────────────────────────────
+// VertexPacked — Compressed mesh vertex (33% smaller)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Compressed vertex with packed normals/tangents.
+/// 32 bytes vs 48 bytes = 33% bandwidth savings.
+///
+/// Normal and tangent compressed from float3+float4 (28 bytes) to
+/// int8x4+int8x4 (8 bytes) using FPackedNormal encoding (UE5 pattern).
+///
+/// Matches the HLSL struct:
+/// ```hlsl
+/// struct VertexPacked {
+///     float3 position;         // 12B
+///     int8_t4 packedNormal;    // 4B (xyz/127, w=0)
+///     float2 texcoord;         // 8B
+///     int8_t4 packedTangent;   // 4B (xyz/127, w=sign)
+///     uint   _pad;             // 4B (align to 32)
+/// };
+/// ```
+struct VertexPacked {
+    Vec3    position;            ///< Object-space position (12B)
+    int8_t  packedNormal[4];     ///< Normal xyz/127 + w=0 (4B)
+    Vec2    texcoord;            ///< UV coordinates (8B)
+    int8_t  packedTangent[4];    ///< Tangent xyz/127 + w=sign (4B)
+    uint32_t _pad = 0;           ///< Pad to 32B alignment (4B)
+};
+
+static_assert(sizeof(VertexPacked) == 32, "VertexPacked must be 32 bytes");
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SimpleVertex — Minimal vertex for debug/UI geometry
 // ─────────────────────────────────────────────────────────────────────────────
 
