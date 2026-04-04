@@ -399,10 +399,25 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         updateCBData.maxParticles = gpuBuf.capacity;
 
         // Ping-pong: READ from ReadSet (SRV), WRITE to WriteSet (UAV).
-        // In-place (SRV+UAV on same buffer) is a DX12 data hazard.
-        // The spawn writes to WriteSet, update reads ReadSet (previous frame's
-        // WriteSet after swap) and writes to WriteSet.
+        // ReadSet was UAV→SRV'd at end of previous frame. On frame 0, it's
+        // still in UAV from InitializeData. Transition to SRV if needed.
         const auto& readSet = gpuBuf.ReadSet();
+        if (!gpuBuf.hasCompletedCycle) {
+            // First frame: ReadSet is in UAV (from InitializeData CopyDst→UAV).
+            // Transition to SRV so the update shader can read via StructuredBuffer.
+            RHIBarrierDesc rsBarriers[7] = {};
+            uint32_t rb = 0;
+            auto addRS = [&](RHIBufferHandle buf) {
+                rsBarriers[rb].buffer = buf;
+                rsBarriers[rb].stateBefore = RHIResourceState::UnorderedAccess;
+                rsBarriers[rb].stateAfter  = RHIResourceState::ShaderResource;
+                ++rb;
+            };
+            addRS(readSet.positions); addRS(readSet.velocities); addRS(readSet.ages);
+            addRS(readSet.lifespans); addRS(readSet.sizes); addRS(readSet.colors);
+            addRS(readSet.rotations);
+            cmdList->ResourceBarrier(rsBarriers, rb);
+        }
         updateCBData.positionsSrvIndex  = m_device->GetBufferSRVIndex(readSet.positions);
         updateCBData.velocitiesSrvIndex = m_device->GetBufferSRVIndex(readSet.velocities);
         updateCBData.agesSrvIndex       = m_device->GetBufferSRVIndex(readSet.ages);
