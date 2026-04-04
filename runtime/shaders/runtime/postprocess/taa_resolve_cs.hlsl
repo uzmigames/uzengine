@@ -28,7 +28,8 @@ cbuffer TaaCB : register(b2) {
     float  varianceClipGamma;   ///< CVar r.TAA.VarianceClipGamma (default 1.25).
     float  velocityThreshold;   ///< CVar r.TAA.VelocityThreshold (default 40.0, pixels).
     float  antiFlickerMax;      ///< CVar r.TAA.AntiFlickerMax (default 0.3).
-    uint   _pad0;
+    float  spatialWeightMul;    ///< CVar r.TAA.SpatialWeightMultiplier (default 2.29).
+    float  exposureScale;       ///< CVar r.TAA.ExposureScale (default 1.0).
 };
 
 SamplerState LinearClampSampler : register(s0);
@@ -156,7 +157,7 @@ void main(uint2 DTid : SV_DispatchThreadID)
     int2 centerCoord = int2(uv * float2(sceneW, sceneH));
     centerCoord = clamp(centerCoord, int2(0, 0), int2(sceneW - 1, sceneH - 1));
 
-    const float FrameExposureScale = 1.0;
+    const float FrameExposureScale = exposureScale;
 
     [unroll]
     for (uint i = 0; i < 9; i++)
@@ -183,7 +184,7 @@ void main(uint2 DTid : SV_DispatchThreadID)
     {
         float2 pixelOffset = kPlusOffsets[j] - jitterOffset;
         /// @ref Karis 2014 — exp(-2.29 * d^2), sigma=0.47
-        float spatialWeight = exp(-2.29 * dot(pixelOffset, pixelOffset));
+        float spatialWeight = exp(-spatialWeightMul * dot(pixelOffset, pixelOffset));
         float hdrWeight = neighborWeights[kPlusIndices[j]];
         float sampleWeight = spatialWeight * hdrWeight;
         filteredColor += neighbors[kPlusIndices[j]] * sampleWeight;

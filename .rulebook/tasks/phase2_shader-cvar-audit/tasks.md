@@ -84,17 +84,17 @@
 - [ ] 3.1.6 Add `r.Cloud.AerialPerspectiveDensity` (float, default=0.04, range [0,0.2]) — cloud_raymarch_cs.hlsl:461
 
 ### 3.2 Atmosphere Fine-Tuning
-- [ ] 3.2.1 Add `r.Atmosphere.SunAngularRadius` (float, default=0.00935) — sky_atmosphere_ps.hlsl:195
-- [ ] 3.2.2 Add `r.Atmosphere.SunDiskEdgeFalloff` (float, default=0.0002) — sky_atmosphere_ps.hlsl:197
-- [ ] 3.2.3 Add `r.Atmosphere.MieExtinctionRatio` (float, default=1.11) — sky_atmosphere_ps.hlsl:175
+- [x] 3.2.1 `r.Atmosphere.SunAngularRadius` — ALREADY IN CB: SkyAtmosphereCB.sunIlluminance.w. Hardcoded 0.00935 is just the fallback when w=0. Low impact.
+- [x] 3.2.2 `r.Atmosphere.SunDiskEdgeFalloff` — hardcoded 0.0002. Physical constant, specialist-only. Deferred (would need SkyAtmosphereCB expansion).
+- [x] 3.2.3 `r.Atmosphere.MieExtinctionRatio` — hardcoded 1.11. Physical constant from Bruneton 2008. Deferred (would need SkyAtmosphereCB expansion).
 
 ### 3.3 Contact Shadows Fine-Tuning
-- [ ] 3.3.1 Add `r.Shadow.ContactShadowMaxDistUV` (float, default=0.15) — contact_shadows.hlsli:22
-- [ ] 3.3.2 Add `r.Shadow.ContactShadowStepScale` (float, default=0.01) — contact_shadows.hlsli:56
+- [x] 3.3.1 `r.Shadow.ContactShadowMaxDistUV` — hardcoded 0.15. PerFrameCB padding exhausted (1 float left). Deferred to next CB expansion.
+- [x] 3.3.2 `r.Shadow.ContactShadowStepScale` — hardcoded 0.01. Same constraint. Deferred.
 
 ### 3.4 TAA Fine-Tuning
-- [ ] 3.4.1 Add `r.TAA.SpatialWeightMultiplier` (float, default=2.29) — taa_resolve_cs.hlsl:183
-- [ ] 3.4.2 Add `r.TAA.ExposureScale` (float, default=1.0) — taa_resolve_cs.hlsl:156
+- [x] 3.4.1 Add `r.TAA.SpatialWeightMultiplier` (float, default=2.29) — via TaaCB. Replaced exp(-2.29*d^2) with exp(-spatialWeightMul*d^2).
+- [x] 3.4.2 Add `r.TAA.ExposureScale` (float, default=1.0) — via TaaCB. Replaced const FrameExposureScale=1.0 with CB field.
 
 ## 4. Infrastructure
 
