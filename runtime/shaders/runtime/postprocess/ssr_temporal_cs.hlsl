@@ -41,12 +41,7 @@ Texture2D<float2> t_velocity   : register(t2);
 SamplerState linearClamp : register(s0);
 SamplerState pointClamp  : register(s1);
 
-/// Blend alpha controls how fast new samples are accepted.
-/// Lower = more history (smoother, more ghosting). Higher = more responsive.
-/// With deterministic SSR (no stochastic rays), a low alpha is safe —
-/// static scenes converge instantly since current == history.
-/// @ref UE5 ScreenSpaceReflections.usf — 0.04 for non-stochastic SSR
-static const float TEMPORAL_BLEND_ALPHA = 0.04;
+static const float TEMPORAL_BLEND_ALPHA = 0.05;
 static const float VELOCITY_THRESHOLD   = 0.01;
 
 [numthreads(8, 8, 1)]
@@ -85,45 +80,29 @@ void main(uint3 DTid : SV_DispatchThreadID)
         return;
     }
 
-    // 3×3 neighbourhood statistics for variance clipping
-    // @ref Salvi 2016 "An Excursion in Temporal Supersampling" — variance clip
-    float4 moment1 = float4(0, 0, 0, 0);
-    float4 moment2 = float4(0, 0, 0, 0);
-    float4 minVal = 1e10;
-    float4 maxVal = -1e10;
+    // 3×3 neighbourhood AABB for clamping
+    float4 minVal = currentSSR;
+    float4 maxVal = currentSSR;
 
     [unroll]
     for (int y = -1; y <= 1; y++) {
         [unroll]
         for (int x = -1; x <= 1; x++) {
+            if (x == 0 && y == 0) continue;
             float2 sampleUV = uv + float2(x, y) * texelSize;
             float4 s = currentTex.SampleLevel(pointClamp, sampleUV, 0);
-            moment1 += s;
-            moment2 += s * s;
             minVal = min(minVal, s);
             maxVal = max(maxVal, s);
         }
     }
 
-    // Variance-based AABB: tighter clipping reduces ghosting
-    // Mean ± gamma * stddev produces a smaller AABB than raw min/max
-    float4 mean   = moment1 / 9.0;
-    float4 sigma  = sqrt(max(moment2 / 9.0 - mean * mean, 0.0));
-    float  gamma  = 2.0; // Loose clipping — deterministic SSR rarely needs tight clip
-    float4 clipMin = max(mean - gamma * sigma, minVal);
-    float4 clipMax = min(mean + gamma * sigma, maxVal);
-
-    // Sample history and clip to neighbourhood AABB
-    float4 rawHistory = historyTex.SampleLevel(linearClamp, prevUV, 0);
-    float4 historySSR = clamp(rawHistory, clipMin, clipMax);
+    // Sample history and clamp to neighbourhood AABB
+    float4 historySSR = historyTex.SampleLevel(linearClamp, prevUV, 0);
+    historySSR = clamp(historySSR, minVal, maxVal);
 
     // Velocity-based blend: faster motion → more current frame
-    // Confidence-based: if history was heavily clipped, trust current more
     float velMag = length(velocity);
-    float velAlpha = saturate(velMag / VELOCITY_THRESHOLD);
-    float clipDist = length(rawHistory.rgb - historySSR.rgb);
-    float clipAlpha = saturate(clipDist * 5.0);
-    float alpha = max(TEMPORAL_BLEND_ALPHA, max(velAlpha, clipAlpha));
+    float alpha = lerp(TEMPORAL_BLEND_ALPHA, 1.0, saturate(velMag / VELOCITY_THRESHOLD));
 
     outputSSR[DTid.xy] = lerp(historySSR, currentSSR, alpha);
 }
