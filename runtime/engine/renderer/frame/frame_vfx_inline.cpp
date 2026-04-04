@@ -131,8 +131,8 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         // last frame. Spawn writes to WriteSet, Update reads ReadSet → writes WriteSet.
         gpuBuf.Swap();
 
-        // CPU particle upload test removed (was debug code).
-        if (false) { // Dead code — keep structure for reference
+        // CPU particle upload test (disabled).
+        if (false) {
         // Write 100 particles at known positions to WriteSet to verify
         // the billboard render path independently of compute spawn/update.
         static bool cpuUploadDone = false;
@@ -189,8 +189,25 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
                     m_device->UnmapBuffer(sizeStg);
                     m_device->UnmapBuffer(ageStg);
 
-                    // Write to BOTH sets so billboard always finds the data
-                    // regardless of which set is being read.
+                    // Transition ALL destination buffers to CopyDst
+                    RHIBarrierDesc preCopy[8] = {};
+                    uint32_t pc = 0;
+                    auto addCopyDst = [&](RHIBufferHandle b) {
+                        preCopy[pc].buffer = b;
+                        preCopy[pc].stateBefore = RHIResourceState::Common;
+                        preCopy[pc].stateAfter = RHIResourceState::CopyDst;
+                        ++pc;
+                    };
+                    addCopyDst(gpuBuf.sets[0].positions);
+                    addCopyDst(gpuBuf.sets[1].positions);
+                    addCopyDst(gpuBuf.sets[0].lifespans);
+                    addCopyDst(gpuBuf.sets[1].lifespans);
+                    addCopyDst(gpuBuf.sets[0].sizes);
+                    addCopyDst(gpuBuf.sets[1].sizes);
+                    addCopyDst(gpuBuf.sets[0].ages);
+                    addCopyDst(gpuBuf.sets[1].ages);
+                    cmdList->ResourceBarrier(preCopy, pc);
+
                     cmdList->CopyBuffer(posStg, 0, gpuBuf.sets[0].positions, 0, posBytes);
                     cmdList->CopyBuffer(posStg, 0, gpuBuf.sets[1].positions, 0, posBytes);
                     cmdList->CopyBuffer(lifeStg, 0, gpuBuf.sets[0].lifespans, 0, lifeBytes);
@@ -200,7 +217,26 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
                     cmdList->CopyBuffer(ageStg, 0, gpuBuf.sets[0].ages, 0, ageBytes);
                     cmdList->CopyBuffer(ageStg, 0, gpuBuf.sets[1].ages, 0, ageBytes);
 
-                    UZ_LOG(VFX, Info, "CPU-uploaded {} test particles to WriteSet", kTestCount);
+                    // CopyDst → SRV so billboard can read
+                    RHIBarrierDesc postCopy[8] = {};
+                    uint32_t ppc = 0;
+                    auto addSRV = [&](RHIBufferHandle b) {
+                        postCopy[ppc].buffer = b;
+                        postCopy[ppc].stateBefore = RHIResourceState::CopyDst;
+                        postCopy[ppc].stateAfter = RHIResourceState::ShaderResource;
+                        ++ppc;
+                    };
+                    addSRV(gpuBuf.sets[0].positions);
+                    addSRV(gpuBuf.sets[1].positions);
+                    addSRV(gpuBuf.sets[0].lifespans);
+                    addSRV(gpuBuf.sets[1].lifespans);
+                    addSRV(gpuBuf.sets[0].sizes);
+                    addSRV(gpuBuf.sets[1].sizes);
+                    addSRV(gpuBuf.sets[0].ages);
+                    addSRV(gpuBuf.sets[1].ages);
+                    cmdList->ResourceBarrier(postCopy, ppc);
+
+                    UZ_LOG(VFX, Info, "CPU-uploaded {} test particles with proper barriers", kTestCount);
                 }
                 // Don't destroy staging until GPU finishes — store for later cleanup
                 // (leaking intentionally for debug, cleaned up on shutdown)
@@ -372,10 +408,29 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
                 cmdList->ResourceBarrier(uavBarriers, ub);
             }
 
+            // freeList is read by spawn CS as StructuredBuffer (SRV).
+            // Transition from UAV→SRV so the read works correctly.
+            {
+                RHIBarrierDesc flBarrier{};
+                flBarrier.buffer = gpuBuf.freeList;
+                flBarrier.stateBefore = RHIResourceState::UnorderedAccess;
+                flBarrier.stateAfter  = RHIResourceState::ShaderResource;
+                cmdList->ResourceBarrier(&flBarrier, 1);
+            }
+
             cmdList->SetPipeline(spawnPSO);
             cmdList->SetRootCBV(1, spawnAlloc.gpuAddr);
             const uint32_t spawnGroups = (spawnCount + kSpawnGroupSize - 1) / kSpawnGroupSize;
             cmdList->Dispatch(spawnGroups, 1, 1);
+
+            // freeList back to UAV for update's dead particle recycling.
+            {
+                RHIBarrierDesc flBarrier{};
+                flBarrier.buffer = gpuBuf.freeList;
+                flBarrier.stateBefore = RHIResourceState::ShaderResource;
+                flBarrier.stateAfter  = RHIResourceState::UnorderedAccess;
+                cmdList->ResourceBarrier(&flBarrier, 1);
+            }
         }
 
         // ── UAV barrier between spawn and update ───────────────────────
