@@ -26,6 +26,14 @@ UZ_DECLARE_LOG_CATEGORY(Renderer);
 
 // ── CVars ────────────────────────────────────────────────────────────────
 static auto* cv_Clouds = UZ_CVAR_BOOL("r.Clouds", true, "Volumetric clouds");
+static auto* cv_CloudNoiseXY     = UZ_CVAR_FLOAT("r.Cloud.NoiseXYScale", 0.12f, "Cloud noise XY coordinate scale", 0.01f, 1.0f);
+static auto* cv_CloudNoiseZ      = UZ_CVAR_FLOAT("r.Cloud.NoiseZScale", 3.0f, "Cloud noise Z coordinate scale", 0.5f, 10.0f);
+static auto* cv_CloudOctaves     = UZ_CVAR_INT("r.Cloud.ShapeOctaves", 4, "Cloud shape FBM octaves", 1, 6);
+static auto* cv_CloudFBMDecay    = UZ_CVAR_FLOAT("r.Cloud.FBMDecay", 0.5f, "FBM amplitude decay per octave", 0.3f, 0.8f);
+static auto* cv_CloudFBMLac      = UZ_CVAR_FLOAT("r.Cloud.FBMLacunarity", 2.0f, "FBM frequency multiplier per octave", 1.5f, 4.0f);
+static auto* cv_CloudErosion     = UZ_CVAR_FLOAT("r.Cloud.DetailErosion", 0.35f, "Detail noise erosion strength", 0.0f, 1.0f);
+static auto* cv_CloudAerialDens  = UZ_CVAR_FLOAT("r.Cloud.AerialPerspectiveDensity", 0.04f, "Aerial perspective fog density", 0.0f, 0.2f);
+static auto* cv_CloudDensScale   = UZ_CVAR_FLOAT("r.Cloud.DensityScale", 25.0f, "Cloud density normalization scale", 1.0f, 100.0f);
 
 namespace uz {
 
@@ -487,9 +495,18 @@ struct alignas(16) CloudCB {
     float tracingStartMaxDistance;                             // 4 bytes  (offset 244)
     float tracingStartDistanceFromCamera;                     // 4 bytes  (offset 248)
     uint32_t detailNoiseSrv;   // 4 bytes  (offset 252) — detail noise 3D texture SRV
+    // ── Shader CVar parameters (Phase 3 — zero hardcoded noise constants) ──
+    float noiseXYScale;        // 4 bytes  (offset 256) — CVar r.Cloud.NoiseXYScale (default 0.12)
+    float noiseZScale;         // 4 bytes  (offset 260) — CVar r.Cloud.NoiseZScale (default 3.0)
+    uint32_t shapeOctaves;     // 4 bytes  (offset 264) — CVar r.Cloud.ShapeOctaves (default 4)
+    float fbmDecay;            // 4 bytes  (offset 268) — CVar r.Cloud.FBMDecay (default 0.5)
+    float fbmLacunarity;       // 4 bytes  (offset 272) — CVar r.Cloud.FBMLacunarity (default 2.0)
+    float detailErosion;       // 4 bytes  (offset 276) — CVar r.Cloud.DetailErosion (default 0.35)
+    float aerialPerspDensity;  // 4 bytes  (offset 280) — CVar r.Cloud.AerialPerspectiveDensity (default 0.04)
+    float densityScale;        // 4 bytes  (offset 284) — CVar r.Cloud.DensityScale (default 25.0)
 };
 
-static_assert(sizeof(CloudCB) == 256, "CloudCB must be 256 bytes for CBV alignment");
+static_assert(sizeof(CloudCB) == 288, "CloudCB must be 288 bytes for CBV alignment");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Execute
@@ -585,6 +602,14 @@ void CloudPass::Execute(IRHICommandList* cmdList, CBRingAllocator& cbRing,
     cb.tracingStartMaxDistance = input.tracingStartMaxDistance;
     cb.tracingStartDistanceFromCamera = input.tracingStartDistanceFromCamera;
     cb.detailNoiseSrv  = m_detailNoiseSrvIndex;
+    cb.noiseXYScale       = cv_CloudNoiseXY->value;
+    cb.noiseZScale        = cv_CloudNoiseZ->value;
+    cb.shapeOctaves       = static_cast<uint32_t>(cv_CloudOctaves->value);
+    cb.fbmDecay           = cv_CloudFBMDecay->value;
+    cb.fbmLacunarity      = cv_CloudFBMLac->value;
+    cb.detailErosion      = cv_CloudErosion->value;
+    cb.aerialPerspDensity = cv_CloudAerialDens->value;
+    cb.densityScale       = cv_CloudDensScale->value;
 
     auto cbAlloc = cbRing.Allocate(sizeof(CloudCB));
     std::memcpy(cbAlloc.cpuPtr, &cb, sizeof(CloudCB));

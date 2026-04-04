@@ -76,12 +76,13 @@
 ## 3. Phase 3 — Low Priority CVars (specialist tuning)
 
 ### 3.1 Cloud FBM
-- [ ] 3.1.1 Add `r.Cloud.NoiseXYScale` (float, default=0.12, range [0.01,1.0]) — cloud_raymarch_cs.hlsl:269
-- [ ] 3.1.2 Add `r.Cloud.NoiseZScale` (float, default=3.0, range [0.5,10.0]) — cloud_raymarch_cs.hlsl:273
-- [ ] 3.1.3 Add `r.Cloud.ShapeOctaves` (int, default=4, range [1,6]) — cloud_raymarch_cs.hlsl:278
-- [ ] 3.1.4 Add `r.Cloud.FBMDecay` (float, default=0.5, range [0.3,0.8]) — cloud_raymarch_cs.hlsl:240
-- [ ] 3.1.5 Add `r.Cloud.FBMLacunarity` (float, default=2.0, range [1.5,4.0]) — cloud_raymarch_cs.hlsl:241
-- [ ] 3.1.6 Add `r.Cloud.AerialPerspectiveDensity` (float, default=0.04, range [0,0.2]) — cloud_raymarch_cs.hlsl:461
+- [x] 3.1.1 Add `r.Cloud.NoiseXYScale` (float, default=0.12) — via CloudCB expansion (256→288 bytes). Replaced inline 0.12f with g_noiseXYScale.
+- [x] 3.1.2 Add `r.Cloud.NoiseZScale` (float, default=3.0) — via CloudCB. Replaced inline 3.0f with g_noiseZScale.
+- [x] 3.1.3 Add `r.Cloud.ShapeOctaves` (int, default=4) — via CloudCB. FBM loop now uses g_shapeOctaves.
+- [x] 3.1.4 Add `r.Cloud.FBMDecay` (float, default=0.5) — via CloudCB. FBM amplitude *= g_fbmDecay.
+- [x] 3.1.5 Add `r.Cloud.FBMLacunarity` (float, default=2.0) — via CloudCB. FBM frequency *= g_fbmLacunarity.
+- [x] 3.1.6 Add `r.Cloud.DetailErosion` (float, default=0.35) — via CloudCB. Erosion strength uses g_detailErosion.
+- [x] 3.1.7 Add `r.Cloud.DensityScale` (float, default=25.0) — via CloudCB. Replaced static const DENSITY_SCALE with g_densityScale.
 
 ### 3.2 Atmosphere Fine-Tuning
 - [x] 3.2.1 `r.Atmosphere.SunAngularRadius` — ALREADY IN CB: SkyAtmosphereCB.sunIlluminance.w. Hardcoded 0.00935 is just the fallback when w=0. Low impact.
