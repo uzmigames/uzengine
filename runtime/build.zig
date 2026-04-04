@@ -769,6 +769,22 @@ pub fn build(b: *std.Build) void {
         runtime_mod.addIncludePath(b.path(ffx ++ "backend/dx12"));
     }
 
+    // Thirdparty — NVIDIA DLSS SDK headers (NGX API for temporal upscaling)
+    // Include paths only — DLSS uses a prebuilt DLL (nvngx_dlss.dll) loaded at runtime
+    // via NVSDK_NGX_D3D12_Init. No static linking required.
+    // Define UZ_DLSS_ENABLED=1 when the SDK is available (downloaded via setup.ps1).
+    if (is_windows) {
+        const dlss_inc = tp ++ "dlss/include/";
+        const dlss_resolved = b.path(dlss_inc).getPath(b);
+        if (std.fs.openDirAbsolute(dlss_resolved, .{})) |*dir| {
+            @constCast(dir).close();
+            runtime_mod.addIncludePath(b.path(dlss_inc));
+            runtime_mod.addCMacro("UZ_DLSS_ENABLED", "1");
+        } else |_| {
+            // DLSS SDK not downloaded — DlssUpscaler compiles as no-op stub.
+        }
+    }
+
     // Include paths — runtime root (for "platform/platform_types.h" etc.)
     runtime_mod.addIncludePath(b.path("."));
 

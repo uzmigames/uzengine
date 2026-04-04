@@ -122,6 +122,26 @@ void Application::ParseArgs(int argc, char* argv[]) {
             m_flipOutputPath = argv[++i];
         } else if (std::strcmp(argv[i], "--flip-threshold") == 0 && i + 1 < argc) {
             m_flipThreshold = static_cast<float>(std::atof(argv[++i]));
+        } else if (std::strcmp(argv[i], "--upscaler") == 0 && i + 1 < argc) {
+            const char* mode = argv[++i];
+            int upscalerVal = 0;
+            if (std::strcmp(mode, "none") == 0)      upscalerVal = 0;
+            else if (std::strcmp(mode, "taa") == 0)   upscalerVal = 1;
+            else if (std::strcmp(mode, "tsr") == 0)   upscalerVal = 2;
+            else if (std::strcmp(mode, "fsr2") == 0)  upscalerVal = 3;
+            else if (std::strcmp(mode, "dlss") == 0)  upscalerVal = 4;
+            else if (std::strcmp(mode, "xess") == 0)  upscalerVal = 5;
+            else { UZ_LOG(App, Warning, "Unknown upscaler '{}', using TAA", mode); upscalerVal = 1; }
+            m_cvarOverrides.emplace_back("r.AntiAliasingMethod", static_cast<float>(upscalerVal));
+        } else if (std::strcmp(argv[i], "--dlss-quality") == 0 && i + 1 < argc) {
+            const char* q = argv[++i];
+            int qVal = 3; // Quality default
+            if (std::strcmp(q, "ultra") == 0 || std::strcmp(q, "ultraperformance") == 0) qVal = 0;
+            else if (std::strcmp(q, "performance") == 0) qVal = 1;
+            else if (std::strcmp(q, "balanced") == 0)    qVal = 2;
+            else if (std::strcmp(q, "quality") == 0)     qVal = 3;
+            else if (std::strcmp(q, "dlaa") == 0)        qVal = 4;
+            m_cvarOverrides.emplace_back("r.DLSS.Quality", static_cast<float>(qVal));
         } else if (std::strcmp(argv[i], "--cvar") == 0 && i + 1 < argc) {
             std::string arg = argv[++i];
             const auto eqPos = arg.find('=');

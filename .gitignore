@@ -98,3 +98,6 @@ poc-napi/node_modules/
 *.uztexture
 *.uzimport
 .cache/
+
+# NVIDIA DLSS SDK (proprietary, downloaded via setup.ps1, ~200MB)
+runtime/thirdparty/dlss/

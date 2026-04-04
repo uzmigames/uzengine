@@ -477,6 +477,14 @@ Clone-Repo -Name "amd-fidelityfx" `
     -Branch "main" `
     -RemoveDirs @("docs", "samples", "tools", "PrebuiltSignedDLL", "framework", "BuildFidelityFXSolution.bat")
 
+# NVIDIA DLSS SDK (Deep Learning Super Sampling — AI temporal upscaling)
+# Provides nvsdk_ngx headers + nvngx_dlss.dll runtime. Requires NVIDIA RTX GPU.
+# NOTE: The SDK is ~200MB; runtime/thirdparty/dlss/ is .gitignored.
+Clone-Repo -Name "dlss" `
+    -Url "https://github.com/NVIDIA/DLSS.git" `
+    -Branch "main" `
+    -RemoveDirs @("doc", "samples", "utils", "tests")
+
 # SMAA — Subpixel Morphological Anti-Aliasing (header-only HLSL/GLSL)
 Clone-Repo -Name "smaa" `
     -Url "https://github.com/iryoku/smaa.git" `
