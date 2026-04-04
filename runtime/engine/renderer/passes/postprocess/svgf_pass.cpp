@@ -8,6 +8,9 @@
 #include "rhi.h"
 #include "log.h"
 #include "profiler.h"
+#include "cvar.h"
+
+#include <cstring>
 
 UZ_DECLARE_LOG_CATEGORY(Renderer);
 
@@ -250,8 +253,15 @@ uint32_t SVGFPass::Denoise(IRHICommandList* cmdList, const SVGFRenderParams& par
                 uint32_t stepSize;
                 uint32_t texWidth;
                 uint32_t texHeight;
+                uint32_t sigmaDepthBits;
+                uint32_t sigmaNormalBits;
+                uint32_t sigmaLuminanceBits;
             };
-            static_assert(sizeof(AtrousRC) == 32);
+            static_assert(sizeof(AtrousRC) == 44);
+
+            static auto* cv_SVGFSigmaD = UZ_CVAR_FLOAT("r.SVGF.SigmaDepth", 1.0f, "SVGF edge-stopping depth sigma", 0.1f, 10.0f);
+            static auto* cv_SVGFSigmaN = UZ_CVAR_FLOAT("r.SVGF.SigmaNormal", 128.0f, "SVGF edge-stopping normal sigma", 8.0f, 512.0f);
+            static auto* cv_SVGFSigmaL = UZ_CVAR_FLOAT("r.SVGF.SigmaLuminance", 4.0f, "SVGF edge-stopping luminance sigma", 0.5f, 16.0f);
 
             AtrousRC rc{};
             rc.inputColorSrv  = srvs[readIdx];
@@ -262,8 +272,12 @@ uint32_t SVGFPass::Denoise(IRHICommandList* cmdList, const SVGFRenderParams& par
             rc.stepSize       = kStepSizes[iter];
             rc.texWidth       = m_width;
             rc.texHeight      = m_height;
+            float sd = cv_SVGFSigmaD->value, sn = cv_SVGFSigmaN->value, sl = cv_SVGFSigmaL->value;
+            std::memcpy(&rc.sigmaDepthBits, &sd, 4);
+            std::memcpy(&rc.sigmaNormalBits, &sn, 4);
+            std::memcpy(&rc.sigmaLuminanceBits, &sl, 4);
 
-            cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
+            cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 11);
             cmdList->SetRootCBV(kSlotPerFrame, params.perFrameBuffer,
                                 params.perFrameOffset, params.perFrameCpuPtr,
                                 params.perFrameSize);

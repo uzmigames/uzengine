@@ -34,6 +34,9 @@ cbuffer RootConstants : register(b0) {
     uint g_stepSize;
     uint g_texWidth;
     uint g_texHeight;
+    uint g_sigmaDepthBits;       // CVar r.SVGF.SigmaDepth as float bits (default 1.0)
+    uint g_sigmaNormalBits;      // CVar r.SVGF.SigmaNormal as float bits (default 128.0)
+    uint g_sigmaLuminanceBits;   // CVar r.SVGF.SigmaLuminance as float bits (default 4.0)
 };
 
 cbuffer PerFrameCB : register(b1) {
@@ -63,14 +66,12 @@ float3 OctDecode(float2 f) {
 }
 
 /// @ref Dammertz 2010 — 5x5 à-trous wavelet kernel weights (B3 spline)
-/// @constants h[5] = {1/16, 1/4, 3/8, 1/4, 1/16}
 static const float kKernel[3] = { 1.0, 2.0/3.0, 1.0/6.0 };
 
-/// @ref Schied 2017 — edge-stopping parameters
-/// @constants sigmaDepth=1.0, sigmaNormal=128.0, sigmaLuminance=4.0
-static const float kSigmaDepth     = 1.0;
-static const float kSigmaNormal    = 128.0;
-static const float kSigmaLuminance = 4.0;
+/// @ref Schied 2017 — edge-stopping parameters (CVar-driven)
+#define kSigmaDepth     asfloat(g_sigmaDepthBits)
+#define kSigmaNormal    asfloat(g_sigmaNormalBits)
+#define kSigmaLuminance asfloat(g_sigmaLuminanceBits)
 
 [numthreads(8, 8, 1)]
 void main(uint3 DTid : SV_DispatchThreadID) {
