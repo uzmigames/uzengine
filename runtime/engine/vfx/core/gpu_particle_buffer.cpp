@@ -431,7 +431,10 @@ bool GPUParticleBuffer::InitializeData(IRHIDevice* device, IRHICommandList* cmd)
                 cmd->CopyBuffer(zeroStaging, 0, sets[0].ages, 0, zeroDesc.sizeBytes);
                 cmd->CopyBuffer(zeroStaging, 0, sets[1].ages, 0, zeroDesc.sizeBytes);
             }
-            device->DestroyBuffer(zeroStaging);
+            // Do NOT destroy zeroStaging here — the CopyBuffer commands are still
+            // on the command list and reference this resource. Store it for later
+            // cleanup (DestroyStaging will handle it after the GPU finishes).
+            zeroStagingBuffer = zeroStaging;
         }
     }
 
@@ -481,6 +484,11 @@ void GPUParticleBuffer::DestroyStaging(IRHIDevice* device)
     if (aliveCountStaging.IsValid()) {
         device->DestroyBuffer(aliveCountStaging);
         aliveCountStaging = {};
+    }
+
+    if (zeroStagingBuffer.IsValid()) {
+        device->DestroyBuffer(zeroStagingBuffer);
+        zeroStagingBuffer = {};
     }
 }
 

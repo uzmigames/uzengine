@@ -207,6 +207,9 @@ struct GPUParticleBuffer {
     /// Upload-heap staging buffer for the alive count counter (single uint32).
     RHIBufferHandle aliveCountStaging = RHIBufferHandle::Invalid();
 
+    /// Upload-heap staging buffer for zeroing lifespans/ages.
+    RHIBufferHandle zeroStagingBuffer = RHIBufferHandle::Invalid();
+
     // -- Accessors ------------------------------------------------------------
 
     /// Returns the attribute set currently used as the read source (SRV).
