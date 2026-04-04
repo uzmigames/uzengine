@@ -332,6 +332,8 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         // ── UAV barrier between update and indirect args ───────────────
         EmitUAVBarrier(cmdList, gpuBuf.aliveCount);
 
+        // No GPU readback here (would require fence wait mid-frame).
+
         // ── Indirect args dispatch ─────────────────────────────────────
         // The indirect args CS reads aliveCount (SRV) and writes
         // indirectDrawArgs / indirectDispatchArgs (UAV).
