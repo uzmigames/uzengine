@@ -96,11 +96,8 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     }
 
     // ── Pre-warm all pipelines eagerly ──────────────────────────────────
-    // SHADER DEBUG: disabled — some new shaders have root sig mismatch.
-    // Pipelines will be created lazily on first use instead.
-    // const uint32_t warmedPipelines = m_pipelines->WarmupAll();
-    // UZ_LOG(Renderer, Info, "SceneRenderer: pre-warmed {} pipelines at startup", warmedPipelines);
-    UZ_LOG(Renderer, Warning, "SceneRenderer: WarmupAll DISABLED for shader debugging");
+    const uint32_t warmedPipelines = m_pipelines->WarmupAll();
+    UZ_LOG(Renderer, Info, "SceneRenderer: pre-warmed {} pipelines at startup", warmedPipelines);
 
     // ── CB Ring Allocator ───────────────────────────────────────────────
     m_cbRing = std::make_unique<CBRingAllocator>();
