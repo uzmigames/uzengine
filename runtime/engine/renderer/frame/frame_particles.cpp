@@ -380,6 +380,11 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
 
         // Soft particle depth fade distance (0 = disabled, skip depth read in PS).
         bbCBData.softFadeDistance = 0.0f;
+        // Keep full size throughout lifetime (no shrink-to-zero).
+        bbCBData.sizeOverLifeStart    = 1.0f;
+        bbCBData.sizeOverLifePeak     = 1.0f;
+        bbCBData.sizeOverLifeEnd      = 1.0f;
+        bbCBData.sizeOverLifePeakTime = 0.5f;
 
         const CBAllocation bbAlloc = m_cbRing->Allocate(sizeof(bbCBData));
         if (!bbAlloc.cpuPtr) {
@@ -404,6 +409,12 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
         const auto& readSet = gpuBuf.WriteSet();
         ParticleBillboardIndices indicesData{};
         indicesData.positionBufferIdx    = m_device->GetBufferSRVIndex(readSet.positions);
+        static bool logBB = false;
+        if (!logBB) {
+            UZ_LOG(VFX, Info, "Billboard posSRV={} readIdx={} writeIdx={}",
+                   indicesData.positionBufferIdx, gpuBuf.readIndex, gpuBuf.writeIndex);
+            logBB = true;
+        }
         indicesData.sizeBufferIdx        = m_device->GetBufferSRVIndex(readSet.sizes);
         indicesData.colorBufferIdx       = m_device->GetBufferSRVIndex(readSet.colors);
         indicesData.rotationBufferIdx    = m_device->GetBufferSRVIndex(readSet.rotations);

@@ -127,9 +127,9 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         auto& gpuBuf = emitter->buffer;
         if (!gpuBuf.IsValid()) continue;
 
-        // No ping-pong swap — in-place simulation (read + write same set).
-        // Both spawn and update operate on WriteSet. Billboard reads WriteSet.
-        // gpuBuf.Swap(); // Disabled: using single-buffer in-place update.
+        // Ping-pong swap: after swap, WriteSet has the buffers that were ReadSet
+        // last frame. Spawn writes to WriteSet, Update reads ReadSet → writes WriteSet.
+        gpuBuf.Swap();
 
         // ── Deferred GPU buffer initialization ─────────────────────────
         // Clean up freeList/freeListHead staging from a previous init,
@@ -199,7 +199,7 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         spawnCBData.emitterPos[0]     = 0.0f;
         spawnCBData.emitterPos[1]     = 0.0f;
         spawnCBData.emitterPos[2]     = 0.0f;
-        spawnCBData.spawnRadius       = 20.0f; // 20cm random offset from origin
+        spawnCBData.spawnRadius       = 200.0f; // 200cm random offset — wide spread
         spawnCBData.spawnVelocity[0]  = emitter->spawnVelocity.x;
         spawnCBData.spawnVelocity[1]  = emitter->spawnVelocity.y;
         spawnCBData.spawnVelocity[2]  = emitter->spawnVelocity.z;
@@ -231,6 +231,15 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         const auto& writeSet = gpuBuf.WriteSet();
         spawnCBData.freeListSrvIndex       = m_device->GetBufferSRVIndex(gpuBuf.freeList);
         spawnCBData.positionsUavIndex       = m_device->GetBufferUAVIndex(writeSet.positions);
+        static bool logIdx = false;
+        if (!logIdx) {
+            UZ_LOG(VFX, Info, "Spawn posUAV={} | Update posSRV={} posUAV={} | readIdx={} writeIdx={}",
+                   spawnCBData.positionsUavIndex,
+                   m_device->GetBufferSRVIndex(gpuBuf.ReadSet().positions),
+                   m_device->GetBufferUAVIndex(writeSet.positions),
+                   gpuBuf.readIndex, gpuBuf.writeIndex);
+            logIdx = true;
+        }
         spawnCBData.velocitiesUavIndex      = m_device->GetBufferUAVIndex(writeSet.velocities);
         spawnCBData.agesUavIndex            = m_device->GetBufferUAVIndex(writeSet.ages);
         spawnCBData.lifespansUavIndex       = m_device->GetBufferUAVIndex(writeSet.lifespans);
@@ -285,17 +294,18 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         updateCBData.frameNumber = frameIndex;
         updateCBData.maxParticles = gpuBuf.capacity;
 
-        // In-place update: use WRITE set for BOTH read AND write (no ping-pong).
-        // The spawn shader already wrote to the write set, so reading from
-        // the same set picks up newly spawned particle data immediately.
-        // This matches the standalone demo's proven approach.
-        updateCBData.positionsSrvIndex  = m_device->GetBufferSRVIndex(writeSet.positions);
-        updateCBData.velocitiesSrvIndex = m_device->GetBufferSRVIndex(writeSet.velocities);
-        updateCBData.agesSrvIndex       = m_device->GetBufferSRVIndex(writeSet.ages);
-        updateCBData.lifespansSrvIndex  = m_device->GetBufferSRVIndex(writeSet.lifespans);
-        updateCBData.sizesSrvIndex      = m_device->GetBufferSRVIndex(writeSet.sizes);
-        updateCBData.colorsSrvIndex     = m_device->GetBufferSRVIndex(writeSet.colors);
-        updateCBData.rotationsSrvIndex  = m_device->GetBufferSRVIndex(writeSet.rotations);
+        // Ping-pong: READ from ReadSet (SRV), WRITE to WriteSet (UAV).
+        // In-place (SRV+UAV on same buffer) is a DX12 data hazard.
+        // The spawn writes to WriteSet, update reads ReadSet (previous frame's
+        // WriteSet after swap) and writes to WriteSet.
+        const auto& readSet = gpuBuf.ReadSet();
+        updateCBData.positionsSrvIndex  = m_device->GetBufferSRVIndex(readSet.positions);
+        updateCBData.velocitiesSrvIndex = m_device->GetBufferSRVIndex(readSet.velocities);
+        updateCBData.agesSrvIndex       = m_device->GetBufferSRVIndex(readSet.ages);
+        updateCBData.lifespansSrvIndex  = m_device->GetBufferSRVIndex(readSet.lifespans);
+        updateCBData.sizesSrvIndex      = m_device->GetBufferSRVIndex(readSet.sizes);
+        updateCBData.colorsSrvIndex     = m_device->GetBufferSRVIndex(readSet.colors);
+        updateCBData.rotationsSrvIndex  = m_device->GetBufferSRVIndex(readSet.rotations);
 
         updateCBData.positionsUavIndex  = m_device->GetBufferUAVIndex(writeSet.positions);
         updateCBData.velocitiesUavIndex = m_device->GetBufferUAVIndex(writeSet.velocities);

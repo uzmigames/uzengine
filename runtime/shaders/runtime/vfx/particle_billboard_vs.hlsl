@@ -416,7 +416,10 @@ VSOutput main(uint vertexID : SV_VertexID) {
 #endif
 
     // ── Cull dead/uninitialized particles ──
-    if (particleLife <= 0.0f || particleAge >= particleLife) {
+    // DEBUG: force alive to test particle count
+    particleLife = max(particleLife, 3.0f);
+    particleSize = max(particleSize, 20.0f);
+    if (false && (particleLife <= 0.0f || particleAge >= particleLife)) {
         output.positionCS     = float4(0, 0, 0, 1);
         output.texcoord       = float2(0, 0);
         output.color          = float4(0, 0, 0, 0);

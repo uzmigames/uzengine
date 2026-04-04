@@ -39,10 +39,10 @@ ApplicationConfig VFXViewportApp::Configure() {
     // {0, -15, 8} meters = {0, -1500, 800} cm.
     cfg.cameraMoveSpeed = 500.f;
     cfg.cameraPositionX = 0.f;
-    cfg.cameraPositionY = -300.f;
-    cfg.cameraPositionZ = 100.f;
+    cfg.cameraPositionY = -500.f;
+    cfg.cameraPositionZ = 200.f;
     cfg.cameraYawDeg = 90.f;
-    cfg.cameraPitchDeg = -5.f;
+    cfg.cameraPitchDeg = -15.f;
     cfg.enableValidation = true;
 
     // VFS root: use the demo's content directory if it exists next to the exe,
