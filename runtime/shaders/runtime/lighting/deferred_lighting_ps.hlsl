@@ -75,8 +75,12 @@ cbuffer PerFrameCB : register(b1) {
     float  _padMipBias;             // c30.x   (480)
     uint   ssgiSrvIndex;            //         (484)
     // ── Skip intermediate fields (488-707) to reach CVar params ──
-    // 56 floats = 224 bytes of padding (488 + 224 = 712... wrong, need 708-488=220 = 55 floats)
-    float  _skipToShadowCVars[55];  //         (488-707)  55 * 4 = 220 bytes
+    // HLSL array packing: float[N] = N×16 bytes (NOT N×4). Use float4 arrays instead.
+    // 220 bytes = 13×float4 (208) + 3×float (12)
+    float4 _skip4[13];              //         (488-695)  13 × 16 = 208 bytes
+    float  _skipA;                  //         (696)
+    float  _skipB;                  //         (700)
+    float  _skipC;                  //         (704)
     // ── Shader CVar parameters (Phase 1) — offset 708 ──
     float  shadowPCFPenumbra;       //         (708)
     float  shadowPCSSMinPenumbra;   //         (712)
