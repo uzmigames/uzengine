@@ -216,7 +216,23 @@ struct PerFrameCB {
     /// SRV index for temporally-accumulated env MIS specular (RGBA16F). UINT32_MAX = disabled.
     uint32_t envMisAccumulatedSrv = UINT32_MAX;
 
-    float    _pad2[15] = {};                        ///< Pad to 768 bytes.
+    // ── Shader CVar parameters (Phase 1 — no hardcoded values) ─────────
+    float    shadowPCFPenumbra       = 2.0f;           ///< CVar r.Shadow.PCFPenumbraRadius — PCF texel radius.
+    float    shadowPCSSMinPenumbra   = 0.5f;           ///< CVar r.Shadow.PCSSMinPenumbra — min penumbra clamp.
+    float    shadowPCSSMaxPenumbra   = 16.0f;          ///< CVar r.Shadow.PCSSMaxPenumbra — max penumbra clamp.
+    float    shadowESMExponent       = 80.0f;          ///< CVar r.Shadow.ESMExponentConstant — ESM warp constant.
+    uint32_t shadowContactSteps      = 16;             ///< CVar r.Shadow.ContactShadowSteps — ray march steps.
+    float    shadowContactThickness  = 0.005f;         ///< CVar r.Shadow.ContactShadowThickness — depth comparison.
+    float    bloomKnee               = 0.5f;           ///< CVar r.Bloom.Knee — soft threshold multiplier.
+    float    exposureKeyValue        = 0.18f;          ///< CVar r.Exposure.KeyValue — Reinhard mid-tone target.
+    float    exposureSpeedUp         = 3.0f;           ///< CVar r.Exposure.SpeedUp — adaptation speed (f-stops/sec).
+    float    exposureSpeedDown       = 1.0f;           ///< CVar r.Exposure.SpeedDown — adaptation speed (f-stops/sec).
+    float    exposureLowPercent      = 10.0f;          ///< CVar r.Exposure.LowPercent — histogram low percentile.
+    float    exposureHighPercent     = 90.0f;          ///< CVar r.Exposure.HighPercent — histogram high percentile.
+    float    materialDielectricF0    = 0.04f;          ///< CVar r.Material.DielectricF0 — Fresnel reflectance.
+    float    materialMinGGXAlpha     = 0.0064f;        ///< CVar r.Material.MinGGXAlpha — prevents specular aliasing.
+
+    float    _pad2[1] = {};                            ///< Pad to 768 bytes.
 };
 
 static_assert(sizeof(PerFrameCB) == 768, "PerFrameCB must be 768 bytes (D3D12 CB alignment)");

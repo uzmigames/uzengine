@@ -17,10 +17,10 @@
 #include "../include/depth_common.hlsli"
 
 /// @ref Wihlidal 2017 — contact shadow ray march parameters
-/// @constants maxSteps=16, maxDistance=0.15 (UV space), thickness=0.01 (normalized)
-static const uint  kContactMaxSteps    = 16;
+/// CVar r.Shadow.ContactShadowSteps, r.Shadow.ContactShadowThickness
+#define kContactMaxSteps    shadowContactSteps
 static const float kContactMaxDistUV   = 0.15;  // Max ray distance in screen UV space
-static const float kContactThickness   = 0.005;  // Depth comparison thickness (normalized depth units)
+#define kContactThickness   shadowContactThickness
 
 /// Screen-space contact shadow with optional Hi-Z acceleration.
 ///

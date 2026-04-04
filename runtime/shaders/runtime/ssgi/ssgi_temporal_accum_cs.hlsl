@@ -31,17 +31,17 @@ cbuffer RootConstants : register(b0) {
     uint g_aoOutputUavIndex;
 #endif
     uint g_packedDimensions;  // low16 = width, high16 = height
+    uint g_temporalAlphaBits; // CVar r.SSGI.TemporalAlpha as float bits (default 0.05)
+    uint g_varianceClipGammaBits; // CVar r.SSGI.VarianceClipGamma as float bits (default 1.0)
 };
 
 SamplerState linearSampler : register(s0);
 
-/// @ref Salvi 2016 — temporal blend factor
-/// @constants alpha=0.05 (5% new frame, 95% history)
-static const float kTemporalAlpha = 0.05;
+/// @ref Salvi 2016 — temporal blend factor (CVar r.SSGI.TemporalAlpha)
+#define kTemporalAlpha asfloat(g_temporalAlphaBits)
 
-/// @ref Schied 2017 — variance clip gamma (wider = more ghosting, tighter = more flickering)
-/// @constants gamma=1.0 (standard deviation multiplier for color clipping box)
-static const float kVarianceClipGamma = 1.0;
+/// @ref Schied 2017 — variance clip gamma (CVar r.SSGI.VarianceClipGamma)
+#define kVarianceClipGamma asfloat(g_varianceClipGammaBits)
 
 /// @ref ITU-R BT.709 luminance weights
 float Luminance(float3 c) {

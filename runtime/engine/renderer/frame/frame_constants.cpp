@@ -42,6 +42,22 @@ static auto* cv_TonemapShoulder    = UZ_CVAR_FLOAT("r.Tonemap.Shoulder", 0.22f, 
 static auto* cv_TonemapBlackClip   = UZ_CVAR_FLOAT("r.Tonemap.BlackClip", 0.f, "ACES black clip", 0.f, 1.f);
 static auto* cv_TonemapWhiteClip   = UZ_CVAR_FLOAT("r.Tonemap.WhiteClip", 0.04f, "ACES white clip", 0.f, 1.f);
 static auto* cv_MipBias            = UZ_CVAR_FLOAT("r.MipBias", 0.f, "Global mipmap LOD bias", -4.f, 4.f);
+
+// ── Shader CVar parameters (Phase 1 — zero hardcoded values in shaders) ──
+static auto* cv_ShadowPCFPenumbra     = UZ_CVAR_FLOAT("r.Shadow.PCFPenumbraRadius", 2.0f, "PCF texel radius", 0.5f, 8.0f);
+static auto* cv_ShadowPCSSMin         = UZ_CVAR_FLOAT("r.Shadow.PCSSMinPenumbra", 0.5f, "PCSS min penumbra clamp", 0.1f, 4.0f);
+static auto* cv_ShadowPCSSMax         = UZ_CVAR_FLOAT("r.Shadow.PCSSMaxPenumbra", 16.0f, "PCSS max penumbra clamp", 4.0f, 64.0f);
+static auto* cv_ShadowESMExponent     = UZ_CVAR_FLOAT("r.Shadow.ESMExponentConstant", 80.0f, "ESM exponential warp constant", 10.0f, 200.0f);
+static auto* cv_ShadowContactSteps    = UZ_CVAR_INT("r.Shadow.ContactShadowSteps", 16, "Contact shadow ray march steps", 4, 32);
+static auto* cv_ShadowContactThick    = UZ_CVAR_FLOAT("r.Shadow.ContactShadowThickness", 0.005f, "Contact shadow depth thickness", 0.001f, 0.05f);
+static auto* cv_BloomKnee             = UZ_CVAR_FLOAT("r.Bloom.Knee", 0.5f, "Bloom soft threshold knee", 0.0f, 1.0f);
+static auto* cv_ExposureKeyValue      = UZ_CVAR_FLOAT("r.Exposure.KeyValue", 0.18f, "Reinhard mid-tone key value", 0.01f, 1.0f);
+static auto* cv_ExposureSpeedUp       = UZ_CVAR_FLOAT("r.Exposure.SpeedUp", 3.0f, "Auto-exposure speed up (f-stops/sec)", 0.1f, 20.0f);
+static auto* cv_ExposureSpeedDown     = UZ_CVAR_FLOAT("r.Exposure.SpeedDown", 1.0f, "Auto-exposure speed down (f-stops/sec)", 0.1f, 20.0f);
+static auto* cv_ExposureLowPercent    = UZ_CVAR_FLOAT("r.Exposure.LowPercent", 10.0f, "Histogram low percentile", 1.0f, 50.0f);
+static auto* cv_ExposureHighPercent   = UZ_CVAR_FLOAT("r.Exposure.HighPercent", 90.0f, "Histogram high percentile", 50.0f, 99.0f);
+static auto* cv_MaterialDielectricF0  = UZ_CVAR_FLOAT("r.Material.DielectricF0", 0.04f, "Dielectric Fresnel F0 reflectance", 0.01f, 0.08f);
+static auto* cv_MaterialMinGGXAlpha   = UZ_CVAR_FLOAT("r.Material.MinGGXAlpha", 0.0064f, "Min GGX alpha (prevents aliasing)", 0.001f, 0.01f);
 static auto* cv_Exposure           = UZ_CVAR_FLOAT("r.Exposure", 1.0f, "Manual exposure bias on auto-exposure", 0.01f, 100.f);
 static auto* cv_GIIntensity        = UZ_CVAR_FLOAT("r.GI.Intensity", 1.f, "GI intensity multiplier", 0.f, 10.f);
 
@@ -313,6 +329,22 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     perFrame.colorSaturation     = cv_ColorSaturation->value;
     perFrame.colorContrast       = cv_ColorContrast->value;
     perFrame.contactShadowLength = cv_ContactShadowLen->value;
+
+    // ── Shader CVar parameters (Phase 1) ────────────────────────────────
+    perFrame.shadowPCFPenumbra       = cv_ShadowPCFPenumbra->value;
+    perFrame.shadowPCSSMinPenumbra   = cv_ShadowPCSSMin->value;
+    perFrame.shadowPCSSMaxPenumbra   = cv_ShadowPCSSMax->value;
+    perFrame.shadowESMExponent       = cv_ShadowESMExponent->value;
+    perFrame.shadowContactSteps      = static_cast<uint32_t>(cv_ShadowContactSteps->value);
+    perFrame.shadowContactThickness  = cv_ShadowContactThick->value;
+    perFrame.bloomKnee               = cv_BloomKnee->value;
+    perFrame.exposureKeyValue        = cv_ExposureKeyValue->value;
+    perFrame.exposureSpeedUp         = cv_ExposureSpeedUp->value;
+    perFrame.exposureSpeedDown       = cv_ExposureSpeedDown->value;
+    perFrame.exposureLowPercent      = cv_ExposureLowPercent->value;
+    perFrame.exposureHighPercent     = cv_ExposureHighPercent->value;
+    perFrame.materialDielectricF0    = cv_MaterialDielectricF0->value;
+    perFrame.materialMinGGXAlpha     = cv_MaterialMinGGXAlpha->value;
 
     // ── PostProcess Volume blending ─────────────────────────────────────
     // Gather all PostProcessVolumeComponents from the ECS, build transient

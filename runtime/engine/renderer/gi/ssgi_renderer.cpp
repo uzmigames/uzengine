@@ -22,6 +22,11 @@ UZ_DECLARE_LOG_CATEGORY(Renderer);
 static auto* cv_SSGIEnabled   = UZ_CVAR_BOOL("r.SSGI", false, "Screen-space global illumination");
 static auto* cv_SSGIQuality   = UZ_CVAR_INT("r.SSGI.Quality", 2, "SSGI quality (1=4rays, 2=8, 3=16, 4=32)", 1, 4);
 static auto* cv_SSGIIntensity = UZ_CVAR_FLOAT("r.SSGI.Intensity", 0.3f, "SSGI indirect diffuse intensity", 0.f, 10.f);
+static auto* cv_SSGIRayCount     = UZ_CVAR_INT("r.SSGI.RayCount", 8, "Rays per pixel (overrides quality preset)", 1, 32);
+static auto* cv_SSGIMaxSteps     = UZ_CVAR_INT("r.SSGI.MaxMarchSteps", 32, "Max linear march steps per ray", 8, 128);
+static auto* cv_SSGIStepSize     = UZ_CVAR_FLOAT("r.SSGI.StepSize", 0.02f, "UV-space step size per march step", 0.005f, 0.1f);
+static auto* cv_SSGIThickness    = UZ_CVAR_FLOAT("r.SSGI.Thickness", 0.5f, "Depth comparison thickness (cm)", 0.01f, 2.0f);
+static auto* cv_SSGITemporalAlpha = UZ_CVAR_FLOAT("r.SSGI.TemporalAlpha", 0.05f, "Temporal accumulation alpha (0=full history, 1=no history)", 0.01f, 0.5f);
 
 namespace uz {
 
@@ -462,7 +467,7 @@ void SSGIRenderer::DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParam
 
     cmdList->SetPipeline(pso);
 
-    // Root constants: 8 DWORDs matching ssgi_trace_cs.hlsl RootConstants
+    // Root constants: 13 DWORDs matching ssgi_trace_cs.hlsl RootConstants
     struct SSGITraceRC {
         uint32_t depthSrvIndex;
         uint32_t normalSrvIndex;
@@ -472,8 +477,13 @@ void SSGIRenderer::DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParam
         uint32_t packedDimensions;  // low16 = width, high16 = height
         uint32_t frameIndex;
         uint32_t hizSrvIndex;      // 0xFFFF = disabled
+        uint32_t rayCount;
+        uint32_t maxSteps;
+        uint32_t stepSizeBits;     // float as uint bits
+        uint32_t thicknessBits;    // float as uint bits
+        uint32_t maxRayDistBits;   // float as uint bits (0.5 default)
     };
-    static_assert(sizeof(SSGITraceRC) == 32, "Must be 8 DWORDs");
+    static_assert(sizeof(SSGITraceRC) == 52, "Must be 13 DWORDs");
 
     SSGITraceRC rc{};
     rc.depthSrvIndex     = params.depthSrvIndex;
@@ -484,8 +494,16 @@ void SSGIRenderer::DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParam
     rc.packedDimensions  = (m_halfWidth & 0xFFFF) | ((m_halfHeight & 0xFFFF) << 16);
     rc.frameIndex        = params.frameIndex;
     rc.hizSrvIndex       = 0xFFFF; // Hi-Z disabled for now (linear march)
+    rc.rayCount          = static_cast<uint32_t>(cv_SSGIRayCount->value);
+    rc.maxSteps          = static_cast<uint32_t>(cv_SSGIMaxSteps->value);
+    float stepSize = cv_SSGIStepSize->value;
+    float thickness = cv_SSGIThickness->value;
+    float maxRayDist = 0.5f; // Could be another CVar in future
+    std::memcpy(&rc.stepSizeBits, &stepSize, 4);
+    std::memcpy(&rc.thicknessBits, &thickness, 4);
+    std::memcpy(&rc.maxRayDistBits, &maxRayDist, 4);
 
-    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
+    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 13);
 
     // PerFrameCB at b1
     cmdList->SetRootCBV(kSlotPerFrame, params.perFrameBuffer,
@@ -614,8 +632,7 @@ void SSGIRenderer::DispatchTemporalAccum(IRHICommandList* cmdList, const SSGIRen
 
     cmdList->SetPipeline(pso);
 
-    // Root constants: 8 DWORDs (DX12 root signature limit = 8 DWORDs)
-    // Pack width+height into a single DWORD (16 bits each, max 65535).
+    // Root constants: 10 DWORDs matching ssgi_temporal_accum_cs.hlsl RootConstants
     struct TemporalAccumRC {
         uint32_t currentSrvIndex;
         uint32_t currentAOSrvIndex;
@@ -625,8 +642,10 @@ void SSGIRenderer::DispatchTemporalAccum(IRHICommandList* cmdList, const SSGIRen
         uint32_t outputUavIndex;
         uint32_t aoOutputUavIndex;
         uint32_t packedDimensions;  // low 16 = width, high 16 = height
+        uint32_t temporalAlphaBits;
+        uint32_t varianceClipGammaBits;
     };
-    static_assert(sizeof(TemporalAccumRC) == 32, "Must be 8 DWORDs");
+    static_assert(sizeof(TemporalAccumRC) == 40, "Must be 10 DWORDs");
 
     TemporalAccumRC rc{};
     rc.currentSrvIndex   = m_ssgiDenoisedSrv;
@@ -637,8 +656,12 @@ void SSGIRenderer::DispatchTemporalAccum(IRHICommandList* cmdList, const SSGIRen
     rc.outputUavIndex    = m_ssgiHistoryUav[writeIdx];
     rc.aoOutputUavIndex  = m_ssgiHistoryAOUav[writeIdx];
     rc.packedDimensions  = (m_halfWidth & 0xFFFF) | ((m_halfHeight & 0xFFFF) << 16);
+    float temporalAlpha = cv_SSGITemporalAlpha->value;
+    float varClipGamma = 1.0f; // Could be CVar in Phase 2
+    std::memcpy(&rc.temporalAlphaBits, &temporalAlpha, 4);
+    std::memcpy(&rc.varianceClipGammaBits, &varClipGamma, 4);
 
-    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
+    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 10);
 
     cmdList->SetRootCBV(kSlotPerFrame, params.perFrameBuffer,
                         params.perFrameOffset, params.perFrameCpuPtr,

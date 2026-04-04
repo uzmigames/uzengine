@@ -37,6 +37,11 @@ cbuffer RootConstants : register(b0) {
     uint g_packedDimensions;  // low16 = width, high16 = height
     uint g_frameIndex;
     uint g_hizSrvIndex;       // 0xFFFF = disabled
+    uint g_rayCount;          // CVar r.SSGI.RayCount (default 8)
+    uint g_maxSteps;          // CVar r.SSGI.MaxMarchSteps (default 32)
+    uint g_stepSizeBits;      // CVar r.SSGI.StepSize as float bits (default 0.02)
+    uint g_thicknessBits;     // CVar r.SSGI.Thickness as float bits (default 0.5)
+    uint g_maxRayDistBits;    // Max ray distance in UV space as float bits (default 0.5)
 };
 
 cbuffer PerFrameCB : register(b1) {
@@ -52,14 +57,15 @@ cbuffer PerFrameCB : register(b1) {
 
 SamplerState pointSampler : register(s0);
 
-// ─── Constants ────────────────────────────────────────────────────────────
+// ─── Parameters from CVars (via root constants) ──────────────────────────
 
-/// @constants Ray count per quality level (controlled by root constant or CVar)
-static const uint kRayCount    = 8;     // Q2 default
-static const uint kMaxSteps    = 32;    // Max linear march steps per ray
-static const float kStepSize   = 0.02;  // UV-space step size (2% of screen per step)
-static const float kThickness  = 0.5;   // Depth comparison thickness (world units/cm)
-static const float kMaxRayDist = 0.5;   // Maximum ray distance in UV space
+/// @ref CVar r.SSGI.RayCount, r.SSGI.MaxMarchSteps, r.SSGI.StepSize,
+///      r.SSGI.Thickness — all configurable at runtime, zero hardcoded values.
+#define kRayCount    g_rayCount
+#define kMaxSteps    g_maxSteps
+#define kStepSize    asfloat(g_stepSizeBits)
+#define kThickness   asfloat(g_thicknessBits)
+#define kMaxRayDist  asfloat(g_maxRayDistBits)
 
 // ─── Octahedral normal decode ──────────────────────────────────────────────
 

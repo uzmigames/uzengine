@@ -231,7 +231,23 @@ struct PerFrameParams {
     uint32_t envSamplerLumHeight = 0;               ///< Height of luminance mip 0.
     uint32_t envMisAccumulatedSrv = UINT32_MAX;     ///< SRV for temporally-accumulated env MIS specular.
 
-    float    _pad2[15]            = {};              ///< Pad scalar section to 768 bytes.
+    // ── Shader CVar parameters (Phase 1 — no hardcoded values) ─────────
+    float    shadowPCFPenumbra       = 2.0f;           ///< CVar r.Shadow.PCFPenumbraRadius
+    float    shadowPCSSMinPenumbra   = 0.5f;           ///< CVar r.Shadow.PCSSMinPenumbra
+    float    shadowPCSSMaxPenumbra   = 16.0f;          ///< CVar r.Shadow.PCSSMaxPenumbra
+    float    shadowESMExponent       = 80.0f;          ///< CVar r.Shadow.ESMExponentConstant
+    uint32_t shadowContactSteps      = 16;             ///< CVar r.Shadow.ContactShadowSteps
+    float    shadowContactThickness  = 0.005f;         ///< CVar r.Shadow.ContactShadowThickness
+    float    bloomKnee               = 0.5f;           ///< CVar r.Bloom.Knee
+    float    exposureKeyValue        = 0.18f;          ///< CVar r.Exposure.KeyValue
+    float    exposureSpeedUp         = 3.0f;           ///< CVar r.Exposure.SpeedUp
+    float    exposureSpeedDown       = 1.0f;           ///< CVar r.Exposure.SpeedDown
+    float    exposureLowPercent      = 10.0f;          ///< CVar r.Exposure.LowPercent
+    float    exposureHighPercent     = 90.0f;          ///< CVar r.Exposure.HighPercent
+    float    materialDielectricF0    = 0.04f;          ///< CVar r.Material.DielectricF0
+    float    materialMinGGXAlpha     = 0.0064f;        ///< CVar r.Material.MinGGXAlpha
+
+    float    _pad2[1]               = {};              ///< Pad scalar section to 768 bytes.
 
     // ── Resource handles (NOT copied to CB) ──────────────────────────────
     // These are bound by ShaderParameterBinder at their HLSL register slots.
