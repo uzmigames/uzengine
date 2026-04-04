@@ -231,15 +231,6 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         const auto& writeSet = gpuBuf.WriteSet();
         spawnCBData.freeListSrvIndex       = m_device->GetBufferSRVIndex(gpuBuf.freeList);
         spawnCBData.positionsUavIndex       = m_device->GetBufferUAVIndex(writeSet.positions);
-        static bool logIdx = false;
-        if (!logIdx) {
-            UZ_LOG(VFX, Info, "Spawn posUAV={} | Update posSRV={} posUAV={} | readIdx={} writeIdx={}",
-                   spawnCBData.positionsUavIndex,
-                   m_device->GetBufferSRVIndex(gpuBuf.ReadSet().positions),
-                   m_device->GetBufferUAVIndex(writeSet.positions),
-                   gpuBuf.readIndex, gpuBuf.writeIndex);
-            logIdx = true;
-        }
         spawnCBData.velocitiesUavIndex      = m_device->GetBufferUAVIndex(writeSet.velocities);
         spawnCBData.agesUavIndex            = m_device->GetBufferUAVIndex(writeSet.ages);
         spawnCBData.lifespansUavIndex       = m_device->GetBufferUAVIndex(writeSet.lifespans);
