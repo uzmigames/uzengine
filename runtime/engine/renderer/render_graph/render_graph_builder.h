@@ -150,6 +150,15 @@ public:
     /// Returns whether per-pass GPU timestamp profiling is enabled.
     [[nodiscard]] bool IsGpuProfileEnabled() const { return m_gpuProfileEnabled; }
 
+    /// Returns the final tracked state of an imported resource after ScheduleBarriers.
+    /// Call after Compile() to query the end-of-frame state for use as the next
+    /// frame's import initial state.
+    [[nodiscard]] RHIResourceState GetFinalState(RgResourceId id) const {
+        if (!m_compiled || !id.IsValid() || id.index >= m_resources.size())
+            return RHIResourceState::Undefined;
+        return m_resources[id.index].currentState;
+    }
+
     /// Enable parallel recording of independent passes.
     ///
     /// When enabled and an `RgParallelExecutor` is used, passes with no data

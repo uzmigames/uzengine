@@ -649,10 +649,20 @@ void DX12CommandList::ResourceBarrier(const RHIBarrierDesc* barriers, uint32_t c
             continue;
         }
 
-        d3dBarriers[validCount] = CD3DX12_RESOURCE_BARRIER::Transition(
-            resource,
-            ToD3D12ResourceState(b.stateBefore),
-            ToD3D12ResourceState(b.stateAfter));
+        // UAV→UAV: emit a UAV barrier (sync fence), not a transition.
+        // DX12 rejects Transition barriers with before == after state.
+        if (b.stateBefore == b.stateAfter &&
+            b.stateBefore == RHIResourceState::UnorderedAccess) {
+            d3dBarriers[validCount] = CD3DX12_RESOURCE_BARRIER::UAV(resource);
+        } else if (b.stateBefore == b.stateAfter) {
+            // Skip non-UAV same-state barriers (invalid in DX12).
+            continue;
+        } else {
+            d3dBarriers[validCount] = CD3DX12_RESOURCE_BARRIER::Transition(
+                resource,
+                ToD3D12ResourceState(b.stateBefore),
+                ToD3D12ResourceState(b.stateAfter));
+        }
         ++validCount;
     }
 

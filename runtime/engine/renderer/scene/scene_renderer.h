@@ -753,7 +753,13 @@ private:
     TrailSystem* m_trailSystem = nullptr;
     PixelDebugSystem* m_pixelDebugSystem = nullptr;
     RHIBufferHandle m_vfxDummyDynParams; ///< Scratch buffer for dynParams when emitter has none.
-    RHIResourceState m_depthEndState = RHIResourceState::Undefined; ///< GBuffer depth state at end of last frame.
+    /// End-of-frame resource states for imported textures.
+    /// Updated after each frame's render graph Compile() to provide correct
+    /// initial states for the next frame's imports.
+    RHIResourceState m_hdrEndState    = RHIResourceState::Undefined;
+    RHIResourceState m_depthEndState  = RHIResourceState::Undefined;
+    RHIResourceState m_albedoEndState = RHIResourceState::Undefined;
+    RHIResourceState m_normalEndState = RHIResourceState::Undefined;
     RHIBufferHandle m_decalCubeVB;
     RHIBufferHandle m_vfxZeroBuffer; ///< 4-byte upload buffer containing uint32 0. Used to zero-clear aliveCount.
     RHIBufferHandle m_decalCubeIB;

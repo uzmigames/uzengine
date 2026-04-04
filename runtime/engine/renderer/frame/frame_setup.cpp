@@ -249,16 +249,21 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
 
     // ── Import render graph resources ──────────────────────────────────
     RHITextureHandle backBuffer = ctx.swapChain->GetCurrentBackBuffer();
-    // Textures are warmed up to their expected states on frame 0 via inline
-    // barriers in RenderFrame() before the render graph runs.
+    // Import with tracked end-of-frame states from the previous frame.
+    // On frame 0, warmup barriers transition from Common to the expected state.
+    auto hdrState   = m_hdrEndState   != RHIResourceState::Undefined ? m_hdrEndState   : RHIResourceState::RenderTarget;
+    auto depthState = m_depthEndState != RHIResourceState::Undefined ? m_depthEndState : RHIResourceState::DepthStencilWrite;
+    auto albState   = m_albedoEndState!= RHIResourceState::Undefined ? m_albedoEndState: RHIResourceState::RenderTarget;
+    auto nrmState   = m_normalEndState!= RHIResourceState::Undefined ? m_normalEndState: RHIResourceState::RenderTarget;
+
     ctx.bbRes       = rgBuilder.ImportTexture("Backbuffer", backBuffer, RHIResourceState::Present);
-    ctx.hdrRes      = rgBuilder.ImportTexture("HDR_SceneColor", m_hdrSceneColor, RHIResourceState::RenderTarget);
-    ctx.albedoRes   = rgBuilder.ImportTexture("GBuf_Albedo",    m_gbuffer.albedo,     RHIResourceState::RenderTarget);
-    ctx.normalRes   = rgBuilder.ImportTexture("GBuf_Normal",    m_gbuffer.normal,     RHIResourceState::RenderTarget);
-    ctx.depthRes    = rgBuilder.ImportTexture("GBuf_Depth",     m_gbuffer.depth,      RHIResourceState::DepthStencilWrite);
-    ctx.positionRes = rgBuilder.ImportTexture("GBuf_Position",  m_gbuffer.positionWS, RHIResourceState::RenderTarget);
-    ctx.emissiveRes = rgBuilder.ImportTexture("GBuf_Emissive",  m_gbuffer.emissive,   RHIResourceState::RenderTarget);
-    ctx.velocityRes = rgBuilder.ImportTexture("GBuf_Velocity",  m_gbuffer.velocity,   RHIResourceState::RenderTarget);
+    ctx.hdrRes      = rgBuilder.ImportTexture("HDR_SceneColor", m_hdrSceneColor, hdrState);
+    ctx.albedoRes   = rgBuilder.ImportTexture("GBuf_Albedo",    m_gbuffer.albedo,     albState);
+    ctx.normalRes   = rgBuilder.ImportTexture("GBuf_Normal",    m_gbuffer.normal,     nrmState);
+    ctx.depthRes    = rgBuilder.ImportTexture("GBuf_Depth",     m_gbuffer.depth,      depthState);
+    ctx.positionRes = rgBuilder.ImportTexture("GBuf_Position",  m_gbuffer.positionWS, albState);
+    ctx.emissiveRes = rgBuilder.ImportTexture("GBuf_Emissive",  m_gbuffer.emissive,   albState);
+    ctx.velocityRes = rgBuilder.ImportTexture("GBuf_Velocity",  m_gbuffer.velocity,   albState);
     ctx.shadowAtlasRes = rgBuilder.ImportTexture("ShadowAtlas", m_shadowAtlas.GetTexture(), RHIResourceState::ShaderResource);
 
     // ── DBuffer resource imports (decal system) ──────────────────────────

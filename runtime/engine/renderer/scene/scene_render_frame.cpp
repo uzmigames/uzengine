@@ -179,6 +179,13 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     // Per-pass GPU timestamps are handled inside RgBuilder::Execute()
     // when m_gpuProfileEnabled is set (wraps each pass callback).
     rgBuilder.Compile();
+
+    // Export end-of-frame states for next frame's imports.
+    m_hdrEndState    = rgBuilder.GetFinalState(ctx.hdrRes);
+    m_depthEndState  = rgBuilder.GetFinalState(ctx.depthRes);
+    m_albedoEndState = rgBuilder.GetFinalState(ctx.albedoRes);
+    m_normalEndState = rgBuilder.GetFinalState(ctx.normalRes);
+
     rgBuilder.Execute(cmdList);
 
     // Shadow Atlas Diagnostic Readback (shadowDebugMode >= 2).

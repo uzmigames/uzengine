@@ -43,7 +43,7 @@ ApplicationConfig VFXViewportApp::Configure() {
     cfg.cameraPositionZ = 800.f;
     cfg.cameraYawDeg = 90.f;
     cfg.cameraPitchDeg = -20.f;
-    cfg.enableValidation = false; // Disabled: GBuffer_Depth state tracking needs render graph fix
+    cfg.enableValidation = true;
 
     // VFS root: use the demo's content directory if it exists next to the exe,
     // otherwise fall back to the default assets/ directory.

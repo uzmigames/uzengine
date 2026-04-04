@@ -453,6 +453,9 @@ void RgBuilder::Execute(IRHICommandList* cmdList)
 
             for (const auto& barrier : pass.barriers) {
                 if (!barrier.resourceId.IsValid()) continue;
+                // Skip no-op barriers (DX12 rejects same before/after state).
+                if (barrier.stateBefore == barrier.stateAfter) continue;
+
                 const auto& res = m_resources[barrier.resourceId.index];
 
                 RHIBarrierDesc desc{};
