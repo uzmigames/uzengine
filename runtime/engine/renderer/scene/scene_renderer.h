@@ -703,6 +703,10 @@ public:
     /// Must be called from the render/init thread.
     bool SetHDRIEnvironment(uint32_t equirectSrvIndex, uint32_t cubemapSize = 512);
 
+    /// Track an externally-created texture so it is destroyed during Shutdown.
+    /// Used by Lua API (uz.texture.load_hdr) to prevent GPU memory leaks.
+    void TrackExternalTexture(const TextureLoadResult& tex);
+
     // ── Low-level accessors (for subsystems needing direct GPU access) ────
 
     /// Returns the RHI device pointer. Valid from Init() through Shutdown().

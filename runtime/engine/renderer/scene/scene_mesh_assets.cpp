@@ -285,4 +285,13 @@ void SceneRenderer::DestroyAssets() {
     m_textureMap.clear();
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// TrackExternalTexture — register externally-created texture for Shutdown cleanup
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SceneRenderer::TrackExternalTexture(const TextureLoadResult& tex) {
+    if (!tex.handle.IsValid()) return;
+    m_textures.push_back(tex);
+}
+
 } // namespace uz
