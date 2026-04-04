@@ -555,7 +555,7 @@ void SSGIRenderer::DispatchSpatialDenoise(IRHICommandList* cmdList, const SSGIRe
 
     cmdList->SetPipeline(pso);
 
-    // Root constants: 8 DWORDs matching SpatialDenoiseRootCB
+    // Root constants: 11 DWORDs matching ssgi_spatial_denoise_cs.hlsl
     struct SpatialDenoiseRC {
         uint32_t inputSrvIndex;
         uint32_t aoInputSrvIndex;
@@ -565,8 +565,15 @@ void SSGIRenderer::DispatchSpatialDenoise(IRHICommandList* cmdList, const SSGIRe
         uint32_t aoOutputUavIndex;
         uint32_t texWidth;
         uint32_t texHeight;
+        uint32_t sigmaDepthBits;
+        uint32_t sigmaNormalBits;
+        uint32_t sigmaLuminanceBits;
     };
-    static_assert(sizeof(SpatialDenoiseRC) == 32, "Must be 8 DWORDs");
+    static_assert(sizeof(SpatialDenoiseRC) == 44, "Must be 11 DWORDs");
+
+    static auto* cv_SigmaDepth = UZ_CVAR_FLOAT("r.SSGI.SpatialSigmaDepth", 1.0f, "Spatial denoise depth sigma", 0.1f, 10.0f);
+    static auto* cv_SigmaNormal = UZ_CVAR_FLOAT("r.SSGI.SpatialSigmaNormal", 128.0f, "Spatial denoise normal sigma", 8.0f, 512.0f);
+    static auto* cv_SigmaLum = UZ_CVAR_FLOAT("r.SSGI.SpatialSigmaLuminance", 4.0f, "Spatial denoise luminance sigma", 0.5f, 16.0f);
 
     SpatialDenoiseRC rc{};
     rc.inputSrvIndex    = m_ssgiTraceSrv;
@@ -577,8 +584,12 @@ void SSGIRenderer::DispatchSpatialDenoise(IRHICommandList* cmdList, const SSGIRe
     rc.aoOutputUavIndex = m_ssgiDenoisedAOUav;
     rc.texWidth         = m_halfWidth;
     rc.texHeight        = m_halfHeight;
+    float sd = cv_SigmaDepth->value, sn = cv_SigmaNormal->value, sl = cv_SigmaLum->value;
+    std::memcpy(&rc.sigmaDepthBits, &sd, 4);
+    std::memcpy(&rc.sigmaNormalBits, &sn, 4);
+    std::memcpy(&rc.sigmaLuminanceBits, &sl, 4);
 
-    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
+    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 11);
 
     cmdList->SetRootCBV(kSlotPerFrame, params.perFrameBuffer,
                         params.perFrameOffset, params.perFrameCpuPtr,

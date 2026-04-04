@@ -12,6 +12,11 @@
 #include "cb_ring_allocator.h"
 #include "log.h"
 #include "profiler.h"
+#include "cvar.h"
+
+static auto* cv_TAAVarianceClip   = UZ_CVAR_FLOAT("r.TAA.VarianceClipGamma", 1.25f, "Variance clip gamma (wider=ghosting, tighter=flickering)", 0.5f, 3.0f);
+static auto* cv_TAAVelocityThresh = UZ_CVAR_FLOAT("r.TAA.VelocityThreshold", 40.0f, "Velocity lerp threshold (pixels)", 5.0f, 100.0f);
+static auto* cv_TAAAntiFlicker    = UZ_CVAR_FLOAT("r.TAA.AntiFlickerMax", 0.3f, "Max anti-flicker contribution", 0.0f, 1.0f);
 
 #include <cstring>
 
@@ -70,6 +75,9 @@ void TaaUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
         uint32_t velocitySrv;
         float    outputWidth;
         float    outputHeight;
+        float    varianceClipGamma;
+        float    velocityThreshold;
+        float    antiFlickerMax;
         uint32_t _pad0;
     };
 
@@ -87,6 +95,9 @@ void TaaUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     taaCb.velocitySrv  = input.velocitySrv;
     taaCb.outputWidth  = input.outputWidth;
     taaCb.outputHeight = input.outputHeight;
+    taaCb.varianceClipGamma = cv_TAAVarianceClip->value;
+    taaCb.velocityThreshold = cv_TAAVelocityThresh->value;
+    taaCb.antiFlickerMax    = cv_TAAAntiFlicker->value;
     taaCb._pad0        = 0;
 
     // Root signature slot 2 = b2 (per-object constant buffer).

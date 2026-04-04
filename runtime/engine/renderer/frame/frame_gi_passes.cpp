@@ -23,6 +23,10 @@
 #include "profiler.h"
 #include "rhi.h"
 #include "log.h"
+#include "cvar.h"
+
+static auto* cv_SSRMaxRoughness = UZ_CVAR_FLOAT("r.SSR.MaxRoughness", 0.35f, "SSR max roughness cutoff", 0.05f, 1.0f);
+static auto* cv_SSRIntensity    = UZ_CVAR_FLOAT("r.SSR.Intensity", 1.0f, "SSR reflection intensity", 0.0f, 5.0f);
 
 #include <cstring>
 
@@ -183,12 +187,14 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
 
 void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
     // Screen-space reflections: Hi-Z ray march + Fresnel-weighted resolve.
-    if (!ctx.ssrActive) return;
+    // Gate: skip if SSR not active OR if we don't have a prev-frame color copy yet.
+    // On frame 0, m_ssrHasPrevColor is false — SSR starts on frame 1+.
+    // @ref UE5 ScreenSpaceReflections.cpp — reads PrevViewInfo.TemporalAAHistory
+    if (!ctx.ssrActive || !m_ssrHasPrevColor) return;
 
     rgBuilder.AddPass("SSR_Trace", [&](rg::RgPassBuilder& pb) {
         pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
         pb.Read(ctx.normalRes, RHIResourceState::ShaderResource);
-        pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
 
         pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources&) {
             UZ_PROFILE_SCOPE("SSR::Trace");
@@ -212,18 +218,19 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
                 float intensity, roughnessMaskScale;
             };
 
+            // Read SSR MaxRoughness from CVar (avoid hardcoded constant)
+            const float ssrMaxRoughness = std::max(0.05f, cv_SSRMaxRoughness->value);
+
             SsrTraceConstants rc{};
             rc.depthSrvIdx      = m_gbuffer.depthSRV;
             rc.normalSrvIdx     = m_gbuffer.normalSRV;
-            // SSR linear march uses the full-resolution depth buffer directly.
-            // Hi-Z min-depth pyramid is for hierarchical acceleration (future),
-            // not for precise hit testing — using it causes missed intersections.
             rc.hizSrvIdx        = m_gbuffer.depthSRV;
-            rc.sceneColorSrvIdx = m_hdrSceneColorSrv;
+            // Use previous frame's HDR copy — breaks SSR feedback loop (UE5 pattern)
+            rc.sceneColorSrvIdx = m_ssrPrevSceneColorSrv;
             rc.outputWidth      = m_renderWidth;
             rc.outputHeight     = m_renderHeight;
-            rc.intensity        = 1.0f;
-            rc.roughnessMaskScale = -2.0f / 0.8f;
+            rc.intensity        = cv_SSRIntensity->value;
+            rc.roughnessMaskScale = -2.0f / ssrMaxRoughness;
 
             cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
             cmd->SetRootCBV(kSlotPerFrame, ctx.perFrameAlloc.bufferHandle,

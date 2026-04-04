@@ -34,6 +34,9 @@ cbuffer RootConstants : register(b0) {
 #endif
     uint g_texWidth;
     uint g_texHeight;
+    uint g_sigmaDepthBits;       // CVar r.SSGI.SpatialSigmaDepth as float bits
+    uint g_sigmaNormalBits;      // CVar r.SSGI.SpatialSigmaNormal as float bits
+    uint g_sigmaLuminanceBits;   // CVar r.SSGI.SpatialSigmaLuminance as float bits
 };
 
 cbuffer PerFrameCB : register(b1) {
@@ -47,11 +50,10 @@ cbuffer PerFrameCB : register(b1) {
     float nearPlane, farPlane;
 };
 
-/// @ref Schied 2017 — edge-stopping function parameters
-/// @constants sigmaDepth=1.0, sigmaNormal=128.0, sigmaLuminance=4.0
-static const float kSigmaDepth     = 1.0;
-static const float kSigmaNormal    = 128.0;
-static const float kSigmaLuminance = 4.0;
+/// @ref Schied 2017 — edge-stopping function parameters (CVar-driven)
+#define kSigmaDepth     asfloat(g_sigmaDepthBits)
+#define kSigmaNormal    asfloat(g_sigmaNormalBits)
+#define kSigmaLuminance asfloat(g_sigmaLuminanceBits)
 
 /// @ref ITU-R BT.709 luminance weights
 float Luminance(float3 c) {
