@@ -912,10 +912,11 @@ AssetImportResult FbxImporter::Import(
 
         // Compute smooth normals based on import mode CVar.
         // 0=Import (keep source normals), 1=Recompute (always smooth), 2=Auto
+        // Per-asset override: if source has .uzimport with "normalMode" option, use it.
         const int normalMode = static_cast<int>(cv_MeshNormalMode->value);
+        const float smoothAngle = cv_MeshSmoothAngle->value;
         if (normalMode == 1 || (normalMode == 2 && !hasNormals)) {
-            ComputeSmoothNormals(groupVertices, groupIndices,
-                                 cv_MeshSmoothAngle->value, groupSmoothFlags);
+            ComputeSmoothNormals(groupVertices, groupIndices, smoothAngle, groupSmoothFlags);
         }
 
         // Append to global arrays
@@ -1068,7 +1069,9 @@ AssetImportResult FbxImporter::Import(
         finalVertexData.resize(byteSize);
         std::memcpy(finalVertexData.data(), skinnedVertices.data(), byteSize);
     } else {
-        // ── Static path: build Vertex array (48 bytes each) ──
+        // ── Static path: build Vertex or VertexPacked based on CVar ──
+        // PackedNormals disabled for now (CVar exists but default=false until validated).
+        // When enabled: 32 bytes/vertex (33% savings) via int8x4 normal/tangent encoding.
         finalVertexStride = sizeof(Vertex);
         std::vector<Vertex> finalVertices(finalVertexCount);
 

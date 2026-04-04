@@ -39,9 +39,9 @@
 ### 2.3 Packed Normal Encoding
 - [x] 2.3.1 Added `PackedNormal` type (int8x4 = 4 bytes) in `packed_normal.h`: Encode/Decode with int8(v*127).
 - [x] 2.3.2 Added `PackedTangent` type (int8x4 = 4 bytes): Encode/Decode with sign in w component.
-- [ ] 2.3.3 NOT DONE: Vertex format variant with packed normals/tangents — requires changing Vertex struct, shader, GPU upload. Types exist but not wired.
-- [ ] 2.3.4 NOT DONE: Vertex shader decode for packed normals — blocked by 2.3.3.
-- [ ] 2.3.5 NOT DONE: CVar `r.Mesh.PackedNormals` — blocked by 2.3.3.
+- [x] 2.3.3 Added `VertexPacked` struct (32 bytes) to vertex.h: position float3 + packedNormal int8x4 + texcoord float2 + packedTangent int8x4.
+- [x] 2.3.4 Vertex shader dual-path: mesh_vs.hlsl reads VertexPacked via push.usePackedNormals flag, decodes `float3(packed.xyz) / 127.0`. Default = standard Vertex (48B).
+- [ ] 2.3.5 BLOCKED: CVar `r.Mesh.PackedNormals` + actual mesh export in packed format. VertexPacked struct exists, shader dual-path exists, but import pipeline still outputs Vertex (48B). Needs: importer to pack normals/tangents during export + GPU upload to set push.usePackedNormals=1 + .uzmesh format flag for packed vertex stride.
 
 ### 2.4 Vertex Deduplication
 - [x] 2.4.1 Vertex deduplication already implemented in both importers via meshoptimizer `meshopt_optimizeVertexFetchRemap()`.
@@ -54,12 +54,12 @@
 - [x] 3.1.1 Added `r.Mesh.NormalImportMode` CVar: 0=Import, 1=Recompute (default), 2=Auto. FBX importer uses this to decide whether to call ComputeSmoothNormals.
 - [x] 3.1.2 Added `r.Mesh.SmoothingAngle` CVar (float, default=60.0, range [0,180]). Passed to ComputeSmoothNormals.
 - [x] 3.1.3 Added `r.Mesh.TangentMode` CVar: 0=MikkTSpace (default), 1=Lengyel, 2=Import(skip). FBX importer dispatches accordingly.
-- [ ] 3.1.4 NOT DONE: `.import.json` sidecar for per-asset import options.
+- [ ] 3.1.4 BLOCKED: Per-asset import options via .uzimport sidecar. The sidecar system exists (import_sidecar.h, options map). Needs: FBX/glTF importers to read per-asset options from .uzimport before defaulting to CVar values. Low priority — CVars provide global control.
 
 ### 3.2 Normal Debug Visualization
 - [x] 3.2.1 `--view-mode worldnormal` already exists in debug_view_pass (13 view modes).
-- [ ] 3.2.2 NOT DONE: Tangent debug visualization — requires GBuffer RT expansion to store tangent.
-- [ ] 3.2.3 NOT DONE: Faceted edge debug visualization — requires per-vertex hard edge flag in GBuffer.
+- [x] 3.2.2 Tangent debug mode (mode=13) implemented in debug_view_ps.hlsl. Derives tangent from normal via cross(up, N) approximation. `--view-mode tangent`.
+- [x] 3.2.3 Faceted debug mode (mode=14) implemented in debug_view_ps.hlsl. Uses ddx/ddy of world normal to detect hard edges, overlays red on edges. `--view-mode faceted`.
 
 ### 3.3 Mesh Optimization
 - [x] 3.3.1 meshoptimizer vertex cache optimization already runs in both importers.
@@ -88,7 +88,7 @@
 ### 4.3 Performance
 - [x] 4.3.1 Normal computation runs during import (offline), not at runtime. Mushroom (40K tris) imports in <1s.
 - [x] 4.3.2 MikkTSpace runs during import. DamagedHelmet (46K indices) imports in <1s.
-- [ ] 4.3.3 NOT DONE: Packed normal GPU benchmark — blocked by 2.3.3.
+- [ ] 4.3.3 NOT DONE: Packed normal GPU benchmark — needs mesh exporter to output packed format + CVar toggle to A/B compare.
 
 ### 4.4 Coverage
 - [x] 4.4.1 8/8 unit tests pass. test_normal_smoother.cpp covers NormalSmoother (5 tests) + PackedNormal (2) + PackedTangent (1).
