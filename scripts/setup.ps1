@@ -493,6 +493,17 @@ Clone-Repo -Name "smaa" `
 
 # ─── Mesh & Geometry Tools ────────────────────────────────────────────────
 
+# MikkTSpace — Industry-standard tangent space generation (Morten Mikkelsen)
+Download-Header -Name "mikktspace" `
+    -Url "https://raw.githubusercontent.com/mmikk/MikkTSpace/master/mikktspace.h" `
+    -FileName "mikktspace.h"
+# Also download the .c implementation
+$mikktDir = Join-Path $ThirdPartyDir "mikktspace"
+$mikktC = Join-Path $mikktDir "mikktspace.c"
+if (-not (Test-Path $mikktC)) {
+    Download-File -Url "https://raw.githubusercontent.com/mmikk/MikkTSpace/master/mikktspace.c" -OutFile $mikktC
+}
+
 # xatlas — UV atlas generation (lightmaps, LOD baking)
 Clone-Repo -Name "xatlas" `
     -Url "https://github.com/jpcy/xatlas.git" `

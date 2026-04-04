@@ -149,6 +149,7 @@ pub fn build(b: *std.Build) void {
         tp ++ "fastgltf/include",
         tp ++ "fastgltf/deps/simdjson",
         tp ++ "meshoptimizer/src",
+        tp ++ "mikktspace",
         tp ++ "entt/single_include",
         tp ++ "luajit/src",
         tp ++ "ufbx",
@@ -377,6 +378,13 @@ pub fn build(b: *std.Build) void {
         .root = b.path(tp ++ "fastgltf/src"),
         .files = &.{ "fastgltf.cpp", "base64.cpp", "io.cpp" },
         .flags = &.{"-std=c++17"},
+    });
+
+    // Thirdparty — mikktspace (industry-standard tangent space generation)
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path(tp ++ "mikktspace"),
+        .files = &.{"mikktspace.c"},
+        .flags = &.{"-std=c99"},
     });
 
     // Thirdparty — spng (SIMD-accelerated PNG decode)

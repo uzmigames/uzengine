@@ -18,6 +18,7 @@
 #include <meshoptimizer.h>
 
 #include "engine/asset/mesh/normal_smoother.h"
+#include "engine/asset/mesh/mikktspace_tangents.h"
 
 #include <algorithm>
 #include <array>
@@ -928,8 +929,10 @@ AssetImportResult FbxImporter::Import(
     }
 
     // ── Generate tangents ──
+    // MikkTSpace tangent generation — industry standard, matches UE5/Unity/Blender.
+    // @ref Mikkelsen 2010 "Simulation of Wrinkled Surfaces Revisited"
     std::vector<float> allTangents;
-    GenerateTangentsForPosNormUV(allVertices, allIndices, allTangents);
+    ComputeMikkTSpaceTangents(allVertices, allIndices, allTangents);
 
     // ── Meshopt: optimize vertex cache ordering ──
     std::vector<uint32_t> optimizedIndices(allIndices.size());

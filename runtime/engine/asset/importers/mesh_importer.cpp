@@ -17,6 +17,7 @@
 #include <meshoptimizer.h>
 
 #include "engine/asset/mesh/normal_smoother.h"
+#include "engine/asset/mesh/mikktspace_tangents.h"
 
 #include <algorithm>
 #include <cmath>
@@ -548,12 +549,13 @@ AssetImportResult MeshImporter::Import(
                     allTangents[base + 3] = t[3];
                 });
         } else {
-            // Generate tangents from UV-space edge vectors for this primitive
+            // MikkTSpace tangent generation — industry standard.
+            // @ref Mikkelsen 2010 "Simulation of Wrinkled Surfaces Revisited"
             std::vector<VertexPosNormUV> primVerts(
                 allVertices.begin() + static_cast<ptrdiff_t>(primVertStart),
                 allVertices.begin() + static_cast<ptrdiff_t>(primVertStart + vertexCount));
             std::vector<float> primTangents;
-            GenerateTangentsForPosNormUV(primVerts, primIndices, primTangents);
+            ComputeMikkTSpaceTangents(primVerts, primIndices, primTangents);
 
             // Copy into global tangent array
             std::memcpy(&allTangents[tangentStartFloat],
