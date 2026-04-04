@@ -148,6 +148,33 @@ Files extracted from upstream source:
 - `LICENSE`
 
 
+## dlss
+
+- Upstream: https://github.com/NVIDIA/DLSS
+- Version: git (main, 2025)
+- License: NVIDIA Software License (proprietary, free for commercial use)
+
+NVIDIA Deep Learning Super Sampling SDK. Provides AI-powered temporal upscaling
+using a deep neural network trained on thousands of games. Supports 5 quality
+presets: DLAA (native AA), Quality (1.5x), Balanced (1.7x), Performance (2.0x),
+and Ultra Performance (3.0x). Requires NVIDIA RTX GPU (Turing+) and GeForce
+driver 531.18+.
+
+**NOTE**: This directory is `.gitignored` — the SDK is downloaded fresh by
+`scripts/setup.ps1` and is not committed to the repository.
+
+**Integration**: UzEngine loads `_nvngx.dll` dynamically via `LoadLibrary` /
+`GetProcAddress` at runtime. No static linking required (avoids MSVC CRT
+incompatibility with Zig's mingw libc). If the DLL is not present (non-NVIDIA
+GPU), the upscaler gracefully falls back to FSR2 or TSR.
+
+Files from upstream repository:
+
+- `include/` (nvsdk_ngx.h, nvsdk_ngx_defs.h, nvsdk_ngx_helpers.h)
+- `lib/Windows_x86_64/x64/` (nvsdk_ngx_d.lib — MSVC import lib, not linked by Zig build)
+- `LICENSE.txt`
+
+
 ## directx_headers
 
 - Upstream: https://github.com/microsoft/DirectX-Headers
