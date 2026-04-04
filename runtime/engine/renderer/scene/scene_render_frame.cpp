@@ -123,7 +123,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
 
     // ── VFX Tick ──────────────────────────────────────────────────────────
     // Calculates per-emitter spawn counts for this frame. Must run before
-    // RegisterParticlePasses(), which consumes GetActiveEmitters().
+    // DispatchVFXSimulation(), which consumes GetActiveEmitters().
     // The override pointer (non-owning) takes precedence over the owned system
     // so that external emitter pools managed by the game layer work correctly.
     {
@@ -132,6 +132,12 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             activeVFX->Tick(dt);
         }
     }
+
+    // ── VFX Inline Compute (spawn + update + indirect args) ─────────────
+    // Dispatched directly on the main command list before the render graph,
+    // matching the standalone VFX demo's working dispatch pattern. The render
+    // graph only handles rendering (billboard draw) and barrier tracking.
+    DispatchVFXSimulation(cmdList, dt, frameIndex);
 
     // ── Register render graph passes in pipeline order ──────────────────
     RegisterShadowPasses(rgBuilder, ctx);

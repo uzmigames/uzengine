@@ -232,18 +232,7 @@ static void DispatchSpawn(IRHICommandList* cmd,
     if (emitter.spawnCount == 0) return;
 
     cmd->SetPipeline(desc.spawnPipeline);
-
-    cmd->SetRootCBV(kSlotPerDispatch,
-                    emitter.spawnCB.bufferHandle,
-                    emitter.spawnCB.offsetBytes,
-                    reinterpret_cast<const uint8_t*>(emitter.spawnCB.cpuPtr),
-                    emitter.spawnCB.sizeBytes);
-
-    // SM6.6 bindless: SRV/UAV accessed via ResourceDescriptorHeap[] using
-    // indices passed through the constant buffer. No descriptor table needed.
-    // SM5 fallback: bind SRV table at slot 5 (only exists in SM5 root sig).
-    // UAV table at slot 4 exists in both root signatures.
-    // Note: kSlotSRVTable (5) is NOT valid for SM6.6 root sig — skip it.
+    cmd->SetRootCBV(kSlotPerDispatch, emitter.spawnCB.gpuAddr);
 
     const uint32_t groups = DivRoundUp(emitter.spawnCount, kParticleThreadGroupSize);
     cmd->Dispatch(groups, 1, 1);
@@ -265,14 +254,7 @@ static void DispatchUpdate(IRHICommandList* cmd,
                            const EmitterSimDispatch& emitter)
 {
     cmd->SetPipeline(desc.updatePipeline);
-
-    cmd->SetRootCBV(kSlotPerDispatch,
-                    emitter.updateCB.bufferHandle,
-                    emitter.updateCB.offsetBytes,
-                    reinterpret_cast<const uint8_t*>(emitter.updateCB.cpuPtr),
-                    emitter.updateCB.sizeBytes);
-
-    // SM6.6 bindless: descriptor indices are in the CB, not descriptor tables.
+    cmd->SetRootCBV(kSlotPerDispatch, emitter.updateCB.gpuAddr);
 
     // Dispatch at least 1 group so newly spawned particles get updated.
     const uint32_t totalCount = emitter.aliveCount + emitter.spawnCount;

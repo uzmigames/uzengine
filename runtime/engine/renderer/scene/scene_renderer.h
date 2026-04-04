@@ -750,14 +750,28 @@ private:
     DecalManager* m_decalManager = nullptr;
     TrailSystem* m_trailSystem = nullptr;
     PixelDebugSystem* m_pixelDebugSystem = nullptr;
+    RHIBufferHandle m_vfxDummyDynParams; ///< Scratch buffer for dynParams when emitter has none.
     RHIBufferHandle m_decalCubeVB;
     RHIBufferHandle m_decalCubeIB;
 
     /// Registers deferred decal passes that project decals onto the G-Buffer.
     void RegisterDecalPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
 
-    /// Registers VFX particle passes: compute simulation + billboard rendering.
+    /// Registers VFX particle passes: billboard rendering + sort (render graph).
+    /// Simulation is dispatched inline via DispatchVFXSimulation() before the
+    /// render graph, matching the standalone demo's working dispatch pattern.
     void RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
+
+    /// Dispatches VFX particle simulation (spawn, update, indirect args) as
+    /// inline compute on the main command list, BEFORE the render graph.
+    ///
+    /// This runs identically to the standalone VFX demo's dispatch pattern:
+    /// swap ping-pong -> init if needed -> spawn CS -> UAV barrier -> update CS
+    /// -> UAV barrier -> indirect args CS -> UAV->IndirectArgument barrier.
+    ///
+    /// The render graph only handles rendering (billboard draw) and barrier
+    /// tracking for the SRV transitions needed by the draw pass.
+    void DispatchVFXSimulation(IRHICommandList* cmdList, float dt, uint32_t frameIndex);
 };
 
 } // namespace uz

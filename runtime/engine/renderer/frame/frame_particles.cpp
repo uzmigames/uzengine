@@ -49,58 +49,26 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
     const auto& emitters = activeVFX->GetActiveEmitters();
     if (emitters.empty()) return;
 
-    // ── Swap ping-pong buffers at the TOP of frame registration ────────
-    // After the swap, WriteSet() returns the set that was read last frame
-    // (left in SRV by the render pass), and ReadSet() returns the set that
-    // was written last frame (left in UAV by the sim pass). The render graph
-    // import below uses these post-swap states.
-    for (auto* emitter : emitters) {
-        if (emitter && emitter->initialized && emitter->buffer.IsValid()) {
-            emitter->buffer.Swap();
-        }
-    }
-
-    // ── Deferred GPU buffer initialization ──────────────────────────────
-    // GPU buffers created in Default heap contain garbage. On the first frame
-    // an emitter participates in rendering, upload the initial free list,
-    // free list head, and alive count via staging copy. The staging buffers
-    // are cleaned up on the next frame (the GPU will have finished the copy
-    // by then since we issue UAV barriers after the copies).
-    for (auto* emitter : emitters) {
-        if (!emitter || !emitter->initialized || !emitter->buffer.IsValid()) continue;
-
-        auto& gpuBuf = emitter->buffer;
-
-        // Clean up staging buffers from a previous frame's initialization.
-        // By this point the GPU has executed the copies (we fenced on present).
-        if (!gpuBuf.needsInitialization &&
-            gpuBuf.freeListStaging.IsValid()) {
-            gpuBuf.DestroyStaging(m_device);
-        }
-
-        // Upload initial data if this buffer has never been initialized.
-        if (gpuBuf.needsInitialization) {
-            if (!gpuBuf.InitializeData(m_device, ctx.cmdList)) {
-                UZ_LOG(VFX, Error,
-                       "RegisterParticlePasses: failed to initialize GPU buffer for emitter");
-            }
-        }
-    }
-
     // ── Import GPU particle buffers into the render graph ────────────────
+    // NOTE: Ping-pong swap, GPU buffer initialization, and simulation (spawn,
+    // update, indirect args) are now dispatched inline on the main command list
+    // by DispatchVFXSimulation() BEFORE the render graph. This function only
+    // handles rendering (billboard draw, sort, trails, mesh particles).
     // Each buffer handle must be imported exactly once so the graph has a
     // single RgResourceId per physical buffer for state tracking. We build
     // a per-emitter struct holding all imported IDs, then distribute them
-    // to both the simulation and render pass descriptors.
+    // to the render pass descriptors.
     //
-    // Post-swap resource states:
-    //   Write set = was previous frame's read set, left in SRV by render pass.
-    //   Read set  = was previous frame's write set, left in UAV by sim pass.
-    //   aliveCount = was SRV (render read it).
-    //   freeList/freeListHead/idToIndex = always UAV (only sim touches).
-    //   indirectDrawArgs/Dispatch = was IndirectArgument (sim's EmitIndirectArgsBarriers).
+    // Post-inline-sim resource states (set by DispatchVFXSimulation):
+    //   Write set = UAV (spawn + update CS wrote to it).
+    //   Read set  = UAV (sim read via bindless; tracked state unchanged from UAV).
+    //   aliveCount = UAV (sim wrote to it; indirect args read via bindless).
+    //   freeList/freeListHead/idToIndex = UAV (sim wrote to them).
+    //   indirectDrawArgs/Dispatch = IndirectArgument (TransitionIndirectArgs).
     //
-    // First-frame exception: all buffers start in UAV from Create().
+    // The render pass reads the write set (post-sim data) as SRV, so the
+    // render graph will transition UAV -> SRV. Indirect args are already in
+    // IndirectArgument state from the inline dispatch.
 
     struct ImportedEmitterIds {
         GPUParticleBuffer* buffer = nullptr;
@@ -152,27 +120,20 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
 
         const bool firstCycle = !gpuBuf.hasCompletedCycle;
 
-        // Write set: on frame 0, UAV (from Create); subsequent frames, SRV
-        // (render pass read this set last frame before swap made it the write set).
-        const RHIResourceState writeSetState = firstCycle
+        // After DispatchVFXSimulation() ran inline on the command list:
+        // - Write set attributes are in UAV (spawn + update CS wrote to them).
+        // - Read set attributes: first frame = UAV (from Create); subsequent
+        //   frames = SRV (billboard render pass left them in SRV last frame).
+        //   Inline sim reads them via bindless (doesn't change tracked state).
+        // - aliveCount is in UAV (sim wrote to it).
+        // - indirectDrawArgs/Dispatch are in IndirectArgument
+        //   (TransitionIndirectArgs barriered them after indirect args CS).
+        constexpr RHIResourceState writeSetState  = RHIResourceState::UnorderedAccess;
+        const RHIResourceState readSetState = firstCycle
             ? RHIResourceState::UnorderedAccess
             : RHIResourceState::ShaderResource;
-
-        // Read set: always UAV. On frame 0, UAV from Create. On subsequent
-        // frames, UAV because the sim wrote to this set last frame (before
-        // swap made it the read set).
-        const RHIResourceState readSetState = RHIResourceState::UnorderedAccess;
-
-        // aliveCount: on frame 0, UAV. Subsequent frames, SRV (render read it).
-        const RHIResourceState aliveState = firstCycle
-            ? RHIResourceState::UnorderedAccess
-            : RHIResourceState::ShaderResource;
-
-        // Indirect args: on frame 0, UAV. Subsequent frames, IndirectArgument
-        // (sim's EmitIndirectArgsBarriers left them there for the render pass).
-        const RHIResourceState indirectState = firstCycle
-            ? RHIResourceState::UnorderedAccess
-            : RHIResourceState::IndirectArgument;
+        constexpr RHIResourceState aliveState     = RHIResourceState::UnorderedAccess;
+        constexpr RHIResourceState indirectState  = RHIResourceState::IndirectArgument;
 
         ImportedEmitterIds ids{};
         ids.buffer = &gpuBuf;
@@ -244,223 +205,10 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
         importedIds.push_back(ids);
     }
 
-    // ── Simulation pass (compute) ──────────────────────────────────────
-    // Dispatches spawn, update, and indirect args compute shaders for
-    // each active emitter. Runs before any rendering to fill particle
-    // attribute buffers.
 
-    ParticleSimulationPassDesc simDesc{};
-    simDesc.spawnPipeline        = ctx.pipelines->GetParticleSpawnCS();
-    simDesc.updatePipeline       = ctx.pipelines->GetParticleUpdateCS();
-    simDesc.indirectArgsPipeline = ctx.pipelines->GetParticleIndirectArgsCS();
+    // Simulation (spawn, update, indirect args) is dispatched inline by
+    // DispatchVFXSimulation() in frame_vfx_inline.cpp.
 
-    if (simDesc.spawnPipeline.IsValid() && simDesc.updatePipeline.IsValid()
-        && simDesc.indirectArgsPipeline.IsValid()) {
-
-        simDesc.emitters.reserve(emitters.size());
-
-        for (auto* emitter : emitters) {
-            if (!emitter || !emitter->initialized) continue;
-
-            auto& gpuBuf = emitter->buffer;
-            if (!gpuBuf.IsValid()) continue;
-
-            // Spawn constants -- must match HLSL VFXSpawnConstants (192 bytes).
-            ParticleSpawnConstants spawnCBData{};
-
-            // Emitter parameters from the ParticleEmitter component.
-            spawnCBData.emitterPos[0]     = 0.0f; // emitter position wired later via transform
-            spawnCBData.emitterPos[1]     = 0.0f;
-            spawnCBData.emitterPos[2]     = 0.0f;
-            spawnCBData.spawnRadius       = 0.0f;
-            spawnCBData.spawnVelocity[0]  = emitter->spawnVelocity.x;
-            spawnCBData.spawnVelocity[1]  = emitter->spawnVelocity.y;
-            spawnCBData.spawnVelocity[2]  = emitter->spawnVelocity.z;
-            spawnCBData.velocityVariation = emitter->velocityVariation;
-
-            // Convert spread angle from degrees (emitter) to radians (shader).
-            constexpr float kDegToRad = 3.14159265358979f / 180.0f;
-            spawnCBData.spreadAngle       = emitter->spreadAngle * kDegToRad;
-
-            // Lifetime range: base lifetime with variation applied.
-            const float minLife = (emitter->lifetime - emitter->lifetimeVariation > 0.01f)
-                                ? (emitter->lifetime - emitter->lifetimeVariation)
-                                : 0.01f;
-            spawnCBData.minLifetime       = minLife;
-            spawnCBData.maxLifetime       = emitter->lifetime;
-            spawnCBData.initialSize       = 50.0f; // 50 cm — visible at camera distance
-            spawnCBData.initialColor[0]   = 1.0f;
-            spawnCBData.initialColor[1]   = 1.0f;
-            spawnCBData.initialColor[2]   = 1.0f;
-            spawnCBData.initialColor[3]   = 1.0f;
-
-            spawnCBData.dt                = ctx.dt;
-            spawnCBData.frameNumber       = ctx.frameIndex;
-            spawnCBData.spawnCount        = emitter->CalculateSpawnCount(ctx.dt);
-            spawnCBData.maxParticles      = gpuBuf.capacity;
-
-            // Update CPU-side alive estimate for the render pass vertex count.
-            // This is approximate (GPU-side count is authoritative), but sufficient
-            // for the CPU-driven Draw() call until DrawIndirect is added.
-            emitter->cpuAliveCount += spawnCBData.spawnCount;
-
-            // Bindless descriptor indices for write-set attribute buffers.
-            const auto& writeSet = gpuBuf.WriteSet();
-            spawnCBData.freeListSrvIndex       = m_device->GetBufferSRVIndex(gpuBuf.freeList);
-            spawnCBData.positionsUavIndex       = m_device->GetBufferUAVIndex(writeSet.positions);
-            spawnCBData.velocitiesUavIndex      = m_device->GetBufferUAVIndex(writeSet.velocities);
-            spawnCBData.agesUavIndex            = m_device->GetBufferUAVIndex(writeSet.ages);
-            spawnCBData.lifespansUavIndex       = m_device->GetBufferUAVIndex(writeSet.lifespans);
-            spawnCBData.sizesUavIndex           = m_device->GetBufferUAVIndex(writeSet.sizes);
-            spawnCBData.colorsUavIndex          = m_device->GetBufferUAVIndex(writeSet.colors);
-            spawnCBData.rotationsUavIndex       = m_device->GetBufferUAVIndex(writeSet.rotations);
-            spawnCBData.freeListHeadUavIndex    = m_device->GetBufferUAVIndex(gpuBuf.freeListHead);
-            spawnCBData.aliveCountUavIndex      = m_device->GetBufferUAVIndex(gpuBuf.aliveCount);
-
-            // Spawn shape defaults (point emitter).
-            spawnCBData.spawnShape        = 0;
-            spawnCBData.spawnOnSurface    = 0;
-
-            // Dynamic params UAV -- use positions UAV as fallback to prevent
-            // writes to descriptor 0 (which corrupts the descriptor ring).
-            // The shader writes float4 to dynamicParams[idx] -- safe overlap with positions.
-            spawnCBData.dynamicParamsUavIndex = spawnCBData.positionsUavIndex;
-
-            const CBAllocation spawnAlloc = m_cbRing->Allocate(sizeof(spawnCBData));
-            if (!spawnAlloc.cpuPtr) {
-                UZ_LOG(VFX, Warning,
-                       "RegisterParticlePasses: CB ring full, skipping emitter sim (spawn)");
-                continue;
-            }
-            std::memcpy(spawnAlloc.cpuPtr, &spawnCBData, sizeof(spawnCBData));
-
-            // Update constants -- must match HLSL VFXUpdateConstants (384 bytes).
-            ParticleUpdateConstants updateCBData{};
-
-            // Simulation parameters.
-            updateCBData.gravity[0]  = emitter->gravity.x;
-            updateCBData.gravity[1]  = emitter->gravity.y;
-            updateCBData.gravity[2]  = emitter->gravity.z;
-            updateCBData.dt          = ctx.dt;
-
-            // Emitter damping is stored as multiplicative (0.98 = retain 98% velocity).
-            // Shader uses subtractive model: vel *= (1 - damping * dt).
-            // Convert: damping_shader = (1 - damping_emitter) / dt, but since the
-            // shader already multiplies by dt, we pass (1 - damping_emitter) directly.
-            // At damping=0.98 and dt=0.016: shader damping = 0.02 => vel *= (1 - 0.02*0.016) ≈ 0.99968.
-            // For the simplest mapping: pass (1 - emitter->damping) as the coefficient.
-            updateCBData.damping     = 1.0f - emitter->damping;
-            // aliveCount in the update CB = maxParticles so the shader processes ALL slots.
-            // Each thread checks age >= lifespan to skip dead/unspawned particles.
-            updateCBData.aliveCount  = gpuBuf.capacity;
-            updateCBData.frameNumber = ctx.frameIndex;
-            updateCBData.maxParticles = gpuBuf.capacity;
-
-            // Bindless descriptor indices: READ set (SRV) -- ping-pong read.
-            const auto& readSet = gpuBuf.ReadSet();
-            updateCBData.positionsSrvIndex  = m_device->GetBufferSRVIndex(readSet.positions);
-            updateCBData.velocitiesSrvIndex = m_device->GetBufferSRVIndex(readSet.velocities);
-            updateCBData.agesSrvIndex       = m_device->GetBufferSRVIndex(readSet.ages);
-            updateCBData.lifespansSrvIndex  = m_device->GetBufferSRVIndex(readSet.lifespans);
-            updateCBData.sizesSrvIndex      = m_device->GetBufferSRVIndex(readSet.sizes);
-            updateCBData.colorsSrvIndex     = m_device->GetBufferSRVIndex(readSet.colors);
-            updateCBData.rotationsSrvIndex  = m_device->GetBufferSRVIndex(readSet.rotations);
-
-            // Bindless descriptor indices: WRITE set (UAV) -- ping-pong write.
-            updateCBData.positionsUavIndex  = m_device->GetBufferUAVIndex(writeSet.positions);
-            updateCBData.velocitiesUavIndex = m_device->GetBufferUAVIndex(writeSet.velocities);
-            updateCBData.agesUavIndex       = m_device->GetBufferUAVIndex(writeSet.ages);
-            updateCBData.lifespansUavIndex  = m_device->GetBufferUAVIndex(writeSet.lifespans);
-            updateCBData.sizesUavIndex      = m_device->GetBufferUAVIndex(writeSet.sizes);
-            updateCBData.colorsUavIndex     = m_device->GetBufferUAVIndex(writeSet.colors);
-            updateCBData.rotationsUavIndex  = m_device->GetBufferUAVIndex(writeSet.rotations);
-
-            // Shared buffers (not double-buffered).
-            updateCBData.freeListUavIndex       = m_device->GetBufferUAVIndex(gpuBuf.freeList);
-            updateCBData.freeListHeadUavIndex   = m_device->GetBufferUAVIndex(gpuBuf.freeListHead);
-            updateCBData.aliveCountNewUavIndex  = m_device->GetBufferUAVIndex(gpuBuf.aliveCount);
-
-            // Dynamic params: use position buffers as fallback to prevent
-            // writes to descriptor 0 (which corrupts the descriptor heap).
-            updateCBData.readDynParamsSrv  = updateCBData.positionsSrvIndex;
-            updateCBData.writeDynParamsUav = updateCBData.positionsUavIndex;
-
-            // Force parameters left at defaults (0 = disabled) for base engine path.
-            // Demo/game code fills curl, vortex, wind, kill volume, etc. as needed.
-
-            const CBAllocation updateAlloc = m_cbRing->Allocate(sizeof(updateCBData));
-            if (!updateAlloc.cpuPtr) {
-                UZ_LOG(VFX, Warning,
-                       "RegisterParticlePasses: CB ring full, skipping emitter sim (update)");
-                continue;
-            }
-            std::memcpy(updateAlloc.cpuPtr, &updateCBData, sizeof(updateCBData));
-
-
-            // Indirect args constants -- must match HLSL VFXIndirectArgsConstants (16 bytes).
-            // The shader reads alive count from an SRV and writes indirect draw/dispatch args.
-            ParticleIndirectArgsConstants indirectCBData{};
-            indirectCBData.aliveCountSrvIndex  = m_device->GetBufferSRVIndex(gpuBuf.aliveCount);
-            indirectCBData.indirectArgsUavIndex = m_device->GetBufferUAVIndex(gpuBuf.indirectDrawArgs);
-
-            const CBAllocation indirectAlloc = m_cbRing->Allocate(sizeof(indirectCBData));
-            if (!indirectAlloc.cpuPtr) {
-                UZ_LOG(VFX, Warning,
-                       "RegisterParticlePasses: CB ring full, skipping emitter sim (indirect)");
-                continue;
-            }
-            std::memcpy(indirectAlloc.cpuPtr, &indirectCBData, sizeof(indirectCBData));
-
-            // Build per-emitter dispatch data.
-            EmitterSimDispatch simData{};
-            simData.buffer     = &gpuBuf;
-            simData.spawnCB    = spawnAlloc;
-            simData.updateCB   = updateAlloc;
-            simData.indirectCB = indirectAlloc;
-            simData.spawnCount = spawnCBData.spawnCount;
-            // Dispatch must cover ALL particle slots so the update shader
-            // processes spawned particles at arbitrary indices (free list order).
-            simData.aliveCount = gpuBuf.capacity;
-
-            // Bindless descriptor indices for the simulation compute shaders.
-            // Each buffer's SRV/UAV index is retrieved from the RHI device's
-            // descriptor heap so compute shaders can access them via
-            // ResourceDescriptorHeap[] (bindless) or as a descriptor table base (SM5).
-            simData.readSetSrvIndex  = m_device->GetBufferSRVIndex(gpuBuf.ReadSet().positions);
-            simData.writeSetUavIndex = m_device->GetBufferUAVIndex(gpuBuf.WriteSet().positions);
-            simData.aliveCountUavIndex           = m_device->GetBufferUAVIndex(gpuBuf.aliveCount);
-            simData.freeListUavIndex             = m_device->GetBufferUAVIndex(gpuBuf.freeList);
-            simData.indirectDrawArgsUavIndex     = m_device->GetBufferUAVIndex(gpuBuf.indirectDrawArgs);
-            simData.indirectDispatchArgsUavIndex = m_device->GetBufferUAVIndex(gpuBuf.indirectDispatchArgs);
-
-            // Wire render graph resource IDs from the imported buffers.
-            // Find the matching imported IDs for this emitter's buffer.
-            for (const auto& imported : importedIds) {
-                if (imported.buffer == &gpuBuf) {
-                    simData.rgWritePositions       = imported.wrPositions;
-                    simData.rgWriteVelocities      = imported.wrVelocities;
-                    simData.rgWriteAges            = imported.wrAges;
-                    simData.rgWriteLifespans       = imported.wrLifespans;
-                    simData.rgWriteSizes           = imported.wrSizes;
-                    simData.rgWriteColors          = imported.wrColors;
-                    simData.rgWriteRotations       = imported.wrRotations;
-                    simData.rgAliveCount           = imported.aliveCount;
-                    simData.rgFreeList             = imported.freeList;
-                    simData.rgFreeListHead         = imported.freeListHead;
-                    simData.rgIdToIndex            = imported.idToIndex;
-                    simData.rgIndirectDrawArgs     = imported.indirectDrawArgs;
-                    simData.rgIndirectDispatchArgs = imported.indirectDispatchArgs;
-                    break;
-                }
-            }
-
-            simDesc.emitters.push_back(simData);
-        }
-
-        if (!simDesc.emitters.empty()) {
-            AddParticleSimulationPass(rgBuilder, simDesc);
-        }
-    }
 
     // ── Sort pass (compute) ──────────────────────────────────────────
     // Dispatches the bitonic merge sort for each active emitter so particles
@@ -560,9 +308,7 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
     const auto billboardPipeline = ctx.pipelines->GetParticleBillboard();
 
     // If the billboard pipeline isn't compiled yet (first few frames or
-    // shader compilation error), skip the render pass. Also skip marking
-    // hasCompletedCycle because the render pass didn't run -- the read-set
-    // buffers won't be left in the expected SRV state for next frame's import.
+    // shader compilation error), skip the render pass entirely.
     if (!billboardPipeline.IsValid()) return;
 
     ParticleRenderPassDesc renderDesc{};
@@ -988,17 +734,7 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
         }
     }
 
-    // Mark all emitter buffers as having completed their first sim+render
-    // cycle. After this point, the render graph import will use steady-state
-    // resource states (SRV for write set, IndirectArgument for indirect args)
-    // instead of the first-frame UAV-everywhere state.
-    // Note: Swap() was moved to the TOP of this function so the render graph
-    // import sees post-swap buffer assignments.
-    for (auto* emitter : emitters) {
-        if (emitter && emitter->initialized && emitter->buffer.IsValid()) {
-            emitter->buffer.hasCompletedCycle = true;
-        }
-    }
+    // hasCompletedCycle is now set by DispatchVFXSimulation() (frame_vfx_inline.cpp).
 }
 
 } // namespace uz

@@ -95,12 +95,8 @@ static void DrawEmitterBillboards(IRHICommandList* cmd,
                               12); // 12 x uint32 = 48 bytes = sizeof(ParticleBillboardIndices)
     }
 
-    // Bind per-emitter billboard constants (view/proj matrices, viewport, etc.)
-    cmd->SetRootCBV(kSlotPerEmitter,
-                    emitter.renderCB.bufferHandle,
-                    emitter.renderCB.offsetBytes,
-                    reinterpret_cast<const uint8_t*>(emitter.renderCB.cpuPtr),
-                    emitter.renderCB.sizeBytes);
+    // Bind per-emitter billboard constants (b2 = root CBV per-object).
+    cmd->SetRootCBV(kSlotPerEmitter, emitter.renderCB.gpuAddr);
 
     // SM6.6 bindless: SRV/UAV accessed via ResourceDescriptorHeap[] using
     // indices from the VFXBillboardIndices CB at b0. No descriptor table needed.
@@ -208,11 +204,8 @@ void AddParticleRenderPass(rg::RgBuilder& builder,
             cmd->SetPipeline(passDesc.billboardPipeline);
 
             // Re-bind PerFrameCB at slot 1 (b1) — viewProj, camera, etc.
-            if (passDesc.perFrameCB.cpuPtr) {
-                cmd->SetRootCBV(1, passDesc.perFrameCB.bufferHandle,
-                                passDesc.perFrameCB.offsetBytes,
-                                passDesc.perFrameCB.cpuPtr,
-                                passDesc.perFrameCB.sizeBytes);
+            if (passDesc.perFrameCB.gpuAddr != 0) {
+                cmd->SetRootCBV(1, passDesc.perFrameCB.gpuAddr);
             }
 
             // Draw each emitter (sorted back-to-front).
