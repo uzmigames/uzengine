@@ -9,15 +9,21 @@ tags: guide, rendering, import-pipeline
 
 ## Quick Reference
 
-UzEngine currently imports FBX with **faceted/flat normals**. This guide explains why and how to fix it.
+**Status: IMPLEMENTED** (v0.7.0). UzEngine now computes smooth normals via area+angle weighted averaging and MikkTSpace tangents during FBX/glTF import.
 
-### Why Meshes Look Faceted
+### Implementation Summary
 
 ```
-Current behavior:
-- Each triangle has 3 separate vertices (even if positions are identical)
-- Each vertex normal = its triangle's face normal
-- Result: hard edge between every triangle → faceted appearance
+Current behavior (v0.7.0+):
+- FBX: ComputeSmoothNormals() with area×angle weighting + 60° hard edge threshold
+- glTF: preserves imported normals (from Blender/Maya), computes only when missing
+- Tangents: MikkTSpace (industry standard, matches UE5/Unity/Blender)
+- CVars: r.Mesh.NormalImportMode, r.Mesh.SmoothingAngle, r.Mesh.TangentMode
+
+Key files:
+- engine/asset/mesh/normal_smoother.h/.cpp — smooth normal algorithm
+- engine/asset/mesh/mikktspace_tangents.h/.cpp — MikkTSpace wrapper
+- engine/asset/mesh/packed_normal.h — PackedNormal/PackedTangent types (int8x4)
 
 Required behavior:
 - Vertices at same position → merged for normal calculation

@@ -341,6 +341,14 @@ Registered in `application.cpp`, `job_system.cpp`, `vfs.cpp`.
 | `camera.MoveSpeed` | float | 1000 | [100, 10000] | FPS camera movement speed (cm/s) |
 | `r.DynamicResolution.TargetFPS` | float | 60.0 | [15, 240] | Target FPS for dynamic res |
 
+## Mesh Import
+
+| CVar | Type | Default | Range | Description |
+|------|------|---------|-------|-------------|
+| `r.Mesh.NormalImportMode` | int | 1 | [0, 2] | 0=Import (keep source), 1=Recompute (smooth), 2=Auto (recompute if missing) |
+| `r.Mesh.SmoothingAngle` | float | 60.0 | [0, 180] | Hard edge angle threshold (degrees) |
+| `r.Mesh.TangentMode` | int | 0 | [0, 2] | 0=MikkTSpace, 1=Lengyel (fallback), 2=Import (skip) |
+
 ## Render Quality Tuning Log (phase2a-2.50.0)
 
 Changes made during the render quality consensus fixes task, with rationale.
