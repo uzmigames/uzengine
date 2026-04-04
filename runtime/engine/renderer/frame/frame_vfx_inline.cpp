@@ -166,8 +166,7 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         // ── Spawn dispatch ─────────────────────────────────────────────
         const uint32_t spawnCount = emitter->CalculateSpawnCount(dt);
 
-        // Update CPU-side alive estimate for the render pass vertex count.
-        emitter->cpuAliveCount += spawnCount;
+        // cpuAliveCount is already updated inside CalculateSpawnCount().
 
         ParticleSpawnConstants spawnCBData{};
 
