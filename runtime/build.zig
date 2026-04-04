@@ -863,6 +863,37 @@ pub fn build(b: *std.Build) void {
     // invalidates the cached .obj files that #include engine_shaders.gen.h.
     _ = lib.step.addDirectoryWatchInput(b.path("shaders")) catch {};
 
+    // ── Shader integrity check (post-uzembed) ────────────────────────────
+    // Verifies that every .hlsl source file has a corresponding .gen.h that
+    // is at least as new. Catches stale gen headers from build system bugs.
+    if (is_windows) {
+        const verify_shaders = b.addSystemCommand(&.{
+            "powershell", "-NoProfile", "-Command",
+            \\$src = Get-ChildItem -Recurse -Filter '*.hlsl' 'shaders/'
+            \\$stale = 0
+            \\foreach ($f in $src) {
+            \\  $rel = $f.FullName.Replace((Resolve-Path 'shaders/').Path, '')
+            \\  $gen = "build/generated/shaders/$rel.gen.h"
+            \\  if (Test-Path $gen) {
+            \\    if ($f.LastWriteTime -gt (Get-Item $gen).LastWriteTime) {
+            \\      Write-Host "SHADER STALE: $($f.Name) is newer than its .gen.h" -ForegroundColor Red
+            \\      $stale++
+            \\    }
+            \\  } else {
+            \\    Write-Host "SHADER MISSING: no .gen.h for $($f.Name)" -ForegroundColor Yellow
+            \\    $stale++
+            \\  }
+            \\}
+            \\if ($stale -gt 0) {
+            \\  Write-Host "WARNING: $stale shader(s) may be stale. Run: zig build --clean" -ForegroundColor Red
+            \\} else {
+            \\  Write-Host "Shader integrity OK ($($src.Count) shaders verified)" -ForegroundColor Green
+            \\}
+        });
+        verify_shaders.step.dependOn(&run_embed.step);
+        lib.step.dependOn(&verify_shaders.step);
+    }
+
     // DX12/DX11 system libraries (Windows only)
     if (is_windows) {
         lib.linkSystemLibrary("d3d12");
