@@ -1,18 +1,13 @@
 /// UzEngine DLSS Temporal Upscaler — Implementation
 ///
-/// Integrates NVIDIA DLSS via the NGX SDK C API (nvsdk_ngx.h) and the
-/// DX12 backend (nvsdk_ngx_helpers_dx12.h). The implementation:
-///   1. Initializes NGX with NVSDK_NGX_D3D12_Init (locates nvngx_dlss.dll)
-///   2. Queries DLSS capability and optimal settings
-///   3. Creates the DLSS feature with NVSDK_NGX_D3D12_CreateFeature
-///   4. Each frame, evaluates DLSS with NVSDK_NGX_D3D12_EvaluateFeature
-///   5. On shutdown, releases feature and shuts down NGX
+/// Integrates NVIDIA DLSS via dynamic loading of the NGX SDK DLL (_nvngx.dll).
+/// Instead of linking the MSVC-compiled nvsdk_ngx_d.lib (which has CRT
+/// incompatibility with Zig's mingw libc), we use LoadLibrary/GetProcAddress
+/// to resolve NGX functions at runtime. This makes DLSS entirely optional —
+/// if the DLL is not present, the upscaler gracefully degrades to a stub.
 ///
 /// @ref NVIDIA 2020 "Deep Learning Super Sampling"
 
-// DLSS requires the NVIDIA NGX SDK (nvsdk_ngx.h + nvngx_dlss.dll).
-// Define UZ_DLSS_ENABLED=1 when the SDK is available (auto-detected by build.zig).
-// Without it, DlssUpscaler compiles as a no-op stub that logs a warning on Init().
 #ifndef UZ_DLSS_ENABLED
 #define UZ_DLSS_ENABLED 0
 #endif
@@ -29,13 +24,20 @@
 #include "engine/rhi/dx12/dx12_command_list.h"
 #include "engine/rhi/dx12/dx12_resources.h"
 #include "profiler.h"
-#include "platform/platform.h"
+#include "engine/paths/paths.h"
 
+// NGX SDK headers — types and constants only, no linking required.
+// We avoid nvsdk_ngx_helpers.h which uses inline functions that reference
+// symbols from the static lib (NVSDK_NGX_Parameter_Set*/Get*).
 #include <nvsdk_ngx.h>
 #include <nvsdk_ngx_defs.h>
-#include <nvsdk_ngx_helpers.h>
 
 #include <cstring>
+
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
 
 UZ_DECLARE_LOG_CATEGORY(Renderer);
 
@@ -43,34 +45,43 @@ UZ_DECLARE_LOG_CATEGORY(Renderer);
 // CVars
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// DLSS quality preset: 0=UltraPerf, 1=Performance, 2=Balanced, 3=Quality, 4=DLAA.
-/// @ref NVIDIA DLSS SDK — quality presets table.
 static auto* cv_DLSSQuality = UZ_CVAR_INT("r.DLSS.Quality", 3,
     "DLSS quality: 0=UltraPerf, 1=Performance, 2=Balanced, 3=Quality, 4=DLAA", 0, 4);
 
-/// RCAS-style sharpening applied after DLSS temporal accumulation.
-/// 0.0 = no sharpening, 1.0 = maximum sharpening.
 static auto* cv_DLSSSharpness = UZ_CVAR_FLOAT("r.DLSS.Sharpness", 0.0f,
     "DLSS sharpness [0, 1]", 0.0f, 1.0f);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dynamic NGX function typedefs
+// ─────────────────────────────────────────────────────────────────────────────
+
+using PFN_NVSDK_NGX_D3D12_Init = NVSDK_NGX_Result(NVSDK_CONV*)(
+    unsigned long long, const wchar_t*, ID3D12Device*, const NVSDK_NGX_FeatureCommonInfo*, NVSDK_NGX_Version);
+using PFN_NVSDK_NGX_D3D12_Shutdown1 = NVSDK_NGX_Result(NVSDK_CONV*)(ID3D12Device*);
+using PFN_NVSDK_NGX_D3D12_GetCapabilityParameters = NVSDK_NGX_Result(NVSDK_CONV*)(NVSDK_NGX_Parameter**);
+using PFN_NVSDK_NGX_D3D12_DestroyParameters = NVSDK_NGX_Result(NVSDK_CONV*)(NVSDK_NGX_Parameter*);
+using PFN_NVSDK_NGX_D3D12_CreateFeature = NVSDK_NGX_Result(NVSDK_CONV*)(
+    ID3D12GraphicsCommandList*, NVSDK_NGX_Feature, NVSDK_NGX_Parameter*, NVSDK_NGX_Handle**);
+using PFN_NVSDK_NGX_D3D12_ReleaseFeature = NVSDK_NGX_Result(NVSDK_CONV*)(NVSDK_NGX_Handle*);
+using PFN_NVSDK_NGX_D3D12_EvaluateFeature = NVSDK_NGX_Result(NVSDK_CONV*)(
+    ID3D12GraphicsCommandList*, const NVSDK_NGX_Handle*, NVSDK_NGX_Parameter*, PFN_NVSDK_NGX_ProgressCallback);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Maps DlssQuality enum to NVSDK_NGX_PerfQuality_Value.
-static NVSDK_NGX_PerfQuality_Value ToNgxQuality(DlssQuality q) {
+static NVSDK_NGX_PerfQuality_Value ToNgxQuality(uz::DlssQuality q) {
     switch (q) {
-    case DlssQuality::UltraPerformance: return NVSDK_NGX_PerfQuality_Value_UltraPerformance;
-    case DlssQuality::Performance:      return NVSDK_NGX_PerfQuality_Value_MaxPerf;
-    case DlssQuality::Balanced:         return NVSDK_NGX_PerfQuality_Value_Balanced;
-    case DlssQuality::Quality:          return NVSDK_NGX_PerfQuality_Value_MaxQuality;
-    case DlssQuality::DLAA:             return NVSDK_NGX_PerfQuality_Value_DLAA;
+    case uz::DlssQuality::UltraPerformance: return NVSDK_NGX_PerfQuality_Value_UltraPerformance;
+    case uz::DlssQuality::Performance:      return NVSDK_NGX_PerfQuality_Value_MaxPerf;
+    case uz::DlssQuality::Balanced:         return NVSDK_NGX_PerfQuality_Value_Balanced;
+    case uz::DlssQuality::Quality:          return NVSDK_NGX_PerfQuality_Value_MaxQuality;
+    case uz::DlssQuality::DLAA:             return NVSDK_NGX_PerfQuality_Value_DLAA;
     }
     return NVSDK_NGX_PerfQuality_Value_MaxQuality;
 }
 
-/// UzEngine application ID for NGX registration (arbitrary, non-zero).
-static constexpr uint64_t kNgxAppId = 0x557A456E67696E65ULL; // "UzEngine" as hex
+static constexpr uint64_t kNgxAppId = 0x557A456E67696E65ULL;
 
 namespace uz {
 
@@ -79,78 +90,117 @@ namespace uz {
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct DlssUpscaler::Impl {
-    /// RHI device reference.
     IRHIDevice* device = nullptr;
-
-    /// DX12 device pointer — cached from Init().
     DX12Device* dx12Device = nullptr;
 
-    /// NGX initialization succeeded.
+    // Dynamic library handle
+    HMODULE ngxModule = nullptr;
+
+    // Dynamically loaded NGX function pointers
+    PFN_NVSDK_NGX_D3D12_Init pfnInit = nullptr;
+    PFN_NVSDK_NGX_D3D12_Shutdown1 pfnShutdown = nullptr;
+    PFN_NVSDK_NGX_D3D12_GetCapabilityParameters pfnGetCapParams = nullptr;
+    PFN_NVSDK_NGX_D3D12_DestroyParameters pfnDestroyParams = nullptr;
+    PFN_NVSDK_NGX_D3D12_CreateFeature pfnCreateFeature = nullptr;
+    PFN_NVSDK_NGX_D3D12_ReleaseFeature pfnReleaseFeature = nullptr;
+    PFN_NVSDK_NGX_D3D12_EvaluateFeature pfnEvaluateFeature = nullptr;
+
     bool ngxInitialized = false;
-
-    /// DLSS feature is supported on this GPU/driver.
     bool dlssSupported = false;
-
-    /// DLSS feature handle (created by NGX).
     NVSDK_NGX_Handle* dlssFeature = nullptr;
-
-    /// NGX parameter block for querying DLSS capabilities.
     NVSDK_NGX_Parameter* ngxParams = nullptr;
 
-    /// Display resolution the feature was created for.
     uint32_t displayWidth = 0;
     uint32_t displayHeight = 0;
-
-    /// Optimal render resolution queried from NGX for current quality preset.
     uint32_t optimalRenderWidth = 0;
     uint32_t optimalRenderHeight = 0;
-
-    /// Current quality preset the feature was created with.
     DlssQuality currentQuality = DlssQuality::Quality;
 
     ~Impl() {
         DestroyFeature();
         ShutdownNgx();
+        UnloadDll();
     }
 
-    /// Initializes the NGX SDK with the application directory.
+    /// Loads _nvngx.dll and resolves function pointers.
+    bool LoadDll() {
+        // Try loading from system path (NVIDIA driver installs it globally).
+        ngxModule = ::LoadLibraryW(L"_nvngx.dll");
+        if (!ngxModule) {
+            UZ_LOG(Renderer, Warning, "DLSS: failed to load _nvngx.dll (error={})",
+                   ::GetLastError());
+            return false;
+        }
+
+        pfnInit = reinterpret_cast<PFN_NVSDK_NGX_D3D12_Init>(
+            ::GetProcAddress(ngxModule, "NVSDK_NGX_D3D12_Init"));
+        pfnShutdown = reinterpret_cast<PFN_NVSDK_NGX_D3D12_Shutdown1>(
+            ::GetProcAddress(ngxModule, "NVSDK_NGX_D3D12_Shutdown1"));
+        pfnGetCapParams = reinterpret_cast<PFN_NVSDK_NGX_D3D12_GetCapabilityParameters>(
+            ::GetProcAddress(ngxModule, "NVSDK_NGX_D3D12_GetCapabilityParameters"));
+        pfnDestroyParams = reinterpret_cast<PFN_NVSDK_NGX_D3D12_DestroyParameters>(
+            ::GetProcAddress(ngxModule, "NVSDK_NGX_D3D12_DestroyParameters"));
+        pfnCreateFeature = reinterpret_cast<PFN_NVSDK_NGX_D3D12_CreateFeature>(
+            ::GetProcAddress(ngxModule, "NVSDK_NGX_D3D12_CreateFeature"));
+        pfnReleaseFeature = reinterpret_cast<PFN_NVSDK_NGX_D3D12_ReleaseFeature>(
+            ::GetProcAddress(ngxModule, "NVSDK_NGX_D3D12_ReleaseFeature"));
+        pfnEvaluateFeature = reinterpret_cast<PFN_NVSDK_NGX_D3D12_EvaluateFeature>(
+            ::GetProcAddress(ngxModule, "NVSDK_NGX_D3D12_EvaluateFeature"));
+
+        if (!pfnInit || !pfnShutdown || !pfnGetCapParams || !pfnCreateFeature ||
+            !pfnReleaseFeature || !pfnEvaluateFeature) {
+            UZ_LOG(Renderer, Warning, "DLSS: _nvngx.dll loaded but missing required exports");
+            UnloadDll();
+            return false;
+        }
+
+        UZ_LOG(Renderer, Info, "DLSS: _nvngx.dll loaded successfully");
+        return true;
+    }
+
+    void UnloadDll() {
+        if (ngxModule) {
+            ::FreeLibrary(ngxModule);
+            ngxModule = nullptr;
+        }
+        pfnInit = nullptr;
+        pfnShutdown = nullptr;
+        pfnGetCapParams = nullptr;
+        pfnDestroyParams = nullptr;
+        pfnCreateFeature = nullptr;
+        pfnReleaseFeature = nullptr;
+        pfnEvaluateFeature = nullptr;
+    }
+
     bool InitNgx(ID3D12Device* nativeDevice) {
-        // Use the executable directory as the NGX data path.
-        // nvngx_dlss.dll must be present in thirdparty/dlss/lib/Windows_x86_64/rel/
-        // or alongside the executable.
-        std::wstring dataPath = uz::GetExeDirW();
+        std::wstring dataPath = uz::GetExeDir().wstring();
 
-        NVSDK_NGX_Result result = NVSDK_NGX_D3D12_Init(
-            kNgxAppId,
-            dataPath.c_str(),
-            nativeDevice);
-
+        NVSDK_NGX_Result result = pfnInit(kNgxAppId, dataPath.c_str(), nativeDevice,
+                                          nullptr, NVSDK_NGX_Version_API);
         if (NVSDK_NGX_FAILED(result)) {
             UZ_LOG(Renderer, Warning,
-                   "DLSS: NGX init failed (result=0x{:08X}) — falling back to alternative upscaler",
+                   "DLSS: NGX init failed (result=0x{:08X}) — falling back",
                    static_cast<uint32_t>(result));
             return false;
         }
 
-        // Get NGX capability parameters.
-        result = NVSDK_NGX_D3D12_GetCapabilityParameters(&ngxParams);
+        result = pfnGetCapParams(&ngxParams);
         if (NVSDK_NGX_FAILED(result)) {
             UZ_LOG(Renderer, Warning,
                    "DLSS: failed to get NGX capability parameters (result=0x{:08X})",
                    static_cast<uint32_t>(result));
-            NVSDK_NGX_D3D12_Shutdown1(nativeDevice);
+            pfnShutdown(nativeDevice);
             return false;
         }
 
-        // Check if DLSS is supported.
+        // Check DLSS availability via NVSDK_NGX_Parameter virtual method table.
         unsigned int dlssAvailable = 0;
-        result = ngxParams->Get(NVSDK_NGX_Parameter_SuperSampling_Available, &dlssAvailable);
-        if (NVSDK_NGX_FAILED(result) || dlssAvailable == 0) {
-            UZ_LOG(Renderer, Warning,
-                   "DLSS: not supported on this GPU/driver — falling back to alternative upscaler");
-            NVSDK_NGX_D3D12_DestroyParameters(ngxParams);
+        ngxParams->Get(NVSDK_NGX_Parameter_SuperSampling_Available, &dlssAvailable);
+        if (dlssAvailable == 0) {
+            UZ_LOG(Renderer, Warning, "DLSS: not supported on this GPU/driver");
+            if (pfnDestroyParams) pfnDestroyParams(ngxParams);
             ngxParams = nullptr;
-            NVSDK_NGX_D3D12_Shutdown1(nativeDevice);
+            pfnShutdown(nativeDevice);
             return false;
         }
 
@@ -160,114 +210,93 @@ struct DlssUpscaler::Impl {
         return true;
     }
 
-    /// Shuts down the NGX SDK.
     void ShutdownNgx() {
-        if (!ngxInitialized || !dx12Device) return;
-
-        if (ngxParams) {
-            NVSDK_NGX_D3D12_DestroyParameters(ngxParams);
+        if (!ngxInitialized || !dx12Device || !pfnShutdown) return;
+        if (ngxParams && pfnDestroyParams) {
+            pfnDestroyParams(ngxParams);
             ngxParams = nullptr;
         }
-
-        NVSDK_NGX_D3D12_Shutdown1(dx12Device->GetDevice());
+        pfnShutdown(dx12Device->GetDevice());
         ngxInitialized = false;
         dlssSupported = false;
-        UZ_LOG(Renderer, Info, "DLSS: NGX shut down");
     }
 
-    /// Queries optimal render resolution for the given quality preset and display resolution.
     bool QueryOptimalSettings(uint32_t dispW, uint32_t dispH, DlssQuality quality) {
         if (!ngxParams) return false;
 
+        // Use NVSDK_NGX_Parameter virtual methods to query optimal settings.
+        ngxParams->Set(NVSDK_NGX_Parameter_Width, dispW);
+        ngxParams->Set(NVSDK_NGX_Parameter_Height, dispH);
+        ngxParams->Set(NVSDK_NGX_Parameter_PerfQualityValue, static_cast<unsigned int>(ToNgxQuality(quality)));
+
         unsigned int optW = 0, optH = 0;
-        unsigned int minW = 0, minH = 0;
-        unsigned int maxW = 0, maxH = 0;
-        float sharpness = 0.0f;
+        ngxParams->Get(NVSDK_NGX_Parameter_OutWidth, &optW);
+        ngxParams->Get(NVSDK_NGX_Parameter_OutHeight, &optH);
 
-        NVSDK_NGX_Result result = NGX_DLSS_GET_OPTIMAL_SETTINGS(
-            ngxParams,
-            dispW, dispH,
-            ToNgxQuality(quality),
-            &optW, &optH,
-            &maxW, &maxH,
-            &minW, &minH,
-            &sharpness);
-
-        if (NVSDK_NGX_FAILED(result) || optW == 0 || optH == 0) {
-            UZ_LOG(Renderer, Warning,
-                   "DLSS: failed to query optimal settings (result=0x{:08X})",
-                   static_cast<uint32_t>(result));
-            return false;
+        // Fallback: compute from quality preset ratio.
+        if (optW == 0 || optH == 0) {
+            float scale = 1.0f;
+            switch (quality) {
+            case DlssQuality::UltraPerformance: scale = 3.0f; break;
+            case DlssQuality::Performance:      scale = 2.0f; break;
+            case DlssQuality::Balanced:         scale = 1.7f; break;
+            case DlssQuality::Quality:          scale = 1.5f; break;
+            case DlssQuality::DLAA:             scale = 1.0f; break;
+            }
+            optW = static_cast<uint32_t>(static_cast<float>(dispW) / scale);
+            optH = static_cast<uint32_t>(static_cast<float>(dispH) / scale);
         }
 
         optimalRenderWidth = optW;
         optimalRenderHeight = optH;
-
-        UZ_LOG(Renderer, Info,
-               "DLSS: optimal render {}x{} for display {}x{} (quality={})",
-               optW, optH, dispW, dispH, static_cast<uint32_t>(quality));
+        UZ_LOG(Renderer, Info, "DLSS: optimal render {}x{} for display {}x{}",
+               optW, optH, dispW, dispH);
         return true;
     }
 
-    /// Creates the DLSS feature for the given display resolution and quality.
     bool CreateFeature(ID3D12GraphicsCommandList* cmdList,
                        uint32_t dispW, uint32_t dispH, DlssQuality quality) {
-        if (dlssFeature) {
-            DestroyFeature();
-        }
-
-        if (!QueryOptimalSettings(dispW, dispH, quality)) {
-            return false;
-        }
+        if (dlssFeature) DestroyFeature();
+        if (!QueryOptimalSettings(dispW, dispH, quality)) return false;
 
         displayWidth = dispW;
         displayHeight = dispH;
         currentQuality = quality;
 
-        unsigned int creationFlags =
-            NVSDK_NGX_DLSS_Feature_Flags_IsHDR |
-            NVSDK_NGX_DLSS_Feature_Flags_MVLowRes |
-            NVSDK_NGX_DLSS_Feature_Flags_DepthInverted |
-            NVSDK_NGX_DLSS_Feature_Flags_AutoExposure;
+        // Set DLSS creation parameters via the NVSDK_NGX_Parameter interface.
+        ngxParams->Set(NVSDK_NGX_Parameter_Width, optimalRenderWidth);
+        ngxParams->Set(NVSDK_NGX_Parameter_Height, optimalRenderHeight);
+        ngxParams->Set(NVSDK_NGX_Parameter_OutWidth, dispW);
+        ngxParams->Set(NVSDK_NGX_Parameter_OutHeight, dispH);
+        ngxParams->Set(NVSDK_NGX_Parameter_PerfQualityValue,
+                       static_cast<unsigned int>(ToNgxQuality(quality)));
+        ngxParams->Set(NVSDK_NGX_Parameter_DLSS_Feature_Create_Flags,
+                       NVSDK_NGX_DLSS_Feature_Flags_IsHDR |
+                       NVSDK_NGX_DLSS_Feature_Flags_MVLowRes |
+                       NVSDK_NGX_DLSS_Feature_Flags_DepthInverted |
+                       NVSDK_NGX_DLSS_Feature_Flags_AutoExposure);
 
-        NVSDK_NGX_DLSS_Create_Params dlssParams{};
-        dlssParams.Feature.InWidth = optimalRenderWidth;
-        dlssParams.Feature.InHeight = optimalRenderHeight;
-        dlssParams.Feature.InTargetWidth = dispW;
-        dlssParams.Feature.InTargetHeight = dispH;
-        dlssParams.InFeatureCreateFlags = creationFlags;
-
-        NVSDK_NGX_Result result = NGX_D3D12_CREATE_DLSS_EXT(
-            cmdList,
-            1, 1,
-            &dlssFeature,
-            ngxParams,
-            &dlssParams);
+        NVSDK_NGX_Result result = pfnCreateFeature(
+            cmdList, NVSDK_NGX_Feature_SuperSampling, ngxParams, &dlssFeature);
 
         if (NVSDK_NGX_FAILED(result)) {
-            UZ_LOG(Renderer, Error,
-                   "DLSS: feature creation failed (result=0x{:08X})",
+            UZ_LOG(Renderer, Error, "DLSS: feature creation failed (result=0x{:08X})",
                    static_cast<uint32_t>(result));
             dlssFeature = nullptr;
             return false;
         }
 
-        UZ_LOG(Renderer, Info,
-               "DLSS: feature created — render {}x{} → display {}x{}",
+        UZ_LOG(Renderer, Info, "DLSS: feature created — render {}x{} → display {}x{}",
                optimalRenderWidth, optimalRenderHeight, dispW, dispH);
         return true;
     }
 
-    /// Destroys the DLSS feature.
     void DestroyFeature() {
-        if (!dlssFeature) return;
-
-        NVSDK_NGX_D3D12_ReleaseFeature(dlssFeature);
+        if (!dlssFeature || !pfnReleaseFeature) return;
+        pfnReleaseFeature(dlssFeature);
         dlssFeature = nullptr;
-        UZ_LOG(Renderer, Info, "DLSS: feature destroyed");
     }
 
-    /// Resolves an RHI texture handle to a native ID3D12Resource pointer.
     ID3D12Resource* GetNativeResource(RHITextureHandle handle) const {
         if (!handle.IsValid() || !dx12Device) return nullptr;
         auto* dx12Tex = dx12Device->GetTexturePool().Get(handle.index, handle.generation);
@@ -285,10 +314,7 @@ DlssUpscaler::DlssUpscaler()
 {
 }
 
-DlssUpscaler::~DlssUpscaler() {
-    Shutdown();
-}
-
+DlssUpscaler::~DlssUpscaler() { Shutdown(); }
 DlssUpscaler::DlssUpscaler(DlssUpscaler&&) noexcept = default;
 DlssUpscaler& DlssUpscaler::operator=(DlssUpscaler&&) noexcept = default;
 
@@ -296,22 +322,10 @@ DlssUpscaler& DlssUpscaler::operator=(DlssUpscaler&&) noexcept = default;
 // Queries
 // ─────────────────────────────────────────────────────────────────────────────
 
-UpscalerType DlssUpscaler::GetType() const noexcept {
-    return UpscalerType::DLSS;
-}
-
-const char* DlssUpscaler::GetName() const noexcept {
-    return "DLSS";
-}
-
-float DlssUpscaler::GetMinScreenPercentage() const noexcept {
-    return 33.3f; // Ultra Performance = 3x
-}
-
-float DlssUpscaler::GetMaxScreenPercentage() const noexcept {
-    return 100.f; // DLAA = native
-}
-
+UpscalerType DlssUpscaler::GetType() const noexcept { return UpscalerType::DLSS; }
+const char* DlssUpscaler::GetName() const noexcept { return "DLSS"; }
+float DlssUpscaler::GetMinScreenPercentage() const noexcept { return 33.3f; }
+float DlssUpscaler::GetMaxScreenPercentage() const noexcept { return 100.f; }
 bool DlssUpscaler::IsAvailable() const noexcept {
     return m_impl && m_impl->dlssSupported && m_impl->ngxInitialized;
 }
@@ -320,14 +334,8 @@ bool DlssUpscaler::IsAvailable() const noexcept {
 // Lifecycle
 // ─────────────────────────────────────────────────────────────────────────────
 
-void DlssUpscaler::Init(IRHIDevice* device, PipelineLibrary* /*pipelines*/,
-                         CBRingAllocator* /*cbRing*/) {
-    if (!device) {
-        UZ_LOG(Renderer, Error, "DLSS: Init called with null device");
-        return;
-    }
-
-    // DLSS requires DX12 backend.
+void DlssUpscaler::Init(IRHIDevice* device, PipelineLibrary*, CBRingAllocator*) {
+    if (!device) { UZ_LOG(Renderer, Error, "DLSS: Init called with null device"); return; }
     if (device->GetBackend() != RHIBackend::DX12) {
         UZ_LOG(Renderer, Warning, "DLSS: only DX12 backend is supported");
         return;
@@ -336,42 +344,33 @@ void DlssUpscaler::Init(IRHIDevice* device, PipelineLibrary* /*pipelines*/,
     m_impl->device = device;
     m_impl->dx12Device = static_cast<DX12Device*>(device);
 
+    // Step 1: Load _nvngx.dll dynamically.
+    if (!m_impl->LoadDll()) return;
+
+    // Step 2: Initialize NGX SDK.
     ID3D12Device* nativeDevice = m_impl->dx12Device->GetDevice();
-    if (!nativeDevice) {
-        UZ_LOG(Renderer, Error, "DLSS: failed to get native ID3D12Device");
+    if (!nativeDevice || !m_impl->InitNgx(nativeDevice)) {
+        m_impl->UnloadDll();
         return;
     }
 
-    // Initialize NGX SDK (locates nvngx_dlss.dll, queries DLSS support).
-    if (!m_impl->InitNgx(nativeDevice)) {
-        return;
-    }
-
-    // DLSS feature is created lazily in Execute() when display resolution is known,
-    // or in OnResize() when the resolution changes.
-    UZ_LOG(Renderer, Info, "DLSS: backend initialized, feature will be created on first frame");
+    UZ_LOG(Renderer, Info, "DLSS: backend initialized, feature created on first frame");
 }
 
 void DlssUpscaler::Shutdown() {
     if (m_impl) {
         m_impl->DestroyFeature();
         m_impl->ShutdownNgx();
+        m_impl->UnloadDll();
         m_impl->device = nullptr;
         m_impl->dx12Device = nullptr;
     }
 }
 
 void DlssUpscaler::OnResize(uint32_t displayWidth, uint32_t displayHeight) {
-    if (!m_impl || !m_impl->dx12Device || !m_impl->dlssSupported) return;
-
-    // If resolution hasn't changed, skip.
-    if (m_impl->dlssFeature &&
-        m_impl->displayWidth == displayWidth &&
-        m_impl->displayHeight == displayHeight) {
-        return;
-    }
-
-    // Feature will be recreated on next Execute() with the new resolution.
+    if (!m_impl || !m_impl->dlssSupported) return;
+    if (m_impl->dlssFeature && m_impl->displayWidth == displayWidth &&
+        m_impl->displayHeight == displayHeight) return;
     m_impl->DestroyFeature();
     m_impl->displayWidth = displayWidth;
     m_impl->displayHeight = displayHeight;
@@ -383,101 +382,62 @@ void DlssUpscaler::OnResize(uint32_t displayWidth, uint32_t displayHeight) {
 
 void DlssUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     UZ_PROFILE_SCOPE("DLSS::Execute");
-
-    if (!m_impl || !m_impl->dx12Device || !m_impl->dlssSupported) {
-        return;
-    }
+    if (!m_impl || !m_impl->dx12Device || !m_impl->dlssSupported) return;
 
     const auto outputW = static_cast<uint32_t>(input.outputWidth);
     const auto outputH = static_cast<uint32_t>(input.outputHeight);
     const auto quality = static_cast<DlssQuality>(cv_DLSSQuality->value);
 
-    // Get native DX12 command list.
     auto* dx12Cmd = static_cast<DX12CommandList*>(cmd);
     ID3D12GraphicsCommandList* nativeCmdList = dx12Cmd->GetNative();
-    if (!nativeCmdList) {
-        UZ_LOG(Renderer, Error, "DLSS: failed to get native command list");
+    if (!nativeCmdList) return;
+
+    // Lazily create or recreate feature.
+    if (!m_impl->dlssFeature || m_impl->displayWidth != outputW ||
+        m_impl->displayHeight != outputH || m_impl->currentQuality != quality) {
+        if (outputW == 0 || outputH == 0) return;
+        if (!m_impl->CreateFeature(nativeCmdList, outputW, outputH, quality)) return;
+    }
+
+    // Resolve RHI textures to native DX12 resources.
+    ID3D12Resource* colorRes    = m_impl->GetNativeResource(input.sceneColorTexture);
+    ID3D12Resource* depthRes    = m_impl->GetNativeResource(input.depthTexture);
+    ID3D12Resource* velocityRes = m_impl->GetNativeResource(input.velocityTexture);
+    ID3D12Resource* outputRes   = m_impl->GetNativeResource(input.historyWriteTexture);
+
+    if (!colorRes || !depthRes || !velocityRes || !outputRes) {
+        UZ_LOG(Renderer, Error, "DLSS: one or more required textures are null");
         return;
     }
 
-    // Lazily create or recreate feature if resolution/quality changed.
-    if (!m_impl->dlssFeature ||
-        m_impl->displayWidth != outputW ||
-        m_impl->displayHeight != outputH ||
-        m_impl->currentQuality != quality) {
+    // Set evaluation parameters via NVSDK_NGX_Parameter virtual method table.
+    // This avoids using nvsdk_ngx_helpers.h inline functions (which require static linking).
+    auto* p = m_impl->ngxParams;
+    p->Set(NVSDK_NGX_Parameter_Color, colorRes);
+    p->Set(NVSDK_NGX_Parameter_Output, outputRes);
+    p->Set(NVSDK_NGX_Parameter_Depth, depthRes);
+    p->Set(NVSDK_NGX_Parameter_MotionVectors, velocityRes);
+    p->Set(NVSDK_NGX_Parameter_Jitter_Offset_X, input.jitterX);
+    p->Set(NVSDK_NGX_Parameter_Jitter_Offset_Y, input.jitterY);
+    p->Set(NVSDK_NGX_Parameter_MV_Scale_X, 1.0f);
+    p->Set(NVSDK_NGX_Parameter_MV_Scale_Y, 1.0f);
+    p->Set(NVSDK_NGX_Parameter_Sharpness, cv_DLSSSharpness->value);
+    p->Set(NVSDK_NGX_Parameter_Reset, static_cast<int>(input.firstFrame ? 1 : 0));
+    p->Set(NVSDK_NGX_Parameter_Width, static_cast<unsigned int>(input.renderWidth));
+    p->Set(NVSDK_NGX_Parameter_Height, static_cast<unsigned int>(input.renderHeight));
 
-        if (outputW == 0 || outputH == 0) {
-            UZ_LOG(Renderer, Warning, "DLSS: invalid output resolution {}x{}",
-                   outputW, outputH);
-            return;
-        }
-
-        if (!m_impl->CreateFeature(nativeCmdList, outputW, outputH, quality)) {
-            return;
-        }
-    }
-
-    // Resolve RHI texture handles to native DX12 resources.
-    ID3D12Resource* sceneColorRes = m_impl->GetNativeResource(input.sceneColorTexture);
-    ID3D12Resource* depthRes      = m_impl->GetNativeResource(input.depthTexture);
-    ID3D12Resource* velocityRes   = m_impl->GetNativeResource(input.velocityTexture);
-    ID3D12Resource* outputRes     = m_impl->GetNativeResource(input.historyWriteTexture);
-
-    if (!sceneColorRes || !depthRes || !velocityRes || !outputRes) {
-        UZ_LOG(Renderer, Error,
-               "DLSS: one or more required textures are null "
-               "(color={}, depth={}, velocity={}, output={})",
-               sceneColorRes != nullptr, depthRes != nullptr,
-               velocityRes != nullptr, outputRes != nullptr);
-        return;
-    }
-
-    // Fill DLSS evaluation parameters.
-    NVSDK_NGX_D3D12_DLSS_Eval_Params evalParams{};
-    evalParams.Feature.pInColor = sceneColorRes;
-    evalParams.Feature.pInOutput = outputRes;
-    evalParams.pInDepth = depthRes;
-    evalParams.pInMotionVectors = velocityRes;
-    evalParams.pInExposureTexture = nullptr; // auto-exposure mode
-
-    // Jitter offset in pixels — same convention as TAA/FSR2.
-    evalParams.InJitterOffsetX = input.jitterX;
-    evalParams.InJitterOffsetY = input.jitterY;
-
-    // Render resolution for this frame.
-    evalParams.InRenderSubrectDimensions.Width  = static_cast<uint32_t>(input.renderWidth);
-    evalParams.InRenderSubrectDimensions.Height = static_cast<uint32_t>(input.renderHeight);
-
-    // Motion vector scale — UzEngine velocity is in pixel units.
-    evalParams.InMVScaleX = 1.0f;
-    evalParams.InMVScaleY = 1.0f;
-
-    // Sharpness from CVar.
-    evalParams.InSharpness = cv_DLSSSharpness->value;
-
-    // Reset flag — discard history on first frame or camera cut.
-    evalParams.InReset = input.firstFrame ? 1 : 0;
-
-    // Pre-exposure value.
-    evalParams.InPreExposure = 1.0f;
-
-    // Evaluate DLSS.
-    NVSDK_NGX_Result result = NGX_D3D12_EVALUATE_DLSS_EXT(
-        nativeCmdList,
-        m_impl->dlssFeature,
-        m_impl->ngxParams,
-        &evalParams);
+    NVSDK_NGX_Result result = m_impl->pfnEvaluateFeature(
+        nativeCmdList, m_impl->dlssFeature, m_impl->ngxParams, nullptr);
 
     if (NVSDK_NGX_FAILED(result)) {
-        UZ_LOG(Renderer, Error,
-               "DLSS: evaluate failed (result=0x{:08X})",
+        UZ_LOG(Renderer, Error, "DLSS: evaluate failed (result=0x{:08X})",
                static_cast<uint32_t>(result));
     }
 }
 
 } // namespace uz
 
-#else // !UZ_DLSS_ENABLED — stub implementation
+#else // !UZ_DLSS_ENABLED
 
 UZ_DECLARE_LOG_CATEGORY(Renderer);
 

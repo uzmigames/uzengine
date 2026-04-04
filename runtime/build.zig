@@ -770,19 +770,25 @@ pub fn build(b: *std.Build) void {
     }
 
     // Thirdparty — NVIDIA DLSS SDK headers (NGX API for temporal upscaling)
-    // Include paths only — DLSS uses a prebuilt DLL (nvngx_dlss.dll) loaded at runtime
-    // via NVSDK_NGX_D3D12_Init. No static linking required.
-    // Define UZ_DLSS_ENABLED=1 when the SDK is available (downloaded via setup.ps1).
-    if (is_windows) {
+    // DLSS uses a static lib (nvsdk_ngx_d.lib) that dynamically loads nvngx_dlss.dll
+    // at runtime via LoadLibrary. Define UZ_DLSS_ENABLED=1 when SDK is present.
+    const has_dlss = blk: {
+        if (!is_windows) break :blk false;
         const dlss_inc = tp ++ "dlss/include/";
         const dlss_resolved = b.path(dlss_inc).getPath(b);
         if (std.fs.openDirAbsolute(dlss_resolved, .{})) |*dir| {
             @constCast(dir).close();
-            runtime_mod.addIncludePath(b.path(dlss_inc));
-            runtime_mod.addCMacro("UZ_DLSS_ENABLED", "1");
+            break :blk true;
         } else |_| {
-            // DLSS SDK not downloaded — DlssUpscaler compiles as no-op stub.
+            break :blk false;
         }
+    };
+    // DLSS SDK — headers only, no static lib linking. DlssUpscaler uses
+    // LoadLibrary/GetProcAddress to load NGX functions at runtime, avoiding
+    // MSVC CRT incompatibility with Zig's mingw libc.
+    if (has_dlss) {
+        runtime_mod.addIncludePath(b.path(tp ++ "dlss/include/"));
+        runtime_mod.addCMacro("UZ_DLSS_ENABLED", "1");
     }
 
     // Include paths — runtime root (for "platform/platform_types.h" etc.)
@@ -971,6 +977,7 @@ pub fn build(b: *std.Build) void {
         dll_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avutil.lib"));
         dll_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/swscale.lib"));
         dll_mod.addLibraryPath(b.path(tp ++ "ffmpeg/lib"));
+        // DLSS: no static lib — uses LoadLibrary/GetProcAddress at runtime.
 
         const dll = b.addLibrary(.{
             .linkage = .dynamic,
@@ -1112,6 +1119,7 @@ pub fn build(b: *std.Build) void {
         test_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avcodec.lib"));
         test_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avutil.lib"));
         test_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/swscale.lib"));
+        // DLSS: no static lib — uses LoadLibrary/GetProcAddress at runtime.
     }
 
     if (is_windows) {
@@ -1181,6 +1189,7 @@ pub fn build(b: *std.Build) void {
             tool_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avcodec.lib"));
             tool_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avutil.lib"));
             tool_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/swscale.lib"));
+            // DLSS: no static lib — uses LoadLibrary/GetProcAddress at runtime.
 
             const tool_exe = b.addExecutable(.{ .name = tool_name, .root_module = tool_mod });
             tool_exe.linkLibrary(lib);
