@@ -142,7 +142,7 @@ RHIPipelineHandle PipelineLibrary::GetGBufferInstanced() {
     desc.depthStencil.depthEnable         = true;
     desc.depthStencil.depthWrite          = true;
     desc.renderTargetFormats[0]           = RHIFormat::RGBA8Unorm;
-    desc.renderTargetFormats[1]           = RHIFormat::RGBA8Unorm;
+    desc.renderTargetFormats[1]           = RHIFormat::RGBA16Float;   // octNormal+metallic+roughness
     desc.renderTargetFormats[2]           = RHIFormat::RGBA32Float;
     desc.renderTargetFormats[3]           = RHIFormat::RGBA16Float;   // HDR emissive color
     desc.renderTargetCount                = 4;

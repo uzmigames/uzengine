@@ -704,6 +704,20 @@ public:
     /// Must be called from the render/init thread.
     bool SetHDRIEnvironment(uint32_t equirectSrvIndex, uint32_t cubemapSize = 512);
 
+    /// Sets the environment from a Three.js CubeUV PMREM atlas texture.
+    ///
+    /// Extracts a standard cubemap with mip chain from the PMREM atlas (using
+    /// `IBLBaker::PmremToCubemap`), then bakes only the irradiance cubemap
+    /// (prefiltered specular is already in the PMREM mip chain). Projects SH
+    /// irradiance for diffuse lighting and fog color.
+    ///
+    /// # Arguments
+    /// * `result` — TextureLoadResult with isPMREM=true, valid handle/SRV.
+    ///
+    /// # Returns
+    /// `true` on success, `false` on failure (error logged).
+    bool SetPMREMEnvironment(const TextureLoadResult& result);
+
     /// Track an externally-created texture so it is destroyed during Shutdown.
     /// Used by Lua API (uz.texture.load_hdr) to prevent GPU memory leaks.
     void TrackExternalTexture(const TextureLoadResult& tex);

@@ -88,6 +88,10 @@ void IBLBaker::Shutdown() {
         m_device->DestroyPipeline(m_equirectPipeline);
         m_equirectPipeline = RHIPipelineHandle::Invalid();
     }
+    if (m_pmremPipeline.IsValid()) {
+        m_device->DestroyPipeline(m_pmremPipeline);
+        m_pmremPipeline = RHIPipelineHandle::Invalid();
+    }
 
     // Destroy shaders
     if (m_brdfLutCS.IsValid()) {
@@ -105,6 +109,10 @@ void IBLBaker::Shutdown() {
     if (m_equirectCS.IsValid()) {
         m_device->DestroyShader(m_equirectCS);
         m_equirectCS = RHIShaderHandle::Invalid();
+    }
+    if (m_pmremCS.IsValid()) {
+        m_device->DestroyShader(m_pmremCS);
+        m_pmremCS = RHIShaderHandle::Invalid();
     }
 
     m_brdfLutSrvIndex = UINT32_MAX;
@@ -665,6 +673,104 @@ IBLBaker::BakeResult IBLBaker::BakeEnvironment(uint32_t envCubemapSrvIndex, RHIT
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// BakeIrradianceOnly
+// ─────────────────────────────────────────────────────────────────────────────
+
+IBLBaker::IrradianceResult IBLBaker::BakeIrradianceOnly(uint32_t envCubemapSrvIndex,
+                                                          RHITextureHandle envCubemapTexture) {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "IBLBaker::BakeIrradianceOnly called before Init()");
+        return {};
+    }
+
+    if (!EnsureIrradiancePipeline()) {
+        return {};
+    }
+
+    // Create irradiance cubemap (64x64 per face, 6 slices, RGBA16F)
+    RHITextureDesc irradDesc;
+    irradDesc.width = kIrradianceSize;
+    irradDesc.height = kIrradianceSize;
+    irradDesc.depthOrArraySize = 6;
+    irradDesc.format = RHIFormat::RGBA16Float;
+    irradDesc.usage = RHITextureUsage::UnorderedAccess | RHITextureUsage::ShaderResource;
+    irradDesc.debugName = "IBL_Irradiance_PMREM";
+
+    auto irradianceTex = m_device->CreateTexture(irradDesc);
+    if (!irradianceTex.IsValid()) {
+        UZ_LOG(Renderer, Error, "IBLBaker: failed to create irradiance texture");
+        return {};
+    }
+
+    auto* cmdList = m_device->CreateCommandList(RHIQueueType::Graphics);
+    auto* fence = m_device->CreateFence();
+    if (!cmdList || !fence) {
+        UZ_LOG(Renderer, Error, "IBLBaker: failed to create cmd list/fence for irradiance bake");
+        m_device->DestroyTexture(irradianceTex);
+        if (cmdList) m_device->DestroyCommandList(cmdList);
+        if (fence)   m_device->DestroyFence(fence);
+        return {};
+    }
+
+    cmdList->Begin();
+
+    // SM5 path: transition env cubemap to SRV
+    if (!m_device->IsBindless() && envCubemapTexture.IsValid()) {
+        RHIBarrierDesc envBarrier = {};
+        envBarrier.texture = envCubemapTexture;
+        envBarrier.buffer = RHIBufferHandle::Invalid();
+        envBarrier.stateBefore = RHIResourceState::UnorderedAccess;
+        envBarrier.stateAfter = RHIResourceState::ShaderResource;
+        cmdList->ResourceBarrier(&envBarrier, 1);
+    }
+
+    cmdList->SetPipeline(m_irradiancePipeline);
+
+    const uint32_t irradConstants[2] = { envCubemapSrvIndex, kIrradianceSize };
+    cmdList->SetRootConstants(0, irradConstants, 2);
+
+    if (!m_device->IsBindless() && envCubemapTexture.IsValid()) {
+        cmdList->SetFragmentTexture(0, envCubemapTexture);
+    }
+
+    uint32_t irradUavIndex = m_device->GetTextureUAVIndex(irradianceTex);
+    cmdList->SetDescriptorTable(4, irradUavIndex);
+
+    const uint32_t groupsXY = kIrradianceSize / kThreadGroupSize;
+    UZ_LOG(Renderer, Info,
+           "IBLBaker: irradiance-only dispatch — groups=({},{},6), envSRV={}, UAV={}",
+           groupsXY, groupsXY, envCubemapSrvIndex, irradUavIndex);
+
+    cmdList->Dispatch(groupsXY, groupsXY, 6);
+
+    // Barrier: UAV -> ShaderResource
+    RHIBarrierDesc irradBarrier;
+    irradBarrier.texture = irradianceTex;
+    irradBarrier.buffer = RHIBufferHandle::Invalid();
+    irradBarrier.stateBefore = RHIResourceState::UnorderedAccess;
+    irradBarrier.stateAfter = RHIResourceState::ShaderResource;
+    cmdList->ResourceBarrier(&irradBarrier, 1);
+
+    cmdList->End();
+    cmdList->Execute();
+
+    fence->Signal(1);
+    fence->WaitCPU(1);
+
+    m_device->DestroyFence(fence);
+    m_device->DestroyCommandList(cmdList);
+
+    IrradianceResult result;
+    result.irradianceSrvIndex = m_device->GetTextureSRVIndex(irradianceTex);
+    result.irradianceTexture = irradianceTex;
+
+    UZ_LOG(Renderer, Info, "IBLBaker: irradiance-only baked ({}x{}, SRV={})",
+           kIrradianceSize, kIrradianceSize, result.irradianceSrvIndex);
+
+    return result;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // EnsureEquirectPipeline
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -822,6 +928,244 @@ IBLBaker::EquirectResult IBLBaker::EquirectToCubemap(uint32_t equirectSrvIndex,
     UZ_LOG(Renderer, Info,
            "IBLBaker: equirect-to-cubemap conversion done ({}x{} per face, SRV={})",
            cubemapSize, cubemapSize, result.srvIndex);
+
+    return result;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EnsurePmremPipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool IBLBaker::EnsurePmremPipeline() {
+    if (m_pmremPipeline.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::PmremToCubemapCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "IBLBaker: failed to compile pmrem_to_cubemap_cs.hlsl");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc;
+    shaderDesc.bytecode = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage = RHIShaderStage::Compute;
+    shaderDesc.entryPoint = "main";
+    shaderDesc.debugName = "pmrem_to_cubemap_cs";
+
+    m_pmremCS = m_device->CreateShader(shaderDesc);
+    if (!m_pmremCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "IBLBaker: failed to create pmrem_to_cubemap_cs shader");
+        return false;
+    }
+
+    RHIComputePipelineDesc pipeDesc;
+    pipeDesc.computeShader = m_pmremCS;
+    pipeDesc.debugName = "IBL_PmremToCubemap";
+
+    m_pmremPipeline = m_device->CreateComputePipeline(pipeDesc);
+    if (!m_pmremPipeline.IsValid()) {
+        UZ_LOG(Renderer, Error, "IBLBaker: failed to create PMREM-to-cubemap compute pipeline");
+        return false;
+    }
+
+    UZ_LOG(Renderer, Info, "IBLBaker: PMREM-to-cubemap pipeline created");
+    return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PmremToCubemap
+// ─────────────────────────────────────────────────────────────────────────────
+
+IBLBaker::PmremResult IBLBaker::PmremToCubemap(uint32_t atlasSrvIndex,
+                                                 RHITextureHandle atlasTexture,
+                                                 uint32_t atlasWidth,
+                                                 uint32_t atlasHeight,
+                                                 uint32_t faceSize,
+                                                 uint32_t lodCount) {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "IBLBaker::PmremToCubemap called before Init()");
+        return {};
+    }
+
+    if (atlasSrvIndex == UINT32_MAX) {
+        UZ_LOG(Renderer, Error, "IBLBaker::PmremToCubemap: invalid atlasSrvIndex");
+        return {};
+    }
+
+    if (faceSize == 0 || lodCount == 0 || lodCount > 16) {
+        UZ_LOG(Renderer, Error, "IBLBaker::PmremToCubemap: invalid faceSize={} or lodCount={}",
+               faceSize, lodCount);
+        return {};
+    }
+
+    if (!EnsurePmremPipeline()) {
+        return {};
+    }
+
+    // ── Create per-mip temporary textures ───────────────────────────────
+    // Each LOD gets a separate 6-slice texture for UAV dispatch.
+    RHITextureHandle mipTextures[16];
+    for (uint32_t lod = 0; lod < lodCount; ++lod) {
+        const uint32_t lodFaceSize = faceSize >> lod;
+        if (lodFaceSize < 1) break;
+
+        RHITextureDesc mipDesc;
+        mipDesc.width = lodFaceSize;
+        mipDesc.height = lodFaceSize;
+        mipDesc.depthOrArraySize = 6;
+        mipDesc.format = RHIFormat::RGBA16Float;
+        mipDesc.usage = RHITextureUsage::UnorderedAccess
+                      | RHITextureUsage::ShaderResource
+                      | RHITextureUsage::CopySrc;
+        mipDesc.debugName = "IBL_PmremMip";
+
+        mipTextures[lod] = m_device->CreateTexture(mipDesc);
+        if (!mipTextures[lod].IsValid()) {
+            UZ_LOG(Renderer, Error, "IBLBaker: failed to create PMREM mip {} texture", lod);
+            for (uint32_t j = 0; j < lod; ++j) {
+                m_device->DestroyTexture(mipTextures[j]);
+            }
+            return {};
+        }
+    }
+
+    // ── Create final mipmapped cubemap ──────────────────────────────────
+    RHITextureDesc cubeDesc;
+    cubeDesc.width = faceSize;
+    cubeDesc.height = faceSize;
+    cubeDesc.depthOrArraySize = 6;
+    cubeDesc.mipLevels = static_cast<uint16_t>(lodCount);
+    cubeDesc.format = RHIFormat::RGBA16Float;
+    cubeDesc.usage = RHITextureUsage::ShaderResource | RHITextureUsage::CopyDst;
+    cubeDesc.debugName = "IBL_PmremCubemap";
+
+    auto cubemapTex = m_device->CreateTexture(cubeDesc);
+    if (!cubemapTex.IsValid()) {
+        UZ_LOG(Renderer, Error, "IBLBaker: failed to create PMREM cubemap texture ({}x{}x{} mips)",
+               faceSize, faceSize, lodCount);
+        for (uint32_t i = 0; i < lodCount; ++i) {
+            m_device->DestroyTexture(mipTextures[i]);
+        }
+        return {};
+    }
+
+    // ── Dispatch compute shaders to extract each LOD ────────────────────
+    auto* cmdList = m_device->CreateCommandList(RHIQueueType::Graphics);
+    auto* fence = m_device->CreateFence();
+    if (!cmdList || !fence) {
+        UZ_LOG(Renderer, Error, "IBLBaker: failed to create command list/fence for PMREM extraction");
+        for (uint32_t i = 0; i < lodCount; ++i) {
+            m_device->DestroyTexture(mipTextures[i]);
+        }
+        m_device->DestroyTexture(cubemapTex);
+        if (cmdList) m_device->DestroyCommandList(cmdList);
+        if (fence)   m_device->DestroyFence(fence);
+        return {};
+    }
+
+    cmdList->Begin();
+    cmdList->SetPipeline(m_pmremPipeline);
+
+    // SM5 path: bind atlas texture at t0
+    if (!m_device->IsBindless()) {
+        cmdList->SetFragmentTexture(0, atlasTexture);
+    }
+
+    // Compute Y offsets for each LOD band:
+    // LOD 0 at Y=0, LOD 1 at Y = 2*faceSize, LOD 2 at Y = 2*faceSize + 2*(faceSize/2), etc.
+    // Each LOD occupies 2 rows of faces (3 faces per row × 2 rows = 6 faces).
+    uint32_t yOffset = 0;
+    for (uint32_t lod = 0; lod < lodCount; ++lod) {
+        const uint32_t lodFaceSize = faceSize >> lod;
+        if (lodFaceSize < 1) break;
+
+        // Root constants: outputSize, atlasSrvIdx, atlasYOffset, atlasFaceSize,
+        //                 atlasWidth, atlasHeight, pad, pad
+        const uint32_t rootConstants[8] = {
+            lodFaceSize, atlasSrvIndex, yOffset, lodFaceSize,
+            atlasWidth, atlasHeight, 0, 0
+        };
+        cmdList->SetRootConstants(0, rootConstants, 8);
+
+        // Bind per-mip UAV at root param 4 (u0)
+        uint32_t mipUav = m_device->GetTextureUAVIndex(mipTextures[lod]);
+        cmdList->SetDescriptorTable(4, mipUav);
+
+        // Dispatch: (lodFaceSize/8, lodFaceSize/8, 6)
+        const uint32_t groupsXY = (lodFaceSize + kThreadGroupSize - 1) / kThreadGroupSize;
+        cmdList->Dispatch(groupsXY, groupsXY, 6);
+
+        UZ_LOG(Renderer, Info,
+               "IBLBaker: PMREM LOD {} — face={}px, yOffset={}, groups=({},{},6), UAV={}",
+               lod, lodFaceSize, yOffset, groupsXY, groupsXY, mipUav);
+
+        // Barrier: per-mip UAV -> CopySrc
+        RHIBarrierDesc mipBarrier;
+        mipBarrier.texture = mipTextures[lod];
+        mipBarrier.buffer = RHIBufferHandle::Invalid();
+        mipBarrier.stateBefore = RHIResourceState::UnorderedAccess;
+        mipBarrier.stateAfter = RHIResourceState::CopySrc;
+        cmdList->ResourceBarrier(&mipBarrier, 1);
+
+        // Advance Y offset: 2 rows of lodFaceSize
+        yOffset += lodFaceSize * 2;
+    }
+
+    // ── Copy per-mip textures into the final mipmapped cubemap ──────────
+    {
+        RHIBarrierDesc dstBarrier;
+        dstBarrier.texture = cubemapTex;
+        dstBarrier.buffer = RHIBufferHandle::Invalid();
+        dstBarrier.stateBefore = RHIResourceState::Common;
+        dstBarrier.stateAfter = RHIResourceState::CopyDst;
+        cmdList->ResourceBarrier(&dstBarrier, 1);
+    }
+
+    for (uint32_t lod = 0; lod < lodCount; ++lod) {
+        for (uint32_t face = 0; face < 6; ++face) {
+            cmdList->CopyTextureRegion(
+                mipTextures[lod], 0, face,   // src: mip 0, face N
+                cubemapTex, lod, face);       // dst: mip N, face N
+        }
+    }
+
+    // Transition final cubemap to ShaderResource
+    {
+        RHIBarrierDesc srvBarrier;
+        srvBarrier.texture = cubemapTex;
+        srvBarrier.buffer = RHIBufferHandle::Invalid();
+        srvBarrier.stateBefore = RHIResourceState::CopyDst;
+        srvBarrier.stateAfter = RHIResourceState::ShaderResource;
+        cmdList->ResourceBarrier(&srvBarrier, 1);
+    }
+
+    cmdList->End();
+    cmdList->Execute();
+
+    fence->Signal(1);
+    fence->WaitCPU(1);
+
+    m_device->DestroyFence(fence);
+    m_device->DestroyCommandList(cmdList);
+
+    // Cleanup temporary per-mip textures
+    for (uint32_t i = 0; i < lodCount; ++i) {
+        m_device->DestroyTexture(mipTextures[i]);
+    }
+
+    PmremResult result;
+    result.cubemap = cubemapTex;
+    result.srvIndex = m_device->GetTextureSRVIndex(cubemapTex);
+
+    if (result.srvIndex == UINT32_MAX) {
+        UZ_LOG(Renderer, Error, "IBLBaker: PMREM cubemap has no SRV");
+    }
+
+    UZ_LOG(Renderer, Info,
+           "IBLBaker: PMREM atlas extracted to cubemap ({}x{}, {} mips, SRV={})",
+           faceSize, faceSize, lodCount, result.srvIndex);
 
     return result;
 }

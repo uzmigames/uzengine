@@ -120,14 +120,17 @@ bool GBuffer::Create(IRHIDevice* device, uint32_t w, uint32_t h) {
         .debugName = "GBuffer_Albedo",
     });
 
-    // Normal — RGBA8Unorm octahedral normal (RG) + metallic (B) + roughness (A)
+    // Normal — RGBA16Float octahedral normal (RG) + metallic (B) + roughness (A)
+    // Uses half-float for oct-encoded normals: 10-bit mantissa gives ~0.18° angular
+    // resolution vs ~0.7° with RGBA8. Eliminates visible stepping in specular
+    // reflections and AO on smooth curved surfaces (e.g. helmet visor).
     // Uses UAV for DBuffer decal apply compute pass (in-place modification).
     normal = device->CreateTexture(RHITextureDesc{
         .width = w,
         .height = h,
         .depthOrArraySize = 1,
         .mipLevels = 1,
-        .format = RHIFormat::RGBA8Unorm,
+        .format = RHIFormat::RGBA16Float,
         .usage = colorUsageUAV,
         .debugName = "GBuffer_Normal",
     });

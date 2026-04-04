@@ -201,18 +201,16 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
                         if (hdrResult.handle.IsValid()) {
                             TrackExternalTexture(hdrResult);
                             if (hdrResult.isPMREM) {
-                                // PMREM atlas: skip equirect→cubemap + prefilter bake.
-                                // The atlas contains prefiltered cubemap faces at multiple
-                                // roughness levels. For now, use the standard path (equirect
-                                // decode is approximate but functional). Full PMREM atlas
-                                // decoding will skip the prefilter bake entirely.
-                                // TODO: SetPMREMEnvironment(hdrResult) — bypass equirect + prefilter
+                                // PMREM atlas: extract cubemap faces directly from the
+                                // Three.js CubeUV atlas. Skips equirect→cubemap conversion
+                                // and prefilter bake (PMREM is already prefiltered).
+                                SetPMREMEnvironment(hdrResult);
                                 UZ_LOG(Renderer, Info,
-                                    "SkyLight: '{}' is PMREM atlas ({}px face, {} LODs) — "
-                                    "using equirect fallback for now",
+                                    "SkyLight: '{}' loaded as PMREM atlas ({}px face, {} LODs)",
                                     sl.cubemapPath, hdrResult.pmremFaceSize, hdrResult.pmremLodCount);
+                            } else {
+                                SetHDRIEnvironment(hdrResult.srvIndex, sl.cubemapResolution);
                             }
-                            SetHDRIEnvironment(hdrResult.srvIndex, sl.cubemapResolution);
                             UZ_LOG(Renderer, Info,
                                 "SkyLight: auto-loaded HDRI '{}' (SRV={}, res={}, PMREM={})",
                                 sl.cubemapPath, hdrResult.srvIndex, sl.cubemapResolution,

@@ -97,7 +97,7 @@ RHIPipelineHandle PipelineLibrary::GetGBuffer(bool bindless) {
     desc.depthStencil.depthWrite          = true;
     // G-Buffer render targets — must match GBuffer::Create() texture formats exactly
     desc.renderTargetFormats[0]           = RHIFormat::RGBA8Unorm;    // albedo+AO
-    desc.renderTargetFormats[1]           = RHIFormat::RGBA8Unorm;    // octNormal+metallic+roughness
+    desc.renderTargetFormats[1]           = RHIFormat::RGBA16Float;   // octNormal+metallic+roughness
     desc.renderTargetFormats[2]           = RHIFormat::RGBA32Float;   // world-space position (debug)
     desc.renderTargetFormats[3]           = RHIFormat::RGBA16Float;   // HDR emissive color
     desc.renderTargetCount                = 4;
@@ -162,7 +162,7 @@ RHIPipelineHandle PipelineLibrary::GetGBufferMasked(bool bindless) {
     desc.depthStencil.depthEnable         = true;
     desc.depthStencil.depthWrite          = true;
     desc.renderTargetFormats[0]           = RHIFormat::RGBA8Unorm;    // albedo+AO
-    desc.renderTargetFormats[1]           = RHIFormat::RGBA8Unorm;    // octNormal+metallic+roughness
+    desc.renderTargetFormats[1]           = RHIFormat::RGBA16Float;   // octNormal+metallic+roughness
     desc.renderTargetFormats[2]           = RHIFormat::RGBA32Float;   // world-space position
     desc.renderTargetFormats[3]           = RHIFormat::RGBA16Float;   // HDR emissive
     desc.renderTargetCount                = 4;

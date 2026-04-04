@@ -39,7 +39,8 @@
           "intensity": 1.0,
           "indirect_lighting_intensity": 1.0,
           "light_color": [1.0, 1.0, 1.0],
-          "cubemap_resolution": 128,
+          "cubemap_path": "textures/studio_small_09_2k.pmrem.ktx2",
+          "cubemap_resolution": 512,
           "lower_hemisphere_black": false,
           "lower_hemisphere_color": [0.1, 0.1, 0.12]
         }

@@ -426,11 +426,12 @@ TEST(GBufferFormats, AlbedoFormat_IsRGBA8Unorm) {
     EXPECT_EQ(BytesPerTexel(kAlbedoFormat), 4u);
 }
 
-/// Normal RT packs octahedral normal (RG) + metallic (B) + roughness (A) in RGBA8Unorm.
-TEST(GBufferFormats, NormalFormat_IsRGBA8Unorm) {
-    constexpr RHIFormat kNormalFormat = RHIFormat::RGBA8Unorm;
-    EXPECT_EQ(kNormalFormat, RHIFormat::RGBA8Unorm);
-    EXPECT_EQ(BytesPerTexel(kNormalFormat), 4u);
+/// Normal RT packs octahedral normal (RG) + metallic (B) + roughness (A) in RGBA16Float.
+/// Half-float gives 10-bit mantissa (~0.18° angular resolution) vs RGBA8's 8-bit (~0.7°).
+TEST(GBufferFormats, NormalFormat_IsRGBA16Float) {
+    constexpr RHIFormat kNormalFormat = RHIFormat::RGBA16Float;
+    EXPECT_EQ(kNormalFormat, RHIFormat::RGBA16Float);
+    EXPECT_EQ(BytesPerTexel(kNormalFormat), 8u);
 }
 
 /// Depth uses 32-bit float for maximum precision in the deferred depth pass.

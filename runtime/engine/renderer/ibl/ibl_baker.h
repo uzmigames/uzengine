@@ -116,6 +116,23 @@ public:
     [[nodiscard]] BakeResult BakeEnvironment(uint32_t envCubemapSrvIndex,
                                              RHITextureHandle envCubemapTexture = {});
 
+    /// Result of irradiance-only bake.
+    struct IrradianceResult {
+        uint32_t irradianceSrvIndex = UINT32_MAX; ///< SRV index for irradiance cubemap.
+        RHITextureHandle irradianceTexture;        ///< Texture handle (caller-owned).
+    };
+
+    /// Bakes only the irradiance cubemap (64x64, cheap) from a source cubemap.
+    ///
+    /// Use this when the prefiltered specular is already available (e.g. PMREM
+    /// atlas). Skips the expensive per-mip prefilter dispatch entirely.
+    ///
+    /// # Arguments
+    /// * `envCubemapSrvIndex` — SRV index of the source cubemap.
+    /// * `envCubemapTexture` — Texture handle (for SM5 barrier).
+    [[nodiscard]] IrradianceResult BakeIrradianceOnly(uint32_t envCubemapSrvIndex,
+                                                       RHITextureHandle envCubemapTexture = {});
+
     /// Result of equirectangular-to-cubemap conversion.
     struct EquirectResult {
         RHITextureHandle cubemap;          ///< Cubemap texture (6-slice Texture2DArray, RGBA16F).
@@ -146,6 +163,43 @@ public:
     /// NOT track or destroy it. Call `device->DestroyTexture()` when done.
     [[nodiscard]] EquirectResult EquirectToCubemap(uint32_t equirectSrvIndex,
                                                     uint32_t cubemapSize = 512);
+
+    /// Result of PMREM atlas to cubemap conversion.
+    struct PmremResult {
+        RHITextureHandle cubemap;          ///< Mipmapped cubemap (6-slice Texture2DArray, RGBA16F).
+        uint32_t srvIndex = UINT32_MAX;    ///< SRV heap index for the cubemap.
+    };
+
+    /// Extracts a standard cubemap with mip chain from a Three.js CubeUV PMREM atlas.
+    ///
+    /// The PMREM atlas contains prefiltered environment faces at multiple roughness
+    /// LODs packed in a 3-wide x 2-tall grid per LOD band. This method dispatches
+    /// `pmrem_to_cubemap_cs.hlsl` to extract each LOD into a cubemap mip level.
+    ///
+    /// The output cubemap has `lodCount` mip levels, with mip 0 = faceSize and
+    /// each subsequent mip halved. Since PMREM is already prefiltered, the caller
+    /// can use this directly as the prefiltered specular cubemap (skipping the
+    /// expensive prefilter bake).
+    ///
+    /// # Arguments
+    /// * `atlasSrvIndex` — SRV index of the PMREM atlas (2D, RGBA16F).
+    /// * `atlasTexture` — Texture handle of the atlas (for SM5 binding).
+    /// * `atlasWidth` — Total atlas width in pixels.
+    /// * `atlasHeight` — Total atlas height in pixels.
+    /// * `faceSize` — Per-face resolution at LOD 0 (e.g. 512).
+    /// * `lodCount` — Number of LOD levels in the atlas.
+    ///
+    /// # Returns
+    /// `PmremResult` with valid cubemap and SRV on success.
+    ///
+    /// # Ownership
+    /// Caller owns the returned cubemap texture.
+    [[nodiscard]] PmremResult PmremToCubemap(uint32_t atlasSrvIndex,
+                                              RHITextureHandle atlasTexture,
+                                              uint32_t atlasWidth,
+                                              uint32_t atlasHeight,
+                                              uint32_t faceSize,
+                                              uint32_t lodCount);
 
     /// Returns true if the BRDF LUT has been baked.
     [[nodiscard]] bool HasBRDFLut() const noexcept { return m_brdfLutSrvIndex != UINT32_MAX; }
@@ -185,6 +239,9 @@ private:
     /// Ensures the equirect-to-cubemap compute pipeline is compiled and ready.
     [[nodiscard]] bool EnsureEquirectPipeline();
 
+    /// Ensures the PMREM-to-cubemap compute pipeline is compiled and ready.
+    [[nodiscard]] bool EnsurePmremPipeline();
+
     IRHIDevice*    m_device    = nullptr;
     ShaderManager* m_shaderMgr = nullptr;
     bool           m_initialized = false;
@@ -194,12 +251,14 @@ private:
     RHIPipelineHandle m_irradiancePipeline = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_prefilterPipeline  = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_equirectPipeline   = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_pmremPipeline      = RHIPipelineHandle::Invalid();
 
     // ── Shader handles ──────────────────────────────────────────────────
     RHIShaderHandle m_brdfLutCS    = RHIShaderHandle::Invalid();
     RHIShaderHandle m_irradianceCS = RHIShaderHandle::Invalid();
     RHIShaderHandle m_prefilterCS  = RHIShaderHandle::Invalid();
     RHIShaderHandle m_equirectCS   = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_pmremCS      = RHIShaderHandle::Invalid();
 
     // ── BRDF LUT texture (persistent, baked once) ───────────────────────
     RHITextureHandle m_brdfLutTexture = RHITextureHandle::Invalid();
