@@ -739,8 +739,12 @@ void AddAtmospherePasses(
         if (ctx.apVolume.IsValid() && ctx.apVolumeUav != UINT32_MAX
             && *ctx.transmittanceLutFilled && ctx.invViewProjData && ctx.cameraPos) {
 
-            rg::RgResourceId apRes = rgBuilder.ImportTexture("APVolume",
-                ctx.apVolume, RHIResourceState::UnorderedAccess);
+            // Reuse pre-imported resource ID from frame_lighting if available,
+            // otherwise import here (fallback for standalone atmosphere rendering).
+            rg::RgResourceId apRes = ctx.apVolumeRes.IsValid()
+                ? ctx.apVolumeRes
+                : rgBuilder.ImportTexture("APVolume",
+                    ctx.apVolume, RHIResourceState::UnorderedAccess);
 
             APVolumeRootConstants apRC{};
             apRC.rayleighBetaX  = skyComp.rayleighScattering.x;

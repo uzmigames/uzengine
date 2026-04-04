@@ -105,6 +105,7 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
         if (m_ssgiRenderer.IsReady()) {
             lightDesc.ssgiTexture = m_ssgiRenderer.GetResultTexture();
         }
+        lightDesc.apVolumeResource    = ctx.apVolumeRes;  // AP volume (read prev frame's data)
         lightDesc.bindless            = ctx.bindless;
         lightDesc.viewportWidth       = ctx.renderWidth;
         lightDesc.viewportHeight      = ctx.renderHeight;

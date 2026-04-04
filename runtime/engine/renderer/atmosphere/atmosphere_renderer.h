@@ -110,6 +110,7 @@ struct AtmosphereFrameContext {
     RHITextureHandle  apVolume;
     uint32_t          apVolumeSrv = UINT32_MAX;
     uint32_t          apVolumeUav = UINT32_MAX;
+    rg::RgResourceId  apVolumeRes{};              ///< Pre-imported render graph resource (from frame_lighting).
     const float*      invViewProjData = nullptr;  ///< Pointer to 16 floats (row-major invViewProj).
     const Vec3*       cameraPos = nullptr;         ///< Camera world position (cm).
 

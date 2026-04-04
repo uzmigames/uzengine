@@ -87,6 +87,7 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
     atmoCtx.apVolume            = m_apVolume;
     atmoCtx.apVolumeSrv         = m_apVolumeSrv;
     atmoCtx.apVolumeUav         = m_apVolumeUav;
+    atmoCtx.apVolumeRes         = ctx.apVolumeRes;  // Pre-imported by RegisterLightingPasses
     atmoCtx.invViewProjData     = reinterpret_cast<const float*>(&ctx.perFrame.invViewProj);
     atmoCtx.cameraPos           = reinterpret_cast<const Vec3*>(&ctx.perFrame.cameraPos);
     atmoCtx.depthSrvIndex       = m_gbuffer.depthSRV;

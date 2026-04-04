@@ -107,6 +107,7 @@ struct FrameContext {
     rg::RgResourceId emissiveRes{};
     rg::RgResourceId velocityRes{};
     rg::RgResourceId shadowAtlasRes{};
+    rg::RgResourceId apVolumeRes{};        ///< Aerial perspective volume (imported, Read in deferred, Write in AP compute).
 
     // ── DBuffer resource IDs (decal system) ─────────────────────────
     rg::RgResourceId dbufferARes{};

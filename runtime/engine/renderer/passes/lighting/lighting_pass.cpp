@@ -44,6 +44,9 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
         if (desc.shadowAtlasResource.IsValid()) {
             pb.Read(desc.shadowAtlasResource, RHIResourceState::ShaderResource);
         }
+        if (desc.apVolumeResource.IsValid()) {
+            pb.Read(desc.apVolumeResource, RHIResourceState::ShaderResource);
+        }
 
         pb.SetExecutionCallback([desc](IRHICommandList* cmd, const rg::RgPassResources& res) {
             UZ_PROFILE_SCOPE("DeferredLighting::Execute");

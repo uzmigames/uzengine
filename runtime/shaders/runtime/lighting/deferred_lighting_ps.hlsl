@@ -59,28 +59,53 @@ cbuffer PerFrameCB : register(b1) {
     float  exposure;                // c15.w   (252)
     float4 skyIrradianceSH[7];      // c16-c22 (256-367)
     uint   shadowDebugMode;         // c23.x   (368)
-    // ── Padding to reach SSR/SSGI SRV indices ──────────────────────────
-    uint   _aerialPerspective;      // c23.y   (372)
+    // ── Aerial Perspective parameters ──────────────────────────────────
+    uint   aerialPerspectiveEnabled;// c23.y   (372) 1 = apply AP in lighting
     uint   _transmittanceLutSrv;    // c23.z   (376)
     float  _apBottomRadius;         // c23.w   (380)
-    float4 _padAP1;                 // c24     (384-399)
-    float4 _padAP2;                 // c25     (400-415)
-    float4 _padAP3;                 // c26     (416-431)
-    float4 _padTone;                // c27     (432-447)
-    float4 _padPostFx1;             // c28     (448-463)
-    float  _padVignette;            // c29.x   (464)
-    float  _padChromaAb;            // c29.y   (468)
-    float  _padContactShadow;       // c29.z   (472)
-    uint   ssrSrvIndex;             // c29.w   (476)
-    float  _padMipBias;             // c30.x   (480)
+    float  _apTopRadius;            //         (384)
+    float  _apRayBetaX;             //         (388)
+    float  _apRayBetaY;             //         (392)
+    float  _apRayBetaZ;             //         (396)
+    float  _apRayScaleH;            //         (400)
+    float  _apMieBeta;              //         (404)
+    float  _apMieScaleH;            //         (408)
+    float  _apMieAniso;             //         (412)
+    float  _apSunI;                 //         (416)
+    float  _apRayScale;             //         (420)
+    float  _apMieScale;             //         (424)
+    // ── Tone curve + post-FX fields (not used by lighting) ────────────
+    float  _toneCurveSlope;         //         (428)
+    float  _toneCurveToe;           //         (432)
+    float  _toneCurveShoulder;      //         (436)
+    float  _toneCurveBlackClip;     //         (440)
+    float  _toneCurveWhiteClip;     //         (444)
+    uint   _gtaoSrv;                //         (448)
+    uint   _brdfDebugMode;          //         (452)
+    float  _heightFogContribution;  //         (456)
+    float  _filmGrain;              //         (460)
+    float  _vignette;               //         (464)
+    float  _chromaAb;               //         (468)
+    float  _contactShadowLen;       //         (472)
+    uint   ssrSrvIndex;             //         (476)
+    float  _mipBias;                //         (480)
     uint   ssgiSrvIndex;            //         (484)
-    // ── Skip intermediate fields (488-707) to reach CVar params ──
-    // DXC aligns float4 arrays to 16-byte boundary: ssgiSrvIndex ends at 488,
-    // but float4 array starts at 496 (next 16-byte aligned). So we need 2 explicit
-    // floats to fill 488-495, then 13×float4 for 496-703, then 1 float for 704-707.
-    float  _gapA;                   //         (488) — fills gap before array alignment
-    float  _gapB;                   //         (492) — fills gap before array alignment
-    float4 _skip4[13];              //         (496-703) 13 × 16 = 208 bytes
+    // ── Intermediate fields (488-707) — named for AP volume access ──
+    uint   _ssgiAO;                 //         (488) ssgiAOSrvIndex
+    uint   _ssgiEn;                 //         (492) ssgiEnabled
+    uint   _rcEnabled;              //         (496) radianceCacheEnabled
+    uint   _rcProbesSrv;            //         (500) rcProbeSHBufferSrv
+    uint   _rcProbesPerAxis;        //         (504)
+    float  _rcExtent;               //         (508)
+    float  _rcOriginX;              //         (512)
+    float  _rcOriginY;              //         (516)
+    float  _rcOriginZ;              //         (520)
+    float  _rcGiIntensity;          //         (524)
+    uint   apVolumeSrvIndex;        //         (528) AP 3D volume (32x32x16 RGBA16F)
+    uint   _reflProbeCount;         //         (532)
+    uint   _reflProbeSrv;           //         (536)
+    float  _colorSat;               //         (540)
+    float4 _skip4[10];              //         (544-703) 10 × 16 = 160 bytes
     float  _skipA;                  //         (704)
     // ── Shader CVar parameters (Phase 1) — offset 708 ──
     float  shadowPCFPenumbra;       //         (708)
@@ -413,9 +438,31 @@ float4 main(FSInput input) : SV_Target {
     }
 #endif
 
-    // ── Final ─────────────────────────────────────────────────────────────
-    // Clamp direct lighting (Lo) to prevent specular fireflies from D_GGX
-    // at very low roughness. Extreme HDR peaks cause bloom blowout.
+    // ── Aerial Perspective ───────────────────────────────────────────────
+    // @ref Hillaire 2020 "A Scalable Sky and Atmosphere Rendering Technique"
+    // Sample precomputed 32x32x16 AP volume: RGB = inscattering, A = mean transmittance.
+    // Applied after all lighting to attenuate distant objects and add atmospheric haze.
     float3 color = Lo + ambient + emissive;
+
+#ifdef UZ_BINDLESS
+    if (aerialPerspectiveEnabled != 0 && apVolumeSrvIndex != kSentinelSrvIndex) {
+        Texture3D<float4> apVolume = ResourceDescriptorHeap[apVolumeSrvIndex];
+
+        // AP volume UVW: XY = screen UV, Z = depth slice (quadratic distribution).
+        // @ref Hillaire 2020 — exponential/quadratic depth slicing for near-camera detail.
+        float2 screenUV = input.texcoord;
+        // totalDepthKm = 100.0, convert viewDepth from cm to km
+        float depthKm = viewDepth * kKmPerCm;
+        float totalDepthKm = 100.0;
+        float depthFraction = saturate(depthKm / totalDepthKm);
+        // Inverse quadratic: volume was written with t*t distribution, so sample with sqrt
+        float w = sqrt(depthFraction);
+
+        float4 ap = apVolume.SampleLevel(linearSampler, float3(screenUV, w), 0);
+        // ap.rgb = inscattering (additive haze), ap.a = mean transmittance
+        color = color * ap.a + ap.rgb;
+    }
+#endif
+
     return float4(max(color, 0.0), 1.0);
 }

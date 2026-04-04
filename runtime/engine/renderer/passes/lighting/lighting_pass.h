@@ -81,6 +81,7 @@ struct LightingPassDesc {
     RHITextureHandle  gtaoTexture;     ///< GTAO filtered AO texture (SM5 fallback, bound at t9).
     RHITextureHandle  ssrTexture;      ///< SSR temporal output (SM5 fallback, bound at t11).
     RHITextureHandle  ssgiTexture;     ///< SSGI upsampled indirect diffuse (SM5 fallback, bound at t12).
+    rg::RgResourceId  apVolumeResource;///< Aerial perspective volume (read, SRV). Invalid = no AP dependency.
     bool              bindless;         ///< True if SM6.6 bindless path is active.
     float             viewportWidth;    ///< Viewport width in pixels.
     float             viewportHeight;   ///< Viewport height in pixels.

@@ -98,6 +98,16 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         });
     }
 
+    // ── Import AP volume for render graph tracking ───────────────────
+    // The AP volume is a persistent 32x32x16 3D texture. Deferred lighting
+    // reads the PREVIOUS frame's data (1-frame latency, standard practice).
+    // The atmosphere passes later in this frame fill the CURRENT frame's data.
+    // Render graph handles UAV→SRV→UAV barriers automatically.
+    if (m_apVolume.IsValid() && m_apVolumeSrv != UINT32_MAX) {
+        ctx.apVolumeRes = rgBuilder.ImportTexture("APVolume",
+            m_apVolume, RHIResourceState::UnorderedAccess);
+    }
+
     RegisterDeferredLightingPass(rgBuilder, ctx);
     RegisterAtmosphereFogCloudPasses(rgBuilder, ctx);
     RegisterSSGIPrevColorCopy(rgBuilder, ctx);
