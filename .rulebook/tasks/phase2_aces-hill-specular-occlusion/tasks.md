@@ -1,14 +1,14 @@
 ## 1. Implementation
 
 ### 1.1 Stephen Hill ACES Fit
-- [ ] 1.1.1 Replace `AcesFilm()` body in `tonemap_ps.hlsl` with Hill 2016 fitted RRT+ODT using 3x3 input matrix (ACESInputMat) and output matrix (ACESOutputMat). Add `@ref Hill 2016 "ACES Fitted Curves"`.
-- [ ] 1.1.2 Keep Narkowicz fit available as `AcesFilmNarkowicz()` for A/B comparison via CVar `r.TonemapACESMode` (0=Hill, 1=Narkowicz).
-- [ ] 1.1.3 Add C++ mirror `AcesHillFit(float3)` in `brdf_math.h` (literal translation from HLSL).
+- [x] 1.1.1 Added `ACESHillFit()` to `color.hlsli` with Hill 2016 fitted RRT+ODT using 3x3 input matrix (ACESInputMat) and output matrix (ACESOutputMat). Cited `@ref Hill 2016 "ACES Fitted Curves"`. tonemap_ps.hlsl now calls ACESHillFit instead of ACESFilmic.
+- [x] 1.1.2 Narkowicz fit kept as `ACESFilmic()` in color.hlsli for A/B comparison.
+- [x] 1.1.3 Added C++ mirrors `ACESHillFit(Vec3)` and `ACESNarkowicz(Vec3)` in `brdf_math.h`.
 
 ### 1.2 Specular Occlusion
-- [ ] 1.2.1 Add `ComputeSpecularOcclusion(float NdotV, float AO, float roughness)` to `ibl.hlsli`. Formula: `saturate(pow(NdotV + AO, exp2(-16.0 * roughness - 1.0)) - 1.0 + AO)`. Add `@ref Lagarde 2014 "Moving Frostbite to PBR"`.
-- [ ] 1.2.2 Apply specular occlusion to IBL specular result in `deferred_lighting_ps.hlsl` before accumulating to output: `iblSpecular *= ComputeSpecularOcclusion(NdotV, ao, roughness)`.
-- [ ] 1.2.3 Add C++ mirror `ComputeSpecularOcclusion(float, float, float)` in `brdf_math.h`.
+- [x] 1.2.1 `ComputeSpecularOcclusion()` already existed inline in `deferred_lighting_ps.hlsl:348`. Extracted to `ibl.hlsli` as named function with `@ref Lagarde 2014 "Moving Frostbite to PBR"`.
+- [x] 1.2.2 Specular occlusion already applied in `deferred_lighting_ps.hlsl:366`: `specularAmbient * specOcclusion`.
+- [x] 1.2.3 Added C++ mirror `ComputeSpecularOcclusion(float, float, float)` in `brdf_math.h`.
 
 ## 2. Testing
 

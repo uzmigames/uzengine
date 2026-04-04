@@ -149,11 +149,11 @@ float4 main(PSIn i) : SV_Target
     color = pow(max(color / midgray, 0.0), colorContrast) * midgray;
 
     // ── ACES Filmic Tonemap ───────────────────────────────────────────────
-    // @ref Falcor ToneMapping.ps.slang toneMapAces — pre-exposure of 0.6
-    // The Narkowicz ACES curve assumes this pre-scale; without it the result
-    // is ~1.67x brighter than intended.
+    // @ref Hill 2016 "ACES Fitted Curves" — RRT+ODT matrix fit.
+    // Better hue preservation than Narkowicz in saturated highlights.
+    // Pre-exposure of 0.6 matches Falcor's toneMapAces reference.
     color *= 0.6;
-    color = ACESFilmic(color);
+    color = ACESHillFit(color);
 
     // ── 3D LUT color grading ──────────────────────────────────────────────
 #ifdef UZ_BINDLESS

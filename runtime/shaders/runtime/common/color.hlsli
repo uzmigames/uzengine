@@ -79,6 +79,39 @@ float3 ACESFilmic(float3 x)
     return saturate((x * (a * x + b)) / (x * (c * x + d) + e));
 }
 
+/// ACES filmic tone mapping (Stephen Hill fitted RRT+ODT matrices).
+/// @ref Hill 2016 "ACES Fitted Curves"
+///
+/// Higher-quality fit than Narkowicz — uses input/output 3x3 matrices to
+/// approximate the full ACES RRT+ODT pipeline. Better hue preservation in
+/// saturated highlights (orange stays orange instead of shifting to yellow).
+/// Input is linear HDR; output is linear [0,1] for sRGB display.
+float3 ACESHillFit(float3 x)
+{
+    // sRGB -> AP1 (ACEScg working space) input matrix
+    static const float3x3 ACESInputMat = float3x3(
+        0.59719f, 0.35458f, 0.04823f,
+        0.07600f, 0.90834f, 0.01566f,
+        0.02840f, 0.13383f, 0.83777f
+    );
+
+    // AP1 -> sRGB output matrix
+    static const float3x3 ACESOutputMat = float3x3(
+         1.60475f, -0.53108f, -0.07367f,
+        -0.10208f,  1.10813f, -0.00605f,
+        -0.00327f, -0.07276f,  1.07602f
+    );
+
+    x = mul(ACESInputMat, x);
+
+    // RRT+ODT fit (Hill)
+    float3 a = x * (x + 0.0245786f) - 0.000090537f;
+    float3 b = x * (0.983729f * x + 0.4329510f) + 0.238081f;
+    x = a / b;
+
+    return saturate(mul(ACESOutputMat, x));
+}
+
 /// Reinhard simple tone mapping: x / (1 + x).
 /// @ref Reinhard et al. 2002 "Photographic Tone Reproduction for Digital
 ///      Images"

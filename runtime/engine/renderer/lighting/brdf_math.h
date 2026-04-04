@@ -466,4 +466,67 @@ static constexpr Vec3 kACES_AP1_RGB2Y = {0.2722287168f, 0.6740817658f, 0.0536895
     return ApplyToneCurve(LinearColor, 0.88f, 0.55f, 0.26f, 0.0f, 0.04f);
 }
 
+// ────────────────────────────────────────────────��────────────────────────────
+// ACESHillFit — Stephen Hill's fitted RRT+ODT matrices
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// ACES filmic tone mapping (Hill 2016 fitted RRT+ODT matrices).
+/// CPU-side equivalent of ACESHillFit() in common/color.hlsli.
+///
+/// @ref Hill 2016 "ACES Fitted Curves" — better hue preservation than Narkowicz
+[[nodiscard]] inline Vec3 ACESHillFit(Vec3 x) noexcept
+{
+    // sRGB -> AP1 (ACEScg working space) input matrix
+    constexpr Mat3 ACESInputMat{
+        0.59719f, 0.35458f, 0.04823f,
+        0.07600f, 0.90834f, 0.01566f,
+        0.02840f, 0.13383f, 0.83777f,
+    };
+    // AP1 -> sRGB output matrix
+    constexpr Mat3 ACESOutputMat{
+         1.60475f, -0.53108f, -0.07367f,
+        -0.10208f,  1.10813f, -0.00605f,
+        -0.00327f, -0.07276f,  1.07602f,
+    };
+
+    x = ACESInputMat.MulVec(x);
+
+    // RRT+ODT fit (Hill)
+    Vec3 a{x.x * (x.x + 0.0245786f) - 0.000090537f,
+            x.y * (x.y + 0.0245786f) - 0.000090537f,
+            x.z * (x.z + 0.0245786f) - 0.000090537f};
+    Vec3 b{x.x * (0.983729f * x.x + 0.4329510f) + 0.238081f,
+            x.y * (0.983729f * x.y + 0.4329510f) + 0.238081f,
+            x.z * (0.983729f * x.z + 0.4329510f) + 0.238081f};
+
+    x = Vec3{a.x / b.x, a.y / b.y, a.z / b.z};
+    x = ACESOutputMat.MulVec(x);
+
+    return Vec3{Saturate(x.x), Saturate(x.y), Saturate(x.z)};
+}
+
+/// Narkowicz 2015 ACES fit — kept for A/B comparison.
+/// @ref Narkowicz 2015 "ACES Filmic Tone Mapping Curve"
+[[nodiscard]] inline Vec3 ACESNarkowicz(Vec3 x) noexcept
+{
+    constexpr float a = 2.51f, b = 0.03f, c = 2.43f, d = 0.59f, e = 0.14f;
+    auto f = [&](float v) -> float {
+        return Saturate((v * (a * v + b)) / (v * (c * v + d) + e));
+    };
+    return Vec3{f(x.x), f(x.y), f(x.z)};
+}
+
+// ────────────���───────────────────────��─────────────────────────────���──────────
+// ComputeSpecularOcclusion — Lagarde 2014 / Filament
+// ───────────────────────────��─────────────────────────────────────────────────
+
+/// Specular occlusion from AO — prevents IBL specular leaking in crevices.
+/// CPU-side equivalent of ComputeSpecularOcclusion() in lighting/ibl.hlsli.
+///
+/// @ref Lagarde 2014 "Moving Frostbite to PBR" — specular occlusion approximation
+[[nodiscard]] inline float ComputeSpecularOcclusion(float NdotV, float ao, float roughness) noexcept
+{
+    return Saturate(std::pow(NdotV + ao, std::exp2(-16.0f * roughness - 1.0f)) - 1.0f + ao);
+}
+
 } // namespace uz::brdf
