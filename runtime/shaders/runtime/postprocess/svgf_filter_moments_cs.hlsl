@@ -30,6 +30,7 @@ cbuffer RootConstants : register(b0) {
 #endif
     uint g_texWidth;
     uint g_texHeight;
+    uint g_normalSigmaBits;   // CVar r.SVGF.MomentsSigmaNormal (default 32.0)
 };
 
 cbuffer PerFrameCB : register(b1) {
@@ -90,7 +91,7 @@ void main(uint3 DTid : SV_DispatchThreadID) {
             float2 sMom  = momentsTex.Load(int3(np, 0));
 
             float wDepth  = exp(-abs(centerLinZ - sLinZ) / (centerLinZ + 1e-6));
-            float wNormal = pow(max(dot(centerNormal, sNorm), 0.0), 32.0);
+            float wNormal = pow(max(dot(centerNormal, sNorm), 0.0), asfloat(g_normalSigmaBits));
             float w = wDepth * wNormal;
 
             momSum += sMom * w;

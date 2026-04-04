@@ -31,6 +31,8 @@ cbuffer RootConstants : register(b0) {
 #endif
     uint g_fullWidth;
     uint g_fullHeight;
+    uint g_depthSigmaBits;    // CVar r.SSGI.UpsampleDepthSigma (default 0.5)
+    uint g_normalPowerBits;   // CVar r.SSGI.UpsampleNormalSigma (default 32.0)
 };
 
 cbuffer PerFrameCB : register(b1) {
@@ -115,10 +117,10 @@ void main(uint3 DTid : SV_DispatchThreadID) {
 
             // Depth weight (exponential falloff)
             float wDepth = exp(-abs(centerLinZ - sampleLinZ) /
-                               (0.5 * centerLinZ + 1e-6));
+                               (asfloat(g_depthSigmaBits) * centerLinZ + 1e-6));
 
-            // Normal weight (cosine power)
-            float wNormal = pow(max(dot(centerNormal, sampleNorm), 0.0), 32.0);
+            // Normal weight (cosine power) — CVar r.SSGI.UpsampleNormalSigma
+            float wNormal = pow(max(dot(centerNormal, sampleNorm), 0.0), asfloat(g_normalPowerBits));
 
             float w = wBilinear * wDepth * wNormal;
 

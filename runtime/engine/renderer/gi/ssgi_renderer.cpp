@@ -724,7 +724,7 @@ void SSGIRenderer::DispatchUpsample(IRHICommandList* cmdList, const SSGIRenderPa
 
     cmdList->SetPipeline(pso);
 
-    // Root constants: 8 DWORDs matching UpsampleRootCB
+    // Root constants: 10 DWORDs matching ssgi_upsample_cs.hlsl
     struct UpsampleRC {
         uint32_t ssgiHalfSrvIndex;
         uint32_t ssgiAOHalfSrvIndex;
@@ -734,8 +734,13 @@ void SSGIRenderer::DispatchUpsample(IRHICommandList* cmdList, const SSGIRenderPa
         uint32_t aoOutputUavIndex;
         uint32_t fullWidth;
         uint32_t fullHeight;
+        uint32_t depthSigmaBits;
+        uint32_t normalPowerBits;
     };
-    static_assert(sizeof(UpsampleRC) == 32, "Must be 8 DWORDs");
+    static_assert(sizeof(UpsampleRC) == 40, "Must be 10 DWORDs");
+
+    static auto* cv_UpsDepthSigma = UZ_CVAR_FLOAT("r.SSGI.UpsampleDepthSigma", 0.5f, "Upsample depth weight sigma", 0.1f, 2.0f);
+    static auto* cv_UpsNormalPow  = UZ_CVAR_FLOAT("r.SSGI.UpsampleNormalSigma", 32.0f, "Upsample normal cosine power", 4.0f, 128.0f);
 
     UpsampleRC rc{};
     rc.ssgiHalfSrvIndex   = m_ssgiHistorySrv[readIdx];
@@ -746,8 +751,11 @@ void SSGIRenderer::DispatchUpsample(IRHICommandList* cmdList, const SSGIRenderPa
     rc.aoOutputUavIndex   = m_ssgiResultAOUav;
     rc.fullWidth          = m_fullWidth;
     rc.fullHeight         = m_fullHeight;
+    float ds = cv_UpsDepthSigma->value, np = cv_UpsNormalPow->value;
+    std::memcpy(&rc.depthSigmaBits, &ds, 4);
+    std::memcpy(&rc.normalPowerBits, &np, 4);
 
-    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
+    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 10);
 
     cmdList->SetRootCBV(kSlotPerFrame, params.perFrameBuffer,
                         params.perFrameOffset, params.perFrameCpuPtr,

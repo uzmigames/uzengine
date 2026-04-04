@@ -195,8 +195,11 @@ uint32_t SVGFPass::Denoise(IRHICommandList* cmdList, const SVGFRenderParams& par
             uint32_t _pad1;
             uint32_t texWidth;
             uint32_t texHeight;
+            uint32_t normalSigmaBits;
         };
-        static_assert(sizeof(FilterMomRC) == 32);
+        static_assert(sizeof(FilterMomRC) == 36);
+
+        static auto* cv_MomSigmaN = UZ_CVAR_FLOAT("r.SVGF.MomentsSigmaNormal", 32.0f, "Moments filter normal sigma", 4.0f, 128.0f);
 
         FilterMomRC rc{};
         rc.momentsSrv       = m_momentsASrv;
@@ -205,8 +208,10 @@ uint32_t SVGFPass::Denoise(IRHICommandList* cmdList, const SVGFRenderParams& par
         rc.outputMomentsUav = m_momentsBUav;
         rc.texWidth         = m_width;
         rc.texHeight        = m_height;
+        float sn = cv_MomSigmaN->value;
+        std::memcpy(&rc.normalSigmaBits, &sn, 4);
 
-        cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
+        cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 9);
         cmdList->SetRootCBV(kSlotPerFrame, params.perFrameBuffer,
                             params.perFrameOffset, params.perFrameCpuPtr,
                             params.perFrameSize);

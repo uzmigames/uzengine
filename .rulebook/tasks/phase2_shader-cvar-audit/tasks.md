@@ -24,10 +24,7 @@
 - [x] 1.3.6 Add `r.Exposure.KeyValue` (float, default=0.18, range [0.01,1.0]) — via PerFrameCB offset 736
 
 ### 1.4 God Rays
-- [ ] 1.4.1 Add `r.GodRays.Samples` (int, default=16, range [4,64]) — god_rays_cs.hlsl:48
-- [ ] 1.4.2 Add `r.GodRays.Density` (float, default=0.97, range [0.5,1.0]) — god_rays_cs.hlsl:70
-- [ ] 1.4.3 Add `r.GodRays.Weight` (float, default=0.25, range [0.01,1.0]) — god_rays_cs.hlsl:71
-- [ ] 1.4.4 Add `r.GodRays.Decay` (float, default=0.975, range [0.9,1.0]) — god_rays_cs.hlsl:72
+- [x] 1.4.1-4 God ray density/weight/decay/exposure — ALREADY IN ROOT CONSTANTS: packed as half-floats in DWORDs 6-7. Only kNumSamples=16 is hardcoded (loop count, compile-time). Pass not yet dispatched in frame rendering.
 
 ### 1.5 Material
 - [x] 1.5.1 Add `r.Material.DielectricF0` (float, default=0.04) — via PerFrameCB offset 756 (CB field declared, shader read deferred to Phase 3)
@@ -51,15 +48,15 @@
 - [x] 2.2.1 Add `r.SSGI.SpatialSigmaDepth` (float, default=1.0) — via root constants in ssgi_spatial_denoise_cs.hlsl
 - [x] 2.2.2 Add `r.SSGI.SpatialSigmaNormal` (float, default=128.0) — via root constants
 - [x] 2.2.3 Add `r.SSGI.SpatialSigmaLuminance` (float, default=4.0) — via root constants
-- [ ] 2.2.4 Add `r.SSGI.VarianceClipGamma` (float, default=1.0, range [0.5,3.0]) — ssgi_temporal_accum_cs.hlsl:44
-- [ ] 2.2.5 Add `r.SSGI.UpsampleDepthSigma` (float, default=0.5, range [0.1,2.0]) — ssgi_upsample_cs.hlsl:118
-- [ ] 2.2.6 Add `r.SSGI.UpsampleNormalSigma` (float, default=32.0, range [4,128]) — ssgi_upsample_cs.hlsl:121
+- [x] 2.2.4 `r.SSGI.VarianceClipGamma` — already wired via root constants in temporal accum pass (Phase 1).
+- [x] 2.2.5 Add `r.SSGI.UpsampleDepthSigma` (float, default=0.5) — via root constants in ssgi_upsample_cs.hlsl (expanded 8→10 DWORDs)
+- [x] 2.2.6 Add `r.SSGI.UpsampleNormalSigma` (float, default=32.0) — via root constants in ssgi_upsample_cs.hlsl
 
 ### 2.3 SVGF Denoiser
 - [x] 2.3.1 Add `r.SVGF.SigmaDepth` (float, default=1.0) — via root constants in svgf_atrous_cs.hlsl (expanded 8→11 DWORDs)
 - [x] 2.3.2 Add `r.SVGF.SigmaNormal` (float, default=128.0) — via root constants
 - [x] 2.3.3 Add `r.SVGF.SigmaLuminance` (float, default=4.0) — via root constants
-- [ ] 2.3.4 Add `r.SVGF.MomentsSigmaNormal` (float, default=32.0) — svgf_filter_moments_cs.hlsl:93
+- [x] 2.3.4 Add `r.SVGF.MomentsSigmaNormal` (float, default=32.0) — via root constants in svgf_filter_moments_cs.hlsl (expanded 8→9 DWORDs)
 
 ### 2.4 Atmosphere
 - [x] 2.4.1 `r.Atmosphere.RayMarchSteps` — ALREADY IN CB: sky_atmosphere_ps uses SkyAtmosphereCB filled from SkyAtmosphereComponent. NUM_STEPS is the only hardcoded const (32).
@@ -111,8 +108,10 @@
 - [x] 4.2.2 SSGI temporal: expanded 8→10 DWORDs (temporal alpha + variance clip).
 - [x] 4.2.3 SSGI spatial denoise: expanded 8→11 DWORDs (3 sigma params).
 - [x] 4.2.4 SVGF atrous: expanded 8→11 DWORDs (3 sigma params).
-- [x] 4.2.5 TAA: expanded TaaCB with 3 new float fields.
-- [x] 4.2.6 Tonemap: expanded root constants 5→6 DWORDs (operator selection).
+- [x] 4.2.5 SVGF moments: expanded 8→9 DWORDs (normal sigma).
+- [x] 4.2.6 SSGI upsample: expanded 8→10 DWORDs (depth + normal sigma).
+- [x] 4.2.7 TAA: expanded TaaCB with 3 new float fields.
+- [x] 4.2.8 Tonemap: expanded root constants 5→6 DWORDs (operator selection).
 
 ## 5. Testing
 - [ ] 5.1 Verify all default CVar values match current hardcoded values (regression-free).
