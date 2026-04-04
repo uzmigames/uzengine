@@ -184,6 +184,13 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         // ── Spawn dispatch ─────────────────────────────────────────────
         const uint32_t spawnCount = emitter->CalculateSpawnCount(dt);
 
+        static uint32_t spawnLogCount = 0;
+        if (spawnLogCount < 10) {
+            UZ_LOG(VFX, Info, "Frame {}: spawnCount={}, cpuAlive={}, dt={:.4f}",
+                   frameIndex, spawnCount, emitter->cpuAliveCount, dt);
+            ++spawnLogCount;
+        }
+
         // cpuAliveCount is already updated inside CalculateSpawnCount().
 
         ParticleSpawnConstants spawnCBData{};
@@ -192,11 +199,11 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         spawnCBData.emitterPos[0]     = 0.0f;
         spawnCBData.emitterPos[1]     = 0.0f;
         spawnCBData.emitterPos[2]     = 0.0f;
-        spawnCBData.spawnRadius       = 0.0f;
+        spawnCBData.spawnRadius       = 20.0f; // 20cm random offset from origin
         spawnCBData.spawnVelocity[0]  = emitter->spawnVelocity.x;
         spawnCBData.spawnVelocity[1]  = emitter->spawnVelocity.y;
         spawnCBData.spawnVelocity[2]  = emitter->spawnVelocity.z;
-        spawnCBData.velocityVariation = emitter->velocityVariation;
+        spawnCBData.velocityVariation = 100.0f; // ±100 cm/s random variation
 
         // Convert spread angle from degrees (emitter) to radians (shader).
         constexpr float kDegToRad = 3.14159265358979f / 180.0f;
@@ -208,7 +215,7 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
                             : 0.01f;
         spawnCBData.minLifetime       = minLife;
         spawnCBData.maxLifetime       = emitter->lifetime;
-        spawnCBData.initialSize       = 100.0f; // 100 cm -- large for debugging
+        spawnCBData.initialSize       = 20.0f; // 20 cm — visible but not overlapping
 
         spawnCBData.initialColor[0]   = 1.0f;
         spawnCBData.initialColor[1]   = 1.0f;
