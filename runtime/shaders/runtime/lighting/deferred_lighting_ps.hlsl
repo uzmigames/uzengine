@@ -58,6 +58,21 @@ cbuffer PerFrameCB : register(b1) {
     float  exposure;                // c15.w   (252)
     float4 skyIrradianceSH[7];      // c16-c22 (256-367)
     uint   shadowDebugMode;         // c23.x   (368)
+    // ── Padding to reach SSR/SSGI SRV indices ──────────────────────────
+    uint   _aerialPerspective;      // c23.y   (372)
+    uint   _transmittanceLutSrv;    // c23.z   (376)
+    float  _apBottomRadius;         // c23.w   (380)
+    float4 _padAP1;                 // c24     (384-399)
+    float4 _padAP2;                 // c25     (400-415)
+    float4 _padAP3;                 // c26     (416-431)
+    float4 _padTone;                // c27     (432-447)
+    float4 _padPostFx1;             // c28     (448-463)
+    float  _padVignette;            // c29.x   (464)
+    float  _padChromaAb;            // c29.y   (468)
+    float  _padContactShadow;       // c29.z   (472)
+    uint   ssrSrvIndex;             // c29.w   (476)
+    float  _padMipBias;             // c30.x   (480)
+    uint   ssgiSrvIndex;            // c30.y   (484)
 };
 
 // LightingCB at b2 via light_types.hlsli (already declared above)
@@ -308,7 +323,14 @@ float4 main(FSInput input) : SV_Target {
                               * (1.0 - totalScatterDielectric);
 
         // SSR: blend screen-space reflections with IBL specular
-#ifndef UZ_BINDLESS
+#ifdef UZ_BINDLESS
+        if (ssrSrvIndex != kSentinelSrvIndex) {
+            Texture2D<float4> ssrTex = ResourceDescriptorHeap[ssrSrvIndex];
+            float4 ssrData = ssrTex.Load(int3(px, 0));
+            if (ssrData.a > 0.001)
+                specularAmbient = lerp(specularAmbient, ssrData.rgb, ssrData.a);
+        }
+#else
         {
             float4 ssrData = ssrTextureT11.Load(int3(px, 0));
             if (ssrData.a > 0.001)
@@ -326,7 +348,14 @@ float4 main(FSInput input) : SV_Target {
         float specOcclusion = saturate(pow(NoV + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao);
 
         // SSGI: add screen-space indirect diffuse if available
-#ifndef UZ_BINDLESS
+#ifdef UZ_BINDLESS
+        if (ssgiSrvIndex != kSentinelSrvIndex) {
+            Texture2D<float4> ssgiTex = ResourceDescriptorHeap[ssgiSrvIndex];
+            float3 ssgiColor = ssgiTex.Load(int3(px, 0)).rgb;
+            if (any(ssgiColor > 0.001))
+                diffuseAmbient += (1.0 - metallic) * ssgiColor * baseColor;
+        }
+#else
         {
             float3 ssgiColor = ssgiTextureT12.Load(int3(px, 0)).rgb;
             if (any(ssgiColor > 0.001))

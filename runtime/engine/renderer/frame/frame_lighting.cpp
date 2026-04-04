@@ -40,7 +40,7 @@ static auto* cv_GTAO             = UZ_CVAR_BOOL("r.GTAO", true, "Ground Truth Am
 // SSR
 static auto* cv_SSR              = UZ_CVAR_BOOL("r.SSR", true, "Screen-Space Reflections");
 static auto* cv_SSRIntensity     = UZ_CVAR_FLOAT("r.SSR.Intensity", 1.0f, "SSR reflection intensity", 0.f, 2.f);
-static auto* cv_SSRMaxRoughness  = UZ_CVAR_FLOAT("r.SSR.MaxRoughness", 0.8f, "Max roughness for SSR", 0.f, 1.f);
+static auto* cv_SSRMaxRoughness  = UZ_CVAR_FLOAT("r.SSR.MaxRoughness", 0.35f, "Max roughness for SSR (UE5 default)", 0.f, 1.f);
 static auto* cv_SSRNumSteps      = UZ_CVAR_INT("r.SSR.NumSteps", 16, "SSR ray march step count", 8, 32);
 static auto* cv_SSRStartMip      = UZ_CVAR_FLOAT("r.SSR.StartMipLevel", 1.0f, "SSR initial HZB mip level", 0.f, 3.f);
 static auto* cv_SSRSlopeTolerance = UZ_CVAR_FLOAT("r.SSR.SlopeToleranceScale", 4.0f, "SSR slope tolerance scale", 1.f, 16.f);

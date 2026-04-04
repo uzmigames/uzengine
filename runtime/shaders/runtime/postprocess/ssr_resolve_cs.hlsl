@@ -84,7 +84,8 @@ void main(uint3 DTid : SV_DispatchThreadID)
 
     // Bilateral filter with roughness-driven kernel radius
     // @ref Schied 2017 "SVGF" — edge-stopping weights: depth + normal
-    float kernelRadius = lerp(1.0, 4.0, saturate((roughness - 0.1) / 0.6));
+    // Wider kernel for rough surfaces — roughness 0.5 gets radius ~6px
+    float kernelRadius = lerp(1.0, 8.0, saturate((roughness - 0.1) / 0.5));
 
     float3 colorSum  = traceResult.rgb;
     float  alphaSum  = traceResult.a;
