@@ -7,7 +7,9 @@
 #include "engine/assertions/engine_assert.h"
 #include "engine/logging/log.h"
 
+#include <cstdint>
 #include <cstdio>
+#include <cstring>
 
 UZ_DEFINE_LOG_CATEGORY(VFX, Trace);
 
@@ -32,7 +34,7 @@ bool ParticleAttributeSet::IsValid() const noexcept
 namespace {
 
 /// Approximate total bytes per particle including both sets and shared buffers.
-constexpr uint32_t kApproxBytesPerParticle = 120;
+constexpr uint32_t kApproxBytesPerParticle = 128;
 
 /// Creates a structured buffer with UAV access for VFX compute shaders.
 ///
@@ -90,8 +92,8 @@ bool CreateAttributeSet(IRHIDevice* device, ParticleAttributeSet& set,
 {
     const auto cap = static_cast<uint64_t>(capacity);
 
-    set.positions  = CreateVFXBuffer(device, cap * 12, 12, FormatDebugName("Positions", suffix));
-    set.velocities = CreateVFXBuffer(device, cap * 12, 12, FormatDebugName("Velocities", suffix));
+    set.positions  = CreateVFXBuffer(device, cap * 16, 16, FormatDebugName("Positions", suffix));
+    set.velocities = CreateVFXBuffer(device, cap * 16, 16, FormatDebugName("Velocities", suffix));
     set.ages       = CreateVFXBuffer(device, cap * 4,  4,  FormatDebugName("Ages", suffix));
     set.lifespans  = CreateVFXBuffer(device, cap * 4,  4,  FormatDebugName("Lifespans", suffix));
     set.sizes      = CreateVFXBuffer(device, cap * 4,  4,  FormatDebugName("Sizes", suffix));
@@ -184,6 +186,11 @@ bool GPUParticleBuffer::Create(IRHIDevice* device, uint32_t particleCapacity)
         return false;
     }
 
+    // Mark for deferred initialization — the GPU bookkeeping buffers (freeList,
+    // freeListHead, aliveCount) contain garbage until InitializeData() copies
+    // the correct initial values from staging buffers.
+    needsInitialization = true;
+
     const uint64_t estimatedKB = (cap * kApproxBytesPerParticle) / 1024;
     UZ_LOG(VFX, Info, "GPU particle buffer created: capacity={}, memory~{}KB",
            capacity, estimatedKB);
@@ -259,6 +266,9 @@ void GPUParticleBuffer::Destroy(IRHIDevice* device)
 {
     if (!device) return;
 
+    // Destroy staging buffers if they were never cleaned up.
+    DestroyStaging(device);
+
     DestroyAttributeSet(device, sets[0]);
     DestroyAttributeSet(device, sets[1]);
 
@@ -284,6 +294,191 @@ void GPUParticleBuffer::Destroy(IRHIDevice* device)
     capacity = 0;
     readIndex = 0;
     writeIndex = 1;
+    needsInitialization = false;
+}
+
+// ---------------------------------------------------------------------------
+// GPUParticleBuffer::InitializeData
+// ---------------------------------------------------------------------------
+
+bool GPUParticleBuffer::InitializeData(IRHIDevice* device, IRHICommandList* cmd)
+{
+    UZ_CHECKF(device != nullptr, "GPUParticleBuffer::InitializeData: device is null");
+    UZ_CHECKF(cmd != nullptr, "GPUParticleBuffer::InitializeData: cmd is null");
+    UZ_CHECKF(IsValid(), "GPUParticleBuffer::InitializeData: buffers not allocated");
+    UZ_CHECKF(needsInitialization, "GPUParticleBuffer::InitializeData: already initialized");
+
+    const auto cap = static_cast<uint64_t>(capacity);
+    const uint64_t freeListSizeBytes = cap * sizeof(uint32_t);
+
+    // ── Free list staging: fill with [0, 1, 2, ..., capacity-1] ─────────
+    {
+        RHIBufferDesc desc{};
+        desc.sizeBytes = freeListSizeBytes;
+        desc.stride = sizeof(uint32_t);
+        desc.usage = RHIBufferUsage::StructuredBuffer;
+        desc.memory = RHIMemoryType::Upload;
+        desc.debugName = "VFX_FreeList_Staging";
+        freeListStaging = device->CreateBuffer(desc);
+
+        if (!freeListStaging.IsValid()) {
+            UZ_LOG(VFX, Error, "InitializeData: failed to create freeList staging buffer");
+            DestroyStaging(device);
+            return false;
+        }
+
+        void* mapped = device->MapBuffer(freeListStaging);
+        if (!mapped) {
+            UZ_LOG(VFX, Error, "InitializeData: failed to map freeList staging buffer");
+            DestroyStaging(device);
+            return false;
+        }
+
+        auto* data = static_cast<uint32_t*>(mapped);
+        for (uint32_t i = 0; i < capacity; ++i) {
+            data[i] = i;
+        }
+        device->UnmapBuffer(freeListStaging);
+
+        cmd->CopyBuffer(freeListStaging, 0, freeList, 0, freeListSizeBytes);
+    }
+
+    // ── Free list head staging: initial value = capacity (all slots free) ──
+    {
+        RHIBufferDesc desc{};
+        desc.sizeBytes = sizeof(uint32_t);
+        desc.stride = sizeof(uint32_t);
+        desc.usage = RHIBufferUsage::StructuredBuffer;
+        desc.memory = RHIMemoryType::Upload;
+        desc.debugName = "VFX_FreeListHead_Staging";
+        freeListHeadStaging = device->CreateBuffer(desc);
+
+        if (!freeListHeadStaging.IsValid()) {
+            UZ_LOG(VFX, Error, "InitializeData: failed to create freeListHead staging buffer");
+            DestroyStaging(device);
+            return false;
+        }
+
+        void* mapped = device->MapBuffer(freeListHeadStaging);
+        if (!mapped) {
+            UZ_LOG(VFX, Error, "InitializeData: failed to map freeListHead staging buffer");
+            DestroyStaging(device);
+            return false;
+        }
+
+        *static_cast<uint32_t*>(mapped) = capacity;
+        device->UnmapBuffer(freeListHeadStaging);
+
+        cmd->CopyBuffer(freeListHeadStaging, 0, freeListHead, 0, sizeof(uint32_t));
+    }
+
+    // ── Alive count staging: initial value = 0 (no particles alive) ─────
+    {
+        RHIBufferDesc desc{};
+        desc.sizeBytes = sizeof(uint32_t);
+        desc.stride = sizeof(uint32_t);
+        desc.usage = RHIBufferUsage::StructuredBuffer;
+        desc.memory = RHIMemoryType::Upload;
+        desc.debugName = "VFX_AliveCount_Staging";
+        aliveCountStaging = device->CreateBuffer(desc);
+
+        if (!aliveCountStaging.IsValid()) {
+            UZ_LOG(VFX, Error, "InitializeData: failed to create aliveCount staging buffer");
+            DestroyStaging(device);
+            return false;
+        }
+
+        void* mapped = device->MapBuffer(aliveCountStaging);
+        if (!mapped) {
+            UZ_LOG(VFX, Error, "InitializeData: failed to map aliveCount staging buffer");
+            DestroyStaging(device);
+            return false;
+        }
+
+        *static_cast<uint32_t*>(mapped) = 0;
+        device->UnmapBuffer(aliveCountStaging);
+
+        cmd->CopyBuffer(aliveCountStaging, 0, aliveCount, 0, sizeof(uint32_t));
+    }
+
+    // ── Zero-initialize lifespan buffers in BOTH sets ──────────────────
+    // Uninitialized Default heap memory may contain non-zero garbage. The update
+    // shader checks (lifespan == 0.0f) to skip unspawned slots. If lifespan has a
+    // non-zero garbage value, the shader treats it as a dead particle and pushes it
+    // onto the free list, corrupting the free list head counter.
+    {
+        RHIBufferDesc zeroDesc{};
+        zeroDesc.sizeBytes = static_cast<uint64_t>(capacity) * sizeof(float);
+        zeroDesc.stride = sizeof(float);
+        zeroDesc.usage = RHIBufferUsage::StructuredBuffer;
+        zeroDesc.memory = RHIMemoryType::Upload;
+        zeroDesc.debugName = "VFX_Zero_Staging";
+        RHIBufferHandle zeroStaging = device->CreateBuffer(zeroDesc);
+
+        if (zeroStaging.IsValid()) {
+            void* mapped = device->MapBuffer(zeroStaging);
+            if (mapped) {
+                std::memset(mapped, 0, zeroDesc.sizeBytes);
+                device->UnmapBuffer(zeroStaging);
+
+                // Zero lifespans in both ping-pong sets
+                cmd->CopyBuffer(zeroStaging, 0, sets[0].lifespans, 0, zeroDesc.sizeBytes);
+                cmd->CopyBuffer(zeroStaging, 0, sets[1].lifespans, 0, zeroDesc.sizeBytes);
+                // Zero ages in both sets
+                cmd->CopyBuffer(zeroStaging, 0, sets[0].ages, 0, zeroDesc.sizeBytes);
+                cmd->CopyBuffer(zeroStaging, 0, sets[1].ages, 0, zeroDesc.sizeBytes);
+            }
+            device->DestroyBuffer(zeroStaging);
+        }
+    }
+
+    UZ_LOG(VFX, Info, "InitializeData: copied freeList ({} entries), freeListHead={}, aliveCount=0, zeroed lifespans/ages",
+           capacity, capacity);
+
+    // ── CopyDst → UAV barriers: GPU must see the copied data before compute ──
+    // CopyBuffer implicitly promotes destinations to CopyDst state.
+    // Transition to UAV so the spawn/update compute shaders can read/write.
+    {
+        const RHIBarrierDesc barriers[] = {
+            { .buffer = freeList,              .stateBefore = RHIResourceState::CopyDst, .stateAfter = RHIResourceState::UnorderedAccess },
+            { .buffer = freeListHead,          .stateBefore = RHIResourceState::CopyDst, .stateAfter = RHIResourceState::UnorderedAccess },
+            { .buffer = aliveCount,            .stateBefore = RHIResourceState::CopyDst, .stateAfter = RHIResourceState::UnorderedAccess },
+            { .buffer = sets[0].lifespans,     .stateBefore = RHIResourceState::CopyDst, .stateAfter = RHIResourceState::UnorderedAccess },
+            { .buffer = sets[1].lifespans,     .stateBefore = RHIResourceState::CopyDst, .stateAfter = RHIResourceState::UnorderedAccess },
+            { .buffer = sets[0].ages,          .stateBefore = RHIResourceState::CopyDst, .stateAfter = RHIResourceState::UnorderedAccess },
+            { .buffer = sets[1].ages,          .stateBefore = RHIResourceState::CopyDst, .stateAfter = RHIResourceState::UnorderedAccess },
+        };
+        cmd->ResourceBarrier(barriers, 7);
+    }
+
+    needsInitialization = false;
+    UZ_LOG(VFX, Info, "GPU particle buffer initialized: freeList[0..{}], head={}, aliveCount=0",
+           capacity - 1, capacity);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// GPUParticleBuffer::DestroyStaging
+// ---------------------------------------------------------------------------
+
+void GPUParticleBuffer::DestroyStaging(IRHIDevice* device)
+{
+    if (!device) return;
+
+    if (freeListStaging.IsValid()) {
+        device->DestroyBuffer(freeListStaging);
+        freeListStaging = {};
+    }
+
+    if (freeListHeadStaging.IsValid()) {
+        device->DestroyBuffer(freeListHeadStaging);
+        freeListHeadStaging = {};
+    }
+
+    if (aliveCountStaging.IsValid()) {
+        device->DestroyBuffer(aliveCountStaging);
+        aliveCountStaging = {};
+    }
 }
 
 }  // namespace uz

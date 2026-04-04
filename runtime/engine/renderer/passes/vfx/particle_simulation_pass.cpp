@@ -24,11 +24,15 @@ namespace uz {
 // Constants
 // ---------------------------------------------------------------------------
 
-/// Thread group size matching [numthreads(64, 1, 1)] in particle compute shaders.
-static constexpr uint32_t kParticleThreadGroupSize = 64;
+/// Thread group size matching [numthreads(256, 1, 1)] in particle compute shaders.
+static constexpr uint32_t kParticleThreadGroupSize = 256;
 
 /// Root parameter slot for per-dispatch constant buffer (b1).
 static constexpr uint32_t kSlotPerDispatch = 1;
+
+/// Root parameter slot for indirect args constant buffer (b0).
+/// The indirect args CS uses register(b0), unlike spawn/update which use b1.
+static constexpr uint32_t kSlotIndirectArgsCB = 0;
 
 /// Root parameter slot for UAV descriptor table (u0..u3).
 static constexpr uint32_t kSlotUAVTable = 4;
@@ -235,8 +239,11 @@ static void DispatchSpawn(IRHICommandList* cmd,
                     reinterpret_cast<const uint8_t*>(emitter.spawnCB.cpuPtr),
                     emitter.spawnCB.sizeBytes);
 
-    cmd->SetDescriptorTable(kSlotSRVTable, emitter.readSetSrvIndex);
-    cmd->SetDescriptorTable(kSlotUAVTable, emitter.writeSetUavIndex);
+    // SM6.6 bindless: SRV/UAV accessed via ResourceDescriptorHeap[] using
+    // indices passed through the constant buffer. No descriptor table needed.
+    // SM5 fallback: bind SRV table at slot 5 (only exists in SM5 root sig).
+    // UAV table at slot 4 exists in both root signatures.
+    // Note: kSlotSRVTable (5) is NOT valid for SM6.6 root sig — skip it.
 
     const uint32_t groups = DivRoundUp(emitter.spawnCount, kParticleThreadGroupSize);
     cmd->Dispatch(groups, 1, 1);
@@ -265,8 +272,7 @@ static void DispatchUpdate(IRHICommandList* cmd,
                     reinterpret_cast<const uint8_t*>(emitter.updateCB.cpuPtr),
                     emitter.updateCB.sizeBytes);
 
-    cmd->SetDescriptorTable(kSlotSRVTable, emitter.readSetSrvIndex);
-    cmd->SetDescriptorTable(kSlotUAVTable, emitter.writeSetUavIndex);
+    // SM6.6 bindless: descriptor indices are in the CB, not descriptor tables.
 
     // Dispatch at least 1 group so newly spawned particles get updated.
     const uint32_t totalCount = emitter.aliveCount + emitter.spawnCount;
@@ -291,15 +297,14 @@ static void DispatchIndirectArgs(IRHICommandList* cmd,
 {
     cmd->SetPipeline(desc.indirectArgsPipeline);
 
-    cmd->SetRootCBV(kSlotPerDispatch,
-                    emitter.indirectCB.bufferHandle,
-                    emitter.indirectCB.offsetBytes,
-                    reinterpret_cast<const uint8_t*>(emitter.indirectCB.cpuPtr),
-                    emitter.indirectCB.sizeBytes);
+    // Indirect args CS uses register(b0) = root param 0 = 32-bit root constants.
+    // Pass the 4 uint32 values (aliveCountSrvIndex, indirectArgsUavIndex, pad, pad)
+    // directly as root constants instead of a CBV.
+    cmd->SetRootConstants(kSlotIndirectArgsCB,
+                          reinterpret_cast<const uint32_t*>(emitter.indirectCB.cpuPtr),
+                          4);
 
-    // Bind the alive count as SRV (read) and indirect args as UAV (write).
-    cmd->SetDescriptorTable(kSlotSRVTable, emitter.aliveCountUavIndex);
-    cmd->SetDescriptorTable(kSlotUAVTable, emitter.indirectDrawArgsUavIndex);
+    // SM6.6 bindless: descriptor indices are in the CB, not descriptor tables.
 
     // Single group -- the shader reads alive count and writes 2 arg structs.
     cmd->Dispatch(1, 1, 1);
@@ -415,11 +420,6 @@ void AddParticleSimulationPass(rg::RgBuilder& builder,
             for (size_t i = 0; i < desc.emitters.size(); ++i) {
                 const auto& emitter = desc.emitters[i];
                 const auto& gpuBuf  = *emitter.buffer;
-
-                // Frame-boundary barriers (SRV->UAV for write set, IndirectArgument->UAV
-                // for indirect args) are handled by the render graph's automatic barrier
-                // scheduling via the imported resource declarations. Only intra-pass UAV
-                // barriers between spawn/update/indirect stages remain manual below.
 
                 // ── Stage 1: Spawn ──────────────────────────────────────
                 DispatchSpawn(cmd, desc, emitter);

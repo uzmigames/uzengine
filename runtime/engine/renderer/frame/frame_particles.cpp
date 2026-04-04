@@ -60,6 +60,33 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
         }
     }
 
+    // ── Deferred GPU buffer initialization ──────────────────────────────
+    // GPU buffers created in Default heap contain garbage. On the first frame
+    // an emitter participates in rendering, upload the initial free list,
+    // free list head, and alive count via staging copy. The staging buffers
+    // are cleaned up on the next frame (the GPU will have finished the copy
+    // by then since we issue UAV barriers after the copies).
+    for (auto* emitter : emitters) {
+        if (!emitter || !emitter->initialized || !emitter->buffer.IsValid()) continue;
+
+        auto& gpuBuf = emitter->buffer;
+
+        // Clean up staging buffers from a previous frame's initialization.
+        // By this point the GPU has executed the copies (we fenced on present).
+        if (!gpuBuf.needsInitialization &&
+            gpuBuf.freeListStaging.IsValid()) {
+            gpuBuf.DestroyStaging(m_device);
+        }
+
+        // Upload initial data if this buffer has never been initialized.
+        if (gpuBuf.needsInitialization) {
+            if (!gpuBuf.InitializeData(m_device, ctx.cmdList)) {
+                UZ_LOG(VFX, Error,
+                       "RegisterParticlePasses: failed to initialize GPU buffer for emitter");
+            }
+        }
+    }
+
     // ── Import GPU particle buffers into the render graph ────────────────
     // Each buffer handle must be imported exactly once so the graph has a
     // single RgResourceId per physical buffer for state tracking. We build
@@ -238,11 +265,66 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
             auto& gpuBuf = emitter->buffer;
             if (!gpuBuf.IsValid()) continue;
 
-            // Spawn constants.
+            // Spawn constants -- must match HLSL VFXSpawnConstants (192 bytes).
             ParticleSpawnConstants spawnCBData{};
-            spawnCBData.spawnCount = emitter->CalculateSpawnCount(ctx.dt);
-            spawnCBData.randomSeed = ctx.frameIndex;
-            spawnCBData.capacity   = gpuBuf.capacity;
+
+            // Emitter parameters from the ParticleEmitter component.
+            spawnCBData.emitterPos[0]     = 0.0f; // emitter position wired later via transform
+            spawnCBData.emitterPos[1]     = 0.0f;
+            spawnCBData.emitterPos[2]     = 0.0f;
+            spawnCBData.spawnRadius       = 0.0f;
+            spawnCBData.spawnVelocity[0]  = emitter->spawnVelocity.x;
+            spawnCBData.spawnVelocity[1]  = emitter->spawnVelocity.y;
+            spawnCBData.spawnVelocity[2]  = emitter->spawnVelocity.z;
+            spawnCBData.velocityVariation = emitter->velocityVariation;
+
+            // Convert spread angle from degrees (emitter) to radians (shader).
+            constexpr float kDegToRad = 3.14159265358979f / 180.0f;
+            spawnCBData.spreadAngle       = emitter->spreadAngle * kDegToRad;
+
+            // Lifetime range: base lifetime with variation applied.
+            const float minLife = (emitter->lifetime - emitter->lifetimeVariation > 0.01f)
+                                ? (emitter->lifetime - emitter->lifetimeVariation)
+                                : 0.01f;
+            spawnCBData.minLifetime       = minLife;
+            spawnCBData.maxLifetime       = emitter->lifetime;
+            spawnCBData.initialSize       = 50.0f; // 50 cm — visible at camera distance
+            spawnCBData.initialColor[0]   = 1.0f;
+            spawnCBData.initialColor[1]   = 1.0f;
+            spawnCBData.initialColor[2]   = 1.0f;
+            spawnCBData.initialColor[3]   = 1.0f;
+
+            spawnCBData.dt                = ctx.dt;
+            spawnCBData.frameNumber       = ctx.frameIndex;
+            spawnCBData.spawnCount        = emitter->CalculateSpawnCount(ctx.dt);
+            spawnCBData.maxParticles      = gpuBuf.capacity;
+
+            // Update CPU-side alive estimate for the render pass vertex count.
+            // This is approximate (GPU-side count is authoritative), but sufficient
+            // for the CPU-driven Draw() call until DrawIndirect is added.
+            emitter->cpuAliveCount += spawnCBData.spawnCount;
+
+            // Bindless descriptor indices for write-set attribute buffers.
+            const auto& writeSet = gpuBuf.WriteSet();
+            spawnCBData.freeListSrvIndex       = m_device->GetBufferSRVIndex(gpuBuf.freeList);
+            spawnCBData.positionsUavIndex       = m_device->GetBufferUAVIndex(writeSet.positions);
+            spawnCBData.velocitiesUavIndex      = m_device->GetBufferUAVIndex(writeSet.velocities);
+            spawnCBData.agesUavIndex            = m_device->GetBufferUAVIndex(writeSet.ages);
+            spawnCBData.lifespansUavIndex       = m_device->GetBufferUAVIndex(writeSet.lifespans);
+            spawnCBData.sizesUavIndex           = m_device->GetBufferUAVIndex(writeSet.sizes);
+            spawnCBData.colorsUavIndex          = m_device->GetBufferUAVIndex(writeSet.colors);
+            spawnCBData.rotationsUavIndex       = m_device->GetBufferUAVIndex(writeSet.rotations);
+            spawnCBData.freeListHeadUavIndex    = m_device->GetBufferUAVIndex(gpuBuf.freeListHead);
+            spawnCBData.aliveCountUavIndex      = m_device->GetBufferUAVIndex(gpuBuf.aliveCount);
+
+            // Spawn shape defaults (point emitter).
+            spawnCBData.spawnShape        = 0;
+            spawnCBData.spawnOnSurface    = 0;
+
+            // Dynamic params UAV -- use positions UAV as fallback to prevent
+            // writes to descriptor 0 (which corrupts the descriptor ring).
+            // The shader writes float4 to dynamicParams[idx] -- safe overlap with positions.
+            spawnCBData.dynamicParamsUavIndex = spawnCBData.positionsUavIndex;
 
             const CBAllocation spawnAlloc = m_cbRing->Allocate(sizeof(spawnCBData));
             if (!spawnAlloc.cpuPtr) {
@@ -252,11 +334,59 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
             }
             std::memcpy(spawnAlloc.cpuPtr, &spawnCBData, sizeof(spawnCBData));
 
-            // Update constants.
+            // Update constants -- must match HLSL VFXUpdateConstants (384 bytes).
             ParticleUpdateConstants updateCBData{};
-            updateCBData.deltaTime  = ctx.dt;
-            updateCBData.aliveCount = emitter->cpuAliveCount;
-            updateCBData.capacity   = gpuBuf.capacity;
+
+            // Simulation parameters.
+            updateCBData.gravity[0]  = emitter->gravity.x;
+            updateCBData.gravity[1]  = emitter->gravity.y;
+            updateCBData.gravity[2]  = emitter->gravity.z;
+            updateCBData.dt          = ctx.dt;
+
+            // Emitter damping is stored as multiplicative (0.98 = retain 98% velocity).
+            // Shader uses subtractive model: vel *= (1 - damping * dt).
+            // Convert: damping_shader = (1 - damping_emitter) / dt, but since the
+            // shader already multiplies by dt, we pass (1 - damping_emitter) directly.
+            // At damping=0.98 and dt=0.016: shader damping = 0.02 => vel *= (1 - 0.02*0.016) ≈ 0.99968.
+            // For the simplest mapping: pass (1 - emitter->damping) as the coefficient.
+            updateCBData.damping     = 1.0f - emitter->damping;
+            // aliveCount in the update CB = maxParticles so the shader processes ALL slots.
+            // Each thread checks age >= lifespan to skip dead/unspawned particles.
+            updateCBData.aliveCount  = gpuBuf.capacity;
+            updateCBData.frameNumber = ctx.frameIndex;
+            updateCBData.maxParticles = gpuBuf.capacity;
+
+            // Bindless descriptor indices: READ set (SRV) -- ping-pong read.
+            const auto& readSet = gpuBuf.ReadSet();
+            updateCBData.positionsSrvIndex  = m_device->GetBufferSRVIndex(readSet.positions);
+            updateCBData.velocitiesSrvIndex = m_device->GetBufferSRVIndex(readSet.velocities);
+            updateCBData.agesSrvIndex       = m_device->GetBufferSRVIndex(readSet.ages);
+            updateCBData.lifespansSrvIndex  = m_device->GetBufferSRVIndex(readSet.lifespans);
+            updateCBData.sizesSrvIndex      = m_device->GetBufferSRVIndex(readSet.sizes);
+            updateCBData.colorsSrvIndex     = m_device->GetBufferSRVIndex(readSet.colors);
+            updateCBData.rotationsSrvIndex  = m_device->GetBufferSRVIndex(readSet.rotations);
+
+            // Bindless descriptor indices: WRITE set (UAV) -- ping-pong write.
+            updateCBData.positionsUavIndex  = m_device->GetBufferUAVIndex(writeSet.positions);
+            updateCBData.velocitiesUavIndex = m_device->GetBufferUAVIndex(writeSet.velocities);
+            updateCBData.agesUavIndex       = m_device->GetBufferUAVIndex(writeSet.ages);
+            updateCBData.lifespansUavIndex  = m_device->GetBufferUAVIndex(writeSet.lifespans);
+            updateCBData.sizesUavIndex      = m_device->GetBufferUAVIndex(writeSet.sizes);
+            updateCBData.colorsUavIndex     = m_device->GetBufferUAVIndex(writeSet.colors);
+            updateCBData.rotationsUavIndex  = m_device->GetBufferUAVIndex(writeSet.rotations);
+
+            // Shared buffers (not double-buffered).
+            updateCBData.freeListUavIndex       = m_device->GetBufferUAVIndex(gpuBuf.freeList);
+            updateCBData.freeListHeadUavIndex   = m_device->GetBufferUAVIndex(gpuBuf.freeListHead);
+            updateCBData.aliveCountNewUavIndex  = m_device->GetBufferUAVIndex(gpuBuf.aliveCount);
+
+            // Dynamic params: use position buffers as fallback to prevent
+            // writes to descriptor 0 (which corrupts the descriptor heap).
+            updateCBData.readDynParamsSrv  = updateCBData.positionsSrvIndex;
+            updateCBData.writeDynParamsUav = updateCBData.positionsUavIndex;
+
+            // Force parameters left at defaults (0 = disabled) for base engine path.
+            // Demo/game code fills curl, vortex, wind, kill volume, etc. as needed.
 
             const CBAllocation updateAlloc = m_cbRing->Allocate(sizeof(updateCBData));
             if (!updateAlloc.cpuPtr) {
@@ -266,10 +396,12 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
             }
             std::memcpy(updateAlloc.cpuPtr, &updateCBData, sizeof(updateCBData));
 
-            // Indirect args constants.
+
+            // Indirect args constants -- must match HLSL VFXIndirectArgsConstants (16 bytes).
+            // The shader reads alive count from an SRV and writes indirect draw/dispatch args.
             ParticleIndirectArgsConstants indirectCBData{};
-            indirectCBData.verticesPerParticle = 6;
-            indirectCBData.threadGroupSize     = 64;
+            indirectCBData.aliveCountSrvIndex  = m_device->GetBufferSRVIndex(gpuBuf.aliveCount);
+            indirectCBData.indirectArgsUavIndex = m_device->GetBufferUAVIndex(gpuBuf.indirectDrawArgs);
 
             const CBAllocation indirectAlloc = m_cbRing->Allocate(sizeof(indirectCBData));
             if (!indirectAlloc.cpuPtr) {
@@ -286,7 +418,9 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
             simData.updateCB   = updateAlloc;
             simData.indirectCB = indirectAlloc;
             simData.spawnCount = spawnCBData.spawnCount;
-            simData.aliveCount = emitter->cpuAliveCount;
+            // Dispatch must cover ALL particle slots so the update shader
+            // processes spawned particles at arbitrary indices (free list order).
+            simData.aliveCount = gpuBuf.capacity;
 
             // Bindless descriptor indices for the simulation compute shaders.
             // Each buffer's SRV/UAV index is retrieved from the RHI device's
@@ -435,7 +569,12 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
     renderDesc.billboardPipeline  = billboardPipeline;
     renderDesc.colorTarget        = ctx.hdrRes;
     renderDesc.depthTarget        = ctx.depthRes;
+    renderDesc.colorTexture       = m_hdrSceneColor;
+    renderDesc.depthTexture       = m_gbuffer.depth;
     renderDesc.sceneDepthTexture  = m_gbuffer.depth;
+    renderDesc.perFrameCB         = ctx.perFrameAlloc;
+    renderDesc.renderWidth        = ctx.renderWidth;
+    renderDesc.renderHeight       = ctx.renderHeight;
 
     // Camera position for distance sorting (Vec4 -> Vec3 xyz).
     const Vec3 camPos{
@@ -456,13 +595,27 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
         auto& gpuBuf = emitter->buffer;
         if (!gpuBuf.IsValid()) continue;
 
-        // Billboard constant buffer: view/proj matrices + viewport dims.
-        ParticleBillboardConstants bbCBData{};
-        std::memcpy(bbCBData.viewMatrix, &viewMatrix, sizeof(float) * 16);
-        std::memcpy(bbCBData.projMatrix, &projMatrix, sizeof(float) * 16);
-        bbCBData.viewportWidth         = ctx.renderWidth;
-        bbCBData.viewportHeight        = ctx.renderHeight;
-        bbCBData.softParticleFadeRange = emitter->softParticleFadeRange;
+        // Billboard CB (b2) -- unified VS + PS constant buffer (304 bytes).
+        // Contains invView for billboard orientation, emitter params,
+        // and PS rendering params (soft fade, erosion, lighting, etc.).
+        ParticleBillboardCB bbCBData{};
+
+        // Compute inverse view matrix for billboard right/up extraction.
+        // The VS reads rows 0 and 1 as camera right and camera up vectors.
+        const Mat4 invViewMat = viewMatrix.Inverse();
+        bbCBData.invView = invViewMat;
+
+        // Emitter position (will be transform-driven later).
+        bbCBData.emitterPosition[0] = 0.0f;
+        bbCBData.emitterPosition[1] = 0.0f;
+        bbCBData.emitterPosition[2] = 0.0f;
+        bbCBData.globalSizeMultiplier = 1.0f;
+
+        // Previous frame view-projection for TAA motion vectors.
+        bbCBData.prevViewProj = projMatrix * viewMatrix;
+
+        // PS rendering parameters.
+        bbCBData.softFadeDistance   = emitter->softParticleFadeRange;
 
         const CBAllocation bbAlloc = m_cbRing->Allocate(sizeof(bbCBData));
         if (!bbAlloc.cpuPtr) {
@@ -475,23 +628,15 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
         EmitterRenderData renderData{};
         renderData.buffer          = &gpuBuf;
         renderData.renderCB        = bbAlloc;
+        // Draw ALL particles and let the VS cull dead ones.
+        // The spawn shader allocates from the top of the free list (index N-1 down),
+        // so alive particles are scattered across the full buffer range.
+        renderData.cpuVertexCount  = gpuBuf.capacity * 6;
 
-        // Bindless indices CB (b0) -- SRV indices for read-set attribute buffers.
-        // The billboard vertex shader reads these via ConstantBuffer<VFXBillboardIndices>
-        // at register(b0) and uses ResourceDescriptorHeap[] to access particle data.
-        struct VFXBillboardIndices {
-            uint32_t positionBufferIdx;
-            uint32_t sizeBufferIdx;
-            uint32_t colorBufferIdx;
-            uint32_t rotationBufferIdx;
-            uint32_t sortedIndicesSrvIndex;
-            uint32_t velocityBufferIdx;
-            uint32_t agesBufferIdx;
-            uint32_t lifespansBufferIdx;
-        };
-
+        // Bindless indices CB (b0) -- SRV indices for read-set attribute buffers
+        // and PS texture indices. Must match HLSL VFXBillboardConstants (48 bytes).
         const auto& readSet = gpuBuf.ReadSet();
-        VFXBillboardIndices indicesData{};
+        ParticleBillboardIndices indicesData{};
         indicesData.positionBufferIdx    = m_device->GetBufferSRVIndex(readSet.positions);
         indicesData.sizeBufferIdx        = m_device->GetBufferSRVIndex(readSet.sizes);
         indicesData.colorBufferIdx       = m_device->GetBufferSRVIndex(readSet.colors);
@@ -502,6 +647,12 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
         indicesData.velocityBufferIdx    = m_device->GetBufferSRVIndex(readSet.velocities);
         indicesData.agesBufferIdx        = m_device->GetBufferSRVIndex(readSet.ages);
         indicesData.lifespansBufferIdx   = m_device->GetBufferSRVIndex(readSet.lifespans);
+        indicesData.spriteTextureIdx     = UINT32_MAX; // No sprite texture yet.
+        indicesData.depthBufferIdx       = m_device->GetTextureSRVIndex(m_gbuffer.depth);
+        // Use positions SRV as fallback — prevents ResourceDescriptorHeap[0] access
+        // which corrupts the descriptor ring. The VS guards dynParams reads anyway.
+        indicesData.dynamicParamsBufferIdx = indicesData.positionBufferIdx;
+        indicesData._vfxPad1             = 0;
 
         const CBAllocation indicesAlloc = m_cbRing->Allocate(sizeof(indicesData));
         if (indicesAlloc.cpuPtr) {

@@ -37,8 +37,11 @@
 #include "render_graph_types.h"
 #include "engine/rhi/rhi_types.h"
 
+#include "mat4.h"
+
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 namespace uz {
@@ -54,24 +57,96 @@ class RgBuilder;
 namespace uz {
 
 // ---------------------------------------------------------------------------
-// ParticleBillboardConstants -- CPU-side mirror of billboard shader CB
+// ParticleBillboardIndices / ParticleBillboardCB -- CPU-side mirrors of billboard shader CBs
 // ---------------------------------------------------------------------------
 
-/// CPU-side mirror of the billboard vertex shader's constant buffer (register b1).
+/// CPU-side mirror of VFXBillboardConstants at register(b0) -- root constants.
 ///
-/// Contains the matrices needed to orient billboards toward the camera and
-/// project them to clip space, plus the viewport dimensions for soft particle
-/// depth comparison.
+/// Contains bindless descriptor indices for particle attribute buffers (VS)
+/// and texture resources (PS). Both VS and PS share the same b0 layout.
 ///
-/// Total size: 144 bytes (256-byte aligned by CBRingAllocator).
-struct ParticleBillboardConstants {
-    float viewMatrix[16]       = {};  ///< 0:   View matrix (world -> view), column-major.
-    float projMatrix[16]       = {};  ///< 64:  Projection matrix (view -> clip), column-major.
-    float viewportWidth        = 0.0f; ///< 128: Viewport width in pixels (for soft particles).
-    float viewportHeight       = 0.0f; ///< 132: Viewport height in pixels.
-    float softParticleFadeRange = 1.0f; ///< 136: Depth range for soft particle fade (world units).
-    float _pad0                = 0.0f; ///< 140: Padding to 144 bytes (16-byte aligned).
+/// Total size: 48 bytes (12 x uint32, matching HLSL exactly).
+struct ParticleBillboardIndices {
+    // VS indices (bytes 0-31)
+    uint32_t positionBufferIdx      = 0;
+    uint32_t sizeBufferIdx          = 0;
+    uint32_t colorBufferIdx         = 0;
+    uint32_t rotationBufferIdx      = 0;
+    uint32_t sortedIndicesSrvIndex  = UINT32_MAX; ///< UINT32_MAX = no sorted indices.
+    uint32_t velocityBufferIdx      = 0;
+    uint32_t agesBufferIdx          = 0;
+    uint32_t lifespansBufferIdx     = 0;
+    // PS indices (bytes 32-47)
+    uint32_t spriteTextureIdx       = UINT32_MAX; ///< Reserved (no sprite texture).
+    uint32_t depthBufferIdx         = 0;          ///< SRV: Texture2D<float> scene depth.
+    uint32_t dynamicParamsBufferIdx = 0;          ///< SRV: StructuredBuffer<float4> dynamic params.
+    uint32_t _vfxPad1               = 0;
 };
+static_assert(sizeof(ParticleBillboardIndices) == 48,
+              "ParticleBillboardIndices must be 48 bytes to match HLSL VFXBillboardConstants");
+
+/// CPU-side mirror of VFXBillboardCB at register(b2) -- unified VS + PS CB.
+///
+/// Contains emitter parameters for billboard orientation (VS, first 160 bytes)
+/// and rendering parameters for soft fade, erosion, lighting (PS, remaining bytes).
+///
+/// Total size: 304 bytes (19 x float4, matching HLSL exactly).
+struct ParticleBillboardCB {
+    // ── VS data (emitter parameters, 160 bytes) ─────────────────────
+    Mat4     invView;                                  ///< Inverse view matrix.
+    float    emitterPosition[3]    = {0, 0, 0};        ///< World-space emitter origin.
+    float    globalSizeMultiplier  = 1.0f;             ///< Size multiplier.
+    float    globalColorTint[4]    = {1, 1, 1, 1};     ///< Color tint.
+    Mat4     prevViewProj;                             ///< Previous frame view-projection (TAA).
+
+    // ── PS data (rendering parameters, 48 bytes) ────────────────────
+    float    softFadeDistance      = 0.3f;             ///< Soft particle depth fade distance.
+    float    alphaErosion         = 0.0f;              ///< Subtractive alpha erosion [0, 1].
+    float    emissiveIntensity    = 0.0f;              ///< Additive emissive multiplier.
+    uint32_t litMode              = 0;                 ///< 0=Unlit, 1=Lit.
+
+    // ── Camera offset & pivot offset ────────────────────────────────
+    float    cameraOffset         = 0.0f;
+    float    pivotOffsetX         = 0.0f;
+    float    pivotOffsetY         = 0.0f;
+    float    screenSpacePixelSize = 8.0f;
+
+    // ── Size by speed ───────────────────────────────────────────────
+    uint32_t sizeBySpeedEnabled   = 0;
+    float    sizeBySpeedMin       = 0.5f;
+    float    sizeBySpeedMax       = 2.0f;
+    float    speedRangeMax        = 10.0f;
+
+    // ── Size over lifetime (piecewise-linear, 16 bytes) ─────────────
+    float    sizeOverLifeStart    = 1.0f;
+    float    sizeOverLifePeak     = 1.0f;
+    float    sizeOverLifeEnd      = 0.0f;
+    float    sizeOverLifePeakTime = 0.3f;
+
+    // ── Color over lifetime (linear interpolation, 32 bytes) ────────
+    float    colorLifeStart[4]    = {1, 1, 1, 1};
+    float    colorLifeEnd[4]      = {1, 1, 1, 0};
+
+    // ── Billboard facing mode + custom direction (16 bytes) ─────────
+    uint32_t facingMode           = 0;                 ///< 0=FaceCamera, 1=VelocityAligned, 2=Plane, 3=Custom, 4=CamPos.
+    float    customFacingX        = 0.0f;
+    float    customFacingY        = 0.0f;
+    float    customFacingZ        = 1.0f;
+
+    // ── Billboard stretching + blend (16 bytes) ─────────────────────
+    float    stretchFactor        = 0.0f;
+    uint32_t blendModeHint        = 2;                 ///< 0=AlphaBlend, 1=Additive, 2=PremulAlpha.
+    uint32_t colorRampLutSrvIndex = UINT32_MAX;        ///< UINT32_MAX = legacy lerp.
+    uint32_t screenSpaceSizeEnabled = 0;
+
+    // ── Color by speed (16 bytes) ───────────────────────────────────
+    uint32_t colorBySpeedEnabled  = 0;
+    uint32_t _cbsPad0             = 0;
+    uint32_t _cbsPad1             = 0;
+    uint32_t _cbsPad2             = 0;
+};
+static_assert(sizeof(ParticleBillboardCB) == 304,
+              "ParticleBillboardCB must be 304 bytes to match HLSL VFXBillboardCB");
 
 // ---------------------------------------------------------------------------
 // EmitterRenderData -- per-emitter data for the render pass
@@ -105,6 +180,10 @@ struct EmitterRenderData {
     /// Signed distance from camera to emitter origin, used for back-to-front sorting.
     /// Larger values are drawn first (farther from camera).
     float distanceToCamera = 0.0f;
+
+    /// CPU-side vertex count for non-indexed draw (6 vertices per alive particle).
+    /// Used as fallback until DrawIndirect command signature is added.
+    uint32_t cpuVertexCount = 0;
 
     // -- Descriptor heap indices for SRV binding (SM5 path) -------------------
 
@@ -171,6 +250,20 @@ struct ParticleRenderPassDesc {
     /// The HDR color target to draw particles into.
     /// Must already be in `RenderTarget` state (set up by the render graph).
     rg::RgResourceId colorTarget;
+
+    /// Physical texture handle for the HDR color target (for BeginRenderPass).
+    RHITextureHandle colorTexture;
+
+    /// Physical texture handle for the depth buffer (for BeginRenderPass).
+    RHITextureHandle depthTexture;
+
+    /// Pre-filled per-frame CB allocation (b1) — viewProj, camera pos, etc.
+    /// Must be re-bound after SetPipeline resets root signature state.
+    CBAllocation perFrameCB = {};
+
+    /// Render viewport dimensions for SetViewport/SetScissorRect.
+    uint32_t renderWidth  = 0;
+    uint32_t renderHeight = 0;
 
     /// The depth buffer for depth testing (read-only, no depth write).
     rg::RgResourceId depthTarget;

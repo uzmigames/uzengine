@@ -11,14 +11,14 @@
 /// NOT double-buffered -- they are updated in-place by GPU atomics.
 ///
 /// # SoA Layout (per attribute set)
-/// - positions:  float3 per particle (12 bytes)
-/// - velocities: float3 per particle (12 bytes)
+/// - positions:  float4 per particle (16 bytes, w unused/padding)
+/// - velocities: float4 per particle (16 bytes, w unused/padding)
 /// - ages:       float  per particle (4 bytes)
 /// - lifespans:  float  per particle (4 bytes)
 /// - sizes:      float  per particle (4 bytes)
 /// - colors:     float4 per particle (16 bytes, RGBA)
 /// - rotations:  float  per particle (4 bytes, 2D angle in radians)
-/// Total: 56 bytes per particle per set, 112 bytes for both sets.
+/// Total: 64 bytes per particle per set, 128 bytes for both sets.
 ///
 /// # Ping-Pong
 /// `readIndex` and `writeIndex` alternate between 0 and 1 each frame.
@@ -26,8 +26,8 @@
 /// `sets[writeIndex]`. After dispatch, `Swap()` flips both indices via XOR.
 ///
 /// # Memory Budget
-/// Total per particle: ~120 bytes (112 for attributes + 8 for shared buffers).
-/// Example: 50K particles ~ 6 MB GPU memory.
+/// Total per particle: ~128 bytes (128 for attributes + shared buffers overhead).
+/// Example: 50K particles ~ 6.25 MB GPU memory.
 
 #include "gpu_particle_sort.h"
 
@@ -37,6 +37,7 @@
 
 namespace uz {
 
+class IRHICommandList;
 class IRHIDevice;
 
 // ---------------------------------------------------------------------------
@@ -53,10 +54,10 @@ class IRHIDevice;
 /// `IsValid()` returns true only when ALL seven attribute buffers have been
 /// successfully allocated. A partially-allocated set is considered invalid.
 struct ParticleAttributeSet {
-    /// Per-particle positions (float3, 12 bytes stride).
+    /// Per-particle positions (float4, 16 bytes stride; w component unused).
     RHIBufferHandle positions = RHIBufferHandle::Invalid();
 
-    /// Per-particle velocities (float3, 12 bytes stride).
+    /// Per-particle velocities (float4, 16 bytes stride; w component unused).
     RHIBufferHandle velocities = RHIBufferHandle::Invalid();
 
     /// Per-particle current age in seconds (float, 4 bytes stride).
@@ -185,6 +186,23 @@ struct GPUParticleBuffer {
     /// read set is left in UAV (from sim).
     bool hasCompletedCycle = false;
 
+    /// Whether the GPU buffers (freeList, freeListHead, aliveCount) still need
+    /// their initial data uploaded. Set to true after Create(), cleared to false
+    /// after InitializeData() successfully copies staging data to the GPU buffers.
+    bool needsInitialization = false;
+
+    // -- Staging buffers for one-time initialization upload --------------------
+
+    /// Upload-heap staging buffer for the free list: [0, 1, 2, ..., capacity-1].
+    /// Kept alive until DestroyStaging() is called after the GPU copy completes.
+    RHIBufferHandle freeListStaging = RHIBufferHandle::Invalid();
+
+    /// Upload-heap staging buffer for the free list head counter (single uint32).
+    RHIBufferHandle freeListHeadStaging = RHIBufferHandle::Invalid();
+
+    /// Upload-heap staging buffer for the alive count counter (single uint32).
+    RHIBufferHandle aliveCountStaging = RHIBufferHandle::Invalid();
+
     // -- Accessors ------------------------------------------------------------
 
     /// Returns the attribute set currently used as the read source (SRV).
@@ -276,6 +294,41 @@ struct GPUParticleBuffer {
     /// # Parameters
     /// - `device`: RHI device for deallocation. May be null (no-op).
     void Destroy(IRHIDevice* device);
+
+    /// Uploads initial data to the GPU bookkeeping buffers via staging copies.
+    ///
+    /// Creates Upload-heap staging buffers, fills them with initial data, and
+    /// issues CopyBuffer commands to transfer data to the GPU-resident buffers:
+    /// - freeList:     [0, 1, 2, ..., capacity-1] — all slots initially free.
+    /// - freeListHead: capacity — stack pointer starts at the top.
+    /// - aliveCount:   0 — no particles alive yet.
+    ///
+    /// After the copies, UAV barriers are emitted so compute shaders see the
+    /// initialized data. Staging buffers are kept alive for GPU copy completion;
+    /// call DestroyStaging() after the command list has been submitted and the
+    /// GPU has finished the copy (typically next frame or after a fence).
+    ///
+    /// # Parameters
+    /// - `device`: RHI device for staging buffer creation. Must not be null.
+    /// - `cmd`: Command list to record copy and barrier commands. Must not be null.
+    ///
+    /// # Returns
+    /// `true` on success, `false` if staging buffer creation or mapping fails.
+    ///
+    /// # Preconditions
+    /// - `IsValid()` must be true (base buffers already allocated via Create).
+    /// - `needsInitialization` must be true.
+    [[nodiscard]] bool InitializeData(IRHIDevice* device, IRHICommandList* cmd);
+
+    /// Releases the staging buffers used by InitializeData().
+    ///
+    /// Call after the GPU has finished executing the copy commands (e.g., after
+    /// a fence wait or at the start of the next frame). Safe to call multiple
+    /// times or if staging buffers were never created (no-op).
+    ///
+    /// # Parameters
+    /// - `device`: RHI device for deallocation. May be null (no-op).
+    void DestroyStaging(IRHIDevice* device);
 };
 
 }  // namespace uz

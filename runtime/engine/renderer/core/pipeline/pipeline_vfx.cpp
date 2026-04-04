@@ -83,10 +83,10 @@ RHIPipelineHandle PipelineLibrary::GetParticleBillboard() {
     // Two-sided: billboard quads may face either direction due to rotation
     desc.rasterizer.cullMode              = RHICullMode::None;
 
-    // Read scene depth for occlusion, do NOT write (particles are transparent)
+    // Read scene depth for occlusion, do NOT write (particles are transparent).
     desc.depthStencil.depthEnable = true;
     desc.depthStencil.depthWrite  = false;
-    desc.depthStencil.depthFunc   = RHICompareFunc::Greater; // Reversed-Z: closer = greater
+    desc.depthStencil.depthFunc   = RHICompareFunc::GreaterEqual; // Reversed-Z: closer = greater
 
     // Standard alpha blend: SrcAlpha / InvSrcAlpha
     desc.renderTargetBlend[0].blendEnable = true;

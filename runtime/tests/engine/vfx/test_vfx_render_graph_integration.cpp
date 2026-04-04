@@ -294,57 +294,61 @@ TEST(VFXRenderGraph_Simulation, EmitterSimDispatch_DefaultIndirectDrawArgsUavInd
 // 7.1.4: Simulation constant buffer structs are correct sizes
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// ParticleSpawnConstants must be exactly 16 bytes to match the HLSL cbuffer
-/// layout (4 x uint32 with no implicit padding).
-TEST(VFXRenderGraph_Simulation, ParticleSpawnConstants_Size_Is16Bytes) {
-    EXPECT_EQ(sizeof(ParticleSpawnConstants), 16u)
-        << "ParticleSpawnConstants must be 16 bytes to match HLSL cbuffer layout";
+/// ParticleSpawnConstants must be exactly 192 bytes to match the HLSL cbuffer
+/// layout (VFXSpawnConstants: 12 x float4).
+TEST(VFXRenderGraph_Simulation, ParticleSpawnConstants_Size_Is192Bytes) {
+    EXPECT_EQ(sizeof(ParticleSpawnConstants), 192u)
+        << "ParticleSpawnConstants must be 192 bytes to match HLSL VFXSpawnConstants";
 }
 
-/// ParticleUpdateConstants must be exactly 16 bytes.
-TEST(VFXRenderGraph_Simulation, ParticleUpdateConstants_Size_Is16Bytes) {
-    EXPECT_EQ(sizeof(ParticleUpdateConstants), 16u)
-        << "ParticleUpdateConstants must be 16 bytes to match HLSL cbuffer layout";
+/// ParticleUpdateConstants must be exactly 384 bytes (24 x float4).
+TEST(VFXRenderGraph_Simulation, ParticleUpdateConstants_Size_Is384Bytes) {
+    EXPECT_EQ(sizeof(ParticleUpdateConstants), 384u)
+        << "ParticleUpdateConstants must be 384 bytes to match HLSL VFXUpdateConstants";
 }
 
-/// ParticleIndirectArgsConstants must be exactly 16 bytes.
+/// ParticleIndirectArgsConstants must be exactly 16 bytes (1 x float4).
 TEST(VFXRenderGraph_Simulation, ParticleIndirectArgsConstants_Size_Is16Bytes) {
     EXPECT_EQ(sizeof(ParticleIndirectArgsConstants), 16u)
-        << "ParticleIndirectArgsConstants must be 16 bytes to match HLSL cbuffer layout";
+        << "ParticleIndirectArgsConstants must be 16 bytes to match HLSL VFXIndirectArgsConstants";
 }
 
-/// The default verticesPerParticle constant in ParticleIndirectArgsConstants
-/// must be 6 (two triangles forming a billboard quad).
-TEST(VFXRenderGraph_Simulation, ParticleIndirectArgsConstants_Default_VerticesPerParticle_Is6) {
+/// The default aliveCountSrvIndex in ParticleIndirectArgsConstants
+/// must be 0 (uninitialized, filled at runtime).
+TEST(VFXRenderGraph_Simulation, ParticleIndirectArgsConstants_Default_AliveCountSrvIndex_Is0) {
     ParticleIndirectArgsConstants c;
-    EXPECT_EQ(c.verticesPerParticle, 6u)
-        << "verticesPerParticle must be 6 (two triangles per billboard quad)";
+    EXPECT_EQ(c.aliveCountSrvIndex, 0u)
+        << "aliveCountSrvIndex default must be 0";
 }
 
-/// The default threadGroupSize in ParticleIndirectArgsConstants must be 64,
-/// matching the CS numthreads attribute.
-TEST(VFXRenderGraph_Simulation, ParticleIndirectArgsConstants_Default_ThreadGroupSize_Is64) {
+/// The default indirectArgsUavIndex in ParticleIndirectArgsConstants
+/// must be 0 (uninitialized, filled at runtime).
+TEST(VFXRenderGraph_Simulation, ParticleIndirectArgsConstants_Default_IndirectArgsUavIndex_Is0) {
     ParticleIndirectArgsConstants c;
-    EXPECT_EQ(c.threadGroupSize, 64u)
-        << "threadGroupSize must be 64 — matches the dispatch shader's numthreads";
+    EXPECT_EQ(c.indirectArgsUavIndex, 0u)
+        << "indirectArgsUavIndex default must be 0";
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 7.1.5: ParticleBillboardConstants size
+// 7.1.5: ParticleBillboardIndices and ParticleBillboardCB sizes
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// ParticleBillboardConstants must be 144 bytes as documented in the header
-/// (viewMatrix 64 + projMatrix 64 + viewportWidth 4 + viewportHeight 4 +
-///  softParticleFadeRange 4 + _pad0 4 = 144).
-TEST(VFXRenderGraph_Billboard, ParticleBillboardConstants_Size_Is144Bytes) {
-    EXPECT_EQ(sizeof(ParticleBillboardConstants), 144u)
-        << "ParticleBillboardConstants must be 144 bytes to match the documented layout";
+/// ParticleBillboardIndices (b0 root constants) must be 48 bytes.
+TEST(VFXRenderGraph_Billboard, ParticleBillboardIndices_Size_Is48Bytes) {
+    EXPECT_EQ(sizeof(ParticleBillboardIndices), 48u)
+        << "ParticleBillboardIndices must be 48 bytes to match HLSL VFXBillboardConstants";
 }
 
-TEST(VFXRenderGraph_Billboard, ParticleBillboardConstants_Default_SoftFadeRange_Is1) {
-    ParticleBillboardConstants c;
-    EXPECT_FLOAT_EQ(c.softParticleFadeRange, 1.0f)
-        << "Default softParticleFadeRange must be 1.0f (1 world unit)";
+/// ParticleBillboardCB (b2) must be 304 bytes (19 x float4).
+TEST(VFXRenderGraph_Billboard, ParticleBillboardCB_Size_Is304Bytes) {
+    EXPECT_EQ(sizeof(ParticleBillboardCB), 304u)
+        << "ParticleBillboardCB must be 304 bytes to match HLSL VFXBillboardCB";
+}
+
+TEST(VFXRenderGraph_Billboard, ParticleBillboardCB_Default_SoftFadeDistance_Is03) {
+    ParticleBillboardCB c;
+    EXPECT_FLOAT_EQ(c.softFadeDistance, 0.3f)
+        << "Default softFadeDistance must be 0.3f";
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -398,8 +398,12 @@ VSOutput main(uint vertexID : SV_VertexID) {
     float  particleLife  = lifespans[particleID];
 
     // Dynamic material parameters (Task 4.14.0)
-    StructuredBuffer<float4> dynParams = ResourceDescriptorHeap[dynamicParamsBufferIdx];
-    float4 particleDynParams = dynParams[particleID];
+    // Guard: descriptor index 0 or UINT32_MAX means no dynamic params buffer.
+    float4 particleDynParams = float4(0, 0, 0, 0);
+    if (dynamicParamsBufferIdx != 0 && dynamicParamsBufferIdx != 0xFFFFFFFF) {
+        StructuredBuffer<float4> dynParams = ResourceDescriptorHeap[dynamicParamsBufferIdx];
+        particleDynParams = dynParams[particleID];
+    }
 #else
     float3 particlePos   = particlePositions[particleID].xyz;
     float  particleSize  = particleSizes[particleID];

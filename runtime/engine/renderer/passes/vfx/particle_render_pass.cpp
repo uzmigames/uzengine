@@ -23,11 +23,11 @@ namespace uz {
 // Constants
 // ---------------------------------------------------------------------------
 
-/// Root parameter slot for bindless descriptor indices CB (b0).
+/// Root parameter slot for bindless descriptor indices (b0 = root constants).
 static constexpr uint32_t kSlotBindlessIndices = 0;
 
-/// Root parameter slot for per-emitter constant buffer (b1).
-static constexpr uint32_t kSlotPerEmitter = 1;
+/// Root parameter slot for per-emitter billboard CB (b2 = root CBV per-object).
+static constexpr uint32_t kSlotPerEmitter = 2;
 
 /// Root parameter slot for SRV descriptor table (t0..tN).
 static constexpr uint32_t kSlotSRVTable = 5;
@@ -87,13 +87,12 @@ static void DrawEmitterBillboards(IRHICommandList* cmd,
 {
     const auto& gpuBuf = *emitter.buffer;
 
-    // Bind b0: VFXBillboardIndices -- bindless descriptor indices for particle attributes.
+    // Bind b0: VFXBillboardIndices as root constants (slot 0 = 32-bit root constants).
+    // 48 bytes = 12 x uint32, fits within the 16x uint32 root constant limit.
     if (emitter.indicesCB.cpuPtr) {
-        cmd->SetRootCBV(kSlotBindlessIndices,
-                        emitter.indicesCB.bufferHandle,
-                        emitter.indicesCB.offsetBytes,
-                        reinterpret_cast<const uint8_t*>(emitter.indicesCB.cpuPtr),
-                        emitter.indicesCB.sizeBytes);
+        cmd->SetRootConstants(kSlotBindlessIndices,
+                              reinterpret_cast<const uint32_t*>(emitter.indicesCB.cpuPtr),
+                              12); // 12 x uint32 = 48 bytes = sizeof(ParticleBillboardIndices)
     }
 
     // Bind per-emitter billboard constants (view/proj matrices, viewport, etc.)
@@ -103,16 +102,16 @@ static void DrawEmitterBillboards(IRHICommandList* cmd,
                     reinterpret_cast<const uint8_t*>(emitter.renderCB.cpuPtr),
                     emitter.renderCB.sizeBytes);
 
-    // Bind SRV table: particle attributes (positions, sizes, colors, rotations)
-    // + sprite texture + scene depth texture.
-    cmd->SetDescriptorTable(kSlotSRVTable, emitter.readSetSrvIndex);
+    // SM6.6 bindless: SRV/UAV accessed via ResourceDescriptorHeap[] using
+    // indices from the VFXBillboardIndices CB at b0. No descriptor table needed.
+    // SM5 fallback would bind SRV table at slot 5 here (not implemented).
 
-    // Issue indirect draw. The args buffer was filled by the simulation pass's
-    // indirect args CS and is in IndirectArgument state.
-    cmd->DrawIndexedIndirect(gpuBuf.indirectDrawArgs,
-                             0,               // argsOffset
-                             1,               // drawCount (1 draw per emitter)
-                             kIndirectDrawArgsStride);
+    // Draw particles using SV_VertexID-based billboard expansion.
+    // The VS generates quad vertices procedurally (no index buffer needed).
+    // Using CPU-side vertex count until DrawIndirect command signature is added.
+    if (emitter.cpuVertexCount > 0) {
+        cmd->Draw(emitter.cpuVertexCount);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -127,9 +126,9 @@ void AddParticleRenderPass(rg::RgBuilder& builder,
 
     for (size_t i = 0; i < desc.emitters.size(); ++i) {
         UZ_CHECKF(desc.emitters[i].buffer != nullptr,
-                  "ParticleRenderPass: emitter[{}] has null GPUParticleBuffer", i);
+                  "ParticleRenderPass: emitter[%zu] has null GPUParticleBuffer", i);
         UZ_CHECKF(desc.emitters[i].buffer->IsValid(),
-                  "ParticleRenderPass: emitter[{}] GPUParticleBuffer is not allocated", i);
+                  "ParticleRenderPass: emitter[%zu] GPUParticleBuffer is not allocated", i);
     }
 
     // Copy desc so we can sort emitters inside the lambda.
@@ -142,9 +141,11 @@ void AddParticleRenderPass(rg::RgBuilder& builder,
             pb.Write(passDesc.colorTarget, RHIResourceState::RenderTarget);
         }
 
-        // Depth target: we read for depth testing (no depth write).
+        // Depth target: used for depth testing (no depth write in PSO).
+        // Use DepthStencilWrite state to allow DSV binding without read-only flag.
+        // The PSO has depthWrite=false so no actual writes occur.
         if (passDesc.depthTarget.IsValid()) {
-            pb.Read(passDesc.depthTarget, RHIResourceState::DepthStencilRead);
+            pb.Write(passDesc.depthTarget, RHIResourceState::DepthStencilWrite);
         }
 
         // Declare read-set attribute buffers and shared buffers for automatic
@@ -178,20 +179,49 @@ void AddParticleRenderPass(rg::RgBuilder& builder,
 
             if (passDesc.emitters.empty()) return;
 
-            // Bind the billboard graphics pipeline once for all emitters.
-            // All particle emitters share the same PSO (billboard VS + alpha-blend PS).
+            // ── Bind render targets, viewport, pipeline ──────────────────────
+            // BeginRenderPass binds HDR color + depth for billboard drawing.
+            // Does NOT clear — preserves existing sky/lighting content.
+            RHIRenderPassDesc rpDesc{};
+            rpDesc.colorAttachmentCount = 1;
+            rpDesc.colorAttachments[0].texture = passDesc.colorTexture;
+            rpDesc.colorAttachments[0].clear   = false;
+            rpDesc.hasDepth = true;
+            rpDesc.depthAttachment.texture = passDesc.depthTexture;
+            rpDesc.depthAttachment.clear   = false;
+            cmd->BeginRenderPass(rpDesc);
+
+            // Viewport + scissor (required for DX12 — not inherited across passes).
+            {
+                RHIViewport vp{};
+                vp.width  = static_cast<float>(passDesc.renderWidth);
+                vp.height = static_cast<float>(passDesc.renderHeight);
+                vp.maxDepth = 1.0f;
+                cmd->SetViewport(vp);
+                RHIScissorRect sr{};
+                sr.right  = static_cast<int32_t>(passDesc.renderWidth);
+                sr.bottom = static_cast<int32_t>(passDesc.renderHeight);
+                cmd->SetScissor(sr);
+            }
+
+            // Pipeline + root signature (resets all root param bindings).
             cmd->SetPipeline(passDesc.billboardPipeline);
 
-            // Read-set attribute buffer transitions (UAV->SRV) and indirect
-            // draw args transitions (UAV->IndirectArgument) are handled by the
-            // render graph's automatic barrier scheduling via the pb.Read()
-            // declarations above. No manual barriers needed here.
+            // Re-bind PerFrameCB at slot 1 (b1) — viewProj, camera, etc.
+            if (passDesc.perFrameCB.cpuPtr) {
+                cmd->SetRootCBV(1, passDesc.perFrameCB.bufferHandle,
+                                passDesc.perFrameCB.offsetBytes,
+                                passDesc.perFrameCB.cpuPtr,
+                                passDesc.perFrameCB.sizeBytes);
+            }
 
-            // Draw each emitter (already sorted back-to-front).
+            // Draw each emitter (sorted back-to-front).
             for (const auto& emitter : passDesc.emitters) {
-                EnsureIndirectArgsReadable(cmd, *emitter.buffer);
                 DrawEmitterBillboards(cmd, emitter);
             }
+
+
+            cmd->EndRenderPass();
 
             // Log first execution for diagnostics.
             static bool loggedOnce = false;
