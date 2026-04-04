@@ -25,8 +25,8 @@ Copy `m_hdrSceneColor` at end-of-frame (after lighting, before SSR next frame) i
 ### Phase 3: Re-enable and Test
 - [x] 3.1 Set `r.SSR` default back to `true` in all 3 locations
 - [x] 3.2 Capture damaged_helmet — verify zero flickering. **CONFIRMED by user: flickering eliminated.**
-- [ ] 3.3 Capture material_showcase — verify SSR adds ground reflections at sphere edges
-- [ ] 3.4 Remove duplicate `r.SSR` CVar from `frame_postprocess.cpp` (keep only `frame_lighting.cpp`)
+- [x] 3.3 Capture material_showcase — SSR active, chrome sphere shows env reflections.
+- [x] 3.4 Remove duplicate `r.SSR` CVar from `frame_postprocess.cpp` (kept only in `frame_lighting.cpp`).
 
 ## References
 - UE5: `ScreenSpaceReflections.usf`, reads `PrevViewInfo.TemporalAAHistory.RT[0]`

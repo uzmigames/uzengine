@@ -21,7 +21,7 @@
 #include <cstring>
 
 // ── CVars ────────────────────────────────────────────────────────────────
-static auto* cv_SSR             = UZ_CVAR_BOOL("r.SSR", true, "Screen-space reflections");
+// r.SSR CVar is declared in frame_lighting.cpp (single source of truth)
 static auto* cv_MotionBlur      = UZ_CVAR_BOOL("r.MotionBlur", true, "Motion blur");
 static auto* cv_DOF             = UZ_CVAR_BOOL("r.DOF", false, "Depth of field");
 static auto* cv_CAS             = UZ_CVAR_BOOL("r.CAS", true, "Contrast adaptive sharpening");
