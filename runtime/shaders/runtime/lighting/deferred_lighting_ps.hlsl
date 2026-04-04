@@ -26,6 +26,8 @@ struct GBufferIndices {
     uint positionIdx;
     uint emissiveIdx;
     uint envMisSrvIdx;  ///< Temporally-accumulated env MIS specular (kSentinelSrvIndex = disabled).
+    uint iblPrefilteredSrvIdx; ///< IBL prefiltered specular cubemap (via root constants, bypasses CB ring).
+    uint iblIrradianceSrvIdx;  ///< IBL irradiance cubemap (via root constants, bypasses CB ring).
 };
 ConstantBuffer<GBufferIndices> gBufIndices : register(b0);
 #else
@@ -328,8 +330,8 @@ float4 main(FSInput input) : SV_Target {
         float3 irradiance = EvalSH_L2(N, skyIrradianceSH);
 
 #ifdef UZ_BINDLESS
-        if (IsSHZero(skyIrradianceSH) && irradianceSrvIndex != kSentinelSrvIndex) {
-            TextureCube<float4> irrTex = ResourceDescriptorHeap[irradianceSrvIndex];
+        if (IsSHZero(skyIrradianceSH) && gBufIndices.iblIrradianceSrvIdx != kSentinelSrvIndex) {
+            TextureCube<float4> irrTex = ResourceDescriptorHeap[gBufIndices.iblIrradianceSrvIdx];
             irradiance = irrTex.SampleLevel(linearSampler, WorldToCubemap(N), 0).rgb;
         }
 #endif
@@ -351,8 +353,8 @@ float4 main(FSInput input) : SV_Target {
         float3 radiance = float3(0, 0, 0);
         float2 envBRDF = float2(0, 0);
 #ifdef UZ_BINDLESS
-        if (prefilteredSrvIndex != kSentinelSrvIndex) {
-            TextureCube<float4> prefTex = ResourceDescriptorHeap[prefilteredSrvIndex];
+        if (gBufIndices.iblPrefilteredSrvIdx != kSentinelSrvIndex) {
+            TextureCube<float4> prefTex = ResourceDescriptorHeap[gBufIndices.iblPrefilteredSrvIdx];
             radiance = prefTex.SampleLevel(linearSampler, WorldToCubemap(R), mipLevel).rgb;
         }
 #endif
@@ -390,7 +392,9 @@ float4 main(FSInput input) : SV_Target {
 
         // Blend by metallic factor
         float3 singleScatter = lerp(FssEss_d, FssEss_m, metallic);
-        float3 multiScatter  = lerp(Fms_d * Ems_d, Fms_m * Ems_m, metallic);
+        // Clamp multi-scatter to non-negative — analytical DFG can produce Ems < 0
+        // at very low roughness, causing negative multi-scatter that cancels specular.
+        float3 multiScatter  = max(float3(0,0,0), lerp(Fms_d * Ems_d, Fms_m * Ems_m, metallic));
 
         // Specular ambient: radiance × single-scatter + irradiance × multi-scatter
         float3 specularAmbient = radiance * singleScatter
@@ -430,7 +434,9 @@ float4 main(FSInput input) : SV_Target {
         // Horizon occlusion — prevent reflections below surface
         // @ref Lagarde 2012 "Horizon Occlusion for Normal Mapped Reflections"
         float horizon = saturate(1.0 + dot(R, N));
-        specularAmbient *= horizon * horizon;
+        // Only apply horizon for rough surfaces — smooth mirrors shouldn't lose energy
+        float horizonFade = saturate(roughness * 4.0); // 0 at roughness=0, 1 at roughness>=0.25
+        specularAmbient *= lerp(1.0, horizon * horizon, horizonFade);
 
         // Specular occlusion — rough dielectrics in occluded areas
         // @ref Lagarde 2014 "Moving Frostbite to PBR" — specular occlusion
@@ -469,7 +475,7 @@ float4 main(FSInput input) : SV_Target {
     // @ref Three.js MeshPhysicalMaterial.transmission — screen-space refraction
     // When transmission > 0, sample the environment cubemap with a refracted
     // direction and blend with the surface result based on Fresnel.
-    if (transmission > 0.0 && prefilteredSrvIndex != kSentinelSrvIndex) {
+    if (transmission > 0.0 && gBufIndices.iblPrefilteredSrvIdx != kSentinelSrvIndex) {
         // Compute refracted direction through the surface
         // @ref Snell's law: eta = n_outside / n_inside = 1.0 / ior
         float specularFromAlpha = frac(packedAlpha / 16.0) * 16.0; // extract specular from packed
@@ -491,7 +497,7 @@ float4 main(FSInput input) : SV_Target {
         // Sample environment at refracted direction with roughness-based mip
         float refractMip = roughness * float(prefilteredMipLevels - 1);
 #ifdef UZ_BINDLESS
-        TextureCube<float4> prefTexT = ResourceDescriptorHeap[prefilteredSrvIndex];
+        TextureCube<float4> prefTexT = ResourceDescriptorHeap[gBufIndices.iblPrefilteredSrvIdx];
         float3 refractedColor = prefTexT.SampleLevel(linearSampler, WorldToCubemap(refractedDir), refractMip).rgb;
 #else
         float3 refractedColor = float3(0, 0, 0);
@@ -519,6 +525,7 @@ float4 main(FSInput input) : SV_Target {
     // Sample precomputed 32x32x16 AP volume: RGB = inscattering, A = mean transmittance.
     // Applied after all lighting to attenuate distant objects and add atmospheric haze.
     float3 color = Lo + ambient + emissive;
+
 
 #ifdef UZ_BINDLESS
     if (aerialPerspectiveEnabled != 0 && apVolumeSrvIndex != kSentinelSrvIndex) {

@@ -69,6 +69,8 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
         lightDesc.emissiveSrvIndex    = m_gbuffer.emissiveSRV;
         lightDesc.envMisSrvIndex      = (m_envMISPass && m_envMISPass->IsInitialized())
                                         ? m_envMISPass->GetAccumulatedSrv() : UINT32_MAX;
+        lightDesc.iblPrefilteredSrvIndex = m_iblResult.prefilteredSrvIndex;
+        lightDesc.iblIrradianceSrvIndex  = m_iblResult.irradianceSrvIndex;
         lightDesc.albedoTexture       = m_gbuffer.albedo;
         lightDesc.normalTexture       = m_gbuffer.normal;
         lightDesc.depthTextureForSrv  = m_gbuffer.depth;

@@ -120,15 +120,17 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
             // ── Bind G-Buffer textures ───────────────────────────────────
             if (desc.bindless) {
                 // SM6.6: push descriptor indices for G-Buffer SRVs.
-                const uint32_t indices[6] = {
+                const uint32_t indices[8] = {
                     desc.albedoSrvIndex,
                     desc.normalSrvIndex,
                     desc.depthSrvIndex,
                     desc.positionSrvIndex,
                     desc.emissiveSrvIndex,
-                    desc.envMisSrvIndex
+                    desc.envMisSrvIndex,
+                    desc.iblPrefilteredSrvIndex,
+                    desc.iblIrradianceSrvIndex
                 };
-                cmd->SetRootConstants(kSlotRootConstants, indices, 6);
+                cmd->SetRootConstants(kSlotRootConstants, indices, 8);
             } else {
                 // SM5: bind G-Buffer textures directly at fragment texture slots t0-t4, t10.
                 cmd->SetFragmentTexture(0, desc.albedoTexture);

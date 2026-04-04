@@ -66,6 +66,8 @@ struct LightingPassDesc {
     uint32_t          positionSrvIndex;  ///< SRV descriptor index for world-space position G-Buffer (SM6.6 bindless).
     uint32_t          emissiveSrvIndex;  ///< SRV descriptor index for emissive G-Buffer (SM6.6 bindless).
     uint32_t          envMisSrvIndex = UINT32_MAX; ///< SRV for env MIS accumulated specular (UINT32_MAX = disabled).
+    uint32_t          iblPrefilteredSrvIndex = UINT32_MAX; ///< IBL prefiltered specular cubemap SRV (via root constants — immune to CB ring staleness).
+    uint32_t          iblIrradianceSrvIndex  = UINT32_MAX; ///< IBL irradiance cubemap SRV (via root constants — immune to CB ring staleness).
     RHITextureHandle  albedoTexture;     ///< Physical albedo texture handle (SM5 fallback binding).
     RHITextureHandle  normalTexture;     ///< Physical normal texture handle (SM5 fallback binding).
     RHITextureHandle  depthTextureForSrv;///< Physical depth texture handle (SM5 fallback binding, read as SRV).
