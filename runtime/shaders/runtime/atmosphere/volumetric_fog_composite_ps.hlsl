@@ -49,24 +49,31 @@ cbuffer VolumetricFogCB : register(b2) {
     uint   gridX;
     uint   gridY;
     uint   gridZ;
+    float  extinctionScale;
+    float3 _emissive;
+    float  fogStartDistance;
+    float  nearFadeInDistance;
 };
 
 SamplerState linearSampler : register(s0);
 
 /// @ref Hillaire 2015 — exponential depth distribution (must match inject/scatter)
+/// @ref UE5 — startZ = max(nearZ, fogStartDistance)
 float SliceToDepth(uint slice, uint numSlices)
 {
+    float startZ = max(nearZ, fogStartDistance);
     float t = (float(slice) + 0.5) / float(numSlices);
-    return nearZ * pow(farZ / max(nearZ, 0.01), t);
+    return startZ * pow(farZ / max(startZ, 0.01), t);
 }
 
 /// Convert a view-space depth to UVW in the froxel volume.
 /// XY = screen UV, Z = normalized depth mapped to exponential slice distribution.
 float3 DepthToFroxelUVW(float2 screenUV, float viewDepthCm)
 {
-    // Invert the exponential distribution:
-    // depth = nearZ * (farZ/nearZ)^t  →  t = log(depth/nearZ) / log(farZ/nearZ)
-    float t = log(max(viewDepthCm, nearZ) / nearZ) / log(farZ / nearZ);
+    // Must match the inject/scatter depth distribution exactly.
+    // depth = startZ * (farZ/startZ)^t  →  t = log(depth/startZ) / log(farZ/startZ)
+    float startZ = max(nearZ, fogStartDistance);
+    float t = log(max(viewDepthCm, startZ) / startZ) / log(farZ / startZ);
     return float3(screenUV, saturate(t));
 }
 

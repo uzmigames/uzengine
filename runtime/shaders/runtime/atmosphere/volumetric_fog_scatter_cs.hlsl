@@ -33,19 +33,25 @@ cbuffer VolumetricFogCB : register(b2) {
     uint   gridZ;
     float  extinctionScale;
     float3 emissive;
+    float  fogStartDistance;
+    float  nearFadeInDistance;
 };
 
 /// @ref Hillaire 2015 — exponential depth distribution (must match inject)
+/// @ref UE5 GetVolumetricFogGridZParams — start offset pushes grid away from camera
 float SliceToDepth(uint slice, uint numSlices)
 {
+    float startZ = max(nearZ, fogStartDistance);
     float t = (float(slice) + 0.5) / float(numSlices);
-    return nearZ * pow(farZ / max(nearZ, 0.01), t);
+    return startZ * pow(farZ / max(startZ, 0.01), t);
 }
 
 /// Compute slice thickness for the exponential distribution.
+/// @ref UE5 — slice 0 starts at startZ, NOT at depth 0.
 float SliceThickness(uint slice, uint numSlices)
 {
-    float d0 = (slice > 0) ? SliceToDepth(slice - 1, numSlices) : 0.0;
+    float startZ = max(nearZ, fogStartDistance);
+    float d0 = (slice > 0) ? SliceToDepth(slice - 1, numSlices) : startZ;
     float d1 = SliceToDepth(slice, numSlices);
     return d1 - d0;
 }
@@ -66,13 +72,22 @@ void main(uint3 DTid : SV_DispatchThreadID)
     float  accumTransmittance = 1.0;
 
     // Front-to-back: slice 0 is nearest to camera
+    float accumDepth = 0.0;
+
     for (uint z = 0; z < gridZ; ++z) {
         float4 sliceData = inscatteringVol.Load(int4(DTid.xy, z, 0));
         float3 sliceInscatter = sliceData.rgb;
         float  sliceExtinction = sliceData.a;
 
-        // Slice thickness in world units (cm → convert to meaningful distance)
         float thickness = SliceThickness(z, gridZ);
+        accumDepth += thickness;
+
+        // ── Near-camera fade-in (UE5 pattern) ────────────────────────
+        // @ref UE5 VolumetricFog.usf — FadeInLerpValue suppresses fog
+        // near the camera to prevent the "white blob" artifact.
+        float fadeIn = (nearFadeInDistance > 0.0)
+            ? saturate(accumDepth / nearFadeInDistance)
+            : 1.0;
 
         // Transmittance through this slice
         // @ref Beer-Lambert law: T = exp(-extinction × distance)
@@ -81,11 +96,12 @@ void main(uint3 DTid : SV_DispatchThreadID)
         // Energy-conservative integration (Frostbite method):
         // @ref Hillaire 2015 Eq. 5 — analytical integration within each slice
         // S_int = (S - S * T_step) / max(extinction, epsilon)
-        float3 Sint = (sliceInscatter - sliceInscatter * sliceTransmittance)
+        // Modulated by fadeIn to suppress near-camera contribution.
+        float3 Sint = fadeIn * (sliceInscatter - sliceInscatter * sliceTransmittance)
                     / max(sliceExtinction, 1e-6);
 
         accumInscatter += accumTransmittance * Sint;
-        accumTransmittance *= sliceTransmittance;
+        accumTransmittance *= lerp(1.0, sliceTransmittance, fadeIn);
 
         // Write integrated result for this slice
         integratedVol[uint3(DTid.xy, z)] = float4(accumInscatter, accumTransmittance);

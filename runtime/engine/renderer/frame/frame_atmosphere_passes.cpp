@@ -117,64 +117,65 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
 
 
     // ── Froxel Volumetric Fog (compute, applied before height fog) ─────
+    // Only runs when a HeightFogComponent with enableVolumetricFog=true exists.
+    // Without a component, no fog is rendered (matches UE5 — fog requires an actor).
     if (m_volFogPass && m_volFogPass->IsInitialized()
         && cv_VolFog->value > 0.5f && ctx.bindless && ctx.world) {
 
-        VolumetricFogCB fogCB{};
-        std::memcpy(&fogCB.invViewProj, &ctx.perFrame.invViewProj, 64);
-        fogCB.cameraPosX     = ctx.perFrame.cameraPos.x;
-        fogCB.cameraPosY     = ctx.perFrame.cameraPos.y;
-        fogCB.cameraPosZ     = ctx.perFrame.cameraPos.z;
-        fogCB.nearZ          = ctx.perFrame.nearPlane;
-        fogCB.farZ           = 640000.0f; // 6.4 km default fog distance
-        fogCB.globalDensity  = 0.00005f;  // Very subtle default (optical depth ~5 at 1km)
-        fogCB.heightFalloff  = 0.001f;   // Gentle height falloff
-        fogCB.heightOffset   = 0.0f;      // Base height
-        fogCB.albedoR        = 1.0f;
-        fogCB.albedoG        = 1.0f;
-        fogCB.albedoB        = 1.0f;
-        fogCB.phaseG         = 0.5f;      // HG asymmetry
-        fogCB.sunDirX        = ctx.sunDir.x;
-        fogCB.sunDirY        = ctx.sunDir.y;
-        fogCB.sunDirZ        = ctx.sunDir.z;
-        fogCB.sunIntensity   = ctx.sunColor.Length();
-        fogCB.sunColorR      = ctx.sunColor.x;
-        fogCB.sunColorG      = ctx.sunColor.y;
-        fogCB.sunColorB      = ctx.sunColor.z;
-        fogCB.temporalAlpha  = 0.05f;
-        fogCB.depthSrvIdx    = m_gbuffer.depthSRV;
-        fogCB.frameIndex     = ctx.frameIndex;
-        fogCB.extinctionScale = 1.0f;
-        fogCB.emissiveR      = 0.0f;
-        fogCB.emissiveG      = 0.0f;
-        fogCB.emissiveB      = 0.0f;
-
-        // Override from HeightFogComponent if volumetric fog is enabled
-        if (ctx.world) {
+        // Find a HeightFogComponent with volumetric fog enabled
+        bool foundVolFog = false;
+        HeightFogComponent const* volFogComp = nullptr;
+        {
             auto fogView = ctx.world->GetRegistry().view<HeightFogComponent>();
             for (auto enttEntity : fogView) {
                 auto& fc = fogView.get<HeightFogComponent>(enttEntity);
-                if (!fc.enabled || !fc.enableVolumetricFog) continue;
-                fogCB.globalDensity   = fc.density;
-                fogCB.heightFalloff   = fc.heightFalloff;
-                fogCB.heightOffset    = fc.baseHeight;
-                fogCB.albedoR         = fc.volumetricFogAlbedo.x;
-                fogCB.albedoG         = fc.volumetricFogAlbedo.y;
-                fogCB.albedoB         = fc.volumetricFogAlbedo.z;
-                fogCB.phaseG          = fc.volumetricFogScatteringDistribution;
-                fogCB.extinctionScale = fc.volumetricFogExtinctionScale;
-                fogCB.emissiveR       = fc.volumetricFogEmissive.x;
-                fogCB.emissiveG       = fc.volumetricFogEmissive.y;
-                fogCB.emissiveB       = fc.volumetricFogEmissive.z;
-                fogCB.farZ            = fc.volumetricFogDistance * 100.0f; // component stores cm already
-                break;
+                if (fc.enabled && fc.enableVolumetricFog) {
+                    volFogComp = &fc;
+                    foundVolFog = true;
+                    break;
+                }
             }
         }
 
-        m_volFogPass->RegisterPasses(
-            rgBuilder, ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc,
-            fogCB, *m_cbRing, ctx.pipelines,
-            ctx.bindless, ctx.renderWidth, ctx.renderHeight);
+        if (foundVolFog && volFogComp) {
+            VolumetricFogCB fogCB{};
+            std::memcpy(&fogCB.invViewProj, &ctx.perFrame.invViewProj, 64);
+            fogCB.cameraPosX     = ctx.perFrame.cameraPos.x;
+            fogCB.cameraPosY     = ctx.perFrame.cameraPos.y;
+            fogCB.cameraPosZ     = ctx.perFrame.cameraPos.z;
+            fogCB.nearZ          = ctx.perFrame.nearPlane;
+            fogCB.sunDirX        = ctx.sunDir.x;
+            fogCB.sunDirY        = ctx.sunDir.y;
+            fogCB.sunDirZ        = ctx.sunDir.z;
+            fogCB.sunIntensity   = ctx.sunColor.Length();
+            fogCB.sunColorR      = ctx.sunColor.x;
+            fogCB.sunColorG      = ctx.sunColor.y;
+            fogCB.sunColorB      = ctx.sunColor.z;
+            fogCB.temporalAlpha  = 0.05f;
+            fogCB.depthSrvIdx    = m_gbuffer.depthSRV;
+            fogCB.frameIndex     = ctx.frameIndex;
+
+            // All fog params come from the component
+            fogCB.globalDensity     = volFogComp->density;
+            fogCB.heightFalloff     = volFogComp->heightFalloff;
+            fogCB.heightOffset      = volFogComp->baseHeight;
+            fogCB.albedoR           = volFogComp->volumetricFogAlbedo.x;
+            fogCB.albedoG           = volFogComp->volumetricFogAlbedo.y;
+            fogCB.albedoB           = volFogComp->volumetricFogAlbedo.z;
+            fogCB.phaseG            = volFogComp->volumetricFogScatteringDistribution;
+            fogCB.extinctionScale   = volFogComp->volumetricFogExtinctionScale;
+            fogCB.emissiveR         = volFogComp->volumetricFogEmissive.x;
+            fogCB.emissiveG         = volFogComp->volumetricFogEmissive.y;
+            fogCB.emissiveB         = volFogComp->volumetricFogEmissive.z;
+            fogCB.farZ              = volFogComp->volumetricFogDistance * 100.0f;
+            fogCB.fogStartDistance   = volFogComp->volumetricFogStartDistance;
+            fogCB.nearFadeInDistance = volFogComp->volumetricFogNearFadeInDistance;
+
+            m_volFogPass->RegisterPasses(
+                rgBuilder, ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc,
+                fogCB, *m_cbRing, ctx.pipelines,
+                ctx.bindless, ctx.renderWidth, ctx.renderHeight);
+        }
     }
 
     if (m_passInspector.IsPassEnabled("fog")) {

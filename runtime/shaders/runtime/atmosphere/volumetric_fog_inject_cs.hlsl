@@ -33,17 +33,20 @@ cbuffer VolumetricFogCB : register(b2) {
     uint   gridZ;
     float  extinctionScale;
     float3 emissive;
+    float  fogStartDistance;
+    float  nearFadeInDistance;
 };
 
 // ─── Depth slicing — exponential distribution ──────────────────────────────
 
 /// @ref Hillaire 2015 — exponential depth distribution
-/// slice_depth = nearZ * (farZ/nearZ)^((slice+0.5)/numSlices)
+/// @ref UE5 GetVolumetricFogGridZParams — start offset pushes grid away from camera
 /// More resolution near camera where fog detail matters most.
 float SliceToDepth(uint slice, uint numSlices)
 {
+    float startZ = max(nearZ, fogStartDistance); // UE5: push start past near clip
     float t = (float(slice) + 0.5) / float(numSlices);
-    return nearZ * pow(farZ / max(nearZ, 0.01), t);
+    return startZ * pow(farZ / max(startZ, 0.01), t);
 }
 
 /// Henyey-Greenstein phase function.

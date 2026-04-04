@@ -75,7 +75,9 @@ struct VolumetricFogCB {
     float    emissiveR;            ///< Fog emissive R.
     float    emissiveG;            ///< Fog emissive G.
     float    emissiveB;            ///< Fog emissive B.
-    float    _pad[15] = {};        ///< Pad to 256 bytes (196 data + 60 pad = 256).
+    float    fogStartDistance;     ///< Min depth for fog grid (cm). Pushes slice 0 away from camera.
+    float    nearFadeInDistance;   ///< Fade-in ramp distance (cm). 0 = no fade.
+    float    _pad[13] = {};        ///< Pad to 256 bytes (204 data + 52 pad = 256).
 };
 
 static_assert(sizeof(VolumetricFogCB) == 256,
