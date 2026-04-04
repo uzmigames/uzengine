@@ -391,10 +391,14 @@ void ParseMaterialComponent(World& world,
     mat->metallicPath  = ReadString(comp, "metallic");
     mat->aoPath        = ReadString(comp, "ao");
     mat->emissivePath  = ReadString(comp, "emissive");
+    mat->baseColorTintR      = ReadFloat(comp, "baseColorR", 1.0f);
+    mat->baseColorTintG      = ReadFloat(comp, "baseColorG", 1.0f);
+    mat->baseColorTintB      = ReadFloat(comp, "baseColorB", 1.0f);
     mat->roughnessMultiplier = ReadFloat(comp, "roughnessMultiplier", 1.0f);
     mat->metallicMultiplier  = ReadFloat(comp, "metallicMultiplier", 1.0f);
     mat->normalIntensity     = ReadFloat(comp, "normalIntensity", 1.0f);
     mat->aoIntensity         = ReadFloat(comp, "aoIntensity", 1.0f);
+    mat->specular            = ReadFloat(comp, "specular", 0.5f);
     mat->emissiveColorR    = ReadFloat(comp, "emissiveColorR", 0.0f);
     mat->emissiveColorG    = ReadFloat(comp, "emissiveColorG", 0.0f);
     mat->emissiveColorB    = ReadFloat(comp, "emissiveColorB", 0.0f);

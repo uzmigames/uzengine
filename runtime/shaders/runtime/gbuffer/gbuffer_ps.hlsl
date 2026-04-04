@@ -152,6 +152,9 @@ GBufferOutput main(PSInput input) {
     albedo *= baseColorTint;
 
     // ── PBR params ────────────────────────────────────────────────────────
+    // When no texture is bound (index == 0 in bindless, or fallback in SM5),
+    // use the multiplier as the direct value instead of sampling.
+    // This allows scenes to set roughness/metallic via scalar params alone.
     float metallic  = 0.0;
     float roughness = 1.0;
     float ao        = 1.0;
@@ -166,10 +169,16 @@ GBufferOutput main(PSInput input) {
         if (roughnessIndex > 0) {
             Texture2D<float4> tex = ResourceDescriptorHeap[roughnessIndex];
             roughness = tex.SampleBias(linearSampler, uv, mipBias).r;
+            roughness *= roughnessMultiplier;
+        } else {
+            roughness = roughnessMultiplier; // no texture: use multiplier directly
         }
         if (metallicIndex > 0) {
             Texture2D<float4> tex = ResourceDescriptorHeap[metallicIndex];
             metallic = tex.SampleBias(linearSampler, uv, mipBias).r;
+            metallic *= metallicMultiplier;
+        } else {
+            metallic = metallicMultiplier; // no texture: use multiplier directly
         }
         if (aoIndex > 0) {
             Texture2D<float4> tex = ResourceDescriptorHeap[aoIndex];
@@ -182,12 +191,12 @@ GBufferOutput main(PSInput input) {
         ao = orm.r; roughness = orm.g; metallic = orm.b;
     } else {
         roughness = roughnessTexture.SampleBias(linearSampler, uv, mipBias).r;
+        roughness *= roughnessMultiplier;
         metallic  = metallicTexture.SampleBias(linearSampler, uv, mipBias).r;
+        metallic  *= metallicMultiplier;
         ao        = aoTexture.SampleBias(linearSampler, uv, mipBias).r;
     }
 #endif
-    roughness *= roughnessMultiplier;
-    metallic  *= metallicMultiplier;
     ao = lerp(1.0, ao, aoIntensity);
 
     // ── Normal mapping ────────────────────────────────────────────────────
