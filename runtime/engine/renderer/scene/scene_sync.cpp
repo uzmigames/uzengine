@@ -327,8 +327,12 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
             }
         }
 
-        // Map materialId to texture SRV indices if textures are loaded
-        if (!m_textures.empty() && meshComp.materialId < static_cast<uint32_t>(m_textures.size())) {
+        // Legacy materialId → texture mapping: only use when the component
+        // explicitly set a materialId AND textures exist. Default materialId=0
+        // would incorrectly bind the first loaded texture (e.g., HDRI) as albedo
+        // for meshes that have no texture assigned.
+        if (meshComp.materialLoaded && meshComp.materialId > 0
+            && meshComp.materialId < static_cast<uint32_t>(m_textures.size())) {
             const auto& tex = m_textures[meshComp.materialId];
             cmd.albedoSrvIndex = tex.srvIndex;
             cmd.albedoTexture  = tex.handle;
