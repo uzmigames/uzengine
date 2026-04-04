@@ -9,7 +9,7 @@
         "mesh": { "asset": "meshes/sphere.uzmesh" },
         "material": {
           "baseColorR": 1.0, "baseColorG": 1.0, "baseColorB": 1.0,
-          "roughnessMultiplier": 0.02,
+          "roughnessMultiplier": 0.0,
           "metallicMultiplier": 0.0,
           "specular": 1.0,
           "normalIntensity": 1.0
@@ -36,20 +36,20 @@
         "mesh": { "asset": "meshes/sphere.uzmesh" },
         "material": {
           "baseColorR": 1.0, "baseColorG": 1.0, "baseColorB": 1.0,
-          "roughnessMultiplier": 0.02,
+          "roughnessMultiplier": 0.0,
           "metallicMultiplier": 1.0,
           "normalIntensity": 1.0
         }
       }
     },
     {
-      "name": "Sphere_BrushedMetal",
+      "name": "Sphere_DarkMetal",
       "components": {
         "transform": { "position": [0, -200, 100], "scale": [90, 90, 90] },
         "mesh": { "asset": "meshes/sphere.uzmesh" },
         "material": {
-          "baseColorR": 0.533, "baseColorG": 0.533, "baseColorB": 0.533,
-          "roughnessMultiplier": 0.5,
+          "baseColorR": 0.3, "baseColorG": 0.3, "baseColorB": 0.3,
+          "roughnessMultiplier": 0.4,
           "metallicMultiplier": 1.0,
           "normalIntensity": 1.0
         }
@@ -62,8 +62,9 @@
         "mesh": { "asset": "meshes/sphere.uzmesh" },
         "material": {
           "baseColorR": 0.416, "baseColorG": 0.706, "baseColorB": 0.251,
-          "roughnessMultiplier": 0.02,
+          "roughnessMultiplier": 0.1,
           "metallicMultiplier": 0.0,
+          "specular": 0.5,
           "normalIntensity": 1.0
         }
       }
@@ -71,15 +72,15 @@
     {
       "name": "MainCamera",
       "components": {
-        "transform": { "position": [700, 0, 100], "rotation": [0, 0, 0] },
-        "camera": { "fov": 60, "near": 1, "far": 100000, "active": true }
+        "transform": { "position": [1800, 0, 100], "rotation": [0, 0, 0] },
+        "camera": { "fov": 40, "near": 1, "far": 100000, "active": true }
       }
     },
     {
       "name": "Sun",
       "components": {
         "transform": { "position": [0, 0, 920], "rotation": [50, -30, 0] },
-        "light": { "type": "directional", "color": [1.0, 0.98, 0.94], "intensity": 5 }
+        "light": { "type": "directional", "color": [1.0, 0.98, 0.94], "intensity": 3 }
       }
     },
     {
@@ -96,16 +97,9 @@
         "sky_light": {
           "intensity": 1.0,
           "light_color": [1.0, 1.0, 1.0],
-          "cubemap_path": "textures/hdri/grasslands_sunset_4k.hdr",
+          "cubemap_path": "textures/ballroom_2k.pmrem.ktx2",
           "cubemap_resolution": 512
         }
-      }
-    },
-    {
-      "name": "ReflectionProbe",
-      "components": {
-        "transform": { "position": [0, 0, 100] },
-        "reflection_probe": { "influence_radius": 3000.0, "resolution": 256 }
       }
     },
     {

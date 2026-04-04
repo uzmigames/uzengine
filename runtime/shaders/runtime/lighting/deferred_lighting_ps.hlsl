@@ -9,6 +9,10 @@
 #include "../material/diffuse.hlsli"
 #include "light_types.hlsli"
 #include "ibl.hlsli"
+
+/// Z-up world direction → Y-up DX cubemap convention.
+/// Must match skybox_cubemap_ps.hlsl and sky_cubemap_cs.hlsl.
+float3 WorldToCubemap(float3 dir) { return float3(dir.x, dir.z, dir.y); }
 // NOTE: shadow.hlsli and contact_shadows.hlsli are included AFTER PerFrameCB
 // because they reference CVar fields (shadowPCFPenumbra, etc.) from the CB.
 
@@ -304,7 +308,7 @@ float4 main(FSInput input) : SV_Target {
 #ifdef UZ_BINDLESS
         if (IsSHZero(skyIrradianceSH) && irradianceSrvIndex != kSentinelSrvIndex) {
             TextureCube<float4> irrTex = ResourceDescriptorHeap[irradianceSrvIndex];
-            irradiance = irrTex.SampleLevel(clampSampler, N, 0).rgb;
+            irradiance = irrTex.SampleLevel(clampSampler, WorldToCubemap(N), 0).rgb;
         }
 #endif
         irradiance = max(irradiance, skyLightMinAmbient);
@@ -327,7 +331,7 @@ float4 main(FSInput input) : SV_Target {
 #ifdef UZ_BINDLESS
         if (prefilteredSrvIndex != kSentinelSrvIndex) {
             TextureCube<float4> prefTex = ResourceDescriptorHeap[prefilteredSrvIndex];
-            radiance = prefTex.SampleLevel(clampSampler, R, mipLevel).rgb;
+            radiance = prefTex.SampleLevel(clampSampler, WorldToCubemap(R), mipLevel).rgb;
         }
 #endif
         // Analytical DFG approximation — replaces GPU-baked BRDF LUT with the

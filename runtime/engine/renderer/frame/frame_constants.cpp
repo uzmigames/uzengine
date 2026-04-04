@@ -120,9 +120,9 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     perFrame.nearPlane   = camera.GetNearPlane();
     perFrame.farPlane    = camera.GetFarPlane();
 
-    // ── IBL SRV indices (set once after first bake, UINT32_MAX = no IBL) ──
-    perFrame.irradianceSrvIndex  = m_iblResult.irradianceSrvIndex;
-    perFrame.prefilteredSrvIndex = m_iblResult.prefilteredSrvIndex;
+    // IBL SRV indices are set AFTER the SkyLight processing loop below,
+    // because SetPMREMEnvironment/SetHDRIEnvironment update m_iblResult
+    // during that loop and we need the updated values in the PerFrameCB.
     perFrame.brdfLutSrvIndex     = m_brdfLutSrvIndex;
     perFrame.prefilteredMipLevels = IBLBaker::kPrefilteredMipLevels;
 
@@ -226,6 +226,11 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
             break;  // First SkyLightComponent only
         }
     }
+
+    // ── IBL SRV indices (AFTER SkyLight loop — SetPMREMEnvironment may have updated m_iblResult) ──
+    perFrame.irradianceSrvIndex  = m_iblResult.irradianceSrvIndex;
+    perFrame.prefilteredSrvIndex = m_iblResult.prefilteredSrvIndex;
+
 
     // Apply CVar-driven skylight overrides on top of component values.
     // r.SkyLight.Intensity acts as a multiplier on the component intensity.
