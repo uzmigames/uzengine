@@ -14,7 +14,7 @@
 
 | Status | Task | Progress | Description |
 |--------|------|----------|-------------|
-| ⬚ | phase1_falcor-dlss-integration | 0/11 | falcor dlss integration |
+| ⬚ | phase1_falcor-dlss-integration | 10/11 | falcor dlss integration |
 | ⬚ | phase1_falcor-dxr-rt-infrastructure | 21/23 | falcor dxr rt infrastructure |
 | ⬚ | phase1_falcor-hair-rendering | 0/17 | falcor hair rendering |
 | ⬚ | phase1_falcor-layered-materials | 0/9 | falcor layered materials |
@@ -28,20 +28,20 @@
 
 | Status | Task | Progress | Description |
 |--------|------|----------|-------------|
-| ⬚ | phase2_aces-hill-specular-occlusion | 0/6 | aces hill specular occlusion |
-| ⬚ | phase2_advanced-sss-burley-profile | 0/6 | advanced sss burley profile |
-| ⬚ | phase2_aerial-perspective-completion | 0/6 | aerial perspective completion |
-| ⬚ | phase2_agx-tonemapping | 0/6 | agx tonemapping |
-| ⬚ | phase2_anisotropic-ggx-brdf | 0/6 | anisotropic ggx brdf |
+| ⬚ | phase2_aces-hill-specular-occlusion | 6/16 | aces hill specular occlusion |
+| ⬚ | phase2_advanced-sss-burley-profile | 0/23 | advanced sss burley profile |
+| ⬚ | phase2_aerial-perspective-completion | 0/17 | aerial perspective completion |
+| ⬚ | phase2_agx-tonemapping | 0/14 | agx tonemapping |
+| ⬚ | phase2_anisotropic-ggx-brdf | 4/21 | anisotropic ggx brdf |
 | ⬚ | phase2_anti-tiling-material | 0/27 | anti tiling material |
-| ⬚ | phase2_baked-lightmap-gi | 0/6 | baked lightmap gi |
-| ⬚ | phase2_f82-extended-fresnel | 0/6 | f82 extended fresnel |
-| ⬚ | phase2_froxel-volumetric-fog | 0/6 | froxel volumetric fog |
-| ⬚ | phase2_fsr2-full-integration | 0/6 | fsr2 full integration |
-| ⬚ | phase2_hdri-skybox-completion | 0/6 | hdri skybox completion |
-| ⬚ | phase2_iridescence-thin-film | 0/6 | iridescence thin film |
+| ⬚ | phase2_baked-lightmap-gi | 0/24 | baked lightmap gi |
+| ⬚ | phase2_f82-extended-fresnel | 0/11 | f82 extended fresnel |
+| ⬚ | phase2_froxel-volumetric-fog | 0/28 | froxel volumetric fog |
+| ⬚ | phase2_fsr2-full-integration | 0/20 | fsr2 full integration |
+| ⬚ | phase2_hdri-skybox-completion | 0/14 | hdri skybox completion |
+| ⬚ | phase2_iridescence-thin-film | 0/16 | iridescence thin film |
 | ⬚ | phase2_material-graph-pipeline | 0/31 | material graph pipeline |
-| ⬚ | phase2_omni-pcss-soft-shadows | 0/6 | omni pcss soft shadows |
+| ⬚ | phase2_omni-pcss-soft-shadows | 0/14 | omni pcss soft shadows |
 
 ## phase3b
 

@@ -28,6 +28,17 @@
     ],
     "PreToolUse": [
       {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/block-destructive-git.sh",
+            "timeout": 5,
+            "statusMessage": "Checking git safety..."
+          }
+        ]
+      },
+      {
         "matcher": "Bash(git commit*)",
         "hooks": [
           {

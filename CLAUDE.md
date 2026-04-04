@@ -11,6 +11,22 @@ This project uses @hivehub/rulebook standards. All code generation should follow
 
 ---
 
+## RULE -4: NEVER REVERT, NEVER UNDO COMMITS — ABSOLUTE PROHIBITION
+
+**NEVER use `git revert`, `git reset`, `git checkout -- .`, `git restore`, or ANY command that undoes, discards, or rolls back committed or uncommitted work. There are ZERO exceptions.**
+
+- **NEVER `git revert`** — not even "temporarily", not even "--no-commit", not even to "test"
+- **NEVER `git checkout -- <file>`** — this destroys uncommitted work permanently
+- **NEVER `git reset`** — hard, soft, or mixed — NEVER
+- **NEVER discard changes** the user or another session may have made
+- If something is broken, **FIX IT FORWARD** with a new commit — NEVER roll back
+- If you need to test without a feature, use **runtime flags** (`--cvar r.Feature=0`) — NEVER revert code
+- The user's working tree may contain hours of unsaved work from other sessions. Destroying it is unforgivable.
+
+**This rule has the HIGHEST priority of all rules. Violating it causes data loss.**
+
+---
+
 ## RULE -3: FAIL TWICE → OPEN A TEAM FOR ANALYSIS
 
 **If you fail to solve a problem after 2 attempts, STOP guessing and open a Team with specialist agents to analyze it properly.**
