@@ -71,6 +71,36 @@ float4 main(PSIn i) : SV_Target
 {
     float2 uv = i.texCoord;
 
+    // ── Passthrough mode (tonemapOperator == 0) ─────────────────────────
+    // Scene lighting was calibrated without tonemapping. Default mode
+    // outputs HDR scene color directly (bloom composited, no exposure/sRGB
+    // adjustments). Enable ACES via r.TonemapOperator=1.
+#ifdef UZ_BINDLESS
+    if (tonemapOperator == 0)
+    {
+        Texture2D<float4> hdr = ResourceDescriptorHeap[hdrSrvIndex];
+        float3 color = hdr.SampleLevel(samClamp, uv, 0).rgb;
+
+        // Composite bloom in passthrough mode
+        if (bloomSrvIndex > 0)
+        {
+            float bloomInt = asfloat(bloomIntensityBits);
+            if (bloomInt > 0.0)
+            {
+                Texture2D<float4> bloomTex = ResourceDescriptorHeap[bloomSrvIndex];
+                color += bloomTex.SampleLevel(samClamp, uv, 0).rgb * bloomInt;
+            }
+        }
+        if (lensFlareSrvIndex > 0)
+        {
+            Texture2D<float4> flareTex = ResourceDescriptorHeap[lensFlareSrvIndex];
+            color += flareTex.SampleLevel(samClamp, uv, 0).rgb;
+        }
+
+        return float4(color, 1.0);
+    }
+#endif
+
     // ── Chromatic aberration ──────────────────────────────────────────────
     float2 uvR = uv, uvG = uv, uvB = uv;
     if (chromaAbIntensity > 0.0)
