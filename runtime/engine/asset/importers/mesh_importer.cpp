@@ -16,6 +16,8 @@
 #include <fastgltf/types.hpp>
 #include <meshoptimizer.h>
 
+#include "engine/asset/mesh/normal_smoother.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -517,14 +519,14 @@ AssetImportResult MeshImporter::Import(
             }
         }
 
-        // Generate flat normals if not provided (operates on this primitive's
-        // vertices only, using local indices before global offset).
+        // Compute smooth normals ONLY when glTF has no normals.
+        // glTF normals from DCC tools (Blender, Maya) are already correct —
+        // overwriting them with averaging destroys the intended shading.
         if (!hasNormals) {
-            // Build a temporary view into the allVertices for this primitive
             std::vector<VertexPosNormUV> primVerts(
                 allVertices.begin() + static_cast<ptrdiff_t>(primVertStart),
                 allVertices.begin() + static_cast<ptrdiff_t>(primVertStart + vertexCount));
-            GenerateFlatNormals(primVerts, primIndices);
+            ComputeSmoothNormals(primVerts, primIndices, 60.0f);
             std::copy(primVerts.begin(), primVerts.end(),
                       allVertices.begin() + static_cast<ptrdiff_t>(primVertStart));
         }

@@ -17,6 +17,8 @@
 #include <ufbx.h>
 #include <meshoptimizer.h>
 
+#include "engine/asset/mesh/normal_smoother.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -889,10 +891,11 @@ AssetImportResult FbxImporter::Import(
             std::swap(groupIndices[t + 1], groupIndices[t + 2]);
         }
 
-        // Generate flat normals if the FBX had no normal layer
-        if (!hasNormals) {
-            GenerateFlatNormals(groupVertices, groupIndices);
-        }
+        // Compute smooth normals — area+angle weighted averaging with 60° hard edge threshold.
+        // Applied whether normals are imported or not: imported normals may be flat (per-face)
+        // from the DCC tool, and smooth averaging produces correct results in both cases.
+        // @ref Max 1999 "Weights for Computing Vertex Normals from Facet Normals"
+        ComputeSmoothNormals(groupVertices, groupIndices, 60.0f);
 
         // Append to global arrays
         for (const uint32_t idx : groupIndices) {

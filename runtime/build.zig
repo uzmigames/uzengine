@@ -78,6 +78,7 @@ pub fn build(b: *std.Build) void {
         "engine/renderer/raytracing",
         "engine/asset",
         "engine/asset/formats",
+        "engine/asset/mesh",
         "engine/asset/importers",
         "engine/job",
         "engine/ecs",
@@ -231,6 +232,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/core", cpp_flags);
     addCppDir(runtime_mod, b, "engine/asset", cpp_flags);
     addCppDir(runtime_mod, b, "engine/asset/formats", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/asset/mesh", cpp_flags);
     addCppDir(runtime_mod, b, "engine/asset/importers", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/camera", cpp_flags);
