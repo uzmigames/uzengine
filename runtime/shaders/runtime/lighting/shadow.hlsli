@@ -91,7 +91,7 @@ float SampleShadowCascade(float3 worldPos, float3 N, float NdotL, uint cascadeId
     float cmpDepth = proj.z - depthBias - slopeBias;
     float texelSize = 1.0 / shadowMapSize;
     // Consistent penumbra across all cascades — constant texel radius.
-    // CVar r.Shadow.PCFPenumbraRadius (default 2.0)
+    // CVar r.Shadow.PCFPenumbraRadius (default 2.0) via PerFrameCB.
     float penumbra = shadowPCFPenumbra;
 
     float halfTexel = texelSize * 0.5;
