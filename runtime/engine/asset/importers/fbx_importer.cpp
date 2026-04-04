@@ -19,6 +19,8 @@
 
 #include "engine/asset/mesh/normal_smoother.h"
 #include "engine/asset/mesh/mikktspace_tangents.h"
+#include "engine/asset/mesh/packed_normal.h"
+#include "import_sidecar.h"
 #include "cvar.h"
 
 // ── Mesh import CVars ──
@@ -910,11 +912,26 @@ AssetImportResult FbxImporter::Import(
             std::swap(groupIndices[t + 1], groupIndices[t + 2]);
         }
 
-        // Compute smooth normals based on import mode CVar.
-        // 0=Import (keep source normals), 1=Recompute (always smooth), 2=Auto
-        // Per-asset override: if source has .uzimport with "normalMode" option, use it.
-        const int normalMode = static_cast<int>(cv_MeshNormalMode->value);
-        const float smoothAngle = cv_MeshSmoothAngle->value;
+        // Compute smooth normals based on import mode.
+        // Priority: .uzimport per-asset options > CVar globals.
+        int normalMode = static_cast<int>(cv_MeshNormalMode->value);
+        float smoothAngle = cv_MeshSmoothAngle->value;
+
+        // Check for per-asset .uzimport sidecar override
+        {
+            const std::string sidecarPath = sourceName + ".uzimport";
+            auto sidecarResult = ReadSidecarFile(sidecarPath);
+            if (sidecarResult.success) {
+                auto it = sidecarResult.sidecar.options.find("normalMode");
+                if (it != sidecarResult.sidecar.options.end()) {
+                    normalMode = std::atoi(it->second.c_str());
+                }
+                it = sidecarResult.sidecar.options.find("smoothingAngle");
+                if (it != sidecarResult.sidecar.options.end()) {
+                    smoothAngle = static_cast<float>(std::atof(it->second.c_str()));
+                }
+            }
+        }
         if (normalMode == 1 || (normalMode == 2 && !hasNormals)) {
             ComputeSmoothNormals(groupVertices, groupIndices, smoothAngle, groupSmoothFlags);
         }
@@ -1069,29 +1086,60 @@ AssetImportResult FbxImporter::Import(
         finalVertexData.resize(byteSize);
         std::memcpy(finalVertexData.data(), skinnedVertices.data(), byteSize);
     } else {
-        // ── Static path: build Vertex or VertexPacked based on CVar ──
-        // PackedNormals disabled for now (CVar exists but default=false until validated).
-        // When enabled: 32 bytes/vertex (33% savings) via int8x4 normal/tangent encoding.
-        finalVertexStride = sizeof(Vertex);
-        std::vector<Vertex> finalVertices(finalVertexCount);
+        // ── Static path: Vertex (48B) or VertexPacked (32B) based on CVar ──
+        static auto* cv_PackedNormals = UZ_CVAR_BOOL("r.Mesh.PackedNormals", false,
+            "Export meshes with packed int8x4 normals/tangents (32B vs 48B)");
 
-        for (size_t i = 0; i < finalVertexCount; ++i) {
-            const auto& src = optimizedVertices[i];
-            auto& dst = finalVertices[i];
+        if (cv_PackedNormals->value >= 0.5f) {
+            // Packed format: 32 bytes/vertex (33% savings)
+            finalVertexStride = sizeof(VertexPacked);
+            std::vector<VertexPacked> packedVertices(finalVertexCount);
 
-            dst.position = {src.position[0], src.position[1], src.position[2]};
-            dst.normal   = {src.normal[0],   src.normal[1],   src.normal[2]};
-            dst.texcoord = {src.uv[0],       src.uv[1]};
-            dst.tangent  = {
-                remappedTangents[i * 4 + 0],
-                remappedTangents[i * 4 + 1],
-                remappedTangents[i * 4 + 2],
-                remappedTangents[i * 4 + 3]};
+            for (size_t i = 0; i < finalVertexCount; ++i) {
+                const auto& src = optimizedVertices[i];
+                auto& dst = packedVertices[i];
+
+                dst.position = {src.position[0], src.position[1], src.position[2]};
+                auto pn = PackedNormal::Encode(src.normal[0], src.normal[1], src.normal[2]);
+                dst.packedNormal[0] = pn.x;
+                dst.packedNormal[1] = pn.y;
+                dst.packedNormal[2] = pn.z;
+                dst.packedNormal[3] = pn.w;
+                dst.texcoord = {src.uv[0], src.uv[1]};
+                auto pt = PackedTangent::Encode(
+                    remappedTangents[i * 4 + 0], remappedTangents[i * 4 + 1],
+                    remappedTangents[i * 4 + 2], remappedTangents[i * 4 + 3]);
+                dst.packedTangent[0] = pt.x;
+                dst.packedTangent[1] = pt.y;
+                dst.packedTangent[2] = pt.z;
+                dst.packedTangent[3] = pt.w;
+                dst._pad = 0;
+            }
+
+            const size_t byteSize = finalVertexCount * sizeof(VertexPacked);
+            finalVertexData.resize(byteSize);
+            std::memcpy(finalVertexData.data(), packedVertices.data(), byteSize);
+        } else {
+            // Standard format: 48 bytes/vertex
+            finalVertexStride = sizeof(Vertex);
+            std::vector<Vertex> finalVertices(finalVertexCount);
+
+            for (size_t i = 0; i < finalVertexCount; ++i) {
+                const auto& src = optimizedVertices[i];
+                auto& dst = finalVertices[i];
+
+                dst.position = {src.position[0], src.position[1], src.position[2]};
+                dst.normal   = {src.normal[0],   src.normal[1],   src.normal[2]};
+                dst.texcoord = {src.uv[0],       src.uv[1]};
+                dst.tangent  = {
+                    remappedTangents[i * 4 + 0], remappedTangents[i * 4 + 1],
+                    remappedTangents[i * 4 + 2], remappedTangents[i * 4 + 3]};
+            }
+
+            const size_t byteSize = finalVertexCount * sizeof(Vertex);
+            finalVertexData.resize(byteSize);
+            std::memcpy(finalVertexData.data(), finalVertices.data(), byteSize);
         }
-
-        const size_t byteSize = finalVertexCount * sizeof(Vertex);
-        finalVertexData.resize(byteSize);
-        std::memcpy(finalVertexData.data(), finalVertices.data(), byteSize);
     }
 
     // ── Auto-LOD generation (LOD1 50%, LOD2 25%, LOD3 12.5%) ──

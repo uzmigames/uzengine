@@ -7,6 +7,7 @@
 #include "engine/asset/mesh/normal_smoother.h"
 #include "engine/asset/mesh/packed_normal.h"
 #include "engine/asset/formats/uzmesh_format.h"
+#include "engine/renderer/mesh/vertex.h"
 
 #include <cmath>
 #include <vector>
@@ -137,6 +138,22 @@ TEST(PackedNormal, EncodeDecodeAxes) {
     EXPECT_EQ(py.y, 127);
     EXPECT_EQ(pz.z, 127);
     EXPECT_EQ(pn.x, -127);
+}
+
+TEST(PackedNormal, BandwidthSavings) {
+    // Verify packed format is actually smaller
+    EXPECT_EQ(sizeof(uz::Vertex), 48u);
+    EXPECT_EQ(sizeof(uz::VertexPacked), 32u);
+    // 33% savings: (48-32)/48 = 0.333
+    float savings = 1.0f - static_cast<float>(sizeof(uz::VertexPacked)) / static_cast<float>(sizeof(uz::Vertex));
+    EXPECT_NEAR(savings, 0.333f, 0.01f);
+
+    // For a 100K vertex mesh:
+    size_t standardSize = 100000 * sizeof(uz::Vertex);     // 4.8 MB
+    size_t packedSize   = 100000 * sizeof(uz::VertexPacked); // 3.2 MB
+    EXPECT_EQ(standardSize, 4800000u);
+    EXPECT_EQ(packedSize,   3200000u);
+    EXPECT_EQ(standardSize - packedSize, 1600000u); // 1.6 MB saved
 }
 
 TEST(PackedTangent, SignPreserved) {

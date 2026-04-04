@@ -229,7 +229,12 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                     // The DrawList is sorted so same-mesh commands are consecutive.
                     if (drawCmd.meshId != lastBoundMeshId) {
                         if (desc.bindless) {
-                            cmd->SetDescriptorIndex(kSlotRootConstants, mesh.vbSrvIndex);
+                            // Push vertexBufferIndex + usePackedNormals (2 DWORDs)
+                            const uint32_t pushData[2] = {
+                                mesh.vbSrvIndex,
+                                (mesh.vertexStride == 32) ? 1u : 0u
+                            };
+                            cmd->SetRootConstants(kSlotRootConstants, pushData, 2);
                         } else {
                             cmd->SetVertexBuffer(0, mesh.vertexBuffer, 0);
                         }
