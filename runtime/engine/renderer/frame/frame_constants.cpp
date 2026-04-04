@@ -11,6 +11,8 @@
 
 #include "camera.h"
 #include "post_process_volume.h"
+#include "texture_loader.h"
+#include "vfs.h"
 #include "gpu_mesh.h"
 #include "sh_projection.h"
 #include "profiler.h"
@@ -152,6 +154,36 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
             perFrame.slCloudAOApertureScale    = sl.cloudAmbientOcclusionApertureScale;
             perFrame.slSkyDistanceThreshold    = sl.skyDistanceThreshold;
             perFrame.slOcclusionContrast       = sl.occlusionContrast;
+
+            // ── Auto-load HDRI from cubemap_path (UE5 SpecifiedCubemap pattern) ──
+            if (sl.sourceType == ESkyLightSourceType::SpecifiedCubemap
+                && !sl.cubemapPath.empty()
+                && !m_hdriActive) {
+                IVFS* vfs = ctx.vfs;
+                if (vfs) {
+                    auto data = vfs->Read(sl.cubemapPath);
+                    if (!data.empty()) {
+                        const char* fmt = "hdr";
+                        if (sl.cubemapPath.size() > 4 &&
+                            sl.cubemapPath.substr(sl.cubemapPath.size() - 4) == ".exr") {
+                            fmt = "exr";
+                        }
+                        TextureLoadResult hdrResult = TextureLoader::LoadHDRFromMemory(
+                            m_device, data.data(), data.size(), fmt, sl.cubemapPath.c_str());
+                        if (hdrResult.handle.IsValid()) {
+                            TrackExternalTexture(hdrResult);
+                            SetHDRIEnvironment(hdrResult.srvIndex, sl.cubemapResolution);
+                            UZ_LOG(Renderer, Info,
+                                "SkyLight: auto-loaded HDRI '{}' (SRV={}, res={})",
+                                sl.cubemapPath, hdrResult.srvIndex, sl.cubemapResolution);
+                        } else {
+                            UZ_LOG(Renderer, Warning,
+                                "SkyLight: failed to load HDRI '{}'", sl.cubemapPath);
+                        }
+                    }
+                }
+            }
+
             break;  // First SkyLightComponent only
         }
     }

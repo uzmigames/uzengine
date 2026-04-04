@@ -11,6 +11,30 @@ This project uses @hivehub/rulebook standards. All code generation should follow
 
 ---
 
+## RULE -3: FAIL TWICE → OPEN A TEAM FOR ANALYSIS
+
+**If you fail to solve a problem after 2 attempts, STOP guessing and open a Team with specialist agents to analyze it properly.**
+
+- 2 failed attempts = open a team with analyzer agents
+- NEVER keep guessing blindly — each failed attempt wastes time
+- Agents should READ CODE, not guess. Grep, read files, trace execution paths.
+- The team should produce a ROOT CAUSE before any fix is attempted
+
+---
+
+## RULE -2: NEVER STOP TO ASK — IMPLEMENT TO COMPLETION
+
+**NEVER pause to ask "quer que eu implemente?", "quer que eu continue?", "quer que eu comite?".**
+
+- When a task has clear next steps, DO THEM immediately
+- Commit when a logical unit of work is done — don't ask permission
+- If something breaks, fix it — don't ask if the user wants it fixed
+- If a fix reveals another issue, fix that too
+- Only stop if genuinely blocked (missing info that can't be inferred)
+- The user trusts you to make implementation decisions
+
+---
+
 ## RULE -1: OBEY THE USER — DO EXACTLY WHAT IS ASKED
 
 **When the user gives a direct instruction, DO IT EXACTLY. No reinterpretation, no "better" alternatives, no creative solutions.**
