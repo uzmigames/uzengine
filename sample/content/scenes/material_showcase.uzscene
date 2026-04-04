@@ -5,7 +5,7 @@
     {
       "name": "Sphere_Glass",
       "components": {
-        "transform": { "position": [0, 200, 100], "scale": [90, 90, 90] },
+        "transform": { "position": [0, 400, 100], "scale": [90, 90, 90] },
         "mesh": { "asset": "meshes/sphere.uzmesh" },
         "material": {
           "baseColorR": 1.0, "baseColorG": 1.0, "baseColorB": 1.0,
@@ -19,7 +19,7 @@
     {
       "name": "Sphere_Diffuse",
       "components": {
-        "transform": { "position": [0, 100, 100], "scale": [90, 90, 90] },
+        "transform": { "position": [0, 200, 100], "scale": [90, 90, 90] },
         "mesh": { "asset": "meshes/sphere.uzmesh" },
         "material": {
           "baseColorR": 1.0, "baseColorG": 1.0, "baseColorB": 1.0,
@@ -45,7 +45,7 @@
     {
       "name": "Sphere_BrushedMetal",
       "components": {
-        "transform": { "position": [0, -100, 100], "scale": [90, 90, 90] },
+        "transform": { "position": [0, -200, 100], "scale": [90, 90, 90] },
         "mesh": { "asset": "meshes/sphere.uzmesh" },
         "material": {
           "baseColorR": 0.533, "baseColorG": 0.533, "baseColorB": 0.533,
@@ -58,7 +58,7 @@
     {
       "name": "Sphere_GreenPlastic",
       "components": {
-        "transform": { "position": [0, -200, 100], "scale": [90, 90, 90] },
+        "transform": { "position": [0, -400, 100], "scale": [90, 90, 90] },
         "mesh": { "asset": "meshes/sphere.uzmesh" },
         "material": {
           "baseColorR": 0.416, "baseColorG": 0.706, "baseColorB": 0.251,
