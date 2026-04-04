@@ -200,10 +200,23 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
                         }
                         if (hdrResult.handle.IsValid()) {
                             TrackExternalTexture(hdrResult);
+                            if (hdrResult.isPMREM) {
+                                // PMREM atlas: skip equirect→cubemap + prefilter bake.
+                                // The atlas contains prefiltered cubemap faces at multiple
+                                // roughness levels. For now, use the standard path (equirect
+                                // decode is approximate but functional). Full PMREM atlas
+                                // decoding will skip the prefilter bake entirely.
+                                // TODO: SetPMREMEnvironment(hdrResult) — bypass equirect + prefilter
+                                UZ_LOG(Renderer, Info,
+                                    "SkyLight: '{}' is PMREM atlas ({}px face, {} LODs) — "
+                                    "using equirect fallback for now",
+                                    sl.cubemapPath, hdrResult.pmremFaceSize, hdrResult.pmremLodCount);
+                            }
                             SetHDRIEnvironment(hdrResult.srvIndex, sl.cubemapResolution);
                             UZ_LOG(Renderer, Info,
-                                "SkyLight: auto-loaded HDRI '{}' (SRV={}, res={})",
-                                sl.cubemapPath, hdrResult.srvIndex, sl.cubemapResolution);
+                                "SkyLight: auto-loaded HDRI '{}' (SRV={}, res={}, PMREM={})",
+                                sl.cubemapPath, hdrResult.srvIndex, sl.cubemapResolution,
+                                hdrResult.isPMREM);
                         } else {
                             UZ_LOG(Renderer, Warning,
                                 "SkyLight: failed to load HDRI '{}'", sl.cubemapPath);

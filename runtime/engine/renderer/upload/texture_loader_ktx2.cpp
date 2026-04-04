@@ -76,10 +76,40 @@ TextureLoadResult TextureLoader::LoadKTX2FromMemory(
     const uint32_t levels = transcoder.get_levels();
     const bool isHDR = transcoder.is_hdr();
 
-    UZ_LOG(Renderer, Info, "KTX2: '{}' — {}x{}, {} levels, HDR={}",
-           debugName, width, height, levels, isHDR);
+    const uint32_t faces = transcoder.get_faces();
+
+    UZ_LOG(Renderer, Info, "KTX2: '{}' — {}x{}, {} levels, {} faces, HDR={}",
+           debugName, width, height, levels, faces, isHDR);
 
     if (width == 0 || height == 0) { transcoder.clear(); return {}; }
+
+    // ── PMREM atlas detection ──────────────────────────────────────────
+    // Three.js CubeUV PMREM atlas: face_count=1, width = 3 * faceSize,
+    // height ≈ 4 * faceSize (LOD groups stacked vertically).
+    // @ref Three.js PMREMGenerator — octahedral atlas packing
+    bool isPMREM = false;
+    uint32_t pmremFaceSize = 0;
+    uint32_t pmremLodCount = 0;
+    if (faces == 1 && (width % 3) == 0) {
+        const uint32_t faceSize = width / 3;
+        // Validate: height should be approximately sum of 2*faceSize geometric series
+        // 2*faceSize + 2*(faceSize/2) + 2*(faceSize/4) + ... ≈ 4*faceSize
+        if (height >= faceSize * 3 && height <= faceSize * 5 && faceSize >= 64) {
+            isPMREM = true;
+            pmremFaceSize = faceSize;
+            // Count LOD levels: sum of (2 * faceSize >> lod) until height is filled
+            uint32_t accHeight = 0;
+            for (uint32_t lod = 0; lod < 16; ++lod) {
+                uint32_t lodFace = faceSize >> lod;
+                if (lodFace < 4) break;
+                accHeight += lodFace * 2; // 2 rows per LOD (3×2 face grid)
+                pmremLodCount = lod + 1;
+                if (accHeight >= height) break;
+            }
+            UZ_LOG(Renderer, Info, "KTX2: '{}' detected as PMREM atlas — face={}px, {} LODs",
+                   debugName, pmremFaceSize, pmremLodCount);
+        }
+    }
 
     if (!transcoder.start_transcoding()) {
         UZ_LOG(Renderer, Error, "LoadKTX2FromMemory: start_transcoding failed");
@@ -168,9 +198,12 @@ TextureLoadResult TextureLoader::LoadKTX2FromMemory(
     result.srvIndex = device->GetTextureSRVIndex(texHandle);
     result.width    = width;
     result.height   = height;
+    result.isPMREM       = isPMREM;
+    result.pmremFaceSize = pmremFaceSize;
+    result.pmremLodCount = pmremLodCount;
 
-    UZ_LOG(Renderer, Info, "KTX2 loaded: '{}' {}x{} HDR={} SRV={}",
-           debugName, width, height, isHDR, result.srvIndex);
+    UZ_LOG(Renderer, Info, "KTX2 loaded: '{}' {}x{} HDR={} SRV={} PMREM={}",
+           debugName, width, height, isHDR, result.srvIndex, isPMREM);
     return result;
 }
 
