@@ -504,16 +504,24 @@ float4 main(FSInput input) : SV_Target {
         refractedColor = prefTexT.SampleLevel(linearSampler, WorldToCubemap(refractedDir), roughness * float(prefilteredMipLevels - 1)).rgb;
 #endif
 
-        // Glass: Fresnel-driven reflection with transparency
-        // At center (NoV high, fresnel low): nearly invisible — let background show through
-        // At edges (NoV low, fresnel high): bright reflective rim
-        // This mimics Three.js MeshPhysicalMaterial transmission appearance
-        float3 glassReflection = reflectedColor * fresnel;
+        // Glass: Fresnel reflection rim + refracted environment at center
+        // @ref Three.js MeshPhysicalMaterial — transmission creates see-through effect
+        // At grazing angles (NoV→0): strong reflection rim (Fresnel ~1.0)
+        // At center (NoV→1): see-through with slight refraction distortion
+        //
+        // In deferred we can't do true screen-space refraction, so we sample
+        // the environment cubemap at a refracted direction. The "glass" appearance
+        // comes from the refracted environment being slightly offset from the
+        // background, plus the bright Fresnel rim at edges.
+        float3 glassColor = lerp(refractedColor, reflectedColor, fresnel);
 
-        // Override all lighting — glass is Fresnel reflection only
-        // The "transparency" comes from NOT adding diffuse/emissive — only Fresnel rim
+        // Attenuate center to look more transparent (Three.js appearance)
+        // Without this, the refracted env looks identical to the background
+        float centerTransparency = 1.0 - fresnel; // high at center, low at rim
+        float attenuation = lerp(0.3, 1.0, fresnel); // center dimmer, rim bright
+
         Lo = float3(0, 0, 0);
-        ambient = glassReflection;
+        ambient = glassColor * attenuation;
         emissive = float3(0, 0, 0);
     }
 

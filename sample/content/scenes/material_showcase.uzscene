@@ -13,8 +13,7 @@
           "metallicMultiplier": 0.0,
           "specular": 0.5,
           "transmission": 1.0,
-          "ior": 1.5,
-          "normalIntensity": 1.0
+          "ior": 1.5
         }
       }
     },
@@ -26,8 +25,7 @@
         "material": {
           "baseColorR": 1.0, "baseColorG": 1.0, "baseColorB": 1.0,
           "roughnessMultiplier": 1.0,
-          "metallicMultiplier": 0.0,
-          "normalIntensity": 1.0
+          "metallicMultiplier": 0.0
         }
       }
     },
@@ -39,8 +37,7 @@
         "material": {
           "baseColorR": 1.0, "baseColorG": 1.0, "baseColorB": 1.0,
           "roughnessMultiplier": 0.0,
-          "metallicMultiplier": 1.0,
-          "normalIntensity": 1.0
+          "metallicMultiplier": 1.0
         }
       }
     },
@@ -50,10 +47,9 @@
         "transform": { "position": [0, -200, 100], "scale": [90, 90, 90] },
         "mesh": { "asset": "meshes/sphere.uzmesh" },
         "material": {
-          "baseColorR": 0.3, "baseColorG": 0.3, "baseColorB": 0.3,
+          "baseColorR": 0.4, "baseColorG": 0.4, "baseColorB": 0.4,
           "roughnessMultiplier": 0.4,
-          "metallicMultiplier": 1.0,
-          "normalIntensity": 1.0
+          "metallicMultiplier": 1.0
         }
       }
     },
@@ -63,11 +59,10 @@
         "transform": { "position": [0, -400, 100], "scale": [90, 90, 90] },
         "mesh": { "asset": "meshes/sphere.uzmesh" },
         "material": {
-          "baseColorR": 0.416, "baseColorG": 0.706, "baseColorB": 0.251,
-          "roughnessMultiplier": 0.1,
+          "baseColorR": 0.2, "baseColorG": 0.55, "baseColorB": 0.1,
+          "roughnessMultiplier": 0.05,
           "metallicMultiplier": 0.0,
-          "specular": 0.5,
-          "normalIntensity": 1.0
+          "specular": 1.0
         }
       }
     },
