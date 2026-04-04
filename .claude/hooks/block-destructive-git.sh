@@ -10,11 +10,15 @@
 #   git clean -f, git push --force, git push -f,
 #   git branch -D, git branch -d
 
-CMD=$(python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tool_input',{}).get('command',''))" 2>/dev/null)
+FULL_CMD=$(python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tool_input',{}).get('command',''))" 2>/dev/null)
 
-if [ -z "$CMD" ]; then
+if [ -z "$FULL_CMD" ]; then
     exit 0
 fi
+
+# Extract only the first line — heredoc content in commit messages
+# should not trigger false positives (e.g. "git commit -m 'fix revert bug'")
+CMD=$(echo "$FULL_CMD" | head -1)
 
 # Check for destructive git commands
 BLOCKED=""
