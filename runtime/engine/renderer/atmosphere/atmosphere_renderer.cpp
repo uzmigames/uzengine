@@ -857,6 +857,13 @@ void PostFrameAtmosphereBake(
     cmdList->Execute();
     ctx.device->WaitIdle();
 
+    // Destroy previous sky IBL textures before re-baking (caller-owned)
+    if (ctx.iblResult->irradianceTexture.IsValid()) {
+        ctx.device->DestroyTexture(ctx.iblResult->irradianceTexture);
+    }
+    if (ctx.iblResult->prefilteredTexture.IsValid()) {
+        ctx.device->DestroyTexture(ctx.iblResult->prefilteredTexture);
+    }
     *ctx.iblResult = ctx.iblBaker->BakeEnvironment(ctx.skyCubemapSrv, ctx.skyCubemap);
     *ctx.skyIBLDirty = false;
     UZ_LOG(Renderer, Info, "SceneRenderer: Sky IBL baked (irrad={}, prefilt={})",

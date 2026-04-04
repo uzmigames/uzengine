@@ -110,6 +110,7 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     perFrame.brdfLutSrvIndex     = m_brdfLutSrvIndex;
     perFrame.prefilteredMipLevels = IBLBaker::kPrefilteredMipLevels;
 
+
     // ── Environment Map Importance Sampling (MIS) ─────────────────────
     if (m_envMapSampler && m_envMapSampler->IsReady()) {
         perFrame.envSamplerAliasSrv       = m_envMapSampler->GetAliasSrv();

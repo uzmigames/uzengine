@@ -248,8 +248,14 @@ void ReflectionProbeRenderer::Shutdown() {
         m_probeBuffer = RHIBufferHandle{};
     }
 
-    // Clear all probe slots (IBL textures are owned by IBLBaker, not us)
+    // Destroy probe-owned IBL textures and clear slots
     for (uint32_t i = 0; i < kMaxProbes; ++i) {
+        if (m_probes[i].irradianceTexture.IsValid()) {
+            m_device->DestroyTexture(m_probes[i].irradianceTexture);
+        }
+        if (m_probes[i].prefilteredTexture.IsValid()) {
+            m_device->DestroyTexture(m_probes[i].prefilteredTexture);
+        }
         m_probes[i] = {};
     }
 
@@ -349,13 +355,23 @@ ProbeFrameResult ReflectionProbeRenderer::Update(
                 sourceTex = slot.captureCubemap;
             }
 
+            // Destroy previous probe IBL textures before re-baking (caller-owned)
+            if (slot.irradianceTexture.IsValid()) {
+                m_device->DestroyTexture(slot.irradianceTexture);
+            }
+            if (slot.prefilteredTexture.IsValid()) {
+                m_device->DestroyTexture(slot.prefilteredTexture);
+            }
+
             auto bakeResult = m_iblBaker->BakeEnvironment(sourceSrv, sourceTex);
 
             if (bakeResult.irradianceSrvIndex != UINT32_MAX &&
                 bakeResult.prefilteredSrvIndex != UINT32_MAX) {
 
-                slot.irradianceSrvIndex  = bakeResult.irradianceSrvIndex;
-                slot.prefilteredSrvIndex = bakeResult.prefilteredSrvIndex;
+                slot.irradianceSrvIndex   = bakeResult.irradianceSrvIndex;
+                slot.prefilteredSrvIndex  = bakeResult.prefilteredSrvIndex;
+                slot.irradianceTexture    = bakeResult.irradianceTexture;
+                slot.prefilteredTexture   = bakeResult.prefilteredTexture;
                 slot.captured = true;
 
                 // Clear the dirty flag on the ECS component

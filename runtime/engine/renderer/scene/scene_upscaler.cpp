@@ -96,6 +96,15 @@ bool SceneRenderer::SetHDRIEnvironment(uint32_t equirectSrvIndex, uint32_t cubem
     m_hdriCubemap = equirectResult.cubemap;
     m_hdriCubemapSrv = equirectResult.srvIndex;
 
+    // Destroy previous IBL textures before re-baking (caller-owned since baker
+    // no longer auto-destroys — fixes reflection probe bake invalidating HDRI IBL).
+    if (m_iblResult.irradianceTexture.IsValid()) {
+        m_device->DestroyTexture(m_iblResult.irradianceTexture);
+    }
+    if (m_iblResult.prefilteredTexture.IsValid()) {
+        m_device->DestroyTexture(m_iblResult.prefilteredTexture);
+    }
+
     // Bake IBL from the new cubemap
     auto bakeResult = m_iblBaker->BakeEnvironment(m_hdriCubemapSrv, m_hdriCubemap);
     if (bakeResult.irradianceSrvIndex == UINT32_MAX || bakeResult.prefilteredSrvIndex == UINT32_MAX) {

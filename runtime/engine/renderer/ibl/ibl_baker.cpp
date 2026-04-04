@@ -66,14 +66,10 @@ void IBLBaker::Shutdown() {
         m_device->DestroyTexture(m_brdfLutTexture);
         m_brdfLutTexture = RHITextureHandle::Invalid();
     }
-    if (m_irradianceTexture.IsValid()) {
-        m_device->DestroyTexture(m_irradianceTexture);
-        m_irradianceTexture = RHITextureHandle::Invalid();
-    }
-    if (m_prefilteredTexture.IsValid()) {
-        m_device->DestroyTexture(m_prefilteredTexture);
-        m_prefilteredTexture = RHITextureHandle::Invalid();
-    }
+    // Environment bake textures are NOT destroyed here — they are caller-owned
+    // via BakeResult. The baker only keeps non-owning references for SM5 accessors.
+    m_lastIrradianceTexture  = RHITextureHandle::Invalid();
+    m_lastPrefilteredTexture = RHITextureHandle::Invalid();
 
     // Destroy pipelines
     if (m_brdfLutPipeline.IsValid()) {
@@ -648,17 +644,17 @@ IBLBaker::BakeResult IBLBaker::BakeEnvironment(uint32_t envCubemapSrvIndex, RHIT
         m_device->DestroyTexture(prefilteredMipTextures[i]);
     }
 
-    // Destroy previous environment textures if re-baking (sky changed)
-    if (m_irradianceTexture.IsValid()) {
-        m_device->DestroyTexture(m_irradianceTexture);
-    }
-    if (m_prefilteredTexture.IsValid()) {
-        m_device->DestroyTexture(m_prefilteredTexture);
-    }
+    // Return texture handles to caller — caller owns the lifetime.
+    // We no longer auto-destroy previous bakes here because multiple consumers
+    // (HDRI environment + reflection probes) share the same baker instance.
+    // Destroying the previous bake's textures would invalidate SRV indices
+    // that other consumers still reference.
+    result.irradianceTexture  = irradianceTex;
+    result.prefilteredTexture = prefilteredTex;
 
-    // Track texture handles for cleanup in Shutdown()
-    m_irradianceTexture  = irradianceTex;
-    m_prefilteredTexture = prefilteredTex;
+    // Keep a non-owning reference for SM5 GetXxxTexture() accessors
+    m_lastIrradianceTexture  = irradianceTex;
+    m_lastPrefilteredTexture = prefilteredTex;
 
     UZ_LOG(Renderer, Info,
            "IBLBaker: environment baked (irradiance={}x{} SRV={}, prefiltered={}x{} SRV={})",

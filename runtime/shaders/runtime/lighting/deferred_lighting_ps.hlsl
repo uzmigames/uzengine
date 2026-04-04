@@ -260,11 +260,18 @@ float4 main(FSInput input) : SV_Target {
             TextureCube<float4> prefTex = ResourceDescriptorHeap[prefilteredSrvIndex];
             radiance = prefTex.SampleLevel(clampSampler, R, mipLevel).rgb;
         }
-        if (brdfLutSrvIndex != kSentinelSrvIndex) {
-            Texture2D<float4> brdfTex = ResourceDescriptorHeap[brdfLutSrvIndex];
-            envBRDF = brdfTex.SampleLevel(clampSampler, float2(NoV, roughness), 0).rg;
-        }
 #endif
+        // Analytical DFG approximation — replaces GPU-baked BRDF LUT with the
+        // closed-form fit from Karis 2014. No texture lookup needed. This is the
+        // same approach used by Three.js, Filament, and Frostbite.
+        // @ref Karis 2014 "Physically Based Shading" — analytical DFG approximation
+        // @ref Three.js WebGLPrograms DFGApprox — production validation
+        {
+            float a = roughness;
+            float4 r = float4(-1.0, -0.0275, -0.572, 0.022) * a + float4(1.0, 0.0425, 1.04, -0.04);
+            float ab = min(r.x * r.x, exp2(-9.28 * NoV)) * r.x + r.z;
+            envBRDF = float2(ab, r.y * a + r.w);
+        }
 
         // ── Split dielectric/metallic multi-scattering (Three.js pattern) ──
         // @ref Fdez-Aguera 2019 "A Multiple-Scattering Microfacet Model"

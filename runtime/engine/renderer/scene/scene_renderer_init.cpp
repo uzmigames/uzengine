@@ -1207,6 +1207,14 @@ void SceneRenderer::Shutdown() {
     if (m_envMapSampler) m_envMapSampler->Shutdown();
 
     // ── IBL resources ──────────────────────────────────────────────────
+    // Destroy caller-owned IBL textures (baker no longer auto-destroys)
+    if (m_iblResult.irradianceTexture.IsValid()) {
+        m_device->DestroyTexture(m_iblResult.irradianceTexture);
+    }
+    if (m_iblResult.prefilteredTexture.IsValid()) {
+        m_device->DestroyTexture(m_iblResult.prefilteredTexture);
+    }
+    m_iblResult = {};
     if (m_iblBaker) m_iblBaker->Shutdown();
     if (m_hdriCubemap.IsValid()) {
         m_device->DestroyTexture(m_hdriCubemap);

@@ -85,9 +85,15 @@ public:
     [[nodiscard]] uint32_t BakeBRDFLut();
 
     /// Result of environment cubemap baking.
+    ///
+    /// The caller owns the returned textures and is responsible for calling
+    /// `device->DestroyTexture()` when they are no longer needed. The baker
+    /// does NOT track or auto-destroy these textures.
     struct BakeResult {
         uint32_t irradianceSrvIndex  = UINT32_MAX; ///< SRV index for irradiance cubemap (diffuse IBL).
         uint32_t prefilteredSrvIndex = UINT32_MAX; ///< SRV index for prefiltered specular cubemap.
+        RHITextureHandle irradianceTexture;         ///< Texture handle for irradiance cubemap (caller-owned).
+        RHITextureHandle prefilteredTexture;        ///< Texture handle for prefiltered cubemap (caller-owned).
     };
 
     /// Bakes irradiance and prefiltered specular cubemaps from a source environment cubemap.
@@ -151,10 +157,12 @@ public:
     [[nodiscard]] RHITextureHandle GetBRDFLutTexture() const noexcept { return m_brdfLutTexture; }
 
     /// Returns the irradiance cubemap texture handle (for SM5 texture binding).
-    [[nodiscard]] RHITextureHandle GetIrradianceTexture() const noexcept { return m_irradianceTexture; }
+    /// @deprecated Callers should use BakeResult::irradianceTexture instead.
+    [[nodiscard]] RHITextureHandle GetIrradianceTexture() const noexcept { return m_lastIrradianceTexture; }
 
     /// Returns the prefiltered specular cubemap texture handle (for SM5 texture binding).
-    [[nodiscard]] RHITextureHandle GetPrefilteredTexture() const noexcept { return m_prefilteredTexture; }
+    /// @deprecated Callers should use BakeResult::prefilteredTexture instead.
+    [[nodiscard]] RHITextureHandle GetPrefilteredTexture() const noexcept { return m_lastPrefilteredTexture; }
 
     /// Destroys all GPU resources and pipelines owned by the baker.
     ///
@@ -197,9 +205,12 @@ private:
     RHITextureHandle m_brdfLutTexture = RHITextureHandle::Invalid();
     uint32_t         m_brdfLutSrvIndex = UINT32_MAX;
 
-    // ── Environment bake textures (persistent, re-baked on sky change) ──
-    RHITextureHandle m_irradianceTexture  = RHITextureHandle::Invalid();
-    RHITextureHandle m_prefilteredTexture = RHITextureHandle::Invalid();
+    // ── Last baked textures (non-owning reference for SM5 GetXxxTexture()) ──
+    // The baker no longer owns these — callers own the BakeResult textures.
+    // These are kept only for backwards compatibility with GetIrradianceTexture()/
+    // GetPrefilteredTexture() accessors used by SM5 binding paths.
+    RHITextureHandle m_lastIrradianceTexture  = RHITextureHandle::Invalid();
+    RHITextureHandle m_lastPrefilteredTexture = RHITextureHandle::Invalid();
 
 };
 
