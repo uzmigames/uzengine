@@ -216,4 +216,109 @@ void ComputeSmoothNormals(
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Overload with per-face smoothing flags
+// ─────────────────────────────────────────────────────────────────────────────
+
+void ComputeSmoothNormals(
+    std::vector<VertexPosNormUV>& vertices,
+    std::vector<uint32_t>& indices,
+    float smoothingAngleDeg,
+    const std::vector<bool>& faceSmoothFlags)
+{
+    if (faceSmoothFlags.empty()) {
+        // No smoothing flags — fall back to angle-only
+        ComputeSmoothNormals(vertices, indices, smoothingAngleDeg);
+        return;
+    }
+
+    if (vertices.empty() || indices.empty()) return;
+
+    const size_t triCount = indices.size() / 3;
+    const size_t vertCount = vertices.size();
+    const float smoothingAngleRad = smoothingAngleDeg * 3.14159265359f / 180.0f;
+    const float cosThreshold = std::cos(smoothingAngleRad);
+
+    // Step 1: Compute face normals
+    struct FaceInfo { Vec3f normal; float area; bool smooth; };
+    std::vector<FaceInfo> faces(triCount);
+    for (size_t f = 0; f < triCount; ++f) {
+        Vec3f p0 = GetPos(vertices[indices[f * 3 + 0]]);
+        Vec3f p1 = GetPos(vertices[indices[f * 3 + 1]]);
+        Vec3f p2 = GetPos(vertices[indices[f * 3 + 2]]);
+        Vec3f faceNormal = (p1 - p0).cross(p2 - p0);
+        faces[f].area = faceNormal.length() * 0.5f;
+        faces[f].normal = faceNormal.normalized();
+        faces[f].smooth = (f < faceSmoothFlags.size()) ? faceSmoothFlags[f] : true;
+    }
+
+    // Step 2: Build adjacency
+    constexpr float kCellSize = 1e-5f;
+    const float invCellSize = 1.0f / kCellSize;
+
+    struct VertFaceRef { uint32_t vertIdx; uint32_t faceIdx; uint32_t corner; };
+    std::unordered_map<PosKey, std::vector<VertFaceRef>, PosKeyHash> posToFaces;
+    posToFaces.reserve(vertCount);
+
+    for (size_t f = 0; f < triCount; ++f) {
+        for (uint32_t c = 0; c < 3; ++c) {
+            uint32_t vi = indices[f * 3 + c];
+            PosKey key = MakePosKey(GetPos(vertices[vi]), invCellSize);
+            posToFaces[key].push_back({vi, static_cast<uint32_t>(f), c});
+        }
+    }
+
+    // Step 3: Accumulate weighted normals with smoothing flag check
+    std::vector<Vec3f> smoothNormals(vertCount, Vec3f{0, 0, 0});
+
+    for (auto& [key, refs] : posToFaces) {
+        for (size_t i = 0; i < refs.size(); ++i) {
+            const auto& refI = refs[i];
+            const auto& faceI = faces[refI.faceIdx];
+
+            // Own face contribution (always added)
+            uint32_t i0 = indices[refI.faceIdx * 3 + refI.corner];
+            uint32_t i1 = indices[refI.faceIdx * 3 + (refI.corner + 1) % 3];
+            uint32_t i2 = indices[refI.faceIdx * 3 + (refI.corner + 2) % 3];
+            Vec3f e1 = (GetPos(vertices[i1]) - GetPos(vertices[i0])).normalized();
+            Vec3f e2 = (GetPos(vertices[i2]) - GetPos(vertices[i0])).normalized();
+            float cornerAngle = std::acos(std::clamp(e1.dot(e2), -1.0f, 1.0f));
+            smoothNormals[refI.vertIdx] = smoothNormals[refI.vertIdx] + faceI.normal * (faceI.area * cornerAngle);
+
+            // Neighbor contributions — only if BOTH faces are smooth AND within angle threshold
+            for (size_t j = 0; j < refs.size(); ++j) {
+                if (i == j) continue;
+                const auto& refJ = refs[j];
+                const auto& faceJ = faces[refJ.faceIdx];
+
+                // Both faces must be marked smooth
+                if (!faceI.smooth || !faceJ.smooth) continue;
+
+                // Angle threshold check
+                float cosAngle = faceI.normal.dot(faceJ.normal);
+                if (cosAngle < cosThreshold) continue;
+
+                // Compute neighbor's weight
+                uint32_t j0 = indices[refJ.faceIdx * 3 + refJ.corner];
+                uint32_t j1 = indices[refJ.faceIdx * 3 + (refJ.corner + 1) % 3];
+                uint32_t j2 = indices[refJ.faceIdx * 3 + (refJ.corner + 2) % 3];
+                Vec3f je1 = (GetPos(vertices[j1]) - GetPos(vertices[j0])).normalized();
+                Vec3f je2 = (GetPos(vertices[j2]) - GetPos(vertices[j0])).normalized();
+                float jAngle = std::acos(std::clamp(je1.dot(je2), -1.0f, 1.0f));
+
+                smoothNormals[refI.vertIdx] = smoothNormals[refI.vertIdx] + faceJ.normal * (faceJ.area * jAngle);
+            }
+        }
+    }
+
+    // Step 4: Normalize and write back
+    for (size_t v = 0; v < vertCount; ++v) {
+        Vec3f n = smoothNormals[v].normalized();
+        if (n.length() < 0.5f) continue;
+        vertices[v].normal[0] = n.x;
+        vertices[v].normal[1] = n.y;
+        vertices[v].normal[2] = n.z;
+    }
+}
+
 } // namespace uz

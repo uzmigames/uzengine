@@ -793,6 +793,7 @@ AssetImportResult FbxImporter::Import(
         // then rely on meshopt to weld/optimize later.
         std::vector<VertexPosNormUV> groupVertices;
         std::vector<uint32_t> groupIndices;
+        std::vector<bool> groupSmoothFlags; // Per-triangle smoothing flag from FBX
 
         // Per-group bone data (parallel to groupVertices, only used when skinned)
         std::vector<std::array<uint8_t, 4>> groupBoneIndices;
@@ -827,6 +828,17 @@ AssetImportResult FbxImporter::Import(
                 mesh,
                 face);
             const uint32_t numTriangulated = numTriangles * 3;
+
+            // Record per-triangle smoothing flag from FBX face_smoothing
+            {
+                bool faceSmooth = true; // default: smooth
+                if (mesh->face_smoothing.count > fi) {
+                    faceSmooth = mesh->face_smoothing.data[fi];
+                }
+                for (uint32_t t = 0; t < numTriangles; ++t) {
+                    groupSmoothFlags.push_back(faceSmooth);
+                }
+            }
 
             // Each triangulated index is a face-corner index into the mesh's
             // vertex attribute arrays. We create a unique vertex per corner.
@@ -892,11 +904,9 @@ AssetImportResult FbxImporter::Import(
             std::swap(groupIndices[t + 1], groupIndices[t + 2]);
         }
 
-        // Compute smooth normals — area+angle weighted averaging with 60° hard edge threshold.
-        // Applied whether normals are imported or not: imported normals may be flat (per-face)
-        // from the DCC tool, and smooth averaging produces correct results in both cases.
+        // Compute smooth normals with FBX smoothing flags when available.
         // @ref Max 1999 "Weights for Computing Vertex Normals from Facet Normals"
-        ComputeSmoothNormals(groupVertices, groupIndices, 60.0f);
+        ComputeSmoothNormals(groupVertices, groupIndices, 60.0f, groupSmoothFlags);
 
         // Append to global arrays
         for (const uint32_t idx : groupIndices) {

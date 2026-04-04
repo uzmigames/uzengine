@@ -44,4 +44,18 @@ void ComputeSmoothNormals(
     std::vector<uint32_t>& indices,
     float smoothingAngleDeg = 60.0f);
 
+/// Overload with per-face smoothing flags (from FBX `face_smoothing`).
+///
+/// When `faceSmoothFlags` is provided, faces marked as smooth (true) will
+/// average normals with adjacent smooth faces regardless of angle. Faces
+/// marked as flat (false) always get hard edges. The angle threshold still
+/// applies between smooth faces to detect sharp creases.
+///
+/// @param faceSmoothFlags  One bool per triangle. Empty = use angle threshold only.
+void ComputeSmoothNormals(
+    std::vector<VertexPosNormUV>& vertices,
+    std::vector<uint32_t>& indices,
+    float smoothingAngleDeg,
+    const std::vector<bool>& faceSmoothFlags);
+
 } // namespace uz
