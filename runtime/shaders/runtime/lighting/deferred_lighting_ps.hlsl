@@ -240,9 +240,11 @@ float4 main(FSInput input) : SV_Target {
 #endif
         irradiance = max(irradiance, skyLightMinAmbient);
 
-        // Cosine-weighted irradiance for diffuse + multi-scatter terms
-        // @ref Three.js — irradiance * RECIPROCAL_PI for Lambertian BRDF
-        float3 cosineIrradiance = irradiance * (1.0 / PI);
+        // Our SH coefficients are pre-convolved with cosine lobe (UE5 pattern),
+        // so EvalSH_L2 returns irradiance E directly. No /PI needed — our
+        // Frostbite diffuse BRDF already accounts for this.
+        // (Three.js multiplies by PI then divides by PI — net identity)
+        float3 cosineIrradiance = irradiance;
 
         // ── Specular: prefiltered env + BRDF LUT (DFG) ──────────────────
         // @ref Three.js — reflection vector blended with normal for rough surfaces
