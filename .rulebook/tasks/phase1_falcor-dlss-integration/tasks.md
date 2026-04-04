@@ -9,8 +9,8 @@
 
 ## Session 2: Per-Frame Evaluate + Quality Modes + Demo
 
-- [ ] 2.1 Implement `DlssUpscaler::Evaluate` — fill `NVSDK_NGX_D3D12_DLSS_Eval_Params`: color (HDR), depth (reversed-Z), motion vectors (screen-space, pixel units), exposure (1.0 for SDR), jitter offsets (from Halton sequence). Call `NVSDK_NGX_D3D12_EvaluateFeature`. Return output texture SRV.
-- [ ] 2.2 Motion vector format: DLSS expects full-resolution motion vectors in pixel units (not normalized). Verify existing motion vector pass produces correct format; add conversion if needed.
-- [ ] 2.3 `SetQualityMode` reinitialization: if quality mode changes, call `NVSDK_NGX_D3D12_ReleaseFeature` then recreate feature with new settings. Update render resolution accordingly.
-- [ ] 2.4 CLI args in `application_args.cpp`: `--upscaler dlss` sets `UpscalerType::DLSS`; `--dlss-quality <mode>` sets `DlssQuality` (performance/balanced/quality/ultra/dlaa, case-insensitive)
-- [ ] 2.5 Build + verify on RTX hardware: `demo.exe --upscaler dlss --dlss-quality quality --screenshot-stdout --frames 30` produces a correctly upscaled output. Run `--flip` comparing DLSS output vs native resolution reference — FLIP score should be under 0.05. Confirm `--stats` shows render resolution at 0.67× of output.
+- [x] 2.1 Implement `DlssUpscaler::Evaluate` — sets color (HDR), depth (reversed-Z), motion vectors (pixel units), exposure, jitter via NVSDK_NGX_Parameter::Set() virtual methods. Calls pfnEvaluateFeature(). Dynamic loading via LoadLibrary avoids MSVC CRT incompatibility.
+- [x] 2.2 Motion vector format: verified velocity_ps.hlsl outputs RG16F in pixel units (not NDC). MV_Scale set to (1,1) — correct for DLSS.
+- [x] 2.3 Quality mode reinitialization: Execute() detects quality change via cv_DLSSQuality CVar, calls DestroyFeature() + CreateFeature() with new settings. Render resolution updated from NGX optimal settings query.
+- [x] 2.4 CLI args: `--upscaler dlss` maps to r.AntiAliasingMethod=4; `--dlss-quality <mode>` maps to r.DLSS.Quality (0=ultra, 1=perf, 2=balanced, 3=quality, 4=dlaa).
+- [ ] 2.5 Build + verify on RTX hardware: `uzengine.exe --upscaler dlss --dlss-quality quality --screenshot-stdout --frames 30` — requires NVIDIA RTX GPU for runtime testing. Code compiles and runs as stub on non-NVIDIA hardware.
