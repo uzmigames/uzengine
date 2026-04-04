@@ -167,6 +167,9 @@
     float m_lensFlareHaloRadius     = 0.6f;          ///< CVar-driven halo ring radius (UV).
     float m_lensFlareChromaticShift = 0.02f;         ///< CVar-driven chromatic aberration offset.
 
+    // ── Volumetric Fog (froxel-based) ─────────────────────────────────
+    std::unique_ptr<VolumetricFogPass> m_volFogPass;   ///< 160×90×64 froxel fog pipeline (inject + scatter + composite).
+
     // ── Volumetric Clouds ───────────────────────────────────────────────
     std::unique_ptr<CloudPass> m_cloudPass;           ///< GPU volumetric cloud pipeline (5 compute shaders).
     IRHICommandList* m_cloudCmdList = nullptr;         ///< Dedicated command list for cloud compute dispatches.

@@ -23,6 +23,8 @@ cbuffer VolumetricFogCB : register(b2) {
     float3 sunColor;
     float  temporalAlpha;
     uint   inscatteringUavIdx;
+    uint   inscatteringSrvIdx;
+    uint   integratedUavIdx;
     uint   integratedSrvIdx;
     uint   depthSrvIdx;
     uint   frameIndex;
@@ -93,15 +95,23 @@ void main(uint3 DTid : SV_DispatchThreadID)
         // Extinction coefficient
         float extinction = density * extinctionScale;
 
-        // ── In-scattering: sun light × phase × density ──────────────
-        // Compute view direction for this froxel
+        // ── In-scattering: sun + ambient ────────────────────────────
+        // @ref Hillaire 2015 — single-scattering from directional light
         float3 viewDir = normalize(worldPos - cameraPos);
         float cosTheta = dot(viewDir, sunDir);
         float phase = HenyeyGreenstein(cosTheta, phaseG);
 
-        // Inscattering = albedo × extinction × phase × sunRadiance + emissive
-        float3 inscatter = albedo * extinction * phase * sunColor * sunIntensity
-                         + emissive * density;
+        // Sun contribution: directional light × HG phase
+        float3 sunInscatter = albedo * extinction * phase * sunColor * sunIntensity;
+
+        // Ambient contribution: isotropic sky light (1/4π phase = ~0.08)
+        // This prevents fog from just darkening the scene — it adds the
+        // characteristic bright haze that makes fog look like fog.
+        // @ref Frostbite — ambient fog = skyColor × extinction × isotropicPhase
+        float3 ambientFogColor = albedo * 0.3;  // ~30% of albedo as ambient sky
+        float3 ambientInscatter = ambientFogColor * extinction * M_1_PI * 0.25;
+
+        float3 inscatter = sunInscatter + ambientInscatter + emissive * density;
 
         // ── Write to 3D volume ──────────────────────────────────────
         // RGB = inscattering (additive light), A = extinction (for transmittance calc)

@@ -102,6 +102,7 @@ class SdfAtlasManager;
 class DynamicResolutionController;
 class CloudPass;
 struct CloudPassInput;
+class VolumetricFogPass;
 class VFXSystem;
 class VFXHotReload;
 class DecalManager;

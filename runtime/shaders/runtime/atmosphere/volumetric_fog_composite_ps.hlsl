@@ -41,6 +41,8 @@ cbuffer VolumetricFogCB : register(b2) {
     float3 sunColor;
     float  temporalAlpha;
     uint   inscatteringUavIdx;
+    uint   inscatteringSrvIdx;
+    uint   integratedUavIdx;
     uint   _integratedSrvIdx;
     uint   _depthSrvIdx;
     uint   frameIndex;

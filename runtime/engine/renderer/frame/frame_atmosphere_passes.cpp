@@ -17,13 +17,18 @@
 #include "render_graph_builder.h"
 #include "render_graph_resources.h"
 #include "atmosphere_renderer.h"
+#include "atmosphere/volumetric_fog_pass.h"
 #include "fog_renderer.h"
+#include "height_fog_component.h"
 #include "profiler.h"
 #include "rhi.h"
 #include "log.h"
+#include "cvar.h"
 
 #include <cstring>
 #include <memory>
+
+static auto* cv_VolFog = UZ_CVAR_BOOL("r.VolumetricFog", true, "Froxel volumetric fog");
 
 namespace uz {
 
@@ -110,6 +115,67 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
     float skyFogG = m_skyIrradianceSH.coeffs[1].w * ctx.perFrame.skyLightIntensity;
     float skyFogB = m_skyIrradianceSH.coeffs[2].w * ctx.perFrame.skyLightIntensity;
 
+
+    // ── Froxel Volumetric Fog (compute, applied before height fog) ─────
+    if (m_volFogPass && m_volFogPass->IsInitialized()
+        && cv_VolFog->value > 0.5f && ctx.bindless && ctx.world) {
+
+        VolumetricFogCB fogCB{};
+        std::memcpy(&fogCB.invViewProj, &ctx.perFrame.invViewProj, 64);
+        fogCB.cameraPosX     = ctx.perFrame.cameraPos.x;
+        fogCB.cameraPosY     = ctx.perFrame.cameraPos.y;
+        fogCB.cameraPosZ     = ctx.perFrame.cameraPos.z;
+        fogCB.nearZ          = ctx.perFrame.nearPlane;
+        fogCB.farZ           = 640000.0f; // 6.4 km default fog distance
+        fogCB.globalDensity  = 0.00005f;  // Very subtle default (optical depth ~5 at 1km)
+        fogCB.heightFalloff  = 0.001f;   // Gentle height falloff
+        fogCB.heightOffset   = 0.0f;      // Base height
+        fogCB.albedoR        = 1.0f;
+        fogCB.albedoG        = 1.0f;
+        fogCB.albedoB        = 1.0f;
+        fogCB.phaseG         = 0.5f;      // HG asymmetry
+        fogCB.sunDirX        = ctx.sunDir.x;
+        fogCB.sunDirY        = ctx.sunDir.y;
+        fogCB.sunDirZ        = ctx.sunDir.z;
+        fogCB.sunIntensity   = ctx.sunColor.Length();
+        fogCB.sunColorR      = ctx.sunColor.x;
+        fogCB.sunColorG      = ctx.sunColor.y;
+        fogCB.sunColorB      = ctx.sunColor.z;
+        fogCB.temporalAlpha  = 0.05f;
+        fogCB.depthSrvIdx    = m_gbuffer.depthSRV;
+        fogCB.frameIndex     = ctx.frameIndex;
+        fogCB.extinctionScale = 1.0f;
+        fogCB.emissiveR      = 0.0f;
+        fogCB.emissiveG      = 0.0f;
+        fogCB.emissiveB      = 0.0f;
+
+        // Override from HeightFogComponent if volumetric fog is enabled
+        if (ctx.world) {
+            auto fogView = ctx.world->GetRegistry().view<HeightFogComponent>();
+            for (auto enttEntity : fogView) {
+                auto& fc = fogView.get<HeightFogComponent>(enttEntity);
+                if (!fc.enabled || !fc.enableVolumetricFog) continue;
+                fogCB.globalDensity   = fc.density;
+                fogCB.heightFalloff   = fc.heightFalloff;
+                fogCB.heightOffset    = fc.baseHeight;
+                fogCB.albedoR         = fc.volumetricFogAlbedo.x;
+                fogCB.albedoG         = fc.volumetricFogAlbedo.y;
+                fogCB.albedoB         = fc.volumetricFogAlbedo.z;
+                fogCB.phaseG          = fc.volumetricFogScatteringDistribution;
+                fogCB.extinctionScale = fc.volumetricFogExtinctionScale;
+                fogCB.emissiveR       = fc.volumetricFogEmissive.x;
+                fogCB.emissiveG       = fc.volumetricFogEmissive.y;
+                fogCB.emissiveB       = fc.volumetricFogEmissive.z;
+                fogCB.farZ            = fc.volumetricFogDistance * 100.0f; // component stores cm already
+                break;
+            }
+        }
+
+        m_volFogPass->RegisterPasses(
+            rgBuilder, ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc,
+            fogCB, *m_cbRing, ctx.pipelines,
+            ctx.bindless, ctx.renderWidth, ctx.renderHeight);
+    }
 
     if (m_passInspector.IsPassEnabled("fog")) {
         AddHeightFogFromECS(rgBuilder, ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc,

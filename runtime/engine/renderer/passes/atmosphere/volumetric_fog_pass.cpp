@@ -122,6 +122,8 @@ void VolumetricFogPass::RegisterPasses(
     CBAllocation fogAlloc = cbRing.Allocate(sizeof(VolumetricFogCB));
     VolumetricFogCB fogCB = params;
     fogCB.inscatteringUavIdx = m_inscatteringUav;
+    fogCB.inscatteringSrvIdx = m_inscatteringSrv;
+    fogCB.integratedUavIdx   = m_integratedUav;
     fogCB.integratedSrvIdx   = m_integratedSrv;
     fogCB.gridX = kFroxelGridX;
     fogCB.gridY = kFroxelGridY;
@@ -194,6 +196,11 @@ void VolumetricFogPass::RegisterPasses(
 
                 cmd->BeginRenderPass(passDesc);
                 cmd->SetPipeline(compositePipeline);
+
+                // Push root constants at b0: depth SRV + integrated volume SRV
+                uint32_t compositeRC[2] = { fogCB.depthSrvIdx, fogCB.integratedSrvIdx };
+                cmd->SetRootConstants(0, compositeRC, 2);
+
                 cmd->SetRootCBV(kSlotPerFrame, perFrameAlloc.gpuAddr);
                 cmd->SetRootCBV(2, fogAlloc.gpuAddr);
 

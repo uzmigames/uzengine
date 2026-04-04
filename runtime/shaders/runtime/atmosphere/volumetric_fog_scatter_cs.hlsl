@@ -23,6 +23,8 @@ cbuffer VolumetricFogCB : register(b2) {
     float3 sunColor;
     float  temporalAlpha;
     uint   inscatteringUavIdx;
+    uint   inscatteringSrvIdx;
+    uint   integratedUavIdx;
     uint   integratedSrvIdx;
     uint   depthSrvIdx;
     uint   frameIndex;
@@ -55,22 +57,10 @@ void main(uint3 DTid : SV_DispatchThreadID)
 {
     if (DTid.x >= gridX || DTid.y >= gridY) return;
 
-    // Read inscattering volume (inject output)
-    Texture3D<float4> inscatteringVol = ResourceDescriptorHeap[inscatteringUavIdx];
-    // Write integrated volume
-    RWTexture3D<float4> integratedVol = ResourceDescriptorHeap[integratedSrvIdx];
-
-    // Oops — note: inscatteringUavIdx was used for Write in inject, but here we
-    // Read the same texture via its SRV. The render graph transitions it to SRV.
-    // The integratedSrvIdx is actually the SRV of the output — but we need UAV.
-    // Let me fix: use the same indices but access via ResourceDescriptorHeap.
-    // In UzEngine bindless, SRV and UAV have separate indices.
-    // The CB has inscatteringUavIdx (UAV for inject, but SRV = inscatteringUavIdx-1 typically)
-    // TODO: pass inscatteringSrvIdx separately. For now, use UAV idx.
-    // ACTUALLY: The render graph transitions the resource. The UAV descriptor
-    // can still be used to READ in HLSL (it's the same resource). But for correctness,
-    // the inscattering texture's SRV should be used for reading.
-    // For now, let's just use the UAV index — it maps to the same resource.
+    // Read inscattering volume via SRV (inject output)
+    Texture3D<float4> inscatteringVol = ResourceDescriptorHeap[inscatteringSrvIdx];
+    // Write integrated volume via UAV (scatter output)
+    RWTexture3D<float4> integratedVol = ResourceDescriptorHeap[integratedUavIdx];
 
     float3 accumInscatter = float3(0, 0, 0);
     float  accumTransmittance = 1.0;

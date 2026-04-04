@@ -7,6 +7,7 @@
 #include "subsystems.h"
 
 #include "atmosphere/cloud_pass.h"
+#include "atmosphere/volumetric_fog_pass.h"
 #include "async_texture_decoder.h"
 #include "camera.h"
 #include "camera_manager.h"
@@ -560,6 +561,13 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     // ── Lens Flare (at display resolution — post-bloom effect) ──────
     m_lensFlarePass = std::make_unique<LensFlarePass>();
     (void)m_lensFlarePass->Init(device, m_shaderMgr.get(), width, height);
+
+    // ── Froxel Volumetric Fog (160×90×64 3D grid) ─────────────────────
+    m_volFogPass = std::make_unique<VolumetricFogPass>();
+    if (!m_volFogPass->Init(m_device)) {
+        UZ_LOG(Renderer, Warning, "SceneRenderer: VolumetricFogPass init failed (vol fog disabled)");
+        m_volFogPass.reset();
+    }
 
     // ── Volumetric Clouds (compute pipeline, half-res output) ────────
     m_cloudPass = std::make_unique<CloudPass>();
@@ -1281,6 +1289,7 @@ void SceneRenderer::Shutdown() {
     // ── Auto-Exposure cleanup ─────────────────────────────────────
     if (m_autoExposure) m_autoExposure->Shutdown();
     if (m_gtaoPass) m_gtaoPass->Shutdown();
+    if (m_volFogPass) { m_volFogPass->Shutdown(m_device); m_volFogPass.reset(); }
     if (m_cloudPass) { m_cloudPass->Shutdown(); m_cloudPass.reset(); }
     if (m_cloudCmdList) { m_device->DestroyCommandList(m_cloudCmdList); m_cloudCmdList = nullptr; }
 

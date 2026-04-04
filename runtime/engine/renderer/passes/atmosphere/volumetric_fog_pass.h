@@ -62,7 +62,9 @@ struct VolumetricFogCB {
     float    sunColorG;            ///< Sun color G.
     float    sunColorB;            ///< Sun color B.
     float    temporalAlpha;        ///< Temporal blend weight (0.05 typical).
-    uint32_t inscatteringUavIdx;   ///< UAV index for inscattering 3D volume.
+    uint32_t inscatteringUavIdx;   ///< UAV index for inscattering 3D volume (inject writes).
+    uint32_t inscatteringSrvIdx;   ///< SRV index for inscattering 3D volume (scatter reads).
+    uint32_t integratedUavIdx;     ///< UAV index for integrated volume (scatter writes).
     uint32_t integratedSrvIdx;     ///< SRV index for integrated volume (composite reads).
     uint32_t depthSrvIdx;          ///< SRV index for scene depth.
     uint32_t frameIndex;           ///< Frame counter for temporal jitter.
@@ -73,7 +75,7 @@ struct VolumetricFogCB {
     float    emissiveR;            ///< Fog emissive R.
     float    emissiveG;            ///< Fog emissive G.
     float    emissiveB;            ///< Fog emissive B.
-    float    _pad[17] = {};        ///< Pad to 256 bytes (188 data + 68 pad = 256).
+    float    _pad[15] = {};        ///< Pad to 256 bytes (196 data + 60 pad = 256).
 };
 
 static_assert(sizeof(VolumetricFogCB) == 256,
