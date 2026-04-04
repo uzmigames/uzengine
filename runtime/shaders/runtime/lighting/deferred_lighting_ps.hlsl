@@ -8,8 +8,9 @@
 #include "../material/brdf.hlsli"
 #include "../material/diffuse.hlsli"
 #include "light_types.hlsli"
-#include "shadow.hlsli"
 #include "ibl.hlsli"
+// NOTE: shadow.hlsli and contact_shadows.hlsli are included AFTER PerFrameCB
+// because they reference CVar fields (shadowPCFPenumbra, etc.) from the CB.
 
 // ─── Root constants at b0 ──────────────────────────────────────────────────
 
@@ -95,6 +96,10 @@ cbuffer PerFrameCB : register(b1) {
 };
 
 // LightingCB at b2 via light_types.hlsli (already declared above)
+
+// Shadow includes AFTER PerFrameCB — they reference CVar fields from the CB.
+#include "shadow.hlsli"
+#include "contact_shadows.hlsli"
 
 SamplerState      linearSampler : register(s0);
 SamplerState      clampSampler  : register(s2);
