@@ -38,7 +38,7 @@ static auto* cv_ContactShadows   = UZ_CVAR_BOOL("r.ContactShadows", true, "Conta
 // GTAO
 static auto* cv_GTAO             = UZ_CVAR_BOOL("r.GTAO", true, "Ground Truth Ambient Occlusion");
 // SSR
-static auto* cv_SSR              = UZ_CVAR_BOOL("r.SSR", false, "Screen-Space Reflections (disabled: needs prev-frame color input, UE5 pattern)");
+static auto* cv_SSR              = UZ_CVAR_BOOL("r.SSR", true, "Screen-Space Reflections");
 static auto* cv_SSRIntensity     = UZ_CVAR_FLOAT("r.SSR.Intensity", 1.0f, "SSR reflection intensity", 0.f, 2.f);
 static auto* cv_SSRMaxRoughness  = UZ_CVAR_FLOAT("r.SSR.MaxRoughness", 0.35f, "Max roughness for SSR (UE5 default)", 0.f, 1.f);
 static auto* cv_SSRNumSteps      = UZ_CVAR_INT("r.SSR.NumSteps", 16, "SSR ray march step count", 8, 32);
@@ -101,6 +101,42 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
     RegisterDeferredLightingPass(rgBuilder, ctx);
     RegisterAtmosphereFogCloudPasses(rgBuilder, ctx);
     RegisterSSGIPrevColorCopy(rgBuilder, ctx);
+
+    // Copy HDR scene color for SSR next-frame input (UE5 pattern: read prev TAA output).
+    // Runs AFTER lighting+atmosphere so the copy contains the complete lit scene.
+    // SSR trace next frame reads m_ssrPrevSceneColorSrv instead of m_hdrSceneColorSrv.
+    // @ref UE5 DeferredShadingRenderer.cpp — QueueTextureExtraction for SSR input
+    if (m_ssrEnabled && m_ssrPrevSceneColor.IsValid() && m_hdrSceneColor.IsValid()) {
+        rgBuilder.AddPass("SSR_CopyPrevColor", [&](rg::RgPassBuilder& pb) {
+            pb.Read(ctx.hdrRes, RHIResourceState::RenderTarget);
+
+            pb.SetExecutionCallback([this](IRHICommandList* cmd, const rg::RgPassResources&) {
+                UZ_PROFILE_SCOPE("SSR::CopyPrevColor");
+
+                RHIBarrierDesc barriers[2]{};
+                barriers[0].texture     = m_hdrSceneColor;
+                barriers[0].stateBefore = RHIResourceState::RenderTarget;
+                barriers[0].stateAfter  = RHIResourceState::CopySrc;
+                barriers[1].texture     = m_ssrPrevSceneColor;
+                barriers[1].stateBefore = RHIResourceState::ShaderResource;
+                barriers[1].stateAfter  = RHIResourceState::CopyDst;
+                cmd->ResourceBarrier(barriers, 2);
+
+                cmd->CopyTexture(m_hdrSceneColor, m_ssrPrevSceneColor);
+
+                RHIBarrierDesc restore[2]{};
+                restore[0].texture     = m_hdrSceneColor;
+                restore[0].stateBefore = RHIResourceState::CopySrc;
+                restore[0].stateAfter  = RHIResourceState::RenderTarget;
+                restore[1].texture     = m_ssrPrevSceneColor;
+                restore[1].stateBefore = RHIResourceState::CopyDst;
+                restore[1].stateAfter  = RHIResourceState::ShaderResource;
+                cmd->ResourceBarrier(restore, 2);
+
+                m_ssrHasPrevColor = true;
+            });
+        });
+    }
 
     // ── PassInspector: register intermediate targets for visualization ──
     RegisterPassInspectorTargets(ctx);

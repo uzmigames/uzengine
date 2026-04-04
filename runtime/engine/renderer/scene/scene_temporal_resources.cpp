@@ -113,8 +113,28 @@ void SceneRenderer::CreateSsrResources(uint32_t width, uint32_t height) {
     }
     m_ssrHistoryIndex = 0;
 
-    UZ_LOG(Renderer, Info, "SceneRenderer: SSR resources created ({}x{}, RGBA16F, trace SRV={}, resolve SRV={}, hist0 SRV={}, hist1 SRV={})",
-           width, height, m_ssrTraceOutputSrv, m_ssrResolvedOutputSrv, m_ssrHistorySrv[0], m_ssrHistorySrv[1]);
+    // Previous frame HDR scene color copy — SSR trace reads this instead of
+    // the live HDR buffer to break the feedback loop (UE5 pattern).
+    // @ref UE5 DeferredShadingRenderer.cpp — PrevFrameViewInfo.ScreenSpaceRayTracingInput
+    {
+        RHITextureDesc prevDesc{};
+        prevDesc.width     = width;
+        prevDesc.height    = height;
+        prevDesc.format    = RHIFormat::RGBA16Float;
+        prevDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::CopyDst;
+        prevDesc.debugName = "SSR_PrevSceneColor";
+
+        m_ssrPrevSceneColor = m_device->CreateTexture(prevDesc);
+        if (m_ssrPrevSceneColor.IsValid()) {
+            m_ssrPrevSceneColorSrv = m_device->GetTextureSRVIndex(m_ssrPrevSceneColor);
+        } else {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create SSR prev scene color texture");
+        }
+    }
+    m_ssrHasPrevColor = false;
+
+    UZ_LOG(Renderer, Info, "SceneRenderer: SSR resources created ({}x{}, RGBA16F, trace SRV={}, resolve SRV={}, hist0 SRV={}, hist1 SRV={}, prevColor SRV={})",
+           width, height, m_ssrTraceOutputSrv, m_ssrResolvedOutputSrv, m_ssrHistorySrv[0], m_ssrHistorySrv[1], m_ssrPrevSceneColorSrv);
 }
 
 void SceneRenderer::DestroySsrResources() {
@@ -139,6 +159,13 @@ void SceneRenderer::DestroySsrResources() {
         }
     }
     m_ssrHistoryIndex = 0;
+
+    if (m_ssrPrevSceneColor.IsValid()) {
+        m_device->DestroyTexture(m_ssrPrevSceneColor);
+        m_ssrPrevSceneColor = RHITextureHandle{};
+        m_ssrPrevSceneColorSrv = UINT32_MAX;
+    }
+    m_ssrHasPrevColor = false;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

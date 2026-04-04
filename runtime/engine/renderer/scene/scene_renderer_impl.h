@@ -335,6 +335,12 @@
     uint32_t m_ssrHistoryIndex = 0;                ///< Current write target index (0 or 1), flips each frame.
     bool     m_ssrEnabled = true;                  ///< Runtime toggle for SSR.
 
+    /// Previous frame HDR scene color copy — used as SSR trace input to break
+    /// the feedback loop (UE5 pattern: read prev TAA output, not current HDR).
+    RHITextureHandle m_ssrPrevSceneColor;          ///< RGBA16F copy of prev frame's HDR.
+    uint32_t m_ssrPrevSceneColorSrv = UINT32_MAX;  ///< SRV for SSR trace to read.
+    bool     m_ssrHasPrevColor = false;            ///< False on first frame (skip SSR).
+
     /// Creates SSR output textures at the given resolution.
     /// Called from Init() and Resize().
     void CreateSsrResources(uint32_t width, uint32_t height);

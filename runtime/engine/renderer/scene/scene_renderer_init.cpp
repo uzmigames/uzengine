@@ -895,7 +895,7 @@ void SceneRenderer::ApplyCVars() {
 
     // ── Render Pass Toggles ─────────────────────────────────────────────
     m_taaEnabled        = cvars.GetBool("r.TAA", false);
-    m_ssrEnabled        = cvars.GetBool("r.SSR", false);
+    m_ssrEnabled        = cvars.GetBool("r.SSR", true);
     m_motionBlurEnabled = cvars.GetBool("r.MotionBlur", true);
     m_casEnabled        = cvars.GetBool("r.CAS", true);
     m_lensFlareEnabled  = cvars.GetBool("r.LensFlare", false);
