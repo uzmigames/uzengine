@@ -43,9 +43,10 @@ SamplerState pointClamp  : register(s1);
 
 /// Blend alpha controls how fast new samples are accepted.
 /// Lower = more history (smoother, more ghosting). Higher = more responsive.
-/// 0.1 = 10% current frame, 90% history — converges in ~10 frames.
-/// @ref Stachowiak 2015 — 0.05..0.15 range for stochastic SSR
-static const float TEMPORAL_BLEND_ALPHA = 0.1;
+/// With deterministic SSR (no stochastic rays), a low alpha is safe —
+/// static scenes converge instantly since current == history.
+/// @ref UE5 ScreenSpaceReflections.usf — 0.04 for non-stochastic SSR
+static const float TEMPORAL_BLEND_ALPHA = 0.04;
 static const float VELOCITY_THRESHOLD   = 0.01;
 
 [numthreads(8, 8, 1)]
@@ -108,7 +109,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
     // Mean ± gamma * stddev produces a smaller AABB than raw min/max
     float4 mean   = moment1 / 9.0;
     float4 sigma  = sqrt(max(moment2 / 9.0 - mean * mean, 0.0));
-    float  gamma  = 1.25; // 1.0 = tight (less ghosting, more flicker), 2.0 = loose
+    float  gamma  = 2.0; // Loose clipping — deterministic SSR rarely needs tight clip
     float4 clipMin = max(mean - gamma * sigma, minVal);
     float4 clipMax = min(mean + gamma * sigma, maxVal);
 

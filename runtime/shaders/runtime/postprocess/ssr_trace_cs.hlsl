@@ -138,8 +138,10 @@ void main(uint3 DTid : SV_DispatchThreadID)
     // SSR provides sharp screen-space detail; IBL provides smooth environment.
     float3 R = reflect(-V, N);
 
-    // Jitter start position along the ray with IGN noise
-    float jitter = IGN(float2(DTid.xy) + timeParams.x * 100.0);
+    // Jitter start position along the ray — purely spatial, NO temporal variation.
+    // @ref UE5 ScreenSpaceReflections.usf — uses InterleavedGradientNoise(pixel) without frame offset
+    // Temporal variation in jitter causes per-frame hit position shifts → visible flickering.
+    float jitter = IGN(float2(DTid.xy));
 
     // Ray march in screen space
     float3 rayStart = worldPos + R * 1.0; // small offset to avoid self-hit
