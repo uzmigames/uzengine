@@ -26,6 +26,15 @@ cbuffer RootConstants : register(b0) {
     uint  g_depthSrvIdx;
     uint  g_halfWidth;
     uint  g_halfHeight;
+    // Cloud CVar params (Phase 3) — via root constants, not CloudCB
+    uint  g_noiseXYScaleBits;    // CVar r.Cloud.NoiseXYScale (asfloat, default 0.12)
+    uint  g_noiseZScaleBits;     // CVar r.Cloud.NoiseZScale (asfloat, default 3.0)
+    uint  g_shapeOctaves;        // CVar r.Cloud.ShapeOctaves (default 4)
+    uint  g_fbmDecayBits;        // CVar r.Cloud.FBMDecay (asfloat, default 0.5)
+    uint  g_fbmLacunarityBits;   // CVar r.Cloud.FBMLacunarity (asfloat, default 2.0)
+    uint  g_detailErosionBits;   // CVar r.Cloud.DetailErosion (asfloat, default 0.35)
+    uint  g_densityScaleBits;    // CVar r.Cloud.DensityScale (asfloat, default 25.0)
+    uint  _rcPad;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -73,15 +82,6 @@ cbuffer CloudCB : register(b2) {
     float   g_tracingStartMaxDistance;
     float   g_tracingStartDistanceFromCamera;
     uint    g_detailNoiseSrv;  // offset 252: detail noise 3D texture SRV (0xFFFFFFFF = none)
-    // ── Shader CVar parameters (Phase 3) ──
-    float   g_noiseXYScale;     // CVar r.Cloud.NoiseXYScale (default 0.12)
-    float   g_noiseZScale;      // CVar r.Cloud.NoiseZScale (default 3.0)
-    uint    g_shapeOctaves;     // CVar r.Cloud.ShapeOctaves (default 4)
-    float   g_fbmDecay;         // CVar r.Cloud.FBMDecay (default 0.5)
-    float   g_fbmLacunarity;    // CVar r.Cloud.FBMLacunarity (default 2.0)
-    float   g_detailErosion;    // CVar r.Cloud.DetailErosion (default 0.35)
-    float   g_aerialPerspDensity; // CVar r.Cloud.AerialPerspectiveDensity (default 0.04)
-    float   g_densityScale;     // CVar r.Cloud.DensityScale (default 25.0)
 };
 
 SamplerState linearSampler : register(s0);
@@ -96,7 +96,7 @@ static const float PLANET_RADIUS_KM = 6360.0f;
 static const float EXT_EPS = 1e-7f;
 
 /// @ref Schneider 2015 — cloud density normalization (CVar r.Cloud.DensityScale)
-#define DENSITY_SCALE g_densityScale
+#define DENSITY_SCALE asfloat(g_densityScaleBits)
 
 /// Planet surface safety offset (km).
 /// @ref Bruneton 2008 — offset to avoid surface intersection
@@ -245,8 +245,8 @@ float FBM(float3 p, uint octaves) {
     float frequency = 1.0f;
     for (uint oct = 0; oct < octaves; ++oct) {
         value += amplitude * ValueNoise3D(p * frequency);
-        amplitude *= g_fbmDecay;
-        frequency *= g_fbmLacunarity;
+        amplitude *= asfloat(g_fbmDecayBits);
+        frequency *= asfloat(g_fbmLacunarityBits);
     }
     return value;
 }
@@ -276,9 +276,9 @@ float SampleDensity(float3 samplePosKm, float innerRadius, float layerHeight) {
     /// @ref Schneider 2015 — noise coordinate mapping
     /// @constants XY_SCALE = 0.12, Z_SCALE = 3.0
     float3 noisePos = float3(
-        (samplePosKm.x + windOffset.x) * g_noiseXYScale,
-        (samplePosKm.y + windOffset.y) * g_noiseXYScale,
-        normalizedH * g_noiseZScale + windOffset.z * 0.05f
+        (samplePosKm.x + windOffset.x) * asfloat(g_noiseXYScaleBits),
+        (samplePosKm.y + windOffset.y) * asfloat(g_noiseXYScaleBits),
+        normalizedH * asfloat(g_noiseZScaleBits) + windOffset.z * 0.05f
     );
 
     // Shape noise — FBM with CVar-driven octaves
@@ -303,11 +303,11 @@ float SampleDensity(float3 samplePosKm, float innerRadius, float layerHeight) {
 #ifdef UZ_BINDLESS
     if (g_detailNoiseSrv != 0xFFFFFFFF && shapeDensity > 0.0f) {
         Texture3D<float4> detailTex = ResourceDescriptorHeap[g_detailNoiseSrv];
-        float3 detailPos = noisePos * (g_fbmLacunarity * 2.0f) + float3(windOffset.x * g_detailWindScale,
+        float3 detailPos = noisePos * (asfloat(g_fbmLacunarityBits) * 2.0f) + float3(windOffset.x * g_detailWindScale,
                                                       windOffset.y * g_detailWindScale,
                                                       windOffset.z * 0.1f);
         float detailNoise = detailTex.SampleLevel(linearSampler, frac(detailPos * 0.25f), 0).r;
-        float erosionStrength = g_detailErosion * (1.0f - saturate(shapeDensity * 2.0f));
+        float erosionStrength = asfloat(g_detailErosionBits) * (1.0f - saturate(shapeDensity * 2.0f));
         shapeDensity = saturate(shapeDensity - detailNoise * erosionStrength);
     }
 #endif

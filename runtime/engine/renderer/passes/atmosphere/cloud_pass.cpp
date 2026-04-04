@@ -602,11 +602,34 @@ void CloudPass::Execute(IRHICommandList* cmdList, CBRingAllocator& cbRing,
 
     // Root constants at slot 0 (b0): {outputUavIndex, depthSrvIndex, halfWidth, halfHeight}
     // Packed as uint32 to match compute root signature expectations.
-    uint32_t rootConst[4] = {
+    // Cloud CVar values as float bits for root constants
+    float noiseXY = cv_CloudNoiseXY->value;
+    float noiseZ  = cv_CloudNoiseZ->value;
+    float fbmDec  = cv_CloudFBMDecay->value;
+    float fbmLac  = cv_CloudFBMLac->value;
+    float erosion = cv_CloudErosion->value;
+    float densScl = cv_CloudDensScale->value;
+    uint32_t noiseXYBits, noiseZBits, fbmDecBits, fbmLacBits, erosionBits, densityBits;
+    std::memcpy(&noiseXYBits, &noiseXY, 4);
+    std::memcpy(&noiseZBits,  &noiseZ,  4);
+    std::memcpy(&fbmDecBits,  &fbmDec,  4);
+    std::memcpy(&fbmLacBits,  &fbmLac,  4);
+    std::memcpy(&erosionBits, &erosion, 4);
+    std::memcpy(&densityBits, &densScl, 4);
+
+    uint32_t rootConst[12] = {
         m_outputUavIndex,
         input.depthSrv,
         m_halfWidth,
-        m_halfHeight
+        m_halfHeight,
+        noiseXYBits,
+        noiseZBits,
+        static_cast<uint32_t>(cv_CloudOctaves->value),
+        fbmDecBits,
+        fbmLacBits,
+        erosionBits,
+        densityBits,
+        0  // padding
     };
 
     static bool loggedOnce = false;
@@ -631,7 +654,7 @@ void CloudPass::Execute(IRHICommandList* cmdList, CBRingAllocator& cbRing,
         loggedOnce = true;
     }
 
-    cmdList->SetRootConstants(0, rootConst, 4);
+    cmdList->SetRootConstants(0, rootConst, 12);
 
     // CBV at slot 2 (b2): CloudCB
     cmdList->SetRootCBV(2, cbAlloc.bufferHandle, cbAlloc.offsetBytes,
