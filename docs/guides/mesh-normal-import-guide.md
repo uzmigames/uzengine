@@ -16,14 +16,21 @@ tags: guide, rendering, import-pipeline
 ```
 Current behavior (v0.7.0+):
 - FBX: ComputeSmoothNormals() with area×angle weighting + 60° hard edge threshold
+- FBX: face_smoothing flags from ufbx → per-face smooth/flat control
 - glTF: preserves imported normals (from Blender/Maya), computes only when missing
 - Tangents: MikkTSpace (industry standard, matches UE5/Unity/Blender)
-- CVars: r.Mesh.NormalImportMode, r.Mesh.SmoothingAngle, r.Mesh.TangentMode
+- Packed normals: VertexPacked (32B) via r.Mesh.PackedNormals=true (33% bandwidth savings)
+- Per-asset override: .uzimport sidecar with normalMode + smoothingAngle options
+- CVars: r.Mesh.NormalImportMode, r.Mesh.SmoothingAngle, r.Mesh.TangentMode, r.Mesh.PackedNormals
+- Debug viz: --view-mode tangent (mode 13), --view-mode faceted (mode 14)
 
 Key files:
 - engine/asset/mesh/normal_smoother.h/.cpp — smooth normal algorithm
 - engine/asset/mesh/mikktspace_tangents.h/.cpp — MikkTSpace wrapper
 - engine/asset/mesh/packed_normal.h — PackedNormal/PackedTangent types (int8x4)
+- engine/renderer/mesh/vertex.h — Vertex (48B) + VertexPacked (32B)
+- shaders/runtime/gbuffer/mesh_vs.hlsl — dual-path vertex fetch (standard + packed)
+- shaders/runtime/debug/debug_view_ps.hlsl — 15 debug view modes (tangent + faceted)
 
 Required behavior:
 - Vertices at same position → merged for normal calculation
