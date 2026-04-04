@@ -24,6 +24,8 @@
 #include <optional>
 #include <string>
 
+namespace uz { class IVFS; }
+
 namespace uz::VFXCurveLoader {
 
 /// Parses a .uzcurve JSON string into a VFXCurve.
@@ -50,6 +52,6 @@ namespace uz::VFXCurveLoader {
 ///
 /// # Errors
 /// Logs `VFX::Error` if the file cannot be read.
-[[nodiscard]] std::optional<VFXCurve> LoadFromFile(const std::string& path);
+[[nodiscard]] std::optional<VFXCurve> LoadFromFile(const std::string& path, IVFS* vfs = nullptr);
 
 } // namespace uz::VFXCurveLoader

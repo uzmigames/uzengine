@@ -33,6 +33,7 @@
 /// @deviations NONE
 
 #include "../include/depth_common.hlsli"
+#include "vfx_flipbook.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -176,9 +177,11 @@ cbuffer VFXBillboardCB : register(b2) {
     /// When non-zero, the PS uses input.speedFactor instead of normalizedAge
     /// to drive the colorLifeStart→End lerp (or LUT sample).
     uint     colorBySpeedEnabled;   ///< 0=off, 1=on. PS uses speed instead of age for color lerp.
-    uint     _cbsPad0;              ///< Padding for 16-byte alignment.
-    uint     _cbsPad1;              ///< Padding for 16-byte alignment.
-    uint     _cbsPad2;              ///< Padding for 16-byte alignment.
+    // ── Flipbook / SubUV animation (12 bytes) ─────────────────────────────
+    /// @ref Nguyen 2007 "GPU Gems 3" ch. 23 — SubUV sprite sheet animation
+    uint     flipbookRows;          ///< Sprite sheet rows (1 = no flipbook).
+    uint     flipbookCols;          ///< Sprite sheet columns (1 = no flipbook).
+    uint     flipbookTotalFrames;   ///< Total valid frames (rows*cols or less for partial sheets).
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -219,6 +222,7 @@ float ComputeSoftParticleFade(float4 screenPos, float2 screenSize, float fadeDis
     // Sample scene depth from the depth buffer
     float sceneDepthRaw;
 #ifdef UZ_BINDLESS
+    if (depthBufferIdx == 0xFFFFFFFF) return 1.0f;
     Texture2D<float> depthTex = ResourceDescriptorHeap[depthBufferIdx];
     sceneDepthRaw = depthTex.SampleLevel(depthSampler, depthUV, 0);
 #else
@@ -257,13 +261,60 @@ float ComputeSoftParticleFade(float4 screenPos, float2 screenSize, float fadeDis
 /// # Returns
 /// Final RGBA color for alpha-blended compositing.
 float4 main(PSInput input) : SV_Target {
-    // ── Procedural soft circle ──
-    // Maps UV [0,1] to [-1,+1] centered, then applies smooth falloff.
-    float2 center = input.texcoord * 2.0f - 1.0f;
-    float dist = dot(center, center); // squared distance from center
-    float alpha = saturate(1.0f - dist); // linear falloff: 1 at center, 0 at edge
-    alpha *= alpha; // quadratic for softer look
-    float4 spriteColor = float4(1.0f, 1.0f, 1.0f, alpha);
+    // ── Sprite color: flipbook SubUV or procedural soft circle ──
+    float4 spriteColor;
+
+    if (flipbookTotalFrames > 1u) {
+        // Flipbook SubUV blending: compute frame UVs from particle age,
+        // sample both frames, and lerp for smooth inter-frame transitions.
+        /// @ref Nguyen 2007 "GPU Gems 3" ch. 23 — SubUV sprite sheet animation
+        float fps = 30.0f; // Default playback rate; override via CB when available.
+        FlipbookResult fb = ComputeFlipbookFrame(
+            input.age, input.lifetime,
+            flipbookRows, flipbookCols, fps, flipbookTotalFrames);
+
+        float2 atlasUV0 = SampleFlipbookUV(input.texcoord, fb.uv0, fb.frameSize);
+        float2 atlasUV1 = SampleFlipbookUV(input.texcoord, fb.uv1, fb.frameSize);
+
+#ifdef UZ_BINDLESS
+        if (spriteTextureIdx != 0xFFFFFFFF) {
+            Texture2D<float4> spriteTex = ResourceDescriptorHeap[spriteTextureIdx];
+            float4 frame0 = spriteTex.SampleLevel(depthSampler, atlasUV0, 0);
+            float4 frame1 = spriteTex.SampleLevel(depthSampler, atlasUV1, 0);
+            spriteColor = lerp(frame0, frame1, fb.blendFactor);
+        } else {
+            // No texture bound — fall back to procedural circle with flipbook alpha.
+            float2 ctr = input.texcoord * 2.0f - 1.0f;
+            float d = dot(ctr, ctr);
+            float a = saturate(1.0f - d);
+            spriteColor = float4(1.0f, 1.0f, 1.0f, a * a);
+        }
+#else
+        spriteColor = float4(1.0f, 1.0f, 1.0f, 1.0f);
+#endif
+    } else if (flipbookTotalFrames == 1u) {
+        // Single-frame sprite texture (no animation).
+#ifdef UZ_BINDLESS
+        if (spriteTextureIdx != 0xFFFFFFFF) {
+            Texture2D<float4> spriteTex = ResourceDescriptorHeap[spriteTextureIdx];
+            spriteColor = spriteTex.SampleLevel(depthSampler, input.texcoord, 0);
+        } else {
+            float2 ctr = input.texcoord * 2.0f - 1.0f;
+            float d = dot(ctr, ctr);
+            float a = saturate(1.0f - d);
+            spriteColor = float4(1.0f, 1.0f, 1.0f, a * a);
+        }
+#else
+        spriteColor = float4(1.0f, 1.0f, 1.0f, 1.0f);
+#endif
+    } else {
+        // No flipbook — procedural soft circle.
+        float2 center = input.texcoord * 2.0f - 1.0f;
+        float dist = dot(center, center);
+        float alpha = saturate(1.0f - dist);
+        alpha *= alpha;
+        spriteColor = float4(1.0f, 1.0f, 1.0f, alpha);
+    }
 
     // ── Evaluate color over lifetime ──
     // normalizedAge in [0,1] maps the particle's age to its full lifespan.
@@ -336,9 +387,9 @@ float4 main(PSInput input) : SV_Target {
     // ── Soft particle depth fade ──
     // Skip soft fade for additive particles — they add light, not block it,
     // so depth-based fading makes no visual sense.
-    float2 screenSize;
+    float2 screenSize = float2(1920.0f, 1080.0f); // fallback
 #ifdef UZ_BINDLESS
-    {
+    if (depthBufferIdx != 0xFFFFFFFF) {
         Texture2D<float> depthTex = ResourceDescriptorHeap[depthBufferIdx];
         uint w, h;
         depthTex.GetDimensions(w, h);

@@ -308,9 +308,11 @@ Files extracted from upstream source:
 - Version: 3.1.3 (2025)
 - License: BSD-3-Clause
 
-SIMD-accelerated JPEG codec. Decodes JPEG images 2-6x faster than libjpeg
-using SSE2/AVX2 intrinsics. Used as the primary JPEG decoder for texture
-import and runtime image loading.
+SIMD-accelerated JPEG codec. Decodes JPEG images 2-6x faster than stb_image
+using SSE2/AVX2 intrinsics. Used as the primary JPEG decoder for async
+texture decode, texture import, and FLIP image loading. Compiled without
+NASM SIMD assembly (pure C fallback) with full 8/12/16-bit multi-precision
+support via the `wrapper/` compilation units.
 
 Files extracted from upstream source:
 
@@ -518,8 +520,9 @@ Single-file public domain libraries for C/C++. Used headers:
 - `stb_image_resize2.h` (v2.16) — high-quality image resizing
 - `stb_truetype.h` (v1.26) — TrueType font rasterizer (used by bitmap_font)
 
-Primary image loader for the engine. stb_image handles most formats; libjpeg-turbo
-is used for performance-critical JPEG batch imports.
+Fallback image loader for formats not handled by dedicated decoders. PNG is
+decoded by spng (SIMD-accelerated), JPEG by libjpeg-turbo. stb_image handles
+TGA, BMP, HDR, PSD, GIF, and PIC formats.
 
 Files extracted from upstream source:
 
@@ -542,6 +545,45 @@ Files extracted from upstream source:
 - `Shaders/` (SMAA.hlsl — edge detection, blending weight, neighborhood blending)
 - `Textures/` (SearchTex.h, AreaTex.h — precomputed lookup textures)
 - `LICENSE.txt`
+
+
+## slang
+
+- Upstream: https://github.com/shader-slang/slang
+- Version: 2025.x (pre-built binaries)
+- License: MIT
+
+Slang shader language compiler. Used as an alternative shader compilation
+backend on macOS/Linux where DXC is not available. Compiles HLSL source
+to SPIR-V and Metal MSL via the Slang C API (`slang_compiler.cpp`).
+On Windows, DXC remains the primary compiler; Slang is optional.
+
+Files from pre-built package:
+
+- `include/` (slang.h, slang-com-ptr.h, etc.)
+- `bin/` (slang.dll / libslang.so — loaded at runtime via dlopen/LoadLibrary)
+- `LICENSE`
+
+
+## spng
+
+- Upstream: https://github.com/nicolaromano/libspng
+- Version: 0.7.4 (2024)
+- License: BSD-2-Clause
+
+SIMD-accelerated PNG decoder. ~3x faster than stb_image for PNG decoding
+using SSE2/SSSE3/SSE4.1 intrinsics on x86_64. Used as the primary PNG
+decoder for the texture pipeline (async texture decode, texture import,
+FLIP image loading). Falls through to stb_image for non-PNG formats
+(JPEG is handled by libjpeg-turbo).
+
+Compiled with `-DSPNG_USE_MINIZ=0` (uses zlib from vcpkg instead of
+bundled miniz) and `-DSPNG_STATIC` (no DLL import/export decorators).
+
+Files extracted from upstream source:
+
+- `spng/` (spng.h, spng.c — single-file library)
+- `LICENSE`
 
 
 ## spdlog

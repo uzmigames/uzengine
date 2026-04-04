@@ -34,6 +34,7 @@
 #include <string>
 
 namespace uz {
+class IVFS;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TrailAsset -- loaded .uztrail data
@@ -119,7 +120,7 @@ struct TrailAsset {
     ///
     /// # Errors
     /// Logs `VFX::Error` with path and reason on failure.
-    [[nodiscard]] static std::unique_ptr<TrailAsset> Load(const std::string& path);
+    [[nodiscard]] static std::unique_ptr<TrailAsset> Load(const std::string& path, IVFS* vfs = nullptr);
 
     /// Loads a TrailAsset from a JSON string (no disk I/O).
     ///

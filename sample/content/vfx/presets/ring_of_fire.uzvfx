@@ -1,0 +1,44 @@
+{
+  "name": "Ring of Fire",
+  "version": 2,
+  "emitters": [
+    {
+      "name": "Ring of Fire",
+      "max_particles": 10000,
+      "emission_rate": 400,
+      "lifetime": 1.5,
+      "looping": true,
+      "modules": {
+        "spawn": {
+          "type": "spawn",
+          "rate": 400,
+          "velocity": [
+            0,
+            0,
+            400
+          ],
+          "spread_angle": 28.6479,
+          "lifespan_min": 0.5,
+          "lifespan_max": 1.5
+        },
+        "update": [
+          {
+            "type": "update",
+            "gravity": [
+              0,
+              0,
+              -200
+            ],
+            "drag": 0.2
+          }
+        ],
+        "render": {
+          "type": "sprite",
+          "width": 40.000001000000005,
+          "height": 40.000001000000005,
+          "blend_mode": "additive"
+        }
+      }
+    }
+  ]
+}

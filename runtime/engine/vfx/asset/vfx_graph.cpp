@@ -8,7 +8,9 @@
 
 #include <json.hpp>
 
-#include <fstream>
+#include "file_system.h"
+#include "vfs.h"
+
 #include <sstream>
 
 UZ_DECLARE_LOG_CATEGORY(VFX);
@@ -47,8 +49,8 @@ VFXEmitterConfig ParseEmitterConfig(const json& root) {
 
 /// Parses the "modules" array and instantiates each via the registry.
 ///
-/// Unknown module types are logged and skipped. Config application is
-/// deferred to a future module-config system (TODO).
+/// Unknown module types are logged and skipped. Config is applied via
+/// IVFXModule::ApplyJsonConfig() for each module that overrides it.
 std::vector<std::unique_ptr<IVFXModule>> ParseModules(
     const json& root, const ModuleRegistry& registry)
 {
@@ -72,8 +74,10 @@ std::vector<std::unique_ptr<IVFXModule>> ParseModules(
             continue;
         }
 
-        // TODO: Apply "config" object to module's public fields once the
-        // module-config deserialization system is implemented.
+        // Apply per-module config from JSON if present.
+        if (entry.contains("config") && entry["config"].is_object()) {
+            mod->ApplyJsonConfig(entry["config"]);
+        }
 
         modules.push_back(std::move(mod));
     }
@@ -178,18 +182,24 @@ std::vector<VFXEventDef> ParseEvents(const json& root) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 std::unique_ptr<VFXGraph> VFXGraph::Load(
-    const std::string& path, const ModuleRegistry& registry)
+    const std::string& path, const ModuleRegistry& registry,
+    IVFS* vfs)
 {
-    std::ifstream file(path, std::ios::in | std::ios::binary);
-    if (!file.is_open()) {
-        UZ_LOG(VFX, Error, "VFXGraph::Load: failed to open file: path='{}'", path);
+    // Read via VFS when available (supports .uzpak), fallback to disk FileReadAll.
+    std::vector<uint8_t> fileData;
+    if (vfs) {
+        fileData = vfs->Read(path);
+    } else {
+        fileData = FileReadAll(path.c_str());
+    }
+    if (fileData.empty()) {
+        UZ_LOG(VFX, Error, "VFXGraph::Load: failed to read '{}' (vfs={})",
+               path, vfs ? vfs->Name() : "disk");
         return nullptr;
     }
 
-    std::ostringstream buf;
-    buf << file.rdbuf();
-
-    auto graph = LoadFromString(buf.str(), registry);
+    std::string jsonStr(fileData.begin(), fileData.end());
+    auto graph = LoadFromString(jsonStr, registry);
     if (graph) {
         graph->sourcePath_ = path;
 

@@ -18,7 +18,7 @@ This document analyzes UE5.6's DX11 RHI implementation for GPU-to-CPU texture re
 
 ### UE5 Decision: STAGING TEXTURE (not buffer)
 
-**Source:** `W:/UE_5.6_Source/Engine/Source/Runtime/Windows/D3D11RHI/Private/D3D11RenderTarget.cpp`, lines 296-369
+**Source:** `W:/UE_5.6_Source/Windows/D3D11RHI/Private/D3D11RenderTarget.cpp`, lines 296-369
 
 UE5 uses a **D3D11_TEXTURE2D** with `D3D11_USAGE_STAGING`, not a buffer. The staging texture descriptor is:
 
@@ -541,14 +541,14 @@ ID3D11Texture2D* GetOrCreateStagingTexture(
 
 ## References
 
-- `W:/UE_5.6_Source/Engine/Source/Runtime/Windows/D3D11RHI/Private/D3D11RenderTarget.cpp`
+- `W:/UE_5.6_Source/Windows/D3D11RHI/Private/D3D11RenderTarget.cpp`
   - `GetStagingTexture()` — lines 296-369
   - `ReadSurfaceDataNoMSAARaw()` — lines 371-410
   - `ReadSurfaceDataMSAARaw()` — lines 465-592
   - `RHIReadSurfaceData()` (FColor) — lines 412-463
   - `RHIReadSurfaceData()` (FLinearColor) — lines 696+
 
-- `W:/UE_5.6_Source/Engine/Source/Runtime/Windows/D3D11RHI/Private/D3D11RHIPrivate.h`
+- `W:/UE_5.6_Source/Windows/D3D11RHI/Private/D3D11RHIPrivate.h`
   - Class `FD3D11DynamicRHI` — method declarations
   - Member `Direct3DDeviceIMContext` — line 718
 

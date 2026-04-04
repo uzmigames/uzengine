@@ -17,7 +17,8 @@
 /// compute shader) because the compute runs on a separate command list where
 /// the depth texture may not be in a readable state.
 
-#include "../include/pbr_common.hlsli"
+#include "../common/constants.hlsli"
+#include "../common/bindless.hlsli"
 
 struct FSInput {
     float4 positionCS : SV_Position;

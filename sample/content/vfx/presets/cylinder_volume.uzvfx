@@ -1,0 +1,44 @@
+{
+  "name": "Cylinder Volume",
+  "version": 2,
+  "emitters": [
+    {
+      "name": "Cylinder Volume",
+      "max_particles": 10000,
+      "emission_rate": 300,
+      "lifetime": 3,
+      "looping": true,
+      "modules": {
+        "spawn": {
+          "type": "spawn",
+          "rate": 300,
+          "velocity": [
+            0,
+            0,
+            200
+          ],
+          "spread_angle": 45.836640572958,
+          "lifespan_min": 1.5,
+          "lifespan_max": 3
+        },
+        "update": [
+          {
+            "type": "update",
+            "gravity": [
+              0,
+              0,
+              -100
+            ],
+            "drag": 0.15000001
+          }
+        ],
+        "render": {
+          "type": "sprite",
+          "width": 30.000000999999997,
+          "height": 30.000000999999997,
+          "blend_mode": "alpha_blend"
+        }
+      }
+    }
+  ]
+}

@@ -101,17 +101,18 @@ static bool IsBatchItemRenderable(const ParticleMeshBatchItem& item,
 static void DrawMeshBatch(IRHICommandList* cmd,
                           const ParticleMeshBatchItem& item)
 {
-    // Bind per-pass constant buffer (view-projection matrix, b0).
-    cmd->SetRootCBV(kSlotPerPass,
-                    item.passCB.bufferHandle,
-                    item.passCB.offsetBytes,
-                    reinterpret_cast<const uint8_t*>(item.passCB.cpuPtr),
-                    item.passCB.sizeBytes);
+    // Bind per-pass root constants at b0 (slot 0 is 32-bit root constants, not CBV).
+    if (item.passCB.cpuPtr) {
+        const uint32_t numDwords = item.passCB.sizeBytes / sizeof(uint32_t);
+        cmd->SetRootConstants(kSlotPerPass,
+                              reinterpret_cast<const uint32_t*>(item.passCB.cpuPtr),
+                              numDwords, 0);
+    }
 
     // Bind SRV table: t0 = instance transforms, t1+ = material textures (if any).
     // The descriptor table starts at instanceBufferSrvIndex; the shader reads
     // consecutive slots from that base.
-    cmd->SetDescriptorTable(kSlotSRVTable, item.instanceBufferSrvIndex);
+    // Bindless: SRV accessed via ResourceDescriptorHeap[index], no descriptor table needed.
 
     // Bind mesh geometry.
     cmd->SetVertexBuffer(0, item.meshVertexBuffer);

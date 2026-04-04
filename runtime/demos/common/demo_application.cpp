@@ -23,6 +23,7 @@
 #include <thread>
 #include <vector>
 
+// LogApp is defined in engine/app/application.cpp — just declare extern here.
 UZ_DECLARE_LOG_CATEGORY(App);
 
 namespace uz {
@@ -141,18 +142,7 @@ int DemoApplication::Run() {
     auto loopStart = std::chrono::high_resolution_clock::now();
     auto prevFrame = loopStart;
 
-    while (true) {
-        // Snapshot input state BEFORE processing messages so that events
-        // delivered by PumpMessages() land in the current frame's state
-        // while previous frame's state is preserved for "just pressed" detection.
-        if (m_input) {
-            m_input->BeginFrame();
-        }
-
-        if (!m_window->PumpMessages() || !m_window->IsOpen()) {
-            break;
-        }
-
+    while (m_window->PumpMessages() && m_window->IsOpen()) {
         // Skip rendering while minimized — swapchain surface is 0x0
         if (m_window->IsMinimized()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));

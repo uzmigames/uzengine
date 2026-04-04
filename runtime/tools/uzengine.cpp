@@ -12,32 +12,31 @@
 #include "rhi_config.h"
 #include "rhi_backend.h"
 #include "log.h"
+#include "flip_pass.h"
+#include "file_system.h"
+#include "shader_compiler.h"
+#include "shader_compiler_fxc.h"
+#include "shader_manager.h"
+
+#include <spng.h>
+#include <jpeglib.h>
+#include <stb_image.h>
 
 #include "../engine/app/project_loader.h"
+#include "world.h"
+#include "scene_loader.h"
 #include "../engine/scripting/lua_vm.h"
-#include "../engine/renderer/scene/scene_renderer.h"
-
-// VFS subsystem — excluded from MSVC build until file_system.h is available.
-#ifdef UZ_HAS_VFS
-#include "../engine/asset/vfs.h"
+#include "lua_scene_api.h"
 #include "lua_scene_io_api.h"
-#endif
-
-// ScriptSystem — depends on VFS; excluded when VFS is unavailable.
-#ifdef UZ_HAS_SCRIPT_SYSTEM
-#include "../engine/scripting/script_system.h"
-#endif
-
-// Lua renderer/input API — excluded until stats_overlay.h is available.
-#ifdef UZ_HAS_LUA_RENDERER_API
 #include "lua_renderer_api.h"
+#include "../engine/scripting/script_system.h"
+#include "../engine/asset/vfs.h"
+#include "../engine/renderer/scene/scene_renderer.h"
 #include "../engine/scripting/core/lua_input_api.h"
 #include "../editor/input/editor_input_handler.h"
 #include "../editor/selection/selection_manager.h"
 #include "../engine/renderer/camera/fly_camera_controller.h"
 #include "../engine/scripting/editor/lua_editor_api.h"
-#endif
-
 #include "../engine/renderer/passes/debug/pixel_debug.h"
 #include "../engine/renderer/passes/debug/inspector_pass.h"
 
@@ -210,6 +209,210 @@ static void LogRenderStats(uint32_t frameIndex, float totalMs) {
            frameIndex, totalMs, avgMs, fps);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// FLIP Headless Evaluation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Loads a PNG/JPG via VFS + stbi, creates a GPU texture, returns SRV index.
+static uint32_t LoadImageToGPU(IRHIDevice* device, const std::string& path,
+                                uint32_t& outWidth, uint32_t& outHeight) {
+    // Read file bytes via filesystem
+    auto data = FileReadAll(path.c_str());
+    if (data.empty()) {
+        UZ_LOG(Engine, Error, "FLIP: failed to read '{}'", path);
+        return UINT32_MAX;
+    }
+
+    int w = 0, h = 0, ch = 0;
+    uint8_t* pixels = nullptr;
+
+    // PNG: spng (SIMD-accelerated)
+    static constexpr uint8_t kPngSig[8] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+    if (data.size() >= 8 && std::memcmp(data.data(), kPngSig, 8) == 0) {
+        spng_ctx* ctx = spng_ctx_new(0);
+        if (ctx) {
+            spng_set_png_buffer(ctx, data.data(), data.size());
+            struct spng_ihdr ihdr;
+            if (spng_get_ihdr(ctx, &ihdr) == SPNG_OK) {
+                size_t outSize = 0;
+                if (spng_decoded_image_size(ctx, SPNG_FMT_RGBA8, &outSize) == SPNG_OK) {
+                    auto* px = static_cast<uint8_t*>(std::malloc(outSize));
+                    if (px && spng_decode_image(ctx, px, outSize, SPNG_FMT_RGBA8, 0) == SPNG_OK) {
+                        w = static_cast<int>(ihdr.width);
+                        h = static_cast<int>(ihdr.height);
+                        pixels = px;
+                    } else {
+                        std::free(px);
+                    }
+                }
+            }
+            spng_ctx_free(ctx);
+        }
+    }
+
+    // JPEG: libjpeg-turbo
+    if (!pixels && data.size() >= 2 && data[0] == 0xFF && data[1] == 0xD8) {
+        struct jpeg_decompress_struct cinfo;
+        struct jpeg_error_mgr jerr;
+        cinfo.err = jpeg_std_error(&jerr);
+        jpeg_create_decompress(&cinfo);
+        jpeg_mem_src(&cinfo, data.data(), static_cast<unsigned long>(data.size()));
+        if (jpeg_read_header(&cinfo, TRUE) == JPEG_HEADER_OK) {
+            cinfo.out_color_space = JCS_RGB;
+            jpeg_start_decompress(&cinfo);
+            w = static_cast<int>(cinfo.output_width);
+            h = static_cast<int>(cinfo.output_height);
+            const size_t rgbaSize = static_cast<size_t>(w) * h * 4;
+            auto* px = static_cast<uint8_t*>(std::malloc(rgbaSize));
+            auto* rgbRow = static_cast<uint8_t*>(std::malloc(static_cast<size_t>(w) * 3));
+            if (px && rgbRow) {
+                unsigned char* rowPtr = rgbRow;
+                while (cinfo.output_scanline < cinfo.output_height) {
+                    jpeg_read_scanlines(&cinfo, &rowPtr, 1);
+                    uint8_t* dst = px + static_cast<size_t>(cinfo.output_scanline - 1) * w * 4;
+                    for (int x = 0; x < w; ++x) {
+                        dst[x * 4 + 0] = rgbRow[x * 3 + 0];
+                        dst[x * 4 + 1] = rgbRow[x * 3 + 1];
+                        dst[x * 4 + 2] = rgbRow[x * 3 + 2];
+                        dst[x * 4 + 3] = 255;
+                    }
+                }
+                pixels = px;
+            } else {
+                std::free(px);
+            }
+            std::free(rgbRow);
+            jpeg_finish_decompress(&cinfo);
+        }
+        jpeg_destroy_decompress(&cinfo);
+    }
+
+    // Fallback: stb_image (TGA, BMP, HDR, etc.)
+    if (!pixels) {
+        pixels = stbi_load_from_memory(data.data(), static_cast<int>(data.size()),
+                                       &w, &h, &ch, 4);
+    }
+
+    if (!pixels) {
+        UZ_LOG(Engine, Error, "FLIP: failed to decode '{}'", path);
+        return UINT32_MAX;
+    }
+    outWidth  = static_cast<uint32_t>(w);
+    outHeight = static_cast<uint32_t>(h);
+
+    // Create RGBA8 texture
+    RHITextureDesc texDesc;
+    texDesc.width     = outWidth;
+    texDesc.height    = outHeight;
+    texDesc.format    = RHIFormat::RGBA8Unorm;
+    texDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::CopyDst;
+    texDesc.debugName = path.c_str();
+    auto texture = device->CreateTexture(texDesc);
+
+    // Upload via staging buffer
+    const uint32_t rowPitch = outWidth * 4;
+    const uint32_t alignedRowPitch = (rowPitch + 255) & ~255u;
+    const uint32_t uploadSize = alignedRowPitch * outHeight;
+
+    RHIBufferDesc stagingDesc;
+    stagingDesc.sizeBytes = uploadSize;
+    stagingDesc.usage     = RHIBufferUsage::CopySrc;
+    stagingDesc.memory    = RHIMemoryType::Upload;
+    stagingDesc.debugName = "FLIP_ImageStaging";
+    auto staging = device->CreateBuffer(stagingDesc);
+
+    auto* mapped = static_cast<uint8_t*>(device->MapBuffer(staging));
+    for (uint32_t row = 0; row < outHeight; ++row) {
+        std::memcpy(mapped + row * alignedRowPitch, pixels + row * rowPitch, rowPitch);
+    }
+    device->UnmapBuffer(staging);
+    std::free(pixels);  // works for spng, jpeglib, and stbi (all use malloc)
+
+    auto* cmdList = device->CreateCommandList();
+    cmdList->Begin();
+
+    RHIBarrierDesc toCopyDst;
+    toCopyDst.texture     = texture;
+    toCopyDst.stateBefore = RHIResourceState::Common;
+    toCopyDst.stateAfter  = RHIResourceState::CopyDst;
+    cmdList->ResourceBarrier(&toCopyDst, 1);
+
+    cmdList->CopyBufferToTexture(staging, 0, alignedRowPitch, texture, 0);
+
+    RHIBarrierDesc toSrv;
+    toSrv.texture     = texture;
+    toSrv.stateBefore = RHIResourceState::CopyDst;
+    toSrv.stateAfter  = RHIResourceState::ShaderResource;
+    cmdList->ResourceBarrier(&toSrv, 1);
+
+    cmdList->End();
+    cmdList->Execute();
+    device->WaitIdle();
+    device->DestroyBuffer(staging);
+
+    return device->GetTextureSRVIndex(texture);
+}
+
+/// Runs FLIP comparison between two images. Prints JSON to stdout, returns exit code.
+static int RunFlip(const RHIDeviceDesc& deviceDesc,
+                    const std::string& refPath, const std::string& testPath,
+                    const std::string& outputPath, float threshold) {
+    UZ_LOG(Engine, Info, "FLIP: comparing '{}' vs '{}'", refPath, testPath);
+
+    // Create headless device
+    auto device = CreateRHIDevice(deviceDesc);
+    auto* devicePtr = device.get();
+    if (!device) {
+        UZ_LOG(Engine, Error, "FLIP: failed to create RHI device");
+        return kExitRenderError;
+    }
+
+    // Load images
+    uint32_t refW = 0, refH = 0, testW = 0, testH = 0;
+    uint32_t refSrv  = LoadImageToGPU(devicePtr, refPath, refW, refH);
+    uint32_t testSrv = LoadImageToGPU(devicePtr, testPath, testW, testH);
+
+    if (refSrv == UINT32_MAX || testSrv == UINT32_MAX) {
+        UZ_LOG(Engine, Error, "FLIP: failed to load images");
+        return kExitRenderError;
+    }
+
+    if (refW != testW || refH != testH) {
+        UZ_LOG(Engine, Error, "FLIP: image dimensions mismatch ({}x{} vs {}x{})",
+               refW, refH, testW, testH);
+        return kExitRenderError;
+    }
+
+    // Shader manager for FLIP compute pipeline
+    auto shaderMgr = std::make_unique<ShaderManager>();
+    if (!shaderMgr->Init(devicePtr)) {
+        UZ_LOG(Engine, Error, "FLIP: failed to init shader manager");
+        return kExitRenderError;
+    }
+
+    // Run FLIP evaluation
+    FlipPass flipPass;
+    if (!flipPass.Init(devicePtr, shaderMgr.get())) {
+        UZ_LOG(Engine, Error, "FLIP: failed to init FlipPass");
+        return kExitRenderError;
+    }
+
+    auto* cmdList = devicePtr->CreateCommandList();
+    cmdList->Begin();
+    auto result = flipPass.Evaluate(cmdList, refSrv, testSrv, refW, refH, threshold);
+
+    // Print JSON to stdout
+    std::printf("FLIP_JSON:{\"mean_flip\":%.6f,\"max_flip\":%.6f,\"threshold\":%.4f,"
+                "\"pass\":%s,\"ref\":\"%s\",\"test\":\"%s\",\"width\":%u,\"height\":%u}\n",
+                result.meanFlip, result.maxFlip, threshold,
+                result.pass ? "true" : "false",
+                refPath.c_str(), testPath.c_str(), refW, refH);
+
+    flipPass.Shutdown();
+
+    return result.pass ? kExitSuccess : 1;
+}
+
 /// Runs the windowed render loop with animated clear screen, optional scene + Lua scripting.
 static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, int maxFrames,
                        const std::string& windowTitle,
@@ -223,10 +426,12 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
                        bool diagMode = false,
                        bool pixelDebugEnabled = false,
                        int pixelDebugX = 960,
-                       int pixelDebugY = 540) {
-    // --diag / --pixel-debug: enforce a frame limit so the process never hangs
+                       int pixelDebugY = 540,
+                       bool passDump = false,
+                       Config* configPtr = nullptr) {
+    // --diag / --pixel-debug / --pass-dump: enforce a frame limit
     int effectiveMaxFrames = maxFrames;
-    if ((diagMode || pixelDebugEnabled) && maxFrames == kInfiniteFrames) {
+    if ((diagMode || pixelDebugEnabled || passDump) && maxFrames == kInfiniteFrames) {
         effectiveMaxFrames = 120;
         UZ_LOG(Engine, Info, "Diagnostic mode: auto-limiting to {} frames (use --frames to override)", effectiveMaxFrames);
     }
@@ -234,6 +439,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     if (!screenshotPath.empty() && maxFrames == kInfiniteFrames) {
         effectiveMaxFrames = 500;
     }
+    bool screenshotRequested = false;
 
     // ── Window ──────────────────────────────────────────────────────────
     WindowDesc winDesc{};
@@ -290,9 +496,30 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         return kExitRenderError;
     }
 
-    // ── Lua ──────────────────────────────────────────────────────────
+    // ── World + VFS + Lua ─────────────────────────────────────────────
+    World world;
+    const std::string resolvedContentRoot = projectDir.empty()
+        ? std::filesystem::current_path().string()
+        : projectDir + "/" + contentRoot;
+    LooseFileVFS vfs(resolvedContentRoot);
+
+    // Load scene if specified
+    if (!defaultScene.empty()) {
+        auto sceneBytes = vfs.Read(defaultScene);
+        if (!sceneBytes.empty()) {
+            const size_t count = LoadScene(world, sceneBytes, defaultScene);
+            UZ_LOG(Engine, Info, "Loaded {} entities from '{}'", count, defaultScene);
+        } else {
+            UZ_LOG(Engine, Warning, "Failed to read scene: '{}'", defaultScene);
+        }
+    }
+
+    // Initialize Lua scripting
     bool luaReady = false;
     if (LuaVM::Init()) {
+        LuaSetWorld(LuaVM::GetState(), &world);
+        LuaSetVFS(LuaVM::GetState(), &vfs);
+        ScriptSystem::Initialize(&world, &vfs);
         luaReady = true;
         UZ_LOG(Engine, Info, "Lua scripting initialized");
     } else {
@@ -307,6 +534,9 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         UZ_LOG(Engine, Warning, "SceneRenderer init failed — falling back to clear screen");
     }
 
+    // Flush pending --cvar overrides to CVarRegistry (after CVars are registered by SceneRenderer::Init)
+    if (configPtr) configPtr->FlushCvarOverrides();
+
     // Apply shadow debug mode from CLI (--shadow-debug <0-8>)
     if (shadowDebugMode > 0 && sceneRendererReady) {
         sceneRenderer.SetShadowDebugMode(static_cast<uint32_t>(shadowDebugMode));
@@ -319,14 +549,13 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     }
 
     // ── Editor Input & Selection (only when editor mode is active) ────
-#ifdef UZ_HAS_LUA_RENDERER_API
     SelectionManager selectionManager;
     EditorInputHandler editorInput;
     if (editorMode && sceneRendererReady) {
         editorInput.Init(sceneRenderer.GetInput(), &selectionManager,
                          &sceneRenderer.GetCamera(), &world);
         editorInput.SetSceneRenderer(&sceneRenderer);
-        // UE5 behavior: WASD moves camera only while RMB held in editor mode.
+        // Editor mode: WASD moves camera only while RMB held.
         sceneRenderer.GetCameraController().SetEditorMode(true);
         UZ_LOG(Engine, Info, "Editor input handler initialized");
     }
@@ -342,7 +571,6 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     if (editorMode && luaReady) {
         LuaSetEditorState(LuaVM::GetState(), &selectionManager, &editorInput);
     }
-#endif
 
     // ── Pixel Debug (GPU printf) ────────────────────────────────────────
     std::unique_ptr<PixelDebugSystem> pixelDebug;
@@ -369,7 +597,6 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     uint32_t frameIndex = 0;
     uint64_t globalFenceValue = 0;
 
-#ifdef UZ_HAS_VFS
     if (sceneRendererReady && !defaultScene.empty()) {
         UZ_LOG(Engine, Info, "Pre-loading scene textures...");
 
@@ -393,7 +620,6 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
 
         UZ_LOG(Engine, Info, "Pre-load complete, all textures loaded");
     }
-#endif
 
     // ── Render Loop ─────────────────────────────────────────────────────
     auto startTime = std::chrono::high_resolution_clock::now();
@@ -437,7 +663,6 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         prevTime = now;
 
         // Update editor input (before scripts, so editor hotkeys take priority)
-#ifdef UZ_HAS_LUA_RENDERER_API
         if (editorMode && sceneRendererReady) {
             editorInput.Update(dt);
             // Sync selection + gizmo state to renderer for outline/gizmo passes
@@ -447,27 +672,32 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
             sceneRenderer.SetGizmoHoveredAxis(editorInput.GetGizmoHoveredAxis());
             sceneRenderer.SetGizmoActiveAxis(editorInput.GetGizmoActiveAxis());
         }
-#endif
 
         // Update Lua scripts
         if (luaReady) {
             LuaVM::UpdateFrameGlobals(dt, t, static_cast<uint64_t>(frameIndex));
-#ifdef UZ_HAS_SCRIPT_SYSTEM
             ScriptSystem::Update(dt);
-#endif
         }
 
         // Render
         if (sceneRendererReady) {
-            sceneRenderer.RenderFrame(cmdList, swapChain, nullptr, nullptr, dt, frameIndex);
+            sceneRenderer.RenderFrame(cmdList, swapChain, &world, &vfs, dt, frameIndex);
         } else {
             RenderClearFrame(cmdList, swapChain, t);
         }
 
-        // Screenshot capture (request on screenshotFrame, captured next frame by RenderFrame)
-        if (sceneRendererReady && !screenshotPath.empty()
-            && frameIndex == static_cast<uint32_t>(screenshotFrame)) {
+        // Screenshot capture — waits for all assets (meshes, textures) to finish loading
+        // before capturing, so async-loaded scenes appear fully rendered.
+        if (sceneRendererReady && !screenshotPath.empty() && !screenshotRequested
+            && frameIndex >= static_cast<uint32_t>(screenshotFrame)) {
+            // Log asset loading state once per frame until ready
+            if (frameIndex % 30 == 0) (void)sceneRenderer.IsSceneFullyLoadedDebug();
+        }
+        if (sceneRendererReady && !screenshotPath.empty() && !screenshotRequested
+            && frameIndex >= static_cast<uint32_t>(screenshotFrame)
+            && (sceneRenderer.IsSceneFullyLoaded() || frameIndex >= static_cast<uint32_t>(screenshotFrame) + 120)) {
             sceneRenderer.RequestScreenshot(screenshotPath);
+            screenshotRequested = true;
         }
 
         // Present + signal fence
@@ -481,13 +711,17 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
 
     // ── Cleanup (reverse order of creation) ─────────────────────────────
     if (luaReady) {
-#ifdef UZ_HAS_SCRIPT_SYSTEM
         ScriptSystem::Shutdown();
-#endif
         LuaVM::Shutdown();
     }
 
     device->WaitIdle();
+
+    // ── Pass dump — all targets as PNGs + INDEX.html ──────────────────
+    if (passDump && sceneRendererReady) {
+        auto& inspector = sceneRenderer.GetPassInspector();
+        inspector.ExecuteDump(device, cmdList, frameIndex, ".screenshots");
+    }
 
     // ── Diagnostic output (JSON to stdout) ──────────────────────────────
     if (diagMode && sceneRendererReady) {
@@ -598,6 +832,18 @@ int main(int argc, char** argv) {
 
     int exitCode = uz::kExitSuccess;
 
+    // ── FLIP comparison mode ────────────────────────────────────────────
+    const std::string flipRef  = config.GetString("flip-ref");
+    const std::string flipTest = config.GetString("flip-test");
+    if (!flipRef.empty() && !flipTest.empty()) {
+        const std::string flipOutput = config.GetString("flip-output");
+        const float flipThreshold = config.GetFloat("flip-threshold", 0.05f);
+        exitCode = uz::RunFlip(deviceDesc, flipRef, flipTest, flipOutput, flipThreshold);
+        UZ_LOG(Engine, Info, "UzEngine Runtime exiting with code {}", exitCode);
+        uz::LogShutdown();
+        return exitCode;
+    }
+
     if (headless) {
         exitCode = uz::RunHeadless(deviceDesc);
     } else {
@@ -610,10 +856,12 @@ int main(int argc, char** argv) {
         const bool pixelDebugEnabled = config.GetBool("pixel-debug", false);
         const int pixelDebugX = config.GetInt("pixel-debug-x", 960);
         const int pixelDebugY = config.GetInt("pixel-debug-y", 540);
+        const bool passDump = config.GetBool("pass-dump", false);
         exitCode = uz::RunWindowed(deviceDesc, width, height, maxFrames,
                                     windowTitle, projectDir, contentRoot, defaultScene,
                                     ssPath, ssFrame, shadowDebug, editorMode,
-                                    diagMode, pixelDebugEnabled, pixelDebugX, pixelDebugY);
+                                    diagMode, pixelDebugEnabled, pixelDebugX, pixelDebugY,
+                                    passDump, &config);
 #else
         UZ_LOG(Engine, Error, "Windowed mode not supported on this platform yet");
         exitCode = uz::kExitRenderError;

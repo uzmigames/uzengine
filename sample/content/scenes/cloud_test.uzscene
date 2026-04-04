@@ -1,0 +1,116 @@
+{
+  "name": "Cloud Test",
+  "version": "1.0",
+  "entities": [
+    {
+      "name": "Sun",
+      "components": {
+        "transform": {
+          "position": [0, 0, 920],
+          "rotation": [60, -30, 0],
+          "scale": [1, 1, 1]
+        },
+        "light": {
+          "type": "directional",
+          "color": [1.0, 0.96, 0.88],
+          "intensity": 10.0,
+          "cast_shadows": true
+        }
+      }
+    },
+    {
+      "name": "SkyAtmosphere",
+      "components": {
+        "transform": {
+          "position": [0, 0, 1020]
+        },
+        "sky_atmosphere": {
+          "sun_illuminance": [12, 12, 12]
+        }
+      }
+    },
+    {
+      "name": "SkyLight",
+      "components": {
+        "transform": {
+          "position": [0, 0, 690]
+        },
+        "sky_light": {
+          "intensity": 1.0,
+          "light_color": [0.85, 0.9, 1.0]
+        }
+      }
+    },
+    {
+      "name": "HeightFog",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        },
+        "height_fog": {
+          "base_height": -5000
+        }
+      }
+    },
+    {
+      "name": "VolumetricClouds",
+      "components": {
+        "transform": {
+          "position": [0, 0, 0]
+        },
+        "volumetric_clouds": {
+          "coverage": 0.5,
+          "density": 1.2,
+          "extinction": 0.04,
+          "scattering_albedo": 0.99,
+          "phase_g": 0.6,
+          "phase_g2": -0.3,
+          "phase_blend": 0.7,
+          "ambient_multiplier": 4.0,
+          "layer_bottom_altitude_km": 3.0,
+          "layer_height_km": 6.0,
+          "primary_steps": 48,
+          "light_steps": 6
+        }
+      }
+    },
+    {
+      "name": "Ground",
+      "components": {
+        "transform": {
+          "position": [0, 0, 0],
+          "scale": [50, 50, 1]
+        },
+        "mesh": {
+          "type": "plane"
+        },
+        "material": {
+          "albedo": [0.3, 0.35, 0.25],
+          "roughness": 0.9,
+          "metallic": 0.0
+        }
+      }
+    },
+    {
+      "name": "Camera",
+      "components": {
+        "transform": {
+          "position": [0, -200, 500]
+        },
+        "camera": {
+          "fov": 60.0,
+          "near_clip": 1.0,
+          "far_clip": 100000.0,
+          "active": true
+        },
+        "script": {
+          "path": "scripts/fly_camera.lua"
+        }
+      }
+    }
+  ]
+}

@@ -71,13 +71,12 @@ static void DrawDistortionEmitter(IRHICommandList* cmd,
 {
     const auto& gpuBuf = *emitter.buffer;
 
-    // Bind b0: distortion PS constants (strength, normal map SRV index).
+    // Bind b0: distortion PS constants as root constants (slot 0 is 32-bit root constants).
     if (emitter.distortionCB.cpuPtr) {
-        cmd->SetRootCBV(kSlotDistortionConstants,
-                        emitter.distortionCB.bufferHandle,
-                        emitter.distortionCB.offsetBytes,
-                        reinterpret_cast<const uint8_t*>(emitter.distortionCB.cpuPtr),
-                        emitter.distortionCB.sizeBytes);
+        const uint32_t numDwords = emitter.distortionCB.sizeBytes / sizeof(uint32_t);
+        cmd->SetRootConstants(kSlotDistortionConstants,
+                              reinterpret_cast<const uint32_t*>(emitter.distortionCB.cpuPtr),
+                              numDwords, 0);
     }
 
     // Bind b1: per-emitter billboard constants (view/proj, viewport).
@@ -88,7 +87,7 @@ static void DrawDistortionEmitter(IRHICommandList* cmd,
                     emitter.billboardCB.sizeBytes);
 
     // Bind SRV table: particle attributes + normal map texture.
-    cmd->SetDescriptorTable(kSlotSRVTable, emitter.readSetSrvIndex);
+    // Bindless: SRV accessed via ResourceDescriptorHeap[index], no descriptor table needed.
 
     // Issue indirect draw. The args buffer was filled by the simulation pass
     // and is in IndirectArgument state.

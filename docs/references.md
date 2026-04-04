@@ -837,3 +837,12 @@ References already listed in sections 1–26 are not duplicated here.
 - **Referenced in**: Falcor `FLIPPass` render pass
 - **Key contribution**: Perceptual image difference metric combining color and edge differences. Superior to PSNR/SSIM for detecting rendering artifacts. Useful for automated visual regression testing.
 - **UzEngine status**: Not implemented. Target: automated backend parity testing (DX12 vs Vulkan).
+
+
+### Hillis & Steele 1986 — Parallel Prefix Sum
+- **Title**: "Data Parallel Algorithms"
+- **Authors**: W. Daniel Hillis, Guy L. Steele Jr.
+- **Venue**: Communications of the ACM, Vol. 29, No. 12
+- **Referenced in**: `cluster_assign_cs.hlsl` — thread group prefix sum for clustered light assignment
+- **Key contribution**: Foundational parallel scan algorithm. O(n log n) work, O(log n) steps. Used for intra-group prefix sums in compute shaders.
+- **UzEngine status**: Implemented in `ThreadGroupPrefixSum()` using groupshared memory.

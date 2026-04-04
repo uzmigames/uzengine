@@ -124,6 +124,9 @@ public:
     /// Sets the name of the active temporal upscaler for display.
     void SetUpscalerName(const char* name) { m_upscalerName = name ? name : "None"; }
 
+    /// Sets the active quality preset name for display.
+    void SetQualityPreset(const char* name) { m_qualityPreset = name ? name : "Custom"; }
+
     /// Sets camera position and rotation for display.
     void SetCameraInfo(float x, float y, float z, float yawDeg, float pitchDeg) {
         m_camX = x; m_camY = y; m_camZ = z;
@@ -136,7 +139,12 @@ public:
         m_totalLODs = totalLODs;
     }
 
-    /// Renders the stats overlay (text panel + graphs).
+    /// Adds a world-space label at a given screen position.
+    /// Call before Render(). The label is drawn as text with a small background.
+    void AddWorldLabel(float screenX, float screenY, const std::string& text,
+                       const Vec4& color = {1.0f, 0.8f, 0.2f, 1.0f});
+
+    /// Renders the stats overlay (text panel + graphs + world labels).
     ///
     /// # Arguments
     /// * `cmdList` — Command list with render target already set.
@@ -168,6 +176,13 @@ private:
     /// Builds the frame time graph and adds it to the text renderer.
     void BuildGraph();
 
+    struct WorldLabel {
+        float x, y;
+        std::string text;
+        Vec4 color;
+    };
+    std::vector<WorldLabel> m_worldLabels;
+
     IRHIDevice* m_device = nullptr;
     BitmapFont m_font;
     TextRenderer m_textRenderer;
@@ -188,6 +203,7 @@ private:
     uint64_t m_vramTotalMB = 0;      ///< Total VRAM in MB
     bool m_bindless = false;         ///< Whether bindless is active
     std::string m_upscalerName = "TAA"; ///< Active temporal upscaler name
+    std::string m_qualityPreset = "Ultra"; ///< Active quality preset name
 
     /// Captures static system info from the device (called once in Init).
     void CaptureSystemInfo(IRHIDevice* device);

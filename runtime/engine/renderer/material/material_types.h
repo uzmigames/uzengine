@@ -58,7 +58,8 @@ enum class EMaterialDomain : uint8_t {
     LightFunction = 3,  ///< Light attenuation modifier (IES profile, gobo, etc.).
     UI            = 4,  ///< 2D user interface element — screen-space, no lighting.
     Volume        = 5,  ///< Volumetric material (fog cards, participating media).
-    Count         = 6, ///< Total number of material domains. Not a valid domain.
+    Particle      = 6,  ///< VFX particle (billboard, mesh, trail) — forward blended pass.
+    Count         = 7, ///< Total number of material domains. Not a valid domain.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -78,6 +79,81 @@ enum class EBlendMode : uint8_t {
     Modulate    = 4,  ///< Multiplicative blending (DestColor, Zero) — used for shadows.
     Count       = 5, ///< Total number of blend modes. Not a valid mode.
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EDecalBlendMode — controls which DBuffer channels a decal writes
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Selects which G-buffer channels a decal material modifies.
+///
+/// @ref Valient 2014 "Deferred Rendering in Killzone: Shadow Fall" — decals can selectively write to color, normal,
+///      and/or roughness channels. This avoids unnecessary G-buffer writes
+///      (e.g., a blood splatter only needs color, not normal/roughness).
+///
+/// The renderer uses this to set DBuffer write masks and optimize per-pixel
+/// shader work (skip texture sampling for channels not being written).
+enum class EDecalBlendMode : uint8_t {
+    Translucent                  = 0,  ///< Color only (alpha-blended onto albedo).
+    Stain                        = 1,  ///< Modulate existing albedo (multiply blend).
+    Normal                       = 2,  ///< Normal only (bump decals, no color change).
+    Emissive                     = 3,  ///< Emissive only (glowing decals, no surface modification).
+
+    DBuffer_ColorNormalRoughness = 4,  ///< Full DBuffer: writes color + normal + roughness.
+    DBuffer_Color                = 5,  ///< DBuffer: color channel only.
+    DBuffer_ColorNormal          = 6,  ///< DBuffer: color + normal channels.
+    DBuffer_ColorRoughness       = 7,  ///< DBuffer: color + roughness channels.
+    DBuffer_Normal               = 8,  ///< DBuffer: normal channel only.
+    DBuffer_NormalRoughness      = 9,  ///< DBuffer: normal + roughness channels.
+    DBuffer_Roughness            = 10, ///< DBuffer: roughness channel only.
+
+    Count                        = 11, ///< Total number of blend modes. Not a valid mode.
+};
+
+/// Returns a human-readable string for the given decal blend mode.
+[[nodiscard]] inline const char* DecalBlendModeToString(EDecalBlendMode m) noexcept {
+    switch (m) {
+        case EDecalBlendMode::Translucent:                  return "Translucent";
+        case EDecalBlendMode::Stain:                        return "Stain";
+        case EDecalBlendMode::Normal:                       return "Normal";
+        case EDecalBlendMode::Emissive:                     return "Emissive";
+        case EDecalBlendMode::DBuffer_ColorNormalRoughness: return "DBuffer_ColorNormalRoughness";
+        case EDecalBlendMode::DBuffer_Color:                return "DBuffer_Color";
+        case EDecalBlendMode::DBuffer_ColorNormal:          return "DBuffer_ColorNormal";
+        case EDecalBlendMode::DBuffer_ColorRoughness:       return "DBuffer_ColorRoughness";
+        case EDecalBlendMode::DBuffer_Normal:               return "DBuffer_Normal";
+        case EDecalBlendMode::DBuffer_NormalRoughness:      return "DBuffer_NormalRoughness";
+        case EDecalBlendMode::DBuffer_Roughness:            return "DBuffer_Roughness";
+        case EDecalBlendMode::Count:                        return "Count";
+    }
+    return "Unknown";
+}
+
+/// Returns true if the decal blend mode writes to the color (albedo) channel.
+[[nodiscard]] inline bool DecalWritesColor(EDecalBlendMode m) noexcept {
+    return m == EDecalBlendMode::Translucent
+        || m == EDecalBlendMode::Stain
+        || m == EDecalBlendMode::DBuffer_ColorNormalRoughness
+        || m == EDecalBlendMode::DBuffer_Color
+        || m == EDecalBlendMode::DBuffer_ColorNormal
+        || m == EDecalBlendMode::DBuffer_ColorRoughness;
+}
+
+/// Returns true if the decal blend mode writes to the normal channel.
+[[nodiscard]] inline bool DecalWritesNormal(EDecalBlendMode m) noexcept {
+    return m == EDecalBlendMode::Normal
+        || m == EDecalBlendMode::DBuffer_ColorNormalRoughness
+        || m == EDecalBlendMode::DBuffer_ColorNormal
+        || m == EDecalBlendMode::DBuffer_Normal
+        || m == EDecalBlendMode::DBuffer_NormalRoughness;
+}
+
+/// Returns true if the decal blend mode writes to the roughness channel.
+[[nodiscard]] inline bool DecalWritesRoughness(EDecalBlendMode m) noexcept {
+    return m == EDecalBlendMode::DBuffer_ColorNormalRoughness
+        || m == EDecalBlendMode::DBuffer_ColorRoughness
+        || m == EDecalBlendMode::DBuffer_NormalRoughness
+        || m == EDecalBlendMode::DBuffer_Roughness;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper functions
@@ -110,6 +186,7 @@ enum class EBlendMode : uint8_t {
         case EMaterialDomain::LightFunction: return "LightFunction";
         case EMaterialDomain::UI:            return "UI";
         case EMaterialDomain::Volume:        return "Volume";
+        case EMaterialDomain::Particle:     return "Particle";
         case EMaterialDomain::Count:         return "Count";
     }
     return "Unknown";

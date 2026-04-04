@@ -144,12 +144,30 @@ void StatsOverlay::SetScreenSize(uint32_t width, uint32_t height) {
 // Render
 // ─────────────────────────────────────────────────────────────────────────────
 
+void StatsOverlay::AddWorldLabel(float screenX, float screenY,
+                                  const std::string& text, const Vec4& color) {
+    if (!m_visible) return;
+    m_worldLabels.push_back({screenX, screenY, text, color});
+}
+
 void StatsOverlay::Render(IRHICommandList* cmdList, CBRingAllocator& cbRing, uint32_t frameIndex) {
     if (!m_visible) return;
 
     m_textRenderer.BeginFrame(frameIndex);
     BuildTextPanel();
     BuildGraph();
+
+    // Draw world-space labels (VFX emitter markers, etc.)
+    for (const auto& label : m_worldLabels) {
+        const float bgPad = 4.0f;
+        const float textW = static_cast<float>(label.text.size()) * 8.0f;
+        m_textRenderer.AddRect(label.x - bgPad, label.y - bgPad,
+                               textW + bgPad * 2, 16.0f + bgPad * 2,
+                               {0.0f, 0.0f, 0.0f, 0.6f});
+        m_textRenderer.AddText(m_font, label.text, label.x, label.y, label.color);
+    }
+    m_worldLabels.clear();
+
     m_textRenderer.Render(cmdList, cbRing, m_font);
 }
 
@@ -160,7 +178,11 @@ void StatsOverlay::Render(IRHICommandList* cmdList, CBRingAllocator& cbRing, uin
 void StatsOverlay::BuildTextPanel() {
     constexpr float kPanelWidth = 280.f;
     float panelX = static_cast<float>(m_screenWidth) - kPanelWidth - kPanelPadding;
-    float panelY = kPanelPadding;
+    // Vertically centered on the right side
+    constexpr float kLineH_est = 16.f;
+    constexpr int kLineCount_est = 23;
+    float panelH_est = kLineH_est * kLineCount_est + 6.f * 3.f + kPanelPadding * 2.f;
+    float panelY = (static_cast<float>(m_screenHeight) - panelH_est) * 0.5f;
 
 
     constexpr float kLineH = 16.f;
@@ -241,6 +263,11 @@ void StatsOverlay::BuildTextPanel() {
 
     // Upscaler name
     snprintf(buf, sizeof(buf), "Upscaler: %s", m_upscalerName.c_str());
+    m_textRenderer.AddText(m_font, buf, textX, textY, cyan);
+    textY += kLineH;
+
+    // Quality preset
+    snprintf(buf, sizeof(buf), "Quality: %s", m_qualityPreset.c_str());
     m_textRenderer.AddText(m_font, buf, textX, textY, cyan);
     textY += kLineH;
 

@@ -131,7 +131,7 @@ bool OutlinePass::Init(IRHIDevice* device, ShaderPipeline& pipeline,
         desc.renderTargetCount = 1;
         desc.depthStencilFormat = dsvFormat;
 
-        // Depth disabled: outline must render on top of ALL geometry (UE5 behavior).
+        // Depth disabled: outline must render on top of ALL geometry.
         // The outline should be visible even when the selected object is occluded.
         desc.depthStencil.depthEnable = false;
         desc.depthStencil.depthWrite  = false;

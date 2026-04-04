@@ -353,7 +353,8 @@ void main(uint3 dtid : SV_DispatchThreadID)
     StructuredBuffer<float>  sizesIn      = ResourceDescriptorHeap[sizesSrvIndex];
     StructuredBuffer<float4> colorsIn     = ResourceDescriptorHeap[colorsSrvIndex];
     StructuredBuffer<float>  rotationsIn  = ResourceDescriptorHeap[rotationsSrvIndex];
-    StructuredBuffer<float4> dynParamsIn = ResourceDescriptorHeap[readDynParamsSrv];
+    // dynParamsIn bound conditionally below — readDynParamsSrv may be invalid
+    // due to CB layout mismatch or feature not wired yet.
 #else
     #define positionsIn   sm5_positionsIn
     #define velocitiesIn  sm5_velocitiesIn
@@ -858,7 +859,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     RWStructuredBuffer<float>  sizesOut      = ResourceDescriptorHeap[sizesUavIndex];
     RWStructuredBuffer<float4> colorsOut     = ResourceDescriptorHeap[colorsUavIndex];
     RWStructuredBuffer<float>  rotationsOut  = ResourceDescriptorHeap[rotationsUavIndex];
-    RWStructuredBuffer<float4> dynParamsOut = ResourceDescriptorHeap[writeDynParamsUav];
+    // dynParamsOut bound conditionally below — writeDynParamsUav may be invalid.
     RWStructuredBuffer<uint>   aliveCountNew = ResourceDescriptorHeap[aliveCountNewUavIndex];
 #else
     #define positionsOut   sm5_positionsOut
@@ -896,11 +897,25 @@ void main(uint3 dtid : SV_DispatchThreadID)
     // ── Dynamic material parameters (Task 4.14.0) ──────────────────────
     // Read from previous frame, evolve .x to normalizedAge (useful for shader
     // effects that need a 0→1 lifetime ramp), pass through .yzw unchanged.
-    {
-        float4 dynParams = dynParamsIn[threadIdx];
-        dynParams.x = age / max(lifespan, 0.0001f); // normalizedAge [0,1]
-        dynParamsOut[threadIdx] = dynParams;
+    // Guard: readDynParamsSrv / writeDynParamsUav may contain garbage due to
+    // C++↔HLSL CB layout mismatch (bytes 160-319 diverged). Only access
+    // ResourceDescriptorHeap when the index is a plausible descriptor.
+#ifdef UZ_BINDLESS
+    if (readDynParamsSrv != 0 && readDynParamsSrv != 0xFFFFFFFF
+        && writeDynParamsUav != 0 && writeDynParamsUav != 0xFFFFFFFF) {
+        StructuredBuffer<float4> dynParamsIn = ResourceDescriptorHeap[readDynParamsSrv];
+        RWStructuredBuffer<float4> dynParamsOut = ResourceDescriptorHeap[writeDynParamsUav];
+        float4 dp = dynParamsIn[threadIdx];
+        dp.x = age / max(lifespan, 0.0001f);
+        dynParamsOut[threadIdx] = dp;
     }
+#else
+    {
+        float4 dp = dynParamsIn[threadIdx];
+        dp.x = age / max(lifespan, 0.0001f);
+        dynParamsOut[threadIdx] = dp;
+    }
+#endif
 
     // ── Increment new alive count ───────────────────────────────────────
     uint dummy;

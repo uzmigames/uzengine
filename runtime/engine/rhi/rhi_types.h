@@ -9,7 +9,8 @@
 /// GPU resources use typed generational handles (`RHIHandle<Tag>`) to prevent
 /// use-after-free and dangling references. Handles are lightweight value types
 /// (8 bytes: index + generation) that can be freely copied, stored, and compared.
-/// A handle with `generation == 0` is always invalid.
+/// A handle with `generation == 0` is always invalid. A handle with
+/// `generation == UINT32_MAX` is a permanently-failed sentinel (see `IsFailed()`).
 ///
 /// # Enums
 /// Flag enums (`RHIBufferUsage`, `RHITextureUsage`, `RHIResourceState`) support
@@ -76,12 +77,17 @@ struct RHIHandle {
     uint32_t index = 0;      ///< Slot index in the backend's resource pool.
     uint32_t generation = 0; ///< Generation counter. 0 means invalid/never-allocated.
 
-    /// Returns true if this handle was ever created (`generation != 0`).
+    /// Returns true if this handle was ever created (`generation != 0`)
+    /// and is not a permanently-failed sentinel.
     ///
     /// # Returns
     /// `true` if the handle may reference a valid resource.
     /// Note: a valid handle can still be stale if the resource was destroyed.
-    bool IsValid() const { return generation != 0; }
+    bool IsValid() const { return generation != 0 && generation != kFailedGeneration; }
+
+    /// Returns true if this handle represents a permanently-failed creation.
+    /// Failed handles are never retried — the pipeline/shader could not be created.
+    bool IsFailed() const { return generation == kFailedGeneration; }
 
     /// Creates an invalid handle sentinel (index=0, generation=0).
     ///
@@ -89,8 +95,16 @@ struct RHIHandle {
     /// A handle that always returns `false` from `IsValid()`.
     [[nodiscard]] static RHIHandle Invalid() { return {0, 0}; }
 
+    /// Creates a permanently-failed sentinel. `IsValid()` returns false,
+    /// `IsFailed()` returns true. Used to prevent infinite retry loops
+    /// when PSO or shader creation fails irrecoverably.
+    [[nodiscard]] static RHIHandle Failed() { return {0, kFailedGeneration}; }
+
     bool operator==(RHIHandle other) const { return index == other.index && generation == other.generation; }
     bool operator!=(RHIHandle other) const { return !(*this == other); }
+
+private:
+    static constexpr uint32_t kFailedGeneration = UINT32_MAX;
 };
 
 /// Tag type for `RHIHandle` — identifies buffer resources.
@@ -508,7 +522,7 @@ struct RHIDepthStencilDesc {
 struct RHIRasterizerDesc {
     RHICullMode cullMode = RHICullMode::Back;
     RHIFillMode fillMode = RHIFillMode::Solid;
-    bool frontCounterClockwise = true; // CCW front face — DX12/UE5 industry standard
+    bool frontCounterClockwise = true; // CCW front face — DX12 industry standard
     float depthBias = 0.0f;
     float slopeScaledDepthBias = 0.0f;
 };

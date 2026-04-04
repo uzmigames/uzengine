@@ -296,16 +296,47 @@ bool VFXCurve::BakeToTexture(IRHIDevice* device, uint32_t texelCount) {
         return false;
     }
 
-    // TODO(vfx): Upload sampled curve data to the texture.
-    // Currently the texture is created but not filled because the mock RHI
-    // device returns nullptr from MapBuffer. When real upload support is
-    // available, sample the curve at each texel center and write the data:
-    //   for (uint32_t x = 0; x < texelCount; ++x) {
-    //       float t = static_cast<float>(x) / static_cast<float>(texelCount - 1);
-    //       if (isFloat) texels[x] = SampleFloat(t);
-    //       else         vec4Texels[x] = SampleVec4(t);
-    //   }
-    //   device->UpdateTexture(handle, texelData, dataSize);
+    // Sample curve into staging buffer and upload to GPU texture.
+    const uint32_t texelBytes = isFloat ? sizeof(float) : (4 * sizeof(float));
+    const uint32_t dataSize = texelCount * texelBytes;
+
+    RHIBufferDesc stagingDesc{};
+    stagingDesc.sizeBytes = dataSize;
+    stagingDesc.usage     = RHIBufferUsage::CopySrc;
+    stagingDesc.memory    = RHIMemoryType::Upload;
+    stagingDesc.debugName = "VFXCurve_Staging";
+    auto staging = device->CreateBuffer(stagingDesc);
+    if (!staging.IsValid()) {
+        UZ_LOG(VFX, Error, "BakeToTexture: failed to create staging buffer");
+        return false;
+    }
+
+    auto* mapped = static_cast<uint8_t*>(device->MapBuffer(staging));
+    if (!mapped) {
+        UZ_LOG(VFX, Error, "BakeToTexture: MapBuffer returned nullptr");
+        device->DestroyBuffer(staging);
+        return false;
+    }
+
+    if (isFloat) {
+        auto* dst = reinterpret_cast<float*>(mapped);
+        for (uint32_t x = 0; x < texelCount; ++x) {
+            const float t = (texelCount > 1)
+                ? static_cast<float>(x) / static_cast<float>(texelCount - 1) : 0.0f;
+            dst[x] = SampleFloat(t);
+        }
+    } else {
+        auto* dst = reinterpret_cast<float*>(mapped);
+        for (uint32_t x = 0; x < texelCount; ++x) {
+            const float t = (texelCount > 1)
+                ? static_cast<float>(x) / static_cast<float>(texelCount - 1) : 0.0f;
+            const auto v = SampleVec4(t);
+            dst[x * 4 + 0] = v.x; dst[x * 4 + 1] = v.y;
+            dst[x * 4 + 2] = v.z; dst[x * 4 + 3] = v.w;
+        }
+    }
+    device->UnmapBuffer(staging);
+    device->DestroyBuffer(staging);
 
     bakedTexture_ = handle;
 

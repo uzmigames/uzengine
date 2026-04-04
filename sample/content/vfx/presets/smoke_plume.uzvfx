@@ -1,0 +1,44 @@
+{
+  "name": "Smoke Plume",
+  "version": 2,
+  "emitters": [
+    {
+      "name": "Smoke Plume",
+      "max_particles": 10000,
+      "emission_rate": 200,
+      "lifetime": 6,
+      "looping": true,
+      "modules": {
+        "spawn": {
+          "type": "spawn",
+          "rate": 200,
+          "velocity": [
+            0,
+            0,
+            300
+          ],
+          "spread_angle": 34.377481145916,
+          "lifespan_min": 3,
+          "lifespan_max": 6
+        },
+        "update": [
+          {
+            "type": "update",
+            "gravity": [
+              0,
+              0,
+              -100
+            ],
+            "drag": 0.2
+          }
+        ],
+        "render": {
+          "type": "sprite",
+          "width": 120.0,
+          "height": 120.0,
+          "blend_mode": "alpha_blend"
+        }
+      }
+    }
+  ]
+}

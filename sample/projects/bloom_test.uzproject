@@ -1,0 +1,16 @@
+{
+  "name": "Bloom Test",
+  "version": "1.0",
+  "engine_version": "0.2.0",
+  "default_scene": "scenes/bloom_test.uzscene",
+  "content_root": "../content/",
+  "window": {
+    "title": "UzEngine — Bloom Test",
+    "width": 1280,
+    "height": 720,
+    "fullscreen": false
+  },
+  "rendering": {
+    "backend": "dx12"
+  }
+}

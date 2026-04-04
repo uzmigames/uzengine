@@ -4,6 +4,7 @@
 /// IBL bake + SH projection.
 
 #include "atmosphere_renderer.h"
+#include "env_map_sampler.h"
 
 #include "world.h"
 #include "camera.h"
@@ -160,7 +161,10 @@ void AddAtmospherePasses(
                     skySunColor = skyComp.sunIlluminance * lightTint;
                     static constexpr float kDegToRad2 = 3.14159265358979323846f / 180.f;
                     skySunAngularRadius = dl2.lightSourceAngle * kDegToRad2;
-                    skySunDiskIntensity = dl2.intensity;
+                    // Sun disk intensity uses the component's artistic control,
+                    // NOT the directional light intensity (which would double-multiply
+                    // with sunIlluminance, producing HDR values of 200+).
+                    skySunDiskIntensity = skyComp.sunDiskIntensity;
                     break;
                 }
             }
@@ -857,6 +861,16 @@ void PostFrameAtmosphereBake(
     *ctx.skyIBLDirty = false;
     UZ_LOG(Renderer, Info, "SceneRenderer: Sky IBL baked (irrad={}, prefilt={})",
            ctx.iblResult->irradianceSrvIndex, ctx.iblResult->prefilteredSrvIndex);
+
+    // Rebuild env map importance sampler from the same sky cubemap
+    if (ctx.envMapSampler) {
+        if (ctx.envMapSampler->Rebuild(ctx.skyCubemapSrv)) {
+            UZ_LOG(Renderer, Info, "SceneRenderer: EnvMapSampler rebuilt (alias={}, lumMip0={}, totalLum={:.4f})",
+                   ctx.envMapSampler->GetAliasSrv(),
+                   ctx.envMapSampler->GetLuminanceMip0Srv(),
+                   ctx.envMapSampler->GetTotalLuminance());
+        }
+    }
 
     // SH projection from sky cubemap
     {

@@ -221,9 +221,9 @@ public:
 private:
     /// Cached location and integrity info for one asset in the loaded archive.
     struct LoadedEntry {
-        uint64_t offset;        ///< Byte offset into data region
-        uint64_t size;          ///< Asset size in bytes
-        uint64_t contentHash;   ///< xxHash64 of blob data (integrity check)
+        uint64_t offset;
+        uint64_t size;
+        uint64_t contentHash;
     };
 
     std::vector<uint8_t> m_data;

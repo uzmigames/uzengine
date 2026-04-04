@@ -92,6 +92,9 @@ bool CreateAttributeSet(IRHIDevice* device, ParticleAttributeSet& set,
 {
     const auto cap = static_cast<uint64_t>(capacity);
 
+    // Positions and velocities: HLSL uses RWStructuredBuffer<float4> (stride 16),
+    // NOT float3 (stride 12). The .w component is unused but the structured buffer
+    // stride must match the HLSL template type exactly.
     set.positions  = CreateVFXBuffer(device, cap * 16, 16, FormatDebugName("Positions", suffix));
     set.velocities = CreateVFXBuffer(device, cap * 16, 16, FormatDebugName("Velocities", suffix));
     set.ages       = CreateVFXBuffer(device, cap * 4,  4,  FormatDebugName("Ages", suffix));
@@ -479,6 +482,151 @@ void GPUParticleBuffer::DestroyStaging(IRHIDevice* device)
         device->DestroyBuffer(aliveCountStaging);
         aliveCountStaging = {};
     }
+}
+
+// ---------------------------------------------------------------------------
+// GPUParticleBuffer::UploadInitialState
+// ---------------------------------------------------------------------------
+
+void GPUParticleBuffer::UploadInitialState(IRHIDevice* device, IRHICommandList* cmd) {
+    UZ_CHECKF(device != nullptr, "UploadInitialState: device is null");
+    UZ_CHECKF(cmd != nullptr, "UploadInitialState: cmd is null");
+    UZ_CHECKF(IsValid(), "UploadInitialState: buffer not allocated");
+
+    const uint32_t cap = capacity;
+
+    // DX12 buffers support implicit state promotion: Common → CopyDst is
+    // auto-promoted, and CopyDst → UAV decays back to Common after execution.
+    // We skip explicit Common→CopyDst barriers — DX12 handles the promotion.
+    // After all copies, a single batch of CopyDst→UAV barriers ensures
+    // visibility for compute dispatches.
+
+    // Staging buffers stored for deferred destruction after GPU execution.
+    RHIBufferHandle stagingBuffers[3] = {};
+
+    // ── Free list: freeList[i] = i for all i ─────────────────────────
+    {
+        const uint64_t dataSize = static_cast<uint64_t>(cap) * sizeof(uint32_t);
+        RHIBufferDesc stagingDesc{};
+        stagingDesc.sizeBytes = dataSize;
+        stagingDesc.usage     = RHIBufferUsage::CopySrc;
+        stagingDesc.memory    = RHIMemoryType::Upload;
+        stagingDesc.debugName = "VFX_FreeList_Staging";
+        stagingBuffers[0] = device->CreateBuffer(stagingDesc);
+
+        auto* mapped = static_cast<uint32_t*>(device->MapBuffer(stagingBuffers[0]));
+        for (uint32_t i = 0; i < cap; ++i) {
+            mapped[i] = i;
+        }
+        device->UnmapBuffer(stagingBuffers[0]);
+
+        cmd->CopyBuffer(stagingBuffers[0], 0, freeList, 0, dataSize);
+    }
+
+    // ── Free list head: = capacity (all slots free) ──────────────────
+    {
+        RHIBufferDesc stagingDesc{};
+        stagingDesc.sizeBytes = sizeof(uint32_t);
+        stagingDesc.usage     = RHIBufferUsage::CopySrc;
+        stagingDesc.memory    = RHIMemoryType::Upload;
+        stagingDesc.debugName = "VFX_FreeListHead_Staging";
+        stagingBuffers[1] = device->CreateBuffer(stagingDesc);
+
+        auto* mapped = static_cast<uint32_t*>(device->MapBuffer(stagingBuffers[1]));
+        mapped[0] = cap;
+        device->UnmapBuffer(stagingBuffers[1]);
+
+        cmd->CopyBuffer(stagingBuffers[1], 0, freeListHead, 0, sizeof(uint32_t));
+    }
+
+    // ── Alive count: = 0 ─────────────────────────────────────────────
+    {
+        RHIBufferDesc stagingDesc{};
+        stagingDesc.sizeBytes = sizeof(uint32_t);
+        stagingDesc.usage     = RHIBufferUsage::CopySrc;
+        stagingDesc.memory    = RHIMemoryType::Upload;
+        stagingDesc.debugName = "VFX_AliveCount_Staging";
+        stagingBuffers[2] = device->CreateBuffer(stagingDesc);
+
+        auto* mapped = static_cast<uint32_t*>(device->MapBuffer(stagingBuffers[2]));
+        mapped[0] = 0;
+        device->UnmapBuffer(stagingBuffers[2]);
+
+        cmd->CopyBuffer(stagingBuffers[2], 0, aliveCount, 0, sizeof(uint32_t));
+    }
+
+    // Store staging handles for caller to destroy after WaitIdle().
+    pendingStagingBuffers.clear();
+    for (auto h : stagingBuffers) {
+        if (h.IsValid()) pendingStagingBuffers.push_back(h);
+    }
+
+    // Single batch of CopyDst→UAV barriers after all copies.
+    {
+        RHIBarrierDesc barriers[3] = {};
+        barriers[0].buffer = freeList;
+        barriers[0].stateBefore = RHIResourceState::CopyDst;
+        barriers[0].stateAfter  = RHIResourceState::UnorderedAccess;
+        barriers[1].buffer = freeListHead;
+        barriers[1].stateBefore = RHIResourceState::CopyDst;
+        barriers[1].stateAfter  = RHIResourceState::UnorderedAccess;
+        barriers[2].buffer = aliveCount;
+        barriers[2].stateBefore = RHIResourceState::CopyDst;
+        barriers[2].stateAfter  = RHIResourceState::UnorderedAccess;
+        cmd->ResourceBarrier(barriers, 3);
+    }
+
+    UZ_LOG(VFX, Info, "GPUParticleBuffer: initial state uploaded (freeList[0..{}], head={}, alive=0)",
+           cap - 1, cap);
+}
+
+void GPUParticleBuffer::TransitionAllToUAV(IRHICommandList* cmd) {
+    UZ_CHECKF(cmd != nullptr, "TransitionAllToUAV: cmd is null");
+    UZ_CHECKF(IsValid(), "TransitionAllToUAV: buffer not allocated");
+
+    // Collect all valid buffer handles that need Common→UAV transition.
+    RHIBarrierDesc barriers[32] = {};
+    uint32_t count = 0;
+
+    auto addBarrier = [&](RHIBufferHandle buf) {
+        if (buf.IsValid() && count < 32) {
+            barriers[count].buffer      = buf;
+            barriers[count].stateBefore = RHIResourceState::Common;
+            barriers[count].stateAfter  = RHIResourceState::UnorderedAccess;
+            ++count;
+        }
+    };
+
+    // Both attribute sets (read + write)
+    for (int s = 0; s < 2; ++s) {
+        addBarrier(sets[s].positions);
+        addBarrier(sets[s].velocities);
+        addBarrier(sets[s].ages);
+        addBarrier(sets[s].lifespans);
+        addBarrier(sets[s].sizes);
+        addBarrier(sets[s].colors);
+        addBarrier(sets[s].rotations);
+    }
+
+    // Shared bookkeeping buffers
+    addBarrier(aliveCount);
+    addBarrier(freeList);
+    addBarrier(freeListHead);
+    addBarrier(idToIndex);
+    addBarrier(indirectDrawArgs);
+    addBarrier(indirectDispatchArgs);
+
+    // Sort buffers
+    if (sort.IsValid()) {
+        addBarrier(sort.sortKeys);
+        addBarrier(sort.sortIndices);
+    }
+
+    if (count > 0) {
+        cmd->ResourceBarrier(barriers, count);
+    }
+
+    UZ_LOG(VFX, Info, "GPUParticleBuffer: transitioned {} buffers Common→UAV", count);
 }
 
 }  // namespace uz

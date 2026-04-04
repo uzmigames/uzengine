@@ -717,10 +717,11 @@ TEST(SkyLightComponent, CanSetAllFields) {
 // SkyCubemapCaptureRootConstants — size, field offsets, write/read, memcpy
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(SkyCubemapCaptureRootConstants, SizeIs32Bytes) {
-    // 8 DWORDs: bottomRadiusKm(4) + topRadiusKm(4) + sunDirX(4) + sunDirY(4)
-    //         + sunDirZ(4) + sunIntensity(4) + transmittanceLutIdx(4) + packedScatterScales(4)
-    EXPECT_EQ(sizeof(SkyCubemapCaptureRootConstants), 32u);
+TEST(SkyCubemapCaptureRootConstants, SizeIs40Bytes) {
+    // 10 DWORDs: bottomRadiusKm(4) + topRadiusKm(4) + sunDirX(4) + sunDirY(4)
+    //          + sunDirZ(4) + sunIntensity(4) + transmittanceLutIdx(4) + packedScatterScales(4)
+    //          + scatteringLut3DIdx(4) + muSMin(4)
+    EXPECT_EQ(sizeof(SkyCubemapCaptureRootConstants), 40u);
 }
 
 TEST(SkyCubemapCaptureRootConstants, FieldOffsets) {
@@ -732,6 +733,8 @@ TEST(SkyCubemapCaptureRootConstants, FieldOffsets) {
     EXPECT_EQ(offsetof(SkyCubemapCaptureRootConstants, sunIntensity),         20u);
     EXPECT_EQ(offsetof(SkyCubemapCaptureRootConstants, transmittanceLutIdx),  24u);
     EXPECT_EQ(offsetof(SkyCubemapCaptureRootConstants, packedScatterScales),  28u);
+    EXPECT_EQ(offsetof(SkyCubemapCaptureRootConstants, scatteringLut3DIdx),  32u);
+    EXPECT_EQ(offsetof(SkyCubemapCaptureRootConstants, muSMin),              36u);
 }
 
 TEST(SkyCubemapCaptureRootConstants, WriteAndReadBack) {
@@ -772,8 +775,10 @@ TEST(SkyCubemapCaptureRootConstants, MemcpyRoundTrip) {
     src.sunIntensity        = 1.0f;
     src.transmittanceLutIdx = 3u;
     src.packedScatterScales = 0u;
+    src.scatteringLut3DIdx  = 0u;
+    src.muSMin              = -0.2079116908f;
 
-    uint8_t buffer[32];
+    uint8_t buffer[40];
     std::memcpy(buffer, &src, sizeof(src));
 
     SkyCubemapCaptureRootConstants dst{};

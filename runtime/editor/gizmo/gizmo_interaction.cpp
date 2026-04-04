@@ -36,7 +36,7 @@ static constexpr float kCircleRadius = 0.70f;
 static constexpr float kCenterCubeHalfSize = 0.08f;
 
 /// Hit testing threshold in screen pixels for axis stems/circles.
-/// Increased from 7px (UE5 base) to account for screen-space projection
+/// 20px threshold accounts for screen-space projection
 /// and to make clicking 3D cylinders/rings easier.
 static constexpr float kHitThresholdPx = 20.0f;
 

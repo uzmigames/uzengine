@@ -1,7 +1,7 @@
 /// UzEngine UzfxLoader — Implementation.
 ///
-/// Parses .uzfx JSON into UzfxDesc, then instantiates ParticleEmitter
-/// with the described module stack.
+/// Parses .uzvfx JSON into UzfxDesc (multi-emitter system), then
+/// instantiates ParticleEmitter instances with configured module stacks.
 
 #include "uzfx_loader.h"
 
@@ -62,7 +62,56 @@ static Vec3 JVec3(const nlohmann::json& j, const char* key, const Vec3& def = {}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Load — parse .uzfx JSON
+// Parse modules section from a JSON object
+// ─────────────────────────────────────────────────────────────────────────────
+
+static void ParseModules(const nlohmann::json& mods, UzfxEmitterDesc& emitter) {
+    // Spawn module
+    if (mods.contains("spawn")) {
+        const auto& s = mods["spawn"];
+        emitter.spawnModule.type       = JString(s, "type", "spawn");
+        emitter.spawnModule.paramsJson = s.dump();
+    }
+
+    // Update modules (array)
+    if (mods.contains("update") && mods["update"].is_array()) {
+        for (const auto& u : mods["update"]) {
+            UzfxModuleEntry entry;
+            entry.type       = JString(u, "type", "update");
+            entry.paramsJson = u.dump();
+            emitter.updateModules.push_back(std::move(entry));
+        }
+    }
+
+    // Render module
+    if (mods.contains("render")) {
+        const auto& r = mods["render"];
+        emitter.renderModule.type       = JString(r, "type", "sprite");
+        emitter.renderModule.paramsJson = r.dump();
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Parse a single emitter JSON object
+// ─────────────────────────────────────────────────────────────────────────────
+
+static UzfxEmitterDesc ParseEmitter(const nlohmann::json& j) {
+    UzfxEmitterDesc em;
+    em.name          = JString(j, "name", "unnamed");
+    em.maxParticles  = JUint(j, "max_particles", em.maxParticles);
+    em.emissionRate  = JFloat(j, "emission_rate", em.emissionRate);
+    em.lifetime      = JFloat(j, "lifetime", em.lifetime);
+    em.looping       = JBool(j, "looping", em.looping);
+
+    if (j.contains("modules")) {
+        ParseModules(j["modules"], em);
+    }
+
+    return em;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Load — parse .uzvfx JSON (all 3 formats)
 // ─────────────────────────────────────────────────────────────────────────────
 
 UzfxDesc UzfxLoader::Load(const std::string& jsonData) {
@@ -79,59 +128,60 @@ UzfxDesc UzfxLoader::Load(const std::string& jsonData) {
     desc.name    = JString(root, "name", "unnamed");
     desc.version = JUint(root, "version", 1);
 
-    // Emitter base params
-    if (root.contains("emitter")) {
-        const auto& em = root["emitter"];
-        desc.maxParticles = JUint(em, "max_particles", desc.maxParticles);
-        desc.emissionRate = JFloat(em, "emission_rate", desc.emissionRate);
-        desc.lifetime     = JFloat(em, "lifetime", desc.lifetime);
-        desc.looping      = JBool(em, "looping", desc.looping);
-    }
-
-    // Modules
-    if (root.contains("modules")) {
-        const auto& mods = root["modules"];
-
-        // Spawn module
-        if (mods.contains("spawn")) {
-            const auto& s = mods["spawn"];
-            desc.spawnModule.type       = JString(s, "type", "spawn");
-            desc.spawnModule.paramsJson = s.dump();
-        }
-
-        // Update modules (array)
-        if (mods.contains("update") && mods["update"].is_array()) {
-            for (const auto& u : mods["update"]) {
-                UzfxDesc::ModuleEntry entry;
-                entry.type       = JString(u, "type", "update");
-                entry.paramsJson = u.dump();
-                desc.updateModules.push_back(std::move(entry));
-            }
-        }
-
-        // Render module
-        if (mods.contains("render")) {
-            const auto& r = mods["render"];
-            desc.renderModule.type       = JString(r, "type", "sprite");
-            desc.renderModule.paramsJson = r.dump();
+    // ── v2: multi-emitter system ────────────────────────────────────────
+    if (root.contains("emitters") && root["emitters"].is_array()) {
+        for (const auto& emJ : root["emitters"]) {
+            desc.emitters.push_back(ParseEmitter(emJ));
         }
     }
+    // ── v1: single emitter with "emitter" + "modules" sections ──────────
+    else if (root.contains("emitter")) {
+        UzfxEmitterDesc em;
+        const auto& emJ = root["emitter"];
+        em.name          = desc.name;
+        em.maxParticles  = JUint(emJ, "max_particles", em.maxParticles);
+        em.emissionRate  = JFloat(emJ, "emission_rate", em.emissionRate);
+        em.lifetime      = JFloat(emJ, "lifetime", em.lifetime);
+        em.looping       = JBool(emJ, "looping", em.looping);
 
-    UZ_LOG(VFXAsset, Info, "UzfxLoader: loaded '{}' (maxParticles={}, rate={}, modules: spawn={}, update={}, render={})",
-           desc.name, desc.maxParticles, desc.emissionRate,
-           desc.spawnModule.type.empty() ? "none" : desc.spawnModule.type,
-           desc.updateModules.size(),
-           desc.renderModule.type.empty() ? "none" : desc.renderModule.type);
+        if (root.contains("modules")) {
+            ParseModules(root["modules"], em);
+        }
+
+        desc.emitters.push_back(std::move(em));
+    }
+    // ── v0: flat format (legacy preset editor) ──────────────────────────
+    else {
+        UzfxEmitterDesc em;
+        em.name         = desc.name;
+        em.emissionRate = JFloat(root, "spawnRate", em.emissionRate);
+        em.lifetime     = JFloat(root, "maxLifetime", em.lifetime);
+        em.maxParticles = JUint(root, "maxParticles", em.maxParticles);
+        desc.emitters.push_back(std::move(em));
+    }
+
+    UZ_LOG(VFXAsset, Info, "UzfxLoader: loaded '{}' ({} emitter{})",
+           desc.name, desc.emitters.size(),
+           desc.emitters.size() == 1 ? "" : "s");
+
+    for (size_t i = 0; i < desc.emitters.size(); ++i) {
+        const auto& em = desc.emitters[i];
+        UZ_LOG(VFXAsset, Info, "  [{}] '{}': particles={}, rate={}, spawn={}, update={}, render={}",
+               i, em.name, em.maxParticles, em.emissionRate,
+               em.spawnModule.type.empty() ? "none" : em.spawnModule.type,
+               em.updateModules.size(),
+               em.renderModule.type.empty() ? "none" : em.renderModule.type);
+    }
 
     return desc;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Instantiate — create live emitter from descriptor
+// InstantiateEmitter — create live emitter from one emitter descriptor
 // ─────────────────────────────────────────────────────────────────────────────
 
-bool UzfxLoader::Instantiate(
-    const UzfxDesc& desc,
+bool UzfxLoader::InstantiateEmitter(
+    const UzfxEmitterDesc& desc,
     ParticleEmitter& emitter,
     IRHIDevice* device,
     ParticleBudget& budget)
@@ -213,6 +263,11 @@ bool UzfxLoader::Instantiate(
                 auto mod = std::make_unique<SpriteRenderModule>();
                 mod->spriteWidth  = JFloat(j, "width", 0.5f);
                 mod->spriteHeight = JFloat(j, "height", 0.5f);
+                mod->texturePath  = JString(j, "texture", "");
+                mod->flipbookRows = JUint(j, "flipbook_rows", 1);
+                mod->flipbookCols = JUint(j, "flipbook_cols", 1);
+                mod->flipbookTotalFrames = mod->flipbookRows * mod->flipbookCols;
+                mod->flipbookFPS  = JFloat(j, "flipbook_fps", 30.0f);
                 emitter.moduleStack.SetRenderModule(std::move(mod));
             } else if (desc.renderModule.type == "mesh") {
                 MeshRenderModuleConfig cfg;
@@ -237,13 +292,30 @@ bool UzfxLoader::Instantiate(
         return false;
     }
 
-    UZ_LOG(VFXAsset, Info, "UzfxLoader: instantiated '{}' (allocated={}, modules: spawn={}, update={}, render={})",
+    UZ_LOG(VFXAsset, Info, "UzfxLoader: instantiated '{}' (allocated={}, spawn={}, update={}, render={})",
            desc.name, emitter.allocatedFromBudget,
            emitter.moduleStack.spawnModules.size(),
            emitter.moduleStack.updateModules.size(),
            emitter.moduleStack.renderModule ? "yes" : "none");
 
     return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Legacy Instantiate — uses first emitter from system desc
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool UzfxLoader::Instantiate(
+    const UzfxDesc& desc,
+    ParticleEmitter& outEmitter,
+    IRHIDevice* device,
+    ParticleBudget& budget)
+{
+    if (desc.emitters.empty()) {
+        UZ_LOG(VFXAsset, Error, "UzfxLoader::Instantiate: no emitters in system '{}'", desc.name);
+        return false;
+    }
+    return InstantiateEmitter(desc.emitters[0], outEmitter, device, budget);
 }
 
 } // namespace uz

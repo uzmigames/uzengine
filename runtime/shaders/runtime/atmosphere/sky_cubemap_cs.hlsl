@@ -1,444 +1,162 @@
-/// Sky Cubemap Capture Compute Shader — Renders atmosphere into a cubemap for IBL.
+/// UzEngine sky cubemap capture — renders atmosphere into cubemap for IBL.
+/// @ref Bruneton & Neyret 2017 "Precomputed Atmospheric Scattering"
+/// 16-step ray march with transmittance LUT. No sun disk (IBL only).
+/// Output: linear HDR, no tonemap. 64x64x6 RGBA16F.
 ///
-/// For each texel of a 64x64x6 cubemap (RWTexture2DArray), computes sky radiance
-/// by ray-marching through the atmosphere using the same Hillaire 2020 single-scatter
-/// model as sky_atmosphere_ps.hlsl, but outputs to a cubemap face array instead of
-/// screen pixels.
-///
-/// Output is LINEAR HDR (no tonemap, no gamma) -- the IBL baker expects linear input.
-/// The sun disk is intentionally excluded to avoid baking a point-source specular
-/// highlight into the IBL cubemap (specular sun should come from direct lighting).
-///
-/// # Coordinate Convention
-/// - Z-up world space: planet center at origin, surface at Z = bottomRadiusKm
-/// - CubeFaceDirection() returns DX convention (Y-up), so we swizzle Y<->Z
-///   to convert cubemap directions into the atmosphere's Z-up coordinate system
-///
-/// # Resources
-/// - b0: Root constants (10 DWORDs) -- atmosphere radii, sun direction, LUT indices
-/// - u0: RWTexture2DArray<float4> output cubemap (64x64x6, RGBA16F)
-/// - Transmittance LUT accessed via bindless ResourceDescriptorHeap[transmittanceLutIdx]
-///
-/// # Dispatch
-/// [8, 8, 6] thread groups of [8, 8, 1] = 64x64 per face x 6 faces.
+/// b0: 10 root constants, u0: RWTexture2DArray, s0: linear sampler
 
-#include "../include/ibl.hlsli"
-#include "../include/atmosphere_lut.hlsli"
+#include "../common/constants.hlsli"
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Root Constants — 10 DWORDs (40 bytes)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Packs atmosphere geometry, sun direction, LUT indices, and muSMin into
-/// exactly 10 DWORDs. Scattering coefficients are hardcoded below as standard
-/// Earth atmosphere values (matching the transmittance LUT bake).
 cbuffer SkyCubemapParams : register(b0) {
-    float bottomRadiusKm;       // DWORD 0: planet surface radius (km)
-    float topRadiusKm;          // DWORD 1: top-of-atmosphere radius (km)
-    float sunDirX;              // DWORD 2: sun direction X
-    float sunDirY;              // DWORD 3: sun direction Y
-    float sunDirZ;              // DWORD 4: sun direction Z
-    float sunIntensity;         // DWORD 5: sun illuminance (uniform RGB, from DirectionalLight)
-    uint  transmittanceLutIdx;  // DWORD 6: bindless SRV index for transmittance LUT
-    uint  packedScatterScales;  // DWORD 7: packed f16 pair — low16 = rayleighScale, high16 = mieScale
-    uint  scatteringLut3DIdx;   // DWORD 8: bindless SRV for Bruneton 3D scattering LUT (0 = not available)
-    float muSMin;               // DWORD 9: cos(102 deg) = -0.2079116908, minimum sun zenith cosine
+    float bottomRadiusKm;
+    float topRadiusKm;
+    float sunDirX, sunDirY, sunDirZ;
+    float sunIntensity;
+    uint  transmittanceLutIdx;
+    uint  packedScatterScales;
+    uint  scatteringLut3DIdx;
+    float muSMin;
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Output UAV
-// ─────────────────────────────────────────────────────────────────────────────
-
 RWTexture2DArray<float4> outputCubemap : register(u0);
-
-/// s0 = bilinear wrap sampler (D3D12_FILTER_MIN_MAG_MIP_LINEAR).
 SamplerState linearSampler : register(s0);
 
-/// SM5 non-bindless: transmittance LUT bound at t0 via SetFragmentTexture(0).
 #ifndef UZ_BINDLESS
 Texture2D<float4> g_TransmittanceLut : register(t0);
 #endif
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Standard Earth Atmosphere Constants
-// ─────────────────────────────────────────────────────────────────────────────
-//
-// These are the canonical Bruneton 2017 / standard values for Earth's atmosphere.
-// They match the coefficients used in transmittance_lut_cs.hlsl and
-// sky_atmosphere_ps.hlsl (via SkyAtmosphereCB). Hardcoding them here avoids
-// exceeding the 8 DWORD root constant budget while keeping physical accuracy.
+static const float3 RAYLEIGH_BETA = float3(5.802e-3, 13.558e-3, 33.1e-3);
+static const float  MIE_BETA = 3.996e-3;
+static const float  MIE_EXT_RATIO = 1.11;
+static const float  MIE_G = 0.8;
+static const float  RAYLEIGH_H = 8.0;
+static const float  MIE_H = 1.2;
+static const float3 GROUND_ALBEDO = float3(0.7, 0.7, 0.7);
+static const uint   FACE_SIZE = 64;
+static const int    NUM_STEPS = 16;
+static const float  OFFSET_KM = 0.005;
 
-/// Rayleigh scattering coefficients at sea level (km^-1).
-/// Wavelength-dependent: blue scatters ~6x more than red.
-static const float3 RAYLEIGH_BETA = float3(5.802e-3f, 13.558e-3f, 33.1e-3f);
+float RayleighPhase(float c) { return (3.0/(16.0*PI))*(1.0+c*c); }
+float MiePhase(float c, float g) { float g2=g*g; float d=1.0+g2-2.0*g*c; return (1.0/(4.0*PI))*(1.0-g2)/(d*sqrt(d)); }
 
-/// Mie scattering coefficient at sea level (km^-1).
-/// Wavelength-independent (aerosol scattering).
-static const float MIE_BETA = 3.996e-3f;
-
-/// Mie extinction-to-scattering ratio (absorption included).
-/// Mie extinction = MIE_BETA * MIE_EXTINCTION_RATIO.
-static const float MIE_EXTINCTION_RATIO = 1.11f;
-
-/// Henyey-Greenstein anisotropy parameter for Mie phase function.
-/// 0.8 = strong forward scattering (typical for atmospheric aerosols).
-static const float MIE_ANISOTROPY = 0.8f;
-
-/// Rayleigh and Mie scale heights — hardcoded Earth defaults (rarely change).
-static const float RAYLEIGH_SCALE_H = 8.0f;   // km
-static const float MIE_SCALE_H      = 1.2f;   // km
-
-/// Ground albedo for Lambertian reflection when view ray hits the planet.
-/// @ref GroundAlbedo — bright ground for visible lower-hemisphere IBL reflections.
-/// @constants 0.7f — above UE5 default (0.4). Without scene-captured reflection probes,
-///            metals reflecting the lower hemisphere of a sky-only cubemap appear black.
-///            Higher ground albedo compensates by brightening the ground radiance in the IBL.
-/// @deviations Hardcoded here due to 8-DWORD root constant budget.
-static const float3 GROUND_ALBEDO = float3(0.7f, 0.7f, 0.7f);
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Integration Constants
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Output cubemap face resolution. Must match the texture allocation on the CPU side.
-static const uint CUBEMAP_FACE_SIZE = 64u;
-
-/// Number of ray-march steps through the atmosphere per texel.
-/// 16 steps is sufficient for low-frequency IBL capture (not screen-space).
-static const int NUM_STEPS = 16;
-
-/// Small epsilon to prevent division by zero in analytical integration.
-static const float EXT_EPS = 1e-7f;
-
-/// Safety margin: place camera at least 5m above ground in sky space (standard pattern).
-static const float PLANET_RADIUS_OFFSET_KM = 0.005f;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Atmosphere Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Rayleigh phase function: (3 / 16 PI)(1 + cos^2 theta).
-/// Symmetric forward/backward scattering from molecules much smaller than
-/// the wavelength of light.
-float RayleighPhase(float cosTheta) {
-    return (3.0f / (16.0f * PI)) * (1.0f + cosTheta * cosTheta);
+float2 RaySphere(float3 o, float3 d, float r) {
+    float b=dot(o,d); float c=dot(o,o)-r*r; float disc=b*b-c;
+    if(disc<0.0) return float2(-1,-1);
+    float sq=sqrt(disc); return float2(-b-sq,-b+sq);
 }
 
-/// Henyey-Greenstein phase function for Mie scattering.
-/// Models forward-peaked scattering from aerosol particles (~wavelength size).
-///
-/// # Parameters
-/// - cosTheta: cosine of angle between view and light direction.
-/// - g: anisotropy parameter in (-1, 1). Positive = forward scattering.
-float MiePhase(float cosTheta, float g) {
-    float g2    = g * g;
-    float denom = 1.0f + g2 - 2.0f * g * cosTheta;
-    return (1.0f / (4.0f * PI)) * (1.0f - g2) / (denom * sqrt(denom));
+void TransmittanceUV(float h, float cosZ, float bR, float tR, out float2 uv) {
+    float H=sqrt(max(0.0,tR*tR-bR*bR));
+    float rho=sqrt(max(0.0,h*h-bR*bR));
+    float disc=h*h*(cosZ*cosZ-1.0)+tR*tR;
+    float d=max(0.0,-h*cosZ+sqrt(max(0.0,disc)));
+    uv=float2((d-(tR-h))/(rho+H-(tR-h)+1e-6), rho/(H+1e-6));
+    uv=saturate(uv);
 }
 
-/// Exponential density profile: exp(-altitude / scaleHeight).
-/// Models how atmospheric density decreases with altitude for both
-/// Rayleigh (molecular) and Mie (aerosol) scattering.
-float DensityAtAltitude(float altitudeKm, float scaleHeightKm) {
-    return exp(-max(0.0f, altitudeKm) / scaleHeightKm);
+float3 SampleTLut(Texture2D<float4> lut, float3 pos, float3 dir, float bR, float tR) {
+    float h=length(pos); float cosZ=dot(normalize(pos),dir);
+    float2 uv; TransmittanceUV(h,cosZ,bR,tR,uv);
+    return lut.SampleLevel(linearSampler,uv,0).rgb;
 }
 
-/// Ray-sphere intersection. Returns (tNear, tFar).
-/// tNear < 0 means ray origin is inside sphere.
-/// Returns (-1, -1) if no intersection.
-float2 RaySphereIntersect(float3 origin, float3 dir, float3 center, float radius) {
-    float3 oc   = origin - center;
-    float  b    = dot(oc, dir);
-    float  c    = dot(oc, oc) - radius * radius;
-    float  disc = b * b - c;
-    if (disc < 0.0f) return float2(-1.0f, -1.0f);
-    float sq = sqrt(disc);
-    return float2(-b - sq, -b + sq);
+/// DX cubemap face direction (Y-up) → swizzle to Z-up
+float3 CubeFaceDirZUp(uint face, float2 uv) {
+    float u=uv.x*2.0-1.0, v=uv.y*2.0-1.0;
+    float3 d;
+    switch(face) {
+        case 0: d=normalize(float3( 1,-v,-u)); break;
+        case 1: d=normalize(float3(-1,-v, u)); break;
+        case 2: d=normalize(float3( u, 1, v)); break;
+        case 3: d=normalize(float3( u,-1,-v)); break;
+        case 4: d=normalize(float3( u,-v, 1)); break;
+        case 5: d=normalize(float3(-u,-v,-1)); break;
+        default: d=float3(0,0,1);
+    }
+    return normalize(float3(d.x, d.z, d.y)); // Y-up → Z-up
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Transmittance LUT Sampling
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Maps (viewHeight, viewZenithCosAngle) to UV for the transmittance LUT.
-///
-/// Uses Bruneton 2017 non-linear parameterization that concentrates precision
-/// near the horizon where transmittance gradients are steepest. Must match
-/// the parameterization in transmittance_lut_cs.hlsl exactly.
-void TransmittanceLutParamsToUv(float viewHeight, float viewZenithCosAngle,
-    float bRadius, float tRadius, out float2 uv)
-{
-    float H   = sqrt(max(0.0f, tRadius * tRadius - bRadius * bRadius));
-    float rho = sqrt(max(0.0f, viewHeight * viewHeight - bRadius * bRadius));
-
-    float discriminant = viewHeight * viewHeight
-        * (viewZenithCosAngle * viewZenithCosAngle - 1.0f)
-        + tRadius * tRadius;
-    float d = max(0.0f, (-viewHeight * viewZenithCosAngle + sqrt(max(0.0f, discriminant))));
-
-    float dMin = tRadius - viewHeight;
-    float dMax = rho + H;
-    float uU   = (d - dMin) / (dMax - dMin);
-    float uV   = rho / H;
-
-    uv = float2(uU, uV);
-}
-
-/// Samples the precomputed transmittance LUT for a given position and direction.
-///
-/// Computes the UV from the sample point's height and the cosine of the angle
-/// between the position vector and the query direction (typically the sun dir).
-///
-/// # Parameters
-/// - lut: precomputed 256x64 RGBA16F transmittance texture.
-/// - samp: bilinear sampler for smooth interpolation.
-/// - samplePos: position in sky-space (km), relative to planet center at origin.
-/// - queryDir: normalized direction to look up (typically sunDir).
-/// - bRadius: planet surface radius (km).
-/// - tRadius: top-of-atmosphere radius (km).
-///
-/// # Returns
-/// RGB transmittance in [0,1]^3.
-float3 SampleTransmittanceLut(Texture2D<float4> lut, SamplerState samp,
-    float3 samplePos, float3 queryDir,
-    float bRadius, float tRadius)
-{
-    float viewHeight = length(samplePos);
-    float viewZenithCosAngle = dot(normalize(samplePos), queryDir);
-
-    float2 uv;
-    TransmittanceLutParamsToUv(viewHeight, viewZenithCosAngle, bRadius, tRadius, uv);
-    return lut.SampleLevel(samp, uv, 0).rgb;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Cubemap Direction Helper (Z-up Adaptation)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Converts a cubemap face index + texel UV to a Z-up world-space direction.
-///
-/// CubeFaceDirection() (from ibl.hlsli) returns directions in DX convention
-/// where Y is up. The atmosphere model uses Z-up, so we swizzle the result:
-///   DX (X, Y, Z) -> Z-up (X, Z, Y)
-///
-/// This ensures that the "up" face of the cubemap (face 2, +Y in DX) maps to
-/// the zenith direction (0, 0, 1) in the atmosphere's coordinate system, and
-/// the horizon band of the cubemap correctly aligns with the atmosphere horizon.
-///
-/// # Parameters
-/// - faceIndex: cubemap face [0, 5] in DX convention.
-/// - uv: normalized UV [0, 1]^2 within that face.
-///
-/// # Returns
-/// Normalized world-space direction in Z-up coordinates.
-float3 CubeFaceDirectionZUp(uint faceIndex, float2 uv) {
-    float3 dxDir = CubeFaceDirection(faceIndex, uv);
-    // Swizzle: DX Y-up (x, y, z) -> atmosphere Z-up (x, z, y)
-    return normalize(float3(dxDir.x, dxDir.z, dxDir.y));
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Compute Shader Entry Point
-// ─────────────────────────────────────────────────────────────────────────────
 
 [numthreads(8, 8, 1)]
-void main(uint3 dispatchThreadId : SV_DispatchThreadID)
-{
-    uint2 texel     = dispatchThreadId.xy;
-    uint  faceIndex = dispatchThreadId.z;
+void main(uint3 DTid : SV_DispatchThreadID) {
+    uint2 texel = DTid.xy;
+    uint face = DTid.z;
+    if (texel.x >= FACE_SIZE || texel.y >= FACE_SIZE || face >= 6) return;
 
-    // Out-of-bounds guard (dispatch covers exactly 64x64x6, but guard anyway)
-    if (texel.x >= CUBEMAP_FACE_SIZE || texel.y >= CUBEMAP_FACE_SIZE || faceIndex >= 6u)
-        return;
+    float2 uv = (float2(texel) + 0.5) / float(FACE_SIZE);
+    float3 rayDir = CubeFaceDirZUp(face, uv);
 
-    // ── Compute world-space ray direction (Z-up) ────────────────────────────
-    float2 uv     = (float2(texel) + 0.5f) / float(CUBEMAP_FACE_SIZE);
-    float3 rayDir = CubeFaceDirectionZUp(faceIndex, uv);
+    float3 camKm = float3(0, 0, bottomRadiusKm + OFFSET_KM);
+    float3 sunDir = normalize(float3(sunDirX, sunDirY, sunDirZ));
+    float cosTheta = dot(rayDir, sunDir);
+    float phaseR = RayleighPhase(cosTheta);
+    float phaseM = MiePhase(cosTheta, MIE_G);
 
-    // ── Camera position in sky-space (km) ───────────────────────────────────
-    // Camera is on the planet surface looking outward.
-    // Z-up: planet center at origin, camera at (0, 0, bottomRadiusKm + offset).
-    float3 cameraSkyKm = float3(0.0f, 0.0f, bottomRadiusKm + PLANET_RADIUS_OFFSET_KM);
+    // Unpack artistic scales
+    float rScale = f16tof32(packedScatterScales & 0xFFFF);
+    float mScale = f16tof32(packedScatterScales >> 16);
+    rScale = (rScale > 0.0) ? rScale : 1.0;
+    mScale = (mScale > 0.0) ? mScale : 1.0;
+    float3 artBetaR = RAYLEIGH_BETA * rScale;
+    float  artBetaM = MIE_BETA * mScale;
 
-    // ── Intersect ray with atmosphere top ───────────────────────────────────
-    float2 atmoHit = RaySphereIntersect(cameraSkyKm, rayDir, float3(0, 0, 0), topRadiusKm);
-    if (atmoHit.y < 0.0f) {
-        outputCubemap[uint3(texel, faceIndex)] = float4(0, 0, 0, 1);
-        return;
-    }
+    float2 atmoHit = RaySphere(camKm, rayDir, topRadiusKm);
+    if (atmoHit.y < 0.0) { outputCubemap[uint3(texel,face)] = float4(0,0,0,1); return; }
 
-    float tStart = max(atmoHit.x, 0.0f);
-    float tEnd   = atmoHit.y;
+    float tStart = max(atmoHit.x, 0.0);
+    float tEnd = atmoHit.y;
+    float2 gndHit = RaySphere(camKm, rayDir, bottomRadiusKm);
+    bool hitsGround = (gndHit.x > 0.0);
+    if (hitsGround) tEnd = min(tEnd, gndHit.x);
 
-    // Clip to planet surface if ray hits ground
-    float2 groundHit = RaySphereIntersect(cameraSkyKm, rayDir, float3(0, 0, 0), bottomRadiusKm);
-    bool   hitsGround = (groundHit.x > 0.0f);
-    if (hitsGround) {
-        tEnd = min(tEnd, groundHit.x);
-    }
+    float stepLen = (tEnd - tStart) / float(NUM_STEPS);
+    if (stepLen <= 0.0) { outputCubemap[uint3(texel,face)] = float4(0,0,0,1); return; }
 
-    float stepLenKm = (tEnd - tStart) / float(NUM_STEPS);
-    if (stepLenKm <= 0.0f) {
-        outputCubemap[uint3(texel, faceIndex)] = float4(0, 0, 0, 1);
-        return;
-    }
-
-    // ── Sun direction and phase functions ───────────────────────────────────
-    float3 sunDir   = normalize(float3(sunDirX, sunDirY, sunDirZ));
-    float  cosTheta = dot(rayDir, sunDir);
-    float  phaseR   = RayleighPhase(cosTheta);
-    float  phaseM   = MiePhase(cosTheta, MIE_ANISOTROPY);
-
-    // ── Unpack artistic scattering scale factors from packed f16 pair ───────
-    // low 16 bits = rayleighScatteringScale, high 16 bits = mieScatteringScale
-    float rayleighScale = f16tof32(packedScatterScales & 0xFFFFu);
-    float mieScale      = f16tof32(packedScatterScales >> 16u);
-    // Guard against zero scales (default = 1.0 if not set)
-    rayleighScale = (rayleighScale > 0.0f) ? rayleighScale : 1.0f;
-    mieScale      = (mieScale > 0.0f)      ? mieScale      : 1.0f;
-
-    // Artistic scattering coefficients — affect in-scattering color only.
-    // Extinction uses the unscaled physical RAYLEIGH_BETA / MIE_BETA
-    // to match the precomputed transmittance LUT.
-    float3 artRayleighBeta = RAYLEIGH_BETA * rayleighScale;
-    float  artMieBeta      = MIE_BETA * mieScale;
-
-    // ── Transmittance LUT ──────────────────────────────────────────────────
 #ifdef UZ_BINDLESS
     Texture2D<float4> tLut = ResourceDescriptorHeap[transmittanceLutIdx];
 #else
     Texture2D<float4> tLut = g_TransmittanceLut;
 #endif
 
-    // ── LUT-based sky radiance (Bruneton 2017 precomputed scattering) ────
-    // When the 3D scattering LUT is available, replace the 16-step ray march
-    // with a single 4D→3D texture lookup via GetSkyRadiance(). This makes
-    // cubemap bake ~16x faster (2 texture samples vs 16 integration steps).
-#ifdef UZ_BINDLESS
-    if (scatteringLut3DIdx != 0) {
-        Texture3D<float4> scatLut = ResourceDescriptorHeap[scatteringLut3DIdx];
-
-        float3 skyRadiance;
-        float3 skyTransmittance;
-        GetSkyRadiance(
-            cameraSkyKm, rayDir, sunDir,
-            scatLut, tLut, linearSampler,
-            bottomRadiusKm, topRadiusKm, muSMin,
-            phaseR, phaseM,
-            skyRadiance, skyTransmittance);
-
-        // Apply artistic scattering scales. The LUT was baked with physical
-        // coefficients, so we scale the result by the user's artistic factors.
-        // Since the LUT stores Rayleigh and Mie combined (after GetSkyRadiance
-        // applies phase functions), we apply a weighted average scale.
-        // For most cases rayleighScale = mieScale = 1.0 so this is identity.
-        float avgScale = lerp(rayleighScale, mieScale, 0.5f);
-        skyRadiance *= avgScale;
-
-        float3 L_lut = skyRadiance * float3(sunIntensity, sunIntensity, sunIntensity);
-
-        // Ground contribution: Lambertian reflection attenuated by transmittance.
-        // GetSkyRadiance handles the atmospheric path integral; we add ground
-        // shading separately for ground-intersecting rays.
-        if (hitsGround) {
-            float3 groundPosKm = cameraSkyKm + rayDir * groundHit.x;
-            float3 groundNormal = normalize(groundPosKm);
-
-            // Sun-to-ground transmittance via LUT
-            float3 groundSunT = SampleTransmittanceLut(tLut, linearSampler,
-                groundPosKm, sunDir, bottomRadiusKm, topRadiusKm);
-
-            // Lambertian BRDF: albedo / PI * max(N.L, 0)
-            float NdotL = max(0.0f, dot(groundNormal, sunDir));
-            float3 groundRadiance = GROUND_ALBEDO * (1.0f / PI) * NdotL
-                                  * float3(sunIntensity, sunIntensity, sunIntensity) * groundSunT;
-
-            // Attenuate by path transmittance from camera to ground
-            L_lut += skyTransmittance * groundRadiance;
-        }
-
-        outputCubemap[uint3(texel, faceIndex)] = float4(L_lut, 1.0f);
-        return;
-    }
-#endif // UZ_BINDLESS
-
-    // FALLBACK_RAYMARCH: kept for SM5/non-LUT debugging
-    // ── Frostbite analytical integration (Bruneton atmosphere pattern) ────
-    //
-    // Per-step analytical integral of in-scattered luminance:
-    //   Sint = (scatter - scatter * T_step) / max(ext, eps)
-    //   L   += Throughput * sunTransmittance * Sint
-    //   Throughput *= T_step
-    //
-    // This avoids float underflow from accumulated exp(-tau_total) at the
-    // horizon that zeroed out scatter in naive summation.
-    float3 L          = float3(0, 0, 0);
-    float3 Throughput = float3(1, 1, 1);
+    float3 L = float3(0, 0, 0);
+    float3 T = float3(1, 1, 1);
 
     for (int i = 0; i < NUM_STEPS; ++i) {
-        float  t        = tStart + (float(i) + 0.5f) * stepLenKm;
-        float3 sampleKm = cameraSkyKm + rayDir * t;
-        float  altKm    = max(0.0f, length(sampleKm) - bottomRadiusKm);
+        float t = tStart + (float(i) + 0.5) * stepLen;
+        float3 sKm = camKm + rayDir * t;
+        float alt = max(0.0, length(sKm) - bottomRadiusKm);
 
-        // Density at this altitude
-        float densR = DensityAtAltitude(altKm, RAYLEIGH_SCALE_H);
-        float densM = DensityAtAltitude(altKm, MIE_SCALE_H);
+        float dR = exp(-alt / RAYLEIGH_H);
+        float dM = exp(-alt / MIE_H);
 
-        // Extinction uses PHYSICAL coefficients (must match transmittance LUT)
-        float3 extR     = RAYLEIGH_BETA * densR;
-        float3 extM     = MIE_BETA * MIE_EXTINCTION_RATIO * densM;
-        float3 extTotal = extR + extM;
+        float3 extR = RAYLEIGH_BETA * dR;
+        float3 extM = MIE_BETA * MIE_EXT_RATIO * dM;
+        float3 ext = extR + extM;
+        float3 Ts = exp(-ext * stepLen);
 
-        // Transmittance over this single step
-        float3 T_step = exp(-extTotal * stepLenKm);
+        float3 sunT = SampleTLut(tLut, sKm, sunDir, bottomRadiusKm, topRadiusKm);
 
-        // Transmittance from sample point toward sun (via precomputed LUT)
-        float3 sunT = SampleTransmittanceLut(tLut, linearSampler,
-            sampleKm, sunDir, bottomRadiusKm, topRadiusKm);
+        float3 scatter = artBetaR * dR * phaseR + artBetaM * dM * phaseM;
+        float3 Sint = (scatter - scatter * Ts) / max(ext, 1e-7);
 
-        // In-scattering uses ARTISTIC coefficients for color control
-        float3 scatterR = artRayleighBeta * densR * phaseR;
-        float3 scatterM = artMieBeta * densM * phaseM;
-        float3 scatter  = scatterR + scatterM;
-
-        // Analytical in-scattering integral over the step:
-        //   Sint = scatter * (1 - T_step) / ext
-        float3 Sint = (scatter - scatter * T_step) / max(extTotal, EXT_EPS);
-
-        // Accumulate luminance weighted by path throughput and sun transmittance
-        L         += Throughput * sunT * Sint * float3(sunIntensity, sunIntensity, sunIntensity);
-        Throughput *= T_step;
+        L += T * sunT * Sint * sunIntensity;
+        T *= Ts;
     }
 
-    // ── Ground contribution ─────────────────────────────────────────────────
-    // When the view ray hits the planet surface, add Lambertian reflection of
-    // sunlight attenuated by atmosphere transmittance (sun->ground and
-    // ground->camera). Gives the ground its base color at the horizon and
-    // below-horizon directions.
+    // Ground contribution
     if (hitsGround) {
-        float3 groundPosKm = cameraSkyKm + rayDir * groundHit.x;
-        float3 groundNormal = normalize(groundPosKm);
-
-        // Sun-to-ground transmittance via LUT
-        float3 groundSunT = SampleTransmittanceLut(tLut, linearSampler,
-            groundPosKm, sunDir, bottomRadiusKm, topRadiusKm);
-
-        // Lambertian BRDF: albedo / PI * max(N.L, 0)
-        float NdotL = max(0.0f, dot(groundNormal, sunDir));
-        float3 groundRadiance = GROUND_ALBEDO * (1.0f / PI) * NdotL
-                              * float3(sunIntensity, sunIntensity, sunIntensity) * groundSunT;
-
-        // Attenuate by path transmittance from ground to camera
-        L += Throughput * groundRadiance;
+        float3 gPos = camKm + rayDir * gndHit.x;
+        float3 gN = normalize(gPos);
+        float3 gSunT = SampleTLut(tLut, gPos, sunDir, bottomRadiusKm, topRadiusKm);
+        float NdotL = max(0.0, dot(gN, sunDir));
+        float3 gRad = GROUND_ALBEDO * (1.0/PI) * NdotL * sunIntensity * gSunT;
+        L += T * gRad;
     }
 
-    // ── NO sun disk ─────────────────────────────────────────────────────────
-    // Intentionally omitted: IBL cubemaps should not contain point-source
-    // specular highlights. The sun's direct contribution comes from the
-    // analytical directional light in the PBR shader, not from the env map.
-
-    // ── Output linear HDR (no tonemap, no gamma) ────────────────────────────
-    // The IBL baker (irradiance convolution + prefiltered specular) operates
-    // on linear HDR data and applies its own processing.
-    outputCubemap[uint3(texel, faceIndex)] = float4(L, 1.0f);
+    // No sun disk — IBL cubemaps exclude point-source specular
+    // Normalize: sky radiância → IBL-suitable range. The irradiance convolution
+    // integrates over the hemisphere but the raw sky values include sunIntensity
+    // which makes them too bright for IBL. Divide by PI to match the convention
+    // where SkyLightIntensity=1.0 produces physically balanced ambient.
+    // Normalize sky radiance by 1/PI for SH energy conservation
+    outputCubemap[uint3(texel, face)] = float4(L * M_1_PI, 1.0);
 }

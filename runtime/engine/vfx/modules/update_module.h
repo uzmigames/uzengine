@@ -26,7 +26,7 @@ namespace uz {
 /// # Parameters
 /// | Name             | Type  | Default         | Description                        |
 /// |------------------|-------|-----------------|------------------------------------|
-/// | gravity          | Vec3  | (0, -9.81, 0)   | Constant acceleration (m/s^2)      |
+/// | gravity          | Vec3  | (0, 0, -981)     | Constant acceleration (cm/s^2)     |
 /// | drag             | Float | 0.98            | Velocity multiplier per frame      |
 /// | angular_velocity | Float | 0.0             | Rotation speed (radians/sec)       |
 class UpdateModule final : public IVFXModule {
@@ -45,13 +45,16 @@ public:
     /// Returns parameter definitions for physics configuration.
     [[nodiscard]] std::vector<ParameterDef> GetParameters() const override;
 
+    /// Applies JSON config: "gravity" [x,y,z], "drag" float, "angular_velocity" float.
+    void ApplyJsonConfig(const nlohmann::json& config) override;
+
     /// No-op. Compute shader handles all integration on the GPU.
     void Execute(const ExecuteContext& ctx) override;
 
     // -- Configuration (public for editor/serialization) ---------------------
 
-    /// Constant acceleration applied each frame (m/s^2).
-    Vec3 gravity{0.0f, -9.81f, 0.0f};
+    /// Constant acceleration applied each frame (cm/s^2). Z-up: negative Z = down.
+    Vec3 gravity{0.0f, 0.0f, -981.0f};
 
     /// Velocity multiplier per frame (1.0 = no drag, 0.0 = instant stop).
     float drag = 0.98f;

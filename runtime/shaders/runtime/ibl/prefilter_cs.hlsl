@@ -1,103 +1,95 @@
-/// Prefiltered environment map compute shader — split-sum specular IBL.
+/// UzEngine GGX prefiltered environment map — split-sum specular IBL.
+/// @ref Karis 2013 "Real Shading in Unreal Engine 4" — prefiltered environment
+/// @ref Lagarde 2014 "Moving Frostbite to PBR" — mip-roughness mapping
 ///
-/// Generates one mip level of a prefiltered environment cubemap by
-/// importance-sampling the GGX NDF at a given roughness. Each mip stores
-/// the pre-integrated specular radiance for that roughness level:
-///
-///   mip 0 = roughness 0.0 (mirror reflection)
-///   mip 1 = roughness 0.25
-///   mip 2 = roughness 0.5
-///   mip 3 = roughness 0.75
-///   mip 4 = roughness 1.0
-///
-/// At runtime, the renderer samples this cubemap at the reflection
-/// direction R with mip level = roughness * maxMipLevel.
-///
-/// Dispatched once per mip level from the CPU with the appropriate
-/// roughness and face size.
-///
-/// # References
-/// - Karis 2013, "Real Shading in Unreal Engine 4" — split-sum, prefiltered env
-/// - Lagarde & de Rousiers 2014, "Moving Frostbite to PBR"
+/// Root constants at b0: { envSrvIndex, faceSize, roughnessBits, sampleCount }
+/// Output: RWTexture2DArray<float4> per-mip cubemap face at u0
 
-#include "../include/ibl.hlsli"
+#include "../common/constants.hlsli"
+#include "../common/sampling.hlsli"
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Resources
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Root constants at b0.
 cbuffer RootConstants : register(b0) {
-    uint  envMapIndex;  // SRV heap index of the source environment cubemap
-    uint  faceSize;     // output face resolution for this mip level
-    float roughness;    // target roughness for this mip [0, 1]
-    uint  sampleCount;  // number of importance samples (e.g., 256)
+    uint envCubemapSrvIndex;
+    uint faceSize;
+    uint roughnessBits;    // float roughness reinterpreted as uint
+    uint sampleCount;
 };
 
 #ifdef UZ_BINDLESS
-// Environment cubemap fetched from descriptor heap at runtime
 #else
-TextureCube<float3> envMap : register(t0);
+TextureCube<float4> envMap : register(t0);
 #endif
 
+RWTexture2DArray<float4> outputPrefiltered : register(u0);
 SamplerState linearSampler : register(s0);
 
-RWTexture2DArray<float4> prefilteredOut : register(u0);
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Compute Shader Entry Point
-// ─────────────────────────────────────────────────────────────────────────────
+float3 CubeFaceDirection(uint face, float2 uv) {
+    float u = uv.x * 2.0 - 1.0;
+    float v = uv.y * 2.0 - 1.0;
+    switch (face) {
+        case 0: return normalize(float3( 1, -v, -u));
+        case 1: return normalize(float3(-1, -v,  u));
+        case 2: return normalize(float3( u,  1,  v));
+        case 3: return normalize(float3( u, -1, -v));
+        case 4: return normalize(float3( u, -v,  1));
+        case 5: return normalize(float3(-u, -v, -1));
+        default: return float3(0, 0, 1);
+    }
+}
 
 [numthreads(8, 8, 1)]
-void main(uint3 dtid : SV_DispatchThreadID) {
-    uint faceIndex = dtid.z;
+void main(uint3 DTid : SV_DispatchThreadID) {
+    if (DTid.x >= faceSize || DTid.y >= faceSize) return;
 
-    if (dtid.x >= faceSize || dtid.y >= faceSize || faceIndex >= 6u) return;
-
-    // Compute the world-space direction for this texel
-    float2 uv = (float2(dtid.xy) + 0.5f) / float(faceSize);
-    float3 N = normalize(CubeFaceDirection(faceIndex, uv));
-
-    // For the prefilter convolution, assume V = R = N (the "split-sum"
-    // approximation). This loses the view-dependent Fresnel stretch at
-    // grazing angles but is the standard real-time trade-off.
-    float3 R = N;
+    float roughness = asfloat(roughnessBits);
+    float2 uv = (float2(DTid.xy) + 0.5) / float(faceSize);
+    float3 N = CubeFaceDirection(DTid.z, uv);
+    float3 R = N; // Assumption: V = N for prefiltering (isotropic)
     float3 V = R;
 
-#ifdef UZ_BINDLESS
-    TextureCube<float3> envCube = ResourceDescriptorHeap[envMapIndex];
-#else
-    #define envCube envMap
-#endif
+    float3 prefilteredColor = float3(0, 0, 0);
+    float totalWeight = 0.0;
 
-    float3 prefilteredColor = float3(0.0f, 0.0f, 0.0f);
-    float  totalWeight      = 0.0f;
-
-    // Clamp roughness to avoid degenerate delta distribution at roughness=0
-    float clampedRoughness = max(roughness, MIN_ROUGHNESS);
-
-    for (uint i = 0u; i < sampleCount; ++i) {
+    for (uint i = 0; i < sampleCount; ++i) {
         float2 Xi = Hammersley(i, sampleCount);
-        float3 H  = ImportanceSampleGGX(Xi, N, clampedRoughness);
-        float3 L  = normalize(2.0f * dot(V, H) * H - V);
+        float3 H  = ImportanceSampleGGX(Xi, roughness);
 
-        float NdotL = dot(N, L);
-        if (NdotL > 0.0f) {
-            // Weight by NdotL to reduce variance from samples near the
-            // horizon where the cosine term is small
-            prefilteredColor += envCube.SampleLevel(linearSampler, L, 0.0f).rgb * NdotL;
+        // Transform H from tangent space to world space
+        float3 up = abs(N.y) < 0.999 ? float3(0, 1, 0) : float3(1, 0, 0);
+        float3 T = normalize(cross(up, N));
+        float3 B = cross(N, T);
+        H = normalize(H.x * T + H.y * B + H.z * N);
+
+        float3 L = 2.0 * dot(V, H) * H - V;
+        float NdotL = max(dot(N, L), 0.0);
+
+        if (NdotL > 0.0) {
+            // @ref Lagarde 2014 "Moving Frostbite to PBR" — mip selection from PDF
+            // Without mip bias, high-roughness mips retain HDR hotspots (sun in HDRI)
+            // because limited samples can't integrate them. Sampling a higher source mip
+            // pre-filters the hotspot, eliminating fireflies and false reflections.
+            float NdotH = max(dot(N, H), 0.0);
+            float HdotV = max(dot(H, V), 0.0);
+            float a2 = roughness * roughness;
+            a2 = a2 * a2; // alpha = roughness^2, a2 = alpha^2
+            float denom = NdotH * NdotH * (a2 - 1.0) + 1.0;
+            float D = a2 / (PI * denom * denom + 0.0001);
+            float pdf = D * NdotH / (4.0 * HdotV) + 0.0001;
+            float saTexel  = 4.0 * PI / (6.0 * faceSize * faceSize);
+            float saSample = 1.0 / (float(sampleCount) * pdf + 0.0001);
+            float mipBias = roughness == 0.0 ? 0.0 : 0.5 * log2(saSample / saTexel);
+            mipBias = max(mipBias, 0.0);
+
+#ifdef UZ_BINDLESS
+            TextureCube<float4> envTex = ResourceDescriptorHeap[envCubemapSrvIndex];
+            prefilteredColor += envTex.SampleLevel(linearSampler, L, mipBias).rgb * NdotL;
+#else
+            prefilteredColor += envMap.SampleLevel(linearSampler, L, mipBias).rgb * NdotL;
+#endif
             totalWeight += NdotL;
         }
     }
 
-    // Guard against zero-weight edge case (all samples below horizon)
-    prefilteredColor = (totalWeight > 0.0f)
-        ? prefilteredColor / totalWeight
-        : float3(0.0f, 0.0f, 0.0f);
-
-    prefilteredOut[uint3(dtid.xy, faceIndex)] = float4(prefilteredColor, 1.0f);
-
-#ifndef UZ_BINDLESS
-    #undef envCube
-#endif
+    prefilteredColor /= max(totalWeight, 0.001);
+    outputPrefiltered[DTid] = float4(prefilteredColor, 1.0);
 }

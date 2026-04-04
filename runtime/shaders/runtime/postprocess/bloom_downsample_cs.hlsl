@@ -1,54 +1,12 @@
-/// Bloom Downsample Chain — 13-Tap Downsampling (Jimenez 2014)
-///
-/// Progressive 2x downsampling with a 13-tap filter that samples a 4x4
-/// neighborhood using bilinear hardware filtering for effective 4x4 coverage
-/// with only 13 taps. This pattern minimizes aliasing and preserves energy
-/// better than a simple box filter.
-///
-/// The 13-tap pattern (Jimenez 2014, "Next Generation Post-Processing in
-/// Call of Duty: Advanced Warfare") samples 5 overlapping 2x2 blocks:
-///
-/// ```
-///   +--+--+--+--+
-///   |  a  |  b  |
-///   +--e--+--f--+
-///   |  c  |  d  |
-///   +--+--+--+--+
-///
-///   Center (e): weight 0.500 (4 overlapping taps at center)
-///   Corners (a,b,c,d): weight 0.125 each (one tap per corner 2x2)
-///   Edges: 4 taps at edge midpoints, weight 0.250 total
-///
-///   13 bilinear taps effectively cover a 4x4 texel region.
-/// ```
-///
-/// # Usage
-/// Dispatch once per downsample level:
-/// - Level 0: fullRes/2 → /4
-/// - Level 1: /4 → /8
-/// - Level 2: /8 → /16
-/// - Level 3: /16 → /32
-/// - Level 4: /32 → /64
-///
-/// @source Jimenez 2014, "Next Generation Post-Processing in Call of Duty: AW"
-///   slide 162 — 13-tap downsample filter
-/// @ref Standard 4-tap bilinear downsample (we use 13-tap for better quality)
-///   (reference uses simpler 4-tap; we use the 13-tap for better quality)
-/// @deviations the reference engine's PostProcessDownsample uses a 4-tap bilinear (4 offset taps).
-///   We use the 13-tap Jimenez pattern for better anti-aliasing, which is the
-///   standard approach in modern engines (Call of Duty, Unity HDRP).
-
-#include "../include/math_util.hlsli"
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Parameters
-// ─────────────────────────────────────────────────────────────────────────────
+/// UzEngine bloom downsample — 5x5 binomial filter (Falcor pattern).
+/// @ref Falcor SimplePostFX.cs.slang blurFilter5x5 — 10x10 effective footprint
+/// @ref Binomial(9) kernel: 1 9 36 84 126 126 84 36 9 1
 
 cbuffer BloomDownsampleParams : register(b0) {
-    uint  g_InputSrvIndex;     ///< SRV index for input texture (previous mip level).
-    uint  g_OutputUavIndex;    ///< UAV index for output texture (next mip level).
-    uint  g_OutputWidth;       ///< Output texture width in pixels.
-    uint  g_OutputHeight;      ///< Output texture height in pixels.
+    uint  g_InputSrvIndex;
+    uint  g_OutputUavIndex;
+    uint  g_OutputWidth;
+    uint  g_OutputHeight;
 };
 
 SamplerState linearSampler : register(s0);
@@ -58,95 +16,68 @@ Texture2D<float4>   g_InputTex  : register(t0);
 RWTexture2D<float4> g_OutputTex : register(u0);
 #endif
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Entry Point
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// 13-tap downsample filter (Jimenez 2014).
-///
-/// Each thread produces one output pixel by sampling the input texture at 13
-/// bilinear-filtered positions covering a 4x4 input texel region.
-///
-/// The filter samples 5 groups:
-/// - 4 corner 2x2 blocks (bilinear filtered, each 1 tap)
-/// - 4 edge 2x2 blocks (bilinear filtered, each 1 tap)
-/// - 1 center 2x2 block (bilinear filtered, 1 tap) counted with double weight
-/// - 4 additional axis-aligned taps at 2-texel distance
-///
-/// Weights are chosen to be energy-preserving (sum = 1.0).
 [numthreads(8, 8, 1)]
-void main(uint3 dtid : SV_DispatchThreadID)
-{
-    if (dtid.x >= g_OutputWidth || dtid.y >= g_OutputHeight)
-        return;
+void main(uint3 dtid : SV_DispatchThreadID) {
+    if (dtid.x >= g_OutputWidth || dtid.y >= g_OutputHeight) return;
 
 #ifdef UZ_BINDLESS
-    Texture2D<float4> inputTex = ResourceDescriptorHeap[g_InputSrvIndex];
-    RWTexture2D<float4> outputTex = ResourceDescriptorHeap[g_OutputUavIndex];
+    Texture2D<float4> src = ResourceDescriptorHeap[g_InputSrvIndex];
+    RWTexture2D<float4> dst = ResourceDescriptorHeap[g_OutputUavIndex];
 #else
-    Texture2D<float4>   inputTex  = g_InputTex;
-    RWTexture2D<float4> outputTex = g_OutputTex;
+    Texture2D<float4> src = g_InputTex;
+    RWTexture2D<float4> dst = g_OutputTex;
 #endif
 
-    // Input is 2x the output resolution
-    float2 inputSize = float2(g_OutputWidth * 2, g_OutputHeight * 2);
-    float2 texelSize = 1.0f / inputSize;
+    // Falcor 5x5 bilinear filter — binomial(9) weights: 1 9 36 84 126 126 84 36 9 1
+    // 5x5 bilinear taps cover 10x10 effective texels
+    float2 invRes = 1.0 / float2(g_OutputWidth * 2, g_OutputHeight * 2);
+    float2 uv = (float2(dtid.xy) * 2.0 + 1.0) * invRes;
+    float uscale = invRes.x * 0.5;
+    float vscale = invRes.y * 0.5;
 
-    // Center UV of the 4x4 source region for this output pixel
-    float2 uv = (float2(dtid.xy) * 2.0f + 1.0f) * texelSize;
+    // Weights from binomial(9) / 512
+    static const float w0 = (126.0 + 126.0) / 512.0;  // center
+    static const float x1 = 1.5 + 36.0 / (36.0 + 84.0);
+    static const float w1 = (36.0 + 84.0) / 512.0;
+    static const float x2 = 3.5 + 1.0 / (1.0 + 9.0);
+    static const float w2 = (1.0 + 10.0) / 512.0;
 
-    // 13-tap filter pattern (Jimenez 2014)
-    // Sample positions relative to center, in texel units:
-    //
-    //   A . B . C
-    //   . D . E .
-    //   F . G . H
-    //   . I . J .
-    //   K . L . M
-    //
-    // Using bilinear sampling, we can cover 4 texels per tap.
-    // The filter decomposes into 5 overlapping 2x2 blocks plus cross taps.
+    float x1u = x1 * uscale, x2u = x2 * uscale;
+    float x1v = x1 * vscale, x2v = x2 * vscale;
 
-    // Corner samples (each covers a 2x2 block via bilinear)
-    float3 a = inputTex.SampleLevel(linearSampler, uv + float2(-2, -2) * texelSize, 0).rgb;
-    float3 c = inputTex.SampleLevel(linearSampler, uv + float2( 2, -2) * texelSize, 0).rgb;
-    float3 k = inputTex.SampleLevel(linearSampler, uv + float2(-2,  2) * texelSize, 0).rgb;
-    float3 m = inputTex.SampleLevel(linearSampler, uv + float2( 2,  2) * texelSize, 0).rgb;
+    // Row 0 (y = -x2v, -x1v offsets)
+    float4 s0 =
+        (src.SampleLevel(linearSampler, uv + float2(-x2u, -x2v), 0) +
+         src.SampleLevel(linearSampler, uv + float2( x2u, -x2v), 0) +
+         src.SampleLevel(linearSampler, uv + float2(-x2u,  x2v), 0) +
+         src.SampleLevel(linearSampler, uv + float2( x2u,  x2v), 0)) * (w2 * w2) +
+        (src.SampleLevel(linearSampler, uv + float2(-x1u, -x2v), 0) +
+         src.SampleLevel(linearSampler, uv + float2( x1u, -x2v), 0) +
+         src.SampleLevel(linearSampler, uv + float2(-x1u,  x2v), 0) +
+         src.SampleLevel(linearSampler, uv + float2( x1u,  x2v), 0)) * (w1 * w2) +
+        (src.SampleLevel(linearSampler, uv + float2(0, -x2v), 0) +
+         src.SampleLevel(linearSampler, uv + float2(0,  x2v), 0)) * (w0 * w2);
 
-    // Edge midpoint samples
-    float3 b = inputTex.SampleLevel(linearSampler, uv + float2( 0, -2) * texelSize, 0).rgb;
-    float3 f = inputTex.SampleLevel(linearSampler, uv + float2(-2,  0) * texelSize, 0).rgb;
-    float3 h = inputTex.SampleLevel(linearSampler, uv + float2( 2,  0) * texelSize, 0).rgb;
-    float3 l = inputTex.SampleLevel(linearSampler, uv + float2( 0,  2) * texelSize, 0).rgb;
+    // Row 1 (y = -x1v, x1v offsets)
+    float4 s1 =
+        (src.SampleLevel(linearSampler, uv + float2(-x2u, -x1v), 0) +
+         src.SampleLevel(linearSampler, uv + float2( x2u, -x1v), 0) +
+         src.SampleLevel(linearSampler, uv + float2(-x2u,  x1v), 0) +
+         src.SampleLevel(linearSampler, uv + float2( x2u,  x1v), 0)) * (w2 * w1) +
+        (src.SampleLevel(linearSampler, uv + float2(-x1u, -x1v), 0) +
+         src.SampleLevel(linearSampler, uv + float2( x1u, -x1v), 0) +
+         src.SampleLevel(linearSampler, uv + float2(-x1u,  x1v), 0) +
+         src.SampleLevel(linearSampler, uv + float2( x1u,  x1v), 0)) * (w1 * w1) +
+        (src.SampleLevel(linearSampler, uv + float2(0, -x1v), 0) +
+         src.SampleLevel(linearSampler, uv + float2(0,  x1v), 0)) * (w0 * w1);
 
-    // Inner cross samples (covers the center 2x2 region more densely)
-    float3 d = inputTex.SampleLevel(linearSampler, uv + float2(-1, -1) * texelSize, 0).rgb;
-    float3 e = inputTex.SampleLevel(linearSampler, uv + float2( 1, -1) * texelSize, 0).rgb;
-    float3 i = inputTex.SampleLevel(linearSampler, uv + float2(-1,  1) * texelSize, 0).rgb;
-    float3 j = inputTex.SampleLevel(linearSampler, uv + float2( 1,  1) * texelSize, 0).rgb;
+    // Row 2 (y = 0)
+    float4 s2 =
+        (src.SampleLevel(linearSampler, uv + float2(-x2u, 0), 0) +
+         src.SampleLevel(linearSampler, uv + float2( x2u, 0), 0)) * (w2 * w0) +
+        (src.SampleLevel(linearSampler, uv + float2(-x1u, 0), 0) +
+         src.SampleLevel(linearSampler, uv + float2( x1u, 0), 0)) * (w1 * w0) +
+        src.SampleLevel(linearSampler, uv, 0) * (w0 * w0);
 
-    // Center sample
-    float3 g = inputTex.SampleLevel(linearSampler, uv, 0).rgb;
-
-    // Weighted combination (energy preserving, weights sum to 1.0)
-    // Weights from Jimenez 2014:
-    // - Center (g): 4/32 = 0.125 (counted in 4 overlapping blocks)
-    // - Inner cross (d,e,i,j): 4/32 each = 0.125 (counted in 2 blocks each)
-    // - Edge (b,f,h,l): 2/32 each = 0.0625
-    // - Corner (a,c,k,m): 1/32 each = 0.03125
-    //
-    // Simplified grouping (5 blocks of 4 samples each):
-    // Block center:     g * 4
-    // Block top-left:   a+b+d+g -> but g is shared, so decompose differently.
-    //
-    // Standard 13-tap weights (Jimenez):
-    float3 color = float3(0, 0, 0);
-    color += (a + c + k + m) * 0.03125f;       // 4 corners: 1/32 each
-    color += (b + f + h + l) * 0.0625f;         // 4 edges: 2/32 each
-    color += (d + e + i + j) * 0.125f;          // 4 inner: 4/32 each
-    color += g * 0.125f;                         // center: 4/32
-    // Total: 4*0.03125 + 4*0.0625 + 4*0.125 + 0.125
-    //      = 0.125 + 0.25 + 0.5 + 0.125 = 1.0
-
-    outputTex[dtid.xy] = float4(max(0, color), 1.0f);
+    dst[dtid.xy] = s0 + s1 + s2;
 }

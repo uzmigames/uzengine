@@ -34,6 +34,7 @@
 #include "engine/rhi/rhi_types.h"
 
 #include <cstdint>
+#include <vector>
 
 namespace uz {
 
@@ -178,6 +179,9 @@ struct GPUParticleBuffer {
     ///
     /// @ref Batcher 1968 "Sorting Networks and Their Applications" — bitonic merge sort
     GPUParticleSort sort;
+
+    /// Staging buffers pending destruction after UploadInitialState + WaitIdle.
+    std::vector<RHIBufferHandle> pendingStagingBuffers;
 
     /// Whether this buffer has been through at least one full sim+render cycle.
     /// Used by the render graph import to determine initial resource states.
@@ -329,6 +333,26 @@ struct GPUParticleBuffer {
     /// # Parameters
     /// - `device`: RHI device for deallocation. May be null (no-op).
     void DestroyStaging(IRHIDevice* device);
+
+    /// Initializes the free list, alive count, and attribute buffers on the GPU.
+    ///
+    /// Alternative to InitializeData() — uses CopySrc staging buffers and stores
+    /// them in pendingStagingBuffers for deferred destruction after WaitIdle.
+    /// Must be called ONCE after Create() and BEFORE any compute dispatch.
+    /// Uploads: freeList[i] = i, freeListHead = capacity, aliveCount = 0.
+    ///
+    /// # Parameters
+    /// - `device`: RHI device for staging buffer creation.
+    /// - `cmd`: Command list in recording state for copy commands.
+    void UploadInitialState(IRHIDevice* device, IRHICommandList* cmd);
+
+    /// Transitions ALL buffers (both attribute sets + shared) from Common to UAV.
+    ///
+    /// DX12 Default heap buffers start in Common state after CreateBuffer().
+    /// The render graph imports them as UAV — this function ensures the actual
+    /// state matches the import assumption. Must be called once after Create()
+    /// on a command list that is executed and waited on before the first frame.
+    void TransitionAllToUAV(IRHICommandList* cmd);
 };
 
 }  // namespace uz

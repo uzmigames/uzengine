@@ -40,10 +40,10 @@ UE5 maintains **three categories of descriptor heaps:**
 
 | Component | File |
 |-----------|------|
-| Descriptor cache (main logic) | `Engine/Source/Runtime/D3D12RHI/Private/D3D12DescriptorCache.h/cpp` |
-| Online/offline heaps | `Engine/Source/Runtime/D3D12RHI/Private/D3D12Descriptors.h/cpp` |
-| Root signature layout | `Engine/Source/Runtime/D3D12RHI/Private/D3D12RootSignature.h` |
-| State cache (dirty tracking) | `Engine/Source/Runtime/D3D12RHI/Private/D3D12StateCachePrivate.h/cpp` |
+| Descriptor cache (main logic) | `D3D12RHI/Private/D3D12DescriptorCache.h/cpp` |
+| Online/offline heaps | `D3D12RHI/Private/D3D12Descriptors.h/cpp` |
+| Root signature layout | `D3D12RHI/Private/D3D12RootSignature.h` |
+| State cache (dirty tracking) | `D3D12RHI/Private/D3D12StateCachePrivate.h/cpp` |
 
 ## Data Structure: FD3D12DescriptorCache
 
@@ -827,7 +827,7 @@ UE5 batches sampler consolidation to reduce allocations.
 
 ## References
 
-- **UE5 Source**: `/Engine/Source/Runtime/D3D12RHI/Private/`
+- **UE5 Source**: `/D3D12RHI/Private/`
 - **Microsoft DX12 Docs**: https://learn.microsoft.com/en-us/windows/win32/direct3d12/root-signatures
 - **GPU Programming Guide**: Descriptor binding is a critical path for GPU utilization
 - **Related Specs**: Resource State Transitions (D3D12 UAV → SRV transitions)

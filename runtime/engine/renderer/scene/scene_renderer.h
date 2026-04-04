@@ -39,7 +39,9 @@
 #include "shadow_cache.h"
 #include "local_light_shadow_atlas.h"
 #include "ibl/ibl_baker.h"
+#include "ibl/env_map_sampler.h"
 #include "ibl/sh_projection.h"
+#include "env_mis_pass.h"
 #include "probes/reflection_probe_renderer.h"
 #include "postprocess/auto_exposure.h"
 #include "postprocess/bloom_pass.h"
@@ -752,6 +754,7 @@ private:
     PixelDebugSystem* m_pixelDebugSystem = nullptr;
     RHIBufferHandle m_vfxDummyDynParams; ///< Scratch buffer for dynParams when emitter has none.
     RHIBufferHandle m_decalCubeVB;
+    RHIBufferHandle m_vfxZeroBuffer; ///< 4-byte upload buffer containing uint32 0. Used to zero-clear aliveCount.
     RHIBufferHandle m_decalCubeIB;
 
     /// Registers deferred decal passes that project decals onto the G-Buffer.

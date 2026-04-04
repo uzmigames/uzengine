@@ -8,6 +8,7 @@
 #include "render_graph_builder.h"
 #include "render_graph_pass.h"
 #include "engine/rhi/rhi.h"
+#include "engine/shader/shader_compiler.h"
 #include "engine/vfx/core/gpu_particle_buffer.h"
 #include "engine/vfx/modules/emitter_module_stack.h"
 #include "engine/vfx/modules/module_compositor.h"
@@ -231,8 +232,17 @@ static void DispatchSpawn(IRHICommandList* cmd,
 {
     if (emitter.spawnCount == 0) return;
 
-    cmd->SetPipeline(desc.spawnPipeline);
+    // Use per-emitter composed PSO if available, otherwise fall back to hardcoded.
+    const auto spawnPSO = emitter.composedSpawnPSO.IsValid()
+        ? emitter.composedSpawnPSO : desc.spawnPipeline;
+    cmd->SetPipeline(spawnPSO);
+
+    // Bind per-dispatch CB at slot 1 (b1) via root CBV using GPU virtual address.
     cmd->SetRootCBV(kSlotPerDispatch, emitter.spawnCB.gpuAddr);
+
+    // In bindless mode (SM6.6), SRV/UAV indices are passed as root constants
+    // in b0 — no descriptor tables needed. The VFX shaders read buffer indices
+    // from the spawn/update constant buffer, not from descriptor table bindings.
 
     const uint32_t groups = DivRoundUp(emitter.spawnCount, kParticleThreadGroupSize);
     cmd->Dispatch(groups, 1, 1);
@@ -253,8 +263,15 @@ static void DispatchUpdate(IRHICommandList* cmd,
                            const ParticleSimulationPassDesc& desc,
                            const EmitterSimDispatch& emitter)
 {
-    cmd->SetPipeline(desc.updatePipeline);
+    // Use per-emitter composed PSO if available, otherwise fall back to hardcoded.
+    const auto updatePSO = emitter.composedUpdatePSO.IsValid()
+        ? emitter.composedUpdatePSO : desc.updatePipeline;
+    cmd->SetPipeline(updatePSO);
+
+    // Bind per-dispatch CB at slot 1 (b1) via root CBV using GPU virtual address.
     cmd->SetRootCBV(kSlotPerDispatch, emitter.updateCB.gpuAddr);
+
+    // Bindless: SRV/UAV indices passed via CB, not descriptor tables.
 
     // Dispatch at least 1 group so newly spawned particles get updated.
     const uint32_t totalCount = emitter.aliveCount + emitter.spawnCount;
@@ -296,8 +313,64 @@ static void DispatchIndirectArgs(IRHICommandList* cmd,
 // ComposeEmitterShaders -- module composition integration
 // ---------------------------------------------------------------------------
 
+/// Compiles an HLSL source string into a compute PSO via DXC runtime compilation.
+///
+/// # Returns
+/// Valid pipeline handle on success, invalid handle on failure (logged).
+static RHIPipelineHandle CompileComposedCS(
+    IRHIDevice* device, ShaderCompiler& compiler,
+    const std::string& hlslSource, const char* debugName)
+{
+    if (hlslSource.empty()) return {};
+
+    ShaderCompileDesc compileDesc;
+    compileDesc.source = hlslSource;
+    compileDesc.entryPoint = "main";
+    compileDesc.sourceName = debugName;
+    compileDesc.stage = ShaderStageCompile::Compute;
+    compileDesc.model = ShaderModelCompile::SM6_6;
+    compileDesc.output = ShaderOutputFormat::DXIL;
+
+    auto result = compiler.Compile(compileDesc);
+    if (!result.success) {
+        UZ_LOG(VFX, Error,
+               "CompileComposedCS: DXC compilation failed for '{}': {}",
+               debugName, result.errors);
+        return {};
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode = result.bytecode.data();
+    shaderDesc.bytecodeSize = result.bytecode.size();
+    shaderDesc.stage = RHIShaderStage::Compute;
+    shaderDesc.entryPoint = "main";
+    shaderDesc.debugName = debugName;
+
+    auto shaderHandle = device->CreateShader(shaderDesc);
+    if (!shaderHandle.IsValid()) {
+        UZ_LOG(VFX, Error, "CompileComposedCS: CreateShader failed for '{}'", debugName);
+        return {};
+    }
+
+    RHIComputePipelineDesc psoDesc{};
+    psoDesc.computeShader = shaderHandle;
+    psoDesc.debugName = debugName;
+
+    auto pso = device->CreateComputePipeline(psoDesc);
+    if (!pso.IsValid()) {
+        UZ_LOG(VFX, Error, "CompileComposedCS: CreateComputePipeline failed for '{}'", debugName);
+        return {};
+    }
+
+    UZ_LOG(VFX, Info, "CompileComposedCS: compiled '{}' ({} bytes DXIL)",
+           debugName, result.bytecode.size());
+    return pso;
+}
+
 bool ComposeEmitterShaders(EmitterModuleStack& stack,
-                           const ModuleCompositor& compositor)
+                           const ModuleCompositor& compositor,
+                           IRHIDevice* device,
+                           ShaderCompiler& compiler)
 {
     // No modules means fallback to hardcoded shaders -- not an error.
     if (!stack.HasModules()) {
@@ -339,11 +412,18 @@ bool ComposeEmitterShaders(EmitterModuleStack& stack,
            stack.composedSpawnHLSL.size(),
            stack.composedCacheKey);
 
-    // TODO(3.61.0): Compile composed HLSL via DXC runtime compilation when available.
-    // Once DXC is integrated, the composed HLSL should be compiled into a PSO here
-    // and stored in the EmitterModuleStack (or a PipelineLibrary cache keyed by
-    // composedCacheKey). Until then, the pass falls through to the hardcoded
-    // pipelines in ParticleSimulationPassDesc.
+    // Compile composed HLSL into compute PSOs via DXC runtime compilation.
+    if (!stack.composedUpdateHLSL.empty()) {
+        stack.composedUpdatePSO = CompileComposedCS(
+            device, compiler, stack.composedUpdateHLSL,
+            "VFX_ComposedUpdate");
+    }
+
+    if (!stack.composedSpawnHLSL.empty()) {
+        stack.composedSpawnPSO = CompileComposedCS(
+            device, compiler, stack.composedSpawnHLSL,
+            "VFX_ComposedSpawn");
+    }
 
     return true;
 }
@@ -401,22 +481,84 @@ void AddParticleSimulationPass(rg::RgBuilder& builder,
 
             for (size_t i = 0; i < desc.emitters.size(); ++i) {
                 const auto& emitter = desc.emitters[i];
-                const auto& gpuBuf  = *emitter.buffer;
+                if (!emitter.buffer) continue;
 
-                // ── Stage 1: Spawn ──────────────────────────────────────
-                DispatchSpawn(cmd, desc, emitter);
+                // Inter-pass barriers (UAV→SRV for render, UAV→IndirectArgument)
+                // are handled by the render graph. Intra-pass barriers between
+                // sequential dispatches on the same command list are manual.
 
-                if (emitter.spawnCount > 0) {
-                    EmitSimulationUAVBarriers(cmd, gpuBuf);
+                // Zero the alive count buffer before this frame's sim.
+                // The update CS atomically increments this for each surviving
+                // particle. Without the reset, alive count accumulates across
+                // frames → indirect args uses stale count → particles stop spawning.
+                //
+                // UAV→CopyDst → copy zero → CopyDst→UAV + UAV barrier.
+                if (emitter.buffer->aliveCount.IsValid() && desc.zeroBuffer.IsValid()) {
+                    RHIBarrierDesc toCopy{};
+                    toCopy.buffer = emitter.buffer->aliveCount;
+                    toCopy.stateBefore = RHIResourceState::UnorderedAccess;
+                    toCopy.stateAfter  = RHIResourceState::CopyDst;
+                    cmd->ResourceBarrier(&toCopy, 1);
+
+                    cmd->CopyBuffer(desc.zeroBuffer, 0,
+                                    emitter.buffer->aliveCount, 0, sizeof(uint32_t));
+
+                    RHIBarrierDesc toUav{};
+                    toUav.buffer = emitter.buffer->aliveCount;
+                    toUav.stateBefore = RHIResourceState::CopyDst;
+                    toUav.stateAfter  = RHIResourceState::UnorderedAccess;
+                    cmd->ResourceBarrier(&toUav, 1);
                 }
 
-                // ── Stage 2: Update ─────────────────────────────────────
-                DispatchUpdate(cmd, desc, emitter);
-                EmitSimulationUAVBarriers(cmd, gpuBuf);
+                // freeList transitions UAV→SRV for spawn CS which reads it
+                // via StructuredBuffer<uint> (SRV descriptor). The buffer is
+                // in UAV from Create/UploadInitialState.
+                {
+                    RHIBarrierDesc barrier{};
+                    barrier.buffer      = emitter.buffer->freeList;
+                    barrier.stateBefore = RHIResourceState::UnorderedAccess;
+                    barrier.stateAfter  = RHIResourceState::ShaderResource;
+                    cmd->ResourceBarrier(&barrier, 1);
+                }
 
-                // ── Stage 3: Indirect args ──────────────────────────────
+                DispatchSpawn(cmd, desc, emitter);
+
+                // freeList back to UAV for update CS (which may recycle dead
+                // particles back to the free list via RWStructuredBuffer).
+                {
+                    RHIBarrierDesc barrier{};
+                    barrier.buffer      = emitter.buffer->freeList;
+                    barrier.stateBefore = RHIResourceState::ShaderResource;
+                    barrier.stateAfter  = RHIResourceState::UnorderedAccess;
+                    cmd->ResourceBarrier(&barrier, 1);
+                }
+
+                DispatchUpdate(cmd, desc, emitter);
+
+                // aliveCount transitions from UAV (written by spawn+update via
+                // atomics) to SRV (read by indirect args CS via bindless
+                // StructuredBuffer<uint>). DX12 does NOT auto-insert UAV→SRV
+                // barriers between dispatches on the same command list.
+                {
+                    RHIBarrierDesc barrier{};
+                    barrier.buffer      = emitter.buffer->aliveCount;
+                    barrier.stateBefore = RHIResourceState::UnorderedAccess;
+                    barrier.stateAfter  = RHIResourceState::ShaderResource;
+                    cmd->ResourceBarrier(&barrier, 1);
+                }
+
                 DispatchIndirectArgs(cmd, desc, emitter);
-                EmitIndirectArgsBarriers(cmd, gpuBuf);
+
+                // Transition aliveCount back to UAV so the render graph's
+                // tracked exit state remains correct (the graph expects all
+                // sim-pass buffers to end in UAV).
+                {
+                    RHIBarrierDesc barrier{};
+                    barrier.buffer      = emitter.buffer->aliveCount;
+                    barrier.stateBefore = RHIResourceState::ShaderResource;
+                    barrier.stateAfter  = RHIResourceState::UnorderedAccess;
+                    cmd->ResourceBarrier(&barrier, 1);
+                }
             }
 
             // Log first execution for diagnostics.

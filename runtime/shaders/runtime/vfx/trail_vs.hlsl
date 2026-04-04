@@ -90,6 +90,7 @@ cbuffer PerFrameCB : register(b1) {
 /// # Returns
 /// Clip-space position, scrolled UVs, interpolated color, and linear depth
 /// for soft-particle depth comparison in the pixel shader.
+#ifdef UZ_BINDLESS
 TrailVSOutput main(uint vertexID : SV_VertexID) {
     TrailVSOutput output;
 
@@ -102,6 +103,23 @@ TrailVSOutput main(uint vertexID : SV_VertexID) {
 
     uint actualIndex = indexBuffer[vertexID];
     TrailVertexData vtx = vertexBuffer[actualIndex];
+#else
+/// SM5 path: vertices come from the Input Assembler via DrawIndexed.
+struct TrailVSInput {
+    float3 position : POSITION;
+    float  u        : TEXCOORD0;
+    float  v        : TEXCOORD1;
+    float4 color    : COLOR0;
+};
+
+TrailVSOutput main(TrailVSInput ia) {
+    TrailVSOutput output;
+    TrailVertexData vtx;
+    vtx.position = ia.position;
+    vtx.u        = ia.u;
+    vtx.v        = ia.v;
+    vtx.color    = ia.color;
+#endif
 
     // ── Step 2: World -> Clip ────────────────────────────────────────────
     // The ribbon CPU builder already places vertices in world space.

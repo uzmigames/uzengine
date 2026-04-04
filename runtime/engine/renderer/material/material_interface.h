@@ -279,6 +279,11 @@ public:
     /// Default: Opaque (deferred G-buffer, no blending).
     [[nodiscard]] virtual EBlendMode GetBlendMode() const { return EBlendMode::Opaque; }
 
+    /// Decal blend mode — controls which DBuffer channels a decal material writes.
+    /// Only meaningful when GetMaterialDomain() == EMaterialDomain::Decal.
+    /// @ref Valient 2014 "Deferred Rendering in Killzone: Shadow Fall" — DBuffer decal blend modes
+    [[nodiscard]] virtual EDecalBlendMode GetDecalBlendMode() const { return EDecalBlendMode::DBuffer_ColorNormalRoughness; }
+
     // ── ORM packed mode ─────────────────────────────────────────────────────
 
     /// Returns true if this material uses a packed ORM texture (Occlusion in R,

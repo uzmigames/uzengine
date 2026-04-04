@@ -118,7 +118,7 @@ TEST(UzMeshFormat, Write_OutputStartsWithMagicAndVersion) {
     EXPECT_EQ(parsed.magic, kUzMeshMagic);
     EXPECT_EQ(parsed.magic, 0x534D5A55u);
     EXPECT_EQ(parsed.version, kUzMeshVersion);
-    EXPECT_EQ(parsed.version, 1u);
+    EXPECT_EQ(parsed.version, 2u);
 }
 
 TEST(UzMeshFormat, Write_VertexDataOffset_Is64ByteAligned) {

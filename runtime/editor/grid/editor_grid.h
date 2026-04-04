@@ -73,12 +73,9 @@ public:
     ///   bindless sampling (used when screen percentage != 100%).
     /// - `displayWidth` / `displayHeight` — Display resolution for pixel-to-UV
     ///   mapping (only used when sceneDepthSrv != UINT32_MAX).
-    /// - `reflectionHdrSrv` — Bindless SRV index for HDR scene texture used for
-    ///   screen-space ground reflection. UINT32_MAX = no reflection.
     void Draw(IRHICommandList* cmdList, CBRingAllocator& cbRing, const Camera& camera,
               uint32_t sceneDepthSrv = UINT32_MAX,
-              float displayWidth = 0.f, float displayHeight = 0.f,
-              uint32_t reflectionHdrSrv = UINT32_MAX);
+              float displayWidth = 0.f, float displayHeight = 0.f);
 
     /// Releases GPU resources.
     void Shutdown();

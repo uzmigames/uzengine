@@ -11,10 +11,12 @@
 #include "dx12_resource_creation.h"
 #include "d3dx12.h"
 
+#include "crash_handler.h"
 #include "log.h"
 #include "profiler.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <string_view>
 #include <vector>
 
@@ -137,12 +139,17 @@ bool DX12CommandList::Init(DX12Device* device, RHIQueueType queueType) {
 
         // Allocate remaining slots — bump allocator guarantees contiguity for
         // sequential Allocate() calls when no free-list entries exist yet.
+        // During runtime, free-list entries may cause non-contiguous allocation.
+        // This is acceptable for upload/copy command lists that don't use the ring.
+        bool contiguous = true;
         for (uint32_t i = 1; i < kTotalRingDescriptors; ++i) {
             uint32_t idx = srvAlloc.Allocate();
             if (idx != base + i) {
-                UZ_LOG(RHI, Error, "Descriptor ring buffer not contiguous at slot {} "
-                       "(expected {}, got {})", i, base + i, idx);
-                return false;
+                if (contiguous) {
+                    UZ_LOG(RHI, Warning, "Descriptor ring buffer not contiguous at slot {} "
+                           "(expected {}, got {}), continuing with non-contiguous ring", i, base + i, idx);
+                    contiguous = false;
+                }
             }
         }
 
@@ -171,6 +178,10 @@ void DX12CommandList::Begin() {
     if (FAILED(hr)) {
         UZ_LOG(RHI, Error, "CommandAllocator::Reset failed, HRESULT=0x{:08X}",
                static_cast<uint32_t>(hr));
+        ++m_consecutiveErrors;
+        if (m_consecutiveErrors >= kMaxConsecutiveErrors) {
+            FatalErrorLoop("CommandAllocator::Reset", static_cast<uint32_t>(hr));
+        }
         return;
     }
 
@@ -178,8 +189,15 @@ void DX12CommandList::Begin() {
     if (FAILED(hr)) {
         UZ_LOG(RHI, Error, "CommandList::Reset failed, HRESULT=0x{:08X}",
                static_cast<uint32_t>(hr));
+        ++m_consecutiveErrors;
+        if (m_consecutiveErrors >= kMaxConsecutiveErrors) {
+            FatalErrorLoop("CommandList::Reset", static_cast<uint32_t>(hr));
+        }
         return;
     }
+
+    // Frame completed Begin() successfully — reset consecutive error counter
+    m_consecutiveErrors = 0;
 
     // Reset the per-frame descriptor bump allocator. The current frame's slice
     // starts at m_frameRingBase + m_currentFrame * kDescriptorsPerFrame.
@@ -212,6 +230,26 @@ void DX12CommandList::End() {
     if (FAILED(hr)) {
         UZ_LOG(RHI, Error, "CommandList::Close failed, HRESULT=0x{:08X}",
                static_cast<uint32_t>(hr));
+
+        // Check if the device was removed — if so, flush DRED breadcrumbs
+        // and page fault data BEFORE anything else. Without this, the DRED
+        // data (which identifies the exact GPU command that faulted) is lost
+        // because LogDeviceRemoved() was previously only called from Present().
+        if (m_device) {
+            ComPtr<ID3D12Device> d3dDevice;
+            m_cmdList->GetDevice(IID_PPV_ARGS(&d3dDevice));
+            if (d3dDevice) {
+                HRESULT removedReason = d3dDevice->GetDeviceRemovedReason();
+                if (removedReason != S_OK) {
+                    m_device->LogDeviceRemoved();
+                }
+            }
+        }
+
+        ++m_consecutiveErrors;
+        if (m_consecutiveErrors >= kMaxConsecutiveErrors) {
+            FatalErrorLoop("CommandList::Close", static_cast<uint32_t>(hr));
+        }
 
         // Dump D3D12 debug layer messages for diagnosis
         ComPtr<ID3D12InfoQueue> infoQueue;
@@ -611,16 +649,10 @@ void DX12CommandList::ResourceBarrier(const RHIBarrierDesc* barriers, uint32_t c
             continue;
         }
 
-        auto d3dBefore = ToD3D12ResourceState(b.stateBefore);
-        auto d3dAfter  = ToD3D12ResourceState(b.stateAfter);
-
-        if (d3dBefore == d3dAfter) {
-            // Same before/after = UAV barrier (synchronization, not state transition)
-            d3dBarriers[validCount] = CD3DX12_RESOURCE_BARRIER::UAV(resource);
-        } else {
-            d3dBarriers[validCount] = CD3DX12_RESOURCE_BARRIER::Transition(
-                resource, d3dBefore, d3dAfter);
-        }
+        d3dBarriers[validCount] = CD3DX12_RESOURCE_BARRIER::Transition(
+            resource,
+            ToD3D12ResourceState(b.stateBefore),
+            ToD3D12ResourceState(b.stateAfter));
         ++validCount;
     }
 
@@ -733,8 +765,10 @@ void DX12CommandList::CopyTextureRegion(RHITextureHandle src, uint32_t srcMip, u
         return;
     }
 
-    D3D12_RESOURCE_DESC srcDesc{}; srcTex->resource->GetDesc(&srcDesc);
-    D3D12_RESOURCE_DESC dstDesc{}; dstTex->resource->GetDesc(&dstDesc);
+    D3D12_RESOURCE_DESC srcDesc = {};
+    srcTex->resource->GetDesc(&srcDesc);
+    D3D12_RESOURCE_DESC dstDesc = {};
+    dstTex->resource->GetDesc(&dstDesc);
     const uint32_t srcSubresource = D3D12CalcSubresource(srcMip, srcSlice, 0,
         srcDesc.MipLevels, static_cast<uint32_t>(srcDesc.DepthOrArraySize));
     const uint32_t dstSubresource = D3D12CalcSubresource(dstMip, dstSlice, 0,
@@ -775,7 +809,8 @@ void DX12CommandList::CopyBufferToTexture(RHIBufferHandle srcBuffer, uint64_t sr
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
     UINT64 totalBytes = 0;
 
-    D3D12_RESOURCE_DESC resDesc{}; tex->resource->GetDesc(&resDesc);
+    D3D12_RESOURCE_DESC resDesc{};
+    tex->resource->GetDesc(&resDesc);
     m_device->GetDevice()->GetCopyableFootprints(
         &resDesc, subresource, 1, srcOffset, &footprint, nullptr, nullptr, &totalBytes);
 
@@ -988,6 +1023,31 @@ void DX12CommandList::EndRenderPass() {
         }
         m_tempRtvCount = 0;
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fatal Error Loop Detection
+// ─────────────────────────────────────────────────────────────────────────────
+
+void DX12CommandList::FatalErrorLoop(const char* operation, uint32_t hresult) {
+    UZ_LOG(RHI, Error,
+           "FATAL: {} consecutive RHI errors detected (last: {} HRESULT=0x{:08X}). "
+           "The GPU is in an unrecoverable error state. Generating crash report and terminating.",
+           m_consecutiveErrors, operation, hresult);
+
+    // Update crash context so the crash report includes RHI state
+    CrashHandler_SetLastRhiOp(operation);
+    CrashHandler_SetGpuDeviceRemoved(hresult == 0x887A0005u); // DXGI_ERROR_DEVICE_REMOVED
+
+    // Flush log before termination
+    UZ_LOG(RHI, Error,
+           "RHI Error Loop Summary: {} errors, operation='{}', HRESULT=0x{:08X}. "
+           "Check crash report for GPU adapter info and stack trace.",
+           m_consecutiveErrors, operation, hresult);
+
+    // Use abort() to trigger the crash handler (SEH exception filter)
+    // which writes the minidump, crash.txt, and crash.json.
+    std::abort();
 }
 
 } // namespace uz

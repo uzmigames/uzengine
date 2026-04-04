@@ -39,7 +39,10 @@ void SceneRenderer::SyncDrawListAndInstances(FrameContext& ctx) {
     // Disable instancing when multiple mesh types are loaded — the instanced path
     // currently only supports homogeneous batches (all mesh[0]). Per-mesh batching
     // is future work. Fall back to per-draw-command path for multi-mesh scenes.
-    ctx.useInstancing = ctx.bindless && instanceCount > 0 && m_meshes.size() <= 1;
+    // Instancing disabled — the single-mesh-type instanced GBuffer path
+    // produces invisible geometry. Per-draw-command path works correctly.
+    // Re-enable after debugging the instanced pipeline.
+    ctx.useInstancing = false;
 
     // Triple-buffered instance data: CPU writes to frame N's buffer while GPU
     // reads from frame N-2. No WaitIdle needed — fence sync in the app layer

@@ -28,7 +28,7 @@ function on_start(entity)
     for i, mat in ipairs(materials) do
         local x = -half_width + (i - 1) * spacing
         local e = uz.scene.create_entity("Sphere_" .. i)
-        uz.scene.set_position(e, x, 0, 100)
+        uz.scene.set_position(e, x, 200, 100)
         uz.scene.set_scale(e, 100, 100, 100)
         uz.scene.set_mesh(e, sphere_id)
         uz.scene.set_material(e, {
@@ -44,16 +44,20 @@ function on_start(entity)
 end
 
 function on_update(entity, dt)
-    -- Load HDRI on first update frame (GPU command list available)
+    -- Load HDRI on frame 3 (give descriptor ring time to stabilize)
     if not hdri_loaded then
-        hdri_loaded = true
-        local hdri_srv = uz.texture.load_hdr("textures/hdri/grasslands_sunset_4k.exr")
-        if hdri_srv then
-            uz.log("HDRI loaded: SRV=" .. tostring(hdri_srv))
-            local ok = uz.renderer.set_hdri_environment(hdri_srv)
-            uz.log("HDRI environment set: " .. tostring(ok))
-        else
-            uz.log("WARNING: Failed to load HDRI panorama")
+        if not hdri_frame then hdri_frame = 0 end
+        hdri_frame = hdri_frame + 1
+        if hdri_frame >= 3 then
+            hdri_loaded = true
+            local hdri_srv = uz.texture.load_hdr("textures/hdri/grasslands_sunset_4k.hdr")
+            if hdri_srv then
+                uz.log("HDRI loaded: SRV=" .. tostring(hdri_srv))
+                local ok = uz.renderer.set_hdri_environment(hdri_srv)
+                uz.log("HDRI environment set: " .. tostring(ok))
+            else
+                uz.log("WARNING: Failed to load HDRI panorama")
+            end
         end
     end
 end

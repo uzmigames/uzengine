@@ -209,7 +209,7 @@ cd W:/UE_5.6_Source
 
 # Compare implementations line-by-line:
 grep -n "HISTOGRAM_SIZE" Engine/Shaders/Private/PostProcessHistogramCommon.ush
-grep -n "ExposureSpeedUp" Engine/Source/Runtime/Engine/Private/Scene.cpp
+grep -n "ExposureSpeedUp" Engine/Private/Scene.cpp
 grep -n "ComputeEyeAdaptation" Engine/Shaders/Private/PostProcessHistogramCommon.ush
 ```
 

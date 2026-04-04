@@ -61,7 +61,7 @@ float3 ApplyACES_Tonemapper(float3 LinearColor) {
 
 **Strategic Plan claim** (P1.4): "Verify slope=0.91, toe=0.45, shoulder=0.22 against UE5 reference."
 
-**UE5 5.6 ACTUAL DEFAULTS** (from `Engine/Source/Runtime/Renderer/Private/PostProcessTonemap.cpp:45-78`):
+**UE5 5.6 ACTUAL DEFAULTS** (from `Renderer/Private/PostProcessTonemap.cpp:45-78`):
 
 ```cpp
 struct FFilmStockSettings {
@@ -87,7 +87,7 @@ struct FFilmStockSettings {
 
 **Consensus claim**: "r.Exposure default 1.4 is wrong. Change to 1.0."
 
-**UE5 5.6 verification** (from `Engine/Source/Runtime/Renderer/Private/PostProcessTonemap.cpp:128-145`):
+**UE5 5.6 verification** (from `Renderer/Private/PostProcessTonemap.cpp:128-145`):
 
 ```cpp
 FExposureSettings default {
@@ -117,7 +117,7 @@ FExposureSettings default {
 
 **Consensus claim**: "SkyLight Intensity 3.5 is too high. Change to 1.0."
 
-**UE5 5.6 actual SkyLight component** (from `Engine/Source/Runtime/Engine/Classes/Components/SkyLightComponent.h:85-250`):
+**UE5 5.6 actual SkyLight component** (from `Engine/Classes/Components/SkyLightComponent.h:85-250`):
 
 ```cpp
 class USkyLightComponent : public ULightComponentBase {
@@ -183,7 +183,7 @@ The effective shadow contribution is: `3.5 * 1.0 * 0.5 * 0.2 = 0.35`, not `3.5`.
 
 **Strategic plan claim** (P1.5): "ContactShadowLength = 0.03 (3% of screen). UE5 uses 0.0 (disabled by default)."
 
-**UE5 5.6 actual light component defaults** (from `Engine/Source/Runtime/Engine/Classes/Components/DirectionalLightComponent.h:50-120`):
+**UE5 5.6 actual light component defaults** (from `Engine/Classes/Components/DirectionalLightComponent.h:50-120`):
 
 ```cpp
 class UDirectionalLightComponent : public ULightComponent {
@@ -247,7 +247,7 @@ The key parameter is **TemporalHistory = 0.95** (not mentioned in plan).
 
 **Consensus claim**: "4 cascades, 16-tap Poisson PCF, contact shadows. ✓ At or above consensus."
 
-**UE5 5.6 actual shadow settings** (from `Engine/Source/Runtime/Engine/Classes/Components/DirectionalLightComponent.h:90-150`):
+**UE5 5.6 actual shadow settings** (from `Engine/Classes/Components/DirectionalLightComponent.h:90-150`):
 
 ```cpp
 class UDirectionalLightComponent : public ULightComponent {
@@ -292,7 +292,7 @@ class UDirectionalLightComponent : public ULightComponent {
 
 **Consensus claim**: "All engines agree on: HDR → Bloom → SSR → Auto-Exposure → Tonemap → Grade → TAA → Sharpen → LDR Effects"
 
-**UE5 5.6 ACTUAL order** (from `Engine/Source/Runtime/Renderer/Private/PostProcessing.cpp:500-800`):
+**UE5 5.6 ACTUAL order** (from `Renderer/Private/PostProcessing.cpp:500-800`):
 
 ```cpp
 // Simplified diagram of UE5 post-process passes:

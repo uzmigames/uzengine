@@ -20,18 +20,19 @@ AAA-quality game engine embedded in VSCode, with open file formats designed for 
 - **No GC** — deterministic memory via Rust-inspired ownership and borrow checking in C++
 - **AI-First** — MCP server integration for autonomous development workflows
 
-## Rendering Features (v0.2.49)
+## Rendering Features (v0.4.0)
 
 | System | Features |
 |--------|----------|
 | **PBR** | GGX + Burley diffuse + SmithJoint + multiscatter energy compensation |
 | **Shadows** | 4-cascade CSM, per-cascade PCF, distance field shadows, contact shadows |
-| **Lighting** | Directional + point (64) + spot (16) lights, IBL (SH L2 + prefiltered specular) |
+| **Lighting** | Directional + point (64) + spot (16) lights, IBL (SH L2 + environment map importance sampling + prefiltered specular) |
 | **Atmosphere** | Bruneton sky, multi-scatter LUT, ozone, aerial perspective, height fog (2-layer + sky injection) |
-| **Post-Process** | TAA, SSR, GTAO, bloom (6-mip Karis), FilmToneMap ACES, auto-exposure, DOF, motion blur |
+| **Post-Process** | TAA (with MIS temporal accumulation), SSR, GTAO, bloom (6-mip Karis), FilmToneMap ACES, auto-exposure, DOF, motion blur |
 | **Anti-Aliasing** | TAA, SMAA (1x/T2x/S2x/4x), FXAA |
 | **Upscaling** | FSR 1.0 (spatial), FSR 2.x (temporal with motion vectors) |
 | **Film Effects** | Film grain, vignette, chromatic aberration, color grading LUT (32x32x32) |
+| **Quality** | 5-tier scalability (Low/Medium/High/Ultra/Cinematic) with per-group controls (shadows, textures, effects, GI, screen, view distance, post-process) |
 | **Backends** | DX12 SM6.8 (bindless), DX12 SM5, DX11, Vulkan |
 
 ## Monorepo Structure
@@ -105,10 +106,10 @@ cd extension && npx tsc
 ### Test
 
 ```bash
-scripts/test.ps1                         # Zig (default)
-scripts/test.ps1 --compiler=msvc         # MSVC
-scripts/test.ps1 --compiler=clang        # Clang
-scripts/test.ps1 --coverage              # With coverage (TS modules)
+scripts/tools/test.ps1                         # Zig (default)
+scripts/tools/test.ps1 --compiler=msvc         # MSVC
+scripts/tools/test.ps1 --compiler=clang        # Clang
+scripts/tools/test.ps1 --coverage              # With coverage (TS modules)
 ```
 
 ### Run
@@ -168,11 +169,11 @@ scripts/build.ps1 [--compiler=zig|msvc|clang]
 | **Test** | GoogleTest 1.15 | — | Vitest 4 | Vitest 4 |
 
 ```bash
-scripts/lint.ps1                   # clang-tidy + eslint
-scripts/format.ps1                 # clang-format + prettier
-scripts/format.ps1 --check         # CI mode (check only)
-scripts/test.ps1                   # zig test + vitest
-scripts/test.ps1 --compiler=msvc   # MSVC tests
+scripts/tools/lint.ps1             # clang-tidy + eslint
+scripts/tools/format.ps1           # clang-format + prettier
+scripts/tools/format.ps1 --check   # CI mode (check only)
+scripts/tools/test.ps1                   # zig test + vitest
+scripts/tools/test.ps1 --compiler=msvc   # MSVC tests
 ```
 
 - **Zero warnings** — all warnings promoted to errors across every module

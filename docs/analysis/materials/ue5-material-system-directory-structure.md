@@ -13,11 +13,11 @@ UE5's material system spans **three major domains**: Runtime (game code), Editor
 
 ---
 
-## 1. Runtime Material System (`Engine/Source/Runtime/Engine/`)
+## 1. Runtime Material System (`Engine/`)
 
 ### 1.1 Core Material Class
 
-**File:** `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Public/Materials/Material.h`
+**File:** `/w/UE_5.6_Source/Engine/Public/Materials/Material.h`
 - **Line 25:** `#include "Material.generated.h"`
 - **UClass:** `UCLASS(BlueprintType)` material asset
 - **Size:** 99,195 bytes (June 3, 2025)
@@ -27,7 +27,7 @@ UE5's material system spans **three major domains**: Runtime (game code), Editor
 
 ### 1.2 Material Expression Base Class
 
-**File:** `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Public/Materials/MaterialExpression.h`
+**File:** `/w/UE_5.6_Source/Engine/Public/Materials/MaterialExpression.h`
 - **Line 146:** `UCLASS(abstract, Optional, BlueprintType, Config=MaterialExpressions, hidecategories=Object, MinimalAPI)`
 - **Base Class:** `UObject`
 - **Size:** 25,963 bytes (June 3, 2025)
@@ -41,7 +41,7 @@ UE5's material system spans **three major domains**: Runtime (game code), Editor
 
 ### 1.3 Material Expression Node Types (274 header files)
 
-**Directory:** `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Public/Materials/`
+**Directory:** `/w/UE_5.6_Source/Engine/Public/Materials/`
 
 **Sample Expression Nodes:**
 ```
@@ -63,9 +63,9 @@ MaterialExpressionBlendMaterialAttributes.h (3,366 bytes)
 ### 1.4 Material Instances (Runtime)
 
 **Files:**
-- `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Public/Materials/MaterialInstance.h`
-- `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Public/Materials/MaterialInstanceConstant.h`
-- `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Public/Materials/MaterialInstanceDynamic.h`
+- `/w/UE_5.6_Source/Engine/Public/Materials/MaterialInstance.h`
+- `/w/UE_5.6_Source/Engine/Public/Materials/MaterialInstanceConstant.h`
+- `/w/UE_5.6_Source/Engine/Public/Materials/MaterialInstanceDynamic.h`
 
 **Purpose:**
 - `MaterialInstance` — base for runtime parameter overrides
@@ -80,7 +80,7 @@ MaterialExpressionBlendMaterialAttributes.h (3,366 bytes)
 
 ### 2.1 Material Compiler Interface
 
-**File:** `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Public/MaterialCompiler.h`
+**File:** `/w/UE_5.6_Source/Engine/Public/MaterialCompiler.h`
 - **Line 119:** `class FMaterialCompiler { ... }`
 - **Purpose:** Abstract interface that all material translators must implement
 - **Key Methods:**
@@ -92,7 +92,7 @@ MaterialExpressionBlendMaterialAttributes.h (3,366 bytes)
 
 ### 2.2 HLSL Material Translator
 
-**File:** `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Private/Materials/HLSLMaterialTranslator.h`
+**File:** `/w/UE_5.6_Source/Engine/Private/Materials/HLSLMaterialTranslator.h`
 - **Line 1:** `// Translates material expressions into HLSL code.`
 - **Size:** 75,965 bytes (June 3, 2025)
 - **Implementation File:** `HLSLMaterialTranslator.cpp` (678,931 bytes)
@@ -223,33 +223,33 @@ Use in draw calls
 ### 5.1 Material Class Hierarchy
 
 **UMaterial Definition:**
-- File: `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Public/Materials/Material.h`
+- File: `/w/UE_5.6_Source/Engine/Public/Materials/Material.h`
 - Line 25: `#include "Material.generated.h"`
 - UClass declaration follows shortly after
 
 **UMaterialExpression Base:**
-- File: `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Public/Materials/MaterialExpression.h`
+- File: `/w/UE_5.6_Source/Engine/Public/Materials/MaterialExpression.h`
 - Line 146: `UCLASS(abstract, Optional, BlueprintType, ...)`
 - Line 147: `class UMaterialExpression : public UObject`
 
 **Material Instance:**
-- File: `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Public/Materials/MaterialInstance.h`
+- File: `/w/UE_5.6_Source/Engine/Public/Materials/MaterialInstance.h`
 - Runtime-loadable parameter override container
 
 ### 5.2 Compilation Pipeline
 
 **Compiler Interface:**
-- File: `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Public/MaterialCompiler.h`
+- File: `/w/UE_5.6_Source/Engine/Public/MaterialCompiler.h`
 - Line 119: `class FMaterialCompiler { ... }` — abstract interface
 - Line 154: `virtual int32 CallExpression(FMaterialExpressionKey ExpressionKey, FMaterialCompiler* InCompiler) = 0;`
 
 **HLSL Translator Implementation:**
-- File: `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Private/Materials/HLSLMaterialTranslator.h`
+- File: `/w/UE_5.6_Source/Engine/Private/Materials/HLSLMaterialTranslator.h`
 - Line 75,965 bytes total
 - `.cpp` file: 678,931 bytes — contains actual node→HLSL logic
 
 **Expression Implementation:**
-- File: `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Private/Materials/MaterialExpressions.cpp`
+- File: `/w/UE_5.6_Source/Engine/Private/Materials/MaterialExpressions.cpp`
 - Line 773,361 bytes — individual `Compile()` implementations
 
 ### 5.3 Editor-Only Components
@@ -340,7 +340,7 @@ class UMaterialGraph : public UEdGraph { ... };
 
 ### 7.1 Internal Directory
 
-**Location:** `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Internal/Materials/`
+**Location:** `/w/UE_5.6_Source/Engine/Internal/Materials/`
 
 **Files:**
 - `MaterialExpressionMaterialSample.h` — internal helper
@@ -396,10 +396,10 @@ FMaterialExpressionCollection ExpressionCollection;  // Serialized array of expr
 ## 10. References
 
 **Primary Source Files:**
-1. `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Public/Materials/Material.h`
-2. `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Public/Materials/MaterialExpression.h`
-3. `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Public/MaterialCompiler.h`
-4. `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Private/Materials/HLSLMaterialTranslator.h`
+1. `/w/UE_5.6_Source/Engine/Public/Materials/Material.h`
+2. `/w/UE_5.6_Source/Engine/Public/Materials/MaterialExpression.h`
+3. `/w/UE_5.6_Source/Engine/Public/MaterialCompiler.h`
+4. `/w/UE_5.6_Source/Engine/Private/Materials/HLSLMaterialTranslator.h`
 5. `/w/UE_5.6_Source/Engine/Source/Editor/UnrealEd/Classes/MaterialGraph/MaterialGraph.h`
 
 **Expression Node Count:** 274 distinct `.h` files in `/Public/Materials/MaterialExpression*.h`

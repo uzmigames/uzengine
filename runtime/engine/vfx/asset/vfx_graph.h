@@ -14,7 +14,7 @@
 ///   "emitter": { "max_particles": 10000, "lifespan_default": 5.0 },
 ///   "modules": [
 ///     { "type": "spawn", "config": { "rate": 500 } },
-///     { "type": "update", "config": { "gravity": [0,-9.81,0] } },
+///     { "type": "update", "config": { "gravity": [0,0,-981] } },
 ///     { "type": "decay" }
 ///   ],
 ///   "parameters": [
@@ -39,6 +39,7 @@
 
 namespace uz {
 
+class IVFS;
 class ModuleRegistry;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -115,7 +116,8 @@ public:
     /// # Side Effects
     /// Logs `VFX/Error` on parse failure with the file path and reason.
     [[nodiscard]] static std::unique_ptr<VFXGraph> Load(
-        const std::string& path, const ModuleRegistry& registry);
+        const std::string& path, const ModuleRegistry& registry,
+        IVFS* vfs = nullptr);
 
     /// Loads a VFXGraph from a JSON string (primarily for testing).
     ///

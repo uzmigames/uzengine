@@ -26,7 +26,7 @@ This analysis extracts UE5's pattern to inform UzEngine's adaptation.
 ## 1. Default Values & Planet Model
 
 ### Component Constructor
-**File**: `Engine/Source/Runtime/Engine/Private/Components/SkyAtmosphereComponent.cpp`
+**File**: `Engine/Private/Components/SkyAtmosphereComponent.cpp`
 
 UE5 ships with Earth-like defaults:
 
@@ -71,7 +71,7 @@ Density peaks at 25km, spreads ±15km → roughly 10-40km band
 ## 2. Coordinate System Units
 
 ### Unit Conversion Constants
-**File**: `Engine/Source/Runtime/Engine/Public/Rendering/SkyAtmosphereCommonData.cpp` (lines 15-16)
+**File**: `Engine/Public/Rendering/SkyAtmosphereCommonData.cpp` (lines 15-16)
 
 ```cpp
 const float FAtmosphereSetup::CmToSkyUnit = 0.00001f;      // cm → km
@@ -93,7 +93,7 @@ const float FAtmosphereSetup::SkyUnitToCm = 1.0f / 0.00001f; // km → cm = 1000
 
 ## 3. Transform Modes & Planet Center Positioning
 
-**File**: `Engine/Source/Runtime/Engine/Classes/Components/SkyAtmosphereComponent.h` (lines 34-40)
+**File**: `Engine/Classes/Components/SkyAtmosphereComponent.h` (lines 34-40)
 
 ```cpp
 enum class ESkyAtmosphereTransformMode : uint8
@@ -402,12 +402,12 @@ struct UzAtmosphereSetup {
 
 | File | Purpose |
 |------|---------|
-| `Engine/Source/Runtime/Engine/Classes/Components/SkyAtmosphereComponent.h` | Component declaration, properties, transform modes |
-| `Engine/Source/Runtime/Engine/Private/Components/SkyAtmosphereComponent.cpp` | Default values (Earth model) |
-| `Engine/Source/Runtime/Engine/Public/Rendering/SkyAtmosphereCommonData.h` | `FAtmosphereSetup` struct declaration |
-| `Engine/Source/Runtime/Engine/Public/Rendering/SkyAtmosphereCommonData.cpp` | **ComputeViewData() implementation — THE KEY FUNCTION** |
+| `Engine/Classes/Components/SkyAtmosphereComponent.h` | Component declaration, properties, transform modes |
+| `Engine/Private/Components/SkyAtmosphereComponent.cpp` | Default values (Earth model) |
+| `Engine/Public/Rendering/SkyAtmosphereCommonData.h` | `FAtmosphereSetup` struct declaration |
+| `Engine/Public/Rendering/SkyAtmosphereCommonData.cpp` | **ComputeViewData() implementation — THE KEY FUNCTION** |
 | `Engine/Shaders/Private/SkyAtmosphereCommon.ush` | Shader-side sampling, unit conversion macros |
-| `Engine/Source/Runtime/Renderer/Private/SkyAtmosphereRendering.cpp` | Render-thread setup, LUT generation, transmittance computation |
+| `Renderer/Private/SkyAtmosphereRendering.cpp` | Render-thread setup, LUT generation, transmittance computation |
 
 ---
 

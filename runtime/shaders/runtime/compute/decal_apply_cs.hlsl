@@ -1,114 +1,91 @@
-/// DBuffer application compute shader — merges DBuffer into GBuffer.
+/// UzEngine Decal Apply Compute Shader — merges DBuffer into GBuffer.
 ///
-/// Runs as a fullscreen compute dispatch after the DBuffer has been filled by
-/// all decal passes and before the deferred lighting pass. Reads the three
-/// DBuffer render targets and modifies the GBuffer albedo, normal, and
-/// roughness/metallic/AO channels via alpha-weighted lerp.
+/// @ref Valient 2014 "Deferred Rendering in Killzone: Shadow Fall" — DBuffer merge
 ///
-/// When the DBuffer alpha is 0 for a pixel, the GBuffer is untouched.
+/// Reads the three DBuffer textures (albedo, normal, material) and blends
+/// them into the GBuffer albedo and normal textures using alpha blending.
 ///
-/// # Thread Group Size
-/// 8x8x1 — 64 threads per group. Dispatch ceil(width/8) x ceil(height/8) x 1.
-///
-/// @ref Valient 2014 "Deferred Rendering in Killzone: Shadow Fall" — DBuffer application
-/// @ref Pesce 2014 "Rendering Decals in Screen Space"
+/// Root constants (b0): DBuffer SRV indices, GBuffer UAV indices, dimensions.
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Root Constants
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Push constants at b0 — bindless indices for DBuffer + GBuffer textures.
 cbuffer DecalApplyConstants : register(b0) {
-    uint dbufferASrvIndex;      ///< DBuffer A: albedo + opacity (RGBA8Unorm SRV)
-    uint dbufferBSrvIndex;      ///< DBuffer B: normal + blend (RGBA8Unorm SRV)
-    uint dbufferCSrvIndex;      ///< DBuffer C: roughness/metallic/AO + blend (RGBA8Unorm SRV)
-    uint gbufferAlbedoUavIndex; ///< GBuffer albedo+AO UAV (RGBA8Unorm)
-    uint gbufferNormalUavIndex; ///< GBuffer packed normal+metallic+roughness UAV (RGBA8Unorm)
+#ifdef UZ_BINDLESS
+    uint dbufferASrvIndex;       // DBuffer A (albedo + opacity)
+    uint dbufferBSrvIndex;       // DBuffer B (normal + normal blend)
+    uint dbufferCSrvIndex;       // DBuffer C (roughness + metallic + blend)
+    uint gbufferAlbedoUavIndex;  // GBuffer albedo UAV
+    uint gbufferNormalUavIndex;  // GBuffer normal UAV
     uint _pad0;
     uint _pad1;
     uint _pad2;
-    uint texWidth;              ///< Render target width in texels.
-    uint texHeight;             ///< Render target height in texels.
+#endif
+    uint texWidth;               // Render target width
+    uint texHeight;              // Render target height
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SM5 register-bound fallback (when UZ_BINDLESS is not defined)
-// ─────────────────────────────────────────────────────────────────────────────
 #ifndef UZ_BINDLESS
-Texture2D<float4>   g_DbufferA       : register(t0);
-Texture2D<float4>   g_DbufferB       : register(t1);
-Texture2D<float4>   g_DbufferC       : register(t2);
-RWTexture2D<float4> g_GbufferAlbedo  : register(u0);
-RWTexture2D<float4> g_GbufferNormal  : register(u1);
+Texture2D<float4>   t_dbufA      : register(t0);
+Texture2D<float4>   t_dbufB      : register(t1);
+Texture2D<float4>   t_dbufC      : register(t2);
+RWTexture2D<float4> u_gbufAlbedo : register(u0);
+RWTexture2D<float4> u_gbufNormal : register(u1);
 #endif
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Entry Point
-// ─────────────────────────────────────────────────────────────────────────────
 
 [numthreads(8, 8, 1)]
 void main(uint3 DTid : SV_DispatchThreadID) {
-    // Bounds check — skip threads outside the render target.
     if (DTid.x >= texWidth || DTid.y >= texHeight) return;
 
-    uint2 coord = DTid.xy;
+    int2 coord = int2(DTid.xy);
 
     // ── Load DBuffer values ──────────────────────────────────────────────
 #ifdef UZ_BINDLESS
-    Texture2D<float4> dbufferA = ResourceDescriptorHeap[dbufferASrvIndex];
-    Texture2D<float4> dbufferB = ResourceDescriptorHeap[dbufferBSrvIndex];
-    Texture2D<float4> dbufferC = ResourceDescriptorHeap[dbufferCSrvIndex];
+    Texture2D<float4> dbufA = ResourceDescriptorHeap[dbufferASrvIndex];
+    Texture2D<float4> dbufB = ResourceDescriptorHeap[dbufferBSrvIndex];
+    Texture2D<float4> dbufC = ResourceDescriptorHeap[dbufferCSrvIndex];
 #else
-    Texture2D<float4> dbufferA = g_DbufferA;
-    Texture2D<float4> dbufferB = g_DbufferB;
-    Texture2D<float4> dbufferC = g_DbufferC;
+    Texture2D<float4> dbufA = t_dbufA;
+    Texture2D<float4> dbufB = t_dbufB;
+    Texture2D<float4> dbufC = t_dbufC;
 #endif
 
-    float4 dA = dbufferA.Load(int3(coord, 0));
-    float4 dB = dbufferB.Load(int3(coord, 0));
-    float4 dC = dbufferC.Load(int3(coord, 0));
+    float4 dA = dbufA.Load(int3(coord, 0));
+    float4 dB = dbufB.Load(int3(coord, 0));
+    float4 dC = dbufC.Load(int3(coord, 0));
 
-    // ── Early out if no decal coverage ───────────────────────────────────
-    // If all three alpha channels are near zero, skip this pixel.
-    float maxAlpha = max(dA.a, max(dB.a, dC.a));
-    if (maxAlpha < 0.001) return;
+    // Skip pixels with no decal contribution (alpha ≈ 0).
+    if (dA.a < 0.001 && dB.a < 0.001 && dC.a < 0.001) return;
 
-    // ── Load and modify GBuffer ──────────────────────────────────────────
+    // ── Load current GBuffer values ──────────────────────────────────────
 #ifdef UZ_BINDLESS
-    RWTexture2D<float4> gbufferAlbedo = ResourceDescriptorHeap[gbufferAlbedoUavIndex];
-    RWTexture2D<float4> gbufferNormal = ResourceDescriptorHeap[gbufferNormalUavIndex];
+    RWTexture2D<float4> gbufAlbedo = ResourceDescriptorHeap[gbufferAlbedoUavIndex];
+    RWTexture2D<float4> gbufNormal = ResourceDescriptorHeap[gbufferNormalUavIndex];
 #else
-    RWTexture2D<float4> gbufferAlbedo = g_GbufferAlbedo;
-    RWTexture2D<float4> gbufferNormal = g_GbufferNormal;
+    RWTexture2D<float4> gbufAlbedo = u_gbufAlbedo;
+    RWTexture2D<float4> gbufNormal = u_gbufNormal;
 #endif
 
-    float4 gAlbedo = gbufferAlbedo[coord];
-    float4 gNormal = gbufferNormal[coord];
+    float4 curAlbedo = gbufAlbedo[coord];
+    float4 curNormal = gbufNormal[coord];
 
-    // ── Apply DBuffer A: albedo modification ─────────────────────────────
-    // lerp(gbuffer.albedo.rgb, decal.albedo.rgb, decal.alpha)
-    // AO channel (alpha of GBuffer albedo) is preserved.
-    if (dA.a > 0.001) {
-        gAlbedo.rgb = lerp(gAlbedo.rgb, dA.rgb, dA.a);
+    // ── Blend DBuffer into GBuffer (alpha blend) ─────────────────────────
+    // DBuffer A → GBuffer albedo: lerp by decal opacity.
+    float albedoAlpha = dA.a;
+    curAlbedo.rgb = lerp(curAlbedo.rgb, dA.rgb, albedoAlpha);
+
+    // DBuffer B → GBuffer normal: lerp by normal blend factor.
+    // DBuffer B stores tangent-space normal in [0,1] encoding.
+    float normalAlpha = dB.a;
+    if (normalAlpha > 0.001) {
+        curNormal.rgb = lerp(curNormal.rgb, dB.rgb, normalAlpha);
     }
 
-    // ── Apply DBuffer B: normal modification ─────────────────────────────
-    // The decal normal is stored in [0,1] range (same as GBuffer octahedral encoding).
-    // We blend the encoded values directly — this is an approximation but visually
-    // correct for small normal perturbations typical of decals.
-    if (dB.a > 0.001) {
-        gNormal.rg = lerp(gNormal.rg, dB.rg, dB.a);
+    // DBuffer C → GBuffer normal alpha (roughness is packed in normal.a
+    // in UzEngine's GBuffer layout).
+    float materialAlpha = dC.a;
+    if (materialAlpha > 0.001) {
+        curNormal.a = lerp(curNormal.a, dC.r, materialAlpha); // roughness → normal.a
     }
 
-    // ── Apply DBuffer C: material modification ───────────────────────────
-    // GBuffer normal texture packing: RG = octahedral normal, B = metallic, A = roughness
-    if (dC.a > 0.001) {
-        gNormal.b = lerp(gNormal.b, dC.g, dC.a);    // metallic
-        gNormal.a = lerp(gNormal.a, dC.r, dC.a);    // roughness
-        gAlbedo.a = lerp(gAlbedo.a, dC.b, dC.a);    // AO (stored in albedo alpha)
-    }
-
-    // ── Write back modified GBuffer ──────────────────────────────────────
-    gbufferAlbedo[coord] = gAlbedo;
-    gbufferNormal[coord] = gNormal;
+    // ── Write back ───────────────────────────────────────────────────────
+    gbufAlbedo[coord] = curAlbedo;
+    gbufNormal[coord] = curNormal;
 }

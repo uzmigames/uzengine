@@ -2,6 +2,146 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.4.0] — 2026-04-01
+
+### Environment Map Importance Sampling (MIS)
+
+- **Luminance pyramid compute shader** (`envmap_luminance_pyramid_cs.hlsl`): cube→equirect luminance with sin(θ) weighting + 2×2 hierarchical sum reduction (10 mip levels, 512×256 → 1×1)
+- **Vose alias table** (`env_map_sampler.h/.cpp`): O(N) CPU construction from GPU readback, uploaded as StructuredBuffer (131K entries) for O(1) sampling
+- **HLSL sampling library** (`envmap_sampling.hlsli`): `SampleEnvironment()`, `EvaluateEnvironmentPDF()`, equirect↔direction conversions
+- **MIS temporal accumulation** (`env_mis_temporal_cs.hlsl`): dedicated compute pass with ping-pong history, PCG per-pixel hash, EMA blend (α=0.05, ~20 frames convergence)
+- **Render graph integration**: EnvMIS_Temporal registered as proper compute pass with GBuffer read dependencies
+- **Deferred lighting**: reads accumulated env MIS specular via 6th root constant
+
+### TAA (Temporal Anti-Aliasing)
+
+- **Wired TAA into simplified postprocess pipeline**: the `return` in the simplified block was preventing TAA resolve from running — tonemap now reads from TAA history output
+- **Fixed first-frame barriers**: Common→UAV instead of SRV→UAV for uninitialized history textures
+- **Fixed anti-flicker guard causing jitter**: `abs(lumaFiltered - lumaHistory)` denominator had no epsilon — in static scenes blendFinal→1.0 defeated temporal accumulation. Added epsilon (0.001) + clamped anti-flicker to max 0.3
+- **Switched default upscaler**: TSR→TAA (single-pass, robust in simplified pipeline)
+- **prevViewProj/prevViewProjValid**: now set inside simplified pipeline block (was unreachable after `return`)
+
+### Indirect Lighting Fix
+
+- **Removed `specularAmbient *= shadow`**: IBL (indirect lighting) must NOT be attenuated by directional shadow — confirmed in UE5 and Falcor (only AO affects indirect)
+- **SH irradiance evaluation**: added `EvalSH_L2()` call using proper UE5 compact format (dot-product evaluation matching `GetSkySHDiffuse()` in ReflectionEnvironmentShared.ush) — previously shader only used cubemap fallback or zero
+- **Fixed SH normalization**: `EvalSH_L2` was applying raw Ylm basis constants to pre-convolved compact coefficients — double-application produced green-tinted over-bright irradiance
+
+### Quality Scalability System
+
+- **QualityPresetManager** (`quality_presets.h/.cpp`): 5 levels (Low/Medium/High/Ultra/Cinematic) across 7 groups
+  - **Shadows**: resolution 512→4096, cascades 1→4, PCF taps 4→32, contact shadows, DFS
+  - **Textures**: mip bias 2→-1, aniso filtering 2→16x
+  - **PostProcess**: TAA, bloom, GTAO, SSR, motion blur, DOF, lens flare, chroma ab, film grain
+  - **Effects**: particle budget 4K→262K, volumetric clouds, height fog
+  - **View Distance**: draw scale 0.4→1.4, LOD scale
+  - **GI**: SSGI, radiance cache, SH sky light
+  - **Screen**: render percentage 50→100%
+- **CLI**: `--cvar quality=0..4` applies preset at startup
+- **Runtime switching**: `CVarRegistry::Get().Set("quality", N)` from Lua/console
+- **Stats overlay**: shows "Quality: Low/Medium/High/Ultra/Cinematic"
+- **Config→CVar bridge**: `Config::FlushCvarOverrides()` transfers `--cvar` CLI args to CVarRegistry after Init
+
+### CPU Math Parity Tests
+
+- **D_GGX** (5 tests): peak at NdotH=1, smooth/rough limits, non-negativity, known value
+- **F_Schlick** (6 tests): normal/grazing incidence, metallic F0, scalar, explicit F90, monotonicity
+- Added to `brdf_math.h` + `test_brdf_parity.cpp` — total 66 BRDF parity tests passing
+
+### Documentation
+
+- `docs/specs/shader-library.md` — directory structure, ~99 shaders, subsystem table, CPU parity mapping
+- `docs/specs/shader-variants.md` — SM5/bindless dual-path, permutation naming, shader cache
+- `docs/analysis/shader-rewrite-postmortem.md` — timeline, decisions, lessons learned, metrics
+
+### Volumetric Clouds UE5 Parity Task
+
+- Created comprehensive gap analysis + task checklist (19 phases, ~100 items) comparing UzEngine clouds against UE5.6 source
+- Covers cloud shadows, temporal reconstruction, weather maps, ground contribution, dual lights, and all missing component properties with correct UE5 defaults
+
+### UI / Stats
+
+- Stats overlay vertically centered on right side (was top-right)
+
+### Bug Fixes
+
+- **TAA jitter without resolve** (`r.TAA=true` set by commit 24c4d801 but resolve was unreachable): identified root cause, wired TAA resolve into simplified pipeline
+- **TSR black screen**: TSR 3-pass upscaler has intermediate texture dependencies not satisfied in simplified pipeline — fell back to single-pass TAA
+- **Env MIS noise/stripes**: 4-sample stochastic MIS without temporal accumulation produced visible banding — implemented dedicated temporal compute pass
+- **Env MIS separate command list**: dispatching outside render graph caused GPU stalls — migrated to proper render graph compute pass
+
+### Archived Tasks
+
+- `phase0_falcor-envmap-importance-sampling` (12/12 complete)
+- `phase0_falcor-postfx-quality` (24/24 complete)
+- `phase0_shader-rewrite-falcor-parity` (46/46 complete)
+
+## [0.3.3] — 2026-03-30
+
+### Falcor Parity — Shader Infrastructure Overhaul
+
+**Critical Shader Bugs (14 fixes)**
+- Fixed 3 compute shader entry points (`CSMain` → `main`) in draw_compact, mipgen, dfs_upsample
+- Added `GroupMemoryBarrierWithGroupSync()` in particle_mesh_instance_cs to prevent data race
+- Implemented SM5 fallback macros for `texture_binding.hlsli` (11 register-bound macros)
+- Implemented `shadow_debug.hlsli` 3×3 diagnostic grid (4 visualization functions)
+- Implemented `ComputeAerialPerspective()` inline 8-step ray march in aerial_perspective.hlsli
+- Implemented single-pass mip chain (mips 0–3) via LDS cooperative downsample in prev_color_reduce_cs
+- Fixed `LineBoxIntersect` call passing position instead of direction in dfs_cone_trace_cs
+- Fixed AABB cull comparing world-space position against local-space bounds in global_sdf_composite_cs
+- Fixed `worldToVolumeScale` for non-unit-scale objects in DFS cone tracing
+- Replaced inline `OctEncode` in gbuffer_ps with `#include "octahedral.hlsli"`
+- Added sorted particle index lookup (`sortedIndices[particleID]`) for back-to-front transparency
+
+**IP Citation Cleanup**
+- Removed all proprietary `.ush`/`.usf` references from runtime shaders and engine code (zero remaining)
+- Stripped `Engine/Source/Runtime/` paths from 32 analysis docs (167 occurrences)
+- Added FFmpeg LGPL 2.1 license file, AMD FidelityFX CAS MIT copyright
+- Added Hillis & Steele 1986 citation to references.md
+
+**Shader Utility Library (3 new headers)**
+- `math_util.hlsli`: 5 constants (M_2PI, M_1_PI, M_PI_2, M_PI_4), 3 hash functions (pcgHash, pcgHash2D, jenkinsHash), `branchlessONB` (Duff 2017), 4 coordinate conversions (spherical, lat/long). Replaced all inline PI literals across 16 shader files.
+- `sampling.hlsli`: 7 functions — RadicalInverseVdC, Hammersley, UniformSampleDiskConcentricApprox, CosineSampleHemisphere, UniformSampleSphere, UniformSampleCone, SampleTriangle, VonMisesFisherSample. Deduplicated from ibl.hlsli and pcss.hlsli.
+- `sheen.hlsli`: Extracted D_Charlie + V_Neubelt from deferred_lighting_ps (Estevez & Kulla 2017)
+- `packing.hlsli`: R10G10B10A2, R16G16_FLOAT, R16G16_UNORM/SNORM pack/unpack + generic snorm/unorm converters
+- `octahedral.hlsli`: Added equal-area variants OctEncodeEqualArea/OctDecodeEqualArea (Meyer 2010)
+- `ibl.hlsli`: Added ComputeEnvLOD (log2 mip selection) + SolidAngleSample
+
+**BRDF Correctness (4 sessions)**
+- `D_GGX`: alpha < 1e-3 guard for delta distribution (perfect mirrors)
+- `Fd_Burley`: Frostbite energy conservation factor `lerp(1, 1/1.51, roughness)` (Lagarde 2015)
+- Unified `Vis_SmithJointApprox` → `V_SmithGGXCorrelated` (exact form) across all 4 call sites
+- Added `F_FresnelDielectric` (full Snell's law), `F_FresnelConductor` (complex IOR), `F_SchlickGeneralized`, `ReflectanceToIOR`
+- Added 5 metal IOR/k constant sets: gold, copper, aluminum, iron, silver (Palik 1998)
+- Implemented `Fd_OrenNayar` (full A+B formula, Oren & Nayar 1994)
+- Implemented `ImportanceSampleGGX_VNDF` (Heitz 2018 hemisphere clipping)
+- BRDF LUT: switched to VNDF sampling, added multi-scatter Ems channel (Turquin 2019), output now RGBA16F
+- Prefilter CS: added mip-biased env sampling via ComputeEnvLOD for firefly suppression
+- Added `D_GGX_Anisotropic` + `V_SmithGGXCorrelated_Anisotropic` (Walter 2007, Heitz 2014)
+- Fixed `IBL_MIN_ROUGHNESS` redefinition conflict between ibl.hlsli and pbr_common.hlsli
+
+**Post-Processing Quality (5 sessions)**
+- TAA: replaced AABB min/max clamp with variance clipping μ±1.25σ (Salvi 2016)
+- Bloom: replaced hard threshold with smooth quadratic knee (Karis 2013)
+- Bloom composite: updated for HDR pipeline (before tonemap)
+- Added 3 tone mapping operators: Reinhard, ReinhardModified, HableUC2 (selectable via tonemapOperator)
+- Added white balance via D-illuminant chromaticity + Bradford chromatic adaptation (Krystek 1985)
+- Added physical camera exposure: EV100 + EV100ToExposure (ISO 12232, Lagarde 2014)
+- SSR: added stochastic multi-ray mode (SSR_NUM_RAYS, GGX importance sampling, Stachowiak 2015)
+- GTAO: added multi-bounce approximation `pow(ao, 1+2.5*ao)` (Jimenez 2016)
+- GTAO: added bent normal computation from accumulated horizon angles
+- DoF: added near/far/sharp layer separation with cross-layer leakage suppression
+
+**Test Fixes**
+- Fixed 13 pre-existing test failures (out-of-sync with code evolution)
+- `FileReadAll: failed to open` log level changed from Error to Warning (shader cache misses)
+
+**Infrastructure**
+- Shader testing pipeline: 4-tier validation rule (CPU parity, visual regression, FLIP, Falcor reference)
+- Falcor reference test runner: `scripts/falcor/falcor_reference_test.py`
+- Reorganized `scripts/` into `tools/`, `deploy/`, `dev/`, `falcor/` subdirectories
+- Added Linux/Mac `.sh` versions for test, lint, format, deploy-napi scripts
+
 ## [0.3.2] — 2026-03-29
 
 ### FBX Auto-LOD Generation, Cook Cache Invalidation, Axis Fix & Runtime LOD Switching

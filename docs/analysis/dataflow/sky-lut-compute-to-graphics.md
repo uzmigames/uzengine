@@ -161,7 +161,7 @@ Context.GraphicsCommandList()->Dispatch(8, 8, 1);
 
 ### Stage 2: State Transition (RDG Barrier)
 
-**File:** `Engine/Source/Runtime/Renderer/Core/RenderGraph.cpp` (implicit)
+**File:** `Renderer/Core/RenderGraph.cpp` (implicit)
 
 The render graph builder tracks resource states. When a compute output becomes a graphics input:
 

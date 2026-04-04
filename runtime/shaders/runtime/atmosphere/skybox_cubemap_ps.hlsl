@@ -1,42 +1,17 @@
-/// HDRI skybox pixel shader — renders a cubemap as the sky background.
-///
-/// Used when an external HDRI environment map is active, replacing the
-/// procedural sky atmosphere ray-march pass. Samples the HDRI cubemap
-/// in the view direction reconstructed from screen UV + inverse view-projection.
-///
+/// UzEngine HDRI skybox — renders cubemap as sky background.
 /// Only fills pixels where depth == 0.0 (reversed-Z far plane = no geometry).
-///
-/// # Inputs
-/// - PerFrameCB at b1: camera, invViewProj, exposure
-/// - SkyboxIndices at b0 (bindless): cubemap SRV index, depth SRV index
-/// - Depth texture (t0, non-bindless): to skip pixels with geometry
-/// - Cubemap texture (t1, non-bindless): HDRI cubemap
-///
-/// # Output
-/// Linear HDR color (pre-tonemap).
-
-#include "../include/pbr_common.hlsli"
-#include "../include/ibl.hlsli"
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Input Structure
-// ─────────────────────────────────────────────────────────────────────────────
 
 struct FSInput {
     float4 positionCS : SV_Position;
     float2 texcoord   : TEXCOORD0;
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Constant Buffers
-// ─────────────────────────────────────────────────────────────────────────────
-
 #ifdef UZ_BINDLESS
-struct SkyboxIndices {
-    uint depthIdx;
-    uint cubemapIdx;
-};
+struct SkyboxIndices { uint depthIdx; uint cubemapIdx; };
 ConstantBuffer<SkyboxIndices> skyboxIndices : register(b0);
+#else
+Texture2D<float>     sceneDepth  : register(t0);
+TextureCube<float4>  hdriCubemap : register(t1);
 #endif
 
 cbuffer PerFrameCB : register(b1) {
@@ -47,35 +22,18 @@ cbuffer PerFrameCB : register(b1) {
     float4   lightColor;
     float4   ambientColor;
     row_major float4x4 invViewProj;
-    float    nearPlane;
-    float    farPlane;
-    uint     irradianceSrvIdx;
-    uint     prefilteredSrvIdx;
-    uint     brdfLutSrvIdx;
-    uint     prefilteredMipLevels;
-    float    skyLightIntensity;
-    float    skyLightColorR;
-    float    skyLightColorG;
-    float    skyLightColorB;
-    float    skyLightMinAmbient;
-    float    exposure;
 };
-
-#ifndef UZ_BINDLESS
-Texture2D<float>     sceneDepth : register(t0);
-TextureCube<float4>  hdriCubemap : register(t1);
-#endif
 
 SamplerState linearSampler : register(s0);
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Pixel Shader Entry Point
-// ─────────────────────────────────────────────────────────────────────────────
+/// Z-up world direction → Y-up DX cubemap convention
+float3 WorldToCubemap(float3 dir) {
+    return float3(dir.x, dir.z, dir.y);
+}
 
 float4 main(FSInput input) : SV_Target {
     float2 uv = input.texcoord;
 
-    // ── Read depth — skip pixels with geometry ──────────────────────────────
 #ifdef UZ_BINDLESS
     Texture2D<float> depthTex = ResourceDescriptorHeap[skyboxIndices.depthIdx];
     float depth = depthTex.Sample(linearSampler, uv).r;
@@ -83,26 +41,14 @@ float4 main(FSInput input) : SV_Target {
     float depth = sceneDepth.Sample(linearSampler, uv).r;
 #endif
 
-    // Only render sky where there is no geometry.
-    // Reversed-Z: far plane = 0.0, so sky pixels have depth near 0.
-    if (depth > 0.0001f)
-        discard;
+    if (depth > 0.0001) discard;
 
-    // ── Reconstruct world-space ray direction ────────────────────────────────
-    float2 ndc = uv * 2.0f - 1.0f;
-    ndc.y      = -ndc.y;
+    float2 ndc = uv * 2.0 - 1.0;
+    ndc.y = -ndc.y;
+    float4 pt0 = mul(float4(ndc, 0.25, 1.0), invViewProj);
+    float4 pt1 = mul(float4(ndc, 0.75, 1.0), invViewProj);
+    float3 rayDir = normalize(pt0.xyz / pt0.w - pt1.xyz / pt1.w);
 
-    // Unproject two points along the same screen ray at different NDC depths.
-    // The camera translation cancels in the subtraction, giving a precise
-    // ray direction even when cameraPos is thousands of units from the origin.
-    float4 pt0    = mul(float4(ndc, 0.25f, 1.0f), invViewProj);
-    float4 pt1    = mul(float4(ndc, 0.75f, 1.0f), invViewProj);
-    float3 world0 = pt0.xyz / pt0.w;
-    float3 world1 = pt1.xyz / pt1.w;
-    float3 rayDir = normalize(world0 - world1);
-
-    // ── Sample HDRI cubemap ──────────────────────────────────────────────────
-    // Convert Z-up world direction to Y-up DX cubemap convention.
     float3 cubemapDir = WorldToCubemap(rayDir);
 
 #ifdef UZ_BINDLESS
@@ -112,6 +58,5 @@ float4 main(FSInput input) : SV_Target {
     float3 color = hdriCubemap.SampleLevel(linearSampler, cubemapDir, 0).rgb;
 #endif
 
-    // Output linear HDR — tonemap applied in separate fullscreen pass.
-    return float4(color, 1.0f);
+    return float4(color, 1.0);
 }

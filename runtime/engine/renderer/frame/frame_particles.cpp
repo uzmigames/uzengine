@@ -24,8 +24,15 @@
 #include "engine/vfx/vfx_system.h"
 #include "engine/vfx/components/particle_emitter.h"
 #include "engine/vfx/core/gpu_particle_buffer.h"
+#include "engine/vfx/core/vfx_cb_structs.h"
 #include "engine/vfx/core/gpu_particle_sort.h"
 #include "engine/vfx/modules/mesh_render_module.h"
+#include "engine/vfx/modules/sprite_render_module.h"
+#include "engine/vfx/modules/spawn_module.h"
+#include "engine/vfx/modules/update_module.h"
+#include "engine/vfx/modules/turbulence_module.h"
+#include "engine/vfx/modules/orbit_module.h"
+#include "engine/vfx/modules/emitter_module_stack.h"
 #include "engine/vfx/trails/trail_system.h"
 
 #include <algorithm>
@@ -115,8 +122,20 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
     for (auto* emitter : emitters) {
         if (!emitter || !emitter->initialized) continue;
 
+        // Skip emitters needing initial upload — their buffers will be
+        // transitioned by InitFreeList this frame. Don't import them into
+        // the render graph to avoid conflicting barrier insertions.
+        if (emitter->needsInitialUpload) continue;
+
         auto& gpuBuf = emitter->buffer;
         if (!gpuBuf.IsValid()) continue;
+
+        // Skip render graph imports for VFX buffers. The VFX shaders use
+        // bindless access (ResourceDescriptorHeap[index]) and don't need
+        // render graph state tracking. Manual barriers in the sim pass
+        // handle all intra-pass transitions. Importing buffers into the
+        // graph caused conflicting barriers and TDR on first frame.
+        continue;
 
         const bool firstCycle = !gpuBuf.hasCompletedCycle;
 
@@ -221,6 +240,7 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
 
         for (auto* emitter : emitters) {
             if (!emitter || !emitter->initialized) continue;
+            if (emitter->needsInitialUpload) continue;
 
             auto& gpuBuf = emitter->buffer;
             if (!gpuBuf.IsValid() || !gpuBuf.sort.IsValid()) continue;
@@ -301,6 +321,9 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
     renderDesc.perFrameCB         = ctx.perFrameAlloc;
     renderDesc.renderWidth        = ctx.renderWidth;
     renderDesc.renderHeight       = ctx.renderHeight;
+    renderDesc.viewportWidth      = m_width;
+    renderDesc.viewportHeight     = m_height;
+    renderDesc.perFrameAlloc      = ctx.perFrameAlloc;
 
     // Camera position for distance sorting (Vec4 -> Vec3 xyz).
     const Vec3 camPos{
@@ -317,31 +340,40 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
 
     for (auto* emitter : emitters) {
         if (!emitter || !emitter->initialized) continue;
+        if (emitter->needsInitialUpload) continue; // Skip first-frame emitters
 
         auto& gpuBuf = emitter->buffer;
         if (!gpuBuf.IsValid()) continue;
 
-        // Billboard CB (b2) -- unified VS + PS constant buffer (304 bytes).
-        // Contains invView for billboard orientation, emitter params,
-        // and PS rendering params (soft fade, erosion, lighting, etc.).
-        ParticleBillboardCB bbCBData{};
+        // Billboard constant buffer (b2): invView + emitter params + rendering params.
+        // Must match VFXBillboardCB in particle_billboard_vs.hlsl byte-for-byte.
+        VFXBillboardCB bbCBData{};
 
-        // Compute inverse view matrix for billboard right/up extraction.
-        // The VS reads rows 0 and 1 as camera right and camera up vectors.
-        const Mat4 invViewMat = viewMatrix.Inverse();
-        bbCBData.invView = invViewMat;
+        // Inverse view matrix — rows 0,1 give camera right/up for billboard orientation.
+        const Mat4 invView = viewMatrix.Inverse();
+        std::memcpy(bbCBData.invView, &invView, sizeof(float) * 16);
 
-        // Emitter position (will be transform-driven later).
-        bbCBData.emitterPosition[0] = 0.0f;
-        bbCBData.emitterPosition[1] = 0.0f;
-        bbCBData.emitterPosition[2] = 0.0f;
+        bbCBData.emitterPositionX = emitter->worldPosition.x;
+        bbCBData.emitterPositionY = emitter->worldPosition.y;
+        bbCBData.emitterPositionZ = emitter->worldPosition.z;
+        // Size multiplier from sprite render module (width as scale factor).
         bbCBData.globalSizeMultiplier = 1.0f;
+        if (emitter->moduleStack.renderModule) {
+            auto* sr = dynamic_cast<SpriteRenderModule*>(emitter->moduleStack.renderModule.get());
+            if (sr) bbCBData.globalSizeMultiplier = sr->spriteWidth;
+        }
 
-        // Previous frame view-projection for TAA motion vectors.
-        bbCBData.prevViewProj = projMatrix * viewMatrix;
+        // Global color tint (default white — no tinting).
+        bbCBData.globalColorTintR = 1.0f;
+        bbCBData.globalColorTintG = 1.0f;
+        bbCBData.globalColorTintB = 1.0f;
+        bbCBData.globalColorTintA = 1.0f;
 
-        // PS rendering parameters.
-        bbCBData.softFadeDistance   = emitter->softParticleFadeRange;
+        // Previous frame viewProj for TAA motion vectors.
+        std::memcpy(bbCBData.prevViewProj, &m_prevViewProj, sizeof(float) * 16);
+
+        // Soft particle depth fade distance (0 = disabled, skip depth read in PS).
+        bbCBData.softFadeDistance = 0.0f;
 
         const CBAllocation bbAlloc = m_cbRing->Allocate(sizeof(bbCBData));
         if (!bbAlloc.cpuPtr) {
@@ -353,6 +385,7 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
 
         EmitterRenderData renderData{};
         renderData.buffer          = &gpuBuf;
+        renderData.cpuAliveCount   = emitter->cpuAliveCount;
         renderData.renderCB        = bbAlloc;
         // Draw ALL particles and let the VS cull dead ones.
         // The spawn shader allocates from the top of the free list (index N-1 down),
@@ -361,6 +394,7 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
 
         // Bindless indices CB (b0) -- SRV indices for read-set attribute buffers
         // and PS texture indices. Must match HLSL VFXBillboardConstants (48 bytes).
+        // Uses ParticleBillboardIndices struct from particle_render_pass.h.
         const auto& readSet = gpuBuf.WriteSet();
         ParticleBillboardIndices indicesData{};
         indicesData.positionBufferIdx    = m_device->GetBufferSRVIndex(readSet.positions);
@@ -469,7 +503,7 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
                 }
 
                 if (!trailDesc.items.empty()) {
-                    AddTrailRenderPass(rgBuilder, trailDesc);
+                    // AddTrailRenderPass(rgBuilder, trailDesc); // DISABLED: RC3 — needs BeginRenderPass fix
                 }
             }
         }
@@ -687,12 +721,15 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
                                 // UAV barrier between emitter dispatches to
                                 // prevent write-after-write hazards on the
                                 // mesh output buffers.
-                                if (i + 1 < dispatches.size()) {
-                                    RHIBarrierDesc barrier{};
-                                    barrier.stateBefore = RHIResourceState::UnorderedAccess;
-                                    barrier.stateAfter  = RHIResourceState::UnorderedAccess;
-                                    cmd->ResourceBarrier(&barrier, 1);
-                                }
+                                // Global UAV barrier between mesh instance CS dispatches.
+                                // No resource handle = global UAV flush (DX12 null resource).
+                                // Disabled: render graph handles inter-pass barriers.
+                                // if (i + 1 < dispatches.size()) {
+                                //     RHIBarrierDesc barrier{};
+                                //     barrier.stateBefore = RHIResourceState::UnorderedAccess;
+                                //     barrier.stateAfter  = RHIResourceState::UnorderedAccess;
+                                //     cmd->ResourceBarrier(&barrier, 1);
+                                // }
                             }
                         });
                 });
@@ -700,7 +737,7 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
 
         // Register the mesh render pass if any batch items were created.
         if (!meshDesc.batches.empty()) {
-            AddParticleMeshRenderPass(rgBuilder, meshDesc);
+            // AddParticleMeshRenderPass(rgBuilder, meshDesc); // DISABLED: RC3 — needs BeginRenderPass fix
         }
     }
 

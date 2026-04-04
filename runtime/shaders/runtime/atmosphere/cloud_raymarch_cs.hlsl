@@ -14,7 +14,8 @@
 /// - RGB: premultiplied cloud color
 /// - A: transmittance (1 = transparent, 0 = opaque)
 
-#include "../include/units.hlsli"
+#include "../common/constants.hlsli"
+#include "../common/bindless.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Root Constants (b0)
@@ -28,7 +29,7 @@ cbuffer RootConstants : register(b0) {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Cloud Constant Buffer (b2)
+// Cloud Constant Buffer (b2) — matches CloudCB in cloud_pass.cpp (256 bytes)
 // ─────────────────────────────────────────────────────────────────────────────
 
 cbuffer CloudCB : register(b2) {
@@ -54,6 +55,7 @@ cbuffer CloudCB : register(b2) {
     uint    g_lightSteps;
     uint    g_shapeNoiseSrv;
     float   g_globalCoverage;
+    // Extra fields from extended CloudCB (offset 188-252) — not used in this shader
 };
 
 SamplerState linearSampler : register(s0);
@@ -63,23 +65,18 @@ Texture3D<float>    g_ShapeNoiseTex : register(t0);
 RWTexture2D<float4> g_OutputTex     : register(u0);
 #endif
 
-#ifndef UZ_PI_DEFINED
-#define UZ_PI_DEFINED
-static const float PI = 3.14159265359f;
-#endif
-
 /// @ref Bruneton 2017 — Earth radius = 6360 km
 static const float PLANET_RADIUS_KM = 6360.0f;
 static const float EXT_EPS = 1e-7f;
 
-/// Density-to-extinction scale factor.
-/// SampleDensity() returns normalized values in [0,1]. Real cloud extinction
-/// coefficients are typically 10-40 km^-1 (Schneider 2015). The component's
-/// base extinction (0.04 km^-1) is scaled by this factor to produce physically
-/// correct optical depth: 0.04 * 25 = 1.0 km^-1 effective extinction, which
-/// gives realistic opacity over the 10 km cloud layer height.
 /// @ref Schneider 2015 — cloud density normalization
+/// @constants DENSITY_SCALE = 25.0
 static const float DENSITY_SCALE = 25.0f;
+
+/// Planet surface safety offset (km).
+/// @ref Bruneton 2008 — offset to avoid surface intersection
+/// @constants 0.005 km = 5 meters
+static const float PLANET_RADIUS_OFFSET_KM = 0.005f;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Ray-Sphere Intersection
@@ -132,8 +129,7 @@ bool GetRayNearFar(float3 cameraSkyKm, float3 rayDir, float innerRadius, float o
 
     if (cameraHeight < innerRadius) {
         // Case 1: Below cloud layer
-        // The ray must exit the inner sphere (going outward) then traverse the shell
-        if (innerHit.y < 0.0f) return false; // Shouldn't happen but guard
+        if (innerHit.y < 0.0f) return false;
         tNear = innerHit.y;
         tFar  = outerHit.y;
         // Reject if looking down (ground hit before inner sphere exit)
@@ -177,26 +173,24 @@ float DualLobeHG(float cosTheta, float g1, float g2, float blend) {
 // Height Gradient
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Height gradient for cloud density distribution within the layer.
-/// Uses a rounded-bottom profile that peaks around 30% height then
-/// fades at the top — typical of cumulus clouds.
+/// Height gradient for cumulus cloud density profile.
+/// Sharp flat bottom (clouds have well-defined bases), rounded top that
+/// peaks around 30% height then gradually fades — the classic cumulus shape.
 /// @ref Schneider 2015 — height-based density gradient for cumulus
 float HeightGradient(float sampleHeight, float innerRadius, float layerHeight) {
-    float normalizedH = saturate((sampleHeight - innerRadius) / layerHeight);
-    // Smooth ramp up from bottom, gradual fade at top
-    float bottomFade = smoothstep(0.0f, 0.15f, normalizedH);
-    float topFade    = smoothstep(1.0f, 0.6f, normalizedH);
-    return bottomFade * topFade;
+    float h = saturate((sampleHeight - innerRadius) / layerHeight);
+    // Sharp bottom ramp (flat cloud base)
+    float bottom = smoothstep(0.0f, 0.07f, h);
+    // Rounded top fade — peak density around 20-40%, gradual falloff to top
+    float top = smoothstep(1.0f, 0.3f, h);
+    return bottom * top;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Density Sampling
+// Procedural Noise
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ─── Procedural Value Noise ──────────────────────────────────────────────────
-// Simple GPU hash-based noise for cloud shapes until 3D texture upload is fixed.
-// @ref Inigo Quilez — "Hash without Sine" procedural noise
-
+/// @ref Inigo Quilez — "Hash without Sine" procedural noise
 float Hash3D(float3 p) {
     p = frac(p * float3(0.1031f, 0.1030f, 0.0973f));
     p += dot(p, p.yxz + 33.33f);
@@ -206,7 +200,7 @@ float Hash3D(float3 p) {
 float ValueNoise3D(float3 p) {
     float3 i = floor(p);
     float3 f = frac(p);
-    f = f * f * (3.0f - 2.0f * f); // smoothstep
+    f = f * f * (3.0f - 2.0f * f);
 
     return lerp(
         lerp(lerp(Hash3D(i + float3(0,0,0)), Hash3D(i + float3(1,0,0)), f.x),
@@ -216,13 +210,15 @@ float ValueNoise3D(float3 p) {
         f.z);
 }
 
-/// Fractal Brownian Motion — 4 octaves of value noise.
+/// FBM with N octaves — 3D isotropic noise for volumetric cloud shapes.
+/// @ref Inigo Quilez, Shadertoy XslGRr — FBM clouds
 /// @ref Schneider 2015 — multi-octave noise for cloud shapes
-float FBM4(float3 p) {
+/// @constants lacunarity = 2.0, gain = 0.5 (standard FBM)
+float FBM(float3 p, int octaves) {
     float value = 0.0f;
     float amplitude = 0.5f;
     float frequency = 1.0f;
-    for (int oct = 0; oct < 4; ++oct) {
+    for (int oct = 0; oct < octaves; ++oct) {
         value += amplitude * ValueNoise3D(p * frequency);
         amplitude *= 0.5f;
         frequency *= 2.0f;
@@ -230,33 +226,50 @@ float FBM4(float3 p) {
     return value;
 }
 
-// ─── Density Sampling ────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Density Sampling
+// ─────────────────────────────────────────────────────────────────────────────
 
+/// Cloud density using 3D isotropic noise coordinates.
+/// @ref Inigo Quilez, Shadertoy XslGRr — 3D world-space noise coords give
+///   volumetric shapes (spheres, towers) rather than flat layers.
+/// @ref Schneider 2015 — coverage remap + height gradient
+///
+/// Key difference from flat clouds: noise is sampled at uniform 3D coordinates
+/// relative to the planet surface, NOT (XY, normalizedH). This produces
+/// actual 3D structures instead of horizontal slabs.
 float SampleDensity(float3 samplePosKm, float innerRadius, float layerHeight) {
     float sampleHeight = length(samplePosKm);
     float hGrad = HeightGradient(sampleHeight, innerRadius, layerHeight);
     if (hGrad <= 0.0f) return 0.0f;
 
-    float3 windOffset = g_windVelocity * g_time;
     float normalizedH = saturate((sampleHeight - innerRadius) / layerHeight);
+    float3 windOffset = g_windVelocity * g_time;
 
-    // Sample 3D shape noise texture (128^3 Perlin-Worley).
-    // UV: world XY position tiled at ~8km period, Z = normalized height in layer.
-    // The wrap sampler handles tiling automatically.
-    /// @ref Schneider 2015 — Perlin-Worley noise for cloud shapes
-    /// @ref three-geospatial shapeRepeat — noise tiling scale
-    // Procedural FBM noise for cloud shapes
-    float3 noiseCoord = float3(
+    // Noise coordinates: XY from world-space scaled for ~8 km tiling,
+    // Z from normalized height stretched for vertical detail.
+    /// @ref Schneider 2015 — noise coordinate mapping
+    /// @constants XY_SCALE = 0.12, Z_SCALE = 3.0
+    float3 noisePos = float3(
         (samplePosKm.x + windOffset.x) * 0.12f,
         (samplePosKm.y + windOffset.y) * 0.12f,
         normalizedH * 3.0f + windOffset.z * 0.05f
     );
-    float noise = FBM4(noiseCoord);
 
-    // Coverage remap: remap(noise, 1-coverage, 1, 0, 1)
-    /// @ref Schneider 2015 slide 70 — density = remap(shape, 1-coverage, 1, 0, 1)
-    float coverageThreshold = 1.0f - g_coverage;
-    float shapeDensity = saturate((noise - coverageThreshold) / max(g_coverage, 0.001f));
+    // Shape noise — 4 octaves of FBM (range ~0.0 to ~0.94, mean ~0.47)
+    /// @ref Schneider 2015 — multi-octave noise for cloud shapes
+    float shape = FBM(noisePos, 4);
+
+    // Coverage-based density: shape noise modulated by coverage and height.
+    // Use a softer remap than Schneider's hard threshold — our procedural FBM
+    // has a narrow value range (~0.3-0.6) compared to Perlin-Worley textures
+    // (~0.0-1.0), so a hard remap at 1-coverage cuts most of the signal.
+    // Instead: bias the noise by coverage, then saturate.
+    /// @ref Schneider 2015 slide 70 — adapted for procedural FBM range
+    float shapeDensity = saturate(shape + g_coverage - 0.5f);
+    // Apply a power curve to create contrast (thick core, thin edges)
+    shapeDensity = shapeDensity * shapeDensity;
+
     return shapeDensity * hGrad * g_density;
 }
 
@@ -307,19 +320,13 @@ void main(uint3 DTid : SV_DispatchThreadID) {
 
     // Snap above planet surface
     float distToCenter = length(cameraSkyKm);
-    float minSafe = PLANET_RADIUS_KM + UZ_PLANET_RADIUS_OFFSET_KM;
+    float minSafe = PLANET_RADIUS_KM + PLANET_RADIUS_OFFSET_KM;
     if (distToCenter < minSafe) {
         cameraSkyKm = cameraSkyKm * (minSafe / distToCenter);
     }
 
     float innerRadius = PLANET_RADIUS_KM + g_layerBottomKm;
     float outerRadius = innerRadius + g_layerHeightKm;
-
-    // NOTE: Depth check is NOT done here because the cloud compute runs on a
-    // separate command list BEFORE the render graph, so the depth buffer may be
-    // in DepthStencilWrite state (not readable). Instead, the depth check is
-    // performed in the composite pixel shader where the render graph manages
-    // barrier state correctly.
 
     // ── Cloud shell intersection ──
     float tNear, tFar;
@@ -329,8 +336,6 @@ void main(uint3 DTid : SV_DispatchThreadID) {
         output[DTid.xy] = float4(0.0f, 0.0f, 0.0f, 1.0f);
         return;
     }
-
-    // Cloud shell intersection confirmed — proceed to ray march.
 
     // Clamp march distance (50 km max for performance)
     tFar = min(tFar, tNear + 50.0f);
@@ -349,9 +354,8 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     float phase = DualLobeHG(cosTheta, g_phaseG, g_phaseG2, g_phaseBlend);
 
     // ── Ambient ──
-    // Cloud interiors receive multi-scattered light approximated as ambient.
-    // If the scene ambient is zero (IBL not ready), use a fraction of sun color.
     /// @ref Schneider 2015 — multi-scatter ambient approximation
+    /// Fallback to sun fraction when IBL SH is not yet computed.
     float3 ambient = g_ambientColor;
     if (dot(ambient, ambient) < 0.001f) {
         ambient = g_sunColor * 0.25f;
@@ -380,9 +384,6 @@ void main(uint3 DTid : SV_DispatchThreadID) {
         float sunT = LightMarch(samplePos, sunDir, innerRadius, outerRadius, g_layerHeightKm);
 
         // Multi-scattering energy approximation.
-        // After the first scatter event, photons continue bouncing inside the cloud,
-        // brightening the interior. This is approximated by boosting the sun
-        // transmittance: each scatter order loses less energy.
         /// @ref Schneider 2015 — multi-scatter energy approximation
         /// @ref Wrenninge 2015 — "Art-Directable Multiple Volumetric Scattering"
         float msPhase = 1.0f;
@@ -390,15 +391,23 @@ void main(uint3 DTid : SV_DispatchThreadID) {
         float3 msLuminance = float3(0.0f, 0.0f, 0.0f);
         float msSunT = sunT;
         for (int ms = 0; ms < 3; ++ms) {
-            msPhase *= 0.5f;   // Phase becomes more isotropic
-            msExt   *= 0.25f;  // Lower extinction (photons penetrate deeper)
-            msSunT = max(msSunT, pow(sunT, msExt)); // Higher transmittance
+            msPhase *= 0.5f;
+            msExt   *= 0.25f;
+            msSunT = max(msSunT, pow(sunT, msExt));
             float msP = lerp(phase, 1.0f / (4.0f * PI), 1.0f - msPhase);
             msLuminance += g_sunColor * msSunT * msP * msPhase;
         }
 
+        // Beer-Powder effect — brightens thin cloud edges (silver lining).
+        // At cloud boundaries where density is low, multi-scattered photons
+        // create a bright rim around the cloud silhouette.
+        /// @ref Schneider 2015 — Beer-Powder approximation
+        /// @constants powder blend = 0.5 (mix between Beer and powder terms)
+        float powder = 1.0f - exp(-density * g_extinction * DENSITY_SCALE * 2.0f);
+        float beerPowder = lerp(1.0f, powder, 0.5f);
+
         // In-scattering: sun (direct + multi-scatter) + ambient
-        float3 sunScatter = g_sunColor * sunT * phase + msLuminance;
+        float3 sunScatter = g_sunColor * sunT * phase * beerPowder + msLuminance;
         float3 ambScatter = ambient;
         float3 scatter = scat * (sunScatter + ambScatter);
 
@@ -408,6 +417,17 @@ void main(uint3 DTid : SV_DispatchThreadID) {
         luminance    += transmittance * Sint;
         transmittance *= T_step;
     }
+
+    // ── Aerial perspective — distant clouds fade toward sky color ─────
+    // Approximates atmospheric scattering between camera and cloud.
+    /// @ref Hillaire 2020 — aerial perspective on volumetric clouds
+    float cloudDist = tNear; // distance to first cloud sample (km)
+    float apFactor = 1.0f - exp(-cloudDist * 0.04f);
+    float3 skyColor = g_ambientColor;
+    if (dot(skyColor, skyColor) < 0.001f) {
+        skyColor = float3(0.4f, 0.55f, 0.8f); // fallback blue sky
+    }
+    luminance = lerp(luminance, skyColor * (1.0f - transmittance), apFactor);
 
     output[DTid.xy] = float4(luminance, transmittance);
 }

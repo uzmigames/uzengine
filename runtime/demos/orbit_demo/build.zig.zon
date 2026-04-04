@@ -1,9 +1,0 @@
-.{
-    .name = .orbit_demo,
-    .version = "0.1.0",
-    .fingerprint = 0x4c256559336bb9a3,
-    .dependencies = .{
-        .uz_demo_common = .{ .path = "../common" },
-    },
-    .paths = .{"build.zig"},
-}

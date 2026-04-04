@@ -174,8 +174,8 @@ A "complete but cut-corners" PostProcessSettings implementation is visible to ev
 ## Data Sources
 
 All properties extracted from actual UE5 5.6 source headers:
-- `Engine/Source/Runtime/Engine/Classes/Components/*.h`
-- `Engine/Source/Runtime/Engine/Classes/Engine/Scene.h`
+- `Engine/Classes/Components/*.h`
+- `Engine/Classes/Engine/Scene.h`
 
 **No approximations**: All defaults, ranges, meta-tags documented directly from source.
 

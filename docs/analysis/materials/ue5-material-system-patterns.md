@@ -104,7 +104,7 @@ public:
 
 **Key Insight:** Material graphs are **DAGs not trees**. If expression A is used by both B and C, compile it once and reuse the result.
 
-**File:** `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Private/Materials/HLSLMaterialTranslator.h`
+**File:** `/w/UE_5.6_Source/Engine/Private/Materials/HLSLMaterialTranslator.h`
 
 ### UzEngine Adaptation
 
@@ -161,7 +161,7 @@ public:
 - `FLightmassProxy` — lightmap data export
 - `FMaterialProxy` — material preview proxy
 
-**File:** `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Public/MaterialCompiler.h` (line 119)
+**File:** `/w/UE_5.6_Source/Engine/Public/MaterialCompiler.h` (line 119)
 
 ### UzEngine Adaptation
 
@@ -225,7 +225,7 @@ struct FExpressionInput {
 
 **Benefit:** Serialization is trivial. Just serialize the array. Connections are maintained via object pointers.
 
-**File:** `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Public/Materials/MaterialExpression.h` (line 120)
+**File:** `/w/UE_5.6_Source/Engine/Public/Materials/MaterialExpression.h` (line 120)
 
 ### UzEngine Adaptation
 
@@ -298,7 +298,7 @@ Texture Sample
 
 Connection: `FExpressionInput{ TextureSampleNode, 0 }` = connect to RGB output.
 
-**File:** `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Public/Materials/MaterialExpression.h` (lines 42-107)
+**File:** `/w/UE_5.6_Source/Engine/Public/Materials/MaterialExpression.h` (lines 42-107)
 
 ### UzEngine Adaptation
 
@@ -364,7 +364,7 @@ void Compile() {
 
 **Key Insight:** Material has **multiple root expressions** (one per output). Compilation is **property-by-property**, not one monolithic pass.
 
-**File:** `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Public/Materials/Material.h`
+**File:** `/w/UE_5.6_Source/Engine/Public/Materials/Material.h`
 
 ### UzEngine Adaptation
 
@@ -470,7 +470,7 @@ public:
 
 **Key Insight:** Compiler tracks errors during compilation. If any expression fails to compile, the entire material compile fails gracefully.
 
-**File:** `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Private/Materials/HLSLMaterialTranslator.h`
+**File:** `/w/UE_5.6_Source/Engine/Private/Materials/HLSLMaterialTranslator.h`
 
 ### UzEngine Adaptation
 
@@ -578,7 +578,7 @@ std::string GenerateHLSL(const MaterialIR& ir);
 std::string GenerateGLSL(const MaterialIR& ir);
 ```
 
-**File Reference:** `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Private/Materials/MaterialIREmitter.cpp` (line 89,879)
+**File Reference:** `/w/UE_5.6_Source/Engine/Private/Materials/MaterialIREmitter.cpp` (line 89,879)
 
 ---
 
@@ -630,7 +630,7 @@ class UMaterialInstanceDynamic : public UMaterialInstance
 - Instance 2: `Color = Blue`
 - Both share the same compiled graph, different parameter values
 
-**File:** `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Public/Materials/MaterialInstance.h`
+**File:** `/w/UE_5.6_Source/Engine/Public/Materials/MaterialInstance.h`
 
 ### UzEngine Adaptation
 

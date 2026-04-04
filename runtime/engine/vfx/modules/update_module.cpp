@@ -3,6 +3,7 @@
 #include "update_module.h"
 
 #include "engine/logging/log.h"
+#include <json.hpp>
 
 UZ_DECLARE_LOG_CATEGORY(VFX);
 
@@ -66,6 +67,22 @@ std::vector<ParameterDef> UpdateModule::GetParameters() const {
     }
 
     return params;
+}
+
+/// Applies JSON config to gravity, drag, and angular velocity fields.
+void UpdateModule::ApplyJsonConfig(const nlohmann::json& config) {
+    if (config.contains("gravity") && config["gravity"].is_array()) {
+        const auto& arr = config["gravity"];
+        if (arr.size() >= 3) {
+            gravity = Vec3{arr[0].get<float>(), arr[1].get<float>(), arr[2].get<float>()};
+        }
+    }
+    if (config.contains("drag") && config["drag"].is_number()) {
+        drag = config["drag"].get<float>();
+    }
+    if (config.contains("angular_velocity") && config["angular_velocity"].is_number()) {
+        angularVelocity = config["angular_velocity"].get<float>();
+    }
 }
 
 /// No-op on CPU side. The update compute shader handles integration

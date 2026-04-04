@@ -50,9 +50,12 @@ namespace uz {
 ///
 /// Must match the HLSL `DecalObjectCB` at register b2 in decal_vs.hlsl and
 /// decal_ps.hlsl exactly.
+/// @ref Valient 2014 "Deferred Rendering in Killzone: Shadow Fall"
+/// Projection: SvPositionToDecal = ScreenToNDC × InvViewProj × WorldToDecal
 struct DecalObjectCB {
-    Mat4     world;            ///< Decal world transform (position + rotation + extents).
-    Mat4     invWorld;         ///< Inverse of world (for world->local projection in PS).
+    Mat4     world;            ///< Decal world transform (OBB = unit cube × world).
+    Mat4     svPosToDecal;     ///< SvPosition → decal local [-1,1]³ (precomputed).
+    Mat4     viewProj;         ///< View-projection (for VS clip-space transform).
     float    opacity;          ///< Global opacity [0,1].
     float    normalBlend;      ///< Normal blend intensity [0,1].
     float    roughness;        ///< Roughness value/multiplier.
@@ -64,7 +67,7 @@ struct DecalObjectCB {
     uint32_t materialSrv;      ///< Material texture SRV index (UINT32_MAX = none).
     uint32_t depthSrv;         ///< GBuffer depth SRV index.
     uint32_t normalGbufSrv;    ///< GBuffer normal SRV index (for angle fade).
-    float    _pad0 = 0.0f;    ///< Pad to 16-byte boundary.
+    uint32_t opacitySrv;       ///< Opacity mask texture SRV index (UINT32_MAX = no mask).
 };
 
 static_assert(sizeof(DecalObjectCB) % 16 == 0, "DecalObjectCB must be 16-byte aligned");

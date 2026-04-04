@@ -38,6 +38,8 @@ Detailed specifications for each milestone, located in [specs/](specs/):
 | [1.5-build-pipeline](specs/1.5-build-pipeline.md) | 1.5 | Asset build pipeline (uzcook, uzembed) |
 | [1.5-gameplay](specs/1.5-gameplay.md) | 1.5 | Gameplay systems — input, physics, audio |
 | [1.5.0-shader-pipeline](specs/1.5.0-shader-pipeline.md) | 1.5 | Shader compilation, caching, hot-reload |
+| [shader-library](specs/shader-library.md) | — | Shader subsystem directory structure, ~99 shaders, CPU parity mapping |
+| [shader-variants](specs/shader-variants.md) | — | Shader variants, SM5/bindless dual-path, PSO cache, permutation naming |
 | [2.0-napi-foundation](specs/2.0-napi-foundation.md) | 2.0 | N-API .node addon integration with VSCode |
 | [2.1-viewport-ui](specs/2.1-viewport-ui.md) | 2.1 | Viewport HWND + editor UI panels |
 | [2.2-2.3-editors](specs/2.2-2.3-editors.md) | 2.2–2.3 | Scene editor, inspector, asset browser |
@@ -50,6 +52,7 @@ Detailed specifications for each milestone, located in [specs/](specs/):
 | Directory | Description |
 |-----------|-------------|
 | [analysis/](analysis/) | Godot 4 and UE5 rendering architecture analysis (POM, tonemap, RenderingDevice) |
+| [analysis/shader-rewrite-postmortem.md](analysis/shader-rewrite-postmortem.md) | Shader infrastructure overhaul — timeline, 14 critical bug fixes, lessons learned, metrics |
 | [architecture/](architecture/) | UE5 RHI binding pattern analysis, migration playbooks, shader model compatibility |
 | [research/](research/) | Research notes, code audits, platform analysis, and implementation templates |
 

@@ -116,6 +116,48 @@ struct Mat3 {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GGX Normal Distribution Function
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Trowbridge-Reitz (GGX) normal distribution function.
+/// @ref Walter et al. 2007 "Microfacet Models for Refraction through Rough Surfaces"
+/// @param alpha Roughness alpha (roughness^2).
+/// @param NdotH Cosine of angle between surface normal and half-vector.
+/// @return NDF value D(h).
+[[nodiscard]] inline float D_GGX(float alpha, float NdotH) noexcept {
+    const float a2 = alpha * alpha;
+    const float d = ((NdotH * a2 - NdotH) * NdotH + 1.0f);
+    return a2 / (d * d * kPI);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Schlick Fresnel Approximation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Schlick Fresnel approximation (scalar).
+/// @ref Schlick 1994 "An Inexpensive BRDF Model for Physically-Based Rendering"
+/// @param f0       Reflectance at normal incidence.
+/// @param f90      Reflectance at grazing incidence.
+/// @param cosTheta Cosine of angle between view and half-vector.
+/// @return Fresnel reflectance.
+[[nodiscard]] inline float F_SchlickScalar(float f0, float f90, float cosTheta) noexcept {
+    return f0 + (f90 - f0) * Pow5(std::max(1.0f - cosTheta, 0.0f));
+}
+
+/// Schlick Fresnel approximation (Vec3, explicit f90).
+/// @ref Schlick 1994 "An Inexpensive BRDF Model for Physically-Based Rendering"
+[[nodiscard]] inline Vec3 F_Schlick(Vec3 f0, Vec3 f90, float cosTheta) noexcept {
+    const float t = Pow5(std::max(1.0f - cosTheta, 0.0f));
+    return f0 + (f90 - f0) * t;
+}
+
+/// Schlick Fresnel approximation (Vec3, f90 = 1).
+/// @ref Schlick 1994 "An Inexpensive BRDF Model for Physically-Based Rendering"
+[[nodiscard]] inline Vec3 F_Schlick(Vec3 f0, float cosTheta) noexcept {
+    return F_Schlick(f0, Vec3{1.0f, 1.0f, 1.0f}, cosTheta);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Disney Burley Diffuse BRDF
 // ─────────────────────────────────────────────────────────────────────────────
 

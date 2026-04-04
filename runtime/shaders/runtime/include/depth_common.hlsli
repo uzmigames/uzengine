@@ -1,42 +1,50 @@
-/// Depth buffer utilities — Reversed-Z convention (standard).
+/// Depth Buffer Utilities — reversed-Z depth linearization and sky detection.
 ///
-/// UzEngine uses reversed-Z: near=1.0, far=0.0. This file provides helpers
-/// so shaders never hardcode depth direction assumptions.
+/// UzEngine uses reversed-Z depth (near=1.0, far~=0.0) for improved
+/// floating-point precision at distance.
 ///
-/// # Rules
-/// - NEVER use raw `0.0` or `1.0` for depth comparisons — use these helpers.
-/// - "Closer" means GREATER depth value in reversed-Z.
-/// - Clear depth to DepthFar() (0.0).
+/// @ref Upchurch & Desbrun 2012 "Tightening the Precision of Perspective Rendering"
+/// @ref Rasterization rules — reversed-Z maps [near, far] to [1, 0]
 
 #ifndef DEPTH_COMMON_HLSLI
 #define DEPTH_COMMON_HLSLI
 
-/// Returns the far plane depth value (clear target).
-float DepthFar()  { return 0.0f; }
-
-/// Returns the near plane depth value.
-float DepthNear() { return 1.0f; }
-
-/// Returns true if depth `a` is closer to the camera than depth `b`.
-/// In reversed-Z: closer = greater value.
-bool IsCloser(float a, float b) { return a > b; }
-
-/// Returns true if the pixel is at the sky (far plane).
-bool IsSkyDepth(float depth) { return depth <= 0.0001f; }
-
 /// Linearizes a reversed-Z depth value to view-space distance.
 ///
-/// # Arguments
-/// - rawDepth: depth buffer sample in [1, 0] (reversed-Z).
-/// - near: camera near plane distance.
-/// - far: camera far plane distance.
+/// Reversed-Z maps depth as: d = (far * near) / (far - z * (far - near))
+/// where z is the raw depth buffer value in [0, 1].
 ///
-/// # Returns
-/// Linear view-space distance from the camera.
-float LinearizeDepthReversedZ(float rawDepth, float near, float far) {
-    // Reversed-Z perspective: z_ndc = near/(far-near) * z_view + (-near*far)/(far-near)
-    // Solving for z_view: z_view = (near * far) / (near + rawDepth * (far - near))
-    return (near * far) / (near + rawDepth * (far - near));
+/// @param depth    Raw depth buffer value (reversed-Z: 1.0 = near, ~0.0 = far).
+/// @param nearZ    Camera near plane distance.
+/// @param farZ     Camera far plane distance.
+/// @return         Linear view-space distance in [nearZ, farZ].
+float LinearizeDepthReversedZ(float depth, float nearZ, float farZ) {
+    return (nearZ * farZ) / (farZ - depth * (farZ - nearZ));
+}
+
+/// Returns true if the depth value represents the sky (far plane).
+///
+/// In reversed-Z, the far plane maps to ~0. Values very close to zero
+/// indicate sky/background pixels that should not participate in
+/// depth-based effects (soft particles, SSAO, SSR, etc.).
+///
+/// @param depth    Raw depth buffer value (reversed-Z).
+/// @return         True if the pixel is at the far plane (sky).
+bool IsSkyDepth(float depth) {
+    return depth < 0.00001f;
+}
+
+/// Reconstructs world-space position from screen UV and reversed-Z depth.
+///
+/// @param screenUV  Screen-space UV in [0,1]x[0,1].
+/// @param depth     Raw depth buffer value (reversed-Z).
+/// @param invVP     Inverse view-projection matrix.
+/// @return          World-space position.
+float3 ReconstructWorldPos(float2 screenUV, float depth, float4x4 invVP) {
+    float4 clipPos = float4(screenUV * 2.0f - 1.0f, depth, 1.0f);
+    clipPos.y = -clipPos.y; // D3D UV convention
+    float4 worldPos = mul(clipPos, invVP);
+    return worldPos.xyz / worldPos.w;
 }
 
 #endif // DEPTH_COMMON_HLSLI

@@ -21,7 +21,7 @@ pub fn build(b: *std.Build) void {
     const build_editor = b.option(bool, "editor", "Build editor.lib alongside runtime.lib") orelse false;
 
     const cpp_flags: []const []const u8 =
-        &.{ "-std=c++17", "-DSPDLOG_COMPILED_LIB", "-DUZ_PROFILING_ENABLED", "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND" };
+        &.{ "-std=c++17", "-DSPDLOG_COMPILED_LIB", "-DUZ_PROFILING_ENABLED", "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND", "-DSPNG_STATIC" };
 
     // ── Include path tables (shared between runtime and tests) ───────────
 
@@ -135,8 +135,10 @@ pub fn build(b: *std.Build) void {
         tp ++ "xxhash",
         tp ++ "lz4/lib",
         tp ++ "stb",
+        tp ++ "spng/spng",
         tp ++ "tinyexr",
         tp ++ "libjpeg-turbo",
+        tp ++ "libjpeg-turbo/src",
         tp ++ "basis_universal/transcoder",
         tp ++ "astcenc/Source",
         tp ++ "vulkan_headers/include",
@@ -371,6 +373,138 @@ pub fn build(b: *std.Build) void {
         .root = b.path(tp ++ "fastgltf/src"),
         .files = &.{ "fastgltf.cpp", "base64.cpp", "io.cpp" },
         .flags = &.{"-std=c++17"},
+    });
+
+    // Thirdparty — spng (SIMD-accelerated PNG decode)
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path(tp ++ "spng/spng"),
+        .files = &.{"spng.c"},
+        .flags = &.{ "-std=c99", "-DSPNG_USE_MINIZ=0", "-DSPNG_STATIC" },
+    });
+
+    // Thirdparty — libjpeg-turbo (JPEG codec, pure C fallback — no NASM SIMD)
+    // 8-bit core sources (default BITS_IN_JSAMPLE=8).
+    // jstdhuff.c is #included by jcparam.c and jdhuff.c — not standalone.
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path(tp ++ "libjpeg-turbo/src"),
+        .files = &.{
+            "jaricom.c",
+            "jcomapi.c",
+            "jdapimin.c",
+            "jdapistd.c",
+            "jdarith.c",
+            "jdatasrc.c",
+            "jdcoefct.c",
+            "jdcolor.c",
+            "jddctmgr.c",
+            "jddiffct.c",
+            "jdhuff.c",
+            "jdicc.c",
+            "jdinput.c",
+            "jdlhuff.c",
+            "jdlossls.c",
+            "jdmainct.c",
+            "jdmarker.c",
+            "jdmaster.c",
+            "jdmerge.c",
+            "jdphuff.c",
+            "jdpostct.c",
+            "jdsample.c",
+            "jdtrans.c",
+            "jerror.c",
+            "jidctflt.c",
+            "jidctfst.c",
+            "jidctint.c",
+            "jidctred.c",
+            "jmemmgr.c",
+            "jmemnobs.c",
+            "jpeg_nbits.c",
+            "jquant1.c",
+            "jquant2.c",
+            "jutils.c",
+            // Encoder core (required — turbojpeg API uses both encode + decode)
+            "jcapimin.c",
+            "jcapistd.c",
+            "jcarith.c",
+            "jccoefct.c",
+            "jccolor.c",
+            "jcdctmgr.c",
+            "jcdiffct.c",
+            "jchuff.c",
+            "jcicc.c",
+            "jcinit.c",
+            "jclhuff.c",
+            "jclossls.c",
+            "jcmainct.c",
+            "jcmarker.c",
+            "jcmaster.c",
+            "jcparam.c",
+            "jcphuff.c",
+            "jcprepct.c",
+            "jcsample.c",
+            "jctrans.c",
+            "jdatadst.c",
+            "jfdctflt.c",
+            "jfdctfst.c",
+            "jfdctint.c",
+            "transupp.c",
+        },
+        .flags = &.{ "-std=c99", "-fno-stack-protector", "-fno-builtin" },
+    });
+
+    // libjpeg-turbo 12-bit and 16-bit multi-precision wrappers.
+    // Each wrapper #defines BITS_IN_JSAMPLE and #includes the base .c file.
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path(tp ++ "libjpeg-turbo/src/wrapper"),
+        .files = &.{
+            // 12-bit decode
+            "jdapistd-12.c",
+            "jdcoefct-12.c",
+            "jdcolor-12.c",
+            "jddctmgr-12.c",
+            "jddiffct-12.c",
+            "jdlossls-12.c",
+            "jdmainct-12.c",
+            "jdmerge-12.c",
+            "jdpostct-12.c",
+            "jdsample-12.c",
+            "jidctflt-12.c",
+            "jidctfst-12.c",
+            "jidctint-12.c",
+            "jidctred-12.c",
+            "jquant1-12.c",
+            "jquant2-12.c",
+            "jutils-12.c",
+            // 12-bit encode
+            "jcapistd-12.c",
+            "jccoefct-12.c",
+            "jccolor-12.c",
+            "jcdctmgr-12.c",
+            "jcdiffct-12.c",
+            "jclossls-12.c",
+            "jcmainct-12.c",
+            "jcprepct-12.c",
+            "jcsample-12.c",
+            "jfdctfst-12.c",
+            "jfdctint-12.c",
+            // 16-bit (lossless only)
+            "jdapistd-16.c",
+            "jdcolor-16.c",
+            "jddiffct-16.c",
+            "jdlossls-16.c",
+            "jdmainct-16.c",
+            "jdpostct-16.c",
+            "jdsample-16.c",
+            "jutils-16.c",
+            "jcapistd-16.c",
+            "jccolor-16.c",
+            "jcdiffct-16.c",
+            "jclossls-16.c",
+            "jcmainct-16.c",
+            "jcprepct-16.c",
+            "jcsample-16.c",
+        },
+        .flags = &.{ "-std=c99", "-fno-stack-protector", "-fno-builtin" },
     });
 
     // Thirdparty — meshoptimizer (mesh optimization library)

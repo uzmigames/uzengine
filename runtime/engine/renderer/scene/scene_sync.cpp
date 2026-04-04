@@ -88,7 +88,7 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
                         // command uses lodIndexByteOffset/Count to select the LOD.
                         for (uint32_t li = 1; li < gpu.lodCount && li < kMaxLODs; ++li) {
                             meshComp.lodGroup.levels[li].meshIndex = loaded;
-                            // Auto screen-size thresholds (UE5 defaults)
+                            // Auto screen-size thresholds (industry-standard defaults)
                             constexpr float kAutoThresholds[] = {1.0f, 0.5f, 0.25f, 0.12f, 0.06f, 0.03f, 0.015f, 0.0f};
                             meshComp.lodGroup.levels[li].screenSizeThreshold =
                                 (li < 8) ? kAutoThresholds[li] : 0.0f;
@@ -378,6 +378,27 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
 
         outDrawList.Add(cmd);
         drawIndex++;
+    }
+
+    // ── Preload decal textures from DecalComponent materials ─────────────
+    // DecalComponent references a MaterialInterface* whose texture paths need
+    // to be loaded into m_textureMap so the decal gather can resolve → SRV.
+    {
+        auto decalView = world->GetRegistry().view<DecalComponent>();
+        for (auto [enttEntity, decal] : decalView.each()) {
+            if (!decal.enabled || !decal.material) continue;
+            const auto* mat = decal.material;
+            auto tryLoadDecalTex = [&](const std::string& path, bool srgb) {
+                if (path.empty()) return;
+                if (m_textureMap.find(path) != m_textureMap.end()) return;
+                LoadTexture(path, vfs, cmdList, srgb);
+            };
+            tryLoadDecalTex(mat->GetAlbedoPath(),    true);
+            tryLoadDecalTex(mat->GetNormalPath(),     false);
+            tryLoadDecalTex(mat->GetRoughnessPath(),  false);
+            tryLoadDecalTex(mat->GetMetallicPath(),   false);
+            tryLoadDecalTex(mat->GetTexturePath("Opacity"), false);
+        }
     }
 
     // ── Flush batched mesh uploads ───────────────────────────────────────

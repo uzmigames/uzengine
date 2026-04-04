@@ -25,6 +25,7 @@ class Camera;
 class PipelineLibrary;
 class IRHIDevice;
 class IRHICommandList;
+class EnvMapSampler;
 
 namespace rg { class RgBuilder; }
 
@@ -98,6 +99,9 @@ struct AtmosphereFrameContext {
     IBLBaker*         iblBaker         = nullptr;
     IBLBaker::BakeResult*    iblResult        = nullptr;
     uint32_t          brdfLutSrvIndex  = UINT32_MAX;
+
+    // Env map importance sampler (owned by SceneRenderer)
+    EnvMapSampler*    envMapSampler    = nullptr;
 
     // SH (owned by SceneRenderer)
     SHCoefficients*  skyIrradianceSH = nullptr;

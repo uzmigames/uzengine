@@ -145,7 +145,7 @@ All values extracted from actual UE5.6.0 source:
 
 ### Axis Colors
 ```
-File: Engine/Source/Runtime/Core/Private/Misc/AxisDisplayInfo.cpp
+File: Core/Private/Misc/AxisDisplayInfo.cpp
 Lines: 104-115
 ```
 

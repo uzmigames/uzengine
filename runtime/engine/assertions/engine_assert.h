@@ -2,7 +2,7 @@
 
 /// UzEngine Assertion System
 ///
-/// Provides three assertion types inspired by Unreal Engine 5's philosophy:
+/// Provides three assertion types:
 /// - **UZ_CHECK**: Verify invariants (fatal in debug, stripped in shipping)
 /// - **UZ_ENSURE**: Handle recoverable conditions (logs + continues)
 /// - **UZ_VERIFY**: Must execute side effects (never stripped)

@@ -77,8 +77,8 @@ enum class CollisionResponse : uint8_t {
 /// | response               | Bounce  | How particles react on surface contact         |
 /// | bounceFactor           | 0.6     | Velocity retention after bounce [0, 1]         |
 /// | depthBufferCollision   | true    | Enable depth-buffer sampling (disable to debug)|
-/// | collisionOffset        | 0.01    | Surface standoff to prevent z-fighting (metres)|
-/// | minBounceSpeed         | 0.1     | Below this speed (m/s), Kill instead of Bounce |
+/// | collisionOffset        | 1.0     | Surface standoff to prevent z-fighting (cm)    |
+/// | minBounceSpeed         | 10.0    | Below this speed (cm/s), Kill instead of Bounce|
 struct CollisionModuleConfig {
     /// How particles react on surface contact.
     CollisionResponse response = CollisionResponse::Bounce;
@@ -91,14 +91,14 @@ struct CollisionModuleConfig {
     /// Set to false only for debugging (particles pass through all geometry).
     bool depthBufferCollision = true;
 
-    /// World-space distance (metres) a particle must penetrate before collision
+    /// World-space distance (cm) a particle must penetrate before collision
     /// triggers. Small positive values prevent persistent z-fighting artefacts
     /// where the particle hovers exactly on the surface.
-    float collisionOffset = 0.01f;
+    float collisionOffset = 1.0f;
 
-    /// Speed threshold (m/s) below which Bounce falls back to Kill.
+    /// Speed threshold (cm/s) below which Bounce falls back to Kill.
     /// Prevents particles from jittering endlessly at low energy.
-    float minBounceSpeed = 0.1f;
+    float minBounceSpeed = 10.0f;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

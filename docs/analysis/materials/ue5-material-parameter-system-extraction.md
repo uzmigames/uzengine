@@ -681,13 +681,13 @@ Enable multiple levels of material inheritance (WoodMaterial → OakWood → Wet
 ## References
 
 ### UE5 Source Files (Analyzed at W:\UE_5.6_Source)
-- `Engine/Source/Runtime/Engine/Classes/Materials/MaterialInterface.h` — Virtual base class
-- `Engine/Source/Runtime/Engine/Classes/Materials/Material.h` — Concrete graph-based material
-- `Engine/Source/Runtime/Engine/Classes/Materials/MaterialInstance.h` — Instance with overrides
-- `Engine/Source/Runtime/Engine/Classes/Materials/MaterialInstanceDynamic.h` — Runtime-only instance
+- `Engine/Classes/Materials/MaterialInterface.h` — Virtual base class
+- `Engine/Classes/Materials/Material.h` — Concrete graph-based material
+- `Engine/Classes/Materials/MaterialInstance.h` — Instance with overrides
+- `Engine/Classes/Materials/MaterialInstanceDynamic.h` — Runtime-only instance
 - `Engine/Shaders/Private/BRDF.ush` — BRDF equations (D, F, G)
 - `Engine/Shaders/Private/GBufferInfo.h` — G-Buffer format constants
-- `Engine/Source/Runtime/Renderer/Private/SceneRendering.cpp` — Render loop (proxy capture)
+- `Renderer/Private/SceneRendering.cpp` — Render loop (proxy capture)
 
 ### UzEngine References
 - `runtime/engine/renderer/material/material.h` — Current PBRMaterial struct

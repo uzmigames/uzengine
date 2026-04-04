@@ -1,0 +1,44 @@
+{
+  "name": "Fire Ramp",
+  "version": 2,
+  "emitters": [
+    {
+      "name": "Fire Ramp",
+      "max_particles": 10000,
+      "emission_rate": 500,
+      "lifetime": 2,
+      "looping": true,
+      "modules": {
+        "spawn": {
+          "type": "spawn",
+          "rate": 500,
+          "velocity": [
+            0,
+            0,
+            500
+          ],
+          "spread_angle": 45.836640572958,
+          "lifespan_min": 0.5,
+          "lifespan_max": 2
+        },
+        "update": [
+          {
+            "type": "update",
+            "gravity": [
+              0,
+              0,
+              -200
+            ],
+            "drag": 0.15000001
+          }
+        ],
+        "render": {
+          "type": "sprite",
+          "width": 80.000001,
+          "height": 80.000001,
+          "blend_mode": "additive"
+        }
+      }
+    }
+  ]
+}

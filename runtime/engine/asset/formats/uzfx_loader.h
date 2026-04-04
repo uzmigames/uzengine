@@ -1,10 +1,11 @@
 #pragma once
 
-/// UzEngine UzfxLoader — Loads .uzfx emitter definitions from JSON files.
+/// UzEngine UzfxLoader — Loads .uzvfx system definitions from JSON files.
 ///
-/// Parses the .uzfx format into `UzfxDesc` and can instantiate a live
-/// `ParticleEmitter` with a fully configured module stack from the
-/// parsed descriptor.
+/// Supports three formats:
+///   - **v2 multi-emitter**: `"emitters": [...]` array
+///   - **v1 single-emitter**: `"emitter": {...}` + `"modules": {...}`
+///   - **v0 flat presets**: all keys at root level (legacy preset editor)
 
 #include "uzfx_format.h"
 
@@ -16,31 +17,24 @@ class IRHIDevice;
 class ParticleBudget;
 struct ParticleEmitter;
 
-/// Loads and instantiates .uzfx particle emitter assets.
+/// Loads and instantiates .uzvfx particle system assets.
 class UzfxLoader {
 public:
-    /// Parses a .uzfx JSON file into a descriptor.
+    /// Parses a .uzvfx JSON file into a system descriptor.
     ///
-    /// # Arguments
-    /// * `jsonData` — Raw JSON string content of the .uzfx file.
-    ///
-    /// # Returns
-    /// Parsed `UzfxDesc`. On parse error, returns default-constructed desc
-    /// with empty name (caller should check `desc.name.empty()`).
+    /// Handles all three format versions. Returns desc with empty name on error.
     [[nodiscard]] static UzfxDesc Load(const std::string& jsonData);
 
-    /// Instantiates a ParticleEmitter from a parsed descriptor.
+    /// Instantiates a single ParticleEmitter from one emitter descriptor.
     ///
-    /// Creates the emitter, configures its module stack from the descriptor's
-    /// module entries, and initializes GPU buffers via the device.
-    ///
-    /// # Arguments
-    /// * `desc` — Parsed .uzfx descriptor.
-    /// * `device` — RHI device for GPU buffer allocation.
-    /// * `budget` — Global particle budget for allocation.
-    ///
-    /// # Returns
-    /// `true` if the emitter was successfully created and initialized.
+    /// Configures module stack and initializes GPU buffers.
+    [[nodiscard]] static bool InstantiateEmitter(
+        const UzfxEmitterDesc& emitterDesc,
+        ParticleEmitter& outEmitter,
+        IRHIDevice* device,
+        ParticleBudget& budget);
+
+    /// Legacy: instantiate from a full UzfxDesc (uses first emitter).
     [[nodiscard]] static bool Instantiate(
         const UzfxDesc& desc,
         ParticleEmitter& outEmitter,

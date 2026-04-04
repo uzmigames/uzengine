@@ -1,0 +1,54 @@
+{
+  "name": "Orbital",
+  "version": 2,
+  "emitters": [
+    {
+      "name": "Orbital",
+      "max_particles": 10000,
+      "emission_rate": 12,
+      "lifetime": 9,
+      "looping": true,
+      "modules": {
+        "spawn": {
+          "type": "spawn",
+          "rate": 12,
+          "velocity": [
+            0,
+            0,
+            0
+          ],
+          "spread_angle": 0.0,
+          "lifespan_min": 7,
+          "lifespan_max": 9
+        },
+        "update": [
+          {
+            "type": "update",
+            "gravity": [
+              0,
+              0,
+              0
+            ],
+            "drag": 0
+          },
+          {
+            "type": "orbit",
+            "radius": 15000,
+            "speed": 1.2,
+            "axis": [
+              0,
+              0,
+              1
+            ]
+          }
+        ],
+        "render": {
+          "type": "sprite",
+          "width": 50.0,
+          "height": 50.0,
+          "blend_mode": "additive"
+        }
+      }
+    }
+  ]
+}

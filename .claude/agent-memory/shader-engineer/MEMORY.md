@@ -163,6 +163,29 @@ core/ -> platform/ -> rhi/ -> render_core/ -> renderer/ -> scene/ -> editor/ -> 
 - `renderer/`: render passes -- NEVER includes d3d12.h
 - `scene/`: pure data -- MUST NOT depend on any rendering module
 
+## Atmosphere Shader System (2026-03-30)
+- **Directory**: `runtime/shaders/runtime/atmosphere/` — 10 files (LUTs + sky + fog)
+- **Shared header**: `sky_common.hlsli` — AtmosphereParams struct, phase functions, density profiles, ray-sphere, LUT parameterization
+- **LUTs**: `transmittance_lut.hlsl` (256x64 CS), `multiscatter_lut.hlsl` (32x32 CS), `sky_view.hlsl` (192x108 CS)
+- **Sky rendering**: `sky_atmosphere.hlsl` (PS, samples sky-view LUT + sun disk), `sky_cubemap.hlsl` (CS, 6-face from sky-view), `skybox_cubemap.hlsl` (PS, static HDRI)
+- **Fog/AP**: `aerial_perspective.hlsl` (CS, 32x32x16 froxel volume), `height_fog.hlsl` (PS, analytical exp fog)
+- **God rays**: `god_rays.hlsl` (CS, screen-space radial blur)
+- **CB layouts**: AtmosphereLutCB (b0 compute), SkyAtmosphereCB (b2 fullscreen), HeightFogCB (b2 fog pass)
+- **References**: Bruneton 2008/2017, Hillaire 2016/2020, Cornette & Shanks 1992, Toth & Umenhoffer 2009
+- **Conventions**: entry point `main`, Z-up, cm world / km atmosphere, kCmToKm = 1e-5
+- **Cloud shaders** (9 files, written 2026-03-30):
+  - `cloud_noise_shape_cs.hlsl` (128^3 R8, CS 4x4x4, Perlin-Worley 4 octaves)
+  - `cloud_noise_detail_cs.hlsl` (32^3 R8, CS 4x4x4, 3-octave Worley erosion)
+  - `cloud_weather_cs.hlsl` (512^2 RGBA8, CS 8x8x1, coverage/type/precip/secondary)
+  - `cloud_raymarch_cs.hlsl` (RGBA16F, CS 8x8x1, main volumetric march, dual-lobe HG, Beer-powder)
+  - `cloud_temporal_cs.hlsl` (CS 8x8x1, variance-clip reprojection, 0.95 history weight)
+  - `cloud_composite_ps.hlsl` (PS fullscreen, scene*T+inscatter, depth-aware sky-only)
+  - `irradiance_lut_cs.hlsl` (64x16 CS 8x8x1, ground irradiance, Bruneton 2017 Eq.15)
+  - `single_scattering_lut_cs.hlsl` (256x128x32 CS 8x8x1, 4D single scatter, R=Rayleigh A=Mie)
+  - `scattering_density_cs.hlsl` (256x128x32 CS 8x8x1, multi-scatter iteration density)
+- **Cloud CB**: CloudParams at b0, ~50 params (noise SRVs, camera, atmosphere, noise tiling, wind, density, lighting, march)
+- **Cloud references**: Schneider 2015/2017 (HZD), Hillaire 2016 (Frostbite), Bruneton 2017
+
 ## See Also
 - `docs/specs/shader-variants.md` - variant/permutation system
 - `docs/specs/shader-library.md` - shared HLSL includes

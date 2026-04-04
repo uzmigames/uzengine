@@ -15,7 +15,7 @@ This document provides EXACT specifications extracted from UE5.6 source code for
 - `Engine/Source/Editor/UnrealEd/Public/UnrealWidget.h` (legacy widget constants)
 - `Engine/Source/Editor/UnrealEd/Private/UnrealWidget.cpp` (color initialization)
 - `Engine/Source/Editor/Experimental/EditorInteractiveToolsFramework/Public/EditorGizmos/TransformGizmo.h` (modern gizmo style)
-- `Engine/Source/Runtime/Core/Private/Misc/AxisDisplayInfo.cpp` (axis colors)
+- `Core/Private/Misc/AxisDisplayInfo.cpp` (axis colors)
 
 ---
 
@@ -139,7 +139,7 @@ All colors are in **Linear Color Space** (not gamma-corrected):
 | **Y (Green)** | (0.1349, 0.3959, 0.0) | #226400 | `FLinearColor(0.1349f, 0.3959f, 0.0f)` |
 | **Z (Blue)** | (0.0251, 0.207, 0.85) | #0624D9 | `FLinearColor(0.0251f, 0.207f, 0.85f)` |
 
-**Source**: `Engine/Source/Runtime/Core/Private/Misc/AxisDisplayInfo.cpp` lines 104-115
+**Source**: `Core/Private/Misc/AxisDisplayInfo.cpp` lines 104-115
 
 **Note on Saturation**: The X and Y axes use muted, saturated earth tones (not pure RGB), while Z uses deep saturated blue.
 
@@ -572,7 +572,7 @@ UE5.6 modernized the gizmo system significantly:
 All values extracted from UE5.6.0 source code:
 
 1. **Axis Colors**:
-   - `Engine/Source/Runtime/Core/Private/Misc/AxisDisplayInfo.cpp` lines 104-115
+   - `Core/Private/Misc/AxisDisplayInfo.cpp` lines 104-115
    - X: `FLinearColor(0.594f, 0.0197f, 0.0f)`
    - Y: `FLinearColor(0.1349f, 0.3959f, 0.0f)`
    - Z: `FLinearColor(0.0251f, 0.207f, 0.85f)`

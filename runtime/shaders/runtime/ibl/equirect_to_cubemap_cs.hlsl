@@ -1,102 +1,63 @@
-/// Equirectangular-to-Cubemap Conversion Compute Shader.
+/// UzEngine equirectangular HDR panorama to cubemap conversion.
+/// @ref Standard equirectangular projection (spherical coordinates → UV)
 ///
-/// Converts an HDR equirectangular panorama (2:1 aspect ratio) into a
-/// cubemap stored as an RWTexture2DArray with 6 slices. Each thread
-/// processes one texel of one cubemap face, mapping the face direction
-/// to spherical coordinates and sampling the equirect texture.
-///
-/// # Resources
-/// - b0: Root constants (4 DWORDs) -- cubemapSize, equirectSrvIndex, pad, pad
-/// - u0: RWTexture2DArray<float4> output cubemap (RGBA16F, NxNx6)
-/// - s0: Bilinear wrap sampler (static sampler)
-///
-/// # Dispatch
-/// [cubemapSize/8, cubemapSize/8, 6] thread groups of [8, 8, 1]
-///
-/// # Coordinate Convention
-/// CubeFaceDirection() returns Y-up directions (DX cubemap convention).
-/// The equirect UV mapping uses the standard spherical-to-UV transform:
-///   u = atan2(dir.z, dir.x) / (2*PI) + 0.5
-///   v = asin(dir.y) / PI + 0.5
+/// Root constants at b0: { cubemapSize, equirectSrvIndex, 0, 0 }
+/// Output: RWTexture2DArray<float4> cubemap at u0
 
-#include "../include/ibl.hlsli"
+#include "../common/constants.hlsli"
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Resources
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Root constants at b0 (4 DWORDs, 16 bytes).
 cbuffer RootConstants : register(b0) {
-    uint cubemapSize;       // Output cubemap face resolution in texels
-    uint equirectSrvIndex;  // SRV descriptor heap index for the HDR equirect texture
-    uint2 _pad;             // Padding to 16-byte alignment
+    uint cubemapSize;
+    uint equirectSrvIndex;
+    uint _pad0;
+    uint _pad1;
 };
 
-SamplerState linearSampler : register(s0);
-
-#ifndef UZ_BINDLESS
-Texture2D<float4> g_EquirectTex : register(t0);
+#ifdef UZ_BINDLESS
+#else
+Texture2D<float4> equirectMap : register(t0);
 #endif
 
 RWTexture2DArray<float4> outputCubemap : register(u0);
+SamplerState linearSampler : register(s0);
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Equirectangular UV Mapping
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Converts a normalised 3D direction to equirectangular UV coordinates.
-///
-/// Uses the standard spherical mapping where:
-///   longitude (phi)   = atan2(dir.z, dir.x)  -> u in [0, 1]
-///   latitude  (theta) = asin(dir.y)          -> v in [0, 1]
-///
-/// The direction must be normalised. The Y component is clamped to [-1, 1]
-/// to guard against floating-point drift producing NaN from asin.
-///
-/// # Parameters
-/// - dir: Normalised world-space direction (Y-up, DX cubemap convention).
-///
-/// # Returns
-/// UV coordinates in [0, 1]^2 for sampling the equirectangular texture.
-float2 DirectionToEquirectUV(float3 dir) {
-    // Longitude: atan2(z, x) gives angle in [-PI, PI], remap to [0, 1]
-    float u = atan2(dir.z, dir.x) / (2.0f * PI) + 0.5f;
-
-    // Latitude: asin(y) gives angle in [-PI/2, PI/2], remap to [0, 1]
-    // Clamp to prevent NaN from floating-point overshoot beyond [-1, 1]
-    float v = asin(clamp(dir.y, -1.0f, 1.0f)) / PI + 0.5f;
-
-    return float2(u, v);
+float3 CubeFaceDirection(uint face, float2 uv) {
+    float u = uv.x * 2.0 - 1.0;
+    float v = uv.y * 2.0 - 1.0;
+    switch (face) {
+        case 0: return normalize(float3( 1, -v, -u));
+        case 1: return normalize(float3(-1, -v,  u));
+        case 2: return normalize(float3( u,  1,  v));
+        case 3: return normalize(float3( u, -1, -v));
+        case 4: return normalize(float3( u, -v,  1));
+        case 5: return normalize(float3(-u, -v, -1));
+        default: return float3(0, 0, 1);
+    }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Compute Shader Entry Point
-// ─────────────────────────────────────────────────────────────────────────────
+/// Convert direction to equirectangular UV
+float2 DirectionToEquirect(float3 dir) {
+    float phi = atan2(dir.z, dir.x);        // [-PI, PI]
+    float theta = asin(clamp(dir.y, -1, 1)); // [-PI/2, PI/2]
+    float u = phi * M_1_PI * 0.5 + 0.5;     // [0, 1]
+    float v = theta * M_1_PI + 0.5;          // [0, 1]
+    return float2(u, 1.0 - v); // flip V for top-down
+}
 
 [numthreads(8, 8, 1)]
-void main(uint3 dtid : SV_DispatchThreadID) {
-    uint faceIndex = dtid.z;
+void main(uint3 DTid : SV_DispatchThreadID) {
+    if (DTid.x >= cubemapSize || DTid.y >= cubemapSize) return;
 
-    // Out-of-bounds guard for non-power-of-two sizes or partial thread groups
-    if (dtid.x >= cubemapSize || dtid.y >= cubemapSize || faceIndex >= 6u) return;
+    float2 uv = (float2(DTid.xy) + 0.5) / float(cubemapSize);
+    float3 dir = CubeFaceDirection(DTid.z, uv);
+    float2 equirectUV = DirectionToEquirect(dir);
 
-    // Compute normalised UV for this texel (centre of texel)
-    float2 uv = (float2(dtid.xy) + 0.5f) / float(cubemapSize);
-
-    // Get the world-space direction for this cubemap face texel
-    float3 dir = normalize(CubeFaceDirection(faceIndex, uv));
-
-    // Convert direction to equirectangular UV
-    float2 equirectUV = DirectionToEquirectUV(dir);
-
-    // Sample the HDR equirectangular panorama via bindless descriptor heap
 #ifdef UZ_BINDLESS
-    Texture2D<float4> equirectTex = ResourceDescriptorHeap[equirectSrvIndex];
+    Texture2D<float4> hdrTex = ResourceDescriptorHeap[equirectSrvIndex];
+    float3 color = hdrTex.SampleLevel(linearSampler, equirectUV, 0).rgb;
 #else
-    Texture2D<float4> equirectTex = g_EquirectTex;
+    float3 color = equirectMap.SampleLevel(linearSampler, equirectUV, 0).rgb;
 #endif
-    float4 color = equirectTex.SampleLevel(linearSampler, equirectUV, 0.0f);
 
-    // Write to the output cubemap face slice
-    outputCubemap[uint3(dtid.xy, faceIndex)] = color;
+    outputCubemap[DTid] = float4(color, 1.0);
 }

@@ -11,15 +11,15 @@ status: published
 
 | Component | Path | File/Line | Module |
 |-----------|------|-----------|--------|
-| **UMaterial class** | `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Public/Materials/Material.h` | Line 25 | Runtime |
-| **UMaterialExpression base** | `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Public/Materials/MaterialExpression.h` | Line 146 | Runtime |
-| **Expression node types** | `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Public/Materials/MaterialExpression*.h` | 274 files | Runtime |
-| **Material compiler interface** | `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Public/MaterialCompiler.h` | Line 119 | Runtime |
-| **HLSL translator impl** | `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Private/Materials/HLSLMaterialTranslator.h` | 75,965 bytes | Runtime/Private |
-| **Translator implementation** | `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Private/Materials/HLSLMaterialTranslator.cpp` | 678,931 bytes | Runtime/Private |
-| **Expression compile logic** | `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Private/Materials/MaterialExpressions.cpp` | 773,361 bytes | Runtime/Private |
+| **UMaterial class** | `/w/UE_5.6_Source/Engine/Public/Materials/Material.h` | Line 25 | Runtime |
+| **UMaterialExpression base** | `/w/UE_5.6_Source/Engine/Public/Materials/MaterialExpression.h` | Line 146 | Runtime |
+| **Expression node types** | `/w/UE_5.6_Source/Engine/Public/Materials/MaterialExpression*.h` | 274 files | Runtime |
+| **Material compiler interface** | `/w/UE_5.6_Source/Engine/Public/MaterialCompiler.h` | Line 119 | Runtime |
+| **HLSL translator impl** | `/w/UE_5.6_Source/Engine/Private/Materials/HLSLMaterialTranslator.h` | 75,965 bytes | Runtime/Private |
+| **Translator implementation** | `/w/UE_5.6_Source/Engine/Private/Materials/HLSLMaterialTranslator.cpp` | 678,931 bytes | Runtime/Private |
+| **Expression compile logic** | `/w/UE_5.6_Source/Engine/Private/Materials/MaterialExpressions.cpp` | 773,361 bytes | Runtime/Private |
 | **Material graph (editor)** | `/w/UE_5.6_Source/Engine/Source/Editor/UnrealEd/Classes/MaterialGraph/MaterialGraph.h` | Line 8 | Editor-only |
-| **Material instance** | `/w/UE_5.6_Source/Engine/Source/Runtime/Engine/Public/Materials/MaterialInstance.h` | Runtime | |
+| **Material instance** | `/w/UE_5.6_Source/Engine/Public/Materials/MaterialInstance.h` | Runtime | |
 
 ---
 

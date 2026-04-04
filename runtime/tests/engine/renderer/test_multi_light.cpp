@@ -201,7 +201,7 @@ TEST(MultiLightTest, PerFrameCBLayout_LightArray_Stride64Bytes) {
 /// The engine uses a smooth inverse-square formula that reaches exactly 0.0
 /// at the range boundary so objects at the edge receive no lighting.
 ///
-/// Formula (matches UE4 / Frostbite):
+/// @ref Karis 2013 "Real Shading in Unreal Engine 4" — windowed inverse-square falloff:
 ///   distRatio  = clamp(dist / range, 0, 1)
 ///   attenuation = (1 - distRatio^2)^2  ×  (1 / (dist^2 + 1))
 ///

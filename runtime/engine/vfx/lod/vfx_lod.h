@@ -92,12 +92,12 @@ enum class VFXLodLevel : uint8_t {
 /// [distances[2],           ∞) → Culled
 /// ```
 ///
-/// Defaults are tuned for a standard game camera with metres as the world unit.
+/// Defaults are tuned for a standard game camera with centimetres as the world unit.
 struct VFXLodSettings {
-    /// Distance at which Full transitions to Reduced (default: 50 m).
-    /// Distance at which Reduced transitions to Minimal (default: 100 m).
-    /// Distance at which Minimal transitions to Culled (default: 200 m).
-    float distances[3] = {50.0f, 100.0f, 200.0f};
+    /// Distance at which Full transitions to Reduced (default: 5000 cm = 50 m).
+    /// Distance at which Reduced transitions to Minimal (default: 10000 cm = 100 m).
+    /// Distance at which Minimal transitions to Culled (default: 20000 cm = 200 m).
+    float distances[3] = {5000.0f, 10000.0f, 20000.0f};
 
     /// Validates that all thresholds are positive and strictly increasing.
     ///

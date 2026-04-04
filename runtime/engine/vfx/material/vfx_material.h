@@ -1,9 +1,14 @@
-/// VFX Material -- CPU-side material properties for particle emitters.
+/// VFX Material — particle material integrated with the engine material system.
 ///
-/// Encapsulates sprite texture, blend mode, emissive intensity, soft fade,
-/// flipbook animation, and color tint. Mirrors Niagara's emitter material
-/// slot: each emitter can optionally reference a VFXMaterial to override
-/// inline rendering parameters.
+/// Inherits from MaterialInterface so VFX particles can participate in the
+/// same material pipeline as meshes: shared textures, material instances,
+/// hot-reload, and editor parameter inspection.
+///
+/// VFX-specific extensions beyond MaterialInterface:
+/// - Flipbook/SubUV animation (rows, cols, totalFrames, fps, blend mode)
+/// - Soft particle fade distance
+/// - Alpha erosion
+/// - Color ramp LUT (GPU-baked curve for color-over-life)
 ///
 /// # Flipbook Auto-Detection
 /// When a sprite texture is loaded, `LoadTexture()` scans the filename for
@@ -15,41 +20,64 @@
 
 #pragma once
 
+#include "engine/renderer/material/material_interface.h"
+
 #include <cstdint>
 #include <string>
 
 namespace uz {
 
-// Forward declarations -- avoids pulling in RHI headers.
 class IRHIDevice;
 class IRHICommandList;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// VFXMaterial
+// VFXMaterial — particle material with MaterialInterface integration
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// CPU-side material descriptor for VFX particle emitters.
+/// Particle material that inherits from MaterialInterface.
 ///
-/// When assigned to an emitter, the renderer reads sprite SRV, flipbook
-/// config, blend mode, emissive, and soft fade from this struct instead
-/// of the emitter config's inline fields.
-struct VFXMaterial {
+/// Exposes all standard material parameters (blend mode, textures, shading model)
+/// plus VFX-specific extensions (flipbook, soft fade, color ramp). Can be used
+/// as a MaterialInstance parent for per-emitter overrides.
+class VFXMaterial : public MaterialInterface {
+public:
+    // ── MaterialInterface overrides ─────────────────────────────────────
+
+    [[nodiscard]] float GetScalarParam(const std::string& name, float defaultVal) const override;
+    void GetVectorParam(const std::string& name, float& outR, float& outG, float& outB,
+                        float defaultR, float defaultG, float defaultB) const override;
+    [[nodiscard]] const std::string& GetTexturePath(const std::string& name) const override;
+    [[nodiscard]] uint32_t GetTextureSrvIndex(const std::string& name) const override;
+
+    [[nodiscard]] EBlendMode GetBlendMode() const override;
+    [[nodiscard]] EMaterialDomain GetMaterialDomain() const override { return EMaterialDomain::Particle; }
+    [[nodiscard]] EShadingModel GetShadingModel() const override;
+    [[nodiscard]] bool IsTwoSided() const override { return isTwoSided; }
+    [[nodiscard]] float GetEmissiveIntensity() const override { return emissiveIntensity; }
+    [[nodiscard]] float GetOpacity() const override { return 1.0f - alphaErosion; }
+    [[nodiscard]] bool IsGpuResourcesLoaded() const override { return HasSprite(); }
+    void SetGpuResourcesLoaded(bool loaded) override { gpuLoaded = loaded; }
+
     // ── Sprite texture ──────────────────────────────────────────────────
+
     std::string spriteTexturePath;                    ///< File path to sprite sheet (TGA/PNG/JPEG).
-    uint32_t    spriteTextureSrvIndex = UINT32_MAX;   ///< Bindless SRV index of loaded sprite. UINT32_MAX = not loaded.
+    uint32_t    spriteTextureSrvIndex = UINT32_MAX;   ///< Bindless SRV index. UINT32_MAX = not loaded.
 
     // ── Blend mode ──────────────────────────────────────────────────────
+
     /// 0 = AlphaBlend (SrcAlpha/InvSrcAlpha)
     /// 1 = Additive   (One/One)
     /// 2 = PremulAlpha (One/InvSrcAlpha)
     uint32_t blendMode = 1;
 
     // ── Rendering parameters ────────────────────────────────────────────
+
     float emissiveIntensity = 1.0f;   ///< Additive emissive multiplier (0 = no emission).
-    float softFadeDistance  = 0.5f;   ///< World-space soft particle fade distance.
+    float softFadeDistance  = 100.0f; ///< Soft particle fade distance (cm).
     float alphaErosion     = 0.0f;    ///< Alpha erosion threshold [0, 1].
 
     // ── Flipbook / SubUV ────────────────────────────────────────────────
+
     uint32_t flipbookRows        = 1;    ///< Rows in sprite sheet. 1 = no flipbook.
     uint32_t flipbookCols        = 1;    ///< Columns in sprite sheet. 1 = no flipbook.
     uint32_t flipbookTotalFrames = 1;    ///< Total valid frames in the sheet.
@@ -57,46 +85,34 @@ struct VFXMaterial {
     uint32_t flipbookBlendMode   = 0;    ///< 0 = None, 1 = Linear, 2 = Random.
 
     // ── Color tint ──────────────────────────────────────────────────────
-    float baseColorTintR = 1.0f;   ///< Material-level red tint [0, 1].
-    float baseColorTintG = 1.0f;   ///< Material-level green tint [0, 1].
-    float baseColorTintB = 1.0f;   ///< Material-level blue tint [0, 1].
+
+    float baseColorTintR = 1.0f;
+    float baseColorTintG = 1.0f;
+    float baseColorTintB = 1.0f;
+
+    // ── Color ramp ──────────────────────────────────────────────────────
+
+    uint32_t colorRampLutSrvIndex = UINT32_MAX; ///< Bindless SRV for 256x1 LUT.
 
     // ── Flags ───────────────────────────────────────────────────────────
-    bool isUnlit   = true;   ///< VFX particles default to unlit (no scene lighting).
-    bool isTwoSided = true;  ///< Billboards are always double-sided.
+
+    bool isUnlit    = true;   ///< VFX particles default to unlit.
+    bool isTwoSided = true;   ///< Billboards are always double-sided.
 
     // ── Methods ─────────────────────────────────────────────────────────
 
     /// Loads the sprite texture from `spriteTexturePath` via TextureLoader.
-    ///
-    /// On success, sets `spriteTextureSrvIndex` and auto-detects flipbook
-    /// grid dimensions from the filename pattern (e.g., `_6x6_` sets
-    /// rows=6, cols=6, totalFrames=36, default FPS=24).
-    ///
-    /// # Arguments
-    /// * `device`  -- RHI device for texture creation. Must not be null.
-    /// * `cmdList` -- Command list in recording state. Must not be null.
-    /// * `isSRGB`  -- When `true` (default), the hardware converts sRGB→linear
-    ///               on sample, which is correct for color/albedo sprite sheets
-    ///               authored in sRGB. Pass `false` for data textures (e.g.,
-    ///               normal maps, distortion vectors) that must stay in linear
-    ///               space throughout the pipeline.
-    ///
-    /// # Returns
-    /// `true` on success (texture loaded and SRV bound).
-    /// `false` on failure (empty path, file not found, decode error).
-    ///
-    /// # Side Effects
-    /// - Creates one GPU texture resource (caller owns lifetime).
-    /// - Flushes the command list internally (TextureLoader::Load is synchronous).
-    /// - Logs success/failure at VFX::Info/Error level.
-    bool LoadTexture(IRHIDevice* device, IRHICommandList* cmdList,
-                     bool isSRGB = true);
+    /// Auto-detects flipbook grid dimensions from filename (e.g., `_6x6_`).
+    bool LoadTexture(IRHIDevice* device, IRHICommandList* cmdList, bool isSRGB = true);
 
     /// Returns true if a sprite texture has been successfully loaded.
     [[nodiscard]] bool HasSprite() const noexcept {
         return spriteTextureSrvIndex != UINT32_MAX;
     }
+
+private:
+    bool gpuLoaded = false;
+    static const std::string kEmptyString; ///< Returned by GetTexturePath for unknown slots.
 };
 
 } // namespace uz

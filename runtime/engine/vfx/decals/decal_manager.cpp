@@ -33,7 +33,7 @@ static constexpr float kUpParallelThreshold = 0.999f;
 // ─────────────────────────────────────────────────────────────────────────────
 
 DecalManager::DecalManager()
-    : rng_(std::random_device{}()) {}
+    : rng_(42u) {}  // Deterministic seed; use PCGRandom for fast + quality RNG.
 
 DecalManager::~DecalManager() {
     if (initialized_) {
@@ -376,8 +376,7 @@ Quat DecalManager::AlignToSurface(const Vec3& surfaceNormal) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 Quat DecalManager::RandomRotationAroundAxis(const Vec3& axis) {
-    std::uniform_real_distribution<float> dist(0.0f, Math::TAU);
-    const float angle = dist(rng_);
+    const float angle = rng_.Range(0.0f, Math::TAU);
     return Quat::FromAxisAngle(axis, angle);
 }
 

@@ -56,16 +56,6 @@ zig build test                    # Run all tests (~3600 tests)
 - Emissive materials (HDR emission + bloom)
 - Material graph system (expressions, baker, GPU baker, shader cache)
 
-### VFX System
-- GPU compute particles (50K per emitter, SoA ping-pong, bitonic sort)
-- Trail/ribbon rendering (CPU catmull-rom, camera-facing geometry)
-- Forward projected decals (OBB projector, depth read)
-- Distortion/heat-haze (accumulation + resolve passes)
-- Flipbook animation (sub-UV atlas, blend between frames)
-- Soft particle depth fade (linearized depth comparison)
-- VFX Viewport demo: standalone preview app with full rendering stack
-  - [Controls Reference](../docs/guides/vfx-viewport-controls.md) | [Architecture](../docs/guides/vfx-viewport-architecture.md)
-
 ### Backends
 - DX12 SM6.8 (bindless ResourceDescriptorHeap)
 - DX12 SM5 (descriptor tables)
@@ -107,9 +97,7 @@ runtime/
 │   ├── postprocess/      bloom, gtao, taa, ssr, tonemap, dof, motion_blur
 │   ├── shadows/          dfs_cone_trace_cs, dfs_cull_objects_cs
 │   └── include/          pbr_common, lighting, shadow_common, film_tonemap
-├── demos/                Standalone demo apps
-│   ├── vfx_viewport/     VFX viewport (particles, trails, decals, distortion, PBR)
-│   └── ...               pbr_test, deferred_test, etc.
+├── demos/                Standalone demo apps (pbr_test, deferred_test, etc.)
 ├── tests/                GoogleTest suites (~3600 tests)
 ├── platform/windows/     Win32 window, input, crash handler
 └── thirdparty/           All dependencies committed (spdlog, tracy, entt, luajit, etc.)

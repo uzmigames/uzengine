@@ -138,7 +138,7 @@ private:
 } // namespace uz
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Auto-Registration Macros (UE5-style decentralized CVar declaration)
+// Auto-Registration Macros (decentralized CVar declaration)
 // ─────────────────────────────────────────────────────────────────────────────
 //
 // Declare static CVars in .cpp files — they self-register at static init time.

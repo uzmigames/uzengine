@@ -330,7 +330,7 @@ TEST(VFXRenderGraph_Simulation, ParticleIndirectArgsConstants_Default_IndirectAr
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 7.1.5: ParticleBillboardIndices and ParticleBillboardCB sizes
+// 7.1.5: ParticleBillboardIndices and VFXBillboardCB sizes
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// ParticleBillboardIndices (b0 root constants) must be 48 bytes.
@@ -339,16 +339,16 @@ TEST(VFXRenderGraph_Billboard, ParticleBillboardIndices_Size_Is48Bytes) {
         << "ParticleBillboardIndices must be 48 bytes to match HLSL VFXBillboardConstants";
 }
 
-/// ParticleBillboardCB (b2) must be 304 bytes (19 x float4).
-TEST(VFXRenderGraph_Billboard, ParticleBillboardCB_Size_Is304Bytes) {
-    EXPECT_EQ(sizeof(ParticleBillboardCB), 304u)
-        << "ParticleBillboardCB must be 304 bytes to match HLSL VFXBillboardCB";
+/// VFXBillboardCB must be 304 bytes (19 x float4) to match HLSL layout.
+TEST(VFXRenderGraph_Billboard, VFXBillboardCB_Size_Is304Bytes) {
+    EXPECT_EQ(sizeof(VFXBillboardCB), 304u)
+        << "VFXBillboardCB must be 304 bytes to match the HLSL VFXBillboardCB layout";
 }
 
-TEST(VFXRenderGraph_Billboard, ParticleBillboardCB_Default_SoftFadeDistance_Is03) {
-    ParticleBillboardCB c;
-    EXPECT_FLOAT_EQ(c.softFadeDistance, 0.3f)
-        << "Default softFadeDistance must be 0.3f";
+TEST(VFXRenderGraph_Billboard, VFXBillboardCB_Default_SoftFadeDistance_Is50) {
+    VFXBillboardCB c;
+    EXPECT_FLOAT_EQ(c.softFadeDistance, 50.0f)
+        << "Default softFadeDistance must be 50.0f (50 world units / cm)";
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

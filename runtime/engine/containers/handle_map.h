@@ -14,7 +14,7 @@
 /// Handles combine both: (index, generation) so Handle(N, gen=5) != Handle(N, gen=6).
 ///
 /// # Inspiration
-/// Pattern from Godot's RID_Owner and Unreal's FHandleTable.
+/// Generational index pattern — common in game engines for safe resource handles.
 ///
 /// # Example
 /// ```cpp

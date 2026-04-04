@@ -32,17 +32,23 @@ namespace uz {
 /// fog density along the view ray, and blends the fog color over the scene.
 struct HeightFogComponent {
     /// Fog inscattering luminance in linear space.
-    /// FogInscatteringLuminance default = black
-    Vec3 color = {0.0f, 0.0f, 0.0f};
+    /// @ref Hillaire 2016 — default white-ish for physically plausible haze
+    Vec3 color = {0.45f, 0.55f, 0.65f};
 
-    /// Base fog density factor. Higher = thicker fog. Typical range: 0.001 to 0.1.
-    float density = 0.0436f;
+    /// Base fog density factor. Higher = thicker fog. Typical range: 0.02 to 0.5.
+    /// 0.15 = clearly visible fog at ~100m distance.
+    float density = 0.15f;
 
     /// Height falloff coefficient. Controls how quickly fog thins with altitude.
-    /// Higher = fog concentrated closer to baseHeight. Typical: 0.2 to 2.0.
+    /// Works in conjunction with baseHeight: fog is densest at baseHeight and
+    /// decays exponentially above it. With baseHeight=-5000 and falloff=0.2,
+    /// fog is visible at ground level (Z=0) with gradual falloff upward.
     float heightFalloff = 0.2f;
 
     /// World-space height at which fog density is at its maximum (cm).
+    /// -10 = just below ground. The exponential height fog integrates
+    /// density along the view ray — rays going toward the ground pass
+    /// through dense fog near baseHeight even if camera is above it.
     float baseHeight = -5000.f;
 
     /// Maximum fog opacity (0 to 1). Prevents fog from fully obscuring distant objects.
@@ -68,8 +74,8 @@ struct HeightFogComponent {
     // ── Directional Inscattering (sun-facing fog glow) ────────────────────
 
     /// Color of the directional inscattering (sun-facing fog glow).
-    /// DirectionalInscatteringLuminance default = black
-    Vec3 directionalInscatteringColor = {0.0f, 0.0f, 0.0f};
+    /// @ref Hillaire 2016 — warm sun glow through fog
+    Vec3 directionalInscatteringColor = {1.0f, 0.85f, 0.5f};
 
     /// Exponent controlling the tightness of the directional inscattering cone.
     /// Higher = tighter sun halo.

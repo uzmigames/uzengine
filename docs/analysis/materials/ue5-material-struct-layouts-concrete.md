@@ -20,7 +20,7 @@
 These are the **runtime storage** for material parameter overrides in UMaterialInstance:
 
 ```cpp
-// From Engine/Source/Runtime/Engine/Classes/Materials/MaterialInstance.h
+// From Engine/Classes/Materials/MaterialInstance.h
 // Simplified/annotated version
 
 namespace UE {
@@ -199,7 +199,7 @@ public:
 ### 1.2 Material Proxy (Thread-Safe Snapshot)
 
 ```cpp
-// From Engine/Source/Runtime/Renderer/Private/SceneRendering.h
+// From Renderer/Private/SceneRendering.h
 // Simplified version
 
 class FMaterialRenderProxy {
@@ -643,10 +643,10 @@ void RenderMesh(const FDrawCommand& Cmd) {
 ## References
 
 ### Source Files
-- `Engine/Source/Runtime/Engine/Classes/Materials/MaterialInstance.h` — Instance definition
-- `Engine/Source/Runtime/Engine/Classes/Materials/MaterialInterface.h` — Virtual base class
-- `Engine/Source/Runtime/Renderer/Private/SceneRendering.h` — Proxy implementation
-- `Engine/Source/Runtime/Renderer/Private/MaterialShaderTypes.h` — Constant buffer utilities
+- `Engine/Classes/Materials/MaterialInstance.h` — Instance definition
+- `Engine/Classes/Materials/MaterialInterface.h` — Virtual base class
+- `Renderer/Private/SceneRendering.h` — Proxy implementation
+- `Renderer/Private/MaterialShaderTypes.h` — Constant buffer utilities
 
 ### Related Specs
 - **Shader System**: `ue5-rendering-systems-analysis.md` (BRDF, G-Buffer formats)

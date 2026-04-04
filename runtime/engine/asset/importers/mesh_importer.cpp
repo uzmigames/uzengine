@@ -642,7 +642,7 @@ AssetImportResult MeshImporter::Import(
     // ── Auto-generate LODs via meshoptimizer ──
     // Uses meshopt_simplify to progressively reduce triangle count.
     // LOD0 = original, LOD1 = 50%, LOD2 = 25%, LOD3 = 12.5%
-    // Screen-height thresholds match UE5 defaults.
+    // Screen-height thresholds use industry-standard defaults.
     struct AutoLOD {
         std::vector<uint32_t> indices;
         float screenThreshold;

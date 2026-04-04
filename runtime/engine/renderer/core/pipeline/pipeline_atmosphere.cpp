@@ -46,7 +46,6 @@ RHIPipelineHandle PipelineLibrary::GetSkyAtmosphere() {
     desc.pixelShader   = m_skyAtmospherePS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
     desc.rasterizer.cullMode      = RHICullMode::None; // Fullscreen triangle — no geometry to cull
-    desc.depthStencilFormat       = RHIFormat::D32Float; // DSV may be bound (sky+depth clear pass)
     desc.depthStencil.depthEnable = false;
     desc.depthStencil.depthWrite  = false;
     desc.renderTargetFormats[0]   = RHIFormat::RGBA16Float;

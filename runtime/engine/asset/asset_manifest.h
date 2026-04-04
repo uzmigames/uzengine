@@ -170,10 +170,7 @@ bool WriteManifestFile(const std::string& path, const AssetManifestWriter& write
 /// 3. Manifest stays in memory for the engine's lifetime.
 class AssetManifest {
 public:
-    /// Result of a manifest query by path or hash.
-    ///
-    /// Contains the asset's metadata and resolved dependency path hashes.
-    /// Returned by `Find()` and `FindByHash()` methods.
+    /// Represents a queried manifest entry with resolved dependencies.
     struct QueryResult {
         uint64_t pathHash = 0;                 ///< xxHash64 of the asset path
         uint64_t size = 0;                     ///< Asset size in bytes

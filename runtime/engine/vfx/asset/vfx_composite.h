@@ -31,6 +31,7 @@
 #include <vector>
 
 namespace uz {
+class IVFS;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VFXCompositeEntry -- single emitter within a composite effect
@@ -97,7 +98,7 @@ public:
     ///
     /// # Side Effects
     /// Logs `VFX/Error` on failure with path and reason.
-    [[nodiscard]] static std::unique_ptr<VFXComposite> Load(const std::string& path);
+    [[nodiscard]] static std::unique_ptr<VFXComposite> Load(const std::string& path, IVFS* vfs = nullptr);
 
     /// Loads a VFXComposite from a JSON string (primarily for testing).
     ///

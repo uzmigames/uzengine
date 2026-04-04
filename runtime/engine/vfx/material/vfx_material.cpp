@@ -75,8 +75,14 @@ static bool DetectFlipbookGrid(const std::string& path,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// VFXMaterial::LoadTexture
+// VFXMaterial::LoadTexture — convenience wrapper for TextureLoader
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// NOTE: This is a thin wrapper around the engine's TextureLoader. The only
+// VFX-specific logic is flipbook auto-detection from the filename. In future,
+// this should be replaced by MaterialManager integration where the texture
+// path is set via MaterialInterface::SetTexturePath("Albedo", path) and
+// loading happens async via the standard asset pipeline.
 
 bool VFXMaterial::LoadTexture(IRHIDevice* device, IRHICommandList* cmdList,
                               bool isSRGB) {
@@ -85,12 +91,6 @@ bool VFXMaterial::LoadTexture(IRHIDevice* device, IRHICommandList* cmdList,
         return false;
     }
 
-    // Load via the synchronous TextureLoader pipeline (stb_image -> staging -> GPU).
-    // isSRGB=true (default): color/albedo sprite sheets authored in sRGB space.
-    //   The GPU hardware converts sRGB→linear on sample, ensuring correct blending
-    //   in linear space. Without sRGB, colors appear washed out / incorrectly bright.
-    // isSRGB=false: data textures (normal maps, distortion UVs, etc.) that must
-    //   remain in linear space; applying sRGB decode would corrupt the data.
     auto result = TextureLoader::Load(device, cmdList, spriteTexturePath, isSRGB);
     if (!result.handle.IsValid()) {
         UZ_LOG(VFX, Error, "VFXMaterial: Failed to load sprite texture '{}'",
@@ -99,6 +99,7 @@ bool VFXMaterial::LoadTexture(IRHIDevice* device, IRHICommandList* cmdList,
     }
 
     spriteTextureSrvIndex = result.srvIndex;
+    gpuLoaded = true;
 
     // Auto-detect flipbook grid from filename pattern (e.g., _6x6_ -> 6 rows, 6 cols).
     uint32_t detectedRows = 0;
@@ -125,6 +126,58 @@ bool VFXMaterial::LoadTexture(IRHIDevice* device, IRHICommandList* cmdList,
            spriteTexturePath, spriteTextureSrvIndex,
            result.width, result.height, isSRGB ? "yes" : "no");
     return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MaterialInterface overrides
+// ─────────────────────────────────────────────────────────────────────────────
+
+const std::string VFXMaterial::kEmptyString;
+
+float VFXMaterial::GetScalarParam(const std::string& name, float defaultVal) const {
+    if (name == "EmissiveIntensity") return emissiveIntensity;
+    if (name == "Opacity") return 1.0f - alphaErosion;
+    if (name == "SoftFadeDistance") return softFadeDistance;
+    if (name == "AlphaErosion") return alphaErosion;
+    if (name == "FlipbookFPS") return flipbookFPS;
+    return defaultVal;
+}
+
+void VFXMaterial::GetVectorParam(const std::string& name,
+                                  float& outR, float& outG, float& outB,
+                                  float defaultR, float defaultG, float defaultB) const {
+    if (name == "BaseColorTint") {
+        outR = baseColorTintR; outG = baseColorTintG; outB = baseColorTintB;
+        return;
+    }
+    if (name == "EmissiveColor") {
+        outR = emissiveIntensity; outG = emissiveIntensity; outB = emissiveIntensity;
+        return;
+    }
+    outR = defaultR; outG = defaultG; outB = defaultB;
+}
+
+const std::string& VFXMaterial::GetTexturePath(const std::string& name) const {
+    if (name == "Albedo" || name == "Sprite") return spriteTexturePath;
+    return kEmptyString;
+}
+
+uint32_t VFXMaterial::GetTextureSrvIndex(const std::string& name) const {
+    if (name == "Albedo" || name == "Sprite") return spriteTextureSrvIndex;
+    return 0;
+}
+
+EBlendMode VFXMaterial::GetBlendMode() const {
+    switch (blendMode) {
+        case 0: return EBlendMode::Translucent;
+        case 1: return EBlendMode::Additive;
+        case 2: return EBlendMode::Translucent; // PremulAlpha → Translucent
+        default: return EBlendMode::Additive;
+    }
+}
+
+EShadingModel VFXMaterial::GetShadingModel() const {
+    return isUnlit ? EShadingModel::Unlit : EShadingModel::DefaultLit;
 }
 
 } // namespace uz

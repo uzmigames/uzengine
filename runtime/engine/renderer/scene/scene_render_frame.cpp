@@ -140,6 +140,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     DispatchVFXSimulation(cmdList, dt, frameIndex);
 
     // ── Register render graph passes in pipeline order ──────────────────
+    // SHADER DEBUG: ALL passes commented out. Uncomment one by one to find crash.
     RegisterShadowPasses(rgBuilder, ctx);
     RegisterGeometryPasses(rgBuilder, ctx);
     RegisterDecalPasses(rgBuilder, ctx);
@@ -198,6 +199,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         atmoCtx.iblBaker            = m_iblBaker.get();
         atmoCtx.iblResult           = &m_iblResult;
         atmoCtx.brdfLutSrvIndex     = m_brdfLutSrvIndex;
+        atmoCtx.envMapSampler       = m_envMapSampler.get();
         atmoCtx.skyIrradianceSH     = &m_skyIrradianceSH;
         atmoCtx.depthSrvIndex       = m_gbuffer.depthSRV;
         atmoCtx.depthTexture        = m_gbuffer.depth;

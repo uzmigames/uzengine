@@ -1,0 +1,9 @@
+{
+  "name": "Minimal Test",
+  "version": "1.0",
+  "engine_version": "0.2.0",
+  "default_scene": "scenes/minimal_test.uzscene",
+  "content_root": "../content/",
+  "window": { "title": "Minimal Test", "width": 1920, "height": 1080, "fullscreen": false },
+  "render": { "backend": "dx12", "shader_model": "6_6", "vsync": false, "hdr": false }
+}

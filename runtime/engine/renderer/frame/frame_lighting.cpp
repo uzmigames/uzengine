@@ -65,32 +65,43 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
 
     if (m_renderPath != RenderPath::Deferred) return;
 
-    // ── DBuffer Apply (after GBuffer fill, before GTAO/lighting) ──
-    RegisterDBufferApplyPass(rgBuilder, ctx);
+    // SHADER DEBUG: all sub-passes commented. Uncomment one by one.
+    // RegisterDBufferApplyPass(rgBuilder, ctx);
+    // RegisterGTAOPass(rgBuilder, ctx);
+    // RegisterDFSPasses(rgBuilder, ctx);
+    // RegisterSSGIPasses(rgBuilder, ctx);
+    // RegisterSDFGIPasses(rgBuilder, ctx);
+    // RegisterSSRPasses(rgBuilder, ctx);
+    // ── Env MIS temporal accumulation (render graph compute pass) ───────
+    if (m_envMISPass && m_envMISPass->IsInitialized()
+        && m_envMapSampler && m_envMapSampler->IsReady()) {
 
-    // ── GTAO (after GBuffer, before lighting) ──
-    RegisterGTAOPass(rgBuilder, ctx);
+        rgBuilder.AddPass("EnvMIS_Temporal", [&](rg::RgPassBuilder& pb) {
+            pb.Read(ctx.albedoRes,   RHIResourceState::ShaderResource);
+            pb.Read(ctx.normalRes,   RHIResourceState::ShaderResource);
+            pb.Read(ctx.depthRes,    RHIResourceState::ShaderResource);
+            pb.Read(ctx.positionRes, RHIResourceState::ShaderResource);
 
-    // ── Distance Field Shadows (after GBuffer + GTAO, before lighting) ──
-    RegisterDFSPasses(rgBuilder, ctx);
+            pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources&) {
+                UZ_PROFILE_SCOPE("EnvMIS::Execute");
 
-    // ── SSGI (after GTAO, before SSR and lighting) ──
-    RegisterSSGIPasses(rgBuilder, ctx);
+                EnvMISPass::DispatchParams misParams;
+                misParams.albedoSrvIdx     = m_gbuffer.albedoSRV;
+                misParams.normalSrvIdx     = m_gbuffer.normalSRV;
+                misParams.depthSrvIdx      = m_gbuffer.depthSRV;
+                misParams.positionSrvIdx   = m_gbuffer.positionWSSRV;
+                misParams.envCubemapSrvIdx = m_hdriActive ? m_hdriCubemapSrv : m_skyCubemapSrv;
+                misParams.frameIndex       = ctx.frameIndex;
+                misParams.temporalAlpha    = 0.05f;
 
-    // ── SDF GI: GDF Composite + Radiance Cache (after SSGI, before lighting) ──
-    RegisterSDFGIPasses(rgBuilder, ctx);
+                m_envMISPass->Execute(cmd, *m_envMapSampler, misParams);
+            });
+        });
+    }
 
-    // ── SSR: Trace + Resolve + Temporal (after GBuffer + HiZ, before lighting) ──
-    RegisterSSRPasses(rgBuilder, ctx);
-
-    // ── Deferred Lighting / Debug View / GBuffer Debug ──
     RegisterDeferredLightingPass(rgBuilder, ctx);
-
-    // ── Atmosphere + Fog + Cloud Composite (HDR, before postprocess) ──
     RegisterAtmosphereFogCloudPasses(rgBuilder, ctx);
-
-    // ── SSGI Previous Frame Color Copy (after all scene color, before postprocess) ──
-    RegisterSSGIPrevColorCopy(rgBuilder, ctx);
+    // RegisterSSGIPrevColorCopy(rgBuilder, ctx);
 
     // ── PassInspector: register intermediate targets for visualization ──
     RegisterPassInspectorTargets(ctx);

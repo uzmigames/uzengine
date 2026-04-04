@@ -16,6 +16,8 @@
 #include "vfs.h"
 #include "log.h"
 
+#include <spng.h>
+#include <jpeglib.h>
 #include <stb_image.h>
 
 #include <algorithm>
@@ -24,6 +26,125 @@
 #include "engine/core/simd_dispatch.h"
 
 namespace uz {
+
+namespace {
+
+/// Returns true if the buffer starts with the 8-byte PNG signature.
+[[nodiscard]] bool IsPngSignature(const uint8_t* data, size_t size) {
+    static constexpr uint8_t kPngSig[8] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+    return size >= 8 && std::memcmp(data, kPngSig, 8) == 0;
+}
+
+/// Decodes a PNG image from memory using spng (SIMD-accelerated).
+/// Returns RGBA8 pixels (caller must free with std::free()) or nullptr on failure.
+/// @ref https://libspng.org — SIMD PNG decoder, ~3x faster than stb_image for PNG.
+[[nodiscard]] unsigned char* SpngDecodeRGBA8(const uint8_t* data, size_t dataSize,
+                                              int& outWidth, int& outHeight) {
+    spng_ctx* ctx = spng_ctx_new(0);
+    if (!ctx) return nullptr;
+
+    if (spng_set_png_buffer(ctx, data, dataSize) != SPNG_OK) {
+        spng_ctx_free(ctx);
+        return nullptr;
+    }
+
+    struct spng_ihdr ihdr;
+    if (spng_get_ihdr(ctx, &ihdr) != SPNG_OK) {
+        spng_ctx_free(ctx);
+        return nullptr;
+    }
+
+    outWidth  = static_cast<int>(ihdr.width);
+    outHeight = static_cast<int>(ihdr.height);
+
+    size_t outSize = 0;
+    if (spng_decoded_image_size(ctx, SPNG_FMT_RGBA8, &outSize) != SPNG_OK) {
+        spng_ctx_free(ctx);
+        return nullptr;
+    }
+
+    auto* pixels = static_cast<unsigned char*>(std::malloc(outSize));
+    if (!pixels) {
+        spng_ctx_free(ctx);
+        return nullptr;
+    }
+
+    if (spng_decode_image(ctx, pixels, outSize, SPNG_FMT_RGBA8, 0) != SPNG_OK) {
+        std::free(pixels);
+        spng_ctx_free(ctx);
+        return nullptr;
+    }
+
+    spng_ctx_free(ctx);
+    return pixels;
+}
+
+
+/// Returns true if the buffer starts with the JPEG SOI marker (0xFF 0xD8).
+[[nodiscard]] bool IsJpegSignature(const uint8_t* data, size_t size) {
+    return size >= 2 && data[0] == 0xFF && data[1] == 0xD8;
+}
+
+/// Decodes a JPEG image from memory using libjpeg-turbo (standard jpeglib API).
+/// Returns RGBA8 pixels (caller must free with std::free()) or nullptr on failure.
+/// @ref https://libjpeg-turbo.org — SIMD JPEG decoder, 2-6x faster than stb_image for JPEG.
+[[nodiscard]] unsigned char* JpegDecodeRGBA8(const uint8_t* data, size_t dataSize,
+                                              int& outWidth, int& outHeight) {
+    struct jpeg_decompress_struct cinfo;
+    struct jpeg_error_mgr jerr;
+
+    cinfo.err = jpeg_std_error(&jerr);
+    jpeg_create_decompress(&cinfo);
+    jpeg_mem_src(&cinfo, data, static_cast<unsigned long>(dataSize));
+
+    if (jpeg_read_header(&cinfo, TRUE) != JPEG_HEADER_OK) {
+        jpeg_destroy_decompress(&cinfo);
+        return nullptr;
+    }
+
+    cinfo.out_color_space = JCS_RGB;
+    jpeg_start_decompress(&cinfo);
+
+    outWidth  = static_cast<int>(cinfo.output_width);
+    outHeight = static_cast<int>(cinfo.output_height);
+
+    const size_t rgbaSize = static_cast<size_t>(outWidth) * static_cast<size_t>(outHeight) * 4;
+    auto* pixels = static_cast<unsigned char*>(std::malloc(rgbaSize));
+    if (!pixels) {
+        jpeg_abort_decompress(&cinfo);
+        jpeg_destroy_decompress(&cinfo);
+        return nullptr;
+    }
+
+    const int rgbStride = outWidth * 3;
+    auto* rgbRow = static_cast<unsigned char*>(std::malloc(static_cast<size_t>(rgbStride)));
+    if (!rgbRow) {
+        std::free(pixels);
+        jpeg_abort_decompress(&cinfo);
+        jpeg_destroy_decompress(&cinfo);
+        return nullptr;
+    }
+
+    unsigned char* rowPtr = rgbRow;
+    while (cinfo.output_scanline < cinfo.output_height) {
+        jpeg_read_scanlines(&cinfo, &rowPtr, 1);
+        unsigned char* dst = pixels + static_cast<size_t>(cinfo.output_scanline - 1)
+                             * static_cast<size_t>(outWidth) * 4;
+        for (int x = 0; x < outWidth; ++x) {
+            dst[x * 4 + 0] = rgbRow[x * 3 + 0];
+            dst[x * 4 + 1] = rgbRow[x * 3 + 1];
+            dst[x * 4 + 2] = rgbRow[x * 3 + 2];
+            dst[x * 4 + 3] = 255;
+        }
+    }
+
+    std::free(rgbRow);
+    jpeg_finish_decompress(&cinfo);
+    jpeg_destroy_decompress(&cinfo);
+    return pixels;
+}
+
+} // anonymous namespace
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Construction / Destruction
@@ -241,23 +362,58 @@ void AsyncTextureDecoder::WorkerLoop() {
         // ── Standard image decode path (PNG/JPG/TGA/BMP/HDR) ────────────
         // Decode on this worker thread — the whole point is to move stbi_load
         // off the render thread so multiple textures decode in parallel.
+        //
+        // PNG files use spng (SIMD-accelerated, ~3x faster than stb_image).
+        // All other formats (JPEG/TGA/BMP/HDR) fall through to stb_image.
         int w = 0;
         int h = 0;
         int channels = 0;
         unsigned char* pixels = nullptr;
 
         if (!request.memoryData.empty()) {
-            // PAK/VFS path: image bytes already in memory, decode without filesystem I/O.
-            pixels = stbi_load_from_memory(
-                request.memoryData.data(),
-                static_cast<int>(request.memoryData.size()),
-                &w, &h, &channels, 4);
+            // PAK/VFS path: image bytes already in memory.
+            // Try spng for PNG, libjpeg-turbo for JPEG, stb_image for the rest.
+            if (IsPngSignature(request.memoryData.data(), request.memoryData.size())) {
+                pixels = SpngDecodeRGBA8(request.memoryData.data(),
+                                         request.memoryData.size(), w, h);
+            } else if (IsJpegSignature(request.memoryData.data(), request.memoryData.size())) {
+                pixels = JpegDecodeRGBA8(request.memoryData.data(),
+                                         request.memoryData.size(), w, h);
+            }
+            if (!pixels) {
+                // Other format or specialized decoder failed — fall back to stb_image.
+                pixels = stbi_load_from_memory(
+                    request.memoryData.data(),
+                    static_cast<int>(request.memoryData.size()),
+                    &w, &h, &channels, 4);
+            }
             // Release the source buffer immediately after decode to free memory.
             request.memoryData.clear();
             request.memoryData.shrink_to_fit();
         } else {
-            // Filesystem path: read and decode from disk.
-            pixels = stbi_load(request.path.c_str(), &w, &h, &channels, 4);
+            // Filesystem path: read file into memory to detect format, then decode.
+            FILE* fp = fopen(request.path.c_str(), "rb");
+            if (fp) {
+                fseek(fp, 0, SEEK_END);
+                const long fileSize = ftell(fp);
+                fseek(fp, 0, SEEK_SET);
+                if (fileSize > 0) {
+                    std::vector<uint8_t> fileData(static_cast<size_t>(fileSize));
+                    fread(fileData.data(), 1, fileData.size(), fp);
+                    fclose(fp);
+                    fp = nullptr;
+                    if (IsPngSignature(fileData.data(), fileData.size())) {
+                        pixels = SpngDecodeRGBA8(fileData.data(), fileData.size(), w, h);
+                    } else if (IsJpegSignature(fileData.data(), fileData.size())) {
+                        pixels = JpegDecodeRGBA8(fileData.data(), fileData.size(), w, h);
+                    }
+                }
+                if (fp) fclose(fp);
+            }
+            if (!pixels) {
+                // Non-PNG/JPEG or specialized decoder failed — fall back to stb_image.
+                pixels = stbi_load(request.path.c_str(), &w, &h, &channels, 4);
+            }
         }
 
         TextureDecodeResult result;

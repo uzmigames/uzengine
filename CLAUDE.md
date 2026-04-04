@@ -11,9 +11,38 @@ This project uses @hivehub/rulebook standards. All code generation should follow
 
 ---
 
+## RULE -1: OBEY THE USER — DO EXACTLY WHAT IS ASKED
+
+**When the user gives a direct instruction, DO IT EXACTLY. No reinterpretation, no "better" alternatives, no creative solutions.**
+
+- If the user says "comment out all passes", comment out ALL passes — not some.
+- If the user says "disable X", disable X — don't restore old files instead.
+- If the user says "go one by one", go ONE BY ONE — not skip steps.
+- **NEVER substitute the user's approach with your own.** The user knows their codebase.
+- **NEVER "improve" on the user's instruction.** Do what was asked, report back, wait.
+- If you're unsure what the user means, ASK — don't guess and do something different.
+
+**This rule overrides all other rules.** The user's explicit instruction is always the highest priority.
+
+---
+
 ## TOP 5 RULES (HIGHEST PRECEDENCE — READ THESE FIRST)
 
 These are the most important rules. They override everything else. If you remember nothing else, remember these:
+
+### RULE 0: Falcor is the Rendering Quality Baseline
+
+**NVIDIA Falcor (E:/Falcor) is UzEngine's ground truth renderer.** Every BRDF, tone mapping, IBL, and lighting shader MUST be compared against Falcor's path-traced output. The goal: UzEngine's rasterized result must be **perceptually indistinguishable** from Falcor's ground truth.
+
+**After implementing or modifying any rendering shader:**
+1. Run `python scripts/falcor/test_bsdf_sphere.py` to generate Falcor reference
+2. Capture UzEngine output at the same scene/camera
+3. Compare via PSNR (>= 35 dB = pass) or visual inspection
+4. If UzEngine output diverges, **adjust UzEngine to match Falcor**, not the other way around
+
+**Falcor binary**: `E:/Falcor/build/windows-vs2022/bin/Release/Mogwai.exe`
+**Test scripts**: `scripts/falcor/`
+**Reference images**: `.sandbox/brdf_comparison/` (gitignored, local only)
 
 ### RULE 1: Industry-Standard Rendering Parity — Components, Parameters, Defaults, Logic
 
@@ -86,15 +115,9 @@ See `.claude/rules/incremental-implementation.md` for details.
 - No simplified algorithms where the correct one is known
 - If GPU readback fails, FIX the readback — don't invent a fallback
 
-### RULE 5: ALWAYS Delegate to Specialist Agents
+### RULE 5: Implement Directly — Agents Only When User Requests
 
-Never write C++/shaders/docs directly in the main conversation. Delegate to the appropriate agent:
-- **Shaders** → `shader-engineer` (opus)
-- **C++ engine code** → `cpp-core-expert` (opus)
-- **RHI backends** → `rhi-engineer` (opus)
-- **Architecture analysis** → `unreal-architect` (haiku)
-- **Docs** → `docs-operator` (haiku)
-- **Tests** → `test-engineer` (sonnet)
+Implement C++, shaders, and docs **directly in the main conversation**. Do NOT delegate to agents unless the user explicitly asks for it. Agents are available but opt-in only.
 
 ### RULE 6: File Locations — NEVER create new directories
 
@@ -114,6 +137,8 @@ The following rules are equally important but less frequently violated. Full det
 - **Task Decomposition** — break multi-file tasks into 1-2 file sub-tasks per subsystem. See `.claude/rules/task-decomposition.md`
 - **Rendering Parity** — every component replicates ALL standard parameters, defaults, and logic. No simplification. See `.claude/rules/ue5-component-parity.md`
 - **Visual Verification** — rendering features need demo + screenshot. **Prefer `--screenshot-stdout`** (base64 to stdout, no disk I/O) over `--screenshot <path>`. See `.claude/rules/visual-verification.md`
+- **Shader Testing Pipeline** — 3-tier validation: (1) CPU math parity tests for every HLSL function, (2) visual regression via PSNR against golden references, (3) FLIP perceptual comparison. See `.claude/rules/shader-testing-pipeline.md`
+- **Pass Dump FIRST** — for ANY visual bug, run `--pass-dump` BEFORE anything else. Inspect every pass output. See `.claude/rules/pass-dump-first.md`
 - **GPU Debugging** — never guess, use `--diag` / `--pixel-debug` / `--vis`. See `.claude/rules/gpu-debugging.md`
 - **Rendering Diagnostics** — MUST run diagnostic tools BEFORE editing any shader. See `.claude/rules/rendering-diagnostics.md`
 - **Demo Build Order** — always rebuild runtime static lib before demo. See `.claude/rules/build-order.md`

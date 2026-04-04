@@ -151,9 +151,17 @@ bool LuaVM::Init() {
     RegisterUzTable(s_state);
 
     // Register engine sub-API tables into uz.* after the base table exists.
-    // APIs whose .cpp is excluded from MSVC build are guarded by feature macros.
+    LuaRegisterSceneAPI(s_state);
+    LuaRegisterMaterialAPI(s_state);
+    LuaRegisterSceneIoAPI(s_state);
     LuaRegisterCameraAPI(s_state);
+    LuaRegisterInputAPI(s_state);
+    LuaRegisterRendererAPI(s_state);
     LuaRegisterCvarAPI(s_state);
+    LuaRegisterAssetAPI(s_state);
+    LuaRegisterPassInspectorAPI(s_state);
+    LuaRegisterEntityAPI(s_state);
+    LuaRegisterLightAPI(s_state);
     LuaRegisterFogAPI(s_state);
     LuaRegisterSkyLightAPI(s_state);
     LuaRegisterAtmosphereAPI(s_state);
@@ -162,26 +170,11 @@ bool LuaVM::Init() {
     LuaRegisterMathAPI(s_state);
     LuaRegisterQuatAPI(s_state);
     LuaRegisterWindowAPI(s_state);
-#ifdef UZ_HAS_VFS
     LuaRegisterVfsAPI(s_state);
-    LuaRegisterSceneIoAPI(s_state);
     LuaRegisterDecalAPI(s_state);
     LuaRegisterReflectionProbeAPI(s_state);
     LuaRegisterPostProcessAPI(s_state);
     LuaRegisterEditorAPI(s_state);
-#endif
-#ifdef UZ_HAS_SCENE_API
-    LuaRegisterSceneAPI(s_state);
-    LuaRegisterMaterialAPI(s_state);
-    LuaRegisterEntityAPI(s_state);
-    LuaRegisterLightAPI(s_state);
-    LuaRegisterInputAPI(s_state);
-#endif
-#ifdef UZ_HAS_LUA_RENDERER_API
-    LuaRegisterRendererAPI(s_state);
-    LuaRegisterAssetAPI(s_state);
-    LuaRegisterPassInspectorAPI(s_state);
-#endif
 
     UZ_LOG(Scripting, Info, "LuaVM initialized (LuaJIT 2.1)");
     return true;

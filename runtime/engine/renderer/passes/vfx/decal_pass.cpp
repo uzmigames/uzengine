@@ -109,7 +109,7 @@ static void DrawDecalBox(IRHICommandList* cmd,
                     decalData.decalCB.sizeBytes);
 
     // Bind SRV table: decal textures (albedo, normal, roughness) + scene depth.
-    cmd->SetDescriptorTable(kSlotSRVTable, decalData.albedoSrvIndex);
+    // Bindless: SRV accessed via ResourceDescriptorHeap[index], no descriptor table needed.
 
     // Bind unit cube mesh.
     cmd->SetVertexBuffer(0, cubeVB);

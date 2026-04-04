@@ -1,50 +1,16 @@
-/// Bloom Upsample Chain — 9-Tap Tent Filter with Additive Blend
-///
-/// Progressive 2x upsampling with a 3x3 tent filter. Each upsample level
-/// reads the result of the previous (lower-resolution) level and blends it
-/// additively with the current level's downsample result.
-///
-/// The 9-tap tent filter provides smooth upsampling with minimal ringing:
-/// ```
-///   1  2  1
-///   2  4  2   / 16
-///   1  2  1
-/// ```
-///
-/// # Usage
-/// Dispatch once per upsample level (reverse of downsample):
-/// - Level 0: /64 + /32 → /32
-/// - Level 1: /32 + /16 → /16
-/// - Level 2: /16 + /8  → /8
-/// - Level 3: /8  + /4  → /4
-/// - Level 4: /4  + /2  → /2
-///
-/// At each level, the output is: downsample[level] + upsample(previousResult)
-/// This produces a smooth multi-scale bloom with contributions from all levels.
-///
-/// @source Jimenez 2014, "Next Generation Post-Processing in Call of Duty: AW"
-///   slide 167 — 9-tap tent filter upsample
-/// @ref Karis 2013 — bloom pyramid tint:268 — per-stage tint applied to each bloom level
-/// @ref Bloom defaults —426-437 — default tint values per stage
-/// @deviations NONE — standard tent filter with reference per-stage tint weights
-
-#include "../include/math_util.hlsli"
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Parameters
-// ─────────────────────────────────────────────────────────────────────────────
+/// UzEngine bloom upsample — 3x3 binomial filter + additive blend (Falcor pattern).
+/// @ref Falcor SimplePostFX.cs.slang blurFilter3x3 — 6x6 effective footprint
+/// @ref Binomial(5) kernel: 1 5 10 10 5 1
 
 cbuffer BloomUpsampleParams : register(b0) {
-    uint  g_LowerMipSrvIndex;  ///< SRV index for the lower-res input (upsampled from previous level).
-    uint  g_OutputUavIndex;    ///< UAV index for output texture (this level's result, also read for blend).
-    uint  g_OutputWidth;       ///< Output texture width in pixels.
-    uint  g_OutputHeight;      ///< Output texture height in pixels.
-    float g_BloomRadius;       ///< Filter radius scale (default 1.0, increases blur spread).
-    /// @ref Bloom defaults —426-437 — per-stage Tint color (Bloom1Tint through Bloom6Tint)
-    /// RGB tint allows colored bloom per mip level (e.g., warm glow in lower mips).
-    float g_StageTintR;        ///< Per-stage tint red channel.
-    float g_StageTintG;        ///< Per-stage tint green channel.
-    float g_StageTintB;        ///< Per-stage tint blue channel.
+    uint  g_LowerMipSrvIndex;
+    uint  g_OutputUavIndex;
+    uint  g_OutputWidth;
+    uint  g_OutputHeight;
+    float g_BloomRadius;
+    float g_StageTintR;
+    float g_StageTintG;
+    float g_StageTintB;
 };
 
 SamplerState linearSampler : register(s0);
@@ -54,73 +20,45 @@ Texture2D<float4>   g_LowerMipTex : register(t0);
 RWTexture2D<float4> g_OutputTex   : register(u0);
 #endif
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Entry Point
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// 9-tap tent filter upsample with additive blend.
-///
-/// Reads the lower-resolution bloom result and upsamples it using a 3x3
-/// tent filter (bilinear-weighted), then additively blends with the
-/// downsample result at this resolution level.
-///
-/// The tent filter weights (normalized):
-///   1/16  2/16  1/16
-///   2/16  4/16  2/16
-///   1/16  2/16  1/16
-///
-/// Using bilinear hardware sampling, this requires only 9 taps.
 [numthreads(8, 8, 1)]
-void main(uint3 dtid : SV_DispatchThreadID)
-{
-    if (dtid.x >= g_OutputWidth || dtid.y >= g_OutputHeight)
-        return;
+void main(uint3 dtid : SV_DispatchThreadID) {
+    if (dtid.x >= g_OutputWidth || dtid.y >= g_OutputHeight) return;
 
 #ifdef UZ_BINDLESS
-    Texture2D<float4> lowerMipTex  = ResourceDescriptorHeap[g_LowerMipSrvIndex];
-    RWTexture2D<float4> outputTex  = ResourceDescriptorHeap[g_OutputUavIndex];
+    Texture2D<float4> lowerMip = ResourceDescriptorHeap[g_LowerMipSrvIndex];
+    RWTexture2D<float4> dst = ResourceDescriptorHeap[g_OutputUavIndex];
 #else
-    Texture2D<float4>   lowerMipTex = g_LowerMipTex;
-    RWTexture2D<float4> outputTex   = g_OutputTex;
+    Texture2D<float4> lowerMip = g_LowerMipTex;
+    RWTexture2D<float4> dst = g_OutputTex;
 #endif
 
-    float2 texelSize = g_BloomRadius / float2(g_OutputWidth, g_OutputHeight);
+    float2 invRes = float2(1.0 / g_OutputWidth, 1.0 / g_OutputHeight);
+    float2 uv = (float2(dtid.xy) + 0.5) * invRes;
+    float uscale = invRes.x * g_BloomRadius;
+    float vscale = invRes.y * g_BloomRadius;
 
-    // UV for this output pixel
-    float2 uv = (float2(dtid.xy) + 0.5f) / float2(g_OutputWidth, g_OutputHeight);
+    // Falcor 3x3 binomial filter — binomial(5): 1 5 10 10 5 1
+    static const float w0 = (10.0 + 10.0) / 32.0;  // center weight
+    static const float x1 = 1.5 + 1.0 / (1.0 + 5.0);
+    static const float w1 = (1.0 + 5.0) / 32.0;
+    float x1u = x1 * uscale;
+    float x1v = x1 * vscale;
 
-    // 9-tap tent filter on the lower-resolution bloom input
-    // Weights: 1/16, 2/16, 4/16 for corners, edges, center
-    float3 upsampled = float3(0, 0, 0);
+    float3 upsampled =
+        (lowerMip.SampleLevel(linearSampler, uv + float2(-x1u, -x1v), 0).rgb +
+         lowerMip.SampleLevel(linearSampler, uv + float2( x1u, -x1v), 0).rgb +
+         lowerMip.SampleLevel(linearSampler, uv + float2(-x1u,  x1v), 0).rgb +
+         lowerMip.SampleLevel(linearSampler, uv + float2( x1u,  x1v), 0).rgb) * (w1 * w1) +
+        (lowerMip.SampleLevel(linearSampler, uv + float2(0, -x1v), 0).rgb +
+         lowerMip.SampleLevel(linearSampler, uv + float2(0,  x1v), 0).rgb +
+         lowerMip.SampleLevel(linearSampler, uv + float2(-x1u, 0), 0).rgb +
+         lowerMip.SampleLevel(linearSampler, uv + float2( x1u, 0), 0).rgb) * (w1 * w0) +
+        lowerMip.SampleLevel(linearSampler, uv, 0).rgb * (w0 * w0);
 
-    // Corners (weight 1/16 each)
-    upsampled += lowerMipTex.SampleLevel(linearSampler, uv + float2(-1, -1) * texelSize, 0).rgb;
-    upsampled += lowerMipTex.SampleLevel(linearSampler, uv + float2( 1, -1) * texelSize, 0).rgb;
-    upsampled += lowerMipTex.SampleLevel(linearSampler, uv + float2(-1,  1) * texelSize, 0).rgb;
-    upsampled += lowerMipTex.SampleLevel(linearSampler, uv + float2( 1,  1) * texelSize, 0).rgb;
-
-    // Edges (weight 2/16 each)
-    upsampled += lowerMipTex.SampleLevel(linearSampler, uv + float2( 0, -1) * texelSize, 0).rgb * 2.0f;
-    upsampled += lowerMipTex.SampleLevel(linearSampler, uv + float2(-1,  0) * texelSize, 0).rgb * 2.0f;
-    upsampled += lowerMipTex.SampleLevel(linearSampler, uv + float2( 1,  0) * texelSize, 0).rgb * 2.0f;
-    upsampled += lowerMipTex.SampleLevel(linearSampler, uv + float2( 0,  1) * texelSize, 0).rgb * 2.0f;
-
-    // Center (weight 4/16)
-    upsampled += lowerMipTex.SampleLevel(linearSampler, uv, 0).rgb * 4.0f;
-
-    // Normalize: total weights = 4*1 + 4*2 + 1*4 = 16
-    upsampled *= (1.0f / 16.0f);
-
-    // Apply per-stage tint weight before accumulation.
-    // multiplies each bloom stage's contribution by its tint color during upsample.
-    // @ref Karis 2013 — bloom pyramid tint:268 — PassInputs.TintColor = BloomStage.Tint * TintScale
+    // Per-stage tint
     upsampled *= float3(g_StageTintR, g_StageTintG, g_StageTintB);
 
-    // Read the downsample result at this level via UAV load (same resource
-    // as output — per-pixel 1:1 read-modify-write avoids SRV/UAV conflict)
-    float3 currentLevel = outputTex[dtid.xy].rgb;
-
-    float3 result = currentLevel + upsampled;
-
-    outputTex[dtid.xy] = float4(max(0, result), 1.0f);
+    // Additive blend with current level
+    float3 currentLevel = dst[dtid.xy].rgb;
+    dst[dtid.xy] = float4(max(0, currentLevel + upsampled), 1.0);
 }

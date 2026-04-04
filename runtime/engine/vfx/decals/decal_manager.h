@@ -35,10 +35,10 @@
 
 #include "engine/math/quaternion.h"
 #include "engine/math/vector3.h"
+#include "engine/random/random.h"
 
 #include <cstdint>
 #include <memory>
-#include <random>
 #include <vector>
 
 namespace uz {
@@ -280,8 +280,8 @@ private:
     /// True = culled (not visible). Resized to pool capacity on Initialize().
     std::vector<bool> culledFlags_;
 
-    /// Mersenne Twister RNG for random decal rotation.
-    std::mt19937 rng_;
+    /// PCG RNG for random decal rotation (faster + better distribution than mt19937).
+    PCGRandom rng_;
 
     /// True after Initialize(), false after Shutdown() or before first init.
     bool initialized_ = false;

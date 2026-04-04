@@ -26,6 +26,9 @@ namespace uz {
 /// Root parameter slot for bindless descriptor indices (b0 = root constants).
 static constexpr uint32_t kSlotBindlessIndices = 0;
 
+/// Root parameter slot for per-frame constant buffer (b1).
+static constexpr uint32_t kSlotPerFrame = 1;
+
 /// Root parameter slot for per-emitter billboard CB (b2 = root CBV per-object).
 static constexpr uint32_t kSlotPerEmitter = 2;
 
@@ -132,8 +135,11 @@ void AddParticleRenderPass(rg::RgBuilder& builder,
 
     builder.AddPass("VFX_ParticleRender", [passDesc](rg::RgPassBuilder& pb) mutable {
         // Declare render graph resource dependencies.
-        // Color target: we write to it (render target blend).
+        // Color target: read-modify-write (alpha blend on top of existing scene).
+        // The Read creates a DAG edge from the previous writer (lighting pass),
+        // ensuring particles are composited AFTER the scene is lit.
         if (passDesc.colorTarget.IsValid()) {
+            pb.Read(passDesc.colorTarget, RHIResourceState::RenderTarget);
             pb.Write(passDesc.colorTarget, RHIResourceState::RenderTarget);
         }
 
@@ -196,7 +202,7 @@ void AddParticleRenderPass(rg::RgBuilder& builder,
 
             // Re-bind PerFrameCB at slot 1 (b1) — viewProj, camera, etc.
             if (passDesc.perFrameCB.gpuAddr != 0) {
-                cmd->SetRootCBV(1, passDesc.perFrameCB.gpuAddr);
+                cmd->SetRootCBV(kSlotPerFrame, passDesc.perFrameCB.gpuAddr);
             }
 
             // Draw each emitter (sorted back-to-front).
@@ -204,15 +210,14 @@ void AddParticleRenderPass(rg::RgBuilder& builder,
                 DrawEmitterBillboards(cmd, emitter);
             }
 
-
             cmd->EndRenderPass();
 
             // Log first execution for diagnostics.
             static bool loggedOnce = false;
             if (!loggedOnce) {
                 UZ_LOG(VFX, Info,
-                       "ParticleRenderPass: first execution -- {} emitters",
-                       passDesc.emitters.size());
+                       "ParticleRenderPass: first execution -- {} emitters, viewport={}x{}",
+                       passDesc.emitters.size(), passDesc.viewportWidth, passDesc.viewportHeight);
                 loggedOnce = true;
             }
         });

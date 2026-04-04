@@ -117,10 +117,8 @@ void VFXSystem::Tick(float dt) {
         // Track time since registration for composite delay support.
         emitter->timeSinceRegistration += dt;
 
-        // Only spawn particles once the start delay has elapsed.
-        if (emitter->timeSinceRegistration >= emitter->startDelay) {
-            emitter->CalculateSpawnCount(dt);
-        }
+        // Spawn count is calculated in frame_particles.cpp::RegisterParticlePasses
+        // to avoid double-accumulation. The start delay check is also done there.
 
         // Accumulate alive count for stats.
         totalAlive += emitter->cpuAliveCount;

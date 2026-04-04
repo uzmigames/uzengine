@@ -366,5 +366,5 @@ rd->draw_list_bind_uniform_set(
 ## References
 
 - **Godot 4.2**: `/e/godot/drivers/d3d12/` (2500+ lines of D3D12-specific code)
-- **UE5.6**: `W:\UE_5.6_Source/Engine/Source/Runtime/RHI/` (public RHI abstraction)
+- **UE5.6**: `W:\UE_5.6_Source/RHI/` (public RHI abstraction)
 - **UzEngine Current**: `/e/UzEngine/src/engine/renderer/` (RHI layer in development)

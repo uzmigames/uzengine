@@ -85,17 +85,16 @@ Mesh GenerateSphereMesh(uint32_t sectorCount, uint32_t stackCount) {
 
         for (uint32_t j = 0; j < sectorCount; ++j, ++k1, ++k2) {
             // Skip degenerate triangles at poles.
-            // Songho reference (CCW/OpenGL): k1→k2→k1+1 and k1+1→k2→k2+1
-            // CCW winding (matches frontCounterClockwise = true, DX12/UE5 standard)
+            // CW winding (matches frontCounterClockwise = false, UzEngine convention)
             if (i != 0) {
                 indices.push_back(k1);
-                indices.push_back(k2);
                 indices.push_back(k1 + 1);
+                indices.push_back(k2);
             }
             if (i != (stackCount - 1)) {
                 indices.push_back(k1 + 1);
-                indices.push_back(k2);
                 indices.push_back(k2 + 1);
+                indices.push_back(k2);
             }
         }
     }
@@ -781,7 +780,7 @@ Mesh MeshBuilder::CreateSphere(float radius, uint32_t stacks, uint32_t slices) {
         }
     }
 
-    // CCW winding order (matches frontCounterClockwise = true, DX12/UE5 standard)
+    // CCW winding order (matches frontCounterClockwise = true, DX12 standard)
     std::vector<uint32_t> indices;
     indices.reserve(stacks * slices * 6);
     for (uint32_t i = 0; i < stacks; ++i) {

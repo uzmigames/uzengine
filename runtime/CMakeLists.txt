@@ -75,8 +75,7 @@ file(GLOB SRC_RENDERER_SHADOWS     engine/renderer/shadows/*.cpp)
 file(GLOB SRC_SCRIPTING      engine/scripting/*.cpp)
 file(GLOB SRC_SCRIPTING_API  engine/scripting/scene/*.cpp)
 file(GLOB SRC_SCRIPTING_API_CORE engine/scripting/core/*.cpp
-                                 engine/scripting/renderer/*.cpp
-                                 engine/scripting/editor/*.cpp)
+                                 engine/scripting/renderer/*.cpp)
 file(GLOB SRC_ASSET          engine/asset/*.cpp)
 file(GLOB SRC_RHI_VULKAN     engine/rhi/vulkan/*.cpp)
 file(GLOB SRC_MATERIAL       engine/material/*.cpp)
@@ -100,16 +99,6 @@ file(GLOB SRC_VFX_TRAILS       engine/vfx/trails/*.cpp)
 file(GLOB SRC_VFX_LOD          engine/vfx/lod/*.cpp)
 file(GLOB SRC_VFX_BUDGET       engine/vfx/budget/*.cpp)
 file(GLOB SRC_VFX_SYSTEM       engine/vfx/*.cpp)
-
-# Editor subsystem (grid, stats, screenshot, font, gizmo, etc.)
-file(GLOB SRC_EDITOR_GRID       editor/grid/*.cpp)
-file(GLOB SRC_EDITOR_FONT       editor/font/*.cpp)
-file(GLOB SRC_EDITOR_STATS      editor/stats/*.cpp)
-file(GLOB SRC_EDITOR_SCREENSHOT  editor/screenshot/*.cpp)
-file(GLOB SRC_EDITOR_GIZMO      editor/gizmo/*.cpp)
-file(GLOB SRC_EDITOR_OUTLINE    editor/outline/*.cpp)
-file(GLOB SRC_EDITOR_SELECTION  editor/selection/*.cpp)
-file(GLOB SRC_EDITOR_INPUT      editor/input/*.cpp)
 
 # Metal backend (macOS/iOS only)
 if(APPLE)
@@ -197,14 +186,6 @@ set(RUNTIME_SOURCES
     ${SRC_VFX_LOD}
     ${SRC_VFX_BUDGET}
     ${SRC_VFX_SYSTEM}
-    ${SRC_EDITOR_GRID}
-    ${SRC_EDITOR_FONT}
-    ${SRC_EDITOR_STATS}
-    ${SRC_EDITOR_SCREENSHOT}
-    ${SRC_EDITOR_GIZMO}
-    ${SRC_EDITOR_OUTLINE}
-    ${SRC_EDITOR_SELECTION}
-    ${SRC_EDITOR_INPUT}
     $<$<PLATFORM_ID:Darwin>:${SRC_RHI_METAL}>
 )
 
@@ -410,7 +391,6 @@ target_include_directories(uzengine_runtime PUBLIC
     engine/scripting/scene
     engine/scripting/core
     engine/scripting/renderer
-    engine/scripting/editor
     engine/ecs
     engine/asset
     engine/material
@@ -442,10 +422,6 @@ target_include_directories(uzengine_runtime PUBLIC
     engine/ecs/update
     engine/ecs/lighting
     engine/rhi/optimization
-    editor
-    editor/grid
-    editor/font
-    editor/stats
     editor/screenshot
     ${CMAKE_CURRENT_BINARY_DIR}/generated/shaders
 )
@@ -487,7 +463,6 @@ if(WIN32)
     target_include_directories(uzengine_runtime PUBLIC
         engine/rhi/dx12
         engine/rhi/dx11
-        engine/rhi/vulkan
     )
     target_include_directories(uzengine_runtime PRIVATE
         thirdparty/d3d12ma/src
@@ -706,10 +681,6 @@ foreach(tool_src IN LISTS TOOL_SOURCES)
     target_link_libraries(${tool_name} PRIVATE uzengine_runtime)
 endforeach()
 
-
-# --- Demo common sources (DemoApplication base class) ---
-file(GLOB DEMO_COMMON_SOURCES demos/common/*.cpp)
-
 # --- Demo executables ---
 file(GLOB DEMO_DIRS demos/*)
 foreach(demo_dir IN LISTS DEMO_DIRS)
@@ -717,12 +688,8 @@ foreach(demo_dir IN LISTS DEMO_DIRS)
         continue()
     endif()
     get_filename_component(demo_name ${demo_dir} NAME)
-    if(demo_name STREQUAL "common")
-        continue()
-    endif()
     file(GLOB DEMO_SOURCES ${demo_dir}/*.cpp)
-    add_executable(${demo_name}_demo ${DEMO_SOURCES} ${DEMO_COMMON_SOURCES})
-    target_include_directories(${demo_name}_demo PRIVATE demos/common)
+    add_executable(${demo_name}_demo ${DEMO_SOURCES})
     target_link_libraries(${demo_name}_demo PRIVATE uzengine_runtime)
 endforeach()
 
@@ -739,9 +706,7 @@ if(WIN32)
     foreach(demo_dir IN LISTS DEMO_DIRS)
         if(IS_DIRECTORY ${demo_dir})
             get_filename_component(demo_name ${demo_dir} NAME)
-            if(NOT demo_name STREQUAL "common")
-                list(APPEND DEPLOY_TARGETS ${demo_name}_demo)
-            endif()
+            list(APPEND DEPLOY_TARGETS ${demo_name}_demo)
         endif()
     endforeach()
 

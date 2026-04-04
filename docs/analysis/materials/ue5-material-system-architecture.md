@@ -22,7 +22,7 @@ UObject
 **Key insight**: Both `UMaterial` and `UMaterialInstance` implement the same interface. **The mesh component does not care which type is assigned to a slot.** This is the core pattern UzEngine should adopt.
 
 ### UMaterialInterface (Base)
-- **File**: `W:/UE_5.6_Source/Engine/Source/Runtime/Engine/Public/Materials/MaterialInterface.h:293`
+- **File**: `W:/UE_5.6_Source/Engine/Public/Materials/MaterialInterface.h:293`
 - **Type**: Abstract base class for all materials
 - **Responsibility**: Virtual interface for material properties, parameter binding, texture sampling info
 - **Key methods**:
@@ -31,13 +31,13 @@ UObject
   - `GetPhysicalMaterial()` — returns associated physical material
 
 ### UMaterial (Concrete)
-- **File**: `W:/UE_5.6_Source/Engine/Source/Runtime/Engine/Public/Materials/Material.h:431`
+- **File**: `W:/UE_5.6_Source/Engine/Public/Materials/Material.h:431`
 - **Type**: `class UMaterial : public UMaterialInterface`
 - **Responsibility**: The "master" material definition with shader nodes
 - **Ownership**: Can own shader graph, expressions, material flags
 
 ### UMaterialInstance (Concrete)
-- **File**: `W:/UE_5.6_Source/Engine/Source/Runtime/Engine/Public/Materials/MaterialInstance.h:578`
+- **File**: `W:/UE_5.6_Source/Engine/Public/Materials/MaterialInstance.h:578`
 - **Type**: `class UMaterialInstance : public UMaterialInterface`
 - **Key members**:
   ```cpp
@@ -66,7 +66,7 @@ UObject
 A `UStaticMesh` defines N **material slots**, each with a default material.
 
 ### FStaticMaterial Struct
-- **File**: `W:/UE_5.6_Source/Engine/Source/Runtime/Engine/Classes/Engine/StaticMesh.h:486`
+- **File**: `W:/UE_5.6_Source/Engine/Classes/Engine/StaticMesh.h:486`
 - **Type**: Struct (not a class)
 - **Definition**:
   ```cpp
@@ -97,7 +97,7 @@ A `UStaticMesh` defines N **material slots**, each with a default material.
   ```
 
 ### UStaticMesh.StaticMaterials Array
-- **File**: `W:/UE_5.6_Source/Engine/Source/Runtime/Engine/Classes/Engine/StaticMesh.h:957`
+- **File**: `W:/UE_5.6_Source/Engine/Classes/Engine/StaticMesh.h:957`
 - **Type**: `TArray<FStaticMaterial> StaticMaterials`
 - **Access**: Private (wrapped by getter/setter methods)
 - **Capacity**: Unbounded (grows as needed)
@@ -111,7 +111,7 @@ A `UStaticMesh` defines N **material slots**, each with a default material.
   ```
 
 ### UStaticMesh.GetMaterial(int32 MaterialIndex)
-- **File**: `W:/UE_5.6_Source/Engine/Source/Runtime/Engine/Private/StaticMesh.cpp:9520`
+- **File**: `W:/UE_5.6_Source/Engine/Private/StaticMesh.cpp:9520`
 - **Implementation**:
   ```cpp
   UMaterialInterface* UStaticMesh::GetMaterial(int32 MaterialIndex) const
@@ -132,7 +132,7 @@ A `UStaticMesh` defines N **material slots**, each with a default material.
 ## 3. StaticMeshComponent Material Resolution
 
 ### OverrideMaterials Array
-- **File**: `W:/UE_5.6_Source/Engine/Source/Runtime/Engine/Classes/Components/MeshComponent.h:31`
+- **File**: `W:/UE_5.6_Source/Engine/Classes/Components/MeshComponent.h:31`
 - **Type**: `TArray<TObjectPtr<class UMaterialInterface>> OverrideMaterials`
 - **Owner**: `UMeshComponent` (base class for all mesh components)
 - **Semantics**: **Per-component material overrides** that can be null
@@ -140,7 +140,7 @@ A `UStaticMesh` defines N **material slots**, each with a default material.
 - **Comment**: "Per-Component material overrides. These must NOT be set directly or a race condition can occur between GC and the rendering thread."
 
 ### Resolution Order: GetMaterial(int32 MaterialIndex)
-- **File**: `W:/UE_5.6_Source/Engine/Source/Runtime/Engine/Public/StaticMeshComponentHelper.h:108`
+- **File**: `W:/UE_5.6_Source/Engine/Public/StaticMeshComponentHelper.h:108`
 - **Type**: Template method (works for UStaticMeshComponent, UInstancedStaticMeshComponent, etc.)
 - **Implementation**:
   ```cpp

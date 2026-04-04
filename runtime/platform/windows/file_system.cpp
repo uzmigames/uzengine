@@ -116,7 +116,7 @@ std::vector<uint8_t> FileReadAll(const char* path) {
 
     if (file == INVALID_HANDLE_VALUE) {
         const DWORD err = GetLastError();
-        UZ_LOG(FileSystem, Error, "FileReadAll: failed to open '{}', win32 error={}", path, err);
+        UZ_LOG(FileSystem, Warning, "FileReadAll: failed to open '{}', win32 error={}", path, err);
         return {};
     }
 

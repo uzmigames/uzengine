@@ -373,7 +373,7 @@ RHIGraphicsPipelineDesc MaterialPipeline::BuildGBufferPipelineDesc(
     desc.pixelShader   = ps;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
 
-    // Rasterizer — back-face cull, CCW front face (DX12/UE5 standard, matching GBuffer)
+    // Rasterizer — back-face cull, CCW front face (DX12 standard, matching GBuffer)
     desc.rasterizer.cullMode              = RHICullMode::Back;
 
     // Depth — enabled, write enabled (deferred geometry pass writes depth)

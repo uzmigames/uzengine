@@ -130,6 +130,10 @@
     uint32_t m_brdfLutSrvIndex = UINT32_MAX;       ///< BRDF LUT SRV (baked once at init).
     SHCoefficients m_skyIrradianceSH;              ///< L2 SH for sky diffuse irradiance.
 
+    // ── Environment Map Importance Sampling ──────────────────────────────
+    std::unique_ptr<EnvMapSampler> m_envMapSampler;  ///< Alias table + luminance pyramid for MIS.
+    std::unique_ptr<EnvMISPass>    m_envMISPass;     ///< Temporal accumulation pass for env MIS specular.
+
     // ── HDRI environment override ────────────────────────────────────────
     RHITextureHandle m_hdriCubemap;            ///< Cubemap converted from HDRI equirect (owned, must destroy).
     uint32_t m_hdriCubemapSrv = UINT32_MAX;    ///< SRV for the HDRI cubemap.
@@ -269,14 +273,14 @@
     uint32_t m_taaHistorySrv[2] = {UINT32_MAX, UINT32_MAX}; ///< SRV indices for history read.
     uint32_t m_taaHistoryUav[2] = {UINT32_MAX, UINT32_MAX}; ///< UAV indices for history write.
     uint32_t m_taaHistoryIndex = 0;            ///< Index of current write target (0 or 1).
-    bool     m_taaEnabled = true;              ///< Runtime toggle for TAA.
+    bool     m_taaEnabled = false;             ///< SHADER DEBUG: disabled — scaffold taa_resolve zeros HDR.
     Mat4     m_prevViewProj;                   ///< Previous frame's unjittered viewProj for reprojection.
     bool     m_prevViewProjValid = false;      ///< False on first frame (no valid previous viewProj).
 
     // ── Temporal Upscaler (ITemporalUpscaler) ────────────────────────────────
 
     std::unique_ptr<ITemporalUpscaler> m_upscaler;         ///< Active temporal upscaler (TAA or TSR).
-    UpscalerType m_upscalerType = UpscalerType::TSR;        ///< Temporal super resolution (default).
+    UpscalerType m_upscalerType = UpscalerType::TAA;        ///< Legacy TAA (single-pass, robust).
 
     // ── Dynamic Resolution ───────────────────────────────────────────────────
 
@@ -619,7 +623,7 @@
     uint32_t m_instanceBufferSrvIndices[kInstanceBufferCount] = {UINT32_MAX, UINT32_MAX, UINT32_MAX};
 
     // Shadow constants moved to shadow_atlas.h (kShadowResolution, kShadowAtlasSize)
-    static constexpr uint32_t kCBRingFrames = 3;
+    static constexpr uint32_t kCBRingFrames = 4; ///< 4 frames prevents stale data race (3 was insufficient — Frame N overwritten by N+3 before GPU read)
     static constexpr uint64_t kCBRingBytesPerFrame = 2 * 1024 * 1024;
 
     // ── Internal Helpers ───────────────────────────────────────────────────

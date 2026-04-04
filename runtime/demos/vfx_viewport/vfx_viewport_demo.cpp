@@ -1521,37 +1521,7 @@ void VFXViewportDemo::OnFrame(float dt) {
     perFrame.farPlane = 100000.0f;
     perFrame.exposure = m_exposure;
 
-    // ── Point lights (scene lights OR VFX particle lights) ──────────────
-    if (m_pointLightsEnabled) {
-        perFrame.numPointLights = 3;
-        // Red light — right side
-        perFrame.pointLight0PosX      = 4.0f;
-        perFrame.pointLight0PosY      = 2.0f;
-        perFrame.pointLight0PosZ      = 0.0f;
-        perFrame.pointLight0Radius    = 800.0f;
-        perFrame.pointLight0ColorR    = 1.0f;
-        perFrame.pointLight0ColorG    = 0.2f;
-        perFrame.pointLight0ColorB    = 0.1f;
-        perFrame.pointLight0Intensity = 3.0f;
-        // Blue light — left-back
-        perFrame.pointLight1PosX      = -3.0f;
-        perFrame.pointLight1PosY      = 3.0f;
-        perFrame.pointLight1PosZ      = -3.0f;
-        perFrame.pointLight1Radius    = 800.0f;
-        perFrame.pointLight1ColorR    = 0.1f;
-        perFrame.pointLight1ColorG    = 0.3f;
-        perFrame.pointLight1ColorB    = 1.0f;
-        perFrame.pointLight1Intensity = 3.0f;
-        // Green light — front
-        perFrame.pointLight2PosX      = 0.0f;
-        perFrame.pointLight2PosY      = 1.5f;
-        perFrame.pointLight2PosZ      = 4.0f;
-        perFrame.pointLight2Radius    = 800.0f;
-        perFrame.pointLight2ColorR    = 0.2f;
-        perFrame.pointLight2ColorG    = 1.0f;
-        perFrame.pointLight2ColorB    = 0.2f;
-        perFrame.pointLight2Intensity = 2.0f;
-    }
+    // Point lights: inline CB fields removed.
 
     // ── VFX particle lights (emitter-position point lights) ──────────────
     // When scene point lights are not active, enabled emitters inject dynamic
@@ -2023,7 +1993,6 @@ void VFXViewportDemo::OnFrame(float dt) {
     // ── Copy HDR for grid ground reflection ────────────────────────────
     // The grid shader uses the pre-grid HDR content for screen-space
     // ground reflection. Copy before the grid render pass begins.
-    uint32_t reflectionSrv = UINT32_MAX;
     {
         RHIBarrierDesc barriers[2]{};
         barriers[0].texture = m_hdrTarget;
@@ -2045,7 +2014,6 @@ void VFXViewportDemo::OnFrame(float dt) {
         barriers2[1].stateAfter = RHIResourceState::RenderTarget;
         cmd->ResourceBarrier(barriers2, 2);
 
-        reflectionSrv = GetDevice()->GetTextureSRVIndex(m_preDistortionCopy);
     }
 
     // ── Editor grid ──────────────────────────────────────────────────────
@@ -2071,12 +2039,10 @@ void VFXViewportDemo::OnFrame(float dt) {
             sc.bottom = static_cast<int32_t>(GetHeight());
             cmd->SetScissor(sc);
 
-            // EditorGrid::Draw(cmdList, cbRing, camera, depthSrv, width, height, reflectionHdrSrv)
             uint32_t depthSrv = GetDevice()->GetTextureSRVIndex(m_depthBuffer);
             grid->Draw(cmd, *cbRing, cam, depthSrv,
                        static_cast<float>(GetWidth()),
-                       static_cast<float>(GetHeight()),
-                       reflectionSrv);
+                       static_cast<float>(GetHeight()));
 
             cmd->EndRenderPass();
         }

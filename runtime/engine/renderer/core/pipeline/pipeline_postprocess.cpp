@@ -67,10 +67,12 @@ RHIPipelineHandle PipelineLibrary::GetTonemap() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool PipelineLibrary::EnsureVelocityPixelShader() {
+    if (m_velocityPS.IsFailed()) return false;
     if (!m_velocityPS.IsValid()) {
         m_velocityPS = m_shaderMgr->CreateShader(EngineShader::VelocityPS, RHIShaderStage::Pixel);
         if (!m_velocityPS.IsValid()) {
             UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile VelocityPS");
+            m_velocityPS = RHIShaderHandle::Failed();
             return false;
         }
     }
@@ -83,7 +85,8 @@ RHIPipelineHandle PipelineLibrary::GetVelocityPass() {
         return RHIPipelineHandle::Invalid();
     }
 
-    if (m_velocityPass.IsValid()) {
+    // Return cached handle (valid or permanently failed — never retry failed creations)
+    if (m_velocityPass != RHIPipelineHandle::Invalid()) {
         return m_velocityPass;
     }
 

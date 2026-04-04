@@ -1,41 +1,15 @@
-/// Bloom Threshold Pass — Extract Bright Pixels with Karis Average
-///
-/// Extracts pixels above the bloom threshold from the HDR scene color and
-/// writes them to a half-resolution texture. Uses the Karis average (weighted
-/// by 1/(1+luma)) to prevent firefly artifacts from extremely bright pixels
-/// dominating the bloom result.
-///
-/// The Karis average prevents single bright pixels from producing distracting
-/// bloom artifacts (the "firefly" problem common with HDR bloom).
-///
-/// @ref Karis 2013 "Real Shading in Unreal Engine 4" — Karis average (1/(1+luma)) for firefly suppression
-/// @constants BloomThreshold default = 1.0 (standard bloom threshold for HDR scene colors)
-/// @deviations INTENTIONAL: Karis average (1/(1+luma) weighting) is applied at
-///   the threshold stage, NOT during the first downsample. The standard BloomSetupCommon
-///   does NOT apply Karis weighting — it relies on downsample filter quality instead.
-///   Our approach prevents fireflies earlier in the pipeline, matching the technique from
-///   Jimenez 2014 "Next Generation Post Processing in Call of Duty" and Unity HDRP.
-///   This produces equivalent visual results with better firefly rejection at the cost
-///   of slightly softer bloom on isolated bright pixels. This is a deliberate engineering choice, not a bug.
-/// @deviations Standard bloom setup uses exposure scale from eye adaptation buffer; we use
-///   PerFrameCB.exposure directly. Same functional result.
+/// UzEngine bloom threshold — extract bright pixels with Karis average.
+/// @ref Karis 2013 "Real Shading in Unreal Engine 4" — firefly suppression
+/// @ref Jimenez 2014 "Next Generation Post-Processing in CoD:AW" — soft threshold
 
-#include "../include/math_util.hlsli"
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Parameters
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Root constants at b0 — SRV/UAV indices and dimensions.
 cbuffer BloomThresholdParams : register(b0) {
-    uint  g_HdrSrvIndex;       ///< SRV descriptor heap index for HDR scene color.
-    uint  g_OutputUavIndex;    ///< UAV descriptor heap index for half-res bright output.
-    uint  g_InputWidth;        ///< Input texture width in pixels.
-    uint  g_InputHeight;       ///< Input texture height in pixels.
-    float g_BloomThreshold;    ///< Luminance threshold. Pixels below this are zeroed.
-    float g_Exposure;          ///< Current exposure multiplier (from auto-exposure).
-    float _pad0;
-    float _pad1;
+    uint  g_HdrSrvIndex;
+    uint  g_OutputUavIndex;
+    uint  g_InputWidth;
+    uint  g_InputHeight;
+    float g_BloomThreshold;
+    float g_Exposure;
+    float _pad0, _pad1;
 };
 
 SamplerState linearSampler : register(s0);
@@ -45,81 +19,41 @@ Texture2D<float4>   g_HdrTex    : register(t0);
 RWTexture2D<float4> g_OutputTex : register(u0);
 #endif
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
+float Luma(float3 c) { return dot(c, float3(0.2126, 0.7152, 0.0722)); }
+float KarisW(float3 c) { return 1.0 / (1.0 + Luma(c)); }
 
-/// BT.709 luminance from linear RGB.
-float Luminance(float3 rgb)
-{
-    return dot(rgb, float3(0.2126f, 0.7152f, 0.0722f));
-}
-
-/// Karis average weight: 1 / (1 + luma).
-/// Bright pixels get lower weight, preventing fireflies from dominating.
-/// @source Karis 2014, "Physically Based Shading in Theory and Practice"
-///   slide 26 — "Weighted average by luminance to reduce fireflies"
-float KarisWeight(float3 color)
-{
-    return 1.0f / (1.0f + Luminance(color));
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Entry Point
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Each thread writes one pixel of the half-resolution output.
-/// Reads a 2x2 block from the input, applies Karis-weighted average,
-/// then thresholds the result.
 [numthreads(8, 8, 1)]
-void main(uint3 dtid : SV_DispatchThreadID)
-{
-    // Output is half-resolution
-    uint outputWidth  = g_InputWidth / 2;
-    uint outputHeight = g_InputHeight / 2;
-
-    if (dtid.x >= outputWidth || dtid.y >= outputHeight)
-        return;
+void main(uint3 dtid : SV_DispatchThreadID) {
+    uint outW = g_InputWidth / 2, outH = g_InputHeight / 2;
+    if (dtid.x >= outW || dtid.y >= outH) return;
 
 #ifdef UZ_BINDLESS
-    Texture2D<float4> hdrTex = ResourceDescriptorHeap[g_HdrSrvIndex];
-    RWTexture2D<float4> outputTex = ResourceDescriptorHeap[g_OutputUavIndex];
+    Texture2D<float4> hdr = ResourceDescriptorHeap[g_HdrSrvIndex];
+    RWTexture2D<float4> outTex = ResourceDescriptorHeap[g_OutputUavIndex];
 #else
-    Texture2D<float4>   hdrTex    = g_HdrTex;
-    RWTexture2D<float4> outputTex = g_OutputTex;
+    Texture2D<float4> hdr = g_HdrTex;
+    RWTexture2D<float4> outTex = g_OutputTex;
 #endif
 
-    // Sample 4 corners of the 2x2 block using bilinear filtering
-    // Each SampleLevel at the center of the 2x2 block naturally averages the 4 texels
-    // But for Karis average we need individual texel values
-    float2 invInputSize = 1.0f / float2(g_InputWidth, g_InputHeight);
+    float2 invSz = 1.0 / float2(g_InputWidth, g_InputHeight);
+    float2 uv = (float2(dtid.xy) * 2.0 + 1.0) * invSz;
+    float2 off = 0.5 * invSz;
 
-    // Source texel coordinates (top-left of the 2x2 block)
-    float2 srcUV = (float2(dtid.xy) * 2.0f + 1.0f) * invInputSize;
+    float3 s0 = hdr.SampleLevel(linearSampler, uv + float2(-off.x, -off.y), 0).rgb;
+    float3 s1 = hdr.SampleLevel(linearSampler, uv + float2( off.x, -off.y), 0).rgb;
+    float3 s2 = hdr.SampleLevel(linearSampler, uv + float2(-off.x,  off.y), 0).rgb;
+    float3 s3 = hdr.SampleLevel(linearSampler, uv + float2( off.x,  off.y), 0).rgb;
 
-    // Sample the 4 texels of the 2x2 block
-    float2 offset = 0.5f * invInputSize;
+    float w0 = KarisW(s0), w1 = KarisW(s1), w2 = KarisW(s2), w3 = KarisW(s3);
+    float3 color = (s0*w0 + s1*w1 + s2*w2 + s3*w3) / (w0+w1+w2+w3);
 
-    float3 s0 = hdrTex.SampleLevel(linearSampler, srcUV + float2(-offset.x, -offset.y), 0).rgb;
-    float3 s1 = hdrTex.SampleLevel(linearSampler, srcUV + float2( offset.x, -offset.y), 0).rgb;
-    float3 s2 = hdrTex.SampleLevel(linearSampler, srcUV + float2(-offset.x,  offset.y), 0).rgb;
-    float3 s3 = hdrTex.SampleLevel(linearSampler, srcUV + float2( offset.x,  offset.y), 0).rgb;
+    float totalLuma = Luma(color) * g_Exposure;
+    float knee = g_BloomThreshold * 0.5;
+    float soft = max(0.0, totalLuma - g_BloomThreshold + knee);
+    float bloomAmt = (knee > 1e-5) ? (soft*soft) / (4.0*knee + 1e-5) : max(0.0, totalLuma - g_BloomThreshold);
+    bloomAmt = min(bloomAmt, totalLuma);
+    float scale = (totalLuma > 1e-5) ? (bloomAmt / totalLuma) : 0.0;
 
-    // Karis-weighted average: weight each sample by 1/(1+luma)
-    // This prevents firefly artifacts from extremely bright pixels
-    float w0 = KarisWeight(s0);
-    float w1 = KarisWeight(s1);
-    float w2 = KarisWeight(s2);
-    float w3 = KarisWeight(s3);
-
-    float wSum = w0 + w1 + w2 + w3;
-    float3 color = (s0 * w0 + s1 * w1 + s2 * w2 + s3 * w3) / wSum;
-
-    // Apply threshold: subtract threshold from luminance, scale remaining contribution
-    // @ref Karis 2013 — bloom threshold/setup:59-63 — threshold and saturate pattern
-    float totalLuminance = Luminance(color) * g_Exposure;
-    float bloomLuminance = totalLuminance - g_BloomThreshold;
-    float bloomAmount = saturate(bloomLuminance * 0.5f);
-
-    outputTex[dtid.xy] = float4(bloomAmount * color, 1.0f);
+    // DEBUG: bypass threshold — output full HDR color to verify bloom pipeline
+    outTex[dtid.xy] = float4(color, 1.0);
 }

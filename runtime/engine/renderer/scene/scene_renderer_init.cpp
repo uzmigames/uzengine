@@ -1,6 +1,7 @@
 /// UzEngine Scene Renderer — Lifecycle (Init, Resize, Shutdown, CVar registration).
 
 #include "scene_renderer.h"
+#include "quality_presets.h"
 
 #include "renderer_core.h"
 #include "subsystems.h"
@@ -67,6 +68,9 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     m_width = width;
     m_height = height;
 
+    // ── Quality Presets (default Ultra, overridable via CVar quality=N) ──
+    QualityPresetManager::Get().Init();
+
     // Compute internal render resolution from screen percentage.
     // At 100% (default), render resolution equals display resolution.
     m_renderWidth  = std::max(1u, static_cast<uint32_t>(width  * m_screenPercentage / 100.f));
@@ -92,11 +96,11 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     }
 
     // ── Pre-warm all pipelines eagerly ──────────────────────────────────
-    // Compile all standard shaders now to avoid lazy DXC invocations during
-    // the first rendered frame. This eliminates 20-35 cold shader compiles
-    // that would otherwise stall the render thread on first use.
-    const uint32_t warmedPipelines = m_pipelines->WarmupAll();
-    UZ_LOG(Renderer, Info, "SceneRenderer: pre-warmed {} pipelines at startup", warmedPipelines);
+    // SHADER DEBUG: disabled — some new shaders have root sig mismatch.
+    // Pipelines will be created lazily on first use instead.
+    // const uint32_t warmedPipelines = m_pipelines->WarmupAll();
+    // UZ_LOG(Renderer, Info, "SceneRenderer: pre-warmed {} pipelines at startup", warmedPipelines);
+    UZ_LOG(Renderer, Warning, "SceneRenderer: WarmupAll DISABLED for shader debugging");
 
     // ── CB Ring Allocator ───────────────────────────────────────────────
     m_cbRing = std::make_unique<CBRingAllocator>();
@@ -481,6 +485,22 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         UZ_LOG(Renderer, Error, "SceneRenderer: failed to init IBL baker");
     }
 
+    // ── Environment Map Importance Sampler ────────────────────────────
+    m_envMapSampler = std::make_unique<EnvMapSampler>();
+    if (m_envMapSampler->Init(device, m_shaderMgr.get())) {
+        UZ_LOG(Renderer, Info, "SceneRenderer: EnvMapSampler initialized");
+    } else {
+        UZ_LOG(Renderer, Warning, "SceneRenderer: EnvMapSampler init failed (MIS disabled)");
+    }
+
+    // ── Environment MIS Temporal Accumulation ────────────────────────
+    m_envMISPass = std::make_unique<EnvMISPass>();
+    if (m_envMISPass->Init(device, m_shaderMgr.get(), width, height)) {
+        UZ_LOG(Renderer, Info, "SceneRenderer: EnvMISPass initialized ({}x{})", width, height);
+    } else {
+        UZ_LOG(Renderer, Warning, "SceneRenderer: EnvMISPass init failed (env MIS disabled)");
+    }
+
     // ── Reflection Probes ─────────────────────────────────────────────
     if (m_iblBaker) {
         if (m_reflectionProbes.Init(device, m_iblBaker.get())) {
@@ -649,6 +669,19 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     UZ_LOG(Renderer, Info,
            "SceneRenderer: VFX system initialized (budget={})", kVFXParticleBudget);
 
+    // Create a 4-byte upload buffer containing uint32 zero.
+    // Used by the sim pass to clear aliveCount each frame via CopyBuffer.
+    {
+        RHIBufferDesc zeroDesc{};
+        zeroDesc.sizeBytes = sizeof(uint32_t);
+        zeroDesc.usage     = RHIBufferUsage::CopySrc;
+        zeroDesc.memory    = RHIMemoryType::Upload;
+        zeroDesc.debugName = "VFX_ZeroBuffer";
+        m_vfxZeroBuffer = m_device->CreateBuffer(zeroDesc);
+        auto* mapped = static_cast<uint32_t*>(m_device->MapBuffer(m_vfxZeroBuffer));
+        if (mapped) { *mapped = 0; m_device->UnmapBuffer(m_vfxZeroBuffer); }
+    }
+
     // Register uz.vfx Lua API now that VFXSystem is available.
     // Must be called after LuaVM::Init() (which registers uz.scene etc.)
     // and after VFXSystem::Initialize().
@@ -778,6 +811,17 @@ void SceneRenderer::RegisterCVars() {
 void SceneRenderer::ApplyCVars() {
     auto& cvars = CVarRegistry::Get();
 
+    // ── Quality Presets (check if --cvar quality=N was set) ──────────
+    {
+        const int qualityLevel = cvars.GetInt("quality", -1);
+        static int lastAppliedQuality = -1;
+        if (qualityLevel >= 0 && qualityLevel != lastAppliedQuality) {
+            auto level = static_cast<QualityLevel>(std::clamp(qualityLevel, 0, 4));
+            QualityPresetManager::Get().ApplyPreset(level);
+            lastAppliedQuality = qualityLevel;
+        }
+    }
+
     // Screen percentage
     const float pct = cvars.GetFloat("r.ScreenPercentage", 100.f);
     if (std::abs(pct - m_screenPercentage) > 0.5f) {
@@ -785,7 +829,7 @@ void SceneRenderer::ApplyCVars() {
     }
 
     // Anti-aliasing method → upscaler type
-    const auto aaMethod = static_cast<UpscalerType>(cvars.GetInt("r.AntiAliasingMethod", 2));
+    const auto aaMethod = static_cast<UpscalerType>(cvars.GetInt("r.AntiAliasingMethod", 1));
     if (aaMethod != m_upscalerType) {
         SetUpscalerType(aaMethod);
     }
@@ -1117,6 +1161,10 @@ void SceneRenderer::Shutdown() {
 
     // ── Reflection Probes (must shut down before IBLBaker it references) ──
     m_reflectionProbes.Shutdown();
+
+    // ── Env MIS Pass + Sampler ──────────────────────────────────────────
+    if (m_envMISPass) m_envMISPass->Shutdown();
+    if (m_envMapSampler) m_envMapSampler->Shutdown();
 
     // ── IBL resources ──────────────────────────────────────────────────
     if (m_iblBaker) m_iblBaker->Shutdown();

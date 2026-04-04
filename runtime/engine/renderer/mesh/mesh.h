@@ -342,7 +342,7 @@ struct MeshBuilder {
     /// Creates a UV sphere centered at origin with the given radius.
     ///
     /// Uses `Vertex` format with normals, UVs (spherical mapping), and tangents.
-    /// CCW winding order (matches `frontCounterClockwise = true`, DX12/UE5 standard).
+    /// CCW winding order (matches `frontCounterClockwise = true`, DX12 standard).
     ///
     /// # Arguments
     /// * `radius` - Sphere radius (default 1.0).

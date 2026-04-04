@@ -67,6 +67,19 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     perFrame.brdfLutSrvIndex     = m_brdfLutSrvIndex;
     perFrame.prefilteredMipLevels = IBLBaker::kPrefilteredMipLevels;
 
+    // ── Environment Map Importance Sampling (MIS) ─────────────────────
+    if (m_envMapSampler && m_envMapSampler->IsReady()) {
+        perFrame.envSamplerAliasSrv       = m_envMapSampler->GetAliasSrv();
+        perFrame.envSamplerLumMip0Srv     = m_envMapSampler->GetLuminanceMip0Srv();
+        perFrame.envSamplerTotalLuminance = m_envMapSampler->GetTotalLuminance();
+        perFrame.envSamplerTexelCount     = m_envMapSampler->GetTexelCount();
+        perFrame.envSamplerLumWidth       = m_envMapSampler->GetLuminanceWidth();
+        perFrame.envSamplerLumHeight      = m_envMapSampler->GetLuminanceHeight();
+    }
+    if (m_envMISPass && m_envMISPass->IsInitialized()) {
+        perFrame.envMisAccumulatedSrv = m_envMISPass->GetAccumulatedSrv();
+    }
+
     // ── Extract SkyLight from SkyLightComponent (standard) ──────────
     // Must be done BEFORE SH upload so intensity can be baked into the SH coefficients.
     // SkyLight extraction: intensity, color, minOcclusion from first SkyLightComponent.
@@ -458,9 +471,10 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
 
     // ── Shadow cascades — delegated to shadow_renderer ─────────────────
     // Determine shadow cache status early so ShadowDataCB gets the right fields.
-    ctx.shadowCacheEnabled = m_shadowCacheManager.GetConfig().enabled
-                           && m_staticShadowAtlas.IsValid()
-                           && m_staticShadowAtlasSrv != UINT32_MAX;
+    // Shadow cache disabled — static+dynamic atlas composition not yet implemented.
+    // All shadow-casting geometry renders into the per-frame atlas every frame.
+    // Re-enable after implementing static atlas → per-frame atlas copy/compose.
+    ctx.shadowCacheEnabled = false;
     ctx.shadowFrame = SetupShadowFrame(
         camera, ctx.sunDir,
         ctx.lightData.perLightShadowBias, ctx.lightData.perLightShadowSlopeBias,

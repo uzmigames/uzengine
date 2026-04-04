@@ -189,7 +189,8 @@ void main(uint3 dtid : SV_DispatchThreadID)
     RWStructuredBuffer<float4> colors       = ResourceDescriptorHeap[colorsUavIndex];
     RWStructuredBuffer<float>  rotations    = ResourceDescriptorHeap[rotationsUavIndex];
     RWStructuredBuffer<uint>   aliveCountUav = ResourceDescriptorHeap[aliveCountUavIndex];
-    RWStructuredBuffer<float4> dynamicParams = ResourceDescriptorHeap[dynamicParamsUavIndex];
+    // dynamicParams bound conditionally — index 0 means not wired (no buffer allocated).
+    // Accessing ResourceDescriptorHeap[0] as RWStructuredBuffer crashes (wrong descriptor type).
 #else
     #define freeListHead  sm5_freeListHead
     #define freeList      sm5_freeList
@@ -444,8 +445,11 @@ void main(uint3 dtid : SV_DispatchThreadID)
     // Initialize per-particle float4 from emitter defaults. The update CS
     // overwrites .x with normalizedAge each frame; .yzw remain user-defined.
 #ifdef UZ_BINDLESS
-    dynamicParams[particleIdx] = float4(defaultDynParam0, defaultDynParam1,
+    if (dynamicParamsUavIndex != 0 && dynamicParamsUavIndex != 0xFFFFFFFF) {
+        RWStructuredBuffer<float4> dynParams = ResourceDescriptorHeap[dynamicParamsUavIndex];
+        dynParams[particleIdx] = float4(defaultDynParam0, defaultDynParam1,
                                         defaultDynParam2, defaultDynParam3);
+    }
 #else
     dynamicParams[particleIdx] = float4(0.0f, 0.0f, 0.0f, 0.0f);
 #endif
