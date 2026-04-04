@@ -52,7 +52,12 @@
       "name": "SkyLight",
       "components": {
         "transform": { "position": [0, 0, 690] },
-        "sky_light": { "intensity": 1.8, "light_color": [0.85, 0.9, 1.0] }
+        "sky_light": {
+          "intensity": 1.8,
+          "light_color": [0.85, 0.9, 1.0],
+          "cubemap_path": "textures/hdri/grasslands_sunset_4k.hdr",
+          "cubemap_resolution": 512
+        }
       }
     },
     {
@@ -73,12 +78,6 @@
       "name": "Controller",
       "components": {
         "script": { "path": "scripts/fly_camera.lua" }
-      }
-    },
-    {
-      "name": "HDRILoader",
-      "components": {
-        "script": { "path": "scripts/load_hdri.lua" }
       }
     }
   ]
