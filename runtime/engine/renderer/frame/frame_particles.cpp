@@ -138,41 +138,18 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
         ImportedEmitterIds ids{};
         ids.buffer = &gpuBuf;
 
-        // Import write-set attribute buffers.
         const auto& ws = gpuBuf.WriteSet();
 
-        // Validate required buffer handles before importing (null → segfault).
-        if (!ws.positions.IsValid() || !gpuBuf.aliveCount.IsValid() ||
-            !gpuBuf.freeList.IsValid() || !gpuBuf.indirectDrawArgs.IsValid()) {
+        if (!ws.positions.IsValid() || !gpuBuf.indirectDrawArgs.IsValid()) {
             UZ_LOG(Renderer, Error, "RegisterParticlePasses: emitter has invalid GPU buffers, skipping");
             continue;
         }
 
-        ids.wrPositions  = rgBuilder.ImportBuffer("VFX_WrPos",  ws.positions,  writeSetState);
-        ids.wrVelocities = rgBuilder.ImportBuffer("VFX_WrVel",  ws.velocities, writeSetState);
-        ids.wrAges       = rgBuilder.ImportBuffer("VFX_WrAge",  ws.ages,       writeSetState);
-        ids.wrLifespans  = rgBuilder.ImportBuffer("VFX_WrLife", ws.lifespans,  writeSetState);
-        ids.wrSizes      = rgBuilder.ImportBuffer("VFX_WrSz",   ws.sizes,      writeSetState);
-        ids.wrColors     = rgBuilder.ImportBuffer("VFX_WrCol",  ws.colors,     writeSetState);
-        ids.wrRotations  = rgBuilder.ImportBuffer("VFX_WrRot",  ws.rotations,  writeSetState);
-
-        // Import read-set attribute buffers.
-        const auto& rs = gpuBuf.WriteSet();
-        ids.rdPositions  = rgBuilder.ImportBuffer("VFX_RdPos",  rs.positions,  readSetState);
-        ids.rdVelocities = rgBuilder.ImportBuffer("VFX_RdVel",  rs.velocities, readSetState);
-        ids.rdAges       = rgBuilder.ImportBuffer("VFX_RdAge",  rs.ages,       readSetState);
-        ids.rdLifespans  = rgBuilder.ImportBuffer("VFX_RdLife", rs.lifespans,  readSetState);
-        ids.rdSizes      = rgBuilder.ImportBuffer("VFX_RdSz",   rs.sizes,      readSetState);
-        ids.rdColors     = rgBuilder.ImportBuffer("VFX_RdCol",  rs.colors,     readSetState);
-        ids.rdRotations  = rgBuilder.ImportBuffer("VFX_RdRot",  rs.rotations,  readSetState);
-
-        // Import shared bookkeeping buffers (single import, shared by both passes).
-        ids.aliveCount         = rgBuilder.ImportBuffer("VFX_Alive",    gpuBuf.aliveCount,         aliveState);
-        ids.freeList           = rgBuilder.ImportBuffer("VFX_FreeList", gpuBuf.freeList,            RHIResourceState::UnorderedAccess);
-        ids.freeListHead       = rgBuilder.ImportBuffer("VFX_FreeHead", gpuBuf.freeListHead,       RHIResourceState::UnorderedAccess);
-        ids.idToIndex          = rgBuilder.ImportBuffer("VFX_IdToIdx",  gpuBuf.idToIndex,          RHIResourceState::UnorderedAccess);
+        // Only import indirect draw args — needed for IndirectArgument barrier.
+        // Particle attribute buffers are NOT imported: the inline sim dispatch
+        // manages them outside the render graph, and the billboard VS reads
+        // them via ResourceDescriptorHeap[] (bindless, no state tracking needed).
         ids.indirectDrawArgs   = rgBuilder.ImportBuffer("VFX_IndDraw",  gpuBuf.indirectDrawArgs,   indirectState);
-        ids.indirectDispatchArgs = rgBuilder.ImportBuffer("VFX_IndDisp", gpuBuf.indirectDispatchArgs, indirectState);
 
         // Import sort buffers. On frame 0, UAV from Create(). On subsequent
         // frames, the sort pass leaves them in UAV after the last dispatch.
@@ -216,8 +193,10 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
     // Runs after simulation (reads post-sim positions) and before rendering
     // (billboard VS reads sorted indices).
 
+    // Sort pass disabled — particle buffers are not tracked by render graph.
+    // Will re-enable when ping-pong + proper resource imports are restored.
+    if (false) {
     const auto sortPipeline = ctx.pipelines->GetParticleSortCS();
-
     if (sortPipeline.IsValid()) {
         // Camera position and forward direction for depth-key generation.
         const Vec3 sortCamPos{
@@ -300,6 +279,7 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
                 });
         }
     }
+    } // if (false) — sort pass disabled
 
     // ── Render pass (transparent phase) ────────────────────────────────
     // Draws particles as camera-facing billboards after opaque geometry
@@ -422,21 +402,11 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
         };
         renderData.distanceToCamera = diff.x * diff.x + diff.y * diff.y + diff.z * diff.z;
 
-        // Wire render graph resource IDs for read-set attributes and shared
-        // buffers. Reuses the same RgResourceIds imported above (one import
-        // per physical buffer).
+        // Only wire indirect draw args (the only resource tracked by the RG).
+        // Particle attribute buffers are managed by the inline sim dispatch.
         for (const auto& imported : importedIds) {
             if (imported.buffer == &gpuBuf) {
-                renderData.rgReadPositions  = imported.rdPositions;
-                renderData.rgReadVelocities = imported.rdVelocities;
-                renderData.rgReadAges       = imported.rdAges;
-                renderData.rgReadLifespans  = imported.rdLifespans;
-                renderData.rgReadSizes      = imported.rdSizes;
-                renderData.rgReadColors     = imported.rdColors;
-                renderData.rgReadRotations  = imported.rdRotations;
-                renderData.rgAliveCount     = imported.aliveCount;
                 renderData.rgIndirectDrawArgs = imported.indirectDrawArgs;
-                renderData.rgSortIndices     = imported.sortIndices;
                 break;
             }
         }

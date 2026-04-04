@@ -148,22 +148,13 @@ void AddParticleRenderPass(rg::RgBuilder& builder,
         // barrier tracking. The graph will insert UAV->SRV transitions for
         // the read set (which was the previous sim's write set) and
         // UAV->IndirectArgument for the indirect draw args.
+        // Particle attribute buffers are NOT tracked by the render graph —
+        // they are managed by the inline simulation dispatch and read via
+        // bindless ResourceDescriptorHeap[] in the billboard VS/PS.
+        // Only indirect draw args are imported (for IndirectArgument barrier).
         for (const auto& emitter : passDesc.emitters) {
-            if (emitter.rgReadPositions.IsValid()) {
-                pb.Read(emitter.rgReadPositions,  RHIResourceState::ShaderResource);
-                pb.Read(emitter.rgReadVelocities, RHIResourceState::ShaderResource);
-                pb.Read(emitter.rgReadAges,       RHIResourceState::ShaderResource);
-                pb.Read(emitter.rgReadLifespans,  RHIResourceState::ShaderResource);
-                pb.Read(emitter.rgReadSizes,      RHIResourceState::ShaderResource);
-                pb.Read(emitter.rgReadColors,     RHIResourceState::ShaderResource);
-                pb.Read(emitter.rgReadRotations,  RHIResourceState::ShaderResource);
-            }
-            if (emitter.rgAliveCount.IsValid()) {
-                pb.Read(emitter.rgAliveCount,      RHIResourceState::ShaderResource);
+            if (emitter.rgIndirectDrawArgs.IsValid()) {
                 pb.Read(emitter.rgIndirectDrawArgs, RHIResourceState::IndirectArgument);
-            }
-            if (emitter.rgSortIndices.IsValid()) {
-                pb.Read(emitter.rgSortIndices, RHIResourceState::ShaderResource);
             }
         }
 
