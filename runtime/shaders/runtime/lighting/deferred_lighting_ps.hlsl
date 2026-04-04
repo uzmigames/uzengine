@@ -346,21 +346,30 @@ float4 main(FSInput input) : SV_Target {
         float3 diffuseAmbient = (1.0 - metallic) * cosineIrradiance * baseColor
                               * (1.0 - totalScatterDielectric);
 
-        // SSR: blend screen-space reflections with IBL specular
-#ifdef UZ_BINDLESS
-        if (ssrSrvIndex != kSentinelSrvIndex) {
-            Texture2D<float4> ssrTex = ResourceDescriptorHeap[ssrSrvIndex];
-            float4 ssrData = ssrTex.Load(int3(px, 0));
-            if (ssrData.a > 0.001)
-                specularAmbient = lerp(specularAmbient, ssrData.rgb, ssrData.a);
-        }
-#else
+        // SSR: blend screen-space reflections with IBL specular.
+        // Use smooth squared confidence to avoid hard seams at SSR edges.
+        // SSR replaces the radiance (prefiltered cubemap) portion of the specular
+        // but preserves the multi-scatter energy from IBL.
+        // @ref UE5 ReflectionEnvironment.usf — blends SSR with IBL probe
         {
-            float4 ssrData = ssrTextureT11.Load(int3(px, 0));
-            if (ssrData.a > 0.001)
-                specularAmbient = lerp(specularAmbient, ssrData.rgb, ssrData.a);
-        }
+            float4 ssrData = float4(0, 0, 0, 0);
+#ifdef UZ_BINDLESS
+            if (ssrSrvIndex != kSentinelSrvIndex) {
+                Texture2D<float4> ssrTex = ResourceDescriptorHeap[ssrSrvIndex];
+                ssrData = ssrTex.Load(int3(px, 0));
+            }
+#else
+            ssrData = ssrTextureT11.Load(int3(px, 0));
 #endif
+            if (ssrData.a > 0.001) {
+                // Squared falloff for smoother edge transition
+                float ssrWeight = ssrData.a * ssrData.a;
+                // Replace only the single-scatter radiance term; keep multi-scatter IBL
+                float3 ssrSpecular = ssrData.rgb * singleScatter
+                                   + cosineIrradiance * multiScatter;
+                specularAmbient = lerp(specularAmbient, ssrSpecular, ssrWeight);
+            }
+        }
 
         // Horizon occlusion — prevent reflections below surface
         // @ref Lagarde 2012 "Horizon Occlusion for Normal Mapped Reflections"
@@ -400,6 +409,8 @@ float4 main(FSInput input) : SV_Target {
 #endif
 
     // ── Final ─────────────────────────────────────────────────────────────
+    // Clamp direct lighting (Lo) to prevent specular fireflies from D_GGX
+    // at very low roughness. Extreme HDR peaks cause bloom blowout.
     float3 color = Lo + ambient + emissive;
     return float4(max(color, 0.0), 1.0);
 }
