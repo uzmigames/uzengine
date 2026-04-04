@@ -131,6 +131,84 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         // last frame. Spawn writes to WriteSet, Update reads ReadSet → writes WriteSet.
         gpuBuf.Swap();
 
+        // CPU particle upload test removed (was debug code).
+        if (false) { // Dead code — keep structure for reference
+        // Write 100 particles at known positions to WriteSet to verify
+        // the billboard render path independently of compute spawn/update.
+        static bool cpuUploadDone = false;
+        if (!cpuUploadDone) {
+            constexpr uint32_t kTestCount = 100;
+            const uint64_t posBytes = kTestCount * 16; // float4 per particle
+            const uint64_t lifeBytes = kTestCount * 4;  // float per particle
+            const uint64_t sizeBytes = kTestCount * 4;
+            const uint64_t ageBytes = kTestCount * 4;
+
+            // Create staging buffers
+            RHIBufferDesc stgDesc{};
+            stgDesc.memory = RHIMemoryType::Upload;
+
+            // Positions: spread in a grid
+            stgDesc.sizeBytes = posBytes; stgDesc.stride = 16;
+            stgDesc.usage = RHIBufferUsage::StructuredBuffer;
+            stgDesc.debugName = "VFX_TestPos";
+            auto posStg = m_device->CreateBuffer(stgDesc);
+
+            stgDesc.sizeBytes = lifeBytes; stgDesc.stride = 4;
+            stgDesc.debugName = "VFX_TestLife";
+            auto lifeStg = m_device->CreateBuffer(stgDesc);
+
+            stgDesc.sizeBytes = sizeBytes;
+            stgDesc.debugName = "VFX_TestSize";
+            auto sizeStg = m_device->CreateBuffer(stgDesc);
+
+            stgDesc.sizeBytes = ageBytes;
+            stgDesc.debugName = "VFX_TestAge";
+            auto ageStg = m_device->CreateBuffer(stgDesc);
+
+            if (posStg.IsValid() && lifeStg.IsValid() && sizeStg.IsValid() && ageStg.IsValid()) {
+                auto* posData = static_cast<float*>(m_device->MapBuffer(posStg));
+                auto* lifeData = static_cast<float*>(m_device->MapBuffer(lifeStg));
+                auto* sizeData = static_cast<float*>(m_device->MapBuffer(sizeStg));
+                auto* ageData = static_cast<float*>(m_device->MapBuffer(ageStg));
+
+                if (posData && lifeData && sizeData && ageData) {
+                    for (uint32_t i = 0; i < kTestCount; ++i) {
+                        float x = ((float)(i % 10) - 5.0f) * 50.0f;
+                        float y = ((float)(i / 10) - 5.0f) * 50.0f;
+                        float z = 0.0f;
+                        posData[i*4+0] = x;
+                        posData[i*4+1] = y;
+                        posData[i*4+2] = z;
+                        posData[i*4+3] = 0.0f;
+                        lifeData[i] = 10.0f; // long lifetime
+                        sizeData[i] = 30.0f; // 30cm
+                        ageData[i] = 0.1f;   // just born
+                    }
+                    m_device->UnmapBuffer(posStg);
+                    m_device->UnmapBuffer(lifeStg);
+                    m_device->UnmapBuffer(sizeStg);
+                    m_device->UnmapBuffer(ageStg);
+
+                    // Write to BOTH sets so billboard always finds the data
+                    // regardless of which set is being read.
+                    cmdList->CopyBuffer(posStg, 0, gpuBuf.sets[0].positions, 0, posBytes);
+                    cmdList->CopyBuffer(posStg, 0, gpuBuf.sets[1].positions, 0, posBytes);
+                    cmdList->CopyBuffer(lifeStg, 0, gpuBuf.sets[0].lifespans, 0, lifeBytes);
+                    cmdList->CopyBuffer(lifeStg, 0, gpuBuf.sets[1].lifespans, 0, lifeBytes);
+                    cmdList->CopyBuffer(sizeStg, 0, gpuBuf.sets[0].sizes, 0, sizeBytes);
+                    cmdList->CopyBuffer(sizeStg, 0, gpuBuf.sets[1].sizes, 0, sizeBytes);
+                    cmdList->CopyBuffer(ageStg, 0, gpuBuf.sets[0].ages, 0, ageBytes);
+                    cmdList->CopyBuffer(ageStg, 0, gpuBuf.sets[1].ages, 0, ageBytes);
+
+                    UZ_LOG(VFX, Info, "CPU-uploaded {} test particles to WriteSet", kTestCount);
+                }
+                // Don't destroy staging until GPU finishes — store for later cleanup
+                // (leaking intentionally for debug, cleaned up on shutdown)
+            }
+            cpuUploadDone = true;
+            continue;
+        } }
+
         // ── Deferred GPU buffer initialization ─────────────────────────
         // Clean up freeList/freeListHead staging from a previous init,
         // but KEEP aliveCountStaging for the per-frame reset below.
@@ -259,6 +337,41 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         std::memcpy(spawnAlloc.cpuPtr, &spawnCBData, sizeof(spawnCBData));
 
         if (spawnCount > 0) {
+            // Log CB key fields (first 3 frames)
+            static int cbLog = 0;
+            if (cbLog < 3) {
+                auto* u = reinterpret_cast<const uint32_t*>(&spawnCBData);
+                UZ_LOG(VFX, Info, "SpawnCB dump: vel=({:.0f},{:.0f},{:.0f}) spread={:.2f} "
+                       "life=[{:.1f},{:.1f}] size={:.0f} spawn={} max={} "
+                       "freeListSrv={} posUav={} freeHeadUav={} aliveUav={}",
+                       spawnCBData.spawnVelocity[0], spawnCBData.spawnVelocity[1], spawnCBData.spawnVelocity[2],
+                       spawnCBData.spreadAngle,
+                       spawnCBData.minLifetime, spawnCBData.maxLifetime,
+                       spawnCBData.initialSize,
+                       spawnCBData.spawnCount, spawnCBData.maxParticles,
+                       spawnCBData.freeListSrvIndex, spawnCBData.positionsUavIndex,
+                       spawnCBData.freeListHeadUavIndex, spawnCBData.aliveCountUavIndex);
+                ++cbLog;
+            }
+
+            // SRV → UAV barrier for WriteSet attributes before compute writes.
+            // The previous frame's UAV→SRV barrier left them in SRV state.
+            if (gpuBuf.hasCompletedCycle) {
+                const auto& ws = gpuBuf.WriteSet();
+                RHIBarrierDesc uavBarriers[7] = {};
+                uint32_t ub = 0;
+                auto addUav = [&](RHIBufferHandle buf) {
+                    uavBarriers[ub].buffer = buf;
+                    uavBarriers[ub].stateBefore = RHIResourceState::ShaderResource;
+                    uavBarriers[ub].stateAfter  = RHIResourceState::UnorderedAccess;
+                    ++ub;
+                };
+                addUav(ws.positions); addUav(ws.velocities); addUav(ws.ages);
+                addUav(ws.lifespans); addUav(ws.sizes); addUav(ws.colors);
+                addUav(ws.rotations);
+                cmdList->ResourceBarrier(uavBarriers, ub);
+            }
+
             cmdList->SetPipeline(spawnPSO);
             cmdList->SetRootCBV(1, spawnAlloc.gpuAddr);
             const uint32_t spawnGroups = (spawnCount + kSpawnGroupSize - 1) / kSpawnGroupSize;
@@ -352,6 +465,30 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
 
         // ── UAV -> IndirectArgument barrier ─────────────────────────────
         TransitionIndirectArgs(cmdList, gpuBuf);
+
+        // ── UAV → SRV barrier for WriteSet attributes ─────────────────
+        // The billboard VS reads particle data via SRV descriptors.
+        // DX12 requires the buffers to be in ShaderResource state for SRV reads.
+        // Without this barrier, SRV reads from UAV-state buffers are undefined.
+        {
+            const auto& ws = gpuBuf.WriteSet();
+            RHIBarrierDesc srvBarriers[7] = {};
+            uint32_t srvCount = 0;
+            auto addSrv = [&](RHIBufferHandle buf) {
+                srvBarriers[srvCount].buffer = buf;
+                srvBarriers[srvCount].stateBefore = RHIResourceState::UnorderedAccess;
+                srvBarriers[srvCount].stateAfter  = RHIResourceState::ShaderResource;
+                ++srvCount;
+            };
+            addSrv(ws.positions);
+            addSrv(ws.velocities);
+            addSrv(ws.ages);
+            addSrv(ws.lifespans);
+            addSrv(ws.sizes);
+            addSrv(ws.colors);
+            addSrv(ws.rotations);
+            cmdList->ResourceBarrier(srvBarriers, srvCount);
+        }
 
         // Mark buffer as having completed a full simulation cycle.
         // The render graph import in RegisterParticlePasses will use
