@@ -37,12 +37,12 @@ ApplicationConfig VFXViewportApp::Configure() {
     // Camera defaults matching the legacy DemoApplication VFX viewport.
     // Position is in centimeters (engine convention), matching the old demo's
     // {0, -15, 8} meters = {0, -1500, 800} cm.
-    cfg.cameraMoveSpeed = 1500.f;
+    cfg.cameraMoveSpeed = 500.f;
     cfg.cameraPositionX = 0.f;
-    cfg.cameraPositionY = -1500.f;
-    cfg.cameraPositionZ = 800.f;
+    cfg.cameraPositionY = -300.f;
+    cfg.cameraPositionZ = 100.f;
     cfg.cameraYawDeg = 90.f;
-    cfg.cameraPitchDeg = -20.f;
+    cfg.cameraPitchDeg = -5.f;
     cfg.enableValidation = true;
 
     // VFS root: use the demo's content directory if it exists next to the exe,

@@ -208,7 +208,7 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
                             : 0.01f;
         spawnCBData.minLifetime       = minLife;
         spawnCBData.maxLifetime       = emitter->lifetime;
-        spawnCBData.initialSize       = 50.0f; // 50 cm -- visible at camera distance
+        spawnCBData.initialSize       = 100.0f; // 100 cm -- large for debugging
 
         spawnCBData.initialColor[0]   = 1.0f;
         spawnCBData.initialColor[1]   = 1.0f;
