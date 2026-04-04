@@ -25,9 +25,9 @@
 ## 2. Phase 2 — Production Quality
 
 ### 2.1 MikkTSpace Integration
-- [ ] 2.1.1 Add mikktspace C library to `scripts/setup.ps1` — single header+source from https://github.com/mmikk/MikkTSpace.
-- [ ] 2.1.2 Create `runtime/engine/asset/mesh/mikktspace_tangents.h/.cpp` wrapping `genTangSpaceDefault()` with UzEngine vertex format adapter (SMikkTSpaceInterface callbacks).
-- [ ] 2.1.3 Replace built-in Lengyel tangents with MikkTSpace as default. Keep Lengyel as fallback for meshes without UVs.
+- [x] 2.1.1 Added mikktspace C library to `scripts/setup.ps1` (Download-Header + .c file). Compiled via `addCSourceFiles` in build.zig. Include path added.
+- [x] 2.1.2 Created `runtime/engine/asset/mesh/mikktspace_tangents.h/.cpp` with `ComputeMikkTSpaceTangents()` wrapping `genTangSpaceDefault()`. SMikkTSpaceInterface callbacks adapted for VertexPosNormUV.
+- [x] 2.1.3 Replaced Lengyel tangents with MikkTSpace in both FBX and glTF importers. Lengyel `GenerateTangentsForPosNormUV` kept as existing code (not deleted) for fallback.
 - [ ] 2.1.4 Verify MikkTSpace output matches UE5/Unity/Blender tangent space — import same mesh in all 4, compare tangent vectors.
 
 ### 2.2 FBX Smoothing Group Import
