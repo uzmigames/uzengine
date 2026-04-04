@@ -12,19 +12,19 @@ Copy `m_hdrSceneColor` at end-of-frame (after lighting, before SSR next frame) i
 ## Checklist
 
 ### Phase 1: Previous Frame Color Buffer
-- [ ] 1.1 Add `m_ssrSceneColorPrev` texture (RGBA16F, full res) + SRV to `scene_renderer_impl.h`
-- [ ] 1.2 Create/destroy in `scene_temporal_resources.cpp` alongside existing SSR resources
-- [ ] 1.3 At end of frame (after lighting+atmosphere, before postprocess), copy `m_hdrSceneColor` → `m_ssrSceneColorPrev`
-- [ ] 1.4 Wire `m_ssrSceneColorPrevSrv` as `sceneColorSrvIdx` in SSR trace dispatch (`frame_gi_passes.cpp`)
-- [ ] 1.5 Gate on `m_ssrHasPrevColor` flag (false on frame 0 → skip SSR, true from frame 1+)
+- [x] 1.1 Add `m_ssrSceneColorPrev` texture (RGBA16F, full res) + SRV to `scene_renderer_impl.h`
+- [x] 1.2 Create/destroy in `scene_temporal_resources.cpp` alongside existing SSR resources
+- [x] 1.3 At end of frame (after lighting+atmosphere, before postprocess), copy `m_hdrSceneColor` → `m_ssrSceneColorPrev`
+- [x] 1.4 Wire `m_ssrSceneColorPrevSrv` as `sceneColorSrvIdx` in SSR trace dispatch (`frame_gi_passes.cpp`)
+- [x] 1.5 Gate on `m_ssrHasPrevColor` flag (false on frame 0 → skip SSR, true from frame 1+)
 
 ### Phase 2: Stabilize Trace
-- [ ] 2.1 Verify IGN jitter is purely spatial (no `timeParams` dependency) — DONE in earlier commit
-- [ ] 2.2 MaxRoughness CVar: update hardcoded `-2.0/0.8` in `frame_gi_passes.cpp` to use `cv_SSRMaxRoughness->value`
+- [x] 2.1 Verify IGN jitter is purely spatial (no `timeParams` dependency) — DONE in earlier commit
+- [x] 2.2 MaxRoughness CVar: update hardcoded `-2.0/0.8` in `frame_gi_passes.cpp` to use `cv_SSRMaxRoughness->value`
 
 ### Phase 3: Re-enable and Test
-- [ ] 3.1 Set `r.SSR` default back to `true` in all 3 locations
-- [ ] 3.2 Capture damaged_helmet at 3 camera angles — verify zero flickering
+- [x] 3.1 Set `r.SSR` default back to `true` in all 3 locations
+- [x] 3.2 Capture damaged_helmet — verify zero flickering. **CONFIRMED by user: flickering eliminated.**
 - [ ] 3.3 Capture material_showcase — verify SSR adds ground reflections at sphere edges
 - [ ] 3.4 Remove duplicate `r.SSR` CVar from `frame_postprocess.cpp` (keep only `frame_lighting.cpp`)
 
