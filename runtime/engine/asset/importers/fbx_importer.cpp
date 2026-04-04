@@ -19,6 +19,12 @@
 
 #include "engine/asset/mesh/normal_smoother.h"
 #include "engine/asset/mesh/mikktspace_tangents.h"
+#include "cvar.h"
+
+// ── Mesh import CVars ──
+static auto* cv_MeshNormalMode    = UZ_CVAR_INT("r.Mesh.NormalImportMode", 1, "0=Import, 1=Recompute, 2=Auto", 0, 2);
+static auto* cv_MeshSmoothAngle  = UZ_CVAR_FLOAT("r.Mesh.SmoothingAngle", 60.0f, "Hard edge angle threshold (degrees)", 0.0f, 180.0f);
+static auto* cv_MeshTangentMode  = UZ_CVAR_INT("r.Mesh.TangentMode", 0, "0=MikkTSpace, 1=Lengyel, 2=Import", 0, 2);
 
 #include <algorithm>
 #include <array>
@@ -904,9 +910,13 @@ AssetImportResult FbxImporter::Import(
             std::swap(groupIndices[t + 1], groupIndices[t + 2]);
         }
 
-        // Compute smooth normals with FBX smoothing flags when available.
-        // @ref Max 1999 "Weights for Computing Vertex Normals from Facet Normals"
-        ComputeSmoothNormals(groupVertices, groupIndices, 60.0f, groupSmoothFlags);
+        // Compute smooth normals based on import mode CVar.
+        // 0=Import (keep source normals), 1=Recompute (always smooth), 2=Auto
+        const int normalMode = static_cast<int>(cv_MeshNormalMode->value);
+        if (normalMode == 1 || (normalMode == 2 && !hasNormals)) {
+            ComputeSmoothNormals(groupVertices, groupIndices,
+                                 cv_MeshSmoothAngle->value, groupSmoothFlags);
+        }
 
         // Append to global arrays
         for (const uint32_t idx : groupIndices) {
@@ -939,10 +949,18 @@ AssetImportResult FbxImporter::Import(
     }
 
     // ── Generate tangents ──
-    // MikkTSpace tangent generation — industry standard, matches UE5/Unity/Blender.
-    // @ref Mikkelsen 2010 "Simulation of Wrinkled Surfaces Revisited"
+    // Tangent generation based on CVar r.Mesh.TangentMode.
+    // 0=MikkTSpace (industry standard), 1=Lengyel (built-in fallback), 2=Import (skip)
     std::vector<float> allTangents;
-    ComputeMikkTSpaceTangents(allVertices, allIndices, allTangents);
+    const int tangentMode = static_cast<int>(cv_MeshTangentMode->value);
+    if (tangentMode == 0) {
+        ComputeMikkTSpaceTangents(allVertices, allIndices, allTangents);
+    } else if (tangentMode == 1) {
+        GenerateTangentsForPosNormUV(allVertices, allIndices, allTangents);
+    } else {
+        // Import mode — no tangent generation (allTangents stays empty)
+        allTangents.resize(allVertices.size() * 4, 0.0f);
+    }
 
     // ── Meshopt: optimize vertex cache ordering ──
     std::vector<uint32_t> optimizedIndices(allIndices.size());
