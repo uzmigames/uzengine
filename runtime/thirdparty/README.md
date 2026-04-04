@@ -106,8 +106,13 @@ Files extracted from upstream source:
 
 Basis Universal GPU texture compression. Supercompresses textures into an
 intermediate format that can be transcoded to any GPU format at load time
-(BC7, BC1, ASTC, ETC2, PVRTC). Used by the asset pipeline for offline
-texture compression.
+(BC7, BC1, ASTC, ETC2, PVRTC). The `ktx2_transcoder` class handles KTX2
+container parsing with UASTC HDR, UASTC LDR, and ETC1S codec support.
+Used for runtime KTX2/PMREM environment map loading (FastHDR from
+needle.tools) and offline texture compression in the asset pipeline.
+
+KTX2 Zstd supercompression enabled (`BASISD_SUPPORT_KTX2_ZSTD=1`).
+Zstd decompression headers in `zstd/` (copied from vcpkg zstd 1.5.7).
 
 Files extracted from upstream source:
 

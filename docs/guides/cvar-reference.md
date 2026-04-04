@@ -350,6 +350,18 @@ Registered in `application.cpp`, `job_system.cpp`, `vfs.cpp`.
 | `r.Mesh.TangentMode` | int | 0 | [0, 2] | 0=MikkTSpace, 1=Lengyel (fallback), 2=Import (skip) |
 | `r.Mesh.PackedNormals` | bool | false | — | Export meshes with int8x4 packed normals/tangents (32B vs 48B vertex) |
 
+## Texture Formats
+
+Supported HDRI/environment map formats for `cubemap_path` in SkyLight:
+
+| Extension | Loader | Description |
+|-----------|--------|-------------|
+| `.hdr` | stb_image (Radiance RGBE) | Standard HDR panorama |
+| `.exr` | tinyexr (OpenEXR) | High-precision HDR panorama |
+| `.ktx2` | basis_universal ktx2_transcoder | UASTC HDR (FastHDR/PMREM), UASTC LDR, ETC1S. Supports Zstd supercompression. |
+
+KTX2 PMREM files from [needle.tools](https://cloud.needle.tools/hdris) are supported directly — the engine transcodes UASTC HDR → RGBA16Float and uses the panorama as equirectangular input for IBL baking.
+
 ## Render Quality Tuning Log (phase2a-2.50.0)
 
 Changes made during the render quality consensus fixes task, with rationale.

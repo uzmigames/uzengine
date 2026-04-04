@@ -6,7 +6,7 @@
 
 | Version | Date | Highlights |
 |---------|------|------------|
-| [v0.7.0](../docs/changelog/runtime/v0.7.0.md) | 2026-04-04 | AAA analysis, 47 shader CVars, DLSS, MikkTSpace tangents, smooth normals |
+| [v0.7.0](../docs/changelog/runtime/v0.7.0.md) | 2026-04-04 | AAA analysis, 47 CVars, DLSS, KTX2/UASTC HDR, MikkTSpace, smooth normals, ACES tonemap |
 | [v0.6.0](../docs/changelog/runtime/v0.6.0.md) | 2026-04-03 | DXR raytracing infra, DamagedHelmet glTF, material graph pipeline |
 | [v0.5.0](../docs/changelog/runtime/v0.5.0.md) | 2026-04-03 | FLIP metric, SSGI 5-pass, shadow quality, cloud noise |
 | [v0.4.0](../docs/changelog/runtime/v0.4.0.md) | 2026-04-01 | Decal system, LOD, VFX trails/distortion, GPU particle fixes |
