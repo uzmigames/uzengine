@@ -93,7 +93,8 @@ struct AtmosphereFrameContext {
     RHITextureHandle  skyCubemap;
     uint32_t          skyCubemapSrv = UINT32_MAX;
     uint32_t          skyCubemapUav = UINT32_MAX;
-    bool*             skyIBLDirty   = nullptr;
+    bool*             skyIBLDirty       = nullptr;
+    bool*             skyCubemapFilled  = nullptr;  ///< True once sky cubemap has been captured at least once.
 
     // IBL (owned by SceneRenderer)
     IBLBaker*         iblBaker         = nullptr;
@@ -110,6 +111,7 @@ struct AtmosphereFrameContext {
     RHITextureHandle  apVolume;
     uint32_t          apVolumeSrv = UINT32_MAX;
     uint32_t          apVolumeUav = UINT32_MAX;
+    bool*             apVolumeFilled = nullptr;    ///< True once AP volume has been dispatched at least once.
     const float*      invViewProjData = nullptr;  ///< Pointer to 16 floats (row-major invViewProj).
     const Vec3*       cameraPos = nullptr;         ///< Camera world position (cm).
 

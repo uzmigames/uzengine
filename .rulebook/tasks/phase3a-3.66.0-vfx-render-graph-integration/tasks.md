@@ -38,6 +38,7 @@
 - [x] 7.3 Integration test: trail pass produces draw calls in transparent phase — 15 tests verifying TrailPassRenderItem defaults, TrailPassConstants (64 bytes), TrailSystem render data production, material/sortOrder flow, two-trail output.
 - [x] 7.4 Integration test: mesh particle pass produces instanced draw calls — 19 tests verifying ParticleMeshPassConstants (64 bytes), batch item defaults, GPUParticleBuffer mesh buffer allocation (3 buffers), MeshRenderModule config flow, mesh buffer create/destroy leak check, two-batch desc.
 - [ ] 7.5 Barrier validation: run with D3D12 Debug Layer + GPU-Based Validation, zero errors — BLOCKED: VFX demos are headless (mock device). Requires real DX12 rendering demo with VFX system integrated into SceneRenderer.
+- [x] 7.6 Fix DX12 resource state mismatches causing device removal on first frame. (1) Added UAV→CopyDst barrier before aliveCount per-frame reset CopyBuffer in frame_vfx_inline.cpp. (2) Fixed atmosphere texture imports: transmittanceLUT, multiScatterLUT, scatteringLUT3D, delta textures, AP volume, and sky cubemap now import as Common state on first frame (freshly created) instead of UAV/RenderTarget. Added m_apVolumeFilled, m_skyCubemapFilled tracking bools.
 
 ## 8. Visual Verification
 

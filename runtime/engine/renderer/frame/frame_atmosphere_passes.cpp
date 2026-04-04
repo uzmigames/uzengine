@@ -79,6 +79,7 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
     atmoCtx.skyCubemapSrv       = m_skyCubemapSrv;
     atmoCtx.skyCubemapUav       = m_skyCubemapUav;
     atmoCtx.skyIBLDirty         = &m_skyIBLDirty;
+    atmoCtx.skyCubemapFilled    = &m_skyCubemapFilled;
     atmoCtx.iblBaker            = m_iblBaker.get();
     atmoCtx.iblResult           = &m_iblResult;
     atmoCtx.brdfLutSrvIndex     = m_brdfLutSrvIndex;
@@ -87,6 +88,7 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
     atmoCtx.apVolume            = m_apVolume;
     atmoCtx.apVolumeSrv         = m_apVolumeSrv;
     atmoCtx.apVolumeUav         = m_apVolumeUav;
+    atmoCtx.apVolumeFilled      = &m_apVolumeFilled;
     atmoCtx.invViewProjData     = reinterpret_cast<const float*>(&ctx.perFrame.invViewProj);
     atmoCtx.cameraPos           = reinterpret_cast<const Vec3*>(&ctx.perFrame.cameraPos);
     atmoCtx.depthSrvIndex       = m_gbuffer.depthSRV;

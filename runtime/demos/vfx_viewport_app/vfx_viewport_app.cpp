@@ -43,7 +43,7 @@ ApplicationConfig VFXViewportApp::Configure() {
     cfg.cameraPositionZ = 800.f;
     cfg.cameraYawDeg = 90.f;
     cfg.cameraPitchDeg = -20.f;
-    cfg.enableValidation = false; // Atmosphere barrier mismatches trigger device removal in debug layer
+    cfg.enableValidation = false; // Disabled: first-frame resource state mismatches cause device removal
 
     // VFS root: use the demo's content directory if it exists next to the exe,
     // otherwise fall back to the default assets/ directory.

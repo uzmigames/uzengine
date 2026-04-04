@@ -89,9 +89,11 @@ void AddAtmospherePasses(
         // ── Transmittance LUT — import every frame so RG can track state ──
         rg::RgResourceId lutRes;
         if (ctx.transmittanceLut.IsValid()) {
+            // First frame: texture was just created and is in Common state.
+            // Subsequent frames: SRV after being read by sky/aerial passes.
             RHIResourceState lutImportState = *ctx.transmittanceLutFilled
                 ? RHIResourceState::ShaderResource
-                : RHIResourceState::UnorderedAccess;
+                : RHIResourceState::Common;
             lutRes = rgBuilder.ImportTexture("TransmittanceLUT",
                 ctx.transmittanceLut, lutImportState);
         }
@@ -203,8 +205,14 @@ void AddAtmospherePasses(
 
             if (ctx.bindless && ctx.skyCubemapUav != UINT32_MAX) {
                 // ── Compute shader path (SM6.6 bindless) ─────────────────
+                // First capture: cubemap is freshly created in Common state.
+                // Subsequent captures: render graph left it in UAV after CS write.
+                const RHIResourceState cubeImportState =
+                    (ctx.skyCubemapFilled && *ctx.skyCubemapFilled)
+                        ? RHIResourceState::UnorderedAccess
+                        : RHIResourceState::Common;
                 auto cubeRes = rgBuilder.ImportTexture(
-                    "SkyCubemap", ctx.skyCubemap, RHIResourceState::UnorderedAccess);
+                    "SkyCubemap", ctx.skyCubemap, cubeImportState);
 
                 SkyCubemapCaptureRootConstants cubeRC{};
                 cubeRC.bottomRadiusKm      = skyComp.bottomRadiusKm;
@@ -241,8 +249,14 @@ void AddAtmospherePasses(
                 AddSkyCubemapCapturePass(rgBuilder, cubePassDesc);
             } else {
                 // ── Pixel shader path (SM5, no bindless) ─────────────────
+                // First capture: cubemap is freshly created in Common state.
+                // Subsequent captures: render graph left it in RenderTarget.
+                const RHIResourceState cubePSImportState =
+                    (ctx.skyCubemapFilled && *ctx.skyCubemapFilled)
+                        ? RHIResourceState::RenderTarget
+                        : RHIResourceState::Common;
                 auto cubeRes = rgBuilder.ImportTexture(
-                    "SkyCubemap", ctx.skyCubemap, RHIResourceState::RenderTarget);
+                    "SkyCubemap", ctx.skyCubemap, cubePSImportState);
 
                 SkyCubemapCapturePSRootConstants psRC{};
                 psRC.bottomRadiusKm      = skyComp.bottomRadiusKm;
@@ -262,6 +276,7 @@ void AddAtmospherePasses(
                 psPassDesc.rootConstants       = psRC;
                 AddSkyCubemapCapturePSPass(rgBuilder, psPassDesc);
             }
+            if (ctx.skyCubemapFilled) *ctx.skyCubemapFilled = true;
         }
 
         // ── Build SkyAtmosphereCB ─────────────────────────────────────────
@@ -332,9 +347,10 @@ void AddAtmospherePasses(
         // ── Multi-Scattering LUT pass ─────────────────────────────────
         rg::RgResourceId msLutRes;
         if (ctx.multiScatterLut.IsValid()) {
+            // First frame: texture was just created and is in Common state.
             RHIResourceState msImportState = *ctx.multiScatterLutFilled
                 ? RHIResourceState::ShaderResource
-                : RHIResourceState::UnorderedAccess;
+                : RHIResourceState::Common;
             msLutRes = rgBuilder.ImportTexture("MultiScatterLUT",
                 ctx.multiScatterLut, msImportState);
         }
@@ -421,9 +437,10 @@ void AddAtmospherePasses(
         // ── Scattering LUT 3D — import every frame so RG can track state ──
         rg::RgResourceId scatRes;
         if (ctx.scatteringLut3D.IsValid() && ctx.scatteringLut3DFilled) {
+            // First frame: texture was just created and is in Common state.
             RHIResourceState scatImportState = *ctx.scatteringLut3DFilled
                 ? RHIResourceState::ShaderResource
-                : RHIResourceState::UnorderedAccess;
+                : RHIResourceState::Common;
             scatRes = rgBuilder.ImportTexture("ScatteringLUT3D",
                 ctx.scatteringLut3D, scatImportState);
         }
@@ -443,17 +460,25 @@ void AddAtmospherePasses(
         if (*ctx.scatteringLut3DDirty && ctx.scatteringLut3D.IsValid()
             && *ctx.transmittanceLutFilled && ctx.deltaRayleigh3D.IsValid()) {
 
-            // Import helper textures into the render graph (scatRes already imported above)
+            // Import helper textures into the render graph (scatRes already imported above).
+            // First precompute: textures are freshly created in Common state.
+            // Subsequent recomputes (parameter change): render graph left them in
+            // their last-used state, which varies per texture — but the render
+            // graph handles the transition correctly as long as the import state
+            // matches reality. On first run, Common is correct.
+            const RHIResourceState deltaInitState = *ctx.scatteringLut3DFilled
+                ? RHIResourceState::UnorderedAccess
+                : RHIResourceState::Common;
             rg::RgResourceId deltaRayRes = rgBuilder.ImportTexture("DeltaRayleigh3D",
-                ctx.deltaRayleigh3D, RHIResourceState::UnorderedAccess);
+                ctx.deltaRayleigh3D, deltaInitState);
             rg::RgResourceId deltaMieRes = rgBuilder.ImportTexture("DeltaMie3D",
-                ctx.deltaMie3D, RHIResourceState::UnorderedAccess);
+                ctx.deltaMie3D, deltaInitState);
             rg::RgResourceId scatDensRes = rgBuilder.ImportTexture("ScatteringDensity3D",
-                ctx.scatteringDensity3D, RHIResourceState::UnorderedAccess);
+                ctx.scatteringDensity3D, deltaInitState);
             rg::RgResourceId irrRes = rgBuilder.ImportTexture("IrradianceLUT",
-                ctx.irradianceLut, RHIResourceState::UnorderedAccess);
+                ctx.irradianceLut, deltaInitState);
             rg::RgResourceId deltaIrrRes = rgBuilder.ImportTexture("DeltaIrradiance",
-                ctx.deltaIrradiance, RHIResourceState::UnorderedAccess);
+                ctx.deltaIrradiance, deltaInitState);
 
             // Common root constants (same atmosphere params as transmittance LUT)
             TransmittanceLutRootConstants scatRC{};
@@ -739,8 +764,16 @@ void AddAtmospherePasses(
         if (ctx.apVolume.IsValid() && ctx.apVolumeUav != UINT32_MAX
             && *ctx.transmittanceLutFilled && ctx.invViewProjData && ctx.cameraPos) {
 
+            // First frame: texture was just created and is in Common state.
+            // Subsequent frames: compute pass left it in UAV (the sky pass
+            // reads it via bindless SRV without a render graph dependency).
+            const RHIResourceState apImportState =
+                (ctx.apVolumeFilled && *ctx.apVolumeFilled)
+                    ? RHIResourceState::UnorderedAccess
+                    : RHIResourceState::Common;
             rg::RgResourceId apRes = rgBuilder.ImportTexture("APVolume",
-                ctx.apVolume, RHIResourceState::UnorderedAccess);
+                ctx.apVolume, apImportState);
+            if (ctx.apVolumeFilled) *ctx.apVolumeFilled = true;
 
             APVolumeRootConstants apRC{};
             apRC.rayleighBetaX  = skyComp.rayleighScattering.x;

@@ -153,6 +153,16 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         // and the free list eventually exhausts (particles stop spawning).
         // This matches the standalone demo's per-frame aliveCount reset.
         if (gpuBuf.aliveCountStaging.IsValid()) {
+            // Transition aliveCount to CopyDst before the copy.
+            // After InitializeData the buffer is in UAV state (CopyDst→UAV
+            // barrier emitted by InitializeData). DX12 requires the
+            // destination of CopyBuffer to be in CopyDst state.
+            RHIBarrierDesc preCopy{};
+            preCopy.buffer      = gpuBuf.aliveCount;
+            preCopy.stateBefore = RHIResourceState::UnorderedAccess;
+            preCopy.stateAfter  = RHIResourceState::CopyDst;
+            cmdList->ResourceBarrier(&preCopy, 1);
+
             cmdList->CopyBuffer(gpuBuf.aliveCountStaging, 0,
                                 gpuBuf.aliveCount, 0, sizeof(uint32_t));
             // CopyDst → UAV barrier so spawn CS can atomically increment.

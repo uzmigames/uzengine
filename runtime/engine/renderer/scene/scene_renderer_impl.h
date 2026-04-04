@@ -78,6 +78,7 @@
     RHITextureHandle m_apVolume;                   ///< 32x32x16 RGBA16F 3D AP volume texture.
     uint32_t m_apVolumeSrv = UINT32_MAX;           ///< SRV index for deferred lighting sampling.
     uint32_t m_apVolumeUav = UINT32_MAX;           ///< UAV index for compute write.
+    bool m_apVolumeFilled = false;                 ///< True once AP volume has been dispatched at least once (state = UAV).
 
     // ── Multi-Scattering LUT ──────────────────────────────────────────────
 
@@ -126,6 +127,7 @@
     uint32_t m_skyCubemapSrv = UINT32_MAX;         ///< SRV index for IBL baker input.
     uint32_t m_skyCubemapUav = UINT32_MAX;         ///< UAV index for compute write.
     bool m_skyIBLDirty = true;                     ///< True when sky cubemap needs re-capture.
+    bool m_skyCubemapFilled = false;               ///< True once the sky cubemap has been captured at least once.
     IBLBaker::BakeResult m_iblResult;              ///< Irradiance + prefiltered SRV indices.
     uint32_t m_brdfLutSrvIndex = UINT32_MAX;       ///< BRDF LUT SRV (baked once at init).
     SHCoefficients m_skyIrradianceSH;              ///< L2 SH for sky diffuse irradiance.

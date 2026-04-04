@@ -249,15 +249,21 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
 
     // ── Import render graph resources ──────────────────────────────────
     RHITextureHandle backBuffer = ctx.swapChain->GetCurrentBackBuffer();
+    // On the first frame, textures start in Common state (freshly created).
+    // On subsequent frames, they're in the state left by the previous frame's passes.
+    const bool firstFrame = (ctx.frameIndex == 0);
+    const RHIResourceState initialSRV = firstFrame ? RHIResourceState::Common : RHIResourceState::ShaderResource;
+    const RHIResourceState initialRT  = firstFrame ? RHIResourceState::Common : RHIResourceState::RenderTarget;
+
     ctx.bbRes       = rgBuilder.ImportTexture("Backbuffer", backBuffer, RHIResourceState::Present);
-    ctx.hdrRes      = rgBuilder.ImportTexture("HDR_SceneColor", m_hdrSceneColor, RHIResourceState::RenderTarget);
-    ctx.albedoRes   = rgBuilder.ImportTexture("GBuf_Albedo",    m_gbuffer.albedo,     RHIResourceState::ShaderResource);
-    ctx.normalRes   = rgBuilder.ImportTexture("GBuf_Normal",    m_gbuffer.normal,     RHIResourceState::ShaderResource);
-    ctx.depthRes    = rgBuilder.ImportTexture("GBuf_Depth",     m_gbuffer.depth,      RHIResourceState::ShaderResource);
-    ctx.positionRes = rgBuilder.ImportTexture("GBuf_Position",  m_gbuffer.positionWS, RHIResourceState::ShaderResource);
-    ctx.emissiveRes = rgBuilder.ImportTexture("GBuf_Emissive",  m_gbuffer.emissive,   RHIResourceState::ShaderResource);
-    ctx.velocityRes = rgBuilder.ImportTexture("GBuf_Velocity",  m_gbuffer.velocity,   RHIResourceState::ShaderResource);
-    ctx.shadowAtlasRes = rgBuilder.ImportTexture("ShadowAtlas", m_shadowAtlas.GetTexture(), RHIResourceState::ShaderResource);
+    ctx.hdrRes      = rgBuilder.ImportTexture("HDR_SceneColor", m_hdrSceneColor, initialRT);
+    ctx.albedoRes   = rgBuilder.ImportTexture("GBuf_Albedo",    m_gbuffer.albedo,     initialSRV);
+    ctx.normalRes   = rgBuilder.ImportTexture("GBuf_Normal",    m_gbuffer.normal,     initialSRV);
+    ctx.depthRes    = rgBuilder.ImportTexture("GBuf_Depth",     m_gbuffer.depth,      firstFrame ? RHIResourceState::Common : RHIResourceState::DepthStencilWrite);
+    ctx.positionRes = rgBuilder.ImportTexture("GBuf_Position",  m_gbuffer.positionWS, initialSRV);
+    ctx.emissiveRes = rgBuilder.ImportTexture("GBuf_Emissive",  m_gbuffer.emissive,   initialSRV);
+    ctx.velocityRes = rgBuilder.ImportTexture("GBuf_Velocity",  m_gbuffer.velocity,   initialSRV);
+    ctx.shadowAtlasRes = rgBuilder.ImportTexture("ShadowAtlas", m_shadowAtlas.GetTexture(), initialSRV);
 
     // ── DBuffer resource imports (decal system) ──────────────────────────
     if (m_dbufferA.IsValid() && m_dbufferB.IsValid() && m_dbufferC.IsValid()) {
