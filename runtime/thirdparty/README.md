@@ -380,6 +380,28 @@ Files extracted from upstream source:
 - `LICENSE`
 
 
+## mikktspace
+
+- Upstream: https://github.com/mmikk/MikkTSpace
+- Version: git (master, 2024)
+- License: Public Domain (zlib-style)
+
+Industry-standard tangent space generation by Morten S. Mikkelsen. Produces
+tangent frames compatible with normal maps baked in Blender, Substance,
+xNormal, UE5, and Unity. Single header+source (mikktspace.h, mikktspace.c).
+
+The UzEngine wrapper (`engine/asset/mesh/mikktspace_tangents.h`) implements
+the `SMikkTSpaceInterface` callbacks for the `VertexPosNormUV` vertex format.
+Called during FBX and glTF import when tangent attributes are missing.
+
+Files extracted from upstream source:
+
+- `mikktspace.h` (API declarations)
+- `mikktspace.c` (implementation)
+
+@ref Mikkelsen 2010 "Simulation of Wrinkled Surfaces Revisited"
+
+
 ## luajit
 
 - Upstream: https://github.com/LuaJIT/LuaJIT
