@@ -1,10 +1,7 @@
-# UE5 Rendering CVars Analysis — Complete Reference Index
+# Analysis Index — Engine Architecture & Rendering References
 
-**Status**: COMPLETE  
-**Date**: 2026-04-04  
-**Source**: UE5 5.6 (W:\UE_5.6_Source\Engine\Source\Runtime\Renderer\Private)  
-**Total CVars Documented**: 1,000+  
-**Total Documentation**: 1,750 lines, 67KB
+**Last Updated**: 2026-04-04  
+**Documents**: 4 major analysis suites
 
 ---
 
@@ -26,9 +23,11 @@
 
 ---
 
-## Document Breakdown
+## Document Suites
 
-### 1. ue5-rendering-cvars-reference.md (608 lines)
+### Suite A: UE5 Rendering CVars (1,750 lines, 67KB)
+
+#### 1. ue5-rendering-cvars-reference.md (608 lines)
 
 **Complete reference of all rendering CVars from UE5 5.6**
 
@@ -45,9 +44,7 @@ Organized by 20 categories:
 
 Each CVar includes: name, type, default, range, description
 
----
-
-### 2. uzengine-cvar-implementation-guide.md (482 lines)
+#### 2. uzengine-cvar-implementation-guide.md (482 lines)
 
 **7-step process to implement CVars**
 
@@ -61,9 +58,7 @@ Each CVar includes: name, type, default, range, description
 
 Includes complete code examples for each step.
 
----
-
-### 3. cvar-architecture-antipatterns.md (577 lines)
+#### 3. cvar-architecture-antipatterns.md (577 lines)
 
 **10 anti-patterns to avoid**
 
@@ -80,11 +75,54 @@ Includes complete code examples for each step.
 
 Includes WRONG/CORRECT code examples for each.
 
----
-
-### 4. README.md (84 lines)
+#### 4. README.md (84 lines)
 
 **Quick-start overview and navigation**
+
+---
+
+### Suite B: Godot 4 Architecture Analysis (1,200+ lines, 42KB)
+
+#### 5. godot4-normal-smoothing-analysis.md (550+ lines)
+
+**Deep analysis of Godot 4's mesh normal smoothing and tangent generation**
+
+Topics:
+- Smoothing group mechanism (uint32 per vertex)
+- Normal averaging algorithm (unweighted face normal sums)
+- Tangent generation via mikktspace library
+- Normal encoding (uncompressed Vector3, optional octahedral compression)
+- Import pipeline (FBX vs glTF handling)
+- Comparison with UE5 (angle-weighted vs group-based)
+- Runtime modification (MeshDataTool)
+- Implementation recommendations for DX12 engines
+
+Key insight: Godot's smoothing groups are simpler than UE5's edge-based approach but equally effective.
+
+---
+
+### Suite C: UE5 SSR Architecture (450+ lines, 18KB)
+
+#### 6. ue5-ssr-architecture.md
+
+**Screen-space reflection pipeline, parameters, quality tiers**
+
+---
+
+## Key Resources by Task Type
+
+### For Normal Smoothing / Mesh Import
+- **Start here:** godot4-normal-smoothing-analysis.md (Section 1: Smoothing Group System)
+- **Implementation:** Section 11: Recommendations for UzEngine
+- **Comparison:** Section 12: Godot vs UE5 vs Industry
+
+### For Rendering Quality Parity
+- **Start here:** ue5-rendering-cvars-reference.md
+- **Implementation:** uzengine-cvar-implementation-guide.md
+- **Anti-patterns:** cvar-architecture-antipatterns.md
+
+### For Advanced Rendering
+- **SSR:** ue5-ssr-architecture.md
 
 ---
 
