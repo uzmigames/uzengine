@@ -19,6 +19,7 @@ cbuffer RootConstants : register(b0)
     uint bloomIntensityBits;  // float reinterpreted as uint
     uint lensFlareSrvIndex;
     uint lutSrvIndex;
+    uint tonemapOperator;     // 0=Hill ACES, 1=Narkowicz ACES, 2=Reinhard, 3=Hable, 4=Linear
 };
 #endif
 
@@ -68,14 +69,6 @@ struct PSIn { float4 position : SV_Position; float2 texCoord : TEXCOORD0; };
 
 float4 main(PSIn i) : SV_Target
 {
-    // DEBUG: sample HDR and output raw (no tonemap)
-#ifdef UZ_BINDLESS
-    {
-        Texture2D<float4> hdr = ResourceDescriptorHeap[hdrSrvIndex];
-        float3 raw = hdr.SampleLevel(samClamp, i.texCoord, 0).rgb;
-        return float4(raw, 1.0);
-    }
-#endif
     float2 uv = i.texCoord;
 
     // ── Chromatic aberration ──────────────────────────────────────────────
@@ -148,12 +141,23 @@ float4 main(PSIn i) : SV_Target
     float midgray = 0.18;
     color = pow(max(color / midgray, 0.0), colorContrast) * midgray;
 
-    // ── ACES Filmic Tonemap ───────────────────────────────────────────────
-    // @ref Hill 2016 "ACES Fitted Curves" — RRT+ODT matrix fit.
-    // Better hue preservation than Narkowicz in saturated highlights.
+    // ── Tone Mapping ─────────────────────────────────────────────────────
+    // Selectable operator via root constant (CVar r.TonemapOperator).
     // Pre-exposure of 0.6 matches Falcor's toneMapAces reference.
     color *= 0.6;
+#ifdef UZ_BINDLESS
+    switch (tonemapOperator)
+    {
+    default:
+    case 0: color = ACESHillFit(color); break;        // @ref Hill 2016 "ACES Fitted Curves"
+    case 1: color = ACESFilmic(color); break;          // @ref Narkowicz 2015 "ACES Filmic"
+    case 2: color = ReinhardTonemap(color); break;     // @ref Reinhard 2002
+    case 3: color = HableUncharted2(color) / HableUncharted2(float3(11.2,11.2,11.2)); break; // @ref Hable 2010
+    case 4: break;                                      // Linear (no tonemapping)
+    }
+#else
     color = ACESHillFit(color);
+#endif
 
     // ── 3D LUT color grading ──────────────────────────────────────────────
 #ifdef UZ_BINDLESS

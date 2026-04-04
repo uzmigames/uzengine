@@ -25,6 +25,8 @@ static auto* cv_SSR             = UZ_CVAR_BOOL("r.SSR", true, "Screen-space refl
 static auto* cv_MotionBlur      = UZ_CVAR_BOOL("r.MotionBlur", true, "Motion blur");
 static auto* cv_DOF             = UZ_CVAR_BOOL("r.DOF", false, "Depth of field");
 static auto* cv_CAS             = UZ_CVAR_BOOL("r.CAS", true, "Contrast adaptive sharpening");
+static auto* cv_TonemapOp       = UZ_CVAR_INT("r.TonemapOperator", 0,
+    "Tonemap: 0=Hill ACES, 1=Narkowicz ACES, 2=Reinhard, 3=Hable, 4=Linear", 0, 4);
 static auto* cv_DOFFocusDist    = UZ_CVAR_FLOAT("r.DOF.FocusDistance", 0.f, "DOF focus distance (cm)", 0.f, 100000.f);
 static auto* cv_DOFAperture     = UZ_CVAR_FLOAT("r.DOF.Aperture", 4.f, "DOF f-stop number", 0.5f, 32.f);
 static auto* cv_DOFFocalRegion  = UZ_CVAR_FLOAT("r.DOF.FocalRegion", 0.f, "In-focus zone width (cm)", 0.f, 10000.f);
@@ -183,8 +185,9 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 uint32_t bloomIntensityBits = 0;
                 std::memcpy(&bloomIntensityBits, &bloomIntensity, sizeof(float));
 
-                uint32_t indices[5] = { capturedTonemapSrv, bloomSrvIdx, bloomIntensityBits, 0, 0 };
-                cmd->SetRootConstants(kSlotRootConstants, indices, 5);
+                uint32_t indices[6] = { capturedTonemapSrv, bloomSrvIdx, bloomIntensityBits, 0, 0,
+                                        static_cast<uint32_t>(cv_TonemapOp->value) };
+                cmd->SetRootConstants(kSlotRootConstants, indices, 6);
 
                 static bool loggedOnce = false;
                 if (!loggedOnce) {
@@ -729,8 +732,9 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                                          ? m_colorGradingLutSrv : 0u;
 
             // Read from the final post-process output (DOF > motion blur > TAA > raw HDR).
-            uint32_t indices[5] = { ctx.postDofSrvForTonemap, bloomSrvIdx, bloomIntensityBits, lensFlareSrvIdx, lutSrvIdx };
-            cmd->SetRootConstants(kSlotRootConstants, indices, 5);
+            uint32_t indices[6] = { ctx.postDofSrvForTonemap, bloomSrvIdx, bloomIntensityBits, lensFlareSrvIdx, lutSrvIdx,
+                                    static_cast<uint32_t>(cv_TonemapOp->value) };
+            cmd->SetRootConstants(kSlotRootConstants, indices, 6);
 
             // SM5/SM6.0: bind all textures via SetFragmentTexture.
             // CRITICAL: every slot the shader reads MUST be explicitly bound —
