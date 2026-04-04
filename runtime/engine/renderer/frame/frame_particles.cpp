@@ -157,7 +157,7 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
         ids.wrRotations  = rgBuilder.ImportBuffer("VFX_WrRot",  ws.rotations,  writeSetState);
 
         // Import read-set attribute buffers.
-        const auto& rs = gpuBuf.ReadSet();
+        const auto& rs = gpuBuf.WriteSet();
         ids.rdPositions  = rgBuilder.ImportBuffer("VFX_RdPos",  rs.positions,  readSetState);
         ids.rdVelocities = rgBuilder.ImportBuffer("VFX_RdVel",  rs.velocities, readSetState);
         ids.rdAges       = rgBuilder.ImportBuffer("VFX_RdAge",  rs.ages,       readSetState);
@@ -260,7 +260,7 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
             SortEmitterDispatch sd{};
             sd.sort               = &gpuBuf.sort;
             sd.aliveCount         = emitter->cpuAliveCount;
-            sd.positionsSrvIndex  = m_device->GetBufferSRVIndex(gpuBuf.ReadSet().positions);
+            sd.positionsSrvIndex  = m_device->GetBufferSRVIndex(gpuBuf.WriteSet().positions);
             sd.rgReadPositions    = importedPtr->rdPositions;
             sd.rgSortKeys         = importedPtr->sortKeys;
             sd.rgSortIndices      = importedPtr->sortIndices;
@@ -381,7 +381,7 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
 
         // Bindless indices CB (b0) -- SRV indices for read-set attribute buffers
         // and PS texture indices. Must match HLSL VFXBillboardConstants (48 bytes).
-        const auto& readSet = gpuBuf.ReadSet();
+        const auto& readSet = gpuBuf.WriteSet();
         ParticleBillboardIndices indicesData{};
         indicesData.positionBufferIdx    = m_device->GetBufferSRVIndex(readSet.positions);
         indicesData.sizeBufferIdx        = m_device->GetBufferSRVIndex(readSet.sizes);
@@ -591,7 +591,7 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
             if (!importedPtr) continue;
 
             // Fill the instance CS constant buffer.
-            const auto& readSet = gpuBuf.ReadSet();
+            const auto& readSet = gpuBuf.WriteSet();
 
             VFXMeshInstanceConstants instanceCBData{};
             instanceCBData.aliveCount    = emitter->cpuAliveCount;

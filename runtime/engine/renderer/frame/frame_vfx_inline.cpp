@@ -103,7 +103,7 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
     // Using a separate buffer avoids corrupting positions or sizes.
     if (!m_vfxDummyDynParams.IsValid()) {
         RHIBufferDesc dummyDesc{};
-        dummyDesc.sizeBytes = 16 * 1024; // 1024 float4 entries (arbitrary, enough for most emitters)
+        dummyDesc.sizeBytes = 16 * 16384; // 16384 float4 entries (covers max emitter capacity)
         dummyDesc.stride = 16;           // sizeof(float4)
         dummyDesc.usage = RHIBufferUsage::StructuredBuffer | RHIBufferUsage::UnorderedAccess;
         dummyDesc.memory = RHIMemoryType::Default;
@@ -121,10 +121,9 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         auto& gpuBuf = emitter->buffer;
         if (!gpuBuf.IsValid()) continue;
 
-        // ── Swap ping-pong buffers ─────────────────────────────────────
-        // After swap, WriteSet() is the buffer we will write simulation
-        // results into, ReadSet() is the buffer with last frame's data.
-        gpuBuf.Swap();
+        // No ping-pong swap — in-place simulation (read + write same set).
+        // Both spawn and update operate on WriteSet. Billboard reads WriteSet.
+        // gpuBuf.Swap(); // Disabled: using single-buffer in-place update.
 
         // ── Deferred GPU buffer initialization ─────────────────────────
         // Clean up freeList/freeListHead staging from a previous init,
@@ -262,17 +261,18 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         updateCBData.frameNumber = frameIndex;
         updateCBData.maxParticles = gpuBuf.capacity;
 
-        // Bindless descriptor indices: READ set (SRV) -- ping-pong read.
-        const auto& readSet = gpuBuf.ReadSet();
-        updateCBData.positionsSrvIndex  = m_device->GetBufferSRVIndex(readSet.positions);
-        updateCBData.velocitiesSrvIndex = m_device->GetBufferSRVIndex(readSet.velocities);
-        updateCBData.agesSrvIndex       = m_device->GetBufferSRVIndex(readSet.ages);
-        updateCBData.lifespansSrvIndex  = m_device->GetBufferSRVIndex(readSet.lifespans);
-        updateCBData.sizesSrvIndex      = m_device->GetBufferSRVIndex(readSet.sizes);
-        updateCBData.colorsSrvIndex     = m_device->GetBufferSRVIndex(readSet.colors);
-        updateCBData.rotationsSrvIndex  = m_device->GetBufferSRVIndex(readSet.rotations);
+        // In-place update: use WRITE set for BOTH read AND write (no ping-pong).
+        // The spawn shader already wrote to the write set, so reading from
+        // the same set picks up newly spawned particle data immediately.
+        // This matches the standalone demo's proven approach.
+        updateCBData.positionsSrvIndex  = m_device->GetBufferSRVIndex(writeSet.positions);
+        updateCBData.velocitiesSrvIndex = m_device->GetBufferSRVIndex(writeSet.velocities);
+        updateCBData.agesSrvIndex       = m_device->GetBufferSRVIndex(writeSet.ages);
+        updateCBData.lifespansSrvIndex  = m_device->GetBufferSRVIndex(writeSet.lifespans);
+        updateCBData.sizesSrvIndex      = m_device->GetBufferSRVIndex(writeSet.sizes);
+        updateCBData.colorsSrvIndex     = m_device->GetBufferSRVIndex(writeSet.colors);
+        updateCBData.rotationsSrvIndex  = m_device->GetBufferSRVIndex(writeSet.rotations);
 
-        // Bindless descriptor indices: WRITE set (UAV) -- ping-pong write.
         updateCBData.positionsUavIndex  = m_device->GetBufferUAVIndex(writeSet.positions);
         updateCBData.velocitiesUavIndex = m_device->GetBufferUAVIndex(writeSet.velocities);
         updateCBData.agesUavIndex       = m_device->GetBufferUAVIndex(writeSet.ages);
