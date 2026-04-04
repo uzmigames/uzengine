@@ -57,7 +57,9 @@ float2 BlockerSearchPCSS(float2 atlasUV, float receiverDepth, float searchRadius
 /// @ref Fernando 2005 — penumbra estimation from blocker depth
 float EstimatePenumbraPCSS(float receiverDepth, float avgBlockerDepth, float lightSize) {
     float penumbra = lightSize * (receiverDepth - avgBlockerDepth) / max(avgBlockerDepth, 1e-6);
-    return clamp(penumbra, shadowPCSSMinPenumbra, shadowPCSSMaxPenumbra);
+    float pcssMin = (shadowPCSSMinPenumbra > 0.01) ? shadowPCSSMinPenumbra : 0.5;
+    float pcssMax = (shadowPCSSMaxPenumbra > 0.01) ? shadowPCSSMaxPenumbra : 16.0;
+    return clamp(penumbra, pcssMin, pcssMax);
 }
 
 // ─── Exponential Shadow Map (ESM) ────────────────────────────────────────
@@ -69,7 +71,8 @@ float SampleShadowESM(float2 atlasUV, float receiverDepth,
                        float2 atlasMin, float2 atlasMax) {
     float2 sUV = clamp(atlasUV, atlasMin, atlasMax);
     float occluderDepth = atlas.Load(int3(int2(sUV * atlasSize), 0));
-    return saturate(exp(-shadowESMExponent * (receiverDepth - occluderDepth)));
+    float esmC = (shadowESMExponent > 1.0) ? shadowESMExponent : 80.0;
+    return saturate(exp(-esmC * (receiverDepth - occluderDepth)));
 }
 
 // ─── Enhanced Shadow Cascade Sampling ────────────────────────────────────

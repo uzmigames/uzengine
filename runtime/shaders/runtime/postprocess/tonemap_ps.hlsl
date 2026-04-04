@@ -143,20 +143,20 @@ float4 main(PSIn i) : SV_Target
 
     // ── Tone Mapping ─────────────────────────────────────────────────────
     // Selectable operator via root constant (CVar r.TonemapOperator).
-    // Pre-exposure of 0.6 matches Falcor's toneMapAces reference.
-    color *= 0.6;
+    // Pre-exposure of 0.6 matches Falcor reference for ACES operators.
+    // Both Hill and Narkowicz fits expect pre-scaled input.
 #ifdef UZ_BINDLESS
     switch (tonemapOperator)
     {
     default:
-    case 0: color = ACESHillFit(color); break;        // @ref Hill 2016 "ACES Fitted Curves"
-    case 1: color = ACESFilmic(color); break;          // @ref Narkowicz 2015 "ACES Filmic"
-    case 2: color = ReinhardTonemap(color); break;     // @ref Reinhard 2002
+    case 0: color = ACESHillFit(color * 0.6); break;              // @ref Hill 2016 "ACES Fitted Curves"
+    case 1: color = ACESFilmic(color * 0.6); break;               // @ref Narkowicz 2015 "ACES Filmic"
+    case 2: color = ReinhardTonemap(color); break;                 // @ref Reinhard 2002
     case 3: color = HableUncharted2(color) / HableUncharted2(float3(11.2,11.2,11.2)); break; // @ref Hable 2010
-    case 4: break;                                      // Linear (no tonemapping)
+    case 4: break;                                                  // Linear (no tonemapping)
     }
 #else
-    color = ACESHillFit(color);
+    color = ACESHillFit(color * 0.6);
 #endif
 
     // ── 3D LUT color grading ──────────────────────────────────────────────

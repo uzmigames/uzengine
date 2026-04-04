@@ -75,12 +75,13 @@ cbuffer PerFrameCB : register(b1) {
     float  _padMipBias;             // c30.x   (480)
     uint   ssgiSrvIndex;            //         (484)
     // ── Skip intermediate fields (488-707) to reach CVar params ──
-    // HLSL array packing: float[N] = N×16 bytes (NOT N×4). Use float4 arrays instead.
-    // 220 bytes = 13×float4 (208) + 3×float (12)
-    float4 _skip4[13];              //         (488-695)  13 × 16 = 208 bytes
-    float  _skipA;                  //         (696)
-    float  _skipB;                  //         (700)
-    float  _skipC;                  //         (704)
+    // DXC aligns float4 arrays to 16-byte boundary: ssgiSrvIndex ends at 488,
+    // but float4 array starts at 496 (next 16-byte aligned). So we need 2 explicit
+    // floats to fill 488-495, then 13×float4 for 496-703, then 1 float for 704-707.
+    float  _gapA;                   //         (488) — fills gap before array alignment
+    float  _gapB;                   //         (492) — fills gap before array alignment
+    float4 _skip4[13];              //         (496-703) 13 × 16 = 208 bytes
+    float  _skipA;                  //         (704)
     // ── Shader CVar parameters (Phase 1) — offset 708 ──
     float  shadowPCFPenumbra;       //         (708)
     float  shadowPCSSMinPenumbra;   //         (712)

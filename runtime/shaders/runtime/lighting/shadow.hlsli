@@ -92,7 +92,8 @@ float SampleShadowCascade(float3 worldPos, float3 N, float NdotL, uint cascadeId
     float texelSize = 1.0 / shadowMapSize;
     // Consistent penumbra across all cascades — constant texel radius.
     // CVar r.Shadow.PCFPenumbraRadius (default 2.0) via PerFrameCB.
-    float penumbra = shadowPCFPenumbra;
+    // Safety: if CB value is zero/invalid (padding mismatch), use default 2.0.
+    float penumbra = (shadowPCFPenumbra > 0.01) ? shadowPCFPenumbra : 2.0;
 
     float halfTexel = texelSize * 0.5;
     float2 atlasMin = tileOffset + halfTexel;

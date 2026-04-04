@@ -18,9 +18,10 @@
 
 /// @ref Wihlidal 2017 — contact shadow ray march parameters
 /// CVar r.Shadow.ContactShadowSteps, r.Shadow.ContactShadowThickness
-#define kContactMaxSteps    shadowContactSteps
-static const float kContactMaxDistUV   = 0.15;  // Max ray distance in screen UV space
-#define kContactThickness   shadowContactThickness
+/// Safety fallback if CB padding mismatch delivers zero values.
+#define kContactMaxSteps    ((shadowContactSteps > 0) ? shadowContactSteps : 16u)
+static const float kContactMaxDistUV   = 0.15;
+#define kContactThickness   ((shadowContactThickness > 0.0001) ? shadowContactThickness : 0.005)
 
 /// Screen-space contact shadow with optional Hi-Z acceleration.
 ///
