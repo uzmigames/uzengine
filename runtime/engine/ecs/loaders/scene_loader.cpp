@@ -399,6 +399,22 @@ void ParseMaterialComponent(World& world,
     mat->normalIntensity     = ReadFloat(comp, "normalIntensity", 1.0f);
     mat->aoIntensity         = ReadFloat(comp, "aoIntensity", 1.0f);
     mat->specular            = ReadFloat(comp, "specular", 0.5f);
+    mat->transmission        = ReadFloat(comp, "transmission", 0.0f);
+    mat->ior                 = ReadFloat(comp, "ior", 1.5f);
+    mat->thicknessScale      = ReadFloat(comp, "thicknessScale", 0.5f);
+
+    // Shading model — auto-detect from transmission or explicit string
+    if (mat->transmission > 0.0f) {
+        mat->shadingModel = uz::EShadingModel::ThinTranslucent;
+    }
+    {
+        auto sm = ReadString(comp, "shadingModel");
+        if (sm == "Unlit")            mat->shadingModel = uz::EShadingModel::Unlit;
+        else if (sm == "Subsurface")  mat->shadingModel = uz::EShadingModel::Subsurface;
+        else if (sm == "ClearCoat")   mat->shadingModel = uz::EShadingModel::ClearCoat;
+        else if (sm == "Cloth")       mat->shadingModel = uz::EShadingModel::Cloth;
+        else if (sm == "ThinTranslucent") mat->shadingModel = uz::EShadingModel::ThinTranslucent;
+    }
     mat->emissiveColorR    = ReadFloat(comp, "emissiveColorR", 0.0f);
     mat->emissiveColorG    = ReadFloat(comp, "emissiveColorG", 0.0f);
     mat->emissiveColorB    = ReadFloat(comp, "emissiveColorB", 0.0f);

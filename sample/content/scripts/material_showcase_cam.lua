@@ -4,8 +4,8 @@
 local camera_speed = 500.0
 local mouse_sensitivity = 0.15
 local yaw = 180.0
-local pitch = -3.0
-local cam_x, cam_y, cam_z = 430, 0, 110
+local pitch = -2.0
+local cam_x, cam_y, cam_z = 1022, -19, 140
 
 function on_start(entity)
     uz.log("=== Material Showcase Camera ===")

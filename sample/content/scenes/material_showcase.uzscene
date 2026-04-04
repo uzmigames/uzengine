@@ -11,7 +11,9 @@
           "baseColorR": 1.0, "baseColorG": 1.0, "baseColorB": 1.0,
           "roughnessMultiplier": 0.0,
           "metallicMultiplier": 0.0,
-          "specular": 1.0,
+          "specular": 0.5,
+          "transmission": 1.0,
+          "ior": 1.5,
           "normalIntensity": 1.0
         }
       }
@@ -72,7 +74,7 @@
     {
       "name": "MainCamera",
       "components": {
-        "transform": { "position": [1800, 0, 100], "rotation": [0, 0, 0] },
+        "transform": { "position": [1022, -19, 140], "rotation": [68.2, 0, -90] },
         "camera": { "fov": 40, "near": 1, "far": 100000, "active": true }
       }
     },

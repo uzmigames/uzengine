@@ -191,6 +191,28 @@ float4 main(FSInput input) : SV_Target {
     float  roughness = max(rt1.a, 0.04);
     float  alpha     = roughness * roughness;
 
+    // ── Decode shading model + specular from emissive.w ──────────────────
+    // @ref gbuffer_ps.hlsl — packedAlpha = specular + smID * 16.0
+#ifdef UZ_BINDLESS
+    float  packedAlpha = gbEmis.Load(int3(px, 0)).a;
+#else
+    float  packedAlpha = gbufferEmissive.Load(int3(px, 0)).a;
+#endif
+    uint   smID = uint(packedAlpha / 16.0);
+    float  transmission = (smID == 9) ? float((uint(packedAlpha) >> 0) & 0xFu) / 15.0 : 0.0;
+    // For ThinTranslucent (smID==9), bits[28:31] of materialFlags encode transmission
+    // which is packed in the emissive alpha alongside the smID.
+    // Rebuild from the GBuffer: customW in RT2.w holds the 4-bit value.
+    float  customW = 0.0;
+#ifdef UZ_BINDLESS
+    customW = gbPos.Load(int3(px, 0)).w;
+#else
+    customW = gbufferPositionWS.Load(int3(px, 0)).w;
+#endif
+    if (smID == 9) {
+        transmission = customW; // RT2.w holds the packed value (0-1)
+    }
+
     float3 F0         = ComputeF0(baseColor, metallic);
     float3 diffColor  = baseColor * (1.0 - metallic);
 
@@ -308,7 +330,7 @@ float4 main(FSInput input) : SV_Target {
 #ifdef UZ_BINDLESS
         if (IsSHZero(skyIrradianceSH) && irradianceSrvIndex != kSentinelSrvIndex) {
             TextureCube<float4> irrTex = ResourceDescriptorHeap[irradianceSrvIndex];
-            irradiance = irrTex.SampleLevel(clampSampler, WorldToCubemap(N), 0).rgb;
+            irradiance = irrTex.SampleLevel(linearSampler, WorldToCubemap(N), 0).rgb;
         }
 #endif
         irradiance = max(irradiance, skyLightMinAmbient);
@@ -331,7 +353,7 @@ float4 main(FSInput input) : SV_Target {
 #ifdef UZ_BINDLESS
         if (prefilteredSrvIndex != kSentinelSrvIndex) {
             TextureCube<float4> prefTex = ResourceDescriptorHeap[prefilteredSrvIndex];
-            radiance = prefTex.SampleLevel(clampSampler, WorldToCubemap(R), mipLevel).rgb;
+            radiance = prefTex.SampleLevel(linearSampler, WorldToCubemap(R), mipLevel).rgb;
         }
 #endif
         // Analytical DFG approximation — replaces GPU-baked BRDF LUT with the
@@ -441,6 +463,56 @@ float4 main(FSInput input) : SV_Target {
         ambient += envMIS;
     }
 #endif
+
+    // ── Transmission / Glass Refraction (smID == 9: ThinTranslucent) ────
+    // @ref KHR_materials_transmission — glTF 2.0 extension
+    // @ref Three.js MeshPhysicalMaterial.transmission — screen-space refraction
+    // When transmission > 0, sample the environment cubemap with a refracted
+    // direction and blend with the surface result based on Fresnel.
+    if (transmission > 0.0 && prefilteredSrvIndex != kSentinelSrvIndex) {
+        // Compute refracted direction through the surface
+        // @ref Snell's law: eta = n_outside / n_inside = 1.0 / ior
+        float specularFromAlpha = frac(packedAlpha / 16.0) * 16.0; // extract specular from packed
+        float iorApprox = 1.0 + specularFromAlpha * 2.0; // specular 0.5 → IOR ~2.0, approximate
+        // Better: IOR from F0. specular=0.5 → F0=0.04 → IOR=1.5 (glass)
+        float f0_scalar = specularFromAlpha * 0.08;
+        float sqrtF0 = sqrt(max(f0_scalar, 0.001));
+        float ior = (1.0 + sqrtF0) / max(1.0 - sqrtF0, 0.001);
+        ior = clamp(ior, 1.0, 2.5);
+
+        float eta = 1.0 / ior;
+        float3 refractedDir = refract(-V, N, eta);
+
+        // If total internal reflection, fall back to reflection
+        if (length(refractedDir) < 0.001) {
+            refractedDir = reflect(-V, N);
+        }
+
+        // Sample environment at refracted direction with roughness-based mip
+        float refractMip = roughness * float(prefilteredMipLevels - 1);
+#ifdef UZ_BINDLESS
+        TextureCube<float4> prefTexT = ResourceDescriptorHeap[prefilteredSrvIndex];
+        float3 refractedColor = prefTexT.SampleLevel(linearSampler, WorldToCubemap(refractedDir), refractMip).rgb;
+#else
+        float3 refractedColor = float3(0, 0, 0);
+#endif
+
+        // Fresnel: how much is reflected vs transmitted
+        // @ref Schlick 1994 — dielectric Fresnel approximation
+        float F0_glass = pow((ior - 1.0) / (ior + 1.0), 2.0);
+        float fresnel = F0_glass + (1.0 - F0_glass) * pow(1.0 - NoV, 5.0);
+
+        // Blend: transmitted environment + reflected IBL specular
+        float3 transmittedLight = refractedColor * baseColor * transmission;
+        float3 reflectedLight = ambient; // IBL specular already computed
+
+        // Final blend: Fresnel determines reflection vs transmission
+        // High fresnel at grazing = more reflection (rim), center = more transmission
+        ambient = lerp(transmittedLight, reflectedLight, fresnel);
+
+        // Reduce direct lighting contribution for transmissive surfaces
+        Lo *= (1.0 - transmission * (1.0 - fresnel));
+    }
 
     // ── Aerial Perspective ───────────────────────────────────────────────
     // @ref Hillaire 2020 "A Scalable Sky and Atmosphere Rendering Technique"

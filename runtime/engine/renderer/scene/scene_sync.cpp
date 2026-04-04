@@ -416,10 +416,17 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
             const uint32_t smId = static_cast<uint32_t>(mat->GetShadingModel()) & 0xFu;
             cmd.materialFlags |= (smId << 24);
 
-            // Clear coat roughness packed into materialFlags bits[28:31] (4 bits = 16 levels).
-            // Only meaningful when shadingModelID == 4 (ClearCoat).
-            const uint32_t ccRoughU4 = std::min(15u, static_cast<uint32_t>(mat->GetClearCoatRoughness() * 15.0f));
-            cmd.materialFlags |= (ccRoughU4 << 28);
+            // bits[28:31] — context-dependent (4-bit, 16 levels):
+            //   smID==4 (ClearCoat):      clearCoatRoughness * 15
+            //   smID==9 (ThinTranslucent): transmission * 15
+            //   other:                    clearCoatRoughness * 15 (default)
+            if (mat->GetShadingModel() == EShadingModel::ThinTranslucent) {
+                const uint32_t transU4 = std::min(15u, static_cast<uint32_t>(mat->GetScalarParam("Transmission", 0.0f) * 15.0f));
+                cmd.materialFlags |= (transU4 << 28);
+            } else {
+                const uint32_t ccRoughU4 = std::min(15u, static_cast<uint32_t>(mat->GetClearCoatRoughness() * 15.0f));
+                cmd.materialFlags |= (ccRoughU4 << 28);
+            }
 
             // Pack twoSided into materialFlags bit 3 (PSO-level only, not read in shader).
             if (mat->IsTwoSided()) {

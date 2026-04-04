@@ -278,8 +278,11 @@ GBufferOutput main(PSInput input) {
     }
 
     // ── Custom data in RT2.w ──────────────────────────────────────────────
+    // bits[28:31] of materialFlags: context-dependent on shading model.
+    //   smID==4 (ClearCoat):       clearCoatRoughness (4-bit, 0-1)
+    //   smID==9 (ThinTranslucent): transmission intensity (4-bit, 0-1)
     float customW = 1.0;
-    if (smID == 4) {
+    if (smID == 4 || smID == 9) {
         customW = float((materialFlags >> 28u) & 0xFu) / 15.0;
     }
 
