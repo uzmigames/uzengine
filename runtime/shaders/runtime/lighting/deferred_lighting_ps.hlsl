@@ -246,10 +246,13 @@ float4 main(FSInput input) : SV_Target {
 #endif
         irradiance = max(irradiance, skyLightMinAmbient);
 
-        float3 diffuseAmbient = kD_env * irradiance * baseColor;
-
-        // Specular: prefiltered env + BRDF LUT
+        // Specular: prefiltered env + BRDF LUT (DFG)
+        // @ref Three.js — reflection vector blended with normal for rough surfaces
+        // prevents rough objects gathering light from behind tangent plane
         float3 R = reflect(-V, N);
+        float r4 = roughness * roughness * roughness * roughness;
+        R = normalize(lerp(R, N, r4));
+
         float mipLevel = roughness * float(prefilteredMipLevels - 1);
         float3 prefilteredColor = float3(0, 0, 0);
         float2 envBRDF = float2(1, 0);
@@ -263,7 +266,26 @@ float4 main(FSInput input) : SV_Target {
             envBRDF = brdfTex.SampleLevel(clampSampler, float2(NoV, roughness), 0).rg;
         }
 #endif
-        float3 specularAmbient = prefilteredColor * (F0 * envBRDF.x + envBRDF.y);
+
+        // Multi-scattering energy compensation
+        // @ref Fdez-Aguera 2019 "A Multiple-Scattering Microfacet Model"
+        // @ref Three.js computeMultiscattering — prevents energy loss on metals
+        float3 FssEss = F0 * envBRDF.x + envBRDF.y;  // single-scatter term
+        float  Ess    = envBRDF.x + envBRDF.y;         // total single-scatter energy
+        float  Ems    = 1.0 - Ess;                     // energy lost to multi-scatter
+        float3 Favg   = F0 + (1.0 - F0) * 0.047619;   // average Fresnel (1/21)
+        float3 Fms    = FssEss * Favg / (1.0 - Ems * Favg); // multi-scatter compensation
+
+        float3 singleScatter = FssEss;
+        float3 multiScatter  = Fms * Ems;
+        float3 totalScatter  = singleScatter + multiScatter;
+
+        float3 specularAmbient = prefilteredColor * singleScatter
+                               + irradiance * multiScatter;
+
+        // Diffuse: energy-conserving — subtract total specular scattering
+        // @ref Three.js RE_IndirectSpecular — diffuse *= (1.0 - totalScattering)
+        float3 diffuseAmbient = (1.0 - metallic) * irradiance * baseColor * (1.0 - totalScatter);
 
         // SSR: blend screen-space reflections with IBL specular
         // @ref Stachowiak 2015 — SSR overrides IBL where confident
@@ -285,7 +307,7 @@ float4 main(FSInput input) : SV_Target {
         {
             float3 ssgiColor = ssgiTextureT12.Load(int3(px, 0)).rgb;
             if (any(ssgiColor > 0.001))
-                diffuseAmbient += kD_env * ssgiColor * baseColor;
+                diffuseAmbient += (1.0 - metallic) * ssgiColor * baseColor;
         }
 #endif
 
