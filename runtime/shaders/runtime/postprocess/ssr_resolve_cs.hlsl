@@ -1,7 +1,10 @@
-/// UzEngine SSR Resolve — pass-through with roughness fade.
-/// The trace pass already outputs (hitColor * confidence, confidence).
-/// Resolve applies additional roughness-based filtering if needed.
+/// UzEngine SSR Resolve — edge-aware bilateral spatial filter.
+/// Denoises stochastic SSR trace output using a depth/normal-aware
+/// bilateral kernel that widens with roughness. Smooth surfaces get
+/// minimal filtering; rough surfaces get a wider kernel to reduce
+/// single-sample noise from GGX importance sampling.
 /// @ref Stachowiak 2015 "Stochastic Screen-Space Reflections"
+/// @ref Schied 2017 "SVGF" — bilateral edge-stopping functions
 
 #include "../common/encoding.hlsli"
 
@@ -65,41 +68,70 @@ void main(uint3 DTid : SV_DispatchThreadID)
         return;
     }
 
-    float4 traceResult = ssrTraceTex.SampleLevel(linearClamp, uv, 0);
+    float4 traceResult = ssrTraceTex.Load(int3(DTid.xy, 0));
 
-    // Read roughness from GBuffer (normalMatPbr.a)
+    // Read center pixel normal + roughness + depth for edge-stopping
     float4 normalData = normalTex.Load(int3(DTid.xy, 0));
+    float3 centerN    = OctDecode(normalData.rg);
     float  roughness  = max(normalData.a, 0.04);
+    float  centerZ    = deviceZ;
 
-    // Roughness-based blur: sample 4 neighbours for rough surfaces
-    // For smooth surfaces (roughness < 0.2), pass through directly
-    float3 color = traceResult.rgb;
-    float  alpha = traceResult.a;
-
-    if (roughness > 0.2 && alpha > 0.0) {
-        // Simple 4-tap cross blur for rough reflections
-        float blurRadius = roughness * 2.0; // px
-        float3 colorSum = color;
-        float  alphaSum = alpha;
-        float  weightSum = 1.0;
-
-        static const float2 offsets[4] = {
-            float2(-1, 0), float2(1, 0), float2(0, -1), float2(0, 1)
-        };
-
-        [unroll]
-        for (uint i = 0; i < 4; i++) {
-            float2 sampleUV = uv + offsets[i] * texelSize * blurRadius;
-            float4 s = ssrTraceTex.SampleLevel(linearClamp, sampleUV, 0);
-            float w = 0.5;
-            colorSum += s.rgb * w;
-            alphaSum += s.a * w;
-            weightSum += w;
-        }
-
-        color = colorSum / weightSum;
-        alpha = alphaSum / weightSum;
+    // Smooth surfaces (roughness < 0.1): pass through directly — no spatial blur
+    if (roughness < 0.1) {
+        outputSSR[DTid.xy] = traceResult;
+        return;
     }
+
+    // Bilateral filter with roughness-driven kernel radius
+    // @ref Schied 2017 "SVGF" — edge-stopping weights: depth + normal
+    float kernelRadius = lerp(1.0, 4.0, saturate((roughness - 0.1) / 0.6));
+
+    float3 colorSum  = traceResult.rgb;
+    float  alphaSum  = traceResult.a;
+    float  weightSum = 1.0;
+
+    // 12-tap Poisson disk (better coverage than cross/grid at same cost)
+    // @ref Jimenez 2016 — screen-space sampling patterns
+    static const float2 kPoisson[12] = {
+        float2(-0.326, -0.406), float2(-0.840, -0.074), float2(-0.696,  0.457),
+        float2(-0.203,  0.621), float2( 0.962, -0.195), float2( 0.473, -0.480),
+        float2( 0.519,  0.767), float2( 0.185, -0.893), float2( 0.507,  0.064),
+        float2(-0.321, -0.932), float2(-0.797, -0.580), float2( 0.114,  0.370)
+    };
+
+    [unroll]
+    for (uint i = 0; i < 12; i++) {
+        float2 sampleUV = uv + kPoisson[i] * texelSize * kernelRadius;
+
+        // Bounds check
+        if (any(sampleUV < 0.0) || any(sampleUV > 1.0)) continue;
+
+        int2 samplePx = int2(sampleUV * float2(outputWidth, outputHeight));
+        float4 sampleSSR  = ssrTraceTex.Load(int3(samplePx, 0));
+        float4 sampleNorm = normalTex.Load(int3(samplePx, 0));
+        float  sampleZ    = depthTex.SampleLevel(linearClamp, sampleUV, 0).r;
+
+        // Edge-stopping weight: normal similarity
+        float3 sN = OctDecode(sampleNorm.rg);
+        float wNormal = pow(max(dot(centerN, sN), 0.0), 32.0);
+
+        // Edge-stopping weight: depth similarity (relative)
+        float depthDiff = abs(centerZ - sampleZ) / max(centerZ, 1e-6);
+        float wDepth = exp(-depthDiff * 100.0);
+
+        // Spatial Gaussian weight
+        float dist2 = dot(kPoisson[i], kPoisson[i]);
+        float wSpatial = exp(-dist2 * 2.0);
+
+        float w = wNormal * wDepth * wSpatial;
+
+        colorSum  += sampleSSR.rgb * w;
+        alphaSum  += sampleSSR.a * w;
+        weightSum += w;
+    }
+
+    float3 color = colorSum / max(weightSum, 0.001);
+    float  alpha = alphaSum / max(weightSum, 0.001);
 
     outputSSR[DTid.xy] = float4(color, alpha);
 }

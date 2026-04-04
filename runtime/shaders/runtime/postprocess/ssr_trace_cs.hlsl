@@ -1,9 +1,11 @@
-/// UzEngine SSR Trace — Hi-Z screen-space ray march.
+/// UzEngine SSR Trace — Hi-Z screen-space ray march with GGX importance sampling.
 /// @ref Stachowiak 2015 "Stochastic Screen-Space Reflections"
 /// @ref McGuire 2014 "Efficient GPU Screen-Space Ray Tracing"
+/// @ref Walter 2007 "Microfacet Models for Refraction" — GGX importance sampling
 /// @constants MaxRoughness = 0.8, NumSteps = 32, BinarySteps = 4
 
 #include "../common/encoding.hlsli"
+#include "../common/sampling.hlsli"
 
 cbuffer SsrTraceRootCB : register(b0) {
 #ifdef UZ_BINDLESS
@@ -130,7 +132,45 @@ void main(uint3 DTid : SV_DispatchThreadID)
     // Reconstruct world position and reflection direction
     float3 worldPos = ReconstructWorldPos(uv, deviceZ);
     float3 V = normalize(cameraPos.xyz - worldPos);
-    float3 R = reflect(-V, N);
+
+    // GGX importance sampling — stochastic ray direction based on roughness.
+    // For smooth surfaces (roughness < 0.05), this degenerates to the mirror
+    // direction. For rough surfaces, rays are spread according to the GGX NDF,
+    // producing naturally blurred reflections that converge via temporal accumulation.
+    // @ref Stachowiak 2015 "Stochastic Screen-Space Reflections" — Section 4.2
+    float3 R;
+    {
+        // Generate 2D random sample using spatiotemporal blue noise
+        uint frameHash = uint(timeParams.z) & 0xFF; // frame count mod 256
+        float2 Xi = float2(
+            IGN(float2(DTid.xy) + float(frameHash) * 5.387),
+            IGN(float2(DTid.xy) * 1.732 + float(frameHash) * 3.117)
+        );
+
+        if (roughness < 0.05) {
+            // Near-mirror: use exact reflection (no noise needed)
+            R = reflect(-V, N);
+        } else {
+            // Importance-sample GGX NDF to get half vector H in tangent space
+            float3 H_tangent = ImportanceSampleGGX(Xi, roughness);
+
+            // Build tangent frame from N
+            float3 up = abs(N.z) < 0.999 ? float3(0, 0, 1) : float3(1, 0, 0);
+            float3 T = normalize(cross(up, N));
+            float3 B = cross(N, T);
+
+            // Transform H to world space
+            float3 H = normalize(H_tangent.x * T + H_tangent.y * B + H_tangent.z * N);
+
+            // Reflect view around H to get ray direction
+            R = reflect(-V, H);
+
+            // Reject rays going below the surface
+            if (dot(R, N) <= 0.0) {
+                R = reflect(-V, N); // fallback to mirror
+            }
+        }
+    }
 
     // Jitter start position along the ray with IGN noise
     float jitter = IGN(float2(DTid.xy) + timeParams.x * 100.0);
