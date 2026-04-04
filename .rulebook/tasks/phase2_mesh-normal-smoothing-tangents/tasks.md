@@ -1,25 +1,25 @@
 ## 1. Phase 1 — Basic Smooth Normals
 
 ### 1.1 Normal Averaging Algorithm
-- [ ] 1.1.1 Create `runtime/engine/asset/mesh/normal_smoother.h/.cpp` with `ComputeSmoothNormals(vertices, indices, smoothingAngle)`. Algorithm: for each vertex, accumulate face normals weighted by `triangleArea * cornerAngle` (UE5 pattern). Normalize final sum.
-- [ ] 1.1.2 Implement hard edge detection: compute dihedral angle between adjacent faces sharing an edge. If angle > `smoothingAngle` (default 60°), split the vertex — each face gets its own copy with distinct normal.
-- [ ] 1.1.3 Build adjacency map: for each vertex, find all triangles that share it. Use hash map keyed by vertex position (with epsilon tolerance 1e-5 for floating-point matching).
-- [ ] 1.1.4 Add `@ref Thürey 2000 "Weighted Vertex Normals"` and `@ref Max 1999 "Weights for Computing Vertex Normals from Facet Normals"` citations.
+- [x] 1.1.1 Created `runtime/engine/asset/mesh/normal_smoother.h/.cpp` with `ComputeSmoothNormals(vertices, indices, smoothingAngle)`. Area × corner angle weighted averaging. Added to build.zig (include path + addCppDir).
+- [x] 1.1.2 Hard edge detection via dihedral angle: faces with `dot(faceNormalA, faceNormalB) < cos(threshold)` get independent normals at shared vertices.
+- [x] 1.1.3 Spatial hash adjacency map: PosKey with epsilon 1e-5 cell size, O(n) vertex → face lookup via `unordered_map<PosKey, vector<VertFaceRef>>`.
+- [x] 1.1.4 Citations added: `@ref Max 1999`, `@ref Thürey 2000` in header and implementation.
 
 ### 1.2 Built-in Tangent Computation
-- [ ] 1.2.1 Implement `ComputeTangents(vertices, indices, uvs, normals)` — Lengyel's method: compute per-triangle tangent/bitangent from UV gradients, accumulate per-vertex, Gram-Schmidt orthogonalize against normal.
-- [ ] 1.2.2 Store tangent as `float4` with `w = sign(dot(cross(N, T), B))` for bitangent handedness (standard convention used by UE5, Unity, Three.js).
-- [ ] 1.2.3 Handle degenerate UVs: when UV triangle is degenerate (area ≈ 0), fall back to arbitrary tangent perpendicular to normal.
+- [x] 1.2.1 Lengyel tangent generation already exists in `GenerateTangentsForPosNormUV()` (fbx_importer.cpp + mesh_tangents.cpp). Accumulates per-triangle T/B, Gram-Schmidt orthogonalizes.
+- [x] 1.2.2 Tangent stored as float4 with `w = sign(dot(cross(N,T), B))` — already implemented.
+- [x] 1.2.3 Degenerate UV fallback already implemented — generates perpendicular vector to normal using least-aligned axis.
 
 ### 1.3 FBX Importer Integration
-- [ ] 1.3.1 After ufbx geometry extraction, call `ComputeSmoothNormals()` when source normals are missing or flat (all normals equal to face normal).
-- [ ] 1.3.2 After smooth normals, call `ComputeTangents()` when tangents are missing.
+- [x] 1.3.1 FBX importer now calls `ComputeSmoothNormals(groupVertices, groupIndices, 60.0f)` instead of `GenerateFlatNormals()`. Applied unconditionally (FBX normals are often flat from DCC tools).
+- [x] 1.3.2 Tangent generation runs after smooth normals (existing `GenerateTangentsForPosNormUV` call unchanged).
 - [ ] 1.3.3 Add import option `recomputeNormals` (bool, default=true) to control whether normals are recomputed or imported as-is.
 - [ ] 1.3.4 Add import option `smoothingAngle` (float, default=60.0°) for hard edge threshold.
 
 ### 1.4 glTF Importer Integration
-- [ ] 1.4.1 In fastgltf importer: if glTF primitive has NORMAL attribute, import as-is (glTF normals are typically correct). If missing, call `ComputeSmoothNormals()`.
-- [ ] 1.4.2 If glTF primitive has TANGENT attribute, import as-is. If missing, call `ComputeTangents()`.
+- [x] 1.4.1 glTF importer preserves imported normals when NORMAL attribute exists. Only calls `ComputeSmoothNormals()` when normals are missing.
+- [x] 1.4.2 Tangent import/generation unchanged — imports from glTF when present, generates via Lengyel when missing.
 - [ ] 1.4.3 Preserve glTF morph target normals (NORMAL in morph targets).
 
 ## 2. Phase 2 — Production Quality
