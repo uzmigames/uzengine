@@ -58,6 +58,32 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     // ── Begin command list ──────────────────────────────────────────────
     cmdList->Begin();
 
+    // ── First-frame resource warmup ─────────────────────────────────────
+    // On frame 0, all textures start in Common state. Transition the core
+    // render targets to their expected states so the render graph's barrier
+    // scheduler doesn't see mismatches. This is a one-shot initialization.
+    if (frameIndex == 0) {
+        RHIBarrierDesc warmupBarriers[8] = {};
+        uint32_t bc = 0;
+        auto addTex = [&](RHITextureHandle tex, RHIResourceState target) {
+            if (tex.IsValid() && bc < 8) {
+                warmupBarriers[bc].texture = tex;
+                warmupBarriers[bc].stateBefore = RHIResourceState::Common;
+                warmupBarriers[bc].stateAfter = target;
+                ++bc;
+            }
+        };
+        addTex(m_hdrSceneColor, RHIResourceState::RenderTarget);
+        addTex(m_gbuffer.albedo, RHIResourceState::RenderTarget);
+        addTex(m_gbuffer.normal, RHIResourceState::RenderTarget);
+        // GBuffer_Depth NOT warmed up here — the render graph handles
+        // Common→DepthStencilWrite via its own barrier scheduler.
+        addTex(m_gbuffer.positionWS, RHIResourceState::RenderTarget);
+        addTex(m_gbuffer.emissive, RHIResourceState::RenderTarget);
+        addTex(m_gbuffer.velocity, RHIResourceState::RenderTarget);
+        if (bc > 0) cmdList->ResourceBarrier(warmupBarriers, bc);
+    }
+
     // ── Pixel Debug: clear counter buffer ────────────────────────────────
     if (m_pixelDebugSystem && m_pixelDebugSystem->IsEnabled()) {
         m_pixelDebugSystem->BeginFrame(cmdList);

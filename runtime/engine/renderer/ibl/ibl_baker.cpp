@@ -323,6 +323,17 @@ uint32_t IBLBaker::BakeBRDFLut() {
     // Set compute pipeline
     cmdList->SetPipeline(m_brdfLutPipeline);
 
+    // Barrier: Common → UAV (texture just created, starts in Common state).
+    // DX12 implicit promotion would handle this, but explicit is safer
+    // and avoids debug layer warnings on the separate bake command list.
+    {
+        RHIBarrierDesc initBarrier{};
+        initBarrier.texture = m_brdfLutTexture;
+        initBarrier.stateBefore = RHIResourceState::Common;
+        initBarrier.stateAfter  = RHIResourceState::UnorderedAccess;
+        cmdList->ResourceBarrier(&initBarrier, 1);
+    }
+
     // Root constants at slot 0: outputWidth, outputHeight
     const uint32_t rootConstants[2] = { kBRDFLutSize, kBRDFLutSize };
     cmdList->SetRootConstants(0, rootConstants, 2);
