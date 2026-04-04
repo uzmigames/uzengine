@@ -565,12 +565,34 @@ pub fn build(b: *std.Build) void {
         .flags = &.{ "-std=c++17", "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND" },
     });
 
-    // Thirdparty — basis_universal transcoder
+    // Thirdparty — basis_universal transcoder (with KTX2 + Zstd support)
     runtime_mod.addCSourceFiles(.{
         .root = b.path(tp ++ "basis_universal/transcoder"),
         .files = &.{"basisu_transcoder.cpp"},
-        .flags = &.{ "-std=c++17", "-DBASISD_SUPPORT_KTX2_ZSTD=0" },
+        .flags = &.{ "-std=c++17", "-DBASISD_SUPPORT_KTX2_ZSTD=1", "-DZSTD_DLL_IMPORT=0" },
     });
+    // Zstd decompression for KTX2 supercompression (compiled from vcpkg source)
+    {
+        const zstd_root = tp ++ "vcpkg/buildtrees/zstd/src/v1.5.7-bb6cae2b2e.clean/lib/";
+        runtime_mod.addCSourceFiles(.{
+            .root = b.path(zstd_root),
+            .files = &.{
+                "common/debug.c",
+                "common/entropy_common.c",
+                "common/error_private.c",
+                "common/fse_decompress.c",
+                "common/xxhash.c",
+                "common/zstd_common.c",
+                "decompress/huf_decompress.c",
+                "decompress/zstd_ddict.c",
+                "decompress/zstd_decompress.c",
+                "decompress/zstd_decompress_block.c",
+            },
+            .flags = &.{ "-std=c99", "-DZSTD_DISABLE_ASM" },
+        });
+        runtime_mod.addIncludePath(b.path(zstd_root));
+        runtime_mod.addIncludePath(b.path(zstd_root ++ "common"));
+    }
 
     // Thirdparty — miniz (zlib-compatible compression for tinyexr)
     runtime_mod.addCSourceFiles(.{

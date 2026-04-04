@@ -25,7 +25,7 @@
 static auto* cv_MotionBlur      = UZ_CVAR_BOOL("r.MotionBlur", true, "Motion blur");
 static auto* cv_DOF             = UZ_CVAR_BOOL("r.DOF", false, "Depth of field");
 static auto* cv_CAS             = UZ_CVAR_BOOL("r.CAS", true, "Contrast adaptive sharpening");
-static auto* cv_TonemapOp       = UZ_CVAR_INT("r.TonemapOperator", 0,
+static auto* cv_TonemapOp       = UZ_CVAR_INT("r.TonemapOperator", 1,
     "Tonemap: 0=None, 1=Hill ACES, 2=Narkowicz ACES, 3=Reinhard, 4=Hable", 0, 4);
 static auto* cv_DOFFocusDist    = UZ_CVAR_FLOAT("r.DOF.FocusDistance", 0.f, "DOF focus distance (cm)", 0.f, 100000.f);
 static auto* cv_DOFAperture     = UZ_CVAR_FLOAT("r.DOF.Aperture", 4.f, "DOF f-stop number", 0.5f, 32.f);

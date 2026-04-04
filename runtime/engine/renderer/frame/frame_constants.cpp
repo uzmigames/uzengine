@@ -180,13 +180,24 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
                 if (vfs) {
                     auto data = vfs->Read(sl.cubemapPath);
                     if (!data.empty()) {
+                        // Detect format from extension
                         const char* fmt = "hdr";
-                        if (sl.cubemapPath.size() > 4 &&
+                        const bool isKtx2 = sl.cubemapPath.size() > 5 &&
+                            (sl.cubemapPath.find(".ktx2") != std::string::npos);
+                        if (!isKtx2 && sl.cubemapPath.size() > 4 &&
                             sl.cubemapPath.substr(sl.cubemapPath.size() - 4) == ".exr") {
                             fmt = "exr";
                         }
-                        TextureLoadResult hdrResult = TextureLoader::LoadHDRFromMemory(
-                            m_device, data.data(), data.size(), fmt, sl.cubemapPath.c_str());
+
+                        TextureLoadResult hdrResult;
+                        if (isKtx2) {
+                            // KTX2 path — use basis_universal ktx2_transcoder
+                            hdrResult = TextureLoader::LoadKTX2FromMemory(
+                                m_device, data.data(), data.size(), sl.cubemapPath.c_str());
+                        } else {
+                            hdrResult = TextureLoader::LoadHDRFromMemory(
+                                m_device, data.data(), data.size(), fmt, sl.cubemapPath.c_str());
+                        }
                         if (hdrResult.handle.IsValid()) {
                             TrackExternalTexture(hdrResult);
                             SetHDRIEnvironment(hdrResult.srvIndex, sl.cubemapResolution);
