@@ -504,9 +504,10 @@ struct alignas(16) CloudCB {
     float detailErosion;       // 4 bytes  (offset 276) — CVar r.Cloud.DetailErosion (default 0.35)
     float aerialPerspDensity;  // 4 bytes  (offset 280) — CVar r.Cloud.AerialPerspectiveDensity (default 0.04)
     float densityScale;        // 4 bytes  (offset 284) — CVar r.Cloud.DensityScale (default 25.0)
+    float _pad3[56] = {};      // 224 bytes padding to reach 512 (DX12 CBV must be 256-byte aligned)
 };
 
-static_assert(sizeof(CloudCB) == 288, "CloudCB must be 288 bytes for CBV alignment");
+static_assert(sizeof(CloudCB) == 512, "CloudCB must be multiple of 256 bytes for DX12 CBV alignment");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Execute
