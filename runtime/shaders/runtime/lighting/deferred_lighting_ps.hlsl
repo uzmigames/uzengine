@@ -470,54 +470,51 @@ float4 main(FSInput input) : SV_Target {
     }
 #endif
 
-    // ── Transmission / Glass Refraction (smID == 9: ThinTranslucent) ────
-    // @ref KHR_materials_transmission — glTF 2.0 extension
-    // @ref Three.js MeshPhysicalMaterial.transmission — screen-space refraction
-    // When transmission > 0, sample the environment cubemap with a refracted
-    // direction and blend with the surface result based on Fresnel.
+    // ── Transmission / Glass (smID == 9: ThinTranslucent) ──────────────
+    // @ref Three.js MeshPhysicalMaterial.transmission — Fresnel reflection + IBL
+    // Glass in deferred: no true screen-space refraction (would need forward pass).
+    // Instead: Fresnel-weighted IBL reflection at center, strong Fresnel rim at edges.
+    // The glass "look" comes from high specular reflection + transparency to environment.
     if (transmission > 0.0 && gBufIndices.iblPrefilteredSrvIdx != kSentinelSrvIndex) {
-        // Compute refracted direction through the surface
-        // @ref Snell's law: eta = n_outside / n_inside = 1.0 / ior
-        float specularFromAlpha = frac(packedAlpha / 16.0) * 16.0; // extract specular from packed
-        float iorApprox = 1.0 + specularFromAlpha * 2.0; // specular 0.5 → IOR ~2.0, approximate
-        // Better: IOR from F0. specular=0.5 → F0=0.04 → IOR=1.5 (glass)
-        float f0_scalar = specularFromAlpha * 0.08;
-        float sqrtF0 = sqrt(max(f0_scalar, 0.001));
+        // IOR from specular parameter: specular=0.5 → F0=0.04 → IOR=1.5 (glass)
+        float specularFromAlpha = frac(packedAlpha / 16.0) * 16.0;
+        float f0_scalar = max(specularFromAlpha * 0.08, 0.001);
+        float sqrtF0 = sqrt(f0_scalar);
         float ior = (1.0 + sqrtF0) / max(1.0 - sqrtF0, 0.001);
         ior = clamp(ior, 1.0, 2.5);
 
-        float eta = 1.0 / ior;
-        float3 refractedDir = refract(-V, N, eta);
-
-        // If total internal reflection, fall back to reflection
-        if (length(refractedDir) < 0.001) {
-            refractedDir = reflect(-V, N);
-        }
-
-        // Sample environment at refracted direction with roughness-based mip
-        float refractMip = roughness * float(prefilteredMipLevels - 1);
-#ifdef UZ_BINDLESS
-        TextureCube<float4> prefTexT = ResourceDescriptorHeap[gBufIndices.iblPrefilteredSrvIdx];
-        float3 refractedColor = prefTexT.SampleLevel(linearSampler, WorldToCubemap(refractedDir), refractMip).rgb;
-#else
-        float3 refractedColor = float3(0, 0, 0);
-#endif
-
-        // Fresnel: how much is reflected vs transmitted
-        // @ref Schlick 1994 — dielectric Fresnel approximation
+        // Fresnel: glass is highly reflective at grazing angles
         float F0_glass = pow((ior - 1.0) / (ior + 1.0), 2.0);
         float fresnel = F0_glass + (1.0 - F0_glass) * pow(1.0 - NoV, 5.0);
 
-        // Blend: transmitted environment + reflected IBL specular
-        float3 transmittedLight = refractedColor * baseColor * transmission;
-        float3 reflectedLight = ambient; // IBL specular already computed
+        // Reflection: sample prefiltered cubemap at reflection direction
+        float3 R_glass = reflect(-V, N);
+        float3 reflectedColor = float3(0, 0, 0);
+#ifdef UZ_BINDLESS
+        TextureCube<float4> prefTexT = ResourceDescriptorHeap[gBufIndices.iblPrefilteredSrvIdx];
+        reflectedColor = prefTexT.SampleLevel(linearSampler, WorldToCubemap(R_glass), roughness * float(prefilteredMipLevels - 1)).rgb;
+#endif
 
-        // Final blend: Fresnel determines reflection vs transmission
-        // High fresnel at grazing = more reflection (rim), center = more transmission
-        ambient = lerp(transmittedLight, reflectedLight, fresnel);
+        // Transmission: sample cubemap at refracted direction for "see-through" effect
+        float eta = 1.0 / ior;
+        float3 refractedDir = refract(-V, N, eta);
+        if (dot(refractedDir, refractedDir) < 0.001) refractedDir = -V; // total internal reflection fallback
+        float3 refractedColor = float3(0, 0, 0);
+#ifdef UZ_BINDLESS
+        refractedColor = prefTexT.SampleLevel(linearSampler, WorldToCubemap(refractedDir), roughness * float(prefilteredMipLevels - 1)).rgb;
+#endif
 
-        // Reduce direct lighting contribution for transmissive surfaces
-        Lo *= (1.0 - transmission * (1.0 - fresnel));
+        // Glass: Fresnel-driven reflection with transparency
+        // At center (NoV high, fresnel low): nearly invisible — let background show through
+        // At edges (NoV low, fresnel high): bright reflective rim
+        // This mimics Three.js MeshPhysicalMaterial transmission appearance
+        float3 glassReflection = reflectedColor * fresnel;
+
+        // Override all lighting — glass is Fresnel reflection only
+        // The "transparency" comes from NOT adding diffuse/emissive — only Fresnel rim
+        Lo = float3(0, 0, 0);
+        ambient = glassReflection;
+        emissive = float3(0, 0, 0);
     }
 
     // ── Aerial Perspective ───────────────────────────────────────────────
