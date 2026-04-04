@@ -529,4 +529,41 @@ static constexpr Vec3 kACES_AP1_RGB2Y = {0.2722287168f, 0.6740817658f, 0.0536895
     return Saturate(std::pow(NdotV + ao, std::exp2(-16.0f * roughness - 1.0f)) - 1.0f + ao);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Anisotropic GGX — CPU mirrors of brdf.hlsli aniso functions
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Remap isotropic roughness + anisotropy to per-axis alpha.
+/// @ref Burley 2012, KHR_materials_anisotropy
+[[nodiscard]] inline std::pair<float, float> RemapAnisotropy(float roughness, float anisotropy) noexcept
+{
+    constexpr float kMinAlpha = 0.0064f;
+    float alpha = std::max(roughness * roughness, kMinAlpha);
+    float ax = std::max(alpha * (1.0f + anisotropy), kMinAlpha);
+    float ay = std::max(alpha * (1.0f - anisotropy), kMinAlpha);
+    return {ax, ay};
+}
+
+/// Anisotropic GGX NDF.
+/// @ref Burley 2012, Walter et al. 2007
+[[nodiscard]] inline float D_GGXAniso(float ax, float ay, float NoH, float XoH, float YoH) noexcept
+{
+    float a2 = ax * ay;
+    float vx = ay * XoH, vy = ax * YoH, vz = a2 * NoH;
+    float S = vx * vx + vy * vy + vz * vz;
+    return (1.0f / kPI) * a2 * (a2 / (S * S));
+}
+
+/// Anisotropic Smith height-correlated visibility.
+/// @ref Heitz 2014, Filament
+[[nodiscard]] inline float V_SmithGGXCorrelated_Aniso(
+    float ax, float ay, float NoV, float NoL,
+    float XoV, float XoL, float YoV, float YoL) noexcept
+{
+    auto len3 = [](float a, float b, float c) { return std::sqrt(a*a + b*b + c*c); };
+    float GGXV = NoL * len3(ax * XoV, ay * YoV, NoV);
+    float GGXL = NoV * len3(ax * XoL, ay * YoL, NoL);
+    return 0.5f / std::max(GGXV + GGXL, 1e-7f);
+}
+
 } // namespace uz::brdf

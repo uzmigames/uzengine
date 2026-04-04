@@ -1,9 +1,9 @@
 ## 1. Implementation
 
 ### 1.1 HLSL Anisotropic BRDF
-- [ ] 1.1.1 Add `D_GGXAniso(float ax, float ay, float NoH, float XoH, float YoH)` to `brdf.hlsli`. Add `@ref Burley 2012 "Physically Based Shading at Disney"`.
-- [ ] 1.1.2 Add `V_SmithGGXCorrelated_Aniso(float ax, float ay, float NoV, float NoL, float XoV, float XoL, float YoV, float YoL)` to `brdf.hlsli`. Add `@ref Heitz 2014`.
-- [ ] 1.1.3 Add `RemapAnisotropy(float roughness, float anisotropy) -> (ax, ay)` helper: `ax = roughness * (1 + anisotropy)`, `ay = roughness * (1 - anisotropy)`.
+- [x] 1.1.1 Added `D_GGXAniso(ax, ay, NoH, XoH, YoH)` to brdf.hlsli. Cited Burley 2012 + Walter 2007.
+- [x] 1.1.2 Added `V_SmithGGXCorrelated_Aniso(ax, ay, NoV, NoL, XoV, XoL, YoV, YoL)` to brdf.hlsli. Cited Heitz 2014 + Filament.
+- [x] 1.1.3 Added `RemapAnisotropy(roughness, anisotropy) -> float2(ax, ay)` to brdf.hlsli. Cited Burley 2012 + KHR_materials_anisotropy.
 - [ ] 1.1.4 Add `SHADING_MODEL_ANISOTROPIC` case to `standard_material.hlsli` dispatch that calls aniso D and V functions.
 
 ### 1.2 GBuffer Anisotropy Packing
@@ -16,7 +16,7 @@
 - [ ] 1.3.3 Upload anisotropy params to material StructuredBuffer.
 
 ### 1.4 C++ Math Mirror
-- [ ] 1.4.1 Add `D_GGXAniso()`, `V_SmithGGXCorrelated_Aniso()`, `RemapAnisotropy()` to `brdf_math.h`.
+- [x] 1.4.1 Added `D_GGXAniso()`, `V_SmithGGXCorrelated_Aniso()`, `RemapAnisotropy()` to brdf_math.h. Literal translation from HLSL.
 
 ## 2. Testing
 
