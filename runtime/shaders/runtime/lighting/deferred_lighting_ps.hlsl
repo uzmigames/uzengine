@@ -228,16 +228,10 @@ float4 main(FSInput input) : SV_Target {
     float3 skyTint = float3(skyLightColorR, skyLightColorG, skyLightColorB) * skyLightIntensity;
     float3 ambient = float3(0, 0, 0);
     {
-        // Fresnel for IBL — uses roughness-modulated F to avoid overly reflective rough surfaces
-        float s = 1.0 - roughness;
-        float3 kS_env = F0 + (max(float3(s, s, s), F0) - F0) * Pow5(1.0 - NoV);
-        float3 kD_env = (1.0 - kS_env) * (1.0 - metallic);
-
-        // Diffuse irradiance: SH evaluation → cubemap fallback
+        // ── Diffuse irradiance: SH evaluation → cubemap fallback ─────────
         // @ref Ramamoorthi & Hanrahan 2001 — L2 SH is sufficient for diffuse irradiance
         float3 irradiance = EvalSH_L2(N, skyIrradianceSH);
 
-        // Cubemap fallback if SH is zero (not yet baked)
 #ifdef UZ_BINDLESS
         if (IsSHZero(skyIrradianceSH) && irradianceSrvIndex != kSentinelSrvIndex) {
             TextureCube<float4> irrTex = ResourceDescriptorHeap[irradianceSrvIndex];
@@ -246,20 +240,23 @@ float4 main(FSInput input) : SV_Target {
 #endif
         irradiance = max(irradiance, skyLightMinAmbient);
 
-        // Specular: prefiltered env + BRDF LUT (DFG)
+        // Cosine-weighted irradiance for diffuse + multi-scatter terms
+        // @ref Three.js — irradiance * RECIPROCAL_PI for Lambertian BRDF
+        float3 cosineIrradiance = irradiance * (1.0 / PI);
+
+        // ── Specular: prefiltered env + BRDF LUT (DFG) ──────────────────
         // @ref Three.js — reflection vector blended with normal for rough surfaces
-        // prevents rough objects gathering light from behind tangent plane
         float3 R = reflect(-V, N);
         float r4 = roughness * roughness * roughness * roughness;
         R = normalize(lerp(R, N, r4));
 
         float mipLevel = roughness * float(prefilteredMipLevels - 1);
-        float3 prefilteredColor = float3(0, 0, 0);
-        float2 envBRDF = float2(1, 0);
+        float3 radiance = float3(0, 0, 0);
+        float2 envBRDF = float2(0, 0);
 #ifdef UZ_BINDLESS
         if (prefilteredSrvIndex != kSentinelSrvIndex) {
             TextureCube<float4> prefTex = ResourceDescriptorHeap[prefilteredSrvIndex];
-            prefilteredColor = prefTex.SampleLevel(clampSampler, R, mipLevel).rgb;
+            radiance = prefTex.SampleLevel(clampSampler, R, mipLevel).rgb;
         }
         if (brdfLutSrvIndex != kSentinelSrvIndex) {
             Texture2D<float4> brdfTex = ResourceDescriptorHeap[brdfLutSrvIndex];
@@ -267,28 +264,41 @@ float4 main(FSInput input) : SV_Target {
         }
 #endif
 
-        // Multi-scattering energy compensation
+        // ── Split dielectric/metallic multi-scattering (Three.js pattern) ──
         // @ref Fdez-Aguera 2019 "A Multiple-Scattering Microfacet Model"
-        // @ref Three.js computeMultiscattering — prevents energy loss on metals
-        float3 FssEss = F0 * envBRDF.x + envBRDF.y;  // single-scatter term
-        float  Ess    = envBRDF.x + envBRDF.y;         // total single-scatter energy
-        float  Ems    = 1.0 - Ess;                     // energy lost to multi-scatter
-        float3 Favg   = F0 + (1.0 - F0) * 0.047619;   // average Fresnel (1/21)
-        float3 Fms    = FssEss * Favg / (1.0 - Ems * Favg); // multi-scatter compensation
+        // @ref Three.js computeMultiscattering — separate F0 per material type
+        float3 dielectricF0 = float3(0.04, 0.04, 0.04);
+        float3 metallicF0   = baseColor;
 
-        float3 singleScatter = FssEss;
-        float3 multiScatter  = Fms * Ems;
-        float3 totalScatter  = singleScatter + multiScatter;
+        // Dielectric path (F0 = 0.04)
+        float3 FssEss_d = dielectricF0 * envBRDF.x + envBRDF.y;
+        float  Ess_d    = envBRDF.x + envBRDF.y;
+        float  Ems_d    = 1.0 - Ess_d;
+        float3 Favg_d   = dielectricF0 + (1.0 - dielectricF0) * 0.047619;
+        float3 Fms_d    = FssEss_d * Favg_d / max(1.0 - Ems_d * Favg_d, 0.001);
 
-        float3 specularAmbient = prefilteredColor * singleScatter
-                               + irradiance * multiScatter;
+        // Metallic path (F0 = baseColor)
+        float3 FssEss_m = metallicF0 * envBRDF.x + envBRDF.y;
+        float  Ess_m    = Ess_d; // same DFG integral
+        float  Ems_m    = Ems_d;
+        float3 Favg_m   = metallicF0 + (1.0 - metallicF0) * 0.047619;
+        float3 Fms_m    = FssEss_m * Favg_m / max(1.0 - Ems_m * Favg_m, 0.001);
 
-        // Diffuse: energy-conserving — subtract total specular scattering
-        // @ref Three.js RE_IndirectSpecular — diffuse *= (1.0 - totalScattering)
-        float3 diffuseAmbient = (1.0 - metallic) * irradiance * baseColor * (1.0 - totalScatter);
+        // Blend by metallic factor
+        float3 singleScatter = lerp(FssEss_d, FssEss_m, metallic);
+        float3 multiScatter  = lerp(Fms_d * Ems_d, Fms_m * Ems_m, metallic);
+
+        // Specular ambient: radiance × single-scatter + irradiance × multi-scatter
+        float3 specularAmbient = radiance * singleScatter
+                               + cosineIrradiance * multiScatter;
+
+        // Diffuse: energy-conserving using DIELECTRIC scattering only
+        // @ref Three.js RE_IndirectSpecular — diffuse *= (1.0 - totalScatteringDielectric)
+        float3 totalScatterDielectric = FssEss_d + Fms_d * Ems_d;
+        float3 diffuseAmbient = (1.0 - metallic) * cosineIrradiance * baseColor
+                              * (1.0 - totalScatterDielectric);
 
         // SSR: blend screen-space reflections with IBL specular
-        // @ref Stachowiak 2015 — SSR overrides IBL where confident
 #ifndef UZ_BINDLESS
         {
             float4 ssrData = ssrTextureT11.Load(int3(px, 0));
@@ -302,6 +312,10 @@ float4 main(FSInput input) : SV_Target {
         float horizon = saturate(1.0 + dot(R, N));
         specularAmbient *= horizon * horizon;
 
+        // Specular occlusion — rough dielectrics in occluded areas
+        // @ref Lagarde 2014 "Moving Frostbite to PBR" — specular occlusion
+        float specOcclusion = saturate(pow(NoV + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao);
+
         // SSGI: add screen-space indirect diffuse if available
 #ifndef UZ_BINDLESS
         {
@@ -311,7 +325,7 @@ float4 main(FSInput input) : SV_Target {
         }
 #endif
 
-        ambient = (diffuseAmbient * ao + specularAmbient) * skyTint;
+        ambient = (diffuseAmbient * ao + specularAmbient * specOcclusion) * skyTint;
     }
 
     // ── Environment MIS (temporally accumulated specular) ───────────────

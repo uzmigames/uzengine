@@ -79,7 +79,7 @@
       "name": "Sun",
       "components": {
         "transform": { "position": [0, 0, 920], "rotation": [50, -30, 0] },
-        "light": { "type": "directional", "color": [1.0, 0.98, 0.94], "intensity": 3 }
+        "light": { "type": "directional", "color": [1.0, 0.98, 0.94], "intensity": 5 }
       }
     },
     {
@@ -93,7 +93,7 @@
       "name": "SkyLight",
       "components": {
         "transform": { "position": [0, 0, 690] },
-        "sky_light": { "intensity": 0.8, "light_color": [1.0, 1.0, 1.0] }
+        "sky_light": { "intensity": 1.0, "light_color": [1.0, 1.0, 1.0] }
       }
     },
     {
