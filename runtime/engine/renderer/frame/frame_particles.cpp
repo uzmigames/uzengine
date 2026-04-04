@@ -56,6 +56,12 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
     const auto& emitters = activeVFX->GetActiveEmitters();
     if (emitters.empty()) return;
 
+    static bool loggedRP = false;
+    if (!loggedRP) {
+        UZ_LOG(VFX, Info, "RegisterParticlePasses: {} active emitters", emitters.size());
+        loggedRP = true;
+    }
+
     // ── Import GPU particle buffers into the render graph ────────────────
     // NOTE: Ping-pong swap, GPU buffer initialization, and simulation (spawn,
     // update, indirect args) are now dispatched inline on the main command list
@@ -449,6 +455,14 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
     }
 
     if (!renderDesc.emitters.empty()) {
+        static bool loggedAdd = false;
+        if (!loggedAdd) {
+            UZ_LOG(VFX, Info, "AddParticleRenderPass: {} emitters, vtx={}, pipeline={}",
+                   renderDesc.emitters.size(),
+                   renderDesc.emitters[0].cpuVertexCount,
+                   renderDesc.billboardPipeline.IsValid());
+            loggedAdd = true;
+        }
         AddParticleRenderPass(rgBuilder, renderDesc);
     }
 

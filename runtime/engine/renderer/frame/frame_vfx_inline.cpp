@@ -115,6 +115,12 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         m_device->GpuProfilerBeginTimestamp(cmdList, "VFX_InlineSimulation");
     }
 
+    static bool loggedOnce = false;
+    if (!loggedOnce) {
+        UZ_LOG(VFX, Info, "DispatchVFXSimulation: {} emitters, PSOs valid", emitters.size());
+        loggedOnce = true;
+    }
+
     for (auto* emitter : emitters) {
         if (!emitter || !emitter->initialized) continue;
 
@@ -145,6 +151,8 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
                        "DispatchVFXSimulation: failed to initialize GPU buffer for emitter");
                 continue;
             }
+            // Clear the merge's upload flag so RegisterParticlePasses doesn't skip this emitter.
+            emitter->needsInitialUpload = false;
         }
 
         // ── Reset aliveCount to 0 each frame ──────────────────────────
