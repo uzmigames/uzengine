@@ -636,6 +636,20 @@ public:
     /// Returns the SVGF à-trous wavelet filter compute pipeline.
     [[nodiscard]] RHIPipelineHandle GetSvgfAtrous();
 
+    // ── Volumetric Fog Compute Pipelines ──────────────────────────────────
+
+    /// Returns the volumetric fog inject compute pipeline.
+    /// Evaluates density + light at each froxel, writes inscattering + extinction.
+    [[nodiscard]] RHIPipelineHandle GetVolumetricFogInject();
+
+    /// Returns the volumetric fog scatter integration compute pipeline.
+    /// Front-to-back accumulation of inscattering + transmittance per column.
+    [[nodiscard]] RHIPipelineHandle GetVolumetricFogScatter();
+
+    /// Returns the volumetric fog composite pipeline (fullscreen, alpha blend).
+    /// Samples integrated froxel volume at scene depth, applies fog.
+    [[nodiscard]] RHIPipelineHandle GetVolumetricFogComposite();
+
     // ── God Rays Compute Pipeline ────────────────────────────────────────
 
     /// Returns the god rays radial blur compute pipeline.

@@ -759,5 +759,143 @@ RHIPipelineHandle PipelineLibrary::GetIrradianceLut() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Volumetric Fog Pipelines
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureVolumetricFogInjectShader() {
+    if (m_volFogInjectCS.IsValid()) return true;
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::VolumetricFogInjectCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile VolumetricFogInjectCS");
+        return false;
+    }
+
+    RHIShaderDesc sd{};
+    sd.bytecode = bytecode.data(); sd.bytecodeSize = bytecode.size();
+    sd.stage = RHIShaderStage::Compute; sd.entryPoint = "main";
+    sd.debugName = "volumetric_fog_inject_cs";
+
+    m_volFogInjectCS = m_device->CreateShader(sd);
+    if (!m_volFogInjectCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create VolumetricFogInjectCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetVolumetricFogInject() {
+    if (!m_initialized) return RHIPipelineHandle::Invalid();
+    if (m_volFogInject.IsValid()) return m_volFogInject;
+    if (!EnsureVolumetricFogInjectShader()) return RHIPipelineHandle::Invalid();
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_volFogInjectCS;
+    desc.debugName     = "VolumetricFogInject";
+
+    m_volFogInject = m_device->CreateComputePipeline(desc);
+    if (!m_volFogInject.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create VolumetricFogInject pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created VolumetricFogInject pipeline");
+    }
+    return m_volFogInject;
+}
+
+bool PipelineLibrary::EnsureVolumetricFogScatterShader() {
+    if (m_volFogScatterCS.IsValid()) return true;
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::VolumetricFogScatterCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile VolumetricFogScatterCS");
+        return false;
+    }
+
+    RHIShaderDesc sd{};
+    sd.bytecode = bytecode.data(); sd.bytecodeSize = bytecode.size();
+    sd.stage = RHIShaderStage::Compute; sd.entryPoint = "main";
+    sd.debugName = "volumetric_fog_scatter_cs";
+
+    m_volFogScatterCS = m_device->CreateShader(sd);
+    if (!m_volFogScatterCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create VolumetricFogScatterCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetVolumetricFogScatter() {
+    if (!m_initialized) return RHIPipelineHandle::Invalid();
+    if (m_volFogScatter.IsValid()) return m_volFogScatter;
+    if (!EnsureVolumetricFogScatterShader()) return RHIPipelineHandle::Invalid();
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_volFogScatterCS;
+    desc.debugName     = "VolumetricFogScatter";
+
+    m_volFogScatter = m_device->CreateComputePipeline(desc);
+    if (!m_volFogScatter.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create VolumetricFogScatter pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created VolumetricFogScatter pipeline");
+    }
+    return m_volFogScatter;
+}
+
+bool PipelineLibrary::EnsureVolumetricFogCompositeShader() {
+    if (m_volFogCompositePS.IsValid()) return true;
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::VolumetricFogCompositePS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile VolumetricFogCompositePS");
+        return false;
+    }
+
+    RHIShaderDesc sd{};
+    sd.bytecode = bytecode.data(); sd.bytecodeSize = bytecode.size();
+    sd.stage = RHIShaderStage::Pixel; sd.entryPoint = "main";
+    sd.debugName = "volumetric_fog_composite_ps";
+
+    m_volFogCompositePS = m_device->CreateShader(sd);
+    if (!m_volFogCompositePS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create VolumetricFogCompositePS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetVolumetricFogComposite() {
+    if (!m_initialized) return RHIPipelineHandle::Invalid();
+    if (m_volFogComposite.IsValid()) return m_volFogComposite;
+    if (!EnsureFullscreenShaders() || !EnsureVolumetricFogCompositeShader())
+        return RHIPipelineHandle::Invalid();
+
+    RHIGraphicsPipelineDesc desc{};
+    desc.vertexShader  = m_fullscreenVS;
+    desc.pixelShader   = m_volFogCompositePS;
+    desc.topology      = RHIPrimitiveTopology::TriangleList;
+    desc.rasterizer.cullMode      = RHICullMode::None;
+    desc.depthStencil.depthEnable = false;
+    desc.depthStencil.depthWrite  = false;
+    // Alpha blend: SrcAlpha / InvSrcAlpha (standard fog compositing)
+    desc.renderTargetBlend[0].blendEnable = true;
+    desc.renderTargetBlend[0].srcColor    = RHIBlendFactor::SrcAlpha;
+    desc.renderTargetBlend[0].dstColor    = RHIBlendFactor::InvSrcAlpha;
+    desc.renderTargetBlend[0].colorOp     = RHIBlendOp::Add;
+    desc.renderTargetBlend[0].srcAlpha    = RHIBlendFactor::One;
+    desc.renderTargetBlend[0].dstAlpha    = RHIBlendFactor::Zero;
+    desc.renderTargetBlend[0].alphaOp     = RHIBlendOp::Add;
+    desc.renderTargetFormats[0] = RHIFormat::RGBA16Float;
+    desc.renderTargetCount      = 1;
+    desc.debugName              = "VolumetricFogComposite";
+
+    m_volFogComposite = CreateCachedPipeline(desc);
+    if (!m_volFogComposite.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create VolumetricFogComposite pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created VolumetricFogComposite pipeline");
+    }
+    return m_volFogComposite;
+}
 
 } // namespace uz

@@ -70,6 +70,9 @@
     [[nodiscard]] bool EnsureMeshSdfBakeShader();
     [[nodiscard]] bool EnsureRadianceCacheTraceShader();
     [[nodiscard]] bool EnsureCloudCompositePixelShader();
+    [[nodiscard]] bool EnsureVolumetricFogInjectShader();
+    [[nodiscard]] bool EnsureVolumetricFogScatterShader();
+    [[nodiscard]] bool EnsureVolumetricFogCompositeShader();
 
     /// Creates a pipeline through the PSO cache. On cache hit, returns the
     /// cached handle without calling the device. On miss, creates via the
@@ -146,6 +149,9 @@
     RHIShaderHandle m_gdfCompositeCS            = RHIShaderHandle::Invalid();
     RHIShaderHandle m_meshSdfBakeCS             = RHIShaderHandle::Invalid();
     RHIShaderHandle m_radianceCacheTraceCS      = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_volFogInjectCS            = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_volFogScatterCS           = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_volFogCompositePS         = RHIShaderHandle::Invalid();
     RHIShaderHandle m_decalVS                   = RHIShaderHandle::Invalid();
     RHIShaderHandle m_decalPS                   = RHIShaderHandle::Invalid();
     RHIShaderHandle m_decalApplyCS              = RHIShaderHandle::Invalid();
@@ -217,3 +223,6 @@
     RHIPipelineHandle m_radianceCacheTrace    = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_decalRender           = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_decalApply            = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_volFogInject          = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_volFogScatter         = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_volFogComposite       = RHIPipelineHandle::Invalid();
