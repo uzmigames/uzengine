@@ -68,13 +68,23 @@ void main(uint3 DTid : SV_DispatchThreadID)
         return;
     }
 
-    float4 traceResult = ssrTraceTex.Load(int3(DTid.xy, 0));
-
     // Read center pixel normal + roughness + depth for edge-stopping
     float4 normalData = normalTex.Load(int3(DTid.xy, 0));
     float3 centerN    = OctDecode(normalData.rg);
     float  roughness  = max(normalData.a, 0.04);
     float  centerZ    = deviceZ;
+
+    // Roughness gate — if this pixel's roughness exceeds the trace pass threshold,
+    // output zero immediately. Without this, the Poisson disk spatial filter can
+    // bleed SSR data from neighboring mirror-surface pixels onto rough surfaces
+    // at silhouette boundaries, causing persistent stipple noise.
+    float rFade = saturate(roughness * roughnessMaskScale + 2.0);
+    if (rFade <= 0.0) {
+        outputSSR[DTid.xy] = float4(0, 0, 0, 0);
+        return;
+    }
+
+    float4 traceResult = ssrTraceTex.Load(int3(DTid.xy, 0));
 
     // Perfect mirrors (roughness < 0.04): pass through directly — no spatial blur
     // @ref Karis 2013 — only truly specular surfaces skip filtering
