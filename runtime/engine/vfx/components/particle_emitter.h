@@ -207,6 +207,11 @@ struct ParticleEmitter {
     float rotationOverLifeStart = 0.0f;
     float rotationOverLifeEnd = 0.0f;
 
+    /// Emitter lifecycle — auto-disable after duration (seconds). 0 = infinite.
+    float emitterDuration = 0.0f;
+    /// Restart count before stopping. 0 = infinite.
+    uint32_t loopCount = 0;
+
     /// Whether the emitter is currently spawning new particles.
     /// When false, existing particles continue to simulate until they die.
     bool isEmitting = true;
