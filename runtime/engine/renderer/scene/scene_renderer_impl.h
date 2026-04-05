@@ -348,6 +348,12 @@
     /// Called from Init() and Resize().
     void CreateSsrResources(uint32_t width, uint32_t height);
 
+    /// HDR scene color copy for forward translucent pass screen-space refraction.
+    /// Copied from the HDR target after deferred lighting, before translucent draws.
+    /// @ref Three.js transmissionRenderTarget — same pattern.
+    RHITextureHandle m_translucentSceneColor;            ///< RGBA16F copy of current frame HDR.
+    uint32_t m_translucentSceneColorSrv = UINT32_MAX;    ///< SRV for translucent shader to sample.
+
     /// Destroys SSR output textures. Called from Shutdown() and Resize().
     void DestroySsrResources();
 
@@ -766,6 +772,12 @@
 
     /// Registers intermediate render targets with the PassInspector for visualization.
     void RegisterPassInspectorTargets(FrameContext& ctx);
+
+    /// Registers the forward translucent pass that renders materials with
+    /// blendMode >= Translucent (glass, transparent, additive).
+    /// Runs AFTER deferred lighting (has HDR scene color for screen-space
+    /// refraction) and BEFORE particles and post-process.
+    void RegisterTranslucentPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
 
     /// Registers post-process passes: bloom, TAA, color grading LUT,
     /// motion blur, DOF, tonemap, and FXAA.

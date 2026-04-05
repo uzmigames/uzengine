@@ -133,6 +133,24 @@ void SceneRenderer::CreateSsrResources(uint32_t width, uint32_t height) {
     }
     m_ssrHasPrevColor = false;
 
+    // ── Translucent scene color copy (screen-space refraction) ──────────
+    // @ref Three.js transmissionRenderTarget — copy of opaque scene for glass.
+    {
+        RHITextureDesc transDesc{};
+        transDesc.width     = width;
+        transDesc.height    = height;
+        transDesc.format    = RHIFormat::RGBA16Float;
+        transDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::CopyDst;
+        transDesc.debugName = "TranslucentSceneColor";
+
+        m_translucentSceneColor = m_device->CreateTexture(transDesc);
+        if (m_translucentSceneColor.IsValid()) {
+            m_translucentSceneColorSrv = m_device->GetTextureSRVIndex(m_translucentSceneColor);
+        } else {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create translucent scene color texture");
+        }
+    }
+
     UZ_LOG(Renderer, Info, "SceneRenderer: SSR resources created ({}x{}, RGBA16F, trace SRV={}, resolve SRV={}, hist0 SRV={}, hist1 SRV={}, prevColor SRV={})",
            width, height, m_ssrTraceOutputSrv, m_ssrResolvedOutputSrv, m_ssrHistorySrv[0], m_ssrHistorySrv[1], m_ssrPrevSceneColorSrv);
 }
@@ -166,6 +184,12 @@ void SceneRenderer::DestroySsrResources() {
         m_ssrPrevSceneColorSrv = UINT32_MAX;
     }
     m_ssrHasPrevColor = false;
+
+    if (m_translucentSceneColor.IsValid()) {
+        m_device->DestroyTexture(m_translucentSceneColor);
+        m_translucentSceneColor = RHITextureHandle{};
+        m_translucentSceneColorSrv = UINT32_MAX;
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

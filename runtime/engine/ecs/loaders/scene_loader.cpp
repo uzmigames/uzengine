@@ -403,6 +403,21 @@ void ParseMaterialComponent(World& world,
     mat->ior                 = ReadFloat(comp, "ior", 1.5f);
     mat->thicknessScale      = ReadFloat(comp, "thicknessScale", 0.5f);
 
+    // Blend mode — auto-detect from transmission or explicit string.
+    // Translucent materials are rendered in a separate forward pass after
+    // deferred lighting, with access to the HDR scene color for refraction.
+    {
+        auto bm = ReadString(comp, "blendMode");
+        if (bm == "Masked")           mat->blendMode = uz::EBlendMode::Masked;
+        else if (bm == "Translucent") mat->blendMode = uz::EBlendMode::Translucent;
+        else if (bm == "Additive")    mat->blendMode = uz::EBlendMode::Additive;
+        else if (bm == "Modulate")    mat->blendMode = uz::EBlendMode::Modulate;
+    }
+    // Auto-promote to Translucent when transmission is set (glass materials).
+    if (mat->transmission > 0.0f && mat->blendMode == uz::EBlendMode::Opaque) {
+        mat->blendMode = uz::EBlendMode::Translucent;
+    }
+
     // Shading model — auto-detect from transmission or explicit string
     if (mat->transmission > 0.0f) {
         mat->shadingModel = uz::EShadingModel::ThinTranslucent;

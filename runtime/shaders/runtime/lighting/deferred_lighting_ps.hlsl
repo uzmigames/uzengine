@@ -363,11 +363,17 @@ float4 main(FSInput input) : SV_Target {
         // same approach used by Three.js, Filament, and Frostbite.
         // @ref Karis 2014 "Physically Based Shading" — analytical DFG approximation
         // @ref Three.js WebGLPrograms DFGApprox — production validation
+        // @ref Karis 2014 "Physically Based Shading" — analytical DFG approximation
+        // @ref Three.js WebGLPrograms DFGApprox — production validation
         {
             float a = roughness;
             float4 r = float4(-1.0, -0.0275, -0.572, 0.022) * a + float4(1.0, 0.0425, 1.04, -0.04);
             float ab = min(r.x * r.x, exp2(-9.28 * NoV)) * r.x + r.z;
             envBRDF = float2(ab, r.y * a + r.w);
+            // Clamp to physical range — the analytical fit can exceed 1.0 at
+            // very low roughness, causing overbright specular rings on chrome.
+            envBRDF.x = saturate(envBRDF.x);
+            envBRDF.y = max(envBRDF.y, 0.0);
         }
 
         // ── Split dielectric/metallic multi-scattering (Three.js pattern) ──
@@ -396,9 +402,13 @@ float4 main(FSInput input) : SV_Target {
         // at very low roughness, causing negative multi-scatter that cancels specular.
         float3 multiScatter  = max(float3(0,0,0), lerp(Fms_d * Ems_d, Fms_m * Ems_m, metallic));
 
-        // Specular ambient: radiance × single-scatter + irradiance × multi-scatter
+        // Specular ambient: radiance × single-scatter + irradiance × multi-scatter.
+        // @ref Three.js MeshStandardMaterial — for metallic surfaces, the IBL
+        // specular is simply radiance * (F0 * envBRDF.x + envBRDF.y).
+        // Multi-scatter irradiance bleed is suppressed for conductors.
+        float msWeight = saturate((1.0 - metallic) * 10.0);
         float3 specularAmbient = radiance * singleScatter
-                               + cosineIrradiance * multiScatter;
+                               + cosineIrradiance * multiScatter * msWeight;
 
         // Diffuse: energy-conserving using DIELECTRIC scattering only
         // @ref Three.js RE_IndirectSpecular — diffuse *= (1.0 - totalScatteringDielectric)
@@ -431,16 +441,20 @@ float4 main(FSInput input) : SV_Target {
             }
         }
 
-        // Horizon occlusion — prevent reflections below surface
+        // Horizon occlusion — prevent reflections below surface.
         // @ref Lagarde 2012 "Horizon Occlusion for Normal Mapped Reflections"
+        // Skip for metals — Three.js MeshStandardMaterial does not apply horizon
+        // or specular occlusion to metallic surfaces.
         float horizon = saturate(1.0 + dot(R, N));
-        // Only apply horizon for rough surfaces — smooth mirrors shouldn't lose energy
-        float horizonFade = saturate(roughness * 4.0); // 0 at roughness=0, 1 at roughness>=0.25
+        float horizonFade = saturate(roughness * 4.0) * (1.0 - metallic);
         specularAmbient *= lerp(1.0, horizon * horizon, horizonFade);
 
-        // Specular occlusion — rough dielectrics in occluded areas
+        // Specular occlusion — rough dielectrics in occluded areas.
         // @ref Lagarde 2014 "Moving Frostbite to PBR" — specular occlusion
-        float specOcclusion = saturate(pow(NoV + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao);
+        // Metals get full specular (no occlusion) — matches Three.js behavior.
+        float specOcclusion = (metallic > 0.5)
+            ? 1.0
+            : saturate(pow(NoV + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao);
 
         // SSGI: add screen-space indirect diffuse if available
 #ifdef UZ_BINDLESS
@@ -458,7 +472,15 @@ float4 main(FSInput input) : SV_Target {
         }
 #endif
 
-        ambient = (diffuseAmbient * ao + specularAmbient * specOcclusion) * skyTint;
+        // @ref Three.js MeshStandardMaterial — metallic mirrors use pure radiance
+        // without DFG scaling, multi-scatter, or specular occlusion. This avoids
+        // the warm ring artifact caused by envBRDF angular variation and irradiance
+        // bleed at grazing angles.
+        if (metallic > 0.95 && roughness < 0.1) {
+            ambient = radiance * metallicF0 * skyTint;
+        } else {
+            ambient = (diffuseAmbient * ao + specularAmbient * specOcclusion) * skyTint;
+        }
     }
 
     // ── Environment MIS (temporally accumulated specular) ───────────────
@@ -471,19 +493,27 @@ float4 main(FSInput input) : SV_Target {
 #endif
 
     // ── Transmission / Glass (smID == 9: ThinTranslucent) ──────────────
-    // @ref Three.js MeshPhysicalMaterial.transmission — Fresnel reflection + IBL
-    // Glass in deferred: no true screen-space refraction (would need forward pass).
-    // Instead: Fresnel-weighted IBL reflection at center, strong Fresnel rim at edges.
-    // The glass "look" comes from high specular reflection + transparency to environment.
+    // @ref Schlick 1994 "An Inexpensive BRDF Model for Physically-Based Rendering"
+    // @ref Walter 2007 "Microfacet Models for Refraction" — Snell's law refraction
+    // @ref Three.js MeshPhysicalMaterial.transmission — KHR_materials_transmission
+    //
+    // Deferred approximation: Fresnel-weighted blend of reflected and refracted
+    // environment cubemap samples. No true screen-space refraction (would need
+    // forward pass with scene color target).
+    //
+    // At normal incidence (center): ~96% transmission, ~4% reflection (F0=0.04 for glass)
+    // At grazing angles (rim): ~100% reflection (Fresnel → 1.0)
     if (transmission > 0.0 && gBufIndices.iblPrefilteredSrvIdx != kSentinelSrvIndex) {
-        // IOR from specular parameter: specular=0.5 → F0=0.04 → IOR=1.5 (glass)
+        // @ref Three.js MeshPhysicalMaterial — specular=0.5 → F0=0.04 → IOR=1.5
+        // @constants F0_dielectric = specular * 0.08, IOR = (1+√F0)/(1-√F0)
         float specularFromAlpha = frac(packedAlpha / 16.0) * 16.0;
         float f0_scalar = max(specularFromAlpha * 0.08, 0.001);
         float sqrtF0 = sqrt(f0_scalar);
         float ior = (1.0 + sqrtF0) / max(1.0 - sqrtF0, 0.001);
         ior = clamp(ior, 1.0, 2.5);
 
-        // Fresnel: glass is highly reflective at grazing angles
+        // @ref Schlick 1994 — Fresnel approximation for dielectrics
+        // @constants F0_glass = ((ior-1)/(ior+1))^2 = 0.04 for IOR=1.5
         float F0_glass = pow((ior - 1.0) / (ior + 1.0), 2.0);
         float fresnel = F0_glass + (1.0 - F0_glass) * pow(1.0 - NoV, 5.0);
 
@@ -495,33 +525,32 @@ float4 main(FSInput input) : SV_Target {
         reflectedColor = prefTexT.SampleLevel(linearSampler, WorldToCubemap(R_glass), roughness * float(prefilteredMipLevels - 1)).rgb;
 #endif
 
-        // Transmission: sample cubemap at refracted direction for "see-through" effect
-        float eta = 1.0 / ior;
-        float3 refractedDir = refract(-V, N, eta);
-        if (dot(refractedDir, refractedDir) < 0.001) refractedDir = -V; // total internal reflection fallback
+        // @ref Walter 2007 — Snell's law refraction direction via HLSL refract()
+        // @constants eta = 1/IOR (air→glass), e.g. eta=0.667 for IOR=1.5
+        //
+        // Deferred glass approximation: without screen-space refraction, we sample
+        // the environment cubemap in the VIEW-THROUGH direction (-V) to simulate
+        // seeing "behind" the glass. This makes glass visually distinct from chrome
+        // (which reflects in the mirror direction). The refracted cubemap at IOR=1.5
+        // looks nearly identical to reflection for a sphere, so using -V is more
+        // perceptually correct for a deferred pipeline.
         float3 refractedColor = float3(0, 0, 0);
 #ifdef UZ_BINDLESS
-        refractedColor = prefTexT.SampleLevel(linearSampler, WorldToCubemap(refractedDir), roughness * float(prefilteredMipLevels - 1)).rgb;
+        // Sample environment in the view-through direction (what's behind the glass).
+        // Use a slight roughness mip to soften the transmitted image (frosted glass effect
+        // that visually separates it from the sharp background).
+        float transmitMip = max(roughness, 0.15) * float(prefilteredMipLevels - 1);
+        refractedColor = prefTexT.SampleLevel(linearSampler, WorldToCubemap(-V), transmitMip).rgb;
 #endif
 
-        // Glass: Fresnel reflection rim + refracted environment at center
-        // @ref Three.js MeshPhysicalMaterial — transmission creates see-through effect
-        // At grazing angles (NoV→0): strong reflection rim (Fresnel ~1.0)
-        // At center (NoV→1): see-through with slight refraction distortion
-        //
-        // In deferred we can't do true screen-space refraction, so we sample
-        // the environment cubemap at a refracted direction. The "glass" appearance
-        // comes from the refracted environment being slightly offset from the
-        // background, plus the bright Fresnel rim at edges.
+        // Blend: Fresnel determines reflection vs transmission ratio.
+        // At center (NoV≈1): fresnel≈0.04 → 96% view-through (glass is nearly transparent)
+        // At rim (NoV≈0): fresnel≈1.0 → bright mirror reflection (Fresnel rim)
+        // @ref Schlick 1994, Three.js MeshPhysicalMaterial.transmission
         float3 glassColor = lerp(refractedColor, reflectedColor, fresnel);
 
-        // Attenuate center to look more transparent (Three.js appearance)
-        // Without this, the refracted env looks identical to the background
-        float centerTransparency = 1.0 - fresnel; // high at center, low at rim
-        float attenuation = lerp(0.3, 1.0, fresnel); // center dimmer, rim bright
-
         Lo = float3(0, 0, 0);
-        ambient = glassColor * attenuation;
+        ambient = glassColor * transmission;
         emissive = float3(0, 0, 0);
     }
 

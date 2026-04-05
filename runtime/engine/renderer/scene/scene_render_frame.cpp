@@ -158,6 +158,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     RegisterGeometryPasses(rgBuilder, ctx);
     RegisterDecalPasses(rgBuilder, ctx);
     RegisterLightingPasses(rgBuilder, ctx);
+    RegisterTranslucentPasses(rgBuilder, ctx);
     RegisterParticlePasses(rgBuilder, ctx);
     RegisterPostProcessPasses(rgBuilder, ctx);
     RegisterOverlayPasses(rgBuilder, ctx);

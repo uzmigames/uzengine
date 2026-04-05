@@ -207,25 +207,29 @@ RHIPipelineHandle PipelineLibrary::GetTranslucent(bool bindless) {
         return cached;
     }
 
-    if (!EnsureMeshShaders() || !EnsureForwardPixelShader()) {
+    if (!EnsureMeshShaders() || !EnsureTranslucentPixelShader()) {
         return RHIPipelineHandle::Invalid();
     }
 
-    // Translucent objects use the forward PBR pixel shader (mesh_ps) since they
-    // cannot write to the GBuffer (deferred shading assumes opaque surfaces).
-    // They are rendered after the deferred lighting pass into the HDR scene color
-    // target with alpha blending, reading depth but not writing to it.
+    // Translucent objects use the translucent pixel shader which handles
+    // glass/transmission (smID==9) with Fresnel-based alpha and standard
+    // translucent materials with matOpacity alpha. Rendered after deferred
+    // lighting into the HDR scene color with alpha blending.
     //
     // SrcAlpha/InvSrcAlpha blend, no depth write for translucent.
     RHIGraphicsPipelineDesc desc{};
     desc.vertexShader  = m_meshVS;
-    desc.pixelShader   = m_meshPS;
+    desc.pixelShader   = m_translucentPS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
-    desc.rasterizer.cullMode              = RHICullMode::None; // Two-sided for translucent (glass, particles)
+    desc.rasterizer.cullMode              = RHICullMode::Back; // Front faces only — back faces cause Fresnel artifacts on glass
     desc.depthStencil.depthEnable         = true;
     desc.depthStencil.depthWrite          = false;  // Read depth, do NOT write
+    // Premultiplied alpha blend (One, InvSrcAlpha):
+    //   final.rgb = src.rgb + dst.rgb * (1 - src.a)
+    // The pixel shader pre-multiplies color by alpha (Fresnel for glass).
+    // This avoids HDR color bleeding at low alpha (SrcAlpha * HDR >> 1.0).
     desc.renderTargetBlend[0].blendEnable = true;
-    desc.renderTargetBlend[0].srcColor    = RHIBlendFactor::SrcAlpha;
+    desc.renderTargetBlend[0].srcColor    = RHIBlendFactor::One;
     desc.renderTargetBlend[0].dstColor    = RHIBlendFactor::InvSrcAlpha;
     desc.renderTargetBlend[0].colorOp     = RHIBlendOp::Add;
     desc.renderTargetBlend[0].srcAlpha    = RHIBlendFactor::One;

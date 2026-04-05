@@ -18,6 +18,7 @@
     [[nodiscard]] bool EnsureGBufferDebugPixelShader();
     [[nodiscard]] bool EnsureDebugViewPixelShader();
     [[nodiscard]] bool EnsureForwardPixelShader();
+    [[nodiscard]] bool EnsureTranslucentPixelShader();
     [[nodiscard]] bool EnsureInstancedMeshShaders();
     [[nodiscard]] bool EnsureInstancedShadowShaders();
     [[nodiscard]] bool EnsureShadowShaders();
@@ -93,6 +94,7 @@
     // ── Cached shader handles ───────────────────────────────────────────
     RHIShaderHandle m_meshVS           = RHIShaderHandle::Invalid();
     RHIShaderHandle m_meshPS           = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_translucentPS    = RHIShaderHandle::Invalid();
     RHIShaderHandle m_fullscreenVS     = RHIShaderHandle::Invalid();
     RHIShaderHandle m_gbufferPS        = RHIShaderHandle::Invalid();
     RHIShaderHandle m_lightingPS       = RHIShaderHandle::Invalid();

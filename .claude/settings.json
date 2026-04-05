@@ -39,6 +39,17 @@
         ]
       },
       {
+        "matcher": "Bash(cd*zig build*)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/clean-shader-cache.sh 2>/dev/null || true",
+            "timeout": 10,
+            "statusMessage": "Cleaning shader cache..."
+          }
+        ]
+      },
+      {
         "matcher": "Bash(git commit*)",
         "hooks": [
           {

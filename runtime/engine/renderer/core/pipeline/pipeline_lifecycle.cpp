@@ -158,6 +158,7 @@ void PipelineLibrary::Shutdown() {
 
     destroyShader(m_meshVS);
     destroyShader(m_meshPS);
+    destroyShader(m_translucentPS);
     destroyShader(m_fullscreenVS);
     destroyShader(m_gbufferPS);
     destroyShader(m_lightingPS);
@@ -291,6 +292,17 @@ bool PipelineLibrary::EnsureForwardPixelShader() {
         m_meshPS = m_shaderMgr->CreateShader(EngineShader::MeshPS, RHIShaderStage::Pixel);
         if (!m_meshPS.IsValid()) {
             UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile MeshPS");
+            return false;
+        }
+    }
+    return true;
+}
+
+bool PipelineLibrary::EnsureTranslucentPixelShader() {
+    if (!m_translucentPS.IsValid()) {
+        m_translucentPS = m_shaderMgr->CreateShader(EngineShader::TranslucentPS, RHIShaderStage::Pixel);
+        if (!m_translucentPS.IsValid()) {
+            UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile TranslucentPS");
             return false;
         }
     }

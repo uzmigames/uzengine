@@ -373,6 +373,15 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
         bindTexFromPath(effNormalPath,    cmd.normalSrvIndex,    cmd.normalTexture);
         bindTexFromPath(effEmissivePath,  cmd.emissiveSrvIndex,  cmd.emissiveTexture);
 
+        // Blend mode — bits[0:1] of materialFlags.
+        // 0=Opaque, 1=Masked, 2=Translucent, 3=Additive.
+        // GBuffer pass skips draws where bits[0:1] >= 2 (Translucent/Additive).
+        // Forward translucent pass only draws where bits[0:1] >= 2.
+        if (mat) {
+            const uint32_t bm = static_cast<uint32_t>(mat->GetBlendMode()) & 0x3u;
+            cmd.materialFlags |= bm;
+        }
+
         // ORM packed mode: single texture replaces separate roughness/metallic/AO.
         // Bind ORM texture to the aoIndex slot; shader unpacks R=AO, G=Roughness, B=Metallic.
         const bool isORM = mat && mat->IsORM();
