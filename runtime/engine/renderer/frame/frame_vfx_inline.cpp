@@ -123,7 +123,11 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
 
         // Ping-pong swap: after swap, WriteSet has the buffers that were ReadSet
         // last frame. Spawn writes to WriteSet, Update reads ReadSet → writes WriteSet.
-        gpuBuf.Swap();
+        // Match standalone: do NOT swap. Always use read=0, write=1.
+        // gpuBuf.Swap();
+        // Force fixed assignment matching standalone demo (m_pingPong=0 never changes).
+        gpuBuf.readIndex = 0;
+        gpuBuf.writeIndex = 1;
 
         // ── Deferred GPU buffer initialization cleanup ────────────────
         // Staging buffers from InitializeData must survive until the GPU
@@ -194,28 +198,27 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         spawnCBData.emitterPos[0]     = 0.0f;
         spawnCBData.emitterPos[1]     = 0.0f;
         spawnCBData.emitterPos[2]     = 0.0f;
-        spawnCBData.spawnRadius       = 200.0f; // 200cm random offset — wide spread
+        // Match standalone demo defaults for fountain effect.
+        spawnCBData.spawnRadius       = 0.0f;  // Point spawn
         spawnCBData.spawnVelocity[0]  = emitter->spawnVelocity.x;
         spawnCBData.spawnVelocity[1]  = emitter->spawnVelocity.y;
         spawnCBData.spawnVelocity[2]  = emitter->spawnVelocity.z;
-        spawnCBData.velocityVariation = 100.0f; // ±100 cm/s random variation
+        spawnCBData.velocityVariation = emitter->velocityVariation;
 
-        // Convert spread angle from degrees (emitter) to radians (shader).
         constexpr float kDegToRad = 3.14159265358979f / 180.0f;
         spawnCBData.spreadAngle       = emitter->spreadAngle * kDegToRad;
 
-        // Lifetime range: base lifetime with variation applied.
         const float minLife = (emitter->lifetime - emitter->lifetimeVariation > 0.01f)
                             ? (emitter->lifetime - emitter->lifetimeVariation)
                             : 0.01f;
         spawnCBData.minLifetime       = minLife;
         spawnCBData.maxLifetime       = emitter->lifetime;
-        spawnCBData.initialSize       = 20.0f; // 20 cm — visible but not overlapping
+        spawnCBData.initialSize       = 10.0f;  // 10cm (standalone default)
 
-        spawnCBData.initialColor[0]   = 1.0f;   // R
-        spawnCBData.initialColor[1]   = 0.3f;  // G — orange
-        spawnCBData.initialColor[2]   = 0.0f;  // B
-        spawnCBData.initialColor[3]   = 1.0f;  // A
+        spawnCBData.initialColor[0]   = 1.0f;
+        spawnCBData.initialColor[1]   = 0.9f;
+        spawnCBData.initialColor[2]   = 0.6f;
+        spawnCBData.initialColor[3]   = 1.0f;
 
         spawnCBData.dt                = dt;
         spawnCBData.frameNumber       = frameIndex;
@@ -236,7 +239,7 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         spawnCBData.aliveCountUavIndex      = m_device->GetBufferUAVIndex(gpuBuf.aliveCount);
 
         // Spawn shape defaults (point emitter).
-        spawnCBData.spawnShape        = 1; // Sphere — spreads particles spatially
+        spawnCBData.spawnShape        = 0; // Point spawn (standalone default)
         spawnCBData.spawnOnSurface    = 0;
 
         // Dynamic params UAV -- use positions UAV as fallback to prevent
