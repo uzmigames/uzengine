@@ -102,7 +102,7 @@ struct PerFrameParams {
     uint32_t irradianceSrvIndex   = UINT32_MAX;        ///< Bindless SRV index for irradiance cubemap.
     uint32_t prefilteredSrvIndex  = UINT32_MAX;        ///< Bindless SRV index for prefiltered specular.
     uint32_t brdfLutSrvIndex      = UINT32_MAX;        ///< Bindless SRV index for BRDF LUT.
-    uint32_t prefilteredMipLevels = 5;                 ///< Number of prefiltered mip levels.
+    uint32_t prefilteredMipLevels = 8;                 ///< Number of prefiltered mip levels (must match IBLBaker::kPrefilteredMipLevels).
     float    skyLightIntensity    = 1.0f;              ///< IBL ambient multiplier.
     float    skyLightColorR       = 1.0f;              ///< Sky light tint (R).
     float    skyLightColorG       = 1.0f;              ///< Sky light tint (G).

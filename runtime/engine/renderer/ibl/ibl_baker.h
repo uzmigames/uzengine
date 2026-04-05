@@ -49,7 +49,7 @@ public:
     // ── Bake parameters (public for external reference) ──────────────────
     static constexpr uint32_t kBRDFLutSize          = 512;
     static constexpr uint32_t kIrradianceSize       = 64;
-    static constexpr uint32_t kPrefilteredSize      = 1024;
+    static constexpr uint32_t kPrefilteredSize      = 256;
     static constexpr uint32_t kPrefilteredMipLevels = 8;
     static constexpr uint32_t kThreadGroupSize      = 8;
 

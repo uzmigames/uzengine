@@ -60,7 +60,7 @@ struct PerFrameCB {
     uint32_t irradianceSrvIndex  = UINT32_MAX; ///< SRV index for irradiance cubemap (UINT32_MAX = no IBL).
     uint32_t prefilteredSrvIndex = UINT32_MAX; ///< SRV index for prefiltered specular cubemap.
     uint32_t brdfLutSrvIndex     = UINT32_MAX; ///< SRV index for BRDF integration LUT.
-    uint32_t prefilteredMipLevels = 5;         ///< Number of prefiltered mip levels (for LOD calculation).
+    uint32_t prefilteredMipLevels = 8;         ///< Number of prefiltered mip levels (must match IBLBaker::kPrefilteredMipLevels).
     float skyLightIntensity = 1.0f;            ///< Multiplier for IBL ambient (SkyLight intensity).
     float skyLightColorR    = 1.0f;            ///< Sky light tint color (R).
     float skyLightColorG    = 1.0f;            ///< Sky light tint color (G).

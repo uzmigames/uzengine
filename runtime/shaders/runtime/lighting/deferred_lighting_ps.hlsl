@@ -349,7 +349,11 @@ float4 main(FSInput input) : SV_Target {
         float r4 = roughness * roughness * roughness * roughness;
         R = normalize(lerp(R, N, r4));
 
-        float mipLevel = roughness * float(prefilteredMipLevels - 1);
+        // @ref Filament surface_light_indirect.fs — quadratic roughness-to-LOD curve
+        // Quadratic `r*(2-r)` maps mid-roughness to blurrier mips than linear,
+        // matching Filament and approximating Three.js piecewise PMREM mapping.
+        // At roughness=0.4: linear→2.8, quadratic→4.48 — blurrier, closer to reference.
+        float mipLevel = roughness * (2.0 - roughness) * float(prefilteredMipLevels - 1);
         float3 radiance = float3(0, 0, 0);
         float2 envBRDF = float2(0, 0);
 #ifdef UZ_BINDLESS
@@ -403,12 +407,13 @@ float4 main(FSInput input) : SV_Target {
         float3 multiScatter  = max(float3(0,0,0), lerp(Fms_d * Ems_d, Fms_m * Ems_m, metallic));
 
         // Specular ambient: radiance × single-scatter + irradiance × multi-scatter.
-        // @ref Three.js MeshStandardMaterial — for metallic surfaces, the IBL
-        // specular is simply radiance * (F0 * envBRDF.x + envBRDF.y).
-        // Multi-scatter irradiance bleed is suppressed for conductors.
-        float msWeight = saturate((1.0 - metallic) * 10.0);
+        // @ref Fdez-Aguera 2019 "A Multiple-Scattering Microfacet Model"
+        // @ref Three.js RE_IndirectSpecular — applies multi-scatter unconditionally
+        // @ref Filament surface_light_indirect.fs — applies to all materials
+        // Multi-scatter compensates energy lost by single-scatter GGX for ALL
+        // material types including metals. No suppression needed.
         float3 specularAmbient = radiance * singleScatter
-                               + cosineIrradiance * multiScatter * msWeight;
+                               + cosineIrradiance * multiScatter;
 
         // Diffuse: energy-conserving using DIELECTRIC scattering only
         // @ref Three.js RE_IndirectSpecular — diffuse *= (1.0 - totalScatteringDielectric)
