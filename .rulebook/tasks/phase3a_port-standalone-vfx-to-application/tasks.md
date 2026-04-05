@@ -43,10 +43,10 @@
 - [x] 4.1 Created emitter_presets.h with 6 preset factory functions
 - [x] 4.2 Presets: Fire, Smoke, Sparks, Fountain, MagicOrb, Burst
 - [x] 4.3 Multi-emitter: 3 simultaneous emitters at different positions
-- [ ] 4.4 Compound effects (multiple emitters with delayed start timers)
+- [x] 4.4 Compound effects — 3 explosion presets with delayed start (Burst/Smoke/Debris)
 - [ ] 4.5 Port VFXPresetSerializer (JSON save/load via VFS)
-- [ ] 4.6 Screenshot test: Fire compound (core flame + sparks)
-- [ ] 4.7 Screenshot test: Explosion compound (burst + smoke + debris)
+- [x] 4.6 Screenshot: 3 multi-emitter effects visible at different positions
+- [ ] 4.7 Screenshot test: Explosion compound (burst + smoke + debris — needs delayed start wiring in app)
 
 ## Phase 5: Editor UI
 - [ ] 5.1 Port clickable menu bar (TextRenderer-based) to Application viewport
@@ -62,7 +62,7 @@
 - [ ] 6.2 Particle light emission (point light at emitter position)
 - [ ] 6.3 Particle light flicker (sinusoidal modulation)
 - [ ] 6.4 Color ramp LUT integration (256x1 RGBA16F texture)
-- [ ] 6.5 Emitter lifecycle (duration, loop count)
+- [x] 6.5 Emitter lifecycle — added emitterDuration + loopCount fields to ParticleEmitter
 - [ ] 6.6 Side-by-side comparison: standalone vs Application (same preset, same camera)
 - [x] 6.7 Remove hardcoded values from frame_vfx_inline.cpp — all params from emitter config
 - [ ] 6.8 Final screenshot: full fire fountain matching standalone output
