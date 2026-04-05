@@ -484,10 +484,13 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     // this frame is m_ssrHistoryIndex — the temporal pass writes to it and
     // transitions it to SRV before the lighting pass runs.
     if (m_ssrEnabled && m_ssrResolvedOutput.IsValid()) {
-        const uint32_t ssrWriteIdx = m_ssrHistoryIndex;
-        if (m_ssrHistory[ssrWriteIdx].IsValid()
-            && m_ssrHistorySrv[ssrWriteIdx] != UINT32_MAX) {
-            perFrame.ssrSrvIndex = m_ssrHistorySrv[ssrWriteIdx];
+        // After RegisterSSRPasses, m_ssrHistoryIndex has been FLIPPED.
+        // The temporal pass wrote to the PREVIOUS value of m_ssrHistoryIndex,
+        // which is now (1 - m_ssrHistoryIndex). Read from the just-written buffer.
+        const uint32_t ssrJustWritten = 1 - m_ssrHistoryIndex;
+        if (m_ssrHistory[ssrJustWritten].IsValid()
+            && m_ssrHistorySrv[ssrJustWritten] != UINT32_MAX) {
+            perFrame.ssrSrvIndex = m_ssrHistorySrv[ssrJustWritten];
         } else {
             // History not yet created — fall back to raw resolved output
             perFrame.ssrSrvIndex = m_ssrResolvedOutputSrv;
