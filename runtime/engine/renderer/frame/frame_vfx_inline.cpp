@@ -111,6 +111,33 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         m_vfxDummyDynParams = m_device->CreateBuffer(dummyDesc);
     }
 
+    // Lazy-create kill volume buffer (16 KillVolumes × 32 bytes).
+    if (!m_vfxKillVolumeBuffer.IsValid()) {
+        RHIBufferDesc kvDesc{};
+        kvDesc.sizeBytes = 16 * 32;
+        kvDesc.stride = 32;
+        kvDesc.usage = RHIBufferUsage::StructuredBuffer;
+        kvDesc.memory = RHIMemoryType::Default;
+        kvDesc.debugName = "VFX_KillVolumes";
+        m_vfxKillVolumeBuffer = m_device->CreateBuffer(kvDesc);
+    }
+
+    // Lazy-create death event buffer + counter (4096 events × 32 bytes).
+    if (!m_vfxDeathEventBuffer.IsValid()) {
+        RHIBufferDesc deDesc{};
+        deDesc.sizeBytes = 4096 * 32;
+        deDesc.stride = 32;
+        deDesc.usage = RHIBufferUsage::StructuredBuffer | RHIBufferUsage::UnorderedAccess;
+        deDesc.memory = RHIMemoryType::Default;
+        deDesc.debugName = "VFX_DeathEvents";
+        m_vfxDeathEventBuffer = m_device->CreateBuffer(deDesc);
+
+        deDesc.sizeBytes = sizeof(uint32_t);
+        deDesc.stride = sizeof(uint32_t);
+        deDesc.debugName = "VFX_DeathEventCount";
+        m_vfxDeathEventCountBuffer = m_device->CreateBuffer(deDesc);
+    }
+
     if (m_gpuProfileEnabled) {
         m_device->GpuProfilerBeginTimestamp(cmdList, "VFX_InlineSimulation");
     }
@@ -387,6 +414,14 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         updateCBData.rotationRate           = emitter->rotationRate;
         updateCBData.rotationOverLifeStart  = emitter->rotationOverLifeStart;
         updateCBData.rotationOverLifeEnd    = emitter->rotationOverLifeEnd;
+
+        // Kill volumes (buffer-based, default disabled with count=0).
+        updateCBData.killVolumeSrvIndex     = m_device->GetBufferSRVIndex(m_vfxKillVolumeBuffer);
+        updateCBData.activeKillVolumeCount  = 0; // No active kill volumes by default
+
+        // Death spawn event buffers (disabled by default — deathSpawnEnabled=0 in CB defaults).
+        updateCBData.deathEventBufferUavIndex = m_device->GetBufferUAVIndex(m_vfxDeathEventBuffer);
+        updateCBData.deathEventCountUavIndex  = m_device->GetBufferUAVIndex(m_vfxDeathEventCountBuffer);
 
         const CBAllocation updateAlloc = m_cbRing->Allocate(sizeof(updateCBData));
         if (!updateAlloc.cpuPtr) {

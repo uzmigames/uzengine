@@ -752,7 +752,10 @@ private:
     DecalManager* m_decalManager = nullptr;
     TrailSystem* m_trailSystem = nullptr;
     PixelDebugSystem* m_pixelDebugSystem = nullptr;
-    RHIBufferHandle m_vfxDummyDynParams; ///< Scratch buffer for dynParams when emitter has none.
+    RHIBufferHandle m_vfxDummyDynParams;      ///< Scratch buffer for dynParams when emitter has none.
+    RHIBufferHandle m_vfxKillVolumeBuffer;    ///< GPU buffer for kill volume descriptors (16 × 32 bytes).
+    RHIBufferHandle m_vfxDeathEventBuffer;    ///< GPU buffer for death events (4096 × 32 bytes).
+    RHIBufferHandle m_vfxDeathEventCountBuffer; ///< Death event counter (single uint32).
     /// End-of-frame resource states for imported textures.
     /// Updated after each frame's render graph Compile() to provide correct
     /// initial states for the next frame's imports.
