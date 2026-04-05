@@ -115,12 +115,6 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         m_device->GpuProfilerBeginTimestamp(cmdList, "VFX_InlineSimulation");
     }
 
-    static bool loggedOnce = false;
-    if (!loggedOnce) {
-        UZ_LOG(VFX, Info, "DispatchVFXSimulation: {} emitters, PSOs valid", emitters.size());
-        loggedOnce = true;
-    }
-
     for (auto* emitter : emitters) {
         if (!emitter || !emitter->initialized) continue;
 
@@ -130,120 +124,6 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         // Ping-pong swap: after swap, WriteSet has the buffers that were ReadSet
         // last frame. Spawn writes to WriteSet, Update reads ReadSet → writes WriteSet.
         gpuBuf.Swap();
-
-        // CPU particle upload test (disabled).
-        if (false) {
-        // Write 100 particles at known positions to WriteSet to verify
-        // the billboard render path independently of compute spawn/update.
-        static bool cpuUploadDone = false;
-        if (!cpuUploadDone) {
-            constexpr uint32_t kTestCount = 100;
-            const uint64_t posBytes = kTestCount * 16; // float4 per particle
-            const uint64_t lifeBytes = kTestCount * 4;  // float per particle
-            const uint64_t sizeBytes = kTestCount * 4;
-            const uint64_t ageBytes = kTestCount * 4;
-
-            // Create staging buffers
-            RHIBufferDesc stgDesc{};
-            stgDesc.memory = RHIMemoryType::Upload;
-
-            // Positions: spread in a grid
-            stgDesc.sizeBytes = posBytes; stgDesc.stride = 16;
-            stgDesc.usage = RHIBufferUsage::StructuredBuffer;
-            stgDesc.debugName = "VFX_TestPos";
-            auto posStg = m_device->CreateBuffer(stgDesc);
-
-            stgDesc.sizeBytes = lifeBytes; stgDesc.stride = 4;
-            stgDesc.debugName = "VFX_TestLife";
-            auto lifeStg = m_device->CreateBuffer(stgDesc);
-
-            stgDesc.sizeBytes = sizeBytes;
-            stgDesc.debugName = "VFX_TestSize";
-            auto sizeStg = m_device->CreateBuffer(stgDesc);
-
-            stgDesc.sizeBytes = ageBytes;
-            stgDesc.debugName = "VFX_TestAge";
-            auto ageStg = m_device->CreateBuffer(stgDesc);
-
-            if (posStg.IsValid() && lifeStg.IsValid() && sizeStg.IsValid() && ageStg.IsValid()) {
-                auto* posData = static_cast<float*>(m_device->MapBuffer(posStg));
-                auto* lifeData = static_cast<float*>(m_device->MapBuffer(lifeStg));
-                auto* sizeData = static_cast<float*>(m_device->MapBuffer(sizeStg));
-                auto* ageData = static_cast<float*>(m_device->MapBuffer(ageStg));
-
-                if (posData && lifeData && sizeData && ageData) {
-                    for (uint32_t i = 0; i < kTestCount; ++i) {
-                        float x = ((float)(i % 10) - 5.0f) * 50.0f;
-                        float y = ((float)(i / 10) - 5.0f) * 50.0f;
-                        float z = 0.0f;
-                        posData[i*4+0] = x;
-                        posData[i*4+1] = y;
-                        posData[i*4+2] = z;
-                        posData[i*4+3] = 0.0f;
-                        lifeData[i] = 10.0f; // long lifetime
-                        sizeData[i] = 30.0f; // 30cm
-                        ageData[i] = 0.1f;   // just born
-                    }
-                    m_device->UnmapBuffer(posStg);
-                    m_device->UnmapBuffer(lifeStg);
-                    m_device->UnmapBuffer(sizeStg);
-                    m_device->UnmapBuffer(ageStg);
-
-                    // Transition ALL destination buffers to CopyDst
-                    RHIBarrierDesc preCopy[8] = {};
-                    uint32_t pc = 0;
-                    auto addCopyDst = [&](RHIBufferHandle b) {
-                        preCopy[pc].buffer = b;
-                        preCopy[pc].stateBefore = RHIResourceState::Common;
-                        preCopy[pc].stateAfter = RHIResourceState::CopyDst;
-                        ++pc;
-                    };
-                    addCopyDst(gpuBuf.sets[0].positions);
-                    addCopyDst(gpuBuf.sets[1].positions);
-                    addCopyDst(gpuBuf.sets[0].lifespans);
-                    addCopyDst(gpuBuf.sets[1].lifespans);
-                    addCopyDst(gpuBuf.sets[0].sizes);
-                    addCopyDst(gpuBuf.sets[1].sizes);
-                    addCopyDst(gpuBuf.sets[0].ages);
-                    addCopyDst(gpuBuf.sets[1].ages);
-                    cmdList->ResourceBarrier(preCopy, pc);
-
-                    cmdList->CopyBuffer(posStg, 0, gpuBuf.sets[0].positions, 0, posBytes);
-                    cmdList->CopyBuffer(posStg, 0, gpuBuf.sets[1].positions, 0, posBytes);
-                    cmdList->CopyBuffer(lifeStg, 0, gpuBuf.sets[0].lifespans, 0, lifeBytes);
-                    cmdList->CopyBuffer(lifeStg, 0, gpuBuf.sets[1].lifespans, 0, lifeBytes);
-                    cmdList->CopyBuffer(sizeStg, 0, gpuBuf.sets[0].sizes, 0, sizeBytes);
-                    cmdList->CopyBuffer(sizeStg, 0, gpuBuf.sets[1].sizes, 0, sizeBytes);
-                    cmdList->CopyBuffer(ageStg, 0, gpuBuf.sets[0].ages, 0, ageBytes);
-                    cmdList->CopyBuffer(ageStg, 0, gpuBuf.sets[1].ages, 0, ageBytes);
-
-                    // CopyDst → SRV so billboard can read
-                    RHIBarrierDesc postCopy[8] = {};
-                    uint32_t ppc = 0;
-                    auto addSRV = [&](RHIBufferHandle b) {
-                        postCopy[ppc].buffer = b;
-                        postCopy[ppc].stateBefore = RHIResourceState::CopyDst;
-                        postCopy[ppc].stateAfter = RHIResourceState::ShaderResource;
-                        ++ppc;
-                    };
-                    addSRV(gpuBuf.sets[0].positions);
-                    addSRV(gpuBuf.sets[1].positions);
-                    addSRV(gpuBuf.sets[0].lifespans);
-                    addSRV(gpuBuf.sets[1].lifespans);
-                    addSRV(gpuBuf.sets[0].sizes);
-                    addSRV(gpuBuf.sets[1].sizes);
-                    addSRV(gpuBuf.sets[0].ages);
-                    addSRV(gpuBuf.sets[1].ages);
-                    cmdList->ResourceBarrier(postCopy, ppc);
-
-                    UZ_LOG(VFX, Info, "CPU-uploaded {} test particles with proper barriers", kTestCount);
-                }
-                // Don't destroy staging until GPU finishes — store for later cleanup
-                // (leaking intentionally for debug, cleaned up on shutdown)
-            }
-            cpuUploadDone = true;
-            continue;
-        } }
 
         // ── Deferred GPU buffer initialization cleanup ────────────────
         // Staging buffers from InitializeData must survive until the GPU
@@ -283,84 +163,6 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
             // Clear the merge's upload flag so RegisterParticlePasses doesn't skip this emitter.
             emitter->needsInitialUpload = false;
 
-            // ── GPU READBACK VALIDATION ──────────────────────────────────
-            // Submit the init copies, wait for GPU, then read back freeListHead
-            // and freeList[0..9] to verify the CopyBuffer delivered correct data.
-            {
-                cmdList->End();
-                cmdList->Execute();
-                m_device->WaitIdle();
-                cmdList->Begin();
-
-                // Readback freeListHead
-                RHIBufferDesc rbDesc{};
-                rbDesc.sizeBytes = sizeof(uint32_t);
-                rbDesc.memory = RHIMemoryType::Readback;
-                rbDesc.debugName = "VFX_RB_Head";
-                auto rbHead = m_device->CreateBuffer(rbDesc);
-
-                // Readback first 10 entries of freeList
-                rbDesc.sizeBytes = 10 * sizeof(uint32_t);
-                rbDesc.debugName = "VFX_RB_FreeList";
-                auto rbFL = m_device->CreateBuffer(rbDesc);
-
-                // Readback aliveCount
-                rbDesc.sizeBytes = sizeof(uint32_t);
-                rbDesc.debugName = "VFX_RB_Alive";
-                auto rbAlive = m_device->CreateBuffer(rbDesc);
-
-                if (rbHead.IsValid() && rbFL.IsValid() && rbAlive.IsValid()) {
-                    // UAV→CopySrc for all three
-                    RHIBarrierDesc b[3] = {};
-                    b[0].buffer = gpuBuf.freeListHead;
-                    b[0].stateBefore = RHIResourceState::UnorderedAccess;
-                    b[0].stateAfter = RHIResourceState::CopySrc;
-                    b[1].buffer = gpuBuf.freeList;
-                    b[1].stateBefore = RHIResourceState::UnorderedAccess;
-                    b[1].stateAfter = RHIResourceState::CopySrc;
-                    b[2].buffer = gpuBuf.aliveCount;
-                    b[2].stateBefore = RHIResourceState::UnorderedAccess;
-                    b[2].stateAfter = RHIResourceState::CopySrc;
-                    cmdList->ResourceBarrier(b, 3);
-
-                    cmdList->CopyBuffer(gpuBuf.freeListHead, 0, rbHead, 0, sizeof(uint32_t));
-                    cmdList->CopyBuffer(gpuBuf.freeList, 0, rbFL, 0, 10 * sizeof(uint32_t));
-                    cmdList->CopyBuffer(gpuBuf.aliveCount, 0, rbAlive, 0, sizeof(uint32_t));
-
-                    // CopySrc→UAV back
-                    b[0].stateBefore = RHIResourceState::CopySrc;
-                    b[0].stateAfter = RHIResourceState::UnorderedAccess;
-                    b[1].stateBefore = RHIResourceState::CopySrc;
-                    b[1].stateAfter = RHIResourceState::UnorderedAccess;
-                    b[2].stateBefore = RHIResourceState::CopySrc;
-                    b[2].stateAfter = RHIResourceState::UnorderedAccess;
-                    cmdList->ResourceBarrier(b, 3);
-
-                    // Submit and wait
-                    cmdList->End();
-                    cmdList->Execute();
-                    m_device->WaitIdle();
-                    cmdList->Begin();
-
-                    // Read values
-                    auto* headVal = static_cast<uint32_t*>(m_device->MapBuffer(rbHead));
-                    auto* flVal = static_cast<uint32_t*>(m_device->MapBuffer(rbFL));
-                    auto* aliveVal = static_cast<uint32_t*>(m_device->MapBuffer(rbAlive));
-
-                    if (headVal && flVal && aliveVal) {
-                        UZ_LOG(VFX, Info,
-                            "GPU READBACK: freeListHead={} (expect {}), aliveCount={}, "
-                            "freeList[0..9]=[{},{},{},{},{},{},{},{},{},{}]",
-                            *headVal, gpuBuf.capacity, *aliveVal,
-                            flVal[0], flVal[1], flVal[2], flVal[3], flVal[4],
-                            flVal[5], flVal[6], flVal[7], flVal[8], flVal[9]);
-                    }
-
-                    m_device->DestroyBuffer(rbHead);
-                    m_device->DestroyBuffer(rbFL);
-                    m_device->DestroyBuffer(rbAlive);
-                }
-            }
         }
 
         // ── Reset aliveCount to 0 each frame ──────────────────────────
@@ -368,20 +170,12 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         // Without resetting to 0 each frame, the counter grows unbounded
         // and the free list eventually exhausts (particles stop spawning).
         // This matches the standalone demo's per-frame aliveCount reset.
+        // Reset aliveCount to 0 via CopyBuffer (matches standalone pattern).
+        // DX12 implicit state promotion handles Common→CopyDst for the copy.
+        // CopyDst→UAV barrier after so spawn CS can InterlockedAdd.
         if (gpuBuf.aliveCountStaging.IsValid()) {
-            // Transition aliveCount to CopyDst before the copy.
-            // After InitializeData the buffer is in UAV state (CopyDst→UAV
-            // barrier emitted by InitializeData). DX12 requires the
-            // destination of CopyBuffer to be in CopyDst state.
-            RHIBarrierDesc preCopy{};
-            preCopy.buffer      = gpuBuf.aliveCount;
-            preCopy.stateBefore = RHIResourceState::UnorderedAccess;
-            preCopy.stateAfter  = RHIResourceState::CopyDst;
-            cmdList->ResourceBarrier(&preCopy, 1);
-
             cmdList->CopyBuffer(gpuBuf.aliveCountStaging, 0,
                                 gpuBuf.aliveCount, 0, sizeof(uint32_t));
-            // CopyDst → UAV barrier so spawn CS can atomically increment.
             RHIBarrierDesc b{};
             b.buffer = gpuBuf.aliveCount;
             b.stateBefore = RHIResourceState::CopyDst;
@@ -391,13 +185,6 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
 
         // ── Spawn dispatch ─────────────────────────────────────────────
         const uint32_t spawnCount = emitter->CalculateSpawnCount(dt);
-
-        static uint32_t spawnLogCount = 0;
-        if (spawnLogCount < 10) {
-            UZ_LOG(VFX, Info, "Frame {}: spawnCount={}, cpuAlive={}, dt={:.4f}",
-                   frameIndex, spawnCount, emitter->cpuAliveCount, dt);
-            ++spawnLogCount;
-        }
 
         // cpuAliveCount is already updated inside CalculateSpawnCount().
 
@@ -467,40 +254,17 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         std::memcpy(spawnAlloc.cpuPtr, &spawnCBData, sizeof(spawnCBData));
 
         if (spawnCount > 0) {
-            // Log CB key fields (first 3 frames)
-            static int cbLog = 0;
-            if (cbLog < 3) {
-                auto* u = reinterpret_cast<const uint32_t*>(&spawnCBData);
-                UZ_LOG(VFX, Info, "SpawnCB dump: vel=({:.0f},{:.0f},{:.0f}) spread={:.2f} "
-                       "life=[{:.1f},{:.1f}] size={:.0f} spawn={} max={} "
-                       "freeListSrv={} posUav={} freeHeadUav={} aliveUav={}",
-                       spawnCBData.spawnVelocity[0], spawnCBData.spawnVelocity[1], spawnCBData.spawnVelocity[2],
-                       spawnCBData.spreadAngle,
-                       spawnCBData.minLifetime, spawnCBData.maxLifetime,
-                       spawnCBData.initialSize,
-                       spawnCBData.spawnCount, spawnCBData.maxParticles,
-                       spawnCBData.freeListSrvIndex, spawnCBData.positionsUavIndex,
-                       spawnCBData.freeListHeadUavIndex, spawnCBData.aliveCountUavIndex);
-                ++cbLog;
-            }
-
-            // Transition WriteSet attributes to UAV before compute writes.
+            // Transition WriteSet attributes Common→UAV before compute writes.
+            // Uses Common as before-state every frame (matches standalone demo).
+            // DX12 buffer state decay means buffers return to Common after
+            // the command list finishes execution, regardless of last explicit state.
             {
                 const auto& ws = gpuBuf.WriteSet();
                 RHIBarrierDesc uavBarriers[7] = {};
                 uint32_t ub = 0;
-                // First frame: Common→UAV (positions/vel/sizes/colors/rot never transitioned).
-                // Note: lifespans/ages were CopyDst→UAV by InitializeData, but
-                // Common→UAV is also valid for them (implicit promotion to CopyDst
-                // then CopyDst→UAV means they're in UAV — a UAV→UAV barrier would
-                // be emitted which our DX12 layer converts to a proper UAV barrier).
-                // Subsequent frames: SRV→UAV (previous frame's UAV→SRV left them in SRV).
-                const RHIResourceState beforeState = gpuBuf.hasCompletedCycle
-                    ? RHIResourceState::ShaderResource
-                    : RHIResourceState::Common;
                 auto addUav = [&](RHIBufferHandle buf) {
                     uavBarriers[ub].buffer = buf;
-                    uavBarriers[ub].stateBefore = beforeState;
+                    uavBarriers[ub].stateBefore = RHIResourceState::Common;
                     uavBarriers[ub].stateAfter  = RHIResourceState::UnorderedAccess;
                     ++ub;
                 };
@@ -524,69 +288,6 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
             cmdList->SetRootCBV(1, spawnAlloc.gpuAddr);
             const uint32_t spawnGroups = (spawnCount + kSpawnGroupSize - 1) / kSpawnGroupSize;
             cmdList->Dispatch(spawnGroups, 1, 1);
-
-            // ── POST-SPAWN READBACK (first 3 frames) ────────────────────
-            static uint32_t postSpawnLog = 0;
-            if (postSpawnLog < 3) {
-                // UAV barrier to flush spawn writes
-                EmitUAVBarrier(cmdList, gpuBuf.freeListHead);
-                EmitUAVBarrier(cmdList, gpuBuf.aliveCount);
-
-                // Submit + wait
-                cmdList->End(); cmdList->Execute(); m_device->WaitIdle(); cmdList->Begin();
-
-                // Readback
-                RHIBufferDesc rb{}; rb.memory = RHIMemoryType::Readback; rb.sizeBytes = sizeof(uint32_t);
-                rb.debugName = "VFX_RB2_Head"; auto rbH = m_device->CreateBuffer(rb);
-                rb.debugName = "VFX_RB2_Alive"; auto rbA = m_device->CreateBuffer(rb);
-                // Also read first 4 positions from WriteSet
-                rb.sizeBytes = 4 * 16; rb.debugName = "VFX_RB2_Pos"; auto rbP = m_device->CreateBuffer(rb);
-                // Read last 4 positions (indices 9996-9999)
-                rb.sizeBytes = 4 * 16; rb.debugName = "VFX_RB2_PosEnd"; auto rbPE = m_device->CreateBuffer(rb);
-
-                if (rbH.IsValid() && rbA.IsValid() && rbP.IsValid() && rbPE.IsValid()) {
-                    RHIBarrierDesc cs[4] = {};
-                    cs[0].buffer = gpuBuf.freeListHead; cs[0].stateBefore = RHIResourceState::UnorderedAccess; cs[0].stateAfter = RHIResourceState::CopySrc;
-                    cs[1].buffer = gpuBuf.aliveCount; cs[1].stateBefore = RHIResourceState::UnorderedAccess; cs[1].stateAfter = RHIResourceState::CopySrc;
-                    cs[2].buffer = gpuBuf.WriteSet().positions; cs[2].stateBefore = RHIResourceState::UnorderedAccess; cs[2].stateAfter = RHIResourceState::CopySrc;
-                    // freeList is in SRV from the pre-spawn barrier
-                    cs[3].buffer = gpuBuf.freeList; cs[3].stateBefore = RHIResourceState::ShaderResource; cs[3].stateAfter = RHIResourceState::CopySrc;
-                    cmdList->ResourceBarrier(cs, 4);
-
-                    cmdList->CopyBuffer(gpuBuf.freeListHead, 0, rbH, 0, sizeof(uint32_t));
-                    cmdList->CopyBuffer(gpuBuf.aliveCount, 0, rbA, 0, sizeof(uint32_t));
-                    cmdList->CopyBuffer(gpuBuf.WriteSet().positions, 0, rbP, 0, 4 * 16);
-                    cmdList->CopyBuffer(gpuBuf.WriteSet().positions, (gpuBuf.capacity - 4) * 16, rbPE, 0, 4 * 16);
-
-                    // Restore states
-                    cs[0].stateBefore = RHIResourceState::CopySrc; cs[0].stateAfter = RHIResourceState::UnorderedAccess;
-                    cs[1].stateBefore = RHIResourceState::CopySrc; cs[1].stateAfter = RHIResourceState::UnorderedAccess;
-                    cs[2].stateBefore = RHIResourceState::CopySrc; cs[2].stateAfter = RHIResourceState::UnorderedAccess;
-                    cs[3].stateBefore = RHIResourceState::CopySrc; cs[3].stateAfter = RHIResourceState::UnorderedAccess;
-                    cmdList->ResourceBarrier(cs, 4);
-
-                    cmdList->End(); cmdList->Execute(); m_device->WaitIdle(); cmdList->Begin();
-
-                    auto* hv = static_cast<uint32_t*>(m_device->MapBuffer(rbH));
-                    auto* av = static_cast<uint32_t*>(m_device->MapBuffer(rbA));
-                    auto* pv = static_cast<float*>(m_device->MapBuffer(rbP));
-                    auto* pe = static_cast<float*>(m_device->MapBuffer(rbPE));
-
-                    if (hv && av && pv && pe) {
-                        UZ_LOG(VFX, Info,
-                            "POST-SPAWN F{}: head={} (was {}), alive={}, spawn={} | "
-                            "WS.pos[9999]=({:.1f},{:.1f},{:.1f}) posUAV={} writeIdx={}",
-                            frameIndex, *hv, gpuBuf.capacity, *av, spawnCount,
-                            pe[12], pe[13], pe[14],
-                            spawnCBData.positionsUavIndex, gpuBuf.writeIndex);
-                    }
-                    m_device->DestroyBuffer(rbH);
-                    m_device->DestroyBuffer(rbA);
-                    m_device->DestroyBuffer(rbP);
-                    m_device->DestroyBuffer(rbPE);
-                }
-                ++postSpawnLog;
-            }
 
             // freeList back to UAV for update's dead particle recycling.
             {
@@ -618,26 +319,10 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         updateCBData.frameNumber = frameIndex;
         updateCBData.maxParticles = gpuBuf.capacity;
 
-        // Ping-pong: READ from ReadSet (SRV), WRITE to WriteSet (UAV).
-        // ReadSet was UAV→SRV'd at end of previous frame. On frame 0, it's
-        // still in UAV from InitializeData. Transition to SRV if needed.
+        // Ping-pong: READ from ReadSet, WRITE to WriteSet.
+        // No explicit ReadSet barriers — bindless ResourceDescriptorHeap access
+        // works regardless of tracked state (matches standalone demo pattern).
         const auto& readSet = gpuBuf.ReadSet();
-        if (!gpuBuf.hasCompletedCycle) {
-            // First frame: ReadSet is in UAV (from InitializeData CopyDst→UAV).
-            // Transition to SRV so the update shader can read via StructuredBuffer.
-            RHIBarrierDesc rsBarriers[7] = {};
-            uint32_t rb = 0;
-            auto addRS = [&](RHIBufferHandle buf) {
-                rsBarriers[rb].buffer = buf;
-                rsBarriers[rb].stateBefore = RHIResourceState::UnorderedAccess;
-                rsBarriers[rb].stateAfter  = RHIResourceState::ShaderResource;
-                ++rb;
-            };
-            addRS(readSet.positions); addRS(readSet.velocities); addRS(readSet.ages);
-            addRS(readSet.lifespans); addRS(readSet.sizes); addRS(readSet.colors);
-            addRS(readSet.rotations);
-            cmdList->ResourceBarrier(rsBarriers, rb);
-        }
         updateCBData.positionsSrvIndex  = m_device->GetBufferSRVIndex(readSet.positions);
         updateCBData.velocitiesSrvIndex = m_device->GetBufferSRVIndex(readSet.velocities);
         updateCBData.agesSrvIndex       = m_device->GetBufferSRVIndex(readSet.ages);
@@ -680,8 +365,6 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         // ── UAV barrier between update and indirect args ───────────────
         EmitUAVBarrier(cmdList, gpuBuf.aliveCount);
 
-        // No GPU readback here (would require fence wait mid-frame).
-
         // ── Indirect args dispatch ─────────────────────────────────────
         // The indirect args CS reads aliveCount (SRV) and writes
         // indirectDrawArgs / indirectDispatchArgs (UAV).
@@ -701,29 +384,10 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         // ── UAV -> IndirectArgument barrier ─────────────────────────────
         TransitionIndirectArgs(cmdList, gpuBuf);
 
-        // ── UAV → SRV barrier for WriteSet attributes ─────────────────
-        // The billboard VS reads particle data via SRV descriptors.
-        // DX12 requires the buffers to be in ShaderResource state for SRV reads.
-        // Without this barrier, SRV reads from UAV-state buffers are undefined.
-        {
-            const auto& ws = gpuBuf.WriteSet();
-            RHIBarrierDesc srvBarriers[7] = {};
-            uint32_t srvCount = 0;
-            auto addSrv = [&](RHIBufferHandle buf) {
-                srvBarriers[srvCount].buffer = buf;
-                srvBarriers[srvCount].stateBefore = RHIResourceState::UnorderedAccess;
-                srvBarriers[srvCount].stateAfter  = RHIResourceState::ShaderResource;
-                ++srvCount;
-            };
-            addSrv(ws.positions);
-            addSrv(ws.velocities);
-            addSrv(ws.ages);
-            addSrv(ws.lifespans);
-            addSrv(ws.sizes);
-            addSrv(ws.colors);
-            addSrv(ws.rotations);
-            cmdList->ResourceBarrier(srvBarriers, srvCount);
-        }
+        // NOTE: No UAV→SRV barrier here. The standalone demo does NOT transition
+        // write-set to SRV after compute. DX12 implicit state decay handles the
+        // Common→UAV→Common lifecycle. The billboard reads via ResourceDescriptorHeap
+        // (bindless) which works regardless of tracked state on NVIDIA.
 
         // Mark buffer as having completed a full simulation cycle.
         // The render graph import in RegisterParticlePasses will use
