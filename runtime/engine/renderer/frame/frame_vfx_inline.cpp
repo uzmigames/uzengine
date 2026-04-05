@@ -322,17 +322,18 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         updateCBData.frameNumber = frameIndex;
         updateCBData.maxParticles = gpuBuf.capacity;
 
-        // Ping-pong: READ from ReadSet, WRITE to WriteSet.
-        // No explicit ReadSet barriers — bindless ResourceDescriptorHeap access
-        // works regardless of tracked state (matches standalone demo pattern).
-        const auto& readSet = gpuBuf.ReadSet();
-        updateCBData.positionsSrvIndex  = m_device->GetBufferSRVIndex(readSet.positions);
-        updateCBData.velocitiesSrvIndex = m_device->GetBufferSRVIndex(readSet.velocities);
-        updateCBData.agesSrvIndex       = m_device->GetBufferSRVIndex(readSet.ages);
-        updateCBData.lifespansSrvIndex  = m_device->GetBufferSRVIndex(readSet.lifespans);
-        updateCBData.sizesSrvIndex      = m_device->GetBufferSRVIndex(readSet.sizes);
-        updateCBData.colorsSrvIndex     = m_device->GetBufferSRVIndex(readSet.colors);
-        updateCBData.rotationsSrvIndex  = m_device->GetBufferSRVIndex(readSet.rotations);
+        // In-place update: read AND write the SAME buffer (WriteSet = sets[1]).
+        // The spawn already wrote to sets[1]. The update reads the spawned data
+        // from the same buffer and writes updated positions back. Each thread
+        // accesses only its own index, so there's no read/write race.
+        // SRV reads of UAV-state buffers work on NVIDIA via implicit promotion.
+        updateCBData.positionsSrvIndex  = m_device->GetBufferSRVIndex(writeSet.positions);
+        updateCBData.velocitiesSrvIndex = m_device->GetBufferSRVIndex(writeSet.velocities);
+        updateCBData.agesSrvIndex       = m_device->GetBufferSRVIndex(writeSet.ages);
+        updateCBData.lifespansSrvIndex  = m_device->GetBufferSRVIndex(writeSet.lifespans);
+        updateCBData.sizesSrvIndex      = m_device->GetBufferSRVIndex(writeSet.sizes);
+        updateCBData.colorsSrvIndex     = m_device->GetBufferSRVIndex(writeSet.colors);
+        updateCBData.rotationsSrvIndex  = m_device->GetBufferSRVIndex(writeSet.rotations);
 
         updateCBData.positionsUavIndex  = m_device->GetBufferUAVIndex(writeSet.positions);
         updateCBData.velocitiesUavIndex = m_device->GetBufferUAVIndex(writeSet.velocities);
