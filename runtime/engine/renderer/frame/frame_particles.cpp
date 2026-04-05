@@ -378,13 +378,50 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
         // Previous frame viewProj for TAA motion vectors.
         std::memcpy(bbCBData.prevViewProj, &m_prevViewProj, sizeof(float) * 16);
 
-        // Soft particle depth fade distance (0 = disabled, skip depth read in PS).
-        bbCBData.softFadeDistance = 0.0f;
-        // Keep full size throughout lifetime (no shrink-to-zero).
-        bbCBData.sizeOverLifeStart    = 1.0f;
-        bbCBData.sizeOverLifePeak     = 1.0f;
-        bbCBData.sizeOverLifeEnd      = 1.0f;
-        bbCBData.sizeOverLifePeakTime = 0.5f;
+        // ── PS rendering parameters ─────────────────────────────────────
+        bbCBData.softFadeDistance      = emitter->softParticleFadeRange;
+        bbCBData.emissiveIntensity     = emitter->emissiveIntensity;
+        bbCBData.litMode               = emitter->litMode;
+
+        // ── Camera offset & pivot ───────────────────────────────────────
+        bbCBData.cameraOffset          = emitter->cameraOffset;
+        bbCBData.pivotOffsetX          = emitter->pivotOffsetX;
+        bbCBData.pivotOffsetY          = emitter->pivotOffsetY;
+
+        // ── Size by speed ───────────────────────────────────────────────
+        bbCBData.sizeBySpeedEnabled    = emitter->sizeBySpeedEnabled;
+        bbCBData.sizeBySpeedMin        = emitter->sizeBySpeedMin;
+        bbCBData.sizeBySpeedMax        = emitter->sizeBySpeedMax;
+        bbCBData.speedRangeMax         = emitter->speedRangeMax;
+
+        // ── Size over lifetime ──────────────────────────────────────────
+        bbCBData.sizeOverLifeStart     = emitter->sizeOverLifeStart;
+        bbCBData.sizeOverLifePeak      = emitter->sizeOverLifePeak;
+        bbCBData.sizeOverLifeEnd       = emitter->sizeOverLifeEnd;
+        bbCBData.sizeOverLifePeakTime  = emitter->sizeOverLifePeakTime;
+
+        // ── Color over lifetime ─────────────────────────────────────────
+        bbCBData.colorLifeStartR       = emitter->colorLifeStartR;
+        bbCBData.colorLifeStartG       = emitter->colorLifeStartG;
+        bbCBData.colorLifeStartB       = emitter->colorLifeStartB;
+        bbCBData.colorLifeStartA       = emitter->colorLifeStartA;
+        bbCBData.colorLifeEndR         = emitter->colorLifeEndR;
+        bbCBData.colorLifeEndG         = emitter->colorLifeEndG;
+        bbCBData.colorLifeEndB         = emitter->colorLifeEndB;
+        bbCBData.colorLifeEndA         = emitter->colorLifeEndA;
+
+        // ── Billboard facing + stretching ───────────────────────────────
+        bbCBData.facingMode            = emitter->facingMode;
+        bbCBData.customFacingX         = emitter->customFacingX;
+        bbCBData.customFacingY         = emitter->customFacingY;
+        bbCBData.customFacingZ         = emitter->customFacingZ;
+        bbCBData.stretchFactor         = emitter->stretchFactor;
+        bbCBData.blendModeHint         = emitter->blendMode;
+
+        // ── Color by speed + screen-space size ──────────────────────────
+        bbCBData.colorBySpeedEnabled   = emitter->colorBySpeedEnabled;
+        bbCBData.screenSpaceSizeEnabled = emitter->screenSpaceSizeEnabled;
+        bbCBData.screenSpacePixelSize  = emitter->screenSpacePixelSize;
 
         const CBAllocation bbAlloc = m_cbRing->Allocate(sizeof(bbCBData));
         if (!bbAlloc.cpuPtr) {

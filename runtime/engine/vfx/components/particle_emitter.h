@@ -103,6 +103,68 @@ struct ParticleEmitter {
     /// @ref Lorach 2007 "Soft Particles" — depth-based alpha fade at geometry intersections.
     float softParticleFadeRange = 100.0f;
 
+    // ── Billboard Rendering Parameters ────────────────────────────────────
+
+    /// Emissive multiplier (additive glow contribution). 0 = disabled.
+    float emissiveIntensity = 0.0f;
+
+    /// 0=Unlit (default), 1=Lit (NdotL directional + ambient).
+    uint32_t litMode = 0;
+
+    /// Spawn radius for shape-based spawn (cm). 0 = point spawn.
+    float spawnRadius = 0.0f;
+
+    /// Initial billboard size in world units (cm).
+    float initialSize = 10.0f;
+
+    /// Initial particle color (RGBA, linear).
+    Vec4 initialColor = {1.0f, 0.9f, 0.6f, 1.0f};
+
+    /// Spawn shape: 0=Point, 1=Sphere, 2=Box, 3=Ring, 4=Cone, 5=Cylinder, 6=Disc, 7=Line.
+    uint32_t spawnShape = 0;
+
+    /// Camera offset — push/pull along camera forward (cm). 0 = disabled.
+    float cameraOffset = 0.0f;
+    /// Sprite pivot X [-1,1]. 0 = center.
+    float pivotOffsetX = 0.0f;
+    /// Sprite pivot Y [-1,1]. 0 = center.
+    float pivotOffsetY = 0.0f;
+
+    /// Size by speed parameters.
+    uint32_t sizeBySpeedEnabled = 0;
+    float sizeBySpeedMin = 0.5f;
+    float sizeBySpeedMax = 2.0f;
+    float speedRangeMax = 1000.0f;
+
+    /// Size over lifetime (piecewise linear: start→peak→end).
+    float sizeOverLifeStart = 1.0f;
+    float sizeOverLifePeak = 1.0f;
+    float sizeOverLifeEnd = 0.0f;
+    float sizeOverLifePeakTime = 0.3f;
+
+    /// Color over lifetime (linear interpolation start→end).
+    float colorLifeStartR = 1.0f, colorLifeStartG = 1.0f, colorLifeStartB = 1.0f, colorLifeStartA = 1.0f;
+    float colorLifeEndR = 1.0f, colorLifeEndG = 1.0f, colorLifeEndB = 1.0f, colorLifeEndA = 0.0f;
+
+    /// Billboard facing mode: 0=FaceCamera, 1=VelocityAligned, 2=FaceCameraPlane, 3=Custom, 4=FaceCameraPosition.
+    uint32_t facingMode = 0;
+    float customFacingX = 0.0f, customFacingY = 0.0f, customFacingZ = 1.0f;
+
+    /// Velocity stretch multiplier. 0 = no stretch.
+    float stretchFactor = 0.0f;
+
+    /// Blend mode: 0=AlphaBlend, 1=Additive, 2=PremulAlpha.
+    uint32_t blendMode = 0;
+
+    /// Color by speed (reuses colorLifeStart/End with speed instead of age).
+    uint32_t colorBySpeedEnabled = 0;
+
+    /// Screen-space size mode (constant pixel coverage).
+    uint32_t screenSpaceSizeEnabled = 0;
+    float screenSpacePixelSize = 8.0f;
+
+    // ── Simulation Parameters ───────────────────────────────────────────
+
     /// Gravity acceleration applied each frame (world space, cm/s^2).
     /// Z-up: negative Z = downward. 981 cm/s^2 = 9.81 m/s^2.
     Vec3 gravity = {0.0f, 0.0f, -981.0f};

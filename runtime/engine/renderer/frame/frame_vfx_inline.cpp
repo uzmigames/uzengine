@@ -194,12 +194,11 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
 
         ParticleSpawnConstants spawnCBData{};
 
-        // Emitter parameters.
-        spawnCBData.emitterPos[0]     = 0.0f;
-        spawnCBData.emitterPos[1]     = 0.0f;
-        spawnCBData.emitterPos[2]     = 0.0f;
-        // Match standalone demo defaults for fountain effect.
-        spawnCBData.spawnRadius       = 0.0f;  // Point spawn
+        // Emitter parameters from ParticleEmitter config.
+        spawnCBData.emitterPos[0]     = emitter->worldPosition.x;
+        spawnCBData.emitterPos[1]     = emitter->worldPosition.y;
+        spawnCBData.emitterPos[2]     = emitter->worldPosition.z;
+        spawnCBData.spawnRadius       = emitter->spawnRadius;
         spawnCBData.spawnVelocity[0]  = emitter->spawnVelocity.x;
         spawnCBData.spawnVelocity[1]  = emitter->spawnVelocity.y;
         spawnCBData.spawnVelocity[2]  = emitter->spawnVelocity.z;
@@ -213,12 +212,12 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
                             : 0.01f;
         spawnCBData.minLifetime       = minLife;
         spawnCBData.maxLifetime       = emitter->lifetime;
-        spawnCBData.initialSize       = 10.0f;  // 10cm (standalone default)
+        spawnCBData.initialSize       = emitter->initialSize;
 
-        spawnCBData.initialColor[0]   = 1.0f;
-        spawnCBData.initialColor[1]   = 0.9f;
-        spawnCBData.initialColor[2]   = 0.6f;
-        spawnCBData.initialColor[3]   = 1.0f;
+        spawnCBData.initialColor[0]   = emitter->initialColor.x;
+        spawnCBData.initialColor[1]   = emitter->initialColor.y;
+        spawnCBData.initialColor[2]   = emitter->initialColor.z;
+        spawnCBData.initialColor[3]   = emitter->initialColor.w;
 
         spawnCBData.dt                = dt;
         spawnCBData.frameNumber       = frameIndex;
@@ -239,7 +238,7 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         spawnCBData.aliveCountUavIndex      = m_device->GetBufferUAVIndex(gpuBuf.aliveCount);
 
         // Spawn shape defaults (point emitter).
-        spawnCBData.spawnShape        = 0; // Point spawn (standalone default)
+        spawnCBData.spawnShape        = emitter->spawnShape;
         spawnCBData.spawnOnSurface    = 0;
 
         // Dynamic params UAV -- use positions UAV as fallback to prevent
