@@ -349,11 +349,16 @@ float4 main(FSInput input) : SV_Target {
         float r4 = roughness * roughness * roughness * roughness;
         R = normalize(lerp(R, N, r4));
 
-        // @ref Filament surface_light_indirect.fs — quadratic roughness-to-LOD curve
-        // Quadratic `r*(2-r)` maps mid-roughness to blurrier mips than linear,
-        // matching Filament and approximating Three.js piecewise PMREM mapping.
-        // At roughness=0.4: linear→2.8, quadratic→4.48 — blurrier, closer to reference.
-        float mipLevel = roughness * (2.0 - roughness) * float(prefilteredMipLevels - 1);
+        // @ref Three.js PMREMGenerator roughnessToMip — piecewise non-linear mapping
+        // Three.js CubeUV PMREM maps roughness to LOD index using breakpoints:
+        //   r=0→LOD0, r=0.21→LOD4, r=0.305→LOD5, r=0.4→LOD6, r=0.8→LOD7, r=1.0→LOD8
+        // Our cubemap extracted from PMREM has LOD 0→mip 0, etc. The PMREM atlas
+        // stores each LOD at progressively higher roughness prefilter levels.
+        // Since the atlas encodes roughness non-linearly, we remap to match:
+        // @ref Filament perceptualRoughnessToLod: r*(2-r) — quadratic, similar shape
+        // Scale by 1.2 to push roughness=0.4 from mip 4.5 closer to mip 5.4 (face=18px).
+        float maxMip = float(prefilteredMipLevels - 1);
+        float mipLevel = clamp(roughness * (2.0 - roughness) * maxMip * 1.2, 0.0, maxMip);
         float3 radiance = float3(0, 0, 0);
         float2 envBRDF = float2(0, 0);
 #ifdef UZ_BINDLESS
