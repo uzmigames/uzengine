@@ -72,6 +72,64 @@ inline void ApplyPreset_Smoke(ParticleEmitter& e) {
     e.curlStrength = 2.0f;
     e.curlFrequency = 0.5f;
     e.curlSpeed = 0.3f;
+    e.windDirX = 1.0f; e.windDirY = 0.0f; e.windDirZ = 0.0f;
+    e.windStrength = 50.0f; // light sidewind
+}
+
+/// Explosion compound — use with multiple emitters (burst + smoke + debris).
+/// Apply to 3 emitters at the same position with different startDelays.
+inline void ApplyPreset_ExplosionBurst(ParticleEmitter& e) {
+    e.maxParticles = 500;
+    e.emissionRate = 50000.0f; // instant burst
+    e.lifetime = 0.5f;
+    e.spawnVelocity = {0.0f, 0.0f, 600.0f};
+    e.velocityVariation = 300.0f;
+    e.spreadAngle = 90.0f;
+    e.gravity = {0.0f, 0.0f, -200.0f};
+    e.initialSize = 20.0f;
+    e.initialColor = {1.0f, 0.9f, 0.5f, 1.0f};
+    e.emissiveIntensity = 5.0f;
+    e.sizeOverLifeEnd = 0.0f;
+    e.colorLifeEndA = 0.0f;
+    e.blendMode = 1;
+    e.startDelay = 0.0f;
+}
+
+inline void ApplyPreset_ExplosionSmoke(ParticleEmitter& e) {
+    e.maxParticles = 1000;
+    e.emissionRate = 500.0f;
+    e.lifetime = 3.0f;
+    e.spawnVelocity = {0.0f, 0.0f, 100.0f};
+    e.velocityVariation = 50.0f;
+    e.spreadAngle = 60.0f;
+    e.gravity = {0.0f, 0.0f, 30.0f};
+    e.damping = 0.9f;
+    e.initialSize = 30.0f;
+    e.initialColor = {0.2f, 0.2f, 0.2f, 0.6f};
+    e.sizeOverLifeStart = 0.5f;
+    e.sizeOverLifePeak = 2.0f;
+    e.sizeOverLifeEnd = 3.0f;
+    e.curlStrength = 1.5f;
+    e.colorLifeEndA = 0.0f;
+    e.startDelay = 0.1f; // delayed — smoke appears after initial flash
+}
+
+inline void ApplyPreset_ExplosionDebris(ParticleEmitter& e) {
+    e.maxParticles = 300;
+    e.emissionRate = 30000.0f; // instant
+    e.lifetime = 2.0f;
+    e.spawnVelocity = {0.0f, 0.0f, 400.0f};
+    e.velocityVariation = 200.0f;
+    e.spreadAngle = 80.0f;
+    e.gravity = {0.0f, 0.0f, -981.0f};
+    e.initialSize = 5.0f;
+    e.initialColor = {0.8f, 0.5f, 0.2f, 1.0f};
+    e.emissiveIntensity = 1.0f;
+    e.sizeOverLifeEnd = 0.0f;
+    e.groundCollision = 1;
+    e.restitution = 0.3f;
+    e.dragCoefficient = 0.8f;
+    e.startDelay = 0.0f;
 }
 
 /// Sparks — fast small bright particles with ground collision.

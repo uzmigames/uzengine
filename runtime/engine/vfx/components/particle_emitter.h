@@ -196,6 +196,10 @@ struct ParticleEmitter {
     float orbitSpeed = 0.0f;
     float orbitAxisX = 0.0f, orbitAxisY = 0.0f, orbitAxisZ = 1.0f;
 
+    /// Simple wind (direction + strength). 0 strength = disabled.
+    float windDirX = 1.0f, windDirY = 0.0f, windDirZ = 0.0f;
+    float windStrength = 0.0f;
+
     /// Quadratic drag (air resistance). 0 = disabled.
     float dragCoefficient = 0.0f;
 

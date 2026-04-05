@@ -188,7 +188,10 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         }
 
         // ── Spawn dispatch ─────────────────────────────────────────────
-        const uint32_t spawnCount = emitter->CalculateSpawnCount(dt);
+        // Check start delay for compound effects (delayed sub-emitters).
+        const bool delayActive = emitter->startDelay > 0.0f
+                                && emitter->timeSinceRegistration < emitter->startDelay;
+        const uint32_t spawnCount = delayActive ? 0 : emitter->CalculateSpawnCount(dt);
 
         // cpuAliveCount is already updated inside CalculateSpawnCount().
 
@@ -376,9 +379,10 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         updateCBData.collisionFriction      = emitter->collisionFriction;
 
         updateCBData.dragCoefficient        = emitter->dragCoefficient;
-        updateCBData.accelX                 = emitter->accelX;
-        updateCBData.accelY                 = emitter->accelY;
-        updateCBData.accelZ                 = emitter->accelZ;
+        // Combine explicit acceleration + simple wind (wind = direction * strength as acceleration).
+        updateCBData.accelX                 = emitter->accelX + emitter->windDirX * emitter->windStrength;
+        updateCBData.accelY                 = emitter->accelY + emitter->windDirY * emitter->windStrength;
+        updateCBData.accelZ                 = emitter->accelZ + emitter->windDirZ * emitter->windStrength;
 
         updateCBData.rotationRate           = emitter->rotationRate;
         updateCBData.rotationOverLifeStart  = emitter->rotationOverLifeStart;
