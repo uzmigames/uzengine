@@ -64,6 +64,14 @@ void main(uint3 DTid : SV_DispatchThreadID)
 
     float4 currentSSR = currentTex.SampleLevel(pointClamp, uv, 0);
 
+    // If current frame has no SSR data (roughness > MaxRoughness, sky, no hit),
+    // output zero immediately — don't let stale history bleed through.
+    // This prevents temporal ghosting on surfaces that shouldn't have SSR.
+    if (currentSSR.a <= 0.001) {
+        outputSSR[DTid.xy] = float4(0, 0, 0, 0);
+        return;
+    }
+
     // First frame or no history — use current directly
     if (firstFrame != 0) {
         outputSSR[DTid.xy] = currentSSR;
