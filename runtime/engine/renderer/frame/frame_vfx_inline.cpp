@@ -245,16 +245,27 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
             continue;
         } }
 
-        // ── Deferred GPU buffer initialization ─────────────────────────
-        // Clean up freeList/freeListHead staging from a previous init,
-        // but KEEP aliveCountStaging for the per-frame reset below.
-        if (!gpuBuf.needsInitialization && gpuBuf.freeListStaging.IsValid()) {
-            if (gpuBuf.freeListStaging.IsValid())
-                m_device->DestroyBuffer(gpuBuf.freeListStaging);
+        // ── Deferred GPU buffer initialization cleanup ────────────────
+        // Staging buffers from InitializeData must survive until the GPU
+        // finishes executing the CopyBuffer commands. With triple-buffered
+        // frame pacing, frame 0's GPU work may still be in flight when
+        // frame 1 starts. D3D12MA frees heap memory immediately on
+        // Allocation::Release(), corrupting in-flight copies.
+        // Wait kFramesInFlight (3) frames before destroying.
+        constexpr uint32_t kFramesInFlight = 3;
+        if (!gpuBuf.needsInitialization && gpuBuf.freeListStaging.IsValid()
+            && gpuBuf.initFrameIndex != UINT32_MAX
+            && frameIndex >= gpuBuf.initFrameIndex + kFramesInFlight) {
+            m_device->DestroyBuffer(gpuBuf.freeListStaging);
             gpuBuf.freeListStaging = RHIBufferHandle::Invalid();
-            if (gpuBuf.freeListHeadStaging.IsValid())
+            if (gpuBuf.freeListHeadStaging.IsValid()) {
                 m_device->DestroyBuffer(gpuBuf.freeListHeadStaging);
-            gpuBuf.freeListHeadStaging = RHIBufferHandle::Invalid();
+                gpuBuf.freeListHeadStaging = RHIBufferHandle::Invalid();
+            }
+            if (gpuBuf.zeroStagingBuffer.IsValid()) {
+                m_device->DestroyBuffer(gpuBuf.zeroStagingBuffer);
+                gpuBuf.zeroStagingBuffer = RHIBufferHandle::Invalid();
+            }
             // Keep aliveCountStaging for per-frame reset!
         }
 
@@ -265,6 +276,10 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
                        "DispatchVFXSimulation: failed to initialize GPU buffer for emitter");
                 continue;
             }
+            // Record which frame InitializeData ran so staging buffers are
+            // deferred for destruction by kFramesInFlight frames.
+            gpuBuf.initFrameIndex = frameIndex;
+
             // Clear the merge's upload flag so RegisterParticlePasses doesn't skip this emitter.
             emitter->needsInitialUpload = false;
         }
@@ -390,15 +405,23 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
                 ++cbLog;
             }
 
-            // SRV → UAV barrier for WriteSet attributes before compute writes.
-            // The previous frame's UAV→SRV barrier left them in SRV state.
-            if (gpuBuf.hasCompletedCycle) {
+            // Transition WriteSet attributes to UAV before compute writes.
+            {
                 const auto& ws = gpuBuf.WriteSet();
                 RHIBarrierDesc uavBarriers[7] = {};
                 uint32_t ub = 0;
+                // First frame: Common→UAV (positions/vel/sizes/colors/rot never transitioned).
+                // Note: lifespans/ages were CopyDst→UAV by InitializeData, but
+                // Common→UAV is also valid for them (implicit promotion to CopyDst
+                // then CopyDst→UAV means they're in UAV — a UAV→UAV barrier would
+                // be emitted which our DX12 layer converts to a proper UAV barrier).
+                // Subsequent frames: SRV→UAV (previous frame's UAV→SRV left them in SRV).
+                const RHIResourceState beforeState = gpuBuf.hasCompletedCycle
+                    ? RHIResourceState::ShaderResource
+                    : RHIResourceState::Common;
                 auto addUav = [&](RHIBufferHandle buf) {
                     uavBarriers[ub].buffer = buf;
-                    uavBarriers[ub].stateBefore = RHIResourceState::ShaderResource;
+                    uavBarriers[ub].stateBefore = beforeState;
                     uavBarriers[ub].stateAfter  = RHIResourceState::UnorderedAccess;
                     ++ub;
                 };

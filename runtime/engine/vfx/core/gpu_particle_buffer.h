@@ -210,6 +210,11 @@ struct GPUParticleBuffer {
     /// Upload-heap staging buffer for zeroing lifespans/ages.
     RHIBufferHandle zeroStagingBuffer = RHIBufferHandle::Invalid();
 
+    /// Frame index when InitializeData ran. Used to defer staging buffer
+    /// destruction by kFramesInFlight frames to ensure the GPU has finished
+    /// executing the CopyBuffer commands before the staging memory is freed.
+    uint32_t initFrameIndex = UINT32_MAX;
+
     // -- Accessors ------------------------------------------------------------
 
     /// Returns the attribute set currently used as the read source (SRV).
