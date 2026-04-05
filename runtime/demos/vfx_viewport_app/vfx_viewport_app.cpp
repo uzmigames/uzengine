@@ -93,16 +93,13 @@ void VFXViewportApp::OnStart() {
 
     // VFX emitters re-enabled with buffer validation guard in frame_particles.cpp.
 
-    // ── VFX Emitter: Fire Fountain (center) ─────────────────────────────────
+    // ── VFX Emitter 1: Fire Fountain (center) ──────────────────────────────
     {
         Entity e = world.CreateEntity();
         world.AddComponent<CName>(e, CName{"Fire"});
         auto& sc = world.AddComponent<SceneComponent>(e);
         sc.SetPosition({0.0f, 0.0f, 0.0f});
         auto& em = world.AddComponent<VfxEmitterComponent>(e);
-        // SyncVfxEmitters creates a ParticleEmitter with these basic fields.
-        // The preset is applied AFTER sync in the SceneRenderer's per-frame loop.
-        // For now, use inline config that maps to the Fire preset defaults.
         em.maxParticles = 5000;
         em.emissionRate = 200.0f;
         em.lifetime = 2.0f;
@@ -112,8 +109,40 @@ void VFXViewportApp::OnStart() {
         m_emitterEntities.push_back(e);
     }
 
-    UZ_LOG(App, Info, "VFXViewportApp: started (SUN + SKY + 1 VFX EMITTER)");
-    return; // Skip emitters 2 and 3
+    // ── VFX Emitter 2: Sparks (right) ───────────────────────────────────────
+    {
+        Entity e = world.CreateEntity();
+        world.AddComponent<CName>(e, CName{"Sparks"});
+        auto& sc = world.AddComponent<SceneComponent>(e);
+        sc.SetPosition({300.0f, 0.0f, 0.0f});
+        auto& em = world.AddComponent<VfxEmitterComponent>(e);
+        em.maxParticles = 2000;
+        em.emissionRate = 150.0f;
+        em.lifetime = 1.5f;
+        em.gravity = {0.0f, 0.0f, -981.0f};
+        em.spawnVelocity = {0.0f, 0.0f, 800.0f};
+        em.emitting = true;
+        m_emitterEntities.push_back(e);
+    }
+
+    // ── VFX Emitter 3: Fountain (left) ──────────────────────────────────────
+    {
+        Entity e = world.CreateEntity();
+        world.AddComponent<CName>(e, CName{"Fountain"});
+        auto& sc = world.AddComponent<SceneComponent>(e);
+        sc.SetPosition({-300.0f, 0.0f, 0.0f});
+        auto& em = world.AddComponent<VfxEmitterComponent>(e);
+        em.maxParticles = 5000;
+        em.emissionRate = 300.0f;
+        em.lifetime = 3.0f;
+        em.gravity = {0.0f, 0.0f, -981.0f};
+        em.spawnVelocity = {0.0f, 0.0f, 500.0f};
+        em.emitting = true;
+        m_emitterEntities.push_back(e);
+    }
+
+    UZ_LOG(App, Info, "VFXViewportApp: started (SUN + SKY + 3 VFX EMITTERS)");
+    return; // Skip old emitters 2 and 3
 
     // ── VFX Emitter 2: Side burst ────────────────────────────────────────────
     //
