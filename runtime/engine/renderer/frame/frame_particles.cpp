@@ -312,17 +312,16 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
     // and lighting. Sorted back-to-front for correct alpha blending.
 
     // Select PSO based on the first emitter's blend mode.
-    // TODO: per-emitter PSO selection for mixed blend modes.
-    const auto billboardPipeline = ctx.pipelines->GetParticleBillboard();
-    const auto additivePipeline  = ctx.pipelines->GetParticleBillboardAdditive();
+    const auto alphaBlendPSO  = ctx.pipelines->GetParticleBillboard();
+    const auto additivePSO    = ctx.pipelines->GetParticleBillboardAdditive();
+    const auto premulAlphaPSO = ctx.pipelines->GetParticleBillboardPremulAlpha();
 
-    // Determine which PSO to use from the first emitter's blend mode.
-    RHIPipelineHandle activePipeline = billboardPipeline;
+    RHIPipelineHandle activePipeline = alphaBlendPSO;
     for (auto* em : emitters) {
-        if (em && em->initialized && em->blendMode == 1 && additivePipeline.IsValid()) {
-            activePipeline = additivePipeline;
-        }
-        break;
+        if (!em || !em->initialized) continue;
+        if (em->blendMode == 1 && additivePSO.IsValid()) activePipeline = additivePSO;
+        else if (em->blendMode == 2 && premulAlphaPSO.IsValid()) activePipeline = premulAlphaPSO;
+        break; // Use first emitter's blend mode for now
     }
 
     if (!activePipeline.IsValid()) return;

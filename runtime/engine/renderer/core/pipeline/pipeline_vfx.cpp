@@ -177,6 +177,48 @@ RHIPipelineHandle PipelineLibrary::GetParticleBillboardAdditive() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Particle Billboard Pipeline (Pre-multiplied Alpha Blend)
+// ─────────────────────────────────────────────────────────────────────────────
+
+RHIPipelineHandle PipelineLibrary::GetParticleBillboardPremulAlpha() {
+    if (!m_initialized) return RHIPipelineHandle::Invalid();
+    if (m_particleBillboardPremulAlpha.IsValid()) return m_particleBillboardPremulAlpha;
+    if (!EnsureParticleBillboardShaders()) return RHIPipelineHandle::Invalid();
+
+    RHIGraphicsPipelineDesc desc{};
+    desc.vertexShader  = m_particleBillboardVS;
+    desc.pixelShader   = m_particleBillboardPS;
+    desc.topology      = RHIPrimitiveTopology::TriangleList;
+    desc.inputElementCount = 0;
+    desc.rasterizer.cullMode = RHICullMode::None;
+    desc.depthStencil.depthEnable = true;
+    desc.depthStencil.depthWrite  = false;
+    desc.depthStencil.depthFunc   = RHICompareFunc::GreaterEqual;
+
+    // Pre-multiplied alpha: One / InvSrcAlpha
+    desc.renderTargetBlend[0].blendEnable = true;
+    desc.renderTargetBlend[0].srcColor    = RHIBlendFactor::One;
+    desc.renderTargetBlend[0].dstColor    = RHIBlendFactor::InvSrcAlpha;
+    desc.renderTargetBlend[0].colorOp     = RHIBlendOp::Add;
+    desc.renderTargetBlend[0].srcAlpha    = RHIBlendFactor::One;
+    desc.renderTargetBlend[0].dstAlpha    = RHIBlendFactor::InvSrcAlpha;
+    desc.renderTargetBlend[0].alphaOp     = RHIBlendOp::Add;
+
+    desc.renderTargetFormats[0] = RHIFormat::RGBA16Float;
+    desc.renderTargetCount      = 1;
+    desc.depthStencilFormat     = RHIFormat::D32Float;
+    desc.debugName              = "ParticleBillboardPremulAlpha";
+
+    m_particleBillboardPremulAlpha = CreateCachedPipeline(desc);
+    if (!m_particleBillboardPremulAlpha.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create ParticleBillboardPremulAlpha pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created ParticleBillboardPremulAlpha pipeline");
+    }
+    return m_particleBillboardPremulAlpha;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Particle Spawn Compute Shader
 // ─────────────────────────────────────────────────────────────────────────────
 

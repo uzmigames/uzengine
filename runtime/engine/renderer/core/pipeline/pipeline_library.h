@@ -699,6 +699,7 @@ public:
     /// # Returns
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetParticleBillboardAdditive();
+    [[nodiscard]] RHIPipelineHandle GetParticleBillboardPremulAlpha();
 
     /// Returns the particle spawn compute pipeline (particle_spawn_cs.hlsl).
     ///
@@ -855,6 +856,7 @@ private:
     // ── VFX cached pipeline handles ──────────────────────────────────────
     RHIPipelineHandle m_particleBillboard          = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_particleBillboardAdditive  = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_particleBillboardPremulAlpha = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_particleSpawnCS_PSO        = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_particleUpdateCS_PSO       = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_particleIndirectArgsCS_PSO = RHIPipelineHandle::Invalid();
