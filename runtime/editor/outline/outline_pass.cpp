@@ -336,7 +336,15 @@ void OutlinePass::Draw(IRHICommandList* cmdList,
                                 objAlloc.offsetBytes, objAlloc.cpuPtr, sizeof(PerObjectCB));
 
             if (bindless) {
-                cmdList->SetDescriptorIndex(kSlotRootConstants, mesh.vbSrvIndex);
+                // Push both vertexBufferIndex (DWORD 0) and usePackedNormals (DWORD 1).
+                // SetDescriptorIndex only writes DWORD 0 — DWORD 1 retains stale state
+                // from whatever pass ran before us, which can cause mesh_vs to decode
+                // vertices with the wrong format → garbled outline silhouette.
+                const uint32_t pushData[2] = {
+                    mesh.vbSrvIndex,
+                    (mesh.vertexStride == 32) ? 1u : 0u
+                };
+                cmdList->SetRootConstants(kSlotRootConstants, pushData, 2);
             } else {
                 cmdList->SetVertexBuffer(0, mesh.vertexBuffer, 0);
             }

@@ -56,6 +56,16 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
                     auto bb    = res.GetTexture(ctx.bbRes);
                     auto depth = res.GetTexture(ctx.depthRes);
 
+                    // The outline composites onto the TAA-resolved backbuffer, which
+                    // is de-jittered. The mask pass must use the UNJITTERED viewProj
+                    // so the outline silhouette aligns with the resolved image.
+                    PerFrameParams outlinePerFrame = ctx.perFrame;
+                    outlinePerFrame.viewProj    = ctx.unjitteredViewProj;
+                    outlinePerFrame.invViewProj = ctx.unjitteredViewProj.Inverse();
+
+                    CBAllocation outlineAlloc = m_cbRing->Allocate(sizeof(PerFrameCB));
+                    std::memcpy(outlineAlloc.cpuPtr, &outlinePerFrame, sizeof(PerFrameCB));
+
                     m_outlinePass->Draw(
                         cmd, *m_cbRing, m_cameraManager->GetActiveCamera(),
                         ctx.drawList.GetCommands(), m_meshes,
@@ -63,7 +73,7 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
                         ctx.vpWidth, ctx.vpHeight,
                         depth, bb,
                         ctx.bindless,
-                        ctx.perFrameAlloc);
+                        outlineAlloc);
                 });
             });
         }
