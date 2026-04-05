@@ -76,8 +76,9 @@ void main(uint3 DTid : SV_DispatchThreadID)
     float  roughness  = max(normalData.a, 0.04);
     float  centerZ    = deviceZ;
 
-    // Smooth surfaces (roughness < 0.1): pass through directly — no spatial blur
-    if (roughness < 0.1) {
+    // Perfect mirrors (roughness < 0.04): pass through directly — no spatial blur
+    // @ref Karis 2013 — only truly specular surfaces skip filtering
+    if (roughness < 0.04) {
         outputSSR[DTid.xy] = traceResult;
         return;
     }
@@ -85,11 +86,17 @@ void main(uint3 DTid : SV_DispatchThreadID)
     // Bilateral filter with roughness-driven kernel radius
     // @ref Schied 2017 "SVGF" — edge-stopping weights: depth + normal
     // Wider kernel for rough surfaces — roughness 0.5 gets radius ~6px
-    float kernelRadius = lerp(1.0, 8.0, saturate((roughness - 0.1) / 0.5));
+    float kernelRadius = lerp(1.0, 8.0, saturate((roughness - 0.04) / 0.46));
 
-    float3 colorSum  = traceResult.rgb;
+    // @ref Karis 2013 "Real Shading in Unreal Engine 4" — inverse Reinhard tonemap
+    // Compress HDR values before accumulation to prevent bright fireflies from
+    // dominating the kernel. Apply inverse after normalization.
+    // Karis weight: rcp(1 + Luminance(color))
+    float centerLum = dot(traceResult.rgb, float3(0.2126, 0.7152, 0.0722));
+    float centerKarisW = rcp(1.0 + centerLum);
+    float3 colorSum  = traceResult.rgb * centerKarisW;
     float  alphaSum  = traceResult.a;
-    float  weightSum = 1.0;
+    float  weightSum = centerKarisW;
 
     // 12-tap Poisson disk (better coverage than cross/grid at same cost)
     // @ref Jimenez 2016 — screen-space sampling patterns
@@ -126,13 +133,21 @@ void main(uint3 DTid : SV_DispatchThreadID)
 
         float w = wNormal * wDepth * wSpatial;
 
-        colorSum  += sampleSSR.rgb * w;
+        // Karis weight: compress HDR before accumulation
+        float sampleLum = dot(sampleSSR.rgb, float3(0.2126, 0.7152, 0.0722));
+        float karisW = rcp(1.0 + sampleLum);
+        colorSum  += sampleSSR.rgb * karisW * w;
         alphaSum  += sampleSSR.a * w;
-        weightSum += w;
+        weightSum += karisW * w;
     }
 
     float3 color = colorSum / max(weightSum, 0.001);
     float  alpha = alphaSum / max(weightSum, 0.001);
+
+    // Inverse Karis: decompress HDR after normalization
+    // @ref Karis 2013 — rcp(1 - Luminance(tonemapped))
+    float finalLum = dot(color, float3(0.2126, 0.7152, 0.0722));
+    color *= rcp(max(1.0 - finalLum, 0.001));
 
     outputSSR[DTid.xy] = float4(color, alpha);
 }

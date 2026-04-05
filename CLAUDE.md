@@ -201,6 +201,9 @@ The following rules are equally important but less frequently violated. Full det
 | ECS/game systems | ecs-systems-engineer | opus |
 | Analyze architecture patterns | unreal-architect | haiku |
 | Analyze Godot patterns | godot-architect | haiku |
+| Analyze Three.js patterns | threejs-architect | haiku |
+| Analyze Frostbite/DICE papers | frostbite-architect | haiku |
+| Analyze CryEngine patterns | cryengine-architect | haiku |
 | Architecture synthesis | engine-architect | sonnet |
 | Write/update docs | docs-operator | haiku |
 | Explore/search codebase | researcher | haiku |

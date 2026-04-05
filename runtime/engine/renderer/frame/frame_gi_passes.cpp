@@ -224,6 +224,8 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
             SsrTraceConstants rc{};
             rc.depthSrvIdx      = m_gbuffer.depthSRV;
             rc.normalSrvIdx     = m_gbuffer.normalSRV;
+            // Hi-Z mip 0 is half-res min-reduced — depth comparison needs full-res.
+            // Keep raw depth SRV until the shader is updated for Hi-Z mip hierarchy traversal (Phase 3).
             rc.hizSrvIdx        = m_gbuffer.depthSRV;
             // Use previous frame's HDR copy — breaks SSR feedback loop (UE5 pattern)
             rc.sceneColorSrvIdx = m_ssrPrevSceneColorSrv;
@@ -284,8 +286,8 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
             rc.depthSrvIdx      = m_gbuffer.depthSRV;
             rc.outputWidth      = m_renderWidth;
             rc.outputHeight     = m_renderHeight;
-            rc.intensity        = 1.0f;
-            rc.roughnessMaskScale = -2.0f / 0.8f;
+            rc.intensity        = cv_SSRIntensity->value;
+            rc.roughnessMaskScale = -2.0f / std::max(0.05f, cv_SSRMaxRoughness->value);
 
             cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
             cmd->SetRootCBV(kSlotPerFrame, ctx.perFrameAlloc.bufferHandle,

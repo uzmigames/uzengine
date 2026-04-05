@@ -49,8 +49,11 @@ static const uint  NUM_STEPS    = 32;
 static const uint  BINARY_STEPS = 4;
 static const float MAX_DISTANCE = 5000.0; // cm
 
-/// @ref IGN — Jimenez 2014
-float IGN(float2 p) {
+/// @ref Jimenez 2014 "Next Generation Post Processing in Call of Duty"
+/// @ref UE5 RandomInterleavedGradientNoise.ush — temporal rotation per frame
+/// @constants IGN = {0.06711056, 0.00583715, 52.9829189}, frame rotation = float2(47, 17) * 0.695
+float IGN(float2 p, uint frameIndex) {
+    p += float(frameIndex % 8) * float2(47.0, 17.0) * 0.695;
     return frac(52.9829189 * frac(p.x * 0.06711056 + p.y * 0.00583715));
 }
 
@@ -138,10 +141,12 @@ void main(uint3 DTid : SV_DispatchThreadID)
     // SSR provides sharp screen-space detail; IBL provides smooth environment.
     float3 R = reflect(-V, N);
 
-    // Jitter start position along the ray — purely spatial, NO temporal variation.
-    // @ref UE5 ScreenSpaceReflections.usf — uses InterleavedGradientNoise(pixel) without frame offset
-    // Temporal variation in jitter causes per-frame hit position shifts → visible flickering.
-    float jitter = IGN(float2(DTid.xy));
+    // Jitter start position along the ray with temporal variation.
+    // @ref UE5 SSRTReflections.usf — InterleavedGradientNoise(pixel, StateFrameIndexMod8)
+    // Temporal rotation distributes step discretization error across 8 frames,
+    // enabling the temporal accumulation pass to average it away.
+    uint frameIdx = uint(timeParams.z);
+    float jitter = IGN(float2(DTid.xy), frameIdx);
 
     // Ray march in screen space
     float3 rayStart = worldPos + R * 1.0; // small offset to avoid self-hit
@@ -207,14 +212,18 @@ void main(uint3 DTid : SV_DispatchThreadID)
         t += stepSize;
     }
 
-    // Binary refinement
-    if (hit) {
+    // Binary refinement — refine hit position within the crossing interval.
+    // Skip refinement for grazing-angle rays where depth comparison is unreliable.
+    if (hit && abs(ssDir.z) > 1e-5) {
         float tLow  = lastT;
         float tHigh = lastT + stepSize;
 
         for (uint b = 0; b < BINARY_STEPS; b++) {
             float tMid = (tLow + tHigh) * 0.5;
             float3 ssMid = ssStart + ssDir * tMid;
+
+            // Screen-bounds check — stop refinement if midpoint exits [0,1]
+            if (any(ssMid.xy < 0.0) || any(ssMid.xy > 1.0)) break;
 
             float sceneZ = hizTex.SampleLevel(pointClamp, ssMid.xy, 0).r;
             float diff = ssMid.z - sceneZ;
@@ -240,5 +249,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
     float screenMask  = ScreenFade(hitUVZ.xy);
     float confidence  = screenMask * rFade * intensity;
 
-    outputSSR[DTid.xy] = float4(hitColor * confidence, confidence);
+    // Store linear (non-premultiplied) color + confidence.
+    // Premultiply is done in deferred_lighting_ps.hlsl to avoid triple-weighting.
+    outputSSR[DTid.xy] = float4(hitColor, confidence);
 }
