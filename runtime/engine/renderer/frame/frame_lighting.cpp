@@ -44,6 +44,7 @@ static auto* cv_SSRMaxRoughness  = UZ_CVAR_FLOAT("r.SSR.MaxRoughness", 0.35f, "M
 static auto* cv_SSRNumSteps      = UZ_CVAR_INT("r.SSR.NumSteps", 16, "SSR ray march step count", 8, 32);
 static auto* cv_SSRStartMip      = UZ_CVAR_FLOAT("r.SSR.StartMipLevel", 1.0f, "SSR initial HZB mip level", 0.f, 3.f);
 static auto* cv_SSRSlopeTolerance = UZ_CVAR_FLOAT("r.SSR.SlopeToleranceScale", 4.0f, "SSR slope tolerance scale", 1.f, 16.f);
+static auto* cv_SSRCopyPrev      = UZ_CVAR_BOOL("r.SSR.CopyPrev", true, "SSR prev-frame color copy");
 // SSGI
 static auto* cv_SSGI             = UZ_CVAR_BOOL("r.SSGI", false, "Screen-Space Global Illumination");
 // DFS (Distance Field Shadows)
@@ -116,7 +117,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
     // Runs AFTER lighting+atmosphere so the copy contains the complete lit scene.
     // SSR trace next frame reads m_ssrPrevSceneColorSrv instead of m_hdrSceneColorSrv.
     // @ref UE5 DeferredShadingRenderer.cpp — QueueTextureExtraction for SSR input
-    if (m_ssrEnabled && m_ssrPrevSceneColor.IsValid() && m_hdrSceneColor.IsValid()) {
+    if (m_ssrEnabled && cv_SSRCopyPrev->value && m_ssrPrevSceneColor.IsValid() && m_hdrSceneColor.IsValid()) {
         rgBuilder.AddPass("SSR_CopyPrevColor", [&](rg::RgPassBuilder& pb) {
             pb.Read(ctx.hdrRes, RHIResourceState::RenderTarget);
 

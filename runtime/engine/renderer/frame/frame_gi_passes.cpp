@@ -27,6 +27,10 @@
 
 static auto* cv_SSRMaxRoughness = UZ_CVAR_FLOAT("r.SSR.MaxRoughness", 0.35f, "SSR max roughness cutoff", 0.05f, 1.0f);
 static auto* cv_SSRIntensity    = UZ_CVAR_FLOAT("r.SSR.Intensity", 1.0f, "SSR reflection intensity", 0.0f, 5.0f);
+static auto* cv_SSRTrace        = UZ_CVAR_FLOAT("r.SSR.Trace", 1.0f, "Enable SSR trace pass (0=skip)", 0.0f, 1.0f);
+static auto* cv_SSRResolve      = UZ_CVAR_FLOAT("r.SSR.Resolve", 1.0f, "Enable SSR resolve pass (0=skip)", 0.0f, 1.0f);
+static auto* cv_SSRTemporal     = UZ_CVAR_FLOAT("r.SSR.Temporal", 1.0f, "Enable SSR temporal pass (0=skip)", 0.0f, 1.0f);
+static auto* cv_SSRCopy         = UZ_CVAR_FLOAT("r.SSR.CopyPrev", 1.0f, "Enable SSR prev-frame color copy (0=skip)", 0.0f, 1.0f);
 
 #include <cstring>
 
@@ -200,7 +204,7 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
             UZ_PROFILE_SCOPE("SSR::Trace");
 
             auto ssrTracePSO = ctx.pipelines->GetSsrTrace();
-            if (!ssrTracePSO.IsValid()) return;
+            if (!ssrTracePSO.IsValid() || cv_SSRTrace->value < 0.5f) return;
 
             {
                 RHIBarrierDesc barrier{};
@@ -262,7 +266,7 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
             UZ_PROFILE_SCOPE("SSR::Resolve");
 
             auto ssrResolvePSO = ctx.pipelines->GetSsrResolve();
-            if (!ssrResolvePSO.IsValid()) return;
+            if (!ssrResolvePSO.IsValid() || cv_SSRResolve->value < 0.5f) return;
 
             {
                 RHIBarrierDesc barrier{};
@@ -323,7 +327,7 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
                 UZ_PROFILE_SCOPE("SSR::Temporal");
 
                 auto ssrTemporalPSO = ctx.pipelines->GetSsrTemporal();
-                if (!ssrTemporalPSO.IsValid()) return;
+                if (!ssrTemporalPSO.IsValid() || cv_SSRTemporal->value < 0.5f) return;
 
                 {
                     RHIBarrierDesc barriers[2]{};

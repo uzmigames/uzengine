@@ -302,14 +302,29 @@ void main(uint2 DTid : SV_DispatchThreadID)
     // ── Variance Clip ───────────────────────────────────────────────────────
     /// @ref Salvi 2016 "An Excursion in Temporal Supersampling" — variance clipping
     /// @constants gamma = 1.25 (standard variance clip multiplier)
+    // Depth-weighted variance to prevent cross-object contamination.
+    // Without this, SSR-modified neighboring objects (different depth) shift
+    // the variance bounds, causing stipple/grain noise on adjacent surfaces.
+    // @ref UE5 TemporalAA.usf — bilateral depth weight in neighborhood stats
+    float depthWeights[9];
+    float depthWeightSum = 0.0;
+    [unroll] for (int di = 0; di < 9; ++di) {
+        int2 dCoord = clamp(centerCoord + kOffsets3x3[di], int2(0, 0), int2(sceneW - 1, sceneH - 1));
+        float sampleDepth = DepthTex.Load(int3(dCoord, 0)).x;
+        float depthDiff = abs(centerDepth - sampleDepth) / max(centerDepth, 1e-6);
+        depthWeights[di] = exp(-depthDiff * 200.0);
+        depthWeightSum += depthWeights[di];
+    }
+    depthWeightSum = max(depthWeightSum, 0.001);
+
     float3 neighborMu = float3(0, 0, 0);
     float3 neighborSigma = float3(0, 0, 0);
     [unroll] for (int ni = 0; ni < 9; ++ni) {
-        neighborMu    += neighbors[ni];
-        neighborSigma += neighbors[ni] * neighbors[ni];
+        float w = depthWeights[ni] / depthWeightSum;
+        neighborMu    += neighbors[ni] * w;
+        neighborSigma += neighbors[ni] * neighbors[ni] * w;
     }
-    neighborMu    /= 9.0;
-    neighborSigma = sqrt(abs(neighborSigma / 9.0 - neighborMu * neighborMu));
+    neighborSigma = sqrt(abs(neighborSigma - neighborMu * neighborMu));
 
     float kVarianceClipGamma = varianceClipGamma;
     float3 varianceMin = neighborMu - kVarianceClipGamma * neighborSigma;

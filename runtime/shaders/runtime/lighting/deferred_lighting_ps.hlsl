@@ -442,11 +442,7 @@ float4 main(FSInput input) : SV_Target {
             ssrData = ssrTextureT11.Load(int3(px, 0));
 #endif
             // Roughness gate: suppress SSR for rough surfaces that the trace pass
-            // would have skipped. This prevents temporal history ghosting from
-            // bleeding stale SSR data onto surfaces that shouldn't have SSR.
-            // Uses the same MaxRoughness=0.35 threshold as the trace pass RoughnessFade.
-            // Without this, camera motion causes the history buffer to carry SSR data
-            // from mirror surfaces onto rough surfaces at the same screen position.
+            // would have skipped. Prevents temporal history ghosting.
             float ssrRoughnessMask = saturate(1.0 - (roughness / 0.35));
             ssrData.a *= ssrRoughnessMask;
 
