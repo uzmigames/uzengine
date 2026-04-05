@@ -348,9 +348,41 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         updateCBData.aliveCountNewUavIndex  = m_device->GetBufferUAVIndex(gpuBuf.aliveCount);
 
         // Dynamic params: use dedicated dummy buffer.
-        // CANNOT use positions/sizes — dynParamsOut write would overwrite those attributes!
         updateCBData.readDynParamsSrv  = m_device->GetBufferSRVIndex(m_vfxDummyDynParams);
         updateCBData.writeDynParamsUav = m_device->GetBufferUAVIndex(m_vfxDummyDynParams);
+
+        // ── Simulation forces from emitter config ───────────────────
+        updateCBData.curlStrength          = emitter->curlStrength;
+        updateCBData.curlFrequency         = emitter->curlFrequency;
+        updateCBData.curlSpeed             = emitter->curlSpeed;
+
+        updateCBData.vortexAxisOriginX     = emitter->vortexAxisOriginX;
+        updateCBData.vortexAxisOriginY     = emitter->vortexAxisOriginY;
+        updateCBData.vortexAxisOriginZ     = emitter->vortexAxisOriginZ;
+        updateCBData.vortexAxisDirX        = emitter->vortexAxisDirX;
+        updateCBData.vortexAxisDirY        = emitter->vortexAxisDirY;
+        updateCBData.vortexAxisDirZ        = emitter->vortexAxisDirZ;
+        updateCBData.vortexTangentialStrength = emitter->vortexTangentialStrength;
+        updateCBData.vortexRadialStrength   = emitter->vortexRadialStrength;
+        updateCBData.vortexMaxRadius        = emitter->vortexMaxRadius;
+
+        updateCBData.orbitEnabled           = emitter->orbitEnabled;
+        updateCBData.orbitRadius             = emitter->orbitRadius;
+        updateCBData.orbitSpeed              = emitter->orbitSpeed;
+
+        updateCBData.groundCollision        = emitter->groundCollision;
+        updateCBData.restitution            = emitter->restitution;
+        updateCBData.collisionResponse      = emitter->collisionResponse;
+        updateCBData.collisionFriction      = emitter->collisionFriction;
+
+        updateCBData.dragCoefficient        = emitter->dragCoefficient;
+        updateCBData.accelX                 = emitter->accelX;
+        updateCBData.accelY                 = emitter->accelY;
+        updateCBData.accelZ                 = emitter->accelZ;
+
+        updateCBData.rotationRate           = emitter->rotationRate;
+        updateCBData.rotationOverLifeStart  = emitter->rotationOverLifeStart;
+        updateCBData.rotationOverLifeEnd    = emitter->rotationOverLifeEnd;
 
         const CBAllocation updateAlloc = m_cbRing->Allocate(sizeof(updateCBData));
         if (!updateAlloc.cpuPtr) {

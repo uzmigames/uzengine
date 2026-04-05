@@ -311,14 +311,24 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
     // Draws particles as camera-facing billboards after opaque geometry
     // and lighting. Sorted back-to-front for correct alpha blending.
 
+    // Select PSO based on the first emitter's blend mode.
+    // TODO: per-emitter PSO selection for mixed blend modes.
     const auto billboardPipeline = ctx.pipelines->GetParticleBillboard();
+    const auto additivePipeline  = ctx.pipelines->GetParticleBillboardAdditive();
 
-    // If the billboard pipeline isn't compiled yet (first few frames or
-    // shader compilation error), skip the render pass entirely.
-    if (!billboardPipeline.IsValid()) return;
+    // Determine which PSO to use from the first emitter's blend mode.
+    RHIPipelineHandle activePipeline = billboardPipeline;
+    for (auto* em : emitters) {
+        if (em && em->initialized && em->blendMode == 1 && additivePipeline.IsValid()) {
+            activePipeline = additivePipeline;
+        }
+        break;
+    }
+
+    if (!activePipeline.IsValid()) return;
 
     ParticleRenderPassDesc renderDesc{};
-    renderDesc.billboardPipeline  = billboardPipeline;
+    renderDesc.billboardPipeline  = activePipeline;
     renderDesc.colorTarget        = ctx.hdrRes;
     renderDesc.depthTarget        = ctx.depthRes;
     renderDesc.colorTexture       = m_hdrSceneColor;

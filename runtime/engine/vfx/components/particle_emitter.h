@@ -163,15 +163,49 @@ struct ParticleEmitter {
     uint32_t screenSpaceSizeEnabled = 0;
     float screenSpacePixelSize = 8.0f;
 
-    // ── Simulation Parameters ───────────────────────────────────────────
+    // ── Simulation Force Parameters ────────────────────────────────────
 
     /// Gravity acceleration applied each frame (world space, cm/s^2).
-    /// Z-up: negative Z = downward. 981 cm/s^2 = 9.81 m/s^2.
     Vec3 gravity = {0.0f, 0.0f, -981.0f};
 
     /// Velocity damping per frame (0 = full stop, 1 = no damping).
     /// Applied multiplicatively: `velocity *= damping` each tick.
     float damping = 0.98f;
+
+    /// Curl noise force parameters.
+    float curlStrength = 0.0f;    ///< 0 = disabled.
+    float curlFrequency = 0.5f;
+    float curlSpeed = 0.2f;
+
+    /// Vortex force parameters.
+    float vortexAxisOriginX = 0.0f, vortexAxisOriginY = 0.0f, vortexAxisOriginZ = 0.0f;
+    float vortexAxisDirX = 0.0f, vortexAxisDirY = 0.0f, vortexAxisDirZ = 1.0f;
+    float vortexTangentialStrength = 0.0f;
+    float vortexRadialStrength = 0.0f;
+    float vortexMaxRadius = 500.0f;
+
+    /// Ground collision. 0=disabled, 1=bounce.
+    uint32_t groundCollision = 0;
+    float restitution = 0.3f;
+    uint32_t collisionResponse = 0;  ///< 0=Bounce, 1=Stick, 2=Kill.
+    float collisionFriction = 0.8f;
+
+    /// Orbit around point.
+    uint32_t orbitEnabled = 0;
+    float orbitRadius = 0.0f;
+    float orbitSpeed = 0.0f;
+    float orbitAxisX = 0.0f, orbitAxisY = 0.0f, orbitAxisZ = 1.0f;
+
+    /// Quadratic drag (air resistance). 0 = disabled.
+    float dragCoefficient = 0.0f;
+
+    /// Per-axis acceleration (independent of gravity).
+    float accelX = 0.0f, accelY = 0.0f, accelZ = 0.0f;
+
+    /// Rotation rate (continuous spin, rad/s). 0 = no spin.
+    float rotationRate = 0.0f;
+    float rotationOverLifeStart = 0.0f;
+    float rotationOverLifeEnd = 0.0f;
 
     /// Whether the emitter is currently spawning new particles.
     /// When false, existing particles continue to simulate until they die.
