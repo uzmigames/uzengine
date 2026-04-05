@@ -10,6 +10,7 @@
 #include "engine/ecs/components.h"
 #include "engine/ecs/core/world.h"
 #include "engine/math/quaternion.h"
+#include "engine/vfx/components/emitter_presets.h"
 #include "input.h"
 #include "camera.h"
 #include "log.h"
@@ -92,22 +93,21 @@ void VFXViewportApp::OnStart() {
 
     // VFX emitters re-enabled with buffer validation guard in frame_particles.cpp.
 
-    // ── VFX Emitter 1: Fountain ──────────────────────────────────────────────
-    //
-    // Billboard particles launched upward with gravity pulling them down,
-    // creating a fountain arc. SceneRenderer::SyncVfxEmitters() picks up the
-    // VfxEmitterComponent each frame and creates the GPU ParticleEmitter.
+    // ── VFX Emitter: Fire Fountain (center) ─────────────────────────────────
     {
         Entity e = world.CreateEntity();
-        world.AddComponent<CName>(e, CName{"Fountain"});
+        world.AddComponent<CName>(e, CName{"Fire"});
         auto& sc = world.AddComponent<SceneComponent>(e);
         sc.SetPosition({0.0f, 0.0f, 0.0f});
         auto& em = world.AddComponent<VfxEmitterComponent>(e);
-        em.maxParticles = 10000;
-        em.emissionRate = 300.0f;
-        em.lifetime = 3.0f;
-        em.gravity = {0.0f, 0.0f, -981.0f};
-        em.spawnVelocity = {0.0f, 0.0f, 500.0f};
+        // SyncVfxEmitters creates a ParticleEmitter with these basic fields.
+        // The preset is applied AFTER sync in the SceneRenderer's per-frame loop.
+        // For now, use inline config that maps to the Fire preset defaults.
+        em.maxParticles = 5000;
+        em.emissionRate = 200.0f;
+        em.lifetime = 2.0f;
+        em.gravity = {0.0f, 0.0f, -200.0f};
+        em.spawnVelocity = {0.0f, 0.0f, 300.0f};
         em.emitting = true;
         m_emitterEntities.push_back(e);
     }
