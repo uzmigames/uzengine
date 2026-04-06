@@ -232,7 +232,10 @@ struct PerFrameCB {
     float    materialDielectricF0    = 0.04f;          ///< CVar r.Material.DielectricF0 — Fresnel reflectance.
     float    materialMinGGXAlpha     = 0.0064f;        ///< CVar r.Material.MinGGXAlpha — prevents specular aliasing.
 
-    float    _pad2[1] = {};                            ///< Pad to 768 bytes.
+    // ── Brixelizer GI (AMD FidelityFX) ────────────────────────────────
+    /// SRV index for Brixelizer GI diffuse output (RGBA16F). UINT32_MAX = disabled.
+    /// Specular GI SRV is at (brixelizerGIDiffuseSrv + 1) by allocation convention.
+    uint32_t brixelizerGIDiffuseSrv = UINT32_MAX;
 };
 
 static_assert(sizeof(PerFrameCB) == 768, "PerFrameCB must be 768 bytes (D3D12 CB alignment)");

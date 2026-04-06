@@ -554,6 +554,13 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
         perFrame.rcProbeSHBufferSrv   = UINT32_MAX;
     }
 
+    // ── Brixelizer GI (AMD FidelityFX sparse SDF voxel GI) ──────────
+    if (m_brixelizerGI && m_brixelizerGI->IsInitialized() && m_device->IsBindless()) {
+        perFrame.brixelizerGIDiffuseSrv = m_brixelizerGI->GetDiffuseGISrv();
+    } else {
+        perFrame.brixelizerGIDiffuseSrv = UINT32_MAX;
+    }
+
     // ── Aerial Perspective parameters (from SkyAtmosphereComponent) ───
     // Populate AP atmosphere constants so deferred_lighting_ps can ray-march
     // inscattering per pixel. Only enabled when a SkyAtmosphereComponent exists

@@ -71,6 +71,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
     RegisterDFSPasses(rgBuilder, ctx);
     RegisterSSGIPasses(rgBuilder, ctx);
     RegisterSDFGIPasses(rgBuilder, ctx);
+    RegisterBrixelizerGIPasses(rgBuilder, ctx);
     RegisterSSRPasses(rgBuilder, ctx);
     // ── Env MIS temporal accumulation (render graph compute pass) ───────
     if (m_envMISPass && m_envMISPass->IsInitialized()
@@ -230,6 +231,17 @@ void SceneRenderer::RegisterPassInspectorTargets(FrameContext& ctx) {
                                             m_ssrHistorySrv[ssrWrittenIdx],
                                             VisDisplayMode::Color, rw, rh);
         }
+    }
+
+    // Brixelizer GI outputs
+    if (m_brixelizerGI && m_brixelizerGI->IsInitialized()
+        && m_brixelizerGI->GetDiffuseGISrv() != UINT32_MAX) {
+        m_passInspector.RegisterTarget("brixelizer.diffuse", {},
+                                        m_brixelizerGI->GetDiffuseGISrv(),
+                                        VisDisplayMode::Color, rw, rh);
+        m_passInspector.RegisterTarget("brixelizer.specular", {},
+                                        m_brixelizerGI->GetSpecularGISrv(),
+                                        VisDisplayMode::Color, rw, rh);
     }
 
     // HDR scene color (after lighting + atmosphere, before postprocess)

@@ -128,7 +128,7 @@ cbuffer PerFrameCB : register(b1) {
     float  exposureHighPercent;     //         (752)
     float  materialDielectricF0;    //         (756)
     float  materialMinGGXAlpha;     //         (760)
-    float  _pad2;                   //         (764)
+    uint   brixGIDiffuseSrv;        //         (764) BrixelizerGI diffuse SRV (specular = diffuse+1)
 };
 
 // LightingCB at b2 via light_types.hlsli (already declared above)
@@ -555,6 +555,23 @@ float4 main(FSInput input) : SV_Target {
             float3 ssgiColor = ssgiTextureT12.Load(int3(px, 0)).rgb;
             if (any(ssgiColor > 0.001))
                 diffuseAmbient += (1.0 - metallic) * ssgiColor * baseColor;
+        }
+#endif
+
+        // ── Brixelizer GI: add sparse SDF voxel indirect lighting ──────
+        // @ref AMD 2024 "FidelityFX Brixelizer GI" — screen-space probe GI
+#ifdef UZ_BINDLESS
+        if (brixGIDiffuseSrv != kSentinelSrvIndex) {
+            Texture2D<float4> brixDiffTex = ResourceDescriptorHeap[brixGIDiffuseSrv];
+            float3 brixDiffuse = brixDiffTex.Load(int3(px, 0)).rgb;
+            if (any(brixDiffuse > 0.001))
+                diffuseAmbient += (1.0 - metallic) * brixDiffuse * baseColor;
+
+            // Specular GI is at diffuseSrv + 1 by allocation convention
+            Texture2D<float4> brixSpecTex = ResourceDescriptorHeap[brixGIDiffuseSrv + 1];
+            float3 brixSpecular = brixSpecTex.Load(int3(px, 0)).rgb;
+            if (any(brixSpecular > 0.001))
+                specularAmbient += brixSpecular * lerp(metallicF0, float3(1,1,1), roughness * 0.5);
         }
 #endif
 

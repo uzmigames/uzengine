@@ -54,6 +54,7 @@
 #include "gi/ssgi_renderer.h"
 #include "gi/global_distance_field.h"
 #include "gi/radiance_cache.h"
+#include "passes/gi/brixelizer_gi_pass.h"
 #include "async_texture_decoder.h"  // TextureDecodeResult for m_deferredDecoded
 #include "inspector_pass.h"        // PassInspector for render target visualization
 #include "upload_ring.h"           // UploadRing for zero-alloc texture staging

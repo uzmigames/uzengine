@@ -188,6 +188,45 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
     });
 }
 
+// ── Brixelizer GI (AMD FidelityFX sparse SDF voxel GI) ─────────────────────
+// Dispatches Brixelizer SDF bake + BrixelizerGI probe-based GI.
+// Produces two RGBA16F textures: diffuseGI and specularGI.
+// The SRV indices are written to PerFrameCB in frame_constants.cpp.
+
+void SceneRenderer::RegisterBrixelizerGIPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
+    if (!m_brixelizerGI || !m_brixelizerGI->IsInitialized()) return;
+    if (!m_passInspector.IsPassEnabled("brixelizer_gi")) return;
+
+    rgBuilder.AddPass("BrixelizerGI", [&](rg::RgPassBuilder& pb) {
+        pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
+        pb.Read(ctx.normalRes, RHIResourceState::ShaderResource);
+
+        pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
+            UZ_PROFILE_SCOPE("BrixelizerGI::Execute");
+
+            // Register geometry from the draw list for SDF voxelization
+            m_brixelizerGI->RegisterGeometry(ctx.drawList.GetCommands());
+
+            // Execute SDF bake + GI dispatch
+            m_brixelizerGI->Execute(
+                cmd,
+                ctx.perFrame.viewProj.data(),    // view matrix
+                ctx.perFrame.viewProj.data(),    // proj matrix (combined viewProj for now)
+                ctx.perFrame.viewProj.data(),    // prev view
+                ctx.perFrame.viewProj.data(),    // prev proj
+                ctx.perFrame.cameraPos.x,
+                ctx.perFrame.cameraPos.y,
+                ctx.perFrame.cameraPos.z,
+                ctx.frameIndex,
+                m_gbuffer.depth,
+                m_gbuffer.normal,
+                m_gbuffer.velocity,
+                m_skyCubemap,
+                m_hdrSceneColor);
+        });
+    });
+}
+
 // ── SSR Compute Passes (after GBuffer + depth prepass + HiZ, before lighting)
 // Two compute passes:
 //   1. SSR_Trace:   Hi-Z ray march → trace output (rgb=hit color, a=confidence)

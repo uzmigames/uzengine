@@ -597,6 +597,13 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     // Cloud noise loading disabled — cloud pass disabled for manual testing.
     // TODO(clouds): re-enable when cloud pipeline is debugged
 
+    // ── Brixelizer GI (AMD FidelityFX sparse SDF voxel GI) ────────────
+    m_brixelizerGI = std::make_unique<BrixelizerGIPass>();
+    if (!m_brixelizerGI->Init(device, m_renderWidth, m_renderHeight)) {
+        UZ_LOG(Renderer, Warning, "SceneRenderer: BrixelizerGI init failed (Brixelizer GI disabled)");
+        m_brixelizerGI.reset();
+    }
+
     // ── DFS Output Texture + Culling Buffers (at render resolution) ──
     // Created here but only populated when DFS is enabled at runtime.
     // The output texture starts at half-resolution by default; fullResolution
@@ -1057,6 +1064,11 @@ void SceneRenderer::Resize(uint32_t width, uint32_t height) {
         m_cloudPass->OnResize(m_renderWidth, m_renderHeight);
     }
 
+    // Recreate Brixelizer GI output textures at render resolution
+    if (m_brixelizerGI && m_brixelizerGI->IsInitialized()) {
+        m_brixelizerGI->OnResize(m_renderWidth, m_renderHeight);
+    }
+
     // Recreate SSR output textures at render resolution
     DestroySsrResources();
     CreateSsrResources(m_renderWidth, m_renderHeight);
@@ -1307,6 +1319,7 @@ void SceneRenderer::Shutdown() {
     if (m_volFogPass) { m_volFogPass->Shutdown(m_device); m_volFogPass.reset(); }
     if (m_cloudPass) { m_cloudPass->Shutdown(); m_cloudPass.reset(); }
     if (m_cloudCmdList) { m_device->DestroyCommandList(m_cloudCmdList); m_cloudCmdList = nullptr; }
+    if (m_brixelizerGI) { m_brixelizerGI->Shutdown(); m_brixelizerGI.reset(); }
 
     // ── Runtime VFX Emitter cleanup ─────────────────────────────────
     // Unregister and destroy all emitters created by SyncVfxEmitters()

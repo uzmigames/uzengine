@@ -75,6 +75,7 @@ pub fn build(b: *std.Build) void {
         "engine/renderer/postprocess",
         "engine/renderer/passes/debug",
         "engine/renderer/passes/ibl",
+        "engine/renderer/passes/gi",
         "engine/renderer/raytracing",
         "engine/asset",
         "engine/asset/formats",
@@ -257,6 +258,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/renderer/passes/vfx", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/passes/ibl", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/passes/raytracing", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer/passes/gi", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/shadows", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/lighting", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/atmosphere", cpp_flags);
@@ -800,6 +802,50 @@ pub fn build(b: *std.Build) void {
         runtime_mod.addIncludePath(b.path(ffx ++ "upscalers/fsr3/include"));
         runtime_mod.addIncludePath(b.path(ffx ++ "upscalers/fsr3/internal"));
         runtime_mod.addIncludePath(b.path(ffx ++ "backend/dx12"));
+    }
+
+    // Thirdparty — AMD FidelityFX SDK 1.1.4 (Brixelizer GI)
+    // Include paths for Brixelizer + BrixelizerGI + DX12 backend.
+    // The FFX SDK 1.1 must be built separately with CMake/MSVC to produce
+    // ffx_backend_dx12_x64.lib. Define UZ_BRIXELIZER_ENABLED=1 when present.
+    // Build: cd thirdparty/amd-fidelityfx-1.1/sdk && cmake -B build -DFFX_API_BACKEND=DX12_X64 -DFFX_ALL=ON && cmake --build build --config Release
+    // FFX SDK 1.1.4 include paths are always added when headers are present.
+    // UZ_BRIXELIZER_ENABLED is only defined when the pre-built .lib also exists.
+    const has_brixelizer_headers = blk: {
+        if (!is_windows) break :blk false;
+        const brix_inc = tp ++ "amd-fidelityfx-1.1/sdk/include/FidelityFX/host/ffx_brixelizer.h";
+        const brix_resolved = b.path(brix_inc).getPath(b);
+        if (std.fs.cwd().access(brix_resolved, .{})) {
+            break :blk true;
+        } else |_| {
+            break :blk false;
+        }
+    };
+    if (has_brixelizer_headers) {
+        const ffx11 = tp ++ "amd-fidelityfx-1.1/sdk/";
+        runtime_mod.addIncludePath(b.path(ffx11 ++ "include"));
+        runtime_mod.addIncludePath(b.path(ffx11 ++ "include/FidelityFX/host"));
+        runtime_mod.addIncludePath(b.path(ffx11 ++ "include/FidelityFX/host/backends/dx12"));
+        runtime_mod.addIncludePath(b.path(ffx11 ++ "include/FidelityFX/gpu"));
+        runtime_mod.addIncludePath(b.path(ffx11 ++ "src/backends/shared"));
+        runtime_mod.addIncludePath(b.path(ffx11 ++ "src/backends/shared/blob_accessors"));
+        runtime_mod.addIncludePath(b.path(ffx11 ++ "src/components/brixelizer"));
+        runtime_mod.addIncludePath(b.path(ffx11 ++ "src/components/brixelizergi"));
+
+        // Only enable Brixelizer when the CMake-built .lib is present.
+        // Build it: cd thirdparty/amd-fidelityfx-1.1/sdk && cmake -B build -DFFX_API_BACKEND=DX12_X64 -DFFX_ALL=ON && cmake --build build --config Release
+        const brix_lib = tp ++ "amd-fidelityfx-1.1/sdk/build/lib/Release/ffx_backend_dx12_x64.lib";
+        const brix_lib_resolved = b.path(brix_lib).getPath(b);
+        const has_brixelizer_lib = blk2: {
+            if (std.fs.cwd().access(brix_lib_resolved, .{})) {
+                break :blk2 true;
+            } else |_| {
+                break :blk2 false;
+            }
+        };
+        if (has_brixelizer_lib) {
+            runtime_mod.addCMacro("UZ_BRIXELIZER_ENABLED", "1");
+        }
     }
 
     // Thirdparty — NVIDIA DLSS SDK headers (NGX API for temporal upscaling)

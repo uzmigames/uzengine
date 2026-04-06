@@ -247,7 +247,10 @@ struct PerFrameParams {
     float    materialDielectricF0    = 0.04f;          ///< CVar r.Material.DielectricF0
     float    materialMinGGXAlpha     = 0.0064f;        ///< CVar r.Material.MinGGXAlpha
 
-    float    _pad2[1]               = {};              ///< Pad scalar section to 768 bytes.
+    // ── Brixelizer GI (AMD FidelityFX) ────────────────────────────────
+    /// SRV index for Brixelizer GI diffuse output (RGBA16F). UINT32_MAX = disabled.
+    /// Specular GI SRV is at (brixelizerGIDiffuseSrv + 1) by allocation convention.
+    uint32_t brixelizerGIDiffuseSrv = UINT32_MAX;
 
     // ── Resource handles (NOT copied to CB) ──────────────────────────────
     // These are bound by ShaderParameterBinder at their HLSL register slots.

@@ -325,6 +325,9 @@
     bool m_sdfGiEnabled = false;                 ///< Runtime toggle for SDF-based GI.
     float m_giIntensity = 1.0f;                  ///< GI intensity multiplier (default 1.0).
 
+    // ── Brixelizer GI (AMD FidelityFX sparse SDF voxel GI) ─────────────────
+    std::unique_ptr<BrixelizerGIPass> m_brixelizerGI;  ///< FFX Brixelizer GI pass (diffuse + specular indirect).
+
     // ── SSR (Screen-Space Reflections) ─────────────────────────────────────
 
     RHITextureHandle m_ssrTraceOutput;             ///< RGBA16F trace result (rgb=hit color, a=confidence).
@@ -780,6 +783,9 @@
 
     /// Registers SDF-based GI passes (GDF composite + radiance cache trace).
     void RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
+
+    /// Registers AMD FidelityFX Brixelizer GI passes (SDF bake + GI dispatch).
+    void RegisterBrixelizerGIPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
 
     /// Registers Screen-Space Reflections passes (trace + resolve + temporal).
     void RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
