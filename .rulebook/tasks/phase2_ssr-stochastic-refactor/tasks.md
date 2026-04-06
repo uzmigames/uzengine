@@ -28,7 +28,7 @@
 - [x] 3.4 C++ SampleGGX_VNDF + ImportanceSampleGGX parity in brdf_math.h. 8 unit tests (normal incidence, medium/full roughness, grazing angle, boundary, upper hemisphere, reflected direction statistics).
 - [x] 3.5 Virtual hit reprojection in ssr_temporal_cs.hlsl — hit distance → estimated world hit pos → reproject via prevVP matrix (CBV at b2). Blends virtual + surface velocity based on distance confidence.
 - [x] 3.6 Hit distance R16F texture: m_ssrHitDistance/Srv/Uav in scene_renderer_impl.h, created in CreateSsrResources(), written by trace pass via bindless UAV (hitDistUavIdx root constant).
-- [ ] 3.7 Implement tile classification compute pass — 8x8 tiles, read roughness from GBuffer, skip tiles with max roughness > MaxRoughness. Use ExecuteIndirect for ray dispatch.
+- [x] 3.7 Tile classification compute pass: ssr_tile_classify_cs.hlsl (8x8 tiles, roughness gate, ray compaction via groupshared+InterlockedAdd, bindless UAV), ssr_prepare_indirect_cs.hlsl (ray count → DispatchIndirectArgs, counter reset). Buffers: m_ssrRayList + m_ssrRayCounterArgs. PSOs registered. Trace pass still direct dispatch (indirect follow-up).
 - [ ] 3.8 Implement roughness-adaptive spatial kernel in ssr_resolve_cs.hlsl — ellipse aligned to projected GGX specular lobe major/minor axes, replacing isotropic Poisson disk.
 - [ ] 3.9 Add exposure correction to prev-frame color sampling — `prevColor *= PreExposure / PrevPreExposure` to prevent brightness flicker on auto-exposure changes.
 - [ ] 3.10 Wire Hi-Z mip hierarchy into trace shader — pass mip count as root constant, implement mip-level stepping (start coarse, refine on hit) per McGuire 2014 / AMD SSSR pattern.
