@@ -6,8 +6,8 @@
   "content_root": "../content/",
   "window": {
     "title": "UzEngine — VFX Particle Showcase",
-    "width": 1280,
-    "height": 720,
+    "width": 1920,
+    "height": 1080,
     "fullscreen": false
   },
   "rendering": {

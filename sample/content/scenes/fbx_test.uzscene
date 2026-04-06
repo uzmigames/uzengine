@@ -29,7 +29,7 @@
             0.96,
             0.88
           ],
-          "intensity": 10
+          "intensity": 12
         }
       }
     },
@@ -164,47 +164,10 @@
       }
     },
     {
-      "name": "ReflectionProbe",
-      "components": {
-        "transform": {
-          "position": [
-            0,
-            0,
-            150
-          ]
-        },
-        "reflection_probe": {
-          "influence_radius": 2000.0,
-          "resolution": 128
-        }
-      }
-    },
-    {
       "name": "Controller",
       "components": {
         "script": {
           "path": "scripts/fly_camera.lua"
-        }
-      }
-    },
-    {
-      "name": "VolumetricClouds",
-      "components": {
-        "transform": {
-          "position": [
-            0,
-            0,
-            0
-          ]
-        },
-        "volumetric_clouds": {
-          "coverage": 0.7,
-          "density": 0.8,
-          "extinction": 0.01,
-          "scattering_albedo": 0.99,
-          "ambient_multiplier": 6.0,
-          "layer_bottom_altitude_km": 5.0,
-          "layer_height_km": 5.0
         }
       }
     }

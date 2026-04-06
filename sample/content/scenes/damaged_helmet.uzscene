@@ -54,9 +54,7 @@
         "transform": { "position": [0, 0, 690] },
         "sky_light": {
           "intensity": 1.8,
-          "light_color": [0.85, 0.9, 1.0],
-          "cubemap_path": "textures/studio_small_09_2k.pmrem.ktx2",
-          "cubemap_resolution": 512
+          "light_color": [0.85, 0.9, 1.0]
         }
       }
     },
