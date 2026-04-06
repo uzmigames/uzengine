@@ -49,6 +49,7 @@
     [[nodiscard]] bool EnsureSsrTraceShader();
     [[nodiscard]] bool EnsureSsrResolveShader();
     [[nodiscard]] bool EnsureSsrTemporalShader();
+    [[nodiscard]] bool EnsureSsrSpatialDenoiseShader();
     [[nodiscard]] bool EnsureColorGradingLutShader();
     [[nodiscard]] bool EnsureMotionBlurShader();
     [[nodiscard]] bool EnsureMotionBlurTileMaxShader();
@@ -130,6 +131,7 @@
     RHIShaderHandle m_ssrTraceCS               = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssrResolveCS             = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssrTemporalCS            = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_ssrSpatialDenoiseCS     = RHIShaderHandle::Invalid();
     RHIShaderHandle m_colorGradingLutCS        = RHIShaderHandle::Invalid();
     RHIShaderHandle m_motionBlurCS             = RHIShaderHandle::Invalid();
     RHIShaderHandle m_motionBlurTileMaxCS      = RHIShaderHandle::Invalid();
@@ -202,6 +204,7 @@
     RHIPipelineHandle m_ssrTrace              = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssrResolve            = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssrTemporal           = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_ssrSpatialDenoise    = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_colorGradingLut       = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_motionBlur            = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_motionBlurTileMax     = RHIPipelineHandle::Invalid();

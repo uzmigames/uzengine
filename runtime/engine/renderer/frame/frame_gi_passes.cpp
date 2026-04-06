@@ -378,6 +378,75 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
 
         m_ssrHistoryIndex = 1 - m_ssrHistoryIndex;
     }
+
+    // SSR Spatial Bilateral Denoise — post-temporal cleanup.
+    // @ref AMD FidelityFX SSSR "DNSR_Prefilter" — bilateral denoise after temporal
+    // Reads from SSR temporal output (history[justWritten]), writes to m_ssrResolvedOutput.
+    // The deferred lighting reads m_ssrResolvedOutputSrv (updated in frame_constants).
+    // This removes residual per-pixel noise before SSR enters the HDR buffer,
+    // preventing TAA neighborhood contamination on adjacent rough surfaces.
+    {
+        const uint32_t ssrJustWritten = 1 - m_ssrHistoryIndex;
+
+        rgBuilder.AddPass("SSR_SpatialDenoise", [&, ssrJustWritten](rg::RgPassBuilder& pb) {
+            pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
+            pb.Read(ctx.normalRes, RHIResourceState::ShaderResource);
+
+            pb.SetExecutionCallback([this, &ctx, ssrJustWritten](IRHICommandList* cmd, const rg::RgPassResources&) {
+                UZ_PROFILE_SCOPE("SSR::SpatialDenoise");
+
+                auto ssrDenoisePSO = ctx.pipelines->GetSsrSpatialDenoise();
+                if (!ssrDenoisePSO.IsValid()) return;
+
+                // Transition resolved output to UAV for writing
+                {
+                    RHIBarrierDesc barrier{};
+                    barrier.texture     = m_ssrResolvedOutput;
+                    barrier.stateBefore = RHIResourceState::ShaderResource;
+                    barrier.stateAfter  = RHIResourceState::UnorderedAccess;
+                    cmd->ResourceBarrier(&barrier, 1);
+                }
+
+                cmd->SetPipeline(ssrDenoisePSO);
+
+                const float ssrMaxRoughness = std::max(0.05f, cv_SSRMaxRoughness->value);
+
+                struct SsrDenoiseConstants {
+                    uint32_t ssrInputSrvIdx, normalSrvIdx, depthSrvIdx, reserved;
+                    uint32_t outputWidth, outputHeight;
+                    float intensity, roughnessMaskScale;
+                };
+
+                SsrDenoiseConstants rc{};
+                rc.ssrInputSrvIdx   = m_ssrHistorySrv[ssrJustWritten];
+                rc.normalSrvIdx     = m_gbuffer.normalSRV;
+                rc.depthSrvIdx      = m_gbuffer.depthSRV;
+                rc.outputWidth      = m_renderWidth;
+                rc.outputHeight     = m_renderHeight;
+                rc.intensity        = cv_SSRIntensity->value;
+                rc.roughnessMaskScale = -2.0f / ssrMaxRoughness;
+
+                cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
+                cmd->SetRootCBV(kSlotPerFrame, ctx.perFrameAlloc.bufferHandle,
+                                ctx.perFrameAlloc.offsetBytes, ctx.perFrameAlloc.cpuPtr,
+                                sizeof(PerFrameCB));
+                cmd->SetDescriptorTable(4, m_ssrResolvedOutputUav);
+
+                const uint32_t groupsX = (m_renderWidth + 7) / 8;
+                const uint32_t groupsY = (m_renderHeight + 7) / 8;
+                cmd->Dispatch(groupsX, groupsY, 1);
+
+                // Transition back to SRV for lighting to read
+                {
+                    RHIBarrierDesc barrier{};
+                    barrier.texture     = m_ssrResolvedOutput;
+                    barrier.stateBefore = RHIResourceState::UnorderedAccess;
+                    barrier.stateAfter  = RHIResourceState::ShaderResource;
+                    cmd->ResourceBarrier(&barrier, 1);
+                }
+            });
+        });
+    }
 }
 
 // ── SSGI Previous Frame Color Copy ─────────────────────────────────────────

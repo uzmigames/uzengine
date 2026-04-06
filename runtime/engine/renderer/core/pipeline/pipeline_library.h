@@ -491,6 +491,18 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetSsrTemporal();
 
+    /// Returns the SSR spatial bilateral denoise compute pipeline (ssr_spatial_denoise_cs.hlsl).
+    ///
+    /// Post-temporal cleanup filter that removes residual per-pixel noise using
+    /// depth + normal edge-stopping weights. Prevents SSR noise from contaminating
+    /// TAA's neighborhood variance statistics on adjacent surfaces.
+    ///
+    /// @ref AMD FidelityFX SSSR "DNSR_Prefilter" — bilateral spatial denoise
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetSsrSpatialDenoise();
+
     /// Returns the color grading LUT compute pipeline (color_grading_lut_cs.hlsl).
     ///
     /// Generates a 32x32x32 3D LUT that bakes the entire color grading +

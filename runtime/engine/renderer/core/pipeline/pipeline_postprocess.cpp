@@ -293,6 +293,64 @@ RHIPipelineHandle PipelineLibrary::GetSsrTemporal() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SSR Spatial Bilateral Denoise Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureSsrSpatialDenoiseShader() {
+    if (m_ssrSpatialDenoiseCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::SsrSpatialDenoiseCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile SsrSpatialDenoiseCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "ssr_spatial_denoise_cs";
+
+    m_ssrSpatialDenoiseCS = m_device->CreateShader(shaderDesc);
+    if (!m_ssrSpatialDenoiseCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SsrSpatialDenoiseCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetSsrSpatialDenoise() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetSsrSpatialDenoise called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_ssrSpatialDenoise.IsValid()) {
+        return m_ssrSpatialDenoise;
+    }
+
+    if (!EnsureSsrSpatialDenoiseShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ssrSpatialDenoiseCS;
+    desc.debugName     = "SSR_SpatialDenoise";
+
+    m_ssrSpatialDenoise = m_device->CreateComputePipeline(desc);
+    if (!m_ssrSpatialDenoise.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SSR_SpatialDenoise pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created SSR_SpatialDenoise pipeline");
+    }
+
+    return m_ssrSpatialDenoise;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Color Grading LUT Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 

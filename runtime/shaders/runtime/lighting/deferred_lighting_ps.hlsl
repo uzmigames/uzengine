@@ -441,9 +441,11 @@ float4 main(FSInput input) : SV_Target {
 #else
             ssrData = ssrTextureT11.Load(int3(px, 0));
 #endif
-            // Roughness gate: suppress SSR for rough surfaces that the trace pass
-            // would have skipped. Prevents temporal history ghosting.
-            float ssrRoughnessMask = saturate(1.0 - (roughness / 0.35));
+            // Smooth roughness fade — gradual transition prevents TAA neighborhood
+            // contamination at the SSR/non-SSR boundary. smoothstep produces a
+            // hermite blend instead of a hard cutoff.
+            // @ref UE5 — smooth roughness fade over a range (not hard threshold)
+            float ssrRoughnessMask = 1.0 - smoothstep(0.15, 0.45, roughness);
             ssrData.a *= ssrRoughnessMask;
 
             if (ssrData.a > 0.01) {

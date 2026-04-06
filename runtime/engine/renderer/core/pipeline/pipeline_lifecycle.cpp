@@ -426,6 +426,7 @@ uint32_t PipelineLibrary::WarmupAll() {
     warmup(GetSsrTrace(), "SSR_Trace");
     warmup(GetSsrResolve(), "SSR_Resolve");
     warmup(GetSsrTemporal(), "SSR_Temporal");
+    warmup(GetSsrSpatialDenoise(), "SSR_SpatialDenoise");
     warmup(GetMotionBlur(), "MotionBlur");
     warmup(GetMotionBlurTileMax(), "MotionBlurTileMax");
     warmup(GetMotionBlurNeighborMax(), "MotionBlurNeighborMax");
