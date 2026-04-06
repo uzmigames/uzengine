@@ -141,12 +141,13 @@ void main(uint3 DTid : SV_DispatchThreadID)
     // SSR provides sharp screen-space detail; IBL provides smooth environment.
     float3 R = reflect(-V, N);
 
-    // Jitter start position along the ray with temporal variation.
-    // @ref UE5 SSRTReflections.usf — InterleavedGradientNoise(pixel, StateFrameIndexMod8)
-    // Temporal rotation distributes step discretization error across 8 frames,
-    // enabling the temporal accumulation pass to average it away.
-    uint frameIdx = uint(timeParams.z);
-    float jitter = IGN(float2(DTid.xy), frameIdx);
+    // Spatial-only jitter — no temporal variation for mirror-only SSR.
+    // Temporal IGN rotation requires temporal accumulation to converge, which
+    // is disabled until stochastic GGX sampling (Phase 3). Without temporal
+    // accumulation, frame-varying jitter causes per-frame hit position shifts
+    // that the post-TAA composite shows as flickering noise.
+    // Will switch to temporal IGN when VNDF + temporal denoise are enabled.
+    float jitter = IGN(float2(DTid.xy), 0);
 
     // Ray march in screen space
     float3 rayStart = worldPos + R * 1.0; // small offset to avoid self-hit
