@@ -8,8 +8,8 @@
 
 ## 2. Irradiance Probe Grid
 
-- [ ] 2.1 Create `irradiance_probe_grid.h/.cpp` in `engine/renderer/gi/` — `IrradianceProbeGrid` class: 3D grid of L2 SH probes (9 coefficients per probe, RGB = 27 floats). Configurable grid dimensions (default 8x4x8), world-space extent (auto from scene AABB or manual).
-- [ ] 2.2 Create `LightProbeVolumeComponent` in `engine/ecs/environment/` — box region defining probe placement area. Fields: `gridDimensions` (uvec3), `extentMin`/`extentMax` (Vec3), `autoFitScene` (bool).
+- [x] 2.1 Create `irradiance_probe_grid.h/.cpp` in `engine/renderer/gi/` — `IrradianceProbeGrid` class with author-placed L2 SH probe grid, 7 float4/probe packing, bindless SRV/UAV, CPU staging + mapped upload, `Rebuild()` on component changes.
+- [x] 2.2 Create `LightProbeVolumeComponent` in `engine/ecs/environment/` — box region with `gridDimensionsX/Y/Z` (default 8x4x8), `extentMin`/`extentMax`, `autoFitScene`+`autoFitPadding`, `needsRebuild` dirty flag, runtime `probeBufferSrv`.
 - [ ] 2.3 Implement probe SH capture from sky cubemap — for each probe position, project the sky cubemap into L2 SH coefficients using the same `SHProjection` utility already in `engine/renderer/lighting/sh_projection.h`.
 - [ ] 2.4 Upload probe SH data to a GPU `StructuredBuffer<float4>` (9 float4s per probe = 144 bytes/probe). Register SRV in global descriptor heap.
 - [ ] 2.5 Add probe grid sampling to `deferred_lighting_ps.hlsl` — trilinear interpolation of world position into probe grid UVW, sample 9 SH coefficients, evaluate `IrradianceSH(normal, shCoeffs)` for diffuse GI contribution.
