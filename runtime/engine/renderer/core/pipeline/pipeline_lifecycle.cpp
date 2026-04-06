@@ -423,6 +423,8 @@ uint32_t PipelineLibrary::WarmupAll() {
     // warmupOptional(GetGpuCull(), "GpuCull");
     // warmupOptional(GetDfsCullObjects(), "DFS_CullObjects");
     // warmupOptional(GetDfsConeTrace(), "DFS_ConeTrace");
+    warmup(GetSsrTileClassify(), "SSR_TileClassify");
+    warmup(GetSsrPrepareIndirect(), "SSR_PrepareIndirect");
     warmup(GetSsrTrace(), "SSR_Trace");
     warmup(GetSsrResolve(), "SSR_Resolve");
     warmup(GetSsrTemporal(), "SSR_Temporal");

@@ -338,6 +338,14 @@
     uint32_t m_ssrHistoryIndex = 0;                ///< Current write target index (0 or 1), flips each frame.
     bool     m_ssrEnabled = true;                  ///< Runtime toggle for SSR.
 
+    /// Tile classification buffers for indirect SSR dispatch.
+    /// @ref AMD FidelityFX SSSR — tile classify + ray compaction + ExecuteIndirect.
+    RHIBufferHandle m_ssrRayList;                  ///< StructuredBuffer<uint> — packed pixel coords (max = width*height).
+    uint32_t m_ssrRayListUav = UINT32_MAX;         ///< UAV for classify to write, trace to read.
+    uint32_t m_ssrRayListSrv = UINT32_MAX;         ///< SRV for trace pass to read ray coords.
+    RHIBufferHandle m_ssrRayCounterArgs;           ///< ByteAddressBuffer — [0]=rayCount, [4..15]=DispatchIndirectArgs.
+    uint32_t m_ssrRayCounterArgsUav = UINT32_MAX;  ///< UAV for classify/prepare to write.
+
     /// Hit distance from SSR trace — used by temporal pass for virtual hit reprojection.
     /// @ref AMD FidelityFX SSSR — hit distance stored separately for temporal reprojection.
     RHITextureHandle m_ssrHitDistance;              ///< R16F hit distance (screen-space ray t).

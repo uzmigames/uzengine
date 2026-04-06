@@ -196,6 +196,97 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
     // @ref UE5 ScreenSpaceReflections.cpp — reads PrevViewInfo.TemporalAAHistory
     if (!ctx.ssrActive || !m_ssrHasPrevColor) return;
 
+    // ── SSR Tile Classification ─────────────────────────────────────────
+    // @ref AMD FidelityFX SSSR — classify tiles, compact ray list, prepare indirect args.
+    // Skips tiles where all pixels have roughness >= MaxRoughness.
+    rgBuilder.AddPass("SSR_TileClassify", [&](rg::RgPassBuilder& pb) {
+        pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
+        pb.Read(ctx.normalRes, RHIResourceState::ShaderResource);
+
+        pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources&) {
+            UZ_PROFILE_SCOPE("SSR::TileClassify");
+
+            auto classifyPSO = ctx.pipelines->GetSsrTileClassify();
+            if (!classifyPSO.IsValid()) return;
+
+            // Counter was reset to 0 by last frame's PrepareIndirect pass.
+            // Transition counter buffer to UAV for the classify shader.
+            {
+                RHIBarrierDesc barrier{};
+                barrier.buffer      = m_ssrRayCounterArgs;
+                barrier.stateBefore = RHIResourceState::IndirectArgument;
+                barrier.stateAfter  = RHIResourceState::UnorderedAccess;
+                cmd->ResourceBarrier(&barrier, 1);
+            }
+
+            cmd->SetPipeline(classifyPSO);
+
+            const float ssrMaxRoughness = std::max(0.05f, cv_SSRMaxRoughness->value);
+
+            struct SsrClassifyConstants {
+                uint32_t normalSrvIdx, depthSrvIdx, rayListUavIdx, counterArgsUavIdx;
+                uint32_t outputWidth, outputHeight;
+                float roughnessThreshold;
+                uint32_t pad7;
+            };
+
+            SsrClassifyConstants rc{};
+            rc.normalSrvIdx       = m_gbuffer.normalSRV;
+            rc.depthSrvIdx        = m_gbuffer.depthSRV;
+            rc.rayListUavIdx      = m_ssrRayListUav;
+            rc.counterArgsUavIdx  = m_ssrRayCounterArgsUav;
+            rc.outputWidth        = m_renderWidth;
+            rc.outputHeight       = m_renderHeight;
+            rc.roughnessThreshold = ssrMaxRoughness;
+
+            cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
+
+            const uint32_t groupsX = (m_renderWidth + 7) / 8;
+            const uint32_t groupsY = (m_renderHeight + 7) / 8;
+            cmd->Dispatch(groupsX, groupsY, 1);
+
+            // UAV barrier on ray list + counter before prepare indirect reads them
+            {
+                RHIBarrierDesc barrier{};
+                barrier.buffer      = m_ssrRayCounterArgs;
+                barrier.stateBefore = RHIResourceState::UnorderedAccess;
+                barrier.stateAfter  = RHIResourceState::UnorderedAccess;
+                cmd->ResourceBarrier(&barrier, 1);
+            }
+        });
+    });
+
+    // ── SSR Prepare Indirect Args ───────────────────────────────────────
+    rgBuilder.AddPass("SSR_PrepareIndirect", [&](rg::RgPassBuilder& pb) {
+        pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources&) {
+            UZ_PROFILE_SCOPE("SSR::PrepareIndirect");
+
+            auto preparePSO = ctx.pipelines->GetSsrPrepareIndirect();
+            if (!preparePSO.IsValid()) return;
+
+            cmd->SetPipeline(preparePSO);
+
+            struct SsrPrepareConstants {
+                uint32_t counterArgsUavIdx;
+            };
+            SsrPrepareConstants prc{};
+            prc.counterArgsUavIdx = m_ssrRayCounterArgsUav;
+            cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&prc), 1);
+
+            cmd->Dispatch(1, 1, 1);
+
+            // Transition counter/args buffer to IndirectArgument state for DispatchIndirect
+            {
+                RHIBarrierDesc barrier{};
+                barrier.buffer      = m_ssrRayCounterArgs;
+                barrier.stateBefore = RHIResourceState::UnorderedAccess;
+                barrier.stateAfter  = RHIResourceState::IndirectArgument;
+                cmd->ResourceBarrier(&barrier, 1);
+            }
+        });
+    });
+
+    // ── SSR Trace (now with indirect dispatch) ──────────────────────────
     rgBuilder.AddPass("SSR_Trace", [&](rg::RgPassBuilder& pb) {
         pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
         pb.Read(ctx.normalRes, RHIResourceState::ShaderResource);

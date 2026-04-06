@@ -57,6 +57,44 @@ void SceneRenderer::DestroyTaaResources() {
 void SceneRenderer::CreateSsrResources(uint32_t width, uint32_t height) {
     DestroySsrResources();
 
+    // ── Tile classification buffers ─────────────────────────────────────
+    // @ref AMD FidelityFX SSSR — ray list + counter/args for indirect dispatch.
+    {
+        // Ray list: one uint per pixel (worst case all pixels need rays)
+        RHIBufferDesc rayListDesc{};
+        rayListDesc.sizeBytes = static_cast<uint64_t>(width) * height * sizeof(uint32_t);
+        rayListDesc.stride    = sizeof(uint32_t);
+        rayListDesc.usage     = RHIBufferUsage::StructuredBuffer
+                              | RHIBufferUsage::UnorderedAccess;
+        rayListDesc.memory    = RHIMemoryType::Default;
+        rayListDesc.debugName = "SSR_RayList";
+
+        m_ssrRayList = m_device->CreateBuffer(rayListDesc);
+        if (m_ssrRayList.IsValid()) {
+            m_ssrRayListSrv = m_device->GetBufferSRVIndex(m_ssrRayList);
+            m_ssrRayListUav = m_device->GetBufferUAVIndex(m_ssrRayList);
+        } else {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create SSR ray list buffer");
+        }
+
+        // Ray counter + indirect dispatch args: 16 bytes
+        // [0] = rayCount (uint32), [4..15] = DispatchIndirectArgs {X, Y, Z}
+        RHIBufferDesc argsDesc{};
+        argsDesc.sizeBytes = 16;
+        argsDesc.stride    = 0;  // raw/byte-address buffer
+        argsDesc.usage     = RHIBufferUsage::UnorderedAccess
+                           | RHIBufferUsage::IndirectArgs;
+        argsDesc.memory    = RHIMemoryType::Default;
+        argsDesc.debugName = "SSR_RayCounterArgs";
+
+        m_ssrRayCounterArgs = m_device->CreateBuffer(argsDesc);
+        if (m_ssrRayCounterArgs.IsValid()) {
+            m_ssrRayCounterArgsUav = m_device->GetBufferUAVIndex(m_ssrRayCounterArgs);
+        } else {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create SSR ray counter buffer");
+        }
+    }
+
     // SSR trace output: RGBA16F full-res, rgb=hit color, a=confidence
     {
         RHITextureDesc traceDesc{};
@@ -175,6 +213,18 @@ void SceneRenderer::CreateSsrResources(uint32_t width, uint32_t height) {
 }
 
 void SceneRenderer::DestroySsrResources() {
+    if (m_ssrRayList.IsValid()) {
+        m_device->DestroyBuffer(m_ssrRayList);
+        m_ssrRayList = RHIBufferHandle{};
+        m_ssrRayListSrv = UINT32_MAX;
+        m_ssrRayListUav = UINT32_MAX;
+    }
+    if (m_ssrRayCounterArgs.IsValid()) {
+        m_device->DestroyBuffer(m_ssrRayCounterArgs);
+        m_ssrRayCounterArgs = RHIBufferHandle{};
+        m_ssrRayCounterArgsUav = UINT32_MAX;
+    }
+
     if (m_ssrTraceOutput.IsValid()) {
         m_device->DestroyTexture(m_ssrTraceOutput);
         m_ssrTraceOutput = RHITextureHandle{};

@@ -510,6 +510,14 @@ public:
     /// neighborhood variance statistics.
     [[nodiscard]] RHIPipelineHandle GetSsrComposite();
 
+    /// Returns the SSR tile classification compute pipeline (ssr_tile_classify_cs.hlsl).
+    /// @ref AMD FidelityFX SSSR — classifies 8x8 tiles and compacts ray list.
+    [[nodiscard]] RHIPipelineHandle GetSsrTileClassify();
+
+    /// Returns the SSR indirect args prepare compute pipeline (ssr_prepare_indirect_cs.hlsl).
+    /// @ref AMD FidelityFX SSSR — converts ray count to DispatchIndirectArgs.
+    [[nodiscard]] RHIPipelineHandle GetSsrPrepareIndirect();
+
     /// Returns the color grading LUT compute pipeline (color_grading_lut_cs.hlsl).
     ///
     /// Generates a 32x32x32 3D LUT that bakes the entire color grading +
