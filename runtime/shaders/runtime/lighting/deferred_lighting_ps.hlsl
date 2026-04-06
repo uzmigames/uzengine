@@ -426,36 +426,12 @@ float4 main(FSInput input) : SV_Target {
         float3 diffuseAmbient = (1.0 - metallic) * cosineIrradiance * baseColor
                               * (1.0 - totalScatterDielectric);
 
-        // SSR: blend screen-space reflections with IBL specular.
-        // Use smooth squared confidence to avoid hard seams at SSR edges.
-        // SSR replaces the radiance (prefiltered cubemap) portion of the specular
-        // but preserves the multi-scatter energy from IBL.
-        // @ref UE5 ReflectionEnvironment.usf — blends SSR with IBL probe
+        // SSR is applied POST-TAA to prevent TAA neighborhood contamination.
+        // See ssr_composite_cs.hlsl — composites SSR onto TAA-resolved image.
+        // The deferred lighting pass outputs IBL-only specular; SSR is added later.
         {
-            float4 ssrData = float4(0, 0, 0, 0);
-#ifdef UZ_BINDLESS
-            if (ssrSrvIndex != kSentinelSrvIndex) {
-                Texture2D<float4> ssrTex = ResourceDescriptorHeap[ssrSrvIndex];
-                ssrData = ssrTex.Load(int3(px, 0));
-            }
-#else
-            ssrData = ssrTextureT11.Load(int3(px, 0));
-#endif
-            // Smooth roughness fade — gradual transition prevents TAA neighborhood
-            // contamination at the SSR/non-SSR boundary. smoothstep produces a
-            // hermite blend instead of a hard cutoff.
-            // @ref UE5 — smooth roughness fade over a range (not hard threshold)
-            float ssrRoughnessMask = 1.0 - smoothstep(0.15, 0.45, roughness);
-            ssrData.a *= ssrRoughnessMask;
-
-            if (ssrData.a > 0.01) {
-                // Squared falloff for smoother edge transition
-                float ssrWeight = ssrData.a * ssrData.a;
-                // Replace only the single-scatter radiance term; keep multi-scatter IBL
-                float3 ssrSpecular = ssrData.rgb * singleScatter
-                                   + cosineIrradiance * multiScatter;
-                specularAmbient = lerp(specularAmbient, ssrSpecular, ssrWeight);
-            }
+            // SSR composite moved to post-TAA pass. This block intentionally empty.
+            // The singleScatter and multiScatter terms remain in specularAmbient (IBL only).
         }
 
         // Horizon occlusion — prevent reflections below surface.

@@ -132,6 +132,84 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
         m_prevViewProj = ctx.unjitteredViewProj;
         m_prevViewProjValid = true;
 
+        // ── SSR Post-TAA Composite ──────────────────────────────────────
+        // Apply SSR AFTER TAA to prevent TAA neighborhood contamination.
+        // The deferred lighting pass outputs IBL-only specular; SSR is
+        // composited here onto the TAA-resolved (or raw HDR) image.
+        if (ctx.ssrActive && m_ssrResolvedOutput.IsValid()
+            && m_ssrResolvedOutputSrv != UINT32_MAX) {
+
+            // Determine the target: TAA output if TAA active, else raw HDR
+            const uint32_t compositeTargetUav = ctx.taaActive
+                ? m_taaHistoryUav[1 - m_taaHistoryIndex]  // TAA just-written
+                : UINT32_MAX;  // will use raw HDR fallback
+
+            if (compositeTargetUav != UINT32_MAX || !ctx.taaActive) {
+                rgBuilder.AddPass("SSR_Composite", [&, compositeTargetUav, tonemapInputSrv](rg::RgPassBuilder& pb) {
+                    pb.SetExecutionCallback([this, &ctx, compositeTargetUav, tonemapInputSrv](IRHICommandList* cmd, const rg::RgPassResources&) {
+                        UZ_PROFILE_SCOPE("SSR::Composite");
+
+                        auto ssrCompositePSO = ctx.pipelines->GetSsrComposite();
+                        if (!ssrCompositePSO.IsValid()) return;
+
+                        // Determine which texture to composite onto
+                        RHITextureHandle targetTex = ctx.taaActive
+                            ? m_taaHistory[1 - m_taaHistoryIndex]  // TAA wrote here
+                            : m_hdrSceneColor;
+                        uint32_t targetUav = ctx.taaActive
+                            ? m_taaHistoryUav[1 - m_taaHistoryIndex]
+                            : UINT32_MAX;  // need HDR UAV — skip if not available
+
+                        if (targetUav == UINT32_MAX) return;  // no UAV for raw HDR
+
+                        // TAA output is in SRV state — transition to UAV for R/W
+                        {
+                            RHIBarrierDesc barrier{};
+                            barrier.texture     = targetTex;
+                            barrier.stateBefore = RHIResourceState::ShaderResource;
+                            barrier.stateAfter  = RHIResourceState::UnorderedAccess;
+                            cmd->ResourceBarrier(&barrier, 1);
+                        }
+
+                        cmd->SetPipeline(ssrCompositePSO);
+
+                        struct SsrCompositeConstants {
+                            uint32_t ssrSrvIdx, normalSrvIdx, depthSrvIdx, reserved;
+                            uint32_t outputWidth, outputHeight;
+                            float intensity, pad;
+                        };
+
+                        SsrCompositeConstants rc{};
+                        rc.ssrSrvIdx    = m_ssrResolvedOutputSrv;
+                        rc.normalSrvIdx = m_gbuffer.normalSRV;
+                        rc.depthSrvIdx  = m_gbuffer.depthSRV;
+                        rc.outputWidth  = static_cast<uint32_t>(ctx.vpWidth);
+                        rc.outputHeight = static_cast<uint32_t>(ctx.vpHeight);
+                        rc.intensity    = 1.0f;
+
+                        cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
+                        cmd->SetRootCBV(kSlotPerFrame, ctx.perFrameAlloc.bufferHandle,
+                                        ctx.perFrameAlloc.offsetBytes, ctx.perFrameAlloc.cpuPtr,
+                                        sizeof(PerFrameCB));
+                        cmd->SetDescriptorTable(4, targetUav);
+
+                        const uint32_t groupsX = (rc.outputWidth + 7) / 8;
+                        const uint32_t groupsY = (rc.outputHeight + 7) / 8;
+                        cmd->Dispatch(groupsX, groupsY, 1);
+
+                        // Back to SRV for tonemap/bloom
+                        {
+                            RHIBarrierDesc barrier{};
+                            barrier.texture     = targetTex;
+                            barrier.stateBefore = RHIResourceState::UnorderedAccess;
+                            barrier.stateAfter  = RHIResourceState::ShaderResource;
+                            cmd->ResourceBarrier(&barrier, 1);
+                        }
+                    });
+                });
+            }
+        }
+
         // ── Bloom pass (if enabled) ─────────────────────────────────────
         if (ctx.bloomEnabled && m_bloomPass && m_bloomPass->IsInitialized()) {
             rgBuilder.AddPass("Bloom", [&](rg::RgPassBuilder& pb) {

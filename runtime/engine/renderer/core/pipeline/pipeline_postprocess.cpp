@@ -351,6 +351,56 @@ RHIPipelineHandle PipelineLibrary::GetSsrSpatialDenoise() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SSR Post-TAA Composite Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureSsrCompositeShader() {
+    if (m_ssrCompositeCS.IsValid()) return true;
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::SsrCompositeCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile SsrCompositeCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "ssr_composite_cs";
+
+    m_ssrCompositeCS = m_device->CreateShader(shaderDesc);
+    if (!m_ssrCompositeCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SsrCompositeCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetSsrComposite() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetSsrComposite called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_ssrComposite.IsValid()) return m_ssrComposite;
+    if (!EnsureSsrCompositeShader()) return RHIPipelineHandle::Invalid();
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ssrCompositeCS;
+    desc.debugName     = "SSR_Composite";
+
+    m_ssrComposite = m_device->CreateComputePipeline(desc);
+    if (!m_ssrComposite.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SSR_Composite pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created SSR_Composite pipeline");
+    }
+    return m_ssrComposite;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Color Grading LUT Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 

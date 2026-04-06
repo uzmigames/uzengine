@@ -503,6 +503,13 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetSsrSpatialDenoise();
 
+    /// Returns the SSR post-TAA composite compute pipeline (ssr_composite_cs.hlsl).
+    ///
+    /// Composites denoised SSR reflections onto the TAA-resolved image.
+    /// Runs AFTER TAA to prevent SSR noise from contaminating TAA's
+    /// neighborhood variance statistics.
+    [[nodiscard]] RHIPipelineHandle GetSsrComposite();
+
     /// Returns the color grading LUT compute pipeline (color_grading_lut_cs.hlsl).
     ///
     /// Generates a 32x32x32 3D LUT that bakes the entire color grading +
