@@ -313,8 +313,11 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
         });
     });
 
-    // SSR Temporal accumulation
-    {
+    // SSR Temporal accumulation — DISABLED until stochastic GGX sampling (Phase 3).
+    // Mirror-only SSR produces deterministic output per-pixel — no noise to accumulate.
+    // The temporal pass was causing TAA neighborhood contamination on adjacent surfaces.
+    // Will be re-enabled with VNDF importance sampling per AMD FidelityFX SSSR pattern.
+    if (false) {
         const uint32_t ssrWriteIdx = m_ssrHistoryIndex;
         const uint32_t ssrReadIdx  = 1 - m_ssrHistoryIndex;
         const bool ssrFirstFrame = !m_prevViewProjValid
@@ -379,13 +382,10 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
         m_ssrHistoryIndex = 1 - m_ssrHistoryIndex;
     }
 
-    // SSR Spatial Bilateral Denoise — post-temporal cleanup.
-    // @ref AMD FidelityFX SSSR "DNSR_Prefilter" — bilateral denoise after temporal
-    // Reads from SSR temporal output (history[justWritten]), writes to m_ssrResolvedOutput.
-    // The deferred lighting reads m_ssrResolvedOutputSrv (updated in frame_constants).
-    // This removes residual per-pixel noise before SSR enters the HDR buffer,
-    // preventing TAA neighborhood contamination on adjacent rough surfaces.
-    {
+    // SSR Spatial Bilateral Denoise — DISABLED until stochastic GGX sampling (Phase 3).
+    // Without stochastic sampling, the resolve pass output is already clean (mirror-only).
+    // Will be re-enabled with VNDF importance sampling per AMD FidelityFX SSSR pattern.
+    if (false) {
         const uint32_t ssrJustWritten = 1 - m_ssrHistoryIndex;
 
         rgBuilder.AddPass("SSR_SpatialDenoise", [&, ssrJustWritten](rg::RgPassBuilder& pb) {
