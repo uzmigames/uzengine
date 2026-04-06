@@ -845,6 +845,12 @@ int main(int argc, char** argv) {
     // Config: project file + CLI overrides
     uz::Config config = uz::BuildConfig(argc, argv);
 
+    // --rt-test: enable RT and the UV test pass via CVar overrides
+    if (config.GetBool("rt-test", false)) {
+        config.AddPendingCvarOverride("r.RayTracing", 1.0f);
+        config.AddPendingCvarOverride("r.RayTracing.TestPass", 1.0f);
+    }
+
     // Apply log level filter (--log-level trace|debug|info|warning|error)
     {
         const std::string ll = config.GetString("log-level",

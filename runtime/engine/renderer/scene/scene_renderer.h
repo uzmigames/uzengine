@@ -109,6 +109,7 @@ class DecalManager;
 class TrailSystem;
 class PixelDebugSystem;
 class RTManager;
+class RTUVTestPass;
 class MaterialPipeline;
 class MaterialManager;
 struct ParticleEmitter;

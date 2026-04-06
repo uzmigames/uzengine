@@ -13,6 +13,7 @@
 #include "scene_renderer.h"
 #include "pixel_debug.h"
 #include "raytracing/rt_manager.h"
+#include "passes/raytracing/rt_uv_test_pass.h"
 
 // Umbrella headers
 #include "renderer_core.h"
@@ -101,6 +102,17 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
 
         if (m_gpuProfileEnabled) {
             m_device->GpuProfilerEndTimestamp(cmdList, "RT_BLAS_TLAS");
+        }
+
+        // ── RT UV Test Pass (debug visualization) ────────────────────
+        if (m_rtManager->IsTestPassEnabled() && m_rtUVTestPass && m_rtUVTestPass->IsReady()) {
+            m_rtUVTestPass->Execute(cmdList, m_rtManager->GetTLASSRVIndex());
+
+            // Register output for --vis rt_uv_test and --pass-dump
+            m_passInspector.RegisterTarget("rt_uv_test",
+                m_rtUVTestPass->GetOutputTexture(),
+                m_rtUVTestPass->GetOutputSRVIndex(),
+                VisDisplayMode::Color, m_renderWidth, m_renderHeight);
         }
     }
 

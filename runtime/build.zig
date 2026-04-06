@@ -256,6 +256,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/renderer/passes/debug", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/passes/vfx", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/passes/ibl", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer/passes/raytracing", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/shadows", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/lighting", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/atmosphere", cpp_flags);

@@ -33,6 +33,7 @@
 #include "dynamic_resolution.h"
 #include "cvar.h"
 #include "raytracing/rt_manager.h"
+#include "passes/raytracing/rt_uv_test_pass.h"
 #include "material_pipeline.h"
 #include "engine/material/material_manager.h"
 #include "engine/vfx/vfx_system.h"
@@ -536,6 +537,16 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     if (!m_rtManager->Init(device)) {
         UZ_LOG(Renderer, Info, "SceneRenderer: RT init skipped (no DXR support or r.RayTracing=0)");
         m_rtManager.reset();
+    }
+
+    // ── RT UV Test Pass (debug) — only if RTManager initialized ─────
+    if (m_rtManager && m_rtManager->IsReady()) {
+        m_rtUVTestPass = std::make_unique<RTUVTestPass>();
+        if (!m_rtUVTestPass->Init(device, m_shaderMgr.get(),
+                                   m_renderWidth, m_renderHeight)) {
+            UZ_LOG(Renderer, Info, "SceneRenderer: RT UV test pass init failed (non-fatal)");
+            m_rtUVTestPass.reset();
+        }
     }
 
     // ── Auto-Exposure ────────────────────────────────────────────────
@@ -1122,6 +1133,10 @@ void SceneRenderer::Shutdown() {
     m_materialManager.reset();
 
     // Destroy RT infrastructure
+    if (m_rtUVTestPass) {
+        m_rtUVTestPass->Shutdown(m_device);
+        m_rtUVTestPass.reset();
+    }
     if (m_rtManager) {
         m_rtManager->Shutdown();
         m_rtManager.reset();
