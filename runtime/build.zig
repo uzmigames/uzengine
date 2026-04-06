@@ -1370,6 +1370,15 @@ pub fn build(b: *std.Build) void {
         b.getInstallStep().dependOn(&b.addInstallBinFile(
             b.path(tp ++ "luajit/src/lua51.dll"), "lua51.dll",
         ).step);
+
+        // NVIDIA DLSS SDK — nvngx_dlss.dll must be next to the exe for NGX to find it.
+        // The DLSS upscaler uses LoadLibrary("_nvngx.dll") which is driver-provided,
+        // but the actual DLSS model DLL must be deployed alongside the application.
+        if (has_dlss) {
+            b.getInstallStep().dependOn(&b.addInstallBinFile(
+                b.path(tp ++ "dlss/lib/Windows_x86_64/dev/nvngx_dlss.dll"), "nvngx_dlss.dll",
+            ).step);
+        }
     }
 }
 

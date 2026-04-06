@@ -791,14 +791,14 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         m_upscaler->Init(m_device, m_pipelines.get(), m_cbRing.get());
 
         // DLSS fallback: if DLSS Init failed (non-NVIDIA GPU, missing DLL, old driver),
-        // fall back to TSR.
+        // fall back to TAA (TSR shader is a stub — not yet implemented).
         if (m_upscalerType == UpscalerType::DLSS) {
             auto* dlss = dynamic_cast<DlssUpscaler*>(m_upscaler.get());
             if (!dlss || !dlss->IsAvailable()) {
-                UZ_LOG(Renderer, Info, "SceneRenderer: DLSS unavailable, falling back to TSR");
+                UZ_LOG(Renderer, Info, "SceneRenderer: DLSS unavailable, falling back to TAA");
                 m_upscaler->Shutdown();
                 m_upscaler.reset();
-                m_upscalerType = UpscalerType::TSR;
+                m_upscalerType = UpscalerType::TAA;
                 m_upscaler = CreateTemporalUpscaler(m_upscalerType);
                 if (m_upscaler) {
                     m_upscaler->Init(m_device, m_pipelines.get(), m_cbRing.get());
