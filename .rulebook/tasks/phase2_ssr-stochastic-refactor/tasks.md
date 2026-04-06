@@ -29,8 +29,8 @@
 - [x] 3.5 Virtual hit reprojection in ssr_temporal_cs.hlsl — hit distance → estimated world hit pos → reproject via prevVP matrix (CBV at b2). Blends virtual + surface velocity based on distance confidence.
 - [x] 3.6 Hit distance R16F texture: m_ssrHitDistance/Srv/Uav in scene_renderer_impl.h, created in CreateSsrResources(), written by trace pass via bindless UAV (hitDistUavIdx root constant).
 - [x] 3.7 Tile classification compute pass: ssr_tile_classify_cs.hlsl (8x8 tiles, roughness gate, ray compaction via groupshared+InterlockedAdd, bindless UAV), ssr_prepare_indirect_cs.hlsl (ray count → DispatchIndirectArgs, counter reset). Buffers: m_ssrRayList + m_ssrRayCounterArgs. PSOs registered. Trace pass still direct dispatch (indirect follow-up).
-- [ ] 3.8 Implement roughness-adaptive spatial kernel in ssr_resolve_cs.hlsl — ellipse aligned to projected GGX specular lobe major/minor axes, replacing isotropic Poisson disk.
-- [ ] 3.9 Add exposure correction to prev-frame color sampling — `prevColor *= PreExposure / PrevPreExposure` to prevent brightness flicker on auto-exposure changes.
+- [x] 3.8 Roughness-adaptive elliptical kernel: 15-sample Halton(2,3) pattern, ellipse aligned to screen-space reflection direction (major:minor ratio 1:1→2.5:1 by roughness), SSSR edge-stopping (normal^512, depth*centerZ*4), Karis HDR weight. Replaces 12-tap isotropic Poisson.
+- [x] 3.9 Exposure correction: `hitColor *= currentExposure / prevExposure` in trace pass. m_ssrPrevExposure tracked per-frame. Ratio=1.0 when auto-exposure is stable (no-op multiply).
 - [x] 3.10 Hi-Z mip hierarchy: two-phase march (coarse at mip1 quarter-res 8 steps, fine at mip0 half-res 16 steps, binary refinement full-res 4 steps). Root constants: hizMip0SrvIdx, hizMip1SrvIdx, hizMipCount. Falls back to linear march when hizMipCount==0.
 - [x] 3.11 Build passes: 127 shaders OK, C++ compiles clean, 8/8 VNDF parity tests pass. Re-enabled temporal + spatial denoise passes. r.SSR=true default. Visual verify pending.
 

@@ -316,10 +316,19 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
                 uint32_t outputWidth, outputHeight;
                 float intensity, roughnessMaskScale;
                 uint32_t hitDistUavIdx, hizMip0SrvIdx, hizMip1SrvIdx, hizMipCount;
+                float exposureCorrection;
+                uint32_t pad13, pad14, pad15;
             };
 
             // Read SSR MaxRoughness from CVar (avoid hardcoded constant)
             const float ssrMaxRoughness = std::max(0.05f, cv_SSRMaxRoughness->value);
+
+            // Exposure correction: prevColor was at m_ssrPrevExposure, current is ctx exposure.
+            // @ref AMD FidelityFX SSSR — prevColor *= currentExposure / prevExposure.
+            const float currentExposure = ctx.perFrame.exposure;
+            const float exposureRatio = (m_ssrPrevExposure > 0.001f)
+                ? currentExposure / m_ssrPrevExposure
+                : 1.0f;
 
             SsrTraceConstants rc{};
             rc.depthSrvIdx      = m_gbuffer.depthSRV;
@@ -334,12 +343,12 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
             rc.roughnessMaskScale = -2.0f / ssrMaxRoughness;
             rc.hitDistUavIdx    = m_ssrHitDistanceUav;
             // Hi-Z mip SRV indices for hierarchical march
-            // mipLevels[0] = half-res, mipLevels[1] = quarter-res
             rc.hizMip0SrvIdx    = (m_hizMipCount >= 1) ? m_hizMipLevels[0].srvIndex : UINT32_MAX;
             rc.hizMip1SrvIdx    = (m_hizMipCount >= 2) ? m_hizMipLevels[1].srvIndex : UINT32_MAX;
             rc.hizMipCount      = m_hizMipCount;
+            rc.exposureCorrection = exposureRatio;
 
-            cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 12);
+            cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 16);
             cmd->SetRootCBV(kSlotPerFrame, ctx.perFrameAlloc.bufferHandle,
                             ctx.perFrameAlloc.offsetBytes, ctx.perFrameAlloc.cpuPtr,
                             sizeof(PerFrameCB));

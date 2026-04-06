@@ -28,6 +28,10 @@ cbuffer SsrTraceRootCB : register(b0) {
     uint   hizMip0SrvIdx;       // 9 — Hi-Z mip 0 (half-res min-reduced depth)
     uint   hizMip1SrvIdx;       // 10 — Hi-Z mip 1 (quarter-res)
     uint   hizMipCount;         // 11 — number of Hi-Z mip levels available (0 = use full-res only)
+    float  exposureCorrection;  // 12 — currentExposure / prevExposure (1.0 when stable)
+    uint   _pad13;              // 13
+    uint   _pad14;              // 14
+    uint   _pad15;              // 15
 };
 
 cbuffer PerFrameCB : register(b1) {
@@ -376,8 +380,10 @@ void main(uint3 DTid : SV_DispatchThreadID)
     float3 hitWorldPos = ReconstructWorldPos(hitUVZ.xy, hitUVZ.z);
     float hitDist = length(hitWorldPos - worldPos);
 
-    // Fetch scene color at hit point
-    float3 hitColor = colorTex.SampleLevel(linearClamp, hitUVZ.xy, 0).rgb;
+    // Fetch scene color at hit point (prev-frame HDR copy).
+    // @ref AMD FidelityFX SSSR — exposure correction for auto-exposure changes.
+    // prevColor was captured at prevExposure; multiply by (current/prev) to normalize.
+    float3 hitColor = colorTex.SampleLevel(linearClamp, hitUVZ.xy, 0).rgb * exposureCorrection;
 
     // Confidence: screen-edge fade × roughness fade × depth-thickness fade
     // @ref AMD FidelityFX SSSR ValidateHit — smoothstep over depth thickness, squared for sharper falloff

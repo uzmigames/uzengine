@@ -364,6 +364,7 @@
     RHITextureHandle m_ssrPrevSceneColor;          ///< RGBA16F copy of prev frame's HDR.
     uint32_t m_ssrPrevSceneColorSrv = UINT32_MAX;  ///< SRV for SSR trace to read.
     bool     m_ssrHasPrevColor = false;            ///< False on first frame (skip SSR).
+    float    m_ssrPrevExposure = 1.0f;             ///< Previous frame's exposure for SSR color correction.
 
     /// Creates SSR output textures at the given resolution.
     /// Called from Init() and Resize().

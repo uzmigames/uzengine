@@ -252,6 +252,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
             });
 
             m_ssrHasPrevColor = true;
+            m_ssrPrevExposure = ctx.perFrame.exposure;
         }
 
         // ── Bloom pass (if enabled) ─────────────────────────────────────
