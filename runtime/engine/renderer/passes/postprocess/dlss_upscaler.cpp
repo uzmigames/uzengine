@@ -59,15 +59,16 @@ using PFN_NVSDK_NGX_D3D12_Init = NVSDK_NGX_Result(NVSDK_CONV*)(
     unsigned long long, const wchar_t*, ID3D12Device*, const NVSDK_NGX_FeatureCommonInfo*, NVSDK_NGX_Version);
 using PFN_NVSDK_NGX_D3D12_Shutdown1 = NVSDK_NGX_Result(NVSDK_CONV*)(ID3D12Device*);
 using PFN_NVSDK_NGX_D3D12_GetCapabilityParameters = NVSDK_NGX_Result(NVSDK_CONV*)(NVSDK_NGX_Parameter**);
+using PFN_NVSDK_NGX_D3D12_AllocateParameters = NVSDK_NGX_Result(NVSDK_CONV*)(NVSDK_NGX_Parameter**);
 using PFN_NVSDK_NGX_D3D12_DestroyParameters = NVSDK_NGX_Result(NVSDK_CONV*)(NVSDK_NGX_Parameter*);
 using PFN_NVSDK_NGX_D3D12_CreateFeature = NVSDK_NGX_Result(NVSDK_CONV*)(
     ID3D12GraphicsCommandList*, NVSDK_NGX_Feature, NVSDK_NGX_Parameter*, NVSDK_NGX_Handle**);
 using PFN_NVSDK_NGX_D3D12_ReleaseFeature = NVSDK_NGX_Result(NVSDK_CONV*)(NVSDK_NGX_Handle*);
-// Use the _C variant (C-linkage) of EvaluateFeature — the C++ version has
-// bool& callback type that may not resolve correctly across compilers.
-// @ref NVIDIA nvsdk_ngx_helpers.h — all helpers call _C variant.
-using PFN_NVSDK_NGX_D3D12_EvaluateFeature_C = NVSDK_NGX_Result(NVSDK_CONV*)(
-    ID3D12GraphicsCommandList*, const NVSDK_NGX_Handle*, const NVSDK_NGX_Parameter*, PFN_NVSDK_NGX_ProgressCallback_C);
+// EvaluateFeature — matches the _nvngx.dll export signature exactly.
+// Note: NVSDK_NGX_Parameter* is non-const (the function modifies internal state).
+// PFN_NVSDK_NGX_ProgressCallback is a C++ callback — passing nullptr is safe.
+using PFN_NVSDK_NGX_D3D12_EvaluateFeature_Fn = NVSDK_NGX_Result(NVSDK_CONV*)(
+    ID3D12GraphicsCommandList*, const NVSDK_NGX_Handle*, NVSDK_NGX_Parameter*, PFN_NVSDK_NGX_ProgressCallback);
 
 // C function wrappers for NVSDK_NGX_Parameter::Set — avoids C++ vtable ABI
 // mismatch between Zig/mingw and NVIDIA's MSVC-compiled _nvngx.dll.
@@ -117,10 +118,11 @@ struct DlssUpscaler::Impl {
     PFN_NVSDK_NGX_D3D12_Init pfnInit = nullptr;
     PFN_NVSDK_NGX_D3D12_Shutdown1 pfnShutdown = nullptr;
     PFN_NVSDK_NGX_D3D12_GetCapabilityParameters pfnGetCapParams = nullptr;
+    PFN_NVSDK_NGX_D3D12_AllocateParameters pfnAllocParams = nullptr;
     PFN_NVSDK_NGX_D3D12_DestroyParameters pfnDestroyParams = nullptr;
     PFN_NVSDK_NGX_D3D12_CreateFeature pfnCreateFeature = nullptr;
     PFN_NVSDK_NGX_D3D12_ReleaseFeature pfnReleaseFeature = nullptr;
-    PFN_NVSDK_NGX_D3D12_EvaluateFeature_C pfnEvaluateFeature = nullptr;
+    PFN_NVSDK_NGX_D3D12_EvaluateFeature_Fn pfnEvaluateFeature = nullptr;
 
     // C wrapper functions for NVSDK_NGX_Parameter — avoids vtable ABI mismatch.
     PFN_NGX_Param_SetD3d12Resource pfnSetD3d12Resource = nullptr;
@@ -132,7 +134,8 @@ struct DlssUpscaler::Impl {
     bool ngxInitialized = false;
     bool dlssSupported = false;
     NVSDK_NGX_Handle* dlssFeature = nullptr;
-    NVSDK_NGX_Parameter* ngxParams = nullptr;
+    NVSDK_NGX_Parameter* ngxParams = nullptr;     // Capability params (for queries + create)
+    NVSDK_NGX_Parameter* ngxEvalParams = nullptr;  // Evaluate params (separate allocation)
 
     uint32_t displayWidth = 0;
     uint32_t displayHeight = 0;
@@ -206,6 +209,8 @@ struct DlssUpscaler::Impl {
             ::GetProcAddress(ngxModule, "NVSDK_NGX_D3D12_Shutdown1"));
         pfnGetCapParams = reinterpret_cast<PFN_NVSDK_NGX_D3D12_GetCapabilityParameters>(
             ::GetProcAddress(ngxModule, "NVSDK_NGX_D3D12_GetCapabilityParameters"));
+        pfnAllocParams = reinterpret_cast<PFN_NVSDK_NGX_D3D12_AllocateParameters>(
+            ::GetProcAddress(ngxModule, "NVSDK_NGX_D3D12_AllocateParameters"));
         pfnDestroyParams = reinterpret_cast<PFN_NVSDK_NGX_D3D12_DestroyParameters>(
             ::GetProcAddress(ngxModule, "NVSDK_NGX_D3D12_DestroyParameters"));
         pfnCreateFeature = reinterpret_cast<PFN_NVSDK_NGX_D3D12_CreateFeature>(
@@ -213,7 +218,7 @@ struct DlssUpscaler::Impl {
         pfnReleaseFeature = reinterpret_cast<PFN_NVSDK_NGX_D3D12_ReleaseFeature>(
             ::GetProcAddress(ngxModule, "NVSDK_NGX_D3D12_ReleaseFeature"));
         // EvaluateFeature — _nvngx.dll only exports the non-_C version.
-        pfnEvaluateFeature = reinterpret_cast<PFN_NVSDK_NGX_D3D12_EvaluateFeature_C>(
+        pfnEvaluateFeature = reinterpret_cast<PFN_NVSDK_NGX_D3D12_EvaluateFeature_Fn>(
             ::GetProcAddress(ngxModule, "NVSDK_NGX_D3D12_EvaluateFeature"));
 
         // C wrapper functions for NVSDK_NGX_Parameter — avoids vtable ABI mismatch.
@@ -299,12 +304,34 @@ struct DlssUpscaler::Impl {
 
         ngxInitialized = true;
         dlssSupported = true;
+
+        // Allocate a SEPARATE parameter object for evaluate calls.
+        // GetCapabilityParameters returns a read-only object for feature queries;
+        // using it for EvaluateFeature causes InvalidParameter (0xBAD00005).
+        if (pfnAllocParams) {
+            NVSDK_NGX_Result allocResult = pfnAllocParams(&ngxEvalParams);
+            if (NVSDK_NGX_FAILED(allocResult) || !ngxEvalParams) {
+                UZ_LOG(Renderer, Warning, "DLSS: AllocateParameters failed (0x{:08X}), using capability params",
+                       static_cast<uint32_t>(allocResult));
+                ngxEvalParams = ngxParams; // Fallback
+            } else {
+                UZ_LOG(Renderer, Info, "DLSS: allocated separate eval params object");
+            }
+        } else {
+            ngxEvalParams = ngxParams; // AllocateParameters not available
+        }
+
         UZ_LOG(Renderer, Info, "DLSS: NGX initialized, DLSS is supported");
         return true;
     }
 
     void ShutdownNgx() {
         if (!ngxInitialized || !dx12Device || !pfnShutdown) return;
+        // Destroy eval params first (if separately allocated)
+        if (ngxEvalParams && ngxEvalParams != ngxParams && pfnDestroyParams) {
+            pfnDestroyParams(ngxEvalParams);
+        }
+        ngxEvalParams = nullptr;
         if (ngxParams && pfnDestroyParams) {
             pfnDestroyParams(ngxParams);
             ngxParams = nullptr;
@@ -512,14 +539,24 @@ void DlssUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     ID3D12Resource* outputRes   = m_impl->GetNativeResource(input.historyWriteTexture);
 
     if (!colorRes || !depthRes || !velocityRes || !outputRes) {
-        UZ_LOG(Renderer, Error, "DLSS: one or more required textures are null");
+        UZ_LOG(Renderer, Error, "DLSS: null textures — color={} depth={} vel={} out={}",
+               (void*)colorRes, (void*)depthRes, (void*)velocityRes, (void*)outputRes);
         return;
+    }
+
+    // Debug: log resource details on first evaluate only
+    static bool loggedOnce = false;
+    if (!loggedOnce) {
+        UZ_LOG(Renderer, Info, "DLSS eval: color={} depth={} vel={} out={} render={}x{} output={}x{} jitter={:.4f},{:.4f}",
+               (void*)colorRes, (void*)depthRes, (void*)velocityRes, (void*)outputRes,
+               inputW, inputH, outputW, outputH, input.jitterX, input.jitterY);
+        loggedOnce = true;
     }
 
     // Set evaluation parameters via C wrapper functions to avoid vtable ABI mismatch
     // between Zig/mingw and NVIDIA's MSVC-compiled _nvngx.dll.
     // @ref docs/analysis/dlss-integration-analysis.md — Root Cause 1
-    auto* p = m_impl->ngxParams;
+    auto* p = m_impl->ngxEvalParams;
 
     // Raw vtable access for NVSDK_NGX_Parameter — bypasses C++ overload resolution
     // entirely. The vtable is compiled by NVIDIA's MSVC _nvngx.dll; Zig/mingw's
@@ -613,7 +650,7 @@ void DlssUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     setVoidPtr("DLSS.Input.GBuffer.Normals", nullptr);
 
     NVSDK_NGX_Result result = m_impl->pfnEvaluateFeature(
-        nativeCmdList, m_impl->dlssFeature, m_impl->ngxParams, nullptr);
+        nativeCmdList, m_impl->dlssFeature, m_impl->ngxEvalParams, nullptr);
 
     if (NVSDK_NGX_FAILED(result)) {
         UZ_LOG(Renderer, Error, "DLSS: evaluate failed (result=0x{:08X})",

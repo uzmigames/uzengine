@@ -63,7 +63,7 @@ static auto* cv_MaterialMinGGXAlpha   = UZ_CVAR_FLOAT("r.Material.MinGGXAlpha", 
 /// or used as the sole exposure when auto-exposure is inactive.
 /// @ref UE5 default: pow(2, AutoExposureBias=1.0) = 2.0. For UzEngine's
 /// light calibration, 10.0 matches typical indoor scene brightness.
-static auto* cv_Exposure           = UZ_CVAR_FLOAT("r.Exposure", 10.0f, "Manual exposure multiplier (applied on auto-exposure)", 0.01f, 100.f);
+static auto* cv_Exposure           = UZ_CVAR_FLOAT("r.Exposure", 2.0f, "Manual exposure multiplier (applied on auto-exposure)", 0.01f, 100.f);
 static auto* cv_GIIntensity        = UZ_CVAR_FLOAT("r.GI.Intensity", 1.f, "GI intensity multiplier", 0.f, 10.f);
 static auto* cv_AerialPersp        = UZ_CVAR_BOOL("r.AerialPerspective", false, "Aerial perspective in deferred lighting");
 
