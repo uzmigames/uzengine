@@ -193,11 +193,15 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
                 const float dz = objectPosition.z - cameraPosition.z;
                 const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
 
-                // Use component-specified bounding sphere radius, or default to
-                // a unit sphere (50 cm radius) if none was set.
-                const float sphereRadius = meshComp.boundingSphereRadius > 0.0f
-                                           ? meshComp.boundingSphereRadius
-                                           : 50.0f;
+                // Use component-specified bounding sphere radius, scaled by the
+                // entity's uniform scale. The auto-computed radius is in model
+                // space — multiply by max axis scale for world-space LOD selection.
+                const float modelRadius = meshComp.boundingSphereRadius > 0.0f
+                                          ? meshComp.boundingSphereRadius
+                                          : 50.0f;
+                const Vec3 scaleVec = sceneComp.GetScale();
+                const float uniformScale = std::max({scaleVec.x, scaleVec.y, scaleVec.z});
+                const float sphereRadius = modelRadius * uniformScale;
 
                 // ScreenMultiple from projection matrix — computes screen size
                 const Mat4& projMatrix = m_cameraManager->GetActiveCamera().GetProjection();
