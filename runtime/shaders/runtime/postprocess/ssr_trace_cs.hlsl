@@ -314,9 +314,14 @@ void main(uint3 DTid : SV_DispatchThreadID)
     // Fetch scene color at hit point
     float3 hitColor = colorTex.SampleLevel(linearClamp, hitUVZ.xy, 0).rgb;
 
-    // Confidence: screen-edge fade × roughness fade × distance fade
+    // Confidence: screen-edge fade × roughness fade × depth-thickness fade
+    // @ref AMD FidelityFX SSSR ValidateHit — smoothstep over depth thickness, squared for sharper falloff
     float screenMask  = ScreenFade(hitUVZ.xy);
-    float confidence  = screenMask * rFade * intensity;
+    float sceneDepthAtHit = hizTex.SampleLevel(pointClamp, hitUVZ.xy, 0).r;
+    float depthThickness = abs(hitUVZ.z - sceneDepthAtHit);
+    float thicknessFade  = saturate(1.0 - depthThickness * 500.0);
+    thicknessFade *= thicknessFade; // squared for sharper falloff per SSSR
+    float confidence  = screenMask * rFade * thicknessFade * intensity;
 
     // Store linear (non-premultiplied) color + confidence.
     // Premultiply is done in deferred_lighting_ps.hlsl to avoid triple-weighting.
