@@ -59,7 +59,11 @@ static auto* cv_ExposureLowPercent    = UZ_CVAR_FLOAT("r.Exposure.LowPercent", 1
 static auto* cv_ExposureHighPercent   = UZ_CVAR_FLOAT("r.Exposure.HighPercent", 90.0f, "Histogram high percentile", 50.0f, 99.0f);
 static auto* cv_MaterialDielectricF0  = UZ_CVAR_FLOAT("r.Material.DielectricF0", 0.04f, "Dielectric Fresnel F0 reflectance", 0.01f, 0.08f);
 static auto* cv_MaterialMinGGXAlpha   = UZ_CVAR_FLOAT("r.Material.MinGGXAlpha", 0.0064f, "Min GGX alpha (prevents aliasing)", 0.001f, 0.01f);
-static auto* cv_Exposure           = UZ_CVAR_FLOAT("r.Exposure", 2.0f, "Manual exposure bias on auto-exposure", 0.01f, 100.f);
+/// Manual exposure multiplier. Applied on top of auto-exposure when active,
+/// or used as the sole exposure when auto-exposure is inactive.
+/// @ref UE5 default: pow(2, AutoExposureBias=1.0) = 2.0. For UzEngine's
+/// light calibration, 10.0 matches typical indoor scene brightness.
+static auto* cv_Exposure           = UZ_CVAR_FLOAT("r.Exposure", 10.0f, "Manual exposure multiplier (applied on auto-exposure)", 0.01f, 100.f);
 static auto* cv_GIIntensity        = UZ_CVAR_FLOAT("r.GI.Intensity", 1.f, "GI intensity multiplier", 0.f, 10.f);
 static auto* cv_AerialPersp        = UZ_CVAR_BOOL("r.AerialPerspective", false, "Aerial perspective in deferred lighting");
 
@@ -362,9 +366,10 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
             loggedOnce = true;
         }
     } else {
-        // Without auto-exposure, use neutral exposure.
-        // Default exposure = 1.0 (neutral, no bias applied).
-        perFrame.exposure = 1.0f;
+        // Without auto-exposure, use the manual exposure CVar directly.
+        // @ref UE5: manualExposure = pow(2, exposureBias), default 2.0.
+        // UzEngine default r.Exposure = 10.0 for typical indoor scene brightness.
+        perFrame.exposure = cv_Exposure->value;
     }
 
     // ── Mip bias for screen percentage texture LOD compensation ────────

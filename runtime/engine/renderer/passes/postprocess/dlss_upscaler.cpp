@@ -356,17 +356,23 @@ struct DlssUpscaler::Impl {
         displayHeight = dispH;
         currentQuality = quality;
 
-        // Set DLSS creation parameters via the NVSDK_NGX_Parameter interface.
-        ngxParams->Set(NVSDK_NGX_Parameter_Width, optimalRenderWidth);
-        ngxParams->Set(NVSDK_NGX_Parameter_Height, optimalRenderHeight);
-        ngxParams->Set(NVSDK_NGX_Parameter_OutWidth, dispW);
-        ngxParams->Set(NVSDK_NGX_Parameter_OutHeight, dispH);
-        ngxParams->Set(NVSDK_NGX_Parameter_PerfQualityValue,
-                       static_cast<unsigned int>(ToNgxQuality(quality)));
-        ngxParams->Set(NVSDK_NGX_Parameter_DLSS_Feature_Create_Flags,
-                       NVSDK_NGX_DLSS_Feature_Flags_IsHDR |
-                       NVSDK_NGX_DLSS_Feature_Flags_MVLowRes |
-                       NVSDK_NGX_DLSS_Feature_Flags_DepthInverted);
+        // Set DLSS creation parameters via raw vtable access (ABI safety).
+        // Slot 3 = Set(const char*, unsigned int)
+        using FnSetUI = void(__thiscall*)(void*, const char*, unsigned int);
+        void** vt = *reinterpret_cast<void***>(ngxParams);
+        auto setUI = [&](const char* key, unsigned int val) {
+            reinterpret_cast<FnSetUI>(vt[3])(ngxParams, key, val);
+        };
+        setUI(NVSDK_NGX_Parameter_Width, optimalRenderWidth);
+        setUI(NVSDK_NGX_Parameter_Height, optimalRenderHeight);
+        setUI(NVSDK_NGX_Parameter_OutWidth, dispW);
+        setUI(NVSDK_NGX_Parameter_OutHeight, dispH);
+        setUI(NVSDK_NGX_Parameter_PerfQualityValue,
+              static_cast<unsigned int>(ToNgxQuality(quality)));
+        setUI(NVSDK_NGX_Parameter_DLSS_Feature_Create_Flags,
+              NVSDK_NGX_DLSS_Feature_Flags_IsHDR |
+              NVSDK_NGX_DLSS_Feature_Flags_MVLowRes |
+              NVSDK_NGX_DLSS_Feature_Flags_DepthInverted);
 
         NVSDK_NGX_Result result = pfnCreateFeature(
             cmdList, NVSDK_NGX_Feature_SuperSampling, ngxParams, &dlssFeature);
@@ -515,58 +521,46 @@ void DlssUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     // @ref docs/analysis/dlss-integration-analysis.md — Root Cause 1
     auto* p = m_impl->ngxParams;
 
-    // Helper lambdas for setting NGX parameters.
+    // Raw vtable access for NVSDK_NGX_Parameter — bypasses C++ overload resolution
+    // entirely. The vtable is compiled by NVIDIA's MSVC _nvngx.dll; Zig/mingw's
+    // overload resolution may pick the wrong slot (e.g., void* instead of ID3D12Resource*).
     //
-    // CRITICAL: We must use explicit member function pointer casts to force
-    // the correct vtable slot for the Set() overload. Zig/mingw may resolve
-    // ID3D12Resource* to the void* overload (vtable slot 7 instead of 6),
-    // causing DLSS to receive resources in the wrong slot → InvalidParameter.
-    //
-    // @ref docs/analysis/dlss-integration-analysis.md — Root Cause 1
-    //
-    // The vtable layout from nvsdk_ngx_params.h:
-    //   slot 0: Set(const char*, unsigned long long)
-    //   slot 1: Set(const char*, float)
-    //   slot 2: Set(const char*, double)
-    //   slot 3: Set(const char*, unsigned int)
-    //   slot 4: Set(const char*, int)
-    //   slot 5: Set(const char*, ID3D11Resource*)
-    //   slot 6: Set(const char*, ID3D12Resource*)
-    //   slot 7: Set(const char*, void*)
+    // @ref nvsdk_ngx_params.h — vtable slot order (0-based, after implicit destructor):
+    //   [0] Set(const char*, unsigned long long)
+    //   [1] Set(const char*, float)
+    //   [2] Set(const char*, double)
+    //   [3] Set(const char*, unsigned int)
+    //   [4] Set(const char*, int)
+    //   [5] Set(const char*, ID3D11Resource*)
+    //   [6] Set(const char*, ID3D12Resource*)
+    //   [7] Set(const char*, void*)
+    //   [8..15] Get overloads
+    //   [16] Reset
 
-    using SetD3D12Fn = void(NVSDK_NGX_Parameter::*)(const char*, ID3D12Resource*);
-    using SetFloatFn = void(NVSDK_NGX_Parameter::*)(const char*, float);
-    using SetUIFn    = void(NVSDK_NGX_Parameter::*)(const char*, unsigned int);
-    using SetIntFn   = void(NVSDK_NGX_Parameter::*)(const char*, int);
-    using SetVoidFn  = void(NVSDK_NGX_Parameter::*)(const char*, void*);
+    // MSVC vtable: no implicit destructor slot for abstract classes.
+    // The first virtual function Set(ull) is at vtable[0].
+    using FnSetFloat      = void(__thiscall*)(void*, const char*, float);
+    using FnSetUI         = void(__thiscall*)(void*, const char*, unsigned int);
+    using FnSetI          = void(__thiscall*)(void*, const char*, int);
+    using FnSetD3D12Res   = void(__thiscall*)(void*, const char*, ID3D12Resource*);
+    using FnSetVoidPtr    = void(__thiscall*)(void*, const char*, void*);
 
-    auto setRes = [&](const char* key, ID3D12Resource* res) {
-        if (m_impl->pfnSetD3d12Resource) {
-            m_impl->pfnSetD3d12Resource(p, key, res);
-        } else {
-            (p->*static_cast<SetD3D12Fn>(&NVSDK_NGX_Parameter::Set))(key, res);
-        }
-    };
+    void** vtable = *reinterpret_cast<void***>(p);
+
     auto setF = [&](const char* key, float val) {
-        if (m_impl->pfnSetF) {
-            m_impl->pfnSetF(p, key, val);
-        } else {
-            (p->*static_cast<SetFloatFn>(&NVSDK_NGX_Parameter::Set))(key, val);
-        }
+        reinterpret_cast<FnSetFloat>(vtable[1])(p, key, val);
     };
     auto setUI = [&](const char* key, unsigned int val) {
-        if (m_impl->pfnSetUI) {
-            m_impl->pfnSetUI(p, key, val);
-        } else {
-            (p->*static_cast<SetUIFn>(&NVSDK_NGX_Parameter::Set))(key, val);
-        }
+        reinterpret_cast<FnSetUI>(vtable[3])(p, key, val);
     };
     auto setI = [&](const char* key, int val) {
-        if (m_impl->pfnSetI) {
-            m_impl->pfnSetI(p, key, val);
-        } else {
-            (p->*static_cast<SetIntFn>(&NVSDK_NGX_Parameter::Set))(key, val);
-        }
+        reinterpret_cast<FnSetI>(vtable[4])(p, key, val);
+    };
+    auto setRes = [&](const char* key, ID3D12Resource* res) {
+        reinterpret_cast<FnSetD3D12Res>(vtable[6])(p, key, res);
+    };
+    auto setVoidPtr = [&](const char* key, void* val) {
+        reinterpret_cast<FnSetVoidPtr>(vtable[7])(p, key, val);
     };
 
     // Core resources
@@ -579,11 +573,11 @@ void DlssUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     setF(NVSDK_NGX_Parameter_Jitter_Offset_X, input.jitterX);
     setF(NVSDK_NGX_Parameter_Jitter_Offset_Y, input.jitterY);
 
-    // Motion vector scale — converts from MV texture space to pixels.
-    // UzEngine MVs are in pixels at render resolution, so scale = -renderSize
-    // (negative because DLSS expects top-to-bottom Y, DX12 is bottom-to-top).
-    setF(NVSDK_NGX_Parameter_MV_Scale_X, static_cast<float>(inputW));
-    setF(NVSDK_NGX_Parameter_MV_Scale_Y, -static_cast<float>(inputH));
+    // Motion vector scale — converts from MV texture value to pixel offset.
+    // UzEngine velocity_ps.hlsl outputs in pixels (currScreen - prevScreen),
+    // so scale = 1.0 (no conversion needed). Positive Y = downward = DLSS convention.
+    setF(NVSDK_NGX_Parameter_MV_Scale_X, 1.0f);
+    setF(NVSDK_NGX_Parameter_MV_Scale_Y, 1.0f);
 
     setF(NVSDK_NGX_Parameter_Sharpness, 0.0f);
     setI(NVSDK_NGX_Parameter_Reset, input.firstFrame ? 1 : 0);
@@ -609,14 +603,14 @@ void DlssUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     setF("DLSS.Pre.Exposure", 1.0f);
     setF("DLSS.Exposure.Scale", 1.0f);
 
-    // Optional resources (set to nullptr to satisfy the parameter validator).
-    setRes("DLSS.Input.Bias.Current.Color.Mask", nullptr);
-    setRes(NVSDK_NGX_Parameter_TransparencyMask, nullptr);
-    setRes(NVSDK_NGX_Parameter_ExposureTexture, nullptr);
-    setRes("DLSS.Input.GBuffer.Albedo", nullptr);
-    setRes("DLSS.Input.GBuffer.Roughness", nullptr);
-    setRes("DLSS.Input.GBuffer.Metallic", nullptr);
-    setRes("DLSS.Input.GBuffer.Normals", nullptr);
+    // Optional resources (nullptr to satisfy the parameter validator).
+    setVoidPtr("DLSS.Input.Bias.Current.Color.Mask", nullptr);
+    setVoidPtr(NVSDK_NGX_Parameter_TransparencyMask, nullptr);
+    setVoidPtr(NVSDK_NGX_Parameter_ExposureTexture, nullptr);
+    setVoidPtr("DLSS.Input.GBuffer.Albedo", nullptr);
+    setVoidPtr("DLSS.Input.GBuffer.Roughness", nullptr);
+    setVoidPtr("DLSS.Input.GBuffer.Metallic", nullptr);
+    setVoidPtr("DLSS.Input.GBuffer.Normals", nullptr);
 
     NVSDK_NGX_Result result = m_impl->pfnEvaluateFeature(
         nativeCmdList, m_impl->dlssFeature, m_impl->ngxParams, nullptr);
