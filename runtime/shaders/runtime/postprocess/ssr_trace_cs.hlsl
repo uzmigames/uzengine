@@ -29,9 +29,9 @@ cbuffer SsrTraceRootCB : register(b0) {
     uint   hizMip1SrvIdx;       // 10 — Hi-Z mip 1 (quarter-res)
     uint   hizMipCount;         // 11 — number of Hi-Z mip levels available (0 = use full-res only)
     float  exposureCorrection;  // 12 — currentExposure / prevExposure (1.0 when stable)
-    uint   _pad13;              // 13
-    uint   _pad14;              // 14
-    uint   _pad15;              // 15
+    uint   numSteps;            // 13 — ray march step count (r.SSR.NumSteps, default 16)
+    float  startMipLevel;       // 14 — initial HZB mip level (r.SSR.StartMipLevel, default 1.0)
+    float  slopeToleranceScale; // 15 — slope tolerance scale (r.SSR.SlopeToleranceScale, default 4.0)
 };
 
 cbuffer PerFrameCB : register(b1) {
@@ -55,7 +55,6 @@ Texture2D<float4> t_sceneColor : register(t3);
 SamplerState pointClamp  : register(s0);
 SamplerState linearClamp : register(s2);
 
-static const uint  NUM_STEPS       = 32;
 static const uint  BINARY_STEPS    = 4;
 static const float MAX_DISTANCE    = 5000.0; // cm
 static const float MIRROR_THRESHOLD = 0.04;  // roughness below this uses mirror reflect
@@ -247,7 +246,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
     float3 hitUVZ = float3(0, 0, 0);
     bool hit = false;
     float lastT = 0.0;
-    float stepSize = tMax / float(NUM_STEPS);
+    float stepSize = tMax / float(numSteps);
 
     // ── Hi-Z hierarchical ray march (when mip chain is available) ───────
     // @ref McGuire 2014 "Efficient GPU Screen-Space Ray Tracing"
@@ -268,10 +267,10 @@ void main(uint3 DTid : SV_DispatchThreadID)
 
         // Phase 1: Coarse march at mip 1 (quarter-res) — 4x coverage per step
         // Each texel covers 4x4 source pixels, so we step 4x larger.
-        float coarseStepSize = tMax / float(NUM_STEPS / 4);
+        float coarseStepSize = tMax / float(numSteps / 4);
         float lastCoarseT = 0.0;
 
-        for (uint i = 0; i < NUM_STEPS / 4; i++) {
+        for (uint i = 0; i < numSteps / 4; i++) {
             float3 ssSample = ssStart + ssDir * t;
             if (any(ssSample.xy < 0.0) || any(ssSample.xy > 1.0)) break;
 
@@ -296,11 +295,11 @@ void main(uint3 DTid : SV_DispatchThreadID)
             hit = false;
             float fineStart = max(lastCoarseT, 0.0);
             float fineEnd   = min(lastCoarseT + coarseStepSize * 2.0, tMax);
-            float fineStepSize = (fineEnd - fineStart) / float(NUM_STEPS / 2);
+            float fineStepSize = (fineEnd - fineStart) / float(numSteps / 2);
             float fineT = fineStart;
             float lastFineT = fineStart;
 
-            for (uint j = 0; j < NUM_STEPS / 2; j++) {
+            for (uint j = 0; j < numSteps / 2; j++) {
                 float3 ssSample = ssStart + ssDir * fineT;
                 if (any(ssSample.xy < 0.0) || any(ssSample.xy > 1.0)) break;
 
@@ -324,7 +323,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
         // Fallback: flat linear march (no Hi-Z mips available)
         float t = stepSize * jitter;
 
-        for (uint i = 0; i < NUM_STEPS; i++) {
+        for (uint i = 0; i < numSteps; i++) {
             float3 ssSample = ssStart + ssDir * t;
             if (any(ssSample.xy < 0.0) || any(ssSample.xy > 1.0)) break;
 

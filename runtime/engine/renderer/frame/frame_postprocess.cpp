@@ -22,6 +22,7 @@
 
 // ── CVars ────────────────────────────────────────────────────────────────
 // r.SSR CVar is declared in frame_lighting.cpp (single source of truth)
+static auto* cv_SSRComposite    = UZ_CVAR_FLOAT("r.SSR.Composite", 1.0f, "Enable SSR post-TAA composite (0=skip)", 0.0f, 1.0f);
 static auto* cv_MotionBlur      = UZ_CVAR_BOOL("r.MotionBlur", true, "Motion blur");
 static auto* cv_DOF             = UZ_CVAR_BOOL("r.DOF", false, "Depth of field");
 static auto* cv_CAS             = UZ_CVAR_BOOL("r.CAS", true, "Contrast adaptive sharpening");
@@ -151,7 +152,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                         UZ_PROFILE_SCOPE("SSR::Composite");
 
                         auto ssrCompositePSO = ctx.pipelines->GetSsrComposite();
-                        if (!ssrCompositePSO.IsValid()) return;
+                        if (!ssrCompositePSO.IsValid() || cv_SSRComposite->value < 0.5f) return;
 
                         // Determine which texture to composite onto
                         RHITextureHandle targetTex = ctx.taaActive

@@ -25,12 +25,18 @@
 #include "log.h"
 #include "cvar.h"
 
-static auto* cv_SSRMaxRoughness = UZ_CVAR_FLOAT("r.SSR.MaxRoughness", 0.35f, "SSR max roughness cutoff", 0.05f, 1.0f);
-static auto* cv_SSRIntensity    = UZ_CVAR_FLOAT("r.SSR.Intensity", 1.0f, "SSR reflection intensity", 0.0f, 5.0f);
-static auto* cv_SSRTrace        = UZ_CVAR_FLOAT("r.SSR.Trace", 1.0f, "Enable SSR trace pass (0=skip)", 0.0f, 1.0f);
-static auto* cv_SSRResolve      = UZ_CVAR_FLOAT("r.SSR.Resolve", 1.0f, "Enable SSR resolve pass (0=skip)", 0.0f, 1.0f);
-static auto* cv_SSRTemporal     = UZ_CVAR_FLOAT("r.SSR.Temporal", 1.0f, "Enable SSR temporal pass (0=skip)", 0.0f, 1.0f);
-static auto* cv_SSRCopy         = UZ_CVAR_FLOAT("r.SSR.CopyPrev", 1.0f, "Enable SSR prev-frame color copy (0=skip)", 0.0f, 1.0f);
+// SSR per-pass CVars (idempotent registration — same CVar pointers as frame_lighting.cpp)
+static auto* cv_SSRMaxRoughness    = UZ_CVAR_FLOAT("r.SSR.MaxRoughness", 0.35f, "SSR max roughness cutoff", 0.05f, 1.0f);
+static auto* cv_SSRIntensity       = UZ_CVAR_FLOAT("r.SSR.Intensity", 1.0f, "SSR reflection intensity", 0.0f, 5.0f);
+static auto* cv_SSRTrace           = UZ_CVAR_FLOAT("r.SSR.Trace", 1.0f, "Enable SSR trace pass (0=skip)", 0.0f, 1.0f);
+static auto* cv_SSRResolve         = UZ_CVAR_FLOAT("r.SSR.Resolve", 1.0f, "Enable SSR resolve pass (0=skip)", 0.0f, 1.0f);
+static auto* cv_SSRTemporal        = UZ_CVAR_FLOAT("r.SSR.Temporal", 1.0f, "Enable SSR temporal pass (0=skip)", 0.0f, 1.0f);
+static auto* cv_SSRSpatialDenoise  = UZ_CVAR_FLOAT("r.SSR.SpatialDenoise", 1.0f, "Enable SSR spatial denoise pass (0=skip)", 0.0f, 1.0f);
+static auto* cv_SSRComposite       = UZ_CVAR_FLOAT("r.SSR.Composite", 1.0f, "Enable SSR post-TAA composite (0=skip)", 0.0f, 1.0f);
+static auto* cv_SSRCopy            = UZ_CVAR_FLOAT("r.SSR.CopyPrev", 1.0f, "Enable SSR prev-frame color copy (0=skip)", 0.0f, 1.0f);
+static auto* cv_SSRNumSteps        = UZ_CVAR_INT("r.SSR.NumSteps", 16, "SSR ray march step count", 8, 64);
+static auto* cv_SSRStartMip        = UZ_CVAR_FLOAT("r.SSR.StartMipLevel", 1.0f, "SSR initial HZB mip level", 0.f, 3.f);
+static auto* cv_SSRSlopeTolerance  = UZ_CVAR_FLOAT("r.SSR.SlopeToleranceScale", 4.0f, "SSR slope tolerance scale", 1.f, 16.f);
 
 #include <cstring>
 
@@ -317,7 +323,8 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
                 float intensity, roughnessMaskScale;
                 uint32_t hitDistUavIdx, hizMip0SrvIdx, hizMip1SrvIdx, hizMipCount;
                 float exposureCorrection;
-                uint32_t pad13, pad14, pad15;
+                uint32_t numSteps;
+                float startMipLevel, slopeToleranceScale;
             };
 
             // Read SSR MaxRoughness from CVar (avoid hardcoded constant)
@@ -347,6 +354,9 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
             rc.hizMip1SrvIdx    = (m_hizMipCount >= 2) ? m_hizMipLevels[1].srvIndex : UINT32_MAX;
             rc.hizMipCount      = m_hizMipCount;
             rc.exposureCorrection = exposureRatio;
+            rc.numSteps           = static_cast<uint32_t>(cv_SSRNumSteps->value);
+            rc.startMipLevel      = cv_SSRStartMip->value;
+            rc.slopeToleranceScale = cv_SSRSlopeTolerance->value;
 
             cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 16);
             cmd->SetRootCBV(kSlotPerFrame, ctx.perFrameAlloc.bufferHandle,
@@ -523,7 +533,7 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
                 UZ_PROFILE_SCOPE("SSR::SpatialDenoise");
 
                 auto ssrDenoisePSO = ctx.pipelines->GetSsrSpatialDenoise();
-                if (!ssrDenoisePSO.IsValid()) return;
+                if (!ssrDenoisePSO.IsValid() || cv_SSRSpatialDenoise->value < 0.5f) return;
 
                 // Transition resolved output to UAV for writing
                 {
