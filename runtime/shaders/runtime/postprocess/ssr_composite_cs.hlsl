@@ -66,8 +66,11 @@ void main(uint3 DTid : SV_DispatchThreadID)
     float  roughness  = max(normalData.a, 0.04);
     float  metallic   = normalData.b;
 
-    // Smooth roughness fade — same as what was in deferred lighting
-    float ssrRoughnessMask = 1.0 - smoothstep(0.15, 0.45, roughness);
+    // Roughness fade — zero SSR above MaxRoughness (0.35).
+    // Must match trace pass RoughnessFade to avoid applying SSR to surfaces
+    // the trace already skipped. Any residual SSR data from neighboring
+    // pixels at the trace boundary would cause noise.
+    float ssrRoughnessMask = 1.0 - smoothstep(0.1, 0.35, roughness);
     float ssrAlpha = ssrData.a * ssrRoughnessMask;
 
     if (ssrAlpha <= 0.01) return;

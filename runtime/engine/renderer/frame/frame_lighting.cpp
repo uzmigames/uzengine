@@ -117,7 +117,9 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
     // Runs AFTER lighting+atmosphere so the copy contains the complete lit scene.
     // SSR trace next frame reads m_ssrPrevSceneColorSrv instead of m_hdrSceneColorSrv.
     // @ref UE5 DeferredShadingRenderer.cpp — QueueTextureExtraction for SSR input
-    if (m_ssrEnabled && cv_SSRCopyPrev->value && m_ssrPrevSceneColor.IsValid() && m_hdrSceneColor.IsValid()) {
+    // CopyPrevColor moved to frame_postprocess.cpp (post-TAA) to avoid
+    // barrier transitions on hdrSceneColor that cause TAA noise.
+    if (false) {
         rgBuilder.AddPass("SSR_CopyPrevColor", [&](rg::RgPassBuilder& pb) {
             pb.Read(ctx.hdrRes, RHIResourceState::RenderTarget);
 

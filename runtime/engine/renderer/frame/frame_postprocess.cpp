@@ -136,7 +136,8 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
         // Apply SSR AFTER TAA to prevent TAA neighborhood contamination.
         // The deferred lighting pass outputs IBL-only specular; SSR is
         // composited here onto the TAA-resolved (or raw HDR) image.
-        if (ctx.ssrActive && m_ssrResolvedOutput.IsValid()
+        if (ctx.ssrActive && m_ssrHasPrevColor
+            && m_ssrResolvedOutput.IsValid()
             && m_ssrResolvedOutputSrv != UINT32_MAX) {
 
             // Determine the target: TAA output if TAA active, else raw HDR
@@ -208,6 +209,49 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                     });
                 });
             }
+        }
+
+        // ── SSR CopyPrevColor (post-TAA, post-composite) ────────────────
+        // Copy the TAA-resolved scene color for next frame's SSR trace input.
+        // MUST run AFTER TAA (not before) to avoid barrier transitions on
+        // hdrSceneColor that cause micro-pixel TAA variation → stipple noise.
+        // @ref UE5 — reads PrevViewInfo.TemporalAAHistory (prev TAA output)
+        if (m_ssrEnabled && m_ssrPrevSceneColor.IsValid()) {
+            // Source: TAA output if available, else raw HDR
+            const RHITextureHandle copySource = ctx.taaActive
+                ? m_taaHistory[1 - m_taaHistoryIndex]
+                : m_hdrSceneColor;
+            const auto copySourceState = ctx.taaActive
+                ? RHIResourceState::ShaderResource  // TAA output is in SRV
+                : RHIResourceState::RenderTarget;   // HDR is in RT
+
+            rgBuilder.AddPass("SSR_CopyPrevColor", [&, copySource, copySourceState](rg::RgPassBuilder& pb) {
+                pb.SetExecutionCallback([this, copySource, copySourceState](IRHICommandList* cmd, const rg::RgPassResources&) {
+                    UZ_PROFILE_SCOPE("SSR::CopyPrevColor");
+
+                    RHIBarrierDesc barriers[2]{};
+                    barriers[0].texture     = copySource;
+                    barriers[0].stateBefore = copySourceState;
+                    barriers[0].stateAfter  = RHIResourceState::CopySrc;
+                    barriers[1].texture     = m_ssrPrevSceneColor;
+                    barriers[1].stateBefore = RHIResourceState::ShaderResource;
+                    barriers[1].stateAfter  = RHIResourceState::CopyDst;
+                    cmd->ResourceBarrier(barriers, 2);
+
+                    cmd->CopyTexture(copySource, m_ssrPrevSceneColor);
+
+                    RHIBarrierDesc restore[2]{};
+                    restore[0].texture     = copySource;
+                    restore[0].stateBefore = RHIResourceState::CopySrc;
+                    restore[0].stateAfter  = copySourceState;
+                    restore[1].texture     = m_ssrPrevSceneColor;
+                    restore[1].stateBefore = RHIResourceState::CopyDst;
+                    restore[1].stateAfter  = RHIResourceState::ShaderResource;
+                    cmd->ResourceBarrier(restore, 2);
+                });
+            });
+
+            m_ssrHasPrevColor = true;
         }
 
         // ── Bloom pass (if enabled) ─────────────────────────────────────
