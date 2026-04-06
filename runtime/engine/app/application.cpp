@@ -429,6 +429,14 @@ SceneRenderer& Application::GetRenderer() {
     return *m_renderer;
 }
 
+VfxEditorOverlay* Application::GetVfxEditorOverlay() {
+    return m_renderer ? m_renderer->GetVfxEditorOverlay() : nullptr;
+}
+
+ParticleEmitter* Application::GetRuntimeEmitter(int32_t runtimeIdx) {
+    return m_renderer ? m_renderer->GetRuntimeEmitter(runtimeIdx) : nullptr;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Control
 // ─────────────────────────────────────────────────────────────────────────────

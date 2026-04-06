@@ -98,6 +98,7 @@ file(GLOB SRC_VFX_DECALS       engine/vfx/decals/*.cpp)
 file(GLOB SRC_VFX_TRAILS       engine/vfx/trails/*.cpp)
 file(GLOB SRC_VFX_LOD          engine/vfx/lod/*.cpp)
 file(GLOB SRC_VFX_BUDGET       engine/vfx/budget/*.cpp)
+file(GLOB SRC_VFX_EDITOR       engine/vfx/editor/*.cpp)
 file(GLOB SRC_VFX_SYSTEM       engine/vfx/*.cpp)
 
 # Metal backend (macOS/iOS only)
@@ -185,6 +186,7 @@ set(RUNTIME_SOURCES
     ${SRC_VFX_TRAILS}
     ${SRC_VFX_LOD}
     ${SRC_VFX_BUDGET}
+    ${SRC_VFX_EDITOR}
     ${SRC_VFX_SYSTEM}
     $<$<PLATFORM_ID:Darwin>:${SRC_RHI_METAL}>
 )

@@ -24,6 +24,7 @@
 #include "gizmo_renderer.h"
 #include "outline_pass.h"
 #include "stats_overlay.h"
+#include "engine/vfx/editor/vfx_editor_overlay.h"
 #include "shader_compiler.h"
 #include "shader_compiler_fxc.h"
 #include "dynamic_resolution.h"
@@ -129,6 +130,10 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     // ── Stats Overlay (deferred init — needs cmdList in recording state) ─
     m_statsOverlay = std::make_unique<StatsOverlay>();
     m_statsOverlayInitialized = false;
+
+    // ── VFX Editor Overlay (deferred init — same as stats overlay) ────────
+    m_vfxEditorOverlay = std::make_unique<VfxEditorOverlay>();
+    m_vfxEditorOverlayInitialized = false;
 
     // ── Render Graph Resource Pool ──────────────────────────────────────
     m_rgPool = std::make_unique<rg::RgResourcePool>(device);
@@ -1040,6 +1045,9 @@ void SceneRenderer::Resize(uint32_t width, uint32_t height) {
     if (m_statsOverlay) {
         m_statsOverlay->SetScreenSize(width, height);
     }
+    if (m_vfxEditorOverlay) {
+        m_vfxEditorOverlay->SetScreenSize(width, height);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1290,6 +1298,7 @@ void SceneRenderer::Shutdown() {
     m_asyncPendingSlots.clear();
 
     if (m_statsOverlay)    m_statsOverlay->Shutdown();
+    if (m_vfxEditorOverlay) m_vfxEditorOverlay->Shutdown();
     if (m_gizmoRenderer)   m_gizmoRenderer->Shutdown();
     if (m_outlinePass)     m_outlinePass->Shutdown();
     if (m_editorGrid)      m_editorGrid->Shutdown();
@@ -1301,6 +1310,7 @@ void SceneRenderer::Shutdown() {
     m_cameraCtrl.reset();
     m_camera.reset();
     m_statsOverlay.reset();
+    m_vfxEditorOverlay.reset();
     m_gizmoRenderer.reset();
     m_outlinePass.reset();
     m_editorGrid.reset();

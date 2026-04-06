@@ -10,6 +10,7 @@
 #include "log.h"
 #include "input.h"
 #include "stats_overlay.h"
+#include "engine/vfx/editor/vfx_editor_overlay.h"
 
 #include <algorithm>
 #include <cmath>
@@ -40,6 +41,12 @@ const Camera& SceneRenderer::GetCamera() const { return *m_camera; }
 FlyCameraController& SceneRenderer::GetCameraController() { return *m_cameraCtrl; }
 InputSystem* SceneRenderer::GetInput() const { return m_input.get(); }
 StatsOverlay* SceneRenderer::GetStatsOverlay() const { return m_statsOverlay.get(); }
+VfxEditorOverlay* SceneRenderer::GetVfxEditorOverlay() const { return m_vfxEditorOverlay.get(); }
+
+ParticleEmitter* SceneRenderer::GetRuntimeEmitter(int32_t runtimeIdx) {
+    if (runtimeIdx < 0 || static_cast<size_t>(runtimeIdx) >= m_runtimeEmitters.size()) return nullptr;
+    return m_runtimeEmitters[static_cast<size_t>(runtimeIdx)].get();
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shadow Atlas Diagnostic Readback

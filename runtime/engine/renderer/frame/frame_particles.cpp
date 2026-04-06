@@ -488,10 +488,7 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
         renderData.readSetSrvIndex = m_device->GetBufferSRVIndex(readSet.positions);
 
         // Distance to camera for back-to-front sorting.
-        // ParticleEmitter does not yet carry a world-space position
-        // (it's an ECS component; position comes from the transform).
-        // Use origin as emitter position until transform wiring is added.
-        const Vec3 emitterPos{0.0f, 0.0f, 0.0f};
+        const Vec3 emitterPos = emitter->worldPosition;
         const Vec3 diff{
             emitterPos.x - camPos.x,
             emitterPos.y - camPos.y,

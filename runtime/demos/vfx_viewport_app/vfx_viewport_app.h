@@ -88,6 +88,15 @@ private:
 
     /// Escape key hold timer for quit gesture (hold 1s to exit).
     float m_escapeHoldTime = 0.0f;
+
+    /// Current preset index for cycling.
+    int m_currentPreset = 0;
+
+    /// Pending preset switch (set by Left/Right keys or overlay).
+    bool m_switchPresetPending = false;
+
+    /// Pending restart (set by R/Delete or overlay button).
+    bool m_restartPending = false;
 };
 
 } // namespace uz

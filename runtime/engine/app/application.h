@@ -60,6 +60,8 @@ class FlyCameraController;
 class IVFS;
 class World;
 class PixelDebugSystem;
+class VfxEditorOverlay;
+struct ParticleEmitter;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // UZ_APPLICATION_MAIN — Entry point macro
@@ -166,6 +168,12 @@ public:
 
     /// Returns the scene renderer. Valid from `OnStart()` through `OnStop()`.
     [[nodiscard]] SceneRenderer& GetRenderer();
+
+    /// Returns the VFX editor overlay. May return null if not initialized.
+    [[nodiscard]] VfxEditorOverlay* GetVfxEditorOverlay();
+
+    /// Returns a runtime ParticleEmitter by index. May return null.
+    [[nodiscard]] ParticleEmitter* GetRuntimeEmitter(int32_t runtimeIdx);
 
     // ── Control ───────────────────────────────────────────────────────────
 

@@ -211,6 +211,13 @@ struct ParticleEmitter {
     float rotationOverLifeStart = 0.0f;
     float rotationOverLifeEnd = 0.0f;
 
+    // ── Particle Light Emission ────────────────────────────────────────
+    uint32_t particleLightEnabled = 0;     ///< 0=off, 1=inject point light at emitter position.
+    float particleLightRadius     = 500.0f;///< Point light radius (cm).
+    float particleLightIntensity  = 2.0f;  ///< Point light intensity multiplier.
+    float particleLightFlicker    = 0.0f;  ///< Flicker amplitude [0,1]. 0=steady.
+    float particleLightFlickerSpeed = 5.0f;///< Flicker oscillation frequency (Hz).
+
     /// Emitter lifecycle — auto-disable after duration (seconds). 0 = infinite.
     float emitterDuration = 0.0f;
     /// Restart count before stopping. 0 = infinite.

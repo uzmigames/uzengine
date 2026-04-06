@@ -18,6 +18,8 @@
 #include "log.h"
 #include "cvar.h"
 #include "world.h"
+#include "engine/vfx/vfx_system.h"
+#include "engine/vfx/components/particle_emitter.h"
 
 #include <algorithm>
 #include <cmath>
@@ -159,6 +161,42 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     ctx.sunColor     = ctx.lightData.sunColor;
     ctx.ambientColor = ctx.lightData.ambientColor;
     ctx.lightingAlloc = ctx.lightData.lightingCBAlloc;
+
+    // ── Inject VFX particle lights into the LightingCB ──────────────────
+    // Emitters with particleLightEnabled inject a dynamic point light at their
+    // world position, using the emitter's initial color and intensity.
+    // Flicker modulation: intensity *= 1 + sin(totalTime * flickerSpeed * 2pi) * amplitude
+    {
+        VFXSystem* vfx = m_vfxSystemOverride ? m_vfxSystemOverride : m_vfxSystem.get();
+        if (vfx && vfx->IsInitialized() && ctx.lightingAlloc.cpuPtr) {
+            auto* lightingCB = reinterpret_cast<LightingCB*>(ctx.lightingAlloc.cpuPtr);
+            const auto& emitters = vfx->GetActiveEmitters();
+            for (const auto* em : emitters) {
+                if (!em || !em->initialized || !em->particleLightEnabled) continue;
+                if (lightingCB->pointLightCount >= kMaxPointLights) break;
+
+                float intensity = em->particleLightIntensity;
+                // Flicker modulation
+                if (em->particleLightFlicker > 0.0f) {
+                    const float phase = m_totalTime * em->particleLightFlickerSpeed * 6.28318f;
+                    intensity *= std::max(0.1f, 1.0f + std::sin(phase) * em->particleLightFlicker);
+                }
+
+                const uint32_t idx = lightingCB->pointLightCount;
+                PointLightData& pld = lightingCB->pointLights[idx];
+                pld.position    = em->worldPosition;
+                pld.radius      = em->particleLightRadius;
+                pld.color       = Vec3{em->initialColor.x, em->initialColor.y, em->initialColor.z} * intensity;
+                pld.sourceRadius    = 0.0f;
+                pld.falloffExponent = 0.0f;
+                pld.specularScale   = 1.0f;
+                pld.diffuseScale    = 1.0f;
+                pld.flags           = kLightFlag_InverseSquared;
+                pld.shadowIndex     = UINT32_MAX;
+                lightingCB->pointLightCount++;
+            }
+        }
+    }
 
     // ── Extract cloud shadow & light shaft parameters from primary DirectionalLight ──
     if (ctx.world) {

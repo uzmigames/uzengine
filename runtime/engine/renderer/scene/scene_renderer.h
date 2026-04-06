@@ -89,6 +89,7 @@ class PipelineLibrary;
 class CBRingAllocator;
 class EditorGrid;
 class StatsOverlay;
+class VfxEditorOverlay;
 class OutlinePass;
 class GizmoRenderer;
 class UploadContext;
@@ -526,6 +527,13 @@ public:
 
     /// Returns the stats overlay. May return null if `Init()` has not been called.
     [[nodiscard]] StatsOverlay* GetStatsOverlay() const;
+
+    /// Returns the VFX editor overlay. May return null if not created.
+    [[nodiscard]] VfxEditorOverlay* GetVfxEditorOverlay() const;
+
+    /// Returns the runtime ParticleEmitter for a given VfxEmitterComponent index.
+    /// Returns null if index is out of range or emitter not yet created.
+    [[nodiscard]] ParticleEmitter* GetRuntimeEmitter(int32_t runtimeIdx);
 
     /// Returns the current display resolution width in pixels.
     [[nodiscard]] uint32_t GetWidth() const { return m_width; }

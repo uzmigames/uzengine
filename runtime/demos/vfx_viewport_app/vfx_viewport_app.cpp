@@ -11,6 +11,9 @@
 #include "engine/ecs/core/world.h"
 #include "engine/math/quaternion.h"
 #include "engine/vfx/components/emitter_presets.h"
+// VFX editor overlay — included directly (light header, no scene_renderer.h dependency)
+#include "engine/vfx/editor/vfx_editor_overlay.h"
+#include "engine/vfx/components/particle_emitter.h"
 #include "input.h"
 #include "camera.h"
 #include "log.h"
@@ -24,6 +27,86 @@
 UZ_DECLARE_LOG_CATEGORY(App);
 
 namespace uz {
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper: copy preset from ParticleEmitter → VfxEmitterComponent
+// ─────────────────────────────────────────────────────────────────────────────
+
+static void ApplyPresetToComponent(VfxEmitterComponent& c, const ParticleEmitter& p) {
+    c.maxParticles       = p.maxParticles;
+    c.emissionRate       = p.emissionRate;
+    c.lifetime           = p.lifetime;
+    c.lifetimeVariation  = p.lifetimeVariation;
+    c.spawnVelocity      = p.spawnVelocity;
+    c.velocityVariation  = p.velocityVariation;
+    c.spreadAngle        = p.spreadAngle;
+    c.spawnShape         = p.spawnShape;
+    c.spawnRadius        = p.spawnRadius;
+    c.initialSize        = p.initialSize;
+    c.initialColor       = p.initialColor;
+    c.emissiveIntensity  = p.emissiveIntensity;
+    c.softParticleFadeRange = p.softParticleFadeRange;
+    c.facingMode         = p.facingMode;
+    c.stretchFactor      = p.stretchFactor;
+    c.blendMode          = p.blendMode;
+    c.sizeOverLifeStart  = p.sizeOverLifeStart;
+    c.sizeOverLifePeak   = p.sizeOverLifePeak;
+    c.sizeOverLifeEnd    = p.sizeOverLifeEnd;
+    c.sizeOverLifePeakTime = p.sizeOverLifePeakTime;
+    c.colorLifeStartR    = p.colorLifeStartR;
+    c.colorLifeStartG    = p.colorLifeStartG;
+    c.colorLifeStartB    = p.colorLifeStartB;
+    c.colorLifeStartA    = p.colorLifeStartA;
+    c.colorLifeEndR      = p.colorLifeEndR;
+    c.colorLifeEndG      = p.colorLifeEndG;
+    c.colorLifeEndB      = p.colorLifeEndB;
+    c.colorLifeEndA      = p.colorLifeEndA;
+    c.gravity            = p.gravity;
+    c.damping            = p.damping;
+    c.curlStrength       = p.curlStrength;
+    c.curlFrequency      = p.curlFrequency;
+    c.curlSpeed          = p.curlSpeed;
+    c.dragCoefficient    = p.dragCoefficient;
+    c.windDirX           = p.windDirX;
+    c.windDirY           = p.windDirY;
+    c.windDirZ           = p.windDirZ;
+    c.windStrength       = p.windStrength;
+    c.orbitEnabled       = p.orbitEnabled;
+    c.orbitRadius        = p.orbitRadius;
+    c.orbitSpeed         = p.orbitSpeed;
+    c.groundCollision    = p.groundCollision;
+    c.restitution        = p.restitution;
+    c.collisionFriction  = p.collisionFriction;
+    c.startDelay         = p.startDelay;
+    c.particleLightEnabled     = p.particleLightEnabled;
+    c.particleLightRadius      = p.particleLightRadius;
+    c.particleLightIntensity   = p.particleLightIntensity;
+    c.particleLightFlicker     = p.particleLightFlicker;
+    c.particleLightFlickerSpeed = p.particleLightFlickerSpeed;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Preset Table — all available presets for cycling
+// ─────────────────────────────────────────────────────────────────────────────
+
+using PresetFn = void(*)(ParticleEmitter&);
+static const PresetFn kPresetFns[] = {
+    ApplyPreset_Fire, ApplyPreset_Smoke, ApplyPreset_Sparks,
+    ApplyPreset_Fountain, ApplyPreset_MagicOrb, ApplyPreset_Burst,
+    ApplyPreset_ExplosionBurst, ApplyPreset_ExplosionSmoke, ApplyPreset_ExplosionDebris,
+    ApplyPreset_Fireball, ApplyPreset_RingOfFire, ApplyPreset_ConeJet,
+    ApplyPreset_CylinderVolume, ApplyPreset_CurlSmoke, ApplyPreset_Tornado,
+    ApplyPreset_Whirlpool, ApplyPreset_WindySmoke, ApplyPreset_LitSmoke,
+    ApplyPreset_LitDebris, ApplyPreset_Orbital, ApplyPreset_AirResist,
+};
+static const char* const kPresetNames[] = {
+    "Fire", "Smoke", "Sparks", "Fountain", "MagicOrb", "Burst",
+    "ExpBurst", "ExpSmoke", "ExpDebris",
+    "Fireball", "RingOfFire", "ConeJet", "CylinderVol",
+    "CurlSmoke", "Tornado", "Whirlpool", "WindySmoke",
+    "LitSmoke", "LitDebris", "Orbital", "AirResist",
+};
+static constexpr int kPresetCount = static_cast<int>(sizeof(kPresetFns) / sizeof(kPresetFns[0]));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Configure
@@ -40,10 +123,10 @@ ApplicationConfig VFXViewportApp::Configure() {
     // {0, -15, 8} meters = {0, -1500, 800} cm.
     cfg.cameraMoveSpeed = 500.f;
     cfg.cameraPositionX = 0.f;
-    cfg.cameraPositionY = -500.f;
-    cfg.cameraPositionZ = 200.f;
+    cfg.cameraPositionY = -1500.f;  // 15m back (matches standalone)
+    cfg.cameraPositionZ = 800.f;    // 8m up (matches standalone)
     cfg.cameraYawDeg = 90.f;
-    cfg.cameraPitchDeg = -15.f;
+    cfg.cameraPitchDeg = -20.f;
     cfg.enableValidation = true;
 
     // VFS root: use the demo's content directory if it exists next to the exe,
@@ -91,97 +174,44 @@ void VFXViewportApp::OnStart() {
         world.AddComponent<SkyAtmosphereComponent>(skyEntity);
     }
 
-    // VFX emitters re-enabled with buffer validation guard in frame_particles.cpp.
-
-    // ── VFX Emitter 1: Fire Fountain (center) ──────────────────────────────
+    // ── Single VFX Emitter at center — cycle presets with Left/Right ────
     {
+        ParticleEmitter preset;
+        ApplyPreset_Fire(preset);
+
         Entity e = world.CreateEntity();
-        world.AddComponent<CName>(e, CName{"Fire"});
+        world.AddComponent<CName>(e, CName{"VFX"});
         auto& sc = world.AddComponent<SceneComponent>(e);
         sc.SetPosition({0.0f, 0.0f, 0.0f});
         auto& em = world.AddComponent<VfxEmitterComponent>(e);
-        em.maxParticles = 5000;
-        em.emissionRate = 200.0f;
-        em.lifetime = 2.0f;
-        em.gravity = {0.0f, 0.0f, -200.0f};
-        em.spawnVelocity = {0.0f, 0.0f, 300.0f};
+        ApplyPresetToComponent(em, preset);
         em.emitting = true;
         m_emitterEntities.push_back(e);
     }
 
-    // ── VFX Emitter 2: Sparks (right) ───────────────────────────────────────
-    {
-        Entity e = world.CreateEntity();
-        world.AddComponent<CName>(e, CName{"Sparks"});
-        auto& sc = world.AddComponent<SceneComponent>(e);
-        sc.SetPosition({300.0f, 0.0f, 0.0f});
-        auto& em = world.AddComponent<VfxEmitterComponent>(e);
-        em.maxParticles = 2000;
-        em.emissionRate = 150.0f;
-        em.lifetime = 1.5f;
-        em.gravity = {0.0f, 0.0f, -981.0f};
-        em.spawnVelocity = {0.0f, 0.0f, 800.0f};
-        em.emitting = true;
-        m_emitterEntities.push_back(e);
+    UZ_LOG(App, Info, "VFXViewportApp: started (SUN + SKY + 1 emitter, preset: {})",
+           kPresetNames[m_currentPreset]);
+
+    // ── Configure VFX Editor Overlay ────────────────────────────────────
+    if (auto* overlay = GetVfxEditorOverlay()) {
+        std::vector<std::string> presetNames;
+        for (int i = 0; i < kPresetCount; ++i) presetNames.push_back(kPresetNames[i]);
+        overlay->SetPresetNames(presetNames);
+        overlay->SetVisible(true); // Start with overlay visible
+
+        // Preset load: apply + restart
+        overlay->onLoadPreset = [this](int presetIdx, ParticleEmitter*) {
+            if (presetIdx < 0 || presetIdx >= kPresetCount) return;
+            m_currentPreset = presetIdx;
+            m_switchPresetPending = true;
+        };
+
+        // Restart
+        overlay->onRestart = [this]() {
+            m_restartPending = true;
+        };
     }
 
-    // ── VFX Emitter 3: Fountain (left) ──────────────────────────────────────
-    {
-        Entity e = world.CreateEntity();
-        world.AddComponent<CName>(e, CName{"Fountain"});
-        auto& sc = world.AddComponent<SceneComponent>(e);
-        sc.SetPosition({-300.0f, 0.0f, 0.0f});
-        auto& em = world.AddComponent<VfxEmitterComponent>(e);
-        em.maxParticles = 5000;
-        em.emissionRate = 300.0f;
-        em.lifetime = 3.0f;
-        em.gravity = {0.0f, 0.0f, -981.0f};
-        em.spawnVelocity = {0.0f, 0.0f, 500.0f};
-        em.emitting = true;
-        m_emitterEntities.push_back(e);
-    }
-
-    UZ_LOG(App, Info, "VFXViewportApp: started (SUN + SKY + 3 VFX EMITTERS)");
-    return; // Skip old emitters 2 and 3
-
-    // ── VFX Emitter 2: Side burst ────────────────────────────────────────────
-    //
-    // Offset to the right, fires particles diagonally upward and to the side.
-    {
-        Entity e = world.CreateEntity();
-        world.AddComponent<CName>(e, CName{"SideBurst"});
-        auto& sc = world.AddComponent<SceneComponent>(e);
-        sc.SetPosition({400.0f, 0.0f, 0.0f});
-        auto& em = world.AddComponent<VfxEmitterComponent>(e);
-        em.maxParticles = 5000;
-        em.emissionRate = 150.0f;
-        em.lifetime = 2.5f;
-        em.gravity = {0.0f, 0.0f, -981.0f};
-        em.spawnVelocity = {200.0f, 0.0f, 400.0f};
-        em.emitting = true;
-        m_emitterEntities.push_back(e);
-    }
-
-    // ── VFX Emitter 3: Slow rain ─────────────────────────────────────────────
-    //
-    // Offset to the left and elevated, drops particles downward slowly.
-    {
-        Entity e = world.CreateEntity();
-        world.AddComponent<CName>(e, CName{"SlowRain"});
-        auto& sc = world.AddComponent<SceneComponent>(e);
-        sc.SetPosition({-400.0f, 0.0f, 500.0f});
-        auto& em = world.AddComponent<VfxEmitterComponent>(e);
-        em.maxParticles = 8000;
-        em.emissionRate = 200.0f;
-        em.lifetime = 4.0f;
-        em.gravity = {0.0f, 0.0f, -300.0f};
-        em.spawnVelocity = {0.0f, 0.0f, -50.0f};
-        em.emitting = true;
-        m_emitterEntities.push_back(e);
-    }
-
-    UZ_LOG(App, Info, "VFXViewportApp: started — {} emitter entities, sun + sky atmosphere",
-           m_emitterEntities.size());
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -205,31 +235,131 @@ void VFXViewportApp::OnUpdate(float dt) {
         m_escapeHoldTime = 0.0f;
     }
 
-    // ── Toggle emitters with Space key ───────────────────────────────────
+    // ── F10: Toggle VFX Editor Overlay ──────────────────────────────────
+    if (input.IsKeyJustPressed(Key::F10)) {
+        if (auto* overlay = GetVfxEditorOverlay()) {
+            overlay->ToggleVisible();
+            UZ_LOG(App, Info, "VFX Editor: {}", overlay->IsVisible() ? "visible" : "hidden");
+        }
+    }
+
+    // ── Tab / Left/Right: Cycle presets ────────────────────────────────
+    if (input.IsKeyJustPressed(Key::Tab) || input.IsKeyJustPressed(Key::Right)) {
+        m_currentPreset = (m_currentPreset + 1) % kPresetCount;
+        m_switchPresetPending = true;
+    }
+    if (input.IsKeyJustPressed(Key::Left)) {
+        m_currentPreset = (m_currentPreset + kPresetCount - 1) % kPresetCount;
+        m_switchPresetPending = true;
+    }
+
+    // ── Apply pending preset switch ─────────────────────────────────────
+    if (m_switchPresetPending) {
+        m_switchPresetPending = false;
+        if (!m_emitterEntities.empty()) {
+            Entity ent = m_emitterEntities[0];
+            if (world.IsValid(ent)) {
+                auto& comp = world.GetComponent<VfxEmitterComponent>(ent);
+                // Reset to defaults first, then apply preset.
+                // This ensures fields not set by the preset (facingMode, stretchFactor, etc.)
+                // don't carry over from the previous preset.
+                ParticleEmitter preset;  // default-constructed = all defaults
+                kPresetFns[m_currentPreset](preset);
+                ApplyPresetToComponent(comp, preset);
+                // Also reset + apply to the runtime ParticleEmitter
+                if (auto* rt = GetRuntimeEmitter(comp.runtimeEmitterIdx)) {
+                    // Reset ALL config fields to defaults
+                    ParticleEmitter defaults;
+                    rt->emissionRate = defaults.emissionRate;
+                    rt->lifetime = defaults.lifetime;
+                    rt->lifetimeVariation = defaults.lifetimeVariation;
+                    rt->spawnVelocity = defaults.spawnVelocity;
+                    rt->velocityVariation = defaults.velocityVariation;
+                    rt->spreadAngle = defaults.spreadAngle;
+                    rt->spawnShape = defaults.spawnShape;
+                    rt->spawnRadius = defaults.spawnRadius;
+                    rt->initialSize = defaults.initialSize;
+                    rt->initialColor = defaults.initialColor;
+                    rt->emissiveIntensity = defaults.emissiveIntensity;
+                    rt->litMode = defaults.litMode;
+                    rt->softParticleFadeRange = defaults.softParticleFadeRange;
+                    rt->facingMode = defaults.facingMode;
+                    rt->stretchFactor = defaults.stretchFactor;
+                    rt->blendMode = defaults.blendMode;
+                    rt->cameraOffset = defaults.cameraOffset;
+                    rt->pivotOffsetX = defaults.pivotOffsetX;
+                    rt->pivotOffsetY = defaults.pivotOffsetY;
+                    rt->sizeOverLifeStart = defaults.sizeOverLifeStart;
+                    rt->sizeOverLifePeak = defaults.sizeOverLifePeak;
+                    rt->sizeOverLifeEnd = defaults.sizeOverLifeEnd;
+                    rt->sizeOverLifePeakTime = defaults.sizeOverLifePeakTime;
+                    rt->colorLifeStartR = defaults.colorLifeStartR;
+                    rt->colorLifeStartG = defaults.colorLifeStartG;
+                    rt->colorLifeStartB = defaults.colorLifeStartB;
+                    rt->colorLifeStartA = defaults.colorLifeStartA;
+                    rt->colorLifeEndR = defaults.colorLifeEndR;
+                    rt->colorLifeEndG = defaults.colorLifeEndG;
+                    rt->colorLifeEndB = defaults.colorLifeEndB;
+                    rt->colorLifeEndA = defaults.colorLifeEndA;
+                    rt->sizeBySpeedEnabled = defaults.sizeBySpeedEnabled;
+                    rt->colorBySpeedEnabled = defaults.colorBySpeedEnabled;
+                    rt->screenSpaceSizeEnabled = defaults.screenSpaceSizeEnabled;
+                    rt->gravity = defaults.gravity;
+                    rt->damping = defaults.damping;
+                    rt->curlStrength = defaults.curlStrength;
+                    rt->curlFrequency = defaults.curlFrequency;
+                    rt->curlSpeed = defaults.curlSpeed;
+                    rt->dragCoefficient = defaults.dragCoefficient;
+                    rt->windDirX = defaults.windDirX;
+                    rt->windDirY = defaults.windDirY;
+                    rt->windDirZ = defaults.windDirZ;
+                    rt->windStrength = defaults.windStrength;
+                    rt->accelX = defaults.accelX;
+                    rt->accelY = defaults.accelY;
+                    rt->accelZ = defaults.accelZ;
+                    rt->vortexTangentialStrength = defaults.vortexTangentialStrength;
+                    rt->vortexRadialStrength = defaults.vortexRadialStrength;
+                    rt->vortexMaxRadius = defaults.vortexMaxRadius;
+                    rt->orbitEnabled = defaults.orbitEnabled;
+                    rt->orbitRadius = defaults.orbitRadius;
+                    rt->orbitSpeed = defaults.orbitSpeed;
+                    rt->groundCollision = defaults.groundCollision;
+                    rt->restitution = defaults.restitution;
+                    rt->collisionResponse = defaults.collisionResponse;
+                    rt->collisionFriction = defaults.collisionFriction;
+                    rt->rotationRate = defaults.rotationRate;
+                    rt->rotationOverLifeStart = defaults.rotationOverLifeStart;
+                    rt->rotationOverLifeEnd = defaults.rotationOverLifeEnd;
+                    // Now apply preset on top of clean defaults
+                    kPresetFns[m_currentPreset](*rt);
+                }
+                comp.restartRequested = true;
+                // Force rebuild of module list in editor overlay
+                if (auto* overlay = GetVfxEditorOverlay()) {
+                    overlay->ForceRebuildModules();
+                }
+                UZ_LOG(App, Info, "[VFX] Preset: {} ({})", kPresetNames[m_currentPreset], m_currentPreset);
+            }
+        }
+    }
+
+    // ── R or Delete: Restart emitter ────────────────────────────────────
+    if (input.IsKeyJustPressed(Key::R) || input.IsKeyJustPressed(Key::Delete)
+        || input.IsKeyJustPressed(Key::Enter) || m_restartPending) {
+        m_restartPending = false;
+        for (const Entity& ent : m_emitterEntities) {
+            if (!world.IsValid(ent)) continue;
+            auto& comp = world.GetComponent<VfxEmitterComponent>(ent);
+            comp.restartRequested = true;
+        }
+    }
+
+    // ── Space: Toggle emission ──────────────────────────────────────────
     if (input.IsKeyJustPressed(Key::Space)) {
         for (const Entity& e : m_emitterEntities) {
             if (!world.IsValid(e)) continue;
             auto& em = world.GetComponent<VfxEmitterComponent>(e);
             em.emitting = !em.emitting;
-        }
-    }
-
-    // ── Orbit the side burst emitter around the origin ───────────────────
-    //
-    // The second emitter (index 1) orbits at a 400cm radius in the XY plane,
-    // giving a visual sense of dynamic movement in the scene.
-    if (m_emitterEntities.size() >= 2) {
-        const Entity& orbitEntity = m_emitterEntities[1];
-        if (world.IsValid(orbitEntity) && world.HasComponent<SceneComponent>(orbitEntity)) {
-            constexpr float kOrbitRadius = 400.0f; // cm
-            constexpr float kOrbitSpeed = 0.5f;    // radians/second
-            const float angle = m_totalTime * kOrbitSpeed;
-            auto& sc = world.GetComponent<SceneComponent>(orbitEntity);
-            sc.SetPosition({
-                kOrbitRadius * std::cos(angle),
-                kOrbitRadius * std::sin(angle),
-                0.0f
-            });
         }
     }
 }

@@ -41,10 +41,26 @@ void SceneRenderer::SyncVfxEmitters(World* world, IVFS* vfs) {
         if (emitterComp.runtimeEmitterIdx >= 0) {
             const auto idx = static_cast<size_t>(emitterComp.runtimeEmitterIdx);
             if (idx < m_runtimeEmitters.size() && m_runtimeEmitters[idx]) {
-                m_runtimeEmitters[idx]->isEmitting = emitterComp.emitting;
+                auto* rt = m_runtimeEmitters[idx].get();
+                rt->isEmitting = emitterComp.emitting;
                 // Sync world position from entity transform.
                 if (auto* sc = registry.try_get<SceneComponent>(enttEntity)) {
-                    m_runtimeEmitters[idx]->worldPosition = sc->GetPosition();
+                    rt->worldPosition = sc->GetPosition();
+                }
+                // Handle restart request: reset GPU buffer only.
+                // ParticleEmitter fields are edited directly by the overlay
+                // sliders, so we do NOT re-copy from the ECS component here.
+                // For preset switches (Tab/Left/Right), the app code already
+                // wrote the new preset into VfxEmitterComponent AND the runtime
+                // ParticleEmitter gets the preset via ApplyPresetToComponent +
+                // the initial creation path.
+                if (emitterComp.restartRequested) {
+                    rt->buffer.needsInitialization = true;
+                    rt->spawnAccumulator = 0.0f;
+                    rt->cpuAliveCount = 0;
+                    rt->isEmitting = true;
+                    emitterComp.restartRequested = false;
+                    emitterComp.emitting = true;
                 }
             }
             continue;
@@ -143,14 +159,81 @@ void SceneRenderer::SyncVfxEmitters(World* world, IVFS* vfs) {
                 m_runtimeEmitters.push_back(std::move(extra));
             }
         } else {
-            // Inline parameters: configure from component fields
-            emitter->maxParticles    = emitterComp.maxParticles;
-            emitter->emissionRate    = emitterComp.emissionRate;
-            emitter->lifetime        = emitterComp.lifetime;
-            emitter->gravity         = emitterComp.gravity;
-            emitter->damping         = emitterComp.damping;
-            emitter->spawnVelocity   = emitterComp.spawnVelocity;
-            emitter->isEmitting      = emitterComp.emitting;
+            // Inline parameters: copy ALL config fields from ECS component
+            emitter->maxParticles       = emitterComp.maxParticles;
+            emitter->emissionRate       = emitterComp.emissionRate;
+            emitter->lifetime           = emitterComp.lifetime;
+            emitter->lifetimeVariation  = emitterComp.lifetimeVariation;
+            emitter->spawnVelocity      = emitterComp.spawnVelocity;
+            emitter->velocityVariation  = emitterComp.velocityVariation;
+            emitter->spreadAngle        = emitterComp.spreadAngle;
+            emitter->spawnShape         = emitterComp.spawnShape;
+            emitter->spawnRadius        = emitterComp.spawnRadius;
+            emitter->initialSize        = emitterComp.initialSize;
+            emitter->initialColor       = emitterComp.initialColor;
+            emitter->emissiveIntensity  = emitterComp.emissiveIntensity;
+            emitter->litMode            = emitterComp.litMode;
+            emitter->softParticleFadeRange = emitterComp.softParticleFadeRange;
+            emitter->facingMode         = emitterComp.facingMode;
+            emitter->stretchFactor      = emitterComp.stretchFactor;
+            emitter->blendMode          = emitterComp.blendMode;
+            emitter->cameraOffset       = emitterComp.cameraOffset;
+            emitter->pivotOffsetX       = emitterComp.pivotOffsetX;
+            emitter->pivotOffsetY       = emitterComp.pivotOffsetY;
+            emitter->sizeOverLifeStart  = emitterComp.sizeOverLifeStart;
+            emitter->sizeOverLifePeak   = emitterComp.sizeOverLifePeak;
+            emitter->sizeOverLifeEnd    = emitterComp.sizeOverLifeEnd;
+            emitter->sizeOverLifePeakTime = emitterComp.sizeOverLifePeakTime;
+            emitter->colorLifeStartR    = emitterComp.colorLifeStartR;
+            emitter->colorLifeStartG    = emitterComp.colorLifeStartG;
+            emitter->colorLifeStartB    = emitterComp.colorLifeStartB;
+            emitter->colorLifeStartA    = emitterComp.colorLifeStartA;
+            emitter->colorLifeEndR      = emitterComp.colorLifeEndR;
+            emitter->colorLifeEndG      = emitterComp.colorLifeEndG;
+            emitter->colorLifeEndB      = emitterComp.colorLifeEndB;
+            emitter->colorLifeEndA      = emitterComp.colorLifeEndA;
+            emitter->sizeBySpeedEnabled = emitterComp.sizeBySpeedEnabled;
+            emitter->sizeBySpeedMin     = emitterComp.sizeBySpeedMin;
+            emitter->sizeBySpeedMax     = emitterComp.sizeBySpeedMax;
+            emitter->speedRangeMax      = emitterComp.speedRangeMax;
+            emitter->colorBySpeedEnabled = emitterComp.colorBySpeedEnabled;
+            emitter->screenSpaceSizeEnabled = emitterComp.screenSpaceSizeEnabled;
+            emitter->screenSpacePixelSize = emitterComp.screenSpacePixelSize;
+            emitter->gravity            = emitterComp.gravity;
+            emitter->damping            = emitterComp.damping;
+            emitter->curlStrength       = emitterComp.curlStrength;
+            emitter->curlFrequency      = emitterComp.curlFrequency;
+            emitter->curlSpeed          = emitterComp.curlSpeed;
+            emitter->dragCoefficient    = emitterComp.dragCoefficient;
+            emitter->windDirX           = emitterComp.windDirX;
+            emitter->windDirY           = emitterComp.windDirY;
+            emitter->windDirZ           = emitterComp.windDirZ;
+            emitter->windStrength       = emitterComp.windStrength;
+            emitter->accelX             = emitterComp.accelX;
+            emitter->accelY             = emitterComp.accelY;
+            emitter->accelZ             = emitterComp.accelZ;
+            emitter->vortexTangentialStrength = emitterComp.vortexTangentialStrength;
+            emitter->vortexRadialStrength     = emitterComp.vortexRadialStrength;
+            emitter->vortexMaxRadius          = emitterComp.vortexMaxRadius;
+            emitter->orbitEnabled       = emitterComp.orbitEnabled;
+            emitter->orbitRadius        = emitterComp.orbitRadius;
+            emitter->orbitSpeed         = emitterComp.orbitSpeed;
+            emitter->groundCollision    = emitterComp.groundCollision;
+            emitter->restitution        = emitterComp.restitution;
+            emitter->collisionResponse  = emitterComp.collisionResponse;
+            emitter->collisionFriction  = emitterComp.collisionFriction;
+            emitter->rotationRate       = emitterComp.rotationRate;
+            emitter->rotationOverLifeStart = emitterComp.rotationOverLifeStart;
+            emitter->rotationOverLifeEnd   = emitterComp.rotationOverLifeEnd;
+            emitter->particleLightEnabled     = emitterComp.particleLightEnabled;
+            emitter->particleLightRadius      = emitterComp.particleLightRadius;
+            emitter->particleLightIntensity   = emitterComp.particleLightIntensity;
+            emitter->particleLightFlicker     = emitterComp.particleLightFlicker;
+            emitter->particleLightFlickerSpeed = emitterComp.particleLightFlickerSpeed;
+            emitter->emitterDuration    = emitterComp.emitterDuration;
+            emitter->loopCount          = emitterComp.loopCount;
+            emitter->startDelay         = emitterComp.startDelay;
+            emitter->isEmitting         = emitterComp.emitting;
 
             if (!emitter->Initialize(m_device, activeVFX->GetBudget())) {
                 UZ_LOG(VFX, Error,

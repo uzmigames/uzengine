@@ -27,6 +27,7 @@
     std::unique_ptr<OutlinePass> m_outlinePass;
     std::unique_ptr<GizmoRenderer> m_gizmoRenderer;
     std::unique_ptr<StatsOverlay> m_statsOverlay;
+    std::unique_ptr<VfxEditorOverlay> m_vfxEditorOverlay;
     std::unique_ptr<Camera> m_camera;
     std::unique_ptr<FlyCameraController> m_cameraCtrl;
     std::unique_ptr<rg::RgResourcePool> m_rgPool;
@@ -472,6 +473,7 @@
     float m_screenPercentage = 100.f;      ///< Render scale (10-200, default 100 = native resolution).
     float m_totalTime = 0.f;
     bool m_statsOverlayInitialized = false;
+    bool m_vfxEditorOverlayInitialized = false;
 
     // ── Screenshot ─────────────────────────────────────────────────────────
 

@@ -28,6 +28,7 @@
 #include "log.h"
 #include "editor_grid.h"
 #include "stats_overlay.h"
+#include "engine/vfx/editor/vfx_editor_overlay.h"
 #include "halton.h"
 #include "cvar.h"
 
@@ -122,6 +123,29 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
         m_statsOverlay->BeginFrame(ctx.dt);
     }
 
+    // ── VFX Editor Overlay deferred init ─────────────────────────────────
+    if (!m_vfxEditorOverlayInitialized && m_vfxEditorOverlay) {
+        UploadContext vfxUpload(m_device);
+        if (m_vfxEditorOverlay->Init(m_device, ctx.cmdList, vfxUpload,
+                m_shaderMgr->GetPipeline(), RHIFormat::RGBA8Unorm,
+                m_width, m_height, ctx.bindless)) {
+            m_vfxEditorOverlayInitialized = true;
+            UZ_LOG(Renderer, Info, "VfxEditorOverlay: initialized OK");
+        } else {
+            UZ_LOG(Renderer, Error, "VfxEditorOverlay: init FAILED");
+        }
+        ctx.cmdList->End();
+        ctx.cmdList->Execute();
+        m_device->WaitIdle();
+        vfxUpload.ReleaseStaging();
+        ctx.cmdList->Begin();
+    }
+
+    // ── VFX Editor Overlay begin frame ───────────────────────────────────
+    if (m_vfxEditorOverlayInitialized && m_vfxEditorOverlay->IsVisible()) {
+        m_vfxEditorOverlay->BeginFrame(ctx.frameIndex);
+    }
+
     // ── Shader hot-reload (poll every frame, recompile if .hlsl changed) ──
     if (m_shaderMgr) {
         auto recompiled = m_shaderMgr->GetPipeline().PollHotReload();
@@ -133,6 +157,15 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
 
     // ── Input ───────────────────────────────────────────────────────────
     m_input->BeginFrame();
+
+    // ── VFX Editor Overlay: handle mouse AFTER BeginFrame ────────────────
+    // The overlay tracks just-pressed internally from IsMouseDown,
+    // so it doesn't depend on InputSystem's BeginFrame timing.
+    bool vfxOverlayWantsMouse = false;
+    if (m_vfxEditorOverlayInitialized && m_vfxEditorOverlay &&
+        m_vfxEditorOverlay->IsVisible()) {
+        vfxOverlayWantsMouse = m_vfxEditorOverlay->HandleMouse(m_input.get(), ctx.dt);
+    }
 
     // ── Debug mode toggle: '0' = off, '1'-'7' = G-Buffer channels ──────
     if (m_input->IsKeyJustPressed(Key::Num0)) {
@@ -182,7 +215,8 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     }
 
     // Fallback: FlyCameraController when no ECS camera is active.
-    if (!cameraFromECS) {
+    // Suppress camera when VFX editor overlay wants mouse input.
+    if (!cameraFromECS && !vfxOverlayWantsMouse) {
         m_cameraCtrl->Update(*m_camera, *m_input, ctx.dt);
     }
 

@@ -385,13 +385,23 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         updateCBData.curlStrength          = emitter->curlStrength;
         updateCBData.curlFrequency         = emitter->curlFrequency;
         updateCBData.curlSpeed             = emitter->curlSpeed;
+        updateCBData.totalTime             = m_totalTime;
 
         updateCBData.vortexAxisOriginX     = emitter->vortexAxisOriginX;
         updateCBData.vortexAxisOriginY     = emitter->vortexAxisOriginY;
         updateCBData.vortexAxisOriginZ     = emitter->vortexAxisOriginZ;
-        updateCBData.vortexAxisDirX        = emitter->vortexAxisDirX;
-        updateCBData.vortexAxisDirY        = emitter->vortexAxisDirY;
-        updateCBData.vortexAxisDirZ        = emitter->vortexAxisDirZ;
+        // Normalize vortex axis direction on CPU (shader expects unit vector)
+        {
+            float vdx = emitter->vortexAxisDirX;
+            float vdy = emitter->vortexAxisDirY;
+            float vdz = emitter->vortexAxisDirZ;
+            float vlen = std::sqrt(vdx * vdx + vdy * vdy + vdz * vdz);
+            if (vlen > 1e-6f) { vdx /= vlen; vdy /= vlen; vdz /= vlen; }
+            else { vdx = 0.0f; vdy = 0.0f; vdz = 1.0f; }
+            updateCBData.vortexAxisDirX = vdx;
+            updateCBData.vortexAxisDirY = vdy;
+            updateCBData.vortexAxisDirZ = vdz;
+        }
         updateCBData.vortexTangentialStrength = emitter->vortexTangentialStrength;
         updateCBData.vortexRadialStrength   = emitter->vortexRadialStrength;
         updateCBData.vortexMaxRadius        = emitter->vortexMaxRadius;
@@ -399,6 +409,9 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         updateCBData.orbitEnabled           = emitter->orbitEnabled;
         updateCBData.orbitRadius             = emitter->orbitRadius;
         updateCBData.orbitSpeed              = emitter->orbitSpeed;
+        updateCBData.orbitAxisX              = emitter->orbitAxisX;
+        updateCBData.orbitAxisY              = emitter->orbitAxisY;
+        updateCBData.orbitAxisZ              = emitter->orbitAxisZ;
 
         updateCBData.groundCollision        = emitter->groundCollision;
         updateCBData.restitution            = emitter->restitution;

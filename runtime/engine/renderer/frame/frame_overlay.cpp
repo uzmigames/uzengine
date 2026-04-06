@@ -26,6 +26,7 @@
 #include "stats_overlay.h"
 #include "engine/vfx/vfx_system.h"
 #include "engine/vfx/components/particle_emitter.h"
+#include "engine/vfx/editor/vfx_editor_overlay.h"
 
 #include <cstdio>
 #include <cstring>
@@ -224,6 +225,23 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
                 }
 
                 m_statsOverlay->Render(cmd, *m_cbRing, ctx.frameIndex);
+            }
+
+            // ── VFX Editor Overlay ──────────────────────────────────
+            if (m_vfxEditorOverlayInitialized && m_vfxEditorOverlay &&
+                m_vfxEditorOverlay->IsVisible()) {
+                // HandleMouse is called in frame_setup.cpp (before camera controller)
+                // so clicks are processed before camera consumes them.
+                VFXSystem* vfx = m_vfxSystemOverride ? m_vfxSystemOverride : m_vfxSystem.get();
+                if (vfx && vfx->IsInitialized()) {
+                    const auto& emitters = vfx->GetActiveEmitters();
+                    if (!emitters.empty()) {
+                        ParticleEmitter* activeEmitter = m_vfxEditorOverlay->GetCurrentEmitter();
+                        if (!activeEmitter) activeEmitter = emitters[0];
+                        m_vfxEditorOverlay->BuildUI(activeEmitter, m_input.get());
+                    }
+                }
+                m_vfxEditorOverlay->Render(cmd, *m_cbRing);
             }
 
             cmd->EndRenderPass();
