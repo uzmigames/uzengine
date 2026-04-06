@@ -25,9 +25,9 @@ cbuffer SsrTraceRootCB : register(b0) {
     float  intensity;           // 6
     float  roughnessMaskScale;  // 7  = -2.0/MaxRoughness
     uint   hitDistUavIdx;       // 8 — bindless UAV index for hit distance output
-    uint   _pad9;               // 9
-    uint   _pad10;              // 10
-    uint   _pad11;              // 11
+    uint   hizMip0SrvIdx;       // 9 — Hi-Z mip 0 (half-res min-reduced depth)
+    uint   hizMip1SrvIdx;       // 10 — Hi-Z mip 1 (quarter-res)
+    uint   hizMipCount;         // 11 — number of Hi-Z mip levels available (0 = use full-res only)
 };
 
 cbuffer PerFrameCB : register(b1) {
@@ -240,42 +240,107 @@ void main(uint3 DTid : SV_DispatchThreadID)
     }
     tMax = max(tMax, 0.0);
 
-    float stepSize = tMax / float(NUM_STEPS);
-    float t = stepSize * jitter;
-
-    // Linear march
     float3 hitUVZ = float3(0, 0, 0);
     bool hit = false;
-
-    float lastDepthDiff = 0.0;
     float lastT = 0.0;
+    float stepSize = tMax / float(NUM_STEPS);
 
-    for (uint i = 0; i < NUM_STEPS; i++) {
-        float3 ssSample = ssStart + ssDir * t;
+    // ── Hi-Z hierarchical ray march (when mip chain is available) ───────
+    // @ref McGuire 2014 "Efficient GPU Screen-Space Ray Tracing"
+    // @ref AMD FidelityFX SSSR — hierarchical mip stepping
+    //
+    // Phase 1: Coarse march at Hi-Z mip 1 (quarter-res) — large steps, skip empty space
+    // Phase 2: Fine march at Hi-Z mip 0 (half-res) — refine near intersection
+    // Phase 3: Binary refinement at full-res depth
+    //
+    // Fallback: when hizMipCount == 0, use flat linear march (original algorithm).
 
-        if (any(ssSample.xy < 0.0) || any(ssSample.xy > 1.0)) break;
+    if (hizMipCount >= 2) {
+        // Hi-Z hierarchical march available
+        Texture2D<float> hizMip0 = ResourceDescriptorHeap[hizMip0SrvIdx]; // half-res
+        Texture2D<float> hizMip1 = ResourceDescriptorHeap[hizMip1SrvIdx]; // quarter-res
 
-        float sceneDepth = hizTex.SampleLevel(pointClamp, ssSample.xy, 0).r;
-        float rayDepth   = ssSample.z;
+        float t = stepSize * jitter;
 
-        // Reversed-Z: ray is behind scene when rayDepth < sceneDepth
-        float depthDiff = rayDepth - sceneDepth;
+        // Phase 1: Coarse march at mip 1 (quarter-res) — 4x coverage per step
+        // Each texel covers 4x4 source pixels, so we step 4x larger.
+        float coarseStepSize = tMax / float(NUM_STEPS / 4);
+        float lastCoarseT = 0.0;
 
-        // Tolerance scales with step size to avoid misses
-        float tolerance = stepSize * abs(ssDir.z) * 2.0 + 0.0001;
+        for (uint i = 0; i < NUM_STEPS / 4; i++) {
+            float3 ssSample = ssStart + ssDir * t;
+            if (any(ssSample.xy < 0.0) || any(ssSample.xy > 1.0)) break;
 
-        if (depthDiff < 0.0 && depthDiff > -tolerance && sceneDepth > 0.0001) {
-            hitUVZ = ssSample;
-            hit = true;
-            break;
+            // Reversed-Z min-reduced: mip stores min(depth) = closest surface
+            float sceneDepth = hizMip1.SampleLevel(pointClamp, ssSample.xy, 0).r;
+            float depthDiff = ssSample.z - sceneDepth;
+            float tolerance = coarseStepSize * abs(ssDir.z) * 2.0 + 0.001;
+
+            if (depthDiff < 0.0 && depthDiff > -tolerance && sceneDepth > 0.0001) {
+                // Potential hit at coarse level — refine in phase 2
+                hitUVZ = ssSample;
+                hit = true;
+                break;
+            }
+
+            lastCoarseT = t;
+            t += coarseStepSize;
         }
 
-        lastDepthDiff = depthDiff;
-        lastT = t;
-        t += stepSize;
+        // Phase 2: Fine march at mip 0 (half-res) — refine around the coarse hit
+        if (hit) {
+            hit = false;
+            float fineStart = max(lastCoarseT, 0.0);
+            float fineEnd   = min(lastCoarseT + coarseStepSize * 2.0, tMax);
+            float fineStepSize = (fineEnd - fineStart) / float(NUM_STEPS / 2);
+            float fineT = fineStart;
+            float lastFineT = fineStart;
+
+            for (uint j = 0; j < NUM_STEPS / 2; j++) {
+                float3 ssSample = ssStart + ssDir * fineT;
+                if (any(ssSample.xy < 0.0) || any(ssSample.xy > 1.0)) break;
+
+                float sceneDepth = hizMip0.SampleLevel(pointClamp, ssSample.xy, 0).r;
+                float depthDiff = ssSample.z - sceneDepth;
+                float tolerance = fineStepSize * abs(ssDir.z) * 2.0 + 0.0005;
+
+                if (depthDiff < 0.0 && depthDiff > -tolerance && sceneDepth > 0.0001) {
+                    hitUVZ = ssSample;
+                    hit = true;
+                    lastT = lastFineT;
+                    stepSize = fineStepSize;
+                    break;
+                }
+
+                lastFineT = fineT;
+                fineT += fineStepSize;
+            }
+        }
+    } else {
+        // Fallback: flat linear march (no Hi-Z mips available)
+        float t = stepSize * jitter;
+
+        for (uint i = 0; i < NUM_STEPS; i++) {
+            float3 ssSample = ssStart + ssDir * t;
+            if (any(ssSample.xy < 0.0) || any(ssSample.xy > 1.0)) break;
+
+            float sceneDepth = hizTex.SampleLevel(pointClamp, ssSample.xy, 0).r;
+            float depthDiff = ssSample.z - sceneDepth;
+            float tolerance = stepSize * abs(ssDir.z) * 2.0 + 0.0001;
+
+            if (depthDiff < 0.0 && depthDiff > -tolerance && sceneDepth > 0.0001) {
+                hitUVZ = ssSample;
+                hit = true;
+                break;
+            }
+
+            lastT = t;
+            t += stepSize;
+        }
     }
 
-    // Binary refinement — refine hit position within the crossing interval.
+    // Phase 3: Binary refinement at full-res depth.
+    // @ref McGuire 2014 — final refinement at highest resolution.
     // Skip refinement for grazing-angle rays where depth comparison is unreliable.
     if (hit && abs(ssDir.z) > 1e-5) {
         float tLow  = lastT;
@@ -285,9 +350,9 @@ void main(uint3 DTid : SV_DispatchThreadID)
             float tMid = (tLow + tHigh) * 0.5;
             float3 ssMid = ssStart + ssDir * tMid;
 
-            // Screen-bounds check — stop refinement if midpoint exits [0,1]
             if (any(ssMid.xy < 0.0) || any(ssMid.xy > 1.0)) break;
 
+            // Full-res depth for final refinement
             float sceneZ = hizTex.SampleLevel(pointClamp, ssMid.xy, 0).r;
             float diff = ssMid.z - sceneZ;
 

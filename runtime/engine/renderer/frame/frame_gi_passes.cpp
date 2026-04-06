@@ -315,7 +315,7 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
                 uint32_t depthSrvIdx, normalSrvIdx, hizSrvIdx, sceneColorSrvIdx;
                 uint32_t outputWidth, outputHeight;
                 float intensity, roughnessMaskScale;
-                uint32_t hitDistUavIdx, pad9, pad10, pad11;
+                uint32_t hitDistUavIdx, hizMip0SrvIdx, hizMip1SrvIdx, hizMipCount;
             };
 
             // Read SSR MaxRoughness from CVar (avoid hardcoded constant)
@@ -324,8 +324,7 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
             SsrTraceConstants rc{};
             rc.depthSrvIdx      = m_gbuffer.depthSRV;
             rc.normalSrvIdx     = m_gbuffer.normalSRV;
-            // Hi-Z mip 0 is half-res min-reduced — depth comparison needs full-res.
-            // Keep raw depth SRV until the shader is updated for Hi-Z mip hierarchy traversal (Phase 3).
+            // Full-res depth for binary refinement (phase 3)
             rc.hizSrvIdx        = m_gbuffer.depthSRV;
             // Use previous frame's HDR copy — breaks SSR feedback loop (UE5 pattern)
             rc.sceneColorSrvIdx = m_ssrPrevSceneColorSrv;
@@ -334,6 +333,11 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
             rc.intensity        = cv_SSRIntensity->value;
             rc.roughnessMaskScale = -2.0f / ssrMaxRoughness;
             rc.hitDistUavIdx    = m_ssrHitDistanceUav;
+            // Hi-Z mip SRV indices for hierarchical march
+            // mipLevels[0] = half-res, mipLevels[1] = quarter-res
+            rc.hizMip0SrvIdx    = (m_hizMipCount >= 1) ? m_hizMipLevels[0].srvIndex : UINT32_MAX;
+            rc.hizMip1SrvIdx    = (m_hizMipCount >= 2) ? m_hizMipLevels[1].srvIndex : UINT32_MAX;
+            rc.hizMipCount      = m_hizMipCount;
 
             cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 12);
             cmd->SetRootCBV(kSlotPerFrame, ctx.perFrameAlloc.bufferHandle,
