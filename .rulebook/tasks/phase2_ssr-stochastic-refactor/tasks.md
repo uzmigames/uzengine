@@ -31,7 +31,7 @@
 - [x] 3.7 Tile classification compute pass: ssr_tile_classify_cs.hlsl (8x8 tiles, roughness gate, ray compaction via groupshared+InterlockedAdd, bindless UAV), ssr_prepare_indirect_cs.hlsl (ray count → DispatchIndirectArgs, counter reset). Buffers: m_ssrRayList + m_ssrRayCounterArgs. PSOs registered. Trace pass still direct dispatch (indirect follow-up).
 - [ ] 3.8 Implement roughness-adaptive spatial kernel in ssr_resolve_cs.hlsl — ellipse aligned to projected GGX specular lobe major/minor axes, replacing isotropic Poisson disk.
 - [ ] 3.9 Add exposure correction to prev-frame color sampling — `prevColor *= PreExposure / PrevPreExposure` to prevent brightness flicker on auto-exposure changes.
-- [ ] 3.10 Wire Hi-Z mip hierarchy into trace shader — pass mip count as root constant, implement mip-level stepping (start coarse, refine on hit) per McGuire 2014 / AMD SSSR pattern.
+- [x] 3.10 Hi-Z mip hierarchy: two-phase march (coarse at mip1 quarter-res 8 steps, fine at mip0 half-res 16 steps, binary refinement full-res 4 steps). Root constants: hizMip0SrvIdx, hizMip1SrvIdx, hizMipCount. Falls back to linear march when hizMipCount==0.
 - [x] 3.11 Build passes: 127 shaders OK, C++ compiles clean, 8/8 VNDF parity tests pass. Re-enabled temporal + spatial denoise passes. r.SSR=true default. Visual verify pending.
 
 ## Phase 4 — Cascade Architecture (A-tier -> S-tier, future)
