@@ -6,6 +6,7 @@
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| [v0.9.0](../docs/changelog/runtime/v0.9.0.md) | 2026-04-06 | AMD FidelityFX Brixelizer GI integration (sparse SDF voxel GI, diffuse+specular indirect, 10 CVars, shader composite) |
 | [v0.8.0](../docs/changelog/runtime/v0.8.0.md) | 2026-04-05 | Froxel volumetric fog, PMREM cubemap pipeline, IBL specular fix, glass transmission, forward translucent pass, zig shader detection |
 | [v0.7.0](../docs/changelog/runtime/v0.7.0.md) | 2026-04-04 | AAA analysis, 47 CVars, DLSS, KTX2/UASTC HDR, MikkTSpace, smooth normals, ACES tonemap |
 | [v0.6.0](../docs/changelog/runtime/v0.6.0.md) | 2026-04-03 | DXR raytracing infra, DamagedHelmet glTF, material graph pipeline |

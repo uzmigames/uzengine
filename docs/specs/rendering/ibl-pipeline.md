@@ -159,3 +159,14 @@ the same RGBA16F 6-face cubemap consumed by `BakeEnvironment()`.
 | IBL bake triggered by sky change flag | Done |
 | IBL from HDR equirectangular file (Phase 3 artist workflow) | Planned |
 | IBL from in-scene cubemap capture actors | Planned |
+| Brixelizer GI diffuse + specular composite in deferred lighting | In Progress |
+
+### Brixelizer GI Integration
+
+AMD FidelityFX Brixelizer GI adds spatially-varying indirect lighting (diffuse + specular) that supplements the global IBL pipeline. While IBL provides uniform ambient from the sky cubemap, Brixelizer GI provides **local** indirect light that varies based on geometry (e.g., bright near windows, dark in corridors).
+
+In `deferred_lighting_ps.hlsl`, Brixelizer GI output is sampled after IBL and added to the ambient terms:
+- `diffuseAmbient += brixDiffuse × baseColor × (1 - metallic)`
+- `specularAmbient += brixSpecular × lerp(F0, 1, roughness × 0.5)`
+
+The GI output SRV index is passed via `brixGIDiffuseSrv` in PerFrameCB (offset 764). Specular SRV is at `diffuseSrv + 1` by allocation convention. Gated by `r.BrixelizerGI` CVar (default: off). See `docs/specs/rendering/gi-system.md` for full Brixelizer GI specification.
