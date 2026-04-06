@@ -1,10 +1,12 @@
-/// UzEngine SSR Trace — Hi-Z screen-space ray march with GGX importance sampling.
+/// UzEngine SSR Trace — Hi-Z screen-space ray march with GGX VNDF importance sampling.
+/// @ref Dupuy & Benyoub 2023 "Sampling Visible GGX Normals with Spherical Caps"
 /// @ref Stachowiak 2015 "Stochastic Screen-Space Reflections"
 /// @ref McGuire 2014 "Efficient GPU Screen-Space Ray Tracing"
-/// @ref Walter 2007 "Microfacet Models for Refraction" — GGX importance sampling
-/// @constants MaxRoughness = 0.8, NumSteps = 32, BinarySteps = 4
+/// @ref AMD 2020 "FidelityFX Stochastic Screen-Space Reflections" (pipeline pattern)
+/// @constants MaxRoughness = 0.8, NumSteps = 32, BinarySteps = 4, MirrorThreshold = 0.04
 
 #include "../common/encoding.hlsli"
+#include "../common/sampling.hlsli"
 
 cbuffer SsrTraceRootCB : register(b0) {
 #ifdef UZ_BINDLESS
@@ -22,6 +24,10 @@ cbuffer SsrTraceRootCB : register(b0) {
     uint   outputHeight;        // 5
     float  intensity;           // 6
     float  roughnessMaskScale;  // 7  = -2.0/MaxRoughness
+    uint   hitDistUavIdx;       // 8 — bindless UAV index for hit distance output
+    uint   _pad9;               // 9
+    uint   _pad10;              // 10
+    uint   _pad11;              // 11
 };
 
 cbuffer PerFrameCB : register(b1) {
@@ -45,16 +51,26 @@ Texture2D<float4> t_sceneColor : register(t3);
 SamplerState pointClamp  : register(s0);
 SamplerState linearClamp : register(s2);
 
-static const uint  NUM_STEPS    = 32;
-static const uint  BINARY_STEPS = 4;
-static const float MAX_DISTANCE = 5000.0; // cm
+static const uint  NUM_STEPS       = 32;
+static const uint  BINARY_STEPS    = 4;
+static const float MAX_DISTANCE    = 5000.0; // cm
+static const float MIRROR_THRESHOLD = 0.04;  // roughness below this uses mirror reflect
 
 /// @ref Jimenez 2014 "Next Generation Post Processing in Call of Duty"
-/// @ref UE5 RandomInterleavedGradientNoise.ush — temporal rotation per frame
+/// @ref Stachowiak 2015 — temporal IGN rotation per frame for stochastic convergence
 /// @constants IGN = {0.06711056, 0.00583715, 52.9829189}, frame rotation = float2(47, 17) * 0.695
 float IGN(float2 p, uint frameIndex) {
-    p += float(frameIndex % 8) * float2(47.0, 17.0) * 0.695;
+    p += float(frameIndex % 64) * float2(47.0, 17.0) * 0.695;
     return frac(52.9829189 * frac(p.x * 0.06711056 + p.y * 0.00583715));
+}
+
+/// Generate 2D quasi-random sample for VNDF using per-pixel IGN with temporal rotation.
+/// @ref Stachowiak 2015 — use IGN as low-discrepancy 2D seed per pixel per frame.
+/// Two independent IGN evaluations with different spatial offsets provide the 2D sample.
+float2 GetBlueNoiseSample(uint2 pixel, uint frameIndex) {
+    float u0 = IGN(float2(pixel), frameIndex);
+    float u1 = IGN(float2(pixel) + float2(37.0, 59.0), frameIndex);
+    return float2(u0, u1);
 }
 
 float LinearizeDepth(float deviceZ) {
@@ -90,6 +106,21 @@ float RoughnessFade(float roughness) {
     return saturate(roughness * roughnessMaskScale + 2.0);
 }
 
+/// Build an orthonormal basis (tangent frame) from a normal vector.
+/// @ref Frisvad 2012 "Building an Orthonormal Basis from a 3D Unit Vector"
+/// Returns tangent T and bitangent B such that (T, B, N) is right-handed.
+void BuildTangentFrame(float3 N, out float3 T, out float3 B) {
+    if (N.z < -0.9999) {
+        T = float3(0.0, -1.0, 0.0);
+        B = float3(-1.0, 0.0, 0.0);
+    } else {
+        float a = 1.0 / (1.0 + N.z);
+        float b = -N.x * N.y * a;
+        T = float3(1.0 - N.x * N.x * a, b, -N.x);
+        B = float3(b, 1.0 - N.y * N.y * a, -N.y);
+    }
+}
+
 [numthreads(8, 8, 1)]
 void main(uint3 DTid : SV_DispatchThreadID)
 {
@@ -115,6 +146,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
     // Sky
     if (deviceZ <= 0.0001) {
         outputSSR[DTid.xy] = float4(0, 0, 0, 0);
+        RWTexture2D<float> hd = ResourceDescriptorHeap[hitDistUavIdx]; hd[DTid.xy] = 0.0;
         return;
     }
 
@@ -128,26 +160,55 @@ void main(uint3 DTid : SV_DispatchThreadID)
     float rFade = RoughnessFade(roughness);
     if (rFade <= 0.0) {
         outputSSR[DTid.xy] = float4(0, 0, 0, 0);
+        RWTexture2D<float> hd = ResourceDescriptorHeap[hitDistUavIdx]; hd[DTid.xy] = 0.0;
         return;
     }
 
-    // Reconstruct world position and reflection direction
+    // Reconstruct world position and view direction
     float3 worldPos = ReconstructWorldPos(uv, deviceZ);
     float3 V = normalize(cameraPos.xyz - worldPos);
 
-    // Mirror reflection — deterministic per-pixel, no temporal noise.
-    // Rough surfaces are handled by the resolve pass (spatial blur) and
-    // by the IBL prefiltered cubemap (which already integrates roughness).
-    // SSR provides sharp screen-space detail; IBL provides smooth environment.
-    float3 R = reflect(-V, N);
+    // Frame index for temporal variation
+    uint frameIndex = uint(timeParams.z);
 
-    // Spatial-only jitter — no temporal variation for mirror-only SSR.
-    // Temporal IGN rotation requires temporal accumulation to converge, which
-    // is disabled until stochastic GGX sampling (Phase 3). Without temporal
-    // accumulation, frame-varying jitter causes per-frame hit position shifts
-    // that the post-TAA composite shows as flickering noise.
-    // Will switch to temporal IGN when VNDF + temporal denoise are enabled.
-    float jitter = IGN(float2(DTid.xy), 0);
+    // ── Ray direction selection: mirror vs VNDF stochastic ──
+    // @ref Dupuy & Benyoub 2023 — VNDF importance sampling for rough surfaces
+    // @ref Stachowiak 2015 — stochastic multi-ray with temporal accumulation
+    //
+    // For roughness < MIRROR_THRESHOLD (perfect mirrors), use deterministic mirror
+    // reflection. For rougher surfaces, use VNDF importance sampling with
+    // temporally-rotated blue noise seeds. The temporal pass accumulates multiple
+    // frames to converge the stochastic result.
+    float3 R;
+    if (roughness <= MIRROR_THRESHOLD) {
+        // Mirror reflection — deterministic, no noise
+        R = reflect(-V, N);
+    } else {
+        // GGX VNDF importance sampling — stochastic ray per pixel per frame
+        float alpha = roughness * roughness;
+
+        // Build tangent frame from the world-space normal
+        float3 T, B;
+        BuildTangentFrame(N, T, B);
+
+        // Transform view direction to tangent space
+        float3 V_tangent = float3(dot(V, T), dot(V, B), dot(V, N));
+
+        // Get 2D blue noise sample with temporal rotation
+        float2 xi = GetBlueNoiseSample(DTid.xy, frameIndex);
+
+        // Sample the VNDF — returns half vector H in tangent space
+        float3 H_tangent = SampleGGX_VNDF(alpha, V_tangent, xi);
+
+        // Transform H back to world space
+        float3 H_world = H_tangent.x * T + H_tangent.y * B + H_tangent.z * N;
+
+        // Reflect view direction around the sampled microfacet normal
+        R = reflect(-V, H_world);
+    }
+
+    // Jitter for ray march step offset (spatial only for mirror, temporal for stochastic)
+    float jitter = IGN(float2(DTid.xy), roughness > MIRROR_THRESHOLD ? frameIndex : 0u);
 
     // Ray march in screen space
     float3 rayStart = worldPos + R * 1.0; // small offset to avoid self-hit
@@ -159,6 +220,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
     // Skip rays going behind the camera
     if (ssEnd.z < 0.0) {
         outputSSR[DTid.xy] = float4(0, 0, 0, 0);
+        RWTexture2D<float> hd = ResourceDescriptorHeap[hitDistUavIdx]; hd[DTid.xy] = 0.0;
         return;
     }
 
@@ -240,8 +302,14 @@ void main(uint3 DTid : SV_DispatchThreadID)
 
     if (!hit) {
         outputSSR[DTid.xy] = float4(0, 0, 0, 0);
+        RWTexture2D<float> hd = ResourceDescriptorHeap[hitDistUavIdx]; hd[DTid.xy] = 0.0;
         return;
     }
+
+    // Compute hit distance in world space for temporal virtual reprojection.
+    // @ref AMD FidelityFX SSSR — store hit distance for reproject via prev VP matrix.
+    float3 hitWorldPos = ReconstructWorldPos(hitUVZ.xy, hitUVZ.z);
+    float hitDist = length(hitWorldPos - worldPos);
 
     // Fetch scene color at hit point
     float3 hitColor = colorTex.SampleLevel(linearClamp, hitUVZ.xy, 0).rgb;
@@ -253,4 +321,5 @@ void main(uint3 DTid : SV_DispatchThreadID)
     // Store linear (non-premultiplied) color + confidence.
     // Premultiply is done in deferred_lighting_ps.hlsl to avoid triple-weighting.
     outputSSR[DTid.xy] = float4(hitColor, confidence);
+    RWTexture2D<float> hdOut = ResourceDescriptorHeap[hitDistUavIdx]; hdOut[DTid.xy] = hitDist;
 }

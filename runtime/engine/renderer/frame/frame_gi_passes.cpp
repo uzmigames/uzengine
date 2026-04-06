@@ -206,12 +206,16 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
             auto ssrTracePSO = ctx.pipelines->GetSsrTrace();
             if (!ssrTracePSO.IsValid() || cv_SSRTrace->value < 0.5f) return;
 
+            // Transition both trace output and hit distance to UAV
             {
-                RHIBarrierDesc barrier{};
-                barrier.texture     = m_ssrTraceOutput;
-                barrier.stateBefore = RHIResourceState::ShaderResource;
-                barrier.stateAfter  = RHIResourceState::UnorderedAccess;
-                cmd->ResourceBarrier(&barrier, 1);
+                RHIBarrierDesc barriers[2]{};
+                barriers[0].texture     = m_ssrTraceOutput;
+                barriers[0].stateBefore = RHIResourceState::ShaderResource;
+                barriers[0].stateAfter  = RHIResourceState::UnorderedAccess;
+                barriers[1].texture     = m_ssrHitDistance;
+                barriers[1].stateBefore = RHIResourceState::ShaderResource;
+                barriers[1].stateAfter  = RHIResourceState::UnorderedAccess;
+                cmd->ResourceBarrier(barriers, 2);
             }
 
             cmd->SetPipeline(ssrTracePSO);
@@ -220,6 +224,7 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
                 uint32_t depthSrvIdx, normalSrvIdx, hizSrvIdx, sceneColorSrvIdx;
                 uint32_t outputWidth, outputHeight;
                 float intensity, roughnessMaskScale;
+                uint32_t hitDistUavIdx, pad9, pad10, pad11;
             };
 
             // Read SSR MaxRoughness from CVar (avoid hardcoded constant)
@@ -237,8 +242,9 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
             rc.outputHeight     = m_renderHeight;
             rc.intensity        = cv_SSRIntensity->value;
             rc.roughnessMaskScale = -2.0f / ssrMaxRoughness;
+            rc.hitDistUavIdx    = m_ssrHitDistanceUav;
 
-            cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
+            cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 12);
             cmd->SetRootCBV(kSlotPerFrame, ctx.perFrameAlloc.bufferHandle,
                             ctx.perFrameAlloc.offsetBytes, ctx.perFrameAlloc.cpuPtr,
                             sizeof(PerFrameCB));
@@ -248,12 +254,16 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
             const uint32_t groupsY = (m_renderHeight + 7) / 8;
             cmd->Dispatch(groupsX, groupsY, 1);
 
+            // Transition both back to SRV
             {
-                RHIBarrierDesc barrier{};
-                barrier.texture     = m_ssrTraceOutput;
-                barrier.stateBefore = RHIResourceState::UnorderedAccess;
-                barrier.stateAfter  = RHIResourceState::ShaderResource;
-                cmd->ResourceBarrier(&barrier, 1);
+                RHIBarrierDesc barriers[2]{};
+                barriers[0].texture     = m_ssrTraceOutput;
+                barriers[0].stateBefore = RHIResourceState::UnorderedAccess;
+                barriers[0].stateAfter  = RHIResourceState::ShaderResource;
+                barriers[1].texture     = m_ssrHitDistance;
+                barriers[1].stateBefore = RHIResourceState::UnorderedAccess;
+                barriers[1].stateAfter  = RHIResourceState::ShaderResource;
+                cmd->ResourceBarrier(barriers, 2);
             }
         });
     });
@@ -313,11 +323,9 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
         });
     });
 
-    // SSR Temporal accumulation — DISABLED until stochastic GGX sampling (Phase 3).
-    // Mirror-only SSR produces deterministic output per-pixel — no noise to accumulate.
-    // The temporal pass was causing TAA neighborhood contamination on adjacent surfaces.
-    // Will be re-enabled with VNDF importance sampling per AMD FidelityFX SSSR pattern.
-    if (false) {
+    // SSR Temporal accumulation — virtual hit reprojection + YCoCg variance clip.
+    // @ref AMD FidelityFX SSSR — temporal pass uses hit distance for virtual reprojection.
+    {
         const uint32_t ssrWriteIdx = m_ssrHistoryIndex;
         const uint32_t ssrReadIdx  = 1 - m_ssrHistoryIndex;
         const bool ssrFirstFrame = !m_prevViewProjValid
@@ -347,7 +355,7 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
 
                 struct SsrTemporalConstants {
                     uint32_t currentSsrSrvIdx, historySsrSrvIdx, velocitySrvIdx, depthSrvIdx;
-                    uint32_t outputWidth, outputHeight, firstFrame, reserved;
+                    uint32_t outputWidth, outputHeight, firstFrame, hitDistSrvIdx;
                 };
 
                 SsrTemporalConstants rc{};
@@ -358,11 +366,27 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
                 rc.outputWidth      = m_renderWidth;
                 rc.outputHeight     = m_renderHeight;
                 rc.firstFrame       = ssrFirstFrame ? 1u : 0u;
+                rc.hitDistSrvIdx    = m_ssrHitDistanceSrv;
 
                 cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
                 cmd->SetRootCBV(kSlotPerFrame, ctx.perFrameAlloc.bufferHandle,
                                 ctx.perFrameAlloc.offsetBytes, ctx.perFrameAlloc.cpuPtr,
                                 sizeof(PerFrameCB));
+
+                // Bind prevViewProj matrix at slot 2 (b2) via CBV from the CB ring.
+                // @ref AMD FidelityFX SSSR — prevVP needed for virtual hit reprojection.
+                struct SsrTemporalPrevVP {
+                    Mat4 prevViewProj;
+                };
+                auto prevVPAlloc = m_cbRing->Allocate(sizeof(SsrTemporalPrevVP));
+                if (prevVPAlloc.cpuPtr) {
+                    auto* pvp = reinterpret_cast<SsrTemporalPrevVP*>(prevVPAlloc.cpuPtr);
+                    pvp->prevViewProj = m_prevViewProj;
+                    cmd->SetRootCBV(kSlotPerObject, prevVPAlloc.bufferHandle,
+                                    prevVPAlloc.offsetBytes, prevVPAlloc.cpuPtr,
+                                    sizeof(SsrTemporalPrevVP));
+                }
+
                 cmd->SetDescriptorTable(4, m_ssrHistoryUav[ssrWriteIdx]);
 
                 const uint32_t groupsX = (m_renderWidth + 7) / 8;
@@ -382,10 +406,9 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
         m_ssrHistoryIndex = 1 - m_ssrHistoryIndex;
     }
 
-    // SSR Spatial Bilateral Denoise — DISABLED until stochastic GGX sampling (Phase 3).
-    // Without stochastic sampling, the resolve pass output is already clean (mirror-only).
-    // Will be re-enabled with VNDF importance sampling per AMD FidelityFX SSSR pattern.
-    if (false) {
+    // SSR Spatial Bilateral Denoise — post-temporal cleanup.
+    // @ref AMD FidelityFX SSSR DNSR_Prefilter — bilateral denoise after temporal.
+    {
         const uint32_t ssrJustWritten = 1 - m_ssrHistoryIndex;
 
         rgBuilder.AddPass("SSR_SpatialDenoise", [&, ssrJustWritten](rg::RgPassBuilder& pb) {

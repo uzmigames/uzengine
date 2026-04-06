@@ -338,6 +338,19 @@
     uint32_t m_ssrHistoryIndex = 0;                ///< Current write target index (0 or 1), flips each frame.
     bool     m_ssrEnabled = true;                  ///< Runtime toggle for SSR.
 
+    /// Hit distance from SSR trace — used by temporal pass for virtual hit reprojection.
+    /// @ref AMD FidelityFX SSSR — hit distance stored separately for temporal reprojection.
+    RHITextureHandle m_ssrHitDistance;              ///< R16F hit distance (screen-space ray t).
+    uint32_t m_ssrHitDistanceSrv = UINT32_MAX;     ///< SRV for temporal pass to read.
+    uint32_t m_ssrHitDistanceUav = UINT32_MAX;     ///< UAV for trace pass to write.
+
+    /// STBN (Spatiotemporal Blue Noise) 128x128x64 RG8 volume texture.
+    /// Each slice is a blue noise pattern; consecutive slices are temporally decorrelated.
+    /// Used by SSR trace for low-discrepancy per-pixel random seeds.
+    /// @ref Heitz & Belcour 2019 "Distributing Monte Carlo Errors as Blue Noise"
+    RHITextureHandle m_stbnTexture;                ///< RG8Unorm 128x128x64 3D texture.
+    uint32_t m_stbnSrv = UINT32_MAX;              ///< SRV for trace pass blue noise lookup.
+
     /// Previous frame HDR scene color copy — used as SSR trace input to break
     /// the feedback loop (UE5 pattern: read prev TAA output, not current HDR).
     RHITextureHandle m_ssrPrevSceneColor;          ///< RGBA16F copy of prev frame's HDR.

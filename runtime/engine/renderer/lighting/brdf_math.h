@@ -566,4 +566,69 @@ static constexpr Vec3 kACES_AP1_RGB2Y = {0.2722287168f, 0.6740817658f, 0.0536895
     return 0.5f / std::max(GGXV + GGXL, 1e-7f);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// §10 — GGX VNDF Importance Sampling (CPU parity)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// GGX importance sampling (standard NDF) — returns half vector H in tangent space (Z-up).
+/// @ref Walter et al. 2007 "Microfacet Models for Refraction through Rough Surfaces"
+/// @constants cosTheta^2 = (1 - u.x) / (1 + (a^2 - 1) * u.x), phi = 2*PI * u.y
+///
+/// CPU mirror of shaders/runtime/common/sampling.hlsli::ImportanceSampleGGX.
+[[nodiscard]] inline Vec3 ImportanceSampleGGX(float ux, float uy, float roughness) noexcept {
+    const float alpha = roughness * roughness;
+    const float a2 = alpha * alpha;
+
+    const float cosTheta = std::sqrt((1.0f - ux) / (1.0f + (a2 - 1.0f) * ux));
+    const float sinTheta = std::sqrt(std::max(1.0f - cosTheta * cosTheta, 0.0f));
+    const float phi = 2.0f * kPI * uy;
+
+    return Vec3{sinTheta * std::cos(phi), sinTheta * std::sin(phi), cosTheta};
+}
+
+/// Sample the GGX Visible Normal Distribution Function (VNDF) using the
+/// spherical cap method. Returns a microfacet normal (half vector) in
+/// tangent space visible from the incident direction wi.
+///
+/// @ref Dupuy & Benyoub 2023 "Sampling Visible GGX Normals with Spherical Caps"
+///
+/// CPU mirror of shaders/runtime/common/sampling.hlsli::SampleGGX_VNDF.
+///
+/// alpha: isotropic GGX roughness (alpha = roughness^2)
+/// wi:    incident direction in tangent space (Z-up), must be normalized
+/// ux, uy: 2D uniform random sample in [0,1]^2
+[[nodiscard]] inline Vec3 SampleGGX_VNDF(float alpha, Vec3 wi, float ux, float uy) noexcept {
+    // Transform the view direction to the hemisphere configuration
+    // (stretch the ellipsoid into a hemisphere)
+    Vec3 Vh = Vec3{alpha * wi.x, alpha * wi.y, wi.z};
+    const float lenVh = std::sqrt(Vh.x * Vh.x + Vh.y * Vh.y + Vh.z * Vh.z);
+    if (lenVh > 0.0f) {
+        Vh.x /= lenVh;
+        Vh.y /= lenVh;
+        Vh.z /= lenVh;
+    }
+
+    // Sample a spherical cap in the positive hemisphere
+    const float phi = 2.0f * kPI * ux;
+    const float z = (1.0f - uy) * (1.0f + Vh.z) - Vh.z;
+    const float sinTheta = std::sqrt(std::max(1.0f - z * z, 0.0f));
+    const float x = sinTheta * std::cos(phi);
+    const float y = sinTheta * std::sin(phi);
+
+    // Compute the microfacet normal on the hemisphere
+    const float hx = x + Vh.x;
+    const float hy = y + Vh.y;
+    const float hz = z + Vh.z;
+
+    // Transform back from hemisphere to the ellipsoid configuration
+    Vec3 result{alpha * hx, alpha * hy, std::max(hz, 0.0f)};
+    const float lenR = std::sqrt(result.x * result.x + result.y * result.y + result.z * result.z);
+    if (lenR > 0.0f) {
+        result.x /= lenR;
+        result.y /= lenR;
+        result.z /= lenR;
+    }
+    return result;
+}
+
 } // namespace uz::brdf

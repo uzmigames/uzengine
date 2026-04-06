@@ -113,6 +113,25 @@ void SceneRenderer::CreateSsrResources(uint32_t width, uint32_t height) {
     }
     m_ssrHistoryIndex = 0;
 
+    // SSR hit distance: R16F full-res — stores screen-space ray t for virtual hit reprojection.
+    // @ref AMD FidelityFX SSSR — separate hit distance for temporal reprojection.
+    {
+        RHITextureDesc hitDesc{};
+        hitDesc.width     = width;
+        hitDesc.height    = height;
+        hitDesc.format    = RHIFormat::R16Float;
+        hitDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::UnorderedAccess;
+        hitDesc.debugName = "SSR_HitDistance";
+
+        m_ssrHitDistance = m_device->CreateTexture(hitDesc);
+        if (m_ssrHitDistance.IsValid()) {
+            m_ssrHitDistanceSrv = m_device->GetTextureSRVIndex(m_ssrHitDistance);
+            m_ssrHitDistanceUav = m_device->GetTextureUAVIndex(m_ssrHitDistance);
+        } else {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create SSR hit distance texture");
+        }
+    }
+
     // Previous frame HDR scene color copy — SSR trace reads this instead of
     // the live HDR buffer to break the feedback loop (UE5 pattern).
     // @ref UE5 DeferredShadingRenderer.cpp — PrevFrameViewInfo.ScreenSpaceRayTracingInput
@@ -177,6 +196,13 @@ void SceneRenderer::DestroySsrResources() {
         }
     }
     m_ssrHistoryIndex = 0;
+
+    if (m_ssrHitDistance.IsValid()) {
+        m_device->DestroyTexture(m_ssrHitDistance);
+        m_ssrHitDistance = RHITextureHandle{};
+        m_ssrHitDistanceSrv = UINT32_MAX;
+        m_ssrHitDistanceUav = UINT32_MAX;
+    }
 
     if (m_ssrPrevSceneColor.IsValid()) {
         m_device->DestroyTexture(m_ssrPrevSceneColor);
