@@ -302,17 +302,11 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
                         const uint64_t matHash = graph->ComputeContentHash();
                         const auto* compResult = m_materialPipeline->GetCompileResult(matHash);
                         if (compResult && !compResult->textureSlots.empty()) {
-                            static bool loggedSlots = false;
-                            if (!loggedSlots) {
-                                loggedSlots = true;
-                                for (size_t si = 0; si < compResult->textureSlots.size(); ++si) {
-                                    const auto& ts = compResult->textureSlots[si];
-                                    auto ti = m_textureMap.find(ts.defaultPath);
-                                    uint32_t srv = 0;
-                                    if (ti != m_textureMap.end() && ti->second < m_textures.size())
-                                        srv = m_textures[ti->second].srvIndex;
-                                    UZ_LOG(Renderer, Info, "MatGraph texSlot[{}] path='{}' srv={}",
-                                           si, ts.defaultPath, srv);
+                            // Ensure all material graph textures are loaded
+                            for (size_t si = 0; si < compResult->textureSlots.size(); ++si) {
+                                const auto& texPath = compResult->textureSlots[si].defaultPath;
+                                if (!texPath.empty() && m_textureMap.find(texPath) == m_textureMap.end()) {
+                                    QueueTextureLoad(texPath);
                                 }
                             }
                             cmd.materialTexCount = static_cast<uint32_t>(

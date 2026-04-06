@@ -573,7 +573,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     if (!defaultScene.empty()) {
         auto sceneBytes = vfs.Read(defaultScene);
         if (!sceneBytes.empty()) {
-            const size_t count = LoadScene(world, sceneBytes, defaultScene);
+            const size_t count = LoadScene(world, sceneBytes, defaultScene, &vfs);
             UZ_LOG(Engine, Info, "Loaded {} entities from '{}'", count, defaultScene);
         } else {
             UZ_LOG(Engine, Warning, "Failed to read scene: '{}'", defaultScene);

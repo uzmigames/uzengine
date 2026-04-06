@@ -1,0 +1,22 @@
+{
+  "name": "stone_trims_02",
+  "version": "1.0",
+  "shading_model": "default_lit",
+  "blend_mode": "opaque",
+  "two_sided": false,
+  "properties": {
+    "base_color": [
+      1.0,
+      1.0,
+      1.0
+    ],
+    "metallic": 0.0,
+    "roughness": 1.0,
+    "normal_strength": 1.0
+  },
+  "textures": {
+    "base_color_map": "textures/sponza/stone_trims_02_baseColor.png",
+    "normal_map": "textures/sponza/stone_trims_02_normal.png",
+    "metallic_roughness_map": "textures/sponza/stone_trims_02_metallicRoughness.png"
+  }
+}

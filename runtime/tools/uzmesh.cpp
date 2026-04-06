@@ -553,6 +553,296 @@ static RawMesh ParseSTL(const std::string& inputPath) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Multi-mesh glTF scene import (--scene mode)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// 4x4 column-major matrix for node transform accumulation.
+struct Mat4 {
+    float m[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+
+    static Mat4 Identity() { return {}; }
+
+    static Mat4 FromTRS(const float* t, const float* q, const float* s) {
+        // Quaternion to rotation matrix, then scale + translate
+        float qx = q[0], qy = q[1], qz = q[2], qw = q[3];
+        float xx = qx*qx, yy = qy*qy, zz = qz*qz;
+        float xy = qx*qy, xz = qx*qz, yz = qy*qz;
+        float wx = qw*qx, wy = qw*qy, wz = qw*qz;
+        Mat4 r;
+        r.m[0]  = (1.f - 2.f*(yy+zz)) * s[0];
+        r.m[1]  = (2.f*(xy+wz))        * s[0];
+        r.m[2]  = (2.f*(xz-wy))        * s[0];
+        r.m[3]  = 0.f;
+        r.m[4]  = (2.f*(xy-wz))        * s[1];
+        r.m[5]  = (1.f - 2.f*(xx+zz))  * s[1];
+        r.m[6]  = (2.f*(yz+wx))        * s[1];
+        r.m[7]  = 0.f;
+        r.m[8]  = (2.f*(xz+wy))        * s[2];
+        r.m[9]  = (2.f*(yz-wx))        * s[2];
+        r.m[10] = (1.f - 2.f*(xx+yy))  * s[2];
+        r.m[11] = 0.f;
+        r.m[12] = t[0]; r.m[13] = t[1]; r.m[14] = t[2]; r.m[15] = 1.f;
+        return r;
+    }
+
+    static Mat4 Multiply(const Mat4& a, const Mat4& b) {
+        Mat4 r;
+        for (int c = 0; c < 4; ++c)
+            for (int row = 0; row < 4; ++row) {
+                float sum = 0.f;
+                for (int k = 0; k < 4; ++k)
+                    sum += a.m[k*4+row] * b.m[c*4+k];
+                r.m[c*4+row] = sum;
+            }
+        return r;
+    }
+
+    uz::Vec3 TransformPoint(const uz::Vec3& p) const {
+        float x = m[0]*p.x + m[4]*p.y + m[8]*p.z  + m[12];
+        float y = m[1]*p.x + m[5]*p.y + m[9]*p.z  + m[13];
+        float z = m[2]*p.x + m[6]*p.y + m[10]*p.z + m[14];
+        return {x, y, z};
+    }
+
+    uz::Vec3 TransformNormal(const uz::Vec3& n) const {
+        float x = m[0]*n.x + m[4]*n.y + m[8]*n.z;
+        float y = m[1]*n.x + m[5]*n.y + m[9]*n.z;
+        float z = m[2]*n.x + m[6]*n.y + m[10]*n.z;
+        float len = std::sqrt(x*x + y*y + z*z);
+        if (len > 1e-8f) { x /= len; y /= len; z /= len; }
+        return {x, y, z};
+    }
+};
+
+/// Per-node mesh extraction result.
+struct NodeMesh {
+    std::string name;
+    std::string materialName;
+    std::string baseColorTex;
+    std::string normalTex;
+    std::string metallicRoughnessTex;
+    RawMesh raw;
+};
+
+/// Resolve a texture path from a glTF texture info.
+static std::string ResolveGltfTexturePath(const fastgltf::Asset& gltf,
+                                           const fastgltf::TextureInfo& texInfo,
+                                           const std::string& texturePrefix) {
+    if (texInfo.textureIndex >= gltf.textures.size()) return {};
+    const auto& tex = gltf.textures[texInfo.textureIndex];
+    if (!tex.imageIndex.has_value()) return {};
+    const auto& img = gltf.images[tex.imageIndex.value()];
+    const auto* uriPtr = std::get_if<fastgltf::sources::URI>(&img.data);
+    if (!uriPtr) return {};
+    std::string uri(uriPtr->uri.string());
+    // Strip "textures/" prefix if present — we'll re-add our own prefix
+    if (uri.rfind("textures/", 0) == 0) uri = uri.substr(9);
+    return texturePrefix + uri;
+}
+
+/// Compute world transform for a glTF node by walking parent chain.
+static Mat4 GetNodeWorldTransform(const fastgltf::Asset& gltf, size_t nodeIdx,
+                                   const std::vector<size_t>& parentMap) {
+    std::vector<size_t> chain;
+    for (size_t n = nodeIdx; n != SIZE_MAX; n = parentMap[n])
+        chain.push_back(n);
+
+    Mat4 world = Mat4::Identity();
+    for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+        const auto& node = gltf.nodes[*it];
+        Mat4 local;
+        if (auto* trs = std::get_if<fastgltf::TRS>(&node.transform)) {
+            float t[3] = {trs->translation[0], trs->translation[1], trs->translation[2]};
+            float q[4] = {trs->rotation[0], trs->rotation[1], trs->rotation[2], trs->rotation[3]};
+            float s[3] = {trs->scale[0], trs->scale[1], trs->scale[2]};
+            local = Mat4::FromTRS(t, q, s);
+        } else if (auto* mat = std::get_if<fastgltf::math::fmat4x4>(&node.transform)) {
+            std::memcpy(local.m, mat->data(), 64);
+        }
+        world = Mat4::Multiply(world, local);
+    }
+    return world;
+}
+
+/// Extract one RawMesh per glTF mesh node with baked world transforms.
+static std::vector<NodeMesh> ParseGLTFMultiMesh(const std::string& inputPath,
+                                                  const std::string& texturePrefix) {
+    std::vector<NodeMesh> results;
+
+    auto parentDir = std::filesystem::path(inputPath).parent_path();
+    fastgltf::Parser parser;
+    auto dataResult = fastgltf::GltfDataBuffer::FromPath(inputPath);
+    if (dataResult.error() != fastgltf::Error::None) {
+        std::cerr << "Error: cannot read " << inputPath << "\n";
+        return results;
+    }
+
+    auto type = fastgltf::determineGltfFileType(dataResult.get());
+    fastgltf::Expected<fastgltf::Asset> assetResult(fastgltf::Error::None);
+    auto options = fastgltf::Options::LoadExternalBuffers
+                 | fastgltf::Options::GenerateMeshIndices;
+
+    if (type == fastgltf::GltfType::glTF)
+        assetResult = parser.loadGltf(dataResult.get(), parentDir, options);
+    else if (type == fastgltf::GltfType::GLB)
+        assetResult = parser.loadGltfBinary(dataResult.get(), parentDir, options);
+    else {
+        std::cerr << "Error: unrecognized glTF format\n";
+        return results;
+    }
+
+    if (assetResult.error() != fastgltf::Error::None) {
+        std::cerr << "Error: fastgltf parse failed\n";
+        return results;
+    }
+
+    auto& gltf = assetResult.get();
+
+    // Build parent map (SIZE_MAX = root)
+    std::vector<size_t> parentMap(gltf.nodes.size(), SIZE_MAX);
+    for (size_t i = 0; i < gltf.nodes.size(); ++i)
+        for (auto child : gltf.nodes[i].children)
+            parentMap[child] = i;
+
+    std::cout << "glTF scene: " << gltf.nodes.size() << " nodes, "
+              << gltf.meshes.size() << " meshes, "
+              << gltf.materials.size() << " materials\n";
+
+    // Iterate all nodes with a mesh
+    for (size_t nodeIdx = 0; nodeIdx < gltf.nodes.size(); ++nodeIdx) {
+        const auto& node = gltf.nodes[nodeIdx];
+        if (!node.meshIndex.has_value()) continue;
+
+        const size_t meshIdx = node.meshIndex.value();
+        const auto& mesh = gltf.meshes[meshIdx];
+
+        // Compute world transform (includes parent chain: root scale, axis rotation, etc.)
+        Mat4 worldXform = GetNodeWorldTransform(gltf, nodeIdx, parentMap);
+
+        for (size_t primIdx = 0; primIdx < mesh.primitives.size(); ++primIdx) {
+            const auto& prim = mesh.primitives[primIdx];
+            auto posIt = prim.findAttribute("POSITION");
+            if (posIt == prim.attributes.end()) continue;
+
+            NodeMesh nm;
+            // Name: node name + primitive index (to handle multi-primitive meshes)
+            std::string nodeName(node.name);
+            if (nodeName.empty()) nodeName = "mesh_" + std::to_string(nodeIdx);
+            nm.name = nodeName + (mesh.primitives.size() > 1 ? "_p" + std::to_string(primIdx) : "");
+
+            // Sanitize name for filesystem
+            for (auto& c : nm.name)
+                if (c == ' ' || c == '/' || c == '\\' || c == ':') c = '_';
+
+            // Extract material info
+            if (prim.materialIndex.has_value()) {
+                const auto& mat = gltf.materials[prim.materialIndex.value()];
+                nm.materialName = std::string(mat.name);
+                if (mat.pbrData.baseColorTexture.has_value())
+                    nm.baseColorTex = ResolveGltfTexturePath(gltf, mat.pbrData.baseColorTexture.value(), texturePrefix);
+                if (mat.normalTexture.has_value()) {
+                    fastgltf::TextureInfo normTexInfo;
+                    normTexInfo.textureIndex = mat.normalTexture->textureIndex;
+                    nm.normalTex = ResolveGltfTexturePath(gltf, normTexInfo, texturePrefix);
+                }
+                if (mat.pbrData.metallicRoughnessTexture.has_value())
+                    nm.metallicRoughnessTex = ResolveGltfTexturePath(gltf, mat.pbrData.metallicRoughnessTexture.value(), texturePrefix);
+            }
+
+            // Extract vertices
+            const auto& posAccessor = gltf.accessors[posIt->accessorIndex];
+            const size_t vertCount = posAccessor.count;
+            nm.raw.vertices.resize(vertCount);
+
+            // Position: apply world transform, then axis swap Y-up → Z-up + m→cm
+            fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec3>(
+                gltf, posAccessor, [&](fastgltf::math::fvec3 pos, std::size_t idx) {
+                    // Apply glTF world transform first (in glTF Y-up space)
+                    uz::Vec3 wp = worldXform.TransformPoint({pos[0], pos[1], pos[2]});
+                    // Then axis swap + unit conversion: X=Z*100, Y=X*100, Z=Y*100
+                    nm.raw.vertices[idx].position = {wp.z * 100.f, wp.x * 100.f, wp.y * 100.f};
+                });
+
+            // Normals
+            auto normIt = prim.findAttribute("NORMAL");
+            if (normIt != prim.attributes.end()) {
+                const auto& normAccessor = gltf.accessors[normIt->accessorIndex];
+                fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec3>(
+                    gltf, normAccessor, [&](fastgltf::math::fvec3 n, std::size_t idx) {
+                        uz::Vec3 wn = worldXform.TransformNormal({n[0], n[1], n[2]});
+                        nm.raw.vertices[idx].normal = {wn.z, wn.x, wn.y};
+                    });
+            }
+
+            // UVs
+            auto uvIt = prim.findAttribute("TEXCOORD_0");
+            if (uvIt != prim.attributes.end()) {
+                const auto& uvAccessor = gltf.accessors[uvIt->accessorIndex];
+                fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec2>(
+                    gltf, uvAccessor, [&](fastgltf::math::fvec2 uv, std::size_t idx) {
+                        nm.raw.vertices[idx].texcoord = {uv[0], uv[1]};
+                    });
+            }
+
+            // Indices
+            if (prim.indicesAccessor.has_value()) {
+                const auto& idxAccessor = gltf.accessors[prim.indicesAccessor.value()];
+                nm.raw.indices.resize(idxAccessor.count);
+                fastgltf::iterateAccessorWithIndex<uint32_t>(
+                    gltf, idxAccessor, [&](uint32_t val, std::size_t idx) {
+                        nm.raw.indices[idx] = val;
+                    });
+            } else {
+                for (uint32_t i = 0; i < vertCount; ++i)
+                    nm.raw.indices.push_back(i);
+            }
+
+            // Winding reverse (axis remap changes handedness)
+            for (size_t t = 0; t + 2 < nm.raw.indices.size(); t += 3)
+                std::swap(nm.raw.indices[t + 1], nm.raw.indices[t + 2]);
+
+            nm.raw.success = true;
+            results.push_back(std::move(nm));
+        }
+    }
+
+    std::cout << "Extracted " << results.size() << " mesh nodes\n";
+    return results;
+}
+
+/// Generate a .uzprefab JSON for a set of node meshes.
+static std::string GeneratePrefab(const std::string& prefabName,
+                                   const std::vector<NodeMesh>& nodes,
+                                   const std::string& meshDir) {
+    std::ostringstream ss;
+    ss << "{\n  \"name\": \"" << prefabName << "\",\n  \"version\": \"1.0\",\n";
+    ss << "  \"components\": { \"transform\": {} },\n";
+    ss << "  \"children\": [\n";
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        const auto& n = nodes[i];
+        ss << "    {\n";
+        ss << "      \"name\": \"" << n.name << "\",\n";
+        ss << "      \"components\": {\n";
+        ss << "        \"transform\": {},\n";
+        ss << "        \"mesh\": { \"asset\": \"" << meshDir << "/" << n.name << ".uzmesh\" },\n";
+        ss << "        \"material\": {\n";
+        if (!n.baseColorTex.empty())
+            ss << "          \"albedo\": \"" << n.baseColorTex << "\",\n";
+        if (!n.normalTex.empty())
+            ss << "          \"normal\": \"" << n.normalTex << "\",\n";
+        if (!n.metallicRoughnessTex.empty())
+            ss << "          \"metallicRoughness\": \"" << n.metallicRoughnessTex << "\",\n";
+        ss << "          \"roughnessMultiplier\": 1.0,\n";
+        ss << "          \"metallicMultiplier\": 1.0\n";
+        ss << "        }\n";
+        ss << "      }\n";
+        ss << "    }" << (i + 1 < nodes.size() ? "," : "") << "\n";
+    }
+    ss << "  ]\n}\n";
+    return ss.str();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Common Pipeline: tangents → AABB → auto-LOD → save
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -682,15 +972,18 @@ static int ProcessAndSave(RawMesh& raw, const std::string& outputPath) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 int main(int argc, char** argv) {
-    std::string inputPath, outputPath, builtinName;
+    std::string inputPath, outputPath, builtinName, sceneOutDir, texturePrefix;
     bool forceYUp = false; // --yup: force Y-up → Z-up conversion (default for FBX/glTF/OBJ)
     bool forceZUp = false; // --zup: skip axis conversion (source already Z-up)
+    bool sceneMode = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--input" && i + 1 < argc)   inputPath = argv[++i];
         if (arg == "--output" && i + 1 < argc)  outputPath = argv[++i];
         if (arg == "--builtin" && i + 1 < argc) builtinName = argv[++i];
+        if (arg == "--scene" && i + 1 < argc)  { sceneOutDir = argv[++i]; sceneMode = true; }
+        if (arg == "--texture-prefix" && i + 1 < argc) texturePrefix = argv[++i];
         if (arg == "--yup") forceYUp = true;
         if (arg == "--zup") forceZUp = true;
     }
@@ -714,11 +1007,69 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    // ── Scene mode: multi-mesh import ────────────────────────────────────
+    // Extracts all mesh nodes from a glTF, writes one .uzmesh per node into
+    // a directory, and generates a .uzprefab with the full hierarchy.
+    if (sceneMode && !inputPath.empty() && !sceneOutDir.empty()) {
+        const std::string ext = ToLower(
+            std::filesystem::path(inputPath).extension().string());
+        if (ext != ".gltf" && ext != ".glb") {
+            std::cerr << "Error: --scene only supports glTF/GLB (got " << ext << ")\n";
+            return 1;
+        }
+
+        // Create output directory
+        std::filesystem::create_directories(sceneOutDir);
+
+        auto nodes = ParseGLTFMultiMesh(inputPath, texturePrefix);
+        if (nodes.empty()) {
+            std::cerr << "Error: no mesh nodes extracted\n";
+            return 1;
+        }
+
+        int failed = 0;
+        for (auto& nm : nodes) {
+            if (!nm.raw.success || nm.raw.vertices.empty()) {
+                std::cerr << "  Skip empty node: " << nm.name << "\n";
+                ++failed;
+                continue;
+            }
+
+            std::string meshPath = sceneOutDir + "/" + nm.name + ".uzmesh";
+            int err = ProcessAndSave(nm.raw, meshPath);
+            if (err != 0) {
+                std::cerr << "  Error processing " << nm.name << "\n";
+                ++failed;
+            } else {
+                std::cout << "  ✓ " << nm.name << " (" << nm.raw.vertices.size()
+                          << " verts, " << nm.raw.indices.size() << " tris)\n";
+            }
+        }
+
+        // Determine the mesh directory relative path for the prefab
+        auto sceneName = std::filesystem::path(sceneOutDir).filename().string();
+        std::string meshRelDir = "meshes/" + sceneName;
+
+        // Generate prefab
+        std::string prefabJson = GeneratePrefab(sceneName, nodes, meshRelDir);
+        std::string prefabPath = sceneOutDir + "/" + sceneName + ".uzprefab";
+        {
+            std::ofstream pf(prefabPath);
+            pf << prefabJson;
+        }
+        std::cout << "Prefab: " << prefabPath << " (" << nodes.size() << " children)\n";
+
+        std::cout << "\nDone: " << (nodes.size() - failed) << " meshes exported, "
+                  << failed << " failed\n";
+        return failed > 0 ? 1 : 0;
+    }
+
     if (inputPath.empty() || outputPath.empty()) {
         std::cerr << "uzmesh — Unified 3D model importer\n\n"
                   << "Usage:\n"
                   << "  uzmesh --input <model.fbx|.gltf|.glb|.obj|.stl> --output <mesh.uzmesh>\n"
-                  << "  uzmesh --builtin <cube|sphere> --output <mesh.uzmesh>\n\n"
+                  << "  uzmesh --builtin <cube|sphere> --output <mesh.uzmesh>\n"
+                  << "  uzmesh --input <model.gltf> --scene <output_dir> [--texture-prefix textures/sponza/]\n\n"
                   << "Supported formats:\n"
                   << "  .fbx         Autodesk FBX (via ufbx)\n"
                   << "  .gltf/.glb   Khronos glTF 2.0 (via fastgltf)\n"
@@ -729,7 +1080,8 @@ int main(int argc, char** argv) {
                   << "  MikkTSpace tangent generation\n"
                   << "  Vertex cache optimization (meshoptimizer)\n"
                   << "  Vertex deduplication\n"
-                  << "  Y-up → Z-up axis conversion\n";
+                  << "  Y-up → Z-up axis conversion\n"
+                  << "  Multi-mesh scene import (--scene): N .uzmesh + .uzprefab\n";
         return 1;
     }
 

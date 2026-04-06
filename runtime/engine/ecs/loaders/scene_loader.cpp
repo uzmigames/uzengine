@@ -34,7 +34,12 @@
 #include <string>
 #include <vector>
 
+#include "../asset/vfs.h"
+
 namespace uz {
+
+/// Thread-local VFS pointer set during LoadScene for .uzmaterial loading.
+static IVFS* s_loadVfs = nullptr;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -372,6 +377,53 @@ void ParseMaterialComponent(World& world,
     }
     auto& mesh = world.GetRegistry().get<StaticMeshComponent>(enttEntity);
 
+    // ── .uzmaterial asset loading ────────────────────────────────────────
+    // When "asset" field is present, load the .uzmaterial JSON file and
+    // extract texture paths + properties from it instead of inline fields.
+    const std::string matAssetPath = ReadString(comp, "asset");
+    if (!matAssetPath.empty() && s_loadVfs) {
+        auto matBytes = s_loadVfs->Read(matAssetPath);
+        if (!matBytes.empty()) {
+            try {
+                auto matJson = nlohmann::json::parse(matBytes.begin(), matBytes.end());
+                auto texIt = matJson.find("textures");
+                auto propIt = matJson.find("properties");
+
+                auto mat = std::make_unique<Material>();
+                if (texIt != matJson.end() && texIt->is_object()) {
+                    auto bc = texIt->find("base_color_map");
+                    if (bc != texIt->end() && bc->is_string()) mat->albedoPath = bc->get<std::string>();
+                    auto nm = texIt->find("normal_map");
+                    if (nm != texIt->end() && nm->is_string()) mat->normalPath = nm->get<std::string>();
+                    auto mr = texIt->find("metallic_roughness_map");
+                    if (mr != texIt->end() && mr->is_string()) {
+                        mat->ormPath = mr->get<std::string>();
+                        mat->useORM = true;
+                    }
+                    auto rm = texIt->find("roughness_map");
+                    if (rm != texIt->end() && rm->is_string()) mat->roughnessPath = rm->get<std::string>();
+                    auto mm = texIt->find("metallic_map");
+                    if (mm != texIt->end() && mm->is_string()) mat->metallicPath = mm->get<std::string>();
+                    auto ao = texIt->find("ao_map");
+                    if (ao != texIt->end() && ao->is_string()) mat->aoPath = ao->get<std::string>();
+                }
+                if (propIt != matJson.end() && propIt->is_object()) {
+                    mat->roughnessMultiplier = ReadFloat(*propIt, "roughness", 1.0f);
+                    mat->metallicMultiplier  = ReadFloat(*propIt, "metallic", 0.0f);
+                    mat->normalIntensity     = ReadFloat(*propIt, "normal_strength", 1.0f);
+                }
+                mesh.SetMaterial(0, mat.get());
+                s_sceneLoadedMaterials.push_back(std::move(mat));
+                return;
+            } catch (const nlohmann::json::parse_error& e) {
+                UZ_LOG(Scene, Warning, "Failed to parse material '{}': {}", matAssetPath, e.what());
+            }
+        } else {
+            UZ_LOG(Scene, Warning, "Failed to read material asset '{}'", matAssetPath);
+        }
+        // Fall through to inline material parsing if .uzmaterial loading fails
+    }
+
     // Material graph path (.uzmat) — stored on the component for lazy-loading
     // by the renderer. The graph material will take precedence once the
     // MaterialPipeline compiles its PSO. Until then, the fixed-PBR textures
@@ -515,6 +567,54 @@ size_t ProcessEntityJson(World& world,
         }
     }
 
+    // ── Prefab instantiation ────────────────────────────────────────────────
+    // When an entity has `"prefab": { "asset": "path.uzprefab" }`, load the
+    // prefab JSON and process its children as children of this entity.
+    auto prefabIt = entityJson.find("prefab");
+    if (prefabIt != entityJson.end() && prefabIt->is_object()) {
+        const std::string prefabPath = ReadString(*prefabIt, "asset");
+        if (!prefabPath.empty() && s_loadVfs) {
+            auto prefabBytes = s_loadVfs->Read(prefabPath);
+            if (!prefabBytes.empty()) {
+                try {
+                    auto prefabJson = nlohmann::json::parse(prefabBytes.begin(), prefabBytes.end());
+
+                    // Process prefab's own components (if any) on this entity
+                    auto prefabCompIt = prefabJson.find("components");
+                    if (prefabCompIt != prefabJson.end() && prefabCompIt->is_object()) {
+                        for (const auto& [ck, cv] : prefabCompIt->items()) {
+                            if (!cv.is_object() || ck == "transform") continue;
+                            if (ck == "mesh") ParseMeshComponent(world, entity, cv);
+                            else if (ck == "light") ParseLightComponent(world, entity, cv, sourceName);
+                            else if (ck == "script") ParseScriptComponent(world, entity, cv);
+                            else if (ck == "camera") ParseCameraComponent(world, entity, cv);
+                        }
+                        auto prefabMatIt = prefabCompIt->find("material");
+                        if (prefabMatIt != prefabCompIt->end() && prefabMatIt->is_object())
+                            ParseMaterialComponent(world, entity, *prefabMatIt);
+                    }
+
+                    // Process prefab's children as children of this entity
+                    auto prefabChildrenIt = prefabJson.find("children");
+                    if (prefabChildrenIt != prefabJson.end() && prefabChildrenIt->is_array()) {
+                        for (const auto& child : *prefabChildrenIt) {
+                            entityCount += ProcessEntityJson(world, child, sourceName);
+                        }
+                    }
+
+                    UZ_LOG(Scene, Info, "Prefab instantiated: '{}' ({} children)",
+                           prefabPath, prefabJson.value("children", nlohmann::json::array()).size());
+                } catch (const nlohmann::json::parse_error& e) {
+                    UZ_LOG(Scene, Warning, "Failed to parse prefab '{}': {}", prefabPath, e.what());
+                }
+            } else {
+                UZ_LOG(Scene, Warning, "Failed to read prefab asset '{}'", prefabPath);
+            }
+        } else if (!prefabPath.empty()) {
+            UZ_LOG(Scene, Warning, "Prefab '{}' requires VFS (use LoadScene with VFS overload)", prefabPath);
+        }
+    }
+
     // ── Children (recursive) ──────────────────────────────────────────────────
     auto childrenIt = entityJson.find("children");
     if (childrenIt != entityJson.end() && childrenIt->is_array()) {
@@ -574,6 +674,16 @@ size_t LoadScene(World& world,
     UZ_LOG(Scene, Info,
            "LoadScene: '{}': loaded {} entities", sourceName, totalCount);
     return totalCount;
+}
+
+size_t LoadScene(World& world,
+                 const std::vector<uint8_t>& sceneJson,
+                 const std::string& sourceName,
+                 IVFS* vfs) {
+    s_loadVfs = vfs;
+    size_t result = LoadScene(world, sceneJson, sourceName);
+    s_loadVfs = nullptr;
+    return result;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

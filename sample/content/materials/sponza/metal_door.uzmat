@@ -1,0 +1,58 @@
+{
+    "version": 1,
+    "name": "metal_door",
+    "domain": "Surface",
+    "shadingModel": "DefaultLit",
+    "expressions": [
+        {
+            "id": 1,
+            "type": "PBROutput",
+            "inputs": [
+                {
+                    "pin": 0,
+                    "srcExpr": 2,
+                    "srcPin": 0
+                },
+                {
+                    "pin": 1,
+                    "srcExpr": 3,
+                    "srcPin": 3
+                },
+                {
+                    "pin": 2,
+                    "srcExpr": 3,
+                    "srcPin": 2
+                },
+                {
+                    "pin": 3,
+                    "srcExpr": 4,
+                    "srcPin": 0
+                }
+            ]
+        },
+        {
+            "id": 2,
+            "type": "TextureSample",
+            "name": "Albedo",
+            "stringParams": {
+                "texturePath": "textures/sponza/metal_door_baseColor.png"
+            }
+        },
+        {
+            "id": 3,
+            "type": "TextureSample",
+            "name": "MetalRoughness",
+            "stringParams": {
+                "texturePath": "textures/sponza/metal_door_metallicRoughness.png"
+            }
+        },
+        {
+            "id": 4,
+            "type": "TextureSample",
+            "name": "Normal",
+            "stringParams": {
+                "texturePath": "textures/sponza/metal_door_normal.png"
+            }
+        }
+    ]
+}
