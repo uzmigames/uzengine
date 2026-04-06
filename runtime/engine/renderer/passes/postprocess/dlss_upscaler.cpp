@@ -122,12 +122,56 @@ struct DlssUpscaler::Impl {
         UnloadDll();
     }
 
+    /// Searches the NVIDIA DriverStore for _nvngx.dll.
+    ///
+    /// _nvngx.dll is NOT in System32 — it lives in the driver package folder:
+    /// C:\Windows\System32\DriverStore\FileRepository\nv_dispi.inf_amd64_*\_nvngx.dll
+    /// @ref NVIDIA NGX Programming Guide — NGX core library is driver-provided.
+    static HMODULE FindNvNgxInDriverStore() {
+        // Enumerate DriverStore directories matching NVIDIA display driver pattern.
+        const wchar_t* driverStoreBase = L"C:\\Windows\\System32\\DriverStore\\FileRepository";
+        WIN32_FIND_DATAW findData{};
+        wchar_t searchPattern[MAX_PATH];
+        _snwprintf_s(searchPattern, MAX_PATH, _TRUNCATE, L"%s\\nv_dispi.inf_amd64_*", driverStoreBase);
+
+        HANDLE hFind = ::FindFirstFileW(searchPattern, &findData);
+        if (hFind == INVALID_HANDLE_VALUE) return nullptr;
+
+        HMODULE result = nullptr;
+        do {
+            if (!(findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+
+            wchar_t dllPath[MAX_PATH];
+            _snwprintf_s(dllPath, MAX_PATH, _TRUNCATE, L"%s\\%s\\_nvngx.dll",
+                         driverStoreBase, findData.cFileName);
+
+            result = ::LoadLibraryW(dllPath);
+            if (result) {
+                UZ_LOG(Renderer, Info, "DLSS: loaded _nvngx.dll from DriverStore: {}",
+                       std::string(dllPath, dllPath + wcslen(dllPath)));
+                break;
+            }
+        } while (::FindNextFileW(hFind, &findData));
+
+        ::FindClose(hFind);
+        return result;
+    }
+
     /// Loads _nvngx.dll and resolves function pointers.
     bool LoadDll() {
-        // Try loading from system path (NVIDIA driver installs it globally).
+        // 1. Try system LoadLibrary (works if driver puts it in a searchable path).
         ngxModule = ::LoadLibraryW(L"_nvngx.dll");
+
+        // 2. Search NVIDIA DriverStore — _nvngx.dll lives inside the driver package.
+        // @ref NVIDIA Developer Forums: "Path to driverStore found using QAI:
+        //   C:\WINDOWS\System32\DriverStore\FileRepository\nv_dispi.inf_amd64_*"
         if (!ngxModule) {
-            UZ_LOG(Renderer, Warning, "DLSS: failed to load _nvngx.dll (error={})",
+            ngxModule = FindNvNgxInDriverStore();
+        }
+
+        if (!ngxModule) {
+            UZ_LOG(Renderer, Warning,
+                   "DLSS: _nvngx.dll not found (error={}) — install/update NVIDIA GeForce driver",
                    ::GetLastError());
             return false;
         }
@@ -386,7 +430,15 @@ void DlssUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
 
     const auto outputW = static_cast<uint32_t>(input.outputWidth);
     const auto outputH = static_cast<uint32_t>(input.outputHeight);
-    const auto quality = static_cast<DlssQuality>(cv_DLSSQuality->value);
+    const auto inputW  = static_cast<uint32_t>(input.renderWidth);
+    const auto inputH  = static_cast<uint32_t>(input.renderHeight);
+
+    // If render resolution == display resolution (no screen percentage), force DLAA (1.0x).
+    // Other DLSS quality presets expect a lower render resolution.
+    auto quality = static_cast<DlssQuality>(cv_DLSSQuality->value);
+    if (inputW >= outputW && inputH >= outputH) {
+        quality = DlssQuality::DLAA;
+    }
 
     auto* dx12Cmd = static_cast<DX12CommandList*>(cmd);
     ID3D12GraphicsCommandList* nativeCmdList = dx12Cmd->GetNative();
@@ -423,8 +475,31 @@ void DlssUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     p->Set(NVSDK_NGX_Parameter_MV_Scale_Y, 1.0f);
     p->Set(NVSDK_NGX_Parameter_Sharpness, cv_DLSSSharpness->value);
     p->Set(NVSDK_NGX_Parameter_Reset, static_cast<int>(input.firstFrame ? 1 : 0));
-    p->Set(NVSDK_NGX_Parameter_Width, static_cast<unsigned int>(input.renderWidth));
-    p->Set(NVSDK_NGX_Parameter_Height, static_cast<unsigned int>(input.renderHeight));
+
+    // Render subrect dimensions — MANDATORY for DLSS evaluate.
+    // Without these, DLSS returns NVSDK_NGX_Result_FAIL_InvalidParameter (0xBAD00005).
+    // @ref NVIDIA DLSS Programming Guide — "InRenderSubrectDimensions" must match
+    //   the actual rendered region within the input textures.
+    const auto renderW = static_cast<unsigned int>(input.renderWidth);
+    const auto renderH = static_cast<unsigned int>(input.renderHeight);
+    p->Set(NVSDK_NGX_Parameter_Width, renderW);
+    p->Set(NVSDK_NGX_Parameter_Height, renderH);
+    p->Set("DLSS.Render.Subrect.Dimensions.Width", renderW);
+    p->Set("DLSS.Render.Subrect.Dimensions.Height", renderH);
+
+    // Subrect base offsets — (0,0) when rendering full viewport.
+    p->Set("DLSS.Input.Color.Subrect.Base.X", static_cast<unsigned int>(0));
+    p->Set("DLSS.Input.Color.Subrect.Base.Y", static_cast<unsigned int>(0));
+    p->Set("DLSS.Input.Depth.Subrect.Base.X", static_cast<unsigned int>(0));
+    p->Set("DLSS.Input.Depth.Subrect.Base.Y", static_cast<unsigned int>(0));
+    p->Set("DLSS.Input.MV.Subrect.Base.X", static_cast<unsigned int>(0));
+    p->Set("DLSS.Input.MV.Subrect.Base.Y", static_cast<unsigned int>(0));
+    p->Set("DLSS.Output.Subrect.Base.X", static_cast<unsigned int>(0));
+    p->Set("DLSS.Output.Subrect.Base.Y", static_cast<unsigned int>(0));
+
+    // Pre-exposure — 1.0 when auto-exposure is handled externally.
+    p->Set("DLSS.Pre.Exposure", 1.0f);
+    p->Set("DLSS.Exposure.Scale", 1.0f);
 
     NVSDK_NGX_Result result = m_impl->pfnEvaluateFeature(
         nativeCmdList, m_impl->dlssFeature, m_impl->ngxParams, nullptr);
