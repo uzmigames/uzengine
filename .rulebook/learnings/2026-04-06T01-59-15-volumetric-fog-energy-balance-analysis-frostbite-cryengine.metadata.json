@@ -1,0 +1,16 @@
+{
+  "id": "2026-04-06T01-59-15-volumetric-fog-energy-balance-analysis-frostbite-cryengine",
+  "title": "Volumetric Fog Energy Balance Analysis - Frostbite & CryEngine",
+  "content": "Completed comprehensive analysis of volumetric fog rendering in Frostbite and CryEngine engines, focusing on preventing scene darkening.\n\n## Key Findings\n\n### 1. Extinction vs Scattering Albedo\n- extinction = absorption + scattering\n- scattering_albedo = scattering / extinction (0=pure absorb, 1=pure scatter)\n- Real-world water fog/clouds: albedo ~0.99-1.0 (nearly pure scattering)\n- Game engines MUST use albedo >= 0.9 to avoid unrealistic darkening\n\n### 2. Frostbite's Solution (Hillaire 2016)\n- 160x90x64 froxel grid with logarithmic depth distribution\n- Light injection from ALL sources:\n  * Directional: phase(angle) * visibility * intensity\n  * Point/Spot: phase * attenuation * shadow_visibility\n  * **Sky/Ambient (CRITICAL)**: sky_irradiance * (1 - exp(-extinction * depth))\n- Multi-scattering compensation: boost ambient by mix(1.0, 2.0, phase_anisotropy)\n- Temporal reprojection at 0.8:0.2 (current:previous) for stability\n\n### 3. CryEngine's Approach\n- Split anisotropy into two parameters:\n  * Atmosphere (global): 0.0-0.4 (prevents shadow darkening)\n  * Radial (sun bloom): 0.5-1.0 (concentrates forward scatter)\n- Allows artists to tune diffuse vs directional scattering independently\n- Ambient boost: (1 + anisotropy_radial) factor\n\n### 4. Henyey-Greenstein Phase Function\n- p(cos θ, g) = (1 - g²) / (4π(1 + g² - 2g cos θ)^1.5)\n- Production values:\n  * Frostbite: g=0.6-0.7 (fog), g=0.8-0.9 (clouds)\n  * CryEngine: g=0.2-0.4 (global), g=0.9 (sun)\n  * Ubisoft: g=0.5-0.6\n- Lower g = less darkening in shadows (more isotropic)\n- Higher g = more directional, risk of shadow darkening\n\n### 5. Default Parameters\n- Froxel grid: 160x90x64 exponential\n- Extinction: 0.01-0.05 m^-1 (typical), 0.1 (dense)\n- Albedo: 0.95 (nearly pure scattering)\n- Ambient phase: g=0.2-0.3 (isotropic, prevent directional shadows)\n\n### 6. Critical Anti-Darkening Techniques\n1. **Sky light injection** into every froxel (prevents pitch-black)\n2. **High scattering albedo** (0.9+) to match water physics\n3. **Anisotropy-based multi-scatter boost**: low g gets 1.5x boost, high g gets 1.0x\n4. **Temporal reprojection** for smooth transitions\n\n## Implementation Priority for UzEngine\n1. Implement sky/ambient injection first (fixes worst darkening)\n2. Ensure scattering_albedo >= 0.9\n3. Add Henyey-Greenstein phase function\n4. Implement multi-scatter boost based on anisotropy\n5. Add temporal reprojection last (optimization)\n\n## Document Location\n`e:/UzEngine/docs/analysis/volumetric-fog-energy-balance.md` (257 lines, complete)",
+  "source": "manual",
+  "tags": [
+    "volumetric-fog",
+    "energy-conservation",
+    "Frostbite",
+    "CryEngine",
+    "rendering",
+    "froxel",
+    "ambient-light"
+  ],
+  "createdAt": "2026-04-06T01:59:15.362Z"
+}

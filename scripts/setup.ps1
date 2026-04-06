@@ -471,10 +471,18 @@ Write-Host "  [crashpad] skipped (not needed until 2.x crash reporting)" -Foregr
 
 # ─── Post-Processing & Upscaling ──────────────────────────────────────────
 
-# AMD FidelityFX SDK (includes FSR 1.0/2.x/3.x, SMAA, CAS, etc.)
+# AMD FidelityFX SDK 2.x (FSR4, Radiance Caching, Denoiser)
 Clone-Repo -Name "amd-fidelityfx" `
     -Url "https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK.git" `
     -Branch "main" `
+    -RemoveDirs @("docs", "samples", "tools", "PrebuiltSignedDLL", "framework", "BuildFidelityFXSolution.bat")
+
+# AMD FidelityFX SDK 1.1.4 (Brixelizer GI — removed in 2.x)
+# Provides ffx_brixelizer.h/.cpp, ffx_brixelizer_gi.h/.cpp, and ~20 HLSL compute shaders
+# for real-time SDF-based global illumination. MIT license.
+Clone-Repo -Name "amd-fidelityfx-1.1" `
+    -Url "https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK.git" `
+    -Branch "v1.1.4" `
     -RemoveDirs @("docs", "samples", "tools", "PrebuiltSignedDLL", "framework", "BuildFidelityFXSolution.bat")
 
 # NVIDIA DLSS SDK (Deep Learning Super Sampling — AI temporal upscaling)

@@ -1,0 +1,14 @@
+{
+    "version": 1,
+    "name": "glass",
+    "domain": "Surface",
+    "shadingModel": "DefaultLit",
+    "blendMode": "Translucent",
+    "twoSided": true,
+    "expressions": [
+        {
+            "id": 1,
+            "type": "PBROutput",
+        }
+    ]
+}

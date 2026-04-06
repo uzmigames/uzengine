@@ -141,13 +141,20 @@ GBufferOutput main(PSInput input) {
 #else
     // ── Fixed PBR path — texture-sampled material properties ─────────────
     float3 albedo = float3(1, 1, 1);
+    float albedoAlpha = 1.0;
 #ifdef UZ_BINDLESS
     if (albedoIndex > 0) {
         Texture2D<float4> tex = ResourceDescriptorHeap[albedoIndex];
-        albedo = tex.SampleBias(linearSampler, uv, mipBias).rgb;
+        float4 albedoSample = tex.SampleBias(linearSampler, uv, mipBias);
+        albedo = albedoSample.rgb;
+        albedoAlpha = albedoSample.a;
     }
 #else
-    albedo = albedoTexture.SampleBias(linearSampler, uv, mipBias).rgb;
+    {
+        float4 albedoSample = albedoTexture.SampleBias(linearSampler, uv, mipBias);
+        albedo = albedoSample.rgb;
+        albedoAlpha = albedoSample.a;
+    }
 #endif
     albedo *= baseColorTint;
 
@@ -264,15 +271,25 @@ GBufferOutput main(PSInput input) {
     emissive *= emissiveColor * emissiveIntensity;
 
     // ── Alpha test ────────────────────────────────────────────────────────
+    // Masked blend mode (bits[0:1] == 1): discard pixels below alphaClipThreshold.
+    // Alpha source priority:
+    //   1. Separate opacity texture (opacitySrvIndex > 0) → sample .a channel
+    //   2. Albedo texture alpha channel (captured during albedo sampling)
     if ((materialFlags & 0x3u) == 1) {
         float alphaValue = matOpacity;
+#ifndef UZ_MATERIAL_GRAPH
 #ifdef UZ_BINDLESS
         if (opacitySrvIndex > 0) {
             Texture2D<float4> opTex = ResourceDescriptorHeap[opacitySrvIndex];
-            alphaValue *= opTex.Sample(linearSampler, uv).r;
+            alphaValue *= opTex.Sample(linearSampler, uv).a;
+        } else {
+            alphaValue *= albedoAlpha;
         }
 #else
-        alphaValue *= opacityTexture.Sample(linearSampler, uv).r;
+        alphaValue *= opacityTexture.Sample(linearSampler, uv).a;
+#endif
+#else
+        alphaValue *= opacity;
 #endif
         if (alphaValue < alphaClipThreshold) discard;
     }

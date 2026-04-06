@@ -39,6 +39,7 @@
 #include <limits>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 UZ_DECLARE_LOG_CATEGORY(Cook);
@@ -70,6 +71,7 @@ struct RawMesh {
     std::vector<uz::Vertex> vertices;
     std::vector<uint32_t> indices;
     bool success = false;
+    bool hasNormals = false;  ///< True if normals were loaded from the source file
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -106,6 +108,7 @@ static RawMesh ParseFBX(const std::string& inputPath) {
 
     const ufbx_mesh* mesh = scene->meshes.data[0];
     const bool hasNormals = mesh->vertex_normal.exists;
+    result.hasNormals = hasNormals;
     const bool hasUVs = mesh->vertex_uv.exists;
 
     std::vector<uint32_t> triBuffer(256);
@@ -215,20 +218,22 @@ static RawMesh ParseGLTF(const std::string& inputPath) {
         const uint32_t baseVertex = static_cast<uint32_t>(result.vertices.size());
         result.vertices.resize(baseVertex + vertCount);
 
-        // Y-up RH → Z-up LH: Engine.X = glTF.Z, Engine.Y = glTF.X, Engine.Z = glTF.Y
+        // Y-up RH → Z-up LH: Engine.X = glTF.Z, Engine.Y = -glTF.X, Engine.Z = glTF.Y
+        // Negating the lateral axis (Y) changes handedness (det=-1).
         // glTF spec: coordinates are in meters. UzEngine uses centimeters → ×100.
         fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec3>(
             gltf, posAccessor, [&](fastgltf::math::fvec3 pos, std::size_t idx) {
-                result.vertices[baseVertex + idx].position = {pos[2] * 100.0f, pos[0] * 100.0f, pos[1] * 100.0f};
+                result.vertices[baseVertex + idx].position = {pos[2] * 100.0f, -pos[0] * 100.0f, pos[1] * 100.0f};
             });
 
         auto normIt = prim.findAttribute("NORMAL");
         if (normIt != prim.attributes.end()) {
+            result.hasNormals = true;
             const auto& normAccessor = gltf.accessors[normIt->accessorIndex];
             fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec3>(
                 gltf, normAccessor, [&](fastgltf::math::fvec3 n, std::size_t idx) {
-                    // Normals are unit vectors — axis swap only, no scale.
-                    result.vertices[baseVertex + idx].normal = {n[2], n[0], n[1]};
+                    // Normals are unit vectors — axis swap + handedness flip, no scale.
+                    result.vertices[baseVertex + idx].normal = {n[2], -n[0], n[1]};
                 });
         }
 
@@ -273,10 +278,8 @@ static RawMesh ParseGLTF(const std::string& inputPath) {
     std::cout << "glTF: " << result.vertices.size() << " vertices, "
               << result.indices.size() << " indices\n";
 
-    // Reverse winding (axis remap changes handedness)
-    for (size_t t = 0; t + 2 < result.indices.size(); t += 3) {
-        std::swap(result.indices[t + 1], result.indices[t + 2]);
-    }
+    // Axis swap {Z, -X, Y} has det=-1, which flips CCW→CW.
+    // DX12 expects CW front faces, so NO additional winding reversal needed.
 
     result.success = true;
     return result;
@@ -604,6 +607,13 @@ struct Mat4 {
         return {x, y, z};
     }
 
+    /// Determinant of the upper-left 3x3 (rotation+scale). Negative = odd reflection.
+    float Determinant3x3() const {
+        return m[0]*(m[5]*m[10] - m[6]*m[9])
+             - m[4]*(m[1]*m[10] - m[2]*m[9])
+             + m[8]*(m[1]*m[6]  - m[2]*m[5]);
+    }
+
     uz::Vec3 TransformNormal(const uz::Vec3& n) const {
         float x = m[0]*n.x + m[4]*n.y + m[8]*n.z;
         float y = m[1]*n.x + m[5]*n.y + m[9]*n.z;
@@ -621,6 +631,14 @@ struct NodeMesh {
     std::string baseColorTex;
     std::string normalTex;
     std::string metallicRoughnessTex;
+    std::string emissiveTex;
+    std::string alphaMode = "OPAQUE";  ///< glTF alphaMode: OPAQUE, MASK, BLEND
+    float alphaCutoff = 0.5f;
+    bool doubleSided = false;
+    float baseColorFactor[4] = {1, 1, 1, 1};
+    float emissiveFactor[3] = {0, 0, 0};
+    float metallicFactor = 1.0f;
+    float roughnessFactor = 1.0f;
     RawMesh raw;
 };
 
@@ -747,6 +765,26 @@ static std::vector<NodeMesh> ParseGLTFMultiMesh(const std::string& inputPath,
                 }
                 if (mat.pbrData.metallicRoughnessTexture.has_value())
                     nm.metallicRoughnessTex = ResolveGltfTexturePath(gltf, mat.pbrData.metallicRoughnessTexture.value(), texturePrefix);
+                if (mat.emissiveTexture.has_value()) {
+                    fastgltf::TextureInfo emTex;
+                    emTex.textureIndex = mat.emissiveTexture->textureIndex;
+                    nm.emissiveTex = ResolveGltfTexturePath(gltf, emTex, texturePrefix);
+                }
+                // Material properties
+                nm.doubleSided = mat.doubleSided;
+                nm.alphaCutoff = mat.alphaCutoff;
+                if (mat.alphaMode == fastgltf::AlphaMode::Opaque) nm.alphaMode = "OPAQUE";
+                else if (mat.alphaMode == fastgltf::AlphaMode::Mask) nm.alphaMode = "MASK";
+                else if (mat.alphaMode == fastgltf::AlphaMode::Blend) nm.alphaMode = "BLEND";
+                nm.baseColorFactor[0] = mat.pbrData.baseColorFactor[0];
+                nm.baseColorFactor[1] = mat.pbrData.baseColorFactor[1];
+                nm.baseColorFactor[2] = mat.pbrData.baseColorFactor[2];
+                nm.baseColorFactor[3] = mat.pbrData.baseColorFactor[3];
+                nm.emissiveFactor[0] = mat.emissiveFactor[0];
+                nm.emissiveFactor[1] = mat.emissiveFactor[1];
+                nm.emissiveFactor[2] = mat.emissiveFactor[2];
+                nm.metallicFactor = mat.pbrData.metallicFactor;
+                nm.roughnessFactor = mat.pbrData.roughnessFactor;
             }
 
             // Extract vertices
@@ -754,23 +792,25 @@ static std::vector<NodeMesh> ParseGLTFMultiMesh(const std::string& inputPath,
             const size_t vertCount = posAccessor.count;
             nm.raw.vertices.resize(vertCount);
 
-            // Position: apply world transform, then axis swap Y-up → Z-up + m→cm
+            // Position: apply world transform, then axis swap Y-up RH → Z-up LH + m→cm
+            // Negate Z to change handedness (det=-1): X=-Z, Y=X, Z=Y
             fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec3>(
                 gltf, posAccessor, [&](fastgltf::math::fvec3 pos, std::size_t idx) {
                     // Apply glTF world transform first (in glTF Y-up space)
                     uz::Vec3 wp = worldXform.TransformPoint({pos[0], pos[1], pos[2]});
-                    // Then axis swap + unit conversion: X=Z*100, Y=X*100, Z=Y*100
-                    nm.raw.vertices[idx].position = {wp.z * 100.f, wp.x * 100.f, wp.y * 100.f};
+                    // Then axis swap + handedness flip + unit conversion
+                    nm.raw.vertices[idx].position = {wp.z * 100.f, -wp.x * 100.f, wp.y * 100.f};
                 });
 
             // Normals
             auto normIt = prim.findAttribute("NORMAL");
             if (normIt != prim.attributes.end()) {
+                nm.raw.hasNormals = true;
                 const auto& normAccessor = gltf.accessors[normIt->accessorIndex];
                 fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec3>(
                     gltf, normAccessor, [&](fastgltf::math::fvec3 n, std::size_t idx) {
                         uz::Vec3 wn = worldXform.TransformNormal({n[0], n[1], n[2]});
-                        nm.raw.vertices[idx].normal = {wn.z, wn.x, wn.y};
+                        nm.raw.vertices[idx].normal = {wn.z, -wn.x, wn.y};
                     });
             }
 
@@ -797,12 +837,38 @@ static std::vector<NodeMesh> ParseGLTFMultiMesh(const std::string& inputPath,
                     nm.raw.indices.push_back(i);
             }
 
-            // Winding reverse (axis remap changes handedness)
-            for (size_t t = 0; t + 2 < nm.raw.indices.size(); t += 3)
-                std::swap(nm.raw.indices[t + 1], nm.raw.indices[t + 2]);
+            // Winding correction:
+            // glTF uses CCW winding. DX12/UzEngine expects CW front faces.
+            // The axis swap {Z, -X, Y} has det=-1, which flips CCW→CW (correct).
+            // If the world transform ALSO has det<0, the two flips cancel → back to CCW → need reversal.
+            // Only reverse winding when BOTH flip (cancel out) or NEITHER flips.
+            float det = worldXform.Determinant3x3();
+            bool axisSwapFlips = true;   // {Z, -X, Y} det=-1
+            bool xformFlips = (det < 0.0f);
+            bool needWindingReverse = (axisSwapFlips == xformFlips);
+            if (needWindingReverse) {
+                for (size_t t = 0; t + 2 < nm.raw.indices.size(); t += 3)
+                    std::swap(nm.raw.indices[t + 1], nm.raw.indices[t + 2]);
+            }
 
             nm.raw.success = true;
             results.push_back(std::move(nm));
+        }
+    }
+
+    // Deduplicate node names: append _1, _2, etc. for instances that share a name
+    // (common in glTF for instanced meshes like repeated columns, roof sections)
+    {
+        std::unordered_map<std::string, int> nameCount;
+        for (auto& nm : results)
+            nameCount[nm.name]++;
+
+        std::unordered_map<std::string, int> nameIndex;
+        for (auto& nm : results) {
+            if (nameCount[nm.name] > 1) {
+                int idx = nameIndex[nm.name]++;
+                nm.name += "_" + std::to_string(idx);
+            }
         }
     }
 
@@ -810,10 +876,129 @@ static std::vector<NodeMesh> ParseGLTFMultiMesh(const std::string& inputPath,
     return results;
 }
 
+/// Generate a .uzmat material graph JSON for a given material.
+static std::string GenerateMaterialGraph(const NodeMesh& n) {
+    std::ostringstream ss;
+    ss << "{\n";
+    ss << "    \"version\": 1,\n";
+    ss << "    \"name\": \"" << n.materialName << "\",\n";
+    ss << "    \"domain\": \"Surface\",\n";
+    ss << "    \"shadingModel\": \"DefaultLit\",\n";
+
+    // Blend mode
+    if (n.alphaMode == "BLEND")
+        ss << "    \"blendMode\": \"Translucent\",\n";
+    else if (n.alphaMode == "MASK")
+        ss << "    \"blendMode\": \"Masked\",\n";
+
+    if (n.doubleSided)
+        ss << "    \"twoSided\": true,\n";
+
+    ss << "    \"expressions\": [\n";
+
+    int nextId = 2;
+    std::vector<std::string> inputs;
+
+    // Albedo texture (pin 0)
+    int albedoId = 0;
+    if (!n.baseColorTex.empty()) {
+        albedoId = nextId++;
+        inputs.push_back("                { \"pin\": 0, \"srcExpr\": " + std::to_string(albedoId) + ", \"srcPin\": 0 }");
+    }
+
+    // MetalRoughness texture (pin 1 = roughness from G, pin 2 = metallic from B)
+    int mrId = 0;
+    if (!n.metallicRoughnessTex.empty()) {
+        mrId = nextId++;
+        inputs.push_back("                { \"pin\": 1, \"srcExpr\": " + std::to_string(mrId) + ", \"srcPin\": 3 }");
+        inputs.push_back("                { \"pin\": 2, \"srcExpr\": " + std::to_string(mrId) + ", \"srcPin\": 2 }");
+    }
+
+    // Normal texture (pin 3)
+    int normalId = 0;
+    if (!n.normalTex.empty()) {
+        normalId = nextId++;
+        inputs.push_back("                { \"pin\": 3, \"srcExpr\": " + std::to_string(normalId) + ", \"srcPin\": 0 }");
+    }
+
+    // Emissive texture (pin 4)
+    int emissiveId = 0;
+    if (!n.emissiveTex.empty()) {
+        emissiveId = nextId++;
+        inputs.push_back("                { \"pin\": 4, \"srcExpr\": " + std::to_string(emissiveId) + ", \"srcPin\": 0 }");
+    }
+
+    // Opacity (pin 5) for masked/translucent — use alpha channel of albedo
+    if ((n.alphaMode == "MASK" || n.alphaMode == "BLEND") && albedoId > 0) {
+        inputs.push_back("                { \"pin\": 5, \"srcExpr\": " + std::to_string(albedoId) + ", \"srcPin\": 4 }");
+    }
+
+    // PBROutput node
+    ss << "        {\n";
+    ss << "            \"id\": 1,\n";
+    ss << "            \"type\": \"PBROutput\",\n";
+    if (!inputs.empty()) {
+        ss << "            \"inputs\": [\n";
+        for (size_t i = 0; i < inputs.size(); ++i) {
+            ss << inputs[i];
+            if (i + 1 < inputs.size()) ss << ",";
+            ss << "\n";
+        }
+        ss << "            ]\n";
+    }
+    if (n.alphaMode == "MASK")
+        ss << "            ,\"floatParams\": { \"alphaClipThreshold\": " << n.alphaCutoff << " }\n";
+    ss << "        }";
+
+    // Albedo texture expression
+    if (albedoId > 0) {
+        ss << ",\n        {\n";
+        ss << "            \"id\": " << albedoId << ",\n";
+        ss << "            \"type\": \"TextureSample\",\n";
+        ss << "            \"name\": \"Albedo\",\n";
+        ss << "            \"stringParams\": { \"texturePath\": \"" << n.baseColorTex << "\" }\n";
+        ss << "        }";
+    }
+
+    // MetalRoughness texture expression
+    if (mrId > 0) {
+        ss << ",\n        {\n";
+        ss << "            \"id\": " << mrId << ",\n";
+        ss << "            \"type\": \"TextureSample\",\n";
+        ss << "            \"name\": \"MetalRoughness\",\n";
+        ss << "            \"stringParams\": { \"texturePath\": \"" << n.metallicRoughnessTex << "\" }\n";
+        ss << "        }";
+    }
+
+    // Normal texture expression
+    if (normalId > 0) {
+        ss << ",\n        {\n";
+        ss << "            \"id\": " << normalId << ",\n";
+        ss << "            \"type\": \"TextureSample\",\n";
+        ss << "            \"name\": \"Normal\",\n";
+        ss << "            \"stringParams\": { \"texturePath\": \"" << n.normalTex << "\" }\n";
+        ss << "        }";
+    }
+
+    // Emissive texture expression
+    if (emissiveId > 0) {
+        ss << ",\n        {\n";
+        ss << "            \"id\": " << emissiveId << ",\n";
+        ss << "            \"type\": \"TextureSample\",\n";
+        ss << "            \"name\": \"Emissive\",\n";
+        ss << "            \"stringParams\": { \"texturePath\": \"" << n.emissiveTex << "\" }\n";
+        ss << "        }";
+    }
+
+    ss << "\n    ]\n}\n";
+    return ss.str();
+}
+
 /// Generate a .uzprefab JSON for a set of node meshes.
 static std::string GeneratePrefab(const std::string& prefabName,
                                    const std::vector<NodeMesh>& nodes,
-                                   const std::string& meshDir) {
+                                   const std::string& meshDir,
+                                   const std::string& materialDir) {
     std::ostringstream ss;
     ss << "{\n  \"name\": \"" << prefabName << "\",\n  \"version\": \"1.0\",\n";
     ss << "  \"components\": { \"transform\": {} },\n";
@@ -826,14 +1011,12 @@ static std::string GeneratePrefab(const std::string& prefabName,
         ss << "        \"transform\": {},\n";
         ss << "        \"mesh\": { \"asset\": \"" << meshDir << "/" << n.name << ".uzmesh\" },\n";
         ss << "        \"material\": {\n";
-        if (!n.baseColorTex.empty())
-            ss << "          \"albedo\": \"" << n.baseColorTex << "\",\n";
-        if (!n.normalTex.empty())
-            ss << "          \"normal\": \"" << n.normalTex << "\",\n";
-        if (!n.metallicRoughnessTex.empty())
-            ss << "          \"metallicRoughness\": \"" << n.metallicRoughnessTex << "\",\n";
-        ss << "          \"roughnessMultiplier\": 1.0,\n";
-        ss << "          \"metallicMultiplier\": 1.0\n";
+        if (!n.materialName.empty()) {
+            ss << "          \"material_graph\": \"" << materialDir << "/" << n.materialName << ".uzmat\"\n";
+        } else {
+            ss << "          \"roughnessMultiplier\": 1.0,\n";
+            ss << "          \"metallicMultiplier\": 1.0\n";
+        }
         ss << "        }\n";
         ss << "      }\n";
         ss << "    }" << (i + 1 < nodes.size() ? "," : "") << "\n";
@@ -855,10 +1038,9 @@ static int ProcessAndSave(RawMesh& raw, const std::string& outputPath) {
     const uint32_t vertexCount = static_cast<uint32_t>(raw.vertices.size());
     const uint32_t indexCount = static_cast<uint32_t>(raw.indices.size());
 
-    // Generate smooth normals — average face normals at shared vertices.
-    // This replaces flat per-face normals with smooth interpolated normals,
-    // matching what ufbx does for FBX with generate_missing_normals=true.
-    {
+    // Generate smooth normals only when normals were NOT loaded from the source file.
+    // When normals exist in the source, preserve them (they include hard edges, artist intent).
+    if (!raw.hasNormals) {
         // Zero all normals first
         for (auto& v : raw.vertices) {
             v.normal = {0.0f, 0.0f, 0.0f};
@@ -972,7 +1154,7 @@ static int ProcessAndSave(RawMesh& raw, const std::string& outputPath) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 int main(int argc, char** argv) {
-    std::string inputPath, outputPath, builtinName, sceneOutDir, texturePrefix;
+    std::string inputPath, outputPath, builtinName, sceneOutDir, texturePrefix, materialOutDir;
     bool forceYUp = false; // --yup: force Y-up → Z-up conversion (default for FBX/glTF/OBJ)
     bool forceZUp = false; // --zup: skip axis conversion (source already Z-up)
     bool sceneMode = false;
@@ -984,6 +1166,7 @@ int main(int argc, char** argv) {
         if (arg == "--builtin" && i + 1 < argc) builtinName = argv[++i];
         if (arg == "--scene" && i + 1 < argc)  { sceneOutDir = argv[++i]; sceneMode = true; }
         if (arg == "--texture-prefix" && i + 1 < argc) texturePrefix = argv[++i];
+        if (arg == "--material-dir" && i + 1 < argc) materialOutDir = argv[++i];
         if (arg == "--yup") forceYUp = true;
         if (arg == "--zup") forceZUp = true;
     }
@@ -1049,9 +1232,31 @@ int main(int argc, char** argv) {
         // Determine the mesh directory relative path for the prefab
         auto sceneName = std::filesystem::path(sceneOutDir).filename().string();
         std::string meshRelDir = "meshes/" + sceneName;
+        std::string matRelDir = "materials/" + sceneName;
+
+        // Generate .uzmat files for unique materials
+        if (!materialOutDir.empty()) {
+            std::filesystem::create_directories(materialOutDir);
+            std::unordered_map<std::string, bool> writtenMats;
+            for (const auto& nm : nodes) {
+                if (nm.materialName.empty()) continue;
+                if (writtenMats.count(nm.materialName)) continue;
+                writtenMats[nm.materialName] = true;
+
+                std::string matPath = materialOutDir + "/" + nm.materialName + ".uzmat";
+                std::string matJson = GenerateMaterialGraph(nm);
+                std::ofstream mf(matPath);
+                mf << matJson;
+                std::cout << "  Material: " << nm.materialName << " → " << matPath;
+                if (nm.alphaMode != "OPAQUE") std::cout << " [" << nm.alphaMode << "]";
+                if (nm.doubleSided) std::cout << " [doubleSided]";
+                std::cout << "\n";
+            }
+            std::cout << "Generated " << writtenMats.size() << " material files\n";
+        }
 
         // Generate prefab
-        std::string prefabJson = GeneratePrefab(sceneName, nodes, meshRelDir);
+        std::string prefabJson = GeneratePrefab(sceneName, nodes, meshRelDir, matRelDir);
         std::string prefabPath = sceneOutDir + "/" + sceneName + ".uzprefab";
         {
             std::ofstream pf(prefabPath);

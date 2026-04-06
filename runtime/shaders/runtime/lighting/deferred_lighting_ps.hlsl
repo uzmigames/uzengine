@@ -180,13 +180,26 @@ float4 main(FSInput input) : SV_Target {
     float3 baseColor = rt0.rgb;
     float  ao        = rt0.a;  // mesh AO from GBuffer
 
-    // GTAO: combine with mesh AO when available (SM5: t9, bindless: gtaoSrvIndex in PerFrameCB)
-#ifndef UZ_BINDLESS
+    // GTAO: combine with mesh AO when available.
+    // SM5 path: fixed texture register t9.
+    // Bindless path: SRV index from PerFrameCB._gtaoSrv.
+#ifdef UZ_BINDLESS
+    if (_gtaoSrv != 0xFFFFFFFFu && _gtaoSrv > 0) {
+        Texture2D<float> gtaoTex = ResourceDescriptorHeap[_gtaoSrv];
+        float gtao = gtaoTex.Load(int3(px, 0));
+        if (gtao > 0.01) ao = min(ao, gtao);
+    }
+#else
     {
         float gtao = gtaoTextureT9.Load(int3(px, 0)).r;
         if (gtao > 0.01) ao = min(ao, gtao);
     }
 #endif
+
+    // minOcclusion: clamp AO so fully occluded areas still receive configurable
+    // minimum ambient. Affects both diffuse (ao * diffuseAmbient) and specular
+    // occlusion paths. @ref SkyLightComponent.minOcclusion
+    ao = max(ao, skyLightMinAmbient);
 
     float3 N         = OctDecode(rt1.rg);
     float  metallic  = rt1.b;
@@ -226,6 +239,25 @@ float4 main(FSInput input) : SV_Target {
     float3 sunL = normalize(lightDir.xyz);
     float  sunNoL = max(dot(N, sunL), 0.0);
     float  shadow = CascadeShadow(worldPos, viewDepth);
+
+    // Screen-space contact shadows: fine detail shadows from small features
+    // (column edges, window frames, floor contact). Gated by CVar r.ContactShadows.
+    if (_contactShadowLen > 0.0) {
+        uint csW, csH;
+#ifdef UZ_BINDLESS
+        Texture2D<float> csDpth = ResourceDescriptorHeap[gBufIndices.depthIdx];
+        csDpth.GetDimensions(csW, csH);
+        float cs = ComputeContactShadow(worldPos, sunL, csDpth,
+                                         viewProj, invViewProj,
+                                         csW, csH, nearPlane, farPlane);
+#else
+        gbufferDepth.GetDimensions(csW, csH);
+        float cs = ComputeContactShadow(worldPos, sunL,
+                                         viewProj, invViewProj,
+                                         csW, csH, nearPlane, farPlane);
+#endif
+        shadow = min(shadow, cs);
+    }
 
     float3 Lo = float3(0, 0, 0);
     {
@@ -335,6 +367,67 @@ float4 main(FSInput input) : SV_Target {
             irradiance = irrTex.SampleLevel(linearSampler, WorldToCubemap(N), 0).rgb;
         }
 #endif
+        // ── Radiance Cache probe grid: spatially-varying diffuse GI ──────
+        // @ref McGuire 2017 "Real-Time GI using Precomputed Light Field Probes"
+        // Trilinear interpolation of 8 surrounding probes' L2 SH coefficients.
+#ifdef UZ_BINDLESS
+        if (_rcEnabled != 0 && _rcProbesSrv != 0xFFFFFFFFu) {
+            StructuredBuffer<float4> probeSH = ResourceDescriptorHeap[_rcProbesSrv];
+
+            // Map world position to probe grid normalized coordinates [0,1]
+            float3 gridOrigin = float3(_rcOriginX, _rcOriginY, _rcOriginZ);
+            float  gridSize   = _rcExtent * 2.0;
+            float3 uvw = (worldPos - gridOrigin) / gridSize;
+            uvw = saturate(uvw);
+
+            // Grid dimensions (uniform: probesPerAxis^3)
+            float  ppa  = float(_rcProbesPerAxis);
+            float3 cell = uvw * (ppa - 1.0);
+            int3   c0   = int3(floor(cell));
+            float3 frac3 = cell - float3(c0);
+            int3   c1   = min(c0 + 1, int3(int(_rcProbesPerAxis) - 1,
+                                            int(_rcProbesPerAxis) - 1,
+                                            int(_rcProbesPerAxis) - 1));
+
+            // Trilinear: fetch 8 corner probes, evaluate SH, blend
+            float3 rcIrrad = float3(0,0,0);
+            [unroll]
+            for (uint corner = 0; corner < 8; ++corner) {
+                int3 idx3 = int3(
+                    (corner & 1) ? c1.x : c0.x,
+                    (corner & 2) ? c1.y : c0.y,
+                    (corner & 4) ? c1.z : c0.z);
+                float w = ((corner & 1) ? frac3.x : (1.0 - frac3.x))
+                        * ((corner & 2) ? frac3.y : (1.0 - frac3.y))
+                        * ((corner & 4) ? frac3.z : (1.0 - frac3.z));
+
+                uint probeLinear = uint(idx3.x)
+                                 + uint(idx3.y) * _rcProbesPerAxis
+                                 + uint(idx3.z) * _rcProbesPerAxis * _rcProbesPerAxis;
+                uint base = probeLinear * 7u; // 7 float4 per probe
+
+                // Load 7 packed SH float4s and evaluate
+                float4 sh0 = probeSH[base + 0];
+                float4 sh1 = probeSH[base + 1];
+                float4 sh2 = probeSH[base + 2];
+                float4 sh3 = probeSH[base + 3];
+                float4 sh4 = probeSH[base + 4];
+                float4 sh5 = probeSH[base + 5];
+                float4 sh6 = probeSH[base + 6];
+
+                float4 shArr[7] = { sh0, sh1, sh2, sh3, sh4, sh5, sh6 };
+                float3 probeIrrad = EvalSH_L2(N, shArr);
+                rcIrrad += w * max(probeIrrad, 0.0);
+            }
+
+            // Blend radiance cache with global SH: RC overrides when available
+            float rcIntensity = _rcGiIntensity;
+            irradiance = lerp(irradiance, rcIrrad, rcIntensity);
+        }
+#endif
+
+        // skyLightMinAmbient provides a floor on irradiance so fully occluded
+        // interior pixels still receive some ambient light.
         irradiance = max(irradiance, skyLightMinAmbient);
 
         // Our SH coefficients are pre-convolved with cosine lobe (UE5 pattern),

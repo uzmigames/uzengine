@@ -99,5 +99,12 @@ poc-napi/node_modules/
 *.uzimport
 .cache/
 
+# 3D Raw Model
+*.glb
+*.gltf
+*.fbx
+*.obj
+*.stl
+
 # NVIDIA DLSS SDK (proprietary, downloaded via setup.ps1, ~200MB)
 runtime/thirdparty/dlss/

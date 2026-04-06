@@ -1,65 +1,53 @@
 {
   "name": "sponza",
   "version": "1.0",
-  "components": {
-    "transform": {}
-  },
+  "components": { "transform": {} },
   "children": [
     {
-      "name": "roof_floor_03_01_roof_tiles_01_0",
+      "name": "roof_floor_03_01_roof_tiles_01_0_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/roof_floor_03_01_roof_tiles_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/roof_floor_03_01_roof_tiles_01_0_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/roof_tiles_01.uzmat"
         }
       }
     },
     {
-      "name": "roof_floor_03_01_roof_tiles_01_0",
+      "name": "roof_floor_03_01_roof_tiles_01_0_1",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/roof_floor_03_01_roof_tiles_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/roof_floor_03_01_roof_tiles_01_0_1.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/roof_tiles_01.uzmat"
         }
       }
     },
     {
-      "name": "roof_floor_03_01_roof_tiles_01_0",
+      "name": "roof_floor_03_01_roof_tiles_01_0_2",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/roof_floor_03_01_roof_tiles_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/roof_floor_03_01_roof_tiles_01_0_2.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/roof_tiles_01.uzmat"
         }
       }
     },
     {
-      "name": "roof_floor_03_01_roof_tiles_01_0",
+      "name": "roof_floor_03_01_roof_tiles_01_0_3",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/roof_floor_03_01_roof_tiles_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/roof_floor_03_01_roof_tiles_01_0_3.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/roof_tiles_01.uzmat"
         }
       }
     },
     {
-      "name": "roof_floor_03_01_roof_tiles_01_0",
+      "name": "roof_floor_03_01_roof_tiles_01_0_4",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/roof_floor_03_01_roof_tiles_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/roof_floor_03_01_roof_tiles_01_0_4.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/roof_tiles_01.uzmat"
         }
@@ -69,9 +57,7 @@
       "name": "roof_floor_03_01_stones_01_tile_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/roof_floor_03_01_stones_01_tile_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/roof_floor_03_01_stones_01_tile_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/stones_01_tile.uzmat"
         }
@@ -81,9 +67,7 @@
       "name": "roof_floor_03_01_metal_door_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/roof_floor_03_01_metal_door_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/roof_floor_03_01_metal_door_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/metal_door.uzmat"
         }
@@ -93,9 +77,7 @@
       "name": "roof_floor_03_01_brickwall_02_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/roof_floor_03_01_brickwall_02_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/roof_floor_03_01_brickwall_02_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/brickwall_02.uzmat"
         }
@@ -105,9 +87,7 @@
       "name": "roof_floor_03_01_brickwall_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/roof_floor_03_01_brickwall_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/roof_floor_03_01_brickwall_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/brickwall_01.uzmat"
         }
@@ -117,9 +97,7 @@
       "name": "roof_floor_03_01_window_frame_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/roof_floor_03_01_window_frame_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/roof_floor_03_01_window_frame_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/window_frame_01.uzmat"
         }
@@ -129,8 +107,9 @@
       "name": "roof_floor_03_01_glass_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/roof_floor_03_01_glass_0.uzmesh"
+        "mesh": { "asset": "meshes/sponza/roof_floor_03_01_glass_0.uzmesh" },
+        "material": {
+          "material_graph": "materials/sponza/glass.uzmat"
         }
       }
     },
@@ -138,45 +117,37 @@
       "name": "ornament_doors_09_door_stoneframe_02_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ornament_doors_09_door_stoneframe_02_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ornament_doors_09_door_stoneframe_02_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/door_stoneframe_02.uzmat"
         }
       }
     },
     {
-      "name": "ornament_doors_09_metal_door_0",
+      "name": "ornament_doors_09_metal_door_0_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ornament_doors_09_metal_door_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ornament_doors_09_metal_door_0_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/metal_door.uzmat"
         }
       }
     },
     {
-      "name": "ornament_doors_09_metal_door_0",
+      "name": "ornament_doors_09_metal_door_0_1",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ornament_doors_09_metal_door_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ornament_doors_09_metal_door_0_1.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/metal_door.uzmat"
         }
       }
     },
     {
-      "name": "ornament_doors_09_metal_door_0",
+      "name": "ornament_doors_09_metal_door_0_2",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ornament_doors_09_metal_door_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ornament_doors_09_metal_door_0_2.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/metal_door.uzmat"
         }
@@ -186,9 +157,7 @@
       "name": "ornament_doors_09_window_frame_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ornament_doors_09_window_frame_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ornament_doors_09_window_frame_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/window_frame_01.uzmat"
         }
@@ -198,8 +167,9 @@
       "name": "ornament_doors_09_glass_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ornament_doors_09_glass_0.uzmesh"
+        "mesh": { "asset": "meshes/sponza/ornament_doors_09_glass_0.uzmesh" },
+        "material": {
+          "material_graph": "materials/sponza/glass.uzmat"
         }
       }
     },
@@ -207,9 +177,7 @@
       "name": "ornament_doors_09_door_stoneframe_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ornament_doors_09_door_stoneframe_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ornament_doors_09_door_stoneframe_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/door_stoneframe_01.uzmat"
         }
@@ -219,9 +187,7 @@
       "name": "ornament_doors_09_stones_01_tile_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ornament_doors_09_stones_01_tile_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ornament_doors_09_stones_01_tile_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/stones_01_tile.uzmat"
         }
@@ -231,9 +197,7 @@
       "name": "ornament_doors_09_stones_2ndfloor_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ornament_doors_09_stones_2ndfloor_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ornament_doors_09_stones_2ndfloor_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/stones_2ndfloor.uzmat"
         }
@@ -243,9 +207,7 @@
       "name": "lionhead_ornament_lion_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/lionhead_ornament_lion_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/lionhead_ornament_lion_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/ornament_lion.uzmat"
         }
@@ -255,9 +217,7 @@
       "name": "walls_floor_03_stones_01_tile_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/walls_floor_03_stones_01_tile_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/walls_floor_03_stones_01_tile_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/stones_01_tile.uzmat"
         }
@@ -267,9 +227,7 @@
       "name": "walls_floor_03_door_stoneframe_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/walls_floor_03_door_stoneframe_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/walls_floor_03_door_stoneframe_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/door_stoneframe_01.uzmat"
         }
@@ -279,9 +237,7 @@
       "name": "walls_floor_03_arch_stone_wall_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/walls_floor_03_arch_stone_wall_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/walls_floor_03_arch_stone_wall_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/arch_stone_wall_01.uzmat"
         }
@@ -291,9 +247,7 @@
       "name": "walls_floor_03_brickwall_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/walls_floor_03_brickwall_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/walls_floor_03_brickwall_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/brickwall_01.uzmat"
         }
@@ -303,9 +257,7 @@
       "name": "walls_floor_03_stone_trims_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/walls_floor_03_stone_trims_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/walls_floor_03_stone_trims_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/stone_trims_01.uzmat"
         }
@@ -315,9 +267,7 @@
       "name": "walls_floor_03_brickwall_02_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/walls_floor_03_brickwall_02_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/walls_floor_03_brickwall_02_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/brickwall_02.uzmat"
         }
@@ -327,9 +277,7 @@
       "name": "ornament_roof_stone_trims_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ornament_roof_stone_trims_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ornament_roof_stone_trims_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/stone_trims_01.uzmat"
         }
@@ -339,9 +287,7 @@
       "name": "ornament_roof_metal_door_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ornament_roof_metal_door_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ornament_roof_metal_door_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/metal_door.uzmat"
         }
@@ -351,9 +297,7 @@
       "name": "sponza_ornament_ornament_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/sponza_ornament_ornament_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/sponza_ornament_ornament_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/ornament_01.uzmat"
         }
@@ -363,9 +307,7 @@
       "name": "ornament_windows_door_stoneframe_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ornament_windows_door_stoneframe_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ornament_windows_door_stoneframe_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/door_stoneframe_01.uzmat"
         }
@@ -375,9 +317,7 @@
       "name": "ornament_windows_metal_door_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ornament_windows_metal_door_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ornament_windows_metal_door_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/metal_door.uzmat"
         }
@@ -387,8 +327,9 @@
       "name": "ornament_windows_glass_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ornament_windows_glass_0.uzmesh"
+        "mesh": { "asset": "meshes/sponza/ornament_windows_glass_0.uzmesh" },
+        "material": {
+          "material_graph": "materials/sponza/glass.uzmat"
         }
       }
     },
@@ -396,9 +337,7 @@
       "name": "ornament_windows_stone_trims_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ornament_windows_stone_trims_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ornament_windows_stone_trims_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/stone_trims_01.uzmat"
         }
@@ -408,9 +347,7 @@
       "name": "ornament_stones_2ndfloor_stone_trims_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ornament_stones_2ndfloor_stone_trims_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ornament_stones_2ndfloor_stone_trims_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/stone_trims_01.uzmat"
         }
@@ -420,9 +357,7 @@
       "name": "stone_walls_2ndfloor_stones_2ndfloor_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/stone_walls_2ndfloor_stones_2ndfloor_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/stone_walls_2ndfloor_stones_2ndfloor_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/stones_2ndfloor.uzmat"
         }
@@ -432,9 +367,7 @@
       "name": "stone_walls_2ndfloor_brickwall_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/stone_walls_2ndfloor_brickwall_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/stone_walls_2ndfloor_brickwall_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/brickwall_01.uzmat"
         }
@@ -444,9 +377,7 @@
       "name": "stone_walls_2ndfloor_floor_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/stone_walls_2ndfloor_floor_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/stone_walls_2ndfloor_floor_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/floor_01.uzmat"
         }
@@ -456,9 +387,7 @@
       "name": "stone_walls_2ndfloor_brickwall_02_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/stone_walls_2ndfloor_brickwall_02_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/stone_walls_2ndfloor_brickwall_02_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/brickwall_02.uzmat"
         }
@@ -468,9 +397,7 @@
       "name": "arch_wall_2ndfloor_stone_trims_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/arch_wall_2ndfloor_stone_trims_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/arch_wall_2ndfloor_stone_trims_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/stone_trims_01.uzmat"
         }
@@ -480,9 +407,7 @@
       "name": "arch_wall_2ndfloor_brickwall_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/arch_wall_2ndfloor_brickwall_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/arch_wall_2ndfloor_brickwall_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/brickwall_01.uzmat"
         }
@@ -492,9 +417,7 @@
       "name": "arch_wall_2ndfloor_metal_door_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/arch_wall_2ndfloor_metal_door_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/arch_wall_2ndfloor_metal_door_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/metal_door.uzmat"
         }
@@ -504,9 +427,7 @@
       "name": "wooden_parts_wood_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/wooden_parts_wood_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/wooden_parts_wood_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/wood_01.uzmat"
         }
@@ -516,9 +437,7 @@
       "name": "wooden_parts_metal_door_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/wooden_parts_metal_door_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/wooden_parts_metal_door_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/metal_door.uzmat"
         }
@@ -528,9 +447,7 @@
       "name": "wooden_parts_wood_door_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/wooden_parts_wood_door_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/wooden_parts_wood_door_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/wood_door_01.uzmat"
         }
@@ -540,8 +457,9 @@
       "name": "wooden_parts_glass_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/wooden_parts_glass_0.uzmesh"
+        "mesh": { "asset": "meshes/sponza/wooden_parts_glass_0.uzmesh" },
+        "material": {
+          "material_graph": "materials/sponza/glass.uzmat"
         }
       }
     },
@@ -549,9 +467,7 @@
       "name": "wood_door_wood_door_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/wood_door_wood_door_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/wood_door_wood_door_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/wood_door_01.uzmat"
         }
@@ -561,9 +477,7 @@
       "name": "wood_door_wood_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/wood_door_wood_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/wood_door_wood_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/wood_01.uzmat"
         }
@@ -573,9 +487,7 @@
       "name": "walls_1stfloor_01_brickwall_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/walls_1stfloor_01_brickwall_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/walls_1stfloor_01_brickwall_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/brickwall_01.uzmat"
         }
@@ -585,9 +497,7 @@
       "name": "walls_1stfloor_01_ceiling_plaster_02_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/walls_1stfloor_01_ceiling_plaster_02_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/walls_1stfloor_01_ceiling_plaster_02_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/ceiling_plaster_02.uzmat"
         }
@@ -597,9 +507,7 @@
       "name": "walls_1stfloor_01_stones_01_tile_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/walls_1stfloor_01_stones_01_tile_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/walls_1stfloor_01_stones_01_tile_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/stones_01_tile.uzmat"
         }
@@ -609,9 +517,7 @@
       "name": "walls_1stfloor_01_window_frame_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/walls_1stfloor_01_window_frame_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/walls_1stfloor_01_window_frame_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/window_frame_01.uzmat"
         }
@@ -621,9 +527,7 @@
       "name": "walls_1stfloor_01_metal_door_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/walls_1stfloor_01_metal_door_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/walls_1stfloor_01_metal_door_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/metal_door.uzmat"
         }
@@ -633,8 +537,9 @@
       "name": "walls_1stfloor_01_glass_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/walls_1stfloor_01_glass_0.uzmesh"
+        "mesh": { "asset": "meshes/sponza/walls_1stfloor_01_glass_0.uzmesh" },
+        "material": {
+          "material_graph": "materials/sponza/glass.uzmat"
         }
       }
     },
@@ -642,9 +547,7 @@
       "name": "walls_1stfloor_01_stone_trims_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/walls_1stfloor_01_stone_trims_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/walls_1stfloor_01_stone_trims_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/stone_trims_01.uzmat"
         }
@@ -654,9 +557,7 @@
       "name": "walls_1stfloor_01_floor_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/walls_1stfloor_01_floor_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/walls_1stfloor_01_floor_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/floor_01.uzmat"
         }
@@ -666,9 +567,7 @@
       "name": "walls_1stfloor_01_arch_stone_wall_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/walls_1stfloor_01_arch_stone_wall_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/walls_1stfloor_01_arch_stone_wall_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/arch_stone_wall_01.uzmat"
         }
@@ -678,9 +577,7 @@
       "name": "walls_1stfloor_01_stone_trims_02_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/walls_1stfloor_01_stone_trims_02_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/walls_1stfloor_01_stone_trims_02_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/stone_trims_02.uzmat"
         }
@@ -690,9 +587,7 @@
       "name": "walls_1stfloor_01_door_stoneframe_02_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/walls_1stfloor_01_door_stoneframe_02_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/walls_1stfloor_01_door_stoneframe_02_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/door_stoneframe_02.uzmat"
         }
@@ -702,9 +597,7 @@
       "name": "walls_1stfloor_01_brickwall_02_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/walls_1stfloor_01_brickwall_02_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/walls_1stfloor_01_brickwall_02_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/brickwall_02.uzmat"
         }
@@ -714,9 +607,7 @@
       "name": "walls_1stfloor_01_stones_2ndfloor_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/walls_1stfloor_01_stones_2ndfloor_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/walls_1stfloor_01_stones_2ndfloor_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/stones_2ndfloor.uzmat"
         }
@@ -726,9 +617,7 @@
       "name": "ornament_stones_01_stone_trims_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ornament_stones_01_stone_trims_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ornament_stones_01_stone_trims_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/stone_trims_01.uzmat"
         }
@@ -738,9 +627,7 @@
       "name": "exterior_brickwall_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/exterior_brickwall_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/exterior_brickwall_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/brickwall_01.uzmat"
         }
@@ -750,9 +637,7 @@
       "name": "exterior_stones_01_tile_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/exterior_stones_01_tile_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/exterior_stones_01_tile_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/stones_01_tile.uzmat"
         }
@@ -762,33 +647,27 @@
       "name": "exterior_arch_stone_wall_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/exterior_arch_stone_wall_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/exterior_arch_stone_wall_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/arch_stone_wall_01.uzmat"
         }
       }
     },
     {
-      "name": "arch_stones_01_stone_trims_01_0",
+      "name": "arch_stones_01_stone_trims_01_0_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/arch_stones_01_stone_trims_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/arch_stones_01_stone_trims_01_0_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/stone_trims_01.uzmat"
         }
       }
     },
     {
-      "name": "arch_stones_01_stone_trims_01_0",
+      "name": "arch_stones_01_stone_trims_01_0_1",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/arch_stones_01_stone_trims_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/arch_stones_01_stone_trims_01_0_1.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/stone_trims_01.uzmat"
         }
@@ -798,9 +677,7 @@
       "name": "arch_stones_01_arch_stone_wall_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/arch_stones_01_arch_stone_wall_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/arch_stones_01_arch_stone_wall_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/arch_stone_wall_01.uzmat"
         }
@@ -810,9 +687,7 @@
       "name": "arch_stones_01_brickwall_02_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/arch_stones_01_brickwall_02_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/arch_stones_01_brickwall_02_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/brickwall_02.uzmat"
         }
@@ -822,33 +697,27 @@
       "name": "arch_stones_01_metal_door_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/arch_stones_01_metal_door_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/arch_stones_01_metal_door_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/metal_door.uzmat"
         }
       }
     },
     {
-      "name": "lamps_2ndflloor_01_metal_door_0",
+      "name": "lamps_2ndflloor_01_metal_door_0_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/lamps_2ndflloor_01_metal_door_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/lamps_2ndflloor_01_metal_door_0_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/metal_door.uzmat"
         }
       }
     },
     {
-      "name": "lamps_2ndflloor_01_metal_door_0",
+      "name": "lamps_2ndflloor_01_metal_door_0_1",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/lamps_2ndflloor_01_metal_door_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/lamps_2ndflloor_01_metal_door_0_1.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/metal_door.uzmat"
         }
@@ -858,8 +727,9 @@
       "name": "lamps_2ndflloor_01_light_bulb_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/lamps_2ndflloor_01_light_bulb_0.uzmesh"
+        "mesh": { "asset": "meshes/sponza/lamps_2ndflloor_01_light_bulb_0.uzmesh" },
+        "material": {
+          "material_graph": "materials/sponza/light_bulb.uzmat"
         }
       }
     },
@@ -867,8 +737,9 @@
       "name": "lamps_2ndflloor_01_lamp_glass_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/lamps_2ndflloor_01_lamp_glass_01_0.uzmesh"
+        "mesh": { "asset": "meshes/sponza/lamps_2ndflloor_01_lamp_glass_01_0.uzmesh" },
+        "material": {
+          "material_graph": "materials/sponza/lamp_glass_01.uzmat"
         }
       }
     },
@@ -876,9 +747,7 @@
       "name": "lamps_2ndflloor_01_column_head_1stfloor_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/lamps_2ndflloor_01_column_head_1stfloor_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/lamps_2ndflloor_01_column_head_1stfloor_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/column_head_1stfloor.uzmat"
         }
@@ -888,9 +757,7 @@
       "name": "ornament_door_2ndfloor_15_stones_01_tile_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ornament_door_2ndfloor_15_stones_01_tile_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ornament_door_2ndfloor_15_stones_01_tile_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/stones_01_tile.uzmat"
         }
@@ -900,9 +767,7 @@
       "name": "ornament_door_2ndfloor_15_brickwall_02_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ornament_door_2ndfloor_15_brickwall_02_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ornament_door_2ndfloor_15_brickwall_02_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/brickwall_02.uzmat"
         }
@@ -912,9 +777,7 @@
       "name": "ornament_door_2ndfloor_15_door_stoneframe_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ornament_door_2ndfloor_15_door_stoneframe_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ornament_door_2ndfloor_15_door_stoneframe_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/door_stoneframe_01.uzmat"
         }
@@ -924,57 +787,47 @@
       "name": "ornament_door_2ndfloor_15_arch_stone_wall_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ornament_door_2ndfloor_15_arch_stone_wall_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ornament_door_2ndfloor_15_arch_stone_wall_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/arch_stone_wall_01.uzmat"
         }
       }
     },
     {
-      "name": "ornament_door_2ndfloor_15_metal_door_0",
+      "name": "ornament_door_2ndfloor_15_metal_door_0_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ornament_door_2ndfloor_15_metal_door_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ornament_door_2ndfloor_15_metal_door_0_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/metal_door.uzmat"
         }
       }
     },
     {
-      "name": "ornament_door_2ndfloor_15_metal_door_0",
+      "name": "ornament_door_2ndfloor_15_metal_door_0_1",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ornament_door_2ndfloor_15_metal_door_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ornament_door_2ndfloor_15_metal_door_0_1.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/metal_door.uzmat"
         }
       }
     },
     {
-      "name": "ornament_door_2ndfloor_15_metal_door_0",
+      "name": "ornament_door_2ndfloor_15_metal_door_0_2",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ornament_door_2ndfloor_15_metal_door_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ornament_door_2ndfloor_15_metal_door_0_2.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/metal_door.uzmat"
         }
       }
     },
     {
-      "name": "ornament_door_2ndfloor_15_metal_door_0",
+      "name": "ornament_door_2ndfloor_15_metal_door_0_3",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ornament_door_2ndfloor_15_metal_door_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ornament_door_2ndfloor_15_metal_door_0_3.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/metal_door.uzmat"
         }
@@ -984,9 +837,7 @@
       "name": "ornament_door_2ndfloor_15_door_stoneframe_02_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ornament_door_2ndfloor_15_door_stoneframe_02_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ornament_door_2ndfloor_15_door_stoneframe_02_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/door_stoneframe_02.uzmat"
         }
@@ -996,9 +847,7 @@
       "name": "ornament_door_2ndfloor_15_window_frame_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ornament_door_2ndfloor_15_window_frame_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ornament_door_2ndfloor_15_window_frame_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/window_frame_01.uzmat"
         }
@@ -1008,8 +857,9 @@
       "name": "ornament_door_2ndfloor_15_glass_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ornament_door_2ndfloor_15_glass_0.uzmesh"
+        "mesh": { "asset": "meshes/sponza/ornament_door_2ndfloor_15_glass_0.uzmesh" },
+        "material": {
+          "material_graph": "materials/sponza/glass.uzmat"
         }
       }
     },
@@ -1017,9 +867,7 @@
       "name": "decals_1st_floor1_dirt_decal_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/decals_1st_floor1_dirt_decal_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/decals_1st_floor1_dirt_decal_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/dirt_decal.uzmat"
         }
@@ -1029,9 +877,7 @@
       "name": "Materials_column_1stfloor_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/Materials_column_1stfloor_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/Materials_column_1stfloor_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/column_1stfloor.uzmat"
         }
@@ -1041,9 +887,7 @@
       "name": "Materials_ornament_lion_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/Materials_ornament_lion_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/Materials_ornament_lion_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/ornament_lion.uzmat"
         }
@@ -1053,9 +897,7 @@
       "name": "Materials_dirt_decal_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/Materials_dirt_decal_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/Materials_dirt_decal_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/dirt_decal.uzmat"
         }
@@ -1065,11 +907,9 @@
       "name": "Materials_ceiling_plaster_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/Materials_ceiling_plaster_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/Materials_ceiling_plaster_01_0.uzmesh" },
         "material": {
-          "material_graph": "materials/sponza/ceiling_plaster_02.uzmat"
+          "material_graph": "materials/sponza/ceiling_plaster_01.uzmat"
         }
       }
     },
@@ -1077,9 +917,7 @@
       "name": "Materials_arch_stone_wall_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/Materials_arch_stone_wall_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/Materials_arch_stone_wall_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/arch_stone_wall_01.uzmat"
         }
@@ -1089,9 +927,7 @@
       "name": "Materials_column_head_2ndfloor_03_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/Materials_column_head_2ndfloor_03_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/Materials_column_head_2ndfloor_03_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/column_head_2ndfloor_03.uzmat"
         }
@@ -1101,9 +937,7 @@
       "name": "Materials_ornament_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/Materials_ornament_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/Materials_ornament_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/ornament_01.uzmat"
         }
@@ -1113,9 +947,7 @@
       "name": "Materials_roof_tiles_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/Materials_roof_tiles_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/Materials_roof_tiles_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/roof_tiles_01.uzmat"
         }
@@ -1125,9 +957,7 @@
       "name": "Materials_stone_trims_02_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/Materials_stone_trims_02_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/Materials_stone_trims_02_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/stone_trims_02.uzmat"
         }
@@ -1137,9 +967,7 @@
       "name": "Materials_column_brickwall_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/Materials_column_brickwall_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/Materials_column_brickwall_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/column_brickwall_01.uzmat"
         }
@@ -1149,9 +977,7 @@
       "name": "Materials_column_head_2ndfloor_02_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/Materials_column_head_2ndfloor_02_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/Materials_column_head_2ndfloor_02_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/column_head_2ndfloor_02.uzmat"
         }
@@ -1161,9 +987,7 @@
       "name": "Materials_brickwall_02_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/Materials_brickwall_02_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/Materials_brickwall_02_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/brickwall_02.uzmat"
         }
@@ -1173,9 +997,7 @@
       "name": "Materials_brickwall_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/Materials_brickwall_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/Materials_brickwall_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/brickwall_01.uzmat"
         }
@@ -1185,8 +1007,9 @@
       "name": "Materials_lamp_glass_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/Materials_lamp_glass_01_0.uzmesh"
+        "mesh": { "asset": "meshes/sponza/Materials_lamp_glass_01_0.uzmesh" },
+        "material": {
+          "material_graph": "materials/sponza/lamp_glass_01.uzmat"
         }
       }
     },
@@ -1194,8 +1017,9 @@
       "name": "Materials_glass_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/Materials_glass_0.uzmesh"
+        "mesh": { "asset": "meshes/sponza/Materials_glass_0.uzmesh" },
+        "material": {
+          "material_graph": "materials/sponza/glass.uzmat"
         }
       }
     },
@@ -1203,9 +1027,7 @@
       "name": "Materials_metal_door_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/Materials_metal_door_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/Materials_metal_door_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/metal_door.uzmat"
         }
@@ -1215,9 +1037,7 @@
       "name": "Materials_door_stoneframe_02_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/Materials_door_stoneframe_02_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/Materials_door_stoneframe_02_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/door_stoneframe_02.uzmat"
         }
@@ -1227,9 +1047,7 @@
       "name": "Materials_door_stoneframe_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/Materials_door_stoneframe_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/Materials_door_stoneframe_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/door_stoneframe_01.uzmat"
         }
@@ -1239,9 +1057,7 @@
       "name": "Materials_stones_2ndfloor_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/Materials_stones_2ndfloor_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/Materials_stones_2ndfloor_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/stones_2ndfloor.uzmat"
         }
@@ -1251,9 +1067,7 @@
       "name": "Materials_floor_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/Materials_floor_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/Materials_floor_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/floor_01.uzmat"
         }
@@ -1263,9 +1077,7 @@
       "name": "Materials_stones_01_tile_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/Materials_stones_01_tile_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/Materials_stones_01_tile_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/stones_01_tile.uzmat"
         }
@@ -1275,9 +1087,7 @@
       "name": "Materials_stone_trims_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/Materials_stone_trims_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/Materials_stone_trims_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/stone_trims_01.uzmat"
         }
@@ -1287,9 +1097,7 @@
       "name": "Materials_window_frame_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/Materials_window_frame_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/Materials_window_frame_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/window_frame_01.uzmat"
         }
@@ -1299,9 +1107,7 @@
       "name": "Materials_column_head_1stfloor_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/Materials_column_head_1stfloor_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/Materials_column_head_1stfloor_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/column_head_1stfloor.uzmat"
         }
@@ -1311,8 +1117,9 @@
       "name": "Materials_light_bulb_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/Materials_light_bulb_0.uzmesh"
+        "mesh": { "asset": "meshes/sponza/Materials_light_bulb_0.uzmesh" },
+        "material": {
+          "material_graph": "materials/sponza/light_bulb.uzmat"
         }
       }
     },
@@ -1320,9 +1127,7 @@
       "name": "Materials_ceiling_plaster_02_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/Materials_ceiling_plaster_02_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/Materials_ceiling_plaster_02_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/ceiling_plaster_02.uzmat"
         }
@@ -1332,9 +1137,7 @@
       "name": "Materials_wood_door_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/Materials_wood_door_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/Materials_wood_door_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/wood_door_01.uzmat"
         }
@@ -1344,9 +1147,7 @@
       "name": "Materials_wood_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/Materials_wood_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/Materials_wood_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/wood_01.uzmat"
         }
@@ -1356,69 +1157,57 @@
       "name": "column_2ndfloor_19_stones_01_tile_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/column_2ndfloor_19_stones_01_tile_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/column_2ndfloor_19_stones_01_tile_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/stones_01_tile.uzmat"
         }
       }
     },
     {
-      "name": "column_2ndfloor_19_column_head_2ndfloor_02_0",
+      "name": "column_2ndfloor_19_column_head_2ndfloor_02_0_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/column_2ndfloor_19_column_head_2ndfloor_02_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/column_2ndfloor_19_column_head_2ndfloor_02_0_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/column_head_2ndfloor_02.uzmat"
         }
       }
     },
     {
-      "name": "column_2ndfloor_19_column_head_2ndfloor_02_0",
+      "name": "column_2ndfloor_19_column_head_2ndfloor_02_0_1",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/column_2ndfloor_19_column_head_2ndfloor_02_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/column_2ndfloor_19_column_head_2ndfloor_02_0_1.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/column_head_2ndfloor_02.uzmat"
         }
       }
     },
     {
-      "name": "column_2ndfloor_19_column_head_2ndfloor_02_0",
+      "name": "column_2ndfloor_19_column_head_2ndfloor_02_0_2",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/column_2ndfloor_19_column_head_2ndfloor_02_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/column_2ndfloor_19_column_head_2ndfloor_02_0_2.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/column_head_2ndfloor_02.uzmat"
         }
       }
     },
     {
-      "name": "column_2ndfloor_19_column_head_2ndfloor_02_0",
+      "name": "column_2ndfloor_19_column_head_2ndfloor_02_0_3",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/column_2ndfloor_19_column_head_2ndfloor_02_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/column_2ndfloor_19_column_head_2ndfloor_02_0_3.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/column_head_2ndfloor_02.uzmat"
         }
       }
     },
     {
-      "name": "column_2ndfloor_19_column_head_2ndfloor_02_0",
+      "name": "column_2ndfloor_19_column_head_2ndfloor_02_0_4",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/column_2ndfloor_19_column_head_2ndfloor_02_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/column_2ndfloor_19_column_head_2ndfloor_02_0_4.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/column_head_2ndfloor_02.uzmat"
         }
@@ -1428,57 +1217,47 @@
       "name": "column_2ndfloor_19_column_brickwall_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/column_2ndfloor_19_column_brickwall_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/column_2ndfloor_19_column_brickwall_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/column_brickwall_01.uzmat"
         }
       }
     },
     {
-      "name": "column_2ndfloor_19_column_head_2ndfloor_03_0",
+      "name": "column_2ndfloor_19_column_head_2ndfloor_03_0_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/column_2ndfloor_19_column_head_2ndfloor_03_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/column_2ndfloor_19_column_head_2ndfloor_03_0_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/column_head_2ndfloor_03.uzmat"
         }
       }
     },
     {
-      "name": "column_2ndfloor_19_column_head_2ndfloor_03_0",
+      "name": "column_2ndfloor_19_column_head_2ndfloor_03_0_1",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/column_2ndfloor_19_column_head_2ndfloor_03_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/column_2ndfloor_19_column_head_2ndfloor_03_0_1.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/column_head_2ndfloor_03.uzmat"
         }
       }
     },
     {
-      "name": "column_2ndfloor_19_column_head_2ndfloor_03_0",
+      "name": "column_2ndfloor_19_column_head_2ndfloor_03_0_2",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/column_2ndfloor_19_column_head_2ndfloor_03_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/column_2ndfloor_19_column_head_2ndfloor_03_0_2.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/column_head_2ndfloor_03.uzmat"
         }
       }
     },
     {
-      "name": "column_2ndfloor_19_column_head_2ndfloor_03_0",
+      "name": "column_2ndfloor_19_column_head_2ndfloor_03_0_3",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/column_2ndfloor_19_column_head_2ndfloor_03_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/column_2ndfloor_19_column_head_2ndfloor_03_0_3.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/column_head_2ndfloor_03.uzmat"
         }
@@ -1488,9 +1267,7 @@
       "name": "column_2ndfloor_19_stone_trims_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/column_2ndfloor_19_stone_trims_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/column_2ndfloor_19_stone_trims_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/stone_trims_01.uzmat"
         }
@@ -1500,9 +1277,7 @@
       "name": "column_2ndfloor_19_column_1stfloor_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/column_2ndfloor_19_column_1stfloor_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/column_2ndfloor_19_column_1stfloor_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/column_1stfloor.uzmat"
         }
@@ -1512,9 +1287,7 @@
       "name": "column_2ndfloor_19_column_head_1stfloor_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/column_2ndfloor_19_column_head_1stfloor_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/column_2ndfloor_19_column_head_1stfloor_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/column_head_1stfloor.uzmat"
         }
@@ -1524,9 +1297,7 @@
       "name": "ceiling_2ndfloor_stones_2ndfloor_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ceiling_2ndfloor_stones_2ndfloor_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ceiling_2ndfloor_stones_2ndfloor_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/stones_2ndfloor.uzmat"
         }
@@ -1536,9 +1307,7 @@
       "name": "ceiling_2ndfloor_metal_door_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ceiling_2ndfloor_metal_door_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ceiling_2ndfloor_metal_door_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/metal_door.uzmat"
         }
@@ -1548,9 +1317,7 @@
       "name": "ceiling_2ndfloor_arch_stone_wall_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ceiling_2ndfloor_arch_stone_wall_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ceiling_2ndfloor_arch_stone_wall_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/arch_stone_wall_01.uzmat"
         }
@@ -1560,9 +1327,7 @@
       "name": "ceiling_2ndfloor_stones_01_tile_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ceiling_2ndfloor_stones_01_tile_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ceiling_2ndfloor_stones_01_tile_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/stones_01_tile.uzmat"
         }
@@ -1572,11 +1337,9 @@
       "name": "ceiling_2ndfloor_ceiling_plaster_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ceiling_2ndfloor_ceiling_plaster_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ceiling_2ndfloor_ceiling_plaster_01_0.uzmesh" },
         "material": {
-          "material_graph": "materials/sponza/ceiling_plaster_02.uzmat"
+          "material_graph": "materials/sponza/ceiling_plaster_01.uzmat"
         }
       }
     },
@@ -1584,9 +1347,7 @@
       "name": "ceiling_2ndfloor_ceiling_plaster_02_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ceiling_2ndfloor_ceiling_plaster_02_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ceiling_2ndfloor_ceiling_plaster_02_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/ceiling_plaster_02.uzmat"
         }
@@ -1596,9 +1357,7 @@
       "name": "ceiling_2ndfloor_stone_trims_02_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ceiling_2ndfloor_stone_trims_02_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ceiling_2ndfloor_stone_trims_02_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/stone_trims_02.uzmat"
         }
@@ -1608,9 +1367,7 @@
       "name": "ceiling_2ndfloor_stone_trims_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ceiling_2ndfloor_stone_trims_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ceiling_2ndfloor_stone_trims_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/stone_trims_01.uzmat"
         }
@@ -1620,9 +1377,7 @@
       "name": "ceiling_2ndfloor_window_frame_01_0",
       "components": {
         "transform": {},
-        "mesh": {
-          "asset": "meshes/sponza/ceiling_2ndfloor_window_frame_01_0.uzmesh"
-        },
+        "mesh": { "asset": "meshes/sponza/ceiling_2ndfloor_window_frame_01_0.uzmesh" },
         "material": {
           "material_graph": "materials/sponza/window_frame_01.uzmat"
         }

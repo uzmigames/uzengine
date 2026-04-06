@@ -1,0 +1,13 @@
+{
+    "version": 1,
+    "name": "lamp_glass_01",
+    "domain": "Surface",
+    "shadingModel": "DefaultLit",
+    "twoSided": true,
+    "expressions": [
+        {
+            "id": 1,
+            "type": "PBROutput",
+        }
+    ]
+}

@@ -402,6 +402,7 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
             cmd.normalIntensity     = mat->GetNormalIntensity();
             cmd.aoIntensity         = mat->GetAoIntensity();
             cmd.opacity             = mat->GetOpacity();
+            cmd.alphaClipThreshold  = mat->GetAlphaClipThreshold();
             cmd.uvScaleX            = mat->GetUvScaleX();
             cmd.uvScaleY            = mat->GetUvScaleY();
             cmd.uvOffsetX           = mat->GetUvOffsetX();

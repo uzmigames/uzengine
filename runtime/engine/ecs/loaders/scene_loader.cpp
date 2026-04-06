@@ -429,9 +429,54 @@ void ParseMaterialComponent(World& world,
     // MaterialPipeline compiles its PSO. Until then, the fixed-PBR textures
     // below serve as fallback so the mesh isn't invisible.
     const std::string matGraphPath = ReadString(comp, "material_graph");
+
+    // Parsed .uzmat metadata (blendMode, twoSided, textures) to propagate to
+    // the fixed Material so the GBuffer pass can route Masked/Translucent draws
+    // and bind opacity textures even before the material graph PSO is compiled.
+    std::string uzmatBlendMode;
+    bool        uzmatTwoSided = false;
+    float       uzmatAlphaClip = 0.3333f;
+    std::string uzmatAlbedoPath;
+
     if (!matGraphPath.empty()) {
         mesh.materialGraphPath = matGraphPath;
         UZ_LOG(Scene, Info, "Material graph assigned: '{}'", matGraphPath);
+
+        // Read .uzmat JSON to extract rendering properties that the fixed Material
+        // needs: blendMode, twoSided, alphaClipThreshold, and albedo texture path
+        // (used as opacity source for Masked materials with alpha in albedo).
+        if (s_loadVfs) {
+            auto matBytes = s_loadVfs->Read(matGraphPath);
+            if (!matBytes.empty()) {
+                try {
+                    auto mj = nlohmann::json::parse(matBytes.begin(), matBytes.end());
+                    uzmatBlendMode = mj.value("blendMode", "");
+                    uzmatTwoSided  = mj.value("twoSided", false);
+
+                    // Extract alphaClipThreshold and albedo texture from expressions.
+                    if (mj.contains("expressions") && mj["expressions"].is_array()) {
+                        for (const auto& expr : mj["expressions"]) {
+                            const std::string exprType = expr.value("type", "");
+                            if (exprType == "PBROutput") {
+                                if (expr.contains("floatParams") && expr["floatParams"].is_object()) {
+                                    uzmatAlphaClip = expr["floatParams"].value("alphaClipThreshold", 0.3333f);
+                                }
+                            }
+                            if (exprType == "TextureSample" || exprType == "TextureParameter") {
+                                if (expr.contains("stringParams") && expr["stringParams"].is_object()) {
+                                    auto tp = expr["stringParams"].value("texturePath", "");
+                                    if (!tp.empty() && uzmatAlbedoPath.empty()) {
+                                        uzmatAlbedoPath = tp; // first texture = albedo
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (const nlohmann::json::parse_error&) {
+                    // Non-fatal — continue with defaults.
+                }
+            }
+        }
     }
 
     // Fixed-PBR path: Create a Material asset owned by the scene loader and assign it to slot 0.
@@ -465,6 +510,33 @@ void ParseMaterialComponent(World& world,
         else if (bm == "Additive")    mat->blendMode = uz::EBlendMode::Additive;
         else if (bm == "Modulate")    mat->blendMode = uz::EBlendMode::Modulate;
     }
+
+    // Propagate .uzmat metadata to the fixed Material when inline fields are absent.
+    // This ensures Masked/Translucent blend modes, twoSided, and opacity wiring work
+    // even when the entity only specifies "material_graph" without inline overrides.
+    if (mat->blendMode == uz::EBlendMode::Opaque && !uzmatBlendMode.empty()) {
+        if (uzmatBlendMode == "Masked")           mat->blendMode = uz::EBlendMode::Masked;
+        else if (uzmatBlendMode == "Translucent") mat->blendMode = uz::EBlendMode::Translucent;
+        else if (uzmatBlendMode == "Additive")    mat->blendMode = uz::EBlendMode::Additive;
+        else if (uzmatBlendMode == "Modulate")    mat->blendMode = uz::EBlendMode::Modulate;
+    }
+    if (uzmatTwoSided) {
+        mat->twoSided = true;
+    }
+    // For Masked materials, enable alpha test. The GBuffer shader samples the
+    // albedo texture's alpha channel as the mask source when no separate opacity
+    // texture is bound (opacitySrvIndex == 0).
+    if (mat->blendMode == uz::EBlendMode::Masked) {
+        mat->alphaTest = true;
+        // A threshold of 0 would never discard anything; use 0.3333 as default.
+        mat->alphaClipThreshold = (uzmatAlphaClip > 0.0f) ? uzmatAlphaClip : 0.3333f;
+        // Set albedo path from .uzmat if not already set inline, so the texture
+        // gets loaded and its alpha channel is available for the mask.
+        if (mat->albedoPath.empty() && !uzmatAlbedoPath.empty()) {
+            mat->albedoPath = uzmatAlbedoPath;
+        }
+    }
+
     // Auto-promote to Translucent when transmission is set (glass materials).
     if (mat->transmission > 0.0f && mat->blendMode == uz::EBlendMode::Opaque) {
         mat->blendMode = uz::EBlendMode::Translucent;

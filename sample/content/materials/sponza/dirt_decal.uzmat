@@ -3,25 +3,23 @@
     "name": "dirt_decal",
     "domain": "Surface",
     "shadingModel": "DefaultLit",
+    "blendMode": "Masked",
+    "twoSided": true,
     "expressions": [
         {
             "id": 1,
             "type": "PBROutput",
             "inputs": [
-                {
-                    "pin": 0,
-                    "srcExpr": 2,
-                    "srcPin": 0
-                }
+                { "pin": 0, "srcExpr": 2, "srcPin": 0 },
+                { "pin": 5, "srcExpr": 2, "srcPin": 4 }
             ]
+            ,"floatParams": { "alphaClipThreshold": 0 }
         },
         {
             "id": 2,
             "type": "TextureSample",
             "name": "Albedo",
-            "stringParams": {
-                "texturePath": "textures/sponza/dirt_decal_baseColor.png"
-            }
+            "stringParams": { "texturePath": "textures/sponza/dirt_decal_baseColor.png" }
         }
     ]
 }

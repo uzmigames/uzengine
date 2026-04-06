@@ -28,8 +28,9 @@
 #include <cstring>
 
 // ── CVars consumed by PerFrameCB population ─────────────────────────────
-static auto* cv_SkyLightIntensity  = UZ_CVAR_FLOAT("r.SkyLight.Intensity", 1.0f, "IBL ambient multiplier", 0.f, 20.f);
-static auto* cv_SkyLightMinAmbient = UZ_CVAR_FLOAT("r.SkyLight.MinAmbient", 0.25f, "Minimum ambient floor", 0.f, 1.f);
+static auto* cv_SkyLightIntensity        = UZ_CVAR_FLOAT("r.SkyLight.Intensity", 1.0f, "IBL ambient multiplier", 0.f, 20.f);
+static auto* cv_SkyLightMinAmbient       = UZ_CVAR_FLOAT("r.SkyLight.MinAmbient", 0.25f, "Minimum ambient floor", 0.f, 1.f);
+static auto* cv_SkyLightIndirectIntensity = UZ_CVAR_FLOAT("r.SkyLight.IndirectIntensity", 1.0f, "Diffuse IBL multiplier (separate from specular)", 0.f, 10.f);
 static auto* cv_ContactShadowLen   = UZ_CVAR_FLOAT("r.ContactShadow.Length", 0.0f, "Contact shadow ray length (0=off)", 0.f, 0.2f);
 static auto* cv_FilmGrain          = UZ_CVAR_FLOAT("r.FilmGrain", 0.f, "Film grain intensity", 0.f, 1.f);
 static auto* cv_Vignette           = UZ_CVAR_FLOAT("r.Vignette", 0.0f, "Vignette intensity", 0.f, 2.f);
@@ -146,6 +147,8 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     // SkyLight extraction: intensity, color, minOcclusion from first SkyLightComponent.
     float skyIntensity = 1.0f;
     float skyIndirectIntensity = 1.0f;
+    bool  lowerHemisphereIsBlack = true;
+    Vec3  lowerHemisphereColor = {0.0f, 0.0f, 0.0f};
     if (ctx.world) {
         auto skyLightView = ctx.world->GetRegistry().view<SkyLightComponent>();
         for (auto enttEntity : skyLightView) {
@@ -172,6 +175,9 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
             perFrame.slCloudAOApertureScale    = sl.cloudAmbientOcclusionApertureScale;
             perFrame.slSkyDistanceThreshold    = sl.skyDistanceThreshold;
             perFrame.slOcclusionContrast       = sl.occlusionContrast;
+
+            lowerHemisphereIsBlack = sl.lowerHemisphereIsBlack;
+            lowerHemisphereColor   = sl.lowerHemisphereColor;
 
             // ── Auto-load HDRI from cubemap_path (UE5 SpecifiedCubemap pattern) ──
             if (sl.sourceType == ESkyLightSourceType::SpecifiedCubemap
@@ -238,6 +244,8 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     // r.SkyLight.MinAmbient provides a floor that the component value is raised to.
     perFrame.skyLightIntensity *= cv_SkyLightIntensity->value;
     perFrame.skyLightMinAmbient = std::max(perFrame.skyLightMinAmbient, cv_SkyLightMinAmbient->value);
+    // IndirectIntensity CVar overrides the component value for diffuse IBL.
+    skyIndirectIntensity *= cv_SkyLightIndirectIntensity->value;
 
     // Upload SH coefficients for sky diffuse irradiance (standard).
     // The shader's deferred_lighting_ps.hlsl line 881 already multiplies
@@ -252,6 +260,30 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
             m_skyIrradianceSH.coeffs[i].z * shScale,
             m_skyIrradianceSH.coeffs[i].w * shScale
         };
+    }
+
+    // Lower hemisphere contribution: when lowerHemisphereIsBlack=false, add
+    // a uniform color from below the horizon into the SH coefficients.
+    // L0 band (coeffs[0].w=R, [1].w=G, [2].w=B) receives the constant term;
+    // L1 Z-band (coeffs[3]) receives a negative bias to push irradiance downward.
+    // @ref Ramamoorthi 2001 "An Efficient Representation for Irradiance Environment Maps"
+    // SH basis: Y00 = 0.2821, Y10_z = 0.4886 (Z-up: vertical direction).
+    if (!lowerHemisphereIsBlack) {
+        const float Y00 = 0.2820947918f;    // 1 / (2 * sqrt(PI))
+        const float Y10 = 0.4886025119f;    // sqrt(3) / (2 * sqrt(PI))
+        // Add lower hemisphere as a half-sphere contribution: L0 + negative L1_Z.
+        // L0 adds uniform color; negative L1_Z biases it toward the lower hemisphere.
+        const float halfWeight = 0.5f;  // Lower hemisphere is half the sphere
+        // L0 contribution: Y00 * color * halfWeight
+        perFrame.skyIrradianceSH[0].w += lowerHemisphereColor.x * Y00 * halfWeight * shScale;
+        perFrame.skyIrradianceSH[1].w += lowerHemisphereColor.y * Y00 * halfWeight * shScale;
+        perFrame.skyIrradianceSH[2].w += lowerHemisphereColor.z * Y00 * halfWeight * shScale;
+        // L1 Z contribution: negative Y10 to push light downward (Z-up = vertical)
+        // coeffs[3] = L1 band: .x=R_L1m1, .y=G_L1m1, .z=B_L1m1, .w = packed L10_R
+        // In our compact packed SH format, L1_Z is in coeffs[3].x/y/z
+        perFrame.skyIrradianceSH[3].x -= lowerHemisphereColor.x * Y10 * halfWeight * shScale;
+        perFrame.skyIrradianceSH[3].y -= lowerHemisphereColor.y * Y10 * halfWeight * shScale;
+        perFrame.skyIrradianceSH[3].z -= lowerHemisphereColor.z * Y10 * halfWeight * shScale;
     }
 
     // Log SH L0 coefficient once to diagnose shadow darkness.

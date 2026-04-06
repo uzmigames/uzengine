@@ -3,56 +3,35 @@
     "name": "stone_trims_01",
     "domain": "Surface",
     "shadingModel": "DefaultLit",
+    "twoSided": true,
     "expressions": [
         {
             "id": 1,
             "type": "PBROutput",
             "inputs": [
-                {
-                    "pin": 0,
-                    "srcExpr": 2,
-                    "srcPin": 0
-                },
-                {
-                    "pin": 1,
-                    "srcExpr": 3,
-                    "srcPin": 3
-                },
-                {
-                    "pin": 2,
-                    "srcExpr": 3,
-                    "srcPin": 2
-                },
-                {
-                    "pin": 3,
-                    "srcExpr": 4,
-                    "srcPin": 0
-                }
+                { "pin": 0, "srcExpr": 2, "srcPin": 0 },
+                { "pin": 1, "srcExpr": 3, "srcPin": 3 },
+                { "pin": 2, "srcExpr": 3, "srcPin": 2 },
+                { "pin": 3, "srcExpr": 4, "srcPin": 0 }
             ]
         },
         {
             "id": 2,
             "type": "TextureSample",
             "name": "Albedo",
-            "stringParams": {
-                "texturePath": "textures/sponza/stone_trims_01_baseColor.png"
-            }
+            "stringParams": { "texturePath": "textures/sponza/stone_trims_01_baseColor.png" }
         },
         {
             "id": 3,
             "type": "TextureSample",
             "name": "MetalRoughness",
-            "stringParams": {
-                "texturePath": "textures/sponza/stone_trims_01_metallicRoughness.png"
-            }
+            "stringParams": { "texturePath": "textures/sponza/stone_trims_01_metallicRoughness.png" }
         },
         {
             "id": 4,
             "type": "TextureSample",
             "name": "Normal",
-            "stringParams": {
-                "texturePath": "textures/sponza/stone_trims_01_normal.png"
-            }
+            "stringParams": { "texturePath": "textures/sponza/stone_trims_01_normal.png" }
         }
     ]
 }
