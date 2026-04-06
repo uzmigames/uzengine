@@ -58,8 +58,9 @@ static auto* cv_ExposureLowPercent    = UZ_CVAR_FLOAT("r.Exposure.LowPercent", 1
 static auto* cv_ExposureHighPercent   = UZ_CVAR_FLOAT("r.Exposure.HighPercent", 90.0f, "Histogram high percentile", 50.0f, 99.0f);
 static auto* cv_MaterialDielectricF0  = UZ_CVAR_FLOAT("r.Material.DielectricF0", 0.04f, "Dielectric Fresnel F0 reflectance", 0.01f, 0.08f);
 static auto* cv_MaterialMinGGXAlpha   = UZ_CVAR_FLOAT("r.Material.MinGGXAlpha", 0.0064f, "Min GGX alpha (prevents aliasing)", 0.001f, 0.01f);
-static auto* cv_Exposure           = UZ_CVAR_FLOAT("r.Exposure", 1.0f, "Manual exposure bias on auto-exposure", 0.01f, 100.f);
+static auto* cv_Exposure           = UZ_CVAR_FLOAT("r.Exposure", 2.0f, "Manual exposure bias on auto-exposure", 0.01f, 100.f);
 static auto* cv_GIIntensity        = UZ_CVAR_FLOAT("r.GI.Intensity", 1.f, "GI intensity multiplier", 0.f, 10.f);
+static auto* cv_AerialPersp        = UZ_CVAR_BOOL("r.AerialPerspective", false, "Aerial perspective in deferred lighting");
 
 namespace uz {
 
@@ -530,7 +531,8 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
         for (auto enttEntity : skyView) {
             auto& skyComp = skyView.get<SkyAtmosphereComponent>(enttEntity);
             if (!skyComp.enabled) continue;
-            if (m_transmittanceLutSrv != UINT32_MAX && m_transmittanceLutFilled) {
+            if (m_transmittanceLutSrv != UINT32_MAX && m_transmittanceLutFilled
+                && cv_AerialPersp->value > 0.5f) {
                 perFrame.aerialPerspectiveEnabled = 1;
                 perFrame.transmittanceLutSrvIndex = m_transmittanceLutSrv;
                 perFrame.apBottomRadiusKm = skyComp.bottomRadiusKm;
