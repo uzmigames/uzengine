@@ -7,6 +7,7 @@
 #include "subsystems.h"
 
 #include "atmosphere/cloud_pass.h"
+#include "postprocess/dlss_upscaler.h"
 #include "atmosphere/volumetric_fog_pass.h"
 #include "async_texture_decoder.h"
 #include "camera.h"
@@ -784,10 +785,26 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         m_fallbackNormalSrvIndex = m_device->GetTextureSRVIndex(m_fallbackNormal);
     }
 
-    // ── Temporal Upscaler (default: TAA — matches existing behavior) ────
+    // ── Temporal Upscaler (default: DLSS → TSR → TAA fallback chain) ────
     m_upscaler = CreateTemporalUpscaler(m_upscalerType);
     if (m_upscaler) {
         m_upscaler->Init(m_device, m_pipelines.get(), m_cbRing.get());
+
+        // DLSS fallback: if DLSS Init failed (non-NVIDIA GPU, missing DLL, old driver),
+        // fall back to TSR, then TAA.
+        if (m_upscalerType == UpscalerType::DLSS) {
+            auto* dlss = dynamic_cast<DlssUpscaler*>(m_upscaler.get());
+            if (!dlss || !dlss->IsAvailable()) {
+                UZ_LOG(Renderer, Info, "SceneRenderer: DLSS unavailable, falling back to TSR");
+                m_upscaler->Shutdown();
+                m_upscaler.reset();
+                m_upscalerType = UpscalerType::TSR;
+                m_upscaler = CreateTemporalUpscaler(m_upscalerType);
+                if (m_upscaler) {
+                    m_upscaler->Init(m_device, m_pipelines.get(), m_cbRing.get());
+                }
+            }
+        }
     }
 
     // ── Dynamic Resolution Controller ────────────────────────────────────
@@ -813,7 +830,7 @@ void SceneRenderer::RegisterCVars() {
                    "Render scale percentage (10-200)", 10.f, 200.f);
 
     cvars.Register("r.AntiAliasingMethod", static_cast<float>(m_upscalerType),
-                   "Anti-aliasing method: 0=None, 1=TAA, 2=TSR", 0.f, 5.f);
+                   "Anti-aliasing method: 0=None, 1=TAA, 2=TSR, 3=FSR2, 4=DLSS, 5=XeSS", 0.f, 5.f);
 
     cvars.Register("r.TSR.History.ScreenPercentage", 100.f,
                    "TSR history buffer resolution multiplier (100-200)", 100.f, 200.f);
