@@ -160,10 +160,12 @@ void VfxEditorOverlay::Render(IRHICommandList* cmdList, CBRingAllocator& cbRing)
     if (!m_initialized || !m_visible) return;
 
     // Pass 1: base UI (menu bar, emitter bar, stage tree, sliders)
+    // No dropdowns in this pass — avoids panel text overwriting dropdown bg.
     m_textRenderer.Render(cmdList, cbRing, m_font);
 
-    // Pass 2: dropdowns ON TOP in a separate batch so they fully cover
-    // any panel/slider content beneath (both rects AND text).
+    // Pass 2: dropdown ONLY — drawn after pass 1 is fully composited.
+    // Dropdown rects (alpha=1.0) overwrite pass 1 pixels underneath.
+    // Click processing also happens here (m_mouseJustPressed still valid).
     bool hasDropdown = (m_dropdownPtr != nullptr) || (m_openMenu >= 0);
     if (hasDropdown) {
         m_textRenderer.BeginFrame(m_lastFrameIndex);
@@ -202,9 +204,9 @@ void VfxEditorOverlay::BuildUI(ParticleEmitter* emitter, const InputSystem* inpu
         BuildStageTree(emitter);
     }
 
-    // Dropdown click processing + drawing deferred to Render() pass 2.
-    // BuildMenuDropdowns/BuildDropdownOverlay are called there in a fresh
-    // text batch so they visually cover all panel content beneath.
+    // Dropdowns are drawn + click-processed in Render() pass 2 only.
+    // NOT called here — avoids adding dropdown rects/text to pass 1 batch
+    // where panel text would overwrite them.
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
