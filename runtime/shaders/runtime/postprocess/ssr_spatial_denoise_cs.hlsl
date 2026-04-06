@@ -109,14 +109,14 @@ void main(uint3 DTid : SV_DispatchThreadID)
         float  sampleZ    = depthTex.Load(int3(samplePx, 0)).r;
 
         // Edge-stopping: normal similarity
-        // @ref Schied 2017 SVGF — sigma_n = 128
+        // @ref AMD FidelityFX SSSR DNSR_Prefilter — PREFILTER_NORMAL_SIGMA = 512.0
         float3 sN = OctDecode(sampleNorm.rg);
-        float wNormal = pow(max(dot(centerN, sN), 0.0), 64.0);
+        float wNormal = pow(max(dot(centerN, sN), 0.0), 512.0);
 
-        // Edge-stopping: depth similarity (relative)
-        // @ref Schied 2017 SVGF — sigma_z = 1.0 (normalized)
+        // Edge-stopping: depth similarity (relative, scaled by center depth)
+        // @ref AMD FidelityFX SSSR — PREFILTER_DEPTH_SIGMA = 4.0
         float depthDiff = abs(centerZ - sampleZ) / max(centerZ, 1e-6);
-        float wDepth = exp(-depthDiff * 500.0);
+        float wDepth = exp(-depthDiff * centerZ * 4.0);
 
         // Spatial Gaussian weight
         float dist2 = float(kOffsets[i].x * kOffsets[i].x + kOffsets[i].y * kOffsets[i].y);

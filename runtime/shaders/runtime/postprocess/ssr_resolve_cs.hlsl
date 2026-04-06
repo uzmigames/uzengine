@@ -130,8 +130,9 @@ void main(uint3 DTid : SV_DispatchThreadID)
         float  sampleZ    = depthTex.SampleLevel(linearClamp, sampleUV, 0).r;
 
         // Edge-stopping weight: normal similarity
+        // @ref AMD FidelityFX SSSR DNSR_Prefilter — sigma_n = 512 (sharp edge preservation)
         float3 sN = OctDecode(sampleNorm.rg);
-        float wNormal = pow(max(dot(centerN, sN), 0.0), 32.0);
+        float wNormal = pow(max(dot(centerN, sN), 0.0), 128.0);
 
         // Edge-stopping weight: depth similarity (relative)
         float depthDiff = abs(centerZ - sampleZ) / max(centerZ, 1e-6);
