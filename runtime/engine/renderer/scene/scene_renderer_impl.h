@@ -286,7 +286,7 @@
     uint32_t m_taaHistorySrv[2] = {UINT32_MAX, UINT32_MAX}; ///< SRV indices for history read.
     uint32_t m_taaHistoryUav[2] = {UINT32_MAX, UINT32_MAX}; ///< UAV indices for history write.
     uint32_t m_taaHistoryIndex = 0;            ///< Index of current write target (0 or 1).
-    bool     m_taaEnabled = false;             ///< SHADER DEBUG: disabled — scaffold taa_resolve zeros HDR.
+    bool     m_taaEnabled = true;              ///< Enables jitter + temporal upscaler dispatch (DLSS/TSR/TAA).
     Mat4     m_prevViewProj;                   ///< Previous frame's unjittered viewProj for reprojection.
     bool     m_prevViewProjValid = false;      ///< False on first frame (no valid previous viewProj).
 

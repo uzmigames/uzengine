@@ -785,13 +785,13 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         m_fallbackNormalSrvIndex = m_device->GetTextureSRVIndex(m_fallbackNormal);
     }
 
-    // ── Temporal Upscaler (default: DLSS → TSR → TAA fallback chain) ────
+    // ── Temporal Upscaler (default: DLSS → TSR fallback chain) ────
     m_upscaler = CreateTemporalUpscaler(m_upscalerType);
     if (m_upscaler) {
         m_upscaler->Init(m_device, m_pipelines.get(), m_cbRing.get());
 
         // DLSS fallback: if DLSS Init failed (non-NVIDIA GPU, missing DLL, old driver),
-        // fall back to TSR, then TAA.
+        // fall back to TSR.
         if (m_upscalerType == UpscalerType::DLSS) {
             auto* dlss = dynamic_cast<DlssUpscaler*>(m_upscaler.get());
             if (!dlss || !dlss->IsAvailable()) {
@@ -806,6 +806,9 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
             }
         }
     }
+
+    // Enable TAA jitter + upscaler dispatch for any non-None upscaler.
+    m_taaEnabled = (m_upscalerType != UpscalerType::None);
 
     // ── Dynamic Resolution Controller ────────────────────────────────────
     m_dynRes = std::make_unique<DynamicResolutionController>();
@@ -937,7 +940,7 @@ void SceneRenderer::ApplyCVars() {
     m_passInspector.SetGridConfig(gridCfg);
 
     // ── Render Pass Toggles ─────────────────────────────────────────────
-    m_taaEnabled        = cvars.GetBool("r.TAA", false);
+    m_taaEnabled        = cvars.GetBool("r.TAA", true);
     m_ssrEnabled        = cvars.GetBool("r.SSR", true);
     m_motionBlurEnabled = cvars.GetBool("r.MotionBlur", true);
     m_casEnabled        = cvars.GetBool("r.CAS", true);
