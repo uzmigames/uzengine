@@ -45,9 +45,22 @@ namespace {
     const RHITextureDesc texDesc = device->GetTextureDesc(target.texture);
     const RHIFormat format       = texDesc.format;
     const uint32_t bytesPerTexel = BytesPerTexel(format);
-    const uint32_t channels      = detail::ChannelCount(format);
+    const uint32_t channelsRaw   = detail::ChannelCount(format);
+    const bool isDepth           = detail::IsDepthFormat(format);
 
-    if (bytesPerTexel == 0 || channels == 0 || detail::IsDepthFormat(format)) {
+    if (bytesPerTexel == 0) {
+        return pixels;
+    }
+    // Depth formats: read as single-channel float (D32F semantics).
+    // Special-case the gbuffer depth (which has known DSV state lifecycle);
+    // other depth targets like shadow atlas need a copy-to-color path that
+    // doesn't disrupt the renderer's command list, so they remain skipped.
+    const bool isGBufferDepth = isDepth && target.name == "gbuffer.depth";
+    if (isDepth && !isGBufferDepth) {
+        return pixels;
+    }
+    const uint32_t channels = isDepth ? 1u : channelsRaw;
+    if (channels == 0) {
         return pixels;
     }
 
@@ -126,10 +139,22 @@ namespace {
                 case DumpChannel::A:   r = a; g = a; b = a; a = 1.0f; break;
             }
 
-            // HDR tonemap for display: simple Reinhard per channel.
-            // Skip tonemap for single-channel views (AO/metallic/roughness
-            // are already in [0,1] and Reinhard would crush them visually).
-            if (target.dumpChannel == DumpChannel::All) {
+            // ── Depth-format special path ──
+            // Reversed-Z depth is mostly tiny values (near=1, far=0) — Reinhard
+            // would map everything to ~0 black. Instead, apply a power curve
+            // to redistribute the dynamic range so the back walls of an
+            // interior scene (depth ~ 1e-3) become visible alongside the
+            // foreground (depth ~ 0.5+).
+            if (isDepth) {
+                // sqrt expands the low end of the [0,1] range; one extra
+                // power flatten brings the visible band into the middle.
+                r = std::sqrt(std::sqrt(std::max(0.0f, r)));
+                g = b = r;
+                a = 1.0f;
+            } else if (target.dumpChannel == DumpChannel::All) {
+                // HDR tonemap for display: simple Reinhard per channel.
+                // Skip tonemap for single-channel views (AO/metallic/roughness
+                // are already in [0,1] and Reinhard would crush them visually).
                 r = r / (1.0f + r);
                 g = g / (1.0f + g);
                 b = b / (1.0f + b);

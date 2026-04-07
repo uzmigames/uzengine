@@ -25,7 +25,14 @@ static auto* cv_SSGIIntensity = UZ_CVAR_FLOAT("r.SSGI.Intensity", 0.3f, "SSGI in
 static auto* cv_SSGIRayCount     = UZ_CVAR_INT("r.SSGI.RayCount", 8, "Rays per pixel (overrides quality preset)", 1, 32);
 static auto* cv_SSGIMaxSteps     = UZ_CVAR_INT("r.SSGI.MaxMarchSteps", 32, "Max linear march steps per ray", 8, 128);
 static auto* cv_SSGIStepSize     = UZ_CVAR_FLOAT("r.SSGI.StepSize", 0.02f, "UV-space step size per march step", 0.005f, 0.1f);
-static auto* cv_SSGIThickness    = UZ_CVAR_FLOAT("r.SSGI.Thickness", 0.5f, "Depth comparison thickness (cm)", 0.01f, 2.0f);
+// Thickness default 0.5 cm is way too small for indoor scenes at cm scale.
+// Sponza columns are ~60cm wide; the screen-space march needs a much higher
+// tolerance to register hits. Bumped to a more defensible default; the
+// `expectedLinearDepth` formula in ssgi_trace_cs.hlsl also has a fundamental
+// scale bug (hardcoded 5km depth assumption) that needs separate work — until
+// then, SSGI is largely broken on cm-scale interior scenes regardless of this
+// value. Brixelizer GI is the preferred indoor GI.
+static auto* cv_SSGIThickness    = UZ_CVAR_FLOAT("r.SSGI.Thickness", 50.0f, "Depth comparison thickness (cm)", 0.01f, 1000.0f);
 static auto* cv_SSGITemporalAlpha = UZ_CVAR_FLOAT("r.SSGI.TemporalAlpha", 0.05f, "Temporal accumulation alpha (0=full history, 1=no history)", 0.01f, 0.5f);
 
 namespace uz {
