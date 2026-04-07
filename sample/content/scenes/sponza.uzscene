@@ -285,6 +285,72 @@
       }
     },
     {
+      "name": "Light_Back_Center",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            600,
+            200
+          ]
+        },
+        "light": {
+          "type": "point",
+          "color": [
+            1.0,
+            0.92,
+            0.78
+          ],
+          "intensity": 240000.0,
+          "range": 3000.0
+        }
+      }
+    },
+    {
+      "name": "Light_Back_Left",
+      "components": {
+        "transform": {
+          "position": [
+            -300,
+            600,
+            200
+          ]
+        },
+        "light": {
+          "type": "point",
+          "color": [
+            1.0,
+            0.92,
+            0.78
+          ],
+          "intensity": 240000.0,
+          "range": 3000.0
+        }
+      }
+    },
+    {
+      "name": "Light_Back_Right",
+      "components": {
+        "transform": {
+          "position": [
+            300,
+            600,
+            200
+          ]
+        },
+        "light": {
+          "type": "point",
+          "color": [
+            1.0,
+            0.92,
+            0.78
+          ],
+          "intensity": 240000.0,
+          "range": 3000.0
+        }
+      }
+    },
+    {
       "name": "Sponza",
       "components": {
         "transform": {}
