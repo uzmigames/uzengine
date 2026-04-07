@@ -8,7 +8,20 @@
     "expressions": [
         {
             "id": 1,
-            "type": "PBROutput",
+            "type": "PBROutput"
         }
-    ]
+    ],
+    "params": {
+        "roughnessMultiplier": 0.45,
+        "metallicMultiplier": 1.0,
+        "baseColorTint": [
+            1.0,
+            1.0,
+            1.0
+        ],
+        "normalStrength": 1.0,
+        "aoMultiplier": 1.0,
+        "emissiveMultiplier": 1.0,
+        "specularMultiplier": 1.0
+    }
 }

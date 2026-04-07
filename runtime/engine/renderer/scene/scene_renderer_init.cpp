@@ -222,6 +222,30 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
                m_renderWidth, m_renderHeight, m_hdrSceneColorSrv);
     }
 
+    // ── Path Tracer Accumulation (RGBA32F ping-pong) ───────────────────
+    // Step 6: progressive accumulation with camera-cut reset.
+    // Allocated unconditionally (cheap when r.PathTracer.Enable=0 — never
+    // touched). Format RGBA32F to retain precision over thousands of samples.
+    for (int i = 0; i < 2; ++i) {
+        RHITextureDesc accumDesc{};
+        accumDesc.width     = m_renderWidth;
+        accumDesc.height    = m_renderHeight;
+        accumDesc.format    = RHIFormat::RGBA32Float;
+        accumDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::RenderTarget;
+        accumDesc.debugName = (i == 0) ? "PT_Accum0" : "PT_Accum1";
+        m_ptAccum[i] = device->CreateTexture(accumDesc);
+        if (!m_ptAccum[i].IsValid()) {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create PT accumulation texture {}", i);
+            return false;
+        }
+        m_ptAccumSrv[i] = device->GetTextureSRVIndex(m_ptAccum[i]);
+        UZ_LOG(Renderer, Info, "SceneRenderer: PT accumulation {} created ({}x{}, RGBA32F, SRV={})",
+               i, m_renderWidth, m_renderHeight, m_ptAccumSrv[i]);
+    }
+    m_ptAccumIdx     = 0;
+    m_ptAccumSamples = 0;
+    m_ptHistoryValid = false;
+
     // ── Shadow Atlas ────────────────────────────────────────────────────
     m_shadowAtlas.Init(m_device);
 

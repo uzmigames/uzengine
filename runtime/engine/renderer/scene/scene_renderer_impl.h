@@ -120,6 +120,17 @@
     uint32_t m_deltaIrradianceSrv = UINT32_MAX;
     uint32_t m_deltaIrradianceUav = UINT32_MAX;
 
+    // ── Path Tracer accumulation (Step 6) ──────────────────────────────
+    // Ping-pong RGBA32F textures: read prev as SRV, write curr as render
+    // target. Sample count + previous view matrix track convergence and
+    // camera-cut reset. @ref Kajiya 1986 — Monte Carlo accumulation.
+    RHITextureHandle m_ptAccum[2]    = { RHITextureHandle::Invalid(), RHITextureHandle::Invalid() };
+    uint32_t         m_ptAccumSrv[2] = { UINT32_MAX, UINT32_MAX };
+    uint32_t         m_ptAccumIdx    = 0;       ///< Current write target (flips each frame).
+    uint32_t         m_ptAccumSamples = 0;      ///< Accumulated sample count since last reset.
+    float            m_ptPrevView[16] = {0};    ///< Previous view matrix (camera-cut detection).
+    bool             m_ptHistoryValid = false;  ///< False on first frame / after reset.
+
     // ── IBL (Image-Based Lighting from sky cubemap) ────────────────────
 
     std::unique_ptr<IBLBaker> m_iblBaker;            ///< GPU compute pipeline for IBL bake (irradiance + prefiltered).

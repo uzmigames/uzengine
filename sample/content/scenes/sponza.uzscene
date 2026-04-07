@@ -1,11 +1,19 @@
 {
   "name": "Sponza Atrium",
   "version": "1.0",
+  "cvars": {
+    "r.PathTracer.Enable": 0,
+    "r.BrixelizerGI": 1,
+    "r.BrixelizerGI.Intensity": 1.4,
+    "r.SkyLight.Intensity": 1.0,
+    "r.SkyLight.MinAmbient": 0.12,
+    "r.SkyLight.IndirectIntensity": 1.0
+  },
   "entities": [
     {
       "name": "Sun",
       "components": {
-        "transform": { "position": [0, 0, 0], "rotation": [90, -30, 0], "scale": [1, 1, 1] },
+        "transform": { "position": [0, 0, 0], "rotation": [55, 35, 0], "scale": [1, 1, 1] },
         "light": {
           "type": "directional",
           "color": [1.0, 0.98, 0.95],
@@ -35,33 +43,12 @@
       "components": {
         "transform": { "position": [0, 0, 0] },
         "sky_light": {
-          "intensity": 0.35,
+          "intensity": 2.5,
           "light_color": [0.95, 0.93, 0.90],
-          "indirect_lighting_intensity": 0.5,
-          "min_occlusion": 0.04,
+          "indirect_lighting_intensity": 1.0,
+          "min_occlusion": 0.12,
           "lower_hemisphere_is_black": false,
-          "lower_hemisphere_color": [0.02, 0.018, 0.015]
-        }
-      }
-    },
-    {
-      "name": "Fog",
-      "components": {
-        "transform": { "position": [0, 0, 0] },
-        "height_fog": { "base_height": -5000 }
-      }
-    },
-    {
-      "name": "InteriorProbeVolume",
-      "components": {
-        "transform": { "position": [0, 0, 0] },
-        "light_probe_volume": {
-          "grid_dimensions_x": 8,
-          "grid_dimensions_y": 8,
-          "grid_dimensions_z": 4,
-          "extent_min": [-1300, -600,   0],
-          "extent_max": [ 1300,  600, 600],
-          "enabled": true
+          "lower_hemisphere_color": [0.12, 0.11, 0.10]
         }
       }
     },

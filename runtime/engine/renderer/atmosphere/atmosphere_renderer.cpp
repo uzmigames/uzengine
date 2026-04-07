@@ -329,133 +329,12 @@ void AddAtmospherePasses(
         CBAllocation skyAlloc = ctx.cbRing->Allocate(sizeof(SkyAtmosphereCB));
         std::memcpy(skyAlloc.cpuPtr, &skyCB, sizeof(SkyAtmosphereCB));
 
-        // ── Multi-Scattering LUT pass ─────────────────────────────────
-        rg::RgResourceId msLutRes;
-        if (ctx.multiScatterLut.IsValid()) {
-            RHIResourceState msImportState = *ctx.multiScatterLutFilled
-                ? RHIResourceState::ShaderResource
-                : RHIResourceState::UnorderedAccess;
-            msLutRes = rgBuilder.ImportTexture("MultiScatterLUT",
-                ctx.multiScatterLut, msImportState);
-        }
-
-        // ── Multi-Scattering LUT compute pass ─────────────────────
-        /// @ref Hillaire 2020 — multi-scattering LUT via hemispherical integration.
-        if (*ctx.multiScatterLutDirty && ctx.multiScatterLut.IsValid()
-                && ctx.multiScatterLutUav != UINT32_MAX
-                && *ctx.transmittanceLutFilled) {
-
-            // Build root constants (same atmosphere params as transmittance LUT)
-            TransmittanceLutRootConstants msRC{};
-            msRC.rayleighBetaX  = skyComp.rayleighScattering.x;
-            msRC.rayleighBetaY  = skyComp.rayleighScattering.y;
-            msRC.rayleighBetaZ  = skyComp.rayleighScattering.z;
-            msRC.rayleighScaleH = skyComp.rayleighScaleHeightKm;
-            msRC.mieBeta        = skyComp.mieScattering;
-            msRC.mieScaleH      = skyComp.mieScaleHeightKm;
-            msRC.bottomRadiusKm = skyComp.bottomRadiusKm;
-            msRC.topRadiusKm    = skyComp.bottomRadiusKm + skyComp.atmosphereHeightKm;
-
-            // Ozone CBV
-            TransmittanceLutOzoneCB msOzoneCB{};
-            {
-                const float px    = skyComp.ozoneTipAltitude;
-                const float py    = skyComp.ozoneTipValue;
-                const float width = skyComp.ozoneWidth;
-                if (width > 0.f && py > 0.f) {
-                    const float slope = py / width;
-                    msOzoneCB.absorptionR = skyComp.ozoneAbsorption.x;
-                    msOzoneCB.absorptionG = skyComp.ozoneAbsorption.y;
-                    msOzoneCB.absorptionB = skyComp.ozoneAbsorption.z;
-                    msOzoneCB.layerWidth  = px;
-                    msOzoneCB.linTerm0    =  slope;
-                    msOzoneCB.constTerm0  = py - px * slope;
-                    msOzoneCB.linTerm1    = -slope;
-                    msOzoneCB.constTerm1  = py - px * (-slope);
-                }
-            }
-            msOzoneCB.transmittanceLutSrvIdx = ctx.transmittanceLutSrv;
-            CBAllocation ozoneAllocMS = ctx.cbRing->Allocate(sizeof(TransmittanceLutOzoneCB));
-            std::memcpy(ozoneAllocMS.cpuPtr, &msOzoneCB, sizeof(TransmittanceLutOzoneCB));
-
-            rgBuilder.AddPass("MultiScatterLUT", [&, msRC, ozoneAllocMS](rg::RgPassBuilder& pb) {
-                pb.Write(msLutRes, RHIResourceState::UnorderedAccess);
-                pb.Read(lutRes, RHIResourceState::ShaderResource);
-
-                // Capture ctx members by value — ctx (AtmosphereFrameContext) lives on
-                // RegisterOverlayPasses stack and is destroyed before Execute().
-                auto* pipelines = ctx.pipelines;
-                const bool bindless = ctx.bindless;
-                const uint32_t transmittanceSrv = ctx.transmittanceLutSrv;
-                const uint32_t msLutUav = ctx.multiScatterLutUav;
-
-                pb.SetExecutionCallback([pipelines, bindless, transmittanceSrv, msLutUav,
-                                         msRC, ozoneAllocMS](IRHICommandList* cmd, const rg::RgPassResources&) {
-                    cmd->SetPipeline(pipelines->GetMultiScatterLut());
-
-                    // Root constants at slot 0 (b0)
-                    cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&msRC), 8);
-
-                    // Ozone CBV at slot 2 (b2)
-                    if (ozoneAllocMS.gpuAddr != 0) {
-                        cmd->SetRootCBV(2, ozoneAllocMS.gpuAddr);
-                    }
-
-                    // Transmittance LUT SRV at slot 5 (t0 descriptor table)
-                    if (!bindless) {
-                        cmd->SetDescriptorTable(5, transmittanceSrv);
-                    }
-
-                    // Output UAV at slot 4 (u0 descriptor table)
-                    cmd->SetDescriptorTable(4, msLutUav);
-
-                    // Dispatch 32x32 / [8,8] = [4,4,1]
-                    cmd->Dispatch(4, 4, 1);
-                });
-            });
-
-            *ctx.multiScatterLutDirty  = false;
-            *ctx.multiScatterLutFilled = true;
-        }
-
-        // ── Scattering LUT 3D — import every frame so RG can track state ──
-        rg::RgResourceId scatRes;
-        if (ctx.scatteringLut3D.IsValid() && ctx.scatteringLut3DFilled) {
-            RHIResourceState scatImportState = *ctx.scatteringLut3DFilled
-                ? RHIResourceState::ShaderResource
-                : RHIResourceState::UnorderedAccess;
-            scatRes = rgBuilder.ImportTexture("ScatteringLUT3D",
-                ctx.scatteringLut3D, scatImportState);
-        }
-
-        // ── Irradiance LUT — import every frame so RG can track state ────
-        rg::RgResourceId irrLutRes;
-        if (ctx.irradianceLut.IsValid() && ctx.scatteringLut3DFilled
-            && *ctx.scatteringLut3DFilled) {
-            irrLutRes = rgBuilder.ImportTexture("IrradianceLUT_Read",
-                ctx.irradianceLut, RHIResourceState::ShaderResource);
-        }
-
-        // ── Bruneton 3D Scattering LUT Precomputation ───────────────────
-        // @ref Bruneton & Neyret 2017 "Precomputed Atmospheric Scattering"
-        // Precomputes the full scattering LUT: single scatter -> (density -> irradiance -> indirect) x 4 orders.
-        // Runs once when dirty, recomputes when atmosphere parameters change.
-        if (*ctx.scatteringLut3DDirty && ctx.scatteringLut3D.IsValid()
-            && *ctx.transmittanceLutFilled && ctx.deltaRayleigh3D.IsValid()) {
-
-            // Import helper textures into the render graph (scatRes already imported above)
-            rg::RgResourceId deltaRayRes = rgBuilder.ImportTexture("DeltaRayleigh3D",
-                ctx.deltaRayleigh3D, RHIResourceState::UnorderedAccess);
-            rg::RgResourceId deltaMieRes = rgBuilder.ImportTexture("DeltaMie3D",
-                ctx.deltaMie3D, RHIResourceState::UnorderedAccess);
-            rg::RgResourceId scatDensRes = rgBuilder.ImportTexture("ScatteringDensity3D",
-                ctx.scatteringDensity3D, RHIResourceState::UnorderedAccess);
-            rg::RgResourceId irrRes = rgBuilder.ImportTexture("IrradianceLUT",
-                ctx.irradianceLut, RHIResourceState::UnorderedAccess);
-            rg::RgResourceId deltaIrrRes = rgBuilder.ImportTexture("DeltaIrradiance",
-                ctx.deltaIrradiance, RHIResourceState::UnorderedAccess);
-
-            // Common root constants (same atmosphere params as transmittance LUT)
+        // ── Bruneton 3D Scattering LUT Precomputation REMOVED ───────────
+        // The Bruneton 2017 multi-order precomputed scattering shaders were
+        // stubs and have been deleted. Sky atmosphere now relies on the
+        // analytic Hillaire 2020 transmittance LUT only.
+#if 0  // Bruneton 3D precomputed scattering — shaders deleted, code preserved for reference only
+        if (false) {
             TransmittanceLutRootConstants scatRC{};
             scatRC.rayleighBetaX  = skyComp.rayleighScattering.x;
             scatRC.rayleighBetaY  = skyComp.rayleighScattering.y;
@@ -732,6 +611,7 @@ void AddAtmospherePasses(
             *ctx.scatteringLut3DFilled = true;
             UZ_LOG(Renderer, Info, "Bruneton 3D scattering LUT precomputed ({} orders)", kNumScatterOrders);
         }
+#endif // Bruneton 3D precomputed scattering removed
 
         // ── Aerial Perspective Volume — precomputed 3D AP texture ─────────
         // @ref Hillaire 2020 — camera-relative aerial perspective volume (3D LUT).
@@ -797,13 +677,7 @@ void AddAtmospherePasses(
             APVolumePassDesc apPassDesc{};
             apPassDesc.volumeTarget        = apRes;
             apPassDesc.transmittanceLutDep = lutRes;
-            apPassDesc.multiScatterLutDep  = msLutRes;
-            // Scattering 3D LUT dependency — only when LUT is filled and CVar enabled.
-            if (cv_ScatteringLut->value > 0.5f
-                && ctx.scatteringLut3DFilled && *ctx.scatteringLut3DFilled
-                && scatRes.IsValid()) {
-                apPassDesc.scatteringLut3DDep = scatRes;
-            }
+            // Multi-scatter LUT and Bruneton 3D scattering LUT removed (stub shaders deleted).
             apPassDesc.pipeline            = ctx.pipelines->GetAerialPerspectiveVolume();
             apPassDesc.rootConstants       = apRC;
             apPassDesc.cbAlloc             = apAlloc;
@@ -822,19 +696,8 @@ void AddAtmospherePasses(
         skyDesc.transmittanceLutSrvIndex = ctx.transmittanceLutSrv;
         skyDesc.transmittanceLutTexture  = ctx.transmittanceLut;
         skyDesc.transmittanceLutRes      = lutRes;
-        skyDesc.multiScatterLutSrvIndex = ctx.multiScatterLutSrv;
-        skyDesc.multiScatterLutTexture  = ctx.multiScatterLut;
-        skyDesc.multiScatterLutRes      = msLutRes;
         skyDesc.apVolumeSrvIndex        = ctx.apVolumeSrv;
-        // Bruneton LUT sky path — gated behind CVar (experimental, dark zenith issue).
-        // When disabled, sky uses proven 32-step march fallback.
-        if (cv_ScatteringLut->value > 0.5f) {
-            skyDesc.scatteringLut3DSrvIndex = ctx.scatteringLut3DSrv;
-            skyDesc.scatteringLut3DTexture  = ctx.scatteringLut3D;
-            skyDesc.scatteringLut3DRes      = scatRes;
-            skyDesc.irradianceLutSrvIndex   = ctx.irradianceLutSrv;
-            skyDesc.irradianceLutRes        = irrLutRes;
-        }
+        // Multi-scatter LUT + Bruneton 3D scattering LUT removed (stub shaders deleted).
         skyDesc.bindless                = ctx.bindless;
         skyDesc.viewportWidth           = ctx.vpWidth;
         skyDesc.viewportHeight          = ctx.vpHeight;

@@ -23,6 +23,8 @@
 #include "render_graph_builder.h"
 #include "render_graph_resources.h"
 #include "atmosphere_renderer.h"
+#include "volumetric_fog_pass.h"
+#include "pathtracing/path_tracer_pass.h"
 #include "fog_renderer.h"
 #include "profiler.h"
 #include "rhi.h"
@@ -59,6 +61,12 @@ static auto* cv_CASSharpness     = UZ_CVAR_FLOAT("r.CAS.Sharpness", 0.2f, "CAS s
 static auto* cv_LODBias          = UZ_CVAR_FLOAT("r.LOD.Bias", 1.f, "Global LOD bias multiplier", 0.1f, 10.f);
 // Debug
 static auto* cv_DebugView        = UZ_CVAR_BOOL("r.DebugView", false, "GBuffer debug visualization");
+// Path Tracer — runtime mode toggle. When enabled, replaces deferred lighting,
+// GI, and shadow passes with a Monte Carlo path tracer pass that writes to
+// hdrSceneColor. Bloom/exposure/tonemap downstream remain unchanged.
+// @ref Kajiya 1986 "The Rendering Equation" — see docs/analysis/path-tracing/
+static auto* cv_PathTracer       = UZ_CVAR_BOOL("r.PathTracer.Enable", false,
+    "Compute path tracer runtime mode (replaces deferred lighting + GI + shadows)");
 
 namespace uz {
 
@@ -67,6 +75,76 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
 
     if (m_renderPath != RenderPath::Deferred) return;
 
+    // ── Path Tracer runtime mode override ──────────────────────────────
+    // When r.PathTracer.Enable=1, the path tracer replaces the entire
+    // deferred lighting + GI + shadow chain. The pass writes the lit HDR
+    // result directly to ctx.hdrRes; bloom/exposure/tonemap downstream
+    // consume it unchanged.
+    // @ref Kajiya 1986 "The Rendering Equation"
+    if (cv_PathTracer->value >= 0.5f) {
+        // ── Camera-cut detection: reset accumulation when view changes ───
+        // We compare the current view matrix (first 16 floats of viewProj
+        // would also work but view is more stable across projection toggles).
+        // Any non-trivial diff resets sampleCount=0.
+        const float* curView = reinterpret_cast<const float*>(&ctx.perFrame.viewProj);
+        float maxDiff = 0.0f;
+        for (int i = 0; i < 16; ++i) {
+            const float diff = std::fabs(curView[i] - m_ptPrevView[i]);
+            if (diff > maxDiff) maxDiff = diff;
+        }
+        if (!m_ptHistoryValid || maxDiff > 1e-5f) {
+            m_ptAccumSamples = 0;
+            m_ptHistoryValid = true;
+        }
+        for (int i = 0; i < 16; ++i) m_ptPrevView[i] = curView[i];
+
+        // Ping-pong: this frame writes to m_ptAccum[curr], reads from prev.
+        const uint32_t curr = m_ptAccumIdx;
+        const uint32_t prev = curr ^ 1u;
+
+        // Import both accumulation textures into the render graph each frame
+        // so the graph tracks state across frames. They start as ShaderResource
+        // since the previous frame left them in RT then transitioned at end of pass.
+        const RHIResourceState currImportState = (m_ptAccumSamples == 0)
+            ? RHIResourceState::Common
+            : RHIResourceState::ShaderResource;
+        rg::RgResourceId accumCurrRes = rgBuilder.ImportTexture("PT_AccumCurr",
+            m_ptAccum[curr], currImportState);
+        // Prev is consumed only via the bindless SRV — no need to import as
+        // a render graph resource since we don't declare it as a Read (the
+        // shader reads it via ResourceDescriptorHeap[]).
+
+        PathTracerPassDesc ptDesc{};
+        ptDesc.hdrTarget         = ctx.hdrRes;
+        ptDesc.accumCurr         = accumCurrRes;
+        ptDesc.normalGBuffer     = ctx.normalRes;
+        ptDesc.depthGBuffer      = ctx.depthRes;
+        ptDesc.albedoGBuffer     = ctx.albedoRes;
+        ptDesc.positionGBuffer   = ctx.positionRes;
+        ptDesc.perFrameAlloc     = ctx.perFrameAlloc;
+        ptDesc.pipeline          = ctx.pipelines->GetPathTracer();
+        ptDesc.normalSrvIndex    = m_gbuffer.normalSRV;
+        ptDesc.depthSrvIndex     = m_gbuffer.depthSRV;
+        ptDesc.albedoSrvIndex    = m_gbuffer.albedoSRV;
+        ptDesc.positionSrvIndex  = m_gbuffer.positionWSSRV;
+        ptDesc.skyCubeSrvIndex   = m_hdriActive ? m_hdriCubemapSrv : m_skyCubemapSrv;
+        ptDesc.accumPrevSrvIndex = m_ptAccumSrv[prev];
+        ptDesc.sampleCount       = m_ptAccumSamples;
+        ptDesc.frameIndex        = ctx.frameIndex;
+        ptDesc.bindless          = ctx.bindless;
+        ptDesc.viewportWidth     = static_cast<float>(ctx.renderWidth);
+        ptDesc.viewportHeight    = static_cast<float>(ctx.renderHeight);
+        AddPathTracerPass(rgBuilder, ptDesc);
+
+        // Advance ping-pong + sample counter for next frame.
+        m_ptAccumIdx     = prev;
+        m_ptAccumSamples = std::min(m_ptAccumSamples + 1u, 65535u);
+
+        // Atmosphere fog/cloud passes still composite into hdrRes after PT.
+        RegisterAtmosphereFogCloudPasses(rgBuilder, ctx);
+        return;
+    }
+
     RegisterDBufferApplyPass(rgBuilder, ctx);
     RegisterGTAOPass(rgBuilder, ctx);
     RegisterDFSPasses(rgBuilder, ctx);
@@ -74,6 +152,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
     RegisterSDFGIPasses(rgBuilder, ctx);
     RegisterBrixelizerGIPasses(rgBuilder, ctx);
     RegisterSSRPasses(rgBuilder, ctx);
+    
     // ── Env MIS temporal accumulation (render graph compute pass) ───────
     if (m_envMISPass && m_envMISPass->IsInitialized()
         && m_envMapSampler && m_envMapSampler->IsReady()) {
@@ -167,14 +246,36 @@ void SceneRenderer::RegisterPassInspectorTargets(FrameContext& ctx) {
     const uint32_t rh = static_cast<uint32_t>(ctx.renderHeight);
 
     // GBuffer targets
-    m_passInspector.RegisterTarget("gbuffer.albedo",   m_gbuffer.albedo,   m_gbuffer.albedoSRV,   VisDisplayMode::Color,     rw, rh);
-    m_passInspector.RegisterTarget("gbuffer.normal",   m_gbuffer.normal,   m_gbuffer.normalSRV,   VisDisplayMode::Normal,    rw, rh);
+    m_passInspector.RegisterTarget("gbuffer.albedo",    m_gbuffer.albedo,     m_gbuffer.albedoSRV,     VisDisplayMode::Color,     rw, rh);
+    m_passInspector.RegisterTarget("gbuffer.normal",    m_gbuffer.normal,     m_gbuffer.normalSRV,     VisDisplayMode::Normal,    rw, rh);
     // GBuffer depth ends the frame in DepthStencilWrite (the render graph
     // does not emit restore barriers for imported depth resources).
-    m_passInspector.RegisterTarget("gbuffer.depth",    m_gbuffer.depth,    m_gbuffer.depthSRV,    VisDisplayMode::Depth,     rw, rh,
+    m_passInspector.RegisterTarget("gbuffer.depth",     m_gbuffer.depth,      m_gbuffer.depthSRV,      VisDisplayMode::Depth,     rw, rh,
                                     RHIResourceState::DepthStencilWrite);
-    m_passInspector.RegisterTarget("gbuffer.velocity", m_gbuffer.velocity, m_gbuffer.velocitySRV, VisDisplayMode::Velocity,  rw, rh);
-    m_passInspector.RegisterTarget("gbuffer.emissive", m_gbuffer.emissive, m_gbuffer.emissiveSRV, VisDisplayMode::Color,     rw, rh);
+    m_passInspector.RegisterTarget("gbuffer.velocity",  m_gbuffer.velocity,   m_gbuffer.velocitySRV,   VisDisplayMode::Velocity,  rw, rh);
+    m_passInspector.RegisterTarget("gbuffer.emissive",  m_gbuffer.emissive,   m_gbuffer.emissiveSRV,   VisDisplayMode::Color,     rw, rh);
+    // World-space position GBuffer (RGBA32F or RGBA16F xyz).
+    if (m_gbuffer.positionWS.IsValid() && m_gbuffer.positionWSSRV != UINT32_MAX) {
+        m_passInspector.RegisterTarget("gbuffer.position", m_gbuffer.positionWS, m_gbuffer.positionWSSRV,
+                                        VisDisplayMode::Color, rw, rh);
+    }
+
+    // ── Channel splits of packed GBuffer RTs ─────────────────────────────
+    // Single-channel views authored from packed RTs so the dump shows them
+    // as distinct grayscale targets:
+    //   gbuffer.ao        ← albedoAO.a
+    //   gbuffer.metallic  ← normalMatPbr.b
+    //   gbuffer.roughness ← normalMatPbr.a
+    // Display unaffected — these alias the same texture handles.
+    m_passInspector.RegisterTarget("gbuffer.ao",        m_gbuffer.albedo, m_gbuffer.albedoSRV,
+                                    VisDisplayMode::Grayscale, rw, rh,
+                                    RHIResourceState::ShaderResource, DumpChannel::A);
+    m_passInspector.RegisterTarget("gbuffer.metallic",  m_gbuffer.normal, m_gbuffer.normalSRV,
+                                    VisDisplayMode::Grayscale, rw, rh,
+                                    RHIResourceState::ShaderResource, DumpChannel::B);
+    m_passInspector.RegisterTarget("gbuffer.roughness", m_gbuffer.normal, m_gbuffer.normalSRV,
+                                    VisDisplayMode::Grayscale, rw, rh,
+                                    RHIResourceState::ShaderResource, DumpChannel::A);
 
     // Shadow atlas (tile resolution used as approximate display dimensions)
     if (m_shadowAtlas.GetTexture().IsValid() && m_shadowAtlas.GetSrvIndex() != UINT32_MAX) {
@@ -237,12 +338,14 @@ void SceneRenderer::RegisterPassInspectorTargets(FrameContext& ctx) {
     // Brixelizer GI outputs
     if (m_brixelizerGI && m_brixelizerGI->IsInitialized()
         && m_brixelizerGI->GetDiffuseGISrv() != UINT32_MAX) {
-        m_passInspector.RegisterTarget("brixelizer.diffuse", {},
+        m_passInspector.RegisterTarget("brixelizer.diffuse",
+                                        m_brixelizerGI->GetDiffuseGITexture(),
                                         m_brixelizerGI->GetDiffuseGISrv(),
-                                        VisDisplayMode::Color, rw, rh);
-        m_passInspector.RegisterTarget("brixelizer.specular", {},
+                                        VisDisplayMode::HDR, rw, rh);
+        m_passInspector.RegisterTarget("brixelizer.specular",
+                                        m_brixelizerGI->GetSpecularGITexture(),
                                         m_brixelizerGI->GetSpecularGISrv(),
-                                        VisDisplayMode::Color, rw, rh);
+                                        VisDisplayMode::HDR, rw, rh);
     }
 
     // HDR scene color (after lighting + atmosphere, before postprocess)
@@ -280,6 +383,22 @@ void SceneRenderer::RegisterPassInspectorTargets(FrameContext& ctx) {
     if (m_skyCubemap.IsValid() && m_skyCubemapSrv != UINT32_MAX) {
         m_passInspector.RegisterTarget("atmo.sky_cubemap", m_skyCubemap, m_skyCubemapSrv,
                                         VisDisplayMode::HDR, 64, 64);
+    }
+
+    // Volumetric fog (godrays / light shafts) — froxel inscattering volume
+    // and the integrated march. Lets the dump show whether volumetric scatter
+    // is producing the expected light shaft pattern from the directional sun.
+    if (m_volFogPass && m_volFogPass->GetInscatteringSrv() != UINT32_MAX) {
+        m_passInspector.RegisterTarget("volfog.inscattering",
+                                        m_volFogPass->GetInscatteringTexture(),
+                                        m_volFogPass->GetInscatteringSrv(),
+                                        VisDisplayMode::HDR, 160, 90);
+    }
+    if (m_volFogPass && m_volFogPass->GetIntegratedSrv() != UINT32_MAX) {
+        m_passInspector.RegisterTarget("volfog.integrated",
+                                        m_volFogPass->GetIntegratedTexture(),
+                                        m_volFogPass->GetIntegratedSrv(),
+                                        VisDisplayMode::HDR, 160, 90);
     }
 
     // Cloud output (half-res RGBA16F) — register both ping-pong buffers for debugging

@@ -28,12 +28,8 @@
     [[nodiscard]] bool EnsureVelocityPixelShader();
     [[nodiscard]] bool EnsureHeightFogPixelShader();
     [[nodiscard]] bool EnsureTransmittanceLutShader();
-    [[nodiscard]] bool EnsureMultiScatterLutShader();
-    [[nodiscard]] bool EnsureSingleScatterLutShader();
-    [[nodiscard]] bool EnsureScatteringDensityShader();
-    [[nodiscard]] bool EnsureIndirectScatteringShader();
-    [[nodiscard]] bool EnsureIrradianceLutShader();
     [[nodiscard]] bool EnsureAPVolumeShader();
+    [[nodiscard]] bool EnsurePathTracerPixelShader();
     [[nodiscard]] bool EnsureSkyCubemapCaptureShader();
     [[nodiscard]] bool EnsureSkyCubemapCapturePSShader();
     [[nodiscard]] bool EnsureHiZPyramidShader();
@@ -106,6 +102,7 @@
     RHIShaderHandle m_pixelDebugCS     = RHIShaderHandle::Invalid(); ///< PixelDebug compute post-pass shader.
     RHIShaderHandle m_gbufferDebugPS   = RHIShaderHandle::Invalid();
     RHIShaderHandle m_debugViewPS      = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_pathTracerPS     = RHIShaderHandle::Invalid();
     RHIShaderHandle m_instancedMeshVS  = RHIShaderHandle::Invalid();
     RHIShaderHandle m_instancedShadowVS = RHIShaderHandle::Invalid();
     RHIShaderHandle m_shadowVS         = RHIShaderHandle::Invalid();
@@ -116,11 +113,6 @@
     RHIShaderHandle m_heightFogPS          = RHIShaderHandle::Invalid();
     RHIShaderHandle m_cloudCompositePS     = RHIShaderHandle::Invalid();
     RHIShaderHandle m_transmittanceLutCS      = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_multiScatterLutCS      = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_singleScatterLutCS     = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_scatteringDensityCS    = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_indirectScatteringCS   = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_irradianceLutCS        = RHIShaderHandle::Invalid();
     RHIShaderHandle m_apVolumeCS             = RHIShaderHandle::Invalid();
     RHIShaderHandle m_skyCubemapCaptureCS    = RHIShaderHandle::Invalid();
     RHIShaderHandle m_skyCubemapCapturePSShader = RHIShaderHandle::Invalid();
@@ -179,6 +171,7 @@
     RHIPipelineHandle m_pixelDebugCompute     = RHIPipelineHandle::Invalid(); ///< PixelDebug compute post-pass PSO.
     RHIPipelineHandle m_gbufferDebug          = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_debugView             = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_pathTracer            = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_shadowDepth           = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_shadowDepthBindless   = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_gbufferInstanced      = RHIPipelineHandle::Invalid();
@@ -190,11 +183,6 @@
     RHIPipelineHandle m_heightFog             = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_cloudComposite        = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_transmittanceLut      = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_multiScatterLut      = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_singleScatterLut     = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_scatteringDensity    = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_indirectScattering   = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_irradianceLut        = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_apVolume             = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_skyCubemapCapture    = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_skyCubemapCapturePSPipeline = RHIPipelineHandle::Invalid();

@@ -9,29 +9,64 @@
             "id": 1,
             "type": "PBROutput",
             "inputs": [
-                { "pin": 0, "srcExpr": 2, "srcPin": 0 },
-                { "pin": 1, "srcExpr": 3, "srcPin": 3 },
-                { "pin": 2, "srcExpr": 3, "srcPin": 2 },
-                { "pin": 3, "srcExpr": 4, "srcPin": 0 }
+                {
+                    "dstPin": "BaseColor",
+                    "srcExpr": 2,
+                    "srcPin": "RGBA"
+                },
+                {
+                    "dstPin": "Metallic",
+                    "srcExpr": 3,
+                    "srcPin": "B"
+                },
+                {
+                    "dstPin": "Roughness",
+                    "srcExpr": 3,
+                    "srcPin": "G"
+                },
+                {
+                    "dstPin": "Normal",
+                    "srcExpr": 4,
+                    "srcPin": "RGBA"
+                }
             ]
         },
         {
             "id": 2,
             "type": "TextureSample",
             "name": "Albedo",
-            "stringParams": { "texturePath": "textures/sponza/column_1stfloor_baseColor.png" }
+            "stringParams": {
+                "texturePath": "textures/sponza/column_1stfloor_baseColor.png"
+            }
         },
         {
             "id": 3,
             "type": "TextureSample",
             "name": "MetalRoughness",
-            "stringParams": { "texturePath": "textures/sponza/column_1stfloor_metallicRoughness.png" }
+            "stringParams": {
+                "texturePath": "textures/sponza/column_1stfloor_metallicRoughness.png"
+            }
         },
         {
             "id": 4,
             "type": "TextureSample",
             "name": "Normal",
-            "stringParams": { "texturePath": "textures/sponza/column_1stfloor_normal.png" }
+            "stringParams": {
+                "texturePath": "textures/sponza/column_1stfloor_normal.png"
+            }
         }
-    ]
+    ],
+    "params": {
+        "roughnessMultiplier": 0.45,
+        "metallicMultiplier": 1.0,
+        "baseColorTint": [
+            1.0,
+            1.0,
+            1.0
+        ],
+        "normalStrength": 1.0,
+        "aoMultiplier": 1.0,
+        "emissiveMultiplier": 1.0,
+        "specularMultiplier": 1.0
+    }
 }

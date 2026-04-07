@@ -53,6 +53,18 @@ enum class VisDisplayMode : uint32_t {
 // RegisteredTarget — metadata for a single intermediate render target
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Channel selector for the pass-dump readback. Lets a single packed RT
+/// be dumped as multiple distinct grayscale views (e.g. albedo.a -> AO,
+/// normalRT.b -> metallic, normalRT.a -> roughness). When set to All the
+/// dump writes the texture as RGBA verbatim (default).
+enum class DumpChannel : uint8_t {
+    All = 0,  ///< RGBA passthrough (default).
+    R   = 1,  ///< Red only, replicated to RGB.
+    G   = 2,  ///< Green only, replicated to RGB.
+    B   = 3,  ///< Blue only, replicated to RGB.
+    A   = 4,  ///< Alpha only, replicated to RGB.
+};
+
 /// Describes a single registered intermediate render target.
 struct RegisteredTarget {
     std::string      name;      ///< Dotted name (e.g., "gbuffer.albedo", "ssgi.trace").
@@ -65,6 +77,10 @@ struct RegisteredTarget {
     /// Used by Validate() to issue correct barrier transitions for readback.
     /// Defaults to ShaderResource since most targets end the frame as SRV.
     RHIResourceState lastState = RHIResourceState::ShaderResource;
+    /// Pass-dump channel selector. All = full RGBA; R/G/B/A = single
+    /// channel as grayscale (lets us split packed GBuffer RTs into
+    /// "gbuffer.ao", "gbuffer.metallic", "gbuffer.roughness" views).
+    DumpChannel      dumpChannel = DumpChannel::All;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -194,7 +210,8 @@ public:
     ///   Defaults to ShaderResource. Must be accurate for Validate() readback.
     void RegisterTarget(const char* name, RHITextureHandle texture, uint32_t srvIndex,
                         VisDisplayMode mode, uint32_t width, uint32_t height,
-                        RHIResourceState state = RHIResourceState::ShaderResource);
+                        RHIResourceState state = RHIResourceState::ShaderResource,
+                        DumpChannel dumpChannel = DumpChannel::All);
 
     // ── Visualization control ────────────────────────────────────────────
 

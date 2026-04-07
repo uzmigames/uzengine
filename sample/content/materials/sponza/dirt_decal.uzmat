@@ -10,16 +10,41 @@
             "id": 1,
             "type": "PBROutput",
             "inputs": [
-                { "pin": 0, "srcExpr": 2, "srcPin": 0 },
-                { "pin": 5, "srcExpr": 2, "srcPin": 4 }
-            ]
-            ,"floatParams": { "alphaClipThreshold": 0 }
+                {
+                    "dstPin": "BaseColor",
+                    "srcExpr": 2,
+                    "srcPin": "RGBA"
+                },
+                {
+                    "dstPin": "Opacity",
+                    "srcExpr": 2,
+                    "srcPin": "A"
+                }
+            ],
+            "floatParams": {
+                "alphaClipThreshold": 0
+            }
         },
         {
             "id": 2,
             "type": "TextureSample",
             "name": "Albedo",
-            "stringParams": { "texturePath": "textures/sponza/dirt_decal_baseColor.png" }
+            "stringParams": {
+                "texturePath": "textures/sponza/dirt_decal_baseColor.png"
+            }
         }
-    ]
+    ],
+    "params": {
+        "roughnessMultiplier": 0.45,
+        "metallicMultiplier": 1.0,
+        "baseColorTint": [
+            1.0,
+            1.0,
+            1.0
+        ],
+        "normalStrength": 1.0,
+        "aoMultiplier": 1.0,
+        "emissiveMultiplier": 1.0,
+        "specularMultiplier": 1.0
+    }
 }

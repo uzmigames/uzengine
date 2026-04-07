@@ -423,6 +423,46 @@ RHIPipelineHandle PipelineLibrary::GetGBufferDebug() {
     return m_gbufferDebug;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Path Tracer Pipeline (Step 1 — fullscreen magenta)
+// ─────────────────────────────────────────────────────────────────────────────
+
+RHIPipelineHandle PipelineLibrary::GetPathTracer() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetPathTracer called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_pathTracer.IsValid()) {
+        return m_pathTracer;
+    }
+
+    if (!EnsureFullscreenShaders() || !EnsurePathTracerPixelShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIGraphicsPipelineDesc desc{};
+    desc.vertexShader  = m_fullscreenVS;
+    desc.pixelShader   = m_pathTracerPS;
+    desc.topology      = RHIPrimitiveTopology::TriangleList;
+    desc.rasterizer.cullMode      = RHICullMode::None;
+    desc.depthStencil.depthEnable = false;
+    desc.depthStencil.depthWrite  = false;
+    desc.renderTargetFormats[0]   = RHIFormat::RGBA32Float; // accum (Step 6)
+    desc.renderTargetFormats[1]   = RHIFormat::RGBA16Float; // hdrSceneColor
+    desc.renderTargetCount        = 2;
+    desc.debugName                = "PathTracer";
+
+    m_pathTracer = CreateCachedPipeline(desc);
+    if (!m_pathTracer.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create PathTracer pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created PathTracer pipeline");
+    }
+
+    return m_pathTracer;
+}
+
 RHIPipelineHandle PipelineLibrary::GetDebugView() {
     if (!m_initialized) {
         UZ_LOG(Renderer, Error, "PipelineLibrary::GetDebugView called before Init()");

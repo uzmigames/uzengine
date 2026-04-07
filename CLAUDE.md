@@ -38,15 +38,33 @@ This project uses @hivehub/rulebook standards. All code generation should follow
 
 ---
 
-## RULE -2: NEVER STOP TO ASK — IMPLEMENT TO COMPLETION
+## RULE -2: NEVER STOP TO ASK — IMPLEMENT CONTINUOUSLY UNTIL DONE
 
-**NEVER pause to ask "quer que eu implemente?", "quer que eu continue?", "quer que eu comite?".**
+**NEVER pause to ask "quer que eu implemente?", "quer que eu continue?", "quer que eu comite?", "queres que eu siga?", "posso prosseguir?".**
 
 - When a task has clear next steps, DO THEM immediately
 - Commit when a logical unit of work is done — don't ask permission
 - If something breaks, fix it — don't ask if the user wants it fixed
 - If a fix reveals another issue, fix that too
-- Only stop if genuinely blocked (missing info that can't be inferred)
+- Only stop if genuinely blocked (missing info that CANNOT be inferred from
+  the codebase, the task description, or reasonable defaults)
+- The user trusts you to make implementation decisions
+
+**OVERNIGHT / LONG-RUNNING WORK MODE** — when the user says "vai dormir",
+"continue sem parar", "implmente tudo", "ate ficar pronto", or similar:
+- Execute continuously without ANY confirmation prompts
+- Take screenshots, run builds, commit, iterate — all autonomously
+- Time-box hard problems: if a single fix takes >30 minutes and isn't
+  converging, document the blocker, work around it, and move on to the
+  next item — DO NOT halt the whole flow
+- Multiple separate problems → work on them in priority order, completing
+  each one independently, committing between them
+- The acceptable end states are: (a) the requested goal is achieved,
+  or (b) all reasonable angles have been exhausted and the remaining issues
+  are documented in commit messages for the next session
+- "Minimente decente" means: the user-visible problem looks materially
+  better than where it started. Iterate screenshots until you see that
+  improvement, then commit and move to the next item.
 - The user trusts you to make implementation decisions
 
 ---

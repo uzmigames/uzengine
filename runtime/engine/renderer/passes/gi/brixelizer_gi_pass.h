@@ -135,6 +135,13 @@ public:
     /// Returns the UAV index for the specular GI output texture.
     [[nodiscard]] uint32_t GetSpecularGIUav() const;
 
+    /// Returns the underlying texture handle for the diffuse GI output.
+    /// Used by PassInspector for dump readback.
+    [[nodiscard]] RHITextureHandle GetDiffuseGITexture() const;
+
+    /// Returns the underlying texture handle for the specular GI output.
+    [[nodiscard]] RHITextureHandle GetSpecularGITexture() const;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> m_impl;

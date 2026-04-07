@@ -1153,6 +1153,14 @@ uint32_t BrixelizerGIPass::GetSpecularGIUav() const {
     return m_impl ? m_impl->specularGIUav : UINT32_MAX;
 }
 
+RHITextureHandle BrixelizerGIPass::GetDiffuseGITexture() const {
+    return m_impl ? m_impl->diffuseGITexture : RHITextureHandle::Invalid();
+}
+
+RHITextureHandle BrixelizerGIPass::GetSpecularGITexture() const {
+    return m_impl ? m_impl->specularGITexture : RHITextureHandle::Invalid();
+}
+
 } // namespace uz
 
 #else // !UZ_BRIXELIZER_ENABLED — no-op stub
@@ -1186,6 +1194,8 @@ uint32_t BrixelizerGIPass::GetDiffuseGISrv() const { return UINT32_MAX; }
 uint32_t BrixelizerGIPass::GetSpecularGISrv() const { return UINT32_MAX; }
 uint32_t BrixelizerGIPass::GetDiffuseGIUav() const { return UINT32_MAX; }
 uint32_t BrixelizerGIPass::GetSpecularGIUav() const { return UINT32_MAX; }
+RHITextureHandle BrixelizerGIPass::GetDiffuseGITexture() const { return RHITextureHandle::Invalid(); }
+RHITextureHandle BrixelizerGIPass::GetSpecularGITexture() const { return RHITextureHandle::Invalid(); }
 
 } // namespace uz
 

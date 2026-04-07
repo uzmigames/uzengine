@@ -114,10 +114,26 @@ namespace {
             if (channels == 1) { g = r; b = r; }
             if (channels == 2) { b = 0.0f; }
 
+            // ── Channel selector — extract a single channel from a packed
+            // RT and replicate it across RGB so a single texture can be
+            // dumped as multiple distinct grayscale views (AO from albedo.a,
+            // metallic from normal.b, roughness from normal.a, etc.).
+            switch (target.dumpChannel) {
+                case DumpChannel::All: break; // RGBA passthrough
+                case DumpChannel::R:   g = r; b = r; a = 1.0f; break;
+                case DumpChannel::G:   r = g; b = g; a = 1.0f; break;
+                case DumpChannel::B:   r = b; g = b; a = 1.0f; break;
+                case DumpChannel::A:   r = a; g = a; b = a; a = 1.0f; break;
+            }
+
             // HDR tonemap for display: simple Reinhard per channel.
-            r = r / (1.0f + r);
-            g = g / (1.0f + g);
-            b = b / (1.0f + b);
+            // Skip tonemap for single-channel views (AO/metallic/roughness
+            // are already in [0,1] and Reinhard would crush them visually).
+            if (target.dumpChannel == DumpChannel::All) {
+                r = r / (1.0f + r);
+                g = g / (1.0f + g);
+                b = b / (1.0f + b);
+            }
 
             // Clamp and convert to 8-bit.
             auto clamp8 = [](float v) -> uint8_t {

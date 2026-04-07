@@ -115,6 +115,7 @@ void PipelineLibrary::Shutdown() {
     destroyPipeline(m_lighting);
     destroyPipeline(m_gbufferDebug);
     destroyPipeline(m_debugView);
+    destroyPipeline(m_pathTracer);
     destroyPipeline(m_shadowDepth);
     destroyPipeline(m_shadowDepthBindless);
     destroyPipeline(m_gbufferInstanced);
@@ -124,10 +125,6 @@ void PipelineLibrary::Shutdown() {
     destroyPipeline(m_heightFog);
     destroyPipeline(m_cloudComposite);
     destroyPipeline(m_transmittanceLut);
-    destroyPipeline(m_singleScatterLut);
-    destroyPipeline(m_scatteringDensity);
-    destroyPipeline(m_indirectScattering);
-    destroyPipeline(m_irradianceLut);
     destroyPipeline(m_apVolume);
     destroyPipeline(m_skyCubemapCapture);
     destroyPipeline(m_skyCubemapCapturePSPipeline);
@@ -165,6 +162,7 @@ void PipelineLibrary::Shutdown() {
     destroyShader(m_pixelDebugCS);
     destroyShader(m_gbufferDebugPS);
     destroyShader(m_debugViewPS);
+    destroyShader(m_pathTracerPS);
     destroyShader(m_instancedMeshVS);
     destroyShader(m_instancedShadowVS);
     destroyShader(m_shadowVS);
@@ -189,11 +187,6 @@ void PipelineLibrary::Shutdown() {
     destroyShader(m_dofSetupCS);
     destroyShader(m_dofBlurCS);
     destroyShader(m_velocityPS);
-    destroyShader(m_multiScatterLutCS);
-    destroyShader(m_singleScatterLutCS);
-    destroyShader(m_scatteringDensityCS);
-    destroyShader(m_indirectScatteringCS);
-    destroyShader(m_irradianceLutCS);
     destroyShader(m_fxaaPS);
 
     m_psoCache.Shutdown();
@@ -281,6 +274,17 @@ bool PipelineLibrary::EnsureDebugViewPixelShader() {
         m_debugViewPS = m_shaderMgr->CreateShader(EngineShader::DebugViewPS, RHIShaderStage::Pixel);
         if (!m_debugViewPS.IsValid()) {
             UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile DebugViewPS");
+            return false;
+        }
+    }
+    return true;
+}
+
+bool PipelineLibrary::EnsurePathTracerPixelShader() {
+    if (!m_pathTracerPS.IsValid()) {
+        m_pathTracerPS = m_shaderMgr->CreateShader(EngineShader::PathTracerPS, RHIShaderStage::Pixel);
+        if (!m_pathTracerPS.IsValid()) {
+            UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile PathTracerPS");
             return false;
         }
     }
@@ -436,7 +440,6 @@ uint32_t PipelineLibrary::WarmupAll() {
     warmup(GetCasSharpen(), "CAS_Sharpen");
 
     // ── Atmosphere / LUT pipelines ──────────────────────────────────────
-    warmup(GetMultiScatterLut(), "MultiScatterLUT");
     warmup(GetAerialPerspectiveVolume(), "AerialPerspectiveVolume");
 
     // ── Tonemap / Color grading ─────────────────────────────────────────
