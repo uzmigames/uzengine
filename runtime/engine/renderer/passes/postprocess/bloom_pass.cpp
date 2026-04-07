@@ -30,7 +30,7 @@ static auto* cv_BloomEnabled   = UZ_CVAR_BOOL("r.Bloom", true, "Bloom post-proce
 // @ref UE5 Scene.cpp — BloomThreshold=-1 (uniform bloom, no bright extraction)
 // @ref UE5 Scene.cpp — BloomIntensity=0.675 (subtle glow, not blowout)
 static auto* cv_BloomThreshold = UZ_CVAR_FLOAT("r.Bloom.Threshold", -1.f, "Bloom luminance threshold (-1=uniform/UE5)", -1.f, 100.f);
-static auto* cv_BloomIntensity = UZ_CVAR_FLOAT("r.Bloom.Intensity", 0.04f, "Bloom contribution multiplier", 0.f, 10.f);
+static auto* cv_BloomIntensity = UZ_CVAR_FLOAT("r.Bloom.Intensity", 0.015f, "Bloom contribution multiplier", 0.f, 10.f);
 static auto* cv_BloomRadius    = UZ_CVAR_FLOAT("r.Bloom.Radius", 1.f, "Bloom upsample filter radius", 0.1f, 4.f);
 static auto* cv_BloomSizeScale = UZ_CVAR_FLOAT("r.Bloom.SizeScale", 4.f, "Global bloom size scale", 0.1f, 64.f);
 

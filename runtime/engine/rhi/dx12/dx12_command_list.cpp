@@ -209,20 +209,24 @@ void DX12CommandList::Begin() {
     m_currentPassDescBase = UINT32_MAX;
 
     // Bind the global shader-visible descriptor heaps for bindless access
-    if (m_listType != D3D12_COMMAND_LIST_TYPE_COPY) {
-        ID3D12DescriptorHeap* heaps[] = {
-            m_device->GetDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV),
-            m_device->GetDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER),
-        };
+    RebindBindlessHeaps();
+}
 
-        uint32_t heapCount = 0;
-        for (auto* h : heaps) {
-            if (h) ++heapCount;
-        }
+void DX12CommandList::RebindBindlessHeaps() {
+    if (m_listType == D3D12_COMMAND_LIST_TYPE_COPY) return;
 
-        if (heapCount > 0) {
-            m_cmdList->SetDescriptorHeaps(heapCount, heaps);
-        }
+    ID3D12DescriptorHeap* heaps[] = {
+        m_device->GetDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV),
+        m_device->GetDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER),
+    };
+
+    uint32_t heapCount = 0;
+    for (auto* h : heaps) {
+        if (h) ++heapCount;
+    }
+
+    if (heapCount > 0) {
+        m_cmdList->SetDescriptorHeaps(heapCount, heaps);
     }
 }
 

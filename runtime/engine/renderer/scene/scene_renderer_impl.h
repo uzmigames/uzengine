@@ -325,6 +325,21 @@
     bool m_sdfGiEnabled = false;                 ///< Runtime toggle for SDF-based GI.
     float m_giIntensity = 1.0f;                  ///< GI intensity multiplier (default 1.0).
 
+    // ── Light Probe Volume (author-placed irradiance grid) ───────────────
+    /// Author-placed L2 SH probe volume — populated each frame from the
+    /// `LightProbeVolumeComponent` (auto-rebuild on dirty) and seeded from
+    /// the captured sky cubemap. Sampled in deferred lighting via trilinear
+    /// blend of 8 surrounding probes.
+    /// @ref Tatarchuk 2005 "Irradiance Volumes for Games"
+    /// @ref Greger 1998 "The Irradiance Volume"
+    IrradianceProbeGrid m_lightProbeGrid;
+
+    // ── DDGI octahedral atlases ───────────────────────────────────────
+    /// Owns the DDGI irradiance + depth probe atlases used by the DXR
+    /// probe-update CS and the deferred lighting Chebyshev sampler.
+    /// @ref Majercik 2019 "Dynamic Diffuse Global Illumination"
+    DDGISystem m_ddgiSystem;
+
     // ── Brixelizer GI (AMD FidelityFX sparse SDF voxel GI) ─────────────────
     std::unique_ptr<BrixelizerGIPass> m_brixelizerGI;  ///< FFX Brixelizer GI pass (diffuse + specular indirect).
 

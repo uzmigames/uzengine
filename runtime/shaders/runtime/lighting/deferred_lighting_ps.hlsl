@@ -13,6 +13,21 @@
 /// Z-up world direction → Y-up DX cubemap convention.
 /// Must match skybox_cubemap_ps.hlsl and sky_cubemap_cs.hlsl.
 float3 WorldToCubemap(float3 dir) { return float3(dir.x, dir.z, dir.y); }
+
+/// Octahedral direction encode — must mirror `OctEncodeDir` in
+/// `ddgi_probe_update_cs.hlsl` so the deferred sampler reads the texel that
+/// the writer produced for the corresponding direction.
+/// @ref Cigolle 2014 "A Survey of Efficient Representations for Independent
+///                    Unit Vectors"
+float2 DDGIOctEncode(float3 n) {
+    n /= (abs(n.x) + abs(n.y) + abs(n.z));
+    float2 e = n.xy;
+    if (n.z < 0.0) {
+        e = (1.0 - abs(e.yx)) * float2(e.x >= 0.0 ? 1.0 : -1.0,
+                                       e.y >= 0.0 ? 1.0 : -1.0);
+    }
+    return e * 0.5 + 0.5;
+}
 // NOTE: shadow.hlsli and contact_shadows.hlsli are included AFTER PerFrameCB
 // because they reference CVar fields (shadowPCFPenumbra, etc.) from the CB.
 
@@ -129,6 +144,28 @@ cbuffer PerFrameCB : register(b1) {
     float  materialDielectricF0;    //         (756)
     float  materialMinGGXAlpha;     //         (760)
     uint   brixGIDiffuseSrv;        //         (764) BrixelizerGI diffuse SRV (specular = diffuse+1)
+    // ── Light Probe Volume (offset 768) ──────────────────────────────
+    uint   _lpvEnabled;             //         (768)
+    uint   _lpvProbeBufferSrv;      //         (772)
+    uint   _lpvDimX;                //         (776)
+    uint   _lpvDimY;                //         (780)
+    uint   _lpvDimZ;                //         (784)
+    float  _lpvOriginX;             //         (788)
+    float  _lpvOriginY;             //         (792)
+    float  _lpvOriginZ;             //         (796)
+    float  _lpvInvSizeX;            //         (800)
+    float  _lpvInvSizeY;            //         (804)
+    float  _lpvInvSizeZ;            //         (808)
+    float  _lpvIntensity;           //         (812)
+    // ── DDGI atlases (offset 816) ────────────────────────────────────
+    uint   _ddgiIrradSrv;           //         (816)
+    uint   _ddgiDepthSrv;           //         (820)
+    uint   _ddgiProbesPerAxis;      //         (824)
+    float  _ddgiProbeSpacing;       //         (828)
+    float  _ddgiOriginX;            //         (832)
+    float  _ddgiOriginY;            //         (836)
+    float  _ddgiOriginZ;            //         (840)
+    float  _ddgiIntensity;          //         (844)
 };
 
 // LightingCB at b2 via light_types.hlsli (already declared above)
@@ -238,11 +275,15 @@ float4 main(FSInput input) : SV_Target {
     float  viewDepth = length(cameraPos.xyz - worldPos);
     float3 sunL = normalize(lightDir.xyz);
     float  sunNoL = max(dot(N, sunL), 0.0);
-    float  shadow = CascadeShadow(worldPos, viewDepth);
+    // Interior fast path: surfaces facing away from the sun (sunNoL == 0) are
+    // self-shadowed regardless of CSM result, so skip the expensive PCF/PCSS
+    // filtering entirely. Saves 16-tap PCF work on every back-facing fragment
+    // in enclosed interiors. @ref UE5 ShadowProjectionPixelShader — N·L cull.
+    float  shadow = (sunNoL > 0.0) ? CascadeShadow(worldPos, viewDepth) : 0.0;
 
     // Screen-space contact shadows: fine detail shadows from small features
     // (column edges, window frames, floor contact). Gated by CVar r.ContactShadows.
-    if (_contactShadowLen > 0.0) {
+    if (sunNoL > 0.0 && _contactShadowLen > 0.0) {
         uint csW, csH;
 #ifdef UZ_BINDLESS
         Texture2D<float> csDpth = ResourceDescriptorHeap[gBufIndices.depthIdx];
@@ -357,30 +398,149 @@ float4 main(FSInput input) : SV_Target {
     float3 skyTint = float3(skyLightColorR, skyLightColorG, skyLightColorB) * skyLightIntensity;
     float3 ambient = float3(0, 0, 0);
     {
-        // ── Diffuse irradiance: SH evaluation → cubemap fallback ─────────
-        // @ref Ramamoorthi & Hanrahan 2001 — L2 SH is sufficient for diffuse irradiance
-        float3 irradiance = EvalSH_L2(N, skyIrradianceSH);
+        // ── Indirect diffuse: pick ONE GI source by priority ─────────────
+        //
+        // Indirect diffuse irradiance has exactly one source per pixel. We
+        // pick by priority — the highest-quality available technique fully
+        // replaces the others. NEVER lerp/sum multiple GI sources; that
+        // double-counts light. Falcor follows the same rule — its path
+        // tracer writes its own output and does not blend with rasterized
+        // sky SH or rasterized irradiance volumes.
+        // @ref Falcor MinimalPathTracer.rt.slang — outColor = direct + indirect
+        // @ref UE5 DeferredLightingCommon.ush — IndirectLighting is a single source
+        //
+        // Priority order (highest first):
+        //   1. DDGI atlases (DXR ray-traced, Chebyshev visibility)
+        //   2. Radiance cache (SDF sphere-traced, spatially-varying SH)
+        //   3. Light Probe Volume (author-placed irradiance grid)
+        //   4. Global sky SH (precomputed cubemap projection — fallback)
 
+        float3 irradiance = float3(0, 0, 0);
+        bool   irradianceFromGI = false;
+
+        // ── 1. DDGI (highest priority) ───────────────────────────────────
 #ifdef UZ_BINDLESS
-        if (IsSHZero(skyIrradianceSH) && gBufIndices.iblIrradianceSrvIdx != kSentinelSrvIndex) {
-            TextureCube<float4> irrTex = ResourceDescriptorHeap[gBufIndices.iblIrradianceSrvIdx];
-            irradiance = irrTex.SampleLevel(linearSampler, WorldToCubemap(N), 0).rgb;
+        if (!irradianceFromGI
+            && _ddgiIrradSrv != 0xFFFFFFFFu && _ddgiDepthSrv != 0xFFFFFFFFu
+            && _ddgiProbesPerAxis > 0 && _ddgiProbeSpacing > 0.0
+            && _ddgiIntensity > 0.0) {
+            Texture2D<float4> ddgiIrradTex = ResourceDescriptorHeap[_ddgiIrradSrv];
+            Texture2D<float2> ddgiDepthTex = ResourceDescriptorHeap[_ddgiDepthSrv];
+
+            // Map world position to grid coordinates [0, dim-1].
+            float3 ddgiOrigin = float3(_ddgiOriginX, _ddgiOriginY, _ddgiOriginZ);
+            float3 ddgiCell   = (worldPos - ddgiOrigin) / _ddgiProbeSpacing;
+            int3   ddgi0      = clamp(int3(floor(ddgiCell)),
+                                      int3(0,0,0),
+                                      int3(int(_ddgiProbesPerAxis)-1,
+                                           int(_ddgiProbesPerAxis)-1,
+                                           int(_ddgiProbesPerAxis)-1));
+            int3   ddgi1      = min(ddgi0 + 1,
+                                    int3(int(_ddgiProbesPerAxis)-1,
+                                         int(_ddgiProbesPerAxis)-1,
+                                         int(_ddgiProbesPerAxis)-1));
+            float3 ddgiFrac   = saturate(ddgiCell - float3(ddgi0));
+
+            // Atlas tile constants — must match DDGISystem in C++.
+            const uint kIrradTile = 6u;
+            const uint kDepthTile = 16u;
+            const uint kIrradStride = kIrradTile + 2u;
+            const uint kDepthStride = kDepthTile + 2u;
+            const uint atlasIrradW = _ddgiProbesPerAxis * _ddgiProbesPerAxis * kIrradStride;
+            const uint atlasIrradH = _ddgiProbesPerAxis * kIrradStride;
+            const uint atlasDepthW = _ddgiProbesPerAxis * _ddgiProbesPerAxis * kDepthStride;
+            const uint atlasDepthH = _ddgiProbesPerAxis * kDepthStride;
+
+            float2 octIrrad = DDGIOctEncode(N);
+
+            float3 ddgiIrrad = float3(0, 0, 0);
+            float  ddgiTotalW = 0.0;
+            [unroll]
+            for (uint corner = 0; corner < 8; ++corner) {
+                int3 idx3 = int3(
+                    (corner & 1) ? ddgi1.x : ddgi0.x,
+                    (corner & 2) ? ddgi1.y : ddgi0.y,
+                    (corner & 4) ? ddgi1.z : ddgi0.z);
+                float wTri = ((corner & 1) ? ddgiFrac.x : (1.0 - ddgiFrac.x))
+                           * ((corner & 2) ? ddgiFrac.y : (1.0 - ddgiFrac.y))
+                           * ((corner & 4) ? ddgiFrac.z : (1.0 - ddgiFrac.z));
+
+                // Linear probe index using the same packing as the writer
+                // (`tileX = idx3.y * dim + idx3.x` then stacked along Y by z).
+                uint probeLinear = uint(idx3.x)
+                                 + uint(idx3.y) * _ddgiProbesPerAxis
+                                 + uint(idx3.z) * _ddgiProbesPerAxis * _ddgiProbesPerAxis;
+                uint tileX = probeLinear % (_ddgiProbesPerAxis * _ddgiProbesPerAxis);
+                uint tileY = probeLinear / (_ddgiProbesPerAxis * _ddgiProbesPerAxis);
+
+                // Probe world position for the visibility test.
+                float3 probePos = ddgiOrigin
+                                + float3(float(idx3.x), float(idx3.y), float(idx3.z))
+                                  * _ddgiProbeSpacing;
+                float3 toProbe   = probePos - worldPos;
+                float  distToProbe = length(toProbe);
+
+                // ── Chebyshev visibility (Majercik 2019 §3.4) ────────
+                {
+                    float2 dirOct = DDGIOctEncode(normalize(-toProbe));
+                    float2 depthOrigin = float2(
+                        float(tileX * kDepthStride + 1u),
+                        float(tileY * kDepthStride + 1u));
+                    float2 depthUV = (depthOrigin + dirOct * float(kDepthTile))
+                                   / float2(float(atlasDepthW),
+                                            float(atlasDepthH));
+                    float2 momentT = ddgiDepthTex.SampleLevel(linearSampler, depthUV, 0);
+                    float meanD  = momentT.x;
+                    float meanD2 = momentT.y;
+                    float variance = max(meanD2 - meanD * meanD, 1e-4);
+                    // VSM-style Chebyshev — fully visible if probe is closer
+                    // than the surface, otherwise upper-bound the visibility
+                    // by p_max = variance / (variance + diff²).
+                    float visibility = 1.0;
+                    if (distToProbe > meanD) {
+                        float diff = distToProbe - meanD;
+                        visibility = variance / (variance + diff * diff);
+                        // Sharpen — Majercik recommends pow(p_max, 8) to
+                        // remove residual leakage.
+                        visibility = max(visibility * visibility * visibility, 0.0);
+                    }
+                    wTri *= visibility;
+                }
+
+                if (wTri <= 0.0) continue;
+
+                // Sample the irradiance atlas with the surface normal.
+                float2 irradOrigin = float2(
+                    float(tileX * kIrradStride + 1u),
+                    float(tileY * kIrradStride + 1u));
+                float2 irradUV = (irradOrigin + octIrrad * float(kIrradTile))
+                               / float2(float(atlasIrradW),
+                                        float(atlasIrradH));
+                float3 probeIrrad = ddgiIrradTex.SampleLevel(linearSampler, irradUV, 0).rgb;
+
+                ddgiIrrad += wTri * probeIrrad;
+                ddgiTotalW += wTri;
+            }
+
+            if (ddgiTotalW > 1e-6) {
+                ddgiIrrad /= ddgiTotalW;
+                irradiance = ddgiIrrad * _ddgiIntensity;
+                irradianceFromGI = true;
+            }
         }
 #endif
-        // ── Radiance Cache probe grid: spatially-varying diffuse GI ──────
-        // @ref McGuire 2017 "Real-Time GI using Precomputed Light Field Probes"
-        // Trilinear interpolation of 8 surrounding probes' L2 SH coefficients.
+
+        // ── 2. Radiance cache (SDF sphere-traced spatially-varying SH) ───
 #ifdef UZ_BINDLESS
-        if (_rcEnabled != 0 && _rcProbesSrv != 0xFFFFFFFFu) {
+        if (!irradianceFromGI
+            && _rcEnabled != 0 && _rcProbesSrv != 0xFFFFFFFFu
+            && _rcGiIntensity > 0.0) {
             StructuredBuffer<float4> probeSH = ResourceDescriptorHeap[_rcProbesSrv];
 
-            // Map world position to probe grid normalized coordinates [0,1]
             float3 gridOrigin = float3(_rcOriginX, _rcOriginY, _rcOriginZ);
             float  gridSize   = _rcExtent * 2.0;
-            float3 uvw = (worldPos - gridOrigin) / gridSize;
-            uvw = saturate(uvw);
+            float3 uvw = saturate((worldPos - gridOrigin) / gridSize);
 
-            // Grid dimensions (uniform: probesPerAxis^3)
             float  ppa  = float(_rcProbesPerAxis);
             float3 cell = uvw * (ppa - 1.0);
             int3   c0   = int3(floor(cell));
@@ -389,7 +549,6 @@ float4 main(FSInput input) : SV_Target {
                                             int(_rcProbesPerAxis) - 1,
                                             int(_rcProbesPerAxis) - 1));
 
-            // Trilinear: fetch 8 corner probes, evaluate SH, blend
             float3 rcIrrad = float3(0,0,0);
             [unroll]
             for (uint corner = 0; corner < 8; ++corner) {
@@ -404,9 +563,8 @@ float4 main(FSInput input) : SV_Target {
                 uint probeLinear = uint(idx3.x)
                                  + uint(idx3.y) * _rcProbesPerAxis
                                  + uint(idx3.z) * _rcProbesPerAxis * _rcProbesPerAxis;
-                uint base = probeLinear * 7u; // 7 float4 per probe
+                uint base = probeLinear * 7u;
 
-                // Load 7 packed SH float4s and evaluate
                 float4 sh0 = probeSH[base + 0];
                 float4 sh1 = probeSH[base + 1];
                 float4 sh2 = probeSH[base + 2];
@@ -414,17 +572,92 @@ float4 main(FSInput input) : SV_Target {
                 float4 sh4 = probeSH[base + 4];
                 float4 sh5 = probeSH[base + 5];
                 float4 sh6 = probeSH[base + 6];
-
                 float4 shArr[7] = { sh0, sh1, sh2, sh3, sh4, sh5, sh6 };
+
                 float3 probeIrrad = EvalSH_L2(N, shArr);
                 rcIrrad += w * max(probeIrrad, 0.0);
             }
 
-            // Blend radiance cache with global SH: RC overrides when available
-            float rcIntensity = _rcGiIntensity;
-            irradiance = lerp(irradiance, rcIrrad, rcIntensity);
+            // Only adopt the radiance cache when it actually contains data —
+            // a fully-zero RC means the trace pass has not converged yet, so
+            // we fall through to the next source.
+            if (dot(rcIrrad, float3(1,1,1)) > 1e-5) {
+                irradiance = rcIrrad * _rcGiIntensity;
+                irradianceFromGI = true;
+            }
         }
 #endif
+
+        // ── 3. Light Probe Volume (author-placed irradiance grid) ────────
+#ifdef UZ_BINDLESS
+        if (!irradianceFromGI
+            && _lpvEnabled != 0 && _lpvProbeBufferSrv != 0xFFFFFFFFu
+            && _lpvDimX > 0 && _lpvDimY > 0 && _lpvDimZ > 0
+            && _lpvIntensity > 0.0) {
+            StructuredBuffer<float4> lpvSH = ResourceDescriptorHeap[_lpvProbeBufferSrv];
+
+            float3 lpvOrigin = float3(_lpvOriginX, _lpvOriginY, _lpvOriginZ);
+            float3 lpvInvSize = float3(_lpvInvSizeX, _lpvInvSizeY, _lpvInvSizeZ);
+            float3 lpvUVW = saturate((worldPos - lpvOrigin) * lpvInvSize);
+
+            float3 lpvDims = float3(float(_lpvDimX), float(_lpvDimY), float(_lpvDimZ));
+            float3 lpvCell = lpvUVW * max(lpvDims - 1.0, 0.0);
+            int3   lpv0 = int3(floor(lpvCell));
+            float3 lpvFrac = lpvCell - float3(lpv0);
+            int3   lpv1 = min(lpv0 + 1,
+                              int3(int(_lpvDimX) - 1,
+                                   int(_lpvDimY) - 1,
+                                   int(_lpvDimZ) - 1));
+
+            float3 lpvIrrad = float3(0, 0, 0);
+            [unroll]
+            for (uint corner = 0; corner < 8; ++corner) {
+                int3 idx3 = int3(
+                    (corner & 1) ? lpv1.x : lpv0.x,
+                    (corner & 2) ? lpv1.y : lpv0.y,
+                    (corner & 4) ? lpv1.z : lpv0.z);
+                float w = ((corner & 1) ? lpvFrac.x : (1.0 - lpvFrac.x))
+                        * ((corner & 2) ? lpvFrac.y : (1.0 - lpvFrac.y))
+                        * ((corner & 4) ? lpvFrac.z : (1.0 - lpvFrac.z));
+
+                uint probeLinear = uint(idx3.x)
+                                 + uint(idx3.y) * _lpvDimX
+                                 + uint(idx3.z) * _lpvDimX * _lpvDimY;
+                uint base = probeLinear * 7u;
+
+                float4 sh0 = lpvSH[base + 0];
+                float4 sh1 = lpvSH[base + 1];
+                float4 sh2 = lpvSH[base + 2];
+                float4 sh3 = lpvSH[base + 3];
+                float4 sh4 = lpvSH[base + 4];
+                float4 sh5 = lpvSH[base + 5];
+                float4 sh6 = lpvSH[base + 6];
+                float4 lpvShArr[7] = { sh0, sh1, sh2, sh3, sh4, sh5, sh6 };
+
+                float3 probeIrrad = EvalSH_L2(N, lpvShArr);
+                lpvIrrad += w * max(probeIrrad, 0.0);
+            }
+
+            if (dot(lpvIrrad, float3(1,1,1)) > 1e-5) {
+                irradiance = lpvIrrad * _lpvIntensity;
+                irradianceFromGI = true;
+            }
+        }
+#endif
+
+        // ── 4. Sky SH (fallback when no GI source provides data) ─────────
+        // @ref Ramamoorthi & Hanrahan 2001 — L2 SH for diffuse irradiance
+        if (!irradianceFromGI) {
+            irradiance = EvalSH_L2(N, skyIrradianceSH);
+
+#ifdef UZ_BINDLESS
+            if (IsSHZero(skyIrradianceSH)
+                && gBufIndices.iblIrradianceSrvIdx != kSentinelSrvIndex) {
+                TextureCube<float4> irrTex = ResourceDescriptorHeap[gBufIndices.iblIrradianceSrvIdx];
+                irradiance = irrTex.SampleLevel(linearSampler, WorldToCubemap(N), 0).rgb;
+            }
+#endif
+        }
 
         // skyLightMinAmbient provides a floor on irradiance so fully occluded
         // interior pixels still receive some ambient light.
@@ -560,18 +793,28 @@ float4 main(FSInput input) : SV_Target {
 
         // ── Brixelizer GI: add sparse SDF voxel indirect lighting ──────
         // @ref AMD 2024 "FidelityFX Brixelizer GI" — screen-space probe GI
+        //
+        // Brixelizer writes per-pixel diffuse irradiance to its own atlas.
+        // We REPLACE the SH-only diffuseAmbient with the GI value when it
+        // contains real data — Brixelizer is spatially-varying and already
+        // accounts for the sky contribution, so adding it on top of the
+        // sky SH would double-count light.
 #ifdef UZ_BINDLESS
         if (brixGIDiffuseSrv != kSentinelSrvIndex) {
             Texture2D<float4> brixDiffTex = ResourceDescriptorHeap[brixGIDiffuseSrv];
             float3 brixDiffuse = brixDiffTex.Load(int3(px, 0)).rgb;
-            if (any(brixDiffuse > 0.001))
-                diffuseAmbient += (1.0 - metallic) * brixDiffuse * baseColor;
-
-            // Specular GI is at diffuseSrv + 1 by allocation convention
-            Texture2D<float4> brixSpecTex = ResourceDescriptorHeap[brixGIDiffuseSrv + 1];
-            float3 brixSpecular = brixSpecTex.Load(int3(px, 0)).rgb;
-            if (any(brixSpecular > 0.001))
-                specularAmbient += brixSpecular * lerp(metallicF0, float3(1,1,1), roughness * 0.5);
+            // Only adopt the GI value when it actually contains data.
+            // First few frames the atlas is still warming up — fall back
+            // to the sky SH path until we get real spatially-varying
+            // bounce light.
+            float brixLuma = dot(brixDiffuse, float3(0.299, 0.587, 0.114));
+            if (brixLuma > 0.001) {
+                // diffuseAmbient was previously set from sky SH +
+                // multi-scattered Fms_d. Replace with the Brixelizer value
+                // tinted by base color (modulated by 1-metallic so metals
+                // still get their pure F0 specular path).
+                diffuseAmbient = (1.0 - metallic) * brixDiffuse * baseColor;
+            }
         }
 #endif
 

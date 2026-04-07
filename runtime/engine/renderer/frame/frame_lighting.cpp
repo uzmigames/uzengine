@@ -35,10 +35,11 @@
 // ── CVars ────────────────────────────────────────────────────────────────
 // Shadows
 static auto* cv_ContactShadows   = UZ_CVAR_BOOL("r.ContactShadows", true, "Contact shadows");
-// GTAO
-static auto* cv_GTAO             = UZ_CVAR_BOOL("r.GTAO", true, "Ground Truth Ambient Occlusion");
-// SSR
-static auto* cv_SSR              = UZ_CVAR_BOOL("r.SSR", true, "Screen-Space Reflections (stochastic VNDF + temporal denoise)");
+// GTAO — disabled (over-occlusion bug). Indoor AO comes from GBuffer mesh
+// AO + skyLightMinAmbient floor + GI bounce instead.
+static auto* cv_GTAO             = UZ_CVAR_BOOL("r.GTAO", false, "Ground Truth Ambient Occlusion");
+// SSR — disabled (resolved-history pass produces zero).
+static auto* cv_SSR              = UZ_CVAR_BOOL("r.SSR", false, "Screen-Space Reflections (stochastic VNDF + temporal denoise)");
 static auto* cv_SSRIntensity     = UZ_CVAR_FLOAT("r.SSR.Intensity", 1.0f, "SSR reflection intensity", 0.f, 2.f);
 static auto* cv_SSRMaxRoughness  = UZ_CVAR_FLOAT("r.SSR.MaxRoughness", 0.35f, "Max roughness for SSR (UE5 default)", 0.f, 1.f);
 static auto* cv_SSRNumSteps      = UZ_CVAR_INT("r.SSR.NumSteps", 16, "SSR ray march step count", 8, 32);

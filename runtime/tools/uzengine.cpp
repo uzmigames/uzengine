@@ -592,6 +592,15 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         UZ_LOG(Engine, Warning, "LuaVM failed to initialize — scripting disabled");
     }
 
+    // Flush pending --cvar overrides BEFORE SceneRenderer::Init so any
+    // file-scope CVar declared via UZ_CVAR_BOOL in a translation unit
+    // included from the renderer (registered during static init) sees the
+    // CLI override during the renderer's own Init() — not after. Without
+    // this ordering, init-time gating CVars (`r.BrixelizerGI.RealInit`,
+    // `r.BrixelizerGI.AllocSdf`, etc.) would always observe the default
+    // value because the override was still pending in the Config map.
+    if (configPtr) configPtr->FlushCvarOverrides();
+
     // ── Scene Renderer ─────────────────────────────────────────────────
     SceneRenderer sceneRenderer;
     bool sceneRendererReady = sceneRenderer.Init(device, &window,
@@ -600,7 +609,9 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         UZ_LOG(Engine, Warning, "SceneRenderer init failed — falling back to clear screen");
     }
 
-    // Flush pending --cvar overrides to CVarRegistry (after CVars are registered by SceneRenderer::Init)
+    // Re-flush in case SceneRenderer::Init registered any new CVars
+    // referenced by the same CLI args. Idempotent — applies any names
+    // that didn't exist on the first pass.
     if (configPtr) configPtr->FlushCvarOverrides();
 
     // Apply shadow debug mode from CLI (--shadow-debug <0-8>)

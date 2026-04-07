@@ -31,7 +31,12 @@
 static auto* cv_SkyLightIntensity        = UZ_CVAR_FLOAT("r.SkyLight.Intensity", 1.0f, "IBL ambient multiplier", 0.f, 20.f);
 static auto* cv_SkyLightMinAmbient       = UZ_CVAR_FLOAT("r.SkyLight.MinAmbient", 0.25f, "Minimum ambient floor", 0.f, 1.f);
 static auto* cv_SkyLightIndirectIntensity = UZ_CVAR_FLOAT("r.SkyLight.IndirectIntensity", 1.0f, "Diffuse IBL multiplier (separate from specular)", 0.f, 10.f);
-static auto* cv_ContactShadowLen   = UZ_CVAR_FLOAT("r.ContactShadow.Length", 0.0f, "Contact shadow ray length (0=off)", 0.f, 0.2f);
+// Contact shadows ON by default — they are NOT GTAO. Pure screen-space
+// ray-march from each pixel along the sun direction; produces hard contact
+// shadows at object/floor intersections without the GTAO over-occlusion bug.
+// 0.10 ≈ 10% of view depth — strong enough for column/floor contact in
+// large interiors like Sponza without leaking onto distant geometry.
+static auto* cv_ContactShadowLen   = UZ_CVAR_FLOAT("r.ContactShadow.Length", 0.10f, "Contact shadow ray length (0=off)", 0.f, 0.2f);
 static auto* cv_FilmGrain          = UZ_CVAR_FLOAT("r.FilmGrain", 0.f, "Film grain intensity", 0.f, 1.f);
 static auto* cv_Vignette           = UZ_CVAR_FLOAT("r.Vignette", 0.0f, "Vignette intensity", 0.f, 2.f);
 static auto* cv_ChromaAb           = UZ_CVAR_FLOAT("r.ChromaticAberration", 0.f, "Chromatic aberration", 0.f, 1.f);
@@ -63,7 +68,10 @@ static auto* cv_MaterialMinGGXAlpha   = UZ_CVAR_FLOAT("r.Material.MinGGXAlpha", 
 /// or used as the sole exposure when auto-exposure is inactive.
 /// @ref UE5 default: pow(2, AutoExposureBias=1.0) = 2.0. For UzEngine's
 /// light calibration, 10.0 matches typical indoor scene brightness.
-static auto* cv_Exposure           = UZ_CVAR_FLOAT("r.Exposure", 2.0f, "Manual exposure multiplier (applied on auto-exposure)", 0.01f, 100.f);
+// Exposure 3.0 — matched to the indoor calibration with Sponza skylight
+// intensity 0.35 and sun direct 18. 3.0 keeps the sun-lit walls bright
+// without washing out the deep-shadowed corners of the atrium.
+static auto* cv_Exposure           = UZ_CVAR_FLOAT("r.Exposure", 3.0f, "Manual exposure multiplier (applied on auto-exposure)", 0.01f, 100.f);
 static auto* cv_GIIntensity        = UZ_CVAR_FLOAT("r.GI.Intensity", 1.f, "GI intensity multiplier", 0.f, 10.f);
 static auto* cv_AerialPersp        = UZ_CVAR_BOOL("r.AerialPerspective", false, "Aerial perspective in deferred lighting");
 
@@ -560,10 +568,110 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     }
 
     // ── Brixelizer GI (AMD FidelityFX sparse SDF voxel GI) ──────────
+    // Expose the diffuse GI atlas SRV to the deferred lighting shader.
+    // The previous black-screen issue was caused by FFX rebinding the
+    // descriptor heap and leaving it bound — fixed by
+    // `DX12CommandList::RebindBindlessHeaps()` after every FFX dispatch.
     if (m_brixelizerGI && m_brixelizerGI->IsInitialized() && m_device->IsBindless()) {
         perFrame.brixelizerGIDiffuseSrv = m_brixelizerGI->GetDiffuseGISrv();
     } else {
         perFrame.brixelizerGIDiffuseSrv = UINT32_MAX;
+    }
+
+    // ── DDGI octahedral atlases (Majercik 2019) ───────────────────────
+    // Mirror the DDGISystem's atlas SRVs + grid layout into the CB so the
+    // deferred lighting shader can sample with Chebyshev visibility. The
+    // probe origin/spacing track the radiance cache so DDGI and the SDF
+    // path use the same probe positions.
+    perFrame.ddgiIrradianceSrv = UINT32_MAX;
+    perFrame.ddgiDepthSrv      = UINT32_MAX;
+    perFrame.ddgiProbesPerAxis = 0;
+    perFrame.ddgiProbeSpacing  = 0.0f;
+    perFrame.ddgiIntensity     = cv_GIIntensity->value;
+    if (m_ddgiSystem.IsInitialized() && m_radianceCache.IsInitialized()
+        && m_device->IsBindless()) {
+        const Vec3 origin = m_radianceCache.GetGridOrigin();
+        m_ddgiSystem.SetGridOrigin(origin);
+        m_ddgiSystem.SetProbeSpacing(m_radianceCache.GetProbeSpacing());
+
+        perFrame.ddgiIrradianceSrv = m_ddgiSystem.GetIrradianceSrv();
+        perFrame.ddgiDepthSrv      = m_ddgiSystem.GetDepthSrv();
+        perFrame.ddgiProbesPerAxis = DDGISystem::kProbesPerAxis;
+        perFrame.ddgiProbeSpacing  = m_ddgiSystem.GetProbeSpacing();
+        perFrame.ddgiOriginX       = origin.x;
+        perFrame.ddgiOriginY       = origin.y;
+        perFrame.ddgiOriginZ       = origin.z;
+    }
+
+    // ── Light Probe Volume (author-placed irradiance grid) ────────────
+    // @ref Tatarchuk 2005 "Irradiance Volumes for Games" — author-placed grids
+    // @ref Greger 1998 "The Irradiance Volume" — SH-based volumetric irradiance
+    perFrame.lpvEnabled        = 0;
+    perFrame.lpvProbeBufferSrv = UINT32_MAX;
+    if (ctx.world && m_device->IsBindless()) {
+        auto lpvView = ctx.world->GetRegistry().view<LightProbeVolumeComponent>();
+        for (auto enttEntity : lpvView) {
+            auto& vol = lpvView.get<LightProbeVolumeComponent>(enttEntity);
+            if (!vol.enabled) continue;
+
+            // Create or rebuild the GPU grid on demand.
+            if (!m_lightProbeGrid.IsInitialized()) {
+                if (!m_lightProbeGrid.CreateResources(m_device, vol)) {
+                    UZ_LOG(Renderer, Warning,
+                           "LightProbeVolume: failed to create probe grid resources");
+                    break;
+                }
+                vol.needsRebuild = true;
+            } else if (vol.needsRebuild
+                       || m_lightProbeGrid.GetDimX() != vol.gridDimensionsX
+                       || m_lightProbeGrid.GetDimY() != vol.gridDimensionsY
+                       || m_lightProbeGrid.GetDimZ() != vol.gridDimensionsZ) {
+                if (!m_lightProbeGrid.Rebuild(vol)) {
+                    UZ_LOG(Renderer, Warning,
+                           "LightProbeVolume: rebuild failed");
+                    break;
+                }
+            }
+
+            if (vol.needsRebuild) {
+                // Seed every probe with the current sky SH (positionally
+                // invariant). Spatial variation comes from tasks 3.x/4.x.
+                SHCoefficients skySH{};
+                std::memcpy(&skySH.coeffs[0], &perFrame.skyIrradianceSH[0],
+                            sizeof(SHCoefficients));
+                m_lightProbeGrid.FillFromSkySH(skySH);
+                m_lightProbeGrid.UploadToGpu();
+                vol.needsRebuild = false;
+            }
+
+            // Populate CB fields consumed by deferred_lighting_ps.hlsl.
+            const Vec3 extMin = m_lightProbeGrid.GetExtentMin();
+            const Vec3 extMax = m_lightProbeGrid.GetExtentMax();
+            const float sx = std::max(extMax.x - extMin.x, 1e-3f);
+            const float sy = std::max(extMax.y - extMin.y, 1e-3f);
+            const float sz = std::max(extMax.z - extMin.z, 1e-3f);
+
+            perFrame.lpvEnabled        = 1;
+            perFrame.lpvProbeBufferSrv = m_lightProbeGrid.GetProbeBufferSrv();
+            perFrame.lpvDimX           = m_lightProbeGrid.GetDimX();
+            perFrame.lpvDimY           = m_lightProbeGrid.GetDimY();
+            perFrame.lpvDimZ           = m_lightProbeGrid.GetDimZ();
+            perFrame.lpvOriginX        = extMin.x;
+            perFrame.lpvOriginY        = extMin.y;
+            perFrame.lpvOriginZ        = extMin.z;
+            perFrame.lpvInvSizeX       = 1.0f / sx;
+            perFrame.lpvInvSizeY       = 1.0f / sy;
+            perFrame.lpvInvSizeZ       = 1.0f / sz;
+            // Default to 0 — the LPV broadcast is just stale sky SH and
+            // would otherwise replace the working sky SH / radiance cache
+            // sample. Authors enable spatial variation via the SDF/DXR
+            // probe-update path; LPV intensity is currently a no-op until
+            // the LPV-specific writer lands.
+            perFrame.lpvIntensity      = 0.0f;
+
+            vol.probeBufferSrv = m_lightProbeGrid.GetProbeBufferSrv();
+            break; // Only the first enabled volume is used.
+        }
     }
 
     // ── Aerial Perspective parameters (from SkyAtmosphereComponent) ───

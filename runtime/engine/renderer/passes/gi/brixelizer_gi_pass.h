@@ -84,10 +84,21 @@ public:
 
     /// Registers geometry from the draw list for SDF voxelization.
     ///
-    /// Translates UzEngine DrawCommand entries into FfxBrixelizerInstanceDescription
-    /// structs. Static geometry is registered once; dynamic geometry is re-registered
-    /// every frame.
-    void RegisterGeometry(const std::vector<DrawCommand>& drawList);
+    /// Translates UzEngine DrawCommand entries into
+    /// `FfxBrixelizerInstanceDescription` structs. The first time a unique
+    /// `meshId` is seen, its vertex/index buffers are registered with
+    /// Brixelizer via `ffxBrixelizerRegisterBuffers` (cached). All
+    /// instances are then created in a single batched
+    /// `ffxBrixelizerCreateInstances` call.
+    ///
+    /// # Arguments
+    /// * `drawList` — Draw commands to voxelize. `DrawCommand::meshId`
+    ///   indexes into `meshes`.
+    /// * `meshes` — Renderer-owned GPUMesh array (lifetime ≥ this pass).
+    /// * `meshCount` — Number of valid `GPUMesh` entries in `meshes`.
+    void RegisterGeometry(const std::vector<DrawCommand>& drawList,
+                          const struct GPUMesh* meshes,
+                          uint32_t                meshCount);
 
     /// Executes the Brixelizer SDF bake and GI dispatch.
     ///

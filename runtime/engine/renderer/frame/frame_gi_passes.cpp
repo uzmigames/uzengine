@@ -16,6 +16,7 @@
 #include "camera.h"
 #include "gi/ssgi_renderer.h"
 #include "gi/mesh_sdf_baker.h"
+#include "raytracing/rt_manager.h"
 #include "gpu_mesh.h"
 #include "world.h"
 #include "render_graph_builder.h"
@@ -37,6 +38,12 @@ static auto* cv_SSRCopy            = UZ_CVAR_FLOAT("r.SSR.CopyPrev", 1.0f, "Enab
 static auto* cv_SSRNumSteps        = UZ_CVAR_INT("r.SSR.NumSteps", 16, "SSR ray march step count", 8, 64);
 static auto* cv_SSRStartMip        = UZ_CVAR_FLOAT("r.SSR.StartMipLevel", 1.0f, "SSR initial HZB mip level", 0.f, 3.f);
 static auto* cv_SSRSlopeTolerance  = UZ_CVAR_FLOAT("r.SSR.SlopeToleranceScale", 4.0f, "SSR slope tolerance scale", 1.f, 16.f);
+
+/// Selects DXR ray-traced probe update over the SDF sphere-trace path.
+/// Requires DXR 1.1 (`RayQuery<>`) and a built TLAS. When the device does not
+/// support DXR or the TLAS is not yet ready, the runtime falls back to the
+/// SDF radiance cache shader transparently. @ref Majercik 2019 "DDGI"
+static auto* cv_RayTracingGI       = UZ_CVAR_BOOL("r.RayTracing.GI", false, "Use DXR ray-traced probe update (DDGI) instead of SDF sphere-tracing");
 
 #include <cstring>
 
@@ -164,26 +171,47 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
         });
     });
 
-    // ── Pass: Radiance Cache Trace ─────────────────────────────────
+    // ── Pass: Radiance Cache Trace (SDF) and DDGI Probe Update (DXR) ───
+    // The SDF path always runs (writes to the L2 SH probe buffer sampled
+    // by the existing `_rcEnabled` block in deferred lighting). When
+    // `r.RayTracing.GI` is enabled and a TLAS is ready, the DDGI atlas
+    // writer also runs and updates the octahedral irradiance + depth
+    // atlases used by the Chebyshev sampler in deferred lighting.
+    // @ref Majercik 2019 "DDGI" — atlases + Chebyshev visibility
     rgBuilder.AddPass("RadianceCache_Trace", [&](rg::RgPassBuilder& pb) {
         pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
             UZ_PROFILE_SCOPE("RadianceCache::Trace");
 
+            // Always run the SDF SH path so the existing deferred lighting
+            // SH sample stays populated regardless of DXR availability.
             auto rcPipeline = ctx.pipelines->GetRadianceCacheTrace();
-            if (!rcPipeline.IsValid()) return;
+            if (rcPipeline.IsValid()) {
+                Vec3 camPos = ctx.perFrame.cameraPos.xyz();
+                m_radianceCache.Update(camPos);
+                m_radianceCache.UpdateProbes(
+                    cmd, m_globalDistanceField, rcPipeline,
+                    m_cbRing.get(),
+                    ctx.perFrameAlloc.bufferHandle,
+                    ctx.perFrameAlloc.offsetBytes,
+                    ctx.perFrameAlloc.cpuPtr,
+                    sizeof(PerFrameCB),
+                    ctx.frameIndex);
+            }
 
-            // Update probe grid center to track camera
-            Vec3 camPos = ctx.perFrame.cameraPos.xyz();
-            m_radianceCache.Update(camPos);
-
-            m_radianceCache.UpdateProbes(
-                cmd, m_globalDistanceField, rcPipeline,
-                m_cbRing.get(),
-                ctx.perFrameAlloc.bufferHandle,
-                ctx.perFrameAlloc.offsetBytes,
-                ctx.perFrameAlloc.cpuPtr,
-                sizeof(PerFrameCB),
-                ctx.frameIndex);
+            // DDGI atlas writer — only when DXR + TLAS + CVar are ready.
+            const bool wantDdgi =
+                cv_RayTracingGI && cv_RayTracingGI->value
+                && m_rtManager && m_rtManager->IsReady()
+                && m_ddgiSystem.IsInitialized();
+            if (wantDdgi) {
+                auto ddgiPipeline = ctx.pipelines->GetDdgiProbeUpdate();
+                if (ddgiPipeline.IsValid()) {
+                    const uint32_t tlasSrv = m_rtManager->GetTLASSRVIndex();
+                    m_ddgiSystem.DispatchUpdate(
+                        cmd, ddgiPipeline, tlasSrv,
+                        m_cbRing.get(), ctx.frameIndex);
+                }
+            }
         });
     });
 }
@@ -194,18 +222,38 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
 // The SRV indices are written to PerFrameCB in frame_constants.cpp.
 
 void SceneRenderer::RegisterBrixelizerGIPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
+    return; // DISABLED: BrixelizerGI crashing render — re-enable after fix
     if (!m_brixelizerGI || !m_brixelizerGI->IsInitialized()) return;
     if (!m_passInspector.IsPassEnabled("brixelizer_gi")) return;
+    // Diagnostic gate — file-scope `cv_BrixDispatch` lives in
+    // `brixelizer_gi_pass.cpp`. Reach the same value via the global CVar
+    // registry so a CLI `--cvar r.BrixelizerGI.Dispatch=0` override is
+    // honoured here even though the C++ pointer lives in another TU.
+    if (!uz::CVarRegistry::Get().GetBool("r.BrixelizerGI.Dispatch", true)) return;
 
     rgBuilder.AddPass("BrixelizerGI", [&](rg::RgPassBuilder& pb) {
         pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
         pb.Read(ctx.normalRes, RHIResourceState::ShaderResource);
+        // HDR scene color is read by the BrixelizerGI dispatch as
+        // `prevLitOutput` (temporal GI history). Without declaring this
+        // dependency, the render graph leaves the HDR target in whatever
+        // state the previous pass left it (UAV in many configurations),
+        // and the FFX backend's internal barrier diverges from the
+        // RG-tracked state. The resulting tonemap then samples a
+        // misbarriered HDR target and reads zero — the screen turns black
+        // even though the GBuffer + lighting wrote correct values.
+        pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
 
         pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
             UZ_PROFILE_SCOPE("BrixelizerGI::Execute");
 
-            // Register geometry from the draw list for SDF voxelization
-            m_brixelizerGI->RegisterGeometry(ctx.drawList.GetCommands());
+            // Register geometry from the draw list for SDF voxelization.
+            // Pass the renderer-owned mesh array so the pass can extract
+            // vertex/index buffers and AABBs by `meshId`.
+            m_brixelizerGI->RegisterGeometry(
+                ctx.drawList.GetCommands(),
+                m_meshes.data(),
+                static_cast<uint32_t>(m_meshes.size()));
 
             // Execute SDF bake + GI dispatch
             m_brixelizerGI->Execute(

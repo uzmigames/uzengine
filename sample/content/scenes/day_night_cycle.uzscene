@@ -1,0 +1,94 @@
+{
+  "name": "Day/Night Cycle",
+  "version": "1.0",
+  "entities": [
+    {
+      "name": "Sun",
+      "components": {
+        "transform": { "position": [0, 0, 0], "rotation": [90, 0, 0], "scale": [1, 1, 1] },
+        "light": {
+          "type": "directional",
+          "color": [1.0, 0.98, 0.95],
+          "intensity": 18,
+          "cast_shadows": true,
+          "atmosphere_sun_light": true,
+          "light_source_angle": 5.0
+        },
+        "script": { "path": "scripts/day_night_cycle.lua" }
+      }
+    },
+    {
+      "name": "Camera",
+      "components": {
+        "transform": { "position": [36, -611, 102], "rotation": [0, 0, 0] },
+        "camera": { "fov": 75, "near": 1, "far": 500000, "active": true },
+        "script": { "path": "scripts/fly_camera.lua" }
+      }
+    },
+    {
+      "name": "Sky",
+      "components": {
+        "transform": { "position": [0, 0, 0] },
+        "sky_atmosphere": { "sun_disk_intensity": 1.0 }
+      }
+    },
+    {
+      "name": "SkyLight",
+      "components": {
+        "transform": { "position": [0, 0, 0] },
+        "sky_light": {
+          "intensity": 0.35,
+          "light_color": [0.95, 0.93, 0.90],
+          "indirect_lighting_intensity": 0.5,
+          "source_type": "captured_scene"
+        }
+      }
+    },
+    {
+      "name": "Clouds",
+      "components": {
+        "transform": { "position": [0, 0, 0] },
+        "volumetric_clouds": {
+          "enabled": true,
+          "coverage": 0.55,
+          "density": 0.7,
+          "cloud_type": 0.5,
+          "layer_bottom_altitude_km": 2.0,
+          "layer_height_km": 4.0,
+          "wind_velocity": [4.0, 0.0, 0.0],
+          "extinction": 0.06,
+          "scattering_albedo": 0.95,
+          "phase_g": 0.5,
+          "phase_g2": -0.3,
+          "phase_blend": 0.5,
+          "ambient_multiplier": 1.0,
+          "tracing_max_distance_km": 50.0,
+          "primary_steps": 100,
+          "light_steps": 6
+        }
+      }
+    },
+    {
+      "name": "HeightFog",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        },
+        "height_fog": {
+          "base_height": -5000
+        }
+      }
+    },
+    {
+      "name": "Ground",
+      "components": {
+        "transform": { "position": [0, 0, -100], "scale": [50, 50, 1] },
+        "mesh": { "path": "meshes/cube.uzmesh" }
+      }
+    }
+  ]
+}

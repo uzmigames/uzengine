@@ -51,6 +51,15 @@ public:
     /// binds the global CBV_SRV_UAV and Sampler descriptor heaps for bindless access.
     void Begin() override;
 
+    /// Rebinds the engine's global CBV_SRV_UAV + Sampler descriptor heaps.
+    /// Call this after any third-party API (FFX, NGX/DLSS, etc.) that may
+    /// have called `SetDescriptorHeaps` with its own internal heaps and
+    /// left them bound on the command list. Without this, subsequent
+    /// bindless lookups (`ResourceDescriptorHeap[idx]`) read from the
+    /// foreign heap and return garbage / nothing → black-screen artifacts
+    /// downstream of the third-party pass.
+    void RebindBindlessHeaps();
+
     /// Ends recording by closing the command list.
     void End() override;
 

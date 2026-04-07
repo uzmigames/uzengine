@@ -38,7 +38,8 @@
 // ── CVars ────────────────────────────────────────────────────────────────
 // CVars consumed by PerFrameCB population live in frame_constants.cpp.
 // CVars below are used by the main SetupFrameData orchestration and ApplyCVars.
-static auto* cv_TAA                = UZ_CVAR_BOOL("r.TAA", true, "TAA anti-aliasing");
+// TAA disabled (jitter trembling bug). No anti-aliasing until fixed.
+static auto* cv_TAA                = UZ_CVAR_BOOL("r.TAA", false, "TAA anti-aliasing");
 static auto* cv_TAACurrentWeight   = UZ_CVAR_FLOAT("r.TAA.CurrentFrameWeight", 0.04f, "TAA current frame blend weight", 0.01f, 0.2f);
 static auto* cv_TAAJitterSeqLen    = UZ_CVAR_INT("r.TAA.JitterSequenceLength", 8, "TAA Halton jitter sequence length", 1, 16);
 static auto* cv_PBRMinRoughness    = UZ_CVAR_FLOAT("r.PBR.MinRoughness", 0.045f, "Minimum roughness clamp", 0.01f, 0.2f);

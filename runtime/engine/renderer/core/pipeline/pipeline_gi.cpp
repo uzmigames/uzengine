@@ -546,6 +546,68 @@ RHIPipelineHandle PipelineLibrary::GetRadianceCacheTrace() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// DDGI Probe Update Compute Pipeline (DXR inline ray tracing)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// @ref Majercik 2019 "Dynamic Diffuse Global Illumination with Ray-Traced
+//                     Irradiance Probes" — runtime swap with the SDF path
+// @ref Microsoft DirectX-Specs "Inline Raytracing (DXR 1.1)" — RayQuery<>
+
+bool PipelineLibrary::EnsureDdgiProbeUpdateShader() {
+    if (m_ddgiProbeUpdateCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::DdgiProbeUpdateCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile DdgiProbeUpdateCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "ddgi_probe_update_cs";
+
+    m_ddgiProbeUpdateCS = m_device->CreateShader(shaderDesc);
+    if (!m_ddgiProbeUpdateCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create DdgiProbeUpdateCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetDdgiProbeUpdate() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetDdgiProbeUpdate called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_ddgiProbeUpdate.IsValid()) {
+        return m_ddgiProbeUpdate;
+    }
+
+    if (!EnsureDdgiProbeUpdateShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ddgiProbeUpdateCS;
+    desc.debugName     = "DDGI_ProbeUpdate";
+
+    m_ddgiProbeUpdate = m_device->CreateComputePipeline(desc);
+    if (!m_ddgiProbeUpdate.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create DDGI_ProbeUpdate pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created DDGI_ProbeUpdate pipeline");
+    }
+
+    return m_ddgiProbeUpdate;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SVGF Reproject Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 

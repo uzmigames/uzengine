@@ -77,6 +77,14 @@ public:
     /// 0.12 averages over ~8 frames (fast convergence, reduced pulsing vs 0.05).
     static constexpr float kTemporalBlendAlpha = 0.12f;
 
+    /// Probes updated per frame for temporal spreading. The trace cursor
+    /// advances by this amount and wraps around the grid, so the full grid
+    /// refreshes every `ceil(kTotalProbes / kProbesPerFrame)` frames. With
+    /// 4096 total probes and 1024/frame the entire grid refreshes every 4
+    /// frames — matches task 3.3 of the indoor lighting milestone.
+    /// @ref Majercik 2019 "DDGI" — amortise probe updates over many frames.
+    static constexpr uint32_t kProbesPerFrame = 1024;
+
     RadianceCache() = default;
     ~RadianceCache();
 
@@ -179,6 +187,7 @@ private:
 
     /// Monotonic counter for temporal variation.
     uint32_t m_frameCounter = 0;
+    uint32_t m_probeUpdateCursor = 0;  ///< Round-robin offset for temporal probe spreading.
 
     bool   m_initialized = false;
     bool   m_dirty       = true;

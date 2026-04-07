@@ -125,8 +125,12 @@ bool IrradianceProbeGrid::AllocateBuffer(uint32_t probeCount) {
     RHIBufferDesc bufDesc{};
     bufDesc.sizeBytes = bufferBytes;
     bufDesc.stride    = 16; // float4
-    bufDesc.usage     = RHIBufferUsage::StructuredBuffer
-                      | RHIBufferUsage::UnorderedAccess;
+    // Upload-heap structured buffer — CPU writes via persistent map, GPU
+    // reads via SRV. UAV is intentionally omitted for now: compute writes
+    // happen through the radiance cache / DDGI shaders into their own
+    // default-heap buffers and atlases (LPV is a CPU-driven seed today).
+    bufDesc.usage     = RHIBufferUsage::StructuredBuffer;
+    bufDesc.memory    = RHIMemoryType::Upload;
     bufDesc.debugName = "IrradianceProbeGrid_SH";
 
     m_shBuffer = m_device->CreateBuffer(bufDesc);
@@ -180,6 +184,34 @@ void IrradianceProbeGrid::FillFromSkySH(const SHCoefficients& skySH) {
         float* dst = m_cpuProbes + p * kSHFloat4PerProbe * 4;
         std::memcpy(dst, src, kBytesPerProbe);
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// CaptureFromSkyCubemap
+// ─────────────────────────────────────────────────────────────────────────
+
+bool IrradianceProbeGrid::CaptureFromSkyCubemap(IRHICommandList* cmdList,
+                                                RHITextureHandle skyCubemap,
+                                                uint32_t         faceSize) {
+    if (!m_device || !m_cpuProbes || m_cpuProbeCount == 0) {
+        UZ_LOG(Renderer, Warning,
+               "IrradianceProbeGrid::CaptureFromSkyCubemap: grid not initialized");
+        return false;
+    }
+    if (!cmdList || !skyCubemap.IsValid() || faceSize == 0) {
+        UZ_LOG(Renderer, Error,
+               "IrradianceProbeGrid::CaptureFromSkyCubemap: invalid arguments");
+        return false;
+    }
+
+    // Project the sky cubemap to L2 SH once. Sky is at infinity, so the
+    // projection is identical for every probe position — spatial variation
+    // is introduced by the SDF/DXR update passes (tasks 3.x / 4.x).
+    const SHCoefficients skySH =
+        ProjectCubemapToSH(m_device, cmdList, skyCubemap, faceSize);
+
+    FillFromSkySH(skySH);
+    return true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────

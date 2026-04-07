@@ -252,6 +252,35 @@ struct PerFrameParams {
     /// Specular GI SRV is at (brixelizerGIDiffuseSrv + 1) by allocation convention.
     uint32_t brixelizerGIDiffuseSrv = UINT32_MAX;
 
+    // ── Light Probe Volume (author-placed irradiance grid) ───────────────
+    /// Author-placed L2 SH probe volume. See `constant_buffers.h::PerFrameCB`
+    /// for field documentation — layout MUST stay byte-identical.
+    uint32_t lpvEnabled        = 0;
+    uint32_t lpvProbeBufferSrv = UINT32_MAX;
+    uint32_t lpvDimX           = 0;
+    uint32_t lpvDimY           = 0;
+    uint32_t lpvDimZ           = 0;
+    float    lpvOriginX        = 0.0f;
+    float    lpvOriginY        = 0.0f;
+    float    lpvOriginZ        = 0.0f;
+    float    lpvInvSizeX       = 0.0f;
+    float    lpvInvSizeY       = 0.0f;
+    float    lpvInvSizeZ       = 0.0f;
+    float    lpvIntensity      = 1.0f;
+
+    // ── DDGI atlases ───────────────────────────────────────────────────
+    uint32_t ddgiIrradianceSrv = UINT32_MAX;
+    uint32_t ddgiDepthSrv      = UINT32_MAX;
+    uint32_t ddgiProbesPerAxis = 0;
+    float    ddgiProbeSpacing  = 0.0f;
+    float    ddgiOriginX       = 0.0f;
+    float    ddgiOriginY       = 0.0f;
+    float    ddgiOriginZ       = 0.0f;
+    float    ddgiIntensity     = 1.0f;
+
+    // ── Padding to next 256-byte boundary (1024 bytes) ────────────────
+    float    _padToCBEnd[44]   = {};
+
     // ── Resource handles (NOT copied to CB) ──────────────────────────────
     // These are bound by ShaderParameterBinder at their HLSL register slots.
 
@@ -273,7 +302,7 @@ struct PerFrameParams {
 };
 
 // Verify scalar section matches PerFrameCB exactly
-static_assert(offsetof(PerFrameParams, irradianceCubemap) == 768,
-              "PerFrameParams resource section must start at byte 768 (after PerFrameCB-compatible scalar section)");
+static_assert(offsetof(PerFrameParams, irradianceCubemap) == 1024,
+              "PerFrameParams resource section must start at byte 1024 (after PerFrameCB-compatible scalar section)");
 
 } // namespace uz

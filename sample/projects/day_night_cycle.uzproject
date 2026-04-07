@@ -1,0 +1,11 @@
+{
+  "name": "Day/Night Cycle",
+  "version": "1.0",
+  "content_root": "../content",
+  "default_scene": "scenes/day_night_cycle.uzscene",
+  "window": {
+    "title": "UzEngine — Day/Night Cycle",
+    "width": 1920,
+    "height": 1080
+  }
+}

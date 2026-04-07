@@ -21,30 +21,20 @@
 #include "engine/rhi/dx12/dx12_command_list.h"
 #include "engine/rhi/dx12/dx12_resources.h"
 #include "engine/renderer/core/gbuffer/draw_list.h"
+#include "engine/renderer/mesh/gpu_mesh.h"
 #include "profiler.h"
 
 // FFX SDK 1.1.4: Brixelizer + BrixelizerGI context APIs.
+//
+// IMPORTANT: brixelizer_loader.h is included AFTER the FFX headers. The
+// loader header forward-declares all the entry points as function-pointer
+// typedefs, then `#define`s the original FFX names to point at function
+// pointers loaded from `uz_brixelizer.dll`. This is the only way to call
+// the MSVC-built FFX libs from Zig/mingw — the wrapper DLL hides every
+// MSVC C++ runtime / STL symbol behind the DLL boundary.
 #include <FidelityFX/host/ffx_brixelizer.h>
 #include <FidelityFX/host/ffx_brixelizergi.h>
-
-// Forward-declare FFX DX12 backend functions to avoid including ffx_dx12.h
-// which transitively pulls headers with MSVC/Agility SDK ABI conflicts.
-extern "C" {
-FFX_API size_t ffxGetScratchMemorySizeDX12(size_t maxContexts);
-FFX_API FfxDevice ffxGetDeviceDX12(ID3D12Device* device);
-FFX_API FfxErrorCode ffxGetInterfaceDX12(
-    FfxInterface* backendInterface,
-    FfxDevice device,
-    void* scratchBuffer,
-    size_t scratchBufferSize,
-    size_t maxContexts);
-FFX_API FfxCommandList ffxGetCommandListDX12(ID3D12CommandList* cmdList);
-FFX_API FfxResource ffxGetResourceDX12(
-    const ID3D12Resource* dx12Resource,
-    FfxResourceDescription ffxResDescription,
-    const wchar_t* ffxResName,
-    FfxResourceStates state);
-} // extern "C"
+#include "brixelizer_loader.h"
 
 #include <cstring>
 #include <cstdlib>
@@ -99,6 +89,23 @@ static auto* cv_BrixMaxBricks = UZ_CVAR_INT("r.BrixelizerGI.MaxBricksPerBake", 1
 static auto* cv_BrixTriSwapSize = UZ_CVAR_INT("r.BrixelizerGI.TriangleSwapSize",
     64 * 1024 * 1024, "Triangle swap space size (bytes)", 1024 * 1024, 256 * 1024 * 1024);
 
+// ── Bisection switches (declared at file scope so CLI --cvar works) ─────
+// CVars declared inside function bodies as `static auto*` only register
+// the first time the function runs, so any --cvar override applied via the
+// CLI parser BEFORE the function executes is silently ignored. Declare
+// these here so they exist by the time scene_renderer_init.cpp processes
+// command-line overrides.
+static auto* cv_BrixDispatch = UZ_CVAR_BOOL("r.BrixelizerGI.Dispatch", true,
+    "Submit the BrixelizerGI bake/dispatch each frame (debug switch)");
+static auto* cv_BrixSdfAlloc = UZ_CVAR_BOOL("r.BrixelizerGI.AllocSdf", true,
+    "Allocate the Brixelizer SDF atlas + cascade buffers (debug switch)");
+static auto* cv_BrixRealInit = UZ_CVAR_BOOL("r.BrixelizerGI.RealInit", true,
+    "Run the full BrixelizerGI Init body (debug switch — set 0 to skip)");
+static auto* cv_BrixGiDispatch = UZ_CVAR_BOOL("r.BrixelizerGI.GiDispatch", true,
+    "Run the BrixelizerGI compute dispatch (skip to bisect bake-only vs gi-only)");
+static auto* cv_BrixBakeUpdate = UZ_CVAR_BOOL("r.BrixelizerGI.BakeUpdate", true,
+    "Run ffxBrixelizerBakeUpdate + ffxBrixelizerUpdate (debug switch)");
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
@@ -110,8 +117,11 @@ static constexpr size_t kMaxFfxContexts = 8;
 /// Maximum Brixelizer cascades.
 static constexpr uint32_t kMaxCascades = 24;
 
-/// Scratch buffer size for Brixelizer update (64 MB default).
-static constexpr size_t kDefaultScratchSize = 64 * 1024 * 1024;
+/// Scratch buffer size for Brixelizer update. Sized for worst-case scenes
+/// like Sponza (138 meshes / ~1.7M triangles). The actual required size is
+/// returned by `ffxBrixelizerBakeUpdate::outScratchBufferSize` and the
+/// engine logs it; bump this if the log warns of overflow.
+static constexpr size_t kDefaultScratchSize = 256 * 1024 * 1024;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PIMPL
@@ -162,6 +172,17 @@ struct BrixelizerGIPass::Impl {
 
     RHIBufferHandle scratchGpuBuffer;
 
+    // ── External SDF resources required by Brixelizer ──
+    // The high-level Brixelizer context does NOT allocate the SDF atlas
+    // or per-cascade buffers — the engine must provide them via
+    // `FfxBrixelizerUpdateDescription::resources`. Each cascade also needs
+    // its own AABB tree + brick map buffer pair. Sizes are defined by
+    // `FFX_BRIXELIZER_*_SIZE` macros from the FFX GPU headers.
+    RHITextureHandle sdfAtlasTexture;        ///< 512^3 R8 unorm 3D texture (~128 MB).
+    RHIBufferHandle  brickAABBsBuffer;       ///< (1<<18) * sizeof(uint32_t) = 1 MB.
+    RHIBufferHandle  cascadeAabbTrees[24];   ///< Per-cascade AABB tree buffer.
+    RHIBufferHandle  cascadeBrickMaps[24];   ///< Per-cascade brick map buffer.
+
     // ── Blue Noise ──
     RHITextureHandle blueNoiseTexture;
     uint32_t blueNoiseSrv = UINT32_MAX;
@@ -189,6 +210,12 @@ struct BrixelizerGIPass::Impl {
     void DestroyHistoryTextures();
     bool CreateScratchBuffer();
     void DestroyScratchBuffer();
+
+    /// Allocates the SDF atlas + per-cascade buffers required by Brixelizer.
+    /// These are external resources owned by the engine and passed to FFX
+    /// each frame via `FfxBrixelizerUpdateDescription::resources`.
+    bool CreateBrixSdfResources();
+    void DestroyBrixSdfResources();
 
     /// Wraps an RHI texture into an FfxResource for the FFX SDK.
     FfxResource WrapTexture(RHITextureHandle texture, const wchar_t* name,
@@ -301,6 +328,87 @@ void BrixelizerGIPass::Impl::DestroyScratchBuffer() {
     if (scratchGpuBuffer.IsValid()) { device->DestroyBuffer(scratchGpuBuffer); scratchGpuBuffer = {}; }
 }
 
+bool BrixelizerGIPass::Impl::CreateBrixSdfResources() {
+    // ── SDF Atlas — 512^3 R8 unorm 3D texture (~128 MB) ──
+    {
+        RHITextureDesc desc{};
+        desc.width            = 512;
+        desc.height           = 512;
+        desc.depthOrArraySize = 512;
+        desc.is3D             = true;
+        desc.format           = RHIFormat::R8Unorm;
+        desc.usage            = RHITextureUsage::ShaderResource
+                              | RHITextureUsage::UnorderedAccess;
+        desc.debugName        = "BrixelizerGI.SdfAtlas";
+        sdfAtlasTexture       = device->CreateTexture(desc);
+        if (!sdfAtlasTexture.IsValid()) {
+            UZ_LOG(Renderer, Error,
+                   "BrixelizerGI: failed to allocate 512^3 SDF atlas texture");
+            return false;
+        }
+    }
+
+    // ── Brick AABBs structured buffer — (1<<18) * sizeof(uint32_t) ──
+    constexpr uint32_t kBrickAABBsSize  = (1u << 18) * sizeof(uint32_t);
+    {
+        RHIBufferDesc desc{};
+        desc.sizeBytes = kBrickAABBsSize;
+        desc.stride    = sizeof(uint32_t);
+        desc.usage     = RHIBufferUsage::StructuredBuffer
+                       | RHIBufferUsage::UnorderedAccess;
+        desc.debugName = "BrixelizerGI.BrickAABBs";
+        brickAABBsBuffer = device->CreateBuffer(desc);
+        if (!brickAABBsBuffer.IsValid()) return false;
+    }
+
+    // ── Per-cascade AABB tree + brick map buffers ──
+    // Sizes from `ffx_brixelizer_host_gpu_shared.h`:
+    //   AABB tree: (16*16*16) * 4 + (4*4*4 + 1) * 24 = 16384 + 1560 = ~17.9 KB
+    //   Brick map: 64*64*64 * 4 = 1 MB
+    constexpr uint32_t kCascadeAabbTreeSize =
+        (16u * 16u * 16u) * sizeof(uint32_t)
+        + (4u * 4u * 4u + 1u) * sizeof(float[3]) * 2u;
+    constexpr uint32_t kCascadeBrickMapSize =
+        64u * 64u * 64u * sizeof(uint32_t);
+
+    for (uint32_t i = 0; i < numCascades && i < 24; ++i) {
+        {
+            RHIBufferDesc desc{};
+            desc.sizeBytes = kCascadeAabbTreeSize;
+            desc.stride    = sizeof(uint32_t);
+            desc.usage     = RHIBufferUsage::StructuredBuffer
+                           | RHIBufferUsage::UnorderedAccess;
+            desc.debugName = "BrixelizerGI.CascadeAabbTree";
+            cascadeAabbTrees[i] = device->CreateBuffer(desc);
+            if (!cascadeAabbTrees[i].IsValid()) return false;
+        }
+        {
+            RHIBufferDesc desc{};
+            desc.sizeBytes = kCascadeBrickMapSize;
+            desc.stride    = sizeof(uint32_t);
+            desc.usage     = RHIBufferUsage::StructuredBuffer
+                           | RHIBufferUsage::UnorderedAccess;
+            desc.debugName = "BrixelizerGI.CascadeBrickMap";
+            cascadeBrickMaps[i] = device->CreateBuffer(desc);
+            if (!cascadeBrickMaps[i].IsValid()) return false;
+        }
+    }
+
+    UZ_LOG(Renderer, Info,
+           "BrixelizerGI: allocated SDF resources (atlas 512^3 R8 + brickAABBs {} KB + {} cascade pairs)",
+           kBrickAABBsSize / 1024u, numCascades);
+    return true;
+}
+
+void BrixelizerGIPass::Impl::DestroyBrixSdfResources() {
+    if (sdfAtlasTexture.IsValid()) { device->DestroyTexture(sdfAtlasTexture); sdfAtlasTexture = {}; }
+    if (brickAABBsBuffer.IsValid()) { device->DestroyBuffer(brickAABBsBuffer); brickAABBsBuffer = {}; }
+    for (uint32_t i = 0; i < 24; ++i) {
+        if (cascadeAabbTrees[i].IsValid()) { device->DestroyBuffer(cascadeAabbTrees[i]); cascadeAabbTrees[i] = {}; }
+        if (cascadeBrickMaps[i].IsValid()) { device->DestroyBuffer(cascadeBrickMaps[i]); cascadeBrickMaps[i] = {}; }
+    }
+}
+
 FfxResource BrixelizerGIPass::Impl::WrapTexture(
     RHITextureHandle texture, const wchar_t* name, FfxResourceStates state) {
     if (!texture.IsValid()) return {};
@@ -309,10 +417,19 @@ FfxResource BrixelizerGIPass::Impl::WrapTexture(
     if (!dx12Tex || !dx12Tex->resource) return {};
 
     FfxResourceDescription desc{};
-    desc.type   = FFX_RESOURCE_TYPE_TEXTURE2D;
+    // Pick the correct FFX resource type for 3D vs 2D textures. The SDF
+    // atlas is a 512^3 R8 volume so this MUST report TEXTURE3D, otherwise
+    // the FFX backend creates a 2D SRV/UAV and the GI shader reads
+    // garbage / crashes.
+    if (dx12Tex->desc.is3D) {
+        desc.type  = FFX_RESOURCE_TYPE_TEXTURE3D;
+        desc.depth = dx12Tex->desc.depthOrArraySize;
+    } else {
+        desc.type  = FFX_RESOURCE_TYPE_TEXTURE2D;
+        desc.depth = 1;
+    }
     desc.width  = dx12Tex->desc.width;
     desc.height = dx12Tex->desc.height;
-    desc.depth  = 1;
     desc.mipCount = 1;
     desc.flags  = FFX_RESOURCE_FLAGS_NONE;
 
@@ -360,6 +477,21 @@ BrixelizerGIPass& BrixelizerGIPass::operator=(BrixelizerGIPass&&) noexcept = def
 bool BrixelizerGIPass::Init(IRHIDevice* device, uint32_t displayWidth, uint32_t displayHeight) {
     if (!device || displayWidth == 0 || displayHeight == 0) return false;
 
+    if (!cv_BrixRealInit->value) {
+        UZ_LOG(Renderer, Warning,
+               "BrixelizerGI: real init skipped via r.BrixelizerGI.RealInit=0");
+        return false;
+    }
+
+    // Resolve every FFX entry point through `uz_brixelizer.dll`. Without
+    // the DLL the macros in `brixelizer_loader.h` resolve to null function
+    // pointers, so any subsequent call would crash — bail out early.
+    if (!BrixLoaderInit()) {
+        UZ_LOG(Renderer, Warning,
+               "BrixelizerGI: uz_brixelizer.dll not loaded — pass disabled");
+        return false;
+    }
+
     m_impl = std::make_unique<Impl>();
     m_impl->device = device;
     m_impl->displayWidth  = displayWidth;
@@ -389,7 +521,7 @@ bool BrixelizerGIPass::Init(IRHIDevice* device, uint32_t displayWidth, uint32_t 
         &m_impl->brixelizerBackend, ffxDevice,
         m_impl->scratchBuffer, m_impl->scratchBufferSize, kMaxFfxContexts);
     if (err != FFX_OK) {
-        UZ_LOG(Renderer, Error, "BrixelizerGI: ffxGetInterfaceDX12 failed for Brixelizer (err=%d)", err);
+        UZ_LOG(Renderer, Error, "BrixelizerGI: ffxGetInterfaceDX12 failed for Brixelizer (err={})", err);
         return false;
     }
 
@@ -398,7 +530,7 @@ bool BrixelizerGIPass::Init(IRHIDevice* device, uint32_t displayWidth, uint32_t 
     void* giScratch = std::malloc(giScratchSize);
     err = ffxGetInterfaceDX12(&m_impl->giBackend, ffxDevice, giScratch, giScratchSize, kMaxFfxContexts);
     if (err != FFX_OK) {
-        UZ_LOG(Renderer, Error, "BrixelizerGI: ffxGetInterfaceDX12 failed for GI (err=%d)", err);
+        UZ_LOG(Renderer, Error, "BrixelizerGI: ffxGetInterfaceDX12 failed for GI (err={})", err);
         std::free(giScratch);
         return false;
     }
@@ -426,12 +558,12 @@ bool BrixelizerGIPass::Init(IRHIDevice* device, uint32_t displayWidth, uint32_t 
 
     err = ffxBrixelizerContextCreate(&brixDesc, &m_impl->brixelizerCtx);
     if (err != FFX_OK) {
-        UZ_LOG(Renderer, Error, "BrixelizerGI: ffxBrixelizerContextCreate failed (err=%d)", err);
+        UZ_LOG(Renderer, Error, "BrixelizerGI: ffxBrixelizerContextCreate failed (err={})", err);
         return false;
     }
     m_impl->brixelizerCreated = true;
 
-    UZ_LOG(Renderer, Info, "BrixelizerGI: Brixelizer context created (%u cascades, base voxel %.1f cm)",
+    UZ_LOG(Renderer, Info, "BrixelizerGI: Brixelizer context created ({} cascades, base voxel {:.1f} cm)",
            numCascades, baseVoxelSize);
 
     // ── Create BrixelizerGI Context ──
@@ -444,7 +576,7 @@ bool BrixelizerGIPass::Init(IRHIDevice* device, uint32_t displayWidth, uint32_t 
 
     err = ffxBrixelizerGIContextCreate(&m_impl->giCtx, &giDesc);
     if (err != FFX_OK) {
-        UZ_LOG(Renderer, Error, "BrixelizerGI: ffxBrixelizerGIContextCreate failed (err=%d)", err);
+        UZ_LOG(Renderer, Error, "BrixelizerGI: ffxBrixelizerGIContextCreate failed (err={})", err);
         // Clean up Brixelizer context
         ffxBrixelizerContextDestroy(&m_impl->brixelizerCtx);
         m_impl->brixelizerCreated = false;
@@ -452,7 +584,7 @@ bool BrixelizerGIPass::Init(IRHIDevice* device, uint32_t displayWidth, uint32_t 
     }
     m_impl->giCreated = true;
 
-    UZ_LOG(Renderer, Info, "BrixelizerGI: GI context created (%ux%u, reversed-Z)",
+    UZ_LOG(Renderer, Info, "BrixelizerGI: GI context created ({}x{}, reversed-Z)",
            displayWidth, displayHeight);
 
     // ── Create GPU resources ──
@@ -478,6 +610,14 @@ bool BrixelizerGIPass::Init(IRHIDevice* device, uint32_t displayWidth, uint32_t 
         UZ_LOG(Renderer, Error, "BrixelizerGI: failed to create GPU scratch buffer");
         Shutdown();
         return false;
+    }
+
+    if (cv_BrixSdfAlloc->value) {
+        if (!m_impl->CreateBrixSdfResources()) {
+            UZ_LOG(Renderer, Error, "BrixelizerGI: failed to create SDF atlas / cascade buffers");
+            Shutdown();
+            return false;
+        }
     }
 
     UZ_LOG(Renderer, Info, "BrixelizerGI: initialized successfully");
@@ -507,6 +647,7 @@ void BrixelizerGIPass::Shutdown() {
     m_impl->DestroyOutputTextures();
     m_impl->DestroyHistoryTextures();
     m_impl->DestroyScratchBuffer();
+    m_impl->DestroyBrixSdfResources();
 
     if (m_impl->blueNoiseTexture.IsValid()) {
         m_impl->device->DestroyTexture(m_impl->blueNoiseTexture);
@@ -534,41 +675,211 @@ bool BrixelizerGIPass::IsInitialized() const {
 // Geometry Registration
 // ─────────────────────────────────────────────────────────────────────────────
 
-void BrixelizerGIPass::RegisterGeometry(const std::vector<DrawCommand>& drawList) {
+void BrixelizerGIPass::RegisterGeometry(const std::vector<DrawCommand>& drawList,
+                                        const GPUMesh*                  meshes,
+                                        uint32_t                        meshCount) {
     if (!IsInitialized()) return;
+    if (!meshes || meshCount == 0) return;
     UZ_PROFILE_SCOPE("BrixelizerGI::RegisterGeometry");
 
-    // For dynamic geometry, delete all previous dynamic instances and re-register.
-    // Static geometry is registered once and tracked by meshId.
+    // ── Step 1: static scene — register once, skip subsequent frames ──
+    // Sponza (and all current scenes) are fully static. Once instances are
+    // registered, re-registering every frame is pure waste and floods the
+    // log. Skip if we already have instances registered and the draw count
+    // matches the cached registration.
+    if (!m_impl->registeredInstances.empty() &&
+        m_impl->registeredInstances.size() == drawList.size()) {
+        return;
+    }
 
-    // Delete all dynamic instances from previous frame
-    std::vector<FfxBrixelizerInstanceID> toDelete;
-    for (auto it = m_impl->registeredInstances.begin(); it != m_impl->registeredInstances.end(); ) {
-        if (!it->isStatic) {
-            toDelete.push_back(it->instanceId);
-            it = m_impl->registeredInstances.erase(it);
-        } else {
-            ++it;
+    // ── Step 2: register vertex/index buffers (cached per meshId) ────
+    //
+    // FFX Brixelizer needs each unique buffer registered once via
+    // `ffxBrixelizerRegisterBuffers`. The returned `bufferIndex` is then
+    // referenced from every `FfxBrixelizerInstanceDescription` whose mesh
+    // shares that buffer. We cache the index in `m_impl->meshIdToBufferIndex`
+    // so subsequent frames just reuse the existing registration.
+    //
+    // Each mesh contributes TWO buffer registrations (vertex + index). We
+    // pack them so:
+    //   bufferIndex(meshId)     → vertex SRV slot
+    //   bufferIndex(meshId) + 1 → index SRV slot
+
+    // Pre-pass: walk the draw list once and collect every unique meshId
+    // that has not yet been registered with Brixelizer. We allocate a
+    // stable "slot" vector with enough capacity that no reallocation can
+    // happen — the `outIndex` pointers handed to FFX MUST remain valid
+    // until ffxBrixelizerRegisterBuffers() returns.
+    struct PendingMesh {
+        uint32_t meshId;
+        uint32_t vbSlot;  // written by FFX
+        uint32_t ibSlot;  // written by FFX
+    };
+    std::vector<PendingMesh> pendingMeshes;
+    pendingMeshes.reserve(drawList.size() + 1);
+
+    {
+        std::unordered_map<uint32_t, bool> seen;
+        seen.reserve(drawList.size());
+        for (const auto& cmd : drawList) {
+            if (cmd.meshId >= meshCount) continue;
+            if (m_impl->meshIdToBufferIndex.count(cmd.meshId)) continue;
+            if (seen.count(cmd.meshId)) continue;
+            const GPUMesh& mesh = meshes[cmd.meshId];
+            if (!mesh.IsValid() || !mesh.IsIndexed()) continue;
+            if (mesh.vertexCount == 0 || mesh.indexCount == 0) continue;
+            seen[cmd.meshId] = true;
+            pendingMeshes.push_back({cmd.meshId, 0u, 0u});
         }
     }
 
-    if (!toDelete.empty()) {
-        ffxBrixelizerDeleteInstances(&m_impl->brixelizerCtx,
-                                     toDelete.data(),
-                                     static_cast<uint32_t>(toDelete.size()));
+    // Build the FFX descriptors AFTER pendingMeshes is fully sized so the
+    // `outIndex` pointers reference stable memory.
+    std::vector<FfxBrixelizerBufferDescription> newBufferDescs;
+    newBufferDescs.reserve(pendingMeshes.size() * 2);
+    for (auto& pm : pendingMeshes) {
+        const GPUMesh& mesh = meshes[pm.meshId];
+
+        const uint32_t vertexBytes = mesh.vertexCount * mesh.vertexStride;
+        FfxBrixelizerBufferDescription vbDesc{};
+        vbDesc.buffer   = m_impl->WrapBuffer(
+            mesh.vertexBuffer, vertexBytes, L"BrixVB",
+            FFX_RESOURCE_STATE_COMPUTE_READ);
+        vbDesc.outIndex = &pm.vbSlot;
+        newBufferDescs.push_back(vbDesc);
+
+        const uint32_t indexBytes =
+            mesh.indexCount
+            * (mesh.indexFormat == RHIIndexFormat::Uint32 ? 4u : 2u);
+        FfxBrixelizerBufferDescription ibDesc{};
+        ibDesc.buffer   = m_impl->WrapBuffer(
+            mesh.indexBuffer, indexBytes, L"BrixIB",
+            FFX_RESOURCE_STATE_COMPUTE_READ);
+        ibDesc.outIndex = &pm.ibSlot;
+        newBufferDescs.push_back(ibDesc);
     }
 
-    // Geometry registration requires vertex/index buffer registration with
-    // ffxBrixelizerRegisterBuffers() and AABB data from the GPUMesh pool.
-    // DrawCommand alone lacks these fields — full registration requires:
-    //   1. Registering each unique vertex/index buffer pair via ffxBrixelizerRegisterBuffers()
-    //   2. Computing world-space AABBs from local-space mesh bounds + world transform
-    //   3. Populating FfxBrixelizerInstanceDescription with buffer indices, strides, counts
-    //
-    // This will be completed in task 3.3 when the GPUMesh buffer registration bridge is built.
-    // For now, the pass initializes, creates contexts, and outputs black GI textures
-    // (which the deferred lighting shader correctly ignores via the UINT32_MAX sentinel).
-    (void)drawList;
+    // Register the new buffers in one batched call. After this returns, the
+    // `vbSlot`/`ibSlot` fields in `pendingMeshes` hold the indices that
+    // FFX will reference from `FfxBrixelizerInstanceDescription::vertexBuffer`
+    // and `indexBuffer`.
+    if (!newBufferDescs.empty()) {
+        FfxErrorCode err = ffxBrixelizerRegisterBuffers(
+            &m_impl->brixelizerCtx,
+            newBufferDescs.data(),
+            static_cast<uint32_t>(newBufferDescs.size()));
+        if (err != FFX_OK) {
+            UZ_LOG(Renderer, Warning,
+                   "BrixelizerGI: ffxBrixelizerRegisterBuffers failed (err={})",
+                   err);
+            return;
+        }
+
+        // Persist the mapping for future frames. We only need the vertex
+        // slot — the index slot is always vbSlot+1 because we register the
+        // pair contiguously above (FFX guarantees consecutive indices on
+        // batched RegisterBuffers calls).
+        for (const auto& pm : pendingMeshes) {
+            m_impl->meshIdToBufferIndex[pm.meshId] = pm.vbSlot;
+        }
+    }
+
+    // Helper that resolves a meshId → vbSlot for instance description fill.
+    // Pendings are guaranteed to be in `meshIdToBufferIndex` at this point.
+    auto bufferSlotForMesh = [&](uint32_t meshId) -> uint32_t {
+        auto it = m_impl->meshIdToBufferIndex.find(meshId);
+        return it != m_impl->meshIdToBufferIndex.end() ? it->second : UINT32_MAX;
+    };
+
+    // ── Step 3: build instance descriptions ──────────────────────────
+    std::vector<FfxBrixelizerInstanceDescription> instanceDescs;
+    instanceDescs.reserve(drawList.size());
+
+    std::vector<FfxBrixelizerInstanceID> outIds;
+    outIds.resize(drawList.size(), 0);
+
+    uint32_t instanceWriteIdx = 0;
+    for (const auto& cmd : drawList) {
+        if (cmd.meshId >= meshCount) continue;
+        const GPUMesh& mesh = meshes[cmd.meshId];
+        if (!mesh.IsValid() || !mesh.IsIndexed()) continue;
+        if (mesh.vertexCount == 0 || mesh.indexCount == 0) continue;
+
+        const uint32_t bufferBase = bufferSlotForMesh(cmd.meshId);
+        if (bufferBase == UINT32_MAX) continue;
+
+        FfxBrixelizerInstanceDescription desc{};
+
+        // Local-space AABB from the source mesh bounds.
+        desc.aabb.min[0] = mesh.boundsMin.x;
+        desc.aabb.min[1] = mesh.boundsMin.y;
+        desc.aabb.min[2] = mesh.boundsMin.z;
+        desc.aabb.max[0] = mesh.boundsMax.x;
+        desc.aabb.max[1] = mesh.boundsMax.y;
+        desc.aabb.max[2] = mesh.boundsMax.z;
+
+        // World transform — FFX uses 3x4 row-major (3 rows × 4 cols),
+        // a flat `float[12]`. UzEngine's `Mat4` stores 16 floats in
+        // column-major order via `data()`. Transpose the upper-left 3x3
+        // and copy the translation column into the last column of the
+        // 3x4 matrix.
+        const float* m = cmd.worldMatrix.data();
+        desc.transform[0]  = m[0];  desc.transform[1]  = m[4];
+        desc.transform[2]  = m[8];  desc.transform[3]  = m[12];
+        desc.transform[4]  = m[1];  desc.transform[5]  = m[5];
+        desc.transform[6]  = m[9];  desc.transform[7]  = m[13];
+        desc.transform[8]  = m[2];  desc.transform[9]  = m[6];
+        desc.transform[10] = m[10]; desc.transform[11] = m[14];
+
+        desc.indexFormat   = (mesh.indexFormat == RHIIndexFormat::Uint32)
+                                 ? FFX_INDEX_TYPE_UINT32
+                                 : FFX_INDEX_TYPE_UINT16;
+        desc.indexBuffer       = bufferBase + 1;  // index slot
+        desc.indexBufferOffset = 0;
+        desc.triangleCount     = mesh.indexCount / 3;
+
+        desc.vertexBuffer       = bufferBase;     // vertex slot
+        desc.vertexBufferOffset = 0;
+        desc.vertexCount        = mesh.vertexCount;
+        desc.vertexStride       = mesh.vertexStride;
+        desc.vertexFormat       = FFX_SURFACE_FORMAT_R32G32B32_FLOAT;
+
+        desc.flags = FFX_BRIXELIZER_INSTANCE_FLAG_NONE;
+        desc.outInstanceID = &outIds[instanceWriteIdx++];
+
+        instanceDescs.push_back(desc);
+    }
+
+    if (instanceDescs.empty()) {
+        return;
+    }
+
+    // ── Step 4: create instances in one batched call ─────────────────
+    FfxErrorCode err = ffxBrixelizerCreateInstances(
+        &m_impl->brixelizerCtx,
+        instanceDescs.data(),
+        static_cast<uint32_t>(instanceDescs.size()));
+    if (err != FFX_OK) {
+        UZ_LOG(Renderer, Warning,
+               "BrixelizerGI: ffxBrixelizerCreateInstances failed (err={})",
+               err);
+        return;
+    }
+
+    // Track instance IDs so we can delete them next frame.
+    m_impl->registeredInstances.reserve(instanceDescs.size());
+    for (uint32_t i = 0; i < instanceDescs.size(); ++i) {
+        BrixelizerMeshInstance trackedInstance{};
+        trackedInstance.instanceId = outIds[i];
+        trackedInstance.isStatic   = true;
+        m_impl->registeredInstances.push_back(trackedInstance);
+    }
+
+    UZ_LOG(Renderer, Info,
+           "BrixelizerGI: registered {} instances ({} unique meshes, {} new buffer slots)",
+           static_cast<uint32_t>(instanceDescs.size()),
+           static_cast<uint32_t>(m_impl->meshIdToBufferIndex.size()),
+           static_cast<uint32_t>(newBufferDescs.size()));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -591,6 +902,15 @@ void BrixelizerGIPass::Execute(
 {
     if (!IsInitialized()) return;
     if (!(cv_BrixGI->value > 0.5f)) return;
+
+    // Skip Execute when no geometry is registered. Calling
+    // ffxBrixelizerUpdate / ffxBrixelizerGIContextDispatch with empty SDF
+    // cascades dereferences uninitialised internal resources and crashes
+    // the GPU (TDR / device removed). Geometry registration runs in
+    // RegisterGeometry() which is called from the render pipeline before
+    // Execute(); this guard is the safety net.
+    if (m_impl->registeredInstances.empty()) return;
+
     UZ_PROFILE_SCOPE("BrixelizerGI::Execute");
 
     auto* dx12CmdList = static_cast<DX12CommandList*>(cmdList);
@@ -608,25 +928,71 @@ void BrixelizerGIPass::Execute(
     updateDesc.populateDebugAABBsFlags = FFX_BRIXELIZER_POPULATE_AABBS_NONE;
     updateDesc.debugVisualizationDesc  = nullptr;
 
+    // External SDF resources — engine-owned, must be populated every call.
+    // The high-level Brixelizer context relays them to the raw context via
+    // `ffxBrixelizerRawContextBegin(...)` inside `ffxBrixelizerUpdate`.
+    updateDesc.resources.sdfAtlas = m_impl->WrapTexture(
+        m_impl->sdfAtlasTexture, L"BrixSdfAtlas",
+        FFX_RESOURCE_STATE_UNORDERED_ACCESS);
+    updateDesc.resources.brickAABBs = m_impl->WrapBuffer(
+        m_impl->brickAABBsBuffer,
+        (1u << 18) * sizeof(uint32_t),
+        L"BrixBrickAABBs",
+        FFX_RESOURCE_STATE_UNORDERED_ACCESS);
+    for (uint32_t i = 0; i < m_impl->numCascades && i < 24; ++i) {
+        constexpr uint32_t kAabbTreeBytes =
+            (16u * 16u * 16u) * sizeof(uint32_t)
+            + (4u * 4u * 4u + 1u) * sizeof(float[3]) * 2u;
+        constexpr uint32_t kBrickMapBytes =
+            64u * 64u * 64u * sizeof(uint32_t);
+        updateDesc.resources.cascadeResources[i].aabbTree = m_impl->WrapBuffer(
+            m_impl->cascadeAabbTrees[i], kAabbTreeBytes,
+            L"BrixCascadeAabbTree", FFX_RESOURCE_STATE_UNORDERED_ACCESS);
+        updateDesc.resources.cascadeResources[i].brickMap = m_impl->WrapBuffer(
+            m_impl->cascadeBrickMaps[i], kBrickMapBytes,
+            L"BrixCascadeBrickMap", FFX_RESOURCE_STATE_UNORDERED_ACCESS);
+    }
+
     size_t requiredScratch = 0;
     updateDesc.outScratchBufferSize = &requiredScratch;
 
-    // Bake update (CPU-side preparation)
-    FfxBrixelizerBakedUpdateDescription bakedUpdate{};
-    FfxErrorCode err = ffxBrixelizerBakeUpdate(&m_impl->brixelizerCtx, &updateDesc, &bakedUpdate);
-    if (err != FFX_OK) {
-        UZ_LOG(Renderer, Warning, "BrixelizerGI: ffxBrixelizerBakeUpdate failed (err=%d)", err);
-        return;
+    FfxErrorCode err = FFX_OK;
+    if (cv_BrixBakeUpdate->value) {
+        // Bake update (CPU-side preparation)
+        FfxBrixelizerBakedUpdateDescription bakedUpdate{};
+        err = ffxBrixelizerBakeUpdate(&m_impl->brixelizerCtx, &updateDesc, &bakedUpdate);
+        if (err != FFX_OK) {
+            UZ_LOG(Renderer, Warning, "BrixelizerGI: ffxBrixelizerBakeUpdate failed (err={})", err);
+            return;
+        }
+
+        // Execute update on GPU
+        FfxResource scratchRes = m_impl->WrapBuffer(
+            m_impl->scratchGpuBuffer, kDefaultScratchSize,
+            L"BrixelizerGI.Scratch", FFX_RESOURCE_STATE_UNORDERED_ACCESS);
+
+        err = ffxBrixelizerUpdate(&m_impl->brixelizerCtx, &bakedUpdate, scratchRes, ffxCmdList);
+        if (err != FFX_OK) {
+            UZ_LOG(Renderer, Warning, "BrixelizerGI: ffxBrixelizerUpdate failed (err={})", err);
+            return;
+        }
+
+        // FFX rebinds the descriptor heap to its own internal one. Restore
+        // the engine's bindless heaps so subsequent passes' bindless reads
+        // (`ResourceDescriptorHeap[idx]`) hit the right heap.
+        dx12CmdList->RebindBindlessHeaps();
     }
 
-    // Execute update on GPU
-    FfxResource scratchRes = m_impl->WrapBuffer(
-        m_impl->scratchGpuBuffer, kDefaultScratchSize,
-        L"BrixelizerGI.Scratch", FFX_RESOURCE_STATE_UNORDERED_ACCESS);
-
-    err = ffxBrixelizerUpdate(&m_impl->brixelizerCtx, &bakedUpdate, scratchRes, ffxCmdList);
-    if (err != FFX_OK) {
-        UZ_LOG(Renderer, Warning, "BrixelizerGI: ffxBrixelizerUpdate failed (err=%d)", err);
+    // Bisection gate: skip the GI dispatch entirely. The Brixelizer SDF
+    // bake above is what populates the cascade brick maps; the GI
+    // dispatch reads from them and produces the diffuse/specular GI
+    // textures consumed by deferred lighting.
+    if (!cv_BrixGiDispatch->value) {
+        // Still update history matrices so the next frame's prev-view is sane.
+        std::memcpy(m_impl->prevViewMatrix, viewMatrix, sizeof(float) * 16);
+        std::memcpy(m_impl->prevProjMatrix, projMatrix, sizeof(float) * 16);
+        m_impl->hasPrevMatrices = true;
+        m_impl->frameIndex++;
         return;
     }
 
@@ -677,23 +1043,47 @@ void BrixelizerGIPass::Execute(
     giDispatch.outputSpecularGI = m_impl->WrapTexture(
         m_impl->specularGITexture, L"SpecularGI", FFX_RESOURCE_STATE_UNORDERED_ACCESS);
 
-    // Get Brixelizer internal resources for GI ray marching
+    // Get Brixelizer raw context (used by the GI dispatch internally for
+    // cascade info / configuration constants).
     FfxBrixelizerRawContext* rawCtx = nullptr;
     ffxBrixelizerGetRawContext(&m_impl->brixelizerCtx, &rawCtx);
     giDispatch.brixelizerContext = rawCtx;
 
-    // Brixelizer internal resources (SDF atlas, brick AABBs, cascade trees/maps)
-    // are populated by the raw context. The FFX SDK sample uses
-    // ffxBrixelizerRawGetSdfAtlas(), ffxBrixelizerRawGetBrickAABBs(), etc.
-    // These internal API functions are resolved at link time from ffx_backend_dx12.lib.
-    // Resources left as null-initialized FfxResource{} until the SDK lib is linked.
+    // Bind the engine-owned SDF resources directly into the GI dispatch.
+    // These are the SAME buffers we passed to `updateDesc.resources` above
+    // so the GI shader reads the data the SDF bake just wrote.
+    giDispatch.sdfAtlas = m_impl->WrapTexture(
+        m_impl->sdfAtlasTexture, L"BrixSdfAtlas_GI",
+        FFX_RESOURCE_STATE_COMPUTE_READ);
+    giDispatch.bricksAABBs = m_impl->WrapBuffer(
+        m_impl->brickAABBsBuffer,
+        (1u << 18) * sizeof(uint32_t),
+        L"BrixBrickAABBs_GI",
+        FFX_RESOURCE_STATE_COMPUTE_READ);
+    for (uint32_t i = 0; i < m_impl->numCascades && i < 24; ++i) {
+        constexpr uint32_t kAabbTreeBytesGi =
+            (16u * 16u * 16u) * sizeof(uint32_t)
+            + (4u * 4u * 4u + 1u) * sizeof(float[3]) * 2u;
+        constexpr uint32_t kBrickMapBytesGi =
+            64u * 64u * 64u * sizeof(uint32_t);
+        giDispatch.cascadeAABBTrees[i] = m_impl->WrapBuffer(
+            m_impl->cascadeAabbTrees[i], kAabbTreeBytesGi,
+            L"BrixCascadeAabbTree_GI", FFX_RESOURCE_STATE_COMPUTE_READ);
+        giDispatch.cascadeBrickMaps[i] = m_impl->WrapBuffer(
+            m_impl->cascadeBrickMaps[i], kBrickMapBytesGi,
+            L"BrixCascadeBrickMap_GI", FFX_RESOURCE_STATE_COMPUTE_READ);
+    }
 
     // Dispatch GI
     err = ffxBrixelizerGIContextDispatch(&m_impl->giCtx, &giDispatch, ffxCmdList);
     if (err != FFX_OK) {
-        UZ_LOG(Renderer, Warning, "BrixelizerGI: ffxBrixelizerGIContextDispatch failed (err=%d)", err);
+        UZ_LOG(Renderer, Warning, "BrixelizerGI: ffxBrixelizerGIContextDispatch failed (err={})", err);
         return;
     }
+
+    // Restore the engine's bindless descriptor heaps after the FFX
+    // dispatch (FFX swaps in its own heaps for its internal pipelines).
+    dx12CmdList->RebindBindlessHeaps();
 
     // Store current matrices as prev for next frame
     std::memcpy(m_impl->prevViewMatrix, viewMatrix, sizeof(float) * 16);
@@ -732,7 +1122,7 @@ void BrixelizerGIPass::OnResize(uint32_t newWidth, uint32_t newHeight) {
         if (err == FFX_OK) {
             m_impl->giCreated = true;
         } else {
-            UZ_LOG(Renderer, Error, "BrixelizerGI: failed to recreate GI context on resize (err=%d)", err);
+            UZ_LOG(Renderer, Error, "BrixelizerGI: failed to recreate GI context on resize (err={})", err);
         }
     }
 
@@ -786,7 +1176,8 @@ bool BrixelizerGIPass::Init(IRHIDevice*, uint32_t, uint32_t) {
 
 void BrixelizerGIPass::Shutdown() {}
 bool BrixelizerGIPass::IsInitialized() const { return false; }
-void BrixelizerGIPass::RegisterGeometry(const std::vector<DrawCommand>&) {}
+void BrixelizerGIPass::RegisterGeometry(const std::vector<DrawCommand>&,
+                                        const GPUMesh*, uint32_t) {}
 void BrixelizerGIPass::Execute(IRHICommandList*, const float*, const float*,
     const float*, const float*, float, float, float, uint32_t,
     RHITextureHandle, RHITextureHandle, RHITextureHandle, RHITextureHandle, RHITextureHandle) {}

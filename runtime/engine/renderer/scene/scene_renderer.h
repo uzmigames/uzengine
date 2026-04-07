@@ -54,6 +54,9 @@
 #include "gi/ssgi_renderer.h"
 #include "gi/global_distance_field.h"
 #include "gi/radiance_cache.h"
+#include "gi/irradiance_probe_grid.h"
+#include "gi/ddgi_system.h"
+#include "engine/ecs/environment/light_probe_volume_component.h"
 #include "passes/gi/brixelizer_gi_pass.h"
 #include "async_texture_decoder.h"  // TextureDecodeResult for m_deferredDecoded
 #include "inspector_pass.h"        // PassInspector for render target visualization

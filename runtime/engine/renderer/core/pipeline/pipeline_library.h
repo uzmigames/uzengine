@@ -702,6 +702,18 @@ public:
     ///
     [[nodiscard]] RHIPipelineHandle GetRadianceCacheTrace();
 
+    /// Returns the DDGI probe update compute pipeline (DXR inline ray tracing).
+    ///
+    /// Hardware-RT counterpart to `GetRadianceCacheTrace()`. Writes into the
+    /// same L2 SH probe buffer using the same 7-float4 packing, so the
+    /// deferred lighting sample path is unchanged. Selected at runtime when
+    /// `r.RayTracing.GI` is enabled and the device supports DXR 1.1
+    /// (`RayQuery<>`).
+    ///
+    /// @ref Majercik 2019 "DDGI" — ray-traced irradiance probes
+    /// @ref Microsoft DirectX-Specs "Inline Raytracing (DXR 1.1)"
+    [[nodiscard]] RHIPipelineHandle GetDdgiProbeUpdate();
+
     /// Returns the DBuffer decal render pipeline (decal_vs + decal_ps, 3 RT, no depth).
     ///
     /// Rasterizer: front-face cull (render back faces of decal OBB).

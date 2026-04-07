@@ -236,9 +236,45 @@ struct PerFrameCB {
     /// SRV index for Brixelizer GI diffuse output (RGBA16F). UINT32_MAX = disabled.
     /// Specular GI SRV is at (brixelizerGIDiffuseSrv + 1) by allocation convention.
     uint32_t brixelizerGIDiffuseSrv = UINT32_MAX;
+
+    // ── Light Probe Volume (author-placed irradiance grid) ───────────────
+    /// Author-placed L2 SH probe volume. Sampled in deferred lighting via
+    /// trilinear blend of 8 surrounding probes for spatially-varying indirect
+    /// diffuse in indoor scenes. UINT32_MAX = no volume.
+    /// @ref Tatarchuk 2005 "Irradiance Volumes for Games"
+    /// @ref Greger 1998 "The Irradiance Volume"
+    uint32_t lpvEnabled       = 0;          ///< 1 = light probe volume active.
+    uint32_t lpvProbeBufferSrv = UINT32_MAX;///< SRV of probe SH StructuredBuffer<float4>.
+    uint32_t lpvDimX          = 0;          ///< Probes along X.
+    uint32_t lpvDimY          = 0;          ///< Probes along Y.
+    uint32_t lpvDimZ          = 0;          ///< Probes along Z.
+    float    lpvOriginX       = 0.0f;       ///< Volume AABB min corner X (cm).
+    float    lpvOriginY       = 0.0f;       ///< Volume AABB min corner Y (cm).
+    float    lpvOriginZ       = 0.0f;       ///< Volume AABB min corner Z (cm).
+    float    lpvInvSizeX      = 0.0f;       ///< 1 / (extentMax.x - extentMin.x).
+    float    lpvInvSizeY      = 0.0f;       ///< 1 / (extentMax.y - extentMin.y).
+    float    lpvInvSizeZ      = 0.0f;       ///< 1 / (extentMax.z - extentMin.z).
+    float    lpvIntensity     = 1.0f;       ///< Intensity multiplier on probe contribution.
+
+    // ── DDGI atlases (Majercik 2019) ──────────────────────────────────
+    /// SRVs for the DDGI octahedral irradiance and depth atlases. Sampled
+    /// in deferred lighting using Chebyshev visibility against the depth
+    /// atlas to suppress light leaks. UINT32_MAX = no DDGI atlas available.
+    /// @ref Majercik 2019 "DDGI" — atlas layout & Chebyshev visibility
+    uint32_t ddgiIrradianceSrv = UINT32_MAX;
+    uint32_t ddgiDepthSrv      = UINT32_MAX;
+    uint32_t ddgiProbesPerAxis = 0;          ///< Probes per axis (cube grid).
+    float    ddgiProbeSpacing  = 0.0f;       ///< Probe spacing in cm.
+    float    ddgiOriginX       = 0.0f;       ///< Probe grid min corner X.
+    float    ddgiOriginY       = 0.0f;
+    float    ddgiOriginZ       = 0.0f;
+    float    ddgiIntensity     = 1.0f;       ///< Intensity multiplier on DDGI contribution.
+
+    // ── Padding to next 256-byte boundary (1024 bytes) ────────────────
+    float    _padToCBEnd[44]  = {};         ///< Pads PerFrameCB to 1024 bytes (4 x 256).
 };
 
-static_assert(sizeof(PerFrameCB) == 768, "PerFrameCB must be 768 bytes (D3D12 CB alignment)");
+static_assert(sizeof(PerFrameCB) == 1024, "PerFrameCB must be 1024 bytes (4 x 256 D3D12 CB alignment)");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PerObjectCB — bound at b2 (root CBV, updated per draw call)

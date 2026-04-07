@@ -74,6 +74,7 @@
     [[nodiscard]] bool EnsureGdfCompositeShader();
     [[nodiscard]] bool EnsureMeshSdfBakeShader();
     [[nodiscard]] bool EnsureRadianceCacheTraceShader();
+    [[nodiscard]] bool EnsureDdgiProbeUpdateShader();
     [[nodiscard]] bool EnsureCloudCompositePixelShader();
     [[nodiscard]] bool EnsureVolumetricFogInjectShader();
     [[nodiscard]] bool EnsureVolumetricFogScatterShader();
@@ -159,6 +160,7 @@
     RHIShaderHandle m_gdfCompositeCS            = RHIShaderHandle::Invalid();
     RHIShaderHandle m_meshSdfBakeCS             = RHIShaderHandle::Invalid();
     RHIShaderHandle m_radianceCacheTraceCS      = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_ddgiProbeUpdateCS         = RHIShaderHandle::Invalid();
     RHIShaderHandle m_volFogInjectCS            = RHIShaderHandle::Invalid();
     RHIShaderHandle m_volFogScatterCS           = RHIShaderHandle::Invalid();
     RHIShaderHandle m_volFogCompositePS         = RHIShaderHandle::Invalid();
@@ -235,6 +237,7 @@
     RHIPipelineHandle m_gdfComposite          = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_meshSdfBake           = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_radianceCacheTrace    = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_ddgiProbeUpdate       = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_decalRender           = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_decalApply            = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_volFogInject          = RHIPipelineHandle::Invalid();

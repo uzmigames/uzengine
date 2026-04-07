@@ -821,12 +821,25 @@ pub fn build(b: *std.Build) void {
             break :blk false;
         }
     };
-    // FFX SDK .lib presence check — reserved for future MSVC build path.
-    _ = blk: {
+    // BrixelizerGI is enabled at build time when both:
+    //   1. The FFX SDK 1.1.4 headers are present
+    //   2. The MSVC-built wrapper DLL `uz_brixelizer.dll` exists
+    //
+    // The wrapper DLL hides every MSVC C++ runtime / STL symbol behind its
+    // boundary so the engine (Zig/mingw) can call its `uz_brix_*` exports
+    // via LoadLibrary at runtime — same pattern as DLSS.
+    //
+    // Build the wrapper:
+    //   cd thirdparty/amd-fidelityfx-1.1/wrapper
+    //   cmake -B build -G "Visual Studio 17 2022" -A x64
+    //   cmake --build build --config Release
+    //
+    // Output: build/bin/uz_brixelizer.dll → copied to runtime/build/bin/.
+    const has_brixelizer_libs = blk: {
         if (!has_brixelizer_headers) break :blk false;
-        const brix_lib = tp ++ "amd-fidelityfx-1.1/sdk/bin/ffx_sdk/ffx_backend_dx12_x64.lib";
-        const brix_lib_resolved = b.path(brix_lib).getPath(b);
-        if (std.fs.cwd().access(brix_lib_resolved, .{})) {
+        const brix_dll = tp ++ "amd-fidelityfx-1.1/wrapper/build/bin/uz_brixelizer.dll";
+        const brix_dll_resolved = b.path(brix_dll).getPath(b);
+        if (std.fs.cwd().access(brix_dll_resolved, .{})) {
             break :blk true;
         } else |_| {
             break :blk false;
@@ -843,11 +856,14 @@ pub fn build(b: *std.Build) void {
         runtime_mod.addIncludePath(b.path(ffx11 ++ "src/components/brixelizer"));
         runtime_mod.addIncludePath(b.path(ffx11 ++ "src/components/brixelizergi"));
 
-        // UZ_BRIXELIZER_ENABLED requires the MSVC CMake build path (cmake --preset msvc)
-        // because the FFX SDK .lib depends on MSVC CRT (libmsvcprt, libuuid, liboleaut32).
-        // Zig's mingw libc cannot satisfy these dependencies.
-        // Build: cd thirdparty/amd-fidelityfx-1.1/sdk && cmake -B build -G "Visual Studio 17 2022" -A x64 -DFFX_API_BACKEND=DX12_X64 -DFFX_ALL=ON && cmake --build build --config Release
-        // To enable: build UzEngine with MSVC, or wrap FFX SDK as a DLL.
+        // Enable BrixelizerGI codepath when the wrapper DLL exists. The
+        // engine never directly links the FFX static libs — every entry
+        // point is resolved at runtime through `brixelizer_loader.cpp`
+        // (LoadLibrary + GetProcAddress). This avoids the MSVC CRT / STL
+        // ABI incompatibility between the FFX libs and Zig/mingw.
+        if (has_brixelizer_libs) {
+            runtime_mod.addCMacro("UZ_BRIXELIZER_ENABLED", "1");
+        }
     }
 
     // Thirdparty — NVIDIA DLSS SDK headers (NGX API for temporal upscaling)

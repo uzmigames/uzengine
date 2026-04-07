@@ -28,6 +28,7 @@
 namespace uz {
 
 class IRHIDevice;
+class IRHICommandList;
 struct LightProbeVolumeComponent;
 struct SHCoefficients;
 
@@ -98,6 +99,36 @@ public:
     /// Fills every probe with a uniform SH value (e.g. the captured sky).
     /// CPU-side only — `UploadToGpu()` pushes the data to the structured buffer.
     void FillFromSkySH(const SHCoefficients& skySH);
+
+    /// Captures the sky cubemap into L2 SH and fills every probe with the
+    /// resulting coefficients.
+    ///
+    /// Because the sky is treated as a directional environment at infinity,
+    /// the projected SH is positionally invariant — every probe in the grid
+    /// receives the same coefficients. Spatial variation (parallax, occlusion,
+    /// indirect bounce) is introduced later by the SDF/DXR probe update passes
+    /// (tasks 3.x and 4.x).
+    ///
+    /// The GPU must be idle before calling this; the function performs a
+    /// readback of the cubemap via `ProjectCubemapToSH(device, cmdList, ...)`.
+    /// Call `UploadToGpu()` afterwards to push the new SH to the structured
+    /// buffer.
+    ///
+    /// # Arguments
+    /// * `cmdList` — Command list used for the readback copy. Must be idle
+    ///   (the underlying projection helper records its own Begin/End).
+    /// * `skyCubemap` — RGBA16F sky cubemap (6 faces).
+    /// * `faceSize` — Width/height of one cubemap face.
+    ///
+    /// # Returns
+    /// `true` on success, `false` if the grid has no CPU storage or the
+    /// projection failed.
+    ///
+    /// @ref Sloan 2008 "Stupid Spherical Harmonics Tricks" — L2 projection
+    /// @ref Greger 1998 "The Irradiance Volume" — sky-only initial fill
+    [[nodiscard]] bool CaptureFromSkyCubemap(IRHICommandList* cmdList,
+                                             RHITextureHandle skyCubemap,
+                                             uint32_t         faceSize);
 
     /// Zeroes every probe SH coefficient (CPU side). Used as a safe init
     /// before tracing runs or when no sky is available.

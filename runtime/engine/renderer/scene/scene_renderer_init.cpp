@@ -662,6 +662,21 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         UZ_LOG(Renderer, Info, "SceneRenderer: SDF GI enabled (GDF + RadianceCache ready)");
     }
 
+    // ── DDGI octahedral atlases (Majercik 2019) ────────────────────────
+    // Allocates the irradiance + depth atlas textures consumed by the DDGI
+    // probe-update CS (DXR variant) and the deferred lighting Chebyshev
+    // sampler. Atlases are tiny (~256 KB total) and always available; the
+    // shader paths skip them when the SRV indices are sentinel.
+    if (!m_ddgiSystem.CreateResources(device)) {
+        UZ_LOG(Renderer, Warning,
+               "SceneRenderer: DDGI atlas init failed (DDGI sampling disabled)");
+    } else {
+        UZ_LOG(Renderer, Info,
+               "SceneRenderer: DDGI atlas ready (irrad SRV={}, depth SRV={})",
+               m_ddgiSystem.GetIrradianceSrv(),
+               m_ddgiSystem.GetDepthSrv());
+    }
+
     // ── SSR Output Textures (at render resolution — operates on GBuffer) ──
     CreateSsrResources(m_renderWidth, m_renderHeight);
 
@@ -940,7 +955,7 @@ void SceneRenderer::ApplyCVars() {
     m_passInspector.SetGridConfig(gridCfg);
 
     // ── Render Pass Toggles ─────────────────────────────────────────────
-    m_taaEnabled        = cvars.GetBool("r.TAA", true);
+    m_taaEnabled        = cvars.GetBool("r.TAA", false);
     m_ssrEnabled        = cvars.GetBool("r.SSR", true);
     m_motionBlurEnabled = cvars.GetBool("r.MotionBlur", true);
     m_casEnabled        = cvars.GetBool("r.CAS", true);
