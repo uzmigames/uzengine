@@ -6,8 +6,11 @@
     "r.BrixelizerGI": 1,
     "r.BrixelizerGI.Intensity": 1.4,
     "r.SkyLight.Intensity": 1.0,
-    "r.SkyLight.MinAmbient": 0.12,
-    "r.SkyLight.IndirectIntensity": 1.0
+    "r.SkyLight.MinAmbient": 0.1,
+    "r.SkyLight.IndirectIntensity": 1.0,
+    "r.GTAO": 1,
+    "r.GTAO.Intensity": 0.5,
+    "r.GTAO.Radius": 60
   },
   "entities": [
     {
