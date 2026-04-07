@@ -35,7 +35,7 @@
         }
     ],
     "params": {
-        "roughnessMultiplier": 0.35,
+        "roughnessMultiplier": 0.55,
         "metallicMultiplier": 1.0,
         "baseColorTint": [
             1.05,
