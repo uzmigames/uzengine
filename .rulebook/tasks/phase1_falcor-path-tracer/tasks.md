@@ -27,3 +27,8 @@
 - [ ] 4.3 Next-Event Estimation (NEE): at each hit, in addition to the bounce, explicitly sample the directional light and add its contribution weighted by `1/lightPdf` (MIS not required for directional lights, their PDF is a delta distribution).
 - [ ] 4.4 `--path-trace` CLI flag: activates path tracer pass in `engine_loop.cpp`, replaces deferred lighting output with accumulation buffer output. `--pt-bounces <N>` sets max bounce count (default 4).
 - [ ] 4.5 Build + verify: Cornell box scene — path-traced output with 4 bounces shows color bleeding (red/green wall color on white floor). Compare to deferred renderer via `--flip` — expect measurable difference (path tracer more accurate). Screenshot convergence after 200 frames.
+
+## 1. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 1.1 Update or create documentation covering the implementation
+- [ ] 1.2 Write tests covering the new behavior
+- [ ] 1.3 Run tests and confirm they pass

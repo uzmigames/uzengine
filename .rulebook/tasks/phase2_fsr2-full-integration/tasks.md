@@ -35,3 +35,8 @@
 ## 3. Documentation
 - [ ] 3.1 Update `docs/specs/rendering/renderer.md` with FSR 2 upscaler description and quality presets.
 - [ ] 3.2 Update `docs/guides/getting-started.md` with FSR 2 setup instructions.
+
+## 4. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 4.1 Update or create documentation covering the implementation
+- [ ] 4.2 Write tests covering the new behavior
+- [ ] 4.3 Run tests and confirm they pass

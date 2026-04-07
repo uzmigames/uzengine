@@ -126,3 +126,8 @@ skip sorting), and validates transparency ordering with overlapping smoke in the
       floats is monotonic with magnitude).
 - [ ] 8.3 Document `Additive` blend mode sort-skip rationale: `A + B = B + A`,
       so draw order is irrelevant for purely additive blending.
+
+## 9. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 9.1 Update or create documentation covering the implementation
+- [ ] 9.2 Write tests covering the new behavior
+- [ ] 9.3 Run tests and confirm they pass

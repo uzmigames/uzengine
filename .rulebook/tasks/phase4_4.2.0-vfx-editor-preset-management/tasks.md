@@ -131,3 +131,8 @@ Dependency: Phase 4.1.0 must be complete (VFXParameterPanel class exists).
 ### 7.2 Add schema version field
 - [x] 7.2 `"version": 1` written as first key in `Save()`. `Load()` reads it via
   `ParseUint()` and logs a warning if value is not `1` but continues loading.
+
+## 8. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 8.1 Update or create documentation covering the implementation
+- [ ] 8.2 Write tests covering the new behavior
+- [ ] 8.3 Run tests and confirm they pass

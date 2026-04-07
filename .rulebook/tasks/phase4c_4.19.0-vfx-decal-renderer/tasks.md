@@ -135,3 +135,8 @@ frame the CPU reads completed events and injects them into the existing
 - [ ] 7.3 Document `normal` default (`float3(0,0,1)`): particles currently emit
       world-up normal; future improvement would ray-cast for true surface normal
       (see task 4.23.0 GPU raycasting).
+
+## 8. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 8.1 Update or create documentation covering the implementation
+- [ ] 8.2 Write tests covering the new behavior
+- [ ] 8.3 Run tests and confirm they pass

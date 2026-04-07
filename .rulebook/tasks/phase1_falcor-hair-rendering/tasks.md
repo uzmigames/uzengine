@@ -26,3 +26,8 @@
 - [ ] 4.1 Per-pixel linked list (OIT) for transparent hair overlap: allocate `RWStructuredBuffer<HairFragment>` with count buffer. Hair PS appends to list. Resolve pass sorts per-pixel list by depth and composites front-to-back. Enable via `HAS_OIT` variant define.
 - [ ] 4.2 Root-to-tip color gradient: `float3 strandColor = lerp(rootColor, tipColor, uv.y)` in `hair_ps.hlsl`. `rootColor` and `tipColor` as per-material parameters stored in GBuffer or material CB.
 - [ ] 4.3 Build + verify final quality: render hair with OIT enabled vs disabled via `--flip` — OIT should show measurably fewer transparency sorting artifacts (lower FLIP on overlapping strand regions). GPU timestamp confirms OIT pass < 2ms.
+
+## 1. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 1.1 Update or create documentation covering the implementation
+- [ ] 1.2 Write tests covering the new behavior
+- [ ] 1.3 Run tests and confirm they pass

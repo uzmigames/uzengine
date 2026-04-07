@@ -42,3 +42,8 @@ extraction pass or readback — uses the emitter's position, color, and configur
 ## 8. Build Verification
 
 - [x] 8.1 Demo builds successfully (`zig build` — zero errors).
+
+## 9. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 9.1 Update or create documentation covering the implementation
+- [ ] 9.2 Write tests covering the new behavior
+- [ ] 9.3 Run tests and confirm they pass

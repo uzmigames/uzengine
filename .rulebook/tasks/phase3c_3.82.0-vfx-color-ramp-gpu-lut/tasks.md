@@ -45,3 +45,8 @@ a 1D RGBA16F LUT texture sampled at `normalizedAge`. The LUT is baked from
 ## 6. Tasks Update
 
 - [x] 6.1 All implementable checklist items marked [x] with descriptions. Visual verification items (5.2-5.4) require GPU runtime.
+
+## 7. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 7.1 Update or create documentation covering the implementation
+- [ ] 7.2 Write tests covering the new behavior
+- [ ] 7.3 Run tests and confirm they pass

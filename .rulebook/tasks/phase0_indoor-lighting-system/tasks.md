@@ -58,3 +58,8 @@
 - [x] 7.2 `docs/specs/rendering/ibl-pipeline.md` — added a "Light Probe Volume (Author-Placed Irradiance Grid)" section documenting the per-probe SH packing, `CaptureFromSkyCubemap` seeding, the `lpv*` CB layout, the 768→1024 byte `PerFrameCB` growth, and the deferred lighting trilinear sample.
 - [x] 7.3 Created `docs/guides/indoor-lighting-guide.md` — artist guide covering SkyLight tuning, `LightProbeVolumeComponent` placement, layered bounce light (radiance cache / Brixelizer), and diagnostic CLI flags.
 - [x] 7.4 `runtime/CHANGELOG.md` — added v0.9.1 (in progress) entry summarising the indoor lighting work.
+
+## 8. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 8.1 Update or create documentation covering the implementation
+- [ ] 8.2 Write tests covering the new behavior
+- [ ] 8.3 Run tests and confirm they pass

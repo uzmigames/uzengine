@@ -52,3 +52,8 @@
 
 - [ ] 10.1 Update `docs/engine/18-ui-system/` with HTML subset, CSS support, layout engine, SDF fonts.
 - [ ] 10.2 Document supported HTML tags and CSS properties.
+
+## 11. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 11.1 Update or create documentation covering the implementation
+- [ ] 11.2 Write tests covering the new behavior
+- [ ] 11.3 Run tests and confirm they pass

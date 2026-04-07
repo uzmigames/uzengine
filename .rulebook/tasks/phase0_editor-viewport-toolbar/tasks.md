@@ -43,3 +43,8 @@
 - [ ] 6.3 Lua API `uz.viewport.set_quality(level)` — wraps QualityPresetManager.
 - [ ] 6.4 Game View toggle (G key) — hides all editor overlays (grid, gizmo, selection outline, stats overlay) while keeping game rendering. Toggle sets ShowFlags::Grid=false, ShowFlags::EditorOverlays=false.
 - [ ] 6.5 Build + verify: Lua scripts can toggle view modes and show flags at runtime.
+
+## 1. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 1.1 Update or create documentation covering the implementation
+- [ ] 1.2 Write tests covering the new behavior
+- [ ] 1.3 Run tests and confirm they pass

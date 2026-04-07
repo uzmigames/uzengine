@@ -70,3 +70,8 @@
 - [x] 9.2 Updated `docs/specs/rendering/ibl-pipeline.md` with Brixelizer GI composite integration description.
 - [x] 9.3 Created `docs/guides/brixelizer-gi-guide.md` — setup guide (CVars, cascade config, performance tuning, debug visualization, troubleshooting).
 - [x] 9.4 Updated `runtime/CHANGELOG.md` with v0.9.0 Brixelizer GI feature addition.
+
+## 10. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 10.1 Update or create documentation covering the implementation
+- [ ] 10.2 Write tests covering the new behavior
+- [ ] 10.3 Run tests and confirm they pass

@@ -57,3 +57,8 @@ transitions. Niagara reference: Scalability settings + significance manager.
 - [ ] 6.3 Unit test: maxParticles cap reduces correctly (8192 × 0.25 = 2048).
 - [ ] 6.4 Unit test: screen-size threshold calculation at known distance/FOV/radius.
 - [ ] 6.5 Integration test: emitter at LOD 3 spawns ~10% of particles compared to LOD 0.
+
+## 7. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 7.1 Update or create documentation covering the implementation
+- [ ] 7.2 Write tests covering the new behavior
+- [ ] 7.3 Run tests and confirm they pass

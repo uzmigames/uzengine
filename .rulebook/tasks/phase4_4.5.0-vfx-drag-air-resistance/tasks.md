@@ -47,3 +47,8 @@ This produces physically plausible arcs for projectiles, embers, and debris.
   and in `particle_update_cs.hlsl` above the drag computation block.
 - [ ] 7.2 Update VFX guide with a "Drag / Air Resistance" section. **Not yet implemented** —
   no vfx-system.md exists in docs/guides/; existing guides do not cover drag.
+
+## 8. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 8.1 Update or create documentation covering the implementation
+- [ ] 8.2 Write tests covering the new behavior
+- [ ] 8.3 Run tests and confirm they pass

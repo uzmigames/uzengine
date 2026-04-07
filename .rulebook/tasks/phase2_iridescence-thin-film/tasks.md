@@ -31,3 +31,8 @@
 ## 3. Documentation
 - [ ] 3.1 Update `docs/specs/rendering/shader-library.md` with `iridescence.hlsli` functions.
 - [ ] 3.2 Update `docs/specs/rendering/shader-variants.md` with `SHADING_MODEL_IRIDESCENT`.
+
+## 4. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 4.1 Update or create documentation covering the implementation
+- [ ] 4.2 Write tests covering the new behavior
+- [ ] 4.3 Run tests and confirm they pass

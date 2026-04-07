@@ -42,3 +42,8 @@
 - [ ] 6.1 Regression: all 9 existing demos produce identical visual output after root signature refactor
 - [ ] 6.2 Test: scene with 50+ point lights — all lights rendered, no silent failures
 - [ ] 6.3 Test: scene with 12+ shadowed lights — shadow atlas correctly assigns tiles, low-priority lights gracefully degrade to unshadowed
+
+## 7. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 7.1 Update or create documentation covering the implementation
+- [ ] 7.2 Write tests covering the new behavior
+- [ ] 7.3 Run tests and confirm they pass

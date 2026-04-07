@@ -47,3 +47,8 @@
 - [x] 9.2 Document .uzvfx_composite format specification
 - [x] 9.3 Document Lua VFX API with examples
 - [x] 9.4 Document hot-reload workflow for VFX artists
+
+## 10. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 10.1 Update or create documentation covering the implementation
+- [ ] 10.2 Write tests covering the new behavior
+- [ ] 10.3 Run tests and confirm they pass

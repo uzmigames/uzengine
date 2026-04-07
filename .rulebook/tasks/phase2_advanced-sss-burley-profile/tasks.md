@@ -42,3 +42,8 @@
 - [ ] 3.1 Update `docs/specs/rendering/shader-library.md` with Burley diffusion profile functions.
 - [ ] 3.2 Update `docs/specs/rendering/renderer.md` with SSS blur pass pipeline description.
 - [ ] 3.3 Add `@ref Christensen & Burley 2015` citations.
+
+## 4. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 4.1 Update or create documentation covering the implementation
+- [ ] 4.2 Write tests covering the new behavior
+- [ ] 4.3 Run tests and confirm they pass

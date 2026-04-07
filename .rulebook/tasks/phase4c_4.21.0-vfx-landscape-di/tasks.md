@@ -134,3 +134,8 @@ of clipping through them.
       1.0 = perfectly elastic (no energy loss on bounce).
 - [ ] 7.3 Document `.r16` file format: `width × height` row-major uint16 values,
       big-endian, value range 0–65535 linearly mapped to `[terrainMinZ, terrainMaxZ]`.
+
+## 8. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 8.1 Update or create documentation covering the implementation
+- [ ] 8.2 Write tests covering the new behavior
+- [ ] 8.3 Run tests and confirm they pass

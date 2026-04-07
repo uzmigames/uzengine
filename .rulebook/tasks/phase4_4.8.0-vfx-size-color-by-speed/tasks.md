@@ -48,3 +48,8 @@ debris that scales with impact velocity.
 - [x] 6.1 Added inline comments in VS for sizeBySpeed block and colorBySpeed speedFactor computation. PS has comments explaining the colorParam override.
 - [ ] 6.2 Update VFX guide with a "Size & Color by Speed" section. **Not yet implemented** —
   no such guide exists in docs/guides/.
+
+## 7. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 7.1 Update or create documentation covering the implementation
+- [ ] 7.2 Write tests covering the new behavior
+- [ ] 7.3 Run tests and confirm they pass

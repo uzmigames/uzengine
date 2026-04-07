@@ -51,3 +51,8 @@ exposes animated curl parameters via the update constant buffer.
 ## 8. Tasks Update
 
 - [x] 8.1 All implementable checklist items marked [x]. Visual verification screenshots require GPU execution by user.
+
+## 9. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 9.1 Update or create documentation covering the implementation
+- [ ] 9.2 Write tests covering the new behavior
+- [ ] 9.3 Run tests and confirm they pass

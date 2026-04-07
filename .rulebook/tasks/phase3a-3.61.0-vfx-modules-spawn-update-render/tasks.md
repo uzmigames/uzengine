@@ -50,3 +50,8 @@
 
 - [x] 9.1 Document module API and custom module creation guide
 - [x] 9.2 Document .uzcurve format specification with examples
+
+## 10. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 10.1 Update or create documentation covering the implementation
+- [ ] 10.2 Write tests covering the new behavior
+- [ ] 10.3 Run tests and confirm they pass

@@ -38,3 +38,8 @@ through sub-frames of an atlas texture based on age. Niagara reference: SubImage
 
 - [x] 6.1 Document flipbook format (rows, cols, totalFrames, FPS, blendMode). Documented in VFX preset comments and cbuffer field documentation in vfx_viewport_vfx.h.
 - [x] 6.2 Update VFX guide with sprite sheet authoring guidelines. Documented in VFX preset comments and cbuffer field documentation in vfx_viewport_vfx.h.
+
+## 7. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 7.1 Update or create documentation covering the implementation
+- [ ] 7.2 Write tests covering the new behavior
+- [ ] 7.3 Run tests and confirm they pass

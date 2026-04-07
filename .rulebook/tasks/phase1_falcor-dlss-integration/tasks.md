@@ -14,3 +14,8 @@
 - [x] 2.3 Quality mode reinitialization: Execute() detects quality change via cv_DLSSQuality CVar, calls DestroyFeature() + CreateFeature() with new settings. Render resolution updated from NGX optimal settings query.
 - [x] 2.4 CLI args: `--upscaler dlss` maps to r.AntiAliasingMethod=4; `--dlss-quality <mode>` maps to r.DLSS.Quality (0=ultra, 1=perf, 2=balanced, 3=quality, 4=dlaa).
 - [ ] 2.5 Build + verify on RTX hardware: `uzengine.exe --upscaler dlss --dlss-quality quality --screenshot-stdout --frames 30` — requires NVIDIA RTX GPU for runtime testing. Code compiles and runs as stub on non-NVIDIA hardware.
+
+## 1. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 1.1 Update or create documentation covering the implementation
+- [ ] 1.2 Write tests covering the new behavior
+- [ ] 1.3 Run tests and confirm they pass

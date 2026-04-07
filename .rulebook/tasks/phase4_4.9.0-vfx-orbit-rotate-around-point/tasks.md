@@ -52,3 +52,8 @@ plane are derived via Gram-Schmidt.
 
 - [x] 7.1 Added `/// @ref Christensen 2018 "Fibonacci Sphere Sampling"` and `/// @constants goldenAngle=2.39996323` citation in `particle_update_cs.hlsl` above the orbit block.
 - [ ] 7.2 Update VFX guide with an "Orbit" section. **Not yet implemented** — no orbit guide exists in docs/guides/.
+
+## 8. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 8.1 Update or create documentation covering the implementation
+- [ ] 8.2 Write tests covering the new behavior
+- [ ] 8.3 Run tests and confirm they pass

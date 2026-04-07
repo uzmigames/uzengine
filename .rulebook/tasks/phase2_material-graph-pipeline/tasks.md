@@ -48,3 +48,8 @@
 - [ ] 10.1 Create `docs/specs/rendering/material-graph-pipeline.md` — data flow from .uzmat → HLSL → PSO → GBuffer
 - [ ] 10.2 Update `docs/guides/shader-authoring.md` with material graph section
 - [ ] 10.3 Add .uzmat format reference to `docs/guides/scene-authoring.md`
+
+## 11. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 11.1 Update or create documentation covering the implementation
+- [ ] 11.2 Write tests covering the new behavior
+- [ ] 11.3 Run tests and confirm they pass

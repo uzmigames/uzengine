@@ -32,3 +32,8 @@
 ## 3. Documentation
 - [ ] 3.1 Update `docs/specs/rendering/shader-library.md` with `aerial_perspective.hlsli` and `SampleAerialPerspective()`.
 - [ ] 3.2 Add `@ref Hillaire 2020 "A Scalable and Production Ready Sky and Atmosphere Rendering Technique"` citations.
+
+## 4. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 4.1 Update or create documentation covering the implementation
+- [ ] 4.2 Write tests covering the new behavior
+- [ ] 4.3 Run tests and confirm they pass

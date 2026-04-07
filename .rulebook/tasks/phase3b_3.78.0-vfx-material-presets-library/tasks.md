@@ -59,3 +59,8 @@ Depends on: Task 3.77.0 (VFX Material System Integration)
 - [x] 8.1 Document .uzvfxmat JSON format with examples. Deferred format noted in tasks.md; current system uses inline VFXMaterial structs — no file format defined yet. Will be documented when 2.1 is implemented.
 - [x] 8.2 Artist guide: how to create VFX materials for UzEngine. Current workflow documented inline: 6 preset VFXMaterial structs in vfx_viewport_demo.cpp set blend mode, emissive, softFade, and baseColorTint. File-based workflow deferred with .uzvfxmat format.
 - [x] 8.3 Document material preset library with screenshots of each. Presets documented in this tasks.md (items 1.1-1.6) with all parameters. Screenshot gallery deferred pending --screenshot-stdout stability.
+
+## 9. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 9.1 Update or create documentation covering the implementation
+- [ ] 9.2 Write tests covering the new behavior
+- [ ] 9.3 Run tests and confirm they pass

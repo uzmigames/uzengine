@@ -24,3 +24,8 @@
 ## 3. Documentation
 - [ ] 3.1 Update `docs/specs/rendering/renderer.md` with HDRI skybox pass description.
 - [ ] 3.2 Update `docs/guides/scene-authoring.md` with how to set up HDRI skybox via SkyLight cubemap_path.
+
+## 4. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 4.1 Update or create documentation covering the implementation
+- [ ] 4.2 Write tests covering the new behavior
+- [ ] 4.3 Run tests and confirm they pass

@@ -19,6 +19,7 @@
 #include "material/material_asset.h"
 #include "../scripting/script_component.h"
 #include "../logging/log.h"
+#include "../core/cvar.h"
 #include "../math/vector3.h"
 #include "../math/quaternion.h"
 
@@ -32,6 +33,7 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "../asset/vfs.h"
@@ -56,6 +58,75 @@ static constexpr float kDegToRad = 3.14159265358979323846f / 180.f;
 /// component in JSON. These are owned here and referenced by StaticMeshComponent
 /// via non-owning pointers (overrideMaterials). Cleared when a new scene is loaded.
 static std::vector<std::unique_ptr<Material>> s_sceneLoadedMaterials;
+
+/// CVar overrides applied by the currently-loaded scene.
+/// Key = cvar name, value = original value before the scene overrode it.
+/// Reverted on the next LoadScene() call so scene overrides do not leak
+/// into default/global configuration.
+static std::unordered_map<std::string, float> s_sceneCVarOverrides;
+
+/// Reverts all CVars previously overridden by a loaded scene to their
+/// pre-override values, then clears the override map.
+static void RevertSceneCVarOverrides() {
+    auto& reg = CVarRegistry::Get();
+    for (const auto& [name, prevValue] : s_sceneCVarOverrides) {
+        reg.Set(name, prevValue);
+    }
+    s_sceneCVarOverrides.clear();
+}
+
+/// Parses a top-level "cvars" JSON object and applies each entry as a CVar
+/// override. Records the previous value of each touched CVar in
+/// s_sceneCVarOverrides so RevertSceneCVarOverrides() can restore them later.
+///
+/// Expected JSON shape:
+///   "cvars": {
+///     "r.PathTracing": 1,
+///     "r.ScreenPercentage": 100.0,
+///     "r.TAA": false
+///   }
+///
+/// Values may be number or bool. Unknown CVars are logged and skipped
+/// (Set() on an unregistered name is already a no-op, but we warn so
+/// typos in scene files are visible).
+static void ApplySceneCVarOverrides(const nlohmann::json& cvarsJson,
+                                    const std::string& sourceName) {
+    if (!cvarsJson.is_object()) {
+        UZ_LOG(Scene, Warning,
+               "LoadScene: '{}': 'cvars' is not an object, ignoring", sourceName);
+        return;
+    }
+    auto& reg = CVarRegistry::Get();
+    for (auto it = cvarsJson.begin(); it != cvarsJson.end(); ++it) {
+        const std::string& name = it.key();
+        float newValue = 0.f;
+        if (it.value().is_number()) {
+            newValue = it.value().get<float>();
+        } else if (it.value().is_boolean()) {
+            newValue = it.value().get<bool>() ? 1.f : 0.f;
+        } else {
+            UZ_LOG(Scene, Warning,
+                   "LoadScene: '{}': cvar '{}' has unsupported value type, skipping",
+                   sourceName, name);
+            continue;
+        }
+        const CVar* existing = reg.Find(name);
+        if (!existing) {
+            UZ_LOG(Scene, Warning,
+                   "LoadScene: '{}': cvar '{}' is not registered, skipping",
+                   sourceName, name);
+            continue;
+        }
+        // Remember the original value (first time we touch this cvar in this scene).
+        if (s_sceneCVarOverrides.find(name) == s_sceneCVarOverrides.end()) {
+            s_sceneCVarOverrides[name] = existing->value;
+        }
+        reg.Set(name, newValue);
+        UZ_LOG(Scene, Info,
+               "LoadScene: '{}': cvar override {} = {}",
+               sourceName, name, newValue);
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal helpers
@@ -710,6 +781,10 @@ size_t LoadScene(World& world,
     // Release materials from any previously loaded scene.
     s_sceneLoadedMaterials.clear();
 
+    // Revert any CVar overrides applied by a previously-loaded scene so the
+    // new scene starts from global defaults before applying its own overrides.
+    RevertSceneCVarOverrides();
+
     if (sceneJson.empty()) {
         UZ_LOG(Scene, Error, "LoadScene: '{}': input byte buffer is empty", sourceName);
         return 0;
@@ -729,6 +804,13 @@ size_t LoadScene(World& world,
         UZ_LOG(Scene, Error,
                "LoadScene: '{}': root element is not a JSON object", sourceName);
         return 0;
+    }
+
+    // Apply top-level "cvars" overrides (if any) BEFORE entity construction,
+    // so components that read CVars during construction see the overridden values.
+    auto cvarsIt = root.find("cvars");
+    if (cvarsIt != root.end()) {
+        ApplySceneCVarOverrides(*cvarsIt, sourceName);
     }
 
     auto entitiesIt = root.find("entities");
@@ -1005,6 +1087,20 @@ std::vector<uint8_t> SaveScene(const World& world) {
     }
 
     root["entities"] = std::move(entities);
+
+    // Preserve any active scene CVar overrides so a load/save round-trip
+    // does not drop the "cvars" section authored in the source .uzscene.
+    if (!s_sceneCVarOverrides.empty()) {
+        nlohmann::json cvarsJson = nlohmann::json::object();
+        auto& reg = CVarRegistry::Get();
+        for (const auto& kv : s_sceneCVarOverrides) {
+            // Write the *current* (overridden) value, not the saved original.
+            if (const CVar* cv = reg.Find(kv.first)) {
+                cvarsJson[kv.first] = cv->value;
+            }
+        }
+        root["cvars"] = std::move(cvarsJson);
+    }
 
     const std::string jsonStr = root.dump(2);
     return {jsonStr.begin(), jsonStr.end()};

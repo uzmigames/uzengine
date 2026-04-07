@@ -56,3 +56,8 @@ Mode enum:
 
 - [x] 6.1 Added `/// @ref Latta 2004 "Inside Geometry Instancing"` and `/// @ref Valve 2006 "Rendering in Left 4 Dead"` citations above billboard basis functions in shader and above facingMode fields in header.
 - [ ] 6.2 Update VFX guide with a "Sprite Facing Modes" section. **Not yet implemented** — no facing mode guide exists in docs/guides/.
+
+## 7. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 7.1 Update or create documentation covering the implementation
+- [ ] 7.2 Write tests covering the new behavior
+- [ ] 7.3 Run tests and confirm they pass

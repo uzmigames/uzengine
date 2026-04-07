@@ -65,3 +65,8 @@ hardware, and art-directed cinematic particles. Niagara reference: Sim Cache sys
 - [ ] 6.4 Integration test: record 60 frames of a simple emitter, play back, verify
       positions match recorded data within float precision.
 - [ ] 6.5 Integration test: loop playback wraps correctly at frame_count boundary.
+
+## 7. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 7.1 Update or create documentation covering the implementation
+- [ ] 7.2 Write tests covering the new behavior
+- [ ] 7.3 Run tests and confirm they pass

@@ -80,3 +80,8 @@ upload, and SRV binding while producing equivalent visual results. The existing
       Bridson 2015, and Latta 2004. Preserved as-is.
 - [x] 8.2 `vector_field_module.h` already documents tightness semantics (0=additive,
       1=velocity replacement) and field parameter table.
+
+## 9. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 9.1 Update or create documentation covering the implementation
+- [ ] 9.2 Write tests covering the new behavior
+- [ ] 9.3 Run tests and confirm they pass

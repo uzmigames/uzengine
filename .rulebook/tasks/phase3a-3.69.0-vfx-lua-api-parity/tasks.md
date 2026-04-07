@@ -49,3 +49,8 @@
 - [x] 9.1 Complete Lua VFX API reference — docs/guides/lua-vfx-api-reference.md with all particle, LOD, budget, composite functions documented.
 - [x] 9.2 Document trail Lua API with usage examples — docs/guides/lua-vfx-trail-api.md with create/destroy/configure examples.
 - [x] 9.3 Document decal Lua API with usage examples — docs/guides/lua-vfx-decal-api.md with spawn/fade/destroy, blend modes, normal intensity, stats query, usage example.
+
+## 10. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 10.1 Update or create documentation covering the implementation
+- [ ] 10.2 Write tests covering the new behavior
+- [ ] 10.3 Run tests and confirm they pass

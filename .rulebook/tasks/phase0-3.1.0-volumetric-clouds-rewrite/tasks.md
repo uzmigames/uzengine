@@ -94,3 +94,8 @@
 - [ ] 8.3 Visual test: screenshot at sunset angle — correct phase function glow toward sun.
 - [ ] 8.4 Performance test: measure frame time before/after Bayer temporal upscale at 1080p.
 - [ ] 8.5 Temporal stability test: capture 60-frame sequence, verify no ghosting or flickering.
+
+## 1. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 1.1 Update or create documentation covering the implementation
+- [ ] 1.2 Write tests covering the new behavior
+- [ ] 1.3 Run tests and confirm they pass

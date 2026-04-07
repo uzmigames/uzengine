@@ -13,3 +13,8 @@
 - [ ] 2.3 NRD shader binding: NRD provides pre-compiled DXIL blobs; load them via `rhi_create_compute_pipeline_from_bytecode`. Bind textures by the indices specified in `nrd::DispatchDesc::resourceRanges`.
 - [ ] 2.4 Create `modulate_illumination_cs.hlsl` — `[numthreads(8,8,1)]` `main`: `float3 result = tDiffuseDenoised * tAlbedo + tSpecularDenoised + tEmission`. Write to `uHdr`. Wire into render graph after NRD passes, before tone mapping.
 - [ ] 2.5 CLI: `--denoiser nrd` activates `NrdDenoiser`. Build + verify on RTX hardware: `demo.exe --path-trace --denoiser nrd --screenshot-stdout --frames 5` produces a clearly denoised image at 1 SPP. Compare first frame (noisy) vs denoised via `--flip`; expect FLIP score improvement > 50%.
+
+## 1. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 1.1 Update or create documentation covering the implementation
+- [ ] 1.2 Write tests covering the new behavior
+- [ ] 1.3 Run tests and confirm they pass

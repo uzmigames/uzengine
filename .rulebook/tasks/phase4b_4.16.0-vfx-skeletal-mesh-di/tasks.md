@@ -108,3 +108,8 @@ effects (sparks from robot joints, embers from fire-arm bones, etc.).
 The `ISkeletalMeshComponent` stub in §3.1 acts as a seam. When the full
 skeletal mesh system ships, `SkeletalSpawnModule` requires no changes — only
 the concrete implementation of `GetBoneTransformsData()` needs to be provided.
+
+## 9. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 9.1 Update or create documentation covering the implementation
+- [ ] 9.2 Write tests covering the new behavior
+- [ ] 9.3 Run tests and confirm they pass

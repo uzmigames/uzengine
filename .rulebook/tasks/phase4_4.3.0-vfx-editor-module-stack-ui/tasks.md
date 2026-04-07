@@ -228,3 +228,8 @@ Dependency: Phase 4.1.0 must be complete (VFXParameterPanel pattern established)
 
 ### 8.2 Update demo header
 - [x] 8.2 Added `[Q] Module stack panel` to the feature list in `VFXViewportDemo` header doc block.
+
+## 9. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 9.1 Update or create documentation covering the implementation
+- [ ] 9.2 Write tests covering the new behavior
+- [ ] 9.3 Run tests and confirm they pass

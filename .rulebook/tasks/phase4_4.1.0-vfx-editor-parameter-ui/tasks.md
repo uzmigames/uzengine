@@ -194,3 +194,8 @@ and the exact parameter rows to show when expanded. Collapsed categories show on
 
 ### 8.2 Update demo header
 - [x] 8.2 Added `[F10] VFX parameter panel` to the feature list in VFXViewportDemo header doc block.
+
+## 9. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 9.1 Update or create documentation covering the implementation
+- [ ] 9.2 Write tests covering the new behavior
+- [ ] 9.3 Run tests and confirm they pass

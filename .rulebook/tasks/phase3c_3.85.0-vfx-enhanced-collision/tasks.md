@@ -95,3 +95,8 @@ collision with depth-buffer normals. Müller et al. 2006 "Position Based Dynamic
 ## 7. Tasks Update
 
 - [x] 7.1 Marked completed checklist items `[x]` in this file.
+
+## 8. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 8.1 Update or create documentation covering the implementation
+- [ ] 8.2 Write tests covering the new behavior
+- [ ] 8.3 Run tests and confirm they pass

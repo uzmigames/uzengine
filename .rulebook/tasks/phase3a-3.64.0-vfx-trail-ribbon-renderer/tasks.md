@@ -44,3 +44,8 @@
 - [x] 8.1 Document .uztrail JSON format specification
 - [x] 8.2 Document trail rendering pipeline and geometry generation
 - [x] 8.3 Document trail configuration guide with visual examples
+
+## 9. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 9.1 Update or create documentation covering the implementation
+- [ ] 9.2 Write tests covering the new behavior
+- [ ] 9.3 Run tests and confirm they pass

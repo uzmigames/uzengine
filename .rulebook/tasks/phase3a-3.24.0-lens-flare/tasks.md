@@ -22,3 +22,8 @@
 
 - [ ] 3.1 Document lens flare parameters with UE5 equivalents
 - [ ] 3.2 Add ghost generation algorithm overview
+
+## 4. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 4.1 Update or create documentation covering the implementation
+- [ ] 4.2 Write tests covering the new behavior
+- [ ] 4.3 Run tests and confirm they pass

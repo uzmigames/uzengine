@@ -17,11 +17,26 @@
 #include "engine/material/material_manager.h"
 #include "engine/material/material_graph.h"
 #include "vfs.h"
+#include "engine/core/cvar.h"
 
 #include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <string>
+
+namespace {
+/// Per-frame mesh load budget — caps the number of synchronous LoadMesh calls
+/// performed by SyncWorldToDrawList. Meshes that exceed the budget keep
+/// meshLoaded=false and are picked up on subsequent frames. This makes the
+/// first frame after LoadScene cheap so the editor/viewport becomes responsive
+/// immediately, then meshes stream in over the next ~N frames.
+///
+/// Set to 0 to disable budgeting (load every queued mesh in one frame).
+static auto* cv_LazyMeshesPerFrame = UZ_CVAR_INT(
+    "r.LazyLoad.MeshesPerFrame", 4,
+    "Max meshes to upload per frame in SyncWorldToDrawList (0 = unlimited).",
+    0, 1024);
+}
 
 // Diagnostic counter: mesh entities found by SyncWorldToDrawList.
 // Read by runtime.cpp to report in uz_frame_stats.
@@ -42,6 +57,12 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
 
     uint32_t drawIndex = 0;
 
+    // Per-frame mesh load budget. Once this hits zero, remaining un-loaded
+    // meshes are skipped (left with meshLoaded=false) and retried next frame.
+    // 0 = unlimited (legacy behavior).
+    const int meshBudgetMax = cv_LazyMeshesPerFrame ? cv_LazyMeshesPerFrame->value : 0;
+    int meshLoadsRemaining = (meshBudgetMax > 0) ? meshBudgetMax : INT32_MAX;
+
     // Use mutable registry view — we need to write meshLoaded/materialLoaded flags
     // back into the components after lazy-loading assets.
     auto meshView = world->GetRegistry().view<StaticMeshComponent, SceneComponent>();
@@ -55,6 +76,18 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
 
         // ── Lazy-load mesh from path (LOD0) ────────────────────────────────
         if (!meshComp.meshLoaded && !meshComp.meshPath.empty()) {
+            // Check if a previous LoadMesh in this frame already cached the
+            // path — if so, claim it for free without consuming budget.
+            auto cacheIt = m_meshMap.find(meshComp.meshPath);
+            if (cacheIt == m_meshMap.end() && meshLoadsRemaining <= 0) {
+                // Budget exhausted — defer to next frame. Leave meshLoaded=false.
+                // Continue iterating so material/texture lazy-load can still run
+                // and other already-cached meshes still get drawn.
+                continue;
+            }
+            if (cacheIt == m_meshMap.end()) {
+                --meshLoadsRemaining;
+            }
             const uint32_t loaded = LoadMesh(meshComp.meshPath, vfs, cmdList);
             if (loaded != UINT32_MAX) {
                 meshComp.meshId     = loaded;
@@ -114,6 +147,14 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
         // that level so the LOD selector uses the correct geometry.
         for (uint32_t lodIdx = 0; lodIdx < kMaxLODs - 1; ++lodIdx) {
             if (!meshComp.lodMeshLoaded[lodIdx] && !meshComp.lodMeshPaths[lodIdx].empty()) {
+                auto lodCacheIt = m_meshMap.find(meshComp.lodMeshPaths[lodIdx]);
+                if (lodCacheIt == m_meshMap.end() && meshLoadsRemaining <= 0) {
+                    // Budget exhausted — defer this LOD to next frame.
+                    break;
+                }
+                if (lodCacheIt == m_meshMap.end()) {
+                    --meshLoadsRemaining;
+                }
                 const uint32_t loaded = LoadMesh(meshComp.lodMeshPaths[lodIdx], vfs, cmdList);
                 meshComp.lodMeshLoaded[lodIdx] = true; // Mark to avoid retrying
                 if (loaded != UINT32_MAX) {

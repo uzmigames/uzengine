@@ -66,3 +66,8 @@ reuses existing spawn/update compute dispatches in a tight loop.
 - [ ] 7.2 Unit test: warmup clamp (warmupTime=100, tickRate=1/30 → capped at 1000 ticks).
 - [ ] 7.3 Unit test: warmupTime=0 → no warmup loop executed, warmupComplete stays false.
 - [ ] 7.4 Integration test: after warmup, alive count > 0 (particles were spawned).
+
+## 8. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 8.1 Update or create documentation covering the implementation
+- [ ] 8.2 Write tests covering the new behavior
+- [ ] 8.3 Run tests and confirm they pass

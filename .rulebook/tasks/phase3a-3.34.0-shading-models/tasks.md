@@ -28,3 +28,8 @@
 - [ ] 3.2 Add per-model BRDF formulas and parameter reference
 - [ ] 3.3 Document G-Buffer custom data channel layout per shading model
 - [ ] 3.4 Add shading model selection guide for artists
+
+## 4. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 4.1 Update or create documentation covering the implementation
+- [ ] 4.2 Write tests covering the new behavior
+- [ ] 4.3 Run tests and confirm they pass

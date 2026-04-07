@@ -53,3 +53,8 @@ cascading into alpha = 0 → discard → procedural fallback.
 
 - [x] 6.1 Document sampler register mapping for VFX shaders. Documented in billboard PS file header comment block (s0=aniso wrap, s1=comparison, s2=bilinear clamp, s3=bilinear wrap).
 - [x] 6.2 Document --sprite CLI flag for custom sprite sheets. Documented via cbuffer fix note and sprite debug log in RenderVFXPass.
+
+## 7. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 7.1 Update or create documentation covering the implementation
+- [ ] 7.2 Write tests covering the new behavior
+- [ ] 7.3 Run tests and confirm they pass

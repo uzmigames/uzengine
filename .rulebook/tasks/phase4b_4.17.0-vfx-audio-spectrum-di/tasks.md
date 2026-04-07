@@ -128,3 +128,8 @@ modulate particle size, color, and velocity magnitude per frequency band.
       ```
 - [ ] 8.2 Document `smoothingAlpha` semantics: typical values 0.05–0.3;
       lower = more smoothing (slower response), higher = snappier.
+
+## 9. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 9.1 Update or create documentation covering the implementation
+- [ ] 9.2 Write tests covering the new behavior
+- [ ] 9.3 Run tests and confirm they pass

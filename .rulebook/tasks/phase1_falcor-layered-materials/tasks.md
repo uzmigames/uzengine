@@ -12,3 +12,8 @@
 - [ ] 2.2 Environment lighting for clear-coat: evaluate coat specular from environment map IBL using coat roughness mip. Evaluate attenuated base IBL using base roughness. Both contributions added.
 - [ ] 2.3 Demo: create two car-paint materials in an existing demo — Material A: metallic base (metallic=1, roughness=0.3) + smooth coat (coatRoughness=0.05, coatIOR=1.5). Material B: rough diffuse base (metallic=0, roughness=0.8) + smooth wet coat (coatRoughness=0.0, coatIOR=1.33 — water). Apply to two spheres.
 - [ ] 2.4 Build + verify via `--screenshot-stdout`: Material A should show dual highlights (sharp coat + broader base metallic). Material B should show a wet-surface appearance with specular coat over matte base. Compare with single-layer PBR via `--flip` to confirm visible difference.
+
+## 1. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 1.1 Update or create documentation covering the implementation
+- [ ] 1.2 Write tests covering the new behavior
+- [ ] 1.3 Run tests and confirm they pass

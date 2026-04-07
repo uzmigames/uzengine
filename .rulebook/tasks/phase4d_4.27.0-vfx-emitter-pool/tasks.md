@@ -61,3 +61,8 @@ assignment. Niagara reference: `FNiagaraGPUInstanceCountManager` pooled data buf
 - [ ] 6.3 Unit test: capacity tier matching (request 5000 → gets 8K slot, not 1K).
 - [ ] 6.4 Unit test: release resets alive_count to 0 without destroying GPU buffers.
 - [ ] 6.5 Stress test: rapid acquire/release 1000 times, no memory leak (pool size stable).
+
+## 7. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 7.1 Update or create documentation covering the implementation
+- [ ] 7.2 Write tests covering the new behavior
+- [ ] 7.3 Run tests and confirm they pass

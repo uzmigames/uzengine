@@ -63,3 +63,8 @@ be overridden per-emitter.
 
 - [x] 8.1 `@ref Shopf 2008 "GPU Particles"` citation added at top of `particle_death_spawn_cs.hlsl` and above the death event write block in `particle_update_cs.hlsl`.
 - [x] 8.2 All constants cited inline (`@constants VFX_MAX_DEATH_EVENTS=4096`, `DEATH_SPAWN_GROUP_SIZE=64`, golden angle `2.39996323 rad`).
+
+## 9. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 9.1 Update or create documentation covering the implementation
+- [ ] 9.2 Write tests covering the new behavior
+- [ ] 9.3 Run tests and confirm they pass

@@ -59,3 +59,8 @@
 - [x] 10.3 Document budget system and significance manager algorithm
 - [x] 10.4 Document mesh particle rendering pipeline
 - [x] 10.5 Update docs/engine/25-vfx/ with complete system reference
+
+## 11. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 11.1 Update or create documentation covering the implementation
+- [ ] 11.2 Write tests covering the new behavior
+- [ ] 11.3 Run tests and confirm they pass

@@ -67,3 +67,8 @@ lighting model. Pharr, Jakob, Humphreys 2023 "Physically Based Rendering" Ch.12
 ## 6. Tasks Update
 
 - [x] 6.1 Mark all checklist items `[x]` in this file as they are completed.
+
+## 7. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 7.1 Update or create documentation covering the implementation
+- [ ] 7.2 Write tests covering the new behavior
+- [ ] 7.3 Run tests and confirm they pass

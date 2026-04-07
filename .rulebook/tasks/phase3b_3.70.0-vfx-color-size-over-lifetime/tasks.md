@@ -36,3 +36,8 @@ change color and size as they age. Uses analytical shader evaluation (no LUT tex
 ## 6. Documentation
 
 - [x] 6.1 Update VFX docs with color/size over lifetime parameter descriptions. Documented in VFX preset comments and help overlay (H key).
+
+## 7. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 7.1 Update or create documentation covering the implementation
+- [ ] 7.2 Write tests covering the new behavior
+- [ ] 7.3 Run tests and confirm they pass

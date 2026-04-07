@@ -32,3 +32,8 @@ of movement instead of always facing the camera. Niagara reference: Alignment = 
 
 - [x] 5.1 Update H key help overlay with alignment controls. Documented via H key help overlay and preset comments (sparks=velocity-aligned, fireball/burst=camera-facing).
 - [x] 5.2 Document alignment modes in VFX guide. Documented via H key help overlay and preset comments.
+
+## 6. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 6.1 Update or create documentation covering the implementation
+- [ ] 6.2 Write tests covering the new behavior
+- [ ] 6.3 Run tests and confirm they pass

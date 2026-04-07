@@ -53,3 +53,8 @@
 - [ ] 11.1 Update `docs/engine/20-gameplay/` with navmesh baking, pathfinding, crowd steering.
 - [ ] 11.2 Add `uz.nav` to `docs/lua-api-reference.md`.
 - [ ] 11.3 Document NavConfig parameters and area cost tuning.
+
+## 12. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 12.1 Update or create documentation covering the implementation
+- [ ] 12.2 Write tests covering the new behavior
+- [ ] 12.3 Run tests and confirm they pass

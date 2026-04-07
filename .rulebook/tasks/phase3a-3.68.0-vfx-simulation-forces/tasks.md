@@ -47,3 +47,8 @@
 - [x] 8.2 Document vector field creation and 3D texture format — docs/guides/vfx-vector-field-guide.md
 - [x] 8.3 Document sub-emitter system architecture and event flow — docs/guides/vfx-sub-emitter-system.md
 - [x] 8.4 Document advanced constraint modules — docs/guides/vfx-constraint-modules.md
+
+## 9. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 9.1 Update or create documentation covering the implementation
+- [ ] 9.2 Write tests covering the new behavior
+- [ ] 9.3 Run tests and confirm they pass

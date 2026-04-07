@@ -242,3 +242,8 @@ Critical feature: clouds cast shadows on the ground and scene geometry.
 - [ ] T.10 Temporal stability test: 60-frame capture, verify no ghosting or flickering.
 - [ ] T.11 Update `cloud_test.uzscene` as comprehensive cloud test scene.
 - [ ] T.12 Update Lua API documentation with all new properties.
+
+## 1. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 1.1 Update or create documentation covering the implementation
+- [ ] 1.2 Write tests covering the new behavior
+- [ ] 1.3 Run tests and confirm they pass

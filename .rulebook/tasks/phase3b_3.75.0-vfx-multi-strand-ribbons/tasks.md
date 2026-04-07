@@ -44,3 +44,8 @@ trail emission. Niagara reference: Ribbon Renderer with multiple strands.
 
 - [ ] 6.1 Document multi-strand and per-particle trail configuration. **Not yet implemented** — no doc for multi-strand exists.
 - [ ] 6.2 Update VFX guide with ribbon rendering details. **Not yet implemented** — `docs/guides/lua-vfx-trail-api.md` covers Lua API but not multi-strand rendering details.
+
+## 7. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 7.1 Update or create documentation covering the implementation
+- [ ] 7.2 Write tests covering the new behavior
+- [ ] 7.3 Run tests and confirm they pass

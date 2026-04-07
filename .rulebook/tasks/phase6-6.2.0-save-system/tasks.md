@@ -49,3 +49,8 @@
 - [ ] 10.1 Update `docs/engine/20-gameplay/` with save system architecture.
 - [ ] 10.2 Add `uz.saves` to `docs/lua-api-reference.md`.
 - [ ] 10.3 Document .uzsave format specification.
+
+## 11. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 11.1 Update or create documentation covering the implementation
+- [ ] 11.2 Write tests covering the new behavior
+- [ ] 11.3 Run tests and confirm they pass

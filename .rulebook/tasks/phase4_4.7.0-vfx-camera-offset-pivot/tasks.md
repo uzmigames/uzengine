@@ -50,3 +50,8 @@ Both are applied in `particle_billboard_vs.hlsl` before projection with no addit
   application in `particle_billboard_vs.hlsl` (lines 184, 497-498).
 - [ ] 6.2 Update VFX guide with a "Camera Offset & Pivot" section. **Not yet implemented** —
   no such guide exists in docs/guides/.
+
+## 7. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 7.1 Update or create documentation covering the implementation
+- [ ] 7.2 Write tests covering the new behavior
+- [ ] 7.3 Run tests and confirm they pass

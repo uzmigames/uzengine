@@ -49,3 +49,8 @@
 - [x] 10.1 Document .uzdecal JSON format specification
 - [x] 10.2 Document deferred decal rendering pipeline
 - [x] 10.3 Document decal pool/atlas usage guide
+
+## 11. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 11.1 Update or create documentation covering the implementation
+- [ ] 11.2 Write tests covering the new behavior
+- [ ] 11.3 Run tests and confirm they pass

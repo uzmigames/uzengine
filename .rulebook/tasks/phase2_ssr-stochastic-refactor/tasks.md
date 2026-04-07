@@ -60,3 +60,8 @@
 - [ ] D.2 Update docs/analysis/ssr/ssr-master-report.md with implementation status after each phase completion.
 - [ ] D.3 Add SSR CVars to docs/guides/shader-authoring.md: r.SSR.MaxRoughness, r.SSR.Intensity, r.SSR.Quality (new, Phase 3).
 - [ ] D.4 Update ROADMAP.md SSR entry from "Stochastic multi-ray (Stachowiak 2015)" to reflect actual implementation status.
+
+## 1. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 1.1 Update or create documentation covering the implementation
+- [ ] 1.2 Write tests covering the new behavior
+- [ ] 1.3 Run tests and confirm they pass

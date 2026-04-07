@@ -47,3 +47,8 @@
 
 - [x] 8.1 Update docs/engine/25-vfx/ with implementation details and API reference
 - [x] 8.2 Document GPU buffer layout and memory usage per particle count
+
+## 9. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 9.1 Update or create documentation covering the implementation
+- [ ] 9.2 Write tests covering the new behavior
+- [ ] 9.3 Run tests and confirm they pass

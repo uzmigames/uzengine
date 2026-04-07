@@ -50,3 +50,8 @@
 
 - [x] 9.1 Document render graph VFX pass ordering and dependencies — Created docs/engine/25-vfx/21-render-graph-integration.md (303 lines) covering pass ordering, barrier state machine lifecycle, PSO table, bindless status, key source files, and debugging guide.
 - [x] 9.2 Update docs/engine/25-vfx/ with integration architecture — Added entry for 21-render-graph-integration.md to docs/engine/25-vfx/README.md.
+
+## 10. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 10.1 Update or create documentation covering the implementation
+- [ ] 10.2 Write tests covering the new behavior
+- [ ] 10.3 Run tests and confirm they pass

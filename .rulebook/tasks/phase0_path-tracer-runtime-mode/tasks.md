@@ -109,3 +109,8 @@
 - [ ] 14.3 Renderer owner reviews R1 (TAA auto-disable) and R2 (upscaler auto-disable) safety logic.
 - [ ] 14.4 All Tier 1 tests green, all 5 goldens within PSNR threshold, Falcor PSNR ≥ 35 dB.
 - [ ] 14.5 Archive task via `mcp__rulebook__rulebook_task_archive`.
+
+## 15. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 15.1 Update or create documentation covering the implementation
+- [ ] 15.2 Write tests covering the new behavior
+- [ ] 15.3 Run tests and confirm they pass

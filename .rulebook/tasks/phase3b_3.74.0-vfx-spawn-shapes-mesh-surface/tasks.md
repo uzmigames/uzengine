@@ -38,3 +38,8 @@ disc, line, and mesh surface emission. Niagara reference: Shape Location module.
 
 - [x] 6.1 Document all spawn shapes with diagrams in VFX guide. Implemented and verified in VFX viewport demo.
 - [x] 6.2 Update help overlay with shape cycling controls. Implemented and verified in VFX viewport demo.
+
+## 7. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 7.1 Update or create documentation covering the implementation
+- [ ] 7.2 Write tests covering the new behavior
+- [ ] 7.3 Run tests and confirm they pass

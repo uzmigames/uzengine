@@ -104,3 +104,8 @@ Pattern: StatsOverlay (runtime/editor/stats/stats_overlay.cpp)
 - [ ] 10.3 Test dropdown menus — deferred to user (requires GPU with display).
 - [ ] 10.4 Test preset loading via menu — deferred to user (requires GPU with display).
 - [ ] 10.5 Test with different window sizes — deferred to user (requires GPU with display).
+
+## 11. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 11.1 Update or create documentation covering the implementation
+- [ ] 11.2 Write tests covering the new behavior
+- [ ] 11.3 Run tests and confirm they pass

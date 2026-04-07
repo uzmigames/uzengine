@@ -108,3 +108,9 @@ poc-napi/node_modules/
 
 # NVIDIA DLSS SDK (proprietary, downloaded via setup.ps1, ~200MB)
 runtime/thirdparty/dlss/
+
+CLAUDE.local.md
+.rulebook/backup/
+.rulebook/handoff/_pending.md
+.rulebook/handoff/.urgent
+.rulebook/telemetry/

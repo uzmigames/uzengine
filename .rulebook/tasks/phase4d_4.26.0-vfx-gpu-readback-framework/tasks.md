@@ -59,3 +59,8 @@ as the foundation for dynamic AABB, death events, gameplay queries, etc.
 - [ ] 5.3 Unit test: capacity overflow drops requests gracefully.
 - [ ] 5.4 Integration test: write known data to GPU buffer, request readback, verify callback
       receives correct data after ringSize frames.
+
+## 6. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 6.1 Update or create documentation covering the implementation
+- [ ] 6.2 Write tests covering the new behavior
+- [ ] 6.3 Run tests and confirm they pass

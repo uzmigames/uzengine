@@ -150,3 +150,8 @@ flocking, swarming, and repulsion effects.
       ```
 - [ ] 8.2 Document `maxPerCell` overflow behavior: particles beyond slot
       `maxPerCell-1` are silently dropped from neighbor queries (not from simulation).
+
+## 9. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 9.1 Update or create documentation covering the implementation
+- [ ] 9.2 Write tests covering the new behavior
+- [ ] 9.3 Run tests and confirm they pass

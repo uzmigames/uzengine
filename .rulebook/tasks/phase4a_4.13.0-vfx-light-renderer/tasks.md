@@ -132,3 +132,8 @@ and `LightRenderModule::ProcessReadback()` already declared.
       attenuation formula in `light_render_module.cpp`.
 - [ ] 8.4 Update `light_render_module.h` class doc to describe triple-buffer scheme
       and 1-frame readback latency rationale.
+
+## 9. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 9.1 Update or create documentation covering the implementation
+- [ ] 9.2 Write tests covering the new behavior
+- [ ] 9.3 Run tests and confirm they pass

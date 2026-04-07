@@ -45,3 +45,8 @@
 - [x] 7.1 Document GPU sort algorithm and performance characteristics — Created docs/guides/vfx-gpu-particle-sort.md with bitonic merge sort algorithm, phase 0/1 dispatch pattern, buffer layout, performance analysis (O(n log²n)), and API reference.
 - [x] 7.2 Document flipbook/SubUV configuration guide — Created docs/guides/vfx-flipbook-subuv-guide.md with blend modes, frame ordering, HLSL functions, usage examples, and edge cases.
 - [x] 7.3 Document distortion rendering pipeline — Created docs/guides/vfx-distortion-pipeline.md with architecture overview, two-pass pipeline explanation, accumulation pass details, resolve pass details, shader algorithms, render graph integration, implementation examples, performance considerations, troubleshooting guide, and references.
+
+## 8. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 8.1 Update or create documentation covering the implementation
+- [ ] 8.2 Write tests covering the new behavior
+- [ ] 8.3 Run tests and confirm they pass
