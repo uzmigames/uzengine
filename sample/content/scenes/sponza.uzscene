@@ -14,7 +14,7 @@
     "r.Tonemap.Slope": 0.98,
     "r.Tonemap.Toe": 0.5,
     "r.AutoExposure": 0,
-    "r.Exposure": 1.5
+    "r.Exposure": 1.8
   },
   "entities": [
     {
@@ -27,8 +27,8 @@
             0
           ],
           "rotation": [
-            40,
-            70,
+            50,
+            60,
             0
           ],
           "scale": [
@@ -44,7 +44,7 @@
             0.98,
             0.95
           ],
-          "intensity": 60,
+          "intensity": 80,
           "cast_shadows": true,
           "atmosphere_sun_light": true,
           "light_source_angle": 0.5
