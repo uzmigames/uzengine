@@ -10,7 +10,9 @@
     "r.SkyLight.IndirectIntensity": 1.0,
     "r.GTAO": 1,
     "r.GTAO.Intensity": 0.5,
-    "r.GTAO.Radius": 60
+    "r.GTAO.Radius": 60,
+    "r.Tonemap.Slope": 0.98,
+    "r.Tonemap.Toe": 0.5
   },
   "entities": [
     {
@@ -350,6 +352,94 @@
           ],
           "intensity": 240000.0,
           "range": 3000.0
+        }
+      }
+    },
+    {
+      "name": "Light_Upper_L_Front",
+      "components": {
+        "transform": {
+          "position": [
+            -450,
+            -300,
+            600
+          ]
+        },
+        "light": {
+          "type": "point",
+          "color": [
+            1.0,
+            0.92,
+            0.78
+          ],
+          "intensity": 144000,
+          "range": 3000
+        }
+      }
+    },
+    {
+      "name": "Light_Upper_R_Front",
+      "components": {
+        "transform": {
+          "position": [
+            450,
+            -300,
+            600
+          ]
+        },
+        "light": {
+          "type": "point",
+          "color": [
+            1.0,
+            0.92,
+            0.78
+          ],
+          "intensity": 144000,
+          "range": 3000
+        }
+      }
+    },
+    {
+      "name": "Light_Upper_L_Back",
+      "components": {
+        "transform": {
+          "position": [
+            -450,
+            300,
+            600
+          ]
+        },
+        "light": {
+          "type": "point",
+          "color": [
+            1.0,
+            0.92,
+            0.78
+          ],
+          "intensity": 144000,
+          "range": 3000
+        }
+      }
+    },
+    {
+      "name": "Light_Upper_R_Back",
+      "components": {
+        "transform": {
+          "position": [
+            450,
+            300,
+            600
+          ]
+        },
+        "light": {
+          "type": "point",
+          "color": [
+            1.0,
+            0.92,
+            0.78
+          ],
+          "intensity": 144000,
+          "range": 3000
         }
       }
     },
