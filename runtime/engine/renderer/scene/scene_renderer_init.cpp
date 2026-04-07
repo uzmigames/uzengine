@@ -1329,6 +1329,15 @@ void SceneRenderer::Shutdown() {
         m_hdrSceneColor = RHITextureHandle{};
     }
 
+    // ── Path Tracer Accumulation cleanup ────────────────────────
+    for (int i = 0; i < 2; ++i) {
+        if (m_ptAccum[i].IsValid()) {
+            m_device->DestroyTexture(m_ptAccum[i]);
+            m_ptAccum[i] = RHITextureHandle{};
+        }
+        m_ptAccumSrv[i] = UINT32_MAX;
+    }
+
     // ── Hi-Z Pyramid cleanup ─────────────────────────────────────
     DestroyHiZPyramid();
 
