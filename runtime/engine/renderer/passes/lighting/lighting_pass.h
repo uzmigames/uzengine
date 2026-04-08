@@ -66,6 +66,8 @@ struct LightingPassDesc {
     uint32_t          positionSrvIndex;  ///< SRV descriptor index for world-space position G-Buffer (SM6.6 bindless).
     uint32_t          emissiveSrvIndex;  ///< SRV descriptor index for emissive G-Buffer (SM6.6 bindless).
     uint32_t          envMisSrvIndex = UINT32_MAX; ///< SRV for env MIS accumulated specular (UINT32_MAX = disabled).
+    uint32_t          iblPrefilteredSrvIndex = UINT32_MAX; ///< IBL prefiltered specular cubemap SRV (via root constants — immune to CB ring staleness).
+    uint32_t          iblIrradianceSrvIndex  = UINT32_MAX; ///< IBL irradiance cubemap SRV (via root constants — immune to CB ring staleness).
     RHITextureHandle  albedoTexture;     ///< Physical albedo texture handle (SM5 fallback binding).
     RHITextureHandle  normalTexture;     ///< Physical normal texture handle (SM5 fallback binding).
     RHITextureHandle  depthTextureForSrv;///< Physical depth texture handle (SM5 fallback binding, read as SRV).
@@ -79,6 +81,9 @@ struct LightingPassDesc {
     RHITextureHandle  iblBrdfLut;       ///< BRDF integration LUT (SM5 fallback, bound at t7).
     RHITextureHandle  transmittanceLutTexture; ///< Atmosphere transmittance LUT (SM5 fallback, bound at t8).
     RHITextureHandle  gtaoTexture;     ///< GTAO filtered AO texture (SM5 fallback, bound at t9).
+    RHITextureHandle  ssrTexture;      ///< SSR temporal output (SM5 fallback, bound at t11).
+    RHITextureHandle  ssgiTexture;     ///< SSGI upsampled indirect diffuse (SM5 fallback, bound at t12).
+    rg::RgResourceId  apVolumeResource;///< Aerial perspective volume (read, SRV). Invalid = no AP dependency.
     bool              bindless;         ///< True if SM6.6 bindless path is active.
     float             viewportWidth;    ///< Viewport width in pixels.
     float             viewportHeight;   ///< Viewport height in pixels.

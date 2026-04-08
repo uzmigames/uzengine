@@ -128,3 +128,8 @@
 - [ ] 14.4 Update `docs/specs/rendering/shader-library.md` with new HLSLI includes (cloth_brdf.hlsli, hair_brdf.hlsli, subsurface.hlsli, decal_common.hlsli).
 - [ ] 14.5 Document GBuffer layout change (shading model ID encoding) in `docs/engine/12-rendering/`.
 - [ ] 14.6 Document material domain system and valid domain+blendMode combinations.
+
+## 3. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 3.1 Update or create documentation covering the implementation
+- [ ] 3.2 Write tests covering the new behavior
+- [ ] 3.3 Run tests and confirm they pass

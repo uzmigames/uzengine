@@ -112,6 +112,7 @@ struct AtmosphereFrameContext {
     uint32_t          apVolumeSrv = UINT32_MAX;
     uint32_t          apVolumeUav = UINT32_MAX;
     bool*             apVolumeFilled = nullptr;    ///< True once AP volume has been dispatched at least once.
+    rg::RgResourceId  apVolumeRes{};              ///< Pre-imported render graph resource (from frame_lighting).
     const float*      invViewProjData = nullptr;  ///< Pointer to 16 floats (row-major invViewProj).
     const Vec3*       cameraPos = nullptr;         ///< Camera world position (cm).
 

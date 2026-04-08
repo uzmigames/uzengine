@@ -70,12 +70,21 @@ TEST(QuatTest, Slerp) {
 }
 
 TEST(QuatTest, FromEuler) {
-    Quat q = Quat::FromEuler(0.0f, XM_PIDIV2, 0.0f); // 90 yaw
-    Vec3 forward(0.0f, 0.0f, 1.0f);
-    Vec3 result = q.RotateVector(forward);
-    EXPECT_NEAR(result.X(), 1.0f, 1e-4f);
+    // UE5-parity convention: pitch=Y-rotation, yaw=Z-rotation, roll=X-rotation.
+    // Noon sun: pitch=-90° elevates the forward vector [1,0,0] to [0,0,1] (zenith).
+    Quat q = Quat::FromEuler(-XM_PIDIV2, 0.0f, 0.0f); // pitch=-90° (noon elevation)
+    Vec3 fwd(1.0f, 0.0f, 0.0f);                        // Vec3::Forward()
+    Vec3 result = q.RotateVector(fwd);
+    EXPECT_NEAR(result.X(), 0.0f, 1e-4f);
     EXPECT_NEAR(result.Y(), 0.0f, 1e-4f);
-    EXPECT_NEAR(result.Z(), 0.0f, 1e-4f);
+    EXPECT_NEAR(result.Z(), 1.0f, 1e-4f);
+
+    // Yaw=90° (Z-rotation) rotates forward [1,0,0] to North [0,1,0].
+    Quat qYaw = Quat::FromEuler(0.0f, XM_PIDIV2, 0.0f);
+    Vec3 resultYaw = qYaw.RotateVector(fwd);
+    EXPECT_NEAR(resultYaw.X(), 0.0f, 1e-4f);
+    EXPECT_NEAR(resultYaw.Y(), 1.0f, 1e-4f);
+    EXPECT_NEAR(resultYaw.Z(), 0.0f, 1e-4f);
 }
 
 TEST(QuatTest, ToMatrix) {

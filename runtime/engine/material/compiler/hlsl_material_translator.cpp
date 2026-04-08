@@ -385,11 +385,20 @@ std::string HlslMaterialTranslator::EmitExpression(const MaterialExpression& exp
     case MatExprType::TextureSample: {
         const std::string texPath = getString("texturePath");
         const uint32_t slot = AllocateTextureSlot("", texPath);
-        const std::string uv = GetInputValue(expr.inputs[0], MatPinType::Float2);
+        // Default UV: use the `uv` parameter from ComputeMaterialOutputs()
+        // when the UV input pin is not connected.
+        const std::string uvValue = expr.inputs[0].IsConnected()
+            ? GetInputValue(expr.inputs[0], MatPinType::Float2)
+            : "uv";
 
+        // Cast ResourceDescriptorHeap entry to Texture2D<float4> before sampling.
+        // DXC's bindless ResourceDescriptorHeap returns a generic Resource type —
+        // an explicit cast is required to call .Sample() on it.
+        const std::string texVar = "_tex" + std::to_string(expr.id);
+        EmitLine("Texture2D<float4> " + texVar +
+                 " = ResourceDescriptorHeap[getTexIndex(" + std::to_string(slot) + ")];");
         EmitLine("float4 " + VarName(expr.id, 0) +
-                 " = ResourceDescriptorHeap[texIndex_" + std::to_string(slot) +
-                 "].Sample(linearSampler, " + uv + ");");
+                 " = " + texVar + ".Sample(linearSampler, " + uvValue + ");");
         EmitLine("float " + VarName(expr.id, 1) + " = " + VarName(expr.id, 0) + ".r;");
         EmitLine("float " + VarName(expr.id, 2) + " = " + VarName(expr.id, 0) + ".g;");
         EmitLine("float " + VarName(expr.id, 3) + " = " + VarName(expr.id, 0) + ".b;");
@@ -583,7 +592,7 @@ std::string HlslMaterialTranslator::EmitExpression(const MaterialExpression& exp
         const uint32_t slot = AllocateTextureSlot(paramName, texPath);
         // TextureParameter outputs a Texture object reference — downstream TextureSample
         // nodes would use this. For code generation, we just store the slot index.
-        EmitLine("// TextureParameter '" + paramName + "' -> texIndex_" + std::to_string(slot));
+        EmitLine("// TextureParameter '" + paramName + "' -> texIndex[" + std::to_string(slot) + "]");
         break;
     }
 
@@ -640,28 +649,96 @@ MaterialCompileResult HlslMaterialTranslator::Compile(const MaterialGraph& graph
     const auto& pbrOutput = graph.GetPBROutput();
     code_ += "\n    // --- PBR Output ---\n";
 
-    // Each PBR output pin: if connected, use the connected value; otherwise, use the default.
+    // Each PBR output pin: if connected, use the connected value; otherwise,
+    // emit a sensible PBR default. Without this, unwired `out` parameters in
+    // the generated function leave the consumer's locals UNINITIALIZED, which
+    // shows up as splotchy register garbage in the GBuffer (notably the AO
+    // channel for materials that only declare albedo/metallic/roughness/normal,
+    // such as the stock Sponza .uzmat files).
     struct PbrPin {
         const char* hlslVar;
-        uint32_t pinIndex;
-        MatPinType type;
+        uint32_t    pinIndex;
+        MatPinType  type;
+        const char* defaultExpr;  ///< HLSL literal used when the pin is not connected.
     };
     static constexpr PbrPin kPbrPins[] = {
-        {"out_baseColor", 0, MatPinType::Float3},
-        {"out_metallic",  1, MatPinType::Float},
-        {"out_roughness", 2, MatPinType::Float},
-        {"out_normal",    3, MatPinType::Float3},
-        {"out_emissive",  4, MatPinType::Float3},
-        {"out_opacity",   5, MatPinType::Float},
-        {"out_ao",        6, MatPinType::Float},
+        {"out_baseColor", 0, MatPinType::Float3, "float3(1.0, 1.0, 1.0)"},
+        {"out_metallic",  1, MatPinType::Float,  "0.0"},
+        {"out_roughness", 2, MatPinType::Float,  "0.5"},
+        // Tangent-space "no normal map" = (0, 0, 1). Stored in [0,1] space
+        // because the consumer decodes via `xy * 2 - 1`, so a flat normal
+        // encodes as (0.5, 0.5, 1.0).
+        {"out_normal",    3, MatPinType::Float3, "float3(0.5, 0.5, 1.0)"},
+        {"out_emissive",  4, MatPinType::Float3, "float3(0.0, 0.0, 0.0)"},
+        {"out_opacity",   5, MatPinType::Float,  "1.0"},
+        // AO defaults to 1.0 (no occlusion). When a material lacks an AO map
+        // it must NOT contribute to dimming. @ref Karis 2013 — Real Shading in UE4.
+        {"out_ao",        6, MatPinType::Float,  "1.0"},
     };
 
     for (const auto& pbrPin : kPbrPins) {
-        if (pbrPin.pinIndex < pbrOutput.inputs.size()) {
+        const bool connected = (pbrPin.pinIndex < pbrOutput.inputs.size())
+            && pbrOutput.inputs[pbrPin.pinIndex].IsConnected();
+        if (connected) {
             const auto& inputPin = pbrOutput.inputs[pbrPin.pinIndex];
             const std::string value = GetInputValue(inputPin, pbrPin.type);
             EmitLine(std::string(pbrPin.hlslVar) + " = " + value + ";");
+        } else {
+            // Pin not declared in the .uzmat (or zero-source) — emit the
+            // canonical PBR default so the `out` parameter is always written.
+            EmitLine(std::string(pbrPin.hlslVar) + " = " + pbrPin.defaultExpr + ";");
         }
+    }
+
+    // ── Apply MaterialParams (UE5-style post-multiplications) ────────────
+    // Standard PBR knobs that every material exposes for tuning. Default
+    // values render identical to a graph without overrides.
+    // @ref Karis 2013 "Real Shading in Unreal Engine 4"
+    // @ref glTF 2.0 PBR — pbrMetallicRoughness factor fields
+    code_ += "\n    // --- MaterialParams (post-multiplications) ---\n";
+    {
+        char buf[256];
+        const auto& mp = graph.params;
+
+        std::snprintf(buf, sizeof(buf),
+            "    out_baseColor *= float3(%g, %g, %g);",
+            mp.baseColorTint[0], mp.baseColorTint[1], mp.baseColorTint[2]);
+        code_ += buf; code_ += "\n";
+
+        std::snprintf(buf, sizeof(buf), "    out_metallic  = saturate(out_metallic  * %g);",
+                      mp.metallicMultiplier);
+        code_ += buf; code_ += "\n";
+
+        std::snprintf(buf, sizeof(buf), "    out_roughness = saturate(out_roughness * %g);",
+                      mp.roughnessMultiplier);
+        code_ += buf; code_ += "\n";
+
+        std::snprintf(buf, sizeof(buf), "    out_emissive *= %g;",
+                      mp.emissiveMultiplier);
+        code_ += buf; code_ += "\n";
+
+        std::snprintf(buf, sizeof(buf), "    out_ao = saturate(out_ao * %g);",
+                      mp.aoMultiplier);
+        code_ += buf; code_ += "\n";
+
+        // Normal strength: lerp the tangent-space normal toward (0.5,0.5,1)
+        // (flat) when strength < 1. Done in encoded space because the
+        // gbuffer decodes via xy*2-1 downstream.
+        if (mp.normalStrength != 1.0f) {
+            std::snprintf(buf, sizeof(buf),
+                "    out_normal = lerp(float3(0.5, 0.5, 1.0), out_normal, %g);",
+                mp.normalStrength);
+            code_ += buf; code_ += "\n";
+        }
+
+        // Specular multiplier — UE5 "Specular" param. Stored as the
+        // material's effective F0 baseline (default 1.0 = 4% F0). Pushed
+        // through the .a channel of the normal RT below would require an
+        // RT layout change; for now we bake it into the dielectric path
+        // by multiplying it into out_roughness=>spec response is nontrivial,
+        // so we expose it as a separate output planned in a follow-up.
+        // @ref Karis 2013 — Specular = 0.5 → 0.04 baseline F0.
+        (void)mp.specularMultiplier;
     }
 
     // Step 5: Wrap in function signature.
@@ -672,7 +749,16 @@ MaterialCompileResult HlslMaterialTranslator::Compile(const MaterialGraph& graph
 
     std::string header = "/// Auto-generated by UzEngine MaterialCompiler\n";
     if (!graph.name.empty()) header += "/// Material: \"" + graph.name + "\"\n";
-    header += std::string("/// Hash: ") + hashBuf + "\n"
+    header += std::string("/// Hash: ") + hashBuf + "\n";
+
+    // Declare texture index array if the graph uses any TextureSample nodes.
+    // The renderer uploads SRV indices to this cbuffer before the draw call.
+    if (nextTextureSlot_ > 0) {
+        header += "// Material texture slots (" + std::to_string(nextTextureSlot_) + " textures)\n";
+        header += "// texIndex[] is declared in the combined shader (MaterialTextureCB at b4)\n\n";
+    }
+
+    header +=
         "void ComputeMaterialOutputs(\n"
         "    in float2 uv, in float3 positionWS, in float3 normalWS,\n"
         "    in float4 vertexColor, in float3 cameraPosition,\n"

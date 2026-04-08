@@ -1,0 +1,120 @@
+{
+  "name": "Glass Test — Single Sphere",
+  "version": "1.0",
+  "entities": [
+    {
+      "name": "Sphere_Glass",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            100
+          ],
+          "scale": [
+            90,
+            90,
+            90
+          ]
+        },
+        "mesh": {
+          "asset": "meshes/sphere.uzmesh"
+        },
+        "material": {
+          "baseColorR": 1.0,
+          "baseColorG": 1.0,
+          "baseColorB": 1.0,
+          "roughnessMultiplier": 0.0,
+          "metallicMultiplier": 0.0,
+          "specular": 0.5,
+          "transmission": 1.0,
+          "ior": 1.5
+        }
+      }
+    },
+    {
+      "name": "MainCamera",
+      "components": {
+        "transform": {
+          "position": [
+            400,
+            0,
+            100
+          ],
+          "rotation": [
+            0,
+            180,
+            0
+          ]
+        },
+        "camera": {
+          "fov": 40,
+          "near": 1,
+          "far": 100000,
+          "active": true
+        }
+      }
+    },
+    {
+      "name": "Sun",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            920
+          ],
+          "rotation": [
+            -30,
+            0,
+            50
+          ]
+        },
+        "light": {
+          "type": "directional",
+          "color": [
+            1.0,
+            0.98,
+            0.94
+          ],
+          "intensity": 3
+        }
+      }
+    },
+    {
+      "name": "SkyAtmosphere",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            1020
+          ]
+        },
+        "sky_atmosphere": {}
+      }
+    },
+    {
+      "name": "SkyLight",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            690
+          ]
+        },
+        "sky_light": {
+          "intensity": 1.0,
+          "light_color": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "cubemap_path": "textures/ballroom_2k.pmrem.ktx2",
+          "cubemap_resolution": 512
+        }
+      }
+    }
+  ]
+}

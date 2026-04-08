@@ -45,8 +45,8 @@ void SceneRenderer::RegisterDecalPasses(rg::RgBuilder& rgBuilder, FrameContext& 
 
     // ── Frustum cull and sort ─────────────────────────────────────────────
     // Build the view-projection matrix for frustum culling.
-    const Mat4& viewMatrix = m_camera->GetView();
-    const Mat4& projMatrix = m_camera->GetProjection();
+    const Mat4& viewMatrix = m_cameraManager->GetActiveCamera().GetView();
+    const Mat4& projMatrix = m_cameraManager->GetActiveCamera().GetProjection();
     const Mat4 viewProj = projMatrix * viewMatrix;
 
     m_decalManager->FrustumCull(viewProj);

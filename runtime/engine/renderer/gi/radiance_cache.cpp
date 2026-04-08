@@ -243,11 +243,23 @@ void RadianceCache::UpdateProbes(
     constants.lightIntensity = 1.0f;
     constants.groundAlbedo  = 0.18f; // Average scene albedo (18% grey card)
 
-    // Root constants at b0 (root param 0, 8 uint32s): SH UAV index + frame index
+    // Temporal probe spreading: update kProbesPerFrame probes per frame,
+    // wrapping the cursor across the grid. The shader skips probes outside
+    // [g_probeOffset, g_probeOffset + g_probeBudget).
+    const uint32_t probeBudget =
+        std::min<uint32_t>(kProbesPerFrame, kTotalProbes);
+    const uint32_t probeOffset = m_probeUpdateCursor % kTotalProbes;
+    m_probeUpdateCursor = (m_probeUpdateCursor + probeBudget) % kTotalProbes;
+
+    // Root constants at b0 (root param 0, 8 uint32s):
+    //   [0] SH UAV index, [1] SH SRV index, [2] frame index,
+    //   [3] probe offset, [4] probe budget, [5..7] padding.
     uint32_t rootConstants[8] = {};
-    rootConstants[0] = m_shBufferUav;  // g_shBufferUav
-    rootConstants[1] = m_shBufferSrv;  // g_shBufferSrv (unused in trace, for future)
-    rootConstants[2] = frameIndex;     // g_frameIndexRC
+    rootConstants[0] = m_shBufferUav;
+    rootConstants[1] = m_shBufferSrv;
+    rootConstants[2] = frameIndex;
+    rootConstants[3] = probeOffset;
+    rootConstants[4] = probeBudget;
     cmdList->SetRootConstants(0, rootConstants, 8);
 
     // Upload bulk trace constants via CB ring and bind at b2 (root param 2)
@@ -261,9 +273,9 @@ void RadianceCache::UpdateProbes(
                         constAlloc.offsetBytes,
                         constAlloc.cpuPtr, sizeof(constants));
 
-    // Dispatch: one thread per probe, 64 threads per group
-    // 4096 probes / 64 threads = 64 groups
-    const uint32_t groupCount = (kTotalProbes + 63) / 64;
+    // Dispatch only as many groups as needed for this frame's probe budget.
+    // 64 threads per group (matches [numthreads(64,1,1)] in the trace shader).
+    const uint32_t groupCount = (probeBudget + 63) / 64;
     cmdList->Dispatch(groupCount, 1, 1);
 
     // Transition back to SRV for lighting shader reads

@@ -3,7 +3,7 @@
 ## Top Level
 
 ```
-UzEngine/0.2/
+UzEngine/
 ├── docs/                    # Internal specs, architecture, roadmap
 │   ├── user/                # Public developer documentation (this site)
 │   ├── specs/               # Internal implementation specifications

@@ -529,9 +529,13 @@ float AutoExposure::Execute(IRHICommandList* cmdList, uint32_t hdrSrvIndex,
 
             // exposureData[0] = currentEV, exposureData[1] = exposure multiplier
             const float readbackExposure = exposureData[1];
+
+
             if (std::isfinite(readbackExposure) && readbackExposure > 0.0f) {
                 m_lastExposure = readbackExposure;
             }
+        } else {
+            UZ_LOG(Renderer, Warning, "AutoExposure: MapBuffer returned null");
         }
     }
 

@@ -132,9 +132,9 @@ TEST(ShaderParameterMetadata, CBSizeIs256Aligned) {
 // PerFrameParams — metadata correctness
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(PerFrameParams, MetadataCBSizeIs768) {
+TEST(PerFrameParams, MetadataCBSizeIs1024) {
     const auto& meta = PerFrameParams::GetMetadata();
-    EXPECT_EQ(meta.cbSize, 768u);
+    EXPECT_EQ(meta.cbSize, 1024u);
     EXPECT_EQ(meta.cbSize % 256, 0u);
 }
 
@@ -179,9 +179,9 @@ TEST(PerFrameParams, ScalarSectionByteIdenticalToPerFrameCB) {
 }
 
 TEST(PerFrameParams, ResourceHandlesAtCorrectOffset) {
-    EXPECT_EQ(offsetof(PerFrameParams, irradianceCubemap), 768u);
-    EXPECT_EQ(offsetof(PerFrameParams, prefilteredSpecular), 776u);
-    EXPECT_EQ(offsetof(PerFrameParams, brdfLut), 784u);
+    EXPECT_EQ(offsetof(PerFrameParams, irradianceCubemap), 1024u);
+    EXPECT_EQ(offsetof(PerFrameParams, prefilteredSpecular), 1032u);
+    EXPECT_EQ(offsetof(PerFrameParams, brdfLut), 1040u);
 }
 
 TEST(PerFrameParams, ResourceMembersHaveCorrectSlots) {

@@ -1,0 +1,16 @@
+{
+  "name": "3D Format Import Test",
+  "version": "1.0",
+  "engine_version": "0.4.0",
+  "default_scene": "scenes/test_obj_suzanne.uzscene",
+  "content_root": "../content/",
+  "window": {
+    "title": "UzEngine — Format Import Test",
+    "width": 1920,
+    "height": 1080,
+    "fullscreen": false
+  },
+  "rendering": {
+    "backend": "dx12"
+  }
+}

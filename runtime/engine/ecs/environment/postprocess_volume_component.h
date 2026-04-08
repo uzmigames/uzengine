@@ -39,6 +39,7 @@
 #pragma once
 
 #include "vector3.h"
+#include "../core/dirty_flags.h"
 
 #include <cstdint>
 
@@ -51,7 +52,7 @@ namespace uz {
 ///
 /// Only fields with their `override*` flag set participate in volume blending.
 /// Non-overridden fields are ignored (pass-through from lower priority or defaults).
-struct PostProcessVolumeComponent {
+struct PostProcessVolumeComponent : public CBDirtyMixin {
     // ── Volume Geometry ────────────────────────────────────────────────
 
     /// AABB half-extents in centimeters (local space, centered on entity position).

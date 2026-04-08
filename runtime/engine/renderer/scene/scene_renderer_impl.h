@@ -28,8 +28,9 @@
     std::unique_ptr<GizmoRenderer> m_gizmoRenderer;
     std::unique_ptr<StatsOverlay> m_statsOverlay;
     std::unique_ptr<VfxEditorOverlay> m_vfxEditorOverlay;
-    std::unique_ptr<Camera> m_camera;
+    std::unique_ptr<CameraManager> m_cameraManager;
     std::unique_ptr<FlyCameraController> m_cameraCtrl;
+    CameraId m_editorFreeCamId = kInvalidCameraId;     ///< Editor free-cam ID (kInvalidCameraId = not active).
     std::unique_ptr<rg::RgResourcePool> m_rgPool;
 
     // ── Fallback Textures (SM5 unconditional sampling) ────────────────────
@@ -121,6 +122,17 @@
     uint32_t m_deltaIrradianceSrv = UINT32_MAX;
     uint32_t m_deltaIrradianceUav = UINT32_MAX;
 
+    // ── Path Tracer accumulation (Step 6) ──────────────────────────────
+    // Ping-pong RGBA32F textures: read prev as SRV, write curr as render
+    // target. Sample count + previous view matrix track convergence and
+    // camera-cut reset. @ref Kajiya 1986 — Monte Carlo accumulation.
+    RHITextureHandle m_ptAccum[2]    = { RHITextureHandle::Invalid(), RHITextureHandle::Invalid() };
+    uint32_t         m_ptAccumSrv[2] = { UINT32_MAX, UINT32_MAX };
+    uint32_t         m_ptAccumIdx    = 0;       ///< Current write target (flips each frame).
+    uint32_t         m_ptAccumSamples = 0;      ///< Accumulated sample count since last reset.
+    float            m_ptPrevView[16] = {0};    ///< Previous view matrix (camera-cut detection).
+    bool             m_ptHistoryValid = false;  ///< False on first frame / after reset.
+
     // ── IBL (Image-Based Lighting from sky cubemap) ────────────────────
 
     std::unique_ptr<IBLBaker> m_iblBaker;            ///< GPU compute pipeline for IBL bake (irradiance + prefiltered).
@@ -145,6 +157,14 @@
     // ── Reflection Probes ────────────────────────────────────────────────
     ReflectionProbeRenderer m_reflectionProbes;   ///< Per-probe cubemap capture, IBL bake, and GPU upload.
 
+    // ── Material Graph Pipeline ──────────────────────────────────────────
+    std::unique_ptr<MaterialPipeline> m_materialPipeline; ///< Compiles .uzmat graphs into GBuffer PSOs.
+    std::unique_ptr<MaterialManager>  m_materialManager;  ///< Loads and caches .uzmat graph files.
+
+    // ── Ray Tracing (DXR) ────────────────────────────────────────────────
+    std::unique_ptr<RTManager> m_rtManager;          ///< BLAS/TLAS/SBT lifecycle, gated by r.RayTracing CVar.
+    std::unique_ptr<RTUVTestPass> m_rtUVTestPass;    ///< RT UV gradient test pass (r.RayTracing.TestPass).
+
     // ── Auto-Exposure ──────────────────────────────────────────────────────
     std::unique_ptr<AutoExposure> m_autoExposure;   ///< GPU histogram-based eye adaptation.
 
@@ -162,12 +182,16 @@
     float m_lensFlareHaloRadius     = 0.6f;          ///< CVar-driven halo ring radius (UV).
     float m_lensFlareChromaticShift = 0.02f;         ///< CVar-driven chromatic aberration offset.
 
+    // ── Volumetric Fog (froxel-based) ─────────────────────────────────
+    std::unique_ptr<VolumetricFogPass> m_volFogPass;   ///< 160×90×64 froxel fog pipeline (inject + scatter + composite).
+
     // ── Volumetric Clouds ───────────────────────────────────────────────
     std::unique_ptr<CloudPass> m_cloudPass;           ///< GPU volumetric cloud pipeline (5 compute shaders).
     IRHICommandList* m_cloudCmdList = nullptr;         ///< Dedicated command list for cloud compute dispatches.
     uint32_t m_cloudOutputSrv = UINT32_MAX;           ///< SRV of the final cloud output for compositing.
     std::unique_ptr<CloudPassInput> m_pendingCloudInput; ///< Deferred cloud input for pre-graph compute dispatch.
     bool m_pendingCloudDispatch = false;               ///< True when cloud compute should run before render graph.
+    bool m_cloudOutputReady = false;                   ///< True after the first cloud compute dispatch has completed.
 
     // ── Distance Field Shadows ───────────────────────────────────────────
 
@@ -276,14 +300,21 @@
     uint32_t m_taaHistorySrv[2] = {UINT32_MAX, UINT32_MAX}; ///< SRV indices for history read.
     uint32_t m_taaHistoryUav[2] = {UINT32_MAX, UINT32_MAX}; ///< UAV indices for history write.
     uint32_t m_taaHistoryIndex = 0;            ///< Index of current write target (0 or 1).
-    bool     m_taaEnabled = false;             ///< SHADER DEBUG: disabled — scaffold taa_resolve zeros HDR.
+    bool     m_taaEnabled = true;              ///< Enables jitter + temporal upscaler dispatch (DLSS/TSR/TAA).
     Mat4     m_prevViewProj;                   ///< Previous frame's unjittered viewProj for reprojection.
     bool     m_prevViewProjValid = false;      ///< False on first frame (no valid previous viewProj).
+
+    // ── CB Update Optimization (dirty flag skip) ────────────────────────
+    ShadowDataCB m_prevShadowCB{};              ///< Cached previous frame shadow CB for memcmp skip.
+    CBAllocation m_prevShadowAlloc{};            ///< Previous frame shadow CB allocation (reused when skipped).
+    bool         m_prevShadowValid = false;      ///< False on first frame.
+    uint32_t     m_cbUpdatesSkipped = 0;         ///< Per-frame counter: number of CB sections skipped.
+    uint32_t     m_cbUpdatesTotal   = 0;         ///< Per-frame counter: total CB sections considered.
 
     // ── Temporal Upscaler (ITemporalUpscaler) ────────────────────────────────
 
     std::unique_ptr<ITemporalUpscaler> m_upscaler;         ///< Active temporal upscaler (TAA or TSR).
-    UpscalerType m_upscalerType = UpscalerType::TAA;        ///< Legacy TAA (single-pass, robust).
+    UpscalerType m_upscalerType = UpscalerType::TAA;        ///< Default TAA. DLSS opt-in via r.AntiAliasingMethod=4.
 
     // ── Dynamic Resolution ───────────────────────────────────────────────────
 
@@ -308,6 +339,24 @@
     bool m_sdfGiEnabled = false;                 ///< Runtime toggle for SDF-based GI.
     float m_giIntensity = 1.0f;                  ///< GI intensity multiplier (default 1.0).
 
+    // ── Light Probe Volume (author-placed irradiance grid) ───────────────
+    /// Author-placed L2 SH probe volume — populated each frame from the
+    /// `LightProbeVolumeComponent` (auto-rebuild on dirty) and seeded from
+    /// the captured sky cubemap. Sampled in deferred lighting via trilinear
+    /// blend of 8 surrounding probes.
+    /// @ref Tatarchuk 2005 "Irradiance Volumes for Games"
+    /// @ref Greger 1998 "The Irradiance Volume"
+    IrradianceProbeGrid m_lightProbeGrid;
+
+    // ── DDGI octahedral atlases ───────────────────────────────────────
+    /// Owns the DDGI irradiance + depth probe atlases used by the DXR
+    /// probe-update CS and the deferred lighting Chebyshev sampler.
+    /// @ref Majercik 2019 "Dynamic Diffuse Global Illumination"
+    DDGISystem m_ddgiSystem;
+
+    // ── Brixelizer GI (AMD FidelityFX sparse SDF voxel GI) ─────────────────
+    std::unique_ptr<BrixelizerGIPass> m_brixelizerGI;  ///< FFX Brixelizer GI pass (diffuse + specular indirect).
+
     // ── SSR (Screen-Space Reflections) ─────────────────────────────────────
 
     RHITextureHandle m_ssrTraceOutput;             ///< RGBA16F trace result (rgb=hit color, a=confidence).
@@ -322,9 +371,43 @@
     uint32_t m_ssrHistoryIndex = 0;                ///< Current write target index (0 or 1), flips each frame.
     bool     m_ssrEnabled = true;                  ///< Runtime toggle for SSR.
 
+    /// Tile classification buffers for indirect SSR dispatch.
+    /// @ref AMD FidelityFX SSSR — tile classify + ray compaction + ExecuteIndirect.
+    RHIBufferHandle m_ssrRayList;                  ///< StructuredBuffer<uint> — packed pixel coords (max = width*height).
+    uint32_t m_ssrRayListUav = UINT32_MAX;         ///< UAV for classify to write, trace to read.
+    uint32_t m_ssrRayListSrv = UINT32_MAX;         ///< SRV for trace pass to read ray coords.
+    RHIBufferHandle m_ssrRayCounterArgs;           ///< ByteAddressBuffer — [0]=rayCount, [4..15]=DispatchIndirectArgs.
+    uint32_t m_ssrRayCounterArgsUav = UINT32_MAX;  ///< UAV for classify/prepare to write.
+
+    /// Hit distance from SSR trace — used by temporal pass for virtual hit reprojection.
+    /// @ref AMD FidelityFX SSSR — hit distance stored separately for temporal reprojection.
+    RHITextureHandle m_ssrHitDistance;              ///< R16F hit distance (screen-space ray t).
+    uint32_t m_ssrHitDistanceSrv = UINT32_MAX;     ///< SRV for temporal pass to read.
+    uint32_t m_ssrHitDistanceUav = UINT32_MAX;     ///< UAV for trace pass to write.
+
+    /// STBN (Spatiotemporal Blue Noise) 128x128x64 RG8 volume texture.
+    /// Each slice is a blue noise pattern; consecutive slices are temporally decorrelated.
+    /// Used by SSR trace for low-discrepancy per-pixel random seeds.
+    /// @ref Heitz & Belcour 2019 "Distributing Monte Carlo Errors as Blue Noise"
+    RHITextureHandle m_stbnTexture;                ///< RG8Unorm 128x128x64 3D texture.
+    uint32_t m_stbnSrv = UINT32_MAX;              ///< SRV for trace pass blue noise lookup.
+
+    /// Previous frame HDR scene color copy — used as SSR trace input to break
+    /// the feedback loop (UE5 pattern: read prev TAA output, not current HDR).
+    RHITextureHandle m_ssrPrevSceneColor;          ///< RGBA16F copy of prev frame's HDR.
+    uint32_t m_ssrPrevSceneColorSrv = UINT32_MAX;  ///< SRV for SSR trace to read.
+    bool     m_ssrHasPrevColor = false;            ///< False on first frame (skip SSR).
+    float    m_ssrPrevExposure = 1.0f;             ///< Previous frame's exposure for SSR color correction.
+
     /// Creates SSR output textures at the given resolution.
     /// Called from Init() and Resize().
     void CreateSsrResources(uint32_t width, uint32_t height);
+
+    /// HDR scene color copy for forward translucent pass screen-space refraction.
+    /// Copied from the HDR target after deferred lighting, before translucent draws.
+    /// @ref Three.js transmissionRenderTarget — same pattern.
+    RHITextureHandle m_translucentSceneColor;            ///< RGBA16F copy of current frame HDR.
+    uint32_t m_translucentSceneColorSrv = UINT32_MAX;    ///< SRV for translucent shader to sample.
 
     /// Destroys SSR output textures. Called from Shutdown() and Resize().
     void DestroySsrResources();
@@ -731,6 +814,9 @@
     /// Registers SDF-based GI passes (GDF composite + radiance cache trace).
     void RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
 
+    /// Registers AMD FidelityFX Brixelizer GI passes (SDF bake + GI dispatch).
+    void RegisterBrixelizerGIPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
+
     /// Registers Screen-Space Reflections passes (trace + resolve + temporal).
     void RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
 
@@ -745,6 +831,12 @@
 
     /// Registers intermediate render targets with the PassInspector for visualization.
     void RegisterPassInspectorTargets(FrameContext& ctx);
+
+    /// Registers the forward translucent pass that renders materials with
+    /// blendMode >= Translucent (glass, transparent, additive).
+    /// Runs AFTER deferred lighting (has HDR scene color for screen-space
+    /// refraction) and BEFORE particles and post-process.
+    void RegisterTranslucentPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
 
     /// Registers post-process passes: bloom, TAA, color grading LUT,
     /// motion blur, DOF, tonemap, and FXAA.

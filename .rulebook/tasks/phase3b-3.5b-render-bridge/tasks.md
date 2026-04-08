@@ -27,3 +27,8 @@
 
 - [ ] 3.1 Update `docs/engine/12-rendering/01-render-world.md`
 - [ ] 3.2 Document ECS → renderer bridge architecture
+
+## 5. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 5.1 Update or create documentation covering the implementation
+- [ ] 5.2 Write tests covering the new behavior
+- [ ] 5.3 Run tests and confirm they pass

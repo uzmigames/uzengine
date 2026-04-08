@@ -72,3 +72,8 @@ phase, dissolve). This is the 8th SoA channel added to `GpuParticleBuffer`.
 - [ ] 8.5 Add `/// @ref` to `dynamic_params_module.h`: cite the concept of
       per-particle custom data from GDC 2014 "Destiny's Multithreaded Rendering
       Architecture" as a design reference for per-particle payload channels.
+
+## 9. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 9.1 Update or create documentation covering the implementation
+- [ ] 9.2 Write tests covering the new behavior
+- [ ] 9.3 Run tests and confirm they pass

@@ -1,0 +1,173 @@
+{
+  "name": "STL Utah Teapot",
+  "version": "1.0",
+  "entities": [
+    {
+      "name": "Sun",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            920
+          ],
+          "rotation": [
+            -30,
+            0,
+            60
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "light": {
+          "type": "directional",
+          "color": [
+            1.0,
+            0.96,
+            0.88
+          ],
+          "intensity": 12
+        }
+      }
+    },
+    {
+      "name": "UtahTeapot",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            5,
+            5,
+            5
+          ]
+        },
+        "mesh": {
+          "asset": "meshes/test_formats/teapot.uzmesh"
+        },
+        "material": {
+          "roughnessMultiplier": 0.5
+        }
+      }
+    },
+    {
+      "name": "GroundPlane",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            -1
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            800,
+            800,
+            2
+          ]
+        },
+        "mesh": {
+          "asset": "meshes/cube.uzmesh"
+        },
+        "material": {
+          "albedo": "textures/checker.png",
+          "roughnessMultiplier": 1.0
+        }
+      }
+    },
+    {
+      "name": "MainCamera",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            -350,
+            120
+          ],
+          "rotation": [
+            0,
+            0,
+            -8
+          ]
+        },
+        "camera": {
+          "fov": 55,
+          "near": 1,
+          "far": 100000,
+          "active": true
+        }
+      }
+    },
+    {
+      "name": "SkyAtmosphere",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            1020
+          ]
+        },
+        "sky_atmosphere": {}
+      }
+    },
+    {
+      "name": "SkyLight",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            690
+          ]
+        },
+        "sky_light": {
+          "intensity": 1.0,
+          "light_color": [
+            0.85,
+            0.9,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "HeightFog",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        },
+        "height_fog": {
+          "base_height": -5000
+        }
+      }
+    },
+    {
+      "name": "Controller",
+      "components": {
+        "script": {
+          "path": "scripts/fly_camera.lua"
+        }
+      }
+    }
+  ]
+}

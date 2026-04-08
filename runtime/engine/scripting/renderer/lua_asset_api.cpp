@@ -280,6 +280,11 @@ static int TextureLoadHDR(lua_State* L) {
         return 1;
     }
 
+    // Store the texture handle in the renderer's texture tracking so it is
+    // destroyed during Shutdown/DestroyAssets. Without this, the 16MB RGBA16F
+    // equirect texture leaks (handle dropped at end of this scope).
+    renderer->TrackExternalTexture(result);
+
     lua_pushinteger(L, static_cast<lua_Integer>(result.srvIndex));
     return 1;
 }

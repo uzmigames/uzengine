@@ -1,0 +1,50 @@
+{
+    "version": 1,
+    "name": "DamagedHelmet PBR",
+    "domain": "Surface",
+    "shadingModel": "DefaultLit",
+    "expressions": [
+        {
+            "id": 1,
+            "type": "PBROutput",
+            "inputs": [
+                { "pin": 0, "srcExpr": 2, "srcPin": 0 },
+                { "pin": 1, "srcExpr": 3, "srcPin": 3 },
+                { "pin": 2, "srcExpr": 3, "srcPin": 2 },
+                { "pin": 3, "srcExpr": 5, "srcPin": 0 },
+                { "pin": 4, "srcExpr": 6, "srcPin": 0 },
+                { "pin": 6, "srcExpr": 4, "srcPin": 1 }
+            ]
+        },
+        {
+            "id": 2,
+            "type": "TextureSample",
+            "name": "Albedo",
+            "stringParams": { "texturePath": "textures/Default_albedo.jpg" }
+        },
+        {
+            "id": 3,
+            "type": "TextureSample",
+            "name": "MetalRoughness",
+            "stringParams": { "texturePath": "textures/Default_metalRoughness.jpg" }
+        },
+        {
+            "id": 4,
+            "type": "TextureSample",
+            "name": "AO",
+            "stringParams": { "texturePath": "textures/Default_AO.jpg" }
+        },
+        {
+            "id": 5,
+            "type": "TextureSample",
+            "name": "Normal",
+            "stringParams": { "texturePath": "textures/Default_normal.jpg" }
+        },
+        {
+            "id": 6,
+            "type": "TextureSample",
+            "name": "Emissive",
+            "stringParams": { "texturePath": "textures/Default_emissive.jpg" }
+        }
+    ]
+}

@@ -51,6 +51,15 @@ public:
     /// binds the global CBV_SRV_UAV and Sampler descriptor heaps for bindless access.
     void Begin() override;
 
+    /// Rebinds the engine's global CBV_SRV_UAV + Sampler descriptor heaps.
+    /// Call this after any third-party API (FFX, NGX/DLSS, etc.) that may
+    /// have called `SetDescriptorHeaps` with its own internal heaps and
+    /// left them bound on the command list. Without this, subsequent
+    /// bindless lookups (`ResourceDescriptorHeap[idx]`) read from the
+    /// foreign heap and return garbage / nothing → black-screen artifacts
+    /// downstream of the third-party pass.
+    void RebindBindlessHeaps();
+
     /// Ends recording by closing the command list.
     void End() override;
 
@@ -150,6 +159,24 @@ public:
 
     /// Ends the render pass. Frees any temporary per-slice/mip RTVs.
     void EndRenderPass() override;
+
+    // ── IRHICommandList: Ray tracing commands ──────────────────────────
+
+    /// Builds a DX12 BLAS via `BuildRaytracingAccelerationStructure`.
+    void BuildBLAS(RHIBLASHandle blas, RHIBufferHandle scratchBuffer,
+                   bool update) override;
+
+    /// Builds a DX12 TLAS via `BuildRaytracingAccelerationStructure`.
+    void BuildTLAS(RHITLASHandle tlas, RHIBufferHandle instanceBuffer,
+                   uint32_t instanceCount, RHIBufferHandle scratchBuffer,
+                   bool update) override;
+
+    /// Dispatches rays via `DispatchRays` on an `ID3D12GraphicsCommandList4`.
+    void DispatchRays(RHIRTPipelineHandle pipeline,
+                      const RHIDispatchRaysDesc& desc) override;
+
+    /// Inserts a UAV barrier for acceleration structures (null resource barrier).
+    void UAVBarrierAS() override;
 
     // ── DX12-specific methods (pre-texture-pool) ─────────────────────────
 

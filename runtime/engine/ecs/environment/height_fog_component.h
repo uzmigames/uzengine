@@ -23,6 +23,7 @@
 #pragma once
 
 #include "vector3.h"
+#include "../core/dirty_flags.h"
 
 namespace uz {
 
@@ -30,7 +31,7 @@ namespace uz {
 ///
 /// The fog pass reads scene depth, reconstructs world position, computes
 /// fog density along the view ray, and blends the fog color over the scene.
-struct HeightFogComponent {
+struct HeightFogComponent : public CBDirtyMixin {
     /// Fog inscattering luminance in linear space.
     /// @ref Hillaire 2016 — default white-ish for physically plausible haze
     Vec3 color = {0.45f, 0.55f, 0.65f};

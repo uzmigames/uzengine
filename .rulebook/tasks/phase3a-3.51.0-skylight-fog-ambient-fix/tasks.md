@@ -39,3 +39,8 @@
 - [ ] 5.2 PSNR comparison if possible — target >30 dB for the sky/fog region.
 - [ ] 5.3 Verify no regression in existing rendering: bloom, CSM, IBL specular, contact shadows all still correct.
 - [ ] 5.4 Update `phase3a-3.50.0-ue5-visual-parity-roadmap/tasks.md` — mark height fog and SkyLight items as fixed.
+
+## 1. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 1.1 Update or create documentation covering the implementation
+- [ ] 1.2 Write tests covering the new behavior
+- [ ] 1.3 Run tests and confirm they pass

@@ -275,6 +275,91 @@ public:
     /// The sampler index in the global sampler heap, or `UINT32_MAX` if invalid.
     virtual uint32_t GetSamplerIndex(RHISamplerHandle handle) const = 0;
 
+    // ── Ray tracing operations (DXR / VK_KHR_ray_tracing_pipeline) ─────
+
+    /// Creates a bottom-level acceleration structure (BLAS) for triangle geometry.
+    ///
+    /// Allocates the result buffer and scratch buffer. The BLAS must be built
+    /// on a command list via `IRHICommandList::BuildBLAS()` before it can be
+    /// referenced by TLAS instances.
+    ///
+    /// # Arguments
+    /// * `desc` — BLAS descriptor with geometry descriptions and build flags.
+    ///
+    /// # Returns
+    /// A valid handle on success, `RHIBLASHandle::Invalid()` on failure or
+    /// if RT is not supported by this backend.
+    virtual RHIBLASHandle CreateBLAS(const RHIBLASDesc& desc) {
+        (void)desc; return RHIBLASHandle::Invalid();
+    }
+
+    /// Destroys a BLAS and frees its GPU memory.
+    virtual void DestroyBLAS(RHIBLASHandle handle) { (void)handle; }
+
+    /// Returns the GPU virtual address of a built BLAS.
+    ///
+    /// Used to fill `RHIRTInstanceDesc::blasAddress` for TLAS instance buffers.
+    /// Returns 0 if the handle is invalid or the BLAS has not been built.
+    virtual uint64_t GetBLASGPUAddress(RHIBLASHandle handle) const {
+        (void)handle; return 0;
+    }
+
+    /// Creates a top-level acceleration structure (TLAS) for scene instances.
+    ///
+    /// Allocates the result buffer. The TLAS must be built on a command list
+    /// via `IRHICommandList::BuildTLAS()` each frame.
+    virtual RHITLASHandle CreateTLAS(const RHITLASDesc& desc) {
+        (void)desc; return RHITLASHandle::Invalid();
+    }
+
+    /// Destroys a TLAS and frees its GPU memory and SRV descriptor.
+    virtual void DestroyTLAS(RHITLASHandle handle) { (void)handle; }
+
+    /// Returns the SRV descriptor index for a TLAS in the global CBV_SRV_UAV heap.
+    ///
+    /// Shaders access the TLAS via `ResourceDescriptorHeap[index]` (SM6.6) or
+    /// via a descriptor table bound to a root parameter (SM5).
+    virtual uint32_t GetTLASSRVIndex(RHITLASHandle handle) const {
+        (void)handle; return UINT32_MAX;
+    }
+
+    /// Creates a ray tracing pipeline state object (RTPSO / state object).
+    ///
+    /// Combines DXIL library shaders, hit group definitions, and pipeline config
+    /// into an immutable state object for DispatchRays.
+    virtual RHIRTPipelineHandle CreateRaytracingPipeline(const RHIRTPipelineDesc& desc) {
+        (void)desc; return RHIRTPipelineHandle::Invalid();
+    }
+
+    /// Destroys a ray tracing pipeline state object.
+    virtual void DestroyRaytracingPipeline(RHIRTPipelineHandle handle) { (void)handle; }
+
+    /// Retrieves the 32-byte shader identifier for a named export in an RTPSO.
+    ///
+    /// Used by `ShaderTableBuilder` to construct shader binding table records.
+    /// Each record starts with the identifier, optionally followed by local
+    /// root arguments.
+    ///
+    /// # Arguments
+    /// * `pipeline` — RT pipeline handle.
+    /// * `exportName` — Wide-string name of the export (raygen, miss, or hit group name).
+    /// * `outIdentifier` — Pointer to a 32-byte buffer to receive the identifier.
+    ///
+    /// # Returns
+    /// `true` if the identifier was found and written, `false` otherwise.
+    virtual bool GetShaderIdentifier(RHIRTPipelineHandle pipeline,
+                                     const wchar_t* exportName,
+                                     void* outIdentifier) {
+        (void)pipeline; (void)exportName; (void)outIdentifier;
+        return false;
+    }
+
+    /// Returns true if the device supports DXR 1.0+ ray tracing.
+    ///
+    /// When false, all RT creation methods return Invalid/UINT32_MAX handles
+    /// and RT command list methods are no-ops.
+    virtual bool SupportsRayTracing() const { return false; }
+
     // ── Swap chain operations ────────────────────────────────────────────
 
     /// Creates a swap chain for presenting rendered frames to a window.

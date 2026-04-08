@@ -197,3 +197,8 @@ to a UAV event buffer consumed by the main update CS in the same frame.
 - [ ] 9.3 Document the depth normal estimation accuracy: `(dL-dR, dD-dU, epsilon)`
       is a finite-difference approximation, not the true geometric normal.
       Accuracy degrades for grazing angles and at silhouette edges.
+
+## 10. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 10.1 Update or create documentation covering the implementation
+- [ ] 10.2 Write tests covering the new behavior
+- [ ] 10.3 Run tests and confirm they pass

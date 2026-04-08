@@ -11,7 +11,11 @@ struct VSOutput {
 
 #ifdef UZ_BINDLESS
 struct Vertex { float3 position; float3 normal; float2 texcoord; float4 tangent; };
-struct PushConstants { uint vertexBufferIndex; };
+struct VertexPacked { float3 position; int4 packedNormal; float2 texcoord; int4 packedTangent; uint _pad; };
+// usePackedNormals is at root constant slot 1 — set to 0 by default when
+// only vertexBufferIndex (slot 0) is pushed. Safe because root constants
+// are zero-initialized by the DX12 runtime within a draw call scope.
+struct PushConstants { uint vertexBufferIndex; uint usePackedNormals; };
 ConstantBuffer<PushConstants> push : register(b0);
 #else
 struct VSInput {
@@ -35,22 +39,47 @@ cbuffer PerObjectCB : register(b2) {
 
 #ifdef UZ_BINDLESS
 VSOutput main(uint vertexID : SV_VertexID) {
-    StructuredBuffer<Vertex> vertices = ResourceDescriptorHeap[push.vertexBufferIndex];
-    Vertex v = vertices[vertexID];
+    float3 vPosition;
+    float3 vNormal;
+    float2 vTexcoord;
+    float4 vTangent;
+
+    if (push.usePackedNormals != 0) {
+        // Packed vertex format (32 bytes) — decode int8 normals/tangents
+        StructuredBuffer<VertexPacked> packedVerts = ResourceDescriptorHeap[push.vertexBufferIndex];
+        VertexPacked pv = packedVerts[vertexID];
+        vPosition = pv.position;
+        vNormal   = float3(pv.packedNormal.xyz) / 127.0;
+        vTexcoord = pv.texcoord;
+        vTangent  = float4(float3(pv.packedTangent.xyz) / 127.0, (pv.packedTangent.w >= 0) ? 1.0 : -1.0);
+    } else {
+        // Standard vertex format (48 bytes)
+        StructuredBuffer<Vertex> vertices = ResourceDescriptorHeap[push.vertexBufferIndex];
+        Vertex v = vertices[vertexID];
+        vPosition = v.position;
+        vNormal   = v.normal;
+        vTexcoord = v.texcoord;
+        vTangent  = v.tangent;
+    }
+
     float4x4 instModel  = model;
     float4x4 instNormal = normalMatrix;
 #else
 VSOutput main(VSInput v) {
+    float3 vPosition = v.position;
+    float3 vNormal   = v.normal;
+    float2 vTexcoord = v.texcoord;
+    float4 vTangent  = v.tangent;
     float4x4 instModel  = model;
     float4x4 instNormal = normalMatrix;
 #endif
 
     VSOutput output;
-    float4 worldPos = mul(float4(v.position, 1.0), instModel);
+    float4 worldPos = mul(float4(vPosition, 1.0), instModel);
     output.positionWS = worldPos.xyz;
     output.positionCS = mul(worldPos, viewProj);
-    output.normalWS   = normalize(mul(float4(v.normal, 0.0), instNormal).xyz);
-    output.tangentWS  = float4(normalize(mul(float4(v.tangent.xyz, 0.0), instNormal).xyz), v.tangent.w);
-    output.texcoord   = v.texcoord;
+    output.normalWS   = normalize(mul(float4(vNormal, 0.0), instNormal).xyz);
+    output.tangentWS  = float4(normalize(mul(float4(vTangent.xyz, 0.0), instNormal).xyz), vTangent.w);
+    output.texcoord   = vTexcoord;
     return output;
 }

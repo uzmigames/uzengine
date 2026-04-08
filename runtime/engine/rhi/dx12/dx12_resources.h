@@ -220,6 +220,94 @@ struct DX12Pipeline {
     RHIGraphicsPipelineDesc      desc = {};
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// DX12BLAS — Bottom-level acceleration structure (per-mesh DXR geometry)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Internal storage for a DX12 bottom-level acceleration structure.
+///
+/// Holds the committed result buffer, scratch buffer, and build inputs
+/// needed for `BuildRaytracingAccelerationStructure`. Managed by
+/// `DX12Device`'s `ResourcePool<DX12BLAS>`.
+///
+/// @ref Microsoft DXR spec — D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC.
+struct DX12BLAS {
+    /// D3D12MA allocation for the result buffer.
+    D3D12MA::Allocation*  resultAllocation  = nullptr;
+    /// Native D3D12 resource for the result buffer.
+    ID3D12Resource*       resultResource    = nullptr;
+    /// D3D12MA allocation for the scratch buffer (kept alive until compaction).
+    D3D12MA::Allocation*  scratchAllocation = nullptr;
+    /// Native D3D12 resource for the scratch buffer.
+    ID3D12Resource*       scratchResource   = nullptr;
+    /// Size of the result buffer in bytes.
+    uint64_t              resultSizeBytes   = 0;
+    /// Size of the scratch buffer in bytes.
+    uint64_t              scratchSizeBytes  = 0;
+    /// Cached geometry descriptions for rebuild/compaction.
+    std::vector<D3D12_RAYTRACING_GEOMETRY_DESC> geometryDescs;
+    /// Build flags (cached from RHIBLASDesc for rebuild).
+    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS buildFlags =
+        D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_NONE;
+    /// True if compaction is pending (post-build, pre-compact copy).
+    bool                  compactionPending = false;
+    /// Generation counter — must match `RHIBLASHandle::generation`.
+    uint32_t              generation        = 0;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DX12TLAS — Top-level acceleration structure (scene instance list)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Internal storage for a DX12 top-level acceleration structure.
+///
+/// Holds the result buffer, scratch buffer, and a bindless SRV descriptor
+/// for shader access via `ResourceDescriptorHeap[srvIndex]`.
+///
+/// @ref Microsoft DXR spec — D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC.
+struct DX12TLAS {
+    /// D3D12MA allocation for the result buffer.
+    D3D12MA::Allocation*  resultAllocation  = nullptr;
+    /// Native D3D12 resource for the result buffer.
+    ID3D12Resource*       resultResource    = nullptr;
+    /// D3D12MA allocation for the scratch buffer.
+    D3D12MA::Allocation*  scratchAllocation = nullptr;
+    /// Native D3D12 resource for the scratch buffer.
+    ID3D12Resource*       scratchResource   = nullptr;
+    /// Size of the result buffer in bytes.
+    uint64_t              resultSizeBytes   = 0;
+    /// Size of the scratch buffer in bytes.
+    uint64_t              scratchSizeBytes  = 0;
+    /// SRV index in the global CBV_SRV_UAV heap for shader access.
+    uint32_t              srvIndex          = UINT32_MAX;
+    /// Maximum instance count this TLAS was allocated for.
+    uint32_t              maxInstanceCount  = 0;
+    /// Build flags (cached from RHITLASDesc for rebuild).
+    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS buildFlags =
+        D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_NONE;
+    /// Generation counter — must match `RHITLASHandle::generation`.
+    uint32_t              generation        = 0;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DX12RTPipeline — Ray tracing pipeline state object (RTPSO)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Internal storage for a DX12 ray tracing state object.
+///
+/// Wraps `ID3D12StateObject` and its properties interface for retrieving
+/// shader identifiers needed to build shader binding tables.
+///
+/// @ref Microsoft DXR spec — D3D12_STATE_OBJECT_DESC.
+struct DX12RTPipeline {
+    /// The D3D12 state object containing all DXR shaders and hit groups.
+    ID3D12StateObject*               stateObject = nullptr;
+    /// Properties interface for querying shader identifiers by export name.
+    ID3D12StateObjectProperties*     properties  = nullptr;
+    /// Generation counter — must match `RHIRTPipelineHandle::generation`.
+    uint32_t                         generation  = 0;
+};
+
 // ResourcePool<T> is defined in ../rhi_resource_pool.h (shared across all backends).
 
 } // namespace uz

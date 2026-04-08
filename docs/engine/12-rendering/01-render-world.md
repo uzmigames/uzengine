@@ -1,6 +1,6 @@
 # Rendering — Render World & Sync
 
-> **Status**: Planned (Milestone 2.0)
+> **Status**: Done (v0.3.0+)
 > **Source**: `runtime/engine/renderer/`
 > **Depends on**: Entity/Component (§10), RHI (§03)
 > **References**: UE5 `FScene` + `FPrimitiveSceneProxy`, Godot `RenderingServer` + RID pattern

@@ -1,149 +1,130 @@
-<<<<<<< HEAD
-=======
-<!-- doc-meta: analysis-directory-index; date: 2026-03-30 -->
+<!-- doc-meta
+title: Engine Architecture Analysis Suite
+author: UzEngine Architecture Team
+date: 2026-04-04
+-->
 
->>>>>>> origin/main
-# Analysis Documents
+# Analysis Documentation Suite
 
-Reference implementations and architectural patterns extracted from engine source code.
+This directory contains deep architectural analyses extracted from reference engine sources (UE5, Godot 4) to inform UzEngine's design and implementation.
 
-## VFX System — Niagara Editor Analysis
+## Documents
 
-<<<<<<< HEAD
-Complete analysis of UE5 Niagara's editor architecture for real-time VFX parameter editing.
-=======
-| Directory | Contents | Files |
-|-----------|----------|-------|
-| [architecture/](architecture/) | Engine architecture decisions and patterns | 2+ |
-| [asset-pipeline/](asset-pipeline/) | Asset loading architecture, texture benchmarks, bottleneck analysis | 5 |
-| [atmosphere/](atmosphere/) | Sky, fog, volumetric clouds, aerial perspective, transmittance LUTs | 17 |
-| [backend-parity/](backend-parity/) | DX11/SM6.0 vs SM6.6 rendering parity: gap analysis, fix tracking | 2 |
-| [dataflow/](dataflow/) | Data flow documents for multi-subsystem features (SDF GI, SSGI, radiance cache) | 5 |
-| [dx12-descriptors/](dx12-descriptors/) | DX12 descriptor management: UE5/Godot patterns, non-bindless issues | 5 |
-| [engine-comparison/](engine-comparison/) | Cross-engine architecture analysis (Godot, Unity, Three.js) | 8+ |
-| [gi/](gi/) | Global illumination: Lumen radiance cache, SDF GI, ground radiance | 3 |
-| [gizmo/](gizmo/) | Editor gizmo specifications: UE5 geometry, colors, interaction, gap analysis | 6 |
-| [lighting/](lighting/) | Shadows, sky light, local lights, reversed-Z depth | 5 |
-| [materials/](materials/) | Material system architecture, parameter layouts, struct definitions | 12 |
-| [parity/](parity/) | UE5 vs UzEngine rendering parity: gap analysis, property inventory, roadmap | 10 |
-| [post-process/](post-process/) | Auto-exposure, histogram, tonemapping | 5 |
-| [renderer/](renderer/) | Debug visualization, general pipeline analysis, mesh winding | 3+ |
-| [rendering-pipeline/](rendering-pipeline/) | Debug visualization, general pipeline analysis | 2+ |
-| [rhi/](rhi/) | RHI abstraction: cbuffer layouts, bindless, SM5 patterns, Vulkan analysis | 12 |
-| [skeletal/](skeletal/) | Skeletal mesh architecture, retargeting, animation integration, UE5 analysis | 6 |
-| [upscaling/](upscaling/) | TSR, Godot 4K upscaling, temporal super-resolution | 8 |
-| [vfx/](vfx/) | VFX system gaps, implementation roadmap, architectural analysis | 5 |
-| [vscode/](vscode/) | VSCode extension integration, viewport, IPC | 2+ |
->>>>>>> origin/main
+### 1. **ue5-rendering-cvars-reference.md** (PRIMARY REFERENCE)
+   **Purpose**: Complete list of all rendering CVars from UE5 source
+   
+   **Contents**:
+   - 1,000+ CVars organized by category (Tone Mapping, Bloom, GTAO, Shadows, TAA, SSR, SSGI, Atmosphere, Clouds, Fog, Hair, Ray Tracing, etc.)
+   - Default values
+   - Valid ranges
+   - Descriptions extracted from UE5 source
+   
+   **How to Use**:
+   - Find a parameter you want to implement (e.g., "bloom threshold")
+   - Look it up in the reference (e.g., `r.Bloom.Threshold`)
+   - Extract the default value, range, and description
+   - Implement in UzEngine using the guide below
 
-### Documents
+### 2. **uzengine-cvar-implementation-guide.md** (STEP-BY-STEP INSTRUCTIONS)
+   **Purpose**: Practical guide for implementing CVars in UzEngine
+   
+   **Contents**:
+   - Step 1: Define CVar in C++
+   - Step 2: Wire into constant buffer structure
+   - Step 3: Populate CB from CVars
+   - Step 4: Wire CB into shader
+   - Step 5: Validation & clamping
+   - Step 6: Console command registration
+   - Step 7: Runtime changes
+   - Implementation roadmap (Phase 1-3)
+   - Code examples for every step
+   
+   **How to Use**:
+   - Pick a feature (e.g., bloom)
+   - Follow all 7 steps with code examples
+   - You now have a complete, working implementation
 
-1. **niagara-editor-ui-patterns.md** — Complete UI architecture
-   - How Niagara organizes emitter properties (categories, sections, parameter groups)
-   - Widget types for each parameter (slider, color picker, dropdown, etc.)
-   - Real-time update flow (parameter change → emitter restart → preview)
-   - Module stack organization (spawn/update/render modules)
-   - Property metadata system (EditCondition, ClampMin, UIMin, etc.)
-   - User parameter exposure mechanism
-   - ~1800 lines of detailed reference
+### 3. **cvar-architecture-antipatterns.md** (WHAT NOT TO DO)
+   **Purpose**: Common mistakes to avoid when building CVar systems
+   
+   **Contents**:
+   - 10 anti-patterns with wrong/right examples
+   - Architecture overview showing correct data flow
+   - Summary of UE5 pattern
+   - Checklist for new features
+   - When NOT to use CVars
+   
+   **How to Use**:
+   - Before implementing a feature, read this
+   - Verify your design against the anti-patterns
+   - Use the checklist before shipping
 
-2. **dataflow/vfx-parameter-ui-to-shader.md** — Complete parameter data flow
-   - Four-stage pipeline: UI → CPU → GPU CB → Shader
-   - Detailed mapping of ImGui slider to GPU constant buffer
-   - Restart vs live update decision logic
-   - Constant buffer struct layout with offsets
-   - Shader integration (compute + pixel shader)
-   - Complete worked example: spawn rate change walkthrough
-   - Latency analysis and synchronization points
+## Key Statistics
 
-### Quick Start Guide
+| Category | CVar Count | Most Important |
+|----------|-----------|---|
+| Tone Mapping | 2 | r.Tonemapper.Sharpen |
+| Bloom | 4 | r.Bloom.ScreenPercentage |
+| GTAO | 8 | r.GTAO.FalloffEnd |
+| Shadows | 25+ | r.Shadow.CSMDepthBias |
+| TAA | 10 | r.TemporalAAFilterSize |
+| SSR | 9 | r.SSR.Quality |
+| SSGI | 6 | r.SSGI.Quality |
+| Atmosphere | 30+ | r.SkyAtmosphere.SampleCountMax |
+| Volumetric Clouds | 15+ | r.VolumetricCloud.ViewRaySampleMaxCount |
+| Volumetric Fog | 7 | r.Fog |
+| **Total** | **1,000+** | - |
 
-3. **../guides/vfx-parameter-ui-quickstart.md** — Implementation reference
-   - Parameter organization checklist
-   - ImGui widget patterns for each parameter type
-   - Min/max constraints for each parameter
-   - Real-time update integration code
-   - Parameter restart vs live update categorization
-   - Preset system skeleton
-   - Troubleshooting checklist
+### 4. **ue5-normal-smoothing-and-tangent-generation.md** (MESH IMPORT)
+   **Purpose**: Complete analysis of mesh normal smoothing & tangent generation in UE5
+   
+   **Contents**:
+   - Normal recomputation algorithm with weighted averaging (area + corner angle)
+   - Hard edge detection (angle threshold + FBX smoothing groups)
+   - Tangent generation via MikkTSpace and built-in methods
+   - Import options (ComputeNormals, ImportNormals, etc.)
+   - Normal storage formats (FPackedNormal 32-bit, FPackedRGBA16N 64-bit)
+   - Runtime handling (no per-frame smoothing, all at import time)
+   - Nanite-specific behavior (cluster normals, LOD transitions)
+   - Complete source file references and line numbers from UE5 5.6
+   - Implementation checklist for custom engines
+   
+   **How to Use**:
+   - Fix faceted/flat shading on FBX imports
+   - Implement weighted normal averaging
+   - Add MikkTSpace tangent generation
+   - Understand normal encoding/decoding in shaders
 
-## How to Use These Documents
+## Organization
 
-**For Architecture Understanding:**
-- Read `niagara-editor-ui-patterns.md` Part 1-7 for complete UI architecture
-- Understand the three-layer structure (System → Emitter → Module)
-- Learn the property metadata system used by Niagara
+All documents in this directory follow the same structure:
+1. **Executive Summary** — key findings
+2. **Technical Deep Dive** — algorithm, code, implementation details
+3. **Comparison** — vs other engines / industry standards
+4. **UzEngine Recommendations** — how to adapt insights
 
-**For Data Flow Understanding:**
-- Read `vfx-parameter-ui-to-shader.md` for complete parameter pipeline
-- Understand where validation happens (Stage 2: CPU)
-- Understand where GPU upload happens (Stage 3: Render Graph)
-- Verify shader integration (Stage 4: GPU)
+## Next Steps
 
-**For Implementation:**
-- Start with `vfx-parameter-ui-quickstart.md`
-- Define your parameter categories
-- Implement ImGui sliders using the widget patterns
-- Create the constant buffer struct
-- Integrate with render graph upload
+### For Rendering Quality
+1. Read ue5-rendering-cvars-reference.md — understand available CVars
+2. Read uzengine-cvar-implementation-guide.md — learn the pattern
+3. Read cvar-architecture-antipatterns.md — know what to avoid
+4. Pick a feature and follow all 7 steps from the guide
+5. Test at runtime — change CVar, verify result next frame
 
-## Key Patterns Extracted
+### For Mesh Import & Shading
+1. Read godot4-normal-smoothing-analysis.md Section 1-3
+2. Follow Section 11 (Recommendations) to implement smoothing groups
+3. Integrate into FBX importer
+4. Test with sample meshes
 
-### Property Organization (Metadata-Driven)
-```cpp
-UPROPERTY(EditAnywhere, Category = "Spawn", meta = (
-    ClampMin = 0,
-    UIMin = 0,
-    UIMax = 1000,
-    DisplayName = "Particles Per Second"
-))
-float SpawnRate = 10.0f;
-```
+## Document Statistics
 
-### Real-Time Update Flow
-```
-ImGui change → Mark dirty → Next frame:
-  ├─ CPU: Decide restart vs live update
-  ├─ Render Graph: Build CB from emitter params
-  ├─ RHI: Upload CB to GPU
-  └─ Shader: Read CB, apply to particles
-```
-
-### Restart vs Live Update
-- **Restart** (spawn rate, lifetime, size, blend) — Kill particles, respawn
-- **Live update** (gravity, drag, wind) — Update CB, particles continue with new forces
-
-## File Locations
-
-```
-docs/analysis/
-├── niagara-editor-ui-patterns.md           (2500 lines, complete reference)
-├── dataflow/
-│   └── vfx-parameter-ui-to-shader.md       (600 lines, data flow trace)
-└── README.md                                (this file)
-
-docs/guides/
-└── vfx-parameter-ui-quickstart.md          (600 lines, implementation checklist)
-```
-
-## References
-
-Source files analyzed:
-- `Engine/Plugins/FX/Niagara/Source/NiagaraEditor/Private/NiagaraEmitterDetailsCustomization.cpp`
-  - Property categorization, edit conditions, callback system
-- `Engine/Plugins/FX/Niagara/Source/Niagara/Classes/NiagaraEmitter.h` (600+ lines)
-  - FVersionedNiagaraEmitterData with all emitter properties
-- `Engine/Plugins/FX/Niagara/Source/NiagaraEditor/Private/Widgets/SNiagaraSystemUserParameters.cpp`
-  - User parameter UI pattern
-- `Engine/Plugins/FX/Niagara/Source/NiagaraEditor/Public/ViewModels/NiagaraParameterPanelViewModel.h`
-  - Parameter management architecture
-
----
-
-**Status:** Complete. All three documents are production-ready and suitable for:
-- Architecture design reviews
-- Implementation reference during coding
-- Training/onboarding documentation
-- API design validation
-
-See the individual documents for detailed analysis.
+| Document | Lines | Focus | Industry Ref |
+|----------|-------|-------|--------------|
+| ue5-rendering-cvars-reference.md | 608 | UE5 1,000+ CVars | UE 5.6 |
+| uzengine-cvar-implementation-guide.md | 482 | Implementation pattern | UE 5.6 |
+| cvar-architecture-antipatterns.md | 577 | Anti-patterns | General |
+| ue5-normal-smoothing-and-tangent-generation.md | 680+ | Mesh normal/tangent import | UE 5.6, MikkTSpace |
+| ue5-ssr-architecture.md | 450+ | Screen-space reflection | UE 5.6 |
+| **Total** | **2,797+** | Complete reference | Multiple |

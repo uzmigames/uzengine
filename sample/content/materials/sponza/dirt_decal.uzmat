@@ -1,0 +1,50 @@
+{
+    "version": 1,
+    "name": "dirt_decal",
+    "domain": "Surface",
+    "shadingModel": "DefaultLit",
+    "blendMode": "Masked",
+    "twoSided": true,
+    "expressions": [
+        {
+            "id": 1,
+            "type": "PBROutput",
+            "inputs": [
+                {
+                    "dstPin": "BaseColor",
+                    "srcExpr": 2,
+                    "srcPin": "RGBA"
+                },
+                {
+                    "dstPin": "Opacity",
+                    "srcExpr": 2,
+                    "srcPin": "A"
+                }
+            ],
+            "floatParams": {
+                "alphaClipThreshold": 0
+            }
+        },
+        {
+            "id": 2,
+            "type": "TextureSample",
+            "name": "Albedo",
+            "stringParams": {
+                "texturePath": "textures/sponza/dirt_decal_baseColor.png"
+            }
+        }
+    ],
+    "params": {
+        "roughnessMultiplier": 0.55,
+        "metallicMultiplier": 0.0,
+        "baseColorTint": [
+            1.05,
+            1.03,
+            1.0
+        ],
+        "normalStrength": 1.0,
+        "aoMultiplier": 1.0,
+        "emissiveMultiplier": 1.0,
+        "specularMultiplier": 1.0
+    }
+}

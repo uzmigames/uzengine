@@ -107,3 +107,8 @@ the SoA particle buffers; the render pass issues a single
       Computer Animation"` for orientation alignment.
 - [ ] 8.2 Update `mesh_render_module.h` doc comment to describe the two-pass
       design (CS transform generation → DrawIndexedInstancedIndirect).
+
+## 9. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 9.1 Update or create documentation covering the implementation
+- [ ] 9.2 Write tests covering the new behavior
+- [ ] 9.3 Run tests and confirm they pass

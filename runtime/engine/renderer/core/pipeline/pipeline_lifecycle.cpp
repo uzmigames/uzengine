@@ -115,6 +115,7 @@ void PipelineLibrary::Shutdown() {
     destroyPipeline(m_lighting);
     destroyPipeline(m_gbufferDebug);
     destroyPipeline(m_debugView);
+    destroyPipeline(m_pathTracer);
     destroyPipeline(m_shadowDepth);
     destroyPipeline(m_shadowDepthBindless);
     destroyPipeline(m_gbufferInstanced);
@@ -124,10 +125,6 @@ void PipelineLibrary::Shutdown() {
     destroyPipeline(m_heightFog);
     destroyPipeline(m_cloudComposite);
     destroyPipeline(m_transmittanceLut);
-    destroyPipeline(m_singleScatterLut);
-    destroyPipeline(m_scatteringDensity);
-    destroyPipeline(m_indirectScattering);
-    destroyPipeline(m_irradianceLut);
     destroyPipeline(m_apVolume);
     destroyPipeline(m_skyCubemapCapture);
     destroyPipeline(m_skyCubemapCapturePSPipeline);
@@ -158,12 +155,14 @@ void PipelineLibrary::Shutdown() {
 
     destroyShader(m_meshVS);
     destroyShader(m_meshPS);
+    destroyShader(m_translucentPS);
     destroyShader(m_fullscreenVS);
     destroyShader(m_gbufferPS);
     destroyShader(m_lightingPS);
     destroyShader(m_pixelDebugCS);
     destroyShader(m_gbufferDebugPS);
     destroyShader(m_debugViewPS);
+    destroyShader(m_pathTracerPS);
     destroyShader(m_instancedMeshVS);
     destroyShader(m_instancedShadowVS);
     destroyShader(m_shadowVS);
@@ -188,11 +187,6 @@ void PipelineLibrary::Shutdown() {
     destroyShader(m_dofSetupCS);
     destroyShader(m_dofBlurCS);
     destroyShader(m_velocityPS);
-    destroyShader(m_multiScatterLutCS);
-    destroyShader(m_singleScatterLutCS);
-    destroyShader(m_scatteringDensityCS);
-    destroyShader(m_indirectScatteringCS);
-    destroyShader(m_irradianceLutCS);
     destroyShader(m_fxaaPS);
 
     m_psoCache.Shutdown();
@@ -286,11 +280,33 @@ bool PipelineLibrary::EnsureDebugViewPixelShader() {
     return true;
 }
 
+bool PipelineLibrary::EnsurePathTracerPixelShader() {
+    if (!m_pathTracerPS.IsValid()) {
+        m_pathTracerPS = m_shaderMgr->CreateShader(EngineShader::PathTracerPS, RHIShaderStage::Pixel);
+        if (!m_pathTracerPS.IsValid()) {
+            UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile PathTracerPS");
+            return false;
+        }
+    }
+    return true;
+}
+
 bool PipelineLibrary::EnsureForwardPixelShader() {
     if (!m_meshPS.IsValid()) {
         m_meshPS = m_shaderMgr->CreateShader(EngineShader::MeshPS, RHIShaderStage::Pixel);
         if (!m_meshPS.IsValid()) {
             UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile MeshPS");
+            return false;
+        }
+    }
+    return true;
+}
+
+bool PipelineLibrary::EnsureTranslucentPixelShader() {
+    if (!m_translucentPS.IsValid()) {
+        m_translucentPS = m_shaderMgr->CreateShader(EngineShader::TranslucentPS, RHIShaderStage::Pixel);
+        if (!m_translucentPS.IsValid()) {
+            UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile TranslucentPS");
             return false;
         }
     }
@@ -411,9 +427,12 @@ uint32_t PipelineLibrary::WarmupAll() {
     // warmupOptional(GetGpuCull(), "GpuCull");
     // warmupOptional(GetDfsCullObjects(), "DFS_CullObjects");
     // warmupOptional(GetDfsConeTrace(), "DFS_ConeTrace");
+    warmup(GetSsrTileClassify(), "SSR_TileClassify");
+    warmup(GetSsrPrepareIndirect(), "SSR_PrepareIndirect");
     warmup(GetSsrTrace(), "SSR_Trace");
     warmup(GetSsrResolve(), "SSR_Resolve");
     warmup(GetSsrTemporal(), "SSR_Temporal");
+    warmup(GetSsrSpatialDenoise(), "SSR_SpatialDenoise");
     warmup(GetMotionBlur(), "MotionBlur");
     warmup(GetMotionBlurTileMax(), "MotionBlurTileMax");
     warmup(GetMotionBlurNeighborMax(), "MotionBlurNeighborMax");
@@ -421,7 +440,6 @@ uint32_t PipelineLibrary::WarmupAll() {
     warmup(GetCasSharpen(), "CAS_Sharpen");
 
     // ── Atmosphere / LUT pipelines ──────────────────────────────────────
-    warmup(GetMultiScatterLut(), "MultiScatterLUT");
     warmup(GetAerialPerspectiveVolume(), "AerialPerspectiveVolume");
 
     // ── Tonemap / Color grading ─────────────────────────────────────────
@@ -465,6 +483,10 @@ uint32_t PipelineLibrary::WarmupAll() {
     warmup(GetSsgiSpatialDenoise(), "SSGI_SpatialDenoise");
     warmup(GetSsgiTemporalAccum(), "SSGI_TemporalAccum");
     warmup(GetSsgiBilateralUpsample(), "SSGI_BilateralUpsample");
+    warmup(GetSvgfReproject(), "SVGF_Reproject");
+    warmup(GetSvgfFilterMoments(), "SVGF_FilterMoments");
+    warmup(GetSvgfAtrous(), "SVGF_ATrous");
+    warmup(GetGodRays(), "GodRays");
     warmup(GetGdfComposite(), "GDF_Composite");
     warmup(GetMeshSdfBake(), "MeshSDF_Bake");
     warmup(GetRadianceCacheTrace(), "RadianceCache_Trace");

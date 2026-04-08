@@ -49,7 +49,7 @@ public:
     // ── Bake parameters (public for external reference) ──────────────────
     static constexpr uint32_t kBRDFLutSize          = 512;
     static constexpr uint32_t kIrradianceSize       = 64;
-    static constexpr uint32_t kPrefilteredSize      = 1024;
+    static constexpr uint32_t kPrefilteredSize      = 256;
     static constexpr uint32_t kPrefilteredMipLevels = 8;
     static constexpr uint32_t kThreadGroupSize      = 8;
 
@@ -85,9 +85,15 @@ public:
     [[nodiscard]] uint32_t BakeBRDFLut();
 
     /// Result of environment cubemap baking.
+    ///
+    /// The caller owns the returned textures and is responsible for calling
+    /// `device->DestroyTexture()` when they are no longer needed. The baker
+    /// does NOT track or auto-destroy these textures.
     struct BakeResult {
         uint32_t irradianceSrvIndex  = UINT32_MAX; ///< SRV index for irradiance cubemap (diffuse IBL).
         uint32_t prefilteredSrvIndex = UINT32_MAX; ///< SRV index for prefiltered specular cubemap.
+        RHITextureHandle irradianceTexture;         ///< Texture handle for irradiance cubemap (caller-owned).
+        RHITextureHandle prefilteredTexture;        ///< Texture handle for prefiltered cubemap (caller-owned).
     };
 
     /// Bakes irradiance and prefiltered specular cubemaps from a source environment cubemap.
@@ -109,6 +115,23 @@ public:
     /// on failure (error logged).
     [[nodiscard]] BakeResult BakeEnvironment(uint32_t envCubemapSrvIndex,
                                              RHITextureHandle envCubemapTexture = {});
+
+    /// Result of irradiance-only bake.
+    struct IrradianceResult {
+        uint32_t irradianceSrvIndex = UINT32_MAX; ///< SRV index for irradiance cubemap.
+        RHITextureHandle irradianceTexture;        ///< Texture handle (caller-owned).
+    };
+
+    /// Bakes only the irradiance cubemap (64x64, cheap) from a source cubemap.
+    ///
+    /// Use this when the prefiltered specular is already available (e.g. PMREM
+    /// atlas). Skips the expensive per-mip prefilter dispatch entirely.
+    ///
+    /// # Arguments
+    /// * `envCubemapSrvIndex` — SRV index of the source cubemap.
+    /// * `envCubemapTexture` — Texture handle (for SM5 barrier).
+    [[nodiscard]] IrradianceResult BakeIrradianceOnly(uint32_t envCubemapSrvIndex,
+                                                       RHITextureHandle envCubemapTexture = {});
 
     /// Result of equirectangular-to-cubemap conversion.
     struct EquirectResult {
@@ -141,6 +164,43 @@ public:
     [[nodiscard]] EquirectResult EquirectToCubemap(uint32_t equirectSrvIndex,
                                                     uint32_t cubemapSize = 512);
 
+    /// Result of PMREM atlas to cubemap conversion.
+    struct PmremResult {
+        RHITextureHandle cubemap;          ///< Mipmapped cubemap (6-slice Texture2DArray, RGBA16F).
+        uint32_t srvIndex = UINT32_MAX;    ///< SRV heap index for the cubemap.
+    };
+
+    /// Extracts a standard cubemap with mip chain from a Three.js CubeUV PMREM atlas.
+    ///
+    /// The PMREM atlas contains prefiltered environment faces at multiple roughness
+    /// LODs packed in a 3-wide x 2-tall grid per LOD band. This method dispatches
+    /// `pmrem_to_cubemap_cs.hlsl` to extract each LOD into a cubemap mip level.
+    ///
+    /// The output cubemap has `lodCount` mip levels, with mip 0 = faceSize and
+    /// each subsequent mip halved. Since PMREM is already prefiltered, the caller
+    /// can use this directly as the prefiltered specular cubemap (skipping the
+    /// expensive prefilter bake).
+    ///
+    /// # Arguments
+    /// * `atlasSrvIndex` — SRV index of the PMREM atlas (2D, RGBA16F).
+    /// * `atlasTexture` — Texture handle of the atlas (for SM5 binding).
+    /// * `atlasWidth` — Total atlas width in pixels.
+    /// * `atlasHeight` — Total atlas height in pixels.
+    /// * `faceSize` — Per-face resolution at LOD 0 (e.g. 512).
+    /// * `lodCount` — Number of LOD levels in the atlas.
+    ///
+    /// # Returns
+    /// `PmremResult` with valid cubemap and SRV on success.
+    ///
+    /// # Ownership
+    /// Caller owns the returned cubemap texture.
+    [[nodiscard]] PmremResult PmremToCubemap(uint32_t atlasSrvIndex,
+                                              RHITextureHandle atlasTexture,
+                                              uint32_t atlasWidth,
+                                              uint32_t atlasHeight,
+                                              uint32_t faceSize,
+                                              uint32_t lodCount);
+
     /// Returns true if the BRDF LUT has been baked.
     [[nodiscard]] bool HasBRDFLut() const noexcept { return m_brdfLutSrvIndex != UINT32_MAX; }
 
@@ -151,10 +211,12 @@ public:
     [[nodiscard]] RHITextureHandle GetBRDFLutTexture() const noexcept { return m_brdfLutTexture; }
 
     /// Returns the irradiance cubemap texture handle (for SM5 texture binding).
-    [[nodiscard]] RHITextureHandle GetIrradianceTexture() const noexcept { return m_irradianceTexture; }
+    /// @deprecated Callers should use BakeResult::irradianceTexture instead.
+    [[nodiscard]] RHITextureHandle GetIrradianceTexture() const noexcept { return m_lastIrradianceTexture; }
 
     /// Returns the prefiltered specular cubemap texture handle (for SM5 texture binding).
-    [[nodiscard]] RHITextureHandle GetPrefilteredTexture() const noexcept { return m_prefilteredTexture; }
+    /// @deprecated Callers should use BakeResult::prefilteredTexture instead.
+    [[nodiscard]] RHITextureHandle GetPrefilteredTexture() const noexcept { return m_lastPrefilteredTexture; }
 
     /// Destroys all GPU resources and pipelines owned by the baker.
     ///
@@ -177,6 +239,9 @@ private:
     /// Ensures the equirect-to-cubemap compute pipeline is compiled and ready.
     [[nodiscard]] bool EnsureEquirectPipeline();
 
+    /// Ensures the PMREM-to-cubemap compute pipeline is compiled and ready.
+    [[nodiscard]] bool EnsurePmremPipeline();
+
     IRHIDevice*    m_device    = nullptr;
     ShaderManager* m_shaderMgr = nullptr;
     bool           m_initialized = false;
@@ -186,20 +251,25 @@ private:
     RHIPipelineHandle m_irradiancePipeline = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_prefilterPipeline  = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_equirectPipeline   = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_pmremPipeline      = RHIPipelineHandle::Invalid();
 
     // ── Shader handles ──────────────────────────────────────────────────
     RHIShaderHandle m_brdfLutCS    = RHIShaderHandle::Invalid();
     RHIShaderHandle m_irradianceCS = RHIShaderHandle::Invalid();
     RHIShaderHandle m_prefilterCS  = RHIShaderHandle::Invalid();
     RHIShaderHandle m_equirectCS   = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_pmremCS      = RHIShaderHandle::Invalid();
 
     // ── BRDF LUT texture (persistent, baked once) ───────────────────────
     RHITextureHandle m_brdfLutTexture = RHITextureHandle::Invalid();
     uint32_t         m_brdfLutSrvIndex = UINT32_MAX;
 
-    // ── Environment bake textures (persistent, re-baked on sky change) ──
-    RHITextureHandle m_irradianceTexture  = RHITextureHandle::Invalid();
-    RHITextureHandle m_prefilteredTexture = RHITextureHandle::Invalid();
+    // ── Last baked textures (non-owning reference for SM5 GetXxxTexture()) ──
+    // The baker no longer owns these — callers own the BakeResult textures.
+    // These are kept only for backwards compatibility with GetIrradianceTexture()/
+    // GetPrefilteredTexture() accessors used by SM5 binding paths.
+    RHITextureHandle m_lastIrradianceTexture  = RHITextureHandle::Invalid();
+    RHITextureHandle m_lastPrefilteredTexture = RHITextureHandle::Invalid();
 
 };
 

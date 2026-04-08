@@ -11,6 +11,7 @@
 #include "dx12_fence.h"
 #include "dx12_command_list.h"
 #include "dx12_resource_creation.h"
+#include "dx12_compat.h"
 
 #include "D3D12MemAlloc.h"
 #include "d3dx12.h"
@@ -281,6 +282,16 @@ bool DX12Device::Init(const RHIDeviceDesc& desc) {
             UZ_LOG(RHI, Info, "D3D12 info queue configured: suppressed {} noisy IDs, limit=1024 messages",
                    _countof(suppressedIds));
         }
+    }
+
+    // Detect DXR (ray tracing) support
+    {
+        D3D12_FEATURE_DATA_D3D12_OPTIONS5 opts5 = {};
+        if (SUCCEEDED(m_device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5,
+                                                     &opts5, sizeof(opts5)))) {
+            m_supportsRayTracing = (opts5.RaytracingTier >= D3D12_RAYTRACING_TIER_1_0);
+        }
+        UZ_LOG(RHI, Info, "DXR ray tracing: {}", m_supportsRayTracing ? "supported" : "not supported");
     }
 
     // Initialize GPU timestamp profiler (non-fatal)
@@ -1351,6 +1362,446 @@ const std::vector<GpuTimingResult>& DX12Device::GpuProfilerGetResults() const {
 
 float DX12Device::GpuProfilerGetFrameTimeMs() const {
     return m_gpuProfiler.GetFrameTimeMs();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Ray Tracing — BLAS / TLAS / RT Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+
+/// Helper to convert RHI AS build flags to DX12 build flags.
+D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS ToDX12ASBuildFlags(RHIASBuildFlags flags) {
+    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS result =
+        D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_NONE;
+    if (HasFlag(flags, RHIASBuildFlags::AllowUpdate))
+        result |= D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_UPDATE;
+    if (HasFlag(flags, RHIASBuildFlags::AllowCompaction))
+        result |= D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_COMPACTION;
+    if (HasFlag(flags, RHIASBuildFlags::PreferFastTrace))
+        result |= D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
+    if (HasFlag(flags, RHIASBuildFlags::PreferFastBuild))
+        result |= D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_BUILD;
+    return result;
+}
+
+/// Helper to convert RHIFormat to DXGI_FORMAT for vertex positions.
+DXGI_FORMAT ToDX12VertexFormat(RHIFormat format) {
+    switch (format) {
+        case RHIFormat::RGB32Float:  return DXGI_FORMAT_R32G32B32_FLOAT;
+        case RHIFormat::RG32Float:   return DXGI_FORMAT_R32G32_FLOAT;
+        case RHIFormat::RGBA32Float: return DXGI_FORMAT_R32G32B32A32_FLOAT;
+        case RHIFormat::RGBA16Float: return DXGI_FORMAT_R16G16B16A16_FLOAT;
+        default:                     return DXGI_FORMAT_R32G32B32_FLOAT;
+    }
+}
+
+/// Helper to convert RHIIndexFormat to DXGI_FORMAT.
+DXGI_FORMAT ToDX12IndexFormat(RHIIndexFormat format) {
+    return format == RHIIndexFormat::Uint16 ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT;
+}
+
+} // anonymous namespace
+
+RHIBLASHandle DX12Device::CreateBLAS(const RHIBLASDesc& desc) {
+    if (!m_supportsRayTracing || !desc.geometries || desc.geometryCount == 0) {
+        return RHIBLASHandle::Invalid();
+    }
+
+    // Build DX12 geometry descriptions
+    std::vector<D3D12_RAYTRACING_GEOMETRY_DESC> geomDescs(desc.geometryCount);
+    for (uint32_t i = 0; i < desc.geometryCount; ++i) {
+        const auto& src = desc.geometries[i];
+        auto& dst = geomDescs[i];
+        dst.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
+        dst.Flags = src.isOpaque ? D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE
+                                 : D3D12_RAYTRACING_GEOMETRY_FLAG_NONE;
+        auto& tri = dst.Triangles;
+        tri.VertexBuffer.StartAddress  = GetBufferGPUAddress(src.vertexBuffer);
+        tri.VertexBuffer.StrideInBytes = src.vertexStride;
+        tri.VertexFormat               = ToDX12VertexFormat(src.vertexFormat);
+        tri.VertexCount                = src.vertexCount;
+        if (src.indexCount > 0 && src.indexBuffer.IsValid()) {
+            tri.IndexBuffer = GetBufferGPUAddress(src.indexBuffer);
+            tri.IndexFormat = ToDX12IndexFormat(src.indexFormat);
+            tri.IndexCount  = src.indexCount;
+        }
+        tri.Transform3x4 = 0; // no per-geometry transform
+    }
+
+    // Query prebuild info for buffer sizes
+    auto dx12BuildFlags = ToDX12ASBuildFlags(desc.buildFlags);
+
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs = {};
+    inputs.Type          = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
+    inputs.Flags         = dx12BuildFlags;
+    inputs.NumDescs      = desc.geometryCount;
+    inputs.DescsLayout   = D3D12_ELEMENTS_LAYOUT_ARRAY;
+    inputs.pGeometryDescs = geomDescs.data();
+
+    ComPtr<ID3D12Device5> device5;
+    if (FAILED(m_device.As(&device5))) {
+        UZ_LOG(RHI, Error, "CreateBLAS: Failed to query ID3D12Device5 — DXR not supported");
+        return RHIBLASHandle::Invalid();
+    }
+
+    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO prebuild = {};
+    device5->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &prebuild);
+
+    // Allocate result buffer
+    D3D12_RESOURCE_DESC resultDesc = {};
+    resultDesc.Dimension          = D3D12_RESOURCE_DIMENSION_BUFFER;
+    resultDesc.Width              = prebuild.ResultDataMaxSizeInBytes;
+    resultDesc.Height             = 1;
+    resultDesc.DepthOrArraySize   = 1;
+    resultDesc.MipLevels          = 1;
+    resultDesc.SampleDesc.Count   = 1;
+    resultDesc.Layout             = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    resultDesc.Flags              = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+
+    D3D12MA::ALLOCATION_DESC allocDesc = {};
+    allocDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
+
+    DX12BLAS blas = {};
+    blas.resultSizeBytes  = prebuild.ResultDataMaxSizeInBytes;
+    blas.scratchSizeBytes = prebuild.ScratchDataSizeInBytes;
+    blas.geometryDescs    = std::move(geomDescs);
+    blas.buildFlags       = dx12BuildFlags;
+
+    HRESULT hr = m_allocator->CreateResource(
+        &allocDesc, &resultDesc,
+        D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE,
+        nullptr,
+        &blas.resultAllocation,
+        IID_PPV_ARGS(&blas.resultResource));
+    if (FAILED(hr)) {
+        UZ_LOG(RHI, Error, "CreateBLAS: Failed to allocate result buffer ({} bytes), hr=0x{:08X}",
+               blas.resultSizeBytes, static_cast<uint32_t>(hr));
+        return RHIBLASHandle::Invalid();
+    }
+
+    // Allocate scratch buffer
+    D3D12_RESOURCE_DESC scratchDesc = resultDesc;
+    scratchDesc.Width = prebuild.ScratchDataSizeInBytes;
+
+    hr = m_allocator->CreateResource(
+        &allocDesc, &scratchDesc,
+        D3D12_RESOURCE_STATE_COMMON,
+        nullptr,
+        &blas.scratchAllocation,
+        IID_PPV_ARGS(&blas.scratchResource));
+    if (FAILED(hr)) {
+        UZ_LOG(RHI, Error, "CreateBLAS: Failed to allocate scratch buffer ({} bytes), hr=0x{:08X}",
+               blas.scratchSizeBytes, static_cast<uint32_t>(hr));
+        blas.resultAllocation->Release();
+        return RHIBLASHandle::Invalid();
+    }
+
+    if (desc.debugName) {
+        std::wstring wname(desc.debugName, desc.debugName + strlen(desc.debugName));
+        blas.resultResource->SetName((wname + L"_Result").c_str());
+        blas.scratchResource->SetName((wname + L"_Scratch").c_str());
+    }
+
+    uint32_t generation = 0;
+    uint32_t index = m_blasPool.Allocate(generation);
+    auto* slot = m_blasPool.Get(index, generation);
+    if (!slot) {
+        UZ_LOG(RHI, Error, "CreateBLAS: pool allocation failed");
+        blas.scratchAllocation->Release();
+        blas.resultAllocation->Release();
+        return RHIBLASHandle::Invalid();
+    }
+    *slot = std::move(blas);
+    slot->generation = generation;
+
+    UZ_LOG(RHI, Info, "Created BLAS '{}': result={}B, scratch={}B",
+           desc.debugName ? desc.debugName : "(unnamed)",
+           prebuild.ResultDataMaxSizeInBytes, prebuild.ScratchDataSizeInBytes);
+    return {index, generation};
+}
+
+void DX12Device::DestroyBLAS(RHIBLASHandle handle) {
+    auto* blas = m_blasPool.Get(handle.index, handle.generation);
+    if (!blas) return;
+
+    if (blas->scratchAllocation) blas->scratchAllocation->Release();
+    if (blas->resultAllocation)  blas->resultAllocation->Release();
+    m_blasPool.Free(handle.index);
+}
+
+uint64_t DX12Device::GetBLASGPUAddress(RHIBLASHandle handle) const {
+    const auto* blas = m_blasPool.Get(handle.index, handle.generation);
+    if (!blas || !blas->resultResource) return 0;
+    return blas->resultResource->GetGPUVirtualAddress();
+}
+
+RHITLASHandle DX12Device::CreateTLAS(const RHITLASDesc& desc) {
+    if (!m_supportsRayTracing || desc.maxInstanceCount == 0) {
+        return RHITLASHandle::Invalid();
+    }
+
+    auto dx12BuildFlags = ToDX12ASBuildFlags(desc.buildFlags);
+
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs = {};
+    inputs.Type          = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
+    inputs.Flags         = dx12BuildFlags;
+    inputs.NumDescs      = desc.maxInstanceCount;
+    inputs.DescsLayout   = D3D12_ELEMENTS_LAYOUT_ARRAY;
+
+    ComPtr<ID3D12Device5> device5;
+    if (FAILED(m_device.As(&device5))) {
+        return RHITLASHandle::Invalid();
+    }
+
+    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO prebuild = {};
+    device5->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &prebuild);
+
+    // Allocate result buffer
+    D3D12_RESOURCE_DESC resultDesc = {};
+    resultDesc.Dimension          = D3D12_RESOURCE_DIMENSION_BUFFER;
+    resultDesc.Width              = prebuild.ResultDataMaxSizeInBytes;
+    resultDesc.Height             = 1;
+    resultDesc.DepthOrArraySize   = 1;
+    resultDesc.MipLevels          = 1;
+    resultDesc.SampleDesc.Count   = 1;
+    resultDesc.Layout             = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    resultDesc.Flags              = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+
+    D3D12MA::ALLOCATION_DESC allocDesc = {};
+    allocDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
+
+    DX12TLAS tlas = {};
+    tlas.resultSizeBytes  = prebuild.ResultDataMaxSizeInBytes;
+    tlas.scratchSizeBytes = prebuild.ScratchDataSizeInBytes;
+    tlas.maxInstanceCount = desc.maxInstanceCount;
+    tlas.buildFlags       = dx12BuildFlags;
+
+    HRESULT hr = m_allocator->CreateResource(
+        &allocDesc, &resultDesc,
+        D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE,
+        nullptr,
+        &tlas.resultAllocation,
+        IID_PPV_ARGS(&tlas.resultResource));
+    if (FAILED(hr)) {
+        UZ_LOG(RHI, Error, "CreateTLAS: Failed to allocate result buffer, hr=0x{:08X}",
+               static_cast<uint32_t>(hr));
+        return RHITLASHandle::Invalid();
+    }
+
+    // Allocate scratch buffer
+    D3D12_RESOURCE_DESC scratchDesc = resultDesc;
+    scratchDesc.Width = prebuild.ScratchDataSizeInBytes;
+
+    hr = m_allocator->CreateResource(
+        &allocDesc, &scratchDesc,
+        D3D12_RESOURCE_STATE_COMMON,
+        nullptr,
+        &tlas.scratchAllocation,
+        IID_PPV_ARGS(&tlas.scratchResource));
+    if (FAILED(hr)) {
+        UZ_LOG(RHI, Error, "CreateTLAS: Failed to allocate scratch buffer, hr=0x{:08X}",
+               static_cast<uint32_t>(hr));
+        tlas.resultAllocation->Release();
+        return RHITLASHandle::Invalid();
+    }
+
+    // Create SRV for shader access (RaytracingAccelerationStructure SRV type)
+    tlas.srvIndex = m_srvUavAllocator.Allocate();
+    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+    srvDesc.Format                                   = DXGI_FORMAT_UNKNOWN;
+    srvDesc.ViewDimension                            = D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE;
+    srvDesc.Shader4ComponentMapping                  = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srvDesc.RaytracingAccelerationStructure.Location = tlas.resultResource->GetGPUVirtualAddress();
+
+    auto cpuHandle = uz::dx12::GetCPUStart(m_cbvSrvUavHeap.Get());
+    cpuHandle.ptr += static_cast<SIZE_T>(tlas.srvIndex) *
+                     m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    m_device->CreateShaderResourceView(nullptr, &srvDesc, cpuHandle);
+
+    if (desc.debugName) {
+        std::wstring wname(desc.debugName, desc.debugName + strlen(desc.debugName));
+        tlas.resultResource->SetName((wname + L"_Result").c_str());
+        tlas.scratchResource->SetName((wname + L"_Scratch").c_str());
+    }
+
+    uint32_t generation = 0;
+    uint32_t index = m_tlasPool.Allocate(generation);
+    auto* slot = m_tlasPool.Get(index, generation);
+    if (!slot) {
+        UZ_LOG(RHI, Error, "CreateTLAS: pool allocation failed");
+        if (tlas.srvIndex != UINT32_MAX) m_srvUavAllocator.Free(tlas.srvIndex);
+        tlas.scratchAllocation->Release();
+        tlas.resultAllocation->Release();
+        return RHITLASHandle::Invalid();
+    }
+    uint32_t savedSrvIndex = tlas.srvIndex;
+    *slot = std::move(tlas);
+    slot->generation = generation;
+
+    UZ_LOG(RHI, Info, "Created TLAS '{}': maxInstances={}, result={}B, scratch={}B, srvIndex={}",
+           desc.debugName ? desc.debugName : "(unnamed)",
+           desc.maxInstanceCount, prebuild.ResultDataMaxSizeInBytes,
+           prebuild.ScratchDataSizeInBytes, savedSrvIndex);
+    return {index, generation};
+}
+
+void DX12Device::DestroyTLAS(RHITLASHandle handle) {
+    auto* tlas = m_tlasPool.Get(handle.index, handle.generation);
+    if (!tlas) return;
+
+    if (tlas->srvIndex != UINT32_MAX) {
+        m_srvUavAllocator.Free(tlas->srvIndex);
+    }
+    if (tlas->scratchAllocation) tlas->scratchAllocation->Release();
+    if (tlas->resultAllocation)  tlas->resultAllocation->Release();
+    m_tlasPool.Free(handle.index);
+}
+
+uint32_t DX12Device::GetTLASSRVIndex(RHITLASHandle handle) const {
+    const auto* tlas = m_tlasPool.Get(handle.index, handle.generation);
+    if (!tlas) return UINT32_MAX;
+    return tlas->srvIndex;
+}
+
+RHIRTPipelineHandle DX12Device::CreateRaytracingPipeline(const RHIRTPipelineDesc& desc) {
+    if (!m_supportsRayTracing || !desc.libraryShaders || desc.libraryCount == 0) {
+        return RHIRTPipelineHandle::Invalid();
+    }
+
+    ComPtr<ID3D12Device5> device5;
+    if (FAILED(m_device.As(&device5))) {
+        return RHIRTPipelineHandle::Invalid();
+    }
+
+    // Count subobjects: libraries + hit groups + shader config + pipeline config + global root sig
+    const uint32_t subobjectCount = desc.libraryCount + desc.hitGroupCount + 3;
+    std::vector<D3D12_STATE_SUBOBJECT> subobjects(subobjectCount);
+    uint32_t idx = 0;
+
+    // Storage for DXIL library descs (must stay alive until CreateStateObject)
+    std::vector<D3D12_DXIL_LIBRARY_DESC> libDescs(desc.libraryCount);
+    for (uint32_t i = 0; i < desc.libraryCount; ++i) {
+        auto shaderHandle = desc.libraryShaders[i];
+        auto* shader = m_shaderPool.Get(shaderHandle.index, shaderHandle.generation);
+        if (!shader) {
+            UZ_LOG(RHI, Error, "CreateRaytracingPipeline: Invalid library shader handle at index {}", i);
+            return RHIRTPipelineHandle::Invalid();
+        }
+        libDescs[i].DXILLibrary.pShaderBytecode = shader->bytecode.data();
+        libDescs[i].DXILLibrary.BytecodeLength  = shader->bytecode.size();
+        libDescs[i].NumExports                  = 0; // export all entry points
+        libDescs[i].pExports                    = nullptr;
+
+        subobjects[idx].Type  = D3D12_STATE_SUBOBJECT_TYPE_DXIL_LIBRARY;
+        subobjects[idx].pDesc = &libDescs[i];
+        ++idx;
+    }
+
+    // Hit groups
+    std::vector<D3D12_HIT_GROUP_DESC> hitGroupDescs(desc.hitGroupCount);
+    for (uint32_t i = 0; i < desc.hitGroupCount; ++i) {
+        const auto& src = desc.hitGroups[i];
+        auto& dst = hitGroupDescs[i];
+        dst.HitGroupExport           = src.hitGroupName;
+        dst.Type                     = D3D12_HIT_GROUP_TYPE_TRIANGLES;
+        dst.ClosestHitShaderImport   = src.closestHitExport;
+        dst.AnyHitShaderImport       = src.anyHitExport;
+        dst.IntersectionShaderImport = src.intersectionExport;
+
+        subobjects[idx].Type  = D3D12_STATE_SUBOBJECT_TYPE_HIT_GROUP;
+        subobjects[idx].pDesc = &hitGroupDescs[i];
+        ++idx;
+    }
+
+    // Shader config (payload + attribute sizes)
+    D3D12_RAYTRACING_SHADER_CONFIG shaderConfig = {};
+    shaderConfig.MaxPayloadSizeInBytes   = desc.maxPayloadSizeInBytes;
+    shaderConfig.MaxAttributeSizeInBytes = desc.maxAttributeSizeInBytes;
+    subobjects[idx].Type  = D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_SHADER_CONFIG;
+    subobjects[idx].pDesc = &shaderConfig;
+    ++idx;
+
+    // Pipeline config (max recursion depth)
+    D3D12_RAYTRACING_PIPELINE_CONFIG pipelineConfig = {};
+    pipelineConfig.MaxTraceRecursionDepth = desc.maxRecursionDepth;
+    subobjects[idx].Type  = D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_PIPELINE_CONFIG;
+    subobjects[idx].pDesc = &pipelineConfig;
+    ++idx;
+
+    // Global root signature (use the same bindless root sig as graphics/compute)
+    D3D12_GLOBAL_ROOT_SIGNATURE globalRS = {};
+    globalRS.pGlobalRootSignature = m_rootSignature;
+    subobjects[idx].Type  = D3D12_STATE_SUBOBJECT_TYPE_GLOBAL_ROOT_SIGNATURE;
+    subobjects[idx].pDesc = &globalRS;
+    ++idx;
+
+    // Create state object
+    D3D12_STATE_OBJECT_DESC stateObjectDesc = {};
+    stateObjectDesc.Type            = D3D12_STATE_OBJECT_TYPE_RAYTRACING_PIPELINE;
+    stateObjectDesc.NumSubobjects   = idx;
+    stateObjectDesc.pSubobjects     = subobjects.data();
+
+    DX12RTPipeline rtPipeline = {};
+    HRESULT hr = device5->CreateStateObject(&stateObjectDesc,
+                                             IID_PPV_ARGS(&rtPipeline.stateObject));
+    if (FAILED(hr)) {
+        UZ_LOG(RHI, Error, "CreateRaytracingPipeline: CreateStateObject failed, hr=0x{:08X}",
+               static_cast<uint32_t>(hr));
+        return RHIRTPipelineHandle::Invalid();
+    }
+
+    // Query properties interface for shader identifier retrieval
+    hr = rtPipeline.stateObject->QueryInterface(IID_PPV_ARGS(&rtPipeline.properties));
+    if (FAILED(hr)) {
+        UZ_LOG(RHI, Error, "CreateRaytracingPipeline: Failed to query ID3D12StateObjectProperties");
+        rtPipeline.stateObject->Release();
+        return RHIRTPipelineHandle::Invalid();
+    }
+
+    uint32_t generation = 0;
+    uint32_t index = m_rtPipelinePool.Allocate(generation);
+    auto* slot = m_rtPipelinePool.Get(index, generation);
+    if (!slot) {
+        UZ_LOG(RHI, Error, "CreateRaytracingPipeline: pool allocation failed");
+        rtPipeline.properties->Release();
+        rtPipeline.stateObject->Release();
+        return RHIRTPipelineHandle::Invalid();
+    }
+    *slot = std::move(rtPipeline);
+    slot->generation = generation;
+
+    UZ_LOG(RHI, Info, "Created RT pipeline '{}' with {} libraries, {} hit groups",
+           desc.debugName ? desc.debugName : "(unnamed)",
+           desc.libraryCount, desc.hitGroupCount);
+    return {index, generation};
+}
+
+void DX12Device::DestroyRaytracingPipeline(RHIRTPipelineHandle handle) {
+    auto* pipeline = m_rtPipelinePool.Get(handle.index, handle.generation);
+    if (!pipeline) return;
+
+    if (pipeline->properties) pipeline->properties->Release();
+    if (pipeline->stateObject) pipeline->stateObject->Release();
+    m_rtPipelinePool.Free(handle.index);
+}
+
+bool DX12Device::GetShaderIdentifier(RHIRTPipelineHandle pipeline,
+                                     const wchar_t* exportName,
+                                     void* outIdentifier) {
+    auto* rtPipeline = m_rtPipelinePool.Get(pipeline.index, pipeline.generation);
+    if (!rtPipeline || !rtPipeline->properties || !exportName || !outIdentifier) {
+        return false;
+    }
+
+    const void* id = rtPipeline->properties->GetShaderIdentifier(exportName);
+    if (!id) {
+        UZ_LOG(RHI, Error, "GetShaderIdentifier: Export not found in RT pipeline");
+        return false;
+    }
+
+    memcpy(outIdentifier, id, kShaderIdentifierSizeInBytes);
+    return true;
 }
 
 // Factory functions moved to rhi_factory.cpp (unified dispatch for all backends).

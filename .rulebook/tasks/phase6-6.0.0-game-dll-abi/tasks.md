@@ -39,3 +39,8 @@
 - [ ] 7.1 Update `docs/engine/15-scripting/` with game.dll ABI documentation.
 - [ ] 7.2 Document GameContext function pointer table with signatures and semantics.
 - [ ] 7.3 Document hot-reload protocol and limitations.
+
+## 8. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 8.1 Update or create documentation covering the implementation
+- [ ] 8.2 Write tests covering the new behavior
+- [ ] 8.3 Run tests and confirm they pass

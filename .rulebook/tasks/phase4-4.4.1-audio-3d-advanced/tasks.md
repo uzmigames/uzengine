@@ -49,3 +49,8 @@
 
 - [ ] 9.1 Update `docs/engine/17-audio/` with 3D audio, streaming, occlusion, events.
 - [ ] 9.2 Document .uzevent format and audio event authoring.
+
+## 10. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 10.1 Update or create documentation covering the implementation
+- [ ] 10.2 Write tests covering the new behavior
+- [ ] 10.3 Run tests and confirm they pass

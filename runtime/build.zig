@@ -75,8 +75,12 @@ pub fn build(b: *std.Build) void {
         "engine/renderer/postprocess",
         "engine/renderer/passes/debug",
         "engine/renderer/passes/ibl",
+        "engine/renderer/passes/gi",
+        "engine/renderer/passes/pathtracing",
+        "engine/renderer/raytracing",
         "engine/asset",
         "engine/asset/formats",
+        "engine/asset/mesh",
         "engine/asset/importers",
         "engine/job",
         "engine/ecs",
@@ -148,6 +152,7 @@ pub fn build(b: *std.Build) void {
         tp ++ "fastgltf/include",
         tp ++ "fastgltf/deps/simdjson",
         tp ++ "meshoptimizer/src",
+        tp ++ "mikktspace",
         tp ++ "entt/single_include",
         tp ++ "luajit/src",
         tp ++ "ufbx",
@@ -231,6 +236,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/core", cpp_flags);
     addCppDir(runtime_mod, b, "engine/asset", cpp_flags);
     addCppDir(runtime_mod, b, "engine/asset/formats", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/asset/mesh", cpp_flags);
     addCppDir(runtime_mod, b, "engine/asset/importers", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/camera", cpp_flags);
@@ -253,6 +259,9 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/renderer/passes/debug", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/passes/vfx", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/passes/ibl", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer/passes/raytracing", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer/passes/gi", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer/passes/pathtracing", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/shadows", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/lighting", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/atmosphere", cpp_flags);
@@ -261,6 +270,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/renderer/ibl", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/gi", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/probes", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer/raytracing", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/scene", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/frame", cpp_flags);
     addCppDir(runtime_mod, b, "engine/job", cpp_flags);
@@ -375,6 +385,13 @@ pub fn build(b: *std.Build) void {
         .root = b.path(tp ++ "fastgltf/src"),
         .files = &.{ "fastgltf.cpp", "base64.cpp", "io.cpp" },
         .flags = &.{"-std=c++17"},
+    });
+
+    // Thirdparty — mikktspace (industry-standard tangent space generation)
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path(tp ++ "mikktspace"),
+        .files = &.{"mikktspace.c"},
+        .flags = &.{"-std=c99"},
     });
 
     // Thirdparty — spng (SIMD-accelerated PNG decode)
@@ -555,12 +572,34 @@ pub fn build(b: *std.Build) void {
         .flags = &.{ "-std=c++17", "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND" },
     });
 
-    // Thirdparty — basis_universal transcoder
+    // Thirdparty — basis_universal transcoder (with KTX2 + Zstd support)
     runtime_mod.addCSourceFiles(.{
         .root = b.path(tp ++ "basis_universal/transcoder"),
         .files = &.{"basisu_transcoder.cpp"},
-        .flags = &.{ "-std=c++17", "-DBASISD_SUPPORT_KTX2_ZSTD=0" },
+        .flags = &.{ "-std=c++17", "-DBASISD_SUPPORT_KTX2_ZSTD=1", "-DZSTD_DLL_IMPORT=0" },
     });
+    // Zstd decompression for KTX2 supercompression (compiled from vcpkg source)
+    {
+        const zstd_root = tp ++ "vcpkg/buildtrees/zstd/src/v1.5.7-bb6cae2b2e.clean/lib/";
+        runtime_mod.addCSourceFiles(.{
+            .root = b.path(zstd_root),
+            .files = &.{
+                "common/debug.c",
+                "common/entropy_common.c",
+                "common/error_private.c",
+                "common/fse_decompress.c",
+                "common/xxhash.c",
+                "common/zstd_common.c",
+                "decompress/huf_decompress.c",
+                "decompress/zstd_ddict.c",
+                "decompress/zstd_decompress.c",
+                "decompress/zstd_decompress_block.c",
+            },
+            .flags = &.{ "-std=c99", "-DZSTD_DISABLE_ASM" },
+        });
+        runtime_mod.addIncludePath(b.path(zstd_root));
+        runtime_mod.addIncludePath(b.path(zstd_root ++ "common"));
+    }
 
     // Thirdparty — miniz (zlib-compatible compression for tinyexr)
     runtime_mod.addCSourceFiles(.{
@@ -769,6 +808,90 @@ pub fn build(b: *std.Build) void {
         runtime_mod.addIncludePath(b.path(ffx ++ "backend/dx12"));
     }
 
+    // Thirdparty — AMD FidelityFX SDK 1.1.4 (Brixelizer GI)
+    // Include paths for Brixelizer + BrixelizerGI + DX12 backend.
+    // The FFX SDK 1.1 must be built separately with CMake/MSVC to produce
+    // ffx_backend_dx12_x64.lib. Define UZ_BRIXELIZER_ENABLED=1 when present.
+    // Build: cd thirdparty/amd-fidelityfx-1.1/sdk && cmake -B build -DFFX_API_BACKEND=DX12_X64 -DFFX_ALL=ON && cmake --build build --config Release
+    // FFX SDK 1.1.4 include paths are always added when headers are present.
+    // UZ_BRIXELIZER_ENABLED is only defined when the pre-built .lib also exists.
+    const has_brixelizer_headers = blk: {
+        if (!is_windows) break :blk false;
+        const brix_inc = tp ++ "amd-fidelityfx-1.1/sdk/include/FidelityFX/host/ffx_brixelizer.h";
+        const brix_resolved = b.path(brix_inc).getPath(b);
+        if (std.fs.cwd().access(brix_resolved, .{})) {
+            break :blk true;
+        } else |_| {
+            break :blk false;
+        }
+    };
+    // BrixelizerGI is enabled at build time when both:
+    //   1. The FFX SDK 1.1.4 headers are present
+    //   2. The MSVC-built wrapper DLL `uz_brixelizer.dll` exists
+    //
+    // The wrapper DLL hides every MSVC C++ runtime / STL symbol behind its
+    // boundary so the engine (Zig/mingw) can call its `uz_brix_*` exports
+    // via LoadLibrary at runtime — same pattern as DLSS.
+    //
+    // Build the wrapper:
+    //   cd thirdparty/amd-fidelityfx-1.1/wrapper
+    //   cmake -B build -G "Visual Studio 17 2022" -A x64
+    //   cmake --build build --config Release
+    //
+    // Output: build/bin/uz_brixelizer.dll → copied to runtime/build/bin/.
+    const has_brixelizer_libs = blk: {
+        if (!has_brixelizer_headers) break :blk false;
+        const brix_dll = tp ++ "amd-fidelityfx-1.1/wrapper/build/bin/uz_brixelizer.dll";
+        const brix_dll_resolved = b.path(brix_dll).getPath(b);
+        if (std.fs.cwd().access(brix_dll_resolved, .{})) {
+            break :blk true;
+        } else |_| {
+            break :blk false;
+        }
+    };
+    if (has_brixelizer_headers) {
+        const ffx11 = tp ++ "amd-fidelityfx-1.1/sdk/";
+        runtime_mod.addIncludePath(b.path(ffx11 ++ "include"));
+        runtime_mod.addIncludePath(b.path(ffx11 ++ "include/FidelityFX/host"));
+        runtime_mod.addIncludePath(b.path(ffx11 ++ "include/FidelityFX/host/backends/dx12"));
+        runtime_mod.addIncludePath(b.path(ffx11 ++ "include/FidelityFX/gpu"));
+        runtime_mod.addIncludePath(b.path(ffx11 ++ "src/backends/shared"));
+        runtime_mod.addIncludePath(b.path(ffx11 ++ "src/backends/shared/blob_accessors"));
+        runtime_mod.addIncludePath(b.path(ffx11 ++ "src/components/brixelizer"));
+        runtime_mod.addIncludePath(b.path(ffx11 ++ "src/components/brixelizergi"));
+
+        // Enable BrixelizerGI codepath when the wrapper DLL exists. The
+        // engine never directly links the FFX static libs — every entry
+        // point is resolved at runtime through `brixelizer_loader.cpp`
+        // (LoadLibrary + GetProcAddress). This avoids the MSVC CRT / STL
+        // ABI incompatibility between the FFX libs and Zig/mingw.
+        if (has_brixelizer_libs) {
+            runtime_mod.addCMacro("UZ_BRIXELIZER_ENABLED", "1");
+        }
+    }
+
+    // Thirdparty — NVIDIA DLSS SDK headers (NGX API for temporal upscaling)
+    // DLSS uses a static lib (nvsdk_ngx_d.lib) that dynamically loads nvngx_dlss.dll
+    // at runtime via LoadLibrary. Define UZ_DLSS_ENABLED=1 when SDK is present.
+    const has_dlss = blk: {
+        if (!is_windows) break :blk false;
+        const dlss_inc = tp ++ "dlss/include/";
+        const dlss_resolved = b.path(dlss_inc).getPath(b);
+        if (std.fs.openDirAbsolute(dlss_resolved, .{})) |*dir| {
+            @constCast(dir).close();
+            break :blk true;
+        } else |_| {
+            break :blk false;
+        }
+    };
+    // DLSS SDK — headers only, no static lib linking. DlssUpscaler uses
+    // LoadLibrary/GetProcAddress to load NGX functions at runtime, avoiding
+    // MSVC CRT incompatibility with Zig's mingw libc.
+    if (has_dlss) {
+        runtime_mod.addIncludePath(b.path(tp ++ "dlss/include/"));
+        runtime_mod.addCMacro("UZ_DLSS_ENABLED", "1");
+    }
+
     // Include paths — runtime root (for "platform/platform_types.h" etc.)
     runtime_mod.addIncludePath(b.path("."));
 
@@ -798,8 +921,47 @@ pub fn build(b: *std.Build) void {
         .root_module = runtime_mod,
     });
 
-    // Runtime compilation depends on uzembed having run
+    // Runtime compilation depends on uzembed having run.
     lib.step.dependOn(&run_embed.step);
+
+    // CRITICAL: Tell zig that runtime compilation depends on shader source files.
+    // Without this, zig's incremental build won't detect .hlsl changes because
+    // the generated .gen.h files are not tracked as C++ header dependencies
+    // (they're generated by uzembed DURING the build, before clang runs).
+    // By adding the shaders/ directory as an input, any .hlsl modification
+    // invalidates the cached .obj files that #include engine_shaders.gen.h.
+    _ = lib.step.addDirectoryWatchInput(b.path("shaders")) catch {};
+
+    // ── Shader integrity check (post-uzembed) ────────────────────────────
+    // Verifies that every .hlsl source file has a corresponding .gen.h that
+    // is at least as new. Catches stale gen headers from build system bugs.
+    if (is_windows) {
+        const verify_shaders = b.addSystemCommand(&.{
+            "powershell", "-NoProfile", "-Command",
+            \\$src = Get-ChildItem -Recurse -Filter '*.hlsl' 'shaders/'
+            \\$stale = 0
+            \\foreach ($f in $src) {
+            \\  $rel = $f.FullName.Replace((Resolve-Path 'shaders/').Path, '')
+            \\  $gen = "build/generated/shaders/$rel.gen.h"
+            \\  if (Test-Path $gen) {
+            \\    if ($f.LastWriteTime -gt (Get-Item $gen).LastWriteTime) {
+            \\      Write-Host "SHADER STALE: $($f.Name) is newer than its .gen.h" -ForegroundColor Red
+            \\      $stale++
+            \\    }
+            \\  } else {
+            \\    Write-Host "SHADER MISSING: no .gen.h for $($f.Name)" -ForegroundColor Yellow
+            \\    $stale++
+            \\  }
+            \\}
+            \\if ($stale -gt 0) {
+            \\  Write-Host "WARNING: $stale shader(s) may be stale. Run: zig build --clean" -ForegroundColor Red
+            \\} else {
+            \\  Write-Host "Shader integrity OK ($($src.Count) shaders verified)" -ForegroundColor Green
+            \\}
+        });
+        verify_shaders.step.dependOn(&run_embed.step);
+        lib.step.dependOn(&verify_shaders.step);
+    }
 
     // DX12/DX11 system libraries (Windows only)
     if (is_windows) {
@@ -815,7 +977,9 @@ pub fn build(b: *std.Build) void {
         lib.linkSystemLibrary("ole32");       // OLE drag-drop (OleInitialize, RegisterDragDrop)
         lib.linkSystemLibrary("shell32");     // Shell_NotifyIconW, SHCreateItemFromParsingName
         lib.linkSystemLibrary("comdlg32");    // Common dialog support (IFileDialog COM)
-        // zlib — compiled from vcpkg source (static, no DLL import issues)
+        // AMD FidelityFX SDK 1.1.4 — Brixelizer GI static libraries.
+        // Linked at the exe level via tool_mod.addObjectFile (see tool exe loop below).
+        // Static lib targets don't resolve external symbols — only the final exe does.
     } else if (target.result.os.tag == .linux) {
         lib.linkSystemLibrary("X11");
     }
@@ -955,6 +1119,7 @@ pub fn build(b: *std.Build) void {
         dll_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avutil.lib"));
         dll_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/swscale.lib"));
         dll_mod.addLibraryPath(b.path(tp ++ "ffmpeg/lib"));
+        // DLSS: no static lib — uses LoadLibrary/GetProcAddress at runtime.
 
         const dll = b.addLibrary(.{
             .linkage = .dynamic,
@@ -1096,6 +1261,7 @@ pub fn build(b: *std.Build) void {
         test_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avcodec.lib"));
         test_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avutil.lib"));
         test_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/swscale.lib"));
+        // DLSS: no static lib — uses LoadLibrary/GetProcAddress at runtime.
     }
 
     if (is_windows) {
@@ -1132,7 +1298,7 @@ pub fn build(b: *std.Build) void {
         const win_sys_libs = [_][]const u8{ "d3d12", "d3d11", "dxgi", "dxguid", "gdi32", "user32", "xinput1_4", "ole32", "shcore", "shell32", "comdlg32" };
 
         // Helper to create a tool exe from a single .cpp
-        const tool_names = [_][]const u8{ "uzengine", "uzcook", "uzpack", "uzfbx" };
+        const tool_names = [_][]const u8{ "uzengine", "uzcook", "uzpack", "uzmesh" };
         for (tool_names) |tool_name| {
             const tool_mod = b.createModule(.{ .target = target, .optimize = optimize });
             tool_mod.link_libc = true;
@@ -1165,6 +1331,9 @@ pub fn build(b: *std.Build) void {
             tool_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avcodec.lib"));
             tool_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avutil.lib"));
             tool_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/swscale.lib"));
+            // DLSS: no static lib — uses LoadLibrary/GetProcAddress at runtime.
+            // FFX SDK 1.1.4: requires MSVC CRT — not linked in Zig build.
+            // Enable via MSVC CMake preset or DLL wrapper (future).
 
             const tool_exe = b.addExecutable(.{ .name = tool_name, .root_module = tool_mod });
             tool_exe.linkLibrary(lib);
@@ -1221,6 +1390,15 @@ pub fn build(b: *std.Build) void {
         b.getInstallStep().dependOn(&b.addInstallBinFile(
             b.path(tp ++ "luajit/src/lua51.dll"), "lua51.dll",
         ).step);
+
+        // NVIDIA DLSS SDK — nvngx_dlss.dll must be next to the exe for NGX to find it.
+        // The DLSS upscaler uses LoadLibrary("_nvngx.dll") which is driver-provided,
+        // but the actual DLSS model DLL must be deployed alongside the application.
+        if (has_dlss) {
+            b.getInstallStep().dependOn(&b.addInstallBinFile(
+                b.path(tp ++ "dlss/lib/Windows_x86_64/dev/nvngx_dlss.dll"), "nvngx_dlss.dll",
+            ).step);
+        }
     }
 }
 

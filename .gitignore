@@ -9,6 +9,7 @@
 !/.rulebook/decisions/
 !/.rulebook/knowledge/
 !/.rulebook/learnings/
+!/.rulebook/archive/
 !/.rulebook/rules/
 !/.rulebook/rulebook.json
 
@@ -97,3 +98,19 @@ poc-napi/node_modules/
 *.uztexture
 *.uzimport
 .cache/
+
+# 3D Raw Model
+*.glb
+*.gltf
+*.fbx
+*.obj
+*.stl
+
+# NVIDIA DLSS SDK (proprietary, downloaded via setup.ps1, ~200MB)
+runtime/thirdparty/dlss/
+
+CLAUDE.local.md
+.rulebook/backup/
+.rulebook/handoff/_pending.md
+.rulebook/handoff/.urgent
+.rulebook/telemetry/

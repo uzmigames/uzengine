@@ -23,3 +23,8 @@
 - [ ] 3.1 Document LTC algorithm with Heitz 2016 reference
 - [ ] 3.2 Add area light parameters with UE5 RectLight equivalents
 - [ ] 3.3 Document LTC texture format and generation process
+
+## 4. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 4.1 Update or create documentation covering the implementation
+- [ ] 4.2 Write tests covering the new behavior
+- [ ] 4.3 Run tests and confirm they pass

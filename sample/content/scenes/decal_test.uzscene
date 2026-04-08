@@ -12,9 +12,9 @@
             920
           ],
           "rotation": [
-            60,
             -30,
-            0
+            0,
+            60
           ],
           "scale": [
             1,
@@ -72,9 +72,9 @@
             120
           ],
           "rotation": [
-            -8,
             0,
-            0
+            0,
+            -8
           ]
         },
         "camera": {
@@ -161,9 +161,21 @@
       "name": "Decal_Manhole_Floor_Left",
       "components": {
         "transform": {
-          "position": [-200, 50, 1],
-          "rotation": [0, 0, 0],
-          "scale": [200, 200, 30]
+          "position": [
+            -200,
+            50,
+            1
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            200,
+            200,
+            30
+          ]
         },
         "decal": {
           "albedo": "textures/decals/manhole_color.png",
@@ -177,9 +189,21 @@
       "name": "Decal_Manhole_Floor_Right",
       "components": {
         "transform": {
-          "position": [200, -50, 1],
-          "rotation": [0, 0, 30],
-          "scale": [150, 150, 30]
+          "position": [
+            200,
+            -50,
+            1
+          ],
+          "rotation": [
+            0,
+            30,
+            0
+          ],
+          "scale": [
+            150,
+            150,
+            30
+          ]
         },
         "decal": {
           "albedo": "textures/decals/manhole_color.png",
@@ -193,17 +217,28 @@
       "name": "Decal_Manhole_Floor",
       "components": {
         "transform": {
-          "position": [0, 150, 1],
-          "rotation": [0, 0, 0],
-          "scale": [200, 200, 30]
+          "position": [
+            0,
+            150,
+            1
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            200,
+            200,
+            30
+          ]
         },
         "decal": {
           "albedo": "textures/decals/manhole_color.png",
           "normal": "textures/decals/manhole_normal.png",
           "roughness": "textures/decals/manhole_roughness.png",
           "opacity_mask": "textures/decals/manhole_opacity.png",
-          "metallic": "textures/decals/manhole_metallic.png",
-          "opacity_mask": "textures/decals/manhole_opacity.png"
+          "metallic": "textures/decals/manhole_metallic.png"
         }
       }
     }

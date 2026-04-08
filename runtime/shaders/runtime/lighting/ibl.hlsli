@@ -44,6 +44,20 @@ bool IsSHZero(float4 shCoeffs[7])
     return dot(abs(shCoeffs[0].xyz), 1.0) < 1e-6;
 }
 
+/// Specular occlusion from AO — prevents IBL specular light leaking in crevices.
+/// @ref Lagarde 2014 "Moving Frostbite to PBR" — specular occlusion approximation
+/// @ref Filament — specular occlusion model
+///
+/// At high roughness the specular lobe is wide and naturally occluded (similar
+/// to diffuse), so the occlusion matches AO. At low roughness the lobe is
+/// narrow and mainly sees the reflection direction, so occlusion is weaker.
+/// The formula uses NdotV to account for grazing angles where the lobe grazes
+/// the surface and is more likely to be occluded.
+float ComputeSpecularOcclusion(float NdotV, float ao, float roughness)
+{
+    return saturate(pow(NdotV + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao);
+}
+
 /// Evaluate IBL: SH diffuse + split-sum specular
 float3 EvalIBL(
     float3 N, float3 V, float3 f0, float3 diffuseColor, float roughness, float NdotV,

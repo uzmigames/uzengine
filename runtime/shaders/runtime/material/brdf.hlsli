@@ -200,4 +200,60 @@ float RoughnessToAlpha(float roughness)
     return max(roughness * roughness, kMinGGXAlpha);
 }
 
+// ─── Anisotropic GGX ────────────────────────────────────────────────────────
+
+/// Remap isotropic roughness + anisotropy to per-axis roughness.
+/// @ref Burley 2012 "Physically Based Shading at Disney" — anisotropic roughness
+/// @ref KHR_materials_anisotropy — glTF anisotropy extension
+///
+/// @param roughness  Isotropic perceptual roughness [0, 1].
+/// @param anisotropy Anisotropy strength [-1, 1]. 0 = isotropic.
+/// @return           float2(ax, ay) — per-axis roughness alpha values.
+float2 RemapAnisotropy(float roughness, float anisotropy)
+{
+    float alpha = RoughnessToAlpha(roughness);
+    float ax = max(alpha * (1.0f + anisotropy), kMinGGXAlpha);
+    float ay = max(alpha * (1.0f - anisotropy), kMinGGXAlpha);
+    return float2(ax, ay);
+}
+
+/// Anisotropic GGX normal distribution function.
+/// @ref Burley 2012 "Physically Based Shading at Disney"
+/// @ref Walter et al. 2007 "Microfacet Models for Refraction" — anisotropic variant
+///
+/// @param ax    Roughness along tangent direction.
+/// @param ay    Roughness along bitangent direction.
+/// @param NoH   Cosine of angle between normal and half-vector.
+/// @param XoH   Cosine of angle between tangent and half-vector.
+/// @param YoH   Cosine of angle between bitangent and half-vector.
+/// @return      NDF value D(h).
+float D_GGXAniso(float ax, float ay, float NoH, float XoH, float YoH)
+{
+    float a2 = ax * ay;
+    float3 V = float3(ay * XoH, ax * YoH, a2 * NoH);
+    float S = dot(V, V);
+    return (1.0f / PI) * a2 * (a2 / (S * S));
+}
+
+/// Anisotropic Smith height-correlated visibility function.
+/// @ref Heitz 2014 "Understanding the Masking-Shadowing Function"
+/// @ref Filament — anisotropic V function
+///
+/// @param ax    Roughness along tangent direction.
+/// @param ay    Roughness along bitangent direction.
+/// @param NoV   cos(N, V).
+/// @param NoL   cos(N, L).
+/// @param XoV   cos(T, V).
+/// @param XoL   cos(T, L).
+/// @param YoV   cos(B, V).
+/// @param YoL   cos(B, L).
+/// @return      Visibility term V = G / (4 * NoV * NoL).
+float V_SmithGGXCorrelated_Aniso(float ax, float ay,
+    float NoV, float NoL, float XoV, float XoL, float YoV, float YoL)
+{
+    float GGXV = NoL * length(float3(ax * XoV, ay * YoV, NoV));
+    float GGXL = NoV * length(float3(ax * XoL, ay * YoL, NoL));
+    return 0.5f / max(GGXV + GGXL, 1e-7f);
+}
+
 #endif // UZ_MATERIAL_BRDF_HLSLI

@@ -11,6 +11,8 @@
 
 #include "camera.h"
 #include "post_process_volume.h"
+#include "texture_loader.h"
+#include "vfs.h"
 #include "gpu_mesh.h"
 #include "sh_projection.h"
 #include "profiler.h"
@@ -20,15 +22,23 @@
 #include "world.h"
 #include "engine/vfx/vfx_system.h"
 #include "engine/vfx/components/particle_emitter.h"
+#include "scene_update_flags.h"
+#include "dirty_flags.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 
 // ── CVars consumed by PerFrameCB population ─────────────────────────────
-static auto* cv_SkyLightIntensity  = UZ_CVAR_FLOAT("r.SkyLight.Intensity", 1.0f, "IBL ambient multiplier", 0.f, 20.f);
-static auto* cv_SkyLightMinAmbient = UZ_CVAR_FLOAT("r.SkyLight.MinAmbient", 0.25f, "Minimum ambient floor", 0.f, 1.f);
-static auto* cv_ContactShadowLen   = UZ_CVAR_FLOAT("r.ContactShadow.Length", 0.0f, "Contact shadow ray length (0=off)", 0.f, 0.2f);
+static auto* cv_SkyLightIntensity        = UZ_CVAR_FLOAT("r.SkyLight.Intensity", 1.0f, "IBL ambient multiplier", 0.f, 20.f);
+static auto* cv_SkyLightMinAmbient       = UZ_CVAR_FLOAT("r.SkyLight.MinAmbient", 0.25f, "Minimum ambient floor", 0.f, 1.f);
+static auto* cv_SkyLightIndirectIntensity = UZ_CVAR_FLOAT("r.SkyLight.IndirectIntensity", 1.0f, "Diffuse IBL multiplier (separate from specular)", 0.f, 10.f);
+// Contact shadows ON by default — they are NOT GTAO. Pure screen-space
+// ray-march from each pixel along the sun direction; produces hard contact
+// shadows at object/floor intersections without the GTAO over-occlusion bug.
+// 0.10 ≈ 10% of view depth — strong enough for column/floor contact in
+// large interiors like Sponza without leaking onto distant geometry.
+static auto* cv_ContactShadowLen   = UZ_CVAR_FLOAT("r.ContactShadow.Length", 0.10f, "Contact shadow ray length (0=off)", 0.f, 0.2f);
 static auto* cv_FilmGrain          = UZ_CVAR_FLOAT("r.FilmGrain", 0.f, "Film grain intensity", 0.f, 1.f);
 static auto* cv_Vignette           = UZ_CVAR_FLOAT("r.Vignette", 0.0f, "Vignette intensity", 0.f, 2.f);
 static auto* cv_ChromaAb           = UZ_CVAR_FLOAT("r.ChromaticAberration", 0.f, "Chromatic aberration", 0.f, 1.f);
@@ -40,15 +50,78 @@ static auto* cv_TonemapShoulder    = UZ_CVAR_FLOAT("r.Tonemap.Shoulder", 0.22f, 
 static auto* cv_TonemapBlackClip   = UZ_CVAR_FLOAT("r.Tonemap.BlackClip", 0.f, "ACES black clip", 0.f, 1.f);
 static auto* cv_TonemapWhiteClip   = UZ_CVAR_FLOAT("r.Tonemap.WhiteClip", 0.04f, "ACES white clip", 0.f, 1.f);
 static auto* cv_MipBias            = UZ_CVAR_FLOAT("r.MipBias", 0.f, "Global mipmap LOD bias", -4.f, 4.f);
-static auto* cv_Exposure           = UZ_CVAR_FLOAT("r.Exposure", 1.0f, "Manual exposure bias on auto-exposure", 0.01f, 100.f);
+
+// ── Shader CVar parameters (Phase 1 — zero hardcoded values in shaders) ──
+static auto* cv_ShadowPCFPenumbra     = UZ_CVAR_FLOAT("r.Shadow.PCFPenumbraRadius", 2.0f, "PCF texel radius", 0.5f, 8.0f);
+static auto* cv_ShadowPCSSMin         = UZ_CVAR_FLOAT("r.Shadow.PCSSMinPenumbra", 0.5f, "PCSS min penumbra clamp", 0.1f, 4.0f);
+static auto* cv_ShadowPCSSMax         = UZ_CVAR_FLOAT("r.Shadow.PCSSMaxPenumbra", 16.0f, "PCSS max penumbra clamp", 4.0f, 64.0f);
+static auto* cv_ShadowESMExponent     = UZ_CVAR_FLOAT("r.Shadow.ESMExponentConstant", 80.0f, "ESM exponential warp constant", 10.0f, 200.0f);
+static auto* cv_ShadowContactSteps    = UZ_CVAR_INT("r.Shadow.ContactShadowSteps", 16, "Contact shadow ray march steps", 4, 32);
+static auto* cv_ShadowContactThick    = UZ_CVAR_FLOAT("r.Shadow.ContactShadowThickness", 0.005f, "Contact shadow depth thickness", 0.001f, 0.05f);
+static auto* cv_BloomKnee             = UZ_CVAR_FLOAT("r.Bloom.Knee", 0.5f, "Bloom soft threshold knee", 0.0f, 1.0f);
+static auto* cv_ExposureKeyValue      = UZ_CVAR_FLOAT("r.Exposure.KeyValue", 0.18f, "Reinhard mid-tone key value", 0.01f, 1.0f);
+static auto* cv_ExposureSpeedUp       = UZ_CVAR_FLOAT("r.Exposure.SpeedUp", 3.0f, "Auto-exposure speed up (f-stops/sec)", 0.1f, 20.0f);
+static auto* cv_ExposureSpeedDown     = UZ_CVAR_FLOAT("r.Exposure.SpeedDown", 1.0f, "Auto-exposure speed down (f-stops/sec)", 0.1f, 20.0f);
+static auto* cv_ExposureLowPercent    = UZ_CVAR_FLOAT("r.Exposure.LowPercent", 10.0f, "Histogram low percentile", 1.0f, 50.0f);
+static auto* cv_ExposureHighPercent   = UZ_CVAR_FLOAT("r.Exposure.HighPercent", 90.0f, "Histogram high percentile", 50.0f, 99.0f);
+static auto* cv_MaterialDielectricF0  = UZ_CVAR_FLOAT("r.Material.DielectricF0", 0.04f, "Dielectric Fresnel F0 reflectance", 0.01f, 0.08f);
+static auto* cv_MaterialMinGGXAlpha   = UZ_CVAR_FLOAT("r.Material.MinGGXAlpha", 0.0064f, "Min GGX alpha (prevents aliasing)", 0.001f, 0.01f);
+/// Manual exposure multiplier. Applied on top of auto-exposure when active,
+/// or used as the sole exposure when auto-exposure is inactive.
+/// @ref UE5 default: pow(2, AutoExposureBias=1.0) = 2.0. For UzEngine's
+/// light calibration, 10.0 matches typical indoor scene brightness.
+// Exposure 3.0 — matched to the indoor calibration with Sponza skylight
+// intensity 0.35 and sun direct 18. 3.0 keeps the sun-lit walls bright
+// without washing out the deep-shadowed corners of the atrium.
+static auto* cv_Exposure           = UZ_CVAR_FLOAT("r.Exposure", 3.0f, "Manual exposure multiplier (applied on auto-exposure)", 0.01f, 100.f);
 static auto* cv_GIIntensity        = UZ_CVAR_FLOAT("r.GI.Intensity", 1.f, "GI intensity multiplier", 0.f, 10.f);
+static auto* cv_AerialPersp        = UZ_CVAR_BOOL("r.AerialPerspective", false, "Aerial perspective in deferred lighting");
 
 namespace uz {
 
 void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     UZ_PROFILE_FUNCTION();
 
-    auto& camera = *m_camera;
+    // ── Reset per-frame CB skip counters ──────────────────────────────
+    m_cbUpdatesSkipped = 0;
+    m_cbUpdatesTotal   = 0;
+
+    // ── Gather scene update flags from component dirty state ────────────
+    ctx.updateFlags.Clear();
+    // Camera always changes (timeParams increments every frame)
+    ctx.updateFlags.Set(SceneUpdateFlags::kCamera);
+    // Gather dirty flags from ECS components
+    if (ctx.world) {
+        // Lights
+        auto lightView = ctx.world->GetRegistry().view<SceneComponent>();
+        for (auto e : lightView) {
+            auto& sc = lightView.get<SceneComponent>(e);
+            if (sc.IsCBDirty()) {
+                ctx.updateFlags.Set(SceneUpdateFlags::kTransforms);
+                sc.ClearCBDirty();
+            }
+        }
+        // Fog
+        auto fogView = ctx.world->GetRegistry().view<HeightFogComponent>();
+        for (auto e : fogView) {
+            auto& fog = fogView.get<HeightFogComponent>(e);
+            if (fog.IsCBDirty()) {
+                ctx.updateFlags.Set(SceneUpdateFlags::kFog);
+                fog.ClearCBDirty();
+            }
+        }
+        // Clouds
+        auto cloudView = ctx.world->GetRegistry().view<VolumetricCloudsComponent>();
+        for (auto e : cloudView) {
+            auto& cloud = cloudView.get<VolumetricCloudsComponent>(e);
+            if (cloud.IsCBDirty()) {
+                ctx.updateFlags.Set(SceneUpdateFlags::kClouds);
+                cloud.ClearCBDirty();
+            }
+        }
+    }
+
+    auto& camera = m_cameraManager->GetActiveCamera();
 
     // ── Build PerFrameParams (scalar section byte-identical to PerFrameCB) ──
     auto& perFrame = ctx.perFrame;
@@ -63,11 +136,12 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     perFrame.nearPlane   = camera.GetNearPlane();
     perFrame.farPlane    = camera.GetFarPlane();
 
-    // ── IBL SRV indices (set once after first bake, UINT32_MAX = no IBL) ──
-    perFrame.irradianceSrvIndex  = m_iblResult.irradianceSrvIndex;
-    perFrame.prefilteredSrvIndex = m_iblResult.prefilteredSrvIndex;
+    // IBL SRV indices are set AFTER the SkyLight processing loop below,
+    // because SetPMREMEnvironment/SetHDRIEnvironment update m_iblResult
+    // during that loop and we need the updated values in the PerFrameCB.
     perFrame.brdfLutSrvIndex     = m_brdfLutSrvIndex;
     perFrame.prefilteredMipLevels = IBLBaker::kPrefilteredMipLevels;
+
 
     // ── Environment Map Importance Sampling (MIS) ─────────────────────
     if (m_envMapSampler && m_envMapSampler->IsReady()) {
@@ -87,6 +161,8 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     // SkyLight extraction: intensity, color, minOcclusion from first SkyLightComponent.
     float skyIntensity = 1.0f;
     float skyIndirectIntensity = 1.0f;
+    bool  lowerHemisphereIsBlack = true;
+    Vec3  lowerHemisphereColor = {0.0f, 0.0f, 0.0f};
     if (ctx.world) {
         auto skyLightView = ctx.world->GetRegistry().view<SkyLightComponent>();
         for (auto enttEntity : skyLightView) {
@@ -113,15 +189,77 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
             perFrame.slCloudAOApertureScale    = sl.cloudAmbientOcclusionApertureScale;
             perFrame.slSkyDistanceThreshold    = sl.skyDistanceThreshold;
             perFrame.slOcclusionContrast       = sl.occlusionContrast;
+
+            lowerHemisphereIsBlack = sl.lowerHemisphereIsBlack;
+            lowerHemisphereColor   = sl.lowerHemisphereColor;
+
+            // ── Auto-load HDRI from cubemap_path (UE5 SpecifiedCubemap pattern) ──
+            if (sl.sourceType == ESkyLightSourceType::SpecifiedCubemap
+                && !sl.cubemapPath.empty()
+                && !m_hdriActive) {
+                IVFS* vfs = ctx.vfs;
+                if (vfs) {
+                    auto data = vfs->Read(sl.cubemapPath);
+                    if (!data.empty()) {
+                        // Detect format from extension
+                        const char* fmt = "hdr";
+                        const bool isKtx2 = sl.cubemapPath.size() > 5 &&
+                            (sl.cubemapPath.find(".ktx2") != std::string::npos);
+                        if (!isKtx2 && sl.cubemapPath.size() > 4 &&
+                            sl.cubemapPath.substr(sl.cubemapPath.size() - 4) == ".exr") {
+                            fmt = "exr";
+                        }
+
+                        TextureLoadResult hdrResult;
+                        if (isKtx2) {
+                            // KTX2 path — use basis_universal ktx2_transcoder
+                            hdrResult = TextureLoader::LoadKTX2FromMemory(
+                                m_device, data.data(), data.size(), sl.cubemapPath.c_str());
+                        } else {
+                            hdrResult = TextureLoader::LoadHDRFromMemory(
+                                m_device, data.data(), data.size(), fmt, sl.cubemapPath.c_str());
+                        }
+                        if (hdrResult.handle.IsValid()) {
+                            TrackExternalTexture(hdrResult);
+                            if (hdrResult.isPMREM) {
+                                // PMREM atlas: extract cubemap faces directly from the
+                                // Three.js CubeUV atlas. Skips equirect→cubemap conversion
+                                // and prefilter bake (PMREM is already prefiltered).
+                                SetPMREMEnvironment(hdrResult);
+                                UZ_LOG(Renderer, Info,
+                                    "SkyLight: '{}' loaded as PMREM atlas ({}px face, {} LODs)",
+                                    sl.cubemapPath, hdrResult.pmremFaceSize, hdrResult.pmremLodCount);
+                            } else {
+                                SetHDRIEnvironment(hdrResult.srvIndex, sl.cubemapResolution);
+                            }
+                            UZ_LOG(Renderer, Info,
+                                "SkyLight: auto-loaded HDRI '{}' (SRV={}, res={}, PMREM={})",
+                                sl.cubemapPath, hdrResult.srvIndex, sl.cubemapResolution,
+                                hdrResult.isPMREM);
+                        } else {
+                            UZ_LOG(Renderer, Warning,
+                                "SkyLight: failed to load HDRI '{}'", sl.cubemapPath);
+                        }
+                    }
+                }
+            }
+
             break;  // First SkyLightComponent only
         }
     }
+
+    // ── IBL SRV indices (AFTER SkyLight loop — SetPMREMEnvironment may have updated m_iblResult) ──
+    perFrame.irradianceSrvIndex  = m_iblResult.irradianceSrvIndex;
+    perFrame.prefilteredSrvIndex = m_iblResult.prefilteredSrvIndex;
+
 
     // Apply CVar-driven skylight overrides on top of component values.
     // r.SkyLight.Intensity acts as a multiplier on the component intensity.
     // r.SkyLight.MinAmbient provides a floor that the component value is raised to.
     perFrame.skyLightIntensity *= cv_SkyLightIntensity->value;
     perFrame.skyLightMinAmbient = std::max(perFrame.skyLightMinAmbient, cv_SkyLightMinAmbient->value);
+    // IndirectIntensity CVar overrides the component value for diffuse IBL.
+    skyIndirectIntensity *= cv_SkyLightIndirectIntensity->value;
 
     // Upload SH coefficients for sky diffuse irradiance (standard).
     // The shader's deferred_lighting_ps.hlsl line 881 already multiplies
@@ -136,6 +274,30 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
             m_skyIrradianceSH.coeffs[i].z * shScale,
             m_skyIrradianceSH.coeffs[i].w * shScale
         };
+    }
+
+    // Lower hemisphere contribution: when lowerHemisphereIsBlack=false, add
+    // a uniform color from below the horizon into the SH coefficients.
+    // L0 band (coeffs[0].w=R, [1].w=G, [2].w=B) receives the constant term;
+    // L1 Z-band (coeffs[3]) receives a negative bias to push irradiance downward.
+    // @ref Ramamoorthi 2001 "An Efficient Representation for Irradiance Environment Maps"
+    // SH basis: Y00 = 0.2821, Y10_z = 0.4886 (Z-up: vertical direction).
+    if (!lowerHemisphereIsBlack) {
+        const float Y00 = 0.2820947918f;    // 1 / (2 * sqrt(PI))
+        const float Y10 = 0.4886025119f;    // sqrt(3) / (2 * sqrt(PI))
+        // Add lower hemisphere as a half-sphere contribution: L0 + negative L1_Z.
+        // L0 adds uniform color; negative L1_Z biases it toward the lower hemisphere.
+        const float halfWeight = 0.5f;  // Lower hemisphere is half the sphere
+        // L0 contribution: Y00 * color * halfWeight
+        perFrame.skyIrradianceSH[0].w += lowerHemisphereColor.x * Y00 * halfWeight * shScale;
+        perFrame.skyIrradianceSH[1].w += lowerHemisphereColor.y * Y00 * halfWeight * shScale;
+        perFrame.skyIrradianceSH[2].w += lowerHemisphereColor.z * Y00 * halfWeight * shScale;
+        // L1 Z contribution: negative Y10 to push light downward (Z-up = vertical)
+        // coeffs[3] = L1 band: .x=R_L1m1, .y=G_L1m1, .z=B_L1m1, .w = packed L10_R
+        // In our compact packed SH format, L1_Z is in coeffs[3].x/y/z
+        perFrame.skyIrradianceSH[3].x -= lowerHemisphereColor.x * Y10 * halfWeight * shScale;
+        perFrame.skyIrradianceSH[3].y -= lowerHemisphereColor.y * Y10 * halfWeight * shScale;
+        perFrame.skyIrradianceSH[3].z -= lowerHemisphereColor.z * Y10 * halfWeight * shScale;
     }
 
     // Log SH L0 coefficient once to diagnose shadow darkness.
@@ -250,9 +412,10 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
             loggedOnce = true;
         }
     } else {
-        // Without auto-exposure, use neutral exposure.
-        // Default exposure = 1.0 (neutral, no bias applied).
-        perFrame.exposure = 1.0f;
+        // Without auto-exposure, use the manual exposure CVar directly.
+        // @ref UE5: manualExposure = pow(2, exposureBias), default 2.0.
+        // UzEngine default r.Exposure = 10.0 for typical indoor scene brightness.
+        perFrame.exposure = cv_Exposure->value;
     }
 
     // ── Mip bias for screen percentage texture LOD compensation ────────
@@ -277,6 +440,22 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     perFrame.colorSaturation     = cv_ColorSaturation->value;
     perFrame.colorContrast       = cv_ColorContrast->value;
     perFrame.contactShadowLength = cv_ContactShadowLen->value;
+
+    // ── Shader CVar parameters (Phase 1) ────────────────────────────────
+    perFrame.shadowPCFPenumbra       = cv_ShadowPCFPenumbra->value;
+    perFrame.shadowPCSSMinPenumbra   = cv_ShadowPCSSMin->value;
+    perFrame.shadowPCSSMaxPenumbra   = cv_ShadowPCSSMax->value;
+    perFrame.shadowESMExponent       = cv_ShadowESMExponent->value;
+    perFrame.shadowContactSteps      = static_cast<uint32_t>(cv_ShadowContactSteps->value);
+    perFrame.shadowContactThickness  = cv_ShadowContactThick->value;
+    perFrame.bloomKnee               = cv_BloomKnee->value;
+    perFrame.exposureKeyValue        = cv_ExposureKeyValue->value;
+    perFrame.exposureSpeedUp         = cv_ExposureSpeedUp->value;
+    perFrame.exposureSpeedDown       = cv_ExposureSpeedDown->value;
+    perFrame.exposureLowPercent      = cv_ExposureLowPercent->value;
+    perFrame.exposureHighPercent     = cv_ExposureHighPercent->value;
+    perFrame.materialDielectricF0    = cv_MaterialDielectricF0->value;
+    perFrame.materialMinGGXAlpha     = cv_MaterialMinGGXAlpha->value;
 
     // ── PostProcess Volume blending ─────────────────────────────────────
     // Gather all PostProcessVolumeComponents from the ECS, build transient
@@ -388,15 +567,12 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     // falls back to the raw resolved SSR output. The history write target for
     // this frame is m_ssrHistoryIndex — the temporal pass writes to it and
     // transitions it to SRV before the lighting pass runs.
-    if (m_ssrEnabled && m_ssrResolvedOutput.IsValid()) {
-        const uint32_t ssrWriteIdx = m_ssrHistoryIndex;
-        if (m_ssrHistory[ssrWriteIdx].IsValid()
-            && m_ssrHistorySrv[ssrWriteIdx] != UINT32_MAX) {
-            perFrame.ssrSrvIndex = m_ssrHistorySrv[ssrWriteIdx];
-        } else {
-            // History not yet created — fall back to raw resolved output
-            perFrame.ssrSrvIndex = m_ssrResolvedOutputSrv;
-        }
+    if (m_ssrEnabled && m_ssrResolvedOutput.IsValid()
+        && m_ssrResolvedOutputSrv != UINT32_MAX) {
+        // SSR pipeline: Trace → Resolve → Temporal → SpatialDenoise.
+        // The SpatialDenoise pass writes its output to m_ssrResolvedOutput.
+        // The lighting shader reads this denoised result.
+        perFrame.ssrSrvIndex = m_ssrResolvedOutputSrv;
     } else {
         perFrame.ssrSrvIndex = UINT32_MAX;
     }
@@ -429,6 +605,113 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
         perFrame.rcProbeSHBufferSrv   = UINT32_MAX;
     }
 
+    // ── Brixelizer GI (AMD FidelityFX sparse SDF voxel GI) ──────────
+    // Expose the diffuse GI atlas SRV to the deferred lighting shader.
+    // The previous black-screen issue was caused by FFX rebinding the
+    // descriptor heap and leaving it bound — fixed by
+    // `DX12CommandList::RebindBindlessHeaps()` after every FFX dispatch.
+    if (m_brixelizerGI && m_brixelizerGI->IsInitialized() && m_device->IsBindless()) {
+        perFrame.brixelizerGIDiffuseSrv = m_brixelizerGI->GetDiffuseGISrv();
+    } else {
+        perFrame.brixelizerGIDiffuseSrv = UINT32_MAX;
+    }
+
+    // ── DDGI octahedral atlases (Majercik 2019) ───────────────────────
+    // Mirror the DDGISystem's atlas SRVs + grid layout into the CB so the
+    // deferred lighting shader can sample with Chebyshev visibility. The
+    // probe origin/spacing track the radiance cache so DDGI and the SDF
+    // path use the same probe positions.
+    perFrame.ddgiIrradianceSrv = UINT32_MAX;
+    perFrame.ddgiDepthSrv      = UINT32_MAX;
+    perFrame.ddgiProbesPerAxis = 0;
+    perFrame.ddgiProbeSpacing  = 0.0f;
+    perFrame.ddgiIntensity     = cv_GIIntensity->value;
+    if (m_ddgiSystem.IsInitialized() && m_radianceCache.IsInitialized()
+        && m_device->IsBindless()) {
+        const Vec3 origin = m_radianceCache.GetGridOrigin();
+        m_ddgiSystem.SetGridOrigin(origin);
+        m_ddgiSystem.SetProbeSpacing(m_radianceCache.GetProbeSpacing());
+
+        perFrame.ddgiIrradianceSrv = m_ddgiSystem.GetIrradianceSrv();
+        perFrame.ddgiDepthSrv      = m_ddgiSystem.GetDepthSrv();
+        perFrame.ddgiProbesPerAxis = DDGISystem::kProbesPerAxis;
+        perFrame.ddgiProbeSpacing  = m_ddgiSystem.GetProbeSpacing();
+        perFrame.ddgiOriginX       = origin.x;
+        perFrame.ddgiOriginY       = origin.y;
+        perFrame.ddgiOriginZ       = origin.z;
+    }
+
+    // ── Light Probe Volume (author-placed irradiance grid) ────────────
+    // @ref Tatarchuk 2005 "Irradiance Volumes for Games" — author-placed grids
+    // @ref Greger 1998 "The Irradiance Volume" — SH-based volumetric irradiance
+    perFrame.lpvEnabled        = 0;
+    perFrame.lpvProbeBufferSrv = UINT32_MAX;
+    if (ctx.world && m_device->IsBindless()) {
+        auto lpvView = ctx.world->GetRegistry().view<LightProbeVolumeComponent>();
+        for (auto enttEntity : lpvView) {
+            auto& vol = lpvView.get<LightProbeVolumeComponent>(enttEntity);
+            if (!vol.enabled) continue;
+
+            // Create or rebuild the GPU grid on demand.
+            if (!m_lightProbeGrid.IsInitialized()) {
+                if (!m_lightProbeGrid.CreateResources(m_device, vol)) {
+                    UZ_LOG(Renderer, Warning,
+                           "LightProbeVolume: failed to create probe grid resources");
+                    break;
+                }
+                vol.needsRebuild = true;
+            } else if (vol.needsRebuild
+                       || m_lightProbeGrid.GetDimX() != vol.gridDimensionsX
+                       || m_lightProbeGrid.GetDimY() != vol.gridDimensionsY
+                       || m_lightProbeGrid.GetDimZ() != vol.gridDimensionsZ) {
+                if (!m_lightProbeGrid.Rebuild(vol)) {
+                    UZ_LOG(Renderer, Warning,
+                           "LightProbeVolume: rebuild failed");
+                    break;
+                }
+            }
+
+            if (vol.needsRebuild) {
+                // Seed every probe with the current sky SH (positionally
+                // invariant). Spatial variation comes from tasks 3.x/4.x.
+                SHCoefficients skySH{};
+                std::memcpy(&skySH.coeffs[0], &perFrame.skyIrradianceSH[0],
+                            sizeof(SHCoefficients));
+                m_lightProbeGrid.FillFromSkySH(skySH);
+                m_lightProbeGrid.UploadToGpu();
+                vol.needsRebuild = false;
+            }
+
+            // Populate CB fields consumed by deferred_lighting_ps.hlsl.
+            const Vec3 extMin = m_lightProbeGrid.GetExtentMin();
+            const Vec3 extMax = m_lightProbeGrid.GetExtentMax();
+            const float sx = std::max(extMax.x - extMin.x, 1e-3f);
+            const float sy = std::max(extMax.y - extMin.y, 1e-3f);
+            const float sz = std::max(extMax.z - extMin.z, 1e-3f);
+
+            perFrame.lpvEnabled        = 1;
+            perFrame.lpvProbeBufferSrv = m_lightProbeGrid.GetProbeBufferSrv();
+            perFrame.lpvDimX           = m_lightProbeGrid.GetDimX();
+            perFrame.lpvDimY           = m_lightProbeGrid.GetDimY();
+            perFrame.lpvDimZ           = m_lightProbeGrid.GetDimZ();
+            perFrame.lpvOriginX        = extMin.x;
+            perFrame.lpvOriginY        = extMin.y;
+            perFrame.lpvOriginZ        = extMin.z;
+            perFrame.lpvInvSizeX       = 1.0f / sx;
+            perFrame.lpvInvSizeY       = 1.0f / sy;
+            perFrame.lpvInvSizeZ       = 1.0f / sz;
+            // Default to 0 — the LPV broadcast is just stale sky SH and
+            // would otherwise replace the working sky SH / radiance cache
+            // sample. Authors enable spatial variation via the SDF/DXR
+            // probe-update path; LPV intensity is currently a no-op until
+            // the LPV-specific writer lands.
+            perFrame.lpvIntensity      = 0.0f;
+
+            vol.probeBufferSrv = m_lightProbeGrid.GetProbeBufferSrv();
+            break; // Only the first enabled volume is used.
+        }
+    }
+
     // ── Aerial Perspective parameters (from SkyAtmosphereComponent) ───
     // Populate AP atmosphere constants so deferred_lighting_ps can ray-march
     // inscattering per pixel. Only enabled when a SkyAtmosphereComponent exists
@@ -438,7 +721,8 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
         for (auto enttEntity : skyView) {
             auto& skyComp = skyView.get<SkyAtmosphereComponent>(enttEntity);
             if (!skyComp.enabled) continue;
-            if (m_transmittanceLutSrv != UINT32_MAX && m_transmittanceLutFilled) {
+            if (m_transmittanceLutSrv != UINT32_MAX && m_transmittanceLutFilled
+                && cv_AerialPersp->value > 0.5f) {
                 perFrame.aerialPerspectiveEnabled = 1;
                 perFrame.transmittanceLutSrvIndex = m_transmittanceLutSrv;
                 perFrame.apBottomRadiusKm = skyComp.bottomRadiusKm;
@@ -508,23 +792,44 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     std::memcpy(ctx.perFrameAlloc.cpuPtr, &perFrame, sizeof(PerFrameCB));
 
     // ── Shadow cascades — delegated to shadow_renderer ─────────────────
-    // Determine shadow cache status early so ShadowDataCB gets the right fields.
-    // Shadow cache disabled — static+dynamic atlas composition not yet implemented.
-    // All shadow-casting geometry renders into the per-frame atlas every frame.
-    // Re-enable after implementing static atlas → per-frame atlas copy/compose.
+    // Skip cascade recompute when camera + lights + transforms haven't changed.
+    // The cascade ViewProj matrices depend on camera position/direction and light
+    // direction — if none changed, the previous frame's ShadowDataCB is still valid.
+    m_cbUpdatesTotal++;
     ctx.shadowCacheEnabled = false;
-    ctx.shadowFrame = SetupShadowFrame(
-        camera, ctx.sunDir,
-        ctx.lightData.perLightShadowBias, ctx.lightData.perLightShadowSlopeBias,
-        ctx.lightData.lightSourceAngleDeg,
-        m_shadowAtlas.GetSrvIndex(), kShadowResolution, *m_cbRing,
-        ctx.lightData.farShadowCascadeCount,
-        ctx.lightData.farShadowDistance,
-        ctx.lightData.farShadowLodBias,
-        ctx.shadowCacheEnabled,
-        m_staticShadowAtlasSrv);
-    ctx.totalCascadeCount = ctx.shadowFrame.totalCascadeCount;
-    ctx.shadowAlloc = ctx.shadowFrame.cbAllocation;
+    const bool shadowsDirty = ctx.updateFlags.AreShadowsDirty() || !m_prevShadowValid;
+
+    if (shadowsDirty) {
+        ctx.shadowFrame = SetupShadowFrame(
+            camera, ctx.sunDir,
+            ctx.lightData.perLightShadowBias, ctx.lightData.perLightShadowSlopeBias,
+            ctx.lightData.lightSourceAngleDeg,
+            m_shadowAtlas.GetSrvIndex(), kShadowResolution, *m_cbRing,
+            ctx.lightData.farShadowCascadeCount,
+            ctx.lightData.farShadowDistance,
+            ctx.lightData.farShadowLodBias,
+            ctx.shadowCacheEnabled,
+            m_staticShadowAtlasSrv);
+        ctx.totalCascadeCount = ctx.shadowFrame.totalCascadeCount;
+        ctx.shadowAlloc = ctx.shadowFrame.cbAllocation;
+
+        // Cache for next frame comparison
+        if (ctx.shadowAlloc.cpuPtr) {
+            std::memcpy(&m_prevShadowCB, ctx.shadowAlloc.cpuPtr, sizeof(ShadowDataCB));
+            m_prevShadowAlloc = ctx.shadowAlloc;
+            m_prevShadowValid = true;
+        }
+    } else {
+        // Shadow data unchanged — skip expensive cascade recompute.
+        // Still allocate a fresh CB slot (ring is triple-buffered, old slot
+        // will be overwritten) but copy from cache instead of recomputing.
+        ctx.shadowAlloc = m_cbRing->Allocate(sizeof(ShadowDataCB));
+        std::memcpy(ctx.shadowAlloc.cpuPtr, &m_prevShadowCB, sizeof(ShadowDataCB));
+        ctx.totalCascadeCount = m_prevShadowCB.cascadeCount;
+        ctx.shadowFrame.totalCascadeCount = m_prevShadowCB.cascadeCount;
+        ctx.shadowFrame.cbAllocation = ctx.shadowAlloc;
+        m_cbUpdatesSkipped++;
+    }
 
     // ── Build ShadowDataParams for binder path ──────────────────────────
     // Copy the 768-byte scalar section from the CB allocation, then attach

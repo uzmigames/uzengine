@@ -1,6 +1,6 @@
 # Viewport Modes — Shading Visualization & Debug Rendering
 
-> **Status**: Planned (Phase 2)
+> **Status**: Done (v0.3.0+ — 13 view modes: lit, albedo, worldnormal, metallic, roughness, ao, depth, worldposition, lighting, shadows, wireframe, unlit, overview)
 > **Source**: `runtime/editor/viewport.h`, `runtime/editor/viewport_modes.h`, `extension/editor/viewport_ui.ts`
 > **References**: UE5 Viewport Modes (Lit, Wireframe, LightOnly, etc.), Godot 3D Viewport, Three.js DebugMode
 

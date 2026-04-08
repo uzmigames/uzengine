@@ -55,6 +55,49 @@ enum class MaterialShadingModel : uint8_t {
 [[nodiscard]] MaterialShadingModel MaterialShadingModelFromString(const char* str);
 
 // ─────────────────────────────────────────────────────────────────────────────
+// MaterialParams — standard PBR material knobs (UE5-style)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Per-material multipliers / tints applied AFTER the graph computes its
+/// raw outputs. Mirrors the standard UE5 / Unity / glTF material parameters
+/// every authored material needs even when it's just a texture passthrough.
+///
+/// Wired into the generated `ComputeMaterialOutputs()` epilogue by the
+/// HLSL translator: each output is multiplied by its corresponding scalar
+/// (or color) at the end of the function. With all defaults at 1.0 the
+/// material renders identical to a graph without overrides.
+///
+/// @ref Karis 2013 "Real Shading in Unreal Engine 4" — F0 baseline 0.04
+/// @ref glTF 2.0 PBR specification — pbrMetallicRoughness factor fields
+struct MaterialParams {
+    /// Multiplied into baseColor at the very end of the graph. Default white.
+    float baseColorTint[3] = {1.0f, 1.0f, 1.0f};
+
+    /// Multiplied into roughness. Useful for making glTF assets less rough.
+    /// Default 1.0.
+    float roughnessMultiplier = 1.0f;
+
+    /// Multiplied into metallic. Useful for clamping spurious metal noise.
+    /// Default 1.0.
+    float metallicMultiplier  = 1.0f;
+
+    /// Multiplied into emissive RGB. Default 1.0.
+    float emissiveMultiplier  = 1.0f;
+
+    /// Tangent-space normal strength (0 = flat, 1 = full bumps).
+    /// Default 1.0.
+    float normalStrength      = 1.0f;
+
+    /// Specular intensity multiplier (UE5 "Specular" param). Scales the
+    /// dielectric F0 baseline (0.04). Default 1.0 = standard 4% F0.
+    /// @ref Karis 2013
+    float specularMultiplier  = 1.0f;
+
+    /// Multiplied into AO. Use < 1 to soften baked AO. Default 1.0.
+    float aoMultiplier        = 1.0f;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MaterialGraph
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -131,6 +174,11 @@ public:
     MaterialDomain domain = MaterialDomain::Surface;
     MaterialShadingModel shadingModel = MaterialShadingModel::DefaultLit;
     std::string name;  ///< Material name for display/debug
+
+    /// Standard PBR knobs (UE5-style). Applied as post-multiplications by
+    /// the HLSL translator after the graph computes its raw outputs. See
+    /// MaterialParams above.
+    MaterialParams params;
 
 private:
     std::vector<MaterialExpression> expressions_;

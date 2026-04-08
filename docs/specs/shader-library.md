@@ -46,7 +46,7 @@ runtime/shaders/runtime/
 | SSGI | 5 | HiZ trace, SVGF denoise |
 | VFX | 14 | Billboard, mesh, trail, decal, distortion |
 | Debug | 3 | 15 view modes, pixel debug, visualization |
-| **Total** | **~99 shaders** | |
+| **Total** | **~145 shaders** | |
 
 ## Bindless vs SM5
 
@@ -72,3 +72,28 @@ Key HLSL functions have C++ mirrors in `engine/renderer/lighting/brdf_math.h` fo
 | `V_SmithGGXCorrelated()` | `brdf::VisibilitySmithGGX()` | `test_brdf_parity.cpp` |
 | `EvalFrostbiteDiffuse()` | `brdf::DiffuseDisneyBurley()` | `test_brdf_parity.cpp` |
 | `ApplyToneCurve()` | `brdf::ApplyToneCurve()` | `test_brdf_parity.cpp` |
+| `ACESHillFit()` | `brdf::ACESHillFit()` | `test_brdf_parity.cpp` |
+| `ACESFilmic()` | `brdf::ACESNarkowicz()` | `test_brdf_parity.cpp` |
+| `ComputeSpecularOcclusion()` | `brdf::ComputeSpecularOcclusion()` | `test_brdf_parity.cpp` |
+| `D_GGXAniso()` | `brdf::D_GGXAniso()` | `test_brdf_parity.cpp` |
+| `V_SmithGGXCorrelated_Aniso()` | `brdf::V_SmithGGXCorrelated_Aniso()` | `test_brdf_parity.cpp` |
+| `RemapAnisotropy()` | `brdf::RemapAnisotropy()` | `test_brdf_parity.cpp` |
+
+## Vertex Formats
+
+| Format | Size | Fields | Shader Struct |
+|--------|------|--------|---------------|
+| `Vertex` | 48B | position(f3), normal(f3), texcoord(f2), tangent(f4) | `mesh_vs.hlsl::Vertex` |
+| `VertexPacked` | 32B | position(f3), packedNormal(i8x4), texcoord(f2), packedTangent(i8x4), pad | `mesh_vs.hlsl::VertexPacked` |
+
+### Packed Normal Decode (HLSL)
+
+```hlsl
+// In mesh_vs.hlsl — decode int8x4 packed normals/tangents
+float3 vNormal  = float3(pv.packedNormal.xyz) / 127.0;
+float4 vTangent = float4(float3(pv.packedTangent.xyz) / 127.0,
+                         (pv.packedTangent.w >= 0) ? 1.0 : -1.0);
+```
+
+CVar `r.Mesh.PackedNormals` (default=false) toggles packed export during mesh import.
+Push constant `usePackedNormals` selects shader decode path at draw time.

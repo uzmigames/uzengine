@@ -48,3 +48,8 @@
 - [ ] 9.1 Update `docs/engine/17-audio/` with XAudio2 engine, voice pool, bus architecture.
 - [ ] 9.2 Add `uz.audio` to `docs/lua-api-reference.md`.
 - [ ] 9.3 Document .uzaudio format and import pipeline.
+
+## 10. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 10.1 Update or create documentation covering the implementation
+- [ ] 10.2 Write tests covering the new behavior
+- [ ] 10.3 Run tests and confirm they pass

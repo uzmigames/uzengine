@@ -55,16 +55,29 @@ struct Quat {
     /// * `axis` - Rotation axis (should be normalized).
     /// * `angle` - Rotation angle in radians.
     static Quat FromAxisAngle(const Vec3& axis, float angle);
-    /// Creates a quaternion from Euler angles (Z-up convention).
+    /// Creates a quaternion from Euler angles using the UE5-parity Z-up convention.
+    ///
+    /// Matches Unreal Engine 4/5 rotation semantics for a Z-up, X-forward coordinate system.
+    /// Application order (intrinsic): Roll(X) → Pitch(Y) → Yaw(Z).
     ///
     /// # Arguments
-    /// * `pitch` - Rotation around X axis (radians). Tilts forward/backward.
-    /// * `yaw` - Rotation around Z axis (radians). Turns left/right (world up in Z-up).
-    /// * `roll` - Rotation around Y axis (radians). Rolls side-to-side.
+    /// * `pitch` - Elevation from horizon, around the Y-right axis (radians).
+    ///             -90° points up (noon/zenith), +90° points underground.
+    /// * `yaw`   - Compass bearing, around the Z-up axis (radians).
+    ///             0° faces East (+X), +90° faces North (+Y).
+    /// * `roll`  - Barrel roll, around the X-forward axis (radians).
     ///
-    /// Note: Internally uses DirectXMath which is Y-up. The mapping is:
-    /// UzEngine pitch(X) = DXMath pitch(X), UzEngine yaw(Z) = DXMath yaw(Y),
-    /// UzEngine roll(Y) = DXMath roll(Z). This conversion happens inside FromEuler().
+    /// # Example — directional light angles
+    /// ```
+    /// // Noon sun (overhead): pitch=-90°, yaw=0°
+    /// Quat sun = Quat::FromEuler(-XM_PIDIV2, 0.f, 0.f);
+    /// // Vec3::Forward() = [1,0,0] → sunDir = [0,0,1] (pointing up toward surface)
+    ///
+    /// // 60° altitude from horizon, East-facing: pitch=-60°, yaw=0°
+    /// Quat sun2 = Quat::FromEuler(-XM_PI/3.f, 0.f, 0.f);
+    /// ```
+    ///
+    /// @ref Shoemake 1994 "Euler Angle Conversion" — Graphic Gems IV, ZYX order
     static Quat FromEuler(float pitch, float yaw, float roll);
     /// Extracts rotation quaternion from a rotation matrix.
     static Quat FromMatrix(const Mat4& m);
@@ -201,13 +214,15 @@ struct Quat {
 
     /// Extracts Euler angles (pitch, yaw, roll) from this quaternion.
     ///
-    /// Uses the standard aerospace convention (Tait-Bryan angles, ZYX rotation order):
-    /// - pitch = rotation around X axis
-    /// - yaw = rotation around Y axis
-    /// - roll = rotation around Z axis
+    /// Inverse of `FromEuler()`. Uses ZYX decomposition matching the UE5-parity convention:
+    /// - pitch = rotation around Y-right axis (Vec3.x)
+    /// - yaw   = rotation around Z-up axis    (Vec3.y)
+    /// - roll  = rotation around X-forward axis (Vec3.z)
     ///
     /// # Returns
     /// Vec3(pitch, yaw, roll) in radians. Subject to gimbal lock when pitch ≈ ±90°.
+    ///
+    /// @ref Shoemake 1994 "Euler Angle Conversion" — Graphic Gems IV, ZYX order
     Vec3 get_euler() const;
 
     /// Extracts the rotation axis from this quaternion.

@@ -5,6 +5,7 @@
 #include "components.h"
 
 #include "camera.h"
+#include "camera_manager.h"
 #include "gpu_mesh.h"
 #include "texture_loader.h"
 #include "lod_selector.h"
@@ -12,11 +13,30 @@
 #include "log.h"
 #include "world.h"
 #include "material_interface.h"
+#include "material_pipeline.h"
+#include "engine/material/material_manager.h"
+#include "engine/material/material_graph.h"
+#include "vfs.h"
+#include "engine/core/cvar.h"
 
 #include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <string>
+
+namespace {
+/// Per-frame mesh load budget — caps the number of synchronous LoadMesh calls
+/// performed by SyncWorldToDrawList. Meshes that exceed the budget keep
+/// meshLoaded=false and are picked up on subsequent frames. This makes the
+/// first frame after LoadScene cheap so the editor/viewport becomes responsive
+/// immediately, then meshes stream in over the next ~N frames.
+///
+/// Set to 0 to disable budgeting (load every queued mesh in one frame).
+static auto* cv_LazyMeshesPerFrame = UZ_CVAR_INT(
+    "r.LazyLoad.MeshesPerFrame", 4,
+    "Max meshes to upload per frame in SyncWorldToDrawList (0 = unlimited).",
+    0, 1024);
+}
 
 // Diagnostic counter: mesh entities found by SyncWorldToDrawList.
 // Read by runtime.cpp to report in uz_frame_stats.
@@ -37,6 +57,12 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
 
     uint32_t drawIndex = 0;
 
+    // Per-frame mesh load budget. Once this hits zero, remaining un-loaded
+    // meshes are skipped (left with meshLoaded=false) and retried next frame.
+    // 0 = unlimited (legacy behavior).
+    const int meshBudgetMax = cv_LazyMeshesPerFrame ? cv_LazyMeshesPerFrame->value : 0;
+    int meshLoadsRemaining = (meshBudgetMax > 0) ? meshBudgetMax : INT32_MAX;
+
     // Use mutable registry view — we need to write meshLoaded/materialLoaded flags
     // back into the components after lazy-loading assets.
     auto meshView = world->GetRegistry().view<StaticMeshComponent, SceneComponent>();
@@ -50,6 +76,18 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
 
         // ── Lazy-load mesh from path (LOD0) ────────────────────────────────
         if (!meshComp.meshLoaded && !meshComp.meshPath.empty()) {
+            // Check if a previous LoadMesh in this frame already cached the
+            // path — if so, claim it for free without consuming budget.
+            auto cacheIt = m_meshMap.find(meshComp.meshPath);
+            if (cacheIt == m_meshMap.end() && meshLoadsRemaining <= 0) {
+                // Budget exhausted — defer to next frame. Leave meshLoaded=false.
+                // Continue iterating so material/texture lazy-load can still run
+                // and other already-cached meshes still get drawn.
+                continue;
+            }
+            if (cacheIt == m_meshMap.end()) {
+                --meshLoadsRemaining;
+            }
             const uint32_t loaded = LoadMesh(meshComp.meshPath, vfs, cmdList);
             if (loaded != UINT32_MAX) {
                 meshComp.meshId     = loaded;
@@ -109,6 +147,14 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
         // that level so the LOD selector uses the correct geometry.
         for (uint32_t lodIdx = 0; lodIdx < kMaxLODs - 1; ++lodIdx) {
             if (!meshComp.lodMeshLoaded[lodIdx] && !meshComp.lodMeshPaths[lodIdx].empty()) {
+                auto lodCacheIt = m_meshMap.find(meshComp.lodMeshPaths[lodIdx]);
+                if (lodCacheIt == m_meshMap.end() && meshLoadsRemaining <= 0) {
+                    // Budget exhausted — defer this LOD to next frame.
+                    break;
+                }
+                if (lodCacheIt == m_meshMap.end()) {
+                    --meshLoadsRemaining;
+                }
                 const uint32_t loaded = LoadMesh(meshComp.lodMeshPaths[lodIdx], vfs, cmdList);
                 meshComp.lodMeshLoaded[lodIdx] = true; // Mark to avoid retrying
                 if (loaded != UINT32_MAX) {
@@ -169,7 +215,7 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
         // size from its bounding sphere and camera distance, then select the
         // appropriate LOD level. The LOD's meshIndex overrides meshId so the
         // draw call uses the correct vertex/index buffers.
-        if (meshComp.lodGroup.numLevels > 1 && m_camera) {
+        if (meshComp.lodGroup.numLevels > 1 && m_cameraManager) {
             uint32_t selectedLOD = 0;
 
             if (meshComp.forcedLOD >= 0) {
@@ -181,21 +227,25 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
                 // Automatic LOD — compute from screen-space projected size.
                 const Mat4& worldMatrix = sceneComp.GetWorldMatrix();
                 const Vec3 objectPosition = worldMatrix.getTranslation();
-                const Vec3& cameraPosition = m_camera->GetPosition();
+                const Vec3& cameraPosition = m_cameraManager->GetActiveCamera().GetPosition();
 
                 const float dx = objectPosition.x - cameraPosition.x;
                 const float dy = objectPosition.y - cameraPosition.y;
                 const float dz = objectPosition.z - cameraPosition.z;
                 const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
 
-                // Use component-specified bounding sphere radius, or default to
-                // a unit sphere (50 cm radius) if none was set.
-                const float sphereRadius = meshComp.boundingSphereRadius > 0.0f
-                                           ? meshComp.boundingSphereRadius
-                                           : 50.0f;
+                // Use component-specified bounding sphere radius, scaled by the
+                // entity's uniform scale. The auto-computed radius is in model
+                // space — multiply by max axis scale for world-space LOD selection.
+                const float modelRadius = meshComp.boundingSphereRadius > 0.0f
+                                          ? meshComp.boundingSphereRadius
+                                          : 50.0f;
+                const Vec3 scaleVec = sceneComp.GetScale();
+                const float uniformScale = std::max({scaleVec.x, scaleVec.y, scaleVec.z});
+                const float sphereRadius = modelRadius * uniformScale;
 
                 // ScreenMultiple from projection matrix — computes screen size
-                const Mat4& projMatrix = m_camera->GetProjection();
+                const Mat4& projMatrix = m_cameraManager->GetActiveCamera().GetProjection();
                 const float projM00 = projMatrix.m._11;
                 const float projM11 = projMatrix.m._22;
 
@@ -258,8 +308,70 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
                 break;
         }
 
-        // Map materialId to texture SRV indices if textures are loaded
-        if (!m_textures.empty() && meshComp.materialId < static_cast<uint32_t>(m_textures.size())) {
+        // ── Material Graph path (.uzmat) ───────────────────────────────────
+        // When a mesh has a materialGraphPath set (from scene_loader), resolve
+        // the graph via MaterialManager, compile the PSO via MaterialPipeline,
+        // and set it on the draw command. The GBuffer pass will use this PSO
+        // instead of the default one, calling ComputeMaterialOutputs() in the
+        // shader to evaluate the graph.
+        if (!meshComp.materialGraphPath.empty() && m_materialManager && m_materialPipeline) {
+            // Lazy-load the graph on first encounter
+            if (meshComp.materialGraphId == UINT32_MAX) {
+                // Resolve VFS-relative path to absolute filesystem path
+                const std::string absPath = vfs ? vfs->ResolvePath(meshComp.materialGraphPath)
+                                                : meshComp.materialGraphPath;
+                meshComp.materialGraphId = m_materialManager->LoadMaterial(absPath);
+                if (meshComp.materialGraphId == UINT32_MAX) {
+                    UZ_LOG(Renderer, Warning, "Failed to load material graph: '{}'",
+                           meshComp.materialGraphPath);
+                    meshComp.materialGraphPath.clear(); // Don't retry
+                }
+            }
+
+            if (meshComp.materialGraphId != UINT32_MAX) {
+                const auto* graph = m_materialManager->GetGraph(meshComp.materialGraphId);
+                if (graph) {
+                    auto pso = m_materialPipeline->GetOrCreatePSO(*graph);
+                    if (pso.IsValid()) {
+                        cmd.materialGraphPipeline = pso;
+
+                        // Resolve texture SRV indices for MaterialTextureCB.
+                        // Use the compile result's textureSlots (ordered by translator
+                        // allocation = topological sort order) to match slot indices
+                        // correctly. The defaultPath in each slot is the VFS-relative
+                        // texture path from the TextureSample node.
+                        const uint64_t matHash = graph->ComputeContentHash();
+                        const auto* compResult = m_materialPipeline->GetCompileResult(matHash);
+                        if (compResult && !compResult->textureSlots.empty()) {
+                            // Ensure all material graph textures are loaded
+                            for (size_t si = 0; si < compResult->textureSlots.size(); ++si) {
+                                const auto& texPath = compResult->textureSlots[si].defaultPath;
+                                if (!texPath.empty() && m_textureMap.find(texPath) == m_textureMap.end()) {
+                                    QueueTextureLoad(texPath);
+                                }
+                            }
+                            cmd.materialTexCount = static_cast<uint32_t>(
+                                std::min(compResult->textureSlots.size(), size_t(16)));
+                            for (uint32_t ti = 0; ti < cmd.materialTexCount; ++ti) {
+                                const auto& texPath = compResult->textureSlots[ti].defaultPath;
+                                auto texIt = m_textureMap.find(texPath);
+                                if (texIt != m_textureMap.end() &&
+                                    texIt->second < static_cast<uint32_t>(m_textures.size())) {
+                                    cmd.materialTexIndices[ti] = m_textures[texIt->second].srvIndex;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Legacy materialId → texture mapping: only use when the component
+        // explicitly set a materialId AND textures exist. Default materialId=0
+        // would incorrectly bind the first loaded texture (e.g., HDRI) as albedo
+        // for meshes that have no texture assigned.
+        if (meshComp.materialLoaded && meshComp.materialId > 0
+            && meshComp.materialId < static_cast<uint32_t>(m_textures.size())) {
             const auto& tex = m_textures[meshComp.materialId];
             cmd.albedoSrvIndex = tex.srvIndex;
             cmd.albedoTexture  = tex.handle;
@@ -300,6 +412,15 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
         bindTexFromPath(effNormalPath,    cmd.normalSrvIndex,    cmd.normalTexture);
         bindTexFromPath(effEmissivePath,  cmd.emissiveSrvIndex,  cmd.emissiveTexture);
 
+        // Blend mode — bits[0:1] of materialFlags.
+        // 0=Opaque, 1=Masked, 2=Translucent, 3=Additive.
+        // GBuffer pass skips draws where bits[0:1] >= 2 (Translucent/Additive).
+        // Forward translucent pass only draws where bits[0:1] >= 2.
+        if (mat) {
+            const uint32_t bm = static_cast<uint32_t>(mat->GetBlendMode()) & 0x3u;
+            cmd.materialFlags |= bm;
+        }
+
         // ORM packed mode: single texture replaces separate roughness/metallic/AO.
         // Bind ORM texture to the aoIndex slot; shader unpacks R=AO, G=Roughness, B=Metallic.
         const bool isORM = mat && mat->IsORM();
@@ -322,6 +443,7 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
             cmd.normalIntensity     = mat->GetNormalIntensity();
             cmd.aoIntensity         = mat->GetAoIntensity();
             cmd.opacity             = mat->GetOpacity();
+            cmd.alphaClipThreshold  = mat->GetAlphaClipThreshold();
             cmd.uvScaleX            = mat->GetUvScaleX();
             cmd.uvScaleY            = mat->GetUvScaleY();
             cmd.uvOffsetX           = mat->GetUvOffsetX();
@@ -343,15 +465,23 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
             const uint32_t smId = static_cast<uint32_t>(mat->GetShadingModel()) & 0xFu;
             cmd.materialFlags |= (smId << 24);
 
-            // Clear coat roughness packed into materialFlags bits[28:31] (4 bits = 16 levels).
-            // Only meaningful when shadingModelID == 4 (ClearCoat).
-            const uint32_t ccRoughU4 = std::min(15u, static_cast<uint32_t>(mat->GetClearCoatRoughness() * 15.0f));
-            cmd.materialFlags |= (ccRoughU4 << 28);
+            // bits[28:31] — context-dependent (4-bit, 16 levels):
+            //   smID==4 (ClearCoat):      clearCoatRoughness * 15
+            //   smID==9 (ThinTranslucent): transmission * 15
+            //   other:                    clearCoatRoughness * 15 (default)
+            if (mat->GetShadingModel() == EShadingModel::ThinTranslucent) {
+                const uint32_t transU4 = std::min(15u, static_cast<uint32_t>(mat->GetScalarParam("Transmission", 0.0f) * 15.0f));
+                cmd.materialFlags |= (transU4 << 28);
+            } else {
+                const uint32_t ccRoughU4 = std::min(15u, static_cast<uint32_t>(mat->GetClearCoatRoughness() * 15.0f));
+                cmd.materialFlags |= (ccRoughU4 << 28);
+            }
 
             // Pack twoSided into materialFlags bit 3 (PSO-level only, not read in shader).
             if (mat->IsTwoSided()) {
                 cmd.materialFlags |= 0x8u; // bit 3
             }
+
 
             // Opacity texture SRV index — used for alpha mask sampling in the shader.
             cmd.opacitySrvIndex = mat->GetOpacitySrvIndex();

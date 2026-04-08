@@ -33,3 +33,8 @@
 - [x] 3.1 Document shadow atlas layout and allocation strategy — docs/analysis/lighting/local-light-shadows.md
 - [x] 3.2 Add point/spot shadow sampling algorithm with UE5 reference — docs/analysis/lighting/local-light-shadows.md §3
 - [x] 3.3 Document shadow importance ranking and performance budget — docs/analysis/lighting/local-light-shadows.md §2, §4
+
+## 5. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 5.1 Update or create documentation covering the implementation
+- [ ] 5.2 Write tests covering the new behavior
+- [ ] 5.3 Run tests and confirm they pass

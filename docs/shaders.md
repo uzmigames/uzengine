@@ -1,18 +1,18 @@
 <!-- doc-meta
 type: reference
 status: active
-updated: 2026-03-24
+updated: 2026-04-03
 version: 1.0
 -->
 
 # UzEngine Shader Reference
 
-Complete catalog of all HLSL shaders and shared include files in the UzEngine runtime. 102 shader programs organized by category + 20 shared libraries.
+Complete catalog of all HLSL shaders and shared include files in the UzEngine runtime. ~145 shader files organized by category + shared libraries.
 
 **Quick Stats**
-- **Shader Programs**: 102 total (23 compute, 40 pixel, 8 vertex, 1 pixel+vertex shader pairs, misc)
-- **Shared Includes**: 20 reusable libraries
-- **Total Lines**: ~50,000+ HLSL
+- **Shader Files**: ~145 total (compute, pixel, vertex, includes)
+- **Subsystems**: GBuffer, lighting, shadows, atmosphere, post-process, VFX, GI, debug, raytracing
+- **Total Lines**: ~60,000+ HLSL
 - **Rendering Pipeline**: Deferred lit, forward PBR, tone-mapped post-process
 - **Platforms**: SM6.6 (bindless), SM5 (traditional IA), all RHI backends via unified compilation
 

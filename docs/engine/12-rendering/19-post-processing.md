@@ -1,6 +1,6 @@
 # Post-Processing System
 
-> **Status**: Planned (Phases 2–3)
+> **Status**: Done (v0.5.0 — TAA, SSR, GTAO, bloom, tonemap, auto-exposure, DOF, motion blur, color grading, SSGI, SVGF)
 > **Source**: `engine/post-process/`, `engine/subsystem/post_process_world.h`
 > **References**: UE5 `PostProcessVolume` + `PostProcessSettings`, Godot `Environment` + `WorldEnvironment`
 

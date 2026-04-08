@@ -25,7 +25,11 @@ cbuffer TaaCB : register(b2) {
     uint   velocitySrvIndex;    ///< Bindless SRV: velocity buffer (RG16F, pixels).
     float  outputWidth;         ///< Output width in pixels.
     float  outputHeight;        ///< Output height in pixels.
-    uint   _pad0;
+    float  varianceClipGamma;   ///< CVar r.TAA.VarianceClipGamma (default 1.25).
+    float  velocityThreshold;   ///< CVar r.TAA.VelocityThreshold (default 40.0, pixels).
+    float  antiFlickerMax;      ///< CVar r.TAA.AntiFlickerMax (default 0.3).
+    float  spatialWeightMul;    ///< CVar r.TAA.SpatialWeightMultiplier (default 2.29).
+    float  exposureScale;       ///< CVar r.TAA.ExposureScale (default 1.0).
 };
 
 SamplerState LinearClampSampler : register(s0);
@@ -153,7 +157,7 @@ void main(uint2 DTid : SV_DispatchThreadID)
     int2 centerCoord = int2(uv * float2(sceneW, sceneH));
     centerCoord = clamp(centerCoord, int2(0, 0), int2(sceneW - 1, sceneH - 1));
 
-    const float FrameExposureScale = 1.0;
+    const float FrameExposureScale = exposureScale;
 
     [unroll]
     for (uint i = 0; i < 9; i++)
@@ -180,7 +184,7 @@ void main(uint2 DTid : SV_DispatchThreadID)
     {
         float2 pixelOffset = kPlusOffsets[j] - jitterOffset;
         /// @ref Karis 2014 — exp(-2.29 * d^2), sigma=0.47
-        float spatialWeight = exp(-2.29 * dot(pixelOffset, pixelOffset));
+        float spatialWeight = exp(-spatialWeightMul * dot(pixelOffset, pixelOffset));
         float hdrWeight = neighborWeights[kPlusIndices[j]];
         float sampleWeight = spatialWeight * hdrWeight;
         filteredColor += neighbors[kPlusIndices[j]] * sampleWeight;
@@ -307,7 +311,7 @@ void main(uint2 DTid : SV_DispatchThreadID)
     neighborMu    /= 9.0;
     neighborSigma = sqrt(abs(neighborSigma / 9.0 - neighborMu * neighborMu));
 
-    static const float kVarianceClipGamma = 1.25;
+    float kVarianceClipGamma = varianceClipGamma;
     float3 varianceMin = neighborMu - kVarianceClipGamma * neighborSigma;
     float3 varianceMax = neighborMu + kVarianceClipGamma * neighborSigma;
 
@@ -322,7 +326,7 @@ void main(uint2 DTid : SV_DispatchThreadID)
     float blendFinal = currentFrameWeight;
 
     /// @ref Karis 2014 — lerp(blend, 0.2, saturate(velocity/40))
-    blendFinal = lerp(blendFinal, 0.2, saturate(velocityMag / 40.0));
+    blendFinal = lerp(blendFinal, 0.2, saturate(velocityMag / velocityThreshold));
 
     /// @ref Karis 2014 — anti-flicker minimum contribution guard
     /// Added epsilon to prevent near-zero denominator in static scenes.
@@ -332,7 +336,7 @@ void main(uint2 DTid : SV_DispatchThreadID)
     float lumaHistory  = clampedHistory.x;
     float lumaDiff = abs(lumaFiltered - lumaHistory);
     float antiFlicker = saturate(0.01 * lumaHistory / max(lumaDiff, 0.001));
-    blendFinal = max(blendFinal, min(antiFlicker, 0.3));
+    blendFinal = max(blendFinal, min(antiFlicker, antiFlickerMax));
 
     // NaN guard
     blendFinal = -min(-blendFinal, 0.0);

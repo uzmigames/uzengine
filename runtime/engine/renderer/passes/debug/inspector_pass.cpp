@@ -34,19 +34,20 @@ void PassInspector::BeginFrame() {
 
 void PassInspector::RegisterTarget(const char* name, RHITextureHandle texture, uint32_t srvIndex,
                                     VisDisplayMode mode, uint32_t width, uint32_t height,
-                                    RHIResourceState state) {
+                                    RHIResourceState state, DumpChannel dumpChannel) {
     if (!name || !texture.IsValid() || srvIndex == UINT32_MAX) {
         return;
     }
 
     RegisteredTarget target;
-    target.name      = name;
-    target.texture   = texture;
-    target.srvIndex  = srvIndex;
-    target.mode      = mode;
-    target.width     = width;
-    target.height    = height;
-    target.lastState = state;
+    target.name        = name;
+    target.texture     = texture;
+    target.srvIndex    = srvIndex;
+    target.mode        = mode;
+    target.width       = width;
+    target.height      = height;
+    target.lastState   = state;
+    target.dumpChannel = dumpChannel;
 
     m_targets.push_back(std::move(target));
 }

@@ -390,6 +390,10 @@ uint64_t MaterialGraph::ComputeContentHash() const {
     auto shadingVal = static_cast<uint8_t>(shadingModel);
     XXH64_update(state, &shadingVal, sizeof(shadingVal));
 
+    // Hash MaterialParams — must be in the hash so PSO recompiles when the
+    // author tweaks roughness/metallic/tint values.
+    XXH64_update(state, &params, sizeof(params));
+
     // Sort expressions by ID for deterministic ordering.
     std::vector<const MaterialExpression*> sorted;
     sorted.reserve(expressions_.size());
@@ -458,6 +462,19 @@ std::string MaterialGraph::ToJson() const {
     root["domain"]       = MaterialDomainToString(domain);
     root["shadingModel"] = MaterialShadingModelToString(shadingModel);
 
+    // ── Standard PBR knobs (always serialized so authors can tweak) ───
+    nlohmann::json jParams;
+    jParams["baseColorTint"]      = {params.baseColorTint[0],
+                                     params.baseColorTint[1],
+                                     params.baseColorTint[2]};
+    jParams["roughnessMultiplier"] = params.roughnessMultiplier;
+    jParams["metallicMultiplier"]  = params.metallicMultiplier;
+    jParams["emissiveMultiplier"]  = params.emissiveMultiplier;
+    jParams["normalStrength"]      = params.normalStrength;
+    jParams["specularMultiplier"]  = params.specularMultiplier;
+    jParams["aoMultiplier"]        = params.aoMultiplier;
+    root["params"] = std::move(jParams);
+
     auto& jExprs = root["expressions"];
     jExprs = nlohmann::json::array();
 
@@ -469,18 +486,36 @@ std::string MaterialGraph::ToJson() const {
         jExpr["pos"]  = {expr.posX, expr.posY};
 
         // Serialize input connections (only connected pins).
+        // Saved in the new named-pin format: dstPin/srcPin as strings.
         auto& jInputs = jExpr["inputs"];
         jInputs = nlohmann::json::array();
         for (const auto& pin : expr.inputs) {
             nlohmann::json jPin;
-            jPin["pin"]  = pin.id;
-            jPin["name"] = pin.name;
-            jPin["type"] = MatPinTypeToHlsl(pin.type);
+            jPin["dstPin"] = pin.name;
+            jPin["type"]   = MatPinTypeToHlsl(pin.type);
             jPin["default"] = {pin.defaultValue[0], pin.defaultValue[1],
                                pin.defaultValue[2], pin.defaultValue[3]};
             if (pin.IsConnected()) {
                 jPin["srcExpr"] = pin.connectedExprId;
-                jPin["srcPin"]  = pin.connectedPinId;
+                // Resolve numeric source pin id back to its name for stable
+                // string-based serialization. Falls back to int if the source
+                // expression cannot be located (defensive).
+                std::string srcPinName;
+                for (const auto& srcExpr : expressions_) {
+                    if (srcExpr.id != pin.connectedExprId) continue;
+                    for (const auto& srcOut : srcExpr.outputs) {
+                        if (srcOut.id == pin.connectedPinId) {
+                            srcPinName = srcOut.name;
+                            break;
+                        }
+                    }
+                    break;
+                }
+                if (!srcPinName.empty()) {
+                    jPin["srcPin"] = srcPinName;
+                } else {
+                    jPin["srcPin"] = pin.connectedPinId;
+                }
             }
             jInputs.push_back(std::move(jPin));
         }
@@ -550,6 +585,24 @@ bool MaterialGraph::FromJson(const std::string& jsonStr, std::string* outError) 
     domain = MaterialDomainFromString(root.value("domain", "Surface").c_str());
     shadingModel = MaterialShadingModelFromString(root.value("shadingModel", "DefaultLit").c_str());
 
+    // Read MaterialParams (UE5-style PBR knobs). All fields optional;
+    // missing fields keep their constructor defaults.
+    if (root.contains("params") && root["params"].is_object()) {
+        const auto& jp = root["params"];
+        if (jp.contains("baseColorTint") && jp["baseColorTint"].is_array()) {
+            const auto& tint = jp["baseColorTint"];
+            for (size_t i = 0; i < std::min(tint.size(), size_t(3)); ++i) {
+                params.baseColorTint[i] = tint[i].get<float>();
+            }
+        }
+        if (jp.contains("roughnessMultiplier")) params.roughnessMultiplier = jp["roughnessMultiplier"].get<float>();
+        if (jp.contains("metallicMultiplier"))  params.metallicMultiplier  = jp["metallicMultiplier"].get<float>();
+        if (jp.contains("emissiveMultiplier"))  params.emissiveMultiplier  = jp["emissiveMultiplier"].get<float>();
+        if (jp.contains("normalStrength"))      params.normalStrength      = jp["normalStrength"].get<float>();
+        if (jp.contains("specularMultiplier"))  params.specularMultiplier  = jp["specularMultiplier"].get<float>();
+        if (jp.contains("aoMultiplier"))        params.aoMultiplier        = jp["aoMultiplier"].get<float>();
+    }
+
     // Parse expressions.
     if (!root.contains("expressions") || !root["expressions"].is_array()) {
         return setError("Missing or invalid 'expressions' array");
@@ -557,6 +610,15 @@ bool MaterialGraph::FromJson(const std::string& jsonStr, std::string* outError) 
 
     expressions_.clear();
     uint32_t maxId = 0;
+
+    // Pending named srcPin connections — resolved after all expressions
+    // are loaded so that the source expression's output pins are visible.
+    struct PendingSrcPinName {
+        uint32_t    dstExprId;
+        uint32_t    dstPinId;
+        std::string srcPinName;
+    };
+    std::vector<PendingSrcPinName> pendingSrcPinNames;
 
     for (const auto& jExpr : root["expressions"]) {
         if (!jExpr.contains("id") || !jExpr.contains("type")) {
@@ -580,16 +642,46 @@ bool MaterialGraph::FromJson(const std::string& jsonStr, std::string* outError) 
         }
 
         // Parse input pin connections and defaults.
+        // Pin lookup follows the UE5 / Godot pattern: prefer NAMED pins.
+        // Accepted JSON forms (in priority order):
+        //   { "dstPin": "BaseColor", "srcExpr": 2, "srcPin": "RGB" }   ← preferred
+        //   { "pin": 0,              "srcExpr": 2, "srcPin": 0     }   ← legacy
+        //   { "pin": "BaseColor",    "srcExpr": 2, "srcPin": "RGB" }   ← also accepted
+        // The loader resolves strings to pin IDs against the factory-created
+        // pins (whose names are declared in material_expression.cpp Setup*).
+        // Connecting an unknown pin name is a hard error to surface typos.
         if (jExpr.contains("inputs") && jExpr["inputs"].is_array()) {
             for (const auto& jPin : jExpr["inputs"]) {
-                const uint32_t pinId = jPin.value("pin", UINT32_MAX);
-
-                // Find the matching factory-created input pin.
+                // Resolve target pin via "dstPin" (named) or "pin" (legacy int/string).
                 MatPin* targetPin = nullptr;
-                for (auto& pin : expr.inputs) {
-                    if (pin.id == pinId) { targetPin = &pin; break; }
+                auto resolveByNameOrId = [&](const nlohmann::json& v) -> MatPin* {
+                    if (v.is_string()) {
+                        const std::string& nm = v.get_ref<const std::string&>();
+                        for (auto& pin : expr.inputs) if (pin.name == nm) return &pin;
+                        return nullptr;
+                    }
+                    if (v.is_number_unsigned() || v.is_number_integer()) {
+                        const uint32_t pid = v.get<uint32_t>();
+                        for (auto& pin : expr.inputs) if (pin.id == pid) return &pin;
+                        return nullptr;
+                    }
+                    return nullptr;
+                };
+                if (jPin.contains("dstPin")) {
+                    targetPin = resolveByNameOrId(jPin["dstPin"]);
+                } else if (jPin.contains("pin")) {
+                    targetPin = resolveByNameOrId(jPin["pin"]);
                 }
-                if (!targetPin) continue;
+                if (!targetPin) {
+                    // Surface the typo so authors don't get silent dropped pins.
+                    std::string what = jPin.contains("dstPin")
+                        ? jPin["dstPin"].dump()
+                        : (jPin.contains("pin") ? jPin["pin"].dump() : std::string("<missing>"));
+                    UZ_LOG(Material, Warning,
+                           "MaterialGraph: expression {} ({}): unknown input pin {} — skipping",
+                           expr.id, MatExprTypeToString(expr.type), what);
+                    continue;
+                }
 
                 // Override default values if present.
                 if (jPin.contains("default") && jPin["default"].is_array()) {
@@ -604,10 +696,28 @@ bool MaterialGraph::FromJson(const std::string& jsonStr, std::string* outError) 
                     targetPin->type = PinTypeFromHlsl(jPin["type"].get<std::string>());
                 }
 
-                // Set connection if present.
+                // Set connection if present. srcPin can be int (legacy) or
+                // string (new). Strings are resolved against the source
+                // expression's output pins by name. Source resolution is
+                // deferred since the source expression may not yet be parsed
+                // — we store the raw value and patch up after the loop.
                 if (jPin.contains("srcExpr") && jPin.contains("srcPin")) {
                     targetPin->connectedExprId = jPin["srcExpr"].get<uint32_t>();
-                    targetPin->connectedPinId  = jPin["srcPin"].get<uint32_t>();
+                    const auto& jSrcPin = jPin["srcPin"];
+                    if (jSrcPin.is_string()) {
+                        // Encode the name as a sentinel: store hash in
+                        // connectedPinId temporarily, mark with high bit set so
+                        // the second pass knows it's a name (not an ID). Use a
+                        // side-table instead to avoid bit collision.
+                        targetPin->connectedPinId = UINT32_MAX; // placeholder
+                        // Track for post-pass resolution.
+                        pendingSrcPinNames.push_back({
+                            expr.id, targetPin->id,
+                            jSrcPin.get<std::string>()
+                        });
+                    } else {
+                        targetPin->connectedPinId = jSrcPin.get<uint32_t>();
+                    }
                 }
             }
         }
@@ -652,6 +762,54 @@ bool MaterialGraph::FromJson(const std::string& jsonStr, std::string* outError) 
     }
 
     nextExprId_ = maxId + 1;
+
+    // ── Resolve pending named srcPin connections ───────────────────────
+    // Names like "RGB" / "G" / "Result" are looked up against the source
+    // expression's output pins. Done in a second pass so authors can put
+    // expressions in any order in the JSON.
+    for (const auto& pending : pendingSrcPinNames) {
+        // Find the destination input pin first.
+        MatPin* dstPin = nullptr;
+        for (auto& e : expressions_) {
+            if (e.id != pending.dstExprId) continue;
+            for (auto& p : e.inputs) {
+                if (p.id == pending.dstPinId) { dstPin = &p; break; }
+            }
+            break;
+        }
+        if (!dstPin) continue;
+
+        // Find source expression and its output pin by name.
+        MaterialExpression* srcExpr = nullptr;
+        for (auto& e : expressions_) {
+            if (e.id == dstPin->connectedExprId) { srcExpr = &e; break; }
+        }
+        if (!srcExpr) {
+            UZ_LOG(Material, Warning,
+                   "MaterialGraph: srcExpr {} for input '{}' not found",
+                   dstPin->connectedExprId, dstPin->name);
+            dstPin->connectedExprId = 0;
+            dstPin->connectedPinId  = 0;
+            continue;
+        }
+        bool resolved = false;
+        for (const auto& outPin : srcExpr->outputs) {
+            if (outPin.name == pending.srcPinName) {
+                dstPin->connectedPinId = outPin.id;
+                resolved = true;
+                break;
+            }
+        }
+        if (!resolved) {
+            UZ_LOG(Material, Warning,
+                   "MaterialGraph: source expression {} ({}) has no output pin named '{}' "
+                   "(input '{}' will be unconnected)",
+                   srcExpr->id, MatExprTypeToString(srcExpr->type),
+                   pending.srcPinName, dstPin->name);
+            dstPin->connectedExprId = 0;
+            dstPin->connectedPinId  = 0;
+        }
+    }
 
     // Verify PBROutput is present.
     if (expressions_.empty() || expressions_[0].type != MatExprType::PBROutput) {

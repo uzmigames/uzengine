@@ -545,4 +545,202 @@ RHIPipelineHandle PipelineLibrary::GetRadianceCacheTrace() {
     return m_radianceCacheTrace;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// DDGI Probe Update Compute Pipeline (DXR inline ray tracing)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// @ref Majercik 2019 "Dynamic Diffuse Global Illumination with Ray-Traced
+//                     Irradiance Probes" — runtime swap with the SDF path
+// @ref Microsoft DirectX-Specs "Inline Raytracing (DXR 1.1)" — RayQuery<>
+
+bool PipelineLibrary::EnsureDdgiProbeUpdateShader() {
+    if (m_ddgiProbeUpdateCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::DdgiProbeUpdateCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile DdgiProbeUpdateCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "ddgi_probe_update_cs";
+
+    m_ddgiProbeUpdateCS = m_device->CreateShader(shaderDesc);
+    if (!m_ddgiProbeUpdateCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create DdgiProbeUpdateCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetDdgiProbeUpdate() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetDdgiProbeUpdate called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_ddgiProbeUpdate.IsValid()) {
+        return m_ddgiProbeUpdate;
+    }
+
+    if (!EnsureDdgiProbeUpdateShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ddgiProbeUpdateCS;
+    desc.debugName     = "DDGI_ProbeUpdate";
+
+    m_ddgiProbeUpdate = m_device->CreateComputePipeline(desc);
+    if (!m_ddgiProbeUpdate.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create DDGI_ProbeUpdate pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created DDGI_ProbeUpdate pipeline");
+    }
+
+    return m_ddgiProbeUpdate;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SVGF Reproject Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureSvgfReprojectShader() {
+    if (m_svgfReprojectCS.IsValid()) return true;
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::SvgfReprojectCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile SvgfReprojectCS");
+        return false;
+    }
+    RHIShaderDesc sd{};
+    sd.bytecode     = bytecode.data();
+    sd.bytecodeSize = bytecode.size();
+    sd.stage        = RHIShaderStage::Compute;
+    sd.entryPoint   = "main";
+    sd.debugName    = "svgf_reproject_cs";
+    m_svgfReprojectCS = m_device->CreateShader(sd);
+    return m_svgfReprojectCS.IsValid();
+}
+
+RHIPipelineHandle PipelineLibrary::GetSvgfReproject() {
+    if (!m_initialized) return RHIPipelineHandle::Invalid();
+    if (m_svgfReproject.IsValid()) return m_svgfReproject;
+    if (!EnsureSvgfReprojectShader()) return RHIPipelineHandle::Invalid();
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_svgfReprojectCS;
+    desc.debugName     = "SVGF_Reproject";
+    m_svgfReproject = m_device->CreateComputePipeline(desc);
+    if (m_svgfReproject.IsValid())
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created SVGF_Reproject pipeline");
+    return m_svgfReproject;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SVGF Filter Moments Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureSvgfFilterMomentsShader() {
+    if (m_svgfFilterMomentsCS.IsValid()) return true;
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::SvgfFilterMomentsCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile SvgfFilterMomentsCS");
+        return false;
+    }
+    RHIShaderDesc sd{};
+    sd.bytecode     = bytecode.data();
+    sd.bytecodeSize = bytecode.size();
+    sd.stage        = RHIShaderStage::Compute;
+    sd.entryPoint   = "main";
+    sd.debugName    = "svgf_filter_moments_cs";
+    m_svgfFilterMomentsCS = m_device->CreateShader(sd);
+    return m_svgfFilterMomentsCS.IsValid();
+}
+
+RHIPipelineHandle PipelineLibrary::GetSvgfFilterMoments() {
+    if (!m_initialized) return RHIPipelineHandle::Invalid();
+    if (m_svgfFilterMoments.IsValid()) return m_svgfFilterMoments;
+    if (!EnsureSvgfFilterMomentsShader()) return RHIPipelineHandle::Invalid();
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_svgfFilterMomentsCS;
+    desc.debugName     = "SVGF_FilterMoments";
+    m_svgfFilterMoments = m_device->CreateComputePipeline(desc);
+    if (m_svgfFilterMoments.IsValid())
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created SVGF_FilterMoments pipeline");
+    return m_svgfFilterMoments;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SVGF A-Trous Wavelet Filter Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureSvgfAtrousShader() {
+    if (m_svgfAtrousCS.IsValid()) return true;
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::SvgfAtrousCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile SvgfAtrousCS");
+        return false;
+    }
+    RHIShaderDesc sd{};
+    sd.bytecode     = bytecode.data();
+    sd.bytecodeSize = bytecode.size();
+    sd.stage        = RHIShaderStage::Compute;
+    sd.entryPoint   = "main";
+    sd.debugName    = "svgf_atrous_cs";
+    m_svgfAtrousCS = m_device->CreateShader(sd);
+    return m_svgfAtrousCS.IsValid();
+}
+
+RHIPipelineHandle PipelineLibrary::GetSvgfAtrous() {
+    if (!m_initialized) return RHIPipelineHandle::Invalid();
+    if (m_svgfAtrous.IsValid()) return m_svgfAtrous;
+    if (!EnsureSvgfAtrousShader()) return RHIPipelineHandle::Invalid();
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_svgfAtrousCS;
+    desc.debugName     = "SVGF_ATrous";
+    m_svgfAtrous = m_device->CreateComputePipeline(desc);
+    if (m_svgfAtrous.IsValid())
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created SVGF_ATrous pipeline");
+    return m_svgfAtrous;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// God Rays Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureGodRaysShader() {
+    if (m_godRaysCS.IsValid()) return true;
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::GodRaysCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile GodRaysCS");
+        return false;
+    }
+    RHIShaderDesc sd{};
+    sd.bytecode     = bytecode.data();
+    sd.bytecodeSize = bytecode.size();
+    sd.stage        = RHIShaderStage::Compute;
+    sd.entryPoint   = "main";
+    sd.debugName    = "god_rays_cs";
+    m_godRaysCS = m_device->CreateShader(sd);
+    return m_godRaysCS.IsValid();
+}
+
+RHIPipelineHandle PipelineLibrary::GetGodRays() {
+    if (!m_initialized) return RHIPipelineHandle::Invalid();
+    if (m_godRays.IsValid()) return m_godRays;
+    if (!EnsureGodRaysShader()) return RHIPipelineHandle::Invalid();
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_godRaysCS;
+    desc.debugName     = "GodRays";
+    m_godRays = m_device->CreateComputePipeline(desc);
+    if (m_godRays.IsValid())
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created GodRays pipeline");
+    return m_godRays;
+}
+
 } // namespace uz

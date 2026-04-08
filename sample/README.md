@@ -22,18 +22,27 @@ runtime/build/bin/uzengine.exe --project sample/projects/deferred_test.uzproject
 runtime/build/bin/uzengine.exe --project sample/projects/pbr_showcase.uzproject --cvar quality=3
 
 # Available demos:
+runtime/build/bin/uzengine.exe --project sample/projects/pbr_showcase.uzproject
+runtime/build/bin/uzengine.exe --project sample/projects/damaged_helmet.uzproject
+runtime/build/bin/uzengine.exe --project sample/projects/deferred_test.uzproject
 runtime/build/bin/uzengine.exe --project sample/projects/camera_test.uzproject
 runtime/build/bin/uzengine.exe --project sample/projects/mesh_test.uzproject
-runtime/build/bin/uzengine.exe --project sample/projects/deferred_test.uzproject
 runtime/build/bin/uzengine.exe --project sample/projects/ibl_test.uzproject
 runtime/build/bin/uzengine.exe --project sample/projects/hdri_test.uzproject
 runtime/build/bin/uzengine.exe --project sample/projects/cornell_box.uzproject
-runtime/build/bin/uzengine.exe --project sample/projects/pbr_showcase.uzproject
 runtime/build/bin/uzengine.exe --project sample/projects/textured_quad.uzproject
 runtime/build/bin/uzengine.exe --project sample/projects/postprocess_test.uzproject
 runtime/build/bin/uzengine.exe --project sample/projects/instancing_test.uzproject
 runtime/build/bin/uzengine.exe --project sample/projects/material_test.uzproject
 runtime/build/bin/uzengine.exe --project sample/projects/fbx_test.uzproject
+runtime/build/bin/uzengine.exe --project sample/projects/vfx_showcase.uzproject
+runtime/build/bin/uzengine.exe --project sample/projects/multi_camera_demo.uzproject
+runtime/build/bin/uzengine.exe --project sample/projects/cloud_test.uzproject
+runtime/build/bin/uzengine.exe --project sample/projects/bloom_test.uzproject
+runtime/build/bin/uzengine.exe --project sample/projects/decal_test.uzproject
+runtime/build/bin/uzengine.exe --project sample/projects/local_shadows_test.uzproject
+runtime/build/bin/uzengine.exe --project sample/projects/lighting_reflection_test.uzproject
+runtime/build/bin/uzengine.exe --project sample/projects/minimal_test.uzproject
 ```
 
 ## Controls (all demos)
@@ -46,7 +55,9 @@ runtime/build/bin/uzengine.exe --project sample/projects/fbx_test.uzproject
 | Scroll wheel | Adjust camera speed |
 | F1 | Deferred render path |
 | F2 | Forward render path |
+| F5 | Toggle editor free-cam |
 | 0-9 | Debug view modes (deferred_test only) |
+| 1/2/3 | Switch cameras (multi_camera_demo) |
 | Tab | Cycle debug views |
 | Escape | Quit |
 
@@ -66,70 +77,75 @@ runtime/build/bin/uzengine.exe --project sample/projects/fbx_test.uzproject
 
 | Demo | Description | Features |
 |------|-------------|----------|
+| `pbr_showcase` | Multi-material showcase (cubes + spheres) | Full PBR pipeline, multiple PBR texture sets |
+| `damaged_helmet` | DamagedHelmet glTF model with HDRI environment | glTF import, material graph, multi-texture PBR, emissive |
+| `deferred_test` | 5 Stonebricks cubes + debug views | PBR textures, GBuffer visualization |
 | `camera_test` | Single white cube with FPS camera | Basic rendering, camera control |
 | `mesh_test` | Single white cube (same as camera_test) | Mesh loading, transforms |
 | `textured_quad` | Checker ground plane from above | Texture loading, UV mapping |
 | `postprocess_test` | 3 white cubes + sun | Tone mapping, FXAA, bloom |
-| `deferred_test` | 5 Stonebricks cubes + debug views | PBR textures, GBuffer visualization |
 | `ibl_test` | 5 Stonebricks cubes + IBL | Image-based lighting |
 | `hdri_test` | HDRI panorama + 7 PBR spheres | EXR loading, IBL reflections, varying metallic/roughness |
 | `instancing_test` | 1000 cubes in 10x10x10 grid (Lua-spawned) | GPU instancing, InstanceBatcher |
 | `material_test` | 5 spheres with different blend modes | Emissive, masked, translucent, additive, opaque |
 | `cornell_box` | Classic GI test box (red/green walls + sphere) | Procedural mesh, solid materials, atmosphere, fog |
 | `fbx_test` | Mushroom monster character on ground plane | FBX mesh import, ORM textures, reflection probe |
-| `pbr_showcase` | Multi-material showcase (cubes + spheres) | Full PBR pipeline, multiple PBR texture sets |
+| `vfx_showcase` | GPU particle effects showcase | VFX compute pipeline, collision, trails, presets |
+| `multi_camera_demo` | 3 cameras cycling every 2s (Front/Top/Side) | CameraManager, push/pop stack, hotkeys 1/2/3 |
+| `cloud_test` | Volumetric clouds test scene | Cloud ray marching, detail noise, aerial perspective |
+| `bloom_test` | Bloom post-process test | Bloom 6-mip pyramid, smooth knee, HDR composite |
+| `decal_test` | Deferred decal projection | DBuffer decals, opacity mask, material-based |
+| `local_shadows_test` | Point/spot light shadow testing | Local light shadows, shadow atlas |
+| `lighting_reflection_test` | Lighting and reflection probe scene | IBL, reflection probes, multiple light types |
+| `minimal_test` | Minimal empty scene | Baseline rendering, startup validation |
 
 ## Structure
 
 ```
 sample/
-├── projects/
-│   ├── camera_test.uzproject
-│   ├── mesh_test.uzproject
-│   ├── textured_quad.uzproject
-│   ├── postprocess_test.uzproject
-│   ├── deferred_test.uzproject
-│   ├── ibl_test.uzproject
-│   ├── hdri_test.uzproject
-│   ├── instancing_test.uzproject
-│   ├── material_test.uzproject
-│   ├── cornell_box.uzproject
-│   ├── fbx_test.uzproject
+├── projects/                    # 22 .uzproject files (one per demo)
 │   ├── pbr_showcase.uzproject
-│   └── demo.uzproject
+│   ├── damaged_helmet.uzproject
+│   ├── vfx_showcase.uzproject
+│   ├── multi_camera_demo.uzproject
+│   ├── cloud_test.uzproject
+│   ├── bloom_test.uzproject
+│   ├── decal_test.uzproject
+│   ├── local_shadows_test.uzproject
+│   ├── lighting_reflection_test.uzproject
+│   ├── minimal_test.uzproject
+│   └── ... (camera_test, mesh_test, deferred_test, ibl_test, etc.)
 └── content/
-    ├── scenes/
-    │   ├── camera_test.uzscene
-    │   ├── mesh_test.uzscene
-    │   ├── textured_quad.uzscene
-    │   ├── postprocess_test.uzscene
-    │   ├── deferred_test.uzscene
-    │   ├── ibl_test.uzscene
-    │   ├── hdri_test.uzscene
-    │   ├── instancing_test.uzscene
-    │   ├── material_test.uzscene
-    │   ├── cornell_box.uzscene
-    │   ├── pbr_showcase.uzscene
-    │   └── demo.uzscene
+    ├── scenes/                  # 22 .uzscene files (one per demo)
     ├── scripts/
-    │   ├── camera_test_controller.lua
-    │   ├── deferred_test_controller.lua
+    │   ├── fly_camera.lua               # Shared fly camera controller
+    │   ├── cornell_box_setup.lua
+    │   ├── cube_rotator.lua
+    │   ├── decal_setup.lua
     │   ├── hdri_setup.lua
     │   ├── instancing_grid_setup.lua
-    │   ├── cornell_box_setup.lua
-    │   ├── pbr_showcase_controller.lua
-    │   ├── pbr_controller.lua
-    │   └── cube_rotator.lua
+    │   ├── load_hdri.lua                # HDRI environment loader
+    │   ├── multi_camera_demo.lua        # 3-camera cycling demo
+    │   └── test_component_parity.lua
+    ├── materials/
+    │   ├── damaged_helmet.uzmat         # glTF material graph (5 textures)
+    │   ├── stone_floor.uzmaterial
+    │   ├── marble.uzmaterial
+    │   └── metal_rust.uzmaterial
     ├── meshes/
-    │   ├── cube.uzmesh          # Binary .uzmesh (UZMH format)
-    │   └── sphere.uzmesh        # Binary .uzmesh (UZMH format)
+    │   ├── cube.uzmesh                  # Binary .uzmesh (UZMH format)
+    │   ├── sphere.uzmesh
+    │   ├── DamagedHelmet.uzmesh         # glTF-imported mesh
+    │   └── MushroomMonster_Low.uzmesh   # FBX-imported mesh (auto-LOD)
     └── textures/
-        ├── Stonebricks/         # PBR texture set
-        ├── Concrete/            # PBR texture set
-        ├── MetalCorroded/       # PBR texture set
-        ├── MushroomMonster/     # FBX character textures
-        ├── hdri/                # HDRI panorama images (EXR)
-        └── checker.png          # Debug checker pattern
+        ├── Stonebricks/                 # PBR texture set
+        ├── Concrete/                    # PBR texture set
+        ├── MetalCorroded/               # PBR texture set
+        ├── MushroomMonster/             # FBX character textures
+        ├── decals/                      # Decal textures
+        ├── hdri/                        # HDRI panorama images (EXR)
+        ├── Default_*.jpg                # Default PBR fallback textures
+        └── checker.png                  # Debug checker pattern
 ```
 
 ## File Formats
@@ -138,7 +154,10 @@ sample/
 |-----------|------|--------|
 | `.uzproject` | Project config | JSON — window, render, default scene |
 | `.uzscene` | Scene definition | JSON — entities, components, hierarchy |
-| `.uzmesh` | Mesh data | Binary — UZMH header + vertex/index data |
+| `.uzmesh` | Mesh data | Binary — UZMH v2 header + vertex/index/LOD data |
+| `.uzmat` | Material graph | JSON — node-based material (PBR textures, channel mapping) |
+| `.uzmaterial` | Simple material | JSON — fixed-function PBR parameters |
+| `.uztexture` | Cooked texture | Binary — pre-processed texture with mips |
 | `.lua` | Script | Lua — `on_start`/`on_update`/`on_stop` lifecycle |
 
 ## C++ Demo Template (RHI-level)

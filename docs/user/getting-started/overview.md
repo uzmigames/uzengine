@@ -31,14 +31,14 @@ for consistent cross-platform builds.
 **MCP Server** — Exposes engine capabilities as AI tools via the Model Context Protocol.
 Enables LLMs to create scenes, modify materials, and run engine commands.
 
-> **Phase 1 (current)** focuses on the Runtime layer — building the rendering foundation
-> from RHI up through a basic deferred renderer.
+> The Runtime layer is fully functional with a AAA deferred renderer (145 shaders),
+> SSGI, VFX pipeline, DXR raytracing infrastructure, and VSCode viewport integration.
 
 ## Design Goals
 
 | Goal | Description |
 |------|-------------|
-| **AAA visual quality** | Physically-based rendering, SM6.6 bindless, compute-driven pipeline |
+| **AAA visual quality** | Physically-based rendering, SM6.8 bindless, compute-driven pipeline (SSGI, SVGF, VFX, DXR) |
 | **AI-native** | Every system exposes structured interfaces for autonomous AI manipulation |
 | **Open formats** | JSON scenes, human-readable configs, no proprietary binary blobs during dev |
 | **Observable** | Structured logging, Tracy profiling, GPU breadcrumbs, stat counters on every system |
@@ -50,8 +50,8 @@ All rendering goes through an abstract RHI layer. The application never touches 
 Vulkan, or Metal APIs directly — only `IRHIDevice`, `IRHICommandList`, and typed handles.
 
 Currently implemented:
-- **DX12 SM6.7** — Full bindless via Agility SDK, D3D12MA memory management, DRED debugging
-- **Shader model negotiation** — Runtime probes hardware and falls back: SM6.7 → SM6.6 → SM6.0 → SM5.1 → SM5.0
+- **DX12 SM6.8** — Full bindless via Agility SDK, D3D12MA memory management, DRED debugging
+- **Shader model negotiation** — Runtime probes hardware and falls back: SM6.8 → SM6.6 → SM6.0 → SM5.1 → SM5.0
 
 See [RHI Guide](../guides/rhi/overview.md) for details.
 

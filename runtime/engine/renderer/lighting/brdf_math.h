@@ -466,4 +466,169 @@ static constexpr Vec3 kACES_AP1_RGB2Y = {0.2722287168f, 0.6740817658f, 0.0536895
     return ApplyToneCurve(LinearColor, 0.88f, 0.55f, 0.26f, 0.0f, 0.04f);
 }
 
+// ────────────────────────────────────────────────��────────────────────────────
+// ACESHillFit — Stephen Hill's fitted RRT+ODT matrices
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// ACES filmic tone mapping (Hill 2016 fitted RRT+ODT matrices).
+/// CPU-side equivalent of ACESHillFit() in common/color.hlsli.
+///
+/// @ref Hill 2016 "ACES Fitted Curves" — better hue preservation than Narkowicz
+[[nodiscard]] inline Vec3 ACESHillFit(Vec3 x) noexcept
+{
+    // sRGB -> AP1 (ACEScg working space) input matrix
+    constexpr Mat3 ACESInputMat{
+        0.59719f, 0.35458f, 0.04823f,
+        0.07600f, 0.90834f, 0.01566f,
+        0.02840f, 0.13383f, 0.83777f,
+    };
+    // AP1 -> sRGB output matrix
+    constexpr Mat3 ACESOutputMat{
+         1.60475f, -0.53108f, -0.07367f,
+        -0.10208f,  1.10813f, -0.00605f,
+        -0.00327f, -0.07276f,  1.07602f,
+    };
+
+    x = ACESInputMat.MulVec(x);
+
+    // RRT+ODT fit (Hill)
+    Vec3 a{x.x * (x.x + 0.0245786f) - 0.000090537f,
+            x.y * (x.y + 0.0245786f) - 0.000090537f,
+            x.z * (x.z + 0.0245786f) - 0.000090537f};
+    Vec3 b{x.x * (0.983729f * x.x + 0.4329510f) + 0.238081f,
+            x.y * (0.983729f * x.y + 0.4329510f) + 0.238081f,
+            x.z * (0.983729f * x.z + 0.4329510f) + 0.238081f};
+
+    x = Vec3{a.x / b.x, a.y / b.y, a.z / b.z};
+    x = ACESOutputMat.MulVec(x);
+
+    return Vec3{Saturate(x.x), Saturate(x.y), Saturate(x.z)};
+}
+
+/// Narkowicz 2015 ACES fit — kept for A/B comparison.
+/// @ref Narkowicz 2015 "ACES Filmic Tone Mapping Curve"
+[[nodiscard]] inline Vec3 ACESNarkowicz(Vec3 x) noexcept
+{
+    constexpr float a = 2.51f, b = 0.03f, c = 2.43f, d = 0.59f, e = 0.14f;
+    auto f = [&](float v) -> float {
+        return Saturate((v * (a * v + b)) / (v * (c * v + d) + e));
+    };
+    return Vec3{f(x.x), f(x.y), f(x.z)};
+}
+
+// ────────────���───────────────────────��─────────────────────────────���──────────
+// ComputeSpecularOcclusion — Lagarde 2014 / Filament
+// ───────────────────────────��─────────────────────────────────────────────────
+
+/// Specular occlusion from AO — prevents IBL specular leaking in crevices.
+/// CPU-side equivalent of ComputeSpecularOcclusion() in lighting/ibl.hlsli.
+///
+/// @ref Lagarde 2014 "Moving Frostbite to PBR" — specular occlusion approximation
+[[nodiscard]] inline float ComputeSpecularOcclusion(float NdotV, float ao, float roughness) noexcept
+{
+    return Saturate(std::pow(NdotV + ao, std::exp2(-16.0f * roughness - 1.0f)) - 1.0f + ao);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Anisotropic GGX — CPU mirrors of brdf.hlsli aniso functions
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Remap isotropic roughness + anisotropy to per-axis alpha.
+/// @ref Burley 2012, KHR_materials_anisotropy
+[[nodiscard]] inline std::pair<float, float> RemapAnisotropy(float roughness, float anisotropy) noexcept
+{
+    constexpr float kMinAlpha = 0.0064f;
+    float alpha = std::max(roughness * roughness, kMinAlpha);
+    float ax = std::max(alpha * (1.0f + anisotropy), kMinAlpha);
+    float ay = std::max(alpha * (1.0f - anisotropy), kMinAlpha);
+    return {ax, ay};
+}
+
+/// Anisotropic GGX NDF.
+/// @ref Burley 2012, Walter et al. 2007
+[[nodiscard]] inline float D_GGXAniso(float ax, float ay, float NoH, float XoH, float YoH) noexcept
+{
+    float a2 = ax * ay;
+    float vx = ay * XoH, vy = ax * YoH, vz = a2 * NoH;
+    float S = vx * vx + vy * vy + vz * vz;
+    return (1.0f / kPI) * a2 * (a2 / (S * S));
+}
+
+/// Anisotropic Smith height-correlated visibility.
+/// @ref Heitz 2014, Filament
+[[nodiscard]] inline float V_SmithGGXCorrelated_Aniso(
+    float ax, float ay, float NoV, float NoL,
+    float XoV, float XoL, float YoV, float YoL) noexcept
+{
+    auto len3 = [](float a, float b, float c) { return std::sqrt(a*a + b*b + c*c); };
+    float GGXV = NoL * len3(ax * XoV, ay * YoV, NoV);
+    float GGXL = NoV * len3(ax * XoL, ay * YoL, NoL);
+    return 0.5f / std::max(GGXV + GGXL, 1e-7f);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §10 — GGX VNDF Importance Sampling (CPU parity)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// GGX importance sampling (standard NDF) — returns half vector H in tangent space (Z-up).
+/// @ref Walter et al. 2007 "Microfacet Models for Refraction through Rough Surfaces"
+/// @constants cosTheta^2 = (1 - u.x) / (1 + (a^2 - 1) * u.x), phi = 2*PI * u.y
+///
+/// CPU mirror of shaders/runtime/common/sampling.hlsli::ImportanceSampleGGX.
+[[nodiscard]] inline Vec3 ImportanceSampleGGX(float ux, float uy, float roughness) noexcept {
+    const float alpha = roughness * roughness;
+    const float a2 = alpha * alpha;
+
+    const float cosTheta = std::sqrt((1.0f - ux) / (1.0f + (a2 - 1.0f) * ux));
+    const float sinTheta = std::sqrt(std::max(1.0f - cosTheta * cosTheta, 0.0f));
+    const float phi = 2.0f * kPI * uy;
+
+    return Vec3{sinTheta * std::cos(phi), sinTheta * std::sin(phi), cosTheta};
+}
+
+/// Sample the GGX Visible Normal Distribution Function (VNDF) using the
+/// spherical cap method. Returns a microfacet normal (half vector) in
+/// tangent space visible from the incident direction wi.
+///
+/// @ref Dupuy & Benyoub 2023 "Sampling Visible GGX Normals with Spherical Caps"
+///
+/// CPU mirror of shaders/runtime/common/sampling.hlsli::SampleGGX_VNDF.
+///
+/// alpha: isotropic GGX roughness (alpha = roughness^2)
+/// wi:    incident direction in tangent space (Z-up), must be normalized
+/// ux, uy: 2D uniform random sample in [0,1]^2
+[[nodiscard]] inline Vec3 SampleGGX_VNDF(float alpha, Vec3 wi, float ux, float uy) noexcept {
+    // Transform the view direction to the hemisphere configuration
+    // (stretch the ellipsoid into a hemisphere)
+    Vec3 Vh = Vec3{alpha * wi.x, alpha * wi.y, wi.z};
+    const float lenVh = std::sqrt(Vh.x * Vh.x + Vh.y * Vh.y + Vh.z * Vh.z);
+    if (lenVh > 0.0f) {
+        Vh.x /= lenVh;
+        Vh.y /= lenVh;
+        Vh.z /= lenVh;
+    }
+
+    // Sample a spherical cap in the positive hemisphere
+    const float phi = 2.0f * kPI * ux;
+    const float z = (1.0f - uy) * (1.0f + Vh.z) - Vh.z;
+    const float sinTheta = std::sqrt(std::max(1.0f - z * z, 0.0f));
+    const float x = sinTheta * std::cos(phi);
+    const float y = sinTheta * std::sin(phi);
+
+    // Compute the microfacet normal on the hemisphere
+    const float hx = x + Vh.x;
+    const float hy = y + Vh.y;
+    const float hz = z + Vh.z;
+
+    // Transform back from hemisphere to the ellipsoid configuration
+    Vec3 result{alpha * hx, alpha * hy, std::max(hz, 0.0f)};
+    const float lenR = std::sqrt(result.x * result.x + result.y * result.y + result.z * result.z);
+    if (lenR > 0.0f) {
+        result.x /= lenR;
+        result.y /= lenR;
+        result.z /= lenR;
+    }
+    return result;
+}
+
 } // namespace uz::brdf

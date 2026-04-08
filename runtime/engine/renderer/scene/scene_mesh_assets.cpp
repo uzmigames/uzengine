@@ -85,8 +85,13 @@ uint32_t SceneRenderer::LoadMesh(const std::string& path, IVFS* vfs,
 
     // ── Queue SDF bake for GI system (deferred — runs after mesh upload flush) ──
     // Only standard-format meshes with valid geometry are eligible for SDF baking.
+    // Skip entirely when SDF GI is not enabled — FlushSdfBakes() does a hard
+    // device WaitIdle per batch, which freezes the main thread for hundreds of
+    // milliseconds when loading scenes with many meshes (e.g. Sponza). The
+    // SDF bake can be re-triggered later if SDF GI is toggled on.
     // Read counts/stride from the header BEFORE moving the vectors (header is not moved).
-    if (cpuMesh.header.vertexFormat == MeshVertexFormat::Standard
+    if (m_sdfGiEnabled
+        && cpuMesh.header.vertexFormat == MeshVertexFormat::Standard
         && cpuMesh.GetVertexCount() > 0 && cpuMesh.GetIndexCount() >= 3)
     {
         PendingSdfBake sdfBake;
@@ -283,6 +288,15 @@ void SceneRenderer::DestroyAssets() {
     }
     m_textures.clear();
     m_textureMap.clear();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TrackExternalTexture — register externally-created texture for Shutdown cleanup
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SceneRenderer::TrackExternalTexture(const TextureLoadResult& tex) {
+    if (!tex.handle.IsValid()) return;
+    m_textures.push_back(tex);
 }
 
 } // namespace uz

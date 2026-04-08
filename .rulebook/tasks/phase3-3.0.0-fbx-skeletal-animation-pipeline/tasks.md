@@ -118,3 +118,8 @@
 - [ ] 12.2 Update `docs/engine/19-animation/03-skeletal-mesh.md` — mark as implemented, update code examples
 - [ ] 12.3 Update `docs/engine/19-animation/01-overview.md` — mark Phase 3 items as implemented
 - [ ] 12.4 Add `docs/guides/fbx-import-guide.md` — how to import FBX characters into UzEngine
+
+## 13. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 13.1 Update or create documentation covering the implementation
+- [ ] 13.2 Write tests covering the new behavior
+- [ ] 13.3 Run tests and confirm they pass

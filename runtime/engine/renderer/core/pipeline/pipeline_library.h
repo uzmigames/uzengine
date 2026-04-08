@@ -285,25 +285,10 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetTransmittanceLut();
 
-    /// Returns the multi-scattering LUT compute pipeline (multi_scatter_lut_cs.hlsl).
-    /// 32x32 R11G11B10F, Hillaire 2020 isotropic integration + geometric series.
-    [[nodiscard]] RHIPipelineHandle GetMultiScatterLut();
-
-    /// Returns the single-scatter 3D LUT precomputation pipeline (single_scattering_lut_cs.hlsl).
-    /// 256x128x32 RGBA16F, Bruneton 2017 single Rayleigh+Mie scatter.
-    [[nodiscard]] RHIPipelineHandle GetSingleScatterLut();
-
-    /// Returns the scattering density precomputation pipeline (scattering_density_cs.hlsl).
-    /// 256x128x32 RGBA16F, Bruneton 2017 per-order density computation.
-    [[nodiscard]] RHIPipelineHandle GetScatteringDensity();
-
-    /// Returns the indirect scattering integration pipeline (indirect_scattering_cs.hlsl).
-    /// 256x128x32, Bruneton 2017 N-th order scattering accumulation.
-    [[nodiscard]] RHIPipelineHandle GetIndirectScattering();
-
-    /// Returns the irradiance LUT pipeline (irradiance_lut_cs.hlsl).
-    /// 64x16 RGBA16F, direct + indirect ground irradiance.
-    [[nodiscard]] RHIPipelineHandle GetIrradianceLut();
+    /// Returns the path tracer fullscreen graphics pipeline (path_tracer_ps.hlsl).
+    /// Step 1: writes solid magenta to hdrSceneColor as a runtime mode toggle.
+    /// @ref Kajiya 1986 "The Rendering Equation"
+    [[nodiscard]] RHIPipelineHandle GetPathTracer();
 
     /// Returns the aerial perspective volume compute pipeline (aerial_perspective_volume_cs.hlsl).
     /// 32x32x16 RGBA16F 3D texture, precomputed per-frame AP inscattering + transmittance.
@@ -491,6 +476,33 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetSsrTemporal();
 
+    /// Returns the SSR spatial bilateral denoise compute pipeline (ssr_spatial_denoise_cs.hlsl).
+    ///
+    /// Post-temporal cleanup filter that removes residual per-pixel noise using
+    /// depth + normal edge-stopping weights. Prevents SSR noise from contaminating
+    /// TAA's neighborhood variance statistics on adjacent surfaces.
+    ///
+    /// @ref AMD FidelityFX SSSR "DNSR_Prefilter" — bilateral spatial denoise
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetSsrSpatialDenoise();
+
+    /// Returns the SSR post-TAA composite compute pipeline (ssr_composite_cs.hlsl).
+    ///
+    /// Composites denoised SSR reflections onto the TAA-resolved image.
+    /// Runs AFTER TAA to prevent SSR noise from contaminating TAA's
+    /// neighborhood variance statistics.
+    [[nodiscard]] RHIPipelineHandle GetSsrComposite();
+
+    /// Returns the SSR tile classification compute pipeline (ssr_tile_classify_cs.hlsl).
+    /// @ref AMD FidelityFX SSSR — classifies 8x8 tiles and compacts ray list.
+    [[nodiscard]] RHIPipelineHandle GetSsrTileClassify();
+
+    /// Returns the SSR indirect args prepare compute pipeline (ssr_prepare_indirect_cs.hlsl).
+    /// @ref AMD FidelityFX SSSR — converts ray count to DispatchIndirectArgs.
+    [[nodiscard]] RHIPipelineHandle GetSsrPrepareIndirect();
+
     /// Returns the color grading LUT compute pipeline (color_grading_lut_cs.hlsl).
     ///
     /// Generates a 32x32x32 3D LUT that bakes the entire color grading +
@@ -625,6 +637,36 @@ public:
     ///
     [[nodiscard]] RHIPipelineHandle GetSsgiBilateralUpsample();
 
+    // ── SVGF Denoiser Compute Pipelines ─────────────────────────────────
+
+    /// Returns the SVGF temporal reprojection compute pipeline.
+    [[nodiscard]] RHIPipelineHandle GetSvgfReproject();
+
+    /// Returns the SVGF moments spatial filter compute pipeline.
+    [[nodiscard]] RHIPipelineHandle GetSvgfFilterMoments();
+
+    /// Returns the SVGF à-trous wavelet filter compute pipeline.
+    [[nodiscard]] RHIPipelineHandle GetSvgfAtrous();
+
+    // ── Volumetric Fog Compute Pipelines ──────────────────────────────────
+
+    /// Returns the volumetric fog inject compute pipeline.
+    /// Evaluates density + light at each froxel, writes inscattering + extinction.
+    [[nodiscard]] RHIPipelineHandle GetVolumetricFogInject();
+
+    /// Returns the volumetric fog scatter integration compute pipeline.
+    /// Front-to-back accumulation of inscattering + transmittance per column.
+    [[nodiscard]] RHIPipelineHandle GetVolumetricFogScatter();
+
+    /// Returns the volumetric fog composite pipeline (fullscreen, alpha blend).
+    /// Samples integrated froxel volume at scene depth, applies fog.
+    [[nodiscard]] RHIPipelineHandle GetVolumetricFogComposite();
+
+    // ── God Rays Compute Pipeline ────────────────────────────────────────
+
+    /// Returns the god rays radial blur compute pipeline.
+    [[nodiscard]] RHIPipelineHandle GetGodRays();
+
     // ── GDF + Radiance Cache Compute Pipelines ─────────────────────────
 
     /// Returns the GDF composite compute pipeline (global_sdf_composite_cs.hlsl).
@@ -644,6 +686,18 @@ public:
     /// 64 threads per group, one thread per probe.
     ///
     [[nodiscard]] RHIPipelineHandle GetRadianceCacheTrace();
+
+    /// Returns the DDGI probe update compute pipeline (DXR inline ray tracing).
+    ///
+    /// Hardware-RT counterpart to `GetRadianceCacheTrace()`. Writes into the
+    /// same L2 SH probe buffer using the same 7-float4 packing, so the
+    /// deferred lighting sample path is unchanged. Selected at runtime when
+    /// `r.RayTracing.GI` is enabled and the device supports DXR 1.1
+    /// (`RayQuery<>`).
+    ///
+    /// @ref Majercik 2019 "DDGI" — ray-traced irradiance probes
+    /// @ref Microsoft DirectX-Specs "Inline Raytracing (DXR 1.1)"
+    [[nodiscard]] RHIPipelineHandle GetDdgiProbeUpdate();
 
     /// Returns the DBuffer decal render pipeline (decal_vs + decal_ps, 3 RT, no depth).
     ///

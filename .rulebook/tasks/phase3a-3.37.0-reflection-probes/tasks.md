@@ -23,3 +23,8 @@
 
 - [x] 3.1 Updated `docs/engine/12-rendering/17-lighting.md` with 276-line Reflection Probes section: system overview, ECS component docs, GPU pipeline (capture→IBL→upload), shader integration pseudocode, performance characteristics.
 - [x] 3.2 Created `docs/guides/reflection-probe-placement.md` (314 lines): placement principles, resolution/quality tradeoffs, priority/overlap handling, optimization strategies, troubleshooting guide.
+
+## 4. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 4.1 Update or create documentation covering the implementation
+- [ ] 4.2 Write tests covering the new behavior
+- [ ] 4.3 Run tests and confirm they pass

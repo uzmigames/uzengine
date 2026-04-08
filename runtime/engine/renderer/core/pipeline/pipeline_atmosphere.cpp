@@ -293,63 +293,6 @@ RHIPipelineHandle PipelineLibrary::GetTransmittanceLut() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Multi-Scattering LUT Compute Pipeline
-
-bool PipelineLibrary::EnsureMultiScatterLutShader() {
-    if (m_multiScatterLutCS.IsValid()) {
-        return true;
-    }
-
-    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::MultiScatterLutCS);
-    if (bytecode.empty()) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile MultiScatterLutCS");
-        return false;
-    }
-
-    RHIShaderDesc shaderDesc{};
-    shaderDesc.bytecode     = bytecode.data();
-    shaderDesc.bytecodeSize = bytecode.size();
-    shaderDesc.stage        = RHIShaderStage::Compute;
-    shaderDesc.entryPoint   = "main";
-    shaderDesc.debugName    = "multi_scatter_lut_cs";
-
-    m_multiScatterLutCS = m_device->CreateShader(shaderDesc);
-    if (!m_multiScatterLutCS.IsValid()) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create MultiScatterLutCS shader");
-        return false;
-    }
-    return true;
-}
-
-RHIPipelineHandle PipelineLibrary::GetMultiScatterLut() {
-    if (!m_initialized) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary::GetMultiScatterLut called before Init()");
-        return RHIPipelineHandle::Invalid();
-    }
-
-    if (m_multiScatterLut.IsValid()) {
-        return m_multiScatterLut;
-    }
-
-    if (!EnsureMultiScatterLutShader()) {
-        return RHIPipelineHandle::Invalid();
-    }
-
-    RHIComputePipelineDesc desc{};
-    desc.computeShader = m_multiScatterLutCS;
-    desc.debugName     = "MultiScatterLUT";
-
-    m_multiScatterLut = m_device->CreateComputePipeline(desc);
-    if (!m_multiScatterLut.IsValid()) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create MultiScatterLUT pipeline");
-    } else {
-        UZ_LOG(Renderer, Info, "PipelineLibrary: created MultiScatterLUT pipeline");
-    }
-
-    return m_multiScatterLut;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Aerial Perspective Volume Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -527,237 +470,143 @@ RHIPipelineHandle PipelineLibrary::GetSkyCubemapCapturePS() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Single Scattering 3D LUT Compute Pipeline (Bruneton 2017)
+// Volumetric Fog Pipelines
 // ─────────────────────────────────────────────────────────────────────────────
 
-bool PipelineLibrary::EnsureSingleScatterLutShader() {
-    if (m_singleScatterLutCS.IsValid()) {
-        return true;
-    }
+bool PipelineLibrary::EnsureVolumetricFogInjectShader() {
+    if (m_volFogInjectCS.IsValid()) return true;
 
-    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::SingleScatteringLutCS);
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::VolumetricFogInjectCS);
     if (bytecode.empty()) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile SingleScatteringLutCS");
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile VolumetricFogInjectCS");
         return false;
     }
 
-    RHIShaderDesc shaderDesc{};
-    shaderDesc.bytecode     = bytecode.data();
-    shaderDesc.bytecodeSize = bytecode.size();
-    shaderDesc.stage        = RHIShaderStage::Compute;
-    shaderDesc.entryPoint   = "main";
-    shaderDesc.debugName    = "single_scattering_lut_cs";
+    RHIShaderDesc sd{};
+    sd.bytecode = bytecode.data(); sd.bytecodeSize = bytecode.size();
+    sd.stage = RHIShaderStage::Compute; sd.entryPoint = "main";
+    sd.debugName = "volumetric_fog_inject_cs";
 
-    m_singleScatterLutCS = m_device->CreateShader(shaderDesc);
-    if (!m_singleScatterLutCS.IsValid()) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SingleScatteringLutCS shader");
+    m_volFogInjectCS = m_device->CreateShader(sd);
+    if (!m_volFogInjectCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create VolumetricFogInjectCS shader");
         return false;
     }
     return true;
 }
 
-RHIPipelineHandle PipelineLibrary::GetSingleScatterLut() {
-    if (!m_initialized) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary::GetSingleScatterLut called before Init()");
-        return RHIPipelineHandle::Invalid();
-    }
-
-    if (m_singleScatterLut.IsValid()) {
-        return m_singleScatterLut;
-    }
-
-    if (!EnsureSingleScatterLutShader()) {
-        return RHIPipelineHandle::Invalid();
-    }
+RHIPipelineHandle PipelineLibrary::GetVolumetricFogInject() {
+    if (!m_initialized) return RHIPipelineHandle::Invalid();
+    if (m_volFogInject.IsValid()) return m_volFogInject;
+    if (!EnsureVolumetricFogInjectShader()) return RHIPipelineHandle::Invalid();
 
     RHIComputePipelineDesc desc{};
-    desc.computeShader = m_singleScatterLutCS;
-    desc.debugName     = "SingleScatterLUT";
+    desc.computeShader = m_volFogInjectCS;
+    desc.debugName     = "VolumetricFogInject";
 
-    m_singleScatterLut = m_device->CreateComputePipeline(desc);
-    if (!m_singleScatterLut.IsValid()) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SingleScatterLUT pipeline");
+    m_volFogInject = m_device->CreateComputePipeline(desc);
+    if (!m_volFogInject.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create VolumetricFogInject pipeline");
     } else {
-        UZ_LOG(Renderer, Info, "PipelineLibrary: created SingleScatterLUT pipeline");
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created VolumetricFogInject pipeline");
     }
-
-    return m_singleScatterLut;
+    return m_volFogInject;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Scattering Density Compute Pipeline (Bruneton 2017)
-// ─────────────────────────────────────────────────────────────────────────────
+bool PipelineLibrary::EnsureVolumetricFogScatterShader() {
+    if (m_volFogScatterCS.IsValid()) return true;
 
-bool PipelineLibrary::EnsureScatteringDensityShader() {
-    if (m_scatteringDensityCS.IsValid()) {
-        return true;
-    }
-
-    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::ScatteringDensityCS);
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::VolumetricFogScatterCS);
     if (bytecode.empty()) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile ScatteringDensityCS");
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile VolumetricFogScatterCS");
         return false;
     }
 
-    RHIShaderDesc shaderDesc{};
-    shaderDesc.bytecode     = bytecode.data();
-    shaderDesc.bytecodeSize = bytecode.size();
-    shaderDesc.stage        = RHIShaderStage::Compute;
-    shaderDesc.entryPoint   = "main";
-    shaderDesc.debugName    = "scattering_density_cs";
+    RHIShaderDesc sd{};
+    sd.bytecode = bytecode.data(); sd.bytecodeSize = bytecode.size();
+    sd.stage = RHIShaderStage::Compute; sd.entryPoint = "main";
+    sd.debugName = "volumetric_fog_scatter_cs";
 
-    m_scatteringDensityCS = m_device->CreateShader(shaderDesc);
-    if (!m_scatteringDensityCS.IsValid()) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create ScatteringDensityCS shader");
+    m_volFogScatterCS = m_device->CreateShader(sd);
+    if (!m_volFogScatterCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create VolumetricFogScatterCS shader");
         return false;
     }
     return true;
 }
 
-RHIPipelineHandle PipelineLibrary::GetScatteringDensity() {
-    if (!m_initialized) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary::GetScatteringDensity called before Init()");
-        return RHIPipelineHandle::Invalid();
-    }
-
-    if (m_scatteringDensity.IsValid()) {
-        return m_scatteringDensity;
-    }
-
-    if (!EnsureScatteringDensityShader()) {
-        return RHIPipelineHandle::Invalid();
-    }
+RHIPipelineHandle PipelineLibrary::GetVolumetricFogScatter() {
+    if (!m_initialized) return RHIPipelineHandle::Invalid();
+    if (m_volFogScatter.IsValid()) return m_volFogScatter;
+    if (!EnsureVolumetricFogScatterShader()) return RHIPipelineHandle::Invalid();
 
     RHIComputePipelineDesc desc{};
-    desc.computeShader = m_scatteringDensityCS;
-    desc.debugName     = "ScatteringDensity";
+    desc.computeShader = m_volFogScatterCS;
+    desc.debugName     = "VolumetricFogScatter";
 
-    m_scatteringDensity = m_device->CreateComputePipeline(desc);
-    if (!m_scatteringDensity.IsValid()) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create ScatteringDensity pipeline");
+    m_volFogScatter = m_device->CreateComputePipeline(desc);
+    if (!m_volFogScatter.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create VolumetricFogScatter pipeline");
     } else {
-        UZ_LOG(Renderer, Info, "PipelineLibrary: created ScatteringDensity pipeline");
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created VolumetricFogScatter pipeline");
     }
-
-    return m_scatteringDensity;
+    return m_volFogScatter;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Indirect Scattering Compute Pipeline (Bruneton 2017)
-// ─────────────────────────────────────────────────────────────────────────────
+bool PipelineLibrary::EnsureVolumetricFogCompositeShader() {
+    if (m_volFogCompositePS.IsValid()) return true;
 
-bool PipelineLibrary::EnsureIndirectScatteringShader() {
-    if (m_indirectScatteringCS.IsValid()) {
-        return true;
-    }
-
-    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::IndirectScatteringCS);
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::VolumetricFogCompositePS);
     if (bytecode.empty()) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile IndirectScatteringCS");
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile VolumetricFogCompositePS");
         return false;
     }
 
-    RHIShaderDesc shaderDesc{};
-    shaderDesc.bytecode     = bytecode.data();
-    shaderDesc.bytecodeSize = bytecode.size();
-    shaderDesc.stage        = RHIShaderStage::Compute;
-    shaderDesc.entryPoint   = "main";
-    shaderDesc.debugName    = "indirect_scattering_cs";
+    RHIShaderDesc sd{};
+    sd.bytecode = bytecode.data(); sd.bytecodeSize = bytecode.size();
+    sd.stage = RHIShaderStage::Pixel; sd.entryPoint = "main";
+    sd.debugName = "volumetric_fog_composite_ps";
 
-    m_indirectScatteringCS = m_device->CreateShader(shaderDesc);
-    if (!m_indirectScatteringCS.IsValid()) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create IndirectScatteringCS shader");
+    m_volFogCompositePS = m_device->CreateShader(sd);
+    if (!m_volFogCompositePS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create VolumetricFogCompositePS shader");
         return false;
     }
     return true;
 }
 
-RHIPipelineHandle PipelineLibrary::GetIndirectScattering() {
-    if (!m_initialized) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary::GetIndirectScattering called before Init()");
+RHIPipelineHandle PipelineLibrary::GetVolumetricFogComposite() {
+    if (!m_initialized) return RHIPipelineHandle::Invalid();
+    if (m_volFogComposite.IsValid()) return m_volFogComposite;
+    if (!EnsureFullscreenShaders() || !EnsureVolumetricFogCompositeShader())
         return RHIPipelineHandle::Invalid();
-    }
 
-    if (m_indirectScattering.IsValid()) {
-        return m_indirectScattering;
-    }
+    RHIGraphicsPipelineDesc desc{};
+    desc.vertexShader  = m_fullscreenVS;
+    desc.pixelShader   = m_volFogCompositePS;
+    desc.topology      = RHIPrimitiveTopology::TriangleList;
+    desc.rasterizer.cullMode      = RHICullMode::None;
+    desc.depthStencil.depthEnable = false;
+    desc.depthStencil.depthWrite  = false;
+    // Alpha blend: SrcAlpha / InvSrcAlpha (standard fog compositing)
+    desc.renderTargetBlend[0].blendEnable = true;
+    desc.renderTargetBlend[0].srcColor    = RHIBlendFactor::SrcAlpha;
+    desc.renderTargetBlend[0].dstColor    = RHIBlendFactor::InvSrcAlpha;
+    desc.renderTargetBlend[0].colorOp     = RHIBlendOp::Add;
+    desc.renderTargetBlend[0].srcAlpha    = RHIBlendFactor::One;
+    desc.renderTargetBlend[0].dstAlpha    = RHIBlendFactor::Zero;
+    desc.renderTargetBlend[0].alphaOp     = RHIBlendOp::Add;
+    desc.renderTargetFormats[0] = RHIFormat::RGBA16Float;
+    desc.renderTargetCount      = 1;
+    desc.debugName              = "VolumetricFogComposite";
 
-    if (!EnsureIndirectScatteringShader()) {
-        return RHIPipelineHandle::Invalid();
-    }
-
-    RHIComputePipelineDesc desc{};
-    desc.computeShader = m_indirectScatteringCS;
-    desc.debugName     = "IndirectScattering";
-
-    m_indirectScattering = m_device->CreateComputePipeline(desc);
-    if (!m_indirectScattering.IsValid()) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create IndirectScattering pipeline");
+    m_volFogComposite = CreateCachedPipeline(desc);
+    if (!m_volFogComposite.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create VolumetricFogComposite pipeline");
     } else {
-        UZ_LOG(Renderer, Info, "PipelineLibrary: created IndirectScattering pipeline");
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created VolumetricFogComposite pipeline");
     }
-
-    return m_indirectScattering;
+    return m_volFogComposite;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Irradiance LUT Compute Pipeline (Bruneton 2017)
-// ─────────────────────────────────────────────────────────────────────────────
-
-bool PipelineLibrary::EnsureIrradianceLutShader() {
-    if (m_irradianceLutCS.IsValid()) {
-        return true;
-    }
-
-    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::IrradianceLutCS);
-    if (bytecode.empty()) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile IrradianceLutCS");
-        return false;
-    }
-
-    RHIShaderDesc shaderDesc{};
-    shaderDesc.bytecode     = bytecode.data();
-    shaderDesc.bytecodeSize = bytecode.size();
-    shaderDesc.stage        = RHIShaderStage::Compute;
-    shaderDesc.entryPoint   = "main";
-    shaderDesc.debugName    = "irradiance_lut_cs";
-
-    m_irradianceLutCS = m_device->CreateShader(shaderDesc);
-    if (!m_irradianceLutCS.IsValid()) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create IrradianceLutCS shader");
-        return false;
-    }
-    return true;
-}
-
-RHIPipelineHandle PipelineLibrary::GetIrradianceLut() {
-    if (!m_initialized) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary::GetIrradianceLut called before Init()");
-        return RHIPipelineHandle::Invalid();
-    }
-
-    if (m_irradianceLut.IsValid()) {
-        return m_irradianceLut;
-    }
-
-    if (!EnsureIrradianceLutShader()) {
-        return RHIPipelineHandle::Invalid();
-    }
-
-    RHIComputePipelineDesc desc{};
-    desc.computeShader = m_irradianceLutCS;
-    desc.debugName     = "IrradianceLUT";
-
-    m_irradianceLut = m_device->CreateComputePipeline(desc);
-    if (!m_irradianceLut.IsValid()) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create IrradianceLUT pipeline");
-    } else {
-        UZ_LOG(Renderer, Info, "PipelineLibrary: created IrradianceLUT pipeline");
-    }
-
-    return m_irradianceLut;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 
 } // namespace uz

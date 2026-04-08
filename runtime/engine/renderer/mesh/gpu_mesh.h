@@ -44,6 +44,7 @@ struct GPUMesh {
     RHIBufferHandle vertexBuffer;                       ///< GPU vertex buffer handle.
     RHIBufferHandle indexBuffer;                        ///< GPU index buffer handle (invalid if non-indexed).
     uint32_t        vbSrvIndex  = UINT32_MAX;           ///< Bindless SRV descriptor index for vertex buffer (SM6.6). UINT32_MAX if not bindless.
+    uint32_t        vertexStride = 48;                  ///< Vertex stride in bytes (48 = Vertex, 32 = VertexPacked).
     uint32_t        indexCount  = 0;                    ///< Number of indices for LOD0 (0 = non-indexed mesh).
     uint32_t        vertexCount = 0;                    ///< Number of vertices.
     RHIIndexFormat  indexFormat = RHIIndexFormat::Uint32; ///< Index element format (`Uint16` or `Uint32`).

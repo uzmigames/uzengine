@@ -22,6 +22,18 @@ UZ_DECLARE_LOG_CATEGORY(Renderer);
 static auto* cv_SSGIEnabled   = UZ_CVAR_BOOL("r.SSGI", false, "Screen-space global illumination");
 static auto* cv_SSGIQuality   = UZ_CVAR_INT("r.SSGI.Quality", 2, "SSGI quality (1=4rays, 2=8, 3=16, 4=32)", 1, 4);
 static auto* cv_SSGIIntensity = UZ_CVAR_FLOAT("r.SSGI.Intensity", 0.3f, "SSGI indirect diffuse intensity", 0.f, 10.f);
+static auto* cv_SSGIRayCount     = UZ_CVAR_INT("r.SSGI.RayCount", 8, "Rays per pixel (overrides quality preset)", 1, 32);
+static auto* cv_SSGIMaxSteps     = UZ_CVAR_INT("r.SSGI.MaxMarchSteps", 32, "Max linear march steps per ray", 8, 128);
+static auto* cv_SSGIStepSize     = UZ_CVAR_FLOAT("r.SSGI.StepSize", 0.02f, "UV-space step size per march step", 0.005f, 0.1f);
+// Thickness default 0.5 cm is way too small for indoor scenes at cm scale.
+// Sponza columns are ~60cm wide; the screen-space march needs a much higher
+// tolerance to register hits. Bumped to a more defensible default; the
+// `expectedLinearDepth` formula in ssgi_trace_cs.hlsl also has a fundamental
+// scale bug (hardcoded 5km depth assumption) that needs separate work — until
+// then, SSGI is largely broken on cm-scale interior scenes regardless of this
+// value. Brixelizer GI is the preferred indoor GI.
+static auto* cv_SSGIThickness    = UZ_CVAR_FLOAT("r.SSGI.Thickness", 50.0f, "Depth comparison thickness (cm)", 0.01f, 1000.0f);
+static auto* cv_SSGITemporalAlpha = UZ_CVAR_FLOAT("r.SSGI.TemporalAlpha", 0.05f, "Temporal accumulation alpha (0=full history, 1=no history)", 0.01f, 0.5f);
 
 namespace uz {
 
@@ -462,30 +474,43 @@ void SSGIRenderer::DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParam
 
     cmdList->SetPipeline(pso);
 
-    // Root constants: 8 DWORDs matching SSGIRootCB
+    // Root constants: 13 DWORDs matching ssgi_trace_cs.hlsl RootConstants
     struct SSGITraceRC {
         uint32_t depthSrvIndex;
         uint32_t normalSrvIndex;
         uint32_t prevColorSrvIndex;
         uint32_t outputUavIndex;
         uint32_t aoOutputUavIndex;
-        uint32_t outputWidth;
-        uint32_t outputHeight;
+        uint32_t packedDimensions;  // low16 = width, high16 = height
         uint32_t frameIndex;
+        uint32_t hizSrvIndex;      // 0xFFFF = disabled
+        uint32_t rayCount;
+        uint32_t maxSteps;
+        uint32_t stepSizeBits;     // float as uint bits
+        uint32_t thicknessBits;    // float as uint bits
+        uint32_t maxRayDistBits;   // float as uint bits (0.5 default)
     };
-    static_assert(sizeof(SSGITraceRC) == 32, "Must be 8 DWORDs");
+    static_assert(sizeof(SSGITraceRC) == 52, "Must be 13 DWORDs");
 
     SSGITraceRC rc{};
-    rc.depthSrvIndex    = params.depthSrvIndex;
-    rc.normalSrvIndex   = params.normalSrvIndex;
+    rc.depthSrvIndex     = params.depthSrvIndex;
+    rc.normalSrvIndex    = params.normalSrvIndex;
     rc.prevColorSrvIndex = m_prevColorReducedSrv;
-    rc.outputUavIndex   = m_ssgiTraceUav;
-    rc.aoOutputUavIndex = m_ssgiTraceAOUav;
-    rc.outputWidth      = m_halfWidth;
-    rc.outputHeight     = m_halfHeight;
-    rc.frameIndex       = params.frameIndex;
+    rc.outputUavIndex    = m_ssgiTraceUav;
+    rc.aoOutputUavIndex  = m_ssgiTraceAOUav;
+    rc.packedDimensions  = (m_halfWidth & 0xFFFF) | ((m_halfHeight & 0xFFFF) << 16);
+    rc.frameIndex        = params.frameIndex;
+    rc.hizSrvIndex       = 0xFFFF; // Hi-Z disabled for now (linear march)
+    rc.rayCount          = static_cast<uint32_t>(cv_SSGIRayCount->value);
+    rc.maxSteps          = static_cast<uint32_t>(cv_SSGIMaxSteps->value);
+    float stepSize = cv_SSGIStepSize->value;
+    float thickness = cv_SSGIThickness->value;
+    float maxRayDist = 0.5f; // Could be another CVar in future
+    std::memcpy(&rc.stepSizeBits, &stepSize, 4);
+    std::memcpy(&rc.thicknessBits, &thickness, 4);
+    std::memcpy(&rc.maxRayDistBits, &maxRayDist, 4);
 
-    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
+    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 13);
 
     // PerFrameCB at b1
     cmdList->SetRootCBV(kSlotPerFrame, params.perFrameBuffer,
@@ -537,7 +562,7 @@ void SSGIRenderer::DispatchSpatialDenoise(IRHICommandList* cmdList, const SSGIRe
 
     cmdList->SetPipeline(pso);
 
-    // Root constants: 8 DWORDs matching SpatialDenoiseRootCB
+    // Root constants: 11 DWORDs matching ssgi_spatial_denoise_cs.hlsl
     struct SpatialDenoiseRC {
         uint32_t inputSrvIndex;
         uint32_t aoInputSrvIndex;
@@ -547,8 +572,15 @@ void SSGIRenderer::DispatchSpatialDenoise(IRHICommandList* cmdList, const SSGIRe
         uint32_t aoOutputUavIndex;
         uint32_t texWidth;
         uint32_t texHeight;
+        uint32_t sigmaDepthBits;
+        uint32_t sigmaNormalBits;
+        uint32_t sigmaLuminanceBits;
     };
-    static_assert(sizeof(SpatialDenoiseRC) == 32, "Must be 8 DWORDs");
+    static_assert(sizeof(SpatialDenoiseRC) == 44, "Must be 11 DWORDs");
+
+    static auto* cv_SigmaDepth = UZ_CVAR_FLOAT("r.SSGI.SpatialSigmaDepth", 1.0f, "Spatial denoise depth sigma", 0.1f, 10.0f);
+    static auto* cv_SigmaNormal = UZ_CVAR_FLOAT("r.SSGI.SpatialSigmaNormal", 128.0f, "Spatial denoise normal sigma", 8.0f, 512.0f);
+    static auto* cv_SigmaLum = UZ_CVAR_FLOAT("r.SSGI.SpatialSigmaLuminance", 4.0f, "Spatial denoise luminance sigma", 0.5f, 16.0f);
 
     SpatialDenoiseRC rc{};
     rc.inputSrvIndex    = m_ssgiTraceSrv;
@@ -559,8 +591,12 @@ void SSGIRenderer::DispatchSpatialDenoise(IRHICommandList* cmdList, const SSGIRe
     rc.aoOutputUavIndex = m_ssgiDenoisedAOUav;
     rc.texWidth         = m_halfWidth;
     rc.texHeight        = m_halfHeight;
+    float sd = cv_SigmaDepth->value, sn = cv_SigmaNormal->value, sl = cv_SigmaLum->value;
+    std::memcpy(&rc.sigmaDepthBits, &sd, 4);
+    std::memcpy(&rc.sigmaNormalBits, &sn, 4);
+    std::memcpy(&rc.sigmaLuminanceBits, &sl, 4);
 
-    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
+    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 11);
 
     cmdList->SetRootCBV(kSlotPerFrame, params.perFrameBuffer,
                         params.perFrameOffset, params.perFrameCpuPtr,
@@ -614,8 +650,7 @@ void SSGIRenderer::DispatchTemporalAccum(IRHICommandList* cmdList, const SSGIRen
 
     cmdList->SetPipeline(pso);
 
-    // Root constants: 8 DWORDs (DX12 root signature limit = 8 DWORDs)
-    // Pack width+height into a single DWORD (16 bits each, max 65535).
+    // Root constants: 10 DWORDs matching ssgi_temporal_accum_cs.hlsl RootConstants
     struct TemporalAccumRC {
         uint32_t currentSrvIndex;
         uint32_t currentAOSrvIndex;
@@ -625,8 +660,10 @@ void SSGIRenderer::DispatchTemporalAccum(IRHICommandList* cmdList, const SSGIRen
         uint32_t outputUavIndex;
         uint32_t aoOutputUavIndex;
         uint32_t packedDimensions;  // low 16 = width, high 16 = height
+        uint32_t temporalAlphaBits;
+        uint32_t varianceClipGammaBits;
     };
-    static_assert(sizeof(TemporalAccumRC) == 32, "Must be 8 DWORDs");
+    static_assert(sizeof(TemporalAccumRC) == 40, "Must be 10 DWORDs");
 
     TemporalAccumRC rc{};
     rc.currentSrvIndex   = m_ssgiDenoisedSrv;
@@ -637,8 +674,12 @@ void SSGIRenderer::DispatchTemporalAccum(IRHICommandList* cmdList, const SSGIRen
     rc.outputUavIndex    = m_ssgiHistoryUav[writeIdx];
     rc.aoOutputUavIndex  = m_ssgiHistoryAOUav[writeIdx];
     rc.packedDimensions  = (m_halfWidth & 0xFFFF) | ((m_halfHeight & 0xFFFF) << 16);
+    float temporalAlpha = cv_SSGITemporalAlpha->value;
+    float varClipGamma = 1.0f; // Could be CVar in Phase 2
+    std::memcpy(&rc.temporalAlphaBits, &temporalAlpha, 4);
+    std::memcpy(&rc.varianceClipGammaBits, &varClipGamma, 4);
 
-    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
+    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 10);
 
     cmdList->SetRootCBV(kSlotPerFrame, params.perFrameBuffer,
                         params.perFrameOffset, params.perFrameCpuPtr,
@@ -690,7 +731,7 @@ void SSGIRenderer::DispatchUpsample(IRHICommandList* cmdList, const SSGIRenderPa
 
     cmdList->SetPipeline(pso);
 
-    // Root constants: 8 DWORDs matching UpsampleRootCB
+    // Root constants: 10 DWORDs matching ssgi_upsample_cs.hlsl
     struct UpsampleRC {
         uint32_t ssgiHalfSrvIndex;
         uint32_t ssgiAOHalfSrvIndex;
@@ -700,8 +741,13 @@ void SSGIRenderer::DispatchUpsample(IRHICommandList* cmdList, const SSGIRenderPa
         uint32_t aoOutputUavIndex;
         uint32_t fullWidth;
         uint32_t fullHeight;
+        uint32_t depthSigmaBits;
+        uint32_t normalPowerBits;
     };
-    static_assert(sizeof(UpsampleRC) == 32, "Must be 8 DWORDs");
+    static_assert(sizeof(UpsampleRC) == 40, "Must be 10 DWORDs");
+
+    static auto* cv_UpsDepthSigma = UZ_CVAR_FLOAT("r.SSGI.UpsampleDepthSigma", 0.5f, "Upsample depth weight sigma", 0.1f, 2.0f);
+    static auto* cv_UpsNormalPow  = UZ_CVAR_FLOAT("r.SSGI.UpsampleNormalSigma", 32.0f, "Upsample normal cosine power", 4.0f, 128.0f);
 
     UpsampleRC rc{};
     rc.ssgiHalfSrvIndex   = m_ssgiHistorySrv[readIdx];
@@ -712,8 +758,11 @@ void SSGIRenderer::DispatchUpsample(IRHICommandList* cmdList, const SSGIRenderPa
     rc.aoOutputUavIndex   = m_ssgiResultAOUav;
     rc.fullWidth          = m_fullWidth;
     rc.fullHeight         = m_fullHeight;
+    float ds = cv_UpsDepthSigma->value, np = cv_UpsNormalPow->value;
+    std::memcpy(&rc.depthSigmaBits, &ds, 4);
+    std::memcpy(&rc.normalPowerBits, &np, 4);
 
-    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
+    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 10);
 
     cmdList->SetRootCBV(kSlotPerFrame, params.perFrameBuffer,
                         params.perFrameOffset, params.perFrameCpuPtr,

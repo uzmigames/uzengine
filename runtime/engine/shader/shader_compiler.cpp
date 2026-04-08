@@ -194,6 +194,7 @@ std::wstring ShaderCompiler::GetTargetProfile(ShaderStageCompile stage,
         case ShaderStageCompile::Domain:        prefix = L"ds"; break;
         case ShaderStageCompile::Amplification: prefix = L"as"; break;
         case ShaderStageCompile::Mesh:          prefix = L"ms"; break;
+        case ShaderStageCompile::Library:       prefix = L"lib"; break;
     }
 
     const wchar_t* version = L"6_6";
@@ -224,9 +225,11 @@ std::vector<std::wstring> ShaderCompiler::BuildArguments(
 {
     std::vector<std::wstring> args;
 
-    // Entry point
-    args.push_back(L"-E");
-    args.push_back(ToWide(desc.entryPoint));
+    // Entry point — library shaders (lib_6_x) use exports, not a single entry point
+    if (desc.stage != ShaderStageCompile::Library) {
+        args.push_back(L"-E");
+        args.push_back(ToWide(desc.entryPoint));
+    }
 
     // Target profile
     args.push_back(L"-T");

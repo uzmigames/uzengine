@@ -23,6 +23,7 @@
 
 #include "quaternion.h"
 #include "mat4.h"
+#include "rhi_types.h"
 
 namespace uz {
 
@@ -188,6 +189,15 @@ public:
 
     /// Returns the aspect ratio.
     [[nodiscard]] float GetAspectRatio() const { return m_aspectRatio; }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Render Target Override (optional — for RTT cameras)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Optional render target for render-to-texture cameras.
+    /// When valid, the scene is rendered to this texture instead of the swapchain.
+    /// Default: invalid (renders to swapchain).
+    RHITextureHandle renderTarget;
 
 private:
     /// Recomputes the view matrix from position and orientation.

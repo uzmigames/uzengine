@@ -13,11 +13,12 @@ references: Wright 2015 SDF GI, Majercik 2019 DDGI, Hillaire 2016 Volume Renderi
 
 ## Overview
 
-UzEngine implements a **three-tier software ray-traced global illumination system** inspired by production GI systems (Wright 2015 SDF, Majercik 2019 DDGI). The system computes indirect diffuse lighting via:
+UzEngine implements a **four-tier global illumination system** combining software ray-traced GI (Wright 2015 SDF, Majercik 2019 DDGI) with AMD FidelityFX Brixelizer for production-quality sparse SDF voxel GI. The system computes indirect lighting via:
 
 1. **Tier 1: Mesh SDF** — Per-mesh signed distance fields (32×32×32, R16F) baked on the GPU
 2. **Tier 2: Global Distance Field** — 4-level cascaded clipmaps (64×64×64 each) compositing all mesh SDFs
 3. **Tier 3: Radiance Cache** — World-space probe grid (16×16×16 = 4096 probes) with L2 spherical harmonics
+4. **Tier 4: Brixelizer GI** — AMD FidelityFX Brixelizer (SDK 1.1.4) sparse SDF voxelization + screen-space probe-based diffuse and specular indirect lighting
 
 The radiance cache is updated incrementally each frame: 32 Fibonacci-distributed rays per probe trace through the global distance field, accumulate irradiance into SH coefficients, and blend with history via exponential moving average. Deferred lighting applies the cached irradiance to all pixels.
 
@@ -839,6 +840,79 @@ This keeps per-frame composite cost bounded while ensuring GI updates complete i
 
 ---
 
-**Document Version:** 1.0
-**Last Updated:** 2026-03-20
-**Status:** Complete specification (implementation in progress)
+## Tier 4: AMD FidelityFX Brixelizer GI
+
+### Overview
+
+Brixelizer GI provides production-quality real-time global illumination via sparse SDF voxelization with cascaded resolution. It outputs both diffuse and specular indirect lighting with a built-in denoiser. Works on any DX12 GPU without requiring DXR hardware.
+
+- **SDK:** AMD FidelityFX SDK 1.1.4 (MIT license)
+- **Location:** `engine/renderer/passes/gi/brixelizer_gi_pass.h/.cpp`
+- **CVar gate:** `r.BrixelizerGI` (default: false)
+
+### Architecture
+
+```
+Geometry Registration (DrawList → FfxBrixelizerInstanceDescription)
+         │
+         ▼
+Brixelizer SDF Bake (ffxBrixelizerBakeUpdate + ffxBrixelizerUpdate)
+  ├─ 2-8 cascades, voxel sizes 2/4/8/16/32/64/128/256 cm
+  ├─ Static + dynamic geometry per cascade
+  └─ GPU compute: 25+ HLSL shaders (SDF build, eikonal, compress)
+         │
+         ▼
+BrixelizerGI Dispatch (ffxBrixelizerGIContextDispatch)
+  ├─ Screen-space probe spawning + projection
+  ├─ SDF ray march through Brixelizer cascades
+  ├─ SH propagation + irradiance cache emission
+  ├─ Specular trace + pre-trace
+  ├─ Temporal reprojection + denoising (blur X/Y)
+  └─ Output: diffuseGI (RGBA16F) + specularGI (RGBA16F)
+         │
+         ▼
+Deferred Lighting Composite (deferred_lighting_ps.hlsl)
+  ├─ diffuseAmbient += brixDiffuse × baseColor × (1 - metallic)
+  └─ specularAmbient += brixSpecular × lerp(F0, 1, roughness × 0.5)
+```
+
+### CVars
+
+| CVar | Type | Default | Description |
+|------|------|---------|-------------|
+| `r.BrixelizerGI` | bool | false | Master toggle |
+| `r.BrixelizerGI.Cascades` | int | 4 | Number of SDF cascades (2-8) |
+| `r.BrixelizerGI.Intensity` | float | 1.0 | GI intensity multiplier |
+| `r.BrixelizerGI.VoxelSize` | float | 2.0 | Finest cascade voxel size (cm) |
+| `r.BrixelizerGI.RayPushoff` | float | 0.5 | Ray origin offset along normal (cm) |
+| `r.BrixelizerGI.SdfSolveEps` | float | 0.5 | SDF ray march epsilon (cm) |
+| `r.BrixelizerGI.MaxReferences` | int | 32768 | Max triangle refs per update |
+| `r.BrixelizerGI.MaxBricksPerBake` | int | 16384 | Max bricks per SDF bake |
+| `r.BrixelizerGI.Debug` | int | 0 | Debug mode (0=off, 1=radiance, 2=irradiance) |
+
+### Relationship to Tiers 1-3
+
+Brixelizer GI is an **alternative** to the Radiance Cache (Tier 3), not a replacement for Tiers 1-2. Both systems can be active simultaneously:
+
+- **Radiance Cache** (Tier 3): low-cost probe grid, diffuse-only, ~0.5ms
+- **Brixelizer GI** (Tier 4): high-quality probe + specular, ~2-4ms
+
+When both are active, Brixelizer GI output is additive in the deferred lighting shader. The `r.BrixelizerGI.Intensity` CVar controls the blend.
+
+### Build Prerequisite
+
+The FFX SDK 1.1.4 must be pre-built with CMake/MSVC:
+
+```bash
+cd runtime/thirdparty/amd-fidelityfx-1.1/sdk
+cmake -B build -G "Visual Studio 17 2022" -A x64 -DFFX_API_BACKEND=DX12_X64 -DFFX_ALL=ON
+cmake --build build --config Release
+```
+
+This produces `ffx_backend_dx12_x64.lib` which gates `UZ_BRIXELIZER_ENABLED=1` in the Zig build.
+
+---
+
+**Document Version:** 1.1
+**Last Updated:** 2026-04-06
+**Status:** Complete specification (Brixelizer GI integration in progress)

@@ -57,6 +57,44 @@ void SceneRenderer::DestroyTaaResources() {
 void SceneRenderer::CreateSsrResources(uint32_t width, uint32_t height) {
     DestroySsrResources();
 
+    // ── Tile classification buffers ─────────────────────────────────────
+    // @ref AMD FidelityFX SSSR — ray list + counter/args for indirect dispatch.
+    {
+        // Ray list: one uint per pixel (worst case all pixels need rays)
+        RHIBufferDesc rayListDesc{};
+        rayListDesc.sizeBytes = static_cast<uint64_t>(width) * height * sizeof(uint32_t);
+        rayListDesc.stride    = sizeof(uint32_t);
+        rayListDesc.usage     = RHIBufferUsage::StructuredBuffer
+                              | RHIBufferUsage::UnorderedAccess;
+        rayListDesc.memory    = RHIMemoryType::Default;
+        rayListDesc.debugName = "SSR_RayList";
+
+        m_ssrRayList = m_device->CreateBuffer(rayListDesc);
+        if (m_ssrRayList.IsValid()) {
+            m_ssrRayListSrv = m_device->GetBufferSRVIndex(m_ssrRayList);
+            m_ssrRayListUav = m_device->GetBufferUAVIndex(m_ssrRayList);
+        } else {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create SSR ray list buffer");
+        }
+
+        // Ray counter + indirect dispatch args: 16 bytes
+        // [0] = rayCount (uint32), [4..15] = DispatchIndirectArgs {X, Y, Z}
+        RHIBufferDesc argsDesc{};
+        argsDesc.sizeBytes = 16;
+        argsDesc.stride    = 0;  // raw/byte-address buffer
+        argsDesc.usage     = RHIBufferUsage::UnorderedAccess
+                           | RHIBufferUsage::IndirectArgs;
+        argsDesc.memory    = RHIMemoryType::Default;
+        argsDesc.debugName = "SSR_RayCounterArgs";
+
+        m_ssrRayCounterArgs = m_device->CreateBuffer(argsDesc);
+        if (m_ssrRayCounterArgs.IsValid()) {
+            m_ssrRayCounterArgsUav = m_device->GetBufferUAVIndex(m_ssrRayCounterArgs);
+        } else {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create SSR ray counter buffer");
+        }
+    }
+
     // SSR trace output: RGBA16F full-res, rgb=hit color, a=confidence
     {
         RHITextureDesc traceDesc{};
@@ -113,11 +151,80 @@ void SceneRenderer::CreateSsrResources(uint32_t width, uint32_t height) {
     }
     m_ssrHistoryIndex = 0;
 
-    UZ_LOG(Renderer, Info, "SceneRenderer: SSR resources created ({}x{}, RGBA16F, trace SRV={}, resolve SRV={}, hist0 SRV={}, hist1 SRV={})",
-           width, height, m_ssrTraceOutputSrv, m_ssrResolvedOutputSrv, m_ssrHistorySrv[0], m_ssrHistorySrv[1]);
+    // SSR hit distance: R16F full-res — stores screen-space ray t for virtual hit reprojection.
+    // @ref AMD FidelityFX SSSR — separate hit distance for temporal reprojection.
+    {
+        RHITextureDesc hitDesc{};
+        hitDesc.width     = width;
+        hitDesc.height    = height;
+        hitDesc.format    = RHIFormat::R16Float;
+        hitDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::UnorderedAccess;
+        hitDesc.debugName = "SSR_HitDistance";
+
+        m_ssrHitDistance = m_device->CreateTexture(hitDesc);
+        if (m_ssrHitDistance.IsValid()) {
+            m_ssrHitDistanceSrv = m_device->GetTextureSRVIndex(m_ssrHitDistance);
+            m_ssrHitDistanceUav = m_device->GetTextureUAVIndex(m_ssrHitDistance);
+        } else {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create SSR hit distance texture");
+        }
+    }
+
+    // Previous frame HDR scene color copy — SSR trace reads this instead of
+    // the live HDR buffer to break the feedback loop (UE5 pattern).
+    // @ref UE5 DeferredShadingRenderer.cpp — PrevFrameViewInfo.ScreenSpaceRayTracingInput
+    {
+        RHITextureDesc prevDesc{};
+        prevDesc.width     = width;
+        prevDesc.height    = height;
+        prevDesc.format    = RHIFormat::RGBA16Float;
+        prevDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::CopyDst;
+        prevDesc.debugName = "SSR_PrevSceneColor";
+
+        m_ssrPrevSceneColor = m_device->CreateTexture(prevDesc);
+        if (m_ssrPrevSceneColor.IsValid()) {
+            m_ssrPrevSceneColorSrv = m_device->GetTextureSRVIndex(m_ssrPrevSceneColor);
+        } else {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create SSR prev scene color texture");
+        }
+    }
+    m_ssrHasPrevColor = false;
+
+    // ── Translucent scene color copy (screen-space refraction) ──────────
+    // @ref Three.js transmissionRenderTarget — copy of opaque scene for glass.
+    {
+        RHITextureDesc transDesc{};
+        transDesc.width     = width;
+        transDesc.height    = height;
+        transDesc.format    = RHIFormat::RGBA16Float;
+        transDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::CopyDst;
+        transDesc.debugName = "TranslucentSceneColor";
+
+        m_translucentSceneColor = m_device->CreateTexture(transDesc);
+        if (m_translucentSceneColor.IsValid()) {
+            m_translucentSceneColorSrv = m_device->GetTextureSRVIndex(m_translucentSceneColor);
+        } else {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create translucent scene color texture");
+        }
+    }
+
+    UZ_LOG(Renderer, Info, "SceneRenderer: SSR resources created ({}x{}, RGBA16F, trace SRV={}, resolve SRV={}, hist0 SRV={}, hist1 SRV={}, prevColor SRV={})",
+           width, height, m_ssrTraceOutputSrv, m_ssrResolvedOutputSrv, m_ssrHistorySrv[0], m_ssrHistorySrv[1], m_ssrPrevSceneColorSrv);
 }
 
 void SceneRenderer::DestroySsrResources() {
+    if (m_ssrRayList.IsValid()) {
+        m_device->DestroyBuffer(m_ssrRayList);
+        m_ssrRayList = RHIBufferHandle{};
+        m_ssrRayListSrv = UINT32_MAX;
+        m_ssrRayListUav = UINT32_MAX;
+    }
+    if (m_ssrRayCounterArgs.IsValid()) {
+        m_device->DestroyBuffer(m_ssrRayCounterArgs);
+        m_ssrRayCounterArgs = RHIBufferHandle{};
+        m_ssrRayCounterArgsUav = UINT32_MAX;
+    }
+
     if (m_ssrTraceOutput.IsValid()) {
         m_device->DestroyTexture(m_ssrTraceOutput);
         m_ssrTraceOutput = RHITextureHandle{};
@@ -139,6 +246,26 @@ void SceneRenderer::DestroySsrResources() {
         }
     }
     m_ssrHistoryIndex = 0;
+
+    if (m_ssrHitDistance.IsValid()) {
+        m_device->DestroyTexture(m_ssrHitDistance);
+        m_ssrHitDistance = RHITextureHandle{};
+        m_ssrHitDistanceSrv = UINT32_MAX;
+        m_ssrHitDistanceUav = UINT32_MAX;
+    }
+
+    if (m_ssrPrevSceneColor.IsValid()) {
+        m_device->DestroyTexture(m_ssrPrevSceneColor);
+        m_ssrPrevSceneColor = RHITextureHandle{};
+        m_ssrPrevSceneColorSrv = UINT32_MAX;
+    }
+    m_ssrHasPrevColor = false;
+
+    if (m_translucentSceneColor.IsValid()) {
+        m_device->DestroyTexture(m_translucentSceneColor);
+        m_translucentSceneColor = RHITextureHandle{};
+        m_translucentSceneColorSrv = UINT32_MAX;
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

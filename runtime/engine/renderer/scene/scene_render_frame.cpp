@@ -12,6 +12,8 @@
 
 #include "scene_renderer.h"
 #include "pixel_debug.h"
+#include "raytracing/rt_manager.h"
+#include "passes/raytracing/rt_uv_test_pass.h"
 
 // Umbrella headers
 #include "renderer_core.h"
@@ -112,6 +114,34 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     ctx.gizmoActiveAxis  = m_gizmoActiveAxis;
     SetupFrameData(ctx, rgBuilder);
 
+    // ── Ray Tracing: build BLAS + TLAS from draw list ─────────────────
+    if (m_rtManager && m_rtManager->IsEnabled()) {
+        if (m_gpuProfileEnabled) {
+            m_device->GpuProfilerBeginTimestamp(cmdList, "RT_BLAS_TLAS");
+        }
+
+        const auto& cmds = ctx.drawList.GetCommands();
+        m_rtManager->BeginFrame(
+            cmds.data(), static_cast<uint32_t>(cmds.size()),
+            m_meshes.data(), static_cast<uint32_t>(m_meshes.size()),
+            cmdList);
+
+        if (m_gpuProfileEnabled) {
+            m_device->GpuProfilerEndTimestamp(cmdList, "RT_BLAS_TLAS");
+        }
+
+        // ── RT UV Test Pass (debug visualization) ────────────────────
+        if (m_rtManager->IsTestPassEnabled() && m_rtUVTestPass && m_rtUVTestPass->IsReady()) {
+            m_rtUVTestPass->Execute(cmdList, m_rtManager->GetTLASSRVIndex());
+
+            // Register output for --vis rt_uv_test and --pass-dump
+            m_passInspector.RegisterTarget("rt_uv_test",
+                m_rtUVTestPass->GetOutputTexture(),
+                m_rtUVTestPass->GetOutputSRVIndex(),
+                VisDisplayMode::Color, m_renderWidth, m_renderHeight);
+        }
+    }
+
     // ── Volumetric Cloud Compute (inline on main command list) ─────────
     // Noise textures are loaded from disk (precomputed .bin files).
     // Weather/raymarch/temporal run as compute dispatches directly on the
@@ -134,6 +164,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
 
         m_cloudOutputSrv = m_cloudPass->GetCloudOutputSrv();
         m_pendingCloudDispatch = false;
+        m_cloudOutputReady = true;
     }
 
     // ── VFX Emitter Sync ───────────────────────────────────────────────
@@ -171,6 +202,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     RegisterGeometryPasses(rgBuilder, ctx);
     RegisterDecalPasses(rgBuilder, ctx);
     RegisterLightingPasses(rgBuilder, ctx);
+    RegisterTranslucentPasses(rgBuilder, ctx);
     RegisterParticlePasses(rgBuilder, ctx);
     RegisterPostProcessPasses(rgBuilder, ctx);
     RegisterOverlayPasses(rgBuilder, ctx);

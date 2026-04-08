@@ -26,6 +26,15 @@ cbuffer RootConstants : register(b0) {
     uint  g_depthSrvIdx;
     uint  g_halfWidth;
     uint  g_halfHeight;
+    // Cloud CVar params (Phase 3) — via root constants, not CloudCB
+    uint  g_noiseXYScaleBits;    // CVar r.Cloud.NoiseXYScale (asfloat, default 0.12)
+    uint  g_noiseZScaleBits;     // CVar r.Cloud.NoiseZScale (asfloat, default 3.0)
+    uint  g_shapeOctaves;        // CVar r.Cloud.ShapeOctaves (default 4)
+    uint  g_fbmDecayBits;        // CVar r.Cloud.FBMDecay (asfloat, default 0.5)
+    uint  g_fbmLacunarityBits;   // CVar r.Cloud.FBMLacunarity (asfloat, default 2.0)
+    uint  g_detailErosionBits;   // CVar r.Cloud.DetailErosion (asfloat, default 0.35)
+    uint  g_densityScaleBits;    // CVar r.Cloud.DensityScale (asfloat, default 25.0)
+    uint  _rcPad;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -55,7 +64,24 @@ cbuffer CloudCB : register(b2) {
     uint    g_lightSteps;
     uint    g_shapeNoiseSrv;
     float   g_globalCoverage;
-    // Extra fields from extended CloudCB (offset 188-252) — not used in this shader
+    // Extended CloudCB fields (offset 188-252)
+    float   g_cloudType;
+    float   g_tracingMaxDistanceKm;
+    float   g_viewSampleCountScale;
+    float   g_reflectionViewSampleCountScale;
+    float   g_shadowViewSampleCountScale;
+    float   g_shadowReflectionViewSampleCountScale;
+    float   g_shadowTracingDistance;
+    float   g_stopTracingTransmittanceThreshold;
+    float   g_aerialPerspRayleighStartDist;
+    float   g_aerialPerspRayleighFadeDist;
+    float   g_aerialPerspMieStartDist;
+    float   g_aerialPerspMieFadeDist;
+    float   g_skyLightCloudBottomOcclusion;
+    uint    g_tracingMaxDistanceMode;
+    float   g_tracingStartMaxDistance;
+    float   g_tracingStartDistanceFromCamera;
+    uint    g_detailNoiseSrv;  // offset 252: detail noise 3D texture SRV (0xFFFFFFFF = none)
 };
 
 SamplerState linearSampler : register(s0);
@@ -69,9 +95,8 @@ RWTexture2D<float4> g_OutputTex     : register(u0);
 static const float PLANET_RADIUS_KM = 6360.0f;
 static const float EXT_EPS = 1e-7f;
 
-/// @ref Schneider 2015 — cloud density normalization
-/// @constants DENSITY_SCALE = 25.0
-static const float DENSITY_SCALE = 25.0f;
+/// @ref Schneider 2015 — cloud density normalization (CVar r.Cloud.DensityScale)
+#define DENSITY_SCALE asfloat(g_densityScaleBits)
 
 /// Planet surface safety offset (km).
 /// @ref Bruneton 2008 — offset to avoid surface intersection
@@ -213,15 +238,15 @@ float ValueNoise3D(float3 p) {
 /// FBM with N octaves — 3D isotropic noise for volumetric cloud shapes.
 /// @ref Inigo Quilez, Shadertoy XslGRr — FBM clouds
 /// @ref Schneider 2015 — multi-octave noise for cloud shapes
-/// @constants lacunarity = 2.0, gain = 0.5 (standard FBM)
-float FBM(float3 p, int octaves) {
+/// CVar-driven: r.Cloud.FBMDecay, r.Cloud.FBMLacunarity, r.Cloud.ShapeOctaves
+float FBM(float3 p, uint octaves) {
     float value = 0.0f;
     float amplitude = 0.5f;
     float frequency = 1.0f;
-    for (int oct = 0; oct < octaves; ++oct) {
+    for (uint oct = 0; oct < octaves; ++oct) {
         value += amplitude * ValueNoise3D(p * frequency);
-        amplitude *= 0.5f;
-        frequency *= 2.0f;
+        amplitude *= asfloat(g_fbmDecayBits);
+        frequency *= asfloat(g_fbmLacunarityBits);
     }
     return value;
 }
@@ -251,14 +276,14 @@ float SampleDensity(float3 samplePosKm, float innerRadius, float layerHeight) {
     /// @ref Schneider 2015 — noise coordinate mapping
     /// @constants XY_SCALE = 0.12, Z_SCALE = 3.0
     float3 noisePos = float3(
-        (samplePosKm.x + windOffset.x) * 0.12f,
-        (samplePosKm.y + windOffset.y) * 0.12f,
-        normalizedH * 3.0f + windOffset.z * 0.05f
+        (samplePosKm.x + windOffset.x) * asfloat(g_noiseXYScaleBits),
+        (samplePosKm.y + windOffset.y) * asfloat(g_noiseXYScaleBits),
+        normalizedH * asfloat(g_noiseZScaleBits) + windOffset.z * 0.05f
     );
 
-    // Shape noise — 4 octaves of FBM (range ~0.0 to ~0.94, mean ~0.47)
+    // Shape noise — FBM with CVar-driven octaves
     /// @ref Schneider 2015 — multi-octave noise for cloud shapes
-    float shape = FBM(noisePos, 4);
+    float shape = FBM(noisePos, g_shapeOctaves);
 
     // Coverage-based density: shape noise modulated by coverage and height.
     // Use a softer remap than Schneider's hard threshold — our procedural FBM
@@ -269,6 +294,23 @@ float SampleDensity(float3 samplePosKm, float innerRadius, float layerHeight) {
     float shapeDensity = saturate(shape + g_coverage - 0.5f);
     // Apply a power curve to create contrast (thick core, thin edges)
     shapeDensity = shapeDensity * shapeDensity;
+
+    // ── Detail noise erosion ──────────────────────────────────────────────
+    /// @ref Schneider & Vos 2015 — detail noise erosion at higher frequency
+    /// Subtracts high-frequency 3D detail noise from the base shape density
+    /// to add fine cloud edge detail (wisps, tendrils).
+    /// @constants DETAIL_FREQ_SCALE = 4.0, DETAIL_EROSION = 0.35
+#ifdef UZ_BINDLESS
+    if (g_detailNoiseSrv != 0xFFFFFFFF && shapeDensity > 0.0f) {
+        Texture3D<float4> detailTex = ResourceDescriptorHeap[g_detailNoiseSrv];
+        float3 detailPos = noisePos * (asfloat(g_fbmLacunarityBits) * 2.0f) + float3(windOffset.x * g_detailWindScale,
+                                                      windOffset.y * g_detailWindScale,
+                                                      windOffset.z * 0.1f);
+        float detailNoise = detailTex.SampleLevel(linearSampler, frac(detailPos * 0.25f), 0).r;
+        float erosionStrength = asfloat(g_detailErosionBits) * (1.0f - saturate(shapeDensity * 2.0f));
+        shapeDensity = saturate(shapeDensity - detailNoise * erosionStrength);
+    }
+#endif
 
     return shapeDensity * hGrad * g_density;
 }
@@ -340,7 +382,9 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     // Clamp march distance (50 km max for performance)
     tFar = min(tFar, tNear + 50.0f);
 
-    // Clamp step count to avoid TDR on large march distances
+    // Clamp step count to avoid TDR on large march distances.
+    // Cap at 32 steps — original 64 causes GPU TDR on first frame with
+    // cold shader compilation + heavy FBM 3D texture lookups.
     uint stepCount = min(g_primarySteps, 64u);
     float stepLen = (tFar - tNear) / float(stepCount);
     if (stepLen <= 0.0f) {

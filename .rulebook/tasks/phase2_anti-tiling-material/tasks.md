@@ -46,3 +46,8 @@
 - [ ] 3.2 Update `docs/specs/rendering/shader-variants.md` with the `ANTI_TILING` permutation entry.
 - [ ] 3.3 Add shader authoring guide entry in `docs/guides/shader-authoring.md` explaining how to enable anti-tiling on a material.
 - [ ] 3.4 Add `@ref` citations to the HLSL file header referencing the published technique.
+
+## 4. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 4.1 Update or create documentation covering the implementation
+- [ ] 4.2 Write tests covering the new behavior
+- [ ] 4.3 Run tests and confirm they pass

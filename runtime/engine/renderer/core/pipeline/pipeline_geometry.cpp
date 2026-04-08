@@ -97,7 +97,7 @@ RHIPipelineHandle PipelineLibrary::GetGBuffer(bool bindless) {
     desc.depthStencil.depthWrite          = true;
     // G-Buffer render targets — must match GBuffer::Create() texture formats exactly
     desc.renderTargetFormats[0]           = RHIFormat::RGBA8Unorm;    // albedo+AO
-    desc.renderTargetFormats[1]           = RHIFormat::RGBA8Unorm;    // octNormal+metallic+roughness
+    desc.renderTargetFormats[1]           = RHIFormat::RGBA16Float;   // octNormal+metallic+roughness
     desc.renderTargetFormats[2]           = RHIFormat::RGBA32Float;   // world-space position (debug)
     desc.renderTargetFormats[3]           = RHIFormat::RGBA16Float;   // HDR emissive color
     desc.renderTargetCount                = 4;
@@ -162,7 +162,7 @@ RHIPipelineHandle PipelineLibrary::GetGBufferMasked(bool bindless) {
     desc.depthStencil.depthEnable         = true;
     desc.depthStencil.depthWrite          = true;
     desc.renderTargetFormats[0]           = RHIFormat::RGBA8Unorm;    // albedo+AO
-    desc.renderTargetFormats[1]           = RHIFormat::RGBA8Unorm;    // octNormal+metallic+roughness
+    desc.renderTargetFormats[1]           = RHIFormat::RGBA16Float;   // octNormal+metallic+roughness
     desc.renderTargetFormats[2]           = RHIFormat::RGBA32Float;   // world-space position
     desc.renderTargetFormats[3]           = RHIFormat::RGBA16Float;   // HDR emissive
     desc.renderTargetCount                = 4;
@@ -207,25 +207,29 @@ RHIPipelineHandle PipelineLibrary::GetTranslucent(bool bindless) {
         return cached;
     }
 
-    if (!EnsureMeshShaders() || !EnsureForwardPixelShader()) {
+    if (!EnsureMeshShaders() || !EnsureTranslucentPixelShader()) {
         return RHIPipelineHandle::Invalid();
     }
 
-    // Translucent objects use the forward PBR pixel shader (mesh_ps) since they
-    // cannot write to the GBuffer (deferred shading assumes opaque surfaces).
-    // They are rendered after the deferred lighting pass into the HDR scene color
-    // target with alpha blending, reading depth but not writing to it.
+    // Translucent objects use the translucent pixel shader which handles
+    // glass/transmission (smID==9) with Fresnel-based alpha and standard
+    // translucent materials with matOpacity alpha. Rendered after deferred
+    // lighting into the HDR scene color with alpha blending.
     //
     // SrcAlpha/InvSrcAlpha blend, no depth write for translucent.
     RHIGraphicsPipelineDesc desc{};
     desc.vertexShader  = m_meshVS;
-    desc.pixelShader   = m_meshPS;
+    desc.pixelShader   = m_translucentPS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
-    desc.rasterizer.cullMode              = RHICullMode::None; // Two-sided for translucent (glass, particles)
+    desc.rasterizer.cullMode              = RHICullMode::Back; // Front faces only — back faces cause Fresnel artifacts on glass
     desc.depthStencil.depthEnable         = true;
     desc.depthStencil.depthWrite          = false;  // Read depth, do NOT write
+    // Premultiplied alpha blend (One, InvSrcAlpha):
+    //   final.rgb = src.rgb + dst.rgb * (1 - src.a)
+    // The pixel shader pre-multiplies color by alpha (Fresnel for glass).
+    // This avoids HDR color bleeding at low alpha (SrcAlpha * HDR >> 1.0).
     desc.renderTargetBlend[0].blendEnable = true;
-    desc.renderTargetBlend[0].srcColor    = RHIBlendFactor::SrcAlpha;
+    desc.renderTargetBlend[0].srcColor    = RHIBlendFactor::One;
     desc.renderTargetBlend[0].dstColor    = RHIBlendFactor::InvSrcAlpha;
     desc.renderTargetBlend[0].colorOp     = RHIBlendOp::Add;
     desc.renderTargetBlend[0].srcAlpha    = RHIBlendFactor::One;
@@ -417,6 +421,46 @@ RHIPipelineHandle PipelineLibrary::GetGBufferDebug() {
     }
 
     return m_gbufferDebug;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Path Tracer Pipeline (Step 1 — fullscreen magenta)
+// ─────────────────────────────────────────────────────────────────────────────
+
+RHIPipelineHandle PipelineLibrary::GetPathTracer() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetPathTracer called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_pathTracer.IsValid()) {
+        return m_pathTracer;
+    }
+
+    if (!EnsureFullscreenShaders() || !EnsurePathTracerPixelShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIGraphicsPipelineDesc desc{};
+    desc.vertexShader  = m_fullscreenVS;
+    desc.pixelShader   = m_pathTracerPS;
+    desc.topology      = RHIPrimitiveTopology::TriangleList;
+    desc.rasterizer.cullMode      = RHICullMode::None;
+    desc.depthStencil.depthEnable = false;
+    desc.depthStencil.depthWrite  = false;
+    desc.renderTargetFormats[0]   = RHIFormat::RGBA32Float; // accum (Step 6)
+    desc.renderTargetFormats[1]   = RHIFormat::RGBA16Float; // hdrSceneColor
+    desc.renderTargetCount        = 2;
+    desc.debugName                = "PathTracer";
+
+    m_pathTracer = CreateCachedPipeline(desc);
+    if (!m_pathTracer.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create PathTracer pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created PathTracer pipeline");
+    }
+
+    return m_pathTracer;
 }
 
 RHIPipelineHandle PipelineLibrary::GetDebugView() {

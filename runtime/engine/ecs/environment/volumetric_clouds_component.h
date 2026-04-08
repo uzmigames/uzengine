@@ -35,6 +35,7 @@
 #pragma once
 
 #include "vector3.h"
+#include "../core/dirty_flags.h"
 
 #include <cstdint>
 
@@ -57,7 +58,7 @@ enum class TracingMaxDistanceMode : uint8_t {
 /// All altitude and distance fields are in **kilometers** to match reference
 /// VolumetricCloudComponent conventions and avoid floating-point precision
 /// issues at planetary scale. Wind velocity is also in km/s.
-struct VolumetricCloudsComponent {
+struct VolumetricCloudsComponent : public CBDirtyMixin {
     // ── Cloud Layer Geometry ─────────────────────────────────────────────
 
     /// Bottom altitude of the cloud layer in km above sea level.

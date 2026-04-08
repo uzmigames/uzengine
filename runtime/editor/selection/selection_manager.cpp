@@ -26,7 +26,9 @@ namespace uz {
 void SelectionManager::Select(Entity entity) {
     m_selected = entity;
     if (entity.IsValid()) {
-        UZ_LOG(Editor, Info, "Selected entity {}", entity.id);
+        UZ_LOG(Editor, Info, "Selected entity {} (gen={})", entity.id, entity.generation);
+    } else {
+        UZ_LOG(Editor, Debug, "Selection: no entity hit");
     }
 }
 

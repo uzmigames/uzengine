@@ -225,6 +225,10 @@ private:
         uint32_t irradianceSrvIndex    = UINT32_MAX;  ///< Baked irradiance cubemap SRV.
         uint32_t prefilteredSrvIndex   = UINT32_MAX;  ///< Baked prefiltered specular SRV.
 
+        // ── Baked IBL textures (owned per probe — caller manages lifetime) ──
+        RHITextureHandle irradianceTexture;           ///< Baked irradiance cubemap (owned).
+        RHITextureHandle prefilteredTexture;          ///< Baked prefiltered specular cubemap (owned).
+
         // ── Capture resources (owned per probe) ─────────────────────────
         RHITextureHandle captureCubemap;              ///< RGBA16F Texture2DArray (6 slices).
         uint32_t         captureCubemapSrv = UINT32_MAX; ///< SRV of the captured cubemap.

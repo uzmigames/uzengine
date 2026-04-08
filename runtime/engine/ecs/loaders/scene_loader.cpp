@@ -19,6 +19,7 @@
 #include "material/material_asset.h"
 #include "../scripting/script_component.h"
 #include "../logging/log.h"
+#include "../core/cvar.h"
 #include "../math/vector3.h"
 #include "../math/quaternion.h"
 
@@ -32,9 +33,15 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
+#include "../asset/vfs.h"
+
 namespace uz {
+
+/// Thread-local VFS pointer set during LoadScene for .uzmaterial loading.
+static IVFS* s_loadVfs = nullptr;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -51,6 +58,75 @@ static constexpr float kDegToRad = 3.14159265358979323846f / 180.f;
 /// component in JSON. These are owned here and referenced by StaticMeshComponent
 /// via non-owning pointers (overrideMaterials). Cleared when a new scene is loaded.
 static std::vector<std::unique_ptr<Material>> s_sceneLoadedMaterials;
+
+/// CVar overrides applied by the currently-loaded scene.
+/// Key = cvar name, value = original value before the scene overrode it.
+/// Reverted on the next LoadScene() call so scene overrides do not leak
+/// into default/global configuration.
+static std::unordered_map<std::string, float> s_sceneCVarOverrides;
+
+/// Reverts all CVars previously overridden by a loaded scene to their
+/// pre-override values, then clears the override map.
+static void RevertSceneCVarOverrides() {
+    auto& reg = CVarRegistry::Get();
+    for (const auto& [name, prevValue] : s_sceneCVarOverrides) {
+        reg.Set(name, prevValue);
+    }
+    s_sceneCVarOverrides.clear();
+}
+
+/// Parses a top-level "cvars" JSON object and applies each entry as a CVar
+/// override. Records the previous value of each touched CVar in
+/// s_sceneCVarOverrides so RevertSceneCVarOverrides() can restore them later.
+///
+/// Expected JSON shape:
+///   "cvars": {
+///     "r.PathTracing": 1,
+///     "r.ScreenPercentage": 100.0,
+///     "r.TAA": false
+///   }
+///
+/// Values may be number or bool. Unknown CVars are logged and skipped
+/// (Set() on an unregistered name is already a no-op, but we warn so
+/// typos in scene files are visible).
+static void ApplySceneCVarOverrides(const nlohmann::json& cvarsJson,
+                                    const std::string& sourceName) {
+    if (!cvarsJson.is_object()) {
+        UZ_LOG(Scene, Warning,
+               "LoadScene: '{}': 'cvars' is not an object, ignoring", sourceName);
+        return;
+    }
+    auto& reg = CVarRegistry::Get();
+    for (auto it = cvarsJson.begin(); it != cvarsJson.end(); ++it) {
+        const std::string& name = it.key();
+        float newValue = 0.f;
+        if (it.value().is_number()) {
+            newValue = it.value().get<float>();
+        } else if (it.value().is_boolean()) {
+            newValue = it.value().get<bool>() ? 1.f : 0.f;
+        } else {
+            UZ_LOG(Scene, Warning,
+                   "LoadScene: '{}': cvar '{}' has unsupported value type, skipping",
+                   sourceName, name);
+            continue;
+        }
+        const CVar* existing = reg.Find(name);
+        if (!existing) {
+            UZ_LOG(Scene, Warning,
+                   "LoadScene: '{}': cvar '{}' is not registered, skipping",
+                   sourceName, name);
+            continue;
+        }
+        // Remember the original value (first time we touch this cvar in this scene).
+        if (s_sceneCVarOverrides.find(name) == s_sceneCVarOverrides.end()) {
+            s_sceneCVarOverrides[name] = existing->value;
+        }
+        reg.Set(name, newValue);
+        UZ_LOG(Scene, Info,
+               "LoadScene: '{}': cvar override {} = {}",
+               sourceName, name, newValue);
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal helpers
@@ -372,7 +448,110 @@ void ParseMaterialComponent(World& world,
     }
     auto& mesh = world.GetRegistry().get<StaticMeshComponent>(enttEntity);
 
-    // Create a Material asset owned by the scene loader and assign it to slot 0.
+    // ── .uzmaterial asset loading ────────────────────────────────────────
+    // When "asset" field is present, load the .uzmaterial JSON file and
+    // extract texture paths + properties from it instead of inline fields.
+    const std::string matAssetPath = ReadString(comp, "asset");
+    if (!matAssetPath.empty() && s_loadVfs) {
+        auto matBytes = s_loadVfs->Read(matAssetPath);
+        if (!matBytes.empty()) {
+            try {
+                auto matJson = nlohmann::json::parse(matBytes.begin(), matBytes.end());
+                auto texIt = matJson.find("textures");
+                auto propIt = matJson.find("properties");
+
+                auto mat = std::make_unique<Material>();
+                if (texIt != matJson.end() && texIt->is_object()) {
+                    auto bc = texIt->find("base_color_map");
+                    if (bc != texIt->end() && bc->is_string()) mat->albedoPath = bc->get<std::string>();
+                    auto nm = texIt->find("normal_map");
+                    if (nm != texIt->end() && nm->is_string()) mat->normalPath = nm->get<std::string>();
+                    auto mr = texIt->find("metallic_roughness_map");
+                    if (mr != texIt->end() && mr->is_string()) {
+                        mat->ormPath = mr->get<std::string>();
+                        mat->useORM = true;
+                    }
+                    auto rm = texIt->find("roughness_map");
+                    if (rm != texIt->end() && rm->is_string()) mat->roughnessPath = rm->get<std::string>();
+                    auto mm = texIt->find("metallic_map");
+                    if (mm != texIt->end() && mm->is_string()) mat->metallicPath = mm->get<std::string>();
+                    auto ao = texIt->find("ao_map");
+                    if (ao != texIt->end() && ao->is_string()) mat->aoPath = ao->get<std::string>();
+                }
+                if (propIt != matJson.end() && propIt->is_object()) {
+                    mat->roughnessMultiplier = ReadFloat(*propIt, "roughness", 1.0f);
+                    mat->metallicMultiplier  = ReadFloat(*propIt, "metallic", 0.0f);
+                    mat->normalIntensity     = ReadFloat(*propIt, "normal_strength", 1.0f);
+                }
+                mesh.SetMaterial(0, mat.get());
+                s_sceneLoadedMaterials.push_back(std::move(mat));
+                return;
+            } catch (const nlohmann::json::parse_error& e) {
+                UZ_LOG(Scene, Warning, "Failed to parse material '{}': {}", matAssetPath, e.what());
+            }
+        } else {
+            UZ_LOG(Scene, Warning, "Failed to read material asset '{}'", matAssetPath);
+        }
+        // Fall through to inline material parsing if .uzmaterial loading fails
+    }
+
+    // Material graph path (.uzmat) — stored on the component for lazy-loading
+    // by the renderer. The graph material will take precedence once the
+    // MaterialPipeline compiles its PSO. Until then, the fixed-PBR textures
+    // below serve as fallback so the mesh isn't invisible.
+    const std::string matGraphPath = ReadString(comp, "material_graph");
+
+    // Parsed .uzmat metadata (blendMode, twoSided, textures) to propagate to
+    // the fixed Material so the GBuffer pass can route Masked/Translucent draws
+    // and bind opacity textures even before the material graph PSO is compiled.
+    std::string uzmatBlendMode;
+    bool        uzmatTwoSided = false;
+    float       uzmatAlphaClip = 0.3333f;
+    std::string uzmatAlbedoPath;
+
+    if (!matGraphPath.empty()) {
+        mesh.materialGraphPath = matGraphPath;
+        UZ_LOG(Scene, Info, "Material graph assigned: '{}'", matGraphPath);
+
+        // Read .uzmat JSON to extract rendering properties that the fixed Material
+        // needs: blendMode, twoSided, alphaClipThreshold, and albedo texture path
+        // (used as opacity source for Masked materials with alpha in albedo).
+        if (s_loadVfs) {
+            auto matBytes = s_loadVfs->Read(matGraphPath);
+            if (!matBytes.empty()) {
+                try {
+                    auto mj = nlohmann::json::parse(matBytes.begin(), matBytes.end());
+                    uzmatBlendMode = mj.value("blendMode", "");
+                    uzmatTwoSided  = mj.value("twoSided", false);
+
+                    // Extract alphaClipThreshold and albedo texture from expressions.
+                    if (mj.contains("expressions") && mj["expressions"].is_array()) {
+                        for (const auto& expr : mj["expressions"]) {
+                            const std::string exprType = expr.value("type", "");
+                            if (exprType == "PBROutput") {
+                                if (expr.contains("floatParams") && expr["floatParams"].is_object()) {
+                                    uzmatAlphaClip = expr["floatParams"].value("alphaClipThreshold", 0.3333f);
+                                }
+                            }
+                            if (exprType == "TextureSample" || exprType == "TextureParameter") {
+                                if (expr.contains("stringParams") && expr["stringParams"].is_object()) {
+                                    auto tp = expr["stringParams"].value("texturePath", "");
+                                    if (!tp.empty() && uzmatAlbedoPath.empty()) {
+                                        uzmatAlbedoPath = tp; // first texture = albedo
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (const nlohmann::json::parse_error&) {
+                    // Non-fatal — continue with defaults.
+                }
+            }
+        }
+    }
+
+    // Fixed-PBR path: Create a Material asset owned by the scene loader and assign it to slot 0.
+    // Also serves as texture-loading fallback when material_graph is set but not yet compiled.
     auto mat = std::make_unique<Material>();
     mat->albedoPath    = ReadString(comp, "albedo");
     mat->normalPath    = ReadString(comp, "normal");
@@ -380,14 +559,80 @@ void ParseMaterialComponent(World& world,
     mat->metallicPath  = ReadString(comp, "metallic");
     mat->aoPath        = ReadString(comp, "ao");
     mat->emissivePath  = ReadString(comp, "emissive");
+    mat->baseColorTintR      = ReadFloat(comp, "baseColorR", 1.0f);
+    mat->baseColorTintG      = ReadFloat(comp, "baseColorG", 1.0f);
+    mat->baseColorTintB      = ReadFloat(comp, "baseColorB", 1.0f);
     mat->roughnessMultiplier = ReadFloat(comp, "roughnessMultiplier", 1.0f);
     mat->metallicMultiplier  = ReadFloat(comp, "metallicMultiplier", 1.0f);
     mat->normalIntensity     = ReadFloat(comp, "normalIntensity", 1.0f);
     mat->aoIntensity         = ReadFloat(comp, "aoIntensity", 1.0f);
+    mat->specular            = ReadFloat(comp, "specular", 0.5f);
+    mat->transmission        = ReadFloat(comp, "transmission", 0.0f);
+    mat->ior                 = ReadFloat(comp, "ior", 1.5f);
+    mat->thicknessScale      = ReadFloat(comp, "thicknessScale", 0.5f);
+
+    // Blend mode — auto-detect from transmission or explicit string.
+    // Translucent materials are rendered in a separate forward pass after
+    // deferred lighting, with access to the HDR scene color for refraction.
+    {
+        auto bm = ReadString(comp, "blendMode");
+        if (bm == "Masked")           mat->blendMode = uz::EBlendMode::Masked;
+        else if (bm == "Translucent") mat->blendMode = uz::EBlendMode::Translucent;
+        else if (bm == "Additive")    mat->blendMode = uz::EBlendMode::Additive;
+        else if (bm == "Modulate")    mat->blendMode = uz::EBlendMode::Modulate;
+    }
+
+    // Propagate .uzmat metadata to the fixed Material when inline fields are absent.
+    // This ensures Masked/Translucent blend modes, twoSided, and opacity wiring work
+    // even when the entity only specifies "material_graph" without inline overrides.
+    if (mat->blendMode == uz::EBlendMode::Opaque && !uzmatBlendMode.empty()) {
+        if (uzmatBlendMode == "Masked")           mat->blendMode = uz::EBlendMode::Masked;
+        else if (uzmatBlendMode == "Translucent") mat->blendMode = uz::EBlendMode::Translucent;
+        else if (uzmatBlendMode == "Additive")    mat->blendMode = uz::EBlendMode::Additive;
+        else if (uzmatBlendMode == "Modulate")    mat->blendMode = uz::EBlendMode::Modulate;
+    }
+    if (uzmatTwoSided) {
+        mat->twoSided = true;
+    }
+    // For Masked materials, enable alpha test. The GBuffer shader samples the
+    // albedo texture's alpha channel as the mask source when no separate opacity
+    // texture is bound (opacitySrvIndex == 0).
+    if (mat->blendMode == uz::EBlendMode::Masked) {
+        mat->alphaTest = true;
+        // A threshold of 0 would never discard anything; use 0.3333 as default.
+        mat->alphaClipThreshold = (uzmatAlphaClip > 0.0f) ? uzmatAlphaClip : 0.3333f;
+        // Set albedo path from .uzmat if not already set inline, so the texture
+        // gets loaded and its alpha channel is available for the mask.
+        if (mat->albedoPath.empty() && !uzmatAlbedoPath.empty()) {
+            mat->albedoPath = uzmatAlbedoPath;
+        }
+    }
+
+    // Auto-promote to Translucent when transmission is set (glass materials).
+    if (mat->transmission > 0.0f && mat->blendMode == uz::EBlendMode::Opaque) {
+        mat->blendMode = uz::EBlendMode::Translucent;
+    }
+
+    // Shading model — auto-detect from transmission or explicit string
+    if (mat->transmission > 0.0f) {
+        mat->shadingModel = uz::EShadingModel::ThinTranslucent;
+    }
+    {
+        auto sm = ReadString(comp, "shadingModel");
+        if (sm == "Unlit")            mat->shadingModel = uz::EShadingModel::Unlit;
+        else if (sm == "Subsurface")  mat->shadingModel = uz::EShadingModel::Subsurface;
+        else if (sm == "ClearCoat")   mat->shadingModel = uz::EShadingModel::ClearCoat;
+        else if (sm == "Cloth")       mat->shadingModel = uz::EShadingModel::Cloth;
+        else if (sm == "ThinTranslucent") mat->shadingModel = uz::EShadingModel::ThinTranslucent;
+    }
     mat->emissiveColorR    = ReadFloat(comp, "emissiveColorR", 0.0f);
     mat->emissiveColorG    = ReadFloat(comp, "emissiveColorG", 0.0f);
     mat->emissiveColorB    = ReadFloat(comp, "emissiveColorB", 0.0f);
     mat->emissiveIntensity = ReadFloat(comp, "emissiveIntensity", 0.0f);
+    mat->ormPath           = ReadString(comp, "orm");
+    if (!mat->ormPath.empty()) {
+        mat->useORM = true;
+    }
 
     mesh.SetMaterial(0, mat.get());
     s_sceneLoadedMaterials.push_back(std::move(mat));
@@ -465,6 +710,54 @@ size_t ProcessEntityJson(World& world,
         }
     }
 
+    // ── Prefab instantiation ────────────────────────────────────────────────
+    // When an entity has `"prefab": { "asset": "path.uzprefab" }`, load the
+    // prefab JSON and process its children as children of this entity.
+    auto prefabIt = entityJson.find("prefab");
+    if (prefabIt != entityJson.end() && prefabIt->is_object()) {
+        const std::string prefabPath = ReadString(*prefabIt, "asset");
+        if (!prefabPath.empty() && s_loadVfs) {
+            auto prefabBytes = s_loadVfs->Read(prefabPath);
+            if (!prefabBytes.empty()) {
+                try {
+                    auto prefabJson = nlohmann::json::parse(prefabBytes.begin(), prefabBytes.end());
+
+                    // Process prefab's own components (if any) on this entity
+                    auto prefabCompIt = prefabJson.find("components");
+                    if (prefabCompIt != prefabJson.end() && prefabCompIt->is_object()) {
+                        for (const auto& [ck, cv] : prefabCompIt->items()) {
+                            if (!cv.is_object() || ck == "transform") continue;
+                            if (ck == "mesh") ParseMeshComponent(world, entity, cv);
+                            else if (ck == "light") ParseLightComponent(world, entity, cv, sourceName);
+                            else if (ck == "script") ParseScriptComponent(world, entity, cv);
+                            else if (ck == "camera") ParseCameraComponent(world, entity, cv);
+                        }
+                        auto prefabMatIt = prefabCompIt->find("material");
+                        if (prefabMatIt != prefabCompIt->end() && prefabMatIt->is_object())
+                            ParseMaterialComponent(world, entity, *prefabMatIt);
+                    }
+
+                    // Process prefab's children as children of this entity
+                    auto prefabChildrenIt = prefabJson.find("children");
+                    if (prefabChildrenIt != prefabJson.end() && prefabChildrenIt->is_array()) {
+                        for (const auto& child : *prefabChildrenIt) {
+                            entityCount += ProcessEntityJson(world, child, sourceName);
+                        }
+                    }
+
+                    UZ_LOG(Scene, Info, "Prefab instantiated: '{}' ({} children)",
+                           prefabPath, prefabJson.value("children", nlohmann::json::array()).size());
+                } catch (const nlohmann::json::parse_error& e) {
+                    UZ_LOG(Scene, Warning, "Failed to parse prefab '{}': {}", prefabPath, e.what());
+                }
+            } else {
+                UZ_LOG(Scene, Warning, "Failed to read prefab asset '{}'", prefabPath);
+            }
+        } else if (!prefabPath.empty()) {
+            UZ_LOG(Scene, Warning, "Prefab '{}' requires VFS (use LoadScene with VFS overload)", prefabPath);
+        }
+    }
+
     // ── Children (recursive) ──────────────────────────────────────────────────
     auto childrenIt = entityJson.find("children");
     if (childrenIt != entityJson.end() && childrenIt->is_array()) {
@@ -488,6 +781,10 @@ size_t LoadScene(World& world,
     // Release materials from any previously loaded scene.
     s_sceneLoadedMaterials.clear();
 
+    // Revert any CVar overrides applied by a previously-loaded scene so the
+    // new scene starts from global defaults before applying its own overrides.
+    RevertSceneCVarOverrides();
+
     if (sceneJson.empty()) {
         UZ_LOG(Scene, Error, "LoadScene: '{}': input byte buffer is empty", sourceName);
         return 0;
@@ -509,6 +806,13 @@ size_t LoadScene(World& world,
         return 0;
     }
 
+    // Apply top-level "cvars" overrides (if any) BEFORE entity construction,
+    // so components that read CVars during construction see the overridden values.
+    auto cvarsIt = root.find("cvars");
+    if (cvarsIt != root.end()) {
+        ApplySceneCVarOverrides(*cvarsIt, sourceName);
+    }
+
     auto entitiesIt = root.find("entities");
     if (entitiesIt == root.end() || !entitiesIt->is_array()) {
         UZ_LOG(Scene, Error,
@@ -524,6 +828,16 @@ size_t LoadScene(World& world,
     UZ_LOG(Scene, Info,
            "LoadScene: '{}': loaded {} entities", sourceName, totalCount);
     return totalCount;
+}
+
+size_t LoadScene(World& world,
+                 const std::vector<uint8_t>& sceneJson,
+                 const std::string& sourceName,
+                 IVFS* vfs) {
+    s_loadVfs = vfs;
+    size_t result = LoadScene(world, sceneJson, sourceName);
+    s_loadVfs = nullptr;
+    return result;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -773,6 +1087,20 @@ std::vector<uint8_t> SaveScene(const World& world) {
     }
 
     root["entities"] = std::move(entities);
+
+    // Preserve any active scene CVar overrides so a load/save round-trip
+    // does not drop the "cvars" section authored in the source .uzscene.
+    if (!s_sceneCVarOverrides.empty()) {
+        nlohmann::json cvarsJson = nlohmann::json::object();
+        auto& reg = CVarRegistry::Get();
+        for (const auto& kv : s_sceneCVarOverrides) {
+            // Write the *current* (overridden) value, not the saved original.
+            if (const CVar* cv = reg.Find(kv.first)) {
+                cvarsJson[kv.first] = cv->value;
+            }
+        }
+        root["cvars"] = std::move(cvarsJson);
+    }
 
     const std::string jsonStr = root.dump(2);
     return {jsonStr.begin(), jsonStr.end()};

@@ -131,6 +131,11 @@ public:
     /// Call after CVarRegistry has all CVars registered (after SceneRenderer::Init).
     void FlushCvarOverrides();
 
+    /// Adds a CVar override to the pending list (applied at FlushCvarOverrides).
+    void AddPendingCvarOverride(const std::string& name, float value) {
+        m_pendingCvarOverrides.emplace_back(name, value);
+    }
+
 private:
     /// Rebuilds m_merged from all sources (called after any load/override).
     void RebuildMerged();

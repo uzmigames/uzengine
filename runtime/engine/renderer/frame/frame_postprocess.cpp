@@ -21,10 +21,13 @@
 #include <cstring>
 
 // ── CVars ────────────────────────────────────────────────────────────────
-static auto* cv_SSR             = UZ_CVAR_BOOL("r.SSR", true, "Screen-space reflections");
+// r.SSR CVar is declared in frame_lighting.cpp (single source of truth)
+static auto* cv_SSRComposite    = UZ_CVAR_FLOAT("r.SSR.Composite", 1.0f, "Enable SSR post-TAA composite (0=skip)", 0.0f, 1.0f);
 static auto* cv_MotionBlur      = UZ_CVAR_BOOL("r.MotionBlur", true, "Motion blur");
 static auto* cv_DOF             = UZ_CVAR_BOOL("r.DOF", false, "Depth of field");
 static auto* cv_CAS             = UZ_CVAR_BOOL("r.CAS", true, "Contrast adaptive sharpening");
+static auto* cv_TonemapOp       = UZ_CVAR_INT("r.TonemapOperator", 1,
+    "Tonemap: 0=None, 1=Hill ACES, 2=Narkowicz ACES, 3=Reinhard, 4=Hable", 0, 4);
 static auto* cv_DOFFocusDist    = UZ_CVAR_FLOAT("r.DOF.FocusDistance", 0.f, "DOF focus distance (cm)", 0.f, 100000.f);
 static auto* cv_DOFAperture     = UZ_CVAR_FLOAT("r.DOF.Aperture", 4.f, "DOF f-stop number", 0.5f, 32.f);
 static auto* cv_DOFFocalRegion  = UZ_CVAR_FLOAT("r.DOF.FocalRegion", 0.f, "In-focus zone width (cm)", 0.f, 10000.f);
@@ -130,6 +133,129 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
         m_prevViewProj = ctx.unjitteredViewProj;
         m_prevViewProjValid = true;
 
+        // ── SSR Post-TAA Composite ──────────────────────────────────────
+        // Apply SSR AFTER TAA to prevent TAA neighborhood contamination.
+        // The deferred lighting pass outputs IBL-only specular; SSR is
+        // composited here onto the TAA-resolved (or raw HDR) image.
+        if (ctx.ssrActive && m_ssrHasPrevColor
+            && m_ssrResolvedOutput.IsValid()
+            && m_ssrResolvedOutputSrv != UINT32_MAX) {
+
+            // Determine the target: TAA output if TAA active, else raw HDR
+            const uint32_t compositeTargetUav = ctx.taaActive
+                ? m_taaHistoryUav[1 - m_taaHistoryIndex]  // TAA just-written
+                : UINT32_MAX;  // will use raw HDR fallback
+
+            if (compositeTargetUav != UINT32_MAX || !ctx.taaActive) {
+                rgBuilder.AddPass("SSR_Composite", [&, compositeTargetUav, tonemapInputSrv](rg::RgPassBuilder& pb) {
+                    pb.SetExecutionCallback([this, &ctx, compositeTargetUav, tonemapInputSrv](IRHICommandList* cmd, const rg::RgPassResources&) {
+                        UZ_PROFILE_SCOPE("SSR::Composite");
+
+                        auto ssrCompositePSO = ctx.pipelines->GetSsrComposite();
+                        if (!ssrCompositePSO.IsValid() || cv_SSRComposite->value < 0.5f) return;
+
+                        // Determine which texture to composite onto
+                        RHITextureHandle targetTex = ctx.taaActive
+                            ? m_taaHistory[1 - m_taaHistoryIndex]  // TAA wrote here
+                            : m_hdrSceneColor;
+                        uint32_t targetUav = ctx.taaActive
+                            ? m_taaHistoryUav[1 - m_taaHistoryIndex]
+                            : UINT32_MAX;  // need HDR UAV — skip if not available
+
+                        if (targetUav == UINT32_MAX) return;  // no UAV for raw HDR
+
+                        // TAA output is in SRV state — transition to UAV for R/W
+                        {
+                            RHIBarrierDesc barrier{};
+                            barrier.texture     = targetTex;
+                            barrier.stateBefore = RHIResourceState::ShaderResource;
+                            barrier.stateAfter  = RHIResourceState::UnorderedAccess;
+                            cmd->ResourceBarrier(&barrier, 1);
+                        }
+
+                        cmd->SetPipeline(ssrCompositePSO);
+
+                        struct SsrCompositeConstants {
+                            uint32_t ssrSrvIdx, normalSrvIdx, depthSrvIdx, reserved;
+                            uint32_t outputWidth, outputHeight;
+                            float intensity, pad;
+                        };
+
+                        SsrCompositeConstants rc{};
+                        rc.ssrSrvIdx    = m_ssrResolvedOutputSrv;
+                        rc.normalSrvIdx = m_gbuffer.normalSRV;
+                        rc.depthSrvIdx  = m_gbuffer.depthSRV;
+                        rc.outputWidth  = static_cast<uint32_t>(ctx.vpWidth);
+                        rc.outputHeight = static_cast<uint32_t>(ctx.vpHeight);
+                        rc.intensity    = 1.0f;
+
+                        cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
+                        cmd->SetRootCBV(kSlotPerFrame, ctx.perFrameAlloc.bufferHandle,
+                                        ctx.perFrameAlloc.offsetBytes, ctx.perFrameAlloc.cpuPtr,
+                                        sizeof(PerFrameCB));
+                        cmd->SetDescriptorTable(4, targetUav);
+
+                        const uint32_t groupsX = (rc.outputWidth + 7) / 8;
+                        const uint32_t groupsY = (rc.outputHeight + 7) / 8;
+                        cmd->Dispatch(groupsX, groupsY, 1);
+
+                        // Back to SRV for tonemap/bloom
+                        {
+                            RHIBarrierDesc barrier{};
+                            barrier.texture     = targetTex;
+                            barrier.stateBefore = RHIResourceState::UnorderedAccess;
+                            barrier.stateAfter  = RHIResourceState::ShaderResource;
+                            cmd->ResourceBarrier(&barrier, 1);
+                        }
+                    });
+                });
+            }
+        }
+
+        // ── SSR CopyPrevColor (post-TAA, post-composite) ────────────────
+        // Copy the TAA-resolved scene color for next frame's SSR trace input.
+        // MUST run AFTER TAA (not before) to avoid barrier transitions on
+        // hdrSceneColor that cause micro-pixel TAA variation → stipple noise.
+        // @ref UE5 — reads PrevViewInfo.TemporalAAHistory (prev TAA output)
+        if (m_ssrEnabled && m_ssrPrevSceneColor.IsValid()) {
+            // Source: TAA output if available, else raw HDR
+            const RHITextureHandle copySource = ctx.taaActive
+                ? m_taaHistory[1 - m_taaHistoryIndex]
+                : m_hdrSceneColor;
+            const auto copySourceState = ctx.taaActive
+                ? RHIResourceState::ShaderResource  // TAA output is in SRV
+                : RHIResourceState::RenderTarget;   // HDR is in RT
+
+            rgBuilder.AddPass("SSR_CopyPrevColor", [&, copySource, copySourceState](rg::RgPassBuilder& pb) {
+                pb.SetExecutionCallback([this, copySource, copySourceState](IRHICommandList* cmd, const rg::RgPassResources&) {
+                    UZ_PROFILE_SCOPE("SSR::CopyPrevColor");
+
+                    RHIBarrierDesc barriers[2]{};
+                    barriers[0].texture     = copySource;
+                    barriers[0].stateBefore = copySourceState;
+                    barriers[0].stateAfter  = RHIResourceState::CopySrc;
+                    barriers[1].texture     = m_ssrPrevSceneColor;
+                    barriers[1].stateBefore = RHIResourceState::ShaderResource;
+                    barriers[1].stateAfter  = RHIResourceState::CopyDst;
+                    cmd->ResourceBarrier(barriers, 2);
+
+                    cmd->CopyTexture(copySource, m_ssrPrevSceneColor);
+
+                    RHIBarrierDesc restore[2]{};
+                    restore[0].texture     = copySource;
+                    restore[0].stateBefore = RHIResourceState::CopySrc;
+                    restore[0].stateAfter  = copySourceState;
+                    restore[1].texture     = m_ssrPrevSceneColor;
+                    restore[1].stateBefore = RHIResourceState::CopyDst;
+                    restore[1].stateAfter  = RHIResourceState::ShaderResource;
+                    cmd->ResourceBarrier(restore, 2);
+                });
+            });
+
+            m_ssrHasPrevColor = true;
+            m_ssrPrevExposure = ctx.perFrame.exposure;
+        }
+
         // ── Bloom pass (if enabled) ─────────────────────────────────────
         if (ctx.bloomEnabled && m_bloomPass && m_bloomPass->IsInitialized()) {
             rgBuilder.AddPass("Bloom", [&](rg::RgPassBuilder& pb) {
@@ -183,8 +309,9 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 uint32_t bloomIntensityBits = 0;
                 std::memcpy(&bloomIntensityBits, &bloomIntensity, sizeof(float));
 
-                uint32_t indices[5] = { capturedTonemapSrv, bloomSrvIdx, bloomIntensityBits, 0, 0 };
-                cmd->SetRootConstants(kSlotRootConstants, indices, 5);
+                uint32_t indices[6] = { capturedTonemapSrv, bloomSrvIdx, bloomIntensityBits, 0, 0,
+                                        static_cast<uint32_t>(cv_TonemapOp->value) };
+                cmd->SetRootConstants(kSlotRootConstants, indices, 6);
 
                 static bool loggedOnce = false;
                 if (!loggedOnce) {
@@ -603,7 +730,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 // Physical CoC model: thin-lens approximation with APS-C sensor.
                 // SensorWidth = 24.576mm (APS-C standard).
                 const float sensorW = 24.576f;
-                const float fovRad = m_camera->GetFovY();
+                const float fovRad = m_cameraManager->GetActiveCamera().GetFovY();
                 const float fMM = sensorW / (2.0f * std::tan(fovRad * 0.5f));
                 const float dMM = m_dofFocusDistance * 10.0f;
                 const float cocInf = (fMM*fMM) / (m_dofAperture * (dMM - fMM)) * static_cast<float>(static_cast<uint32_t>(ctx.renderWidth)) / sensorW * 0.5f;
@@ -729,8 +856,9 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                                          ? m_colorGradingLutSrv : 0u;
 
             // Read from the final post-process output (DOF > motion blur > TAA > raw HDR).
-            uint32_t indices[5] = { ctx.postDofSrvForTonemap, bloomSrvIdx, bloomIntensityBits, lensFlareSrvIdx, lutSrvIdx };
-            cmd->SetRootConstants(kSlotRootConstants, indices, 5);
+            uint32_t indices[6] = { ctx.postDofSrvForTonemap, bloomSrvIdx, bloomIntensityBits, lensFlareSrvIdx, lutSrvIdx,
+                                    static_cast<uint32_t>(cv_TonemapOp->value) };
+            cmd->SetRootConstants(kSlotRootConstants, indices, 6);
 
             // SM5/SM6.0: bind all textures via SetFragmentTexture.
             // CRITICAL: every slot the shader reads MUST be explicitly bound —

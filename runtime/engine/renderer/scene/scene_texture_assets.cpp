@@ -390,7 +390,10 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
         m_deferredMeshUploads.push_back(std::move(deferred));  // move staging ownership
 
         // Queue SDF bake for the Lua-path loaded mesh (same logic as LoadMesh).
-        if (cpuMesh.header.vertexFormat == MeshVertexFormat::Standard
+        // Gated on m_sdfGiEnabled — FlushSdfBakes does WaitIdle and freezes
+        // the main thread when many meshes are queued.
+        if (m_sdfGiEnabled
+            && cpuMesh.header.vertexFormat == MeshVertexFormat::Standard
             && cpuMesh.GetVertexCount() > 0 && cpuMesh.GetIndexCount() >= 3)
         {
             PendingSdfBake sdfBake;

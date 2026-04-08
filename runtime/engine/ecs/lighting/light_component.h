@@ -134,7 +134,7 @@ public:
 
     /// Angular diameter of the sun disk in degrees (visual size in the sky).
     /// Equivalent: LightSourceAngle. Default: 0.5357 deg (≈ Earth sun).
-    float lightSourceAngle = 0.5357f;
+    float lightSourceAngle = 1.2f;
 
     /// Soft edge angle of the sun disk in degrees.
     /// Equivalent: LightSourceSoftAngle. Default: 0.0.

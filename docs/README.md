@@ -1,4 +1,4 @@
-# UzEngine 0.2 — Documentation
+# UzEngine 0.6 — Documentation
 
 > AAA game engine embedded in VSCode, designed for autonomous AI development.
 
@@ -38,7 +38,7 @@ Detailed specifications for each milestone, located in [specs/](specs/):
 | [1.5-build-pipeline](specs/1.5-build-pipeline.md) | 1.5 | Asset build pipeline (uzcook, uzembed) |
 | [1.5-gameplay](specs/1.5-gameplay.md) | 1.5 | Gameplay systems — input, physics, audio |
 | [1.5.0-shader-pipeline](specs/1.5.0-shader-pipeline.md) | 1.5 | Shader compilation, caching, hot-reload |
-| [shader-library](specs/shader-library.md) | — | Shader subsystem directory structure, ~99 shaders, CPU parity mapping |
+| [shader-library](specs/shader-library.md) | — | Shader subsystem directory structure, ~145 shaders, CPU parity mapping |
 | [shader-variants](specs/shader-variants.md) | — | Shader variants, SM5/bindless dual-path, PSO cache, permutation naming |
 | [2.0-napi-foundation](specs/2.0-napi-foundation.md) | 2.0 | N-API .node addon integration with VSCode |
 | [2.1-viewport-ui](specs/2.1-viewport-ui.md) | 2.1 | Viewport HWND + editor UI panels |
