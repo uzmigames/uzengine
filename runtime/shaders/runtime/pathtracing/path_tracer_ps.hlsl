@@ -1,23 +1,15 @@
-/// UzEngine Path Tracer — Step 7: Direct-sun shadow via screen-space depth march
+/// UzEngine Path Tracer — Step 7: Direct-sun shadow via CSM shadow atlas.
 ///
-/// Hybrid deviation from `docs/analysis/path-tracing/04-incremental-plan.md`:
-/// the original Step 7 calls for analytic ECS primitives (PtPrimitiveComponent).
-/// Authoring those requires a parallel asset pipeline + Cornell-style test
-/// scene; for Sponza they would be invisible. We instead do a screen-space
-/// depth-buffer ray march for the direct sun shadow term, which gives
-/// immediate, visible contact shadows on the existing GBuffer geometry.
+/// Shadows are sampled from the same Cascaded Shadow Map atlas used by the
+/// deferred lighting pipeline. This gives view-independent, stable sun shadows
+/// matching the rasterized path exactly.
 ///
-/// Indirect bounces still escape to the sky (no scene tracing yet) — true
-/// multi-bounce against arbitrary geometry needs analytic ECS primitives or
-/// a BVH builder, both deferred to a future milestone.
+/// @ref Engel 2006 "Cascaded Shadow Maps" (ShaderX5)
 ///
-/// @ref Bavoil 2008 "Multi-Layer Dual-Resolution Screen-Space Ambient Occlusion"
-///      — screen-space depth march pattern
-///
-/// Adds physically-correct specular reflection on top of Step 4. Uses GGX
-/// VNDF importance sampling (Dupuy & Benyoub 2023) and the Smith correlated
-/// height-correlated visibility term, both from `material/brdf.hlsli` so the
-/// path-traced result matches the rasterized PBR pipeline mathematically.
+/// Specular reflection uses a roughness-perturbed mirror model: mirror direction
+/// lerped toward a random hemisphere direction by roughness², then sampled from
+/// the sky cubemap with LOD = sqrt(roughness)*5. Simple, stable, no screen-space
+/// ray marching artifacts.
 ///
 /// Per pixel:
 ///   1. Read GBuffer: normal, albedo, metallic, roughness, position.
@@ -50,6 +42,7 @@ cbuffer PathTracerRC : register(b0) {
     uint g_depthSrv;
     uint g_albedoSrv;
     uint g_positionSrv;
+    uint g_emissiveSrv;   // GBuffer emissive HDR (RT3)
     uint g_skyCubeSrv;
     uint g_accumPrevSrv;  // Step 6: history read for progressive accumulation
     uint g_sampleCount;   // Step 6: number of samples already accumulated
@@ -65,6 +58,7 @@ Texture2D<float>   t_depth    : register(t1);
 Texture2D<float4>  t_albedo   : register(t2);
 Texture2D<float4>  t_position : register(t3);
 TextureCube<float4> t_skyCube : register(t4);
+Texture2D<float4>  t_emissive : register(t6); // t5 = shadowAtlasTexture (non-bindless)
 #endif
 
 cbuffer PerFrameCB : register(b1) {
@@ -77,6 +71,21 @@ cbuffer PerFrameCB : register(b1) {
 };
 
 SamplerState g_linearClamp : register(s0);
+
+#ifndef UZ_BINDLESS
+/// SM5 path: shadow atlas at t5 (t0-t4 used by GBuffer + sky cube).
+/// shadow.hlsli's CascadeShadow() macro-aliases this as `shadowAtlas`.
+Texture2D<float> shadowAtlasTexture : register(t5);
+#endif
+
+// shadowPCFPenumbra is read from the full PerFrameCB in deferred_lighting_ps.
+// The path tracer uses a trimmed CB — supply the default here so shadow.hlsli
+// compiles without layout changes.
+static const float shadowPCFPenumbra = 2.0;
+
+// Must be included AFTER the PerFrameCB (or the shadowPCFPenumbra define above)
+// because shadow.hlsli references that name for the Poisson penumbra radius.
+#include "../lighting/shadow.hlsli"
 
 #define PT_SAMPLES_PER_FRAME 4
 
@@ -107,64 +116,7 @@ float3 WorldToTangent(float3 v, float3 N, float3 T, float3 B) {
     return float3(dot(v, T), dot(v, B), dot(v, N));
 }
 
-// ─── Screen-space sun shadow (Step 7 hybrid) ────────────────────────────────
-// March a ray in world space, project each step to screen, compare to depth.
-// Returns 0 if occluded, 1 if visible. Uses a small step count to keep cost low.
-//
-// THICKNESS CHECK is critical: without it, the ray can falsely flag a pixel
-// as shadowed when its screen projection lands on distant geometry that is
-// in front of the sample but is NOT actually occluding the sun ray (the
-// distant pixel is just BEHIND the screen-space ray in 3D). This is the
-// classic SSCS false-occlusion bug. Mitigated by rejecting depth samples
-// whose linear-depth difference exceeds a thickness window.
-//
-// @ref Bavoil 2008 — depth-buffer comparison shadow pattern
-// @ref UE5 ContactShadows — UAttachedScreenSpaceShadowSettings::ContactShadowLength + thickness
-float ScreenSpaceSunShadow(float3 worldPos, float3 sunDir, Texture2D<float> depthTex,
-                           int2 screenSize)
-{
-    const int   kSteps     = 16;
-    const float kStepWorld = 4.0;     // ~4 cm per step (Sponza is in cm)
-    const float kBias      = 1.0;
-    // Maximum world-space depth difference to count as a real occlusion.
-    // Anything farther than this is treated as "not the same surface" and
-    // skipped — avoids false shadows from distant background geometry.
-    const float kMaxThickness = 25.0;
 
-    float3 P = worldPos + sunDir * kBias;
-
-    [loop]
-    for (int i = 0; i < kSteps; ++i) {
-        P += sunDir * kStepWorld;
-        float4 clip = mul(viewProj, float4(P, 1.0));
-        if (clip.w <= 0.0) return 1.0;
-        float3 ndc = clip.xyz / clip.w;
-        if (any(abs(ndc.xy) > 1.0)) return 1.0;
-        float2 uv = ndc.xy * float2(0.5, -0.5) + 0.5;
-        int2 px = int2(uv * float2(screenSize));
-        float sceneZ = depthTex.Load(int3(px, 0));
-        // Reversed-Z: depth==1 near, depth==0 far.
-        // sceneZ > rayZ → scene point is in FRONT of (closer than) the ray.
-        // That's only a real occluder if the depth difference is small —
-        // i.e. the scene point is on the SAME surface, not a background object.
-        // Convert to linear depth via the projection's inverse to test thickness.
-        if (sceneZ > ndc.z) {
-            // Compute world position of the depth-buffer sample at this UV.
-            float4 sampleClip = float4(ndc.xy, sceneZ, 1.0);
-            // Linear depth thickness in world space: project the ray-pos and
-            // depth-sample back to view space and compare distances along the
-            // sun ray. Cheap approximation: use 1/clip.w as a proxy for view-z.
-            float rayLinear   = clip.w;       // view-space depth of ray sample
-            float sceneLinear = clip.w * (ndc.z / max(sceneZ, 1e-6));
-            float thickness   = abs(rayLinear - sceneLinear);
-            if (thickness < kMaxThickness) {
-                return 0.0; // real occluder
-            }
-            // Otherwise: distant background, ignore and keep marching.
-        }
-    }
-    return 1.0;
-}
 
 struct PSOutput {
     float4 accum : SV_Target0;  ///< RGBA32F progressive accumulation (history).
@@ -180,12 +132,14 @@ PSOutput main(float4 pos : SV_Position)
     Texture2D<float>   depthTex    = ResourceDescriptorHeap[g_depthSrv];
     Texture2D<float4>  albedoTex   = ResourceDescriptorHeap[g_albedoSrv];
     Texture2D<float4>  positionTex = ResourceDescriptorHeap[g_positionSrv];
+    Texture2D<float4>  emissiveTex = ResourceDescriptorHeap[g_emissiveSrv];
     TextureCube<float4> skyCube    = ResourceDescriptorHeap[g_skyCubeSrv];
 #else
     #define normalTex   t_normal
     #define depthTex    t_depth
     #define albedoTex   t_albedo
     #define positionTex t_position
+    #define emissiveTex t_emissive
     #define skyCube     t_skyCube
 #endif
 
@@ -229,17 +183,10 @@ PSOutput main(float4 pos : SV_Position)
     uint rngState = uint(px.x) * 1973u + uint(px.y) * 9277u + g_frameIndex * 26699u;
     rngState |= 1u;
 
-    // ── Direct sun ─────────────────────────────────────────────────────────
-    // Lambert diffuse weighted by (1 - F) energy conservation, plus GGX
-    // specular evaluated at the sun direction.
-    // @ref Karis 2013, @ref Heitz 2014
-    // ── Direct sun (no shadow occlusion in this milestone) ────────────────
-    // Step 7's screen-space shadow ray was view-dependent — the sun shadow
-    // appeared/disappeared as the camera moved because depth-buffer projection
-    // is camera-relative by definition. A real sun-relative shadow needs the
-    // CSM shadow atlas, which is wired in a future step (deferred to keep this
-    // path tracer milestone honest about what it does and doesn't simulate).
-    // For now: unconditional sun term, matching the early-Shadertoy behaviour.
+    // ── Direct sun + CSM shadow (Step 7) ────────────────────────────────────
+    // Shadow sampled from the same CSM atlas used by the deferred pipeline —
+    // view-independent, stable, matches rasterized shadows exactly.
+    // @ref Karis 2013, @ref Heitz 2014, @ref Engel 2006
     float3 directRadiance = float3(0, 0, 0);
     {
         float3 L     = normalize(lightDir.xyz);
@@ -256,17 +203,20 @@ PSOutput main(float4 pos : SV_Position)
             float3 specular = (D * G) * F / max(1e-4, 4.0 * NdotV * NdotL);
             float3 diffuse  = (1.0 - F) * (1.0 - metallic) * albedo / PI;
 
-            directRadiance = (diffuse + specular) * lightColor.rgb * NdotL;
+            // Camera-to-surface distance used as view-depth proxy for cascade
+            // selection. Cascade splits are in world-space units (cm for Sponza)
+            // so the scale matches.
+            float  viewDepth  = length(P - cameraPos.xyz);
+            float  sunShadow  = CascadeShadow(P, viewDepth);
+
+            directRadiance = (diffuse + specular) * lightColor.rgb * NdotL * sunShadow;
         }
     }
 
     // ── Indirect environment (split lobes) ─────────────────────────────────
-    // Half the samples sample the diffuse cosine hemisphere; half sample the
-    // GGX VNDF specular lobe. Each weighted by its respective response.
-    // For diffuse the cosine PDF cancels (1/π) so the integrand is
-    // (1-F)*(1-metallic)*albedo*L_env. For specular the VNDF cancels D and
-    // the masking term to leave F*G2/G1 * L_env (Heitz 2018 simplification).
-    // @ref Heitz 2018 "Sampling the GGX Distribution of Visible Normals"
+    // Half the samples: cosine-weighted diffuse hemisphere.
+    // Half the samples: roughness-perturbed mirror specular → sky cubemap LOD.
+    // @ref Shirley 1992
     float3 indirect = float3(0, 0, 0);
 
     // Diffuse half
@@ -280,28 +230,33 @@ PSOutput main(float4 pos : SV_Position)
         indirect += (1.0 - F0) * (1.0 - metallic) * albedo * env;
     }
 
-    // Specular half via GGX VNDF
-    float3 Vt = WorldToTangent(V, N, T, B);
+    // Specular half — roughness-perturbed mirror reflection sampled from the sky cubemap.
+    // Mirror direction lerped toward a random hemisphere direction by roughness²,
+    // matching the reference path tracer's specularRayDir model.
+    // LOD = sqrt(roughness) * 5 gives approximate cone width for blurring.
+    // @ref Shirley 1992 "Nonuniform Random Point Sets via Warping"
     [unroll]
     for (int ks = 0; ks < (PT_SAMPLES_PER_FRAME / 2); ++ks) {
-        float2 u = Rand2(rngState);
-        float3 Ht = SampleGGX_VNDF(alpha, Vt, u);
-        float3 H  = TangentToWorld(Ht, N, T, B);
-        float3 Lr = reflect(-V, H);
-        float  NdotL = dot(N, Lr);
+        float3 mirrorDir  = reflect(-V, N);
+        float3 diffuseDir = normalize(N + RandUnitVector(rngState));
+        // alpha = roughness² — low roughness → mirror, high roughness → diffuse spread.
+        float3 Lr    = normalize(lerp(mirrorDir, diffuseDir, alpha));
+        float  NdotL = max(0.0, dot(N, Lr));
         if (NdotL > 0.0) {
-            float  VdotH = max(0.0, dot(V, H));
+            float  VdotH = max(0.0, dot(V, normalize(V + Lr)));
             float3 F     = F_Schlick(F0, VdotH);
-            // Heitz 2018 simplification: VNDF importance-sampled estimator
-            // for specular = F * G2/G1 (no D, no PDF division).
-            float G1 = G1_SmithGGX(alpha * alpha, NdotV);
-            float G2 = G_SmithGGXCorrelated(alpha, NdotV, NdotL);
-            float weight = (G1 > 1e-6) ? (G2 / G1) : 0.0;
-            float3 env = skyCube.SampleLevel(g_linearClamp, Lr, 0.0).rgb;
-            indirect += F * weight * env;
+            float  skyLOD = sqrt(roughness) * 5.0;
+            float3 env   = skyCube.SampleLevel(g_linearClamp, Lr, skyLOD).rgb;
+            indirect += F * env;
         }
     }
     indirect /= float(PT_SAMPLES_PER_FRAME / 2);
+
+    // ── Emissive (GBuffer RT3) ─────────────────────────────────────────────
+    // Emissive is additive over the path-traced lighting, exactly as the
+    // deferred pipeline does. Not accumulated — read fresh each frame so
+    // emissive changes take effect immediately without needing a reset.
+    float3 emissive = emissiveTex.Load(int3(px, 0)).rgb;
 
     float3 newSample = directRadiance + indirect;
 
@@ -329,7 +284,11 @@ PSOutput main(float4 pos : SV_Position)
     }
 
     PSOutput o;
-    o.accum = float4(blended, 1.0); // RGBA32F — full-precision history.
-    o.hdr   = float4(blended, 1.0); // RGBA16F — consumed by tonemap downstream.
+    // Emissive added AFTER accumulation blend so it is never averaged into the
+    // history — it's a stable, noise-free additive term.
+    float3 finalColor = blended + emissive;
+
+    o.accum = float4(blended, 1.0);     // RGBA32F — history without emissive (keeps accumulation clean).
+    o.hdr   = float4(finalColor, 1.0);  // RGBA16F — with emissive, consumed by tonemap.
     return o;
 }

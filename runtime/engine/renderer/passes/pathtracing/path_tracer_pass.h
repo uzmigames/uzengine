@@ -37,18 +37,21 @@ struct PathTracerPassDesc {
     rg::RgResourceId  accumCurr;        ///< RGBA32F accumulation curr write target RT[0].
     rg::RgResourceId  normalGBuffer;    ///< GBuffer normal (read).
     rg::RgResourceId  depthGBuffer;     ///< GBuffer depth  (read).
-    rg::RgResourceId  albedoGBuffer;    ///< GBuffer albedo (read).
+    rg::RgResourceId  albedoGBuffer;    ///< GBuffer albedo+AO (read).
     rg::RgResourceId  positionGBuffer;  ///< GBuffer worldPos (read).
+    rg::RgResourceId  emissiveGBuffer;  ///< GBuffer emissive HDR (read).
     CBAllocation      perFrameAlloc;    ///< PerFrame CB at b1.
     RHIPipelineHandle pipeline;         ///< Path tracer fullscreen PSO (2 RTs).
     uint32_t          normalSrvIndex;
     uint32_t          depthSrvIndex;
     uint32_t          albedoSrvIndex;
     uint32_t          positionSrvIndex;
+    uint32_t          emissiveSrvIndex;   ///< GBuffer emissive HDR SRV index.
     uint32_t          skyCubeSrvIndex;
     uint32_t          accumPrevSrvIndex;  ///< SRV of the OTHER ping-pong accum (history read).
     uint32_t          sampleCount;        ///< Accumulated sample count this frame (0=fresh).
     uint32_t          frameIndex;
+    CBAllocation      shadowAlloc;        ///< ShadowDataCB allocation (b4) — for CSM sun shadows.
     bool              bindless;
     float             viewportWidth;
     float             viewportHeight;

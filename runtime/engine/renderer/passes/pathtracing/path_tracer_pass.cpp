@@ -21,12 +21,13 @@ namespace uz {
 void AddPathTracerPass(rg::RgBuilder& builder, const PathTracerPassDesc& desc)
 {
     builder.AddPass("PathTracer", [desc](rg::RgPassBuilder& pb) {
-        pb.Write(desc.accumCurr,      RHIResourceState::RenderTarget);
-        pb.Write(desc.hdrTarget,      RHIResourceState::RenderTarget);
-        pb.Read(desc.normalGBuffer,   RHIResourceState::ShaderResource);
-        pb.Read(desc.depthGBuffer,    RHIResourceState::ShaderResource);
-        pb.Read(desc.albedoGBuffer,   RHIResourceState::ShaderResource);
-        pb.Read(desc.positionGBuffer, RHIResourceState::ShaderResource);
+        pb.Write(desc.accumCurr,       RHIResourceState::RenderTarget);
+        pb.Write(desc.hdrTarget,       RHIResourceState::RenderTarget);
+        pb.Read(desc.normalGBuffer,    RHIResourceState::ShaderResource);
+        pb.Read(desc.depthGBuffer,     RHIResourceState::ShaderResource);
+        pb.Read(desc.albedoGBuffer,    RHIResourceState::ShaderResource);
+        pb.Read(desc.positionGBuffer,  RHIResourceState::ShaderResource);
+        pb.Read(desc.emissiveGBuffer,  RHIResourceState::ShaderResource);
 
         pb.SetExecutionCallback([desc](IRHICommandList* cmd, const rg::RgPassResources& res) {
             UZ_PROFILE_SCOPE("PathTracer::Execute");
@@ -58,20 +59,28 @@ void AddPathTracerPass(rg::RgBuilder& builder, const PathTracerPassDesc& desc)
                             desc.perFrameAlloc.offsetBytes,
                             desc.perFrameAlloc.cpuPtr, desc.perFrameAlloc.sizeBytes);
 
+            // ShadowDataCB (b4) — cascade matrices + atlas SRV index for CSM shadows.
+            if (desc.shadowAlloc.cpuPtr != nullptr) {
+                cmd->SetRootCBV(kSlotShadow, desc.shadowAlloc.bufferHandle,
+                                desc.shadowAlloc.offsetBytes,
+                                desc.shadowAlloc.cpuPtr, desc.shadowAlloc.sizeBytes);
+            }
+
             // Root constants — must match PathTracerRC layout in
             // path_tracer_ps.hlsl.
             if (desc.bindless) {
-                const uint32_t constants[8] = {
+                const uint32_t constants[9] = {
                     desc.normalSrvIndex,
                     desc.depthSrvIndex,
                     desc.albedoSrvIndex,
                     desc.positionSrvIndex,
+                    desc.emissiveSrvIndex,
                     desc.skyCubeSrvIndex,
                     desc.accumPrevSrvIndex,
                     desc.sampleCount,
                     desc.frameIndex
                 };
-                cmd->SetRootConstants(kSlotRootConstants, constants, 8);
+                cmd->SetRootConstants(kSlotRootConstants, constants, 9);
             } else {
                 const uint32_t constants[2] = { desc.sampleCount, desc.frameIndex };
                 cmd->SetRootConstants(kSlotRootConstants, constants, 2);
