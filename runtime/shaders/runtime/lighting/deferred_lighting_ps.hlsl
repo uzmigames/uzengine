@@ -166,6 +166,8 @@ cbuffer PerFrameCB : register(b1) {
     float  _ddgiOriginY;            //         (836)
     float  _ddgiOriginZ;            //         (840)
     float  _ddgiIntensity;          //         (844)
+    // ── Indirect AO ──────────────────────────────────────────────────
+    float  _indirectAOExponent;     //         (848) pow(ao, N) for indirect light
 };
 
 // LightingCB at b2 via light_types.hlsli (already declared above)
@@ -184,9 +186,23 @@ struct FSInput {
     float2 texcoord   : TEXCOORD0;
 };
 
+// ─── Debug MRT Output ──────────────────────────────────────────────────────
+// When the lighting pipeline uses 4 render targets, SV_Target1-3 provide
+// split lighting layers for pass-dump / debug visualization:
+//   RT0 = final composited HDR (Lo + ambient + emissive)
+//   RT1 = direct lighting only (Lo = sun * shadow)
+//   RT2 = indirect lighting only (ambient = SH/GI/IBL)
+//   RT3 = shadow mask (R=shadow factor, G=AO, B=specOcclusion)
+struct LightingOutput {
+    float4 hdr      : SV_Target0;
+    float4 direct   : SV_Target1;
+    float4 indirect : SV_Target2;
+    float4 debug    : SV_Target3;
+};
+
 // ─── Entry Point ───────────────────────────────────────────────────────────
 
-float4 main(FSInput input) : SV_Target {
+LightingOutput main(FSInput input) {
     int2 px = int2(input.positionCS.xy);
 
     // ── GBuffer Load (pixel-exact, no filtering) ──────────────────────────
@@ -395,7 +411,13 @@ float4 main(FSInput input) : SV_Target {
     // IBL (indirect lighting) is NOT attenuated by directional shadow.
     // @ref UE5 DeferredLightingCommon.ush — IndirectLighting is independent of shadow.
     // Only AO affects indirect; shadows only affect direct lights.
-    float3 skyTint = float3(skyLightColorR, skyLightColorG, skyLightColorB) * skyLightIntensity;
+    // Split tint vs intensity: SH diffuse is already pre-scaled by
+    // indirectLightingIntensity on the CPU (frame_constants.cpp:269), so diffuse
+    // only gets the color tint. Specular IBL reads the prefiltered cubemap which
+    // is NOT pre-scaled, so it needs the full intensity multiplier.
+    float3 skyColor = float3(skyLightColorR, skyLightColorG, skyLightColorB);
+    float3 skyTintDiffuse  = skyColor;
+    float3 skyTintSpecular = skyColor * skyLightIntensity;
     float3 ambient = float3(0, 0, 0);
     {
         // ── Indirect diffuse: pick ONE GI source by priority ─────────────
@@ -823,9 +845,10 @@ float4 main(FSInput input) : SV_Target {
         // the warm ring artifact caused by envBRDF angular variation and irradiance
         // bleed at grazing angles.
         if (metallic > 0.95 && roughness < 0.1) {
-            ambient = radiance * metallicF0 * skyTint;
+            ambient = radiance * metallicF0 * skyTintSpecular;
         } else {
-            ambient = (diffuseAmbient * ao + specularAmbient * specOcclusion) * skyTint;
+            ambient = diffuseAmbient * ao * skyTintDiffuse
+                    + specularAmbient * specOcclusion * skyTintSpecular;
         }
     }
 
@@ -927,5 +950,10 @@ float4 main(FSInput input) : SV_Target {
     }
 #endif
 
-    return float4(max(color, 0.0), 1.0);
+    LightingOutput output;
+    output.hdr      = float4(max(color, 0.0), 1.0);
+    output.direct   = float4(max(Lo, 0.0), 1.0);
+    output.indirect = float4(max(ambient, 0.0), 1.0);
+    output.debug    = float4(shadow, ao, 0.0, 1.0);
+    return output;
 }

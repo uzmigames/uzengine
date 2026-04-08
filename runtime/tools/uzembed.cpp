@@ -356,12 +356,21 @@ int main(int argc, char* argv[]) {
     int failed = 0;
     std::vector<ShaderEntry> entries;
 
-    // Collect and sort entries for deterministic output
+    // Collect and sort entries for deterministic output.
+    // Skip directories named "backup" or starting with "." to avoid
+    // including stale backup copies of shaders.
     std::vector<fs::directory_entry> hlslFiles;
-    for (const auto& entry : fs::recursive_directory_iterator(inputDir)) {
-        if (!entry.is_regular_file()) continue;
-        if (entry.path().extension() != ".hlsl") continue;
-        hlslFiles.push_back(entry);
+    for (auto it = fs::recursive_directory_iterator(inputDir); it != fs::recursive_directory_iterator(); ++it) {
+        if (it->is_directory()) {
+            const std::string dirName = it->path().filename().string();
+            if (dirName == "backup" || (!dirName.empty() && dirName[0] == '.')) {
+                it.disable_recursion_pending();
+                continue;
+            }
+        }
+        if (!it->is_regular_file()) continue;
+        if (it->path().extension() != ".hlsl") continue;
+        hlslFiles.push_back(*it);
     }
     std::sort(hlslFiles.begin(), hlslFiles.end(),
               [](const auto& a, const auto& b) { return a.path() < b.path(); });

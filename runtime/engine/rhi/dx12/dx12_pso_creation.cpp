@@ -358,6 +358,7 @@ ID3D12RootSignature* CreateBindlessRootSignature(
             "CBV(b2, flags=DATA_STATIC_WHILE_SET_AT_EXECUTE, visibility=SHADER_VISIBILITY_ALL),"
             "CBV(b4, flags=DATA_STATIC_WHILE_SET_AT_EXECUTE, visibility=SHADER_VISIBILITY_ALL),"
             "DescriptorTable(UAV(u0, numDescriptors=4, flags=DESCRIPTORS_VOLATILE), visibility=SHADER_VISIBILITY_ALL),"
+            "CBV(b3, flags=DATA_STATIC_WHILE_SET_AT_EXECUTE, visibility=SHADER_VISIBILITY_PIXEL),"
             "StaticSampler(s0, filter=FILTER_ANISOTROPIC, maxAnisotropy=16, "
                 "addressU=TEXTURE_ADDRESS_WRAP, addressV=TEXTURE_ADDRESS_WRAP, addressW=TEXTURE_ADDRESS_WRAP, "
                 "comparisonFunc=COMPARISON_NEVER, borderColor=STATIC_BORDER_COLOR_OPAQUE_BLACK, "

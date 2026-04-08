@@ -4,6 +4,7 @@
 /// and dispatches GPU work each frame. The filtered AO result is consumed
 /// by the deferred lighting pass to modulate ambient occlusion.
 ///
+/// BUILD MARKER: rebuild trigger for shader gen.h dependency tracking.
 
 #include "gtao_pass.h"
 

@@ -278,8 +278,11 @@ struct PerFrameParams {
     float    ddgiOriginZ       = 0.0f;
     float    ddgiIntensity     = 1.0f;
 
+    // ── Indirect AO ──────────────────────────────────────────────────────
+    float    indirectAOExponent = 2.0f;     ///< CVar r.IndirectAO.Exponent
+
     // ── Padding to next 256-byte boundary (1024 bytes) ────────────────
-    float    _padToCBEnd[44]   = {};
+    float    _padToCBEnd[43]   = {};
 
     // ── Resource handles (NOT copied to CB) ──────────────────────────────
     // These are bound by ShaderParameterBinder at their HLSL register slots.

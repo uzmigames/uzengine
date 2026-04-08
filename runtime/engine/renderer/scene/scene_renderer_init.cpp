@@ -227,6 +227,25 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
                m_renderWidth, m_renderHeight, m_hdrSceneColorSrv);
     }
 
+    // ── Debug Lighting Split Targets (MRT from deferred lighting pass) ──
+    {
+        const char* debugNames[3] = {"Debug_DirectLight", "Debug_IndirectLight", "Debug_ShadowMask"};
+        RHITextureHandle* handles[3] = {&m_debugDirectLight, &m_debugIndirectLight, &m_debugShadowMask};
+        uint32_t* srvs[3] = {&m_debugDirectLightSrv, &m_debugIndirectLightSrv, &m_debugShadowMaskSrv};
+        for (int i = 0; i < 3; ++i) {
+            RHITextureDesc dbgDesc{};
+            dbgDesc.width     = m_renderWidth;
+            dbgDesc.height    = m_renderHeight;
+            dbgDesc.format    = RHIFormat::RGBA16Float;
+            dbgDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::RenderTarget;
+            dbgDesc.debugName = debugNames[i];
+            *handles[i] = device->CreateTexture(dbgDesc);
+            *srvs[i] = device->GetTextureSRVIndex(*handles[i]);
+        }
+        UZ_LOG(Renderer, Info, "SceneRenderer: debug lighting targets created (direct={}, indirect={}, shadow={})",
+               m_debugDirectLightSrv, m_debugIndirectLightSrv, m_debugShadowMaskSrv);
+    }
+
     // ── Path Tracer Accumulation (RGBA32F ping-pong) ───────────────────
     // Step 6: progressive accumulation with camera-cut reset.
     // Allocated unconditionally (cheap when r.PathTracer.Enable=0 — never
@@ -1101,6 +1120,24 @@ void SceneRenderer::Resize(uint32_t width, uint32_t height) {
         m_hdrSceneColorSrv = m_device->GetTextureSRVIndex(m_hdrSceneColor);
     }
 
+    // Recreate debug MRT targets at render resolution
+    {
+        const char* debugNames[3] = {"Debug_DirectLight", "Debug_IndirectLight", "Debug_ShadowMask"};
+        RHITextureHandle* handles[3] = {&m_debugDirectLight, &m_debugIndirectLight, &m_debugShadowMask};
+        uint32_t* srvs[3] = {&m_debugDirectLightSrv, &m_debugIndirectLightSrv, &m_debugShadowMaskSrv};
+        for (int i = 0; i < 3; ++i) {
+            if (handles[i]->IsValid()) m_device->DestroyTexture(*handles[i]);
+            RHITextureDesc dbgDesc{};
+            dbgDesc.width     = m_renderWidth;
+            dbgDesc.height    = m_renderHeight;
+            dbgDesc.format    = RHIFormat::RGBA16Float;
+            dbgDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::RenderTarget;
+            dbgDesc.debugName = debugNames[i];
+            *handles[i] = m_device->CreateTexture(dbgDesc);
+            *srvs[i] = handles[i]->IsValid() ? m_device->GetTextureSRVIndex(*handles[i]) : UINT32_MAX;
+        }
+    }
+
     // Recreate Hi-Z pyramid at render resolution
     CreateHiZPyramid(m_renderWidth, m_renderHeight);
 
@@ -1335,6 +1372,23 @@ void SceneRenderer::Shutdown() {
     if (m_hdrSceneColor.IsValid()) {
         m_device->DestroyTexture(m_hdrSceneColor);
         m_hdrSceneColor = RHITextureHandle{};
+    }
+
+    // ── Debug MRT cleanup ───────────────────────────────────────
+    if (m_debugDirectLight.IsValid()) {
+        m_device->DestroyTexture(m_debugDirectLight);
+        m_debugDirectLight = RHITextureHandle{};
+        m_debugDirectLightSrv = UINT32_MAX;
+    }
+    if (m_debugIndirectLight.IsValid()) {
+        m_device->DestroyTexture(m_debugIndirectLight);
+        m_debugIndirectLight = RHITextureHandle{};
+        m_debugIndirectLightSrv = UINT32_MAX;
+    }
+    if (m_debugShadowMask.IsValid()) {
+        m_device->DestroyTexture(m_debugShadowMask);
+        m_debugShadowMask = RHITextureHandle{};
+        m_debugShadowMaskSrv = UINT32_MAX;
     }
 
     // ── Path Tracer Accumulation cleanup ────────────────────────

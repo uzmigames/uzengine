@@ -26,9 +26,14 @@ RWTexture2D<float2> outputLUT : register(u0);
 #endif
 
 /// @ref Karis 2013 — IntegrateBRDF function
-/// Importance-samples the GGX NDF and integrates the split-sum BRDF terms.
+/// @ref Dupuy & Benyoub 2023 "Sampling Visible GGX Normals with Spherical Caps"
+///
+/// Uses VNDF importance sampling instead of NDF sampling. VNDF only samples
+/// microfacet normals visible from V, which eliminates wasted samples at
+/// grazing angles and improves convergence for low NdotV. The Monte Carlo
+/// weight simplifies from G*VdotH/(NdotH*NdotV) to G2/G1.
 float2 IntegrateBRDF(float NdotV, float roughness) {
-    float alpha = roughness * roughness;
+    float alpha = max(roughness * roughness, kMinGGXAlpha);
 
     // View vector in tangent space (N = (0,0,1))
     float3 V;
@@ -43,23 +48,27 @@ float2 IntegrateBRDF(float NdotV, float roughness) {
 
     for (uint i = 0; i < SAMPLE_COUNT; ++i) {
         float2 Xi = Hammersley(i, SAMPLE_COUNT);
-        float3 H  = ImportanceSampleGGX(Xi, roughness);
+        // VNDF sampling — returns half-vector visible from V in tangent space
+        float3 H  = SampleGGX_VNDF(alpha, V, Xi);
         float3 L  = 2.0 * dot(V, H) * H - V;
 
         float NdotL = max(L.z, 0.0);
-        float NdotH = max(H.z, 0.0);
         float VdotH = max(dot(V, H), 0.0);
 
         if (NdotL > 0.0) {
-            // @ref Karis 2013 — Smith G visibility for IBL integration
-            float G = G_SmithGGXCorrelated(max(alpha, kMinGGXAlpha), NdotV, NdotL);
-            // G_Vis = G * VdotH / (NdotH * NdotV) — geometric visibility term
-            float G_Vis = (G * VdotH) / max(NdotH * NdotV, 1e-4);
-            // Fc = (1 - VdotH)^5 — Fresnel power term
+            // With VNDF sampling, the MC weight for ∫ f_r * cosθ dω simplifies:
+            //   weight = f_r * NdotL / PDF_L = F * G2 / G1
+            // @ref Dupuy & Benyoub 2023, Appendix A — PDF(L) = D*G1/(4*NdotV)
+            float a2 = alpha * alpha;
+            float G2   = G_SmithGGXCorrelated(alpha, NdotV, NdotL);
+            float G1_V = G1_SmithGGX(a2, NdotV);
+            float weight = G2 / max(G1_V, 1e-4);
+
+            // Fc = (1 - VdotH)^5 — Fresnel power term (split-sum decomposition)
             float Fc = Pow5(1.0 - VdotH);
 
-            scale += (1.0 - Fc) * G_Vis;
-            bias  += Fc * G_Vis;
+            scale += (1.0 - Fc) * weight;
+            bias  += Fc * weight;
         }
     }
 

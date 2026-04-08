@@ -57,11 +57,31 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
             constexpr float kClearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
             cmd->ClearRenderTarget(bb, kClearColor);
 
-            // ── Begin render pass — 1 color attachment, no depth ─────────
+            // ── Clear debug MRT targets if present ──────────────────────
+            const bool hasMRT = desc.debugDirectLight.IsValid()
+                             && desc.debugIndirectLight.IsValid()
+                             && desc.debugShadowMask.IsValid();
+            if (hasMRT) {
+                cmd->ClearRenderTarget(desc.debugDirectLight,   kClearColor);
+                cmd->ClearRenderTarget(desc.debugIndirectLight,  kClearColor);
+                cmd->ClearRenderTarget(desc.debugShadowMask,     kClearColor);
+            }
+
+            // ── Begin render pass — 1 or 4 color attachments, no depth ──
             RHIRenderPassDesc passDesc{};
-            passDesc.colorAttachmentCount = 1;
             passDesc.colorAttachments[0].texture = bb;
             passDesc.colorAttachments[0].clear   = false;
+            if (hasMRT) {
+                passDesc.colorAttachmentCount = 4;
+                passDesc.colorAttachments[1].texture = desc.debugDirectLight;
+                passDesc.colorAttachments[1].clear   = false;
+                passDesc.colorAttachments[2].texture = desc.debugIndirectLight;
+                passDesc.colorAttachments[2].clear   = false;
+                passDesc.colorAttachments[3].texture = desc.debugShadowMask;
+                passDesc.colorAttachments[3].clear   = false;
+            } else {
+                passDesc.colorAttachmentCount = 1;
+            }
             passDesc.hasDepth = false;
 
             cmd->BeginRenderPass(passDesc);

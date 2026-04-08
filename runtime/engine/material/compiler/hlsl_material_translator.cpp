@@ -156,12 +156,14 @@ std::string HlslMaterialTranslator::GetInputValue(const MatPin& inputPin, MatPin
 // ─────────────────────────────────────────────────────────────────────────────
 
 uint32_t HlslMaterialTranslator::AllocateTextureSlot(const std::string& paramName,
-                                                      const std::string& defaultPath) {
+                                                      const std::string& defaultPath,
+                                                      bool isSRGB) {
     const uint32_t slot = nextTextureSlot_++;
     MaterialCompileResult::TextureSlotInfo info;
     info.paramName = paramName;
     info.defaultPath = defaultPath;
     info.slotIndex = slot;
+    info.isSRGB = isSRGB;
     result_.textureSlots.push_back(std::move(info));
     return slot;
 }
@@ -384,7 +386,15 @@ std::string HlslMaterialTranslator::EmitExpression(const MaterialExpression& exp
     // ── Texture ──────────────────────────────────────────────────────────────
     case MatExprType::TextureSample: {
         const std::string texPath = getString("texturePath");
-        const uint32_t slot = AllocateTextureSlot("", texPath);
+        // Color-carrying slots are sRGB; data/scalar slots are linear.
+        // Node names set by uzmesh and the material editor follow this convention:
+        //   sRGB  → "Albedo", "BaseColor", "Diffuse", "Emissive", "Fuzz", "Scatter"
+        //   Linear → everything else (Normal, MetalRoughness, AO, Roughness, Metallic, ORM…)
+        const auto& nodeName = expr.name;
+        const bool slotIsSRGB = (nodeName == "Albedo"    || nodeName == "BaseColor" ||
+                                 nodeName == "Diffuse"   || nodeName == "Emissive"  ||
+                                 nodeName == "Fuzz"      || nodeName == "Scatter");
+        const uint32_t slot = AllocateTextureSlot("", texPath, slotIsSRGB);
         // Default UV: use the `uv` parameter from ComputeMaterialOutputs()
         // when the UV input pin is not connected.
         const std::string uvValue = expr.inputs[0].IsConnected()

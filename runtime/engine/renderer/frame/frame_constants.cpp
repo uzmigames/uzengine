@@ -76,6 +76,7 @@ static auto* cv_MaterialMinGGXAlpha   = UZ_CVAR_FLOAT("r.Material.MinGGXAlpha", 
 static auto* cv_Exposure           = UZ_CVAR_FLOAT("r.Exposure", 3.0f, "Manual exposure multiplier (applied on auto-exposure)", 0.01f, 100.f);
 static auto* cv_GIIntensity        = UZ_CVAR_FLOAT("r.GI.Intensity", 1.f, "GI intensity multiplier", 0.f, 10.f);
 static auto* cv_AerialPersp        = UZ_CVAR_BOOL("r.AerialPerspective", false, "Aerial perspective in deferred lighting");
+static auto* cv_IndirectAOExp      = UZ_CVAR_FLOAT("r.IndirectAO.Exponent", 2.f, "AO exponent for indirect light (higher = more occlusion)", 1.f, 5.f);
 
 namespace uz {
 
@@ -626,6 +627,7 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     perFrame.ddgiProbesPerAxis = 0;
     perFrame.ddgiProbeSpacing  = 0.0f;
     perFrame.ddgiIntensity     = cv_GIIntensity->value;
+    perFrame.indirectAOExponent = cv_IndirectAOExp->value;
     if (m_ddgiSystem.IsInitialized() && m_radianceCache.IsInitialized()
         && m_device->IsBindless()) {
         const Vec3 origin = m_radianceCache.GetGridOrigin();

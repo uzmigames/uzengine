@@ -19,9 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash .claude/hooks/detect-gaps.sh 2>/dev/null || true",
-            "timeout": 15,
-            "statusMessage": "Detecting codebase gaps..."
+            "command": "bash E:/UzEngine/.claude/hooks/resume-from-handoff.sh"
           }
         ]
       },
@@ -31,14 +29,6 @@
           {
             "type": "command",
             "command": "bash E:/UzEngine/.claude/hooks/on-compact-reinject.sh"
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash E:/UzEngine/.claude/hooks/resume-from-handoff.sh"
           }
         ]
       }

@@ -672,7 +672,7 @@ public:
     ///
     /// # Returns
     /// Stable texture ID on success. `UINT32_MAX` if the path is empty.
-    [[nodiscard]] uint32_t QueueTextureLoad(const std::string& path);
+    [[nodiscard]] uint32_t QueueTextureLoad(const std::string& path, bool isSRGB = false);
 
     /// Returns the VFS path for a texture loaded via `QueueTextureLoad`.
     ///

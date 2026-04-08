@@ -346,7 +346,10 @@ RHIPipelineHandle PipelineLibrary::GetLighting() {
     desc.depthStencil.depthEnable = false;
     desc.depthStencil.depthWrite  = false;
     desc.renderTargetFormats[0]   = RHIFormat::RGBA16Float;  // HDR output (tonemapped separately)
-    desc.renderTargetCount        = 1;
+    desc.renderTargetFormats[1]   = RHIFormat::RGBA16Float;  // Debug: direct lighting (Lo)
+    desc.renderTargetFormats[2]   = RHIFormat::RGBA16Float;  // Debug: indirect lighting (ambient)
+    desc.renderTargetFormats[3]   = RHIFormat::RGBA16Float;  // Debug: shadow/AO mask
+    desc.renderTargetCount        = 4;
     desc.debugName                = "DeferredLighting";
 
     // Fullscreen passes never use vertex input layout

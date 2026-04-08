@@ -39,6 +39,7 @@ struct MaterialCompileResult {
         std::string paramName;    ///< Empty for non-parameter textures
         std::string defaultPath;  ///< Default texture asset path
         uint32_t slotIndex = 0;
+        bool isSRGB = false;      ///< True for color slots (Albedo/Emissive/Diffuse), false for data slots (Normal/MetalRoughness/AO/ORM)
     };
     std::vector<TextureSlotInfo> textureSlots;
 };
@@ -69,7 +70,7 @@ private:
     [[nodiscard]] std::string VarName(uint32_t exprId, uint32_t pinId) const;
 
     /// Allocate a texture slot index and return it.
-    uint32_t AllocateTextureSlot(const std::string& paramName, const std::string& defaultPath);
+    uint32_t AllocateTextureSlot(const std::string& paramName, const std::string& defaultPath, bool isSRGB = false);
 
     /// Allocate a parameter CB slot and return the index.
     uint32_t AllocateParamSlot(const std::string& name, MatPinType type, const float* defaultVal);

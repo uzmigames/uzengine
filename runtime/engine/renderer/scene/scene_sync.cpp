@@ -343,11 +343,12 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
                         const uint64_t matHash = graph->ComputeContentHash();
                         const auto* compResult = m_materialPipeline->GetCompileResult(matHash);
                         if (compResult && !compResult->textureSlots.empty()) {
-                            // Ensure all material graph textures are loaded
+                            // Ensure all material graph textures are loaded with correct sRGB flag.
+                            // isSRGB is set by the translator per node name (Albedo=sRGB, MetalRoughness/Normal=linear).
                             for (size_t si = 0; si < compResult->textureSlots.size(); ++si) {
-                                const auto& texPath = compResult->textureSlots[si].defaultPath;
-                                if (!texPath.empty() && m_textureMap.find(texPath) == m_textureMap.end()) {
-                                    QueueTextureLoad(texPath);
+                                const auto& slot = compResult->textureSlots[si];
+                                if (!slot.defaultPath.empty() && m_textureMap.find(slot.defaultPath) == m_textureMap.end()) {
+                                    QueueTextureLoad(slot.defaultPath, slot.isSRGB);
                                 }
                             }
                             cmd.materialTexCount = static_cast<uint32_t>(

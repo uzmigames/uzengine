@@ -245,7 +245,7 @@ void SceneRenderer::PreloadMaterialTextures(MaterialInterface* mat, IVFS* vfs,
 // Deferred Load Queue — Textures (Lua API)
 // ─────────────────────────────────────────────────────────────────────────────
 
-uint32_t SceneRenderer::QueueTextureLoad(const std::string& path) {
+uint32_t SceneRenderer::QueueTextureLoad(const std::string& path, bool isSRGB) {
     if (path.empty()) return UINT32_MAX;
 
     // Return cached ID immediately — no need to queue.
@@ -278,9 +278,9 @@ uint32_t SceneRenderer::QueueTextureLoad(const std::string& path) {
     // The resultKey = original path ensures m_asyncPendingSlots lookup works.
     if (m_asyncDecoder) {
         if (m_lastVfs) {
-            m_asyncDecoder->SubmitVFS(m_lastVfs, path, false, path);
+            m_asyncDecoder->SubmitVFS(m_lastVfs, path, isSRGB, path);
         } else {
-            m_asyncDecoder->Submit(path, false, path);
+            m_asyncDecoder->Submit(path, isSRGB, path);
         }
         m_asyncPendingSlots[path] = slotIndex;
         UZ_LOG(Renderer, Debug, "SceneRenderer: queued async texture load '{}' (slot={})", path, slotIndex);

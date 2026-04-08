@@ -67,6 +67,14 @@
     uint32_t m_hdrSceneColorSrv = UINT32_MAX;   ///< SRV for tonemap pass to read.
     bool m_hdrHasContent = false;               ///< True after the first render graph execution fills the HDR target.
 
+    // ── Debug Lighting Split Targets (MRT outputs from deferred lighting) ──
+    RHITextureHandle m_debugDirectLight;        ///< RT1: direct lighting (Lo = sun * shadow).
+    uint32_t m_debugDirectLightSrv = UINT32_MAX;
+    RHITextureHandle m_debugIndirectLight;      ///< RT2: indirect lighting (ambient = SH/GI/IBL).
+    uint32_t m_debugIndirectLightSrv = UINT32_MAX;
+    RHITextureHandle m_debugShadowMask;         ///< RT3: shadow mask (R=shadow, G=AO).
+    uint32_t m_debugShadowMaskSrv = UINT32_MAX;
+
     // ── Atmosphere LUT ─────────────────────────────────────────────────────
 
     RHITextureHandle m_transmittanceLut;         ///< 256x64 RGBA16F precomputed transmittance LUT.

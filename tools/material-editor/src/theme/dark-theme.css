@@ -1,0 +1,783 @@
+/* UzEngine Material Editor — Exact UE5 Material Editor Theme
+   Reference: Unreal Engine 5 Material Editor dark theme colors
+   extracted from UE5 source (SlateColor, FLinearColor) and screenshots */
+
+:root {
+  /* ── UE5 exact background colors ─────────────────────────────────── */
+  --bg-graph: #141414;
+  --bg-panel: #242424;
+  --bg-toolbar: #2a2a2a;
+  --bg-node: #1a1a1a;
+  --bg-node-title: rgba(0, 0, 0, 0.6);
+  --bg-input: #111111;
+  --bg-input-focus: #1a1a1a;
+  --bg-hover: #333333;
+  --bg-selected: #264f78;
+
+  /* ── UE5 node header category colors (from UE5 FLinearColor) ───── */
+  --header-output: #7b2022;
+  --header-constants: #592a7a;
+  --header-math: #1b6b42;
+  --header-texture: #1b5e8a;
+  --header-coordinates: #8a6b1b;
+  --header-procedural: #1b7a6b;
+  --header-utility: #4a4a5a;
+  --header-parameters: #8a4b1b;
+
+  /* ── UE5 pin type colors (from UE5 FEdGraphUtilities) ──────────── */
+  --pin-float: #36c736;
+  --pin-float2: #9fdb9f;
+  --pin-float3: #f9e770;
+  --pin-float4: #fc6f6f;
+  --pin-texture: #ff7070;
+  --pin-bool: #c80000;
+  --pin-exec: #ffffff;
+
+  /* ── Text ───────────────────────────────────────────────────────── */
+  --text-bright: #e8e8e8;
+  --text-normal: #c0c0c0;
+  --text-dim: #808080;
+  --text-muted: #555555;
+
+  /* ── Borders ────────────────────────────────────────────────────── */
+  --border-node: #303030;
+  --border-selected: #e89a2a;
+  --border-panel: #1a1a1a;
+
+  /* ── Edges ──────────────────────────────────────────────────────── */
+  --edge-default: #888888;
+
+  /* ── Scrollbar ──────────────────────────────────────────────────── */
+  --scrollbar-thumb: #3a3a3a;
+  --scrollbar-track: #1a1a1a;
+
+  font-family: 'Segoe UI', 'Roboto', -apple-system, sans-serif;
+  font-size: 12px;
+  color: var(--text-normal);
+  -webkit-font-smoothing: antialiased;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-graph);
+}
+
+/* ── Scrollbar ─────────────────────────────────────────────────────────── */
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #555; }
+
+/* ── App Layout ────────────────────────────────────────────────────────── */
+
+.app-layout {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+}
+
+/* ── UE5 Toolbar Container ────────────────────────────────────────────── */
+
+.ue-toolbar-container {
+  flex-shrink: 0;
+  background: #2d2d2d;
+  border-bottom: 1px solid #1a1a1a;
+}
+
+/* Action buttons row */
+.ue-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 6px;
+  height: 28px;
+  background: #333;
+  border-bottom: 1px solid #222;
+}
+
+.ue-toolbar-btn {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  background: none;
+  color: var(--text-normal);
+  border: none;
+  border-radius: 2px;
+  padding: 2px 6px;
+  font-size: 11px;
+  height: 22px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ue-toolbar-btn:hover { background: #484848; color: var(--text-bright); }
+.ue-toolbar-btn:active { background: #555; }
+.ue-toolbar-btn:disabled { color: #555; cursor: default; }
+
+.ue-toolbar-icon {
+  font-size: 12px;
+}
+
+.toolbar-separator {
+  width: 1px;
+  height: 16px;
+  background: #555;
+  margin: 0 3px;
+}
+
+/* Breadcrumb navbar — UE5 style */
+.ue-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  height: 26px;
+  background: #2a2a2a;
+  border-bottom: 1px solid #1e1e1e;
+  font-size: 12px;
+}
+
+.ue-breadcrumb-icon {
+  font-size: 14px;
+  color: var(--text-dim);
+}
+
+.ue-breadcrumb-item {
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.ue-breadcrumb-item:hover {
+  color: var(--text-bright);
+}
+.ue-breadcrumb-item.active {
+  color: var(--text-bright);
+  font-weight: 500;
+}
+
+.ue-breadcrumb-sep {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.app-main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ── Graph Canvas ──────────────────────────────────────────────────────── */
+
+.graph-canvas {
+  flex: 1;
+  position: relative;
+  outline: none;
+}
+
+/* UE5 graph background — subtle grid */
+.react-flow__background {
+  background: var(--bg-graph) !important;
+}
+
+/* ── Side Panel — UE5 left panel (preview + details) ──────────────────── */
+
+.side-panel {
+  width: 370px;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border-panel);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.side-panel-left {
+  border-left: none;
+  border-right: 1px solid var(--border-panel);
+}
+
+.panel-section {
+  padding: 6px 8px;
+  border-bottom: 1px solid #1e1e1e;
+}
+
+.panel-section-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+
+/* ── Node Palette ──────────────────────────────────────────────────────── */
+
+.palette-category { margin-bottom: 2px; }
+
+.palette-category-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 0;
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.palette-category-header:hover { color: var(--text-normal); }
+
+.palette-item {
+  display: block;
+  width: 100%;
+  padding: 2px 6px 2px 14px;
+  background: none;
+  border: none;
+  color: var(--text-normal);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 2px;
+}
+.palette-item:hover { background: #333; color: var(--text-bright); }
+
+/* ── UE5 Details Panel ─────────────────────────────────────────────────── */
+
+.details-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Tab bar */
+.details-tab-bar {
+  display: flex;
+  align-items: center;
+  background: #2a2a2a;
+  border-bottom: 1px solid #1e1e1e;
+  height: 24px;
+  padding: 0 2px;
+  gap: 0;
+}
+
+.details-tab {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+  height: 24px;
+  border-bottom: 2px solid transparent;
+}
+.details-tab:hover { color: var(--text-normal); }
+.details-tab.active {
+  color: var(--text-bright);
+  border-bottom-color: #4a90d9;
+  background: #333;
+}
+
+.details-tab-icon {
+  font-size: 10px;
+}
+
+.details-tab-close {
+  font-size: 9px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0 2px;
+  margin-right: 4px;
+}
+.details-tab-close:hover { color: var(--text-normal); }
+
+/* Search bar */
+.details-search {
+  display: flex;
+  align-items: center;
+  padding: 3px 6px;
+  background: #262626;
+  border-bottom: 1px solid #1e1e1e;
+}
+
+.details-search-input {
+  flex: 1;
+  background: #1a1a1a;
+  color: var(--text-bright);
+  border: 1px solid #3a3a3a;
+  border-radius: 2px;
+  padding: 2px 6px;
+  font-size: 11px;
+  height: 20px;
+}
+.details-search-input:focus {
+  border-color: var(--border-selected);
+  outline: none;
+}
+
+/* Content area */
+.details-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0;
+}
+
+/* Section with collapsible header */
+.details-section {
+  border-bottom: 1px solid #1e1e1e;
+}
+
+.details-section-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-bright);
+  background: #2a2a2a;
+  cursor: pointer;
+  user-select: none;
+}
+.details-section-header:hover { background: #333; }
+
+.details-collapse-icon {
+  font-size: 8px;
+  color: var(--text-dim);
+  width: 10px;
+}
+
+/* Property rows */
+.details-row {
+  display: flex;
+  align-items: center;
+  padding: 2px 8px 2px 22px;
+  min-height: 22px;
+  border-bottom: 1px solid #1a1a1a;
+}
+
+.details-label {
+  min-width: 110px;
+  font-size: 11px;
+  color: var(--text-normal);
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.details-input {
+  flex: 1;
+  background: #1a1a1a;
+  color: var(--text-bright);
+  border: 1px solid #333;
+  border-radius: 2px;
+  padding: 1px 4px;
+  font-size: 11px;
+  height: 20px;
+  min-width: 0;
+}
+.details-input:focus { outline: none; border-color: var(--border-selected); }
+
+.details-select {
+  flex: 1;
+  background: #1a1a1a;
+  color: var(--text-bright);
+  border: 1px solid #333;
+  border-radius: 2px;
+  padding: 1px 4px;
+  font-size: 11px;
+  height: 20px;
+  min-width: 0;
+}
+.details-select:focus { outline: none; border-color: var(--border-selected); }
+
+.details-checkbox {
+  accent-color: #4a90d9;
+}
+
+.details-value {
+  font-size: 11px;
+  color: var(--text-normal);
+}
+
+.details-empty {
+  padding: 12px 10px;
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+/* Legacy prop-input still used by NodePalette search */
+.prop-input {
+  flex: 1;
+  background: #1a1a1a;
+  color: var(--text-bright);
+  border: 1px solid #3a3a3a;
+  border-radius: 2px;
+  padding: 2px 4px;
+  font-size: 11px;
+  min-width: 0;
+}
+.prop-input:focus { outline: none; border-color: var(--border-selected); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   CUSTOM NODES — UE5 Material Editor exact style
+   UE5 nodes: dark bg, thin colored title bar, compact pins,
+   rounded corners, subtle shadow, orange border on select
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.mat-node {
+  min-width: 120px;
+  max-width: 200px;
+  background: rgba(17, 17, 17, 0.92);
+  border: 1.5px solid #2a2a2a;
+  border-radius: 4px;
+  font-size: 10px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(2px);
+  overflow: hidden;
+}
+.mat-node.selected {
+  border-color: var(--border-selected);
+  box-shadow:
+    0 0 0 1px var(--border-selected),
+    0 0 12px rgba(232, 154, 42, 0.25);
+}
+
+/* UE5 node header — thin colored strip with title */
+.mat-node-header {
+  padding: 2px 8px;
+  font-weight: 500;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.9);
+  letter-spacing: 0.2px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.3);
+}
+
+.mat-node-body {
+  padding: 2px 0;
+}
+
+/* Pin pair row — input left, output right */
+.mat-node-pin-pair {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 18px;
+  padding: 0 0;
+  font-size: 10px;
+  color: #999;
+}
+
+/* Individual pin — handle + label inline */
+.mat-node-pin {
+  display: flex;
+  align-items: center;
+  position: relative;
+  height: 18px;
+  padding: 0 8px;
+}
+.mat-node-pin.input {
+  flex-direction: row;
+}
+.mat-node-pin.output {
+  flex-direction: row-reverse;
+}
+
+.mat-node-pin-label {
+  font-size: 9px;
+  color: #999;
+  white-space: nowrap;
+  letter-spacing: 0.2px;
+  padding: 0 3px;
+}
+
+.mat-node-pin-spacer {
+  flex: 1;
+  min-width: 12px;
+  height: 18px;
+}
+
+/* Per-pin handle — positioned at edge of node via React Flow */
+.uz-handle {
+  width: 9px !important;
+  height: 9px !important;
+  min-width: 9px !important;
+  min-height: 9px !important;
+  border-radius: 50% !important;
+  border-width: 2px !important;
+  border-style: solid !important;
+  position: relative !important;
+  top: auto !important;
+  left: auto !important;
+  right: auto !important;
+  transform: none !important;
+}
+.uz-handle:hover {
+  width: 11px !important;
+  height: 11px !important;
+  min-width: 11px !important;
+  min-height: 11px !important;
+  filter: brightness(1.3);
+}
+
+/* Inline editors */
+.mat-node-inline-editor {
+  padding: 2px 6px 3px;
+}
+
+.mat-node-inline-input {
+  width: 100%;
+  background: #0e0e0e;
+  color: var(--text-bright);
+  border: 1px solid #333;
+  border-radius: 2px;
+  padding: 1px 4px;
+  font-size: 10px;
+  height: 18px;
+}
+.mat-node-inline-input:focus {
+  border-color: var(--border-selected);
+  outline: none;
+}
+
+/* UE5-style vector field row — X Y Z inputs side by side, compact */
+.mat-node-vector-fields {
+  display: flex;
+  gap: 1px;
+  margin-bottom: 2px;
+}
+.mat-node-vector-field {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+.mat-node-vector-label {
+  font-size: 8px;
+  font-weight: 600;
+  color: #666;
+  min-width: 8px;
+}
+.mat-node-vector-input {
+  width: 100%;
+  background: #0a0a0a;
+  color: var(--text-bright);
+  border: 1px solid #2a2a2a;
+  border-radius: 1px;
+  padding: 0 2px;
+  font-size: 9px;
+  height: 14px;
+  min-width: 0;
+}
+.mat-node-vector-input:focus {
+  border-color: var(--border-selected);
+  outline: none;
+}
+
+/* UE5-style color preview — compact rectangle, clickable */
+.mat-node-color-preview {
+  width: 100%;
+  height: 32px;
+  border-radius: 1px;
+  border: 1px solid #1a1a1a;
+  position: relative;
+  cursor: pointer;
+}
+.mat-node-color-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  border: none;
+  padding: 0;
+}
+
+.mat-node-texture-path {
+  padding: 1px 10px;
+  font-size: 9px;
+  color: #666;
+  word-break: break-all;
+  max-width: 180px;
+}
+
+/* PBR Output — UE5 style with inline defaults */
+.mat-node.pbr-output {
+  min-width: 120px;
+  max-width: 160px;
+}
+
+.pbr-pin-row {
+  display: flex;
+  align-items: center;
+  position: relative;
+  height: 18px;
+  padding: 0 6px;
+}
+
+.pbr-pin-label {
+  font-size: 9px;
+  color: #bbb;
+  white-space: nowrap;
+  padding: 0 3px;
+}
+
+.pbr-pin-default {
+  font-size: 8px;
+  color: #888;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 2px;
+  padding: 0 3px;
+  margin-left: 1px;
+  height: 13px;
+  line-height: 13px;
+}
+
+/* ── React Flow Handles — UE5 pin circles ──────────────────────────────── */
+
+.react-flow__handle {
+  width: 8px !important;
+  height: 8px !important;
+  min-width: 8px !important;
+  min-height: 8px !important;
+  border-radius: 50% !important;
+  border: 1.5px solid rgba(0, 0, 0, 0.5) !important;
+}
+.react-flow__handle:hover {
+  width: 10px !important;
+  height: 10px !important;
+  min-width: 10px !important;
+  min-height: 10px !important;
+}
+
+/* React Flow edge path */
+.react-flow__edge-path {
+  stroke-width: 1.5 !important;
+}
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke-width: 2.5 !important;
+}
+
+/* React Flow connection line */
+.react-flow__connection-path {
+  stroke: #888 !important;
+  stroke-width: 1.5 !important;
+  stroke-dasharray: 5 3 !important;
+}
+
+/* React Flow controls */
+.react-flow__controls {
+  box-shadow: none !important;
+  border: 1px solid #333 !important;
+  border-radius: 3px !important;
+}
+.react-flow__controls-button {
+  background: #2a2a2a !important;
+  border-bottom: 1px solid #333 !important;
+  color: #888 !important;
+  fill: #888 !important;
+  width: 24px !important;
+  height: 24px !important;
+}
+.react-flow__controls-button:hover {
+  background: #3a3a3a !important;
+}
+.react-flow__controls-button svg {
+  fill: #888 !important;
+}
+
+/* ── Context Menu — UE5 right-click style ──────────────────────────────── */
+
+.context-menu {
+  position: fixed;
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 3px;
+  padding: 3px 0;
+  min-width: 200px;
+  max-height: 450px;
+  overflow-y: auto;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.7);
+  z-index: 1000;
+}
+
+.context-menu-search {
+  padding: 3px 6px;
+  margin-bottom: 2px;
+}
+.context-menu-search input {
+  width: 100%;
+  background: #1a1a1a;
+  color: var(--text-bright);
+  border: 1px solid #444;
+  border-radius: 2px;
+  padding: 3px 6px;
+  font-size: 11px;
+}
+.context-menu-search input:focus { border-color: var(--border-selected); outline: none; }
+
+.context-menu-item {
+  display: block;
+  width: 100%;
+  padding: 3px 14px;
+  background: none;
+  border: none;
+  color: var(--text-normal);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+.context-menu-item:hover { background: #3a5c8a; color: #fff; }
+
+.context-menu-category {
+  padding: 3px 14px 1px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.6px;
+  margin-top: 2px;
+}
+
+/* ── Preview Panel — UE5 style with dark background ───────────────────── */
+
+.preview-panel {
+  height: 410px;
+  border-bottom: 1px solid #1e1e1e;
+  background: #0a0a0a;
+  position: relative;
+  flex-shrink: 0;
+}
+.preview-panel canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* ── Minimap — UE5 style ──────────────────────────────────────────────── */
+
+.react-flow__minimap {
+  background: #1a1a1a !important;
+  border: 1px solid #333 !important;
+  border-radius: 3px;
+}
+
+/* ── Selection box ─────────────────────────────────────────────────────── */
+
+.react-flow__selection {
+  background: rgba(38, 79, 120, 0.15) !important;
+  border: 1px solid rgba(38, 79, 120, 0.5) !important;
+}
+
+/* ── Attribution hide ──────────────────────────────────────────────────── */
+
+.react-flow__attribution { display: none; }

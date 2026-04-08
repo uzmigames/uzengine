@@ -111,8 +111,15 @@ float2 FindMaxHorizonAngle(uint steps, float2 baseUV, float2 screenDir,
 {
     float2 bestAng = float2(-1.0, -1.0);
 
+    // @ref UE5 PostProcessAmbientOcclusion.usf — StepSize = PixelRadius / NumTaps.
+    // Samples march within [0, searchRadius] in `steps` increments. Previous
+    // formulation `searchRadius * (i + offset)` overshot the radius from the
+    // second sample onward, causing nearly all samples to fall outside the
+    // attenuation falloff and produce a near-constant flat AO output.
+    float stepSize = searchRadius / float(steps);
+
     for (uint i = 0; i < steps; i++) {
-        float stepOffset = max(searchRadius * (float(i) + initialOffset), float(i) + 1.0);
+        float stepOffset = max(stepSize * (float(i) + initialOffset), float(i) + 1.0);
         float2 uvOfsPos = screenDir * stepOffset * texelSize;
         float2 uvOfsNeg = -uvOfsPos;
 
@@ -229,12 +236,15 @@ void main(uint3 DTid : SV_DispatchThreadID)
     float baseAngle  = noise * PI + temporalAngle;
     float stepOffset = frac(noise + temporalOffset);
 
-    // Screen-space search radius: world-space radius → NDC → pixels
-    // invTanHalfFov = proj[1][1], so (R * invTanHalfFov / Z) gives NDC half-height units.
-    // Multiply by half screen width to convert to pixel radius.
+    // Screen-space search radius: world-space radius → NDC → pixels.
+    // @ref UE5 PostProcessAmbientOcclusion.usf:870 — FOVScale = ViewportHeight * InvTanHalfFov.
+    // invTanHalfFov is the vertical FoV cotangent (proj[1][1]); in NDC [-1,+1] the
+    // Y axis maps to `height/2` pixels, NOT `width/2`. Using width here overestimates
+    // the pixel radius by the aspect ratio (1.78× at 16:9) and mismatches the
+    // horizontal/vertical sampling isotropy the horizon integral assumes.
     float screenRadius = (worldRadius * invTanHalfFov) / linearZ;
-    screenRadius *= 0.5 * float(outputWidth); // NDC → pixels
-    screenRadius = min(screenRadius, 256.0); // clamp max pixel radius
+    screenRadius *= 0.5 * float(outputHeight); // NDC → pixels (vertical axis)
+    screenRadius = min(screenRadius, 512.0);   // clamp max pixel radius (UE5 GTAO_MAX_PIXEL_SCREEN_RADIUS)
 
     // Attenuation factor: inverse-square falloff from worldRadius
     float attenFactor = 2.0 / (worldRadius * worldRadius);

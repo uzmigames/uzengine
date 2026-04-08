@@ -351,6 +351,20 @@ void SceneRenderer::RegisterPassInspectorTargets(FrameContext& ctx) {
                                         VisDisplayMode::HDR, rw, rh);
     }
 
+    // ── Lighting debug MRT targets (direct / indirect / shadow+AO) ────
+    if (m_debugDirectLight.IsValid() && m_debugDirectLightSrv != UINT32_MAX) {
+        m_passInspector.RegisterTarget("lighting.direct", m_debugDirectLight, m_debugDirectLightSrv,
+                                        VisDisplayMode::HDR, rw, rh);
+    }
+    if (m_debugIndirectLight.IsValid() && m_debugIndirectLightSrv != UINT32_MAX) {
+        m_passInspector.RegisterTarget("lighting.indirect", m_debugIndirectLight, m_debugIndirectLightSrv,
+                                        VisDisplayMode::HDR, rw, rh);
+    }
+    if (m_debugShadowMask.IsValid() && m_debugShadowMaskSrv != UINT32_MAX) {
+        m_passInspector.RegisterTarget("lighting.shadow", m_debugShadowMask, m_debugShadowMaskSrv,
+                                        VisDisplayMode::Grayscale, rw, rh);
+    }
+
     // HDR scene color (after lighting + atmosphere, before postprocess)
     m_passInspector.RegisterTarget("hdr", m_hdrSceneColor, m_hdrSceneColorSrv,
                                     VisDisplayMode::HDR, rw, rh);

@@ -84,6 +84,12 @@ struct LightingPassDesc {
     RHITextureHandle  ssrTexture;      ///< SSR temporal output (SM5 fallback, bound at t11).
     RHITextureHandle  ssgiTexture;     ///< SSGI upsampled indirect diffuse (SM5 fallback, bound at t12).
     rg::RgResourceId  apVolumeResource;///< Aerial perspective volume (read, SRV). Invalid = no AP dependency.
+
+    // ── Debug MRT targets (lighting split visualization) ─────────────
+    RHITextureHandle  debugDirectLight;  ///< RT1: direct lighting (Lo). Invalid = skip.
+    RHITextureHandle  debugIndirectLight;///< RT2: indirect lighting (ambient). Invalid = skip.
+    RHITextureHandle  debugShadowMask;   ///< RT3: shadow mask (R=shadow, G=AO). Invalid = skip.
+
     bool              bindless;         ///< True if SM6.6 bindless path is active.
     float             viewportWidth;    ///< Viewport width in pixels.
     float             viewportHeight;   ///< Viewport height in pixels.

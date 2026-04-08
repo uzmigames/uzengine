@@ -48,7 +48,14 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
         result.maxVal  = -1e30f;
         result.avgVal  = 0.0f;
 
-        // Query the actual texture format from the RHI.
+        // Query the actual texture descriptor from the RHI. We need the full
+        // descriptor (not just format) so we can correctly sample every face
+        // of a cubemap / every slice of a texture array. A previous version
+        // of this validator copied only subresource 0 for every target, which
+        // produced false-positive WARN_ZERO reports for cubemaps whose face 0
+        // (+X) happened to be dim relative to the other faces (e.g., a sky
+        // cubemap where +X looks toward the horizon while +Z looks at the
+        // sun). The fix is to iterate all array slices and union the stats.
         const RHITextureDesc texDesc = device->GetTextureDesc(target.texture);
         const RHIFormat format       = texDesc.format;
         const uint32_t bytesPerTexel = BytesPerTexel(format);
@@ -61,6 +68,7 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
             result.minVal = 0.0f;
             result.maxVal = 0.0f;
             result.avgVal = 0.0f;
+            result.isZero = false;
             results.push_back(std::move(result));
             continue;
         }
@@ -72,6 +80,24 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
             result.isZero = false; // Don't flag as zero — depth not validated.
             UZ_LOG(PassInspector, Info,
                    "[PASS VALIDATE] {}: SKIPPED (depth format — readback not supported)",
+                   target.name);
+            results.push_back(std::move(result));
+            continue;
+        }
+
+        // 3D volume textures — CopyTextureToBuffer only copies Z-slice 0 of a
+        // volume subresource via the current RHI signature, so the readback
+        // cannot see data written to other Z slices (e.g., ap_volume, volfog
+        // froxel grid). Rather than producing misleading WARN_ZERO we skip
+        // the zero check entirely for 3D textures. Use the dedicated pass-dump
+        // / --vis tooling to inspect volume contents.
+        if (texDesc.is3D) {
+            result.minVal = 0.0f;
+            result.maxVal = 0.0f;
+            result.avgVal = 0.0f;
+            result.isZero = false;
+            UZ_LOG(PassInspector, Info,
+                   "[PASS VALIDATE] {}: SKIPPED (3D volume — use --pass-dump/--vis)",
                    target.name);
             results.push_back(std::move(result));
             continue;
@@ -108,41 +134,60 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
             result.minVal = 0.0f;
             result.maxVal = 0.0f;
             result.avgVal = 0.0f;
+            result.isZero = false;
             results.push_back(std::move(result));
             continue;
         }
 
-        // Record barrier + copy + restore barrier for this single target.
-        {
-            RHIBarrierDesc barrier{};
-            barrier.texture     = target.texture;
-            barrier.stateBefore = target.lastState;
-            barrier.stateAfter  = RHIResourceState::CopySrc;
-            cmdList->ResourceBarrier(&barrier, 1);
+        // Determine how many array slices to sample. For a cubemap this is 6
+        // (one readback per face). For a texture array it is the array size.
+        // For a plain 2D texture it is 1.
+        const uint32_t arraySlices = (!texDesc.is3D)
+            ? std::max<uint32_t>(1u, static_cast<uint32_t>(texDesc.depthOrArraySize))
+            : 1u;
 
-            cmdList->CopyTextureToBuffer(target.texture, 0,
-                                          readbackBuffer, 0, rowPitch, 0);
+        uint32_t    sampleCountTotal = 0;
+        double      sumTotal         = 0.0;
+        bool        anyReadbackOk    = false;
 
-            barrier.stateBefore = RHIResourceState::CopySrc;
-            barrier.stateAfter  = target.lastState;
-            cmdList->ResourceBarrier(&barrier, 1);
-        }
+        for (uint32_t slice = 0; slice < arraySlices; ++slice) {
+            // Record barrier + copy + restore barrier for this slice.
+            {
+                RHIBarrierDesc barrier{};
+                barrier.texture     = target.texture;
+                barrier.stateBefore = target.lastState;
+                barrier.stateAfter  = RHIResourceState::CopySrc;
+                cmdList->ResourceBarrier(&barrier, 1);
 
-        cmdList->End();
-        cmdList->Execute();
-        device->WaitIdle();
-        cmdList->Begin();
+                cmdList->CopyTextureToBuffer(target.texture, /*mip*/0,
+                                              readbackBuffer, /*dstOffset*/0,
+                                              rowPitch, /*arraySlice*/slice);
 
-        // Map and sample a 4x4 block from the center.
-        void* mapped = device->MapBuffer(readbackBuffer);
-        if (mapped) {
+                barrier.stateBefore = RHIResourceState::CopySrc;
+                barrier.stateAfter  = target.lastState;
+                cmdList->ResourceBarrier(&barrier, 1);
+            }
+
+            cmdList->End();
+            cmdList->Execute();
+            device->WaitIdle();
+            cmdList->Begin();
+
+            // Map and sample a 4x4 block from the center of this slice.
+            void* mapped = device->MapBuffer(readbackBuffer);
+            if (!mapped) {
+                UZ_LOG(PassInspector, Warning,
+                       "[PASS VALIDATE] {}: slice {} — failed to map readback buffer",
+                       target.name, slice);
+                continue;
+            }
+
+            anyReadbackOk = true;
+
             const uint32_t centerX = (target.width  > kSampleDim) ? (target.width  / 2 - kSampleDim / 2) : 0;
             const uint32_t centerY = (target.height > kSampleDim) ? (target.height / 2 - kSampleDim / 2) : 0;
             const uint32_t sampleW = std::min(kSampleDim, target.width);
             const uint32_t sampleH = std::min(kSampleDim, target.height);
-
-            uint32_t sampleCount = 0;
-            double sum = 0.0;
 
             for (uint32_t y = 0; y < sampleH; ++y) {
                 const auto* rowBase = static_cast<const uint8_t*>(mapped)
@@ -164,26 +209,24 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
                             }
                             result.minVal = std::min(result.minVal, val);
                             result.maxVal = std::max(result.maxVal, val);
-                            sum += static_cast<double>(val);
-                            ++sampleCount;
+                            sumTotal += static_cast<double>(val);
+                            ++sampleCountTotal;
                         }
                     }
                 }
             }
 
-            if (sampleCount > 0) {
-                result.avgVal = static_cast<float>(sum / static_cast<double>(sampleCount));
-            } else {
-                result.minVal = 0.0f;
-                result.maxVal = 0.0f;
-                result.avgVal = 0.0f;
-            }
-
             device->UnmapBuffer(readbackBuffer);
+        }
+
+        if (!anyReadbackOk) {
+            result.minVal = 0.0f;
+            result.maxVal = 0.0f;
+            result.avgVal = 0.0f;
+            result.isZero = false; // Cannot confirm — don't warn.
+        } else if (sampleCountTotal > 0) {
+            result.avgVal = static_cast<float>(sumTotal / static_cast<double>(sampleCountTotal));
         } else {
-            UZ_LOG(PassInspector, Warning,
-                   "[PASS VALIDATE] {}: SKIPPED (failed to map readback buffer)",
-                   target.name);
             result.minVal = 0.0f;
             result.maxVal = 0.0f;
             result.avgVal = 0.0f;

@@ -108,6 +108,10 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
             lightDesc.ssgiTexture = m_ssgiRenderer.GetResultTexture();
         }
         lightDesc.apVolumeResource    = ctx.apVolumeRes;  // AP volume (read prev frame's data)
+        // Debug MRT targets — lighting split visualization for --pass-dump
+        lightDesc.debugDirectLight    = m_debugDirectLight;
+        lightDesc.debugIndirectLight  = m_debugIndirectLight;
+        lightDesc.debugShadowMask     = m_debugShadowMask;
         lightDesc.bindless            = ctx.bindless;
         lightDesc.viewportWidth       = ctx.renderWidth;
         lightDesc.viewportHeight      = ctx.renderHeight;

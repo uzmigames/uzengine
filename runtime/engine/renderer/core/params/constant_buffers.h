@@ -270,8 +270,15 @@ struct PerFrameCB {
     float    ddgiOriginZ       = 0.0f;
     float    ddgiIntensity     = 1.0f;       ///< Intensity multiplier on DDGI contribution.
 
+    // ── Indirect AO parameters ───────────────────────────────────────────
+    /// Exponent applied to AO for indirect light attenuation.
+    /// Higher values = more aggressive occlusion on indirect (ambient) light.
+    /// Direct light uses linear AO; indirect uses pow(ao, exponent).
+    /// @ref Lagarde & de Rousiers 2014 "Moving Frostbite to PBR" — §4.9.3
+    float    indirectAOExponent = 2.0f;     ///< CVar r.IndirectAO.Exponent — default 2.0.
+
     // ── Padding to next 256-byte boundary (1024 bytes) ────────────────
-    float    _padToCBEnd[44]  = {};         ///< Pads PerFrameCB to 1024 bytes (4 x 256).
+    float    _padToCBEnd[43]  = {};         ///< Pads PerFrameCB to 1024 bytes (4 x 256).
 };
 
 static_assert(sizeof(PerFrameCB) == 1024, "PerFrameCB must be 1024 bytes (4 x 256 D3D12 CB alignment)");
