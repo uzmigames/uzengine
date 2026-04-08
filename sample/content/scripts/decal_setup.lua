@@ -29,7 +29,7 @@ function on_start(entity)
     -- Decal on floor: rust stain
     local d2 = uz.scene.create_entity("Decal_RustFloor")
     uz.scene.set_position(d2, 150, -50, 1)
-    uz.scene.set_rotation(d2, 0, 0, 45)
+    uz.scene.set_rotation(d2, 0, 45, 0)
     uz.scene.set_scale(d2, 250, 250, 50)
     uz.scene.create_decal(d2)
     if rust_albedo then uz.scene.set_decal_albedo(d2, rust_albedo) end
@@ -38,7 +38,7 @@ function on_start(entity)
     -- Decal on wall: rust stain
     local d3 = uz.scene.create_entity("Decal_RustWall")
     uz.scene.set_position(d3, 0, 398, 150)
-    uz.scene.set_rotation(d3, 90, 0, 0)
+    uz.scene.set_rotation(d3, 0, 0, 90)
     uz.scene.set_scale(d3, 300, 300, 50)
     uz.scene.create_decal(d3)
     if rust_albedo then uz.scene.set_decal_albedo(d3, rust_albedo) end

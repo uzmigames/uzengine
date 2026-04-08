@@ -118,15 +118,12 @@ function on_update(entity, dt)
         time_of_day = time_of_day - 24.0
     end
 
-    -- Sun elevation (rotation around Y in DX convention) — Forward = +X.
-    -- 0 at 6h (east horizon), 90 at 12h (overhead), 180 at 18h,
-    -- 270 at 0h (underground). Rotating +X around Y moves it into the
-    -- XZ plane, giving vertical sun motion.
+    -- Sun elevation: set_rotation(pitch_Y, yaw_Z, roll_X).
+    -- pitch (Y-axis) drives vertical arc; 0 at horizon, 90 at noon.
+    -- Small yaw tilt (Z) makes the sun trace an arc off-center.
     local elev = (time_of_day - 6.0) / 24.0 * 360.0
     if sun ~= nil then
-        -- Tilt a bit on roll so the sun traces an arc instead of
-        -- passing exactly overhead (looks more natural).
-        uz.scene.set_rotation(sun, 0, elev, 15)
+        uz.scene.set_rotation(sun, elev, 15, 0)
     end
 
     -- Color / intensity

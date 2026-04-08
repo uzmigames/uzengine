@@ -29,9 +29,9 @@ function on_update(entity, dt)
         local speed = base_speed * (0.5 + i * 0.3)
         angles[i] = angles[i] + speed * dt
         if angles[i] > 360 then angles[i] = angles[i] - 360 end
-        -- Rotate around Z axis (Z-up): set_rotation(pitch, yaw, roll)
-        -- For Z-up rotation around world Z, we set roll (3rd param)
-        uz.scene.set_rotation(e, 0, 0, angles[i])
+        -- Rotate around Z axis (Z-up): set_rotation(pitch_Y, yaw_Z, roll_X)
+        -- For Z-up rotation around world Z, we set yaw (2nd param)
+        uz.scene.set_rotation(e, 0, angles[i], 0)
     end
 end
 

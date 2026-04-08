@@ -74,7 +74,7 @@ function on_start(entity)
     -- ── Sun light ──
     local sun = uz.scene.create_entity("Sun")
     uz.scene.set_position(sun, 0, 0, 920)
-    uz.scene.set_rotation(sun, 50, -30, 0)
+    uz.scene.set_rotation(sun, -30, 0, 50)
     uz.scene.add_directional_light(sun, 1.0, 1.0, 1.0, 10.0)
     uz.scene.set_atmosphere_sun_light(sun, true)
 
