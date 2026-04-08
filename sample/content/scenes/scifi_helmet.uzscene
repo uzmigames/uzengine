@@ -1,5 +1,5 @@
 {
-  "name": "SciFi Helmet \u00e2\u20ac\u201d High Quality PBR",
+  "name": "SciFi Helmet — High Quality PBR",
   "version": "1.0",
   "entities": [
     {
@@ -14,7 +14,7 @@
           "rotation": [
             -40,
             0,
-            0
+            55
           ]
         },
         "light": {
@@ -98,9 +98,9 @@
             130
           ],
           "rotation": [
-            -5,
             0,
-            0
+            0,
+            -5
           ]
         },
         "camera": {

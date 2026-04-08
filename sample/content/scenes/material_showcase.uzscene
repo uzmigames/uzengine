@@ -1,5 +1,5 @@
 {
-  "name": "Material Showcase \u00e2\u20ac\u201d HDRI Environment (Three.js Parity)",
+  "name": "Material Showcase — HDRI Environment (Three.js Parity)",
   "version": "1.0",
   "entities": [
     {
@@ -152,8 +152,8 @@
           ],
           "rotation": [
             68.2,
-            0,
-            -90
+            -90,
+            0
           ]
         },
         "camera": {
@@ -176,7 +176,7 @@
           "rotation": [
             -30,
             0,
-            0
+            50
           ]
         },
         "light": {

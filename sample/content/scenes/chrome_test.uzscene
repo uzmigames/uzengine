@@ -1,5 +1,5 @@
 {
-  "name": "Chrome Test \u00e2\u20ac\u201d Single Sphere",
+  "name": "Chrome Test — Single Sphere",
   "version": "1.0",
   "entities": [
     {
@@ -40,8 +40,8 @@
           ],
           "rotation": [
             0,
-            0,
-            180
+            180,
+            0
           ]
         },
         "camera": {
@@ -64,7 +64,7 @@
           "rotation": [
             -30,
             0,
-            0
+            50
           ]
         },
         "light": {
