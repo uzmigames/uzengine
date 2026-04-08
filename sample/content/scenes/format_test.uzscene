@@ -2,11 +2,148 @@
   "name": "OBJ Bunny Test",
   "version": "1.0",
   "entities": [
-    {"name":"Sun","components":{"transform":{"position":[0,0,920],"rotation":[50,-30,0],"scale":[1,1,1]},"light":{"type":"directional","color":[1,0.96,0.88],"intensity":14}}},
-    {"name":"Bunny","components":{"transform":{"position":[0,0,-50],"rotation":[0,0,0],"scale":[1500,1500,1500]},"mesh":{"asset":"meshes/test_formats/bunny.uzmesh"},"material":{"roughnessMultiplier":0.3}}},
-    {"name":"Ground","components":{"transform":{"position":[0,0,-2],"rotation":[0,0,0],"scale":[500,500,2]},"mesh":{"asset":"meshes/cube.uzmesh"},"material":{"albedo":"textures/checker.png"}}},
-    {"name":"Cam","components":{"transform":{"position":[0,-350,120],"rotation":[-8,0,0]},"camera":{"fov":55,"near":1,"far":100000,"active":true}}},
-    {"name":"Sky","components":{"transform":{"position":[0,0,1020]},"sky_atmosphere":{}}},
-    {"name":"SkyL","components":{"transform":{"position":[0,0,690]},"sky_light":{"intensity":1.5,"light_color":[0.85,0.9,1.0]}}}
+    {
+      "name": "Sun",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            920
+          ],
+          "rotation": [
+            -30,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "light": {
+          "type": "directional",
+          "color": [
+            1,
+            0.96,
+            0.88
+          ],
+          "intensity": 14
+        }
+      }
+    },
+    {
+      "name": "Bunny",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            -50
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1500,
+            1500,
+            1500
+          ]
+        },
+        "mesh": {
+          "asset": "meshes/test_formats/bunny.uzmesh"
+        },
+        "material": {
+          "roughnessMultiplier": 0.3
+        }
+      }
+    },
+    {
+      "name": "Ground",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            -2
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            500,
+            500,
+            2
+          ]
+        },
+        "mesh": {
+          "asset": "meshes/cube.uzmesh"
+        },
+        "material": {
+          "albedo": "textures/checker.png"
+        }
+      }
+    },
+    {
+      "name": "Cam",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            -350,
+            120
+          ],
+          "rotation": [
+            -8,
+            0,
+            0
+          ]
+        },
+        "camera": {
+          "fov": 55,
+          "near": 1,
+          "far": 100000,
+          "active": true
+        }
+      }
+    },
+    {
+      "name": "Sky",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            1020
+          ]
+        },
+        "sky_atmosphere": {}
+      }
+    },
+    {
+      "name": "SkyL",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            690
+          ]
+        },
+        "sky_light": {
+          "intensity": 1.5,
+          "light_color": [
+            0.85,
+            0.9,
+            1.0
+          ]
+        }
+      }
+    }
   ]
 }

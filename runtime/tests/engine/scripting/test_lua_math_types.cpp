@@ -534,32 +534,35 @@ TEST_F(LuaMathTypesTest, Quat_FromEuler_ZeroAngles_IsIdentity) {
 }
 
 TEST_F(LuaMathTypesTest, Quat_FromEuler_Pitch90_HasCorrectComponents) {
-    // pitch=90°, yaw=0, roll=0 → x=sin(45°)≈0.7071, y=0, z=0, w=cos(45°)≈0.7071
+    // UE5 convention: pitch = rotation around Y-right axis.
+    // pitch=90°, yaw=0, roll=0 → pure Y-axis quat: x=0, y=sin(45°)≈0.7071, z=0, w≈0.7071
     double x, y, z, w;
     ASSERT_TRUE(EvalQuatComponents("uz.math.quat_from_euler(90, 0, 0)", x, y, z, w));
-    EXPECT_NEAR(x, 0.7071, 1e-3);
-    EXPECT_NEAR(y, 0.0,    1e-3);
-    EXPECT_NEAR(z, 0.0,    1e-3);
-    EXPECT_NEAR(w, 0.7071, 1e-3);
-}
-
-TEST_F(LuaMathTypesTest, Quat_FromEuler_Yaw90_HasCorrectComponents) {
-    // pitch=0, yaw=90°, roll=0 → x=0, y=sin(45°)≈0.7071, z=0, w=cos(45°)≈0.7071
-    double x, y, z, w;
-    ASSERT_TRUE(EvalQuatComponents("uz.math.quat_from_euler(0, 90, 0)", x, y, z, w));
     EXPECT_NEAR(x, 0.0,    1e-3);
     EXPECT_NEAR(y, 0.7071, 1e-3);
     EXPECT_NEAR(z, 0.0,    1e-3);
     EXPECT_NEAR(w, 0.7071, 1e-3);
 }
 
-TEST_F(LuaMathTypesTest, Quat_FromEuler_Roll90_HasCorrectComponents) {
-    // pitch=0, yaw=0, roll=90° → x=0, y=0, z=sin(45°)≈0.7071, w=cos(45°)≈0.7071
+TEST_F(LuaMathTypesTest, Quat_FromEuler_Yaw90_HasCorrectComponents) {
+    // UE5 convention: yaw = rotation around Z-up axis.
+    // pitch=0, yaw=90°, roll=0 → pure Z-axis quat: x=0, y=0, z=sin(45°)≈0.7071, w≈0.7071
     double x, y, z, w;
-    ASSERT_TRUE(EvalQuatComponents("uz.math.quat_from_euler(0, 0, 90)", x, y, z, w));
+    ASSERT_TRUE(EvalQuatComponents("uz.math.quat_from_euler(0, 90, 0)", x, y, z, w));
     EXPECT_NEAR(x, 0.0,    1e-3);
     EXPECT_NEAR(y, 0.0,    1e-3);
     EXPECT_NEAR(z, 0.7071, 1e-3);
+    EXPECT_NEAR(w, 0.7071, 1e-3);
+}
+
+TEST_F(LuaMathTypesTest, Quat_FromEuler_Roll90_HasCorrectComponents) {
+    // UE5 convention: roll = rotation around X-forward axis.
+    // pitch=0, yaw=0, roll=90° → pure X-axis quat: x=sin(45°)≈0.7071, y=0, z=0, w≈0.7071
+    double x, y, z, w;
+    ASSERT_TRUE(EvalQuatComponents("uz.math.quat_from_euler(0, 0, 90)", x, y, z, w));
+    EXPECT_NEAR(x, 0.7071, 1e-3);
+    EXPECT_NEAR(y, 0.0,    1e-3);
+    EXPECT_NEAR(z, 0.0,    1e-3);
     EXPECT_NEAR(w, 0.7071, 1e-3);
 }
 
@@ -590,10 +593,11 @@ TEST_F(LuaMathTypesTest, Quat_FromAxisAngle_ZeroAxis_IsIdentity) {
 }
 
 TEST_F(LuaMathTypesTest, Quat_FromAxisAngle_90DegYAxis_MatchesFromEuler) {
-    // 90° around Y should match quat_from_euler(0, 90, 0).
+    // UE5 convention: yaw=90° is Z-rotation. quat_from_euler(90,0,0) = Y-rotation (pitch).
+    // So FromAxisAngle(Z, 90°) should match FromEuler(pitch=0, yaw=90, roll=0).
     EXPECT_TRUE(EvalBool(
         "(function()\n"
-        "  local q1 = uz.math.quat_from_axis_angle(0, 1, 0, 90)\n"
+        "  local q1 = uz.math.quat_from_axis_angle(0, 0, 1, 90)\n"
         "  local q2 = uz.math.quat_from_euler(0, 90, 0)\n"
         "  local function near(a, b) return math.abs(a - b) < 0.001 end\n"
         "  local s1 = tostring(q1)\n"
@@ -732,10 +736,10 @@ TEST_F(LuaMathTypesTest, Quat_MulVec3_IdentityRotation_PreservesVector) {
 }
 
 TEST_F(LuaMathTypesTest, Quat_MulVec3_90DegYRotation_RotatesXIntoNegZ) {
-    // 90° around Y: (1,0,0) → (0,0,-1)
+    // UE5-parity: pitch=Y-rotation. pitch=90° rotates forward [1,0,0] → [0,0,-1].
     double x, y, z;
     ASSERT_TRUE(EvalVec3Components(
-        "uz.math.quat_from_euler(0, 90, 0) * uz.math.vec3(1, 0, 0)",
+        "uz.math.quat_from_euler(90, 0, 0) * uz.math.vec3(1, 0, 0)",
         x, y, z));
     EXPECT_NEAR(x,  0.0, 1e-3);
     EXPECT_NEAR(y,  0.0, 1e-3);
@@ -743,10 +747,10 @@ TEST_F(LuaMathTypesTest, Quat_MulVec3_90DegYRotation_RotatesXIntoNegZ) {
 }
 
 TEST_F(LuaMathTypesTest, Quat_MulVec3_90DegXRotation_RotatesYIntoZ) {
-    // 90° around X: (0,1,0) → (0,0,1)
+    // UE5-parity: roll=X-rotation. roll=90° rotates right [0,1,0] → [0,0,1].
     double x, y, z;
     ASSERT_TRUE(EvalVec3Components(
-        "uz.math.quat_from_euler(90, 0, 0) * uz.math.vec3(0, 1, 0)",
+        "uz.math.quat_from_euler(0, 0, 90) * uz.math.vec3(0, 1, 0)",
         x, y, z));
     EXPECT_NEAR(x, 0.0, 1e-3);
     EXPECT_NEAR(y, 0.0, 1e-3);

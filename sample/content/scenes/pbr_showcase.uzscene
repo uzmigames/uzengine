@@ -12,8 +12,8 @@
             920
           ],
           "rotation": [
-            60,
             -30,
+            0,
             0
           ],
           "scale": [
@@ -273,7 +273,10 @@
           "roughness": "textures/Concrete/Poliigon_ConcreteWorn_8690_Roughness.jpg",
           "metallic": "textures/Concrete/Poliigon_ConcreteWorn_8690_Metallic.jpg",
           "ao": "textures/Concrete/Poliigon_ConcreteWorn_8690_AmbientOcclusion.jpg",
-          "uvScale": [8, 8]
+          "uvScale": [
+            8,
+            8
+          ]
         }
       }
     },

@@ -269,40 +269,30 @@ static int QuatMethodNormalize(lua_State* L) {
 
 /// q:to_euler() → pitch, yaw, roll  (degrees)
 ///
-/// Decomposes the quaternion into Euler angles using YXZ intrinsic order
-/// (yaw around world-Y, then pitch around local-X, then roll around local-Z).
-/// This matches the engine's Quaternion::ToEulerAngles convention used by
-/// uz.scene.set_rotation / get_rotation.
+/// Decomposes the quaternion into Euler angles using the UE5-parity ZYX order,
+/// matching quat_from_euler() and uz.scene.set_rotation / get_rotation.
 ///
 /// # Returns
-/// Three numbers: pitch (X-axis), yaw (Y-axis), roll (Z-axis) — all in degrees.
+/// Three numbers in degrees:
+///   pitch — elevation from horizon, around the Y-right axis (-90° = noon)
+///   yaw   — compass bearing, around the Z-up axis (0° = East/+X)
+///   roll  — barrel roll, around the X-forward axis
+///
+/// @ref Shoemake 1994 "Euler Angle Conversion" — Graphic Gems IV, ZYX order
 static int QuatMethodToEuler(lua_State* L) {
     QuatData* q = CheckQuat(L, 1);
 
-    // Rotation matrix elements needed for YXZ decomposition.
-    // From the quaternion: R = I + 2w[q]x + 2[q]x^2  (skew-symmetric form)
     const float x = q->x, y = q->y, z = q->z, w = q->w;
 
-    // Singularity test value: sin(pitch) = 2*(w*x - y*z)
-    const float sinP = 2.0f * (w * x - y * z);
-
-    float pitch, yaw, roll;
-
-    if (sinP >= 0.9999f) {
-        // North pole gimbal lock.
-        pitch = kQuatPi * 0.5f;
-        yaw   = 2.0f * std::atan2(y, w);
-        roll  = 0.0f;
-    } else if (sinP <= -0.9999f) {
-        // South pole gimbal lock.
-        pitch = -kQuatPi * 0.5f;
-        yaw   = -2.0f * std::atan2(y, w);
-        roll  = 0.0f;
-    } else {
-        pitch = std::asin(sinP);
-        yaw   = std::atan2(2.0f * (w * y + x * z), 1.0f - 2.0f * (x*x + y*y));
-        roll  = std::atan2(2.0f * (w * z + x * y), 1.0f - 2.0f * (x*x + z*z));
-    }
+    // ZYX decomposition matching Quat::get_euler() in quaternion.cpp:
+    //   pitch = around Y-right axis  → 2*(w*y - z*x)
+    //   yaw   = around Z-up axis     → atan2(w*z + x*y)
+    //   roll  = around X-forward axis → atan2(w*x + y*z)
+    // @ref Shoemake 1994 "Euler Angle Conversion" — Graphic Gems IV, ZYX order
+    const float sinP = 2.0f * (w * y - z * x);
+    const float pitch = std::asin(sinP >= 1.0f ? 1.0f : (sinP <= -1.0f ? -1.0f : sinP));
+    const float yaw   = std::atan2(2.0f * (w * z + x * y), 1.0f - 2.0f * (y*y + z*z));
+    const float roll  = std::atan2(2.0f * (w * x + y * z), 1.0f - 2.0f * (x*x + y*y));
 
     lua_pushnumber(L, pitch * kQuatRadToDeg);
     lua_pushnumber(L, yaw   * kQuatRadToDeg);
@@ -358,20 +348,26 @@ static int MathQuatIdentity(lua_State* L) {
 
 /// uz.math.quat_from_euler(pitch, yaw, roll) → Quat
 ///
-/// Constructs a quaternion from Euler angles in degrees using YXZ intrinsic
-/// order: yaw (Y) is applied first, then pitch (X), then roll (Z).  This
-/// matches the convention used by uz.scene.set_rotation / get_rotation.
+/// Constructs a quaternion from Euler angles in degrees using the UE5-parity
+/// Z-up convention. Application order (intrinsic): Roll(X) → Pitch(Y) → Yaw(Z).
+///
+/// Matches the convention used by uz.scene.set_rotation / get_rotation and
+/// Quat::FromEuler() in C++.
 ///
 /// # Parameters
-/// - pitch — rotation around the X axis, in degrees
-/// - yaw   — rotation around the Y axis, in degrees
-/// - roll  — rotation around the Z axis, in degrees
+/// - pitch — elevation from horizon, around the Y-right axis, in degrees.
+///           -90° points up (noon/zenith), +90° points underground.
+/// - yaw   — compass bearing, around the Z-up axis, in degrees.
+///           0° faces East (+X), +90° faces North (+Y).
+/// - roll  — barrel roll, around the X-forward axis, in degrees.
+///
+/// @ref Shoemake 1994 "Euler Angle Conversion" — Graphic Gems IV, ZYX order
 static int MathQuatFromEuler(lua_State* L) {
     const float pitch = static_cast<float>(luaL_checknumber(L, 1)) * kQuatDegToRad;
     const float yaw   = static_cast<float>(luaL_checknumber(L, 2)) * kQuatDegToRad;
     const float roll  = static_cast<float>(luaL_checknumber(L, 3)) * kQuatDegToRad;
 
-    // Half-angles.
+    // Half-angles: pitch → Y-rotation, yaw → Z-rotation, roll → X-rotation.
     const float hp = pitch * 0.5f;
     const float hy = yaw   * 0.5f;
     const float hr = roll  * 0.5f;
@@ -380,11 +376,20 @@ static int MathQuatFromEuler(lua_State* L) {
     const float cy = std::cos(hy), sy = std::sin(hy);
     const float cr = std::cos(hr), sr = std::sin(hr);
 
-    // YXZ composition: Q = Qy * Qx * Qz
+    // ZYX composition: Q = Qz * Qy * Qx  (Yaw * Pitch * Roll, applied right-to-left).
+    // Qx = (sr,  0,  0, cr)  — roll  around X
+    // Qy = ( 0, sp,  0, cp)  — pitch around Y
+    // Qz = ( 0,  0, sy, cy)  — yaw   around Z
+    //
+    // Full Hamilton product Qz*(Qy*Qx):
+    //   x = cy*cp*sr - sy*sp*cr
+    //   y = cy*sp*cr + sy*cp*sr
+    //   z = sy*cp*cr - cy*sp*sr
+    //   w = cy*cp*cr + sy*sp*sr
     PushQuat(L,
-        cy * sp * cr + sy * cp * sr,   // x
-        sy * cp * cr - cy * sp * sr,   // y
-        cy * cp * sr - sy * sp * cr,   // z
+        cy * cp * sr - sy * sp * cr,   // x
+        cy * sp * cr + sy * cp * sr,   // y
+        sy * cp * cr - cy * sp * sr,   // z
         cy * cp * cr + sy * sp * sr    // w
     );
     return 1;

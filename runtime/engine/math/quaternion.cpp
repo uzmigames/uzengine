@@ -14,8 +14,24 @@ Quat Quat::FromAxisAngle(const Vec3& axis, float angle) {
 }
 
 Quat Quat::FromEuler(float pitch, float yaw, float roll) {
-    XMVECTOR qx = XMQuaternionRotationRollPitchYaw(pitch, yaw, roll);
-    return Quat(qx);
+    // UE5-parity Z-up convention (matches Unreal Engine 4/5 rotation semantics):
+    //   Pitch = elevation from horizon, around the Y-right axis.
+    //           Pitch = -90° points up (noon/zenith), +90° points down.
+    //   Yaw   = compass bearing, around the Z-up axis.
+    //           Yaw = 0° faces East/+X, +90° faces North/+Y.
+    //   Roll  = barrel roll, around the X-forward axis.
+    //
+    // Application order: Roll(X) → Pitch(Y) → Yaw(Z)  (extrinsic ZYX / intrinsic XYZ).
+    // @ref Shoemake 1994 "Euler Angle Conversion" — Graphic Gems IV, ZYX order
+    const XMVECTOR kX = XMVectorSet(1.F, 0.F, 0.F, 0.F);
+    const XMVECTOR kY = XMVectorSet(0.F, 1.F, 0.F, 0.F);
+    const XMVECTOR kZ = XMVectorSet(0.F, 0.F, 1.F, 0.F);
+    XMVECTOR qRoll  = XMQuaternionRotationAxis(kX, roll);
+    XMVECTOR qPitch = XMQuaternionRotationAxis(kY, pitch);
+    XMVECTOR qYaw   = XMQuaternionRotationAxis(kZ, yaw);
+    // q = qYaw * qPitch * qRoll: XMQuaternionMultiply(Q1,Q2) applies Q2 first, then Q1.
+    XMVECTOR q = XMQuaternionMultiply(qYaw, XMQuaternionMultiply(qPitch, qRoll));
+    return Quat(q);
 }
 
 Quat Quat::FromMatrix(const Mat4& m) {
@@ -96,11 +112,16 @@ float Quat::angle_to(const Quat& other) const {
 }
 
 Vec3 Quat::get_euler() const {
-    float pitch = std::atan2(2.0f * (w * x + y * z), 1.0f - 2.0f * (x * x + y * y));
-    float sin_yaw = Math::clamp(2.0f * (w * y - z * x), -1.0f, 1.0f);
-    float yaw = std::asin(sin_yaw);
-    float roll = std::atan2(2.0f * (w * z + x * y), 1.0f - 2.0f * (y * y + z * z));
-    return {pitch, yaw, roll};
+    // ZYX decomposition matching FromEuler UE5 convention:
+    //   Pitch = around Y-right axis  → returned as Vec3.x
+    //   Yaw   = around Z-up axis     → returned as Vec3.y
+    //   Roll  = around X-forward axis → returned as Vec3.z
+    // @ref Shoemake 1994 "Euler Angle Conversion" — Graphic Gems IV, ZYX order
+    float roll_x  = std::atan2(2.0f * (w * x + y * z), 1.0f - 2.0f * (x * x + y * y));
+    float pitch_y = std::asin(Math::clamp(2.0f * (w * y - z * x), -1.0f, 1.0f));
+    float yaw_z   = std::atan2(2.0f * (w * z + x * y), 1.0f - 2.0f * (y * y + z * z));
+    // Return as (pitch, yaw, roll) = (Y-rot, Z-rot, X-rot) to match parameter order of FromEuler.
+    return {pitch_y, yaw_z, roll_x};
 }
 
 Vec3 Quat::get_axis() const {
