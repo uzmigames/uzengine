@@ -228,3 +228,8 @@
 - Day 18: ~65% parity (SSR + TAA done)
 - Day 32: ~75% parity (full post-process stack)
 - Day 60: ~80% parity (scene management + advanced)
+
+## 3. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 3.1 Update or create documentation covering the implementation
+- [ ] 3.2 Write tests covering the new behavior
+- [ ] 3.3 Run tests and confirm they pass

@@ -50,6 +50,12 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     float3 prefilteredColor = float3(0, 0, 0);
     float totalWeight = 0.0;
 
+    // NOTE: NDF sampling (ImportanceSampleGGX) is kept here intentionally.
+    // The prefilter assumes V=N=R, so the view direction is the normal itself.
+    // When V=N=(0,0,1) in tangent space, VNDF degenerates to NDF (all upper-
+    // hemisphere normals are visible from directly above). Switching to
+    // SampleGGX_VNDF would produce identical results with no quality gain.
+    // @ref Dupuy & Benyoub 2023, Section 3.2 — σ_std(i) = (1+z_i)/2 → 1 when z_i=1
     for (uint i = 0; i < sampleCount; ++i) {
         float2 Xi = Hammersley(i, sampleCount);
         float3 H  = ImportanceSampleGGX(Xi, roughness);

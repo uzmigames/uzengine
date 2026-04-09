@@ -439,6 +439,16 @@ void main(uint3 dtid : SV_DispatchThreadID)
             freeList[pushIndex] = threadIdx;
         }
 
+        // Zero the output lifespan so this slot is skipped by the next frame's
+        // full-capacity dispatch (lifespan==0 → early return at line ~348).
+        // Godot pattern: dead slots become no-ops via flag/lifespan gate.
+#ifdef UZ_BINDLESS
+        RWStructuredBuffer<float> deadLifespans = ResourceDescriptorHeap[lifespansUavIndex];
+        deadLifespans[threadIdx] = 0.0f;
+#else
+        sm5_lifespansOut[threadIdx] = 0.0f;
+#endif
+
 #ifndef UZ_BINDLESS
         #undef freeList
         #undef freeListHead

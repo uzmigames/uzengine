@@ -17,8 +17,8 @@
 local camera_speed = 500.0
 local mouse_sensitivity = 0.15
 local yaw = 90.0
-local pitch = -20.0
-local cam_x, cam_y, cam_z = 0, -500, 200
+local pitch = -10.0
+local cam_x, cam_y, cam_z = 0, -250, 130
 local render_path = "deferred"
 
 local debug_views = {

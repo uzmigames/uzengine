@@ -117,25 +117,13 @@ uint32_t ParticleEmitter::CalculateSpawnCount(float dt) noexcept {
     const auto spawnCount = static_cast<uint32_t>(integerPart);
     spawnAccumulator -= integerPart;
 
-    // Clamp to available capacity (capacity - currently alive).
-    const uint32_t capacity = buffer.capacity;
-    const uint32_t available = (capacity > cpuAliveCount)
-                                   ? (capacity - cpuAliveCount)
-                                   : 0;
+    // Godot pattern: CPU doesn't track alive count. Dispatch = capacity.
+    // The GPU free-list handles slot allocation — spawn shader pops from
+    // freeList and guards against overflow (freeListHead >= capacity → skip).
+    // CPU just passes the spawn count; GPU decides if slots are available.
+    cpuAliveCount = buffer.capacity;
 
-    const uint32_t clamped = std::min(spawnCount, available);
-
-    // Update CPU-side alive count estimate.
-    // Uses a fractional death accumulator to avoid truncation-to-zero at high FPS.
-    cpuAliveCount += clamped;
-    if (lifetime > 0.0f && cpuAliveCount > 0) {
-        deathAccumulator += static_cast<float>(cpuAliveCount) * (dt / lifetime);
-        const auto deaths = static_cast<uint32_t>(deathAccumulator);
-        deathAccumulator -= static_cast<float>(deaths);
-        cpuAliveCount = (cpuAliveCount > deaths) ? (cpuAliveCount - deaths) : 0;
-    }
-
-    return clamped;
+    return spawnCount;
 }
 
 } // namespace uz

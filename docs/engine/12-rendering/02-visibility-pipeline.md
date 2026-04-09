@@ -1,6 +1,6 @@
 # Rendering — Visibility Pipeline
 
-> **Status**: Planned (Milestone 2.0–4.0)
+> **Status**: Done (v0.3.0+ — frustum cull, Hi-Z occlusion, LOD selection)
 > **Source**: `runtime/engine/renderer/`
 > **Depends on**: Render World (§12-01), RHI (§03)
 > **References**: UE5 Nanite visibility, GPU-driven rendering papers

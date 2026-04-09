@@ -97,10 +97,19 @@ FlipResult FlipPass::Evaluate(IRHICommandList* cmdList,
 
         m_lastWidth  = width;
         m_lastHeight = height;
+
+        UZ_LOG(Renderer, Info, "FlipPass: heatmap SRV={}, UAV={}, stats UAV={}",
+               m_heatmapSrv, m_heatmapUav, m_statsUav);
     }
 
-    // Clear stats buffer via staging upload
+    // Test: heatmap barrier + stats clear + stats barriers
     {
+        RHIBarrierDesc toCopyDst;
+        toCopyDst.buffer      = m_statsBuffer;
+        toCopyDst.stateBefore = RHIResourceState::Common;
+        toCopyDst.stateAfter  = RHIResourceState::CopyDst;
+        cmdList->ResourceBarrier(&toCopyDst, 1);
+
         RHIBufferDesc clearDesc;
         clearDesc.sizeBytes = 16;
         clearDesc.usage     = RHIBufferUsage::CopySrc;
@@ -114,12 +123,14 @@ FlipResult FlipPass::Evaluate(IRHICommandList* cmdList,
         m_device->DestroyBuffer(clearBuf);
     }
 
-    // Transition heatmap to UAV
-    RHIBarrierDesc toUav;
-    toUav.texture     = m_heatmap;
-    toUav.stateBefore = RHIResourceState::Common;
-    toUav.stateAfter  = RHIResourceState::UnorderedAccess;
-    cmdList->ResourceBarrier(&toUav, 1);
+    RHIBarrierDesc barriers[2];
+    barriers[0].texture     = m_heatmap;
+    barriers[0].stateBefore = RHIResourceState::Common;
+    barriers[0].stateAfter  = RHIResourceState::UnorderedAccess;
+    barriers[1].buffer      = m_statsBuffer;
+    barriers[1].stateBefore = RHIResourceState::CopyDst;
+    barriers[1].stateAfter  = RHIResourceState::UnorderedAccess;
+    cmdList->ResourceBarrier(barriers, 2);
 
     // Dispatch
     cmdList->SetPipeline(m_pipeline);
@@ -131,19 +142,21 @@ FlipResult FlipPass::Evaluate(IRHICommandList* cmdList,
         width, height, 3840u, *reinterpret_cast<uint32_t*>(&monitorDist)
     };
     cmdList->SetRootConstants(0, rc, 8);
-    cmdList->SetDescriptorTable(4, m_heatmapUav);
 
     cmdList->Dispatch(
         (width  + kThreadGroupSize - 1) / kThreadGroupSize,
         (height + kThreadGroupSize - 1) / kThreadGroupSize,
         1);
 
-    // Transition heatmap to SRV
-    RHIBarrierDesc toSrv;
-    toSrv.texture     = m_heatmap;
-    toSrv.stateBefore = RHIResourceState::UnorderedAccess;
-    toSrv.stateAfter  = RHIResourceState::ShaderResource;
-    cmdList->ResourceBarrier(&toSrv, 1);
+    // Transition heatmap to SRV + stats buffer to CopySrc
+    RHIBarrierDesc postBarriers[2];
+    postBarriers[0].texture     = m_heatmap;
+    postBarriers[0].stateBefore = RHIResourceState::UnorderedAccess;
+    postBarriers[0].stateAfter  = RHIResourceState::ShaderResource;
+    postBarriers[1].buffer      = m_statsBuffer;
+    postBarriers[1].stateBefore = RHIResourceState::UnorderedAccess;
+    postBarriers[1].stateAfter  = RHIResourceState::CopySrc;
+    cmdList->ResourceBarrier(postBarriers, 2);
 
     // Execute + readback stats
     cmdList->End();
@@ -158,11 +171,11 @@ FlipResult FlipPass::Evaluate(IRHICommandList* cmdList,
     rbDesc.debugName = "FLIP_StatsReadback";
     auto readbackBuf = m_device->CreateBuffer(rbDesc);
 
-    auto* cmdList2 = m_device->CreateCommandList();
-    cmdList2->Begin();
-    cmdList2->CopyBuffer(m_statsBuffer, 0, readbackBuf, 0, 16);
-    cmdList2->End();
-    cmdList2->Execute();
+    // Reuse the caller's cmdList (now idle) for the stats copy
+    cmdList->Begin();
+    cmdList->CopyBuffer(m_statsBuffer, 0, readbackBuf, 0, 16);
+    cmdList->End();
+    cmdList->Execute();
     m_device->WaitIdle();
 
     const auto* data = static_cast<const uint32_t*>(m_device->MapBuffer(readbackBuf));

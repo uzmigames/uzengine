@@ -54,6 +54,5 @@ void main(uint3 dtid : SV_DispatchThreadID) {
     bloomAmt = min(bloomAmt, totalLuma);
     float scale = (totalLuma > 1e-5) ? (bloomAmt / totalLuma) : 0.0;
 
-    // DEBUG: bypass threshold — output full HDR color to verify bloom pipeline
-    outTex[dtid.xy] = float4(color, 1.0);
+    outTex[dtid.xy] = float4(color * scale, 1.0);
 }

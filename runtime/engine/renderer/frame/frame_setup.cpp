@@ -39,7 +39,8 @@
 // ── CVars ────────────────────────────────────────────────────────────────
 // CVars consumed by PerFrameCB population live in frame_constants.cpp.
 // CVars below are used by the main SetupFrameData orchestration and ApplyCVars.
-static auto* cv_TAA                = UZ_CVAR_BOOL("r.TAA", true, "TAA anti-aliasing");
+// TAA disabled (jitter trembling bug). No anti-aliasing until fixed.
+static auto* cv_TAA                = UZ_CVAR_BOOL("r.TAA", false, "TAA anti-aliasing");
 static auto* cv_TAACurrentWeight   = UZ_CVAR_FLOAT("r.TAA.CurrentFrameWeight", 0.04f, "TAA current frame blend weight", 0.01f, 0.2f);
 static auto* cv_TAAJitterSeqLen    = UZ_CVAR_INT("r.TAA.JitterSequenceLength", 8, "TAA Halton jitter sequence length", 1, 16);
 static auto* cv_PBRMinRoughness    = UZ_CVAR_FLOAT("r.PBR.MinRoughness", 0.045f, "Minimum roughness clamp", 0.01f, 0.2f);
@@ -185,26 +186,46 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
                RenderPathToString(m_renderPath));
     }
 
+    // ── Editor Free-Cam Toggle (F5) ──
+    if (m_input && m_input->IsKeyJustPressed(Key::F5)) {
+        if (m_editorFreeCamId == kInvalidCameraId) {
+            // Push: create a free-cam at the current camera's position
+            m_editorFreeCamId = m_cameraManager->CreateCamera("EditorFreeCam");
+            Camera* freeCam = m_cameraManager->GetCamera(m_editorFreeCamId);
+            if (freeCam) {
+                const Camera& current = m_cameraManager->GetActiveCamera();
+                *freeCam = current; // Copy position, orientation, projection
+            }
+            m_cameraManager->PushCamera(m_editorFreeCamId);
+        } else {
+            // Pop: restore previous camera, destroy free-cam
+            m_cameraManager->PopCamera();
+            m_cameraManager->DestroyCamera(m_editorFreeCamId);
+            m_editorFreeCamId = kInvalidCameraId;
+        }
+    }
+
     // ── Camera: ECS camera (game mode) or fly controller (editor mode) ──
     bool cameraFromECS = false;
 
-    // Sync camera from ECS CameraComponent every frame.
-    // Lua scripts (camera_test_controller.lua, etc.) update CameraComponent
-    // via uz.camera.set_position/look_at in on_update — we read that here.
-    // This works in both editor and game mode, driven by the Lua script.
-    if (ctx.world) {
+    // Sync camera from ECS CameraComponent every frame — but ONLY when the
+    // active camera is the default Main camera (id=0). When CameraManager has
+    // switched to a non-default camera (via mgr_switch or PushCamera), the ECS
+    // CameraComponent is ignored so Lua scripts can control cameras directly
+    // via mgr_set_position/mgr_look_at without being overwritten.
+    if (ctx.world && m_cameraManager->GetActiveCameraId() == 0) {
         auto cameraView = ctx.world->View<CameraComponent>();
         for (auto [enttEntity, cam] : cameraView.each()) {
             if (cam.isActive) {
                 const Vec3 camPos = cam.GetWorldPosition();
-                m_camera->SetPosition(camPos);
+                m_cameraManager->GetActiveCamera().SetPosition(camPos);
                 if (cam.hasLookTarget) {
-                    m_camera->LookAt(cam.lookTarget);
+                    m_cameraManager->GetActiveCamera().LookAt(cam.lookTarget);
                 } else {
                     const Vec3 fwd = (cam.GetRotation() * Vec3::Forward()).Normalized();
-                    m_camera->LookAt(camPos + fwd * 1000.f);
+                    m_cameraManager->GetActiveCamera().LookAt(camPos + fwd * 1000.f);
                 }
-                m_camera->SetPerspective(
+                m_cameraManager->GetActiveCamera().SetPerspective(
                     cam.fov * (3.14159265f / 180.f),
                     static_cast<float>(m_width) / static_cast<float>(m_height),
                     cam.nearPlane, cam.farPlane);
@@ -214,13 +235,15 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
         }
     }
 
-    // Fallback: FlyCameraController when no ECS camera is active.
+    // Fallback: FlyCameraController when no ECS camera is active AND
+    // we're on the default Main camera (id=0). Non-default cameras are
+    // controlled by Lua scripts via mgr_set_position/mgr_look_at.
     // Suppress camera when VFX editor overlay wants mouse input.
-    if (!cameraFromECS && !vfxOverlayWantsMouse) {
-        m_cameraCtrl->Update(*m_camera, *m_input, ctx.dt);
+    if (!cameraFromECS && !vfxOverlayWantsMouse && m_cameraManager->GetActiveCameraId() == 0) {
+        m_cameraCtrl->Update(m_cameraManager->GetActiveCamera(), *m_input, ctx.dt);
     }
 
-    auto& camera = *m_camera;
+    auto& camera = m_cameraManager->GetActiveCamera();
 
     // ── TAA Jitter — Halton(2,3) sub-pixel offset on the projection matrix ──
     // TAA jitter: Halton(2,3) sub-pixel offset applied to the projection matrix.

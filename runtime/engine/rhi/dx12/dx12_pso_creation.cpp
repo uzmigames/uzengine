@@ -176,8 +176,8 @@ ID3D12RootSignature* CreateBindlessRootSignature(
     const bool bindless = (sm >= ShaderModel::SM6_6);
 
     // SM6.6: 5 root params (+ UAV table for compute). SM5: 6 root params (+ SRV table).
-    D3D12_ROOT_PARAMETER1 rootParams[6] = {};
-    uint32_t numParams = 5;
+    D3D12_ROOT_PARAMETER1 rootParams[7] = {};
+    uint32_t numParams = 6;  // 0=b0, 1=b1, 2=b2, 3=b4(shadow), 4=b3(material), 5=UAV
 
     // Root parameter 0: root constants (uint32 descriptorIndex) at b0
     rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
@@ -221,7 +221,14 @@ ID3D12RootSignature* CreateBindlessRootSignature(
     rootParams[4].DescriptorTable.pDescriptorRanges = &uavRange;
     rootParams[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
-    // SM5 only: Root parameter 5 — SRV descriptor table for textures/structured buffers
+    // Root parameter 5: root CBV for material graph params at b3
+    rootParams[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    rootParams[5].Descriptor.ShaderRegister = 3;  // b3 — material graph params + texture indices
+    rootParams[5].Descriptor.RegisterSpace = 0;
+    rootParams[5].Descriptor.Flags = D3D12_ROOT_DESCRIPTOR_FLAG_DATA_STATIC_WHILE_SET_AT_EXECUTE;
+    rootParams[5].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+    // SM5 only: Root parameter 6 — SRV descriptor table for textures/structured buffers
     D3D12_DESCRIPTOR_RANGE1 srvRange = {};
     if (!bindless) {
         srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -231,12 +238,12 @@ ID3D12RootSignature* CreateBindlessRootSignature(
         srvRange.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE;
         srvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
-        rootParams[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-        rootParams[5].DescriptorTable.NumDescriptorRanges = 1;
-        rootParams[5].DescriptorTable.pDescriptorRanges = &srvRange;
-        rootParams[5].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+        rootParams[6].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        rootParams[6].DescriptorTable.NumDescriptorRanges = 1;
+        rootParams[6].DescriptorTable.pDescriptorRanges = &srvRange;
+        rootParams[6].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
-        numParams = 6;
+        numParams = 7;  // 0=b0, 1=b1, 2=b2, 3=b4, 4=UAV, 5=b3(material), 6=SRV(SM5)
     }
 
     D3D12_ROOT_SIGNATURE_FLAGS flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
@@ -351,6 +358,7 @@ ID3D12RootSignature* CreateBindlessRootSignature(
             "CBV(b2, flags=DATA_STATIC_WHILE_SET_AT_EXECUTE, visibility=SHADER_VISIBILITY_ALL),"
             "CBV(b4, flags=DATA_STATIC_WHILE_SET_AT_EXECUTE, visibility=SHADER_VISIBILITY_ALL),"
             "DescriptorTable(UAV(u0, numDescriptors=4, flags=DESCRIPTORS_VOLATILE), visibility=SHADER_VISIBILITY_ALL),"
+            "CBV(b3, flags=DATA_STATIC_WHILE_SET_AT_EXECUTE, visibility=SHADER_VISIBILITY_PIXEL),"
             "StaticSampler(s0, filter=FILTER_ANISOTROPIC, maxAnisotropy=16, "
                 "addressU=TEXTURE_ADDRESS_WRAP, addressV=TEXTURE_ADDRESS_WRAP, addressW=TEXTURE_ADDRESS_WRAP, "
                 "comparisonFunc=COMPARISON_NEVER, borderColor=STATIC_BORDER_COLOR_OPAQUE_BLACK, "

@@ -10,6 +10,7 @@
 #include "taa_upscaler.h"
 #include "tsr_upscaler.h"
 #include "fsr2_upscaler.h"
+#include "dlss_upscaler.h"
 
 #include "log.h"
 
@@ -29,7 +30,11 @@ std::unique_ptr<ITemporalUpscaler> CreateTemporalUpscaler(UpscalerType type) {
     case UpscalerType::FSR2:
         return std::make_unique<FSR2Upscaler>();
 
-    case UpscalerType::DLSS:
+    case UpscalerType::DLSS: {
+        auto dlss = std::make_unique<DlssUpscaler>();
+        return dlss;
+    }
+
     case UpscalerType::XeSS:
         UZ_LOG(Renderer, Warning,
                "Upscaler type {} not yet implemented, falling back to TSR",

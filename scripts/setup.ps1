@@ -471,11 +471,27 @@ Write-Host "  [crashpad] skipped (not needed until 2.x crash reporting)" -Foregr
 
 # ─── Post-Processing & Upscaling ──────────────────────────────────────────
 
-# AMD FidelityFX SDK (includes FSR 1.0/2.x/3.x, SMAA, CAS, etc.)
+# AMD FidelityFX SDK 2.x (FSR4, Radiance Caching, Denoiser)
 Clone-Repo -Name "amd-fidelityfx" `
     -Url "https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK.git" `
     -Branch "main" `
     -RemoveDirs @("docs", "samples", "tools", "PrebuiltSignedDLL", "framework", "BuildFidelityFXSolution.bat")
+
+# AMD FidelityFX SDK 1.1.4 (Brixelizer GI — removed in 2.x)
+# Provides ffx_brixelizer.h/.cpp, ffx_brixelizer_gi.h/.cpp, and ~20 HLSL compute shaders
+# for real-time SDF-based global illumination. MIT license.
+Clone-Repo -Name "amd-fidelityfx-1.1" `
+    -Url "https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK.git" `
+    -Branch "v1.1.4" `
+    -RemoveDirs @("docs", "samples", "tools", "PrebuiltSignedDLL", "framework", "BuildFidelityFXSolution.bat")
+
+# NVIDIA DLSS SDK (Deep Learning Super Sampling — AI temporal upscaling)
+# Provides nvsdk_ngx headers + nvngx_dlss.dll runtime. Requires NVIDIA RTX GPU.
+# NOTE: The SDK is ~200MB; runtime/thirdparty/dlss/ is .gitignored.
+Clone-Repo -Name "dlss" `
+    -Url "https://github.com/NVIDIA/DLSS.git" `
+    -Branch "main" `
+    -RemoveDirs @("doc", "samples", "utils", "tests")
 
 # SMAA — Subpixel Morphological Anti-Aliasing (header-only HLSL/GLSL)
 Clone-Repo -Name "smaa" `
@@ -484,6 +500,17 @@ Clone-Repo -Name "smaa" `
     -RemoveDirs @("Demo", "Scripts")
 
 # ─── Mesh & Geometry Tools ────────────────────────────────────────────────
+
+# MikkTSpace — Industry-standard tangent space generation (Morten Mikkelsen)
+Download-Header -Name "mikktspace" `
+    -Url "https://raw.githubusercontent.com/mmikk/MikkTSpace/master/mikktspace.h" `
+    -FileName "mikktspace.h"
+# Also download the .c implementation
+$mikktDir = Join-Path $ThirdPartyDir "mikktspace"
+$mikktC = Join-Path $mikktDir "mikktspace.c"
+if (-not (Test-Path $mikktC)) {
+    Download-File -Url "https://raw.githubusercontent.com/mmikk/MikkTSpace/master/mikktspace.c" -OutFile $mikktC
+}
 
 # xatlas — UV atlas generation (lightmaps, LOD baking)
 Clone-Repo -Name "xatlas" `

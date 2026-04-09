@@ -21,3 +21,8 @@
 
 - [ ] 3.1 Update `docs/engine/12-rendering/02-visibility-pipeline.md` with LOD selection algorithm
 - [ ] 3.2 Document LOD authoring guidelines (triangle count targets per level, threshold defaults)
+
+## 4. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 4.1 Update or create documentation covering the implementation
+- [ ] 4.2 Write tests covering the new behavior
+- [ ] 4.3 Run tests and confirm they pass

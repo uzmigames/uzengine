@@ -38,3 +38,8 @@
 - [ ] 7.2 Verify billboard VS expands quads from alive particle data.
 - [ ] 7.3 Capture RenderDoc frame to inspect compute shader UAV writes.
 - [ ] 7.4 Update VFX unit tests for new defaults (cm, Z-up) — 20 test failures expected.
+
+## 8. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 8.1 Update or create documentation covering the implementation
+- [ ] 8.2 Write tests covering the new behavior
+- [ ] 8.3 Run tests and confirm they pass

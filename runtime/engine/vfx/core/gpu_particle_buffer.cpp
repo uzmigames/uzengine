@@ -569,6 +569,28 @@ void GPUParticleBuffer::UploadInitialState(IRHIDevice* device, IRHICommandList* 
         if (h.IsValid()) pendingStagingBuffers.push_back(h);
     }
 
+    // ── Zero-init lifespans in BOTH ping-pong sets ──────────────────────
+    // Godot pattern: dispatch=capacity, dead slots do no-op via lifespan==0 check.
+    // Without zero-init, unspawned slots have garbage lifespan → unpredictable behavior.
+    for (int s = 0; s < 2; ++s) {
+        if (sets[s].lifespans.IsValid()) {
+            const uint64_t dataSize = cap * sizeof(float);
+            RHIBufferDesc sd{};
+            sd.sizeBytes = dataSize;
+            sd.usage     = RHIBufferUsage::CopySrc;
+            sd.memory    = RHIMemoryType::Upload;
+            sd.debugName = "VFX_Lifespans_ZeroInit";
+            auto staging = device->CreateBuffer(sd);
+            if (staging.IsValid()) {
+                auto* mapped = static_cast<float*>(device->MapBuffer(staging));
+                std::memset(mapped, 0, static_cast<size_t>(dataSize));
+                device->UnmapBuffer(staging);
+                cmd->CopyBuffer(staging, 0, sets[s].lifespans, 0, dataSize);
+                pendingStagingBuffers.push_back(staging);
+            }
+        }
+    }
+
     // Single batch of CopyDst→UAV barriers after all copies.
     {
         RHIBarrierDesc barriers[3] = {};
@@ -584,7 +606,18 @@ void GPUParticleBuffer::UploadInitialState(IRHIDevice* device, IRHICommandList* 
         cmd->ResourceBarrier(barriers, 3);
     }
 
-    UZ_LOG(VFX, Info, "GPUParticleBuffer: initial state uploaded (freeList[0..{}], head={}, alive=0)",
+    // Lifespan buffers: CopyDst→UAV
+    for (int s = 0; s < 2; ++s) {
+        if (sets[s].lifespans.IsValid()) {
+            RHIBarrierDesc b{};
+            b.buffer      = sets[s].lifespans;
+            b.stateBefore = RHIResourceState::CopyDst;
+            b.stateAfter  = RHIResourceState::UnorderedAccess;
+            cmd->ResourceBarrier(&b, 1);
+        }
+    }
+
+    UZ_LOG(VFX, Info, "GPUParticleBuffer: initial state uploaded (freeList[0..{}], head={}, alive=0, lifespans zeroed)",
            cap - 1, cap);
 }
 

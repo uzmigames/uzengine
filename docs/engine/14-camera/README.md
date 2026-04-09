@@ -1,6 +1,6 @@
 # Camera System — Complete Reference
 
-> **Status**: Planned (Phase 2–3)
+> **Status**: Done (v0.5.0 — CameraManager, multi-camera, editor free-cam)
 > **Source**: `runtime/engine/components/camera_component.h`, `runtime/engine/renderer/camera/`
 > **Depends on**: SceneComponent (§10), Transform (§02), Input System (§13)
 

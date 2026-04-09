@@ -62,3 +62,8 @@
 - [ ] 12.1 Update `docs/engine/19-animation/` with clips, state machine, blend spaces, root motion, notifies.
 - [ ] 12.2 Add `uz.animation` to `docs/lua-api-reference.md`.
 - [ ] 12.3 Document .uzanim and .uzanim_sm formats.
+
+## 13. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 13.1 Update or create documentation covering the implementation
+- [ ] 13.2 Write tests covering the new behavior
+- [ ] 13.3 Run tests and confirm they pass

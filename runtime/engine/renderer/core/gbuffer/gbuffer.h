@@ -20,7 +20,7 @@ class IRHIDevice;
 ///
 /// Allocates and manages the render targets used by the GBuffer pass:
 /// - **Albedo** (RGBA8Unorm) — base color (RGB) + ambient occlusion (A)
-/// - **Normal** (RGBA8Unorm) — octahedral-encoded normal (RG) + metallic (B) + roughness (A)
+/// - **Normal** (RGBA16Float) — octahedral-encoded normal (RG) + metallic (B) + roughness (A)
 /// - **Depth** (D32Float) — hardware depth buffer
 /// - **Velocity** (RG16Float) — screen-space motion vectors for TAA/motion blur
 /// - **Emissive** (RGBA16Float) — HDR emissive color (RGB), alpha unused
@@ -110,7 +110,7 @@ public:
     // ─────────────────────────────────────────────────────────────────────────
 
     RHITextureHandle albedo;       ///< RGBA8Unorm — base color (RGB) + ambient occlusion (A)
-    RHITextureHandle normal;       ///< RGBA8Unorm — octahedral normal (RG) + metallic (B) + roughness (A)
+    RHITextureHandle normal;       ///< RGBA16Float — octahedral normal (RG) + metallic (B) + roughness (A)
     RHITextureHandle depth;        ///< D32Float — depth buffer
     RHITextureHandle velocity;     ///< RG16Float — screen-space motion vectors (TAA / motion blur)
     RHITextureHandle positionWS;   ///< RGBA32Float — world-space position (RGB), debug/verification target

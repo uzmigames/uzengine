@@ -131,13 +131,16 @@ GPUMesh UploadMesh(IRHIDevice* device, IRHICommandList* cmdList, const Mesh& mes
     result.boundsMin = mesh.header.boundsMin;
     result.boundsMax = mesh.header.boundsMax;
 
+    // -- Vertex stride (48 = Vertex, 32 = VertexPacked) --
+    result.vertexStride = mesh.header.vertexStride;
+
     // -- Bindless SRV index --
     if (device->IsBindless()) {
         result.vbSrvIndex = device->GetBufferSRVIndex(result.vertexBuffer);
     }
 
-    UZ_LOG(Renderer, Info, "UploadMesh: uploaded {} vertices, {} indices (bindless SRV={})",
-           result.vertexCount, result.indexCount,
+    UZ_LOG(Renderer, Info, "UploadMesh: uploaded {} vertices, {} indices, stride={} (bindless SRV={})",
+           result.vertexCount, result.indexCount, result.vertexStride,
            result.vbSrvIndex != UINT32_MAX ? static_cast<int>(result.vbSrvIndex) : -1);
 
     return result;

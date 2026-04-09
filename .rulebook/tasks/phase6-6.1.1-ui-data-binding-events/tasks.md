@@ -48,3 +48,8 @@
 
 - [ ] 10.1 Update `docs/engine/18-ui-system/` with data binding, events, input routing, animator.
 - [ ] 10.2 Add `uz.ui` to `docs/lua-api-reference.md`.
+
+## 11. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 11.1 Update or create documentation covering the implementation
+- [ ] 11.2 Write tests covering the new behavior
+- [ ] 11.3 Run tests and confirm they pass

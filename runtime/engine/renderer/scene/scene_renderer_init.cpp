@@ -7,8 +7,13 @@
 #include "subsystems.h"
 
 #include "atmosphere/cloud_pass.h"
+#include "postprocess/dlss_upscaler.h"
+#include "atmosphere/volumetric_fog_pass.h"
 #include "async_texture_decoder.h"
 #include "camera.h"
+#include "camera_manager.h"
+#include "lua_camera_api.h"
+#include "../engine/scripting/lua_vm.h"
 #include "units.h"
 #include "fly_camera_controller.h"
 #include "render_graph_resources.h"
@@ -29,6 +34,10 @@
 #include "shader_compiler_fxc.h"
 #include "dynamic_resolution.h"
 #include "cvar.h"
+#include "raytracing/rt_manager.h"
+#include "passes/raytracing/rt_uv_test_pass.h"
+#include "material_pipeline.h"
+#include "engine/material/material_manager.h"
 #include "engine/vfx/vfx_system.h"
 #include "engine/vfx/asset/vfx_hot_reload.h"
 #include "engine/vfx/components/particle_emitter.h"
@@ -139,15 +148,22 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     m_rgPool = std::make_unique<rg::RgResourcePool>(device);
 
     // ── Camera ──────────────────────────────────────────────────────────
-    m_camera = std::make_unique<Camera>();
+    m_cameraManager = std::make_unique<CameraManager>();
     m_cameraCtrl = std::make_unique<FlyCameraController>();
 
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
-    m_camera->SetHorizontalFOV(90.f, aspect, uz::Units::kDefaultNearPlaneCm, uz::Units::kDefaultFarPlaneCm);
-    m_camera->SetPosition({0.f, 200.f, -500.f});
-    m_camera->LookAt({0.f, 0.f, 0.f}, Vec3::Up());
-    m_cameraCtrl->InitFromCamera(*m_camera);
+    Camera& cam = m_cameraManager->GetActiveCamera();
+    cam.SetHorizontalFOV(90.f, aspect, uz::Units::kDefaultNearPlaneCm, uz::Units::kDefaultFarPlaneCm);
+    cam.SetPosition({0.f, 200.f, -500.f});
+    cam.LookAt({0.f, 0.f, 0.f}, Vec3::Up());
+    m_cameraCtrl->InitFromCamera(cam);
     m_cameraCtrl->SetMoveSpeed(5.f);  // 5 cm/s — matches Lua pbr_showcase_controller default
+
+    // ── Register CameraManager with Lua VM ──
+    if (auto* L = uz::LuaVM::GetState()) {
+        LuaSetCameraManager(L, m_cameraManager.get());
+        LuaRegisterCameraManagerAPI(L);
+    }
 
     // ── GBuffer (at render resolution — upscaled to display res by TAA) ──
     if (!m_gbuffer.Create(device, m_renderWidth, m_renderHeight)) {
@@ -210,6 +226,49 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         UZ_LOG(Renderer, Info, "SceneRenderer: HDR scene color created ({}x{}, RGBA16F, SRV={})",
                m_renderWidth, m_renderHeight, m_hdrSceneColorSrv);
     }
+
+    // ── Debug Lighting Split Targets (MRT from deferred lighting pass) ──
+    {
+        const char* debugNames[3] = {"Debug_DirectLight", "Debug_IndirectLight", "Debug_ShadowMask"};
+        RHITextureHandle* handles[3] = {&m_debugDirectLight, &m_debugIndirectLight, &m_debugShadowMask};
+        uint32_t* srvs[3] = {&m_debugDirectLightSrv, &m_debugIndirectLightSrv, &m_debugShadowMaskSrv};
+        for (int i = 0; i < 3; ++i) {
+            RHITextureDesc dbgDesc{};
+            dbgDesc.width     = m_renderWidth;
+            dbgDesc.height    = m_renderHeight;
+            dbgDesc.format    = RHIFormat::RGBA16Float;
+            dbgDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::RenderTarget;
+            dbgDesc.debugName = debugNames[i];
+            *handles[i] = device->CreateTexture(dbgDesc);
+            *srvs[i] = device->GetTextureSRVIndex(*handles[i]);
+        }
+        UZ_LOG(Renderer, Info, "SceneRenderer: debug lighting targets created (direct={}, indirect={}, shadow={})",
+               m_debugDirectLightSrv, m_debugIndirectLightSrv, m_debugShadowMaskSrv);
+    }
+
+    // ── Path Tracer Accumulation (RGBA32F ping-pong) ───────────────────
+    // Step 6: progressive accumulation with camera-cut reset.
+    // Allocated unconditionally (cheap when r.PathTracer.Enable=0 — never
+    // touched). Format RGBA32F to retain precision over thousands of samples.
+    for (int i = 0; i < 2; ++i) {
+        RHITextureDesc accumDesc{};
+        accumDesc.width     = m_renderWidth;
+        accumDesc.height    = m_renderHeight;
+        accumDesc.format    = RHIFormat::RGBA32Float;
+        accumDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::RenderTarget;
+        accumDesc.debugName = (i == 0) ? "PT_Accum0" : "PT_Accum1";
+        m_ptAccum[i] = device->CreateTexture(accumDesc);
+        if (!m_ptAccum[i].IsValid()) {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create PT accumulation texture {}", i);
+            return false;
+        }
+        m_ptAccumSrv[i] = device->GetTextureSRVIndex(m_ptAccum[i]);
+        UZ_LOG(Renderer, Info, "SceneRenderer: PT accumulation {} created ({}x{}, RGBA32F, SRV={})",
+               i, m_renderWidth, m_renderHeight, m_ptAccumSrv[i]);
+    }
+    m_ptAccumIdx     = 0;
+    m_ptAccumSamples = 0;
+    m_ptHistoryValid = false;
 
     // ── Shadow Atlas ────────────────────────────────────────────────────
     m_shadowAtlas.Init(m_device);
@@ -512,6 +571,33 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         }
     }
 
+    // ── Material Graph Pipeline (non-fatal) ────────────────────────
+    m_materialManager = std::make_unique<MaterialManager>();
+    m_materialPipeline = std::make_unique<MaterialPipeline>();
+    if (m_materialPipeline->Init(device, &m_shaderMgr->GetPipeline())) {
+        UZ_LOG(Renderer, Info, "SceneRenderer: MaterialPipeline initialized");
+    } else {
+        UZ_LOG(Renderer, Warning, "SceneRenderer: MaterialPipeline init failed — graph materials disabled");
+        m_materialPipeline.reset();
+    }
+
+    // ── Ray Tracing (DXR) — non-fatal, gated by r.RayTracing CVar ──
+    m_rtManager = std::make_unique<RTManager>();
+    if (!m_rtManager->Init(device)) {
+        UZ_LOG(Renderer, Info, "SceneRenderer: RT init skipped (no DXR support or r.RayTracing=0)");
+        m_rtManager.reset();
+    }
+
+    // ── RT UV Test Pass (debug) — only if RTManager initialized ─────
+    if (m_rtManager && m_rtManager->IsReady()) {
+        m_rtUVTestPass = std::make_unique<RTUVTestPass>();
+        if (!m_rtUVTestPass->Init(device, m_shaderMgr.get(),
+                                   m_renderWidth, m_renderHeight)) {
+            UZ_LOG(Renderer, Info, "SceneRenderer: RT UV test pass init failed (non-fatal)");
+            m_rtUVTestPass.reset();
+        }
+    }
+
     // ── Auto-Exposure ────────────────────────────────────────────────
     m_autoExposure = std::make_unique<AutoExposure>();
     if (!m_autoExposure->Init(device, m_shaderMgr.get())) {
@@ -536,6 +622,13 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     m_lensFlarePass = std::make_unique<LensFlarePass>();
     (void)m_lensFlarePass->Init(device, m_shaderMgr.get(), width, height);
 
+    // ── Froxel Volumetric Fog (160×90×64 3D grid) ─────────────────────
+    m_volFogPass = std::make_unique<VolumetricFogPass>();
+    if (!m_volFogPass->Init(m_device)) {
+        UZ_LOG(Renderer, Warning, "SceneRenderer: VolumetricFogPass init failed (vol fog disabled)");
+        m_volFogPass.reset();
+    }
+
     // ── Volumetric Clouds (compute pipeline, half-res output) ────────
     m_cloudPass = std::make_unique<CloudPass>();
     if (!m_cloudPass->Init(m_device, m_shaderMgr.get(), m_renderWidth, m_renderHeight)) {
@@ -552,6 +645,13 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
 
     // Cloud noise loading disabled — cloud pass disabled for manual testing.
     // TODO(clouds): re-enable when cloud pipeline is debugged
+
+    // ── Brixelizer GI (AMD FidelityFX sparse SDF voxel GI) ────────────
+    m_brixelizerGI = std::make_unique<BrixelizerGIPass>();
+    if (!m_brixelizerGI->Init(device, m_renderWidth, m_renderHeight)) {
+        UZ_LOG(Renderer, Warning, "SceneRenderer: BrixelizerGI init failed (Brixelizer GI disabled)");
+        m_brixelizerGI.reset();
+    }
 
     // ── DFS Output Texture + Culling Buffers (at render resolution) ──
     // Created here but only populated when DFS is enabled at runtime.
@@ -608,6 +708,21 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     m_sdfGiEnabled = m_globalDistanceField.IsInitialized() && m_radianceCache.IsInitialized();
     if (m_sdfGiEnabled) {
         UZ_LOG(Renderer, Info, "SceneRenderer: SDF GI enabled (GDF + RadianceCache ready)");
+    }
+
+    // ── DDGI octahedral atlases (Majercik 2019) ────────────────────────
+    // Allocates the irradiance + depth atlas textures consumed by the DDGI
+    // probe-update CS (DXR variant) and the deferred lighting Chebyshev
+    // sampler. Atlases are tiny (~256 KB total) and always available; the
+    // shader paths skip them when the SRV indices are sentinel.
+    if (!m_ddgiSystem.CreateResources(device)) {
+        UZ_LOG(Renderer, Warning,
+               "SceneRenderer: DDGI atlas init failed (DDGI sampling disabled)");
+    } else {
+        UZ_LOG(Renderer, Info,
+               "SceneRenderer: DDGI atlas ready (irrad SRV={}, depth SRV={})",
+               m_ddgiSystem.GetIrradianceSrv(),
+               m_ddgiSystem.GetDepthSrv());
     }
 
     // ── SSR Output Textures (at render resolution — operates on GBuffer) ──
@@ -733,11 +848,30 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         m_fallbackNormalSrvIndex = m_device->GetTextureSRVIndex(m_fallbackNormal);
     }
 
-    // ── Temporal Upscaler (default: TAA — matches existing behavior) ────
+    // ── Temporal Upscaler (default: DLSS → TSR fallback chain) ────
     m_upscaler = CreateTemporalUpscaler(m_upscalerType);
     if (m_upscaler) {
         m_upscaler->Init(m_device, m_pipelines.get(), m_cbRing.get());
+
+        // DLSS fallback: if DLSS Init failed (non-NVIDIA GPU, missing DLL, old driver),
+        // fall back to TAA (TSR shader is a stub — not yet implemented).
+        if (m_upscalerType == UpscalerType::DLSS) {
+            auto* dlss = dynamic_cast<DlssUpscaler*>(m_upscaler.get());
+            if (!dlss || !dlss->IsAvailable()) {
+                UZ_LOG(Renderer, Info, "SceneRenderer: DLSS unavailable, falling back to TAA");
+                m_upscaler->Shutdown();
+                m_upscaler.reset();
+                m_upscalerType = UpscalerType::TAA;
+                m_upscaler = CreateTemporalUpscaler(m_upscalerType);
+                if (m_upscaler) {
+                    m_upscaler->Init(m_device, m_pipelines.get(), m_cbRing.get());
+                }
+            }
+        }
     }
+
+    // Enable TAA jitter + upscaler dispatch for any non-None upscaler.
+    m_taaEnabled = (m_upscalerType != UpscalerType::None);
 
     // ── Dynamic Resolution Controller ────────────────────────────────────
     m_dynRes = std::make_unique<DynamicResolutionController>();
@@ -762,7 +896,7 @@ void SceneRenderer::RegisterCVars() {
                    "Render scale percentage (10-200)", 10.f, 200.f);
 
     cvars.Register("r.AntiAliasingMethod", static_cast<float>(m_upscalerType),
-                   "Anti-aliasing method: 0=None, 1=TAA, 2=TSR", 0.f, 5.f);
+                   "Anti-aliasing method: 0=None, 1=TAA, 2=TSR, 3=FSR2, 4=DLSS, 5=XeSS", 0.f, 5.f);
 
     cvars.Register("r.TSR.History.ScreenPercentage", 100.f,
                    "TSR history buffer resolution multiplier (100-200)", 100.f, 200.f);
@@ -869,7 +1003,7 @@ void SceneRenderer::ApplyCVars() {
     m_passInspector.SetGridConfig(gridCfg);
 
     // ── Render Pass Toggles ─────────────────────────────────────────────
-    m_taaEnabled        = cvars.GetBool("r.TAA", true);
+    m_taaEnabled        = cvars.GetBool("r.TAA", false);
     m_ssrEnabled        = cvars.GetBool("r.SSR", true);
     m_motionBlurEnabled = cvars.GetBool("r.MotionBlur", true);
     m_casEnabled        = cvars.GetBool("r.CAS", true);
@@ -986,6 +1120,24 @@ void SceneRenderer::Resize(uint32_t width, uint32_t height) {
         m_hdrSceneColorSrv = m_device->GetTextureSRVIndex(m_hdrSceneColor);
     }
 
+    // Recreate debug MRT targets at render resolution
+    {
+        const char* debugNames[3] = {"Debug_DirectLight", "Debug_IndirectLight", "Debug_ShadowMask"};
+        RHITextureHandle* handles[3] = {&m_debugDirectLight, &m_debugIndirectLight, &m_debugShadowMask};
+        uint32_t* srvs[3] = {&m_debugDirectLightSrv, &m_debugIndirectLightSrv, &m_debugShadowMaskSrv};
+        for (int i = 0; i < 3; ++i) {
+            if (handles[i]->IsValid()) m_device->DestroyTexture(*handles[i]);
+            RHITextureDesc dbgDesc{};
+            dbgDesc.width     = m_renderWidth;
+            dbgDesc.height    = m_renderHeight;
+            dbgDesc.format    = RHIFormat::RGBA16Float;
+            dbgDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::RenderTarget;
+            dbgDesc.debugName = debugNames[i];
+            *handles[i] = m_device->CreateTexture(dbgDesc);
+            *srvs[i] = handles[i]->IsValid() ? m_device->GetTextureSRVIndex(*handles[i]) : UINT32_MAX;
+        }
+    }
+
     // Recreate Hi-Z pyramid at render resolution
     CreateHiZPyramid(m_renderWidth, m_renderHeight);
 
@@ -1013,6 +1165,11 @@ void SceneRenderer::Resize(uint32_t width, uint32_t height) {
         m_cloudPass->OnResize(m_renderWidth, m_renderHeight);
     }
 
+    // Recreate Brixelizer GI output textures at render resolution
+    if (m_brixelizerGI && m_brixelizerGI->IsInitialized()) {
+        m_brixelizerGI->OnResize(m_renderWidth, m_renderHeight);
+    }
+
     // Recreate SSR output textures at render resolution
     DestroySsrResources();
     CreateSsrResources(m_renderWidth, m_renderHeight);
@@ -1036,7 +1193,7 @@ void SceneRenderer::Resize(uint32_t width, uint32_t height) {
     m_colorGradingLutDirty = true;
 
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
-    m_camera->SetAspectRatio(aspect);
+    m_cameraManager->GetActiveCamera().SetAspectRatio(aspect);
 
     if (m_outlinePass) {
         m_outlinePass->Resize(width, height);
@@ -1082,6 +1239,23 @@ void SceneRenderer::Shutdown() {
     if (m_shadowReadbackBuffer.IsValid()) {
         m_device->DestroyBuffer(m_shadowReadbackBuffer);
         m_shadowReadbackBuffer = RHIBufferHandle{};
+    }
+
+    // Destroy material graph pipeline
+    if (m_materialPipeline) {
+        m_materialPipeline->Shutdown();
+        m_materialPipeline.reset();
+    }
+    m_materialManager.reset();
+
+    // Destroy RT infrastructure
+    if (m_rtUVTestPass) {
+        m_rtUVTestPass->Shutdown(m_device);
+        m_rtUVTestPass.reset();
+    }
+    if (m_rtManager) {
+        m_rtManager->Shutdown();
+        m_rtManager.reset();
     }
 
     DestroyAssets();
@@ -1172,6 +1346,14 @@ void SceneRenderer::Shutdown() {
     if (m_envMapSampler) m_envMapSampler->Shutdown();
 
     // ── IBL resources ──────────────────────────────────────────────────
+    // Destroy caller-owned IBL textures (baker no longer auto-destroys)
+    if (m_iblResult.irradianceTexture.IsValid()) {
+        m_device->DestroyTexture(m_iblResult.irradianceTexture);
+    }
+    if (m_iblResult.prefilteredTexture.IsValid()) {
+        m_device->DestroyTexture(m_iblResult.prefilteredTexture);
+    }
+    m_iblResult = {};
     if (m_iblBaker) m_iblBaker->Shutdown();
     if (m_hdriCubemap.IsValid()) {
         m_device->DestroyTexture(m_hdriCubemap);
@@ -1190,6 +1372,32 @@ void SceneRenderer::Shutdown() {
     if (m_hdrSceneColor.IsValid()) {
         m_device->DestroyTexture(m_hdrSceneColor);
         m_hdrSceneColor = RHITextureHandle{};
+    }
+
+    // ── Debug MRT cleanup ───────────────────────────────────────
+    if (m_debugDirectLight.IsValid()) {
+        m_device->DestroyTexture(m_debugDirectLight);
+        m_debugDirectLight = RHITextureHandle{};
+        m_debugDirectLightSrv = UINT32_MAX;
+    }
+    if (m_debugIndirectLight.IsValid()) {
+        m_device->DestroyTexture(m_debugIndirectLight);
+        m_debugIndirectLight = RHITextureHandle{};
+        m_debugIndirectLightSrv = UINT32_MAX;
+    }
+    if (m_debugShadowMask.IsValid()) {
+        m_device->DestroyTexture(m_debugShadowMask);
+        m_debugShadowMask = RHITextureHandle{};
+        m_debugShadowMaskSrv = UINT32_MAX;
+    }
+
+    // ── Path Tracer Accumulation cleanup ────────────────────────
+    for (int i = 0; i < 2; ++i) {
+        if (m_ptAccum[i].IsValid()) {
+            m_device->DestroyTexture(m_ptAccum[i]);
+            m_ptAccum[i] = RHITextureHandle{};
+        }
+        m_ptAccumSrv[i] = UINT32_MAX;
     }
 
     // ── Hi-Z Pyramid cleanup ─────────────────────────────────────
@@ -1238,8 +1446,10 @@ void SceneRenderer::Shutdown() {
     // ── Auto-Exposure cleanup ─────────────────────────────────────
     if (m_autoExposure) m_autoExposure->Shutdown();
     if (m_gtaoPass) m_gtaoPass->Shutdown();
+    if (m_volFogPass) { m_volFogPass->Shutdown(m_device); m_volFogPass.reset(); }
     if (m_cloudPass) { m_cloudPass->Shutdown(); m_cloudPass.reset(); }
     if (m_cloudCmdList) { m_device->DestroyCommandList(m_cloudCmdList); m_cloudCmdList = nullptr; }
+    if (m_brixelizerGI) { m_brixelizerGI->Shutdown(); m_brixelizerGI.reset(); }
 
     // ── Runtime VFX Emitter cleanup ─────────────────────────────────
     // Unregister and destroy all emitters created by SyncVfxEmitters()
@@ -1265,6 +1475,10 @@ void SceneRenderer::Shutdown() {
     if (m_vfxSystem) {
         m_vfxSystem->Shutdown(m_device);
         m_vfxSystem.reset();
+    }
+    if (m_vfxZeroBuffer.IsValid()) {
+        m_device->DestroyBuffer(m_vfxZeroBuffer);
+        m_vfxZeroBuffer = RHIBufferHandle{};
     }
 
     // ── Upload ring cleanup ─────────────────────────────────────────
@@ -1308,7 +1522,7 @@ void SceneRenderer::Shutdown() {
 
     m_rgPool.reset();
     m_cameraCtrl.reset();
-    m_camera.reset();
+    m_cameraManager.reset();
     m_statsOverlay.reset();
     m_vfxEditorOverlay.reset();
     m_gizmoRenderer.reset();

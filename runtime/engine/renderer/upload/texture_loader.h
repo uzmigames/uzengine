@@ -53,6 +53,9 @@ struct TextureLoadResult {
     uint32_t height = 0;                 ///< Texture height in texels.
     uint16_t mipLevels = 0;              ///< Number of mip levels in the texture (0 on failure).
     TextureLoadState loadState = TextureLoadState::Empty; ///< Current loading lifecycle state.
+    bool     isPMREM = false;            ///< True if KTX2 contains a Three.js CubeUV PMREM atlas.
+    uint32_t pmremFaceSize = 0;          ///< Per-face resolution of the PMREM atlas (width / 3).
+    uint32_t pmremLodCount = 0;          ///< Number of LOD levels packed in the PMREM atlas.
 };
 
 /// Computes the full mip chain count for a texture of the given dimensions.
@@ -399,6 +402,21 @@ public:
         size_t dataSize,
         const char* formatHint = "exr",
         const char* debugName = "HDRTexture");
+
+    /// Loads a KTX2 texture (UASTC HDR or ETC1S) from memory.
+    ///
+    /// Uses basis_universal's ktx2_transcoder to decode the KTX2 container
+    /// and transcode the compressed data to RGBA16Float for GPU upload.
+    /// Supports UASTC HDR (FastHDR/PMREM) and standard UASTC/ETC1S.
+    ///
+    /// @param data       Raw KTX2 file bytes.
+    /// @param dataSize   Size of the data buffer in bytes.
+    /// @param debugName  Optional debug name for the GPU resource.
+    [[nodiscard]] static TextureLoadResult LoadKTX2FromMemory(
+        IRHIDevice* device,
+        const void* data,
+        size_t dataSize,
+        const char* debugName = "KTX2Texture");
 
     /// Loads HDR from memory using an external command list and upload context.
     ///

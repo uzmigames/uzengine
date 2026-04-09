@@ -1,8 +1,9 @@
-/// UzEngine sky atmosphere — 32-step ray march with Rayleigh + Mie scattering.
+/// UzEngine sky atmosphere — Bruneton 32-step ray march with Rayleigh + Mie.
 /// @ref Bruneton & Neyret 2017 "Precomputed Atmospheric Scattering"
 /// @ref Hillaire 2020 "A Scalable Sky and Atmosphere Rendering Technique"
-/// Simplified: no precomputed LUTs, no multi-scattering, no ozone.
-/// Full Bruneton LUT path pending.
+/// @ref StillTravelling 2020 "The sun, the sky and the clouds" (Shadertoy tdSXzD)
+///      — sun core/corona/halo pattern.
+/// Volumetric clouds live in cloud_raymarch_cs.hlsl, NOT here.
 
 #include "../common/constants.hlsli"
 
@@ -98,6 +99,7 @@ float2 RaySphereIntersect(float3 origin, float3 dir, float radius) {
     return float2(-b - sq, -b + sq);
 }
 
+
 float4 main(FSInput input) : SV_Target {
     int2 px = int2(input.positionCS.xy);
 
@@ -191,11 +193,40 @@ float4 main(FSInput input) : SV_Target {
         throughput *= T_step;
     }
 
-    // Sun disk
-    float sunCosAngle = cos(max(sunIlluminance.w, 0.00935));
-    if (cosTheta > sunCosAngle) {
-        float sunEdge = smoothstep(sunCosAngle, sunCosAngle + 0.0002, cosTheta);
-        L += sunIlluminance.xyz * sunDiskIntensity * sunEdge * throughput;
+    // ── Sun: hard core + Mie-style halo with explicit cutoff ─────────────
+    // @ref StillTravelling 2020 "The sun, the sky and the clouds"
+    //      (Shadertoy tdSXzD) — getSunPoint + getMie pattern.
+    //
+    // Three components, each with a finite footprint so the sun stays
+    // localized instead of bleeding across the whole sky:
+    //   1. Core    — hard HDR disk inside `sunRadius` (smoothstep edge).
+    //   2. Corona  — warm falloff that ends at ~6× the disk radius.
+    //   3. Halo    — wide soft glow that ends at ~25× the disk radius.
+    {
+        float sunRadius = max(sunIlluminance.w, 0.00935);  // radians
+        float theta     = acos(clamp(cosTheta, -1.0, 1.0));
+
+        // 1. Core — bright white disk with a soft 1px edge.
+        float core = 1.0 - smoothstep(sunRadius * 0.85, sunRadius * 1.05, theta);
+        core *= 50.0;  // HDR — drives bloom + lens flare downstream.
+
+        // 2. Corona — tight falloff over ~2.5× the disk radius.
+        float coronaR  = sunRadius * 2.5;
+        float corona   = saturate(1.0 - theta / coronaR);
+        corona = corona * corona * (3.0 - 2.0 * corona);
+        corona *= 1.5;
+
+        // 3. Halo — narrow soft glow, hard cutoff at ~8× sunRadius.
+        float haloR  = sunRadius * 8.0;
+        float halo   = saturate(1.0 - theta / haloR);
+        halo = pow(halo, 4.0) * 0.2;
+
+        // Warm tint for corona/halo; the core stays neutral white.
+        float3 warmTint = float3(1.00, 0.72, 0.40);
+        float3 sunCol = sunIlluminance.xyz * core
+                      + sunIlluminance.xyz * warmTint * (corona + halo);
+
+        L += sunCol * sunDiskIntensity * throughput;
     }
 
     return float4(max(L, 0.0), 1.0);

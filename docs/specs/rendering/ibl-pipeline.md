@@ -105,6 +105,44 @@ The IBL bake is triggered by the sky change flag (`skyIBLDirty`). The
 The baked SRV indices and SH coefficients are forwarded to `PerFrameCB` for use by
 the deferred lighting pass.
 
+### Light Probe Volume (Author-Placed Irradiance Grid)
+
+`runtime/engine/renderer/gi/irradiance_probe_grid.{h,cpp}` implements a 3D grid
+of L2 SH probes within an authored AABB driven by `LightProbeVolumeComponent`.
+Used for indoor lighting where the global sky SH is too uniform — the volume
+provides spatially-varying indirect diffuse via trilinear blend of 8 surrounding
+probes during deferred lighting.
+
+**Per-probe storage**: 7 float4 (112 bytes), matching the L2 SH packing used by
+`SkyIrradianceEnvironmentMap`. The grid is allocated as a single
+`StructuredBuffer<float4>` with `kSHFloat4PerProbe * probeCount` entries; the
+linear index is `x + y*dimX + z*dimX*dimY`.
+
+**Initial fill** — `IrradianceProbeGrid::CaptureFromSkyCubemap(cmdList, sky, faceSize)`
+projects the sky cubemap to L2 SH via `ProjectCubemapToSH` and broadcasts the
+coefficients to every probe. Sky is positionally invariant, so spatial variation
+comes from the SDF/DXR probe-update passes (tasks 3.x / 4.x of the indoor
+lighting milestone).
+
+**CB layout** — populated each frame in
+`runtime/engine/renderer/frame/frame_constants.cpp`:
+
+| Field | Bytes | Purpose |
+|---|---|---|
+| `lpvEnabled` | 4 | 1 = volume active |
+| `lpvProbeBufferSrv` | 4 | Bindless SRV of probe SH buffer |
+| `lpvDimX/Y/Z` | 12 | Probes per axis |
+| `lpvOriginX/Y/Z` | 12 | World-space AABB min corner (cm) |
+| `lpvInvSizeX/Y/Z` | 12 | Pre-divided 1 / extentSize |
+| `lpvIntensity` | 4 | Probe contribution multiplier |
+
+`PerFrameCB` was grown 768 → 1024 bytes (4 × 256) to fit these fields plus
+forward-looking padding. Mirrored byte-for-byte in `PerFrameParams`.
+
+**Shader sampling** — `deferred_lighting_ps.hlsl` performs trilinear blend of
+the 8 surrounding probes after the global sky SH and radiance cache paths,
+lerping the result into `irradiance` by `lpvIntensity`. Bindless-only path.
+
 ### Equirectangular to Cubemap
 
 `equirect_to_cubemap_cs.hlsl` converts an HDR equirectangular environment map to a
@@ -159,3 +197,14 @@ the same RGBA16F 6-face cubemap consumed by `BakeEnvironment()`.
 | IBL bake triggered by sky change flag | Done |
 | IBL from HDR equirectangular file (Phase 3 artist workflow) | Planned |
 | IBL from in-scene cubemap capture actors | Planned |
+| Brixelizer GI diffuse + specular composite in deferred lighting | In Progress |
+
+### Brixelizer GI Integration
+
+AMD FidelityFX Brixelizer GI adds spatially-varying indirect lighting (diffuse + specular) that supplements the global IBL pipeline. While IBL provides uniform ambient from the sky cubemap, Brixelizer GI provides **local** indirect light that varies based on geometry (e.g., bright near windows, dark in corridors).
+
+In `deferred_lighting_ps.hlsl`, Brixelizer GI output is sampled after IBL and added to the ambient terms:
+- `diffuseAmbient += brixDiffuse × baseColor × (1 - metallic)`
+- `specularAmbient += brixSpecular × lerp(F0, 1, roughness × 0.5)`
+
+The GI output SRV index is passed via `brixGIDiffuseSrv` in PerFrameCB (offset 764). Specular SRV is at `diffuseSrv + 1` by allocation convention. Gated by `r.BrixelizerGI` CVar (default: off). See `docs/specs/rendering/gi-system.md` for full Brixelizer GI specification.

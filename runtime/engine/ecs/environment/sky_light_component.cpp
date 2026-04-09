@@ -31,8 +31,18 @@ UZ_REGISTER_COMPONENT_SERIALIZER(sky_light, uz::SkyLightComponent,
         c.indirectLightingIntensity  = uz::json::Float(j, "indirect_lighting_intensity", defaults.indirectLightingIntensity);
 
         // Source
-        c.sourceType       = static_cast<uz::ESkyLightSourceType>(
-            uz::json::Int(j, "source_type", static_cast<int32_t>(defaults.sourceType)));
+        {
+            auto it = j.find("cubemap_path");
+            if (it != j.end() && it->is_string()) {
+                c.cubemapPath = it->get<std::string>();
+            }
+        }
+        if (!c.cubemapPath.empty()) {
+            c.sourceType = uz::ESkyLightSourceType::SpecifiedCubemap;
+        } else {
+            c.sourceType = static_cast<uz::ESkyLightSourceType>(
+                uz::json::Int(j, "source_type", static_cast<int32_t>(defaults.sourceType)));
+        }
         c.realTimeCapture  = uz::json::Bool(j, "real_time_capture", defaults.realTimeCapture);
         c.cubemapResolution = uz::json::Uint(j, "cubemap_resolution", defaults.cubemapResolution);
 
@@ -62,6 +72,9 @@ UZ_REGISTER_COMPONENT_SERIALIZER(sky_light, uz::SkyLightComponent,
         j["indirect_lighting_intensity"] = c->indirectLightingIntensity;
 
         // Source
+        if (!c->cubemapPath.empty()) {
+            j["cubemap_path"] = c->cubemapPath;
+        }
         j["source_type"]        = static_cast<int32_t>(c->sourceType);
         j["real_time_capture"]  = c->realTimeCapture;
         j["cubemap_resolution"] = c->cubemapResolution;

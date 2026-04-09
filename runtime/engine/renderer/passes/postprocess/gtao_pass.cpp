@@ -4,6 +4,7 @@
 /// and dispatches GPU work each frame. The filtered AO result is consumed
 /// by the deferred lighting pass to modulate ambient occlusion.
 ///
+/// BUILD MARKER: rebuild trigger for shader gen.h dependency tracking.
 
 #include "gtao_pass.h"
 
@@ -21,7 +22,7 @@
 UZ_DECLARE_LOG_CATEGORY(Renderer);
 
 // ── CVars ────────────────────────────────────────────────────────────────
-static auto* cv_GTAOEnabled        = UZ_CVAR_BOOL("r.GTAO", true, "Ground truth ambient occlusion");
+static auto* cv_GTAOEnabled        = UZ_CVAR_BOOL("r.GTAO", false, "Ground truth ambient occlusion");
 static auto* cv_GTAORadius         = UZ_CVAR_FLOAT("r.GTAO.Radius", 200.f, "AO search radius (cm)", 1.f, 10000.f);
 static auto* cv_GTAOIntensity      = UZ_CVAR_FLOAT("r.GTAO.Intensity", 1.f, "AO strength multiplier", 0.f, 5.f);
 static auto* cv_GTAOPower          = UZ_CVAR_FLOAT("r.GTAO.Power", 1.f, "AO power curve exponent", 0.1f, 10.f);

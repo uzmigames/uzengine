@@ -125,7 +125,7 @@ struct RHIConfig {
 
 | Backend | Status | Platform | Notes |
 |---------|--------|----------|-------|
-| `DX12` | ✅ Implemented | Windows 10+ | Primary backend, SM5–SM6.7 support |
+| `DX12` | ✅ Implemented | Windows 10+ | Primary backend, SM5–SM6.8 support |
 | `Vulkan` | 📋 Planned | Windows, Linux | Cross-platform fallback |
 | `Metal` | 📋 Planned | macOS | Apple Silicon & Intel Macs |
 | `Null` | ✅ Implemented | All | Headless rendering (testing) |

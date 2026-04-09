@@ -55,3 +55,8 @@
 
 - [x] 9.1 Add a `///` doc block at the top of `vfx_viewport_app.h` describing the class purpose, lifecycle, and the key difference from `VFXViewportDemo` (Application vs. DemoApplication base). — Full doc block with comparison table and lifecycle diagram.
 - [x] 9.2 Update `docs/guides/` with a one-page `vfx-engine-integration.md` covering how to migrate a DemoApplication VFX demo to Application, including the `OnStart` emitter setup pattern and `PreEndCallback` UI overlay pattern. — Created docs/guides/vfx-engine-integration.md.
+
+## 10. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 10.1 Update or create documentation covering the implementation
+- [ ] 10.2 Write tests covering the new behavior
+- [ ] 10.3 Run tests and confirm they pass

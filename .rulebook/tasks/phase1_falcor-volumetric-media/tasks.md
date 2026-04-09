@@ -21,3 +21,8 @@
 - [ ] 3.3 Temporal reprojection: ping-pong `uPrevVolume` buffer. Reproject previous frame via camera delta: `prevUV = projectWorldPos(worldPos, prevViewProj)`. Blend: `accumulated = lerp(current, prevSample, 0.9)` if reprojection UV is in [0,1] and depth matches. Reset on disocclusion.
 - [ ] 3.4 Demo: create a smoke volume using `GenerateSphereVolume` (radius=200cm, density=0.5). Place directional light on one side. Run `demo.exe --screenshot-stdout --frames 30`. Verify: visible volumetric shadow cone, forward-scattering halo, transmittance fade at volume edges.
 - [ ] 3.5 Build + verify: volume renders without device removal. GPU timestamp < 3ms for single 128³ volume at 1080p half-res. Temporal reprojection reduces frame-to-frame noise (compare frame 1 vs frame 30 via `--flip`, expect significant noise reduction).
+
+## 1. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 1.1 Update or create documentation covering the implementation
+- [ ] 1.2 Write tests covering the new behavior
+- [ ] 1.3 Run tests and confirm they pass

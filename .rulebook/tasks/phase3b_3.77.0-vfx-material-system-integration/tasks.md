@@ -56,3 +56,8 @@ Particle Color, SubUV, Dynamic Parameter nodes.
 - [ ] 8.1 Document VFXMaterial struct and how to assign to emitters. **Not yet implemented** — no doc guide for VFXMaterial in docs/guides/.
 - [ ] 8.2 Document blend mode differences and when to use each. **Not yet implemented.**
 - [ ] 8.3 Update VFX viewport help overlay with material controls. **Not yet implemented** — M key (material cycling) is not documented in the H-key help overlay.
+
+## 9. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 9.1 Update or create documentation covering the implementation
+- [ ] 9.2 Write tests covering the new behavior
+- [ ] 9.3 Run tests and confirm they pass

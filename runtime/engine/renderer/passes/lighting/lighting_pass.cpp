@@ -44,6 +44,9 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
         if (desc.shadowAtlasResource.IsValid()) {
             pb.Read(desc.shadowAtlasResource, RHIResourceState::ShaderResource);
         }
+        if (desc.apVolumeResource.IsValid()) {
+            pb.Read(desc.apVolumeResource, RHIResourceState::ShaderResource);
+        }
 
         pb.SetExecutionCallback([desc](IRHICommandList* cmd, const rg::RgPassResources& res) {
             UZ_PROFILE_SCOPE("DeferredLighting::Execute");
@@ -54,11 +57,31 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
             constexpr float kClearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
             cmd->ClearRenderTarget(bb, kClearColor);
 
-            // ── Begin render pass — 1 color attachment, no depth ─────────
+            // ── Clear debug MRT targets if present ──────────────────────
+            const bool hasMRT = desc.debugDirectLight.IsValid()
+                             && desc.debugIndirectLight.IsValid()
+                             && desc.debugShadowMask.IsValid();
+            if (hasMRT) {
+                cmd->ClearRenderTarget(desc.debugDirectLight,   kClearColor);
+                cmd->ClearRenderTarget(desc.debugIndirectLight,  kClearColor);
+                cmd->ClearRenderTarget(desc.debugShadowMask,     kClearColor);
+            }
+
+            // ── Begin render pass — 1 or 4 color attachments, no depth ──
             RHIRenderPassDesc passDesc{};
-            passDesc.colorAttachmentCount = 1;
             passDesc.colorAttachments[0].texture = bb;
             passDesc.colorAttachments[0].clear   = false;
+            if (hasMRT) {
+                passDesc.colorAttachmentCount = 4;
+                passDesc.colorAttachments[1].texture = desc.debugDirectLight;
+                passDesc.colorAttachments[1].clear   = false;
+                passDesc.colorAttachments[2].texture = desc.debugIndirectLight;
+                passDesc.colorAttachments[2].clear   = false;
+                passDesc.colorAttachments[3].texture = desc.debugShadowMask;
+                passDesc.colorAttachments[3].clear   = false;
+            } else {
+                passDesc.colorAttachmentCount = 1;
+            }
             passDesc.hasDepth = false;
 
             cmd->BeginRenderPass(passDesc);
@@ -117,15 +140,17 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
             // ── Bind G-Buffer textures ───────────────────────────────────
             if (desc.bindless) {
                 // SM6.6: push descriptor indices for G-Buffer SRVs.
-                const uint32_t indices[6] = {
+                const uint32_t indices[8] = {
                     desc.albedoSrvIndex,
                     desc.normalSrvIndex,
                     desc.depthSrvIndex,
                     desc.positionSrvIndex,
                     desc.emissiveSrvIndex,
-                    desc.envMisSrvIndex
+                    desc.envMisSrvIndex,
+                    desc.iblPrefilteredSrvIndex,
+                    desc.iblIrradianceSrvIndex
                 };
-                cmd->SetRootConstants(kSlotRootConstants, indices, 6);
+                cmd->SetRootConstants(kSlotRootConstants, indices, 8);
             } else {
                 // SM5: bind G-Buffer textures directly at fragment texture slots t0-t4, t10.
                 cmd->SetFragmentTexture(0, desc.albedoTexture);
@@ -144,8 +169,14 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
                     cmd->SetFragmentTexture(9, desc.gtaoTexture);
                 }
                 cmd->SetFragmentTexture(10, desc.emissiveTexture);
-                // t11 (local shadow atlas) is bound by ShaderParameterBinder
-                // via ShadowDataParams metadata above.
+                // t11: SSR temporal output
+                if (desc.ssrTexture.IsValid()) {
+                    cmd->SetFragmentTexture(11, desc.ssrTexture);
+                }
+                // t12: SSGI upsampled indirect diffuse
+                if (desc.ssgiTexture.IsValid()) {
+                    cmd->SetFragmentTexture(12, desc.ssgiTexture);
+                }
             }
 
             // ── Viewport and scissor ─────────────────────────────────────

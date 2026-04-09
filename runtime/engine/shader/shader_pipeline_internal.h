@@ -46,6 +46,10 @@ inline ShaderStageCompile InferStageFromPath(const std::string& path) {
         if (suffix == "_as") return ShaderStageCompile::Amplification;
         if (suffix == "_ms") return ShaderStageCompile::Mesh;
     }
+    if (stem.size() >= 4) {
+        auto suffix4 = stem.substr(stem.size() - 4);
+        if (suffix4 == "_lib") return ShaderStageCompile::Library;
+    }
     // Fallback: check for common naming patterns
     if (stem.find("vert") != std::string::npos) return ShaderStageCompile::Vertex;
     if (stem.find("pixel") != std::string::npos || stem.find("frag") != std::string::npos)

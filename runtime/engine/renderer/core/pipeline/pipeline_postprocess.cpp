@@ -293,6 +293,210 @@ RHIPipelineHandle PipelineLibrary::GetSsrTemporal() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SSR Spatial Bilateral Denoise Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureSsrSpatialDenoiseShader() {
+    if (m_ssrSpatialDenoiseCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::SsrSpatialDenoiseCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile SsrSpatialDenoiseCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "ssr_spatial_denoise_cs";
+
+    m_ssrSpatialDenoiseCS = m_device->CreateShader(shaderDesc);
+    if (!m_ssrSpatialDenoiseCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SsrSpatialDenoiseCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetSsrSpatialDenoise() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetSsrSpatialDenoise called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_ssrSpatialDenoise.IsValid()) {
+        return m_ssrSpatialDenoise;
+    }
+
+    if (!EnsureSsrSpatialDenoiseShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ssrSpatialDenoiseCS;
+    desc.debugName     = "SSR_SpatialDenoise";
+
+    m_ssrSpatialDenoise = m_device->CreateComputePipeline(desc);
+    if (!m_ssrSpatialDenoise.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SSR_SpatialDenoise pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created SSR_SpatialDenoise pipeline");
+    }
+
+    return m_ssrSpatialDenoise;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SSR Post-TAA Composite Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureSsrCompositeShader() {
+    if (m_ssrCompositeCS.IsValid()) return true;
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::SsrCompositeCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile SsrCompositeCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "ssr_composite_cs";
+
+    m_ssrCompositeCS = m_device->CreateShader(shaderDesc);
+    if (!m_ssrCompositeCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SsrCompositeCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetSsrComposite() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetSsrComposite called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_ssrComposite.IsValid()) return m_ssrComposite;
+    if (!EnsureSsrCompositeShader()) return RHIPipelineHandle::Invalid();
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ssrCompositeCS;
+    desc.debugName     = "SSR_Composite";
+
+    m_ssrComposite = m_device->CreateComputePipeline(desc);
+    if (!m_ssrComposite.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SSR_Composite pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created SSR_Composite pipeline");
+    }
+    return m_ssrComposite;
+}
+
+// ── SSR Tile Classification ──────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureSsrTileClassifyShader() {
+    if (m_ssrTileClassifyCS.IsValid()) return true;
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::SsrTileClassifyCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile SsrTileClassifyCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "ssr_tile_classify_cs";
+
+    m_ssrTileClassifyCS = m_device->CreateShader(shaderDesc);
+    if (!m_ssrTileClassifyCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SsrTileClassifyCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetSsrTileClassify() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetSsrTileClassify called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_ssrTileClassify.IsValid()) return m_ssrTileClassify;
+    if (!EnsureSsrTileClassifyShader()) return RHIPipelineHandle::Invalid();
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ssrTileClassifyCS;
+    desc.debugName     = "SSR_TileClassify";
+
+    m_ssrTileClassify = m_device->CreateComputePipeline(desc);
+    if (!m_ssrTileClassify.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SSR_TileClassify pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created SSR_TileClassify pipeline");
+    }
+    return m_ssrTileClassify;
+}
+
+// ── SSR Prepare Indirect Args ────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureSsrPrepareIndirectShader() {
+    if (m_ssrPrepareIndirectCS.IsValid()) return true;
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::SsrPrepareIndirectCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile SsrPrepareIndirectCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "ssr_prepare_indirect_cs";
+
+    m_ssrPrepareIndirectCS = m_device->CreateShader(shaderDesc);
+    if (!m_ssrPrepareIndirectCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SsrPrepareIndirectCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetSsrPrepareIndirect() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetSsrPrepareIndirect called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_ssrPrepareIndirect.IsValid()) return m_ssrPrepareIndirect;
+    if (!EnsureSsrPrepareIndirectShader()) return RHIPipelineHandle::Invalid();
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ssrPrepareIndirectCS;
+    desc.debugName     = "SSR_PrepareIndirect";
+
+    m_ssrPrepareIndirect = m_device->CreateComputePipeline(desc);
+    if (!m_ssrPrepareIndirect.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SSR_PrepareIndirect pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created SSR_PrepareIndirect pipeline");
+    }
+    return m_ssrPrepareIndirect;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Color Grading LUT Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 

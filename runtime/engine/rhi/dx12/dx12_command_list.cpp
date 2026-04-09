@@ -43,6 +43,8 @@ static D3D12_RESOURCE_STATES ToD3D12ResourceState(RHIResourceState state) {
         case RHIResourceState::CopyDst:           return D3D12_RESOURCE_STATE_COPY_DEST;
         case RHIResourceState::Present:           return D3D12_RESOURCE_STATE_PRESENT;
         case RHIResourceState::IndirectArgument:  return D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT;
+        case RHIResourceState::RaytracingAccelerationStructure:
+            return D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE;
         default:                                  return D3D12_RESOURCE_STATE_COMMON;
     }
 }
@@ -207,20 +209,24 @@ void DX12CommandList::Begin() {
     m_currentPassDescBase = UINT32_MAX;
 
     // Bind the global shader-visible descriptor heaps for bindless access
-    if (m_listType != D3D12_COMMAND_LIST_TYPE_COPY) {
-        ID3D12DescriptorHeap* heaps[] = {
-            m_device->GetDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV),
-            m_device->GetDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER),
-        };
+    RebindBindlessHeaps();
+}
 
-        uint32_t heapCount = 0;
-        for (auto* h : heaps) {
-            if (h) ++heapCount;
-        }
+void DX12CommandList::RebindBindlessHeaps() {
+    if (m_listType == D3D12_COMMAND_LIST_TYPE_COPY) return;
 
-        if (heapCount > 0) {
-            m_cmdList->SetDescriptorHeaps(heapCount, heaps);
-        }
+    ID3D12DescriptorHeap* heaps[] = {
+        m_device->GetDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV),
+        m_device->GetDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER),
+    };
+
+    uint32_t heapCount = 0;
+    for (auto* h : heaps) {
+        if (h) ++heapCount;
+    }
+
+    if (heapCount > 0) {
+        m_cmdList->SetDescriptorHeaps(heapCount, heaps);
     }
 }
 
@@ -649,10 +655,12 @@ void DX12CommandList::ResourceBarrier(const RHIBarrierDesc* barriers, uint32_t c
             continue;
         }
 
-        // UAV→UAV: emit a UAV barrier (sync fence), not a transition.
-        // DX12 rejects Transition barriers with before == after state.
-        if (b.stateBefore == b.stateAfter &&
-            b.stateBefore == RHIResourceState::UnorderedAccess) {
+        // UAV flush: when both states are UnorderedAccess, DX12 requires a
+        // D3D12_RESOURCE_BARRIER_TYPE_UAV barrier (not a transition). A
+        // transition with identical before/after states is illegal and causes
+        // E_INVALIDARG on CommandList::Close.
+        if (b.stateBefore == RHIResourceState::UnorderedAccess
+            && b.stateAfter == RHIResourceState::UnorderedAccess) {
             d3dBarriers[validCount] = CD3DX12_RESOURCE_BARRIER::UAV(resource);
         } else if (b.stateBefore == b.stateAfter) {
             // Skip non-UAV same-state barriers (invalid in DX12).
@@ -1058,6 +1066,133 @@ void DX12CommandList::FatalErrorLoop(const char* operation, uint32_t hresult) {
     // Use abort() to trigger the crash handler (SEH exception filter)
     // which writes the minidump, crash.txt, and crash.json.
     std::abort();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Ray Tracing Commands
+// ─────────────────────────────────────────────────────────────────────────────
+
+void DX12CommandList::BuildBLAS(RHIBLASHandle blas, RHIBufferHandle scratchBuffer,
+                                bool update) {
+    auto* blasData = m_device->GetBLASPool().Get(blas.index, blas.generation);
+    if (!blasData || !blasData->resultResource) {
+        UZ_LOG(RHI, Error, "BuildBLAS: Invalid BLAS handle");
+        return;
+    }
+
+    ComPtr<ID3D12GraphicsCommandList4> cmdList4;
+    if (FAILED(m_cmdList.As(&cmdList4))) {
+        UZ_LOG(RHI, Error, "BuildBLAS: Failed to query ID3D12GraphicsCommandList4 — DXR not supported");
+        return;
+    }
+
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC buildDesc = {};
+    buildDesc.Inputs.Type          = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
+    buildDesc.Inputs.Flags         = blasData->buildFlags;
+    if (update) {
+        buildDesc.Inputs.Flags    |= D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PERFORM_UPDATE;
+        buildDesc.SourceAccelerationStructureData = blasData->resultResource->GetGPUVirtualAddress();
+    }
+    buildDesc.Inputs.NumDescs      = static_cast<UINT>(blasData->geometryDescs.size());
+    buildDesc.Inputs.DescsLayout   = D3D12_ELEMENTS_LAYOUT_ARRAY;
+    buildDesc.Inputs.pGeometryDescs = blasData->geometryDescs.data();
+    buildDesc.DestAccelerationStructureData    = blasData->resultResource->GetGPUVirtualAddress();
+
+    // Use the BLAS's own scratch buffer if no override is provided
+    if (scratchBuffer.IsValid()) {
+        auto& bufPool = m_device->GetBufferPool();
+        auto* buf = bufPool.Get(scratchBuffer.index, scratchBuffer.generation);
+        buildDesc.ScratchAccelerationStructureData = buf ? buf->resource->GetGPUVirtualAddress() : 0;
+    } else {
+        buildDesc.ScratchAccelerationStructureData = blasData->scratchResource->GetGPUVirtualAddress();
+    }
+
+    cmdList4->BuildRaytracingAccelerationStructure(&buildDesc, 0, nullptr);
+}
+
+void DX12CommandList::BuildTLAS(RHITLASHandle tlas, RHIBufferHandle instanceBuffer,
+                                uint32_t instanceCount, RHIBufferHandle scratchBuffer,
+                                bool update) {
+    auto* tlasData = m_device->GetTLASPool().Get(tlas.index, tlas.generation);
+    if (!tlasData || !tlasData->resultResource) {
+        UZ_LOG(RHI, Error, "BuildTLAS: Invalid TLAS handle");
+        return;
+    }
+
+    ComPtr<ID3D12GraphicsCommandList4> cmdList4;
+    if (FAILED(m_cmdList.As(&cmdList4))) {
+        UZ_LOG(RHI, Error, "BuildTLAS: Failed to query ID3D12GraphicsCommandList4");
+        return;
+    }
+
+    auto& bufPool = m_device->GetBufferPool();
+    auto* instBuf = bufPool.Get(instanceBuffer.index, instanceBuffer.generation);
+    if (!instBuf) {
+        UZ_LOG(RHI, Error, "BuildTLAS: Invalid instance buffer handle");
+        return;
+    }
+
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC buildDesc = {};
+    buildDesc.Inputs.Type          = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
+    buildDesc.Inputs.Flags         = tlasData->buildFlags;
+    if (update) {
+        buildDesc.Inputs.Flags    |= D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PERFORM_UPDATE;
+        buildDesc.SourceAccelerationStructureData = tlasData->resultResource->GetGPUVirtualAddress();
+    }
+    buildDesc.Inputs.NumDescs      = instanceCount;
+    buildDesc.Inputs.DescsLayout   = D3D12_ELEMENTS_LAYOUT_ARRAY;
+    buildDesc.Inputs.InstanceDescs = instBuf->resource->GetGPUVirtualAddress();
+    buildDesc.DestAccelerationStructureData = tlasData->resultResource->GetGPUVirtualAddress();
+
+    // Use the TLAS's own scratch buffer if no override is provided
+    if (scratchBuffer.IsValid()) {
+        auto* buf = bufPool.Get(scratchBuffer.index, scratchBuffer.generation);
+        buildDesc.ScratchAccelerationStructureData = buf ? buf->resource->GetGPUVirtualAddress() : 0;
+    } else {
+        buildDesc.ScratchAccelerationStructureData = tlasData->scratchResource->GetGPUVirtualAddress();
+    }
+
+    cmdList4->BuildRaytracingAccelerationStructure(&buildDesc, 0, nullptr);
+}
+
+void DX12CommandList::DispatchRays(RHIRTPipelineHandle pipeline,
+                                   const RHIDispatchRaysDesc& desc) {
+    auto* rtPipeline = m_device->GetRTPipelinePool().Get(pipeline.index, pipeline.generation);
+    if (!rtPipeline || !rtPipeline->stateObject) {
+        UZ_LOG(RHI, Error, "DispatchRays: Invalid RT pipeline handle");
+        return;
+    }
+
+    ComPtr<ID3D12GraphicsCommandList4> cmdList4;
+    if (FAILED(m_cmdList.As(&cmdList4))) {
+        UZ_LOG(RHI, Error, "DispatchRays: Failed to query ID3D12GraphicsCommandList4");
+        return;
+    }
+
+    // Bind the RT pipeline state object
+    cmdList4->SetPipelineState1(rtPipeline->stateObject);
+
+    D3D12_DISPATCH_RAYS_DESC d3dDesc = {};
+    d3dDesc.RayGenerationShaderRecord.StartAddress  = desc.rayGenShaderTable.startAddress;
+    d3dDesc.RayGenerationShaderRecord.SizeInBytes    = desc.rayGenShaderTable.sizeInBytes;
+    d3dDesc.MissShaderTable.StartAddress             = desc.missShaderTable.startAddress;
+    d3dDesc.MissShaderTable.SizeInBytes              = desc.missShaderTable.sizeInBytes;
+    d3dDesc.MissShaderTable.StrideInBytes            = desc.missShaderTable.strideInBytes;
+    d3dDesc.HitGroupTable.StartAddress               = desc.hitGroupTable.startAddress;
+    d3dDesc.HitGroupTable.SizeInBytes                = desc.hitGroupTable.sizeInBytes;
+    d3dDesc.HitGroupTable.StrideInBytes              = desc.hitGroupTable.strideInBytes;
+    d3dDesc.Width  = desc.width;
+    d3dDesc.Height = desc.height;
+    d3dDesc.Depth  = desc.depth;
+
+    cmdList4->DispatchRays(&d3dDesc);
+}
+
+void DX12CommandList::UAVBarrierAS() {
+    D3D12_RESOURCE_BARRIER barrier = {};
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+    barrier.UAV.pResource = nullptr; // null = all UAVs
+    m_cmdList->ResourceBarrier(1, &barrier);
 }
 
 } // namespace uz

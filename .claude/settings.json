@@ -19,9 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash .claude/hooks/detect-gaps.sh 2>/dev/null || true",
-            "timeout": 15,
-            "statusMessage": "Detecting codebase gaps..."
+            "command": "bash E:/UzEngine/.claude/hooks/resume-from-handoff.sh"
           }
         ]
       },
@@ -30,20 +28,34 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash U:/UzmiEngine/uzengine/.claude/hooks/on-compact-reinject.sh"
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash U:/UzmiEngine/uzengine/.claude/hooks/resume-from-handoff.sh"
+            "command": "bash E:/UzEngine/.claude/hooks/on-compact-reinject.sh"
           }
         ]
       }
     ],
     "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/block-destructive-git.sh",
+            "timeout": 5,
+            "statusMessage": "Checking git safety..."
+          }
+        ]
+      },
+      {
+        "matcher": "Bash(cd*zig build*)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/clean-shader-cache.sh 2>/dev/null || true",
+            "timeout": 10,
+            "statusMessage": "Cleaning shader cache..."
+          }
+        ]
+      },
       {
         "matcher": "Bash(git commit*)",
         "hooks": [
@@ -59,7 +71,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash U:/UzmiEngine/uzengine/.claude/hooks/enforce-no-deferred.sh"
+            "command": "bash E:/UzEngine/.claude/hooks/enforce-no-deferred.sh"
           }
         ]
       },
@@ -67,7 +79,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash U:/UzmiEngine/uzengine/.claude/hooks/enforce-no-shortcuts.sh"
+            "command": "bash E:/UzEngine/.claude/hooks/enforce-no-shortcuts.sh"
           }
         ]
       },
@@ -75,7 +87,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash U:/UzmiEngine/uzengine/.claude/hooks/enforce-mcp-for-tasks.sh"
+            "command": "bash E:/UzEngine/.claude/hooks/enforce-mcp-for-tasks.sh"
           }
         ]
       }
@@ -85,7 +97,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash U:/UzmiEngine/uzengine/.claude/hooks/check-context-and-handoff.sh"
+            "command": "bash E:/UzEngine/.claude/hooks/check-context-and-handoff.sh"
           }
         ]
       }

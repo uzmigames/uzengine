@@ -663,8 +663,8 @@ TEST(AverageRootConstants, WriteAndReadBack) {
 // PerFrameCB — IBL fields (size, defaults, offsets, round-trips)
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(PerFrameCB_IBL, SizeIs768Bytes) {
-    EXPECT_EQ(sizeof(PerFrameCB), 768u);
+TEST(PerFrameCB_IBL, SizeIs1024Bytes) {
+    EXPECT_EQ(sizeof(PerFrameCB), 1024u);
 }
 
 TEST(PerFrameCB_IBL, NearPlaneDefault) {

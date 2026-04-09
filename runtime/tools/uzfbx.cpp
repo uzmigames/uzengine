@@ -10,6 +10,7 @@
 /// ```
 
 #include "mesh.h"
+#include "auto_lod.h"
 #include "log.h"
 #include "profiler.h"
 
@@ -215,7 +216,15 @@ int main(int argc, char** argv) {
         bMin.z = std::min(bMin.z, v.position.z); bMax.z = std::max(bMax.z, v.position.z);
     }
 
-    // 6. Build Mesh and save
+    // 6. Auto-LOD generation (shared utility)
+    uz::AutoLODResult lodResult = uz::GenerateAutoLODs(
+        vertices.data(), vertexCount, indices.data(), indexCount);
+    for (uint32_t i = 0; i < lodResult.generatedCount; ++i) {
+        std::cout << "LOD" << (i + 1) << ": " << indexCount << " → "
+                  << lodResult.lodIndices[i].size() << " indices\n";
+    }
+
+    // 7. Build Mesh with LOD data and save
     uz::Mesh outMesh;
     std::memset(&outMesh.header, 0, sizeof(uz::MeshHeader));
     outMesh.header.magic            = uz::kMeshMagic;
@@ -234,8 +243,10 @@ int main(int argc, char** argv) {
     outMesh.vertexData.resize(vertexCount * sizeof(uz::Vertex));
     std::memcpy(outMesh.vertexData.data(), vertices.data(), outMesh.vertexData.size());
 
-    outMesh.indexData.resize(indexCount * sizeof(uint32_t));
+    outMesh.indexData.resize(static_cast<size_t>(indexCount) * sizeof(uint32_t));
     std::memcpy(outMesh.indexData.data(), indices.data(), outMesh.indexData.size());
+
+    uz::ApplyAutoLODs(outMesh, lodResult);
 
     if (!uz::SaveMesh(outputPath, outMesh)) {
         std::cerr << "Error: failed to write " << outputPath << "\n";
@@ -243,7 +254,8 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "Converted: " << vertexCount << " vertices, " << indexCount
-              << " indices, bounds=[" << bMin.x << "," << bMin.y << "," << bMin.z
+              << " indices, " << outMesh.header.lodCount << " LODs, bounds=["
+              << bMin.x << "," << bMin.y << "," << bMin.z
               << "]→[" << bMax.x << "," << bMax.y << "," << bMax.z
               << "] → " << outputPath << "\n";
     return 0;

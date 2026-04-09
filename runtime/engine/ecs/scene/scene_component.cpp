@@ -50,18 +50,21 @@ SceneComponent::~SceneComponent() {
 void SceneComponent::SetPosition(const Vec3& pos) {
     m_position = pos;
     MarkDirty();
+    MarkCBDirty(TransformDirty::Position);
 }
 
 /// Sets the local rotation and propagates dirty flags to this and all descendants.
 void SceneComponent::SetRotation(const Quat& rot) {
     m_rotation = rot;
     MarkDirty();
+    MarkCBDirty(TransformDirty::Rotation);
 }
 
 /// Sets the local scale and propagates dirty flags to this and all descendants.
 void SceneComponent::SetScale(const Vec3& scl) {
     m_scale = scl;
     MarkDirty();
+    MarkCBDirty(TransformDirty::Scale);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

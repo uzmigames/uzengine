@@ -535,7 +535,7 @@ RHIPipelineHandle PipelineLibrary::GetDecalDeferred() {
 
     // G-Buffer render targets — must match GBuffer::Create() texture formats
     desc.renderTargetFormats[0] = RHIFormat::RGBA8Unorm;   // albedo+AO
-    desc.renderTargetFormats[1] = RHIFormat::RGBA8Unorm;   // octNormal+metallic+roughness
+    desc.renderTargetFormats[1] = RHIFormat::RGBA16Float;  // octNormal+metallic+roughness
     desc.renderTargetFormats[2] = RHIFormat::RGBA32Float;  // world-space position (debug)
     desc.renderTargetFormats[3] = RHIFormat::RGBA16Float;  // HDR emissive
     desc.renderTargetCount      = 4;

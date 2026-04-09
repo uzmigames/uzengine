@@ -29,6 +29,7 @@
 #include "vector3.h"
 
 #include <cstdint>
+#include <string>
 
 namespace uz {
 
@@ -77,6 +78,13 @@ struct SkyLightComponent {
 
     /// Where the IBL cubemap data comes from.
     ESkyLightSourceType sourceType = ESkyLightSourceType::CapturedScene;
+
+    /// VFS-relative path to an HDR/EXR cubemap or equirect panorama.
+    /// Only used when sourceType == SpecifiedCubemap.
+    /// The renderer loads this texture, converts equirect→cubemap, and bakes IBL
+    /// (irradiance SH + prefiltered specular) automatically.
+    /// Example: "textures/hdri/ballroom_4k.hdr"
+    std::string cubemapPath;
 
     /// Whether to recapture the sky cubemap every frame (true) or only once (false).
     /// Equivalent: RealTimeCapture. Enable for dynamic time-of-day.

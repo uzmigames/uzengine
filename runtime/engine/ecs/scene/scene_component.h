@@ -21,6 +21,7 @@
 #pragma once
 
 #include "component.h"
+#include "../core/dirty_flags.h"
 #include "../math/vector3.h"
 #include "../math/quaternion.h"
 #include "../math/mat4.h"
@@ -58,7 +59,7 @@ namespace uz {
 /// Mat4 worldMat = child.GetWorldMatrix();
 /// Vec3 worldPos = child.GetWorldPosition(); // {15, 0, 0}
 /// ```
-class SceneComponent : public Component {
+class SceneComponent : public Component, public CBDirtyMixin {
 public:
     /// Constructor. Initializes to identity transform (origin, no rotation, unit scale).
     SceneComponent() = default;

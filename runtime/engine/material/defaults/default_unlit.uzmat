@@ -6,15 +6,15 @@
     "expressions": [
         {
             "id": 1,
-            "type": "PBROutput"
+            "type": "PBROutput",
+            "inputs": [
+                { "pin": 4, "srcExpr": 2, "srcPin": 0 }
+            ]
         },
         {
             "id": 2,
-            "type": "VectorConstant",
-            "params": { "x": 1.0, "y": 1.0, "z": 1.0 }
+            "type": "Vector3Constant",
+            "scalarParams": { "x": 1.0, "y": 1.0, "z": 1.0 }
         }
-    ],
-    "connections": [
-        { "fromId": 2, "fromPin": 0, "toId": 1, "toPin": 5 }
     ]
 }

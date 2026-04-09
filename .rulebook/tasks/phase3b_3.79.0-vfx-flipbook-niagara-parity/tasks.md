@@ -101,3 +101,8 @@ expression, NiagaraSpriteVertexFactory. See docs/analysis/particles/ for full an
 
 - [ ] 9.1 Document the SubUV data flow: CPU subImageIndex → GPU channel → VS → PS → UV remap.
 - [ ] 9.2 Document supported sprite sheet formats and naming conventions.
+
+## 10. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 10.1 Update or create documentation covering the implementation
+- [ ] 10.2 Write tests covering the new behavior
+- [ ] 10.3 Run tests and confirm they pass

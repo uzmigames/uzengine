@@ -211,7 +211,6 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
     // Simulation (spawn, update, indirect args) is dispatched inline by
     // DispatchVFXSimulation() in frame_vfx_inline.cpp.
 
-
     // ── Sort pass (compute) ──────────────────────────────────────────
     // Dispatches the bitonic merge sort for each active emitter so particles
     // are rendered in back-to-front order for correct alpha blending.
@@ -229,7 +228,7 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
             ctx.perFrame.cameraPos.y,
             ctx.perFrame.cameraPos.z
         };
-        const Vec3 sortCamFwd = m_camera->GetForward();
+        const Vec3 sortCamFwd = m_cameraManager->GetActiveCamera().GetForward();
 
         // Per-emitter sort dispatch data for the render graph compute pass.
         struct SortEmitterDispatch {
@@ -348,8 +347,8 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
     };
 
     // View and projection matrices for billboard orientation.
-    const Mat4& viewMatrix = m_camera->GetView();
-    const Mat4& projMatrix = m_camera->GetProjection();
+    const Mat4& viewMatrix = m_cameraManager->GetActiveCamera().GetView();
+    const Mat4& projMatrix = m_cameraManager->GetActiveCamera().GetProjection();
 
     renderDesc.emitters.reserve(emitters.size());
 

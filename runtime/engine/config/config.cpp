@@ -102,11 +102,16 @@ void Config::ApplyCLIOverrides(int argc, const char* const* argv) {
 void Config::FlushCvarOverrides() {
     if (m_pendingCvarOverrides.empty()) return;
     auto& cvars = CVarRegistry::Get();
+    // Apply but DO NOT clear the pending map. CVars declared inside
+    // function bodies as `static auto*` only register the first time the
+    // function runs, so the same overrides may need to be re-applied
+    // after each major init phase. Idempotent — `cvars.Set` skips names
+    // that have not been registered yet, so unknown entries simply wait
+    // for a later flush.
     for (const auto& [name, value] : m_pendingCvarOverrides) {
         cvars.Set(name, value);
         UZ_LOG(Config, Info, "CVar applied: {} = {}", name, value);
     }
-    m_pendingCvarOverrides.clear();
 }
 
 void Config::RebuildMerged() {

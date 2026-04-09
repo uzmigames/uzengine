@@ -47,3 +47,8 @@
 - [ ] 10.1 Update `docs/engine/14-camera/` with SpringArm, modes, shake, FOV.
 - [ ] 10.2 Add enhanced `uz.camera` to `docs/lua-api-reference.md`.
 - [ ] 10.3 Document .uzcam format.
+
+## 11. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 11.1 Update or create documentation covering the implementation
+- [ ] 11.2 Write tests covering the new behavior
+- [ ] 11.3 Run tests and confirm they pass

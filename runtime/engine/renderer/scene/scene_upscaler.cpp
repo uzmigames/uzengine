@@ -96,6 +96,15 @@ bool SceneRenderer::SetHDRIEnvironment(uint32_t equirectSrvIndex, uint32_t cubem
     m_hdriCubemap = equirectResult.cubemap;
     m_hdriCubemapSrv = equirectResult.srvIndex;
 
+    // Destroy previous IBL textures before re-baking (caller-owned since baker
+    // no longer auto-destroys — fixes reflection probe bake invalidating HDRI IBL).
+    if (m_iblResult.irradianceTexture.IsValid()) {
+        m_device->DestroyTexture(m_iblResult.irradianceTexture);
+    }
+    if (m_iblResult.prefilteredTexture.IsValid()) {
+        m_device->DestroyTexture(m_iblResult.prefilteredTexture);
+    }
+
     // Bake IBL from the new cubemap
     auto bakeResult = m_iblBaker->BakeEnvironment(m_hdriCubemapSrv, m_hdriCubemap);
     if (bakeResult.irradianceSrvIndex == UINT32_MAX || bakeResult.prefilteredSrvIndex == UINT32_MAX) {
@@ -146,6 +155,104 @@ bool SceneRenderer::SetHDRIEnvironment(uint32_t equirectSrvIndex, uint32_t cubem
            "irrad={}, prefilt={})",
            cubemapSize, cubemapSize, m_hdriCubemapSrv,
            bakeResult.irradianceSrvIndex, bakeResult.prefilteredSrvIndex);
+
+    return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SetPMREMEnvironment
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool SceneRenderer::SetPMREMEnvironment(const TextureLoadResult& result) {
+    if (!m_iblBaker || !m_iblBaker->IsInitialized()) {
+        UZ_LOG(Renderer, Error, "SceneRenderer::SetPMREMEnvironment: IBL baker not initialized");
+        return false;
+    }
+
+    if (!result.isPMREM || result.srvIndex == UINT32_MAX || !result.handle.IsValid()) {
+        UZ_LOG(Renderer, Error, "SceneRenderer::SetPMREMEnvironment: invalid PMREM texture");
+        return false;
+    }
+
+    // Step 1: Extract PMREM atlas into a standard mipmapped cubemap.
+    // The atlas contains prefiltered faces at multiple roughness LODs — the
+    // output cubemap's mip chain maps directly to roughness levels.
+    auto pmremResult = m_iblBaker->PmremToCubemap(
+        result.srvIndex, result.handle,
+        result.width, result.height,
+        result.pmremFaceSize, result.pmremLodCount);
+
+    if (!pmremResult.cubemap.IsValid() || pmremResult.srvIndex == UINT32_MAX) {
+        UZ_LOG(Renderer, Error, "SceneRenderer::SetPMREMEnvironment: PMREM extraction failed");
+        return false;
+    }
+
+    // Step 2: Destroy previous HDRI cubemap if one was set
+    if (m_hdriCubemap.IsValid()) {
+        m_device->DestroyTexture(m_hdriCubemap);
+    }
+
+    m_hdriCubemap = pmremResult.cubemap;
+    m_hdriCubemapSrv = pmremResult.srvIndex;
+
+    // Step 3: Destroy previous IBL textures before re-baking
+    if (m_iblResult.irradianceTexture.IsValid()) {
+        m_device->DestroyTexture(m_iblResult.irradianceTexture);
+    }
+    if (m_iblResult.prefilteredTexture.IsValid()) {
+        m_device->DestroyTexture(m_iblResult.prefilteredTexture);
+    }
+
+    // Step 4: Bake ONLY irradiance (64x64, cheap). The PMREM cubemap is already
+    // prefiltered — skip the expensive per-mip prefilter dispatch entirely.
+    auto irradResult = m_iblBaker->BakeIrradianceOnly(m_hdriCubemapSrv, m_hdriCubemap);
+    if (irradResult.irradianceSrvIndex == UINT32_MAX) {
+        UZ_LOG(Renderer, Error, "SceneRenderer::SetPMREMEnvironment: irradiance bake failed");
+        return false;
+    }
+
+    m_iblResult.irradianceSrvIndex  = irradResult.irradianceSrvIndex;
+    m_iblResult.irradianceTexture   = irradResult.irradianceTexture;
+    m_iblResult.prefilteredSrvIndex = pmremResult.srvIndex;
+    m_iblResult.prefilteredTexture  = pmremResult.cubemap;
+    m_hdriActive = true;
+
+    // Step 5: Rebuild env map importance sampler
+    if (m_envMapSampler) {
+        m_envMapSampler->Rebuild(m_hdriCubemapSrv);
+    }
+
+    // Step 6: Project SH irradiance from the cubemap for diffuse lighting + fog
+    {
+        auto* cmdList = m_device->CreateCommandList(RHIQueueType::Graphics);
+        if (cmdList) {
+            cmdList->Begin();
+            auto shResult = ProjectCubemapToSH(m_device, cmdList,
+                                                m_hdriCubemap, result.pmremFaceSize);
+            cmdList->End();
+            m_device->DestroyCommandList(cmdList);
+
+            bool shValid = (std::abs(shResult.coeffs[0].w) > 1e-6f ||
+                           std::abs(shResult.coeffs[1].w) > 1e-6f);
+            if (shValid) {
+                m_skyIrradianceSH = shResult;
+                UZ_LOG(Renderer, Info, "SceneRenderer: PMREM SH projected (L0_R={:.4f})",
+                       shResult.coeffs[0].x);
+            }
+        }
+    }
+
+    // Step 7: Suppress procedural sky IBL re-capture
+    m_skyIBLDirty = false;
+
+    // Step 8: Overwrite the sky cubemap SRV for skybox rendering
+    m_skyCubemapSrv = m_hdriCubemapSrv;
+
+    UZ_LOG(Renderer, Info,
+           "SceneRenderer: PMREM environment set (face={}px, {} LODs, cubemapSRV={}, "
+           "irrad={}, prefilt={})",
+           result.pmremFaceSize, result.pmremLodCount, m_hdriCubemapSrv,
+           m_iblResult.irradianceSrvIndex, m_iblResult.prefilteredSrvIndex);
 
     return true;
 }

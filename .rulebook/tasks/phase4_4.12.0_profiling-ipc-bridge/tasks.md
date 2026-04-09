@@ -57,3 +57,8 @@ Phases 1–5 of the profiling system are complete: Tracy CPU instrumentation (11
 - [ ] Extension shows live FPS + GPU ms in status bar via IPC stats
 - [ ] GPU per-pass timing breakdown available in stats snapshot
 - [ ] All IPC messages have schema validation tests
+
+## 6. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 6.1 Update or create documentation covering the implementation
+- [ ] 6.2 Write tests covering the new behavior
+- [ ] 6.3 Run tests and confirm they pass

@@ -268,9 +268,9 @@ TEST_F(SceneLoaderTest, TransformComponent_ZeroRotation_ProducesIdentityQuat) {
 }
 
 TEST_F(SceneLoaderTest, TransformComponent_90DegYaw_ProducesCorrectQuat) {
-    // 90-degree yaw (rotation around Y axis).
+    // UE5 convention: yaw = rotation around Z-up axis.
     // Euler pitch=0, yaw=90, roll=0 → Quat::FromEuler(0, π/2, 0)
-    // Expected: (x≈0, y≈0.7071, z≈0, w≈0.7071)
+    // Expected: pure Z-axis quat (x≈0, y≈0, z≈0.7071, w≈0.7071)
     const char* json = R"({
         "entities": [
             {
@@ -291,12 +291,12 @@ TEST_F(SceneLoaderTest, TransformComponent_90DegYaw_ProducesCorrectQuat) {
     auto [enttEntity, sc] = *view.each().begin();
     const uz::Quat& q = sc.GetRotation();
 
-    const float expected_yw = std::sin(90.0f * kDegToRad / 2.0f); // ≈ 0.7071
+    const float expected_zw = std::sin(90.0f * kDegToRad / 2.0f); // ≈ 0.7071
     const float expected_w  = std::cos(90.0f * kDegToRad / 2.0f); // ≈ 0.7071
 
     EXPECT_NEAR(q.x, 0.0f,       1e-3f);
-    EXPECT_NEAR(q.y, expected_yw, 1e-3f);
-    EXPECT_NEAR(q.z, 0.0f,       1e-3f);
+    EXPECT_NEAR(q.y, 0.0f,       1e-3f);
+    EXPECT_NEAR(q.z, expected_zw, 1e-3f);
     EXPECT_NEAR(q.w, expected_w,  1e-3f);
 }
 

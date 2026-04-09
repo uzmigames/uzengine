@@ -1,0 +1,11 @@
+{
+  "name": "Sponza Atrium",
+  "version": "1.0",
+  "content_root": "../content",
+  "default_scene": "scenes/sponza.uzscene",
+  "window": {
+    "title": "UzEngine — Sponza Atrium",
+    "width": 1920,
+    "height": 1080
+  }
+}

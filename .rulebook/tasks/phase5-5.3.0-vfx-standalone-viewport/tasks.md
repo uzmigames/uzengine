@@ -158,3 +158,8 @@
 - [x] D.2 Create docs/guides/vfx-viewport-architecture.md — rendering pipeline (15-stage frame order), CB layout (768-byte PerFrameCB), root sig, GPU resources, VFX compute pipeline, material/emitter presets.
 - [x] D.3 Update docs/engine/25-vfx/README.md with viewport documentation links. Added links to vfx-viewport-controls.md and vfx-viewport-architecture.md, fixed stale tools/uz_viewport.exe path to demos/vfx_viewport/.
 - [x] D.4 Add VFX system section to project README with feature list (particles, trails, decals, distortion, flipbook, soft depth fade), viewport demo entry in directory structure, and links to controls/architecture docs. Screenshot image pending build (thirdparty DLLs needed).
+
+## 1. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 1.1 Update or create documentation covering the implementation
+- [ ] 1.2 Write tests covering the new behavior
+- [ ] 1.3 Run tests and confirm they pass

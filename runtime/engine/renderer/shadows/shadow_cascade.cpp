@@ -26,9 +26,12 @@ constexpr uint32_t kFrustumCornerCount = 8;
 /// Threshold for detecting a near-vertical light direction.
 constexpr float kVerticalThreshold = 0.999f;
 
-/// texel snap factor — accounts for maximum kernel filter downsampling.
-/// Source: ShadowSetup.cpp:1029 — MaxDownsampleFactor = 4.
-constexpr float kMaxDownsampleFactor = 4.0f;
+/// Texel snap factor for shadow map stabilization.
+/// Snaps the cascade projection to integer texel boundaries so shadows
+/// don't shimmer when the camera moves. A factor of 1.0 snaps to
+/// individual texels (most stable). Higher values coarsen the grid.
+/// @ref Valient 2014 "Deferred Rendering in Killzone" — CSM texel snapping
+constexpr float kMaxDownsampleFactor = 1.0f;
 
 /// Extracts camera near and far planes from a left-handed perspective
 /// projection matrix (DX convention, z in [0,1]).

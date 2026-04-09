@@ -52,8 +52,16 @@ ShadowFrameData SetupShadowFrame(
     cfg.cascadeDistributionExponent = 3.0f;      // default (DLC.cpp:1029)
     cfg.cascadeTransitionFraction   = 0.1f;      // 10% blend overlap (DLC.cpp:1030)
     cfg.shadowDistanceFadeoutFraction = 0.1f;    // 10% fade on last cascade (DLC.cpp:1031)
-    cfg.normalBias                  = 0.0f;      // Equivalent: NO normal bias in pixel shader. All bias in shadow VS via rasterizer state.
-    cfg.csmDepthBias                = 0.0f;      // Equivalent: bias applied in shadow VS via rasterizer, NOT in pixel shader sampling
+    // Bias values must be NON-ZERO to avoid total acne / total shadowing.
+    // The previous "all bias in rasterizer state" pattern only works when
+    // the slope-scale rasterizer bias is actually wired through the shadow
+    // VS PSO — which it is, but it's insufficient on its own for cm-scale
+    // interior scenes (Sponza-class). Restore proper depth + normal bias.
+    // @ref Lengyel "Foundations of Game Engine Development" §10.5 — bias
+    // values around 1-10 cm world-space normal bias and 5-15 normalized
+    // depth bias are typical for architectural scenes at cm scale.
+    cfg.normalBias                  = 2.0f;      // World-space cm
+    cfg.csmDepthBias                = 10.0f;     // Normalized depth bias
     cfg.slopeScaleDepthBias         = 3.0f * perLightShadowSlopeBias;  // Equivalent: CSMSlopeBias * per-light ShadowSlopeBias
     cfg.cascadeBiasDistribution     = 1.0f;      // Fully world-scaled (ShadowSetup.cpp:1846)
     cfg.receiverBias                = 1.0f;      // 1.0 = full shadow strength (no attenuation)

@@ -1,6 +1,6 @@
 # Spec — Debug View Modes
 
-> **Status**: Planned (Phase 2)
+> **Status**: Done (v0.3.0+ — 13 modes implemented via --view-mode CLI and debug_view_ps.hlsl)
 > **Dependencies**: Deferred G-Buffer rendering, Lighting pass, Post-processing pipeline
 
 ---

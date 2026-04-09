@@ -1,4 +1,7 @@
 #include "cvar.h"
+#include "log.h"
+
+UZ_DECLARE_LOG_CATEGORY(Engine);
 
 /// Console variable (CVar) registry implementation.
 ///
@@ -99,6 +102,7 @@ bool CVarRegistry::GetBool(const std::string& name, bool defaultIfMissing) const
 void CVarRegistry::Set(const std::string& name, float value) {
     CVar* cv = Find(name);
     if (!cv) {
+        UZ_LOG(Engine, Warning, "CVarRegistry::Set: CVar '{}' not found (override ignored)", name);
         return;
     }
     cv->value = std::clamp(value, cv->minValue, cv->maxValue);

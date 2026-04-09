@@ -131,6 +131,22 @@ struct Material : public MaterialInterface {
     /// Packed into materialFlags bits[16:23] with range 0.0-2.0.
     float envMultiplier = 1.0f;
 
+    // ── Transmission (glass/refractive materials) ────────────────────────
+
+    /// Transmission intensity. 0 = opaque (default), 1 = fully transmissive glass.
+    /// @ref Three.js MeshPhysicalMaterial.transmission — KHR_materials_transmission
+    float transmission = 0.0f;
+
+    /// Index of refraction for transmission and Fresnel.
+    /// 1.0 = air, 1.33 = water, 1.5 = glass (default), 2.42 = diamond.
+    /// @ref KHR_materials_ior — glTF 2.0 extension
+    float ior = 1.5f;
+
+    /// Thickness for refraction distortion in world units (cm).
+    /// Controls how much the view behind the object is distorted.
+    /// @ref KHR_materials_volume — glTF 2.0 extension
+    float thicknessScale = 0.5f;
+
     // ── Emissive parameters ──────────────────────────────────────────────
 
     /// Emissive tint color (linear RGB). Default (0,0,0) = no emission.
@@ -263,6 +279,9 @@ struct Material : public MaterialInterface {
         if (name == "EnvMultiplier")       return envMultiplier;
         if (name == "ClearCoat")           return clearCoat;
         if (name == "ClearCoatRoughness")  return clearCoatRoughness;
+        if (name == "Transmission")        return transmission;
+        if (name == "IOR")                 return ior;
+        if (name == "ThicknessScale")      return thicknessScale;
         return defaultVal;
     }
 

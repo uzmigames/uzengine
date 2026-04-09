@@ -245,7 +245,7 @@ void SceneRenderer::PreloadMaterialTextures(MaterialInterface* mat, IVFS* vfs,
 // Deferred Load Queue — Textures (Lua API)
 // ─────────────────────────────────────────────────────────────────────────────
 
-uint32_t SceneRenderer::QueueTextureLoad(const std::string& path) {
+uint32_t SceneRenderer::QueueTextureLoad(const std::string& path, bool isSRGB) {
     if (path.empty()) return UINT32_MAX;
 
     // Return cached ID immediately — no need to queue.
@@ -278,9 +278,9 @@ uint32_t SceneRenderer::QueueTextureLoad(const std::string& path) {
     // The resultKey = original path ensures m_asyncPendingSlots lookup works.
     if (m_asyncDecoder) {
         if (m_lastVfs) {
-            m_asyncDecoder->SubmitVFS(m_lastVfs, path, false, path);
+            m_asyncDecoder->SubmitVFS(m_lastVfs, path, isSRGB, path);
         } else {
-            m_asyncDecoder->Submit(path, false, path);
+            m_asyncDecoder->Submit(path, isSRGB, path);
         }
         m_asyncPendingSlots[path] = slotIndex;
         UZ_LOG(Renderer, Debug, "SceneRenderer: queued async texture load '{}' (slot={})", path, slotIndex);
@@ -390,7 +390,10 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
         m_deferredMeshUploads.push_back(std::move(deferred));  // move staging ownership
 
         // Queue SDF bake for the Lua-path loaded mesh (same logic as LoadMesh).
-        if (cpuMesh.header.vertexFormat == MeshVertexFormat::Standard
+        // Gated on m_sdfGiEnabled — FlushSdfBakes does WaitIdle and freezes
+        // the main thread when many meshes are queued.
+        if (m_sdfGiEnabled
+            && cpuMesh.header.vertexFormat == MeshVertexFormat::Standard
             && cpuMesh.GetVertexCount() > 0 && cpuMesh.GetIndexCount() >= 3)
         {
             PendingSdfBake sdfBake;

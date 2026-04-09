@@ -8,18 +8,6 @@ This project is managed by [@hivehub/rulebook](https://github.com/hivellm/rulebo
 The authoritative rules come from the imports below. Claude Code loads all of them
 automatically at session start (see [Anthropic memory docs](https://code.claude.com/docs/en/memory#claude-md-imports)).
 
-## Project identity & live state
-<!-- @.rulebook/STATE.md (skipped — target file not present) -->
-
-## Core standards (team-shared, versioned)
-@AGENTS.md
-
-## Project-specific overrides (user-owned, survives `rulebook update`)
-@AGENTS.override.md
-
-## Session scratchpad (human notes)
-@.rulebook/PLANS.md
-
 ## Critical rules (highest precedence — apply on every turn)
 
 1. **Read `AGENTS.md` and `AGENTS.override.md`** before making changes. These contain project-specific conventions that override generic guidance.

@@ -78,3 +78,8 @@ debug counter showing culled vs active emitters in the ImGui overlay.
 - [x] 8.1 All implemented checklist items marked [x]. Sections 1–4 (FrustumPlanes API in
   VFXParticleSystem) remain pending — the demo uses an inline NDC-space cull test instead.
   Sections 5–6 (demo integration, multi-emitter system) fully implemented and verified.
+
+## 9. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 9.1 Update or create documentation covering the implementation
+- [ ] 9.2 Write tests covering the new behavior
+- [ ] 9.3 Run tests and confirm they pass

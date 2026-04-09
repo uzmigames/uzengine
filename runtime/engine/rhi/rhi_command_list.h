@@ -378,6 +378,57 @@ public:
                                      RHIBufferHandle dstBuffer, uint64_t dstOffset,
                                      uint32_t dstRowPitch, uint32_t arraySlice = 0) = 0;
 
+    // ── Ray tracing commands (DXR / VK_KHR_ray_tracing_pipeline) ──────
+
+    /// Builds a bottom-level acceleration structure from triangle geometry.
+    ///
+    /// The BLAS must have been created via `IRHIDevice::CreateBLAS()`. The
+    /// scratch buffer must be large enough for the build (query via device).
+    /// After this call, a UAV barrier on the BLAS is required before use.
+    ///
+    /// # Arguments
+    /// * `blas` — BLAS handle to build into.
+    /// * `scratchBuffer` — Temporary build workspace buffer.
+    /// * `update` — If true, performs an in-place refit (requires AllowUpdate flag).
+    virtual void BuildBLAS(RHIBLASHandle blas, RHIBufferHandle scratchBuffer,
+                           bool update = false) {
+        (void)blas; (void)scratchBuffer; (void)update;
+    }
+
+    /// Builds a top-level acceleration structure from an instance buffer.
+    ///
+    /// # Arguments
+    /// * `tlas` — TLAS handle to build into.
+    /// * `instanceBuffer` — GPU buffer of `RHIRTInstanceDesc` entries.
+    /// * `instanceCount` — Number of instances in the buffer.
+    /// * `scratchBuffer` — Temporary build workspace buffer.
+    /// * `update` — If true, performs an in-place refit (requires AllowUpdate flag).
+    virtual void BuildTLAS(RHITLASHandle tlas, RHIBufferHandle instanceBuffer,
+                           uint32_t instanceCount, RHIBufferHandle scratchBuffer,
+                           bool update = false) {
+        (void)tlas; (void)instanceBuffer; (void)instanceCount;
+        (void)scratchBuffer; (void)update;
+    }
+
+    /// Dispatches rays using the given RT pipeline and shader tables.
+    ///
+    /// Requires a TLAS to be built and accessible via SRV. The shader tables
+    /// must be populated with valid shader identifiers from the pipeline.
+    ///
+    /// # Arguments
+    /// * `pipeline` — RT pipeline state object handle.
+    /// * `desc` — Dispatch rays descriptor (shader tables + dimensions).
+    virtual void DispatchRays(RHIRTPipelineHandle pipeline,
+                              const RHIDispatchRaysDesc& desc) {
+        (void)pipeline; (void)desc;
+    }
+
+    /// Inserts a UAV barrier for an acceleration structure.
+    ///
+    /// Required after BuildBLAS/BuildTLAS and before the AS is read
+    /// (e.g., by DispatchRays or inline ray query).
+    virtual void UAVBarrierAS() {}
+
     // ── Render pass scope ────────────────────────────────────────────────
 
     /// Begins a render pass with the given color and depth attachments.

@@ -20,3 +20,8 @@
 
 - [ ] 3.1 Update `docs/engine/11-scene/` with .uzscene format spec
 - [ ] 3.2 Document scene loading pipeline
+
+## 4. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 4.1 Update or create documentation covering the implementation
+- [ ] 4.2 Write tests covering the new behavior
+- [ ] 4.3 Run tests and confirm they pass

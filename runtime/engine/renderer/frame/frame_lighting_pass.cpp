@@ -69,6 +69,8 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
         lightDesc.emissiveSrvIndex    = m_gbuffer.emissiveSRV;
         lightDesc.envMisSrvIndex      = (m_envMISPass && m_envMISPass->IsInitialized())
                                         ? m_envMISPass->GetAccumulatedSrv() : UINT32_MAX;
+        lightDesc.iblPrefilteredSrvIndex = m_iblResult.prefilteredSrvIndex;
+        lightDesc.iblIrradianceSrvIndex  = m_iblResult.irradianceSrvIndex;
         lightDesc.albedoTexture       = m_gbuffer.albedo;
         lightDesc.normalTexture       = m_gbuffer.normal;
         lightDesc.depthTextureForSrv  = m_gbuffer.depth;
@@ -92,6 +94,24 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
         if (m_gtaoPass && m_gtaoPass->IsInitialized() && m_gtaoPass->settings.enabled) {
             lightDesc.gtaoTexture = m_gtaoPass->GetFilteredAOTexture();
         }
+        // SSR temporal output for SM5 fallback (t11)
+        if (ctx.ssrActive) {
+            const uint32_t ssrWriteIdx = m_ssrHistoryIndex;
+            if (m_ssrHistory[ssrWriteIdx].IsValid()) {
+                lightDesc.ssrTexture = m_ssrHistory[ssrWriteIdx];
+            } else if (m_ssrResolvedOutput.IsValid()) {
+                lightDesc.ssrTexture = m_ssrResolvedOutput;
+            }
+        }
+        // SSGI upsampled indirect diffuse for SM5 fallback (t12)
+        if (m_ssgiRenderer.IsReady()) {
+            lightDesc.ssgiTexture = m_ssgiRenderer.GetResultTexture();
+        }
+        lightDesc.apVolumeResource    = ctx.apVolumeRes;  // AP volume (read prev frame's data)
+        // Debug MRT targets — lighting split visualization for --pass-dump
+        lightDesc.debugDirectLight    = m_debugDirectLight;
+        lightDesc.debugIndirectLight  = m_debugIndirectLight;
+        lightDesc.debugShadowMask     = m_debugShadowMask;
         lightDesc.bindless            = ctx.bindless;
         lightDesc.viewportWidth       = ctx.renderWidth;
         lightDesc.viewportHeight      = ctx.renderHeight;

@@ -106,8 +106,13 @@ Files extracted from upstream source:
 
 Basis Universal GPU texture compression. Supercompresses textures into an
 intermediate format that can be transcoded to any GPU format at load time
-(BC7, BC1, ASTC, ETC2, PVRTC). Used by the asset pipeline for offline
-texture compression.
+(BC7, BC1, ASTC, ETC2, PVRTC). The `ktx2_transcoder` class handles KTX2
+container parsing with UASTC HDR, UASTC LDR, and ETC1S codec support.
+Used for runtime KTX2/PMREM environment map loading (FastHDR from
+needle.tools) and offline texture compression in the asset pipeline.
+
+KTX2 Zstd supercompression enabled (`BASISD_SUPPORT_KTX2_ZSTD=1`).
+Zstd decompression headers in `zstd/` (copied from vcpkg zstd 1.5.7).
 
 Files extracted from upstream source:
 
@@ -146,6 +151,33 @@ Files extracted from upstream source:
 - `include/` (D3D12MemAlloc.h)
 - `src/` (D3D12MemAlloc.cpp)
 - `LICENSE`
+
+
+## dlss
+
+- Upstream: https://github.com/NVIDIA/DLSS
+- Version: git (main, 2025)
+- License: NVIDIA Software License (proprietary, free for commercial use)
+
+NVIDIA Deep Learning Super Sampling SDK. Provides AI-powered temporal upscaling
+using a deep neural network trained on thousands of games. Supports 5 quality
+presets: DLAA (native AA), Quality (1.5x), Balanced (1.7x), Performance (2.0x),
+and Ultra Performance (3.0x). Requires NVIDIA RTX GPU (Turing+) and GeForce
+driver 531.18+.
+
+**NOTE**: This directory is `.gitignored` — the SDK is downloaded fresh by
+`scripts/setup.ps1` and is not committed to the repository.
+
+**Integration**: UzEngine loads `_nvngx.dll` dynamically via `LoadLibrary` /
+`GetProcAddress` at runtime. No static linking required (avoids MSVC CRT
+incompatibility with Zig's mingw libc). If the DLL is not present (non-NVIDIA
+GPU), the upscaler gracefully falls back to FSR2 or TSR.
+
+Files from upstream repository:
+
+- `include/` (nvsdk_ngx.h, nvsdk_ngx_defs.h, nvsdk_ngx_helpers.h)
+- `lib/Windows_x86_64/x64/` (nvsdk_ngx_d.lib — MSVC import lib, not linked by Zig build)
+- `LICENSE.txt`
 
 
 ## directx_headers
@@ -351,6 +383,28 @@ Files extracted from upstream source:
 
 - `lib/` (lz4.h, lz4.c, lz4hc.h, lz4hc.c, lz4frame.h, lz4frame.c)
 - `LICENSE`
+
+
+## mikktspace
+
+- Upstream: https://github.com/mmikk/MikkTSpace
+- Version: git (master, 2024)
+- License: Public Domain (zlib-style)
+
+Industry-standard tangent space generation by Morten S. Mikkelsen. Produces
+tangent frames compatible with normal maps baked in Blender, Substance,
+xNormal, UE5, and Unity. Single header+source (mikktspace.h, mikktspace.c).
+
+The UzEngine wrapper (`engine/asset/mesh/mikktspace_tangents.h`) implements
+the `SMikkTSpaceInterface` callbacks for the `VertexPosNormUV` vertex format.
+Called during FBX and glTF import when tangent attributes are missing.
+
+Files extracted from upstream source:
+
+- `mikktspace.h` (API declarations)
+- `mikktspace.c` (implementation)
+
+@ref Mikkelsen 2010 "Simulation of Wrinkled Surfaces Revisited"
 
 
 ## luajit

@@ -147,6 +147,49 @@ public:
     /// Extracts the cached blob from a DX12 PSO via `GetCachedBlob()` for disk caching.
     std::vector<uint8_t> GetPipelineCachedBlob(RHIPipelineHandle handle) override;
 
+    // ── IRHIDevice: Ray tracing operations ─────────────────────────────
+
+    /// Creates a DX12 BLAS (acceleration structure result + scratch buffers).
+    RHIBLASHandle CreateBLAS(const RHIBLASDesc& desc) override;
+
+    /// Destroys a DX12 BLAS and frees its D3D12MA allocations.
+    void DestroyBLAS(RHIBLASHandle handle) override;
+
+    /// Returns the GPU virtual address of a built DX12 BLAS result buffer.
+    uint64_t GetBLASGPUAddress(RHIBLASHandle handle) const override;
+
+    /// Creates a DX12 TLAS (result + scratch buffers + SRV descriptor).
+    RHITLASHandle CreateTLAS(const RHITLASDesc& desc) override;
+
+    /// Destroys a DX12 TLAS and frees its D3D12MA allocations and SRV slot.
+    void DestroyTLAS(RHITLASHandle handle) override;
+
+    /// Returns the SRV descriptor index for a DX12 TLAS.
+    uint32_t GetTLASSRVIndex(RHITLASHandle handle) const override;
+
+    /// Creates a DX12 RT pipeline (state object) from DXIL library shaders.
+    RHIRTPipelineHandle CreateRaytracingPipeline(const RHIRTPipelineDesc& desc) override;
+
+    /// Destroys a DX12 RT pipeline state object.
+    void DestroyRaytracingPipeline(RHIRTPipelineHandle handle) override;
+
+    /// Retrieves a 32-byte shader identifier from a DX12 state object.
+    bool GetShaderIdentifier(RHIRTPipelineHandle pipeline,
+                             const wchar_t* exportName,
+                             void* outIdentifier) override;
+
+    /// Returns true if the DX12 device supports DXR 1.0+.
+    bool SupportsRayTracing() const override { return m_supportsRayTracing; }
+
+    /// Returns the BLAS resource pool (for command list access).
+    ResourcePool<DX12BLAS>& GetBLASPool() { return m_blasPool; }
+
+    /// Returns the TLAS resource pool (for command list access).
+    ResourcePool<DX12TLAS>& GetTLASPool() { return m_tlasPool; }
+
+    /// Returns the RT pipeline resource pool (for command list access).
+    ResourcePool<DX12RTPipeline>& GetRTPipelinePool() { return m_rtPipelinePool; }
+
     // ── IRHIDevice: Copy queue ──────────────────────────────────────────
 
     /// Signals the DX12 copy queue fence and returns the signaled value.
@@ -377,6 +420,12 @@ private:
     ResourcePool<DX12Shader>       m_shaderPool;
     ResourcePool<DX12Sampler>      m_samplerPool;
     ResourcePool<DX12Pipeline>     m_pipelinePool;
+
+    // ── Ray Tracing Resource Pools ─────────────────────────────────────
+    ResourcePool<DX12BLAS>         m_blasPool;
+    ResourcePool<DX12TLAS>         m_tlasPool;
+    ResourcePool<DX12RTPipeline>   m_rtPipelinePool;
+    bool                           m_supportsRayTracing = false;
 
     /// Global bindless root signature — shared by all graphics pipelines.
     ID3D12RootSignature*           m_rootSignature = nullptr;

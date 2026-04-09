@@ -229,7 +229,12 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                     // The DrawList is sorted so same-mesh commands are consecutive.
                     if (drawCmd.meshId != lastBoundMeshId) {
                         if (desc.bindless) {
-                            cmd->SetDescriptorIndex(kSlotRootConstants, mesh.vbSrvIndex);
+                            // Push vertexBufferIndex + usePackedNormals (2 DWORDs)
+                            const uint32_t pushData[2] = {
+                                mesh.vbSrvIndex,
+                                (mesh.vertexStride == 32) ? 1u : 0u
+                            };
+                            cmd->SetRootConstants(kSlotRootConstants, pushData, 2);
                         } else {
                             cmd->SetVertexBuffer(0, mesh.vertexBuffer, 0);
                         }
@@ -356,14 +361,33 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                     if (drawCmd.materialGraphPipeline.IsValid()) {
                         cmd->SetPipeline(drawCmd.materialGraphPipeline);
 
-                        // Upload material params CB at b3 (kSlotMaterialParams = 3)
-                        if (drawCmd.materialParamCount > 0) {
-                            const uint32_t paramBytes = drawCmd.materialParamCount * 16; // float4 per slot
-                            auto matAlloc = desc.cbAllocator->Allocate(paramBytes);
+                        // Upload materialParams CB at b3 — contains:
+                        // [0..3] = texture SRV indices (as float-encoded uint via asuint)
+                        // [4..15] = user-defined material parameters
+                        {
+                            constexpr uint32_t kMaterialCBSize = 256; // 16 float4 = 256 bytes
+                            auto matAlloc = desc.cbAllocator->Allocate(kMaterialCBSize);
                             if (matAlloc.cpuPtr) {
-                                std::memcpy(matAlloc.cpuPtr, drawCmd.materialParams, paramBytes);
-                                cmd->SetRootCBV(3, matAlloc.bufferHandle, matAlloc.offsetBytes,
-                                                matAlloc.cpuPtr, paramBytes);
+                                std::memset(matAlloc.cpuPtr, 0, kMaterialCBSize);
+
+                                // Pack texture SRV indices into first 4 float4 (16 uint slots).
+                                // Use memcpy to reinterpret uint → float bits (matching asuint in shader).
+                                auto* dst = static_cast<uint32_t*>(matAlloc.cpuPtr);
+                                for (uint32_t ti = 0; ti < drawCmd.materialTexCount && ti < 16; ++ti) {
+                                    dst[ti] = drawCmd.materialTexIndices[ti];
+                                }
+
+                                // User params go at offset 64 bytes (slot 4+)
+                                if (drawCmd.materialParamCount > 0) {
+                                    const uint32_t paramOffset = 16 * sizeof(uint32_t); // 64 bytes
+                                    const uint32_t paramBytes = std::min(drawCmd.materialParamCount * 16u,
+                                                                         kMaterialCBSize - paramOffset);
+                                    std::memcpy(static_cast<uint8_t*>(matAlloc.cpuPtr) + paramOffset,
+                                                drawCmd.materialParams, paramBytes);
+                                }
+
+                                cmd->SetRootCBV(kSlotMaterialParams, matAlloc.bufferHandle, matAlloc.offsetBytes,
+                                                matAlloc.cpuPtr, kMaterialCBSize);
                             }
                         }
                     }

@@ -1,4 +1,4 @@
-# UzEngine 0.2 — Engine Documentation
+# UzEngine 0.6 — Engine Documentation
 
 > **AAA game engine embedded in VSCode, designed for autonomous AI-driven development.**
 

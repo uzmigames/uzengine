@@ -71,3 +71,8 @@
 - [ ] 13.1 Update `docs/engine/20-gameplay/` with BT architecture, node types, blackboard.
 - [ ] 13.2 Add `uz.bt` to `docs/lua-api-reference.md`.
 - [ ] 13.3 Document .uzbt format with examples.
+
+## 14. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 14.1 Update or create documentation covering the implementation
+- [ ] 14.2 Write tests covering the new behavior
+- [ ] 14.3 Run tests and confirm they pass

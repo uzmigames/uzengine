@@ -102,7 +102,7 @@ struct PerFrameParams {
     uint32_t irradianceSrvIndex   = UINT32_MAX;        ///< Bindless SRV index for irradiance cubemap.
     uint32_t prefilteredSrvIndex  = UINT32_MAX;        ///< Bindless SRV index for prefiltered specular.
     uint32_t brdfLutSrvIndex      = UINT32_MAX;        ///< Bindless SRV index for BRDF LUT.
-    uint32_t prefilteredMipLevels = 5;                 ///< Number of prefiltered mip levels.
+    uint32_t prefilteredMipLevels = 8;                 ///< Number of prefiltered mip levels (must match IBLBaker::kPrefilteredMipLevels).
     float    skyLightIntensity    = 1.0f;              ///< IBL ambient multiplier.
     float    skyLightColorR       = 1.0f;              ///< Sky light tint (R).
     float    skyLightColorG       = 1.0f;              ///< Sky light tint (G).
@@ -231,7 +231,58 @@ struct PerFrameParams {
     uint32_t envSamplerLumHeight = 0;               ///< Height of luminance mip 0.
     uint32_t envMisAccumulatedSrv = UINT32_MAX;     ///< SRV for temporally-accumulated env MIS specular.
 
-    float    _pad2[15]            = {};              ///< Pad scalar section to 768 bytes.
+    // ── Shader CVar parameters (Phase 1 — no hardcoded values) ─────────
+    float    shadowPCFPenumbra       = 2.0f;           ///< CVar r.Shadow.PCFPenumbraRadius
+    float    shadowPCSSMinPenumbra   = 0.5f;           ///< CVar r.Shadow.PCSSMinPenumbra
+    float    shadowPCSSMaxPenumbra   = 16.0f;          ///< CVar r.Shadow.PCSSMaxPenumbra
+    float    shadowESMExponent       = 80.0f;          ///< CVar r.Shadow.ESMExponentConstant
+    uint32_t shadowContactSteps      = 16;             ///< CVar r.Shadow.ContactShadowSteps
+    float    shadowContactThickness  = 0.005f;         ///< CVar r.Shadow.ContactShadowThickness
+    float    bloomKnee               = 0.5f;           ///< CVar r.Bloom.Knee
+    float    exposureKeyValue        = 0.18f;          ///< CVar r.Exposure.KeyValue
+    float    exposureSpeedUp         = 3.0f;           ///< CVar r.Exposure.SpeedUp
+    float    exposureSpeedDown       = 1.0f;           ///< CVar r.Exposure.SpeedDown
+    float    exposureLowPercent      = 10.0f;          ///< CVar r.Exposure.LowPercent
+    float    exposureHighPercent     = 90.0f;          ///< CVar r.Exposure.HighPercent
+    float    materialDielectricF0    = 0.04f;          ///< CVar r.Material.DielectricF0
+    float    materialMinGGXAlpha     = 0.0064f;        ///< CVar r.Material.MinGGXAlpha
+
+    // ── Brixelizer GI (AMD FidelityFX) ────────────────────────────────
+    /// SRV index for Brixelizer GI diffuse output (RGBA16F). UINT32_MAX = disabled.
+    /// Specular GI SRV is at (brixelizerGIDiffuseSrv + 1) by allocation convention.
+    uint32_t brixelizerGIDiffuseSrv = UINT32_MAX;
+
+    // ── Light Probe Volume (author-placed irradiance grid) ───────────────
+    /// Author-placed L2 SH probe volume. See `constant_buffers.h::PerFrameCB`
+    /// for field documentation — layout MUST stay byte-identical.
+    uint32_t lpvEnabled        = 0;
+    uint32_t lpvProbeBufferSrv = UINT32_MAX;
+    uint32_t lpvDimX           = 0;
+    uint32_t lpvDimY           = 0;
+    uint32_t lpvDimZ           = 0;
+    float    lpvOriginX        = 0.0f;
+    float    lpvOriginY        = 0.0f;
+    float    lpvOriginZ        = 0.0f;
+    float    lpvInvSizeX       = 0.0f;
+    float    lpvInvSizeY       = 0.0f;
+    float    lpvInvSizeZ       = 0.0f;
+    float    lpvIntensity      = 1.0f;
+
+    // ── DDGI atlases ───────────────────────────────────────────────────
+    uint32_t ddgiIrradianceSrv = UINT32_MAX;
+    uint32_t ddgiDepthSrv      = UINT32_MAX;
+    uint32_t ddgiProbesPerAxis = 0;
+    float    ddgiProbeSpacing  = 0.0f;
+    float    ddgiOriginX       = 0.0f;
+    float    ddgiOriginY       = 0.0f;
+    float    ddgiOriginZ       = 0.0f;
+    float    ddgiIntensity     = 1.0f;
+
+    // ── Indirect AO ──────────────────────────────────────────────────────
+    float    indirectAOExponent = 2.0f;     ///< CVar r.IndirectAO.Exponent
+
+    // ── Padding to next 256-byte boundary (1024 bytes) ────────────────
+    float    _padToCBEnd[43]   = {};
 
     // ── Resource handles (NOT copied to CB) ──────────────────────────────
     // These are bound by ShaderParameterBinder at their HLSL register slots.
@@ -254,7 +305,7 @@ struct PerFrameParams {
 };
 
 // Verify scalar section matches PerFrameCB exactly
-static_assert(offsetof(PerFrameParams, irradianceCubemap) == 768,
-              "PerFrameParams resource section must start at byte 768 (after PerFrameCB-compatible scalar section)");
+static_assert(offsetof(PerFrameParams, irradianceCubemap) == 1024,
+              "PerFrameParams resource section must start at byte 1024 (after PerFrameCB-compatible scalar section)");
 
 } // namespace uz

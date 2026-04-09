@@ -26,6 +26,14 @@ UZ_DECLARE_LOG_CATEGORY(Renderer);
 
 // ── CVars ────────────────────────────────────────────────────────────────
 static auto* cv_Clouds = UZ_CVAR_BOOL("r.Clouds", true, "Volumetric clouds");
+static auto* cv_CloudNoiseXY     = UZ_CVAR_FLOAT("r.Cloud.NoiseXYScale", 0.12f, "Cloud noise XY coordinate scale", 0.01f, 1.0f);
+static auto* cv_CloudNoiseZ      = UZ_CVAR_FLOAT("r.Cloud.NoiseZScale", 3.0f, "Cloud noise Z coordinate scale", 0.5f, 10.0f);
+static auto* cv_CloudOctaves     = UZ_CVAR_INT("r.Cloud.ShapeOctaves", 4, "Cloud shape FBM octaves", 1, 6);
+static auto* cv_CloudFBMDecay    = UZ_CVAR_FLOAT("r.Cloud.FBMDecay", 0.5f, "FBM amplitude decay per octave", 0.3f, 0.8f);
+static auto* cv_CloudFBMLac      = UZ_CVAR_FLOAT("r.Cloud.FBMLacunarity", 2.0f, "FBM frequency multiplier per octave", 1.5f, 4.0f);
+static auto* cv_CloudErosion     = UZ_CVAR_FLOAT("r.Cloud.DetailErosion", 0.35f, "Detail noise erosion strength", 0.0f, 1.0f);
+static auto* cv_CloudAerialDens  = UZ_CVAR_FLOAT("r.Cloud.AerialPerspectiveDensity", 0.04f, "Aerial perspective fog density", 0.0f, 0.2f);
+static auto* cv_CloudDensScale   = UZ_CVAR_FLOAT("r.Cloud.DensityScale", 25.0f, "Cloud density normalization scale", 1.0f, 100.0f);
 
 namespace uz {
 
@@ -129,6 +137,12 @@ void CloudPass::Shutdown() {
         m_shapeNoiseTexture = RHITextureHandle::Invalid();
     }
     m_shapeNoiseSrvIndex = UINT32_MAX;
+
+    if (m_detailNoiseTexture.IsValid()) {
+        m_device->DestroyTexture(m_detailNoiseTexture);
+        m_detailNoiseTexture = RHITextureHandle::Invalid();
+    }
+    m_detailNoiseSrvIndex = UINT32_MAX;
 
     // Destroy staging buffers
     for (auto& buf : m_stagingBuffers) {
@@ -338,8 +352,102 @@ void CloudPass::LoadNoiseTextures(IRHICommandList* cmdList, IVFS* vfs) {
     // Keep staging buffer alive — will be destroyed in Shutdown()
     m_stagingBuffers.push_back(stagingBuf);
 
-    m_hasNoiseTextures = true;
     UZ_LOG(Renderer, Info, "CloudPass: shape noise loaded (128^3 RGBA8, SRV={})", m_shapeNoiseSrvIndex);
+
+    // ── Load detail noise — 32^3 R8 (32,768 bytes) ──
+    // VFS asset from runtime/content/atmosphere/shape_detail.bin
+    const std::string detailPath = "atmosphere/shape_detail.bin";
+    constexpr uint32_t kDetailRes = 32;
+    constexpr uint64_t kDetailExpSize = kDetailRes * kDetailRes * kDetailRes; // 32768
+
+    std::vector<uint8_t> detailR8;
+    if (vfs) {
+        detailR8 = vfs->Read(detailPath);
+    }
+    if (detailR8.empty()) {
+        static bool loggedOnce = false;
+        if (!loggedOnce) {
+            UZ_LOG(Renderer, Warning, "CloudPass: could not load {} via VFS — detail noise erosion disabled", detailPath);
+            loggedOnce = true;
+        }
+    }
+
+    if (detailR8.size() == kDetailExpSize) {
+        // Expand R8 -> RGBA8
+        // DX12 requires D3D12_TEXTURE_DATA_PITCH_ALIGNMENT = 256 bytes per row.
+        // 32 texels * 4 bytes = 128 bytes/row — must pad to 256 for staging buffer.
+        constexpr uint32_t kDetRowPitch        = kDetailRes * 4;       // 128 bytes (source)
+        constexpr uint32_t kDetAlignedRowPitch = (kDetRowPitch + 255u) & ~255u; // 256 bytes (aligned)
+        constexpr uint64_t kDetAlignedSlice    = kDetAlignedRowPitch * kDetailRes;
+        constexpr uint64_t kDetStagingSize     = kDetAlignedSlice * kDetailRes;
+
+        // Expand R8 -> RGBA8 with row padding for DX12 alignment
+        std::vector<uint8_t> detailStaged(kDetStagingSize, 0);
+        for (uint32_t z = 0; z < kDetailRes; ++z) {
+            for (uint32_t y = 0; y < kDetailRes; ++y) {
+                uint64_t srcRow = (z * kDetailRes + y) * kDetailRes;
+                uint64_t dstRow = z * kDetAlignedSlice + y * kDetAlignedRowPitch;
+                for (uint32_t x = 0; x < kDetailRes; ++x) {
+                    uint8_t v = detailR8[srcRow + x];
+                    detailStaged[dstRow + x * 4 + 0] = v;
+                    detailStaged[dstRow + x * 4 + 1] = v;
+                    detailStaged[dstRow + x * 4 + 2] = v;
+                    detailStaged[dstRow + x * 4 + 3] = v;
+                }
+            }
+        }
+
+        RHITextureDesc detTexDesc{};
+        detTexDesc.width            = kDetailRes;
+        detTexDesc.height           = kDetailRes;
+        detTexDesc.depthOrArraySize = kDetailRes;
+        detTexDesc.format           = RHIFormat::RGBA8Unorm;
+        detTexDesc.usage            = RHITextureUsage::ShaderResource | RHITextureUsage::CopyDst;
+        detTexDesc.is3D             = true;
+        detTexDesc.debugName        = "Cloud_DetailNoise";
+
+        m_detailNoiseTexture = m_device->CreateTexture(detTexDesc);
+        if (m_detailNoiseTexture.IsValid()) {
+            m_detailNoiseSrvIndex = m_device->GetTextureSRVIndex(m_detailNoiseTexture);
+
+            RHIBufferDesc detBufDesc{};
+            detBufDesc.sizeBytes = kDetStagingSize;
+            detBufDesc.usage     = RHIBufferUsage::CopySrc;
+            detBufDesc.memory    = RHIMemoryType::Upload;
+            detBufDesc.debugName = "Cloud_DetailNoise_Staging";
+
+            auto detStaging = m_device->CreateBuffer(detBufDesc);
+            if (detStaging.IsValid()) {
+                void* detMapped = m_device->MapBuffer(detStaging);
+                if (detMapped) {
+                    std::memcpy(detMapped, detailStaged.data(), kDetStagingSize);
+                    m_device->UnmapBuffer(detStaging);
+
+                    RHIBarrierDesc detBarrier{};
+                    detBarrier.texture     = m_detailNoiseTexture;
+                    detBarrier.stateBefore = RHIResourceState::Common;
+                    detBarrier.stateAfter  = RHIResourceState::CopyDst;
+                    cmdList->ResourceBarrier(&detBarrier, 1);
+
+                    cmdList->CopyBufferToTexture(detStaging, 0, kDetAlignedRowPitch,
+                                                 m_detailNoiseTexture, 0, 0);
+
+                    detBarrier.stateBefore = RHIResourceState::CopyDst;
+                    detBarrier.stateAfter  = RHIResourceState::ShaderResource;
+                    cmdList->ResourceBarrier(&detBarrier, 1);
+
+                    m_stagingBuffers.push_back(detStaging);
+                    UZ_LOG(Renderer, Info, "CloudPass: detail noise loaded (32^3 RGBA8, SRV={})",
+                           m_detailNoiseSrvIndex);
+                }
+            }
+        }
+    } else if (!detailR8.empty()) {
+        UZ_LOG(Renderer, Warning, "CloudPass: shape_detail.bin size mismatch (expected {}, got {})",
+               kDetailExpSize, detailR8.size());
+    }
+
+    m_hasNoiseTextures = true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -386,7 +494,7 @@ struct alignas(16) CloudCB {
     uint32_t tracingMaxDistanceMode;                          // 4 bytes  (offset 240)
     float tracingStartMaxDistance;                             // 4 bytes  (offset 244)
     float tracingStartDistanceFromCamera;                     // 4 bytes  (offset 248)
-    float _pad[1];             // 4 bytes  (offset 252 -> 256 total)
+    uint32_t detailNoiseSrv;   // 4 bytes  (offset 252) — detail noise 3D texture SRV
 };
 
 static_assert(sizeof(CloudCB) == 256, "CloudCB must be 256 bytes for CBV alignment");
@@ -484,7 +592,7 @@ void CloudPass::Execute(IRHICommandList* cmdList, CBRingAllocator& cbRing,
     cb.tracingMaxDistanceMode = input.tracingMaxDistanceMode;
     cb.tracingStartMaxDistance = input.tracingStartMaxDistance;
     cb.tracingStartDistanceFromCamera = input.tracingStartDistanceFromCamera;
-    std::memset(cb._pad, 0, sizeof(cb._pad));
+    cb.detailNoiseSrv  = m_detailNoiseSrvIndex;
 
     auto cbAlloc = cbRing.Allocate(sizeof(CloudCB));
     std::memcpy(cbAlloc.cpuPtr, &cb, sizeof(CloudCB));
@@ -494,11 +602,34 @@ void CloudPass::Execute(IRHICommandList* cmdList, CBRingAllocator& cbRing,
 
     // Root constants at slot 0 (b0): {outputUavIndex, depthSrvIndex, halfWidth, halfHeight}
     // Packed as uint32 to match compute root signature expectations.
-    uint32_t rootConst[4] = {
+    // Cloud CVar values as float bits for root constants
+    float noiseXY = cv_CloudNoiseXY->value;
+    float noiseZ  = cv_CloudNoiseZ->value;
+    float fbmDec  = cv_CloudFBMDecay->value;
+    float fbmLac  = cv_CloudFBMLac->value;
+    float erosion = cv_CloudErosion->value;
+    float densScl = cv_CloudDensScale->value;
+    uint32_t noiseXYBits, noiseZBits, fbmDecBits, fbmLacBits, erosionBits, densityBits;
+    std::memcpy(&noiseXYBits, &noiseXY, 4);
+    std::memcpy(&noiseZBits,  &noiseZ,  4);
+    std::memcpy(&fbmDecBits,  &fbmDec,  4);
+    std::memcpy(&fbmLacBits,  &fbmLac,  4);
+    std::memcpy(&erosionBits, &erosion, 4);
+    std::memcpy(&densityBits, &densScl, 4);
+
+    uint32_t rootConst[12] = {
         m_outputUavIndex,
         input.depthSrv,
         m_halfWidth,
-        m_halfHeight
+        m_halfHeight,
+        noiseXYBits,
+        noiseZBits,
+        static_cast<uint32_t>(cv_CloudOctaves->value),
+        fbmDecBits,
+        fbmLacBits,
+        erosionBits,
+        densityBits,
+        0  // padding
     };
 
     static bool loggedOnce = false;
@@ -523,7 +654,7 @@ void CloudPass::Execute(IRHICommandList* cmdList, CBRingAllocator& cbRing,
         loggedOnce = true;
     }
 
-    cmdList->SetRootConstants(0, rootConst, 4);
+    cmdList->SetRootConstants(0, rootConst, 12);
 
     // CBV at slot 2 (b2): CloudCB
     cmdList->SetRootCBV(2, cbAlloc.bufferHandle, cbAlloc.offsetBytes,

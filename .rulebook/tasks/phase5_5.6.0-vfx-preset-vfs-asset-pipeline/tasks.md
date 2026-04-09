@@ -59,3 +59,8 @@
 - [ ] 8.2 Document all new `VFXPresetSerializer` overloads with full `///` Rust-style doc blocks: purpose, parameters, returns, errors, limitations (PakVFS read-only for Save), and a code example.
 - [ ] 8.3 Add a `/// @note` to `VFXPresetSerializer::ScanDirectory(logicalPrefix, vfs)` explaining that directory listing is only supported for `LooseFileVFS` mounts and returns an empty vector for `PakVFS`.
 - [ ] 8.4 Update the `VFXHotReload` doc block (if it exists) or create one in `vfx_hot_reload.h` documenting the `Watch()` + `Poll()` lifecycle, the VFS path requirement, and the partial-file safety guarantee.
+
+## 9. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 9.1 Update or create documentation covering the implementation
+- [ ] 9.2 Write tests covering the new behavior
+- [ ] 9.3 Run tests and confirm they pass

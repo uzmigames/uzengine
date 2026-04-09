@@ -35,3 +35,8 @@
 ## 6. Documentation
 - [ ] 6.1 Document first-frame resource state convention in render graph comments.
 - [ ] 6.2 Update atmosphere_renderer.h with first-frame state notes.
+
+## 7. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 7.1 Update or create documentation covering the implementation
+- [ ] 7.2 Write tests covering the new behavior
+- [ ] 7.3 Run tests and confirm they pass

@@ -1,0 +1,19 @@
+{
+  "name": "Chrome Test",
+  "version": "1.0",
+  "engine_version": "0.2.0",
+  "default_scene": "scenes/chrome_test.uzscene",
+  "content_root": "../content/",
+  "window": {
+    "title": "UzEngine — Chrome Test",
+    "width": 1920,
+    "height": 1080,
+    "fullscreen": false
+  },
+  "render": {
+    "backend": "dx12",
+    "shader_model": "6_6",
+    "vsync": false,
+    "hdr": false
+  }
+}

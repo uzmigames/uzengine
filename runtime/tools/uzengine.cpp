@@ -39,6 +39,8 @@
 #include "../engine/scripting/editor/lua_editor_api.h"
 #include "../engine/renderer/passes/debug/pixel_debug.h"
 #include "../engine/renderer/passes/debug/inspector_pass.h"
+#include "../engine/asset/importers/png_codec.h"
+#include "texture_loader.h"
 
 #ifdef _WIN32
 #include "platform_window.h"
@@ -52,6 +54,7 @@
 #include <filesystem>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace uz {
 
@@ -401,14 +404,77 @@ static int RunFlip(const RHIDeviceDesc& deviceDesc,
     cmdList->Begin();
     auto result = flipPass.Evaluate(cmdList, refSrv, testSrv, refW, refH, threshold);
 
+    // Save heatmap PNG if output path specified
+    if (!outputPath.empty() && result.heatmap.IsValid()) {
+        const uint32_t rowPitch = refW * 8; // RGBA16F = 4 channels * 2 bytes
+        const uint32_t bufSize  = rowPitch * refH;
+
+        RHIBufferDesc rbDesc;
+        rbDesc.sizeBytes = bufSize;
+        rbDesc.usage     = RHIBufferUsage::CopyDst;
+        rbDesc.memory    = RHIMemoryType::Readback;
+        rbDesc.debugName = "FLIP_HeatmapReadback";
+        auto readbackBuf = devicePtr->CreateBuffer(rbDesc);
+
+        if (readbackBuf.IsValid()) {
+            // Reuse existing cmdList — it's idle after Evaluate's WaitIdle
+            cmdList->Begin();
+
+            RHIBarrierDesc toCopy;
+            toCopy.texture     = result.heatmap;
+            toCopy.stateBefore = RHIResourceState::ShaderResource;
+            toCopy.stateAfter  = RHIResourceState::CopySrc;
+            cmdList->ResourceBarrier(&toCopy, 1);
+            cmdList->CopyTextureToBuffer(result.heatmap, 0, readbackBuf, 0, rowPitch);
+            cmdList->End();
+            cmdList->Execute();
+            devicePtr->WaitIdle();
+
+            // Convert RGBA16F → RGBA8 and save
+            const auto* src = static_cast<const uint16_t*>(devicePtr->MapBuffer(readbackBuf));
+            std::vector<uint8_t> rgba8(refW * refH * 4);
+            for (uint32_t i = 0; i < refW * refH * 4; ++i) {
+                // float16 → float32 → uint8
+                uint16_t fp16 = src[i];
+                uint32_t sign = (fp16 >> 15) & 0x1;
+                uint32_t exp  = (fp16 >> 10) & 0x1F;
+                uint32_t man  = fp16 & 0x3FF;
+                float f;
+                if (exp == 0) {
+                    f = (man == 0) ? 0.0f : std::ldexp(static_cast<float>(man), -24);
+                } else if (exp == 31) {
+                    f = 1.0f; // clamp inf/nan
+                } else {
+                    f = std::ldexp(static_cast<float>(man + 1024), static_cast<int>(exp) - 25);
+                }
+                if (sign) f = -f;
+                if (f < 0.0f) f = 0.0f;
+                if (f > 1.0f) f = 1.0f;
+                rgba8[i] = static_cast<uint8_t>(f * 255.0f + 0.5f);
+            }
+            devicePtr->UnmapBuffer(readbackBuf);
+            devicePtr->DestroyBuffer(readbackBuf);
+
+            if (PngCodec::EncodeFile(outputPath, rgba8.data(), refW, refH, 4)) {
+                UZ_LOG(Engine, Info, "FLIP: heatmap saved to '{}'", outputPath);
+            } else {
+                UZ_LOG(Engine, Error, "FLIP: failed to save heatmap to '{}'", outputPath);
+            }
+        } else {
+            UZ_LOG(Engine, Error, "FLIP: failed to create readback buffer for heatmap");
+        }
+    }
+
     // Print JSON to stdout
     std::printf("FLIP_JSON:{\"mean_flip\":%.6f,\"max_flip\":%.6f,\"threshold\":%.4f,"
                 "\"pass\":%s,\"ref\":\"%s\",\"test\":\"%s\",\"width\":%u,\"height\":%u}\n",
                 result.meanFlip, result.maxFlip, threshold,
                 result.pass ? "true" : "false",
                 refPath.c_str(), testPath.c_str(), refW, refH);
+    std::fflush(stdout);
 
     flipPass.Shutdown();
+    devicePtr->DestroyCommandList(cmdList);
 
     return result.pass ? kExitSuccess : 1;
 }
@@ -507,7 +573,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     if (!defaultScene.empty()) {
         auto sceneBytes = vfs.Read(defaultScene);
         if (!sceneBytes.empty()) {
-            const size_t count = LoadScene(world, sceneBytes, defaultScene);
+            const size_t count = LoadScene(world, sceneBytes, defaultScene, &vfs);
             UZ_LOG(Engine, Info, "Loaded {} entities from '{}'", count, defaultScene);
         } else {
             UZ_LOG(Engine, Warning, "Failed to read scene: '{}'", defaultScene);
@@ -526,6 +592,15 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         UZ_LOG(Engine, Warning, "LuaVM failed to initialize — scripting disabled");
     }
 
+    // Flush pending --cvar overrides BEFORE SceneRenderer::Init so any
+    // file-scope CVar declared via UZ_CVAR_BOOL in a translation unit
+    // included from the renderer (registered during static init) sees the
+    // CLI override during the renderer's own Init() — not after. Without
+    // this ordering, init-time gating CVars (`r.BrixelizerGI.RealInit`,
+    // `r.BrixelizerGI.AllocSdf`, etc.) would always observe the default
+    // value because the override was still pending in the Config map.
+    if (configPtr) configPtr->FlushCvarOverrides();
+
     // ── Scene Renderer ─────────────────────────────────────────────────
     SceneRenderer sceneRenderer;
     bool sceneRendererReady = sceneRenderer.Init(device, &window,
@@ -534,7 +609,9 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         UZ_LOG(Engine, Warning, "SceneRenderer init failed — falling back to clear screen");
     }
 
-    // Flush pending --cvar overrides to CVarRegistry (after CVars are registered by SceneRenderer::Init)
+    // Re-flush in case SceneRenderer::Init registered any new CVars
+    // referenced by the same CLI args. Idempotent — applies any names
+    // that didn't exist on the first pass.
     if (configPtr) configPtr->FlushCvarOverrides();
 
     // Apply shadow debug mode from CLI (--shadow-debug <0-8>)
@@ -778,6 +855,12 @@ int main(int argc, char** argv) {
 
     // Config: project file + CLI overrides
     uz::Config config = uz::BuildConfig(argc, argv);
+
+    // --rt-test: enable RT and the UV test pass via CVar overrides
+    if (config.GetBool("rt-test", false)) {
+        config.AddPendingCvarOverride("r.RayTracing", 1.0f);
+        config.AddPendingCvarOverride("r.RayTracing.TestPass", 1.0f);
+    }
 
     // Apply log level filter (--log-level trace|debug|info|warning|error)
     {

@@ -1,6 +1,6 @@
 # Editor Framework — VSCode Integration, Gizmos, Selection, and Undo/Redo
 
-> **Status**: Planned (Phase 2–3)
+> **Status**: Partial (v0.3.0+ — N-API addon, VSCode extension, viewport HWND, IPC dispatch, play/stop mode. Hierarchy/Inspector/Gizmos planned)
 > **Source**: `editor/`, extension code in VSCode extension project
 > **References**: UE5 FEditorViewportClient, Godot EditorPlugin + EditorInspectorPlugin, Blueprint editor interaction patterns
 

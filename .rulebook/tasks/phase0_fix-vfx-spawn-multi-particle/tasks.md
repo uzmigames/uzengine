@@ -28,3 +28,8 @@
 - [ ] 5.2 Remove CPU upload test code (if(false) block in frame_vfx_inline.cpp)
 - [ ] 5.3 Restore billboard VS to production state (no debug overrides)
 - [ ] 5.4 Commit final working state
+
+## 6. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 6.1 Update or create documentation covering the implementation
+- [ ] 6.2 Write tests covering the new behavior
+- [ ] 6.3 Run tests and confirm they pass

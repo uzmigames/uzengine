@@ -30,4 +30,13 @@ namespace uz {
 /// * `L` - Active Lua state. Must not be null.
 void LuaRegisterCameraAPI(lua_State* L);
 
+class CameraManager;
+
+/// Stores the CameraManager pointer in the Lua registry for mgr_* functions.
+void LuaSetCameraManager(lua_State* L, CameraManager* mgr);
+
+/// Registers uz.camera.mgr_create/mgr_switch/mgr_list/mgr_get_active/mgr_destroy.
+/// Must be called after LuaRegisterCameraAPI and LuaSetCameraManager.
+void LuaRegisterCameraManagerAPI(lua_State* L);
+
 } // namespace uz

@@ -112,6 +112,40 @@ void Application::ParseArgs(int argc, char* argv[]) {
             m_config.forceLooseVFS = true;
         } else if (std::strcmp(argv[i], "--pak-cache-mb") == 0 && i + 1 < argc) {
             m_config.pakCacheMB = static_cast<uint32_t>(std::atoi(argv[++i]));
+        } else if (std::strcmp(argv[i], "--flip") == 0) {
+            m_flipMode = true;
+        } else if (std::strcmp(argv[i], "--flip-ref") == 0 && i + 1 < argc) {
+            m_flipRefPath = argv[++i];
+        } else if (std::strcmp(argv[i], "--flip-test") == 0 && i + 1 < argc) {
+            m_flipTestPath = argv[++i];
+        } else if (std::strcmp(argv[i], "--flip-output") == 0 && i + 1 < argc) {
+            m_flipOutputPath = argv[++i];
+        } else if (std::strcmp(argv[i], "--flip-threshold") == 0 && i + 1 < argc) {
+            m_flipThreshold = static_cast<float>(std::atof(argv[++i]));
+        } else if (std::strcmp(argv[i], "--upscaler") == 0 && i + 1 < argc) {
+            const char* mode = argv[++i];
+            int upscalerVal = 0;
+            if (std::strcmp(mode, "none") == 0)      upscalerVal = 0;
+            else if (std::strcmp(mode, "taa") == 0)   upscalerVal = 1;
+            else if (std::strcmp(mode, "tsr") == 0)   upscalerVal = 2;
+            else if (std::strcmp(mode, "fsr2") == 0)  upscalerVal = 3;
+            else if (std::strcmp(mode, "dlss") == 0)  upscalerVal = 4;
+            else if (std::strcmp(mode, "xess") == 0)  upscalerVal = 5;
+            else { UZ_LOG(App, Warning, "Unknown upscaler '{}', using TAA", mode); upscalerVal = 1; }
+            m_cvarOverrides.emplace_back("r.AntiAliasingMethod", static_cast<float>(upscalerVal));
+        } else if (std::strcmp(argv[i], "--dlss-quality") == 0 && i + 1 < argc) {
+            const char* q = argv[++i];
+            int qVal = 3; // Quality default
+            if (std::strcmp(q, "ultra") == 0 || std::strcmp(q, "ultraperformance") == 0) qVal = 0;
+            else if (std::strcmp(q, "performance") == 0) qVal = 1;
+            else if (std::strcmp(q, "balanced") == 0)    qVal = 2;
+            else if (std::strcmp(q, "quality") == 0)     qVal = 3;
+            else if (std::strcmp(q, "dlaa") == 0)        qVal = 4;
+            m_cvarOverrides.emplace_back("r.DLSS.Quality", static_cast<float>(qVal));
+        } else if (std::strcmp(argv[i], "--rt-test") == 0) {
+            m_cvarOverrides.emplace_back("r.RayTracing", 1.0f);
+            m_cvarOverrides.emplace_back("r.RayTracing.TestPass", 1.0f);
+            m_visTarget = "rt_uv_test";
         } else if (std::strcmp(argv[i], "--cvar") == 0 && i + 1 < argc) {
             std::string arg = argv[++i];
             const auto eqPos = arg.find('=');
@@ -175,6 +209,20 @@ void Application::ParseArgs(int argc, char* argv[]) {
             m_config.maxFrames = 120;
         }
         LogSuppressConsole();
+    }
+
+    // --flip: headless FLIP comparison mode.
+    // Loads two images, runs FlipPass compute shader, outputs FLIP_JSON to stdout.
+    // Does NOT require a scene or rendering pipeline — uses device + compute only.
+    if (m_flipMode) {
+        m_headless = true;
+        m_config.maxFrames = 1; // Exit after one frame
+        LogSuppressConsole();
+
+        if (m_flipRefPath.empty() || m_flipTestPath.empty()) {
+            UZ_LOG(App, Error, "--flip requires --flip-ref <path> and --flip-test <path>");
+            m_flipMode = false;
+        }
     }
 }
 

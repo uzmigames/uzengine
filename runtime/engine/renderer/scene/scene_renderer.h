@@ -50,9 +50,14 @@
 #include "postprocess/gtao_pass.h"
 #include "postprocess/hiz_pyramid_pass.h"
 #include "shadows/distance_field_shadow_config.h"
+#include "camera_manager.h"
 #include "gi/ssgi_renderer.h"
 #include "gi/global_distance_field.h"
 #include "gi/radiance_cache.h"
+#include "gi/irradiance_probe_grid.h"
+#include "gi/ddgi_system.h"
+#include "engine/ecs/environment/light_probe_volume_component.h"
+#include "passes/gi/brixelizer_gi_pass.h"
 #include "async_texture_decoder.h"  // TextureDecodeResult for m_deferredDecoded
 #include "inspector_pass.h"        // PassInspector for render target visualization
 #include "upload_ring.h"           // UploadRing for zero-alloc texture staging
@@ -102,11 +107,16 @@ class SdfAtlasManager;
 class DynamicResolutionController;
 class CloudPass;
 struct CloudPassInput;
+class VolumetricFogPass;
 class VFXSystem;
 class VFXHotReload;
 class DecalManager;
 class TrailSystem;
 class PixelDebugSystem;
+class RTManager;
+class RTUVTestPass;
+class MaterialPipeline;
+class MaterialManager;
 struct ParticleEmitter;
 namespace rg { class RgResourcePool; }
 
@@ -514,10 +524,14 @@ public:
 
     // ── Accessors ──────────────────────────────────────────────────────────
 
-    /// Returns the camera used for rendering. Must only be called after `Init()`.
+    /// Returns the active camera used for rendering. Must only be called after `Init()`.
     [[nodiscard]] Camera& GetCamera();
-    /// Const overload — returns a const reference to the render camera.
+    /// Const overload — returns a const reference to the active render camera.
     [[nodiscard]] const Camera& GetCamera() const;
+
+    /// Returns the camera manager. Must only be called after `Init()`.
+    [[nodiscard]] CameraManager& GetCameraManager();
+    [[nodiscard]] const CameraManager& GetCameraManager() const;
 
     /// Returns the fly camera controller. Must only be called after `Init()`.
     [[nodiscard]] FlyCameraController& GetCameraController();
@@ -658,7 +672,7 @@ public:
     ///
     /// # Returns
     /// Stable texture ID on success. `UINT32_MAX` if the path is empty.
-    [[nodiscard]] uint32_t QueueTextureLoad(const std::string& path);
+    [[nodiscard]] uint32_t QueueTextureLoad(const std::string& path, bool isSRGB = false);
 
     /// Returns the VFS path for a texture loaded via `QueueTextureLoad`.
     ///
@@ -702,6 +716,24 @@ public:
     /// # Thread Safety
     /// Must be called from the render/init thread.
     bool SetHDRIEnvironment(uint32_t equirectSrvIndex, uint32_t cubemapSize = 512);
+
+    /// Sets the environment from a Three.js CubeUV PMREM atlas texture.
+    ///
+    /// Extracts a standard cubemap with mip chain from the PMREM atlas (using
+    /// `IBLBaker::PmremToCubemap`), then bakes only the irradiance cubemap
+    /// (prefiltered specular is already in the PMREM mip chain). Projects SH
+    /// irradiance for diffuse lighting and fog color.
+    ///
+    /// # Arguments
+    /// * `result` — TextureLoadResult with isPMREM=true, valid handle/SRV.
+    ///
+    /// # Returns
+    /// `true` on success, `false` on failure (error logged).
+    bool SetPMREMEnvironment(const TextureLoadResult& result);
+
+    /// Track an externally-created texture so it is destroyed during Shutdown.
+    /// Used by Lua API (uz.texture.load_hdr) to prevent GPU memory leaks.
+    void TrackExternalTexture(const TextureLoadResult& tex);
 
     // ── Low-level accessors (for subsystems needing direct GPU access) ────
 

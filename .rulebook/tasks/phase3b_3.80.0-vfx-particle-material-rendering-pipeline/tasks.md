@@ -82,3 +82,8 @@ and material blend pipeline. See docs/analysis/vfx/niagara-sprite-rendering-pipe
 - [ ] 9.2 Document sprite sheet requirements: format, channels, sRGB, sizes.
 - [ ] 9.3 Document blend mode selection guide: when to use Additive vs Translucent vs AlphaComposite.
 - [ ] 9.4 Update Niagara parity analysis with verified implementation notes.
+
+## 10. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 10.1 Update or create documentation covering the implementation
+- [ ] 10.2 Write tests covering the new behavior
+- [ ] 10.3 Run tests and confirm they pass

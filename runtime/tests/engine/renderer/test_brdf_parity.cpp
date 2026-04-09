@@ -748,3 +748,137 @@ TEST(Fresnel_Schlick, Monotonicity) {
         prev = r.x;
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §10 — GGX VNDF Importance Sampling (Dupuy & Benyoub 2023 Spherical Caps)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Helper to compute vector length.
+static float VecLen(const Vec3& v) {
+    return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+}
+
+/// Helper to normalize a vector.
+static Vec3 VecNormalize(const Vec3& v) {
+    float len = VecLen(v);
+    if (len < 1e-8f) return {0.0f, 0.0f, 1.0f};
+    return {v.x / len, v.y / len, v.z / len};
+}
+
+/// VNDF sampling at normal incidence: the sampled H should point roughly upward
+/// (close to the normal) for a smooth surface.
+/// @ref Dupuy & Benyoub 2023 — at normal incidence, VNDF ≈ NDF for smooth surfaces.
+TEST(VNDF_Sampling, NormalIncidence_Smooth_HPointsUp) {
+    const Vec3 wi = {0.0f, 0.0f, 1.0f};  // looking straight down at surface
+    const float alpha = 0.01f;  // very smooth (roughness ~0.1)
+    const Vec3 H = SampleGGX_VNDF(alpha, wi, 0.5f, 0.5f);
+    // H should be very close to (0, 0, 1) for smooth surface at normal incidence
+    EXPECT_GT(H.z, 0.9f) << "H.z=" << H.z << " should be near 1.0 for smooth surface";
+    EXPECT_LT(std::abs(H.x), 0.2f);
+    EXPECT_LT(std::abs(H.y), 0.2f);
+}
+
+/// VNDF sampling at roughness 0.5: samples should spread more around the hemisphere.
+/// Test that the sampled H is still in the upper hemisphere (z > 0).
+TEST(VNDF_Sampling, MediumRoughness_UpperHemisphere) {
+    const Vec3 wi = {0.0f, 0.0f, 1.0f};
+    const float alpha = 0.25f;  // roughness 0.5 → alpha = 0.25
+    for (int i = 0; i < 32; ++i) {
+        float ux = static_cast<float>(i) / 32.0f;
+        float uy = static_cast<float>((i * 7 + 3) % 32) / 32.0f;
+        const Vec3 H = SampleGGX_VNDF(alpha, wi, ux, uy);
+        EXPECT_GT(H.z, 0.0f) << "H must be in upper hemisphere, got z=" << H.z
+                              << " at u=(" << ux << "," << uy << ")";
+        float len = VecLen(H);
+        EXPECT_NEAR(len, 1.0f, 1e-4f) << "H must be unit length";
+    }
+}
+
+/// VNDF at roughness 1.0 (alpha = 1.0): full hemisphere distribution.
+/// Samples should still be normalized and in upper hemisphere.
+TEST(VNDF_Sampling, FullRoughness_StillValid) {
+    const Vec3 wi = VecNormalize({0.3f, 0.0f, 0.9f});  // slight off-axis
+    const float alpha = 1.0f;
+    for (int i = 0; i < 64; ++i) {
+        float ux = static_cast<float>(i) / 64.0f;
+        float uy = static_cast<float>((i * 13 + 5) % 64) / 64.0f;
+        const Vec3 H = SampleGGX_VNDF(alpha, wi, ux, uy);
+        EXPECT_GE(H.z, -1e-5f) << "H.z must be >= 0 (upper hemisphere)";
+        float len = VecLen(H);
+        EXPECT_NEAR(len, 1.0f, 1e-3f) << "H must be unit length";
+    }
+}
+
+/// VNDF grazing angle: wi nearly parallel to surface.
+/// The sampled H should still be valid (unit length, upper hemisphere).
+TEST(VNDF_Sampling, GrazingAngle_StillValid) {
+    const Vec3 wi = VecNormalize({0.99f, 0.0f, 0.1f});  // nearly grazing
+    const float alpha = 0.1f;
+    for (int i = 0; i < 32; ++i) {
+        float ux = static_cast<float>(i) / 32.0f;
+        float uy = 0.5f;
+        const Vec3 H = SampleGGX_VNDF(alpha, wi, ux, uy);
+        EXPECT_GE(H.z, -1e-5f) << "H.z must be >= 0";
+        float len = VecLen(H);
+        EXPECT_NEAR(len, 1.0f, 1e-3f) << "H must be unit length";
+    }
+}
+
+/// VNDF boundary: u=(0,0) and u near (1,1) should produce valid results.
+/// Note: u=(1.0,1.0) is degenerate (phi=2*PI wraps, z collapses) — test near-boundary.
+TEST(VNDF_Sampling, BoundaryInputs) {
+    const Vec3 wi = {0.0f, 0.0f, 1.0f};
+    const float alpha = 0.25f;
+
+    const Vec3 H0 = SampleGGX_VNDF(alpha, wi, 0.0f, 0.0f);
+    EXPECT_GE(H0.z, -1e-5f);
+    EXPECT_NEAR(VecLen(H0), 1.0f, 1e-3f);
+
+    // Near-boundary (0.999 instead of exact 1.0 to avoid degenerate phi=2*PI)
+    const Vec3 H1 = SampleGGX_VNDF(alpha, wi, 0.999f, 0.999f);
+    EXPECT_GE(H1.z, -1e-5f);
+    EXPECT_NEAR(VecLen(H1), 1.0f, 1e-3f);
+}
+
+/// VNDF property: the majority of reflected directions L = 2*(V·H)*H - V
+/// should be in the upper hemisphere. VNDF reduces below-hemisphere samples
+/// compared to standard NDF sampling, but doesn't eliminate them entirely
+/// for rough surfaces.
+/// @ref Heitz 2018 — VNDF provides lower variance by preferring visible normals.
+TEST(VNDF_Sampling, ReflectedDirection_MostlyUpperHemisphere) {
+    const Vec3 V = VecNormalize({0.2f, 0.1f, 0.9f});
+    const float alpha = 0.3f;
+    int aboveCount = 0;
+    const int N = 256;
+    for (int i = 0; i < N; ++i) {
+        float ux = static_cast<float>(i) / static_cast<float>(N);
+        float uy = static_cast<float>((i * 11 + 7) % N) / static_cast<float>(N);
+        const Vec3 H = SampleGGX_VNDF(alpha, V, ux, uy);
+        float VdotH = V.x * H.x + V.y * H.y + V.z * H.z;
+        Vec3 L = {2.0f * VdotH * H.x - V.x,
+                  2.0f * VdotH * H.y - V.y,
+                  2.0f * VdotH * H.z - V.z};
+        if (L.z >= 0.0f) aboveCount++;
+    }
+    // At alpha=0.3, V mostly vertical, >85% of samples should reflect upward.
+    const float ratio = static_cast<float>(aboveCount) / static_cast<float>(N);
+    EXPECT_GT(ratio, 0.85f) << "Expected >85% upper hemisphere reflections, got "
+                            << ratio * 100.0f << "%";
+}
+
+/// ImportanceSampleGGX: at normal incidence with smooth surface, H ≈ (0,0,1).
+TEST(GGX_ImportanceSample, NormalIncidence_Smooth) {
+    const Vec3 H = ImportanceSampleGGX(0.5f, 0.5f, 0.01f);
+    EXPECT_GT(H.z, 0.99f) << "Very smooth surface should sample H near normal";
+}
+
+/// ImportanceSampleGGX: all samples in upper hemisphere.
+TEST(GGX_ImportanceSample, UpperHemisphere) {
+    for (int i = 0; i < 64; ++i) {
+        float ux = static_cast<float>(i) / 64.0f + 0.001f;
+        float uy = static_cast<float>((i * 13 + 3) % 64) / 64.0f;
+        const Vec3 H = ImportanceSampleGGX(ux, uy, 0.5f);
+        EXPECT_GE(H.z, 0.0f) << "H must be in upper hemisphere";
+        EXPECT_NEAR(VecLen(H), 1.0f, 1e-4f);
+    }
+}

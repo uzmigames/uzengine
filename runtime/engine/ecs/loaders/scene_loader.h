@@ -109,9 +109,18 @@ class World;
 /// size_t count = uz::LoadScene(world, bytes, "scenes/main.uzscene");
 /// UZ_LOG(Scene, Info, "Loaded {} entities", count);
 /// ```
+class IVFS;
+
 [[nodiscard]] size_t LoadScene(World& world,
                                 const std::vector<uint8_t>& sceneJson,
                                 const std::string& sourceName);
+
+/// Overload with VFS access — enables loading .uzmaterial files referenced
+/// by `"material": { "asset": "materials/foo.uzmaterial" }`.
+[[nodiscard]] size_t LoadScene(World& world,
+                                const std::vector<uint8_t>& sceneJson,
+                                const std::string& sourceName,
+                                IVFS* vfs);
 
 /// Serializes the World's entities to `.uzscene` JSON format.
 ///

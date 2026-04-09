@@ -1,0 +1,141 @@
+{
+  "name": "Sponza Atrium",
+  "version": "1.0",
+  "cvars": {
+    "r.PathTracer.Enable": 0,
+    "r.RadianceCache": 0,
+    "r.GI.Intensity": 1.4,
+    "r.GI.RadianceCache.GridExtent": 3000,
+    "r.BrixelizerGI": 0,
+    "r.BrixelizerGI.Intensity": 1.4,
+    "r.SkyLight.Intensity": 1.0,
+    "r.SkyLight.MinAmbient": 0.04,
+    "r.SkyLight.IndirectIntensity": 1.5,
+    "r.GTAO": 1,
+    "r.GTAO.Intensity": 1.0,
+    "r.GTAO.Radius": 100,
+    "r.GTAO.NumAngles": 4,
+    "r.GTAO.NumTaps": 12,
+    "r.GTAO.ThicknessBlend": 0.5,
+    "r.AutoExposure": 0,
+    "r.Exposure": 2.0
+  },
+  "entities": [
+    {
+      "name": "Sun",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            -60,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "light": {
+          "type": "directional",
+          "color": [
+            1.0,
+            0.98,
+            0.95
+          ],
+          "intensity": 10,
+          "cast_shadows": true,
+          "atmosphere_sun_light": true,
+          "light_source_angle": 0.5
+        }
+      }
+    },
+    {
+      "name": "Camera",
+      "components": {
+        "transform": {
+          "position": [
+            36,
+            -611,
+            102
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        "camera": {
+          "fov": 75,
+          "near": 5,
+          "far": 10000,
+          "active": true
+        }
+      }
+    },
+    {
+      "name": "Sky",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        },
+        "sky_atmosphere": {}
+      }
+    },
+    {
+      "name": "SkyLight",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        },
+        "sky_light": {
+          "cubemap_path": "textures/hdri/grasslands_sunset_4k.hdr",
+          "intensity": 1.5,
+          "light_color": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "indirect_lighting_intensity": 1.5,
+          "min_occlusion": 0.1,
+          "lower_hemisphere_is_black": false,
+          "lower_hemisphere_color": [
+            0.12,
+            0.11,
+            0.1
+          ]
+        }
+      }
+    },
+    {
+      "name": "Sponza",
+      "components": {
+        "transform": {}
+      },
+      "prefab": {
+        "asset": "meshes/sponza/sponza.uzprefab"
+      }
+    },
+    {
+      "name": "Controller",
+      "components": {
+        "script": {
+          "path": "scripts/fly_camera.lua"
+        }
+      }
+    }
+  ]
+}

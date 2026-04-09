@@ -19,6 +19,7 @@ cbuffer RootConstants : register(b0)
     uint bloomIntensityBits;  // float reinterpreted as uint
     uint lensFlareSrvIndex;
     uint lutSrvIndex;
+    uint tonemapOperator;     // 0=Hill ACES, 1=Narkowicz ACES, 2=Reinhard, 3=Hable, 4=Linear
 };
 #endif
 
@@ -68,15 +69,37 @@ struct PSIn { float4 position : SV_Position; float2 texCoord : TEXCOORD0; };
 
 float4 main(PSIn i) : SV_Target
 {
-    // DEBUG: sample HDR and output raw (no tonemap)
+    float2 uv = i.texCoord;
+
+    // ── Passthrough mode (tonemapOperator == 0) ─────────────────────────
+    // Scene lighting was calibrated without tonemapping. Default mode
+    // outputs HDR scene color directly (bloom composited, no exposure/sRGB
+    // adjustments). Enable ACES via r.TonemapOperator=1.
 #ifdef UZ_BINDLESS
+    if (tonemapOperator == 0)
     {
         Texture2D<float4> hdr = ResourceDescriptorHeap[hdrSrvIndex];
-        float3 raw = hdr.SampleLevel(samClamp, i.texCoord, 0).rgb;
-        return float4(raw, 1.0);
+        float3 color = hdr.SampleLevel(samClamp, uv, 0).rgb;
+
+        // Composite bloom in passthrough mode
+        if (bloomSrvIndex > 0)
+        {
+            float bloomInt = asfloat(bloomIntensityBits);
+            if (bloomInt > 0.0)
+            {
+                Texture2D<float4> bloomTex = ResourceDescriptorHeap[bloomSrvIndex];
+                color += bloomTex.SampleLevel(samClamp, uv, 0).rgb * bloomInt;
+            }
+        }
+        if (lensFlareSrvIndex > 0)
+        {
+            Texture2D<float4> flareTex = ResourceDescriptorHeap[lensFlareSrvIndex];
+            color += flareTex.SampleLevel(samClamp, uv, 0).rgb;
+        }
+
+        return float4(color, 1.0);
     }
 #endif
-    float2 uv = i.texCoord;
 
     // ── Chromatic aberration ──────────────────────────────────────────────
     float2 uvR = uv, uvG = uv, uvB = uv;
@@ -148,12 +171,22 @@ float4 main(PSIn i) : SV_Target
     float midgray = 0.18;
     color = pow(max(color / midgray, 0.0), colorContrast) * midgray;
 
-    // ── ACES Filmic Tonemap ───────────────────────────────────────────────
-    // @ref Falcor ToneMapping.ps.slang toneMapAces — pre-exposure of 0.6
-    // The Narkowicz ACES curve assumes this pre-scale; without it the result
-    // is ~1.67x brighter than intended.
-    color *= 0.6;
-    color = ACESFilmic(color);
+    // ── Tone Mapping ─────────────────────────────────────────────────────
+    // Selectable operator via root constant (CVar r.TonemapOperator).
+    // No pre-exposure — scene lighting is already calibrated for these curves.
+#ifdef UZ_BINDLESS
+    switch (tonemapOperator)
+    {
+    case 1: color = ACESHillFit(color); break;                     // @ref Hill 2016 "ACES Fitted Curves"
+    case 2: color = ACESFilmic(color); break;                      // @ref Narkowicz 2015 "ACES Filmic"
+    case 3: color = ReinhardTonemap(color); break;                 // @ref Reinhard 2002
+    case 4: color = HableUncharted2(color) / HableUncharted2(float3(11.2,11.2,11.2)); break; // @ref Hable 2010
+    default:
+    case 0: break;                                                  // None (exposure + sat + contrast only)
+    }
+#else
+    // SM5 path: no tonemap curve (matches default behavior)
+#endif
 
     // ── 3D LUT color grading ──────────────────────────────────────────────
 #ifdef UZ_BINDLESS

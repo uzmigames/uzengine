@@ -70,3 +70,8 @@
 - [ ] 3.1 Update `docs/guides/vfx-viewport-controls.md` with outline/gizmo keyboard shortcuts
 - [ ] 3.2 Add gizmo interaction guide (W/E/R modes, Ctrl snap, mouse drag behavior)
 - [ ] 3.3 Add `docs/engine/22-developer-layer/` editor tools architecture documentation
+
+## 5. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 5.1 Update or create documentation covering the implementation
+- [ ] 5.2 Write tests covering the new behavior
+- [ ] 5.3 Run tests and confirm they pass

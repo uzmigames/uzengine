@@ -53,3 +53,8 @@
 - [ ] 8.1 Add `/// @ref` comments to every new field added to `ParticleEmitter` in step 2.1, citing the same paper references as the corresponding `VFXEmitterConfig` fields (GDC Niagara 2019, Latta 2004, etc.).
 - [ ] 8.2 Document `SpawnVFXCompound()` in `vfx_helpers.h` with full `///` Rust-style docs: purpose, parameters, returns, example usage, and lifetime notes (caller must unregister emitters before destroying entities).
 - [ ] 8.3 Update `docs/analysis/` with a data flow document `vfx-ecs-scene-renderer.md` tracing the path from `TransformComponent + ParticleEmitter` entity → SceneRenderer ECS collection → VFXSystem registration → ParticleSimulationPass compute dispatch → ParticleRenderPass billboard draw.
+
+## 9. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 9.1 Update or create documentation covering the implementation
+- [ ] 9.2 Write tests covering the new behavior
+- [ ] 9.3 Run tests and confirm they pass

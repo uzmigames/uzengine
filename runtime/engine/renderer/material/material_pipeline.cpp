@@ -382,7 +382,7 @@ RHIGraphicsPipelineDesc MaterialPipeline::BuildGBufferPipelineDesc(
 
     // G-Buffer render targets — matches GBuffer::Create() and PipelineLibrary::GetGBuffer()
     desc.renderTargetFormats[0] = RHIFormat::RGBA8Unorm;    // albedo + AO
-    desc.renderTargetFormats[1] = RHIFormat::RGBA8Unorm;    // octNormal + metallic + roughness
+    desc.renderTargetFormats[1] = RHIFormat::RGBA16Float;   // octNormal + metallic + roughness
     desc.renderTargetFormats[2] = RHIFormat::RGBA32Float;   // world-space position (debug)
     desc.renderTargetFormats[3] = RHIFormat::RGBA16Float;   // HDR emissive color
     desc.renderTargetCount      = 4;

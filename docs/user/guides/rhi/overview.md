@@ -110,9 +110,10 @@ CLI (--rhi=dx12)  >  .uzproject (render.rhi)  >  platform auto-detect
 
 | Backend | Status | Platform |
 |---------|--------|----------|
-| DX12 SM6.7 | Implemented | Windows 10+ |
+| DX12 SM6.8 | Implemented | Windows 10+ |
 | DX12 SM6.6 | Implemented | Windows 10+ |
 | DX12 SM5.x | Fallback | Windows 10+ |
+| DX11 | Implemented | Windows 10+ |
 | Vulkan | Planned | Windows, Linux |
 | Metal | Planned | macOS |
 
