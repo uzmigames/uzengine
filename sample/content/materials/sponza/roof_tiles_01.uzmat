@@ -3,7 +3,7 @@
     "name": "roof_tiles_01",
     "domain": "Surface",
     "shadingModel": "DefaultLit",
-    "twoSided": true,
+    "twoSided": false,
     "expressions": [
         {
             "id": 1,

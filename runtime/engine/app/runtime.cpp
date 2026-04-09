@@ -263,6 +263,7 @@ int uz_runtime_init(void) {
 #endif
 
     uz::LogInit();
+    uz::LogSetLevel(uz::LogLevel::Info);  // IPC mode: full logging (goes to file, not stdout)
     UZ_LOG(RuntimeAPI, Info, "Log file: {}", uz::LogGetFilePath());
 
     // In isolated worker mode, the crash handler's Vectored Exception Handler

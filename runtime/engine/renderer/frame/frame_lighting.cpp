@@ -37,9 +37,11 @@
 // ── CVars ────────────────────────────────────────────────────────────────
 // Shadows
 static auto* cv_ContactShadows   = UZ_CVAR_BOOL("r.ContactShadows", true, "Contact shadows");
-// GTAO — disabled (over-occlusion bug). Indoor AO comes from GBuffer mesh
-// AO + skyLightMinAmbient floor + GI bounce instead.
-static auto* cv_GTAO             = UZ_CVAR_BOOL("r.GTAO", false, "Ground Truth Ambient Occlusion");
+// GTAO — declared in gtao_pass.cpp as cv_GTAOEnabled. The registry is
+// idempotent and CVarRegistry::Find("r.GTAO") returns the same CVar, but
+// declaring it in two TUs invites static-init-order confusion where the
+// "first" registration's default wins (and empty-arg macro bugs silently
+// compile to nonsense). Read via cvars.GetBool("r.GTAO", false) instead.
 // SSR — disabled (resolved-history pass produces zero).
 static auto* cv_SSR              = UZ_CVAR_BOOL("r.SSR", false, "Screen-Space Reflections (stochastic VNDF + temporal denoise)");
 static auto* cv_SSRIntensity     = UZ_CVAR_FLOAT("r.SSR.Intensity", 1.0f, "SSR reflection intensity", 0.f, 2.f);
@@ -289,8 +291,8 @@ void SceneRenderer::RegisterPassInspectorTargets(FrameContext& ctx) {
                                         RHIResourceState::DepthStencilWrite);
     }
 
-    // GTAO
-    if (m_gtaoPass && m_gtaoPass->IsInitialized() && m_gtaoPass->settings.enabled) {
+    // GTAO — use IsEnabled() (live CVar query) instead of stale settings.enabled.
+    if (m_gtaoPass && m_gtaoPass->IsInitialized() && m_gtaoPass->IsEnabled()) {
         const uint32_t gtaoSrv = m_gtaoPass->GetFilteredAOSrvIndex();
         if (gtaoSrv != UINT32_MAX) {
             m_passInspector.RegisterTarget("gtao.result", m_gtaoPass->GetFilteredAOTexture(), gtaoSrv,

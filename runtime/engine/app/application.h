@@ -249,6 +249,7 @@ private:
     std::string m_passToggle;          ///< --pass-toggle <name>: toggle a pass off at startup.
     std::string m_passCompare;         ///< --pass-compare <name>: compare mode for a pass.
     bool        m_diagMode = false;  ///< --diag: run diagnostics and output JSON to stdout.
+    bool        m_verbose = false;   ///< --verbose: show all log levels (default: errors only).
 
     // ── Pixel Debug ──────────────────────────────────────────────────────
     bool     m_pixelDebugEnabled = false;  ///< --pixel-debug: enable GPU printf for a pixel.

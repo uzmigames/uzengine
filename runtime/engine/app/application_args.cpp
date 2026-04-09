@@ -88,6 +88,8 @@ void Application::ParseArgs(int argc, char* argv[]) {
             m_config.cameraPitchDeg = static_cast<float>(std::atof(argv[++i]));
         } else if (std::strcmp(argv[i], "--screenshot-stdout") == 0) {
             m_screenshotBase64 = true;
+        } else if (std::strcmp(argv[i], "--verbose") == 0) {
+            m_verbose = true;
         } else if (std::strcmp(argv[i], "--headless") == 0) {
             m_headless = true;
         } else if (std::strcmp(argv[i], "--vis") == 0 && i + 1 < argc) {

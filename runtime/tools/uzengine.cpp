@@ -851,8 +851,6 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
 int main(int argc, char** argv) {
     uz::LogInit();
 
-    UZ_LOG(Engine, Info, "UzEngine Runtime starting");
-
     // Config: project file + CLI overrides
     uz::Config config = uz::BuildConfig(argc, argv);
 
@@ -862,7 +860,8 @@ int main(int argc, char** argv) {
         config.AddPendingCvarOverride("r.RayTracing.TestPass", 1.0f);
     }
 
-    // Apply log level filter (--log-level trace|debug|info|warning|error)
+    // Log level: default is Error (set in log.cpp g_runtimeLevel).
+    // --verbose sets Info. --log-level overrides both.
     {
         const std::string ll = config.GetString("log-level",
             config.GetString("log_level", ""));
@@ -873,8 +872,12 @@ int main(int argc, char** argv) {
             else if (ll == "warning") uz::LogSetLevel(uz::LogLevel::Warning);
             else if (ll == "error")   uz::LogSetLevel(uz::LogLevel::Error);
             else UZ_LOG(Engine, Warning, "Unknown log level '{}', using default", ll);
+        } else if (config.GetBool("verbose", false)) {
+            uz::LogSetLevel(uz::LogLevel::Info);
         }
     }
+
+    UZ_LOG(Engine, Info, "UzEngine Runtime starting");
 
     // Resolve RHI settings from config
     const uz::RHIConfig rhiCfg = uz::ResolveRHIConfig(config);

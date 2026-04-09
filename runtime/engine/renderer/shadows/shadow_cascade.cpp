@@ -327,11 +327,12 @@ void ComputeCascades(
         const float cascadeDepthBias = constantBias * (1.0f - config.cascadeBiasDistribution)
                                      + worldScaledBias * config.cascadeBiasDistribution;
 
-        // Normal bias: base value (cm) + small per-cascade scaling.
-        // Scale gently so far cascades get slightly more offset, but never exceed
-        // a few cm. The texelSize scaling must be very conservative.
-        const float normalBiasScale = std::min(worldUnitsPerTexel * 0.01f, 2.0f);
-        const float finalNormalBias = config.normalBias + config.normalBias * normalBiasScale;
+        // Normal bias: floor of config.normalBias (cm), but NEVER less than
+        // ~1.5 texels of the current cascade. Far cascades have enormous texels
+        // (cm/texel grows linearly with frustum radius), so a fixed 2 cm normal
+        // bias is far smaller than one texel and causes shadow acne over the
+        // entire far-cascade footprint. Scaling with texel size eliminates it.
+        const float finalNormalBias = std::max(config.normalBias, worldUnitsPerTexel * 1.5f);
 
         // 3h. Store results.
         outCascades[cascade].viewProj           = shadowVP;

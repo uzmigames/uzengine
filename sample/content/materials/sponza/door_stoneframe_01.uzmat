@@ -3,7 +3,7 @@
     "name": "door_stoneframe_01",
     "domain": "Surface",
     "shadingModel": "DefaultLit",
-    "twoSided": true,
+    "twoSided": false,
     "expressions": [
         {
             "id": 1,

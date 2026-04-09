@@ -14,25 +14,6 @@
     ]
   },
   "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash E:/UzEngine/.claude/hooks/resume-from-handoff.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "compact",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash E:/UzEngine/.claude/hooks/on-compact-reinject.sh"
-          }
-        ]
-      }
-    ],
     "PreToolUse": [
       {
         "matcher": "Bash",
@@ -88,16 +69,6 @@
           {
             "type": "command",
             "command": "bash E:/UzEngine/.claude/hooks/enforce-mcp-for-tasks.sh"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash E:/UzEngine/.claude/hooks/check-context-and-handoff.sh"
           }
         ]
       }

@@ -207,7 +207,7 @@ PSOutput main(float4 pos : SV_Position)
             // selection. Cascade splits are in world-space units (cm for Sponza)
             // so the scale matches.
             float  viewDepth  = length(P - cameraPos.xyz);
-            float  sunShadow  = CascadeShadow(P, viewDepth);
+            float  sunShadow  = CascadeShadow(P, viewDepth, N, NdotL);
 
             directRadiance = (diffuse + specular) * lightColor.rgb * NdotL * sunShadow;
         }

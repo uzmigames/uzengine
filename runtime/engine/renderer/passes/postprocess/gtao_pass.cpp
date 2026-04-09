@@ -367,6 +367,18 @@ bool GTAOPass::Resize(uint32_t width, uint32_t height) {
     return CreateTextures(width, height);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// IsEnabled — authoritative CVar query
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Reads the `r.GTAO` CVar directly. This is the authoritative gate used by
+/// every frame setup / pass registration site. `settings.enabled` is a cached
+/// mirror that is refreshed only inside Execute() and must not be trusted
+/// during SetupFrameData() / RegisterGTAOPass() / frame_lighting_pass binding.
+bool GTAOPass::IsEnabled() const noexcept {
+    return cv_GTAOEnabled != nullptr && cv_GTAOEnabled->value >= 0.5f;
+}
+
 void GTAOPass::Shutdown() {
     if (!m_initialized) {
         return;
@@ -658,7 +670,10 @@ uint32_t GTAOPass::Execute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
         return UINT32_MAX;
     }
 
-    // Apply CVar overrides to settings
+    // Apply CVar overrides to settings.
+    // settings.enabled is kept in sync with the r.GTAO CVar here so that
+    // any legacy code still reading settings.enabled observes the same
+    // state as IsEnabled(). The authoritative gate is IsEnabled().
     settings.enabled        = cv_GTAOEnabled->value >= 0.5f;
     settings.worldRadius    = cv_GTAORadius->value;
     settings.intensity      = cv_GTAOIntensity->value;

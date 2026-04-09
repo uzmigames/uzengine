@@ -46,7 +46,7 @@ static std::vector<spdlog::sink_ptr> g_sinks;
 static std::mutex g_loggerMutex;
 static std::unordered_map<std::string, std::shared_ptr<spdlog::logger>> g_loggers;
 static bool g_initialized = false;
-static spdlog::level::level_enum g_runtimeLevel = spdlog::level::trace;
+static spdlog::level::level_enum g_runtimeLevel = spdlog::level::err;
 static std::string g_logFilePath;
 
 /// Builds the default log file path in the user's local app data directory.
@@ -230,7 +230,7 @@ void LogShutdown() {
     g_loggers.clear();
     g_sinks.clear();
     g_logFilePath.clear();
-    g_runtimeLevel = spdlog::level::trace;
+    g_runtimeLevel = spdlog::level::err;
     g_initialized = false;
 }
 

@@ -110,18 +110,24 @@ float SampleShadowCascade(float3 worldPos, float3 N, float NdotL, uint cascadeId
 
 // ─── Full cascade shadow with blending + distance fade ────────────────────
 
-float CascadeShadow(float3 worldPos, float viewDepth) {
+/// Sample cascaded shadow map with normal-offset bias.
+/// @param N      World-space surface normal — used for normal-offset bias so
+///               walls/ceilings receive bias along their true normal direction
+///               instead of world-up. Hardcoding N=(0,0,1) was the cause of the
+///               "darkening from far away, clean circle near camera" artifact:
+///               far cascades have larger texels → larger bias magnitude → the
+///               wrong bias direction pushed vertical surfaces into self-shadow.
+/// @param NdotL  Real cos(angle) between surface normal and light direction,
+///               used for slope-scaled depth bias. Caller already fast-paths
+///               back-facing surfaces (NdotL <= 0) before invoking this.
+float CascadeShadow(float3 worldPos, float viewDepth, float3 N, float NdotL) {
     if (cascadeCount == 0) return 1.0;
-
-    float NdotL = 0.5; // conservative default
 
 #ifdef UZ_BINDLESS
     Texture2D<float> shadowAtlas = ResourceDescriptorHeap[shadowAtlasIndex];
 #else
     #define shadowAtlas shadowAtlasTexture
 #endif
-
-    float3 N = float3(0, 0, 1); // placeholder — caller should use SampleShadowMapFull for accurate bias
 
     uint sel = cascadeCount - 1;
     [unroll] for (uint c = 0; c < kMaxCascades; ++c) {

@@ -3,7 +3,7 @@
     "name": "stones_2ndfloor",
     "domain": "Surface",
     "shadingModel": "DefaultLit",
-    "twoSided": true,
+    "twoSided": false,
     "expressions": [
         {
             "id": 1,

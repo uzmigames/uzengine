@@ -216,6 +216,16 @@ public:
     /// Returns true if Init() has been called and GPU resources are allocated.
     [[nodiscard]] bool IsInitialized() const noexcept { return m_initialized; }
 
+    /// Live query of the `r.GTAO` CVar — the authoritative master toggle.
+    ///
+    /// @note `settings.enabled` is refreshed only inside Execute() and so is
+    /// stale during scene loading, pass registration, and PerFrameCB upload.
+    /// Every site that gates GTAO work MUST call this method rather than
+    /// reading `settings.enabled` directly, otherwise disabling `r.GTAO` via
+    /// scene CVars or --cvar has no effect for at least one frame (and can
+    /// leak stale filtered-AO content into the deferred lighting pass).
+    [[nodiscard]] bool IsEnabled() const noexcept;
+
     /// Returns the SRV descriptor index of the filtered AO texture.
     [[nodiscard]] uint32_t GetFilteredAOSrvIndex() const noexcept { return m_filteredAOSrvIndex; }
 

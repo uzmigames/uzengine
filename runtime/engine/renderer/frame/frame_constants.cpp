@@ -553,7 +553,11 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     }
 
     // ── GTAO SRV index (set early — actual compute runs in render graph) ──
-    if (m_gtaoPass && m_gtaoPass->IsInitialized() && m_gtaoPass->settings.enabled) {
+    // Use IsEnabled() (live CVar query). settings.enabled is refreshed only
+    // inside Execute() and would be stale here, pre-seeding a valid SRV into
+    // PerFrameCB even when r.GTAO=0 — causing the lighting PS to sample a
+    // stale filtered-AO texture and darken ambient.
+    if (m_gtaoPass && m_gtaoPass->IsInitialized() && m_gtaoPass->IsEnabled()) {
         perFrame.gtaoSrvIndex = m_gtaoPass->GetFilteredAOSrvIndex();
     } else {
         perFrame.gtaoSrvIndex = UINT32_MAX;
