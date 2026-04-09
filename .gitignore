@@ -97,3 +97,9 @@ poc-napi/node_modules/
 *.uztexture
 *.uzimport
 .cache/
+
+CLAUDE.local.md
+.rulebook/backup/
+.rulebook/handoff/_pending.md
+.rulebook/handoff/.urgent
+.rulebook/telemetry/

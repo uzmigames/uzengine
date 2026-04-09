@@ -24,6 +24,23 @@
             "statusMessage": "Detecting codebase gaps..."
           }
         ]
+      },
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash U:/UzmiEngine/uzengine/.claude/hooks/on-compact-reinject.sh"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash U:/UzmiEngine/uzengine/.claude/hooks/resume-from-handoff.sh"
+          }
+        ]
       }
     ],
     "PreToolUse": [
@@ -37,6 +54,40 @@
             "statusMessage": "Validating commit..."
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash U:/UzmiEngine/uzengine/.claude/hooks/enforce-no-deferred.sh"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash U:/UzmiEngine/uzengine/.claude/hooks/enforce-no-shortcuts.sh"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash U:/UzmiEngine/uzengine/.claude/hooks/enforce-mcp-for-tasks.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash U:/UzmiEngine/uzengine/.claude/hooks/check-context-and-handoff.sh"
+          }
+        ]
       }
     ]
   },
@@ -44,5 +95,9 @@
     "type": "command",
     "command": "bash .claude/statusline.sh 2>/dev/null || echo UzEngine"
   },
-  "enabledMcpjsonServers": ["tml", "rulebook", "uzengine"]
+  "enabledMcpjsonServers": [
+    "tml",
+    "rulebook",
+    "uzengine"
+  ]
 }
