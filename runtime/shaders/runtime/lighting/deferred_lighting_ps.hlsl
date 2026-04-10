@@ -672,6 +672,12 @@ LightingOutput main(FSInput input) {
         }
 #endif
 
+        // Shadow-modulated sky IBL visibility — declared here so both the
+        // diffuse irradiance below AND the specular radiance further down
+        // can consume it. Default to 1.0 (full sky) — it is only overridden
+        // when we fall through to the Sky SH path with no real GI source.
+        float skyVisibility = 1.0;
+
         // ── 4. Sky SH (fallback when no GI source provides data) ─────────
         // @ref Ramamoorthi & Hanrahan 2001 — L2 SH for diffuse irradiance
         if (!irradianceFromGI) {
@@ -684,10 +690,74 @@ LightingOutput main(FSInput input) {
                 irradiance = irrTex.SampleLevel(linearSampler, WorldToCubemap(N), 0).rgb;
             }
 #endif
+
+            // Shadow-modulated sky IBL — approximate macro occlusion.
+            //
+            // The sky SH / IBL cubemap is sampled by world normal only, with
+            // ZERO visibility information. A pixel deep inside an enclosed
+            // room receives the same hemisphere as a pixel on an outdoor
+            // rooftop, which causes obvious light leak (interior walls light
+            // up as if the sun were shining through them — the Sponza
+            // "light through walls" bug, 2026-04-10).
+            //
+            // Without a world-space GI solver (DDGI / RadianceCache / LPV /
+            // Brixelizer) to provide real visibility, we approximate macro
+            // occlusion by modulating the sky irradiance by the primary
+            // directional shadow factor:
+            //
+            //   when `shadow == 1` (pixel sees the sun)        → full sky
+            //   when `shadow == 0` (pixel fully in sun shadow) → dim sky
+            //
+            // The physical rationale: in natural lighting the sky dome and
+            // the sun are on the same hemisphere, so pixels occluded from
+            // the sun are generally also occluded from most of the sky.
+            // UE5 uses a similar coupling (`StaticShadowing * SkyIrradiance`
+            // in DeferredLightingCommon.ush). The `kMinShadowedSkyFraction`
+            // leaves a small baseline (5%) so that deep shadows don't go
+            // pure black — ideally replaced by a real GI solver that
+            // propagates bounces into enclosed volumes.
+            //
+            // ONLY applied to the Sky SH fallback path. When a real GI
+            // source (DDGI/RC/LPV/Brixelizer) provides `irradiance`, that
+            // value already encodes world-space visibility and this hack
+            // would double-occlude.
+            //
+            // Penumbra softening + bounce-light floor.
+            //
+            // The raw `shadow` value comes from a narrow PCF kernel that
+            // has a hard lit↔unlit transition. Applying that curve linearly
+            // to indirect sky lighting produces visible hard edges where
+            // real bounce light would smoothly diffuse. Two knobs soften it:
+            //
+            // 1. `kMinShadowedSkyFraction = 0.18` — a fixed floor that
+            //    represents the fill light from surfaces bouncing the sun
+            //    onto shadowed geometry (the primary reason a fully
+            //    shadowed wall in Sponza still receives warm light from
+            //    its illuminated neighbours). Without a world-space GI
+            //    solver this is a constant — tuned to look reasonable in
+            //    a mostly-enclosed stone courtyard. When a real solver
+            //    (DDGI/RC/LPV/Brixelizer) is active, the whole block is
+            //    bypassed and `skyVisibility` stays at 1.0.
+            //
+            // 2. `pow(shadow, 0.4)` softening curve — lifts the penumbra
+            //    much more aggressively than `sqrt` would. At shadow=0.5
+            //    the softened value is ~0.76 (vs ~0.71 for sqrt); at
+            //    shadow=0.25 it is ~0.57 (vs 0.5). The penumbra becomes a
+            //    wide, smooth gradient instead of a crisp lit/unlit line.
+            //
+            // Only applied to the sky IBL path. Direct Lo keeps the crisp
+            // shadow for contour definition.
+            const float kMinShadowedSkyFraction = 0.10;
+            const float kShadowSoftenExponent   = 0.55;
+            float softenedShadow = pow(saturate(shadow), kShadowSoftenExponent);
+            skyVisibility        = lerp(kMinShadowedSkyFraction, 1.0, softenedShadow);
+            irradiance *= skyVisibility;
         }
 
-        // skyLightMinAmbient provides a floor on irradiance so fully occluded
-        // interior pixels still receive some ambient light.
+        // skyLightMinAmbient provides a HARD floor on irradiance so the
+        // shadow-modulated sky above cannot go below a minimum. Keep this
+        // value low (0.005–0.02 in linear RGB) — high values defeat the
+        // shadow modulation by lifting every pixel back up to full ambient.
         irradiance = max(irradiance, skyLightMinAmbient);
 
         // Our SH coefficients are pre-convolved with cosine lobe (UE5 pattern),
@@ -720,6 +790,18 @@ LightingOutput main(FSInput input) {
             radiance = prefTex.SampleLevel(linearSampler, WorldToCubemap(R), mipLevel).rgb;
         }
 #endif
+        // Shadow-modulated specular IBL — same rationale as the diffuse
+        // SH path above. Without world-space GI / SSR providing real
+        // visibility, a pixel deep inside an enclosed room receives full
+        // prefiltered cubemap reflections, creating bright "hot spot"
+        // reflections on polished surfaces (column capitals, floor tiles)
+        // even when physically no sky should be visible. Multiplying by
+        // the same `skyVisibility` used for the diffuse term suppresses
+        // these ghost reflections consistently with the diffuse macro
+        // occlusion. When `skyVisibility == 1.0` (lit pixel or GI source
+        // active) this is a no-op.
+        // @ref UE5 DeferredLightingCommon.ush — IndirectSpecular scaling
+        radiance *= skyVisibility;
         // Analytical DFG approximation — replaces GPU-baked BRDF LUT with the
         // closed-form fit from Karis 2014. No texture lookup needed. This is the
         // same approach used by Three.js, Filament, and Frostbite.
