@@ -647,11 +647,14 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     // TODO(clouds): re-enable when cloud pipeline is debugged
 
     // ── Brixelizer GI (AMD FidelityFX sparse SDF voxel GI) ────────────
-    m_brixelizerGI = std::make_unique<BrixelizerGIPass>();
-    if (!m_brixelizerGI->Init(device, m_renderWidth, m_renderHeight)) {
-        UZ_LOG(Renderer, Warning, "SceneRenderer: BrixelizerGI init failed (Brixelizer GI disabled)");
-        m_brixelizerGI.reset();
-    }
+    // DISABLED: ffxBrixelizerContextCreate crashes with err=-2147483635
+    // on non-AMD GPUs, corrupting the command allocator and leaking D3D12MA.
+    // Re-enable after isolating the AMD-only code path.
+    // m_brixelizerGI = std::make_unique<BrixelizerGIPass>();
+    // if (!m_brixelizerGI->Init(device, m_renderWidth, m_renderHeight)) {
+    //     UZ_LOG(Renderer, Warning, "SceneRenderer: BrixelizerGI init failed (Brixelizer GI disabled)");
+    //     m_brixelizerGI.reset();
+    // }
 
     // ── DFS Output Texture + Culling Buffers (at render resolution) ──
     // Created here but only populated when DFS is enabled at runtime.
@@ -1479,6 +1482,28 @@ void SceneRenderer::Shutdown() {
     if (m_vfxZeroBuffer.IsValid()) {
         m_device->DestroyBuffer(m_vfxZeroBuffer);
         m_vfxZeroBuffer = RHIBufferHandle{};
+    }
+    // VFX auxiliary buffers created lazily in DispatchVFXSimulation
+    // (frame_vfx_inline.cpp:104-138). These are owned by SceneRenderer and
+    // must be destroyed here — not by VFXSystem::Shutdown — because they
+    // are scratch/system-wide resources, not per-emitter state. Previously
+    // leaked at shutdown (D3D12MA reported 4 live allocations totalling
+    // 524288 bytes). @ref phase0_fix-vfx-spawn-multi-particle task 1.5.
+    if (m_vfxDummyDynParams.IsValid()) {
+        m_device->DestroyBuffer(m_vfxDummyDynParams);
+        m_vfxDummyDynParams = RHIBufferHandle{};
+    }
+    if (m_vfxKillVolumeBuffer.IsValid()) {
+        m_device->DestroyBuffer(m_vfxKillVolumeBuffer);
+        m_vfxKillVolumeBuffer = RHIBufferHandle{};
+    }
+    if (m_vfxDeathEventBuffer.IsValid()) {
+        m_device->DestroyBuffer(m_vfxDeathEventBuffer);
+        m_vfxDeathEventBuffer = RHIBufferHandle{};
+    }
+    if (m_vfxDeathEventCountBuffer.IsValid()) {
+        m_device->DestroyBuffer(m_vfxDeathEventCountBuffer);
+        m_vfxDeathEventCountBuffer = RHIBufferHandle{};
     }
 
     // ── Upload ring cleanup ─────────────────────────────────────────

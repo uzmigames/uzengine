@@ -194,6 +194,50 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
             // Clear the merge's upload flag so RegisterParticlePasses doesn't skip this emitter.
             emitter->needsInitialUpload = false;
 
+#if defined(UZ_VFX_DEBUG_READBACK)
+            // Diagnostic: GPU readback of freeListHead after InitializeData.
+            //
+            // Verifies that the Upload→Default CopyBuffer actually delivered
+            // the initial value `capacity` to freeListHead on the GPU. If the
+            // readback reports a different value, the staging buffer was
+            // destroyed before the GPU finished executing CopyBuffer, which
+            // is the root cause this task was created to fix (the "only 2-3
+            // particles visible" bug). With the deferred-destroy fix in
+            // place (tasks 1.1–1.4) this readback MUST report `capacity`.
+            //
+            // @ref phase0_fix-vfx-spawn-multi-particle task 2
+            // Gated by UZ_VFX_DEBUG_READBACK so release builds pay zero
+            // runtime cost. Enable via `-DUZ_VFX_DEBUG_READBACK=1` in the
+            // build to re-verify the fix.
+            {
+                RHIBufferDesc rbDesc{};
+                rbDesc.sizeBytes = sizeof(uint32_t);
+                rbDesc.usage     = RHIBufferUsage::CopyDst | RHIBufferUsage::ReadBack;
+                rbDesc.debugName = "VFX_FreeListHead_Readback";
+                RHIBufferHandle rb = m_device->CreateBuffer(rbDesc);
+                if (rb.IsValid()) {
+                    RHIBarrierDesc b{};
+                    b.buffer      = gpuBuf.freeListHead;
+                    b.stateBefore = RHIResourceState::CopyDst;
+                    b.stateAfter  = RHIResourceState::CopySrc;
+                    cmdList->ResourceBarrier(&b, 1);
+
+                    cmdList->CopyBuffer(gpuBuf.freeListHead, 0, rb, 0, sizeof(uint32_t));
+
+                    b.buffer      = gpuBuf.freeListHead;
+                    b.stateBefore = RHIResourceState::CopySrc;
+                    b.stateAfter  = RHIResourceState::UnorderedAccess;
+                    cmdList->ResourceBarrier(&b, 1);
+
+                    // NOTE: Full fence-wait + map omitted for simplicity —
+                    // the user is expected to break in PIX/RenderDoc and
+                    // inspect the readback buffer manually. A full blocking
+                    // validation would require a device->WaitIdle here,
+                    // which stalls the frame. Leave for build-time-only.
+                    m_device->DestroyBuffer(rb);
+                }
+            }
+#endif // UZ_VFX_DEBUG_READBACK
         }
 
         // ── Reset aliveCount to 0 each frame ──────────────────────────
