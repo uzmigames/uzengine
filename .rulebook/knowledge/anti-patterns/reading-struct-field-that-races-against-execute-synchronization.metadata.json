@@ -1,0 +1,18 @@
+{
+  "id": "reading-struct-field-that-races-against-execute-synchronization",
+  "type": "anti-pattern",
+  "title": "Reading struct field that races against Execute() synchronization",
+  "category": "architecture",
+  "description": "Quando uma pass (`GTAOPass`, qualquer pass com `Execute()` por frame) tem um campo `settings.X` que é sincronizado a partir de um CVar APENAS dentro de `Execute()`, qualquer código que lê `settings.X` em OUTRO lugar (frame_constants builder, render graph registration, etc.) está em race condition. O valor lido pode ser:\n\n1. **Frame 0**: o default de construção da struct (hardcoded no header), NÃO o default do CVar\n2. **Frame N após toggle do CVar**: o valor antigo, até Execute() rodar e sincronizar\n\nSintomas: features \"não desligam\" quando o CVar é set para `false`, features \"se ativam sozinhas\" no primeiro frame, diffs de comportamento entre build debug (onde Execute() roda primeiro) e release (ordem diferente).\n\nFix: **nunca expose `settings` diretamente para código fora do pass**. Expose um accessor `IsFooEnabled()` / `GetBar()` que lê o CVar/source direto sem depender de `Execute()` ter rodado. Documenta o contrato no header.",
+  "example": "// ❌ ANTI-PATTERN — race condition\n// gtao_pass.h\nstruct GTAOSettings {\n    bool enabled = true;  // ← default mismatch com CVar!\n};\nclass GTAOPass {\npublic:\n    GTAOSettings settings;  // exposed field\n};\n\n// gtao_pass.cpp\nuint32_t GTAOPass::Execute(...) {\n    settings.enabled = cv_GTAOEnabled->value >= 0.5f;  // syncs HERE\n    if (!settings.enabled) return UINT32_MAX;\n    // ...\n}\n\n// frame_constants.cpp\n// Called BEFORE GTAOPass::Execute() runs — reads stale value!\nif (m_gtaoPass->settings.enabled) {  // ← RACE\n    perFrame.gtaoSrvIndex = m_gtaoPass->GetFilteredAOSrvIndex();\n}\n\n// ✅ FIX — accessor reads source of truth directly\n// gtao_pass.h\nstruct GTAOSettings {\n    bool enabled = false;  // MATCHES cv_GTAOEnabled default\n};\nclass GTAOPass {\npublic:\n    GTAOSettings settings;\n    /// Always reads the CVar directly — safe to call from any frame phase.\n    [[nodiscard]] bool IsEnabledCVar() const noexcept;\n};\n\n// gtao_pass.cpp\nbool GTAOPass::IsEnabledCVar() const noexcept {\n    return cv_GTAOEnabled->value >= 0.5f;  // direct read\n}\n\n// frame_constants.cpp — no race\nif (m_gtaoPass->IsEnabledCVar()) {\n    perFrame.gtaoSrvIndex = m_gtaoPass->GetFilteredAOSrvIndex();\n}",
+  "whenToUse": "N/A — é um anti-pattern para evitar. Use quando você quer NÃO ter race conditions entre leitura precoce e sincronização tardia.",
+  "whenNotToUse": "Leituras de `settings` DENTRO do próprio `Execute()` são OK — ele acabou de sincronizar. Leituras FORA, nunca.",
+  "createdAt": "2026-04-10T15:06:38.671Z",
+  "tags": [
+    "architecture",
+    "cvar",
+    "race-condition",
+    "rendering"
+  ],
+  "source": "manual"
+}

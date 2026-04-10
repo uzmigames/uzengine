@@ -76,6 +76,14 @@ GTAOPass::~GTAOPass() {
     }
 }
 
+bool GTAOPass::IsEnabledCVar() const noexcept {
+    // Read the CVar directly — do NOT consult `settings.enabled`, which
+    // is only refreshed at the top of Execute() and races against
+    // RegisterGTAOPass()/frame_constants builders for frame 0 and any
+    // frame where the CVar was just toggled.
+    return cv_GTAOEnabled->value >= 0.5f;
+}
+
 bool GTAOPass::Init(IRHIDevice* device, ShaderManager* shaderMgr,
                     uint32_t width, uint32_t height) {
     if (m_initialized) {
@@ -658,7 +666,10 @@ uint32_t GTAOPass::Execute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
         return UINT32_MAX;
     }
 
-    // Apply CVar overrides to settings
+    // Apply CVar overrides to settings. `settings.enabled` is ALSO a
+    // snapshot used by the rest of this frame's Execute() path; the
+    // CPU-side scheduler / constant-buffer builder must NOT read it,
+    // they should call `IsEnabledCVar()` instead. See gtao_pass.h.
     settings.enabled        = cv_GTAOEnabled->value >= 0.5f;
     settings.worldRadius    = cv_GTAORadius->value;
     settings.intensity      = cv_GTAOIntensity->value;

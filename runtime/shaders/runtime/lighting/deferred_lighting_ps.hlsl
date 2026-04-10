@@ -236,6 +236,11 @@ LightingOutput main(FSInput input) {
     // GTAO: combine with mesh AO when available.
     // SM5 path: fixed texture register t9.
     // Bindless path: SRV index from PerFrameCB._gtaoSrv.
+    //
+    // The CPU gates `_gtaoSrv` to UINT32_MAX when `r.GTAO=0`, and this
+    // branch guards against stale/zero SRV slots. Never sample GTAO
+    // unconditionally — see frame_constants.cpp:555 and gtao_pass.h
+    // IsEnabledCVar() for the CPU-side gating contract.
 #ifdef UZ_BINDLESS
     if (_gtaoSrv != 0xFFFFFFFFu && _gtaoSrv > 0) {
         Texture2D<float> gtaoTex = ResourceDescriptorHeap[_gtaoSrv];
@@ -768,9 +773,38 @@ LightingOutput main(FSInput input) {
         float3 specularAmbient = radiance * singleScatter
                                + cosineIrradiance * multiScatter;
 
-        // Diffuse: energy-conserving using DIELECTRIC scattering only
-        // @ref Three.js RE_IndirectSpecular — diffuse *= (1.0 - totalScatteringDielectric)
-        float3 totalScatterDielectric = FssEss_d + Fms_d * Ems_d;
+        // Diffuse: energy-conserving using DIELECTRIC scattering only.
+        //
+        // @ref Lagarde & de Rousiers 2014 "Moving Frostbite to PBR" §4.9.2 p.32
+        //      — the diffuse energy compensation term represents the average
+        //      energy NOT captured by the specular lobe over the whole
+        //      hemisphere, which is a VIEW-INDEPENDENT quantity. It must be
+        //      evaluated with NoV=1 (or, equivalently, from a 1D LUT indexed
+        //      by roughness alone). Reusing the view-dependent `envBRDF`
+        //      (a function of NoV) for this term causes the ambient diffuse
+        //      to shift visibly when rotating the camera — the exact Sponza
+        //      bug we hit after disabling Brixelizer GI.
+        //
+        // @ref Three.js RE_IndirectSpecular uses the NoV-dependent version
+        //      (known discrepancy with Frostbite/Filament — prioritises ALU
+        //      count over correctness).
+        float2 envBRDF_diff;
+        {
+            float a = roughness;
+            float4 r = float4(-1.0, -0.0275, -0.572, 0.022) * a
+                     + float4( 1.0,  0.0425,  1.04,  -0.04);
+            // NoV = 1 → exp2(-9.28 * 1) ≈ 0.00159 (≤ r.x*r.x for all a).
+            float ab = min(r.x * r.x, exp2(-9.28)) * r.x + r.z;
+            envBRDF_diff.x = saturate(ab);
+            envBRDF_diff.y = max(r.y * a + r.w, 0.0);
+        }
+        float3 FssEss_d_diff = dielectricF0 * envBRDF_diff.x + envBRDF_diff.y;
+        float  Ess_d_diff    = envBRDF_diff.x + envBRDF_diff.y;
+        float  Ems_d_diff    = 1.0 - Ess_d_diff;
+        float3 Fms_d_diff    = FssEss_d_diff * Favg_d
+                             / max(1.0 - Ems_d_diff * Favg_d, 0.001);
+        float3 totalScatterDielectric = FssEss_d_diff + Fms_d_diff * Ems_d_diff;
+
         float3 diffuseAmbient = (1.0 - metallic) * cosineIrradiance * baseColor
                               * (1.0 - totalScatterDielectric);
 

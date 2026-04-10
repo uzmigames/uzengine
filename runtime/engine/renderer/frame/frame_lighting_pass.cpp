@@ -90,8 +90,9 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
         if (m_transmittanceLut.IsValid() && m_transmittanceLutFilled) {
             lightDesc.transmittanceLutTexture = m_transmittanceLut;
         }
-        // GTAO filtered AO texture for SM5 fallback (t9)
-        if (m_gtaoPass && m_gtaoPass->IsInitialized() && m_gtaoPass->settings.enabled) {
+        // GTAO filtered AO texture for SM5 fallback (t9). See
+        // frame_constants.cpp:555 — must gate on IsEnabledCVar().
+        if (m_gtaoPass && m_gtaoPass->IsInitialized() && m_gtaoPass->IsEnabledCVar()) {
             lightDesc.gtaoTexture = m_gtaoPass->GetFilteredAOTexture();
         }
         // SSR temporal output for SM5 fallback (t11)

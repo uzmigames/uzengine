@@ -80,6 +80,37 @@ void ParseRenderSection(const nlohmann::json& root, ProjectConfig& cfg) {
     cfg.vsync         = JsonBool  (render, "vsync",   cfg.vsync);
 }
 
+/// Parses the optional "cvars" sub-object into `cfg.cvarOverrides`.
+///
+/// Accepted value types per entry:
+///   - number  → stored as float
+///   - boolean → stored as 0.0f / 1.0f
+/// Strings, arrays, and nested objects are silently skipped with a warning,
+/// matching the "unknown keys are ignored" policy used elsewhere in the
+/// loader. Order of iteration follows JSON object insertion order (nlohmann
+/// preserves it for ordered_json; for default `json` the order is
+/// insertion order as well in practice).
+void ParseCvarsSection(const nlohmann::json& root, ProjectConfig& cfg) {
+    auto it = root.find("cvars");
+    if (it == root.end() || !it->is_object()) {
+        return;
+    }
+    for (auto entryIt = it->begin(); entryIt != it->end(); ++entryIt) {
+        const std::string& name = entryIt.key();
+        const auto& value = entryIt.value();
+
+        if (value.is_number()) {
+            cfg.cvarOverrides.emplace_back(name, value.get<float>());
+        } else if (value.is_boolean()) {
+            cfg.cvarOverrides.emplace_back(name, value.get<bool>() ? 1.0f : 0.0f);
+        } else {
+            UZ_LOG(Config, Warning,
+                   "LoadProject: cvar '{}' has unsupported type — must be "
+                   "number or boolean (skipped)", name);
+        }
+    }
+}
+
 } // anonymous namespace
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -128,13 +159,15 @@ std::optional<ProjectConfig> LoadProject(const std::string& path) {
     // ── Nested configuration sections ─────────────────────────────────────────
     ParseWindowSection(root, cfg);
     ParseRenderSection(root, cfg);
+    ParseCvarsSection (root, cfg);
 
     UZ_LOG(Config, Info,
-           "LoadProject: loaded '{}' (version='{}', defaultScene='{}', backend='{}')",
+           "LoadProject: loaded '{}' (version='{}', defaultScene='{}', backend='{}', cvarOverrides={})",
            cfg.name.empty() ? path : cfg.name,
            cfg.version,
            cfg.defaultScene,
-           cfg.renderBackend);
+           cfg.renderBackend,
+           cfg.cvarOverrides.size());
 
     return cfg;
 }

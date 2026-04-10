@@ -291,17 +291,46 @@ void ComputeCascades(
         radius = std::max(radius, 1.0f);
 
         // 3d. Build the light view matrix.
-        const Vec3 lightEye = center - lightDirNorm * radius;
-        const Mat4 lightView = Mat4::LookAt(lightEye, center, lightUp);
+        //
+        // Caster pullback: the light eye is pulled back `radius * kCasterPullbackScale`
+        // (NOT just `radius`) so that shadow casters that lie BETWEEN the sun
+        // and the frustum's bounding sphere — but are themselves outside the
+        // sphere — are still rasterized into the shadow map.
+        //
+        // The previous value (`radius * 1`) produced a shadow volume that
+        // ENDED at the back of the frustum sphere. Walls behind the camera
+        // or above it (e.g. Sponza's exterior arcade walls) were excluded
+        // from the shadow atlas, so the sun leaked through them and lit
+        // interior geometry — the "sun follows the camera indoors" bug
+        // (Sponza, 2026-04-10). Rotating the camera moved the sphere and
+        // therefore the set of included casters, causing the indoor lighting
+        // to flicker between dark and bright as different walls entered/left
+        // the caster volume.
+        //
+        // Value 8.0 is a practical default: it multiplies the rendered
+        // depth range by ~8x, slightly reducing depth precision but still
+        // well within 24-bit shadow map accuracy for scenes up to a few
+        // hundred meters. Future: replace with a per-frame scene-AABB-
+        // driven CastersBox (UE5 ShadowSetup.cpp pattern).
+        // @ref UE5 ShadowSetup.cpp — FShadowCascadeSettings::ShadowBoundsAccurate
+        const float kCasterPullbackScale = 8.0f;
+        const float pullback = radius * kCasterPullbackScale;
+        const Vec3  lightEye = center - lightDirNorm * pullback;
+        const Mat4  lightView = Mat4::LookAt(lightEye, center, lightUp);
 
-        // 3e. Build the orthographic projection from the bounding sphere.
-        // Shadow maps use STANDARD-Z (0=near, 1=far) while main view uses reversed-Z (1=near, 0=far).
-        // This matches reference (ShadowSetup.cpp:907): XMMatrixOrthographicLH naturally produces
-        // standard-Z. The shadow comparison sampler (SCF_Less) and clear value (kShadowDepthClear=1.0)
-        // are tuned for this space. Scene depth is reprojected into light-space (standard-Z)
-        // before shadow comparison, so both sides of SampleCmp are in the same depth space.
+        // 3e. Build the orthographic projection.
+        //
+        // Shadow maps use STANDARD-Z (0=near, 1=far) while main view uses
+        // reversed-Z. XMMatrixOrthographicOffCenterLH naturally produces
+        // standard-Z; the shadow comparison sampler (SCF_Less) and clear
+        // value (kShadowDepthClear=1.0) are tuned for this space.
+        //
+        // `orthoFar` must extend from the pulled-back eye to the far side
+        // of the frustum sphere, i.e. `pullback + radius`, so that the
+        // whole sphere is inside the ortho volume AND everything between
+        // the pulled-back eye and the sphere is a valid caster.
         const float orthoNear = 0.0f;
-        const float orthoFar  = 2.0f * radius;
+        const float orthoFar  = pullback + radius;
 
         const Mat4 lightProj{XMMatrixOrthographicOffCenterLH(
             -radius, radius, -radius, radius, orthoNear, orthoFar)};
