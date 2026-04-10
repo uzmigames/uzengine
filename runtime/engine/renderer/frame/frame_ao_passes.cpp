@@ -59,10 +59,9 @@ void SceneRenderer::RegisterDBufferApplyPass(rg::RgBuilder& rgBuilder, FrameCont
 // ── GTAO Pass (after GBuffer, before lighting) ─────────────────────────────
 
 void SceneRenderer::RegisterGTAOPass(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
-    // IsEnabled() is a live CVar query — settings.enabled is only refreshed
-    // inside Execute() and would be stale here, causing the graph to still
-    // schedule the GTAO pass after r.GTAO=0 for at least one frame.
-    if (m_gtaoPass && m_gtaoPass->IsInitialized() && m_gtaoPass->IsEnabled()
+    // See frame_constants.cpp:555 — must gate on IsEnabledCVar(), never
+    // on the struct `settings.enabled` snapshot (race vs. Execute()).
+    if (m_gtaoPass && m_gtaoPass->IsInitialized() && m_gtaoPass->IsEnabledCVar()
         && m_passInspector.IsPassEnabled("gtao")) {
         rgBuilder.AddPass("GTAO", [&](rg::RgPassBuilder& pb) {
             pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);

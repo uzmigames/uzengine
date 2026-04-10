@@ -906,6 +906,21 @@ int main(int argc, char** argv) {
             // Project values serve as defaults; CLI overrides take precedence
             if (!config.Has("width"))  width = projectCfg->windowWidth;
             if (!config.Has("height")) height = projectCfg->windowHeight;
+
+            // Push the project's "cvars" block onto the pending override
+            // queue. These are flushed in the same place as `--cvar` CLI
+            // overrides (just before SceneRenderer::Init), so init-time
+            // gating CVars see the project values. CLI overrides added
+            // below — e.g., `--cvar` or `--rt-test` — are appended after
+            // these and therefore take precedence on duplicate names.
+            for (const auto& [name, value] : projectCfg->cvarOverrides) {
+                config.AddPendingCvarOverride(name, value);
+            }
+            if (!projectCfg->cvarOverrides.empty()) {
+                UZ_LOG(Engine, Info,
+                       "Project: queued {} CVar override(s) from .uzproject",
+                       projectCfg->cvarOverrides.size());
+            }
         }
     }
 

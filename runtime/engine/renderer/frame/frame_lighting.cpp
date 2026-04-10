@@ -291,8 +291,8 @@ void SceneRenderer::RegisterPassInspectorTargets(FrameContext& ctx) {
                                         RHIResourceState::DepthStencilWrite);
     }
 
-    // GTAO — use IsEnabled() (live CVar query) instead of stale settings.enabled.
-    if (m_gtaoPass && m_gtaoPass->IsInitialized() && m_gtaoPass->IsEnabled()) {
+    // GTAO — use IsEnabledCVar() (live CVar query) instead of stale settings.enabled.
+    if (m_gtaoPass && m_gtaoPass->IsInitialized() && m_gtaoPass->IsEnabledCVar()) {
         const uint32_t gtaoSrv = m_gtaoPass->GetFilteredAOSrvIndex();
         if (gtaoSrv != UINT32_MAX) {
             m_passInspector.RegisterTarget("gtao.result", m_gtaoPass->GetFilteredAOTexture(), gtaoSrv,

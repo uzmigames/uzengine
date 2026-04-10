@@ -484,3 +484,65 @@ TEST_F(ProjectLoaderTest, UnknownWindowSubKeys_AreIgnored) {
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->windowWidth, 800);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 16. cvars block — number, boolean, and unsupported-type handling
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_F(ProjectLoaderTest, CvarsBlock_NumbersAndBoolsParsed) {
+    auto path = WriteProject(R"({
+        "name": "CvarTest",
+        "cvars": {
+            "r.AutoExposure":          false,
+            "r.AutoExposure.Bias":     0.5,
+            "r.SSGI":                  true,
+            "r.AutoExposure.SpeedDown": 5
+        }
+    })");
+    auto result = uz::LoadProject(path);
+    ASSERT_TRUE(result.has_value());
+    ASSERT_EQ(result->cvarOverrides.size(), 4u);
+
+    // Order is preserved (JSON insertion order).
+    EXPECT_EQ(result->cvarOverrides[0].first, "r.AutoExposure");
+    EXPECT_FLOAT_EQ(result->cvarOverrides[0].second, 0.0f);
+
+    EXPECT_EQ(result->cvarOverrides[1].first, "r.AutoExposure.Bias");
+    EXPECT_FLOAT_EQ(result->cvarOverrides[1].second, 0.5f);
+
+    EXPECT_EQ(result->cvarOverrides[2].first, "r.SSGI");
+    EXPECT_FLOAT_EQ(result->cvarOverrides[2].second, 1.0f);
+
+    EXPECT_EQ(result->cvarOverrides[3].first, "r.AutoExposure.SpeedDown");
+    EXPECT_FLOAT_EQ(result->cvarOverrides[3].second, 5.0f);
+}
+
+TEST_F(ProjectLoaderTest, CvarsBlock_StringValueIsSkipped) {
+    auto path = WriteProject(R"({
+        "cvars": {
+            "r.Valid":   1,
+            "r.Invalid": "not a number"
+        }
+    })");
+    auto result = uz::LoadProject(path);
+    ASSERT_TRUE(result.has_value());
+    ASSERT_EQ(result->cvarOverrides.size(), 1u);
+    EXPECT_EQ(result->cvarOverrides[0].first, "r.Valid");
+    EXPECT_FLOAT_EQ(result->cvarOverrides[0].second, 1.0f);
+}
+
+TEST_F(ProjectLoaderTest, CvarsBlock_Missing_LeavesEmptyVector) {
+    auto path = WriteProject(R"({ "name": "NoCvars" })");
+    auto result = uz::LoadProject(path);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_TRUE(result->cvarOverrides.empty());
+}
+
+TEST_F(ProjectLoaderTest, CvarsBlock_NotAnObject_IsIgnored) {
+    auto path = WriteProject(R"({
+        "cvars": "should be an object, not a string"
+    })");
+    auto result = uz::LoadProject(path);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_TRUE(result->cvarOverrides.empty());
+}

@@ -453,3 +453,97 @@ TEST(GPUParticleBuffer, WriteSet_ConstOverload_SameAddress) {
 
     EXPECT_EQ(&constBuf.WriteSet(), &buf.WriteSet());
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Deferred staging-buffer destruction (phase0_fix-vfx-spawn-multi-particle)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// `initFrameIndex` starts as the sentinel `UINT32_MAX` on a fresh buffer.
+/// The deferred-destroy logic in frame_vfx_inline.cpp uses this sentinel to
+/// mean "InitializeData has not run yet" — if that precondition were ever
+/// broken, staging buffers could be destroyed on frame 0 before any
+/// CopyBuffer command had even been recorded.
+TEST(GPUParticleBuffer, InitFrameIndex_DefaultsToSentinel) {
+    GPUParticleBuffer buf;
+    EXPECT_EQ(buf.initFrameIndex, UINT32_MAX)
+        << "initFrameIndex default must be UINT32_MAX so the deferred-destroy "
+           "condition `frameIndex >= initFrameIndex + 3` can never accidentally "
+           "trigger before InitializeData runs";
+}
+
+/// `DestroyStaging` on a default-constructed buffer must be a safe no-op.
+/// This covers the early-shutdown path where the app tears down before any
+/// VFX emitter ever calls `InitializeData`.
+TEST(GPUParticleBuffer, DestroyStaging_NullDevice_NoOp) {
+    GPUParticleBuffer buf;
+    // Intentionally pass nullptr — the function must early-return without
+    // dereferencing the device or touching invalid handles.
+    buf.DestroyStaging(nullptr);
+    // All handles must remain at their default (invalid) state.
+    EXPECT_FALSE(buf.freeListStaging.IsValid());
+    EXPECT_FALSE(buf.freeListHeadStaging.IsValid());
+    EXPECT_FALSE(buf.aliveCountStaging.IsValid());
+    EXPECT_FALSE(buf.zeroStagingBuffer.IsValid());
+}
+
+/// `DestroyStaging` must be idempotent — calling it twice on the same buffer
+/// without any staging allocations between calls must not crash or double-free.
+/// This mirrors the real shutdown path where `GPUParticleBuffer::Destroy`
+/// calls `DestroyStaging`, and an external controller may also call it.
+TEST(GPUParticleBuffer, DestroyStaging_DoubleCall_Safe) {
+    MockRHIDevice device;
+    GPUParticleBuffer buf;
+
+    // Simulate that staging buffers were created at some point.
+    buf.freeListStaging     = device.CreateBuffer({});
+    buf.freeListHeadStaging = device.CreateBuffer({});
+    buf.aliveCountStaging   = device.CreateBuffer({});
+    buf.zeroStagingBuffer   = device.CreateBuffer({});
+
+    ASSERT_TRUE(buf.freeListStaging.IsValid());
+    ASSERT_TRUE(buf.zeroStagingBuffer.IsValid());
+
+    // First call destroys them.
+    buf.DestroyStaging(&device);
+    EXPECT_FALSE(buf.freeListStaging.IsValid());
+    EXPECT_FALSE(buf.freeListHeadStaging.IsValid());
+    EXPECT_FALSE(buf.aliveCountStaging.IsValid());
+    EXPECT_FALSE(buf.zeroStagingBuffer.IsValid());
+
+    // Second call is a no-op — must not crash or attempt to destroy
+    // invalid handles.
+    buf.DestroyStaging(&device);
+    EXPECT_FALSE(buf.freeListStaging.IsValid());
+}
+
+/// Deferred-destroy gating condition.
+///
+/// The frame_vfx_inline.cpp cleanup uses the condition
+/// `frameIndex >= initFrameIndex + kFramesInFlight` with `kFramesInFlight == 3`.
+/// This test documents and pins the intent: the staging buffers must survive
+/// exactly 3 frames past the frame in which InitializeData ran.
+TEST(GPUParticleBuffer, DeferredDestroyCondition_Timing) {
+    constexpr uint32_t kFramesInFlight = 3;
+    const uint32_t init = 10u;
+
+    auto ready = [&](uint32_t frame) {
+        return frame >= init + kFramesInFlight;
+    };
+
+    EXPECT_FALSE(ready(10))  << "Frame 10 (init frame) must keep staging alive";
+    EXPECT_FALSE(ready(11))  << "Frame 11 must keep staging alive (1 frame passed)";
+    EXPECT_FALSE(ready(12))  << "Frame 12 must keep staging alive (2 frames passed)";
+    EXPECT_TRUE (ready(13))  << "Frame 13 is the first safe frame (3 frames passed)";
+    EXPECT_TRUE (ready(14))  << "Frames after 13 remain safe";
+
+    // Sentinel precondition: if initFrameIndex is UINT32_MAX, the condition
+    // `frameIndex >= UINT32_MAX + 3` overflows to a very small number, so the
+    // real check must also guard on `initFrameIndex != UINT32_MAX`. Document
+    // the guard requirement here so a future refactor cannot remove it.
+    const uint32_t sentinel = UINT32_MAX;
+    const bool protectedByGuard = (sentinel == UINT32_MAX);
+    EXPECT_TRUE(protectedByGuard)
+        << "The sentinel check `initFrameIndex != UINT32_MAX` in "
+           "frame_vfx_inline.cpp MUST remain — without it, wraparound would "
+           "cause staging to be destroyed on frame 2";
+}

@@ -65,6 +65,17 @@ float2 GetCascadeTileOffset(uint idx, uint cols, out float2 tileSize) {
 
 // ─── Single cascade PCF ──────────────────────────────────────────────────
 
+/// Sample a single CSM cascade.
+///
+/// Returns the shadow factor in [0, 1] when the pixel falls inside the
+/// cascade's frustum, or the sentinel `-1.0` when the pixel is OUT OF
+/// the cascade's coverage (Z outside [0,1] or UV outside [0,1]). The
+/// caller MUST check for `< 0` before using the result — returning
+/// `1.0` on miss causes "sun leaks through walls" when the camera-
+/// aligned cascade frustum rotates away from indoor geometry (Sponza
+/// bug, 2026-04-10).
+///
+/// @ref shadow_fallback_walk.md — why the sentinel matters
 float SampleShadowCascade(float3 worldPos, float3 N, float NdotL, uint cascadeIdx,
                           Texture2D<float> shadowAtlas, SamplerComparisonState smplr) {
     float normalBias = GetCascadeNormalBias(cascadeIdx);
@@ -73,7 +84,8 @@ float SampleShadowCascade(float3 worldPos, float3 N, float NdotL, uint cascadeId
 
     float4 lsp = mul(float4(biasedPos, 1.0), cascadeViewProj[cascadeIdx]);
     float3 proj = lsp.xyz / lsp.w;
-    if (proj.z < 0.0 || proj.z > 1.0) return 1.0;
+    // OUT OF CASCADE Z RANGE — caller must fall back to next cascade.
+    if (proj.z < 0.0 || proj.z > 1.0) return -1.0;
 
     float2 shadowUV = proj.xy * 0.5 + 0.5;
     shadowUV.y = 1.0 - shadowUV.y;
@@ -81,7 +93,8 @@ float SampleShadowCascade(float3 worldPos, float3 N, float NdotL, uint cascadeId
     float2 tileSize;
     float2 tileOffset = GetCascadeTileOffset(cascadeIdx, atlasColumns, tileSize);
     float2 atlasUV = tileOffset + shadowUV * tileSize;
-    if (any(shadowUV < 0.0) || any(shadowUV > 1.0)) return 1.0;
+    // OUT OF CASCADE XY RANGE — caller must fall back to next cascade.
+    if (any(shadowUV < 0.0) || any(shadowUV > 1.0)) return -1.0;
 
     // Depth bias: use CB value with a minimum floor to prevent shadow acne.
     // @ref Holbert 2011 "Normal Offset Shadows" — constant + slope-scaled bias
@@ -110,16 +123,19 @@ float SampleShadowCascade(float3 worldPos, float3 N, float NdotL, uint cascadeId
 
 // ─── Full cascade shadow with blending + distance fade ────────────────────
 
-/// Sample cascaded shadow map with normal-offset bias.
+/// Full CSM evaluation with cascade-walk fallback + distance fade.
+///
 /// @param N      World-space surface normal — used for normal-offset bias so
-///               walls/ceilings receive bias along their true normal direction
-///               instead of world-up. Hardcoding N=(0,0,1) was the cause of the
-///               "darkening from far away, clean circle near camera" artifact:
-///               far cascades have larger texels → larger bias magnitude → the
-///               wrong bias direction pushed vertical surfaces into self-shadow.
+///               walls/ceilings receive bias along their true normal direction.
+///               Hardcoding N=(0,0,1) caused the "darkening from far away" artifact:
+///               far cascades have larger texels → larger bias magnitude → wrong
+///               direction pushed vertical surfaces into self-shadow.
 /// @param NdotL  Real cos(angle) between surface normal and light direction,
-///               used for slope-scaled depth bias. Caller already fast-paths
-///               back-facing surfaces (NdotL <= 0) before invoking this.
+///               used for slope-scaled depth bias.
+///
+/// Walks cascades outward from the depth-selected start until one covers the
+/// pixel (sentinel >= 0), blends at split boundaries, and fades at max distance.
+/// @ref UE5 ShadowProjectionCommon.ush — cascade fallback walk.
 float CascadeShadow(float3 worldPos, float viewDepth, float3 N, float NdotL) {
     if (cascadeCount == 0) return 1.0;
 
@@ -129,14 +145,37 @@ float CascadeShadow(float3 worldPos, float viewDepth, float3 N, float NdotL) {
     #define shadowAtlas shadowAtlasTexture
 #endif
 
-    uint sel = cascadeCount - 1;
+    // Pick the smallest (tightest) cascade whose split distance contains
+    // this pixel. This is the preferred cascade at our depth.
+    uint startCascade = cascadeCount - 1;
     [unroll] for (uint c = 0; c < kMaxCascades; ++c) {
         if (c >= cascadeCount) break;
-        if (viewDepth < GetCascadeSplit(c)) { sel = c; break; }
+        if (viewDepth < GetCascadeSplit(c)) { startCascade = c; break; }
     }
 
-    float shadow = SampleShadowCascade(worldPos, N, NdotL, sel, shadowAtlas, shadowSampler);
+    // Walk outward from `startCascade` until a cascade covers this pixel.
+    // A miss returns sentinel `< 0`. The first hit becomes `shadow` and
+    // `sel` records which cascade produced it (needed for the split-
+    // boundary blend below).
+    float shadow = -1.0;
+    uint  sel    = startCascade;
+    [unroll] for (uint step = 0; step < kMaxCascades; ++step) {
+        uint idx = startCascade + step;
+        if (idx >= cascadeCount) break;
+        float s = SampleShadowCascade(worldPos, N, NdotL, idx, shadowAtlas, shadowSampler);
+        if (s >= 0.0) { shadow = s; sel = idx; break; }
+    }
 
+    // If EVERY cascade missed the pixel, it is outside the entire CSM
+    // coverage. Fall back to fully lit — distance-field shadows (DFS)
+    // or other long-range techniques would ideally cover this case.
+    if (shadow < 0.0) {
+        shadow = 1.0;
+    }
+
+    // Split-boundary blend: when the pixel is near the far edge of
+    // `sel`, lerp toward `sel+1` to hide the seam. Only blends if the
+    // next cascade actually covers the pixel too.
     if (sel < cascadeCount - 1) {
         float splitDist = GetCascadeSplit(sel);
         float fadeStart = GetCascadeFadeStart(sel);
@@ -144,10 +183,17 @@ float CascadeShadow(float3 worldPos, float viewDepth, float3 N, float NdotL) {
         if (blendRange > 0.0 && viewDepth > fadeStart) {
             float bf = saturate((viewDepth - fadeStart) / blendRange);
             float next = SampleShadowCascade(worldPos, N, NdotL, sel + 1, shadowAtlas, shadowSampler);
-            shadow = lerp(shadow, next, bf);
+            if (next >= 0.0) {
+                shadow = lerp(shadow, next, bf);
+            }
         }
     }
 
+    // Global distance fade: pixels beyond `shadowFadeStart` progressively
+    // ignore their shadow sample (fade to fully lit at `shadowFadeEnd`).
+    // This is a separate mechanism from the cascade-walk miss above and
+    // must stay enabled — it prevents visible shadow popping at the
+    // outermost cascade boundary.
     if (shadowFadeEnd > shadowFadeStart && viewDepth > shadowFadeStart) {
         float ff = saturate((viewDepth - shadowFadeStart) / (shadowFadeEnd - shadowFadeStart));
         shadow = lerp(shadow, 1.0, ff);

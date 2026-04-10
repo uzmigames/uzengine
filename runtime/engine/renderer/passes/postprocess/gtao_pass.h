@@ -61,7 +61,18 @@ struct GTAOSettings {
     float    fadeStartDist   = 50000.0f; ///< Distance where AO fades (cm).
     float    fadeEndDist     = 100000.0f;///< Distance where AO disappears (cm).
     float    maxFadeDepth    = 100000.0f;///< Skip AO beyond this depth (cm).
-    bool     enabled         = true;     ///< Master toggle.
+
+    /// Master toggle.
+    ///
+    /// Defaults to `false` to match the `r.GTAO` CVar default. The previous
+    /// value (`true`) caused a frame-0 race: `frame_constants.cpp` reads
+    /// `settings.enabled` BEFORE `GTAOPass::Execute()` has had a chance to
+    /// sync `settings.enabled` from the CVar, so GTAO was silently enabled
+    /// for frame 0 and (because `RegisterGTAOPass` also gates on
+    /// `settings.enabled`) could latch on permanently. Keeping the
+    /// default `false` makes the struct defaults consistent with the CVar
+    /// and eliminates the race.
+    bool     enabled         = false;
     GTAOQuality quality      = GTAOQuality::High;  ///< Quality preset. Default: High (full-res).
 
     /// AO power curve exponent. Default: 2.0.
@@ -216,15 +227,19 @@ public:
     /// Returns true if Init() has been called and GPU resources are allocated.
     [[nodiscard]] bool IsInitialized() const noexcept { return m_initialized; }
 
-    /// Live query of the `r.GTAO` CVar — the authoritative master toggle.
+    /// Returns the CURRENT effective enable state by consulting the
+    /// `r.GTAO` CVar directly.
     ///
-    /// @note `settings.enabled` is refreshed only inside Execute() and so is
-    /// stale during scene loading, pass registration, and PerFrameCB upload.
-    /// Every site that gates GTAO work MUST call this method rather than
-    /// reading `settings.enabled` directly, otherwise disabling `r.GTAO` via
-    /// scene CVars or --cvar has no effect for at least one frame (and can
-    /// leak stale filtered-AO content into the deferred lighting pass).
-    [[nodiscard]] bool IsEnabled() const noexcept;
+    /// All call sites that gate GTAO scheduling, perFrame SRV propagation,
+    /// and lighting-pass consumption MUST use this accessor instead of
+    /// reading `settings.enabled`. `settings.enabled` is only written at
+    /// the top of `GTAOPass::Execute()`, which runs AFTER
+    /// `RegisterGTAOPass()` and AFTER `frame_constants.cpp` has already
+    /// populated `perFrame.gtaoSrvIndex`. Reading the struct there races
+    /// against the CVar and can leak a stale/construction-time value into
+    /// the lighting shader — the exact Sponza "camera sphere of light"
+    /// bug we hit on 2026-04-10.
+    [[nodiscard]] bool IsEnabledCVar() const noexcept;
 
     /// Returns the SRV descriptor index of the filtered AO texture.
     [[nodiscard]] uint32_t GetFilteredAOSrvIndex() const noexcept { return m_filteredAOSrvIndex; }

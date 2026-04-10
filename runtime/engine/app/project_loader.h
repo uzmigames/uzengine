@@ -18,6 +18,8 @@
 
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace uz {
 
@@ -47,9 +49,20 @@ namespace uz {
 ///   "render": {
 ///     "backend": "dx12",
 ///     "vsync":   false
+///   },
+///   "cvars": {
+///     "r.AutoExposure":          0,
+///     "r.AutoExposure.SpeedDown": 5.0
 ///   }
 /// }
 /// ```
+///
+/// The optional `cvars` block lets a project pin engine CVars without
+/// requiring `--cvar` CLI args. Values are applied via the same
+/// `Config::AddPendingCvarOverride` path used by the CLI, so they take
+/// effect before `SceneRenderer::Init` reads init-time CVars. CLI
+/// `--cvar` arguments still take precedence because they are pushed
+/// onto the override queue after the project values.
 struct ProjectConfig {
     /// Display name of the project.
     std::string name;
@@ -97,6 +110,19 @@ struct ProjectConfig {
     ///
     /// When false the engine renders as fast as possible. Default: false.
     bool vsync = false;
+
+    // ── CVar overrides ───────────────────────────────────────────────────────
+
+    /// Project-level CVar overrides parsed from the optional "cvars" object.
+    ///
+    /// Each entry is `(name, value)`. Names are looked up in the global
+    /// `CVarRegistry` after registration. Values are stored as `float` to
+    /// match `Config::AddPendingCvarOverride`; bools should be supplied as
+    /// `0` or `1`.
+    ///
+    /// Order is preserved (parse order), so later entries override earlier
+    /// ones for the same name.
+    std::vector<std::pair<std::string, float>> cvarOverrides;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

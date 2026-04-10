@@ -553,11 +553,14 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     }
 
     // ── GTAO SRV index (set early — actual compute runs in render graph) ──
-    // Use IsEnabled() (live CVar query). settings.enabled is refreshed only
-    // inside Execute() and would be stale here, pre-seeding a valid SRV into
-    // PerFrameCB even when r.GTAO=0 — causing the lighting PS to sample a
-    // stale filtered-AO texture and darken ambient.
-    if (m_gtaoPass && m_gtaoPass->IsInitialized() && m_gtaoPass->IsEnabled()) {
+    //
+    // MUST use IsEnabledCVar() — NOT settings.enabled. The latter is only
+    // refreshed at the top of GTAOPass::Execute(), which runs AFTER this
+    // builder. Reading the struct here races and leaks a stale value into
+    // `perFrame.gtaoSrvIndex`, which the deferred lighting shader then
+    // samples unconditionally — manifesting as the "camera sphere of light"
+    // Sponza bug (see .claude/rules/rendering-diagnostics.md, 2026-04-10).
+    if (m_gtaoPass && m_gtaoPass->IsInitialized() && m_gtaoPass->IsEnabledCVar()) {
         perFrame.gtaoSrvIndex = m_gtaoPass->GetFilteredAOSrvIndex();
     } else {
         perFrame.gtaoSrvIndex = UINT32_MAX;

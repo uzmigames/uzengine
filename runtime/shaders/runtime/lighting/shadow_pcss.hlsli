@@ -80,6 +80,11 @@ float SampleShadowESM(float2 atlasUV, float receiverDepth,
 /// Drop-in replacement for SampleShadowCascade with PCSS/ESM/IGN support.
 /// filterMethod: 0 = PCF with IGN rotation, 1 = PCSS, 2 = ESM.
 /// Call this instead of SampleShadowCascade when you want enhanced shadows.
+///
+/// Like the plain PCF variant, this returns the sentinel `-1.0` when
+/// the pixel falls outside the cascade's frustum. Callers MUST walk
+/// to the next cascade on miss — returning `1.0` causes sun leak
+/// (Sponza bug 2026-04-10).
 float SampleShadowCascadePCSS(float3 worldPos, float3 N, float NdotL, uint cascadeIdx,
                                Texture2D<float> shadowAtlas, SamplerComparisonState smplr,
                                float2 pixelPos, uint frameIdx) {
@@ -89,7 +94,7 @@ float SampleShadowCascadePCSS(float3 worldPos, float3 N, float NdotL, uint casca
 
     float4 lsp = mul(float4(biasedPos, 1.0), cascadeViewProj[cascadeIdx]);
     float3 proj = lsp.xyz / lsp.w;
-    if (proj.z < 0.0 || proj.z > 1.0) return 1.0;
+    if (proj.z < 0.0 || proj.z > 1.0) return -1.0;
 
     float2 shadowUV = proj.xy * 0.5 + 0.5;
     shadowUV.y = 1.0 - shadowUV.y;
@@ -97,7 +102,7 @@ float SampleShadowCascadePCSS(float3 worldPos, float3 N, float NdotL, uint casca
     float2 tileSize;
     float2 tileOffset = GetCascadeTileOffset(cascadeIdx, atlasColumns, tileSize);
     float2 atlasUV = tileOffset + shadowUV * tileSize;
-    if (any(shadowUV < 0.0) || any(shadowUV > 1.0)) return 1.0;
+    if (any(shadowUV < 0.0) || any(shadowUV > 1.0)) return -1.0;
 
     float depthBias = max(GetCascadeDepthBias(cascadeIdx), 0.0005);
     float slopeBias = depthBias * slopeScale;
@@ -147,6 +152,11 @@ float SampleShadowCascadePCSS(float3 worldPos, float3 N, float NdotL, uint casca
 
 /// Drop-in replacement for CascadeShadow() with PCSS/ESM/IGN support.
 /// Uses filterMethod from ShadowDataCB to select algorithm.
+///
+/// Implements the same cascade-walk fallback as CascadeShadow() —
+/// when the depth-selected cascade misses, we walk outward through
+/// larger cascades until one covers the pixel. Critical to prevent
+/// the "sun leaks indoors on camera rotation" Sponza bug.
 float CascadeShadowPCSS(float3 worldPos, float viewDepth, float3 N, float NdotL,
                          float2 pixelPos, uint frameIdx) {
     if (cascadeCount == 0) return 1.0;
@@ -157,15 +167,31 @@ float CascadeShadowPCSS(float3 worldPos, float viewDepth, float3 N, float NdotL,
     #define sa shadowAtlasTexture
 #endif
 
-    uint sel = cascadeCount - 1;
+    // Depth-based starting cascade (tightest that contains this depth).
+    uint startCascade = cascadeCount - 1;
     [unroll] for (uint c = 0; c < kMaxCascades; ++c) {
         if (c >= cascadeCount) break;
-        if (viewDepth < GetCascadeSplit(c)) { sel = c; break; }
+        if (viewDepth < GetCascadeSplit(c)) { startCascade = c; break; }
     }
 
-    float shadow = SampleShadowCascadePCSS(worldPos, N, NdotL, sel, sa, shadowSampler,
-                                            pixelPos, frameIdx);
+    // Walk outward until a cascade covers the pixel. Sentinel `< 0` = miss.
+    float shadow = -1.0;
+    uint  sel    = startCascade;
+    [unroll] for (uint step = 0; step < kMaxCascades; ++step) {
+        uint idx = startCascade + step;
+        if (idx >= cascadeCount) break;
+        float s = SampleShadowCascadePCSS(worldPos, N, NdotL, idx, sa, shadowSampler,
+                                          pixelPos, frameIdx);
+        if (s >= 0.0) { shadow = s; sel = idx; break; }
+    }
 
+    // If EVERY cascade missed, pixel is outside CSM range — fall back
+    // to fully lit (DFS handles very distant shadows if enabled).
+    if (shadow < 0.0) {
+        shadow = 1.0;
+    }
+
+    // Split-boundary blend when near the far edge of the selected cascade.
     if (sel < cascadeCount - 1) {
         float splitDist = GetCascadeSplit(sel);
         float fadeStart = GetCascadeFadeStart(sel);
@@ -174,7 +200,9 @@ float CascadeShadowPCSS(float3 worldPos, float viewDepth, float3 N, float NdotL,
             float bf = saturate((viewDepth - fadeStart) / blendRange);
             float next = SampleShadowCascadePCSS(worldPos, N, NdotL, sel + 1, sa, shadowSampler,
                                                   pixelPos, frameIdx);
-            shadow = lerp(shadow, next, bf);
+            if (next >= 0.0) {
+                shadow = lerp(shadow, next, bf);
+            }
         }
     }
 

@@ -88,6 +88,13 @@
         },
         "file": { "type": "string", "default": "uzengine.log" }
       }
+    },
+    "cvars": {
+      "type": "object",
+      "description": "Engine CVar overrides applied at startup before SceneRenderer::Init. Each value must be a number or boolean (booleans are converted to 0.0/1.0). CLI --cvar arguments take precedence over project values.",
+      "additionalProperties": {
+        "type": ["number", "boolean"]
+      }
     }
   },
   "additionalProperties": true

@@ -9,7 +9,15 @@
         {
             "id": 1,
             "type": "PBROutput",
-            "inputs": []
+            "inputs": [
+                { "pin": 4, "srcExpr": 2, "srcPin": 0 }
+            ]
+        },
+        {
+            "id": 2,
+            "type": "Vector3Constant",
+            "name": "WindowSunGlow",
+            "scalarParams": { "x": 8.0, "y": 6.5, "z": 4.5 }
         }
     ],
     "params": {

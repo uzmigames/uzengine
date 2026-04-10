@@ -1,0 +1,19 @@
+{
+  "id": "csm-cascade-fallback-walk-never-return-1-0-on-cascade-miss",
+  "type": "pattern",
+  "title": "CSM cascade fallback walk — never return 1.0 on cascade miss",
+  "category": "rendering",
+  "description": "Quando uma função sample-single-cascade (`SampleShadowCascade`) detecta que o pixel está fora do frustum da cascade (projection Z fora de [0,1] OU UV fora de [0,1]), ela DEVE retornar um sentinela (`-1.0`) em vez de `1.0`. O caller (`CascadeShadow`) então caminha outward pelas cascadas a partir da `startCascade` escolhida por depth, e só cai para \"fully lit\" quando TODAS as cascadas missam.\n\nRetornar `1.0` direto causa vazamento de sol em qualquer pixel fora do frustum da cascade primária — que muda constantemente ao rotacionar/mover a câmera porque o frustum CSM é derivado da view da câmera. Os sintomas são \"sol seguindo a câmera\" e lighting global oscilando ao rotacionar.\n\nAplica-se tanto ao PCF normal (`shadow.hlsli`) quanto à variante PCSS/ESM (`shadow_pcss.hlsli`).",
+  "example": "// shadow.hlsli — single-cascade sample\nfloat SampleShadowCascade(float3 worldPos, float3 N, float NdotL, uint cascadeIdx, ...) {\n    float4 lsp = mul(float4(biasedPos, 1.0), cascadeViewProj[cascadeIdx]);\n    float3 proj = lsp.xyz / lsp.w;\n    // OUT OF CASCADE Z RANGE — sentinel, caller must fall back.\n    if (proj.z < 0.0 || proj.z > 1.0) return -1.0;\n\n    float2 shadowUV = proj.xy * 0.5 + 0.5;\n    shadowUV.y = 1.0 - shadowUV.y;\n    if (any(shadowUV < 0.0) || any(shadowUV > 1.0)) return -1.0;  // OUT OF XY\n\n    // ... PCF sampling ...\n    return shadow;  // valid [0, 1]\n}\n\n// top-level: walk outward until a cascade covers\nfloat CascadeShadow(float3 worldPos, float viewDepth) {\n    if (cascadeCount == 0) return 1.0;\n\n    uint startCascade = cascadeCount - 1;\n    [unroll] for (uint c = 0; c < kMaxCascades; ++c) {\n        if (c >= cascadeCount) break;\n        if (viewDepth < GetCascadeSplit(c)) { startCascade = c; break; }\n    }\n\n    float shadow = -1.0;\n    uint  sel    = startCascade;\n    [unroll] for (uint step = 0; step < kMaxCascades; ++step) {\n        uint idx = startCascade + step;\n        if (idx >= cascadeCount) break;\n        float s = SampleShadowCascade(worldPos, N, NdotL, idx, shadowAtlas, shadowSampler);\n        if (s >= 0.0) { shadow = s; sel = idx; break; }\n    }\n\n    // Only fall back to \"fully lit\" when EVERY cascade missed.\n    if (shadow < 0.0) shadow = 1.0;\n\n    // ... split-boundary blend + shadowFade ...\n    return shadow;\n}",
+  "whenToUse": "Sempre que o shader implementar Cascaded Shadow Maps (CSM) com múltiplas cascadas. Todo `SampleShadowCascade` individual deve usar sentinela, e todo `CascadeShadow` top-level deve fazer walk outward.",
+  "whenNotToUse": "N/A — é padrão obrigatório para CSM. A única exceção seria se o projeto usa um único shadow map global (não cascaded), onde miss significa literalmente \"fora do mundo\".",
+  "createdAt": "2026-04-10T14:59:11.979Z",
+  "tags": [
+    "rendering",
+    "csm",
+    "shadows",
+    "hlsl",
+    "shader"
+  ],
+  "source": "manual"
+}
