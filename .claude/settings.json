@@ -72,6 +72,35 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash E:/UzEngine/.claude/hooks/on-compact-reinject.sh"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash E:/UzEngine/.claude/hooks/resume-from-handoff.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash E:/UzEngine/.claude/hooks/check-context-and-handoff.sh"
+          }
+        ]
+      }
     ]
   },
   "statusLine": {

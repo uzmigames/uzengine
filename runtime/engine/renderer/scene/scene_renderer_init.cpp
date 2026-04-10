@@ -647,11 +647,12 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     // TODO(clouds): re-enable when cloud pipeline is debugged
 
     // ── Brixelizer GI (AMD FidelityFX sparse SDF voxel GI) ────────────
-    m_brixelizerGI = std::make_unique<BrixelizerGIPass>();
-    if (!m_brixelizerGI->Init(device, m_renderWidth, m_renderHeight)) {
-        UZ_LOG(Renderer, Warning, "SceneRenderer: BrixelizerGI init failed (Brixelizer GI disabled)");
-        m_brixelizerGI.reset();
-    }
+    // DISABLED: ffxBrixelizerContextCreate fails on this GPU — skip init entirely.
+    // m_brixelizerGI = std::make_unique<BrixelizerGIPass>();
+    // if (!m_brixelizerGI->Init(device, m_renderWidth, m_renderHeight)) {
+    //     UZ_LOG(Renderer, Warning, "SceneRenderer: BrixelizerGI init failed (Brixelizer GI disabled)");
+    //     m_brixelizerGI.reset();
+    // }
 
     // ── DFS Output Texture + Culling Buffers (at render resolution) ──
     // Created here but only populated when DFS is enabled at runtime.
