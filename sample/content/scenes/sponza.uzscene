@@ -31,8 +31,8 @@
             0
           ],
           "rotation": [
-            -60,
-            30,
+            -75,
+            0,
             0
           ],
           "scale": [
@@ -102,8 +102,7 @@
           ]
         },
         "sky_light": {
-          "cubemap_path": "textures/hdri/grasslands_sunset_4k.hdr",
-          "intensity": 1.5,
+          "intensity": 1,
           "light_color": [
             1.0,
             1.0,
