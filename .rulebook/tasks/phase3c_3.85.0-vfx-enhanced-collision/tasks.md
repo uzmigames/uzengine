@@ -12,49 +12,42 @@ collision with depth-buffer normals. Müller et al. 2006 "Position Based Dynamic
 
 ## 1. Shader — Sobel Normal Estimation
 
-- [ ] 1.1 In `runtime/shaders/runtime/vfx/vfx_collision.hlsli`, add a new function
-  `float3 EstimateSurfaceNormalSobel(Texture2D<float> depthTexture, SamplerState smp,
-  float2 screenUV, float2 texelSize, float4x4 invViewProj)`.
-  This replaces the existing 4-tap cross-difference with a full 3×3 Sobel operator.
-  Add: `/// @ref Sousa 2013 "CryENGINE 3 Graphics Gems" — Sobel 3x3 depth normal`.
-  **Not yet implemented — vfx_collision.hlsli has 4-tap EstimateSurfaceNormal only.**
-- [ ] 1.2 Keep the original `EstimateSurfaceNormal` (4-tap) intact — it is used by
-  the existing `ScreenSpaceCollision()` function. The new Sobel variant is opt-in
-  via a shader define `VFX_COLLISION_SOBEL`. **Not yet implemented.**
-- [ ] 1.3 In `ScreenSpaceCollision()`, add a compile-time branch for `VFX_COLLISION_SOBEL`.
-  **Not yet implemented.**
+- [x] 1.1 Added `EstimateSurfaceNormalSobel()` in vfx_collision.hlsli with full 3x3 Sobel operator
+  on depth buffer. 8 depth samples + world-space reconstruction, Sobel Gx/Gy gradients, cross
+  product for normal. Includes `@ref Sousa 2013` citation and degenerate normal guard.
+- [x] 1.2 Original 4-tap `EstimateSurfaceNormal` preserved intact. Sobel variant guarded by
+  `#ifdef VFX_COLLISION_SOBEL` / `#endif`.
+- [x] 1.3 In `ScreenSpaceCollision()`, added `#ifdef VFX_COLLISION_SOBEL` compile-time branch
+  that calls `EstimateSurfaceNormalSobel` instead of `EstimateSurfaceNormal`.
 
 ## 2. Shader — Stick Response
 
-- [ ] 2.1 In `vfx_collision.hlsli`, add `CollisionResponse::Stick = 3` (value 3) as
-  a comment block. **Not yet implemented — CollisionResponse has only Kill/Bounce/Slide.**
-- [ ] 2.2 In the CollisionModule HLSL snippet, add handling for `cbCollisionResponse == 3`
-  (Stick). **Not yet implemented.**
-- [ ] 2.3 Add `Stick = 3` to the `CollisionResponse` enum in `collision_module.h`.
-  **Not yet implemented — enum has Kill/Bounce/Slide only.**
-- [ ] 2.4 Update `CollisionResponseToString()` and `CollisionResponseFromString()` to
-  handle `"stick"`. **Not yet implemented.**
+- [x] 2.1 Added CollisionResponse enum values comment block in vfx_collision.hlsli
+  (Kill=0, Bounce=1, Slide=2, Stick=3) after ReflectVelocity.
+- [x] 2.2 Added `cbCollisionResponse == 3u` (Stick) branch in kCollisionShaderCode:
+  zeroes velocity, snaps position to surface (surfaceNormal * cbCollisionOffset).
+- [x] 2.3 Added `Stick = 3` to `CollisionResponse` enum in collision_module.h.
+- [x] 2.4 Updated `CollisionResponseToString()` (returns "stick") and
+  `CollisionResponseFromString()` (parses "stick" case-insensitively).
 
 ## 3. Restitution Coefficient
 
-- [ ] 3.1 Rename `bounceFactor` in `CollisionModuleConfig` to `restitution` in
-  `runtime/engine/vfx/modules/collision_module.h`. **Not yet implemented — field is
-  still named `bounceFactor = 0.6f`. Note: VFXEmitterConfig uses `restitution` for
-  the demo ground collision (separate from CollisionModule). CollisionModule rename
-  is distinct work.**
-- [ ] 3.2 Update `GetParameters()` serialization key from `"bounce_factor"` to
-  `"restitution"` with backward-compat alias. **Not yet implemented.**
-- [ ] 3.3 In `vfx_collision.hlsli`'s `ReflectVelocity()`, rename `bounceFactor`
-  parameter to `restitution`. **Not yet implemented.**
+- [x] 3.1 Renamed `bounceFactor` to `restitution` in `CollisionModuleConfig` (collision_module.h).
+  Updated all references in collision_module.cpp, uzfx_loader.cpp, and test file.
+- [x] 3.2 `GetParameters()` now uses key `"restitution"`. `ParseConfig()` accepts both
+  `"restitution"` (canonical) and `"bounce_factor"` (legacy alias). When both present,
+  `"restitution"` takes precedence.
+- [x] 3.3 Renamed `bounceFactor` parameter to `restitution` in `ReflectVelocity()` in
+  vfx_collision.hlsli. Added `@ref Muller et al. 2006` citation.
 
 ## 4. Collision Event Flag — Sub-Emitter Integration
 
-- [ ] 4.1 Add `bool emitCollisionEvent = false` to `CollisionModuleConfig`. **Not yet implemented.**
-- [ ] 4.2 In the collision shader snippet, write `SubEmitterFlags[particleIdx] = 1u`
-  on collision when `cbCollisionEmitEvent` is set. **Not yet implemented.**
-- [ ] 4.3 Add `uint cbCollisionEmitEvent` to the module's expected bindings list. **Not yet implemented.**
-- [ ] 4.4 Update `CollisionModule::GetParameters()` to expose `"emit_collision_event"`. **Not yet implemented.**
-- [ ] 4.5 Update `CollisionModule::ParseConfig()` to parse `"emit_collision_event"`. **Not yet implemented.**
+- [x] 4.1 Added `bool emitCollisionEvent = false` to `CollisionModuleConfig` in collision_module.h.
+- [x] 4.2 In kCollisionShaderCode, added `if (cbCollisionEmitEvent != 0u) { SubEmitterFlags[particleIdx] = 1u; }`
+  inside the `if (hit)` block, before the response switch.
+- [x] 4.3 Added `cbCollisionEmitEvent : uint` to the expected bindings documentation in collision_module.h.
+- [x] 4.4 Added `"emit_collision_event"` (Bool) to `GetParameters()` as the 6th parameter.
+- [x] 4.5 Added `"emit_collision_event"` parsing in `ParseConfig()` (boolean field).
 
 ## 5. Demo — Enhanced Collision Preset + Sparks
 

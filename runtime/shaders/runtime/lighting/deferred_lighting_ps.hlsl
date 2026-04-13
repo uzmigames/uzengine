@@ -396,6 +396,37 @@ LightingOutput main(FSInput input) {
         float atten = distAtten * cone * cone;
         if (atten <= 0.0) continue;
 
+        // ── Spot shadow map sampling ─────────────────────────────────
+        // Each local shadow entry is 5 float4s in localShadowRaw[]:
+        //   [0..3] = viewProj rows, [4] = (atlasOffsetX, atlasOffsetY, atlasScale, bias)
+        float spotShadow = 1.0;
+        if (sl.shadowIndex != 0xFFFFFFFFu && sl.shadowIndex < localShadowCount) {
+#ifdef UZ_BINDLESS
+            Texture2D<float> localAtlas = ResourceDescriptorHeap[localShadowAtlasIndex];
+#endif
+            uint base = sl.shadowIndex * 5u;
+            float4x4 localVP = float4x4(
+                localShadowRaw[base + 0],
+                localShadowRaw[base + 1],
+                localShadowRaw[base + 2],
+                localShadowRaw[base + 3]);
+            float4 atlasParams = localShadowRaw[base + 4];
+            float  localBias   = atlasParams.w;
+
+            float4 lsPos = mul(float4(worldPos, 1.0), localVP);
+            float3 lsProj = lsPos.xyz / lsPos.w;
+
+            if (lsProj.z > 0.0 && lsProj.z < 1.0) {
+                float2 atlasUV = lsProj.xy * atlasParams.z
+                               + float2(atlasParams.x, atlasParams.y);
+                float biasedZ = lsProj.z - localBias * 0.001;
+#ifdef UZ_BINDLESS
+                spotShadow = localAtlas.SampleCmpLevelZero(
+                    shadowSampler, atlasUV, biasedZ);
+#endif
+            }
+        }
+
         float3 Hs   = normalize(V + Ls);
         float  NoHs = saturate(dot(N, Hs));
         float  VoHs = saturate(dot(V, Hs));
@@ -406,7 +437,7 @@ LightingOutput main(FSInput input) {
         float3 specs = Ds * Viss * Fs;
         float3 diffs = EvalFrostbiteDiffuse(diffColor, roughness, NoV, NoLs, VoHs);
 
-        Lo += (diffs + specs) * sl.color * NoLs * atten;
+        Lo += (diffs + specs) * sl.color * NoLs * atten * spotShadow;
     }
 
     // ── IBL ambient (Falcor split-sum pattern) ──────────────────────────
@@ -963,7 +994,12 @@ LightingOutput main(FSInput input) {
         if (metallic > 0.95 && roughness < 0.1) {
             ambient = radiance * metallicF0 * skyTintSpecular;
         } else {
-            ambient = diffuseAmbient * ao * skyTintDiffuse
+            // Apply indirect AO exponent to all indirect diffuse light —
+            // pow(ao, N) darkens occluded areas more aggressively than
+            // linear ao, creating visible shadow definition even under
+            // omnidirectional bounce/sky light. CVar: r.IndirectAO.Exponent.
+            float aoForDiffuse = pow(saturate(ao), _indirectAOExponent);
+            ambient = diffuseAmbient * aoForDiffuse * skyTintDiffuse
                     + specularAmbient * specOcclusion * skyTintSpecular;
         }
     }

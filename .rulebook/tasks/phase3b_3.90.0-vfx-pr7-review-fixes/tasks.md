@@ -37,7 +37,11 @@
 - [ ] 7.1 Debug why particles are not visible: spawn dispatch runs but alive count stays 0. Investigate free list initialization, UAV barrier ordering, readback timing.
 - [ ] 7.2 Verify billboard VS expands quads from alive particle data.
 - [ ] 7.3 Capture RenderDoc frame to inspect compute shader UAV writes.
-- [ ] 7.4 Update VFX unit tests for new defaults (cm, Z-up) — 20 test failures expected.
+- [x] 7.4 Update VFX unit tests for new defaults (cm, Z-up).
+      Fixed 6 files: test_vfx_modules.cpp (gravity Y->Z), test_vfx_integration.cpp (gravity + comment),
+      test_uzfx_loader.cpp (2x gravity JSON + 2x velocity JSON), test_vfx_graph.cpp (parameter default),
+      test_vfx_lua_fields_trail.cpp (gravity set/get round-trip). All Y-up (0,-9.81,0) -> Z-up (0,0,-981),
+      metre velocities -> cm velocities.
 
 ## 8. Tail (mandatory — enforced by rulebook v5.3.0)
 - [ ] 8.1 Update or create documentation covering the implementation

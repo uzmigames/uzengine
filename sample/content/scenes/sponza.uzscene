@@ -3,20 +3,36 @@
   "version": "1.0",
   "cvars": {
     "r.PathTracer.Enable": 0,
+    "r.RayTracing": 1,
+    "r.RayTracing.GI": 1,
     "r.RadianceCache": 0,
     "r.GI.Intensity": 1.4,
-    "r.GI.RadianceCache.GridExtent": 3000,
+    "r.GI.RadianceCache.GridExtent": 15000,
     "r.BrixelizerGI": 0,
     "r.BrixelizerGI.Intensity": 1.4,
     "r.SkyLight.Intensity": 1.0,
-    "r.SkyLight.MinAmbient": 0.04,
-    "r.SkyLight.IndirectIntensity": 1.5,
+    "r.SkyLight.MinAmbient": 0.01,
+    "r.SkyLight.IndirectIntensity": 0.15,
     "r.GTAO": 1,
-    "r.GTAO.Intensity": 1.0,
-    "r.GTAO.Radius": 100,
-    "r.GTAO.NumAngles": 4,
-    "r.GTAO.NumTaps": 12,
-    "r.GTAO.ThicknessBlend": 0.5,
+    "r.GTAO.Intensity": 3.5,
+    "r.GTAO.Power": 2.8,
+    "r.GTAO.Radius": 200,
+    "r.GTAO.Quality": 3,
+    "r.GTAO.NumAngles": 6,
+    "r.GTAO.NumTaps": 16,
+    "r.GTAO.ThicknessBlend": 0.8,
+    "r.GTAO.MaxScreenRadius": 384,
+    "r.SSGI": 1,
+    "r.SSGI.Quality": 2,
+    "r.SSGI.Intensity": 0.25,
+    "r.SSGI.TemporalAlpha": 0.05,
+    "r.IndirectAO.Exponent": 3.0,
+    "r.Shadow.AtlasResolution": 8192,
+    "r.Shadow.PCFPenumbraRadius": 12.0,
+    "r.Shadow.PCSS.Samples": 64,
+    "r.Shadow.PCSS.SearchSamples": 32,
+    "r.Shadow.PCSSMinPenumbra": 4.0,
+    "r.Shadow.PCSSMaxPenumbra": 48.0,
     "r.AutoExposure": 0,
     "r.Exposure": 2.0
   },
@@ -31,7 +47,7 @@
             0
           ],
           "rotation": [
-            -60,
+            -72,
             30,
             0
           ],
@@ -51,7 +67,7 @@
           "intensity": 10,
           "cast_shadows": true,
           "atmosphere_sun_light": true,
-          "light_source_angle": 0.5
+          "light_source_angle": 2.0
         }
       }
     },
@@ -120,6 +136,8 @@
         }
       }
     },
+
+
     {
       "name": "Sponza",
       "components": {

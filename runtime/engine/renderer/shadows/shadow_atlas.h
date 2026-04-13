@@ -22,7 +22,7 @@ class IRHIDevice;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Per-cascade shadow map resolution in texels (width = height).
-static constexpr uint32_t kShadowResolution = 2048;
+static constexpr uint32_t kShadowResolution = 4096;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ShadowAtlas

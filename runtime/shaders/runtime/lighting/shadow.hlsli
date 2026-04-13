@@ -180,15 +180,19 @@ float CascadeShadow(float3 worldPos, float viewDepth) {
         shadow = 1.0;
     }
 
-    // Split-boundary blend: when the pixel is near the far edge of
-    // `sel`, lerp toward `sel+1` to hide the seam. Only blends if the
-    // next cascade actually covers the pixel too.
+    // Split-boundary blend: lerp shadow FACTOR (not UV) between cascades
+    // to hide the resolution seam. Uses a wide 40% fade zone to make
+    // the transition gradual enough that cascade projection differences
+    // are not visible as double-shadows.
     if (sel < cascadeCount - 1) {
         float splitDist = GetCascadeSplit(sel);
-        float fadeStart = GetCascadeFadeStart(sel);
+        // Wide fade: start blending at 60% of cascade range
+        float fadeStart = splitDist * 0.6;
         float blendRange = splitDist - fadeStart;
         if (blendRange > 0.0 && viewDepth > fadeStart) {
             float bf = saturate((viewDepth - fadeStart) / blendRange);
+            // Smooth step for perceptually even transition
+            bf = bf * bf * (3.0 - 2.0 * bf);
             float next = SampleShadowCascade(worldPos, N, NdotL, sel + 1, shadowAtlas, shadowSampler);
             if (next >= 0.0) {
                 shadow = lerp(shadow, next, bf);

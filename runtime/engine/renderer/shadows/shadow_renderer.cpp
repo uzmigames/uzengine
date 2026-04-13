@@ -49,7 +49,7 @@ ShadowFrameData SetupShadowFrame(
     cfg.cascadeCount                = 4;
     cfg.resolution                  = shadowResolution;
     cfg.maxDistance                  = 40000.0f;  // 400m — reference default (DLC.cpp:1017)
-    cfg.cascadeDistributionExponent = 3.0f;      // default (DLC.cpp:1029)
+    cfg.cascadeDistributionExponent = 2.0f;      // lower = cascade 0 covers further = circle boundary farther from camera
     cfg.cascadeTransitionFraction   = 0.1f;      // 10% blend overlap (DLC.cpp:1030)
     cfg.shadowDistanceFadeoutFraction = 0.1f;    // 10% fade on last cascade (DLC.cpp:1031)
     // Bias values must be NON-ZERO to avoid total acne / total shadowing.
@@ -65,7 +65,7 @@ ShadowFrameData SetupShadowFrame(
     cfg.slopeScaleDepthBias         = 3.0f * perLightShadowSlopeBias;  // Equivalent: CSMSlopeBias * per-light ShadowSlopeBias
     cfg.cascadeBiasDistribution     = 1.0f;      // Fully world-scaled (ShadowSetup.cpp:1846)
     cfg.receiverBias                = 1.0f;      // 1.0 = full shadow strength (no attenuation)
-    cfg.filterMethod                = 1;         // Poisson 16-tap (cleaner than PCSS without temporal filter)
+    cfg.filterMethod                = 1;         // PCSS variable penumbra with cascade-normalized kernel
     cfg.maxSoftKernelSize           = 40.0f;     // default (ShadowRendering.cpp:182)
 
     // ── Far shadow cascades — wired from DirectionalLightComponent ───────

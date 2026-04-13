@@ -37,18 +37,10 @@ phase, dissolve). This is the 8th SoA channel added to `GpuParticleBuffer`.
 
 ## 6. CPU Module and Serialization
 
-- [ ] 6.1 Create `runtime/engine/vfx/modules/dynamic_params_module.h/cpp`
-      implementing `IVFXModule`. Fields:
-      ```cpp
-      Vec4    defaultValue = Vec4(0.f, 0.f, 0.f, 0.f);
-      uint8_t evolveMode   = 0;  // 0=constant, 1=lerp-to-zero, 2=age-normalized
-      float   evolveRate   = 1.0f;
-      ```
-- [ ] 6.2 `EmitHLSL()` returns `""` — the module only uploads CB data, no inline
-      HLSL snippet needed.
-- [ ] 6.3 `Serialize` / `Deserialize` round-trips all three fields via JSON.
-- [ ] 6.4 Register the module in `register_builtin_modules.cpp` under the key
-      `"DynamicParams"`.
+- [x] 6.1 Created `runtime/engine/vfx/modules/dynamic_params_module.h/cpp` implementing `IVFXModule`. Config struct has Vec4 defaultValue={0,0,0,0}, uint8_t evolveMode=0 (constant/lerp-to-zero/age-normalized), float evolveRate=1.0f.
+- [x] 6.2 `GetShaderCode()` returns empty string_view — module only uploads CB data, no inline HLSL snippet.
+- [x] 6.3 `ParseConfig()` round-trips all three fields via JSON: "default_value" (array[4]), "evolve_mode" (int 0-2), "evolve_rate" (float). `ApplyJsonConfig()` delegates to `ParseConfig()`. Clamping + warning logs for out-of-range values.
+- [x] 6.4 Registered the module in `register_builtin_modules.cpp` under key `"dynamic_params"`.
 
 ## 7. Demo Integration
 

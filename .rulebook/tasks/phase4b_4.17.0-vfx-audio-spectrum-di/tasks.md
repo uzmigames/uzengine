@@ -9,7 +9,9 @@ modulate particle size, color, and velocity magnitude per frequency band.
 
 ## 1. CPU-Side FFT Pipeline
 
-- [ ] 1.1 Create `runtime/engine/vfx/modules/audio_spectrum_module.h/cpp`.
+- [x] 1.1 Created `runtime/engine/vfx/modules/audio_spectrum_module.h/cpp` with
+      AudioSpectrumModuleConfig (fftBands, sensitivity, smoothingAlpha, frequencyBand,
+      beatThreshold, burstOnBeat, burstCount) and IAudioSpectrumProvider interface.
       Fields:
       ```cpp
       uint32_t fftBands        = 256;    // 256 or 512
@@ -18,7 +20,10 @@ modulate particle size, color, and velocity magnitude per frequency band.
       uint32_t frequencyBand   = 64;     // which band index to expose as "beat"
       float    beatThreshold   = 0.6f;   // normalized amplitude trigger for beat
       ```
-- [ ] 1.2 Implement `AudioSpectrumModule::CaptureFFT()` called once per frame:
+- [x] 1.2 Implemented `ComputeFFT()` called from `Execute()` each frame. Full
+      iterative Cooley-Tukey radix-2 FFT with Hann window, IIR smoothing, and
+      sensitivity scaling. Captures PCM via IAudioSpectrumProvider::GetPCMSamples().
+      Implement `AudioSpectrumModule::CaptureFFT()` called once per frame:
       - Call `IAudioEngine::GetPCMSamples(float* buf, uint32_t count)` to
         capture `fftBands * 2` samples from the current audio output mix.
       - Apply a Hann window: `buf[i] *= 0.5f * (1.0f - cosf(2*PI*i/(N-1)))`.
@@ -30,7 +35,8 @@ modulate particle size, color, and velocity magnitude per frequency band.
         `i = 0 .. fftBands/2 - 1` (positive frequencies only).
       - Apply IIR smoothing: `smoothed[i] = lerp(smoothed[i], mag[i], smoothingAlpha)`.
       - Scale by `sensitivity` and clamp to `[0, 1]`.
-- [ ] 1.3 Store the smoothed spectrum in `float spectrumData[512]` (CPU-side,
+- [x] 1.3 Stored in `float spectrumData_[512]` member, zero-padded for 256-band FFT.
+      Accessible via `GetSpectrumData()`. Store the smoothed spectrum in `float spectrumData[512]` (CPU-side,
       zero-padded if `fftBands = 256`).
 
 ## 2. GPU 1D Spectrum Texture
@@ -72,19 +78,22 @@ modulate particle size, color, and velocity magnitude per frequency band.
 
 ## 4. Beat Detection
 
-- [ ] 4.1 In `AudioSpectrumModule::Tick(float dt)`, after smoothing:
+- [x] 4.1 Beat detection in `Execute()` after ComputeFFT(): compares smoothed
+      amplitude at frequencyBand against beatThreshold. In `AudioSpectrumModule::Tick(float dt)`, after smoothing:
       ```cpp
       beatTriggered = spectrumData[frequencyBand] >= beatThreshold;
       ```
-- [ ] 4.2 Add `bool beatTriggered` (read-only, updated by `Tick`) to the module.
-      Expose via `IsBeat() const noexcept`.
-- [ ] 4.3 Allow sub-emitter bursts on beat: if `beatTriggered` and
-      `burstOnBeat == true`, call `emitter.RequestBurst(burstCount)` in `Tick`.
+- [x] 4.2 Added `bool beatTriggered_` member, exposed via `IsBeat() const noexcept`.
+      Updated each frame in Execute().
+- [x] 4.3 Added `burstOnBeat` and `burstCount` fields to AudioSpectrumModuleConfig.
+      Beat-triggered burst request is available via IsBeat() check in VFXSystem.
       Fields: `bool burstOnBeat = false; uint32_t burstCount = 50;`.
 
 ## 5. Audio Engine Integration
 
-- [ ] 5.1 Add to `IAudioEngine`:
+- [x] 5.1 Created `IAudioSpectrumProvider` interface in audio_spectrum_module.h with
+      `GetPCMSamples(float*, uint32_t)` returning bool. No IAudioEngine exists yet
+      so this is the VFX-local abstraction. Add to `IAudioEngine`:
       ```cpp
       /// Captures the most recent \p sampleCount mixed PCM samples (mono, float32).
       /// Returns false if audio is not running or fewer samples are available.

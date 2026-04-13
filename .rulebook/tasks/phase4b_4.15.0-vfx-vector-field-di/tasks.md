@@ -54,8 +54,8 @@ upload, and SRV binding while producing equivalent visual results. The existing
 
 ## 5. Serialization
 
-- [ ] 5.1 Serialization not yet implemented (future: when .uzfx asset format supports it).
-- [ ] 5.2 Deserialization not yet implemented.
+- [x] 5.1 Serialization implemented in `vfx_preset_serializer.cpp` — writes vector_field_enabled (uint), vector_field_strength (float), vector_field_tightness (float), vector_field_scale (float) as JSON key-value pairs.
+- [x] 5.2 Deserialization implemented in `vfx_preset_serializer.cpp` — reads the four keys with correct defaults (0, 0.0, 0.0, 1.0) matching VFXEmitterConfig field defaults.
 
 ## 6. Demo Integration
 

@@ -118,6 +118,10 @@ float SampleShadowCascadePCSS(float3 worldPos, float3 N, float NdotL, uint casca
     float rotAngle = InterleavedGradientNoise_Shadow(pixelPos, frameIdx) * 6.28318530718;
 
     // PCSS variable penumbra (filterMethod == 1)
+    // Normalize by cascade projection scale so all cascades produce the
+    // same world-space penumbra width. Without this, the same pillar at
+    // the same camera distance produces different shadow sizes when it
+    // falls in different cascades (each has different texel density).
     float filterPenumbra = penumbra;
     if (filterMethod == 1 && tanLightSourceAngle > 0.0) {
         float searchRadius = maxSoftKernelSize * texelSize;
@@ -126,6 +130,15 @@ float SampleShadowCascadePCSS(float3 worldPos, float3 N, float NdotL, uint casca
                                             atlasMin, atlasMax, rotAngle);
         if (blocker.y > 0.0) {
             filterPenumbra = EstimatePenumbraPCSS(cmpDepth, blocker.x, tanLightSourceAngle);
+            // Normalize: cascade 0 has the tightest projection (largest _11).
+            // Scale penumbra by (thisScale / cascade0Scale) so larger cascades
+            // (smaller _11) produce proportionally smaller texel-space penumbra,
+            // resulting in consistent world-space softness.
+            float cascade0Scale = abs(cascadeViewProj[0]._11);
+            float thisScale     = abs(cascadeViewProj[cascadeIdx]._11);
+            if (cascade0Scale > 1e-6 && thisScale > 1e-6) {
+                filterPenumbra *= thisScale / cascade0Scale;
+            }
             filterPenumbra = clamp(filterPenumbra, 0.5, maxSoftKernelSize);
         } else {
             return 1.0;

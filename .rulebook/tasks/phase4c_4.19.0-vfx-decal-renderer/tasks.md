@@ -10,14 +10,18 @@ frame the CPU reads completed events and injects them into the existing
 
 ## 1. Death Event Buffer
 
-- [ ] 1.1 In `runtime/engine/vfx/core/gpu_particle_buffer.h`, declare:
+- [x] 1.1 Added `ParticleDeathEvent` struct (48 bytes, position/size/color/normal/pad) and
+      `deathEventBuffer`/`deathEventCount`/`hasDeathEventBuffers` handles to gpu_particle_buffer.h.
+      In `runtime/engine/vfx/core/gpu_particle_buffer.h`, declare:
       ```cpp
       /// Ring buffer for particle death events written by the update CS.
       /// CPU reads and clears this each frame (1-frame latency allowed).
       RHIBufferHandle deathEventBuffer = RHIBufferHandle::Invalid();
       RHIBufferHandle deathEventCount  = RHIBufferHandle::Invalid(); // uint32 UAV
       ```
-- [ ] 1.2 Allocate `deathEventBuffer` as `STRUCTURED_BUFFER | UNORDERED_ACCESS`,
+- [x] 1.2 Implemented `CreateDeathEventBuffers()` in gpu_particle_buffer.cpp: allocates
+      deathEventBuffer (stride=48, count=capacity) and deathEventCount (uint32 atomic).
+      Allocate `deathEventBuffer` as `STRUCTURED_BUFFER | UNORDERED_ACCESS`,
       stride = `sizeof(ParticleDeathEvent)`, count = `maxParticles`. Define:
       ```cpp
       struct ParticleDeathEvent {
@@ -28,8 +32,9 @@ frame the CPU reads completed events and injects them into the existing
           float  _pad;       //  4 bytes
       };                     // total: 48 bytes
       ```
-- [ ] 1.3 Allocate `deathEventCount` as an unordered-access `uint32` counter
-      buffer, reset to 0 each frame via `ClearUAV`.
+- [x] 1.3 Included in CreateDeathEventBuffers(). Counter buffer allocated as
+      StructuredBuffer | UnorderedAccess, single uint32 element. ClearUAV at frame
+      start is handled by the render graph (task 2.2).
 
 ## 2. Update CS Death Event Write
 
@@ -80,7 +85,10 @@ frame the CPU reads completed events and injects them into the existing
         desc.materialIdx = decalMaterialIndex;
         decals.SpawnDecal(desc);
         ```
-- [x] 3.3 Add to `VFXEmitterConfig`: Added simplified `deathDecalEnabled` (uint32_t, default 0) config field to VFXEmitterConfig with serialization support. Full decal parameter set (minSizeForDecal, decalSizeScale, decalLifetime, etc.) deferred to GPU readback implementation.
+- [x] 3.3 Add to `VFXEmitterConfig`: Full death decal parameter set added:
+      deathDecalEnabled (uint32_t, 0), minSizeForDecal (2.0 cm), decalSizeScale (3.0),
+      decalLifetime (10.0s), decalMaterialIndex (0), maxDeathDecalsPerFrame (64).
+      Serialization added to vfx_preset_serializer.cpp (both save and load).
       ```cpp
       bool     emitDeathDecals      = false;
       float    minSizeForDecal      = 2.0f;  // cm

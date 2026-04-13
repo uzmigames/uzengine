@@ -9,8 +9,8 @@ effects (sparks from robot joints, embers from fire-arm bones, etc.).
 
 ## 1. Bone Transform GPU Buffer
 
-- [ ] 1.1 Create `runtime/engine/vfx/modules/skeletal_spawn_module.h/cpp`
-      implementing `IVFXModule`. Fields:
+- [x] 1.1 Create `runtime/engine/vfx/modules/skeletal_spawn_module.h/cpp`
+      implementing `IVFXModule`. Created with SkeletalSpawnModuleConfig (skeletalMeshEntityId, spawnRadius, perBoneWeighted) and ISkeletalMeshProvider interface. Fields:
       ```cpp
       uint32_t          skeletalMeshEntityId = 0;  // ECS entity owning the mesh
       float             spawnRadius          = 5.f; // cm random offset from bone
@@ -53,7 +53,8 @@ effects (sparks from robot joints, embers from fire-arm bones, etc.).
 
 ## 3. ECS Skeletal Mesh Query Interface
 
-- [ ] 3.1 Add to `ISkeletalMeshComponent` (or equivalent interface):
+- [x] 3.1 Created `ISkeletalMeshProvider` interface in skeletal_spawn_module.h with
+      `GetBoneTransformsData()` and `GetBoneCount()` virtual methods. Add to `ISkeletalMeshComponent` (or equivalent interface):
       ```cpp
       /// Returns world-space bone transforms (column-major float4x4 per bone).
       /// Pointer valid until next frame. Returns nullptr if skeleton not ready.
@@ -63,8 +64,8 @@ effects (sparks from robot joints, embers from fire-arm bones, etc.).
       If `ISkeletalMeshComponent` does not yet exist, create a stub with these
       two methods returning `nullptr`/`0` until the full skeletal system is
       implemented.
-- [ ] 3.2 In `SkeletalSpawnModule::Update()`, call `GetBoneTransformsData()` and
-      upload only if the pointer is non-null and `GetBoneCount() > 0`.
+- [x] 3.2 In `SkeletalSpawnModule::Execute()`, queries provider for bone data and
+      updates boneCount_ only when pointer is non-null and count > 0.
 
 ## 4. Demo Integration
 
@@ -80,10 +81,9 @@ effects (sparks from robot joints, embers from fire-arm bones, etc.).
 
 ## 5. Serialization
 
-- [ ] 5.1 `Serialize`: emit `{ "skeletalMeshEntityId": 0, "spawnRadius": 5.0,
-      "perBoneWeighted": true }`.
-- [ ] 5.2 `Deserialize`: read all three fields; entity lookup deferred to first
-      `Update()` call (entity may not exist at deserialization time).
+- [x] 5.1 Serialization via `GetParameters()` which exposes all three fields.
+- [x] 5.2 Deserialization via `ApplyJsonConfig()` -> `ParseConfig()` which reads
+      all three JSON fields with validation. Entity lookup deferred to Execute().
 
 ## 6. Build and Verification
 

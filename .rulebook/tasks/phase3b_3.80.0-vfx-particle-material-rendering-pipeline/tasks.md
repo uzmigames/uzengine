@@ -44,28 +44,35 @@ and material blend pipeline. See docs/analysis/vfx/niagara-sprite-rendering-pipe
 
 ## 5. Fix Texture Loading
 
-- [ ] 5.1 Load sprite textures as **sRGB** (true) for color textures — `TextureLoader::Load(device, cmd, path, true)`.
-      Currently loaded as linear which makes colors washed out.
-- [ ] 5.2 When PNG has no alpha channel, the RHI should create RGBA8 with alpha=1.
-      Verify this is the default behavior of TextureLoader for 3-channel PNGs.
-- [ ] 5.3 Log texture format/channels on load: width, height, channels, hasAlpha, sRGB.
+- [x] 5.1 Verified: `VFXMaterial::LoadTexture()` already defaults `isSRGB=true` in its signature (vfx_material.h:107),
+      which overrides `TextureLoader::Load`'s default of `false`. Color textures load as sRGB correctly.
+- [x] 5.2 Verified: `TextureLoader::Load` calls `stbi_load(..., 4)` which forces 4-channel RGBA output.
+      stb_image fills alpha=255 for RGB-only sources. 3-channel PNGs produce RGBA8 with alpha=1. No gap.
+- [x] 5.3 Added `originalChannels` field to `TextureLoadResult` (texture_loader.h). Propagated in
+      `TextureLoader::Load` and `LoadFromMemory`. VFXMaterial log now prints width, height, hasAlpha, sRGB.
 
 ## 6. Preset Tuning for Fire Sprite Sheet
 
-- [ ] 6.1 Simple Burst with fire sprite: Additive blend (mode 1), channelMask=0 (RGBA),
+- [x] 6.1 Simple Burst with fire sprite: Additive blend (mode 1), channelMask=0 (RGBA),
       emissive=1.0, size=1.0, spread=PI, lifetime=1.5-3.0, gravity=(-3 Z), 300 particles.
       Color over life: warm white→orange→transparent.
-- [ ] 6.2 With RGB-only fire PNG: Additive blend makes black pixels invisible (add 0 light).
+      Updated spread=3.14159, lifetime=1.5-3.0, colorLifeStart=(1,0.95,0.8,1) warm white,
+      colorLifeEnd=(1,0.4,0.05,0) orange->transparent. Both .cpp and .json presets updated.
+- [x] 6.2 With RGB-only fire PNG: Additive blend makes black pixels invisible (add 0 light).
       Bright pixels add fire color. No alpha needed — this is how Niagara fire works.
-- [ ] 6.3 With Green-channel mode (mask=2): green channel drives BOTH luminance and opacity.
+      Added comment in Simple Burst preset explaining RGB-only + Additive behavior.
+- [x] 6.3 With Green-channel mode (mask=2): green channel drives BOTH luminance and opacity.
       Bright green = bright opaque fire, dark green = dim transparent.
+      Added comment in Simple Burst preset explaining green-channel mode behavior.
 
 ## 7. Demo Controls
 
 - [ ] 7.1 Shift+M cycles channel mask (RGBA/R/G/B/A) — already implemented.
 - [ ] 7.2 M cycles material presets — already implemented.
-- [ ] 7.3 Add J key: cycle sRGB on/off for sprite texture (reloads texture).
-- [ ] 7.4 Add K key: toggle soft fade on/off for quick comparison.
+- [x] 7.3 Add I key: toggle sRGB on/off for sprite texture (J was taken by lit-particles toggle).
+      Added m_spriteSRGB member + Key::I handler in vfx_viewport_input.cpp.
+- [x] 7.4 Add U key: toggle soft fade on/off for quick comparison (K was taken by kill-volume toggle).
+      Added m_softFadeEnabled member + Key::U handler; sets softFadeDistance to 0/0.5 on all emitters.
 
 ## 8. Visual Verification
 
@@ -78,9 +85,11 @@ and material blend pipeline. See docs/analysis/vfx/niagara-sprite-rendering-pipe
 
 ## 9. Documentation
 
-- [ ] 9.1 Document the particle material rendering pipeline: VS SubUV → PS material → blend.
+- [x] 9.1 Document the particle material rendering pipeline: VS SubUV → PS material → blend.
+      Created docs/guides/vfx-particle-material-pipeline.md with full pipeline overview.
 - [ ] 9.2 Document sprite sheet requirements: format, channels, sRGB, sizes.
-- [ ] 9.3 Document blend mode selection guide: when to use Additive vs Translucent vs AlphaComposite.
+- [x] 9.3 Document blend mode selection guide: when to use Additive vs Translucent vs AlphaComposite.
+      Included in vfx-particle-material-pipeline.md "Choosing a Blend Mode" section.
 - [ ] 9.4 Update Niagara parity analysis with verified implementation notes.
 
 ## 10. Tail (mandatory — enforced by rulebook v5.3.0)
