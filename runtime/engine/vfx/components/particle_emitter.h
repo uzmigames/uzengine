@@ -32,6 +32,7 @@
 #include "engine/vfx/parameters/vfx_parameter_store.h"
 #include "vector3.h"
 
+#include <cfloat>
 #include <cstdint>
 #include <string>
 
@@ -39,6 +40,23 @@ namespace uz {
 
 class IRHIDevice;
 class MaterialInterface;
+
+// ---------------------------------------------------------------------------
+// EmitterBounds -- per-emitter dynamic AABB from GPU reduction
+// ---------------------------------------------------------------------------
+
+/// Axis-aligned bounding box computed from alive particle positions each frame
+/// via a GPU parallel reduction. Used for frustum culling and LOD screen-size
+/// significance evaluation. The bounds have 1-frame readback latency.
+///
+/// @ref Gribb & Hartmann 2001 "Fast Extraction of Viewing Frustum Planes"
+///      -- positive-vertex AABB-frustum test
+struct EmitterBounds {
+    Vec3 aabbMin = {FLT_MAX,  FLT_MAX,  FLT_MAX};   ///< World-space AABB minimum.
+    Vec3 aabbMax = {-FLT_MAX, -FLT_MAX, -FLT_MAX};   ///< World-space AABB maximum.
+    bool valid = false;                                ///< True when readback data is usable.
+    uint32_t frameAge = 0;                             ///< Frames since last successful readback.
+};
 
 // ---------------------------------------------------------------------------
 // ParticleEmitter -- GPU particle emitter ECS component (pure data + methods)
@@ -218,6 +236,22 @@ struct ParticleEmitter {
     float particleLightFlicker    = 0.0f;  ///< Flicker amplitude [0,1]. 0=steady.
     float particleLightFlickerSpeed = 5.0f;///< Flicker oscillation frequency (Hz).
 
+    // ── Warmup / Pre-warm Simulation ──────────────────────────────────
+    /// Seconds of simulation to run instantly at emitter spawn so looping
+    /// effects (smoke, fire, dust) appear fully populated from frame 1.
+    /// Default 0 = no warmup (backwards compatible).
+    float warmupTime = 0.0f;
+
+    /// Simulation granularity during warmup (seconds per tick).
+    /// Lower values produce more accurate warmup but cost more GPU time.
+    /// Default: 1/30s (~33ms per tick).
+    float warmupTickRate = 0.0333f;
+
+    /// Runtime flag: set to true after the warmup loop finishes.
+    /// Prevents re-warmup on every frame. Reset to false on hot reload.
+    bool warmupComplete = false;
+
+    // ── Emitter Lifecycle ──────────────────────────────────────────────
     /// Emitter lifecycle — auto-disable after duration (seconds). 0 = infinite.
     float emitterDuration = 0.0f;
     /// Restart count before stopping. 0 = infinite.
@@ -247,6 +281,14 @@ struct ParticleEmitter {
     /// Current LOD level (set by VFXSystem each frame, read-only for scripts).
     VFXLodLevel currentLodLevel = VFXLodLevel::Full;
 
+    /// Current spawn rate scale after smooth LOD transition [0.01, 1.0].
+    /// Interpolated toward `targetSpawnScale` each frame using `lodTransitionTime`.
+    float currentSpawnScale = 1.0f;
+
+    /// Target spawn rate scale for the current LOD level.
+    /// Set from `lodSettings.spawnRateScale[currentLodLevel]` each frame.
+    float targetSpawnScale = 1.0f;
+
     // -- Runtime State (managed by VFXSystem, do not modify directly) ---------
 
     /// GPU particle storage (ping-pong SoA buffers + shared bookkeeping).
@@ -273,6 +315,12 @@ struct ParticleEmitter {
     /// Incremented each frame by VFXSystem::Tick(). Emission begins
     /// when this value reaches or exceeds startDelay.
     float timeSinceRegistration = 0.0f;
+
+    /// Dynamic axis-aligned bounding box from GPU parallel reduction.
+    /// Updated each frame with 1-frame readback latency. Used by frustum
+    /// culling when `bounds.valid == true`; falls back to static sphere
+    /// estimate when invalid or `frameAge < 2`.
+    EmitterBounds bounds;
 
     /// Whether this emitter has been initialized (GPU buffers allocated).
     bool initialized = false;

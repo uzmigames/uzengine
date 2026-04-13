@@ -113,6 +113,7 @@ pub fn build(b: *std.Build) void {
         "engine/vfx/budget",
         "engine/vfx/editor",
         "engine/vfx/material",
+        "engine/vfx/mesh",
         "engine/animation",
         "engine/event",
         "engine/property",
@@ -303,6 +304,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/vfx/budget",  cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/editor",  cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/material", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/mesh",     cpp_flags);
     addCppDir(runtime_mod, b, "engine/animation", cpp_flags);
     addCppDir(runtime_mod, b, "engine/property", cpp_flags);
     addCppDir(runtime_mod, b, "engine/debug",    cpp_flags);
@@ -689,7 +691,7 @@ pub fn build(b: *std.Build) void {
             "infback.c", "inffast.c", "inflate.c", "inftrees.c",
             "trees.c", "uncompr.c", "zutil.c",
         },
-        .flags = &.{},
+        .flags = &.{"-DZLIB_STATIC"},
     });
 
     // Thirdparty — libpng (PNG read/write, required by msdfgen ext/save-png.cpp)
@@ -714,7 +716,7 @@ pub fn build(b: *std.Build) void {
             "pngwtran.c",
             "pngwutil.c",
         },
-        .flags = &.{ "-DPNG_ARM_NEON_OPT=0", "-DPNG_STATIC" },
+        .flags = &.{ "-DPNG_ARM_NEON_OPT=0", "-DPNG_STATIC", "-DZLIB_STATIC" },
     });
 
     // Thirdparty — FreeType (font rasterization, required by msdfgen ext/import-font.cpp)
@@ -1295,7 +1297,7 @@ pub fn build(b: *std.Build) void {
     // ── Demos & Tools (Windows/DX12 only) ────────────────────────────────
 
     if (is_windows) {
-        const win_sys_libs = [_][]const u8{ "d3d12", "d3d11", "dxgi", "dxguid", "gdi32", "user32", "xinput1_4", "ole32", "shcore", "shell32", "comdlg32" };
+        const win_sys_libs = [_][]const u8{ "d3d12", "d3d11", "dxgi", "dxguid", "gdi32", "user32", "ws2_32", "dbghelp", "winmm", "xinput1_4", "ole32", "shcore", "shell32", "comdlg32" };
 
         // Helper to create a tool exe from a single .cpp
         const tool_names = [_][]const u8{ "uzengine", "uzcook", "uzpack", "uzmesh" };

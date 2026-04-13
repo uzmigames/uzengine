@@ -100,6 +100,11 @@ LRESULT CALLBACK PlatformWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
             self->m_input->OnKeyUp(static_cast<uint16_t>(wp));
         return 0;
 
+    case WM_CHAR:
+        if (self && self->m_input)
+            self->m_input->OnChar(static_cast<uint16_t>(wp));
+        return 0;
+
     case WM_MOUSEMOVE:
         if (self && self->m_input)
             self->m_input->OnMouseMove(

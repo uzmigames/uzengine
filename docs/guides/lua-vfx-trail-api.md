@@ -45,6 +45,8 @@ local trail = uz.vfx.create_trail({
   - `min_point_distance` (float): Minimum world distance to spawn a new point (cm; skips nearby points)
   - `sort_order` (int): Render order relative to other VFX (higher = later)
   - `is_active` (boolean): Start with recording enabled (default: true)
+  - `ribbon_strands` (int): Number of parallel ribbon strands (default: 1). Values > 1 produce N parallel quad-strip ribbons offset perpendicular to the camera-facing plane, approximating a tube or wing shape. Each strand carries a unique `strandIndex` for per-strand shader modulation. Vertex count scales as `pointCount * 2 * ribbonStrands`.
+  - `strand_spacing` (float): World-space distance between adjacent strands in metres (default: 0.1). Only meaningful when `ribbon_strands > 1`. A value of 0 collapses all strands into overlapping ribbons.
 
 **Returns:**
 - (number): Trail handle on success, or nil if material failed to load

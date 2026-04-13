@@ -22,12 +22,15 @@
 #include "vfx_module.h"
 
 #include "engine/math/vector3.h"
+#include "engine/rhi/rhi_types.h"
 
 #include <string>
 #include <string_view>
 #include <json.hpp>
 
 namespace uz {
+
+class IRHIDevice;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MeshRotationMode -- particle orientation strategy
@@ -104,6 +107,14 @@ struct MeshRenderModuleConfig {
 
     /// Particle orientation strategy. See MeshRotationMode for details.
     MeshRotationMode rotationMode = MeshRotationMode::VelocityAligned;
+
+    /// Maximum number of mesh instances that can be rendered per frame.
+    ///
+    /// Determines the size of the GPU instance transform and color buffers.
+    /// The instance CS writes at most `maxInstances` transforms; excess alive
+    /// particles beyond this limit are silently culled by the atomic slot claim.
+    /// Default 4096 is suitable for mid-density debris/spark effects.
+    uint32_t maxInstances = 4096;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -193,6 +204,54 @@ public:
     /// Returns the current rendering configuration (read-only).
     [[nodiscard]] const MeshRenderModuleConfig& GetConfig() const noexcept;
 
+    // ── GPU buffer management ────────────────────────────────────────────────
+
+    /// Allocates the per-instance GPU buffers (transform + color).
+    ///
+    /// Creates two structured buffers:
+    /// - `instanceTransformBuffer_`: float4x4 (64 bytes) x maxInstances, UAV.
+    /// - `instanceColorBuffer_`: float4 (16 bytes) x maxInstances, UAV.
+    ///
+    /// Both buffers are bound as UAVs by the instance CS and as SRVs by the
+    /// mesh VS/PS. Must be called once before the first frame that uses this
+    /// module.
+    ///
+    /// # Parameters
+    /// - `device`: RHI device for buffer creation. Must not be null.
+    ///
+    /// # Returns
+    /// `true` on success, `false` if allocation fails (partial allocs cleaned up).
+    [[nodiscard]] bool CreateGPUBuffers(IRHIDevice* device);
+
+    /// Releases the per-instance GPU buffers and resets handles to invalid.
+    ///
+    /// Safe to call if buffers were never created (no-op).
+    ///
+    /// # Parameters
+    /// - `device`: RHI device for deallocation. May be null (no-op).
+    void DestroyGPUBuffers(IRHIDevice* device);
+
+    /// Stores the mesh path for later loading. Does not perform disk I/O.
+    ///
+    /// Actual mesh geometry loading from disk is deferred to the asset pipeline
+    /// (future task). This method stores the VFS path and marks the module as
+    /// "loaded" so procedural mesh generation or explicit buffer assignment
+    /// can proceed.
+    ///
+    /// # Parameters
+    /// - `meshPath`: VFS-relative path to the mesh asset.
+    /// - `device`: RHI device (reserved for future mesh loading; currently unused).
+    void Load(std::string_view meshPath, IRHIDevice* device);
+
+    /// Returns true if GPU instance buffers have been allocated.
+    [[nodiscard]] bool HasGPUBuffers() const noexcept;
+
+    /// Returns the instance transform buffer handle (float4x4 per instance).
+    [[nodiscard]] RHIBufferHandle GetInstanceTransformBuffer() const noexcept;
+
+    /// Returns the instance color buffer handle (float4 per instance).
+    [[nodiscard]] RHIBufferHandle GetInstanceColorBuffer() const noexcept;
+
     // ── Serialization helpers ────────────────────────────────────────────────
 
     /// Parses a MeshRenderModuleConfig from a JSON object.
@@ -220,6 +279,20 @@ public:
 
 private:
     MeshRenderModuleConfig config_;
+
+    /// GPU buffer for per-instance float4x4 world transforms.
+    /// Written by particle_mesh_instance_cs.hlsl, read by particle_mesh_vs.hlsl.
+    RHIBufferHandle instanceTransformBuffer_ = RHIBufferHandle::Invalid();
+
+    /// GPU buffer for per-instance float4 RGBA colors.
+    /// Written by particle_mesh_instance_cs.hlsl, read by particle_mesh_ps.hlsl.
+    RHIBufferHandle instanceColorBuffer_ = RHIBufferHandle::Invalid();
+
+    /// Whether GPU instance buffers have been successfully allocated.
+    bool hasGPUBuffers_ = false;
+
+    /// Whether Load() has been called with a valid path.
+    bool meshLoaded_ = false;
 };
 
 } // namespace uz

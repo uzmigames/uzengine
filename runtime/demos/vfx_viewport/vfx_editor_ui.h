@@ -227,6 +227,13 @@ private:
     float  m_dragSliderMin = 0.0f;
     float  m_dragSliderMax = 1.0f;
 
+    // ── Number input (text edit) state ──────────────────────────────────
+    float* m_editingPtr = nullptr;      ///< Pointer to the float being text-edited, or nullptr.
+    float  m_editingMin = 0.0f;         ///< Min clamp for the editing field.
+    float  m_editingMax = 1.0f;         ///< Max clamp for the editing field.
+    std::string m_editBuffer;           ///< Current text being typed.
+    const InputSystem* m_inputRef = nullptr; ///< Cached input pointer for char access.
+
     // ── Dropdown state ───────────────────────────────────────────────────
     uint32_t* m_dropdownPtr = nullptr;   ///< Pointer to the uint32_t being edited, or nullptr.
     float     m_dropdownX = 0.0f;        ///< Screen X of the open dropdown.
@@ -297,6 +304,11 @@ private:
 
     /// Renders a horizontal slider. Returns `true` if the value changed.
     bool Slider(float x, float y, float w, float* value, float minVal, float maxVal, const char* label);
+
+    /// Renders a clickable number input box. Click to enter edit mode and type
+    /// a new value. Press Enter or click elsewhere to commit. Press Escape to
+    /// cancel. Returns `true` if the value changed this frame.
+    bool NumberInput(float x, float y, float w, float* value, float minVal, float maxVal, const char* label);
 
     /// Renders a boolean toggle. Returns `true` if the value changed.
     bool Toggle(float x, float y, bool* value, const char* label);

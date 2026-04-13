@@ -96,6 +96,10 @@ void InputSystem::BeginFrame() {
     m_scrollDelta = 0.f;
     m_rawMouseDX = 0.f;
     m_rawMouseDY = 0.f;
+    // NOTE: m_charBuffer is NOT cleared here — it accumulates WM_CHAR events
+    // from PumpMessages() which happens BEFORE BeginFrame(). Clearing here
+    // would lose all chars typed this frame. Instead, call ClearTypedChars()
+    // after all UI consumers have processed the chars.
 
     // Poll XInput gamepads
     PollGamepads();
@@ -576,6 +580,14 @@ void InputSystem::OnMouseButton(MouseButton btn, bool down) {
 
 void InputSystem::OnMouseScroll(float delta) {
     m_scrollDelta += delta;
+}
+
+void InputSystem::OnChar(uint16_t ch) {
+    // Accept backspace (0x08), enter/return (0x0D), escape (0x1B),
+    // and printable ASCII (0x20-0x7E).
+    if (ch == 0x08 || ch == 0x0D || ch == 0x1B || (ch >= 0x20 && ch <= 0x7E)) {
+        m_charBuffer += static_cast<char>(ch);
+    }
 }
 
 } // namespace uz

@@ -99,10 +99,32 @@ struct VFXLodSettings {
     /// Distance at which Minimal transitions to Culled (default: 20000 cm = 200 m).
     float distances[3] = {5000.0f, 10000.0f, 20000.0f};
 
-    /// Validates that all thresholds are positive and strictly increasing.
+    /// Per-LOD-level spawn rate multiplier [0, 1].
+    /// Index 0 = Full, 1 = Reduced, 2 = Minimal, 3 = Culled.
+    /// Applied to emissionRate each frame to reduce spawning at distance.
+    float spawnRateScale[4] = {1.0f, 0.5f, 0.25f, 0.1f};
+
+    /// Per-LOD-level maxParticles multiplier [0, 1].
+    /// Reduces the emitter's max particle cap at distance.
+    /// Index 0 = Full, 1 = Reduced, 2 = Minimal, 3 = Culled.
+    float maxParticlesScale[4] = {1.0f, 0.75f, 0.5f, 0.25f};
+
+    /// Time in seconds to lerp between LOD levels to avoid pop.
+    /// At each frame, `currentSpawnScale` approaches `targetSpawnScale`
+    /// at a rate controlled by `dt / lodTransitionTime`.
+    float lodTransitionTime = 0.5f;
+
+    /// Screen-size significance threshold. If the emitter's bounding sphere
+    /// projects to less than this fraction of screen height, skip rendering
+    /// entirely (LOD level = Culled). Default 0.01 = 1% of screen height.
+    float screenSizeThreshold = 0.01f;
+
+    /// Validates that all thresholds are positive and strictly increasing,
+    /// and all scale values are in [0, 1].
     ///
     /// A settings struct is valid when:
     ///   `distances[0] > 0 && distances[0] < distances[1] < distances[2]`
+    ///   AND all spawnRateScale/maxParticlesScale values are in [0, 1].
     ///
     /// # Returns
     /// `true` if the thresholds are well-formed; `false` otherwise.

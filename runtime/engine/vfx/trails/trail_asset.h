@@ -18,7 +18,9 @@
 ///     "max_points": 100,
 ///     "point_lifetime": 2.0,
 ///     "min_point_distance": 0.1,
-///     "sort_order": 0
+///     "sort_order": 0,
+///     "ribbon_strands": 1,
+///     "strand_spacing": 0.1
 /// }
 /// ```
 ///
@@ -96,6 +98,16 @@ struct TrailAsset {
     /// a new point is emitted. Must be > 0. Prevents point over-population
     /// when the emitter is nearly stationary.
     float minPointDistance = 0.1f;
+
+    /// Number of parallel ribbon strands generated from the same trail points.
+    /// 1 = single flat ribbon (default). Values > 1 produce N parallel quad-strip
+    /// ribbons offset perpendicular to the camera-facing plane.
+    /// @ref Latta 2004 "Building an Advanced Particle System"
+    uint32_t ribbonStrands = 1;
+
+    /// World-space spacing between adjacent ribbon strands (metres).
+    /// Only meaningful when `ribbonStrands > 1`.
+    float strandSpacing = 0.1f;
 
     /// Rendering sort order relative to other transparent VFX.
     /// Higher values render on top of lower values.

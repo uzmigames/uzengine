@@ -117,6 +117,30 @@ struct TrailComponent {
     /// Typically set to a transparent value so the trail fades out.
     Vec4 colorEnd{1.0f, 1.0f, 1.0f, 0.0f};
 
+    /// Number of parallel ribbon strands generated from the same trail points.
+    ///
+    /// When set to 1 (default), produces a single flat ribbon. Values > 1
+    /// produce N parallel quad-strip ribbons offset perpendicular to the
+    /// camera-facing plane, approximating a tube or wing shape. Each strand
+    /// receives a unique `strandIndex` in the vertex data for per-strand
+    /// color/width modulation in the shader.
+    ///
+    /// @ref Latta 2004 "Building an Advanced Particle System" — multi-strand
+    ///      ribbon geometry for volumetric trail effects.
+    ///
+    /// # Note
+    /// Vertex count scales linearly with strand count: `pointCount * 2 * ribbonStrands`.
+    /// Keep strand count low (2–4) for real-time use.
+    uint32_t ribbonStrands = 1;
+
+    /// World-space spacing between adjacent ribbon strands (metres).
+    ///
+    /// Controls how far apart parallel strands are offset along the ribbon's
+    /// up vector (perpendicular to both the tangent and camera-facing right).
+    /// Only meaningful when `ribbonStrands > 1`. A value of 0 collapses all
+    /// strands into a single overlapping ribbon.
+    float strandSpacing = 0.1f;
+
     /// Render sort priority. Higher values draw on top of lower values within
     /// the VFX render pass. Trails with equal sort order have undefined
     /// relative ordering.

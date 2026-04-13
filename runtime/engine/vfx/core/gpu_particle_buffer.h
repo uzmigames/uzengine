@@ -42,6 +42,32 @@ class IRHICommandList;
 class IRHIDevice;
 
 // ---------------------------------------------------------------------------
+// ParticleDeathEvent -- GPU death event written by the update CS
+// ---------------------------------------------------------------------------
+
+/// Represents a particle death event for decal spawning.
+///
+/// Written by the particle update compute shader when a particle's age exceeds
+/// its lifespan and death decals are enabled. The CPU reads these events back
+/// (with 1-frame latency) and injects them into the DecalManager.
+///
+/// Layout matches the HLSL `ParticleDeathEvent` struct exactly (48 bytes,
+/// 16-byte aligned). Must be kept in sync with `particle_update_cs.hlsl`.
+///
+/// @ref Lagarde & de Rousiers 2014 "Moving Frostbite to PBR" -- deferred decal
+///      projection for particle death marks
+struct ParticleDeathEvent {
+    float position[3] = {};  ///< World-space death position (12 bytes).
+    float size         = 0.0f; ///< Particle size at death (4 bytes).
+    float color[4]     = {};  ///< Particle RGBA color at death (16 bytes).
+    float normal[3]    = {};  ///< Estimated surface normal at death (12 bytes).
+    float _pad         = 0.0f; ///< Padding to 48 bytes (16-byte alignment).
+};
+
+static_assert(sizeof(ParticleDeathEvent) == 48,
+              "ParticleDeathEvent must be exactly 48 bytes for GPU struct parity");
+
+// ---------------------------------------------------------------------------
 // ParticleAttributeSet -- one half of the ping-pong pair
 // ---------------------------------------------------------------------------
 
@@ -75,6 +101,13 @@ struct ParticleAttributeSet {
 
     /// Per-particle 2D rotation angle in radians (float, 4 bytes stride).
     RHIBufferHandle rotations = RHIBufferHandle::Invalid();
+
+    /// Per-particle sub-image (flipbook) index for SubUV animation (float, 4 bytes stride).
+    /// Computed by the update CS as `(age / lifespan) * (totalFrames - 1)`.
+    /// The integer part selects the current frame; the fractional part is the blend
+    /// factor to the next frame. Initialized to 0.0 by the spawn CS.
+    /// @ref UE5 Niagara SubImageIndex module
+    RHIBufferHandle subImageIndices = RHIBufferHandle::Invalid();
 
     /// Returns true if all attribute buffers have been allocated.
     [[nodiscard]] bool IsValid() const noexcept;
@@ -170,6 +203,24 @@ struct GPUParticleBuffer {
     /// Whether the mesh instance buffers have been allocated.
     /// True only for emitters using MeshRenderModule.
     bool hasMeshBuffers = false;
+
+    // -- Death event buffers (for decal spawning on particle death) -----------
+
+    /// Ring buffer for particle death events written by the update CS.
+    /// CPU reads and clears this each frame (1-frame latency allowed).
+    /// Stride = sizeof(ParticleDeathEvent) = 48 bytes, count = capacity.
+    /// Only allocated when `hasDeathEventBuffers` is true.
+    RHIBufferHandle deathEventBuffer = RHIBufferHandle::Invalid();
+
+    /// Atomic counter for the number of death events written this frame.
+    /// Single uint32 element, incremented by InterlockedAdd in the update CS.
+    /// Reset to 0 via ClearUAV each frame before the update dispatch.
+    /// Only allocated when `hasDeathEventBuffers` is true.
+    RHIBufferHandle deathEventCount = RHIBufferHandle::Invalid();
+
+    /// Whether the death event buffers have been allocated.
+    /// True only for emitters with `emitDeathDecals` enabled.
+    bool hasDeathEventBuffers = false;
 
     // -- Sort buffers (for depth-ordered transparent rendering) ---------------
 
@@ -297,6 +348,31 @@ struct GPUParticleBuffer {
     /// # Parameters
     /// - `device`: RHI device for deallocation. May be null (no-op).
     void DestroyMeshBuffers(IRHIDevice* device);
+
+    /// Allocates the optional death event buffers for decal spawning.
+    ///
+    /// Creates two additional GPU buffers: death event structured buffer
+    /// (ParticleDeathEvent per particle) and death event count (single uint32
+    /// atomic counter).
+    ///
+    /// Must be called AFTER a successful `Create()` -- the base buffer must
+    /// already be allocated so `capacity` is known.
+    ///
+    /// # Parameters
+    /// - `device`: RHI device for buffer creation. Must not be null.
+    ///
+    /// # Returns
+    /// `true` on success, `false` if any allocation fails.
+    ///
+    /// # Preconditions
+    /// - `IsValid()` must be true (base buffers allocated).
+    /// - `hasDeathEventBuffers` must be false (not already allocated).
+    [[nodiscard]] bool CreateDeathEventBuffers(IRHIDevice* device);
+
+    /// Releases the optional death event buffers and resets handles to invalid.
+    ///
+    /// No-op if `hasDeathEventBuffers` is false or `device` is null.
+    void DestroyDeathEventBuffers(IRHIDevice* device);
 
     /// Releases all GPU buffers and resets state.
     ///

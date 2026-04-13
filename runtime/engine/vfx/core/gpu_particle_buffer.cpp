@@ -24,7 +24,7 @@ bool ParticleAttributeSet::IsValid() const noexcept
     return positions.IsValid() && velocities.IsValid() &&
            ages.IsValid() && lifespans.IsValid() &&
            sizes.IsValid() && colors.IsValid() &&
-           rotations.IsValid();
+           rotations.IsValid() && subImageIndices.IsValid();
 }
 
 // ---------------------------------------------------------------------------
@@ -101,7 +101,8 @@ bool CreateAttributeSet(IRHIDevice* device, ParticleAttributeSet& set,
     set.lifespans  = CreateVFXBuffer(device, cap * 4,  4,  FormatDebugName("Lifespans", suffix));
     set.sizes      = CreateVFXBuffer(device, cap * 4,  4,  FormatDebugName("Sizes", suffix));
     set.colors     = CreateVFXBuffer(device, cap * 16, 16, FormatDebugName("Colors", suffix));
-    set.rotations  = CreateVFXBuffer(device, cap * 4,  4,  FormatDebugName("Rotations", suffix));
+    set.rotations       = CreateVFXBuffer(device, cap * 4,  4,  FormatDebugName("Rotations", suffix));
+    set.subImageIndices = CreateVFXBuffer(device, cap * 4,  4,  FormatDebugName("SubImageIndices", suffix));
 
     return set.IsValid();
 }
@@ -115,7 +116,8 @@ void DestroyAttributeSet(IRHIDevice* device, ParticleAttributeSet& set)
     if (set.lifespans.IsValid())  device->DestroyBuffer(set.lifespans);
     if (set.sizes.IsValid())      device->DestroyBuffer(set.sizes);
     if (set.colors.IsValid())     device->DestroyBuffer(set.colors);
-    if (set.rotations.IsValid())  device->DestroyBuffer(set.rotations);
+    if (set.rotations.IsValid())       device->DestroyBuffer(set.rotations);
+    if (set.subImageIndices.IsValid()) device->DestroyBuffer(set.subImageIndices);
     set = {};
 }
 
@@ -262,6 +264,62 @@ void GPUParticleBuffer::DestroyMeshBuffers(IRHIDevice* device)
 }
 
 // ---------------------------------------------------------------------------
+// GPUParticleBuffer::CreateDeathEventBuffers
+// ---------------------------------------------------------------------------
+
+bool GPUParticleBuffer::CreateDeathEventBuffers(IRHIDevice* device)
+{
+    UZ_CHECKF(device != nullptr, "GPUParticleBuffer::CreateDeathEventBuffers: device is null");
+    UZ_CHECKF(IsValid(), "GPUParticleBuffer::CreateDeathEventBuffers: base buffers not allocated");
+    UZ_CHECKF(!hasDeathEventBuffers, "GPUParticleBuffer::CreateDeathEventBuffers: already allocated");
+
+    const auto cap = static_cast<uint64_t>(capacity);
+
+    // Death event structured buffer: one ParticleDeathEvent (48 bytes) per particle.
+    deathEventBuffer = CreateVFXBuffer(device,
+                                        cap * sizeof(ParticleDeathEvent),
+                                        sizeof(ParticleDeathEvent),
+                                        "VFX_DeathEventBuffer");
+
+    // Death event count: single uint32 atomic counter.
+    deathEventCount = CreateVFXBuffer(device,
+                                       sizeof(uint32_t),
+                                       sizeof(uint32_t),
+                                       "VFX_DeathEventCount");
+
+    if (!deathEventBuffer.IsValid() || !deathEventCount.IsValid()) {
+        UZ_LOG(VFX, Error,
+               "Failed to allocate death event buffers: capacity={}", capacity);
+        DestroyDeathEventBuffers(device);
+        return false;
+    }
+
+    hasDeathEventBuffers = true;
+
+    const uint64_t deathKB = (cap * sizeof(ParticleDeathEvent) + sizeof(uint32_t)) / 1024;
+    UZ_LOG(VFX, Info,
+           "GPU death event buffers created: capacity={}, memory~{}KB",
+           capacity, deathKB);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// GPUParticleBuffer::DestroyDeathEventBuffers
+// ---------------------------------------------------------------------------
+
+void GPUParticleBuffer::DestroyDeathEventBuffers(IRHIDevice* device)
+{
+    if (!device) return;
+
+    if (deathEventBuffer.IsValid()) device->DestroyBuffer(deathEventBuffer);
+    if (deathEventCount.IsValid())  device->DestroyBuffer(deathEventCount);
+
+    deathEventBuffer = {};
+    deathEventCount = {};
+    hasDeathEventBuffers = false;
+}
+
+// ---------------------------------------------------------------------------
 // GPUParticleBuffer::Destroy
 // ---------------------------------------------------------------------------
 
@@ -277,6 +335,9 @@ void GPUParticleBuffer::Destroy(IRHIDevice* device)
 
     // Destroy optional mesh instance buffers if present.
     DestroyMeshBuffers(device);
+
+    // Destroy optional death event buffers if present.
+    DestroyDeathEventBuffers(device);
 
     // Destroy sort buffers (sortKeys + sortIndices).
     sort.Destroy(device);

@@ -53,6 +53,7 @@ struct TextureLoadResult {
     uint32_t height = 0;                 ///< Texture height in texels.
     uint16_t mipLevels = 0;              ///< Number of mip levels in the texture (0 on failure).
     TextureLoadState loadState = TextureLoadState::Empty; ///< Current loading lifecycle state.
+    uint8_t  originalChannels = 0;       ///< Channel count of the source image before forced RGBA conversion (1-4). 0 = unknown.
     bool     isPMREM = false;            ///< True if KTX2 contains a Three.js CubeUV PMREM atlas.
     uint32_t pmremFaceSize = 0;          ///< Per-face resolution of the PMREM atlas (width / 3).
     uint32_t pmremLodCount = 0;          ///< Number of LOD levels packed in the PMREM atlas.

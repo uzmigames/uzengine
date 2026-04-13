@@ -23,6 +23,7 @@
 #include "engine/renderer/material/material_interface.h"
 
 #include <cstdint>
+#include <memory>
 #include <string>
 
 namespace uz {
@@ -109,6 +110,20 @@ public:
     [[nodiscard]] bool HasSprite() const noexcept {
         return spriteTextureSrvIndex != UINT32_MAX;
     }
+
+    // ── Serialization (.uzvfxmat JSON) ──────────────────────────────────
+
+    /// Loads a VFXMaterial from a .uzvfxmat JSON file on disk.
+    /// Returns nullptr on I/O or validation failure (errors logged).
+    [[nodiscard]] static std::unique_ptr<VFXMaterial> LoadFromFile(const std::string& path);
+
+    /// Loads a VFXMaterial from a JSON string (no file I/O).
+    /// Returns nullptr on parse or validation failure (errors logged).
+    [[nodiscard]] static std::unique_ptr<VFXMaterial> LoadFromString(const std::string& jsonStr);
+
+    /// Serializes this material to a .uzvfxmat JSON file on disk.
+    /// Returns false on I/O failure (errors logged).
+    bool SaveToFile(const std::string& path) const;
 
 private:
     bool gpuLoaded = false;

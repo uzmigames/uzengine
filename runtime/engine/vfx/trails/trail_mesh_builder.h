@@ -33,11 +33,16 @@ namespace uz {
 /// Per-vertex data for trail ribbon geometry.
 ///
 /// Matches the GPU input layout declared in the trail vertex shader.
-/// Total size is 36 bytes: position (12) + u (4) + v (4) + color (16).
+/// Total size is 40 bytes: position (12) + u (4) + v (4) + color (16) + strandIndex (4).
 ///
 /// # UV Convention
 /// - `u` runs across the ribbon width: 0.0 = left edge, 1.0 = right edge.
 /// - `v` runs along the ribbon length: 0.0 = head (newest), 1.0 = tail (oldest).
+///
+/// # Multi-Strand
+/// When `ribbonStrands > 1`, multiple parallel quad-strip ribbons are generated
+/// from the same trail points. Each strand carries a unique `strandIndex`
+/// (0-based) that the shader can use for per-strand color/width modulation.
 ///
 /// # Color
 /// RGBA linear color sampled from the trail gradient at parameter `t`, where
@@ -54,10 +59,14 @@ struct TrailVertex {
 
     /// Vertex color sampled from the trail gradient (RGBA linear). (16 bytes)
     Vec4 color;
+
+    /// Zero-based index of the ribbon strand this vertex belongs to. (4 bytes)
+    /// 0 for single-strand trails. Used by the shader for per-strand modulation.
+    uint32_t strandIndex;
 };
 
-static_assert(sizeof(TrailVertex) == 36,
-    "TrailVertex size mismatch -- GPU input layout expects 36 bytes.");
+static_assert(sizeof(TrailVertex) == 40,
+    "TrailVertex size mismatch -- GPU input layout expects 40 bytes.");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TrailMeshData -- generated ribbon geometry ready for GPU upload
@@ -70,9 +79,13 @@ static_assert(sizeof(TrailVertex) == 36,
 /// face). Upload both arrays to dynamic GPU buffers each frame.
 ///
 /// # Layout
-/// Vertices are ordered left-right per trail point: index `2*i` is the left
-/// vertex for point `i`, and `2*i+1` is the right vertex. Indices form a
-/// contiguous quad strip: `(2i, 2i+1, 2i+2), (2i+1, 2i+3, 2i+2)` per segment.
+/// For a single strand (ribbonStrands=1), vertices are ordered left-right per
+/// trail point: index `2*i` is the left vertex for point `i`, and `2*i+1` is
+/// the right vertex. Indices form a contiguous quad strip.
+///
+/// For multi-strand (ribbonStrands=N), each strand is a complete quad-strip
+/// appended sequentially. Strand `s` vertices start at offset `s * pointCount * 2`.
+/// Strands are offset perpendicular to the ribbon plane (along the "up" vector).
 ///
 /// # Lifetime
 /// `TrailMeshData` is value-typed. `TrailMeshBuilder::Build()` returns a new
@@ -193,11 +206,16 @@ public:
     ///                     Clamped to a minimum of 0.0001 internally to avoid
     ///                     divide-by-zero. Pass 0 or negative to disable
     ///                     age-based modulation (falls back to arc-length only).
+    /// * `ribbonStrands` - Number of parallel ribbon strands (default 1).
+    ///                     Each strand is a full quad-strip offset along the
+    ///                     ribbon's up vector. Must be >= 1.
+    /// * `strandSpacing` - World-space distance between adjacent strands (metres).
+    ///                     Only meaningful when ribbonStrands > 1.
     ///
     /// # Returns
-    /// A `TrailMeshData` with `pointCount * 2` vertices and
-    /// `(pointCount - 1) * 6` indices, or an empty `TrailMeshData` if
-    /// `pointCount < 2`.
+    /// A `TrailMeshData` with `pointCount * 2 * ribbonStrands` vertices and
+    /// `(pointCount - 1) * 6 * ribbonStrands` indices, or an empty
+    /// `TrailMeshData` if `pointCount < 2`.
     ///
     /// # Side Effects
     /// Logs `VFX::Warning` if `points` is null or `pointCount` is 0.
@@ -210,7 +228,9 @@ public:
         const Vec4& colorStart,
         const Vec4& colorEnd,
         float totalDistance,
-        float pointLifetime
+        float pointLifetime,
+        uint32_t ribbonStrands = 1,
+        float strandSpacing = 0.1f
     ) const;
 };
 

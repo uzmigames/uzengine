@@ -157,14 +157,19 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     }
 
     // ── Input ───────────────────────────────────────────────────────────
+    // Capture scroll delta BEFORE BeginFrame clears it — the VFX overlay
+    // reads scroll in HandleMouse which runs after BeginFrame.
+    const float preFrameScrollDelta = m_input->GetScrollDelta();
     m_input->BeginFrame();
 
     // ── VFX Editor Overlay: handle mouse AFTER BeginFrame ────────────────
     // The overlay tracks just-pressed internally from IsMouseDown,
     // so it doesn't depend on InputSystem's BeginFrame timing.
+    // Inject the pre-BeginFrame scroll delta so the panel can scroll.
     bool vfxOverlayWantsMouse = false;
     if (m_vfxEditorOverlayInitialized && m_vfxEditorOverlay &&
         m_vfxEditorOverlay->IsVisible()) {
+        m_vfxEditorOverlay->InjectScrollDelta(preFrameScrollDelta);
         vfxOverlayWantsMouse = m_vfxEditorOverlay->HandleMouse(m_input.get(), ctx.dt);
     }
 

@@ -203,6 +203,13 @@ private:
     float  m_dragSliderMin = 0.0f;
     float  m_dragSliderMax = 1.0f;
 
+    // ── Number input (text edit) state ──────────────────────────────────
+    float* m_editingPtr = nullptr;
+    float  m_editingMin = 0.0f;
+    float  m_editingMax = 1.0f;
+    std::string m_editBuffer;
+    const InputSystem* m_inputRef = nullptr;
+
     // ── Dropdown state ─────────���─────────────────────────────────────────
     uint32_t* m_dropdownPtr = nullptr;
     float     m_dropdownX = 0.0f;
@@ -256,6 +263,12 @@ private:
     [[nodiscard]] bool HitTest(float x, float y, float w, float h) const;
     bool Button(float x, float y, float w, float h, const char* label);
     bool Slider(float x, float y, float w, float* value, float minVal, float maxVal, const char* label);
+public:
+    /// Injects a scroll delta captured before InputSystem::BeginFrame() clears it.
+    /// Called by frame_setup.cpp so the panel scroll works correctly.
+    void InjectScrollDelta(float delta) { m_scrollDelta = delta; }
+private:
+    bool NumberInput(float x, float y, float w, float* value, float minVal, float maxVal, const char* label);
     void DropdownTrigger(float x, float y, float w, uint32_t* value,
                          const char* const* names, uint32_t count, const char* label);
 

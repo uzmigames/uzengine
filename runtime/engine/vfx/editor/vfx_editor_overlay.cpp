@@ -97,6 +97,7 @@ void VfxEditorOverlay::BeginFrame(uint32_t frameIndex) {
 
 bool VfxEditorOverlay::HandleMouse(const InputSystem* input, float /*dt*/) {
     if (!input) return false;
+    m_inputRef = input;
     m_mouseX = input->GetMouseX();
     m_mouseY = input->GetMouseY();
 
@@ -108,7 +109,8 @@ bool VfxEditorOverlay::HandleMouse(const InputSystem* input, float /*dt*/) {
     m_mouseJustReleased = !currentDown && m_mouseDown;
     m_mouseDown = currentDown;
 
-    m_scrollDelta = input->GetScrollDelta();
+    // m_scrollDelta is set by InjectScrollDelta() before HandleMouse,
+    // because BeginFrame() clears it before we get here.
 
     if (m_mouseJustPressed) {
         UZ_LOG(VFX, Info, "CLICK ({:.0f},{:.0f}) down={}", m_mouseX, m_mouseY, m_mouseDown);
@@ -124,7 +126,7 @@ bool VfxEditorOverlay::HandleMouse(const InputSystem* input, float /*dt*/) {
     }
 
     const float sw = static_cast<float>(m_screenW);
-    m_wantsInput = false;
+    m_wantsInput = (m_editingPtr != nullptr);
 
     // Menu bar
     if (HitTest(0.0f, 0.0f, sw, kMenuBarH)) m_wantsInput = true;
@@ -254,6 +256,99 @@ bool VfxEditorOverlay::Slider(float x, float y, float w, float* value,
         *value = minVal + t * range;
         return true;
     }
+    return false;
+}
+
+bool VfxEditorOverlay::NumberInput(float x, float y, float w, float* value,
+                                   float minVal, float maxVal, const char* label) {
+    const bool isEditing = (m_editingPtr == value);
+    const bool hovered = HitTest(x, y, w, kSliderH);
+
+    // Background — highlight when editing or hovered.
+    const Vec4 bgColor = isEditing ? Vec4{0.20f, 0.25f, 0.35f, 1.0f}
+                       : hovered   ? kColorBtnHover
+                                   : kColorSliderBg;
+    m_textRenderer.AddRect(x, y, w, kSliderH, bgColor);
+
+    // Label on the left.
+    m_textRenderer.AddText(m_font, label, x + 4.0f, y + 2.0f, kColorText);
+
+    // Value display or edit buffer on the right.
+    char displayBuf[32];
+    if (isEditing) {
+        if (m_editBuffer.empty()) {
+            // Show old value as dim placeholder + cursor
+            std::snprintf(displayBuf, sizeof(displayBuf), "%.2f_", *value);
+            m_textRenderer.AddText(m_font, displayBuf, x + w - 80.0f, y + 2.0f,
+                                   Vec4{0.5f, 0.5f, 0.4f, 1.0f});
+        } else {
+            std::snprintf(displayBuf, sizeof(displayBuf), "%s_", m_editBuffer.c_str());
+            m_textRenderer.AddText(m_font, displayBuf, x + w - 80.0f, y + 2.0f,
+                                   Vec4{1.0f, 1.0f, 0.6f, 1.0f});
+        }
+    } else {
+        std::snprintf(displayBuf, sizeof(displayBuf), "%.2f", *value);
+        m_textRenderer.AddText(m_font, displayBuf, x + w - 80.0f, y + 2.0f, Vec4{1,1,1,1});
+    }
+
+    // Click to start editing — buffer starts EMPTY so the first keystroke
+    // replaces the old value entirely (select-all behavior).
+    if (hovered && m_mouseJustPressed && !isEditing) {
+        m_editingPtr = value;
+        m_editingMin = minVal;
+        m_editingMax = maxVal;
+        m_editBuffer.clear();
+        m_wantsInput = true;
+        return false;
+    }
+
+    // Click elsewhere to commit (empty buffer = keep old value).
+    if (isEditing && m_mouseJustPressed && !hovered) {
+        if (!m_editBuffer.empty()) {
+            char* end = nullptr;
+            const double parsed = std::strtod(m_editBuffer.c_str(), &end);
+            if (end != m_editBuffer.c_str()) {
+                *value = std::clamp(static_cast<float>(parsed), minVal, maxVal);
+            }
+        }
+        m_editingPtr = nullptr;
+        m_editBuffer.clear();
+        return !m_editBuffer.empty();
+    }
+
+    // Process typed characters while editing.
+    if (isEditing && m_inputRef) {
+        const auto& chars = m_inputRef->GetTypedChars();
+        if (!chars.empty()) {
+            UZ_LOG(VFX, Info, "NumberInput: received {} chars, buf='{}'", chars.size(), m_editBuffer);
+        }
+        bool changed = false;
+        for (char ch : chars) {
+            if (ch == '\r' || ch == '\n') {
+                // Enter — commit.
+                char* end = nullptr;
+                const double parsed = std::strtod(m_editBuffer.c_str(), &end);
+                if (end != m_editBuffer.c_str()) {
+                    *value = std::clamp(static_cast<float>(parsed), minVal, maxVal);
+                    changed = true;
+                }
+                m_editingPtr = nullptr;
+                m_editBuffer.clear();
+                return changed;
+            } else if (ch == 0x1B) {
+                // Escape — cancel.
+                m_editingPtr = nullptr;
+                m_editBuffer.clear();
+                return false;
+            } else if (ch == '\b') {
+                if (!m_editBuffer.empty()) m_editBuffer.pop_back();
+            } else if ((ch >= '0' && ch <= '9') || ch == '.' || ch == '-') {
+                m_editBuffer += ch;
+            }
+        }
+        m_wantsInput = true;
+    }
+
     return false;
 }
 
@@ -812,12 +907,12 @@ void VfxEditorOverlay::BuildStageTree(ParticleEmitter* /*emitter*/) {
 
                     switch (param.type) {
                         case VfxModuleParam::Float:
-                            if (param.fPtr) Slider(px, y, pw, param.fPtr, param.min, param.max, param.label);
+                            if (param.fPtr) NumberInput(px, y, pw, param.fPtr, param.min, param.max, param.label);
                             break;
                         case VfxModuleParam::Uint:
                             if (param.uPtr) {
                                 float fVal = static_cast<float>(*param.uPtr);
-                                if (Slider(px, y, pw, &fVal, param.min, param.max, param.label)) {
+                                if (NumberInput(px, y, pw, &fVal, param.min, param.max, param.label)) {
                                     *param.uPtr = static_cast<uint32_t>(std::clamp(fVal, param.min, param.max));
                                 }
                             }

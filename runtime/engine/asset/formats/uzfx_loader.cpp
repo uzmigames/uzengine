@@ -240,9 +240,12 @@ bool UzfxLoader::InstantiateEmitter(
             emitter.moduleStack.AddUpdateModule(std::move(mod));
         } else if (entry.type == "collision") {
             CollisionModuleConfig cfg;
-            cfg.bounceFactor        = JFloat(j, "bounce_factor", cfg.bounceFactor);
+            // "restitution" is canonical; "bounce_factor" accepted for backward compat.
+            cfg.restitution          = JFloat(j, "restitution",
+                                              JFloat(j, "bounce_factor", cfg.restitution));
             cfg.depthBufferCollision = JBool(j, "depth_buffer_collision", cfg.depthBufferCollision);
             cfg.collisionOffset     = JFloat(j, "collision_offset", cfg.collisionOffset);
+            cfg.emitCollisionEvent  = JBool(j, "emit_collision_event", cfg.emitCollisionEvent);
             emitter.moduleStack.AddUpdateModule(std::make_unique<CollisionModule>(cfg));
         } else if (entry.type == "vector_field") {
             auto mod = std::make_unique<VectorFieldModule>();

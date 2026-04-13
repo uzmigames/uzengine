@@ -256,7 +256,7 @@ TEST(VFXGraph, LoadFromString_MultipleParameters_AllParsedInOrder) {
       "modules": [ { "type": "spawn" } ],
       "parameters": [
         { "name": "alpha",   "type": "float", "default": 1.0, "min": 0.0, "max": 1.0 },
-        { "name": "gravity", "type": "vec3",  "default_vec3": [0.0, -9.81, 0.0] },
+        { "name": "gravity", "type": "vec3",  "default_vec3": [0.0, 0.0, -981.0] },
         { "name": "color",   "type": "vec4",  "default_vec4": [1.0, 0.5, 0.0, 1.0] }
       ]
     })";

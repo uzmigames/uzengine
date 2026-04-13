@@ -308,6 +308,7 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         spawnCBData.sizesUavIndex           = m_device->GetBufferUAVIndex(writeSet.sizes);
         spawnCBData.colorsUavIndex          = m_device->GetBufferUAVIndex(writeSet.colors);
         spawnCBData.rotationsUavIndex       = m_device->GetBufferUAVIndex(writeSet.rotations);
+        spawnCBData.subImageIndicesUavIndex = m_device->GetBufferUAVIndex(writeSet.subImageIndices);
         spawnCBData.freeListHeadUavIndex    = m_device->GetBufferUAVIndex(gpuBuf.freeListHead);
         spawnCBData.aliveCountUavIndex      = m_device->GetBufferUAVIndex(gpuBuf.aliveCount);
 
@@ -406,7 +407,8 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         updateCBData.lifespansSrvIndex  = m_device->GetBufferSRVIndex(writeSet.lifespans);
         updateCBData.sizesSrvIndex      = m_device->GetBufferSRVIndex(writeSet.sizes);
         updateCBData.colorsSrvIndex     = m_device->GetBufferSRVIndex(writeSet.colors);
-        updateCBData.rotationsSrvIndex  = m_device->GetBufferSRVIndex(writeSet.rotations);
+        updateCBData.rotationsSrvIndex       = m_device->GetBufferSRVIndex(writeSet.rotations);
+        updateCBData.subImageIndicesSrvIndex = m_device->GetBufferSRVIndex(writeSet.subImageIndices);
 
         updateCBData.positionsUavIndex  = m_device->GetBufferUAVIndex(writeSet.positions);
         updateCBData.velocitiesUavIndex = m_device->GetBufferUAVIndex(writeSet.velocities);
@@ -414,7 +416,8 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         updateCBData.lifespansUavIndex  = m_device->GetBufferUAVIndex(writeSet.lifespans);
         updateCBData.sizesUavIndex      = m_device->GetBufferUAVIndex(writeSet.sizes);
         updateCBData.colorsUavIndex     = m_device->GetBufferUAVIndex(writeSet.colors);
-        updateCBData.rotationsUavIndex  = m_device->GetBufferUAVIndex(writeSet.rotations);
+        updateCBData.rotationsUavIndex       = m_device->GetBufferUAVIndex(writeSet.rotations);
+        updateCBData.subImageIndicesUavIndex = m_device->GetBufferUAVIndex(writeSet.subImageIndices);
 
         // Shared buffers (not double-buffered).
         updateCBData.freeListUavIndex       = m_device->GetBufferUAVIndex(gpuBuf.freeList);

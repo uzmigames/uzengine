@@ -7,6 +7,7 @@
 #include "mesh_render_module.h"
 
 #include "engine/logging/log.h"
+#include "engine/rhi/rhi_device.h"
 
 #include <json.hpp>
 
@@ -305,6 +306,110 @@ const MeshRenderModuleConfig& MeshRenderModule::GetConfig() const noexcept
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GPU buffer management
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool MeshRenderModule::CreateGPUBuffers(IRHIDevice* device)
+{
+    if (!device) {
+        UZ_LOG(VFX, Error, "MeshRenderModule::CreateGPUBuffers: device is null");
+        return false;
+    }
+
+    if (hasGPUBuffers_) {
+        UZ_LOG(VFX, Warning, "MeshRenderModule::CreateGPUBuffers: already allocated");
+        return true;
+    }
+
+    const uint32_t count = config_.maxInstances;
+    if (count == 0) {
+        UZ_LOG(VFX, Error, "MeshRenderModule::CreateGPUBuffers: maxInstances is 0");
+        return false;
+    }
+
+    // Instance transform buffer: one float4x4 (64 bytes) per instance.
+    // UAV for the compute shader, SRV for the vertex shader.
+    {
+        RHIBufferDesc desc{};
+        desc.sizeBytes = static_cast<uint64_t>(count) * 64;
+        desc.stride = 64;
+        desc.usage = RHIBufferUsage::StructuredBuffer | RHIBufferUsage::UnorderedAccess;
+        desc.memory = RHIMemoryType::Default;
+        desc.debugName = "VFX_MeshInstanceTransforms";
+        instanceTransformBuffer_ = device->CreateBuffer(desc);
+    }
+
+    // Instance color buffer: one float4 (16 bytes) per instance.
+    // UAV for the compute shader, SRV for the pixel shader.
+    {
+        RHIBufferDesc desc{};
+        desc.sizeBytes = static_cast<uint64_t>(count) * 16;
+        desc.stride = 16;
+        desc.usage = RHIBufferUsage::StructuredBuffer | RHIBufferUsage::UnorderedAccess;
+        desc.memory = RHIMemoryType::Default;
+        desc.debugName = "VFX_MeshInstanceColors";
+        instanceColorBuffer_ = device->CreateBuffer(desc);
+    }
+
+    if (!instanceTransformBuffer_.IsValid() || !instanceColorBuffer_.IsValid()) {
+        UZ_LOG(VFX, Error,
+               "MeshRenderModule::CreateGPUBuffers: allocation failed (maxInstances={})",
+               count);
+        DestroyGPUBuffers(device);
+        return false;
+    }
+
+    hasGPUBuffers_ = true;
+
+    const uint64_t totalKB = (static_cast<uint64_t>(count) * (64 + 16)) / 1024;
+    UZ_LOG(VFX, Info,
+           "MeshRenderModule: GPU instance buffers created (maxInstances={}, memory~{}KB)",
+           count, totalKB);
+    return true;
+}
+
+void MeshRenderModule::DestroyGPUBuffers(IRHIDevice* device)
+{
+    if (!device) return;
+
+    if (instanceTransformBuffer_.IsValid()) {
+        device->DestroyBuffer(instanceTransformBuffer_);
+        instanceTransformBuffer_ = RHIBufferHandle::Invalid();
+    }
+
+    if (instanceColorBuffer_.IsValid()) {
+        device->DestroyBuffer(instanceColorBuffer_);
+        instanceColorBuffer_ = RHIBufferHandle::Invalid();
+    }
+
+    hasGPUBuffers_ = false;
+}
+
+void MeshRenderModule::Load(std::string_view meshPath, IRHIDevice* /*device*/)
+{
+    config_.meshPath = std::string(meshPath);
+    meshLoaded_ = true;
+
+    UZ_LOG(VFX, Info, "MeshRenderModule::Load: path='{}' (deferred — actual mesh loading in future task)",
+           config_.meshPath);
+}
+
+bool MeshRenderModule::HasGPUBuffers() const noexcept
+{
+    return hasGPUBuffers_;
+}
+
+RHIBufferHandle MeshRenderModule::GetInstanceTransformBuffer() const noexcept
+{
+    return instanceTransformBuffer_;
+}
+
+RHIBufferHandle MeshRenderModule::GetInstanceColorBuffer() const noexcept
+{
+    return instanceColorBuffer_;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // JSON deserialization
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -342,6 +447,17 @@ MeshRenderModuleConfig MeshRenderModule::ParseConfig(const nlohmann::json& j)
     if (j.contains("rotation_mode") && j.at("rotation_mode").is_string()) {
         cfg.rotationMode = MeshRotationModeFromString(
             j.at("rotation_mode").get<std::string>());
+    }
+
+    if (j.contains("max_instances") && j.at("max_instances").is_number_integer()) {
+        const auto val = j.at("max_instances").get<int64_t>();
+        if (val > 0 && val <= 1048576) {
+            cfg.maxInstances = static_cast<uint32_t>(val);
+        } else {
+            UZ_LOG(VFX, Warning,
+                   "MeshRenderModule: max_instances {} out of range [1, 1048576] -- using default",
+                   val);
+        }
     }
 
     return cfg;

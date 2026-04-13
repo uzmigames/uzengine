@@ -25,6 +25,18 @@
 #include "engine/vfx/modules/pin_module.h"
 #include "engine/vfx/modules/distance_constraint_module.h"
 
+// Dynamic material parameter modules (Phase 4.14.0)
+#include "engine/vfx/modules/dynamic_params_module.h"
+
+// Data interface modules (Phase 4.16.0+)
+#include "engine/vfx/modules/skeletal_spawn_module.h"
+#include "engine/vfx/modules/audio_spectrum_module.h"
+
+// Spatial interaction and feedback modules (Phase 4.18.0+)
+#include "engine/vfx/modules/neighbor_interaction_module.h"
+#include "engine/vfx/modules/render_target_di_module.h"
+#include "engine/vfx/modules/async_gpu_trace_module.h"
+
 #include "engine/logging/log.h"
 
 UZ_DECLARE_LOG_CATEGORY(VFX);
@@ -53,6 +65,18 @@ void RegisterBuiltinModules(ModuleRegistry& registry)
     registry.Register<OrbitModule>("orbit");
     registry.Register<PinModule>("pin");
     registry.Register<DistanceConstraintModule>("distance_constraint");
+
+    // Dynamic material parameter modules (Phase 4.14.0)
+    registry.Register<DynamicParamsModule>("dynamic_params");
+
+    // Data interface modules (Phase 4.16.0+)
+    registry.Register<SkeletalSpawnModule>("skeletal_spawn");
+    registry.Register<AudioSpectrumModule>("audio_spectrum");
+
+    // Spatial interaction and feedback modules (Phase 4.18.0+)
+    registry.Register<NeighborInteractionModule>("neighbor_interaction");
+    registry.Register<RenderTargetDIModule>("render_target_di");
+    registry.Register<AsyncGPUTraceModule>("async_gpu_trace");
 
     UZ_LOG(VFX, Info, "Registered {} built-in VFX modules",
            registry.GetRegisteredNames().size());

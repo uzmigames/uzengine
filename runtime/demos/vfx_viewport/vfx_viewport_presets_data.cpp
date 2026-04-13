@@ -12,16 +12,21 @@ namespace uz {
 // ─────────────────────────────────────────────────────────────────────────────
 
 static const VFXPreset s_presets[] = {
+    // Simple Burst — fire sprite preset (Task 3.80.0 §6.1).
+    // Additive blend: RGB-only fire PNGs work because black pixels add zero
+    // light (6.2). Green-channel mode (channelMask=2) drives both luminance
+    // and opacity — bright green = bright opaque fire, dark green = dim
+    // transparent (6.3).
     { "Simple Burst", {
         /*position*/ {0.0f, 0.0f, 0.0f}, /*spawnRadius*/ 0.2f,
         /*velocity*/ {0.0f, 0.0f, 6.0f}, /*velVariation*/ 3.0f,
-        /*spread*/ 1.0f, /*minLife*/ 1.0f, /*maxLife*/ 2.5f, /*size*/ 1.0f,
+        /*spread*/ 3.14159f, /*minLife*/ 1.5f, /*maxLife*/ 3.0f, /*size*/ 1.0f,
         /*color*/ {1.0f, 0.8f, 0.4f, 1.0f},
         /*gravity*/ {0.0f, 0.0f, -3.0f}, /*damping*/ 0.15f,
         /*softFade*/ 0.5f, /*emissive*/ 1.0f,
         /*sizeOverLife*/ 0.5f, 1.2f, 0.0f, 0.3f,
-        /*colorLifeStart*/ 1.0f, 0.9f, 0.5f, 1.0f,
-        /*colorLifeEnd*/ 1.0f, 0.3f, 0.05f, 0.0f,
+        /*colorLifeStart*/ 1.0f, 0.95f, 0.8f, 1.0f,  // warm white
+        /*colorLifeEnd*/ 1.0f, 0.4f, 0.05f, 0.0f,    // orange -> transparent
         /*facingMode*/ 0, /*customFacingX*/ 0.0f, /*customFacingY*/ 0.0f, /*customFacingZ*/ 1.0f, /*stretchFactor*/ 0.0f,
         /*spawnShape*/ 0, /*spawnOnSurface*/ 0,
         /*shapeParam1*/ 0.0f, /*shapeParam2*/ 0.0f, /*shapeParam3*/ 0.0f,

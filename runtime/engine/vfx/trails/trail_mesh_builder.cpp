@@ -141,7 +141,9 @@ TrailMeshData TrailMeshBuilder::Build(
     const Vec4& colorStart,
     const Vec4& colorEnd,
     float totalDistance,
-    float pointLifetime
+    float pointLifetime,
+    uint32_t ribbonStrands,
+    float strandSpacing
 ) const {
     if (points == nullptr) {
         UZ_LOG(VFX, Warning, "TrailMeshBuilder::Build: points array is null");
@@ -158,6 +160,9 @@ TrailMeshData TrailMeshBuilder::Build(
         return {};
     }
 
+    // Clamp strand count to at least 1.
+    const uint32_t strandCount = std::max(ribbonStrands, 1u);
+
     const uint32_t lastIndex = pointCount - 1u;
     const float safeDistance = std::max(totalDistance, kMinTotalDistance);
     // Safe lifetime denominator for age normalization. When pointLifetime is
@@ -166,82 +171,150 @@ TrailMeshData TrailMeshBuilder::Build(
     const bool  useAgeTaper  = (pointLifetime > 0.0f);
 
     TrailMeshData mesh;
-    // Each point produces one left vertex and one right vertex.
-    mesh.vertices.reserve(static_cast<size_t>(pointCount) * 2u);
-    // Each segment (pair of adjacent points) produces 2 triangles = 6 indices.
-    mesh.indices.reserve(static_cast<size_t>(lastIndex) * 6u);
+    // Each point produces 2 vertices per strand (left + right).
+    const size_t totalVertices = static_cast<size_t>(pointCount) * 2u * strandCount;
+    // Each segment produces 6 indices per strand.
+    const size_t totalIndices = static_cast<size_t>(lastIndex) * 6u * strandCount;
+    mesh.vertices.reserve(totalVertices);
+    mesh.indices.reserve(totalIndices);
 
-    // ── Vertex generation ──────────────────────────────────────────────────
-    // Walk head-to-tail (index 0 = newest = t=0), emitting left/right pairs.
+    // ── Pre-compute per-point data shared across all strands ───────────────
+    // Tangent, right, and up vectors are the same for all strands at a given
+    // point — only the vertical offset differs. Computing them once avoids
+    // redundant normalize() calls when strandCount > 1.
+
+    // Stack-friendly scratch arrays for small trail counts; heap for large.
+    constexpr uint32_t kStackThreshold = 256;
+    Vec3 tangentStack[kStackThreshold];
+    Vec3 rightStack[kStackThreshold];
+    Vec3 upStack[kStackThreshold];
+    float tStack[kStackThreshold];
+    float ageFactorStack[kStackThreshold];
+    float halfWidthStack[kStackThreshold];
+    Vec4 colorStack[kStackThreshold];
+
+    std::vector<Vec3> tangentHeap, rightHeap, upHeap;
+    std::vector<float> tHeap, ageFactorHeap, halfWidthHeap;
+    std::vector<Vec4> colorHeap;
+
+    Vec3*  tangents;
+    Vec3*  rights;
+    Vec3*  ups;
+    float* ts;
+    float* ageFactors;
+    float* halfWidths;
+    Vec4*  colors;
+
+    if (pointCount <= kStackThreshold) {
+        tangents   = tangentStack;
+        rights     = rightStack;
+        ups        = upStack;
+        ts         = tStack;
+        ageFactors = ageFactorStack;
+        halfWidths = halfWidthStack;
+        colors     = colorStack;
+    } else {
+        tangentHeap.resize(pointCount);
+        rightHeap.resize(pointCount);
+        upHeap.resize(pointCount);
+        tHeap.resize(pointCount);
+        ageFactorHeap.resize(pointCount);
+        halfWidthHeap.resize(pointCount);
+        colorHeap.resize(pointCount);
+        tangents   = tangentHeap.data();
+        rights     = rightHeap.data();
+        ups        = upHeap.data();
+        ts         = tHeap.data();
+        ageFactors = ageFactorHeap.data();
+        halfWidths = halfWidthHeap.data();
+        colors     = colorHeap.data();
+    }
+
     for (uint32_t i = 0; i < pointCount; ++i) {
         const Vec3& pointPos = points[i].position;
 
-        // Normalized arc-length parameter: 0 at head, 1 at tail.
-        const float t = points[i].distanceFromHead / safeDistance;
+        ts[i] = points[i].distanceFromHead / safeDistance;
 
-        const Vec3 tangent  = ComputeTangent(points, i, lastIndex);
+        tangents[i] = ComputeTangent(points, i, lastIndex);
         const Vec3 toCamera = (cameraPosition - pointPos).normalize();
-        const Vec3 right    = ComputeRight(tangent, toCamera);
+        rights[i]   = ComputeRight(tangents[i], toCamera);
 
-        // ── Age-based taper ────────────────────────────────────────────────
-        // normalizedAge: 0 at emission (age=0), 1 at expiry (age=pointLifetime).
-        // ageFactor: 1 at emission, 0 at expiry — used to taper width.
-        // When age-based modulation is disabled, ageFactor stays 1.0 and the
-        // width/color fallback to pure arc-length interpolation.
+        // Up vector: perpendicular to both tangent and right — defines the
+        // offset axis for multi-strand ribbons.
+        ups[i] = rights[i].Cross(tangents[i]);
+        if (ups[i].lengthSq() < kDegenerateLengthSq) {
+            ups[i] = Vec3::Up();
+        } else {
+            ups[i] = ups[i].normalize();
+        }
+
         const float normalizedAge = useAgeTaper
             ? std::clamp(points[i].age / safeLifetime, 0.0f, 1.0f)
             : 0.0f;
-        const float ageFactor = 1.0f - normalizedAge;
+        ageFactors[i] = 1.0f - normalizedAge;
 
-        // Width: arc-length interpolation between widthStart and widthEnd,
-        // then scaled by ageFactor so the ribbon tapers to zero as it ages.
-        const float baseWidth = std::max(0.0f, widthStart + (widthEnd - widthStart) * t);
-        const float halfWidth = baseWidth * ageFactor * 0.5f;
+        const float baseWidth = std::max(0.0f, widthStart + (widthEnd - widthStart) * ts[i]);
+        halfWidths[i] = baseWidth * ageFactors[i] * 0.5f;
 
-        // Color: blend colorStart -> colorEnd using the MAXIMUM of arc-length t
-        // and normalizedAge. This ensures both spatial position and point age
-        // contribute to the color shift (older points are always darker/redder
-        // even if they are spatially close to the head).
-        const float colorParam = std::max(t, normalizedAge);
-        const Vec4  color      = LerpColor(colorStart, colorEnd, colorParam);
-
-        // Left vertex: u=0, ribbon left edge.
-        TrailVertex& leftVert  = mesh.vertices.emplace_back();
-        leftVert.position = pointPos - right * halfWidth;
-        leftVert.u        = 0.0f;
-        leftVert.v        = t;
-        leftVert.color    = color;
-
-        // Right vertex: u=1, ribbon right edge.
-        TrailVertex& rightVert = mesh.vertices.emplace_back();
-        rightVert.position = pointPos + right * halfWidth;
-        rightVert.u        = 1.0f;
-        rightVert.v        = t;
-        rightVert.color    = color;
+        const float colorParam = std::max(ts[i], normalizedAge);
+        colors[i] = LerpColor(colorStart, colorEnd, colorParam);
     }
 
-    // ── Index generation ───────────────────────────────────────────────────
-    // For segment i (connecting points i and i+1):
-    //   base   = i * 2       → left  vertex of point i
-    //   base+1 = i * 2 + 1   → right vertex of point i
-    //   base+2 = (i+1) * 2   → left  vertex of point i+1
-    //   base+3 = (i+1) * 2 + 1 → right vertex of point i+1
-    //
-    // Counter-clockwise winding (left-handed front face):
-    //   Triangle 1: base, base+1, base+2  (lower-left, lower-right, upper-left)
-    //   Triangle 2: base+1, base+3, base+2 (lower-right, upper-right, upper-left)
-    for (uint32_t i = 0; i < lastIndex; ++i) {
-        const uint32_t base = i * 2u;
+    // ── Generate vertices and indices for each strand ──────────────────────
+    // For N strands, offsets are centered: strand s is offset by
+    //   upOffset = (s - (N-1)/2) * strandSpacing
+    // so a single strand (N=1) has zero offset, 2 strands are at ±spacing/2, etc.
+    const float halfSpan = (strandCount - 1u) * strandSpacing * 0.5f;
 
-        // Triangle 1 (bottom-left half of quad)
-        mesh.indices.push_back(base);
-        mesh.indices.push_back(base + 1u);
-        mesh.indices.push_back(base + 2u);
+    for (uint32_t s = 0; s < strandCount; ++s) {
+        // Perpendicular offset for this strand (along up vector).
+        const float strandOffset = (strandCount > 1)
+            ? (static_cast<float>(s) * strandSpacing - halfSpan)
+            : 0.0f;
 
-        // Triangle 2 (top-right half of quad)
-        mesh.indices.push_back(base + 1u);
-        mesh.indices.push_back(base + 3u);
-        mesh.indices.push_back(base + 2u);
+        // Base vertex index for this strand's quad-strip.
+        const uint32_t strandVertexBase = static_cast<uint32_t>(mesh.vertices.size());
+
+        // ── Vertex generation for strand s ────────────────────────────────
+        for (uint32_t i = 0; i < pointCount; ++i) {
+            const Vec3& pointPos = points[i].position;
+            const Vec3  offsetPos = pointPos + ups[i] * strandOffset;
+
+            // Left vertex: u=0, ribbon left edge.
+            TrailVertex& leftVert  = mesh.vertices.emplace_back();
+            leftVert.position    = offsetPos - rights[i] * halfWidths[i];
+            leftVert.u           = 0.0f;
+            leftVert.v           = ts[i];
+            leftVert.color       = colors[i];
+            leftVert.strandIndex = s;
+
+            // Right vertex: u=1, ribbon right edge.
+            TrailVertex& rightVert = mesh.vertices.emplace_back();
+            rightVert.position    = offsetPos + rights[i] * halfWidths[i];
+            rightVert.u           = 1.0f;
+            rightVert.v           = ts[i];
+            rightVert.color       = colors[i];
+            rightVert.strandIndex = s;
+        }
+
+        // ── Index generation for strand s ─────────────────────────────────
+        // Each segment within this strand connects point i to point i+1.
+        // Counter-clockwise winding (left-handed front face):
+        //   Triangle 1: base, base+1, base+2
+        //   Triangle 2: base+1, base+3, base+2
+        for (uint32_t i = 0; i < lastIndex; ++i) {
+            const uint32_t base = strandVertexBase + i * 2u;
+
+            // Triangle 1 (bottom-left half of quad)
+            mesh.indices.push_back(base);
+            mesh.indices.push_back(base + 1u);
+            mesh.indices.push_back(base + 2u);
+
+            // Triangle 2 (top-right half of quad)
+            mesh.indices.push_back(base + 1u);
+            mesh.indices.push_back(base + 3u);
+            mesh.indices.push_back(base + 2u);
+        }
     }
 
     return mesh;

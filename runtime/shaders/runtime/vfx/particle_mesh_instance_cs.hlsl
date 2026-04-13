@@ -51,9 +51,11 @@
 /// - t1: StructuredBuffer<float4>           velocities (xyz=vel, w=unused)
 /// - t2: StructuredBuffer<float>            ages
 /// - t3: StructuredBuffer<float>            lifespans
+/// - t4: StructuredBuffer<float4>           colors     (rgba per particle)
 /// - u0: RWStructuredBuffer<float4x4>       instanceTransforms
 /// - u1: RWStructuredBuffer<uint>           instanceCount (1 element)
 /// - u2: RWByteAddressBuffer                indirectArgs (20 bytes)
+/// - u3: RWStructuredBuffer<float4>         instanceColors (rgba per instance)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -103,11 +105,17 @@ cbuffer VFXMeshInstanceConstants : register(b0) {
     uint     agesSrvIndex;           ///< StructuredBuffer<float>  ages.       40
     uint     lifespansSrvIndex;      ///< StructuredBuffer<float>  lifespans.  44
 
+    uint     colorsSrvIndex;         ///< StructuredBuffer<float4> colors.     48
+    uint     _pad_srv;               ///<                                      52
+
     // ── Bindless descriptor indices: output UAVs ──────────────────────────
-    uint     instanceTransformsUavIndex; ///< RWStructuredBuffer<float4x4>.    48
-    uint     instanceCountUavIndex;      ///< RWStructuredBuffer<uint> (1 el). 52
-    uint     indirectArgsUavIndex;       ///< RWByteAddressBuffer (20 bytes).  56
-    uint     _pad2;                      ///<                                  60
+    uint     instanceTransformsUavIndex; ///< RWStructuredBuffer<float4x4>.    56
+    uint     instanceCountUavIndex;      ///< RWStructuredBuffer<uint> (1 el). 60
+
+    uint     indirectArgsUavIndex;       ///< RWByteAddressBuffer (20 bytes).  64
+    uint     instanceColorsUavIndex;     ///< RWStructuredBuffer<float4>.      68
+    uint     _pad2;                      ///<                                  72
+    uint     _pad3;                      ///<                                  76
 #endif
 };
 
@@ -117,9 +125,11 @@ StructuredBuffer<float4>           sm5_positions       : register(t0);
 StructuredBuffer<float4>           sm5_velocities      : register(t1);
 StructuredBuffer<float>            sm5_ages            : register(t2);
 StructuredBuffer<float>            sm5_lifespans       : register(t3);
+StructuredBuffer<float4>           sm5_colors          : register(t4);
 RWStructuredBuffer<float4x4>       sm5_instanceXforms  : register(u0);
 RWStructuredBuffer<uint>           sm5_instanceCount   : register(u1);
 RWByteAddressBuffer                sm5_indirectArgs    : register(u2);
+RWStructuredBuffer<float4>         sm5_instanceColors  : register(u3);
 #endif
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -268,13 +278,15 @@ void main(uint3 dtid : SV_DispatchThreadID)
 
     // ── Bind UAV resources ───────────────────────────────────────────────────
 #ifdef UZ_BINDLESS
-    RWStructuredBuffer<uint>    instanceCount    = ResourceDescriptorHeap[instanceCountUavIndex];
-    RWByteAddressBuffer         indirectArgs     = ResourceDescriptorHeap[indirectArgsUavIndex];
-    RWStructuredBuffer<float4x4> instanceXforms  = ResourceDescriptorHeap[instanceTransformsUavIndex];
+    RWStructuredBuffer<uint>     instanceCount    = ResourceDescriptorHeap[instanceCountUavIndex];
+    RWByteAddressBuffer          indirectArgs     = ResourceDescriptorHeap[indirectArgsUavIndex];
+    RWStructuredBuffer<float4x4> instanceXforms   = ResourceDescriptorHeap[instanceTransformsUavIndex];
+    RWStructuredBuffer<float4>   instanceColors   = ResourceDescriptorHeap[instanceColorsUavIndex];
 #else
     #define instanceCount    sm5_instanceCount
     #define indirectArgs     sm5_indirectArgs
     #define instanceXforms   sm5_instanceXforms
+    #define instanceColors   sm5_instanceColors
 #endif
 
     // ── One-time initialisation by thread 0 ─────────────────────────────────
@@ -304,11 +316,13 @@ void main(uint3 dtid : SV_DispatchThreadID)
     StructuredBuffer<float4> velocitiesBuf = ResourceDescriptorHeap[velocitiesSrvIndex];
     StructuredBuffer<float>  agesBuf       = ResourceDescriptorHeap[agesSrvIndex];
     StructuredBuffer<float>  lifespansBuf  = ResourceDescriptorHeap[lifespansSrvIndex];
+    StructuredBuffer<float4> colorsBuf     = ResourceDescriptorHeap[colorsSrvIndex];
 #else
     #define positionsBuf   sm5_positions
     #define velocitiesBuf  sm5_velocities
     #define agesBuf        sm5_ages
     #define lifespansBuf   sm5_lifespans
+    #define colorsBuf      sm5_colors
 #endif
 
     float  age      = agesBuf[particleIdx];
@@ -317,8 +331,9 @@ void main(uint3 dtid : SV_DispatchThreadID)
     // ── Skip dead particles ───────────────────────────────────────────────────
     if (age >= lifespan) return;
 
-    float3 pos = positionsBuf[particleIdx].xyz;
-    float3 vel = velocitiesBuf[particleIdx].xyz;
+    float3 pos   = positionsBuf[particleIdx].xyz;
+    float3 vel   = velocitiesBuf[particleIdx].xyz;
+    float4 color = colorsBuf[particleIdx];
 
     float sx = meshScaleX;
     float sy = meshScaleY;
@@ -341,6 +356,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     InterlockedAdd(instanceCount[0], 1, instanceSlot);
 
     instanceXforms[instanceSlot] = transform;
+    instanceColors[instanceSlot] = color;
 
     // ── Update indirect args instance count ──────────────────────────────────
     // Write instance count into the indirect args buffer. Because multiple
@@ -357,9 +373,11 @@ void main(uint3 dtid : SV_DispatchThreadID)
     #undef instanceCount
     #undef indirectArgs
     #undef instanceXforms
+    #undef instanceColors
     #undef positionsBuf
     #undef velocitiesBuf
     #undef agesBuf
     #undef lifespansBuf
+    #undef colorsBuf
 #endif
 }

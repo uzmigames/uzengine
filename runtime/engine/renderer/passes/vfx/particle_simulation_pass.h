@@ -121,8 +121,8 @@ struct ParticleSpawnConstants {
     float    defaultDynParam0    = 0.0f;  ///< Default dynamic param X.
 
     float    defaultDynParam1    = 0.0f;  ///< Default dynamic param Y.
-    float    defaultDynParam2    = 0.0f;  ///< Default dynamic param Z.
-    float    defaultDynParam3    = 0.0f;  ///< Default dynamic param W.
+    uint32_t subImageIndicesUavIndex = 0; ///< UAV for RWStructuredBuffer<float> subImageIndices.
+    uint32_t flipbookTotalFrames = 1;    ///< Total SubUV frames for subImageIndex computation.
     /// @ref Salmon 2011 "Parallel Random Numbers" -- 0=use frameNumber, >0=fixed seed.
     uint32_t emitterSeed         = 0;     ///< Deterministic seed override.
 };
@@ -157,7 +157,7 @@ struct ParticleUpdateConstants {
     uint32_t sizesSrvIndex       = 0;
     uint32_t colorsSrvIndex      = 0;
     uint32_t rotationsSrvIndex   = 0;
-    uint32_t _padSrv0            = 0;
+    uint32_t subImageIndicesSrvIndex = 0; ///< SRV for StructuredBuffer<float> subImageIndices (read).
 
     // ── Bindless Descriptor Indices: WRITE set (UAV) ────────────────── offset 64
     uint32_t positionsUavIndex   = 0;
@@ -168,7 +168,7 @@ struct ParticleUpdateConstants {
     uint32_t sizesUavIndex       = 0;
     uint32_t colorsUavIndex      = 0;
     uint32_t rotationsUavIndex   = 0;
-    uint32_t _padUav0            = 0;
+    uint32_t subImageIndicesUavIndex = 0; ///< UAV for RWStructuredBuffer<float> subImageIndices (write).
 
     // ── Bindless Descriptor Indices: Shared Buffers ─────────────────── offset 96
     uint32_t freeListUavIndex    = 0;
@@ -264,7 +264,7 @@ struct ParticleUpdateConstants {
     float    pointForceZ         = 0.0f;
     float    pointForceStrength  = 0.0f;
     float    pointForceRadius    = 100.0f;
-    uint32_t _padPF0             = 0;
+    uint32_t flipbookTotalFrames = 1;    ///< SubUV total frames for subImageIndex computation.
     uint32_t _padPF1             = 0;
 
     // ── Procedural Terrain Collision (Task 4.21.0) ──────────────────── offset 344

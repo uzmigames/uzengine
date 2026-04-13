@@ -190,6 +190,37 @@ namespace {
         }
     }
 
+    // -- ribbon_strands (optional, default 1) --
+    uint32_t ribbonStrands = 1;
+    if (root.contains("ribbon_strands")) {
+        if (!root["ribbon_strands"].is_number_integer()) {
+            UZ_LOG(VFX, Error, "TrailAsset: 'ribbon_strands' must be an integer");
+            return nullptr;
+        }
+        const int rawStrands = root["ribbon_strands"].get<int>();
+        if (rawStrands < 1) {
+            UZ_LOG(VFX, Error,
+                   "TrailAsset: 'ribbon_strands' must be >= 1, got {}", rawStrands);
+            return nullptr;
+        }
+        ribbonStrands = static_cast<uint32_t>(rawStrands);
+    }
+
+    // -- strand_spacing (optional, default 0.1) --
+    float strandSpacing = 0.1f;
+    if (root.contains("strand_spacing")) {
+        if (!root["strand_spacing"].is_number()) {
+            UZ_LOG(VFX, Error, "TrailAsset: 'strand_spacing' must be a number");
+            return nullptr;
+        }
+        strandSpacing = root["strand_spacing"].get<float>();
+        if (strandSpacing < 0.0f) {
+            UZ_LOG(VFX, Error,
+                   "TrailAsset: 'strand_spacing' must be >= 0, got {}", strandSpacing);
+            return nullptr;
+        }
+    }
+
     // -- sort_order (optional, default 0) --
     int sortOrder = 0;
     if (root.contains("sort_order")) {
@@ -211,6 +242,8 @@ namespace {
     asset->maxPoints         = maxPoints;
     asset->pointLifetime     = pointLifetime;
     asset->minPointDistance  = minPointDistance;
+    asset->ribbonStrands     = ribbonStrands;
+    asset->strandSpacing     = strandSpacing;
     asset->sortOrder         = sortOrder;
     return asset;
 }

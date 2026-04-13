@@ -271,6 +271,11 @@ struct VFXEmitterConfig {
     ///
     /// @ref Lagarde & de Rousiers 2014 "Moving Frostbite to PBR" — deferred decal projection
     uint32_t deathDecalEnabled       = 0;    ///< 0=no decals, 1=spawn decals on particle death events.
+    float    minSizeForDecal         = 2.0f;  ///< Minimum particle size (cm) to trigger a death decal.
+    float    decalSizeScale          = 3.0f;  ///< Decal radius = particle size * scale.
+    float    decalLifetime           = 10.0f; ///< Death decal lifetime in seconds.
+    uint32_t decalMaterialIndex      = 0;     ///< Index into DecalManager material list.
+    uint32_t maxDeathDecalsPerFrame  = 64;    ///< Cap on death decals read back per frame (bandwidth limit).
     // ── Render target feedback (Task 4.22.0) ────────────────────────────────
     /// Infrastructure flag for persistent trail accumulation into a render target.
     /// When enabled, particle positions would be accumulated into a persistent

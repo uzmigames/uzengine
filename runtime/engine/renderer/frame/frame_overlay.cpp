@@ -254,6 +254,9 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
                 m_vfxEditorOverlay->Render(cmd, *m_cbRing);
             }
 
+            // Clear typed chars after all UI consumers have processed them.
+            m_input->ClearTypedChars();
+
             cmd->EndRenderPass();
         });
     });

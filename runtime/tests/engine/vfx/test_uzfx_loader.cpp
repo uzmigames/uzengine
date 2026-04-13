@@ -25,13 +25,13 @@ TEST(UzfxLoader, LoadValidJson) {
         "modules": {
             "spawn": {
                 "type": "spawn",
-                "velocity": [0.0, 10.0, 0.0],
+                "velocity": [0.0, 0.0, 1000.0],
                 "spread_angle": 30.0,
                 "lifespan_min": 1.0,
                 "lifespan_max": 3.0
             },
             "update": [
-                {"type": "update", "gravity": [0.0, -9.81, 0.0], "drag": 0.98},
+                {"type": "update", "gravity": [0.0, 0.0, -981.0], "drag": 0.98},
                 {"type": "turbulence", "strength": 2.0, "frequency": 0.5, "octaves": 3},
                 {"type": "decay"}
             ],
@@ -102,7 +102,7 @@ TEST(UzfxLoader, InstantiateFromDesc) {
             "lifetime": 2.0
         },
         "modules": {
-            "spawn": {"type": "spawn", "velocity": [0, 5, 0]},
+            "spawn": {"type": "spawn", "velocity": [0, 0, 500]},
             "update": [
                 {"type": "update", "gravity": [0, -9.81, 0], "drag": 0.98},
                 {"type": "decay"}

@@ -2,10 +2,11 @@
 ///
 /// Covers: default config values, ParseConfig from valid JSON, ParseConfig with
 /// missing/invalid fields, GetShaderCode returns non-empty HLSL, GetName returns
-/// "collision", CollisionResponse enum string conversions (all 3 values + unknown
-/// + case-insensitive FromString), config validation (bounceFactor clamped to
+/// "collision", CollisionResponse enum string conversions (all 4 values + unknown
+/// + case-insensitive FromString), config validation (restitution clamped to
 /// [0,1], minBounceSpeed and collisionOffset clamped to >= 0), default constructor
-/// usable for ModuleRegistry, GetParameters returns 5 entries, Execute is a no-op.
+/// usable for ModuleRegistry, GetParameters returns 6 entries, Execute is a no-op,
+/// Stick response, emitCollisionEvent flag, backward-compat "bounce_factor" alias.
 ///
 /// No GPU hardware required — all tests are CPU-only.
 
@@ -29,10 +30,11 @@ namespace {
 nlohmann::json MakeFullJson() {
     return nlohmann::json::parse(R"({
         "response": "bounce",
-        "bounce_factor": 0.7,
+        "restitution": 0.7,
         "depth_buffer_collision": false,
         "collision_offset": 0.05,
-        "min_bounce_speed": 0.2
+        "min_bounce_speed": 0.2,
+        "emit_collision_event": true
     })");
 }
 
@@ -47,9 +49,9 @@ TEST(UZ_CollisionModule, DefaultConfig_Response_IsBounce) {
     EXPECT_EQ(m.GetConfig().response, CollisionResponse::Bounce);
 }
 
-TEST(UZ_CollisionModule, DefaultConfig_BounceFactor_IsPointSix) {
+TEST(UZ_CollisionModule, DefaultConfig_Restitution_IsPointSix) {
     CollisionModule m;
-    EXPECT_FLOAT_EQ(m.GetConfig().bounceFactor, 0.6f);
+    EXPECT_FLOAT_EQ(m.GetConfig().restitution, 0.6f);
 }
 
 TEST(UZ_CollisionModule, DefaultConfig_DepthBufferCollision_IsTrue) {
@@ -115,7 +117,7 @@ TEST(UZ_CollisionModule, GetShaderCode_ContainsDepthBufferSample) {
 TEST(UZ_CollisionModule, GetParameters_ReturnsFiveEntries) {
     CollisionModule m;
     const auto params = m.GetParameters();
-    EXPECT_EQ(params.size(), 5u)
+    EXPECT_EQ(params.size(), 6u)
         << "CollisionModule must expose exactly 5 parameters";
 }
 
@@ -127,11 +129,11 @@ TEST(UZ_CollisionModule, GetParameters_FirstEntry_IsResponse) {
     EXPECT_EQ(params[0].type, ParameterType::Int);
 }
 
-TEST(UZ_CollisionModule, GetParameters_SecondEntry_IsBounceFactor) {
+TEST(UZ_CollisionModule, GetParameters_SecondEntry_IsRestitution) {
     CollisionModule m;
     const auto params = m.GetParameters();
     ASSERT_GE(params.size(), 2u);
-    EXPECT_STREQ(params[1].name, "bounce_factor");
+    EXPECT_STREQ(params[1].name, "restitution");
     EXPECT_EQ(params[1].type, ParameterType::Float);
     EXPECT_FLOAT_EQ(params[1].defaultFloat, 0.6f);
 }
@@ -244,9 +246,9 @@ TEST(UZ_CollisionModule_ParseConfig, ValidJson_ResponseIsBounce) {
     EXPECT_EQ(cfg.response, CollisionResponse::Bounce);
 }
 
-TEST(UZ_CollisionModule_ParseConfig, ValidJson_BounceFactorIsPointSeven) {
+TEST(UZ_CollisionModule_ParseConfig, ValidJson_RestitutionIsPointSeven) {
     const auto cfg = CollisionModule::ParseConfig(MakeFullJson());
-    EXPECT_NEAR(cfg.bounceFactor, 0.7f, 1e-5f);
+    EXPECT_NEAR(cfg.restitution, 0.7f, 1e-5f);
 }
 
 TEST(UZ_CollisionModule_ParseConfig, ValidJson_DepthBufferCollisionIsFalse) {
@@ -283,17 +285,17 @@ TEST(UZ_CollisionModule_ParseConfig, ResponseSlide_ParsedCorrectly) {
 TEST(UZ_CollisionModule_ParseConfig, EmptyObject_UsesAllDefaults) {
     const auto cfg = CollisionModule::ParseConfig(nlohmann::json::object());
     EXPECT_EQ(cfg.response, CollisionResponse::Bounce);
-    EXPECT_FLOAT_EQ(cfg.bounceFactor, 0.6f);
+    EXPECT_FLOAT_EQ(cfg.restitution, 0.6f);
     EXPECT_TRUE(cfg.depthBufferCollision);
     EXPECT_FLOAT_EQ(cfg.collisionOffset, 0.01f);
     EXPECT_FLOAT_EQ(cfg.minBounceSpeed, 0.1f);
 }
 
-TEST(UZ_CollisionModule_ParseConfig, MissingBounceFactor_UsesDefault) {
+TEST(UZ_CollisionModule_ParseConfig, MissingRestitution_UsesDefault) {
     const auto j = nlohmann::json::parse(R"({ "response": "slide" })");
     const auto cfg = CollisionModule::ParseConfig(j);
-    EXPECT_FLOAT_EQ(cfg.bounceFactor, 0.6f)
-        << "Missing bounce_factor must use default 0.6";
+    EXPECT_FLOAT_EQ(cfg.restitution, 0.6f)
+        << "Missing restitution must use default 0.6";
 }
 
 // =============================================================================
@@ -303,7 +305,7 @@ TEST(UZ_CollisionModule_ParseConfig, MissingBounceFactor_UsesDefault) {
 TEST(UZ_CollisionModule_ParseConfig, NullInput_ReturnsDefaults) {
     const auto cfg = CollisionModule::ParseConfig(nlohmann::json(nullptr));
     EXPECT_EQ(cfg.response, CollisionResponse::Bounce);
-    EXPECT_FLOAT_EQ(cfg.bounceFactor, 0.6f);
+    EXPECT_FLOAT_EQ(cfg.restitution, 0.6f);
 }
 
 TEST(UZ_CollisionModule_ParseConfig, ArrayInput_ReturnsDefaults) {
@@ -313,37 +315,58 @@ TEST(UZ_CollisionModule_ParseConfig, ArrayInput_ReturnsDefaults) {
 
 TEST(UZ_CollisionModule_ParseConfig, NumberInput_ReturnsDefaults) {
     const auto cfg = CollisionModule::ParseConfig(nlohmann::json(42));
-    EXPECT_FLOAT_EQ(cfg.bounceFactor, 0.6f);
+    EXPECT_FLOAT_EQ(cfg.restitution, 0.6f);
 }
 
 // =============================================================================
-// ParseConfig — bounceFactor clamped to [0, 1]
+// ParseConfig — restitution clamped to [0, 1]
 // =============================================================================
 
-TEST(UZ_CollisionModule_ParseConfig, BounceFactorAboveOne_ClampedToOne) {
-    const auto j = nlohmann::json::parse(R"({ "bounce_factor": 2.5 })");
+TEST(UZ_CollisionModule_ParseConfig, RestitutionAboveOne_ClampedToOne) {
+    const auto j = nlohmann::json::parse(R"({ "restitution": 2.5 })");
     const auto cfg = CollisionModule::ParseConfig(j);
-    EXPECT_FLOAT_EQ(cfg.bounceFactor, 1.0f)
-        << "bounce_factor > 1.0 must be clamped to 1.0";
+    EXPECT_FLOAT_EQ(cfg.restitution, 1.0f)
+        << "restitution > 1.0 must be clamped to 1.0";
 }
 
-TEST(UZ_CollisionModule_ParseConfig, BounceFactorBelowZero_ClampedToZero) {
-    const auto j = nlohmann::json::parse(R"({ "bounce_factor": -0.5 })");
+TEST(UZ_CollisionModule_ParseConfig, RestitutionBelowZero_ClampedToZero) {
+    const auto j = nlohmann::json::parse(R"({ "restitution": -0.5 })");
     const auto cfg = CollisionModule::ParseConfig(j);
-    EXPECT_FLOAT_EQ(cfg.bounceFactor, 0.0f)
-        << "bounce_factor < 0.0 must be clamped to 0.0";
+    EXPECT_FLOAT_EQ(cfg.restitution, 0.0f)
+        << "restitution < 0.0 must be clamped to 0.0";
 }
 
-TEST(UZ_CollisionModule_ParseConfig, BounceFactorZero_IsAccepted) {
-    const auto j = nlohmann::json::parse(R"({ "bounce_factor": 0.0 })");
+TEST(UZ_CollisionModule_ParseConfig, RestitutionZero_IsAccepted) {
+    const auto j = nlohmann::json::parse(R"({ "restitution": 0.0 })");
     const auto cfg = CollisionModule::ParseConfig(j);
-    EXPECT_FLOAT_EQ(cfg.bounceFactor, 0.0f);
+    EXPECT_FLOAT_EQ(cfg.restitution, 0.0f);
 }
 
-TEST(UZ_CollisionModule_ParseConfig, BounceFactorOne_IsAccepted) {
-    const auto j = nlohmann::json::parse(R"({ "bounce_factor": 1.0 })");
+TEST(UZ_CollisionModule_ParseConfig, RestitutionOne_IsAccepted) {
+    const auto j = nlohmann::json::parse(R"({ "restitution": 1.0 })");
     const auto cfg = CollisionModule::ParseConfig(j);
-    EXPECT_FLOAT_EQ(cfg.bounceFactor, 1.0f);
+    EXPECT_FLOAT_EQ(cfg.restitution, 1.0f);
+}
+
+// =============================================================================
+// ParseConfig — backward-compat "bounce_factor" alias
+// =============================================================================
+
+TEST(UZ_CollisionModule_ParseConfig, LegacyBounceFactor_SetsRestitution) {
+    const auto j = nlohmann::json::parse(R"({ "bounce_factor": 0.4 })");
+    const auto cfg = CollisionModule::ParseConfig(j);
+    EXPECT_FLOAT_EQ(cfg.restitution, 0.4f)
+        << "Legacy bounce_factor key must be accepted as restitution alias";
+}
+
+TEST(UZ_CollisionModule_ParseConfig, RestitutionOverridesBounceFactor) {
+    const auto j = nlohmann::json::parse(R"({
+        "bounce_factor": 0.3,
+        "restitution": 0.8
+    })");
+    const auto cfg = CollisionModule::ParseConfig(j);
+    EXPECT_FLOAT_EQ(cfg.restitution, 0.8f)
+        << "When both keys present, restitution takes precedence";
 }
 
 // =============================================================================
@@ -395,17 +418,94 @@ TEST(UZ_CollisionModule, DefaultConstructor_ProducesValidModule) {
     CollisionModule m;
     EXPECT_STREQ(m.GetName(), "collision");
     EXPECT_FALSE(m.GetShaderCode().empty());
-    EXPECT_EQ(m.GetParameters().size(), 5u);
+    EXPECT_EQ(m.GetParameters().size(), 6u);
 }
 
 TEST(UZ_CollisionModule, ExplicitConstructor_StoresConfig) {
     CollisionModuleConfig cfg;
-    cfg.response      = CollisionResponse::Kill;
-    cfg.bounceFactor  = 0.3f;
+    cfg.response        = CollisionResponse::Kill;
+    cfg.restitution     = 0.3f;
     cfg.collisionOffset = 0.05f;
 
     CollisionModule m(cfg);
     EXPECT_EQ(m.GetConfig().response, CollisionResponse::Kill);
-    EXPECT_FLOAT_EQ(m.GetConfig().bounceFactor, 0.3f);
+    EXPECT_FLOAT_EQ(m.GetConfig().restitution, 0.3f);
     EXPECT_FLOAT_EQ(m.GetConfig().collisionOffset, 0.05f);
+}
+
+// =============================================================================
+// Stick response — CollisionResponse::Stick = 3
+// =============================================================================
+
+TEST(UZ_CollisionResponseToString, Stick_ReturnsStick) {
+    EXPECT_STREQ(CollisionResponseToString(CollisionResponse::Stick), "stick");
+}
+
+TEST(UZ_CollisionResponseFromString, Stick_ParsedCorrectly) {
+    EXPECT_EQ(CollisionResponseFromString("stick"), CollisionResponse::Stick);
+}
+
+TEST(UZ_CollisionResponseFromString, Stick_MixedCase_ParsedCorrectly) {
+    EXPECT_EQ(CollisionResponseFromString("Stick"), CollisionResponse::Stick);
+}
+
+TEST(UZ_CollisionModule_ParseConfig, ResponseStick_ParsedCorrectly) {
+    const auto j = nlohmann::json::parse(R"({ "response": "stick" })");
+    const auto cfg = CollisionModule::ParseConfig(j);
+    EXPECT_EQ(cfg.response, CollisionResponse::Stick);
+}
+
+TEST(UZ_CollisionModule, StickResponse_EnumValue_IsThree) {
+    EXPECT_EQ(static_cast<uint8_t>(CollisionResponse::Stick), 3u);
+}
+
+// =============================================================================
+// Collision event flag — emitCollisionEvent
+// =============================================================================
+
+TEST(UZ_CollisionModule, DefaultConfig_EmitCollisionEvent_IsFalse) {
+    CollisionModule m;
+    EXPECT_FALSE(m.GetConfig().emitCollisionEvent);
+}
+
+TEST(UZ_CollisionModule_ParseConfig, EmitCollisionEvent_True_Parsed) {
+    const auto j = nlohmann::json::parse(R"({ "emit_collision_event": true })");
+    const auto cfg = CollisionModule::ParseConfig(j);
+    EXPECT_TRUE(cfg.emitCollisionEvent);
+}
+
+TEST(UZ_CollisionModule_ParseConfig, EmitCollisionEvent_False_Parsed) {
+    const auto j = nlohmann::json::parse(R"({ "emit_collision_event": false })");
+    const auto cfg = CollisionModule::ParseConfig(j);
+    EXPECT_FALSE(cfg.emitCollisionEvent);
+}
+
+TEST(UZ_CollisionModule_ParseConfig, EmitCollisionEvent_Missing_DefaultsFalse) {
+    const auto cfg = CollisionModule::ParseConfig(nlohmann::json::object());
+    EXPECT_FALSE(cfg.emitCollisionEvent);
+}
+
+TEST(UZ_CollisionModule, GetParameters_SixthEntry_IsEmitCollisionEvent) {
+    CollisionModule m;
+    const auto params = m.GetParameters();
+    ASSERT_GE(params.size(), 6u);
+    EXPECT_STREQ(params[5].name, "emit_collision_event");
+    EXPECT_EQ(params[5].type, ParameterType::Bool);
+    EXPECT_FALSE(params[5].defaultBool);
+}
+
+TEST(UZ_CollisionModule, GetShaderCode_ContainsStickResponse) {
+    CollisionModule m;
+    const std::string_view code = m.GetShaderCode();
+    EXPECT_NE(code.find("cbCollisionResponse == 3u"), std::string_view::npos)
+        << "HLSL snippet must handle Stick response (value 3)";
+}
+
+TEST(UZ_CollisionModule, GetShaderCode_ContainsCollisionEmitEvent) {
+    CollisionModule m;
+    const std::string_view code = m.GetShaderCode();
+    EXPECT_NE(code.find("cbCollisionEmitEvent"), std::string_view::npos)
+        << "HLSL snippet must reference cbCollisionEmitEvent";
+    EXPECT_NE(code.find("SubEmitterFlags"), std::string_view::npos)
+        << "HLSL snippet must write SubEmitterFlags on collision event";
 }

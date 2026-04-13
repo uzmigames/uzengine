@@ -659,12 +659,33 @@ class InputSystem {
     ///   Accumulated until the next `BeginFrame()`.
     void OnMouseScroll(float delta);
 
+    /// Called by the platform layer when a character is typed (WM_CHAR).
+    ///
+    /// Appends the character to the per-frame character buffer. Only printable
+    /// ASCII characters (0x20-0x7E) and backspace (0x08) are accepted.
+    ///
+    /// # Arguments
+    /// * `ch` - The typed character (UTF-16 code unit from WM_CHAR wParam).
+    void OnChar(uint16_t ch);
+
+    /// Returns the typed characters accumulated since the last ClearTypedChars().
+    /// Includes printable ASCII + backspace ('\b') + enter ('\r') + escape (0x1B).
+    [[nodiscard]] const std::string& GetTypedChars() const { return m_charBuffer; }
+
+    /// Clears the typed character buffer. Call AFTER all UI consumers have
+    /// processed chars for this frame (after BuildUI, not in BeginFrame).
+    void ClearTypedChars() { m_charBuffer.clear(); }
+
   private:
     // ── Keyboard State ──────────────────────────────────────────────────
     static constexpr int kMaxKeys = 256;
 
     bool m_keyCurrent[kMaxKeys] = {};
     bool m_keyPrevious[kMaxKeys] = {};
+
+    /// Per-frame typed character buffer (printable ASCII + backspace).
+    /// Cleared at the start of each `BeginFrame()`.
+    std::string m_charBuffer;
 
     // ── Mouse Button State ──────────────────────────────────────────────
     static constexpr int kMaxMouseButtons = static_cast<int>(MouseButton::Count);
