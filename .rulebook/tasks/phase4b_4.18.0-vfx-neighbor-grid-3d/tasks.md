@@ -118,7 +118,7 @@ without the complexity of spatial hashing and neighbor queries.
 
 ## 4. CPU Orchestration
 
-- [ ] 4.1 Create `runtime/engine/vfx/modules/neighbor_interaction_module.h/cpp`:
+- [x] 4.1 Create `runtime/engine/vfx/modules/neighbor_interaction_module.h/cpp` — implemented IVFXModule with NeighborGrid3DConfig, Boids params, ApplyJsonConfig, registered as "neighbor_interaction":
       ```cpp
       struct NeighborInteractionModule : IVFXModule {
           NeighborGrid3DConfig gridConfig;

@@ -7,7 +7,47 @@
 /// This is the canonical engine-integrated version of the VFX viewport.
 /// The legacy DemoApplication version remains at demos/vfx_viewport/ for
 /// standalone testing and as a reference implementation.
+///
+/// # Custom CLI Arguments
+/// - `--sprite <path>`: Load a sprite texture for all emitters (PNG/TGA/JPEG).
+/// - `--flipbook <rows> <cols>`: Flipbook grid dimensions (used with --sprite).
+/// - `--flipbook-fps <float>`: Flipbook playback rate in frames per second (default 30).
+/// - `--channel <0|1|2|3|4>`: Sprite channel mask (0=RGBA, 1=R, 2=G, 3=B, 4=A).
+/// - `--vfxsys <path>`: Override the `.uzvfxsys` compound asset path (default
+///   `"vfx/systems/fireball.uzvfxsys"`).
 
 #include "vfx_viewport_app.h"
 
-UZ_APPLICATION_MAIN(uz::VFXViewportApp)
+#include <cstdlib>
+#include <cstring>
+
+int main(int argc, char** argv) {
+    if (int r = uz::Application::TryComposeGrid(argc, argv); r >= 0)
+        return r;
+    if (int r = uz::Application::TryDiffImages(argc, argv); r >= 0)
+        return r;
+
+    uz::VFXViewportApp app;
+
+    // Parse VFX-specific CLI arguments before Run() calls Configure() + ParseArgs().
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--sprite") == 0 && i + 1 < argc) {
+            app.SetSpriteTexturePath(argv[++i]);
+        } else if (std::strcmp(argv[i], "--flipbook") == 0 && i + 2 < argc) {
+            const uint32_t rows = static_cast<uint32_t>(std::atoi(argv[++i]));
+            const uint32_t cols = static_cast<uint32_t>(std::atoi(argv[++i]));
+            app.SetFlipbookGrid(rows, cols);
+        } else if (std::strcmp(argv[i], "--flipbook-fps") == 0 && i + 1 < argc) {
+            const float fps = static_cast<float>(std::atof(argv[++i]));
+            app.SetFlipbookFPS(fps);
+        } else if (std::strcmp(argv[i], "--channel") == 0 && i + 1 < argc) {
+            uint32_t mask = static_cast<uint32_t>(std::atoi(argv[++i]));
+            if (mask > 4u) mask = 0u; // Clamp unknown values to RGBA pass-through.
+            app.SetSpriteChannelMask(mask);
+        } else if (std::strcmp(argv[i], "--vfxsys") == 0 && i + 1 < argc) {
+            app.SetSystemAssetPath(argv[++i]);
+        }
+    }
+
+    return app.Run(argc, argv);
+}

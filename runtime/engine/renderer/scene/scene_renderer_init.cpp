@@ -30,6 +30,7 @@
 #include "outline_pass.h"
 #include "stats_overlay.h"
 #include "engine/vfx/editor/vfx_editor_overlay.h"
+#include "engine/vfx/system/vfx_system_instance.h"
 #include "shader_compiler.h"
 #include "shader_compiler_fxc.h"
 #include "dynamic_resolution.h"
@@ -1466,8 +1467,19 @@ void SceneRenderer::Shutdown() {
                     emitter->Shutdown(m_device, activeVFX->GetBudget());
                 }
             }
+            // Compound VfxSystemInstance cleanup. Each instance owns N child
+            // ParticleEmitter* which were registered with the VFXSystem above.
+            // Unregister them here, then let Destroy() release GPU buffers.
+            for (auto& inst : m_runtimeSystems) {
+                if (!inst) continue;
+                for (auto* child : inst->GetEmitters()) {
+                    if (child) activeVFX->UnregisterEmitter(child);
+                }
+                inst->Destroy(m_device, activeVFX->GetBudget());
+            }
         }
         m_runtimeEmitters.clear();
+        m_runtimeSystems.clear();
     }
 
     // ── VFX System cleanup ───────────────────────────────────────────

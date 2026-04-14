@@ -127,7 +127,7 @@ to a UAV event buffer consumed by the main update CS in the same frame.
 
 ## 5. CPU Module
 
-- [ ] 5.1 Create `runtime/engine/vfx/modules/async_gpu_trace_module.h/cpp`:
+- [x] 5.1 Create `runtime/engine/vfx/modules/async_gpu_trace_module.h/cpp` — implemented IVFXModule with traceRadius=30, maxSteps=8, restitution=0.4, writeDeathDecals=false:
       ```cpp
       struct AsyncGPUTraceModule : IVFXModule {
           float    traceRadius  = 30.0f;   // cm
@@ -136,10 +136,10 @@ to a UAV event buffer consumed by the main update CS in the same frame.
           bool     writeDeathDecals = false; // forward hits to decal system
       };
       ```
-- [ ] 5.2 `EmitHLSL()` returns `""` — this module hooks into the render graph
+- [x] 5.2 `GetShaderCode()` returns empty — this module hooks into the render graph
       directly, not into the particle update HLSL snippet system.
-- [ ] 5.3 `Serialize` / `Deserialize` round-trips all three fields.
-- [ ] 5.4 Register in `register_builtin_modules.cpp` under key `"AsyncGPUTrace"`.
+- [x] 5.3 ApplyJsonConfig round-trips all four fields (traceRadius, maxSteps, restitution, writeDeathDecals).
+- [x] 5.4 Registered in `register_builtin_modules.cpp` as `"async_gpu_trace"`.
 
 ## 6. Optional: Decal Integration
 

@@ -131,8 +131,9 @@ cbuffer VFXSpawnConstants : register(b1) {
     float    defaultDynParam0;     ///< Default dynamic param X (overwritten to normalizedAge in update). 172
 
     float    defaultDynParam1;     ///< Default dynamic param Y (user-defined).  176
-    float    defaultDynParam2;     ///< Default dynamic param Z (user-defined).  180
-    float    defaultDynParam3;     ///< Default dynamic param W (user-defined).  184
+    /// @ref Niagara Sprite SubImageIndex module — per-particle flipbook index buffer.
+    uint     subImageIndicesUavIndex; ///< RWStructuredBuffer<float> subImageIndices UAV. 180
+    uint     flipbookTotalFrames;   ///< Total SubUV frames (for init — spawn writes 0.0). 184
     /// @ref Salmon 2011 "Parallel Random Numbers" — deterministic seed override
     uint     emitterSeed;          ///< 0=use frameNumber (non-deterministic), >0=fixed seed. 188
 #endif
@@ -441,14 +442,31 @@ void main(uint3 dtid : SV_DispatchThreadID)
     colors[particleIdx]     = initialColor;
     rotations[particleIdx]  = rotation;
 
+    // ── SubImageIndex: Niagara-style per-particle flipbook channel ───────
+    // Spawn writes 0.0 (first frame). The update CS advances this to
+    // normAge * (totalFrames - 1) every frame, giving the VS a direct
+    // per-particle frame index without re-deriving from age interpolants.
+    /// @ref Niagara SubImageIndex module — per-particle flipbook animation
+#ifdef UZ_BINDLESS
+    if (subImageIndicesUavIndex != 0xFFFFFFFFu) {
+        RWStructuredBuffer<float> subImages = ResourceDescriptorHeap[subImageIndicesUavIndex];
+        subImages[particleIdx] = 0.0f;
+    }
+#endif
+
     // ── Dynamic material parameters (Task 4.14.0) ──────────────────────
     // Initialize per-particle float4 from emitter defaults. The update CS
     // overwrites .x with normalizedAge each frame; .yzw remain user-defined.
+    //
+    // Phase 3b-3.91.0 Phase 2 note: CB slots 180/184 were repurposed from
+    // `defaultDynParam2/3` to `subImageIndicesUavIndex` + `flipbookTotalFrames`
+    // to wire the per-particle SubImageIndex SoA channel. The .zw dynamic
+    // params now default to 0; callers needing them must upload a new CB.
 #ifdef UZ_BINDLESS
     if (dynamicParamsUavIndex != 0 && dynamicParamsUavIndex != 0xFFFFFFFF) {
         RWStructuredBuffer<float4> dynParams = ResourceDescriptorHeap[dynamicParamsUavIndex];
         dynParams[particleIdx] = float4(defaultDynParam0, defaultDynParam1,
-                                        defaultDynParam2, defaultDynParam3);
+                                        0.0f, 0.0f);
     }
 #else
     dynamicParams[particleIdx] = float4(0.0f, 0.0f, 0.0f, 0.0f);

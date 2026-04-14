@@ -14,7 +14,7 @@ in frustum culling with accurate dynamic bounds. Niagara reference:
       UAV + CPU_READ usage for readback.
 - [ ] 1.2 Add `RhiBufferHandle boundsReadback` — staging buffer for GPU→CPU copy.
       Created with READBACK heap type.
-- [ ] 1.3 Add `EmitterBounds` struct to `particle_emitter.h`:
+- [x] 1.3 Added `EmitterBounds` struct to `particle_emitter.h` (Vec3 aabbMin/Max, bool valid, uint32_t frameAge) + `bounds` field on ParticleEmitter:
       `Vec3 aabbMin, aabbMax; bool valid = false; uint32_t frameAge = 0;`.
 - [ ] 1.4 Initialize boundsBuffer with extreme values (min=FLT_MAX, max=-FLT_MAX)
       at emitter creation and at the start of each frame before the reduction.

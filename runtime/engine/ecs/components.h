@@ -24,6 +24,7 @@
 #include "environment/volumetric_clouds_component.h"
 #include "environment/postprocess_volume_component.h"
 #include "environment/vfx_emitter_component.h"
+#include "environment/vfx_system_component.h"
 
 // Metadata components
 #include "metadata/name_component.h"

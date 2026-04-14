@@ -36,6 +36,103 @@ namespace uz {
 void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
     UZ_PROFILE_FUNCTION();
 
+    // ── Flipbook Debug pass ─────────────────────────────────────────────
+    // Draws a screen-space quad in the top-right corner that cycles through
+    // the sprite atlas of the first active VFX emitter at a fixed framerate.
+    // Used to verify that the atlas sampling path (bindless SRV index + UV
+    // math) works independently of the particle data flow. If this quad
+    // cycles through frames correctly but particles show a stuck frame, the
+    // bug is in the particle CB / age / lifetime path, NOT in the atlas
+    // sampling shader math.
+    //
+    // Runs after particle/post-process passes but before the editor overlay
+    // so it composites on top of tonemapped scene color.
+    if (m_flipbookDebugEnabled) {
+        VFXSystem* vfxDbg = m_vfxSystemOverride ? m_vfxSystemOverride : m_vfxSystem.get();
+        const ParticleEmitter* firstEmitter = nullptr;
+        if (vfxDbg) {
+            const auto& ems = vfxDbg->GetActiveEmitters();
+            for (auto* e : ems) {
+                if (e && e->initialized && e->spriteTextureSrvIndex != UINT32_MAX) {
+                    firstEmitter = e;
+                    break;
+                }
+            }
+        }
+
+        if (firstEmitter) {
+            // Capture values by copy for the deferred callback (emitter ptr
+            // may be recycled between graph build and execute).
+            const uint32_t dbgSrvIdx   = firstEmitter->spriteTextureSrvIndex;
+            const uint32_t dbgRows     = firstEmitter->flipbookRows;
+            const uint32_t dbgCols     = firstEmitter->flipbookCols;
+            const uint32_t dbgFrames   = firstEmitter->flipbookTotalFrames;
+            const float    dbgTime     = m_totalTime;
+
+            rgBuilder.AddPass("FlipbookDebugPass",
+                [&, dbgSrvIdx, dbgRows, dbgCols, dbgFrames, dbgTime](rg::RgPassBuilder& pb) {
+                pb.Write(ctx.bbRes, RHIResourceState::RenderTarget);
+
+                pb.SetExecutionCallback([this, &ctx, dbgSrvIdx, dbgRows, dbgCols, dbgFrames, dbgTime](
+                        IRHICommandList* cmd, const rg::RgPassResources& res) {
+                    UZ_PROFILE_SCOPE("FlipbookDebugPass");
+
+                    auto pso = ctx.pipelines->GetFlipbookDebugPSO();
+                    if (!pso.IsValid()) {
+                        UZ_LOG(VFX, Error, "FlipbookDebugPass: invalid PSO");
+                        return;
+                    }
+
+                    auto bb = res.GetTexture(ctx.bbRes);
+
+                    RHIRenderPassDesc passDesc{};
+                    passDesc.colorAttachmentCount        = 1;
+                    passDesc.colorAttachments[0].texture = bb;
+                    passDesc.colorAttachments[0].clear   = false;
+                    passDesc.hasDepth                    = false;
+                    cmd->BeginRenderPass(passDesc);
+
+                    RHIViewport vp{};
+                    vp.width    = ctx.vpWidth;
+                    vp.height   = ctx.vpHeight;
+                    vp.maxDepth = 1.0f;
+                    cmd->SetViewport(vp);
+
+                    RHIScissorRect sc{};
+                    sc.right  = static_cast<int32_t>(ctx.swapChain->GetWidth());
+                    sc.bottom = static_cast<int32_t>(ctx.swapChain->GetHeight());
+                    cmd->SetScissor(sc);
+
+                    cmd->SetPipeline(pso);
+
+                    // Pack the CB — layout matches FlipbookDebugCB in
+                    // flipbook_debug_ps.hlsl (32 bytes, 8 DWORDs).
+                    uint32_t timeBits = 0;
+                    uint32_t fpsBits  = 0;
+                    constexpr float kDebugFPS = 10.0f;
+                    std::memcpy(&timeBits, &dbgTime,   sizeof(float));
+                    std::memcpy(&fpsBits,  &kDebugFPS, sizeof(float));
+
+                    const uint32_t rootConstants[8] = {
+                        dbgSrvIdx,   // spriteTextureIdx
+                        dbgRows,     // flipbookRows
+                        dbgCols,     // flipbookCols
+                        dbgFrames,   // totalFrames
+                        timeBits,    // totalTime (float bits)
+                        fpsBits,     // fps (float bits)
+                        0,           // _pad0
+                        0            // _pad1
+                    };
+                    cmd->SetRootConstants(kSlotRootConstants, rootConstants, 8);
+
+                    cmd->Draw(6); // 2 triangles, 6 verts, no vertex buffer.
+
+                    cmd->EndRenderPass();
+                });
+            });
+        }
+    }
+
     // ── Editor Selection Outline pass ───────────────────────────────────
     // Renders a colored outline around the selected entity. Runs before the
     // overlay pass (grid + stats) so the outline composites under the UI.

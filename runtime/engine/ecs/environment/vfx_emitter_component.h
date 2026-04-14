@@ -52,6 +52,23 @@ struct VfxEmitterComponent {
     float velocityVariation = 1.0f;   ///< Random per-component velocity spread (cm/s).
     float spreadAngle       = 30.0f;  ///< Cone half-angle (degrees). 0=laser, 90=hemisphere.
 
+    // ── Sprite Texture ──────────────────────────────────────────────────
+
+    /// Path to sprite sheet (PNG/TGA/JPEG). Empty = procedural circle.
+    std::string spriteTexturePath;
+
+    /// Flipbook grid dimensions (auto-detected from filename if using VFXMaterial).
+    uint32_t flipbookRows        = 1;  ///< Rows in sprite sheet. 1 = no flipbook.
+    uint32_t flipbookCols        = 1;  ///< Columns in sprite sheet. 1 = no flipbook.
+    uint32_t flipbookTotalFrames = 1;  ///< Total valid frames in the sheet.
+
+    /// Flipbook playback rate. 0 = lifetime-driven (one full cycle per lifetime, Niagara default).
+    /// >0 = fixed FPS (may cycle multiple times or clip within lifetime).
+    float flipbookFPS = 0.0f;
+
+    /// Sprite texture channel mask: 0=RGBA, 1=R, 2=G, 3=B, 4=A.
+    uint32_t spriteChannelMask = 0;
+
     // ── Spawn Shape ──────────────────────────────────────────────────────
 
     uint32_t spawnShape     = 0;      ///< 0=Point, 1=Sphere, 2=Box, 3=Ring, 4=Cone, 5=Cylinder.

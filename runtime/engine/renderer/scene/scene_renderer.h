@@ -118,6 +118,7 @@ class RTUVTestPass;
 class MaterialPipeline;
 class MaterialManager;
 struct ParticleEmitter;
+class VfxSystemInstance;
 namespace rg { class RgResourcePool; }
 
 // ─────────────────────────────────────────────────────────────────────────────

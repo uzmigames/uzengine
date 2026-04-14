@@ -121,6 +121,38 @@ struct ParticleEmitter {
     /// @ref Lorach 2007 "Soft Particles" — depth-based alpha fade at geometry intersections.
     float softParticleFadeRange = 100.0f;
 
+    // ── Sprite Texture ────────────────────────────────────────────────────
+
+    /// Path to sprite sheet (PNG/TGA/JPEG) for textured particles.
+    /// When non-empty, the engine loads this texture during emitter sync
+    /// and binds it as a billboard sprite. Empty = procedural circle.
+    std::string spriteTexturePath;
+
+    /// Bindless SRV index for the loaded sprite texture.
+    /// Set automatically by the engine when `spriteTexturePath` is loaded.
+    /// UINT32_MAX = no sprite texture (procedural circle fallback).
+    uint32_t spriteTextureSrvIndex = UINT32_MAX;
+
+    /// Flipbook grid dimensions for sprite sheet animation.
+    /// Auto-detected from filename pattern (e.g., `_6x6_`) when using VFXMaterial,
+    /// or set explicitly here for inline emitters.
+    uint32_t flipbookRows       = 1;  ///< Rows in sprite sheet. 1 = no flipbook.
+    uint32_t flipbookCols       = 1;  ///< Columns in sprite sheet. 1 = no flipbook.
+    uint32_t flipbookTotalFrames = 1; ///< Total valid frames in the sheet.
+
+    /// Flipbook playback rate in frames per second.
+    /// Controls how fast the sprite sheet cycles through frames over the
+    /// particle's lifetime. Used by `ComputeFlipbookFrame` in the pixel shader.
+    /// 0 = lifetime-driven (one full cycle per particle lifetime, Niagara default).
+    /// >0 = fixed FPS (may cycle multiple times or clip within lifetime).
+    float flipbookFPS = 0.0f;
+
+    /// Sprite texture channel mask selector.
+    /// 0 = RGBA pass-through (default), 1 = R, 2 = G, 3 = B, 4 = A.
+    /// Non-zero values splat the chosen channel across RGB and A so single-channel
+    /// alpha sheets render as grayscale mattes.
+    uint32_t spriteChannelMask = 0;
+
     // ── Billboard Rendering Parameters ────────────────────────────────────
 
     /// Emissive multiplier (additive glow contribution). 0 = disabled.

@@ -862,6 +862,23 @@ public:
     /// Blend: SrcAlpha / InvSrcAlpha.
     [[nodiscard]] RHIPipelineHandle GetParticleMeshTransparent();
 
+    /// Returns the flipbook debug pipeline (flipbook_debug_vs + flipbook_debug_ps).
+    ///
+    /// Renders a screen-space quad in the top-right corner that samples a sprite
+    /// atlas with time-based frame cycling. Used to verify atlas sampling math
+    /// independently of the particle data flow.
+    ///
+    /// Geometry: 2 triangles via SV_VertexID (Draw(6,1,0,0)), no vertex buffer.
+    /// Rasterizer: no cull.
+    /// Depth: disabled (no depth test, no depth write).
+    /// Blend: disabled (opaque overwrite).
+    /// Render target: RGBA8Unorm (backbuffer, post-tonemap).
+    /// Depth format: Unknown (no depth attachment).
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetFlipbookDebugPSO();
+
     /// Pre-creates all standard pipelines eagerly instead of on first use.
     ///
     /// Call at scene load time to avoid hitches during the first frame.
@@ -891,6 +908,7 @@ private:
     [[nodiscard]] bool EnsureDecalDeferredShaders();
     [[nodiscard]] bool EnsureTrailRibbonShaders();
     [[nodiscard]] bool EnsureParticleMeshShaders();
+    [[nodiscard]] bool EnsureFlipbookDebugShaders();
 
     // ── VFX cached shader handles ────────────────────────────────────────
     RHIShaderHandle m_particleBillboardVS       = RHIShaderHandle::Invalid();
@@ -906,6 +924,8 @@ private:
     RHIShaderHandle m_trailPS                   = RHIShaderHandle::Invalid();
     RHIShaderHandle m_particleMeshVS            = RHIShaderHandle::Invalid();
     RHIShaderHandle m_particleMeshPS            = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_flipbookDebugVS           = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_flipbookDebugPS           = RHIShaderHandle::Invalid();
 
     // ── VFX cached pipeline handles ──────────────────────────────────────
     RHIPipelineHandle m_particleBillboard          = RHIPipelineHandle::Invalid();
@@ -920,6 +940,9 @@ private:
     RHIPipelineHandle m_trailRibbon                = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_particleMeshOpaque         = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_particleMeshTransparent    = RHIPipelineHandle::Invalid();
+    bool              m_particleMeshOpaqueFailed      = false;
+    bool              m_particleMeshTransparentFailed = false;
+    RHIPipelineHandle m_flipbookDebug              = RHIPipelineHandle::Invalid();
 };
 
 } // namespace uz

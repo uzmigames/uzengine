@@ -113,7 +113,7 @@ struct VFXUpdateCB {
     uint32_t sizesSrvIndex = UINT32_MAX;        // 48
     uint32_t colorsSrvIndex = UINT32_MAX;       // 52
     uint32_t rotationsSrvIndex = UINT32_MAX;    // 56
-    uint32_t subImageIndicesSrvIndex = 0;      // 60 (replaces _padSrv0; HLSL not yet updated)
+    uint32_t subImageIndicesSrvIndex = 0;      // 60 (replaces _padSrv0; HLSL updated in Phase 3b-3.91.0 Phase 2)
 
     // ── Write-set UAV indices (bytes 64-95) ─────────────────────────────
     uint32_t positionsUavIndex = UINT32_MAX;    // 64
@@ -124,7 +124,7 @@ struct VFXUpdateCB {
     uint32_t sizesUavIndex = UINT32_MAX;        // 80
     uint32_t colorsUavIndex = UINT32_MAX;       // 84
     uint32_t rotationsUavIndex = UINT32_MAX;    // 88
-    uint32_t subImageIndicesUavIndex = 0;      // 92 (replaces _padUav0; HLSL not yet updated)
+    uint32_t subImageIndicesUavIndex = 0;      // 92 (replaces _padUav0; HLSL updated in Phase 3b-3.91.0 Phase 2)
 
     // ── Shared buffer UAV indices (bytes 96-111) ────────────────────────
     uint32_t freeListUavIndex = UINT32_MAX;     // 96

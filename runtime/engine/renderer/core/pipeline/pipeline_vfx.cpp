@@ -692,8 +692,13 @@ RHIPipelineHandle PipelineLibrary::GetParticleMeshOpaque() {
     if (m_particleMeshOpaque.IsValid()) {
         return m_particleMeshOpaque;
     }
+    // Avoid spamming the log every frame when PSO creation has already failed.
+    if (m_particleMeshOpaqueFailed) {
+        return RHIPipelineHandle::Invalid();
+    }
 
     if (!EnsureParticleMeshShaders()) {
+        m_particleMeshOpaqueFailed = true;
         return RHIPipelineHandle::Invalid();
     }
 
@@ -723,7 +728,10 @@ RHIPipelineHandle PipelineLibrary::GetParticleMeshOpaque() {
 
     m_particleMeshOpaque = CreateCachedPipeline(desc);
     if (!m_particleMeshOpaque.IsValid()) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create ParticleMeshOpaque pipeline");
+        m_particleMeshOpaqueFailed = true;
+        UZ_LOG(Renderer, Error,
+               "PipelineLibrary: failed to create ParticleMeshOpaque pipeline "
+               "(subsequent attempts silenced)");
     } else {
         UZ_LOG(Renderer, Info, "PipelineLibrary: created ParticleMeshOpaque pipeline");
     }
@@ -748,8 +756,12 @@ RHIPipelineHandle PipelineLibrary::GetParticleMeshTransparent() {
     if (m_particleMeshTransparent.IsValid()) {
         return m_particleMeshTransparent;
     }
+    if (m_particleMeshTransparentFailed) {
+        return RHIPipelineHandle::Invalid();
+    }
 
     if (!EnsureParticleMeshShaders()) {
+        m_particleMeshTransparentFailed = true;
         return RHIPipelineHandle::Invalid();
     }
 
@@ -786,12 +798,97 @@ RHIPipelineHandle PipelineLibrary::GetParticleMeshTransparent() {
 
     m_particleMeshTransparent = CreateCachedPipeline(desc);
     if (!m_particleMeshTransparent.IsValid()) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create ParticleMeshTransparent pipeline");
+        m_particleMeshTransparentFailed = true;
+        UZ_LOG(Renderer, Error,
+               "PipelineLibrary: failed to create ParticleMeshTransparent pipeline "
+               "(subsequent attempts silenced)");
     } else {
         UZ_LOG(Renderer, Info, "PipelineLibrary: created ParticleMeshTransparent pipeline");
     }
 
     return m_particleMeshTransparent;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Flipbook Debug Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Compiles the flipbook debug vertex and pixel shaders if not already cached.
+bool PipelineLibrary::EnsureFlipbookDebugShaders() {
+    if (!m_flipbookDebugVS.IsValid()) {
+        m_flipbookDebugVS = m_shaderMgr->CreateShader(
+            EngineShader::FlipbookDebugVS, RHIShaderStage::Vertex);
+        if (!m_flipbookDebugVS.IsValid()) {
+            UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile FlipbookDebugVS");
+            return false;
+        }
+    }
+    if (!m_flipbookDebugPS.IsValid()) {
+        m_flipbookDebugPS = m_shaderMgr->CreateShader(
+            EngineShader::FlipbookDebugPS, RHIShaderStage::Pixel);
+        if (!m_flipbookDebugPS.IsValid()) {
+            UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile FlipbookDebugPS");
+            return false;
+        }
+    }
+    return true;
+}
+
+/// Returns the flipbook debug pipeline.
+///
+/// PSO configuration:
+/// - No vertex input layout (SV_VertexID only — 6 verts = 2 tris)
+/// - Depth test and depth write both disabled (pure overlay)
+/// - Blending disabled (opaque overwrite on backbuffer)
+/// - Render target: RGBA8Unorm (backbuffer post-tonemap)
+/// - No depth attachment
+///
+/// Draw call: `Draw(6, 1, 0, 0)`.
+RHIPipelineHandle PipelineLibrary::GetFlipbookDebugPSO() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetFlipbookDebugPSO called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_flipbookDebug.IsValid()) {
+        return m_flipbookDebug;
+    }
+
+    if (!EnsureFlipbookDebugShaders()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIGraphicsPipelineDesc desc{};
+    desc.vertexShader  = m_flipbookDebugVS;
+    desc.pixelShader   = m_flipbookDebugPS;
+    desc.topology      = RHIPrimitiveTopology::TriangleList;
+
+    // No vertex input layout — VS uses SV_VertexID to derive positions.
+    desc.inputElementCount = 0;
+
+    // Two-sided (quad in NDC — cull direction doesn't matter).
+    desc.rasterizer.cullMode = RHICullMode::None;
+
+    // No depth test, no depth write — this is a pure screen-space overlay.
+    desc.depthStencil.depthEnable = false;
+    desc.depthStencil.depthWrite  = false;
+
+    // Blending disabled — opaque overwrite.
+    desc.renderTargetBlend[0].blendEnable = false;
+
+    desc.renderTargetFormats[0] = RHIFormat::RGBA8Unorm; // backbuffer (post-tonemap)
+    desc.renderTargetCount      = 1;
+    desc.depthStencilFormat     = RHIFormat::Unknown;    // no depth attachment
+    desc.debugName              = "FlipbookDebug";
+
+    m_flipbookDebug = CreateCachedPipeline(desc);
+    if (!m_flipbookDebug.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create FlipbookDebug pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created FlipbookDebug pipeline");
+    }
+
+    return m_flipbookDebug;
 }
 
 } // namespace uz

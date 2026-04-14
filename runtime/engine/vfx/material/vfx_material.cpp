@@ -4,12 +4,14 @@
 
 #include "texture_loader.h"
 #include "engine/logging/log.h"
+#include "engine/paths/paths.h"
 #include "file_system.h"
 
 #include <json.hpp>
 
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <unordered_map>
 
@@ -125,7 +127,23 @@ bool VFXMaterial::LoadTexture(IRHIDevice* device, IRHICommandList* cmdList,
                "VFXMaterial: Reusing cached sprite '{}' (SRV={})",
                spriteTexturePath, spriteTextureSrvIndex);
     } else {
-        auto result = TextureLoader::Load(device, cmdList, spriteTexturePath, isSRGB);
+        // Resolve the sprite path: try as-is first (honors absolute/CLI paths),
+        // then fall back to exe-dir, then assets/ subdir under exe-dir. This
+        // lets presets reference engine-relative paths like "vfx/foo.png"
+        // while still allowing absolute paths from CLI.
+        std::string resolvedPath = spriteTexturePath;
+        if (!std::filesystem::exists(resolvedPath)) {
+            auto p1 = uz::ResolveEngineResource(spriteTexturePath);
+            if (std::filesystem::exists(p1)) {
+                resolvedPath = p1.string();
+            } else {
+                auto p2 = uz::GetExeDir() / "assets" / spriteTexturePath;
+                if (std::filesystem::exists(p2)) {
+                    resolvedPath = p2.string();
+                }
+            }
+        }
+        auto result = TextureLoader::Load(device, cmdList, resolvedPath, isSRGB);
         if (!result.handle.IsValid()) {
             UZ_LOG(VFX, Error, "VFXMaterial: Failed to load sprite texture '{}'",
                    spriteTexturePath);

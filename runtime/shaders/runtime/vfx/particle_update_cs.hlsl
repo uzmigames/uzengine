@@ -140,7 +140,8 @@ cbuffer VFXUpdateConstants : register(b1) {
     uint     sizesSrvIndex;        ///< StructuredBuffer<float> sizes.               48
     uint     colorsSrvIndex;       ///< StructuredBuffer<float4> colors.             52
     uint     rotationsSrvIndex;    ///< StructuredBuffer<float> rotations.           56
-    uint     _padSrv0;             ///<                                              60
+    /// @ref Niagara SubImageIndex module — per-particle flipbook channel (read).
+    uint     subImageIndicesSrvIndex; ///< StructuredBuffer<float> subImageIndices.  60
 
     // ── Bindless Descriptor Indices: WRITE set (UAV) ────────────────────── offset 64
     uint     positionsUavIndex;    ///< RWStructuredBuffer<float4> positions.        64
@@ -151,7 +152,8 @@ cbuffer VFXUpdateConstants : register(b1) {
     uint     sizesUavIndex;        ///< RWStructuredBuffer<float> sizes.             80
     uint     colorsUavIndex;       ///< RWStructuredBuffer<float4> colors.           84
     uint     rotationsUavIndex;    ///< RWStructuredBuffer<float> rotations.         88
-    uint     _padUav0;             ///<                                              92
+    /// @ref Niagara SubImageIndex module — per-particle flipbook channel (write).
+    uint     subImageIndicesUavIndex; ///< RWStructuredBuffer<float> subImageIndices. 92
 
     // ── Bindless Descriptor Indices: Shared Buffers ─────────────────────── offset 96
     uint     freeListUavIndex;     ///< RWStructuredBuffer<uint> free_list.          96
@@ -257,7 +259,8 @@ cbuffer VFXUpdateConstants : register(b1) {
     float    pointForceZ;                ///< Force center Z (world units, cm).         324
     float    pointForceStrength;         ///< Force magnitude (m/s^2). >0=attract, <0=repel. 328
     float    pointForceRadius;           ///< Max influence radius (world units).       332
-    uint     _padPF0;                    ///< Alignment padding.                         336
+    /// @ref Niagara SubImageIndex module — SubUV frame count for index computation.
+    uint     flipbookTotalFrames;        ///< Total SubUV frames for subImageIndex calc. 336
     uint     _padPF1;                    ///< Alignment padding.                         340
 
     // ── Procedural Terrain Collision (Task 4.21.0) ──────────────────────── offset 344
@@ -903,6 +906,23 @@ void main(uint3 dtid : SV_DispatchThreadID)
     sizesOut[threadIdx]      = size;
     colorsOut[threadIdx]     = color;
     rotationsOut[threadIdx]  = rotation;
+
+    // ── SubImageIndex: Niagara-style per-particle flipbook channel ───────
+    // Writes normAge * (totalFrames - 1) so the VS can read a float index
+    // directly and compute atlas UVs without re-deriving age interpolants.
+    // This is the authoritative signal for flipbook cycling — it replaces
+    // age-based math in the VS/PS which was susceptible to interpolant
+    // flow issues between the simulation and rendering passes.
+    /// @ref Niagara SubImageIndex module — per-particle sub-UV animation
+#ifdef UZ_BINDLESS
+    // Guard: 0xFFFFFFFF is the only sentinel meaning "unbound". Index 0 IS valid.
+    if (subImageIndicesUavIndex != 0xFFFFFFFFu) {
+        RWStructuredBuffer<float> subImagesOut = ResourceDescriptorHeap[subImageIndicesUavIndex];
+        // Fixed 30 fps playback: subImageIndex grows linearly with age.
+        // The VS wraps with modulo, so cycling continues past totalFrames.
+        subImagesOut[threadIdx] = max(age, 0.0f) * 30.0f;
+    }
+#endif
 
     // ── Dynamic material parameters (Task 4.14.0) ──────────────────────
     // Read from previous frame, evolve .x to normalizedAge (useful for shader

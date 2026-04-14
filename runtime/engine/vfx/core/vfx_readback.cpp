@@ -39,12 +39,13 @@ bool VFXReadbackManager::Create(IRHIDevice* device,
         ring_[i].requests.reserve(maxRequestsPerFrame);
 
         // Allocate READBACK-heap staging buffer.
-        ring_[i].buffer = device->CreateBuffer(
-            stagingCapacityBytes,
-            1, // stride (raw bytes)
-            RHIBufferUsage::Readback,
-            "VFXReadbackStaging"
-        );
+        RHIBufferDesc stagingDesc;
+        stagingDesc.sizeBytes = stagingCapacityBytes;
+        stagingDesc.stride    = 1;
+        stagingDesc.usage     = RHIBufferUsage::CopyDst;
+        stagingDesc.memory    = RHIMemoryType::Readback;
+        stagingDesc.debugName = "VFXReadbackStaging";
+        ring_[i].buffer = device->CreateBuffer(stagingDesc);
 
         if (!ring_[i].buffer.IsValid()) {
             UZ_LOG(VFX, Error,
@@ -164,11 +165,11 @@ void VFXReadbackManager::EndFrame(IRHICommandList* cmd, uint64_t fenceValue) {
 
     // Issue CopyBufferRegion for each request in this frame's batch.
     for (const auto& req : slot.requests) {
-        cmd->CopyBufferRegion(
-            slot.buffer,     // dst (readback staging)
-            req.stagingOffset,
-            req.src,         // src (GPU buffer)
-            req.offset,
+        cmd->CopyBuffer(
+            req.src,              // src (GPU buffer)
+            req.offset,           // src offset
+            slot.buffer,          // dst (readback staging)
+            req.stagingOffset,    // dst offset
             req.size
         );
     }

@@ -39,6 +39,7 @@
 #include "engine/ecs/core/entity.h"
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace uz {
@@ -47,6 +48,32 @@ class VFXViewportApp final : public Application {
 public:
     VFXViewportApp() = default;
     ~VFXViewportApp() override = default;
+
+    /// Sets the sprite texture path for all emitters (from --sprite CLI arg).
+    /// Must be called before Run(). If non-empty, the engine loads this texture
+    /// during emitter sync and binds it as a billboard sprite.
+    void SetSpriteTexturePath(const std::string& path) { m_spriteTexturePath = path; }
+
+    /// Sets flipbook grid dimensions for the sprite texture (from --flipbook CLI arg).
+    /// Only meaningful when a sprite texture is set. Rows/cols default to 1 (no flipbook).
+    void SetFlipbookGrid(uint32_t rows, uint32_t cols) {
+        m_flipbookRows = rows;
+        m_flipbookCols = cols;
+        m_flipbookTotalFrames = rows * cols;
+    }
+
+    /// Sets the flipbook playback rate in frames per second (from --flipbook-fps CLI arg).
+    /// Drives how fast the SubUV sheet cycles across the particle lifetime.
+    void SetFlipbookFPS(float fps) { m_flipbookFPS = fps; }
+
+    /// Sets the sprite texture channel mask (from --channel CLI arg).
+    /// 0=RGBA pass-through, 1=R, 2=G, 3=B, 4=A.
+    void SetSpriteChannelMask(uint32_t mask) { m_spriteChannelMask = mask; }
+
+    /// Overrides the VfxSystem asset path used for the compound fireball
+    /// effect (from `--vfxsys` CLI arg). Defaults to
+    /// `"vfx/systems/fireball.uzvfxsys"` when unset.
+    void SetSystemAssetPath(const std::string& path) { m_systemAssetPath = path; }
 
 protected:
     // ── Application interface ────────────────────────────────────────────
@@ -92,11 +119,39 @@ private:
     /// Current preset index for cycling.
     int m_currentPreset = 0;
 
+    /// VFX emitter entity (for projectile-style animation of position).
+    /// Now carries a VfxSystemComponent — a single entity that spawns the
+    /// full fireball compound (head + sparks + smoke) internally.
+    Entity m_vfxEntity{};
+
+    /// Projectile animation phase [0..1] — advances each frame, loops.
+    float m_projectilePhase = 0.0f;
+
     /// Pending preset switch (set by Left/Right keys or overlay).
     bool m_switchPresetPending = false;
 
     /// Pending restart (set by R/Delete or overlay button).
     bool m_restartPending = false;
+
+    // ── Sprite texture (from --sprite CLI arg) ──────────────────────────
+
+    /// Path to sprite texture set via SetSpriteTexturePath().
+    std::string m_spriteTexturePath;
+
+    /// Flipbook grid dimensions set via SetFlipbookGrid().
+    uint32_t m_flipbookRows        = 1;
+    uint32_t m_flipbookCols        = 1;
+    uint32_t m_flipbookTotalFrames = 1;
+
+    /// Flipbook playback rate. 0 = lifetime-driven (one full cycle per lifetime). >0 = fixed FPS.
+    float m_flipbookFPS = 0.0f;
+
+    /// Sprite texture channel mask: 0=RGBA, 1=R, 2=G, 3=B, 4=A.
+    uint32_t m_spriteChannelMask = 0;
+
+    /// Path to the `.uzvfxsys` asset driving the compound fireball effect.
+    /// Overridable via the `--vfxsys <path>` CLI argument.
+    std::string m_systemAssetPath = "vfx/systems/fireball.uzvfxsys";
 };
 
 } // namespace uz

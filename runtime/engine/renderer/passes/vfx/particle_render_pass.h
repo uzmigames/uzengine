@@ -65,6 +65,11 @@ namespace uz {
 /// and texture resources (PS). Both VS and PS share the same b0 layout.
 ///
 /// Total size: 48 bytes (12 x uint32, matching HLSL exactly).
+/// Fits within the 16x uint32 root-constant limit (64 bytes).
+///
+/// Phase 3b-3.91.0 Phase 2: the trailing pad slot was repurposed as the
+/// `subImageIndexBufferIdx` field — a bindless SRV index pointing at the
+/// per-particle SubImageIndex SoA channel. No size change.
 struct ParticleBillboardIndices {
     // VS indices (bytes 0-31)
     uint32_t positionBufferIdx      = 0;
@@ -79,7 +84,8 @@ struct ParticleBillboardIndices {
     uint32_t spriteTextureIdx       = UINT32_MAX; ///< Reserved (no sprite texture).
     uint32_t depthBufferIdx         = 0;          ///< SRV: Texture2D<float> scene depth.
     uint32_t dynamicParamsBufferIdx = 0;          ///< SRV: StructuredBuffer<float4> dynamic params.
-    uint32_t _vfxPad1               = 0;
+    /// @ref Niagara SubImageIndex module — per-particle flipbook SoA channel.
+    uint32_t subImageIndexBufferIdx = 0;          ///< SRV: StructuredBuffer<float> subImageIndices.
 };
 static_assert(sizeof(ParticleBillboardIndices) == 48,
               "ParticleBillboardIndices must be 48 bytes to match HLSL VFXBillboardConstants");
@@ -145,13 +151,19 @@ struct VFXBillboardCB {
     uint32_t colorRampLutSrvIndex  = 0xFFFFFFFF; ///< 280
     uint32_t screenSpaceSizeEnabled = 0;    ///< 284
 
-    // ── Color by speed (bytes 288-303) ──────────────────────────────────
+    // ── Color by speed + flipbook (bytes 288-303) ──────────────────────
     uint32_t colorBySpeedEnabled   = 0;     ///< 288
-    uint32_t _cbsPad0              = 0;     ///< 292
-    uint32_t _cbsPad1              = 0;     ///< 296
-    uint32_t _cbsPad2              = 0;     ///< 300
+    uint32_t flipbookRows          = 1;     ///< 292: Sprite sheet rows. 1 = no flipbook.
+    uint32_t flipbookCols          = 1;     ///< 296: Sprite sheet columns. 1 = no flipbook.
+    uint32_t flipbookTotalFrames   = 1;     ///< 300: Total valid frames in sprite sheet.
+
+    // ── Flipbook playback rate + channel mask (bytes 304-319) ──────────
+    float    flipbookFPS           = 30.0f; ///< 304: Flipbook playback frame rate (frames per second).
+    uint32_t spriteChannelMask     = 0;     ///< 308: 0=RGBA pass-through, 1=R, 2=G, 3=B, 4=A.
+    float    vfxTotalTime          = 0.0f;  ///< 312: Global total time (s) for flipbook cycling.
+    uint32_t _vfxBillboardPad1     = 0;     ///< 316
 };
-static_assert(sizeof(VFXBillboardCB) == 304, "VFXBillboardCB must be 304 bytes to match HLSL layout");
+static_assert(sizeof(VFXBillboardCB) == 320, "VFXBillboardCB must be 320 bytes to match HLSL layout");
 
 // ---------------------------------------------------------------------------
 // EmitterRenderData -- per-emitter data for the render pass

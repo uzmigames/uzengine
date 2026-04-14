@@ -10,7 +10,7 @@ texture persists across frames unless explicitly cleared.
 
 ## 1. Accumulation Texture Allocation
 
-- [ ] 1.1 Create `runtime/engine/vfx/modules/render_target_di_module.h/cpp`.
+- [x] 1.1 Create `runtime/engine/vfx/modules/render_target_di_module.h/cpp` — implemented IVFXModule with texWidth/Height, decayRate, paintOpacity, feedbackStrength, screenSpace, clearOnReset. Registered as "render_target_di".
       Fields:
       ```cpp
       uint32_t         texWidth          = 1280;

@@ -9,8 +9,12 @@
 #include "components.h"
 
 #include "engine/asset/formats/uzfx_loader.h"
+#include "engine/renderer/upload/texture_loader.h"
 #include "engine/vfx/vfx_system.h"
 #include "engine/vfx/components/particle_emitter.h"
+#include "engine/vfx/material/vfx_material.h"
+#include "engine/vfx/system/vfx_system.h"
+#include "engine/vfx/system/vfx_system_instance.h"
 #include "log.h"
 #include "profiler.h"
 #include "rhi.h"
@@ -235,6 +239,14 @@ void SceneRenderer::SyncVfxEmitters(World* world, IVFS* vfs) {
             emitter->startDelay         = emitterComp.startDelay;
             emitter->isEmitting         = emitterComp.emitting;
 
+            // ── Sprite texture ─────────────────────────────────────────
+            emitter->spriteTexturePath   = emitterComp.spriteTexturePath;
+            emitter->flipbookRows        = emitterComp.flipbookRows;
+            emitter->flipbookCols        = emitterComp.flipbookCols;
+            emitter->flipbookTotalFrames = emitterComp.flipbookTotalFrames;
+            emitter->flipbookFPS         = emitterComp.flipbookFPS;
+            emitter->spriteChannelMask   = emitterComp.spriteChannelMask;
+
             if (!emitter->Initialize(m_device, activeVFX->GetBudget())) {
                 UZ_LOG(VFX, Error,
                        "SyncVfxEmitters: failed to initialize inline emitter — skipping");
@@ -250,6 +262,42 @@ void SceneRenderer::SyncVfxEmitters(World* world, IVFS* vfs) {
 
         emitter->isEmitting = emitterComp.emitting;
 
+        // ── Load sprite texture if path is set ─────────────────────────
+        // Creates a VFXMaterial, loads the texture via TextureLoader, and
+        // assigns the bindless SRV index to the emitter for rendering.
+        if (!emitter->spriteTexturePath.empty() && emitter->spriteTextureSrvIndex == UINT32_MAX) {
+            auto mat = std::make_unique<VFXMaterial>();
+            mat->spriteTexturePath  = emitter->spriteTexturePath;
+            mat->flipbookRows       = emitter->flipbookRows;
+            mat->flipbookCols       = emitter->flipbookCols;
+            mat->flipbookTotalFrames = emitter->flipbookTotalFrames;
+
+            auto* texCmd = m_device->CreateCommandList(RHIQueueType::Graphics);
+            if (texCmd) {
+                texCmd->Begin();
+                if (mat->LoadTexture(m_device, texCmd, /*isSRGB=*/true)) {
+                    emitter->spriteTextureSrvIndex = mat->spriteTextureSrvIndex;
+                    // VFXMaterial auto-detects flipbook from filename; propagate back
+                    emitter->flipbookRows        = mat->flipbookRows;
+                    emitter->flipbookCols        = mat->flipbookCols;
+                    emitter->flipbookTotalFrames = mat->flipbookTotalFrames;
+                    emitter->material = mat.release(); // Transfer ownership to emitter
+                    UZ_LOG(VFX, Info,
+                           "SyncVfxEmitters: loaded sprite '{}' (SRV={}, {}x{} flipbook)",
+                           emitter->spriteTexturePath, emitter->spriteTextureSrvIndex,
+                           emitter->flipbookRows, emitter->flipbookCols);
+                } else {
+                    UZ_LOG(VFX, Warning,
+                           "SyncVfxEmitters: failed to load sprite '{}' — using procedural circle",
+                           emitter->spriteTexturePath);
+                }
+                texCmd->End();
+                texCmd->Execute();
+                m_device->WaitIdle();
+                m_device->DestroyCommandList(texCmd);
+            }
+        }
+
         // Register with VFXSystem for per-frame simulation
         activeVFX->RegisterEmitter(emitter.get());
 
@@ -262,6 +310,147 @@ void SceneRenderer::SyncVfxEmitters(World* world, IVFS* vfs) {
                "SyncVfxEmitters: created emitter idx={} (asset='{}')",
                newIdx,
                emitterComp.assetPath.empty() ? "<inline>" : emitterComp.assetPath);
+    }
+
+    // ── VfxSystemComponent (compound, multi-emitter) ─────────────────────
+    // Each VfxSystemComponent instantiates a VfxSystemInstance which owns N
+    // child ParticleEmitter*. Child emitters are registered with the global
+    // VFXSystem so they take part in per-frame compute dispatch, but the
+    // unique_ptr ownership lives inside the VfxSystemInstance.
+    auto sysView = registry.view<VfxSystemComponent>();
+    for (auto [enttEntity, sysComp] : sysView.each()) {
+        // Existing instance — sync transform and emission state.
+        if (sysComp.runtimeInstanceIdx >= 0) {
+            const auto idx = static_cast<size_t>(sysComp.runtimeInstanceIdx);
+            if (idx < m_runtimeSystems.size() && m_runtimeSystems[idx]) {
+                auto* inst = m_runtimeSystems[idx].get();
+                inst->SetEmitting(sysComp.emitting);
+                if (auto* sc = registry.try_get<SceneComponent>(enttEntity)) {
+                    inst->SetWorldTransform(sc->GetPosition());
+                }
+                if (sysComp.restartRequested) {
+                    // Restart every child emitter: reset GPU buffer + spawn state.
+                    for (auto* child : inst->GetEmitters()) {
+                        if (!child) continue;
+                        child->buffer.needsInitialization = true;
+                        child->spawnAccumulator = 0.0f;
+                        child->cpuAliveCount    = 0;
+                        child->isEmitting       = true;
+                    }
+                    inst->SetEmitting(true);
+                    sysComp.restartRequested = false;
+                    sysComp.emitting         = true;
+                }
+            }
+            continue;
+        }
+
+        // First encounter — load asset and create instance.
+        if (sysComp.systemAssetPath.empty()) {
+            UZ_LOG(VFX, Warning,
+                   "SyncVfxEmitters: VfxSystemComponent has empty systemAssetPath — skipping");
+            continue;
+        }
+
+        auto asset = VfxSystem::Load(sysComp.systemAssetPath, vfs);
+        if (!asset) {
+            UZ_LOG(VFX, Error,
+                   "SyncVfxEmitters: failed to load VfxSystem asset '{}' — skipping",
+                   sysComp.systemAssetPath);
+            continue;
+        }
+
+        auto instance = std::make_unique<VfxSystemInstance>();
+        instance->SetEmitting(sysComp.emitting);
+        if (auto* sc = registry.try_get<SceneComponent>(enttEntity)) {
+            instance->SetWorldTransform(sc->GetPosition());
+        }
+        if (!instance->Init(*asset, m_device, activeVFX->GetBudget())) {
+            UZ_LOG(VFX, Error,
+                   "SyncVfxEmitters: VfxSystemInstance::Init failed for '{}' — skipping",
+                   sysComp.systemAssetPath);
+            continue;
+        }
+        // Re-apply transform AFTER Init so children created with default
+        // worldPosition=(0,0,0) get the correct position immediately.
+        if (auto* sc = registry.try_get<SceneComponent>(enttEntity)) {
+            instance->SetWorldTransform(sc->GetPosition());
+        }
+
+        // Register each child with the global VFXSystem AND perform the
+        // same initial GPU upload / transition done in the single-emitter
+        // path. This keeps the render-graph happy on frame 1.
+        for (auto* child : instance->GetEmitters()) {
+            if (!child) continue;
+
+            auto* initCmd = m_device->CreateCommandList(RHIQueueType::Graphics);
+            if (initCmd) {
+                initCmd->Begin();
+                child->buffer.UploadInitialState(m_device, initCmd);
+                child->buffer.TransitionAllToUAV(initCmd);
+                initCmd->End();
+                initCmd->Execute();
+                m_device->WaitIdle();
+                m_device->DestroyCommandList(initCmd);
+                for (auto h : child->buffer.pendingStagingBuffers) {
+                    m_device->DestroyBuffer(h);
+                }
+                child->buffer.pendingStagingBuffers.clear();
+            }
+            child->needsInitialUpload = false;
+
+            // ── Load sprite texture if preset specified one ─────────────
+            // Mirrors the single-emitter sprite-load path so compound
+            // children (e.g. FireballHead flipbook) can display sprites too.
+            if (!child->spriteTexturePath.empty()
+                && child->spriteTextureSrvIndex == UINT32_MAX) {
+                auto mat = std::make_unique<VFXMaterial>();
+                mat->spriteTexturePath   = child->spriteTexturePath;
+                mat->flipbookRows        = child->flipbookRows;
+                mat->flipbookCols        = child->flipbookCols;
+                mat->flipbookTotalFrames = child->flipbookTotalFrames;
+
+                auto* texCmd = m_device->CreateCommandList(RHIQueueType::Graphics);
+                if (texCmd) {
+                    texCmd->Begin();
+                    if (mat->LoadTexture(m_device, texCmd, /*isSRGB=*/true)) {
+                        child->spriteTextureSrvIndex = mat->spriteTextureSrvIndex;
+                        child->flipbookRows        = mat->flipbookRows;
+                        child->flipbookCols        = mat->flipbookCols;
+                        child->flipbookTotalFrames = mat->flipbookTotalFrames;
+                        child->material = mat.release();
+                        UZ_LOG(VFX, Info,
+                               "SyncVfxEmitters: compound child loaded sprite '{}' "
+                               "(SRV={}, {}x{} flipbook, {} frames)",
+                               child->spriteTexturePath,
+                               child->spriteTextureSrvIndex,
+                               child->flipbookRows, child->flipbookCols,
+                               child->flipbookTotalFrames);
+                    } else {
+                        UZ_LOG(VFX, Warning,
+                               "SyncVfxEmitters: compound child failed to load "
+                               "sprite '{}' — using procedural circle",
+                               child->spriteTexturePath);
+                    }
+                    texCmd->End();
+                    texCmd->Execute();
+                    m_device->WaitIdle();
+                    m_device->DestroyCommandList(texCmd);
+                }
+            }
+
+            activeVFX->RegisterEmitter(child);
+        }
+
+        const auto newIdx = static_cast<int32_t>(m_runtimeSystems.size());
+        m_runtimeSystems.push_back(std::move(instance));
+        sysComp.runtimeInstanceIdx = newIdx;
+
+        UZ_LOG(VFX, Info,
+               "SyncVfxEmitters: created VfxSystemInstance idx={} from '{}' "
+               "({} child emitters)",
+               newIdx, sysComp.systemAssetPath,
+               m_runtimeSystems[newIdx]->GetEmitterCount());
     }
 }
 

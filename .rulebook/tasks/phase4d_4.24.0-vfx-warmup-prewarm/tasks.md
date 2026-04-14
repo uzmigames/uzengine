@@ -9,11 +9,11 @@ reuses existing spawn/update compute dispatches in a tight loop.
 
 ## 1. Emitter Data
 
-- [ ] 1.1 Add `float warmupTime = 0.0f` to `ParticleEmitter` in `particle_emitter.h`.
+- [x] 1.1 Added `float warmupTime = 0.0f` to `ParticleEmitter` in `particle_emitter.h`.
       Default 0 means no warmup (backwards compatible). Units: seconds.
-- [ ] 1.2 Add `float warmupTickRate = 0.0333f` to `ParticleEmitter` (1/30s default).
+- [x] 1.2 Added `float warmupTickRate = 0.0333f` to `ParticleEmitter` (1/30s default).
       Controls simulation granularity during warmup. Lower = more accurate but slower.
-- [ ] 1.3 Add `bool warmupComplete = false` runtime flag to `ParticleEmitter`.
+- [x] 1.3 Added `bool warmupComplete = false` runtime flag to `ParticleEmitter`.
       Set to true after warmup loop finishes. Prevents re-warmup on hot reload.
 
 ## 2. .uzvfx Format Support

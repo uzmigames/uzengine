@@ -431,6 +431,14 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
         bbCBData.screenSpaceSizeEnabled = emitter->screenSpaceSizeEnabled;
         bbCBData.screenSpacePixelSize  = emitter->screenSpacePixelSize;
 
+        // ── Flipbook / SubUV animation ──────────────────────────────────
+        bbCBData.flipbookRows          = emitter->flipbookRows;
+        bbCBData.flipbookCols          = emitter->flipbookCols;
+        bbCBData.flipbookTotalFrames   = emitter->flipbookTotalFrames;
+        bbCBData.flipbookFPS           = emitter->flipbookFPS;
+        bbCBData.spriteChannelMask     = emitter->spriteChannelMask;
+        bbCBData.vfxTotalTime          = m_totalTime;
+
         const CBAllocation bbAlloc = m_cbRing->Allocate(sizeof(bbCBData));
         if (!bbAlloc.cpuPtr) {
             UZ_LOG(VFX, Warning,
@@ -469,12 +477,15 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
         indicesData.velocityBufferIdx    = m_device->GetBufferSRVIndex(readSet.velocities);
         indicesData.agesBufferIdx        = m_device->GetBufferSRVIndex(readSet.ages);
         indicesData.lifespansBufferIdx   = m_device->GetBufferSRVIndex(readSet.lifespans);
-        indicesData.spriteTextureIdx     = UINT32_MAX; // No sprite texture yet.
+        // Use the emitter's loaded sprite texture SRV, or UINT32_MAX for procedural circle.
+        indicesData.spriteTextureIdx     = emitter->spriteTextureSrvIndex;
         indicesData.depthBufferIdx       = m_device->GetTextureSRVIndex(m_gbuffer.depth);
         // Use positions SRV as fallback — prevents ResourceDescriptorHeap[0] access
         // which corrupts the descriptor ring. The VS guards dynParams reads anyway.
         indicesData.dynamicParamsBufferIdx = indicesData.positionBufferIdx;
-        indicesData._vfxPad1             = 0;
+        // SubImageIndex SoA channel — VS reads per-particle float index written by update CS.
+        // @ref Niagara SubImageIndex module — per-particle flipbook channel
+        indicesData.subImageIndexBufferIdx = m_device->GetBufferSRVIndex(readSet.subImageIndices);
 
         const CBAllocation indicesAlloc = m_cbRing->Allocate(sizeof(indicesData));
         if (indicesAlloc.cpuPtr) {

@@ -8,13 +8,13 @@ transitions. Niagara reference: Scalability settings + significance manager.
 
 ## 1. LOD Settings Extension
 
-- [ ] 1.1 Add `float spawnRateScale[4] = {1.0f, 0.5f, 0.25f, 0.1f}` to `VFXLodSettings`
+- [x] 1.1 Added `float spawnRateScale[4] = {1.0f, 0.5f, 0.25f, 0.1f}` to `VFXLodSettings`
       in `vfx_lod.h`. One scale per LOD level (0=nearest, 3=farthest).
-- [ ] 1.2 Add `float maxParticlesScale[4] = {1.0f, 0.75f, 0.5f, 0.25f}` to `VFXLodSettings`.
+- [x] 1.2 Added `float maxParticlesScale[4] = {1.0f, 0.75f, 0.5f, 0.25f}` to `VFXLodSettings`.
       Reduces the emitter's max_particles cap at distance.
-- [ ] 1.3 Add `float lodTransitionTime = 0.5f` to `VFXLodSettings`. Seconds to lerp
+- [x] 1.3 Added `float lodTransitionTime = 0.5f` to `VFXLodSettings`. Seconds to lerp
       between LOD levels to avoid pop.
-- [ ] 1.4 Add `float currentSpawnScale = 1.0f` and `float targetSpawnScale = 1.0f` as
+- [x] 1.4 Added `float currentSpawnScale = 1.0f` and `float targetSpawnScale = 1.0f` as
       runtime fields on `ParticleEmitter` for smooth interpolation.
 
 ## 2. .uzvfx Format
@@ -38,7 +38,7 @@ transitions. Niagara reference: Scalability settings + significance manager.
 
 ## 4. Screen-Size Significance (Optional Enhancement)
 
-- [ ] 4.1 Add `float screenSizeThreshold = 0.01f` to `VFXLodSettings`. If the emitter's
+- [x] 4.1 Added `float screenSizeThreshold = 0.01f` to `VFXLodSettings`. If the emitter's
       bounding sphere projects to < threshold fraction of screen height, skip rendering
       entirely (LOD level = culled).
 - [ ] 4.2 Computation: `screenSize = boundsSphereRadius / (distance * tan(fovY/2))`.

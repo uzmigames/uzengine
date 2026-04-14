@@ -8,15 +8,15 @@ assignment. Niagara reference: `FNiagaraGPUInstanceCountManager` pooled data buf
 
 ## 1. Pool Data Structure
 
-- [ ] 1.1 Create `runtime/engine/vfx/core/vfx_emitter_pool.h` — `VFXEmitterPool` class:
+- [x] 1.1 Created `runtime/engine/vfx/core/vfx_emitter_pool.h` — `VFXEmitterPool` class:
       `Create(device, poolSize, defaultCapacity)`, `Destroy()`,
       `AcquireSlot(requestedCapacity) → GPUParticleBuffer*`,
       `ReleaseSlot(GPUParticleBuffer*)`.
-- [ ] 1.2 Internal storage: `std::vector<PoolSlot>` where each `PoolSlot` has a
+- [x] 1.2 Internal storage: `std::vector<PoolSlot>` where each `PoolSlot` has a
       `GPUParticleBuffer buffer; uint32_t capacity; bool inUse;`.
-- [ ] 1.3 Free list: `std::vector<uint32_t> freeSlots` (indices into the pool).
+- [x] 1.3 Free list: `std::vector<uint32_t> freeSlots_` (indices into the pool).
       `AcquireSlot()` pops from freeSlots, `ReleaseSlot()` pushes back.
-- [ ] 1.4 Default pool size: 32 slots. Default capacity per slot: 8192 particles.
+- [x] 1.4 Default pool: 32 slots (8x1K + 8x4K + 8x8K + 4x16K + 2x32K + 2x64K).
       Configurable via `VFXSystemConfig`.
 
 ## 2. Slot Reset (No GPU Dealloc)

@@ -92,6 +92,11 @@ struct VSOutput {
     float4 prevPositionCS : TEXCOORD5;   ///< Previous frame clip-space position for TAA motion vectors.
     float  speedFactor    : TEXCOORD6;   ///< Normalized speed [0,1] = saturate(speed / speedRangeMax). Used by PS for color-by-speed.
     float4 dynamicParams  : TEXCOORD7;   ///< Per-particle dynamic material parameters (Task 4.14.0). X=normalizedAge, YZW=user.
+    // ── Niagara-style flipbook UVs (pre-computed per vertex, interpolated) ──
+    /// @ref Niagara NiagaraSpriteVertexFactory.ush — VS-computed atlas UVs
+    float2 flipbookUV0    : TEXCOORD8;   ///< Atlas UV for current frame at this vertex.
+    float2 flipbookUV1    : TEXCOORD9;   ///< Atlas UV for next frame at this vertex (for blending).
+    float  flipbookLerp   : TEXCOORD10;  ///< Inter-frame blend factor [0,1].
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -121,7 +126,8 @@ cbuffer VFXBillboardConstants : register(b0) {
     uint spriteTextureIdx;     ///< SRV index: Texture2D<float4> sprite/atlas (PS only).
     uint depthBufferIdx;       ///< SRV index: Texture2D<float> scene depth reversed-Z (PS only).
     uint dynamicParamsBufferIdx; ///< SRV index: StructuredBuffer<float4> dynamic material params (Task 4.14.0).
-    uint _vfxPad1;
+    /// @ref Niagara SubImageIndex module — per-particle SoA flipbook index.
+    uint subImageIndexBufferIdx; ///< SRV index: StructuredBuffer<float> subImageIndices.
 };
 #else
 /// SM5 fallback: explicit SRV bindings for particle attribute buffers.
@@ -223,9 +229,14 @@ cbuffer VFXBillboardCB : register(b2) {
     // ── Color by speed (VS→PS, 16 bytes) ──────────────────────────────────
     /// When non-zero, VS passes speed-normalized factor to PS for color lerp.
     uint     colorBySpeedEnabled;   ///< 0=off, 1=on. PS uses speed instead of age for color lerp.
-    uint     _cbsPad0;              ///< Padding for 16-byte alignment.
-    uint     _cbsPad1;              ///< Padding for 16-byte alignment.
-    uint     _cbsPad2;              ///< Padding for 16-byte alignment.
+    uint     flipbookRows;          ///< Sprite atlas rows (1=no flipbook). VS computes per-frame UVs.
+    uint     flipbookCols;          ///< Sprite atlas cols (1=no flipbook).
+    uint     flipbookTotalFrames;   ///< Total valid frames in atlas.
+    // ── Flipbook FPS + channel mask (16 bytes) ──────────────────────────────
+    float    _cbsFlipbookFPS;       ///< Flipbook playback rate. 0=lifetime-driven.
+    uint     _cbsSpriteChannelMask; ///< PS reads spriteChannelMask here.
+    float    _cbsVfxTotalTime;      ///< Global total time — matches PS vfxTotalTime.
+    uint     _cbsPad4;              ///< 16-byte alignment padding.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -428,6 +439,9 @@ VSOutput main(uint vertexID : SV_VertexID) {
         output.prevPositionCS = float4(0, 0, 0, 1);
         output.speedFactor    = 0;
         output.dynamicParams  = float4(0, 0, 0, 0);
+        output.flipbookUV0    = float2(0, 0);
+        output.flipbookUV1    = float2(0, 0);
+        output.flipbookLerp   = 0;
         return output;
     }
 
@@ -650,7 +664,54 @@ VSOutput main(uint vertexID : SV_VertexID) {
 
     // ── Dynamic material parameters (Task 4.14.0) ──
     // Pass through per-particle float4 to PS for shader-driven effects.
+    // Override .x with authoritative normalizedAge (computed from VS-visible
+    // particleAge/particleLife). PS color-over-life reads this field.
     output.dynamicParams = particleDynParams;
+    output.dynamicParams.x = saturate(particleAge / max(particleLife, 0.0001f));
+
+    // ── Niagara-style atlas UV pre-computation (per-vertex) ──────────────
+    // Reads the per-particle subImageIndex written by the update CS each
+    // frame and computes the atlas UVs for the current frame, the next
+    // frame, and the blend factor between them. The PS simply samples
+    // at these UVs and lerps — no flipbook math runs in the PS.
+    //
+    /// @ref Niagara NiagaraSpriteVertexFactory.ush — SubUV VS pre-computation
+    /// @ref Nguyen 2007 "GPU Gems 3" ch.23 — SubUV sprite sheet animation
+    if (flipbookTotalFrames > 1u) {
+        // Read subImageIndex from SoA channel (written each frame by update CS).
+        float subImgIdx = 0.0f;
+#ifdef UZ_BINDLESS
+        if (subImageIndexBufferIdx != 0xFFFFFFFFu) {
+            StructuredBuffer<float> subImages = ResourceDescriptorHeap[subImageIndexBufferIdx];
+            subImgIdx = subImages[particleID];
+        }
+#endif
+        // Niagara pattern: frameA = floor(idx), frameB = frameA + 1, lerp = frac(idx).
+        uint framesClamped = max(flipbookTotalFrames, 1u);
+        uint frameA = (uint)floor(subImgIdx) % framesClamped;
+        uint frameB = (frameA + 1u) % framesClamped;
+        float lerpT = frac(subImgIdx);
+
+        uint cols = max(flipbookCols, 1u);
+        uint rows = max(flipbookRows, 1u);
+        float invCols = 1.0f / (float)cols;
+        float invRows = 1.0f / (float)rows;
+
+        float colA = (float)(frameA % cols);
+        float rowA = (float)(frameA / cols);
+        float colB = (float)(frameB % cols);
+        float rowB = (float)(frameB / cols);
+
+        float2 cornerUV = kCornerUVs[vertexInQuad];
+        output.flipbookUV0 = (float2(colA, rowA) + cornerUV) * float2(invCols, invRows);
+        output.flipbookUV1 = (float2(colB, rowB) + cornerUV) * float2(invCols, invRows);
+        output.flipbookLerp = lerpT;
+    } else {
+        // No flipbook — pass straight corner UVs.
+        output.flipbookUV0  = kCornerUVs[vertexInQuad];
+        output.flipbookUV1  = kCornerUVs[vertexInQuad];
+        output.flipbookLerp = 0.0f;
+    }
 
     return output;
 }

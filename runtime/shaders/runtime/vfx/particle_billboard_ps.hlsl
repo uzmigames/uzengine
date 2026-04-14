@@ -60,6 +60,11 @@ struct PSInput {
     float4 prevPositionCS : TEXCOORD5;   ///< Previous frame clip-space position (for motion vector PS).
     float  speedFactor    : TEXCOORD6;   ///< Normalized speed [0,1] from VS for color-by-speed.
     float4 dynamicParams  : TEXCOORD7;   ///< Per-particle dynamic material parameters (Task 4.14.0). X=normalizedAge, YZW=user.
+    // ── Niagara-style flipbook UVs (computed in VS, interpolated to PS) ──
+    /// @ref Niagara NiagaraSpriteVertexFactory.ush — VS-precomputed atlas UVs
+    float2 flipbookUV0    : TEXCOORD8;   ///< Atlas UV for current frame (interpolated).
+    float2 flipbookUV1    : TEXCOORD9;   ///< Atlas UV for next frame.
+    float  flipbookLerp   : TEXCOORD10;  ///< Inter-frame blend factor.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -92,7 +97,8 @@ cbuffer VFXBillboardConstants : register(b0) {
     uint spriteTextureIdx;     ///< Reserved (always UINT32_MAX, no sprite texture).
     uint depthBufferIdx;       ///< SRV index: Texture2D<float> scene depth (reversed-Z).
     uint dynamicParamsBufferIdx; ///< SRV index: StructuredBuffer<float4> dynamic params (Task 4.14.0). Not read by PS.
-    uint _vfxPad1;
+    /// @ref Niagara SubImageIndex module — declared for layout (read by VS only).
+    uint subImageIndexBufferIdx; ///< SRV index: StructuredBuffer<float> subImageIndices. Not read by PS.
 };
 #else
 /// SM5 fallback: explicit texture bindings.
@@ -182,6 +188,11 @@ cbuffer VFXBillboardCB : register(b2) {
     uint     flipbookRows;          ///< Sprite sheet rows (1 = no flipbook).
     uint     flipbookCols;          ///< Sprite sheet columns (1 = no flipbook).
     uint     flipbookTotalFrames;   ///< Total valid frames (rows*cols or less for partial sheets).
+    // ── Flipbook FPS + channel mask (16 bytes) ───────────────────────────
+    float    flipbookFPS;           ///< Flipbook playback rate (frames per second).
+    uint     spriteChannelMask;     ///< 0=RGBA, 1=R, 2=G, 3=B, 4=A.
+    float    vfxTotalTime;          ///< Global total time (s) — same as debug quad.
+    uint     _vfxBillboardPad1;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -248,6 +259,26 @@ float ComputeSoftParticleFade(float4 screenPos, float2 screenSize, float fadeDis
     return saturate(depthDifference / fadeDistance);
 }
 
+/// Applies the user-selected sprite channel mask to a sampled sprite color.
+///
+/// Selecting a single channel splats that channel to RGB and A so downstream
+/// multiplication by particle color/tint produces expected grayscale alpha
+/// mattes (common for single-channel smoke / alpha-only sprite sheets).
+///
+/// # Parameters
+/// - sample: sampled sprite RGBA.
+/// - mask: channel selector (0=RGBA, 1=R, 2=G, 3=B, 4=A).
+///
+/// # Returns
+/// Masked RGBA color.
+float4 ApplyChannelMask(float4 sample, uint mask) {
+    if (mask == 1u) return float4(sample.rrr, sample.r);
+    if (mask == 2u) return float4(sample.ggg, sample.g);
+    if (mask == 3u) return float4(sample.bbb, sample.b);
+    if (mask == 4u) return float4(sample.aaa, sample.a);
+    return sample;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Pixel Shader Entry Point
 // ─────────────────────────────────────────────────────────────────────────────
@@ -261,29 +292,24 @@ float ComputeSoftParticleFade(float4 screenPos, float2 screenSize, float fadeDis
 /// # Returns
 /// Final RGBA color for alpha-blended compositing.
 float4 main(PSInput input) : SV_Target {
-    // ── Sprite color: flipbook SubUV or procedural soft circle ──
     float4 spriteColor;
 
     if (flipbookTotalFrames > 1u) {
-        // Flipbook SubUV blending: compute frame UVs from particle age,
-        // sample both frames, and lerp for smooth inter-frame transitions.
-        /// @ref Nguyen 2007 "GPU Gems 3" ch. 23 — SubUV sprite sheet animation
-        float fps = 30.0f; // Default playback rate; override via CB when available.
-        FlipbookResult fb = ComputeFlipbookFrame(
-            input.age, input.lifetime,
-            flipbookRows, flipbookCols, fps, flipbookTotalFrames);
-
-        float2 atlasUV0 = SampleFlipbookUV(input.texcoord, fb.uv0, fb.frameSize);
-        float2 atlasUV1 = SampleFlipbookUV(input.texcoord, fb.uv1, fb.frameSize);
-
+        // ── Niagara flipbook sample ──────────────────────────────────────
+        // The VS has already computed per-vertex atlas UVs from the
+        // per-particle subImageIndex SoA channel (written by the update CS
+        // each frame). The PS just samples both frames and lerps by the
+        // interpolated blend factor. No flipbook math in the PS.
+        //
+        /// @ref Niagara NiagaraSpriteVertexFactory.ush — PS is purely stateless
 #ifdef UZ_BINDLESS
         if (spriteTextureIdx != 0xFFFFFFFF) {
             Texture2D<float4> spriteTex = ResourceDescriptorHeap[spriteTextureIdx];
-            float4 frame0 = spriteTex.SampleLevel(depthSampler, atlasUV0, 0);
-            float4 frame1 = spriteTex.SampleLevel(depthSampler, atlasUV1, 0);
-            spriteColor = lerp(frame0, frame1, fb.blendFactor);
+            float4 c0 = spriteTex.SampleLevel(depthSampler, input.flipbookUV0, 0);
+            float4 c1 = spriteTex.SampleLevel(depthSampler, input.flipbookUV1, 0);
+            spriteColor = lerp(c0, c1, input.flipbookLerp);
+            spriteColor = ApplyChannelMask(spriteColor, spriteChannelMask);
         } else {
-            // No texture bound — fall back to procedural circle with flipbook alpha.
             float2 ctr = input.texcoord * 2.0f - 1.0f;
             float d = dot(ctr, ctr);
             float a = saturate(1.0f - d);
@@ -298,6 +324,7 @@ float4 main(PSInput input) : SV_Target {
         if (spriteTextureIdx != 0xFFFFFFFF) {
             Texture2D<float4> spriteTex = ResourceDescriptorHeap[spriteTextureIdx];
             spriteColor = spriteTex.SampleLevel(depthSampler, input.texcoord, 0);
+            spriteColor = ApplyChannelMask(spriteColor, spriteChannelMask);
         } else {
             float2 ctr = input.texcoord * 2.0f - 1.0f;
             float d = dot(ctr, ctr);
@@ -317,8 +344,8 @@ float4 main(PSInput input) : SV_Target {
     }
 
     // ── Evaluate color over lifetime ──
-    // normalizedAge in [0,1] maps the particle's age to its full lifespan.
-    float normalizedAge = saturate(input.age / max(input.lifetime, 0.0001f));
+    // Use per-particle normalizedAge passed from VS via dynamicParams.x.
+    float normalizedAge = saturate(input.dynamicParams.x);
 
     // ── Color by speed override ──
     // When colorBySpeedEnabled is non-zero, replace normalizedAge with the

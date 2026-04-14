@@ -9,18 +9,18 @@ as the foundation for dynamic AABB, death events, gameplay queries, etc.
 
 ## 1. Core Readback Manager
 
-- [ ] 1.1 Create `runtime/engine/vfx/core/vfx_readback.h` — `VFXReadbackManager` class:
+- [x] 1.1 Created `runtime/engine/vfx/core/vfx_readback.h` — `VFXReadbackManager` class:
       `Create(device, maxRequestsPerFrame, ringSize=3)`, `Destroy()`,
       `RequestReadback(srcBuffer, byteOffset, byteSize, callbackFn)`,
       `BeginFrame(frameIndex)`, `EndFrame(cmdList)`, `ProcessCallbacks()`.
-- [ ] 1.2 `ReadbackRequest` struct: `RhiBufferHandle src; uint32_t offset; uint32_t size;
+- [x] 1.2 `ReadbackRequest` struct: `RHIBufferHandle src; uint32_t offset; uint32_t size;
       uint32_t ringSlot; std::function<void(const void* data, uint32_t size)> callback;`.
-- [ ] 1.3 Ring buffer of staging heaps: `std::array<StagingFrame, 3>` where each
+- [x] 1.3 Ring buffer of staging heaps: `std::vector<StagingFrame>` where each
       `StagingFrame` has a single large READBACK buffer (e.g., 64KB) with a bump allocator.
       Requests within a frame suballocate from the same staging buffer.
-- [ ] 1.4 `EndFrame()` issues CopyBufferRegion commands for all requests in the current
+- [x] 1.4 `EndFrame()` issues CopyBuffer commands for all requests in the current
       frame's staging slot. Advances ring index.
-- [ ] 1.5 `ProcessCallbacks()` maps the staging buffer from `ringIndex - ringSize` (oldest
+- [x] 1.5 `ProcessCallbacks()` maps the staging buffer from oldest
       complete frame), invokes each request's callback with a pointer to the mapped data,
       then unmaps. Callbacks execute on the calling thread (main thread).
 

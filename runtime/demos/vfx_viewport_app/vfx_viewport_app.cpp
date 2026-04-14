@@ -11,6 +11,9 @@
 #include "engine/ecs/core/world.h"
 #include "engine/math/quaternion.h"
 #include "engine/vfx/components/emitter_presets.h"
+#include "engine/ecs/environment/vfx_emitter_component.h"
+#include "engine/ecs/environment/vfx_system_component.h"
+#include "engine/ecs/scene/scene_component.h"
 // VFX editor overlay — included directly (light header, no scene_renderer.h dependency)
 #include "engine/vfx/editor/vfx_editor_overlay.h"
 #include "engine/vfx/components/particle_emitter.h"
@@ -33,6 +36,14 @@ namespace uz {
 // ─────────────────────────────────────────────────────────────────────────────
 
 static void ApplyPresetToComponent(VfxEmitterComponent& c, const ParticleEmitter& p) {
+    // Sprite texture (path cleared by default-constructed preset = procedural circle)
+    c.spriteTexturePath  = p.spriteTexturePath;
+    c.flipbookRows       = p.flipbookRows;
+    c.flipbookCols       = p.flipbookCols;
+    c.flipbookTotalFrames = p.flipbookTotalFrames;
+    c.flipbookFPS        = p.flipbookFPS;
+    c.spriteChannelMask  = p.spriteChannelMask;
+
     c.maxParticles       = p.maxParticles;
     c.emissionRate       = p.emissionRate;
     c.lifetime           = p.lifetime;
@@ -91,6 +102,7 @@ static void ApplyPresetToComponent(VfxEmitterComponent& c, const ParticleEmitter
 
 using PresetFn = void(*)(ParticleEmitter&);
 static const PresetFn kPresetFns[] = {
+    ApplyPreset_FireballProjectile,
     ApplyPreset_Fire, ApplyPreset_Smoke, ApplyPreset_Sparks,
     ApplyPreset_Fountain, ApplyPreset_MagicOrb, ApplyPreset_Burst,
     ApplyPreset_ExplosionBurst, ApplyPreset_ExplosionSmoke, ApplyPreset_ExplosionDebris,
@@ -100,6 +112,7 @@ static const PresetFn kPresetFns[] = {
     ApplyPreset_LitDebris, ApplyPreset_Orbital, ApplyPreset_AirResist,
 };
 static const char* const kPresetNames[] = {
+    "FireballProj",
     "Fire", "Smoke", "Sparks", "Fountain", "MagicOrb", "Burst",
     "ExpBurst", "ExpSmoke", "ExpDebris",
     "Fireball", "RingOfFire", "ConeJet", "CylinderVol",
@@ -174,20 +187,61 @@ void VFXViewportApp::OnStart() {
         world.AddComponent<SkyAtmosphereComponent>(skyEntity);
     }
 
-    // ── Single VFX Emitter at center — cycle presets with Left/Right ────
+    // ── Fireball Compound: ONE entity with VfxSystemComponent ──────────
+    // The VfxSystemComponent points to a `.uzvfxsys` asset that describes
+    // the child emitters (head + sparks + smoke). The scene renderer
+    // creates a VfxSystemInstance which owns those ParticleEmitters
+    // internally and propagates the entity's world transform to them.
+    // This replaces the legacy 3-entity hack (m_vfxEntity + m_vfxSparks
+    // + m_vfxSmoke).
     {
-        ParticleEmitter preset;
-        ApplyPreset_Fire(preset);
-
-        Entity e = world.CreateEntity();
-        world.AddComponent<CName>(e, CName{"VFX"});
-        auto& sc = world.AddComponent<SceneComponent>(e);
+        m_vfxEntity = world.CreateEntity();
+        world.AddComponent<CName>(m_vfxEntity, CName{"VFX_Fireball"});
+        auto& sc = world.AddComponent<SceneComponent>(m_vfxEntity);
         sc.SetPosition({0.0f, 0.0f, 0.0f});
-        auto& em = world.AddComponent<VfxEmitterComponent>(e);
-        ApplyPresetToComponent(em, preset);
-        em.emitting = true;
-        m_emitterEntities.push_back(e);
+        auto& sys = world.AddComponent<VfxSystemComponent>(m_vfxEntity);
+        sys.systemAssetPath  = m_systemAssetPath;
+        sys.emitting         = true;
     }
+
+    // ── Standalone emitter for preset cycling (Tab/Left/Right) ─────────
+    // The fireball compound is hard-coded above; for the remaining presets
+    // we keep one VfxEmitterComponent entity whose parameters get rewritten
+    // when the user cycles presets.
+    auto createEmitter = [&](const char* name, const ParticleEmitter& p, bool useSprite) -> Entity {
+        Entity ent = world.CreateEntity();
+        world.AddComponent<CName>(ent, CName{name});
+        auto& sc = world.AddComponent<SceneComponent>(ent);
+        sc.SetPosition({0.0f, 0.0f, 0.0f});
+        auto& em = world.AddComponent<VfxEmitterComponent>(ent);
+        ApplyPresetToComponent(em, p);
+        em.emitting = true;
+        if (useSprite && !m_spriteTexturePath.empty()) {
+            em.spriteTexturePath  = m_spriteTexturePath;
+            em.flipbookRows       = m_flipbookRows;
+            em.flipbookCols       = m_flipbookCols;
+            em.flipbookTotalFrames = m_flipbookTotalFrames;
+        }
+        em.flipbookFPS       = m_flipbookFPS;
+        em.spriteChannelMask = m_spriteChannelMask;
+        m_emitterEntities.push_back(ent);
+        return ent;
+    };
+
+    {
+        // Default standalone preset = Fire (used when user cycles past the
+        // built-in fireball compound). Emission is silenced by default so
+        // the compound fireball is the only visible effect at startup.
+        ParticleEmitter stdP;
+        ApplyPreset_Fire(stdP);
+        Entity stdEmitter = createEmitter("VFX_Standalone", stdP, true);
+        if (world.HasComponent<VfxEmitterComponent>(stdEmitter)) {
+            world.GetComponent<VfxEmitterComponent>(stdEmitter).emitting = false;
+        }
+    }
+
+    UZ_LOG(App, Info, "VFXViewportApp: fireball compound created via VfxSystemComponent '{}'",
+           m_systemAssetPath);
 
     UZ_LOG(App, Info, "VFXViewportApp: started (SUN + SKY + 1 emitter, preset: {})",
            kPresetNames[m_currentPreset]);
@@ -220,6 +274,39 @@ void VFXViewportApp::OnStart() {
 
 void VFXViewportApp::OnUpdate(float dt) {
     m_totalTime += dt;
+
+    // ── Fireball projectile animation: move the single compound entity ──
+    // The VfxSystemInstance automatically propagates this position to all
+    // child emitters (head + sparks + smoke) via SetWorldTransform().
+    if (m_currentPreset == 0) {
+        World& w = GetWorld();
+        m_projectilePhase += dt * 0.4f; // 2.5 seconds per cycle
+        if (m_projectilePhase >= 1.0f) m_projectilePhase -= 1.0f;
+        const float startX = -600.0f;
+        const float endX   =  600.0f;
+        const float x = startX + (endX - startX) * m_projectilePhase;
+        const Vec3 pos{x, 0.0f, 0.0f};
+
+        if (w.HasComponent<SceneComponent>(m_vfxEntity)) w.GetComponent<SceneComponent>(m_vfxEntity).SetPosition(pos);
+    } else {
+        m_projectilePhase = 0.0f;
+    }
+
+    // ── Gate fireball vs. standalone emitter based on selected preset ──
+    // Preset 0 = FireballProj -> compound active, standalone silent.
+    // Any other preset -> compound silent, standalone active.
+    {
+        World& w = GetWorld();
+        const bool fireballActive = (m_currentPreset == 0);
+        if (w.HasComponent<VfxSystemComponent>(m_vfxEntity)) {
+            w.GetComponent<VfxSystemComponent>(m_vfxEntity).emitting = fireballActive;
+        }
+        if (!m_emitterEntities.empty() && w.IsValid(m_emitterEntities[0])) {
+            if (w.HasComponent<VfxEmitterComponent>(m_emitterEntities[0])) {
+                w.GetComponent<VfxEmitterComponent>(m_emitterEntities[0]).emitting = !fireballActive;
+            }
+        }
+    }
 
     InputSystem& input = GetInput();
     World& world = GetWorld();
@@ -266,6 +353,15 @@ void VFXViewportApp::OnUpdate(float dt) {
                 ParticleEmitter preset;  // default-constructed = all defaults
                 kPresetFns[m_currentPreset](preset);
                 ApplyPresetToComponent(comp, preset);
+                // Re-apply --sprite CLI override (presets don't set sprite texture)
+                if (!m_spriteTexturePath.empty()) {
+                    comp.spriteTexturePath  = m_spriteTexturePath;
+                    comp.flipbookRows       = m_flipbookRows;
+                    comp.flipbookCols       = m_flipbookCols;
+                    comp.flipbookTotalFrames = m_flipbookTotalFrames;
+                }
+                comp.flipbookFPS       = m_flipbookFPS;
+                comp.spriteChannelMask = m_spriteChannelMask;
                 // Also reset + apply to the runtime ParticleEmitter
                 if (auto* rt = GetRuntimeEmitter(comp.runtimeEmitterIdx)) {
                     // Reset ALL config fields to defaults

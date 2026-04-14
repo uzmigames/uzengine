@@ -10,6 +10,7 @@
 
     IRHIDevice* m_device = nullptr;
     bool m_editorMode = false;            ///< When true, editor grid + stats overlay are rendered.
+    bool m_flipbookDebugEnabled = false;  ///< When true, a debug flipbook quad is drawn in the top-right corner (VFX verification).
     uint32_t m_editorCameraInitFrame = 0;   ///< Frame counter for deferred editor camera init (waits for Lua scripts).
     Entity m_selectedEntity{};            ///< Currently selected entity for editor outline/gizmo rendering.
     uint8_t m_gizmoMode = 0;             ///< GizmoMode: 0=Translate, 1=Rotate, 2=Scale.
@@ -708,6 +709,13 @@
     /// ParticleEmitter instances created from VfxEmitterComponent ECS data.
     /// Indexed by the component's runtimeEmitterIdx field.
     std::vector<std::unique_ptr<ParticleEmitter>> m_runtimeEmitters;
+
+    /// Compound VfxSystemInstance instances created from VfxSystemComponent
+    /// ECS data. Each instance owns N child ParticleEmitter* which are also
+    /// registered with the global VFXSystem (but NOT stored in
+    /// m_runtimeEmitters — ownership is with the system instance).
+    /// Indexed by the component's runtimeInstanceIdx field.
+    std::vector<std::unique_ptr<VfxSystemInstance>> m_runtimeSystems;
 
     /// Hot-reload watcher for .uzfx and .uzvfx files (dev builds only).
     std::unique_ptr<VFXHotReload> m_vfxHotReload;

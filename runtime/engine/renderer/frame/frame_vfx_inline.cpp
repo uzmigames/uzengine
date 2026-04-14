@@ -316,6 +316,9 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         spawnCBData.spawnShape        = emitter->spawnShape;
         spawnCBData.spawnOnSurface    = 0;
 
+        // Flipbook total frames for SubImageIndex computation in spawn shader.
+        spawnCBData.flipbookTotalFrames = emitter->flipbookTotalFrames;
+
         // Dynamic params UAV -- use positions UAV as fallback to prevent
         // writes to descriptor 0 (which corrupts the descriptor ring).
         // Use dedicated dummy buffer — CANNOT use positions/sizes (spawn
@@ -474,6 +477,9 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         updateCBData.rotationRate           = emitter->rotationRate;
         updateCBData.rotationOverLifeStart  = emitter->rotationOverLifeStart;
         updateCBData.rotationOverLifeEnd    = emitter->rotationOverLifeEnd;
+
+        // Flipbook total frames for SubImageIndex computation in update shader.
+        updateCBData.flipbookTotalFrames    = emitter->flipbookTotalFrames;
 
         // Kill volumes (buffer-based, default disabled with count=0).
         updateCBData.killVolumeSrvIndex     = m_device->GetBufferSRVIndex(m_vfxKillVolumeBuffer);
