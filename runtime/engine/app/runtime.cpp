@@ -441,6 +441,7 @@ int uz_create_viewport(void* parent_hwnd, int width, int height) {
             state->sceneRenderer.GetInput(), &state->selectionManager,
             &state->sceneRenderer.GetCamera(), &state->world);
         state->editorInput.SetSceneRenderer(&state->sceneRenderer);
+        state->sceneRenderer.SetEditorInputHandler(&state->editorInput);
         state->editorInputReady = true;
         UZ_LOG(RuntimeAPI, Info, "Editor input handler initialized (selection + gizmos)");
     }
@@ -1432,6 +1433,7 @@ void uz_set_editor_mode(int enabled) {
                 s_state->sceneRenderer.GetInput(), &s_state->selectionManager,
                 &s_state->sceneRenderer.GetCamera(), &s_state->world);
             s_state->editorInput.SetSceneRenderer(&s_state->sceneRenderer);
+            s_state->sceneRenderer.SetEditorInputHandler(&s_state->editorInput);
             s_state->editorInputReady = true;
             UZ_LOG(RuntimeAPI, Info, "Editor input handler initialized (selection + gizmos)");
 

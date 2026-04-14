@@ -28,6 +28,7 @@
 #include "log.h"
 #include "editor_grid.h"
 #include "stats_overlay.h"
+#include "viewport_toolbar.h"
 #include "engine/vfx/editor/vfx_editor_overlay.h"
 #include "halton.h"
 #include "cvar.h"
@@ -147,6 +148,24 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
         m_vfxEditorOverlay->BeginFrame(ctx.frameIndex);
     }
 
+    // ── Viewport Toolbar deferred init ───────────────────────────────────
+    if (!m_viewportToolbarInitialized && m_viewportToolbar) {
+        UploadContext tbUpload(m_device);
+        if (m_viewportToolbar->Init(m_device, ctx.cmdList, tbUpload,
+                m_shaderMgr->GetPipeline(), RHIFormat::RGBA8Unorm,
+                m_width, m_height, ctx.bindless)) {
+            m_viewportToolbarInitialized = true;
+            UZ_LOG(Renderer, Info, "ViewportToolbar: initialized OK");
+        } else {
+            UZ_LOG(Renderer, Warning, "ViewportToolbar: init FAILED — toolbar disabled");
+        }
+        ctx.cmdList->End();
+        ctx.cmdList->Execute();
+        m_device->WaitIdle();
+        tbUpload.ReleaseStaging();
+        ctx.cmdList->Begin();
+    }
+
     // ── Shader hot-reload (poll every frame, recompile if .hlsl changed) ──
     if (m_shaderMgr) {
         auto recompiled = m_shaderMgr->GetPipeline().PollHotReload();
@@ -168,6 +187,11 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
         vfxOverlayWantsMouse = m_vfxEditorOverlay->HandleMouse(m_input.get(), ctx.dt);
     }
 
+    // ── Viewport Toolbar: update + hit-test (editor mode only) ───────────
+    if (m_editorMode && m_viewportToolbarInitialized && m_viewportToolbar) {
+        m_viewportToolbar->Update(m_input.get(), m_editorInputHandler, this);
+    }
+
     // ── Debug mode toggle: '0' = off, '1'-'7' = G-Buffer channels ──────
     if (m_input->IsKeyJustPressed(Key::Num0)) {
         m_debugMode = GBufferDebugMode::Count;
@@ -184,6 +208,17 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
             ? RenderPath::Forward : RenderPath::Deferred;
         UZ_LOG(Renderer, Info, "Render path switched to: {}",
                RenderPathToString(m_renderPath));
+    }
+
+    // ── Game view toggle: G — hides all editor overlays ──────────────────
+    if (m_editorMode && m_input->IsKeyJustPressed(Key::G)) {
+        m_gameViewMode = !m_gameViewMode;
+        auto& cvars = CVarRegistry::Get();
+        // Grid and toolbar CVars reflect game-view state.
+        cvars.Set("r.Toolbar.Show", m_gameViewMode ? 0.f : 1.f);
+        cvars.Set("r.Show.Grid",    m_gameViewMode ? 0.f : 1.f);
+        cvars.Set("r.Gizmo.Show",   m_gameViewMode ? 0.f : 1.f);
+        UZ_LOG(Renderer, Info, "Game view: {}", m_gameViewMode ? "ON (overlays hidden)" : "OFF (overlays visible)");
     }
 
     // ── Editor Free-Cam Toggle (F5) ──

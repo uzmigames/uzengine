@@ -134,6 +134,7 @@ private:
         float    alpha;             ///< Opacity (1.0 normal, 0.5 for inactive axes during drag).
         uint32_t vertexBufferSrv;   ///< SRV index for structured vertex buffer.
         uint32_t _pad0, _pad1, _pad2; ///< Padding to 16-byte alignment.
+        Mat4     localRot;          ///< Entity rotation matrix for Local space. Identity in World space.
     };
 
     // ── Geometry build helpers ───────────────────────────────────────────

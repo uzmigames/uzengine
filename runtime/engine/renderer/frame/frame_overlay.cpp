@@ -24,9 +24,12 @@
 #include "gizmo_renderer.h"
 #include "outline_pass.h"
 #include "stats_overlay.h"
+#include "viewport_toolbar.h"
 #include "engine/vfx/vfx_system.h"
 #include "engine/vfx/components/particle_emitter.h"
 #include "engine/vfx/editor/vfx_editor_overlay.h"
+
+#include "cvar.h"
 
 #include <cstdio>
 #include <cstring>
@@ -40,7 +43,7 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
     // Renders a colored outline around the selected entity. Runs before the
     // overlay pass (grid + stats) so the outline composites under the UI.
     // Uses a two-pass technique: mask (mesh→R8Unorm) + detect (fullscreen edge).
-    if (m_editorMode && m_selectedEntity.IsValid() && m_outlinePass && m_shadowDebugMode != 1) {
+    if (m_editorMode && !m_gameViewMode && m_selectedEntity.IsValid() && m_outlinePass && m_shadowDebugMode != 1) {
         // Depth must match display resolution for the mask depth test.
         const bool depthMatchesDisplay = (m_renderWidth == m_width && m_renderHeight == m_height);
         if (depthMatchesDisplay) {
@@ -137,8 +140,14 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
             }
 
             // ── Gizmo (transform handles on selected entity) ────────
+            const bool gizmoVisible =
+                CVarRegistry::Get().GetFloat("r.Gizmo.Show", 1.f) >= 0.5f;
+            const bool isSelectMode =
+                (ctx.gizmoModeRaw == static_cast<uint8_t>(GizmoMode::Select));
+
             if (m_editorMode && m_selectedEntity.IsValid()
-                && m_gizmoRenderer && m_gizmoRenderer->IsInitialized()) {
+                && m_gizmoRenderer && m_gizmoRenderer->IsInitialized()
+                && gizmoVisible && !isSelectMode) {
                 // Find the selected entity's world position from the draw list.
                 Vec3 entityPos{0.f, 0.f, 0.f};
                 Quat entityRot = Quat::Identity();
@@ -157,7 +166,7 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
                                        ctx.gizmoActiveAxis);
             }
 
-            if (m_editorMode && m_statsOverlayInitialized) {
+            if (m_editorMode && m_statsOverlayInitialized && !m_gameViewMode) {
                 const uint32_t drawCount = ctx.useInstancing
                     ? static_cast<uint32_t>(ctx.instanceBatches.size())
                     : static_cast<uint32_t>(ctx.drawList.Count());
@@ -252,6 +261,11 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
                     }
                 }
                 m_vfxEditorOverlay->Render(cmd, *m_cbRing);
+            }
+
+            // ── Viewport Toolbar ────────────────────────────────────
+            if (m_editorMode && !m_gameViewMode && m_viewportToolbarInitialized && m_viewportToolbar) {
+                m_viewportToolbar->Render(cmd, *m_cbRing, ctx.frameIndex);
             }
 
             cmd->EndRenderPass();

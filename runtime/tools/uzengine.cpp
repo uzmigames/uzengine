@@ -632,6 +632,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         editorInput.Init(sceneRenderer.GetInput(), &selectionManager,
                          &sceneRenderer.GetCamera(), &world);
         editorInput.SetSceneRenderer(&sceneRenderer);
+        sceneRenderer.SetEditorInputHandler(&editorInput);
         // Editor mode: WASD moves camera only while RMB held.
         sceneRenderer.GetCameraController().SetEditorMode(true);
         UZ_LOG(Engine, Info, "Editor input handler initialized");

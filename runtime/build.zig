@@ -125,6 +125,7 @@ pub fn build(b: *std.Build) void {
         "editor/screenshot",
         "editor/input",
         "editor/selection",
+        "editor/toolbar",
     };
 
     const thirdparty_include_dirs = [_][]const u8{
@@ -1017,6 +1018,7 @@ pub fn build(b: *std.Build) void {
         addCppDir(editor_mod, b, "editor/screenshot", cpp_flags);
         addCppDir(editor_mod, b, "editor/input",      cpp_flags);
         addCppDir(editor_mod, b, "editor/selection",  cpp_flags);
+        addCppDir(editor_mod, b, "editor/toolbar",    cpp_flags);
 
         // Include paths — same as runtime so editor code can include engine headers
         editor_mod.addIncludePath(b.path("."));

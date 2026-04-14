@@ -94,7 +94,9 @@ class ShaderManager;
 class PipelineLibrary;
 class CBRingAllocator;
 class EditorGrid;
+class EditorInputHandler;
 class StatsOverlay;
+class ViewportToolbar;
 class VfxEditorOverlay;
 class OutlinePass;
 class GizmoRenderer;
@@ -782,6 +784,10 @@ public:
 
     /// Returns the object-space AABB bounds for a mesh by its ID.
     [[nodiscard]] bool GetMeshBounds(uint32_t meshId, Vec3& outMin, Vec3& outMax) const;
+
+    /// Sets the EditorInputHandler pointer used by the ViewportToolbar.
+    /// Non-owning — the handler must outlive the renderer.
+    void SetEditorInputHandler(EditorInputHandler* handler) { m_editorInputHandler = handler; }
 
     /// Sets the active gizmo mode for editor gizmo rendering.
     /// 0 = translate, 1 = rotate, 2 = scale.

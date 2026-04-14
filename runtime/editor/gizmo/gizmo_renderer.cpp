@@ -8,9 +8,11 @@
 
 #include "camera.h"
 #include "cb_ring_allocator.h"
+#include "cvar.h"
 #include "editor_input_handler.h"
 #include "engine_shaders.h"
 #include "log.h"
+#include "quaternion.h"
 #include "rhi.h"
 #include "root_slots.h"
 #include "shader_pipeline.h"
@@ -932,8 +934,8 @@ void GizmoRenderer::DrawAxisSubsetIndexed(IRHICommandList* cmdList, CBRingAlloca
 
 void GizmoRenderer::Draw(IRHICommandList* cmdList, CBRingAllocator& cbRing,
                           const Camera& camera,
-                          const Vec3& worldPos, const Quat& /*entityRotation*/,
-                          GizmoMode mode, GizmoSpace /*space*/,
+                          const Vec3& worldPos, const Quat& entityRotation,
+                          GizmoMode mode, GizmoSpace space,
                           int hoveredAxis,
                           int activeAxis) {
     if (!m_initialized) return;
@@ -954,7 +956,16 @@ void GizmoRenderer::Draw(IRHICommandList* cmdList, CBRingAllocator& cbRing,
     // Scale so the gizmo occupies ~kTargetScreenPx on screen regardless of distance.
     // screenScale = distToCamera * tan(fov/2) * (targetPx / viewportHeight).
     // Using 720p as reference baseline.
-    const float screenScale = distToCamera * tanHalfFov * (kTargetScreenPx / 720.0f);
+    // r.Gizmo.Scale multiplies the screen-space size for 4K / accessibility use.
+    const float gizmoScaleMul = CVarRegistry::Get().GetFloat("r.Gizmo.Scale", 1.0f);
+    const float screenScale = distToCamera * tanHalfFov * (kTargetScreenPx / 720.0f)
+                              * gizmoScaleMul;
+
+    // ── Compute local rotation matrix ───────────────────────────────
+    // World space: identity. Local space: entity rotation matrix.
+    const Mat4 localRot = (space == GizmoSpace::Local)
+                          ? entityRotation.ToMatrix()
+                          : Mat4::Identity();
 
     // ── Prepare base constant buffer ────────────────────────────────
 
@@ -969,6 +980,7 @@ void GizmoRenderer::Draw(IRHICommandList* cmdList, CBRingAllocator& cbRing,
     baseCB._pad0 = 0;
     baseCB._pad1 = 0;
     baseCB._pad2 = 0;
+    baseCB.localRot = localRot;
 
     // ── Draw based on mode ──────────────────────────────────────────
 

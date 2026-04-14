@@ -30,6 +30,7 @@
 #include "gizmo_renderer.h"
 #include "outline_pass.h"
 #include "stats_overlay.h"
+#include "viewport_toolbar.h"
 #include "engine/vfx/editor/vfx_editor_overlay.h"
 #include "shader_compiler.h"
 #include "shader_compiler_fxc.h"
@@ -143,6 +144,10 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     // ── Stats Overlay (deferred init — needs cmdList in recording state) ─
     m_statsOverlay = std::make_unique<StatsOverlay>();
     m_statsOverlayInitialized = false;
+
+    // ── Viewport Toolbar (deferred init — needs cmdList in recording state) ─
+    m_viewportToolbar = std::make_unique<ViewportToolbar>();
+    m_viewportToolbarInitialized = false;
 
     // ── VFX Editor Overlay (deferred init — same as stats overlay) ────────
     m_vfxEditorOverlay = std::make_unique<VfxEditorOverlay>();
@@ -946,6 +951,19 @@ void SceneRenderer::RegisterCVars() {
     cvars.Register("r.PassInspector.GridRows", 4.f,
                    "Pass grid row count", 1.f, 8.f);
 
+    // ── Gizmo CVars ──────────────────────────────────────────────────────
+    cvars.Register("r.Gizmo.Show", 1.f,
+                   "Show editor transform gizmo (0=hide, 1=show)", 0.f, 1.f);
+    cvars.Register("r.Gizmo.Scale", 1.f,
+                   "Gizmo screen-space size multiplier (1.0=default, 2.0=double for 4K)", 0.1f, 4.f);
+
+    // ── Toolbar CVars ─────────────────────────────────────────────────────
+    cvars.Register("r.Toolbar.Show", 1.f,
+                   "Show viewport toolbar overlay (0=hide, 1=show)", 0.f, 1.f);
+    cvars.Register("r.Toolbar.Profile", 0.f,
+                   "Toolbar profile: 0=Full, 1=MaterialPreview, 2=MeshPreview, 3=Minimal",
+                   0.f, 3.f);
+
     // All other CVars (pass toggles, parameters) are registered decentrally
     // via UZ_CVAR_* macros in their respective subsystem .cpp files.
     // ApplyCVars() reads them by name — no local registration needed.
@@ -1208,6 +1226,9 @@ void SceneRenderer::Resize(uint32_t width, uint32_t height) {
 
     if (m_statsOverlay) {
         m_statsOverlay->SetScreenSize(width, height);
+    }
+    if (m_viewportToolbar) {
+        m_viewportToolbar->SetScreenSize(width, height);
     }
     if (m_vfxEditorOverlay) {
         m_vfxEditorOverlay->SetScreenSize(width, height);
@@ -1541,6 +1562,7 @@ void SceneRenderer::Shutdown() {
     m_asyncPendingSlots.clear();
 
     if (m_statsOverlay)    m_statsOverlay->Shutdown();
+    if (m_viewportToolbar) m_viewportToolbar->Shutdown();
     if (m_vfxEditorOverlay) m_vfxEditorOverlay->Shutdown();
     if (m_gizmoRenderer)   m_gizmoRenderer->Shutdown();
     if (m_outlinePass)     m_outlinePass->Shutdown();
@@ -1553,6 +1575,7 @@ void SceneRenderer::Shutdown() {
     m_cameraCtrl.reset();
     m_cameraManager.reset();
     m_statsOverlay.reset();
+    m_viewportToolbar.reset();
     m_vfxEditorOverlay.reset();
     m_gizmoRenderer.reset();
     m_outlinePass.reset();

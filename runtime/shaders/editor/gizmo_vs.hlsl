@@ -15,6 +15,7 @@ cbuffer GizmoCB : register(b1) {
     uint   _pad0;
     uint   _pad1;
     uint   _pad2;
+    row_major float4x4 localRot; // Entity rotation for Local coord space. Identity in World space.
 };
 
 struct GizmoVertex {
@@ -42,12 +43,14 @@ VSOutput main(uint vertexID : SV_VertexID) {
 #endif
     GizmoVertex v = vertexBuffer[vertexID];
 
-    // Scale vertex to maintain constant screen size, then translate to world pos
-    float3 worldPos = v.position * screenScale + gizmoWorldPos;
-    output.position = mul(float4(worldPos, 1.0), viewProj);
+    // Apply entity local rotation (identity in World space, entity rotation in Local space),
+    // scale to maintain constant screen size, then translate to world position.
+    float3 rotatedPos    = mul(float4(v.position, 0.0), localRot).xyz;
+    float3 worldPos      = rotatedPos * screenScale + gizmoWorldPos;
+    output.position      = mul(float4(worldPos, 1.0), viewProj);
 
-    // Pass normal as-is (gizmo is axis-aligned in world space, no rotation needed)
-    output.normal = v.normal;
+    // Rotate normal to match the local orientation for correct N-dot-L shading.
+    output.normal = mul(float4(v.normal, 0.0), localRot).xyz;
 
     // Use per-vertex color if non-zero, else use axis color from CB
     float colorLen = dot(v.color, v.color);
