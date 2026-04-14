@@ -32,6 +32,7 @@
 #include "render_path.h"
 #include "gbuffer_debug_pass.h"  // GBufferDebugMode
 #include "debug_view_mode.h"    // DebugViewMode
+#include "show_flags.h"       // ShowFlags / ShowFlag
 #include "gpu_mesh.h"
 #include "texture_loader.h"
 #include "screenshot_capture.h"
@@ -356,6 +357,25 @@ public:
 
     /// Returns the current debug view mode.
     [[nodiscard]] DebugViewMode GetDebugViewMode() const { return m_debugViewMode; }
+
+    /// Returns the current show-flag set by value. Modify via `SetShowFlag`
+    /// — a copy is returned so callers can read without holding a reference
+    /// into the renderer (ShowFlags is 8 bytes).
+    [[nodiscard]] ShowFlags GetShowFlags() const { return m_showFlags; }
+
+    /// Returns a mutable reference to the show-flag set. Used by CVar-bridge
+    /// and IPC handlers that apply edits between frames.
+    [[nodiscard]] ShowFlags& MutableShowFlags() { return m_showFlags; }
+
+    /// Overwrites the entire show-flag set. Takes effect on the next
+    /// `RenderFrame()` call.
+    void SetShowFlags(ShowFlags flags) { m_showFlags = flags; }
+
+    /// Sets a single show flag to `enabled`. Takes effect on the next frame.
+    void SetShowFlag(ShowFlag flag, bool enabled) { m_showFlags.Set(flag, enabled); }
+
+    /// Returns `true` if the given show flag is currently enabled.
+    [[nodiscard]] bool GetShowFlag(ShowFlag flag) const { return m_showFlags.Get(flag); }
 
     /// Sets the shadow debug visualization mode (0=off, 1-8=debug views).
     /// See shadow_debug.hlsli for mode descriptions.

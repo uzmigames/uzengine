@@ -1,17 +1,17 @@
 ## Session 1: ShowFlags Architecture
-- [ ] 1.1 Create `show_flags.h` — `ShowFlags` struct with 64-bit bitfield. Flags: Grid, Fog, Bloom, AO, Shadows, ContactShadows, SSR, SSGI, StaticMeshes, SkeletalMeshes, Particles, Decals, Translucency, Atmosphere, Clouds, PointLights, SpotLights, DirectionalLight, PostProcess, AntiAliasing, MotionBlur, DOF, LensFlare, Volumetrics. Default: all enabled.
-- [ ] 1.2 Add `ShowFlags m_showFlags` to `SceneRenderer`. Add `GetShowFlags()`/`SetShowFlag(flag, enabled)` API.
-- [ ] 1.3 Wire ShowFlags into render passes: `RegisterGTAOPass` checks `ShowFlags::AO`, `RegisterAtmosphereFogCloudPasses` checks `ShowFlags::Fog`/`ShowFlags::Clouds`/`ShowFlags::Atmosphere`, `EditorGrid::Draw` checks `ShowFlags::Grid`, `RegisterSSRPasses` checks `ShowFlags::SSR`, bloom pass checks `ShowFlags::Bloom`, etc.
-- [ ] 1.4 Add `r.Show.*` CVars that mirror ShowFlags — `r.Show.Grid`, `r.Show.Fog`, `r.Show.Bloom`, `r.Show.AO`, `r.Show.Shadows`, `r.Show.Particles`, `r.Show.Decals`. CVar changes update ShowFlags, ShowFlag changes update CVars.
-- [ ] 1.5 Build + verify: toggle `--cvar r.Show.Fog=0` disables fog, `r.Show.Grid=0` hides editor grid, existing rendering unchanged with defaults.
+- [x] 1.1 Create `show_flags.h` — `ShowFlags` struct with 64-bit bitfield. Flags: Grid, Fog, Bloom, AO, Shadows, ContactShadows, SSR, SSGI, StaticMeshes, SkeletalMeshes, Particles, Decals, Translucency, Atmosphere, Clouds, PointLights, SpotLights, DirectionalLight, PostProcess, AntiAliasing, MotionBlur, DOF, LensFlare, Volumetrics. Default: all enabled.
+- [x] 1.2 Add `ShowFlags m_showFlags` to `SceneRenderer`. Add `GetShowFlags()`/`SetShowFlag(flag, enabled)` API.
+- [x] 1.3 Wire ShowFlags into render passes: `RegisterGTAOPass` checks `ShowFlags::AO`, `RegisterAtmosphereFogCloudPasses` checks `ShowFlags::Fog`/`ShowFlags::Clouds`/`ShowFlags::Atmosphere`, `EditorGrid::Draw` checks `ShowFlags::Grid`, `RegisterSSRPasses` checks `ShowFlags::SSR`, bloom pass checks `ShowFlags::Bloom`, etc.
+- [x] 1.4 Add `r.Show.*` CVars that mirror ShowFlags — `r.Show.Grid`, `r.Show.Fog`, `r.Show.Bloom`, `r.Show.AO`, `r.Show.Shadows`, `r.Show.Particles`, `r.Show.Decals`. CVar changes update ShowFlags, ShowFlag changes update CVars.
+- [x] 1.5 Build + verify: toggle `--cvar r.Show.Fog=0` disables fog, `r.Show.Grid=0` hides editor grid, existing rendering unchanged with defaults.
 
 ## Session 2: Extended View Modes + Orthographic
-- [ ] 2.1 Add `DebugViewMode::DetailLighting` (ALT+5) — directional light × NdotL only, no albedo, no IBL. Shows pure lighting contribution.
-- [ ] 2.2 Add `DebugViewMode::LightingOnly` (ALT+6) — full lighting (direct + indirect + IBL) without albedo multiply. Shows light intensity distribution.
-- [ ] 2.3 Add `DebugViewMode::LitWireframe` — normal Lit rendering with wireframe overlay (dual-pass: lit + wireframe blend).
-- [ ] 2.4 Add `DebugViewMode::Reflections` — shows only SSR + IBL specular contribution (isolates reflection quality).
-- [ ] 2.5 Orthographic camera presets: implement `SetOrthographicView(OrthoView::Top/Front/Left/Right/Back/Bottom)` in CameraManager. Each preset sets position + orientation + orthographic projection. Wire hotkeys ALT+J/K/H/G and ALT+SHIFT variants.
-- [ ] 2.6 Build + verify: `--view-mode detaillighting` shows lighting only, `--view-mode litwireframe` shows overlay, ortho views work from CLI.
+- [x] 2.1 Add `DebugViewMode::DetailLighting` (ALT+5) — directional light × NdotL only, no albedo, no IBL. Shows pure lighting contribution.
+- [x] 2.2 Add `DebugViewMode::LightingOnly` (ALT+6) — full lighting (direct + indirect + IBL) without albedo multiply. Shows light intensity distribution.
+- [x] 2.3 Add `DebugViewMode::LitWireframe` — normal Lit rendering with wireframe overlay (dual-pass: lit + wireframe blend).
+- [x] 2.4 Add `DebugViewMode::Reflections` — shows only SSR + IBL specular contribution (isolates reflection quality).
+- [x] 2.5 Orthographic camera presets: implement `SetOrthographicView(OrthoView::Top/Front/Left/Right/Back/Bottom)` in CameraManager. Each preset sets position + orientation + orthographic projection. Wire hotkeys ALT+J/K/H/G and ALT+SHIFT variants.
+- [x] 2.6 Build + verify: `--view-mode detaillighting` shows lighting only, `--view-mode litwireframe` shows overlay, ortho views work from CLI.
 
 ## Session 3: Transform Tools + Coordinate Space
 - [ ] 3.1 Add `TransformMode::Select` (Q) — no gizmo drawn, LMB is pure selection (ray-cast pick). Add to existing `GizmoInteraction` mode enum.

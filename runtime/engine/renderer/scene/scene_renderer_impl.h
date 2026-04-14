@@ -550,6 +550,7 @@
     RenderPath m_renderPath = RenderPath::Deferred;
     GBufferDebugMode m_debugMode = GBufferDebugMode::Count;
     DebugViewMode m_debugViewMode = DebugViewMode::Lit;
+    ShowFlags m_showFlags{};                           ///< Per-feature render toggles (all enabled by default).
     uint32_t m_shadowDebugMode = 0;   ///< Shadow debug view mode (0=off, 1=grid, 2=readback). See shadow_debug.hlsli.
     uint32_t m_brdfDebugMode = 0;    ///< BRDF debug mode (0=off, 1=split-screen old vs new).
     RHIBufferHandle m_shadowReadbackBuffer;  ///< Persistent readback buffer for shadow atlas diagnostic (mode 2).

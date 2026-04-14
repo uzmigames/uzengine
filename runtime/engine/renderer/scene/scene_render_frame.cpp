@@ -11,6 +11,7 @@
 ///   - RegisterOverlayPasses()   → frame/frame_overlay.cpp
 
 #include "scene_renderer.h"
+#include "show_flags_cvar.h"
 #include "pixel_debug.h"
 #include "raytracing/rt_manager.h"
 #include "passes/raytracing/rt_uv_test_pass.h"
@@ -54,6 +55,8 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
                                  World* world, IVFS* vfs, float dt, uint32_t frameIndex,
                                  PreEndCallback preEndCb) {
     if (!m_device || !cmdList || !swapChain) return;
+
+    SyncShowFlagsFromCVars(m_showFlags);
 
     UZ_PROFILE_FUNCTION();
 

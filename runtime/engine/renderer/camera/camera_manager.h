@@ -17,6 +17,7 @@
 #pragma once
 
 #include "camera.h"
+#include "ortho_view.h"
 
 #include <cstdint>
 #include <string>
@@ -79,6 +80,40 @@ public:
     /// Returns the stack depth (0 = no pushes).
     [[nodiscard]] uint32_t GetStackDepth() const { return static_cast<uint32_t>(m_stack.size()); }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Orthographic Presets
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Switches the active camera to an axis-aligned orthographic preset view.
+    ///
+    /// Saves the current perspective state (position, orientation, projection
+    /// parameters) so it can be restored later via `RestorePerspectiveView()`.
+    /// If the camera is already in an ortho view, the saved perspective state
+    /// is NOT overwritten — only the view direction changes.
+    ///
+    /// Camera origin is fixed at world (0, 0, 0). For the editor this is the
+    /// scene pivot; for previews it is the object centre.
+    ///
+    /// # Arguments
+    /// * `view`        — Preset to apply (Top/Bottom/Front/Back/Left/Right).
+    ///                   `OrthoView::None` is equivalent to `RestorePerspectiveView()`.
+    /// * `orthoSize`   — Half-height of the orthographic frustum (world units, default 1000).
+    /// * `aspectRatio` — Viewport width / height (used to compute ortho width, default 16/9).
+    void SetOrthographicView(OrthoView view,
+                             float orthoSize   = 1000.f,
+                             float aspectRatio = 16.f / 9.f);
+
+    /// Restores the perspective camera state saved before the last
+    /// `SetOrthographicView()` call.
+    ///
+    /// No-op if the camera was never put into an ortho preset (`GetActiveOrthoView()
+    /// == OrthoView::None`).
+    void RestorePerspectiveView();
+
+    /// Returns the currently active orthographic preset, or `OrthoView::None`
+    /// if the camera is in its normal (perspective) mode.
+    [[nodiscard]] OrthoView GetActiveOrthoView() const { return m_activeOrthoView; }
+
 private:
     struct CameraEntry {
         Camera      camera;
@@ -90,6 +125,21 @@ private:
     std::vector<CameraId>     m_stack;    ///< Push/pop stack of previous active IDs.
     CameraId                  m_activeId = 0;
     CameraId                  m_nextId   = 0;
+
+    // ── Ortho preset state ────────────────────────────────────────────────────
+
+    OrthoView m_activeOrthoView = OrthoView::None;
+
+    /// Saved perspective state — populated by SetOrthographicView() on first call.
+    struct PerspectiveSnapshot {
+        Vec3  position    = {};
+        Quat  orientation = {};
+        float fovY        = 0.7854f; ///< Default 45 degrees
+        float aspectRatio = 16.f / 9.f;
+        float nearPlane   = 10.f;
+        float farPlane    = 100000.f;
+        bool  valid       = false;
+    } m_savedPerspective;
 
     /// Finds the index into m_cameras for a given ID. Returns -1 if not found.
     [[nodiscard]] int FindIndex(CameraId id) const;

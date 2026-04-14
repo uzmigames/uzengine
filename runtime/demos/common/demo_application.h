@@ -45,6 +45,7 @@
 /// frames (default 5) to allow GPU pipeline warmup before capturing.
 
 #include "debug_view_mode.h"
+#include "ortho_view.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -105,6 +106,9 @@ struct DemoConfig {
 
     // ── Debug view ──────────────────────────────────────────────────────
     DebugViewMode debugViewMode = DebugViewMode::Lit; ///< Initial debug view mode (from --view-mode).
+
+    // ── Orthographic view preset ─────────────────────────────────────────
+    OrthoView orthoView = OrthoView::None; ///< Initial ortho view preset (from --ortho-view). None = perspective.
 
     // ── Camera defaults ─────────────────────────────────────────────────
     float cameraMoveSpeed = 10.f;         ///< Fly camera movement speed (units/sec).
@@ -346,6 +350,28 @@ protected:
     /// * `input` — The input system to poll for key presses. Must not be null.
     void ApplyDebugViewKeyboard(const InputSystem* input);
 
+    /// Checks ALT+J/K/H/G (and ALT+SHIFT variants) to switch the active camera
+    /// between the six axis-aligned orthographic presets.
+    ///
+    /// Hotkey mapping:
+    ///   - ALT+J        → Top
+    ///   - ALT+SHIFT+J  → Bottom
+    ///   - ALT+K        → Front
+    ///   - ALT+SHIFT+K  → Back
+    ///   - ALT+H        → Left
+    ///   - ALT+G        → Right
+    ///
+    /// Pressing the hotkey for the already-active view restores the previous
+    /// perspective camera state. Pressing any ortho key while in perspective mode
+    /// saves the current perspective params so they can be restored.
+    ///
+    /// # Arguments
+    /// * `input` — The input system to poll for key presses. Must not be null.
+    void ApplyOrthoCameraKeyboard(const InputSystem* input);
+
+    /// Returns the currently active orthographic preset (OrthoView::None = perspective).
+    [[nodiscard]] OrthoView GetActiveOrthoView() const { return m_activeOrthoView; }
+
     /// Returns the screenshot capture object (may be null if no screenshot path set).
     [[nodiscard]] ScreenshotCapture* GetScreenshotCapture() const;
 
@@ -431,6 +457,21 @@ private:
 
     // ── Debug view mode ────────────────────────────────────────────────
     DebugViewMode m_debugViewMode = DebugViewMode::Lit;
+
+    // ── Orthographic view state ─────────────────────────────────────────────
+    OrthoView m_activeOrthoView = OrthoView::None;
+
+    /// Perspective camera params saved before the last ortho preset was applied.
+    struct PerspectiveSave {
+        float posX = 0.f, posY = 0.f, posZ = 0.f;    ///< World-space position.
+        float orientX = 0.f, orientY = 0.f,           ///< Orientation quaternion (XYZW).
+              orientZ = 0.f, orientW = 1.f;
+        float fovY        = 0.7854f;                  ///< Vertical FOV in radians.
+        float aspectRatio = 16.f / 9.f;
+        float nearPlane   = 10.f;
+        float farPlane    = 100000.f;
+        bool  valid       = false;
+    } m_savedPerspective;
 
     // ── Screenshot state ────────────────────────────────────────────────
     bool m_screenshotPending = false;

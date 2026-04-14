@@ -134,6 +134,8 @@ void DemoApplication::ParseCommonArgs(int argc, char* argv[], DemoConfig& config
             config.maxFrames = static_cast<uint32_t>(std::atoi(argv[++i]));
         } else if (std::strcmp(argv[i], "--view-mode") == 0 && i + 1 < argc) {
             config.debugViewMode = DebugViewModeFromString(argv[++i]);
+        } else if (std::strcmp(argv[i], "--ortho-view") == 0 && i + 1 < argc) {
+            config.orthoView = OrthoViewFromString(argv[++i]);
         } else if (std::strcmp(argv[i], "--all-modes") == 0 && i + 1 < argc) {
             config.allModesOutputPath = argv[++i];
         } else if (std::strcmp(argv[i], "--camera-x") == 0 && i + 1 < argc) {

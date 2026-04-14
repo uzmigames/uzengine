@@ -55,6 +55,7 @@ namespace uz {
 // to PerFrameCB in frame_setup.cpp for the deferred lighting shader.
 
 void SceneRenderer::RegisterSSGIPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
+    if (!m_showFlags.Get(ShowFlag::SSGI)) return;
     // Screen-space global illumination — traces against the depth buffer for indirect light.
     const bool ssgiActive = m_ssgiRenderer.IsReady()
                           && m_device->IsBindless()
@@ -283,6 +284,7 @@ void SceneRenderer::RegisterBrixelizerGIPasses(rg::RgBuilder& rgBuilder, FrameCo
 // The lighting pass blends SSR with IBL specular via ssrSrvIndex in PerFrameCB.
 
 void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
+    if (!m_showFlags.Get(ShowFlag::SSR)) return;
     // Screen-space reflections: Hi-Z ray march + Fresnel-weighted resolve.
     // Gate: skip if SSR not active OR if we don't have a prev-frame color copy yet.
     // On frame 0, m_ssrHasPrevColor is false — SSR starts on frame 1+.

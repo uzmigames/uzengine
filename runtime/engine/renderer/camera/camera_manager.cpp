@@ -124,4 +124,95 @@ int CameraManager::FindIndex(CameraId id) const {
     return -1;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Orthographic Preset Views
+// ─────────────────────────────────────────────────────────────────────────────
+
+void CameraManager::SetOrthographicView(OrthoView view, float orthoSize, float aspectRatio) {
+    if (view == OrthoView::None) {
+        RestorePerspectiveView();
+        return;
+    }
+
+    Camera& cam = GetActiveCamera();
+
+    // Save perspective state once — do NOT overwrite if already in ortho mode.
+    if (m_activeOrthoView == OrthoView::None) {
+        m_savedPerspective.position    = cam.GetPosition();
+        m_savedPerspective.orientation = cam.GetOrientation();
+        m_savedPerspective.fovY        = cam.GetFovY();
+        m_savedPerspective.aspectRatio = cam.GetAspectRatio();
+        m_savedPerspective.nearPlane   = cam.GetNearPlane();
+        m_savedPerspective.farPlane    = cam.GetFarPlane();
+        m_savedPerspective.valid       = true;
+    }
+    m_activeOrthoView = view;
+
+    // ── Camera distance and frustum dimensions ──────────────────────────────
+    // Place the camera far enough that the near/far planes bracket the scene.
+    // 100000 cm = 1 km: appropriate for typical UzEngine scenes (unit = 1 cm).
+    constexpr float kViewDist  = 100000.f; // cm
+    constexpr float kOrthoNear = 1.f;
+    constexpr float kOrthoFar  = kViewDist * 2.f;
+
+    const float orthoW = orthoSize * aspectRatio;
+    const float orthoH = orthoSize;
+
+    // ── Position and up vector per view ────────────────────────────────────
+    // Coordinate system: X=forward, Y=right, Z=up (left-handed).
+    //
+    // Top/Bottom place the camera along ±Z so the up hint must be along X
+    // (perpendicular to the forward direction; using Vec3::Up()=Z would be
+    // collinear with the forward vector and degenerate the LookAt matrix).
+    //
+    // All other views keep the camera in the XY plane so Vec3::Up()=Z is safe.
+    Vec3 pos;
+    Vec3 up;
+    switch (view) {
+        case OrthoView::Top:    pos = {0.f, 0.f,  kViewDist}; up = Vec3::Forward(); break;
+        case OrthoView::Bottom: pos = {0.f, 0.f, -kViewDist}; up = Vec3::Forward(); break;
+        case OrthoView::Front:  pos = {-kViewDist, 0.f, 0.f}; up = Vec3::Up();      break;
+        case OrthoView::Back:   pos = { kViewDist, 0.f, 0.f}; up = Vec3::Up();      break;
+        case OrthoView::Left:   pos = {0.f,  kViewDist, 0.f}; up = Vec3::Up();      break;
+        case OrthoView::Right:  pos = {0.f, -kViewDist, 0.f}; up = Vec3::Up();      break;
+        default:
+            UZ_LOG(Camera, Warning, "CameraManager::SetOrthographicView: unknown view {}", static_cast<int>(view));
+            return;
+    }
+
+    cam.SetPosition(pos);
+    cam.LookAt(Vec3{0.f, 0.f, 0.f}, up);
+    cam.SetOrthographic(orthoW, orthoH, kOrthoNear, kOrthoFar);
+
+    UZ_LOG(Camera, Info, "CameraManager: ortho view '{}' (frustum={}x{}, dist={})",
+           OrthoViewName(view), orthoW, orthoH, kViewDist);
+}
+
+void CameraManager::RestorePerspectiveView() {
+    if (m_activeOrthoView == OrthoView::None) {
+        return; // Not in ortho mode — nothing to restore.
+    }
+
+    if (!m_savedPerspective.valid) {
+        UZ_LOG(Camera, Warning, "CameraManager::RestorePerspectiveView: no saved state");
+        m_activeOrthoView = OrthoView::None;
+        return;
+    }
+
+    Camera& cam = GetActiveCamera();
+    cam.SetPosition(m_savedPerspective.position);
+    cam.SetOrientation(m_savedPerspective.orientation);
+    cam.SetPerspective(m_savedPerspective.fovY,
+                       m_savedPerspective.aspectRatio,
+                       m_savedPerspective.nearPlane,
+                       m_savedPerspective.farPlane);
+
+    UZ_LOG(Camera, Info, "CameraManager: restored perspective view (pos={},{},{} fovY={:.3f})",
+           m_savedPerspective.position.x, m_savedPerspective.position.y,
+           m_savedPerspective.position.z, m_savedPerspective.fovY);
+
+    m_activeOrthoView = OrthoView::None;
+    m_savedPerspective.valid = false;
+}
+
 } // namespace uz

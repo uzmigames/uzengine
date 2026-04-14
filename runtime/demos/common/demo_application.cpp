@@ -102,6 +102,54 @@ int DemoApplication::Run() {
         }
     }
 
+    // ── Apply initial ortho view preset (from --ortho-view) ─────────────────
+    // Applied after perspective camera setup so the perspective state is saved.
+    if (m_config.orthoView != OrthoView::None) {
+        const float aspect = (m_height > 0)
+            ? static_cast<float>(m_width) / static_cast<float>(m_height)
+            : (16.f / 9.f);
+        // Save current perspective state before entering ortho mode.
+        {
+            const Vec3& pos = m_camera->GetPosition();
+            const Quat& ori = m_camera->GetOrientation();
+            m_savedPerspective.posX        = pos.x;
+            m_savedPerspective.posY        = pos.y;
+            m_savedPerspective.posZ        = pos.z;
+            m_savedPerspective.orientX     = ori.x;
+            m_savedPerspective.orientY     = ori.y;
+            m_savedPerspective.orientZ     = ori.z;
+            m_savedPerspective.orientW     = ori.w;
+            m_savedPerspective.fovY        = m_camera->GetFovY();
+            m_savedPerspective.aspectRatio = m_camera->GetAspectRatio();
+            m_savedPerspective.nearPlane   = m_camera->GetNearPlane();
+            m_savedPerspective.farPlane    = m_camera->GetFarPlane();
+            m_savedPerspective.valid       = true;
+        }
+        m_activeOrthoView = m_config.orthoView;
+
+        constexpr float kViewDist  = 100000.f;
+        constexpr float kOrthoNear = 1.f;
+        constexpr float kOrthoFar  = kViewDist * 2.f;
+        constexpr float kOrthoHalfH = 1000.f;
+        const float orthoW = kOrthoHalfH * aspect;
+
+        Vec3 pos;
+        Vec3 upHint;
+        switch (m_config.orthoView) {
+            case OrthoView::Top:    pos = {0.f, 0.f,  kViewDist}; upHint = Vec3::Forward(); break;
+            case OrthoView::Bottom: pos = {0.f, 0.f, -kViewDist}; upHint = Vec3::Forward(); break;
+            case OrthoView::Front:  pos = {-kViewDist, 0.f, 0.f}; upHint = Vec3::Up();      break;
+            case OrthoView::Back:   pos = { kViewDist, 0.f, 0.f}; upHint = Vec3::Up();      break;
+            case OrthoView::Left:   pos = {0.f,  kViewDist, 0.f}; upHint = Vec3::Up();      break;
+            case OrthoView::Right:  pos = {0.f, -kViewDist, 0.f}; upHint = Vec3::Up();      break;
+            default:                pos = {0.f, 0.f,  kViewDist}; upHint = Vec3::Forward(); break;
+        }
+        m_camera->SetPosition(pos);
+        m_camera->LookAt(Vec3{0.f, 0.f, 0.f}, upHint);
+        m_camera->SetOrthographic(orthoW, kOrthoHalfH, kOrthoNear, kOrthoFar);
+        UZ_LOG(App, Info, "DemoApplication: initial ortho view '{}'", OrthoViewName(m_config.orthoView));
+    }
+
     // ── Diagnostic systems ────────────────────────────────────────────────
     if (m_config.diagMode) {
         m_passInspector = std::make_unique<PassInspector>();
@@ -381,6 +429,110 @@ void DemoApplication::ApplyDebugViewKeyboard(const InputSystem* input) {
             UZ_LOG(App, Info, "Debug view mode: {}", DebugViewModeName(mode));
         }
     }
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ApplyOrthoCameraKeyboard — ALT+J/K/H/G ortho preset selection
+// ─────────────────────────────────────────────────────────────────────────────
+
+void DemoApplication::ApplyOrthoCameraKeyboard(const InputSystem* input) {
+    const bool altDown = input->IsKeyDown(Key::LeftAlt) || input->IsKeyDown(Key::RightAlt);
+    if (!altDown) return;
+
+    const bool shiftDown = input->IsKeyDown(Key::LeftShift) || input->IsKeyDown(Key::RightShift);
+
+    // Resolve the requested view from the hotkey pressed this frame.
+    OrthoView requested = OrthoView::None;
+    if      (input->IsKeyJustPressed(Key::J) && !shiftDown) requested = OrthoView::Top;
+    else if (input->IsKeyJustPressed(Key::J) &&  shiftDown) requested = OrthoView::Bottom;
+    else if (input->IsKeyJustPressed(Key::K) && !shiftDown) requested = OrthoView::Front;
+    else if (input->IsKeyJustPressed(Key::K) &&  shiftDown) requested = OrthoView::Back;
+    else if (input->IsKeyJustPressed(Key::H))               requested = OrthoView::Left;
+    else if (input->IsKeyJustPressed(Key::G))               requested = OrthoView::Right;
+
+    if (requested == OrthoView::None) return; // No ortho hotkey pressed this frame.
+
+    Camera& cam = GetCamera();
+
+    if (requested == m_activeOrthoView) {
+        // Same view pressed again — restore perspective.
+        if (m_savedPerspective.valid) {
+            cam.SetPosition({m_savedPerspective.posX,
+                             m_savedPerspective.posY,
+                             m_savedPerspective.posZ});
+            cam.SetOrientation(Quat{m_savedPerspective.orientX,
+                                    m_savedPerspective.orientY,
+                                    m_savedPerspective.orientZ,
+                                    m_savedPerspective.orientW});
+            cam.SetPerspective(m_savedPerspective.fovY,
+                               m_savedPerspective.aspectRatio,
+                               m_savedPerspective.nearPlane,
+                               m_savedPerspective.farPlane);
+            m_savedPerspective.valid = false;
+            UZ_LOG(App, Info, "Ortho view: restored perspective");
+        }
+        m_activeOrthoView = OrthoView::None;
+        return;
+    }
+
+    // Save perspective state once — do NOT overwrite when already in an ortho view.
+    if (m_activeOrthoView == OrthoView::None) {
+        const Vec3& pos = cam.GetPosition();
+        const Quat& ori = cam.GetOrientation();
+        m_savedPerspective.posX        = pos.x;
+        m_savedPerspective.posY        = pos.y;
+        m_savedPerspective.posZ        = pos.z;
+        m_savedPerspective.orientX     = ori.x;
+        m_savedPerspective.orientY     = ori.y;
+        m_savedPerspective.orientZ     = ori.z;
+        m_savedPerspective.orientW     = ori.w;
+        m_savedPerspective.fovY        = cam.GetFovY();
+        m_savedPerspective.aspectRatio = cam.GetAspectRatio();
+        m_savedPerspective.nearPlane   = cam.GetNearPlane();
+        m_savedPerspective.farPlane    = cam.GetFarPlane();
+        m_savedPerspective.valid       = true;
+    }
+    m_activeOrthoView = requested;
+
+    // ── Camera placement constants ──────────────────────────────────────────
+    // 100000 cm = 1 km — camera placed this far from origin along the view axis.
+    // OrthoNear/Far bracket the full scene around the origin.
+    constexpr float kViewDist  = 100000.f;
+    constexpr float kOrthoNear = 1.f;
+    constexpr float kOrthoFar  = kViewDist * 2.f;
+
+    // Ortho size: use current window aspect so the frustum matches the viewport.
+    const float aspect = (m_height > 0)
+        ? static_cast<float>(m_width) / static_cast<float>(m_height)
+        : (16.f / 9.f);
+    constexpr float kOrthoHalfH = 1000.f; // 10 m half-height
+    const float orthoW = kOrthoHalfH * aspect;
+    const float orthoH = kOrthoHalfH;
+
+    // ── Position and up vector per view ────────────────────────────────────
+    // Coordinate system: X=forward, Y=right, Z=up (UzEngine standard).
+    //
+    // Top/Bottom look along ±Z — Vec3::Up()==Z would be collinear with forward,
+    // so use Vec3::Forward()==X as the up hint to avoid a degenerate LookAt.
+    Vec3 pos;
+    Vec3 upHint;
+    switch (requested) {
+        case OrthoView::Top:    pos = {0.f, 0.f,  kViewDist}; upHint = Vec3::Forward(); break;
+        case OrthoView::Bottom: pos = {0.f, 0.f, -kViewDist}; upHint = Vec3::Forward(); break;
+        case OrthoView::Front:  pos = {-kViewDist, 0.f, 0.f}; upHint = Vec3::Up();      break;
+        case OrthoView::Back:   pos = { kViewDist, 0.f, 0.f}; upHint = Vec3::Up();      break;
+        case OrthoView::Left:   pos = {0.f,  kViewDist, 0.f}; upHint = Vec3::Up();      break;
+        case OrthoView::Right:  pos = {0.f, -kViewDist, 0.f}; upHint = Vec3::Up();      break;
+        default:                return;
+    }
+
+    cam.SetPosition(pos);
+    cam.LookAt(Vec3{0.f, 0.f, 0.f}, upHint);
+    cam.SetOrthographic(orthoW, orthoH, kOrthoNear, kOrthoFar);
+
+    UZ_LOG(App, Info, "Ortho view: {} (frustum={}x{}, dist={})",
+           OrthoViewName(requested), orthoW, orthoH, kViewDist);
 }
 
 } // namespace uz

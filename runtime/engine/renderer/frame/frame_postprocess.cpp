@@ -257,7 +257,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
         }
 
         // ── Bloom pass (if enabled) ─────────────────────────────────────
-        if (ctx.bloomEnabled && m_bloomPass && m_bloomPass->IsInitialized()) {
+        if (m_showFlags.Get(ShowFlag::Bloom) && ctx.bloomEnabled && m_bloomPass && m_bloomPass->IsInitialized()) {
             rgBuilder.AddPass("Bloom", [&](rg::RgPassBuilder& pb) {
                 pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
                 pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources&) {

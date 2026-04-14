@@ -2,6 +2,7 @@
 
 #include "scene_renderer.h"
 #include "quality_presets.h"
+#include "show_flags_cvar.h"
 
 #include "renderer_core.h"
 #include "subsystems.h"
@@ -77,6 +78,9 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     m_device = device;
     m_width = width;
     m_height = height;
+
+    // ── ShowFlag CVars — register before CLI overrides are applied ───────
+    RegisterShowFlagCVars();
 
     // ── Quality Presets (default Ultra, overridable via CVar quality=N) ──
     QualityPresetManager::Get().Init();

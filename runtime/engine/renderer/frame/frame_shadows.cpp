@@ -27,6 +27,7 @@ struct ShadowCB {
 };
 
 void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
+    if (!m_showFlags.Get(ShowFlag::Shadows)) return;
     UZ_PROFILE_FUNCTION();
 
     const bool bindless = ctx.bindless;

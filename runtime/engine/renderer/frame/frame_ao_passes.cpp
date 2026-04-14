@@ -61,6 +61,7 @@ void SceneRenderer::RegisterDBufferApplyPass(rg::RgBuilder& rgBuilder, FrameCont
 void SceneRenderer::RegisterGTAOPass(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
     // See frame_constants.cpp:555 — must gate on IsEnabledCVar(), never
     // on the struct `settings.enabled` snapshot (race vs. Execute()).
+    if (!m_showFlags.Get(ShowFlag::AO)) { return; }
     if (m_gtaoPass && m_gtaoPass->IsInitialized() && m_gtaoPass->IsEnabledCVar()
         && m_passInspector.IsPassEnabled("gtao")) {
         rgBuilder.AddPass("GTAO", [&](rg::RgPassBuilder& pb) {

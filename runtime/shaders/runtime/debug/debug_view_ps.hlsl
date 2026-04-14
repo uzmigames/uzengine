@@ -11,6 +11,8 @@ cbuffer RootConstants : register(b0) {
     uint g_normalSrv;
     uint g_depthSrv;
     uint g_positionSrv;
+    uint g_hdrSrv;      // HDR scene color (LightingOnly / Reflections); UINT_MAX = unused
+    uint g_ssrSrv;      // SSR resolve result (Reflections); UINT_MAX = unused
 };
 #else
 cbuffer RootConstants : register(b0) {
@@ -20,6 +22,8 @@ Texture2D<float4> t_albedo   : register(t0);
 Texture2D<float4> t_normal   : register(t1);
 Texture2D<float>  t_depth    : register(t2);
 Texture2D<float4> t_position : register(t3);
+Texture2D<float4> t_hdr      : register(t4);
+Texture2D<float4> t_ssr      : register(t5);
 #endif
 
 cbuffer PerFrameCB : register(b1) {
@@ -48,11 +52,15 @@ float4 main(float4 pos : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
     Texture2D<float4> normalTex   = ResourceDescriptorHeap[g_normalSrv];
     Texture2D<float>  depthTex    = ResourceDescriptorHeap[g_depthSrv];
     Texture2D<float4> positionTex = ResourceDescriptorHeap[g_positionSrv];
+    Texture2D<float4> hdrTex      = ResourceDescriptorHeap[g_hdrSrv];
+    Texture2D<float4> ssrTex      = ResourceDescriptorHeap[g_ssrSrv];
 #else
     #define albedoTex   t_albedo
     #define normalTex   t_normal
     #define depthTex    t_depth
     #define positionTex t_position
+    #define hdrTex      t_hdr
+    #define ssrTex      t_ssr
 #endif
 
     float4 albedoData = albedoTex.Load(int3(px, 0));
@@ -111,6 +119,35 @@ float4 main(float4 pos : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
         float3 baseColor = albedoData.rgb * 0.5;
         float3 edgeColor = float3(1, 0, 0); // Red for hard edges
         return float4(lerp(baseColor, edgeColor, edge), 1);
+    }
+
+    case 15: // DetailLighting — directional NdotL × light color, no albedo, no IBL
+    {
+        // @ref Pharr 2023 "Physically Based Rendering" — diffuse BRDF decomposition.
+        // Shows only the shading term contributed by the primary directional light.
+        // lightDir in PerFrameCB is the direction FROM the surface TO the light (world space).
+        float NdotL = saturate(dot(N, -lightDir.xyz));
+        float3 detail = NdotL * lightColor.rgb;
+        return float4(detail, 1);
+    }
+
+    case 16: // LightingOnly — HDR scene color divided by albedo (isolates lighting contribution)
+    {
+        // @ref Lagarde 2014 "Moving Frostbite to PBR" — lighting buffer extraction.
+        // LightingOnly = HDR / albedo (where albedo > epsilon), showing pure light intensity.
+        float4 hdr = hdrTex.Load(int3(px, 0));
+        float3 alb = max(albedoData.rgb, 0.001);
+        float3 lighting = hdr.rgb / alb;
+        return float4(lighting, 1);
+    }
+
+    case 18: // Reflections — SSR contribution only
+    {
+        // @ref McGuire 2014 "Efficient GPU Screen-Space Ray Tracing".
+        // Displays the raw SSR resolve result (rgb=hit color, a=confidence).
+        // Falls back to zero when SSR result is unavailable.
+        float4 ssr = ssrTex.Load(int3(px, 0));
+        return float4(ssr.rgb, 1);
     }
 
     default: // Lit or unknown — should not reach here
