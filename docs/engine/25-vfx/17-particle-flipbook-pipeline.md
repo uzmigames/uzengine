@@ -98,6 +98,41 @@ as fallbacks), assigns the bindless SRV index to the emitter, and wires
 the CB fields. Both the single-emitter `VfxEmitterComponent` path and
 the compound `VfxSystemComponent` path run the same sprite-load code.
 
+## Persistent IDs (phase 7.4.0 — opt-in extension)
+
+Emitters that need stable particle identity (event payload correlation
+in 7.3.0, cross-emitter reads in 7.12.0, deterministic replay/debugging)
+can opt in to a `uint64` `persistentIDs` SoA channel:
+
+```cpp
+ParticleEmitter e;
+e.emitsPersistentIDs = true;
+e.Initialize(device, budget);  // Allocates the extra channel on both sets.
+
+// Each frame, before the spawn dispatch:
+const uint64_t baseID = e.ReservePersistentIDRange(spawnThisFrame);
+// Upload baseID to VFXSpawnCB — GPU computes id = baseID + threadIndex
+// and writes to persistentIDs[slot].
+```
+
+Design contract:
+
+- **Monotonic IDs.** `ReservePersistentIDRange(count)` always advances
+  the counter; IDs are never reused even after slot recycle. The 64-bit
+  space is effectively infinite (see
+  `test_persistent_particle_ids.cpp::SixtyFourBitSpaceCoversPracticalLifetimes`).
+- **0 is a reserved sentinel.** The counter starts at 1 so dead slots
+  (cleared to 0 by the update CS in 7.4.1) cannot collide with live
+  particles.
+- **Opt-in memory cost.** Zero overhead for emitters that don't set
+  `emitsPersistentIDs = true`; the dual 8-bytes/slot buffers are only
+  allocated when explicitly requested.
+
+GPU spawn-CS write path + readback query API (`VfxEmitter::QueryParticleByID`
+via 4.26.0 readback framework) land in the follow-up
+`phase7_7.4.1-vfx-persistent-ids-gpu-path`. The CPU API shipped in
+7.4.0 is frozen — the follow-up only fills in the shader side.
+
 ## See also
 
 - Unit tests: `runtime/tests/engine/vfx/test_flipbook_atlas.cpp`

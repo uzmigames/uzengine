@@ -55,6 +55,20 @@ bool ParticleEmitter::Initialize(IRHIDevice* device, ParticleBudget& budget) {
         return false;
     }
 
+    // Opt-in persistent ID allocation (phase 7.4.0). Only allocated when the
+    // emitter has explicitly requested event correlation or cross-emitter
+    // reads — keeps memory overhead at zero for the majority of effects.
+    if (emitsPersistentIDs) {
+        if (!buffer.CreatePersistentIDBuffers(device)) {
+            UZ_LOG(VFX, Error,
+                   "ParticleEmitter::Initialize: persistent-ID buffer creation "
+                   "failed, capacity={}", granted);
+            // Non-fatal — emitter still runs without persistent IDs. Callers
+            // that require them check `buffer.hasPersistentIDs` before using.
+            emitsPersistentIDs = false;
+        }
+    }
+
     // Allocate mesh instance buffers if this emitter uses MeshRenderModule.
     // The render module's GetName() returns "mesh_render" for mesh-based emitters.
     if (moduleStack.renderModule &&

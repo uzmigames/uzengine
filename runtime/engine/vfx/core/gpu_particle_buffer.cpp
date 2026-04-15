@@ -118,6 +118,7 @@ void DestroyAttributeSet(IRHIDevice* device, ParticleAttributeSet& set)
     if (set.colors.IsValid())     device->DestroyBuffer(set.colors);
     if (set.rotations.IsValid())       device->DestroyBuffer(set.rotations);
     if (set.subImageIndices.IsValid()) device->DestroyBuffer(set.subImageIndices);
+    if (set.persistentIDs.IsValid())   device->DestroyBuffer(set.persistentIDs);
     set = {};
 }
 
@@ -261,6 +262,52 @@ void GPUParticleBuffer::DestroyMeshBuffers(IRHIDevice* device)
     meshInstanceCount = {};
     meshIndirectDrawArgs = {};
     hasMeshBuffers = false;
+}
+
+// ---------------------------------------------------------------------------
+// GPUParticleBuffer::CreatePersistentIDBuffers (phase 7.4.0)
+// ---------------------------------------------------------------------------
+
+bool GPUParticleBuffer::CreatePersistentIDBuffers(IRHIDevice* device)
+{
+    UZ_CHECKF(device != nullptr,
+              "GPUParticleBuffer::CreatePersistentIDBuffers: device is null");
+    UZ_CHECKF(IsValid(),
+              "GPUParticleBuffer::CreatePersistentIDBuffers: base buffers not allocated");
+    UZ_CHECKF(!hasPersistentIDs,
+              "GPUParticleBuffer::CreatePersistentIDBuffers: already allocated");
+
+    const auto cap = static_cast<uint64_t>(capacity);
+
+    // uint64 per slot, matching `FNiagaraEmitter::bRequiresPersistentIDs`.
+    // Structured buffer stride = 8 bytes so HLSL `RWStructuredBuffer<uint64_t>`
+    // (or paired uint2) indexes correctly.
+    sets[0].persistentIDs = CreateVFXBuffer(
+        device, cap * 8, 8, "VFX_PersistentIDs_SetA");
+    sets[1].persistentIDs = CreateVFXBuffer(
+        device, cap * 8, 8, "VFX_PersistentIDs_SetB");
+
+    if (!sets[0].persistentIDs.IsValid() || !sets[1].persistentIDs.IsValid()) {
+        UZ_LOG(VFX, Error,
+               "CreatePersistentIDBuffers: allocation failed for capacity={}",
+               capacity);
+        if (sets[0].persistentIDs.IsValid()) {
+            device->DestroyBuffer(sets[0].persistentIDs);
+            sets[0].persistentIDs = {};
+        }
+        if (sets[1].persistentIDs.IsValid()) {
+            device->DestroyBuffer(sets[1].persistentIDs);
+            sets[1].persistentIDs = {};
+        }
+        return false;
+    }
+
+    hasPersistentIDs = true;
+    const uint64_t idsKB = (cap * 8 * 2) / 1024;
+    UZ_LOG(VFX, Info,
+           "GPU persistent-ID buffers created: capacity={}, memory~{}KB",
+           capacity, idsKB);
+    return true;
 }
 
 // ---------------------------------------------------------------------------

@@ -365,6 +365,43 @@ struct ParticleEmitter {
     /// May be less than maxParticles if the budget was constrained.
     uint32_t allocatedFromBudget = 0;
 
+    // -- Persistent particle IDs (phase 7.4.0) -------------------------------
+
+    /// When true, spawn CS assigns each particle a monotonically increasing
+    /// 64-bit persistent identifier that survives SoA slot recycle. Required
+    /// for event payload correlation (7.3.0), cross-emitter particle reads
+    /// (7.12.0), and deterministic replay.
+    ///
+    /// Opt-in; default false so most emitters pay zero cost. Setting this
+    /// to true before `Initialize()` makes the initializer allocate a
+    /// `uint64`-per-slot SoA channel on both attribute sets.
+    ///
+    /// @ref UE5 FNiagaraEmitter::bRequiresPersistentIDs
+    bool emitsPersistentIDs = false;
+
+    /// Monotonically increasing counter used to assign persistent IDs.
+    /// Incremented by `spawnCount` each frame inside the spawn CS dispatch
+    /// setup; GPU computes `id = baseID + threadIndex`. IDs are never reused
+    /// even across slot recycle — the 64-bit space is effectively infinite.
+    ///
+    /// Lives on CPU (not GPU) to simplify persistent-state hot-reload.
+    uint64_t nextPersistentID = 1;
+
+    /// Reserves a contiguous range of `count` persistent IDs starting at the
+    /// current counter value. Advances `nextPersistentID` by `count`. The
+    /// GPU spawn CS then computes `id = baseID + threadIndex` so each
+    /// newly spawned particle receives a unique ID.
+    ///
+    /// Must only be called when `emitsPersistentIDs == true`. Passing 0
+    /// is a no-op and returns the current counter (useful as a sentinel).
+    ///
+    /// @returns the base ID for the reserved range.
+    uint64_t ReservePersistentIDRange(uint32_t count) noexcept {
+        const uint64_t base = nextPersistentID;
+        nextPersistentID += count;
+        return base;
+    }
+
     // -- Material ------------------------------------------------------------
 
     /// Material for this emitter's rendered particles. Accepts any MaterialInterface

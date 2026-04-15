@@ -109,7 +109,31 @@ struct ParticleAttributeSet {
     /// @ref UE5 Niagara SubImageIndex module
     RHIBufferHandle subImageIndices = RHIBufferHandle::Invalid();
 
-    /// Returns true if all attribute buffers have been allocated.
+    /// Per-particle persistent identifier (uint64, 8 bytes stride).
+    ///
+    /// Monotonically increasing 64-bit ID assigned at spawn from a per-emitter
+    /// atomic counter. Survives SoA slot recycle — when a slot is reused by
+    /// a new particle, the new particle gets a FRESH id, while the old id is
+    /// never re-issued. Dead slots carry id = 0.
+    ///
+    /// Enables:
+    ///   - Event payload correlation (7.3.0): a collision event can reference
+    ///     the exact source particle even after slot recycle.
+    ///   - Cross-emitter particle reads (7.12.0): follower emitters track a
+    ///     specific master particle by id.
+    ///   - Deterministic replay + debugging: stable id for logging/recording.
+    ///
+    /// Allocated only when the owning emitter opts in via
+    /// `ParticleEmitter::emitsPersistentIDs = true`. When opted out the handle
+    /// stays `Invalid()` and the SoA stride check in `IsValid()` excludes it.
+    ///
+    /// @ref UE5 FNiagaraEmitter::bRequiresPersistentIDs
+    /// @ref UE5 FNiagaraGPUInstanceCountManager::AllocatePersistentID
+    RHIBufferHandle persistentIDs = RHIBufferHandle::Invalid();
+
+    /// Returns true when every mandatory attribute buffer is allocated. The
+    /// optional `persistentIDs` channel is not required for validity; callers
+    /// that need it must check `persistentIDs.IsValid()` separately.
     [[nodiscard]] bool IsValid() const noexcept;
 };
 
@@ -221,6 +245,18 @@ struct GPUParticleBuffer {
     /// Whether the death event buffers have been allocated.
     /// True only for emitters with `emitDeathDecals` enabled.
     bool hasDeathEventBuffers = false;
+
+    // -- Persistent particle IDs (phase 7.4.0) --------------------------------
+
+    /// Whether the persistentIDs SoA channels have been allocated for both
+    /// attribute sets. True only for emitters with
+    /// `ParticleEmitter::emitsPersistentIDs = true`.
+    ///
+    /// When false the per-set `persistentIDs` handles stay `Invalid()` and
+    /// callers must not attempt to read/write them.
+    ///
+    /// @ref UE5 FNiagaraEmitter::bRequiresPersistentIDs
+    bool hasPersistentIDs = false;
 
     // -- Sort buffers (for depth-ordered transparent rendering) ---------------
 
@@ -340,6 +376,23 @@ struct GPUParticleBuffer {
     /// - `IsValid()` must be true (base buffers allocated).
     /// - `hasMeshBuffers` must be false (not already allocated).
     [[nodiscard]] bool CreateMeshBuffers(IRHIDevice* device);
+
+    /// Allocates the persistent-ID SoA channel (`uint64` per slot) on BOTH
+    /// attribute sets. Opt-in alternative to baking the cost into every
+    /// emitter; only effects that rely on event correlation or cross-emitter
+    /// particle reads need to call this.
+    ///
+    /// # Preconditions
+    /// - `device` must not be null.
+    /// - `IsValid()` must be true (base attribute sets already allocated).
+    /// - `hasPersistentIDs` must be false.
+    ///
+    /// # Returns
+    /// `true` on success. On failure any partially allocated channels are
+    /// destroyed and `hasPersistentIDs` stays false.
+    ///
+    /// @ref phase7_7.4.0-vfx-persistent-particle-ids
+    [[nodiscard]] bool CreatePersistentIDBuffers(IRHIDevice* device);
 
     /// Releases the optional mesh instance buffers and resets handles to invalid.
     ///
