@@ -459,6 +459,24 @@ struct ParticleEmitter {
     /// @ref UE5 UNiagaraEmitter::bLocalSpace
     uint8_t simulationSpace = 0u;  // 0=WorldSpace (default), 1=LocalSpace
 
+    // -- Emitter mode (phase 7.5.0) ------------------------------------------
+
+    /// Selects the simulation strategy.
+    ///
+    /// `Stateful` (default, value 0): runs the standard spawn + update CS
+    /// pipeline. Full per-frame integration with turbulence, collision,
+    /// gravity, etc. Matches pre-7.5.0 behaviour.
+    ///
+    /// `Stateless` (value 1): skips the update CS entirely. The billboard
+    /// VS evaluates particle position from closed-form analytical motion
+    /// (see `VfxStatelessEvaluatePosition`). Restricted physics model
+    /// (initial velocity + gravity + exponential damping) but 2-4x cheaper
+    /// for dense bursts of simple ballistic particles (muzzle flashes,
+    /// spark showers).
+    ///
+    /// @ref UE5 UNiagaraStatelessEmitter.h
+    uint8_t emitterMode = 0u;  // 0=Stateful (default), 1=Stateless
+
     /// Optional spawn-rate ramp table (interim 4-point form until the full
     /// curve editor from 7.16.0 ships). When `enabled == false` the
     /// emission rate passes through unchanged.
