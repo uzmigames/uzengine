@@ -139,6 +139,80 @@ namespace {
     auto asset = std::make_unique<VfxSystem>();
     asset->name = std::move(name);
     asset->emitters = std::move(refs);
+
+    // -- parameters block (optional, added in phase 7.2.0) --
+    // Parses: "parameters": { "<name>": {"type": "float|vec3|vec4", "value": ...} }
+    // Unknown types are rejected with a Warning (the rest of the asset loads).
+    if (root.contains("parameters") && root["parameters"].is_object()) {
+        const auto& paramsJson = root["parameters"];
+        asset->parameters.reserve(paramsJson.size());
+        for (auto it = paramsJson.begin(); it != paramsJson.end(); ++it) {
+            const std::string paramName = it.key();
+            if (paramName.empty()) {
+                UZ_LOG(VFX, Warning,
+                       "VfxSystem[parameters]: empty parameter name, skipping");
+                continue;
+            }
+            if (!it.value().is_object()) {
+                UZ_LOG(VFX, Warning,
+                       "VfxSystem[parameters][{}]: entry must be an object, skipping",
+                       paramName);
+                continue;
+            }
+            const auto& entry = it.value();
+            if (!entry.contains("type") || !entry["type"].is_string()) {
+                UZ_LOG(VFX, Warning,
+                       "VfxSystem[parameters][{}]: missing or invalid 'type', skipping",
+                       paramName);
+                continue;
+            }
+            const std::string typeStr = entry["type"].get<std::string>();
+
+            VfxSystem::ParameterDefault def;
+            def.name = paramName;
+
+            if (typeStr == "float") {
+                if (!entry.contains("value") || !entry["value"].is_number()) {
+                    UZ_LOG(VFX, Warning,
+                           "VfxSystem[parameters][{}]: float 'value' must be a number, skipping",
+                           paramName);
+                    continue;
+                }
+                def.value = Vec4{entry["value"].get<float>(), 0.0f, 0.0f, 0.0f};
+                def.componentCount = 1;
+            } else if (typeStr == "vec3" || typeStr == "vec4") {
+                if (!entry.contains("value") || !entry["value"].is_array()) {
+                    UZ_LOG(VFX, Warning,
+                           "VfxSystem[parameters][{}]: {} 'value' must be an array, skipping",
+                           paramName, typeStr);
+                    continue;
+                }
+                const auto& arr = entry["value"];
+                const size_t required = (typeStr == "vec3") ? 3u : 4u;
+                if (arr.size() != required) {
+                    UZ_LOG(VFX, Warning,
+                           "VfxSystem[parameters][{}]: {} 'value' must have {} elements (got {}), skipping",
+                           paramName, typeStr, required, arr.size());
+                    continue;
+                }
+                def.value = Vec4{
+                    arr[0].get<float>(),
+                    arr[1].get<float>(),
+                    arr[2].get<float>(),
+                    (required == 4u) ? arr[3].get<float>() : 0.0f
+                };
+                def.componentCount = static_cast<uint8_t>(required);
+            } else {
+                UZ_LOG(VFX, Warning,
+                       "VfxSystem[parameters][{}]: unknown type '{}' (expected float/vec3/vec4), skipping",
+                       paramName, typeStr);
+                continue;
+            }
+
+            asset->parameters.push_back(std::move(def));
+        }
+    }
+
     return asset;
 }
 
@@ -207,6 +281,36 @@ bool VfxSystem::SaveToFile(const std::string& path) const {
         emittersJson.push_back(std::move(e));
     }
     root["emitters"] = std::move(emittersJson);
+
+    // Parameters block (7.2.0): only written when non-empty to keep legacy
+    // fireball.uzvfxsys round-trip stable.
+    if (!parameters.empty()) {
+        nlohmann::json paramsJson = nlohmann::json::object();
+        for (const auto& p : parameters) {
+            nlohmann::json entry;
+            switch (p.componentCount) {
+                case 1:
+                    entry["type"] = "float";
+                    entry["value"] = p.value.x;
+                    break;
+                case 3:
+                    entry["type"] = "vec3";
+                    entry["value"] = {p.value.x, p.value.y, p.value.z};
+                    break;
+                case 4:
+                    entry["type"] = "vec4";
+                    entry["value"] = {p.value.x, p.value.y, p.value.z, p.value.w};
+                    break;
+                default:
+                    // Should never happen; loader validates componentCount.
+                    entry["type"] = "vec4";
+                    entry["value"] = {p.value.x, p.value.y, p.value.z, p.value.w};
+                    break;
+            }
+            paramsJson[p.name] = std::move(entry);
+        }
+        root["parameters"] = std::move(paramsJson);
+    }
 
     std::ofstream ofs(path);
     if (!ofs) {

@@ -153,6 +153,52 @@ Tracked in follow-up tasks; not required for the MVP:
 - **Artist guide** (`docs/guides/authoring-vfx-compound.md`) — artist-
   facing how-to for building compound effects in the editor.
 
+## Parameters (phase 7.2.0)
+
+A compound asset can declare named default parameters that flow into the
+runtime instance's System-scope attribute store (see
+`20-namespaced-attributes.md`). Game code can overwrite them at any time
+via typed accessors on `VfxSystemInstance`:
+
+```cpp
+inst.SetFloatParameter("intensity", 2.0f);
+inst.SetVec3Parameter("windDir",   {1, 0, 0});
+inst.SetVec4Parameter("teamColor", {0.2f, 0.4f, 1.0f, 1.0f});
+
+const float i = inst.GetFloatParameter("intensity", 1.0f);
+```
+
+JSON block in `.uzvfxsys`:
+
+```json
+{
+  "format":  "uzvfxsys",
+  "version": 1,
+  "name":    "Fireball",
+  "emitters": [ ... ],
+  "parameters": {
+    "intensity": { "type": "float", "value": 1.0 },
+    "teamColor": { "type": "vec4",  "value": [0.2, 0.4, 1.0, 1.0] },
+    "windDir":   { "type": "vec3",  "value": [1.0, 0.0, 0.0] }
+  }
+}
+```
+
+Supported types: `float`, `vec3`, `vec4`. Unknown types and malformed
+value arrays are skipped with a `VFX/Warning` — the rest of the asset
+still loads. Authoring order is preserved for deterministic CB layout
+(mirrors the insertion-order contract of `VfxAttributeStore`).
+
+Defaults are applied once per `VfxSystemInstance::Init`; subsequent
+`Set*Parameter` calls override them and persist across frames until the
+instance is destroyed.
+
+Lua bindings (`ctx.vfx:set_param` / `ctx.vfx:get_param`) and the binding-
+expression evaluator (e.g. `"sparks.emissionRate = global.intensity * 120"`)
+land in the dedicated follow-up task
+`phase7_7.2.1-vfx-lua-parameter-bindings` so they ride alongside the
+7.3.0 event-pipeline Lua callbacks in one scripting pass.
+
 ## See also
 
 - `runtime/engine/vfx/system/vfx_system.h` / `.cpp` — asset type.

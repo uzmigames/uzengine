@@ -29,9 +29,12 @@
 #pragma once
 
 #include "vector3.h"
+#include "vector4.h"
+#include "engine/vfx/parameters/vfx_attribute_store.h"
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace uz {
@@ -123,6 +126,61 @@ public:
     /// Current world-space origin applied to local-space children.
     [[nodiscard]] Vec3 GetWorldPosition() const noexcept { return m_worldPosition; }
 
+    // ── Named user parameters (7.2.0 system-level parameter store) ──────────
+    //
+    // Writes land in the System scope of the internal attribute store. Values
+    // survive across frames and hot-reload. Readers bind to them via the
+    // canonical `System.<name>` key (see docs/engine/25-vfx/20-namespaced-attributes.md).
+    //
+    // # Example
+    // ```cpp
+    // inst.SetFloatParameter("intensity", 2.0f);
+    // const float intensity = inst.GetFloatParameter("intensity", 1.0f);
+    // ```
+
+    /// Sets a float parameter on the System scope.
+    void SetFloatParameter(const std::string& name, float value);
+
+    /// Sets a Vec3 parameter on the System scope (stored as Vec4 with w=0).
+    void SetVec3Parameter(const std::string& name, const Vec3& value);
+
+    /// Sets a Vec4 parameter on the System scope (canonical colour/gradient format).
+    void SetVec4Parameter(const std::string& name, const Vec4& value);
+
+    /// Reads a float parameter; returns `defaultValue` if the parameter has
+    /// never been set.
+    [[nodiscard]] float GetFloatParameter(const std::string& name,
+                                          float defaultValue = 0.0f) const;
+
+    /// Reads a Vec3 parameter; returns `defaultValue` on miss.
+    [[nodiscard]] Vec3 GetVec3Parameter(const std::string& name,
+                                        const Vec3& defaultValue = {}) const;
+
+    /// Reads a Vec4 parameter; returns `defaultValue` on miss.
+    [[nodiscard]] Vec4 GetVec4Parameter(const std::string& name,
+                                        const Vec4& defaultValue = {}) const;
+
+    /// Enumerates parameter names currently set on the System scope.
+    /// Insertion order preserved (stable for GPU CB layout).
+    [[nodiscard]] std::vector<std::string> GetParameterNames() const;
+
+    /// Returns true if `name` has been set at least once and not cleared.
+    [[nodiscard]] bool HasParameter(const std::string& name) const;
+
+    /// Drops a single parameter. Returns true if it existed.
+    bool RemoveParameter(const std::string& name);
+
+    /// Drops every System-scope parameter. Leaves Particles/Emitter scopes
+    /// untouched (they're currently unused at system level but reserved for
+    /// future per-system particle defaults).
+    void ClearParameters();
+
+    /// Direct access to the underlying attribute store — intended for the
+    /// render graph and the HLSL CB generator. Most callers should prefer
+    /// the `Set*/Get*Parameter` accessors above.
+    [[nodiscard]] VfxAttributeStore&       GetAttributeStore()       noexcept { return m_attributes; }
+    [[nodiscard]] const VfxAttributeStore& GetAttributeStore() const noexcept { return m_attributes; }
+
 private:
     /// Child emitters in declaration order from the source asset.
     /// Parallel to `m_localSpace`.
@@ -137,6 +195,11 @@ private:
 
     /// Master emission flag; mirrored into every child during `Tick`.
     bool m_emitting = true;
+
+    /// Scoped attribute store. Only the `System` scope is populated today
+    /// by `Set*Parameter`; per-emitter and per-particle scopes are reserved
+    /// for future expansions (7.1.1 runtime migration, 7.12 particle-read DI).
+    VfxAttributeStore m_attributes;
 };
 
 } // namespace uz

@@ -40,6 +40,8 @@
 
 #pragma once
 
+#include "vector4.h"
+
 #include <memory>
 #include <string>
 #include <vector>
@@ -99,6 +101,31 @@ struct VfxSystem {
     /// Path from which this asset was loaded. Empty when loaded from an
     /// in-memory string via `LoadFromString`.
     std::string sourcePath;
+
+    /// Optional named default parameters applied to the runtime instance's
+    /// System-scope attribute store at `VfxSystemInstance::Init`. Authors
+    /// declare these in the `.uzvfxsys` `parameters` block, game code can
+    /// override them via `SetFloatParameter`/`SetVec3Parameter`/etc. after
+    /// init.
+    ///
+    /// JSON format (all values stored as Vec4 — scalars use .x, Vec3 uses
+    /// .xyz, Vec4 is canonical):
+    /// ```json
+    /// "parameters": {
+    ///   "intensity":  { "type": "float", "value": 1.0 },
+    ///   "teamColor":  { "type": "vec4",  "value": [0.2, 0.4, 1.0, 1.0] },
+    ///   "windDir":    { "type": "vec3",  "value": [1.0, 0.0, 0.0] }
+    /// }
+    /// ```
+    struct ParameterDefault {
+        std::string name;          ///< Parameter name (System.<name> after binding).
+        Vec4        value{};       ///< Packed value — .x for floats, .xyz for vec3s.
+        uint8_t     componentCount = 1; ///< 1=float, 3=vec3, 4=vec4. Authoritative for round-trip.
+    };
+
+    /// Declared default parameters in authoring order. Applied to the System
+    /// scope of the runtime `VfxAttributeStore` during `VfxSystemInstance::Init`.
+    std::vector<ParameterDefault> parameters;
 
     /// Loads a `.uzvfxsys` JSON file and validates its schema.
     ///

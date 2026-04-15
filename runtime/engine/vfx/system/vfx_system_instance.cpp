@@ -113,9 +113,30 @@ bool VfxSystemInstance::Init(const VfxSystem& asset, IRHIDevice* device,
         return false;
     }
 
+    // Apply asset-declared default parameters to the System scope (7.2.0).
+    // Game code can still override later via Set*Parameter.
+    for (const auto& p : asset.parameters) {
+        switch (p.componentCount) {
+            case 1:
+                m_attributes.SetFloat(VfxAttributeScope::System, p.name, p.value.x);
+                break;
+            case 3:
+                m_attributes.SetVec3(VfxAttributeScope::System, p.name,
+                                     Vec3{p.value.x, p.value.y, p.value.z});
+                break;
+            case 4:
+                m_attributes.SetVec4(VfxAttributeScope::System, p.name, p.value);
+                break;
+            default:
+                // Defensive — componentCount is validated at load time.
+                m_attributes.SetVec4(VfxAttributeScope::System, p.name, p.value);
+                break;
+        }
+    }
+
     UZ_LOG(VFX, Info,
-           "VfxSystemInstance::Init: asset='{}' -> {} child emitters",
-           asset.name, m_emitters.size());
+           "VfxSystemInstance::Init: asset='{}' -> {} child emitters, {} default params",
+           asset.name, m_emitters.size(), asset.parameters.size());
     return true;
 }
 
@@ -183,6 +204,53 @@ std::vector<ParticleEmitter*> VfxSystemInstance::GetEmitters() const {
         out.push_back(child.get());
     }
     return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VfxSystemInstance -- named user parameters (System scope)
+// ─────────────────────────────────────────────────────────────────────────────
+
+void VfxSystemInstance::SetFloatParameter(const std::string& name, float value) {
+    m_attributes.SetFloat(VfxAttributeScope::System, name, value);
+}
+
+void VfxSystemInstance::SetVec3Parameter(const std::string& name, const Vec3& value) {
+    m_attributes.SetVec3(VfxAttributeScope::System, name, value);
+}
+
+void VfxSystemInstance::SetVec4Parameter(const std::string& name, const Vec4& value) {
+    m_attributes.SetVec4(VfxAttributeScope::System, name, value);
+}
+
+float VfxSystemInstance::GetFloatParameter(const std::string& name,
+                                           float defaultValue) const {
+    return m_attributes.GetFloat(VfxAttributeScope::System, name, defaultValue);
+}
+
+Vec3 VfxSystemInstance::GetVec3Parameter(const std::string& name,
+                                         const Vec3& defaultValue) const {
+    return m_attributes.GetVec3(VfxAttributeScope::System, name, defaultValue);
+}
+
+Vec4 VfxSystemInstance::GetVec4Parameter(const std::string& name,
+                                         const Vec4& defaultValue) const {
+    return m_attributes.GetVec4(VfxAttributeScope::System, name, defaultValue);
+}
+
+std::vector<std::string> VfxSystemInstance::GetParameterNames() const {
+    return m_attributes.GetNames(VfxAttributeScope::System);
+}
+
+bool VfxSystemInstance::HasParameter(const std::string& name) const {
+    return m_attributes.Has(VfxAttributeScope::System, name);
+}
+
+bool VfxSystemInstance::RemoveParameter(const std::string& name) {
+    return m_attributes.Remove(VfxAttributeScope::System, name);
+}
+
+void VfxSystemInstance::ClearParameters() {
+    m_attributes.Clear(VfxAttributeScope::System);
 }
 
 } // namespace uz
