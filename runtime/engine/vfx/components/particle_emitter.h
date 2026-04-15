@@ -387,6 +387,30 @@ struct ParticleEmitter {
     /// Lives on CPU (not GPU) to simplify persistent-state hot-reload.
     uint64_t nextPersistentID = 1;
 
+    // -- Fixed-timestep accumulator (phase 7.8.0) ----------------------------
+
+    /// Selects how the update pass converts `frameDt` into sub-steps.
+    ///
+    /// `FrameRate` (default) runs one update CS per frame with
+    /// `dt = frameDt`, matching pre-7.8.0 behaviour. `FixedRate` runs N
+    /// dispatches per frame, each using `dt = fixedDt`, delivering
+    /// frame-rate-independent determinism for competitive multiplayer and
+    /// replay systems.
+    ///
+    /// Runtime accumulator state lives in `timestepAccumulator`; the
+    /// declaration here is the authoring intent.
+    ///
+    /// @ref UE5 UNiagaraEmitter::FixedTickDeltaTime
+    uint8_t timestepMode = 0u;   // 0=FrameRate, 1=FixedRate (see VfxTimestepMode)
+
+    /// Fixed sub-step duration in seconds. Applied only when
+    /// `timestepMode == FixedRate`. Typical values: 1/30, 1/60.
+    float fixedDt = 1.0f / 60.0f;
+
+    /// Anti-spiral clamp — maximum sub-steps per frame.
+    /// Applied only when `timestepMode == FixedRate`.
+    uint32_t maxSubSteps = 8u;
+
     /// Reserves a contiguous range of `count` persistent IDs starting at the
     /// current counter value. Advances `nextPersistentID` by `count`. The
     /// GPU spawn CS then computes `id = baseID + threadIndex` so each

@@ -106,6 +106,7 @@ pub fn build(b: *std.Build) void {
         "engine/vfx/modules",
         "engine/vfx/asset",
         "engine/vfx/parameters",
+        "engine/vfx/data_interfaces",
         "engine/vfx/events",
         "engine/renderer/passes/vfx",
         "engine/vfx/decals",
@@ -299,6 +300,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/vfx/modules", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/asset", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/parameters", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/data_interfaces", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/events", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/decals",  cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/trails",  cpp_flags);
