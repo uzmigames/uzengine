@@ -26,6 +26,7 @@
 
 #include "engine/vfx/core/gpu_particle_buffer.h"
 #include "engine/vfx/core/particle_budget.h"
+#include "engine/vfx/core/vfx_spawn_rate_curve.h"
 #include "engine/vfx/events/vfx_event.h"
 #include "engine/vfx/lod/vfx_lod.h"
 #include "engine/vfx/modules/emitter_module_stack.h"
@@ -410,6 +411,44 @@ struct ParticleEmitter {
     /// Anti-spiral clamp — maximum sub-steps per frame.
     /// Applied only when `timestepMode == FixedRate`.
     uint32_t maxSubSteps = 8u;
+
+    // -- Velocity inheritance + spawn curves (phase 7.20.0) ------------------
+
+    /// Fraction of the emitter's frame velocity inherited by newly spawned
+    /// particles. `0.0` (default) = spawn at rest relative to the emitter;
+    /// `1.0` = spawn matching the emitter's world-space motion. Typical
+    /// values: 0.3–0.7 for smoke trailing a vehicle, 1.0 for muzzle flashes.
+    ///
+    /// Applied additively: `initialVel = spawnVel + velocityInheritance * emitterVel`.
+    /// `emitterVel` is filled each frame via `UpdateFrameVelocity`.
+    ///
+    /// @ref UE5 FNiagaraEmitterSpawnInfo::bInheritVelocity
+    float velocityInheritance = 0.0f;
+
+    /// Last-frame world-space emitter velocity (cm/s). Refreshed each frame
+    /// by the sync pass via `UpdateFrameVelocity(newPos, dt)` and consumed
+    /// by the spawn CS to compute inherited velocity.
+    ///
+    /// Not authored — runtime state. Reset to zero on `Initialize`.
+    Vec3 emitterFrameVelocity {0.0f, 0.0f, 0.0f};
+
+    /// Last observed emitter world position. Used internally by
+    /// `UpdateFrameVelocity` to derive the frame delta.
+    Vec3 lastEmitterPosition {0.0f, 0.0f, 0.0f};
+
+    /// Whether `lastEmitterPosition` has been seeded. Prevents the first
+    /// frame from producing a huge synthetic velocity (0 -> actual pos).
+    bool emitterFrameVelocityPrimed = false;
+
+    /// Optional spawn-rate ramp table (interim 4-point form until the full
+    /// curve editor from 7.16.0 ships). When `enabled == false` the
+    /// emission rate passes through unchanged.
+    VfxSpawnRateCurve spawnRateCurve {};
+
+    /// Captures the new emitter position, derives the frame velocity
+    /// delta, and updates `emitterFrameVelocity`. Call once per frame
+    /// before the spawn CS dispatch. Rejects non-positive `dt`.
+    void UpdateFrameVelocity(const Vec3& newPosition, float dt) noexcept;
 
     /// Reserves a contiguous range of `count` persistent IDs starting at the
     /// current counter value. Advances `nextPersistentID` by `count`. The

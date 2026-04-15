@@ -140,4 +140,33 @@ uint32_t ParticleEmitter::CalculateSpawnCount(float dt) noexcept {
     return spawnCount;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ParticleEmitter::UpdateFrameVelocity  (phase 7.20.0)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Derives world-space frame velocity from successive emitter positions.
+// The first call after Initialize primes `lastEmitterPosition` but leaves
+// `emitterFrameVelocity` at zero so we don't produce a spurious (0 -> real
+// pos) velocity spike.
+
+void ParticleEmitter::UpdateFrameVelocity(const Vec3& newPosition, float dt) noexcept {
+    if (!(dt > 0.0f)) {
+        // Zero / negative dt: refuse silently; keep previous velocity so a
+        // paused editor frame doesn't wipe the inherited motion.
+        return;
+    }
+
+    if (!emitterFrameVelocityPrimed) {
+        lastEmitterPosition       = newPosition;
+        emitterFrameVelocity      = {0.0f, 0.0f, 0.0f};
+        emitterFrameVelocityPrimed = true;
+        return;
+    }
+
+    const Vec3 delta = newPosition - lastEmitterPosition;
+    const float invDt = 1.0f / dt;
+    emitterFrameVelocity = Vec3{delta.x * invDt, delta.y * invDt, delta.z * invDt};
+    lastEmitterPosition  = newPosition;
+}
+
 } // namespace uz
