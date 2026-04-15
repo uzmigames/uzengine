@@ -440,6 +440,25 @@ struct ParticleEmitter {
     /// frame from producing a huge synthetic velocity (0 -> actual pos).
     bool emitterFrameVelocityPrimed = false;
 
+    // -- Simulation space (phase 7.7.0) --------------------------------------
+
+    /// Coordinate frame in which particles are stored and simulated.
+    ///
+    /// `WorldSpace` (default, value 0): positions + velocities are in
+    /// world-space. Matches pre-7.7.0 behaviour; effects rendered at a
+    /// fixed location regardless of emitter motion.
+    ///
+    /// `LocalSpace` (value 1): positions + velocities are in the emitter's
+    /// local frame. The billboard VS applies `worldFromLocal` at draw time
+    /// so particles follow the emitter rigidly. Gravity and external
+    /// forces are rotated into local space at integration time.
+    ///
+    /// Required for attached effects (muzzle flashes, vehicle exhaust) that
+    /// must stay anchored to fast-moving entities without trail lag.
+    ///
+    /// @ref UE5 UNiagaraEmitter::bLocalSpace
+    uint8_t simulationSpace = 0u;  // 0=WorldSpace (default), 1=LocalSpace
+
     /// Optional spawn-rate ramp table (interim 4-point form until the full
     /// curve editor from 7.16.0 ships). When `enabled == false` the
     /// emission rate passes through unchanged.
