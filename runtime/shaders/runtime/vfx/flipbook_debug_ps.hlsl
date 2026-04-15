@@ -7,6 +7,8 @@
 ///
 /// Entry point: main (mandatory).
 
+#include "flipbook_atlas.hlsli"
+
 struct PSIn {
     float4 positionCS : SV_Position;
     float2 uv         : TEXCOORD0;
@@ -30,21 +32,12 @@ float4 main(PSIn input) : SV_Target {
         return float4(1, 0, 1, 1); // magenta — misconfigured
     }
 
-    // Cycle frame index with global time.
+    // Cycle frame index with global time, then use the shared atlas helper
+    // so this debug overlay samples the exact same tile as the particle VS
+    // would for an equivalent subImageIndex.
     float frameF = totalTime * fps;
     uint  frameI = (uint)frameF % totalFrames;
-
-    // Atlas tile for this frame.
-    uint col = frameI % flipbookCols;
-    uint row = frameI / flipbookCols;
-    float invCols = 1.0f / (float)flipbookCols;
-    float invRows = 1.0f / (float)flipbookRows;
-
-    // Remap [0..1] quad UV into the chosen tile's sub-rect of the atlas.
-    float2 atlasUV = float2(
-        ((float)col + input.uv.x) * invCols,
-        ((float)row + input.uv.y) * invRows
-    );
+    float2 atlasUV = AtlasUV(frameI, flipbookRows, flipbookCols, input.uv);
 
     if (spriteTextureIdx == 0xFFFFFFFFu) {
         return float4(input.uv.x, input.uv.y, 0.5f, 1.0f); // no texture — gradient

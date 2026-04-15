@@ -45,6 +45,7 @@
 /// @deviations NONE
 
 #include "../include/depth_common.hlsli"
+#include "flipbook_atlas.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -686,25 +687,16 @@ VSOutput main(uint vertexID : SV_VertexID) {
             subImgIdx = subImages[particleID];
         }
 #endif
-        // Niagara pattern: frameA = floor(idx), frameB = frameA + 1, lerp = frac(idx).
-        uint framesClamped = max(flipbookTotalFrames, 1u);
-        uint frameA = (uint)floor(subImgIdx) % framesClamped;
-        uint frameB = (frameA + 1u) % framesClamped;
-        float lerpT = frac(subImgIdx);
+        // Shared atlas helper — see `flipbook_atlas.hlsli`. Keeps the math
+        // identical between this path and the debug quad overlay.
+        uint  frameA;
+        uint  frameB;
+        float lerpT;
+        ComputeFlipbookFrames(subImgIdx, flipbookTotalFrames, frameA, frameB, lerpT);
 
-        uint cols = max(flipbookCols, 1u);
-        uint rows = max(flipbookRows, 1u);
-        float invCols = 1.0f / (float)cols;
-        float invRows = 1.0f / (float)rows;
-
-        float colA = (float)(frameA % cols);
-        float rowA = (float)(frameA / cols);
-        float colB = (float)(frameB % cols);
-        float rowB = (float)(frameB / cols);
-
-        float2 cornerUV = kCornerUVs[vertexInQuad];
-        output.flipbookUV0 = (float2(colA, rowA) + cornerUV) * float2(invCols, invRows);
-        output.flipbookUV1 = (float2(colB, rowB) + cornerUV) * float2(invCols, invRows);
+        float2 cornerUV    = kCornerUVs[vertexInQuad];
+        output.flipbookUV0 = AtlasUV(frameA, flipbookRows, flipbookCols, cornerUV);
+        output.flipbookUV1 = AtlasUV(frameB, flipbookRows, flipbookCols, cornerUV);
         output.flipbookLerp = lerpT;
     } else {
         // No flipbook — pass straight corner UVs.
