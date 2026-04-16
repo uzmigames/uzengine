@@ -1662,9 +1662,14 @@ static void QuickSortEdges(SEdge * pSortBuffer, int iLeft, int iRight, const int
 		return;
 	}
 
-	// Random
+	// Random (patched: avoid UB when the rotate amount is 0 — shift by 32
+	// on a 32-bit unsigned is undefined in C and trips Zig's sanitizer).
 	t=uSeed&31;
-	t=(uSeed<<t)|(uSeed>>(32-t));
+	if (t == 0) {
+		t = uSeed;
+	} else {
+		t=(uSeed<<t)|(uSeed>>(32-t));
+	}
 	uSeed=uSeed+t+3;
 	// Random end
 

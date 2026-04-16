@@ -136,6 +136,13 @@ uint32_t SceneRenderer::QueueMeshLoad(const std::string& path) {
     return slotIndex;
 }
 
+const GPUMesh* SceneRenderer::GetGPUMesh(uint32_t meshId) const {
+    if (meshId >= m_meshes.size()) return nullptr;
+    const GPUMesh& m = m_meshes[meshId];
+    if (!m.IsValid()) return nullptr;
+    return &m;
+}
+
 uint32_t SceneRenderer::RegisterProceduralMesh(Mesh&& mesh, const std::string& key) {
     if (key.empty() || !mesh.IsValid()) return UINT32_MAX;
 

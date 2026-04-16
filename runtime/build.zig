@@ -97,6 +97,7 @@ pub fn build(b: *std.Build) void {
         "engine/scripting/core",
         "engine/scripting/renderer",
         "engine/scripting/editor",
+        "engine/scripting/animation",
         "engine/ipc",
         "engine/vfx",
         "engine/vfx/core",
@@ -289,6 +290,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/scripting/core", cpp_flags);
     addCppDir(runtime_mod, b, "engine/scripting/renderer", cpp_flags);
     addCppDir(runtime_mod, b, "engine/scripting/editor", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/scripting/animation", cpp_flags);
     addCppDir(runtime_mod, b, "engine/ipc", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/core", cpp_flags);

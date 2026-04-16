@@ -785,6 +785,13 @@ public:
     /// Returns the object-space AABB bounds for a mesh by its ID.
     [[nodiscard]] bool GetMeshBounds(uint32_t meshId, Vec3& outMin, Vec3& outMax) const;
 
+    /// Returns a pointer to the GPU mesh at the given ID, or nullptr if the ID
+    /// is out of range or the mesh has not finished uploading.
+    ///
+    /// Used by the animation subsystem to upload per-frame skinned vertex data
+    /// into the mesh's vertex buffer after GPU skinning.
+    [[nodiscard]] const GPUMesh* GetGPUMesh(uint32_t meshId) const;
+
     /// Sets the EditorInputHandler pointer used by the ViewportToolbar.
     /// Non-owning — the handler must outlive the renderer.
     void SetEditorInputHandler(EditorInputHandler* handler) { m_editorInputHandler = handler; }

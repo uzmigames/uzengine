@@ -53,13 +53,31 @@
             1
           ]
         },
-        "mesh": {
-          "asset": "meshes/MushroomMonster_Low.uzmesh"
+        "skeletal_mesh": {
+          "asset": "meshes/mushroommonster/MushroomMonster_Low.uzmesh",
+          "skeleton": "meshes/mushroommonster/MushroomMonster_Low.uzskel",
+          "initialClip": "",
+          "clips": [
+            "meshes/mushroommonster/animations/Mushroom_Idle.uzanim",
+            "meshes/mushroommonster/animations/Mushroom_IdleBreak.uzanim",
+            "meshes/mushroommonster/animations/Mushroom_Walk.uzanim",
+            "meshes/mushroommonster/animations/Mushroom_WalkBack.uzanim",
+            "meshes/mushroommonster/animations/Mushroom_Attack01.uzanim",
+            "meshes/mushroommonster/animations/Mushroom_Attack02.uzanim",
+            "meshes/mushroommonster/animations/Mushroom_Attack03.uzanim",
+            "meshes/mushroommonster/animations/Mushroom_Block01.uzanim",
+            "meshes/mushroommonster/animations/Mushroom_Block02.uzanim",
+            "meshes/mushroommonster/animations/Mushroom_Block03.uzanim",
+            "meshes/mushroommonster/animations/Mushroom_Hit.uzanim",
+            "meshes/mushroommonster/animations/Mushroom_Death.uzanim",
+            "meshes/mushroommonster/animations/Mushroom_Squash.uzanim"
+          ]
         },
         "material": {
-          "albedo": "textures/MushroomMonster/MushroomMonster_Low_MushroomMesh_BaseColor.png",
-          "normal": "textures/MushroomMonster/MushroomMonster_Low_MushroomMesh_Normal.png",
-          "ao": "textures/MushroomMonster/MushroomMonster_Low_MushroomMesh_ORM.png"
+          "material_graph": "meshes/mushroommonster/mushroom_monster.uzmat"
+        },
+        "script": {
+          "path": "scripts/mushroom_controller.lua"
         }
       }
     },

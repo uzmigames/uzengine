@@ -2,6 +2,7 @@
 /// instancing, and all per-frame state preparation.
 
 #include "scene_renderer.h"
+#include "skeletal_mesh_subsystem.h"
 
 // Umbrella headers
 #include "renderer_core.h"
@@ -104,6 +105,12 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
 
     // ── Flush deferred asset loads (queued from Lua callbacks) ─────────
     FlushPendingLoads(ctx.cmdList, ctx.vfs);
+
+    // ── Upload skinned vertex buffers for all animated entities ────────
+    // AnimationSubsystem::TickAll(dt) has already produced fresh CPU vertex
+    // bytes. Push them into each entity's procedural GPU mesh so the GBuffer
+    // pass draws the updated pose this frame.
+    uz::SkeletalMeshSubsystem::Get().UploadAll(m_device, ctx.cmdList, *this);
 
     // ── Apply CVar changes ─────────────────────────────────────────────
     ApplyCVars();

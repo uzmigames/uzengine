@@ -32,6 +32,7 @@
 #include "../engine/scripting/script_system.h"
 #include "../engine/asset/vfs.h"
 #include "../engine/renderer/scene/scene_renderer.h"
+#include "../engine/animation/skeletal_mesh_subsystem.h"
 #include "../engine/scripting/core/lua_input_api.h"
 #include "../editor/input/editor_input_handler.h"
 #include "../editor/selection/selection_manager.h"
@@ -675,6 +676,13 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     uint32_t frameIndex = 0;
     uint64_t globalFenceValue = 0;
 
+    // Finalize skeletal-mesh components after SceneRenderer is up: loads the
+    // .uzmesh / .uzskel / .uzanim for every animated entity, wires per-entity
+    // procedural output meshes, and registers the animation subsystem state.
+    if (sceneRendererReady) {
+        SkeletalMeshSubsystem::Get().Finalize(world, sceneRenderer, vfs);
+    }
+
     if (sceneRendererReady && !defaultScene.empty()) {
         UZ_LOG(Engine, Info, "Pre-loading scene textures...");
 
@@ -756,6 +764,12 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
             LuaVM::UpdateFrameGlobals(dt, t, static_cast<uint64_t>(frameIndex));
             ScriptSystem::Update(dt);
         }
+
+        // Advance all skeletal animation controllers in parallel and CPU-skin
+        // each entity's vertex buffer. Must run before RenderFrame so the GPU
+        // upload (queued inside SceneRenderer::RenderFrame → FlushPendingLoads)
+        // sees the latest skinned bytes.
+        SkeletalMeshSubsystem::Get().TickAll(dt);
 
         // Render
         if (sceneRendererReady) {

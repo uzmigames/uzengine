@@ -115,9 +115,19 @@ struct SubMesh {
 /// manually for procedural geometry.
 struct Mesh {
     MeshHeader             header;       ///< Parsed file header
-    std::vector<uint8_t>   vertexData;   ///< Raw vertex bytes
+    std::vector<uint8_t>   vertexData;   ///< Raw vertex bytes (48 B Vertex stride, bind-pose for skinned)
     std::vector<uint8_t>   indexData;    ///< Raw index bytes
     std::vector<SubMesh>   submeshes;    ///< Submesh ranges (empty = single draw call for entire mesh)
+
+    // ── Skinning data (set only when the source asset is UZMS/skinned) ──────
+    // `skinnedVertexData` contains the original 56 B SkinnedVertex[] stream,
+    // preserved for GPU skinning (consumed by gpu_skinning_cs.hlsl). When
+    // present, `skeletonPath` names the .uzskel asset that goes with this mesh.
+    // The static `vertexData` stream above is still the stripped 48 B bind-pose
+    // copy — used as the bind-pose fallback when the mesh is rendered without
+    // an animation controller (e.g., in the editor before controllers run).
+    std::vector<uint8_t>   skinnedVertexData; ///< 56 B SkinnedVertex[], empty if unskinned.
+    std::string            skeletonPath;      ///< VFS path to .uzskel, empty if unskinned.
 
     /// Returns vertex count from header.
     [[nodiscard]] uint32_t GetVertexCount() const { return header.vertexCount; }
