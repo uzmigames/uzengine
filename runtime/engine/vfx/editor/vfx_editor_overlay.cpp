@@ -6,6 +6,7 @@
 
 #include "vfx_editor_overlay.h"
 #include "engine/vfx/components/particle_emitter.h"
+#include "editor/font/system_font.h"
 #include "input.h"
 #include "upload_context.h"
 #include "log.h"
@@ -57,10 +58,11 @@ bool VfxEditorOverlay::Init(IRHIDevice* device, IRHICommandList* cmdList, Upload
     m_screenW = screenW;
     m_screenH = screenH;
 
-    const std::string fontPath = "C:/Windows/Fonts/consola.ttf";
+    const std::string fontPath = ResolveDefaultMonoFont();
     constexpr float kFontSize = 14.0f;
-    if (!m_font.Init(device, cmdList, upload, fontPath, kFontSize)) {
-        UZ_LOG(VFX, Error, "VfxEditorOverlay: Failed to init font");
+    if (fontPath.empty() || !m_font.Init(device, cmdList, upload, fontPath, kFontSize)) {
+        UZ_LOG(VFX, Error, "VfxEditorOverlay: Failed to init font (resolved='%s')",
+               fontPath.c_str());
         return false;
     }
 

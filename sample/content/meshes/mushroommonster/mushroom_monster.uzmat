@@ -42,12 +42,12 @@
         }
     ],
     "params": {
-        "roughnessMultiplier": 1.0,
-        "metallicMultiplier": 1.0,
+        "roughnessMultiplier": 0.1,
+        "metallicMultiplier": 0.0,
         "baseColorTint": [1.0, 1.0, 1.0],
         "normalStrength": 1.0,
         "aoMultiplier": 1.0,
         "emissiveMultiplier": 0.0,
-        "specularMultiplier": 1.0
+        "specularMultiplier": 0.2
     }
 }

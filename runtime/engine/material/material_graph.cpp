@@ -800,6 +800,27 @@ bool MaterialGraph::FromJson(const std::string& jsonStr, std::string* outError) 
                 break;
             }
         }
+        // Common author aliases: "RGB" routes to the RGBA output pin (the
+        // translator emits per-channel .r/.g/.b swizzles when the consumer
+        // reads a Float3 from a Float4 source). Accepting this spelling
+        // avoids silently dropping BaseColor/Normal/Emissive pins in .uzmat
+        // files authored with "srcPin": "RGB".
+        if (!resolved) {
+            const std::string& n = pending.srcPinName;
+            const char* fallback = nullptr;
+            if (n == "RGB")      fallback = "RGBA";
+            else if (n == "XYZ") fallback = "RGBA";
+            else if (n == "XY")  fallback = "RGBA";
+            if (fallback) {
+                for (const auto& outPin : srcExpr->outputs) {
+                    if (outPin.name == fallback) {
+                        dstPin->connectedPinId = outPin.id;
+                        resolved = true;
+                        break;
+                    }
+                }
+            }
+        }
         if (!resolved) {
             UZ_LOG(Material, Warning,
                    "MaterialGraph: source expression {} ({}) has no output pin named '{}' "

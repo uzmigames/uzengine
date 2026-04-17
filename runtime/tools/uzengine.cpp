@@ -604,6 +604,13 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
 
     // ── Scene Renderer ─────────────────────────────────────────────────
     SceneRenderer sceneRenderer;
+    // Forward the project/CLI-supplied content root to the renderer so
+    // features like VFX hot-reload can attach to the correct directory.
+    // When the project did not set one, the renderer skips hot-reload
+    // silently — no path is ever hardcoded inside the runtime.
+    if (configPtr) {
+        sceneRenderer.SetContentRoot(configPtr->GetString("content_root", ""));
+    }
     bool sceneRendererReady = sceneRenderer.Init(device, &window,
         static_cast<uint32_t>(width), static_cast<uint32_t>(height));
     if (!sceneRendererReady) {
@@ -624,6 +631,20 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     // Apply editor mode from CLI (--editor)
     if (editorMode && sceneRendererReady) {
         sceneRenderer.SetEditorMode(true);
+    }
+
+    // Apply debug view mode from CLI (--view-mode <name>). The uzengine
+    // runtime has its own Config-based CLI parser (distinct from
+    // Application::ParseArgs), so `--view-mode` must be routed here manually
+    // or the renderer defaults to Lit regardless of the flag.
+    if (sceneRendererReady && configPtr) {
+        const std::string vmArg = configPtr->GetString("view-mode", "");
+        if (!vmArg.empty()) {
+            const DebugViewMode vm = DebugViewModeFromString(std::string_view{vmArg});
+            sceneRenderer.SetDebugViewMode(vm);
+            UZ_LOG(Engine, Info, "Debug view mode: '{}' (enum={})",
+                   DebugViewModeName(vm), static_cast<uint32_t>(vm));
+        }
     }
 
     // ── Editor Input & Selection (only when editor mode is active) ────

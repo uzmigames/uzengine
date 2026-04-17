@@ -35,6 +35,9 @@ void SkeletalMeshInstance::Bind(const Mesh* sourceMesh, const Skeleton* skeleton
             const size_t bytes = std::min(m_outputVertexData.size(), sourceMesh->vertexData.size());
             std::memcpy(m_outputVertexData.data(), sourceMesh->vertexData.data(), bytes);
         }
+        // Force one upload so the procedural GPU mesh starts with the bind
+        // pose rather than uninitialized data. Cleared on first UploadAll.
+        m_outputDirty = true;
     }
 }
 
@@ -97,6 +100,7 @@ void SkeletalMeshInstance::UpdatePaletteFromPose() {
 
         m_palette[i] = bone.inverseBindWorld * worldMatrices[i];
     }
+
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -139,6 +143,15 @@ void SkeletalMeshInstance::SkinCpu() {
         return;
     }
 
+    // TEMP: bypass CPU skinning while the bind-pose palette identity bug
+    // and associated math are still under investigation. `Bind()` primes
+    // `m_outputVertexData` with the 48 B bind-pose stream, and the dirty-
+    // flag gate in UploadAll ensures that copy is uploaded exactly once.
+    // This keeps the mesh visible in its correct rest pose and preserves
+    // interactive framerate while the skinning rig is still wrong. Revert
+    // once UpdatePaletteFromPose produces an identity palette at bind.
+    return;
+
     const uint32_t vertexCount = m_sourceMesh->GetVertexCount();
     const size_t srcStride = sizeof(SkinnedVertex);
     const size_t dstStride = sizeof(Vertex);
@@ -150,6 +163,7 @@ void SkeletalMeshInstance::SkinCpu() {
         // No palette yet — copy bind pose as a fallback.
         const size_t bytes = std::min(m_outputVertexData.size(), m_sourceMesh->vertexData.size());
         std::memcpy(m_outputVertexData.data(), m_sourceMesh->vertexData.data(), bytes);
+        m_outputDirty = true;
         return;
     }
 
@@ -215,6 +229,9 @@ void SkeletalMeshInstance::SkinCpu() {
 
         dv->texcoord = sv->texcoord;
     }
+
+    // Every vertex in m_outputVertexData was rewritten — mark for GPU re-upload.
+    m_outputDirty = true;
 }
 
 } // namespace uz

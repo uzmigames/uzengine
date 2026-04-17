@@ -4,6 +4,7 @@
 /// with a frame time graph (bottom-left) using the BitmapFont text renderer.
 
 #include "stats_overlay.h"
+#include "editor/font/system_font.h"
 #include "upload_context.h"
 #include "constant_buffers.h"
 #include "log.h"
@@ -37,10 +38,11 @@ bool StatsOverlay::Init(IRHIDevice* device, IRHICommandList* cmdList, UploadCont
     m_screenWidth = screenWidth;
     m_screenHeight = screenHeight;
 
-    // ── Font atlas ───────────────────────────────────────────────────────
-    std::string fontPath = "C:/Windows/Fonts/consola.ttf";
-    if (!m_font.Init(device, cmdList, upload, fontPath, kFontSize)) {
-        UZ_LOG(EditorStats, Error, "Failed to init stats font");
+    // ── Font atlas (platform-resolved monospace) ─────────────────────────
+    const std::string fontPath = ResolveDefaultMonoFont();
+    if (fontPath.empty() ||
+        !m_font.Init(device, cmdList, upload, fontPath, kFontSize)) {
+        UZ_LOG(EditorStats, Error, "Failed to init stats font (resolved='{}')", fontPath);
         return false;
     }
 

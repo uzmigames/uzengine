@@ -717,6 +717,14 @@
     /// Hot-reload watcher for .uzfx and .uzvfx files (dev builds only).
     std::unique_ptr<VFXHotReload> m_vfxHotReload;
 
+    /// Content root directory supplied by the application (via SetContentRoot).
+    /// Used to initialize the VFX hot-reload watcher. Empty by default —
+    /// when empty, hot-reload is skipped. The runtime never hardcodes a
+    /// content directory; the application (engine host / editor / demo) is
+    /// responsible for supplying one derived from project config, CLI flags,
+    /// or similar.
+    std::string m_contentRoot;
+
     // ── GPU Instancing (triple-buffered) ─────────────────────────────────
     RHIBufferHandle m_instanceBuffers[kInstanceBufferCount]; ///< Per-frame instance buffers.
     uint32_t m_instanceBufferCapacity = 0;   ///< Current capacity in number of InstanceData elements.

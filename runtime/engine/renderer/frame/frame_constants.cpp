@@ -73,7 +73,7 @@ static auto* cv_MaterialMinGGXAlpha   = UZ_CVAR_FLOAT("r.Material.MinGGXAlpha", 
 // Exposure 3.0 — matched to the indoor calibration with Sponza skylight
 // intensity 0.35 and sun direct 18. 3.0 keeps the sun-lit walls bright
 // without washing out the deep-shadowed corners of the atrium.
-static auto* cv_Exposure           = UZ_CVAR_FLOAT("r.Exposure", 3.0f, "Manual exposure multiplier (applied on auto-exposure)", 0.01f, 100.f);
+static auto* cv_Exposure           = UZ_CVAR_FLOAT("r.Exposure", 1.0f, "Manual exposure multiplier (applied on auto-exposure)", 0.01f, 100.f);
 static auto* cv_GIIntensity        = UZ_CVAR_FLOAT("r.GI.Intensity", 1.f, "GI intensity multiplier", 0.f, 10.f);
 static auto* cv_AerialPersp        = UZ_CVAR_BOOL("r.AerialPerspective", false, "Aerial perspective in deferred lighting");
 static auto* cv_IndirectAOExp      = UZ_CVAR_FLOAT("r.IndirectAO.Exponent", 2.f, "AO exponent for indirect light (higher = more occlusion)", 1.f, 5.f);

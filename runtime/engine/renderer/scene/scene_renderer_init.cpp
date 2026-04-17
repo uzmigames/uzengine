@@ -829,12 +829,14 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     }
 
     // ── VFX Hot-Reload (.uzfx + .uzvfx files) ───────────────────────────
-    // Watches content directories for changes and triggers emitter
-    // re-instantiation when .uzfx files are modified on disk.
+    // Watches the application-supplied content directory for changes and
+    // triggers emitter re-instantiation when .uzfx files are modified on
+    // disk. The runtime never hardcodes a content path — when the host
+    // did not call SetContentRoot(), hot-reload is silently skipped.
 #if !defined(NDEBUG)
-    {
+    if (!m_contentRoot.empty()) {
         m_vfxHotReload = std::make_unique<VFXHotReload>();
-        m_vfxHotReload->Initialize("content/", m_vfxSystem.get(), nullptr);
+        m_vfxHotReload->Initialize(m_contentRoot, m_vfxSystem.get(), nullptr);
 
         // When a .uzfx file changes, reset all emitters that reference it
         // so SyncVfxEmitters re-creates them next frame.
@@ -1259,6 +1261,18 @@ void SceneRenderer::Shutdown() {
     // Without this, D3D12MA asserts "Some allocations were not freed" because
     // resources are destroyed while the GPU still references them.
     m_device->WaitIdle();
+
+    // Flush the deferred-destroy queue. Per-frame uploaders (skeletal mesh
+    // staging buffers, SDF bake scratch, etc.) push transient RHI buffers
+    // here and rely on `frame_setup.cpp` to drain the queue at the start of
+    // the NEXT frame — but on shutdown there is no next frame, so anything
+    // still queued would leak and trip the D3D12MA allocation-leak assert.
+    for (auto& buf : m_deferredDestroyBuffers) {
+        if (buf.IsValid()) {
+            m_device->DestroyBuffer(buf);
+        }
+    }
+    m_deferredDestroyBuffers.clear();
 
     // Destroy screenshot readback buffer
     m_screenshotCapture.Shutdown();

@@ -98,6 +98,15 @@ public:
         return m_outputVertexData;
     }
 
+    /// True when `m_outputVertexData` has been mutated since the last GPU
+    /// upload. The render-thread uploader consumes + clears this flag so that
+    /// the 5.76 MB VB copy is skipped on frames where nothing changed (static
+    /// bind pose, or animations with no per-frame delta).
+    [[nodiscard]] bool IsOutputDirty() const { return m_outputDirty; }
+
+    /// Clears the dirty flag. Call exactly once after a successful GPU upload.
+    void ClearOutputDirty() { m_outputDirty = false; }
+
     /// Returns the source mesh pointer (for GPU palette index-count decisions).
     [[nodiscard]] const Mesh* GetSourceMesh() const { return m_sourceMesh; }
 
@@ -122,6 +131,7 @@ private:
     // Computed each frame.
     std::vector<Mat4>    m_palette;             ///< World bone × inverseBind, per bone.
     std::vector<uint8_t> m_outputVertexData;    ///< 48 B Vertex[] bytes, one per source vertex.
+    bool                 m_outputDirty = false; ///< Set when m_outputVertexData changes; cleared after upload.
 };
 
 } // namespace uz

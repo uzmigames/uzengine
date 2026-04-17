@@ -6,6 +6,7 @@
 #include "viewport_toolbar.h"
 
 #include "cvar.h"
+#include "editor/font/system_font.h"
 #include "editor_input_handler.h"
 #include "input.h"
 #include "log.h"
@@ -37,18 +38,13 @@ bool ViewportToolbar::Init(IRHIDevice* device, IRHICommandList* cmdList,
     m_screenWidth  = screenWidth;
     m_screenHeight = screenHeight;
 
-    // ── Load font (same Consolas 13px as StatsOverlay) ───────────────────
-    std::string fontPath;
-#if defined(_WIN32)
-    fontPath = "C:/Windows/Fonts/consola.ttf";
-#elif defined(__APPLE__)
-    fontPath = "/System/Library/Fonts/Monaco.ttf";
-#else
-    fontPath = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf";
-#endif
-
-    if (!m_font.Init(device, cmdList, upload, fontPath, kFontSize)) {
-        UZ_LOG(Toolbar, Warning, "ViewportToolbar: font load failed, toolbar disabled");
+    // ── Load font (platform-resolved monospace, same as StatsOverlay) ────
+    const std::string fontPath = ResolveDefaultMonoFont();
+    if (fontPath.empty() ||
+        !m_font.Init(device, cmdList, upload, fontPath, kFontSize)) {
+        UZ_LOG(Toolbar, Warning,
+               "ViewportToolbar: font load failed (resolved='{}'), toolbar disabled",
+               fontPath);
         return false;
     }
 

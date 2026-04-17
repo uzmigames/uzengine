@@ -7,7 +7,7 @@
 /// # Usage
 /// ```cpp
 /// BitmapFont font;
-/// font.Init(device, cmdList, uploadCtx, "C:/Windows/Fonts/consola.ttf", 16.f);
+/// font.Init(device, cmdList, uploadCtx, uz::ResolveDefaultMonoFont(), 16.f);
 /// // ... use GetGlyph() to lay out text quads ...
 /// font.Shutdown(device);
 /// ```

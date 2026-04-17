@@ -143,6 +143,12 @@ const GPUMesh* SceneRenderer::GetGPUMesh(uint32_t meshId) const {
     return &m;
 }
 
+void SceneRenderer::QueueBufferDestroy(RHIBufferHandle buffer) {
+    if (buffer.IsValid()) {
+        m_deferredDestroyBuffers.push_back(buffer);
+    }
+}
+
 uint32_t SceneRenderer::RegisterProceduralMesh(Mesh&& mesh, const std::string& key) {
     if (key.empty() || !mesh.IsValid()) return UINT32_MAX;
 

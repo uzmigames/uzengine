@@ -307,6 +307,24 @@ public:
     /// Returns the current pixel debug system, or nullptr if not set.
     [[nodiscard]] PixelDebugSystem* GetPixelDebugSystem() const noexcept { return m_pixelDebugSystem; }
 
+    /// Sets the content root directory used for VFX hot-reload.
+    ///
+    /// The runtime is path-agnostic — it never hardcodes a content
+    /// directory. The host application (engine CLI, editor, demo) is
+    /// responsible for resolving the content root from its own sources
+    /// (project config, `.uzproject` file, command-line flag) and forwarding
+    /// it here *before* `Init()` runs, so the hot-reload watcher can attach
+    /// to the correct directory.
+    ///
+    /// When unset (empty string), VFX hot-reload is skipped silently.
+    ///
+    /// # Parameters
+    /// - `root`: Absolute or CWD-relative path to the content directory.
+    void SetContentRoot(std::string root) { m_contentRoot = std::move(root); }
+
+    /// Returns the content root currently configured via SetContentRoot().
+    [[nodiscard]] const std::string& GetContentRoot() const noexcept { return m_contentRoot; }
+
     // ── Configuration ──────────────────────────────────────────────────────
 
     /// Switches between deferred and forward rendering.
@@ -791,6 +809,17 @@ public:
     /// Used by the animation subsystem to upload per-frame skinned vertex data
     /// into the mesh's vertex buffer after GPU skinning.
     [[nodiscard]] const GPUMesh* GetGPUMesh(uint32_t meshId) const;
+
+    /// Queues an RHI buffer for destruction after the current frame's fence
+    /// completes. Used by subsystems that create transient upload/staging
+    /// buffers inside the render command list: the buffer must outlive the
+    /// recorded GPU copies, so it cannot be destroyed immediately.
+    ///
+    /// Processed at the start of the NEXT frame (see
+    /// `frame_setup.cpp:`m_deferredDestroyBuffers flush), after
+    /// `Application::WaitForFrame` has confirmed the previous GPU submit is
+    /// complete.
+    void QueueBufferDestroy(RHIBufferHandle buffer);
 
     /// Sets the EditorInputHandler pointer used by the ViewportToolbar.
     /// Non-owning — the handler must outlive the renderer.

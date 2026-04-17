@@ -316,29 +316,52 @@ void SkeletalMeshSubsystem::TickAll(float dt) {
 void SkeletalMeshSubsystem::UploadAll(IRHIDevice* device, IRHICommandList* cmdList, SceneRenderer& renderer) {
     if (device == nullptr || cmdList == nullptr) return;
 
-    std::vector<std::pair<uint32_t, std::vector<uint8_t>>> snapshots;
+    // Snapshot only the instances that actually produced new skinned bytes
+    // this frame. `UploadContext::UploadBuffer` allocates a fresh DX12 staging
+    // committed resource per call, which is expensive (~0.1-1 ms), so skipping
+    // unchanged instances is the single largest win for static / idle meshes.
+    struct DirtySnapshot {
+        uint32_t                 meshId;
+        std::vector<uint8_t>     bytes;
+        SkeletalMeshInstance*    instance;
+    };
+    std::vector<DirtySnapshot> snapshots;
     {
         std::lock_guard<std::mutex> lock(m_registryMutex);
         snapshots.reserve(m_records.size());
         for (auto& rec : m_records) {
             if (!rec.instance) continue;
+            if (!rec.instance->IsOutputDirty()) continue;
             const auto& bytes = rec.instance->GetOutputVertexData();
             if (bytes.empty()) continue;
-            snapshots.emplace_back(rec.instance->GetOutputMeshId(), bytes);
+            snapshots.push_back({rec.instance->GetOutputMeshId(), bytes, rec.instance.get()});
         }
     }
     if (snapshots.empty()) return;
 
     UploadContext upload(device);
-    for (const auto& [meshId, bytes] : snapshots) {
-        const GPUMesh* gmesh = renderer.GetGPUMesh(meshId);
+    for (auto& snap : snapshots) {
+        const GPUMesh* gmesh = renderer.GetGPUMesh(snap.meshId);
         if (gmesh == nullptr || !gmesh->IsValid()) continue;
-        if (!upload.UploadBuffer(cmdList, gmesh->vertexBuffer, bytes.data(), bytes.size())) {
+        if (!upload.UploadBuffer(cmdList, gmesh->vertexBuffer, snap.bytes.data(), snap.bytes.size())) {
             UZ_LOG(Animation, Warning,
-                   "SkeletalMeshSubsystem::UploadAll: UploadBuffer failed for meshId {}", meshId);
+                   "SkeletalMeshSubsystem::UploadAll: UploadBuffer failed for meshId {}", snap.meshId);
+            continue;
         }
+        // Consume the dirty flag now that the copy is recorded; if a new
+        // SkinCpu pass sets the flag again later this frame, we'll pick it
+        // up on the next UploadAll call (not expected in normal tick order).
+        snap.instance->ClearOutputDirty();
     }
-    upload.ReleaseStaging();
+    // The command list still holds unsubmitted CopyBuffer commands that
+    // reference these staging buffers. Destroying them now (as
+    // ReleaseStaging() would) leaves the GPU reading freed memory and
+    // produces corrupted vertex data (visible as stray geometry across the
+    // screen). Hand ownership to the renderer's deferred-destroy queue,
+    // which fires on the next frame AFTER the GPU fence has completed.
+    for (RHIBufferHandle staging : upload.TakeStagingBuffers()) {
+        renderer.QueueBufferDestroy(staging);
+    }
 }
 
 } // namespace uz

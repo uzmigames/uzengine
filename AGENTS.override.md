@@ -7,6 +7,7 @@
 - **FAIL TWICE → OPEN TEAM** — agents must READ CODE, produce root cause before any fix.
 - **NEVER STOP TO ASK** — implement continuously. Never "quer que eu continue?".
 - **OBEY USER EXACTLY** — no reinterpretation, no "better" alternatives.
+- **RUNTIME IS 100% PATH-AGNOSTIC** — NEVER hardcode filesystem paths in `runtime/` code (no absolute paths, no drive letters, no project-specific relative paths like `"sample/content/..."` or `"content/meshes/foo.uzmesh"`). All paths enter via CLI args (`--project`, `--cvar`), `.uzproj` files, asset manifests, or explicit API calls from the application layer. Use `uz::GetExeDir()` for exe-relative resolution. Demos/samples/tests outside `runtime/` MAY have paths (they are consumers). Before committing `runtime/` changes, grep for `":/"`, `".uz"`, `"content/"`, `"sample/"`, drive letters.
 
 ## RENDERING RULES
 
