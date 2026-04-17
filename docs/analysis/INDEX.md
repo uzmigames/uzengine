@@ -1,173 +1,195 @@
-# Analysis Index — Engine Architecture & Rendering References
+# UzEngine Analysis — Master Index
 
-**Last Updated**: 2026-04-04  
-**Documents**: 4 major analysis suites
-
----
-
-## Quick Navigation
-
-### I Want To...
-
-**Understand what CVars exist**  
-→ Start with ue5-rendering-cvars-reference.md
-
-**Implement CVars in UzEngine**  
-→ Follow uzengine-cvar-implementation-guide.md (7 steps)
-
-**Know what NOT to do**  
-→ Read cvar-architecture-antipatterns.md (10 anti-patterns)
-
-**Get started in 5 minutes**  
-→ Read README.md
+**Reorganized**: 2026-04-17
+**Scope**: Reference material, reverse engineering, gap analyses, architectural research.
+**Convention**: Every directory has its own `INDEX.md`. This file points to them.
 
 ---
 
-## Document Suites
+## 1 · Lighting & Shadows  *(primary focus)*
 
-### Suite A: UE5 Rendering CVars (1,750 lines, 67KB)
+Path: [`lighting/`](./lighting/) — See [lighting/INDEX.md](./lighting/INDEX.md)
 
-#### 1. ue5-rendering-cvars-reference.md (608 lines)
-
-**Complete reference of all rendering CVars from UE5 5.6**
-
-Organized by 20 categories:
-- Tone Mapping (2 CVars)
-- Bloom (4 CVars)
-- GTAO (8 CVars)
-- Shadow Mapping (50+ CVars)
-- TAA/TSR (10 CVars)
-- Sky Atmosphere (30+ CVars)
-- Volumetric Clouds (20+ CVars)
-- Volumetric Fog (7 CVars)
-- And 12 more categories...
-
-Each CVar includes: name, type, default, range, description
-
-#### 2. uzengine-cvar-implementation-guide.md (482 lines)
-
-**7-step process to implement CVars**
-
-1. Define CVar in C++
-2. Wire into constant buffer struct
-3. Populate CB from CVars (read every frame)
-4. Wire CB into shader
-5. Validation & clamping (C++ side)
-6. Console command registration
-7. Runtime testing
-
-Includes complete code examples for each step.
-
-#### 3. cvar-architecture-antipatterns.md (577 lines)
-
-**10 anti-patterns to avoid**
-
-1. Hardcoded values in shaders
-2. Compilation-time conditionals
-3. Initialization-time only parameters
-4. Inconsistent C++/shader defaults
-5. Skipping CB updates
-6. Missing validation & clamping
-7. No documentation
-8. Cascading dependencies without checks
-9. Forgetting frame boundary reads
-10. CVar scope confusion
-
-Includes WRONG/CORRECT code examples for each.
-
-#### 4. README.md (84 lines)
-
-**Quick-start overview and navigation**
+| Subdir | Focus |
+|--------|-------|
+| [`lighting/crimson-desert/`](./lighting/crimson-desert/) | BlackSpace Engine per-pixel RTGI, ray reconstruction, denoising. |
+| [`lighting/lumen/`](./lighting/lumen/) | UE5 Lumen: surface cache, radiance cache, screen probe gather. |
+| [`lighting/modern-techniques/`](./lighting/modern-techniques/) | ReSTIR DI/GI, DDGI, SDFGI, VSM, radiance cascades, ray reconstruction. |
+| [`lighting/direct/`](./lighting/direct/) | Analytic lights (directional, point, spot), IBL, skylight. |
+| [`lighting/shadows/`](./lighting/shadows/) | CSM, VSM, PCSS, local light atlas, reversed-Z, point/spot data flow. |
+| [`lighting/global-illumination/`](./lighting/global-illumination/) | Generic GI references (ground radiance, etc.). |
+| [`lighting/indoor/`](./lighting/indoor/) | Sponza, Frostbite/CryEngine/Three.js/Godot indoor GI. |
+| [`lighting/uzengine/`](./lighting/uzengine/) | UzEngine gap analysis + AAA default pipeline redesign. |
 
 ---
 
-### Suite B: Godot 4 Architecture Analysis (1,200+ lines, 42KB)
+## 2 · Reflections
 
-#### 5. godot4-normal-smoothing-analysis.md (550+ lines)
+Path: [`reflections/`](./reflections/)
 
-**Deep analysis of Godot 4's mesh normal smoothing and tangent generation**
-
-Topics:
-- Smoothing group mechanism (uint32 per vertex)
-- Normal averaging algorithm (unweighted face normal sums)
-- Tangent generation via mikktspace library
-- Normal encoding (uncompressed Vector3, optional octahedral compression)
-- Import pipeline (FBX vs glTF handling)
-- Comparison with UE5 (angle-weighted vs group-based)
-- Runtime modification (MeshDataTool)
-- Implementation recommendations for DX12 engines
-
-Key insight: Godot's smoothing groups are simpler than UE5's edge-based approach but equally effective.
+| Subdir | Focus |
+|--------|-------|
+| [`reflections/ssr/`](./reflections/ssr/) | SSR — Frostbite stochastic, CryEngine, UE5, Three.js, Godot, idTech. |
+| [`reflections/ssr-academic/`](./reflections/ssr-academic/) | Academic SSR survey. |
+| [`reflections/next-gen-2025.md`](./reflections/next-gen-2025.md) | Next-gen reflection survey (2025). |
+| [`reflections/ssr-state-of-the-art-2025.md`](./reflections/ssr-state-of-the-art-2025.md) | SSR SOTA 2025. |
 
 ---
 
-### Suite C: UE5 SSR Architecture (450+ lines, 18KB)
+## 3 · Atmosphere, Sky, Fog, Clouds
 
-#### 6. ue5-ssr-architecture.md
+Path: [`atmosphere-sky/`](./atmosphere-sky/)
 
-**Screen-space reflection pipeline, parameters, quality tiers**
-
----
-
-## Key Resources by Task Type
-
-### For Normal Smoothing / Mesh Import
-- **Start here:** godot4-normal-smoothing-analysis.md (Section 1: Smoothing Group System)
-- **Implementation:** Section 11: Recommendations for UzEngine
-- **Comparison:** Section 12: Godot vs UE5 vs Industry
-
-### For Rendering Quality Parity
-- **Start here:** ue5-rendering-cvars-reference.md
-- **Implementation:** uzengine-cvar-implementation-guide.md
-- **Anti-patterns:** cvar-architecture-antipatterns.md
-
-### For Advanced Rendering
-- **SSR:** ue5-ssr-architecture.md
+| Subdir | Focus |
+|--------|-------|
+| [`atmosphere-sky/sky/`](./atmosphere-sky/sky/) | Bruneton/Hillaire sky, aerial perspective, UE5 blue horizon. |
+| [`atmosphere-sky/fog/`](./atmosphere-sky/fog/) | Exponential height fog, volumetric fog (froxels), UE5 fog defaults. |
+| [`atmosphere-sky/clouds/`](./atmosphere-sky/clouds/) | Volumetric clouds (Schneider, Hillaire). |
 
 ---
 
-## Key Statistics
+## 4 · Materials
 
-| Item | Count |
-|------|-------|
-| Total CVars | 1,000+ |
-| Categories | 20 |
-| Lines of Documentation | 1,750 |
-| Implementation Steps | 7 |
-| Anti-Patterns | 10 |
+Path: [`materials/`](./materials/)
 
----
-
-## Implementation Priority
-
-**Phase 1 (Week 1)**: Tone Mapping, Bloom, TAA, Shadows, GTAO, Fog  
-**Phase 2 (Weeks 2-3)**: SSR, SSGI, Atmosphere, Advanced Fog  
-**Phase 3 (Weeks 4-6)**: Clouds, Hair, Ray Tracing, Lumen, Advanced Shadows
+| Subdir | Focus |
+|--------|-------|
+| [`materials/core/`](./materials/core/) | PBR, IBL, metallic, glass/transmission. |
+| [`materials/decals/`](./materials/decals/) | Deferred decals (UE5 architecture + quick reference). |
 
 ---
 
-## Critical Rules
+## 5 · Post-Process & Upscaling
 
-1. Every parameter is a CVar (no exceptions)
-2. CVar flows: component → CB → shader
-3. CB struct matches shader layout exactly
-4. Shaders read CB, never hardcoded
-5. Validate ranges in C++ before GPU
-6. Update CB every frame (not cached)
-7. Document thoroughly (units, range, reference)
-8. Test at runtime (change CVar, see result next frame)
-9. No recompilation needed
-10. Defaults from published references
+- [`post-process/`](./post-process/) — Tonemap, auto-exposure (histogram), bloom, GTAO.
+- [`post-process/ue5-gtao-deep-dive/`](./post-process/ue5-gtao-deep-dive/) — UE5 GTAO algorithm.
+- [`upscaling/`](./upscaling/) — TAA, TSR, DLSS (incl. Ray Reconstruction), FSR, Godot upscaling.
 
 ---
 
-## Next Steps
+## 6 · Path Tracing
 
-1. Read README.md (5 min)
-2. Skim ue5-rendering-cvars-reference.md (10 min)
-3. Study uzengine-cvar-implementation-guide.md (30 min)
-4. Review cvar-architecture-antipatterns.md (20 min)
-5. Pick 1 feature, follow all 7 steps
-6. Test at runtime
-7. Repeat
+Path: [`path-tracing/`](./path-tracing/) — Reference path tracer architecture and plan.
 
+---
+
+## 7 · VFX & Particles
+
+Path: [`vfx-particles/`](./vfx-particles/)
+
+| Subdir | Focus |
+|--------|-------|
+| [`vfx-particles/niagara/`](./vfx-particles/niagara/) | UE5 Niagara DI, module stack UI, GPU buffer lifecycle. |
+| [`vfx-particles/particles/`](./vfx-particles/particles/) | Flipbook / sub-UV. |
+
+---
+
+## 8 · Animation & Skeletal
+
+Path: [`animation-skeletal/`](./animation-skeletal/)
+
+| Subdir | Focus |
+|--------|-------|
+| [`animation-skeletal/skeletal/`](./animation-skeletal/skeletal/) | Skeleton, GPU skinning, vertex formats. |
+| [`animation-skeletal/animation/`](./animation-skeletal/animation/) | Sequences, pose, debug traces. |
+
+---
+
+## 9 · Rendering Architecture
+
+Path: [`rendering-arch/`](./rendering-arch/)
+
+| Subdir | Focus |
+|--------|-------|
+| [`rendering-arch/cvars/`](./rendering-arch/cvars/) | UE5 CVar reference, anti-patterns, UzEngine implementation guide. |
+| [`rendering-arch/patterns/`](./rendering-arch/patterns/) | UE5 / Godot / Unity / Three.js / Falcor renderer patterns. |
+| [`rendering-arch/expert-reviews/`](./rendering-arch/expert-reviews/) | Multi-expert consensus reviews (UE5, Godot, Unity, shader, pipeline). |
+| [`rendering-arch/gap-analysis/`](./rendering-arch/gap-analysis/) | Feature matrices, UE5 implementation checklists. |
+| [`rendering-arch/overview/`](./rendering-arch/overview/) | Strategic plan, renderer audit, postmortem. |
+| [`rendering-arch/debug/`](./rendering-arch/debug/) | Debug visualization. |
+
+---
+
+## 10 · GPU Backend
+
+Path: [`gpu-backend/`](./gpu-backend/)
+
+| Subdir | Focus |
+|--------|-------|
+| [`gpu-backend/rhi/`](./gpu-backend/rhi/) | RHI layer, cbuffer layout, Agility SDK, SM5 fallback. |
+| [`gpu-backend/dx12/`](./gpu-backend/dx12/) | DX12 descriptors, PSO, root signature. |
+| [`gpu-backend/parity/`](./gpu-backend/parity/) | DX11/DX12 parity, bindless issues. |
+
+---
+
+## 11 · Asset Pipeline
+
+Path: [`asset-pipeline/`](./asset-pipeline/)
+
+| Subdir | Focus |
+|--------|-------|
+| [`asset-pipeline/loading/`](./asset-pipeline/loading/) | UE5/UzEngine loading architecture, texture streaming. |
+| [`asset-pipeline/mesh/`](./asset-pipeline/mesh/) | Normal smoothing, tangent generation (MikkTSpace), Godot / UE5. |
+
+---
+
+## 12 · Editor Tools
+
+Path: [`editor-tools/`](./editor-tools/)
+
+| Subdir | Focus |
+|--------|-------|
+| [`editor-tools/gizmo/`](./editor-tools/gizmo/) | Transform gizmo: UE5 analysis, implementation guide. |
+| [`editor-tools/render-toolbar/`](./editor-tools/render-toolbar/) | Viewport toolbar. |
+
+---
+
+## 13 · Engineering
+
+Path: [`engineering/`](./engineering/)
+
+| Subdir | Focus |
+|--------|-------|
+| [`engineering/debug-tools/`](./engineering/debug-tools/) | Rendering diagnostics inventory, Falcor integration. |
+| [`engineering/vscode-integration/`](./engineering/vscode-integration/) | Runtime/N-API IPC, frame capture. |
+| [`engineering/hardcoded-paths/`](./engineering/hardcoded-paths/) | Audit of hardcoded filesystem paths in runtime/. |
+
+---
+
+## 14 · Data Flow Reference
+
+Path: [`dataflow/`](./dataflow/) — Per-feature data flow documents (ECS → CB → shader).
+
+Covers: Bruneton LUT, decal component, flipbook sub-UV, GPU SDF bake, Hi-Z occlusion culling,
+radiance cache, reflection probe capture, SDF GI pipeline, sky LUT, skylight+fog,
+SSGI, stochastic SSR, TAA→tonemap, VFX parameter UI, volumetric fog pipeline.
+
+---
+
+## 15 · External References
+
+Path: [`_references/`](./_references/)
+
+| Subdir | Focus |
+|--------|-------|
+| [`_references/falcor/`](./_references/falcor/) | NVIDIA Falcor reference implementation analysis. |
+| [`_references/dlss/`](./_references/dlss/) | DLSS integration analysis. |
+| [`_references/intel-gpu/`](./_references/intel-gpu/) | Intel GPU research: AO, denoising, materials, neural graphics, ray tracing, sampling, upscaling. |
+| [`_references/engine-comparison/`](./_references/engine-comparison/) | Godot/Unity/UE5 feature matrices. |
+| [`_references/ue5-parity/`](./_references/ue5-parity/) | UE5 property parity reports. |
+
+---
+
+## 16 · Archive
+
+Path: [`_archive/`](./_archive/) — Old root READMEs/INDEXes, overnight notes, historical issue lists. Kept for continuity; not authoritative.
+
+---
+
+## Quick paths
+
+- **I want to fix Sponza lighting**: start at [`lighting/indoor/sponza-lighting-rootcause.md`](./lighting/indoor/sponza-lighting-rootcause.md) → then [`lighting/uzengine/gap-analysis.md`](./lighting/uzengine/gap-analysis.md).
+- **I want to understand Lumen**: [`lighting/lumen/00-architecture.md`](./lighting/lumen/00-architecture.md).
+- **I want Crimson Desert's tech stack**: [`lighting/crimson-desert/00-blackspace-engine.md`](./lighting/crimson-desert/00-blackspace-engine.md).
+- **I want the new default lighting pipeline plan**: [`lighting/uzengine/aaa-default-pipeline.md`](./lighting/uzengine/aaa-default-pipeline.md).
+- **I want to wire a new CVar**: [`rendering-arch/cvars/uzengine-implementation-guide.md`](./rendering-arch/cvars/uzengine-implementation-guide.md).
