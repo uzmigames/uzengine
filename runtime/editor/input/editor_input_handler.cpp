@@ -51,6 +51,10 @@ void EditorInputHandler::Update(float /*dt*/) {
 
     // ── Gizmo mode hotkeys (only when not dragging) ─────────────────────
     if (!m_gizmoInteraction.IsDragging()) {
+        if (m_input->IsKeyJustPressed(Key::Q)) {
+            m_mode = GizmoMode::Select;
+            UZ_LOG(Editor, Trace, "Gizmo mode: Select");
+        }
         if (m_input->IsKeyJustPressed(Key::W)) {
             m_mode = GizmoMode::Translate;
             UZ_LOG(Editor, Trace, "Gizmo mode: Translate");
@@ -64,8 +68,8 @@ void EditorInputHandler::Update(float /*dt*/) {
             UZ_LOG(Editor, Trace, "Gizmo mode: Scale");
         }
 
-        // ── Coordinate space toggle ────────────────────────────────────
-        if (m_input->IsKeyJustPressed(Key::Space)) {
+        // ── Coordinate space toggle (Grave / ` key) ────────────────────
+        if (m_input->IsKeyJustPressed(Key::Grave)) {
             m_space = (m_space == GizmoSpace::World) ? GizmoSpace::Local : GizmoSpace::World;
             UZ_LOG(Editor, Trace, "Gizmo space: {}",
                    m_space == GizmoSpace::World ? "World" : "Local");
@@ -106,7 +110,10 @@ void EditorInputHandler::Update(float /*dt*/) {
     }
 
     // ── Gizmo hover hit testing (every frame) ───────────────────────────
-    if (entityValid && hasDeps && !m_gizmoInteraction.IsDragging()) {
+    // Select mode has no gizmo — never hit-test or draw.
+    const bool gizmoActive = (m_mode != GizmoMode::Select);
+
+    if (gizmoActive && entityValid && hasDeps && !m_gizmoInteraction.IsDragging()) {
         // Compute screen scale to match the renderer's formula.
         const Vec3 camPos = m_camera->GetPosition();
         const float dx = entityPos.x - camPos.x;
@@ -132,9 +139,12 @@ void EditorInputHandler::Update(float /*dt*/) {
     if (m_input->IsMouseJustPressed(MouseButton::Left) &&
         !m_input->IsMouseDown(MouseButton::Right)) {
 
-        const GizmoHitResult hovered = m_gizmoInteraction.GetHoveredAxis();
+        // In Select mode the gizmo never has a hovered axis.
+        const GizmoHitResult hovered = gizmoActive
+            ? m_gizmoInteraction.GetHoveredAxis()
+            : GizmoHitResult::None;
 
-        if (entityValid && hasDeps && hovered != GizmoHitResult::None) {
+        if (gizmoActive && entityValid && hasDeps && hovered != GizmoHitResult::None) {
             // Gizmo was hit — start drag instead of selection.
             const Vec3 camPos = m_camera->GetPosition();
             const float dx = entityPos.x - camPos.x;

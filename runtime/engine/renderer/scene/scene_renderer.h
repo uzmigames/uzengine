@@ -32,6 +32,7 @@
 #include "render_path.h"
 #include "gbuffer_debug_pass.h"  // GBufferDebugMode
 #include "debug_view_mode.h"    // DebugViewMode
+#include "show_flags.h"       // ShowFlags / ShowFlag
 #include "gpu_mesh.h"
 #include "texture_loader.h"
 #include "screenshot_capture.h"
@@ -93,7 +94,9 @@ class ShaderManager;
 class PipelineLibrary;
 class CBRingAllocator;
 class EditorGrid;
+class EditorInputHandler;
 class StatsOverlay;
+class ViewportToolbar;
 class VfxEditorOverlay;
 class OutlinePass;
 class GizmoRenderer;
@@ -305,6 +308,24 @@ public:
     /// Returns the current pixel debug system, or nullptr if not set.
     [[nodiscard]] PixelDebugSystem* GetPixelDebugSystem() const noexcept { return m_pixelDebugSystem; }
 
+    /// Sets the content root directory used for VFX hot-reload.
+    ///
+    /// The runtime is path-agnostic — it never hardcodes a content
+    /// directory. The host application (engine CLI, editor, demo) is
+    /// responsible for resolving the content root from its own sources
+    /// (project config, `.uzproject` file, command-line flag) and forwarding
+    /// it here *before* `Init()` runs, so the hot-reload watcher can attach
+    /// to the correct directory.
+    ///
+    /// When unset (empty string), VFX hot-reload is skipped silently.
+    ///
+    /// # Parameters
+    /// - `root`: Absolute or CWD-relative path to the content directory.
+    void SetContentRoot(std::string root) { m_contentRoot = std::move(root); }
+
+    /// Returns the content root currently configured via SetContentRoot().
+    [[nodiscard]] const std::string& GetContentRoot() const noexcept { return m_contentRoot; }
+
     // ── Configuration ──────────────────────────────────────────────────────
 
     /// Switches between deferred and forward rendering.
@@ -357,6 +378,25 @@ public:
 
     /// Returns the current debug view mode.
     [[nodiscard]] DebugViewMode GetDebugViewMode() const { return m_debugViewMode; }
+
+    /// Returns the current show-flag set by value. Modify via `SetShowFlag`
+    /// — a copy is returned so callers can read without holding a reference
+    /// into the renderer (ShowFlags is 8 bytes).
+    [[nodiscard]] ShowFlags GetShowFlags() const { return m_showFlags; }
+
+    /// Returns a mutable reference to the show-flag set. Used by CVar-bridge
+    /// and IPC handlers that apply edits between frames.
+    [[nodiscard]] ShowFlags& MutableShowFlags() { return m_showFlags; }
+
+    /// Overwrites the entire show-flag set. Takes effect on the next
+    /// `RenderFrame()` call.
+    void SetShowFlags(ShowFlags flags) { m_showFlags = flags; }
+
+    /// Sets a single show flag to `enabled`. Takes effect on the next frame.
+    void SetShowFlag(ShowFlag flag, bool enabled) { m_showFlags.Set(flag, enabled); }
+
+    /// Returns `true` if the given show flag is currently enabled.
+    [[nodiscard]] bool GetShowFlag(ShowFlag flag) const { return m_showFlags.Get(flag); }
 
     /// Sets the shadow debug visualization mode (0=off, 1-8=debug views).
     /// See shadow_debug.hlsli for mode descriptions.
@@ -763,6 +803,28 @@ public:
 
     /// Returns the object-space AABB bounds for a mesh by its ID.
     [[nodiscard]] bool GetMeshBounds(uint32_t meshId, Vec3& outMin, Vec3& outMax) const;
+
+    /// Returns a pointer to the GPU mesh at the given ID, or nullptr if the ID
+    /// is out of range or the mesh has not finished uploading.
+    ///
+    /// Used by the animation subsystem to upload per-frame skinned vertex data
+    /// into the mesh's vertex buffer after GPU skinning.
+    [[nodiscard]] const GPUMesh* GetGPUMesh(uint32_t meshId) const;
+
+    /// Queues an RHI buffer for destruction after the current frame's fence
+    /// completes. Used by subsystems that create transient upload/staging
+    /// buffers inside the render command list: the buffer must outlive the
+    /// recorded GPU copies, so it cannot be destroyed immediately.
+    ///
+    /// Processed at the start of the NEXT frame (see
+    /// `frame_setup.cpp:`m_deferredDestroyBuffers flush), after
+    /// `Application::WaitForFrame` has confirmed the previous GPU submit is
+    /// complete.
+    void QueueBufferDestroy(RHIBufferHandle buffer);
+
+    /// Sets the EditorInputHandler pointer used by the ViewportToolbar.
+    /// Non-owning — the handler must outlive the renderer.
+    void SetEditorInputHandler(EditorInputHandler* handler) { m_editorInputHandler = handler; }
 
     /// Sets the active gizmo mode for editor gizmo rendering.
     /// 0 = translate, 1 = rotate, 2 = scale.

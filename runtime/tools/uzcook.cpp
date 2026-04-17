@@ -125,6 +125,7 @@ static std::vector<std::string> ScanSourceFiles(
         if (!entry.is_regular_file()) continue;
 
         std::string ext = entry.path().extension().string();
+        for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         if (registry.FindByExtension(ext) != nullptr) {
             files.push_back(entry.path().string());
         }
@@ -395,6 +396,7 @@ int main(int argc, char** argv) {
         }
 
         std::string ext = fs::path(sourcePath).extension().string();
+        for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         auto* importer = registry.FindByExtension(ext);
         if (!importer) continue;
 
@@ -523,8 +525,29 @@ int main(int argc, char** argv) {
             else if (importerName == "mesh" || importerName == "fbx") { outputExt = ".uzmesh"; assetType = uz::AssetType::Mesh; }
             else if (importerName == "texture") { outputExt = ".uztexture"; assetType = uz::AssetType::Texture; }
 
-            // Write companion file (filesystem, no lock needed — unique per file)
-            if (importerName == "texture" || importerName == "mesh" || importerName == "fbx") {
+            // Importer may override the primary output extension based on the
+            // input content (e.g., FBX with animation but no mesh → .uzanim).
+            if (!result.primaryExtensionOverride.empty()) {
+                outputExt = result.primaryExtensionOverride;
+                if (outputExt == ".uzanim" || outputExt == ".uzskel") {
+                    assetType = uz::AssetType::Generic;
+                } else if (outputExt == ".uzmesh") {
+                    assetType = uz::AssetType::Mesh;
+                } else if (outputExt == ".uztexture") {
+                    assetType = uz::AssetType::Texture;
+                } else if (outputExt == ".uzshader") {
+                    assetType = uz::AssetType::Shader;
+                }
+            }
+
+            // Write companion file (filesystem, no lock needed — unique per file).
+            // Mesh/texture imports always emit a companion next to the source.
+            // FBX animation-only imports also emit a companion (.uzanim) so the
+            // dev-mode LooseFileVFS can find them at their logical VFS path.
+            const bool writeCompanion =
+                (importerName == "texture" || importerName == "mesh" ||
+                 importerName == "fbx");
+            if (writeCompanion) {
                 std::string companionPath = t->sourcePath;
                 auto compDot = companionPath.rfind('.');
                 if (compDot != std::string::npos) {
@@ -583,6 +606,24 @@ int main(int argc, char** argv) {
                                               uz::HashToHex(scCacheKey) + ".bin";
                     cookedAssets.push_back({sidecarLogical, scCachePath, sc.data.size(),
                                             uz::AssetType::Generic, {}});
+
+                    // Also emit sidecars as companion files next to the source
+                    // so dev-mode LooseFileVFS can resolve them. FBX may produce
+                    // .uzskel / .uzanim alongside the primary .uzmesh / .uzanim.
+                    if (importerName == "fbx") {
+                        std::string scCompanionPath = t->sourcePath;
+                        auto scCompDot = scCompanionPath.rfind('.');
+                        if (scCompDot != std::string::npos) {
+                            scCompanionPath = scCompanionPath.substr(0, scCompDot) + sc.extension;
+                        }
+                        std::ofstream scOut(scCompanionPath, std::ios::binary);
+                        if (scOut.is_open()) {
+                            scOut.write(reinterpret_cast<const char*>(sc.data.data()),
+                                        static_cast<std::streamsize>(sc.data.size()));
+                            UZ_LOG(Cook, Info, "Wrote sidecar companion: '{}' ({} bytes)",
+                                   scCompanionPath, sc.data.size());
+                        }
+                    }
                 }
             }
             ++imported;

@@ -125,32 +125,25 @@ float SampleShadowCascade(float3 worldPos, float3 N, float NdotL, uint cascadeId
 
 /// Full CSM evaluation with cascade-walk fallback + distance fade.
 ///
-/// Previously this function picked ONE cascade based on `viewDepth` and
-/// returned `1.0` (fully lit) if that cascade's frustum did not cover
-/// the pixel. This caused the "sun leaks through walls when the camera
-/// rotates" bug in Sponza — cascades are derived from the camera view
-/// frustum, so rotating the camera moved cascade 0 away from indoor
-/// geometry, and the miss returned "lit" instead of trying the next
-/// larger cascade.
+/// @param N      World-space surface normal — used for normal-offset bias so
+///               walls/ceilings receive bias along their true normal direction.
+///               Hardcoding N=(0,0,1) caused the "darkening from far away" artifact:
+///               far cascades have larger texels → larger bias magnitude → wrong
+///               direction pushed vertical surfaces into self-shadow.
+/// @param NdotL  Real cos(angle) between surface normal and light direction,
+///               used for slope-scaled depth bias.
 ///
-/// Fix (2026-04-10): walk cascades outward from the depth-selected
-/// start until one returns a valid sample (sentinel >= 0), blend with
-/// the next larger cascade at the split boundary for smooth transitions,
-/// and only fall back to "fully lit" when the pixel is outside EVERY
-/// cascade's frustum AND beyond the user-configured shadow fade range.
+/// Walks cascades outward from the depth-selected start until one covers the
+/// pixel (sentinel >= 0), blends at split boundaries, and fades at max distance.
 /// @ref UE5 ShadowProjectionCommon.ush — cascade fallback walk.
-float CascadeShadow(float3 worldPos, float viewDepth) {
+float CascadeShadow(float3 worldPos, float viewDepth, float3 N, float NdotL) {
     if (cascadeCount == 0) return 1.0;
-
-    float NdotL = 0.5; // conservative default
 
 #ifdef UZ_BINDLESS
     Texture2D<float> shadowAtlas = ResourceDescriptorHeap[shadowAtlasIndex];
 #else
     #define shadowAtlas shadowAtlasTexture
 #endif
-
-    float3 N = float3(0, 0, 1); // placeholder — caller should use SampleShadowMapFull for accurate bias
 
     // Pick the smallest (tightest) cascade whose split distance contains
     // this pixel. This is the preferred cascade at our depth.

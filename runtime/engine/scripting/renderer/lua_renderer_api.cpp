@@ -4,6 +4,8 @@
 #include "debug_view_mode.h"
 #include "scene_renderer.h"
 #include "stats_overlay.h"
+#include "show_flags.h"
+#include "quality_presets.h"
 #include "postprocess/temporal_upscaler.h"
 #include "cvar.h"
 
@@ -427,6 +429,110 @@ static int RendererGetDisplayResolution(lua_State* L) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Lua C functions — uz.viewport.*
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// uz.viewport.set_view_mode(mode_name)
+///
+/// Sets the debug view mode on the active SceneRenderer.
+///
+/// # Arguments
+/// * `mode_name` (string) — e.g. "lit", "albedo", "depth", "wireframe".
+///   Unrecognized names default to "Lit".
+static int ViewportSetViewMode(lua_State* L) {
+    return RendererSetDebugView(L);
+}
+
+/// uz.viewport.get_view_mode() → string
+///
+/// Returns the active debug view mode name (e.g. "Lit", "Albedo").
+static int ViewportGetViewMode(lua_State* L) {
+    return RendererGetDebugView(L);
+}
+
+/// uz.viewport.set_show_flag(flag_name, enabled)
+///
+/// Sets a named show flag on the active SceneRenderer.
+///
+/// # Arguments
+/// * `flag_name` (string) — flag name matching ShowFlagName(), e.g. "Grid", "Fog", "AO", "Bloom".
+/// * `enabled`   (bool)   — true to enable, false to disable.
+///
+/// # Returns
+/// Nothing. Logs a warning for unknown flag names.
+static int ViewportSetShowFlag(lua_State* L) {
+    const char* name    = luaL_checkstring(L, 1);
+    const bool  enabled = lua_toboolean(L, 2) != 0;
+
+    SceneRenderer* renderer = GetRenderer(L);
+    if (!renderer) {
+        UZ_LOG(Scripting, Warning, "uz.viewport.set_show_flag: SceneRenderer not set");
+        return 0;
+    }
+
+    ShowFlag flag{};
+    if (!ShowFlagFromString(name, &flag)) {
+        UZ_LOG(Scripting, Warning,
+               "uz.viewport.set_show_flag: unknown flag '{}'", name);
+        return 0;
+    }
+
+    renderer->SetShowFlag(flag, enabled);
+    UZ_LOG(Scripting, Debug, "[Lua] uz.viewport.set_show_flag: {}={}", name, enabled);
+    return 0;
+}
+
+/// uz.viewport.get_show_flag(flag_name) → bool
+///
+/// Returns whether the named show flag is currently enabled.
+///
+/// # Arguments
+/// * `flag_name` (string) — flag name, e.g. "Grid", "Fog", "AO".
+///
+/// # Returns
+/// bool — true if enabled, false if disabled or flag unknown.
+static int ViewportGetShowFlag(lua_State* L) {
+    const char* name = luaL_checkstring(L, 1);
+
+    SceneRenderer* renderer = GetRenderer(L);
+    if (!renderer) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    ShowFlag flag{};
+    if (!ShowFlagFromString(name, &flag)) {
+        UZ_LOG(Scripting, Warning,
+               "uz.viewport.get_show_flag: unknown flag '{}'", name);
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    lua_pushboolean(L, renderer->GetShowFlag(flag) ? 1 : 0);
+    return 1;
+}
+
+/// uz.viewport.set_quality(level)
+///
+/// Applies a quality preset.
+///
+/// # Arguments
+/// * `level` (integer) — 0=Low, 1=Medium, 2=High, 3=Ultra.
+///
+/// # Returns
+/// Nothing. Out-of-range values are clamped.
+static int ViewportSetQuality(lua_State* L) {
+    int level = static_cast<int>(luaL_checkinteger(L, 1));
+    if (level < 0) level = 0;
+    if (level > static_cast<int>(QualityLevel::Ultra)) {
+        level = static_cast<int>(QualityLevel::Ultra);
+    }
+    QualityPresetManager::Get().ApplyPreset(static_cast<QualityLevel>(level));
+    UZ_LOG(Scripting, Debug, "[Lua] uz.viewport.set_quality: level={}", level);
+    return 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Lua C functions — uz.debug.*
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -540,10 +646,31 @@ void LuaRegisterRendererAPI(lua_State* L) {
 
     lua_setfield(L, -2, "debug");
 
+    // ── uz.viewport = { set_view_mode, get_view_mode, set_show_flag,
+    //                    get_show_flag, set_quality }  ─────────────────────
+    lua_newtable(L);
+
+    lua_pushcfunction(L, ViewportSetViewMode);
+    lua_setfield(L, -2, "set_view_mode");
+
+    lua_pushcfunction(L, ViewportGetViewMode);
+    lua_setfield(L, -2, "get_view_mode");
+
+    lua_pushcfunction(L, ViewportSetShowFlag);
+    lua_setfield(L, -2, "set_show_flag");
+
+    lua_pushcfunction(L, ViewportGetShowFlag);
+    lua_setfield(L, -2, "get_show_flag");
+
+    lua_pushcfunction(L, ViewportSetQuality);
+    lua_setfield(L, -2, "set_quality");
+
+    lua_setfield(L, -2, "viewport");
+
     // Pop the uz table.
     lua_pop(L, 1);
 
-    UZ_LOG(Scripting, Info, "uz.renderer / uz.debug API registered");
+    UZ_LOG(Scripting, Info, "uz.renderer / uz.debug / uz.viewport API registered");
 }
 
 void LuaSetSceneRenderer(lua_State* L, SceneRenderer* renderer) {

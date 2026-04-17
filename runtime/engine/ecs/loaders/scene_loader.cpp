@@ -13,6 +13,7 @@
 #include "name_component.h"
 #include "scene_component.h"
 #include "static_mesh_component.h"
+#include "skeletal_mesh_component.h"
 #include "lod_group.h"
 #include "camera_component.h"
 #include "light_component.h"
@@ -432,6 +433,47 @@ void ParseMeshComponent(World& world,
     mesh.boundingSphereRadius = ReadFloat(comp, "boundingSphereRadius", 0.0f);
 }
 
+/// Parses the `"skeletal_mesh"` component JSON.
+///
+/// Emplaces a `StaticMeshComponent` (so the rendering path works unchanged)
+/// and a `SkeletalMeshComponent` holding animation metadata. The subsystem
+/// finalises both components after scene load by loading the mesh/skeleton,
+/// registering an output mesh, and binding the controller.
+void ParseSkeletalMeshComponent(World& world,
+                                 Entity entity,
+                                 const nlohmann::json& comp) {
+    const std::string meshAsset = ReadString(comp, "asset");
+    if (meshAsset.empty()) {
+        UZ_LOG(Scene, Warning,
+               "LoadScene: 'skeletal_mesh' component has no 'asset' field — skipped");
+        return;
+    }
+
+    auto enttEntity = static_cast<entt::entity>(static_cast<uint32_t>(entity.id));
+
+    // Rendering component — meshPath points to the skinned .uzmesh so the
+    // scene renderer lazily loads it (including its skinnedVertexData).
+    auto& mesh = world.GetRegistry().emplace<StaticMeshComponent>(enttEntity);
+    mesh.meshPath = meshAsset;
+
+    // Animation metadata.
+    SkeletalMeshComponent skel;
+    skel.meshPath        = meshAsset;
+    skel.skeletonPath    = ReadString(comp, "skeleton");
+    skel.initialClipName = ReadString(comp, "initialClip");
+
+    auto clipsIt = comp.find("clips");
+    if (clipsIt != comp.end() && clipsIt->is_array()) {
+        for (const auto& item : *clipsIt) {
+            if (item.is_string()) {
+                skel.animationClipPaths.push_back(item.get<std::string>());
+            }
+        }
+    }
+
+    world.GetRegistry().emplace<SkeletalMeshComponent>(enttEntity, std::move(skel));
+}
+
 /// Parses the `"material"` component JSON and writes texture paths into an
 /// existing `StaticMeshComponent`.
 ///
@@ -507,15 +549,23 @@ void ParseMaterialComponent(World& world,
     std::string uzmatBlendMode;
     bool        uzmatTwoSided = false;
     float       uzmatAlphaClip = 0.3333f;
+
+    // Fully-resolved texture paths parsed from the PBROutput pin graph. An
+    // empty string means the pin is either unbound or the graph is malformed,
+    // and the fixed-PBR fallback below will try to fill it from inline JSON.
     std::string uzmatAlbedoPath;
+    std::string uzmatNormalPath;
+    std::string uzmatRoughnessPath;
+    std::string uzmatMetallicPath;
+    std::string uzmatAoPath;
+    std::string uzmatEmissivePath;
+    std::string uzmatOrmPath;          ///< Non-empty = AO/R/M routed from one texture.
+    bool        uzmatHasOrm = false;
 
     if (!matGraphPath.empty()) {
         mesh.materialGraphPath = matGraphPath;
         UZ_LOG(Scene, Info, "Material graph assigned: '{}'", matGraphPath);
 
-        // Read .uzmat JSON to extract rendering properties that the fixed Material
-        // needs: blendMode, twoSided, alphaClipThreshold, and albedo texture path
-        // (used as opacity source for Masked materials with alpha in albedo).
         if (s_loadVfs) {
             auto matBytes = s_loadVfs->Read(matGraphPath);
             if (!matBytes.empty()) {
@@ -524,41 +574,156 @@ void ParseMaterialComponent(World& world,
                     uzmatBlendMode = mj.value("blendMode", "");
                     uzmatTwoSided  = mj.value("twoSided", false);
 
-                    // Extract alphaClipThreshold and albedo texture from expressions.
                     if (mj.contains("expressions") && mj["expressions"].is_array()) {
+                        // Step 1 — index TextureSample expressions by id so we
+                        // can resolve PBROutput inputs that reference them.
+                        std::unordered_map<int64_t, std::string> texByExprId;
+                        const nlohmann::json* pbrOutput = nullptr;
+
                         for (const auto& expr : mj["expressions"]) {
-                            const std::string exprType = expr.value("type", "");
-                            if (exprType == "PBROutput") {
+                            const std::string type = expr.value("type", "");
+                            const int64_t id       = expr.value("id", int64_t{-1});
+
+                            if ((type == "TextureSample" || type == "TextureParameter") && id >= 0) {
+                                if (expr.contains("stringParams") && expr["stringParams"].is_object()) {
+                                    const auto tp = expr["stringParams"].value("texturePath", "");
+                                    if (!tp.empty()) texByExprId[id] = tp;
+                                }
+                            } else if (type == "PBROutput") {
+                                pbrOutput = &expr;
                                 if (expr.contains("floatParams") && expr["floatParams"].is_object()) {
                                     uzmatAlphaClip = expr["floatParams"].value("alphaClipThreshold", 0.3333f);
                                 }
                             }
-                            if (exprType == "TextureSample" || exprType == "TextureParameter") {
-                                if (expr.contains("stringParams") && expr["stringParams"].is_object()) {
-                                    auto tp = expr["stringParams"].value("texturePath", "");
-                                    if (!tp.empty() && uzmatAlbedoPath.empty()) {
-                                        uzmatAlbedoPath = tp; // first texture = albedo
+                        }
+
+                        // Step 2 — walk the PBROutput input list, mapping each
+                        // destination pin to the source texture's expression id.
+                        struct PinRouting {
+                            int64_t srcExpr = -1;
+                            std::string srcPin; ///< "RGB", "R", "G", "B" or empty.
+                        };
+                        std::unordered_map<std::string, PinRouting> pinMap;
+
+                        auto canonPin = [](const std::string& raw) {
+                            std::string s = raw;
+                            for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                            if (s == "basecolor")   return std::string("BaseColor");
+                            if (s == "metallic")    return std::string("Metallic");
+                            if (s == "roughness")   return std::string("Roughness");
+                            if (s == "normal")      return std::string("Normal");
+                            if (s == "emissive")    return std::string("Emissive");
+                            if (s == "opacity")     return std::string("Opacity");
+                            if (s == "ao" || s == "occlusion") return std::string("AO");
+                            return std::string{};
+                        };
+
+                        if (pbrOutput && pbrOutput->contains("inputs") && (*pbrOutput)["inputs"].is_array()) {
+                            for (const auto& in : (*pbrOutput)["inputs"]) {
+                                std::string dst;
+                                if (in.contains("dstPin") && in["dstPin"].is_string()) {
+                                    dst = canonPin(in["dstPin"].get<std::string>());
+                                } else if (in.contains("pin") && in["pin"].is_number_integer()) {
+                                    // Numeric pin indices follow material_expression.cpp:
+                                    // 0=BaseColor, 1=Metallic, 2=Roughness, 3=Normal,
+                                    // 4=Emissive, 5=Opacity, 6=AO.
+                                    static constexpr const char* kNames[] = {
+                                        "BaseColor", "Metallic", "Roughness", "Normal",
+                                        "Emissive",  "Opacity",  "AO" };
+                                    const int pin = in["pin"].get<int>();
+                                    if (pin >= 0 && pin < 7) dst = kNames[pin];
+                                }
+                                if (dst.empty()) continue;
+
+                                PinRouting r;
+                                r.srcExpr = in.value("srcExpr", int64_t{-1});
+                                if (in.contains("srcPin")) {
+                                    if (in["srcPin"].is_string()) {
+                                        r.srcPin = in["srcPin"].get<std::string>();
+                                    } else if (in["srcPin"].is_number_integer()) {
+                                        // Numeric srcPin indices on TextureSample output:
+                                        // 0 = RGBA, 1 = R, 2 = G, 3 = B, 4 = A.
+                                        static constexpr const char* kSlots[] = {
+                                            "RGBA", "R", "G", "B", "A" };
+                                        const int sp = in["srcPin"].get<int>();
+                                        if (sp >= 0 && sp < 5) r.srcPin = kSlots[sp];
                                     }
                                 }
+                                pinMap[dst] = r;
                             }
                         }
+
+                        auto pinTexture = [&](const std::string& dst) -> std::string {
+                            auto it = pinMap.find(dst);
+                            if (it == pinMap.end()) return {};
+                            auto texIt = texByExprId.find(it->second.srcExpr);
+                            return (texIt == texByExprId.end()) ? std::string{} : texIt->second;
+                        };
+
+                        uzmatAlbedoPath   = pinTexture("BaseColor");
+                        uzmatNormalPath   = pinTexture("Normal");
+                        uzmatEmissivePath = pinTexture("Emissive");
+
+                        // AO / Roughness / Metallic — detect the ORM convention
+                        // (R→AO, G→Roughness, B→Metallic from a single texture).
+                        const std::string aoTex = pinTexture("AO");
+                        const std::string rgTex = pinTexture("Roughness");
+                        const std::string mtTex = pinTexture("Metallic");
+                        const bool sameTex =
+                            !aoTex.empty() && aoTex == rgTex && rgTex == mtTex;
+
+                        auto pinSrcPin = [&](const std::string& dst) {
+                            auto it = pinMap.find(dst);
+                            return (it == pinMap.end()) ? std::string{} : it->second.srcPin;
+                        };
+
+                        if (sameTex &&
+                            pinSrcPin("AO")        == "R" &&
+                            pinSrcPin("Roughness") == "G" &&
+                            pinSrcPin("Metallic")  == "B") {
+                            uzmatOrmPath  = aoTex;
+                            uzmatHasOrm   = true;
+                        } else {
+                            uzmatAoPath        = aoTex;
+                            uzmatRoughnessPath = rgTex;
+                            uzmatMetallicPath  = mtTex;
+                        }
                     }
-                } catch (const nlohmann::json::parse_error&) {
-                    // Non-fatal — continue with defaults.
+                } catch (const nlohmann::json::parse_error& e) {
+                    UZ_LOG(Scene, Warning, "Failed to parse material graph '{}': {}",
+                           matGraphPath, e.what());
                 }
+            } else {
+                UZ_LOG(Scene, Warning, "Failed to read material graph '{}'", matGraphPath);
             }
         }
     }
 
     // Fixed-PBR path: Create a Material asset owned by the scene loader and assign it to slot 0.
     // Also serves as texture-loading fallback when material_graph is set but not yet compiled.
+    //
+    // When a `.uzmat` graph was parsed above, its resolved texture paths take
+    // precedence over inline JSON fields — the graph authoritatively describes
+    // which texture feeds each PBR pin (including ORM R→AO routing).
     auto mat = std::make_unique<Material>();
-    mat->albedoPath    = ReadString(comp, "albedo");
-    mat->normalPath    = ReadString(comp, "normal");
-    mat->roughnessPath = ReadString(comp, "roughness");
-    mat->metallicPath  = ReadString(comp, "metallic");
-    mat->aoPath        = ReadString(comp, "ao");
-    mat->emissivePath  = ReadString(comp, "emissive");
+    auto pickPath = [&](const std::string& graphPath, const char* inlineKey) {
+        if (!graphPath.empty()) return graphPath;
+        return ReadString(comp, inlineKey);
+    };
+    mat->albedoPath    = pickPath(uzmatAlbedoPath,   "albedo");
+    mat->normalPath    = pickPath(uzmatNormalPath,   "normal");
+    mat->roughnessPath = pickPath(uzmatRoughnessPath, "roughness");
+    mat->metallicPath  = pickPath(uzmatMetallicPath, "metallic");
+    mat->aoPath        = pickPath(uzmatAoPath,       "ao");
+    mat->emissivePath  = pickPath(uzmatEmissivePath, "emissive");
+    if (uzmatHasOrm) {
+        mat->ormPath = uzmatOrmPath;
+        mat->useORM  = true;
+        // Clear individual R/M paths: they're now read from ORM.G / ORM.B.
+        mat->roughnessPath.clear();
+        mat->metallicPath.clear();
+        mat->aoPath.clear();
+    }
     mat->baseColorTintR      = ReadFloat(comp, "baseColorR", 1.0f);
     mat->baseColorTintG      = ReadFloat(comp, "baseColorG", 1.0f);
     mat->baseColorTintB      = ReadFloat(comp, "baseColorB", 1.0f);
@@ -694,6 +859,8 @@ size_t ProcessEntityJson(World& world,
                 ParseCameraComponent(world, entity, compValue);
             } else if (compKey == "mesh") {
                 ParseMeshComponent(world, entity, compValue);
+            } else if (compKey == "skeletal_mesh") {
+                ParseSkeletalMeshComponent(world, entity, compValue);
             } else if (compKey == "light") {
                 ParseLightComponent(world, entity, compValue, sourceName);
             } else if (!ComponentSerializerRegistry::Get().Deserialize(compKey, world, entity, &compValue)) {

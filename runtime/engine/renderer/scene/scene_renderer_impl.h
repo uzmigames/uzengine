@@ -10,6 +10,7 @@
 
     IRHIDevice* m_device = nullptr;
     bool m_editorMode = false;            ///< When true, editor grid + stats overlay are rendered.
+    bool m_gameViewMode = false;          ///< When true (G key), all editor overlays are hidden.
     bool m_flipbookDebugEnabled = false;  ///< When true, a debug flipbook quad is drawn in the top-right corner (VFX verification).
     uint32_t m_editorCameraInitFrame = 0;   ///< Frame counter for deferred editor camera init (waits for Lua scripts).
     Entity m_selectedEntity{};            ///< Currently selected entity for editor outline/gizmo rendering.
@@ -17,6 +18,7 @@
     uint8_t m_gizmoSpace = 0;            ///< GizmoSpace: 0=World, 1=Local.
     int m_gizmoHoveredAxis = -1;         ///< Hovered axis: -1=none, 0-6=axis/plane/center.
     int m_gizmoActiveAxis = -1;          ///< Active (dragging) axis: same encoding.
+    EditorInputHandler* m_editorInputHandler = nullptr; ///< Non-owning pointer set by the application layer.
 
     // ── Engine Infrastructure ──────────────────────────────────────────────
 
@@ -31,6 +33,8 @@
     std::unique_ptr<VfxEditorOverlay> m_vfxEditorOverlay;
     std::unique_ptr<CameraManager> m_cameraManager;
     std::unique_ptr<FlyCameraController> m_cameraCtrl;
+    std::unique_ptr<ViewportToolbar> m_viewportToolbar;
+    bool m_viewportToolbarInitialized = false; ///< True after ViewportToolbar::Init() succeeds.
     CameraId m_editorFreeCamId = kInvalidCameraId;     ///< Editor free-cam ID (kInvalidCameraId = not active).
     std::unique_ptr<rg::RgResourcePool> m_rgPool;
 
@@ -551,6 +555,7 @@
     RenderPath m_renderPath = RenderPath::Deferred;
     GBufferDebugMode m_debugMode = GBufferDebugMode::Count;
     DebugViewMode m_debugViewMode = DebugViewMode::Lit;
+    ShowFlags m_showFlags{};                           ///< Per-feature render toggles (all enabled by default).
     uint32_t m_shadowDebugMode = 0;   ///< Shadow debug view mode (0=off, 1=grid, 2=readback). See shadow_debug.hlsli.
     uint32_t m_brdfDebugMode = 0;    ///< BRDF debug mode (0=off, 1=split-screen old vs new).
     RHIBufferHandle m_shadowReadbackBuffer;  ///< Persistent readback buffer for shadow atlas diagnostic (mode 2).
@@ -719,6 +724,14 @@
 
     /// Hot-reload watcher for .uzfx and .uzvfx files (dev builds only).
     std::unique_ptr<VFXHotReload> m_vfxHotReload;
+
+    /// Content root directory supplied by the application (via SetContentRoot).
+    /// Used to initialize the VFX hot-reload watcher. Empty by default —
+    /// when empty, hot-reload is skipped. The runtime never hardcodes a
+    /// content directory; the application (engine host / editor / demo) is
+    /// responsible for supplying one derived from project config, CLI flags,
+    /// or similar.
+    std::string m_contentRoot;
 
     // ── GPU Instancing (triple-buffered) ─────────────────────────────────
     RHIBufferHandle m_instanceBuffers[kInstanceBufferCount]; ///< Per-frame instance buffers.

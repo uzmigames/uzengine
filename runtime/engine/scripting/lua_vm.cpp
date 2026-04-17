@@ -25,6 +25,7 @@
 #include "lua_reflection_probe_api.h"
 #include "lua_postprocess_api.h"
 #include "lua_editor_api.h"
+#include "lua_animation_api.h"
 
 /// Lua virtual machine initialization, state management, sandbox configuration, and API registration.
 
@@ -161,6 +162,7 @@ bool LuaVM::Init() {
     LuaRegisterAssetAPI(s_state);
     LuaRegisterPassInspectorAPI(s_state);
     LuaRegisterEntityAPI(s_state);
+    LuaRegisterAnimationAPI(s_state);
     LuaRegisterLightAPI(s_state);
     LuaRegisterFogAPI(s_state);
     LuaRegisterSkyLightAPI(s_state);

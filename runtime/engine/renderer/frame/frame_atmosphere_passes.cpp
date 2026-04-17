@@ -103,7 +103,9 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
     atmoCtx.hdriCubemapSrv      = m_hdriActive ? m_hdriCubemapSrv : UINT32_MAX;
     atmoCtx.hdriCubemapTex      = m_hdriCubemap;
 
-    AddAtmospherePasses(rgBuilder, ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc, atmoCtx);
+    if (m_showFlags.Get(ShowFlag::Atmosphere)) {
+        AddAtmospherePasses(rgBuilder, ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc, atmoCtx);
+    }
 
     /// Sky light color for fog inscattering: uses the SH L0 coefficient from
     /// the IBL irradiance projection as the average sky color. Our equivalent of
@@ -121,7 +123,7 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
     // ── Froxel Volumetric Fog (compute, applied before height fog) ─────
     // Only runs when a HeightFogComponent with enableVolumetricFog=true exists.
     // Without a component, no fog is rendered (matches UE5 — fog requires an actor).
-    if (m_volFogPass && m_volFogPass->IsInitialized()
+    if (m_showFlags.Get(ShowFlag::Volumetrics) && m_volFogPass && m_volFogPass->IsInitialized()
         && cv_VolFog->value > 0.5f && ctx.bindless && ctx.world) {
 
         // Find a HeightFogComponent with volumetric fog enabled
@@ -180,7 +182,7 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
         }
     }
 
-    if (m_passInspector.IsPassEnabled("fog")) {
+    if (m_showFlags.Get(ShowFlag::Fog) && m_passInspector.IsPassEnabled("fog")) {
         AddHeightFogFromECS(rgBuilder, ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc,
                             ctx.world, m_cameraManager->GetActiveCamera(), ctx.pipelines, *m_cbRing,
                             m_gbuffer.depthSRV, m_gbuffer.depth,
@@ -189,7 +191,7 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
     }
 
     // ── Volumetric Clouds (compute, composited over HDR) ─────────────
-    if (m_cloudPass && m_cloudPass->IsInitialized()
+    if (m_showFlags.Get(ShowFlag::Clouds) && m_cloudPass && m_cloudPass->IsInitialized()
         && m_passInspector.IsPassEnabled("clouds") && ctx.world) {
 
         auto cloudView = ctx.world->GetRegistry().view<VolumetricCloudsComponent>();

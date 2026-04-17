@@ -20,7 +20,7 @@ AAA-quality game engine embedded in VSCode, with open file formats designed for 
 - **No GC** — deterministic memory via Rust-inspired ownership and borrow checking in C++
 - **AI-First** — MCP server integration for autonomous development workflows
 
-## Rendering Features (v0.6.0)
+## Rendering Features (v0.9.5)
 
 | System | Features |
 |--------|----------|
@@ -28,15 +28,17 @@ AAA-quality game engine embedded in VSCode, with open file formats designed for 
 | **Shadows** | 4-cascade CSM, PCSS blocker search, ESM, contact shadows, distance field shadows, static shadow cache |
 | **Lighting** | Directional + point (64) + spot (16) lights, IBL (SH L2 + env map importance sampling + prefiltered specular + VNDF), clustered shading |
 | **Atmosphere** | Bruneton sky, multi-scatter LUT, ozone, aerial perspective, height fog (2-layer + sky injection), volumetric clouds (UE5 parity), god rays |
-| **GI** | SSGI (5 compute passes: trace, spatial denoise, temporal accum, bilateral upsample, prev color reduce), SVGF denoiser (3 passes) |
+| **GI** | SSGI (5 compute passes: trace, spatial denoise, temporal accum, bilateral upsample, prev color reduce), SVGF denoiser (3 passes), DDGI (Majercik 2019), Brixelizer SDF voxel GI, light probe volumes (L2 SH grid) |
 | **Post-Process** | TAA (variance clipping), SSR (stochastic multi-ray), GTAO (multi-bounce + bent normals), bloom (6-mip Karis smooth knee), FilmToneMap ACES, auto-exposure, DOF (near/far/sharp layers), motion blur |
 | **Anti-Aliasing** | TAA, SMAA (1x/T2x/S2x/4x), FXAA |
-| **Upscaling** | FSR 1.0 (spatial), FSR 2.x (temporal with motion vectors) |
+| **Upscaling** | FSR 1.0 (spatial), FSR 2.x (temporal with motion vectors), DLSS |
 | **Film Effects** | Film grain, vignette, chromatic aberration, color grading LUT (32x32x32), white balance (Bradford adaptation) |
+| **Skeletal Animation** | FBX importer v16 (per-source axis convention: Maya Y-up RH + 3ds Max Z-up RH coexisting), GPU compute skinning (persistent UPLOAD-heap palette staging, 480+ FPS on 120k-vertex characters), TRS bone composition (FTransform semantics), UE5-style retargeting (`AS_*` clip prefix-strip + alias), animation crossfade |
 | **Quality** | 5-tier scalability (Low/Medium/High/Ultra/Cinematic) with per-group controls (shadows, textures, effects, GI, screen, view distance, post-process) |
 | **VFX** | GPU compute particle system (65K/emitter), collision, flipbook SubUV, trails, decals, attractor forces, vector fields, sub-emitters |
-| **Raytracing** | DXR infrastructure (BLAS/TLAS managers, shader table builder, RT pipeline) |
-| **Camera** | CameraManager with push/pop stack, editor free-cam (F5), per-camera render targets, multi-camera switching |
+| **Raytracing** | DXR 1.1 infrastructure (BLAS/TLAS managers, shader table builder, RT pipeline), path tracer with emissive GBuffer + roughness-perturbed mirror specular |
+| **Camera** | CameraManager with push/pop stack, editor free-cam (F5), per-camera render targets, multi-camera switching, scriptable 3rd-person follow (Lua) |
+| **Scripting** | LuaJIT bindings: `uz.scene` (entity transforms — set/get position, rotation, yaw), `uz.animation` (clip control + crossfade), `uz.input` (keyboard/mouse), `uz.camera` (position, look-at, FOV, ortho), `uz.renderer` (debug modes, render path) |
 | **Diagnostics** | FLIP perceptual metric, pass dump, pixel debug, per-pass GPU profiling, GPU validation, DRED breadcrumbs |
 | **Backends** | DX12 SM6.8 (bindless), DX12 SM5, DX11, Vulkan |
 

@@ -141,6 +141,9 @@ enum class Key : uint16_t {
     End = 0x23,
     PageUp = 0x21,
     PageDown = 0x22,
+
+    // ──── Punctuation / OEM Keys ────
+    Grave = 0xC0, ///< Grave accent / tilde key (` / ~), VK_OEM_3 on US layout.
 };
 
 /// Mouse button codes.

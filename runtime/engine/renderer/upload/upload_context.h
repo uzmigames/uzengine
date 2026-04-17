@@ -18,6 +18,7 @@
 #include "rhi_types.h"
 
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 namespace uz {
@@ -98,6 +99,14 @@ public:
     /// The GPU MUST have finished all copy commands before calling this.
     /// Typically achieved by executing the command list and waiting on a fence.
     void ReleaseStaging();
+
+    /// Hands ownership of the staging buffers to the caller, clearing the
+    /// internal list so `ReleaseStaging()` becomes a no-op. Used when the
+    /// caller wants to defer destruction via another mechanism (e.g., a
+    /// per-frame deferred-destroy queue keyed to the GPU fence).
+    [[nodiscard]] std::vector<RHIBufferHandle> TakeStagingBuffers() {
+        return std::exchange(m_stagingBuffers, std::vector<RHIBufferHandle>{});
+    }
 
     /// Returns the number of staging buffers awaiting release.
     [[nodiscard]] uint32_t GetStagingCount() const { return static_cast<uint32_t>(m_stagingBuffers.size()); }

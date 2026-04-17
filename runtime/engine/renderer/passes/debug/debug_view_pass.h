@@ -71,6 +71,13 @@ struct DebugViewPassDesc {
     uint32_t          depthSrvIndex;    ///< SRV heap index for depth G-Buffer.
     uint32_t          positionSrvIndex; ///< SRV heap index for position G-Buffer.
 
+    // ── Extended view mode resources (optional) ──────────────────────────
+
+    rg::RgResourceId  hdrGBuffer;       ///< HDR scene color (read, SRV). Required for LightingOnly / Reflections.
+    uint32_t          hdrSrvIndex;      ///< SRV heap index for HDR scene color (UINT32_MAX if unused).
+    rg::RgResourceId  ssrGBuffer;       ///< SSR resolve result (read, SRV). Required for Reflections.
+    uint32_t          ssrSrvIndex;      ///< SRV heap index for SSR result (UINT32_MAX if unused).
+
     bool              bindless;         ///< True if SM6.6 bindless descriptor model is active.
     float             viewportWidth;    ///< Viewport width in pixels.
     float             viewportHeight;   ///< Viewport height in pixels.

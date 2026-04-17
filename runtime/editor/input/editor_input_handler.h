@@ -42,6 +42,7 @@ class SceneRenderer;
 
 /// Gizmo manipulation mode — determines which transform operation the gizmo performs.
 enum class GizmoMode : uint8_t {
+    Select,    ///< Selection mode — no gizmo drawn, LMB is pure ray-cast pick (hotkey: Q)
     Translate, ///< Move selected entity (hotkey: W)
     Rotate,    ///< Rotate selected entity (hotkey: E)
     Scale,     ///< Scale selected entity (hotkey: R)
@@ -73,11 +74,12 @@ static constexpr float kDefaultScaleSnap = 0.25f;
 /// Routes editor-mode input events to selection and gizmo systems.
 ///
 /// Hotkeys:
+/// - Q: Switch to Select mode (no gizmo, LMB picks entity)
 /// - W: Switch to Translate mode
 /// - E: Switch to Rotate mode
 /// - R: Switch to Scale mode
-/// - Space: Toggle World/Local coordinate space
-/// - Left-click on gizmo: Begin drag to transform entity
+/// - Grave (` / ~): Toggle World/Local coordinate space
+/// - Left-click on gizmo: Begin drag to transform entity (Translate/Rotate/Scale only)
 /// - Left-click on scene: Pick entity at cursor position via SelectionManager
 /// - Ctrl + drag: Enable snapping (10cm translate, 15deg rotate, 0.25 scale)
 ///

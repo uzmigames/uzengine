@@ -375,6 +375,8 @@ bool GTAOPass::Resize(uint32_t width, uint32_t height) {
     return CreateTextures(width, height);
 }
 
+// (IsEnabled removed — use IsEnabledCVar() declared in gtao_pass.h)
+
 void GTAOPass::Shutdown() {
     if (!m_initialized) {
         return;

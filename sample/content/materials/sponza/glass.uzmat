@@ -4,7 +4,7 @@
     "domain": "Surface",
     "shadingModel": "DefaultLit",
     "blendMode": "Translucent",
-    "twoSided": true,
+    "twoSided": false,
     "expressions": [
         {
             "id": 1,

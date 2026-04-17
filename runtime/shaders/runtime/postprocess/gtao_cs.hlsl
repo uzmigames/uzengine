@@ -199,6 +199,15 @@ void main(uint3 DTid : SV_DispatchThreadID)
 {
     if (DTid.x >= outputWidth || DTid.y >= outputHeight) return;
 
+    // Hard culling when intensity is effectively zero. Prevents any sub-pixel
+    // horizon-search artifacts from leaking into the final composite when GTAO
+    // is disabled via CVar. Writes the neutral value (1.0 = no occlusion) so
+    // the deferred lighting min(meshAO, gtao) branch becomes a no-op.
+    if (aoIntensity < 0.001) {
+        outputAO[DTid.xy] = 1.0;
+        return;
+    }
+
     float2 texelSize = 1.0 / float2(outputWidth, outputHeight);
     float2 uv = (float2(DTid.xy) + 0.5) * texelSize;
 
@@ -244,7 +253,21 @@ void main(uint3 DTid : SV_DispatchThreadID)
     // horizontal/vertical sampling isotropy the horizon integral assumes.
     float screenRadius = (worldRadius * invTanHalfFov) / linearZ;
     screenRadius *= 0.5 * float(outputHeight); // NDC → pixels (vertical axis)
-    screenRadius = min(screenRadius, 512.0);   // clamp max pixel radius (UE5 GTAO_MAX_PIXEL_SCREEN_RADIUS)
+    // Clamp max pixel radius — raised from UE5's 512 default so large worldRadius
+    // values (r.GTAO.Radius >= 500 cm in cm-scale scenes) can actually extend
+    // the effective AO search circle beyond the default half-screen cap.
+    screenRadius = min(screenRadius, 2048.0);
+
+    // Early-out when the world-space search radius projects to sub-pixel size.
+    // Below this threshold the horizon search cannot march meaningfully within
+    // worldRadius — every tap falls outside the attenuation falloff (lenSq *
+    // attenFactor >= 1), the lerp collapses bestAng to its initial -1, and
+    // acosFast(-1)=π produces a fully-occluded horizon → false darkening at
+    // distance. UE5 uses the same screen-size gate.
+    if (screenRadius < float(numTaps)) {
+        outputAO[DTid.xy] = 1.0;
+        return;
+    }
 
     // Attenuation factor: inverse-square falloff from worldRadius
     float attenFactor = 2.0 / (worldRadius * worldRadius);

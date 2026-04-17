@@ -1,0 +1,53 @@
+{
+    "version": 1,
+    "name": "MushroomMonster",
+    "domain": "Surface",
+    "shadingModel": "DefaultLit",
+    "twoSided": false,
+    "expressions": [
+        {
+            "id": 1,
+            "type": "PBROutput",
+            "inputs": [
+                { "dstPin": "BaseColor", "srcExpr": 2, "srcPin": "RGB" },
+                { "dstPin": "Normal",    "srcExpr": 3, "srcPin": "RGB" },
+                { "dstPin": "AO",        "srcExpr": 4, "srcPin": "R"   },
+                { "dstPin": "Roughness", "srcExpr": 4, "srcPin": "G"   },
+                { "dstPin": "Metallic",  "srcExpr": 4, "srcPin": "B"   }
+            ]
+        },
+        {
+            "id": 2,
+            "type": "TextureSample",
+            "name": "Albedo",
+            "stringParams": {
+                "texturePath": "meshes/mushroommonster/textures/MushroomMonster_Low_MushroomMesh_BaseColor.png"
+            }
+        },
+        {
+            "id": 3,
+            "type": "TextureSample",
+            "name": "Normal",
+            "stringParams": {
+                "texturePath": "meshes/mushroommonster/textures/MushroomMonster_Low_MushroomMesh_Normal.png"
+            }
+        },
+        {
+            "id": 4,
+            "type": "TextureSample",
+            "name": "ORM",
+            "stringParams": {
+                "texturePath": "meshes/mushroommonster/textures/MushroomMonster_Low_MushroomMesh_ORM.png"
+            }
+        }
+    ],
+    "params": {
+        "roughnessMultiplier": 0.1,
+        "metallicMultiplier": 0.0,
+        "baseColorTint": [1.0, 1.0, 1.0],
+        "normalStrength": 1.0,
+        "aoMultiplier": 1.0,
+        "emissiveMultiplier": 0.0,
+        "specularMultiplier": 0.2
+    }
+}

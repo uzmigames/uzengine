@@ -136,7 +136,9 @@ Mesh LoadMeshFromMemory(const std::vector<uint8_t>& data, const std::string& nam
             const uint32_t dstStride = sizeof(Vertex);
             const uint32_t vertCount = uz.header.vertexCount;
 
-            // Strip bone data: copy first 48 bytes per vertex
+            // Strip bone data: copy first 48 bytes per vertex into the static
+            // bind-pose stream, but keep a full 56 B copy in `skinnedVertexData`
+            // so the GPU skinning compute shader can read the original stream.
             if (srcStride > dstStride && vertCount > 0) {
                 mesh.vertexData.resize(static_cast<size_t>(vertCount) * dstStride);
                 for (uint32_t i = 0; i < vertCount; ++i) {
@@ -144,6 +146,8 @@ Mesh LoadMeshFromMemory(const std::vector<uint8_t>& data, const std::string& nam
                                 uz.vertexData.data() + static_cast<size_t>(i) * srcStride,
                                 dstStride);
                 }
+                mesh.skinnedVertexData = uz.vertexData;
+                mesh.skeletonPath      = uz.skeletonPath;
             } else {
                 mesh.vertexData = uz.vertexData;
             }

@@ -98,6 +98,7 @@ pub fn build(b: *std.Build) void {
         "engine/scripting/core",
         "engine/scripting/renderer",
         "engine/scripting/editor",
+        "engine/scripting/animation",
         "engine/ipc",
         "engine/vfx",
         "engine/vfx/core",
@@ -132,6 +133,7 @@ pub fn build(b: *std.Build) void {
         "editor/screenshot",
         "editor/input",
         "editor/selection",
+        "editor/toolbar",
     };
 
     const thirdparty_include_dirs = [_][]const u8{
@@ -296,6 +298,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/scripting/core", cpp_flags);
     addCppDir(runtime_mod, b, "engine/scripting/renderer", cpp_flags);
     addCppDir(runtime_mod, b, "engine/scripting/editor", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/scripting/animation", cpp_flags);
     addCppDir(runtime_mod, b, "engine/ipc", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/core", cpp_flags);
@@ -1031,6 +1034,7 @@ pub fn build(b: *std.Build) void {
         addCppDir(editor_mod, b, "editor/screenshot", cpp_flags);
         addCppDir(editor_mod, b, "editor/input",      cpp_flags);
         addCppDir(editor_mod, b, "editor/selection",  cpp_flags);
+        addCppDir(editor_mod, b, "editor/toolbar",    cpp_flags);
 
         // Include paths — same as runtime so editor code can include engine headers
         editor_mod.addIncludePath(b.path("."));
@@ -1355,6 +1359,31 @@ pub fn build(b: *std.Build) void {
 
             for (win_sys_libs) |l| tool_exe.linkSystemLibrary(l);
             b.installArtifact(tool_exe);
+        }
+
+        // ── Standalone debug exe: runtime/tests/debug_skin_reference/main.cpp ──
+        // Temporary debugging tool — runs reference + UzEngine skinning paths
+        // side-by-side and dumps .obj files for visual comparison.
+        {
+            const dbg_mod = b.createModule(.{ .target = target, .optimize = optimize });
+            dbg_mod.link_libc = true;
+            dbg_mod.link_libcpp = true;
+            dbg_mod.addIncludePath(b.path("."));
+            for (engine_include_dirs) |dir| dbg_mod.addIncludePath(b.path(dir));
+            for (thirdparty_include_dirs) |dir| dbg_mod.addIncludePath(b.path(dir));
+            for (windows_engine_include_dirs) |dir| dbg_mod.addIncludePath(b.path(dir));
+            for (windows_thirdparty_include_dirs) |dir| dbg_mod.addIncludePath(b.path(dir));
+
+            dbg_mod.addCSourceFiles(.{
+                .root = b.path("tests/debug_skin_reference"),
+                .files = &.{"main.cpp"},
+                .flags = cpp_flags,
+            });
+
+            const dbg_exe = b.addExecutable(.{ .name = "debug_skin_reference", .root_module = dbg_mod });
+            dbg_exe.linkLibrary(lib);
+            for (win_sys_libs) |l| dbg_exe.linkSystemLibrary(l);
+            b.installArtifact(dbg_exe);
         }
 
         // Run steps

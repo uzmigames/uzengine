@@ -23,13 +23,48 @@
 
 namespace uz {
 
+/// Classifies the current debug view mode as one of three dispatch strategies:
+/// - kGBufferOnly: replace the lighting pass entirely (needs only GBuffer + PerFrame).
+/// - kPostLighting: run lighting first, then overlay the debug view on top of HDR.
+/// - kWireframeOverlay: run lighting normally, add wireframe overlay in the overlay pass.
+/// - kNone: no debug mode active — run normal deferred lighting.
+static bool IsGBufferOnlyMode(DebugViewMode m) {
+    switch (m) {
+        case DebugViewMode::Albedo:
+        case DebugViewMode::WorldNormal:
+        case DebugViewMode::Metallic:
+        case DebugViewMode::Roughness:
+        case DebugViewMode::AO:
+        case DebugViewMode::Depth:
+        case DebugViewMode::WorldPosition:
+        case DebugViewMode::Unlit:
+        case DebugViewMode::Tangent:
+        case DebugViewMode::Faceted:
+        case DebugViewMode::DetailLighting:
+            return true;
+        default:
+            return false;
+    }
+}
+static bool IsPostLightingMode(DebugViewMode m) {
+    return m == DebugViewMode::Lighting
+        || m == DebugViewMode::Shadows
+        || m == DebugViewMode::LightingOnly
+        || m == DebugViewMode::Reflections;
+}
+
 void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
     // ── Deferred Lighting / Debug View / GBuffer Debug ──────────────────
-    const bool debugActive = false; // DEBUG: force off to isolate
-    const bool debugViewActive = false; // DEBUG: force off to isolate
+    const bool debugActive = false; // Legacy GBufferDebug force-off — kept for safety
 
-    if (debugViewActive) {
-        // ── Debug View Mode — replaces lighting with channel visualization ──
+    const DebugViewMode dvm = m_debugViewMode;
+    const bool debugViewActive = (dvm != DebugViewMode::Lit && dvm != DebugViewMode::LitWireframe);
+    const bool gbufferOnly = debugViewActive && IsGBufferOnlyMode(dvm);
+    const bool postLighting = debugViewActive && IsPostLightingMode(dvm);
+    const bool needsLightingFirst = postLighting;
+
+    // Helper to fill the common DebugViewPassDesc fields.
+    auto makeDebugViewDesc = [&]() {
         DebugViewPassDesc dvDesc{};
         dvDesc.backbuffer        = ctx.hdrRes;
         dvDesc.albedoGBuffer     = ctx.albedoRes;
@@ -38,7 +73,7 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
         dvDesc.positionGBuffer   = ctx.positionRes;
         dvDesc.perFrameAlloc     = ctx.perFrameAlloc;
         dvDesc.pipeline          = ctx.pipelines->GetDebugView();
-        dvDesc.mode              = m_debugViewMode;
+        dvDesc.mode              = dvm;
         dvDesc.albedoSrvIndex    = m_gbuffer.albedoSRV;
         dvDesc.normalSrvIndex    = m_gbuffer.normalSRV;
         dvDesc.depthSrvIndex     = m_gbuffer.depthSRV;
@@ -47,11 +82,22 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
         dvDesc.normalTexture     = m_gbuffer.normal;
         dvDesc.depthTexture      = m_gbuffer.depth;
         dvDesc.positionTexture   = m_gbuffer.positionWS;
+        dvDesc.hdrSrvIndex       = m_hdrSceneColorSrv;
+        dvDesc.ssrSrvIndex       = m_ssrResolvedOutputSrv;
         dvDesc.bindless          = ctx.bindless;
         dvDesc.viewportWidth     = ctx.renderWidth;
         dvDesc.viewportHeight    = ctx.renderHeight;
+        return dvDesc;
+    };
+
+    if (gbufferOnly) {
+        // ── GBuffer-only debug view — replaces the lighting pass entirely ──
+        auto dvDesc = makeDebugViewDesc();
         AddDebugViewPass(rgBuilder, dvDesc);
-    } else if (!debugActive) {
+        return;
+    }
+
+    if (!debugActive) {
         LightingPassDesc lightDesc{};
         lightDesc.backbuffer          = ctx.hdrRes;
         lightDesc.albedoGBuffer       = ctx.albedoRes;
@@ -124,6 +170,20 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
         lightDesc.cbRingAllocator   = m_cbRing.get();
 
         AddLightingPass(rgBuilder, lightDesc);
+
+        // ── Post-lighting debug view — overlays debug visualization on top of HDR ──
+        // LightingOnly and Reflections need the filled HDR buffer, so they run AFTER
+        // the lighting pass has written hdrRes, then overwrite it with the debug view.
+        if (needsLightingFirst) {
+            auto dvDesc = makeDebugViewDesc();
+            // HDR resource was just written by the lighting pass — declare it as an
+            // input to the debug view pass so the render graph inserts the correct
+            // RT→SRV barrier before the fullscreen triangle reads it.
+            dvDesc.hdrGBuffer = ctx.hdrRes;
+            // After debug view writes the HDR resource, the rest of the pipeline
+            // (tonemap, TAA) reads it as before.  No extra transitions needed.
+            AddDebugViewPass(rgBuilder, dvDesc);
+        }
     } else {
         GBufferDebugPassDesc dbgDesc{};
         dbgDesc.backbuffer         = ctx.hdrRes;

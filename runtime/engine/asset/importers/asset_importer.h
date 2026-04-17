@@ -62,6 +62,15 @@ struct AssetImportResult {
     std::string error;                 ///< Human-readable error message (empty on success)
     std::vector<AssetImportSidecar> sidecars; ///< Optional sidecar files produced alongside the primary output
     std::vector<ImportedMaterial> materials;    ///< Extracted materials (mesh imports only, empty for other asset types)
+
+    /// Optional override for the primary output extension (including leading dot).
+    ///
+    /// Normally `uzcook` chooses the primary extension from the importer name
+    /// (e.g., `fbx` → `.uzmesh`). When an importer can produce different primary
+    /// outputs depending on the input (e.g., an FBX file with animation but no
+    /// mesh produces `.uzanim`), it sets this field. Empty string (default) uses
+    /// the importer's standard extension.
+    std::string primaryExtensionOverride;
 };
 
 /// Configuration options for an import operation.

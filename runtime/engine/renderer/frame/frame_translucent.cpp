@@ -36,6 +36,7 @@ UZ_DECLARE_LOG_CATEGORY(Renderer);
 namespace uz {
 
 void SceneRenderer::RegisterTranslucentPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
+    if (!m_showFlags.Get(ShowFlag::Translucency)) return;
     UZ_PROFILE_FUNCTION();
 
     // Check if any draw command has blendMode >= 2 (Translucent/Additive).

@@ -241,18 +241,15 @@ LightingOutput main(FSInput input) {
     // branch guards against stale/zero SRV slots. Never sample GTAO
     // unconditionally — see frame_constants.cpp:555 and gtao_pass.h
     // IsEnabledCVar() for the CPU-side gating contract.
+    if (_gtaoSrv != 0xFFFFFFFFu) {
 #ifdef UZ_BINDLESS
-    if (_gtaoSrv != 0xFFFFFFFFu && _gtaoSrv > 0) {
         Texture2D<float> gtaoTex = ResourceDescriptorHeap[_gtaoSrv];
         float gtao = gtaoTex.Load(int3(px, 0));
-        if (gtao > 0.01) ao = min(ao, gtao);
-    }
 #else
-    {
         float gtao = gtaoTextureT9.Load(int3(px, 0)).r;
+#endif
         if (gtao > 0.01) ao = min(ao, gtao);
     }
-#endif
 
     // minOcclusion: clamp AO so fully occluded areas still receive configurable
     // minimum ambient. Affects both diffuse (ao * diffuseAmbient) and specular
@@ -300,7 +297,7 @@ LightingOutput main(FSInput input) {
     // self-shadowed regardless of CSM result, so skip the expensive PCF/PCSS
     // filtering entirely. Saves 16-tap PCF work on every back-facing fragment
     // in enclosed interiors. @ref UE5 ShadowProjectionPixelShader — N·L cull.
-    float  shadow = (sunNoL > 0.0) ? CascadeShadow(worldPos, viewDepth) : 0.0;
+    float  shadow = (sunNoL > 0.0) ? CascadeShadow(worldPos, viewDepth, N, sunNoL) : 0.0;
 
     // Screen-space contact shadows: fine detail shadows from small features
     // (column edges, window frames, floor contact). Gated by CVar r.ContactShadows.

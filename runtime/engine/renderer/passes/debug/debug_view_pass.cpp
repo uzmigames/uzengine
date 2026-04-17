@@ -34,6 +34,14 @@ void AddDebugViewPass(rg::RgBuilder& builder, const DebugViewPassDesc& desc)
         pb.Read(desc.depthGBuffer,    RHIResourceState::ShaderResource);
         pb.Read(desc.positionGBuffer, RHIResourceState::ShaderResource);
 
+        // Optional extended resources — only declared when the mode needs them.
+        if (desc.hdrGBuffer.IsValid()) {
+            pb.Read(desc.hdrGBuffer, RHIResourceState::ShaderResource);
+        }
+        if (desc.ssrGBuffer.IsValid()) {
+            pb.Read(desc.ssrGBuffer, RHIResourceState::ShaderResource);
+        }
+
         pb.SetExecutionCallback([desc](IRHICommandList* cmd, const rg::RgPassResources& res) {
             UZ_PROFILE_SCOPE("DebugView::Execute");
 
@@ -62,15 +70,18 @@ void AddDebugViewPass(rg::RgBuilder& builder, const DebugViewPassDesc& desc)
 
             // ── Bind debug mode + G-Buffer SRV indices ───────────────────
             if (desc.bindless) {
-                // SM6.6: pack mode + 4 SRV indices into 5 root constants.
-                const uint32_t constants[5] = {
+                // SM6.6: pack mode + 4 GBuffer SRV indices + 2 extended SRV indices.
+                // Shader cbuffer layout: mode, albedo, normal, depth, position, hdr, ssr.
+                const uint32_t constants[7] = {
                     static_cast<uint32_t>(desc.mode),
                     desc.albedoSrvIndex,
                     desc.normalSrvIndex,
                     desc.depthSrvIndex,
-                    desc.positionSrvIndex
+                    desc.positionSrvIndex,
+                    desc.hdrSrvIndex,   // UINT32_MAX when unused — shader guards before load
+                    desc.ssrSrvIndex,   // UINT32_MAX when unused
                 };
-                cmd->SetRootConstants(kSlotRootConstants, constants, 5);
+                cmd->SetRootConstants(kSlotRootConstants, constants, 7);
             } else {
                 // SM5: push mode as a single root constant, bind textures explicitly.
                 const uint32_t modeVal = static_cast<uint32_t>(desc.mode);
@@ -79,6 +90,7 @@ void AddDebugViewPass(rg::RgBuilder& builder, const DebugViewPassDesc& desc)
                 cmd->SetFragmentTexture(1, desc.normalTexture);
                 cmd->SetFragmentTexture(2, desc.depthTexture);
                 cmd->SetFragmentTexture(3, desc.positionTexture);
+                // t4/t5 are optional — only bound when the mode needs them.
             }
 
             // ── Viewport and scissor ─────────────────────────────────────

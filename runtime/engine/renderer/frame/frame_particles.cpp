@@ -43,6 +43,7 @@ UZ_DECLARE_LOG_CATEGORY(VFX);
 namespace uz {
 
 void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
+    if (!m_showFlags.Get(ShowFlag::Particles)) return;
     UZ_PROFILE_FUNCTION();
 
     // Resolve active VFX system: the non-owning override (set via SetVFXSystem)

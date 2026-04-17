@@ -71,6 +71,11 @@ int Application::Run(int argc, char** argv) {
     m_config = Configure();
     ParseArgs(argc, argv);
 
+    // Default log level is Error (set in log.cpp). --verbose restores full output.
+    if (m_verbose) {
+        LogSetLevel(LogLevel::Info);
+    }
+
     // ── 2. Platform (window, device, swapchain, fences, cmdlist) ─────────
     if (!InitPlatform()) {
         UZ_LOG(App, Error, "Application: platform initialization failed");

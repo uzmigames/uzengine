@@ -48,9 +48,16 @@ enum class DebugViewMode : uint32_t {
     Wireframe     = 10, ///< Not implemented in post-process — handled by rasterizer state.
     Unlit         = 11, ///< Alias for Albedo (same G-Buffer read, no lighting).
     Overview      = 12, ///< Composite grid of all channels (2x3 or similar layout).
-    Tangent       = 13, ///< Derived tangent direction (cross(N, up) approximation).
-    Faceted       = 14, ///< Highlight hard edges — pixels where adjacent normals diverge.
-    Count         = 15, ///< Sentinel — number of valid modes (not a displayable mode).
+    Tangent        = 13, ///< Derived tangent direction (cross(N, up) approximation).
+    Faceted        = 14, ///< Highlight hard edges — pixels where adjacent normals diverge.
+
+    // Extended view modes (toolbar additions)
+    DetailLighting = 15, ///< Directional light × NdotL only — no albedo, no IBL. Shows pure shading term. (ALT+5)
+    LightingOnly   = 16, ///< Full lighting (direct + indirect + IBL) without albedo multiply. Shows light intensity distribution. (ALT+6)
+    LitWireframe   = 17, ///< Normal Lit output with wireframe overlay (dual-pass: lit + wireframe blend).
+    Reflections    = 18, ///< SSR + IBL specular contribution only. Isolates reflection quality.
+
+    Count          = 19, ///< Sentinel — number of valid modes (not a displayable mode).
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -79,9 +86,13 @@ inline const char* DebugViewModeName(DebugViewMode mode) {
         case DebugViewMode::Wireframe:     return "Wireframe";
         case DebugViewMode::Unlit:         return "Unlit";
         case DebugViewMode::Overview:      return "Overview";
-        case DebugViewMode::Tangent:       return "Tangent";
-        case DebugViewMode::Faceted:       return "Faceted";
-        case DebugViewMode::Count:         return "Count";
+        case DebugViewMode::Tangent:        return "Tangent";
+        case DebugViewMode::Faceted:        return "Faceted";
+        case DebugViewMode::DetailLighting: return "DetailLighting";
+        case DebugViewMode::LightingOnly:   return "LightingOnly";
+        case DebugViewMode::LitWireframe:   return "LitWireframe";
+        case DebugViewMode::Reflections:    return "Reflections";
+        case DebugViewMode::Count:          return "Count";
     }
     return "Unknown";
 }
@@ -119,8 +130,12 @@ inline DebugViewMode DebugViewModeFromString(std::string_view name) {
     if (iequals(name, "wireframe"))     return DebugViewMode::Wireframe;
     if (iequals(name, "unlit"))         return DebugViewMode::Unlit;
     if (iequals(name, "overview"))      return DebugViewMode::Overview;
-    if (iequals(name, "tangent"))       return DebugViewMode::Tangent;
-    if (iequals(name, "faceted"))       return DebugViewMode::Faceted;
+    if (iequals(name, "tangent"))        return DebugViewMode::Tangent;
+    if (iequals(name, "faceted"))        return DebugViewMode::Faceted;
+    if (iequals(name, "detaillighting")) return DebugViewMode::DetailLighting;
+    if (iequals(name, "lightingonly"))   return DebugViewMode::LightingOnly;
+    if (iequals(name, "litwireframe"))   return DebugViewMode::LitWireframe;
+    if (iequals(name, "reflections"))    return DebugViewMode::Reflections;
 
     return DebugViewMode::Lit;
 }

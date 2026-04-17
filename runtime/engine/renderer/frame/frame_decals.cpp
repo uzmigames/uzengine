@@ -30,6 +30,7 @@ UZ_DECLARE_LOG_CATEGORY(VFX);
 namespace uz {
 
 void SceneRenderer::RegisterDecalPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
+    if (!m_showFlags.Get(ShowFlag::Decals)) return;
     UZ_PROFILE_FUNCTION();
 
     // Skip if no decal manager is set or it has no active decals.

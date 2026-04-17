@@ -19,6 +19,7 @@ extern "C" {
 
 #include <cstdint>
 #include <cstring>
+#include <cmath>
 
 /// Lua bindings for the entity/node API (transform, components, hierarchy, lifecycle).
 
@@ -222,6 +223,108 @@ static int SceneSetName(lua_State* L) {
         world->AddComponent<CName>(entity, CName{name});
     }
 
+    return 0;
+}
+
+/// uz.scene.set_position(entity, x, y, z) -> void
+///
+/// Sets the LOCAL position on the entity's SceneComponent.
+/// No-op if the entity is invalid or has no SceneComponent.
+static int SceneSetPosition(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) return 0;
+    const Entity entity = CheckEntity(L, 1, "set_position");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+    if (!world->HasComponent<SceneComponent>(entity)) return 0;
+    const float x = static_cast<float>(luaL_checknumber(L, 2));
+    const float y = static_cast<float>(luaL_checknumber(L, 3));
+    const float z = static_cast<float>(luaL_checknumber(L, 4));
+    world->GetComponent<SceneComponent>(entity).SetPosition(Vec3{x, y, z});
+    return 0;
+}
+
+/// uz.scene.get_position(entity) -> x, y, z (or nil)
+///
+/// Returns the LOCAL position of the entity. Returns nil if the entity is
+/// invalid or has no SceneComponent.
+static int SceneGetPosition(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_position");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<SceneComponent>(entity)) { lua_pushnil(L); return 1; }
+    const Vec3& p = world->GetComponent<SceneComponent>(entity).GetPosition();
+    lua_pushnumber(L, p.x);
+    lua_pushnumber(L, p.y);
+    lua_pushnumber(L, p.z);
+    return 3;
+}
+
+/// uz.scene.get_world_position(entity) -> x, y, z (or nil)
+///
+/// Returns the WORLD position of the entity (after parent chain composition).
+static int SceneGetWorldPosition(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_world_position");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<SceneComponent>(entity)) { lua_pushnil(L); return 1; }
+    const Vec3 p = world->GetComponent<SceneComponent>(entity).GetWorldPosition();
+    lua_pushnumber(L, p.x);
+    lua_pushnumber(L, p.y);
+    lua_pushnumber(L, p.z);
+    return 3;
+}
+
+/// uz.scene.set_rotation(entity, x, y, z, w) -> void
+///
+/// Sets the LOCAL rotation on the entity's SceneComponent. The quaternion
+/// MUST be normalized — caller is responsible.
+static int SceneSetRotation(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) return 0;
+    const Entity entity = CheckEntity(L, 1, "set_rotation");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+    if (!world->HasComponent<SceneComponent>(entity)) return 0;
+    const float x = static_cast<float>(luaL_checknumber(L, 2));
+    const float y = static_cast<float>(luaL_checknumber(L, 3));
+    const float z = static_cast<float>(luaL_checknumber(L, 4));
+    const float w = static_cast<float>(luaL_checknumber(L, 5));
+    world->GetComponent<SceneComponent>(entity).SetRotation(Quat{x, y, z, w});
+    return 0;
+}
+
+/// uz.scene.get_rotation(entity) -> x, y, z, w (or nil)
+static int SceneGetRotation(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_rotation");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<SceneComponent>(entity)) { lua_pushnil(L); return 1; }
+    const Quat& q = world->GetComponent<SceneComponent>(entity).GetRotation();
+    lua_pushnumber(L, q.x);
+    lua_pushnumber(L, q.y);
+    lua_pushnumber(L, q.z);
+    lua_pushnumber(L, q.w);
+    return 4;
+}
+
+/// uz.scene.set_rotation_yaw(entity, yawRadians) -> void
+///
+/// Convenience: sets the entity's local rotation to a Z-axis (yaw) rotation.
+/// Useful for character controllers that only need to orient around the up axis.
+static int SceneSetRotationYaw(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) return 0;
+    const Entity entity = CheckEntity(L, 1, "set_rotation_yaw");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+    if (!world->HasComponent<SceneComponent>(entity)) return 0;
+    const float yaw = static_cast<float>(luaL_checknumber(L, 2));
+    const float halfYaw = yaw * 0.5f;
+    const float s = std::sin(halfYaw);
+    const float c = std::cos(halfYaw);
+    // Rotation around Z axis: q = (0, 0, sin(yaw/2), cos(yaw/2)).
+    world->GetComponent<SceneComponent>(entity).SetRotation(Quat{0.0f, 0.0f, s, c});
     return 0;
 }
 
@@ -588,6 +691,24 @@ void LuaRegisterEntityAPI(lua_State* L) {
 
     lua_pushcfunction(L, SceneEntityCount);
     lua_setfield(L, -2, "entity_count");
+
+    lua_pushcfunction(L, SceneSetPosition);
+    lua_setfield(L, -2, "set_position");
+
+    lua_pushcfunction(L, SceneGetPosition);
+    lua_setfield(L, -2, "get_position");
+
+    lua_pushcfunction(L, SceneGetWorldPosition);
+    lua_setfield(L, -2, "get_world_position");
+
+    lua_pushcfunction(L, SceneSetRotation);
+    lua_setfield(L, -2, "set_rotation");
+
+    lua_pushcfunction(L, SceneGetRotation);
+    lua_setfield(L, -2, "get_rotation");
+
+    lua_pushcfunction(L, SceneSetRotationYaw);
+    lua_setfield(L, -2, "set_rotation_yaw");
 
     lua_pushcfunction(L, SceneHasComponent);
     lua_setfield(L, -2, "has_component");

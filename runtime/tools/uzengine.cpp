@@ -32,6 +32,7 @@
 #include "../engine/scripting/script_system.h"
 #include "../engine/asset/vfs.h"
 #include "../engine/renderer/scene/scene_renderer.h"
+#include "../engine/animation/skeletal_mesh_subsystem.h"
 #include "../engine/scripting/core/lua_input_api.h"
 #include "../editor/input/editor_input_handler.h"
 #include "../editor/selection/selection_manager.h"
@@ -603,6 +604,13 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
 
     // ── Scene Renderer ─────────────────────────────────────────────────
     SceneRenderer sceneRenderer;
+    // Forward the project/CLI-supplied content root to the renderer so
+    // features like VFX hot-reload can attach to the correct directory.
+    // When the project did not set one, the renderer skips hot-reload
+    // silently — no path is ever hardcoded inside the runtime.
+    if (configPtr) {
+        sceneRenderer.SetContentRoot(configPtr->GetString("content_root", ""));
+    }
     bool sceneRendererReady = sceneRenderer.Init(device, &window,
         static_cast<uint32_t>(width), static_cast<uint32_t>(height));
     if (!sceneRendererReady) {
@@ -625,6 +633,20 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         sceneRenderer.SetEditorMode(true);
     }
 
+    // Apply debug view mode from CLI (--view-mode <name>). The uzengine
+    // runtime has its own Config-based CLI parser (distinct from
+    // Application::ParseArgs), so `--view-mode` must be routed here manually
+    // or the renderer defaults to Lit regardless of the flag.
+    if (sceneRendererReady && configPtr) {
+        const std::string vmArg = configPtr->GetString("view-mode", "");
+        if (!vmArg.empty()) {
+            const DebugViewMode vm = DebugViewModeFromString(std::string_view{vmArg});
+            sceneRenderer.SetDebugViewMode(vm);
+            UZ_LOG(Engine, Info, "Debug view mode: '{}' (enum={})",
+                   DebugViewModeName(vm), static_cast<uint32_t>(vm));
+        }
+    }
+
     // ── Editor Input & Selection (only when editor mode is active) ────
     SelectionManager selectionManager;
     EditorInputHandler editorInput;
@@ -632,6 +654,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         editorInput.Init(sceneRenderer.GetInput(), &selectionManager,
                          &sceneRenderer.GetCamera(), &world);
         editorInput.SetSceneRenderer(&sceneRenderer);
+        sceneRenderer.SetEditorInputHandler(&editorInput);
         // Editor mode: WASD moves camera only while RMB held.
         sceneRenderer.GetCameraController().SetEditorMode(true);
         UZ_LOG(Engine, Info, "Editor input handler initialized");
@@ -673,6 +696,13 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     // the lightweight DrainPendingTextureLoads (no full RenderFrame overhead).
     uint32_t frameIndex = 0;
     uint64_t globalFenceValue = 0;
+
+    // Finalize skeletal-mesh components after SceneRenderer is up: loads the
+    // .uzmesh / .uzskel / .uzanim for every animated entity, wires per-entity
+    // procedural output meshes, and registers the animation subsystem state.
+    if (sceneRendererReady) {
+        SkeletalMeshSubsystem::Get().Finalize(world, sceneRenderer, vfs);
+    }
 
     if (sceneRendererReady && !defaultScene.empty()) {
         UZ_LOG(Engine, Info, "Pre-loading scene textures...");
@@ -755,6 +785,12 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
             LuaVM::UpdateFrameGlobals(dt, t, static_cast<uint64_t>(frameIndex));
             ScriptSystem::Update(dt);
         }
+
+        // Advance all skeletal animation controllers in parallel and CPU-skin
+        // each entity's vertex buffer. Must run before RenderFrame so the GPU
+        // upload (queued inside SceneRenderer::RenderFrame → FlushPendingLoads)
+        // sees the latest skinned bytes.
+        SkeletalMeshSubsystem::Get().TickAll(dt);
 
         // Render
         if (sceneRendererReady) {
@@ -851,8 +887,6 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
 int main(int argc, char** argv) {
     uz::LogInit();
 
-    UZ_LOG(Engine, Info, "UzEngine Runtime starting");
-
     // Config: project file + CLI overrides
     uz::Config config = uz::BuildConfig(argc, argv);
 
@@ -862,7 +896,8 @@ int main(int argc, char** argv) {
         config.AddPendingCvarOverride("r.RayTracing.TestPass", 1.0f);
     }
 
-    // Apply log level filter (--log-level trace|debug|info|warning|error)
+    // Log level: default is Error (set in log.cpp g_runtimeLevel).
+    // --verbose sets Info. --log-level overrides both.
     {
         const std::string ll = config.GetString("log-level",
             config.GetString("log_level", ""));
@@ -873,8 +908,12 @@ int main(int argc, char** argv) {
             else if (ll == "warning") uz::LogSetLevel(uz::LogLevel::Warning);
             else if (ll == "error")   uz::LogSetLevel(uz::LogLevel::Error);
             else UZ_LOG(Engine, Warning, "Unknown log level '{}', using default", ll);
+        } else if (config.GetBool("verbose", false)) {
+            uz::LogSetLevel(uz::LogLevel::Info);
         }
     }
+
+    UZ_LOG(Engine, Info, "UzEngine Runtime starting");
 
     // Resolve RHI settings from config
     const uz::RHIConfig rhiCfg = uz::ResolveRHIConfig(config);
