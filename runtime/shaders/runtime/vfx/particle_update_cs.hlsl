@@ -502,6 +502,12 @@ void main(uint3 dtid : SV_DispatchThreadID)
 #ifdef UZ_BINDLESS
     if (curlStrength > 0.0f) {
         float3 curlForce = AnimatedCurlNoise(pos, totalTime, curlSpeed, curlFrequency);
+        // Safety: the raw finite-difference curl can spike near simplex
+        // cell boundaries. Sanitize and clamp before integration.
+        if (any(isnan(curlForce)) || any(isinf(curlForce))) {
+            curlForce = float3(0, 0, 0);
+        }
+        curlForce = clamp(curlForce, -1.0f, 1.0f);
         vel += curlForce * curlStrength * dt;
     }
 
@@ -614,8 +620,32 @@ void main(uint3 dtid : SV_DispatchThreadID)
     }
 #endif // UZ_BINDLESS
 
+    // ── Velocity safety net ────────────────────────────────────────────
+    // Final guard before position integration. Any force above that
+    // produced a NaN/Inf, or an overflowing magnitude, would otherwise
+    // teleport the particle to an unrenderable coordinate within one
+    // frame. Clamp to a reasonable max speed (cm/s) and neutralize
+    // non-finite components.
+    if (any(isnan(vel)) || any(isinf(vel))) {
+        vel = float3(0, 0, 0);
+    }
+    const float kMaxSpeed = 10000.0f; // 100 m/s cap — large enough for any effect
+    const float velLen = length(vel);
+    if (velLen > kMaxSpeed) {
+        vel *= (kMaxSpeed / velLen);
+    }
+
     // ── Integrate position (explicit Euler) ─────────────────────────────
     pos += vel * dt;
+
+    // ── Position safety net ────────────────────────────────────────────
+    // If the integrated position is still non-finite, snap back to origin
+    // so the particle continues simulating instead of rendering at a
+    // location that makes it disappear (NaN positions get culled).
+    if (any(isnan(pos)) || any(isinf(pos))) {
+        pos = float3(0, 0, 0);
+        vel = float3(0, 0, 0);
+    }
 
     // ── Orbit around emitter origin (additive position override) ─────────
     // Directly sets a circular orbit position additive to the integrated position.

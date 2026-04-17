@@ -409,6 +409,16 @@ void SceneRenderer::SyncVfxEmitters(World* world, IVFS* vfs) {
             if (idx < m_runtimeSystems.size() && m_runtimeSystems[idx]) {
                 auto* inst = m_runtimeSystems[idx].get();
                 inst->SetEmitting(sysComp.emitting);
+                // Propagate to children every frame. `VfxSystemInstance::Tick`
+                // would do this, but it is not called from the render loop,
+                // so `SetEmitting` alone does not silence active children.
+                // Without this, toggling `sysComp.emitting = false` stops
+                // new spawns at the instance level but the children keep
+                // spawning until a restart explicitly overrides them.
+                for (auto* child : inst->GetEmitters()) {
+                    if (!child) continue;
+                    child->isEmitting = sysComp.emitting;
+                }
                 if (auto* sc = registry.try_get<SceneComponent>(enttEntity)) {
                     inst->SetWorldTransform(sc->GetPosition());
                 }
