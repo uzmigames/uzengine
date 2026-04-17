@@ -1,0 +1,42 @@
+debug_skin_reference — Mushroom_Idle vs UzEngine pipeline
+==========================================================
+Mesh:        e:/UzEngine/sample/content/meshes/mushroommonster/MushroomMonster_Low.fbx
+Animation:   e:/UzEngine/sample/content/meshes/mushroommonster/animations/Mushroom_Idle.FBX
+Sample t:    0.0000 s (absolute t=0.0000)
+Bones:       21
+Vertices:    119988
+
+Position deltas (cm)
+  max:         0.0000
+  mean:        0.0000
+  within 1cm:  119988 / 119988  (100.0000%)
+
+Palette Frobenius diff (per-bone)
+  max: 73.6575  at bone[20] = 'Bone003'
+
+5 representative vertices (ref vs uz)
+  v[9999]:  ref=(127.9230, -88.3710, 82.7654)  uz=(127.9231, -88.3710, 82.7654)  delta=0.0000 cm
+  v[29997]:  ref=(150.5949, 46.0442, 38.5425)  uz=(150.5949, 46.0442, 38.5425)  delta=0.0000 cm
+  v[49995]:  ref=(-4.2027, 24.6038, -68.8383)  uz=(-4.2027, 24.6038, -68.8383)  delta=0.0000 cm
+  v[69993]:  ref=(56.4630, -18.1323, 22.8264)  uz=(56.4630, -18.1323, 22.8264)  delta=0.0000 cm
+  v[89991]:  ref=(223.6257, -23.3486, -4.6315)  uz=(223.6257, -23.3486, -4.6315)  delta=0.0000 cm
+
+First 6 bone palette translation rows (m[3,0..2])
+  bone[0] 'MushroomPelvis'  parent=-1
+    ref: (-1.1722, -0.0290, 0.6956)
+    uz : (0.6957, -1.1722, -0.0290)
+  bone[1] 'Point005'  parent=0
+    ref: (-1.1723, -0.0291, 0.6956)
+    uz : (0.6957, -1.1723, -0.0291)
+  bone[2] 'Point004'  parent=0
+    ref: (-1.1732, -0.0333, 0.6965)
+    uz : (0.6965, -1.1732, -0.0333)
+  bone[3] 'Point002'  parent=0
+    ref: (-1.1726, -0.0290, 0.6956)
+    uz : (0.6956, -1.1726, -0.0289)
+  bone[4] 'Point003'  parent=0
+    ref: (-1.1631, -0.0171, 0.6957)
+    uz : (0.6957, -1.1631, -0.0171)
+  bone[5] 'Point011'  parent=0
+    ref: (-1.1914, -0.0362, 0.6939)
+    uz : (0.6939, -1.1914, -0.0362)
