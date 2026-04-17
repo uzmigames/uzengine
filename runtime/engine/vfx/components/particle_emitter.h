@@ -36,6 +36,7 @@
 #include <cfloat>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace uz {
 
@@ -362,6 +363,12 @@ struct ParticleEmitter {
     /// Set to true by SyncVfxEmitters, consumed by RegisterParticlePasses.
     bool needsInitialUpload = false;
 
+    /// When true, RegisterParticlePasses skips sim + render for this
+    /// emitter (phase 10.5.0 frustum cull gate). Written by
+    /// `SyncVfxEmitters` each frame based on the ECS cull hysteresis.
+    /// @ref engine/vfx/lod/vfx_frustum_cull.h
+    bool cullSuppress = false;
+
     /// Number of particles actually allocated from the budget.
     /// May be less than maxParticles if the budget was constrained.
     uint32_t allocatedFromBudget = 0;
@@ -529,6 +536,16 @@ struct ParticleEmitter {
     /// to schedule a one-shot particle burst. VFXSystem drains the queue
     /// each frame during the simulation pass.
     VFXEventQueue eventQueue;
+
+    // -- Asset metadata -------------------------------------------------------
+
+    /// Tag metadata for asset-browser filter + snippet library search.
+    /// Free-form lower-case identifiers (e.g. "fire", "ambient", "magic").
+    /// Round-trips through emitter_serializer.h. Query grammar is documented
+    /// in `docs/engine/25-vfx/19-asset-tagging.md`.
+    ///
+    /// @ref UE5 NiagaraScriptBase::Tags + FAssetData metadata.
+    std::vector<std::string> tags;
 
     // -- Methods --------------------------------------------------------------
 

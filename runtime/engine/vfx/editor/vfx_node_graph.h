@@ -98,6 +98,24 @@ struct VfxGraphWire {
     VfxPinType  type = VfxPinType::Float;
 };
 
+/// Dynamic-input expression binding on an input pin (phase 8.10.0).
+///
+/// When an input pin carries an expression instead of a concrete wire, the
+/// graph compiler evaluates the expression DSL at compose time and inlines
+/// the resulting HLSL snippet. The expression string uses the infix grammar
+/// defined in `vfx_expression.h`.
+///
+/// JSON round-trip:
+/// ```json
+/// { "pin": "n1:color", "expr": "lerp(colorStart, colorEnd, normalizedAge)" }
+/// ```
+///
+/// @ref UE5 UNiagaraDynamicInputScript
+struct VfxGraphPinExpression {
+    std::string pinEndpoint;   ///< `"<nodeId>:<pinName>"` — the input pin.
+    std::string expression;    ///< Infix expression source (parsed at compile time).
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Graph container
 // ─────────────────────────────────────────────────────────────────────────────
@@ -108,6 +126,20 @@ struct VfxGraphWire {
 struct VfxNodeGraph {
     std::vector<VfxGraphNode> nodes;
     std::vector<VfxGraphWire> wires;
+
+    /// Dynamic-input expression bindings (phase 8.10.0). Each entry
+    /// replaces a wire on the target input pin with an inline expression
+    /// evaluated at compose time. Pins may have either a wire OR an
+    /// expression, not both — the graph compiler prioritises the
+    /// expression when present.
+    std::vector<VfxGraphPinExpression> pinExpressions;
+
+    /// Tag metadata for asset-browser filter / snippet library search.
+    /// Free-form lower-case identifiers. See
+    /// `docs/engine/25-vfx/19-asset-tagging.md` for the query grammar.
+    ///
+    /// @ref UE5 NiagaraScriptBase::Tags.
+    std::vector<std::string> tags;
 
     /// Inserts a new node preserving the unique-`id` invariant. Returns
     /// `true` on success; `false` (and does not insert) when the id is
@@ -151,6 +183,65 @@ struct VfxNodeGraph {
 [[nodiscard]] bool VfxParseEndpoint(const std::string& endpoint,
                                       std::string& outNode,
                                       std::string& outPin) noexcept;
+
+/// Clipboard copy / paste helper for the node-graph editor (phase 8.6.0).
+///
+/// `Copy` serialises a subset of a `VfxNodeGraph` (one or more node ids plus
+/// every wire whose *both* endpoints land in the selection) to a standalone
+/// JSON snippet. `Paste` round-trips the snippet into another graph, renaming
+/// colliding node ids with a `_copy`, `_copy2`, … suffix and rewriting wire
+/// endpoints so connections survive the rename.
+///
+/// # JSON shape
+/// Identical to `.uzvfxgraph` except `"format"` is `"uzvfxclip"` and the
+/// version stream starts fresh at 1 so editors can evolve the two formats
+/// independently. Wires and pin types are preserved byte-for-byte so a
+/// round-trip through Copy → Paste produces an isomorphic subgraph.
+///
+/// ```json
+/// {
+///   "format":  "uzvfxclip",
+///   "version": 1,
+///   "nodes":   [ { "id": "n0", "module": "Spawn", "position": {"x": 0, "y": 0} } ],
+///   "wires":   [ { "from": "n0:out", "to": "n1:in", "type": "float" } ]
+/// }
+/// ```
+///
+/// Dangling wires — those where the selection only captures one endpoint —
+/// are intentionally dropped at Copy time; the destination graph cannot
+/// know how to satisfy them.
+///
+/// @ref UE5 SNiagaraGraphCopyPaste
+/// @ref docs/engine/25-vfx/23-clipboard-format.md
+struct VfxNodeGraphClipboard {
+    /// Returns a JSON snippet containing every node whose id is in
+    /// `selectedIds` plus every wire whose both endpoints point into the
+    /// selection. Empty selection produces an empty, valid snippet with
+    /// zero nodes and zero wires.
+    [[nodiscard]] static std::string Copy(
+        const VfxNodeGraph& source,
+        const std::vector<std::string>& selectedIds);
+
+    /// Parses a clipboard snippet and inserts its nodes + wires into
+    /// `target`. Colliding node ids are renamed with a `_copy`, `_copy2`,
+    /// … suffix; every wire endpoint referencing a renamed node is
+    /// rewritten so connections continue to resolve.
+    ///
+    /// # Returns
+    /// The list of ids actually added to `target`, in the same order as
+    /// the snippet's `nodes` array. Empty vector on parse failure — the
+    /// target graph is left untouched.
+    [[nodiscard]] static std::vector<std::string> Paste(
+        VfxNodeGraph& target, const std::string& clipboardJson);
+
+    /// Paste multiple times — convenience for "Ctrl+V twice" without
+    /// forcing the caller to manage intermediate id-remap tables. Each
+    /// paste uses its own rename pass so stacked pastes each land with
+    /// distinct ids.
+    [[nodiscard]] static std::vector<std::string> PasteMany(
+        VfxNodeGraph& target, const std::string& clipboardJson,
+        uint32_t count);
+};
 
 /// `.uzvfxgraph` JSON load / save helpers.
 struct VfxNodeGraphAsset {

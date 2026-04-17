@@ -129,6 +129,71 @@ constexpr float kMinTotalDistance = 0.0001f;
 } // anonymous namespace
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Ribbon morphology helpers (phase 8.14.0)
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool VfxTrailMorphology::IsIdentity() const noexcept {
+    // An empty curve has no keys; the builder skips sampling altogether
+    // when every curve is empty, preserving the legacy fast path.
+    return widthCurve.keys.empty() &&
+           twistCurve.keys.empty() &&
+           opacityCurve.keys.empty();
+}
+
+float VfxSampleMorphologyCurve(const VfxTangentCurve& curve,
+                                float t, float defaultValue) noexcept {
+    if (curve.keys.empty()) return defaultValue;
+    const float clamped = std::clamp(t, 0.0f, 1.0f);
+    return curve.Evaluate(clamped);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UV mode helpers (phase 8.12.0)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const char* VfxTrailUVModeToString(VfxTrailUVMode mode) noexcept {
+    switch (mode) {
+        case VfxTrailUVMode::Stretch:   return "stretch";
+        case VfxTrailUVMode::Tiled:     return "tiled";
+        case VfxTrailUVMode::PerRibbon: return "per_ribbon";
+    }
+    return "stretch";
+}
+
+bool VfxTrailUVModeFromString(const std::string& name,
+                               VfxTrailUVMode& out) noexcept {
+    if (name == "stretch")    { out = VfxTrailUVMode::Stretch;   return true; }
+    if (name == "tiled")      { out = VfxTrailUVMode::Tiled;     return true; }
+    if (name == "per_ribbon") { out = VfxTrailUVMode::PerRibbon; return true; }
+    return false;
+}
+
+float VfxComputeTrailV(VfxTrailUVMode mode,
+                        float t,
+                        uint32_t strandIndex,
+                        uint32_t strandCount,
+                        float tilesPerRibbon) noexcept {
+    switch (mode) {
+        case VfxTrailUVMode::Stretch:
+            return t;
+        case VfxTrailUVMode::Tiled: {
+            // Clamp to avoid zero-tile collapse that would project all
+            // vertices to V = 0 and render a single-colour ribbon.
+            const float tiles = (tilesPerRibbon > 0.0001f) ? tilesPerRibbon : 0.0001f;
+            return t * tiles;
+        }
+        case VfxTrailUVMode::PerRibbon: {
+            // Each strand occupies a distinct V band in [0, 1]. For
+            // strandCount == 1 this degenerates to Stretch. For N > 1,
+            // strand s samples V in [s/N, (s+1)/N].
+            const uint32_t n = (strandCount > 0u) ? strandCount : 1u;
+            return (static_cast<float>(strandIndex) + t) / static_cast<float>(n);
+        }
+    }
+    return t;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // TrailMeshBuilder::Build -- ribbon quad-strip generation
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -143,7 +208,10 @@ TrailMeshData TrailMeshBuilder::Build(
     float totalDistance,
     float pointLifetime,
     uint32_t ribbonStrands,
-    float strandSpacing
+    float strandSpacing,
+    VfxTrailUVMode uvMode,
+    float tilesPerRibbon,
+    const VfxTrailMorphology* morphology
 ) const {
     if (points == nullptr) {
         UZ_LOG(VFX, Warning, "TrailMeshBuilder::Build: points array is null");
@@ -260,6 +328,50 @@ TrailMeshData TrailMeshBuilder::Build(
         colors[i] = LerpColor(colorStart, colorEnd, colorParam);
     }
 
+    // ── Apply morphology curves (phase 8.14.0) ─────────────────────────────
+    // Each non-empty curve modulates the corresponding per-point attribute.
+    // Empty-curve default preserves the legacy behaviour so pre-8.14 trails
+    // remain byte-for-byte identical.
+    //
+    // @ref UE5 FNiagaraRibbonShapeCustomVertex
+    if (morphology != nullptr && !morphology->IsIdentity()) {
+        for (uint32_t i = 0; i < pointCount; ++i) {
+            const float t = ts[i];
+
+            // Width multiplier.
+            const float widthMul = VfxSampleMorphologyCurve(
+                morphology->widthCurve, t, 1.0f);
+            halfWidths[i] *= std::max(0.0f, widthMul);
+
+            // Opacity multiplier on vertex alpha.
+            const float opacityMul = VfxSampleMorphologyCurve(
+                morphology->opacityCurve, t, 1.0f);
+            colors[i].w *= std::clamp(opacityMul, 0.0f, 1.0f);
+
+            // Twist: rotate (right, up) around tangent by `theta` radians.
+            // Uses the Rodrigues formula specialised for the pair of axes
+            // already in hand, avoiding a full rotation matrix.
+            const float theta = VfxSampleMorphologyCurve(
+                morphology->twistCurve, t, 0.0f);
+            if (theta != 0.0f) {
+                const float c = std::cos(theta);
+                const float s = std::sin(theta);
+                const Vec3  r = rights[i];
+                const Vec3  u = ups[i];
+                rights[i] = Vec3{
+                    r.x * c + u.x * s,
+                    r.y * c + u.y * s,
+                    r.z * c + u.z * s,
+                };
+                ups[i] = Vec3{
+                    u.x * c - r.x * s,
+                    u.y * c - r.y * s,
+                    u.z * c - r.z * s,
+                };
+            }
+        }
+    }
+
     // ── Generate vertices and indices for each strand ──────────────────────
     // For N strands, offsets are centered: strand s is offset by
     //   upOffset = (s - (N-1)/2) * strandSpacing
@@ -280,11 +392,17 @@ TrailMeshData TrailMeshBuilder::Build(
             const Vec3& pointPos = points[i].position;
             const Vec3  offsetPos = pointPos + ups[i] * strandOffset;
 
+            // Per-mode V coordinate (phase 8.12.0). Stretch preserves the
+            // legacy `V = t` behaviour so pre-8.12 trails are byte-for-byte
+            // unchanged.
+            const float vCoord = VfxComputeTrailV(uvMode, ts[i], s,
+                                                   strandCount, tilesPerRibbon);
+
             // Left vertex: u=0, ribbon left edge.
             TrailVertex& leftVert  = mesh.vertices.emplace_back();
             leftVert.position    = offsetPos - rights[i] * halfWidths[i];
             leftVert.u           = 0.0f;
-            leftVert.v           = ts[i];
+            leftVert.v           = vCoord;
             leftVert.color       = colors[i];
             leftVert.strandIndex = s;
 
@@ -292,7 +410,7 @@ TrailMeshData TrailMeshBuilder::Build(
             TrailVertex& rightVert = mesh.vertices.emplace_back();
             rightVert.position    = offsetPos + rights[i] * halfWidths[i];
             rightVert.u           = 1.0f;
-            rightVert.v           = ts[i];
+            rightVert.v           = vCoord;
             rightVert.color       = colors[i];
             rightVert.strandIndex = s;
         }

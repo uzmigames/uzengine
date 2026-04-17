@@ -143,6 +143,14 @@ void AddParticleRenderPass(rg::RgBuilder& builder,
             pb.Write(passDesc.colorTarget, RHIResourceState::RenderTarget);
         }
 
+        // Velocity target (MRT slot 1): read-modify-write so the foreground
+        // particle dominates (blend is disabled, back-to-front draw order).
+        // @ref Karis 2014 "High Quality Temporal Supersampling"
+        if (passDesc.velocityTarget.IsValid()) {
+            pb.Read(passDesc.velocityTarget, RHIResourceState::RenderTarget);
+            pb.Write(passDesc.velocityTarget, RHIResourceState::RenderTarget);
+        }
+
         // Depth target: used for depth testing (no depth write in PSO).
         // Use DepthStencilWrite state to allow DSV binding without read-only flag.
         // The PSO has depthWrite=false so no actual writes occur.
@@ -179,6 +187,16 @@ void AddParticleRenderPass(rg::RgBuilder& builder,
             rpDesc.colorAttachmentCount = 1;
             rpDesc.colorAttachments[0].texture = passDesc.colorTexture;
             rpDesc.colorAttachments[0].clear   = false;
+            // Bind velocity target as MRT slot 1 when available. The particle
+            // PSO declares RT[1]=RG16Float so the PS SV_Target1 motion vector
+            // output is written here. When the caller does not provide a
+            // velocity texture (tests / isolated passes), MRT slot 1 is left
+            // unbound and the GPU discards the extra PS output.
+            if (passDesc.velocityTexture.IsValid()) {
+                rpDesc.colorAttachmentCount = 2;
+                rpDesc.colorAttachments[1].texture = passDesc.velocityTexture;
+                rpDesc.colorAttachments[1].clear   = false;
+            }
             rpDesc.hasDepth = true;
             rpDesc.depthAttachment.texture = passDesc.depthTexture;
             rpDesc.depthAttachment.clear   = false;

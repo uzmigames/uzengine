@@ -175,6 +175,31 @@ struct VfxEmitterComponent {
     /// free list). Cleared automatically by SyncVfxEmitters after processing.
     bool restartRequested = false;
 
+    // ── Culling state (phase 10.5.0) ─────────────────────────────────────
+
+    /// Mirrors `uz::EmitterCullState` — kept as POD fields here to avoid
+    /// pulling the full cull header into the component interface. The
+    /// scene renderer copies these to a real `EmitterCullState`, updates,
+    /// and copies back. 2-frame hysteresis across `culledPrevFrame`.
+    ///
+    /// @ref engine/vfx/lod/vfx_frustum_cull.h
+    /// @ref docs/engine/25-vfx/42-frustum-cull-integration.md
+    bool     cullCulledThisFrame   = false;
+    bool     cullCulledPrevFrame   = false;
+    uint32_t cullFramesSinceCulled = 0;
+
+    // ── HZB occlusion state (phase 9.14.0) ──────────────────────────────
+
+    /// Per-emitter HZB occlusion hysteresis. Mirrors
+    /// `VfxOcclusionHysteresis` as POD fields — the scene renderer
+    /// constructs a transient `VfxOcclusionHysteresis` from these,
+    /// calls `Update(rawVote)`, and writes back.
+    ///
+    /// @ref engine/vfx/lod/vfx_hzb_occlusion.h
+    /// @ref docs/engine/25-vfx/37-hzb-occlusion.md
+    bool     hzbOccluded     = false;  ///< Committed occlusion state.
+    uint32_t hzbDissentCount = 0;      ///< Frames since last state flip vote.
+
     // ── Internal (set by engine, do not modify) ──────────────────────────
 
     int32_t runtimeEmitterIdx = -1;

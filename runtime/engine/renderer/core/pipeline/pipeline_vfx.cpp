@@ -97,8 +97,15 @@ RHIPipelineHandle PipelineLibrary::GetParticleBillboard() {
     desc.renderTargetBlend[0].dstAlpha    = RHIBlendFactor::InvSrcAlpha;
     desc.renderTargetBlend[0].alphaOp     = RHIBlendOp::Add;
 
+    // RT1: velocity (RG16F) — motion vectors for TAA/DLSS/FSR reprojection.
+    // Blend disabled: last-drawn particle (foreground) wins the pixel's motion,
+    // which matches the back-to-front alpha sort order.
+    // @ref Karis 2014 "High Quality Temporal Supersampling"
+    desc.renderTargetBlend[1].blendEnable = false;
+
     desc.renderTargetFormats[0] = RHIFormat::RGBA16Float; // HDR scene color
-    desc.renderTargetCount      = 1;
+    desc.renderTargetFormats[1] = RHIFormat::RG16Float;   // velocity (motion vectors)
+    desc.renderTargetCount      = 2;
     desc.depthStencilFormat     = RHIFormat::D32Float;
     desc.debugName              = "ParticleBillboard";
 
@@ -161,8 +168,12 @@ RHIPipelineHandle PipelineLibrary::GetParticleBillboardAdditive() {
     desc.renderTargetBlend[0].dstAlpha    = RHIBlendFactor::One;
     desc.renderTargetBlend[0].alphaOp     = RHIBlendOp::Add;
 
+    // RT1: velocity (motion vectors) — blend disabled.
+    desc.renderTargetBlend[1].blendEnable = false;
+
     desc.renderTargetFormats[0] = RHIFormat::RGBA16Float; // HDR scene color
-    desc.renderTargetCount      = 1;
+    desc.renderTargetFormats[1] = RHIFormat::RG16Float;   // velocity
+    desc.renderTargetCount      = 2;
     desc.depthStencilFormat     = RHIFormat::D32Float;
     desc.debugName              = "ParticleBillboardAdditive";
 
@@ -204,8 +215,12 @@ RHIPipelineHandle PipelineLibrary::GetParticleBillboardPremulAlpha() {
     desc.renderTargetBlend[0].dstAlpha    = RHIBlendFactor::InvSrcAlpha;
     desc.renderTargetBlend[0].alphaOp     = RHIBlendOp::Add;
 
+    // RT1: velocity (motion vectors) — blend disabled.
+    desc.renderTargetBlend[1].blendEnable = false;
+
     desc.renderTargetFormats[0] = RHIFormat::RGBA16Float;
-    desc.renderTargetCount      = 1;
+    desc.renderTargetFormats[1] = RHIFormat::RG16Float;   // velocity
+    desc.renderTargetCount      = 2;
     desc.depthStencilFormat     = RHIFormat::D32Float;
     desc.debugName              = "ParticleBillboardPremulAlpha";
 

@@ -49,6 +49,16 @@ struct VfxSystemComponent {
     /// been created. -1 means "not yet instantiated". Managed by the
     /// engine; do not modify from gameplay code.
     int32_t runtimeInstanceIdx = -1;
+
+    // ── Culling state (phase 10.5.0) ─────────────────────────────────────
+
+    /// Mirrors `uz::EmitterCullState` fields (same layout as
+    /// `VfxEmitterComponent::cullCulled*`). The scene renderer treats the
+    /// compound system's AABB as a single sphere for the frustum test.
+    /// @ref engine/vfx/lod/vfx_frustum_cull.h
+    bool     cullCulledThisFrame   = false;
+    bool     cullCulledPrevFrame   = false;
+    uint32_t cullFramesSinceCulled = 0;
 };
 
 } // namespace uz

@@ -58,6 +58,11 @@ inline std::string SerializeEmitter(const ParticleEmitter& e) {
     j["colorLifeEndG"]    = e.colorLifeEndG;
     j["colorLifeEndB"]    = e.colorLifeEndB;
     j["colorLifeEndA"]    = e.colorLifeEndA;
+    // Asset tag metadata (see docs/engine/25-vfx/19-asset-tagging.md). Only
+    // emit when present so legacy .uzfx files stay diff-minimal.
+    if (!e.tags.empty()) {
+        j["tags"] = e.tags;
+    }
     return j.dump(2);
 }
 
@@ -116,6 +121,15 @@ inline bool DeserializeEmitter(const std::string& jsonStr, ParticleEmitter& e) {
         if (j.contains("initialColor") && j["initialColor"].is_array()) {
             auto& c = j["initialColor"];
             e.initialColor = {c[0].get<float>(), c[1].get<float>(), c[2].get<float>(), c[3].get<float>()};
+        }
+        // Tag metadata — tolerates missing + non-string entries (which are skipped).
+        if (j.contains("tags") && j["tags"].is_array()) {
+            e.tags.clear();
+            for (auto& entry : j["tags"]) {
+                if (entry.is_string()) {
+                    e.tags.push_back(entry.get<std::string>());
+                }
+            }
         }
         return true;
     } catch (...) {

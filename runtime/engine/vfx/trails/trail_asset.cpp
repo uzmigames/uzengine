@@ -231,6 +231,37 @@ namespace {
         sortOrder = root["sort_order"].get<int>();
     }
 
+    // -- uv_mode (optional, default "stretch") — phase 8.12.0 --
+    VfxTrailUVMode uvMode = VfxTrailUVMode::Stretch;
+    if (root.contains("uv_mode")) {
+        if (!root["uv_mode"].is_string()) {
+            UZ_LOG(VFX, Error, "TrailAsset: 'uv_mode' must be a string");
+            return nullptr;
+        }
+        const std::string uvModeStr = root["uv_mode"].get<std::string>();
+        if (!VfxTrailUVModeFromString(uvModeStr, uvMode)) {
+            UZ_LOG(VFX, Error,
+                   "TrailAsset: unknown uv_mode '{}' (expected stretch|tiled|per_ribbon)",
+                   uvModeStr);
+            return nullptr;
+        }
+    }
+
+    // -- tiles_per_ribbon (optional, default 1.0) — phase 8.12.0 --
+    float tilesPerRibbon = 1.0f;
+    if (root.contains("tiles_per_ribbon")) {
+        if (!root["tiles_per_ribbon"].is_number()) {
+            UZ_LOG(VFX, Error, "TrailAsset: 'tiles_per_ribbon' must be a number");
+            return nullptr;
+        }
+        tilesPerRibbon = root["tiles_per_ribbon"].get<float>();
+        if (tilesPerRibbon <= 0.0f) {
+            UZ_LOG(VFX, Error,
+                   "TrailAsset: 'tiles_per_ribbon' must be > 0, got {}", tilesPerRibbon);
+            return nullptr;
+        }
+    }
+
     // -- Assemble the asset --
     auto asset = std::make_unique<TrailAsset>();
     asset->materialPath      = materialPath;
@@ -245,6 +276,8 @@ namespace {
     asset->ribbonStrands     = ribbonStrands;
     asset->strandSpacing     = strandSpacing;
     asset->sortOrder         = sortOrder;
+    asset->uvMode            = uvMode;
+    asset->tilesPerRibbon    = tilesPerRibbon;
     return asset;
 }
 

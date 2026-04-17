@@ -212,7 +212,7 @@ cbuffer VFXBillboardCB : register(b2) {
     // ── Billboard facing mode + custom direction (16 bytes) ──────────────
     /// @ref Latta 2004 "Inside Geometry Instancing" — camera-position billboard
     /// @ref Valve 2006 "Rendering in Left 4 Dead" — axis-aligned billboard
-    uint     facingMode;           ///< 0=FaceCamera, 1=VelocityAligned, 2=FaceCameraPlane, 3=CustomVector, 4=FaceCameraPosition.
+    uint     facingMode;           ///< 0=FaceCamera, 1=VelocityAligned, 2=FaceCameraPlane, 3=CustomVector, 4=FaceCameraPosition, 5=PlaneAxis (plane normal from customFacingXYZ), 6=WorldZAligned.
     float    customFacingX;        ///< Custom facing direction X (facingMode 3 only).
     float    customFacingY;        ///< Custom facing direction Y (facingMode 3 only).
     float    customFacingZ;        ///< Custom facing direction Z (facingMode 3 only). Default: world Z-up.
@@ -367,6 +367,83 @@ void BasisFaceCameraPosition(float3 particlePos, out float3 right, out float3 up
     float3 worldUp = (abs(toCamera.z) < 0.99f) ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f);
     right = normalize(cross(worldUp, toCamera));
     up    = cross(toCamera, right); // re-orthogonalize: guaranteed perpendicular and unit length
+}
+
+/// Builds billboard right/up axes for mode 5: PlaneAxis.
+///
+/// The billboard rotates within the plane whose normal is `planeNormal`
+/// (author-supplied via customFacingXYZ). The long axis (`up` output)
+/// stays as the most camera-facing direction within that plane; the short
+/// axis (`right`) is perpendicular to both plane normal and up.
+///
+/// Typical use: `planeNormal = (0,0,1)` to constrain billboards to the
+/// XY plane (ground-locked sprites), or `(0,1,0)` for a wall decal.
+///
+/// @ref ENiagaraBillboardType::PlaneAxis
+///
+/// # Parameters
+/// - particlePos:  world-space particle center (for parallax-correct up axis).
+/// - planeNormal:  unit-length plane normal (rotation axis).
+/// - right:        out — billboard right vector (perpendicular to planeNormal).
+/// - up:           out — billboard up vector (lies in the plane, faces camera).
+void BasisPlaneAxis(float3 particlePos, float3 planeNormal,
+                    out float3 right, out float3 up)
+{
+    // Vector from particle to camera; we project it onto the plane to pick
+    // the "most camera-facing" in-plane orientation. The plane projection is
+    // toCamera - (toCamera · n) n.
+    float3 toCamera = cameraPos.xyz - particlePos;
+    float  dotN     = dot(toCamera, planeNormal);
+    float3 inPlane  = toCamera - dotN * planeNormal;
+
+    float inPlaneLen = length(inPlane);
+    if (inPlaneLen < 0.001f) {
+        // Degenerate: camera is on the plane normal. Pick an arbitrary in-plane
+        // axis by taking the world-X cross; fall back to world-Y if collinear.
+        float3 alt = (abs(planeNormal.x) < 0.99f) ? float3(1.0f, 0.0f, 0.0f)
+                                                    : float3(0.0f, 1.0f, 0.0f);
+        right = normalize(cross(planeNormal, alt));
+    } else {
+        // Right axis = planeNormal × inPlane. Because inPlane is in the plane,
+        // this cross is also in the plane and perpendicular to inPlane.
+        right = normalize(cross(planeNormal, inPlane / inPlaneLen));
+    }
+    up = cross(right, planeNormal); // in-plane, perpendicular to right
+}
+
+/// Builds billboard right/up axes for mode 6: WorldZAligned.
+///
+/// Long axis is locked to world up (Z axis). The short axis lies in the
+/// horizontal plane, perpendicular to the camera-to-particle direction
+/// projected onto horizontal. Equivalent to `PlaneAxis(planeNormal=(0,0,1))`
+/// but cheaper — no dynamic planeNormal branch.
+///
+/// Common use: vertical rain streaks, vertical laser beams, upright flares.
+///
+/// @ref ENiagaraBillboardType::WorldUpAligned
+///
+/// # Parameters
+/// - particlePos:  world-space particle center (for horizontal facing).
+/// - right:        out — billboard right vector (horizontal, perpendicular to camera).
+/// - up:           out — billboard up vector (always world Z).
+void BasisWorldZAligned(float3 particlePos, out float3 right, out float3 up)
+{
+    const float3 worldUp = float3(0.0f, 0.0f, 1.0f);
+
+    // Horizontal direction from particle to camera (drop Z).
+    float2 toCam2D = cameraPos.xy - particlePos.xy;
+    float  len2D   = length(toCam2D);
+
+    if (len2D < 0.001f) {
+        // Camera directly overhead — pick world-X as a stable fallback.
+        right = float3(1.0f, 0.0f, 0.0f);
+    } else {
+        // Right axis: perpendicular to the in-plane toCamera, still in the
+        // horizontal plane. Rotating (x,y) by 90° gives (-y,x).
+        float2 horiz = toCam2D / len2D;
+        right = float3(-horiz.y, horiz.x, 0.0f);
+    }
+    up = worldUp;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -610,6 +687,21 @@ VSOutput main(uint vertexID : SV_VertexID) {
         case 4: // FaceCameraPosition — faces camera EYE position, not view direction
         {
             BasisFaceCameraPosition(particlePos, billboardRight, billboardUp);
+            break;
+        }
+        case 5: // PlaneAxis — rotate within the plane whose normal is customFacingXYZ
+        {
+            float3 planeNormal = float3(customFacingX, customFacingY, customFacingZ);
+            float  pnLen       = length(planeNormal);
+            // Default to world-Z when the plane normal is unset / zero.
+            planeNormal = (pnLen > 0.001f) ? (planeNormal / pnLen)
+                                            : float3(0.0f, 0.0f, 1.0f);
+            BasisPlaneAxis(particlePos, planeNormal, billboardRight, billboardUp);
+            break;
+        }
+        case 6: // WorldZAligned — long axis locked to world up
+        {
+            BasisWorldZAligned(particlePos, billboardRight, billboardUp);
             break;
         }
         default: // 0: FaceCamera — standard full-spherical camera-facing billboard

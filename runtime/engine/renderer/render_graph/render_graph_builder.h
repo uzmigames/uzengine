@@ -85,6 +85,26 @@ public:
     /// A valid `RgResourceId` referencing this texture.
     [[nodiscard]] RgResourceId CreateTexture(const char* name, const RgTextureDesc& desc);
 
+    /// Convenience wrapping `CreateTexture` for a transient 3D volume texture
+    /// (phase 10.6.0). The 3D volume is separated from 2D arrays in the pool
+    /// key so it cannot alias to a 2D array resource.
+    ///
+    /// # Arguments
+    /// * `name`   — Debug name.
+    /// * `width`, `height`, `depth` — Volume dimensions in voxels.
+    /// * `format` — Texel format (e.g. `RHIFormat::R32Float` for density).
+    /// * `usage`  — Texture usage flags. Defaults to
+    ///   `ShaderResource | UnorderedAccess` (splat + sample pattern used
+    ///   by the phase 9.10 volumetric renderer).
+    ///
+    /// # Returns
+    /// A valid `RgResourceId` referencing the 3D texture.
+    [[nodiscard]] RgResourceId CreateTransient3D(
+        const char* name, uint32_t width, uint32_t height, uint32_t depth,
+        RHIFormat format,
+        RHITextureUsage usage = RHITextureUsage::ShaderResource |
+                                RHITextureUsage::UnorderedAccess);
+
     /// Creates a virtual buffer resource in the graph.
     ///
     /// # Arguments

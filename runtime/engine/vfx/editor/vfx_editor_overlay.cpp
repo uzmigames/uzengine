@@ -202,7 +202,19 @@ void VfxEditorOverlay::BuildUI(ParticleEmitter* emitter, const InputSystem* inpu
         if (emitter != m_lastEmitter) {
             BuildModuleList(emitter);
             m_lastEmitter = emitter;
+            // Clear tag-editing state when switching emitters so the new
+            // emitter's "+ Add tag" input starts empty.
+            m_tagEditing = false;
+            m_tagEditBuffer.clear();
         }
+        // Tags row — sits at the top of the left panel, above the Module
+        // Stack. Returns the vertical space it consumed so subsequent
+        // panels can offset accordingly. The current implementation
+        // renders tags over the panel start; full layout integration is
+        // a follow-up (the existing stage tree uses absolute Y positions
+        // so they don't conflict today).
+        constexpr float kLeftPanelTopY = 30.0f + 26.0f; // kMenuBarH + kEmitterBarH
+        BuildTagsRow(emitter, 0.0f, kLeftPanelTopY, 280.0f);
         BuildStageTree(emitter);
     }
 
@@ -344,6 +356,106 @@ bool VfxEditorOverlay::NumberInput(float x, float y, float w, float* value,
                 if (!m_editBuffer.empty()) m_editBuffer.pop_back();
             } else if ((ch >= '0' && ch <= '9') || ch == '.' || ch == '-') {
                 m_editBuffer += ch;
+            }
+        }
+        m_wantsInput = true;
+    }
+
+    return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// StringInput — generic text-input widget (phase 10.1.0)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Filters a character through the selected InputFilter. Returns the
+/// accepted character (possibly case-folded) or '\0' if rejected.
+static char FilterChar(char ch, VfxEditorOverlay::InputFilter filter) {
+    switch (filter) {
+        case VfxEditorOverlay::InputFilter::Any:
+            return (ch >= 0x20) ? ch : '\0'; // printable only
+        case VfxEditorOverlay::InputFilter::LowercaseASCII:
+            if (ch >= 'a' && ch <= 'z') return ch;
+            if (ch >= 'A' && ch <= 'Z') return static_cast<char>(ch - 'A' + 'a');
+            if (ch >= '0' && ch <= '9') return ch;
+            if (ch == '-' || ch == '_') return ch;
+            return '\0';
+        case VfxEditorOverlay::InputFilter::Identifier:
+            if (ch >= 'a' && ch <= 'z') return ch;
+            if (ch >= 'A' && ch <= 'Z') return ch;
+            if (ch >= '0' && ch <= '9') return ch;
+            if (ch == '_') return ch;
+            return '\0';
+        case VfxEditorOverlay::InputFilter::Numeric:
+            if (ch >= '0' && ch <= '9') return ch;
+            if (ch == '.' || ch == '-') return ch;
+            return '\0';
+    }
+    return '\0';
+}
+
+bool VfxEditorOverlay::StringInput(float x, float y, float w,
+                                    std::string* buffer,
+                                    InputFilter filter,
+                                    const char* placeholder) {
+    const bool isFocused = (m_focusedStringInput == buffer);
+    const bool hovered   = HitTest(x, y, w, kSliderH);
+
+    // Background — highlight when focused or hovered.
+    const Vec4 bgColor = isFocused ? Vec4{0.20f, 0.25f, 0.35f, 1.0f}
+                        : hovered  ? kColorBtnHover
+                                   : kColorSliderBg;
+    m_textRenderer.AddRect(x, y, w, kSliderH, bgColor);
+
+    // Display text: focused → buffer + cursor, unfocused → buffer or placeholder.
+    if (isFocused) {
+        std::string disp = buffer->empty() ? std::string("_") : *buffer + "_";
+        m_textRenderer.AddText(m_font, disp.c_str(), x + 4.0f, y + 2.0f,
+                               Vec4{1.0f, 1.0f, 0.6f, 1.0f});
+    } else if (buffer->empty() && placeholder[0] != '\0') {
+        m_textRenderer.AddText(m_font, placeholder, x + 4.0f, y + 2.0f, kColorTextDim);
+    } else {
+        m_textRenderer.AddText(m_font, buffer->c_str(), x + 4.0f, y + 2.0f, kColorText);
+    }
+
+    // Click to gain focus.
+    if (hovered && m_mouseJustPressed && !isFocused) {
+        // Steal focus from any other input.
+        m_focusedStringInput = buffer;
+        m_stringInputBackup  = *buffer;
+        m_editingPtr = nullptr;
+        m_editBuffer.clear();
+        m_tagEditing = false;
+        m_tagEditBuffer.clear();
+        m_wantsInput = true;
+        return false;
+    }
+
+    // Click outside to commit.
+    if (isFocused && m_mouseJustPressed && !hovered) {
+        m_focusedStringInput = nullptr;
+        return true; // committed
+    }
+
+    // Process keystrokes while focused.
+    if (isFocused && m_inputRef) {
+        const auto& chars = m_inputRef->GetTypedChars();
+        for (char ch : chars) {
+            if (ch == '\r' || ch == '\n') {
+                m_focusedStringInput = nullptr;
+                return true; // committed via Enter
+            } else if (ch == 0x1B) {
+                // Escape — restore backup.
+                *buffer = m_stringInputBackup;
+                m_focusedStringInput = nullptr;
+                return false;
+            } else if (ch == '\b') {
+                if (!buffer->empty()) buffer->pop_back();
+            } else {
+                const char accepted = FilterChar(ch, filter);
+                if (accepted != '\0') {
+                    *buffer += accepted;
+                }
             }
         }
         m_wantsInput = true;
@@ -529,6 +641,19 @@ void VfxEditorOverlay::BuildEmitterBar() {
     // "Start" button — applies slider edits by restarting the emitter
     if (Button(btnX, btnY, btnW, btnH, "Start")) {
         if (onRestart) onRestart();
+    }
+    btnX += btnW + 6.0f;
+
+    // "Re-capture" button — enqueues a thumbnail recapture request
+    // for the currently active VFX asset (phase 9.7.0).
+    const float recapW = 100.0f;
+    if (Button(btnX, btnY, recapW, btnH, "Re-capture")) {
+        if (onRecaptureThumbnail && m_lastEmitter) {
+            // The overlay doesn't know the asset path directly — the
+            // callback owner (vfx_viewport_app) resolves it from the
+            // active system/emitter context.
+            onRecaptureThumbnail("");
+        }
     }
 }
 
@@ -775,6 +900,141 @@ void VfxEditorOverlay::BuildModuleList(ParticleEmitter* e) {
         addFloat(m.params, "Pixel Size", &e->screenSpacePixelSize, 1.0f, 64.0f);
         m_modules.push_back(std::move(m));
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BuildTagsRow — chip editor + text input (phase 9.1.0)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Layout (single row, wraps when chips exceed width):
+//   ┌─────────────────────────────────────┐
+//   │ Tags: [fire ×] [hero ×] [+ New tag] │
+//   └─────────────────────────────────────┘
+//
+// Returns the total vertical pixels the row consumed so the caller can
+// place the module stack beneath it.
+
+float VfxEditorOverlay::BuildTagsRow(ParticleEmitter* emitter,
+                                       float x, float y, float w) {
+    if (emitter == nullptr) return 0.0f;
+
+    constexpr float kRowPad       = 4.0f;
+    constexpr float kLabelW       = 38.0f;
+    constexpr float kChipH        = 18.0f;
+    constexpr float kChipPadX     = 6.0f;
+    constexpr float kChipGap      = 4.0f;
+    constexpr float kAddBtnW      = 90.0f;
+    constexpr float kCharW        = 7.0f; // approximate char advance for width calc
+
+    // "Tags:" label.
+    m_textRenderer.AddText(m_font, "Tags:", x + kRowPad, y + kRowPad, kColorText);
+
+    float cx = x + kLabelW;
+    const float cy = y + kRowPad;
+    const float rowRight = x + w - kRowPad;
+
+    // Existing chips. Click the × to remove. Layout wraps to a new line
+    // when the chip would exceed the row's right edge.
+    uint32_t removeIdx = UINT32_MAX;
+    float curY = cy;
+    for (uint32_t i = 0; i < emitter->tags.size(); ++i) {
+        const std::string& t = emitter->tags[i];
+        const float chipW = kChipPadX * 2.0f + (t.size() + 2u) * kCharW; // +2 for " ×"
+        if (cx + chipW > rowRight) {
+            cx = x + kLabelW;
+            curY += kChipH + kChipGap;
+        }
+        // Chip background.
+        m_textRenderer.AddRect(cx, curY, chipW, kChipH,
+                               Vec4{0.25f, 0.35f, 0.50f, 1.0f});
+        m_textRenderer.AddText(m_font, t.c_str(), cx + kChipPadX, curY + 2.0f, kColorText);
+
+        // × remove button — hit-test the last char width.
+        const float xBtnX = cx + chipW - kChipPadX - kCharW;
+        m_textRenderer.AddText(m_font, "x", xBtnX, curY + 2.0f,
+                               Vec4{1.0f, 0.7f, 0.7f, 1.0f});
+        if (HitTest(xBtnX - 2.0f, curY, kCharW + 4.0f, kChipH) &&
+            m_mouseJustPressed) {
+            removeIdx = i;
+        }
+        cx += chipW + kChipGap;
+    }
+
+    if (removeIdx != UINT32_MAX && removeIdx < emitter->tags.size()) {
+        emitter->tags.erase(emitter->tags.begin() + removeIdx);
+    }
+
+    // "+ Add tag" input. Wraps to a new line when it doesn't fit.
+    if (cx + kAddBtnW > rowRight) {
+        cx = x + kLabelW;
+        curY += kChipH + kChipGap;
+    }
+    const bool hovered = HitTest(cx, curY, kAddBtnW, kChipH);
+    m_textRenderer.AddRect(cx, curY, kAddBtnW, kChipH,
+                           m_tagEditing ? Vec4{0.20f, 0.25f, 0.35f, 1.0f}
+                                        : hovered ? kColorBtnHover
+                                                  : kColorBtnNormal);
+
+    if (m_tagEditing) {
+        std::string disp = m_tagEditBuffer.empty() ? std::string("_") : m_tagEditBuffer + "_";
+        m_textRenderer.AddText(m_font, disp.c_str(), cx + 4.0f, curY + 2.0f,
+                               Vec4{1.0f, 1.0f, 0.6f, 1.0f});
+    } else {
+        m_textRenderer.AddText(m_font, "+ Add tag", cx + 4.0f, curY + 2.0f, kColorTextDim);
+    }
+
+    // Click to start editing — clears the num-input state so keystrokes
+    // route here.
+    if (hovered && m_mouseJustPressed && !m_tagEditing) {
+        m_tagEditing = true;
+        m_tagEditBuffer.clear();
+        m_editingPtr = nullptr; // steal focus from numeric editor
+        m_editBuffer.clear();
+        m_wantsInput = true;
+    }
+
+    // Click outside to commit + close.
+    if (m_tagEditing && m_mouseJustPressed && !hovered) {
+        if (!m_tagEditBuffer.empty()) {
+            emitter->tags.push_back(m_tagEditBuffer);
+        }
+        m_tagEditing = false;
+        m_tagEditBuffer.clear();
+    }
+
+    // Process typed characters. Validation: lowercase letters, digits,
+    // hyphen, underscore. Enter commits, Escape cancels.
+    if (m_tagEditing && m_inputRef) {
+        const auto& chars = m_inputRef->GetTypedChars();
+        for (char ch : chars) {
+            if (ch == '\r' || ch == '\n') {
+                if (!m_tagEditBuffer.empty()) {
+                    emitter->tags.push_back(m_tagEditBuffer);
+                }
+                m_tagEditing = false;
+                m_tagEditBuffer.clear();
+                break;
+            } else if (ch == 0x1B) { // Escape
+                m_tagEditing = false;
+                m_tagEditBuffer.clear();
+                break;
+            } else if (ch == '\b') {
+                if (!m_tagEditBuffer.empty()) m_tagEditBuffer.pop_back();
+            } else if ((ch >= 'a' && ch <= 'z') ||
+                       (ch >= '0' && ch <= '9') ||
+                       ch == '-' || ch == '_') {
+                m_tagEditBuffer += ch;
+            } else if (ch >= 'A' && ch <= 'Z') {
+                // Force lowercase (matches the VfxAssetTagMatches contract).
+                m_tagEditBuffer += static_cast<char>(ch - 'A' + 'a');
+            }
+            // Other chars (whitespace, punctuation) silently dropped.
+        }
+        m_wantsInput = true;
+    }
+
+    const float consumed = (curY + kChipH + kRowPad) - y;
+    return consumed;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

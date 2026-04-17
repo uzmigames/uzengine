@@ -343,6 +343,20 @@ void VFXViewportApp::OnUpdate(float dt) {
     // ── Apply pending preset switch ─────────────────────────────────────
     if (m_switchPresetPending) {
         m_switchPresetPending = false;
+        // Clear any leftover particles from the previously-active source so
+        // switching presets doesn't leave phantom trails on screen.
+        // `emitting = false` only stops new spawns — alive particles keep
+        // simulating until they expire — so we need an explicit restart.
+        if (world.HasComponent<VfxSystemComponent>(m_vfxEntity)) {
+            auto& sysComp = world.GetComponent<VfxSystemComponent>(m_vfxEntity);
+            sysComp.restartRequested = true;
+        }
+        if (!m_emitterEntities.empty() && world.IsValid(m_emitterEntities[0])) {
+            if (world.HasComponent<VfxEmitterComponent>(m_emitterEntities[0])) {
+                world.GetComponent<VfxEmitterComponent>(m_emitterEntities[0]).restartRequested = true;
+            }
+        }
+
         if (!m_emitterEntities.empty()) {
             Entity ent = m_emitterEntities[0];
             if (world.IsValid(ent)) {

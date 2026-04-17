@@ -277,6 +277,19 @@ struct ParticleRenderPassDesc {
     /// Physical texture handle for the depth buffer (for BeginRenderPass).
     RHITextureHandle depthTexture;
 
+    /// Optional velocity (motion-vector) render target (MRT slot 1).
+    /// RG16Float, written by the billboard PS for TAA / DLSS / FSR reprojection.
+    /// Leave invalid to render particles without motion-vector output — the
+    /// PSO's RT[1] slot will still be declared, so the handle must match the
+    /// PSO's renderTargetCount. When invalid, AddParticleRenderPass skips the
+    /// MRT binding (for tests / isolated passes with legacy PSOs).
+    /// @ref UE5 NiagaraSpriteVertexFactory motion-vector output
+    rg::RgResourceId velocityTarget;
+
+    /// Physical handle for the velocity target (for BeginRenderPass).
+    /// Paired with velocityTarget; must be set when velocityTarget is valid.
+    RHITextureHandle velocityTexture;
+
     /// Pre-filled per-frame CB allocation (b1) — viewProj, camera pos, etc.
     /// Must be re-bound after SetPipeline resets root signature state.
     CBAllocation perFrameCB = {};

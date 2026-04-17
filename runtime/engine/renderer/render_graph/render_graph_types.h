@@ -71,6 +71,14 @@ struct RgTextureDesc {
     uint16_t mipLevels = 1;                                    ///< Number of mip levels.
     RHIFormat format = RHIFormat::RGBA8Unorm;                  ///< Texel format.
     RHITextureUsage usage = RHITextureUsage::ShaderResource;   ///< Combined usage flags.
+
+    /// When true, the texture is a volumetric 3D texture and
+    /// `depthOrArraySize` is interpreted as depth. When false, the
+    /// texture is a 2D texture (array when `depthOrArraySize > 1`).
+    /// Added in phase 10.6.0 to enable transient 3D textures for the
+    /// volumetric renderer pipeline (phase 9.10).
+    /// @ref RHITextureDesc::is3D
+    bool is3D = false;
 };
 
 /// Describes a virtual buffer to be created by the render graph.

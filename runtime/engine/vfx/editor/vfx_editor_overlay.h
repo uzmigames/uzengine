@@ -15,6 +15,7 @@
 
 #include "editor/font/bitmap_font.h"
 #include "editor/font/text_renderer.h"
+#include "engine/vfx/editor/vfx_preview_clock.h"
 #include "vector4.h"
 
 #include <cstdint>
@@ -129,11 +130,45 @@ public:
     std::function<void(int, ParticleEmitter*)> onLoadPreset;
     std::function<void(int)> onSelectEmitter;
 
+    /// Called when the user clicks "Re-capture thumbnail" in the inspector.
+    /// The string argument is the asset path whose thumbnail should be
+    /// regenerated. The app wires this to enqueue a
+    /// `VfxThumbnailCaptureRequest` (phase 9.7.0).
+    std::function<void(const std::string& assetPath)> onRecaptureThumbnail;
+
     /// Returns the currently-edited emitter pointer (set by last BuildUI call).
     [[nodiscard]] ParticleEmitter* GetCurrentEmitter() const { return m_lastEmitter; }
 
     /// Forces rebuild of the module list on next BuildUI (after preset switch).
     void ForceRebuildModules() { m_lastEmitter = nullptr; }
+
+    // ── Preview clock (phase 8.4.0) ──────────────────────────────────────
+    // Scrub / pause / frame-step for timing-critical VFX authoring. Drives
+    // the simulation delta time that the caller forwards to VFXSystem::Tick.
+    //
+    // Usage:
+    // ```cpp
+    // const float wallDt = frameTimer.GetDeltaSeconds();
+    // const float simDt  = overlay.SimulationDeltaTime(wallDt);
+    // vfxSystem.Tick(simDt);
+    // ```
+    //
+    // @ref engine/vfx/editor/vfx_preview_clock.h
+    // @ref docs/engine/25-vfx/21-preview-timeline.md
+
+    /// Returns the simulation dt the caller should feed into `VFXSystem::Tick`,
+    /// based on the current preview-clock state and the provided wall-clock
+    /// delta. Equivalent to `wallDt` when the overlay is Playing at 1× rate.
+    [[nodiscard]] float SimulationDeltaTime(float wallDt) noexcept {
+        return previewClock_.Tick(wallDt);
+    }
+
+    /// Returns the preview clock for direct state manipulation by the
+    /// editor shell (binding keyboard shortcuts / rendering a timeline).
+    [[nodiscard]] VfxPreviewClock& PreviewClock() noexcept { return previewClock_; }
+    [[nodiscard]] const VfxPreviewClock& PreviewClock() const noexcept {
+        return previewClock_;
+    }
 
     // ── Stage Tree Data Model ────���───────────────────────────────────────
 
@@ -210,6 +245,22 @@ private:
     std::string m_editBuffer;
     const InputSystem* m_inputRef = nullptr;
 
+    // ── Tag input state (phase 9.1.0) ───────────────────────────────────
+    /// True while the "+ Add tag" input field is receiving keystrokes for
+    /// the currently-active emitter. Mutually exclusive with number-input
+    /// editing (both paths clear the other when activating).
+    bool        m_tagEditing = false;
+    std::string m_tagEditBuffer;
+
+    // ── Unified string-input focus (phase 10.1.0) ───────────────────────
+    /// Pointer to the currently focused StringInput buffer. Only one
+    /// string input can have focus at a time. Null when no StringInput
+    /// is active. `m_editingPtr` (number) and `m_tagEditing` (tag) are
+    /// legacy focus trackers that still work; `m_focusedStringInput`
+    /// provides a unified mechanism for future consumers.
+    std::string* m_focusedStringInput = nullptr;
+    std::string  m_stringInputBackup; ///< Snapshot for Escape restore.
+
     // ── Dropdown state ─────────���─────────────────────────────────────────
     uint32_t* m_dropdownPtr = nullptr;
     float     m_dropdownX = 0.0f;
@@ -259,7 +310,19 @@ private:
     static constexpr float kScrollSpeed   = 30.0f;
     static constexpr float kPanelPadX     = 6.0f;
 
-    // ── Widget helpers ────────��──────────────────────────────────────────
+public:
+    // ── Input filter (phase 10.1.0) ────────────────────────────────────
+
+    /// Character filter for `StringInput`. Controls which keystrokes are
+    /// accepted into the edit buffer.
+    enum class InputFilter : uint8_t {
+        Any,            ///< All printable characters.
+        LowercaseASCII, ///< a-z 0-9 - _ (uppercase auto-lowered).
+        Identifier,     ///< a-z A-Z 0-9 _ (C-style identifier chars).
+        Numeric,        ///< 0-9 . - (decimal number input).
+    };
+
+    // ── Widget helpers ───────────────────────────────────────────────────
     [[nodiscard]] bool HitTest(float x, float y, float w, float h) const;
     bool Button(float x, float y, float w, float h, const char* label);
     bool Slider(float x, float y, float w, float* value, float minVal, float maxVal, const char* label);
@@ -267,6 +330,28 @@ public:
     /// Injects a scroll delta captured before InputSystem::BeginFrame() clears it.
     /// Called by frame_setup.cpp so the panel scroll works correctly.
     void InjectScrollDelta(float delta) { m_scrollDelta = delta; }
+
+    /// Generic string-input widget (phase 10.1.0).
+    ///
+    /// Renders a clickable text field at `(x, y, w, kSliderH)`. When
+    /// clicked, captures keyboard focus (only one StringInput can be
+    /// active at a time). Typed characters are filtered through `filter`
+    /// and appended to `*buffer`. Enter commits (returns true), Escape
+    /// cancels (returns false and restores the original buffer).
+    ///
+    /// # Arguments
+    /// * `x, y, w` — screen-pixel position and width.
+    /// * `buffer`   — mutable string to edit. Must outlive the frame.
+    /// * `filter`   — character filter (default Any).
+    /// * `placeholder` — greyed-out text shown when buffer is empty and
+    ///   the field is not focused (e.g. "Type here...").
+    ///
+    /// # Returns
+    /// `true` when the user pressed Enter (committed). `false` otherwise.
+    bool StringInput(float x, float y, float w, std::string* buffer,
+                     InputFilter filter = InputFilter::Any,
+                     const char* placeholder = "");
+
 private:
     bool NumberInput(float x, float y, float w, float* value, float minVal, float maxVal, const char* label);
     void DropdownTrigger(float x, float y, float w, uint32_t* value,
@@ -278,8 +363,18 @@ private:
     void BuildEmitterBar();
     void BuildModuleList(ParticleEmitter* emitter);
     void BuildStageTree(ParticleEmitter* emitter);
+    /// Renders the "Tags" row inside the left panel (phase 9.1.0):
+    /// chip rendering with × remove buttons + "+ Add" text-input. Calls
+    /// `VfxAssetTagMatches`-compatible lowercase validation. Returns the
+    /// vertical height consumed so the caller can offset the module
+    /// stack below it.
+    float BuildTagsRow(ParticleEmitter* emitter, float x, float y, float w);
     void BuildDropdownOverlay();
     void CloseDropdown();
+
+    /// Preview clock driving scrub / pause / frame-step (phase 8.4.0).
+    /// Consumed via `SimulationDeltaTime(wallDt)` — see public API.
+    VfxPreviewClock previewClock_{};
 };
 
 } // namespace uz

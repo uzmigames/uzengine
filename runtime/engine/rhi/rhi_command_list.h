@@ -429,6 +429,16 @@ public:
     /// (e.g., by DispatchRays or inline ray query).
     virtual void UAVBarrierAS() {}
 
+    // ── Stencil ──────────────────────────────────────────────────────────
+
+    /// Sets the dynamic stencil reference value for subsequent draw calls.
+    /// Only meaningful when the PSO's `RHIDepthStencilDesc::stencilEnable`
+    /// is true and a face's `stencilFunc` references the ref value.
+    ///
+    /// Maps to `OMSetStencilRef` (DX12), `vkCmdSetStencilReference` (Vulkan),
+    /// `setStencilReferenceValue` (Metal).
+    virtual void SetStencilRef(uint32_t ref) { (void)ref; }
+
     // ── Render pass scope ────────────────────────────────────────────────
 
     /// Begins a render pass with the given color and depth attachments.

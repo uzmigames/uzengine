@@ -8,6 +8,8 @@
 
 #include <algorithm>
 #include <fstream>
+#include <unordered_map>
+#include <unordered_set>
 
 UZ_DECLARE_LOG_CATEGORY(VFX);
 
@@ -183,6 +185,25 @@ bool VfxNodeGraphAsset::LoadFromString(const std::string& jsonStr,
         }
     }
 
+    // Asset tag metadata (phase 8.2.0). Non-string entries are skipped with a
+    // warning so malformed entries do not nullify the whole load.
+    // @ref docs/engine/25-vfx/19-asset-tagging.md
+    if (root.contains("tags")) {
+        if (!root["tags"].is_array()) {
+            UZ_LOG(VFX, Warning,
+                   "VfxNodeGraphAsset[tags]: 'tags' must be an array, skipping");
+        } else {
+            for (const auto& entry : root["tags"]) {
+                if (entry.is_string()) {
+                    outGraph.tags.push_back(entry.get<std::string>());
+                } else {
+                    UZ_LOG(VFX, Warning,
+                           "VfxNodeGraphAsset[tags]: non-string tag skipped");
+                }
+            }
+        }
+    }
+
     return true;
 }
 
@@ -228,6 +249,12 @@ std::string VfxNodeGraphAsset::SaveToString(const VfxNodeGraph& graph) {
     }
     root["wires"] = std::move(wiresJson);
 
+    // Tag metadata (phase 8.2.0): emit only when non-empty to keep legacy
+    // graph files diff-minimal.
+    if (!graph.tags.empty()) {
+        root["tags"] = graph.tags;
+    }
+
     return root.dump(2);
 }
 
@@ -240,6 +267,195 @@ bool VfxNodeGraphAsset::SaveToFile(const VfxNodeGraph& graph,
     }
     ofs << SaveToString(graph);
     return static_cast<bool>(ofs);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VfxNodeGraphClipboard — phase 8.6.0
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+
+using json = nlohmann::json;
+
+/// Splits a `"node:pin"` endpoint string; returns true when well-formed.
+bool SplitEndpoint(const std::string& endpoint,
+                   std::string& nodeOut, std::string& pinOut) {
+    const auto colon = endpoint.find(':');
+    if (colon == std::string::npos || colon == 0 ||
+        colon + 1 == endpoint.size()) {
+        return false;
+    }
+    nodeOut = endpoint.substr(0, colon);
+    pinOut  = endpoint.substr(colon + 1);
+    return true;
+}
+
+/// Builds a unique id by appending `_copy`, `_copy2`, … until no collision
+/// remains in `target` and the running `added` set.
+std::string MakeUniqueId(const VfxNodeGraph& target,
+                         const std::unordered_set<std::string>& added,
+                         const std::string& wanted) {
+    auto collides = [&](const std::string& cand) {
+        if (target.FindNode(cand) != nullptr) return true;
+        return added.count(cand) > 0;
+    };
+    if (!collides(wanted)) return wanted;
+    for (uint32_t n = 1; n < 10000; ++n) {
+        std::string cand = wanted + "_copy";
+        if (n > 1) cand += std::to_string(n);
+        if (!collides(cand)) return cand;
+    }
+    // Fall back to a numeric tag — should never happen in practice.
+    return wanted + "_copy_overflow";
+}
+
+} // namespace
+
+std::string VfxNodeGraphClipboard::Copy(
+    const VfxNodeGraph& source, const std::vector<std::string>& selectedIds) {
+    std::unordered_set<std::string> selectionSet(selectedIds.begin(),
+                                                    selectedIds.end());
+
+    json root;
+    root["format"]  = "uzvfxclip";
+    root["version"] = 1;
+
+    json nodesJson = json::array();
+    for (const auto& n : source.nodes) {
+        if (selectionSet.count(n.id) == 0) continue;
+        json nj;
+        nj["id"]       = n.id;
+        nj["module"]   = n.module;
+        nj["position"] = { {"x", n.position.x}, {"y", n.position.y} };
+        nodesJson.push_back(std::move(nj));
+    }
+    root["nodes"] = std::move(nodesJson);
+
+    json wiresJson = json::array();
+    for (const auto& w : source.wires) {
+        std::string fromNode, fromPin, toNode, toPin;
+        if (!SplitEndpoint(w.fromEndpoint, fromNode, fromPin)) continue;
+        if (!SplitEndpoint(w.toEndpoint,   toNode,   toPin))   continue;
+        // Drop wires whose endpoints escape the selection — the destination
+        // graph has no way to satisfy a dangling endpoint.
+        if (selectionSet.count(fromNode) == 0) continue;
+        if (selectionSet.count(toNode)   == 0) continue;
+
+        json wj;
+        wj["from"] = w.fromEndpoint;
+        wj["to"]   = w.toEndpoint;
+        wj["type"] = VfxPinTypeToString(w.type);
+        wiresJson.push_back(std::move(wj));
+    }
+    root["wires"] = std::move(wiresJson);
+
+    return root.dump(2);
+}
+
+std::vector<std::string> VfxNodeGraphClipboard::Paste(
+    VfxNodeGraph& target, const std::string& clipboardJson) {
+    std::vector<std::string> added;
+
+    json root;
+    try {
+        root = json::parse(clipboardJson);
+    } catch (const json::parse_error& e) {
+        UZ_LOG(VFX, Error,
+               "VfxNodeGraphClipboard::Paste: JSON parse error: {}", e.what());
+        return added;
+    }
+
+    if (!root.is_object() || !root.contains("format") ||
+        !root["format"].is_string() ||
+        root["format"].get<std::string>() != "uzvfxclip") {
+        UZ_LOG(VFX, Error,
+               "VfxNodeGraphClipboard::Paste: invalid format marker");
+        return added;
+    }
+
+    // First pass: compute id remap (source id → new id) so wire endpoints
+    // can be rewritten before we touch the target graph.
+    std::unordered_map<std::string, std::string> remap;
+    std::unordered_set<std::string> addedSet;
+    if (root.contains("nodes") && root["nodes"].is_array()) {
+        for (const auto& n : root["nodes"]) {
+            if (!n.is_object()) continue;
+            const std::string srcId = n.value("id", std::string{});
+            if (srcId.empty()) continue;
+            const std::string newId = MakeUniqueId(target, addedSet, srcId);
+            remap[srcId] = newId;
+            addedSet.insert(newId);
+        }
+    }
+
+    // Second pass: insert nodes with remapped ids.
+    if (root.contains("nodes") && root["nodes"].is_array()) {
+        for (const auto& n : root["nodes"]) {
+            if (!n.is_object()) continue;
+            VfxGraphNode node;
+            const std::string srcId = n.value("id", std::string{});
+            if (srcId.empty()) {
+                UZ_LOG(VFX, Warning,
+                       "VfxNodeGraphClipboard::Paste: node missing id, skipping");
+                continue;
+            }
+            auto remapIt = remap.find(srcId);
+            if (remapIt == remap.end()) continue; // unreachable
+            node.id     = remapIt->second;
+            node.module = n.value("module", std::string{});
+            if (n.contains("position") && n["position"].is_object()) {
+                node.position.x = n["position"].value("x", 0.0f);
+                node.position.y = n["position"].value("y", 0.0f);
+            }
+            if (node.module.empty()) {
+                UZ_LOG(VFX, Warning,
+                       "VfxNodeGraphClipboard::Paste: node '{}' missing module, skipping",
+                       node.id);
+                continue;
+            }
+            if (target.AddNode(node)) {
+                added.push_back(node.id);
+            }
+        }
+    }
+
+    // Third pass: insert wires with endpoints rewritten to the new ids.
+    auto rewriteEndpoint = [&](const std::string& ep) -> std::string {
+        std::string nodeId, pin;
+        if (!SplitEndpoint(ep, nodeId, pin)) return ep;
+        auto it = remap.find(nodeId);
+        if (it == remap.end()) return ep;
+        return it->second + ":" + pin;
+    };
+
+    if (root.contains("wires") && root["wires"].is_array()) {
+        for (const auto& w : root["wires"]) {
+            if (!w.is_object()) continue;
+            VfxGraphWire wire;
+            wire.fromEndpoint = rewriteEndpoint(w.value("from", std::string{}));
+            wire.toEndpoint   = rewriteEndpoint(w.value("to",   std::string{}));
+            const std::string typeStr = w.value("type", std::string("float"));
+            if (!VfxPinTypeFromString(typeStr, wire.type)) {
+                wire.type = VfxPinType::Float;
+            }
+            if (!target.AddWire(wire)) {
+                UZ_LOG(VFX, Warning,
+                       "VfxNodeGraphClipboard::Paste: wire missing endpoint(s), skipping");
+            }
+        }
+    }
+
+    return added;
+}
+
+std::vector<std::string> VfxNodeGraphClipboard::PasteMany(
+    VfxNodeGraph& target, const std::string& clipboardJson, uint32_t count) {
+    std::vector<std::string> added;
+    for (uint32_t i = 0; i < count; ++i) {
+        auto batch = Paste(target, clipboardJson);
+        added.insert(added.end(), batch.begin(), batch.end());
+    }
+    return added;
 }
 
 } // namespace uz

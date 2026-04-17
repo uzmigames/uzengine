@@ -51,6 +51,59 @@ struct VfxDebugHudEmitterSample {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Per-module sample (phase 8.5.0) — timestamp-query bracket per module.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// VFX simulation / render stage a module participates in.
+///
+/// Matches `EmitterModuleStack`: spawn modules run once per new particle,
+/// update modules run every frame on alive particles, and a single render
+/// module handles the draw. Reporting the stage lets the HUD group rows by
+/// phase even when module names repeat across stages.
+enum class VfxDebugHudStage : uint8_t {
+    Spawn  = 0,
+    Update = 1,
+    Render = 2,
+};
+
+/// Measurement for one module dispatch inside an emitter for one frame.
+///
+/// The GPU `--gpu-profile` timestamp-query harness wraps each module dispatch
+/// with a labelled region; on resolve, that region's duration is pushed here
+/// via `VfxDebugHudCollector::ReportModule`. Multiple samples for the same
+/// `(emitterName, moduleName, stage)` tuple inside a single frame sum during
+/// aggregation — useful for modules that dispatch more than once per tick.
+struct VfxDebugHudModuleSample {
+    std::string       emitterName;          ///< Matches the enclosing emitter sample.
+    std::string       moduleName;           ///< `IVFXModule::GetName()` value.
+    VfxDebugHudStage  stage = VfxDebugHudStage::Update;
+    float             gpuMs = 0.0f;         ///< GPU time for the dispatch.
+};
+
+/// One row inside a module breakdown, resolved during `Aggregate`.
+///
+/// `percentOfEmitterTotal` is the share of this module's cost against the
+/// emitter's `totalMs` — `0.0f` when the emitter has no recorded GPU time
+/// (purely culled emitters). The aggregator sorts breakdown entries by
+/// `gpuMs` descending so the slow module floats to the top.
+struct VfxDebugHudModuleEntry {
+    std::string       moduleName;
+    VfxDebugHudStage  stage = VfxDebugHudStage::Update;
+    float             gpuMs = 0.0f;
+    float             percentOfEmitterTotal = 0.0f;
+};
+
+/// Ordered module breakdown attached to a HUD row.
+///
+/// Rendered when the row expands (widget integration in `phase7_7.17.1`).
+/// `totalMs` is the sum of every entry's `gpuMs` — matches the outer row's
+/// `simulationMs + renderMs` within timestamp-query noise margins.
+struct VfxDebugHudModuleBreakdown {
+    std::vector<VfxDebugHudModuleEntry> entries; ///< Sorted by gpuMs descending.
+    float totalMs = 0.0f;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Aggregated HUD view — what the overlay reads.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -67,6 +120,11 @@ struct VfxDebugHudRow {
     uint32_t    lodLevel       = 0u;
     bool        culled         = false;
     bool        isTopN         = false;  ///< Among the top-N most expensive.
+
+    /// Per-module breakdown populated when `ReportModule` samples matched
+    /// this emitter. Empty when no module samples were reported.
+    /// @ref UE5 FNiagaraPerfReportModule
+    VfxDebugHudModuleBreakdown moduleBreakdown{};
 };
 
 /// Frame-wide totals + sorted per-row view.
@@ -110,6 +168,24 @@ public:
                        uint32_t lodLevel,
                        bool culled);
 
+    /// Reports one module's GPU time inside an emitter for this frame
+    /// (phase 8.5.0). Matching samples (same emitter + module + stage)
+    /// accumulate during aggregation so modules that dispatch multiple
+    /// times per frame still appear as a single breakdown entry.
+    ///
+    /// Call sites: the GPU timestamp-query harness at each module dispatch
+    /// boundary (spawn CS, update CS, render draw). Safe to call before or
+    /// after the matching `ReportEmitter` — the aggregator joins by name.
+    ///
+    /// @ref UE5 FNiagaraPerfReportModule
+    void ReportModule(const VfxDebugHudModuleSample& sample);
+
+    /// Convenience overload mirroring `ReportEmitter`'s field-list form.
+    void ReportModule(std::string emitterName,
+                      std::string moduleName,
+                      VfxDebugHudStage stage,
+                      float gpuMs);
+
     /// Collapses the per-frame samples into a sorted view and clears the
     /// internal buffer. Returns a view with rows sorted by total GPU ms
     /// descending; the first `topNCount` rows get `isTopN == true`.
@@ -122,11 +198,28 @@ public:
         return static_cast<uint32_t>(m_samples.size());
     }
 
+    /// Number of module samples buffered for this frame.
+    [[nodiscard]] uint32_t PendingModuleSampleCount() const noexcept {
+        return static_cast<uint32_t>(m_moduleSamples.size());
+    }
+
     /// Explicitly drops the per-frame buffer (e.g. when switching scenes).
-    void Clear() noexcept { m_samples.clear(); }
+    void Clear() noexcept {
+        m_samples.clear();
+        m_moduleSamples.clear();
+    }
 
 private:
     std::vector<VfxDebugHudEmitterSample> m_samples;
+    std::vector<VfxDebugHudModuleSample>  m_moduleSamples;
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stage-name helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Returns a static-storage string for `stage` — used by the HUD widget
+/// and by docs / logs. Never returns null.
+[[nodiscard]] const char* VfxDebugHudStageName(VfxDebugHudStage stage) noexcept;
 
 } // namespace uz

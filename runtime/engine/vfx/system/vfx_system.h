@@ -127,6 +127,15 @@ struct VfxSystem {
     /// scope of the runtime `VfxAttributeStore` during `VfxSystemInstance::Init`.
     std::vector<ParameterDefault> parameters;
 
+    /// Tag metadata for the asset browser + snippet library (8.8.0) to filter
+    /// and search. Tags are free-form lower-case identifiers (e.g. "fire",
+    /// "ambient", "magic", "player") — no namespace rules enforced at load.
+    /// Authors edit them via the inspector; the tag query grammar is
+    /// documented in `docs/engine/25-vfx/19-asset-tagging.md`.
+    ///
+    /// @ref UE5 NiagaraScriptBase::Tags + FAssetData metadata.
+    std::vector<std::string> tags;
+
     /// Loads a `.uzvfxsys` JSON file and validates its schema.
     ///
     /// # Arguments

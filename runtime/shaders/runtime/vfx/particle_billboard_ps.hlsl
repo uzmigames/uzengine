@@ -34,6 +34,7 @@
 
 #include "../include/depth_common.hlsli"
 #include "vfx_flipbook.hlsli"
+#include "vfx_motion_vectors.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -168,7 +169,7 @@ cbuffer VFXBillboardCB : register(b2) {
     float4   colorLifeStart;       ///< RGBA color at birth.
     float4   colorLifeEnd;         ///< RGBA color at death.
     // ── Billboard facing mode + custom direction (16 bytes, declared for layout) ──
-    uint     facingMode;           ///< 0=FaceCamera, 1=VelocityAligned, 2=FaceCameraPlane, 3=CustomVector, 4=FaceCameraPosition (not read by PS).
+    uint     facingMode;           ///< 0=FaceCamera, 1=VelocityAligned, 2=FaceCameraPlane, 3=CustomVector, 4=FaceCameraPosition, 5=PlaneAxis, 6=WorldZAligned (not read by PS).
     float    customFacingX;        ///< Custom facing direction X (not read by PS).
     float    customFacingY;        ///< Custom facing direction Y (not read by PS).
     float    customFacingZ;        ///< Custom facing direction Z (not read by PS).
@@ -283,6 +284,27 @@ float4 ApplyChannelMask(float4 sample, uint mask) {
 // Pixel Shader Entry Point
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Multi-target output for particle billboard pixel shader.
+///
+/// SV_Target0: HDR scene color (RGBA16F, alpha-blended per blendModeHint).
+/// SV_Target1: Per-pixel screen-space motion vector (RG16F, UV space).
+///
+/// The motion vector is the difference between the current frame's screen-space
+/// UV and the previous frame's screen-space UV for this fragment. Consumers
+/// (TAA / DLSS / FSR) reproject the previous frame's color using this vector.
+///
+/// The velocity RT is bound with blend disabled so the last-drawn particle
+/// dominates the motion vector at each pixel. This matches the alpha-sort order
+/// (back-to-front) — the foreground particle's motion is the one that matters
+/// for reprojection of the visible pixel.
+///
+/// @ref Karis 2014 "High Quality Temporal Supersampling" — per-object motion vectors
+/// @ref UE5 NiagaraSpriteVertexFactory motion-vector output
+struct PSOutput {
+    float4 color          : SV_Target0;   ///< HDR scene color.
+    float2 motionVector   : SV_Target1;   ///< Screen-space UV delta (RG16F).
+};
+
 /// Generates a procedural soft circle, applies vertex color, color over
 /// lifetime, and computes soft-particle depth fade.
 ///
@@ -290,8 +312,9 @@ float4 ApplyChannelMask(float4 sample, uint mask) {
 /// - input: interpolated vertex data from the billboard VS.
 ///
 /// # Returns
-/// Final RGBA color for alpha-blended compositing.
-float4 main(PSInput input) : SV_Target {
+/// Final RGBA color for alpha-blended compositing and per-pixel motion vector.
+PSOutput main(PSInput input) {
+    PSOutput output;
     float4 spriteColor;
 
     if (flipbookTotalFrames > 1u) {
@@ -440,17 +463,28 @@ float4 main(PSInput input) : SV_Target {
         discard;
     }
 
+    // ── Motion vector output (SV_Target1) ──
+    // Computed from current SV_Position clip-space and the VS-provided
+    // prevPositionCS (which uses prevViewProj * prevWorldPos). TAA / DLSS /
+    // FSR use this to reproject the previous frame so fast-moving particles
+    // do not leave stale history trails.
+    //
+    // @ref Karis 2014 "High Quality Temporal Supersampling"
+    // @ref vfx_motion_vectors.hlsli — ComputeMotionVector NDC-to-UV helper
+    output.motionVector = ComputeMotionVector(input.positionCS, input.prevPositionCS);
+
     // ── Blend mode output (Niagara exact match) ──
     // Each blend mode requires a different alpha treatment to produce correct
     // results with its corresponding PSO blend state.
     if (blendModeHint == 2) {
         // AlphaComposite (One / InvSrcAlpha): premultiplied alpha output.
         // RGB is pre-multiplied by opacity so the One src factor is correct.
-        return float4(emissive * opacity, opacity);
+        output.color = float4(emissive * opacity, opacity);
     } else {
         // Additive (One / One) and Translucent (SrcAlpha / InvSrcAlpha):
         // Output straight alpha. Additive ignores alpha in blend (One/One on color),
         // Translucent uses SrcAlpha to modulate RGB in the blend hardware.
-        return float4(emissive, opacity);
+        output.color = float4(emissive, opacity);
     }
+    return output;
 }

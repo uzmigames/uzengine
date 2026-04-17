@@ -31,6 +31,7 @@
 
 #include "engine/vfx/events/vfx_event.h"
 #include "engine/vfx/modules/vfx_module.h"
+#include "engine/vfx/asset/vfx_emitter_inheritance.h"
 
 #include <cstdint>
 #include <memory>
@@ -119,6 +120,26 @@ public:
         const std::string& path, const ModuleRegistry& registry,
         IVFS* vfs = nullptr);
 
+    /// Loads a graph resolving an inheritance chain at JSON level.
+    ///
+    /// When the asset (or any of its ancestors) carries a `"parent"` field,
+    /// `VfxResolveInheritance` merges the chain before module instantiation.
+    /// Cycles and chains deeper than `VFX_MAX_INHERITANCE_DEPTH` fail with
+    /// `nullptr` and a `VFX/Error` log.
+    ///
+    /// @ref UE5 NiagaraEmitterHandleInheritance.h
+    /// @ref docs/engine/25-vfx/20-emitter-inheritance.md
+    [[nodiscard]] static std::unique_ptr<VFXGraph> LoadWithInheritance(
+        const std::string& path, const ModuleRegistry& registry,
+        const VfxInheritanceLoader& loader, IVFS* vfs = nullptr);
+
+    /// String-input variant of `LoadWithInheritance` (used by tests and the
+    /// editor preview pipeline). `loader` resolves each parent path referenced
+    /// by the chain.
+    [[nodiscard]] static std::unique_ptr<VFXGraph> LoadFromStringWithInheritance(
+        const std::string& jsonStr, const ModuleRegistry& registry,
+        const VfxInheritanceLoader& loader);
+
     /// Loads a VFXGraph from a JSON string (primarily for testing).
     ///
     /// # Parameters
@@ -167,9 +188,18 @@ public:
         return sourcePath_;
     }
 
+    /// Returns the authored parent path from the original JSON `"parent"` key.
+    /// Empty when the graph is a root (has no parent). Populated for every
+    /// load path — inheritance-resolved or not — so the hot-reload watcher
+    /// can reload descendants when a parent file changes.
+    [[nodiscard]] const std::string& GetParentPath() const noexcept {
+        return parentPath_;
+    }
+
 private:
     std::string name_;                               ///< Graph name.
     std::string sourcePath_;                          ///< Source .uzvfx file path.
+    std::string parentPath_;                          ///< Authored parent path (empty for roots).
     uint32_t version_ = 0;                           ///< Format version.
     VFXEmitterConfig emitterConfig_;                  ///< Emitter pool config.
     std::vector<std::unique_ptr<IVFXModule>> modules_;///< Ordered module list.

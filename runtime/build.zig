@@ -67,6 +67,7 @@ pub fn build(b: *std.Build) void {
         "engine/renderer/fog",
         "engine/renderer/scene",
         "engine/renderer/frame",
+        "engine/renderer/headless",
         "engine/renderer/passes",
         "engine/renderer/passes/geometry",
         "engine/renderer/passes/lighting",
@@ -117,6 +118,8 @@ pub fn build(b: *std.Build) void {
         "engine/vfx/editor",
         "engine/vfx/material",
         "engine/vfx/mesh",
+        "engine/vfx/lighting",
+        "engine/physics",
         "engine/animation",
         "engine/event",
         "engine/property",
@@ -277,6 +280,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/renderer/raytracing", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/scene", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/frame", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer/headless", cpp_flags);
     addCppDir(runtime_mod, b, "engine/job", cpp_flags);
     addCppDir(runtime_mod, b, "engine/ecs/core", cpp_flags);
     addCppDir(runtime_mod, b, "engine/ecs/scene", cpp_flags);
@@ -311,6 +315,8 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/vfx/editor",  cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/material", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/mesh",     cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/lighting", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/physics",      cpp_flags);
     addCppDir(runtime_mod, b, "engine/animation", cpp_flags);
     addCppDir(runtime_mod, b, "engine/property", cpp_flags);
     addCppDir(runtime_mod, b, "engine/debug",    cpp_flags);
@@ -1306,7 +1312,7 @@ pub fn build(b: *std.Build) void {
         const win_sys_libs = [_][]const u8{ "d3d12", "d3d11", "dxgi", "dxguid", "gdi32", "user32", "ws2_32", "dbghelp", "winmm", "xinput1_4", "ole32", "shcore", "shell32", "comdlg32" };
 
         // Helper to create a tool exe from a single .cpp
-        const tool_names = [_][]const u8{ "uzengine", "uzcook", "uzpack", "uzmesh" };
+        const tool_names = [_][]const u8{ "uzengine", "uzcook", "uzpack", "uzmesh", "uzvfxinspect", "uzvalidate" };
         for (tool_names) |tool_name| {
             const tool_mod = b.createModule(.{ .target = target, .optimize = optimize });
             tool_mod.link_libc = true;

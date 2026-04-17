@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include "engine/vfx/trails/trail_mesh_builder.h"
 #include "vector4.h"
 
 #include <memory>
@@ -108,6 +109,18 @@ struct TrailAsset {
     /// World-space spacing between adjacent ribbon strands (metres).
     /// Only meaningful when `ribbonStrands > 1`.
     float strandSpacing = 0.1f;
+
+    /// V-coordinate authoring mode (phase 8.12.0).
+    /// JSON key: `"uv_mode"` — one of `"stretch"`, `"tiled"`, `"per_ribbon"`.
+    /// Defaults to `Stretch` to keep pre-8.12 trails byte-for-byte unchanged.
+    /// @ref UE5 ENiagaraRibbonUVMode
+    /// @ref docs/engine/25-vfx/29-trail-uv-modes.md
+    VfxTrailUVMode uvMode = VfxTrailUVMode::Stretch;
+
+    /// Texture repeat count along the ribbon length when `uvMode == Tiled`.
+    /// JSON key: `"tiles_per_ribbon"`. Ignored in other modes. Requires the
+    /// trail sampler to use `Wrap` addressing so V values > 1 wrap correctly.
+    float tilesPerRibbon = 1.0f;
 
     /// Rendering sort order relative to other transparent VFX.
     /// Higher values render on top of lower values.

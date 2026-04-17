@@ -18,13 +18,102 @@
 /// responsible for ownership.
 
 #include "engine/vfx/trails/trail_point.h"
+#include "engine/vfx/curves/vfx_tangent_curve.h"
 #include "vector3.h"
 #include "vector4.h"
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace uz {
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VfxTrailUVMode — how the ribbon's V coordinate is generated (phase 8.12.0)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Controls how the ribbon's V coordinate is generated along its length.
+///
+/// | Mode      | V formula                                  | Use case                         |
+/// |-----------|--------------------------------------------|----------------------------------|
+/// | Stretch   | `V = t`                                    | One texture copy spans the ribbon.|
+/// | Tiled     | `V = t * tilesPerRibbon`                   | Texture repeats along the length. |
+/// | PerRibbon | `V = (strandIndex + t) / strandCount`      | Per-strand UV band in an atlas.   |
+///
+/// `t` is the normalised arc-length parameter (`distanceFromHead / totalDistance`).
+/// `Tiled` requires the trail texture sampler to use `Wrap` addressing so V
+/// values > 1 wrap correctly.
+///
+/// @ref UE5 ENiagaraRibbonUVMode
+/// @ref docs/engine/25-vfx/29-trail-uv-modes.md
+enum class VfxTrailUVMode : uint8_t {
+    Stretch   = 0,
+    Tiled     = 1,
+    PerRibbon = 2,
+};
+
+/// Returns a static string for `mode` (used by JSON round-trip and logs).
+[[nodiscard]] const char* VfxTrailUVModeToString(VfxTrailUVMode mode) noexcept;
+
+/// Parses a string into a UV mode. Returns true on success; unrecognised
+/// names leave `out` untouched and return false.
+[[nodiscard]] bool VfxTrailUVModeFromString(const std::string& name,
+                                              VfxTrailUVMode& out) noexcept;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VfxTrailMorphology — per-point curve-driven attributes (phase 8.14.0)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Optional per-point attribute curves sampled at normalised arc length.
+///
+/// Every curve is optional — an empty curve means "use the uniform default".
+/// The builder evaluates each non-empty curve at `t = distanceFromHead /
+/// totalDistance` and combines the sample with the legacy width / color
+/// interpolation:
+///
+/// - **Width curve** multiplies the per-point base width so authors can
+///   taper, bulge, or pulse the ribbon without separate strand parameters.
+/// - **Twist curve** (radians) rotates the ribbon's cross-section around
+///   the tangent axis so twisted energy / caduceus effects work without a
+///   hand-authored mesh. Sampled per-point; the quad strip becomes non-
+///   planar when adjacent samples differ.
+/// - **Opacity curve** multiplies the vertex colour's alpha channel so
+///   trails can fade at custom points along their length (e.g. a gap
+///   mid-stream or a hot head that eases into a dim tail).
+///
+/// @ref UE5 FNiagaraRibbonShapeCustomVertex
+/// @ref docs/engine/25-vfx/31-ribbon-morphology.md
+struct VfxTrailMorphology {
+    VfxTangentCurve widthCurve;    ///< Multiplier; empty curve = 1.0.
+    VfxTangentCurve twistCurve;    ///< Radians around tangent; empty curve = 0.
+    VfxTangentCurve opacityCurve;  ///< Alpha multiplier; empty curve = 1.0.
+
+    /// Returns true iff no curves are authored. The builder short-circuits
+    /// the per-point sampling loop when this is true.
+    [[nodiscard]] bool IsIdentity() const noexcept;
+};
+
+/// Samples a morphology curve at `t`, returning `defaultValue` when the
+/// curve has no keys. Clamps `t` to [0, 1].
+[[nodiscard]] float VfxSampleMorphologyCurve(const VfxTangentCurve& curve,
+                                              float t,
+                                              float defaultValue) noexcept;
+
+/// Pure-function V generator — separated from `Build` so tests can verify
+/// the math in isolation.
+///
+/// # Parameters
+/// - `mode`            — UV authoring mode.
+/// - `t`               — normalised arc length in [0, 1].
+/// - `strandIndex`     — zero-based strand index (0 for single-strand).
+/// - `strandCount`     — total number of strands (≥ 1).
+/// - `tilesPerRibbon`  — repeat count for Tiled mode (ignored otherwise).
+///                        Clamped to ≥ 0.0001 to avoid zero-tile degeneracy.
+[[nodiscard]] float VfxComputeTrailV(VfxTrailUVMode mode,
+                                      float t,
+                                      uint32_t strandIndex,
+                                      uint32_t strandCount,
+                                      float tilesPerRibbon) noexcept;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TrailVertex -- per-vertex layout for trail ribbon geometry (GPU-ready)
@@ -211,6 +300,11 @@ public:
     ///                     ribbon's up vector. Must be >= 1.
     /// * `strandSpacing` - World-space distance between adjacent strands (metres).
     ///                     Only meaningful when ribbonStrands > 1.
+    /// * `uvMode` - V coordinate authoring mode (phase 8.12.0). Defaults to
+    ///              `Stretch` so legacy callers keep their existing V math.
+    /// * `tilesPerRibbon` - Texture repeats along the ribbon length when
+    ///                       `uvMode == Tiled`. Ignored in other modes.
+    ///                       Requires the sampler to use `Wrap` addressing.
     ///
     /// # Returns
     /// A `TrailMeshData` with `pointCount * 2 * ribbonStrands` vertices and
@@ -230,7 +324,10 @@ public:
         float totalDistance,
         float pointLifetime,
         uint32_t ribbonStrands = 1,
-        float strandSpacing = 0.1f
+        float strandSpacing = 0.1f,
+        VfxTrailUVMode uvMode = VfxTrailUVMode::Stretch,
+        float tilesPerRibbon = 1.0f,
+        const VfxTrailMorphology* morphology = nullptr
     ) const;
 };
 

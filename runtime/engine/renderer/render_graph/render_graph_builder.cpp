@@ -103,6 +103,24 @@ RgResourceId RgBuilder::CreateTexture(const char* name, const RgTextureDesc& des
     return id;
 }
 
+RgResourceId RgBuilder::CreateTransient3D(const char* name,
+                                            uint32_t width, uint32_t height, uint32_t depth,
+                                            RHIFormat format, RHITextureUsage usage)
+{
+    UZ_CHECK(!m_compiled);
+    UZ_CHECK(width > 0u && height > 0u && depth > 0u);
+
+    RgTextureDesc desc{};
+    desc.width            = width;
+    desc.height           = height;
+    desc.depthOrArraySize = static_cast<uint16_t>(depth);
+    desc.mipLevels        = 1u;
+    desc.format           = format;
+    desc.usage            = usage;
+    desc.is3D             = true;
+    return CreateTexture(name, desc);
+}
+
 RgResourceId RgBuilder::CreateBuffer(const char* name, const RgBufferDesc& desc)
 {
     UZ_CHECK(!m_compiled);

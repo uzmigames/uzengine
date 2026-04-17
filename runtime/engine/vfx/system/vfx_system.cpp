@@ -213,6 +213,24 @@ namespace {
         }
     }
 
+    // -- tags array (optional, added in phase 8.2.0) --
+    // JSON: "tags": ["fire", "ambient", ...]. Non-string entries are skipped
+    // with a warning so a malformed element does not nullify the whole load.
+    if (root.contains("tags")) {
+        if (!root["tags"].is_array()) {
+            UZ_LOG(VFX, Warning, "VfxSystem[tags]: 'tags' must be an array, skipping");
+        } else {
+            for (const auto& entry : root["tags"]) {
+                if (entry.is_string()) {
+                    asset->tags.push_back(entry.get<std::string>());
+                } else {
+                    UZ_LOG(VFX, Warning,
+                           "VfxSystem[tags]: non-string tag skipped");
+                }
+            }
+        }
+    }
+
     return asset;
 }
 
@@ -310,6 +328,12 @@ bool VfxSystem::SaveToFile(const std::string& path) const {
             paramsJson[p.name] = std::move(entry);
         }
         root["parameters"] = std::move(paramsJson);
+    }
+
+    // Tag metadata block (8.2.0): only emitted when non-empty to keep diffs
+    // minimal for legacy assets. @ref docs/engine/25-vfx/19-asset-tagging.md
+    if (!tags.empty()) {
+        root["tags"] = tags;
     }
 
     std::ofstream ofs(path);

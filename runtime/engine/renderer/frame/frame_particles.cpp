@@ -127,6 +127,7 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
 
     for (auto* emitter : emitters) {
         if (!emitter || !emitter->initialized) continue;
+        if (emitter->cullSuppress) continue; // phase 10.5.0 frustum cull gate
 
         // Skip emitters needing initial upload — their buffers will be
         // transitioned by InitFreeList this frame. Don't import them into
@@ -245,6 +246,7 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
 
         for (auto* emitter : emitters) {
             if (!emitter || !emitter->initialized) continue;
+        if (emitter->cullSuppress) continue; // phase 10.5.0 frustum cull gate
             if (emitter->needsInitialUpload) continue;
 
             auto& gpuBuf = emitter->buffer;
@@ -332,6 +334,13 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
     renderDesc.colorTexture       = m_hdrSceneColor;
     renderDesc.depthTexture       = m_gbuffer.depth;
     renderDesc.sceneDepthTexture  = m_gbuffer.depth;
+    // Motion-vector MRT: bind the gbuffer velocity target so particles emit
+    // per-pixel motion vectors consumed by TAA / DLSS / FSR. The render
+    // graph transitions velocityRes from ShaderResource (previous passes) to
+    // RenderTarget (this pass) and back to ShaderResource for post-process.
+    // @ref UE5 NiagaraSpriteVertexFactory motion-vector output
+    renderDesc.velocityTarget     = ctx.velocityRes;
+    renderDesc.velocityTexture    = m_gbuffer.velocity;
     renderDesc.perFrameCB         = ctx.perFrameAlloc;
     renderDesc.renderWidth        = ctx.renderWidth;
     renderDesc.renderHeight       = ctx.renderHeight;
@@ -354,6 +363,7 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
 
     for (auto* emitter : emitters) {
         if (!emitter || !emitter->initialized) continue;
+        if (emitter->cullSuppress) continue; // phase 10.5.0 frustum cull gate
         if (emitter->needsInitialUpload) continue; // Skip first-frame emitters
 
         auto& gpuBuf = emitter->buffer;
@@ -647,6 +657,7 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
 
         for (auto* emitter : emitters) {
             if (!emitter || !emitter->initialized) continue;
+        if (emitter->cullSuppress) continue; // phase 10.5.0 frustum cull gate
 
             // Only process emitters with a MeshRenderModule.
             if (!emitter->moduleStack.renderModule) continue;

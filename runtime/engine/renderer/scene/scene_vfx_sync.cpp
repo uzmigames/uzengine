@@ -12,9 +12,13 @@
 #include "engine/renderer/upload/texture_loader.h"
 #include "engine/vfx/vfx_system.h"
 #include "engine/vfx/components/particle_emitter.h"
+#include "engine/vfx/lod/vfx_frustum_cull.h"
+#include "engine/vfx/lod/vfx_hzb_occlusion.h"
 #include "engine/vfx/material/vfx_material.h"
 #include "engine/vfx/system/vfx_system.h"
 #include "engine/vfx/system/vfx_system_instance.h"
+#include "camera.h"
+#include "camera_manager.h"
 #include "log.h"
 #include "profiler.h"
 #include "rhi.h"
@@ -40,6 +44,15 @@ void SceneRenderer::SyncVfxEmitters(World* world, IVFS* vfs) {
     auto& registry = world->GetRegistry();
     auto view = registry.view<VfxEmitterComponent>();
 
+    // ── Frustum-cull plane extraction (phase 10.5.0) ────────────────────
+    // Extracted once per frame from the active camera's viewProj; every
+    // emitter tests its bounding sphere against these planes and feeds a
+    // 2-frame hysteresis state machine. Culled emitters skip sim + render.
+    // @ref engine/vfx/lod/vfx_frustum_cull.h
+    const Mat4 viewProj = m_cameraManager->GetActiveCamera().GetProjection() *
+                          m_cameraManager->GetActiveCamera().GetView();
+    const FrustumPlanes frustum = ExtractFrustumPlanes(viewProj);
+
     for (auto [enttEntity, emitterComp] : view.each()) {
         // ── Already created — sync emitting state + world position ──────
         if (emitterComp.runtimeEmitterIdx >= 0) {
@@ -59,13 +72,84 @@ void SceneRenderer::SyncVfxEmitters(World* world, IVFS* vfs) {
                 // ParticleEmitter gets the preset via ApplyPresetToComponent +
                 // the initial creation path.
                 if (emitterComp.restartRequested) {
+                    // Respect the caller's `emitting` flag so a restart used
+                    // to CLEAR particles (preset switch with emitting=false)
+                    // doesn't inadvertently re-enable emission.
+                    const bool keepEmitting = emitterComp.emitting;
                     rt->buffer.needsInitialization = true;
                     rt->spawnAccumulator = 0.0f;
                     rt->cpuAliveCount = 0;
-                    rt->isEmitting = true;
+                    rt->isEmitting = keepEmitting;
                     emitterComp.restartRequested = false;
-                    emitterComp.emitting = true;
+                    // Reset cull hysteresis so the post-teleport frame is
+                    // always "visible" regardless of the pre-teleport state.
+                    emitterComp.cullCulledThisFrame   = false;
+                    emitterComp.cullCulledPrevFrame   = false;
+                    emitterComp.cullFramesSinceCulled = 0;
                 }
+
+                // ── Frustum cull test (phase 10.5.0) ────────────────────
+                // Conservative bounding sphere = spawnRadius + maxSpeed *
+                // maxLifetime. Sphere test → hysteresis state machine on
+                // the ECS component. The runtime emitter's `cullSuppress`
+                // flag (below) gates the sim + render pass.
+                const float radius = ComputeEmitterBoundingSphereRadius(
+                    rt->spawnRadius,
+                    std::max(0.0f, rt->velocityVariation) +
+                        std::max(0.0f, std::max(
+                            std::max(std::fabs(rt->spawnVelocity.x),
+                                     std::fabs(rt->spawnVelocity.y)),
+                            std::fabs(rt->spawnVelocity.z))),
+                    std::max(0.0f, rt->lifetime));
+                const bool inside = IsSphereInsideFrustum(
+                    frustum, rt->worldPosition, radius);
+
+                EmitterCullState cs;
+                cs.culledThisFrame   = emitterComp.cullCulledThisFrame;
+                cs.culledPrevFrame   = emitterComp.cullCulledPrevFrame;
+                cs.framesSinceCulled = emitterComp.cullFramesSinceCulled;
+                bool shouldDispatch = cs.Update(inside);
+                emitterComp.cullCulledThisFrame   = cs.culledThisFrame;
+                emitterComp.cullCulledPrevFrame   = cs.culledPrevFrame;
+                emitterComp.cullFramesSinceCulled = cs.framesSinceCulled;
+
+                // ── HZB occlusion gate (phase 9.14.0) ──────────────────
+                // If still visible after frustum test, run the HZB
+                // occlusion check. The HZB texture + mip chain are
+                // queried by the scene renderer if available; when no
+                // HZB is present the vote defaults to "visible" and
+                // the hysteresis stays in the "not occluded" state.
+                if (shouldDispatch) {
+                    // Construct transient hysteresis from ECS state.
+                    VfxOcclusionHysteresis hzb(3u);
+                    // Restore committed state from component.
+                    if (emitterComp.hzbOccluded) {
+                        // Force committed-occluded by feeding enough
+                        // occluded votes through the state machine.
+                        for (uint32_t k = 0; k < 4; ++k) hzb.Update(true);
+                    }
+
+                    // TODO(9.14): actual HZB pyramid sample requires
+                    // the scene's HZB SRV + viewProj. When the HZB
+                    // pass is integrated, replace this with:
+                    //   auto rect = VfxProjectAABBToScreen(aabb, viewProj);
+                    //   auto mip = VfxSelectHZBMip(rect, hzbW, hzbH, mipCount);
+                    //   float hzbDepth = SampleHZB(mip, rect);
+                    //   bool rawOccluded = VfxIsOccludedByHZB(rect.nearestDepth, hzbDepth);
+                    // For now, vote "not occluded" so the hysteresis
+                    // is wired but no emitters are incorrectly culled.
+                    const bool rawOccluded = false;
+
+                    const bool stillVisible = !hzb.Update(rawOccluded);
+                    emitterComp.hzbOccluded     = hzb.CommittedOccluded();
+                    emitterComp.hzbDissentCount = hzb.DissentCount();
+
+                    if (!stillVisible) {
+                        shouldDispatch = false;
+                    }
+                }
+
+                rt->cullSuppress = !shouldDispatch;
             }
             continue;
         }
@@ -330,16 +414,19 @@ void SceneRenderer::SyncVfxEmitters(World* world, IVFS* vfs) {
                 }
                 if (sysComp.restartRequested) {
                     // Restart every child emitter: reset GPU buffer + spawn state.
+                    // Respect the caller's `sysComp.emitting` flag so a restart
+                    // used to CLEAR particles (preset switch: emitting=false)
+                    // doesn't inadvertently re-enable emission on the next tick.
+                    const bool keepEmitting = sysComp.emitting;
                     for (auto* child : inst->GetEmitters()) {
                         if (!child) continue;
                         child->buffer.needsInitialization = true;
                         child->spawnAccumulator = 0.0f;
                         child->cpuAliveCount    = 0;
-                        child->isEmitting       = true;
+                        child->isEmitting       = keepEmitting;
                     }
-                    inst->SetEmitting(true);
+                    inst->SetEmitting(keepEmitting);
                     sysComp.restartRequested = false;
-                    sysComp.emitting         = true;
                 }
             }
             continue;

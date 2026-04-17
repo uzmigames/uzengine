@@ -438,6 +438,38 @@ Properties:
 - Allocated on first access, returned after frame completes
 - No explicit cleanup needed
 
+### Creating Transient 3D Textures (Volumes)
+
+**Use for volumetric data (froxel density, voxel grids, 3D LUTs).**
+
+3D textures are a different resource type from 2D arrays in every RHI
+backend. The graph exposes a dedicated helper so the `is3D` flag
+reaches the RHI and the resource pool keys volumes separately from
+arrays:
+
+```cpp
+// Viewport-sized fog density volume (splat + sample pattern).
+auto fogVolume = rg.CreateTransient3D(
+    "FogVolume",
+    /*width*/  160,
+    /*height*/ 90,
+    /*depth*/  64,
+    RHIFormat::R16Float);
+// Default usage: ShaderResource | UnorderedAccess.
+```
+
+Properties:
+- Underlying `RHITextureDesc::is3D = true`
+- Pool key includes `is3D`, so a 3D volume will never alias a 2D array
+  slice — even when dimensions and format match
+- Access via `pb.Write(fogVolume, UnorderedAccess)` from a compute
+  splat pass, then `pb.Read(fogVolume, ShaderResource)` from a
+  sampling pass in the same graph — the barrier is inserted for you
+
+Prefer this helper over constructing an `RgTextureDesc` by hand: it
+sets `is3D` correctly and picks the compute-splat usage defaults that
+the volumetric renderer expects.
+
 ### Creating Transient Buffers
 
 **Use for temporary data (HZB, indirect args, upload buffers).**
