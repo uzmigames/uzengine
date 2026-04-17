@@ -417,6 +417,10 @@ int uz_create_viewport(void* parent_hwnd, int width, int height) {
         uz::LuaSetWorld(uz::LuaVM::GetState(), &state->world);
         uz::LuaSetVFS(uz::LuaVM::GetState(), state->vfs.get());
         uz::ScriptSystem::Initialize(&state->world, state->vfs.get());
+        // Standalone runtime starts in Play Mode (scripts active). Editor
+        // clients override via uz_set_editor_mode(1) → ScriptSystem suspends.
+        uz::ScriptSystem::SetPlayMode(!state->editorModeRequested);
+        state->playMode = !state->editorModeRequested;
         state->luaReady = true;
         UZ_LOG(RuntimeAPI, Info, "Lua scripting initialized");
     } else {
@@ -1154,6 +1158,7 @@ int uz_play(void) {
 
     s_state->playMode = true;
     s_state->sceneRenderer.SetEditorMode(false);
+    uz::ScriptSystem::SetPlayMode(true);
 
     UZ_LOG(RuntimeAPI, Info, "Play mode started");
     return 1;
@@ -1165,6 +1170,7 @@ int uz_stop(void) {
 
     s_state->playMode = false;
     s_state->sceneRenderer.SetEditorMode(true);
+    uz::ScriptSystem::SetPlayMode(false);
 
     UZ_LOG(RuntimeAPI, Info, "Play mode stopped — editor restored");
     return 1;
@@ -1424,6 +1430,11 @@ int uz_get_codec_extradata(const uint8_t** out_data, uint32_t* out_size) {
 void uz_set_editor_mode(int enabled) {
     if (!HasViewport()) return;
     s_state->editorModeRequested = (enabled != 0);
+    // Editor mode and play mode are mutually exclusive. Enabling editor mode
+    // suspends all gameplay scripts — the built-in FlyCameraController is the
+    // only active controller, as in Unreal / Unity / Godot editors.
+    uz::ScriptSystem::SetPlayMode(enabled == 0);
+    s_state->playMode = (enabled == 0);
     if (s_state->sceneRendererReady) {
         s_state->sceneRenderer.SetEditorMode(enabled != 0);
 

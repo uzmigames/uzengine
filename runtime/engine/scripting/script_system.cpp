@@ -31,8 +31,9 @@ namespace uz {
 // Static state
 // ─────────────────────────────────────────────────────────────────────────────
 
-World* ScriptSystem::s_world = nullptr;
-IVFS*  ScriptSystem::s_vfs   = nullptr;
+World* ScriptSystem::s_world    = nullptr;
+IVFS*  ScriptSystem::s_vfs      = nullptr;
+bool   ScriptSystem::s_playMode = false; ///< Scripts are dormant in editor by default.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Entity <-> lightuserdata encoding
@@ -276,7 +277,30 @@ void ScriptSystem::Initialize(World* world, IVFS* vfs) {
     UZ_LOG(Scripting, Info, "ScriptSystem initialized");
 }
 
+void ScriptSystem::SetPlayMode(bool enabled) {
+    if (s_playMode == enabled) return;
+    s_playMode = enabled;
+    // Deliberately Warning-level so the state transition is always visible
+    // in runtime logs (default level is Error). Play-mode entry/exit is
+    // infrequent and operationally significant — the user needs to be able
+    // to confirm whether scripts are running when diagnosing input issues.
+    UZ_LOG(Scripting, Warning, "ScriptSystem: play mode {}", enabled ? "ON" : "OFF");
+}
+
+bool ScriptSystem::IsPlayMode() {
+    return s_playMode;
+}
+
 void ScriptSystem::Update(float deltaTime) {
+    // Editor-mode gate: never tick gameplay scripts while the author is
+    // editing the scene. The built-in FlyCameraController provides camera
+    // navigation without any scripting; ECS Camera components and scene
+    // author-time data are still read (see SceneRenderer::Gather), but no
+    // on_start / on_update hooks fire. Entering Play Mode flips the flag.
+    if (!s_playMode) {
+        return;
+    }
+
     if (!s_world || !s_vfs) {
         UZ_LOG(Scripting, Warning,
             "ScriptSystem::Update called but system was not initialized");

@@ -587,8 +587,14 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         LuaSetWorld(LuaVM::GetState(), &world);
         LuaSetVFS(LuaVM::GetState(), &vfs);
         ScriptSystem::Initialize(&world, &vfs);
+        // Standalone runtime: scripts are dormant in editor mode (--editor
+        // CLI) and active otherwise. Mirrors the Unreal / Unity / Godot
+        // editor convention — BeginPlay / Start / _ready only fire when the
+        // game is actually running.
+        ScriptSystem::SetPlayMode(!editorMode);
         luaReady = true;
-        UZ_LOG(Engine, Info, "Lua scripting initialized");
+        UZ_LOG(Engine, Info, "Lua scripting initialized (play mode: {})",
+               editorMode ? "OFF" : "ON");
     } else {
         UZ_LOG(Engine, Warning, "LuaVM failed to initialize — scripting disabled");
     }

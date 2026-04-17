@@ -9,6 +9,8 @@
 
 #include "fly_camera_controller.h"
 
+#include "log.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -24,6 +26,22 @@ void FlyCameraController::InitFromCamera(const Camera& camera) {
 }
 
 void FlyCameraController::Update(Camera& camera, const InputSystem& input, float deltaTime) {
+    // ── Diagnostic trace — once every 60 frames so the log doesn't drown. ───
+    {
+        static int s_frameCounter = 0;
+        if ((s_frameCounter++ % 60) == 0) {
+            UZ_LOG(Renderer, Error,
+                "[DIAG] FlyCam editorMode={} RMB={} W={} A={} S={} D={} pos=({:.1f},{:.1f},{:.1f})",
+                m_editorMode,
+                input.IsMouseDown(MouseButton::Right),
+                input.IsKeyDown(Key::W),
+                input.IsKeyDown(Key::A),
+                input.IsKeyDown(Key::S),
+                input.IsKeyDown(Key::D),
+                camera.GetPosition().x, camera.GetPosition().y, camera.GetPosition().z);
+        }
+    }
+
     // ── Mouse look (only when RMB held) ──────────────────────────────────────
     if (input.IsMouseDown(MouseButton::Right)) {
         float dx = input.GetMouseDeltaX();
@@ -48,14 +66,15 @@ void FlyCameraController::Update(Camera& camera, const InputSystem& input, float
     camera.LookAt(pos + forward, Vec3::Up());
 
     // ── WASD movement — Fly camera ─────────────────────────────────────────────
-    // In editor mode: WASD moves camera ONLY while RMB is held.
-    // Without RMB, W/E/R are gizmo hotkeys handled by EditorInputHandler.
-    // In game mode: WASD always moves the camera.
-    const bool allowMovement = !m_editorMode || input.IsMouseDown(MouseButton::Right);
-
+    //
+    // WASD + Space/Ctrl always move the camera — no RMB gate in either editor
+    // or game mode. The previous "WASD requires RMB" UE-style behavior was
+    // removed because users coming from Godot / Unity Scene view / most modern
+    // editors expect WASD to always work. W/E/R still trigger Translate /
+    // Rotate / Scale gizmo mode switches via EditorInputHandler (just-pressed
+    // edge), which does not conflict with held-down movement.
     Vec3 moveDir = {0.f, 0.f, 0.f};
-
-    if (allowMovement) {
+    {
         // Right vector: perpendicular to forward in the XY plane
         Vec3 right = Vec3(-std::sin(m_yaw), std::cos(m_yaw), 0.f);
 

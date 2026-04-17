@@ -256,42 +256,82 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
         }
     }
 
-    // ── Camera: ECS camera (game mode) or fly controller (editor mode) ──
+    // ── Camera: editor fly cam (editor mode) or ECS camera (play mode) ──
+    //
+    // In editor mode the native FlyCameraController is the authoritative
+    // driver — matches the industry convention (UE5 PIE / Unity Scene view /
+    // Godot editor viewport): the scene's authored ECS cameras are read only
+    // once, to seed the fly cam's initial pose, then WASD+RMB flies freely.
+    // No Lua script is required; the Controller/fly_camera.lua pattern is
+    // therefore obsolete.
+    //
+    // In play mode the original flow applies: ECS cameras drive the view and
+    // the FlyCameraController is a fallback when nothing is active.
     bool cameraFromECS = false;
+    const bool editorMode = IsEditorMode();
 
-    // Sync camera from ECS CameraComponent every frame — but ONLY when the
-    // active camera is the default Main camera (id=0). When CameraManager has
-    // switched to a non-default camera (via mgr_switch or PushCamera), the ECS
-    // CameraComponent is ignored so Lua scripts can control cameras directly
-    // via mgr_set_position/mgr_look_at without being overwritten.
-    if (ctx.world && m_cameraManager->GetActiveCameraId() == 0) {
-        auto cameraView = ctx.world->View<CameraComponent>();
-        for (auto [enttEntity, cam] : cameraView.each()) {
-            if (cam.isActive) {
+    if (editorMode && m_cameraManager->GetActiveCameraId() == 0) {
+        // One-shot seed from the first active ECS camera on editor entry /
+        // scene reload. After that, the user is flying — authored ECS
+        // positions are ignored until the next editor-mode transition.
+        if (!m_editorFlyCamInitialized && ctx.world) {
+            auto cameraView = ctx.world->View<CameraComponent>();
+            for (auto [enttEntity, cam] : cameraView.each()) {
+                if (!cam.isActive) continue;
+                auto& activeCam = m_cameraManager->GetActiveCamera();
                 const Vec3 camPos = cam.GetWorldPosition();
-                m_cameraManager->GetActiveCamera().SetPosition(camPos);
+                activeCam.SetPosition(camPos);
                 if (cam.hasLookTarget) {
-                    m_cameraManager->GetActiveCamera().LookAt(cam.lookTarget);
+                    activeCam.LookAt(cam.lookTarget);
                 } else {
                     const Vec3 fwd = (cam.GetRotation() * Vec3::Forward()).Normalized();
-                    m_cameraManager->GetActiveCamera().LookAt(camPos + fwd * 1000.f);
+                    activeCam.LookAt(camPos + fwd * 1000.f);
                 }
-                m_cameraManager->GetActiveCamera().SetPerspective(
+                activeCam.SetPerspective(
                     cam.fov * (3.14159265f / 180.f),
                     static_cast<float>(m_width) / static_cast<float>(m_height),
                     cam.nearPlane, cam.farPlane);
-                cameraFromECS = true;
+                m_cameraCtrl->InitFromCamera(activeCam);
+                m_editorFlyCamInitialized = true;
                 break;
             }
         }
-    }
 
-    // Fallback: FlyCameraController when no ECS camera is active AND
-    // we're on the default Main camera (id=0). Non-default cameras are
-    // controlled by Lua scripts via mgr_set_position/mgr_look_at.
-    // Suppress camera when VFX editor overlay wants mouse input.
-    if (!cameraFromECS && !vfxOverlayWantsMouse && m_cameraManager->GetActiveCameraId() == 0) {
-        m_cameraCtrl->Update(m_cameraManager->GetActiveCamera(), *m_input, ctx.dt);
+        if (!vfxOverlayWantsMouse) {
+            m_cameraCtrl->Update(m_cameraManager->GetActiveCamera(), *m_input, ctx.dt);
+        }
+    } else {
+        // Play mode — sync camera from ECS CameraComponent every frame, but
+        // only while the default Main camera (id=0) is active. Non-default
+        // cameras are driven by Lua via mgr_set_position/mgr_look_at.
+        if (ctx.world && m_cameraManager->GetActiveCameraId() == 0) {
+            auto cameraView = ctx.world->View<CameraComponent>();
+            for (auto [enttEntity, cam] : cameraView.each()) {
+                if (cam.isActive) {
+                    const Vec3 camPos = cam.GetWorldPosition();
+                    m_cameraManager->GetActiveCamera().SetPosition(camPos);
+                    if (cam.hasLookTarget) {
+                        m_cameraManager->GetActiveCamera().LookAt(cam.lookTarget);
+                    } else {
+                        const Vec3 fwd = (cam.GetRotation() * Vec3::Forward()).Normalized();
+                        m_cameraManager->GetActiveCamera().LookAt(camPos + fwd * 1000.f);
+                    }
+                    m_cameraManager->GetActiveCamera().SetPerspective(
+                        cam.fov * (3.14159265f / 180.f),
+                        static_cast<float>(m_width) / static_cast<float>(m_height),
+                        cam.nearPlane, cam.farPlane);
+                    cameraFromECS = true;
+                    break;
+                }
+            }
+        }
+
+        // Fallback fly cam when no ECS camera is active (typical for empty
+        // scenes or demos without a CameraComponent).
+        if (!cameraFromECS && !vfxOverlayWantsMouse
+                && m_cameraManager->GetActiveCameraId() == 0) {
+            m_cameraCtrl->Update(m_cameraManager->GetActiveCamera(), *m_input, ctx.dt);
+        }
     }
 
     auto& camera = m_cameraManager->GetActiveCamera();

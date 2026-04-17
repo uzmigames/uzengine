@@ -94,11 +94,26 @@ public:
     /// `s_vfs` pointers to guard against use-after-free.
     static void Shutdown();
 
+    /// Enables or disables script execution. When disabled (the default in
+    /// editor mode), `Update()` is a no-op — no `on_start` or `on_update`
+    /// calls fire, keeping gameplay scripts dormant while the user edits the
+    /// scene. Set to true when entering Play Mode; set to false when leaving
+    /// it.
+    ///
+    /// This mirrors the Unreal / Unity / Godot editor convention: BeginPlay
+    /// / Start / _ready only runs inside PIE / Play / the game runtime,
+    /// never while the author is arranging the scene.
+    static void SetPlayMode(bool enabled);
+
+    /// Returns whether scripts are currently active.
+    [[nodiscard]] static bool IsPlayMode();
+
 private:
     ScriptSystem() = delete;
 
     static World* s_world; ///< Non-owning pointer to the active World
     static IVFS*  s_vfs;   ///< Non-owning pointer to the VFS for script loading
+    static bool   s_playMode; ///< When false, Update() is a no-op (editor default).
 };
 
 } // namespace uz

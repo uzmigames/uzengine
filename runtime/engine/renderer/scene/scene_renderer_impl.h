@@ -11,6 +11,7 @@
     IRHIDevice* m_device = nullptr;
     bool m_editorMode = false;            ///< When true, editor grid + stats overlay are rendered.
     bool m_gameViewMode = false;          ///< When true (G key), all editor overlays are hidden.
+    bool m_editorFlyCamInitialized = false; ///< True once the editor fly cam has been seeded from the scene's active ECS camera.
     uint32_t m_editorCameraInitFrame = 0;   ///< Frame counter for deferred editor camera init (waits for Lua scripts).
     Entity m_selectedEntity{};            ///< Currently selected entity for editor outline/gizmo rendering.
     uint8_t m_gizmoMode = 0;             ///< GizmoMode: 0=Translate, 1=Rotate, 2=Scale.

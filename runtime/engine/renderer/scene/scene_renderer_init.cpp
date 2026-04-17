@@ -1243,6 +1243,17 @@ void SceneRenderer::Resize(uint32_t width, uint32_t height) {
 
 void SceneRenderer::SetEditorMode(bool enabled) {
     m_editorMode = enabled;
+    // Native FlyCameraController mirrors editor mode: WASD requires RMB held
+    // in editor (so W/E/R stay free for gizmo hotkeys) and moves freely in
+    // game mode. When entering editor mode we mark the fly cam for a one-
+    // shot re-seed from the scene's active ECS camera so the author sees the
+    // scene from the designed viewpoint before flying.
+    if (m_cameraCtrl) {
+        m_cameraCtrl->SetEditorMode(enabled);
+    }
+    if (enabled) {
+        m_editorFlyCamInitialized = false;
+    }
     UZ_LOG(Renderer, Info, "Editor mode: {}", enabled ? "ON" : "OFF");
 }
 
