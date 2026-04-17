@@ -81,26 +81,46 @@ void SkeletalMeshInstance::UpdatePaletteFromPose() {
         pose = Pose::FromBindPose(*m_skeleton);
     }
 
-    // Compute world matrix of each bone in topological order (parents already
-    // done when the child is processed). Row-vector convention:
-    //     world[i] = local[i] * world[parent[i]].
-    // Then palette[i] = inverseBind[i] * world[i], so the shader can skin via
-    //     skinnedPoint = bindPoint * palette[i].
-    std::vector<Mat4> worldMatrices(boneCount, Mat4::Identity());
+    // Walk the bone hierarchy via TRS composition (BoneTransform::ComposeWith)
+    // — the same composition the FBX importer assumes when decomposing each
+    // keyframe via `ComputeLocalFromWorldTRS`. Doing the walk in matrix space
+    // (`Mat4 * Mat4`) instead silently injects shear into any bone whose
+    // ancestor chain has non-uniform scale, which produces the correct bind
+    // pose by tautology (both sides of `palette = inverseBind * world` use
+    // the same algorithm and cancel) but visibly broken animated poses.
+    //
+    // Mirrors UE5's `FillUpComponentSpaceTransforms`
+    // (Engine/Source/Runtime/Engine/Private/Animation/AnimationRuntime.cpp:2683-2701)
+    // — TRS hierarchy walk, single matrix flatten per bone at the leaves.
+    std::vector<BoneTransform> worldTransforms(boneCount);
 
     for (uint32_t i = 0; i < boneCount; ++i) {
         const BoneInfo& bone = m_skeleton->GetBone(i);
-        const Mat4 local = pose.localTransforms[i].ToMatrix();
+        const BoneTransform& localTRS = pose.localTransforms[i];
 
         if (bone.parentIndex < 0) {
-            worldMatrices[i] = local;
+            worldTransforms[i] = localTRS;
         } else {
-            worldMatrices[i] = local * worldMatrices[static_cast<size_t>(bone.parentIndex)];
+            worldTransforms[i] = localTRS.ComposeWith(
+                worldTransforms[static_cast<size_t>(bone.parentIndex)]);
         }
 
-        m_palette[i] = bone.inverseBindWorld * worldMatrices[i];
+        const Mat4 worldMatrix = Mat4::TRS(
+            worldTransforms[i].position,
+            worldTransforms[i].rotation,
+            worldTransforms[i].scale);
+        m_palette[i] = bone.inverseBindWorld * worldMatrix;
     }
+}
 
+void SkeletalMeshInstance::UpdatePaletteGpu() {
+    if (!m_gpuPaletteMapped || m_palette.empty()) return;
+    // Layout expected by `gpu_skinning_cs.hlsl`: raw ByteAddressBuffer
+    // containing 64 B row-major Mat4 entries back-to-back. Straight
+    // memcpy of the CPU Mat4 array matches, because each `Mat4`
+    // (`XMFLOAT4X4`) is already 64 B row-major.
+    const size_t bytes = m_palette.size() * sizeof(Mat4);
+    std::memcpy(m_gpuPaletteMapped, m_palette.data(), bytes);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -142,15 +162,6 @@ void SkeletalMeshInstance::SkinCpu() {
         // Static mesh — nothing to skin; keep the bind-pose copy.
         return;
     }
-
-    // TEMP: bypass CPU skinning while the bind-pose palette identity bug
-    // and associated math are still under investigation. `Bind()` primes
-    // `m_outputVertexData` with the 48 B bind-pose stream, and the dirty-
-    // flag gate in UploadAll ensures that copy is uploaded exactly once.
-    // This keeps the mesh visible in its correct rest pose and preserves
-    // interactive framerate while the skinning rig is still wrong. Revert
-    // once UpdatePaletteFromPose produces an identity palette at bind.
-    return;
 
     const uint32_t vertexCount = m_sourceMesh->GetVertexCount();
     const size_t srcStride = sizeof(SkinnedVertex);

@@ -193,6 +193,18 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetPixelDebugCompute();
 
+    /// Returns the GPU skinning compute pipeline (gpu_skinning_cs, 64 threads / group).
+    ///
+    /// Applies linear-blend skinning on the GPU: reads a SkinnedVertex[] SRV +
+    /// a bone palette SRV, writes animated Vertex[] into a UAV that is then
+    /// consumed by the GBuffer pass as a vertex buffer. Dispatched per
+    /// skeletal instance by `SkeletalMeshSubsystem` each frame, ahead of the
+    /// main geometry pass.
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure.
+    [[nodiscard]] RHIPipelineHandle GetGpuSkinning();
+
     /// Returns the G-Buffer debug visualization pipeline (fullscreen_vs + gbuffer_debug_ps, 1 RT).
     ///
     /// Rasterizer: no cull (fullscreen triangle).

@@ -18,6 +18,7 @@
 
 #include <ufbx.h>
 #include <meshoptimizer.h>
+#include <cstdio>
 
 #include "engine/asset/mesh/normal_smoother.h"
 #include "engine/asset/mesh/mikktspace_tangents.h"
@@ -237,22 +238,82 @@ void GenerateTangentsForPosNormUV(
 ///
 /// Uses ufbx_matrix_to_transform which correctly decomposes arbitrary affine matrices
 /// into translation, rotation (quaternion), and scale — independent of coordinate convention.
+/// Per-file source axis convention captured at scene load time. Used by
+/// `DecomposeUfbxMatrix` and vertex extraction to remap source coords into
+/// UzEngine's engine frame (right=+Y, up=+Z, back=+X — the frame produced
+/// by the legacy Maya-Y-up cyclic permutation).
+namespace {
+    enum class FbxSrcConvention {
+        // Y-up RH (Maya, default FBX): apply cyclic permutation (x,y,z) → (z,x,y).
+        MayaYupRH,
+        // Z-up RH with forward=+Y (3ds Max default): apply (x,y,z) → (-y, x, z) so
+        // the result lands in the SAME engine frame as MayaYupRH (right=+Y, up=+Z,
+        // back=+X). Critical when mixing Maya-exported skinned meshes with
+        // Max-exported animations for the same character.
+        MaxZupRH,
+        // Source already matches engine frame — no conversion. Catch-all for
+        // future formats or files that ufbx normalised on load.
+        Identity,
+    };
+    thread_local FbxSrcConvention g_fbxSrcConv = FbxSrcConvention::Identity;
+}
+
+/// Sets the per-file conversion based on `scene->settings.axes`. Inspected by
+/// `DecomposeUfbxMatrix` and the vertex extractor.
+inline void SetFbxSrcConventionFromScene(const ufbx_scene* scene) {
+    g_fbxSrcConv = FbxSrcConvention::Identity;
+    if (!scene) return;
+    const auto& a = scene->settings.axes;
+    const bool isMaya =
+        a.right == UFBX_COORDINATE_AXIS_POSITIVE_X &&
+        a.up    == UFBX_COORDINATE_AXIS_POSITIVE_Y &&
+        a.front == UFBX_COORDINATE_AXIS_POSITIVE_Z;
+    const bool isMax =
+        a.right == UFBX_COORDINATE_AXIS_POSITIVE_X &&
+        a.up    == UFBX_COORDINATE_AXIS_POSITIVE_Z &&
+        a.front == UFBX_COORDINATE_AXIS_NEGATIVE_Y;
+    if (isMaya)     g_fbxSrcConv = FbxSrcConvention::MayaYupRH;
+    else if (isMax) g_fbxSrcConv = FbxSrcConvention::MaxZupRH;
+}
+
+/// Remaps a 3-component source vector into the engine frame.
+inline Vec3 RemapSrcVec3(double sx, double sy, double sz) {
+    switch (g_fbxSrcConv) {
+        case FbxSrcConvention::MayaYupRH:
+            // Cyclic (x,y,z) → (z,x,y)
+            return Vec3{static_cast<float>(sz), static_cast<float>(sx), static_cast<float>(sy)};
+        case FbxSrcConvention::MaxZupRH:
+            // (x,y,z) → (-y, x, z) — puts right on +Y, up on +Z, back on +X
+            return Vec3{static_cast<float>(-sy), static_cast<float>(sx), static_cast<float>(sz)};
+        case FbxSrcConvention::Identity:
+        default:
+            return Vec3{static_cast<float>(sx), static_cast<float>(sy), static_cast<float>(sz)};
+    }
+}
+
+/// Remaps a quaternion's imaginary part the same way as a vector. The scalar
+/// (w) is invariant under axis-permutation conjugation. Note: pure axis
+/// permutations (det=±1) preserve rotation magnitude; handedness changes are
+/// absorbed by the geometry winding flip elsewhere in the importer.
+inline Quat RemapSrcQuat(double qx, double qy, double qz, double qw) {
+    const Vec3 v = RemapSrcVec3(qx, qy, qz);
+    return Quat{v.x, v.y, v.z, static_cast<float>(qw)};
+}
+
+/// Remaps a non-uniform scale triple. Scale components remap the same way as
+/// position, but the absolute value is preserved (negative scales flip).
+inline Vec3 RemapSrcScale(double sx, double sy, double sz) {
+    // Scale magnitudes follow the same axis remap; sign of the source scale
+    // sign is preserved on the destination axis it maps to.
+    return RemapSrcVec3(sx, sy, sz);
+}
+
 [[nodiscard]] BoneTransform DecomposeUfbxMatrix(const ufbx_matrix& mat) {
     ufbx_transform t = ufbx_matrix_to_transform(&mat);
     BoneTransform bt;
-    bt.position = Vec3{
-        static_cast<float>(t.translation.x),
-        static_cast<float>(t.translation.y),
-        static_cast<float>(t.translation.z)};
-    bt.rotation = Quat{
-        static_cast<float>(t.rotation.x),
-        static_cast<float>(t.rotation.y),
-        static_cast<float>(t.rotation.z),
-        static_cast<float>(t.rotation.w)};
-    bt.scale = Vec3{
-        static_cast<float>(t.scale.x),
-        static_cast<float>(t.scale.y),
-        static_cast<float>(t.scale.z)};
+    bt.position = RemapSrcVec3(t.translation.x, t.translation.y, t.translation.z);
+    bt.rotation = RemapSrcQuat(t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w);
+    bt.scale    = RemapSrcScale(t.scale.x, t.scale.y, t.scale.z);
     return bt;
 }
 
@@ -317,40 +378,90 @@ struct SkeletonExtractResult {
     }
 
     // ── Step 1: Collect all valid bone nodes and their world bind transforms ──
+    //
+    // We collect bones in two passes:
+    //   1.a — every node referenced by a skin cluster (the "skinned" bones)
+    //   1.b — every transform-only ANCESTOR of a skinned bone, walked up the
+    //         FBX hierarchy until we hit a node ufbx considers "the scene
+    //         root" (no parent). This mirrors UE's behaviour: an animation
+    //         file's `MushroomRoot` / `Point001` parents may carry the
+    //         locomotion of the rig (root motion, hip offset). Excluding
+    //         them collapses every bone's "local-relative-to-skel-parent"
+    //         into "world", and any non-trivial parent transform in the
+    //         animation file then disagrees with the mesh file's bind
+    //         pose, fragmenting the mesh on playback. Including them gives
+    //         the runtime a full hierarchy to compose against.
+    //
+    // Ancestors that aren't skin clusters get their bind from `node->node_to_world`
+    // (the static / rest pose of the FBX scene, which is what every DCC tool
+    // treats as "bind" for transform-only nodes).
     struct BoneCandidate {
         ufbx_node* node = nullptr;
-        size_t clusterIdx = 0;
+        size_t clusterIdx = 0;       ///< Cluster index, or SIZE_MAX for transform-only bones.
         BoneTransform worldBind;
     };
 
     std::vector<BoneCandidate> candidates;
     std::unordered_map<ufbx_node*, size_t> nodeToCandidateIdx;
 
+    auto addCandidate = [&](ufbx_node* node, size_t clusterIdx,
+                            const BoneTransform& worldBind) -> bool {
+        if (!node) return false;
+        if (nodeToCandidateIdx.count(node) > 0) return false;
+        // Reject anonymous nodes — ufbx's synthetic scene-root node has an
+        // empty name and the skeleton refuses to add it. We don't need it
+        // anyway; it's a no-op container.
+        if (node->name.length == 0) return false;
+        BoneCandidate cand;
+        cand.node = node;
+        cand.clusterIdx = clusterIdx;
+        cand.worldBind = worldBind;
+        nodeToCandidateIdx[node] = candidates.size();
+        candidates.push_back(cand);
+        return true;
+    };
+
+    // 1.a — Skinned bones (their bind comes from cluster->bind_to_world).
     for (size_t ci = 0; ci < skin->clusters.count; ++ci) {
         const ufbx_skin_cluster* cluster = skin->clusters.data[ci];
-        if (!cluster || !cluster->bone_node) {
-            continue;
-        }
-
-        ufbx_node* boneNode = cluster->bone_node;
-
-        // Skip duplicate bone nodes (multiple clusters can reference the same bone)
-        if (nodeToCandidateIdx.count(boneNode) > 0) {
-            continue;
-        }
-
-        BoneCandidate cand;
-        cand.node = boneNode;
-        cand.clusterIdx = ci;
-        cand.worldBind = DecomposeUfbxMatrix(cluster->bind_to_world);
-
-        nodeToCandidateIdx[boneNode] = candidates.size();
-        candidates.push_back(cand);
+        if (!cluster || !cluster->bone_node) continue;
+        addCandidate(cluster->bone_node, ci,
+                     DecomposeUfbxMatrix(cluster->bind_to_world));
     }
 
     if (candidates.empty()) {
         UZ_LOG(Asset, Error, "No valid bone nodes found in skin deformer");
         return result;
+    }
+
+    // 1.b — Walk up from each skinned bone and add ALL transform-only
+    // ancestors as bones too, all the way up to (but excluding) the
+    // implicit scene root that ufbx provides. This lifts the SKELETON
+    // ROOT off the pelvis and onto the actual root bone of the rig
+    // (e.g. `MushroomRoot`), matching the industry-standard convention
+    // used by Unreal: the pelvis is never the topmost bone, the rig has
+    // a dedicated root bone above it that carries locomotion / root
+    // motion. Without this, animations baked against the FBX-native
+    // hierarchy can't be reapplied here because the parent transforms
+    // they assume are missing from our skeleton.
+    //
+    // We iterate by index because addCandidate() may grow the vector mid-loop.
+    // Walk all the way up. Some rigs have the actual root bone (e.g.
+    // `MushroomRoot`) AS the FBX scene root in the mesh file, while the
+    // animation files put it under another scene-root node. Skipping the
+    // mesh's scene root would then drop the very bone the animations
+    // expect to drive. Include every ancestor; if any of them really IS
+    // a synthetic identity-transform container, it just adds an
+    // identity-bind bone with no effect on skinning.
+    for (size_t i = 0; i < candidates.size(); ++i) {
+        ufbx_node* walk = candidates[i].node->parent;
+        while (walk != nullptr) {
+            if (nodeToCandidateIdx.count(walk) == 0) {
+                addCandidate(walk, SIZE_MAX,
+                             DecomposeUfbxMatrix(walk->node_to_world));
+            }
+            walk = walk->parent;
+        }
     }
 
     // ── Step 2: Resolve parent indices (walk up chain to find a bone in our set) ──
@@ -936,7 +1047,7 @@ const char* FbxImporter::Name() const {
 }
 
 uint32_t FbxImporter::Version() const {
-    return 5; // v5: axis remap (FBX.Z,X,Y) → (UE.X,Y,Z) — Z-up correct orientation
+    return 16; // v16: removed manual winding flip (per-source remaps preserve CCW already)
 }
 
 const std::vector<std::string>& FbxImporter::Extensions() const {
@@ -958,13 +1069,32 @@ AssetImportResult FbxImporter::Import(
     }
 
     // ── Parse FBX via ufbx ──
-    // Do NOT set target_axes — the FBX file already uses Z-up vertex positions.
-    // Any axis conversion via target_axes remaps the axes and breaks orientation.
-    // MODIFY_GEOMETRY bakes all node transforms (scale, rotation, translation) into
-    // vertex positions so we get a clean, flat vertex buffer without a scene hierarchy.
+    // Set `target_axes = ufbx_axes_left_handed_z_up` so ufbx normalises every
+    // file (Y-up Maya, Z-up Max, RH or LH) into UzEngine's left-handed Z-up
+    // frame on load. With this enabled, both `vertex_position` AND every
+    // bone's `cluster->bind_to_world` / `node_to_world` come out in the same
+    // engine frame — no per-component remap needed downstream.
+    //
+    // The previous policy (no `target_axes`, manual cyclic permutation in
+    // `DecomposeUfbxMatrix` and the vertex extractor) worked end-to-end for
+    // the SKINNED MESH file (Maya, Y-up RH) because the same remap was
+    // applied to bind matrices and vertices, so they cancelled. It silently
+    // BROKE every animation clip because the clip files in
+    // `meshes/mushroommonster/animations/*.FBX` were exported by 3ds Max
+    // and are already Z-up — applying the cyclic remap to them sends bones
+    // into a third frame inconsistent with the mesh's bind. See
+    // `docs/analysis/animation/debug-axis-remap.md` for the detailed
+    // diagnosis.
+    // ufbx is told NOT to apply target_axes. We'll do per-file axis conversion
+    // ourselves below, after detecting the source `scene->settings.axes.up`. This
+    // is necessary because Maya-export mesh files (Y-up) and 3ds-Max-export
+    // animation files (Z-up) cohabit the same character; ufbx's target_axes
+    // conversion does not propagate through `ufbx_evaluate_scene`'s evaluated
+    // matrices reliably across files with different source UpAxis, so we end up
+    // with mesh bones in one frame and animation bones in another.
     ufbx_load_opts loadOpts = {};
-    loadOpts.target_unit_meters = 0.01f; // normalize to centimeters
-    loadOpts.space_conversion = UFBX_SPACE_CONVERSION_MODIFY_GEOMETRY;
+    loadOpts.target_unit_meters = 0.01f;                            // normalise to centimetres
+    loadOpts.space_conversion   = UFBX_SPACE_CONVERSION_MODIFY_GEOMETRY;
     loadOpts.generate_missing_normals = true;
 
     ufbx_error fbxError = {};
@@ -986,6 +1116,34 @@ AssetImportResult FbxImporter::Import(
         ufbx_scene* s;
         ~SceneGuard() { if (s) ufbx_free_scene(s); }
     } sceneGuard{scene};
+
+    // ── Per-file axis convention: select the engine-frame remap ──
+    SetFbxSrcConventionFromScene(scene);
+
+    // DIAGNOSTIC: log the detected source axes and the remap decision.
+    {
+        const auto axisName = [](ufbx_coordinate_axis a) -> const char* {
+            switch (a) {
+                case UFBX_COORDINATE_AXIS_POSITIVE_X: return "+X";
+                case UFBX_COORDINATE_AXIS_NEGATIVE_X: return "-X";
+                case UFBX_COORDINATE_AXIS_POSITIVE_Y: return "+Y";
+                case UFBX_COORDINATE_AXIS_NEGATIVE_Y: return "-Y";
+                case UFBX_COORDINATE_AXIS_POSITIVE_Z: return "+Z";
+                case UFBX_COORDINATE_AXIS_NEGATIVE_Z: return "-Z";
+                default: return "??";
+            }
+        };
+        const auto& src = scene->settings.axes;
+        const char* convName =
+            g_fbxSrcConv == FbxSrcConvention::MayaYupRH ? "Maya-Y-up cyclic (z,x,y)" :
+            g_fbxSrcConv == FbxSrcConvention::MaxZupRH  ? "Max-Z-up to engine (-y,x,z)" :
+                                                          "identity";
+        std::fprintf(stderr,
+                     "[FBX axes] %s — src: right=%s up=%s front=%s; remap=%s\n",
+                     sourceName.c_str(),
+                     axisName(src.right), axisName(src.up), axisName(src.front),
+                     convName);
+    }
 
     // ── Detect the import mode ──
     // A regular character FBX has both meshes AND anim_stacks. An animation-only
@@ -1198,21 +1356,23 @@ AssetImportResult FbxImporter::Import(
 
                 VertexPosNormUV vert = {};
 
-                // Position — always present
-                // Axis remap: FBX raw data is (X=lateral, Y=height, Z=depth).
-                // UzEngine is Z-up: map FBX.Y→UE.Z, FBX.Z→UE.X, FBX.X→UE.Y.
-                // Cyclic permutation (det=+1), preserves winding order.
-                const ufbx_vec3 pos = ufbx_get_vertex_vec3(&mesh->vertex_position, cornerIdx);
-                vert.position[0] = static_cast<float>(pos.z);
-                vert.position[1] = static_cast<float>(pos.x);
-                vert.position[2] = static_cast<float>(pos.y);
+                // Position — always present. Apply the per-file source-axis
+                // remap chosen at scene-load time (see RemapSrcVec3).
+                {
+                    const ufbx_vec3 pos = ufbx_get_vertex_vec3(&mesh->vertex_position, cornerIdx);
+                    const Vec3 remapped = RemapSrcVec3(pos.x, pos.y, pos.z);
+                    vert.position[0] = remapped.x;
+                    vert.position[1] = remapped.y;
+                    vert.position[2] = remapped.z;
+                }
 
-                // Normal — may not exist (same axis remap as position)
+                // Normal — may not exist. Same per-file remap.
                 if (hasNormals) {
                     const ufbx_vec3 norm = ufbx_get_vertex_vec3(&mesh->vertex_normal, cornerIdx);
-                    vert.normal[0] = static_cast<float>(norm.z);
-                    vert.normal[1] = static_cast<float>(norm.x);
-                    vert.normal[2] = static_cast<float>(norm.y);
+                    const Vec3 remapped = RemapSrcVec3(norm.x, norm.y, norm.z);
+                    vert.normal[0] = remapped.x;
+                    vert.normal[1] = remapped.y;
+                    vert.normal[2] = remapped.z;
                 }
                 // else: normals will be generated as flat normals after all faces
 
@@ -1247,13 +1407,20 @@ AssetImportResult FbxImporter::Import(
             continue;
         }
 
-        // Reverse triangle winding from CW to CCW.
-        // ufbx MODIFY_GEOMETRY converts positions to left-handed Z-up but does
-        // not flip triangle winding, leaving faces CW. Our rasterizer uses
-        // frontCounterClockwise = true (CCW = front), so we must reverse.
-        for (size_t t = 0; t + 2 < groupIndices.size(); t += 3) {
-            std::swap(groupIndices[t + 1], groupIndices[t + 2]);
-        }
+        // Triangle winding: ufbx delivers FBX-native winding (CCW for typical
+        // RH Maya/Max sources). Our per-source axis remaps (Maya cyclic and
+        // Max (-y,x,z)) both have det=+1, preserving winding. UzEngine's
+        // rasterizer uses frontCounterClockwise = true (CCW = front), so the
+        // FBX-native CCW already matches; NO flip is needed. Flipping here
+        // would invert all faces and the mesh would render as back-faces
+        // (hollow / inside-out look). Kept as a comment because previous
+        // versions of this importer used `UFBX_SPACE_CONVERSION_MODIFY_GEOMETRY`
+        // with `target_axes=LH-Z-up`, which DID flip handedness and required
+        // the swap below; if that policy is restored, re-enable this loop.
+        //
+        // for (size_t t = 0; t + 2 < groupIndices.size(); t += 3) {
+        //     std::swap(groupIndices[t + 1], groupIndices[t + 2]);
+        // }
 
         // Compute smooth normals based on import mode.
         // Priority: .uzimport per-asset options > CVar globals.

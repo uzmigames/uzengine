@@ -7,16 +7,22 @@
 #include "animation_clip.h"
 #include "animation_io.h"
 #include "animation_controller.h"
+#include "mat4.h"
 #include "mesh.h"
 #include "gpu_mesh.h"
+#include "vertex.h"
 #include "vfs.h"
 #include "upload_context.h"
 #include "scene_renderer.h"
+#include "pipeline_library.h"
+#include "rhi.h"
 #include "job_system.h"
 #include "world.h"
 #include "static_mesh_component.h"
 #include "skeletal_mesh_component.h"
 #include "log.h"
+
+#include <cstring>
 
 UZ_DECLARE_LOG_CATEGORY(Animation);
 
@@ -155,14 +161,18 @@ void SkeletalMeshSubsystem::Finalize(World& world, SceneRenderer& renderer, IVFS
 
         // ── Register a per-entity procedural output mesh ───────────────
         // We deep-copy the bind-pose mesh so the subsystem later overwrites
-        // the VB with skinned vertices each frame.
+        // the VB with skinned vertices each frame. Flagging `gpuSkinned`
+        // upgrades the VB usage with UAV + StructuredBuffer so
+        // `gpu_skinning_cs.hlsl` can write animated vertices into it
+        // directly (see MakeVertexBufferDesc in gpu_mesh.cpp).
         Mesh procCopy;
         procCopy.header            = sourceMeshPtr->header;
-        procCopy.vertexData        = sourceMeshPtr->vertexData; // 48 B bind pose
+        procCopy.vertexData        = sourceMeshPtr->vertexData; // 48 B bind pose (seed, overwritten by CS each frame)
         procCopy.indexData         = sourceMeshPtr->indexData;
         procCopy.submeshes         = sourceMeshPtr->submeshes;
         procCopy.skinnedVertexData.clear(); // proc mesh itself is not skinned
         procCopy.skeletonPath.clear();
+        procCopy.gpuSkinned        = true;
 
         const std::string key = "skeletal://" + skelMesh.meshPath + "#" + std::to_string(perEntityIndex++);
         const uint32_t procMeshId = renderer.RegisterProceduralMesh(std::move(procCopy), key);
@@ -210,7 +220,25 @@ void SkeletalMeshSubsystem::Finalize(World& world, SceneRenderer& renderer, IVFS
                     (slash == std::string::npos) ? 0 : slash + 1,
                     (dot == std::string::npos) ? std::string::npos : dot - ((slash == std::string::npos) ? 0 : slash + 1));
             }
+            // Strip common DCC-tool retargeting prefixes (e.g. UE exports
+            // retargeted animations as "AS_Mushroom_Idle"; gameplay scripts
+            // refer to the logical name "Mushroom_Idle"). Strip the prefix
+            // and ALSO register the unstripped name as an alias so existing
+            // content still resolves.
+            const std::string originalName = name;
+            constexpr const char* kRetargetPrefixes[] = {"AS_", "Anim_"};
+            for (const char* prefix : kRetargetPrefixes) {
+                const size_t plen = std::strlen(prefix);
+                if (name.size() > plen && name.compare(0, plen, prefix) == 0) {
+                    name.erase(0, plen);
+                    break;
+                }
+            }
+            AnimationClip clipCopy = parsed.value();
             controller->RegisterClip(name, std::move(parsed.value()));
+            if (originalName != name) {
+                controller->RegisterClip(originalName, std::move(clipCopy));
+            }
             ++loadedClips;
         }
 
@@ -289,6 +317,20 @@ void SkeletalMeshSubsystem::TickAll(float dt) {
     auto runOne = [dt](WorkItem& w) {
         if (!w.instance || !w.instance->IsValid()) return;
 
+        // Game-thread per-instance work: advance the controller, sample the
+        // pose for this frame, and stash it on the instance. The palette and
+        // the skinned vertex stream are produced LATER on the render thread
+        // — by `DispatchSkinningGpu` for the GPU compute path, which calls
+        // `UpdatePaletteFromPose` itself just before recording the dispatch.
+        //
+        // We intentionally DO NOT call `UpdatePaletteFromPose` or `SkinCpu`
+        // here: the GPU path renders the SkinnedVertex[] stream on the GPU
+        // and ignores `m_outputVertexData`, so the per-frame 120 k-vertex
+        // CPU skinning pass would be pure waste. (`UploadAll` is now a
+        // bind-pose-only fallback for backends without compute support; it
+        // uploads `m_outputVertexData` seeded once by `Bind()`, which is
+        // sufficient for the bind-pose render and never benefits from a
+        // per-frame `SkinCpu`.)
         const Skeleton* skeleton = w.instance->GetSkeleton();
         if (skeleton != nullptr && w.controller != nullptr) {
             w.controller->Update(dt);
@@ -296,9 +338,6 @@ void SkeletalMeshSubsystem::TickAll(float dt) {
             w.controller->SamplePose(*skeleton, pose);
             w.instance->SetPose(pose);
         }
-
-        w.instance->UpdatePaletteFromPose();
-        w.instance->SkinCpu();
     };
 
     auto* js = JobSystem::Get();
@@ -359,6 +398,308 @@ void SkeletalMeshSubsystem::UploadAll(IRHIDevice* device, IRHICommandList* cmdLi
     // produces corrupted vertex data (visible as stray geometry across the
     // screen). Hand ownership to the renderer's deferred-destroy queue,
     // which fires on the next frame AFTER the GPU fence has completed.
+    for (RHIBufferHandle staging : upload.TakeStagingBuffers()) {
+        renderer.QueueBufferDestroy(staging);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GPU skinning (gpu_skinning_cs.hlsl)
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+
+/// Lazily creates the per-instance GPU resources backing the skinning pass:
+/// - input SRV: `sourceMesh->skinnedVertexData` uploaded once (Default heap);
+/// - palette SRV: Default-heap buffer of `kMaxBones × 64 B`, identity-seeded
+///   via a single staging copy and then refreshed each frame from the per-
+///   instance staging path in `DispatchSkinningGpu`;
+/// - output UAV: pulled from the GPUMesh's vertex buffer.
+///
+/// Returns true once all three handles are valid on the instance. Returns
+/// false (silently) while the GPUMesh is still pending upload or the RHI
+/// doesn't expose bindless descriptors.
+bool EnsureGpuSkinningResources(SkeletalMeshInstance& inst,
+                                 IRHIDevice* device,
+                                 IRHICommandList* cmdList,
+                                 UploadContext& upload,
+                                 SceneRenderer& renderer) {
+    if (inst.GetGpuInputBuffer().IsValid() &&
+        inst.GetGpuPaletteBuffer().IsValid() &&
+        inst.GetGpuOutputUav() != UINT32_MAX) {
+        return true;
+    }
+
+    const Mesh* src = inst.GetSourceMesh();
+    if (!src || src->skinnedVertexData.empty()) return false;
+
+    const GPUMesh* gmesh = renderer.GetGPUMesh(inst.GetOutputMeshId());
+    if (gmesh == nullptr || !gmesh->IsValid()) return false;
+
+    // ── Output UAV index ─────────────────────────────────────────────────
+    const uint32_t outputUav = device->GetBufferUAVIndex(gmesh->vertexBuffer);
+    if (outputUav == UINT32_MAX) {
+        UZ_LOG(Animation, Warning,
+               "GPU skinning: output VB has no UAV (gpuSkinned flag missing?) for instance");
+        return false;
+    }
+    inst.SetGpuOutputUav(outputUav);
+
+    // Output VB was left in CopyDst state after the initial bind-pose
+    // upload in UploadMesh. Transition it to ShaderResource so the very
+    // first per-frame barrier (ShaderResource → UnorderedAccess) starts
+    // from the correct tracked state.
+    RHIBarrierDesc vbInit{};
+    vbInit.buffer      = gmesh->vertexBuffer;
+    vbInit.stateBefore = RHIResourceState::CopyDst;
+    vbInit.stateAfter  = RHIResourceState::ShaderResource;
+    cmdList->ResourceBarrier(&vbInit, 1);
+
+    // ── Skinned input buffer (one-time upload) ──────────────────────────
+    if (!inst.GetGpuInputBuffer().IsValid()) {
+        // stride=0 → raw ByteAddressBuffer SRV so the CPU-packed 56 B
+        // SkinnedVertex layout is read at exact offsets in HLSL without
+        // the D3D12 vector-packing padding that a StructuredBuffer<T>
+        // would inject.
+        RHIBufferDesc inDesc{};
+        inDesc.sizeBytes = static_cast<uint64_t>(src->skinnedVertexData.size());
+        inDesc.stride    = 0;
+        inDesc.usage     = RHIBufferUsage::StructuredBuffer | RHIBufferUsage::CopyDst;
+        inDesc.memory    = RHIMemoryType::Default;
+        inDesc.debugName = "SkeletalMesh_SkinnedInput";
+        RHIBufferHandle inBuf = device->CreateBuffer(inDesc);
+        if (!inBuf.IsValid()) {
+            UZ_LOG(Animation, Error, "GPU skinning: CreateBuffer(input) failed");
+            return false;
+        }
+        if (!upload.UploadBuffer(cmdList, inBuf,
+                                 src->skinnedVertexData.data(),
+                                 src->skinnedVertexData.size())) {
+            UZ_LOG(Animation, Error, "GPU skinning: UploadBuffer(input) failed");
+            device->DestroyBuffer(inBuf);
+            return false;
+        }
+        // UploadBuffer leaves the buffer in CopyDst state. The compute
+        // shader reads it as a StructuredBuffer SRV, so we must transition
+        // to ShaderResource before the first dispatch can read fresh data.
+        RHIBarrierDesc inToSrv{};
+        inToSrv.buffer      = inBuf;
+        inToSrv.stateBefore = RHIResourceState::CopyDst;
+        inToSrv.stateAfter  = RHIResourceState::ShaderResource;
+        cmdList->ResourceBarrier(&inToSrv, 1);
+
+        const uint32_t inSrv = device->GetBufferSRVIndex(inBuf);
+        if (inSrv == UINT32_MAX) {
+            UZ_LOG(Animation, Error, "GPU skinning: input buffer has no SRV index");
+            device->DestroyBuffer(inBuf);
+            return false;
+        }
+        inst.SetGpuInput(inBuf, inSrv);
+    }
+
+    // ── Palette buffer (DEFAULT heap, populated via per-frame staging) ──
+    // We deliberately use a Default-heap destination plus a per-instance,
+    // PERSISTENTLY-MAPPED Upload-heap staging buffer that we reuse every
+    // frame.
+    //
+    // History: a previous version called `UploadContext::UploadBuffer` once
+    // per frame, which allocated a fresh staging through D3D12MA every
+    // frame. After a few hundred frames the upload pool fragmented enough
+    // to start failing every staging allocation with `DXGI_ERROR_DEVICE_
+    // REMOVED` (0x887A0005), spamming the log without breaking rendering
+    // because the dispatch then ran with the previous frame's stale
+    // palette. A single permanent staging eliminates the churn.
+    if (!inst.GetGpuPaletteBuffer().IsValid()) {
+        static constexpr uint64_t kMaxBones = 256;
+        // Destination — Default heap, raw byte-address SRV.
+        RHIBufferDesc pDesc{};
+        pDesc.sizeBytes = kMaxBones * sizeof(Mat4);
+        pDesc.stride    = 0;
+        pDesc.usage     = RHIBufferUsage::StructuredBuffer | RHIBufferUsage::CopyDst;
+        pDesc.memory    = RHIMemoryType::Default;
+        pDesc.debugName = "SkeletalMesh_Palette";
+        RHIBufferHandle pBuf = device->CreateBuffer(pDesc);
+        if (!pBuf.IsValid()) {
+            UZ_LOG(Animation, Error, "GPU skinning: CreateBuffer(palette) failed");
+            return false;
+        }
+        const uint32_t pSrv = device->GetBufferSRVIndex(pBuf);
+        if (pSrv == UINT32_MAX) {
+            UZ_LOG(Animation, Error, "GPU skinning: palette SRV index missing");
+            device->DestroyBuffer(pBuf);
+            return false;
+        }
+
+        // Persistent staging — Upload heap, mapped once and reused.
+        RHIBufferDesc sDesc{};
+        sDesc.sizeBytes = kMaxBones * sizeof(Mat4);
+        sDesc.stride    = 0;
+        sDesc.usage     = RHIBufferUsage::CopySrc;
+        sDesc.memory    = RHIMemoryType::Upload;
+        sDesc.debugName = "SkeletalMesh_PaletteStaging";
+        RHIBufferHandle sBuf = device->CreateBuffer(sDesc);
+        if (!sBuf.IsValid()) {
+            UZ_LOG(Animation, Error, "GPU skinning: CreateBuffer(palette staging) failed");
+            device->DestroyBuffer(pBuf);
+            return false;
+        }
+        void* sMapped = device->MapBuffer(sBuf);
+        if (!sMapped) {
+            UZ_LOG(Animation, Error, "GPU skinning: MapBuffer(palette staging) failed");
+            device->DestroyBuffer(sBuf);
+            device->DestroyBuffer(pBuf);
+            return false;
+        }
+
+        // Seed identity into the staging, copy into the destination, transition
+        // destination to ShaderResource. After this point, every per-frame
+        // upload is just memcpy + CopyBufferRegion + 2 barriers — no D3D12MA
+        // allocations.
+        Mat4* slots = static_cast<Mat4*>(sMapped);
+        const Mat4 identity = Mat4::Identity();
+        for (uint64_t i = 0; i < kMaxBones; ++i) slots[i] = identity;
+
+        cmdList->CopyBuffer(sBuf, 0, pBuf, 0, kMaxBones * sizeof(Mat4));
+
+        RHIBarrierDesc palToSrv{};
+        palToSrv.buffer      = pBuf;
+        palToSrv.stateBefore = RHIResourceState::CopyDst;
+        palToSrv.stateAfter  = RHIResourceState::ShaderResource;
+        cmdList->ResourceBarrier(&palToSrv, 1);
+
+        inst.SetGpuPalette(pBuf, pSrv, nullptr);
+        inst.SetGpuPaletteStaging(sBuf, sMapped);
+    }
+
+    return true;
+}
+
+} // anonymous namespace
+
+void SkeletalMeshSubsystem::DispatchSkinningGpu(IRHIDevice* device,
+                                                 IRHICommandList* cmdList,
+                                                 SceneRenderer& renderer,
+                                                 PipelineLibrary& pipelines) {
+    if (device == nullptr || cmdList == nullptr) return;
+
+    RHIPipelineHandle skinningPso = pipelines.GetGpuSkinning();
+    if (!skinningPso.IsValid()) return;
+
+    // Snapshot instance pointers under the lock; run the compute work outside
+    // the lock (the instance pointers are stable for the frame lifetime).
+    std::vector<SkeletalMeshInstance*> instances;
+    {
+        std::lock_guard<std::mutex> lock(m_registryMutex);
+        instances.reserve(m_records.size());
+        for (auto& rec : m_records) {
+            if (!rec.instance) continue;
+            if (!rec.instance->IsValid()) continue;
+            instances.push_back(rec.instance.get());
+        }
+    }
+    if (instances.empty()) return;
+
+    UploadContext upload(device);
+
+    // Bind the compute pipeline once; per-instance state is pushed via root
+    // constants and bindless descriptor indices.
+    cmdList->SetPipeline(skinningPso);
+
+    for (SkeletalMeshInstance* inst : instances) {
+        if (!EnsureGpuSkinningResources(*inst, device, cmdList, upload, renderer)) {
+            continue;
+        }
+
+        inst->UpdatePaletteFromPose();
+
+        // ── Diagnostic: dump m_palette[5] every 30 frames to confirm the
+        // pose is being animated (rotations should appear in row 0/1/2).
+        {
+            static uint32_t s_frame = 0;
+            ++s_frame;
+            if ((s_frame % 30u) == 0u && !inst->GetPalette().empty() &&
+                inst->GetPalette().size() > 5) {
+                const float* m = reinterpret_cast<const float*>(&inst->GetPalette()[5]);
+                UZ_LOG(Animation, Warning,
+                       "  pal[5] @ frame {}: r0=({:.4f},{:.4f},{:.4f},{:.4f}) "
+                       "r1=({:.4f},{:.4f},{:.4f},{:.4f}) "
+                       "r2=({:.4f},{:.4f},{:.4f},{:.4f}) "
+                       "r3=({:.4f},{:.4f},{:.4f},{:.4f})",
+                       s_frame,
+                       m[0], m[1], m[2], m[3],
+                       m[4], m[5], m[6], m[7],
+                       m[8], m[9], m[10], m[11],
+                       m[12], m[13], m[14], m[15]);
+            }
+        }
+
+        // ── Per-frame palette upload via the persistent staging buffer.
+        // memcpy m_palette into the upload-heap staging, then issue a
+        // CopyBufferRegion into the Default-heap palette destination.
+        // No D3D12MA allocation per frame — the staging buffer was created
+        // ONCE in EnsureGpuSkinningResources.
+        const auto& palette = inst->GetPalette();
+        void* stagingMapped = inst->GetGpuPaletteStagingMappedPtr();
+        if (!palette.empty() && stagingMapped) {
+            const size_t bytes = palette.size() * sizeof(Mat4);
+            std::memcpy(stagingMapped, palette.data(), bytes);
+
+            RHIBarrierDesc palToCopy{};
+            palToCopy.buffer      = inst->GetGpuPaletteBuffer();
+            palToCopy.stateBefore = RHIResourceState::ShaderResource;
+            palToCopy.stateAfter  = RHIResourceState::CopyDst;
+            cmdList->ResourceBarrier(&palToCopy, 1);
+
+            cmdList->CopyBuffer(inst->GetGpuPaletteStagingBuffer(), 0,
+                                inst->GetGpuPaletteBuffer(), 0, bytes);
+
+            RHIBarrierDesc palToSrv{};
+            palToSrv.buffer      = inst->GetGpuPaletteBuffer();
+            palToSrv.stateBefore = RHIResourceState::CopyDst;
+            palToSrv.stateAfter  = RHIResourceState::ShaderResource;
+            cmdList->ResourceBarrier(&palToSrv, 1);
+        }
+
+        const GPUMesh* gmesh = renderer.GetGPUMesh(inst->GetOutputMeshId());
+        if (gmesh == nullptr || !gmesh->IsValid()) continue;
+
+        const uint32_t vertexCount = inst->GetSourceMesh()->GetVertexCount();
+        if (vertexCount == 0) continue;
+
+        // The GBuffer vertex shader reads this buffer as a bindless
+        // StructuredBuffer SRV (see gbuffer_pass.cpp: bindless path uses
+        // `mesh.vbSrvIndex`, not `SetVertexBuffer`). So the correct target
+        // state around the compute dispatch is ShaderResource, not
+        // VertexBuffer — the latter would leave the VS reading the buffer
+        // from the wrong D3D12 resource state and blocking the SRV.
+        RHIBarrierDesc toUav{};
+        toUav.buffer       = gmesh->vertexBuffer;
+        toUav.stateBefore  = RHIResourceState::ShaderResource;
+        toUav.stateAfter   = RHIResourceState::UnorderedAccess;
+        cmdList->ResourceBarrier(&toUav, 1);
+
+        // Push constants (4 uints: inputSrv, paletteSrv, outputUav, vertexCount).
+        const uint32_t push[4] = {
+            inst->GetGpuInputSrv(),
+            inst->GetGpuPaletteSrv(),
+            inst->GetGpuOutputUav(),
+            vertexCount
+        };
+        cmdList->SetRootConstants(0, push, 4);
+
+        const uint32_t groupsX = (vertexCount + 63u) / 64u;
+        cmdList->Dispatch(groupsX, 1, 1);
+
+        // UAV → ShaderResource so the GBuffer VS can read the freshly
+        // written vertices via the bindless SRV path.
+        RHIBarrierDesc toSrv{};
+        toSrv.buffer       = gmesh->vertexBuffer;
+        toSrv.stateBefore  = RHIResourceState::UnorderedAccess;
+        toSrv.stateAfter   = RHIResourceState::ShaderResource;
+        cmdList->ResourceBarrier(&toSrv, 1);
+    }
+
+    // Defer staging destruction until the GPU fence of this frame elapses.
     for (RHIBufferHandle staging : upload.TakeStagingBuffers()) {
         renderer.QueueBufferDestroy(staging);
     }

@@ -32,6 +32,17 @@ static RHIBufferDesc MakeVertexBufferDesc(IRHIDevice* device, const Mesh& mesh) 
         desc.debugName = "GPUMesh_VB";
     }
 
+    // GPU-skinned output: compute shader writes each frame via UAV. Also
+    // keep the structured-buffer SRV so bindless meshes can still read it
+    // as a VB. The initial state is CopyDst so the bind-pose UploadBuffer
+    // below succeeds before the per-frame UAV→VertexBuffer transitions.
+    if (mesh.gpuSkinned) {
+        desc.usage = desc.usage |
+                     RHIBufferUsage::StructuredBuffer |
+                     RHIBufferUsage::UnorderedAccess;
+        desc.debugName = "GPUMesh_VB_Skinned";
+    }
+
     return desc;
 }
 

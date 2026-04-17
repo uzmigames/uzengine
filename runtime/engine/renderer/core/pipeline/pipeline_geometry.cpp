@@ -391,6 +391,34 @@ RHIPipelineHandle PipelineLibrary::GetPixelDebugCompute() {
     return m_pixelDebugCompute;
 }
 
+RHIPipelineHandle PipelineLibrary::GetGpuSkinning() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetGpuSkinning called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_gpuSkinningPipeline.IsValid()) {
+        return m_gpuSkinningPipeline;
+    }
+
+    if (!EnsureGpuSkinningShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_gpuSkinningCS;
+    desc.debugName     = "GpuSkinning";
+
+    m_gpuSkinningPipeline = m_device->CreateComputePipeline(desc);
+    if (!m_gpuSkinningPipeline.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create GpuSkinning pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created GpuSkinning pipeline");
+    }
+
+    return m_gpuSkinningPipeline;
+}
+
 RHIPipelineHandle PipelineLibrary::GetGBufferDebug() {
     if (!m_initialized) {
         UZ_LOG(Renderer, Error, "PipelineLibrary::GetGBufferDebug called before Init()");

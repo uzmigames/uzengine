@@ -71,28 +71,41 @@ void Skeleton::ComputeInverseBindMatrices() {
         return;
     }
 
-    // Temporary array of world-space bind matrices.
-    // Bones are in topological order (parents before children), so a single
-    // forward pass computes all world transforms without recursion.
-    std::vector<Mat4> worldBindMatrices(boneCount);
+    // Walk the bone hierarchy via TRS composition (BoneTransform::ComposeWith)
+    // and only flatten to a 4x4 matrix at the leaves. The FBX importer
+    // (`ComputeLocalFromWorldTRS`) decomposed every bone with the inverse of
+    // this exact composition, so reconstructing the world transform here with
+    // anything other than the same TRS chain produces a different matrix
+    // whenever a bone has non-uniform scale (FBX rigs frequently bake non-
+    // trivial scale into bones via axis conversion / pre-/post-rotation).
+    // Mismatched composition = correct bind pose (the same algorithm runs on
+    // both sides of `palette = inverseBind * world` so they cancel) but
+    // incorrect animated poses.
+    //
+    // This mirrors UE5's `FillUpComponentSpaceTransforms`
+    // (Engine/Source/Runtime/Engine/Private/Animation/AnimationRuntime.cpp:2683-2701)
+    // which composes `FTransform * FTransform` and only converts to FMatrix
+    // once per bone, when finally writing into the GPU palette.
+    std::vector<BoneTransform> worldBindTRS(boneCount);
 
     for (uint32_t i = 0; i < boneCount; ++i) {
         auto& bone = m_bones[i];
-
-        // Compute this bone's local bind matrix from its TRS components.
-        const Mat4 localBind = Mat4::TRS(bone.bindTranslation, bone.bindRotation, bone.bindScale);
+        const BoneTransform localBind = bone.GetBindTransform();
 
         if (bone.parentIndex == kInvalidBoneIndex) {
-            // Root bone: local = world.
-            worldBindMatrices[i] = localBind;
+            worldBindTRS[i] = localBind;
         } else {
-            // Child bone: world = local * parentWorld.
-            // DirectX row-vector convention: vertex * local * parent = vertex * world.
-            worldBindMatrices[i] = localBind * worldBindMatrices[static_cast<uint32_t>(bone.parentIndex)];
+            worldBindTRS[i] = localBind.ComposeWith(
+                worldBindTRS[static_cast<uint32_t>(bone.parentIndex)]);
         }
 
-        // Inverse bind matrix: transforms from model space to bone-local bind space.
-        bone.inverseBindWorld = worldBindMatrices[i].inverse();
+        // Flatten the world TRS to a matrix and invert. The result is the
+        // inverse of the bind-pose component-space matrix — the standard
+        // skinning "inverse bind" matrix despite the misleading "World"
+        // suffix on the field name.
+        const Mat4 worldBindMatrix = Mat4::TRS(
+            worldBindTRS[i].position, worldBindTRS[i].rotation, worldBindTRS[i].scale);
+        bone.inverseBindWorld = worldBindMatrix.inverse();
     }
 
     m_inverseBindComputed = true;

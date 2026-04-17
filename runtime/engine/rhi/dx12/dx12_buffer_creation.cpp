@@ -119,23 +119,45 @@ bool CreateDX12Buffer(ID3D12Device* device,
         }
     }
 
-    // Create SRV for structured/typed buffers (bindless)
-    if (HasFlag(desc.usage, RHIBufferUsage::StructuredBuffer) && desc.stride > 0) {
+    // Create SRV for structured/typed buffers (bindless).
+    //
+    // stride > 0  → structured buffer (StructuredBuffer<T> in HLSL).
+    // stride == 0 → raw byte-address buffer (ByteAddressBuffer in HLSL).
+    //               Required when the caller wants CPU-exact byte layout
+    //               without HLSL's vector-packing rules injecting padding
+    //               (e.g., GPU skinning SkinnedVertex = 56 B packed).
+    if (HasFlag(desc.usage, RHIBufferUsage::StructuredBuffer)) {
         uint32_t srvIdx = srvUavHeap.Allocate();
         if (srvIdx != DescriptorAllocator::kInvalidIndex) {
             D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-            srvDesc.Format = DXGI_FORMAT_UNKNOWN;
             srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
             srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-            const uint64_t numElements = desc.sizeBytes / desc.stride;
-            if (numElements > UINT_MAX) {
-                UZ_LOG(RHI, Error, "CreateBuffer: SRV element count {} exceeds UINT_MAX (name='{}')",
-                       numElements, desc.debugName ? desc.debugName : "");
-                srvUavHeap.Free(srvIdx);
-                return false;
+
+            if (desc.stride > 0) {
+                srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+                const uint64_t numElements = desc.sizeBytes / desc.stride;
+                if (numElements > UINT_MAX) {
+                    UZ_LOG(RHI, Error, "CreateBuffer: SRV element count {} exceeds UINT_MAX (name='{}')",
+                           numElements, desc.debugName ? desc.debugName : "");
+                    srvUavHeap.Free(srvIdx);
+                    return false;
+                }
+                srvDesc.Buffer.NumElements = static_cast<UINT>(numElements);
+                srvDesc.Buffer.StructureByteStride = desc.stride;
+            } else {
+                // Raw buffer SRV: R32_TYPELESS + RAW flag, element count in DWORDs.
+                srvDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+                const uint64_t numElements = desc.sizeBytes / 4;
+                if (numElements > UINT_MAX) {
+                    UZ_LOG(RHI, Error, "CreateBuffer: raw SRV element count {} exceeds UINT_MAX (name='{}')",
+                           numElements, desc.debugName ? desc.debugName : "");
+                    srvUavHeap.Free(srvIdx);
+                    return false;
+                }
+                srvDesc.Buffer.NumElements = static_cast<UINT>(numElements);
+                srvDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_RAW;
             }
-            srvDesc.Buffer.NumElements = static_cast<UINT>(numElements);
-            srvDesc.Buffer.StructureByteStride = desc.stride;
+
             device->CreateShaderResourceView(resource, &srvDesc, srvUavHeap.CpuHandle(srvIdx));
             outBuffer.srvIndex = srvIdx;
         }

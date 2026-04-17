@@ -26,6 +26,7 @@
 #include "bone_transform.h"
 #include "pose.h"
 #include "mat4.h"
+#include "rhi_types.h"
 
 #include <cstdint>
 #include <mutex>
@@ -116,6 +117,57 @@ public:
     /// Returns the current bone palette (model-space bone × inverseBind).
     [[nodiscard]] const std::vector<Mat4>& GetPalette() const { return m_palette; }
 
+    // ── GPU skinning resources (managed by SkeletalMeshSubsystem) ──────
+
+    /// Input structured buffer holding the 56 B SkinnedVertex[] stream.
+    /// Uploaded once at Finalize. Read as SRV by `gpu_skinning_cs.hlsl`.
+    [[nodiscard]] RHIBufferHandle GetGpuInputBuffer() const { return m_gpuInputBuffer; }
+    [[nodiscard]] uint32_t        GetGpuInputSrv() const    { return m_gpuInputSrv; }
+
+    /// Per-frame bone palette buffer: kMaxBones × 64 B row-major Mat4[].
+    /// Default heap (GPU-only memory). The shader reads this as a raw
+    /// ByteAddressBuffer SRV. Each frame the runtime memcpys the latest
+    /// `m_palette` into the per-instance UPLOAD-heap staging buffer below
+    /// and issues a CopyBufferRegion into this Default-heap destination.
+    [[nodiscard]] RHIBufferHandle GetGpuPaletteBuffer() const { return m_gpuPaletteBuffer; }
+    [[nodiscard]] uint32_t        GetGpuPaletteSrv() const    { return m_gpuPaletteSrv; }
+    [[nodiscard]] void*           GetGpuPaletteMappedPtr() const { return m_gpuPaletteMapped; }
+
+    /// Per-instance UPLOAD-heap staging buffer used as the source for the
+    /// per-frame palette CopyBufferRegion. Allocated ONCE in
+    /// `EnsureGpuSkinningResources` and reused every frame — reallocating a
+    /// fresh staging via `UploadContext::UploadBuffer` each frame fragmented
+    /// the D3D12MA pool fast enough to start failing with
+    /// `DXGI_ERROR_DEVICE_REMOVED` after a few hundred frames.
+    [[nodiscard]] RHIBufferHandle GetGpuPaletteStagingBuffer() const { return m_gpuPaletteStaging; }
+    [[nodiscard]] void*           GetGpuPaletteStagingMappedPtr() const { return m_gpuPaletteStagingMapped; }
+
+    /// Bindless UAV descriptor index of the procedural mesh's vertex buffer,
+    /// which the compute shader writes into. Set by the subsystem after the
+    /// mesh is uploaded.
+    [[nodiscard]] uint32_t GetGpuOutputUav() const { return m_gpuOutputUav; }
+
+    /// Setters used by SkeletalMeshSubsystem during resource binding.
+    void SetGpuInput(RHIBufferHandle buffer, uint32_t srv) {
+        m_gpuInputBuffer = buffer;
+        m_gpuInputSrv    = srv;
+    }
+    void SetGpuPalette(RHIBufferHandle buffer, uint32_t srv, void* mapped) {
+        m_gpuPaletteBuffer = buffer;
+        m_gpuPaletteSrv    = srv;
+        m_gpuPaletteMapped = mapped;
+    }
+    void SetGpuPaletteStaging(RHIBufferHandle buffer, void* mapped) {
+        m_gpuPaletteStaging       = buffer;
+        m_gpuPaletteStagingMapped = mapped;
+    }
+    void SetGpuOutputUav(uint32_t uavIndex) { m_gpuOutputUav = uavIndex; }
+
+    /// Copies the current palette into the mapped upload buffer. Safe to
+    /// call from the render thread after pose evaluation. No-op if the
+    /// palette or the mapped pointer isn't populated yet.
+    void UpdatePaletteGpu();
+
 private:
     // Shared, immutable resources.
     const Mesh*     m_sourceMesh = nullptr;
@@ -132,6 +184,16 @@ private:
     std::vector<Mat4>    m_palette;             ///< World bone × inverseBind, per bone.
     std::vector<uint8_t> m_outputVertexData;    ///< 48 B Vertex[] bytes, one per source vertex.
     bool                 m_outputDirty = false; ///< Set when m_outputVertexData changes; cleared after upload.
+
+    // ── GPU skinning handles (null until the subsystem binds GPU resources) ──
+    RHIBufferHandle m_gpuInputBuffer       = {};         ///< SkinnedVertex[] SRV (Default heap, one-time upload).
+    RHIBufferHandle m_gpuPaletteBuffer     = {};         ///< Per-frame palette destination (Default heap).
+    void*           m_gpuPaletteMapped     = nullptr;    ///< Unused for Default-heap palettes; kept for the legacy Upload-heap path.
+    RHIBufferHandle m_gpuPaletteStaging    = {};         ///< Persistent UPLOAD-heap staging buffer for per-frame palette uploads.
+    void*           m_gpuPaletteStagingMapped = nullptr; ///< Mapped pointer of `m_gpuPaletteStaging` (write-only from CPU).
+    uint32_t        m_gpuInputSrv          = UINT32_MAX;
+    uint32_t        m_gpuPaletteSrv        = UINT32_MAX;
+    uint32_t        m_gpuOutputUav         = UINT32_MAX; ///< UAV index of the procedural mesh VB.
 };
 
 } // namespace uz

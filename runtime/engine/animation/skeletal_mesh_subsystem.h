@@ -41,6 +41,7 @@ class AnimationController;
 class SceneRenderer;
 class IRHIDevice;
 class IRHICommandList;
+class PipelineLibrary;
 class World;
 struct Mesh;
 class IVFS;
@@ -109,7 +110,27 @@ public:
     /// Must run on the render thread inside an active frame: the caller
     /// supplies the device for staging allocation and a command list in
     /// recording state. The `renderer` resolves mesh IDs to `GPUMesh`.
+    ///
+    /// # Deprecation
+    /// Superseded by `DispatchSkinningGpu` when the GPU compute skinning
+    /// pipeline is wired; the CPU path remains as an editor / debug
+    /// fallback. Current production renderer calls `DispatchSkinningGpu`
+    /// instead.
     void UploadAll(IRHIDevice* device, IRHICommandList* cmdList, SceneRenderer& renderer);
+
+    /// Runs the `gpu_skinning_cs.hlsl` compute pass for every registered
+    /// instance. Lazy-initialises per-entity GPU resources (input SRV,
+    /// palette upload-buffer, output UAV) on first call once the procedural
+    /// mesh finishes uploading. After the dispatch, the mesh's vertex
+    /// buffer is left in the `VertexBuffer` state and is consumed by the
+    /// GBuffer pass as-is.
+    ///
+    /// Must run on the render thread inside an active frame, before the
+    /// GBuffer pass records its draws.
+    void DispatchSkinningGpu(IRHIDevice* device,
+                             IRHICommandList* cmdList,
+                             SceneRenderer& renderer,
+                             PipelineLibrary& pipelines);
 
     // ── Lookup ────────────────────────────────────────────────────────
 

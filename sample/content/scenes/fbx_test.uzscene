@@ -58,19 +58,19 @@
           "skeleton": "meshes/mushroommonster/MushroomMonster_Low.uzskel",
           "initialClip": "",
           "clips": [
-            "meshes/mushroommonster/animations/Mushroom_Idle.uzanim",
-            "meshes/mushroommonster/animations/Mushroom_IdleBreak.uzanim",
-            "meshes/mushroommonster/animations/Mushroom_Walk.uzanim",
-            "meshes/mushroommonster/animations/Mushroom_WalkBack.uzanim",
-            "meshes/mushroommonster/animations/Mushroom_Attack01.uzanim",
-            "meshes/mushroommonster/animations/Mushroom_Attack02.uzanim",
-            "meshes/mushroommonster/animations/Mushroom_Attack03.uzanim",
-            "meshes/mushroommonster/animations/Mushroom_Block01.uzanim",
-            "meshes/mushroommonster/animations/Mushroom_Block02.uzanim",
-            "meshes/mushroommonster/animations/Mushroom_Block03.uzanim",
-            "meshes/mushroommonster/animations/Mushroom_Hit.uzanim",
-            "meshes/mushroommonster/animations/Mushroom_Death.uzanim",
-            "meshes/mushroommonster/animations/Mushroom_Squash.uzanim"
+            "meshes/mushroommonster/animations/AS_Mushroom_Idle.uzanim",
+            "meshes/mushroommonster/animations/AS_Mushroom_IdleBreak.uzanim",
+            "meshes/mushroommonster/animations/AS_Mushroom_Walk.uzanim",
+            "meshes/mushroommonster/animations/AS_Mushroom_WalkBack.uzanim",
+            "meshes/mushroommonster/animations/AS_Mushroom_Attack01.uzanim",
+            "meshes/mushroommonster/animations/AS_Mushroom_Attack02.uzanim",
+            "meshes/mushroommonster/animations/AS_Mushroom_Attack03.uzanim",
+            "meshes/mushroommonster/animations/AS_Mushroom_Block01.uzanim",
+            "meshes/mushroommonster/animations/AS_Mushroom_Block02.uzanim",
+            "meshes/mushroommonster/animations/AS_Mushroom_Block03.uzanim",
+            "meshes/mushroommonster/animations/AS_Mushroom_Hit.uzanim",
+            "meshes/mushroommonster/animations/AS_Mushroom_Death.uzanim",
+            "meshes/mushroommonster/animations/AS_Mushroom_Squash.uzanim"
           ]
         },
         "material": {
@@ -96,8 +96,8 @@
             0
           ],
           "scale": [
-            800,
-            800,
+            4000,
+            4000,
             2
           ]
         },
@@ -115,14 +115,14 @@
       "components": {
         "transform": {
           "position": [
+            -380,
             0,
-            -350,
-            120
+            260
           ],
           "rotation": [
             0,
             0,
-            -8
+            0
           ]
         },
         "camera": {
@@ -178,14 +178,6 @@
         },
         "height_fog": {
           "base_height": -5000
-        }
-      }
-    },
-    {
-      "name": "Controller",
-      "components": {
-        "script": {
-          "path": "scripts/fly_camera.lua"
         }
       }
     }

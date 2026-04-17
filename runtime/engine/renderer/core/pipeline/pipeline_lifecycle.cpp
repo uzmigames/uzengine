@@ -144,6 +144,7 @@ void PipelineLibrary::Shutdown() {
     destroyPipeline(m_dofSetup);
     destroyPipeline(m_dofBlur);
     destroyPipeline(m_fxaa);
+    destroyPipeline(m_gpuSkinningPipeline);
 
     // Destroy cached shaders
     auto destroyShader = [this](RHIShaderHandle& h) {
@@ -160,6 +161,7 @@ void PipelineLibrary::Shutdown() {
     destroyShader(m_gbufferPS);
     destroyShader(m_lightingPS);
     destroyShader(m_pixelDebugCS);
+    destroyShader(m_gpuSkinningCS);
     destroyShader(m_gbufferDebugPS);
     destroyShader(m_debugViewPS);
     destroyShader(m_pathTracerPS);
@@ -252,6 +254,17 @@ bool PipelineLibrary::EnsurePixelDebugComputeShader() {
         m_pixelDebugCS = m_shaderMgr->CreateShader(EngineShader::PixelDebugCS, RHIShaderStage::Compute);
         if (!m_pixelDebugCS.IsValid()) {
             UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile PixelDebugCS");
+            return false;
+        }
+    }
+    return true;
+}
+
+bool PipelineLibrary::EnsureGpuSkinningShader() {
+    if (!m_gpuSkinningCS.IsValid()) {
+        m_gpuSkinningCS = m_shaderMgr->CreateShader(EngineShader::GpuSkinningCS, RHIShaderStage::Compute);
+        if (!m_gpuSkinningCS.IsValid()) {
+            UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile GpuSkinningCS");
             return false;
         }
     }

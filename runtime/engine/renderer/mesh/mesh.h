@@ -129,6 +129,13 @@ struct Mesh {
     std::vector<uint8_t>   skinnedVertexData; ///< 56 B SkinnedVertex[], empty if unskinned.
     std::string            skeletonPath;      ///< VFS path to .uzskel, empty if unskinned.
 
+    /// When true, the GPU vertex buffer is created with UAV + StructuredBuffer
+    /// usage so a compute shader (gpu_skinning_cs.hlsl) can write animated
+    /// vertices into it each frame. The procedural skeletal-mesh path sets
+    /// this before `RegisterProceduralMesh()`; regular static meshes keep
+    /// the default CopyDst-only VB layout.
+    bool                   gpuSkinned = false;
+
     /// Returns vertex count from header.
     [[nodiscard]] uint32_t GetVertexCount() const { return header.vertexCount; }
 

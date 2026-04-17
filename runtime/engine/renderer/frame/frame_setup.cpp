@@ -106,11 +106,20 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     // ── Flush deferred asset loads (queued from Lua callbacks) ─────────
     FlushPendingLoads(ctx.cmdList, ctx.vfs);
 
-    // ── Upload skinned vertex buffers for all animated entities ────────
-    // AnimationSubsystem::TickAll(dt) has already produced fresh CPU vertex
-    // bytes. Push them into each entity's procedural GPU mesh so the GBuffer
-    // pass draws the updated pose this frame.
-    uz::SkeletalMeshSubsystem::Get().UploadAll(m_device, ctx.cmdList, *this);
+    // ── Skeletal: GPU skinning compute pass ──────────────────────────────
+    // Runs gpu_skinning_cs.hlsl per skeletal instance: reads SkinnedVertex[]
+    // SRV + bone palette SRV, writes Vertex[] into the procedural mesh's VB
+    // UAV. The GBuffer pass then samples the freshly-skinned VB via its
+    // bindless SRV. Falls back to the CPU `UploadAll` path (which uploads the
+    // CPU-skinned `m_outputVertexData` produced by `SkinCpu` in TickAll) if
+    // the GPU skinning PSO is invalid (downlevel feature levels, shader
+    // compile failure, etc.).
+    if (m_pipelines && m_pipelines->GetGpuSkinning().IsValid()) {
+        uz::SkeletalMeshSubsystem::Get().DispatchSkinningGpu(
+            m_device, ctx.cmdList, *this, *m_pipelines);
+    } else {
+        uz::SkeletalMeshSubsystem::Get().UploadAll(m_device, ctx.cmdList, *this);
+    }
 
     // ── Apply CVar changes ─────────────────────────────────────────────
     ApplyCVars();
