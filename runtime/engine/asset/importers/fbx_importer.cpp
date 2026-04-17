@@ -291,21 +291,100 @@ inline Vec3 RemapSrcVec3(double sx, double sy, double sz) {
     }
 }
 
-/// Remaps a quaternion's imaginary part the same way as a vector. The scalar
-/// (w) is invariant under axis-permutation conjugation. Note: pure axis
-/// permutations (det=±1) preserve rotation magnitude; handedness changes are
-/// absorbed by the geometry winding flip elsewhere in the importer.
+/// Remaps a rotation quaternion from the source FBX coordinate frame into the
+/// engine frame (right=+Y, up=+Z, back=+X, left-handed).
+///
+/// MayaYupRH: the position remap is the cyclic permutation (x,y,z)→(z,x,y),
+/// which corresponds to a 120° rotation M_maya about the (1,1,1)/√3 axis.
+/// q_engine = M_maya * q_maya * M_maya^{-1}
+/// Quaternion of M_maya = (0.5, 0.5, 0.5, 0.5), so the cyclic permutation on
+/// the imaginary part (z,x,y,w) is correct.
+///
+/// MaxZupRH (UE5 FBX export): FbxAxisSystem::ConvertScene pre-multiplies the
+/// ROOT bone's local rotation by q_T_left = +90° around the Maya X axis before
+/// writing the FBX file. All child bone LOCAL transforms are left unchanged,
+/// but every bone's WORLD rotation — as returned by ufbx_evaluate_scene — is
+/// T_left-rotated relative to the Maya world rotation.
+///
+/// The correct engine-space rotation is therefore:
+///   q_engine = q_L * q_ue5_world * q_R
+/// where
+///   q_L = M_maya * conj(T_left) = (0, 0, √2/2, √2/2)  [+90° around engine Z]
+///   q_R = M_maya^{-1}           = (−0.5, −0.5, −0.5, 0.5)
+///
+/// This is mathematically equivalent to the MayaYupRH formula because:
+///   q_ue5_world = q_T_left * q_maya_world  (for every bone in the chain)
+///   q_L * (q_T_left * q_maya_world) * q_R
+///     = M_maya * q_maya_world * M_maya^{-1}    ✓
+///
+/// Derivation verified numerically for root (Point001), direct child
+/// (MushroomPelvis) and a deep descendant (Point005) of the mushroom rig.
+///
+/// @ref FbxAxisSystem::ConvertScene documentation, ufbx library source
 inline Quat RemapSrcQuat(double qx, double qy, double qz, double qw) {
-    const Vec3 v = RemapSrcVec3(qx, qy, qz);
-    return Quat{v.x, v.y, v.z, static_cast<float>(qw)};
+    switch (g_fbxSrcConv) {
+        case FbxSrcConvention::MayaYupRH: {
+            // Cyclic permutation (x,y,z,w) → (z,x,y,w) matches M_maya conjugation.
+            return Quat{static_cast<float>(qz),
+                        static_cast<float>(qx),
+                        static_cast<float>(qy),
+                        static_cast<float>(qw)};
+        }
+        case FbxSrcConvention::MaxZupRH: {
+            // Closed-form of the two-sided quaternion sandwich q_L * q_ue5 * q_R:
+            //   q_L = (0, 0, s, s)      s = sqrt(2)/2   [+90 deg around engine Z]
+            //   q_R = (-h, -h, -h, h)   h = 0.5         [M_maya_inv]
+            //
+            // Full expansion gives the compact result (verified numerically for
+            // root, direct child, and deep descendant bones of the mushroom rig):
+            //   out.x = s * (qz - qy)
+            //   out.y = s * (qx - qw)
+            //   out.z = s * (qy + qz)
+            //   out.w = s * (qw + qx)
+            // The output is already unit when the input is unit.
+            constexpr float s = 0.70710678118654752f;  // sqrt(2)/2
+            const float ix = static_cast<float>(qx);
+            const float iy = static_cast<float>(qy);
+            const float iz = static_cast<float>(qz);
+            const float iw = static_cast<float>(qw);
+            return Quat{s * (iz - iy),
+                        s * (ix - iw),
+                        s * (iy + iz),
+                        s * (iw + ix)};
+        }
+        case FbxSrcConvention::Identity:
+        default:
+            return Quat{static_cast<float>(qx),
+                        static_cast<float>(qy),
+                        static_cast<float>(qz),
+                        static_cast<float>(qw)};
+    }
 }
 
-/// Remaps a non-uniform scale triple. Scale components remap the same way as
-/// position, but the absolute value is preserved (negative scales flip).
+/// Remaps a non-uniform scale triple. Scale magnitudes follow the same AXIS
+/// permutation as positions, but without sign changes — scale is always a
+/// positive magnitude per axis.
+///
+/// For MayaYupRH the cyclic permutation (x,y,z)→(z,x,y) has no sign flips,
+/// so it is safe to reuse RemapSrcVec3.
+///
+/// For MaxZupRH the position remap is (x,y,z)→(−y, x, z). The sign flip on y
+/// is needed for positions/directions (to reflect the axis direction change),
+/// but scale magnitudes must NOT be negated — a scale of (1,1,1) must remain
+/// (1,1,1) in engine space. The correct scale permutation for MaxZupRH is
+/// therefore (y, x, z): swap X↔Y and preserve Z, no sign change.
 inline Vec3 RemapSrcScale(double sx, double sy, double sz) {
-    // Scale magnitudes follow the same axis remap; sign of the source scale
-    // sign is preserved on the destination axis it maps to.
-    return RemapSrcVec3(sx, sy, sz);
+    switch (g_fbxSrcConv) {
+        case FbxSrcConvention::MayaYupRH:
+            // Cyclic: same as position remap, no sign flips involved.
+            return Vec3{static_cast<float>(sz), static_cast<float>(sx), static_cast<float>(sy)};
+        case FbxSrcConvention::MaxZupRH:
+            // Permute X↔Y; Z is unchanged. No sign flip (scale is unsigned).
+            return Vec3{static_cast<float>(sy), static_cast<float>(sx), static_cast<float>(sz)};
+        case FbxSrcConvention::Identity:
+        default:
+            return Vec3{static_cast<float>(sx), static_cast<float>(sy), static_cast<float>(sz)};
+    }
 }
 
 [[nodiscard]] BoneTransform DecomposeUfbxMatrix(const ufbx_matrix& mat) {
@@ -1047,7 +1126,7 @@ const char* FbxImporter::Name() const {
 }
 
 uint32_t FbxImporter::Version() const {
-    return 16; // v16: removed manual winding flip (per-source remaps preserve CCW already)
+    return 17; // v17: restore winding flip for non-Identity remaps (RH→LH CCW→CW)
 }
 
 const std::vector<std::string>& FbxImporter::Extensions() const {
@@ -1337,6 +1416,21 @@ AssetImportResult FbxImporter::Import(
                 mesh,
                 face);
             const uint32_t numTriangulated = numTriangles * 3;
+
+            // Reverse triangle winding for source conventions whose triangles
+            // are authored CCW-outward in a right-handed frame. The per-file
+            // axis remap (MayaYupRH cyclic, MaxZupRH swap) is det=+1 so it
+            // preserves CCW in the new basis, but the engine renders in a
+            // left-handed convention where CCW is treated as back-facing.
+            // Swap indices [1]↔[2] of every triangle to flip winding to CW,
+            // which LH rendering interprets as front-facing outward. Required
+            // for meshes exported from Maya (Y-up RH) and for UE5-retargeted
+            // animation FBXs whose meshes are encoded with the same handedness.
+            if (g_fbxSrcConv != FbxSrcConvention::Identity) {
+                for (uint32_t t = 0; t < numTriangles; ++t) {
+                    std::swap(triIndices[t * 3 + 1], triIndices[t * 3 + 2]);
+                }
+            }
 
             // Record per-triangle smoothing flag from FBX face_smoothing
             {
