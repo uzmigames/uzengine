@@ -185,8 +185,25 @@ struct GPUParticleBuffer {
 
     /// GPU atomic counter: number of alive particles (single uint32).
     /// The compute shader increments this atomically; the CPU reads it back
-    /// once per frame for budget tracking.
+    /// once per frame via the `aliveCountReadback` ring for budget tracking.
     RHIBufferHandle aliveCount = RHIBufferHandle::Invalid();
+
+    // ── Alive-count CPU readback (phase 15.6) ─────────────────────────
+    //
+    // A 3-slot readback ring mirrors the `aliveCount` atomic back to the
+    // CPU so the editor / stats overlay can show the real live particle
+    // count. Each frame the simulation pass copies `aliveCount` into
+    // slot `readbackWriteIndex`; the CPU maps the oldest slot (same
+    // index, since we advance AFTER kicking) to read an N-frames-stale
+    // but correct value. 3 slots give the GPU enough headroom to not
+    // stall at `Map()` time under the default 2–3 frames-in-flight.
+    static constexpr uint32_t kAliveReadbackRingSize = 3;
+    RHIBufferHandle aliveCountReadback[kAliveReadbackRingSize] = {};
+    uint32_t readbackWriteIndex  = 0;
+    bool     readbackHasKickedOnce = false;
+    /// Most recent alive count polled from the readback ring — this is
+    /// the authoritative live count for editor / HUD display.
+    uint32_t gpuAliveCount = 0;
 
     /// GPU free list: recycled particle indices stored as a stack.
     /// Size: capacity * sizeof(uint32_t).
@@ -435,6 +452,21 @@ struct GPUParticleBuffer {
     /// # Parameters
     /// - `device`: RHI device for deallocation. May be null (no-op).
     void Destroy(IRHIDevice* device);
+
+    /// Copies the current `aliveCount` GPU atomic into the next slot of
+    /// the readback ring and advances `readbackWriteIndex`. Caller is
+    /// responsible for barriering `aliveCount` into `CopySrc` before the
+    /// copy and back to `UnorderedAccess` after. No-op if either handle
+    /// is invalid.
+    void KickAliveReadback(IRHICommandList* cmd);
+
+    /// Maps the oldest readback slot and stores its value in
+    /// `gpuAliveCount`. Safe to call every frame; no-op until at least
+    /// one `KickAliveReadback` has committed. The value is
+    /// `kAliveReadbackRingSize - 1` frames stale by design (long enough
+    /// for the GPU-side copy to complete, short enough to track rapid
+    /// changes).
+    void PollAliveReadback(IRHIDevice* device);
 
     /// Uploads initial data to the GPU bookkeeping buffers via staging copies.
     ///

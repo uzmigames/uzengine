@@ -153,9 +153,37 @@ bool GPUParticleBuffer::Create(IRHIDevice* device, uint32_t particleCapacity)
 
     const auto cap = static_cast<uint64_t>(capacity);
 
-    // Shared: alive count (single uint32, modified by GPU atomics)
-    aliveCount = CreateVFXBuffer(device, sizeof(uint32_t), sizeof(uint32_t),
-                                 "VFX_AliveCount");
+    // Shared: alive count (single uint32, modified by GPU atomics).
+    // Extra `CopySrc` usage is required so the simulation pass can copy
+    // it into the CPU readback ring each frame.
+    {
+        RHIBufferDesc desc{};
+        desc.sizeBytes = sizeof(uint32_t);
+        desc.stride = sizeof(uint32_t);
+        desc.usage = RHIBufferUsage::StructuredBuffer
+                   | RHIBufferUsage::UnorderedAccess
+                   | RHIBufferUsage::CopySrc;
+        desc.memory = RHIMemoryType::Default;
+        desc.debugName = "VFX_AliveCount";
+        aliveCount = device->CreateBuffer(desc);
+    }
+
+    // Readback ring (3 slots). Each holds a single uint32 in a
+    // CPU-visible Readback heap. The simulation pass's Kick copies the
+    // current `aliveCount` here; the CPU polls the oldest slot each
+    // frame to get the authoritative live particle count.
+    for (uint32_t i = 0; i < kAliveReadbackRingSize; ++i) {
+        RHIBufferDesc desc{};
+        desc.sizeBytes = sizeof(uint32_t);
+        desc.stride    = sizeof(uint32_t);
+        desc.usage     = RHIBufferUsage::CopyDst;
+        desc.memory    = RHIMemoryType::Readback;
+        desc.debugName = "VFX_AliveCount_Readback";
+        aliveCountReadback[i] = device->CreateBuffer(desc);
+    }
+    readbackWriteIndex    = 0;
+    readbackHasKickedOnce = false;
+    gpuAliveCount         = 0;
 
     // Shared: free list stack (capacity entries, each uint32 particle index)
     freeList = CreateVFXBuffer(device, cap * sizeof(uint32_t), sizeof(uint32_t),
@@ -390,6 +418,15 @@ void GPUParticleBuffer::Destroy(IRHIDevice* device)
     sort.Destroy(device);
 
     if (aliveCount.IsValid())           device->DestroyBuffer(aliveCount);
+    for (uint32_t i = 0; i < kAliveReadbackRingSize; ++i) {
+        if (aliveCountReadback[i].IsValid()) {
+            device->DestroyBuffer(aliveCountReadback[i]);
+            aliveCountReadback[i] = {};
+        }
+    }
+    readbackWriteIndex    = 0;
+    readbackHasKickedOnce = false;
+    gpuAliveCount         = 0;
     if (freeList.IsValid())             device->DestroyBuffer(freeList);
     if (freeListHead.IsValid())         device->DestroyBuffer(freeListHead);
     if (idToIndex.IsValid())            device->DestroyBuffer(idToIndex);
@@ -776,6 +813,46 @@ void GPUParticleBuffer::TransitionAllToUAV(IRHICommandList* cmd) {
     }
 
     UZ_LOG(VFX, Info, "GPUParticleBuffer: transitioned {} buffers Common→UAV", count);
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Alive-count CPU readback (phase 15.6)
+// ───────────────────────────────────────────────────────────────────────────
+
+void GPUParticleBuffer::KickAliveReadback(IRHICommandList* cmd) {
+    if (cmd == nullptr) return;
+    if (!aliveCount.IsValid()) return;
+
+    const uint32_t slot = readbackWriteIndex;
+    if (!aliveCountReadback[slot].IsValid()) return;
+
+    // Caller has already barriered `aliveCount` from UAV → CopySrc and
+    // will barrier it back after this copy. The readback buffer is in a
+    // Readback heap (Common state) and accepts `CopyDst` without an
+    // explicit barrier.
+    cmd->CopyBuffer(aliveCount, 0,
+                    aliveCountReadback[slot], 0, sizeof(uint32_t));
+
+    readbackWriteIndex    = (slot + 1u) % kAliveReadbackRingSize;
+    readbackHasKickedOnce = true;
+}
+
+void GPUParticleBuffer::PollAliveReadback(IRHIDevice* device) {
+    if (device == nullptr) return;
+    if (!readbackHasKickedOnce) return;
+
+    // After Kick, `readbackWriteIndex` points to the slot that will be
+    // written NEXT frame — which is the oldest slot in the ring, so its
+    // current contents reflect the GPU value from N-1 frames ago. That
+    // slot's write has had a full frame + GPU sync to complete.
+    const uint32_t readSlot = readbackWriteIndex;
+    if (!aliveCountReadback[readSlot].IsValid()) return;
+
+    void* mapped = device->MapBuffer(aliveCountReadback[readSlot]);
+    if (mapped != nullptr) {
+        gpuAliveCount = *static_cast<uint32_t*>(mapped);
+        device->UnmapBuffer(aliveCountReadback[readSlot]);
+    }
 }
 
 }  // namespace uz

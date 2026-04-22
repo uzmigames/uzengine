@@ -171,6 +171,10 @@ private:
 
     /// Whether Initialize() has been called.
     bool initialized_ = false;
+
+    /// Stored so `Tick` can poll the per-emitter `aliveCount` readback
+    /// ring without plumbing a device pointer through every call site.
+    IRHIDevice* device_ = nullptr;
 };
 
 } // namespace uz

@@ -46,6 +46,19 @@ int main(int argc, char** argv) {
             app.SetSpriteChannelMask(mask);
         } else if (std::strcmp(argv[i], "--vfxsys") == 0 && i + 1 < argc) {
             app.SetSystemAssetPath(argv[++i]);
+        } else if (std::strcmp(argv[i], "--window-size") == 0 && i + 1 < argc) {
+            // Phase 13.5 — `--window-size WxH` override for headless
+            // multi-resolution screenshot capture.
+            const char* arg = argv[++i];
+            const char* x = std::strchr(arg, 'x');
+            if (x) {
+                const int w = std::atoi(arg);
+                const int h = std::atoi(x + 1);
+                if (w > 0 && h > 0) {
+                    app.SetWindowSize(static_cast<uint32_t>(w),
+                                       static_cast<uint32_t>(h));
+                }
+            }
         }
     }
 

@@ -128,8 +128,8 @@ static constexpr int kPresetCount = static_cast<int>(sizeof(kPresetFns) / sizeof
 ApplicationConfig VFXViewportApp::Configure() {
     ApplicationConfig cfg;
     cfg.title = "VFX Viewport";
-    cfg.width = 1280;
-    cfg.height = 720;
+    cfg.width  = (m_overrideWidth  > 0u) ? m_overrideWidth  : 1280u;
+    cfg.height = (m_overrideHeight > 0u) ? m_overrideHeight :  720u;
 
     // Camera defaults matching the legacy DemoApplication VFX viewport.
     // Position is in centimeters (engine convention), matching the old demo's
@@ -252,6 +252,14 @@ void VFXViewportApp::OnStart() {
         for (int i = 0; i < kPresetCount; ++i) presetNames.push_back(kPresetNames[i]);
         overlay->SetPresetNames(presetNames);
         overlay->SetVisible(true); // Start with overlay visible
+        overlay->SetNiagaraMode(true); // Phase 0 — default to Niagara-parity editor
+        overlay->SetLayoutMode(VfxEditorLayoutMode::SplitHorizontal); // Phase 15.4 — 50/50 split default
+
+        // Seed the emitter tab list for the Niagara-mode system
+        // overview panel. Demo has one emitter slot; the label mirrors
+        // the active preset so cycling Tab / Left / Right keeps the
+        // Stack tab header in sync.
+        overlay->SetEmitterNames({kPresetNames[m_currentPreset]}, 0);
 
         // Preset load: apply + restart
         overlay->onLoadPreset = [this](int presetIdx, ParticleEmitter*) {
@@ -264,6 +272,62 @@ void VFXViewportApp::OnStart() {
         overlay->onRestart = [this]() {
             m_restartPending = true;
         };
+
+        // Phase 12.10.0 — menu command dispatch. Each command from the
+        // redesigned menu bar (12.7) routes to the appropriate app
+        // action. Preset commands use the `Presets_Base + index`
+        // convention.
+        overlay->onMenuCommand = [this, overlay](VfxMenuCommand cmd) {
+            const uint16_t code = static_cast<uint16_t>(cmd);
+            const uint16_t presetBase = static_cast<uint16_t>(VfxMenuCommand::Presets_Base);
+            if (code >= presetBase && code < presetBase + static_cast<uint16_t>(kPresetCount)) {
+                const int idx = static_cast<int>(code - presetBase);
+                m_currentPreset = idx;
+                m_switchPresetPending = true;
+                return;
+            }
+            switch (cmd) {
+            case VfxMenuCommand::File_New:
+            case VfxMenuCommand::File_Open:
+            case VfxMenuCommand::File_Save:
+            case VfxMenuCommand::File_SaveAs:
+                // Demo has no file persistence — silently ignore.
+                break;
+            case VfxMenuCommand::File_Exit:
+                Quit();
+                break;
+            case VfxMenuCommand::Edit_Undo: {
+                auto& undo = overlay->UndoStack();
+                if (undo.CanUndo()) undo.Undo();
+                break;
+            }
+            case VfxMenuCommand::Edit_Redo: {
+                auto& undo = overlay->UndoStack();
+                if (undo.CanRedo()) undo.Redo();
+                break;
+            }
+            case VfxMenuCommand::View_NiagaraMode:
+                overlay->ToggleNiagaraMode();
+                break;
+            case VfxMenuCommand::View_ToggleStats:
+                // Stats overlay toggling is handled by the Application
+                // layer — no hook yet.
+                break;
+            case VfxMenuCommand::Help_Docs:
+            case VfxMenuCommand::Help_About:
+                // No demo-side implementation.
+                break;
+            default:
+                break;
+            }
+        };
+
+        // Phase 12.10.0 — Add Emitter from the menu tab bar. The demo
+        // uses a single emitter today; this callback is stubbed so the
+        // button renders but fires a warning instead of crashing.
+        overlay->onAddEmitterRequested = [] {
+            UZ_LOG(App, Info, "onAddEmitterRequested: demo only has one emitter slot");
+        };
     }
 
 }
@@ -274,6 +338,22 @@ void VFXViewportApp::OnStart() {
 
 void VFXViewportApp::OnUpdate(float dt) {
     m_totalTime += dt;
+
+    // Phase 14.13 — drain the status-bar notification queue. Queue
+    // auto-dismisses after 3 s per entry.
+    // Phase 14.14 — feed smoothed FPS into the status bar. EMA with
+    // 0.1 s time constant so a single-frame hitch does not slam the
+    // colour threshold back and forth.
+    if (auto* overlay = GetVfxEditorOverlay()) {
+        overlay->TickStatus(dt);
+
+        if (dt > 1.0e-4f) {
+            const float instantFps = 1.0f / dt;
+            const float alpha = dt / (dt + 0.1f);
+            m_fpsSmoothed += (instantFps - m_fpsSmoothed) * alpha;
+        }
+        overlay->UpdateTelemetry(m_fpsSmoothed, 0u, 0.0f, 0.0f);
+    }
 
     // ── Fireball projectile animation: move the single compound entity ──
     // The VfxSystemInstance automatically propagates this position to all
@@ -327,6 +407,55 @@ void VFXViewportApp::OnUpdate(float dt) {
         if (auto* overlay = GetVfxEditorOverlay()) {
             overlay->ToggleVisible();
             UZ_LOG(App, Info, "VFX Editor: {}", overlay->IsVisible() ? "visible" : "hidden");
+        }
+    }
+
+    // ── F11: Toggle Niagara-parity composition (phase 11.14.0) ─────────
+    // Requires the overlay to be visible — F10 gates F11 so pressing F11
+    // while the overlay is hidden is a silent no-op.
+    if (input.IsKeyJustPressed(Key::F11)) {
+        if (auto* overlay = GetVfxEditorOverlay(); overlay && overlay->IsVisible()) {
+            const bool enabled = overlay->ToggleNiagaraMode();
+            UZ_LOG(App, Info, "VFX Editor Niagara mode: {}",
+                   enabled ? "enabled" : "disabled");
+        }
+    }
+
+    // ── Phase 12.10.0 — Key forwarding to the overlay's keybinding
+    //    handler while Niagara mode is active. Translates the input
+    //    system's `uz::Key` to `VfxEditorKeybindingHandler::Key` for
+    //    the handful of keys the Niagara editor cares about.
+    if (auto* overlay = GetVfxEditorOverlay();
+        overlay != nullptr && overlay->IsVisible() && overlay->IsNiagaraMode()) {
+        const bool ctrl  = input.IsKeyDown(Key::LeftCtrl)  || input.IsKeyDown(Key::RightCtrl);
+        const bool shift = input.IsKeyDown(Key::LeftShift) || input.IsKeyDown(Key::RightShift);
+        using Kb = VfxEditorKeybindingHandler::Key;
+        const struct { Key in; Kb out; } kMap[] = {
+            { Key::Z,      Kb::Z      },
+            { Key::Y,      Kb::Y      },
+            { Key::S,      Kb::S      },
+            { Key::D,      Kb::D      },
+            { Key::F,      Kb::F      },
+            { Key::A,      Kb::A      },
+            { Key::C,      Kb::C      },
+            { Key::V,      Kb::V      },
+            { Key::F2,     Kb::F2     },
+            { Key::Escape, Kb::Escape },
+            { Key::Tab,    Kb::Tab    },
+            { Key::Delete, Kb::Delete },
+            { Key::Enter,  Kb::Enter  },
+            { Key::Space,  Kb::Space  },
+            { Key::Home,   Kb::Home   },
+            { Key::End,    Kb::End    },
+            { Key::Left,   Kb::Left   },
+            { Key::Right,  Kb::Right  },
+            { Key::Up,     Kb::Up     },
+            { Key::Down,   Kb::Down   },
+        };
+        for (const auto& m : kMap) {
+            if (input.IsKeyJustPressed(m.in)) {
+                overlay->InjectKey(m.out, ctrl, shift);
+            }
         }
     }
 
@@ -444,9 +573,13 @@ void VFXViewportApp::OnUpdate(float dt) {
                     kPresetFns[m_currentPreset](*rt);
                 }
                 comp.restartRequested = true;
-                // Force rebuild of module list in editor overlay
+                // Force rebuild of module list + retitle the emitter
+                // slot so the Stack tab header + system overview show
+                // the active preset instead of the startup name.
                 if (auto* overlay = GetVfxEditorOverlay()) {
                     overlay->ForceRebuildModules();
+                    overlay->SetEmitterNames(
+                        {kPresetNames[m_currentPreset]}, 0);
                 }
                 UZ_LOG(App, Info, "[VFX] Preset: {} ({})", kPresetNames[m_currentPreset], m_currentPreset);
             }

@@ -25,6 +25,7 @@ void VFXSystem::Initialize(IRHIDevice* device, uint32_t maxTotalParticles) {
 
     budget_.SetMax(maxTotalParticles);
     totalAliveParticles_ = 0;
+    device_              = device;
 
     // Create module registry and populate with built-in modules.
     moduleRegistry_ = std::make_unique<ModuleRegistry>();
@@ -51,7 +52,8 @@ void VFXSystem::Shutdown(IRHIDevice* device) {
     moduleRegistry_.reset();
     emitters_.clear();
     totalAliveParticles_ = 0;
-    initialized_ = false;
+    initialized_         = false;
+    device_              = nullptr;
 
     UZ_LOG(VFX, Info, "VFXSystem shutdown");
 }
@@ -120,8 +122,19 @@ void VFXSystem::Tick(float dt) {
         // Spawn count is calculated in frame_particles.cpp::RegisterParticlePasses
         // to avoid double-accumulation. The start delay check is also done there.
 
-        // Accumulate alive count for stats.
-        totalAlive += emitter->cpuAliveCount;
+        // Poll the GPU alive-count readback ring so editor/HUD can read
+        // the authoritative live-particle count from `buffer.gpuAliveCount`.
+        // Safe every frame — no-op until the first Kick has committed.
+        if (device_ != nullptr) {
+            emitter->buffer.PollAliveReadback(device_);
+        }
+
+        // Accumulate alive count for stats. Prefer the GPU-read value;
+        // fall back to the CPU capacity mirror when the readback ring
+        // has not yet produced a sample.
+        totalAlive += (emitter->buffer.readbackHasKickedOnce)
+            ? emitter->buffer.gpuAliveCount
+            : emitter->cpuAliveCount;
     }
 
     totalAliveParticles_ = totalAlive;

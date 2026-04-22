@@ -75,6 +75,13 @@ public:
     /// `"vfx/systems/fireball.uzvfxsys"` when unset.
     void SetSystemAssetPath(const std::string& path) { m_systemAssetPath = path; }
 
+    /// Phase 13.5 — overrides the window dimensions for headless
+    /// screenshot capture at arbitrary resolutions.
+    void SetWindowSize(uint32_t w, uint32_t h) {
+        m_overrideWidth  = w;
+        m_overrideHeight = h;
+    }
+
 protected:
     // ── Application interface ────────────────────────────────────────────
 
@@ -152,6 +159,15 @@ private:
     /// Path to the `.uzvfxsys` asset driving the compound fireball effect.
     /// Overridable via the `--vfxsys <path>` CLI argument.
     std::string m_systemAssetPath = "vfx/systems/fireball.uzvfxsys";
+
+    /// Window-size override (0 = use defaults). Set by `--window-size WxH`.
+    uint32_t m_overrideWidth  = 0;
+    uint32_t m_overrideHeight = 0;
+
+    /// Phase 14.14 — exponentially-smoothed FPS for the status-bar
+    /// chip. 0.1 s time constant damps hitch spikes without adding
+    /// perceptible lag.
+    float m_fpsSmoothed = 60.0f;
 };
 
 } // namespace uz
