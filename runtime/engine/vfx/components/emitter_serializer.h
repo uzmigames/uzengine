@@ -12,8 +12,10 @@
 #pragma once
 
 #include "particle_emitter.h"
-#include <nlohmann/json.hpp>
+#include <json.hpp>
+#include <algorithm>
 #include <string>
+#include <vector>
 
 namespace uz {
 
@@ -63,6 +65,77 @@ inline std::string SerializeEmitter(const ParticleEmitter& e) {
     if (!e.tags.empty()) {
         j["tags"] = e.tags;
     }
+    // Niagara-parity time-stamped spawn bursts (phase 11.8). Only emit
+    // when the list is non-empty so legacy assets stay byte-identical.
+    if (!e.bursts.empty()) {
+        nlohmann::json burstsArr = nlohmann::json::array();
+        for (const auto& b : e.bursts) {
+            nlohmann::json bj;
+            bj["t"] = b.time;
+            bj["n"] = b.count;
+            burstsArr.push_back(std::move(bj));
+        }
+        j["bursts"] = std::move(burstsArr);
+    }
+    // Niagara-parity spawn rate curve (phase 11.7). Only emit when the
+    // curve has keys — legacy assets without a curve keep the constant
+    // `emissionRate` path.
+    if (e.spawnRateCurve.GetKeyCount() > 0) {
+        nlohmann::json curveObj;
+        nlohmann::json keysArr = nlohmann::json::array();
+        for (const auto& k : e.spawnRateCurve.GetFloatKeys()) {
+            nlohmann::json kObj;
+            kObj["t"] = k.time;
+            kObj["v"] = k.value;
+            keysArr.push_back(std::move(kObj));
+        }
+        curveObj["keys"] = std::move(keysArr);
+        curveObj["interp"] =
+            (e.spawnRateCurve.GetInterpolation() == InterpolationMode::Cubic)
+                ? "Cubic"
+                : (e.spawnRateCurve.GetInterpolation() == InterpolationMode::Smoothstep)
+                    ? "Smoothstep"
+                    : "Linear";
+        j["spawnRateCurve"] = std::move(curveObj);
+    }
+    // Niagara-parity 7-stage stack (phase 11.1.0). Only emit when the
+    // stack is non-empty — legacy assets stay byte-identical.
+    // @ref docs/engine/25-vfx/44-niagara-stack-model.md
+    if (!e.stack.IsEmpty()) {
+        nlohmann::json stagesArr = nlohmann::json::array();
+        for (const auto& entry : e.stack.Entries()) {
+            if (entry.modules.empty()) continue;
+            nlohmann::json stageObj;
+            stageObj["stage"] = VfxStageName(entry.stage);
+            nlohmann::json modArr = nlohmann::json::array();
+            for (const auto& mod : entry.modules) {
+                nlohmann::json mj;
+                mj["type"]       = mod.moduleTypeName;
+                mj["instanceId"] = mod.instanceId;
+                mj["enabled"]    = mod.enabled;
+                if (mod.overrideFlag != VfxOverrideFlag::None) {
+                    mj["override"] = VfxOverrideFlagName(mod.overrideFlag);
+                }
+                if (!mod.configJson.empty()) {
+                    // configJson is raw JSON text; embed as a parsed
+                    // object when valid, otherwise as a string so bad
+                    // text doesn't break the round-trip.
+                    try {
+                        mj["config"] = nlohmann::json::parse(mod.configJson);
+                    } catch (...) {
+                        mj["config"] = mod.configJson;
+                    }
+                }
+                modArr.push_back(std::move(mj));
+            }
+            stageObj["modules"] = std::move(modArr);
+            stagesArr.push_back(std::move(stageObj));
+        }
+        j["stages"] = std::move(stagesArr);
+    }
+    if (!e.attachBoneNameDefault.empty()) {
+        j["attachBoneName"] = e.attachBoneNameDefault;
+    }
     return j.dump(2);
 }
 
@@ -74,6 +147,7 @@ inline bool DeserializeEmitter(const std::string& jsonStr, ParticleEmitter& e) {
         auto get = [&](const char* key, auto& val) {
             if (j.contains(key)) val = j[key].get<std::remove_reference_t<decltype(val)>>();
         };
+        get("attachBoneName", e.attachBoneNameDefault);
         get("maxParticles", e.maxParticles);
         get("emissionRate", e.emissionRate);
         get("lifetime", e.lifetime);
@@ -128,6 +202,110 @@ inline bool DeserializeEmitter(const std::string& jsonStr, ParticleEmitter& e) {
             for (auto& entry : j["tags"]) {
                 if (entry.is_string()) {
                     e.tags.push_back(entry.get<std::string>());
+                }
+            }
+        }
+
+        // Spawn bursts (phase 11.8). Missing key = empty list =
+        // no bursts fire. Malformed entries are silently dropped.
+        if (j.contains("bursts") && j["bursts"].is_array()) {
+            e.bursts.clear();
+            e.bursts.reserve(j["bursts"].size());
+            for (const auto& bj : j["bursts"]) {
+                if (!bj.is_object()) continue;
+                VfxBurstEvent b{};
+                if (bj.contains("t") && bj["t"].is_number()) {
+                    b.time = bj["t"].get<float>();
+                }
+                if (bj.contains("n") && bj["n"].is_number()) {
+                    b.count = bj["n"].get<uint32_t>();
+                }
+                e.bursts.push_back(b);
+            }
+            // Ensure the ordering invariant even if the asset is out of order.
+            std::sort(e.bursts.begin(), e.bursts.end(),
+                       [](const VfxBurstEvent& a, const VfxBurstEvent& b) {
+                           return a.time < b.time;
+                       });
+            e.burstCursor = 0u;
+        }
+
+        // Spawn rate curve (phase 11.7). Missing key → legacy
+        // constant-rate behaviour. Malformed keys are silently dropped.
+        if (j.contains("spawnRateCurve") && j["spawnRateCurve"].is_object()) {
+            const auto& curve = j["spawnRateCurve"];
+            std::vector<Keyframe> keys;
+            if (curve.contains("keys") && curve["keys"].is_array()) {
+                for (const auto& kj : curve["keys"]) {
+                    if (!kj.is_object()) continue;
+                    Keyframe k{};
+                    if (kj.contains("t") && kj["t"].is_number()) {
+                        k.time = kj["t"].get<float>();
+                    }
+                    if (kj.contains("v") && kj["v"].is_number()) {
+                        k.value = kj["v"].get<float>();
+                    }
+                    keys.push_back(k);
+                }
+            }
+            // Sort by time — SetKeys requires sorted input.
+            std::sort(keys.begin(), keys.end(),
+                       [](const Keyframe& a, const Keyframe& b) {
+                           return a.time < b.time;
+                       });
+            e.spawnRateCurve.SetKeys(std::move(keys));
+            if (curve.contains("interp") && curve["interp"].is_string()) {
+                const std::string s = curve["interp"].get<std::string>();
+                if (s == "Cubic") {
+                    e.spawnRateCurve.SetInterpolation(InterpolationMode::Cubic);
+                } else if (s == "Smoothstep") {
+                    e.spawnRateCurve.SetInterpolation(InterpolationMode::Smoothstep);
+                } else {
+                    e.spawnRateCurve.SetInterpolation(InterpolationMode::Linear);
+                }
+            }
+        }
+
+        // Niagara-parity stack (phase 11.1.0). Missing `stages` means
+        // legacy asset — leave `e.stack` empty so the inline-config
+        // path continues to drive behaviour.
+        if (j.contains("stages") && j["stages"].is_array()) {
+            e.stack.Clear();
+            for (const auto& stageObj : j["stages"]) {
+                if (!stageObj.is_object()) continue;
+                VfxStage stage = VfxStage::ParticleUpdate;
+                if (stageObj.contains("stage") && stageObj["stage"].is_string()) {
+                    VfxStageFromName(stageObj["stage"].get<std::string>().c_str(), stage);
+                }
+                VfxStackEntry& entry = e.stack.GetEntry(stage);
+                if (stageObj.contains("modules") && stageObj["modules"].is_array()) {
+                    for (const auto& modJson : stageObj["modules"]) {
+                        if (!modJson.is_object()) continue;
+                        VfxModuleInstance mod;
+                        if (modJson.contains("type") && modJson["type"].is_string()) {
+                            mod.moduleTypeName = modJson["type"].get<std::string>();
+                        }
+                        if (mod.moduleTypeName.empty()) continue;
+                        if (modJson.contains("instanceId") && modJson["instanceId"].is_string()) {
+                            mod.instanceId = modJson["instanceId"].get<std::string>();
+                        }
+                        if (modJson.contains("enabled") && modJson["enabled"].is_boolean()) {
+                            mod.enabled = modJson["enabled"].get<bool>();
+                        }
+                        if (modJson.contains("override") && modJson["override"].is_string()) {
+                            VfxOverrideFlagFromName(
+                                modJson["override"].get<std::string>().c_str(),
+                                mod.overrideFlag);
+                        }
+                        if (modJson.contains("config")) {
+                            if (modJson["config"].is_string()) {
+                                mod.configJson = modJson["config"].get<std::string>();
+                            } else {
+                                mod.configJson = modJson["config"].dump();
+                            }
+                        }
+                        entry.Add(std::move(mod));
+                    }
                 }
             }
         }

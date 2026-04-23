@@ -1295,6 +1295,21 @@ void VfxEditorOverlay::BuildModuleList(ParticleEmitter* e) {
         m_modules.push_back(std::move(m));
     }
 
+    // ── Attach (Niagara AttachToComponent + socket parity) ──────────────
+    // `attachBoneNameDefault` is the asset-serialized bone name. Scene sync
+    // treats it as the fallback when the ECS component does not supply a
+    // placement-specific override.
+    {
+        VfxModuleDef m;
+        m.name = "Attach"; m.stage = VfxStage::EmitterUpdate;
+        m.params.push_back({});
+        auto& bp = m.params.back();
+        bp.label = "Bone Name"; bp.type = VfxModuleParam::String;
+        bp.sPtr  = &e->attachBoneNameDefault;
+        bp.hint  = "e.g. hand_r (empty = entity root)";
+        m_modules.push_back(std::move(m));
+    }
+
     // ── Particle Spawn ───────────────────────────────────────────────────
     {
         VfxModuleDef m;
@@ -1764,6 +1779,13 @@ void VfxEditorOverlay::BuildStageTree(ParticleEmitter* /*emitter*/) {
                                 if (NumberInput(px, y, pw, &fVal, param.min, param.max, param.label)) {
                                     *param.iPtr = static_cast<int32_t>(std::clamp(fVal, param.min, param.max));
                                 }
+                            }
+                            break;
+                        case VfxModuleParam::String:
+                            if (param.sPtr) {
+                                StringInput(px, y, pw, param.sPtr,
+                                            InputFilter::Any,
+                                            (param.hint && *param.hint) ? param.hint : param.label);
                             }
                             break;
                         case VfxModuleParam::Enum:

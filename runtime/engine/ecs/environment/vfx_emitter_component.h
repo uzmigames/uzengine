@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include "engine/ecs/core/entity.h"
 #include "vector3.h"
 #include "vector4.h"
 
@@ -173,6 +174,21 @@ struct VfxEmitterComponent {
     /// priority fall back to back-to-front camera-distance ordering.
     /// Negative values are allowed and push the emitter further back.
     int32_t renderPriority = 0;
+
+    // ── Bone Attachment (Niagara parity: `AttachToComponent` + socket) ───
+
+    /// When valid, the emitter's world transform is driven each frame from
+    /// this entity. If `attachBoneName` is also set AND the entity owns a
+    /// `SkeletalMeshComponent` with that bone, the emitter follows the
+    /// bone's world matrix (socket-style attach). Otherwise it follows the
+    /// entity's `SceneComponent` transform (parent attach).
+    /// Invalid entity disables attachment entirely.
+    Entity attachEntity = Entity::Invalid();
+
+    /// Bone/socket name to track on `attachEntity`'s skeletal mesh. Empty
+    /// means "use the entity's root transform". Case-sensitive match against
+    /// the skeleton's bone list.
+    std::string attachBoneName;
 
     // ── Runtime State ────────────────────────────────────────────────────
 

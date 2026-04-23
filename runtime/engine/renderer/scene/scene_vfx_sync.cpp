@@ -8,7 +8,11 @@
 
 #include "components.h"
 
+#include "engine/animation/skeletal_mesh_instance.h"
+#include "engine/animation/skeletal_mesh_subsystem.h"
+#include "engine/animation/skeleton.h"
 #include "engine/asset/formats/uzfx_loader.h"
+#include "engine/ecs/mesh/skeletal_mesh_component.h"
 #include "engine/renderer/upload/texture_loader.h"
 #include "engine/vfx/vfx_system.h"
 #include "engine/vfx/components/particle_emitter.h"
@@ -26,8 +30,122 @@
 #include "world.h"
 
 #include <string>
+#include <unordered_set>
 
 namespace uz {
+
+namespace {
+
+/// Result of resolving the attach target for a VFX emitter.
+///
+/// `resolved` is true when the attach entity was found and produced a usable
+/// transform (either from a skeletal bone or from the entity's SceneComponent).
+/// `position` is the resolved world-space position. `boneMatched` is true only
+/// when `attachBoneName` was non-empty AND resolved to a real skeleton bone —
+/// the UI uses this to distinguish "parent attach" from "bone socket attach".
+struct AttachResolveResult {
+    bool resolved    = false;
+    bool boneMatched = false;
+    Vec3 position    = {0.0f, 0.0f, 0.0f};
+};
+
+/// One-shot warning dedup keyed on `(entityId, entityGeneration, bone hash)`.
+/// Prevents log spam when the attach target is misconfigured — we print the
+/// warning exactly once per (target, bone) combo per process lifetime.
+std::unordered_set<uint64_t>& AttachWarnedKeys() {
+    static std::unordered_set<uint64_t> set;
+    return set;
+}
+
+/// Composes a 64-bit dedup key from the attach entity + bone name.
+uint64_t MakeAttachWarnKey(Entity e, const std::string& bone) {
+    uint64_t key = (static_cast<uint64_t>(e.id) << 32) |
+                   static_cast<uint64_t>(e.generation);
+    key ^= std::hash<std::string>{}(bone) * 0x9E3779B97F4A7C15ull;
+    return key;
+}
+
+/// Resolves the VFX emitter's attach target to a world-space position.
+///
+/// Order of preference:
+/// 1. `attachEntity` + non-empty `attachBoneName` + entity owns a
+///    `SkeletalMeshComponent` whose skeleton has that bone → bone world matrix
+///    from `SkeletalMeshInstance`, composed with the entity's SceneComponent
+///    world matrix. Marks `boneMatched = true`.
+/// 2. `attachEntity` alone → entity's SceneComponent world position.
+/// 3. Invalid / missing → `resolved = false`.
+///
+/// Missing-target warnings are emitted once per (entity, bone) key.
+AttachResolveResult ResolveAttachTransform(World* world,
+                                           const VfxEmitterComponent& comp,
+                                           const std::string& boneNameFallback) {
+    AttachResolveResult out;
+    if (!world) return out;
+    if (!comp.attachEntity.IsValid()) return out;
+    if (!world->IsValid(comp.attachEntity)) {
+        auto& warned = AttachWarnedKeys();
+        const uint64_t key = MakeAttachWarnKey(comp.attachEntity, comp.attachBoneName);
+        if (warned.insert(key).second) {
+            UZ_LOG(VFX, Warning,
+                   "VFX attach target entity id={} gen={} is invalid — falling back to emitter SceneComponent",
+                   comp.attachEntity.id, comp.attachEntity.generation);
+        }
+        return out;
+    }
+
+    // Target entity's SceneComponent transform (used as parent transform for
+    // bone sampling AND as the plain fallback when no bone name is set).
+    Vec3 parentPos = {0.0f, 0.0f, 0.0f};
+    Mat4 parentWorld = Mat4::Identity();
+    bool haveParent = false;
+    if (world->HasComponent<SceneComponent>(comp.attachEntity)) {
+        const auto& sc = world->GetComponent<SceneComponent>(comp.attachEntity);
+        parentWorld = sc.GetWorldMatrix();
+        parentPos   = sc.GetWorldPosition();
+        haveParent  = true;
+    }
+
+    // Bone-socket path. Prefer the ECS component's bone name; fall back to
+    // the asset-default (edited through the Parameters panel).
+    const std::string& activeBone =
+        !comp.attachBoneName.empty() ? comp.attachBoneName : boneNameFallback;
+    if (!activeBone.empty() &&
+        world->HasComponent<SkeletalMeshComponent>(comp.attachEntity)) {
+        const auto& smc = world->GetComponent<SkeletalMeshComponent>(comp.attachEntity);
+        if (smc.instanceId != UINT32_MAX) {
+            SkeletalMeshInstance* inst =
+                SkeletalMeshSubsystem::Get().GetInstance(smc.instanceId);
+            if (inst != nullptr && inst->GetSkeleton() != nullptr) {
+                const int32_t boneIdx = inst->GetSkeleton()->FindBoneIndex(activeBone);
+                if (boneIdx >= 0) {
+                    const Mat4 boneLocal = inst->GetBoneWorldMatrix(boneIdx);
+                    const Mat4 boneWorld = parentWorld * boneLocal;
+                    out.position = boneWorld.getTranslation();
+                    out.resolved    = true;
+                    out.boneMatched = true;
+                    return out;
+                }
+                // Bone name did not match any bone on the skeleton.
+                auto& warned = AttachWarnedKeys();
+                const uint64_t key = MakeAttachWarnKey(comp.attachEntity, activeBone);
+                if (warned.insert(key).second) {
+                    UZ_LOG(VFX, Warning,
+                           "VFX attach bone '{}' not found on skeleton for entity id={} — falling back to entity root",
+                           activeBone, comp.attachEntity.id);
+                }
+            }
+        }
+    }
+
+    // Parent-attach fallback (entity root transform).
+    if (haveParent) {
+        out.position = parentPos;
+        out.resolved = true;
+    }
+    return out;
+}
+
+} // namespace
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SyncVfxEmitters
@@ -60,8 +178,15 @@ void SceneRenderer::SyncVfxEmitters(World* world, IVFS* vfs) {
             if (idx < m_runtimeEmitters.size() && m_runtimeEmitters[idx]) {
                 auto* rt = m_runtimeEmitters[idx].get();
                 rt->isEmitting = emitterComp.emitting;
-                // Sync world position from entity transform.
-                if (auto* sc = registry.try_get<SceneComponent>(enttEntity)) {
+                // Sync world position: attach target (bone/entity) overrides
+                // the emitter's own SceneComponent when configured.
+                const AttachResolveResult attach = ResolveAttachTransform(
+                    world, emitterComp, rt->attachBoneNameDefault);
+                rt->attachedThisFrame = attach.resolved;
+                if (attach.resolved) {
+                    rt->worldPosition        = attach.position;
+                    rt->attachedWorldPosition = attach.position;
+                } else if (auto* sc = registry.try_get<SceneComponent>(enttEntity)) {
                     rt->worldPosition = sc->GetPosition();
                 }
                 // Handle restart request: reset GPU buffer only.
@@ -269,7 +394,13 @@ void SceneRenderer::SyncVfxEmitters(World* world, IVFS* vfs) {
 
             emitter->graphPath = emitterComp.assetPath;
             Vec3 worldPos{};
-            if (auto* sc = registry.try_get<SceneComponent>(enttEntity)) {
+            const AttachResolveResult attach = ResolveAttachTransform(
+                world, emitterComp, emitter->attachBoneNameDefault);
+            if (attach.resolved) {
+                worldPos = attach.position;
+                emitter->attachedThisFrame = true;
+                emitter->attachedWorldPosition = attach.position;
+            } else if (auto* sc = registry.try_get<SceneComponent>(enttEntity)) {
                 worldPos = sc->GetPosition();
             }
             emitter->worldPosition = worldPos;

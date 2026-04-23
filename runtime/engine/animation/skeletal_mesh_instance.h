@@ -117,6 +117,19 @@ public:
     /// Returns the current bone palette (model-space bone × inverseBind).
     [[nodiscard]] const std::vector<Mat4>& GetPalette() const { return m_palette; }
 
+    /// Returns the model-space world TRS for each bone computed by the last
+    /// `UpdatePaletteFromPose()` call. Empty until the first pose evaluation.
+    /// Indexed by bone index; use `Skeleton::FindBoneIndex(name)` to resolve
+    /// a name to an index.
+    [[nodiscard]] const std::vector<BoneTransform>& GetWorldBoneTransforms() const {
+        return m_worldBoneTransforms;
+    }
+
+    /// Composes the model-space world matrix for the bone at `boneIdx`.
+    /// Returns `Mat4::Identity()` if the index is out of range or the world
+    /// transforms have not yet been computed.
+    [[nodiscard]] Mat4 GetBoneWorldMatrix(int32_t boneIdx) const;
+
     // ── GPU skinning resources (managed by SkeletalMeshSubsystem) ──────
 
     /// Input structured buffer holding the 56 B SkinnedVertex[] stream.
@@ -182,6 +195,7 @@ private:
 
     // Computed each frame.
     std::vector<Mat4>    m_palette;             ///< World bone × inverseBind, per bone.
+    std::vector<BoneTransform> m_worldBoneTransforms; ///< Model-space world TRS per bone (cached from last UpdatePaletteFromPose).
     std::vector<uint8_t> m_outputVertexData;    ///< 48 B Vertex[] bytes, one per source vertex.
     bool                 m_outputDirty = false; ///< Set when m_outputVertexData changes; cleared after upload.
 

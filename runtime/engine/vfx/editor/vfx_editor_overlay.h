@@ -347,14 +347,16 @@ public:
 
     struct VfxModuleParam {
         const char* label = nullptr;
-        enum Type : uint8_t { Float, Uint, Bool, Enum, Int } type = Float;
-        float*    fPtr      = nullptr;
-        uint32_t* uPtr      = nullptr;
-        int32_t*  iPtr      = nullptr;
-        float     min       = 0.0f;
-        float     max       = 1.0f;
+        enum Type : uint8_t { Float, Uint, Bool, Enum, Int, String } type = Float;
+        float*       fPtr      = nullptr;
+        uint32_t*    uPtr      = nullptr;
+        int32_t*     iPtr      = nullptr;
+        std::string* sPtr      = nullptr;
+        float        min       = 0.0f;
+        float        max       = 1.0f;
+        const char*  hint      = "";
         const char* const* enumNames = nullptr;
-        uint32_t  enumCount = 0;
+        uint32_t     enumCount = 0;
     };
 
     struct VfxModuleDef {

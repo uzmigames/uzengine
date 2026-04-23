@@ -312,6 +312,24 @@ struct ParticleEmitter {
     /// back to back-to-front camera-distance ordering. Negative allowed.
     int32_t renderPriority = 0;
 
+    /// World-space override position sourced from bone / parent attach.
+    /// Written by the scene-sync layer when `VfxEmitterComponent::attachEntity`
+    /// resolves to a valid transform; left at its spawn-time value otherwise.
+    /// The spawn CS consumes this as the emitter origin each frame.
+    Vec3 attachedWorldPosition = {0.0f, 0.0f, 0.0f};
+
+    /// True when the most recent attach resolve succeeded. When false the
+    /// emitter keeps its last known `attachedWorldPosition` and falls back
+    /// to the owning SceneComponent transform in scene sync.
+    bool attachedThisFrame = false;
+
+    /// Default bone/socket name serialized into the emitter asset.
+    /// When the emitter is instantiated into a scene, this name is copied
+    /// onto `VfxEmitterComponent::attachBoneName` as a starting value — the
+    /// scene / gameplay layer still has to supply the target entity since
+    /// entity handles are placement-specific and not part of the asset.
+    std::string attachBoneNameDefault;
+
     /// Per-emitter LOD distance settings.
     /// Used by VFXSystem to evaluate LOD level each frame.
     VFXLodSettings lodSettings;
