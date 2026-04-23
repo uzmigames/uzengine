@@ -158,11 +158,15 @@ ApplicationConfig VFXViewportApp::Configure() {
     // Position is in centimeters (engine convention), matching the old demo's
     // {0, -15, 8} meters = {0, -1500, 800} cm.
     cfg.cameraMoveSpeed = 500.f;
-    cfg.cameraPositionX = 0.f;
+    // Shift camera +X so the emitter at world (0,0,0) appears centered in
+    // the LEFT viewport (Parameters panel covers the right ~35%). Camera
+    // right axis = +X (yaw=90 faces +Y), so offsetting +X moves the
+    // subject leftward on screen by the same amount.
+    cfg.cameraPositionX = -450.f;
     cfg.cameraPositionY = -1500.f;  // 15m back (matches standalone)
-    cfg.cameraPositionZ = 800.f;    // 8m up (matches standalone)
+    cfg.cameraPositionZ = 500.f;    // lowered from 800 so emitter base sits mid-frame
     cfg.cameraYawDeg = 90.f;
-    cfg.cameraPitchDeg = -20.f;
+    cfg.cameraPitchDeg = -10.f;     // flatter pitch so emitter rises into centre
     cfg.enableValidation = true;
 
     // VFS root: use the demo's content directory if it exists next to the exe,
