@@ -389,6 +389,16 @@ void VfxEditorOverlay::Render(IRHICommandList* cmdList, CBRingAllocator& cbRing)
         m_contextMenu.Render(m_textRenderer, m_font);
         m_textRenderer.Render(cmdList, cbRing, m_font);
     }
+
+    // Pass 4: color picker popup. Dedicated pass so the pane's label
+    // text cannot overprint the popup chrome — rects + text from the
+    // picker submit into a fresh frame that draws strictly above the
+    // earlier passes.
+    if (m_colorPicker.isOpen) {
+        m_textRenderer.BeginFrame(m_lastFrameIndex);
+        RenderColorPicker();
+        m_textRenderer.Render(cmdList, cbRing, m_font);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -540,11 +550,8 @@ void VfxEditorOverlay::BuildUI(ParticleEmitter* emitter, const InputSystem* inpu
     // so the user can switch presets + toggle preset menus.
     if (m_niagaraMode && emitter != nullptr) {
         BuildNiagaraUI(emitter);
-        // Color picker renders AFTER the Niagara composition so the
-        // popup always sits above the inline strip / panels. Without
-        // this call the branch's early `return` skipped the picker
-        // draw and the popup never appeared.
-        RenderColorPicker();
+        // Color picker draws on its own pass inside Render() so the
+        // pane's label text does not overprint the popup chrome.
         return;
     }
 
@@ -584,10 +591,8 @@ void VfxEditorOverlay::BuildUI(ParticleEmitter* emitter, const InputSystem* inpu
     // (above the Niagara branch) so popups are clickable in every
     // layout mode; see the block right after `m_selectedEmitterIdx`.
 
-    // Phase 15.11 — color picker renders last so it draws above every
-    // panel + swatch beneath. The popup is clamped into screen bounds
-    // inside RenderColorPicker.
-    RenderColorPicker();
+    // Color picker draws in its own pass from `Render()` — see the
+    // dedicated `BeginFrame` + `RenderColorPicker` block below.
 
     // Dropdowns are drawn + click-processed in Render() pass 2 only.
     // NOT called here — avoids adding dropdown rects/text to pass 1 batch
@@ -1279,6 +1284,17 @@ void VfxEditorOverlay::BuildModuleList(ParticleEmitter* e) {
         m_modules.push_back(std::move(m));
     }
 
+    // ── Render Sort (Niagara EmitterSortPriority parity) ────────────────
+    {
+        VfxModuleDef m;
+        m.name = "Render Sort"; m.stage = VfxStage::EmitterUpdate;
+        m.params.push_back({});
+        auto& sp = m.params.back();
+        sp.label = "Priority"; sp.type = VfxModuleParam::Int;
+        sp.iPtr = &e->renderPriority; sp.min = -100.0f; sp.max = 100.0f;
+        m_modules.push_back(std::move(m));
+    }
+
     // ── Particle Spawn ───────────────────────────────────────────────────
     {
         VfxModuleDef m;
@@ -1742,6 +1758,14 @@ void VfxEditorOverlay::BuildStageTree(ParticleEmitter* /*emitter*/) {
                                 }
                             }
                             break;
+                        case VfxModuleParam::Int:
+                            if (param.iPtr) {
+                                float fVal = static_cast<float>(*param.iPtr);
+                                if (NumberInput(px, y, pw, &fVal, param.min, param.max, param.label)) {
+                                    *param.iPtr = static_cast<int32_t>(std::clamp(fVal, param.min, param.max));
+                                }
+                            }
+                            break;
                         case VfxModuleParam::Enum:
                             if (param.uPtr && param.enumNames) {
                                 DropdownTrigger(px, y, pw, param.uPtr, param.enumNames, param.enumCount, param.label);
@@ -1991,6 +2015,31 @@ void VfxEditorOverlay::EnsureCompositionBound() {
     // Phase 12.9.0 — bind overview widget to the overlay's backing view
     // list. `BuildNiagaraUI` refreshes the vector each frame.
     m_systemOverview.Bind(&m_overviewViews);
+
+    // Phase 15.12 — forward the System Overview widget callbacks through
+    // the overlay's public `on*` members so the host only wires one set
+    // of handlers. Lambda captures `this` so re-assigning the public
+    // callbacks at runtime takes effect immediately.
+    m_systemOverview.onEmitterEnableToggled =
+        [this](size_t idx, bool enabled) {
+            if (onEmitterEnableToggled) onEmitterEnableToggled(idx, enabled);
+        };
+    m_systemOverview.onEmitterMoved =
+        [this](size_t src, size_t dst) {
+            if (onEmitterMoved) onEmitterMoved(src, dst);
+        };
+    m_systemOverview.onEmitterDuplicated =
+        [this](size_t idx) {
+            if (onEmitterDuplicated) onEmitterDuplicated(idx);
+        };
+    m_systemOverview.onEmitterDeleted =
+        [this](size_t idx) {
+            if (onEmitterDeleted) onEmitterDeleted(idx);
+        };
+    m_systemOverview.onAddEmitterRequested =
+        [this]() {
+            if (onAddEmitterRequested) onAddEmitterRequested();
+        };
 
     // Timeline scrubber drives the overlay's existing preview clock so
     // play/pause/speed changes take effect on the next
@@ -2976,6 +3025,12 @@ void VfxEditorOverlay::BuildNiagaraUI(ParticleEmitter* emitter) {
                 : std::string("Emitter");
         m_stackPanel.SetEmitterName(name);
     }
+    // Switching to a different emitter invalidates the color picker's
+    // pointer cache — close it so the popup does not write through
+    // into the previous slot's RGBA.
+    if (m_lastEmitter != emitter && m_colorPicker.isOpen) {
+        CloseColorPicker();
+    }
     m_lastEmitter = emitter;
 
     const float screenW = static_cast<float>(m_screenW);
@@ -3090,6 +3145,60 @@ void VfxEditorOverlay::BuildNiagaraUI(ParticleEmitter* emitter) {
                 rows.push_back(std::move(r));
                 return rows.back().toggleOn;
             };
+            auto addCoreU = [&](const char* lbl, uint32_t* v,
+                                  uint32_t lo, uint32_t hi) {
+                PaneWidget::InlineRow r;
+                r.kind   = PaneWidget::InlineRowKind::UintCoreField;
+                r.label  = lbl;
+                r.uValue = v;
+                r.uMin   = lo;
+                r.uMax   = hi;
+                rows.push_back(std::move(r));
+            };
+            auto addSubU = [&](const char* lbl, uint32_t* v,
+                                 uint32_t lo, uint32_t hi, bool visible) {
+                PaneWidget::InlineRow r;
+                r.kind       = PaneWidget::InlineRowKind::UintSubField;
+                r.label      = lbl;
+                r.uValue     = v;
+                r.uMin       = lo;
+                r.uMax       = hi;
+                r.subVisible = visible;
+                rows.push_back(std::move(r));
+            };
+            auto addCoreEnum = [&](const char* lbl, uint32_t* v,
+                                     const char* const* names, uint32_t count) {
+                PaneWidget::InlineRow r;
+                r.kind       = PaneWidget::InlineRowKind::EnumField;
+                r.label      = lbl;
+                r.uValue     = v;
+                r.enumNames  = names;
+                r.enumCount  = count;
+                rows.push_back(std::move(r));
+            };
+            auto addSubEnum = [&](const char* lbl, uint32_t* v,
+                                    const char* const* names, uint32_t count,
+                                    bool visible) {
+                PaneWidget::InlineRow r;
+                r.kind       = PaneWidget::InlineRowKind::EnumSubField;
+                r.label      = lbl;
+                r.uValue     = v;
+                r.enumNames  = names;
+                r.enumCount  = count;
+                r.subVisible = visible;
+                rows.push_back(std::move(r));
+            };
+            auto addSwatch = [&](const char* lbl, float* rPtr, float* gPtr,
+                                   float* bPtr, float* aPtr) {
+                PaneWidget::InlineRow r;
+                r.kind            = PaneWidget::InlineRowKind::ColorSwatch;
+                r.label           = lbl;
+                r.swatchRgba[0]   = rPtr;
+                r.swatchRgba[1]   = gPtr;
+                r.swatchRgba[2]   = bPtr;
+                r.swatchRgba[3]   = aPtr;
+                rows.push_back(std::move(r));
+            };
             auto addSub = [&](const char* lbl, float* v, float lo, float hi,
                                bool visible) {
                 PaneWidget::InlineRow r;
@@ -3103,10 +3212,36 @@ void VfxEditorOverlay::BuildNiagaraUI(ParticleEmitter* emitter) {
             };
 
             // ── Spawn + Particle core (always visible) ─────────────
+            // ── Enum name tables (shared across frames) ────────────
+            static const char* const kSpawnShapeNames[] = {
+                "Point", "Sphere", "Box", "Ring", "Cone",
+                "Cylinder", "Disc", "Line"
+            };
+            static const char* const kBlendModeNames[] = {
+                "AlphaBlend", "Additive", "PremulAlpha"
+            };
+            static const char* const kFacingModeNames[] = {
+                "Face Camera", "Velocity Aligned", "Face Camera Plane",
+                "Custom Vector", "Face Camera Pos"
+            };
+            static const char* const kLitModeNames[] = { "Unlit", "Lit" };
+            static const char* const kCollisionResponseNames[] = {
+                "Bounce", "Stick", "Kill"
+            };
+            static const char* const kSpriteChannelNames[] = {
+                "RGBA", "R", "G", "B", "A"
+            };
+
             addCore("Emission Rate",   &emitter->emissionRate,      0.0f, 5000.0f);
             addCore("Lifetime",        &emitter->lifetime,          0.01f, 60.0f);
             addCore("Lifetime Var",    &emitter->lifetimeVariation, 0.0f, 10.0f);
+            addCoreU("Max Particles",  &emitter->maxParticles,     100u, 50000u);
+            addCoreU("Loop Count",     &emitter->loopCount,          0u, 100u);
+            addCore("Duration",        &emitter->emitterDuration,   0.0f, 60.0f);
             addCore("Spawn Radius",    &emitter->spawnRadius,       0.0f, 1000.0f);
+            addCoreEnum("Spawn Shape", &emitter->spawnShape,
+                         kSpawnShapeNames,
+                         sizeof(kSpawnShapeNames) / sizeof(kSpawnShapeNames[0]));
             addCore("Initial Size",    &emitter->initialSize,       0.001f, 500.0f);
             addCore("Spawn Vel X",     &emitter->spawnVelocity.x, -2000.0f, 2000.0f);
             addCore("Spawn Vel Y",     &emitter->spawnVelocity.y, -2000.0f, 2000.0f);
@@ -3117,6 +3252,43 @@ void VfxEditorOverlay::BuildNiagaraUI(ParticleEmitter* emitter) {
             addCore("Emissive",        &emitter->emissiveIntensity, 0.0f, 20.0f);
             addCore("Stretch",         &emitter->stretchFactor,     0.0f, 5.0f);
             addCore("Soft Fade",       &emitter->softParticleFadeRange, 0.0f, 500.0f);
+            addCore("Velocity Inherit",&emitter->velocityInheritance, 0.0f, 1.0f);
+            addCore("Warmup Time",     &emitter->warmupTime,        0.0f, 10.0f);
+            addCore("Warmup Tick",     &emitter->warmupTickRate,    0.001f, 0.2f);
+
+            // ── Initial Color (per-particle birth color) ───────────
+            addSection("Initial Color");
+            addSwatch("Initial Color",
+                      &emitter->initialColor.x, &emitter->initialColor.y,
+                      &emitter->initialColor.z, &emitter->initialColor.w);
+
+            // ── Rendering ──────────────────────────────────────────
+            addSection("Rendering");
+            addCoreEnum("Blend Mode",  &emitter->blendMode,
+                         kBlendModeNames,
+                         sizeof(kBlendModeNames) / sizeof(kBlendModeNames[0]));
+            addCoreEnum("Facing Mode", &emitter->facingMode,
+                         kFacingModeNames,
+                         sizeof(kFacingModeNames) / sizeof(kFacingModeNames[0]));
+            addCoreEnum("Lit Mode",    &emitter->litMode,
+                         kLitModeNames,
+                         sizeof(kLitModeNames) / sizeof(kLitModeNames[0]));
+            addCore("Custom Facing X", &emitter->customFacingX, -1.0f, 1.0f);
+            addCore("Custom Facing Y", &emitter->customFacingY, -1.0f, 1.0f);
+            addCore("Custom Facing Z", &emitter->customFacingZ, -1.0f, 1.0f);
+            addCore("Camera Offset",   &emitter->cameraOffset,   -500.0f, 500.0f);
+            addCore("Pivot X",         &emitter->pivotOffsetX,   -1.0f, 1.0f);
+            addCore("Pivot Y",         &emitter->pivotOffsetY,   -1.0f, 1.0f);
+
+            // ── Sprite / Flipbook ──────────────────────────────────
+            addSection("Sprite / Flipbook");
+            addCoreU("Flipbook Rows",  &emitter->flipbookRows,       1u, 16u);
+            addCoreU("Flipbook Cols",  &emitter->flipbookCols,       1u, 16u);
+            addCoreU("Flipbook Frames",&emitter->flipbookTotalFrames,1u, 256u);
+            addCore("Flipbook FPS",    &emitter->flipbookFPS,        0.0f, 120.0f);
+            addCoreEnum("Channel Mask",&emitter->spriteChannelMask,
+                         kSpriteChannelNames,
+                         sizeof(kSpriteChannelNames) / sizeof(kSpriteChannelNames[0]));
 
             // ── Color Over Life (always runtime-active) ────────────
             addSection("Color Over Life");
@@ -3266,6 +3438,11 @@ void VfxEditorOverlay::BuildNiagaraUI(ParticleEmitter* emitter) {
                                             &emitter->groundCollision);
             addSub("Restitution", &emitter->restitution,       0.0f, 1.0f, collOn);
             addSub("Friction",    &emitter->collisionFriction, 0.0f, 1.0f, collOn);
+            addSubEnum("Response", &emitter->collisionResponse,
+                        kCollisionResponseNames,
+                        sizeof(kCollisionResponseNames) /
+                            sizeof(kCollisionResponseNames[0]),
+                        collOn);
 
             // ── Particle Light (uint32 enable) ─────────────────────
             const bool lightOn = addHeaderU("Particle Light",
@@ -3288,6 +3465,16 @@ void VfxEditorOverlay::BuildNiagaraUI(ParticleEmitter* emitter) {
                     0.0f, 10.0f, sbsOn);
             addSub("Speed Range",   &emitter->speedRangeMax,
                     1.0f, 10000.0f, sbsOn);
+
+            // ── Color By Speed (uint32 enable, reuses Color Over Life) ─
+            (void)addHeaderU("Color By Speed",
+                              &emitter->colorBySpeedEnabled);
+
+            // ── Screen-Space Size (uint32 enable) ──────────────────
+            const bool ssOn = addHeaderU("Screen-Space Size",
+                                           &emitter->screenSpaceSizeEnabled);
+            addSub("Pixel Size", &emitter->screenSpacePixelSize,
+                    1.0f, 256.0f, ssOn);
 
             m_editorPane.SetInlineRows(std::move(rows));
         } else {
@@ -3379,6 +3566,27 @@ void VfxEditorOverlay::BuildNiagaraUI(ParticleEmitter* emitter) {
                             *r.toggleTarget = r.toggleOn ? 0.0f : r.toggleOnValue;
                             m_wantsInput = true;
                         }
+                    } else if (r.kind == VfxEditorPaneWidget::InlineRowKind::EnumField ||
+                               r.kind == VfxEditorPaneWidget::InlineRowKind::EnumSubField) {
+                        // Click cycles to the next enum value, wrapping
+                        // at the end of the name table.
+                        if (r.uValue != nullptr && r.enumCount > 0u) {
+                            *r.uValue = (*r.uValue + 1u) % r.enumCount;
+                            m_wantsInput = true;
+                        }
+                    } else if ((r.kind == VfxEditorPaneWidget::InlineRowKind::UintCoreField ||
+                                 r.kind == VfxEditorPaneWidget::InlineRowKind::UintSubField) &&
+                                r.uValue != nullptr) {
+                        m_inlineUDragActive      = true;
+                        m_inlineUDragField       = r.uValue;
+                        m_inlineUDragMin         = r.uMin;
+                        m_inlineUDragMax         = r.uMax;
+                        m_inlineUDragMouseXStart = m_mouseX;
+                        m_inlineUDragAccum       = static_cast<float>(*r.uValue);
+                        const float range = static_cast<float>(r.uMax - r.uMin);
+                        m_inlineUDragScale =
+                            std::max(range / 200.0f, 1.0f / 40.0f);
+                        m_wantsInput = true;
                     } else if (r.value != nullptr) {
                         m_inlineDragActive     = true;
                         m_inlineDragField      = r.value;
@@ -3403,6 +3611,22 @@ void VfxEditorOverlay::BuildNiagaraUI(ParticleEmitter* emitter) {
                     } else {
                         m_inlineDragActive = false;
                         m_inlineDragField  = nullptr;
+                    }
+                }
+                if (m_inlineUDragActive && m_inlineUDragField != nullptr) {
+                    if (m_mouseDown) {
+                        const float dx = m_mouseX - m_inlineUDragMouseXStart;
+                        const float nv = static_cast<float>(m_inlineUDragAccum)
+                                          + dx * m_inlineUDragScale;
+                        const float clampedF = std::clamp(nv,
+                            static_cast<float>(m_inlineUDragMin),
+                            static_cast<float>(m_inlineUDragMax));
+                        *m_inlineUDragField = static_cast<uint32_t>(
+                            clampedF + 0.5f);
+                        m_wantsInput = true;
+                    } else {
+                        m_inlineUDragActive = false;
+                        m_inlineUDragField  = nullptr;
                     }
                 }
                 // Fall back to the store-driven inspector for anything

@@ -166,6 +166,14 @@ struct VfxEmitterComponent {
     uint32_t loopCount      = 0;      ///< Restart count before stopping. 0=infinite.
     float startDelay        = 0.0f;   ///< Delay before first spawn (seconds).
 
+    // ── Render Sort ──────────────────────────────────────────────────────
+
+    /// Render sort priority (Niagara parity: `EmitterSortPriority`).
+    /// Higher values render ON TOP of lower values. Emitters with the same
+    /// priority fall back to back-to-front camera-distance ordering.
+    /// Negative values are allowed and push the emitter further back.
+    int32_t renderPriority = 0;
+
     // ── Runtime State ────────────────────────────────────────────────────
 
     bool emitting = true;

@@ -43,10 +43,11 @@ static constexpr uint32_t kIndirectDrawArgsStride = 20;
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/// Sorts emitters back-to-front by distance to camera.
+/// Sorts emitters for correct alpha blending layering.
 ///
-/// Emitters farther from the camera are drawn first, ensuring correct
-/// alpha blending when particles from different emitters overlap.
+/// Primary key: `renderPriority` ascending — higher priority draws LAST
+/// so it appears ON TOP (Niagara `EmitterSortPriority` parity).
+/// Tie-breaker: back-to-front by `distanceToCamera` (farther first).
 ///
 /// # Arguments
 /// * `emitters` -- Mutable reference to the emitter array. Sorted in-place.
@@ -54,6 +55,9 @@ static void SortEmittersBackToFront(std::vector<EmitterRenderData>& emitters)
 {
     std::sort(emitters.begin(), emitters.end(),
               [](const EmitterRenderData& a, const EmitterRenderData& b) {
+                  if (a.renderPriority != b.renderPriority) {
+                      return a.renderPriority < b.renderPriority;
+                  }
                   return a.distanceToCamera > b.distanceToCamera;
               });
 }
@@ -215,16 +219,32 @@ void AddParticleRenderPass(rg::RgBuilder& builder,
                 cmd->SetScissor(sr);
             }
 
-            // Pipeline + root signature (resets all root param bindings).
-            cmd->SetPipeline(passDesc.billboardPipeline);
+            // Phase 15.15 — the pass now switches PSO per emitter so a
+            // system that mixes Fire (additive) + Smoke (alpha blend)
+            // renders each emitter with its own blend state. The
+            // default `passDesc.billboardPipeline` only matters for
+            // emitters that didn't override the per-emitter pipeline.
+            RHIPipelineHandle currentPipeline = passDesc.billboardPipeline;
+            cmd->SetPipeline(currentPipeline);
 
             // Re-bind PerFrameCB at slot 1 (b1) — viewProj, camera, etc.
             if (passDesc.perFrameCB.gpuAddr != 0) {
                 cmd->SetRootCBV(kSlotPerFrame, passDesc.perFrameCB.gpuAddr);
             }
 
-            // Draw each emitter (sorted back-to-front).
+            // Draw each emitter (sorted back-to-front). Flip the PSO
+            // only when it changes to avoid redundant state thrash.
             for (const auto& emitter : passDesc.emitters) {
+                const RHIPipelineHandle want = emitter.pipeline.IsValid()
+                    ? emitter.pipeline : passDesc.billboardPipeline;
+                if (want != currentPipeline) {
+                    currentPipeline = want;
+                    cmd->SetPipeline(currentPipeline);
+                    if (passDesc.perFrameCB.gpuAddr != 0) {
+                        cmd->SetRootCBV(kSlotPerFrame,
+                                        passDesc.perFrameCB.gpuAddr);
+                    }
+                }
                 DrawEmitterBillboards(cmd, emitter);
             }
 

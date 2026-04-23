@@ -56,10 +56,21 @@ static void ApplyPresetToComponent(VfxEmitterComponent& c, const ParticleEmitter
     c.initialSize        = p.initialSize;
     c.initialColor       = p.initialColor;
     c.emissiveIntensity  = p.emissiveIntensity;
+    c.litMode            = p.litMode;
     c.softParticleFadeRange = p.softParticleFadeRange;
     c.facingMode         = p.facingMode;
     c.stretchFactor      = p.stretchFactor;
     c.blendMode          = p.blendMode;
+    c.cameraOffset       = p.cameraOffset;
+    c.pivotOffsetX       = p.pivotOffsetX;
+    c.pivotOffsetY       = p.pivotOffsetY;
+    c.sizeBySpeedEnabled = p.sizeBySpeedEnabled;
+    c.sizeBySpeedMin     = p.sizeBySpeedMin;
+    c.sizeBySpeedMax     = p.sizeBySpeedMax;
+    c.speedRangeMax      = p.speedRangeMax;
+    c.colorBySpeedEnabled = p.colorBySpeedEnabled;
+    c.screenSpaceSizeEnabled = p.screenSpaceSizeEnabled;
+    c.screenSpacePixelSize = p.screenSpacePixelSize;
     c.sizeOverLifeStart  = p.sizeOverLifeStart;
     c.sizeOverLifePeak   = p.sizeOverLifePeak;
     c.sizeOverLifeEnd    = p.sizeOverLifeEnd;
@@ -82,13 +93,25 @@ static void ApplyPresetToComponent(VfxEmitterComponent& c, const ParticleEmitter
     c.windDirY           = p.windDirY;
     c.windDirZ           = p.windDirZ;
     c.windStrength       = p.windStrength;
+    c.accelX             = p.accelX;
+    c.accelY             = p.accelY;
+    c.accelZ             = p.accelZ;
+    c.vortexTangentialStrength = p.vortexTangentialStrength;
+    c.vortexRadialStrength     = p.vortexRadialStrength;
+    c.vortexMaxRadius          = p.vortexMaxRadius;
     c.orbitEnabled       = p.orbitEnabled;
     c.orbitRadius        = p.orbitRadius;
     c.orbitSpeed         = p.orbitSpeed;
     c.groundCollision    = p.groundCollision;
     c.restitution        = p.restitution;
+    c.collisionResponse  = p.collisionResponse;
     c.collisionFriction  = p.collisionFriction;
+    c.rotationRate       = p.rotationRate;
+    c.rotationOverLifeStart = p.rotationOverLifeStart;
+    c.rotationOverLifeEnd   = p.rotationOverLifeEnd;
     c.startDelay         = p.startDelay;
+    c.emitterDuration    = p.emitterDuration;
+    c.loopCount          = p.loopCount;
     c.particleLightEnabled     = p.particleLightEnabled;
     c.particleLightRadius      = p.particleLightRadius;
     c.particleLightIntensity   = p.particleLightIntensity;
@@ -201,7 +224,10 @@ void VFXViewportApp::OnStart() {
         sc.SetPosition({0.0f, 0.0f, 0.0f});
         auto& sys = world.AddComponent<VfxSystemComponent>(m_vfxEntity);
         sys.systemAssetPath  = m_systemAssetPath;
-        sys.emitting         = true;
+        // Multi-emitter demo prioritises the author-composed slots.
+        // Compound fireball stays dormant at startup and wakes up only
+        // when a slot is cycled to preset 0 (FireballProj).
+        sys.emitting         = false;
     }
 
     // ── Standalone emitter for preset cycling (Tab/Left/Right) ─────────
@@ -229,16 +255,17 @@ void VFXViewportApp::OnStart() {
     };
 
     {
-        // Default standalone preset = Fire (used when user cycles past the
-        // built-in fireball compound). Emission is silenced by default so
-        // the compound fireball is the only visible effect at startup.
+        // Default slot = Fire. Emission enabled so the demo greets the
+        // user with a visible effect; the compound fireball
+        // (VfxSystemComponent) starts dormant until a slot cycles to
+        // preset 0.
         ParticleEmitter stdP;
         ApplyPreset_Fire(stdP);
-        Entity stdEmitter = createEmitter("VFX_Standalone", stdP, true);
-        if (world.HasComponent<VfxEmitterComponent>(stdEmitter)) {
-            world.GetComponent<VfxEmitterComponent>(stdEmitter).emitting = false;
-        }
+        createEmitter("VFX_Standalone", stdP, true);
+        m_emitterPresets.push_back(1);  // index 1 = Fire.
     }
+    m_activeEmitterIdx = 0;
+    m_currentPreset    = 1;
 
     UZ_LOG(App, Info, "VFXViewportApp: fireball compound created via VfxSystemComponent '{}'",
            m_systemAssetPath);
@@ -256,10 +283,10 @@ void VFXViewportApp::OnStart() {
         overlay->SetLayoutMode(VfxEditorLayoutMode::SplitHorizontal); // Phase 15.4 — 50/50 split default
 
         // Seed the emitter tab list for the Niagara-mode system
-        // overview panel. Demo has one emitter slot; the label mirrors
-        // the active preset so cycling Tab / Left / Right keeps the
-        // Stack tab header in sync.
-        overlay->SetEmitterNames({kPresetNames[m_currentPreset]}, 0);
+        // overview panel. `RefreshEmitterNames` builds the label list
+        // from `m_emitterPresets` so adding / duplicating / deleting
+        // emitters keeps the overview in sync automatically.
+        RefreshEmitterNames();
 
         // Preset load: apply + restart
         overlay->onLoadPreset = [this](int presetIdx, ParticleEmitter*) {
@@ -322,14 +349,77 @@ void VFXViewportApp::OnStart() {
             }
         };
 
-        // Phase 12.10.0 — Add Emitter from the menu tab bar. The demo
-        // uses a single emitter today; this callback is stubbed so the
-        // button renders but fires a warning instead of crashing.
-        overlay->onAddEmitterRequested = [] {
-            UZ_LOG(App, Info, "onAddEmitterRequested: demo only has one emitter slot");
+        // Phase 15.12 — multi-emitter callbacks. Structural ECS ops
+        // (create / destroy entities, reorder) are queued as pending
+        // flags and drained in OnUpdate so the demo never mutates the
+        // ECS list mid-overlay-tick.
+        overlay->onAddEmitterRequested = [this] {
+            m_pendingAddEmitter = true;
+        };
+        overlay->onEmitterDuplicated = [this](size_t idx) {
+            m_pendingDuplicateIdx = static_cast<int>(idx);
+        };
+        overlay->onEmitterDeleted = [this](size_t idx) {
+            m_pendingDeleteIdx = static_cast<int>(idx);
+        };
+        overlay->onEmitterMoved = [this](size_t src, size_t dst) {
+            m_pendingMoveSrc = static_cast<int>(src);
+            m_pendingMoveDst = static_cast<int>(dst);
+        };
+        overlay->onEmitterEnableToggled = [this](size_t idx, bool enabled) {
+            auto& w = GetWorld();
+            if (idx >= m_emitterEntities.size()) return;
+            Entity e = m_emitterEntities[idx];
+            if (!w.IsValid(e)) return;
+            if (!w.HasComponent<VfxEmitterComponent>(e)) return;
+            w.GetComponent<VfxEmitterComponent>(e).emitting = enabled;
+        };
+        overlay->onSelectEmitter = [this](int idx) {
+            if (idx < 0 || idx >= static_cast<int>(m_emitterEntities.size())) return;
+            m_activeEmitterIdx = idx;
+            if (idx < static_cast<int>(m_emitterPresets.size())) {
+                m_currentPreset = m_emitterPresets[idx];
+            }
         };
     }
 
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RefreshEmitterNames — rebuild the overview label list from preset slots.
+// ─────────────────────────────────────────────────────────────────────────────
+
+void VFXViewportApp::RefreshEmitterNames() {
+    auto* overlay = GetVfxEditorOverlay();
+    if (overlay == nullptr) return;
+
+    std::vector<std::string> names;
+    names.reserve(m_emitterPresets.size());
+    for (size_t i = 0; i < m_emitterPresets.size(); ++i) {
+        const int idx = m_emitterPresets[i];
+        const char* preset =
+            (idx >= 0 && idx < kPresetCount) ? kPresetNames[idx] : "?";
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "%zu: %s", i + 1u, preset);
+        names.emplace_back(buf);
+    }
+    const int sel = std::clamp(
+        m_activeEmitterIdx, 0,
+        std::max(0, static_cast<int>(names.size()) - 1));
+    overlay->SetEmitterNames(names, sel);
+}
+
+void VFXViewportApp::ReassignRenderPriorities() {
+    auto& w = GetWorld();
+    for (size_t i = 0; i < m_emitterEntities.size(); ++i) {
+        Entity e = m_emitterEntities[i];
+        if (!w.IsValid(e) || !w.HasComponent<VfxEmitterComponent>(e)) continue;
+        auto& comp = w.GetComponent<VfxEmitterComponent>(e);
+        comp.renderPriority = static_cast<int32_t>(i);
+        if (auto* rt = GetRuntimeEmitter(comp.runtimeEmitterIdx)) {
+            rt->renderPriority = static_cast<int32_t>(i);
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -339,6 +429,104 @@ void VFXViewportApp::OnStart() {
 void VFXViewportApp::OnUpdate(float dt) {
     m_totalTime += dt;
 
+    // Phase 15.12 — drain pending multi-emitter structural ops. Handled
+    // before input routing so a click that adds / removes an emitter
+    // this frame produces a consistent overview list before any other
+    // consumer reads it.
+    if (m_pendingAddEmitter) {
+        m_pendingAddEmitter = false;
+        auto& w = GetWorld();
+        Entity ent = w.CreateEntity();
+        w.AddComponent<CName>(ent, CName{"VFX_Emitter"});
+        w.AddComponent<SceneComponent>(ent);
+        auto& em = w.AddComponent<VfxEmitterComponent>(ent);
+        ParticleEmitter seed;
+        ApplyPreset_Fire(seed);
+        ApplyPresetToComponent(em, seed);
+        em.emitting = true;
+        if (!m_spriteTexturePath.empty()) {
+            em.spriteTexturePath   = m_spriteTexturePath;
+            em.flipbookRows        = m_flipbookRows;
+            em.flipbookCols        = m_flipbookCols;
+            em.flipbookTotalFrames = m_flipbookTotalFrames;
+        }
+        em.flipbookFPS       = m_flipbookFPS;
+        em.spriteChannelMask = m_spriteChannelMask;
+        m_emitterEntities.push_back(ent);
+        m_emitterPresets.push_back(1);  // "Fire" default preset index.
+        m_activeEmitterIdx = static_cast<int>(m_emitterEntities.size()) - 1;
+        RefreshEmitterNames();
+        ReassignRenderPriorities();
+    }
+    if (m_pendingDuplicateIdx >= 0) {
+        const int src = m_pendingDuplicateIdx;
+        m_pendingDuplicateIdx = -1;
+        if (src >= 0 && src < static_cast<int>(m_emitterEntities.size())) {
+            auto& w = GetWorld();
+            Entity srcE = m_emitterEntities[src];
+            if (w.IsValid(srcE) && w.HasComponent<VfxEmitterComponent>(srcE)) {
+                Entity ent = w.CreateEntity();
+                w.AddComponent<CName>(ent, CName{"VFX_Clone"});
+                w.AddComponent<SceneComponent>(ent);
+                auto& em = w.AddComponent<VfxEmitterComponent>(ent);
+                // Clone the component fields. The duplicated component
+                // must NOT keep the source's `runtimeEmitterIdx` — the
+                // sync pass would treat the clone as an alias for the
+                // source's runtime and stomp it on the next
+                // restartRequested.
+                em = w.GetComponent<VfxEmitterComponent>(srcE);
+                em.runtimeEmitterIdx = -1;  // force fresh runtime creation
+                em.emitting = true;
+                m_emitterEntities.insert(m_emitterEntities.begin() + src + 1, ent);
+                const int srcPreset = (src < static_cast<int>(m_emitterPresets.size()))
+                    ? m_emitterPresets[src] : 1;
+                m_emitterPresets.insert(m_emitterPresets.begin() + src + 1, srcPreset);
+                m_activeEmitterIdx = src + 1;
+                RefreshEmitterNames();
+                ReassignRenderPriorities();
+            }
+        }
+    }
+    if (m_pendingDeleteIdx >= 0) {
+        const int idx = m_pendingDeleteIdx;
+        m_pendingDeleteIdx = -1;
+        if (idx >= 0 && idx < static_cast<int>(m_emitterEntities.size())
+            && m_emitterEntities.size() > 1u) {
+            auto& w = GetWorld();
+            Entity e = m_emitterEntities[idx];
+            if (w.IsValid(e)) w.DestroyEntity(e);
+            m_emitterEntities.erase(m_emitterEntities.begin() + idx);
+            if (idx < static_cast<int>(m_emitterPresets.size())) {
+                m_emitterPresets.erase(m_emitterPresets.begin() + idx);
+            }
+            m_activeEmitterIdx = std::clamp(m_activeEmitterIdx, 0,
+                static_cast<int>(m_emitterEntities.size()) - 1);
+            RefreshEmitterNames();
+            ReassignRenderPriorities();
+        }
+    }
+    if (m_pendingMoveSrc >= 0 && m_pendingMoveDst >= 0) {
+        const int src = m_pendingMoveSrc;
+        const int dst = m_pendingMoveDst;
+        m_pendingMoveSrc = -1;
+        m_pendingMoveDst = -1;
+        const int n = static_cast<int>(m_emitterEntities.size());
+        if (src != dst && src >= 0 && src < n && dst >= 0 && dst < n) {
+            Entity e = m_emitterEntities[src];
+            int   p = (src < static_cast<int>(m_emitterPresets.size()))
+                ? m_emitterPresets[src] : 1;
+            m_emitterEntities.erase(m_emitterEntities.begin() + src);
+            m_emitterPresets.erase(m_emitterPresets.begin() + src);
+            const int insertAt = (dst > src) ? dst : dst;
+            m_emitterEntities.insert(
+                m_emitterEntities.begin() + insertAt, e);
+            m_emitterPresets.insert(m_emitterPresets.begin() + insertAt, p);
+            m_activeEmitterIdx = insertAt;
+            RefreshEmitterNames();
+            ReassignRenderPriorities();
+        }
+    }
+
     // Phase 14.13 — drain the status-bar notification queue. Queue
     // auto-dismisses after 3 s per entry.
     // Phase 14.14 — feed smoothed FPS into the status bar. EMA with
@@ -346,6 +534,25 @@ void VFXViewportApp::OnUpdate(float dt) {
     // colour threshold back and forth.
     if (auto* overlay = GetVfxEditorOverlay()) {
         overlay->TickStatus(dt);
+
+        // Phase 15.14 — publish the active emitter's runtime pointer
+        // so the overlay binds Parameters to the correct standalone
+        // (ignores compound fireball children that VFXSystem also
+        // tracks in its global emitter list).
+        ParticleEmitter* activeRt = nullptr;
+        if (!m_emitterEntities.empty()) {
+            const int idx = std::clamp(
+                m_activeEmitterIdx, 0,
+                static_cast<int>(m_emitterEntities.size()) - 1);
+            Entity ent = m_emitterEntities[idx];
+            auto& w = GetWorld();
+            if (w.IsValid(ent) &&
+                w.HasComponent<VfxEmitterComponent>(ent)) {
+                const auto& comp = w.GetComponent<VfxEmitterComponent>(ent);
+                activeRt = GetRuntimeEmitter(comp.runtimeEmitterIdx);
+            }
+        }
+        overlay->SetActiveEmitterOverride(activeRt);
 
         if (dt > 1.0e-4f) {
             const float instantFps = 1.0f / dt;
@@ -377,14 +584,20 @@ void VFXViewportApp::OnUpdate(float dt) {
     // Any other preset -> compound silent, standalone active.
     {
         World& w = GetWorld();
-        const bool fireballActive = (m_currentPreset == 0);
-        if (w.HasComponent<VfxSystemComponent>(m_vfxEntity)) {
-            w.GetComponent<VfxSystemComponent>(m_vfxEntity).emitting = fireballActive;
+        // Phase 15.12 — enable the compound fireball only when ANY
+        // slot is configured to preset 0 (FireballProj). Standalone
+        // emitters keep their per-slot `emitting` state untouched so
+        // the Emitters-tab checkboxes remain authoritative across
+        // frames — the previous global gate stomped every slot each
+        // update and prevented mixed-preset setups (Fire + Sparks,
+        // Smoke + Wind, etc.).
+        bool anySlotFireball = false;
+        for (int p : m_emitterPresets) {
+            if (p == 0) { anySlotFireball = true; break; }
         }
-        if (!m_emitterEntities.empty() && w.IsValid(m_emitterEntities[0])) {
-            if (w.HasComponent<VfxEmitterComponent>(m_emitterEntities[0])) {
-                w.GetComponent<VfxEmitterComponent>(m_emitterEntities[0]).emitting = !fireballActive;
-            }
+        if (w.HasComponent<VfxSystemComponent>(m_vfxEntity)) {
+            w.GetComponent<VfxSystemComponent>(m_vfxEntity).emitting =
+                anySlotFireball;
         }
     }
 
@@ -480,14 +693,27 @@ void VFXViewportApp::OnUpdate(float dt) {
             auto& sysComp = world.GetComponent<VfxSystemComponent>(m_vfxEntity);
             sysComp.restartRequested = true;
         }
-        if (!m_emitterEntities.empty() && world.IsValid(m_emitterEntities[0])) {
-            if (world.HasComponent<VfxEmitterComponent>(m_emitterEntities[0])) {
-                world.GetComponent<VfxEmitterComponent>(m_emitterEntities[0]).restartRequested = true;
+        // Preset switch targets the currently-active slot so users can
+        // configure each emitter independently.
+        const int activeIdx = std::clamp(
+            m_activeEmitterIdx, 0,
+            static_cast<int>(m_emitterEntities.size()) - 1);
+        if (activeIdx >= 0 && activeIdx < static_cast<int>(m_emitterEntities.size())
+            && world.IsValid(m_emitterEntities[activeIdx])) {
+            if (world.HasComponent<VfxEmitterComponent>(m_emitterEntities[activeIdx])) {
+                world.GetComponent<VfxEmitterComponent>(m_emitterEntities[activeIdx]).restartRequested = true;
             }
         }
 
-        if (!m_emitterEntities.empty()) {
-            Entity ent = m_emitterEntities[0];
+        if (!m_emitterEntities.empty() && activeIdx >= 0) {
+            Entity ent = m_emitterEntities[activeIdx];
+            // Auto-enable emission on the slot the user just targeted
+            // so a preset cycle always yields a visible effect — otherwise
+            // slots started via OnStart with emitting=false stay silent.
+            if (world.IsValid(ent) &&
+                world.HasComponent<VfxEmitterComponent>(ent)) {
+                world.GetComponent<VfxEmitterComponent>(ent).emitting = true;
+            }
             if (world.IsValid(ent)) {
                 auto& comp = world.GetComponent<VfxEmitterComponent>(ent);
                 // Reset to defaults first, then apply preset.
@@ -573,15 +799,19 @@ void VFXViewportApp::OnUpdate(float dt) {
                     kPresetFns[m_currentPreset](*rt);
                 }
                 comp.restartRequested = true;
-                // Force rebuild of module list + retitle the emitter
-                // slot so the Stack tab header + system overview show
-                // the active preset instead of the startup name.
+                // Track the preset the active slot is now showing so
+                // the overview label list reflects per-slot presets.
+                if (activeIdx >= 0 &&
+                    activeIdx < static_cast<int>(m_emitterPresets.size())) {
+                    m_emitterPresets[activeIdx] = m_currentPreset;
+                }
                 if (auto* overlay = GetVfxEditorOverlay()) {
                     overlay->ForceRebuildModules();
-                    overlay->SetEmitterNames(
-                        {kPresetNames[m_currentPreset]}, 0);
+                    RefreshEmitterNames();
                 }
-                UZ_LOG(App, Info, "[VFX] Preset: {} ({})", kPresetNames[m_currentPreset], m_currentPreset);
+                UZ_LOG(App, Info, "[VFX] Preset: {} ({}) @ slot {}",
+                       kPresetNames[m_currentPreset], m_currentPreset,
+                       activeIdx);
             }
         }
     }

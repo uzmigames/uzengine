@@ -86,6 +86,88 @@ void SceneRenderer::SyncVfxEmitters(World* world, IVFS* vfs) {
                     emitterComp.cullCulledThisFrame   = false;
                     emitterComp.cullCulledPrevFrame   = false;
                     emitterComp.cullFramesSinceCulled = 0;
+
+                    // Phase 15.14 — re-copy all config fields from the
+                    // ECS component to the runtime emitter. Needed so
+                    // preset switches / host-driven param edits take
+                    // effect on emitters that the demo can't address
+                    // via `GetRuntimeEmitter` (e.g. just-added slots
+                    // whose `runtimeEmitterIdx` was still -1 at the
+                    // time of the switch).
+                    rt->maxParticles        = emitterComp.maxParticles;
+                    rt->emissionRate        = emitterComp.emissionRate;
+                    rt->lifetime            = emitterComp.lifetime;
+                    rt->lifetimeVariation   = emitterComp.lifetimeVariation;
+                    rt->spawnVelocity       = emitterComp.spawnVelocity;
+                    rt->velocityVariation   = emitterComp.velocityVariation;
+                    rt->spreadAngle         = emitterComp.spreadAngle;
+                    rt->spawnShape          = emitterComp.spawnShape;
+                    rt->spawnRadius         = emitterComp.spawnRadius;
+                    rt->initialSize         = emitterComp.initialSize;
+                    rt->initialColor        = emitterComp.initialColor;
+                    rt->emissiveIntensity   = emitterComp.emissiveIntensity;
+                    rt->litMode             = emitterComp.litMode;
+                    rt->softParticleFadeRange = emitterComp.softParticleFadeRange;
+                    rt->facingMode          = emitterComp.facingMode;
+                    rt->stretchFactor       = emitterComp.stretchFactor;
+                    rt->blendMode           = emitterComp.blendMode;
+                    rt->cameraOffset        = emitterComp.cameraOffset;
+                    rt->pivotOffsetX        = emitterComp.pivotOffsetX;
+                    rt->pivotOffsetY        = emitterComp.pivotOffsetY;
+                    rt->sizeOverLifeStart   = emitterComp.sizeOverLifeStart;
+                    rt->sizeOverLifePeak    = emitterComp.sizeOverLifePeak;
+                    rt->sizeOverLifeEnd     = emitterComp.sizeOverLifeEnd;
+                    rt->sizeOverLifePeakTime = emitterComp.sizeOverLifePeakTime;
+                    rt->colorLifeStartR     = emitterComp.colorLifeStartR;
+                    rt->colorLifeStartG     = emitterComp.colorLifeStartG;
+                    rt->colorLifeStartB     = emitterComp.colorLifeStartB;
+                    rt->colorLifeStartA     = emitterComp.colorLifeStartA;
+                    rt->colorLifeEndR       = emitterComp.colorLifeEndR;
+                    rt->colorLifeEndG       = emitterComp.colorLifeEndG;
+                    rt->colorLifeEndB       = emitterComp.colorLifeEndB;
+                    rt->colorLifeEndA       = emitterComp.colorLifeEndA;
+                    rt->gravity             = emitterComp.gravity;
+                    rt->damping             = emitterComp.damping;
+                    rt->curlStrength        = emitterComp.curlStrength;
+                    rt->curlFrequency       = emitterComp.curlFrequency;
+                    rt->curlSpeed           = emitterComp.curlSpeed;
+                    rt->dragCoefficient     = emitterComp.dragCoefficient;
+                    rt->windDirX            = emitterComp.windDirX;
+                    rt->windDirY            = emitterComp.windDirY;
+                    rt->windDirZ            = emitterComp.windDirZ;
+                    rt->windStrength        = emitterComp.windStrength;
+                    rt->orbitEnabled        = emitterComp.orbitEnabled;
+                    rt->orbitRadius         = emitterComp.orbitRadius;
+                    rt->orbitSpeed          = emitterComp.orbitSpeed;
+                    rt->accelX              = emitterComp.accelX;
+                    rt->accelY              = emitterComp.accelY;
+                    rt->accelZ              = emitterComp.accelZ;
+                    rt->vortexTangentialStrength = emitterComp.vortexTangentialStrength;
+                    rt->vortexRadialStrength     = emitterComp.vortexRadialStrength;
+                    rt->vortexMaxRadius          = emitterComp.vortexMaxRadius;
+                    rt->groundCollision     = emitterComp.groundCollision;
+                    rt->restitution         = emitterComp.restitution;
+                    rt->collisionResponse   = emitterComp.collisionResponse;
+                    rt->collisionFriction   = emitterComp.collisionFriction;
+                    rt->rotationRate        = emitterComp.rotationRate;
+                    rt->rotationOverLifeStart = emitterComp.rotationOverLifeStart;
+                    rt->rotationOverLifeEnd   = emitterComp.rotationOverLifeEnd;
+                    rt->sizeBySpeedEnabled  = emitterComp.sizeBySpeedEnabled;
+                    rt->sizeBySpeedMin      = emitterComp.sizeBySpeedMin;
+                    rt->sizeBySpeedMax      = emitterComp.sizeBySpeedMax;
+                    rt->speedRangeMax       = emitterComp.speedRangeMax;
+                    rt->colorBySpeedEnabled = emitterComp.colorBySpeedEnabled;
+                    rt->screenSpaceSizeEnabled = emitterComp.screenSpaceSizeEnabled;
+                    rt->screenSpacePixelSize   = emitterComp.screenSpacePixelSize;
+                    rt->emitterDuration     = emitterComp.emitterDuration;
+                    rt->loopCount           = emitterComp.loopCount;
+                    rt->startDelay          = emitterComp.startDelay;
+                    rt->particleLightEnabled     = emitterComp.particleLightEnabled;
+                    rt->particleLightRadius      = emitterComp.particleLightRadius;
+                    rt->particleLightIntensity   = emitterComp.particleLightIntensity;
+                    rt->particleLightFlicker     = emitterComp.particleLightFlicker;
+                    rt->particleLightFlickerSpeed = emitterComp.particleLightFlickerSpeed;
+                    rt->renderPriority      = emitterComp.renderPriority;
                 }
 
                 // ── Frustum cull test (phase 10.5.0) ────────────────────
@@ -322,6 +404,7 @@ void SceneRenderer::SyncVfxEmitters(World* world, IVFS* vfs) {
             emitter->loopCount          = emitterComp.loopCount;
             emitter->startDelay         = emitterComp.startDelay;
             emitter->isEmitting         = emitterComp.emitting;
+            emitter->renderPriority     = emitterComp.renderPriority;
 
             // ── Sprite texture ─────────────────────────────────────────
             emitter->spriteTexturePath   = emitterComp.spriteTexturePath;

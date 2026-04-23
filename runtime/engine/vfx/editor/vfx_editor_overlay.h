@@ -203,6 +203,25 @@ public:
     /// Returns the emitter index selected by the user this frame (-1 = none).
     [[nodiscard]] int GetSelectedEmitterIndex() const { return m_selectedEmitterIdx; }
 
+    /// Returns the active emitter slot — updated by clicks on the
+    /// System Overview + preset-cycle keystrokes. Used by the frame
+    /// renderer to bind `BuildUI` to the correct `ParticleEmitter*`.
+    [[nodiscard]] int ActiveEmitterIdx() const noexcept {
+        return m_activeEmitterIdx;
+    }
+    void SetActiveEmitterIdx(int idx) noexcept { m_activeEmitterIdx = idx; }
+
+    /// Host-provided pointer to the active emitter. When set, the
+    /// frame renderer uses this instead of indexing into
+    /// `VFXSystem::GetActiveEmitters()` (which interleaves standalone
+    /// + compound children and breaks slot-index alignment).
+    [[nodiscard]] ParticleEmitter* ActiveEmitterOverride() const noexcept {
+        return m_activeEmitterOverride;
+    }
+    void SetActiveEmitterOverride(ParticleEmitter* em) noexcept {
+        m_activeEmitterOverride = em;
+    }
+
     // ── Callbacks ────────────────────────────────────────────────────────
     std::function<void()>    onRestart;
     /// Called with preset index. The callback receives the ParticleEmitter*
@@ -224,6 +243,14 @@ public:
     /// Phase 12.7.0 — fires when the `+` tab at the end of the emitter
     /// bar is clicked. Host creates a new emitter in the bound system.
     std::function<void()> onAddEmitterRequested;
+
+    // Phase 15.12 — multi-emitter callbacks routed through the System
+    // Overview widget. Fires with the emitter slot index (matching
+    // `SetEmitterNames` order). Host keeps the ECS list in sync.
+    std::function<void(size_t idx, bool enabled)> onEmitterEnableToggled;
+    std::function<void(size_t src, size_t dst)>   onEmitterMoved;
+    std::function<void(size_t idx)>               onEmitterDuplicated;
+    std::function<void(size_t idx)>               onEmitterDeleted;
 
     /// Returns the currently-edited emitter pointer (set by last BuildUI call).
     [[nodiscard]] ParticleEmitter* GetCurrentEmitter() const { return m_lastEmitter; }
@@ -320,9 +347,10 @@ public:
 
     struct VfxModuleParam {
         const char* label = nullptr;
-        enum Type : uint8_t { Float, Uint, Bool, Enum } type = Float;
+        enum Type : uint8_t { Float, Uint, Bool, Enum, Int } type = Float;
         float*    fPtr      = nullptr;
         uint32_t* uPtr      = nullptr;
+        int32_t*  iPtr      = nullptr;
         float     min       = 0.0f;
         float     max       = 1.0f;
         const char* const* enumNames = nullptr;
@@ -428,6 +456,17 @@ private:
     float  m_inlineDragMin         = 0.0f;
     float  m_inlineDragMax         = 1.0f;
 
+    // Phase 15.13 — separate drag state for uint32 scalars. Intermediate
+    // accumulator is stored as float so sub-pixel drag deltas don't
+    // truncate to zero — only the final write casts back to uint32.
+    bool      m_inlineUDragActive      = false;
+    uint32_t* m_inlineUDragField       = nullptr;
+    float     m_inlineUDragMouseXStart = 0.0f;
+    float     m_inlineUDragAccum       = 0.0f;
+    float     m_inlineUDragScale       = 0.05f;
+    uint32_t  m_inlineUDragMin         = 0u;
+    uint32_t  m_inlineUDragMax         = 0xFFFFFFFFu;
+
     // Phase 15.10 — Color-over-life gradient widget state. Persists
     // across frames since the pane rebuilds its row list every frame.
     // 0 = start (left handle), 1 = end (right handle).
@@ -529,6 +568,7 @@ private:
     std::vector<std::string> m_presetNames;
     std::vector<std::string> m_emitterNames;
     int  m_activeEmitterIdx  = 0;
+    ParticleEmitter* m_activeEmitterOverride = nullptr;
     int  m_selectedEmitterIdx = -1;
 
     // ── Theme colors (phase 12.1.0) ──────────────────────────────────────

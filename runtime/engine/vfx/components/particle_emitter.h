@@ -27,10 +27,13 @@
 #include "engine/vfx/core/gpu_particle_buffer.h"
 #include "engine/vfx/core/particle_budget.h"
 #include "engine/vfx/core/vfx_spawn_rate_curve.h"
+#include "engine/vfx/curves/vfx_curve.h"
 #include "engine/vfx/events/vfx_event.h"
+#include "engine/vfx/spawn/vfx_burst_event.h"
 #include "engine/vfx/lod/vfx_lod.h"
 #include "engine/vfx/modules/emitter_module_stack.h"
 #include "engine/vfx/parameters/vfx_parameter_store.h"
+#include "engine/vfx/stack/vfx_stack.h"
 #include "vector3.h"
 
 #include <cfloat>
@@ -304,6 +307,11 @@ struct ParticleEmitter {
     /// Higher-priority emitters are allocated first when the budget is tight.
     uint8_t priority = 50;
 
+    /// Render sort priority (Niagara `EmitterSortPriority` parity).
+    /// Higher values render ON TOP of lower values. Equal priority falls
+    /// back to back-to-front camera-distance ordering. Negative allowed.
+    int32_t renderPriority = 0;
+
     /// Per-emitter LOD distance settings.
     /// Used by VFXSystem to evaluate LOD level each frame.
     VFXLodSettings lodSettings;
@@ -484,10 +492,50 @@ struct ParticleEmitter {
     /// @ref UE5 UNiagaraStatelessEmitter.h
     uint8_t emitterMode = 0u;  // 0=Stateful (default), 1=Stateless
 
-    /// Optional spawn-rate ramp table (interim 4-point form until the full
-    /// curve editor from 7.16.0 ships). When `enabled == false` the
-    /// emission rate passes through unchanged.
-    VfxSpawnRateCurve spawnRateCurve {};
+    /// Optional 4-point spawn-rate multiplier (normalised-time, interim
+    /// form from phase 7.20.0). Applies on top of `emissionRate` when
+    /// `enabled == true`. For the richer Niagara-parity per-second rate
+    /// curve see `spawnRateCurve` below (phase 11.7).
+    VfxSpawnRateCurve spawnRateMultiplier {};
+
+    /// Niagara-parity spawn rate curve (phase 11.7). When non-empty,
+    /// `CalculateSpawnCount(dt)` samples this curve at
+    /// `timeSinceRegistration` as an absolute **particles-per-second**
+    /// rate, overriding the constant `emissionRate`. When empty (the
+    /// default), the legacy constant-rate + optional multiplier path
+    /// applies unchanged.
+    ///
+    /// X axis: seconds since emitter registration (absolute time, not
+    /// normalised lifetime). Y axis: particles/second.
+    ///
+    /// @ref engine/vfx/curves/vfx_curve.h
+    /// @ref docs/engine/25-vfx/47-spawn-rate-curve.md
+    VFXCurve spawnRateCurve {};
+
+    /// Niagara-parity time-stamped spawn bursts (phase 11.8). Each
+    /// entry fires exactly once per emitter lifecycle at `time` seconds
+    /// after registration, adding `count` particles to that frame's
+    /// spawn total. The vector is kept sorted ascending by `time`; the
+    /// `burstCursor` field below is the index of the next-unfired entry.
+    ///
+    /// @ref engine/vfx/spawn/vfx_burst_event.h
+    /// @ref docs/engine/25-vfx/48-burst-events.md
+    std::vector<VfxBurstEvent> bursts {};
+
+    /// Index of the next-unfired entry in `bursts`. Advances monotonically
+    /// each frame until `bursts[burstCursor].time > timeSinceRegistration`.
+    /// Reset to 0 by the restart pipeline (`restartRequested`).
+    size_t burstCursor = 0u;
+
+    /// Niagara-parity 7-stage module stack (phase 11.1.0). When
+    /// `stack.IsEmpty()` (legacy / default asset), the inline config
+    /// above drives behaviour exactly as before. When populated, the
+    /// stack takes precedence — the module compositor walks each stage
+    /// and stitches module HLSL in execution order.
+    ///
+    /// @ref engine/vfx/stack/vfx_stack.h
+    /// @ref docs/engine/25-vfx/44-niagara-stack-model.md
+    VfxStack stack {};
 
     /// Captures the new emitter position, derives the frame velocity
     /// delta, and updates `emitterFrameVelocity`. Call once per frame

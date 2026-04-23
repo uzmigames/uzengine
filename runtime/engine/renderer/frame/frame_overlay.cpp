@@ -352,8 +352,24 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
                 if (vfx && vfx->IsInitialized()) {
                     const auto& emitters = vfx->GetActiveEmitters();
                     if (!emitters.empty()) {
-                        ParticleEmitter* activeEmitter = m_vfxEditorOverlay->GetCurrentEmitter();
-                        if (!activeEmitter) activeEmitter = emitters[0];
+                        // Phase 15.14 — prefer the host-provided
+                        // pointer so the editor binds to the exact
+                        // standalone emitter the author picked in the
+                        // System Overview. Falling back to indexing
+                        // into `emitters` by slot index would land on
+                        // compound children (they share the same
+                        // registration list), showing the wrong
+                        // params / writing through to the wrong rt.
+                        ParticleEmitter* activeEmitter =
+                            m_vfxEditorOverlay->ActiveEmitterOverride();
+                        if (activeEmitter == nullptr) {
+                            int sel = m_vfxEditorOverlay->ActiveEmitterIdx();
+                            if (sel < 0) sel = 0;
+                            if (sel >= static_cast<int>(emitters.size())) {
+                                sel = static_cast<int>(emitters.size()) - 1;
+                            }
+                            activeEmitter = emitters[sel];
+                        }
                         m_vfxEditorOverlay->BuildUI(activeEmitter, m_input.get());
                     }
                 }

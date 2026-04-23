@@ -182,6 +182,13 @@ struct EmitterRenderData {
     /// The emitter's GPU particle storage (read set is used for SRV binding).
     GPUParticleBuffer* buffer = nullptr;
 
+    /// Per-emitter graphics PSO. Lets the render pass switch pipelines
+    /// inside the draw loop so emitters with different `blendMode` can
+    /// coexist in a single system (Fire-additive + Smoke-alphablend,
+    /// Debris-premultiplied, etc.). Defaults to the `billboardPipeline`
+    /// selected in `ParticleRenderPassDesc` when left invalid.
+    RHIPipelineHandle pipeline = {};
+
     /// Pre-filled CB allocation for the billboard shader constants.
     CBAllocation renderCB = {};
 
@@ -200,6 +207,10 @@ struct EmitterRenderData {
     /// Signed distance from camera to emitter origin, used for back-to-front sorting.
     /// Larger values are drawn first (farther from camera).
     float distanceToCamera = 0.0f;
+
+    /// Render sort priority (Niagara parity). Higher = drawn later = on top.
+    /// Primary sort key; `distanceToCamera` is the tie-breaker.
+    int32_t renderPriority = 0;
 
     /// CPU-side vertex count for non-indexed draw (6 vertices per alive particle).
     /// Used as fallback until DrawIndirect command signature is added.

@@ -459,9 +459,20 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
         std::memcpy(bbAlloc.cpuPtr, &bbCBData, sizeof(bbCBData));
 
         EmitterRenderData renderData{};
+        // Per-emitter PSO so emitters with different blendModes render
+        // with their own blend state in the same pass. Falls back to
+        // alphaBlend if the chosen PSO isn't available.
+        if (emitter->blendMode == 1 && additivePSO.IsValid()) {
+            renderData.pipeline = additivePSO;
+        } else if (emitter->blendMode == 2 && premulAlphaPSO.IsValid()) {
+            renderData.pipeline = premulAlphaPSO;
+        } else if (alphaBlendPSO.IsValid()) {
+            renderData.pipeline = alphaBlendPSO;
+        }
         renderData.buffer          = &gpuBuf;
         renderData.cpuAliveCount   = emitter->cpuAliveCount;
         renderData.renderCB        = bbAlloc;
+        renderData.renderPriority  = emitter->renderPriority;
         // Draw ALL particles and let the VS cull dead ones.
         // The spawn shader allocates from the top of the free list (index N-1 down),
         // so alive particles are scattered across the full buffer range.

@@ -140,6 +140,33 @@ private:
     /// Pending restart (set by R/Delete or overlay button).
     bool m_restartPending = false;
 
+    // Phase 15.12 — multi-emitter demo state.
+    /// Currently-selected emitter in the System Overview. Preset cycles
+    /// apply to this slot; Add / Duplicate / Delete reorder the list.
+    int  m_activeEmitterIdx = 0;
+    /// Per-slot preset index so each emitter remembers which preset it
+    /// last loaded (used to label the emitter slot on the overview + to
+    /// re-apply the right preset after reorder).
+    std::vector<int> m_emitterPresets;
+    /// Pending multi-emitter structural ops applied during the main
+    /// update pass so ECS mutations happen at a well-defined point.
+    bool m_pendingAddEmitter    = false;
+    int  m_pendingDuplicateIdx  = -1;
+    int  m_pendingDeleteIdx     = -1;
+    int  m_pendingMoveSrc       = -1;
+    int  m_pendingMoveDst       = -1;
+
+    /// Rewrites `overlay->SetEmitterNames` from the current slot list so
+    /// the overview + tab strip reflect ECS mutations.
+    void RefreshEmitterNames();
+
+    /// Reassigns `renderPriority` on every emitter (component + runtime)
+    /// from its position in `m_emitterEntities`. Index 0 -> priority 0
+    /// (renders first / farthest back); last index -> highest priority
+    /// (renders last / on top). Call after Add / Move / Delete / Duplicate
+    /// so list order = draw order.
+    void ReassignRenderPriorities();
+
     // ── Sprite texture (from --sprite CLI arg) ──────────────────────────
 
     /// Path to sprite texture set via SetSpriteTexturePath().
