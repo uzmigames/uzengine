@@ -136,6 +136,17 @@ cbuffer VFXSpawnConstants : register(b1) {
     uint     flipbookTotalFrames;   ///< Total SubUV frames (for init — spawn writes 0.0). 184
     /// @ref Salmon 2011 "Parallel Random Numbers" — deterministic seed override
     uint     emitterSeed;          ///< 0=use frameNumber (non-deterministic), >0=fixed seed. 188
+
+    // ── User-declared per-particle attribute bindless UAV indices ──────
+    //
+    // 0xFFFFFFFFu means "slot not allocated". The Spawn CS may initialise
+    // each enabled channel to its declared default via user_attrs.hlsli.
+    uint4    userFloatUav;         ///< 4 float-channel UAVs (one uint per component).  192
+    uint2    userVec4Uav;          ///< 2 vec4-channel UAVs.                             208
+    float2   _pad3;                ///< Padding to 16-byte alignment.                    216
+    float4   userFloatDefault;     ///< Default values for the 4 float channels.         224
+    float4   userVec4Default0;     ///< Default float4 for vec4 slot 0.                  240
+    float4   userVec4Default1;     ///< Default float4 for vec4 slot 1.                  256
 #endif
 };
 
@@ -470,6 +481,28 @@ void main(uint3 dtid : SV_DispatchThreadID)
     }
 #else
     dynamicParams[particleIdx] = float4(0.0f, 0.0f, 0.0f, 0.0f);
+#endif
+
+    // ── User-declared per-particle attribute defaults ───────────────────
+    // Write the declared default into every allocated user channel so the
+    // first `UserAttr_Read*` call returns deterministic data.
+    // @ref docs/engine/25-vfx/98-user-custom-attributes.md
+#ifdef UZ_BINDLESS
+    [unroll] for (uint uf = 0; uf < 4; ++uf) {
+        const uint uavIdx = userFloatUav[uf];
+        if (uavIdx != 0xFFFFFFFFu) {
+            RWStructuredBuffer<float> channel = ResourceDescriptorHeap[uavIdx];
+            channel[particleIdx] = userFloatDefault[uf];
+        }
+    }
+    if (userVec4Uav.x != 0xFFFFFFFFu) {
+        RWStructuredBuffer<float4> ch0 = ResourceDescriptorHeap[userVec4Uav.x];
+        ch0[particleIdx] = userVec4Default0;
+    }
+    if (userVec4Uav.y != 0xFFFFFFFFu) {
+        RWStructuredBuffer<float4> ch1 = ResourceDescriptorHeap[userVec4Uav.y];
+        ch1[particleIdx] = userVec4Default1;
+    }
 #endif
 
     // ── Increment alive count ───────────────────────────────────────────

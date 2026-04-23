@@ -119,6 +119,12 @@ void DestroyAttributeSet(IRHIDevice* device, ParticleAttributeSet& set)
     if (set.rotations.IsValid())       device->DestroyBuffer(set.rotations);
     if (set.subImageIndices.IsValid()) device->DestroyBuffer(set.subImageIndices);
     if (set.persistentIDs.IsValid())   device->DestroyBuffer(set.persistentIDs);
+    for (auto& h : set.userFloat) {
+        if (h.IsValid()) device->DestroyBuffer(h);
+    }
+    for (auto& h : set.userVec4) {
+        if (h.IsValid()) device->DestroyBuffer(h);
+    }
     set = {};
 }
 
@@ -339,6 +345,124 @@ bool GPUParticleBuffer::CreatePersistentIDBuffers(IRHIDevice* device)
 }
 
 // ---------------------------------------------------------------------------
+// GPUParticleBuffer::CreateUserFloatSlot / CreateUserVec4Slot
+// ---------------------------------------------------------------------------
+
+bool GPUParticleBuffer::CreateUserFloatSlot(IRHIDevice* device, uint32_t slotIndex)
+{
+    UZ_CHECKF(device != nullptr,
+              "GPUParticleBuffer::CreateUserFloatSlot: device is null");
+    UZ_CHECKF(IsValid(),
+              "GPUParticleBuffer::CreateUserFloatSlot: base buffers not allocated");
+    UZ_CHECKF(slotIndex < kMaxUserFloatAttrs,
+              "GPUParticleBuffer::CreateUserFloatSlot: slot %u >= max %u",
+              slotIndex, kMaxUserFloatAttrs);
+
+    // Idempotent when the slot is already live — callers may re-issue a
+    // declaration on hot-reload without us thrashing the allocator.
+    if ((userFloatMask & (1u << slotIndex)) != 0u) {
+        return true;
+    }
+
+    const auto cap = static_cast<uint64_t>(capacity);
+    char nameA[64]; char nameB[64];
+    std::snprintf(nameA, sizeof(nameA), "VFX_UserFloat_Slot%u_SetA", slotIndex);
+    std::snprintf(nameB, sizeof(nameB), "VFX_UserFloat_Slot%u_SetB", slotIndex);
+
+    sets[0].userFloat[slotIndex] = CreateVFXBuffer(
+        device, cap * sizeof(float), sizeof(float), nameA);
+    sets[1].userFloat[slotIndex] = CreateVFXBuffer(
+        device, cap * sizeof(float), sizeof(float), nameB);
+
+    if (!sets[0].userFloat[slotIndex].IsValid() ||
+        !sets[1].userFloat[slotIndex].IsValid()) {
+        UZ_LOG(VFX, Error,
+               "CreateUserFloatSlot: allocation failed for slot={} capacity={}",
+               slotIndex, capacity);
+        if (sets[0].userFloat[slotIndex].IsValid()) {
+            device->DestroyBuffer(sets[0].userFloat[slotIndex]);
+            sets[0].userFloat[slotIndex] = {};
+        }
+        if (sets[1].userFloat[slotIndex].IsValid()) {
+            device->DestroyBuffer(sets[1].userFloat[slotIndex]);
+            sets[1].userFloat[slotIndex] = {};
+        }
+        return false;
+    }
+    userFloatMask |= (1u << slotIndex);
+    UZ_LOG(VFX, Info,
+           "User-attribute float slot {} allocated: capacity={}", slotIndex, capacity);
+    return true;
+}
+
+bool GPUParticleBuffer::CreateUserVec4Slot(IRHIDevice* device, uint32_t slotIndex)
+{
+    UZ_CHECKF(device != nullptr,
+              "GPUParticleBuffer::CreateUserVec4Slot: device is null");
+    UZ_CHECKF(IsValid(),
+              "GPUParticleBuffer::CreateUserVec4Slot: base buffers not allocated");
+    UZ_CHECKF(slotIndex < kMaxUserVec4Attrs,
+              "GPUParticleBuffer::CreateUserVec4Slot: slot %u >= max %u",
+              slotIndex, kMaxUserVec4Attrs);
+
+    if ((userVec4Mask & (1u << slotIndex)) != 0u) {
+        return true;
+    }
+
+    const auto cap = static_cast<uint64_t>(capacity);
+    char nameA[64]; char nameB[64];
+    std::snprintf(nameA, sizeof(nameA), "VFX_UserVec4_Slot%u_SetA", slotIndex);
+    std::snprintf(nameB, sizeof(nameB), "VFX_UserVec4_Slot%u_SetB", slotIndex);
+
+    // float4 stride = 16 bytes.
+    sets[0].userVec4[slotIndex] = CreateVFXBuffer(
+        device, cap * 16u, 16u, nameA);
+    sets[1].userVec4[slotIndex] = CreateVFXBuffer(
+        device, cap * 16u, 16u, nameB);
+
+    if (!sets[0].userVec4[slotIndex].IsValid() ||
+        !sets[1].userVec4[slotIndex].IsValid()) {
+        UZ_LOG(VFX, Error,
+               "CreateUserVec4Slot: allocation failed for slot={} capacity={}",
+               slotIndex, capacity);
+        if (sets[0].userVec4[slotIndex].IsValid()) {
+            device->DestroyBuffer(sets[0].userVec4[slotIndex]);
+            sets[0].userVec4[slotIndex] = {};
+        }
+        if (sets[1].userVec4[slotIndex].IsValid()) {
+            device->DestroyBuffer(sets[1].userVec4[slotIndex]);
+            sets[1].userVec4[slotIndex] = {};
+        }
+        return false;
+    }
+    userVec4Mask |= (1u << slotIndex);
+    UZ_LOG(VFX, Info,
+           "User-attribute vec4 slot {} allocated: capacity={}", slotIndex, capacity);
+    return true;
+}
+
+void GPUParticleBuffer::DestroyUserAttributeBuffers(IRHIDevice* device)
+{
+    if (device == nullptr) return;
+    for (uint32_t set = 0; set < 2; ++set) {
+        for (uint32_t i = 0; i < kMaxUserFloatAttrs; ++i) {
+            if (sets[set].userFloat[i].IsValid()) {
+                device->DestroyBuffer(sets[set].userFloat[i]);
+                sets[set].userFloat[i] = {};
+            }
+        }
+        for (uint32_t i = 0; i < kMaxUserVec4Attrs; ++i) {
+            if (sets[set].userVec4[i].IsValid()) {
+                device->DestroyBuffer(sets[set].userVec4[i]);
+                sets[set].userVec4[i] = {};
+            }
+        }
+    }
+    userFloatMask = 0;
+    userVec4Mask  = 0;
+}
+
+// ---------------------------------------------------------------------------
 // GPUParticleBuffer::CreateDeathEventBuffers
 // ---------------------------------------------------------------------------
 
@@ -413,6 +537,9 @@ void GPUParticleBuffer::Destroy(IRHIDevice* device)
 
     // Destroy optional death event buffers if present.
     DestroyDeathEventBuffers(device);
+
+    // Destroy optional user-attribute channels (both attribute sets).
+    DestroyUserAttributeBuffers(device);
 
     // Destroy sort buffers (sortKeys + sortIndices).
     sort.Destroy(device);

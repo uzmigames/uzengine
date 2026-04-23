@@ -136,6 +136,22 @@ inline std::string SerializeEmitter(const ParticleEmitter& e) {
     if (!e.attachBoneNameDefault.empty()) {
         j["attachBoneName"] = e.attachBoneNameDefault;
     }
+    if (!e.userAttributes.empty()) {
+        auto& arr = j["userAttributes"];
+        arr = nlohmann::json::array();
+        for (const auto& a : e.userAttributes) {
+            nlohmann::json entry;
+            entry["name"] = a.name;
+            entry["type"] = (a.type == UserAttributeType::Vec4) ? "vec4" : "float";
+            if (a.type == UserAttributeType::Vec4) {
+                entry["default"] = {a.defaultVec4.x, a.defaultVec4.y,
+                                     a.defaultVec4.z, a.defaultVec4.w};
+            } else {
+                entry["default"] = a.defaultFloat;
+            }
+            arr.push_back(std::move(entry));
+        }
+    }
     return j.dump(2);
 }
 
@@ -309,6 +325,31 @@ inline bool DeserializeEmitter(const std::string& jsonStr, ParticleEmitter& e) {
                 }
             }
         }
+
+        if (j.contains("userAttributes") && j["userAttributes"].is_array()) {
+            e.userAttributes.clear();
+            for (const auto& entry : j["userAttributes"]) {
+                UserAttributeDef def;
+                if (entry.contains("name") && entry["name"].is_string()) {
+                    def.name = entry["name"].get<std::string>();
+                }
+                const std::string typeStr = entry.value("type", std::string{"float"});
+                if (typeStr == "vec4") def.type = UserAttributeType::Vec4;
+                else                   def.type = UserAttributeType::Float;
+                if (entry.contains("default")) {
+                    const auto& dv = entry["default"];
+                    if (def.type == UserAttributeType::Vec4 && dv.is_array() && dv.size() >= 4) {
+                        def.defaultVec4 = Vec4{
+                            dv[0].get<float>(), dv[1].get<float>(),
+                            dv[2].get<float>(), dv[3].get<float>()};
+                    } else if (def.type == UserAttributeType::Float && dv.is_number()) {
+                        def.defaultFloat = dv.get<float>();
+                    }
+                }
+                (void)e.RegisterUserAttribute(def);
+            }
+        }
+
         return true;
     } catch (...) {
         return false;

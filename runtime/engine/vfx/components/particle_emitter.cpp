@@ -115,21 +115,144 @@ void ParticleEmitter::Shutdown(IRHIDevice* device, ParticleBudget& budget) {
 }
 
 // ---------------------------------------------------------------------------
+// ParticleEmitter::RegisterUserAttribute / FindUserAttribute / EnsureUserAttributeBuffers
+// ---------------------------------------------------------------------------
+
+uint32_t ParticleEmitter::RegisterUserAttribute(const UserAttributeDef& def) {
+    // Re-declaration: keep the original registration (hot-reload safe).
+    for (const auto& existing : userAttributes) {
+        if (existing.name == def.name) {
+            if (existing.type != def.type) {
+                UZ_LOG(VFX, Error,
+                       "RegisterUserAttribute: name '{}' already registered with a different type — keeping the original",
+                       def.name);
+                return UINT32_MAX;
+            }
+            return existing.slotIndex;
+        }
+    }
+
+    // Assign a slot by counting how many entries of this type are already
+    // registered.
+    uint32_t usedFloat = 0;
+    uint32_t usedVec4  = 0;
+    for (const auto& existing : userAttributes) {
+        if (existing.type == UserAttributeType::Float) ++usedFloat;
+        else                                           ++usedVec4;
+    }
+
+    UserAttributeDef out = def;
+    if (def.type == UserAttributeType::Float) {
+        if (usedFloat >= kMaxUserFloatAttrs) {
+            UZ_LOG(VFX, Error,
+                   "RegisterUserAttribute: float quota ({}) exceeded — refusing '{}'",
+                   kMaxUserFloatAttrs, def.name);
+            return UINT32_MAX;
+        }
+        out.slotIndex = usedFloat;
+    } else {
+        if (usedVec4 >= kMaxUserVec4Attrs) {
+            UZ_LOG(VFX, Error,
+                   "RegisterUserAttribute: vec4 quota ({}) exceeded — refusing '{}'",
+                   kMaxUserVec4Attrs, def.name);
+            return UINT32_MAX;
+        }
+        out.slotIndex = usedVec4;
+    }
+    userAttributes.push_back(out);
+    return out.slotIndex;
+}
+
+const UserAttributeDef* ParticleEmitter::FindUserAttribute(const std::string& name) const {
+    for (const auto& a : userAttributes) {
+        if (a.name == name) return &a;
+    }
+    return nullptr;
+}
+
+bool ParticleEmitter::EnsureUserAttributeBuffers(IRHIDevice* device) {
+    if (userAttributes.empty()) return true;
+    if (!buffer.IsValid()) return false;
+    UZ_CHECK(device != nullptr);
+
+    bool allOk = true;
+    for (const auto& a : userAttributes) {
+        if (a.slotIndex == UINT32_MAX) continue;
+        if (a.type == UserAttributeType::Float) {
+            if ((buffer.userFloatMask & (1u << a.slotIndex)) == 0u) {
+                if (!buffer.CreateUserFloatSlot(device, a.slotIndex)) {
+                    allOk = false;
+                }
+            }
+        } else {
+            if ((buffer.userVec4Mask & (1u << a.slotIndex)) == 0u) {
+                if (!buffer.CreateUserVec4Slot(device, a.slotIndex)) {
+                    allOk = false;
+                }
+            }
+        }
+    }
+    return allOk;
+}
+
+// ---------------------------------------------------------------------------
 // ParticleEmitter::CalculateSpawnCount
 // ---------------------------------------------------------------------------
 
 uint32_t ParticleEmitter::CalculateSpawnCount(float dt) noexcept {
-    if (!initialized || !isEmitting || emissionRate <= 0.0f || dt <= 0.0f) {
+    if (!initialized || !isEmitting || dt <= 0.0f) {
+        return 0;
+    }
+
+    // Phase 11.7: when the rich spawn-rate curve has keys, sample it at
+    // the current absolute emitter time as particles/second. Otherwise
+    // fall back to the constant `emissionRate`. The optional 4-point
+    // multiplier (`spawnRateMultiplier`) applies on top of the chosen
+    // base rate when enabled — it's a normalised-time ramp, sampled at
+    // (timeSinceRegistration / lifetime).
+    float baseRate = emissionRate;
+    if (spawnRateCurve.GetKeyCount() > 0) {
+        baseRate = spawnRateCurve.SampleFloat(timeSinceRegistration);
+        // Safety clamp: negative rates are meaningless; upper bound is
+        // (maxParticles / lifetime) so a runaway curve can't over-spawn
+        // the buffer in a single frame.
+        const float upperBound = (lifetime > 0.0f)
+            ? (static_cast<float>(maxParticles) / lifetime)
+            : static_cast<float>(maxParticles);
+        baseRate = std::clamp(baseRate, 0.0f, upperBound);
+    }
+
+    if (spawnRateMultiplier.enabled && lifetime > 0.0f) {
+        const float normalisedT = std::clamp(
+            timeSinceRegistration / lifetime, 0.0f, 1.0f);
+        baseRate *= spawnRateMultiplier.Evaluate(normalisedT);
+    }
+
+    // Phase 11.8: advance the burst cursor and add every burst whose
+    // `time` has been crossed this frame. Runs regardless of `baseRate`
+    // because bursts are independent of the continuous rate — a paused
+    // rate (0/s) still lets scheduled bursts fire.
+    uint32_t burstFired = 0u;
+    if (!bursts.empty()) {
+        VfxBurstList::AdvanceCursor(bursts, burstCursor,
+                                     timeSinceRegistration,
+                                     burstFired, burstCursor);
+    }
+
+    if (baseRate <= 0.0f && burstFired == 0u) {
         return 0;
     }
 
     // Accumulate fractional particles from this frame.
-    spawnAccumulator += emissionRate * dt;
+    spawnAccumulator += baseRate * dt;
 
     // Extract integer part as the spawn count.
     const float integerPart = std::floor(spawnAccumulator);
-    const auto spawnCount = static_cast<uint32_t>(integerPart);
+    uint32_t spawnCount = static_cast<uint32_t>(integerPart);
     spawnAccumulator -= integerPart;
+
+    // Add any burst contributions.
+    spawnCount += burstFired;
 
     // Godot pattern: CPU doesn't track alive count. Dispatch = capacity.
     // The GPU free-list handles slot allocation — spawn shader pops from

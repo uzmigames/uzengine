@@ -81,8 +81,23 @@ struct VFXSpawnCB {
     uint32_t subImageIndicesUavIndex = 0;          // 176 (HLSL not yet updated)
     uint32_t flipbookTotalFrames = 1;              // 180
     float _pad2[2] = {};                           // 184-191
+
+    // ── User-declared per-particle attribute UAV indices + defaults ───
+    //
+    // Layout is tuned to HLSL cbuffer packing rules (scalars/vectors must
+    // not cross 16-byte boundaries). The memory image below matches a
+    // `uint4 userFloatUav; uint2 userVec4Uav; float2 _pad3; float4
+    // userFloatDefault; float4 userVec4Default0; float4 userVec4Default1`
+    // HLSL declaration byte-for-byte.
+    uint32_t userFloatUav[4]     = {UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX}; // 192-207
+    uint32_t userVec4Uav[2]      = {UINT32_MAX, UINT32_MAX};                         // 208-215
+    float    _pad3[2]            = {};                                               // 216-223
+    float    userFloatDefault[4] = {0.0f, 0.0f, 0.0f, 0.0f};                          // 224-239
+    float    userVec4Default0[4] = {0.0f, 0.0f, 0.0f, 0.0f};                          // 240-255
+    float    userVec4Default1[4] = {0.0f, 0.0f, 0.0f, 0.0f};                          // 256-271
 };
-static_assert(sizeof(VFXSpawnCB) == 192, "VFXSpawnCB must be 192 bytes to match HLSL layout");
+static_assert(sizeof(VFXSpawnCB) == 272,
+              "VFXSpawnCB must be 272 bytes to match HLSL layout");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VFXUpdateCB — matches VFXUpdateConstants in particle_update_cs.hlsl (register b1)

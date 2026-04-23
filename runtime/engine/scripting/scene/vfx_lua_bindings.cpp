@@ -1087,6 +1087,117 @@ static int VFXGetEmitterCount(lua_State* L) {
 /// A Lua array table of integer emitter handles for all matched entries.
 /// The table may be empty if no entries matched.
 ///
+// ─────────────────────────────────────────────────────────────────────────────
+// User-declared per-particle attributes (Niagara "Parameters" parity)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Lua signature: `uz.vfx:declare_user_attr(handle, name, type, default)`
+///
+/// Registers a user-defined per-particle attribute channel on the emitter
+/// identified by `handle`. Allocates the matching GPU structured buffer on
+/// success. `type` is the string `"float"` or `"vec4"`; `default` is a
+/// number for float or a `{x, y, z, w}` array for vec4.
+///
+/// Returns the assigned slot index (integer) on success, or `nil` when the
+/// emitter is invalid, the quota is full, or the declared type differs from
+/// a previous declaration with the same name.
+static int VFXDeclareUserAttr(lua_State* L) {
+    const lua_Integer handle = luaL_checkinteger(L, 2);
+    const char*       name   = luaL_checkstring(L, 3);
+    const char*       typeStr = luaL_optstring(L, 4, "float");
+
+    VFXSystem* vfxSystem = GetVFXSystem(L);
+    if (!vfxSystem) {
+        UZ_LOG(VFX, Warning, "uz.vfx:declare_user_attr — VFXSystem not registered");
+        lua_pushnil(L);
+        return 1;
+    }
+    ParticleEmitter* emitter = ResolveEmitter(vfxSystem, handle);
+    if (!emitter) {
+        UZ_LOG(VFX, Warning, "uz.vfx:declare_user_attr — stale or invalid handle");
+        lua_pushnil(L);
+        return 1;
+    }
+
+    UserAttributeDef def;
+    def.name = name;
+    const std::string type(typeStr);
+    if (type == "vec4") {
+        def.type = UserAttributeType::Vec4;
+        if (lua_istable(L, 5)) {
+            auto readIdx = [&](int k) -> float {
+                lua_rawgeti(L, 5, k);
+                float v = lua_isnumber(L, -1)
+                    ? static_cast<float>(lua_tonumber(L, -1)) : 0.0f;
+                lua_pop(L, 1);
+                return v;
+            };
+            def.defaultVec4 = Vec4{readIdx(1), readIdx(2), readIdx(3), readIdx(4)};
+        }
+    } else {
+        def.type = UserAttributeType::Float;
+        if (lua_isnumber(L, 5)) {
+            def.defaultFloat = static_cast<float>(lua_tonumber(L, 5));
+        }
+    }
+
+    const uint32_t slot = emitter->RegisterUserAttribute(def);
+    if (slot == UINT32_MAX) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushinteger(L, static_cast<lua_Integer>(slot));
+    return 1;
+}
+
+/// Lua signature: `uz.vfx:get_user_attr_slot(handle, name)`
+///
+/// Returns the slot index assigned to a named user attribute, or `nil` when
+/// no declaration matches. Useful for modules that need to rebind without
+/// re-declaring.
+static int VFXGetUserAttrSlot(lua_State* L) {
+    const lua_Integer handle = luaL_checkinteger(L, 2);
+    const char*       name   = luaL_checkstring(L, 3);
+
+    VFXSystem* vfxSystem = GetVFXSystem(L);
+    if (!vfxSystem) {
+        lua_pushnil(L);
+        return 1;
+    }
+    ParticleEmitter* emitter = ResolveEmitter(vfxSystem, handle);
+    if (!emitter) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const UserAttributeDef* a = emitter->FindUserAttribute(name);
+    if (!a || a->slotIndex == UINT32_MAX) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushinteger(L, static_cast<lua_Integer>(a->slotIndex));
+    return 1;
+}
+
+/// Lua signature: `uz.vfx:get_user_attr_count(handle)`
+///
+/// Returns the number of declared user attribute channels on the emitter,
+/// or `0` if the handle is invalid.
+static int VFXGetUserAttrCount(lua_State* L) {
+    const lua_Integer handle = luaL_checkinteger(L, 2);
+    VFXSystem* vfxSystem = GetVFXSystem(L);
+    if (!vfxSystem) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+    ParticleEmitter* emitter = ResolveEmitter(vfxSystem, handle);
+    if (!emitter) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+    lua_pushinteger(L, static_cast<lua_Integer>(emitter->userAttributes.size()));
+    return 1;
+}
+
 /// # Side Effects
 /// - Logs `VFX/Warning` for unmatched composite entries.
 /// - Logs `VFX/Error` if the composite file fails to load.
@@ -1286,6 +1397,15 @@ void RegisterVFXLuaBindings(lua_State* L, VFXSystem* vfxSystem) {
 
     lua_pushcfunction(L, VFXStopComposite);
     lua_setfield(L, -2, "stop_composite");
+
+    lua_pushcfunction(L, VFXDeclareUserAttr);
+    lua_setfield(L, -2, "declare_user_attr");
+
+    lua_pushcfunction(L, VFXGetUserAttrSlot);
+    lua_setfield(L, -2, "get_user_attr_slot");
+
+    lua_pushcfunction(L, VFXGetUserAttrCount);
+    lua_setfield(L, -2, "get_user_attr_count");
 
     lua_setfield(L, -2, "vfx");  // uz.vfx = { ... }
     lua_pop(L, 1);               // pop uz table

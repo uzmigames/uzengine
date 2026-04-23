@@ -1,0 +1,25 @@
+{
+  "_comment": "Demo asset exercising the user-declared per-particle attribute channels. DeserializeEmitter() loads this file and registers two float channels (Mass, Drag) + one vec4 channel (CustomColor). Modules can read/write these via the user_attrs.hlsli helpers and their slot indices.",
+  "maxParticles": 512,
+  "emissionRate": 60.0,
+  "lifetime": 3.0,
+  "spawnShape": 0,
+  "initialSize": 12.0,
+  "userAttributes": [
+    {
+      "name": "Mass",
+      "type": "float",
+      "default": 1.0
+    },
+    {
+      "name": "Drag",
+      "type": "float",
+      "default": 0.2
+    },
+    {
+      "name": "CustomColor",
+      "type": "vec4",
+      "default": [1.0, 0.5, 0.25, 1.0]
+    }
+  ]
+}

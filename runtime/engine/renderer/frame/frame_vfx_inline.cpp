@@ -325,6 +325,36 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         // writes dynamicParams[idx] which would overwrite that attribute).
         spawnCBData.dynamicParamsUavIndex = m_device->GetBufferUAVIndex(m_vfxDummyDynParams);
 
+        // User-declared per-particle attributes (Niagara "Parameters" parity).
+        // Each declared slot publishes a bindless UAV to the spawn CS, which
+        // writes the declared default into every newly allocated particle.
+        for (const auto& ua : emitter->userAttributes) {
+            if (ua.slotIndex == UINT32_MAX) continue;
+            if (ua.type == UserAttributeType::Float) {
+                const uint32_t slot = ua.slotIndex;
+                if (slot < kMaxUserFloatAttrs &&
+                    writeSet.userFloat[slot].IsValid()) {
+                    spawnCBData.userFloatUav[slot] =
+                        m_device->GetBufferUAVIndex(writeSet.userFloat[slot]);
+                    spawnCBData.userFloatDefault[slot] = ua.defaultFloat;
+                }
+            } else {
+                const uint32_t slot = ua.slotIndex;
+                if (slot < kMaxUserVec4Attrs &&
+                    writeSet.userVec4[slot].IsValid()) {
+                    spawnCBData.userVec4Uav[slot] =
+                        m_device->GetBufferUAVIndex(writeSet.userVec4[slot]);
+                    float* dst = (slot == 0)
+                        ? spawnCBData.userVec4Default0
+                        : spawnCBData.userVec4Default1;
+                    dst[0] = ua.defaultVec4.x;
+                    dst[1] = ua.defaultVec4.y;
+                    dst[2] = ua.defaultVec4.z;
+                    dst[3] = ua.defaultVec4.w;
+                }
+            }
+        }
+
         const CBAllocation spawnAlloc = m_cbRing->Allocate(sizeof(spawnCBData));
         if (!spawnAlloc.cpuPtr) {
             UZ_LOG(VFX, Warning,

@@ -125,9 +125,20 @@ struct ParticleSpawnConstants {
     uint32_t flipbookTotalFrames = 1;    ///< Total SubUV frames for subImageIndex computation.
     /// @ref Salmon 2011 "Parallel Random Numbers" -- 0=use frameNumber, >0=fixed seed.
     uint32_t emitterSeed         = 0;     ///< Deterministic seed override.
+
+    // ── User-declared per-particle attribute UAV indices + defaults ─── offset 192
+    // Mirrors the HLSL cbuffer extension (see particle_spawn_cs.hlsl). All
+    // UAV slots default to UINT32_MAX meaning "no buffer" — the Spawn CS
+    // short-circuits when the slot is unbound.
+    uint32_t userFloatUav[4]     = {UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX}; // 192-207
+    uint32_t userVec4Uav[2]      = {UINT32_MAX, UINT32_MAX};                         // 208-215
+    float    _padUser[2]         = {};                                               // 216-223
+    float    userFloatDefault[4] = {0.0f, 0.0f, 0.0f, 0.0f};                          // 224-239
+    float    userVec4Default0[4] = {0.0f, 0.0f, 0.0f, 0.0f};                          // 240-255
+    float    userVec4Default1[4] = {0.0f, 0.0f, 0.0f, 0.0f};                          // 256-271
 };
-static_assert(sizeof(ParticleSpawnConstants) == 192,
-              "ParticleSpawnConstants must be 192 bytes to match HLSL VFXSpawnConstants");
+static_assert(sizeof(ParticleSpawnConstants) == 272,
+              "ParticleSpawnConstants must be 272 bytes to match HLSL VFXSpawnConstants");
 
 /// CPU-side mirror of the update shader's cbuffer VFXUpdateConstants (register b1).
 ///

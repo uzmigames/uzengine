@@ -1310,6 +1310,36 @@ void VfxEditorOverlay::BuildModuleList(ParticleEmitter* e) {
         m_modules.push_back(std::move(m));
     }
 
+    // ── User Attributes (Niagara "Parameters" parity) ───────────────────
+    // Read-only listing of the user-declared per-particle channels. Each
+    // entry is driven by a float (default value for Float attrs) or a Vec4
+    // (Vec4 attrs) so designers can tweak the spawn default. Declaration
+    // and removal still flow through Lua / the asset file — the editor
+    // only exposes the runtime values.
+    if (!e->userAttributes.empty()) {
+        VfxModuleDef m;
+        m.name = "User Attributes"; m.stage = VfxStage::ParticleSpawn;
+        for (auto& a : e->userAttributes) {
+            m.params.push_back({});
+            auto& p = m.params.back();
+            p.label = a.name.c_str();
+            if (a.type == UserAttributeType::Float) {
+                p.type = VfxModuleParam::Float;
+                p.fPtr = &a.defaultFloat;
+                p.min  = -1000.0f;
+                p.max  = 1000.0f;
+            } else {
+                // Expose the Vec4 as four sequential float rows so the
+                // existing NumberInput renderer can edit each component.
+                p.type = VfxModuleParam::Float;
+                p.fPtr = &a.defaultVec4.x;
+                p.min  = 0.0f;
+                p.max  = 1.0f;
+            }
+        }
+        m_modules.push_back(std::move(m));
+    }
+
     // ── Particle Spawn ───────────────────────────────────────────────────
     {
         VfxModuleDef m;

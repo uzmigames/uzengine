@@ -32,7 +32,9 @@
 #include "gpu_particle_sort.h"
 
 #include "engine/rhi/rhi_types.h"
+#include "engine/vfx/asset/vfx_graph.h"
 
+#include <array>
 #include <cstdint>
 #include <vector>
 
@@ -130,6 +132,16 @@ struct ParticleAttributeSet {
     /// @ref UE5 FNiagaraEmitter::bRequiresPersistentIDs
     /// @ref UE5 FNiagaraGPUInstanceCountManager::AllocatePersistentID
     RHIBufferHandle persistentIDs = RHIBufferHandle::Invalid();
+
+    /// Optional user-declared per-particle `float` channels.
+    ///
+    /// `userFloat[i]` is the structured buffer for the i-th user Float slot
+    /// and is `Invalid()` when that slot was never declared. The slot index
+    /// matches `UserAttributeDef::slotIndex`.
+    std::array<RHIBufferHandle, kMaxUserFloatAttrs> userFloat = {};
+
+    /// Optional user-declared per-particle `float4` channels.
+    std::array<RHIBufferHandle, kMaxUserVec4Attrs> userVec4 = {};
 
     /// Returns true when every mandatory attribute buffer is allocated. The
     /// optional `persistentIDs` channel is not required for validity; callers
@@ -275,6 +287,14 @@ struct GPUParticleBuffer {
     /// @ref UE5 FNiagaraEmitter::bRequiresPersistentIDs
     bool hasPersistentIDs = false;
 
+    /// Bit masks tracking which user-attribute slots are live on BOTH
+    /// attribute sets. Bit `i` set means `sets[r].userFloat[i]` and
+    /// `sets[w].userFloat[i]` have been created. Masks make it cheap for
+    /// the spawn/update passes to decide whether a slot needs clearing or
+    /// binding without walking the whole array.
+    uint32_t userFloatMask = 0;
+    uint32_t userVec4Mask  = 0;
+
     // -- Sort buffers (for depth-ordered transparent rendering) ---------------
 
     /// Bitonic merge sort manager for back-to-front particle ordering.
@@ -410,6 +430,29 @@ struct GPUParticleBuffer {
     ///
     /// @ref phase7_7.4.0-vfx-persistent-particle-ids
     [[nodiscard]] bool CreatePersistentIDBuffers(IRHIDevice* device);
+
+    /// Allocates an optional per-particle `float` user-attribute channel on
+    /// BOTH attribute sets and flips the matching bit in `userFloatMask`.
+    ///
+    /// Idempotent: a no-op when the slot is already live.
+    ///
+    /// # Preconditions
+    /// - `device` must not be null.
+    /// - `IsValid()` must be true.
+    /// - `slotIndex < kMaxUserFloatAttrs`.
+    ///
+    /// # Returns
+    /// `true` on success. On allocation failure any partial allocations are
+    /// destroyed and the slot bit stays 0.
+    [[nodiscard]] bool CreateUserFloatSlot(IRHIDevice* device, uint32_t slotIndex);
+
+    /// `float4` analogue of `CreateUserFloatSlot`.
+    [[nodiscard]] bool CreateUserVec4Slot(IRHIDevice* device, uint32_t slotIndex);
+
+    /// Releases all user-attribute channels on both attribute sets and
+    /// clears `userFloatMask` / `userVec4Mask`. Safe to call on a buffer
+    /// without any declared attributes (no-op).
+    void DestroyUserAttributeBuffers(IRHIDevice* device);
 
     /// Releases the optional mesh instance buffers and resets handles to invalid.
     ///

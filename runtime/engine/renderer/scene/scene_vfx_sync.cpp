@@ -551,6 +551,17 @@ void SceneRenderer::SyncVfxEmitters(World* world, IVFS* vfs) {
                 continue;
             }
 
+            // Allocate any user-declared per-particle attribute channels
+            // (Niagara "Parameters" parity). Failure logs a warning but
+            // does not abort emitter creation — the emitter still runs
+            // without the missing channels.
+            if (!emitter->userAttributes.empty()) {
+                if (!emitter->EnsureUserAttributeBuffers(m_device)) {
+                    UZ_LOG(VFX, Warning,
+                           "SyncVfxEmitters: some user-attribute channels failed to allocate");
+                }
+            }
+
             // Mark emitter as needing initial GPU state upload.
             // The upload happens in RegisterParticlePasses when the render
             // command list is available (avoids creating a temp cmd list here

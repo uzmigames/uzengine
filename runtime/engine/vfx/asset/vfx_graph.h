@@ -63,6 +63,40 @@ struct VFXParameterDef {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// UserAttributeDef -- user-declared per-particle SoA channel
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Type of a user-declared per-particle attribute channel.
+///
+/// Float channels use `StructuredBuffer<float>`; Vec4 channels use
+/// `StructuredBuffer<float4>`. A single emitter can declare up to 4 float
+/// channels and 2 Vec4 channels (`kMaxUserFloatAttrs` / `kMaxUserVec4Attrs`).
+enum class UserAttributeType : uint8_t {
+    Float = 0,
+    Vec4  = 1,
+};
+
+/// Maximum number of user-declared `Float` channels per emitter.
+static constexpr uint32_t kMaxUserFloatAttrs = 4;
+
+/// Maximum number of user-declared `Vec4` channels per emitter.
+static constexpr uint32_t kMaxUserVec4Attrs  = 2;
+
+/// One user-declared per-particle attribute channel.
+///
+/// When included in `VFXGraph`, the emitter runtime allocates a matching
+/// structured buffer, initialises every particle to `defaultFloat` /
+/// `defaultVec4` at spawn, and exposes the buffer's bindless SRV/UAV index
+/// so modules can read and write the channel by slot.
+struct UserAttributeDef {
+    std::string name;                            ///< Lookup name (e.g. "Mass", "CustomColor").
+    UserAttributeType type = UserAttributeType::Float;
+    float defaultFloat = 0.0f;                   ///< Default value (Float type).
+    Vec4  defaultVec4  = {0.0f, 0.0f, 0.0f, 1.0f};///< Default value (Vec4 type).
+    uint32_t slotIndex = UINT32_MAX;             ///< Assigned slot (0..kMaxUserFloatAttrs-1 for Float, same for Vec4). Set by the runtime after allocation.
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // VFXEmitterConfig -- emitter-level settings from the graph
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -183,6 +217,19 @@ public:
         return events_;
     }
 
+    /// Returns the user-attribute declarations for this graph.
+    /// Each entry drives an optional per-particle SoA channel that modules
+    /// can read / write by slot index.
+    [[nodiscard]] const std::vector<UserAttributeDef>& GetUserAttributes() const noexcept {
+        return userAttributes_;
+    }
+
+    /// Mutates the user-attribute list. The loader / editor uses this to
+    /// register declarations parsed from `.uzvfx` JSON.
+    std::vector<UserAttributeDef>& MutableUserAttributes() noexcept {
+        return userAttributes_;
+    }
+
     /// Returns the filesystem path this graph was loaded from (empty if from string).
     [[nodiscard]] const std::string& GetSourcePath() const noexcept {
         return sourcePath_;
@@ -205,6 +252,7 @@ private:
     std::vector<std::unique_ptr<IVFXModule>> modules_;///< Ordered module list.
     std::vector<VFXParameterDef> parameters_;         ///< Exposed parameters.
     std::vector<VFXEventDef> events_;                 ///< Named event triggers.
+    std::vector<UserAttributeDef> userAttributes_;    ///< User-declared per-particle SoA channels.
 };
 
 } // namespace uz

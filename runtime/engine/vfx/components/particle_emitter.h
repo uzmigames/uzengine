@@ -330,6 +330,20 @@ struct ParticleEmitter {
     /// entity handles are placement-specific and not part of the asset.
     std::string attachBoneNameDefault;
 
+    // ── User-declared per-particle attributes (Niagara "Parameters") ────
+
+    /// Asset-declared user attribute channels. Each entry maps to an
+    /// optional `StructuredBuffer<float>` or `StructuredBuffer<float4>` on
+    /// `buffer.sets[*].userFloat[slot]` / `.userVec4[slot]`. Slot indices
+    /// are assigned by `RegisterUserAttribute()` and surfaced via the
+    /// `slotIndex` field so modules can look up the GPU binding without
+    /// re-querying the mask.
+    ///
+    /// The list is authoritative: only declared channels are allocated,
+    /// and re-declaring an existing name is a no-op (type + default are
+    /// left alone on the runtime to avoid silent data loss on hot-reload).
+    std::vector<UserAttributeDef> userAttributes;
+
     /// Per-emitter LOD distance settings.
     /// Used by VFXSystem to evaluate LOD level each frame.
     VFXLodSettings lodSettings;
@@ -614,6 +628,39 @@ struct ParticleEmitter {
     std::vector<std::string> tags;
 
     // -- Methods --------------------------------------------------------------
+
+    /// Registers a user-declared per-particle attribute channel.
+    ///
+    /// - Appends a copy of `def` to `userAttributes` when the name is new.
+    ///   The registered entry gets `slotIndex` auto-assigned from the next
+    ///   free slot of the matching type (`UserAttributeType::Float` or
+    ///   `UserAttributeType::Vec4`).
+    /// - If a channel with that name already exists, the registration is a
+    ///   no-op and returns the existing slot index (its type/default are
+    ///   preserved — hot-reload does not wipe live GPU state).
+    ///
+    /// # Returns
+    /// The assigned slot index (`UINT32_MAX` on failure: the per-type quota
+    /// `kMaxUserFloatAttrs` / `kMaxUserVec4Attrs` is full, or the existing
+    /// entry has a different type than the caller requested).
+    uint32_t RegisterUserAttribute(const UserAttributeDef& def);
+
+    /// Looks up a registered user attribute by name. Returns `nullptr`
+    /// when no matching declaration exists.
+    [[nodiscard]] const UserAttributeDef* FindUserAttribute(const std::string& name) const;
+
+    /// Allocates GPU structured buffers for every declaration in
+    /// `userAttributes` whose slot isn't already live in
+    /// `buffer.userFloatMask` / `buffer.userVec4Mask`.
+    ///
+    /// No-op when `userAttributes` is empty or when `buffer` is not yet
+    /// initialised. Safe to call multiple times — it only creates missing
+    /// channels and leaves existing ones untouched.
+    ///
+    /// # Returns
+    /// `true` when all declared channels have matching GPU buffers after
+    /// the call; `false` if any allocation failed.
+    [[nodiscard]] bool EnsureUserAttributeBuffers(IRHIDevice* device);
 
     /// Allocates GPU buffers from the particle budget.
     ///
