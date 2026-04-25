@@ -18,8 +18,14 @@ echo.
 set ROOT=%~dp0..
 
 :: Refresh PATH from registry (picks up winget/installer changes)
+:: NOTE: HKLM\...\Environment\Path is REG_EXPAND_SZ; reg query returns the raw
+:: value with %SystemRoot% (and friends) unexpanded. The two `call set` lines
+:: below force cmd to re-evaluate the variable, which expands those tokens —
+:: without that pass, Zig sub-processes can't find powershell.exe etc.
 for /f "tokens=2*" %%A in ('reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v Path 2^>nul') do set "SYSPATH=%%B"
 for /f "tokens=2*" %%A in ('reg query "HKCU\Environment" /v Path 2^>nul') do set "USRPATH=%%B"
+call set "SYSPATH=%SYSPATH%"
+call set "USRPATH=%USRPATH%"
 set "PATH=%SYSPATH%;%USRPATH%"
 
 :: ---- Pre-flight: kill processes locking build artifacts ----

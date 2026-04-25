@@ -738,6 +738,18 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
                m_ddgiSystem.GetDepthSrv());
     }
 
+    // ── VFX -> DDGI emissive feed (phase16 lumen-gi-contribution) ─────
+    // Allocates the structured buffer that carries up to
+    // `VfxDDGIEmissiveFeed::kMaxSamples` emissive particle samples per
+    // frame. Failure is non-fatal — DDGI continues to work without VFX
+    // contribution; only the visual indirect-bounce from explosions /
+    // magic effects is missing.
+    if (!m_vfxDDGIEmissiveFeed.Init(device)) {
+        UZ_LOG(Renderer, Warning,
+               "SceneRenderer: VFX DDGI emissive feed init failed "
+               "(emissive particles will not contribute to GI bounce)");
+    }
+
     // ── SSR Output Textures (at render resolution — operates on GBuffer) ──
     CreateSsrResources(m_renderWidth, m_renderHeight);
 
@@ -1452,6 +1464,11 @@ void SceneRenderer::Shutdown() {
     // ── DFS cleanup ─────────────────────────────────────────────────
     DestroyDfsResources();
 
+    // ── VFX DDGI emissive feed cleanup ─────────────────────────────────
+    // Releases the structured buffer holding the per-frame VFX emissive
+    // sample upload. Idempotent — no-op when never initialised.
+    m_vfxDDGIEmissiveFeed.Shutdown();
+
     // ── SSGI cleanup ──────────────────────────────────────────────────
     m_ssgiRenderer.DestroyResources();
 
@@ -1589,7 +1606,7 @@ void SceneRenderer::Shutdown() {
 
     if (m_statsOverlay)    m_statsOverlay->Shutdown();
     if (m_viewportToolbar) m_viewportToolbar->Shutdown();
-    if (m_vfxEditorOverlay) m_vfxEditorOverlay->Shutdown();
+    if (m_vfxEditorOverlay) m_vfxEditorOverlay->Shutdown(m_device);
     if (m_gizmoRenderer)   m_gizmoRenderer->Shutdown();
     if (m_outlinePass)     m_outlinePass->Shutdown();
     if (m_editorGrid)      m_editorGrid->Shutdown();

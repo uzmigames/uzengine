@@ -85,8 +85,18 @@ public:
               ShaderPipeline& shaderPipeline, RHIFormat rtvFormat,
               uint32_t screenW, uint32_t screenH, bool bindless);
 
-    /// Destroys all GPU resources.
-    void Shutdown();
+    /// Destroys all GPU resources owned by the overlay.
+    ///
+    /// Shuts down the text renderer, the bitmap font atlas, and the
+    /// MSDF font atlas. Both atlases hold 1024x1024 R8 textures that
+    /// D3D12MA otherwise reports as leaks at process exit
+    /// (`m_pMetadata->IsEmpty()` assertion in `~NormalBlock`).
+    ///
+    /// # Parameters
+    /// - `device`: RHI device used to free atlas textures. May be null
+    ///   when the overlay was never initialised; in that case Shutdown
+    ///   is a no-op.
+    void Shutdown(IRHIDevice* device);
 
     /// Updates screen dimensions on window resize.
     void SetScreenSize(uint32_t w, uint32_t h);

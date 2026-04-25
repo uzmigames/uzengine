@@ -161,9 +161,17 @@ bool VfxEditorOverlay::Init(IRHIDevice* device, IRHICommandList* cmdList, Upload
     return true;
 }
 
-void VfxEditorOverlay::Shutdown() {
+void VfxEditorOverlay::Shutdown(IRHIDevice* device) {
     if (m_initialized) {
         m_textRenderer.Shutdown();
+        // Release the GPU font atlas textures owned by the bitmap + MSDF
+        // fonts. Without this the two 1024x1024 R8 atlases (~2 MiB total)
+        // leak past device shutdown and trip D3D12MA's
+        // `m_pMetadata->IsEmpty()` assertion in `~NormalBlock`.
+        if (device != nullptr) {
+            m_font.Shutdown(device);
+            m_msdfFont.Shutdown(device);
+        }
         m_initialized = false;
     }
 }

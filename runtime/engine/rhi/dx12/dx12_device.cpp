@@ -17,6 +17,8 @@
 #include "d3dx12.h"
 #include "log.h"
 #include "profiler.h"
+
+#include <cstdio>  // fprintf/fflush for leak diag (bypasses spdlog async sinks)
 #include "engine/paths/paths.h"
 
 #include <cstring>
@@ -85,23 +87,32 @@ DX12Device::~DX12Device() {
         m_agilityCoreModule = nullptr;
     }
 
-    // Report any live allocations before releasing the allocator
+    // Report any live allocations before releasing the allocator.
+    //
+    // Bypasses the engine's spdlog wrapper because the named-allocation
+    // diag may be the LAST output before D3D12MA's `~NormalBlock` fires
+    // its `m_pMetadata->IsEmpty()` assertion + abort. spdlog's async
+    // sinks can drop the queued messages on abort; `fprintf` + explicit
+    // `fflush` are synchronous and survive the imminent crash.
     if (m_allocator) {
         D3D12MA::TotalStatistics stats{};
         m_allocator->CalculateStatistics(&stats);
         const auto& total = stats.Total.Stats;
         if (total.AllocationCount > 0) {
-            UZ_LOG(RHI, Warning,
-                   "D3D12MA: {} live allocations ({} bytes) at shutdown — LEAK!",
-                   total.AllocationCount, total.AllocationBytes);
+            std::fprintf(stderr,
+                "[D3D12MA-LEAK] %u live allocations (%llu bytes) at shutdown -- LEAK!\n",
+                total.AllocationCount,
+                static_cast<unsigned long long>(total.AllocationBytes));
 
             // Log per-pool live objects to identify the leak
+            static const char* kHeapNames[] = {"DEFAULT", "UPLOAD", "READBACK"};
             for (uint32_t heapType = 0; heapType < 3; ++heapType) {
                 const auto& heap = stats.HeapType[heapType].Stats;
                 if (heap.AllocationCount > 0) {
-                    static const char* kHeapNames[] = {"DEFAULT", "UPLOAD", "READBACK"};
-                    UZ_LOG(RHI, Warning, "  Heap {}: {} allocs, {} bytes",
-                           kHeapNames[heapType], heap.AllocationCount, heap.AllocationBytes);
+                    std::fprintf(stderr,
+                        "[D3D12MA-LEAK]   Heap %s: %u allocs, %llu bytes\n",
+                        kHeapNames[heapType], heap.AllocationCount,
+                        static_cast<unsigned long long>(heap.AllocationBytes));
                 }
             }
 
@@ -110,11 +121,13 @@ DX12Device::~DX12Device() {
                 auto& slots = m_texturePool.Slots();
                 for (uint32_t i = 0; i < slots.size(); ++i) {
                     if (slots[i].allocation) {
-                        UZ_LOG(RHI, Warning, "  LEAKED texture [{}]: '{}' {}x{} fmt={} ({} bytes)",
-                               i, slots[i].desc.debugName ? slots[i].desc.debugName : "(null)",
-                               slots[i].desc.width, slots[i].desc.height,
-                               static_cast<int>(slots[i].desc.format),
-                               slots[i].allocation->GetSize());
+                        std::fprintf(stderr,
+                            "[D3D12MA-LEAK]   LEAKED texture [%u]: '%s' %ux%u fmt=%d (%llu bytes)\n",
+                            i,
+                            slots[i].desc.debugName ? slots[i].desc.debugName : "(null)",
+                            slots[i].desc.width, slots[i].desc.height,
+                            static_cast<int>(slots[i].desc.format),
+                            static_cast<unsigned long long>(slots[i].allocation->GetSize()));
                     }
                 }
             }
@@ -123,12 +136,15 @@ DX12Device::~DX12Device() {
                 auto& slots = m_bufferPool.Slots();
                 for (uint32_t i = 0; i < slots.size(); ++i) {
                     if (slots[i].allocation) {
-                        UZ_LOG(RHI, Warning, "  LEAKED buffer [{}]: '{}' {} bytes",
-                               i, slots[i].desc.debugName ? slots[i].desc.debugName : "(null)",
-                               slots[i].allocation->GetSize());
+                        std::fprintf(stderr,
+                            "[D3D12MA-LEAK]   LEAKED buffer [%u]: '%s' (%llu bytes)\n",
+                            i,
+                            slots[i].desc.debugName ? slots[i].desc.debugName : "(null)",
+                            static_cast<unsigned long long>(slots[i].allocation->GetSize()));
                     }
                 }
             }
+            std::fflush(stderr);
         }
         m_allocator->Release();
         m_allocator = nullptr;

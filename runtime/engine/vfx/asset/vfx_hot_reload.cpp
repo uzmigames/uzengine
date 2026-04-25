@@ -1,9 +1,13 @@
 /// VFX Hot-Reload Implementation
 ///
 /// Uses std::filesystem for directory scanning and timestamp polling.
-/// Guarded by UZ_DEV_BUILD / !NDEBUG to strip from shipping builds.
-
-#if defined(UZ_DEV_BUILD) || !defined(NDEBUG)
+///
+/// The class is instantiated only in dev builds — see scene_renderer_init.cpp,
+/// which guards the `make_unique<VFXHotReload>()` call with `#if !NDEBUG`. The
+/// implementation itself is unconditionally compiled because `unique_ptr<T>`
+/// in the renderer header forces the destructor to be visible to the linker
+/// even in release builds where the unique_ptr is always null. Unreferenced
+/// methods are stripped by DCE in `-Doptimize=ReleaseFast`.
 
 #include "vfx_hot_reload.h"
 #include "vfx_emitter_inheritance.h"
@@ -242,5 +246,3 @@ void VFXHotReload::OnReload(VFXReloadCallback callback) {
 }
 
 } // namespace uz
-
-#endif // UZ_DEV_BUILD || !NDEBUG

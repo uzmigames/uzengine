@@ -7,6 +7,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "dx12_fence.h"
+#include "dx12_guids.h"
 
 #include "log.h"
 #include "profiler.h"
