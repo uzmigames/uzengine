@@ -465,8 +465,24 @@ VSOutput main(uint vertexID : SV_VertexID) {
     VSOutput output;
 
     // Determine which particle this vertex belongs to and which corner
-    uint particleID   = vertexID / VERTICES_PER_PARTICLE;
+    uint sortedSlot   = vertexID / VERTICES_PER_PARTICLE;
     uint vertexInQuad = vertexID % VERTICES_PER_PARTICLE;
+
+    // Translate the linear draw slot to the source particle index when a
+    // sort buffer is bound. The bitonic sort writes alive particles in
+    // back-to-front order to slots [0..aliveCount-1] (dead particles get
+    // SORT_KEY_DEAD and trail at the end), so iterating sortedSlot
+    // 0..aliveCount-1 gives correct alpha-blend draw order. When no sort
+    // is dispatched (additive sprites, or no sort PSO), the SRV index is
+    // UINT32_MAX and we fall back to identity mapping.
+    uint particleID = sortedSlot;
+#ifdef UZ_BINDLESS
+    if (sortedIndicesSrvIndex != 0 && sortedIndicesSrvIndex != 0xFFFFFFFF) {
+        StructuredBuffer<uint> sortedIndices =
+            ResourceDescriptorHeap[sortedIndicesSrvIndex];
+        particleID = sortedIndices[sortedSlot];
+    }
+#endif
 
     // ── Read particle attributes from structured buffers ──
 #ifdef UZ_BINDLESS

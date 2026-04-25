@@ -53,16 +53,33 @@ namespace uz {
 // ParticleMeshPassConstants -- CPU-side mirror of the mesh instance shader CB
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// CPU-side mirror of the mesh instance vertex shader's per-pass constant buffer (b0).
+/// CPU-side mirror of the mesh instance vertex/pixel shaders' per-pass
+/// constant buffer (b0). Both shaders read from the same b0 binding so a
+/// single root-constants push covers both stages.
 ///
-/// Contains the combined view-projection matrix used to transform each instance's
-/// pre-computed world-space TRS matrix into clip space. Must be byte-identical
-/// to the HLSL cbuffer layout.
+/// Contains:
+/// - The combined view-projection matrix used by the VS to transform each
+///   instance's pre-computed world-space TRS matrix into clip space.
+/// - Two bindless SRV descriptor indices that replace the legacy
+///   `register(t0)`/`register(t1)` SRV bindings (the engine's SM6.6 root
+///   signature has no SRV table at t0..t1 — it relies on
+///   `ResourceDescriptorHeap[]` indirection).
 ///
-/// Total size: 64 bytes (256-byte aligned by CBRingAllocator).
+/// Must be byte-identical to the HLSL `cbuffer VFXMeshRenderConstants`
+/// declarations in `particle_mesh_vs.hlsl` AND `particle_mesh_ps.hlsl`.
+///
+/// Total size: 80 bytes (256-byte aligned by CBRingAllocator).
 struct ParticleMeshPassConstants {
-    float viewProjection[16] = {}; ///< 0: View-projection matrix, column-major.
+    float    viewProjection[16] = {};            ///< 0..63: View-proj, column-major.
+    uint32_t instanceTransformsBufferIdx = 0xFFFFFFFFu; ///< 64: bindless SRV — float4x4 buffer.
+    uint32_t instanceColorsBufferIdx     = 0xFFFFFFFFu; ///< 68: bindless SRV — float4 buffer.
+    uint32_t _pad0 = 0;                          ///< 72.
+    uint32_t _pad1 = 0;                          ///< 76.
 };
+
+static_assert(sizeof(ParticleMeshPassConstants) == 80,
+              "ParticleMeshPassConstants must match the HLSL cbuffer layout "
+              "in particle_mesh_vs.hlsl / particle_mesh_ps.hlsl");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ParticleMeshBatchItem -- one instanced mesh draw batch

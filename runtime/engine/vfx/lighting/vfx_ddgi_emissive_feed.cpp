@@ -14,6 +14,37 @@ VfxDDGIEmissiveFeed::~VfxDDGIEmissiveFeed() {
     Shutdown();
 }
 
+VfxDDGIEmissiveFeed::VfxDDGIEmissiveFeed(VfxDDGIEmissiveFeed&& other) noexcept
+    : device_(other.device_),
+      buffer_(other.buffer_),
+      srvIndex_(other.srvIndex_),
+      sampleCount_(other.sampleCount_),
+      enabled(other.enabled)
+{
+    std::memcpy(staging_, other.staging_, sizeof(staging_));
+    other.device_      = nullptr;
+    other.buffer_      = {};
+    other.srvIndex_    = UINT32_MAX;
+    other.sampleCount_ = 0;
+}
+
+VfxDDGIEmissiveFeed& VfxDDGIEmissiveFeed::operator=(VfxDDGIEmissiveFeed&& other) noexcept {
+    if (this != &other) {
+        Shutdown();
+        device_      = other.device_;
+        buffer_      = other.buffer_;
+        srvIndex_    = other.srvIndex_;
+        sampleCount_ = other.sampleCount_;
+        enabled      = other.enabled;
+        std::memcpy(staging_, other.staging_, sizeof(staging_));
+        other.device_      = nullptr;
+        other.buffer_      = {};
+        other.srvIndex_    = UINT32_MAX;
+        other.sampleCount_ = 0;
+    }
+    return *this;
+}
+
 bool VfxDDGIEmissiveFeed::Init(IRHIDevice* device) {
     if (device == nullptr) return false;
 

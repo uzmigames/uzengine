@@ -199,6 +199,21 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     // graph only handles rendering (billboard draw) and barrier tracking.
     DispatchVFXSimulation(cmdList, dt, frameIndex);
 
+    // ── VFX Inline Sort (depth sort for alpha-blended emitters) ─────────
+    // Runs immediately after simulation so the post-update positions / ages
+    // are visible to the bitonic key-gen. Sprite alpha-blended emitters and
+    // mesh emitters with `sortMode != None` opt in. Mesh-instance CB and
+    // sprite VS pick up the produced sortedIndices buffer via bindless SRV.
+    DispatchVFXSort(cmdList);
+
+    // ── VFX -> DDGI emissive injection (phase16 lumen-gi-contribution) ─
+    // Walks active emitters with non-zero emissive intensity + alive
+    // particles, builds a top-N `VfxEmissiveSample` list, and uploads
+    // it via `m_vfxDDGIEmissiveFeed`. The DDGI probe-update CS reading
+    // the produced SRV is wired in the on-hardware follow-up; until
+    // then the upload is harmless data flow.
+    GatherAndUploadVfxEmissiveSamples();
+
     // ── Register render graph passes in pipeline order ──────────────────
     // SHADER DEBUG: ALL passes commented out. Uncomment one by one to find crash.
     RegisterShadowPasses(rgBuilder, ctx);

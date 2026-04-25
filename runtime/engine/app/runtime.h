@@ -507,6 +507,71 @@ UZ_API void uz_set_editor_mode(int enabled);
 /// * `path` — Absolute path to the content directory.
 UZ_API void uz_set_content_root(const char* path);
 
+// ─────────────────────────────────────────────────────────────────────────────
+// VFX scalability + sequencer hooks
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// All four functions resolve the target emitter via
+// `VFXSystem::FindEmitterByName`. `name` is matched against
+// `ParticleEmitter::name`; emitters without a name are unreachable from
+// this API. Each function is a no-op (logged as warning) when the runtime
+// has no active viewport / VFXSystem or when no emitter matches `name`.
+
+/// Requests a deterministic re-warm of the named emitter to `time_seconds`.
+///
+/// The next sim tick resets the emitter's GPU state and replays it from
+/// t=0 to the target via fixed-rate sub-ticks. See
+/// `ParticleEmitter::Seek` for the exact semantics. Negative
+/// `time_seconds` clamps to 0 (full reset, no warmup).
+///
+/// # Arguments
+/// * `name` — Stable identifier matched against `ParticleEmitter::name`.
+///            Must be a non-null, null-terminated UTF-8 string.
+/// * `time_seconds` — Replay duration. Clamped to >= 0 internally.
+///
+/// # Returns
+/// - 1 if the emitter was found and the seek was queued.
+/// - 0 otherwise (no runtime, no VFXSystem, or no matching emitter).
+UZ_API int uz_vfx_seek(const char* name, float time_seconds);
+
+/// Pauses the named emitter's simulation.
+///
+/// While paused, the emitter's existing alive particles freeze in place
+/// (sim dt is forced to 0) but the render path keeps drawing them.
+/// Independent from emission state — to also stop spawning new particles
+/// the caller should additionally toggle `isEmitting` via Lua.
+///
+/// # Arguments
+/// * `name` — Emitter name.
+///
+/// # Returns
+/// - 1 if the emitter was found and paused (or was already paused).
+/// - 0 otherwise.
+UZ_API int uz_vfx_pause(const char* name);
+
+/// Resumes the named emitter's simulation.
+///
+/// Inverse of `uz_vfx_pause`. Idempotent — calling on an already-running
+/// emitter is a no-op success.
+UZ_API int uz_vfx_resume(const char* name);
+
+/// Sets the per-emitter dt multiplier.
+///
+/// 1.0 = real-time (default). 0.5 = half-speed. 2.0 = double-speed.
+/// Negative values clamp to 0. Applied AFTER the global `r.VFX.TimeScale`
+/// so a sequencer can slow a specific emitter against a global slow-mo
+/// backdrop, or fast-forward an effect while everything else runs at
+/// normal speed.
+///
+/// # Arguments
+/// * `name` — Emitter name.
+/// * `scale` — New time-scale value. Clamped to [0, +inf).
+///
+/// # Returns
+/// - 1 if the emitter was found and the time-scale was applied.
+/// - 0 otherwise.
+UZ_API int uz_vfx_set_time_scale(const char* name, float scale);
+
 #ifdef __cplusplus
 }
 #endif

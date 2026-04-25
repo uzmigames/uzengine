@@ -297,11 +297,21 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
                             UZ_PROFILE_SCOPE("VFX_ParticleSort");
 
                             for (const auto& d : dispatches) {
+                                // Legacy disabled-RG path. Kept compilable for future
+                                // re-enable, but the inline mesh sort dispatch in
+                                // `frame_vfx_inline.cpp` is the live path.
+                                GPUParticleSort::DispatchParams sp{};
+                                sp.sortMode              = GpuSortMode::ViewDepth;
+                                sp.keyGenCount           = d.aliveCount;
+                                sp.cameraPos             = camPosArr;
+                                sp.cameraForward         = camFwdArr;
+                                sp.positionsSrvIndex     = d.positionsSrvIndex;
+                                sp.agesSrvIndex          = d.positionsSrvIndex; // placeholder for compile
+                                sp.lifespansSrvIndex     = d.positionsSrvIndex; // placeholder for compile
+                                sp.customSortKeySrvIndex = 0xFFFFFFFFu;
                                 d.sort->DispatchSort(
                                     m_device, cmd, sortPipeline,
-                                    *m_cbRing, d.aliveCount,
-                                    camPosArr, camFwdArr,
-                                    d.positionsSrvIndex);
+                                    *m_cbRing, sp);
                             }
                         });
                 });
@@ -621,26 +631,37 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
     if (meshInstanceCSPipeline.IsValid()) {
         // CPU-side mirror of the VFXMeshInstanceConstants cbuffer in
         // particle_mesh_instance_cs.hlsl (64 bytes, 16-byte aligned rows).
+        // Layout MUST match the HLSL `VFXMeshInstanceConstants` cbuffer in
+        // particle_mesh_instance_cs.hlsl byte-for-byte. Earlier the CPU struct
+        // ended at offset 64 while HLSL declared 80 bytes — `colorsSrvIndex`
+        // and `instanceColorsUavIndex` were read as zero, so per-particle
+        // mesh colors silently bound to whatever sat at descriptor heap
+        // index 0. This struct is the corrected 80-byte layout.
         struct VFXMeshInstanceConstants {
-            uint32_t aliveCount;               //  0
-            float    meshScaleX;               //  4
-            float    meshScaleY;               //  8
-            float    meshScaleZ;               // 12
-            uint32_t rotationMode;             // 16
-            uint32_t meshIndexCount;           // 20
-            uint32_t _pad0;                    // 24
-            uint32_t _pad1;                    // 28
-            uint32_t positionsSrvIndex;        // 32
-            uint32_t velocitiesSrvIndex;       // 36
-            uint32_t agesSrvIndex;             // 40
-            uint32_t lifespansSrvIndex;        // 44
-            uint32_t instanceTransformsUavIndex; // 48
-            uint32_t instanceCountUavIndex;    // 52
-            uint32_t indirectArgsUavIndex;     // 56
-            uint32_t _pad2;                    // 60
+            uint32_t aliveCount;                  //  0
+            float    meshScaleX;                  //  4
+            float    meshScaleY;                  //  8
+            float    meshScaleZ;                  // 12
+            uint32_t rotationMode;                // 16
+            uint32_t meshIndexCount;              // 20
+            uint32_t sortMode;                    // 24 MeshSortMode ordinal
+            uint32_t sortedIndicesSrvIndex;       // 28 UINT32_MAX when sortMode==None
+            uint32_t positionsSrvIndex;           // 32
+            uint32_t velocitiesSrvIndex;          // 36
+            uint32_t agesSrvIndex;                // 40
+            uint32_t lifespansSrvIndex;           // 44
+            uint32_t colorsSrvIndex;              // 48
+            uint32_t _pad_srv;                    // 52
+            uint32_t instanceTransformsUavIndex;  // 56
+            uint32_t instanceCountUavIndex;       // 60
+            uint32_t indirectArgsUavIndex;        // 64
+            uint32_t instanceColorsUavIndex;      // 68
+            uint32_t _pad2;                       // 72
+            uint32_t _pad3;                       // 76
         };
-        static_assert(sizeof(VFXMeshInstanceConstants) == 64,
-                       "VFXMeshInstanceConstants must be exactly 64 bytes");
+        static_assert(sizeof(VFXMeshInstanceConstants) == 80,
+                       "VFXMeshInstanceConstants must be exactly 80 bytes "
+                       "to match particle_mesh_instance_cs.hlsl cbuffer layout");
 
         // View-projection matrix for the mesh render pass CB.
         const Mat4 viewProj = projMatrix * viewMatrix;
@@ -705,14 +726,38 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
             instanceCBData.meshScaleZ    = meshConfig.meshScale.z;
             instanceCBData.rotationMode  = static_cast<uint32_t>(meshConfig.rotationMode);
             instanceCBData.meshIndexCount = 0; // Populated once mesh asset system is wired.
-            instanceCBData._pad0         = 0;
-            instanceCBData._pad1         = 0;
+
+            // Sort wiring — `DispatchVFXSort` runs inline before this pass
+            // is registered, populating `gpuBuf.sort.sortIndices` for any
+            // mesh emitter whose `MeshSortMode != None`. The instance CS
+            // reads that buffer to translate logical sorted slot N back to
+            // the source particle index, producing a back-to-front instance
+            // transform stream for correct alpha blending.
+            //
+            // CustomAttribute mode: the dispatch path currently downgrades
+            // to None when `customSortAttribute` is unset (section 4 of the
+            // refactor task wires the user-attribute SRV resolver). Until
+            // then, CustomAttribute behaves as None at runtime, but the
+            // config field round-trips through `.uzfx` correctly.
+            instanceCBData.sortMode = static_cast<uint32_t>(meshConfig.sortMode);
+            instanceCBData.sortedIndicesSrvIndex =
+                (gpuBuf.sort.IsValid() &&
+                 meshConfig.sortMode != MeshSortMode::None)
+                ? m_device->GetBufferSRVIndex(gpuBuf.sort.sortIndices)
+                : UINT32_MAX;
+            // Defensive: if the SRV is not actually bindable, downgrade to None
+            // so the CS does not dereference an invalid descriptor.
+            if (instanceCBData.sortedIndicesSrvIndex == UINT32_MAX) {
+                instanceCBData.sortMode = static_cast<uint32_t>(MeshSortMode::None);
+            }
 
             // Bindless SRV indices for the read-set particle attribute buffers.
             instanceCBData.positionsSrvIndex  = m_device->GetBufferSRVIndex(readSet.positions);
             instanceCBData.velocitiesSrvIndex = m_device->GetBufferSRVIndex(readSet.velocities);
             instanceCBData.agesSrvIndex       = m_device->GetBufferSRVIndex(readSet.ages);
             instanceCBData.lifespansSrvIndex  = m_device->GetBufferSRVIndex(readSet.lifespans);
+            instanceCBData.colorsSrvIndex     = m_device->GetBufferSRVIndex(readSet.colors);
+            instanceCBData._pad_srv           = 0;
 
             // Bindless UAV indices for the mesh output buffers.
             instanceCBData.instanceTransformsUavIndex =
@@ -721,7 +766,21 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
                 m_device->GetBufferUAVIndex(gpuBuf.meshInstanceCount);
             instanceCBData.indirectArgsUavIndex =
                 m_device->GetBufferUAVIndex(gpuBuf.meshIndirectDrawArgs);
+
+            // Per-instance vertex color buffer. The CS writes RGBA per
+            // alive instance; the mesh PS reads it via SV_InstanceID. When
+            // the MeshRenderModule has not allocated the instance-color
+            // buffer (lifecycle issue, lazy init), fall back to the read
+            // colors SRV so the descriptor index is at least valid — the
+            // CS will overwrite it with the per-particle color anyway, so
+            // the fallback only matters for the (rare) skipped frame.
+            const RHIBufferHandle instanceColorBuf =
+                meshModule->GetInstanceColorBuffer();
+            instanceCBData.instanceColorsUavIndex = instanceColorBuf.IsValid()
+                ? m_device->GetBufferUAVIndex(instanceColorBuf)
+                : 0u;
             instanceCBData._pad2 = 0;
+            instanceCBData._pad3 = 0;
 
             const CBAllocation instanceAlloc = m_cbRing->Allocate(sizeof(instanceCBData));
             if (!instanceAlloc.cpuPtr) {
@@ -749,8 +808,20 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
             meshDispatches.push_back(dispatch);
 
             // Build the mesh render pass batch item for this emitter.
+            // Both VS and PS read b0 — the SM6.6 root signature has no SRV
+            // table at t0/t1, so the structured buffers must be reached via
+            // ResourceDescriptorHeap[] using indices forwarded through this
+            // CB. UINT32_MAX is the "no buffer" sentinel; the shaders treat
+            // it as "do not sample" but in practice the dispatch always
+            // produces both buffers on the same frame.
             ParticleMeshPassConstants meshPassCB{};
             std::memcpy(meshPassCB.viewProjection, &viewProj, sizeof(float) * 16);
+            meshPassCB.instanceTransformsBufferIdx =
+                m_device->GetBufferSRVIndex(gpuBuf.meshInstanceTransforms);
+            meshPassCB.instanceColorsBufferIdx =
+                meshModule->GetInstanceColorBuffer().IsValid()
+                    ? m_device->GetBufferSRVIndex(meshModule->GetInstanceColorBuffer())
+                    : UINT32_MAX;
 
             const CBAllocation meshPassAlloc = m_cbRing->Allocate(sizeof(meshPassCB));
             if (!meshPassAlloc.cpuPtr) {

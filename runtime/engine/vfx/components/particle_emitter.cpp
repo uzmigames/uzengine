@@ -96,12 +96,50 @@ bool ParticleEmitter::Initialize(IRHIDevice* device, ParticleBudget& budget) {
 // ParticleEmitter::Shutdown
 // ---------------------------------------------------------------------------
 
+void ParticleEmitter::Seek(float targetTime) noexcept {
+    // Negative targets are a no-op semantically (a "rewind to before the
+    // emitter started"); collapse to 0 = full reset, no warmup.
+    pendingSeekTime = (targetTime > 0.0f) ? targetTime : 0.0f;
+
+    // Reset CPU-side accumulators that the sim path uses to compute spawn
+    // counts. The next frame's inline sim consumes these and replays
+    // pendingSeekTime via fixed-rate ticks before the regular tick — see
+    // frame_vfx_inline.cpp `DispatchVFXSimulation` (warmup loop is wired in
+    // the on-hardware follow-up `phase16_vfx-sort-pipeline-hardware-validation`).
+    spawnAccumulator = 0.0f;
+    cpuAliveCount    = 0;
+
+    // Force GPU buffer reset on the next sim tick. `needsInitialization`
+    // is the same flag scene_vfx_sync uses for its restart path, so we
+    // reuse the existing reinit pipeline rather than inventing a parallel
+    // one.
+    buffer.needsInitialization = true;
+}
+
 void ParticleEmitter::Shutdown(IRHIDevice* device, ParticleBudget& budget) {
     if (!initialized) return;
 
     UZ_CHECK(device != nullptr);
 
     const uint32_t released = allocatedFromBudget;
+
+    // Release any subsystem-private GPU buffers held by stacked modules.
+    // Default `IVFXModule::ReleaseGPUResources` is a no-op, so simulation
+    // modules that hold no GPU resources (gravity, drag, decay, etc.)
+    // pay nothing here. The render module is the production case:
+    // `MeshRenderModule` owns `instanceTransformBuffer_` +
+    // `instanceColorBuffer_`, both of which used to leak past every
+    // mesh-emitter shutdown until this hook was wired
+    // (phase0 particle-mesh-bindless-rewrite-and-d3d12ma-leak section B).
+    for (auto& mod : moduleStack.spawnModules) {
+        if (mod) mod->ReleaseGPUResources(device);
+    }
+    for (auto& mod : moduleStack.updateModules) {
+        if (mod) mod->ReleaseGPUResources(device);
+    }
+    if (moduleStack.renderModule) {
+        moduleStack.renderModule->ReleaseGPUResources(device);
+    }
 
     buffer.Destroy(device);
     budget.Return(released);

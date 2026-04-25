@@ -47,6 +47,14 @@ public:
     VfxDDGIEmissiveFeed(const VfxDDGIEmissiveFeed&)            = delete;
     VfxDDGIEmissiveFeed& operator=(const VfxDDGIEmissiveFeed&) = delete;
 
+    /// Move-construct: transfers ownership of the GPU buffer + descriptor
+    /// state. The source is left in the same state as a default-constructed
+    /// instance so its destructor is a no-op. Required because
+    /// `SceneRenderer` defaults its own move constructor and embeds this
+    /// type by value alongside other movable subsystems.
+    VfxDDGIEmissiveFeed(VfxDDGIEmissiveFeed&& other) noexcept;
+    VfxDDGIEmissiveFeed& operator=(VfxDDGIEmissiveFeed&& other) noexcept;
+
     /// Allocates the GPU structured buffer for `kMaxSamples` entries.
     ///
     /// # Arguments

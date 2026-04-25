@@ -12,9 +12,28 @@
 ///
 /// # Register Layout (SM5 fallback)
 /// - t1: StructuredBuffer<float4>  instanceColors
-/// - b0: cbuffer with light direction and ambient color
+/// - b0: cbuffer mirroring `VFXMeshRenderConstants` (viewProjection +
+///       bindless descriptor indices). The PS only consumes
+///       `g_instanceColorsBufferIdx`; the matrix and the second index are
+///       still read by the VS bound to the same PSO.
+/// - b1: cbuffer with light direction and ambient color
 ///
 /// @ref standard per-instance tinting with instanced mesh rendering
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Constant Buffer (b0) — shared with VS, same layout as
+// `ParticleMeshPassConstants` on the CPU.
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Mirrors the VS declaration so the PS can read the bindless SRV index for
+// the instance color buffer without needing a separate root parameter.
+cbuffer VFXMeshRenderConstants : register(b0) {
+    float4x4 viewProjection;
+    uint     g_instanceTransformsBufferIdx;
+    uint     g_instanceColorsBufferIdx;
+    uint     _meshCBpad0;
+    uint     _meshCBpad1;
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constant Buffer (b1) — per-frame lighting data
@@ -33,9 +52,30 @@ cbuffer VFXMeshLightConstants : register(b1) {
 // Instance Color Buffer
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Per-instance RGBA colors, one float4 per alive particle.
-/// Written by particle_mesh_instance_cs.hlsl, indexed by SV_InstanceID.
+#ifndef UZ_BINDLESS
+/// SM5 fallback — per-instance RGBA colors via `register(t1)`.
 StructuredBuffer<float4> g_instanceColors : register(t1);
+#endif
+
+/// Loads the per-instance RGBA color for `instanceID`.
+///
+/// # Bindless (SM6.6+)
+/// Reads `ResourceDescriptorHeap[g_instanceColorsBufferIdx]` cast to
+/// `StructuredBuffer<float4>`. The CPU sets the index after the instance
+/// CS dispatch.
+///
+/// # SM5 fallback
+/// Uses the explicitly-bound `register(t1)` SRV.
+float4 LoadInstanceColor(uint instanceID)
+{
+#ifdef UZ_BINDLESS
+    StructuredBuffer<float4> instanceColors =
+        ResourceDescriptorHeap[g_instanceColorsBufferIdx];
+    return instanceColors[instanceID];
+#else
+    return g_instanceColors[instanceID];
+#endif
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pixel Input
@@ -62,7 +102,7 @@ struct PSInput {
 float4 main(PSInput input) : SV_Target
 {
     // Read per-instance color (RGBA).
-    float4 instanceColor = g_instanceColors[input.instanceID];
+    float4 instanceColor = LoadInstanceColor(input.instanceID);
 
     // Normalize the interpolated world normal.
     float3 N = normalize(input.worldNormal);

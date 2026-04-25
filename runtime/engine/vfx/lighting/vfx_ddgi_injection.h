@@ -117,4 +117,46 @@ struct VfxEmissiveSample {
                                                uint32_t count,
                                                const Vec3& probePosition) noexcept;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-emitter sample synthesis (phase16_vfx-lumen-gi-contribution)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Builds a `VfxEmissiveSample` from a single emitter's CPU state.
+///
+/// Approximates the emitter as one virtual point light located at its
+/// world position. Radiance = `initialColor.rgb * emissiveIntensity *
+/// aliveFraction`, where `aliveFraction = clamp(aliveCount / maxParticles, 0, 1)`
+/// — a denser emitter outweighs a sparser one with the same authored
+/// intensity. Influence radius = `max(kMinRadiusCm, spawnRadius * 4)`,
+/// reflecting that explosions / magic effects radiate well beyond their
+/// authored spawn shape.
+///
+/// The function is pure CPU; the caller (`GatherAndUploadVfxEmissiveSamples`)
+/// produces an array of these and forwards them to the GPU upload feed.
+///
+/// # Arguments
+/// - `worldPosition`     — emitter centre.
+/// - `colorRgb`          — `initialColor.xyz` in linear RGB.
+/// - `emissiveIntensity` — emitter's authored emissive multiplier.
+/// - `aliveCount`        — particles currently alive on the emitter.
+/// - `maxParticles`      — emitter capacity (denominator for alive fraction).
+/// - `spawnRadius`       — authored spawn radius in cm.
+///
+/// # Returns
+/// A populated `VfxEmissiveSample`. When `emissiveIntensity <= 0` or
+/// `aliveCount == 0`, every channel of `emissive` is zero — the caller
+/// is expected to skip such emitters before adding them to the feed.
+[[nodiscard]] VfxEmissiveSample VfxDDGIBuildSampleForEmitter(
+    const Vec3&  worldPosition,
+    const Vec3&  colorRgb,
+    float        emissiveIntensity,
+    uint32_t     aliveCount,
+    uint32_t     maxParticles,
+    float        spawnRadius) noexcept;
+
+/// Minimum influence radius in centimetres applied by
+/// `VfxDDGIBuildSampleForEmitter`. Floors small spawn radii so a tiny
+/// spark still lights its immediate vicinity (1 metre).
+constexpr float kVfxDDGIMinInfluenceRadiusCm = 100.0f;
+
 } // namespace uz

@@ -94,4 +94,39 @@ Vec3 VfxDDGIAccumulateAtProbe(const VfxEmissiveSample* samples, uint32_t count,
     return sum;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// VfxDDGIBuildSampleForEmitter
+// ─────────────────────────────────────────────────────────────────────────────
+
+VfxEmissiveSample VfxDDGIBuildSampleForEmitter(
+    const Vec3&  worldPosition,
+    const Vec3&  colorRgb,
+    float        emissiveIntensity,
+    uint32_t     aliveCount,
+    uint32_t     maxParticles,
+    float        spawnRadius) noexcept
+{
+    VfxEmissiveSample s;
+    s.position        = worldPosition;
+    s.influenceRadius = std::max(kVfxDDGIMinInfluenceRadiusCm,
+                                  spawnRadius * 4.0f);
+
+    if (emissiveIntensity <= 0.0f || aliveCount == 0u) {
+        s.emissive = Vec3{0.0f, 0.0f, 0.0f};
+        return s;
+    }
+
+    // Alive fraction caps at 1 so an over-spawned emitter does not exceed
+    // its authored intensity in radiance — the alive count past capacity
+    // is already an authoring bug elsewhere.
+    const float maxF = std::max(1.0f, static_cast<float>(maxParticles));
+    const float aliveFraction = std::min(1.0f,
+                                          static_cast<float>(aliveCount) / maxF);
+    const float scaled = emissiveIntensity * aliveFraction;
+    s.emissive.x = colorRgb.x * scaled;
+    s.emissive.y = colorRgb.y * scaled;
+    s.emissive.z = colorRgb.z * scaled;
+    return s;
+}
+
 } // namespace uz

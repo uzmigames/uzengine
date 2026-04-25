@@ -78,18 +78,22 @@ static const uint SORT_KEY_DEAD = 0x00000000;
 
 /// Sort constants uploaded by the CPU each frame. Contains camera parameters
 /// for sort key computation, descriptor indices for bindless buffer access,
-/// and merge parameters for the global bitonic merge phase.
+/// alive-detection / custom-key SRVs, and merge parameters for the global
+/// bitonic merge phase.
 ///
-/// Layout is 16-byte aligned per HLSL packing rules. Total: 80 bytes.
+/// Layout is 16-byte aligned per HLSL packing rules. Total: 96 bytes.
 cbuffer VFXSortConstants : register(b0) {
     // ── Particle and Phase Control ────────────────────────────────────────
-    uint     particleCount;       ///< Total alive particles to sort.          0
+    uint     keyGenCount;         ///< Real keys generated for slots          0
+                                  ///< [0..keyGenCount-1]; slots beyond
+                                  ///< receive SORT_KEY_DEAD.
     uint     sortPhase;           ///< 0 = local sort + keygen, 1 = global     4
                                   ///< merge.
-    uint     paddedCount;         ///< particleCount rounded up to next        8
+    uint     paddedCount;         ///< keyGenCount rounded up to next          8
                                   ///< power of two (bitonic requires
                                   ///< power-of-two array size).
-    uint     _pad0;               ///<                                         12
+    uint     sortMode;            ///< GpuSortMode ordinal (0=ViewDepth,       12
+                                  ///< 1=CustomAttribute).
 
     // ── Camera Parameters for Sort Key ────────────────────────────────────
     float3   cameraPos;           ///< World-space camera position.            16
@@ -120,11 +124,31 @@ cbuffer VFXSortConstants : register(b0) {
                                   ///< Power of two, starts at
                                   ///< 2 * SORT_GROUP_SIZE and doubles.
     uint     bitonicSubBlockSize; ///< Current sub-block size within the       68
-                                  ///< merge block. Starts at
-                                  ///< bitonicBlockSize / 2 and halves.
+                                  ///< merge block.
     uint     _pad4;               ///<                                         72
     uint     _pad5;               ///<                                         76
-};                                ///<                                   Total: 80
+
+#ifdef UZ_BINDLESS
+    // ── Alive detection + custom-attribute SRVs ──────────────────────────
+    uint     agesSrvIndex;        ///< SRV: StructuredBuffer<float> ages.      80
+                                  ///< Used for alive detection on every
+                                  ///< key-gen call.
+    uint     lifespansSrvIndex;   ///< SRV: StructuredBuffer<float> lifespans. 84
+    uint     customSortKeySrvIndex; ///< SRV: StructuredBuffer<float> per-     88
+                                    ///< particle key. Read when
+                                    ///< sortMode == kSortMode_CustomAttribute.
+    uint     _pad6;               ///<                                         92
+#else
+    uint     _pad6a;              ///<                                         80
+    uint     _pad6b;              ///<                                         84
+    uint     _pad6c;              ///<                                         88
+    uint     _pad6d;              ///<                                         92
+#endif
+};                                ///<                                   Total: 96
+
+// ── Sort mode enum values — must match GpuSortMode in gpu_particle_sort.h ──
+static const uint kSortMode_ViewDepth       = 0u;
+static const uint kSortMode_CustomAttribute = 1u;
 
 #ifndef UZ_BINDLESS
 /// SM5 fallback: explicit register bindings for sort buffers.
@@ -180,24 +204,60 @@ uint FloatToSortableUint(float f)
 // Phase 0: Key Generation + Local Bitonic Sort
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Generates a sort key for a single particle by computing the signed distance
-/// along the camera view direction, then converts to sortable uint. For
-/// descending order (back-to-front), the key is bitwise-inverted so that
-/// larger distances produce larger uint keys.
+/// Generates a sort key for a single particle.
+///
+/// Performs alive detection first: when the particle is dead
+/// (`age >= lifespan`), the function returns `SORT_KEY_DEAD` so the slot
+/// sorts to the tail regardless of whatever stale data sits in its
+/// position / custom-attribute slots. Alive particles produce a key
+/// derived from the configured `sortMode`:
+///   * `kSortMode_ViewDepth`       — `dot(pos - cameraPos, cameraForward)`
+///                                    converted to a sortable uint and
+///                                    bitwise-inverted (descending order).
+///   * `kSortMode_CustomAttribute` — float read from
+///                                    `customSortKeyBuf[particleIdx]`,
+///                                    bitwise-inverted (descending order).
 ///
 /// # Arguments
-/// - `particleIdx`:   index into the positions buffer.
-/// - `positionsBuf`:  bindless SRV for particle positions.
+/// - `particleIdx`:        index into all per-particle SRV buffers.
+/// - `positionsBuf`:       bindless SRV for particle positions (ViewDepth).
+/// - `customKeyBuf`:       bindless SRV for the custom key channel
+///                         (CustomAttribute).
+/// - `agesBuf`:            ages SRV for the alive check.
+/// - `lifespansBuf`:       lifespans SRV for the alive check.
 ///
 /// # Returns
-/// Sortable uint key. Descending: largest distance -> largest key value.
-uint GenerateSortKey(uint particleIdx, StructuredBuffer<float4> positionsBuf)
+/// Sortable uint key, descending order (largest = farthest / largest key).
+/// `SORT_KEY_DEAD` for dead particles.
+uint GenerateSortKey(uint                       particleIdx,
+                     StructuredBuffer<float4>   positionsBuf,
+                     StructuredBuffer<float>    customKeyBuf,
+                     StructuredBuffer<float>    agesBuf,
+                     StructuredBuffer<float>    lifespansBuf)
 {
-    float3 pos = positionsBuf[particleIdx].xyz;
-    float viewDist = dot(pos - cameraPos, cameraForward);
-    uint key = FloatToSortableUint(viewDist);
-    // Invert for descending order: farthest particle gets the largest uint key.
-    // After inversion, unsigned sort (ascending) produces descending distance order.
+    // Alive detection — dead particles always sort to the tail. The SRVs are
+    // SoA channels written by the simulation; reading slot `particleIdx`
+    // is safe regardless of free-list scatter because the buffers are sized
+    // by capacity, not aliveCount.
+    float age      = agesBuf[particleIdx];
+    float lifespan = lifespansBuf[particleIdx];
+    if (age >= lifespan) {
+        return SORT_KEY_DEAD;
+    }
+
+    // Live particle: pick the key source for the configured mode.
+    float keyValue;
+    if (sortMode == kSortMode_CustomAttribute) {
+        keyValue = customKeyBuf[particleIdx];
+    } else {
+        // Default branch covers ViewDepth and any future / unknown mode.
+        float3 pos = positionsBuf[particleIdx].xyz;
+        keyValue = dot(pos - cameraPos, cameraForward);
+    }
+
+    // Invert for descending order: farthest / largest custom key -> largest
+    // uint, so a single ascending unsigned sort produces back-to-front order.
+    uint key = FloatToSortableUint(keyValue);
     return ~key;
 }
 
@@ -245,18 +305,39 @@ void LocalSortPhase(uint groupIdx, uint localIdx, uint globalIdx)
     // ── Bind buffers ──────────────────────────────────────────────────────
 #ifdef UZ_BINDLESS
     StructuredBuffer<float4> positions = ResourceDescriptorHeap[positionsSrvIndex];
+    StructuredBuffer<float>  ages      = ResourceDescriptorHeap[agesSrvIndex];
+    StructuredBuffer<float>  lifespans = ResourceDescriptorHeap[lifespansSrvIndex];
+    StructuredBuffer<float>  customKey = ResourceDescriptorHeap[customSortKeySrvIndex];
     RWStructuredBuffer<uint> outKeys   = ResourceDescriptorHeap[sortKeysUavIndex];
     RWStructuredBuffer<uint> outVals   = ResourceDescriptorHeap[sortIndicesUavIndex];
 #else
+    // SM5 fallback never plumbs ages/lifespans/customKey — alive detection
+    // is the SM6.6 bindless path. SM5 path keeps legacy behaviour for
+    // back-compat with platforms without DXR-class shader model. Caller is
+    // responsible for ensuring SM5 emitters either have contiguous alive
+    // particles or skip sorting entirely.
     #define positions sm5_positions
     #define outKeys   sm5_sortKeys
     #define outVals   sm5_sortIndices
 #endif
 
     // ── Load: generate sort key or assign dead sentinel ───────────────────
-    if (globalIdx < particleCount)
+    // Slots `[0..keyGenCount-1]` get a real key (which may itself be
+    // SORT_KEY_DEAD if the particle is dead, see GenerateSortKey). Slots
+    // beyond keyGenCount (used to pad up to paddedCount) get SORT_KEY_DEAD
+    // unconditionally so they sort to the tail.
+    if (globalIdx < keyGenCount)
     {
-        gs_keys[localIdx]    = GenerateSortKey(globalIdx, positions);
+#ifdef UZ_BINDLESS
+        gs_keys[localIdx] = GenerateSortKey(globalIdx, positions, customKey,
+                                            ages, lifespans);
+#else
+        // Legacy SM5 path: ViewDepth-only, no alive detection.
+        float3 pos = positions[globalIdx].xyz;
+        float  viewDist = dot(pos - cameraPos, cameraForward);
+        uint   key = FloatToSortableUint(viewDist);
+        gs_keys[localIdx] = ~key;
+#endif
         gs_indices[localIdx] = globalIdx;
     }
     else

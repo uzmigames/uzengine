@@ -155,14 +155,15 @@ TEST(UZ_MeshRenderModule, GetShaderCode_AllModes_ContainMeshInstanceTransforms) 
 }
 
 // =============================================================================
-// GetParameters — 5 entries
+// GetParameters — 6 entries (scale_x/y/z, cast_shadow, rotation_mode, sort_mode)
 // =============================================================================
 
-TEST(UZ_MeshRenderModule, GetParameters_ReturnsFiveEntries) {
+TEST(UZ_MeshRenderModule, GetParameters_ReturnsSixEntries) {
     MeshRenderModule m;
     const auto params = m.GetParameters();
-    EXPECT_EQ(params.size(), 5u)
-        << "MeshRenderModule must expose exactly 5 parameters";
+    EXPECT_EQ(params.size(), 6u)
+        << "MeshRenderModule must expose exactly 6 parameters: scale_x, "
+           "scale_y, scale_z, cast_shadow, rotation_mode, sort_mode";
 }
 
 TEST(UZ_MeshRenderModule, GetParameters_ScaleX_IsFloat) {
@@ -403,7 +404,7 @@ TEST(UZ_MeshRenderModule, DefaultConstructor_ProducesValidModule) {
     MeshRenderModule m;
     EXPECT_STREQ(m.GetName(), "mesh_render");
     EXPECT_FALSE(m.GetShaderCode().empty());
-    EXPECT_EQ(m.GetParameters().size(), 5u);
+    EXPECT_EQ(m.GetParameters().size(), 6u);
 }
 
 TEST(UZ_MeshRenderModule, ExplicitConstructor_StoresConfig) {

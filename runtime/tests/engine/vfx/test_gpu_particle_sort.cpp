@@ -92,18 +92,42 @@ TEST(NextPowerOfTwo, OneMillion_Returns1048576) {
 // VFXSortConstants — layout
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The struct must be exactly 80 bytes so that a memcpy produces the correct
-/// GPU cbuffer layout expected by particle_sort_cs.hlsl.
-TEST(VFXSortConstants, SizeIs80Bytes) {
-    static_assert(sizeof(VFXSortConstants) == 80,
+/// The struct must be exactly 96 bytes so that a memcpy produces the correct
+/// GPU cbuffer layout expected by particle_sort_cs.hlsl. Grew from 80 -> 96
+/// to host the alive-detection / custom-attribute SRV indices in Row 5.
+TEST(VFXSortConstants, SizeIs96Bytes) {
+    static_assert(sizeof(VFXSortConstants) == 96,
                   "VFXSortConstants size mismatch — GPU cbuffer will break");
-    EXPECT_EQ(sizeof(VFXSortConstants), 80u);
+    EXPECT_EQ(sizeof(VFXSortConstants), 96u);
 }
 
-/// particleCount is the first field at byte 0.
-TEST(VFXSortConstants, ParticleCount_OffsetIsZero) {
-    EXPECT_EQ(offsetof(VFXSortConstants, particleCount), 0u)
-        << "particleCount must be at byte 0 (Row 0, first field)";
+/// keyGenCount is the first field at byte 0. Replaces the earlier
+/// `particleCount` field once alive detection runs over the full slot range.
+TEST(VFXSortConstants, KeyGenCount_OffsetIsZero) {
+    EXPECT_EQ(offsetof(VFXSortConstants, keyGenCount), 0u)
+        << "keyGenCount must be at byte 0 (Row 0, first field)";
+}
+
+/// sortMode replaces the previous _pad0 slot at byte 12 (Row 0 last uint).
+TEST(VFXSortConstants, SortMode_OffsetIs12) {
+    EXPECT_EQ(offsetof(VFXSortConstants, sortMode), 12u)
+        << "sortMode must be at byte 12 (Row 0 last field)";
+}
+
+/// agesSrvIndex starts the new Row 5 at byte 80.
+TEST(VFXSortConstants, AgesSrvIndex_OffsetIs80) {
+    EXPECT_EQ(offsetof(VFXSortConstants, agesSrvIndex), 80u)
+        << "agesSrvIndex must be at byte 80 (Row 5 start)";
+}
+
+/// lifespansSrvIndex follows agesSrvIndex at byte 84.
+TEST(VFXSortConstants, LifespansSrvIndex_OffsetIs84) {
+    EXPECT_EQ(offsetof(VFXSortConstants, lifespansSrvIndex), 84u);
+}
+
+/// customSortKeySrvIndex at byte 88.
+TEST(VFXSortConstants, CustomSortKeySrvIndex_OffsetIs88) {
+    EXPECT_EQ(offsetof(VFXSortConstants, customSortKeySrvIndex), 88u);
 }
 
 /// cameraPosX starts Row 1 at byte 16.
@@ -133,30 +157,35 @@ TEST(VFXSortConstants, BitonicBlockSize_OffsetIs64) {
 /// All fields must be writable and readable back with the exact values written.
 TEST(VFXSortConstants, AllFields_Roundtrip) {
     VFXSortConstants cb{};
-    cb.particleCount       = 512u;
-    cb.sortPhase           = 1u;
-    cb.paddedCount         = 512u;
-    cb._pad0               = 0u;
-    cb.cameraPosX          = 1.0f;
-    cb.cameraPosY          = 2.0f;
-    cb.cameraPosZ          = 3.0f;
-    cb._pad1               = 0.0f;
-    cb.cameraForwardX      = 0.0f;
-    cb.cameraForwardY      = 0.0f;
-    cb.cameraForwardZ      = 1.0f;
-    cb._pad2               = 0.0f;
-    cb.positionsSrvIndex   = 7u;
-    cb.sortKeysUavIndex    = 8u;
-    cb.sortIndicesUavIndex = 9u;
-    cb._pad3               = 0u;
-    cb.bitonicBlockSize    = 512u;
-    cb.bitonicSubBlockSize = 256u;
-    cb._pad4               = 0u;
-    cb._pad5               = 0u;
+    cb.keyGenCount           = 512u;
+    cb.sortPhase             = 1u;
+    cb.paddedCount           = 512u;
+    cb.sortMode              = 0u;       // ViewDepth ordinal
+    cb.cameraPosX            = 1.0f;
+    cb.cameraPosY            = 2.0f;
+    cb.cameraPosZ            = 3.0f;
+    cb._pad1                 = 0.0f;
+    cb.cameraForwardX        = 0.0f;
+    cb.cameraForwardY        = 0.0f;
+    cb.cameraForwardZ        = 1.0f;
+    cb._pad2                 = 0.0f;
+    cb.positionsSrvIndex     = 7u;
+    cb.sortKeysUavIndex      = 8u;
+    cb.sortIndicesUavIndex   = 9u;
+    cb._pad3                 = 0u;
+    cb.bitonicBlockSize      = 512u;
+    cb.bitonicSubBlockSize   = 256u;
+    cb._pad4                 = 0u;
+    cb._pad5                 = 0u;
+    cb.agesSrvIndex          = 11u;
+    cb.lifespansSrvIndex     = 12u;
+    cb.customSortKeySrvIndex = 13u;
+    cb._pad6                 = 0u;
 
-    EXPECT_EQ(cb.particleCount,       512u);
+    EXPECT_EQ(cb.keyGenCount,         512u);
     EXPECT_EQ(cb.sortPhase,           1u);
     EXPECT_EQ(cb.paddedCount,         512u);
+    EXPECT_EQ(cb.sortMode,            0u);
     EXPECT_FLOAT_EQ(cb.cameraPosX,    1.0f);
     EXPECT_FLOAT_EQ(cb.cameraPosY,    2.0f);
     EXPECT_FLOAT_EQ(cb.cameraPosZ,    3.0f);
@@ -168,6 +197,9 @@ TEST(VFXSortConstants, AllFields_Roundtrip) {
     EXPECT_EQ(cb.sortIndicesUavIndex, 9u);
     EXPECT_EQ(cb.bitonicBlockSize,    512u);
     EXPECT_EQ(cb.bitonicSubBlockSize, 256u);
+    EXPECT_EQ(cb.agesSrvIndex,          11u);
+    EXPECT_EQ(cb.lifespansSrvIndex,     12u);
+    EXPECT_EQ(cb.customSortKeySrvIndex, 13u);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -57,6 +57,7 @@
 #include "gi/radiance_cache.h"
 #include "gi/irradiance_probe_grid.h"
 #include "gi/ddgi_system.h"
+#include "engine/vfx/lighting/vfx_ddgi_emissive_feed.h"
 #include "engine/ecs/environment/light_probe_volume_component.h"
 #include "passes/gi/brixelizer_gi_pass.h"
 #include "async_texture_decoder.h"  // TextureDecodeResult for m_deferredDecoded
@@ -274,6 +275,14 @@ public:
     /// - `vfx`: Non-owning pointer to an externally-managed VFX system,
     ///          or nullptr to restore use of the internally-owned system.
     void SetVFXSystem(VFXSystem* vfx) { m_vfxSystemOverride = vfx; }
+
+    /// Returns the active VFX system pointer. The override (set by
+    /// `SetVFXSystem`) takes precedence; otherwise the internally-owned
+    /// system is returned. Result is nullptr only when neither has been
+    /// constructed yet (pre-Init).
+    [[nodiscard]] VFXSystem* GetVFXSystem() const noexcept {
+        return m_vfxSystemOverride ? m_vfxSystemOverride : m_vfxSystem.get();
+    }
 
     /// Sets the decal manager reference for deferred decal rendering.
     ///
@@ -888,6 +897,50 @@ private:
     /// The render graph only handles rendering (billboard draw) and barrier
     /// tracking for the SRV transitions needed by the draw pass.
     void DispatchVFXSimulation(IRHICommandList* cmdList, float dt, uint32_t frameIndex);
+
+    /// Dispatches the bitonic depth sort for emitters that need back-to-front
+    /// rendering. Runs inline immediately after `DispatchVFXSimulation` so the
+    /// post-update particle attributes are visible to the sort CS.
+    ///
+    /// Emitters that opt in:
+    /// - Sprite emitters with `blendMode == AlphaBlend` (mode 0). Sort uses
+    ///   `GpuSortMode::ViewDepth`.
+    /// - Mesh emitters where `MeshRenderModule::sortMode != None`. Mode is
+    ///   forwarded to the sort CS (ViewDepth or CustomAttribute).
+    ///
+    /// Other emitters (additive sprites, unsorted meshes) are skipped — alpha
+    /// blend on additive is order-independent, and unsorted meshes opt out
+    /// explicitly.
+    ///
+    /// The sort consumes positions / ages / lifespans (and optionally a
+    /// custom-attribute SRV) from `gpuBuf.WriteSet()` and produces the
+    /// `gpuBuf.sort.sortIndices` buffer, which downstream passes index into
+    /// to translate logical "back-to-front draw slot N" -> source particle
+    /// index.
+    void DispatchVFXSort(IRHICommandList* cmdList);
+
+    /// Walks the active emitter list and produces up to
+    /// `VfxDDGIEmissiveFeed::kMaxSamples` `VfxEmissiveSample` entries
+    /// for the brightest emitters this frame, then forwards them to
+    /// `m_vfxDDGIEmissiveFeed.UploadFrame` for GPU upload.
+    ///
+    /// CVar gates:
+    /// - `r.VFX.DDGIInjection` (default 1): when 0, the function is a
+    ///   logged no-op and `m_vfxDDGIEmissiveFeed.GetSampleCount() == 0`.
+    /// - `r.VFX.DDGIInjection.MaxEmitters` (default 32, clamped to
+    ///   `kMaxSamples`): hard cap on the number of emitters considered
+    ///   so a runaway content count cannot starve the readback path.
+    ///
+    /// Each produced sample uses the emitter's world position, the
+    /// emitter's `initialColor.rgb * emissiveIntensity` as the radiance,
+    /// and `spawnRadius * 4` (clamped to a minimum) as the influence
+    /// radius. Emitters with zero alive particles or zero emissive
+    /// intensity are skipped before the top-N sort. The DDGI probe-
+    /// update CS reading the buffer is gated by
+    /// `phase16_vfx-lumen-gi-hardware-validation` — until that ships
+    /// the gather + upload still runs but the probe shader does not yet
+    /// consume the SRV index.
+    void GatherAndUploadVfxEmissiveSamples();
 };
 
 } // namespace uz

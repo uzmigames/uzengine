@@ -70,6 +70,51 @@ enum class MeshRotationMode : uint8_t {
 [[nodiscard]] MeshRotationMode MeshRotationModeFromString(std::string_view str);
 
 // ─────────────────────────────────────────────────────────────────────────────
+// MeshSortMode -- per-instance draw-order strategy for transparent meshes
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Determines the order in which mesh particle instances are emitted to the
+/// instance transform buffer.
+///
+/// | Mode             | Behaviour                                                |
+/// |------------------|----------------------------------------------------------|
+/// | None             | Insertion order — current behaviour, no sort dispatch.   |
+/// | ViewDepth        | Back-to-front by squared distance from camera position.  |
+/// | CustomAttribute  | Sorted by a user-declared per-particle float attribute.  |
+///
+/// Sorting is required for correct alpha blending when rendering transparent
+/// mesh particles (glass shards, energy cores, jelly debris). Without sorting,
+/// closer translucent meshes can render behind farther ones because alpha
+/// blend depends on draw submission order.
+///
+/// @ref UE5 NiagaraMeshRendererProperties::ESortMode (parity reference)
+enum class MeshSortMode : uint8_t {
+    None = 0,            ///< No sort. Insertion order. Cheapest path.
+    ViewDepth = 1,       ///< Back-to-front by squared distance to camera.
+    CustomAttribute = 2, ///< Sorted by a user-custom float attribute (descending).
+};
+
+/// Converts a MeshSortMode to its canonical string representation.
+///
+/// Used for serialization, logging, and the editor dropdown.
+///
+/// # Returns
+/// - A null-terminated string literal (static lifetime).
+/// - `"Unknown"` for unrecognised enum values.
+[[nodiscard]] const char* MeshSortModeToString(MeshSortMode mode) noexcept;
+
+/// Converts a string to MeshSortMode.
+///
+/// Case-sensitive. Recognised values: `"None"`, `"ViewDepth"`, `"CustomAttribute"`.
+///
+/// # Returns
+/// The matching `MeshSortMode`.
+///
+/// # Errors
+/// Returns `MeshSortMode::None` for unrecognised strings and logs a warning.
+[[nodiscard]] MeshSortMode MeshSortModeFromString(std::string_view str);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MeshRenderModuleConfig -- all knobs for instanced mesh particle rendering
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -107,6 +152,24 @@ struct MeshRenderModuleConfig {
 
     /// Particle orientation strategy. See MeshRotationMode for details.
     MeshRotationMode rotationMode = MeshRotationMode::VelocityAligned;
+
+    /// Per-instance draw-order strategy. See MeshSortMode for details.
+    ///
+    /// Default `None` preserves the legacy insertion-order behaviour for
+    /// opaque mesh emitters where alpha-blend artefacts are invisible. Set
+    /// to `ViewDepth` for transparent / translucent meshes; the renderer
+    /// will dispatch a bitonic sort and emit instance transforms in
+    /// back-to-front order so alpha blending is correct.
+    MeshSortMode sortMode = MeshSortMode::None;
+
+    /// Name of the user-declared per-particle float attribute used as the
+    /// sort key when `sortMode == CustomAttribute`. Ignored otherwise.
+    ///
+    /// The attribute must be a `Float` channel registered on the emitter via
+    /// `ParticleEmitter::AddUserAttribute`. Particles are sorted in descending
+    /// key order (largest first) so authors can use it for "render newer
+    /// particles last", mass-based stacking, or material-id binning.
+    std::string customSortAttribute;
 
     /// Maximum number of mesh instances that can be rendered per frame.
     ///
@@ -199,6 +262,32 @@ public:
     /// (particle_mesh_instance_cs.hlsl) rather than this module's Execute hook.
     void Execute(const ExecuteContext& ctx) override;
 
+    /// Applies a JSON config object produced by the asset serializer.
+    ///
+    /// Used by the deserializer / module registry path to materialize a
+    /// runtime `MeshRenderModule` from the `VfxModuleInstance::configJson`
+    /// blob stored in `ParticleEmitter::stack`. Internally delegates to
+    /// `ParseConfig` so the JSON schema stays single-sourced.
+    ///
+    /// # Behaviour
+    /// - All fields recognised by `ParseConfig` are applied; unrecognised
+    ///   keys are ignored.
+    /// - Missing keys fall back to the existing config's values rather than
+    ///   the struct defaults — this preserves any settings the caller
+    ///   already set programmatically before deserialization.
+    void ApplyJsonConfig(const nlohmann::json& config) override;
+
+    /// Releases the per-instance GPU buffers (transform + color) held by
+    /// this module. Called from `ParticleEmitter::Shutdown` so the
+    /// `instanceTransformBuffer_` / `instanceColorBuffer_` pair does NOT
+    /// leak past the emitter that owned them — D3D12MA reports the leak
+    /// at process exit otherwise (`m_pMetadata->IsEmpty()` assertion).
+    ///
+    /// Equivalent to `DestroyGPUBuffers(device)`; documented separately
+    /// because it is the entry point of the `IVFXModule::ReleaseGPUResources`
+    /// virtual contract.
+    void ReleaseGPUResources(IRHIDevice* device) override;
+
     // ── Configuration accessors ──────────────────────────────────────────────
 
     /// Returns the current rendering configuration (read-only).
@@ -257,13 +346,16 @@ public:
     /// Parses a MeshRenderModuleConfig from a JSON object.
     ///
     /// Recognised fields:
-    /// | JSON key        | C++ field            | Type          |
-    /// |-----------------|----------------------|---------------|
-    /// | `mesh_path`     | `meshPath`           | string        |
-    /// | `material_path` | `materialPath`       | string        |
-    /// | `mesh_scale`    | `meshScale`          | [x, y, z]     |
-    /// | `cast_shadow`   | `castShadow`         | bool          |
-    /// | `rotation_mode` | `rotationMode`       | string        |
+    /// | JSON key                | C++ field             | Type          |
+    /// |-------------------------|-----------------------|---------------|
+    /// | `mesh_path`             | `meshPath`            | string        |
+    /// | `material_path`         | `materialPath`        | string        |
+    /// | `mesh_scale`            | `meshScale`           | [x, y, z]     |
+    /// | `cast_shadow`           | `castShadow`          | bool          |
+    /// | `rotation_mode`         | `rotationMode`        | string        |
+    /// | `sort_mode`             | `sortMode`            | string        |
+    /// | `custom_sort_attribute` | `customSortAttribute` | string        |
+    /// | `max_instances`         | `maxInstances`        | int (1..2^20) |
     ///
     /// Missing fields retain their default values. Unknown fields are ignored.
     ///

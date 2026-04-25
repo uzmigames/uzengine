@@ -211,6 +211,12 @@ struct ParticleEmitter {
     /// Blend mode: 0=AlphaBlend, 1=Additive, 2=PremulAlpha.
     uint32_t blendMode = 0;
 
+    /// One-time warning flag for `MeshSortMode::CustomAttribute` lookup
+    /// failure. Flipped to `true` after the first warning so log spam stays
+    /// bounded — authoring bug remains visible (single line per emitter)
+    /// but does not flood the log every frame at 60 Hz.
+    bool customSortWarned = false;
+
     /// Color by speed (reuses colorLifeStart/End with speed instead of age).
     uint32_t colorBySpeedEnabled = 0;
 
@@ -297,6 +303,29 @@ struct ParticleEmitter {
     /// Whether the emitter is currently spawning new particles.
     /// When false, existing particles continue to simulate until they die.
     bool isEmitting = true;
+
+    /// Whether the emitter's simulation step is paused. Independent from
+    /// `isEmitting` — a paused emitter keeps its alive particles frozen
+    /// in place (sim dt forced to 0) while emitting=false would let them
+    /// continue ageing. Editor scrub / sequencer rewind use this.
+    /// Toggled by the C API `uz_vfx_pause` / `uz_vfx_resume`.
+    bool isPaused = false;
+
+    /// Per-emitter dt multiplier applied AFTER the global
+    /// `r.VFX.TimeScale`. Default 1.0 means "real-time"; 0.5 is half-
+    /// speed, 2.0 is double-speed. The cinematic / sequencer layer
+    /// drives this via `uz_vfx_set_time_scale`.
+    float timeScale = 1.0f;
+
+    /// Stable name for external tooling (`uz_vfx_seek`,
+    /// `VFXSystem::FindEmitterByName`). Empty when the emitter was
+    /// created without one — name-based lookup just skips it.
+    std::string name;
+
+    /// Pending deterministic re-warm target in seconds. 0 means no seek
+    /// is queued. Set by `Seek(t)`, cleared by `ClearPendingSeek()` once
+    /// the sim path's warmup loop finishes.
+    float pendingSeekTime = 0.0f;
 
     /// Path to the VFX graph asset that defines this emitter's behavior.
     /// Used by Lua `uz.vfx:spawn()` to match emitters by graph type.
@@ -661,6 +690,40 @@ struct ParticleEmitter {
     /// `true` when all declared channels have matching GPU buffers after
     /// the call; `false` if any allocation failed.
     [[nodiscard]] bool EnsureUserAttributeBuffers(IRHIDevice* device);
+
+    /// Requests a deterministic re-warm to `targetTime` seconds.
+    ///
+    /// Marks the emitter for reset + replay: the next sim path resets
+    /// state (alive=0, free list full, accumulators zero) then performs
+    /// `ceil(targetTime / kSeekFixedDt)` fixed-rate sim ticks before the
+    /// regular per-frame tick. Once the warmup completes the sim
+    /// dispatch calls `ClearPendingSeek()` and resumes normal operation.
+    ///
+    /// Implements the cinematic / sequencer integration described by
+    /// `phase16_vfx-scalability-cvars-sequencer` (item 1.7) — gameplay
+    /// can scrub through long-lived effects without waiting real-time.
+    ///
+    /// # Parameters
+    /// - `targetTime`: Replay duration in seconds. Negative values are
+    ///   clamped to 0 (no warmup; effectively a reset).
+    ///
+    /// # Side Effects
+    /// - Sets `buffer.needsInitialization = true` so the next sim tick
+    ///   recreates GPU bookkeeping (free-list head, alive count).
+    /// - Resets `cpuAliveCount = 0` and `spawnAccumulator = 0`.
+    /// - Sets `pendingSeekTime = max(0, targetTime)`.
+    void Seek(float targetTime) noexcept;
+
+    /// Returns the pending re-warm target in seconds; 0 means "no seek
+    /// pending" or "warmup completed". Read by the sim path each frame.
+    [[nodiscard]] float GetPendingSeekTime() const noexcept {
+        return pendingSeekTime;
+    }
+
+    /// Clears the pending seek request. Called by the sim path after the
+    /// warmup loop completes. Idempotent — safe to call when no seek
+    /// is pending.
+    void ClearPendingSeek() noexcept { pendingSeekTime = 0.0f; }
 
     /// Allocates GPU buffers from the particle budget.
     ///

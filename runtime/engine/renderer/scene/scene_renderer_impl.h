@@ -367,6 +367,17 @@
     /// @ref Majercik 2019 "Dynamic Diffuse Global Illumination"
     DDGISystem m_ddgiSystem;
 
+    // ── VFX -> DDGI emissive injection (phase16 lumen-gi-contribution) ─
+    /// GPU buffer holding up to 32 top-emissive particle samples, fed
+    /// into the DDGI probe-update CS so explosions / fire / magic VFX
+    /// contribute bounce light to the probe grid. The on-frame gather
+    /// + UploadFrame wiring lives in
+    /// `SceneRenderer::GatherAndUploadVfxEmissiveSamples`; the actual
+    /// probe-update CS reading the buffer is gated by
+    /// `phase16_vfx-lumen-gi-hardware-validation` (CB layout extension
+    /// requires DX12 to verify).
+    VfxDDGIEmissiveFeed m_vfxDDGIEmissiveFeed;
+
     // ── Brixelizer GI (AMD FidelityFX sparse SDF voxel GI) ─────────────────
     std::unique_ptr<BrixelizerGIPass> m_brixelizerGI;  ///< FFX Brixelizer GI pass (diffuse + specular indirect).
 

@@ -165,3 +165,160 @@ TEST(UzfxLoader, InstantiateAllModuleTypes) {
 
     emitter.Shutdown(&device, budget);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mesh render module — sort + rotation + custom-attribute fields
+//
+// Validates that the production `.uzvfx` loader (UzfxLoader::InstantiateEmitter)
+// reads every field added by phase16_vfx-particle-sort-pipeline-refactor:
+// `rotation_mode`, `sort_mode`, `custom_sort_attribute`, `max_instances`.
+// Before this task those fields were silently ignored even when present in
+// the asset; ensuring they round-trip through the production path is what
+// makes the depth-sort feature usable from data.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#include "engine/vfx/modules/mesh_render_module.h"
+
+TEST(UzfxLoader, MeshRender_ParsesSortAndRotationFields) {
+    const char* json = R"({
+        "name": "ShardMeshes",
+        "emitter": {"max_particles": 500, "lifetime": 4.0},
+        "modules": {
+            "spawn": {"type": "spawn"},
+            "render": {
+                "type": "mesh",
+                "mesh_path": "meshes/test_shard.uzmesh",
+                "material_path": "materials/test_glass.uzmat",
+                "scale": [2.0, 1.0, 0.5],
+                "cast_shadow": false,
+                "rotation_mode": "Random",
+                "sort_mode": "ViewDepth",
+                "max_instances": 256
+            }
+        }
+    })";
+
+    auto desc = UzfxLoader::Load(json);
+    ASSERT_FALSE(desc.emitters.empty());
+
+    test::MockRHIDevice device;
+    ParticleBudget budget(500'000);
+
+    ParticleEmitter emitter;
+    ASSERT_TRUE(UzfxLoader::Instantiate(desc, emitter, &device, budget));
+
+    ASSERT_NE(emitter.moduleStack.renderModule, nullptr);
+    const auto* mesh = dynamic_cast<const MeshRenderModule*>(
+        emitter.moduleStack.renderModule.get());
+    ASSERT_NE(mesh, nullptr) << "render type='mesh' must produce MeshRenderModule";
+
+    const auto& cfg = mesh->GetConfig();
+    EXPECT_EQ(cfg.rotationMode, MeshRotationMode::Random)
+        << "rotation_mode must be parsed from .uzvfx render block";
+    EXPECT_EQ(cfg.sortMode, MeshSortMode::ViewDepth)
+        << "sort_mode must be parsed from .uzvfx render block";
+    EXPECT_EQ(cfg.maxInstances, 256u)
+        << "max_instances must be parsed from .uzvfx render block";
+
+    emitter.Shutdown(&device, budget);
+}
+
+TEST(UzfxLoader, MeshRender_DefaultsWhenSortFieldsAbsent) {
+    // Legacy .uzvfx files that predate the sort pipeline must continue to
+    // load with sortMode == None and rotationMode == VelocityAligned (the
+    // historical engine default before the new fields existed).
+    const char* json = R"({
+        "name": "LegacyMeshAsset",
+        "emitter": {"max_particles": 200},
+        "modules": {
+            "spawn": {"type": "spawn"},
+            "render": {
+                "type": "mesh",
+                "mesh_path": "meshes/legacy.uzmesh"
+            }
+        }
+    })";
+
+    auto desc = UzfxLoader::Load(json);
+    test::MockRHIDevice device;
+    ParticleBudget budget(500'000);
+
+    ParticleEmitter emitter;
+    ASSERT_TRUE(UzfxLoader::Instantiate(desc, emitter, &device, budget));
+
+    const auto* mesh = dynamic_cast<const MeshRenderModule*>(
+        emitter.moduleStack.renderModule.get());
+    ASSERT_NE(mesh, nullptr);
+
+    EXPECT_EQ(mesh->GetConfig().sortMode, MeshSortMode::None)
+        << "Missing sort_mode must default to None for backward compat";
+    EXPECT_EQ(mesh->GetConfig().rotationMode, MeshRotationMode::VelocityAligned)
+        << "Missing rotation_mode must default to VelocityAligned";
+
+    emitter.Shutdown(&device, budget);
+}
+
+TEST(UzfxLoader, MeshRender_CustomAttributeWithoutNameDowngradesToNone) {
+    // The production loader emits a one-time warning AND falls back to
+    // sortMode=None when an asset selects CustomAttribute without naming
+    // the attribute — same contract as MeshRenderModule::ParseConfig.
+    const char* json = R"({
+        "name": "BadCustomSort",
+        "emitter": {"max_particles": 100},
+        "modules": {
+            "spawn": {"type": "spawn"},
+            "render": {
+                "type": "mesh",
+                "mesh_path": "meshes/x.uzmesh",
+                "sort_mode": "CustomAttribute"
+            }
+        }
+    })";
+
+    auto desc = UzfxLoader::Load(json);
+    test::MockRHIDevice device;
+    ParticleBudget budget(500'000);
+
+    ParticleEmitter emitter;
+    ASSERT_TRUE(UzfxLoader::Instantiate(desc, emitter, &device, budget));
+
+    const auto* mesh = dynamic_cast<const MeshRenderModule*>(
+        emitter.moduleStack.renderModule.get());
+    ASSERT_NE(mesh, nullptr);
+    EXPECT_EQ(mesh->GetConfig().sortMode, MeshSortMode::None)
+        << "CustomAttribute without custom_sort_attribute must downgrade to None";
+    EXPECT_TRUE(mesh->GetConfig().customSortAttribute.empty());
+
+    emitter.Shutdown(&device, budget);
+}
+
+TEST(UzfxLoader, MeshRender_CustomAttributeWithNamePreservesMode) {
+    const char* json = R"({
+        "name": "ValidCustomSort",
+        "emitter": {"max_particles": 100},
+        "modules": {
+            "spawn": {"type": "spawn"},
+            "render": {
+                "type": "mesh",
+                "mesh_path": "meshes/x.uzmesh",
+                "sort_mode": "CustomAttribute",
+                "custom_sort_attribute": "Mass"
+            }
+        }
+    })";
+
+    auto desc = UzfxLoader::Load(json);
+    test::MockRHIDevice device;
+    ParticleBudget budget(500'000);
+
+    ParticleEmitter emitter;
+    ASSERT_TRUE(UzfxLoader::Instantiate(desc, emitter, &device, budget));
+
+    const auto* mesh = dynamic_cast<const MeshRenderModule*>(
+        emitter.moduleStack.renderModule.get());
+    ASSERT_NE(mesh, nullptr);
+    EXPECT_EQ(mesh->GetConfig().sortMode, MeshSortMode::CustomAttribute);
+    EXPECT_EQ(mesh->GetConfig().customSortAttribute, "Mass");
+
+    emitter.Shutdown(&device, budget);
+}

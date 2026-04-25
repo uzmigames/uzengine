@@ -37,6 +37,9 @@
 #include "engine/vfx/modules/render_target_di_module.h"
 #include "engine/vfx/modules/async_gpu_trace_module.h"
 
+// Spline data interface modules (phase16_vfx-spline-data-interface)
+#include "engine/vfx/modules/spline_modules.h"
+
 #include "engine/logging/log.h"
 
 UZ_DECLARE_LOG_CATEGORY(VFX);
@@ -77,6 +80,11 @@ void RegisterBuiltinModules(ModuleRegistry& registry)
     registry.Register<NeighborInteractionModule>("neighbor_interaction");
     registry.Register<RenderTargetDIModule>("render_target_di");
     registry.Register<AsyncGPUTraceModule>("async_gpu_trace");
+
+    // Spline data interface modules (phase16_vfx-spline-data-interface)
+    registry.Register<SpawnAlongSplineModule>("spawn_along_spline");
+    registry.Register<ForceTowardSplineModule>("force_toward_spline");
+    registry.Register<FollowSplineModule>("follow_spline");
 
     UZ_LOG(VFX, Info, "Registered {} built-in VFX modules",
            registry.GetRegisteredNames().size());

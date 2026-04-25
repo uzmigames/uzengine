@@ -24,7 +24,13 @@
 #include "engine/vfx/vfx_system.h"
 #include "engine/vfx/components/particle_emitter.h"
 #include "engine/vfx/core/gpu_particle_buffer.h"
+#include "engine/vfx/core/gpu_particle_sort.h"
+#include "engine/vfx/lighting/vfx_ddgi_emissive_feed.h"
+#include "engine/vfx/lighting/vfx_ddgi_injection.h"
+#include "engine/vfx/modules/mesh_render_module.h"
+#include "engine/core/cvar.h"
 
+#include <algorithm>
 #include <cstring>
 #include <cmath>
 
@@ -89,6 +95,37 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
     const auto& emitters = activeVFX->GetActiveEmitters();
     if (emitters.empty()) return;
 
+    // ── Apply global VFX scalability (sampled by VFXSystem::Tick) ───────
+    // `r.VFX.SimulatePaused` short-circuits dt to zero so existing GPU
+    // particles freeze in place while the render path keeps drawing them.
+    // `r.VFX.TimeScale` then multiplies the (already-paused-or-not) dt
+    // before the per-emitter `timeScale` and `isPaused` filters apply.
+    // This ordering lets a sequencer pause everything globally and still
+    // run a specific emitter via direct C API control if the caller
+    // resets the per-emitter `isPaused`.
+    float globalDt = dt;
+    if (activeVFX->IsSimulationPaused()) {
+        globalDt = 0.0f;
+    } else {
+        globalDt *= activeVFX->GetTimeScale();
+    }
+
+    // `r.VFX.AllowGPUSim` — when 0 we skip the GPU compute dispatch
+    // entirely. The condition gates the early-out below so the rest of
+    // the function stays unchanged for the common (allowed) case.
+    if (!activeVFX->IsGPUSimAllowed()) {
+        static bool warnedGPUSimDisabled = false;
+        if (!warnedGPUSimDisabled) {
+            UZ_LOG(VFX, Warning,
+                   "r.VFX.AllowGPUSim=0: skipping GPU particle simulation. "
+                   "Existing alive particles will continue to render but "
+                   "will not advance. There is no CPU sim fallback yet — "
+                   "this is intended for compute-less platforms / debug.");
+            warnedGPUSimDisabled = true;
+        }
+        return;
+    }
+
     // Pipeline state objects for the three compute shaders.
     const auto spawnPSO        = m_pipelines->GetParticleSpawnCS();
     const auto updatePSO       = m_pipelines->GetParticleUpdateCS();
@@ -97,6 +134,11 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
     if (!spawnPSO.IsValid() || !updatePSO.IsValid() || !indirectArgsPSO.IsValid()) {
         return;
     }
+
+    // Replace `dt` for the rest of the function with the scaled value so
+    // every subsequent reference (spawn count, update CB, etc.) sees the
+    // post-scalability dt without further plumbing.
+    dt = globalDt;
 
     // Lazy-create a dummy dynParams buffer for emitters that don't have one.
     // This buffer is written by spawn/update shaders as RWStructuredBuffer<float4>.
@@ -258,11 +300,21 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
             cmdList->ResourceBarrier(&b, 1);
         }
 
+        // ── Per-emitter dt (pause + time-scale) ────────────────────────
+        // Apply the per-emitter `isPaused` and `timeScale` after the global
+        // `r.VFX.SimulatePaused` / `r.VFX.TimeScale` filters at the top of
+        // this function. A paused emitter sees dt=0 (alive particles freeze
+        // in place); time-scale scales the residual dt linearly. The same
+        // value is consumed by `CalculateSpawnCount` (spawn rate) and the
+        // update CS (age / position advance), so a slow-mo emitter is
+        // visually slow-mo across both spawn AND update.
+        float emitterDt = emitter->isPaused ? 0.0f : (dt * emitter->timeScale);
+
         // ── Spawn dispatch ─────────────────────────────────────────────
         // Check start delay for compound effects (delayed sub-emitters).
         const bool delayActive = emitter->startDelay > 0.0f
                                 && emitter->timeSinceRegistration < emitter->startDelay;
-        const uint32_t spawnCount = delayActive ? 0 : emitter->CalculateSpawnCount(dt);
+        const uint32_t spawnCount = delayActive ? 0 : emitter->CalculateSpawnCount(emitterDt);
 
         // cpuAliveCount is already updated inside CalculateSpawnCount().
 
@@ -293,7 +345,7 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         spawnCBData.initialColor[2]   = emitter->initialColor.z;
         spawnCBData.initialColor[3]   = emitter->initialColor.w;
 
-        spawnCBData.dt                = dt;
+        spawnCBData.dt                = emitterDt;
         spawnCBData.frameNumber       = frameIndex;
         spawnCBData.spawnCount        = spawnCount;
         spawnCBData.maxParticles      = gpuBuf.capacity;
@@ -420,7 +472,7 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         updateCBData.gravity[0]  = emitter->gravity.x;
         updateCBData.gravity[1]  = emitter->gravity.y;
         updateCBData.gravity[2]  = emitter->gravity.z;
-        updateCBData.dt          = dt;
+        updateCBData.dt          = emitterDt;
         updateCBData.damping     = 1.0f - emitter->damping;
 
         // Process ALL particle slots so the shader handles particles at
@@ -568,6 +620,236 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
     if (m_gpuProfileEnabled) {
         m_device->GpuProfilerEndTimestamp(cmdList, "VFX_InlineSimulation");
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DispatchVFXSort — bitonic depth sort for emitters that need back-to-front
+//                   rendering. Runs inline after DispatchVFXSimulation.
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SceneRenderer::DispatchVFXSort(IRHICommandList* cmdList) {
+    UZ_PROFILE_FUNCTION();
+
+    VFXSystem* activeVFX = m_vfxSystemOverride ? m_vfxSystemOverride : m_vfxSystem.get();
+    if (!activeVFX || !activeVFX->IsInitialized()) return;
+
+    const auto& emitters = activeVFX->GetActiveEmitters();
+    if (emitters.empty()) return;
+
+    const auto sortPSO = m_pipelines->GetParticleSortCS();
+    if (!sortPSO.IsValid()) return;
+
+    if (m_gpuProfileEnabled) {
+        m_device->GpuProfilerBeginTimestamp(cmdList, "VFX_InlineSort");
+    }
+
+    // Camera vectors for ViewDepth keys. Captured once per frame; the sort
+    // dispatch reads them as float[3].
+    const Vec3 camPos = m_cameraManager->GetActiveCamera().GetPosition();
+    const Vec3 camFwd = m_cameraManager->GetActiveCamera().GetForward();
+    const float camPosArr[3] = { camPos.x, camPos.y, camPos.z };
+    const float camFwdArr[3] = { camFwd.x, camFwd.y, camFwd.z };
+
+    constexpr uint32_t kBlendModeAlphaBlend = 0u;
+
+    for (auto* emitter : emitters) {
+        if (!emitter || !emitter->initialized) continue;
+        if (emitter->cullSuppress) continue;
+        if (emitter->needsInitialUpload) continue;
+
+        auto& gpuBuf = emitter->buffer;
+        if (!gpuBuf.IsValid() || !gpuBuf.sort.IsValid()) continue;
+        if (emitter->cpuAliveCount == 0) continue;
+
+        // ── Resolve sort mode + key source for this emitter ─────────────
+        // Sprite emitters (no MeshRenderModule, or one we don't recognise)
+        // auto-sort when blendMode == AlphaBlend and skip otherwise.
+        // Mesh emitters consult MeshRenderModule::sortMode.
+        bool        needsSort = false;
+        GpuSortMode gpuSortMode = GpuSortMode::ViewDepth;
+        uint32_t    customSortKeySrv = 0xFFFFFFFFu;
+
+        const auto* renderModule = emitter->moduleStack.renderModule.get();
+        const bool isMesh = renderModule != nullptr &&
+                            std::strcmp(renderModule->GetName(), "mesh_render") == 0;
+
+        if (isMesh) {
+            const auto* meshModule = static_cast<const MeshRenderModule*>(renderModule);
+            const auto& meshConfig = meshModule->GetConfig();
+            switch (meshConfig.sortMode) {
+            case MeshSortMode::None:
+                needsSort = false;
+                break;
+            case MeshSortMode::ViewDepth:
+                needsSort = true;
+                gpuSortMode = GpuSortMode::ViewDepth;
+                break;
+            case MeshSortMode::CustomAttribute: {
+                // Resolve `customSortAttribute` -> Float user-attribute slot
+                // -> structured buffer SRV. CustomAttribute requires a Float
+                // (Vec4 is rejected because the sort_cs reads scalar floats).
+                // If anything fails, downgrade to None and warn once per
+                // emitter so the authoring bug is visible without spamming.
+                needsSort = true;
+                gpuSortMode = GpuSortMode::CustomAttribute;
+
+                const UserAttributeDef* attr = nullptr;
+                if (!meshConfig.customSortAttribute.empty()) {
+                    attr = emitter->FindUserAttribute(meshConfig.customSortAttribute);
+                }
+
+                bool resolved = false;
+                if (attr != nullptr &&
+                    attr->type == UserAttributeType::Float &&
+                    attr->slotIndex < kMaxUserFloatAttrs) {
+                    const auto& userFloatBuf =
+                        gpuBuf.WriteSet().userFloat[attr->slotIndex];
+                    if (userFloatBuf.IsValid()) {
+                        customSortKeySrv = m_device->GetBufferSRVIndex(userFloatBuf);
+                        resolved = (customSortKeySrv != UINT32_MAX);
+                    }
+                }
+
+                if (!resolved) {
+                    if (!emitter->customSortWarned) {
+                        UZ_LOG(VFX, Warning,
+                               "Emitter sort_mode=CustomAttribute references "
+                               "user attribute '{}' that is not declared as a "
+                               "Float channel or has no GPU buffer; sort "
+                               "downgraded to None for this emitter",
+                               meshConfig.customSortAttribute);
+                        emitter->customSortWarned = true;
+                    }
+                    needsSort = false;
+                }
+                break;
+            }
+            }
+        } else {
+            // Sprite path: sort iff alpha-blended.
+            needsSort = (emitter->blendMode == kBlendModeAlphaBlend);
+            gpuSortMode = GpuSortMode::ViewDepth;
+        }
+
+        if (!needsSort) continue;
+
+        // ── Resolve bindless SRV indices for the sort dispatch ──────────
+        const auto& readSet = gpuBuf.WriteSet();
+        const uint32_t positionsSrv = m_device->GetBufferSRVIndex(readSet.positions);
+        const uint32_t agesSrv      = m_device->GetBufferSRVIndex(readSet.ages);
+        const uint32_t lifespansSrv = m_device->GetBufferSRVIndex(readSet.lifespans);
+
+        if (positionsSrv == UINT32_MAX || agesSrv == UINT32_MAX ||
+            lifespansSrv == UINT32_MAX) {
+            UZ_LOG(VFX, Warning,
+                   "DispatchVFXSort: emitter has invalid SRV indices "
+                   "(pos={}, ages={}, lifespans={}); skipping",
+                   positionsSrv, agesSrv, lifespansSrv);
+            continue;
+        }
+
+        // ── Run the sort over `capacity` slots so alive detection covers
+        // every potentially-alive particle (free-list scatter pattern).
+        GPUParticleSort::DispatchParams sp{};
+        sp.sortMode              = gpuSortMode;
+        sp.keyGenCount           = gpuBuf.capacity;
+        sp.cameraPos             = camPosArr;
+        sp.cameraForward         = camFwdArr;
+        sp.positionsSrvIndex     = positionsSrv;
+        sp.agesSrvIndex          = agesSrv;
+        sp.lifespansSrvIndex     = lifespansSrv;
+        sp.customSortKeySrvIndex = customSortKeySrv;
+
+        gpuBuf.sort.DispatchSort(m_device, cmdList, sortPSO, *m_cbRing, sp);
+    }
+
+    if (m_gpuProfileEnabled) {
+        m_device->GpuProfilerEndTimestamp(cmdList, "VFX_InlineSort");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GatherAndUploadVfxEmissiveSamples — feeds emissive particles into DDGI.
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Phase 16 lumen-gi-contribution. Walks the active emitter list, produces a
+// VfxEmissiveSample per emitter that has both alive particles AND non-zero
+// emissive intensity, then forwards the result to `m_vfxDDGIEmissiveFeed`
+// for top-N selection + GPU upload.
+//
+// Two CVars gate the gather:
+//   * `r.VFX.DDGIInjection`           — master switch (default 1).
+//   * `r.VFX.DDGIInjection.MaxEmitters` — hard cap on the number of
+//     emitters considered, clamped to the feed's `kMaxSamples`.
+//
+// The DDGI probe-update CS reading the produced buffer is wired in
+// `phase16_vfx-lumen-gi-hardware-validation`. Until that lands, the feed
+// still uploads the buffer every frame so the hardware-side wiring only
+// has to add the SRV bind on the probe-update CS side.
+
+void SceneRenderer::GatherAndUploadVfxEmissiveSamples()
+{
+    UZ_PROFILE_FUNCTION();
+
+    if (!m_vfxDDGIEmissiveFeed.IsInitialized()) return;
+
+    auto& cvars = CVarRegistry::Get();
+    const bool enabled = cvars.GetBool("r.VFX.DDGIInjection", true);
+    if (!enabled) {
+        m_vfxDDGIEmissiveFeed.Reset();
+        return;
+    }
+
+    VFXSystem* activeVFX = m_vfxSystemOverride ? m_vfxSystemOverride : m_vfxSystem.get();
+    if (!activeVFX || !activeVFX->IsInitialized()) {
+        m_vfxDDGIEmissiveFeed.Reset();
+        return;
+    }
+
+    const auto& emitters = activeVFX->GetActiveEmitters();
+    if (emitters.empty()) {
+        m_vfxDDGIEmissiveFeed.Reset();
+        return;
+    }
+
+    const uint32_t requestedCap = static_cast<uint32_t>(std::max(0,
+        cvars.GetInt("r.VFX.DDGIInjection.MaxEmitters",
+                     static_cast<int>(VfxDDGIEmissiveFeed::kMaxSamples))));
+    const uint32_t emitterCap = std::min(requestedCap,
+                                          VfxDDGIEmissiveFeed::kMaxSamples);
+
+    // Build a CPU-side staging vector of candidate samples. The feed's
+    // UploadFrame already runs top-N selection, so we can over-produce
+    // here and let it sort.
+    VfxEmissiveSample staging[VfxDDGIEmissiveFeed::kMaxSamples];
+    uint32_t produced = 0;
+
+    for (auto* emitter : emitters) {
+        if (produced >= emitterCap) break;
+        if (!emitter || !emitter->initialized) continue;
+
+        const float emissive = emitter->emissiveIntensity;
+        if (emissive <= 0.0f)            continue;
+        if (emitter->cpuAliveCount == 0) continue;
+
+        // Build a virtual point-light approximation via the shared
+        // helper so the math stays in lockstep with the unit tests.
+        const Vec3 colorRgb {
+            emitter->initialColor.x,
+            emitter->initialColor.y,
+            emitter->initialColor.z
+        };
+        staging[produced] = VfxDDGIBuildSampleForEmitter(
+            emitter->worldPosition,
+            colorRgb,
+            emissive,
+            emitter->cpuAliveCount,
+            emitter->maxParticles,
+            emitter->spawnRadius);
+        ++produced;
+    }
+
+    m_vfxDDGIEmissiveFeed.UploadFrame(staging, produced);
 }
 
 } // namespace uz

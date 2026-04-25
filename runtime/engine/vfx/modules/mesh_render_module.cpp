@@ -46,6 +46,32 @@ MeshRotationMode MeshRotationModeFromString(std::string_view str)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// MeshSortMode string conversion
+// ─────────────────────────────────────────────────────────────────────────────
+
+const char* MeshSortModeToString(MeshSortMode mode) noexcept
+{
+    switch (mode) {
+    case MeshSortMode::None:            return "None";
+    case MeshSortMode::ViewDepth:       return "ViewDepth";
+    case MeshSortMode::CustomAttribute: return "CustomAttribute";
+    default:                            return "Unknown";
+    }
+}
+
+MeshSortMode MeshSortModeFromString(std::string_view str)
+{
+    if (str == "None")            return MeshSortMode::None;
+    if (str == "ViewDepth")       return MeshSortMode::ViewDepth;
+    if (str == "CustomAttribute") return MeshSortMode::CustomAttribute;
+
+    UZ_LOG(VFX, Warning,
+           "MeshRenderModule: unrecognised sort_mode '{}' -- defaulting to None",
+           str);
+    return MeshSortMode::None;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // HLSL snippet -- per-particle instance transform writer
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -248,7 +274,7 @@ std::string_view MeshRenderModule::GetShaderCode() const
 std::vector<ParameterDef> MeshRenderModule::GetParameters() const
 {
     std::vector<ParameterDef> params;
-    params.reserve(5);
+    params.reserve(6);
 
     {
         ParameterDef p;
@@ -285,6 +311,16 @@ std::vector<ParameterDef> MeshRenderModule::GetParameters() const
         p.defaultInt = static_cast<int32_t>(config_.rotationMode);
         params.push_back(p);
     }
+    {
+        // sort_mode is exposed as Int (enum ordinal) so it lives in the
+        // constant buffer beside the float scales and rotation mode without
+        // a separate string-typed parameter slot.
+        ParameterDef p;
+        p.name       = "sort_mode";
+        p.type       = ParameterType::Int;
+        p.defaultInt = static_cast<int32_t>(config_.sortMode);
+        params.push_back(p);
+    }
 
     return params;
 }
@@ -294,6 +330,34 @@ void MeshRenderModule::Execute(const ExecuteContext& /*ctx*/)
 {
     // The GPU does all the work. CPU bookkeeping (e.g., updating the instance
     // buffer descriptor index) is handled by the owning emitter before dispatch.
+}
+
+/// Applies the deserialized JSON config to this module instance.
+///
+/// Delegates to `ParseConfig` so the schema is single-sourced; the resulting
+/// `MeshRenderModuleConfig` becomes the new value of `config_`. Pre-existing
+/// fields that are missing from the JSON revert to struct defaults — this
+/// matches `ParseConfig`'s contract and is the right behaviour for the
+/// `.uzfx` round-trip path (config is fully described in the asset).
+void MeshRenderModule::ApplyJsonConfig(const nlohmann::json& config)
+{
+    if (!config.is_object()) {
+        UZ_LOG(VFX, Warning,
+               "MeshRenderModule::ApplyJsonConfig: config is not an object -- ignored");
+        return;
+    }
+    config_ = ParseConfig(config);
+}
+
+/// Implements the `IVFXModule::ReleaseGPUResources` contract by forwarding
+/// to `DestroyGPUBuffers`. Until this override existed (phase0
+/// particle-mesh-bindless-rewrite-and-d3d12ma-leak), every
+/// `ParticleEmitter::Shutdown` of a mesh emitter leaked the
+/// `instanceTransformBuffer_` + `instanceColorBuffer_` pair, which D3D12MA
+/// surfaced as `m_pMetadata->IsEmpty()` at process exit.
+void MeshRenderModule::ReleaseGPUResources(IRHIDevice* device)
+{
+    DestroyGPUBuffers(device);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -447,6 +511,24 @@ MeshRenderModuleConfig MeshRenderModule::ParseConfig(const nlohmann::json& j)
     if (j.contains("rotation_mode") && j.at("rotation_mode").is_string()) {
         cfg.rotationMode = MeshRotationModeFromString(
             j.at("rotation_mode").get<std::string>());
+    }
+
+    if (j.contains("sort_mode") && j.at("sort_mode").is_string()) {
+        cfg.sortMode = MeshSortModeFromString(
+            j.at("sort_mode").get<std::string>());
+    }
+
+    if (j.contains("custom_sort_attribute") && j.at("custom_sort_attribute").is_string()) {
+        cfg.customSortAttribute = j.at("custom_sort_attribute").get<std::string>();
+    }
+
+    // CustomAttribute sort requires a non-empty attribute name. If the asset
+    // selected the mode but forgot to name the attribute, downgrade to None
+    // and warn — silently sorting by an unset key would mask the authoring bug.
+    if (cfg.sortMode == MeshSortMode::CustomAttribute && cfg.customSortAttribute.empty()) {
+        UZ_LOG(VFX, Warning,
+               "MeshRenderModule: sort_mode='CustomAttribute' but custom_sort_attribute is empty -- falling back to None");
+        cfg.sortMode = MeshSortMode::None;
     }
 
     if (j.contains("max_instances") && j.at("max_instances").is_number_integer()) {

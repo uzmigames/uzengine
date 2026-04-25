@@ -460,6 +460,132 @@ static int VFXPause(lua_State* L) {
     return 0;
 }
 
+/// uz.vfx:freeze(entity, frozen) -> void
+///
+/// Sets the per-emitter `isPaused` flag. Frozen emitters keep alive
+/// particles in place — the sim sees `dt = 0` while the render path
+/// continues to draw. Distinct from `pause`, which stops emission AND
+/// zeroes `emissionRate`. Use `freeze` for screenshot capture / editor
+/// scrub; use `pause` to suspend new spawns while letting existing
+/// particles age out naturally.
+///
+/// # Parameters
+/// - `entity` (integer handle): Emitter handle returned by `spawn`.
+/// - `frozen` (boolean): `true` to freeze sim, `false` to resume.
+static int VFXFreeze(lua_State* L) {
+    const lua_Integer handle = luaL_checkinteger(L, 2);
+
+    if (!lua_isboolean(L, 3)) {
+        return luaL_error(L,
+            "uz.vfx:freeze — argument 2 (frozen) must be a boolean, got %s",
+            lua_typename(L, lua_type(L, 3)));
+    }
+    const bool frozen = (lua_toboolean(L, 3) != 0);
+
+    VFXSystem* vfxSystem = GetVFXSystem(L);
+    if (!vfxSystem) {
+        UZ_LOG(VFX, Warning, "uz.vfx:freeze — VFXSystem not registered");
+        return 0;
+    }
+
+    ParticleEmitter* emitter = ResolveEmitter(vfxSystem, handle);
+    if (!emitter) {
+        UZ_LOG(VFX, Warning, "uz.vfx:freeze — stale or invalid emitter handle");
+        return 0;
+    }
+
+    emitter->isPaused = frozen;
+    return 0;
+}
+
+/// uz.vfx:set_time_scale(entity, scale) -> void
+///
+/// Sets the per-emitter dt multiplier. 1.0 = real-time (default), 0.5 =
+/// half-speed, 2.0 = double-speed. Applied AFTER the global
+/// `r.VFX.TimeScale` so a sequencer can slow individual emitters
+/// against a global slow-mo backdrop. Negative values clamp to 0.
+///
+/// # Parameters
+/// - `entity` (integer handle): Emitter handle returned by `spawn`.
+/// - `scale` (number): New time-scale value. Clamped to [0, +inf).
+static int VFXSetTimeScale(lua_State* L) {
+    const lua_Integer handle = luaL_checkinteger(L, 2);
+    const lua_Number  scale  = luaL_checknumber(L, 3);
+
+    VFXSystem* vfxSystem = GetVFXSystem(L);
+    if (!vfxSystem) {
+        UZ_LOG(VFX, Warning, "uz.vfx:set_time_scale — VFXSystem not registered");
+        return 0;
+    }
+
+    ParticleEmitter* emitter = ResolveEmitter(vfxSystem, handle);
+    if (!emitter) {
+        UZ_LOG(VFX, Warning, "uz.vfx:set_time_scale — stale or invalid emitter handle");
+        return 0;
+    }
+
+    const float clamped = (scale > 0.0) ? static_cast<float>(scale) : 0.0f;
+    emitter->timeScale = clamped;
+    return 0;
+}
+
+/// uz.vfx:seek(entity, time_seconds) -> void
+///
+/// Requests a deterministic re-warm of the emitter to `time_seconds`. The
+/// next sim tick resets state and replays the emitter from t=0 to the
+/// target via fixed-rate sub-ticks. See `ParticleEmitter::Seek` for the
+/// runtime contract.
+///
+/// # Parameters
+/// - `entity` (integer handle): Emitter handle returned by `spawn`.
+/// - `time_seconds` (number): Replay duration. Negative -> 0 (full reset).
+static int VFXSeek(lua_State* L) {
+    const lua_Integer handle = luaL_checkinteger(L, 2);
+    const lua_Number  time   = luaL_checknumber(L, 3);
+
+    VFXSystem* vfxSystem = GetVFXSystem(L);
+    if (!vfxSystem) {
+        UZ_LOG(VFX, Warning, "uz.vfx:seek — VFXSystem not registered");
+        return 0;
+    }
+
+    ParticleEmitter* emitter = ResolveEmitter(vfxSystem, handle);
+    if (!emitter) {
+        UZ_LOG(VFX, Warning, "uz.vfx:seek — stale or invalid emitter handle");
+        return 0;
+    }
+
+    emitter->Seek(static_cast<float>(time));
+    return 0;
+}
+
+/// uz.vfx:find_by_name(name) -> integer | nil
+///
+/// Looks up a registered emitter by its `name` field. Returns the integer
+/// handle on success, `nil` when no emitter is registered under that name.
+///
+/// Useful for cinematic / sequencer integrations: the timeline references
+/// emitters by stable string id rather than capturing pointers across
+/// scene reloads.
+static int VFXFindByName(lua_State* L) {
+    const char* name = luaL_checkstring(L, 2);
+
+    VFXSystem* vfxSystem = GetVFXSystem(L);
+    if (!vfxSystem) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    ParticleEmitter* emitter = vfxSystem->FindEmitterByName(std::string(name));
+    if (!emitter) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    lua_pushinteger(L, EmitterToHandle(emitter));
+    return 1;
+}
+
 /// uz.vfx:get_alive_count(entity) -> integer
 ///
 /// Returns the CPU-side alive particle count for the emitter. This value is
@@ -1358,6 +1484,19 @@ void RegisterVFXLuaBindings(lua_State* L, VFXSystem* vfxSystem) {
 
     lua_pushcfunction(L, VFXPause);
     lua_setfield(L, -2, "pause");
+
+    // Scalability + sequencer bindings (phase16 cvars-sequencer task).
+    lua_pushcfunction(L, VFXFreeze);
+    lua_setfield(L, -2, "freeze");
+
+    lua_pushcfunction(L, VFXSetTimeScale);
+    lua_setfield(L, -2, "set_time_scale");
+
+    lua_pushcfunction(L, VFXSeek);
+    lua_setfield(L, -2, "seek");
+
+    lua_pushcfunction(L, VFXFindByName);
+    lua_setfield(L, -2, "find_by_name");
 
     lua_pushcfunction(L, VFXGetAliveCount);
     lua_setfield(L, -2, "get_alive_count");
