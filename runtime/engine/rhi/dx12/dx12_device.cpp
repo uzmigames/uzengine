@@ -446,12 +446,23 @@ bool DX12Device::EnableDebugLayer(bool gpuValidation) {
 
 bool DX12Device::CreateFactory(bool validation) {
     UZ_PROFILE_FUNCTION();
-    UINT flags = 0;
-    if (validation) {
-        flags = DXGI_CREATE_FACTORY_DEBUG;
-    }
 
+    // Try DXGI_CREATE_FACTORY_DEBUG first when validation is requested. On
+    // hosts without the DXGI Debug runtime installed (some Win11 SKUs, fresh
+    // dev images) this returns DXGI_ERROR_INVALID_CALL (0x887A0001) — fall
+    // back to flags=0 so the D3D12 debug layer (already enabled separately)
+    // still surfaces InfoQueue messages without forcing every dev to install
+    // the optional Graphics Tools feature.
+    UINT flags = validation ? DXGI_CREATE_FACTORY_DEBUG : 0u;
     HRESULT hr = CreateDXGIFactory2(flags, IID_PPV_ARGS(&m_factory));
+    if (FAILED(hr) && validation) {
+        UZ_LOG(RHI, Warning,
+               "CreateDXGIFactory2 with DXGI_CREATE_FACTORY_DEBUG failed "
+               "(hr=0x{:08X}); retrying without DXGI debug flag — D3D12 "
+               "debug layer + InfoQueue still available.",
+               static_cast<uint32_t>(hr));
+        hr = CreateDXGIFactory2(0u, IID_PPV_ARGS(&m_factory));
+    }
     if (FAILED(hr)) {
         UZ_LOG(RHI, Error, "CreateDXGIFactory2 failed, hr=0x{:08X}", static_cast<uint32_t>(hr));
         return false;

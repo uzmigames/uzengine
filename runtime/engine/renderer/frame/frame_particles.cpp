@@ -808,14 +808,11 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
             meshDispatches.push_back(dispatch);
 
             // Build the mesh render pass batch item for this emitter.
-            // Both VS and PS read b0 — the SM6.6 root signature has no SRV
-            // table at t0/t1, so the structured buffers must be reached via
-            // ResourceDescriptorHeap[] using indices forwarded through this
-            // CB. UINT32_MAX is the "no buffer" sentinel; the shaders treat
-            // it as "do not sample" but in practice the dispatch always
-            // produces both buffers on the same frame.
+            // The CB carries only the two bindless descriptor indices —
+            // viewProjection is read from PerFrameCB at b1 by the VS, so
+            // we don't repeat it here (the b0 root-constants slot is
+            // capped at 16 DWORDs / 64 bytes by the bindless root sig).
             ParticleMeshPassConstants meshPassCB{};
-            std::memcpy(meshPassCB.viewProjection, &viewProj, sizeof(float) * 16);
             meshPassCB.instanceTransformsBufferIdx =
                 m_device->GetBufferSRVIndex(gpuBuf.meshInstanceTransforms);
             meshPassCB.instanceColorsBufferIdx =

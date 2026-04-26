@@ -25,21 +25,55 @@
 /// @ref instanced rendering with structured buffer instance data
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Constant Buffer (b0) — per-frame camera data + bindless descriptor indices
+// Constant Buffer (b0) — root constants (16 DWORDs / 64 bytes max)
 // ─────────────────────────────────────────────────────────────────────────────
 //
+// The bindless root signature pins b0 to `RootConstants(num32BitConstants=16)`
+// = 64 bytes total. We can ONLY put 16 DWORDs here. viewProjection (64 bytes
+// alone) used to fit, but adding the bindless indices needed today would
+// overflow the root signature. Instead, viewProjection is read from
+// PerFrameCB at b1 (which the engine binds globally each frame), and b0
+// carries only the two per-emitter bindless descriptor indices.
+//
 // Layout MUST stay byte-identical to `ParticleMeshPassConstants` in
-// `particle_mesh_render_pass.h` (CPU mirror) and the same struct authored by
-// `frame_particles.cpp` when it fills the per-batch CB. Total size: 80 bytes
-// (64 bytes viewProjection + 16 bytes for two descriptor indices + padding).
+// `particle_mesh_render_pass.h` (CPU mirror, 64 bytes).
 cbuffer VFXMeshRenderConstants : register(b0) {
-    float4x4 viewProjection;                ///< Combined view * projection matrix.   0
-    uint     g_instanceTransformsBufferIdx; ///< Bindless SRV index — instance xforms 64
-    uint     g_instanceColorsBufferIdx;     ///< Bindless SRV index — instance colors 68
-                                            ///< (consumed by particle_mesh_ps.hlsl
-                                            ///<  via the same b0 binding)
-    uint     _meshCBpad0;                   ///<                                       72
-    uint     _meshCBpad1;                   ///<                                       76
+    uint     g_instanceTransformsBufferIdx; ///<  0  Bindless SRV — instance xforms.
+    uint     g_instanceColorsBufferIdx;     ///<  4  Bindless SRV — instance colors.
+    // Reserved DWORDs — keeps the layout 16-DWORDs to hit the root-constants
+    // ceiling exactly. Future per-batch fields land here without touching the
+    // root signature.
+    uint     _meshCBpad[14];                ///<  8..63
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Constant Buffer (b1) — engine-global PerFrameCB (read viewProj only).
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// PerFrameCB layout is owned by `engine/renderer/core/params/per_frame_params.h`.
+// We declare the FULL struct (matching `particle_billboard_vs.hlsl`) so DXC's
+// reflection metadata mirrors the engine-global binding exactly — partial
+// declarations have been observed to cause PSO E_INVALIDARG when the root
+// signature validation runs.
+cbuffer PerFrameCB : register(b1) {
+    row_major float4x4 viewProj;        ///< View * Projection matrix.
+    float4   cameraPos;                 ///< xyz = camera world position, w = unused.
+    float4   timeParams;                ///< x = totalTime, y = deltaTime, z = frameCount.
+    float4   lightDir;                  ///< xyz = direction toward light, w = unused.
+    float4   lightColor;                ///< xyz = color * intensity, w = unused.
+    float4   ambientColor;              ///< xyz = ambient radiance, w = unused.
+    row_major float4x4 invViewProj;     ///< Inverse view-projection.
+    float    nearPlane;                 ///< Camera near plane.
+    float    farPlane;                  ///< Camera far plane.
+    uint     _perFramePad0;
+    uint     _perFramePad1;
+    uint     _perFramePad2;
+    uint     _perFramePad3;
+    float    _perFramePad4;
+    float    _perFramePad5;
+    float    _perFramePad6;
+    float    _perFramePad7;
+    float    exposure;                  ///< Auto-exposure multiplier.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -114,7 +148,7 @@ VSOutput main(VSInput input)
 
     // Transform position: local -> world -> clip.
     float4 worldPos = mul(float4(input.position, 1.0f), world);
-    output.clipPos = mul(worldPos, viewProjection);
+    output.clipPos = mul(worldPos, viewProj);
     output.worldPos = worldPos.xyz;
 
     // Transform normal by upper 3x3 (no translation).

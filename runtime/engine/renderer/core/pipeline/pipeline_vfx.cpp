@@ -722,9 +722,22 @@ RHIPipelineHandle PipelineLibrary::GetParticleMeshOpaque() {
     desc.pixelShader   = m_particleMeshPS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
 
-    // No vertex input layout — mesh VS uses SV_VertexID + SV_InstanceID
-    // with bindless structured buffers for vertex data.
-    desc.inputElementCount = 0;
+    // Phase 0 (demo launch pipeline fix) — the mesh VS DOES sample an
+    // actual vertex buffer (`VfxMeshVertex` = Position float3 + Normal
+    // float3 + UV float2, stride 32) indexed by `SV_VertexID`. A
+    // previous comment here claimed the VS was bindless like the
+    // billboard path — that was wrong and DX12 rejected the PSO with
+    // E_INVALIDARG because the VS signature did not match the (empty)
+    // input layout. Declare the real layout so `CreateGraphicsPipelineState`
+    // succeeds.
+    static const RHIInputElementDesc kParticleMeshInputLayout[] = {
+        { RHIInputSemantic::Position, 0, RHIFormat::RGB32Float, 0, 0  },
+        { RHIInputSemantic::Normal,   0, RHIFormat::RGB32Float, 0, 12 },
+        { RHIInputSemantic::Texcoord, 0, RHIFormat::RG32Float,  0, 24 },
+    };
+    desc.inputElements     = kParticleMeshInputLayout;
+    desc.inputElementCount = 3;
+    desc.vertexStride      = 32;
 
     // Opaque particle meshes — cull back faces
     desc.rasterizer.cullMode              = RHICullMode::Back;
@@ -785,9 +798,16 @@ RHIPipelineHandle PipelineLibrary::GetParticleMeshTransparent() {
     desc.pixelShader   = m_particleMeshPS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
 
-    // No vertex input layout — mesh VS uses SV_VertexID + SV_InstanceID
-    // with bindless structured buffers for vertex data.
-    desc.inputElementCount = 0;
+    // Phase 0 — same Position/Normal/UV layout as the opaque variant.
+    // See the opaque-PSO comment above for the full rationale.
+    static const RHIInputElementDesc kParticleMeshInputLayout[] = {
+        { RHIInputSemantic::Position, 0, RHIFormat::RGB32Float, 0, 0  },
+        { RHIInputSemantic::Normal,   0, RHIFormat::RGB32Float, 0, 12 },
+        { RHIInputSemantic::Texcoord, 0, RHIFormat::RG32Float,  0, 24 },
+    };
+    desc.inputElements     = kParticleMeshInputLayout;
+    desc.inputElementCount = 3;
+    desc.vertexStride      = 32;
 
     // Two-sided: transparent meshes visible from both sides
     desc.rasterizer.cullMode              = RHICullMode::None;

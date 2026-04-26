@@ -21,18 +21,17 @@
 /// @ref standard per-instance tinting with instanced mesh rendering
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Constant Buffer (b0) — shared with VS, same layout as
-// `ParticleMeshPassConstants` on the CPU.
+// Constant Buffer (b0) — shared with VS, 16 DWORDs (root-constants ceiling).
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// Mirrors the VS declaration so the PS can read the bindless SRV index for
-// the instance color buffer without needing a separate root parameter.
+// Layout MUST mirror the VS declaration in particle_mesh_vs.hlsl so a single
+// `SetRootConstants` push covers both stages. PS only consumes
+// `g_instanceColorsBufferIdx`; the transforms index is unused here but kept
+// so the offsets match.
 cbuffer VFXMeshRenderConstants : register(b0) {
-    float4x4 viewProjection;
     uint     g_instanceTransformsBufferIdx;
     uint     g_instanceColorsBufferIdx;
-    uint     _meshCBpad0;
-    uint     _meshCBpad1;
+    uint     _meshCBpad[14];
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

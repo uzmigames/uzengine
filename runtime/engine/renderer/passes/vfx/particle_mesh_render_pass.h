@@ -57,29 +57,26 @@ namespace uz {
 /// constant buffer (b0). Both shaders read from the same b0 binding so a
 /// single root-constants push covers both stages.
 ///
-/// Contains:
-/// - The combined view-projection matrix used by the VS to transform each
-///   instance's pre-computed world-space TRS matrix into clip space.
-/// - Two bindless SRV descriptor indices that replace the legacy
-///   `register(t0)`/`register(t1)` SRV bindings (the engine's SM6.6 root
-///   signature has no SRV table at t0..t1 — it relies on
-///   `ResourceDescriptorHeap[]` indirection).
+/// The bindless root signature pins b0 to
+/// `RootConstants(num32BitConstants=16)` = 64 bytes max. View-projection
+/// no longer lives here — it is read from PerFrameCB at b1 (engine-global)
+/// instead. Only the two per-emitter bindless descriptor indices ride this
+/// slot; the rest is reserved padding so future per-batch fields land
+/// without touching the root signature.
 ///
 /// Must be byte-identical to the HLSL `cbuffer VFXMeshRenderConstants`
 /// declarations in `particle_mesh_vs.hlsl` AND `particle_mesh_ps.hlsl`.
 ///
-/// Total size: 80 bytes (256-byte aligned by CBRingAllocator).
+/// Total size: 64 bytes (16 DWORDs, exact root-constants ceiling).
 struct ParticleMeshPassConstants {
-    float    viewProjection[16] = {};            ///< 0..63: View-proj, column-major.
-    uint32_t instanceTransformsBufferIdx = 0xFFFFFFFFu; ///< 64: bindless SRV — float4x4 buffer.
-    uint32_t instanceColorsBufferIdx     = 0xFFFFFFFFu; ///< 68: bindless SRV — float4 buffer.
-    uint32_t _pad0 = 0;                          ///< 72.
-    uint32_t _pad1 = 0;                          ///< 76.
+    uint32_t instanceTransformsBufferIdx = 0xFFFFFFFFu; ///<  0  bindless SRV — float4x4 buffer.
+    uint32_t instanceColorsBufferIdx     = 0xFFFFFFFFu; ///<  4  bindless SRV — float4  buffer.
+    uint32_t _pad[14] = {};                              ///<  8..63 reserved.
 };
 
-static_assert(sizeof(ParticleMeshPassConstants) == 80,
-              "ParticleMeshPassConstants must match the HLSL cbuffer layout "
-              "in particle_mesh_vs.hlsl / particle_mesh_ps.hlsl");
+static_assert(sizeof(ParticleMeshPassConstants) == 64,
+              "ParticleMeshPassConstants must be exactly 64 bytes (16 DWORDs) "
+              "to match the bindless root-constants slot at b0");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ParticleMeshBatchItem -- one instanced mesh draw batch
