@@ -503,9 +503,16 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
         indicesData.sizeBufferIdx        = m_device->GetBufferSRVIndex(readSet.sizes);
         indicesData.colorBufferIdx       = m_device->GetBufferSRVIndex(readSet.colors);
         indicesData.rotationBufferIdx    = m_device->GetBufferSRVIndex(readSet.rotations);
-        indicesData.sortedIndicesSrvIndex = gpuBuf.sort.IsValid()
-            ? m_device->GetBufferSRVIndex(gpuBuf.sort.sortIndices)
-            : UINT32_MAX;
+        // BRING-UP: bypass sort indirection — particles weren't appearing
+        // on hardware because sortedIndices[N] was returning unspawned slot
+        // indices for the lower N range (spawn shader allocates from the
+        // top of the free list, so alive particles cluster at high indices,
+        // and the bitonic sort hadn't been validated end-to-end yet).
+        // Identity mapping (UINT32_MAX sentinel) lets the VS iterate every
+        // pool slot directly and the per-vertex `particleLife <= 0` cull
+        // discards dead/uninitialized slots. Re-enable sort once the bitonic
+        // pipeline's output has been visually verified.
+        indicesData.sortedIndicesSrvIndex = UINT32_MAX;
         indicesData.velocityBufferIdx    = m_device->GetBufferSRVIndex(readSet.velocities);
         indicesData.agesBufferIdx        = m_device->GetBufferSRVIndex(readSet.ages);
         indicesData.lifespansBufferIdx   = m_device->GetBufferSRVIndex(readSet.lifespans);
