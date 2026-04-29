@@ -1,6 +1,9 @@
 # Sandbox — test outputs, Falcor references, temp captures (never committed)
 .sandbox/
 
+# Local toolchains pinned to project (e.g. zig 0.15.2 download)
+.tools/
+
 # Rulebook - ignore runtime data, keep specs and tasks
 /.rulebook/*
 !/.rulebook/specs/

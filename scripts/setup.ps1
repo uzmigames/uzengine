@@ -81,14 +81,24 @@ function Apply-Patches {
     if (-not (Test-Path $patchDir)) { return }
     $patches = Get-ChildItem $patchDir -Filter "*.patch" | Sort-Object Name
     if ($patches.Count -eq 0) { return }
-    foreach ($patch in $patches) {
-        Write-Host "  [$Name] applying $($patch.Name)..." -ForegroundColor Magenta
-        # Apply from repo root — git apply works on the working tree even for non-git subdirs
-        Push-Location $RootDir
-        git apply $patch.FullName 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "  [$Name] WARN: patch may already be applied: $($patch.Name)" -ForegroundColor DarkYellow
+    # Apply from repo root — git apply works on the working tree even for non-git subdirs
+    Push-Location $RootDir
+    try {
+        foreach ($patch in $patches) {
+            # Probe: if reverse-apply succeeds, the patch is already in the working tree
+            # (typically because upstream merged the same fix). Skip silently.
+            & git apply --reverse --check $patch.FullName 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "  [$Name] already applied: $($patch.Name)" -ForegroundColor DarkGray
+                continue
+            }
+            Write-Host "  [$Name] applying $($patch.Name)..." -ForegroundColor Magenta
+            & git apply --ignore-whitespace $patch.FullName 2>$null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "  [$Name] WARN: patch did not apply cleanly: $($patch.Name)" -ForegroundColor Yellow
+            }
         }
+    } finally {
         Pop-Location
     }
 }
@@ -116,20 +126,49 @@ function Refresh-Path {
     $env:Path = "$machinePath;$userPath"
 }
 
-# Zig
-if (-not (Get-Command zig -ErrorAction SilentlyContinue)) {
-    Refresh-Path
+# Zig — project pins to 0.15.x (build.zig uses APIs removed in 0.16)
+$ZigPinnedVersion = "0.15.2"
+$ZigToolsDir = Join-Path $RootDir ".tools\zig-x86_64-windows-$ZigPinnedVersion"
+
+function Test-ZigVersionOk {
+    param([string]$Cmd)
+    try {
+        $v = & $Cmd version 2>$null
+        if ($LASTEXITCODE -eq 0 -and $v -match "^0\.15\.") { return $v }
+    } catch {}
+    return $null
 }
-if (-not (Get-Command zig -ErrorAction SilentlyContinue)) {
-    Write-Host "  Zig not found. Installing via winget..." -ForegroundColor Yellow
-    winget install zig.zig --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
-    Refresh-Path
-    if (-not (Get-Command zig -ErrorAction SilentlyContinue)) {
-        Write-Error "Zig installed but not in PATH. Restart terminal and re-run setup."
+
+# 1. Check existing zig in PATH
+$systemZigVer = $null
+if (Get-Command zig -ErrorAction SilentlyContinue) {
+    $systemZigVer = Test-ZigVersionOk "zig"
+}
+if (-not $systemZigVer) { Refresh-Path; if (Get-Command zig -ErrorAction SilentlyContinue) { $systemZigVer = Test-ZigVersionOk "zig" } }
+
+# 2. Check pinned local zig
+$localZigOk = (Test-Path (Join-Path $ZigToolsDir "zig.exe"))
+
+if ($systemZigVer) {
+    Write-Host "  Zig: $systemZigVer (system)" -ForegroundColor Green
+} elseif ($localZigOk) {
+    $localVer = & (Join-Path $ZigToolsDir "zig.exe") version
+    Write-Host "  Zig: $localVer (.tools/)" -ForegroundColor Green
+} else {
+    Write-Host "  Zig 0.15.x not found. Downloading $ZigPinnedVersion to .tools\..." -ForegroundColor Yellow
+    $zigZip = Join-Path $TempDir "zig-$ZigPinnedVersion.zip"
+    $zigUrl = "https://ziglang.org/download/$ZigPinnedVersion/zig-x86_64-windows-$ZigPinnedVersion.zip"
+    Download-File -Url $zigUrl -OutFile $zigZip
+    $toolsRoot = Join-Path $RootDir ".tools"
+    if (-not (Test-Path $toolsRoot)) { New-Item -ItemType Directory -Path $toolsRoot | Out-Null }
+    Expand-Archive -Path $zigZip -DestinationPath $toolsRoot -Force
+    Remove-Item $zigZip
+    if (-not (Test-Path (Join-Path $ZigToolsDir "zig.exe"))) {
+        Write-Error "Zig extraction failed: $ZigToolsDir\zig.exe not found"
     }
+    $localVer = & (Join-Path $ZigToolsDir "zig.exe") version
+    Write-Host "  Zig: $localVer (.tools/)" -ForegroundColor Green
 }
-$zigVer = zig version
-Write-Host "  Zig: $zigVer" -ForegroundColor Green
 
 # CMake
 if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
@@ -168,7 +207,8 @@ if (-not (Test-Path $VcpkgExe)) {
 $VcpkgPackages = @("zlib", "zstd")
 foreach ($pkg in $VcpkgPackages) {
     Write-Host "  vcpkg: installing $pkg..." -ForegroundColor Yellow
-    & $VcpkgExe install "${pkg}:x64-windows" --vcpkg-root $VcpkgDir 2>&1 | Out-Null
+    & $VcpkgExe install "${pkg}:x64-windows" --vcpkg-root $VcpkgDir
+    if ($LASTEXITCODE -ne 0) { Write-Error "vcpkg install $pkg failed (exit $LASTEXITCODE)" }
 }
 
 # ─── Git Clones ─────────────────────────────────────────────────────────────
@@ -582,6 +622,18 @@ Download-Extract-Zip -Name "slang" `
 # Includes: libavcodec (H.264 encode/decode), libavutil, libswscale (RGBA to NV12).
 # LGPL licensed - no GPL codec libraries, safe for proprietary use.
 $ffmpegDir = Join-Path $ThirdPartyDir "ffmpeg"
+
+# phase0_fix-vfx-demo-launch-pipeline -- self-healing for incomplete
+# extractions. If a prior setup left only lib/+include/ but no bin/,
+# the runtime DLLs (swscale-9.dll, avcodec-62.dll, ...) are missing
+# and every exe crashes at startup. Detect the gap and force a fresh
+# re-download.
+$ffmpegBinDir = Join-Path $ffmpegDir "bin"
+if ((Test-Path $ffmpegDir) -and -not (Test-Path $ffmpegBinDir)) {
+    Write-Host "  [ffmpeg] bin/ missing -- forcing clean re-download..." -ForegroundColor Yellow
+    Remove-Item -Recurse -Force $ffmpegDir -ErrorAction SilentlyContinue
+}
+
 if (-not (Test-Path $ffmpegDir)) {
     $ffmpegZipUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl-shared.zip"
     $ffmpegZip = Join-Path $TempDir "ffmpeg.zip"
@@ -677,8 +729,8 @@ foreach ($mod in $npmModules) {
     if (Test-Path (Join-Path $modPath "package.json")) {
         Write-Host "  [$mod] npm install..." -ForegroundColor Yellow
         Push-Location $modPath
-        npm install 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) { Pop-Location; Write-Error "npm install failed in $mod" }
+        & npm install
+        if ($LASTEXITCODE -ne 0) { Pop-Location; Write-Error "npm install failed in $mod (exit $LASTEXITCODE)" }
         Pop-Location
         Write-Host "  [$mod] OK" -ForegroundColor Green
     }
@@ -692,7 +744,7 @@ Write-Host "[8/9] Verifying image libraries..." -ForegroundColor Cyan
 $ImageLibs = @(
     @{ Name = "stb";              File = "stb_image.h" },
     @{ Name = "spng";             File = "spng\spng.h" },
-    @{ Name = "libjpeg-turbo";    File = "jpeglib.h" },
+    @{ Name = "libjpeg-turbo";    File = "src\jpeglib.h" },
     @{ Name = "tinyexr";          File = "tinyexr.h" },
     @{ Name = "basis_universal";  File = "transcoder\basisu_transcoder.h" },
     @{ Name = "astcenc";          File = "Source\astcenc.h" },

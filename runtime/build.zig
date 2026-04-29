@@ -116,7 +116,9 @@ pub fn build(b: *std.Build) void {
         "engine/vfx/lod",
         "engine/vfx/budget",
         "engine/vfx/baker",
+        "engine/vfx/stack",
         "engine/vfx/editor",
+        "engine/vfx/editor/undo",
         "engine/vfx/material",
         "engine/vfx/mesh",
         "engine/vfx/lighting",
@@ -211,7 +213,14 @@ pub fn build(b: *std.Build) void {
 
     // Clean old generated headers to prevent stale files from conflicting
     // with renamed/moved shaders (e.g., post/ → postprocess/ migration).
-    const clean_generated = b.addRemoveDirTree(b.path("build/generated/shaders"));
+    // Note: b.addRemoveDirTree was removed in zig 0.16 — use addSystemCommand instead.
+    const clean_generated = if (target.result.os.tag == .windows)
+        b.addSystemCommand(&.{
+            "cmd", "/c",
+            "if exist build\\generated\\shaders rmdir /s /q build\\generated\\shaders",
+        })
+    else
+        b.addSystemCommand(&.{ "sh", "-c", "rm -rf build/generated/shaders" });
 
     // Run uzembed: shaders/ → build/generated/shaders/ (all subdirs)
     const run_embed = b.addRunArtifact(embed_exe);
@@ -315,7 +324,9 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/vfx/lod",     cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/budget",  cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/baker",   cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/stack",   cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/editor",  cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/editor/undo", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/material", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/mesh",     cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/lighting", cpp_flags);
@@ -1440,6 +1451,37 @@ pub fn build(b: *std.Build) void {
         if (has_dlss) {
             b.getInstallStep().dependOn(&b.addInstallBinFile(
                 b.path(tp ++ "dlss/lib/Windows_x86_64/dev/nvngx_dlss.dll"), "nvngx_dlss.dll",
+            ).step);
+        }
+
+        // FFmpeg shared DLLs (phase0_fix-vfx-demo-launch-pipeline).
+        // The LGPL shared build from BtbN ships DLLs under thirdparty/ffmpeg/bin/.
+        // We deploy every one we find there so `uzengine.exe` /
+        // `test_runtime.exe` / demos can link at startup. Deployment is
+        // tolerant of missing files — when `setup.ps1` hasn't been re-run
+        // yet, the step silently skips the missing DLLs and the build
+        // still succeeds.
+        const ffmpeg_dlls = [_][]const u8{
+            "avcodec-62.dll",
+            "avdevice-62.dll",
+            "avfilter-11.dll",
+            "avformat-62.dll",
+            "avutil-60.dll",
+            "swresample-6.dll",
+            "swscale-9.dll",
+        };
+        for (ffmpeg_dlls) |dll| {
+            const src_path = b.fmt("{s}ffmpeg/bin/{s}", .{ tp, dll });
+            // Check whether the source file exists before adding the
+            // install step — zig's addInstallBinFile otherwise fails
+            // the build when the file is missing.
+            const abs_src = b.path(src_path).getPath(b);
+            std.fs.accessAbsolute(abs_src, .{}) catch {
+                // Source not present — skip. setup.ps1 re-run needed.
+                continue;
+            };
+            b.getInstallStep().dependOn(&b.addInstallBinFile(
+                b.path(src_path), dll,
             ).step);
         }
     }
