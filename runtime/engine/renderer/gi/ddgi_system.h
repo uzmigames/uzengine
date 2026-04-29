@@ -142,11 +142,20 @@ public:
     ///   The current frame's PerFrameCB allocation. The same struct is bound
     ///   at b1 by the renderer; we re-bind it as the b2 trace constants
     ///   because the DDGI shader reuses the radiance cache CB layout.
+    /// * `vfxEmissiveSrvIndex` — Bindless SRV of the `VfxDDGIEmissiveFeed`
+    ///   StructuredBuffer (one `VfxEmissiveSample` per active emitter).
+    ///   Pass `UINT32_MAX` to disable the VFX emissive injection branch in
+    ///   the probe-update CS — the shader gates on
+    ///   `vfxEmissiveSampleCount > 0 && srv != 0xFFFFFFFF`.
+    /// * `vfxEmissiveSampleCount` — Number of valid samples in the buffer.
+    ///   `0` is the natural disable signal; the shader skips its loop.
     void DispatchUpdate(IRHICommandList* cmdList,
                         RHIPipelineHandle ddgiPipeline,
                         uint32_t          tlasSrvIndex,
                         CBRingAllocator*  cbRing,
-                        uint32_t          frameIndex);
+                        uint32_t          frameIndex,
+                        uint32_t          vfxEmissiveSrvIndex   = UINT32_MAX,
+                        uint32_t          vfxEmissiveSampleCount = 0);
 
 private:
     IRHIDevice*      m_device       = nullptr;

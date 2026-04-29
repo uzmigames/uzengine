@@ -101,7 +101,9 @@ void DDGISystem::DispatchUpdate(IRHICommandList* cmdList,
                                 RHIPipelineHandle ddgiPipeline,
                                 uint32_t          tlasSrvIndex,
                                 CBRingAllocator*  cbRing,
-                                uint32_t          frameIndex) {
+                                uint32_t          frameIndex,
+                                uint32_t          vfxEmissiveSrvIndex,
+                                uint32_t          vfxEmissiveSampleCount) {
     if (!m_initialized || !cmdList || !ddgiPipeline.IsValid() || !cbRing) {
         return;
     }
@@ -133,6 +135,17 @@ void DDGISystem::DispatchUpdate(IRHICommandList* cmdList,
     constants.lightColorG       = 1.0f;
     constants.lightColorB       = 1.0f;
     constants.groundAlbedo      = 0.18f;
+
+    // VFX emissive feed — populated by `GatherAndUploadVfxEmissiveSamples`
+    // earlier in the frame and threaded through the caller. SRV index
+    // UINT32_MAX (default arg) when no emitters were alive or the
+    // `r.VFX.DDGIInjection` CVar is off; the in-shader gate
+    // (`vfxEmissiveSampleCount > 0 && srv != 0xFFFFFFFF`) short-circuits
+    // the accumulation loop in `ddgi_probe_update_cs.hlsl` in that case.
+    constants.vfxEmissiveSrvIndex   = vfxEmissiveSrvIndex;
+    constants.vfxEmissiveSampleCount = vfxEmissiveSampleCount;
+    constants._vfxEmissivePad0      = 0.0f;
+    constants._vfxEmissivePad1      = 0.0f;
 
     // Bind the pipeline once for both passes.
     cmdList->SetPipeline(ddgiPipeline);

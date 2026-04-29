@@ -239,8 +239,24 @@ struct RadianceCacheTraceConstants {
     float    lightColorG;
     float    lightColorB;
     float    groundAlbedo;       ///< Estimated average scene albedo for bounce (0.18 typical).
+
+    // ── VFX → DDGI emissive injection (phase16 hardware-validation) ───────────
+    // Bindless SRV index of the `VfxDDGIEmissiveFeed` StructuredBuffer plus the
+    // number of valid samples in it. Both default to UINT32_MAX / 0 so the
+    // in-shader gate (`vfxEmissiveSampleCount > 0`) short-circuits when:
+    //   * the `r.VFX.DDGIInjection` CVar is off (the feed Resets to 0), or
+    //   * no emitters were alive this frame, or
+    //   * the host hasn't built a feed (e.g. the radiance-cache trace shader
+    //     which shares this CB layout but never reads the VFX fields).
+    //
+    // Two trailing floats keep the struct on a 16-byte boundary so DX12 root
+    // CBV reads and HLSL cbuffer packing stay in lock-step.
+    uint32_t vfxEmissiveSrvIndex   = UINT32_MAX; ///< Bindless SRV of the VFX emissive feed buffer.
+    uint32_t vfxEmissiveSampleCount = 0;          ///< Valid sample count in the buffer.
+    float    _vfxEmissivePad0      = 0.0f;        ///< 16-byte alignment pad.
+    float    _vfxEmissivePad1      = 0.0f;        ///< 16-byte alignment pad.
 };
 
-static_assert(sizeof(RadianceCacheTraceConstants) == 176, "RadianceCacheTraceConstants must be 176 bytes");
+static_assert(sizeof(RadianceCacheTraceConstants) == 192, "RadianceCacheTraceConstants must be 192 bytes");
 
 } // namespace uz

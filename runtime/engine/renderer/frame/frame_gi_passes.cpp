@@ -208,9 +208,28 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
                 auto ddgiPipeline = ctx.pipelines->GetDdgiProbeUpdate();
                 if (ddgiPipeline.IsValid()) {
                     const uint32_t tlasSrv = m_rtManager->GetTLASSRVIndex();
+
+                    // VFX emissive feed — `GatherAndUploadVfxEmissiveSamples`
+                    // runs earlier in the frame (after the simulation tick)
+                    // and stages the top-N most-emissive samples into the
+                    // bindless StructuredBuffer. When the `r.VFX.DDGIInjection`
+                    // CVar is off the gather path calls `Reset()` which forces
+                    // `GetSampleCount() == 0`, so passing the values verbatim
+                    // here naturally disables the in-shader accumulation
+                    // without an extra branch on the C++ side.
+                    const uint32_t vfxSrv =
+                        m_vfxDDGIEmissiveFeed.IsInitialized()
+                            ? m_vfxDDGIEmissiveFeed.GetBufferSrvIndex()
+                            : UINT32_MAX;
+                    const uint32_t vfxCount =
+                        m_vfxDDGIEmissiveFeed.IsInitialized()
+                            ? m_vfxDDGIEmissiveFeed.GetSampleCount()
+                            : 0u;
+
                     m_ddgiSystem.DispatchUpdate(
                         cmd, ddgiPipeline, tlasSrv,
-                        m_cbRing.get(), ctx.frameIndex);
+                        m_cbRing.get(), ctx.frameIndex,
+                        vfxSrv, vfxCount);
                 }
             }
         });

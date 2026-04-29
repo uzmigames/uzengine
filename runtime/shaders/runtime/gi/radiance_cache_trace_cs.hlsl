@@ -69,6 +69,17 @@ cbuffer TraceConstants : register(b2) {
     float lightColorG;
     float lightColorB;
     float groundAlbedo;
+
+    // ── VFX → DDGI emissive injection (phase16 hardware-validation) ──────
+    // Trailing fields appended in `RadianceCacheTraceConstants` so the C++
+    // host can write a single struct to either compute pipeline. The radiance
+    // cache trace shader does not consume the VFX feed (only the DDGI atlas
+    // writer in `ddgi_probe_update_cs.hlsl` does); we declare them only so
+    // the cbuffer layout matches the 192-byte CPU mirror.
+    uint  vfxEmissiveSrvIndex;
+    uint  vfxEmissiveSampleCount;
+    float _vfxEmissivePad0;
+    float _vfxEmissivePad1;
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────

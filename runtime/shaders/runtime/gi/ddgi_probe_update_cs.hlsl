@@ -78,6 +78,43 @@ cbuffer TraceConstants : register(b2) {
     float lightColorG;
     float lightColorB;
     float groundAlbedo;
+
+    // ── VFX → DDGI emissive injection (phase16 hardware-validation) ──────
+    // Mirrors the trailing fields of `uz::RadianceCacheTraceConstants` in
+    // `engine/renderer/gi/radiance_cache.h`. When `vfxEmissiveSampleCount`
+    // is 0 (CVar off / no alive emitters / radiance-cache shader path) the
+    // accumulation loop below is skipped at runtime and DXC dead-code
+    // strips the entire branch on shader-stage scheduling.
+    uint  vfxEmissiveSrvIndex;
+    uint  vfxEmissiveSampleCount;
+    float _vfxEmissivePad0;
+    float _vfxEmissivePad1;
+};
+
+// ─── VFX emissive sample (mirrors `uz::VfxEmissiveSample`) ───────────────
+//
+// Layout MUST match the CPU `struct VfxEmissiveSample` in
+// `engine/vfx/lighting/vfx_ddgi_injection.h` byte-for-byte. The CPU side is:
+//   Vec3  position;        // 12 bytes (3 floats, NOT a float4 — Vec3 is
+//                          //          tightly packed with no trailing pad)
+//   Vec3  emissive;        // 12 bytes
+//   float influenceRadius; //  4 bytes
+//   ───── total = 28 bytes ─────
+//
+// The structured buffer is created with `desc.stride = sizeof(VfxEmissiveSample)`
+// = 28 in `vfx_ddgi_emissive_feed.cpp:53`. We must therefore declare the HLSL
+// struct as scalars-only so DXC packs it tightly (28 bytes); a `float3 position`
+// followed by `float3 emissive` would force `emissive` to offset 16 (HLSL
+// disallows float3 straddling a 16-byte boundary), bloating the stride to 32
+// and corrupting buffer reads.
+struct VfxDDGIEmissiveSample {
+    float positionX;        // offset 0
+    float positionY;        // offset 4
+    float positionZ;        // offset 8
+    float emissiveX;        // offset 12
+    float emissiveY;        // offset 16
+    float emissiveZ;        // offset 20
+    float influenceRadius;  // offset 24
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────
@@ -278,6 +315,69 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     if (g_atlasMode == 0u) {
         float3 irrad = (accumWeight > 1e-6) ? (accumIrrad / accumWeight)
                                             : float3(0, 0, 0);
+
+        // ── VFX emissive injection (band-0 / omnidirectional) ───────────────
+        //
+        // For each VFX emissive sample, compute the Karis attenuation between
+        // probe centre and sample position and add the resulting radiance
+        // uniformly to every octahedral texel of this probe. The contribution
+        // is direction-independent (band-0 / SH[0]) — a fireball located near
+        // a probe lights every direction equally, modulo the smooth radius
+        // cutoff. This matches the proposal's "omnidirectional irradiance"
+        // semantics for the atlas variant of the DDGI update.
+        //
+        // CPU mirror — `VfxDDGIAttenuation` /  `VfxDDGIProbeContribution` in
+        //   runtime/engine/vfx/lighting/vfx_ddgi_injection.cpp:21-47
+        //
+        //   float dOverR = d / r;
+        //   float s      = max(0, 1 - dOverR^4);
+        //   float s2     = s * s;
+        //   float invSq  = 1 / (d*d + 1);
+        //   return s2 * invSq;
+        //
+        // The HLSL below reproduces this byte-for-byte (same operands, same
+        // ordering, same denominator constant). Verified item 1.4.
+        //
+        // The gate is doubly-conservative: the runtime sample count must be
+        // non-zero AND the SRV index must not be sentinel. When the
+        // `r.VFX.DDGIInjection` CVar is off, `GatherAndUploadVfxEmissiveSamples`
+        // calls `m_vfxDDGIEmissiveFeed.Reset()` which forces `sampleCount == 0`,
+        // skipping the loop entirely.
+        if (vfxEmissiveSampleCount > 0u && vfxEmissiveSrvIndex != 0xFFFFFFFFu) {
+            StructuredBuffer<VfxDDGIEmissiveSample> emissiveSamples =
+                ResourceDescriptorHeap[NonUniformResourceIndex(vfxEmissiveSrvIndex)];
+
+            [loop]
+            for (uint vi = 0u; vi < vfxEmissiveSampleCount; ++vi) {
+                VfxDDGIEmissiveSample s = emissiveSamples[vi];
+
+                if (s.influenceRadius <= 0.0f) continue;
+
+                // probePos - samplePos: distance vector from sample to probe.
+                // CPU helper uses `sample.position - probePosition` then takes
+                // its magnitude — only `d` is used so sign doesn't matter.
+                float dx = probePos.x - s.positionX;
+                float dy = probePos.y - s.positionY;
+                float dz = probePos.z - s.positionZ;
+                float distSq = dx * dx + dy * dy + dz * dz;
+                float d      = sqrt(distSq);
+
+                // Smooth radius cutoff: matches CPU early-out `d >= radius`.
+                if (d >= s.influenceRadius) continue;
+
+                float dOverR = d / s.influenceRadius;
+                float dOverR2 = dOverR * dOverR;
+                float dOverR4 = dOverR2 * dOverR2;
+                float sCutoff = max(0.0f, 1.0f - dOverR4);
+                float s2 = sCutoff * sCutoff;
+                float invSq = 1.0f / (distSq + 1.0f);
+                float falloff = s2 * invSq;
+
+                irrad.x += s.emissiveX * falloff;
+                irrad.y += s.emissiveY * falloff;
+                irrad.z += s.emissiveZ * falloff;
+            }
+        }
 
         // EMA hysteresis blend with the previous frame.
         RWTexture2D<float4> irradTex = ResourceDescriptorHeap[g_irradAtlasUav];
