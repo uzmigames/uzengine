@@ -9,9 +9,19 @@
    3. ❌ Instance-color buffer never written — instance CS reads colorsBuf[particleIdx] correctly; color path traced end-to-end.
    4. ❌ Camera/scale mismatch — default scene at the same camera with sprite particles renders animated frames (proven by byte-diff at frames 5 vs 60).
 
-   **The actual root cause is below the source-reading layer: either (a) the spawn CS produces zero alive particles on the GPU (freeListHead never decrements; could be a barrier ordering / staging-buffer-destroyed-too-early issue similar to the historical "only 2-3 particles visible" bug noted at `frame_vfx_inline.cpp:261`), (b) the mesh instance CS dispatch group count reads aliveCount=0 on the GPU side because the spawn CS's writes haven't been visibility-fenced, or (c) the indirect args buffer's InstanceCount field is never populated for the asset-driven path. All three require either RenderDoc capture, GPU-side breadcrumbs, or a temporary staging-buffer readback (gated by `UZ_VFX_DEBUG_READBACK`) to discriminate between them.**
+   **Strengthened diagnosis (second pass):**
+   - Sprite preset (`simple_burst.uzvfx`) loaded via `--vfx-asset` renders visibly with animated frames (5 / 30 / 60 = 220849 / 221289 / 221364 bytes — `.sandbox/sprite-asset-frame-*.png`). **Asset-driven path + spawn CS confirmed working** — discriminator that narrows the bug to mesh-render path specifically.
+   - Mesh particles fail with both the custom `test_shard.uzmesh` AND the existing `sphere.uzmesh` at 50× scale. **Not asset-specific.**
+   - Attempted fix: explicit `UAV→Common` barrier transition for write-set attribute buffers (positions / velocities / ages / lifespans / sizes / colors / rotations) between inline sim's `dispatchOneTick` and downstream RG passes. Build clean, exit 0, no `D3D12 ERROR`, but screenshots STILL byte-identical at 179 801 bytes — barrier transition was not the actual root cause.
+   - `ParticleMeshRenderPass: first execution -- 1 emitters (1 batches submitted, 1 drawn)` log fires; "1 drawn" = 1 BATCH dispatched (`DrawIndexedInstancedIndirect` call issued). The indirect args buffer's `InstanceCount` field is the runtime instance multiplier — that's the suspect.
+   - Render-graph mesh-instance-CS pass at `frame_particles.cpp:1135-1149` declares `pb.Read` for positions / velocities / ages / lifespans BUT all use `Invalid()` resource IDs (the attribute buffers are not imported into the RG per phase 3b's pruned import block to avoid TDR). So the auto-barrier scheduler emits NO transition for them.
 
-   **Phase 2 (the surgical fix) requires GPU-level debugging beyond what code-reading + screenshot-diff can resolve. Filed as a future hardware-CI task.**
+   **Remaining hypotheses (require RenderDoc / GPU breadcrumbs / staging readback to discriminate):**
+   - (a) Mesh instance CS reads garbage from non-transitioned bindless SRVs and all threads early-return at `if (age >= lifespan) return;` (HLSL `particle_mesh_instance_cs.hlsl:364`). Note: `lifespan = max(lifespansBuf[i], 0.001f)` clamps zero reads, so straightforward stale-zero reads should NOT cause early-return. Garbage NaN / large age reads WOULD.
+   - (b) `instanceCount[0]` UAV is written correctly by the CS but the indirect args buffer's `InstanceCount` field stays zero because `indirectArgs.InterlockedMax(INDIRECT_INSTANCE_COUNT_OFFSET, ...)` (HLSL line 428) doesn't propagate cross-pass before the mesh draw reads the indirect args.
+   - (c) Mesh CS dispatches zero groups because the dispatch math `(cpuAliveCount + 255) / 256` reads `cpuAliveCount = 0` somewhere — but CPU mirror sets it to capacity (200) per the Godot pattern, ruling this out unless the value isn't reaching the CB.
+
+   **Phase 2 (the surgical fix) requires GPU-level debugging beyond what code-reading + screenshot-diff can resolve. Filed as a future hardware-CI session.** The two reverted attempts (UAV→ShaderResource, then UAV→Common) prove that the simple-barrier-fix story is wrong; the bug is deeper.
 
 ## 2. Fix (whichever path the diagnosis lands on)
 - [ ] 2.1 Implement the surgical fix matching the diagnosed path (parse `initial_color` in `uzfx_loader.cpp` / re-wire spawn dispatch / fix instance-CS SRV index / adjust asset)
