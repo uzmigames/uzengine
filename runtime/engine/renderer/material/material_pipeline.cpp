@@ -16,6 +16,7 @@
 #include "vertex_layout.h"
 
 #include <algorithm>
+#include <cstdio>     // std::snprintf — used by GetParticleMeshPSO debug-name builder
 #include <cstring>
 #include <string>
 #include <utility>
@@ -49,11 +50,18 @@ MaterialPipeline::MaterialPipeline(MaterialPipeline&& other) noexcept
     , m_initialized(other.m_initialized)
     , m_meshVS(other.m_meshVS)
     , m_cache(std::move(other.m_cache))
+    , m_particleMeshVS(other.m_particleMeshVS)
+    , m_particleMeshPS(other.m_particleMeshPS)
+    , m_particleMeshShadersFailed(other.m_particleMeshShadersFailed)
+    , m_particleMeshCache(std::move(other.m_particleMeshCache))
 {
     other.m_device = nullptr;
     other.m_shaderPipeline = nullptr;
     other.m_initialized = false;
     other.m_meshVS = RHIShaderHandle::Invalid();
+    other.m_particleMeshVS = RHIShaderHandle::Invalid();
+    other.m_particleMeshPS = RHIShaderHandle::Invalid();
+    other.m_particleMeshShadersFailed = false;
 }
 
 MaterialPipeline& MaterialPipeline::operator=(MaterialPipeline&& other) noexcept {
@@ -64,11 +72,18 @@ MaterialPipeline& MaterialPipeline::operator=(MaterialPipeline&& other) noexcept
         m_initialized = other.m_initialized;
         m_meshVS = other.m_meshVS;
         m_cache = std::move(other.m_cache);
+        m_particleMeshVS = other.m_particleMeshVS;
+        m_particleMeshPS = other.m_particleMeshPS;
+        m_particleMeshShadersFailed = other.m_particleMeshShadersFailed;
+        m_particleMeshCache = std::move(other.m_particleMeshCache);
 
         other.m_device = nullptr;
         other.m_shaderPipeline = nullptr;
         other.m_initialized = false;
         other.m_meshVS = RHIShaderHandle::Invalid();
+        other.m_particleMeshVS = RHIShaderHandle::Invalid();
+        other.m_particleMeshPS = RHIShaderHandle::Invalid();
+        other.m_particleMeshShadersFailed = false;
     }
     return *this;
 }
@@ -138,6 +153,29 @@ void MaterialPipeline::Shutdown() {
         m_device->DestroyShader(m_meshVS);
         m_meshVS = RHIShaderHandle::Invalid();
     }
+
+    // ── Particle-mesh resolver cache ──
+    // PSOs first, then the shared VS/PS. Same destruction order used by
+    // PipelineLibrary::Shutdown for symmetry — the underlying RHI does
+    // not require any specific order, but keeping VS/PS alive while PSOs
+    // exist keeps validation tools happy on backends that walk reference
+    // graphs.
+    for (auto& [key, pso] : m_particleMeshCache) {
+        if (pso.IsValid()) {
+            m_device->DestroyPipeline(pso);
+        }
+    }
+    m_particleMeshCache.clear();
+
+    if (m_particleMeshVS.IsValid()) {
+        m_device->DestroyShader(m_particleMeshVS);
+        m_particleMeshVS = RHIShaderHandle::Invalid();
+    }
+    if (m_particleMeshPS.IsValid()) {
+        m_device->DestroyShader(m_particleMeshPS);
+        m_particleMeshPS = RHIShaderHandle::Invalid();
+    }
+    m_particleMeshShadersFailed = false;
 
     m_device = nullptr;
     m_shaderPipeline = nullptr;
@@ -399,6 +437,313 @@ RHIGraphicsPipelineDesc MaterialPipeline::BuildGBufferPipelineDesc(
     }
 
     return desc;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Particle-Mesh PSO Resolver
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+
+/// Packs `(shadingModel, blendMode, twoSided, layout)` into a 64-bit cache
+/// key. Each field occupies its own byte so the bit-pattern is trivially
+/// reversible during debugging — no hash collisions are possible because
+/// every input maps to a unique 32-bit pattern in `[0, 2^32)`.
+///
+/// Layout (LSB → MSB):
+///   bits  0..7  : `MeshVertexLayout` (max 256 layouts)
+///   bits  8..15 : `twoSided` (0 or 1, but reserved as a full byte)
+///   bits 16..23 : `EBlendMode` (max 256, currently 5)
+///   bits 24..31 : `EShadingModel` (max 256, currently 10)
+///   bits 32..63 : reserved (zero)
+///
+/// Why no hashing: the input space is small (≤ 2^32), so a direct bit-pack
+/// is faster, deterministic, and debug-readable in `std::format("{:016X}")`.
+[[nodiscard]] uint64_t MakeParticleMeshKey(const ParticleMaterialDesc& desc,
+                                            MeshVertexLayout layout) noexcept {
+    const uint64_t l = static_cast<uint64_t>(layout)              & 0xFFull;
+    const uint64_t t = static_cast<uint64_t>(desc.twoSided ? 1 : 0) & 0xFFull;
+    const uint64_t b = static_cast<uint64_t>(desc.blendMode)      & 0xFFull;
+    const uint64_t s = static_cast<uint64_t>(desc.shadingModel)   & 0xFFull;
+    return (s << 24) | (b << 16) | (t << 8) | l;
+}
+
+/// Vertex layout descriptor for `MeshVertexLayout::VfxMesh_PosNormalUV`.
+/// Matches `VfxMeshVertex` in `vfx_procedural_mesh.h` and
+/// `particle_mesh_vs.hlsl`'s VS input struct (Position + Normal + UV,
+/// stride 32). Returned by reference so the call site has stable
+/// pointer-to-elements lifetime for the entire process.
+[[nodiscard]] const RHIInputElementDesc* GetVfxMeshPosNormalUVLayout(uint32_t& outCount,
+                                                                      uint32_t& outStride) noexcept {
+    static const RHIInputElementDesc kElements[] = {
+        { RHIInputSemantic::Position, 0, RHIFormat::RGB32Float, 0, 0  },
+        { RHIInputSemantic::Normal,   0, RHIFormat::RGB32Float, 0, 12 },
+        { RHIInputSemantic::Texcoord, 0, RHIFormat::RG32Float,  0, 24 },
+    };
+    outCount  = 3;
+    outStride = 32;
+    return kElements;
+}
+
+} // namespace
+
+bool MaterialPipeline::EnsureParticleMeshShaders() {
+    if (m_particleMeshShadersFailed) {
+        // Sticky failure — already logged once, do not flood subsequent frames.
+        return false;
+    }
+    if (m_particleMeshVS.IsValid() && m_particleMeshPS.IsValid()) {
+        return true;
+    }
+
+    // Same compilation path as `MaterialPipeline::Init` uses for `m_meshVS`:
+    // LoadBytecodeFromSource via the shared `ShaderPipeline` (DXC). We
+    // intentionally do NOT call `PipelineLibrary::EnsureParticleMeshShaders`
+    // because that lives in a separate translation unit and uses a
+    // different `ShaderManager` instance — duplicating the compile here
+    // (≈ a few hundred bytes of DXIL) keeps `MaterialPipeline` self-contained.
+
+    if (!m_particleMeshVS.IsValid()) {
+        auto vsBytecode = m_shaderPipeline->LoadBytecodeFromSource(
+            EngineShaders::GetName(EngineShader::ParticleMeshVS),
+            EngineShaders::GetSource(EngineShader::ParticleMeshVS));
+        if (vsBytecode.empty()) {
+            UZ_LOG(Renderer, Error,
+                   "MaterialPipeline: failed to compile ParticleMeshVS — "
+                   "particle-mesh PSO resolver disabled for the rest of this run");
+            m_particleMeshShadersFailed = true;
+            return false;
+        }
+
+        RHIShaderDesc vsDesc{};
+        vsDesc.bytecode     = vsBytecode.data();
+        vsDesc.bytecodeSize = vsBytecode.size();
+        vsDesc.stage        = RHIShaderStage::Vertex;
+        vsDesc.entryPoint   = "main";
+        vsDesc.debugName    = "MaterialPipeline_ParticleMeshVS";
+
+        m_particleMeshVS = m_device->CreateShader(vsDesc);
+        if (!m_particleMeshVS.IsValid()) {
+            UZ_LOG(Renderer, Error,
+                   "MaterialPipeline: failed to create ParticleMeshVS handle");
+            m_particleMeshShadersFailed = true;
+            return false;
+        }
+    }
+
+    if (!m_particleMeshPS.IsValid()) {
+        auto psBytecode = m_shaderPipeline->LoadBytecodeFromSource(
+            EngineShaders::GetName(EngineShader::ParticleMeshPS),
+            EngineShaders::GetSource(EngineShader::ParticleMeshPS));
+        if (psBytecode.empty()) {
+            UZ_LOG(Renderer, Error,
+                   "MaterialPipeline: failed to compile ParticleMeshPS — "
+                   "particle-mesh PSO resolver disabled for the rest of this run");
+            m_particleMeshShadersFailed = true;
+            return false;
+        }
+
+        RHIShaderDesc psDesc{};
+        psDesc.bytecode     = psBytecode.data();
+        psDesc.bytecodeSize = psBytecode.size();
+        psDesc.stage        = RHIShaderStage::Pixel;
+        psDesc.entryPoint   = "main";
+        psDesc.debugName    = "MaterialPipeline_ParticleMeshPS";
+
+        m_particleMeshPS = m_device->CreateShader(psDesc);
+        if (!m_particleMeshPS.IsValid()) {
+            UZ_LOG(Renderer, Error,
+                   "MaterialPipeline: failed to create ParticleMeshPS handle");
+            m_particleMeshShadersFailed = true;
+            return false;
+        }
+    }
+
+    return true;
+}
+
+RHIGraphicsPipelineDesc MaterialPipeline::BuildParticleMeshPipelineDesc(
+    const ParticleMaterialDesc& desc, MeshVertexLayout layout,
+    const char* debugName) const
+{
+    // The render-pass output is the HDR scene-colour target plus the depth
+    // buffer; the formats MUST match `PipelineLibrary::GetParticleMeshOpaque`
+    // exactly or DX12 will reject the PSO at draw time. See
+    // `pipeline_vfx.cpp:752-754` for the canonical RT layout.
+    RHIGraphicsPipelineDesc pipeDesc{};
+    pipeDesc.vertexShader = m_particleMeshVS;
+    pipeDesc.pixelShader  = m_particleMeshPS;
+    pipeDesc.topology     = RHIPrimitiveTopology::TriangleList;
+
+    // ── Vertex layout selection ────────────────────────────────────────────
+    // Today there is exactly one layout (`VfxMesh_PosNormalUV`); a switch
+    // statement is overkill but it documents the extension point for future
+    // skinned/packed variants without forcing a follow-up edit.
+    switch (layout) {
+        case MeshVertexLayout::VfxMesh_PosNormalUV:
+        default: {
+            uint32_t count   = 0;
+            uint32_t stride  = 0;
+            const auto* elem = GetVfxMeshPosNormalUVLayout(count, stride);
+            pipeDesc.inputElements     = elem;
+            pipeDesc.inputElementCount = count;
+            pipeDesc.vertexStride      = stride;
+            break;
+        }
+    }
+
+    // ── Rasterizer (cull mode honours `twoSided`) ─────────────────────────
+    pipeDesc.rasterizer.cullMode =
+        desc.twoSided ? RHICullMode::None : RHICullMode::Back;
+
+    // ── Depth-stencil state — driven by blend mode ─────────────────────────
+    // Reversed-Z: nearer fragments compare GREATER. Opaque writes depth so
+    // particles occlude each other; translucent / additive read-only so
+    // back-to-front draw order is the only thing that decides blending.
+    pipeDesc.depthStencil.depthEnable = true;
+    pipeDesc.depthStencil.depthFunc   = RHICompareFunc::Greater;
+    pipeDesc.depthStencil.depthWrite  =
+        (desc.blendMode == EBlendMode::Opaque ||
+         desc.blendMode == EBlendMode::Masked);
+
+    // ── Blend state — distinct configuration per `EBlendMode` ─────────────
+    auto& rt0 = pipeDesc.renderTargetBlend[0];
+    switch (desc.blendMode) {
+        case EBlendMode::Opaque:
+        case EBlendMode::Masked:
+            // No blending — fragments either fully overwrite (Opaque) or
+            // are discarded by alpha test in the PS (Masked). The PSO is
+            // identical either way today; the cache key still routes
+            // Masked to its own slot so a future masked-specific PS can
+            // be hot-swapped in without churning the call site.
+            rt0.blendEnable = false;
+            break;
+        case EBlendMode::Translucent:
+            // Standard SrcAlpha / InvSrcAlpha alpha compositing.
+            rt0.blendEnable = true;
+            rt0.srcColor    = RHIBlendFactor::SrcAlpha;
+            rt0.dstColor    = RHIBlendFactor::InvSrcAlpha;
+            rt0.colorOp     = RHIBlendOp::Add;
+            rt0.srcAlpha    = RHIBlendFactor::One;
+            rt0.dstAlpha    = RHIBlendFactor::InvSrcAlpha;
+            rt0.alphaOp     = RHIBlendOp::Add;
+            break;
+        case EBlendMode::Additive:
+            // One / One additive — used for sparks, glow, fire embers.
+            rt0.blendEnable = true;
+            rt0.srcColor    = RHIBlendFactor::SrcAlpha; // pre-mult by particle alpha
+            rt0.dstColor    = RHIBlendFactor::One;
+            rt0.colorOp     = RHIBlendOp::Add;
+            rt0.srcAlpha    = RHIBlendFactor::Zero;
+            rt0.dstAlpha    = RHIBlendFactor::One;
+            rt0.alphaOp     = RHIBlendOp::Add;
+            break;
+        case EBlendMode::Modulate:
+            // DestColor / Zero multiplicative — rarely used for mesh
+            // particles but accepted for parity with the EBlendMode enum.
+            rt0.blendEnable = true;
+            rt0.srcColor    = RHIBlendFactor::DstColor;
+            rt0.dstColor    = RHIBlendFactor::Zero;
+            rt0.colorOp     = RHIBlendOp::Add;
+            rt0.srcAlpha    = RHIBlendFactor::DstAlpha;
+            rt0.dstAlpha    = RHIBlendFactor::Zero;
+            rt0.alphaOp     = RHIBlendOp::Add;
+            break;
+        case EBlendMode::Count:
+        default:
+            // Out-of-range value — treat as Opaque. The caller is expected
+            // to validate ahead of time, but defending here means a corrupt
+            // material descriptor never produces a PSO with undefined blend.
+            rt0.blendEnable = false;
+            break;
+    }
+
+    // ── Render target formats ──────────────────────────────────────────────
+    pipeDesc.renderTargetFormats[0] = RHIFormat::RGBA16Float; // HDR scene color
+    pipeDesc.renderTargetCount      = 1;
+    pipeDesc.depthStencilFormat     = RHIFormat::D32Float;
+    pipeDesc.debugName              = debugName;
+
+    return pipeDesc;
+}
+
+RHIPipelineHandle MaterialPipeline::GetParticleMeshPSO(const ParticleMaterialDesc& desc,
+                                                       MeshVertexLayout layout)
+{
+    UZ_PROFILE_SCOPE("MaterialPipeline::GetParticleMeshPSO");
+
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error,
+               "MaterialPipeline::GetParticleMeshPSO called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    // Out-of-range layout is treated as the default to keep the cache
+    // bounded; an explicit assert during development surfaces broken call
+    // sites without aborting release builds.
+    if (static_cast<uint32_t>(layout) >= static_cast<uint32_t>(MeshVertexLayout::Count)) {
+        UZ_LOG(Renderer, Warning,
+               "MaterialPipeline::GetParticleMeshPSO: layout={} is out of range "
+               "(Count={}) — falling back to VfxMesh_PosNormalUV",
+               static_cast<uint32_t>(layout),
+               static_cast<uint32_t>(MeshVertexLayout::Count));
+        layout = MeshVertexLayout::VfxMesh_PosNormalUV;
+    }
+
+    // ── Cache lookup ─────────────────────────────────────────────────────
+    const uint64_t key = MakeParticleMeshKey(desc, layout);
+    if (auto it = m_particleMeshCache.find(key); it != m_particleMeshCache.end()) {
+        return it->second;
+    }
+
+    // ── Lazy-compile the shared particle-mesh VS / PS ────────────────────
+    if (!EnsureParticleMeshShaders()) {
+        // Sticky failure — already logged. Cache the invalid handle so we
+        // do not retry the (failing) shader compile on every call.
+        m_particleMeshCache[key] = RHIPipelineHandle::Invalid();
+        return RHIPipelineHandle::Invalid();
+    }
+
+    // ── Build + create the PSO ────────────────────────────────────────────
+    char debugName[96];
+    std::snprintf(debugName, sizeof(debugName),
+                  "ParticleMeshPSO_sm%u_bm%u_ts%u_layout%u",
+                  static_cast<uint32_t>(desc.shadingModel),
+                  static_cast<uint32_t>(desc.blendMode),
+                  desc.twoSided ? 1u : 0u,
+                  static_cast<uint32_t>(layout));
+
+    const RHIGraphicsPipelineDesc pipeDesc =
+        BuildParticleMeshPipelineDesc(desc, layout, debugName);
+
+    RHIPipelineHandle pso = m_device->CreateGraphicsPipeline(pipeDesc);
+    if (!pso.IsValid()) {
+        UZ_LOG(Renderer, Error,
+               "MaterialPipeline::GetParticleMeshPSO: PSO creation failed for "
+               "key={:016X} (shadingModel={}, blendMode={}, twoSided={}, layout={})",
+               key,
+               ShadingModelToString(desc.shadingModel),
+               BlendModeToString(desc.blendMode),
+               desc.twoSided ? "true" : "false",
+               static_cast<uint32_t>(layout));
+        // Cache the invalid handle so the failure logs once per (key) and
+        // not every frame. The caller is expected to fall back to
+        // `PipelineLibrary::GetParticleMeshOpaque()` on `IsValid() == false`.
+        m_particleMeshCache[key] = RHIPipelineHandle::Invalid();
+        return RHIPipelineHandle::Invalid();
+    }
+
+    UZ_LOG(Renderer, Info,
+           "MaterialPipeline: created particle-mesh PSO key={:016X} "
+           "(shadingModel={}, blendMode={}, twoSided={}, layout={})",
+           key,
+           ShadingModelToString(desc.shadingModel),
+           BlendModeToString(desc.blendMode),
+           desc.twoSided ? "true" : "false",
+           static_cast<uint32_t>(layout));
+
+    m_particleMeshCache[key] = pso;
+    return pso;
 }
 
 } // namespace uz

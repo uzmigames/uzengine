@@ -492,6 +492,20 @@ MeshRenderModuleConfig MeshRenderModule::ParseConfig(const nlohmann::json& j)
     }
 
     if (j.contains("material_path") && j.at("material_path").is_string()) {
+        // `materialPath` is stored as a string and resolved per-frame at
+        // batch-build time by `SceneRenderer::RegisterParticlePasses` (see
+        // `frame_particles.cpp` mesh-emitter loop). We deliberately do
+        // NOT eagerly load the `MaterialAsset` here:
+        //   1. Hot-reload — re-saving a `.uzmat` while the emitter is
+        //      live should pick up the new shading model / blend mode
+        //      without re-instantiating the module.
+        //   2. PSO cache — `MaterialPipeline::GetParticleMeshPSO` is
+        //      keyed by (shadingModel, blendMode, twoSided, layout) so
+        //      200 emitters using the same material share a single PSO
+        //      regardless of when each one resolves the path.
+        //   3. Asset-system ordering — modules are constructed before
+        //      the VFS / MaterialPipeline are guaranteed to be ready,
+        //      so a `LoadMaterial` call here would have to defer anyway.
         cfg.materialPath = j.at("material_path").get<std::string>();
     }
 

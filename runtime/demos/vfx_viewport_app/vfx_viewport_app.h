@@ -82,6 +82,25 @@ public:
         m_overrideHeight = h;
     }
 
+    /// Sets a single-emitter `.uzvfx` asset path (from `--vfx-asset` CLI arg).
+    /// When non-empty, `OnStart()` skips the default fireball compound +
+    /// standalone-preset scene and instead creates ONE entity with a
+    /// `VfxEmitterComponent` whose `assetPath` is this value. The engine's
+    /// `scene_vfx_sync.cpp` then resolves the path through the VFS and
+    /// instantiates the emitter via `UzfxLoader::InstantiateEmitter` —
+    /// the production code path the hardware-validation tasks need to
+    /// exercise. Path is interpreted relative to the active VFS root
+    /// (see `SetCustomVfsRoot`).
+    void SetEmitterAssetPath(const std::string& path) { m_emitterAssetPath = path; }
+
+    /// Overrides the VFS root directory (from `--vfs-root` CLI arg). Useful
+    /// when loading assets that live outside the demo's bundled `content/`
+    /// or `assets/` subfolders — e.g. point at `sample/content/` to load
+    /// `vfx/tests/mesh_sort_shards.uzvfx` and have its referenced mesh +
+    /// material paths resolve against the same root. Empty = use default
+    /// resolution (`<exe_dir>/content` if exists, otherwise fallback).
+    void SetCustomVfsRoot(const std::string& path) { m_customVfsRoot = path; }
+
 protected:
     // ── Application interface ────────────────────────────────────────────
 
@@ -186,6 +205,16 @@ private:
     /// Path to the `.uzvfxsys` asset driving the compound fireball effect.
     /// Overridable via the `--vfxsys <path>` CLI argument.
     std::string m_systemAssetPath = "vfx/systems/fireball.uzvfxsys";
+
+    /// Single-emitter asset path set via `SetEmitterAssetPath`. When non-empty,
+    /// `OnStart` short-circuits the default fireball + preset-cycling scene
+    /// and creates exactly one `VfxEmitterComponent`-bearing entity that
+    /// loads this path through the production scene_vfx_sync code path.
+    std::string m_emitterAssetPath;
+
+    /// VFS root override set via `SetCustomVfsRoot`. Empty = leave Configure
+    /// to pick `<exe_dir>/content` or the engine default.
+    std::string m_customVfsRoot;
 
     /// Window-size override (0 = use defaults). Set by `--window-size WxH`.
     uint32_t m_overrideWidth  = 0;

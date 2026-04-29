@@ -151,8 +151,14 @@ void AddParticleMeshRenderPass(rg::RgBuilder& builder,
     builder.AddPass("VFX_ParticleMeshRender", [passDesc](rg::RgPassBuilder& pb) mutable {
         // ── Declare render graph resource dependencies ───────────────────────
 
-        // Color target: we write rendered mesh particles into it.
+        // HDR color target: read-modify-write so the DAG schedules this pass
+        // AFTER whatever pass last wrote the HDR composite (sky / lighting).
+        // The previous `Write`-only declaration made the auto-scheduler
+        // free to reorder this pass before lighting, blanking the scene
+        // because the composite was overwritten by a clear or stale state.
+        // Mirrors `particle_render_pass.cpp:145-148`.
         if (passDesc.colorTarget.IsValid()) {
+            pb.Read(passDesc.colorTarget, RHIResourceState::RenderTarget);
             pb.Write(passDesc.colorTarget, RHIResourceState::RenderTarget);
         }
 
@@ -170,11 +176,57 @@ void AddParticleMeshRenderPass(rg::RgBuilder& builder,
             }
         }
 
+        // Per-batch indirect args buffer: the preceding mesh-instance CS
+        // wrote it as `UnorderedAccess`. Declaring a Read in
+        // `IndirectArgument` state lets the auto-barrier scheduler emit
+        // the `UAV → IndirectArgument` transition before the
+        // `DrawIndexedIndirect` here. Without this declaration the draw
+        // executes against a buffer still in `UAV` state and the debug
+        // layer raises a CORRUPTED_PARAMETER error.
+        for (const auto& batch : passDesc.batches) {
+            if (batch.indirectArgsBufferRg.IsValid()) {
+                pb.Read(batch.indirectArgsBufferRg,
+                        RHIResourceState::IndirectArgument);
+            }
+        }
+
         pb.SetExecutionCallback([passDesc](IRHICommandList* cmd,
                                            const rg::RgPassResources& /*res*/) {
             UZ_PROFILE_SCOPE("VFX::ParticleMeshRender");
 
             if (passDesc.batches.empty()) return;
+
+            // ── Bind render targets, viewport, scissor ───────────────────────
+            // BeginRenderPass binds HDR color + scene depth. Without it the
+            // indirect draw inherits stale RTV/DSV from the previous pass
+            // (typically GBuffer slots — wrong format for HDR composite).
+            // This was the root cause of the RC3 disable — the same fix
+            // landed on the billboard pass in commit c8560ba9 and is
+            // mirrored here. Does NOT clear — preserves sky + lit scene.
+            // @ref runtime/engine/renderer/passes/vfx/particle_render_pass.cpp:190-220
+            RHIRenderPassDesc rpDesc{};
+            rpDesc.colorAttachmentCount = 1;
+            rpDesc.colorAttachments[0].texture = passDesc.colorTexture;
+            rpDesc.colorAttachments[0].clear   = false;
+            rpDesc.hasDepth = true;
+            rpDesc.depthAttachment.texture = passDesc.depthTexture;
+            rpDesc.depthAttachment.clear   = false;
+            cmd->BeginRenderPass(rpDesc);
+
+            // Viewport + scissor (DX12 does not inherit them across passes).
+            // Use render-resolution units — the HDR composite is authored
+            // pre-upsample and must be matched here, not the swapchain size.
+            {
+                RHIViewport vp{};
+                vp.width    = static_cast<float>(passDesc.renderWidth);
+                vp.height   = static_cast<float>(passDesc.renderHeight);
+                vp.maxDepth = 1.0f;
+                cmd->SetViewport(vp);
+                RHIScissorRect sr{};
+                sr.right  = static_cast<int32_t>(passDesc.renderWidth);
+                sr.bottom = static_cast<int32_t>(passDesc.renderHeight);
+                cmd->SetScissor(sr);
+            }
 
             uint32_t drawnBatches = 0;
 
@@ -193,12 +245,18 @@ void AddParticleMeshRenderPass(rg::RgBuilder& builder,
                 ++drawnBatches;
             }
 
+            cmd->EndRenderPass();
+
             // Log first execution for diagnostics and pipeline validation.
+            // The "first execution -- N emitters" line is the spec scenario
+            // marker that hardware-validation scripts grep for to confirm
+            // the pass actually ran (vs. being silently skipped).
             static bool loggedOnce = false;
             if (!loggedOnce) {
                 UZ_LOG(VFX, Info,
-                       "ParticleMeshRenderPass: first execution -- {} batches submitted, "
-                       "{} drawn (transparent={})",
+                       "ParticleMeshRenderPass: first execution -- {} emitters "
+                       "({} batches submitted, {} drawn, transparent={})",
+                       drawnBatches,
                        passDesc.batches.size(),
                        drawnBatches,
                        passDesc.isTransparent);

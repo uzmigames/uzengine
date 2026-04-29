@@ -105,12 +105,13 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
 
     // ── Setup all per-frame state (camera, CBs, draw list, instancing) ──
     FrameContext ctx{};
-    ctx.cmdList    = cmdList;
-    ctx.swapChain  = swapChain;
-    ctx.world      = world;
-    ctx.vfs        = vfs;
-    ctx.dt         = dt;
-    ctx.frameIndex = frameIndex;
+    ctx.cmdList       = cmdList;
+    ctx.swapChain     = swapChain;
+    ctx.world         = world;
+    ctx.vfs           = vfs;
+    ctx.dt            = dt;
+    ctx.frameIndex    = frameIndex;
+    ctx.sceneRenderer = this;
     ctx.gizmoModeRaw    = m_gizmoMode;
     ctx.gizmoSpaceRaw   = m_gizmoSpace;
     ctx.gizmoHoveredAxis = m_gizmoHoveredAxis;

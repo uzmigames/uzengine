@@ -12,20 +12,20 @@
       "modules": {
         "spawn": {
           "type": "spawn",
-          "velocity": [0.0, 0.0, 80.0],
-          "spread_angle": 30.0,
+          "velocity": [0.0, 0.0, 200.0],
+          "spread_angle": 60.0,
           "lifespan_min": 4.5,
           "lifespan_max": 5.5
         },
         "update": [
-          { "type": "update", "gravity": [0.0, 0.0, -200.0], "drag": 0.95 },
+          { "type": "update", "gravity": [0.0, 0.0, -80.0], "drag": 0.4 },
           { "type": "decay" }
         ],
         "render": {
           "type": "mesh",
           "mesh_path": "meshes/test_shard.uzmesh",
           "material_path": "materials/test_glass.uzmat",
-          "scale": [1.0, 1.0, 1.0],
+          "scale": [3.0, 3.0, 3.0],
           "cast_shadow": false,
           "rotation_mode": "Random",
           "sort_mode": "ViewDepth",

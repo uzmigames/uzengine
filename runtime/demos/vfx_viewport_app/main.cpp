@@ -15,6 +15,14 @@
 /// - `--channel <0|1|2|3|4>`: Sprite channel mask (0=RGBA, 1=R, 2=G, 3=B, 4=A).
 /// - `--vfxsys <path>`: Override the `.uzvfxsys` compound asset path (default
 ///   `"vfx/systems/fireball.uzvfxsys"`).
+/// - `--vfx-asset <path>`: Load a single-emitter `.uzvfx` asset via the
+///   production `UzfxLoader::InstantiateEmitter` path (used by the VFX
+///   hardware-validation suite). Bypasses the default fireball + preset
+///   cycling scene. Path is interpreted relative to the active VFS root.
+/// - `--vfs-root <path>`: Override the VFS root directory (defaults to
+///   `<exe_dir>/content` if it exists, otherwise the engine fallback).
+///   Useful with `--vfx-asset` to point at `sample/content/` so test
+///   assets resolve without bundling them into the demo build.
 
 #include "vfx_viewport_app.h"
 
@@ -46,6 +54,10 @@ int main(int argc, char** argv) {
             app.SetSpriteChannelMask(mask);
         } else if (std::strcmp(argv[i], "--vfxsys") == 0 && i + 1 < argc) {
             app.SetSystemAssetPath(argv[++i]);
+        } else if (std::strcmp(argv[i], "--vfx-asset") == 0 && i + 1 < argc) {
+            app.SetEmitterAssetPath(argv[++i]);
+        } else if (std::strcmp(argv[i], "--vfs-root") == 0 && i + 1 < argc) {
+            app.SetCustomVfsRoot(argv[++i]);
         } else if (std::strcmp(argv[i], "--window-size") == 0 && i + 1 < argc) {
             // Phase 13.5 — `--window-size WxH` override for headless
             // multi-resolution screenshot capture.

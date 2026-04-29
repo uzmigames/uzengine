@@ -169,12 +169,21 @@ ApplicationConfig VFXViewportApp::Configure() {
     cfg.cameraPitchDeg = -10.f;     // flatter pitch so emitter rises into centre
     cfg.enableValidation = true;
 
-    // VFS root: use the demo's content directory if it exists next to the exe,
-    // otherwise fall back to the default assets/ directory.
-    const auto exeDir = GetExeDir();
-    const auto contentDir = exeDir / "content";
-    if (std::filesystem::exists(contentDir)) {
-        cfg.vfsRoot = contentDir.string();
+    // VFS root: priority order is
+    //   1. `--vfs-root <path>` CLI override (m_customVfsRoot) — used by the
+    //      hardware-validation tasks to point at `sample/content/` so test
+    //      assets (mesh_sort_shards.uzvfx, test_shard.uzmesh, test_glass.uzmat)
+    //      resolve without bundling them into the demo build artifacts.
+    //   2. `<exe_dir>/content` if it exists.
+    //   3. Engine default (typically `<exe_dir>/assets/`).
+    if (!m_customVfsRoot.empty()) {
+        cfg.vfsRoot = m_customVfsRoot;
+    } else {
+        const auto exeDir = GetExeDir();
+        const auto contentDir = exeDir / "content";
+        if (std::filesystem::exists(contentDir)) {
+            cfg.vfsRoot = contentDir.string();
+        }
     }
 
     return cfg;
@@ -188,6 +197,61 @@ void VFXViewportApp::OnStart() {
     UZ_LOG(App, Info, "VFXViewportApp::OnStart — creating scene entities...");
     World& world = GetWorld();
     UZ_LOG(App, Info, "VFXViewportApp: World obtained, creating entities...");
+
+    // ── Asset-driven mode: skip fireball compound + preset cycling ─────────
+    // When `--vfx-asset <path>` is set we are running a hardware-validation
+    // scenario and want the scene to contain ONLY the asset under test, so
+    // the inline-sort timing + visual A/B is not contaminated by the default
+    // fireball + standalone Fire emitter the demo normally spawns. The sun
+    // and sky atmosphere are still useful (the asset's mesh material is
+    // DefaultLit), so they stay.
+    if (!m_emitterAssetPath.empty()) {
+        UZ_LOG(App, Info,
+               "VFXViewportApp: asset-driven mode — loading single emitter from '{}'",
+               m_emitterAssetPath);
+
+        // Sun
+        {
+            Entity sunEntity = world.CreateEntity();
+            world.AddComponent<CName>(sunEntity, CName{"Sun"});
+            auto& sun = world.AddComponent<DirectionalLightComponent>(sunEntity);
+            sun.color = {1.0f, 0.95f, 0.85f};
+            sun.intensity = 10.0f;
+            sun.shadowCascades = 4;
+            sun.SetRotation(Quat::FromAxisAngle(Vec3::Right(),
+                                                -50.0f * DirectX::XM_PI / 180.0f));
+        }
+
+        // Sky atmosphere
+        {
+            Entity skyEntity = world.CreateEntity();
+            world.AddComponent<CName>(skyEntity, CName{"SkyAtmosphere"});
+            world.AddComponent<SkyAtmosphereComponent>(skyEntity);
+        }
+
+        // Single emitter sourced from the .uzvfx asset. scene_vfx_sync.cpp
+        // detects assetPath and routes through UzfxLoader::Load +
+        // InstantiateEmitter — exactly the production code path the
+        // hardware-validation suite is meant to exercise.
+        {
+            Entity ent = world.CreateEntity();
+            world.AddComponent<CName>(ent, CName{"VFX_AssetDriven"});
+            auto& sc = world.AddComponent<SceneComponent>(ent);
+            sc.SetPosition({0.0f, 0.0f, 0.0f});
+            auto& em = world.AddComponent<VfxEmitterComponent>(ent);
+            em.assetPath = m_emitterAssetPath;
+            em.emitting  = true;
+            m_emitterEntities.push_back(ent);
+            m_emitterPresets.push_back(0);  // not preset-driven, but list parity
+        }
+        m_activeEmitterIdx = 0;
+        m_currentPreset    = -1;  // sentinel: preset cycling disabled
+
+        if (auto* overlay = GetVfxEditorOverlay()) {
+            overlay->SetVisible(false);  // overlay is preset-centric; off in asset mode
+        }
+        return;
+    }
 
     // DEBUG: Incremental entity creation — test each one for crash
 
@@ -569,7 +633,8 @@ void VFXViewportApp::OnUpdate(float dt) {
     // ── Fireball projectile animation: move the single compound entity ──
     // The VfxSystemInstance automatically propagates this position to all
     // child emitters (head + sparks + smoke) via SetWorldTransform().
-    if (m_currentPreset == 0) {
+    // Skipped in asset-driven mode (no fireball compound was created).
+    if (m_currentPreset == 0 && m_emitterAssetPath.empty()) {
         World& w = GetWorld();
         m_projectilePhase += dt * 0.4f; // 2.5 seconds per cycle
         if (m_projectilePhase >= 1.0f) m_projectilePhase -= 1.0f;
@@ -586,7 +651,11 @@ void VFXViewportApp::OnUpdate(float dt) {
     // ── Gate fireball vs. standalone emitter based on selected preset ──
     // Preset 0 = FireballProj -> compound active, standalone silent.
     // Any other preset -> compound silent, standalone active.
-    {
+    // Skipped in asset-driven mode — no VfxSystemComponent exists on
+    // m_vfxEntity (we never created the fireball compound) so the
+    // HasComponent guard would short-circuit anyway, but skipping the
+    // whole block keeps the asset emitter's `emitting` flag authoritative.
+    if (m_emitterAssetPath.empty()) {
         World& w = GetWorld();
         // Phase 15.12 — enable the compound fireball only when ANY
         // slot is configured to preset 0 (FireballProj). Standalone
@@ -677,13 +746,18 @@ void VFXViewportApp::OnUpdate(float dt) {
     }
 
     // ── Tab / Left/Right: Cycle presets ────────────────────────────────
-    if (input.IsKeyJustPressed(Key::Tab) || input.IsKeyJustPressed(Key::Right)) {
-        m_currentPreset = (m_currentPreset + 1) % kPresetCount;
-        m_switchPresetPending = true;
-    }
-    if (input.IsKeyJustPressed(Key::Left)) {
-        m_currentPreset = (m_currentPreset + kPresetCount - 1) % kPresetCount;
-        m_switchPresetPending = true;
+    // Disabled in asset-driven mode — cycling would overwrite the
+    // user-supplied .uzvfx asset with a built-in sprite preset and
+    // defeat the purpose of `--vfx-asset`.
+    if (m_emitterAssetPath.empty()) {
+        if (input.IsKeyJustPressed(Key::Tab) || input.IsKeyJustPressed(Key::Right)) {
+            m_currentPreset = (m_currentPreset + 1) % kPresetCount;
+            m_switchPresetPending = true;
+        }
+        if (input.IsKeyJustPressed(Key::Left)) {
+            m_currentPreset = (m_currentPreset + kPresetCount - 1) % kPresetCount;
+            m_switchPresetPending = true;
+        }
     }
 
     // ── Apply pending preset switch ─────────────────────────────────────

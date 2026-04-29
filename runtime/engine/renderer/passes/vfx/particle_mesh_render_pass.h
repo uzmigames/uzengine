@@ -30,8 +30,16 @@
 ///
 /// # Root Signature Slot Layout
 /// Matches the engine's global root signature:
-/// - Slot 0 (b0): Per-pass constant buffer (view/proj matrices).
-/// - Slot 5 (t0..tN): SRV descriptor table starting at `instanceBufferSrvIndex`.
+/// - Slot 0 (b0): Per-pass root constants (`ParticleMeshPassConstants`,
+///   16 DWORDs) — carries the two bindless SRV indices for the instance
+///   transforms + instance colors buffers. View-projection rides at b1
+///   in `PerFrameCB`, inherited from the engine's global per-frame state.
+///
+/// SM6.6 bindless: SRV/UAV resources are accessed via
+/// `ResourceDescriptorHeap[idx]` using indices from the b0 root constants.
+/// No SRV descriptor table is bound at slot 5 — that slot was retired in
+/// the RC2 bindless migration. The instance transforms SRV is reached as
+/// `ResourceDescriptorHeap[instanceTransformsBufferIdx]` inside the VS.
 ///
 /// # Thread Safety
 /// NOT thread-safe. Must be called from the render thread only.
@@ -139,9 +147,20 @@ struct ParticleMeshBatchItem {
     /// written by the preceding instance CS dispatch.
     ///
     /// Must be in `RHIResourceState::IndirectArgument` state when this pass
-    /// executes. The caller is responsible for inserting the appropriate UAV
-    /// barrier between the instance CS and this pass.
+    /// executes. The render graph emits the UAV→IndirectArgument barrier
+    /// automatically when `indirectArgsBufferRg` below is declared as a
+    /// `pb.Read(..., IndirectArgument)` dependency in the pass setup.
     RHIBufferHandle indirectArgsBuffer;
+
+    /// Render graph resource id for the same `indirectArgsBuffer` above —
+    /// used by the pass to declare a `Read(..., IndirectArgument)`
+    /// dependency so the auto-barrier scheduler emits the
+    /// `UnorderedAccess → IndirectArgument` transition between the
+    /// preceding mesh-instance CS write and this pass's indirect draw.
+    /// MUST be set when `indirectArgsBuffer` is set; otherwise the draw
+    /// executes against a buffer still in `UnorderedAccess` state and
+    /// triggers a debug-layer error.
+    rg::RgResourceId indirectArgsBufferRg;
 
     // ── Per-pass constant buffer ─────────────────────────────────────────────
 
@@ -170,7 +189,10 @@ struct ParticleMeshPassDesc {
 
     /// The HDR color target to draw mesh particles into (render graph resource ID).
     ///
-    /// Declared as `RHIResourceState::RenderTarget` by the pass.
+    /// Declared as `RHIResourceState::RenderTarget` by the pass — both as a
+    /// `Read` (so the DAG schedules this pass after lighting/sky writes the
+    /// HDR buffer) and a `Write` (so subsequent post-process passes see the
+    /// updated state).
     rg::RgResourceId colorTarget;
 
     /// The depth buffer (render graph resource ID).
@@ -179,6 +201,31 @@ struct ParticleMeshPassDesc {
     /// or `RHIResourceState::DepthStencilRead` for transparent batches based
     /// on `isTransparent`.
     rg::RgResourceId depthTarget;
+
+    // ── Physical RHI handles for `BeginRenderPass` ────────────────────────────
+    //
+    // The execute callback must call `cmd->BeginRenderPass(...)` so the DX12
+    // backend issues `OMSetRenderTargets` against the HDR composite slot.
+    // Without these handles the indirect draw would land on whatever RTV/DSV
+    // were bound by the previous pass (typically GBuffer slots — wrong format
+    // for HDR composite). This was the root cause of the RC3 disable.
+
+    /// Physical texture handle for the HDR color target (for `BeginRenderPass`).
+    /// MUST refer to the same physical resource backing `colorTarget` above.
+    RHITextureHandle colorTexture;
+
+    /// Physical texture handle for the depth-stencil target (for `BeginRenderPass`).
+    /// MUST refer to the same physical resource backing `depthTarget` above.
+    RHITextureHandle depthTexture;
+
+    /// Render-resolution viewport width for `SetViewport` / `SetScissor`.
+    /// Pass the renderer's internal render resolution (post-DLSS upsample
+    /// input), NOT the swapchain backbuffer size — the HDR composite is
+    /// authored at render resolution.
+    uint32_t renderWidth = 0;
+
+    /// Render-resolution viewport height for `SetViewport` / `SetScissor`.
+    uint32_t renderHeight = 0;
 
     // ── Rendering mode ────────────────────────────────────────────────────────
 
