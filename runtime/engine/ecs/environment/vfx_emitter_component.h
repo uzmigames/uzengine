@@ -190,6 +190,23 @@ struct VfxEmitterComponent {
     /// the skeleton's bone list.
     std::string attachBoneName;
 
+    // ── Spline Target (Niagara parity: SplineComponent reference) ────────
+
+    /// When set to a valid entity that owns a `SplineComponent`, the VFX
+    /// scene sync copies that component's `controlPoints` (transformed by
+    /// the entity's `SceneComponent` world matrix when present) into this
+    /// emitter's `splineSource` each frame. The VFX inline frame then
+    /// rebuilds and uploads the GPU `VfxSplineBuffer` so the spline modules
+    /// on this emitter (`SpawnAlongSplineModule`, `ForceTowardSplineModule`,
+    /// `FollowSplineModule`) consume the latest geometry.
+    ///
+    /// Invalid (default) entity disables the link — emitters without a
+    /// spline target keep using whatever is already in `splineSource`
+    /// (typically empty, in which case the simulation shaders short-circuit
+    /// on `cbSplinePointCount < 2`).
+    /// @ref engine/ecs/environment/spline_component.h `SplineComponent`
+    Entity splineTargetEntity = Entity::Invalid();
+
     // ── Runtime State ────────────────────────────────────────────────────
 
     bool emitting = true;

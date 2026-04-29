@@ -141,6 +141,11 @@ void ParticleEmitter::Shutdown(IRHIDevice* device, ParticleBudget& budget) {
         moduleStack.renderModule->ReleaseGPUResources(device);
     }
 
+    // Release the spline data-interface upload buffer, if one was lazy-
+    // created during simulation. Safe to call on a never-created instance
+    // (Destroy is a no-op when the buffer is invalid).
+    splineBuffer.Destroy(device);
+
     buffer.Destroy(device);
     budget.Return(released);
 

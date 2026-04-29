@@ -1,14 +1,23 @@
 #pragma once
 
-/// VFX Editor Pane Widget — phase 15.3.0.
+/// VFX Editor Pane Widget — phase 15.3.0 / phase 16.3b.
 ///
 /// Composite widget that hosts the editing sub-panels (stack /
 /// parameters / emitters) behind a tab strip. Renders inside the
 /// `editorPane` rect produced by the phase-15.1 `SplitHorizontal`
 /// layout.
+///
+/// Phase 16.3b — added `EntityRef` InlineRowKind for the "Spline
+/// Target" entity-picker row. The row renders the current entity name
+/// (or "None") left-aligned and a "[x] Clear" button right-aligned.
+/// Clicking the row body cycles forward through the available entity
+/// list; clicking Clear writes `Entity::Invalid()`. The caller populates
+/// `entityCandidates` each frame from the ECS world query and writes
+/// back via `onEntitySelected`.
 
 #include "engine/vfx/editor/vfx_stack_panel_widget.h" // VfxStackRect
 #include "engine/vfx/editor/vfx_tab_strip_widget.h"
+#include "engine/ecs/core/entity.h"                   // uz::Entity
 
 #include <algorithm>
 #include <cstdint>
@@ -95,6 +104,14 @@ public:
         SectionHeader  = 3,  ///< Visual-only divider (e.g. "Color Over Life").
         ColorGradient  = 4,  ///< Unreal-style colorbox preview with two handles.
         ColorSwatch    = 5,  ///< Clickable RGBA swatch that opens the picker popup.
+        UintCoreField  = 6,  ///< Integer scalar, always visible. Drag rounds.
+        UintSubField   = 7,  ///< Integer scalar inside a modifier group.
+        EnumField      = 8,  ///< uint32 enum — click row cycles to next value.
+        EnumSubField   = 9,  ///< Enum inside a modifier group.
+        EntityRef      = 10, ///< ECS entity reference. Phase 16.3b — Spline Target picker.
+                             ///<   Row body click: advance to next `entityCandidates` entry.
+                             ///<   "[x] Clear" button at right edge: write Entity::Invalid().
+                             ///<   Caller re-populates `entityCandidates` each frame from ECS.
     };
     struct InlineRow {
         InlineRowKind kind      = InlineRowKind::CoreField;
@@ -133,6 +150,39 @@ public:
         // ColorSwatch payload. Four float* into the target RGBA so the
         // picker popup can write through on preset / HEX / slider edits.
         float*        swatchRgba[4] = {nullptr, nullptr, nullptr, nullptr};
+
+        // UintCoreField / UintSubField / EnumField payload. `uValue`
+        // targets the uint32_t field; drag writes round-to-int; enum
+        // rows cycle through `enumNames[]` on click.
+        uint32_t*         uValue    = nullptr;
+        uint32_t          uMin      = 0u;
+        uint32_t          uMax      = 0xFFFFFFFFu;
+        const char* const* enumNames = nullptr;
+        uint32_t          enumCount = 0u;
+
+        // EntityRef payload (phase 16.3b — Spline Target picker).
+        //
+        // `entityCurrent` holds the entity displayed this frame. The
+        // caller sets it from `VfxEmitterComponent::splineTargetEntity`
+        // (or whichever ECS field the row targets) before calling
+        // `SetInlineRows`. The render pass reads the name from
+        // `entityCandidates` for the matching id.
+        //
+        // `entityCandidates` is a flat list of {entity, display-name}
+        // pairs scanned from the ECS world (filtered to entities that
+        // own `SplineComponent`). Re-populate every frame so newly
+        // added/removed spline entities appear without stale data.
+        //
+        // `onEntitySelected` fires once per user selection change
+        // (row-body cycle OR clear button). The callback writes the
+        // chosen entity back to the ECS component field.
+        struct EntityCandidate {
+            Entity      entity;
+            std::string name;
+        };
+        Entity                              entityCurrent    = Entity::Invalid();
+        std::vector<EntityCandidate>        entityCandidates;
+        std::function<void(Entity)>         onEntitySelected;
     };
     static constexpr float kInlineRowHeight         = 22.0f;
     static constexpr float kInlineSectionGap        = 6.0f;

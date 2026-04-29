@@ -147,6 +147,19 @@ cbuffer VFXSpawnConstants : register(b1) {
     float4   userFloatDefault;     ///< Default values for the 4 float channels.         224
     float4   userVec4Default0;     ///< Default float4 for vec4 slot 0.                  240
     float4   userVec4Default1;     ///< Default float4 for vec4 slot 1.                  256
+
+    // ── Spline Data Interface (phase16 hardware-validation) ─────────────
+    // Mirrors `ParticleSpawnConstants` in particle_simulation_pass.h. Zero
+    // defaults when the emitter has no `SpawnAlongSplineModule`; the spawn
+    // CS gates spline work on `cbSplinePointCount >= 2`.
+    uint     cbSplineSrvIndex;            ///< Bindless SRV — VfxSplineBuffer. 272
+    uint     cbSplinePointCount;          ///< Valid sample count (>= 2).      276
+    float    cbSplineTotalLength;         ///< Arc-length total (cm).          280
+    uint     cbSplineSpawnStratified;     ///< 0=random U, 1=stratified.       284
+    float    cbSplineSpawnJitterRadius;   ///< Perpendicular jitter (cm).      288
+    float    cbSplineSpawnTangentOffset;  ///< Spawn offset along tangent.     292
+    float    _cbSplineSpawnPad0;          ///< 16-byte alignment pad.          296
+    float    _cbSplineSpawnPad1;          ///<                                 300
 #endif
 };
 

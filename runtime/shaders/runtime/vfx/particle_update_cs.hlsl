@@ -286,6 +286,28 @@ cbuffer VFXUpdateConstants : register(b1) {
     uint     _padCollEvt1;              ///< Alignment padding.                           372
     uint     _padCollEvt2;              ///< Alignment padding.                           376
     uint     _padCollEvt3;              ///< Alignment padding.                           380
+
+    // ── Spline Data Interface (phase16 hardware-validation) ───────────── offset 384
+    // Mirrors `ParticleUpdateConstants` in particle_simulation_pass.h. Zero
+    // defaults when the emitter has no `ForceTowardSplineModule` /
+    // `FollowSplineModule`; the update CS gates spline work on
+    // `cbSplinePointCount >= 2`.
+    uint     cbSplineSrvIndex;             ///< Bindless SRV — VfxSplineBuffer.   384
+    uint     cbSplinePointCount;           ///< Valid sample count (>= 2).        388
+    float    cbSplineTotalLength;          ///< Arc-length total (cm).            392
+
+    // ForceTowardSplineModule (zero when not present).
+    float    cbSplineForceStiffness;        ///< Spring stiffness (1/s^2).         396
+    float    cbSplineForceMaxAccel;         ///< Hard cap on force (cm/s^2).       400
+    float    cbSplineForceAttractDistance;  ///< Cull radius; 0 = no cull.         404
+
+    // FollowSplineModule (zero when not present).
+    float    cbSplineFollowSpeed;           ///< Per-lifetime u-advance scale.     408
+    uint     cbSplineFollowLoop;            ///< 0=clamp, 1=wrap.                  412
+    float    cbSplineFollowStartU;          ///< Initial u offset in [0,1].        416
+    float    _cbSplineUpdatePad0;           ///< 16-byte alignment pad.            420
+    float    _cbSplineUpdatePad1;           ///<                                   424
+    float    _cbSplineUpdatePad2;           ///<                                   428
 #endif
 };
 

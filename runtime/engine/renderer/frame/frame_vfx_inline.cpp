@@ -28,6 +28,7 @@
 #include "engine/vfx/lighting/vfx_ddgi_emissive_feed.h"
 #include "engine/vfx/lighting/vfx_ddgi_injection.h"
 #include "engine/vfx/modules/mesh_render_module.h"
+#include "engine/vfx/modules/spline_modules.h"
 #include "engine/core/cvar.h"
 
 #include <algorithm>
@@ -296,6 +297,82 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
 #endif // UZ_VFX_DEBUG_READBACK
         }
 
+        // ── Spline data-interface detection + per-frame upload ─────────
+        // Phase 16 hardware-validation: when an emitter's spawn / update
+        // module stack carries any `Spawn/Force/Follow` spline module the
+        // simulation shaders need a baked `VfxSplineBuffer` reachable via
+        // the bindless heap. We scan once per frame, lazy-create the
+        // upload buffer at first detection, and `RebuildAndUpload` from
+        // `emitter->splineSource` so any gameplay-side mutation of the
+        // control points is picked up without an explicit flush.
+        //
+        // Detection is per-phase: spawn detection records the first
+        // `SpawnAlongSplineModule` so the spawn CB can read its config;
+        // update detection records the first `Force/Follow` instance for
+        // each kind so both update modules can coexist on one stack.
+        //
+        // When NO spline module is present every captured pointer stays
+        // `nullptr` and the CB-fill block below skips its writes — the
+        // new CB fields keep their zero defaults and shaders short-circuit
+        // on `cbSplinePointCount < 2`. Spline-less emitters therefore see
+        // exactly the same constant buffer they had before this change.
+        const SpawnAlongSplineModule* spawnSpline   = nullptr;
+        const ForceTowardSplineModule* forceSpline   = nullptr;
+        const FollowSplineModule*      followSpline  = nullptr;
+
+        for (const auto& mod : emitter->moduleStack.spawnModules) {
+            if (!mod) continue;
+            if (auto* s = dynamic_cast<const SpawnAlongSplineModule*>(mod.get())) {
+                spawnSpline = s;
+                break;
+            }
+        }
+        for (const auto& mod : emitter->moduleStack.updateModules) {
+            if (!mod) continue;
+            if (!forceSpline) {
+                if (auto* f = dynamic_cast<const ForceTowardSplineModule*>(mod.get())) {
+                    forceSpline = f;
+                    continue;
+                }
+            }
+            if (!followSpline) {
+                if (auto* f = dynamic_cast<const FollowSplineModule*>(mod.get())) {
+                    followSpline = f;
+                }
+            }
+        }
+
+        const bool hasSplineModule =
+            spawnSpline != nullptr || forceSpline != nullptr || followSpline != nullptr;
+
+        if (hasSplineModule) {
+            // Lazy-create the GPU upload buffer the first time we detect a
+            // spline module. `kVfxSplineDefaultResolution` (64) matches the
+            // HLSL helper's expected sample count. A failed Create here is
+            // logged but non-fatal: the new CB fields stay zero and the
+            // shaders short-circuit.
+            if (!emitter->splineBuffer.IsValid()) {
+                if (!emitter->splineBuffer.Create(m_device, kVfxSplineDefaultResolution)) {
+                    UZ_LOG(VFX, Error,
+                           "DispatchVFXSimulation: VfxSplineBuffer::Create failed; "
+                           "spline modules will be inert this frame");
+                }
+            }
+
+            // Rebuild + upload once per frame. `RebuildAndUpload` rebuilds
+            // the arc-length table on the CPU and memcpys baked
+            // `VfxSplinePoint` samples into the upload-heap buffer; it is
+            // a no-op (returns true) when `splineSource.controlPoints` has
+            // fewer than 2 entries.
+            if (emitter->splineBuffer.IsValid()) {
+                if (!emitter->splineBuffer.RebuildAndUpload(emitter->splineSource, m_device)) {
+                    UZ_LOG(VFX, Warning,
+                           "DispatchVFXSimulation: VfxSplineBuffer::RebuildAndUpload failed; "
+                           "spline shaders will see stale or empty samples this frame");
+                }
+            }
+        }
+
         // ── Per-tick dispatch body ─────────────────────────────────────
         // Runs alive-count-reset + spawn + update + indirect-args for ONE
         // simulation step. Called once per regular frame, OR multiple
@@ -440,6 +517,24 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
                     dst[3] = ua.defaultVec4.w;
                 }
             }
+        }
+
+        // ── Spline data-interface fields (spawn CB) ────────────────────
+        // Filled only when this emitter carries a `SpawnAlongSplineModule`.
+        // The shared SRV/count/length triple comes from `splineBuffer` so
+        // the spawn CS can address the bindless buffer; per-module config
+        // copies the author-side defaults verbatim. When `spawnSpline` is
+        // null every field stays at the struct default (0) and the spawn
+        // shader gates on `cbSplinePointCount >= 2`.
+        if (spawnSpline && emitter->splineBuffer.IsValid()) {
+            spawnCBData.cbSplineSrvIndex   = emitter->splineBuffer.GetBindlessSrvIndex(m_device);
+            spawnCBData.cbSplinePointCount = emitter->splineBuffer.pointCount;
+            spawnCBData.cbSplineTotalLength = emitter->splineBuffer.totalLength;
+
+            const auto& cfg = spawnSpline->GetConfig();
+            spawnCBData.cbSplineSpawnStratified    = cfg.stratified ? 1u : 0u;
+            spawnCBData.cbSplineSpawnJitterRadius  = cfg.jitterRadius;
+            spawnCBData.cbSplineSpawnTangentOffset = cfg.tangentOffset;
         }
 
         const CBAllocation spawnAlloc = m_cbRing->Allocate(sizeof(spawnCBData));
@@ -606,6 +701,35 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         // Death spawn event buffers (disabled by default — deathSpawnEnabled=0 in CB defaults).
         updateCBData.deathEventBufferUavIndex = m_device->GetBufferUAVIndex(m_vfxDeathEventBuffer);
         updateCBData.deathEventCountUavIndex  = m_device->GetBufferUAVIndex(m_vfxDeathEventCountBuffer);
+
+        // ── Spline data-interface fields (update CB) ───────────────────
+        // The shared SRV/count/length triple is published whenever EITHER
+        // a `ForceTowardSplineModule` or a `FollowSplineModule` is on the
+        // update stack — both modules share the same baked buffer. Each
+        // module's config block stays zero when only the other is present
+        // (the shader paths gate on per-module sentinels: stiffness > 0
+        // for force, speed != 0 for follow). When neither module is on
+        // the stack every field stays default-zero and the update CS
+        // short-circuits on `cbSplinePointCount < 2`.
+        if ((forceSpline != nullptr || followSpline != nullptr) &&
+            emitter->splineBuffer.IsValid()) {
+            updateCBData.cbSplineSrvIndex    = emitter->splineBuffer.GetBindlessSrvIndex(m_device);
+            updateCBData.cbSplinePointCount  = emitter->splineBuffer.pointCount;
+            updateCBData.cbSplineTotalLength = emitter->splineBuffer.totalLength;
+
+            if (forceSpline) {
+                const auto& cfg = forceSpline->GetConfig();
+                updateCBData.cbSplineForceStiffness       = cfg.stiffness;
+                updateCBData.cbSplineForceMaxAccel        = cfg.maxAcceleration;
+                updateCBData.cbSplineForceAttractDistance = cfg.attractDistance;
+            }
+            if (followSpline) {
+                const auto& cfg = followSpline->GetConfig();
+                updateCBData.cbSplineFollowSpeed  = cfg.speed;
+                updateCBData.cbSplineFollowLoop   = cfg.loop ? 1u : 0u;
+                updateCBData.cbSplineFollowStartU = cfg.startU;
+            }
+        }
 
         const CBAllocation updateAlloc = m_cbRing->Allocate(sizeof(updateCBData));
         if (!updateAlloc.cpuPtr) {

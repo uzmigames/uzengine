@@ -136,9 +136,25 @@ struct ParticleSpawnConstants {
     float    userFloatDefault[4] = {0.0f, 0.0f, 0.0f, 0.0f};                          // 224-239
     float    userVec4Default0[4] = {0.0f, 0.0f, 0.0f, 0.0f};                          // 240-255
     float    userVec4Default1[4] = {0.0f, 0.0f, 0.0f, 0.0f};                          // 256-271
+
+    // ── Spline Data Interface (phase16 hardware-validation) ──────────── offset 272
+    // Populated when a `SpawnAlongSplineModule` is on the emitter's spawn
+    // stack. Zero-default keeps spline-less emitters byte-identical to
+    // the prior layout (the spawn CS gates spline work on
+    // `cbSplinePointCount >= 2`). Mirrored in `particle_spawn_cs.hlsl`.
+    /// @ref engine/vfx/modules/spline_modules.h `SpawnAlongSplineModule`
+    /// @ref engine/vfx/data_interfaces/vfx_spline_buffer.h `VfxSplineBuffer`
+    uint32_t cbSplineSrvIndex          = 0;       ///< Bindless SRV; 0xFFFFFFFFu = unbound. 272
+    uint32_t cbSplinePointCount        = 0;       ///< Valid sample count (>= 2 to use). 276
+    float    cbSplineTotalLength       = 0.0f;    ///< Arc-length total (cm).             280
+    uint32_t cbSplineSpawnStratified   = 0;       ///< 0=random U, 1=stratified per slot. 284
+    float    cbSplineSpawnJitterRadius = 0.0f;    ///< Perpendicular jitter radius (cm). 288
+    float    cbSplineSpawnTangentOffset = 0.0f;   ///< Spawn offset along tangent (cm).  292
+    float    _cbSplineSpawnPad0        = 0.0f;    ///< Pad to 16-byte alignment.          296
+    float    _cbSplineSpawnPad1        = 0.0f;    ///<                                    300
 };
-static_assert(sizeof(ParticleSpawnConstants) == 272,
-              "ParticleSpawnConstants must be 272 bytes to match HLSL VFXSpawnConstants");
+static_assert(sizeof(ParticleSpawnConstants) == 304,
+              "ParticleSpawnConstants must be 304 bytes to match HLSL VFXSpawnConstants");
 
 /// CPU-side mirror of the update shader's cbuffer VFXUpdateConstants (register b1).
 ///
@@ -293,9 +309,35 @@ struct ParticleUpdateConstants {
     uint32_t _padCollEvt1        = 0;
     uint32_t _padCollEvt2        = 0;
     uint32_t _padCollEvt3        = 0;
+
+    // ── Spline Data Interface (phase16 hardware-validation) ──────────── offset 384
+    // Populated when `ForceTowardSplineModule` and/or `FollowSplineModule`
+    // are on the emitter's update stack. Zero-default keeps spline-less
+    // emitters byte-identical to the prior layout (the update CS gates
+    // spline work on `cbSplinePointCount >= 2`). Mirrored in
+    // `particle_update_cs.hlsl`.
+    /// @ref engine/vfx/modules/spline_modules.h `ForceTowardSplineModule`
+    /// @ref engine/vfx/modules/spline_modules.h `FollowSplineModule`
+    /// @ref engine/vfx/data_interfaces/vfx_spline_buffer.h `VfxSplineBuffer`
+    uint32_t cbSplineSrvIndex            = 0;     ///< Bindless SRV; 0xFFFFFFFFu = unbound. 384
+    uint32_t cbSplinePointCount          = 0;     ///< Valid sample count (>= 2 to use).   388
+    float    cbSplineTotalLength         = 0.0f;  ///< Arc-length total (cm).               392
+
+    // ForceTowardSplineModule fields (zero when not present).
+    float    cbSplineForceStiffness       = 0.0f; ///< Spring stiffness (1/s^2).            396
+    float    cbSplineForceMaxAccel        = 0.0f; ///< Hard cap on force magnitude (cm/s^2).400
+    float    cbSplineForceAttractDistance = 0.0f; ///< Cull radius; 0 = no cull.            404
+
+    // FollowSplineModule fields (zero when not present).
+    float    cbSplineFollowSpeed          = 0.0f; ///< Per-lifetime u-advance scale.        408
+    uint32_t cbSplineFollowLoop           = 0;    ///< 0=clamp at endpoint, 1=wrap.         412
+    float    cbSplineFollowStartU         = 0.0f; ///< Initial u offset in [0,1].           416
+    float    _cbSplineUpdatePad0          = 0.0f; ///< Pad to 16-byte alignment.            420
+    float    _cbSplineUpdatePad1          = 0.0f; ///<                                      424
+    float    _cbSplineUpdatePad2          = 0.0f; ///<                                      428
 };
-static_assert(sizeof(ParticleUpdateConstants) == 384,
-              "ParticleUpdateConstants must be 384 bytes to match HLSL VFXUpdateConstants");
+static_assert(sizeof(ParticleUpdateConstants) == 432,
+              "ParticleUpdateConstants must be 432 bytes to match HLSL VFXUpdateConstants");
 
 /// CPU-side mirror of the indirect args shader's cbuffer VFXIndirectArgsConstants (register b0).
 ///

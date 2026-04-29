@@ -5,9 +5,11 @@
 /// tabs using the engine's TextRenderer (AddRect + AddText).
 
 #include "vfx_editor_overlay.h"
+#include "engine/ecs/core/entity.h"
 #include "engine/vfx/components/particle_emitter.h"
 #include "engine/vfx/editor/vfx_editor_icons.h"
 #include "engine/vfx/editor/vfx_editor_theme.h"
+#include "engine/vfx/modules/spline_modules.h"
 #include "engine/vfx/modules/vfx_module_metadata.h"
 #include "editor/font/system_font.h"
 #include "input.h"
@@ -3536,6 +3538,58 @@ void VfxEditorOverlay::BuildNiagaraUI(ParticleEmitter* emitter) {
             addSub("Pixel Size", &emitter->screenSpacePixelSize,
                     1.0f, 256.0f, ssOn);
 
+            // ── Spline Target (phase 16.3b) ─────────────────────────
+            // Only rendered when the emitter carries at least one spline
+            // module. Detect via dynamic_cast over the module-stack
+            // vectors — mirrors the detection in frame_vfx_inline.cpp.
+            {
+                bool hasSplineModule = false;
+                for (const auto& mod : emitter->moduleStack.spawnModules) {
+                    if (!mod) continue;
+                    if (dynamic_cast<const SpawnAlongSplineModule*>(mod.get())) {
+                        hasSplineModule = true;
+                        break;
+                    }
+                }
+                if (!hasSplineModule) {
+                    for (const auto& mod : emitter->moduleStack.updateModules) {
+                        if (!mod) continue;
+                        if (dynamic_cast<const ForceTowardSplineModule*>(mod.get()) ||
+                            dynamic_cast<const FollowSplineModule*>(mod.get())) {
+                            hasSplineModule = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (hasSplineModule) {
+                    addSection("Spline");
+
+                    // Read the current entity from the host-provided pointer.
+                    // When the host has not wired `splineTargetCurrent` the row
+                    // shows "None" (Entity::Invalid() default) and still allows
+                    // the author to see the picker is present.
+                    const Entity currentEntity = (splineTargetCurrent != nullptr)
+                        ? *splineTargetCurrent
+                        : Entity::Invalid();
+
+                    // Build the EntityRef row.
+                    using PaneWidget = VfxEditorPaneWidget;
+                    PaneWidget::InlineRow er;
+                    er.kind             = PaneWidget::InlineRowKind::EntityRef;
+                    er.label            = "Spline Target";
+                    er.entityCurrent    = currentEntity;
+                    er.entityCandidates = splineTargetCandidates; // copy — safe across frames
+                    // Forward selection back to the host via `onSplineTargetChanged`.
+                    // Capture by value so the lambda is self-contained and outlives
+                    // the local scope in case the pane widget holds the row copy.
+                    if (onSplineTargetChanged) {
+                        er.onEntitySelected = onSplineTargetChanged;
+                    }
+                    rows.push_back(std::move(er));
+                }
+            }
+
             m_editorPane.SetInlineRows(std::move(rows));
         } else {
             m_editorPane.SetInlineRows({});
@@ -3613,6 +3667,52 @@ void VfxEditorOverlay::BuildNiagaraUI(ParticleEmitter* emitter) {
                             OpenColorPicker(m_mouseX - 340.0f, m_mouseY + 12.0f,
                                              r.swatchRgba[0], r.swatchRgba[1],
                                              r.swatchRgba[2], r.swatchRgba[3]);
+                            m_wantsInput = true;
+                        }
+                    } else if (r.kind == VfxEditorPaneWidget::InlineRowKind::EntityRef) {
+                        // Phase 16.3b — Spline Target entity-picker.
+                        //
+                        // Hit regions mirror the render geometry in
+                        // VfxEditorPaneWidget::Render / EntityRef block:
+                        //   - Clear button: rightmost 52 px of the row.
+                        //   - Row body (left of Clear): cycle candidates.
+                        //
+                        // Both paths fire `onEntitySelected`. No drag
+                        // state required — selection is discrete (click,
+                        // not scrub).
+                        if (r.onEntitySelected) {
+                            const VfxStackRect rowR =
+                                m_editorPane.InlineRowRect(rects.editorPane,
+                                                            inlineIdx);
+                            constexpr float kClearBtnW = 52.0f;
+                            const float clearX = rowR.x + rowR.width - kClearBtnW;
+                            if (m_mouseX >= clearX) {
+                                // Clear button: write Entity::Invalid()
+                                // only when an entity is currently set —
+                                // a click on the greyed button is a no-op.
+                                if (r.entityCurrent.IsValid()) {
+                                    r.onEntitySelected(Entity::Invalid());
+                                }
+                            } else {
+                                // Row body: cycle forward through the
+                                // candidate list. If the current entity
+                                // is not in the list (stale) or the list
+                                // is empty, jump to the first candidate.
+                                const auto& cands = r.entityCandidates;
+                                if (!cands.empty()) {
+                                    // Find the index of the current entity.
+                                    size_t curIdx = cands.size(); // sentinel = not found
+                                    for (size_t ci = 0; ci < cands.size(); ++ci) {
+                                        if (cands[ci].entity == r.entityCurrent) {
+                                            curIdx = ci;
+                                            break;
+                                        }
+                                    }
+                                    const size_t nextIdx =
+                                        (curIdx + 1u) % cands.size();
+                                    r.onEntitySelected(cands[nextIdx].entity);
+                                }
+                            }
                             m_wantsInput = true;
                         }
                     } else if (r.kind == VfxEditorPaneWidget::InlineRowKind::ModifierHeader) {

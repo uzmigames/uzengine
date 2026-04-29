@@ -1,10 +1,11 @@
-/// VfxEditorPaneWidget — implementation (phase 15.3.0).
+/// VfxEditorPaneWidget — implementation (phase 15.3.0 / phase 16.3b).
 
 #include "vfx_editor_pane_widget.h"
 
 #include "editor/font/bitmap_font.h"
 #include "editor/font/msdf_font.h"
 #include "editor/font/text_renderer.h"
+#include "engine/ecs/core/entity.h"
 #include "engine/vfx/editor/vfx_editor_theme.h"
 #include "engine/vfx/editor/vfx_parameter_inspector_widget.h"
 #include "engine/vfx/editor/vfx_stack_panel_widget.h"
@@ -13,6 +14,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 
 namespace uz {
 
@@ -60,6 +62,24 @@ float RowHeight(const VfxEditorPaneWidget::InlineRow& r) {
         return VfxEditorPaneWidget::kInlineSwatchRowHeight;
     }
     return VfxEditorPaneWidget::kInlineRowHeight;
+}
+
+// Shared renderer for scalar-value rows (core or sub). The caller
+// provides the label, indent, and display buffer. Keeps the Render
+// switch tidy across the many row flavours that share the same
+// "label left, field right" layout.
+void DrawScalarRow(TextRenderer& text, const BitmapFont& font,
+                    const Vec4& labelColor, const VfxColorPalette& pal,
+                    const VfxStackRect& rowRect, const char* label,
+                    float labelIndent, const char* valueText) {
+    text.AddText(font, label, rowRect.x + labelIndent, rowRect.y + 4.0f,
+                  labelColor);
+    constexpr float kFieldW = 120.0f;
+    const float fieldX = rowRect.x + rowRect.width - kFieldW - 8.0f;
+    text.AddRect(fieldX, rowRect.y + 3.0f, kFieldW, rowRect.height - 6.0f,
+                  pal.inputBg);
+    text.AddText(font, valueText, fieldX + 6.0f, rowRect.y + 4.0f,
+                  pal.textPrimary);
 }
 
 // Counts rows that actually render — sub-fields whose owning modifier
@@ -304,6 +324,30 @@ void VfxEditorPaneWidget::Render(TextRenderer& text,
                                   palette.textPrimary);
                     break;
                 }
+                case InlineRowKind::UintCoreField:
+                case InlineRowKind::UintSubField: {
+                    const float indent = (r.kind == InlineRowKind::UintSubField)
+                        ? 28.0f : 8.0f;
+                    const uint32_t v = (r.uValue != nullptr) ? *r.uValue : 0u;
+                    std::snprintf(buf, sizeof(buf), "%u", v);
+                    DrawScalarRow(text, font, palette.textSecondary,
+                                   palette, rowRect, r.label.c_str(),
+                                   indent, buf);
+                    break;
+                }
+                case InlineRowKind::EnumField:
+                case InlineRowKind::EnumSubField: {
+                    const float indent = (r.kind == InlineRowKind::EnumSubField)
+                        ? 28.0f : 8.0f;
+                    const uint32_t v = (r.uValue != nullptr) ? *r.uValue : 0u;
+                    const char* label = (r.enumNames != nullptr &&
+                                           v < r.enumCount)
+                        ? r.enumNames[v] : "?";
+                    DrawScalarRow(text, font, palette.textSecondary,
+                                   palette, rowRect, r.label.c_str(),
+                                   indent, label);
+                    break;
+                }
                 case InlineRowKind::SectionHeader: {
                     // Bold label + subtle underline. No checkbox, no
                     // value — this is a pure visual group divider for
@@ -463,6 +507,93 @@ void VfxEditorPaneWidget::Render(TextRenderer& text,
                     text.AddText(font, buf,
                                   swX - 82.0f, rowRect.y + 9.0f,
                                   palette.textPrimary);
+                    break;
+                }
+                case InlineRowKind::EntityRef: {
+                    // Phase 16.3b — "Spline Target" entity-picker row.
+                    //
+                    // Layout:
+                    //   [Label]  [EntityName or "None"]  [[x] Clear]
+                    //   <-- 40% label col -->  <-- value field -->  <-- 52px clear btn -->
+                    //
+                    // Row body click (not on Clear): cycles to the next
+                    // candidate in `entityCandidates`. Clear sets Invalid.
+                    // Both actions fire `onEntitySelected`.
+                    //
+                    // This is a display-only render pass: click handling is
+                    // done in `VfxEditorOverlay` which hits-tests row index
+                    // and sub-region. The widget renders the authoritative
+                    // visual so the caller's input code has a stable reference.
+
+                    // Label column (40% of row width, left-aligned).
+                    constexpr float kLabelFrac  = 0.40f;
+                    constexpr float kClearBtnW  = 52.0f;
+                    const float labelW = rowRect.width * kLabelFrac;
+                    text.AddText(font, r.label.c_str(),
+                                  rowRect.x + 8.0f,
+                                  rowRect.y + 4.0f,
+                                  palette.textSecondary);
+
+                    // Resolve display name for the current entity.
+                    const bool hasEntity = r.entityCurrent.IsValid();
+                    const char* entityDisplayName = "None";
+                    if (hasEntity) {
+                        bool foundInCandidates = false;
+                        // Search the candidate list for the current entity.
+                        for (const auto& cand : r.entityCandidates) {
+                            if (cand.entity == r.entityCurrent) {
+                                entityDisplayName = cand.name.c_str();
+                                foundInCandidates = true;
+                                break;
+                            }
+                        }
+                        // If the current entity is not in the candidate list
+                        // (stale from a previous scene state), show a fallback
+                        // that makes the stale reference visible to the author.
+                        if (!foundInCandidates) {
+                            entityDisplayName = "? (stale entity)";
+                        }
+                    }
+
+                    // Value field: spans from label column to right edge
+                    // minus the Clear button.
+                    const float fieldX = rowRect.x + labelW;
+                    const float fieldW = rowRect.width - labelW - kClearBtnW - 4.0f;
+                    text.AddRect(fieldX, rowRect.y + 3.0f,
+                                  fieldW, rowRect.height - 6.0f,
+                                  palette.inputBg);
+                    // 1-px accent border when an entity is selected —
+                    // mirrors UE5 object-reference fields.
+                    if (hasEntity) {
+                        text.AddRect(fieldX, rowRect.y + 3.0f,
+                                      fieldW, 1.0f, palette.accentMuted);
+                        text.AddRect(fieldX, rowRect.y + rowRect.height - 4.0f,
+                                      fieldW, 1.0f, palette.accentMuted);
+                        text.AddRect(fieldX, rowRect.y + 3.0f,
+                                      1.0f, rowRect.height - 6.0f, palette.accentMuted);
+                        text.AddRect(fieldX + fieldW - 1.0f, rowRect.y + 3.0f,
+                                      1.0f, rowRect.height - 6.0f, palette.accentMuted);
+                    }
+                    text.AddText(font, entityDisplayName,
+                                  fieldX + 6.0f, rowRect.y + 4.0f,
+                                  hasEntity ? palette.textPrimary : palette.textDim);
+
+                    // Clear button: always rendered but only interactable
+                    // when `entityCurrent` is valid. Greyed when no entity
+                    // is set so the author understands the field is empty.
+                    const float clearX = rowRect.x + rowRect.width - kClearBtnW;
+                    const Vec4  clearBg   = hasEntity
+                        ? palette.stateError
+                        : palette.inputBg;
+                    const Vec4  clearText = hasEntity
+                        ? palette.textPrimary
+                        : palette.textDisabled;
+                    text.AddRect(clearX, rowRect.y + 3.0f,
+                                  kClearBtnW - 2.0f, rowRect.height - 6.0f,
+                                  clearBg);
+                    text.AddText(font, "[x] Clear",
+                                  clearX + 4.0f, rowRect.y + 4.0f,
+                                  clearText);
                     break;
                 }
                 }

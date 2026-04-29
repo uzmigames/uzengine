@@ -14,6 +14,7 @@
 #include "engine/asset/formats/uzfx_loader.h"
 #include "engine/ecs/mesh/skeletal_mesh_component.h"
 #include "engine/renderer/upload/texture_loader.h"
+#include "engine/vfx/data_interfaces/vfx_spline_di.h"
 #include "engine/vfx/vfx_system.h"
 #include "engine/vfx/components/particle_emitter.h"
 #include "engine/vfx/lod/vfx_frustum_cull.h"
@@ -145,6 +146,68 @@ AttachResolveResult ResolveAttachTransform(World* world,
     return out;
 }
 
+/// Pulls authored spline geometry from a `SplineComponent` on the
+/// emitter's `splineTargetEntity` and copies it into the runtime
+/// emitter's `splineSource`.
+///
+/// Order of operations:
+/// 1. Bail if the target entity is unset/invalid or lacks a
+///    `SplineComponent` — leaves `splineSource` untouched so callers
+///    that author it programmatically (legacy path) keep working.
+/// 2. Resolve the target's world matrix from its `SceneComponent`,
+///    falling back to identity when no scene transform is attached.
+/// 3. Clear and refill `splineSource.controlPoints` by transforming
+///    each authored point through the world matrix (object-local cm
+///    -> world-space cm).
+/// 4. Mirror `tension`, `looping`, `arcLengthSamples` byte-for-byte
+///    from the component to the runtime spline. The downstream
+///    `VfxSplineBuffer::RebuildAndUpload` will rebuild the arc-length
+///    table and bake the GPU points before the next sim dispatch.
+///
+/// @ref engine/ecs/environment/spline_component.h `SplineComponent`
+/// @ref engine/vfx/data_interfaces/vfx_spline_di.h `VfxSpline`
+void SyncSplineSourceFromTarget(World* world,
+                                Entity splineTarget,
+                                VfxSpline& dst) {
+    if (world == nullptr) return;
+    if (!splineTarget.IsValid()) return;
+    if (!world->IsValid(splineTarget)) return;
+    if (!world->HasComponent<SplineComponent>(splineTarget)) return;
+
+    const auto& src = world->GetComponent<SplineComponent>(splineTarget);
+
+    // World transform — identity when the spline-owner has no scene
+    // transform attached (the spline lives in world coordinates as-is).
+    Mat4 worldXform = Mat4::Identity();
+    if (world->HasComponent<SceneComponent>(splineTarget)) {
+        worldXform = world->GetComponent<SceneComponent>(splineTarget).GetWorldMatrix();
+    }
+
+    // Replace the runtime spline's control points with the
+    // world-transformed authored points. `clear` + `reserve` keeps the
+    // amortised allocator behaviour predictable across frames.
+    dst.controlPoints.clear();
+    dst.controlPoints.reserve(src.controlPoints.size());
+    for (const auto& localPt : src.controlPoints) {
+        dst.controlPoints.push_back(worldXform.TransformPoint(localPt));
+    }
+
+    // Mirror the evaluator parameters. `arcLengthSamples` carries through
+    // verbatim — the buffer's `RebuildAndUpload` allocates up to
+    // `kVfxSplineMaxResolution` slots so any sane value is safe here.
+    dst.tension          = src.tension;
+    dst.looping          = src.looping;
+    dst.arcLengthSamples = src.arcLengthSamples;
+
+    // Force the next `SampleUniform` / `RebuildAndUpload` to rebuild the
+    // arc-length table — the cached one is stale once `controlPoints`
+    // changes. `BuildArcLengthTable` is invoked by `RebuildAndUpload`
+    // unconditionally, so simply clearing the cache here is enough to
+    // signal "needs work" without coupling to the buffer side.
+    dst.arcLengthTable.clear();
+    dst.totalLength = 0.0f;
+}
+
 } // namespace
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -189,6 +252,22 @@ void SceneRenderer::SyncVfxEmitters(World* world, IVFS* vfs) {
                 } else if (auto* sc = registry.try_get<SceneComponent>(enttEntity)) {
                     rt->worldPosition = sc->GetPosition();
                 }
+
+                // ── Spline target sync (phase 16 — item 3.2) ────────────
+                // Pull authored control points from the linked
+                // SplineComponent (if any) and copy them — world-
+                // transformed — into the runtime emitter's splineSource.
+                // The VFX inline frame will detect spline modules on this
+                // emitter and rebuild the GPU `VfxSplineBuffer` before the
+                // simulation dispatch, so the spawn/update CSs see the
+                // freshly authored geometry every frame.
+                // No-op when `splineTargetEntity` is unset/invalid or the
+                // target has no SplineComponent — programmatic authoring
+                // of `splineSource` still works in that case.
+                SyncSplineSourceFromTarget(world,
+                                           emitterComp.splineTargetEntity,
+                                           rt->splineSource);
+
                 // Handle restart request: reset GPU buffer only.
                 // ParticleEmitter fields are edited directly by the overlay
                 // sliders, so we do NOT re-copy from the ECS component here.
@@ -570,6 +649,15 @@ void SceneRenderer::SyncVfxEmitters(World* world, IVFS* vfs) {
         }
 
         emitter->isEmitting = emitterComp.emitting;
+
+        // ── Spline target sync (phase 16 — item 3.2) ────────────────────
+        // Same as the per-frame path above, but applied on the
+        // creation frame so spline modules see authored geometry on
+        // their very first dispatch instead of waiting one frame for
+        // the existing-emitter loop to run.
+        SyncSplineSourceFromTarget(world,
+                                   emitterComp.splineTargetEntity,
+                                   emitter->splineSource);
 
         // ── Load sprite texture if path is set ─────────────────────────
         // Creates a VFXMaterial, loads the texture via TextureLoader, and

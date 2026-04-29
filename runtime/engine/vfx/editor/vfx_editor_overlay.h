@@ -262,6 +262,36 @@ public:
     std::function<void(size_t idx)>               onEmitterDuplicated;
     std::function<void(size_t idx)>               onEmitterDeleted;
 
+    // ── Spline Target entity picker (phase 16.3b) ────────────────────
+    //
+    // Host wires these before the first `BuildUI` call. The overlay
+    // rebuilds the "Spline Target" row every frame from the data below.
+    //
+    // `splineTargetCurrent` — the entity currently set on the active
+    //   emitter's `VfxEmitterComponent::splineTargetEntity`. Host
+    //   updates this pointer each frame from the ECS query result. If
+    //   the pointer is null the row uses `Entity::Invalid()`.
+    //
+    // `splineTargetCandidates` — a pre-built list of
+    //   {entity, display-name} pairs filtered from the scene's ECS
+    //   world (entities that own `SplineComponent`). Host repopulates
+    //   it each frame so newly added/removed splines are reflected.
+    //
+    // `onSplineTargetChanged` — fires when the author selects a new
+    //   entity or clicks "Clear". Host writes the received entity back
+    //   to `VfxEmitterComponent::splineTargetEntity`.
+    //
+    // The row is only rendered when the active emitter has at least one
+    // spline module (`SpawnAlongSplineModule`, `ForceTowardSplineModule`,
+    // `FollowSplineModule`) on its module stack. When no spline module
+    // is present the row is silently omitted so non-spline emitters are
+    // not cluttered with a picker that has no effect.
+    using SplineEntityCandidate =
+        VfxEditorPaneWidget::InlineRow::EntityCandidate;
+    const Entity*                             splineTargetCurrent    = nullptr;
+    std::vector<SplineEntityCandidate>        splineTargetCandidates;
+    std::function<void(Entity)>               onSplineTargetChanged;
+
     /// Returns the currently-edited emitter pointer (set by last BuildUI call).
     [[nodiscard]] ParticleEmitter* GetCurrentEmitter() const { return m_lastEmitter; }
 

@@ -28,6 +28,8 @@
 #include "engine/vfx/core/particle_budget.h"
 #include "engine/vfx/core/vfx_spawn_rate_curve.h"
 #include "engine/vfx/curves/vfx_curve.h"
+#include "engine/vfx/data_interfaces/vfx_spline_buffer.h"
+#include "engine/vfx/data_interfaces/vfx_spline_di.h"
 #include "engine/vfx/events/vfx_event.h"
 #include "engine/vfx/spawn/vfx_burst_event.h"
 #include "engine/vfx/lod/vfx_lod.h"
@@ -630,6 +632,25 @@ struct ParticleEmitter {
     /// Module stack defining this emitter's spawn/update/render behavior.
     /// When empty (no modules), falls back to the hardcoded shaders from 3.60.0.
     EmitterModuleStack moduleStack;
+
+    // -- Spline Data Interface ------------------------------------------------
+
+    /// Author-side spline geometry consumed by `SpawnAlongSplineModule`,
+    /// `ForceTowardSplineModule`, and `FollowSplineModule`. Empty by default
+    /// (no control points) which makes the GPU upload bake zero samples and
+    /// the simulation shaders short-circuit on `cbSplinePointCount < 2`.
+    /// Gameplay code (or `SyncVfxEmitters` once the ECS `SplineComponent`
+    /// lands) writes `controlPoints` / `tension` / `looping` here.
+    /// @ref engine/vfx/data_interfaces/vfx_spline_di.h `VfxSpline`
+    VfxSpline splineSource;
+
+    /// GPU upload wrapper for `splineSource`. Lazy-created by
+    /// `DispatchVFXSimulation` on the first frame any spline module is
+    /// detected on this emitter; `RebuildAndUpload` runs once per frame
+    /// before the spawn / update CS dispatches to keep the bindless SRV
+    /// in sync with `splineSource`. Released by `Shutdown`.
+    /// @ref engine/vfx/data_interfaces/vfx_spline_buffer.h `VfxSplineBuffer`
+    VfxSplineBuffer splineBuffer;
 
     // -- Parameters -----------------------------------------------------------
 
