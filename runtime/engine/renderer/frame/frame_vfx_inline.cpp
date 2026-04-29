@@ -42,6 +42,20 @@ namespace uz {
 static constexpr uint32_t kSpawnGroupSize  = 256;
 static constexpr uint32_t kUpdateGroupSize = 256;
 
+/// Fixed timestep for `ParticleEmitter::Seek(t)` warmup loop. Mirrors the
+/// engine's reference 60 Hz simulation rate so deterministic-scrub
+/// recordings reproduce identically against any rendering framerate.
+///
+/// Sized to balance warmup cost (longer dt = fewer ticks, faster scrub) vs.
+/// integration accuracy (shorter dt = closer to a real continuous sim).
+/// 1/60 s matches `ParticleEmitter::fixedDt` so the FixedRate timestep
+/// emitters experience no semantic discontinuity when seek-warmup hands
+/// off to the regular tick path.
+///
+/// @ref engine/vfx/components/particle_emitter.h `Seek(targetTime)`
+/// @ref .rulebook/tasks/phase16_vfx-scalability-hardware-validation
+static constexpr float kSeekFixedDt = 1.0f / 60.0f;
+
 /// Emits a UAV-to-UAV barrier on a single buffer.
 ///
 /// A UAV barrier (same state before/after = UAV) flushes all pending UAV
@@ -282,12 +296,33 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
 #endif // UZ_VFX_DEBUG_READBACK
         }
 
-        // ── Reset aliveCount to 0 each frame ──────────────────────────
+        // ── Per-tick dispatch body ─────────────────────────────────────
+        // Runs alive-count-reset + spawn + update + indirect-args for ONE
+        // simulation step. Called once per regular frame, OR multiple
+        // times during a `Seek(t)` warmup. Captures local emitter state
+        // by reference (capture-default `[&]`) so seek-warmup ticks see
+        // the same descriptor / buffer setup as the regular tick.
+        //
+        // `tickDt`        — dt for this tick (scaled by emitter pause/time).
+        // `tickFrameIndex` — frame number used for spawn-RNG variation.
+        //                    Incremented per warmup tick so each iteration
+        //                    rolls fresh randoms instead of duplicating.
+        // `restoreToCommonAfterTick` — when true, emit state-restore
+        //                    barriers at end of tick so the next tick
+        //                    sees the same start state. Used by the seek
+        //                    warmup (multiple ticks per cmdlist). The
+        //                    regular per-frame tick passes `false` so
+        //                    the buffers remain in (UAV/IndirectArgument)
+        //                    for the render graph import which follows.
+        auto dispatchOneTick = [&](float tickDt, uint32_t tickFrameIndex,
+                                   bool restoreToCommonAfterTick) {
+        // ── Reset aliveCount to 0 per tick ────────────────────────────
         // The spawn and update shaders atomically increment aliveCount.
-        // Without resetting to 0 each frame, the counter grows unbounded
+        // Without resetting to 0 each tick, the counter grows unbounded
         // and the free list eventually exhausts (particles stop spawning).
-        // This matches the standalone demo's per-frame aliveCount reset.
-        // Reset aliveCount to 0 via CopyBuffer (matches standalone pattern).
+        // This matches the standalone demo's per-frame aliveCount reset
+        // and is required EVERY tick during the seek warmup loop, not
+        // just once per frame.
         // DX12 implicit state promotion handles Common→CopyDst for the copy.
         // CopyDst→UAV barrier after so spawn CS can InterlockedAdd.
         if (gpuBuf.aliveCountStaging.IsValid()) {
@@ -308,7 +343,7 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         // value is consumed by `CalculateSpawnCount` (spawn rate) and the
         // update CS (age / position advance), so a slow-mo emitter is
         // visually slow-mo across both spawn AND update.
-        float emitterDt = emitter->isPaused ? 0.0f : (dt * emitter->timeScale);
+        float emitterDt = emitter->isPaused ? 0.0f : (tickDt * emitter->timeScale);
 
         // ── Spawn dispatch ─────────────────────────────────────────────
         // Check start delay for compound effects (delayed sub-emitters).
@@ -346,7 +381,7 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         spawnCBData.initialColor[3]   = emitter->initialColor.w;
 
         spawnCBData.dt                = emitterDt;
-        spawnCBData.frameNumber       = frameIndex;
+        spawnCBData.frameNumber       = tickFrameIndex;
         spawnCBData.spawnCount        = spawnCount;
         spawnCBData.maxParticles      = gpuBuf.capacity;
 
@@ -411,15 +446,16 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         if (!spawnAlloc.cpuPtr) {
             UZ_LOG(VFX, Warning,
                    "DispatchVFXSimulation: CB ring full, skipping emitter (spawn)");
-            continue;
+            return;  // abort this tick; inside dispatchOneTick lambda
         }
         std::memcpy(spawnAlloc.cpuPtr, &spawnCBData, sizeof(spawnCBData));
 
         if (spawnCount > 0) {
             // Transition WriteSet attributes Common→UAV before compute writes.
-            // Uses Common as before-state every frame (matches standalone demo).
-            // DX12 buffer state decay means buffers return to Common after
-            // the command list finishes execution, regardless of last explicit state.
+            // Uses Common as before-state every tick (matches standalone demo).
+            // The end-of-tick barrier block (after indirect args) returns
+            // every UAV buffer to Common so seek-warmup ticks 2..N see
+            // the same start state as tick 1.
             {
                 const auto& ws = gpuBuf.WriteSet();
                 RHIBarrierDesc uavBarriers[7] = {};
@@ -575,7 +611,7 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         if (!updateAlloc.cpuPtr) {
             UZ_LOG(VFX, Warning,
                    "DispatchVFXSimulation: CB ring full, skipping emitter (update)");
-            continue;
+            return;  // abort this tick; inside dispatchOneTick lambda
         }
         std::memcpy(updateAlloc.cpuPtr, &updateCBData, sizeof(updateCBData));
 
@@ -606,15 +642,108 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         // ── UAV -> IndirectArgument barrier ─────────────────────────────
         TransitionIndirectArgs(cmdList, gpuBuf);
 
-        // NOTE: No UAV→SRV barrier here. The standalone demo does NOT transition
-        // write-set to SRV after compute. DX12 implicit state decay handles the
-        // Common→UAV→Common lifecycle. The billboard reads via ResourceDescriptorHeap
-        // (bindless) which works regardless of tracked state on NVIDIA.
+        // ── Per-tick state-restore barriers (warmup only) ───────────────
+        // When this tick is part of a multi-tick seek warmup, return
+        // every buffer to Common so the NEXT tick sees the same start
+        // state as tick 1. Skipped on the regular per-frame tick because
+        // the render graph import expects (UAV / IndirectArgument) — the
+        // states the regular code path leaves the buffers in.
+        if (restoreToCommonAfterTick) {
+            const auto& ws = gpuBuf.WriteSet();
+            RHIBarrierDesc back[12] = {};
+            uint32_t bn = 0;
+            auto addBack = [&](RHIBufferHandle buf, RHIResourceState before) {
+                if (!buf.IsValid()) return;
+                back[bn].buffer      = buf;
+                back[bn].stateBefore = before;
+                back[bn].stateAfter  = RHIResourceState::Common;
+                ++bn;
+            };
+            addBack(ws.positions,  RHIResourceState::UnorderedAccess);
+            addBack(ws.velocities, RHIResourceState::UnorderedAccess);
+            addBack(ws.ages,       RHIResourceState::UnorderedAccess);
+            addBack(ws.lifespans,  RHIResourceState::UnorderedAccess);
+            addBack(ws.sizes,      RHIResourceState::UnorderedAccess);
+            addBack(ws.colors,     RHIResourceState::UnorderedAccess);
+            addBack(ws.rotations,  RHIResourceState::UnorderedAccess);
+            addBack(gpuBuf.freeList,            RHIResourceState::UnorderedAccess);
+            addBack(gpuBuf.aliveCount,          RHIResourceState::UnorderedAccess);
+            addBack(gpuBuf.indirectDrawArgs,    RHIResourceState::IndirectArgument);
+            addBack(gpuBuf.indirectDispatchArgs, RHIResourceState::IndirectArgument);
+            if (bn > 0) cmdList->ResourceBarrier(back, bn);
+        }
 
         // Mark buffer as having completed a full simulation cycle.
         // The render graph import in RegisterParticlePasses will use
         // steady-state resource states from this point forward.
         gpuBuf.hasCompletedCycle = true;
+        };  // dispatchOneTick lambda
+
+        // ── Seek warmup loop ──────────────────────────────────────────
+        // Consume any `pendingSeekTime` queued by `ParticleEmitter::Seek(t)`
+        // by running fixed-rate sim ticks with `dt = kSeekFixedDt` BEFORE
+        // the regular per-frame tick. Each warmup tick increments the
+        // frame number so spawn-RNG produces fresh randoms instead of
+        // duplicating the same particles every iteration.
+        //
+        // The work is capped per frame by `r.VFX.Seek.MaxTicksPerFrame`:
+        // long scrubs (e.g. 30 s = 1800 ticks at 1/60 s) split across
+        // multiple frames so a single Seek() doesn't stall the GPU
+        // pipeline. The remaining seconds roll over via decremented
+        // `pendingSeekTime`; the next frame resumes the warmup until
+        // it fully drains.
+        //
+        // @ref .rulebook/tasks/phase16_vfx-scalability-hardware-validation
+        // @ref engine/vfx/components/particle_emitter.h `Seek(targetTime)`
+        if (emitter->GetPendingSeekTime() > 0.0f) {
+            const float remaining = emitter->GetPendingSeekTime();
+            const uint32_t totalTicks = static_cast<uint32_t>(
+                std::ceil(remaining / kSeekFixedDt));
+
+            // Read CVar each frame so console / hot-reload tweaks take
+            // effect on the next seek without restarting the engine.
+            // Default 256 = 4.27 s of sim work at 60 Hz; clamped to 1
+            // so a misconfigured 0 doesn't deadlock long scrubs.
+            auto& cvars = CVarRegistry::Get();
+            const int  maxTicksRaw = cvars.GetInt(
+                "r.VFX.Seek.MaxTicksPerFrame", 256);
+            const uint32_t maxThisFrame = static_cast<uint32_t>(
+                std::max(1, maxTicksRaw));
+            const uint32_t ticksThisFrame = std::min(totalTicks, maxThisFrame);
+
+            for (uint32_t i = 0; i < ticksThisFrame; ++i) {
+                // Frame number salt: outer frameIndex shifted by i so
+                // spawn-RNG sees a fresh seed each warmup tick. The
+                // multiplier (1u << 16) avoids collisions with the
+                // regular tick's frameIndex within reasonable run lengths.
+                const uint32_t tickFrameNumber =
+                    frameIndex + (i + 1u) * (1u << 16);
+                // restoreToCommonAfterTick=true so the next tick (warmup
+                // or regular) sees the buffers in Common.
+                dispatchOneTick(kSeekFixedDt, tickFrameNumber,
+                                /*restoreToCommonAfterTick=*/true);
+            }
+
+            if (ticksThisFrame >= totalTicks) {
+                // Warmup completed in full — clear the pending request.
+                emitter->ClearPendingSeek();
+            } else {
+                // Hit the per-frame budget; decrement the pending time
+                // by exactly what we consumed and resume on the next
+                // frame. Floating-point error converges to zero across
+                // long scrubs because every tick uses the same kSeekFixedDt.
+                const float consumed = static_cast<float>(ticksThisFrame) * kSeekFixedDt;
+                const float leftover = (remaining > consumed) ? (remaining - consumed) : 0.0f;
+                emitter->pendingSeekTime = leftover;
+            }
+        }
+
+        // ── Regular per-frame tick ────────────────────────────────────
+        // Always runs, with the (possibly globally-scaled) frame dt.
+        // restoreToCommonAfterTick=false so the buffers remain in
+        // (UAV / IndirectArgument) for the render graph import that
+        // follows in `RegisterParticlePasses`.
+        dispatchOneTick(dt, frameIndex, /*restoreToCommonAfterTick=*/false);
     }
 
     if (m_gpuProfileEnabled) {

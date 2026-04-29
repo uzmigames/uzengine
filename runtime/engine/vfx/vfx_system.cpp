@@ -65,6 +65,14 @@ void VFXSystem::Initialize(IRHIDevice* device, uint32_t maxTotalParticles) {
         "Multiplied into the frame dt seen by every emitter sim before "
         "per-emitter timeScale is applied.",
         0.f, 100.f);
+    cvars.Register(
+        "r.VFX.Seek.MaxTicksPerFrame", 256.0f,
+        "Maximum spawn/update CS dispatches per frame consumed by "
+        "ParticleEmitter::Seek(t) warmup loops. Long scrubs split across "
+        "frames when this cap is hit so a single Seek() does not stall "
+        "the GPU pipeline. Default 256 = 4.27 s of sim work at 60 Hz; "
+        "raise for faster scrub-completion at the cost of frame spikes.",
+        1.f, 100'000.f);
 
     // ── DDGI emissive injection (phase16 lumen-gi-contribution) ──────
     cvars.Register(

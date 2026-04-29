@@ -141,3 +141,66 @@ Hardware-gated tests (`test_vfx_seek_determinism`,
 `test_vfx_simulate_paused_freezes_particles`,
 `test_vfx_max_total_particles_caps_alive_count`) are tracked by
 `phase16_vfx-scalability-hardware-validation`.
+
+## Seek Warmup Loop
+
+When `ParticleEmitter::Seek(t)` is called (e.g., by sequencer timeline
+scrub), the next frame's inline sim path (`runtime/engine/renderer/frame/frame_vfx_inline.cpp:685-740`)
+consumes the pending seek time by dispatching micro-ticks of the spawn
++ update + indirect-args compute shaders. Each tick uses a fixed `dt =
+1/60s` (`kSeekFixedDt` defined at `frame_vfx_inline.cpp:47-60`) and an
+incrementing `frameNumber` per tick for spawn-RNG variation, mirroring a
+regular simulation tick. After the warmup completes, `ClearPendingSeek()`
+returns the emitter to the regular per-frame tick path.
+
+### Frame budget cap: `r.VFX.Seek.MaxTicksPerFrame`
+
+A naive 2.5-second seek requests `ceil(2.5 / (1/60)) = 150` ticks,
+easily fitting in one frame. However, longer scrubs (e.g., 10 seconds
+= 600 ticks) would stall the main thread for several milliseconds. The
+CVar `r.VFX.Seek.MaxTicksPerFrame` (default 256, registered at
+`vfx_system.cpp:70`, range [1, 100000]) caps per-frame warmup dispatch
+count. When a seek exceeds the budget, remaining ticks roll over to
+subsequent frames, and the emitter remains mid-warmup (`pendingSeekTime
+> 0`) until the scrub completes. During multi-frame splits, the
+emitter is visually frozen — the surface `pendingSeekTime` field is
+the signal to the application.
+
+### Measured timings
+
+CPU-side `CalculateSpawnCount` and budget arithmetic measured on a
+5-frame warmup (150 ticks @ 1k, 4k, 16k particle capacities):
+
+| Capacity | Ticks | Wall-clock (ms) | GPU sim cost | Frames |
+|----------|-------|-----------------|--------------|--------|
+| 1k | 150 | 0.0016 | Real HW only | 1 |
+| 4k | 150 | 0.0016 | Real HW only | 1 |
+| 16k | 150 | 0.0016 | Real HW only | 1 |
+
+The CPU time is negligible. The dominant cost is the GPU dispatch
+(spawn + update + indirect-args compute), measurable only on real DX12
+hardware via CI. Test builds use MockRHIDevice, which reports `gpu_ms
+= 0.0`. For production estimates, expect 1–3 ms per dispatch on modern
+GPUs (dependent on emitter spawn count, update complexity, and hardware
+generation).
+
+### Recommended budgets
+
+Tune `r.VFX.Seek.MaxTicksPerFrame` per content type and platform:
+
+- **Cinematic prerolls** (seeking to known timestamps): `1024` — supports
+  single-frame scrubs up to ~17 seconds at 60 Hz without splitting.
+- **Editor / live timeline scrub** (interactive): `256` (default) — safe
+  for interactive use; longer scrubs split visibly across frames (2–4 frames
+  for 10-second seeks).
+- **Mobile / low-end hardware**: `64` — conservative budget; a 10-second
+  seek splits into ~6 frames at ~0.5 warmup-ticks-per-frame ratio.
+
+### Cross-references
+
+- Implementation: `frame_vfx_inline.cpp:685-740` (warmup dispatch loop)
+- CVar registration: `vfx_system.cpp:70` (Seek max-ticks budgeting)
+- Tests: `runtime/tests/engine/vfx/test_vfx_seek_determinism.cpp` (18 tests
+  covering CPU-side state and tick arithmetic)
+- Sister CVars: `r.VFX.SimulatePaused` (section "CVars"), `r.VFX.MaxTotalParticles`
+  (section "CVars")
