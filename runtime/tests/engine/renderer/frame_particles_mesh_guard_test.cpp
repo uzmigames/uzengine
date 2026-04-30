@@ -235,6 +235,68 @@ TEST(MeshGuard_BillboardSkipsMeshEmitter, GetName_OnConstModule_ReturnsCorrectSt
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// MeshRenderModule — GPU buffer accessors before CreateGPUBuffers
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Regression coverage for `phase0_vfx-mesh-particle-visibility-debug`:
+// the visibility bug was caused by `MeshRenderModule::CreateGPUBuffers`
+// never being called from `ParticleEmitter::Initialize`, leaving
+// `instanceColorBuffer_` as `Invalid()`. The bindless
+// `instanceColorsUavIndex` then fell back to descriptor 0 (a garbage
+// resource), and the pixel shader's `ResourceDescriptorHeap[g_instanceColorsBufferIdx]`
+// returned zeros — every fragment computed black, blanking the entire
+// HDR composite.
+//
+// These CPU-only tests pin the contract: a freshly-constructed
+// `MeshRenderModule` MUST report `HasGPUBuffers() == false` and
+// MUST return `Invalid()` from both buffer accessors. The full
+// integration ("ParticleEmitter::Initialize calls CreateGPUBuffers
+// for mesh emitters") is covered by the visual A/B test (item 3.x)
+// because constructing a real `IRHIDevice` is GPU-bound.
+
+/// Default-constructed MeshRenderModule has no GPU buffers allocated.
+/// This is the precondition that `ParticleEmitter::Initialize` relies on
+/// when it calls `meshModule->CreateGPUBuffers(device)` exactly once.
+TEST(MeshGuard_BillboardSkipsMeshEmitter,
+     DefaultMeshRenderModule_HasGPUBuffers_IsFalse) {
+    MeshRenderModule mod;
+    EXPECT_FALSE(mod.HasGPUBuffers())
+        << "A freshly-constructed MeshRenderModule must report "
+           "HasGPUBuffers()==false; CreateGPUBuffers must be called by the "
+           "owning ParticleEmitter before bindless descriptor lookups happen";
+}
+
+/// Default-constructed MeshRenderModule returns Invalid() from
+/// GetInstanceColorBuffer(). If this ever silently flips to a default-valid
+/// handle, `ParticleEmitter::Initialize` would skip the
+/// `CreateGPUBuffers(device)` call (because of an `IsValid()` early-out
+/// somewhere upstream), and the mesh-particle visibility regression would
+/// re-appear: PS reads from descriptor 0 → `instanceColor.rgb*lighting==0` →
+/// fully-black HDR composite.
+/// @ref phase0_vfx-mesh-particle-visibility-debug
+TEST(MeshGuard_BillboardSkipsMeshEmitter,
+     DefaultMeshRenderModule_InstanceColorBuffer_IsInvalid) {
+    MeshRenderModule mod;
+    EXPECT_FALSE(mod.GetInstanceColorBuffer().IsValid())
+        << "GetInstanceColorBuffer() must be Invalid() before CreateGPUBuffers; "
+           "a default-valid handle would mask the missing CreateGPUBuffers call "
+           "and re-introduce the visibility regression "
+           "(phase0_vfx-mesh-particle-visibility-debug).";
+}
+
+/// Default-constructed MeshRenderModule returns Invalid() from
+/// GetInstanceTransformBuffer() — same regression-pinning rationale as
+/// the color buffer.
+TEST(MeshGuard_BillboardSkipsMeshEmitter,
+     DefaultMeshRenderModule_InstanceTransformBuffer_IsInvalid) {
+    MeshRenderModule mod;
+    EXPECT_FALSE(mod.GetInstanceTransformBuffer().IsValid())
+        << "GetInstanceTransformBuffer() must be Invalid() before "
+           "CreateGPUBuffers; tested for symmetry with the color-buffer "
+           "regression test.";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Integration coverage gap note
 // ─────────────────────────────────────────────────────────────────────────────
 // The spec scenario "billboard batch contains 0 vertices from this emitter

@@ -207,13 +207,56 @@ $vfs = 'e:/UzmiEngine/uzengine/sample/content'
 
 No `D3D12 ERROR` lines. Exit code 0.
 
-### Visibility caveat
+### Visibility verified (post `phase0_vfx-mesh-particle-visibility-debug`)
 
-The pipeline is structurally re-enabled and GPU-validation clean. The
-test asset's shards are not yet visible at the demo's default camera
-angle — likely a per-instance color or per-frame spawn-tick issue outside
-this task's scope. Filed for follow-up in a separate hardware-validation
-task.
+The pipeline produces visibly-rendered mesh particles. `--diag` JSON at
+frame 120 reports `hdr OK avg=4.30 max=8.97` (was `WARN_ZERO avg=0`
+before the fix). Screenshots:
+
+| State    | Path                                       | Size     | Content                |
+|----------|--------------------------------------------|----------|------------------------|
+| Pre-fix  | `.sandbox/visibility-FIXED-v3.png` (37 KB) | 1280×720 | fully black            |
+| Post-fix | `.sandbox/post-fix-final.png` (262 KB)     | 1280×720 | lit mesh tetrahedra    |
+
+### Root cause (six fixes)
+
+The visible symptom — fully black HDR composite whenever a mesh emitter
+was active — turned out to be caused by `MeshRenderModule::CreateGPUBuffers`
+never being invoked. The function existed and allocated
+`instanceColorBuffer_` + `instanceTransformBuffer_` but had no caller.
+Result: `instanceColorBuffer_` stayed `Invalid()`, the bindless
+`instanceColorsUavIndex` fell back to descriptor 0 (a garbage resource),
+the CS wrote per-instance colors over a random global resource, and the
+PS read zeros from the same descriptor → every fragment computed
+`instanceColor.rgb * lighting = 0 * lighting = black`. Five secondary
+issues were surfaced and fixed during diagnosis:
+
+1. **`particle_mesh_instance_cs.hlsl` — cbuffer at `register(b1)` not
+   `b0`.** The bindless RS pins slot 0 to `RootConstants(16 DWORDs)` so
+   `SetRootCBV(0)` silently no-op'd, leaving the CB at zero.
+2. **`particle_mesh_instance_cs.hlsl` dead-particle test now checks
+   both `lifespan <= 0.0f` (unspawned slots) and `age >= lifespan`
+   (decayed).** The prior `max(lifespan, 0.001f)` clamp let unspawned
+   slots through with garbage attribute reads.
+3. **`particle_mesh_ps.hlsl` cbuffer at `b1` declared as `PerFrameCB`
+   matching the engine-global binding.** The previous local
+   `VFXMeshLightConstants` collided with PerFrameCB and read PerFrameCB
+   fields as garbage light data.
+4. **`frame_vfx_inline.cpp` explicit `UAV→ShaderResource` barrier on
+   attribute buffers at end of each tick + matching `ShaderResource→UAV`
+   before the next spawn.** The bindless `ResourceDescriptorHeap[]`
+   reads need the resource in SR state; DX12 implicit promote does not
+   trigger for buffers freshly written via UAV.
+5. **`frame_particles.cpp` + `particle_mesh_render_pass.{h,cpp}` —
+   per-instance transform AND color buffers imported into the render
+   graph and declared as `pb.Read(..., ShaderResource)` by the mesh
+   render pass,** so the auto-barrier scheduler emits the `UAV→SR`
+   transition between the mesh-instance CS write and the indirect draw.
+6. **`particle_emitter.cpp` — added missing
+   `meshModule->CreateGPUBuffers(device)` call** right after
+   `buffer.CreateMeshBuffers(device)` in `ParticleEmitter::Initialize`.
+
+@ref `phase0_vfx-mesh-particle-visibility-debug`
 
 ## Cross-references
 

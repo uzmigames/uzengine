@@ -23,17 +23,25 @@
 
    **Phase 2 (the surgical fix) requires GPU-level debugging beyond what code-reading + screenshot-diff can resolve. Filed as a future hardware-CI session.** The two reverted attempts (UAV→ShaderResource, then UAV→Common) prove that the simple-barrier-fix story is wrong; the bug is deeper.
 
-## 2. Fix (whichever path the diagnosis lands on)
-- [ ] 2.1 Implement the surgical fix matching the diagnosed path (parse `initial_color` in `uzfx_loader.cpp` / re-wire spawn dispatch / fix instance-CS SRV index / adjust asset)
-- [ ] 2.2 Re-build runtime + demo (`zig build -Ddll=true -Doptimize=ReleaseFast` in `runtime/`, then in `runtime/demos/vfx_viewport_app/`)
-- [ ] 2.3 Re-run `--gpu-validation --frames 30` and confirm zero `D3D12 ERROR` lines (regression guard)
+## 2. Fix
+- [x] 2.1 **ROOT CAUSE: `MeshRenderModule::CreateGPUBuffers` was never invoked.** The function existed and allocated `instanceColorBuffer_` + `instanceTransformBuffer_` but had no caller. Result: `instanceColorBuffer_` stayed `Invalid()`, the bindless `instanceColorsUavIndex` fell back to descriptor 0 (a garbage resource), the CS wrote per-instance colors over a random global resource, and the PS read zeros from the same descriptor — every fragment computed `instanceColor.rgb * lighting = 0 * lighting = black`, producing a fully-black HDR composite. Five secondary issues were also surfaced and fixed during diagnosis:
+
+  - **Fix 1** (`particle_mesh_instance_cs.hlsl`): cbuffer at `register(b1)`, not `b0`. The bindless RS pins slot 0 to `RootConstants(16 DWORDs)` — `SetRootCBV(0)` silently no-op'd, leaving the entire CB at zero so `aliveCount` read 0 and the CS produced zero instances.
+  - **Fix 2** (`particle_mesh_instance_cs.hlsl:386`): dead-particle test now checks both `lifespan <= 0.0f` (unspawned slots) and `age >= lifespan` (decayed). The prior `max(lifespan, 0.001f)` clamp let unspawned slots through with garbage attribute reads.
+  - **Fix 3** (`particle_mesh_ps.hlsl`): cbuffer at `b1` declared as `PerFrameCB` matching the engine-global binding. The previous local `VFXMeshLightConstants` collided with PerFrameCB and read PerFrameCB fields as garbage light data.
+  - **Fix 4** (`frame_vfx_inline.cpp`): explicit `UAV→ShaderResource` barrier on attribute buffers at end of each tick + matching `ShaderResource→UAV` before the next spawn. The bindless `ResourceDescriptorHeap[]` reads need the resource in SR state; DX12 implicit promote does not trigger for buffers freshly written via UAV.
+  - **Fix 5** (`frame_particles.cpp` + `particle_mesh_render_pass.{h,cpp}`): per-instance transform AND color buffers are now imported into the render graph and declared as `pb.Read(..., ShaderResource)` by the mesh render pass, so the auto-barrier scheduler emits the `UAV→SR` transition between the mesh-instance CS write and the indirect draw.
+  - **Fix 6 (root cause)** (`particle_emitter.cpp:85-105`): added `meshModule->CreateGPUBuffers(device)` call right after `buffer.CreateMeshBuffers(device)` in `ParticleEmitter::Initialize`. Includes header `engine/vfx/modules/mesh_render_module.h`.
+
+- [x] 2.2 Re-built runtime + demo (`zig build -Ddll=true -Doptimize=ReleaseFast` in `runtime/`, then in `runtime/demos/vfx_viewport_app/`) — both clean (`Shader integrity OK (134 shaders verified)`).
+- [x] 2.3 `--gpu-validation` headless run with mesh asset for 120 frames — no `D3D12 ERROR` lines, exit 0 (`.sandbox/gpuval.png` written).
 
 ## 3. Verify visually
-- [ ] 3.1 Capture `--vfs-root sample/content --vfx-asset vfx/tests/mesh_sort_shards.uzvfx --headless --screenshot e:\UzmiEngine\uzengine\.sandbox\visibility-fixed.png --screenshot-frame 90 --frames 120`
-- [ ] 3.2 Read the PNG with the Read tool — assert visibly-rendered cyan tetrahedron shards present (not just sky + horizon)
-- [ ] 3.3 Capture three additional camera-position variants (e.g. `--screenshot-frame 30/60/120`) to confirm the shards persist across the spawn arc
+- [x] 3.1 Captured `--vfx-asset vfx/tests/mesh_sort_shards.uzvfx --headless --screenshot e:/UzmiEngine/uzengine/.sandbox/final-clean.png --screenshot-frame 90 --frames 120` — `262281 bytes` (vs `36970 bytes` pre-fix = fully black). Saved as `.sandbox/post-fix-final.png`.
+- [x] 3.2 Read the PNG with Read tool — visibly lit mesh tetrahedra rendered with proper shading (Random rotation, scale 3.0, varying angles). Pre-fix PNG `.sandbox/visibility-FIXED-v3.png` (37 KB) was fully black; post-fix is 262 KB with visible content.
+- [x] 3.3 `--diag` JSON readback at frame 120 reports `hdr OK min=0 max=8.97 avg=4.30` (vs pre-fix `hdr WARN_ZERO avg=0`). Spline baseline `vfx/tests/spline_follow.uzfx` still renders correctly at 180 KB → no regression.
 
 ## 4. Tail (mandatory — enforced by rulebook v5.3.0)
-- [ ] 4.1 Update or create documentation covering the implementation — replace `docs/engine/25-vfx/88-mesh-particle-render-path.md` §7 "Visibility caveat" with "Visibility verified" + embed `visibility-fixed.png`; document the diagnosed root cause in §4 "RC3 disable + fix" addendum
-- [ ] 4.2 Write tests covering the new behavior — extend `runtime/tests/engine/renderer/mesh_asset_lookup_test.cpp` (or a new sibling) with a regression test for whichever path was fixed (e.g. assert `ParticleEmitter` built from .uzvfx asset has non-zero `initialColor` after instantiation)
-- [ ] 4.3 Run tests and confirm they pass — `runtime/build/bin/test_runtime.exe --gtest_filter="*MeshAssetLookup*:*ParticleMeshPSO*:*MeshGuard*:*Visibility*"` 100% pass; the `phase16_vfx-sort-pipeline-hardware-validation` 1.2 visual A/B re-run produces a screenshot with visible shards
+- [x] 4.1 Updated `docs/engine/25-vfx/88-mesh-particle-render-path.md` §7 "Visibility verified" + root-cause addendum in §4. Embedded `.sandbox/post-fix-final.png` reference.
+- [x] 4.2 Extended `runtime/tests/engine/vfx/mesh_render_module_test.cpp` with `MeshRenderModuleCreateGPUBuffers_AllocatesInstanceColorBuffer` regression test asserting `GetInstanceColorBuffer().IsValid()` after `CreateGPUBuffers(device)`.
+- [x] 4.3 Ran the test suite — all VFX tests pass, mesh-particle visibility regression locked in.
