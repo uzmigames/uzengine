@@ -162,6 +162,29 @@ struct ParticleMeshBatchItem {
     /// triggers a debug-layer error.
     rg::RgResourceId indirectArgsBufferRg;
 
+    /// Render graph resource id for the per-instance transform buffer
+    /// (`gpuBuf.meshInstanceTransforms`) written by the preceding mesh
+    /// instance CS as `UnorderedAccess`. The vertex shader reads it via
+    /// `ResourceDescriptorHeap[g_instanceTransformsBufferIdx]` (bindless
+    /// SRV path) so it MUST be in `ShaderResource` state when this pass
+    /// executes. Without a `pb.Read(..., ShaderResource)` declaration the
+    /// render graph leaves the buffer in `UnorderedAccess`, the bindless
+    /// SRV read returns garbage / NaN values, and the resulting clip-space
+    /// triangles span the entire viewport — visually blanking the HDR
+    /// composite to black with normal lighting (or to the PS constant when
+    /// the PS is hard-coded for diagnostics).
+    /// @ref phase0_vfx-mesh-particle-visibility-debug
+    rg::RgResourceId instanceTransformsBufferRg;
+
+    /// Render graph resource id for the per-instance color buffer
+    /// (`gpuBuf.meshInstanceColors`) written by the same mesh instance
+    /// CS. The pixel shader reads per-instance RGBA via
+    /// `ResourceDescriptorHeap[g_instanceColorsBufferIdx]` so it ALSO
+    /// needs an explicit `Read(..., ShaderResource)` for the same reason
+    /// the transforms buffer does.
+    /// @ref phase0_vfx-mesh-particle-visibility-debug
+    rg::RgResourceId instanceColorsBufferRg;
+
     // ── Per-pass constant buffer ─────────────────────────────────────────────
 
     /// Pre-filled CB allocation for the per-pass shader constants (b0).

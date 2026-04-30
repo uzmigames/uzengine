@@ -183,10 +183,28 @@ void AddParticleMeshRenderPass(rg::RgBuilder& builder,
         // `DrawIndexedIndirect` here. Without this declaration the draw
         // executes against a buffer still in `UAV` state and the debug
         // layer raises a CORRUPTED_PARAMETER error.
+        //
+        // Per-batch instance transforms + instance colors: same story.
+        // The mesh-instance CS wrote both as `UnorderedAccess`. The VS /
+        // PS read them via `ResourceDescriptorHeap[]` (bindless SRV path)
+        // so they MUST be in `ShaderResource` state at draw time. Without
+        // these declarations the render graph leaves the buffers in UAV
+        // state, the bindless reads return garbage / NaN values, and the
+        // resulting clip-space-spanning triangles blank the HDR composite
+        // to black (or to the PS constant when forced for diagnostics).
+        // @ref phase0_vfx-mesh-particle-visibility-debug
         for (const auto& batch : passDesc.batches) {
             if (batch.indirectArgsBufferRg.IsValid()) {
                 pb.Read(batch.indirectArgsBufferRg,
                         RHIResourceState::IndirectArgument);
+            }
+            if (batch.instanceTransformsBufferRg.IsValid()) {
+                pb.Read(batch.instanceTransformsBufferRg,
+                        RHIResourceState::ShaderResource);
+            }
+            if (batch.instanceColorsBufferRg.IsValid()) {
+                pb.Read(batch.instanceColorsBufferRg,
+                        RHIResourceState::ShaderResource);
             }
         }
 

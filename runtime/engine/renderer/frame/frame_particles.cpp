@@ -130,6 +130,15 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
         rg::RgResourceId meshInstanceTransforms;
         rg::RgResourceId meshInstanceCount;
         rg::RgResourceId meshIndirectDrawArgs;
+        // Per-instance color buffer is owned by `MeshRenderModule`, not
+        // `GPUParticleBuffer`. Imported here so the auto-barrier scheduler
+        // emits the UAV→ShaderResource transition between the mesh
+        // instance CS write and the mesh render pass's PS read (bindless
+        // `ResourceDescriptorHeap[g_instanceColorsBufferIdx]`). The handle
+        // is invalid when the module has not yet allocated the buffer
+        // (lazy init); we only import valid handles below.
+        // @ref phase0_vfx-mesh-particle-visibility-debug
+        rg::RgResourceId meshInstanceColors;
     };
 
     std::vector<ImportedEmitterIds> importedIds;
@@ -218,6 +227,30 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
             "VFX_MeshInstCount", gpuBuf.meshInstanceCount, meshCountState);
         ids.meshIndirectDrawArgs = rgBuilder.ImportBuffer(
             "VFX_MeshIndDraw", gpuBuf.meshIndirectDrawArgs, meshIndirectState);
+
+        // Per-instance color buffer (owned by `MeshRenderModule`, not
+        // `GPUParticleBuffer`). Same import pattern as the transforms
+        // buffer: UAV on the first cycle (pre-init upload state), then
+        // ShaderResource for steady-state once the prior frame's mesh
+        // render pass has consumed it. The mesh instance CS will write
+        // it as UAV again, and the auto-barrier scheduler emits the
+        // SRV→UAV transition before the CS dispatch.
+        // @ref phase0_vfx-mesh-particle-visibility-debug
+        if (emitter->moduleStack.renderModule &&
+            std::strcmp(emitter->moduleStack.renderModule->GetName(),
+                        "mesh_render") == 0) {
+            const auto* meshModule = static_cast<const MeshRenderModule*>(
+                emitter->moduleStack.renderModule.get());
+            const RHIBufferHandle instanceColors =
+                meshModule->GetInstanceColorBuffer();
+            if (instanceColors.IsValid()) {
+                const RHIResourceState meshColorsState = firstCycle
+                    ? RHIResourceState::UnorderedAccess
+                    : RHIResourceState::ShaderResource;
+                ids.meshInstanceColors = rgBuilder.ImportBuffer(
+                    "VFX_MeshInstColors", instanceColors, meshColorsState);
+            }
+        }
 
         importedIds.push_back(ids);
         // Silence "unused" warnings for state-vars referenced only when the
@@ -744,6 +777,7 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
             rg::RgResourceId rgMeshTransforms;
             rg::RgResourceId rgMeshCount;
             rg::RgResourceId rgMeshIndirectArgs;
+            rg::RgResourceId rgMeshColors;
         };
 
         std::vector<MeshEmitterDispatch> meshDispatches;
@@ -923,6 +957,7 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
             dispatch.rgMeshTransforms = importedPtr->meshInstanceTransforms;
             dispatch.rgMeshCount      = importedPtr->meshInstanceCount;
             dispatch.rgMeshIndirectArgs = importedPtr->meshIndirectDrawArgs;
+            dispatch.rgMeshColors     = importedPtr->meshInstanceColors;
             meshDispatches.push_back(dispatch);
 
             // Build the mesh render pass batch item for this emitter.
@@ -1105,6 +1140,16 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
             // `DrawIndexedIndirect` because the buffer is still in
             // UnorderedAccess state from the preceding compute write.
             batch.indirectArgsBufferRg = importedPtr->meshIndirectDrawArgs;
+            // Render graph IDs for the per-instance transform + color
+            // buffers. Without these the auto-barrier scheduler leaves
+            // the buffers in `UnorderedAccess` after the mesh-instance
+            // CS write, the bindless SRV reads in the VS / PS return
+            // garbage / NaN, and the rasterizer produces clip-space
+            // spanning triangles — visually blanking the HDR composite
+            // to black with normal lighting.
+            // @ref phase0_vfx-mesh-particle-visibility-debug
+            batch.instanceTransformsBufferRg = importedPtr->meshInstanceTransforms;
+            batch.instanceColorsBufferRg     = importedPtr->meshInstanceColors;
             batch.passCB               = meshPassAlloc;
 
             meshDesc.batches.push_back(batch);
@@ -1147,6 +1192,8 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
                             pb.Write(d.rgMeshCount,       RHIResourceState::UnorderedAccess);
                         if (d.rgMeshIndirectArgs.IsValid())
                             pb.Write(d.rgMeshIndirectArgs, RHIResourceState::UnorderedAccess);
+                        if (d.rgMeshColors.IsValid())
+                            pb.Write(d.rgMeshColors, RHIResourceState::UnorderedAccess);
                     }
 
                     pb.SetExecutionCallback(
@@ -1158,7 +1205,10 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
                             for (size_t i = 0; i < dispatches.size(); ++i) {
                                 const auto& d = dispatches[i];
 
-                                cmd->SetRootCBV(0,
+                                // Slot 1 (NOT 0) — slot 0 is RootConstants in
+                                // the bindless RS (dx12_pso_creation.cpp:182-187).
+                                // The mesh-instance CS's cbuffer is at register(b1).
+                                cmd->SetRootCBV(1,
                                     d.instanceCB.bufferHandle,
                                     d.instanceCB.offsetBytes,
                                     d.instanceCB.cpuPtr,

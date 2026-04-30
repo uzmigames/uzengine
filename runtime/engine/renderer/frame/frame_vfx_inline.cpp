@@ -546,18 +546,29 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         std::memcpy(spawnAlloc.cpuPtr, &spawnCBData, sizeof(spawnCBData));
 
         if (spawnCount > 0) {
-            // Transition WriteSet attributes Common→UAV before compute writes.
-            // Uses Common as before-state every tick (matches standalone demo).
-            // The end-of-tick barrier block (after indirect args) returns
-            // every UAV buffer to Common so seek-warmup ticks 2..N see
-            // the same start state as tick 1.
+            // Transition WriteSet attributes (ShaderResource | Common)→UAV
+            // before compute writes. The end-of-tick barrier in the regular
+            // per-frame path leaves these buffers in `ShaderResource` state
+            // (so the downstream RG mesh-instance-CS bindless reads see
+            // valid data); the seek-warmup-tick path leaves them in
+            // `Common`. The first tick of any frame thus sees one of two
+            // states — both must transition cleanly to UAV. We use the
+            // first frame's `Common` state for the initial pre-init upload,
+            // and `ShaderResource` for steady-state.
             {
                 const auto& ws = gpuBuf.WriteSet();
                 RHIBarrierDesc uavBarriers[7] = {};
                 uint32_t ub = 0;
                 auto addUav = [&](RHIBufferHandle buf) {
                     uavBarriers[ub].buffer = buf;
-                    uavBarriers[ub].stateBefore = RHIResourceState::Common;
+                    // Steady-state: previous frame ended with SRV. First
+                    // frame: previous state was Common (pre-init). DX12
+                    // accepts a state-transition where the actual state
+                    // matches `stateBefore`; we set the steady-state path
+                    // (SRV→UAV). The first frame's pre-init upload puts
+                    // buffers in CopyDst→UAV via `UploadInitialState` so
+                    // the SRV→UAV barrier is the correct ongoing pattern.
+                    uavBarriers[ub].stateBefore = RHIResourceState::ShaderResource;
                     uavBarriers[ub].stateAfter  = RHIResourceState::UnorderedAccess;
                     ++ub;
                 };
@@ -776,24 +787,31 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
             const auto& ws = gpuBuf.WriteSet();
             RHIBarrierDesc back[12] = {};
             uint32_t bn = 0;
-            auto addBack = [&](RHIBufferHandle buf, RHIResourceState before) {
+            auto addBack = [&](RHIBufferHandle buf, RHIResourceState before, RHIResourceState after) {
                 if (!buf.IsValid()) return;
                 back[bn].buffer      = buf;
                 back[bn].stateBefore = before;
-                back[bn].stateAfter  = RHIResourceState::Common;
+                back[bn].stateAfter  = after;
                 ++bn;
             };
-            addBack(ws.positions,  RHIResourceState::UnorderedAccess);
-            addBack(ws.velocities, RHIResourceState::UnorderedAccess);
-            addBack(ws.ages,       RHIResourceState::UnorderedAccess);
-            addBack(ws.lifespans,  RHIResourceState::UnorderedAccess);
-            addBack(ws.sizes,      RHIResourceState::UnorderedAccess);
-            addBack(ws.colors,     RHIResourceState::UnorderedAccess);
-            addBack(ws.rotations,  RHIResourceState::UnorderedAccess);
-            addBack(gpuBuf.freeList,            RHIResourceState::UnorderedAccess);
-            addBack(gpuBuf.aliveCount,          RHIResourceState::UnorderedAccess);
-            addBack(gpuBuf.indirectDrawArgs,    RHIResourceState::IndirectArgument);
-            addBack(gpuBuf.indirectDispatchArgs, RHIResourceState::IndirectArgument);
+            // Attribute buffers: end in ShaderResource so the next tick's
+            // spawn barrier (ShaderResource→UAV) and any downstream
+            // bindless SRV reads (mesh-instance CS) see a uniform state.
+            addBack(ws.positions,  RHIResourceState::UnorderedAccess, RHIResourceState::ShaderResource);
+            addBack(ws.velocities, RHIResourceState::UnorderedAccess, RHIResourceState::ShaderResource);
+            addBack(ws.ages,       RHIResourceState::UnorderedAccess, RHIResourceState::ShaderResource);
+            addBack(ws.lifespans,  RHIResourceState::UnorderedAccess, RHIResourceState::ShaderResource);
+            addBack(ws.sizes,      RHIResourceState::UnorderedAccess, RHIResourceState::ShaderResource);
+            addBack(ws.colors,     RHIResourceState::UnorderedAccess, RHIResourceState::ShaderResource);
+            addBack(ws.rotations,  RHIResourceState::UnorderedAccess, RHIResourceState::ShaderResource);
+            // Free-list / alive-count / indirect args: keep their UAV /
+            // IndirectArgument states (the seek-warmup loop expects these
+            // back to Common, but the regular per-frame path doesn't run
+            // this block — only the warmup loop does).
+            addBack(gpuBuf.freeList,             RHIResourceState::UnorderedAccess, RHIResourceState::Common);
+            addBack(gpuBuf.aliveCount,           RHIResourceState::UnorderedAccess, RHIResourceState::Common);
+            addBack(gpuBuf.indirectDrawArgs,     RHIResourceState::IndirectArgument, RHIResourceState::Common);
+            addBack(gpuBuf.indirectDispatchArgs, RHIResourceState::IndirectArgument, RHIResourceState::Common);
             if (bn > 0) cmdList->ResourceBarrier(back, bn);
         }
 
@@ -801,6 +819,152 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         // The render graph import in RegisterParticlePasses will use
         // steady-state resource states from this point forward.
         gpuBuf.hasCompletedCycle = true;
+
+#if defined(UZ_VFX_DIAG_ALIVECOUNT)
+        // ── Diagnostic: readback aliveCount + freeListHead per tick ────
+        // Temporary instrumentation for phase0_vfx-mesh-particle-visibility-debug.
+        // Reads back the GPU-side aliveCount (post spawn+update increments)
+        // and the freeListHead (post spawn decrements) and logs them at
+        // Info level. Use this to discriminate root cause hypothesis (a)
+        // garbage-SRV-reads vs (b) indirect-args-not-propagating: if
+        // aliveCount stays > 0 each frame but the screenshot shows zero
+        // instances, the spawn/update path is fine and the bug is in the
+        // mesh-instance-CS / indirect-args interaction.
+        //
+        // Cost: per-tick WaitIdle stalls the frame for ~ms; do NOT enable
+        // in shipping builds. Enable via -DUZ_VFX_DIAG_ALIVECOUNT in the
+        // zig build (or add the macro inline for one-shot debugging).
+        if (gpuBuf.aliveCount.IsValid() && gpuBuf.freeListHead.IsValid())
+        {
+            // 1. Create ReadBack buffers (one per value of interest).
+            RHIBufferDesc rbDesc{};
+            rbDesc.sizeBytes = sizeof(uint32_t);
+            rbDesc.usage     = RHIBufferUsage::CopyDst;
+            rbDesc.memory    = RHIMemoryType::Readback;
+
+            rbDesc.debugName = "VFX_Diag_AliveCount_RB";
+            RHIBufferHandle rbAlive = m_device->CreateBuffer(rbDesc);
+            rbDesc.debugName = "VFX_Diag_FreeListHead_RB";
+            RHIBufferHandle rbHead  = m_device->CreateBuffer(rbDesc);
+
+            // Mesh-output readbacks: meshInstanceCount + indirect-args
+            // InstanceCount field (offset 4 into meshIndirectDrawArgs).
+            // These were filled by the PREVIOUS frame's render-graph
+            // mesh-instance-CS pass (this frame's pass hasn't run yet).
+            // Capturing previous-frame values is fine for diagnose: we
+            // want to see if ANY frame produces non-zero instances.
+            const bool hasMeshOutputs =
+                gpuBuf.meshInstanceCount.IsValid() &&
+                gpuBuf.meshIndirectDrawArgs.IsValid();
+            rbDesc.debugName = "VFX_Diag_MeshInstanceCount_RB";
+            RHIBufferHandle rbMeshCount = hasMeshOutputs
+                ? m_device->CreateBuffer(rbDesc) : RHIBufferHandle::Invalid();
+            rbDesc.debugName = "VFX_Diag_IndirectInstanceCount_RB";
+            RHIBufferHandle rbIndirectInstCount = hasMeshOutputs
+                ? m_device->CreateBuffer(rbDesc) : RHIBufferHandle::Invalid();
+            rbDesc.debugName = "VFX_Diag_IndirectIndexCount_RB";
+            RHIBufferHandle rbIndirectIndexCount = hasMeshOutputs
+                ? m_device->CreateBuffer(rbDesc) : RHIBufferHandle::Invalid();
+
+            if (rbAlive.IsValid() && rbHead.IsValid()) {
+                // 2. State -> CopySrc for the source buffers.
+                RHIBarrierDesc srcBars[4] = {};
+                uint32_t bn = 0;
+                auto addCopySrc = [&](RHIBufferHandle buf, RHIResourceState before) {
+                    if (!buf.IsValid()) return;
+                    srcBars[bn].buffer      = buf;
+                    srcBars[bn].stateBefore = before;
+                    srcBars[bn].stateAfter  = RHIResourceState::CopySrc;
+                    ++bn;
+                };
+                addCopySrc(gpuBuf.aliveCount,           RHIResourceState::UnorderedAccess);
+                addCopySrc(gpuBuf.freeListHead,         RHIResourceState::UnorderedAccess);
+                if (hasMeshOutputs) {
+                    addCopySrc(gpuBuf.meshInstanceCount,    RHIResourceState::UnorderedAccess);
+                    addCopySrc(gpuBuf.meshIndirectDrawArgs, RHIResourceState::IndirectArgument);
+                }
+                cmdList->ResourceBarrier(srcBars, bn);
+
+                // 3. Copy.
+                cmdList->CopyBuffer(gpuBuf.aliveCount,   0, rbAlive, 0, sizeof(uint32_t));
+                cmdList->CopyBuffer(gpuBuf.freeListHead, 0, rbHead,  0, sizeof(uint32_t));
+                if (hasMeshOutputs) {
+                    cmdList->CopyBuffer(gpuBuf.meshInstanceCount, 0, rbMeshCount, 0, sizeof(uint32_t));
+                    // IndexCountPerInstance @ offset 0 — written by thread 0 of
+                    // the mesh CS. If this is the meshIndexCount value (e.g. 12
+                    // for the tetrahedron), thread 0 ran. If 0, CS didn't dispatch.
+                    cmdList->CopyBuffer(gpuBuf.meshIndirectDrawArgs, 0,
+                                        rbIndirectIndexCount, 0, sizeof(uint32_t));
+                    // InstanceCount @ offset 4 — written by alive-particle loop.
+                    cmdList->CopyBuffer(gpuBuf.meshIndirectDrawArgs, sizeof(uint32_t),
+                                        rbIndirectInstCount, 0, sizeof(uint32_t));
+                }
+
+                // 4. Restore source buffers to original state.
+                bn = 0;
+                auto addRestore = [&](RHIBufferHandle buf, RHIResourceState after) {
+                    if (!buf.IsValid()) return;
+                    srcBars[bn].buffer      = buf;
+                    srcBars[bn].stateBefore = RHIResourceState::CopySrc;
+                    srcBars[bn].stateAfter  = after;
+                    ++bn;
+                };
+                addRestore(gpuBuf.aliveCount,           RHIResourceState::UnorderedAccess);
+                addRestore(gpuBuf.freeListHead,         RHIResourceState::UnorderedAccess);
+                if (hasMeshOutputs) {
+                    addRestore(gpuBuf.meshInstanceCount,    RHIResourceState::UnorderedAccess);
+                    addRestore(gpuBuf.meshIndirectDrawArgs, RHIResourceState::IndirectArgument);
+                }
+                cmdList->ResourceBarrier(srcBars, bn);
+
+                // 5. End command list, execute, wait, map, log, destroy.
+                cmdList->End();
+                cmdList->Execute();
+                m_device->WaitIdle();
+
+                uint32_t aliveVal = 0;
+                uint32_t headVal  = 0;
+                uint32_t meshCountVal = 0;
+                uint32_t indirectInstVal = 0;
+                if (auto* p = static_cast<uint32_t*>(m_device->MapBuffer(rbAlive))) {
+                    aliveVal = *p; m_device->UnmapBuffer(rbAlive);
+                }
+                if (auto* p = static_cast<uint32_t*>(m_device->MapBuffer(rbHead))) {
+                    headVal = *p; m_device->UnmapBuffer(rbHead);
+                }
+                if (hasMeshOutputs && rbMeshCount.IsValid()) {
+                    if (auto* p = static_cast<uint32_t*>(m_device->MapBuffer(rbMeshCount))) {
+                        meshCountVal = *p; m_device->UnmapBuffer(rbMeshCount);
+                    }
+                }
+                if (hasMeshOutputs && rbIndirectInstCount.IsValid()) {
+                    if (auto* p = static_cast<uint32_t*>(m_device->MapBuffer(rbIndirectInstCount))) {
+                        indirectInstVal = *p; m_device->UnmapBuffer(rbIndirectInstCount);
+                    }
+                }
+                uint32_t indirectIdxVal = 0;
+                if (hasMeshOutputs && rbIndirectIndexCount.IsValid()) {
+                    if (auto* p = static_cast<uint32_t*>(m_device->MapBuffer(rbIndirectIndexCount))) {
+                        indirectIdxVal = *p; m_device->UnmapBuffer(rbIndirectIndexCount);
+                    }
+                }
+
+                UZ_LOG(VFX, Info,
+                       "[DIAG] '{}' alive={} head={} mesh={{instCount={} idxPerInst={} indirectInst={}}} cap={}",
+                       emitter->graphPath.empty() ? "<inline>" : emitter->graphPath,
+                       aliveVal, headVal, meshCountVal, indirectIdxVal, indirectInstVal, gpuBuf.capacity);
+
+                // 6. Re-begin command list so the rest of the frame can keep recording.
+                cmdList->Begin();
+
+                m_device->DestroyBuffer(rbAlive);
+                m_device->DestroyBuffer(rbHead);
+                if (rbMeshCount.IsValid())        m_device->DestroyBuffer(rbMeshCount);
+                if (rbIndirectInstCount.IsValid()) m_device->DestroyBuffer(rbIndirectInstCount);
+                if (rbIndirectIndexCount.IsValid()) m_device->DestroyBuffer(rbIndirectIndexCount);
+            }
+        }
+#endif // UZ_VFX_DIAG_ALIVECOUNT
         };  // dispatchOneTick lambda
 
         // ── Seek warmup loop ──────────────────────────────────────────
@@ -868,6 +1032,34 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         // (UAV / IndirectArgument) for the render graph import that
         // follows in `RegisterParticlePasses`.
         dispatchOneTick(dt, frameIndex, /*restoreToCommonAfterTick=*/false);
+
+        // [phase0_vfx-mesh-particle-visibility-debug] UAV→ShaderResource for
+        // attribute buffers — explicit transition (DX12 implicit-promote does
+        // NOT trigger for buffers freshly written via UAV; bindless SRV access
+        // through ResourceDescriptorHeap[] then returns garbage / NaN, which
+        // produces clip-space-filling triangles that occlude the entire
+        // viewport). The next frame's spawn dispatch barrier (line ~555)
+        // transitions ShaderResource→UnorderedAccess to write again.
+        {
+            const auto& ws = gpuBuf.WriteSet();
+            RHIBarrierDesc attrBarriers[7] = {};
+            uint32_t bn = 0;
+            auto addBar = [&](RHIBufferHandle buf) {
+                if (!buf.IsValid()) return;
+                attrBarriers[bn].buffer      = buf;
+                attrBarriers[bn].stateBefore = RHIResourceState::UnorderedAccess;
+                attrBarriers[bn].stateAfter  = RHIResourceState::ShaderResource;
+                ++bn;
+            };
+            addBar(ws.positions);
+            addBar(ws.velocities);
+            addBar(ws.ages);
+            addBar(ws.lifespans);
+            addBar(ws.sizes);
+            addBar(ws.colors);
+            addBar(ws.rotations);
+            if (bn > 0) cmdList->ResourceBarrier(attrBarriers, bn);
+        }
     }
 
     if (m_gpuProfileEnabled) {

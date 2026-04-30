@@ -95,7 +95,18 @@ static const uint INDIRECT_START_INSTANCE_OFFSET = 16;  ///< StartInstanceLocati
 /// Per-dispatch constants uploaded by the CPU each frame.
 ///
 /// Layout is 16-byte aligned per HLSL packing rules.
-cbuffer VFXMeshInstanceConstants : register(b0) {
+// CB lives at b1 to match the bindless root signature: slot 0 is reserved
+// for `RootConstants(16 DWORDs)` (per dx12_pso_creation.cpp:182-187), and
+// slot 1 is the CBV. Other VFX compute shaders (particle_spawn_cs,
+// particle_death_spawn_cs, particle_indirect_args_cs) all bind at b1 too —
+// previously this CS was at b0, which caused `SetRootCBV(0)` to silently
+// no-op against the RootConstants slot, leaving every CB field as zero,
+// `aliveCount` reading 0, and ALL threads early-returning at
+// `if (sortedSlot >= aliveCount) return;` — the mesh CS produced zero
+// instances for any asset-driven mesh emitter.
+//
+// @ref phase0_vfx-mesh-particle-visibility-debug
+cbuffer VFXMeshInstanceConstants : register(b1) {
     // ── Simulation parameters ─────────────────────────────────────────────
     uint     aliveCount;             ///< Total alive particles to process.     0
     float    meshScaleX;             ///< Per-instance X scale.                 4
@@ -352,16 +363,27 @@ void main(uint3 dtid : SV_DispatchThreadID)
 #endif
 
     float  age      = agesBuf[particleIdx];
-    float  lifespan = max(lifespansBuf[particleIdx], 0.001f);
+    float  lifespan = lifespansBuf[particleIdx];
 
-    // ── Skip dead particles ───────────────────────────────────────────────────
-    // In the sorted path the bitonic sort already pushed dead particles past
-    // the [0..aliveCount-1] range we dispatch over; this check is defensive
-    // against a half-frame race where a particle dies between simulation and
-    // sort. In the unsorted path the dispatch covers aliveCount slots starting
-    // at 0, so dead particles can appear in the dispatch range and must be
-    // filtered here.
-    if (age >= lifespan) return;
+    // ── Skip dead AND unspawned particles ────────────────────────────────────
+    // The CPU dispatches `cpuAliveCount = capacity` threads (Godot pattern:
+    // GPU free-list handles slot allocation; CPU just dispatches the full
+    // buffer). For mesh particles this means many of the threads target
+    // slots that are either:
+    //   (a) dead — `age >= lifespan` (the post-decay state for a returned slot)
+    //   (b) unspawned — `lifespan == 0.0f` (the zero-init state from
+    //       GPUParticleBuffer::InitializeData; spawn writes a positive
+    //       lifespan only when it actually consumes the slot)
+    // BOTH must early-return. The previous `lifespan = max(..., 0.001f)`
+    // clamp masked case (b) — unspawned slots with lifespan=0 became
+    // `0 >= 0.001f = false` and produced a transform from garbage position
+    // / velocity / colour data, filling the indirect args' InstanceCount
+    // with the full capacity even when only a handful of particles were
+    // alive. The mesh draw then rendered ~200 garbage instances on top
+    // of the real ones.
+    //
+    // @ref phase0_vfx-mesh-particle-visibility-debug
+    if (lifespan <= 0.0f || age >= lifespan) return;
 
     float3 pos   = positionsBuf[particleIdx].xyz;
     float3 vel   = velocitiesBuf[particleIdx].xyz;

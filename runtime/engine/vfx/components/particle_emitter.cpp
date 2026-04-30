@@ -3,6 +3,7 @@
 #include "particle_emitter.h"
 
 #include "engine/vfx/core/particle_budget.h"
+#include "engine/vfx/modules/mesh_render_module.h"
 
 #include "engine/assertions/engine_assert.h"
 #include "engine/logging/log.h"
@@ -77,6 +78,30 @@ bool ParticleEmitter::Initialize(IRHIDevice* device, ParticleBudget& budget) {
             UZ_LOG(VFX, Error,
                    "ParticleEmitter::Initialize: mesh buffer creation failed, capacity={}",
                    granted);
+            buffer.Destroy(device);
+            budget.Return(granted);
+            return false;
+        }
+
+        // The render module owns its own per-instance color + transform
+        // buffers (separate from `buffer.meshInstanceTransforms`, which
+        // is used by the mesh-instance compute shader's transform write
+        // path). The color buffer in particular must exist before
+        // `RegisterParticlePasses` runs, otherwise the bindless
+        // `instanceColorsUavIndex` falls back to descriptor 0 (a
+        // garbage resource) and the pixel shader's
+        // `ResourceDescriptorHeap[g_instanceColorsBufferIdx]` returns
+        // zeros — making every mesh particle render as black on a
+        // black-blanked HDR composite. Caused phase0
+        // `vfx-mesh-particle-visibility-debug` regression.
+        // @ref phase0_vfx-mesh-particle-visibility-debug
+        auto* meshModule = static_cast<MeshRenderModule*>(
+            moduleStack.renderModule.get());
+        if (!meshModule->CreateGPUBuffers(device)) {
+            UZ_LOG(VFX, Error,
+                   "ParticleEmitter::Initialize: MeshRenderModule::CreateGPUBuffers "
+                   "failed, capacity={} maxInstances={}",
+                   granted, meshModule->GetConfig().maxInstances);
             buffer.Destroy(device);
             budget.Return(granted);
             return false;

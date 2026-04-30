@@ -35,17 +35,38 @@ cbuffer VFXMeshRenderConstants : register(b0) {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Constant Buffer (b1) — per-frame lighting data
+// Constant Buffer (b1) — engine-global PerFrameCB
 // ─────────────────────────────────────────────────────────────────────────────
-
-cbuffer VFXMeshLightConstants : register(b1) {
-    float3 lightDirection;       ///< Normalized world-space light direction (towards light).
-    float  _pad0;
-    float3 lightColor;           ///< Light color (linear RGB, pre-multiplied by intensity).
-    float  _pad1;
-    float3 ambientColor;         ///< Ambient light color (linear RGB).
-    float  _pad2;
+//
+// MUST match `runtime/engine/renderer/core/params/per_frame_params.h` byte-for-byte
+// (mirrors `particle_mesh_vs.hlsl:58`). The bindless root signature pins b1 as
+// a CBV pointing at PerFrameCB; the previous local cbuffer `VFXMeshLightConstants`
+// at the same register collided with that binding and caused the PS to read
+// PerFrameCB fields as garbage light data — making lit mesh particles render
+// pure black even when alive instances were dispatched.
+//
+// @ref phase0_vfx-mesh-particle-visibility-debug
+cbuffer PerFrameCB : register(b1) {
+    row_major float4x4 viewProj;
+    float4   cameraPos;
+    float4   timeParams;
+    float4   lightDir;          ///< xyz = direction toward light (matches VS).
+    float4   lightColor;        ///< xyz = color * intensity.
+    float4   ambientColor;      ///< xyz = ambient radiance.
+    row_major float4x4 invViewProj;
+    float    nearPlane;
+    float    farPlane;
+    uint     _perFramePad0;
+    uint     _perFramePad1;
+    uint     _perFramePad2;
+    uint     _perFramePad3;
+    float    _perFramePad4;
+    float    _perFramePad5;
+    float    _perFramePad6;
+    float    _perFramePad7;
+    float    exposure;
 };
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Instance Color Buffer
@@ -100,7 +121,6 @@ struct PSInput {
 /// the instance color for translucent particle support.
 float4 main(PSInput input) : SV_Target
 {
-    // Read per-instance color (RGBA).
     float4 instanceColor = LoadInstanceColor(input.instanceID);
 
     // Normalize the interpolated world normal.
@@ -109,11 +129,13 @@ float4 main(PSInput input) : SV_Target
     // Simple half-Lambert N-dot-L for soft particle lighting.
     // Half-Lambert wraps the lighting to avoid completely dark backsides,
     // which looks better for small particle meshes viewed from all angles.
-    float NdotL = dot(N, lightDirection);
+    // PerFrameCB.lightDir.xyz / lightColor.xyz / ambientColor.xyz come from
+    // the engine-global PerFrameCB (matches particle_mesh_vs.hlsl b1 binding).
+    float NdotL = dot(N, lightDir.xyz);
     float halfLambert = NdotL * 0.5f + 0.5f;
 
     // Combine directional lighting with ambient.
-    float3 lighting = lightColor * halfLambert + ambientColor;
+    float3 lighting = lightColor.xyz * halfLambert + ambientColor.xyz;
 
     // Final color: instance tint * lighting.
     float3 finalColor = instanceColor.rgb * lighting;
