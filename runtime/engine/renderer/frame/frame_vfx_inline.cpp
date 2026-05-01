@@ -8,6 +8,14 @@
 /// The render graph still handles rendering (billboard draw) and the necessary
 /// UAV -> SRV / IndirectArgument barrier transitions for the draw pass.
 
+// [phase0_vfx-mesh-bindless-attr-read-bug] One-shot diagnostic enablement.
+// Uncomment for the diagnostic session that traces what the GPU actually
+// has in WriteSet.positions / lifespans / ages immediately after the inline
+// sim's UAV->SR barrier (= what the mesh-instance CS bindless-reads see).
+// Stalls the CPU per-frame; do NOT leave enabled in shipping builds.
+// #define UZ_VFX_DIAG_ATTR_READBACK 1
+// #define UZ_VFX_DIAG_ALIVECOUNT 1
+
 #include "scene_renderer.h"
 
 // Umbrella headers
@@ -1040,6 +1048,16 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         // produces clip-space-filling triangles that occlude the entire
         // viewport). The next frame's spawn dispatch barrier (line ~555)
         // transitions ShaderResource→UnorderedAccess to write again.
+        //
+        // KNOWN INCOMPLETE — phase0_vfx-mesh-bindless-attr-read-bug:
+        // This barrier is necessary but NOT sufficient. The
+        // bindless SRV read in the mesh-instance CS still returns zero
+        // even with the UAV→SR transition + an explicit UAV-flush
+        // barrier (tested 2026-04-30 on the DX12 backend). The
+        // CPU-side `CopyBuffer` readback (`UZ_VFX_DIAG_ATTR_READBACK`)
+        // sees the spawn-written data correctly, but the in-shader
+        // bindless read does not. Investigating via PIX/RenderDoc is
+        // the next step (descriptor heap state inspection).
         {
             const auto& ws = gpuBuf.WriteSet();
             RHIBarrierDesc attrBarriers[7] = {};
@@ -1060,6 +1078,179 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
             addBar(ws.rotations);
             if (bn > 0) cmdList->ResourceBarrier(attrBarriers, bn);
         }
+
+#if defined(UZ_VFX_DIAG_ATTR_READBACK)
+        // ── Diagnostic: per-frame readback of WriteSet attribute buffers ───
+        // Phase 1.1 of phase0_vfx-mesh-bindless-attr-read-bug.
+        //
+        // Reads back positions[0..3], lifespans[0..3], ages[0..3] from the
+        // WriteSet immediately AFTER the inline UAV→ShaderResource
+        // transition above and BEFORE the render graph executes the
+        // mesh-instance CS pass. The values logged here are what the GPU
+        // actually has in memory right after spawn+update wrote them.
+        //
+        // Discriminator:
+        //   • Sane values close to (0, 0, 0..150) cm  → spawn/update writes
+        //     are correct, the bindless read inside the mesh CS is the bug
+        //     (RG state corruption / UAV write hazard / per-emitter ordering
+        //     hypotheses 1-3).
+        //   • Garbage values > 1000 / NaN              → spawn or update
+        //     writes garbage (worldPosition or attach.resolved hypothesis 4).
+        //   • Mixed (some sane, some garbage)         → buffer ping-pong
+        //     mismatch — WriteSet/ReadSet got swapped between sim and read.
+        //
+        // Cost: per-frame WaitIdle stalls the CPU for ~ms; do NOT enable in
+        // shipping builds. Enable via -DUZ_VFX_DIAG_ATTR_READBACK in the zig
+        // build OR by adding `#define UZ_VFX_DIAG_ATTR_READBACK 1` at the top
+        // of this file for a one-shot debugging session.
+        if (gpuBuf.WriteSet().positions.IsValid() &&
+            gpuBuf.WriteSet().lifespans.IsValid() &&
+            gpuBuf.WriteSet().ages.IsValid())
+        {
+            const auto& ws = gpuBuf.WriteSet();
+
+            // Read the WHOLE buffer so we don't miss the active region —
+            // spawn pops from the END of the free-list (slot indices
+            // count down from `capacity-1`), so the first few slots are
+            // always empty until late in steady-state. Reading the full
+            // buffer + scanning client-side for non-zero entries is
+            // essential for catching the actually-spawned particles.
+            const uint32_t kReadCount = gpuBuf.capacity;
+
+            // 1. Create per-attribute readback buffers sized for the full SoA.
+            RHIBufferDesc rbPosDesc{};
+            rbPosDesc.sizeBytes = static_cast<uint64_t>(kReadCount) *
+                                  sizeof(float) * 4;  // float4 stride
+            rbPosDesc.usage     = RHIBufferUsage::CopyDst;
+            rbPosDesc.memory    = RHIMemoryType::Readback;
+            rbPosDesc.debugName = "VFX_DiagAttr_Pos_RB";
+            RHIBufferHandle rbPos = m_device->CreateBuffer(rbPosDesc);
+
+            RHIBufferDesc rbScalarDesc{};
+            rbScalarDesc.sizeBytes = static_cast<uint64_t>(kReadCount) *
+                                     sizeof(float);
+            rbScalarDesc.usage     = RHIBufferUsage::CopyDst;
+            rbScalarDesc.memory    = RHIMemoryType::Readback;
+            rbScalarDesc.debugName = "VFX_DiagAttr_Lifespan_RB";
+            RHIBufferHandle rbLifespan = m_device->CreateBuffer(rbScalarDesc);
+            rbScalarDesc.debugName = "VFX_DiagAttr_Age_RB";
+            RHIBufferHandle rbAge = m_device->CreateBuffer(rbScalarDesc);
+
+            if (rbPos.IsValid() && rbLifespan.IsValid() && rbAge.IsValid())
+            {
+                // 2. Transition source buffers ShaderResource → CopySrc.
+                RHIBarrierDesc srcBars[3] = {};
+                srcBars[0].buffer      = ws.positions;
+                srcBars[0].stateBefore = RHIResourceState::ShaderResource;
+                srcBars[0].stateAfter  = RHIResourceState::CopySrc;
+                srcBars[1].buffer      = ws.lifespans;
+                srcBars[1].stateBefore = RHIResourceState::ShaderResource;
+                srcBars[1].stateAfter  = RHIResourceState::CopySrc;
+                srcBars[2].buffer      = ws.ages;
+                srcBars[2].stateBefore = RHIResourceState::ShaderResource;
+                srcBars[2].stateAfter  = RHIResourceState::CopySrc;
+                cmdList->ResourceBarrier(srcBars, 3);
+
+                cmdList->CopyBuffer(ws.positions, 0, rbPos, 0,
+                                    rbPosDesc.sizeBytes);
+                cmdList->CopyBuffer(ws.lifespans, 0, rbLifespan, 0,
+                                    rbScalarDesc.sizeBytes);
+                cmdList->CopyBuffer(ws.ages, 0, rbAge, 0,
+                                    rbScalarDesc.sizeBytes);
+
+                RHIBarrierDesc restoreBars[3] = {};
+                restoreBars[0].buffer      = ws.positions;
+                restoreBars[0].stateBefore = RHIResourceState::CopySrc;
+                restoreBars[0].stateAfter  = RHIResourceState::ShaderResource;
+                restoreBars[1].buffer      = ws.lifespans;
+                restoreBars[1].stateBefore = RHIResourceState::CopySrc;
+                restoreBars[1].stateAfter  = RHIResourceState::ShaderResource;
+                restoreBars[2].buffer      = ws.ages;
+                restoreBars[2].stateBefore = RHIResourceState::CopySrc;
+                restoreBars[2].stateAfter  = RHIResourceState::ShaderResource;
+                cmdList->ResourceBarrier(restoreBars, 3);
+
+                cmdList->End();
+                cmdList->Execute();
+                m_device->WaitIdle();
+
+                std::vector<float> posData(kReadCount * 4);
+                std::vector<float> lifespanData(kReadCount);
+                std::vector<float> ageData(kReadCount);
+                if (auto* p = static_cast<float*>(m_device->MapBuffer(rbPos))) {
+                    std::memcpy(posData.data(), p, posData.size() * sizeof(float));
+                    m_device->UnmapBuffer(rbPos);
+                }
+                if (auto* p = static_cast<float*>(m_device->MapBuffer(rbLifespan))) {
+                    std::memcpy(lifespanData.data(), p, lifespanData.size() * sizeof(float));
+                    m_device->UnmapBuffer(rbLifespan);
+                }
+                if (auto* p = static_cast<float*>(m_device->MapBuffer(rbAge))) {
+                    std::memcpy(ageData.data(), p, ageData.size() * sizeof(float));
+                    m_device->UnmapBuffer(rbAge);
+                }
+
+                // Scan: count alive (lifespan > 0), find min/max position
+                // magnitude, sample first 3 alive slots, sample first 3 dead
+                // slots (lifespan == 0) to see if they have garbage pos.
+                uint32_t aliveSeen = 0;
+                float minPosMag = 1.0e30f;
+                float maxPosMag = 0.0f;
+                int firstAliveIdx[3] = { -1, -1, -1 };
+                int firstDeadIdx[3]  = { -1, -1, -1 };
+                int nAlive = 0;
+                int nDead  = 0;
+                for (uint32_t i = 0; i < kReadCount; ++i) {
+                    const float life = lifespanData[i];
+                    if (life > 0.0f) {
+                        ++aliveSeen;
+                        const float px = posData[i*4 + 0];
+                        const float py = posData[i*4 + 1];
+                        const float pz = posData[i*4 + 2];
+                        const float mag = std::sqrt(px*px + py*py + pz*pz);
+                        if (mag < minPosMag) minPosMag = mag;
+                        if (mag > maxPosMag) maxPosMag = mag;
+                        if (nAlive < 3) firstAliveIdx[nAlive++] = static_cast<int>(i);
+                    } else if (nDead < 3) {
+                        firstDeadIdx[nDead++] = static_cast<int>(i);
+                    }
+                }
+
+                UZ_LOG(VFX, Info,
+                       "[DIAG-ATTR f={}] '{}' cpuAlive={} gpuAliveSeen={} cap={} "
+                       "posMagRange=[{:.2f}, {:.2f}]",
+                       frameIndex,
+                       emitter->graphPath.empty() ? "<inline>" : emitter->graphPath,
+                       emitter->cpuAliveCount, aliveSeen, gpuBuf.capacity,
+                       (aliveSeen > 0) ? minPosMag : 0.0f, maxPosMag);
+
+                for (int k = 0; k < nAlive; ++k) {
+                    const int i = firstAliveIdx[k];
+                    UZ_LOG(VFX, Info,
+                           "[DIAG-ATTR f={}]   ALIVE slot[{}] pos=({:.2f}, {:.2f}, {:.2f}) "
+                           "life={:.3f} age={:.3f}",
+                           frameIndex, i,
+                           posData[i*4 + 0], posData[i*4 + 1], posData[i*4 + 2],
+                           lifespanData[i], ageData[i]);
+                }
+                for (int k = 0; k < nDead; ++k) {
+                    const int i = firstDeadIdx[k];
+                    UZ_LOG(VFX, Info,
+                           "[DIAG-ATTR f={}]   DEAD  slot[{}] pos=({:.2f}, {:.2f}, {:.2f}) "
+                           "life={:.3f} age={:.3f}",
+                           frameIndex, i,
+                           posData[i*4 + 0], posData[i*4 + 1], posData[i*4 + 2],
+                           lifespanData[i], ageData[i]);
+                }
+
+                cmdList->Begin();
+
+                m_device->DestroyBuffer(rbPos);
+                m_device->DestroyBuffer(rbLifespan);
+                m_device->DestroyBuffer(rbAge);
+            }
+        }
+#endif // UZ_VFX_DIAG_ATTR_READBACK
     }
 
     if (m_gpuProfileEnabled) {
