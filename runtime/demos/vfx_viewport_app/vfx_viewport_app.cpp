@@ -247,9 +247,17 @@ void VFXViewportApp::OnStart() {
         m_activeEmitterIdx = 0;
         m_currentPreset    = -1;  // sentinel: preset cycling disabled
 
-        if (auto* overlay = GetVfxEditorOverlay()) {
-            overlay->SetVisible(false);  // overlay is preset-centric; off in asset mode
-        }
+        // Asset mode used to hide the entire editor overlay
+        // (`overlay->SetVisible(false)`) because the legacy preset cycler
+        // was preset-centric. The Niagara-parity editor (phase 11) works
+        // for any single emitter regardless of source, so the overlay is
+        // shown in BOTH modes now. Preset cycling stays disabled (the
+        // helper skips `SetPresetNames` + `onLoadPreset`) but every other
+        // editor capability — parameter inspector, splitter widget, color
+        // picker, module stack, multi-emitter add/duplicate/delete/move —
+        // works against the asset-loaded emitter exactly the same.
+        // @ref phase17_vfx-viewport-overlay-asset-mode
+        ConfigureEditorOverlay(/*enablePresetCycling=*/false);
         return;
     }
 
@@ -342,114 +350,7 @@ void VFXViewportApp::OnStart() {
            kPresetNames[m_currentPreset]);
 
     // ── Configure VFX Editor Overlay ────────────────────────────────────
-    if (auto* overlay = GetVfxEditorOverlay()) {
-        std::vector<std::string> presetNames;
-        for (int i = 0; i < kPresetCount; ++i) presetNames.push_back(kPresetNames[i]);
-        overlay->SetPresetNames(presetNames);
-        overlay->SetVisible(true); // Start with overlay visible
-        overlay->SetNiagaraMode(true); // Phase 0 — default to Niagara-parity editor
-        overlay->SetLayoutMode(VfxEditorLayoutMode::SplitHorizontal); // Phase 15.4 — 50/50 split default
-
-        // Seed the emitter tab list for the Niagara-mode system
-        // overview panel. `RefreshEmitterNames` builds the label list
-        // from `m_emitterPresets` so adding / duplicating / deleting
-        // emitters keeps the overview in sync automatically.
-        RefreshEmitterNames();
-
-        // Preset load: apply + restart
-        overlay->onLoadPreset = [this](int presetIdx, ParticleEmitter*) {
-            if (presetIdx < 0 || presetIdx >= kPresetCount) return;
-            m_currentPreset = presetIdx;
-            m_switchPresetPending = true;
-        };
-
-        // Restart
-        overlay->onRestart = [this]() {
-            m_restartPending = true;
-        };
-
-        // Phase 12.10.0 — menu command dispatch. Each command from the
-        // redesigned menu bar (12.7) routes to the appropriate app
-        // action. Preset commands use the `Presets_Base + index`
-        // convention.
-        overlay->onMenuCommand = [this, overlay](VfxMenuCommand cmd) {
-            const uint16_t code = static_cast<uint16_t>(cmd);
-            const uint16_t presetBase = static_cast<uint16_t>(VfxMenuCommand::Presets_Base);
-            if (code >= presetBase && code < presetBase + static_cast<uint16_t>(kPresetCount)) {
-                const int idx = static_cast<int>(code - presetBase);
-                m_currentPreset = idx;
-                m_switchPresetPending = true;
-                return;
-            }
-            switch (cmd) {
-            case VfxMenuCommand::File_New:
-            case VfxMenuCommand::File_Open:
-            case VfxMenuCommand::File_Save:
-            case VfxMenuCommand::File_SaveAs:
-                // Demo has no file persistence — silently ignore.
-                break;
-            case VfxMenuCommand::File_Exit:
-                Quit();
-                break;
-            case VfxMenuCommand::Edit_Undo: {
-                auto& undo = overlay->UndoStack();
-                if (undo.CanUndo()) undo.Undo();
-                break;
-            }
-            case VfxMenuCommand::Edit_Redo: {
-                auto& undo = overlay->UndoStack();
-                if (undo.CanRedo()) undo.Redo();
-                break;
-            }
-            case VfxMenuCommand::View_NiagaraMode:
-                overlay->ToggleNiagaraMode();
-                break;
-            case VfxMenuCommand::View_ToggleStats:
-                // Stats overlay toggling is handled by the Application
-                // layer — no hook yet.
-                break;
-            case VfxMenuCommand::Help_Docs:
-            case VfxMenuCommand::Help_About:
-                // No demo-side implementation.
-                break;
-            default:
-                break;
-            }
-        };
-
-        // Phase 15.12 — multi-emitter callbacks. Structural ECS ops
-        // (create / destroy entities, reorder) are queued as pending
-        // flags and drained in OnUpdate so the demo never mutates the
-        // ECS list mid-overlay-tick.
-        overlay->onAddEmitterRequested = [this] {
-            m_pendingAddEmitter = true;
-        };
-        overlay->onEmitterDuplicated = [this](size_t idx) {
-            m_pendingDuplicateIdx = static_cast<int>(idx);
-        };
-        overlay->onEmitterDeleted = [this](size_t idx) {
-            m_pendingDeleteIdx = static_cast<int>(idx);
-        };
-        overlay->onEmitterMoved = [this](size_t src, size_t dst) {
-            m_pendingMoveSrc = static_cast<int>(src);
-            m_pendingMoveDst = static_cast<int>(dst);
-        };
-        overlay->onEmitterEnableToggled = [this](size_t idx, bool enabled) {
-            auto& w = GetWorld();
-            if (idx >= m_emitterEntities.size()) return;
-            Entity e = m_emitterEntities[idx];
-            if (!w.IsValid(e)) return;
-            if (!w.HasComponent<VfxEmitterComponent>(e)) return;
-            w.GetComponent<VfxEmitterComponent>(e).emitting = enabled;
-        };
-        overlay->onSelectEmitter = [this](int idx) {
-            if (idx < 0 || idx >= static_cast<int>(m_emitterEntities.size())) return;
-            m_activeEmitterIdx = idx;
-            if (idx < static_cast<int>(m_emitterPresets.size())) {
-                m_currentPreset = m_emitterPresets[idx];
-            }
-        };
-    }
+    ConfigureEditorOverlay(/*enablePresetCycling=*/true);
 
 }
 
@@ -475,6 +376,144 @@ void VFXViewportApp::RefreshEmitterNames() {
         m_activeEmitterIdx, 0,
         std::max(0, static_cast<int>(names.size()) - 1));
     overlay->SetEmitterNames(names, sel);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ConfigureEditorOverlay — Niagara-parity editor overlay setup.
+//
+// Shared between default mode (preset cycling enabled) and asset mode
+// (preset cycling disabled — overlay still hosts parameter inspector,
+// splitter, color picker, multi-emitter manipulation, etc.).
+//
+// @ref phase17_vfx-viewport-overlay-asset-mode — root cause of the bug
+//      where the entire overlay was hidden in asset mode.
+// ─────────────────────────────────────────────────────────────────────────────
+
+void VFXViewportApp::ConfigureEditorOverlay(bool enablePresetCycling) {
+    auto* overlay = GetVfxEditorOverlay();
+    if (overlay == nullptr) return;
+
+    overlay->SetVisible(true);
+    overlay->SetNiagaraMode(true);                                  // Phase 0
+    overlay->SetLayoutMode(VfxEditorLayoutMode::SplitHorizontal);   // Phase 15.4
+
+    if (enablePresetCycling) {
+        std::vector<std::string> presetNames;
+        presetNames.reserve(static_cast<size_t>(kPresetCount));
+        for (int i = 0; i < kPresetCount; ++i) {
+            presetNames.push_back(kPresetNames[i]);
+        }
+        overlay->SetPresetNames(presetNames);
+    }
+
+    // Seed the emitter tab list for the Niagara-mode system overview
+    // panel. `RefreshEmitterNames` builds the label list from
+    // `m_emitterPresets` so adding / duplicating / deleting emitters
+    // keeps the overview in sync automatically.
+    RefreshEmitterNames();
+
+    // Preset load callback — only wired when cycling is enabled. In asset
+    // mode the user has no way to trigger this from the UI, but defensive
+    // null-callback gating in the overlay handles the missing wire.
+    if (enablePresetCycling) {
+        overlay->onLoadPreset = [this](int presetIdx, ParticleEmitter*) {
+            if (presetIdx < 0 || presetIdx >= kPresetCount) return;
+            m_currentPreset = presetIdx;
+            m_switchPresetPending = true;
+        };
+    }
+
+    // Restart — works in both modes (asset mode restarts the asset emitter,
+    // default mode restarts the standalone preset emitter).
+    overlay->onRestart = [this]() {
+        m_restartPending = true;
+    };
+
+    // Phase 12.10.0 — menu command dispatch. Each command from the
+    // redesigned menu bar (12.7) routes to the appropriate app
+    // action. Preset commands use the `Presets_Base + index`
+    // convention; in asset mode the preset-base range is silently
+    // ignored (cycling disabled).
+    overlay->onMenuCommand = [this, overlay, enablePresetCycling](VfxMenuCommand cmd) {
+        const uint16_t code = static_cast<uint16_t>(cmd);
+        const uint16_t presetBase = static_cast<uint16_t>(VfxMenuCommand::Presets_Base);
+        if (code >= presetBase && code < presetBase + static_cast<uint16_t>(kPresetCount)) {
+            if (!enablePresetCycling) return;
+            const int idx = static_cast<int>(code - presetBase);
+            m_currentPreset = idx;
+            m_switchPresetPending = true;
+            return;
+        }
+        switch (cmd) {
+        case VfxMenuCommand::File_New:
+        case VfxMenuCommand::File_Open:
+        case VfxMenuCommand::File_Save:
+        case VfxMenuCommand::File_SaveAs:
+            // Demo has no file persistence — silently ignore.
+            break;
+        case VfxMenuCommand::File_Exit:
+            Quit();
+            break;
+        case VfxMenuCommand::Edit_Undo: {
+            auto& undo = overlay->UndoStack();
+            if (undo.CanUndo()) undo.Undo();
+            break;
+        }
+        case VfxMenuCommand::Edit_Redo: {
+            auto& undo = overlay->UndoStack();
+            if (undo.CanRedo()) undo.Redo();
+            break;
+        }
+        case VfxMenuCommand::View_NiagaraMode:
+            overlay->ToggleNiagaraMode();
+            break;
+        case VfxMenuCommand::View_ToggleStats:
+            // Stats overlay toggling is handled by the Application
+            // layer — no hook yet.
+            break;
+        case VfxMenuCommand::Help_Docs:
+        case VfxMenuCommand::Help_About:
+            // No demo-side implementation.
+            break;
+        default:
+            break;
+        }
+    };
+
+    // Phase 15.12 — multi-emitter callbacks. Structural ECS ops
+    // (create / destroy entities, reorder) are queued as pending
+    // flags and drained in OnUpdate so the demo never mutates the
+    // ECS list mid-overlay-tick. Wired in BOTH modes — asset mode
+    // users can still add/duplicate/delete emitters next to the
+    // asset-loaded one.
+    overlay->onAddEmitterRequested = [this] {
+        m_pendingAddEmitter = true;
+    };
+    overlay->onEmitterDuplicated = [this](size_t idx) {
+        m_pendingDuplicateIdx = static_cast<int>(idx);
+    };
+    overlay->onEmitterDeleted = [this](size_t idx) {
+        m_pendingDeleteIdx = static_cast<int>(idx);
+    };
+    overlay->onEmitterMoved = [this](size_t src, size_t dst) {
+        m_pendingMoveSrc = static_cast<int>(src);
+        m_pendingMoveDst = static_cast<int>(dst);
+    };
+    overlay->onEmitterEnableToggled = [this](size_t idx, bool enabled) {
+        auto& w = GetWorld();
+        if (idx >= m_emitterEntities.size()) return;
+        Entity e = m_emitterEntities[idx];
+        if (!w.IsValid(e)) return;
+        if (!w.HasComponent<VfxEmitterComponent>(e)) return;
+        w.GetComponent<VfxEmitterComponent>(e).emitting = enabled;
+    };
+    overlay->onSelectEmitter = [this, enablePresetCycling](int idx) {
+        if (idx < 0 || idx >= static_cast<int>(m_emitterEntities.size())) return;
+        m_activeEmitterIdx = idx;
+        if (enablePresetCycling && idx < static_cast<int>(m_emitterPresets.size())) {
+            m_currentPreset = m_emitterPresets[idx];
+        }
+    };
 }
 
 void VFXViewportApp::ReassignRenderPriorities() {

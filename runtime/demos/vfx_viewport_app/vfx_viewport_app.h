@@ -179,6 +179,17 @@ private:
     /// the overview + tab strip reflect ECS mutations.
     void RefreshEmitterNames();
 
+    /// Configures the Niagara-parity editor overlay
+    /// (`runtime/engine/vfx/editor/`) for both default and asset modes.
+    /// Sets visibility, layout, callbacks, and (when
+    /// `enablePresetCycling == true`) the preset name list +
+    /// `onLoadPreset` callback. In asset mode (preset cycling disabled)
+    /// the same emitter manipulation callbacks are wired so the user
+    /// can still add / duplicate / delete / reorder emitters and tune
+    /// their parameters live via the parameter inspector.
+    /// @ref phase17_vfx-viewport-overlay-asset-mode
+    void ConfigureEditorOverlay(bool enablePresetCycling);
+
     /// Reassigns `renderPriority` on every emitter (component + runtime)
     /// from its position in `m_emitterEntities`. Index 0 -> priority 0
     /// (renders first / farthest back); last index -> highest priority
