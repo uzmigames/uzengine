@@ -326,7 +326,8 @@ void main(uint3 dtid : SV_DispatchThreadID)
         indirectArgs.Store(INDIRECT_START_INDEX_OFFSET,    0u);
         indirectArgs.Store(INDIRECT_BASE_VERTEX_OFFSET,    0u);
         indirectArgs.Store(INDIRECT_START_INSTANCE_OFFSET, 0u);
-        // InstanceCount (offset 4) will be written by the alive-particle loop below.
+        // InstanceCount (offset 4) is written via InterlockedMax/Add by
+        // every alive thread BELOW — both sorted and unsorted paths.
     }
 
     // ── Early exit for excess threads ────────────────────────────────────────
@@ -424,15 +425,21 @@ void main(uint3 dtid : SV_DispatchThreadID)
 #endif
 
     if (isSorted) {
+        // Sorted path: each surviving thread writes to its sorted slot
+        // index AND atomically tracks the highest occupied slot via
+        // InterlockedMax on instanceCount + indirectArgs.InstanceCount.
+        // The CPU dispatches `cpuAliveCount` threads (currently set to
+        // capacity per the Godot LIFO-spawn pattern), and the dead-check
+        // above filters out unspawned slots. The atomic-max approach
+        // matches the unsorted path's compaction semantics WITHOUT
+        // depending on thread 0 surviving the dead-check (the prior
+        // "thread 0 pins aliveCount" optimisation broke when slot 0 was
+        // unspawned — the common case for LIFO free-list spawning where
+        // most low-indexed slots stay empty until late in steady-state).
+        // @ref phase0_vfx-mesh-bindless-attr-read-bug
         instanceSlot = sortedSlot;
-        if (sortedSlot == 0) {
-            // Pin the indirect-args instance count to aliveCount once. Other
-            // threads do not contend on indirect args in the sorted path.
-            indirectArgs.Store(INDIRECT_INSTANCE_COUNT_OFFSET, aliveCount);
-            // Mirror in instanceCount UAV for any downstream consumer that
-            // reads it directly.
-            instanceCount[0] = aliveCount;
-        }
+        uint prevSorted;
+        InterlockedMax(instanceCount[0], sortedSlot + 1u, prevSorted);
     } else {
         InterlockedAdd(instanceCount[0], 1, instanceSlot);
     }
@@ -440,12 +447,12 @@ void main(uint3 dtid : SV_DispatchThreadID)
     instanceXforms[instanceSlot] = transform;
     instanceColors[instanceSlot] = color;
 
-    // ── Update indirect args instance count (unsorted path only) ─────────────
-    // Sorted path already pinned the count above; running the InterlockedMax
-    // there would still be correct but is wasted bandwidth.
-    if (!isSorted) {
-        // Atomic max ensures the last alive slot wins.
-        // (instanceSlot + 1) is the running upper bound on the instance count.
+    // ── Update indirect args instance count ─────────────────────────────
+    // Atomic max ensures the last alive slot wins. (instanceSlot + 1) is
+    // the running upper bound on the instance count. Both paths use this
+    // — for sorted, it matches the sortedSlot ordering; for unsorted, it
+    // matches the InterlockedAdd-claimed slot.
+    {
         uint prev;
         indirectArgs.InterlockedMax(INDIRECT_INSTANCE_COUNT_OFFSET,
                                     instanceSlot + 1u, prev);

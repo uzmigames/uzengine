@@ -1397,6 +1397,23 @@ void SceneRenderer::DispatchVFXSort(IRHICommandList* cmdList) {
         sp.customSortKeySrvIndex = customSortKeySrv;
 
         gpuBuf.sort.DispatchSort(m_device, cmdList, sortPSO, *m_cbRing, sp);
+
+        // Transition sortIndices UAV -> ShaderResource so the
+        // mesh-instance CS's bindless SRV read of sortedIndices sees
+        // the freshly-sorted data. Without this, the bindless read
+        // returns the previous frame's UAV state (or zero on first
+        // frame) and every alive thread maps to particleIdx=0 (which
+        // is unspawned for the LIFO free-list pattern), making the
+        // dead-particle check fire for ALL threads -> instCount=0 and
+        // no draw.
+        // @ref phase0_vfx-mesh-bindless-attr-read-bug
+        {
+            RHIBarrierDesc bar{};
+            bar.buffer      = gpuBuf.sort.sortIndices;
+            bar.stateBefore = RHIResourceState::UnorderedAccess;
+            bar.stateAfter  = RHIResourceState::ShaderResource;
+            cmdList->ResourceBarrier(&bar, 1);
+        }
     }
 
     if (m_gpuProfileEnabled) {

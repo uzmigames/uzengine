@@ -13,21 +13,41 @@
 
 - [ ] 1.4 (DEFERRED — not needed; path 4 already ruled out by 1.1) Logging `emitter->worldPosition` was the discriminator for path 4 (spawn writes wrong values). The 1.1 readback definitively proves spawn writes correct positions, so the worldPosition source is correct.
 
-- [ ] 1.5 **Triangulation** (preliminary, pending RenderDoc):
-   - Spawn / update CS writes are CORRECT (verified by CopyBuffer readback). Path 4 ruled out.
-   - State transition `UAV -> ShaderResource` is emitted (verified by diag-barrier log; barrier_count=7 ws.positions.idx=117).
-   - Explicit UAV-flush barrier does NOT help. Path 2 ruled out.
-   - CPU-side WaitIdle (split-submit) does NOT help either. Rules out CPU/GPU sync hypothesis.
-   - **Most likely remaining hypothesis: the descriptor heap entry for the per-particle attribute buffer SRV was created when the buffer was in a different physical allocation, OR there is a D3D12MA aliasing issue where the SRV view points to memory that got recycled.** Needs RenderDoc descriptor-heap inspection to confirm.
-   - Alternative hypothesis: the CS instruction sequence has a memory barrier issue at the HLSL level — e.g., `if (sortedSlot == 0) instanceCount[0] = 0;` followed by other threads' `InterlockedAdd(instanceCount[0], 1, slot)` may have an ordering hazard within the dispatch. But `InterlockedAdd` itself is atomic, so this should not produce `instCount=0` consistently.
+- [x] 1.5 **Triangulation (final, post 2026-05-03 bisection):**
+   - Spawn / update CS writes are CORRECT (CopyBuffer readback). Path 4 ruled out.
+   - Explicit UAV-flush + UAV->SR barrier on attribute buffers is necessary but ALONE not sufficient. Earlier "Path 2 ruled out" was wrong reasoning — the symptom I was reading (instCount=0) wasn't from the attribute buffer reads at all.
+   - **Re-bisected: the per-particle attribute SRV reads (positions/lifespans/colors) WORK CORRECTLY in the unsorted path.** Setting `sort_mode: None` on the asset, the readback reports `mesh={instCount=4..6 indirectInst=4..6}` with 4-6 visible mesh tetrahedra rendering with proper depth + lighting. Bindless reads of `positionsBuf[particleIdx]` / `lifespansBuf[particleIdx]` return correct spawn-written values when `particleIdx` directly equals `dtid.x` (unsorted identity mapping).
+   - **The actual remaining bug is specific to the SORTED path.** With `sort_mode: ViewDepth`, the CS reads `particleIdx = sortedIndices[sortedSlot]`. The bindless SRV read of `sortedIndices[]` returns 0 for every slot (or the buffer is in the wrong state at the time of read). Result: every alive thread maps to `particleIdx = 0` → `lifespansBuf[0] = 0` (slot 0 is unspawned in our LIFO pattern) → dead-check fires for ALL threads → `instCount=0`.
+   - Adding a UAV->ShaderResource barrier on `gpuBuf.sort.sortIndices` at the end of `DispatchVFXSort` did NOT fix it. The sort CS may not be running on this asset (gating issue), OR its output is also corrupted by a deeper bindless-read issue.
+   - **Secondary CS race:** the prior "thread 0 pins instanceCount = aliveCount in the sorted path" pattern was broken — when slot 0 is unspawned (the common case for LIFO spawn), thread 0 returns at the dead-check before reaching the pin. Replaced both paths with `InterlockedMax(instanceCount, slot+1)` for robustness.
 
-## 2. Fix
+## 2. Fix (incremental — sorted path remains broken)
 
-- [ ] 2.1 Implement the surgical fix matching the diagnosed path. Path 1 = import attribute buffers into RG (gated on `firstCycle == false` to avoid the predecessor's TDR regression). Path 2 = explicit `UAV -> UAV` barrier before the state transition. Path 3 = move SR transition to after the per-emitter loop. Path 4 = fix `scene_vfx_sync.cpp` worldPosition / attach resolution.
+- [x] 2.1a `particle_mesh_instance_cs.hlsl` — replaced the "thread 0 pins instanceCount" optimisation in the sorted path with `InterlockedMax(instanceCount, sortedSlot+1)`, mirroring the unsorted path. Removes the regression where slot 0 being unspawned (LIFO common case) leaves InstanceCount=0. Both paths now also do `indirectArgs.InterlockedMax(INSTANCE_COUNT, slot+1)`.
 
-- [ ] 2.2 Re-build runtime + demo (`zig build -Ddll=true -Doptimize=ReleaseFast` in `runtime/`, then `runtime/demos/vfx_viewport_app/`).
+- [x] 2.1b `frame_vfx_inline.cpp` `DispatchVFXSort` — added explicit `UAV -> ShaderResource` barrier on `gpuBuf.sort.sortIndices` at the end of the per-emitter loop. Necessary for the mesh-instance CS to read the sorted-indices buffer through bindless SRV. Did NOT make `sort_mode: ViewDepth` render alive particles (deeper bug remains; see 1.5 above).
 
-- [ ] 2.3 Re-run `--gpu-validation --headless --frames 30` and confirm zero `D3D12 ERROR` lines (regression guard against the RG-import-causes-TDR scenario the predecessor fix tripped on).
+- [x] 2.2 Re-built runtime + demo (`Shader integrity OK (134 shaders verified)`).
+
+- [x] 2.3 No `D3D12 ERROR` lines under `--gpu-validation`. The barriers added are state-correct.
+
+## 3. Verify visually
+
+- [x] 3.1 With `sort_mode: None` on the asset: visible mesh tetrahedra render with proper depth + lighting (`.sandbox/final-unsorted-frame60.png`, 126 KB). HDR composite is no longer black-blanked, indirectInst matches alive count (4-7 instances). The unsorted path is now functionally correct.
+
+- [ ] 3.2 With committed `sort_mode: ViewDepth`: still produces `instCount=0`, screenshot identical to spline baseline (179 801 bytes). **Sorted path remains broken — needs separate task with RenderDoc to inspect why the sortedIndices bindless read returns 0.**
+
+- [ ] 3.3 (DEFERRED to follow-up task) Capture the three frame-N variants. Cannot pass while sort_mode=ViewDepth (the asset's committed value) renders nothing.
+
+## 4. Tail (mandatory — enforced by rulebook v5.3.0)
+
+- [ ] 4.1 Update or create documentation covering the implementation — partial fix means the doc update should describe BOTH the sorted-path CS race fix AND the still-outstanding sortedIndices bindless read bug. Defer to follow-up task that completes the visibility.
+
+- [ ] 4.2 Write tests covering the new behavior — regression test: assert that `particle_mesh_instance_cs.hlsl` does NOT have an `if (sortedSlot == 0)` block in the post-dead-check sorted path (parsed from the .hlsl source) so the thread-0 race cannot regress silently.
+
+- [ ] 4.3 Run tests and confirm they pass.
+
+**Status: incremental fixes landed but task remains BLOCKED on sorted-path bindless read. Recommend creating phase0_vfx-mesh-sortedindices-bindless-read follow-up.**
 
 ## 3. Verify visually
 
