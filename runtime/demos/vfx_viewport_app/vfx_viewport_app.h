@@ -70,10 +70,12 @@ public:
     /// 0=RGBA pass-through, 1=R, 2=G, 3=B, 4=A.
     void SetSpriteChannelMask(uint32_t mask) { m_spriteChannelMask = mask; }
 
-    /// Overrides the VfxSystem asset path used for the compound fireball
-    /// effect (from `--vfxsys` CLI arg). Defaults to
-    /// `"vfx/systems/fireball.uzvfxsys"` when unset.
-    void SetSystemAssetPath(const std::string& path) { m_systemAssetPath = path; }
+    /// DEPRECATED — kept for ABI parity with older mains; the demo no
+    /// longer creates a `VfxSystemComponent`. Calling this is a no-op
+    /// (logged once at Warning level on first invocation). Removed in
+    /// `phase17_vfx-viewport-default-scene-no-uzvfxsys` because the
+    /// referenced `.uzvfxsys` asset was never authored.
+    void SetSystemAssetPath(const std::string& /*path*/);
 
     /// Phase 13.5 — overrides the window dimensions for headless
     /// screenshot capture at arbitrary resolutions.
@@ -145,9 +147,13 @@ private:
     /// Current preset index for cycling.
     int m_currentPreset = 0;
 
-    /// VFX emitter entity (for projectile-style animation of position).
-    /// Now carries a VfxSystemComponent — a single entity that spawns the
-    /// full fireball compound (head + sparks + smoke) internally.
+    /// VFX entity used by the projectile-style animation in `OnUpdate`.
+    /// Default-initialised to invalid; populated only if a code path
+    /// chooses to drive entity-position animation. The legacy
+    /// `VfxSystemComponent` attachment was removed in
+    /// `phase17_vfx-viewport-default-scene-no-uzvfxsys` so the entity
+    /// stays invalid and the projectile path becomes a no-op until a
+    /// new owner repurposes it.
     Entity m_vfxEntity{};
 
     /// Projectile animation phase [0..1] — advances each frame, loops.
@@ -212,10 +218,6 @@ private:
 
     /// Sprite texture channel mask: 0=RGBA, 1=R, 2=G, 3=B, 4=A.
     uint32_t m_spriteChannelMask = 0;
-
-    /// Path to the `.uzvfxsys` asset driving the compound fireball effect.
-    /// Overridable via the `--vfxsys <path>` CLI argument.
-    std::string m_systemAssetPath = "vfx/systems/fireball.uzvfxsys";
 
     /// Single-emitter asset path set via `SetEmitterAssetPath`. When non-empty,
     /// `OnStart` short-circuits the default fireball + preset-cycling scene

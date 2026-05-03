@@ -13,8 +13,11 @@
 /// - `--flipbook <rows> <cols>`: Flipbook grid dimensions (used with --sprite).
 /// - `--flipbook-fps <float>`: Flipbook playback rate in frames per second (default 30).
 /// - `--channel <0|1|2|3|4>`: Sprite channel mask (0=RGBA, 1=R, 2=G, 3=B, 4=A).
-/// - `--vfxsys <path>`: Override the `.uzvfxsys` compound asset path (default
-///   `"vfx/systems/fireball.uzvfxsys"`).
+/// - `--vfxsys <path>`: DEPRECATED — accepts the flag for compatibility with
+///   older harness scripts but logs a one-time warning and ignores the path.
+///   The compound `.uzvfxsys` asset path was removed in
+///   `phase17_vfx-viewport-default-scene-no-uzvfxsys`; the demo now uses
+///   in-code presets only.
 /// - `--vfx-asset <path>`: Load a single-emitter `.uzvfx` asset via the
 ///   production `UzfxLoader::InstantiateEmitter` path (used by the VFX
 ///   hardware-validation suite). Bypasses the default fireball + preset

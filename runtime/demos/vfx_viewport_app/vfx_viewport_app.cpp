@@ -148,6 +148,28 @@ static constexpr int kPresetCount = static_cast<int>(sizeof(kPresetFns) / sizeof
 // Configure
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SetSystemAssetPath — deprecated no-op.
+//
+// The legacy `--vfxsys` CLI argument used to override the path to a
+// `vfx/systems/*.uzvfxsys` compound asset. The compound was never
+// authored and the demo now uses in-code preset functions for every
+// slot, so this setter has no effect. Kept as a one-time-warning stub
+// to avoid breaking older harness scripts that still pass the flag.
+// @ref phase17_vfx-viewport-default-scene-no-uzvfxsys
+// ─────────────────────────────────────────────────────────────────────────────
+
+void VFXViewportApp::SetSystemAssetPath(const std::string& /*path*/) {
+    static bool warned = false;
+    if (!warned) {
+        UZ_LOG(App, Warning,
+               "SetSystemAssetPath / --vfxsys is deprecated and no longer "
+               "loads any asset. The default scene uses in-code presets only. "
+               "Remove the flag to silence this warning.");
+        warned = true;
+    }
+}
+
 ApplicationConfig VFXViewportApp::Configure() {
     ApplicationConfig cfg;
     cfg.title = "VFX Viewport";
@@ -286,25 +308,17 @@ void VFXViewportApp::OnStart() {
         world.AddComponent<SkyAtmosphereComponent>(skyEntity);
     }
 
-    // ── Fireball Compound: ONE entity with VfxSystemComponent ──────────
-    // The VfxSystemComponent points to a `.uzvfxsys` asset that describes
-    // the child emitters (head + sparks + smoke). The scene renderer
-    // creates a VfxSystemInstance which owns those ParticleEmitters
-    // internally and propagates the entity's world transform to them.
-    // This replaces the legacy 3-entity hack (m_vfxEntity + m_vfxSparks
-    // + m_vfxSmoke).
-    {
-        m_vfxEntity = world.CreateEntity();
-        world.AddComponent<CName>(m_vfxEntity, CName{"VFX_Fireball"});
-        auto& sc = world.AddComponent<SceneComponent>(m_vfxEntity);
-        sc.SetPosition({0.0f, 0.0f, 0.0f});
-        auto& sys = world.AddComponent<VfxSystemComponent>(m_vfxEntity);
-        sys.systemAssetPath  = m_systemAssetPath;
-        // Multi-emitter demo prioritises the author-composed slots.
-        // Compound fireball stays dormant at startup and wakes up only
-        // when a slot is cycled to preset 0 (FireballProj).
-        sys.emitting         = false;
-    }
+    // ── (REMOVED) Fireball Compound entity ──────────────────────────────
+    // The previous design (commit 5641dbb6) created `m_vfxEntity` with a
+    // `VfxSystemComponent` referencing `vfx/systems/fireball.uzvfxsys`.
+    // That asset was never authored — the directory `sample/content/vfx/
+    // systems/` does not exist either. Result: error spam every frame and
+    // a broken preset slot. The compound has been removed; preset 0
+    // (`ApplyPreset_FireballProjectile`) is a complete standalone preset
+    // and works through the same standalone emitter that hosts the other
+    // 21 presets. `m_vfxEntity` stays default-invalid; downstream
+    // `world.HasComponent<>` guards short-circuit naturally.
+    // @ref phase17_vfx-viewport-default-scene-no-uzvfxsys
 
     // ── Standalone emitter for preset cycling (Tab/Left/Right) ─────────
     // The fireball compound is hard-coded above; for the remaining presets
@@ -332,9 +346,10 @@ void VFXViewportApp::OnStart() {
 
     {
         // Default slot = Fire. Emission enabled so the demo greets the
-        // user with a visible effect; the compound fireball
-        // (VfxSystemComponent) starts dormant until a slot cycles to
-        // preset 0.
+        // user with a visible effect. Tab / Left / Right cycle through
+        // all 22 in-code presets (`kPresetFns[]`); preset 0
+        // (FireballProjectile) renders through this same standalone
+        // emitter with the projectile-position animation in OnUpdate.
         ParticleEmitter stdP;
         ApplyPreset_Fire(stdP);
         createEmitter("VFX_Standalone", stdP, true);
@@ -343,11 +358,10 @@ void VFXViewportApp::OnStart() {
     m_activeEmitterIdx = 0;
     m_currentPreset    = 1;
 
-    UZ_LOG(App, Info, "VFXViewportApp: fireball compound created via VfxSystemComponent '{}'",
-           m_systemAssetPath);
-
-    UZ_LOG(App, Info, "VFXViewportApp: started (SUN + SKY + 1 emitter, preset: {})",
-           kPresetNames[m_currentPreset]);
+    UZ_LOG(App, Info,
+           "VFXViewportApp: started (SUN + SKY + 1 standalone emitter, preset: {}). "
+           "Tab / Left / Right cycle through {} in-code presets.",
+           kPresetNames[m_currentPreset], kPresetCount);
 
     // ── Configure VFX Editor Overlay ────────────────────────────────────
     ConfigureEditorOverlay(/*enablePresetCycling=*/true);
@@ -669,10 +683,12 @@ void VFXViewportApp::OnUpdate(float dt) {
         overlay->UpdateTelemetry(m_fpsSmoothed, 0u, 0.0f, 0.0f);
     }
 
-    // ── Fireball projectile animation: move the single compound entity ──
-    // The VfxSystemInstance automatically propagates this position to all
-    // child emitters (head + sparks + smoke) via SetWorldTransform().
-    // Skipped in asset-driven mode (no fireball compound was created).
+    // ── Fireball projectile animation: animate the standalone emitter ──
+    // When preset 0 (FireballProjectile) is active, sweep the emitter's
+    // position back-and-forth so the trail effect reads as motion. The
+    // legacy code drove `m_vfxEntity` (the removed compound entity); now
+    // it drives the active standalone emitter directly.
+    // @ref phase17_vfx-viewport-default-scene-no-uzvfxsys
     if (m_currentPreset == 0 && m_emitterAssetPath.empty()) {
         World& w = GetWorld();
         m_projectilePhase += dt * 0.4f; // 2.5 seconds per cycle
@@ -682,36 +698,23 @@ void VFXViewportApp::OnUpdate(float dt) {
         const float x = startX + (endX - startX) * m_projectilePhase;
         const Vec3 pos{x, 0.0f, 0.0f};
 
-        if (w.HasComponent<SceneComponent>(m_vfxEntity)) w.GetComponent<SceneComponent>(m_vfxEntity).SetPosition(pos);
+        const int activeIdx = std::clamp(
+            m_activeEmitterIdx, 0,
+            static_cast<int>(m_emitterEntities.size()) - 1);
+        if (activeIdx >= 0 && activeIdx < static_cast<int>(m_emitterEntities.size())) {
+            Entity ent = m_emitterEntities[activeIdx];
+            if (w.IsValid(ent) && w.HasComponent<SceneComponent>(ent)) {
+                w.GetComponent<SceneComponent>(ent).SetPosition(pos);
+            }
+        }
     } else {
         m_projectilePhase = 0.0f;
     }
 
-    // ── Gate fireball vs. standalone emitter based on selected preset ──
-    // Preset 0 = FireballProj -> compound active, standalone silent.
-    // Any other preset -> compound silent, standalone active.
-    // Skipped in asset-driven mode — no VfxSystemComponent exists on
-    // m_vfxEntity (we never created the fireball compound) so the
-    // HasComponent guard would short-circuit anyway, but skipping the
-    // whole block keeps the asset emitter's `emitting` flag authoritative.
-    if (m_emitterAssetPath.empty()) {
-        World& w = GetWorld();
-        // Phase 15.12 — enable the compound fireball only when ANY
-        // slot is configured to preset 0 (FireballProj). Standalone
-        // emitters keep their per-slot `emitting` state untouched so
-        // the Emitters-tab checkboxes remain authoritative across
-        // frames — the previous global gate stomped every slot each
-        // update and prevented mixed-preset setups (Fire + Sparks,
-        // Smoke + Wind, etc.).
-        bool anySlotFireball = false;
-        for (int p : m_emitterPresets) {
-            if (p == 0) { anySlotFireball = true; break; }
-        }
-        if (w.HasComponent<VfxSystemComponent>(m_vfxEntity)) {
-            w.GetComponent<VfxSystemComponent>(m_vfxEntity).emitting =
-                anySlotFireball;
-        }
-    }
+    // (REMOVED) "Gate fireball vs. standalone emitter" block. The compound
+    // entity (`m_vfxEntity` with `VfxSystemComponent`) is gone — every
+    // preset now runs through the standalone emitter, no gating needed.
+    // @ref phase17_vfx-viewport-default-scene-no-uzvfxsys
 
     InputSystem& input = GetInput();
     World& world = GetWorld();
@@ -802,14 +805,10 @@ void VFXViewportApp::OnUpdate(float dt) {
     // ── Apply pending preset switch ─────────────────────────────────────
     if (m_switchPresetPending) {
         m_switchPresetPending = false;
-        // Clear any leftover particles from the previously-active source so
-        // switching presets doesn't leave phantom trails on screen.
-        // `emitting = false` only stops new spawns — alive particles keep
-        // simulating until they expire — so we need an explicit restart.
-        if (world.HasComponent<VfxSystemComponent>(m_vfxEntity)) {
-            auto& sysComp = world.GetComponent<VfxSystemComponent>(m_vfxEntity);
-            sysComp.restartRequested = true;
-        }
+        // (REMOVED) compound-entity restart. The compound entity
+        // (`m_vfxEntity` with `VfxSystemComponent`) was removed in
+        // `phase17_vfx-viewport-default-scene-no-uzvfxsys`. Per-slot
+        // restart on the standalone emitter is handled below.
         // Preset switch targets the currently-active slot so users can
         // configure each emitter independently.
         const int activeIdx = std::clamp(
