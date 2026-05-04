@@ -55,16 +55,23 @@ inline void ApplyPreset_Smoke(ParticleEmitter& e) {
     e.gravity = {0.0f, 0.0f, -100.0f};
     e.damping = 0.2f;
     e.initialSize = 120.0f;
-    e.initialColor = {0.5f, 0.5f, 0.5f, 0.7f};
+    e.initialColor = {0.7f, 0.7f, 0.7f, 0.8f};
     e.spawnRadius = 20.0f;
     e.emissiveIntensity = 0.0f;
     e.softParticleFadeRange = 50.0f;
     e.sizeOverLifeStart = 0.3f; e.sizeOverLifePeak = 1.5f;
     e.sizeOverLifeEnd = 2.5f; e.sizeOverLifePeakTime = 0.3f;
-    e.colorLifeStartR = 0.7f; e.colorLifeStartG = 0.6f;
-    e.colorLifeStartB = 0.5f; e.colorLifeStartA = 0.8f;
-    e.colorLifeEndR = 0.2f; e.colorLifeEndG = 0.2f;
-    e.colorLifeEndB = 0.2f; e.colorLifeEndA = 0.0f;
+    // colorLifeStart/End drive `lerp(start, end, age/lifetime)` in
+    // `particle_billboard_ps.hlsl:388` and the result is multiplied
+    // INTO `initialColor`. The previous values had a warm tint
+    // `(0.7, 0.6, 0.5)` at start which produced a muddy brown smoke
+    // when multiplied with the neutral grey initialColor — fixed in
+    // `phase17_vfx-viewport-smoke-color-fix` to be neutral grey at
+    // birth, fading to dark grey at death (the expected smoke recipe).
+    e.colorLifeStartR = 1.0f; e.colorLifeStartG = 1.0f;
+    e.colorLifeStartB = 1.0f; e.colorLifeStartA = 0.9f;
+    e.colorLifeEndR = 0.4f;  e.colorLifeEndG = 0.4f;
+    e.colorLifeEndB = 0.4f;  e.colorLifeEndA = 0.0f;
     e.blendMode = 0;
 }
 
