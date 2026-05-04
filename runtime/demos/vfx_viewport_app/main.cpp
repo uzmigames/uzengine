@@ -22,6 +22,11 @@
 ///   production `UzfxLoader::InstantiateEmitter` path (used by the VFX
 ///   hardware-validation suite). Bypasses the default fireball + preset
 ///   cycling scene. Path is interpreted relative to the active VFS root.
+/// - `--start-preset <N|name>`: Override the starting preset (default `Fire`).
+///   Accepts an integer index `0..21` OR a preset name (case-insensitive,
+///   e.g. `Smoke`, `Tornado`, `MagicOrb`). Used by
+///   `scripts/vfx_validate_presets.ps1` to baseline + diff each preset.
+///   See `phase17_vfx-viewport-22-preset-validation` for the contract.
 /// - `--vfs-root <path>`: Override the VFS root directory (defaults to
 ///   `<exe_dir>/content` if it exists, otherwise the engine fallback).
 ///   Useful with `--vfx-asset` to point at `sample/content/` so test
@@ -29,6 +34,7 @@
 
 #include "vfx_viewport_app.h"
 
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -59,6 +65,24 @@ int main(int argc, char** argv) {
             app.SetSystemAssetPath(argv[++i]);
         } else if (std::strcmp(argv[i], "--vfx-asset") == 0 && i + 1 < argc) {
             app.SetEmitterAssetPath(argv[++i]);
+        } else if (std::strcmp(argv[i], "--start-preset") == 0 && i + 1 < argc) {
+            // Try integer first; if that fails, treat as case-insensitive name.
+            const char* arg = argv[++i];
+            char* end = nullptr;
+            const long asInt = std::strtol(arg, &end, 10);
+            if (end != arg && *end == '\0') {
+                app.SetStartPreset(static_cast<int>(asInt));
+            } else {
+                const int idx = uz::VFXViewportApp::PresetIndexFromName(arg);
+                if (idx < 0) {
+                    std::fprintf(stderr,
+                                 "[main] --start-preset '%s' is not a valid preset name; "
+                                 "ignored. Run with --start-preset 0..%d or a name from kPresetNames.\n",
+                                 arg, uz::VFXViewportApp::GetPresetCount() - 1);
+                } else {
+                    app.SetStartPreset(idx);
+                }
+            }
         } else if (std::strcmp(argv[i], "--vfs-root") == 0 && i + 1 < argc) {
             app.SetCustomVfsRoot(argv[++i]);
         } else if (std::strcmp(argv[i], "--window-size") == 0 && i + 1 < argc) {

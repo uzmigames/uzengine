@@ -95,6 +95,29 @@ public:
     /// (see `SetCustomVfsRoot`).
     void SetEmitterAssetPath(const std::string& path) { m_emitterAssetPath = path; }
 
+    /// Overrides the starting preset (from `--start-preset N|name` CLI arg).
+    /// Accepts an integer index `0..kPresetCount-1` OR a string matching
+    /// one of `kPresetNames[i]` (case-insensitive). When set, `OnStart()`
+    /// applies that preset to the standalone emitter immediately instead
+    /// of the hardcoded `Fire` default. Invalid values fall back to the
+    /// hardcoded default (`Fire`) and a `[App] [warning]` is logged.
+    /// Used by the preset-validation harness
+    /// (`scripts/vfx_validate_presets.ps1`) to baseline + diff each
+    /// preset programmatically.
+    /// @ref phase17_vfx-viewport-22-preset-validation
+    void SetStartPreset(int idx) { m_startPresetIdx = idx; }
+
+    /// Resolves a preset name (case-insensitive, e.g. `"smoke"`, `"Tornado"`)
+    /// to its index in `kPresetFns[]`. Returns -1 if no match. Used by the
+    /// CLI parser in `main.cpp` to convert `--start-preset Smoke` to an
+    /// integer.
+    /// @ref phase17_vfx-viewport-22-preset-validation
+    static int PresetIndexFromName(const std::string& name);
+
+    /// Returns the total number of in-code presets (`kPresetCount`). Useful
+    /// for harness scripts iterating from 0 to N-1.
+    static int GetPresetCount();
+
     /// Overrides the VFS root directory (from `--vfs-root` CLI arg). Useful
     /// when loading assets that live outside the demo's bundled `content/`
     /// or `assets/` subfolders — e.g. point at `sample/content/` to load
@@ -146,6 +169,11 @@ private:
 
     /// Current preset index for cycling.
     int m_currentPreset = 0;
+
+    /// Starting preset index from `--start-preset` CLI arg, or -1 when
+    /// not specified. Read once in `OnStart()` to override the default.
+    /// @ref phase17_vfx-viewport-22-preset-validation
+    int m_startPresetIdx = -1;
 
     /// VFX entity used by the projectile-style animation in `OnUpdate`.
     /// Default-initialised to invalid; populated only if a code path

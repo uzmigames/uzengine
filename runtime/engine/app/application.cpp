@@ -18,6 +18,7 @@
 #include "uzengine.h"
 #include "scene_renderer.h"
 #include "compare_grid.h"
+#include "stb_image.h"
 #include "world.h"
 #include "cvar.h"
 #include "flip_pass.h"
@@ -559,6 +560,29 @@ int Application::TryDiffImages(int argc, char* argv[]) {
     if (!ImageDiff::DiffToPNG(pathA, labelA, pathB, labelB, output, cellSize)) {
         UZ_LOG(App, Error, "Failed to generate diff: output='{}'", output);
         return 1;
+    }
+
+    // Print PSNR + diff stats to STDOUT so callers can parse without
+    // depending on the engine logger (which may not be initialised at
+    // this point in the boot sequence). Format is stable + machine
+    // parseable: `DIFF_STATS: PSNR=NN.NN dB diff=NN.NN%% maxCh=NNN`.
+    // @ref phase17_vfx-viewport-22-preset-validation — used by
+    //      `scripts/vfx_validate_presets.ps1` to PSNR-diff each preset.
+    {
+        int wA = 0, hA = 0, cA = 0;
+        int wB = 0, hB = 0, cB = 0;
+        unsigned char* pixA = stbi_load(pathA.c_str(), &wA, &hA, &cA, 4);
+        unsigned char* pixB = stbi_load(pathB.c_str(), &wB, &hB, &cB, 4);
+        if (pixA && pixB) {
+            const ImageDiffResult r = ImageDiff::Compare(
+                pixA, static_cast<uint32_t>(wA), static_cast<uint32_t>(hA),
+                pixB, static_cast<uint32_t>(wB), static_cast<uint32_t>(hB));
+            std::printf("DIFF_STATS: PSNR=%.2f dB diff=%.2f%% maxCh=%.0f\n",
+                        r.psnr, r.diffPercentage, r.maxChannelDiff);
+            std::fflush(stdout);
+        }
+        if (pixA) stbi_image_free(pixA);
+        if (pixB) stbi_image_free(pixB);
     }
 
     return 0;

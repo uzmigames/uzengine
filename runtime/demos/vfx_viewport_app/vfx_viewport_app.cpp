@@ -149,6 +149,40 @@ static constexpr int kPresetCount = static_cast<int>(sizeof(kPresetFns) / sizeof
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
+// PresetIndexFromName / GetPresetCount — preset-name lookup helpers.
+//
+// Used by the CLI parser in main.cpp to convert `--start-preset Smoke` to
+// an integer index. Comparison is case-insensitive on ASCII so callers
+// can use `Smoke`, `smoke`, `SMOKE` interchangeably.
+//
+// @ref phase17_vfx-viewport-22-preset-validation
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+inline char AsciiLower(char c) {
+    return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
+}
+inline bool IEquals(const char* a, const char* b) {
+    while (*a && *b) {
+        if (AsciiLower(*a) != AsciiLower(*b)) return false;
+        ++a; ++b;
+    }
+    return *a == 0 && *b == 0;
+}
+}  // namespace
+
+int VFXViewportApp::PresetIndexFromName(const std::string& name) {
+    for (int i = 0; i < kPresetCount; ++i) {
+        if (IEquals(name.c_str(), kPresetNames[i])) return i;
+    }
+    return -1;
+}
+
+int VFXViewportApp::GetPresetCount() {
+    return kPresetCount;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SetSystemAssetPath — deprecated no-op.
 //
 // The legacy `--vfxsys` CLI argument used to override the path to a
@@ -345,18 +379,29 @@ void VFXViewportApp::OnStart() {
     };
 
     {
-        // Default slot = Fire. Emission enabled so the demo greets the
-        // user with a visible effect. Tab / Left / Right cycle through
-        // all 22 in-code presets (`kPresetFns[]`); preset 0
-        // (FireballProjectile) renders through this same standalone
-        // emitter with the projectile-position animation in OnUpdate.
+        // Default slot = Fire (or `--start-preset N` if provided). Emission
+        // enabled so the demo greets the user with a visible effect. Tab /
+        // Left / Right cycle through all 22 in-code presets
+        // (`kPresetFns[]`); preset 0 (FireballProjectile) renders through
+        // this same standalone emitter with the projectile-position
+        // animation in OnUpdate.
+        // @ref phase17_vfx-viewport-22-preset-validation (start-preset)
+        int startIdx = 1;  // Fire default
+        if (m_startPresetIdx >= 0 && m_startPresetIdx < kPresetCount) {
+            startIdx = m_startPresetIdx;
+        } else if (m_startPresetIdx >= 0) {
+            UZ_LOG(App, Warning,
+                   "VFXViewportApp: --start-preset {} out of range [0..{}], "
+                   "falling back to Fire (index 1)",
+                   m_startPresetIdx, kPresetCount - 1);
+        }
         ParticleEmitter stdP;
-        ApplyPreset_Fire(stdP);
+        kPresetFns[startIdx](stdP);
         createEmitter("VFX_Standalone", stdP, true);
-        m_emitterPresets.push_back(1);  // index 1 = Fire.
+        m_emitterPresets.push_back(startIdx);
+        m_currentPreset = startIdx;
     }
     m_activeEmitterIdx = 0;
-    m_currentPreset    = 1;
 
     UZ_LOG(App, Info,
            "VFXViewportApp: started (SUN + SKY + 1 standalone emitter, preset: {}). "

@@ -1,0 +1,156 @@
+﻿[
+    {
+        "index":  0,
+        "name":  "FireballProj",
+        "file":  "00-FireballProj.png",
+        "bytes":  187398,
+        "sha256":  "3B8781F4ED28E8663EAF70F02B54EA7E0FE8B9ED77092693A155C3694DB183B9"
+    },
+    {
+        "index":  1,
+        "name":  "Fire",
+        "file":  "01-Fire.png",
+        "bytes":  189137,
+        "sha256":  "B4A8E536635F5977ABFB30BD20CCCA0D0AF652126B567024990145859D25D84D"
+    },
+    {
+        "index":  2,
+        "name":  "Smoke",
+        "file":  "02-Smoke.png",
+        "bytes":  188973,
+        "sha256":  "F76100CB64313F1521030B2716DA0BCB35333D42BDE2D79BE7957E9B0FC42981"
+    },
+    {
+        "index":  3,
+        "name":  "Sparks",
+        "file":  "03-Sparks.png",
+        "bytes":  188851,
+        "sha256":  "12BCDCE033E6D7311E435F4790AFF2D8907E6530F96AFD77CD63455E0B234489"
+    },
+    {
+        "index":  4,
+        "name":  "Fountain",
+        "file":  "04-Fountain.png",
+        "bytes":  188789,
+        "sha256":  "63F56104403BD3655CF4FEC1795FE0EB9947277BEC4E6976717054FF359F1C37"
+    },
+    {
+        "index":  5,
+        "name":  "MagicOrb",
+        "file":  "05-MagicOrb.png",
+        "bytes":  189032,
+        "sha256":  "AF35E8A22F4FAB07A5004A7DDBE5011F25346C8F15BB117724979D1796949CAE"
+    },
+    {
+        "index":  6,
+        "name":  "Burst",
+        "file":  "06-Burst.png",
+        "bytes":  190529,
+        "sha256":  "9FF305C6F75B2069302DD52D7C7EA46A1092FC599D701EC1BC34CBBBE9ECDEB8"
+    },
+    {
+        "index":  7,
+        "name":  "ExpBurst",
+        "file":  "07-ExpBurst.png",
+        "bytes":  193385,
+        "sha256":  "01AA3023720F7FB68FCF7BABCC258E563DA522B93894845E31EBD9AB15AA07A2"
+    },
+    {
+        "index":  8,
+        "name":  "ExpSmoke",
+        "file":  "08-ExpSmoke.png",
+        "bytes":  189007,
+        "sha256":  "EC0DA340F87FE762DD85216F49D556A5F382D63E319F1B466A0D5F02EB4DECB7"
+    },
+    {
+        "index":  9,
+        "name":  "ExpDebris",
+        "file":  "09-ExpDebris.png",
+        "bytes":  191923,
+        "sha256":  "F1FABB5C994107F35FE705ABB5CECAC8D2BD79D15B3CD89D45EAD7F16CC84F7E"
+    },
+    {
+        "index":  10,
+        "name":  "Fireball",
+        "file":  "10-Fireball.png",
+        "bytes":  189642,
+        "sha256":  "C879F143C30D27379D243080BD7506DC781CD0435EF5F5896DEE9ABFB49673F4"
+    },
+    {
+        "index":  11,
+        "name":  "RingOfFire",
+        "file":  "11-RingOfFire.png",
+        "bytes":  189288,
+        "sha256":  "134414ACED144F08CE3111110F7B0BD39B5AA0597FF1683386376DAD42407B04"
+    },
+    {
+        "index":  12,
+        "name":  "ConeJet",
+        "file":  "12-ConeJet.png",
+        "bytes":  189770,
+        "sha256":  "ABC8D015ED7EAC4CDAD14DD65DB080834990AD1A6E4B30128052B83DC140B19E"
+    },
+    {
+        "index":  13,
+        "name":  "CylinderVol",
+        "file":  "13-CylinderVol.png",
+        "bytes":  188896,
+        "sha256":  "22410530D061E87F1570DF544F190068D5CB440B661B05C9B4E62E2DF5F38E41"
+    },
+    {
+        "index":  14,
+        "name":  "CurlSmoke",
+        "file":  "14-CurlSmoke.png",
+        "bytes":  188498,
+        "sha256":  "8F848428E67CBB58A3D15213F6E511C437EA1F37CB7B725125E723FCD62CAE83"
+    },
+    {
+        "index":  15,
+        "name":  "Tornado",
+        "file":  "15-Tornado.png",
+        "bytes":  189378,
+        "sha256":  "68BEB48A1EFEE2BDFD13EF0D17774BEB313AC52FD0D560CAC5E7436255739386"
+    },
+    {
+        "index":  16,
+        "name":  "Whirlpool",
+        "file":  "16-Whirlpool.png",
+        "bytes":  188467,
+        "sha256":  "11BF3C4C5AF8D968DCD157BBD043475DAB32C54ED1A28A30B73C0C13A24AE133"
+    },
+    {
+        "index":  17,
+        "name":  "WindySmoke",
+        "file":  "17-WindySmoke.png",
+        "bytes":  189456,
+        "sha256":  "F18F33FC006D12CC723B4932E6C60187AA432BF452EA1E4D9205F45601706C99"
+    },
+    {
+        "index":  18,
+        "name":  "LitSmoke",
+        "file":  "18-LitSmoke.png",
+        "bytes":  188831,
+        "sha256":  "11BE7A2CE6F01D16620443EFC2F11C589B88B617B4D56C0B0E30302DD3473756"
+    },
+    {
+        "index":  19,
+        "name":  "LitDebris",
+        "file":  "19-LitDebris.png",
+        "bytes":  190392,
+        "sha256":  "84AB4AF94B515003FDE39AABA437037B433A6CF7219D7C38FA4D5D5D62F99ABA"
+    },
+    {
+        "index":  20,
+        "name":  "Orbital",
+        "file":  "20-Orbital.png",
+        "bytes":  186854,
+        "sha256":  "B96E9D8DB5EE5DE2D44F3052DF6879B03D5D743E469E58A43685070CD7F86221"
+    },
+    {
+        "index":  21,
+        "name":  "AirResist",
+        "file":  "21-AirResist.png",
+        "bytes":  189091,
+        "sha256":  "32C92AD42E0AE24D9C868085F0C824CC7E0A47BEAF5E1A039E8B7C74C557ABF8"
+    }
+]
