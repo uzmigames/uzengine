@@ -71,7 +71,8 @@ Geometry AlignedChildGeometry(const SlotBase& slot,
 
 SlotBase& HorizontalBox::AddSlot(SP<Widget> child) {
     SlotBase s;
-    s.widget = std::move(child);
+    s.widget = child;
+    m_hitTestCache.push_back(std::move(child));
     m_slots.push_back(std::move(s));
     return m_slots.back();
 }
@@ -169,7 +170,8 @@ void HorizontalBox::Paint(SlateRenderer& renderer) {
 
 SlotBase& VerticalBox::AddSlot(SP<Widget> child) {
     SlotBase s;
-    s.widget = std::move(child);
+    s.widget = child;
+    m_hitTestCache.push_back(std::move(child));
     m_slots.push_back(std::move(s));
     return m_slots.back();
 }
@@ -264,7 +266,8 @@ void VerticalBox::Paint(SlateRenderer& renderer) {
 
 SlotBase& Overlay::AddSlot(SP<Widget> child) {
     SlotBase s;
-    s.widget = std::move(child);
+    s.widget = child;
+    m_hitTestCache.push_back(std::move(child));
     m_slots.push_back(std::move(s));
     return m_slots.back();
 }

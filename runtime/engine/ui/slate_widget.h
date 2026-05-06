@@ -18,8 +18,10 @@
 #pragma once
 
 #include "engine/ui/slate_core.h"
+#include "engine/ui/slate_input.h"
 
 #include <cstdint>
+#include <vector>
 
 namespace uz::ui {
 
@@ -73,15 +75,48 @@ public:
     /// MUST NOT call `TextRenderer` directly — use the SlateRenderer.
     virtual void Paint(SlateRenderer& renderer) = 0;
 
+    // Input hooks (Step 4) ----------------------------------------------
+
+    virtual EventReply OnPointerDown(const PointerEvent& /*e*/)  { return EventReply::Unhandled; }
+    virtual EventReply OnPointerUp(const PointerEvent& /*e*/)    { return EventReply::Unhandled; }
+    virtual EventReply OnPointerMove(const PointerEvent& /*e*/)  { return EventReply::Unhandled; }
+    virtual EventReply OnPointerWheel(const PointerEvent& /*e*/) { return EventReply::Unhandled; }
+    virtual EventReply OnKeyDown(const KeyEvent& /*e*/)          { return EventReply::Unhandled; }
+    virtual EventReply OnKeyUp(const KeyEvent& /*e*/)            { return EventReply::Unhandled; }
+
+    /// Pointer entered the widget (different from the previously-hovered one).
+    virtual void OnHoverEnter() {}
+    /// Pointer left the widget for a different target (or no target).
+    virtual void OnHoverLeave() {}
+
+    // Tree linkage ------------------------------------------------------
+
+    /// Container widgets MUST override to expose their children for
+    /// hit-test traversal. Default: no children. Returned vector is
+    /// stable across calls within the same frame; callers iterate in
+    /// the returned order (later → "on top").
+    [[nodiscard]] virtual const std::vector<SP<Widget>>* HitTestChildren() const noexcept {
+        return nullptr;
+    }
+
     // Geometry ----------------------------------------------------------
 
     [[nodiscard]] const Geometry& GetGeometry() const noexcept { return m_geometry; }
+
+    /// Parent linkage maintained by container widgets when they call
+    /// `AddSlot` / `SetParent`. Used by InputRouter for bubble routing.
+    [[nodiscard]] WP<Widget> GetParent() const noexcept { return m_parent; }
+    void SetParent(WP<Widget> parent) noexcept { m_parent = std::move(parent); }
 
 protected:
     Widget() = default;
 
     /// Set by `Arrange`. Subclasses read it from `Paint`.
     Geometry m_geometry{};
+
+    /// Weak parent ref for input bubble. Containers wire this up in
+    /// `AddSlot`. Default empty for orphans / root widgets.
+    WP<Widget> m_parent;
 };
 
 } // namespace uz::ui

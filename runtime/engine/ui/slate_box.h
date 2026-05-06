@@ -43,6 +43,8 @@ class HorizontalBox : public Widget {
 public:
     /// Adds `child` as a new slot at the end of the row.
     /// Returns a reference to the slot for chained configuration.
+    /// Parent linkage for input bubble is wired separately by
+    /// `InputRouter::SetRoot` walking the tree (see `slate_input.cpp`).
     SlotBase& AddSlot(SP<Widget> child);
 
     /// Number of currently-attached slots.
@@ -55,8 +57,13 @@ public:
     void Arrange(Geometry geometry) override;
     void Paint(SlateRenderer& renderer) override;
 
+    [[nodiscard]] const std::vector<SP<Widget>>* HitTestChildren() const noexcept override {
+        return &m_hitTestCache;
+    }
+
 protected:
-    std::vector<SlotBase> m_slots;
+    std::vector<SlotBase>      m_slots;
+    std::vector<SP<Widget>>    m_hitTestCache; ///< Mirrors slot widgets for HitTestChildren.
 };
 
 class VerticalBox : public Widget {
@@ -69,8 +76,13 @@ public:
     void Arrange(Geometry geometry) override;
     void Paint(SlateRenderer& renderer) override;
 
+    [[nodiscard]] const std::vector<SP<Widget>>* HitTestChildren() const noexcept override {
+        return &m_hitTestCache;
+    }
+
 protected:
-    std::vector<SlotBase> m_slots;
+    std::vector<SlotBase>   m_slots;
+    std::vector<SP<Widget>> m_hitTestCache;
 };
 
 // Conventional short aliases — match Unreal Slate's `SHBox`/`SVBox` ergonomics.
@@ -91,8 +103,13 @@ public:
     void Arrange(Geometry geometry) override;
     void Paint(SlateRenderer& renderer) override;
 
+    [[nodiscard]] const std::vector<SP<Widget>>* HitTestChildren() const noexcept override {
+        return &m_hitTestCache;
+    }
+
 protected:
-    std::vector<SlotBase> m_slots;
+    std::vector<SlotBase>   m_slots;
+    std::vector<SP<Widget>> m_hitTestCache;
 };
 
 } // namespace uz::ui
