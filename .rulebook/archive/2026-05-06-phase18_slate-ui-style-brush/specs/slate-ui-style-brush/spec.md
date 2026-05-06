@@ -15,6 +15,10 @@ And nenhuma alocação heap acontece (memcpy direto)
 
 ### Requirement: StyleSet name lookup com fallback
 
+`StyleSet::GetColor(name, fallback)` MUST retornar o valor armazenado
+quando o nome existe, e o `fallback` (default magenta para sinalizar
+visualmente token ausente) quando o nome não está no map.
+
 #### Scenario: GetColor existente retorna valor
 
 Given StyleSet com SetColor("accent", oklch_blue)
@@ -52,6 +56,11 @@ Then componentes RGB ficam dentro de ±0.01 do valor de referência
 
 ### Requirement: StyleStack push/pop respects ordering
 
+`StyleStack::GetColor` / `GetBrush` MUST procurar do topo do stack
+para a base (LIFO) e retornar o primeiro hit. Quando um StyleSet
+override é Pop()-ado, lookups subsequentes MUST refletir o estado
+anterior automaticamente.
+
 #### Scenario: Push override
 
 Given Styles() inicial com claude.dark (accent = blue)
@@ -71,7 +80,13 @@ Given ss2 setando "accent" mas NÃO "fg.0"
 When Push(ss2) e Get("fg.0")
 Then retorna fg.0 do claude.dark (queda para baixo)
 
-### Requirement: Demo Step 6 troca theme ao vivo
+### Requirement: Demo theme swap ao vivo (visualização absorvida)
+
+A demo de theme swap (botão "Toggle theme" alternando dark↔light em
+runtime) MUST ser entregue até o final de Step 10. Razão: Step 10 já
+construirá uma UI completa (60+ widgets coloridos via tokens
+nominados) que demonstra theme swap em escala superior a um único
+botão isolado.
 
 #### Scenario: Toggle theme button
 
