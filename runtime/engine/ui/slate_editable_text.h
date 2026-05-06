@@ -48,12 +48,16 @@ public:
     EventReply OnPointerDown(const PointerEvent& e) override;
     EventReply OnKeyDown(const KeyEvent& e) override;
 
-    /// Programmatic focus control. The router picks up focus state via
-    /// `IsFocused`; the FocusManager arrives in Step 9.
+    /// Programmatic focus control. The Step-9 FocusManager wraps these.
     void Focus();
     void Blur();
     [[nodiscard]] bool IsFocused() const noexcept { return m_focused; }
     [[nodiscard]] std::size_t Caret() const noexcept { return m_caret; }
+
+    /// Step 9: opt into the tab cycle.
+    [[nodiscard]] bool IsFocusable() const noexcept override { return true; }
+    void OnFocusReceived() override { Focus(); }
+    void OnFocusLost()     override { Blur(); }
 
     /// Key-code constants the host platform layer should produce. Keeps
     /// the widget free of OS-specific VK_* defines.

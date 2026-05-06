@@ -126,6 +126,23 @@ public:
     /// Pointer left the widget for a different target (or no target).
     virtual void OnHoverLeave() {}
 
+    /// Step 9 — focus.
+    virtual void OnFocusReceived() {}
+    virtual void OnFocusLost() {}
+
+    /// Returns true if this widget is part of the tab cycle and can
+    /// receive keyboard focus. Default false; widgets like EditableText
+    /// override to return true.
+    [[nodiscard]] virtual bool IsFocusable() const noexcept { return false; }
+
+    /// Step 9 — drag-and-drop.
+    /// `OnDragEnter` fires when the cursor enters the widget while a
+    /// drag is in progress; `OnDragLeave` when it leaves; `OnDrop`
+    /// when the user releases over the widget.
+    virtual void       OnDragEnter() {}
+    virtual void       OnDragLeave() {}
+    virtual EventReply OnDrop()     { return EventReply::Unhandled; }
+
     // Tree linkage ------------------------------------------------------
 
     /// Container widgets MUST override to expose their children for
