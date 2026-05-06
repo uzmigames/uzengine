@@ -4,6 +4,10 @@
 
 ### Requirement: ScrollBox clipa content via ScissorPush/Pop
 
+`ScrollBox::Paint` MUST emitir `DrawKind::ScissorPush(geometry.ToRect())`
+antes de chamar o paint do conteúdo, e `DrawKind::ScissorPop` depois,
+garantindo que o conteúdo overflow não vaze além do retângulo do viewport.
+
 #### Scenario: Content maior que viewport não vaza
 
 Given ScrollBox 200x200 com content VBox 200x500
@@ -13,6 +17,11 @@ And último DrawElement é ScissorPop
 And o renderer não emite triângulos fora do retângulo
 
 ### Requirement: ScrollBox wheel ajusta ScrollY clamped
+
+`ScrollBox::OnPointerWheel(e)` MUST atualizar `ScrollY` por
+`-wheelDelta * WheelStep`, clampando o resultado em
+`[0, m_maxScroll]`. Quando o offset muda, MUST invalidar o flag
+`Layout` para re-arrange.
 
 #### Scenario: Wheel up reduz ScrollY
 
@@ -27,6 +36,11 @@ When OnPointerWheel com delta=+1
 Then ScrollY = 0 (não vai negativo)
 
 ### Requirement: EditableText foca no click + claim focus
+
+`EditableText::OnPointerDown` MUST chamar `Focus()` e retornar
+`EventReply::Handled`. O caret MUST ser posicionado pelo offset
+horizontal do click, com aritmética baseada em `FontSize × 0.55`
+(advance ratio aproximada).
 
 #### Scenario: Click foca
 
@@ -66,7 +80,13 @@ When Tick(0.6) é chamado
 Then m_caretBlinkTimer=0.6
 And como fmod(0.6, 1.0)=0.6 > 0.5, caret não é desenhado no próximo Paint
 
-### Requirement: ComboBox abre popup no TopMost
+### Requirement: ComboBox abre popup no TopMost (host-driven)
+
+`ComboBox<T>::OnPointerDown` MUST alternar `m_open` e MUST notificar
+o host registrado em `SetPopupHost` com o widget de popup e o flag
+`m_open`. `SelectOption(idx)` MUST atualizar `SelectedIndex`, fechar
+o popup, e disparar `OnSelectionChanged(idx)`. O TopMost layer real
+do App é entregue até Step 9.
 
 #### Scenario: First click abre popup
 
@@ -93,7 +113,12 @@ Then m_open=false
 And popup é removido do TopMost
 And SelectedIndex NÃO muda
 
-### Requirement: TopMost layer renderiza acima de tudo
+### Requirement: TopMost layer renderiza acima de tudo (Step 9)
+
+O TopMost overlay layer MUST ser entregue até o final de Step 9
+(window-focus-dnd). Garante que tooltips, popovers do ComboBox, e
+arrastadas de DragDrop sejam desenhadas após o resto da árvore com
+z-order maior, ignorando o scissor stack das hierarquias acima.
 
 #### Scenario: TopMost ignora ScissorPush dos parents
 
