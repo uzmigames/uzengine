@@ -26,6 +26,9 @@
 
 namespace uz::ui {
 
+class Widget;
+enum class InvalidationFlag : unsigned char;
+
 template <typename T>
 class Attribute {
 public:
@@ -39,14 +42,15 @@ public:
     Attribute(std::function<T()> getter) : m_getter(std::move(getter)) {}
 
     /// Assigns a literal value. Clears any previously-bound lambda.
-    Attribute& operator=(T value) {
-        m_value = std::move(value);
-        m_getter = nullptr;
-        return *this;
-    }
+    /// If the new value differs from the previous and an owner+flag is
+    /// bound (via `BindOwner`), invalidates the owner with that flag
+    /// — Step 5 contract: literal change auto-invalidates Paint.
+    Attribute& operator=(T value);
 
     /// Assigns a lambda getter. The literal field is unchanged but
-    /// will not be consulted while the lambda is set.
+    /// will not be consulted while the lambda is set. Lambda
+    /// assignment NEVER auto-invalidates — the widget compares
+    /// snapshot-vs-current in Tick.
     Attribute& operator=(std::function<T()> getter) {
         m_getter = std::move(getter);
         return *this;
@@ -65,9 +69,17 @@ public:
     /// Drops any bound lambda; subsequent Get() returns the literal.
     void Unbind() noexcept { m_getter = nullptr; }
 
+    /// Step-5 hook: links the attribute to its owner widget so
+    /// literal-set can auto-invalidate. Called by widget constructors
+    /// or by container code; forwarding to the impl below avoids a
+    /// circular include here.
+    void BindOwner(Widget* owner, InvalidationFlag onChange);
+
 private:
-    T m_value{};
+    T                  m_value{};
     std::function<T()> m_getter;
+    Widget*            m_owner{nullptr};
+    InvalidationFlag   m_invalidationFlag{};
 };
 
 } // namespace uz::ui

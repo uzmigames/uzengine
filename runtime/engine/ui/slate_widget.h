@@ -17,15 +17,52 @@
 
 #pragma once
 
+#include "engine/ui/slate_attribute.h"
 #include "engine/ui/slate_core.h"
 #include "engine/ui/slate_input.h"
 
 #include <cstdint>
+#include <type_traits>
 #include <vector>
 
 namespace uz::ui {
 
 class SlateRenderer;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Invalidation flags (Step 5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Per-widget dirty bits. A widget is "clean" when its corresponding
+/// bit is unset. The framework sets bits on data changes (via
+/// `Invalidate(...)`); the App's frame loop reads them to decide
+/// whether to re-Measure / re-Paint.
+///
+/// Bubble rules (enforced by `Widget::Invalidate`):
+///   - `Layout`     bubbles up: a child reflow forces parent re-measure.
+///   - `Paint`      does NOT bubble: parent paint is unaffected.
+///   - `Visibility` does NOT bubble: collapse/expand only redraws self.
+enum class InvalidationFlag : std::uint8_t {
+    None       = 0,
+    Layout     = 1u << 0,
+    Paint      = 1u << 1,
+    Visibility = 1u << 2,
+};
+
+constexpr InvalidationFlag operator|(InvalidationFlag a, InvalidationFlag b) noexcept {
+    return static_cast<InvalidationFlag>(
+        static_cast<std::uint8_t>(a) | static_cast<std::uint8_t>(b));
+}
+constexpr InvalidationFlag operator&(InvalidationFlag a, InvalidationFlag b) noexcept {
+    return static_cast<InvalidationFlag>(
+        static_cast<std::uint8_t>(a) & static_cast<std::uint8_t>(b));
+}
+constexpr InvalidationFlag& operator|=(InvalidationFlag& a, InvalidationFlag b) noexcept {
+    a = a | b; return a;
+}
+constexpr bool Any(InvalidationFlag f) noexcept {
+    return static_cast<std::uint8_t>(f) != 0;
+}
 
 /// Final geometry assigned to a widget by its parent's Arrange pass.
 /// Coordinates are absolute (parent-resolved) Slate units.
@@ -108,6 +145,28 @@ public:
     [[nodiscard]] WP<Widget> GetParent() const noexcept { return m_parent; }
     void SetParent(WP<Widget> parent) noexcept { m_parent = std::move(parent); }
 
+    // Invalidation (Step 5) ---------------------------------------------
+
+    /// Marks the widget dirty for the given flag(s). `Layout` bubbles
+    /// up to the parent; `Paint` and `Visibility` do not.
+    void Invalidate(InvalidationFlag flags) noexcept {
+        m_invalidation |= flags;
+        if (Any(flags & InvalidationFlag::Layout)) {
+            if (auto p = m_parent.lock()) p->Invalidate(InvalidationFlag::Layout);
+        }
+    }
+
+    [[nodiscard]] bool IsDirty(InvalidationFlag flag) const noexcept {
+        return Any(m_invalidation & flag);
+    }
+
+    void ClearDirty(InvalidationFlag flag) noexcept {
+        m_invalidation = static_cast<InvalidationFlag>(
+            static_cast<std::uint8_t>(m_invalidation) & ~static_cast<std::uint8_t>(flag));
+    }
+
+    [[nodiscard]] InvalidationFlag Invalidation() const noexcept { return m_invalidation; }
+
 protected:
     Widget() = default;
 
@@ -117,6 +176,31 @@ protected:
     /// Weak parent ref for input bubble. Containers wire this up in
     /// `AddSlot`. Default empty for orphans / root widgets.
     WP<Widget> m_parent;
+
+    /// Initial state = both Layout and Paint dirty so the first frame
+    /// always measures + paints.
+    InvalidationFlag m_invalidation{InvalidationFlag::Layout | InvalidationFlag::Paint};
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Attribute<T> deferred impl (depends on Widget being complete).
+// ─────────────────────────────────────────────────────────────────────────────
+
+template <typename T>
+inline Attribute<T>& Attribute<T>::operator=(T value) {
+    const bool changed = !(m_value == value); // requires T::operator==
+    m_value = std::move(value);
+    m_getter = nullptr;
+    if (changed && m_owner) {
+        m_owner->Invalidate(m_invalidationFlag);
+    }
+    return *this;
+}
+
+template <typename T>
+inline void Attribute<T>::BindOwner(Widget* owner, InvalidationFlag onChange) {
+    m_owner = owner;
+    m_invalidationFlag = onChange;
+}
 
 } // namespace uz::ui
