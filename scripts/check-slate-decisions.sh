@@ -13,7 +13,7 @@ if [[ ! -f "$DOC" ]]; then
 fi
 
 EXPECTED_DECISIONS=(
-  "Decision 1 — Core language: C++23 (no scripting in the core)"
+  "Decision 1 — Core language: C++17 (project std, no scripting in the core)"
   "Decision 2 — Memory model: \`std::shared_ptr<Widget>\` + \`std::weak_ptr\`"
   "Decision 3 — Data model: Pull via \`Attribute<T>\`"
   "Decision 4 — Threading: UI single-thread, draw lists immutable"

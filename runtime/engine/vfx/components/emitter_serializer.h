@@ -291,7 +291,7 @@ inline bool DeserializeEmitter(const std::string& jsonStr, ParticleEmitter& e) {
                 if (!stageObj.is_object()) continue;
                 VfxStage stage = VfxStage::ParticleUpdate;
                 if (stageObj.contains("stage") && stageObj["stage"].is_string()) {
-                    VfxStageFromName(stageObj["stage"].get<std::string>().c_str(), stage);
+                    (void)VfxStageFromName(stageObj["stage"].get<std::string>().c_str(), stage);
                 }
                 VfxStackEntry& entry = e.stack.GetEntry(stage);
                 if (stageObj.contains("modules") && stageObj["modules"].is_array()) {
@@ -309,7 +309,7 @@ inline bool DeserializeEmitter(const std::string& jsonStr, ParticleEmitter& e) {
                             mod.enabled = modJson["enabled"].get<bool>();
                         }
                         if (modJson.contains("override") && modJson["override"].is_string()) {
-                            VfxOverrideFlagFromName(
+                            (void)VfxOverrideFlagFromName(
                                 modJson["override"].get<std::string>().c_str(),
                                 mod.overrideFlag);
                         }

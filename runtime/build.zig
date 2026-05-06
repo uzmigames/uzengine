@@ -127,6 +127,7 @@ pub fn build(b: *std.Build) void {
         "engine/event",
         "engine/property",
         "engine/debug",
+        "engine/ui",
         "editor/grid",
         "editor/outline",
         "editor/gizmo",
@@ -334,6 +335,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/animation", cpp_flags);
     addCppDir(runtime_mod, b, "engine/property", cpp_flags);
     addCppDir(runtime_mod, b, "engine/debug",    cpp_flags);
+    addCppDir(runtime_mod, b, "engine/ui",       cpp_flags);
 
     // Thirdparty — SPIRV-Reflect (C source, not C++)
     runtime_mod.addCSourceFiles(.{
@@ -1214,6 +1216,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(test_mod, b, "tests/engine/ecs", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/event", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/property", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine/ui", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/scripting", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/vfx", cpp_flags);
     addCppDir(test_mod, b, "tests/editor", cpp_flags);

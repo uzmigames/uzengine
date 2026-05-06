@@ -14,11 +14,13 @@ in-game HUD, debug overlays).
 
 ---
 
-## Decision 1 — Core language: C++23 (no scripting in the core)
+## Decision 1 — Core language: C++17 (project std, no scripting in the core)
 
 **Decision.** The core widget tree, layout, paint, input, invalidation,
-style, and window subsystems are written in pure C++23. No Lua, no
-scripting, no JIT inside `runtime/engine/ui/`.
+style, and window subsystems are written in pure C++17 — the language
+standard already used by the rest of the engine (`runtime/build.zig`
+sets `-std=c++17`). No Lua, no scripting, no JIT inside
+`runtime/engine/ui/`.
 
 **Alternative rejected.** Bind every Widget to Lua at the core level
 (Slate-via-Lua), so designers could compose UIs from script.

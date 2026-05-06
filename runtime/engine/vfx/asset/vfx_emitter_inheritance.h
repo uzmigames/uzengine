@@ -108,6 +108,21 @@ VfxResolveInheritance(const nlohmann::json& childJson,
                       const VfxInheritanceLoader& loader,
                       uint32_t maxDepth = VFX_MAX_INHERITANCE_DEPTH);
 
+/// Editor variant of `VfxResolveInheritance`. Differs from the runtime
+/// path in that `action: "remove"` modules are NOT dropped — instead they
+/// are kept in the resolved module list and tagged with
+/// `"override": "OverrideRemove"` so the editor's stack panel can render
+/// them dimmed + struck-through (matching Niagara's "Show Removed Modules"
+/// view).
+///
+/// All other behaviour matches `VfxResolveInheritance` — same tagging of
+/// surviving modules (`Inherited` / `OverrideAdd` / `OverrideReplace`),
+/// same parameter / event / tag merging, same cycle detection.
+[[nodiscard]] std::optional<nlohmann::json>
+VfxResolveInheritanceForEditor(const nlohmann::json& childJson,
+                               const VfxInheritanceLoader& loader,
+                               uint32_t maxDepth = VFX_MAX_INHERITANCE_DEPTH);
+
 /// Internal recursive entry — exposed only for tests and for callers that
 /// need to pass their own visited set (e.g. the hot-reload watcher tracking
 /// partial reloads).

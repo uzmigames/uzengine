@@ -43,16 +43,26 @@ void DeepMerge(json& base, const json& patch) {
 
 /// Builds the final modules array from parent + child override entries.
 ///
+/// Tags every surviving module with an `"override"` key so editor + serializer
+/// can preserve provenance:
+///   - parent module untouched     → `"Inherited"`
+///   - child `action: "add"`        → `"OverrideAdd"`
+///   - child `action: "replace"`    → `"OverrideReplace"`
+///   - child `action: "remove"`     → drop (runtime) or `"OverrideRemove"` (editor)
+///
 /// Strips `action` keys so downstream parsers see a plain module list.
-json ApplyModuleOverrides(const json& parentModules, const json& childModules) {
+json ApplyModuleOverrides(const json& parentModules, const json& childModules,
+                          bool keepRemovedAsOverride) {
     json result = json::array();
     if (parentModules.is_array()) {
         for (const auto& m : parentModules) {
             // Drop any leftover action field from a prior merge — keeps the
             // serialiser idempotent across chained resolutions.
             json clean = m;
-            if (clean.is_object() && clean.contains("action")) {
-                clean.erase("action");
+            if (clean.is_object()) {
+                if (clean.contains("action")) clean.erase("action");
+                // Default-tag as Inherited; child overrides will rewrite it.
+                if (!clean.contains("override")) clean["override"] = "Inherited";
             }
             result.push_back(std::move(clean));
         }
@@ -82,7 +92,11 @@ json ApplyModuleOverrides(const json& parentModules, const json& childModules) {
                 UZ_LOG(VFX, Warning, "VfxInheritance: 'remove' target '{}' not found in parent", type);
                 continue;
             }
-            result.erase(it);
+            if (keepRemovedAsOverride) {
+                (*it)["override"] = "OverrideRemove";
+            } else {
+                result.erase(it);
+            }
             continue;
         }
 
@@ -92,6 +106,7 @@ json ApplyModuleOverrides(const json& parentModules, const json& childModules) {
         if (action == "replace") {
             if (type.empty()) {
                 UZ_LOG(VFX, Warning, "VfxInheritance: 'replace' override missing 'type', appending");
+                entry["override"] = "OverrideAdd";
                 result.push_back(std::move(entry));
                 continue;
             }
@@ -100,6 +115,7 @@ json ApplyModuleOverrides(const json& parentModules, const json& childModules) {
             });
             if (it == result.end()) {
                 UZ_LOG(VFX, Warning, "VfxInheritance: 'replace' target '{}' not found in parent, appending", type);
+                entry["override"] = "OverrideAdd";
                 result.push_back(std::move(entry));
                 continue;
             }
@@ -109,6 +125,7 @@ json ApplyModuleOverrides(const json& parentModules, const json& childModules) {
                 DeepMerge(merged, entry["config"]);
                 entry["config"] = std::move(merged);
             }
+            entry["override"] = "OverrideReplace";
             *it = std::move(entry);
             continue;
         }
@@ -117,6 +134,7 @@ json ApplyModuleOverrides(const json& parentModules, const json& childModules) {
             UZ_LOG(VFX, Warning,
                    "VfxInheritance: unknown action '{}', treating as 'add'", action);
         }
+        entry["override"] = "OverrideAdd";
         result.push_back(std::move(entry));
     }
 
@@ -166,12 +184,37 @@ std::string VfxNormalizeInheritancePath(const std::string& path) {
     return out;
 }
 
+namespace {
+
+std::optional<nlohmann::json>
+VfxResolveInheritanceCore(const nlohmann::json& childJson,
+                          const VfxInheritanceLoader& loader,
+                          std::unordered_set<std::string>& visited,
+                          uint32_t depth,
+                          uint32_t maxDepth,
+                          bool keepRemovedAsOverride);
+
+} // namespace
+
 std::optional<nlohmann::json>
 VfxResolveInheritanceImpl(const nlohmann::json& childJson,
                           const VfxInheritanceLoader& loader,
                           std::unordered_set<std::string>& visited,
                           uint32_t depth,
                           uint32_t maxDepth) {
+    return VfxResolveInheritanceCore(childJson, loader, visited, depth, maxDepth,
+                                     /*keepRemovedAsOverride*/ false);
+}
+
+namespace {
+
+std::optional<nlohmann::json>
+VfxResolveInheritanceCore(const nlohmann::json& childJson,
+                          const VfxInheritanceLoader& loader,
+                          std::unordered_set<std::string>& visited,
+                          uint32_t depth,
+                          uint32_t maxDepth,
+                          bool keepRemovedAsOverride) {
     if (depth > maxDepth) {
         UZ_LOG(VFX, Error,
                "VfxInheritance: chain depth {} exceeds max {}", depth, maxDepth);
@@ -219,7 +262,8 @@ VfxResolveInheritanceImpl(const nlohmann::json& childJson,
 
     visited.insert(normalised);
     auto resolvedParent =
-        VfxResolveInheritanceImpl(parentJson, loader, visited, depth + 1, maxDepth);
+        VfxResolveInheritanceCore(parentJson, loader, visited, depth + 1,
+                                  maxDepth, keepRemovedAsOverride);
     visited.erase(normalised);
 
     if (!resolvedParent) {
@@ -247,7 +291,8 @@ VfxResolveInheritanceImpl(const nlohmann::json& childJson,
     // Modules: apply action-based overrides.
     merged["modules"] = ApplyModuleOverrides(
         merged.contains("modules") ? merged["modules"] : json::array(),
-        childJson.contains("modules") ? childJson["modules"] : json::array());
+        childJson.contains("modules") ? childJson["modules"] : json::array(),
+        keepRemovedAsOverride);
 
     // Parameters and events: union by name, child wins duplicates.
     merged["parameters"] = AppendByName(
@@ -281,12 +326,24 @@ VfxResolveInheritanceImpl(const nlohmann::json& childJson,
     return merged;
 }
 
+} // anonymous namespace (Core)
+
 std::optional<nlohmann::json>
 VfxResolveInheritance(const nlohmann::json& childJson,
                       const VfxInheritanceLoader& loader,
                       uint32_t maxDepth) {
     std::unordered_set<std::string> visited;
-    return VfxResolveInheritanceImpl(childJson, loader, visited, 0u, maxDepth);
+    return VfxResolveInheritanceCore(childJson, loader, visited, 0u, maxDepth,
+                                     /*keepRemovedAsOverride*/ false);
+}
+
+std::optional<nlohmann::json>
+VfxResolveInheritanceForEditor(const nlohmann::json& childJson,
+                               const VfxInheritanceLoader& loader,
+                               uint32_t maxDepth) {
+    std::unordered_set<std::string> visited;
+    return VfxResolveInheritanceCore(childJson, loader, visited, 0u, maxDepth,
+                                     /*keepRemovedAsOverride*/ true);
 }
 
 } // namespace uz
