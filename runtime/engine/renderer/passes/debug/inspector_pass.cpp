@@ -26,6 +26,7 @@ namespace uz {
 
 void PassInspector::BeginFrame() {
     m_targets.clear();
+    m_bufferTargets.clear();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -67,6 +68,22 @@ void PassInspector::RegisterDisabledTarget(const char* name) {
     target.disabledPlaceholder = true;
 
     m_targets.push_back(std::move(target));
+}
+
+void PassInspector::RegisterBufferTarget(const char* name, RHIBufferHandle buffer,
+                                          uint64_t sizeBytes,
+                                          RHIResourceState state) {
+    if (!name || !buffer.IsValid() || sizeBytes == 0) {
+        return;
+    }
+
+    RegisteredBufferTarget target;
+    target.name      = name;
+    target.buffer    = buffer;
+    target.sizeBytes = sizeBytes;
+    target.lastState = state;
+
+    m_bufferTargets.push_back(std::move(target));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

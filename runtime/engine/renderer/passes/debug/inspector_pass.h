@@ -93,6 +93,20 @@ struct RegisteredTarget {
 // ValidationResult — per-target anomaly detection result
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Describes a registered GPU buffer for `--diag` numeric validation.
+///
+/// Buffers cannot be visualized by the fullscreen vis pass; they exist only
+/// so Validate()/--diag can read back min/max/avg statistics (interpreted as
+/// float data). Primary use: GI probe buffers (e.g. "rc.probes") whose
+/// health is otherwise invisible.
+struct RegisteredBufferTarget {
+    std::string      name;       ///< Dotted name (e.g., "rc.probes").
+    RHIBufferHandle  buffer;     ///< GPU buffer handle.
+    uint64_t         sizeBytes;  ///< Bytes to read back (clamped internally).
+    /// Resource state the buffer is expected to be in after the frame ends.
+    RHIResourceState lastState = RHIResourceState::ShaderResource;
+};
+
 /// Result of readback-based validation for a single registered target.
 struct ValidationResult {
     std::string name;      ///< Target name.
@@ -234,6 +248,21 @@ public:
     /// * `name` — Dotted identifier of the target that WOULD be registered
     ///   if the pass were enabled (e.g., "ssgi.result", "gtao.result").
     void RegisterDisabledTarget(const char* name);
+
+    /// Registers a GPU buffer for `--diag` numeric validation (float stats).
+    ///
+    /// Buffer targets appear in the diagnostic report alongside texture
+    /// targets but are never visualized/dumped. Data is interpreted as
+    /// float32 for min/max/avg/NaN statistics.
+    ///
+    /// # Arguments
+    /// * `name` — Dotted identifier (e.g., "rc.probes").
+    /// * `buffer` — GPU buffer handle. Must be valid.
+    /// * `sizeBytes` — Bytes to read back from offset 0.
+    /// * `state` — Resource state the buffer is in at frame end.
+    void RegisterBufferTarget(const char* name, RHIBufferHandle buffer,
+                              uint64_t sizeBytes,
+                              RHIResourceState state = RHIResourceState::ShaderResource);
 
     // ── Visualization control ────────────────────────────────────────────
 
@@ -456,6 +485,7 @@ public:
 
 private:
     std::vector<RegisteredTarget> m_targets;   ///< Targets registered this frame.
+    std::vector<RegisteredBufferTarget> m_bufferTargets; ///< Buffer targets registered this frame.
     std::string m_visTargetName;               ///< Currently selected vis target name (empty = off).
     bool m_validationEnabled = false;          ///< True if pass.validate is active.
 

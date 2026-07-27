@@ -332,10 +332,16 @@ void SceneRenderer::RegisterPassInspectorTargets(FrameContext& ctx) {
     {
         auto& cvars = CVarRegistry::Get();
 
-        // Radiance cache stores L2 SH in a StructuredBuffer — no texture to
-        // read back yet, so it only surfaces here while disabled. A probe
-        // visualization texture is planned with the hit-lighting rework.
-        if (!cvars.GetBool("r.RadianceCache", false)) {
+        // Radiance cache stores L2 SH in a StructuredBuffer — registered as a
+        // BUFFER target so --diag reads real min/max/avg probe statistics
+        // (all-zero probes = trace not converging/running).
+        if (cvars.GetBool("r.RadianceCache", false)
+            && m_radianceCache.IsInitialized()
+            && m_radianceCache.GetProbeSHBuffer().IsValid()) {
+            m_passInspector.RegisterBufferTarget("rc.probes",
+                                                  m_radianceCache.GetProbeSHBuffer(),
+                                                  m_radianceCache.GetProbeSHBufferSize());
+        } else {
             m_passInspector.RegisterDisabledTarget("rc.probes");
         }
 

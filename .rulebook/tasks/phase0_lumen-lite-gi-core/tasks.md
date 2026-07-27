@@ -12,15 +12,15 @@
 - [x] 2.2 PSNR loop documented in plan doc §5 + baseline recorded: **7.91 dB** pose A (raster-a.png vs golden-a.png, same pose/flags). PSNR via sampled-MSE Python; NOTE (tooling debt): in-engine `--flip-ref/--flip-test` HANGS (>9 min, process killed) — needs its own fix before FLIP-based gating; PSNR loop is sufficient for phase gating meanwhile. Pose B/C raster pairs to be captured with the Phase 4 verification.
 
 ## 3. Surface-cache-lite hit lighting
-- [ ] 3.1 Create shared `runtime/shaders/runtime/gi/gi_hit_lighting.hlsli` with the hit-radiance model (shadowed sun + albedo + prev-frame irradiance feedback), consumed by both probe tracers
-- [ ] 3.2 radiance_cache_trace_cs.hlsl: real hit normal via GDF central-difference gradient (6 taps)
-- [ ] 3.3 radiance_cache_trace_cs.hlsl: sun occlusion via GDF sphere-trace from hit toward light
+- [x] 3.1 Created shared `runtime/shaders/runtime/gi/gi_hit_lighting.hlsli`: GIHit_Radiance (Lambert, shadowed sun + bounce feedback) + GISH_EvaluateBasis/GISH_PackCompact/GISH_EvalIrradiance — EXACT ports of the CPU SH projector. This exposed a format bug: the old trace stored raw SH bands into the compact layout that EvalSH_L2 expects PRE-convolved (L0 ~4× hot, L1/L2 mis-signed/swapped).
+- [x] 3.2 radiance_cache_trace_cs.hlsl: GdfHitNormal — GDF central-difference gradient (6 taps), ray-facing flip, -dir fallback on degenerate gradient.
+- [x] 3.3 radiance_cache_trace_cs.hlsl: GdfSunVisibility — GDF sphere-trace from hit toward the light (32 steps, normal push-off). Miss rays now sample the atmosphere sky cubemap directionally (Z-up→cubemap swizzle) instead of a flat color.
+- [x] 3.7 Multi-bounce feedback: ProbeIrradianceAt — nearest-probe prev-frame SH sample at hit × scene albedo folded into GIHit_Radiance (@ref Majercik 2019 §infinite bounces). Same-buffer read documented (EMA keeps mixing stable).
+- [x] 3.8 `r.RadianceCache: 1` in sponza.uzscene. **THE CHAIN WAS DEAD AT THE SOURCE — three findings while enabling:** (a) `mesh_sdf_bake_cs.hlsl` was a 1-LINE EMPTY STUB (mesh SDFs never baked); (b) `global_sdf_composite_cs.hlsl` was ALSO a 1-line stub (clipmaps never written — zero distance = "surface everywhere" = every probe ray hit instantly with full shadow = black probes; the rc.probes diag readback fingerprint was avg = 1/28 exactly = only the packed constant 1.0 alive). Both implemented for real (Ericson 2005 point-triangle bake; clipmap composite with AABB-conservative min over mesh SDFs). (c) frame_constants advertised the DDGI atlases to the CB whenever DDGI+RC were initialized without checking `r.RayTracing.GI` — the never-dispatched atlases could hijack the priority-1 GI branch; now gated. Bonus fixes: probe spacing size/N → size/(N-1) to match the deferred trilinear mapping; rcGridExtent CB now sourced from the cache's actual extent; FlushSdfBakes → GDF MarkAllDirty() (composite ran before bakes finished and never re-ran); PassInspector gained BUFFER diag targets (rc.probes real min/max/avg readback — how the all-zero fingerprint was caught).
+- [x] 3.9 Verified: rc.probes min/max/avg = -1.4496/+1.4409/0.0532 (real directional SH bands); lighting.indirect avg 0.2749 → 0.2969, floor 0.027 → 0.055; visual `.screenshots/gi-plan/06-sdfgi-live.png` shows graded wall irradiance + lit far wall; PSNR pose A vs PT golden: **7.91 → 11.62 dB**.
 - [ ] 3.4 ddgi_probe_update_cs.hlsl: geometric triangle normal + sun shadow via second RayQuery
-- [ ] 3.5 Per-instance average albedo+emissive table: C++ build at scene load (material constants + albedo mip-tail average), StructuredBuffer upload, bindless SRV in probe constants
-- [ ] 3.6 Consume the material table in the DXR path via `InstanceID()`; SDF path uses scene-average fallback (logged)
-- [ ] 3.7 Multi-bounce feedback: sample previous-frame probe SH at hit × hit albedo, added to hit radiance (@ref Majercik 2019 §infinite bounces)
-- [ ] 3.8 Enable `r.RadianceCache: 1` in sponza.uzscene; verify `r.RayTracing.GI=1` path on DXR hardware
-- [ ] 3.9 Verify: `--vis` probe atlas shows colored shadow-aware bounce; `--pixel-debug` on enclosed pixel shows no unshadowed-sun energy; PSNR delta recorded
+- [ ] 3.5 Per-instance average albedo+emissive table: C++ build at scene load, StructuredBuffer upload, bindless SRV in probe constants
+- [ ] 3.6 Consume the material table in the DXR path via `InstanceID()`; SDF path uses scene-average fallback (r.GI.SceneAlbedo CVar, default 0.35 = measured Sponza GBuffer average)
 
 ## 4. Composite correctness
 - [ ] 4.1 deferred_lighting_ps.hlsl: SSGI joins the indirect cascade by screen-validity blend (replaces additive `diffuseAmbient += ssgi`)

@@ -714,9 +714,10 @@ TEST_F(GIGpuTest, GDFShaderConstantStructLayout) {
     static_assert(sizeof(uz::GdfCompositeConstants) == 32,
         "GdfCompositeConstants must be 32 bytes (8 root constants)");
 
-    // RadianceCacheTraceConstants must be exactly 176 bytes
-    static_assert(sizeof(uz::RadianceCacheTraceConstants) == 176,
-        "RadianceCacheTraceConstants must be 176 bytes");
+    // RadianceCacheTraceConstants must be exactly 192 bytes (176 + the
+    // surface-cache-lite block: sceneAlbedo RGB + skyCubemapSrv).
+    static_assert(sizeof(uz::RadianceCacheTraceConstants) == 192,
+        "RadianceCacheTraceConstants must be 192 bytes");
 
     // Verify field offsets for GdfCompositeConstants (matches root constant layout)
     uz::GdfCompositeConstants cc{};

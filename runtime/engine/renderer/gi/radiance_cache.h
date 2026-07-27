@@ -131,6 +131,12 @@ public:
     /// * `perFrameCpuPtr` — CPU pointer to the per-frame data.
     /// * `perFrameSize` — Size of the per-frame data in bytes.
     /// * `frameIndex` — Monotonic frame counter (for temporal jitter).
+    /// * `sceneAlbedo` — Average scene diffuse albedo (linear RGB) used as
+    ///   the hit-surface albedo by the surface-cache-lite shading model.
+    ///   Pass `{0.18, 0.18, 0.18}` (grey card) when no material data exists.
+    /// * `skyCubemapSrv` — Bindless SRV of the atmosphere sky cubemap for
+    ///   directional miss radiance. `UINT32_MAX` falls back to the flat
+    ///   skylight color.
     void UpdateProbes(
         IRHICommandList* cmdList,
         const GlobalDistanceField& gdf,
@@ -140,11 +146,21 @@ public:
         uint32_t perFrameOffset,
         const void* perFrameCpuPtr,
         uint32_t perFrameSize,
-        uint32_t frameIndex);
+        uint32_t frameIndex,
+        const Vec3& sceneAlbedo,
+        uint32_t skyCubemapSrv);
 
     /// Returns the SRV index for the probe SH buffer.
     /// Used by the deferred lighting shader to sample radiance cache probes.
     [[nodiscard]] uint32_t GetProbeSHBufferSrv() const noexcept { return m_shBufferSrv; }
+
+    /// Returns the raw probe SH buffer handle (PassInspector diag readback).
+    [[nodiscard]] RHIBufferHandle GetProbeSHBuffer() const noexcept { return m_shBuffer; }
+
+    /// Returns the probe SH buffer size in bytes (totalProbes × 7 × float4).
+    [[nodiscard]] uint64_t GetProbeSHBufferSize() const noexcept {
+        return static_cast<uint64_t>(kTotalProbes) * 7u * 16u;
+    }
 
     /// Returns the UAV index for the probe SH buffer.
     [[nodiscard]] uint32_t GetProbeSHBufferUav() const noexcept { return m_shBufferUav; }
@@ -238,9 +254,15 @@ struct RadianceCacheTraceConstants {
     float    lightColorR;        ///< Primary light color R.
     float    lightColorG;
     float    lightColorB;
-    float    groundAlbedo;       ///< Estimated average scene albedo for bounce (0.18 typical).
+    float    groundAlbedo;       ///< Legacy scalar fallback (unused by the shader — kept for layout).
+
+    // Surface-cache-lite hit inputs (see gi_hit_lighting.hlsli)
+    float    sceneAlbedoR;       ///< Average scene diffuse albedo, linear RGB.
+    float    sceneAlbedoG;
+    float    sceneAlbedoB;
+    uint32_t skyCubemapSrv;      ///< Atmosphere sky cubemap SRV (UINT32_MAX = flat sky fallback).
 };
 
-static_assert(sizeof(RadianceCacheTraceConstants) == 176, "RadianceCacheTraceConstants must be 176 bytes");
+static_assert(sizeof(RadianceCacheTraceConstants) == 192, "RadianceCacheTraceConstants must be 192 bytes");
 
 } // namespace uz

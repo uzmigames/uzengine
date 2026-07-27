@@ -407,6 +407,12 @@ void SceneRenderer::FlushSdfBakes(IRHICommandList* cmdList) {
     cmdList->Begin();
 
     m_pendingSdfBakes.clear();
+
+    // The GDF composite only re-runs for dirty clipmaps, and the dirty flag
+    // tracks camera motion — a composite that already ran this session would
+    // never see the SDFs we just baked. Force a full recomposite.
+    m_globalDistanceField.MarkAllDirty();
+
     UZ_LOG(Renderer, Info, "SceneRenderer: SDF batch bake complete");
 }
 

@@ -602,7 +602,9 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
         perFrame.radianceCacheEnabled = 1;
         perFrame.rcProbeSHBufferSrv   = m_radianceCache.GetProbeSHBufferSrv();
         perFrame.rcProbesPerAxis      = RadianceCache::kProbesPerAxis;
-        perFrame.rcGridExtent         = m_rcGridExtentCVar;
+        // Use the cache's ACTUAL extent, not the CVar copy — if the CVar and
+        // CreateResources ever diverge, the sampler must follow the real grid.
+        perFrame.rcGridExtent         = m_radianceCache.GetGridExtent();
         const Vec3 origin = m_radianceCache.GetGridOrigin();
         perFrame.rcGridOriginX        = origin.x;
         perFrame.rcGridOriginY        = origin.y;
@@ -635,8 +637,17 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     perFrame.ddgiProbeSpacing  = 0.0f;
     perFrame.ddgiIntensity     = cv_GIIntensity->value;
     perFrame.indirectAOExponent = cv_IndirectAOExp->value;
+    // The atlases exist from init, but they only receive dispatches when
+    // `r.RayTracing.GI` is on — advertising them to the shader while the
+    // writer never runs hands the priority-1 GI branch an UNWRITTEN depth
+    // atlas: garbage-large depth moments pass the Chebyshev test with
+    // visibility 1, the empty irradiance atlas is adopted as the pixel's
+    // indirect, and every lower-priority GI source (radiance cache, LPV,
+    // sky SH) is silently skipped. Read the CVar through the registry —
+    // never a file-static pointer (see the r.GTAO gating incident).
     if (m_ddgiSystem.IsInitialized() && m_radianceCache.IsInitialized()
-        && m_device->IsBindless()) {
+        && m_device->IsBindless()
+        && CVarRegistry::Get().GetBool("r.RayTracing.GI", false)) {
         const Vec3 origin = m_radianceCache.GetGridOrigin();
         m_ddgiSystem.SetGridOrigin(origin);
         m_ddgiSystem.SetProbeSpacing(m_radianceCache.GetProbeSpacing());

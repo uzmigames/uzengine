@@ -123,7 +123,7 @@ DiagnosticReport PassInspector::GenerateReport(IRHIDevice* device, IRHICommandLi
                                                 uint32_t frameNumber) {
     DiagnosticReport report;
     report.frameNumber = frameNumber;
-    report.targetCount = static_cast<uint32_t>(m_targets.size());
+    report.targetCount = static_cast<uint32_t>(m_targets.size() + m_bufferTargets.size());
 
     // Run validation on all registered targets (synchronous GPU readback)
     report.targets = Validate(device, cmdList);

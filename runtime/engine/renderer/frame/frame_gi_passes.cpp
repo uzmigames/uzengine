@@ -45,6 +45,13 @@ static auto* cv_SSRSlopeTolerance  = UZ_CVAR_FLOAT("r.SSR.SlopeToleranceScale", 
 /// SDF radiance cache shader transparently. @ref Majercik 2019 "DDGI"
 static auto* cv_RayTracingGI       = UZ_CVAR_BOOL("r.RayTracing.GI", false, "Use DXR ray-traced probe update (DDGI) instead of SDF sphere-tracing");
 
+/// Average scene diffuse albedo used as the hit-surface albedo by the probe
+/// tracers' surface-cache-lite shading (gi_hit_lighting.hlsli). The GDF has
+/// no per-hit material identity, so a scene-wide average is the honest input;
+/// 0.35 matches the measured Sponza GBuffer albedo average. A per-instance
+/// material table (DXR path) supersedes this for RayQuery hits.
+static auto* cv_GISceneAlbedo      = UZ_CVAR_FLOAT("r.GI.SceneAlbedo", 0.35f, "Average scene diffuse albedo for probe hit shading", 0.f, 1.f);
+
 #include <cstring>
 
 namespace uz {
@@ -189,6 +196,18 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
             if (rcPipeline.IsValid()) {
                 Vec3 camPos = ctx.perFrame.cameraPos.xyz();
                 m_radianceCache.Update(camPos);
+
+                // Surface-cache-lite hit inputs: scene-average albedo (the
+                // GDF carries no per-hit material identity) + the atmosphere
+                // sky cubemap for directional miss radiance. The cubemap
+                // holds last frame's capture — sky changes slowly, and the
+                // EMA-blended probes absorb the 1-frame lag.
+                const float avgAlbedo = cv_GISceneAlbedo->value;
+                const Vec3 sceneAlbedo{avgAlbedo, avgAlbedo, avgAlbedo};
+                const uint32_t skySrv =
+                    (m_skyCubemap.IsValid() && m_skyCubemapSrv != UINT32_MAX)
+                        ? m_skyCubemapSrv : UINT32_MAX;
+
                 m_radianceCache.UpdateProbes(
                     cmd, m_globalDistanceField, rcPipeline,
                     m_cbRing.get(),
@@ -196,7 +215,9 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
                     ctx.perFrameAlloc.offsetBytes,
                     ctx.perFrameAlloc.cpuPtr,
                     sizeof(PerFrameCB),
-                    ctx.frameIndex);
+                    ctx.frameIndex,
+                    sceneAlbedo,
+                    skySrv);
             }
 
             // DDGI atlas writer — only when DXR + TLAS + CVar are ready.

@@ -27,11 +27,11 @@ namespace uz {
 std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICommandList* cmdList) {
     std::vector<ValidationResult> results;
 
-    if (!device || !cmdList || m_targets.empty()) {
+    if (!device || !cmdList || (m_targets.empty() && m_bufferTargets.empty())) {
         return results;
     }
 
-    results.reserve(m_targets.size());
+    results.reserve(m_targets.size() + m_bufferTargets.size());
 
     static constexpr uint32_t kSampleDim = 4;
 
@@ -262,6 +262,90 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
             result.minVal = 0.0f;
             result.maxVal = 0.0f;
             result.avgVal = 0.0f;
+        }
+
+        device->DestroyBuffer(readbackBuffer);
+        results.push_back(std::move(result));
+    }
+
+    // ── Buffer targets: full readback, interpreted as float32 ────────────
+    for (const auto& bufTarget : m_bufferTargets) {
+        ValidationResult result;
+        result.name    = bufTarget.name;
+        result.isZero  = true;
+        result.hasNaN  = false;
+        result.hasInf  = false;
+        result.minVal  = 1e30f;
+        result.maxVal  = -1e30f;
+        result.avgVal  = 0.0f;
+
+        // Cap the readback to keep validation cheap for huge buffers.
+        const uint64_t readBytes = std::min<uint64_t>(bufTarget.sizeBytes,
+                                                      4u * 1024u * 1024u);
+
+        RHIBufferDesc readbackDesc{};
+        readbackDesc.sizeBytes = readBytes;
+        readbackDesc.stride    = 4;
+        readbackDesc.usage     = RHIBufferUsage::CopyDst;
+        readbackDesc.memory    = RHIMemoryType::Readback;
+        readbackDesc.debugName = "PassInspector_ValidateBuffer";
+
+        RHIBufferHandle readbackBuffer = device->CreateBuffer(readbackDesc);
+        if (!readbackBuffer.IsValid()) {
+            result.skipped = true;
+            result.isZero  = false;
+            result.minVal = result.maxVal = result.avgVal = 0.0f;
+            results.push_back(std::move(result));
+            continue;
+        }
+
+        {
+            RHIBarrierDesc barrier{};
+            barrier.buffer      = bufTarget.buffer;
+            barrier.stateBefore = bufTarget.lastState;
+            barrier.stateAfter  = RHIResourceState::CopySrc;
+            cmdList->ResourceBarrier(&barrier, 1);
+
+            cmdList->CopyBuffer(bufTarget.buffer, 0, readbackBuffer, 0, readBytes);
+
+            barrier.stateBefore = RHIResourceState::CopySrc;
+            barrier.stateAfter  = bufTarget.lastState;
+            cmdList->ResourceBarrier(&barrier, 1);
+        }
+
+        cmdList->End();
+        cmdList->Execute();
+        device->WaitIdle();
+        cmdList->Begin();
+
+        void* mapped = device->MapBuffer(readbackBuffer);
+        if (mapped) {
+            const auto* floats = static_cast<const float*>(mapped);
+            const uint64_t count = readBytes / sizeof(float);
+            double sum = 0.0;
+            uint64_t finiteCount = 0;
+            for (uint64_t i = 0; i < count; ++i) {
+                const float v = floats[i];
+                if (std::isnan(v)) {
+                    result.hasNaN = true;
+                } else if (std::isinf(v)) {
+                    result.hasInf = true;
+                } else {
+                    if (v != 0.0f) result.isZero = false;
+                    result.minVal = std::min(result.minVal, v);
+                    result.maxVal = std::max(result.maxVal, v);
+                    sum += static_cast<double>(v);
+                    ++finiteCount;
+                }
+            }
+            result.avgVal = (finiteCount > 0)
+                ? static_cast<float>(sum / static_cast<double>(finiteCount)) : 0.0f;
+            if (finiteCount == 0) { result.minVal = 0.0f; result.maxVal = 0.0f; }
+            device->UnmapBuffer(readbackBuffer);
+        } else {
+            result.skipped = true;
+            result.isZero  = false;
+            result.minVal = result.maxVal = result.avgVal = 0.0f;
         }
 
         device->DestroyBuffer(readbackBuffer);

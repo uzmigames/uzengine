@@ -1,20 +1,28 @@
 /// UzEngine Radiance Cache Trace — SDF-based probe update.
 ///
 /// Updates one L2 SH probe per thread. For every probe in the grid we shoot
-/// `raysPerProbe` cosine-weighted hemisphere rays, ray-march them through the
-/// global distance field clipmap hierarchy, and accumulate the resulting
-/// radiance into the probe's L2 SH coefficients (7 float4 packing). Hit points
-/// receive single-bounce sun lighting modulated by the average ground albedo.
-/// Missed rays sample the sky color. The new SH is EMA-blended with the prior
-/// frame to suppress single-frame noise.
+/// `raysPerProbe` uniformly-distributed sphere rays, sphere-trace them through
+/// the global distance field clipmap hierarchy, and accumulate the resulting
+/// radiance into the probe's L2 SH coefficients (compact 7-float4 packing —
+/// see gi_hit_lighting.hlsli for the format contract).
+///
+/// Hit points use the shared surface-cache-lite model (GIHit_Radiance):
+///   - Real surface normal from the GDF central-difference gradient.
+///   - Sun visibility from a second GDF sphere-trace toward the light.
+///   - Scene-average albedo (CPU-computed from the draw list materials).
+///   - Multi-bounce feedback: previous-frame probe irradiance at the hit.
+/// Missed rays sample the atmosphere sky cubemap in the ray direction
+/// (falling back to the flat skylight color when the cubemap is absent).
+/// The new SH is EMA-blended with the prior frame to suppress noise.
 ///
 /// @ref Sloan 2008 "Stupid Spherical Harmonics (SH) Tricks" — L2 projection
-/// @ref Wright 2015 "Dynamic Diffuse Global Illumination" — surfel/probe GI
 /// @ref Majercik 2019 "Dynamic Diffuse Global Illumination with Ray-Traced
-///                     Irradiance Probes" — temporal hysteresis blending
+///                     Irradiance Probes" — hysteresis + infinite bounces
 /// @ref Wright/Crassin 2018 "Distance Field Ray Tracing" — clipmap stepping
+/// @ref Ramamoorthi & Hanrahan 2001 — SH irradiance environment maps
 
 #include "../common/constants.hlsli"
+#include "gi_hit_lighting.hlsli"
 
 // ─── Root constants at b0 ──────────────────────────────────────────────────
 
@@ -68,7 +76,12 @@ cbuffer TraceConstants : register(b2) {
     float lightColorR;
     float lightColorG;
     float lightColorB;
-    float groundAlbedo;
+    float groundAlbedo;          // Legacy scalar fallback (kept for layout).
+
+    float sceneAlbedoR;          // CPU-computed average scene albedo (linear).
+    float sceneAlbedoG;
+    float sceneAlbedoB;
+    uint  skyCubemapSrv;         // Atmosphere sky cubemap SRV (sentinel = flat sky).
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────
@@ -79,63 +92,13 @@ static const float kMinStep        = 2.0;     // cm — never advance less than 
 static const uint  kMaxStepsPerRay = 96;
 static const uint  kMaxRaysPerProbe = 64;
 
-// ─── L2 SH basis (Sloan 2008 packing — pre-cosine-convolved on accumulate) ──
-//
-// We store 9 raw L2 coefficients per channel. They are written into the 7
-// float4 packing consumed by `EvalSH_L2` in deferred lighting:
-//   coeffs[0] = (sh1.r, sh2.r, sh3.r, sh0.r)   ← UE5/Three.js L0+L1 packing
-//   coeffs[1] = (sh1.g, sh2.g, sh3.g, sh0.g)
-//   coeffs[2] = (sh1.b, sh2.b, sh3.b, sh0.b)
-//   coeffs[3] = (sh4.r, sh5.r, sh6.r, sh7.r)
-//   coeffs[4] = (sh4.g, sh5.g, sh6.g, sh7.g)
-//   coeffs[5] = (sh4.b, sh5.b, sh6.b, sh7.b)
-//   coeffs[6] = (sh8.r, sh8.g, sh8.b, 1)
-//
-// Basis values (Ramamoorthi & Hanrahan 2001, Sloan 2008):
-//   Y0   =  0.282095
-//   Y1.x = -0.488603 * x
-//   Y1.y =  0.488603 * y
-//   Y1.z = -0.488603 * z
-//   Y2.xy =  1.092548 * x * y
-//   Y2.yz = -1.092548 * y * z
-//   Y2.zz =  0.315392 * (3*z*z - 1)
-//   Y2.xz = -1.092548 * x * z
-//   Y2.xx =  0.546274 * (x*x - y*y)
-
-void SHEvaluateL2(float3 dir, out float basis[9]) {
-    basis[0] =  0.282095;
-    basis[1] = -0.488603 * dir.x;
-    basis[2] =  0.488603 * dir.y;
-    basis[3] = -0.488603 * dir.z;
-    basis[4] =  1.092548 * dir.x * dir.y;
-    basis[5] = -1.092548 * dir.y * dir.z;
-    basis[6] =  0.315392 * (3.0 * dir.z * dir.z - 1.0);
-    basis[7] = -1.092548 * dir.x * dir.z;
-    basis[8] =  0.546274 * (dir.x * dir.x - dir.y * dir.y);
-}
-
-// Pack 9 raw L2 coefficients per channel into the 7-float4 layout.
-void PackL2(float shR[9], float shG[9], float shB[9], out float4 packed[7]) {
-    packed[0] = float4(shR[1], shR[2], shR[3], shR[0]);
-    packed[1] = float4(shG[1], shG[2], shG[3], shG[0]);
-    packed[2] = float4(shB[1], shB[2], shB[3], shB[0]);
-    packed[3] = float4(shR[4], shR[5], shR[6], shR[7]);
-    packed[4] = float4(shG[4], shG[5], shG[6], shG[7]);
-    packed[5] = float4(shB[4], shB[5], shB[6], shB[7]);
-    packed[6] = float4(shR[8], shG[8], shB[8], 1.0);
-}
-
-void UnpackL2(float4 packed[7], out float shR[9], out float shG[9], out float shB[9]) {
-    shR[0] = packed[0].w; shG[0] = packed[1].w; shB[0] = packed[2].w;
-    shR[1] = packed[0].x; shG[1] = packed[1].x; shB[1] = packed[2].x;
-    shR[2] = packed[0].y; shG[2] = packed[1].y; shB[2] = packed[2].y;
-    shR[3] = packed[0].z; shG[3] = packed[1].z; shB[3] = packed[2].z;
-    shR[4] = packed[3].x; shG[4] = packed[4].x; shB[4] = packed[5].x;
-    shR[5] = packed[3].y; shG[5] = packed[4].y; shB[5] = packed[5].y;
-    shR[6] = packed[3].z; shG[6] = packed[4].z; shB[6] = packed[5].z;
-    shR[7] = packed[3].w; shG[7] = packed[4].w; shB[7] = packed[5].w;
-    shR[8] = packed[6].x; shG[8] = packed[6].y; shB[8] = packed[6].z;
-}
+// ─── L2 SH accumulation/packing ─────────────────────────────────────────────
+// Raw basis (GISH_EvaluateBasis) + compact pack (GISH_PackCompact) come from
+// gi_hit_lighting.hlsli and are exact ports of the CPU projector — see the
+// format contract there. The previous local SHEvaluateL2/PackL2 pair stored
+// raw bands with mismatched sign/order into the compact layout, which
+// EvalSH_L2 then read as if convolution had been folded in (L0 ~4× hot,
+// L1/L2 lobes swapped).
 
 // ─── GDF clipmap sampling ─────────────────────────────────────────────────
 //
@@ -200,6 +163,82 @@ float TraceGDF(float3 origin, float3 dir, float maxT) {
     return -1.0;
 }
 
+// ─── Hit-point queries (surface-cache-lite inputs) ─────────────────────────
+
+/// Outward surface normal from the GDF gradient (central differences, 6 taps).
+/// Flipped to face the incoming ray so backface/inside hits still shade sanely.
+/// @ref Hart 1996 "Sphere Tracing" — SDF gradient as surface normal
+float3 GdfHitNormal(float3 p, float3 rayDir) {
+    const float e = kSurfaceEpsilon;
+    float3 g = float3(
+        SampleGdfDistance(p + float3(e, 0, 0)) - SampleGdfDistance(p - float3(e, 0, 0)),
+        SampleGdfDistance(p + float3(0, e, 0)) - SampleGdfDistance(p - float3(0, e, 0)),
+        SampleGdfDistance(p + float3(0, 0, e)) - SampleGdfDistance(p - float3(0, 0, e)));
+    float len = length(g);
+    float3 n = (len > 1e-5) ? g / len : -rayDir;
+    // A surface visible along `rayDir` must face against it.
+    return (dot(n, rayDir) > 0.0) ? -n : n;
+}
+
+/// Sun visibility at a hit point: 1 when a GDF sphere-trace toward the light
+/// escapes, 0 when it re-hits geometry. This is what stops enclosed interiors
+/// from receiving direct sun injection through walls.
+static const uint kShadowMaxSteps = 32;
+float GdfSunVisibility(float3 p, float3 n, float3 toLight, float maxT) {
+    // Push off along BOTH the normal and the light direction so the trace
+    // starts outside the kSurfaceEpsilon acceptance band of the surface.
+    float3 origin = p + n * (2.0 * kSurfaceEpsilon);
+    float t = kMinStep;
+    [loop]
+    for (uint i = 0; i < kShadowMaxSteps; ++i) {
+        float3 q = origin + toLight * t;
+        float d = SampleGdfDistance(q);
+        if (d < kSurfaceEpsilon) {
+            return 0.0;
+        }
+        t += max(d, kMinStep);
+        if (t >= maxT) {
+            break;
+        }
+    }
+    return 1.0;
+}
+
+/// Previous-frame probe irradiance at a world position (nearest probe, one
+/// 7-float4 fetch). Feeds the multi-bounce term — reading the same buffer the
+/// dispatch writes is intentional: probes outside this frame's update window
+/// hold last frame's converged values, and the EMA keeps any same-frame
+/// mixing stable. @ref Majercik 2019 §"infinite bounces"
+float3 ProbeIrradianceAt(float3 worldPos, float3 n) {
+    RWStructuredBuffer<float4> shBuf = ResourceDescriptorHeap[g_shBufferUavIndex];
+    float3 cell = (worldPos - float3(gridOriginX, gridOriginY, gridOriginZ)) / probeSpacing;
+    int3 idx3 = clamp(int3(round(cell)), int3(0, 0, 0),
+                      int3(int(probesPerAxis) - 1,
+                           int(probesPerAxis) - 1,
+                           int(probesPerAxis) - 1));
+    uint idx = uint(idx3.x)
+             + uint(idx3.y) * probesPerAxis
+             + uint(idx3.z) * probesPerAxis * probesPerAxis;
+    uint base = idx * 7u;
+    float4 packed[7];
+    [unroll]
+    for (uint k = 0; k < 7; ++k) packed[k] = shBuf[base + k];
+    return GISH_EvalIrradiance(packed, n);
+}
+
+/// Sky radiance for a miss ray: atmosphere cubemap when available (directional
+/// sky — bright toward the sun horizon, dark opposite), else the flat
+/// skylight color the old path used.
+/// Z-up world direction → Y-up DX cubemap convention (engine-wide swizzle).
+float3 SkyRadiance(float3 dir) {
+    if (skyCubemapSrv != kSentinelSrvIndex) {
+        TextureCube<float4> sky = ResourceDescriptorHeap[skyCubemapSrv];
+        SamplerState samp = SamplerDescriptorHeap[1];
+        return sky.SampleLevel(samp, float3(dir.x, dir.z, dir.y), 0).rgb;
+    }
+    return float3(skyColorR, skyColorG, skyColorB);
+}
+
 // ─── Hammersley + cosine-hemisphere sample ───────────────────────────────
 
 float RadicalInverseVdC(uint bits) {
@@ -257,6 +296,11 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     // sample different directions, then EMA-blend in time.
     uint frameJitter = (frameIndex * 1664525u + 1013904223u);
 
+    float3 L = normalize(float3(lightDirX, lightDirY, lightDirZ));
+    float3 sunColorIntensity = float3(lightColorR, lightColorG, lightColorB)
+                             * lightIntensity;
+    float3 sceneAlbedo = float3(sceneAlbedoR, sceneAlbedoG, sceneAlbedoB);
+
     [loop]
     for (uint i = 0; i < nRays; ++i) {
         float2 xi = Hammersley(i + (frameJitter & 0xFFFFu), nRays + (frameJitter & 0xFFu));
@@ -267,25 +311,26 @@ void main(uint3 DTid : SV_DispatchThreadID) {
 
         float3 radiance;
         if (t < 0.0) {
-            // Miss → sky.
-            radiance = float3(skyColorR, skyColorG, skyColorB);
+            // Miss → directional sky (atmosphere cubemap or flat fallback).
+            radiance = SkyRadiance(dir);
         } else {
-            // Hit → single-bounce sun lighting on a Lambertian surface of
-            // average ground albedo. We don't know the actual normal at the
-            // hit point (no second SDF gradient sample), so use the negated
-            // ray direction as a conservative outward normal.
-            float3 N    = -dir;
-            float3 L    = normalize(float3(lightDirX, lightDirY, lightDirZ));
-            float  NdL  = max(dot(N, L), 0.0);
-            float3 sunRad = float3(lightColorR, lightColorG, lightColorB)
-                          * lightIntensity * NdL;
-            radiance = sunRad * groundAlbedo;
+            // Hit → surface-cache-lite shading (gi_hit_lighting.hlsli):
+            // real GDF-gradient normal, sun occlusion trace, scene-average
+            // albedo, and previous-frame probe irradiance as the
+            // multi-bounce feedback term.
+            float3 hitPos = probePos + dir * t;
+            float3 n      = GdfHitNormal(hitPos, dir);
+            float  sunVis = GdfSunVisibility(hitPos, n, L, maxTraceDistance);
+            float3 bounce = ProbeIrradianceAt(hitPos + n * probeSpacing * 0.25, n);
+            radiance = GIHit_Radiance(sceneAlbedo, float3(0, 0, 0), n,
+                                      L, sunColorIntensity, sunVis, bounce);
         }
 
-        // Accumulate into raw L2 SH (Sloan 2008). Cosine convolution is
-        // applied at evaluation time by EvalSH_L2 — store raw bands here.
+        // Accumulate raw radiance-projection coefficients with the SAME
+        // basis the CPU projector uses; convolution constants are folded at
+        // pack time by GISH_PackCompact (see gi_hit_lighting.hlsli).
         float basis[9];
-        SHEvaluateL2(dir, basis);
+        GISH_EvaluateBasis(dir, basis);
 
         [unroll]
         for (uint b = 0; b < 9; ++b) {
@@ -297,9 +342,9 @@ void main(uint3 DTid : SV_DispatchThreadID) {
         }
     }
 
-    // Pack into 7 float4s (matches deferred lighting `EvalSH_L2`).
+    // Pack into the engine-wide compact 7-float4 layout (EvalSH_L2-ready).
     float4 newPacked[7];
-    PackL2(shR, shG, shB, newPacked);
+    GISH_PackCompact(shR, shG, shB, newPacked);
 
     // ── Hysteresis: temporal blend with previous SH ────────────────────
     // @ref Majercik 2019 "Dynamic Diffuse Global Illumination" — alpha 0.05–0.15

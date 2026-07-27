@@ -50,7 +50,11 @@ bool RadianceCache::CreateResources(IRHIDevice* device, float worldExtent) {
 
     m_device      = device;
     m_gridExtent  = worldExtent;
-    m_probeSpacing = (worldExtent * 2.0f) / static_cast<float>(kProbesPerAxis);
+    // N probes per axis span the full grid with probes ON both boundaries:
+    // spacing = size / (N - 1). This MUST match the deferred lighting
+    // trilinear mapping `cell = (pos - origin) / size * (N - 1)` — the
+    // previous `size / N` spacing drifted up to a full cell at the far edge.
+    m_probeSpacing = (worldExtent * 2.0f) / static_cast<float>(kProbesPerAxis - 1);
     m_gridCenter  = Vec3{0.0f, 0.0f, 0.0f};
     m_gridOrigin  = Vec3{-worldExtent, -worldExtent, -worldExtent};
 
@@ -145,7 +149,9 @@ void RadianceCache::UpdateProbes(
     uint32_t perFrameOffset,
     const void* perFrameCpuPtr,
     uint32_t perFrameSize,
-    uint32_t frameIndex)
+    uint32_t frameIndex,
+    const Vec3& sceneAlbedo,
+    uint32_t skyCubemapSrv)
 {
     if (!m_initialized || !cmdList || !tracePipeline.IsValid() || !cbRing) {
         return;
@@ -241,7 +247,15 @@ void RadianceCache::UpdateProbes(
     constants.lightColorG   = pf->lightColor.y;
     constants.lightColorB   = pf->lightColor.z;
     constants.lightIntensity = 1.0f;
-    constants.groundAlbedo  = 0.18f; // Average scene albedo (18% grey card)
+    constants.groundAlbedo  = 0.18f; // Legacy scalar — shader now uses sceneAlbedo below.
+
+    // Surface-cache-lite hit inputs (gi_hit_lighting.hlsli). The albedo is
+    // the draw-list material average computed by the caller; the sky cubemap
+    // gives directional miss radiance instead of a flat color.
+    constants.sceneAlbedoR  = sceneAlbedo.x;
+    constants.sceneAlbedoG  = sceneAlbedo.y;
+    constants.sceneAlbedoB  = sceneAlbedo.z;
+    constants.skyCubemapSrv = skyCubemapSrv;
 
     // Temporal probe spreading: update kProbesPerFrame probes per frame,
     // wrapping the cursor across the grid. The shader skips probes outside

@@ -111,6 +111,15 @@ public:
     /// * `cameraPos` — Current camera world-space position.
     void Update(const Vec3& cameraPos);
 
+    /// Marks every clipmap dirty so the next CompositeFromMeshSDFs pass
+    /// rebuilds all cascades. Call after the mesh SDF set changes (batch
+    /// bakes complete, meshes stream in/out) — the per-clipmap dirty flag
+    /// only tracks camera motion, so a composite that ran before the bakes
+    /// finished would otherwise never pick up the new SDFs.
+    void MarkAllDirty() {
+        for (auto& clip : m_clipmaps) clip.dirty = true;
+    }
+
     /// Dispatches the GDF composite compute shader for each dirty clipmap.
     ///
     /// For each voxel in a dirty clipmap, the shader iterates all mesh SDFs,
