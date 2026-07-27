@@ -282,6 +282,7 @@ sampled-MSE Python (PIL) — the in-engine `--flip-ref/--flip-test` mode HANGS
 | Phase | Pose A (nave) | Pose B (arcade shadow) | Pose C (elevated) | Notes |
 |---|---|---|---|---|
 | Phase 1 done (SSGI+GTAO on, GTAO fixed) | **7.91 dB** | — | — | 2026-07-27, raster-a.png vs golden-a.png. Raster is far darker than PT truth — flat sky ambient vs real sky-visibility bounce. B/C raster pairs pending. |
+| Phase 3 done (SDF GI + DDGI DXR hit lighting, flicker fixed — c0fe1c0a) | **10.45 dB** @ r.GI.Intensity=1.0; **13.40 dB** @ 6.5 (sweep peak) | — | — | 2026-07-27, sweep3-gi*.png vs golden-a.png, overlays off (`r.Show.Grid/EditorOverlays/Stats=0 r.Toolbar.Show=0`). The ~6.5 ≈ 2π optimum multiplier is a UNITS DEFICIT in the probe→deferred irradiance chain — root-cause in item 4.4 (units audit), do NOT bake 6.5 into the scene. Overlay-polluted captures (sweep2-*) read ~1.4 dB lower — always capture with overlays off. |
 
 ## 6 · Risks
 
