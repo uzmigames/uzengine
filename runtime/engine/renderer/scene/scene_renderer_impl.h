@@ -367,6 +367,13 @@
     /// @ref Majercik 2019 "Dynamic Diffuse Global Illumination"
     DDGISystem m_ddgiSystem;
 
+    /// Per-mesh material table for probe hit shading (GIMeshMaterialGPU,
+    /// indexed by TLAS InstanceID = meshId). Upload-heap StructuredBuffer,
+    /// refreshed from the draw list before the DDGI dispatch.
+    RHIBufferHandle m_giMaterialTable{};
+    uint32_t        m_giMaterialTableSrv = UINT32_MAX;
+    uint32_t        m_giMaterialTableCapacity = 0;  ///< Entries allocated.
+
     // ── Brixelizer GI (AMD FidelityFX sparse SDF voxel GI) ─────────────────
     std::unique_ptr<BrixelizerGIPass> m_brixelizerGI;  ///< FFX Brixelizer GI pass (diffuse + specular indirect).
 

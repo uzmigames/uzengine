@@ -75,7 +75,11 @@ public:
 
     /// Temporal blend factor (EMA alpha). Lower = more temporal stability.
     /// 0.12 averages over ~8 frames (fast convergence, reduced pulsing vs 0.05).
-    static constexpr float kTemporalBlendAlpha = 0.12f;
+    /// EMA blend factor for probe hysteresis. 0.05 = hysteresis 0.95 —
+    /// @ref Majercik 2019 §4 recommends 0.85–0.98; the previous 0.12 left
+    /// visible shimmer because the 32-ray jittered estimate with BINARY sun
+    /// visibility has high per-frame variance.
+    static constexpr float kTemporalBlendAlpha = 0.05f;
 
     /// Probes updated per frame for temporal spreading. The trace cursor
     /// advances by this amount and wraps around the grid, so the full grid
@@ -204,6 +208,7 @@ private:
     /// Monotonic counter for temporal variation.
     uint32_t m_frameCounter = 0;
     uint32_t m_probeUpdateCursor = 0;  ///< Round-robin offset for temporal probe spreading.
+    uint32_t m_probeSweepsDone   = 0;  ///< Update passes since init — first full sweep writes alpha=1.
 
     bool   m_initialized = false;
     bool   m_dirty       = true;
@@ -261,8 +266,29 @@ struct RadianceCacheTraceConstants {
     float    sceneAlbedoG;
     float    sceneAlbedoB;
     uint32_t skyCubemapSrv;      ///< Atmosphere sky cubemap SRV (UINT32_MAX = flat sky fallback).
+
+    /// DXR path only (DDGI probe writer):
+    uint32_t materialTableSrv;   ///< StructuredBuffer<GIMeshMaterialGPU> indexed by TLAS InstanceID (= meshId). UINT32_MAX = scene-average fallback.
+    uint32_t rcProbeShSrv;       ///< Radiance-cache SH buffer SRV for multi-bounce feedback reads. UINT32_MAX = no feedback.
+    uint32_t _padHit0;
+    uint32_t _padHit1;
 };
 
-static_assert(sizeof(RadianceCacheTraceConstants) == 192, "RadianceCacheTraceConstants must be 192 bytes");
+static_assert(sizeof(RadianceCacheTraceConstants) == 208, "RadianceCacheTraceConstants must be 208 bytes");
+
+/// Per-mesh material entry for the probe tracers' hit shading.
+///
+/// Indexed by TLAS `InstanceID()` (the engine packs `cmd.meshId` there —
+/// see tlas_manager.cpp). The albedo TEXTURE average is obtained in-shader
+/// by sampling the material's albedo SRV at its last mip (the mip tail IS
+/// the average), tinted by the material's base color factor.
+struct GIMeshMaterialGPU {
+    float    tintR;              ///< BaseColor tint factor (linear).
+    float    tintG;
+    float    tintB;
+    uint32_t albedoSrv;          ///< Albedo texture SRV (UINT32_MAX = tint only).
+};
+
+static_assert(sizeof(GIMeshMaterialGPU) == 16, "GIMeshMaterialGPU must be 16 bytes");
 
 } // namespace uz

@@ -7,6 +7,8 @@
 #include "ddgi_system.h"
 
 #include "radiance_cache.h"     // RadianceCacheTraceConstants — shared CB layout
+#include "global_distance_field.h"
+#include "constant_buffers.h"   // PerFrameCB — real sun/skylight source
 #include "cb_ring_allocator.h"
 #include "log.h"
 #include "rhi.h"
@@ -101,13 +103,21 @@ void DDGISystem::DispatchUpdate(IRHICommandList* cmdList,
                                 RHIPipelineHandle ddgiPipeline,
                                 uint32_t          tlasSrvIndex,
                                 CBRingAllocator*  cbRing,
-                                uint32_t          frameIndex) {
+                                uint32_t          frameIndex,
+                                const GlobalDistanceField* gdf,
+                                const void*       perFrameCpuPtr,
+                                const Vec3&       sceneAlbedo,
+                                uint32_t          skyCubemapSrv,
+                                uint32_t          materialTableSrv,
+                                uint32_t          rcProbeShSrv) {
     if (!m_initialized || !cmdList || !ddgiPipeline.IsValid() || !cbRing) {
         return;
     }
 
     // Build the trace constants — same struct as the SDF radiance cache so
-    // both shaders share the b2 CB layout.
+    // both shaders share the b2 CB layout. Sun/sky come from the REAL
+    // per-frame data (the previous version hardcoded a +Z white sun and a
+    // fixed blue sky, so the atlases never matched the scene lighting).
     RadianceCacheTraceConstants constants{};
     constants.gridOriginX       = m_gridOrigin.x;
     constants.gridOriginY       = m_gridOrigin.y;
@@ -119,20 +129,60 @@ void DDGISystem::DispatchUpdate(IRHICommandList* cmdList,
     constants.frameIndex        = frameIndex;
     constants.maxTraceDistance  = m_probeSpacing
                                 * static_cast<float>(kProbesPerAxis) * 2.0f;
-    constants.temporalBlendAlpha = 0.12f;
+    // First dispatch writes with alpha=1: the atlases start with UNDEFINED
+    // Common-state contents, and EMA-blending garbage strobes the Chebyshev
+    // visibility while it decays. One clean overwrite, then hysteresis 0.95
+    // (@ref Majercik 2019 §4 — the 32-ray jittered estimate with binary sun
+    // visibility is too noisy for the previous 0.12).
+    constants.temporalBlendAlpha = m_firstDispatch ? 1.0f : 0.05f;
     constants.shBufferUav       = UINT32_MAX;
-    constants.numGdfClipmaps    = 0;
-    constants.skyColorR         = 0.6f;
-    constants.skyColorG         = 0.7f;
-    constants.skyColorB         = 0.9f;
-    constants.lightDirX         = 0.0f;
-    constants.lightDirY         = 0.0f;
-    constants.lightDirZ         = 1.0f;
-    constants.lightIntensity    = 1.0f;
-    constants.lightColorR       = 1.0f;
-    constants.lightColorG       = 1.0f;
-    constants.lightColorB       = 1.0f;
-    constants.groundAlbedo      = 0.18f;
+
+    // GDF clipmaps — the probe writer samples the gradient for hit normals.
+    constants.numGdfClipmaps = 0;
+    if (gdf && gdf->IsInitialized()) {
+        constants.numGdfClipmaps = GlobalDistanceField::kNumClipmaps;
+        for (uint32_t i = 0; i < GlobalDistanceField::kNumClipmaps && i < 4; ++i) {
+            const auto& clip = gdf->GetClipmap(i);
+            float* centerPtr = nullptr;
+            float* extentPtr = nullptr;
+            uint32_t* srvPtr = nullptr;
+            switch (i) {
+                case 0: centerPtr = &constants.gdfCenter0X; extentPtr = &constants.gdfExtent0; srvPtr = &constants.gdfClipmapSrv0; break;
+                case 1: centerPtr = &constants.gdfCenter1X; extentPtr = &constants.gdfExtent1; srvPtr = &constants.gdfClipmapSrv1; break;
+                case 2: centerPtr = &constants.gdfCenter2X; extentPtr = &constants.gdfExtent2; srvPtr = &constants.gdfClipmapSrv2; break;
+                case 3: centerPtr = &constants.gdfCenter3X; extentPtr = &constants.gdfExtent3; srvPtr = &constants.gdfClipmapSrv3; break;
+            }
+            if (centerPtr && extentPtr && srvPtr) {
+                centerPtr[0] = clip.center.x;
+                centerPtr[1] = clip.center.y;
+                centerPtr[2] = clip.center.z;
+                *extentPtr   = clip.extent;
+                *srvPtr      = clip.srvIndex;
+            }
+        }
+    }
+
+    // Real sun + skylight from the PerFrameCB (same source the SDF path uses).
+    const auto* pf = static_cast<const PerFrameCB*>(perFrameCpuPtr);
+    if (pf) {
+        constants.skyColorR      = pf->skyLightColorR * pf->skyLightIntensity;
+        constants.skyColorG      = pf->skyLightColorG * pf->skyLightIntensity;
+        constants.skyColorB      = pf->skyLightColorB * pf->skyLightIntensity;
+        constants.lightDirX      = pf->lightDir.x;
+        constants.lightDirY      = pf->lightDir.y;
+        constants.lightDirZ      = pf->lightDir.z;
+        constants.lightColorR    = pf->lightColor.x;
+        constants.lightColorG    = pf->lightColor.y;
+        constants.lightColorB    = pf->lightColor.z;
+        constants.lightIntensity = 1.0f;
+    }
+    constants.groundAlbedo   = 0.18f; // Legacy scalar — shader uses sceneAlbedo.
+    constants.sceneAlbedoR   = sceneAlbedo.x;
+    constants.sceneAlbedoG   = sceneAlbedo.y;
+    constants.sceneAlbedoB   = sceneAlbedo.z;
+    constants.skyCubemapSrv  = skyCubemapSrv;
+    constants.materialTableSrv = materialTableSrv;
+    constants.rcProbeShSrv     = rcProbeShSrv;
 
     // Bind the pipeline once for both passes.
     cmdList->SetPipeline(ddgiPipeline);

@@ -957,10 +957,18 @@ LightingOutput main(FSInput input) {
         // without DFG scaling, multi-scatter, or specular occlusion. This avoids
         // the warm ring artifact caused by envBRDF angular variation and irradiance
         // bleed at grazing angles.
+        //
+        // The skylight COLOR tint applies only when the irradiance actually
+        // came from the sky-SH fallback — scene radiance from a world-space
+        // GI source (DDGI/RC/LPV/Brixelizer/SSGI) already carries the sky's
+        // color through its light transport; tinting it again re-colors
+        // legitimate bounce light. With a white skylight this is a no-op,
+        // but any authored tint would silently distort GI output.
+        float3 giDiffuseTint = irradianceFromGI ? float3(1, 1, 1) : skyTintDiffuse;
         if (metallic > 0.95 && roughness < 0.1) {
             ambient = radiance * metallicF0 * skyTintSpecular;
         } else {
-            ambient = diffuseAmbient * ao * skyTintDiffuse
+            ambient = diffuseAmbient * ao * giDiffuseTint
                     + specularAmbient * specOcclusion * skyTintSpecular;
         }
     }

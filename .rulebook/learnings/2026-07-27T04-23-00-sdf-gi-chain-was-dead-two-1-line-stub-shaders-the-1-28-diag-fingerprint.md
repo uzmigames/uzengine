@@ -1,0 +1,6 @@
+# SDF GI chain was dead: TWO 1-line stub shaders + the 1/28 diag fingerprint
+**Source**: manual
+**Date**: 2026-07-27
+**Related Task**: phase0_lumen-lite-gi-core
+**Tags**: gi, sdf, stub, diagnostics, shader
+mesh_sdf_bake_cs.hlsl AND global_sdf_composite_cs.hlsl were empty one-line stubs since the original GI scaffolding — mesh SDFs and GDF clipmaps were never written. Zeroed distance fields read as "surface at every point in space": every probe ray hits at the first sphere-trace step, the sun-occlusion trace also hits instantly (visibility 0), so radiance-cache probes converge to pure black regardless of how correct the trace shader is. The April 2026 indoor-lighting task fixed the TRACE stub but never noticed the two upstream stubs feeding it zeros. Diagnostic fingerprints worth remembering: (1) probe buffer readback avg == 1/28 EXACTLY means only the packed SH constant (packed[6].w=1) is alive — all radiance bands zero; (2) "changed GI parameters, image byte-identical" means the contribution is zero at the source, not mis-tuned; (3) when a checklist says a shader was implemented, verify its DEPENDENCIES got implemented too — wc -l every shader in the chain (a 1-line .hlsl is a stub). Found 2026-07-27 in phase0_lumen-lite-gi-core after PassInspector gained buffer readback targets (rc.probes min/max/avg), which is now the standard way to see probe health.

@@ -520,7 +520,14 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         UZ_LOG(Engine, Error, "Failed to create window");
         return kExitRenderError;
     }
-    window.Show();
+    // --hidden: keep the HWND invisible (swapchain still works). Automated
+    // capture runs (--screenshot/--diag/--pass-dump) shouldn't steal focus.
+    const bool hiddenWindow = configPtr && configPtr->GetBool("hidden", false);
+    if (!hiddenWindow) {
+        window.Show();
+    } else {
+        UZ_LOG(Engine, Info, "Hidden window mode: HWND created but not shown");
+    }
 
     // ── Device ──────────────────────────────────────────────────────────
     auto rhiDevice = CreateRHIDevice(deviceDesc);

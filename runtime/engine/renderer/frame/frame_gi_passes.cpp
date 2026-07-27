@@ -221,17 +221,79 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
             }
 
             // DDGI atlas writer — only when DXR + TLAS + CVar are ready.
+            // Read the CVar through the registry (file-static pointers go
+            // stale across module init — see the r.GTAO gating incident).
             const bool wantDdgi =
-                cv_RayTracingGI && cv_RayTracingGI->value
+                CVarRegistry::Get().GetBool("r.RayTracing.GI", false)
                 && m_rtManager && m_rtManager->IsReady()
                 && m_ddgiSystem.IsInitialized();
             if (wantDdgi) {
                 auto ddgiPipeline = ctx.pipelines->GetDdgiProbeUpdate();
                 if (ddgiPipeline.IsValid()) {
+                    // ── Per-mesh material table (GIMeshMaterialGPU) ─────
+                    // Indexed by TLAS InstanceID (= meshId). Refreshed every
+                    // frame from the draw list — a 2 KB Upload-heap memcpy.
+                    // The albedo TEXTURE average is sampled in-shader at the
+                    // mip tail; here we only record tint + SRV.
+                    const uint32_t meshCap =
+                        static_cast<uint32_t>(m_meshes.size());
+                    if (meshCap > 0
+                        && (!m_giMaterialTable.IsValid()
+                            || m_giMaterialTableCapacity < meshCap)) {
+                        if (m_giMaterialTable.IsValid()) {
+                            m_device->DestroyBuffer(m_giMaterialTable);
+                            m_giMaterialTable = {};
+                            m_giMaterialTableSrv = UINT32_MAX;
+                        }
+                        RHIBufferDesc desc{};
+                        desc.sizeBytes = static_cast<uint64_t>(meshCap)
+                                       * sizeof(GIMeshMaterialGPU);
+                        desc.stride    = sizeof(GIMeshMaterialGPU);
+                        desc.usage     = RHIBufferUsage::StructuredBuffer;
+                        desc.memory    = RHIMemoryType::Upload;
+                        desc.debugName = "GI_MaterialTable";
+                        m_giMaterialTable = m_device->CreateBuffer(desc);
+                        m_giMaterialTableSrv = m_giMaterialTable.IsValid()
+                            ? m_device->GetBufferSRVIndex(m_giMaterialTable)
+                            : UINT32_MAX;
+                        m_giMaterialTableCapacity = meshCap;
+                    }
+                    if (m_giMaterialTable.IsValid()) {
+                        auto* entries = static_cast<GIMeshMaterialGPU*>(
+                            m_device->MapBuffer(m_giMaterialTable));
+                        if (entries) {
+                            for (uint32_t e = 0; e < meshCap; ++e) {
+                                entries[e] = {1.f, 1.f, 1.f, UINT32_MAX};
+                            }
+                            for (const auto& dc : ctx.drawList.GetCommands()) {
+                                if (dc.meshId >= meshCap) continue;
+                                auto& entry = entries[dc.meshId];
+                                entry.tintR = dc.baseColorTintR;
+                                entry.tintG = dc.baseColorTintG;
+                                entry.tintB = dc.baseColorTintB;
+                                // Slot 0 doubles as "unset" in DrawCommand.
+                                entry.albedoSrv =
+                                    (dc.albedoSrvIndex != 0
+                                     && dc.albedoSrvIndex != UINT32_MAX)
+                                        ? dc.albedoSrvIndex : UINT32_MAX;
+                            }
+                            m_device->UnmapBuffer(m_giMaterialTable);
+                        }
+                    }
+
+                    const float avgAlbedo = cv_GISceneAlbedo->value;
                     const uint32_t tlasSrv = m_rtManager->GetTLASSRVIndex();
                     m_ddgiSystem.DispatchUpdate(
                         cmd, ddgiPipeline, tlasSrv,
-                        m_cbRing.get(), ctx.frameIndex);
+                        m_cbRing.get(), ctx.frameIndex,
+                        &m_globalDistanceField,
+                        ctx.perFrameAlloc.cpuPtr,
+                        Vec3{avgAlbedo, avgAlbedo, avgAlbedo},
+                        (m_skyCubemap.IsValid()
+                         && m_skyCubemapSrv != UINT32_MAX)
+                            ? m_skyCubemapSrv : UINT32_MAX,
+                        m_giMaterialTableSrv,
+                        m_radianceCache.GetProbeSHBufferSrv());
                 }
             }
         });

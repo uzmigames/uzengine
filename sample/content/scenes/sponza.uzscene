@@ -7,6 +7,8 @@
     "r.SSGI.Intensity": 1.0,
     "r.GTAO": 1,
     "r.RadianceCache": 1,
+    "r.RayTracing": 1,
+    "r.RayTracing.GI": 1,
     "r.AutoExposure": 0,
     "r.Exposure": 2.0
   },

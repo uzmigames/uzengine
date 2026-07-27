@@ -1312,6 +1312,14 @@ void SceneRenderer::Shutdown() {
         m_shadowReadbackBuffer = RHIBufferHandle{};
     }
 
+    // Destroy the GI material table (probe hit shading)
+    if (m_giMaterialTable.IsValid()) {
+        m_device->DestroyBuffer(m_giMaterialTable);
+        m_giMaterialTable = RHIBufferHandle{};
+        m_giMaterialTableSrv = UINT32_MAX;
+        m_giMaterialTableCapacity = 0;
+    }
+
     // Destroy material graph pipeline
     if (m_materialPipeline) {
         m_materialPipeline->Shutdown();

@@ -23,6 +23,7 @@
 /// @ref Microsoft DirectX-Specs "Inline Raytracing (DXR 1.1)" — RayQuery<>
 
 #include "../common/constants.hlsli"
+#include "gi_hit_lighting.hlsli"
 
 // ─── Root constants at b0 ──────────────────────────────────────────────────
 
@@ -55,14 +56,15 @@ cbuffer TraceConstants : register(b2) {
     uint  shBufferUav;          // Unused by atlas writer.
     uint  _padTC;
 
-    float _gdf0[4];
-    float _gdf1[4];
-    float _gdf2[4];
-    float _gdf3[4];
-    uint  _gdfSrv0;
-    uint  _gdfSrv1;
-    uint  _gdfSrv2;
-    uint  _gdfSrv3;
+    // NOTE: these MUST be float4/uint4 — scalar arrays (`float x[4]`) get one
+    // 16-byte register PER ELEMENT in HLSL cbuffers, which silently shifted
+    // every field below by 144 bytes in the previous declaration (the sky and
+    // sun values this shader read were garbage from the wrong offsets).
+    float4 gdfCenterExtent0;    // xyz = clipmap center (world cm), w = half-extent.
+    float4 gdfCenterExtent1;
+    float4 gdfCenterExtent2;
+    float4 gdfCenterExtent3;
+    uint4  gdfSrv;              // x..w = clipmap SRV indices 0..3.
 
     uint  numGdfClipmaps;
     float skyColorR;
@@ -77,7 +79,23 @@ cbuffer TraceConstants : register(b2) {
     float lightColorR;
     float lightColorG;
     float lightColorB;
-    float groundAlbedo;
+    float groundAlbedo;          // Legacy scalar fallback (kept for layout).
+
+    float sceneAlbedoR;          // Scene-average albedo fallback (linear).
+    float sceneAlbedoG;
+    float sceneAlbedoB;
+    uint  skyCubemapSrv;         // Atmosphere sky cubemap SRV (sentinel = flat sky).
+
+    uint  materialTableSrv;      // StructuredBuffer<GIMeshMaterialGPU>, indexed by InstanceID (= meshId).
+    uint  rcProbeShSrv;          // Radiance-cache SH buffer SRV — multi-bounce feedback.
+    uint  _padHit0;
+    uint  _padHit1;
+};
+
+/// Mirrors GIMeshMaterialGPU (radiance_cache.h, 16 bytes).
+struct GIMeshMaterial {
+    float3 tint;                 // BaseColor tint factor (linear).
+    uint   albedoSrv;            // Albedo texture SRV (sentinel = tint only).
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────
@@ -163,11 +181,85 @@ uint2 ProbeAtlasOrigin(uint linearIdx, uint tileSize) {
                  tileY * stride + 1u);
 }
 
+// ─── Hit-point queries (surface-cache-lite inputs) ───────────────────────
+
+/// GDF clipmap distance sample — same cascade walk as the SDF tracer.
+/// Returns a large value when no clipmap covers the point.
+float DdgiSampleGdfClip(uint srvIdx, float3 p, float4 centerExtent) {
+    if (srvIdx == kSentinelSrvIndex || centerExtent.w <= 0.0) return 1e9;
+    float3 local = (p - centerExtent.xyz) / centerExtent.w;
+    if (any(abs(local) > 1.0)) return 1e9;
+    Texture3D<float> gdfTex = ResourceDescriptorHeap[srvIdx];
+    SamplerState samp = SamplerDescriptorHeap[1];
+    return gdfTex.SampleLevel(samp, local * 0.5 + 0.5, 0).r;
+}
+
+float DdgiSampleGdf(float3 p) {
+    float d = DdgiSampleGdfClip(gdfSrv.x, p, gdfCenterExtent0);
+    if (d < 1e8) return d;
+    d = DdgiSampleGdfClip(gdfSrv.y, p, gdfCenterExtent1);
+    if (d < 1e8) return d;
+    d = DdgiSampleGdfClip(gdfSrv.z, p, gdfCenterExtent2);
+    if (d < 1e8) return d;
+    return DdgiSampleGdfClip(gdfSrv.w, p, gdfCenterExtent3);
+}
+
+/// Sky radiance for a miss ray — atmosphere cubemap when available,
+/// flat skylight color otherwise. Z-up world → Y-up cubemap swizzle.
+float3 DdgiSkyRadiance(float3 dir) {
+    if (skyCubemapSrv != kSentinelSrvIndex) {
+        TextureCube<float4> sky = ResourceDescriptorHeap[skyCubemapSrv];
+        SamplerState samp = SamplerDescriptorHeap[1];
+        return sky.SampleLevel(samp, float3(dir.x, dir.z, dir.y), 0).rgb;
+    }
+    return float3(skyColorR, skyColorG, skyColorB);
+}
+
+/// Hit-surface albedo: per-mesh material table entry (tint × albedo-texture
+/// average). The texture average comes free from the sampler — the LAST mip
+/// of a mip-mapped texture is its box-filtered average, so SampleLevel at a
+/// huge LOD clamps to it. Falls back to the scene-average constant.
+float3 DdgiHitAlbedo(uint meshId) {
+    if (materialTableSrv == kSentinelSrvIndex) {
+        return float3(sceneAlbedoR, sceneAlbedoG, sceneAlbedoB);
+    }
+    StructuredBuffer<GIMeshMaterial> table = ResourceDescriptorHeap[materialTableSrv];
+    GIMeshMaterial mat = table[meshId];
+    float3 albedo = mat.tint;
+    if (mat.albedoSrv != kSentinelSrvIndex) {
+        Texture2D<float4> albedoTex = ResourceDescriptorHeap[mat.albedoSrv];
+        SamplerState samp = SamplerDescriptorHeap[1];
+        albedo *= albedoTex.SampleLevel(samp, float2(0.5, 0.5), 16.0).rgb;
+    }
+    return albedo;
+}
+
+/// Previous-frame radiance-cache irradiance at a world position (nearest
+/// probe). Shares the probe grid with the SDF path — frame_constants keeps
+/// both grids aligned. @ref Majercik 2019 §"infinite bounces"
+float3 DdgiBounceIrradiance(float3 worldPos, float3 n) {
+    if (rcProbeShSrv == kSentinelSrvIndex) return float3(0, 0, 0);
+    StructuredBuffer<float4> shBuf = ResourceDescriptorHeap[rcProbeShSrv];
+    float3 cell = (worldPos - float3(gridOriginX, gridOriginY, gridOriginZ)) / probeSpacing;
+    int3 idx3 = clamp(int3(round(cell)), int3(0, 0, 0),
+                      int3(int(probesPerAxis) - 1,
+                           int(probesPerAxis) - 1,
+                           int(probesPerAxis) - 1));
+    uint idx = uint(idx3.x)
+             + uint(idx3.y) * probesPerAxis
+             + uint(idx3.z) * probesPerAxis * probesPerAxis;
+    uint base = idx * 7u;
+    float4 packed[7];
+    [unroll]
+    for (uint k = 0; k < 7; ++k) packed[k] = shBuf[base + k];
+    return GISH_EvalIrradiance(packed, n);
+}
+
 // ─── Sample radiance toward a single direction ──────────────────────────
 
 float4 TraceProbeRay(float3 origin, float3 dir) {
     if (g_tlasSrvIndex == kSentinelSrvIndex) {
-        return float4(skyColorR, skyColorG, skyColorB, maxTraceDistance);
+        return float4(DdgiSkyRadiance(dir), maxTraceDistance);
     }
     RaytracingAccelerationStructure tlas = ResourceDescriptorHeap[g_tlasSrvIndex];
 
@@ -182,17 +274,53 @@ float4 TraceProbeRay(float3 origin, float3 dir) {
     q.Proceed();
 
     if (q.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
-        // Single-bounce sun lighting at the (unknown-normal) hit point.
-        // Use the negated ray direction as a conservative outward normal —
-        // accurate per-vertex normals require an SBT/hit-group pipeline.
-        float3 N    = -dir;
-        float3 L    = normalize(float3(lightDirX, lightDirY, lightDirZ));
-        float  NdL  = max(dot(N, L), 0.0);
-        float3 sunRad = float3(lightColorR, lightColorG, lightColorB)
-                      * lightIntensity * NdL;
-        return float4(sunRad * groundAlbedo, q.CommittedRayT());
+        float  hitT   = q.CommittedRayT();
+        float3 hitPos = origin + dir * hitT;
+        uint   meshId = q.CommittedInstanceID();
+
+        // Geometric normal without vertex fetch: the GDF gradient — the SDF
+        // chain runs alongside DDGI (frame_gi_passes always dispatches the
+        // radiance cache), so the clipmaps hold real distances. Falls back
+        // to the negated ray direction when the GDF has no data here.
+        float3 n = -dir;
+        {
+            const float e = 5.0; // cm — matches the SDF tracer's epsilon
+            float3 g = float3(
+                DdgiSampleGdf(hitPos + float3(e, 0, 0)) - DdgiSampleGdf(hitPos - float3(e, 0, 0)),
+                DdgiSampleGdf(hitPos + float3(0, e, 0)) - DdgiSampleGdf(hitPos - float3(0, e, 0)),
+                DdgiSampleGdf(hitPos + float3(0, 0, e)) - DdgiSampleGdf(hitPos - float3(0, 0, e)));
+            float len = length(g);
+            if (len > 1e-5) {
+                n = g / len;
+                if (dot(n, dir) > 0.0) n = -n;
+            }
+        }
+
+        // Sun visibility: precise second RayQuery toward the light.
+        float3 L = normalize(float3(lightDirX, lightDirY, lightDirZ));
+        float sunVis = 1.0;
+        {
+            RayDesc sray;
+            sray.Origin    = hitPos + n * (2.0 * kRayTMin);
+            sray.Direction = L;
+            sray.TMin      = kRayTMin;
+            sray.TMax      = maxTraceDistance;
+            RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> sq;
+            sq.TraceRayInline(tlas, RAY_FLAG_NONE, 0xFF, sray);
+            sq.Proceed();
+            if (sq.CommittedStatus() == COMMITTED_TRIANGLE_HIT) sunVis = 0.0;
+        }
+
+        float3 sunColorIntensity = float3(lightColorR, lightColorG, lightColorB)
+                                 * lightIntensity;
+        float3 albedo = DdgiHitAlbedo(meshId);
+        float3 bounce = DdgiBounceIrradiance(hitPos + n * probeSpacing * 0.25, n);
+
+        float3 radiance = GIHit_Radiance(albedo, float3(0, 0, 0), n,
+                                         L, sunColorIntensity, sunVis, bounce);
+        return float4(radiance, hitT);
     }
-    return float4(skyColorR, skyColorG, skyColorB, maxTraceDistance);
+    return float4(DdgiSkyRadiance(dir), maxTraceDistance);
 }
 
 // ─── Entry point — one thread per atlas texel of one probe ───────────────
@@ -238,7 +366,22 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     // Majercik 2019 §5 — the per-texel cosine integration that gives DDGI
     // its smooth probe filtering without resampling at lookup time.
     uint nRays = min(raysPerProbe, kMaxRaysPerProbe);
-    uint frameJitter = (g_frameIndex * 1664525u + 1013904223u);
+
+    // Per-frame ray-set rotation with a SHORT deterministic cycle.
+    // A white-noise jitter (LCG on frameIndex) makes each frame's estimate
+    // statistically independent, so the EMA-blended probe value executes a
+    // random walk that never stations — visible as low-frequency lighting
+    // wander. With a cycle of kJitterCycle distinct Cranley-Patterson
+    // offsets the input sequence is periodic, so the EMA converges to a
+    // stationary orbit of amplitude ~alpha * sigma (imperceptible) while
+    // still integrating kJitterCycle * nRays effective directions.
+    // @ref Cranley & Patterson 1976 "Randomization of Number Theoretic
+    //      Methods for Multiple Integration" — toroidal shift of a fixed set
+    // @ref Roberts 2018 "The Unreasonable Effectiveness of Quasirandom
+    //      Sequences" — R2 constants 0.75487767, 0.56984029
+    const uint kJitterCycle = 16u;
+    float2 cpOffset = frac(float2(0.75487767, 0.56984029)
+                           * float(g_frameIndex % kJitterCycle));
 
     float3 accumIrrad = float3(0, 0, 0);
     float  accumWeight = 0.0;
@@ -249,9 +392,7 @@ void main(uint3 DTid : SV_DispatchThreadID) {
 
     [loop]
     for (uint i = 0; i < nRays; ++i) {
-        float2 xi = Hammersley(i + (frameJitter & 0xFFFFu),
-                               nRays + (frameJitter & 0xFFu));
-        xi = frac(xi);
+        float2 xi = frac(Hammersley(i, nRays) + cpOffset);
         float3 rayDir = SphericalSample(xi);
 
         float4 rt = TraceProbeRay(probePos, rayDir);

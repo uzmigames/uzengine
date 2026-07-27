@@ -184,7 +184,15 @@ void RadianceCache::UpdateProbes(
     constants.raysPerProbe      = kRaysPerProbe;
     constants.frameIndex        = frameIndex;
     constants.maxTraceDistance   = m_gridExtent * 2.0f; // Trace up to the grid diameter
-    constants.temporalBlendAlpha = kTemporalBlendAlpha;
+    // First full sweep writes with alpha=1: the SH buffer starts with
+    // UNDEFINED default-heap contents, and EMA-blending garbage produces a
+    // visible strobe while it decays (~40 frames at alpha=0.05). One clean
+    // overwrite pass, then hysteresis.
+    const uint32_t sweepFrames =
+        (kTotalProbes + kProbesPerFrame - 1) / kProbesPerFrame;
+    constants.temporalBlendAlpha =
+        (m_probeSweepsDone < sweepFrames) ? 1.0f : kTemporalBlendAlpha;
+    if (m_probeSweepsDone < sweepFrames) ++m_probeSweepsDone;
     constants.shBufferUav       = m_shBufferUav;
 
     // Fill GDF clipmap parameters from the global distance field

@@ -35,6 +35,7 @@ class IRHIDevice;
 class IRHICommandList;
 class CBRingAllocator;
 class RTManager;
+class GlobalDistanceField;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DDGISystem
@@ -143,15 +144,30 @@ public:
     /// * `ddgiPipeline` — Compute PSO created from `ddgi_probe_update_cs.hlsl`.
     /// * `tlasSrvIndex` — Bindless SRV index of the scene TLAS (0xFFFFFFFF if none).
     /// * `cbRing` — CB ring allocator for trace constants.
-    /// * `perFrameBuffer` / `perFrameOffset` / `perFrameCpuPtr` / `perFrameSize` —
-    ///   The current frame's PerFrameCB allocation. The same struct is bound
-    ///   at b1 by the renderer; we re-bind it as the b2 trace constants
-    ///   because the DDGI shader reuses the radiance cache CB layout.
+    /// * `frameIndex` — Monotonic frame counter (temporal jitter + EMA).
+    /// * `gdf` — Global distance field; the probe writer samples its gradient
+    ///   for hit normals (may be null → -rayDir fallback).
+    /// * `perFrameCpuPtr` — CPU pointer to the current PerFrameCB (real sun
+    ///   direction/color + skylight; replaces the old hardcoded values).
+    /// * `sceneAlbedo` — Scene-average albedo fallback for hits without a
+    ///   material-table entry.
+    /// * `skyCubemapSrv` — Atmosphere sky cubemap SRV for directional miss
+    ///   radiance (UINT32_MAX = flat skylight fallback).
+    /// * `materialTableSrv` — StructuredBuffer<GIMeshMaterialGPU> SRV indexed
+    ///   by TLAS InstanceID (= meshId). UINT32_MAX = scene-average fallback.
+    /// * `rcProbeShSrv` — Radiance-cache SH buffer SRV for multi-bounce
+    ///   feedback. UINT32_MAX disables the feedback term.
     void DispatchUpdate(IRHICommandList* cmdList,
                         RHIPipelineHandle ddgiPipeline,
                         uint32_t          tlasSrvIndex,
                         CBRingAllocator*  cbRing,
-                        uint32_t          frameIndex);
+                        uint32_t          frameIndex,
+                        const GlobalDistanceField* gdf,
+                        const void*       perFrameCpuPtr,
+                        const Vec3&       sceneAlbedo,
+                        uint32_t          skyCubemapSrv,
+                        uint32_t          materialTableSrv,
+                        uint32_t          rcProbeShSrv);
 
 private:
     IRHIDevice*      m_device       = nullptr;

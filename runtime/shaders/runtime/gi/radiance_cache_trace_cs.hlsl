@@ -82,6 +82,11 @@ cbuffer TraceConstants : register(b2) {
     float sceneAlbedoG;
     float sceneAlbedoB;
     uint  skyCubemapSrv;         // Atmosphere sky cubemap SRV (sentinel = flat sky).
+
+    uint  materialTableSrv;      // DXR path only — unused by the SDF tracer.
+    uint  rcProbeShSrv;          // DXR path only — unused by the SDF tracer.
+    uint  _padHit0;
+    uint  _padHit1;
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────
@@ -292,9 +297,19 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     uint nRays = min(raysPerProbe, kMaxRaysPerProbe);
     float invN = 1.0 / float(nRays);
 
-    // Per-frame jitter — rotate the Hammersley sequence so different frames
-    // sample different directions, then EMA-blend in time.
-    uint frameJitter = (frameIndex * 1664525u + 1013904223u);
+    // Per-frame ray-set rotation with a SHORT deterministic cycle. White-noise
+    // jitter (LCG on frameIndex) makes each frame's estimate independent, so
+    // the EMA-blended probe executes a random walk that never stations —
+    // visible as low-frequency lighting wander. A periodic Cranley-Patterson
+    // shift makes the EMA converge to a stationary orbit (~alpha * sigma)
+    // while still integrating kJitterCycle * nRays effective directions.
+    // @ref Cranley & Patterson 1976 "Randomization of Number Theoretic
+    //      Methods for Multiple Integration" — toroidal shift of a fixed set
+    // @ref Roberts 2018 "The Unreasonable Effectiveness of Quasirandom
+    //      Sequences" — R2 constants 0.75487767, 0.56984029
+    const uint kJitterCycle = 16u;
+    float2 cpOffset = frac(float2(0.75487767, 0.56984029)
+                           * float(frameIndex % kJitterCycle));
 
     float3 L = normalize(float3(lightDirX, lightDirY, lightDirZ));
     float3 sunColorIntensity = float3(lightColorR, lightColorG, lightColorB)
@@ -303,8 +318,7 @@ void main(uint3 DTid : SV_DispatchThreadID) {
 
     [loop]
     for (uint i = 0; i < nRays; ++i) {
-        float2 xi = Hammersley(i + (frameJitter & 0xFFFFu), nRays + (frameJitter & 0xFFu));
-        xi = frac(xi); // keep in [0,1)
+        float2 xi = frac(Hammersley(i, nRays) + cpOffset);
         float3 dir = SphericalSample(xi);
 
         float t = TraceGDF(probePos, dir, maxTraceDistance);
