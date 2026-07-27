@@ -246,26 +246,44 @@ DeferredMeshUpload UploadMeshDeferred(IRHIDevice* device, IRHICommandList* cmdLi
 // ─────────────────────────────────────────────────────────────────────────────
 
 void FlushDeferredMeshUploads(IRHIDevice* device, IRHICommandList* cmdList,
-                              std::vector<DeferredMeshUpload>& uploads) {
+                              std::vector<DeferredMeshUpload>& uploads,
+                              std::vector<RHIBufferHandle>* deferredRelease) {
     if (!device || !cmdList) {
         UZ_LOG(Renderer, Error, "FlushDeferredMeshUploads: null device or command list");
         return;
     }
 
-    // Single GPU submission for all batched copy commands.
+    // Single GPU submission for all batched copy commands. Submitting here
+    // (before the caller records draws on the re-begun list) keeps the D3D12
+    // implicit state promotion/decay semantics: buffers decay to COMMON at the
+    // ExecuteCommandLists boundary, so later draws read-promote them without
+    // explicit barriers, and same-queue FIFO ordering guarantees the copies
+    // complete before any subsequent draw executes.
     cmdList->End();
     cmdList->Execute();
-    device->WaitIdle();
 
-    // All copies are complete — safe to release staging buffers.
-    for (auto& upload : uploads) {
-        upload.upload.ReleaseStaging();
+    if (deferredRelease) {
+        // Stall-free path: hand staging buffers to the caller's retire queue.
+        // The GPU may still be reading them — the caller destroys them only
+        // after the frames-in-flight fence guarantees completion.
+        for (auto& upload : uploads) {
+            for (RHIBufferHandle handle : upload.upload.TakeStagingBuffers()) {
+                deferredRelease->push_back(handle);
+            }
+        }
+    } else {
+        // Legacy path: full device drain, then immediate release.
+        device->WaitIdle();
+        for (auto& upload : uploads) {
+            upload.upload.ReleaseStaging();
+        }
     }
 
     // Resume recording so the caller can continue using the command list.
     cmdList->Begin();
 
-    UZ_LOG(Renderer, Info, "FlushDeferredMeshUploads: flushed {} deferred mesh uploads", uploads.size());
+    UZ_LOG(Renderer, Info, "FlushDeferredMeshUploads: flushed {} deferred mesh uploads{}",
+           uploads.size(), deferredRelease ? " (stall-free)" : "");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

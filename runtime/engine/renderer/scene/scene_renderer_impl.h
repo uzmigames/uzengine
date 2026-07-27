@@ -586,6 +586,17 @@
     /// Flushed at the start of each frame after the previous frame's fence.
     std::vector<RHIBufferHandle> m_deferredDestroyBuffers;
 
+    /// Staging buffers retired from stall-free mesh upload flushes. Unlike
+    /// `m_deferredDestroyBuffers` (safe to destroy next frame because its
+    /// producers execute + fence before queueing), these were submitted the
+    /// same frame with NO CPU wait, so they must survive the full
+    /// frames-in-flight depth before destruction. Buckets rotate once per
+    /// SetupFrameData pass; the bucket being reused is kStagingRetireFrames
+    /// passes old, so the frame fence has long guaranteed GPU completion.
+    static constexpr uint32_t kStagingRetireFrames = 3;
+    std::vector<RHIBufferHandle> m_stagingRetireBuckets[kStagingRetireFrames];
+    uint32_t m_stagingRetireIndex = 0;
+
     /// Pending deferred mesh uploads accumulated during SyncWorldToDrawList.
     /// Flushed in a single GPU submission at the end of the sync pass.
     std::vector<DeferredMeshUpload> m_deferredMeshUploads;
@@ -632,6 +643,24 @@
     /// via Submit() when they need loading, and completed decodes are polled
     /// and batch-uploaded to the GPU at the start of each RenderFrame().
     std::unique_ptr<AsyncTextureDecoder> m_asyncDecoder;
+
+    // ── Async Mesh Load (background file read + parse) ────────────────────
+
+    /// Worker thread pool for background .uzmesh read + parse. Started in
+    /// Init(), shut down in Shutdown(). SyncWorldToDrawList submits unloaded
+    /// mesh paths via RequestMeshAsync(); FlushPendingLoads() polls completed
+    /// CPU meshes and batch-uploads them (budgeted per frame).
+    std::unique_ptr<AsyncMeshLoader> m_asyncMeshLoader;
+
+    /// Mesh paths submitted to the async loader that are still in-flight.
+    /// Maps path -> slot index in m_meshes (slot holds an invalid placeholder
+    /// GPUMesh until the upload completes).
+    std::unordered_map<std::string, uint32_t> m_asyncMeshPendingSlots;
+
+    /// Completed CPU meshes waiting for GPU upload integration. Fed by
+    /// PollCompleted(), drained by FlushPendingLoads() under the
+    /// r.LazyLoad.MeshesPerFrame budget.
+    std::vector<MeshLoadResultCPU> m_asyncMeshReady;
 
     /// VFS pointer cached from the last RenderFrame call.
     /// Used by QueueTextureLoad (which doesn't receive VFS as a parameter).
@@ -747,6 +776,16 @@
     ///
     /// Requires a command list in recording state for GPU uploads.
     void FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs);
+
+    /// Integrates CPU meshes completed by the AsyncMeshLoader: polls results,
+    /// uploads up to `r.LazyLoad.MeshesPerFrame` meshes (0 = unlimited) via
+    /// UploadMeshDeferred into their reserved placeholder slots, and queues
+    /// eligible meshes for SDF baking. Called from FlushPendingLoads() so
+    /// ready meshes become claimable by the same frame's SyncWorldToDrawList.
+    ///
+    /// # Arguments
+    /// * `cmdList` — Command list in recording state.
+    void IntegrateAsyncMeshLoads(IRHICommandList* cmdList);
 
     /// Batch-bakes all pending mesh SDFs in a single GPU submission.
     ///

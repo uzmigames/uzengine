@@ -60,6 +60,7 @@
 #include "engine/ecs/environment/light_probe_volume_component.h"
 #include "passes/gi/brixelizer_gi_pass.h"
 #include "async_texture_decoder.h"  // TextureDecodeResult for m_deferredDecoded
+#include "async_mesh_loader.h"      // MeshLoadResultCPU for m_asyncMeshReady
 #include "inspector_pass.h"        // PassInspector for render target visualization
 #include "upload_ring.h"           // UploadRing for zero-alloc texture staging
 
@@ -105,6 +106,7 @@ class Camera;
 class FlyCameraController;
 class World;
 class AsyncTextureDecoder;
+class AsyncMeshLoader;
 
 class SdfAtlasManager;
 class DynamicResolutionController;
@@ -641,6 +643,29 @@ public:
     /// Index into the mesh array on success, `UINT32_MAX` on failure.
     [[nodiscard]] uint32_t LoadMesh(const std::string& path, IVFS* vfs,
                                     IRHICommandList* cmdList);
+
+    /// Requests an asynchronous mesh load (background file read + parse).
+    ///
+    /// Reserves a placeholder slot in the mesh array keyed by `path` and
+    /// submits the file to the AsyncMeshLoader worker pool. The slot's
+    /// GPUMesh stays invalid until FlushPendingLoads() integrates the
+    /// completed CPU mesh (budgeted by `r.LazyLoad.MeshesPerFrame`).
+    /// Callers must treat an invalid slot as "not ready yet" and retry
+    /// claiming on a later frame — never draw a placeholder.
+    ///
+    /// Falls back to the synchronous LoadMesh() path when the async loader
+    /// is unavailable (init failure or pre-init call).
+    ///
+    /// # Arguments
+    /// * `path` — VFS-relative mesh path (slot map key).
+    /// * `vfs` — VFS for path resolution / background reads. May be null.
+    /// * `cmdList` — Command list for the synchronous fallback only.
+    ///
+    /// # Returns
+    /// Stable slot index (placeholder or ready), `UINT32_MAX` on empty path
+    /// or synchronous-fallback failure.
+    [[nodiscard]] uint32_t RequestMeshAsync(const std::string& path, IVFS* vfs,
+                                            IRHICommandList* cmdList);
 
     /// Reads back the shadow atlas from GPU and logs diagnostic depth values.
     /// Called when shadowDebugMode >= 2. One-shot per session (first frame only).

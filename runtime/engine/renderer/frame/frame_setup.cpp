@@ -100,6 +100,19 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     }
     m_deferredDestroyBuffers.clear();
 
+    // ── Retire mesh-upload staging buffers (frames-in-flight aged) ──────
+    // Stall-free mesh flushes submit copies with no CPU wait, so their staging
+    // buffers must outlive the full frames-in-flight depth. Rotating into a
+    // bucket that is kStagingRetireFrames passes old guarantees the frame
+    // fence has covered the submission that referenced these buffers.
+    m_stagingRetireIndex = (m_stagingRetireIndex + 1) % kStagingRetireFrames;
+    for (auto& buf : m_stagingRetireBuckets[m_stagingRetireIndex]) {
+        if (buf.IsValid()) {
+            m_device->DestroyBuffer(buf);
+        }
+    }
+    m_stagingRetireBuckets[m_stagingRetireIndex].clear();
+
     // ── Cache VFS for QueueTextureLoad (called from Lua outside RenderFrame) ──
     m_lastVfs = ctx.vfs;
 

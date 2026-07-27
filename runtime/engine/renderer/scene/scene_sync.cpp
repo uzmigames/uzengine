@@ -24,19 +24,11 @@
 #include <cmath>
 #include <string>
 
-namespace {
-/// Per-frame mesh load budget — caps the number of synchronous LoadMesh calls
-/// performed by SyncWorldToDrawList. Meshes that exceed the budget keep
-/// meshLoaded=false and are picked up on subsequent frames. This makes the
-/// first frame after LoadScene cheap so the editor/viewport becomes responsive
-/// immediately, then meshes stream in over the next ~N frames.
-///
-/// Set to 0 to disable budgeting (load every queued mesh in one frame).
-static auto* cv_LazyMeshesPerFrame = UZ_CVAR_INT(
-    "r.LazyLoad.MeshesPerFrame", 4,
-    "Max meshes to upload per frame in SyncWorldToDrawList (0 = unlimited).",
-    0, 1024);
-}
+// Mesh loading is asynchronous: SyncWorldToDrawList submits unloaded paths to
+// the AsyncMeshLoader (via RequestMeshAsync) and claims slots once their GPU
+// upload completes. The per-frame GPU-upload budget lives in
+// scene_mesh_assets.cpp (`r.LazyLoad.MeshesPerFrame`, consumed by
+// IntegrateAsyncMeshLoads).
 
 // Diagnostic counter: mesh entities found by SyncWorldToDrawList.
 // Read by runtime.cpp to report in uz_frame_stats.
@@ -57,12 +49,6 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
 
     uint32_t drawIndex = 0;
 
-    // Per-frame mesh load budget. Once this hits zero, remaining un-loaded
-    // meshes are skipped (left with meshLoaded=false) and retried next frame.
-    // 0 = unlimited (legacy behavior).
-    const int meshBudgetMax = cv_LazyMeshesPerFrame ? cv_LazyMeshesPerFrame->value : 0;
-    int meshLoadsRemaining = (meshBudgetMax > 0) ? meshBudgetMax : INT32_MAX;
-
     // Use mutable registry view — we need to write meshLoaded/materialLoaded flags
     // back into the components after lazy-loading assets.
     auto meshView = world->GetRegistry().view<StaticMeshComponent, SceneComponent>();
@@ -76,19 +62,21 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
 
         // ── Lazy-load mesh from path (LOD0) ────────────────────────────────
         if (!meshComp.meshLoaded && !meshComp.meshPath.empty()) {
-            // Check if a previous LoadMesh in this frame already cached the
-            // path — if so, claim it for free without consuming budget.
-            auto cacheIt = m_meshMap.find(meshComp.meshPath);
-            if (cacheIt == m_meshMap.end() && meshLoadsRemaining <= 0) {
-                // Budget exhausted — defer to next frame. Leave meshLoaded=false.
-                // Continue iterating so material/texture lazy-load can still run
-                // and other already-cached meshes still get drawn.
+            // Request an async load (no-op if already requested — the path
+            // maps to a stable slot from the first call). The slot's GPUMesh
+            // stays invalid until IntegrateAsyncMeshLoads uploads it; until
+            // then the entity stays meshLoaded=false and is retried next
+            // frame. Built-ins and loader-unavailable fall back to a
+            // synchronous load and are claimable immediately.
+            const uint32_t loaded = RequestMeshAsync(meshComp.meshPath, vfs, cmdList);
+            if (loaded != UINT32_MAX
+                && loaded < static_cast<uint32_t>(m_meshes.size())
+                && !m_meshes[loaded].IsValid()) {
+                // Still loading on a worker — claim on a later frame. Continue
+                // iterating so material/texture lazy-load still runs and
+                // already-resident meshes still get drawn.
                 continue;
             }
-            if (cacheIt == m_meshMap.end()) {
-                --meshLoadsRemaining;
-            }
-            const uint32_t loaded = LoadMesh(meshComp.meshPath, vfs, cmdList);
             if (loaded != UINT32_MAX) {
                 meshComp.meshId     = loaded;
                 meshComp.meshLoaded = true;
@@ -142,21 +130,20 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
         }
 
         // ── Lazy-load LOD meshes (LOD1..LOD7) ──────────────────────────────
-        // Each non-empty lodMeshPaths entry is loaded on first encounter.
+        // Each non-empty lodMeshPaths entry is requested asynchronously on
+        // first encounter and claimed once its GPU upload completes.
         // Successfully loaded meshes update the LODGroup's meshIndex for
         // that level so the LOD selector uses the correct geometry.
         for (uint32_t lodIdx = 0; lodIdx < kMaxLODs - 1; ++lodIdx) {
             if (!meshComp.lodMeshLoaded[lodIdx] && !meshComp.lodMeshPaths[lodIdx].empty()) {
-                auto lodCacheIt = m_meshMap.find(meshComp.lodMeshPaths[lodIdx]);
-                if (lodCacheIt == m_meshMap.end() && meshLoadsRemaining <= 0) {
-                    // Budget exhausted — defer this LOD to next frame.
-                    break;
+                const uint32_t loaded = RequestMeshAsync(meshComp.lodMeshPaths[lodIdx], vfs, cmdList);
+                if (loaded != UINT32_MAX
+                    && loaded < static_cast<uint32_t>(m_meshes.size())
+                    && !m_meshes[loaded].IsValid()) {
+                    // Still loading on a worker — retry this LOD next frame.
+                    continue;
                 }
-                if (lodCacheIt == m_meshMap.end()) {
-                    --meshLoadsRemaining;
-                }
-                const uint32_t loaded = LoadMesh(meshComp.lodMeshPaths[lodIdx], vfs, cmdList);
-                meshComp.lodMeshLoaded[lodIdx] = true; // Mark to avoid retrying
+                meshComp.lodMeshLoaded[lodIdx] = true; // Resident or failed — stop retrying
                 if (loaded != UINT32_MAX) {
                     // lodIdx 0 in lodMeshPaths = LOD level 1 in lodGroup
                     const uint32_t lodLevel = lodIdx + 1;
@@ -535,8 +522,11 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
     // ── Flush batched mesh uploads ───────────────────────────────────────
     // All meshes loaded during this sync pass were deferred — submit all
     // copy commands in a single GPU submission instead of one per mesh.
+    // Stall-free: staging buffers retire through the frames-in-flight-aged
+    // bucket instead of a device WaitIdle.
     if (!m_deferredMeshUploads.empty()) {
-        FlushDeferredMeshUploads(m_device, cmdList, m_deferredMeshUploads);
+        FlushDeferredMeshUploads(m_device, cmdList, m_deferredMeshUploads,
+                                 &m_stagingRetireBuckets[m_stagingRetireIndex]);
         UZ_LOG(Renderer, Info, "SyncWorldToDrawList: flushed {} deferred mesh uploads",
                m_deferredMeshUploads.size());
         m_deferredMeshUploads.clear();

@@ -15,11 +15,22 @@
 #include "rhi.h"
 #include "log.h"
 #include "profiler.h"
+#include "cvar.h"
 #include "gi/mesh_sdf_baker.h"
 #include "pipeline_library.h"
 
 #include <fstream>
 #include <string>
+
+// ── CVars ────────────────────────────────────────────────────────────────
+/// Per-frame budget for integrating async-loaded meshes (GPU upload). File
+/// reads and parsing happen unbudgeted on AsyncMeshLoader workers; this only
+/// caps how many completed meshes get staged + copied per frame, bounding the
+/// transient staging-memory spike. 0 = unlimited (integrate everything ready).
+static auto* cv_LazyMeshesPerFrame = UZ_CVAR_INT(
+    "r.LazyLoad.MeshesPerFrame", 32,
+    "Max async-loaded meshes to GPU-upload per frame (0 = unlimited).",
+    0, 1024);
 
 namespace uz {
 
@@ -110,6 +121,140 @@ uint32_t SceneRenderer::LoadMesh(const std::string& path, IVFS* vfs,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// RequestMeshAsync — background read + parse, placeholder slot until ready
+// ─────────────────────────────────────────────────────────────────────────────
+
+uint32_t SceneRenderer::RequestMeshAsync(const std::string& path, IVFS* vfs,
+                                          IRHICommandList* cmdList) {
+    if (path.empty()) return UINT32_MAX;
+
+    // Cache hit: slot exists (resident mesh or in-flight placeholder).
+    auto it = m_meshMap.find(path);
+    if (it != m_meshMap.end()) {
+        return it->second;
+    }
+
+    // Built-in primitives are cheap procedural CPU meshes — synchronous path.
+    // Async loader unavailable (init failure / pre-init) — synchronous path.
+    if ((path.size() > 8 && path.compare(0, 8, "builtin:") == 0) || !m_asyncMeshLoader) {
+        return LoadMesh(path, vfs, cmdList);
+    }
+
+    // Reserve a placeholder slot so the path maps to a stable mesh ID from the
+    // first request. The GPUMesh stays invalid (IsValid() == false) until
+    // IntegrateAsyncMeshLoads() uploads the parsed data — callers must not
+    // draw the slot before it becomes valid.
+    const auto slot = static_cast<uint32_t>(m_meshes.size());
+    m_meshes.emplace_back();
+    m_meshBoundsMin.emplace_back();
+    m_meshBoundsMax.emplace_back();
+    m_meshMap[path] = slot;
+    m_asyncMeshPendingSlots[path] = slot;
+
+    // Prefer a resolved filesystem path: workers then use plain file I/O and
+    // do not serialize on the shared VFS mutex. Fall back to a VFS read on
+    // the worker when the file is not directly reachable (pak-only assets).
+    const bool isAbsolute = (path[0] == '/' || path[0] == '\\' ||
+                             (path.size() > 1 && path[1] == ':'));
+    const std::string fsPath = (vfs && !isAbsolute) ? vfs->ResolvePath(path) : path;
+    if (std::ifstream(fsPath, std::ios::binary).good()) {
+        m_asyncMeshLoader->Submit(fsPath, path);
+    } else if (vfs) {
+        m_asyncMeshLoader->SubmitVFS(vfs, path, path);
+    } else {
+        m_asyncMeshLoader->Submit(path, path);
+    }
+
+    UZ_LOG(Renderer, Debug, "SceneRenderer: async mesh load requested '{}' (slot={})",
+           path, slot);
+    return slot;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IntegrateAsyncMeshLoads — GPU-upload completed CPU meshes (budgeted)
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SceneRenderer::IntegrateAsyncMeshLoads(IRHICommandList* cmdList) {
+    if (!m_asyncMeshLoader) return;
+
+    UZ_PROFILE_FUNCTION();
+
+    // Collect newly completed CPU meshes (non-blocking).
+    {
+        auto results = m_asyncMeshLoader->PollCompleted();
+        for (auto& r : results) {
+            m_asyncMeshReady.push_back(std::move(r));
+        }
+    }
+    if (m_asyncMeshReady.empty()) return;
+
+    const int budgetMax = cv_LazyMeshesPerFrame ? cv_LazyMeshesPerFrame->value : 0;
+    const auto toProcess = (budgetMax > 0)
+        ? std::min(m_asyncMeshReady.size(), static_cast<size_t>(budgetMax))
+        : m_asyncMeshReady.size();
+
+    for (size_t i = 0; i < toProcess; ++i) {
+        auto& ready = m_asyncMeshReady[i];
+
+        auto pendingIt = m_asyncMeshPendingSlots.find(ready.path);
+        if (pendingIt == m_asyncMeshPendingSlots.end()) {
+            UZ_LOG(Renderer, Warning,
+                   "SceneRenderer: async mesh completed for unknown path '{}' — discarding",
+                   ready.path);
+            continue;
+        }
+        const uint32_t slot = pendingIt->second;
+
+        if (!ready.mesh.IsValid()) {
+            // Read/parse failed on the worker (already logged there). The slot
+            // stays an invalid placeholder — entities never claim it.
+            UZ_LOG(Renderer, Error,
+                   "SceneRenderer: async mesh load failed for '{}' (slot={})",
+                   ready.path, slot);
+            m_asyncMeshPendingSlots.erase(pendingIt);
+            continue;
+        }
+
+        DeferredMeshUpload deferred = UploadMeshDeferred(m_device, cmdList, ready.mesh);
+        if (!deferred.mesh.IsValid()) {
+            UZ_LOG(Renderer, Error,
+                   "SceneRenderer: GPU upload failed for async mesh '{}' (slot={})",
+                   ready.path, slot);
+            m_asyncMeshPendingSlots.erase(pendingIt);
+            continue;
+        }
+
+        m_meshes[slot]        = deferred.mesh;
+        m_meshBoundsMin[slot] = ready.mesh.header.boundsMin;
+        m_meshBoundsMax[slot] = ready.mesh.header.boundsMax;
+        m_deferredMeshUploads.push_back(std::move(deferred));
+
+        // Queue SDF bake (same eligibility as the synchronous LoadMesh path).
+        if (m_sdfGiEnabled
+            && ready.mesh.header.vertexFormat == MeshVertexFormat::Standard
+            && ready.mesh.GetVertexCount() > 0 && ready.mesh.GetIndexCount() >= 3)
+        {
+            PendingSdfBake sdfBake;
+            sdfBake.meshIndex    = slot;
+            sdfBake.vertexCount  = ready.mesh.GetVertexCount();
+            sdfBake.vertexStride = ready.mesh.header.vertexStride;
+            sdfBake.indexCount   = ready.mesh.GetIndexCount();
+            sdfBake.vertexData   = std::move(ready.mesh.vertexData);
+            sdfBake.indexData    = std::move(ready.mesh.indexData);
+            m_pendingSdfBakes.push_back(std::move(sdfBake));
+        }
+
+        m_asyncMeshPendingSlots.erase(pendingIt);
+        UZ_LOG(Renderer, Info,
+               "SceneRenderer: async mesh integrated '{}' (id={}, {} verts, {} indices)",
+               ready.path, slot, m_meshes[slot].vertexCount, m_meshes[slot].indexCount);
+    }
+
+    m_asyncMeshReady.erase(m_asyncMeshReady.begin(),
+                           m_asyncMeshReady.begin() + static_cast<ptrdiff_t>(toProcess));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Deferred Load Queue — Meshes (Lua API)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -185,18 +330,25 @@ bool SceneRenderer::IsSceneFullyLoaded() const {
     if (m_textureBatchCount > 0) return false;
     if (!m_pendingCopyUploads.empty()) return false;
     if (m_copyFenceValue > 0) return false;
+    if (m_asyncMeshLoader && m_asyncMeshLoader->PendingCount() > 0) return false;
+    if (!m_asyncMeshReady.empty()) return false;
+    if (!m_asyncMeshPendingSlots.empty()) return false;
+    if (!m_deferredMeshUploads.empty()) return false;
     return true;
 }
 
 bool SceneRenderer::IsSceneFullyLoadedDebug() const {
     UZ_LOG(Renderer, Debug,
            "IsSceneFullyLoaded: meshPaths={}, procMeshes={}, texPaths={}, asyncPending={}, "
-           "deferred={}, batch={}, copyUploads={}, copyFence={}",
+           "deferred={}, batch={}, copyUploads={}, copyFence={}, "
+           "asyncMeshPending={}, asyncMeshReady={}, asyncMeshSlots={}",
            m_pendingMeshPaths.size(), m_pendingProceduralMeshes.size(),
            m_pendingTexturePaths.size(),
            m_asyncDecoder ? m_asyncDecoder->PendingCount() : 0,
            m_deferredDecoded.size(), m_textureBatchCount,
-           m_pendingCopyUploads.size(), m_copyFenceValue);
+           m_pendingCopyUploads.size(), m_copyFenceValue,
+           m_asyncMeshLoader ? m_asyncMeshLoader->PendingCount() : 0,
+           m_asyncMeshReady.size(), m_asyncMeshPendingSlots.size());
     return IsSceneFullyLoaded();
 }
 

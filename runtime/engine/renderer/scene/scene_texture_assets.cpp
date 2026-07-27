@@ -92,11 +92,13 @@ void SceneRenderer::DrainPendingTextureLoads(IRHICommandList* cmdList, IVFS* vfs
     UZ_LOG(Renderer, Info, "DrainPendingTextureLoads: completed in {} iterations", iter);
 }
 
-/// Maximum textures to upload per frame. Limits the number of staging buffer
-/// creations + GPU copies per frame to avoid main-thread stalls during the
-/// End/Execute/WaitIdle flush. Each 2K BC7 texture upload takes ~2-3ms of
-/// command recording, so 4/frame keeps the stall under 12ms.
-static constexpr uint32_t kMaxTextureUploadsPerFrame = 8;
+/// Returns the per-frame async texture GPU upload budget from the
+/// `r.Scene.MaxTextureUploadsPerFrame` CVar (default 8, range [1, 32]).
+/// Limits staging-buffer creations + GPU copies per frame so the upload
+/// batch stays small enough to never stall the render thread.
+[[nodiscard]] static uint32_t MaxTextureUploadsPerFrame() {
+    return cv_MaxTexUploads ? static_cast<uint32_t>(cv_MaxTexUploads->value) : 8u;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Asset Loading — Textures (async decode + deferred GPU upload)
@@ -355,6 +357,11 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
         m_textureBatchCount = 0;
     }
 
+    // ── Integrate async-loaded meshes (background read/parse → GPU upload) ──
+    // Runs before SyncWorldToDrawList (SetupFrameData order), so meshes that
+    // finished on workers become claimable by entities this same frame.
+    IntegrateAsyncMeshLoads(cmdList);
+
     // ── Flush pending mesh uploads (deferred — batched into single submission) ──
     for (const std::string& path : m_pendingMeshPaths) {
         const uint32_t slotIndex = m_meshMap.at(path);
@@ -429,8 +436,10 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
     m_pendingProceduralMeshes.clear();
 
     // ── Batch-flush deferred mesh uploads in a single GPU submission ──────
+    // Stall-free: staging retires through the frames-in-flight-aged bucket.
     if (!m_deferredMeshUploads.empty()) {
-        FlushDeferredMeshUploads(m_device, cmdList, m_deferredMeshUploads);
+        FlushDeferredMeshUploads(m_device, cmdList, m_deferredMeshUploads,
+                                 &m_stagingRetireBuckets[m_stagingRetireIndex]);
         m_deferredMeshUploads.clear();
     }
 
@@ -524,7 +533,7 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
 
     const uint32_t toProcess = std::min(
         static_cast<uint32_t>(m_deferredDecoded.size()),
-        kMaxTextureUploadsPerFrame);
+        MaxTextureUploadsPerFrame());
 
     UZ_LOG(Renderer, Debug, "SceneRenderer: uploading {}/{} decoded textures this frame",
            toProcess, m_deferredDecoded.size());

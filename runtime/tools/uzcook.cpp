@@ -166,6 +166,7 @@ static std::vector<uint8_t> ReadFileBytes(const std::string& path) {
 /// Convention (case-insensitive suffix matching):
 ///   Albedo/BaseColor/COL/Diffuse  -> BC7 sRGB  (highest quality color)
 ///   Normal/NRM/NORM               -> BC5 linear (2-channel direction data)
+///   MetallicRoughness (glTF pack) -> BC7 linear (G=roughness, B=metallic)
 ///   Roughness/ROUGH               -> BC4 linear (single channel)
 ///   Metallic/METAL/METALNESS      -> BC4 linear (single channel)
 ///   AO/AmbientOcclusion/Occlusion -> BC4 linear (single channel)
@@ -229,6 +230,20 @@ static void SelectTextureFormat(const std::string& filename,
         lower.find("emission") != std::string::npos) {
         outFormat = uz::TextureFormat::BC7;
         outSRGB = true;
+        return;
+    }
+
+    // glTF combined metallic-roughness — BC7 linear. Shaders read G=roughness
+    // and B=metallic (glTF 2.0 §3.9.2), so a multi-channel format is required;
+    // BC4 would keep only R and zero both used channels. Checked BEFORE the
+    // single-channel roughness/metallic rules below.
+    if (lower.find("metallicroughness") != std::string::npos ||
+        lower.find("metallic_roughness") != std::string::npos ||
+        lower.find("metalroughness") != std::string::npos ||
+        lower.find("roughnessmetallic") != std::string::npos ||
+        lower.find("roughness_metallic") != std::string::npos) {
+        outFormat = uz::TextureFormat::BC7;
+        outSRGB = false;
         return;
     }
 

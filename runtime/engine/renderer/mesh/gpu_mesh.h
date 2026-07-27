@@ -163,24 +163,35 @@ struct DeferredMeshUpload {
 
 /// Executes all pending deferred mesh uploads in a single GPU submission.
 ///
-/// Ends the command list, executes it, waits for GPU idle, releases all
-/// staging buffers from every `DeferredMeshUpload`, then re-begins the
-/// command list so the caller can continue recording.
+/// Ends the command list and executes it so the copies are submitted before
+/// any draw recorded afterwards (same-queue FIFO guarantees ordering), then
+/// re-begins the command list so the caller can continue recording.
+///
+/// Staging buffer lifetime has two modes:
+/// - `deferredRelease == nullptr` (legacy): waits for GPU idle and frees all
+///   staging buffers immediately. Introduces a full CPU/GPU stall.
+/// - `deferredRelease != nullptr` (stall-free): NO WaitIdle. Ownership of
+///   every staging buffer handle is moved into `*deferredRelease`; the caller
+///   MUST destroy them only after the GPU has consumed this frame's commands
+///   (e.g., a fence-guarded retire queue held for the frames-in-flight depth).
 ///
 /// After this call, all `DeferredMeshUpload::mesh` instances are safe to use
-/// for rendering and the staging buffers have been freed.
+/// for rendering (draws recorded later on the same queue observe the copies).
 ///
 /// # Arguments
-/// * `device`  - RHI device for WaitIdle. Must not be null.
+/// * `device`  - RHI device. Must not be null.
 /// * `cmdList` - Command list with pending copy commands. Will be ended,
-///   executed, waited on, and re-begun.
+///   executed, and re-begun.
 /// * `uploads` - Vector of deferred uploads whose staging buffers will be
-///   released. May be empty (still submits/restarts the command list).
+///   released or handed off. May be empty (still submits/restarts the list).
+/// * `deferredRelease` - Optional sink receiving staging buffer handles for
+///   fence-guarded destruction. Null selects the legacy WaitIdle path.
 ///
 /// # Errors
 /// Logs `Renderer::Error` if device or command list is null.
 void FlushDeferredMeshUploads(IRHIDevice* device, IRHICommandList* cmdList,
-                              std::vector<DeferredMeshUpload>& uploads);
+                              std::vector<DeferredMeshUpload>& uploads,
+                              std::vector<RHIBufferHandle>* deferredRelease = nullptr);
 
 /// Destroys GPU buffers owned by a `GPUMesh` and resets it to default state.
 ///

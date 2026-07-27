@@ -190,7 +190,9 @@ void Application::FlushPendingSceneLoad() {
     }
 
     m_world = std::make_unique<World>();
-    const size_t count = uz::LoadScene(*m_world, bytes, path);
+    // Pass the VFS so "prefab" entities resolve their referenced assets —
+    // the VFS-less overload silently skips prefab instantiation.
+    const size_t count = uz::LoadScene(*m_world, bytes, path, m_vfs.get());
     UZ_LOG(App, Info, "Application: scene '{}' loaded ({} entities)", path, count);
 }
 
