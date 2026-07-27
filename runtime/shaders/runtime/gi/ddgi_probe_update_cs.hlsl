@@ -321,7 +321,12 @@ void main(uint3 DTid : SV_DispatchThreadID) {
         uint2 atlasXY     = atlasOrigin + uint2(localX - 1u, localY - 1u);
 
         float2 prev = depthTex[atlasXY];
+        // The depth moments drive the deferred Chebyshev visibility, which
+        // amplifies small wobbles into weight flips at silhouette edges —
+        // give them stronger hysteresis than irradiance (first full write
+        // still passes alpha=1 to overwrite undefined memory).
         float a = saturate(temporalBlendAlpha);
+        a = (a >= 1.0) ? 1.0 : min(a, 0.02);
         float2 blended = lerp(prev, float2(meanD, meanD2), a);
         depthTex[atlasXY] = blended;
     }

@@ -528,7 +528,15 @@ LightingOutput main(FSInput input) {
                     float2 momentT = ddgiDepthTex.SampleLevel(linearSampler, depthUV, 0);
                     float meanD  = momentT.x;
                     float meanD2 = momentT.y;
-                    float variance = max(meanD2 - meanD * meanD, 1e-4);
+                    // Relative variance floor (10% of mean distance): the
+                    // probe jitter cycle wobbles the moments slightly, and
+                    // with only an absolute epsilon the Chebyshev weight
+                    // flips binarily at silhouette edges — the renormalized
+                    // 8-corner blend then visibly shimmers on arches and
+                    // window reveals. A deviation floor proportional to the
+                    // mean makes borderline probes FADE instead of flip.
+                    float variance = max(meanD2 - meanD * meanD,
+                                         0.01 * meanD * meanD + 1e-4);
                     // VSM-style Chebyshev — fully visible if probe is closer
                     // than the surface, otherwise upper-bound the visibility
                     // by p_max = variance / (variance + diff²).
@@ -538,9 +546,12 @@ LightingOutput main(FSInput input) {
                         visibility = variance / (variance + diff * diff);
                         // Sharpen — Majercik recommends pow(p_max, 8) to
                         // remove residual leakage.
-                        visibility = max(visibility * visibility * visibility, 0.0);
+                        visibility = visibility * visibility * visibility;
                     }
-                    wTri *= visibility;
+                    // Small weight floor keeps the corner renormalization
+                    // stable when every corner is near-occluded (edge
+                    // shimmer); the cost is a bounded 2% leak.
+                    wTri *= max(visibility, 0.02);
                 }
 
                 if (wTri <= 0.0) continue;
@@ -994,7 +1005,12 @@ LightingOutput main(FSInput input) {
         if (metallic > 0.95 && roughness < 0.1) {
             ambient = radiance * metallicF0 * skyTintSpecular;
         } else {
-            ambient = diffuseAmbient * ao * giDiffuseTint
+            // Indirect diffuse uses pow(ao, exponent) — micro-occlusion
+            // suppresses ambient more aggressively than direct light,
+            // restoring contact darkening where pilasters meet walls.
+            // @ref Lagarde & de Rousiers 2014 "Moving Frostbite to PBR" §4.9.3
+            float aoIndirect = pow(max(ao, 1e-3), _indirectAOExponent);
+            ambient = diffuseAmbient * aoIndirect * giDiffuseTint
                     + specularAmbient * specOcclusion * skyTintSpecular;
         }
     }

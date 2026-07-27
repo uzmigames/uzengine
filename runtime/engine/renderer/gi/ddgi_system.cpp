@@ -125,7 +125,10 @@ void DDGISystem::DispatchUpdate(IRHICommandList* cmdList,
     constants.probeSpacing      = m_probeSpacing;
     constants.probesPerAxis     = kProbesPerAxis;
     constants.totalProbes       = kTotalProbes;
-    constants.raysPerProbe      = 32;
+    // 64 rays halves the per-frame estimate sigma vs 32 — the binary sun
+    // visibility at hits makes the estimate noisy, and the EMA limit cycle
+    // amplitude scales with sigma (visible as edge shimmer below 64).
+    constants.raysPerProbe      = 64;
     constants.frameIndex        = frameIndex;
     constants.maxTraceDistance  = m_probeSpacing
                                 * static_cast<float>(kProbesPerAxis) * 2.0f;
