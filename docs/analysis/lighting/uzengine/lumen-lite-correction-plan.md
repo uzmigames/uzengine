@@ -268,9 +268,20 @@ gather stack at 1440p on the 4090 (log `--gpu-profile`).
 
 ## 5 · PSNR tracking table (fill per phase)
 
-| Phase | Pose A (atrium) | Pose B (arcade shadow) | Pose C (gallery) | Notes |
+Goldens: `.screenshots/gi-plan/golden-{a,b,c}.png` — in-engine path tracer,
+2400 accumulated spp, editor mode (scripts dormant), overlays off, poses via
+`--camera-pos/--camera-look` (added 2026-07-27):
+- A: pos 36,-611,102 → look 36,400,60 (nave, ground)
+- B: pos 250,-450,80 → look -300,-450,140 (arcade shadow, cross-aisle)
+- C: pos 36,-611,420 → look 36,300,120 (elevated nave)
+
+Raster comparison captures use the SAME pose flags + editor mode. PSNR via
+sampled-MSE Python (PIL) — the in-engine `--flip-ref/--flip-test` mode HANGS
+(>9 min, killed; tooling debt logged in task item 2.2).
+
+| Phase | Pose A (nave) | Pose B (arcade shadow) | Pose C (elevated) | Notes |
 |---|---|---|---|---|
-| Baseline (0 GI) | — | — | — | capture pending Phase 1 harness |
+| Phase 1 done (SSGI+GTAO on, GTAO fixed) | **7.91 dB** | — | — | 2026-07-27, raster-a.png vs golden-a.png. Raster is far darker than PT truth — flat sky ambient vs real sky-visibility bounce. B/C raster pairs pending. |
 
 ## 6 · Risks
 

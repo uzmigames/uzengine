@@ -166,7 +166,11 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
                                        ctx.gizmoActiveAxis);
             }
 
-            if (m_editorMode && m_statsOverlayInitialized && !m_gameViewMode) {
+            // r.Show.Stats gates the HUD so headless captures (path-tracer
+            // goldens, PSNR comparisons) can disable it — the flag existed
+            // (ShowFlag::Stats / "Stats HUD") but was never consulted here.
+            if (m_editorMode && m_statsOverlayInitialized && !m_gameViewMode
+                && m_showFlags.Get(ShowFlag::Stats)) {
                 const uint32_t drawCount = ctx.useInstancing
                     ? static_cast<uint32_t>(ctx.instanceBatches.size())
                     : static_cast<uint32_t>(ctx.drawList.Count());

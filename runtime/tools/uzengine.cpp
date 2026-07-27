@@ -25,6 +25,7 @@
 #include "../engine/app/project_loader.h"
 #include "world.h"
 #include "scene_loader.h"
+#include "../engine/ecs/scene/camera_component.h"
 #include "../engine/scripting/lua_vm.h"
 #include "lua_scene_api.h"
 #include "lua_scene_io_api.h"
@@ -578,6 +579,50 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
             UZ_LOG(Engine, Info, "Loaded {} entities from '{}'", count, defaultScene);
         } else {
             UZ_LOG(Engine, Warning, "Failed to read scene: '{}'", defaultScene);
+        }
+    }
+
+    // ── CLI camera pose override (--camera-pos x,y,z / --camera-look x,y,z) ──
+    // Applied to the first ACTIVE CameraComponent after scene load, before the
+    // first frame, so both play-mode ECS sync and the editor fly-cam seed pick
+    // it up. Primary use: repeatable multi-pose captures (path-tracer goldens,
+    // PSNR comparisons) without authoring scene variants. In play mode a
+    // camera-driving Lua script may still override the pose every frame — use
+    // --editor (scripts dormant) for deterministic captures.
+    if (configPtr) {
+        const std::string camPosArg  = configPtr->GetString("camera-pos", "");
+        const std::string camLookArg = configPtr->GetString("camera-look", "");
+        auto parseVec3 = [](const std::string& s, Vec3& out) -> bool {
+            float x = 0.f, y = 0.f, z = 0.f;
+            if (std::sscanf(s.c_str(), "%f,%f,%f", &x, &y, &z) != 3) return false;
+            out = Vec3{x, y, z};
+            return true;
+        };
+        Vec3 camPos{}, camLook{};
+        const bool hasPos  = !camPosArg.empty()  && parseVec3(camPosArg, camPos);
+        const bool hasLook = !camLookArg.empty() && parseVec3(camLookArg, camLook);
+        if (hasPos || hasLook) {
+            bool applied = false;
+            auto camView = world.View<CameraComponent>();
+            for (auto [entity, cam] : camView.each()) {
+                if (!cam.isActive) continue;
+                // CameraComponent derives from SceneComponent — position is
+                // set directly on the component.
+                if (hasPos) cam.SetPosition(camPos);
+                if (hasLook) {
+                    cam.hasLookTarget = true;
+                    cam.lookTarget    = camLook;
+                }
+                applied = true;
+                UZ_LOG(Engine, Info,
+                       "Camera override: pos=({}) look=({})",
+                       hasPos ? camPosArg : "scene", hasLook ? camLookArg : "scene");
+                break;
+            }
+            if (!applied) {
+                UZ_LOG(Engine, Warning,
+                       "--camera-pos/--camera-look given but no active CameraComponent found");
+            }
         }
     }
 
