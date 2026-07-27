@@ -10,6 +10,10 @@
 #include "render_graph_pass.h"
 #include "root_slots.h"
 #include "engine/rhi/rhi.h"
+#include "gi/radiance_cache.h"
+#include "cb_ring_allocator.h"
+
+#include <cstring>
 
 #include "log.h"
 #include "profiler.h"
@@ -69,7 +73,7 @@ void AddPathTracerPass(rg::RgBuilder& builder, const PathTracerPassDesc& desc)
             // Root constants — must match PathTracerRC layout in
             // path_tracer_ps.hlsl.
             if (desc.bindless) {
-                const uint32_t constants[9] = {
+                const uint32_t constants[10] = {
                     desc.normalSrvIndex,
                     desc.depthSrvIndex,
                     desc.albedoSrvIndex,
@@ -78,9 +82,31 @@ void AddPathTracerPass(rg::RgBuilder& builder, const PathTracerPassDesc& desc)
                     desc.skyCubeSrvIndex,
                     desc.accumPrevSrvIndex,
                     desc.sampleCount,
-                    desc.frameIndex
+                    desc.frameIndex,
+                    desc.tlasSrvIndex
                 };
-                cmd->SetRootConstants(kSlotRootConstants, constants, 9);
+                cmd->SetRootConstants(kSlotRootConstants, constants, 10);
+
+                // TraceConstants (b2) — GDF + material table + sun/sky for
+                // the bounce-hit shading. Built HERE (execute time) because
+                // the PerFrameCB cpuPtr is only populated after graph build.
+                if (desc.giCbRing != nullptr) {
+                    RadianceCacheTraceConstants giConstants{};
+                    giConstants.maxTraceDistance = 1e7f;
+                    FillGITraceHitConstants(giConstants, desc.gdf,
+                                            desc.perFrameAlloc.cpuPtr,
+                                            desc.sceneAlbedo,
+                                            desc.skyCubemapSrv,
+                                            desc.materialTableSrv,
+                                            desc.rcProbeShSrv);
+                    auto giAlloc = desc.giCbRing->Allocate(sizeof(giConstants));
+                    if (giAlloc.cpuPtr != nullptr) {
+                        std::memcpy(giAlloc.cpuPtr, &giConstants, sizeof(giConstants));
+                        cmd->SetRootCBV(kSlotPerObject, giAlloc.bufferHandle,
+                                        giAlloc.offsetBytes, giAlloc.cpuPtr,
+                                        sizeof(giConstants));
+                    }
+                }
             } else {
                 const uint32_t constants[2] = { desc.sampleCount, desc.frameIndex };
                 cmd->SetRootConstants(kSlotRootConstants, constants, 2);

@@ -310,4 +310,63 @@ void RadianceCache::UpdateProbes(
     m_dirty = false;
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// FillGITraceHitConstants — shared world-hit shading inputs (b2)
+// ─────────────────────────────────────────────────────────────────────────
+
+void FillGITraceHitConstants(RadianceCacheTraceConstants& constants,
+                             const GlobalDistanceField* gdf,
+                             const void* perFrameCpuPtr,
+                             const Vec3& sceneAlbedo,
+                             uint32_t skyCubemapSrv,
+                             uint32_t materialTableSrv,
+                             uint32_t rcProbeShSrv) {
+    // GDF clipmaps — hit-normal gradients for tracers without vertex fetch.
+    constants.numGdfClipmaps = 0;
+    if (gdf && gdf->IsInitialized()) {
+        constants.numGdfClipmaps = GlobalDistanceField::kNumClipmaps;
+        for (uint32_t i = 0; i < GlobalDistanceField::kNumClipmaps && i < 4; ++i) {
+            const auto& clip = gdf->GetClipmap(i);
+            float* centerPtr = nullptr;
+            float* extentPtr = nullptr;
+            uint32_t* srvPtr = nullptr;
+            switch (i) {
+                case 0: centerPtr = &constants.gdfCenter0X; extentPtr = &constants.gdfExtent0; srvPtr = &constants.gdfClipmapSrv0; break;
+                case 1: centerPtr = &constants.gdfCenter1X; extentPtr = &constants.gdfExtent1; srvPtr = &constants.gdfClipmapSrv1; break;
+                case 2: centerPtr = &constants.gdfCenter2X; extentPtr = &constants.gdfExtent2; srvPtr = &constants.gdfClipmapSrv2; break;
+                case 3: centerPtr = &constants.gdfCenter3X; extentPtr = &constants.gdfExtent3; srvPtr = &constants.gdfClipmapSrv3; break;
+            }
+            if (centerPtr && extentPtr && srvPtr) {
+                centerPtr[0] = clip.center.x;
+                centerPtr[1] = clip.center.y;
+                centerPtr[2] = clip.center.z;
+                *extentPtr   = clip.extent;
+                *srvPtr      = clip.srvIndex;
+            }
+        }
+    }
+
+    // Real sun + skylight from the populated PerFrameCB.
+    const auto* pf = static_cast<const PerFrameCB*>(perFrameCpuPtr);
+    if (pf) {
+        constants.skyColorR      = pf->skyLightColorR * pf->skyLightIntensity;
+        constants.skyColorG      = pf->skyLightColorG * pf->skyLightIntensity;
+        constants.skyColorB      = pf->skyLightColorB * pf->skyLightIntensity;
+        constants.lightDirX      = pf->lightDir.x;
+        constants.lightDirY      = pf->lightDir.y;
+        constants.lightDirZ      = pf->lightDir.z;
+        constants.lightColorR    = pf->lightColor.x;
+        constants.lightColorG    = pf->lightColor.y;
+        constants.lightColorB    = pf->lightColor.z;
+        constants.lightIntensity = 1.0f;
+    }
+    constants.groundAlbedo     = 0.18f; // Legacy scalar — shaders use sceneAlbedo.
+    constants.sceneAlbedoR     = sceneAlbedo.x;
+    constants.sceneAlbedoG     = sceneAlbedo.y;
+    constants.sceneAlbedoB     = sceneAlbedo.z;
+    constants.skyCubemapSrv    = skyCubemapSrv;
+    constants.materialTableSrv = materialTableSrv;
+    constants.rcProbeShSrv     = rcProbeShSrv;
+}
+
 } // namespace uz

@@ -77,6 +77,7 @@ static auto* cv_Exposure           = UZ_CVAR_FLOAT("r.Exposure", 1.0f, "Manual e
 static auto* cv_GIIntensity        = UZ_CVAR_FLOAT("r.GI.Intensity", 1.f, "GI intensity multiplier", 0.f, 10.f);
 static auto* cv_AerialPersp        = UZ_CVAR_BOOL("r.AerialPerspective", false, "Aerial perspective in deferred lighting");
 static auto* cv_IndirectAOExp      = UZ_CVAR_FLOAT("r.IndirectAO.Exponent", 2.f, "AO exponent for indirect light (higher = more occlusion)", 1.f, 5.f);
+static auto* cv_LightingDebug      = UZ_CVAR_INT("r.Lighting.DebugMode", 0, "Lighting decomposition debug: 0=off 1=direct 2=indirect 3=GI irradiance 4=SSGI 5=AO 6=source map 7=skyVisibility", 0, 7);
 
 namespace uz {
 
@@ -526,7 +527,9 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
             if (ppvComp.overrideScreenSpaceReflectionIntensity){ s.SetOverride(PostProcessOverride::ScreenSpaceReflectionIntensity);s.screenSpaceReflectionIntensity = ppvComp.screenSpaceReflectionIntensity; }
             if (ppvComp.overrideScreenSpaceReflectionQuality)  { s.SetOverride(PostProcessOverride::ScreenSpaceReflectionQuality);  s.screenSpaceReflectionQuality  = ppvComp.screenSpaceReflectionQuality; }
 
-            ppvManager.AddVolume(vol);
+            // Frame-local manager — the returned volume id is not needed
+            // (volumes are re-collected every frame, never removed by id).
+            (void)ppvManager.AddVolume(vol);
         }
 
         // Compute the final blended settings and apply overridden fields to perFrame.
@@ -637,6 +640,7 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     perFrame.ddgiProbeSpacing  = 0.0f;
     perFrame.ddgiIntensity     = cv_GIIntensity->value;
     perFrame.indirectAOExponent = cv_IndirectAOExp->value;
+    perFrame.lightingDebugMode  = static_cast<uint32_t>(cv_LightingDebug->value);
     // The atlases exist from init, but they only receive dispatches when
     // `r.RayTracing.GI` is on — advertising them to the shader while the
     // writer never runs hands the priority-1 GI branch an UNWRITTEN depth

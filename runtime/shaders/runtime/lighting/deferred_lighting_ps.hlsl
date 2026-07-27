@@ -168,6 +168,10 @@ cbuffer PerFrameCB : register(b1) {
     float  _ddgiIntensity;          //         (844)
     // ── Indirect AO ──────────────────────────────────────────────────
     float  _indirectAOExponent;     //         (848) pow(ao, N) for indirect light
+    // ── Lighting decomposition debug (r.Lighting.DebugMode) ──────────
+    uint   _lightingDebugMode;      //         (852) 0=off 1=direct 2=indirect
+                                    //         3=GI irradiance 4=SSGI 5=AO
+                                    //         6=source map 7=skyVisibility
 };
 
 // LightingCB at b2 via light_types.hlsli (already declared above)
@@ -421,6 +425,14 @@ LightingOutput main(FSInput input) {
     float3 skyTintDiffuse  = skyColor;
     float3 skyTintSpecular = skyColor * skyLightIntensity;
     float3 ambient = float3(0, 0, 0);
+
+    // Lighting decomposition debug captures (r.Lighting.DebugMode) — set in
+    // the branches below, consumed by the final debug override. Source ids:
+    // 0=sky-SH fallback, 1=DDGI, 2=RC, 3=LPV.
+    float3 dbgIrradiance    = float3(0, 0, 0);
+    float3 dbgSsgi          = float3(0, 0, 0);
+    float  dbgSkyVisibility = 1.0;
+    uint   dbgGiSource      = 0u;
     {
         // ── Indirect diffuse: pick ONE GI source by priority ─────────────
         //
@@ -550,6 +562,7 @@ LightingOutput main(FSInput input) {
                 ddgiIrrad /= ddgiTotalW;
                 irradiance = ddgiIrrad * _ddgiIntensity;
                 irradianceFromGI = true;
+                dbgGiSource = 1u;
             }
         }
 #endif
@@ -608,6 +621,7 @@ LightingOutput main(FSInput input) {
             if (dot(rcIrrad, float3(1,1,1)) > 1e-5) {
                 irradiance = rcIrrad * _rcGiIntensity;
                 irradianceFromGI = true;
+                dbgGiSource = 2u;
             }
         }
 #endif
@@ -665,6 +679,7 @@ LightingOutput main(FSInput input) {
             if (dot(lpvIrrad, float3(1,1,1)) > 1e-5) {
                 irradiance = lpvIrrad * _lpvIntensity;
                 irradianceFromGI = true;
+                dbgGiSource = 3u;
             }
         }
 #endif
@@ -762,6 +777,8 @@ LightingOutput main(FSInput input) {
         // Frostbite diffuse BRDF already accounts for this.
         // (Three.js multiplies by PI then divides by PI — net identity)
         float3 cosineIrradiance = irradiance;
+        dbgIrradiance    = irradiance;
+        dbgSkyVisibility = skyVisibility;
 
         // ── Specular: prefiltered env + BRDF LUT (DFG) ──────────────────
         // @ref Three.js — reflection vector blended with normal for rough surfaces
@@ -910,18 +927,27 @@ LightingOutput main(FSInput input) {
             ? 1.0
             : saturate(pow(NoV + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao);
 
-        // SSGI: add screen-space indirect diffuse if available
+        // SSGI: screen-space indirect diffuse. ONLY added when no world-space
+        // GI source (DDGI/RC/LPV) provided the irradiance — those probes
+        // already integrate the same bounce transport SSGI estimates, so
+        // adding both double-counts indirect light (measured +1.4 dB error
+        // vs the reference path tracer on Sponza pose A). When a world GI
+        // source is active SSGI is skipped entirely until per-pixel validity
+        // is threaded through the SSGI chain (task 4.1 follow-up: blend by
+        // screen-trace confidence instead of a binary gate).
+        // @ref Falcor MinimalPathTracer — one indirect source per pixel
 #ifdef UZ_BINDLESS
         if (ssgiSrvIndex != kSentinelSrvIndex) {
             Texture2D<float4> ssgiTex = ResourceDescriptorHeap[ssgiSrvIndex];
             float3 ssgiColor = ssgiTex.Load(int3(px, 0)).rgb;
-            if (any(ssgiColor > 0.001))
+            dbgSsgi = ssgiColor;
+            if (!irradianceFromGI && any(ssgiColor > 0.001))
                 diffuseAmbient += (1.0 - metallic) * ssgiColor * baseColor;
         }
 #else
         {
             float3 ssgiColor = ssgiTextureT12.Load(int3(px, 0)).rgb;
-            if (any(ssgiColor > 0.001))
+            if (!irradianceFromGI && any(ssgiColor > 0.001))
                 diffuseAmbient += (1.0 - metallic) * ssgiColor * baseColor;
         }
 #endif
@@ -1049,6 +1075,35 @@ LightingOutput main(FSInput input) {
     // Sample precomputed 32x32x16 AP volume: RGB = inscattering, A = mean transmittance.
     // Applied after all lighting to attenuate distant objects and add atmospheric haze.
     float3 color = Lo + ambient + emissive;
+
+    // ── Lighting decomposition debug (r.Lighting.DebugMode) ─────────────
+    // Replaces the composed color with an isolated term so each stage of
+    // the indirect cascade can be captured headlessly (--hidden --cvar
+    // r.Lighting.DebugMode=N --screenshot). Placed BEFORE aerial
+    // perspective so haze does not pollute the term being inspected.
+    if (_lightingDebugMode != 0u) {
+        if      (_lightingDebugMode == 1u) color = Lo;
+        else if (_lightingDebugMode == 2u) color = ambient;
+        else if (_lightingDebugMode == 3u) color = dbgIrradiance;
+        else if (_lightingDebugMode == 4u) color = dbgSsgi;
+        else if (_lightingDebugMode == 5u) color = float3(ao, ao, ao);
+        else if (_lightingDebugMode == 6u) {
+            // GI source map: green=DDGI, blue=RC, yellow=LPV, red=sky-SH.
+            if      (dbgGiSource == 1u) color = float3(0, 1, 0);
+            else if (dbgGiSource == 2u) color = float3(0, 0, 1);
+            else if (dbgGiSource == 3u) color = float3(1, 1, 0);
+            else                        color = float3(1, 0, 0);
+        }
+        else if (_lightingDebugMode == 7u)
+            color = float3(dbgSkyVisibility, dbgSkyVisibility, dbgSkyVisibility);
+
+        LightingOutput dbgOut;
+        dbgOut.hdr      = float4(max(color, 0.0), 1.0);
+        dbgOut.direct   = float4(max(Lo, 0.0), 1.0);
+        dbgOut.indirect = float4(max(ambient, 0.0), 1.0);
+        dbgOut.debug    = float4(shadow, ao, 0.0, 1.0);
+        return dbgOut;
+    }
 
 
 #ifdef UZ_BINDLESS

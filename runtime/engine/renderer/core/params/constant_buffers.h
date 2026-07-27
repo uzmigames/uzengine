@@ -277,8 +277,16 @@ struct PerFrameCB {
     /// @ref Lagarde & de Rousiers 2014 "Moving Frostbite to PBR" — §4.9.3
     float    indirectAOExponent = 2.0f;     ///< CVar r.IndirectAO.Exponent — default 2.0.
 
+    // ── Lighting decomposition debug (CVar r.Lighting.DebugMode) ──────
+    /// 0 = off. 1 = direct only (Lo). 2 = indirect only (ambient).
+    /// 3 = GI irradiance E/pi chosen by the cascade (pre-albedo, pre-AO).
+    /// 4 = raw SSGI irradiance. 5 = GTAO scalar. 6 = GI source map
+    /// (green=DDGI, blue=RC, yellow=LPV, red=sky-SH fallback).
+    /// 7 = skyVisibility (shadow-modulated sky hack activity).
+    uint32_t lightingDebugMode = 0;
+
     // ── Padding to next 256-byte boundary (1024 bytes) ────────────────
-    float    _padToCBEnd[43]  = {};         ///< Pads PerFrameCB to 1024 bytes (4 x 256).
+    float    _padToCBEnd[42]  = {};         ///< Pads PerFrameCB to 1024 bytes (4 x 256).
 };
 
 static_assert(sizeof(PerFrameCB) == 1024, "PerFrameCB must be 1024 bytes (4 x 256 D3D12 CB alignment)");

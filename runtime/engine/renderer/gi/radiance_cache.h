@@ -291,4 +291,19 @@ struct GIMeshMaterialGPU {
 
 static_assert(sizeof(GIMeshMaterialGPU) == 16, "GIMeshMaterialGPU must be 16 bytes");
 
+/// Fills the world-hit portion of the shared b2 trace-constants block (GDF
+/// clipmaps, sun/sky from the per-frame CB, scene albedo, material table,
+/// bounce-feedback SH buffer). Used by every GI tracer that shades world
+/// hits — the DDGI atlas writer and the reference path tracer — so the
+/// three consumers can never drift. Grid/probe fields are the caller's.
+/// `perFrameCpuPtr` must point at a populated PerFrameCB (may be null —
+/// sun/sky are then left at zero).
+void FillGITraceHitConstants(RadianceCacheTraceConstants& constants,
+                             const GlobalDistanceField* gdf,
+                             const void* perFrameCpuPtr,
+                             const Vec3& sceneAlbedo,
+                             uint32_t skyCubemapSrv,
+                             uint32_t materialTableSrv,
+                             uint32_t rcProbeShSrv);
+
 } // namespace uz

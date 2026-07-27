@@ -882,6 +882,13 @@
     /// Registers SDF-based GI passes (GDF composite + radiance cache trace).
     void RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
 
+    /// (Re)creates + refreshes the per-mesh GI material table (tint + albedo
+    /// SRV, indexed by TLAS InstanceID = meshId). Shared by the DDGI atlas
+    /// writer and the reference path tracer. Safe to call every frame — the
+    /// buffer is Upload-heap and grows on demand. Returns the table SRV
+    /// (UINT32_MAX when no meshes / creation failed).
+    uint32_t UpdateGIMaterialTable(const FrameContext& ctx);
+
     /// Registers AMD FidelityFX Brixelizer GI passes (SDF bake + GI dispatch).
     void RegisterBrixelizerGIPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
 

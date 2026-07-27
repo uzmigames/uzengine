@@ -230,56 +230,7 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
             if (wantDdgi) {
                 auto ddgiPipeline = ctx.pipelines->GetDdgiProbeUpdate();
                 if (ddgiPipeline.IsValid()) {
-                    // ── Per-mesh material table (GIMeshMaterialGPU) ─────
-                    // Indexed by TLAS InstanceID (= meshId). Refreshed every
-                    // frame from the draw list — a 2 KB Upload-heap memcpy.
-                    // The albedo TEXTURE average is sampled in-shader at the
-                    // mip tail; here we only record tint + SRV.
-                    const uint32_t meshCap =
-                        static_cast<uint32_t>(m_meshes.size());
-                    if (meshCap > 0
-                        && (!m_giMaterialTable.IsValid()
-                            || m_giMaterialTableCapacity < meshCap)) {
-                        if (m_giMaterialTable.IsValid()) {
-                            m_device->DestroyBuffer(m_giMaterialTable);
-                            m_giMaterialTable = {};
-                            m_giMaterialTableSrv = UINT32_MAX;
-                        }
-                        RHIBufferDesc desc{};
-                        desc.sizeBytes = static_cast<uint64_t>(meshCap)
-                                       * sizeof(GIMeshMaterialGPU);
-                        desc.stride    = sizeof(GIMeshMaterialGPU);
-                        desc.usage     = RHIBufferUsage::StructuredBuffer;
-                        desc.memory    = RHIMemoryType::Upload;
-                        desc.debugName = "GI_MaterialTable";
-                        m_giMaterialTable = m_device->CreateBuffer(desc);
-                        m_giMaterialTableSrv = m_giMaterialTable.IsValid()
-                            ? m_device->GetBufferSRVIndex(m_giMaterialTable)
-                            : UINT32_MAX;
-                        m_giMaterialTableCapacity = meshCap;
-                    }
-                    if (m_giMaterialTable.IsValid()) {
-                        auto* entries = static_cast<GIMeshMaterialGPU*>(
-                            m_device->MapBuffer(m_giMaterialTable));
-                        if (entries) {
-                            for (uint32_t e = 0; e < meshCap; ++e) {
-                                entries[e] = {1.f, 1.f, 1.f, UINT32_MAX};
-                            }
-                            for (const auto& dc : ctx.drawList.GetCommands()) {
-                                if (dc.meshId >= meshCap) continue;
-                                auto& entry = entries[dc.meshId];
-                                entry.tintR = dc.baseColorTintR;
-                                entry.tintG = dc.baseColorTintG;
-                                entry.tintB = dc.baseColorTintB;
-                                // Slot 0 doubles as "unset" in DrawCommand.
-                                entry.albedoSrv =
-                                    (dc.albedoSrvIndex != 0
-                                     && dc.albedoSrvIndex != UINT32_MAX)
-                                        ? dc.albedoSrvIndex : UINT32_MAX;
-                            }
-                            m_device->UnmapBuffer(m_giMaterialTable);
-                        }
-                    }
+                    (void)UpdateGIMaterialTable(ctx);
 
                     const float avgAlbedo = cv_GISceneAlbedo->value;
                     const uint32_t tlasSrv = m_rtManager->GetTLASSRVIndex();
@@ -298,6 +249,59 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
             }
         });
     });
+}
+
+// ── GI material table (shared: DDGI atlas writer + reference path tracer) ──
+
+uint32_t SceneRenderer::UpdateGIMaterialTable(const FrameContext& ctx) {
+    // Indexed by TLAS InstanceID (= meshId). Refreshed every frame from the
+    // draw list — a 2 KB Upload-heap memcpy. The albedo TEXTURE average is
+    // sampled in-shader at the mip tail; here we only record tint + SRV.
+    const uint32_t meshCap = static_cast<uint32_t>(m_meshes.size());
+    if (meshCap > 0
+        && (!m_giMaterialTable.IsValid()
+            || m_giMaterialTableCapacity < meshCap)) {
+        if (m_giMaterialTable.IsValid()) {
+            m_device->DestroyBuffer(m_giMaterialTable);
+            m_giMaterialTable = {};
+            m_giMaterialTableSrv = UINT32_MAX;
+        }
+        RHIBufferDesc desc{};
+        desc.sizeBytes = static_cast<uint64_t>(meshCap)
+                       * sizeof(GIMeshMaterialGPU);
+        desc.stride    = sizeof(GIMeshMaterialGPU);
+        desc.usage     = RHIBufferUsage::StructuredBuffer;
+        desc.memory    = RHIMemoryType::Upload;
+        desc.debugName = "GI_MaterialTable";
+        m_giMaterialTable = m_device->CreateBuffer(desc);
+        m_giMaterialTableSrv = m_giMaterialTable.IsValid()
+            ? m_device->GetBufferSRVIndex(m_giMaterialTable)
+            : UINT32_MAX;
+        m_giMaterialTableCapacity = meshCap;
+    }
+    if (m_giMaterialTable.IsValid()) {
+        auto* entries = static_cast<GIMeshMaterialGPU*>(
+            m_device->MapBuffer(m_giMaterialTable));
+        if (entries) {
+            for (uint32_t e = 0; e < meshCap; ++e) {
+                entries[e] = {1.f, 1.f, 1.f, UINT32_MAX};
+            }
+            for (const auto& dc : ctx.drawList.GetCommands()) {
+                if (dc.meshId >= meshCap) continue;
+                auto& entry = entries[dc.meshId];
+                entry.tintR = dc.baseColorTintR;
+                entry.tintG = dc.baseColorTintG;
+                entry.tintB = dc.baseColorTintB;
+                // Slot 0 doubles as "unset" in DrawCommand.
+                entry.albedoSrv =
+                    (dc.albedoSrvIndex != 0
+                     && dc.albedoSrvIndex != UINT32_MAX)
+                        ? dc.albedoSrvIndex : UINT32_MAX;
+            }
+            m_device->UnmapBuffer(m_giMaterialTable);
+        }
+    }
+    return m_giMaterialTableSrv;
 }
 
 // ── Brixelizer GI (AMD FidelityFX sparse SDF voxel GI) ─────────────────────

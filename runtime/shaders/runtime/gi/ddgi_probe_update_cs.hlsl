@@ -24,6 +24,7 @@
 
 #include "../common/constants.hlsli"
 #include "gi_hit_lighting.hlsli"
+#include "gi_trace_common.hlsli"
 
 // ─── Root constants at b0 ──────────────────────────────────────────────────
 
@@ -38,65 +39,8 @@ cbuffer RootConstants : register(b0) {
     uint g_probeBudget;
 };
 
-// ─── Trace constants at b2 (matches DDGI cb layout) ───────────────────────
-
-cbuffer TraceConstants : register(b2) {
-    float gridOriginX;
-    float gridOriginY;
-    float gridOriginZ;
-    float probeSpacing;
-
-    uint  probesPerAxis;
-    uint  totalProbes;
-    uint  raysPerProbe;
-    uint  frameIndex;
-
-    float maxTraceDistance;
-    float temporalBlendAlpha;
-    uint  shBufferUav;          // Unused by atlas writer.
-    uint  _padTC;
-
-    // NOTE: these MUST be float4/uint4 — scalar arrays (`float x[4]`) get one
-    // 16-byte register PER ELEMENT in HLSL cbuffers, which silently shifted
-    // every field below by 144 bytes in the previous declaration (the sky and
-    // sun values this shader read were garbage from the wrong offsets).
-    float4 gdfCenterExtent0;    // xyz = clipmap center (world cm), w = half-extent.
-    float4 gdfCenterExtent1;
-    float4 gdfCenterExtent2;
-    float4 gdfCenterExtent3;
-    uint4  gdfSrv;              // x..w = clipmap SRV indices 0..3.
-
-    uint  numGdfClipmaps;
-    float skyColorR;
-    float skyColorG;
-    float skyColorB;
-
-    float lightDirX;
-    float lightDirY;
-    float lightDirZ;
-    float lightIntensity;
-
-    float lightColorR;
-    float lightColorG;
-    float lightColorB;
-    float groundAlbedo;          // Legacy scalar fallback (kept for layout).
-
-    float sceneAlbedoR;          // Scene-average albedo fallback (linear).
-    float sceneAlbedoG;
-    float sceneAlbedoB;
-    uint  skyCubemapSrv;         // Atmosphere sky cubemap SRV (sentinel = flat sky).
-
-    uint  materialTableSrv;      // StructuredBuffer<GIMeshMaterialGPU>, indexed by InstanceID (= meshId).
-    uint  rcProbeShSrv;          // Radiance-cache SH buffer SRV — multi-bounce feedback.
-    uint  _padHit0;
-    uint  _padHit1;
-};
-
-/// Mirrors GIMeshMaterialGPU (radiance_cache.h, 16 bytes).
-struct GIMeshMaterial {
-    float3 tint;                 // BaseColor tint factor (linear).
-    uint   albedoSrv;            // Albedo texture SRV (sentinel = tint only).
-};
+// b2 TraceConstants + GDF/sky/albedo helpers live in gi_trace_common.hlsli
+// (shared with the reference path tracer).
 
 // ─── Constants ────────────────────────────────────────────────────────────
 
@@ -183,57 +127,6 @@ uint2 ProbeAtlasOrigin(uint linearIdx, uint tileSize) {
 
 // ─── Hit-point queries (surface-cache-lite inputs) ───────────────────────
 
-/// GDF clipmap distance sample — same cascade walk as the SDF tracer.
-/// Returns a large value when no clipmap covers the point.
-float DdgiSampleGdfClip(uint srvIdx, float3 p, float4 centerExtent) {
-    if (srvIdx == kSentinelSrvIndex || centerExtent.w <= 0.0) return 1e9;
-    float3 local = (p - centerExtent.xyz) / centerExtent.w;
-    if (any(abs(local) > 1.0)) return 1e9;
-    Texture3D<float> gdfTex = ResourceDescriptorHeap[srvIdx];
-    SamplerState samp = SamplerDescriptorHeap[1];
-    return gdfTex.SampleLevel(samp, local * 0.5 + 0.5, 0).r;
-}
-
-float DdgiSampleGdf(float3 p) {
-    float d = DdgiSampleGdfClip(gdfSrv.x, p, gdfCenterExtent0);
-    if (d < 1e8) return d;
-    d = DdgiSampleGdfClip(gdfSrv.y, p, gdfCenterExtent1);
-    if (d < 1e8) return d;
-    d = DdgiSampleGdfClip(gdfSrv.z, p, gdfCenterExtent2);
-    if (d < 1e8) return d;
-    return DdgiSampleGdfClip(gdfSrv.w, p, gdfCenterExtent3);
-}
-
-/// Sky radiance for a miss ray — atmosphere cubemap when available,
-/// flat skylight color otherwise. Z-up world → Y-up cubemap swizzle.
-float3 DdgiSkyRadiance(float3 dir) {
-    if (skyCubemapSrv != kSentinelSrvIndex) {
-        TextureCube<float4> sky = ResourceDescriptorHeap[skyCubemapSrv];
-        SamplerState samp = SamplerDescriptorHeap[1];
-        return sky.SampleLevel(samp, float3(dir.x, dir.z, dir.y), 0).rgb;
-    }
-    return float3(skyColorR, skyColorG, skyColorB);
-}
-
-/// Hit-surface albedo: per-mesh material table entry (tint × albedo-texture
-/// average). The texture average comes free from the sampler — the LAST mip
-/// of a mip-mapped texture is its box-filtered average, so SampleLevel at a
-/// huge LOD clamps to it. Falls back to the scene-average constant.
-float3 DdgiHitAlbedo(uint meshId) {
-    if (materialTableSrv == kSentinelSrvIndex) {
-        return float3(sceneAlbedoR, sceneAlbedoG, sceneAlbedoB);
-    }
-    StructuredBuffer<GIMeshMaterial> table = ResourceDescriptorHeap[materialTableSrv];
-    GIMeshMaterial mat = table[meshId];
-    float3 albedo = mat.tint;
-    if (mat.albedoSrv != kSentinelSrvIndex) {
-        Texture2D<float4> albedoTex = ResourceDescriptorHeap[mat.albedoSrv];
-        SamplerState samp = SamplerDescriptorHeap[1];
-        albedo *= albedoTex.SampleLevel(samp, float2(0.5, 0.5), 16.0).rgb;
-    }
-    return albedo;
-}
-
 /// Previous-frame radiance-cache irradiance at a world position (nearest
 /// probe). Shares the probe grid with the SDF path — frame_constants keeps
 /// both grids aligned. @ref Majercik 2019 §"infinite bounces"
@@ -259,7 +152,7 @@ float3 DdgiBounceIrradiance(float3 worldPos, float3 n) {
 
 float4 TraceProbeRay(float3 origin, float3 dir) {
     if (g_tlasSrvIndex == kSentinelSrvIndex) {
-        return float4(DdgiSkyRadiance(dir), maxTraceDistance);
+        return float4(GITrace_SkyRadiance(dir), maxTraceDistance);
     }
     RaytracingAccelerationStructure tlas = ResourceDescriptorHeap[g_tlasSrvIndex];
 
@@ -282,19 +175,7 @@ float4 TraceProbeRay(float3 origin, float3 dir) {
         // chain runs alongside DDGI (frame_gi_passes always dispatches the
         // radiance cache), so the clipmaps hold real distances. Falls back
         // to the negated ray direction when the GDF has no data here.
-        float3 n = -dir;
-        {
-            const float e = 5.0; // cm — matches the SDF tracer's epsilon
-            float3 g = float3(
-                DdgiSampleGdf(hitPos + float3(e, 0, 0)) - DdgiSampleGdf(hitPos - float3(e, 0, 0)),
-                DdgiSampleGdf(hitPos + float3(0, e, 0)) - DdgiSampleGdf(hitPos - float3(0, e, 0)),
-                DdgiSampleGdf(hitPos + float3(0, 0, e)) - DdgiSampleGdf(hitPos - float3(0, 0, e)));
-            float len = length(g);
-            if (len > 1e-5) {
-                n = g / len;
-                if (dot(n, dir) > 0.0) n = -n;
-            }
-        }
+        float3 n = GITrace_GdfNormal(hitPos, dir);
 
         // Sun visibility: precise second RayQuery toward the light.
         float3 L = normalize(float3(lightDirX, lightDirY, lightDirZ));
@@ -313,14 +194,14 @@ float4 TraceProbeRay(float3 origin, float3 dir) {
 
         float3 sunColorIntensity = float3(lightColorR, lightColorG, lightColorB)
                                  * lightIntensity;
-        float3 albedo = DdgiHitAlbedo(meshId);
+        float3 albedo = GITrace_HitAlbedo(meshId);
         float3 bounce = DdgiBounceIrradiance(hitPos + n * probeSpacing * 0.25, n);
 
         float3 radiance = GIHit_Radiance(albedo, float3(0, 0, 0), n,
                                          L, sunColorIntensity, sunVis, bounce);
         return float4(radiance, hitT);
     }
-    return float4(DdgiSkyRadiance(dir), maxTraceDistance);
+    return float4(GITrace_SkyRadiance(dir), maxTraceDistance);
 }
 
 // ─── Entry point — one thread per atlas texel of one probe ───────────────

@@ -24,12 +24,16 @@
 #include "constant_buffers.h"
 #include "render_graph_types.h"
 #include "engine/rhi/rhi_types.h"
+#include "vector3.h"
 
 namespace uz::rg {
 class RgBuilder;
 } // namespace uz::rg
 
 namespace uz {
+
+class CBRingAllocator;
+class GlobalDistanceField;
 
 /// Configuration for the path tracer pass.
 struct PathTracerPassDesc {
@@ -52,6 +56,20 @@ struct PathTracerPassDesc {
     uint32_t          sampleCount;        ///< Accumulated sample count this frame (0=fresh).
     uint32_t          frameIndex;
     CBAllocation      shadowAlloc;        ///< ShadowDataCB allocation (b4) — for CSM sun shadows.
+    /// Scene TLAS SRV for real multi-bounce transport (UINT32_MAX = fall
+    /// back to the occlusion-free sky estimate — NOT reference quality).
+    uint32_t          tlasSrvIndex = UINT32_MAX;
+    /// Inputs for the b2 TraceConstants (GDF clipmaps + material table +
+    /// sun/sky). The CB is built + bound INSIDE the execution callback —
+    /// the PerFrameCB cpuPtr is only populated after graph build, so the
+    /// sun/sky values MUST be read at execute time (reading them at
+    /// registration yields zeros — the black-bounce bug of 2026-07-27).
+    CBRingAllocator*           giCbRing = nullptr;   ///< null = no b2 bound.
+    const GlobalDistanceField* gdf = nullptr;
+    Vec3                       sceneAlbedo{0.35f, 0.35f, 0.35f};
+    uint32_t                   skyCubemapSrv   = UINT32_MAX;
+    uint32_t                   materialTableSrv = UINT32_MAX;
+    uint32_t                   rcProbeShSrv    = UINT32_MAX;
     bool              bindless;
     float             viewportWidth;
     float             viewportHeight;

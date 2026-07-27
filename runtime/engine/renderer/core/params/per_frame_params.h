@@ -281,8 +281,13 @@ struct PerFrameParams {
     // ── Indirect AO ──────────────────────────────────────────────────────
     float    indirectAOExponent = 2.0f;     ///< CVar r.IndirectAO.Exponent
 
+    // ── Lighting decomposition debug (CVar r.Lighting.DebugMode) ─────────
+    /// 0 = off. 1 = direct only. 2 = indirect only. 3 = GI irradiance.
+    /// 4 = raw SSGI. 5 = GTAO scalar. 6 = GI source map. 7 = skyVisibility.
+    uint32_t lightingDebugMode = 0;
+
     // ── Padding to next 256-byte boundary (1024 bytes) ────────────────
-    float    _padToCBEnd[43]   = {};
+    float    _padToCBEnd[42]   = {};
 
     // ── Resource handles (NOT copied to CB) ──────────────────────────────
     // These are bound by ShaderParameterBinder at their HLSL register slots.

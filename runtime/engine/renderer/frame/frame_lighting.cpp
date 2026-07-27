@@ -18,7 +18,10 @@
 #include "camera.h"
 #include "gi/ssgi_renderer.h"
 #include "gi/mesh_sdf_baker.h"
+#include "gi/radiance_cache.h"
+#include "raytracing/rt_manager.h"
 #include "gpu_mesh.h"
+#include <cstring>
 #include "world.h"
 #include "render_graph_builder.h"
 #include "render_graph_resources.h"
@@ -116,6 +119,11 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         // a render graph resource since we don't declare it as a Read (the
         // shader reads it via ResourceDescriptorHeap[]).
 
+        // The reference path tracer consumes GDF clipmaps for bounce-hit
+        // normals — keep the SDF GI chain (GDF composite + probe traces)
+        // running in PT mode so the clipmaps hold real distances.
+        RegisterSDFGIPasses(rgBuilder, ctx);
+
         PathTracerPassDesc ptDesc{};
         ptDesc.hdrTarget         = ctx.hdrRes;
         ptDesc.accumCurr         = accumCurrRes;
@@ -137,6 +145,28 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         ptDesc.frameIndex        = ctx.frameIndex;
         ptDesc.shadowAlloc       = ctx.shadowAlloc;
         ptDesc.bindless          = ctx.bindless;
+
+        // Real multi-bounce transport: TLAS + the shared b2 trace constants
+        // (GDF hit normals, material table, sun/sky). Without a TLAS the
+        // shader falls back to the occlusion-free sky estimate. The b2 CB
+        // is built inside the pass execution callback — at registration
+        // time the PerFrameCB is not populated yet.
+        if (m_rtManager && m_rtManager->IsReady()) {
+            ptDesc.tlasSrvIndex = m_rtManager->GetTLASSRVIndex();
+
+            const float sceneAlbedoAvg =
+                CVarRegistry::Get().GetFloat("r.GI.SceneAlbedo", 0.35f);
+            ptDesc.giCbRing         = m_cbRing.get();
+            ptDesc.gdf              = &m_globalDistanceField;
+            ptDesc.sceneAlbedo      = Vec3{sceneAlbedoAvg, sceneAlbedoAvg,
+                                           sceneAlbedoAvg};
+            ptDesc.skyCubemapSrv    =
+                (m_skyCubemap.IsValid() && m_skyCubemapSrv != UINT32_MAX)
+                    ? m_skyCubemapSrv : UINT32_MAX;
+            ptDesc.materialTableSrv = UpdateGIMaterialTable(ctx);
+            ptDesc.rcProbeShSrv     = m_radianceCache.IsInitialized()
+                ? m_radianceCache.GetProbeSHBufferSrv() : UINT32_MAX;
+        }
         ptDesc.viewportWidth     = static_cast<float>(ctx.renderWidth);
         ptDesc.viewportHeight    = static_cast<float>(ctx.renderHeight);
         AddPathTracerPass(rgBuilder, ptDesc);
