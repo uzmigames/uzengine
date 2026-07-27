@@ -859,9 +859,18 @@ uint32_t GTAOPass::Execute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
         rc.farPlane       = farPlane;
         // Pack frameIndex (lower 16 bits) and hizSrvIndex (upper 16 bits) into DWORD 7.
         // hizSrvIndex == UINT32_MAX maps to 0xFFFF which the shader interprets as "disabled".
+        //
+        // The shader derives its 6-angle temporal rotation + 4-phase offset
+        // from frameIndex — a dither designed to be RESOLVED BY TAA
+        // (@ref Jimenez 2016 §"temporal reprojection"). Without TAA nothing
+        // integrates the cycle and it shows as raw AO shimmer, so freeze the
+        // temporal part (frameIndex=0) and rely on the spatial IGN dither
+        // alone when TAA is off.
+        const bool taaOn = CVarRegistry::Get().GetBool("r.TAA", false);
+        const uint32_t temporalFrame = taaOn ? (frameIndex & 0xFFFFu) : 0u;
         const uint32_t packedHiz = (hizSrvIndex == UINT32_MAX) ? 0xFFFFu
                                  : (hizSrvIndex & 0xFFFFu);
-        rc.frameAndHiz = (frameIndex & 0xFFFFu) | (packedHiz << 16u);
+        rc.frameAndHiz = temporalFrame | (packedHiz << 16u);
 
         // DWORDs 8-15: algorithm parameters driven by quality preset + CVars.
         // CVar overrides take precedence over quality preset defaults when
