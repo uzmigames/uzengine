@@ -9,8 +9,6 @@
 
 #include "fly_camera_controller.h"
 
-#include "log.h"
-
 #include <algorithm>
 #include <cmath>
 
@@ -26,20 +24,14 @@ void FlyCameraController::InitFromCamera(const Camera& camera) {
 }
 
 void FlyCameraController::Update(Camera& camera, const InputSystem& input, float deltaTime) {
-    // ── Diagnostic trace — once every 60 frames so the log doesn't drown. ───
-    {
-        static int s_frameCounter = 0;
-        if ((s_frameCounter++ % 60) == 0) {
-            UZ_LOG(Renderer, Error,
-                "[DIAG] FlyCam editorMode={} RMB={} W={} A={} S={} D={} pos=({:.1f},{:.1f},{:.1f})",
-                m_editorMode,
-                input.IsMouseDown(MouseButton::Right),
-                input.IsKeyDown(Key::W),
-                input.IsKeyDown(Key::A),
-                input.IsKeyDown(Key::S),
-                input.IsKeyDown(Key::D),
-                camera.GetPosition().x, camera.GetPosition().y, camera.GetPosition().z);
-        }
+    // ── Scroll wheel: movement speed ─────────────────────────────────────────
+    // One notch = ±50 cm/s, clamped to [50, 5000] — same range and step as the
+    // Lua fly_camera controller, so the native editor cam and the scripted
+    // play-mode cam behave identically under the wheel.
+    const float scroll = input.GetScrollDelta();
+    if (scroll != 0.f) {
+        m_moveSpeed = std::clamp(m_moveSpeed + scroll * kScrollSpeedStep,
+                                 kMinMoveSpeed, kMaxMoveSpeed);
     }
 
     // ── Mouse look (only when RMB held) ──────────────────────────────────────

@@ -77,11 +77,15 @@ GTAOPass::~GTAOPass() {
 }
 
 bool GTAOPass::IsEnabledCVar() const noexcept {
-    // Read the CVar directly — do NOT consult `settings.enabled`, which
-    // is only refreshed at the top of Execute() and races against
-    // RegisterGTAOPass()/frame_constants builders for frame 0 and any
-    // frame where the CVar was just toggled.
-    return cv_GTAOEnabled->value >= 0.5f;
+    // Read through the registry, NOT the file-static cv_GTAOEnabled pointer.
+    // Scene .uzscene overrides apply via CVarRegistry::Set on the registry's
+    // instance; when this TU's static registration raced module init, the
+    // cached pointer can be a different object that never sees the override
+    // (see the warning in frame_lighting.cpp about exactly this pattern) —
+    // the pass then silently never schedules while `--diag` shows the CVar
+    // as 1. Also never consult `settings.enabled` here: it is only refreshed
+    // at the top of Execute() and races RegisterGTAOPass()/frame_constants.
+    return CVarRegistry::Get().GetBool("r.GTAO", false);
 }
 
 bool GTAOPass::Init(IRHIDevice* device, ShaderManager* shaderMgr,

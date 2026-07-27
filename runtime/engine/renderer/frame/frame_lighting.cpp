@@ -298,6 +298,9 @@ void SceneRenderer::RegisterPassInspectorTargets(FrameContext& ctx) {
             m_passInspector.RegisterTarget("gtao.result", m_gtaoPass->GetFilteredAOTexture(), gtaoSrv,
                                             VisDisplayMode::Grayscale, rw, rh);
         }
+    } else {
+        // Keep the target visible in --diag as SKIPPED instead of absent.
+        m_passInspector.RegisterDisabledTarget("gtao.result");
     }
 
     // SSGI intermediate textures
@@ -318,6 +321,42 @@ void SceneRenderer::RegisterPassInspectorTargets(FrameContext& ctx) {
                                         m_ssgiRenderer.GetResultSrvIndex(), VisDisplayMode::HDR, rw, rh);
         m_passInspector.RegisterTarget("ssgi.ao", m_ssgiRenderer.GetAOResultTexture(),
                                         m_ssgiRenderer.GetAOResultSrvForInspector(), VisDisplayMode::Grayscale, rw, rh);
+    } else {
+        m_passInspector.RegisterDisabledTarget("ssgi.result");
+    }
+
+    // ── World-space GI probe systems (radiance cache + DDGI atlases) ─────
+    // Registered unconditionally so `--diag` distinguishes "disabled" from
+    // "absent" — the entire GI stack being silently off is exactly the bug
+    // class this visibility exists to catch.
+    {
+        auto& cvars = CVarRegistry::Get();
+
+        // Radiance cache stores L2 SH in a StructuredBuffer — no texture to
+        // read back yet, so it only surfaces here while disabled. A probe
+        // visualization texture is planned with the hit-lighting rework.
+        if (!cvars.GetBool("r.RadianceCache", false)) {
+            m_passInspector.RegisterDisabledTarget("rc.probes");
+        }
+
+        const bool ddgiActive = cvars.GetBool("r.RayTracing.GI", false)
+                              && m_ddgiSystem.IsInitialized();
+        if (ddgiActive) {
+            m_passInspector.RegisterTarget("ddgi.irradiance",
+                                            m_ddgiSystem.GetIrradianceTexture(),
+                                            m_ddgiSystem.GetIrradianceSrv(),
+                                            VisDisplayMode::HDR,
+                                            m_ddgiSystem.GetIrradianceAtlasWidth(),
+                                            m_ddgiSystem.GetIrradianceAtlasHeight());
+            m_passInspector.RegisterTarget("ddgi.depth",
+                                            m_ddgiSystem.GetDepthTexture(),
+                                            m_ddgiSystem.GetDepthSrv(),
+                                            VisDisplayMode::Grayscale,
+                                            m_ddgiSystem.GetDepthAtlasWidth(),
+                                            m_ddgiSystem.GetDepthAtlasHeight());
+        } else {
+            m_passInspector.RegisterDisabledTarget("ddgi.irradiance");
+        }
     }
 
     // SSR

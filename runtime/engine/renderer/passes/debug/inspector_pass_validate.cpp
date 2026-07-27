@@ -48,6 +48,20 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
         result.maxVal  = -1e30f;
         result.avgVal  = 0.0f;
 
+        // Disabled-pass placeholder — no texture to read. Report SKIPPED so
+        // the diag output shows the pass exists but is off.
+        if (target.disabledPlaceholder) {
+            result.skipped = true;
+            result.isZero  = false;
+            result.minVal  = 0.0f;
+            result.maxVal  = 0.0f;
+            result.avgVal  = 0.0f;
+            UZ_LOG(PassInspector, Info,
+                   "[PASS VALIDATE] {}: SKIPPED (pass disabled)", target.name);
+            results.push_back(std::move(result));
+            continue;
+        }
+
         // Query the actual texture descriptor from the RHI. We need the full
         // descriptor (not just format) so we can correctly sample every face
         // of a cubemap / every slice of a texture array. A previous version
@@ -65,6 +79,7 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
             UZ_LOG(PassInspector, Warning,
                    "[PASS VALIDATE] {}: SKIPPED (unsupported format {})",
                    target.name, static_cast<int>(format));
+            result.skipped = true;
             result.minVal = 0.0f;
             result.maxVal = 0.0f;
             result.avgVal = 0.0f;
@@ -74,6 +89,7 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
         }
 
         if (detail::IsDepthFormat(format)) {
+            result.skipped = true;
             result.minVal = 0.0f;
             result.maxVal = 0.0f;
             result.avgVal = 0.0f;
@@ -92,6 +108,7 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
         // the zero check entirely for 3D textures. Use the dedicated pass-dump
         // / --vis tooling to inspect volume contents.
         if (texDesc.is3D) {
+            result.skipped = true;
             result.minVal = 0.0f;
             result.maxVal = 0.0f;
             result.avgVal = 0.0f;
@@ -108,6 +125,7 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
 
         // Skip very large textures to avoid huge allocations during validation.
         if (totalBytes > 16u * 1024u * 1024u) {
+            result.skipped = true;
             result.minVal = 0.0f;
             result.maxVal = 0.0f;
             result.avgVal = 0.0f;
@@ -131,6 +149,7 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
             UZ_LOG(PassInspector, Warning,
                    "[PASS VALIDATE] {}: SKIPPED (failed to create readback buffer)",
                    target.name);
+            result.skipped = true;
             result.minVal = 0.0f;
             result.maxVal = 0.0f;
             result.avgVal = 0.0f;
@@ -189,6 +208,18 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
             const uint32_t sampleW = std::min(kSampleDim, target.width);
             const uint32_t sampleH = std::min(kSampleDim, target.height);
 
+            // Honor the target's dump-channel selector so single-channel views
+            // of packed RTs (gbuffer.ao = albedo.a, gbuffer.metallic =
+            // normal.b, gbuffer.roughness = normal.a) report stats for THEIR
+            // channel only. Previously all channels were aggregated, making
+            // gbuffer.ao's min/max/avg identical to gbuffer.albedo's.
+            const uint32_t firstChannel = (target.dumpChannel == DumpChannel::All)
+                ? 0u
+                : std::min(static_cast<uint32_t>(target.dumpChannel) - 1u, channels - 1u);
+            const uint32_t lastChannel = (target.dumpChannel == DumpChannel::All)
+                ? channels
+                : firstChannel + 1u;
+
             for (uint32_t y = 0; y < sampleH; ++y) {
                 const auto* rowBase = static_cast<const uint8_t*>(mapped)
                                     + static_cast<uint64_t>(centerY + y) * rowPitch;
@@ -196,7 +227,7 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
                 for (uint32_t x = 0; x < sampleW; ++x) {
                     const auto* texelBase = rowBase + (centerX + x) * bytesPerTexel;
 
-                    for (uint32_t c = 0; c < channels; ++c) {
+                    for (uint32_t c = firstChannel; c < lastChannel; ++c) {
                         const float val = detail::ReadChannel(texelBase, c, format);
 
                         if (std::isnan(val)) {
@@ -220,6 +251,7 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
         }
 
         if (!anyReadbackOk) {
+            result.skipped = true;
             result.minVal = 0.0f;
             result.maxVal = 0.0f;
             result.avgVal = 0.0f;
@@ -239,7 +271,8 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
     // Log results.
     for (const auto& r : results) {
         const char* status = "OK";
-        if (r.hasNaN)       status = "FAIL — has NaN";
+        if (r.skipped)      status = "SKIPPED";
+        else if (r.hasNaN)  status = "FAIL — has NaN";
         else if (r.hasInf)  status = "FAIL — has Inf";
         else if (r.isZero)  status = "WARNING — all zeros";
 

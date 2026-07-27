@@ -60,6 +60,11 @@ static const char* FeatureLevelToString(D3D_FEATURE_LEVEL level) {
 DX12Device::~DX12Device() {
     UZ_PROFILE_FUNCTION();
 
+    // Flush buffered log output BEFORE teardown begins: the D3D12MA debug
+    // assert below aborts the process, and Warning/Info sinks only flush on
+    // Error+ — an abort here would otherwise erase the entire run's log.
+    LogFlushAll();
+
     if (m_tracyD3D12Ctx) {
         TracyD3D12Destroy(m_tracyD3D12Ctx);
         m_tracyD3D12Ctx = nullptr;
@@ -91,7 +96,10 @@ DX12Device::~DX12Device() {
         m_allocator->CalculateStatistics(&stats);
         const auto& total = stats.Total.Stats;
         if (total.AllocationCount > 0) {
-            UZ_LOG(RHI, Warning,
+            // Error level, not Warning: the default runtime log level is
+            // Error, and this report precedes a D3D12MA debug abort — it must
+            // reach the log (Error also auto-flushes every sink).
+            UZ_LOG(RHI, Error,
                    "D3D12MA: {} live allocations ({} bytes) at shutdown — LEAK!",
                    total.AllocationCount, total.AllocationBytes);
 
@@ -100,7 +108,7 @@ DX12Device::~DX12Device() {
                 const auto& heap = stats.HeapType[heapType].Stats;
                 if (heap.AllocationCount > 0) {
                     static const char* kHeapNames[] = {"DEFAULT", "UPLOAD", "READBACK"};
-                    UZ_LOG(RHI, Warning, "  Heap {}: {} allocs, {} bytes",
+                    UZ_LOG(RHI, Error, "  Heap {}: {} allocs, {} bytes",
                            kHeapNames[heapType], heap.AllocationCount, heap.AllocationBytes);
                 }
             }
@@ -110,7 +118,7 @@ DX12Device::~DX12Device() {
                 auto& slots = m_texturePool.Slots();
                 for (uint32_t i = 0; i < slots.size(); ++i) {
                     if (slots[i].allocation) {
-                        UZ_LOG(RHI, Warning, "  LEAKED texture [{}]: '{}' {}x{} fmt={} ({} bytes)",
+                        UZ_LOG(RHI, Error, "  LEAKED texture [{}]: '{}' {}x{} fmt={} ({} bytes)",
                                i, slots[i].desc.debugName ? slots[i].desc.debugName : "(null)",
                                slots[i].desc.width, slots[i].desc.height,
                                static_cast<int>(slots[i].desc.format),
@@ -123,13 +131,20 @@ DX12Device::~DX12Device() {
                 auto& slots = m_bufferPool.Slots();
                 for (uint32_t i = 0; i < slots.size(); ++i) {
                     if (slots[i].allocation) {
-                        UZ_LOG(RHI, Warning, "  LEAKED buffer [{}]: '{}' {} bytes",
+                        UZ_LOG(RHI, Error, "  LEAKED buffer [{}]: '{}' {} bytes",
                                i, slots[i].desc.debugName ? slots[i].desc.debugName : "(null)",
                                slots[i].allocation->GetSize());
                     }
                 }
             }
+
         }
+        // The D3D12MA debug assert in Release() below aborts the process when
+        // blocks still hold allocations — flush so the report above (and the
+        // whole run's log) survives the abort. Unconditional: the assert can
+        // fire even when CalculateStatistics reports zero allocations (e.g.
+        // allocations released on another thread after the report).
+        LogFlushAll();
         m_allocator->Release();
         m_allocator = nullptr;
     }

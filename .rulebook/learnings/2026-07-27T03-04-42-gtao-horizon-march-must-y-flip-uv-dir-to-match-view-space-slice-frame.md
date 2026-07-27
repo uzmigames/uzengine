@@ -1,0 +1,6 @@
+# GTAO horizon march must Y-flip UV dir to match view-space slice frame
+**Source**: manual
+**Date**: 2026-07-27
+**Related Task**: phase0_lumen-lite-gi-core
+**Tags**: gtao, shader, rendering, regression
+gtao_cs.hlsl regression (bd4db199 rewrite dropped `uvOffset.y *= -1`): FindMaxHorizonAngle marches in UV space (+V=down) while IntegrateHorizonArc builds the slice frame in view space (+Y=up, ScreenToViewPos negates ndc.y). Unflipped, the two horizons swap about the view vector and ANY unoccluded plane integrates to (2/pi)(N.V)^2 (~0.07 at grazing) — radius-independent, which is the diagnostic fingerprint. Also: the `ao *= 2/PI` "normalization" was spurious (Jimenez 2016 Eq.7 slice mean is already [0,1]); it capped open surfaces at 0.637 since the first implementation, so the 2026-04 "known good" baseline (avg 0.81 at intensity 0.5) was itself 36% too dark. Fingerprints for the future: AO constant vs radius sweep => geometry-independent math bug, not tuning; AO tracking (N.V)^2 => mirrored horizons. Fixed 2026-07-27 in phase0_lumen-lite-gi-core with shader-engineer closed-form verification.

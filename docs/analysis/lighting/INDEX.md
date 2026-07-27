@@ -133,6 +133,7 @@ document builds on the previous:
 | `cb-layouts.md` | Constant buffer memory layouts (HLSL + C++ sides). |
 | `validation-methodology.md` | PSNR/SSIM validation against path-traced reference. |
 | `migration-plan.md` | Phased rollout: CVar-gated, additive-first, 9 phases. |
+| `lumen-lite-correction-plan.md` | **2026-07-26 execution plan** — verified current state (no GI active by default; probe hit-lighting physics bug) + Lumen→UzEngine mapping + 6 phases with per-phase verification. |
 
 ---
 
@@ -140,7 +141,8 @@ document builds on the previous:
 
 | Goal | Start here |
 |------|------------|
-| Fix Sponza today | [`uzengine/sponza-debug-plan.md`](./uzengine/sponza-debug-plan.md) |
+| **Fix Sponza GI now (current plan)** | [`uzengine/lumen-lite-correction-plan.md`](./uzengine/lumen-lite-correction-plan.md) |
+| Fix Sponza today (older pass-by-pass diagnosis) | [`uzengine/sponza-debug-plan.md`](./uzengine/sponza-debug-plan.md) |
 | Understand Crimson Desert | [`crimson-desert/00-blackspace-engine.md`](./crimson-desert/00-blackspace-engine.md) |
 | Understand Lumen | [`lumen/00-architecture.md`](./lumen/00-architecture.md) |
 | Pick a GI technique | [`modern-techniques/00-overview.md`](./modern-techniques/00-overview.md) |

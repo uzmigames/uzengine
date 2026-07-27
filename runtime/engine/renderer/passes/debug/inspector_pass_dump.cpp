@@ -271,6 +271,11 @@ void PassInspector::ExecuteDump(IRHIDevice* device, IRHICommandList* cmdList,
     for (uint32_t i = 0; i < static_cast<uint32_t>(m_targets.size()); ++i) {
         const auto& target = m_targets[i];
 
+        // Disabled-pass placeholders carry no texture — nothing to dump.
+        if (target.disabledPlaceholder) {
+            continue;
+        }
+
         // Build filename: XX-name.png (dots replaced with dashes)
         std::ostringstream fnStream;
         fnStream << std::setfill('0') << std::setw(2) << i << "-";

@@ -81,9 +81,13 @@ std::string DiagnosticReport::ToJSON() const {
         os << "{";
         os << "\"name\":"; JsonEscapeString(os, t.name); os << ",";
 
-        // Status string: deterministic priority order — NaN > Inf > zero > OK
+        // Status string: deterministic priority order —
+        // skipped > NaN > Inf > zero > OK. SKIPPED covers both disabled-pass
+        // placeholders and targets whose readback is impossible (depth
+        // format, 3D volume, oversized) — the log line carries the reason.
         const char* status = "OK";
-        if (t.hasNaN)       status = "FAIL_NAN";
+        if (t.skipped)      status = "SKIPPED";
+        else if (t.hasNaN)  status = "FAIL_NAN";
         else if (t.hasInf)  status = "FAIL_INF";
         else if (t.isZero)  status = "WARN_ZERO";
         os << "\"status\":\"" << status << "\",";

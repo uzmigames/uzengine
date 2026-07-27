@@ -651,6 +651,16 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
             UZ_LOG(Engine, Info, "Debug view mode: '{}' (enum={})",
                    DebugViewModeName(vm), static_cast<uint32_t>(vm));
         }
+
+        // Route --vis <target> to the PassInspector for the same reason —
+        // without this the flag is silently ignored by the uzengine tool
+        // (only DemoApplication parsed it) and the "visualize any pass
+        // target" workflow documented in rendering-diagnostics.md is dead.
+        const std::string visArg = configPtr->GetString("vis", "");
+        if (!visArg.empty()) {
+            sceneRenderer.GetPassInspector().SetVisTarget(visArg.c_str());
+            UZ_LOG(Engine, Info, "PassInspector vis target: '{}'", visArg);
+        }
     }
 
     // ── Editor Input & Selection (only when editor mode is active) ────
@@ -859,9 +869,16 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         std::fflush(stdout);
     }
 
+    // Teardown checkpoints flush the buffered log so an abort inside any
+    // teardown stage (e.g. the D3D12MA not-empty-block assert) still leaves
+    // the log on disk up to the last completed stage.
+    UZ_LOG(Engine, Info, "Teardown: SceneRenderer.Shutdown begin");
+    LogFlushAll();
     if (sceneRendererReady) {
         sceneRenderer.Shutdown();
     }
+    UZ_LOG(Engine, Info, "Teardown: SceneRenderer.Shutdown done");
+    LogFlushAll();
 
     auto endTime = std::chrono::high_resolution_clock::now();
     const float totalMs = std::chrono::duration<float, std::milli>(endTime - startTime).count();
@@ -878,6 +895,8 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     }
     device->DestroyCommandList(cmdList);
     device->DestroySwapChain(swapChain);
+    UZ_LOG(Engine, Info, "Teardown: fences/cmdlist/swapchain destroyed");
+    LogFlushAll();
 
     return kExitSuccess;
 }

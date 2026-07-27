@@ -3,7 +3,9 @@
   "version": "1.0",
   "cvars": {
     "r.PathTracer.Enable": 0,
-    "r.SSGI.Intensity": 1.5,
+    "r.SSGI": 1,
+    "r.SSGI.Intensity": 1.0,
+    "r.GTAO": 1,
     "r.AutoExposure": 0,
     "r.Exposure": 2.0
   },

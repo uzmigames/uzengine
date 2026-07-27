@@ -166,7 +166,9 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     cam.SetPosition({0.f, 200.f, -500.f});
     cam.LookAt({0.f, 0.f, 0.f}, Vec3::Up());
     m_cameraCtrl->InitFromCamera(cam);
-    m_cameraCtrl->SetMoveSpeed(5.f);  // 5 cm/s — matches Lua pbr_showcase_controller default
+    // 500 cm/s — scene units are centimeters, so the previous 5 cm/s took ~9
+    // minutes to cross the Sponza atrium (~2600 cm). Matches fly_camera.lua.
+    m_cameraCtrl->SetMoveSpeed(500.f);
 
     // ── Register CameraManager with Lua VM ──
     if (auto* L = uz::LuaVM::GetState()) {
@@ -757,6 +759,11 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     const int decoderThreads = std::max(2, hwThreads / 2); // clamped to [2,8] by decoder
     m_asyncDecoder = std::make_unique<AsyncTextureDecoder>(decoderThreads);
 
+    // ── Async Mesh Loader (background .uzmesh read + parse) ──────────────
+    // Shares the CPU with the texture decode pool during scene loads; half
+    // the hardware threads keeps both pools busy without oversubscription.
+    m_asyncMeshLoader = std::make_unique<AsyncMeshLoader>(decoderThreads);
+
     // ── Copy command list for async texture uploads (zero-stall DMA queue) ──
     // Texture staging copies run on a dedicated copy queue so the graphics
     // pipeline never blocks on texture uploads. Falls back to graphics queue
@@ -1285,6 +1292,17 @@ void SceneRenderer::Shutdown() {
     }
     m_deferredDestroyBuffers.clear();
 
+    // Flush the staging retire buckets (stall-free mesh upload staging).
+    // The WaitIdle above guarantees no in-flight frame references them.
+    for (auto& bucket : m_stagingRetireBuckets) {
+        for (auto& buf : bucket) {
+            if (buf.IsValid()) {
+                m_device->DestroyBuffer(buf);
+            }
+        }
+        bucket.clear();
+    }
+
     // Destroy screenshot readback buffer
     m_screenshotCapture.Shutdown();
 
@@ -1585,6 +1603,12 @@ void SceneRenderer::Shutdown() {
     if (m_asyncDecoder) m_asyncDecoder->Shutdown();
     m_asyncDecoder.reset();
     m_asyncPendingSlots.clear();
+
+    // ── Async Mesh Loader cleanup ─────────────────────────────────
+    if (m_asyncMeshLoader) m_asyncMeshLoader->Shutdown();
+    m_asyncMeshLoader.reset();
+    m_asyncMeshPendingSlots.clear();
+    m_asyncMeshReady.clear();
 
     if (m_statsOverlay)    m_statsOverlay->Shutdown();
     if (m_viewportToolbar) m_viewportToolbar->Shutdown();

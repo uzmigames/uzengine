@@ -106,6 +106,11 @@ public:
     [[nodiscard]] uint32_t GetDepthSrv() const noexcept       { return m_depthSrv; }
     [[nodiscard]] uint32_t GetDepthUav() const noexcept       { return m_depthUav; }
 
+    /// Raw atlas texture handles — used by the PassInspector to register the
+    /// atlases as `--vis` / `--pass-dump` / `--diag` targets.
+    [[nodiscard]] RHITextureHandle GetIrradianceTexture() const noexcept { return m_irradAtlas; }
+    [[nodiscard]] RHITextureHandle GetDepthTexture() const noexcept      { return m_depthAtlas; }
+
     [[nodiscard]] uint32_t GetIrradianceAtlasWidth() const noexcept {
         return kProbesPerAxis * kProbesPerAxis * (kIrradianceProbeSize + 2);
     }

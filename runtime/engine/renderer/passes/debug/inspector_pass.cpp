@@ -52,6 +52,23 @@ void PassInspector::RegisterTarget(const char* name, RHITextureHandle texture, u
     m_targets.push_back(std::move(target));
 }
 
+void PassInspector::RegisterDisabledTarget(const char* name) {
+    if (!name || name[0] == '\0') {
+        return;
+    }
+
+    RegisteredTarget target;
+    target.name                = name;
+    target.texture             = RHITextureHandle{};
+    target.srvIndex            = UINT32_MAX;
+    target.mode                = VisDisplayMode::Color;
+    target.width               = 0;
+    target.height              = 0;
+    target.disabledPlaceholder = true;
+
+    m_targets.push_back(std::move(target));
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Visualization control
 // ─────────────────────────────────────────────────────────────────────────────
@@ -85,7 +102,7 @@ const RegisteredTarget* PassInspector::GetVisTarget() const noexcept {
     }
 
     for (const auto& target : m_targets) {
-        if (target.name == m_visTargetName) {
+        if (target.name == m_visTargetName && !target.disabledPlaceholder) {
             return &target;
         }
     }
@@ -190,8 +207,10 @@ std::vector<const RegisteredTarget*> PassInspector::GetGridTargets() const {
     const uint32_t maxCells = GetGridCellCount();
     gridTargets.reserve(std::min(maxCells, static_cast<uint32_t>(m_targets.size())));
 
-    for (uint32_t i = 0; i < static_cast<uint32_t>(m_targets.size()) && i < maxCells; ++i) {
-        gridTargets.push_back(&m_targets[i]);
+    for (const auto& target : m_targets) {
+        if (gridTargets.size() >= maxCells) break;
+        if (target.disabledPlaceholder) continue; // No texture to display.
+        gridTargets.push_back(&target);
     }
 
     return gridTargets;

@@ -57,6 +57,7 @@ bool VfxEditorOverlay::Init(IRHIDevice* device, IRHICommandList* cmdList, Upload
                             uint32_t screenW, uint32_t screenH, bool bindless) {
     m_screenW = screenW;
     m_screenH = screenH;
+    m_device  = device;
 
     const std::string fontPath = ResolveDefaultMonoFont();
     constexpr float kFontSize = 14.0f;
@@ -78,8 +79,13 @@ bool VfxEditorOverlay::Init(IRHIDevice* device, IRHICommandList* cmdList, Upload
 void VfxEditorOverlay::Shutdown() {
     if (m_initialized) {
         m_textRenderer.Shutdown();
+        // The font atlas is a GPU texture — without this the "FontAtlas"
+        // allocation outlives the allocator and trips the D3D12MA
+        // not-empty-block assert at device destruction.
+        if (m_device) m_font.Shutdown(m_device);
         m_initialized = false;
     }
+    m_device = nullptr;
 }
 
 void VfxEditorOverlay::SetScreenSize(uint32_t w, uint32_t h) {

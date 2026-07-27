@@ -81,6 +81,12 @@ struct RegisteredTarget {
     /// channel as grayscale (lets us split packed GBuffer RTs into
     /// "gbuffer.ao", "gbuffer.metallic", "gbuffer.roughness" views).
     DumpChannel      dumpChannel = DumpChannel::All;
+    /// True for a name-only placeholder registered while the owning pass is
+    /// disabled. Carries NO texture — Validate() reports status SKIPPED and
+    /// vis/dump/grid ignore the entry. Exists so `--diag` output distinguishes
+    /// "pass off" from "pass absent" (a silently missing GI target hid the
+    /// disabled-by-default GI stack for months).
+    bool             disabledPlaceholder = false;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -93,6 +99,11 @@ struct ValidationResult {
     bool        isZero;    ///< True if all sampled texels are zero.
     bool        hasNaN;    ///< True if any sampled texel contains NaN.
     bool        hasInf;    ///< True if any sampled texel contains Inf.
+    /// True when the target was not actually sampled — the owning pass is
+    /// disabled (placeholder registration) or readback is impossible for the
+    /// resource (depth format, 3D volume, oversized, unsupported format).
+    /// Reported as status "SKIPPED"; never counts toward warnings/failures.
+    bool        skipped = false;
     float       minVal;    ///< Minimum value across all sampled channels.
     float       maxVal;    ///< Maximum value across all sampled channels.
     float       avgVal;    ///< Average value across all sampled channels.
@@ -212,6 +223,17 @@ public:
                         VisDisplayMode mode, uint32_t width, uint32_t height,
                         RHIResourceState state = RHIResourceState::ShaderResource,
                         DumpChannel dumpChannel = DumpChannel::All);
+
+    /// Registers a name-only placeholder for a target whose owning pass is
+    /// disabled this frame. The placeholder carries no texture; `--diag`
+    /// reports it with status `SKIPPED` so disabled passes remain visible in
+    /// the diagnostic output instead of silently absent. Vis, dump, and grid
+    /// ignore placeholders.
+    ///
+    /// # Arguments
+    /// * `name` — Dotted identifier of the target that WOULD be registered
+    ///   if the pass were enabled (e.g., "ssgi.result", "gtao.result").
+    void RegisterDisabledTarget(const char* name);
 
     // ── Visualization control ────────────────────────────────────────────
 

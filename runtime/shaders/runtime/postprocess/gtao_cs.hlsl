@@ -120,7 +120,17 @@ float2 FindMaxHorizonAngle(uint steps, float2 baseUV, float2 screenDir,
 
     for (uint i = 0; i < steps; i++) {
         float stepOffset = max(stepSize * (float(i) + initialOffset), float(i) + 1.0);
-        float2 uvOfsPos = screenDir * stepOffset * texelSize;
+
+        // Marching happens in UV space (+V = screen down) while the slice frame
+        // built by IntegrateHorizonArc lives in view space (+Y = up, because
+        // ScreenToViewPos negates ndc.y). Marching `screenDir` unflipped samples
+        // slice azimuth -phi while gamma / |n_p| are evaluated for +phi: the two
+        // horizons come back swapped about the view vector, the visible arc
+        // collapses from PI to a wedge of half-width (PI/2 - |gamma|), and any
+        // unoccluded plane integrates to (N.V)^2 instead of 1 — radius-independent.
+        // @ref Jimenez et al. 2016 "Practical Realtime Strategies for Accurate
+        //      Indirect Occlusion" — dual-direction horizon search
+        float2 uvOfsPos = float2(screenDir.x, -screenDir.y) * stepOffset * texelSize;
         float2 uvOfsNeg = -uvOfsPos;
 
         float2 uvPos = baseUV + uvOfsPos;
@@ -253,21 +263,23 @@ void main(uint3 DTid : SV_DispatchThreadID)
     // horizontal/vertical sampling isotropy the horizon integral assumes.
     float screenRadius = (worldRadius * invTanHalfFov) / linearZ;
     screenRadius *= 0.5 * float(outputHeight); // NDC → pixels (vertical axis)
-    // Clamp max pixel radius — raised from UE5's 512 default so large worldRadius
-    // values (r.GTAO.Radius >= 500 cm in cm-scale scenes) can actually extend
-    // the effective AO search circle beyond the default half-screen cap.
-    screenRadius = min(screenRadius, 2048.0);
+    // Step budget: numTaps taps must cover the whole radius, so a large cap
+    // means the search steps *over* geometry between taps. At 1080p with
+    // r.GTAO.Radius=200 and 8 taps a mid-distance pixel already marches 352 px
+    // (44 px/tap). 256 px matches r.GTAO.MaxScreenRadius (currently declared
+    // in gtao_pass.cpp but not yet uploaded to the root CB, so this literal
+    // shadows it until a CB slot is freed for it).
+    screenRadius = min(screenRadius, 256.0);
 
-    // Early-out when the world-space search radius projects to sub-pixel size.
-    // Below this threshold the horizon search cannot march meaningfully within
-    // worldRadius — every tap falls outside the attenuation falloff (lenSq *
-    // attenFactor >= 1), the lerp collapses bestAng to its initial -1, and
-    // acosFast(-1)=π produces a fully-occluded horizon → false darkening at
-    // distance. UE5 uses the same screen-size gate.
-    if (screenRadius < float(numTaps)) {
-        outputAO[DTid.xy] = 1.0;
-        return;
-    }
+    // Clamp the pixel radius up to the tap count rather than discarding the
+    // pixel. bestAng = -1 -> acosFast(-1) = PI is the fully OPEN horizon
+    // (theta = 0 is fully occluded, theta = PI fully open), so an undersized
+    // radius degrades gracefully to "no occluder found", never to false
+    // darkening. Discarding instead puts a hard AO discontinuity at
+    // linearZ = worldRadius * invTanHalfFov * height / (2 * numTaps)
+    // (~88 m at r.GTAO.Radius=100), far inside r.GTAO.FadeStart (500 m).
+    // @ref Jimenez et al. 2016 — screen-space step budget
+    screenRadius = max(screenRadius, float(numTaps));
 
     // Attenuation factor: inverse-square falloff from worldRadius
     float attenFactor = 2.0 / (worldRadius * worldRadius);
@@ -288,11 +300,22 @@ void main(uint3 DTid : SV_DispatchThreadID)
         stepOffset = frac(stepOffset + 0.617);
     }
 
+    // The slice mean IS the cosine-weighted visibility in [0,1]: Eq. 7 already
+    // carries the 1/4 and the ||n_p|| weight. For an unoccluded plane facing the
+    // camera (gamma = 0, theta = +-PI/2) it evaluates to 0.25*((1+1)+(1+1)) = 1
+    // exactly, and the azimuthal mean of ||n_p||*(gamma*sin gamma + cos gamma)
+    // is 1 for any plane orientation. An extra 2/PI would cap fully open
+    // surfaces at 0.6366 (uniform 1.571x over-darkening).
+    // @ref Jimenez et al. 2016 — Eq. 7, inner (arc) integral
     float ao = aoSum / float(numAngles);
-    ao *= 2.0 / PI; // normalize to [0,1]
+
+    // With numAngles = 2 the estimator is unbiased but noisy and can overshoot
+    // 1.0 on tilted surfaces (single-slice value reaches ~1.5); clamp before the
+    // curve so aoPower stays a well-defined [0,1] gamma.
+    ao = saturate(ao);
 
     // Power curve + intensity
-    ao = 1.0 - (1.0 - pow(abs(ao), aoPower)) * aoIntensity;
+    ao = 1.0 - (1.0 - pow(ao, aoPower)) * aoIntensity;
     ao = saturate(ao);
 
     // Distance fade

@@ -179,11 +179,14 @@ bool CreateDX12Texture(ID3D12Device* device,
         return false;
     }
 
-    // Set debug name
+    // Set debug name on the resource AND the D3D12MA allocation — the
+    // allocation name is what D3D12MA's unfreed-allocation report prints,
+    // so leaks stay identifiable at shutdown.
     if (desc.debugName) {
         wchar_t wideName[256] = {};
         MultiByteToWideChar(CP_UTF8, 0, desc.debugName, -1, wideName, 256);
         resource->SetName(wideName);
+        if (allocation) allocation->SetName(wideName);
     }
 
     outTexture.allocation = allocation;
