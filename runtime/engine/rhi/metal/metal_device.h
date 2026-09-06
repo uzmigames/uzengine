@@ -131,6 +131,9 @@ public:
     /// Destroys a Metal pipeline state. See `IRHIDevice::DestroyPipeline`.
     void DestroyPipeline(RHIPipelineHandle handle) override;
 
+    /// Metal does not support PSO blob export; returns empty (cache miss).
+    std::vector<uint8_t> GetPipelineCachedBlob(RHIPipelineHandle handle) override;
+
     // ── IRHIDevice: Sampler operations ───────────────────────────────────
 
     /// Creates a Metal sampler via `MTLDevice::newSamplerState`. See `IRHIDevice::CreateSampler`.

@@ -123,8 +123,10 @@ void RadianceCache::Update(const Vec3& cameraPos) {
     const XMVECTOR vCmp        = XMVectorGreaterOrEqual(vDiff, vSpacing);
 
     // Check if any of the first 3 components are true (nonzero).
-    // movemask extracts sign bits; GreaterOrEqual sets all bits for true lanes.
-    if (_mm_movemask_ps(vCmp) & 0x7) {
+    // GreaterOrEqual sets all bits for true lanes; test components directly
+    // so this stays portable (SSE movemask is x86-only).
+    if (XMVectorGetX(vCmp) != 0.0f || XMVectorGetY(vCmp) != 0.0f ||
+        XMVectorGetZ(vCmp) != 0.0f) {
         const Vec3 snappedCenter(vSnapped);
         m_gridCenter = snappedCenter;
         m_gridOrigin = Vec3(XMVectorSubtract(vSnapped, XMVectorReplicate(m_gridExtent)));
@@ -180,6 +182,9 @@ void RadianceCache::UpdateProbes(
     constants.maxTraceDistance   = m_gridExtent * 2.0f; // Trace up to the grid diameter
     constants.temporalBlendAlpha = kTemporalBlendAlpha;
     constants.shBufferUav       = m_shBufferUav;
+    // The SH buffer is created unwritten; the first dispatch must replace
+    // rather than blend with undefined contents.
+    constants.firstWrite        = m_firstWritePending ? 1u : 0u;
 
     // Fill GDF clipmap parameters from the global distance field
     const uint32_t numClipmaps = GlobalDistanceField::kNumClipmaps;
@@ -286,6 +291,7 @@ void RadianceCache::UpdateProbes(
     cmdList->ResourceBarrier(&toSrv, 1);
 
     m_dirty = false;
+    m_firstWritePending = false;
 }
 
 } // namespace uz

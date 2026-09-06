@@ -459,6 +459,89 @@ TEST_F(SceneLoaderTest, DirectionalLightComponent_DefaultColor_WhenAbsent) {
     EXPECT_NEAR(light.intensity, 1.0f, 1e-4f);
 }
 
+TEST_F(SceneLoaderTest, DirectionalLightComponent_ParsesSnakeCaseOptionalFields) {
+    const char* json = R"({
+        "entities": [
+            {
+                "name": "Sun",
+                "components": {
+                    "light": {
+                        "type":                    "directional",
+                        "intensity":               10.0,
+                        "atmosphere_sun_light":    false,
+                        "light_source_angle":      0.53,
+                        "shadow_cascades":         3,
+                        "dynamic_shadow_distance": 8000.0
+                    }
+                }
+            }
+        ]
+    })";
+    const size_t count = uz::LoadScene(world_, ToBytes(json), "test");
+    ASSERT_EQ(count, 1u);
+
+    auto view = world_.View<uz::DirectionalLightComponent>();
+    ASSERT_EQ(ViewCount(view), 1u);
+
+    auto [enttEntity, light] = *view.each().begin();
+    EXPECT_FALSE(light.atmosphereSunLight);
+    EXPECT_NEAR(light.lightSourceAngle,      0.53f,  1e-4f);
+    EXPECT_EQ(light.shadowCascades,          3);
+    EXPECT_NEAR(light.dynamicShadowDistance, 8000.f, 1e-2f);
+}
+
+TEST_F(SceneLoaderTest, DirectionalLightComponent_ParsesCamelCaseOptionalFields) {
+    const char* json = R"({
+        "entities": [
+            {
+                "name": "Sun",
+                "components": {
+                    "light": {
+                        "type":                  "directional",
+                        "atmosphereSunLight":    false,
+                        "lightSourceAngle":      0.25,
+                        "shadowCascades":        2,
+                        "dynamicShadowDistance": 5000.0
+                    }
+                }
+            }
+        ]
+    })";
+    (void)uz::LoadScene(world_, ToBytes(json), "test");
+
+    auto view = world_.View<uz::DirectionalLightComponent>();
+    ASSERT_EQ(ViewCount(view), 1u);
+
+    auto [enttEntity, light] = *view.each().begin();
+    EXPECT_FALSE(light.atmosphereSunLight);
+    EXPECT_NEAR(light.lightSourceAngle,      0.25f,  1e-4f);
+    EXPECT_EQ(light.shadowCascades,          2);
+    EXPECT_NEAR(light.dynamicShadowDistance, 5000.f, 1e-2f);
+}
+
+TEST_F(SceneLoaderTest, DirectionalLightComponent_OptionalDefaultsPreserved_WhenAbsent) {
+    const char* json = R"({
+        "entities": [
+            {
+                "name": "Sun",
+                "components": {
+                    "light": { "type": "directional", "intensity": 10.0 }
+                }
+            }
+        ]
+    })";
+    (void)uz::LoadScene(world_, ToBytes(json), "test");
+
+    auto view = world_.View<uz::DirectionalLightComponent>();
+    ASSERT_EQ(ViewCount(view), 1u);
+
+    auto [enttEntity, light] = *view.each().begin();
+    EXPECT_TRUE(light.atmosphereSunLight);                          // default true
+    EXPECT_NEAR(light.lightSourceAngle,      1.2f,    1e-4f);       // default 1.2
+    EXPECT_EQ(light.shadowCascades,          4);                    // default 4
+    EXPECT_NEAR(light.dynamicShadowDistance, 40000.f, 1e-1f);       // default 40000
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 10. Entity with point light → PointLightComponent with range
 // ─────────────────────────────────────────────────────────────────────────────

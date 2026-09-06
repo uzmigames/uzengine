@@ -320,6 +320,7 @@ void SSGIRenderer::Render(IRHICommandList* cmdList, const SSGIRenderParams& para
 
     // Flip history ping-pong for next frame
     m_historyIndex = 1 - m_historyIndex;
+    m_hasProducedResult = true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

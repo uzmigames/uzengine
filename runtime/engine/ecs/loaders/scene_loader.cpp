@@ -275,12 +275,73 @@ void ParseCameraComponent(World& world,
     }
 }
 
+/// Returns the first present key between a snake_case and a camelCase alias,
+/// or nullptr when neither exists. Scene files use snake_case; engine tooling
+/// may emit camelCase.
+static const char* FindLightKey(const nlohmann::json& comp,
+                                const char* snake,
+                                const char* camel) {
+    if (comp.contains(snake)) return snake;
+    if (camel != nullptr && comp.contains(camel)) return camel;
+    return nullptr;
+}
+
 /// Parses a `"directional"` light sub-object into the given component.
+///
+/// Besides color/intensity, accepts the optional directional fields
+/// (snake_case on-disk contract, camelCase aliases):
+/// `atmosphere_sun_light`, `light_source_angle` (degrees, full angular
+/// diameter), `shadow_cascades`, `cascade_distribution_exponent`, and
+/// `dynamic_shadow_distance`. Absent fields keep component defaults.
+/// Unknown keys emit a warning (likely a typo that would silently no-op).
 void ApplyDirectionalLightFields(DirectionalLightComponent& light,
                                   const nlohmann::json& comp) {
     light.color     = ReadVec3(comp, "color", 1.f, 1.f, 1.f);
     light.intensity = ReadFloat(comp, "intensity", 1.f);
     // Directional lights have no range or cone angle fields.
+
+    if (const char* k = FindLightKey(comp, "atmosphere_sun_light", "atmosphereSunLight")) {
+        light.atmosphereSunLight = ReadBool(comp, k, light.atmosphereSunLight);
+    }
+    if (const char* k = FindLightKey(comp, "light_source_angle", "lightSourceAngle")) {
+        light.lightSourceAngle = ReadFloat(comp, k, light.lightSourceAngle);
+    }
+    if (const char* k = FindLightKey(comp, "shadow_cascades", "shadowCascades")) {
+        light.shadowCascades =
+            static_cast<int>(ReadFloat(comp, k, static_cast<float>(light.shadowCascades)));
+    }
+    if (const char* k = FindLightKey(comp, "cascade_distribution_exponent",
+                                     "cascadeDistributionExponent")) {
+        light.cascadeDistributionExponent =
+            ReadFloat(comp, k, light.cascadeDistributionExponent);
+    }
+    if (const char* k = FindLightKey(comp, "dynamic_shadow_distance",
+                                     "dynamicShadowDistance")) {
+        light.dynamicShadowDistance =
+            ReadFloat(comp, k, light.dynamicShadowDistance);
+    }
+
+    // Warn on keys we do not consume — a typo here would silently no-op.
+    static constexpr const char* kKnown[] = {
+        "type", "color", "intensity",
+        "cast_shadows", "castShadows",  // accepted; inert for directional (CSM always on)
+        "atmosphere_sun_light", "atmosphereSunLight",
+        "light_source_angle", "lightSourceAngle",
+        "shadow_cascades", "shadowCascades",
+        "cascade_distribution_exponent", "cascadeDistributionExponent",
+        "dynamic_shadow_distance", "dynamicShadowDistance",
+    };
+    for (const auto& [key, value] : comp.items()) {
+        bool known = false;
+        for (const char* k : kKnown) {
+            if (key == k) { known = true; break; }
+        }
+        if (!known) {
+            UZ_LOG(Scene, Warning,
+                   "LoadScene: directional light has unrecognized key '{}' — ignored",
+                   key);
+        }
+    }
 }
 
 /// Parses a `"point"` light sub-object into the given component.

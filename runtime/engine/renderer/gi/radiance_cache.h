@@ -191,6 +191,7 @@ private:
 
     bool   m_initialized = false;
     bool   m_dirty       = true;
+    bool   m_firstWritePending = true; ///< Set at CreateResources; consumed by the first UpdateProbes.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -212,7 +213,7 @@ struct RadianceCacheTraceConstants {
     float    maxTraceDistance;    ///< Maximum ray trace distance (cm).
     float    temporalBlendAlpha; ///< EMA blend factor (0.05).
     uint32_t shBufferUav;        ///< UAV index for SH buffer read/write.
-    uint32_t _pad;
+    uint32_t firstWrite;         ///< 1 = write SH without temporal blend (buffer never written).
 
     // GDF clipmap parameters for the trace shader
     float    gdfCenter0X, gdfCenter0Y, gdfCenter0Z, gdfExtent0;

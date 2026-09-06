@@ -974,6 +974,7 @@ TEST_F(DirectoryWatcherTest, Callback_FileCreated_NotificationDelivered) {
 // Asynchronous file read
 // ─────────────────────────────────────────────────────────────────────────────
 
+#ifdef _WIN32  // Async file I/O is implemented only on Windows.
 TEST_F(FileSystemTest, AsyncRead_ExistingFile_MatchesSyncRead) {
     // Async read of a known-content file must produce byte-identical output to
     // FileReadAll — both read paths must agree on every byte.
@@ -1080,6 +1081,7 @@ TEST_F(FileSystemTest, AsyncRead_LargeFile_MatchesSyncRead) {
             << "Byte mismatch at index " << i;
     }
 }
+#endif // _WIN32
 
 TEST_F(DirectoryWatcherTest, Callback_FileModified_NotificationDelivered) {
     // Create the file before starting the watcher so that the subsequent

@@ -1,0 +1,9 @@
+{
+  "id": "2026-08-31T16-22-14-sponza-intel-parity-scene-calibration-values-and-gi-binding-traps",
+  "title": "Sponza Intel parity — scene calibration values and GI binding traps",
+  "content": "Sponza Intel parity analysis (2026-08-31): sponza.uzscene now uses sun rotation [-56,79,0] (Intel glTF SUN node: elevation 55.9°, azimuth ~79° in engine coords; engine convention pitch-about-Y/yaw-about-Z, forward +X, to-sun = R·Forward). Sun/sky scale unified via sky_atmosphere sun_illuminance [10,10,10] matching light intensity 10. Key trap: scene_loader silently dropped directional light keys before the fix; SSGI/DDGI/RC have \"bound but never written\" resource patterns — always gate binding on a first-produced-output flag, not IsInitialized. r.SSGI master cvar defaults FALSE — setting only r.SSGI.Intensity is a dead knob.",
+  "source": "manual",
+  "relatedTask": "phase1_fix-sponza-intel-lighting-parity",
+  "tags": [],
+  "createdAt": "2026-08-31T16:22:14.526Z"
+}

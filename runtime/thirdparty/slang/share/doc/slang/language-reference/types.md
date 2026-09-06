@@ -4,8 +4,11 @@ Slang types:
 * [Fundamental Types](types-fundamental.md)
 * [Vector and Matrix Types](types-vector-and-matrix.md)
 * [Structures](types-struct.md) and [Classes](types-class.md)
-  * [Extensions](types-extension.md)
+* [Enumerations](types-enum.md)
+* [Extensions](types-extension.md)
 * [Array Types](types-array.md)
+* [Tuple Types](types-tuple.md) (Slang 2026)
+* [Optional Types](types-optional.md)
 * [Pointers](types-pointer.md)
 * [Interfaces](types-interface.md)
 * [Special Types](types-special.md)
@@ -109,9 +112,12 @@ Declaration of new types is allowed in:
 > effect of the C-style type expression grammar. This extends to traditional variable declarations where a
 > single declaration can declare a type and one or more variables. (TODO: link)
 
-> 📝 **Remark 3:** Unlike in C++, `const`, `inline`, `volatile`, and similar keywords are modifiers. This
+> 📝 **Remark 3:** Unlike in C++, `const`, `inline`, and similar keywords are modifiers. This
 > restricts their allowed placement to the left of the type specifier. For example, `const int a = 5;` is a
 > valid variable declaration but `int const a = 5;` is not.
+
+> 📝 **Remark 4:** Modifier `volatile` has been deprecated in Slang 2025 and removed in Slang 2026.
+> [Atomic\<T\>](../../../core-module-reference/types/atomic-0/index.html) should be used instead.
 
 
 ## Type Alias Declarations {#alias}

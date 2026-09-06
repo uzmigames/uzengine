@@ -123,6 +123,12 @@ public:
     [[nodiscard]] float GetProbeSpacing() const noexcept { return m_probeSpacing; }
     [[nodiscard]] bool  IsInitialized() const noexcept   { return m_initialized; }
 
+    /// True once DispatchUpdate() has completed a full atlas write. Until then
+    /// the atlases have never been written and must not be bound for lighting.
+    [[nodiscard]] bool  HasCompletedFirstUpdate() const noexcept {
+        return m_firstUpdateComplete;
+    }
+
     /// Atlas SRV/UAV pair to bind to the DDGI compute shader's root constants.
     /// Uses the bindless heap — both indices must be valid before dispatch.
     [[nodiscard]] bool HasValidUavs() const noexcept {
@@ -161,6 +167,7 @@ private:
     float            m_probeSpacing = 0.0f;
     bool             m_initialized  = false;
     bool             m_firstDispatch = true; ///< Atlases start in Common state.
+    bool             m_firstUpdateComplete = false;
 };
 
 } // namespace uz

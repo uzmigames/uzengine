@@ -43,7 +43,7 @@ class PipelineLibrary;
 ///
 /// SSGI CVars — runtime-configurable quality and intensity
 struct SSGISettings {
-    bool     enabled   = true;    ///< Master toggle for SSGI.
+    bool     enabled   = false;   ///< Master toggle for SSGI. Matches the r.SSGI CVar default.
     /// Quality level (1-4). Maps to ray count: Q1=4, Q2=8, Q3=16, Q4=32.
     /// Quality maps to ray count: Q1=4, Q2=8, Q3=16, Q4=32
     int      quality   = 2;
@@ -140,6 +140,10 @@ public:
     [[nodiscard]] bool IsReady() const noexcept {
         return m_initialized && settings.enabled;
     }
+
+    /// True once Render() has produced a valid output texture. Until then the
+    /// result texture has never been written and must not be bound.
+    [[nodiscard]] bool HasProducedResult() const noexcept { return m_hasProducedResult; }
 
     // ── PassInspector accessors for intermediate textures ────────────────
 
@@ -246,6 +250,7 @@ private:
     uint32_t m_fullHeight   = 0;
     bool     m_initialized  = false;
     bool     m_hasPrevColor = false; ///< False on first frame (no valid prev scene color).
+    bool     m_hasProducedResult = false; ///< False until Render() writes the result texture.
 
     static constexpr uint32_t kThreadGroupSize = 8;
 };

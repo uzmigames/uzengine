@@ -27,8 +27,13 @@ bool IRHIDevice::IsBindless() const {
     if (GetBackend() == RHIBackend::Vulkan) {
         return false;
     }
+    // Metal: argument buffers exist, but the engine's Metal shader path
+    // (Slang → MSL) compiles the register-bound SM5 variants — never bindless.
+    if (GetBackend() == RHIBackend::Metal) {
+        return false;
+    }
     // DX12: SM6.6+ enables ResourceDescriptorHeap bindless.
-    // DX11/Metal: always false (no SM6.6 support).
+    // DX11: always false (no SM6.6 support).
     return GetShaderModel() >= ShaderModel::SM6_6;
 }
 

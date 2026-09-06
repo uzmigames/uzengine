@@ -35,11 +35,11 @@
         }
     ],
     "params": {
-        "roughnessMultiplier": 1,
-        "metallicMultiplier": 0.0,
+        "roughnessMultiplier": 1.0,
+        "metallicMultiplier": 1.0,
         "baseColorTint": [
-            1.05,
-            1.03,
+            1.0,
+            1.0,
             1.0
         ],
         "normalStrength": 1.0,

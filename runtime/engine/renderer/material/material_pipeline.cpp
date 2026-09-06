@@ -391,8 +391,10 @@ RHIGraphicsPipelineDesc MaterialPipeline::BuildGBufferPipelineDesc(
     desc.debugName = debugName;
 
     // SM5 path requires vertex input layout; SM6.6 bindless omits it
+    const auto layout = VertexLayout::Standard();  // hoisted: desc.inputElements references it
+    // (must outlive the pipeline creation call below)
     if (!bindless) {
-        const auto layout = VertexLayout::Standard();
+
         desc.inputElements     = layout.elements;
         desc.inputElementCount = layout.count;
         desc.vertexStride      = layout.stride;

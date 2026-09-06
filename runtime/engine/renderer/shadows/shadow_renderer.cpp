@@ -36,6 +36,7 @@ ShadowFrameData SetupShadowFrame(
     uint32_t shadowAtlasSrv,
     uint32_t shadowResolution,
     CBRingAllocator& cbRing,
+    float dynamicShadowDistance,
     uint32_t farShadowCascadeCount,
     float farShadowDistance,
     int32_t farShadowLodBias,
@@ -48,7 +49,7 @@ ShadowFrameData SetupShadowFrame(
     ShadowConfig& cfg = result.config;
     cfg.cascadeCount                = 4;
     cfg.resolution                  = shadowResolution;
-    cfg.maxDistance                  = 40000.0f;  // 400m — reference default (DLC.cpp:1017)
+    cfg.maxDistance                  = dynamicShadowDistance;  // Per-light CSM range (component-driven)
     cfg.cascadeDistributionExponent = 3.0f;      // default (DLC.cpp:1029)
     cfg.cascadeTransitionFraction   = 0.1f;      // 10% blend overlap (DLC.cpp:1030)
     cfg.shadowDistanceFadeoutFraction = 0.1f;    // 10% fade on last cascade (DLC.cpp:1031)

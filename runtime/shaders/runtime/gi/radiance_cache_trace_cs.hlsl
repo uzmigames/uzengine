@@ -43,7 +43,7 @@ cbuffer TraceConstants : register(b2) {
     float maxTraceDistance;
     float temporalBlendAlpha;
     uint  shBufferUav;          // Same as g_shBufferUavIndex (cb mirror).
-    uint  _padTC;
+    uint  firstWrite;           // 1 = buffer never written: replace instead of blend.
 
     float gdfCenter0X, gdfCenter0Y, gdfCenter0Z, gdfExtent0;
     float gdfCenter1X, gdfCenter1Y, gdfCenter1Z, gdfExtent1;
@@ -306,7 +306,7 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     RWStructuredBuffer<float4> shBuf = ResourceDescriptorHeap[g_shBufferUavIndex];
     uint base = probeIdx * 7u;
 
-    float a = saturate(temporalBlendAlpha);
+    float a = (firstWrite != 0) ? 1.0 : saturate(temporalBlendAlpha);
     [unroll]
     for (uint k = 0; k < 7; ++k) {
         float4 prev = shBuf[base + k];

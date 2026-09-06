@@ -587,7 +587,10 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
 
     // ── SSGI SRV indices (set early — actual compute runs in render graph) ──
     // SSGI result SRV indices — used by deferred lighting to add indirect diffuse.
-    if (m_ssgiRenderer.IsReady() && m_device->IsBindless()) {
+    // HasProducedResult gates the binding: until the first successful Render()
+    // completes, the result texture has never been written.
+    if (m_ssgiRenderer.IsReady() && m_ssgiRenderer.HasProducedResult()
+        && m_device->IsBindless()) {
         perFrame.ssgiSrvIndex   = m_ssgiRenderer.GetResultSrvIndex();
         perFrame.ssgiAOSrvIndex = m_ssgiRenderer.GetAOResultSrvIndex();
         perFrame.ssgiEnabled    = 1;
@@ -635,8 +638,8 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     perFrame.ddgiProbeSpacing  = 0.0f;
     perFrame.ddgiIntensity     = cv_GIIntensity->value;
     perFrame.indirectAOExponent = cv_IndirectAOExp->value;
-    if (m_ddgiSystem.IsInitialized() && m_radianceCache.IsInitialized()
-        && m_device->IsBindless()) {
+    if (m_ddgiSystem.IsInitialized() && m_ddgiSystem.HasCompletedFirstUpdate()
+        && m_radianceCache.IsInitialized() && m_device->IsBindless()) {
         const Vec3 origin = m_radianceCache.GetGridOrigin();
         m_ddgiSystem.SetGridOrigin(origin);
         m_ddgiSystem.SetProbeSpacing(m_radianceCache.GetProbeSpacing());
@@ -814,6 +817,7 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
             ctx.lightData.perLightShadowBias, ctx.lightData.perLightShadowSlopeBias,
             ctx.lightData.lightSourceAngleDeg,
             m_shadowAtlas.GetSrvIndex(), kShadowResolution, *m_cbRing,
+            ctx.lightData.dynamicShadowDistance,
             ctx.lightData.farShadowCascadeCount,
             ctx.lightData.farShadowDistance,
             ctx.lightData.farShadowLodBias,

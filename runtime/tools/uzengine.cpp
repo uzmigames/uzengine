@@ -43,9 +43,7 @@
 #include "../engine/asset/importers/png_codec.h"
 #include "texture_loader.h"
 
-#ifdef _WIN32
 #include "platform_window.h"
-#endif
 
 #include <chrono>
 #include <cmath>
@@ -147,7 +145,6 @@ static int RunHeadless(const RHIDeviceDesc& deviceDesc) {
 // Windowed render loop (Windows)
 // ─────────────────────────────────────────────────────────────────────────────
 
-#ifdef _WIN32
 
 /// Creates per-frame fences for triple-buffered synchronization.
 ///
@@ -876,7 +873,6 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     return kExitSuccess;
 }
 
-#endif // _WIN32
 
 } // namespace uz
 
@@ -1000,8 +996,20 @@ int main(int argc, char** argv) {
                                     diagMode, pixelDebugEnabled, pixelDebugX, pixelDebugY,
                                     passDump, &config);
 #else
-        UZ_LOG(Engine, Error, "Windowed mode not supported on this platform yet");
-        exitCode = uz::kExitRenderError;
+        const std::string ssPath = config.GetString("screenshot");
+        const int ssFrame = config.GetInt("screenshot-frame", 5);
+        const int shadowDebug = config.GetInt("shadow-debug", 0);
+        const bool editorMode = config.GetBool("editor", false);
+        const bool diagMode = config.GetBool("diag", false);
+        const bool pixelDebugEnabled = config.GetBool("pixel-debug", false);
+        const int pixelDebugX = config.GetInt("pixel-debug-x", 960);
+        const int pixelDebugY = config.GetInt("pixel-debug-y", 540);
+        const bool passDump = config.GetBool("pass-dump", false);
+        exitCode = uz::RunWindowed(deviceDesc, width, height, maxFrames,
+                                    windowTitle, projectDir, contentRoot, defaultScene,
+                                    ssPath, ssFrame, shadowDebug, editorMode,
+                                    diagMode, pixelDebugEnabled, pixelDebugX, pixelDebugY,
+                                    passDump, &config);
 #endif
     }
 

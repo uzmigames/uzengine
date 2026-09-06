@@ -280,6 +280,8 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 UZ_PROFILE_SCOPE("Tonemap::Execute");
 
                 auto bb = res.GetTexture(ctx.bbRes);
+                const RHIPipelineHandle tonemapPipeline = ctx.pipelines->GetTonemap();
+                if (!tonemapPipeline.IsValid()) return;
 
                 RHIRenderPassDesc passDesc{};
                 passDesc.colorAttachmentCount        = 1;
@@ -287,7 +289,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 passDesc.colorAttachments[0].clear   = false;
                 cmd->BeginRenderPass(passDesc);
 
-                cmd->SetPipeline(ctx.pipelines->GetTonemap());
+                cmd->SetPipeline(tonemapPipeline);
 
                 RHIViewport vp{};
                 vp.width    = static_cast<uint32_t>(ctx.vpWidth);

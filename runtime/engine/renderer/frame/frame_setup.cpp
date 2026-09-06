@@ -68,7 +68,9 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
                 m_width, m_height, ctx.bindless)) {
             m_statsOverlayInitialized = true;
         } else {
-            UZ_LOG(Renderer, Error, "SceneRenderer: failed to init stats overlay");
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to init stats overlay — disabling");
+            m_statsOverlay->Shutdown();
+            m_statsOverlay.reset();
         }
 
         // Upload 1x1 fallback textures for SM5 unconditional sampling.
@@ -150,7 +152,9 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
             m_vfxEditorOverlayInitialized = true;
             UZ_LOG(Renderer, Info, "VfxEditorOverlay: initialized OK");
         } else {
-            UZ_LOG(Renderer, Error, "VfxEditorOverlay: init FAILED");
+            UZ_LOG(Renderer, Error, "VfxEditorOverlay: init FAILED — disabling");
+            m_vfxEditorOverlay->Shutdown();
+            m_vfxEditorOverlay.reset();
         }
         ctx.cmdList->End();
         ctx.cmdList->Execute();
@@ -174,6 +178,8 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
             UZ_LOG(Renderer, Info, "ViewportToolbar: initialized OK");
         } else {
             UZ_LOG(Renderer, Warning, "ViewportToolbar: init FAILED — toolbar disabled");
+            m_viewportToolbar->Shutdown();
+            m_viewportToolbar.reset();
         }
         ctx.cmdList->End();
         ctx.cmdList->Execute();
