@@ -110,6 +110,12 @@ poc-napi/node_modules/
 # NVIDIA DLSS SDK (proprietary, downloaded via setup.ps1, ~200MB)
 runtime/thirdparty/dlss/
 
+# Local macOS/Linux thirdparty binaries (Slang SDK dylibs, LuaJIT build output —
+# platform-specific, never committed; Windows/Linux fetch or build their own)
+runtime/thirdparty/slang/bin/*.dylib
+runtime/thirdparty/slang/lib/
+runtime/thirdparty/luajit/src/libluajit.*
+
 CLAUDE.local.md
 .rulebook/backup/
 .rulebook/handoff/_pending.md
