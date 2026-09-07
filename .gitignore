@@ -121,3 +121,21 @@ CLAUDE.local.md
 .rulebook/handoff/_pending.md
 .rulebook/handoff/.urgent
 .rulebook/telemetry/
+
+# Sponza diagnostics and generated regression output; keep runners and fixtures.
+/scripts/*_artifacts/
+/scripts/*.generated.h
+/scripts/sponza-*.png
+/scripts/sponza-*.args
+/scripts/sponza-*.exit
+/scripts/sponza-*.asm
+/scripts/sponza-*.json
+/scripts/sponza-*-files.txt
+/scripts/sponza-*-sha256.txt
+/scripts/sponza-*-path-scan.txt
+/scripts/sponza-lighting-debug-journal.md
+/scripts/lumen-siggraph2022-reference.pdf
+/scripts/lumen-siggraph2022-reference.txt
+
+# Downloaded by scripts/setup.ps1; do not vendor a second DirectX header tree.
+/runtime/thirdparty/agility/
