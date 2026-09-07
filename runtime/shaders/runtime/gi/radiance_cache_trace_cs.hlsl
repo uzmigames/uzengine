@@ -1,30 +1,34 @@
 /// UzEngine Radiance Cache Trace — SDF-based probe update.
 ///
 /// Updates one L2 SH probe per thread. For every probe in the grid we shoot
-/// `raysPerProbe` cosine-weighted hemisphere rays, ray-march them through the
+/// `raysPerProbe` uniform full-sphere rays, ray-march them through the
 /// global distance field clipmap hierarchy, and accumulate the resulting
 /// radiance into the probe's L2 SH coefficients (7 float4 packing). Hit points
-/// receive single-bounce sun lighting modulated by the average ground albedo.
+/// receive sun lighting and diffuse feedback using the surface reflectance cache.
 /// Missed rays sample the sky color. The new SH is EMA-blended with the prior
 /// frame to suppress single-frame noise.
 ///
 /// @ref Sloan 2008 "Stupid Spherical Harmonics (SH) Tricks" — L2 projection
-/// @ref Wright 2015 "Dynamic Diffuse Global Illumination" — surfel/probe GI
+/// @ref Wright 2015 "Dynamic Occlusion with Signed Distance Fields"
 /// @ref Majercik 2019 "Dynamic Diffuse Global Illumination with Ray-Traced
-///                     Irradiance Probes" — temporal hysteresis blending
-/// @ref Wright/Crassin 2018 "Distance Field Ray Tracing" — clipmap stepping
+///                     Irradiance Fields" — temporal hysteresis blending
 
 #include "../common/constants.hlsli"
+#include "../lighting/ibl.hlsli"
+
+SamplerState linearClamp : register(s2);
 
 // ─── Root constants at b0 ──────────────────────────────────────────────────
 
 cbuffer RootConstants : register(b0) {
     uint g_shBufferUavIndex;   // Bindless UAV index of the probe SH buffer.
-    uint g_shBufferSrvIndex;   // (unused) Bindless SRV — kept for future blends.
+    uint g_shBufferSrvIndex;   // Previous completed SH snapshot; never the active UAV.
     uint g_frameIndex;         // Frame counter for temporal jitter.
     uint g_probeOffset;        // First probe index updated this frame.
     uint g_probeBudget;        // Number of probes to update this frame (0 = all).
-    uint _padRC[3];
+    uint g_skyRadianceSrv;
+    uint g_diagnosticUav;
+    uint _padRC;
 };
 
 // ─── Trace constants at b2 (matches RadianceCacheTraceConstants) ──────────
@@ -43,7 +47,7 @@ cbuffer TraceConstants : register(b2) {
     float maxTraceDistance;
     float temporalBlendAlpha;
     uint  shBufferUav;          // Same as g_shBufferUavIndex (cb mirror).
-    uint  _padTC;
+    uint  firstWrite;           // 1 = buffer never written: replace instead of blend.
 
     float gdfCenter0X, gdfCenter0Y, gdfCenter0Z, gdfExtent0;
     float gdfCenter1X, gdfCenter1Y, gdfCenter1Z, gdfExtent1;
@@ -73,6 +77,8 @@ cbuffer TraceConstants : register(b2) {
 
 // ─── Constants ────────────────────────────────────────────────────────────
 
+/// @constants Pi normalizes sphere integration; 5 cm hit tolerance, 2 cm minimum
+/// step, 96 trace steps and 64 rays are this implementation's quality budgets.
 static const float kPI            = 3.14159265358979323846;
 static const float kSurfaceEpsilon = 5.0;     // cm — accept hits below this distance
 static const float kMinStep        = 2.0;     // cm — never advance less than this
@@ -114,15 +120,22 @@ void SHEvaluateL2(float3 dir, out float basis[9]) {
     basis[8] =  0.546274 * (dir.x * dir.x - dir.y * dir.y);
 }
 
-// Pack 9 raw L2 coefficients per channel into the 7-float4 layout.
+/// @ref Sloan 2008 "Stupid Spherical Harmonics (SH) Tricks"
+/// @constants Cosine convolution divided by pi: A0=1, A1=2/3, A2=1/4.
+// EvalSH_L2 evaluates a polynomial, so bake both basis and convolution here.
 void PackL2(float shR[9], float shG[9], float shB[9], out float4 packed[7]) {
-    packed[0] = float4(shR[1], shR[2], shR[3], shR[0]);
-    packed[1] = float4(shG[1], shG[2], shG[3], shG[0]);
-    packed[2] = float4(shB[1], shB[2], shB[3], shB[0]);
-    packed[3] = float4(shR[4], shR[5], shR[6], shR[7]);
-    packed[4] = float4(shG[4], shG[5], shG[6], shG[7]);
-    packed[5] = float4(shB[4], shB[5], shB[6], shB[7]);
-    packed[6] = float4(shR[8], shG[8], shB[8], 1.0);
+    const float c0 = 0.282094791773878;
+    const float c1 = 0.32573500793528;
+    const float c2 = 0.27313710764802;
+    const float c3 = 0.07884789131313;
+    const float c4 = 0.13656855382401;
+    packed[0] = float4(-c1*shR[1], c1*shR[2], -c1*shR[3], c0*shR[0]-c3*shR[6]);
+    packed[1] = float4(-c1*shG[1], c1*shG[2], -c1*shG[3], c0*shG[0]-c3*shG[6]);
+    packed[2] = float4(-c1*shB[1], c1*shB[2], -c1*shB[3], c0*shB[0]-c3*shB[6]);
+    packed[3] = float4(c2*shR[4], -c2*shR[5], 3.0*c3*shR[6], -c2*shR[7]);
+    packed[4] = float4(c2*shG[4], -c2*shG[5], 3.0*c3*shG[6], -c2*shG[7]);
+    packed[5] = float4(c2*shB[4], -c2*shB[5], 3.0*c3*shB[6], -c2*shB[7]);
+    packed[6] = float4(c4*shR[8], c4*shG[8], c4*shB[8], 1.0);
 }
 
 void UnpackL2(float4 packed[7], out float shR[9], out float shG[9], out float shB[9]) {
@@ -139,50 +152,53 @@ void UnpackL2(float4 packed[7], out float shR[9], out float shG[9], out float sh
 
 // ─── GDF clipmap sampling ─────────────────────────────────────────────────
 //
-// Each clipmap is a 64^3 R16F volume centered on a world position with a
-// half-extent in cm. Sampling returns the signed distance to the nearest
+// Each clipmap stores distance in R and diffuse reflectance in GBA, with a
+// half-extent in cm. Sampling returns the distance to the nearest
 // surface in cm; values outside the clipmap return a large positive number
 // (the next cascade is tried automatically).
 
-float SampleGdfClipmap(uint srvIdx, float3 worldPos, float3 center, float extent) {
+float4 SampleGdfClipmap(uint srvIdx, float3 worldPos, float3 center, float extent) {
     if (srvIdx == kSentinelSrvIndex || extent <= 0.0) {
-        return 1e9;
+        return float4(1e9, 0.0, 0.0, 0.0);
     }
     float3 local = (worldPos - center) / extent;       // [-1,1] inside the clipmap
     if (any(abs(local) > 1.0)) {
-        return 1e9;
+        return float4(1e9, 0.0, 0.0, 0.0);
     }
     float3 uvw = local * 0.5 + 0.5;                    // [0,1]
-    Texture3D<float> gdfTex = ResourceDescriptorHeap[srvIdx];
-    SamplerState samp = SamplerDescriptorHeap[1];      // linear clamp (matches engine s2)
-    return gdfTex.SampleLevel(samp, uvw, 0).r;
+    Texture3D<float4> gdfTex = ResourceDescriptorHeap[srvIdx];
+    return gdfTex.SampleLevel(linearClamp, uvw, 0);
 }
 
-float SampleGdfDistance(float3 worldPos) {
+float4 SampleGdfSurface(float3 worldPos) {
     // Try cascades from finest to coarsest. Each cascade is 4x larger so the
     // first one that contains the point gives the most accurate distance.
-    float d = SampleGdfClipmap(gdfClipmapSrv0,
+    float4 d = SampleGdfClipmap(gdfClipmapSrv0,
                                worldPos,
                                float3(gdfCenter0X, gdfCenter0Y, gdfCenter0Z),
                                gdfExtent0);
-    if (d < 1e8) return d;
+    if (d.x < 1e8) return d;
     d = SampleGdfClipmap(gdfClipmapSrv1,
                          worldPos,
                          float3(gdfCenter1X, gdfCenter1Y, gdfCenter1Z),
                          gdfExtent1);
-    if (d < 1e8) return d;
+    if (d.x < 1e8) return d;
     d = SampleGdfClipmap(gdfClipmapSrv2,
                          worldPos,
                          float3(gdfCenter2X, gdfCenter2Y, gdfCenter2Z),
                          gdfExtent2);
-    if (d < 1e8) return d;
+    if (d.x < 1e8) return d;
     return SampleGdfClipmap(gdfClipmapSrv3,
                             worldPos,
                             float3(gdfCenter3X, gdfCenter3Y, gdfCenter3Z),
                             gdfExtent3);
 }
 
-// Sphere-tracing through the GDF. Returns hit distance (>=0) or -1 on miss.
+float SampleGdfDistance(float3 worldPos) {
+    return SampleGdfSurface(worldPos).x;
+}
+
+// Sphere-tracing returns a hit (>=0), distance escape (-1), or exhausted work (-2).
 float TraceGDF(float3 origin, float3 dir, float maxT) {
     float t = kMinStep;
     [loop]
@@ -197,10 +213,59 @@ float TraceGDF(float3 origin, float3 dir, float maxT) {
             return -1.0;
         }
     }
-    return -1.0;
+    return -2.0;
 }
 
-// ─── Hammersley + cosine-hemisphere sample ───────────────────────────────
+/// @ref Majercik 2019 "Dynamic Diffuse Global Illumination with Ray-Traced Irradiance Fields", sections 5.2-5.3.
+/// @constants Eight trilinear corners; squared normal weight rejects probes behind a surface.
+float3 SamplePreviousDiffuse(float3 position, float3 normal) {
+    if (firstWrite != 0 || g_shBufferSrvIndex == kSentinelSrvIndex) return 0.0;
+    float3 cell = (position - float3(gridOriginX, gridOriginY, gridOriginZ)) / probeSpacing;
+    if (any(cell < 0.0) || any(cell > float(probesPerAxis - 1))) return 0.0;
+    uint3 lower = uint3(floor(cell));
+    uint3 upper = min(lower + 1, probesPerAxis - 1);
+    float3 fraction = frac(cell);
+    StructuredBuffer<float4> history = ResourceDescriptorHeap[g_shBufferSrvIndex];
+    float3 irradiance = 0.0;
+    float totalWeight = 0.0;
+    [unroll]
+    for (uint corner = 0; corner < 8; ++corner) {
+        uint3 index = uint3((corner & 1) ? upper.x : lower.x,
+                            (corner & 2) ? upper.y : lower.y,
+                            (corner & 4) ? upper.z : lower.z);
+        float weight = ((corner & 1) ? fraction.x : 1.0 - fraction.x)
+                     * ((corner & 2) ? fraction.y : 1.0 - fraction.y)
+                     * ((corner & 4) ? fraction.z : 1.0 - fraction.z);
+        float3 probePosition = float3(gridOriginX, gridOriginY, gridOriginZ) + float3(index) * probeSpacing;
+        float3 toProbe = probePosition - position;
+        float distance = length(toProbe);
+        float normalWeight = distance > 0.0 ? saturate(dot(normal, toProbe / distance)) : 1.0;
+        weight *= normalWeight * normalWeight;
+        uint base = (index.x + index.y * probesPerAxis + index.z * probesPerAxis * probesPerAxis) * 7;
+        if (history[base + 6].w <= 0.0) continue;
+        float4 coefficients[7];
+        [unroll] for (uint k = 0; k < 7; ++k) coefficients[k] = history[base + k];
+        irradiance += weight * EvalSH_L2(normal, coefficients);
+        totalWeight += weight;
+    }
+    return totalWeight > 0.0 ? irradiance / totalWeight : 0.0;
+}
+
+/// @ref Hart 1996 "Sphere Tracing: A Geometric Method for the Antialiased Ray Tracing of Implicit Surfaces"
+/// @constants Central differences use offsets +/- one hit tolerance; 2*epsilon clears the surface for a shadow ray.
+float3 GdfNormal(float3 position) {
+    float3 dx = float3(kSurfaceEpsilon, 0.0, 0.0);
+    float3 dy = float3(0.0, kSurfaceEpsilon, 0.0);
+    float3 dz = float3(0.0, 0.0, kSurfaceEpsilon);
+    float3 gradient = float3(
+        SampleGdfDistance(position + dx) - SampleGdfDistance(position - dx),
+        SampleGdfDistance(position + dy) - SampleGdfDistance(position - dy),
+        SampleGdfDistance(position + dz) - SampleGdfDistance(position - dz));
+    float magnitude = length(gradient);
+    return magnitude > 0.0 ? gradient / magnitude : float3(0.0, 0.0, 0.0);
+}
+
+// ─── Hammersley + uniform sphere sample ─────────────────────────────────
 
 float RadicalInverseVdC(uint bits) {
     bits = (bits << 16u) | (bits >> 16u);
@@ -246,6 +311,21 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     float3 probePos = float3(gridOriginX, gridOriginY, gridOriginZ)
                     + float3(float(gx), float(gy), float(gz)) * probeSpacing;
 
+    /// @ref Majercik 2021 "Scaling Probe-Based Real-Time Dynamic Global Illumination for Production", section 6.1.
+    /// @constants SH record6.w stores validity (0=inside geometry,1=active); seven records per probe.
+    float4 probeSurface = SampleGdfSurface(probePos);
+    if (probeSurface.r < kSurfaceEpsilon) {
+        RWStructuredBuffer<float4> outputSH = ResourceDescriptorHeap[g_shBufferUavIndex];
+        [unroll] for (uint coefficient = 0; coefficient < 7; ++coefficient)
+            outputSH[probeIdx * 7 + coefficient] = 0.0;
+        if (g_diagnosticUav != 0 && g_diagnosticUav != kSentinelSrvIndex) {
+            RWStructuredBuffer<float4> diagnostic = ResourceDescriptorHeap[g_diagnosticUav];
+            diagnostic[probeIdx * 2] = probeSurface;
+            diagnostic[probeIdx * 2 + 1] = 0.0;
+        }
+        return;
+    }
+
     float shR[9] = {0,0,0,0,0,0,0,0,0};
     float shG[9] = {0,0,0,0,0,0,0,0,0};
     float shB[9] = {0,0,0,0,0,0,0,0,0};
@@ -256,34 +336,49 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     // Per-frame jitter — rotate the Hammersley sequence so different frames
     // sample different directions, then EMA-blend in time.
     uint frameJitter = (frameIndex * 1664525u + 1013904223u);
+    /// @constants Diagnostic luminance uses Rec.709 weights (0.2126,0.7152,0.0722).
+    float4 traceStats = 0.0;
 
     [loop]
     for (uint i = 0; i < nRays; ++i) {
-        float2 xi = Hammersley(i + (frameJitter & 0xFFFFu), nRays + (frameJitter & 0xFFu));
-        xi = frac(xi); // keep in [0,1)
+        float2 xi = frac(Hammersley(i, nRays)
+            + float2(RadicalInverseVdC(frameJitter), RadicalInverseVdC(frameJitter ^ probeIdx)));
         float3 dir = SphericalSample(xi);
 
         float t = TraceGDF(probePos, dir, maxTraceDistance);
 
-        float3 radiance;
-        if (t < 0.0) {
-            // Miss → sky.
-            radiance = float3(skyColorR, skyColorG, skyColorB);
-        } else {
-            // Hit → single-bounce sun lighting on a Lambertian surface of
-            // average ground albedo. We don't know the actual normal at the
-            // hit point (no second SDF gradient sample), so use the negated
-            // ray direction as a conservative outward normal.
-            float3 N    = -dir;
+        float3 radiance = 0.0;
+        if (t == -1.0) {
+            traceStats.x += invN;
+            radiance = float3(0.0, 0.0, 0.0);
+            if (g_skyRadianceSrv != kSentinelSrvIndex) {
+                TextureCube<float4> sky = ResourceDescriptorHeap[g_skyRadianceSrv];
+                radiance = sky.SampleLevel(linearClamp, float3(dir.x, dir.z, dir.y), 0).rgb
+                         * float3(skyColorR, skyColorG, skyColorB);
+            }
+        } else if (t >= 0.0) {
+            float3 hitPosition = probePos + t * dir;
+            float3 N    = GdfNormal(hitPosition);
             float3 L    = normalize(float3(lightDirX, lightDirY, lightDirZ));
             float  NdL  = max(dot(N, L), 0.0);
+            float visibility = 0.0;
+            if (NdL > 0.0 && dot(N, -dir) > 0.0) {
+                float3 shadowOrigin = hitPosition + N * (2.0 * kSurfaceEpsilon);
+                visibility = TraceGDF(shadowOrigin, L, maxTraceDistance) == -1.0 ? 1.0 : 0.0;
+            }
             float3 sunRad = float3(lightColorR, lightColorG, lightColorB)
-                          * lightIntensity * NdL;
-            radiance = sunRad * groundAlbedo;
+                          * lightIntensity * NdL * visibility;
+            traceStats.y += dot(N, -dir) > 0.0 ? invN : 0.0;
+            traceStats.z += dot(sunRad, float3(0.2126, 0.7152, 0.0722)) * invN;
+            /// @ref Majercik 2019 "Dynamic Diffuse Global Illumination with Ray-Traced Irradiance Fields"
+            /// @constants Direct irradiance divides by pi; packed SH already stores E/pi.
+            float3 albedo = saturate(SampleGdfSurface(hitPosition).gba);
+            float3 indirect = SamplePreviousDiffuse(hitPosition + N * (2.0 * kSurfaceEpsilon), N);
+            radiance = dot(N, -dir) > 0.0 ? albedo * (sunRad / kPI + indirect) : 0.0;
         }
+        traceStats.w += dot(radiance, float3(0.2126, 0.7152, 0.0722)) * invN;
 
-        // Accumulate into raw L2 SH (Sloan 2008). Cosine convolution is
-        // applied at evaluation time by EvalSH_L2 — store raw bands here.
+        // Project raw radiance; PackL2 applies the cosine convolution.
         float basis[9];
         SHEvaluateL2(dir, basis);
 
@@ -297,6 +392,13 @@ void main(uint3 DTid : SV_DispatchThreadID) {
         }
     }
 
+    // Optional transport readback: two float4 records per probe, Rec.709 luminance.
+    if (g_diagnosticUav != 0 && g_diagnosticUav != kSentinelSrvIndex) {
+        RWStructuredBuffer<float4> diagnostic = ResourceDescriptorHeap[g_diagnosticUav];
+        diagnostic[probeIdx * 2] = probeSurface;
+        diagnostic[probeIdx * 2 + 1] = traceStats;
+    }
+
     // Pack into 7 float4s (matches deferred lighting `EvalSH_L2`).
     float4 newPacked[7];
     PackL2(shR, shG, shB, newPacked);
@@ -306,11 +408,15 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     RWStructuredBuffer<float4> shBuf = ResourceDescriptorHeap[g_shBufferUavIndex];
     uint base = probeIdx * 7u;
 
-    float a = saturate(temporalBlendAlpha);
+    float a = (firstWrite != 0) ? 1.0 : saturate(temporalBlendAlpha);
     [unroll]
     for (uint k = 0; k < 7; ++k) {
-        float4 prev = shBuf[base + k];
-        float4 blended = lerp(prev, newPacked[k], a);
-        shBuf[base + k] = blended;
+        if (firstWrite != 0) {
+            shBuf[base + k] = newPacked[k];
+        } else {
+            StructuredBuffer<float4> history = ResourceDescriptorHeap[g_shBufferSrvIndex];
+            shBuf[base + k] = lerp(history[base + k], newPacked[k], a);
+        }
     }
+    shBuf[base + 6].w = 1.0;
 }

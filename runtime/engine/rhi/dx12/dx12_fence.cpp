@@ -8,6 +8,12 @@
 #define NOMINMAX
 #include "dx12_fence.h"
 
+// IID_PPV_ARGS(&m_fence) needs __uuidof(ID3D12Fence). On Clang/MinGW that
+// resolves through __mingw_uuidof<T>, whose primary template is declared but
+// never defined — without the __CRT_UUID_DECL entries this compiles and then
+// fails at link with "undefined symbol: __mingw_uuidof<ID3D12Fence>()".
+#include "dx12_guids.h"
+
 #include "log.h"
 #include "profiler.h"
 

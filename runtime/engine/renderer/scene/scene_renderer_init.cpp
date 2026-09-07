@@ -166,7 +166,7 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     cam.SetPosition({0.f, 200.f, -500.f});
     cam.LookAt({0.f, 0.f, 0.f}, Vec3::Up());
     m_cameraCtrl->InitFromCamera(cam);
-    m_cameraCtrl->SetMoveSpeed(5.f);  // 5 cm/s — matches Lua pbr_showcase_controller default
+    m_cameraCtrl->SetMoveSpeed(500.f);
 
     // ── Register CameraManager with Lua VM ──
     if (auto* L = uz::LuaVM::GetState()) {
@@ -713,7 +713,8 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     if (!m_globalDistanceField.CreateResources(device)) {
         UZ_LOG(Renderer, Warning, "SceneRenderer: GDF init failed (SDF GI disabled)");
     }
-    if (!m_radianceCache.CreateResources(device, 5000.0f)) {
+    m_rcGridExtentCVar = CVarRegistry::Get().GetFloat("r.GI.RadianceCache.GridExtent", 5000.f);
+    if (!m_radianceCache.CreateResources(device, m_rcGridExtentCVar)) {
         UZ_LOG(Renderer, Warning, "SceneRenderer: RadianceCache init failed (SDF GI disabled)");
     }
     // Enable SDF GI when both subsystems initialized successfully.
@@ -1052,7 +1053,8 @@ void SceneRenderer::ApplyCVars() {
     m_passInspector.SetPassEnabled("clouds", cvars.GetBool("r.Clouds", true));
     m_passInspector.SetPassEnabled("contact_shadow", cvars.GetBool("r.ContactShadows", true));
     m_passInspector.SetPassEnabled("aerial_persp", cvars.GetBool("r.AerialPerspective", true));
-    m_passInspector.SetPassEnabled("ssgi", cvars.GetBool("r.SSGI", true));
+    m_passInspector.SetPassEnabled("ssgi", cvars.GetBool("r.SSGI", true)
+        || cvars.GetBool("r.GI.FinalGather", false));
     m_passInspector.SetPassEnabled("sdf_gi", cvars.GetBool("r.RadianceCache", false));
     m_passInspector.SetPassEnabled("ssr", cvars.GetBool("r.SSR", true));
     m_passInspector.SetPassEnabled("motionblur", cvars.GetBool("r.MotionBlur", true));

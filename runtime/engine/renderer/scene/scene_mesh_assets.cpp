@@ -9,6 +9,7 @@
 #include "scene_renderer.h"
 
 #include "mesh.h"
+#include "vertex.h"
 #include "gpu_mesh.h"
 #include "upload_context.h"
 #include "vfs.h"
@@ -17,11 +18,19 @@
 #include "profiler.h"
 #include "gi/mesh_sdf_baker.h"
 #include "pipeline_library.h"
+#include "cvar.h"
 
 #include <fstream>
+#include <algorithm>
+#include <cstddef>
 #include <string>
 
 namespace uz {
+
+static auto* cv_MeshSdfTwoSided = UZ_CVAR_BOOL("r.GI.MeshSdf.TwoSided", false,
+    "Unsigned mesh distance fields for open surfaces (requires scene reload)");
+static auto* cv_MeshSdfResolution = UZ_CVAR_INT("r.GI.MeshSdf.Resolution", 32,
+    "Mesh distance field voxels per axis (requires scene reload)", 1, 128);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Asset Loading — Meshes (deferred upload, flushed in batch)
@@ -177,9 +186,13 @@ uint32_t SceneRenderer::RegisterProceduralMesh(Mesh&& mesh, const std::string& k
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool SceneRenderer::IsSceneFullyLoaded() const {
+    if (m_budgetDeferredMeshCount > 0) return false;
+    if (!m_deferredMeshUploads.empty()) return false;
+    if (!m_pendingSdfBakes.empty()) return false;
     if (!m_pendingMeshPaths.empty()) return false;
     if (!m_pendingProceduralMeshes.empty()) return false;
     if (!m_pendingTexturePaths.empty()) return false;
+    if (!m_asyncPendingSlots.empty()) return false;
     if (m_asyncDecoder && m_asyncDecoder->PendingCount() > 0) return false;
     if (!m_deferredDecoded.empty()) return false;
     if (m_textureBatchCount > 0) return false;
@@ -191,12 +204,14 @@ bool SceneRenderer::IsSceneFullyLoaded() const {
 bool SceneRenderer::IsSceneFullyLoadedDebug() const {
     UZ_LOG(Renderer, Debug,
            "IsSceneFullyLoaded: meshPaths={}, procMeshes={}, texPaths={}, asyncPending={}, "
-           "deferred={}, batch={}, copyUploads={}, copyFence={}",
+           "deferred={}, batch={}, copyUploads={}, copyFence={}, budgetDeferredMeshes={}, "
+           "meshUploads={}, sdfBakes={}, asyncSlots={}",
            m_pendingMeshPaths.size(), m_pendingProceduralMeshes.size(),
            m_pendingTexturePaths.size(),
            m_asyncDecoder ? m_asyncDecoder->PendingCount() : 0,
            m_deferredDecoded.size(), m_textureBatchCount,
-           m_pendingCopyUploads.size(), m_copyFenceValue);
+           m_pendingCopyUploads.size(), m_copyFenceValue, m_budgetDeferredMeshCount,
+           m_deferredMeshUploads.size(), m_pendingSdfBakes.size(), m_asyncPendingSlots.size());
     return IsSceneFullyLoaded();
 }
 
@@ -218,6 +233,7 @@ void SceneRenderer::FlushSdfBakes(IRHICommandList* cmdList) {
 
     UZ_LOG(Renderer, Info, "SceneRenderer: batch SDF bake — {} meshes",
            m_pendingSdfBakes.size());
+    const auto resolution = static_cast<uint32_t>(std::clamp(cv_MeshSdfResolution->value, 1.0f, 128.0f));
 
     for (auto& bake : m_pendingSdfBakes) {
         if (bake.meshIndex >= static_cast<uint32_t>(m_meshes.size())) continue;
@@ -228,7 +244,8 @@ void SceneRenderer::FlushSdfBakes(IRHICommandList* cmdList) {
         MeshSDF sdf = MeshSdfBaker::BakeMeshGPU(
             m_device, cmdList, bakePipeline,
             positions, bake.vertexCount, bake.vertexStride,
-            indices, bake.indexCount, 32);
+            indices, bake.indexCount, resolution, static_cast<uint32_t>(offsetof(Vertex, normal)),
+            cv_MeshSdfTwoSided->value);
 
         if (sdf.valid) {
             // Defer destruction of the temporary triangle upload buffer until the
@@ -240,7 +257,7 @@ void SceneRenderer::FlushSdfBakes(IRHICommandList* cmdList) {
             m_meshes[bake.meshIndex].sdf = sdf;
             UZ_LOG(Renderer, Info,
                    "SceneRenderer: GPU-baked mesh SDF (meshIdx={}, res={}, SRV={})",
-                   bake.meshIndex, 32, sdf.srvIndex);
+                   bake.meshIndex, sdf.resolution, sdf.srvIndex);
         } else {
             UZ_LOG(Renderer, Warning,
                    "SceneRenderer: SDF bake failed for meshIdx={} ({} verts, {} indices)",

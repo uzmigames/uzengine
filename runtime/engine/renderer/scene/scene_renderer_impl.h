@@ -588,6 +588,7 @@
     /// Pending deferred mesh uploads accumulated during SyncWorldToDrawList.
     /// Flushed in a single GPU submission at the end of the sync pass.
     std::vector<DeferredMeshUpload> m_deferredMeshUploads;
+    uint32_t m_budgetDeferredMeshCount = 0;
 
     // ── Deferred SDF Baking ─────────────────────────────────────────────────
 
@@ -715,7 +716,13 @@
     std::vector<std::unique_ptr<ParticleEmitter>> m_runtimeEmitters;
 
     /// Hot-reload watcher for .uzfx and .uzvfx files (dev builds only).
+    /// Guarded by the same condition as vfx_hot_reload.cpp: the destructor is
+    /// only compiled in dev builds, so an unconditional unique_ptr member
+    /// would instantiate a deleter calling a symbol that does not exist in
+    /// shipping builds.
+#if defined(UZ_DEV_BUILD) || !defined(NDEBUG)
     std::unique_ptr<VFXHotReload> m_vfxHotReload;
+#endif
 
     /// Content root directory supplied by the application (via SetContentRoot).
     /// Used to initialize the VFX hot-reload watcher. Empty by default —

@@ -11,7 +11,6 @@
 
 // ─── Root constants at b0 (5 DWORDs) ──────────────────────────────────────
 
-#ifdef UZ_BINDLESS
 cbuffer RootConstants : register(b0)
 {
     uint hdrSrvIndex;
@@ -21,7 +20,6 @@ cbuffer RootConstants : register(b0)
     uint lutSrvIndex;
     uint tonemapOperator;     // 0=Hill ACES, 1=Narkowicz ACES, 2=Reinhard, 3=Hable, 4=Linear
 };
-#endif
 
 // ─── PerFrameCB at b1 (768 bytes — only need post-process fields) ─────────
 

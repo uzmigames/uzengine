@@ -55,6 +55,7 @@ static constexpr uint32_t kCollisionResponseCount = 3;
 bool VfxEditorOverlay::Init(IRHIDevice* device, IRHICommandList* cmdList, UploadContext& upload,
                             ShaderPipeline& shaderPipeline, RHIFormat rtvFormat,
                             uint32_t screenW, uint32_t screenH, bool bindless) {
+    m_device = device;
     m_screenW = screenW;
     m_screenH = screenH;
 
@@ -78,7 +79,9 @@ bool VfxEditorOverlay::Init(IRHIDevice* device, IRHICommandList* cmdList, Upload
 void VfxEditorOverlay::Shutdown() {
     if (m_initialized) {
         m_textRenderer.Shutdown();
+        m_font.Shutdown(m_device);
         m_initialized = false;
+        m_device = nullptr;
     }
 }
 

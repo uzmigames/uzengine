@@ -68,6 +68,7 @@ struct LightFrameData {
     uint32_t farShadowCascadeCount = 0;      ///< Far shadow cascade count (0 = disabled).
     float farShadowDistance = 300000.0f;      ///< Far shadow max distance in cm.
     int32_t farShadowLodBias = 0;             ///< LOD bias for far shadow cascades.
+    float dynamicShadowDistance = 40000.0f;   ///< CSM max distance in cm (DirectionalLightComponent).
 
     CBAllocation lightingCBAlloc;          ///< LightingCB upload in CB ring.
 

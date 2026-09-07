@@ -9,6 +9,9 @@
 /// process ID to prevent cross-run collisions.
 
 #include "dll_loader.h"
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 #include "process.h"
 #include "shared_memory.h"
 #include "environment.h"
@@ -327,8 +330,13 @@ TEST_F(ProcessTest, ProcessReadStderr_CmdErrorOutput_CanReadFromPipe) {
 
 /// Returns a test-unique shared memory name to avoid cross-run collisions.
 static std::string MakeSharedMemName(const char* suffix) {
+#ifdef _WIN32
+    const auto pid = ::GetCurrentProcessId();
+#else
+    const auto pid = ::getpid();
+#endif
     return std::string("UzEngineTest_") + suffix + "_" +
-           std::to_string(::GetCurrentProcessId());
+           std::to_string(pid);
 }
 
 TEST_F(ProcessTest, SharedMemoryCreate_ValidArgs_ReturnsNonNullData) {

@@ -519,3 +519,48 @@ TEST_F(MetalDeviceTest, CreateGraphicsPipeline_NullShaders_ReturnsInvalid) {
 } // namespace
 
 #endif // defined(__APPLE__)
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Compute Pipeline (task phase1_port-metal-shader-pipeline, Phase 4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Creates a compute pipeline from an MSL kernel — Metal compiles MSL source
+/// in CreateShader, so the test feeds MSL directly.
+TEST_F(MetalDeviceTest, CreateComputePipeline_ValidKernel) {
+    const char* msl = R"(
+#include <metal_stdlib>
+using namespace metal;
+kernel void accum(device float* data [[buffer(0)]], uint tid [[thread_position_in_grid]]) {
+    data[tid] += 1.0;
+}
+)";
+    uz::RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode = msl;
+    shaderDesc.bytecodeSize = std::strlen(msl);
+    shaderDesc.stage = uz::RHIShaderStage::Compute;
+    shaderDesc.entryPoint = "accum";
+    shaderDesc.debugName = "TestAccumCS";
+
+    uz::RHIShaderHandle shader = m_device->CreateShader(shaderDesc);
+    ASSERT_TRUE(shader.IsValid());
+
+    uz::RHIComputePipelineDesc pipeDesc{};
+    pipeDesc.computeShader = shader;
+    pipeDesc.debugName = "TestAccumPSO";
+
+    uz::RHIPipelineHandle pipeline = m_device->CreateComputePipeline(pipeDesc);
+    EXPECT_TRUE(pipeline.IsValid());
+
+    m_device->DestroyPipeline(pipeline);
+    m_device->DestroyShader(shader);
+}
+
+TEST_F(MetalDeviceTest, CreateComputePipeline_InvalidShader_Fails) {
+    uz::RHIComputePipelineDesc pipeDesc{};
+    pipeDesc.computeShader = uz::RHIShaderHandle::Invalid();
+    pipeDesc.debugName = "TestInvalidPSO";
+
+    uz::RHIPipelineHandle pipeline = m_device->CreateComputePipeline(pipeDesc);
+    EXPECT_FALSE(pipeline.IsValid());
+}

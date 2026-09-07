@@ -411,7 +411,7 @@ TEST_F(GIGpuTest, Create3DR16FTexture64Cubed) {
 // Test 7.3a: GDF Clipmap Resource Lifecycle
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Creates the full GlobalDistanceField (4 cascaded R16F 3D clipmap textures),
+/// Creates the full GlobalDistanceField (4 expanded RGBA16F/raw R16F 3D pairs),
 /// verifies all resources are valid, then destroys them without leaks.
 TEST_F(GIGpuTest, GDFClipmapResourceLifecycle) {
     uz::GlobalDistanceField gdf;
@@ -419,7 +419,7 @@ TEST_F(GIGpuTest, GDFClipmapResourceLifecycle) {
     // Before creation, should not be initialized
     EXPECT_FALSE(gdf.IsInitialized());
 
-    // Create all 4 clipmap textures
+    // Create all four expanded/raw clipmap pairs
     const bool created = gdf.CreateResources(m_device.get());
     ASSERT_TRUE(created) << "GlobalDistanceField::CreateResources() failed";
     EXPECT_TRUE(gdf.IsInitialized());
@@ -429,6 +429,24 @@ TEST_F(GIGpuTest, GDFClipmapResourceLifecycle) {
         const auto& clipmap = gdf.GetClipmap(i);
         EXPECT_TRUE(clipmap.texture.IsValid())
             << "Clipmap " << i << " texture is invalid";
+        ASSERT_TRUE(clipmap.rawTexture.IsValid()) << "Raw clipmap " << i << " is invalid";
+        EXPECT_NE(clipmap.srvIndex, UINT32_MAX);
+        EXPECT_NE(clipmap.uavIndex, UINT32_MAX);
+        EXPECT_NE(clipmap.rawSrvIndex, UINT32_MAX);
+        EXPECT_NE(clipmap.rawUavIndex, UINT32_MAX);
+        EXPECT_NE(clipmap.rawSrvIndex, clipmap.srvIndex);
+        EXPECT_NE(clipmap.rawUavIndex, clipmap.uavIndex);
+        const auto expandedDesc = m_device->GetTextureDesc(clipmap.texture);
+        const auto rawDesc = m_device->GetTextureDesc(clipmap.rawTexture);
+        EXPECT_EQ(expandedDesc.format, uz::RHIFormat::RGBA16Float);
+        EXPECT_EQ(rawDesc.format, uz::RHIFormat::R16Float);
+        EXPECT_TRUE(expandedDesc.is3D);
+        EXPECT_TRUE(rawDesc.is3D);
+        EXPECT_EQ(rawDesc.width, expandedDesc.width);
+        EXPECT_EQ(rawDesc.height, expandedDesc.height);
+        EXPECT_EQ(rawDesc.depthOrArraySize, expandedDesc.depthOrArraySize);
+        EXPECT_EQ(rawDesc.mipLevels, expandedDesc.mipLevels);
+        EXPECT_FALSE(clipmap.hasData);
         EXPECT_EQ(clipmap.extent, uz::GlobalDistanceField::kClipmapExtents[i])
             << "Clipmap " << i << " extent mismatch";
     }
@@ -444,6 +462,16 @@ TEST_F(GIGpuTest, GDFClipmapResourceLifecycle) {
     // Destroy — should not crash or leak
     gdf.DestroyResources();
     EXPECT_FALSE(gdf.IsInitialized());
+    for (uint32_t i = 0; i < uz::GlobalDistanceField::kNumClipmaps; ++i) {
+        const auto& clipmap = gdf.GetClipmap(i);
+        EXPECT_FALSE(clipmap.texture.IsValid());
+        EXPECT_FALSE(clipmap.rawTexture.IsValid());
+        EXPECT_EQ(clipmap.srvIndex, UINT32_MAX);
+        EXPECT_EQ(clipmap.uavIndex, UINT32_MAX);
+        EXPECT_EQ(clipmap.rawSrvIndex, UINT32_MAX);
+        EXPECT_EQ(clipmap.rawUavIndex, UINT32_MAX);
+        EXPECT_FALSE(clipmap.hasData);
+    }
 }
 
 /// Verifies double-destroy of GDF resources is safe (no crash, no double-free).
@@ -474,14 +502,14 @@ TEST_F(GIGpuTest, RadianceCacheResourceLifecycle) {
     ASSERT_TRUE(created) << "RadianceCache::CreateResources() failed";
     EXPECT_TRUE(rc.IsInitialized());
 
-    // SRV and UAV indices should be valid (not UINT32_MAX)
-    EXPECT_NE(rc.GetProbeSHBufferSrv(), UINT32_MAX)
-        << "RadianceCache SH buffer SRV index is invalid";
+    EXPECT_FALSE(rc.HasProducedResult());
+    EXPECT_EQ(rc.GetProbeSHBufferSrv(), UINT32_MAX)
+        << "Unwritten radiance cache probes must not be exposed to lighting";
     EXPECT_NE(rc.GetProbeSHBufferUav(), UINT32_MAX)
         << "RadianceCache SH buffer UAV index is invalid";
 
     // Probe spacing should be positive and consistent with the grid size
-    const float expectedSpacing = (5000.0f * 2.0f) / static_cast<float>(uz::RadianceCache::kProbesPerAxis);
+    const float expectedSpacing = (5000.0f * 2.0f) / static_cast<float>(uz::RadianceCache::kProbesPerAxis - 1);
     EXPECT_NEAR(rc.GetProbeSpacing(), expectedSpacing, 0.01f)
         << "Probe spacing doesn't match expected value for 5000cm extent, "
         << uz::RadianceCache::kProbesPerAxis << " probes per axis";
@@ -489,6 +517,15 @@ TEST_F(GIGpuTest, RadianceCacheResourceLifecycle) {
     // Destroy should not crash
     rc.DestroyResources();
     EXPECT_FALSE(rc.IsInitialized());
+    EXPECT_FALSE(rc.HasProducedResult());
+    EXPECT_EQ(rc.GetProbeSHBufferSrv(), UINT32_MAX);
+    EXPECT_EQ(rc.GetProbeSHBufferUav(), UINT32_MAX);
+
+    ASSERT_TRUE(rc.CreateResources(m_device.get(), 1500.0f));
+    EXPECT_FALSE(rc.HasProducedResult());
+    EXPECT_EQ(rc.GetProbeSHBufferSrv(), UINT32_MAX);
+    EXPECT_FLOAT_EQ(rc.GetGridExtent(), 1500.0f);
+    EXPECT_FLOAT_EQ(rc.GetProbeSpacing(), 200.0f);
 }
 
 /// Verifies double-destroy of radiance cache is safe.
@@ -657,6 +694,12 @@ TEST_F(GIGpuTest, RadianceCacheGridGeometry) {
     EXPECT_NEAR(origin.y, -5000.0f, 1.0f);
     EXPECT_NEAR(origin.z, -5000.0f, 1.0f);
 
+    const float gridDiameter = rc.GetProbeSpacing()
+        * static_cast<float>(uz::RadianceCache::kProbesPerAxis - 1);
+    EXPECT_NEAR(origin.x + gridDiameter, center.x + rc.GetGridExtent(), 0.01f);
+    EXPECT_NEAR(origin.y + gridDiameter, center.y + rc.GetGridExtent(), 0.01f);
+    EXPECT_NEAR(origin.z + gridDiameter, center.z + rc.GetGridExtent(), 0.01f);
+
     // Move camera and verify grid tracks
     rc.Update(uz::Vec3{1000.0f, 500.0f, -200.0f});
     const uz::Vec3 newCenter = rc.GetGridCenter();
@@ -706,13 +749,22 @@ TEST_F(GIGpuTest, StructuredBufferSHProbeSize) {
 /// alignments. These structs are passed directly to GPU root constants and
 /// structured buffers — size mismatches cause silent data corruption.
 TEST_F(GIGpuTest, GDFShaderConstantStructLayout) {
-    // GdfMeshSdfGPU must be exactly 96 bytes (GPU-friendly, fits 6 float4 rows)
-    static_assert(sizeof(uz::GdfMeshSdfGPU) == 96,
-        "GdfMeshSdfGPU must be 96 bytes for StructuredBuffer packing");
+    // Distance transforms and material data occupy eight float4 registers.
+    static_assert(sizeof(uz::GdfMeshSdfGPU) == 128,
+        "GdfMeshSdfGPU must be 128 bytes for cbuffer packing");
 
-    // GdfCompositeConstants must be exactly 32 bytes (8 uint32 root constants)
-    static_assert(sizeof(uz::GdfCompositeConstants) == 32,
-        "GdfCompositeConstants must be 32 bytes (8 root constants)");
+    // Eight original DWORDs retain their offsets; rawOutputUav appends the ninth.
+    static_assert(sizeof(uz::GdfCompositeConstants) == 36,
+        "GdfCompositeConstants must be 36 bytes (9 root constants)");
+    static_assert(offsetof(uz::GdfCompositeConstants, outputUav) == 0);
+    static_assert(offsetof(uz::GdfCompositeConstants, meshCount) == 4);
+    static_assert(offsetof(uz::GdfCompositeConstants, accumulate) == 8);
+    static_assert(offsetof(uz::GdfCompositeConstants, resolution) == 12);
+    static_assert(offsetof(uz::GdfCompositeConstants, clipmapCenterX) == 16);
+    static_assert(offsetof(uz::GdfCompositeConstants, clipmapCenterY) == 20);
+    static_assert(offsetof(uz::GdfCompositeConstants, clipmapCenterZ) == 24);
+    static_assert(offsetof(uz::GdfCompositeConstants, clipmapExtent) == 28);
+    static_assert(offsetof(uz::GdfCompositeConstants, rawOutputUav) == 32);
 
     // RadianceCacheTraceConstants must be exactly 176 bytes
     static_assert(sizeof(uz::RadianceCacheTraceConstants) == 176,
@@ -722,19 +774,21 @@ TEST_F(GIGpuTest, GDFShaderConstantStructLayout) {
     uz::GdfCompositeConstants cc{};
     cc.outputUav      = 42;
     cc.meshCount      = 7;
-    cc.clipmapIndex   = 2;
+    cc.accumulate    = 1;
     cc.resolution     = 64;
     cc.clipmapCenterX = 100.0f;
     cc.clipmapCenterY = 200.0f;
     cc.clipmapCenterZ = 300.0f;
     cc.clipmapExtent  = 2500.0f;
+    cc.rawOutputUav   = 43;
 
     // Interpret as uint32 array — this is how SetRootConstants reads it
     const auto* asUints = reinterpret_cast<const uint32_t*>(&cc);
     EXPECT_EQ(asUints[0], 42u);   // outputUav
     EXPECT_EQ(asUints[1], 7u);    // meshCount
-    EXPECT_EQ(asUints[2], 2u);    // clipmapIndex
+    EXPECT_EQ(asUints[2], 1u);
     EXPECT_EQ(asUints[3], 64u);   // resolution
+    EXPECT_EQ(asUints[8], 43u);   // independent raw output UAV
 
     // Float fields: verify they appear at the expected uint32 offsets
     float centerX = 0.0f;

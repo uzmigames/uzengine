@@ -244,6 +244,7 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
                                 }
 
                                 // Render this primitive
+                                if ((drawCmd.materialFlags & 0x3u) >= 2u) continue;
                                 if (drawCmd.meshId >= scrollingDesc.meshCount) continue;
                                 const GPUMesh& mesh = scrollingDesc.meshes[drawCmd.meshId];
                                 if (!mesh.IsValid()) continue;
@@ -424,6 +425,7 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
                     // Draw all scene geometry into this tile
                     uint32_t lastBoundMeshId = UINT32_MAX;
                     for (const auto& drawCmd : commands) {
+                        if ((drawCmd.materialFlags & 0x3u) >= 2u) continue;
                         if (drawCmd.meshId >= localMeshCount) continue;
                         const GPUMesh& mesh = localMeshes[drawCmd.meshId];
                         if (!mesh.IsValid()) continue;

@@ -19,6 +19,7 @@
 #import <Foundation/Foundation.h>
 
 UZ_DECLARE_LOG_CATEGORY(OsIntegration);
+UZ_DEFINE_LOG_CATEGORY(OsIntegration, Info);
 
 namespace uz {
 

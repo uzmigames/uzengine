@@ -79,8 +79,13 @@ float2 GetCascadeTileOffset(uint idx, uint cols, out float2 tileSize) {
 float SampleShadowCascade(float3 worldPos, float3 N, float NdotL, uint cascadeIdx,
                           Texture2D<float> shadowAtlas, SamplerComparisonState smplr) {
     float normalBias = GetCascadeNormalBias(cascadeIdx);
-    float slopeScale = clamp(tan(acos(max(NdotL, 0.001))), 0.0, 10.0);
-    float3 biasedPos = worldPos + N * normalBias * slopeScale;
+    /// @ref Holbert 2011 "Saying Goodbye to Shadow Acne"; Castano 2013 "Shadow Mapping Summary"
+    /// @constants Normal offset uses sin(theta) in [0,1]; slope offset uses tan(theta), capped at 2.
+    /// 1e-6 protects the grazing-angle division; saturate also rejects cosine roundoff above 1.
+    float cosine = saturate(NdotL);
+    float normalScale = sqrt(max(0.0, 1.0 - cosine * cosine));
+    float slopeScale = min(2.0, normalScale / max(cosine, 1e-6));
+    float3 biasedPos = worldPos + N * normalBias * normalScale;
 
     float4 lsp = mul(float4(biasedPos, 1.0), cascadeViewProj[cascadeIdx]);
     float3 proj = lsp.xyz / lsp.w;
@@ -96,9 +101,9 @@ float SampleShadowCascade(float3 worldPos, float3 N, float NdotL, uint cascadeId
     // OUT OF CASCADE XY RANGE — caller must fall back to next cascade.
     if (any(shadowUV < 0.0) || any(shadowUV > 1.0)) return -1.0;
 
-    // Depth bias: use CB value with a minimum floor to prevent shadow acne.
-    // @ref Holbert 2011 "Normal Offset Shadows" — constant + slope-scaled bias
-    float depthBias = max(GetCascadeDepthBias(cascadeIdx), 0.0005);
+    /// @ref Pettineo 2013 "A Sampling of Shadow Techniques" — bias normalized to cascade depth range.
+    /// @constants Zero is the lower bound; preserve the producer's world-scaled cascade bias.
+    float depthBias = max(GetCascadeDepthBias(cascadeIdx), 0.0);
     // Slope-scaled depth bias: surfaces at grazing angles need more bias
     float slopeBias = depthBias * slopeScale;
     float cmpDepth = proj.z - depthBias - slopeBias;

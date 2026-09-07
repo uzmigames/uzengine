@@ -144,7 +144,9 @@ public:
 
     /// Returns the SRV index for the probe SH buffer.
     /// Used by the deferred lighting shader to sample radiance cache probes.
-    [[nodiscard]] uint32_t GetProbeSHBufferSrv() const noexcept { return m_shBufferSrv; }
+    [[nodiscard]] uint32_t GetProbeSHBufferSrv() const noexcept {
+        return HasProducedResult() ? m_shBufferSrv : UINT32_MAX;
+    }
 
     /// Returns the UAV index for the probe SH buffer.
     [[nodiscard]] uint32_t GetProbeSHBufferUav() const noexcept { return m_shBufferUav; }
@@ -164,7 +166,15 @@ public:
     /// Returns true if resources have been created and are valid.
     [[nodiscard]] bool IsInitialized() const noexcept { return m_initialized; }
 
+    [[nodiscard]] bool HasProducedResult() const noexcept {
+        return m_initialized && !m_firstWritePending && !m_dirty;
+    }
+    void InvalidateHistory() noexcept { m_dirty = true; }
+
 private:
+    void QueueDiagnosticReadback(IRHICommandList* cmdList, uint32_t frameIndex);
+    void ReadDiagnosticResults(uint32_t frameIndex);
+
     IRHIDevice* m_device = nullptr;
 
     /// StructuredBuffer<float4> — kTotalProbes * kSHFloat4PerProbe float4 elements.
@@ -172,6 +182,19 @@ private:
     RHIBufferHandle m_shBuffer;
     uint32_t        m_shBufferSrv = UINT32_MAX;
     uint32_t        m_shBufferUav = UINT32_MAX;
+    RHIBufferHandle m_historyShBuffer;
+    uint32_t        m_historyShBufferSrv = UINT32_MAX;
+    uint32_t        m_historyShBufferUav = UINT32_MAX;
+    RHIResourceState m_shBufferState = RHIResourceState::Common;
+    RHIResourceState m_historyShBufferState = RHIResourceState::Common;
+    RHIBufferHandle m_diagnosticReadback;
+    RHIBufferHandle m_diagnosticStats;
+    uint32_t m_diagnosticStatsUav = UINT32_MAX;
+    RHIResourceState m_diagnosticStatsState = RHIResourceState::Common;
+    uint32_t m_diagnosticCopyFrame = UINT32_MAX;
+    bool m_diagnosticComplete = false;
+    Vec3 m_diagnosticOrigin;
+    float m_diagnosticSpacing = 0.0f;
 
     /// World-space grid origin (minimum corner = center - extent).
     Vec3   m_gridOrigin;
@@ -191,6 +214,7 @@ private:
 
     bool   m_initialized = false;
     bool   m_dirty       = true;
+    bool   m_firstWritePending = true; ///< Set at CreateResources; consumed by the first UpdateProbes.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -212,7 +236,7 @@ struct RadianceCacheTraceConstants {
     float    maxTraceDistance;    ///< Maximum ray trace distance (cm).
     float    temporalBlendAlpha; ///< EMA blend factor (0.05).
     uint32_t shBufferUav;        ///< UAV index for SH buffer read/write.
-    uint32_t _pad;
+    uint32_t firstWrite;         ///< 1 = write SH without temporal blend (buffer never written).
 
     // GDF clipmap parameters for the trace shader
     float    gdfCenter0X, gdfCenter0Y, gdfCenter0Z, gdfExtent0;

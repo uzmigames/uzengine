@@ -82,6 +82,13 @@ SamplerState linearSampler : register(s0);
 float3 WorldToCubemap(float3 dir) { return float3(dir.x, dir.z, dir.y); }
 
 float4 main(PSInput input) : SV_Target {
+    float3 emission = emissiveColor * emissiveIntensity;
+#ifdef UZ_BINDLESS
+    if (emissiveIndex > 0 && emissiveIndex != kSentinelSrvIndex) {
+        Texture2D<float4> emissiveTexture = ResourceDescriptorHeap[emissiveIndex];
+        emission *= emissiveTexture.Sample(linearSampler, input.texcoord * uvScale + uvOffset).rgb;
+    }
+#endif
     float3 N = normalize(input.normalWS);
     float3 V = normalize(cameraPos.xyz - input.positionWS);
     float  NoV = max(dot(N, V), 1e-4);
@@ -191,7 +198,7 @@ float4 main(PSInput input) : SV_Target {
 
         // @ref Shadertoy XdVfDd — color = refraction + surface_reflection
         // Refraction is dominant (1-F ≈ 0.96 at center), reflection adds Fresnel rim.
-        float3 color = refractionColor + surfaceReflection;
+        float3 color = refractionColor + surfaceReflection + emission;
         return float4(color, 1.0);
     }
 
@@ -219,7 +226,7 @@ float4 main(PSInput input) : SV_Target {
     }
 #endif
 
-    float3 color = albedo * (lightColor.xyz * NdotL + iblDiffuse + ambientColor.xyz);
+    float3 color = albedo * (lightColor.xyz * NdotL + iblDiffuse + ambientColor.xyz) + emission;
     // Premultiplied alpha — color already weighted by opacity for (One, InvSrcAlpha) blend.
     return float4(color * matOpacity, matOpacity);
 }

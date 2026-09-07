@@ -9,6 +9,7 @@
 #endif
 
 #include "demo_application.h"
+#include "platform_window.h"
 #include "units.h"
 #include "uzengine.h"
 

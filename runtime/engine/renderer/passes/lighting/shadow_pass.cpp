@@ -19,6 +19,7 @@
 #include "profiler.h"
 
 #include <cstring>
+#include <algorithm>
 
 UZ_DECLARE_LOG_CATEGORY(Renderer);
 
@@ -84,6 +85,8 @@ void AddShadowPass(rg::RgBuilder& builder, const ShadowPassDesc& desc)
             cmd->ClearDepthStencil(desc.shadowAtlasTexture, kShadowDepthClear, 0);
 
             const auto& commands = desc.drawList->GetCommands();
+            const bool hasTranslucent = std::any_of(commands.begin(), commands.end(),
+                [](const DrawCommand& draw) { return (draw.materialFlags & 0x3u) >= 2u; });
             const uint32_t resolution = desc.atlasResolution;
             uint32_t totalDrawCalls = 0;
 
@@ -123,7 +126,7 @@ void AddShadowPass(rg::RgBuilder& builder, const ShadowPassDesc& desc)
                 // For the instanced path, use mesh[0] as the shared geometry
                 // (instanced batches are always homogeneous in mesh — future work
                 // will store per-batch meshId and bind accordingly).
-                const bool useInstanced = desc.instanced && desc.bindless
+                const bool useInstanced = desc.instanced && desc.bindless && !hasTranslucent
                                           && desc.batchData != nullptr
                                           && desc.batchCount > 0
                                           && desc.meshCount > 0
@@ -213,6 +216,7 @@ void AddShadowPass(rg::RgBuilder& builder, const ShadowPassDesc& desc)
                     // - Uncached: render all (default, backward compatible)
                     uint32_t lastBoundMeshId = UINT32_MAX; // Track to avoid redundant rebinds.
                     for (const auto& drawCmd : commands) {
+                        if ((drawCmd.materialFlags & 0x3u) >= 2u) continue;
                         // ── Mobility filter for shadow caching ───────────────
                         if (desc.cacheMode == ShadowCacheMode::StaticPrimitivesOnly) {
                             // Only render static/stationary primitives into cached atlas

@@ -277,10 +277,24 @@ struct PerFrameCB {
     /// @ref Lagarde & de Rousiers 2014 "Moving Frostbite to PBR" — §4.9.3
     float    indirectAOExponent = 2.0f;     ///< CVar r.IndirectAO.Exponent — default 2.0.
 
+    uint32_t sdfReflectionsEnabled = 0;
+    uint32_t sdfReflectionSkySrv = UINT32_MAX;
+    uint32_t sdfReflectionSamples = 4;
+    Vec4     sdfReflectionClipmaps[4] = {};
+    uint32_t sdfReflectionClipmapSrv[4] = {UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX};
+    float    sdfReflectionTraceDistance = 5000.0f;
+    float    sdfReflectionVoxelSize = 0.0f;
+    uint32_t sdfReflectionTraceSteps = 96;
+    float    sdfReflectionIntensity = 1.0f;
+    uint32_t sdfDiffuseSamples = 0;
+    uint32_t _padSdfRaw[3] = {};
+    uint32_t sdfRawClipmapSrv[4] = {UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX};
+
     // ── Padding to next 256-byte boundary (1024 bytes) ────────────────
-    float    _padToCBEnd[43]  = {};         ///< Pads PerFrameCB to 1024 bytes (4 x 256).
+    float    _padToCBEnd[8]  = {};         ///< Pads PerFrameCB to 1024 bytes (4 x 256).
 };
 
+static_assert(offsetof(PerFrameCB, sdfRawClipmapSrv) == 976);
 static_assert(sizeof(PerFrameCB) == 1024, "PerFrameCB must be 1024 bytes (4 x 256 D3D12 CB alignment)");
 
 // ─────────────────────────────────────────────────────────────────────────────

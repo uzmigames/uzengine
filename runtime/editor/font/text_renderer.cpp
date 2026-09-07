@@ -8,9 +8,12 @@
 #include "constant_buffers.h"
 #include "log.h"
 
-#ifdef _WIN32
+// ShaderPipeline overload: available wherever runtime HLSL compilation exists
+// (Windows via DXC, macOS via Slang→MSL).
+#if defined(_WIN32) || defined(__APPLE__)
 #include "engine_shaders.h"
 #include "shader_pipeline.h"
+#define UZ_TEXT_RENDERER_HAS_SHADER_PIPELINE 1
 #endif
 
 #include <cstring>
@@ -139,7 +142,7 @@ bool TextRenderer::InitPipelines(RHIShaderHandle textPs, RHIShaderHandle rectPs,
     return true;
 }
 
-#ifdef _WIN32
+#ifdef UZ_TEXT_RENDERER_HAS_SHADER_PIPELINE
 bool TextRenderer::Init(IRHIDevice* device, ShaderPipeline& shaderPipeline,
                         RHIFormat rtvFormat, uint32_t screenWidth, uint32_t screenHeight,
                         bool bindless) {
@@ -187,7 +190,18 @@ bool TextRenderer::Init(IRHIDevice* device, ShaderPipeline& shaderPipeline,
 
     return InitPipelines(textPs, rectPs, rtvFormat);
 }
-#endif // _WIN32
+#else
+bool TextRenderer::Init(IRHIDevice* device, ShaderPipeline& shaderPipeline,
+                        RHIFormat rtvFormat, uint32_t screenWidth, uint32_t screenHeight,
+                        bool bindless) {
+    (void)device; (void)shaderPipeline; (void)rtvFormat;
+    (void)screenWidth; (void)screenHeight; (void)bindless;
+    UZ_LOG(EditorText, Error,
+           "TextRenderer: ShaderPipeline overload is unavailable on this "
+           "platform — use the pre-created shader handle overload");
+    return false;
+}
+#endif // UZ_TEXT_RENDERER_HAS_SHADER_PIPELINE
 
 bool TextRenderer::Init(IRHIDevice* device, RHIShaderHandle overlayVS,
                         RHIShaderHandle textPS, RHIShaderHandle rectPS,

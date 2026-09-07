@@ -75,7 +75,7 @@ TEST(PerFrameCB, InvViewProjField_WriteAndReadBack) {
         dst[i] = static_cast<float>(i + 1);
     }
 
-    uint8_t blob[512]; // PerFrameCB is 512 bytes (two D3D12 256-byte CB slots)
+    uint8_t blob[sizeof(PerFrameCB)];
     std::memcpy(blob, &cb, sizeof(cb));
 
     PerFrameCB restored{};
@@ -95,7 +95,7 @@ TEST(PerFrameCB, LightingFields_WriteAndReadBack) {
     cb.lightColor  = {1.0f,  0.9f, 0.8f, 0.0f};
     cb.ambientColor = {0.1f, 0.1f, 0.15f, 0.0f};
 
-    uint8_t blob[512]; // PerFrameCB is 512 bytes (two D3D12 256-byte CB slots)
+    uint8_t blob[sizeof(PerFrameCB)];
     std::memcpy(blob, &cb, sizeof(cb));
 
     PerFrameCB r{};

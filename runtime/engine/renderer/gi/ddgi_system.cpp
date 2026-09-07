@@ -213,6 +213,8 @@ void DDGISystem::DispatchUpdate(IRHICommandList* cmdList,
     toSrv[1].stateBefore = RHIResourceState::UnorderedAccess;
     toSrv[1].stateAfter  = RHIResourceState::ShaderResource;
     cmdList->ResourceBarrier(toSrv, 2);
+
+    m_firstUpdateComplete = true;
 }
 
 void DDGISystem::DestroyResources() {

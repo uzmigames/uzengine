@@ -49,7 +49,11 @@ ConstantBuffer<GBufferIndices> gBufIndices : register(b0);
 Texture2D<float4> gbufferAlbedo    : register(t0);
 Texture2D<float4> gbufferNormal    : register(t1);
 Texture2D<float>  gbufferDepth     : register(t2);
+Texture2D<float>  shadowAtlasTexture : register(t3);
 Texture2D<float4> gbufferPositionWS : register(t4);
+TextureCube<float4> iblIrradiance  : register(t5);
+TextureCube<float4> iblPrefiltered : register(t6);
+Texture2D<float2> iblBrdfLut       : register(t7);
 Texture2D<float>  gtaoTextureT9    : register(t9);
 Texture2D<float4> gbufferEmissive  : register(t10);
 Texture2D<float4> ssrTextureT11    : register(t11);
@@ -168,7 +172,20 @@ cbuffer PerFrameCB : register(b1) {
     float  _ddgiIntensity;          //         (844)
     // ── Indirect AO ──────────────────────────────────────────────────
     float  _indirectAOExponent;     //         (848) pow(ao, N) for indirect light
+    uint _sdfReflectionsEnabled;    // 852
+    uint _sdfReflectionSkySrv;      // 856
+    uint _sdfReflectionSamples;     // 860
+    float4 _sdfReflectionClipmaps[4]; // 864
+    uint4 _sdfReflectionClipmapSrv; // 928
+    float _sdfReflectionTraceDistance; // 944
+    float _sdfReflectionVoxelSize;  // 948
+    uint _sdfReflectionTraceSteps;  // 952
+    float _sdfReflectionIntensity; // 956
+    uint _sdfDiffuseSamples;        // 960
+    uint3 _padSdfRaw;               // 964
+    uint4 _sdfRawClipmapSrv;         // 976
 };
+
 
 // LightingCB at b2 via light_types.hlsli (already declared above)
 
@@ -178,6 +195,11 @@ cbuffer PerFrameCB : register(b1) {
 
 SamplerState      linearSampler : register(s0);
 SamplerState      clampSampler  : register(s2);
+
+#ifdef UZ_BINDLESS
+#define UZ_SDF_REFLECTION_SAMPLER clampSampler
+#include "../gi/sdf_diffuse_gather.hlsli"
+#endif
 
 // ─── Input ─────────────────────────────────────────────────────────────────
 
@@ -225,6 +247,14 @@ LightingOutput main(FSInput input) {
     float3 worldPos = gbufferPositionWS.Load(int3(px, 0)).xyz;
     float3 emissive = gbufferEmissive.Load(int3(px, 0)).rgb;
 #endif
+
+    // Raster surface derivatives are independent of interpolated/normal-map shading normals.
+    // @ref Pharr, Jakob and Humphreys 2023 "Physically Based Rendering", surface normal orientation.
+    // @constants Squared area <=1e-12 is degenerate; unknown geometry produces zero transport.
+    float3 geometricNormal = cross(ddx_fine(worldPos), ddy_fine(worldPos));
+    float geometricArea = dot(geometricNormal, geometricNormal);
+    geometricNormal = geometricArea > 1e-12 ? geometricNormal * rsqrt(geometricArea) : 0.0;
+    if (dot(geometricNormal, cameraPos.xyz - worldPos) < 0.0) geometricNormal = -geometricNormal;
 
     // Sky pixels: reversed-Z far = 0
     if (z <= 0.0001) discard;
@@ -283,7 +313,15 @@ LightingOutput main(FSInput input) {
         transmission = customW; // RT2.w holds the packed value (0-1)
     }
 
-    float3 F0         = ComputeF0(baseColor, metallic);
+    /// @ref Karis 2013 "Real Shading in Unreal Engine 4"
+    /// @ref Guy and Agopian 2026 "Physically Based Rendering in Filament" (living document, accessed 2026-09-07), specular micro-occlusion.
+    /// @constants 16 separates shading IDs; 0.08 maps Specular=0.5 to F0=0.04;
+    /// 50 extinguishes grazing reflectance for authored F0 below 2%.
+    float materialSpecular = saturate(packedAlpha - float(smID) * 16.0);
+    float3 dielectricF0 = 0.08 * materialSpecular;
+    float dielectricF90 = saturate(50.0 * dielectricF0.g);
+    float3 F0         = lerp(dielectricF0, baseColor, metallic);
+    float3 F90        = lerp(dielectricF90, 1.0, metallic);
     float3 diffColor  = baseColor * (1.0 - metallic);
 
     float3 V   = normalize(cameraPos.xyz - worldPos);
@@ -333,7 +371,7 @@ LightingOutput main(FSInput input) {
             // @ref Heitz 2014 + Hammon 2017 — optimized correlated Smith visibility
             float  D = D_GGX(alpha, NoH);
             float  Vis = V_SmithGGXCorrelated(alpha, NoV, NoL);
-            float3 F = F_Schlick(F0, float3(1, 1, 1), VoH);
+            float3 F = F_Schlick(F0, F90, VoH);
             float3 spec = D * Vis * F;
 
             // Diffuse: Frostbite energy-conserving (already divided by PI)
@@ -365,7 +403,7 @@ LightingOutput main(FSInput input) {
 
         float  Dp   = D_GGX(alpha, NoHp);
         float  Visp = V_SmithGGXCorrelated(alpha, NoV, NoLp);
-        float3 Fp   = F_Schlick(F0, float3(1,1,1), VoHp);
+        float3 Fp   = F_Schlick(F0, F90, VoHp);
         float3 specp = Dp * Visp * Fp;
         float3 diffp = EvalFrostbiteDiffuse(diffColor, roughness, NoV, NoLp, VoHp);
 
@@ -399,7 +437,7 @@ LightingOutput main(FSInput input) {
 
         float  Ds   = D_GGX(alpha, NoHs);
         float  Viss = V_SmithGGXCorrelated(alpha, NoV, NoLs);
-        float3 Fs   = F_Schlick(F0, float3(1,1,1), VoHs);
+        float3 Fs   = F_Schlick(F0, F90, VoHs);
         float3 specs = Ds * Viss * Fs;
         float3 diffs = EvalFrostbiteDiffuse(diffColor, roughness, NoV, NoLs, VoHs);
 
@@ -556,9 +594,7 @@ LightingOutput main(FSInput input) {
 
         // ── 2. Radiance cache (SDF sphere-traced spatially-varying SH) ───
 #ifdef UZ_BINDLESS
-        if (!irradianceFromGI
-            && _rcEnabled != 0 && _rcProbesSrv != 0xFFFFFFFFu
-            && _rcGiIntensity > 0.0) {
+        if (!irradianceFromGI && _rcEnabled != 0 && _rcProbesSrv != 0xFFFFFFFFu) {
             StructuredBuffer<float4> probeSH = ResourceDescriptorHeap[_rcProbesSrv];
 
             float3 gridOrigin = float3(_rcOriginX, _rcOriginY, _rcOriginZ);
@@ -574,6 +610,7 @@ LightingOutput main(FSInput input) {
                                             int(_rcProbesPerAxis) - 1));
 
             float3 rcIrrad = float3(0,0,0);
+            float rcTotalWeight = 0.0;
             [unroll]
             for (uint corner = 0; corner < 8; ++corner) {
                 int3 idx3 = int3(
@@ -584,10 +621,18 @@ LightingOutput main(FSInput input) {
                         * ((corner & 2) ? frac3.y : (1.0 - frac3.y))
                         * ((corner & 4) ? frac3.z : (1.0 - frac3.z));
 
+                // Match the surfel gather: probes behind the tangent plane must not darken or light this side.
+                float3 probePosition = gridOrigin + float3(idx3) * (gridSize / (ppa - 1.0));
+                float3 toProbe = probePosition - worldPos;
+                float probeDistance = length(toProbe);
+                float normalWeight = probeDistance > 0.0 ? saturate(dot(N, toProbe / probeDistance)) : 1.0;
+                w *= normalWeight * normalWeight;
+
                 uint probeLinear = uint(idx3.x)
                                  + uint(idx3.y) * _rcProbesPerAxis
                                  + uint(idx3.z) * _rcProbesPerAxis * _rcProbesPerAxis;
                 uint base = probeLinear * 7u;
+                if (probeSH[base + 6].w <= 0.0) continue;
 
                 float4 sh0 = probeSH[base + 0];
                 float4 sh1 = probeSH[base + 1];
@@ -600,15 +645,12 @@ LightingOutput main(FSInput input) {
 
                 float3 probeIrrad = EvalSH_L2(N, shArr);
                 rcIrrad += w * max(probeIrrad, 0.0);
+                rcTotalWeight += w;
             }
 
-            // Only adopt the radiance cache when it actually contains data —
-            // a fully-zero RC means the trace pass has not converged yet, so
-            // we fall through to the next source.
-            if (dot(rcIrrad, float3(1,1,1)) > 1e-5) {
-                irradiance = rcIrrad * _rcGiIntensity;
-                irradianceFromGI = true;
-            }
+            // CPU validity gates initialization; zero is valid for an unlit enclosure.
+            irradiance = rcTotalWeight > 0.0 ? rcIrrad * (_rcGiIntensity / rcTotalWeight) : 0.0;
+            irradianceFromGI = true;
         }
 #endif
 
@@ -755,7 +797,9 @@ LightingOutput main(FSInput input) {
         // shadow-modulated sky above cannot go below a minimum. Keep this
         // value low (0.005–0.02 in linear RGB) — high values defeat the
         // shadow modulation by lifting every pixel back up to full ambient.
-        irradiance = max(irradiance, skyLightMinAmbient);
+        if (!irradianceFromGI) {
+            irradiance = max(irradiance, skyLightMinAmbient);
+        }
 
         // Our SH coefficients are pre-convolved with cosine lobe (UE5 pattern),
         // so EvalSH_L2 returns irradiance E directly. No /PI needed — our
@@ -799,35 +843,53 @@ LightingOutput main(FSInput input) {
         // active) this is a no-op.
         // @ref UE5 DeferredLightingCommon.ush — IndirectSpecular scaling
         radiance *= skyVisibility;
-        // Analytical DFG approximation — replaces GPU-baked BRDF LUT with the
-        // closed-form fit from Karis 2014. No texture lookup needed. This is the
-        // same approach used by Three.js, Filament, and Frostbite.
-        // @ref Karis 2014 "Physically Based Shading" — analytical DFG approximation
-        // @ref Three.js WebGLPrograms DFGApprox — production validation
-        // @ref Karis 2014 "Physically Based Shading" — analytical DFG approximation
-        // @ref Three.js WebGLPrograms DFGApprox — production validation
-        {
-            float a = roughness;
-            float4 r = float4(-1.0, -0.0275, -0.572, 0.022) * a + float4(1.0, 0.0425, 1.04, -0.04);
-            float ab = min(r.x * r.x, exp2(-9.28 * NoV)) * r.x + r.z;
-            envBRDF = float2(ab, r.y * a + r.w);
-            // Clamp to physical range — the analytical fit can exceed 1.0 at
-            // very low roughness, causing overbright specular rings on chrome.
-            envBRDF.x = saturate(envBRDF.x);
-            envBRDF.y = max(envBRDF.y, 0.0);
+#ifdef UZ_BINDLESS
+        if (_sdfReflectionsEnabled != 0 || _sdfDiffuseSamples != 0) {
+            SdfReflectionScene scene;
+            [unroll] for (uint cascade = 0; cascade < 4; ++cascade)
+                scene.clipmaps[cascade] = _sdfReflectionClipmaps[cascade];
+            scene.clipmapSrv = _sdfReflectionClipmapSrv;
+            scene.rawClipmapSrv = _sdfRawClipmapSrv;
+            scene.skySrv = _sdfReflectionSkySrv;
+            scene.probeSrv = _rcProbesSrv;
+            scene.probesPerAxis = _rcProbesPerAxis;
+            scene.probeOrigin = float3(_rcOriginX, _rcOriginY, _rcOriginZ);
+            scene.probeExtent = _rcExtent;
+            scene.voxelSize = _sdfReflectionVoxelSize;
+            scene.traceDistance = _sdfReflectionTraceDistance;
+            scene.traceSteps = _sdfReflectionTraceSteps;
+            scene.sunDirection = sunL;
+            scene.sunColor = lightColor.xyz;
+            scene.skyMultiplier = skyTintSpecular;
+            if (_sdfDiffuseSamples != 0) {
+                Texture2D<float4> gatheredDiffuse = ResourceDescriptorHeap[ssgiSrvIndex];
+                cosineIrradiance = gatheredDiffuse.Load(int3(px, 0)).rgb;
+                skyTintDiffuse = 1.0;
+            }
+            if (_sdfReflectionsEnabled != 0) {
+                radiance = GatherSdfReflections(scene, worldPos, N, geometricNormal, reflect(-V, N), roughness,
+                    uint2(px), uint(timeParams.z), _sdfReflectionSamples) * _sdfReflectionIntensity;
+                if (ssrSrvIndex != kSentinelSrvIndex) {
+                    Texture2D<float4> screenReflections = ResourceDescriptorHeap[ssrSrvIndex];
+                    float4 screenHit = screenReflections.SampleLevel(clampSampler, input.texcoord, 0);
+                    radiance = lerp(radiance, screenHit.rgb, saturate(screenHit.a));
+                }
+                skyTintSpecular = 1.0;
+            }
         }
+#endif
+        envBRDF = EnvironmentBRDFApprox(roughness, NoV);
 
         // ── Split dielectric/metallic multi-scattering (Three.js pattern) ──
         // @ref Fdez-Aguera 2019 "A Multiple-Scattering Microfacet Model"
         // @ref Three.js computeMultiscattering — separate F0 per material type
-        float3 dielectricF0 = float3(0.04, 0.04, 0.04);
         float3 metallicF0   = baseColor;
 
-        // Dielectric path (F0 = 0.04)
-        float3 FssEss_d = dielectricF0 * envBRDF.x + envBRDF.y;
+        // Dielectric reflectance includes the authored micro-occlusion.
+        float3 FssEss_d = dielectricF0 * envBRDF.x + dielectricF90 * envBRDF.y;
         float  Ess_d    = envBRDF.x + envBRDF.y;
         float  Ems_d    = 1.0 - Ess_d;
-        float3 Favg_d   = dielectricF0 + (1.0 - dielectricF0) * 0.047619;
+        float3 Favg_d   = dielectricF0 + (dielectricF90 - dielectricF0) * 0.047619;
         float3 Fms_d    = FssEss_d * Favg_d / max(1.0 - Ems_d * Favg_d, 0.001);
 
         // Metallic path (F0 = baseColor)
@@ -867,17 +929,8 @@ LightingOutput main(FSInput input) {
         // @ref Three.js RE_IndirectSpecular uses the NoV-dependent version
         //      (known discrepancy with Frostbite/Filament — prioritises ALU
         //      count over correctness).
-        float2 envBRDF_diff;
-        {
-            float a = roughness;
-            float4 r = float4(-1.0, -0.0275, -0.572, 0.022) * a
-                     + float4( 1.0,  0.0425,  1.04,  -0.04);
-            // NoV = 1 → exp2(-9.28 * 1) ≈ 0.00159 (≤ r.x*r.x for all a).
-            float ab = min(r.x * r.x, exp2(-9.28)) * r.x + r.z;
-            envBRDF_diff.x = saturate(ab);
-            envBRDF_diff.y = max(r.y * a + r.w, 0.0);
-        }
-        float3 FssEss_d_diff = dielectricF0 * envBRDF_diff.x + envBRDF_diff.y;
+        float2 envBRDF_diff = EnvironmentBRDFApprox(roughness, 1.0);
+        float3 FssEss_d_diff = dielectricF0 * envBRDF_diff.x + dielectricF90 * envBRDF_diff.y;
         float  Ess_d_diff    = envBRDF_diff.x + envBRDF_diff.y;
         float  Ems_d_diff    = 1.0 - Ess_d_diff;
         float3 Fms_d_diff    = FssEss_d_diff * Favg_d
@@ -886,14 +939,6 @@ LightingOutput main(FSInput input) {
 
         float3 diffuseAmbient = (1.0 - metallic) * cosineIrradiance * baseColor
                               * (1.0 - totalScatterDielectric);
-
-        // SSR is applied POST-TAA to prevent TAA neighborhood contamination.
-        // See ssr_composite_cs.hlsl — composites SSR onto TAA-resolved image.
-        // The deferred lighting pass outputs IBL-only specular; SSR is added later.
-        {
-            // SSR composite moved to post-TAA pass. This block intentionally empty.
-            // The singleScatter and multiScatter terms remain in specularAmbient (IBL only).
-        }
 
         // Horizon occlusion — prevent reflections below surface.
         // @ref Lagarde 2012 "Horizon Occlusion for Normal Mapped Reflections"
@@ -912,7 +957,7 @@ LightingOutput main(FSInput input) {
 
         // SSGI: add screen-space indirect diffuse if available
 #ifdef UZ_BINDLESS
-        if (ssgiSrvIndex != kSentinelSrvIndex) {
+        if (ssgiSrvIndex != kSentinelSrvIndex && _sdfDiffuseSamples == 0) {
             Texture2D<float4> ssgiTex = ResourceDescriptorHeap[ssgiSrvIndex];
             float3 ssgiColor = ssgiTex.Load(int3(px, 0)).rgb;
             if (any(ssgiColor > 0.001))
@@ -953,16 +998,8 @@ LightingOutput main(FSInput input) {
         }
 #endif
 
-        // @ref Three.js MeshStandardMaterial — metallic mirrors use pure radiance
-        // without DFG scaling, multi-scatter, or specular occlusion. This avoids
-        // the warm ring artifact caused by envBRDF angular variation and irradiance
-        // bleed at grazing angles.
-        if (metallic > 0.95 && roughness < 0.1) {
-            ambient = radiance * metallicF0 * skyTintSpecular;
-        } else {
-            ambient = diffuseAmbient * ao * skyTintDiffuse
-                    + specularAmbient * specOcclusion * skyTintSpecular;
-        }
+        ambient = diffuseAmbient * ao * skyTintDiffuse
+                + specularAmbient * specOcclusion * skyTintSpecular;
     }
 
     // ── Environment MIS (temporally accumulated specular) ───────────────
@@ -985,7 +1022,11 @@ LightingOutput main(FSInput input) {
     //
     // At normal incidence (center): ~96% transmission, ~4% reflection (F0=0.04 for glass)
     // At grazing angles (rim): ~100% reflection (Fresnel → 1.0)
+#ifdef UZ_BINDLESS
     if (transmission > 0.0 && gBufIndices.iblPrefilteredSrvIdx != kSentinelSrvIndex) {
+#else
+    if (transmission > 0.0) {
+#endif
         // @ref Three.js MeshPhysicalMaterial — specular=0.5 → F0=0.04 → IOR=1.5
         // @constants F0_dielectric = specular * 0.08, IOR = (1+√F0)/(1-√F0)
         float specularFromAlpha = frac(packedAlpha / 16.0) * 16.0;
@@ -1005,6 +1046,8 @@ LightingOutput main(FSInput input) {
 #ifdef UZ_BINDLESS
         TextureCube<float4> prefTexT = ResourceDescriptorHeap[gBufIndices.iblPrefilteredSrvIdx];
         reflectedColor = prefTexT.SampleLevel(linearSampler, WorldToCubemap(R_glass), roughness * float(prefilteredMipLevels - 1)).rgb;
+#else
+        reflectedColor = iblPrefiltered.SampleLevel(linearSampler, WorldToCubemap(R_glass), roughness * float(prefilteredMipLevels - 1)).rgb;
 #endif
 
         // @ref Walter 2007 — Snell's law refraction direction via HLSL refract()

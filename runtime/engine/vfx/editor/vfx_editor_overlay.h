@@ -169,6 +169,7 @@ private:
     // ── GPU resources ────────────────────────────────────────────────────
     TextRenderer m_textRenderer;
     BitmapFont   m_font;
+    IRHIDevice*  m_device = nullptr;
     bool         m_initialized = false;
     bool         m_visible = false;
     uint32_t     m_lastFrameIndex = 0;

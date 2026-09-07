@@ -9,6 +9,7 @@
 
 #include "log.h"
 #include "profiler.h"
+#if defined(UZ_HAS_FFMPEG) || defined(_WIN32)
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -749,3 +750,61 @@ bool H264Encoder::GetExtradata(const uint8_t** outData, uint32_t* outSize) const
 }
 
 } // namespace uz
+
+#else // !UZ_HAS_FFMPEG && !_WIN32
+
+// FFmpeg is vendored only with Windows binaries; on other platforms the
+// encoder reports itself unavailable. Callers already degrade gracefully
+// (runtime.cpp: "H.264 encoder not available — frame streaming disabled").
+namespace uz {
+
+UZ_DEFINE_LOG_CATEGORY(H264, Info);
+
+struct H264Encoder::Impl {};
+
+H264Encoder::H264Encoder() = default;
+H264Encoder::~H264Encoder() = default;
+H264Encoder::H264Encoder(H264Encoder&&) noexcept = default;
+H264Encoder& H264Encoder::operator=(H264Encoder&&) noexcept = default;
+
+bool H264Encoder::Initialize(const Config& config) {
+    (void)config;
+    UZ_LOG(H264, Warning,
+           "H264Encoder: FFmpeg unavailable on this platform — frame streaming disabled");
+    return false;
+}
+
+void H264Encoder::Shutdown() {}
+
+bool H264Encoder::EncodeFrame(const uint8_t* rgbaData, uint32_t rgbaStride,
+                              const uint8_t** outData, uint32_t* outSize) {
+    (void)rgbaData; (void)rgbaStride;
+    if (outData) *outData = nullptr;
+    if (outSize) *outSize = 0;
+    return false;
+}
+
+void H264Encoder::SubmitFrameAsync(const uint8_t* rgbaData, uint32_t rgbaStride) {
+    (void)rgbaData; (void)rgbaStride;
+}
+
+bool H264Encoder::GetEncodedFrame(const uint8_t** outData, uint32_t* outSize) {
+    if (outData) *outData = nullptr;
+    if (outSize) *outSize = 0;
+    return false;
+}
+
+void H264Encoder::RequestKeyframe() {}
+void H264Encoder::SetBitrate(uint32_t kbps) { (void)kbps; }
+bool H264Encoder::IsInitialized() const noexcept { return false; }
+const char* H264Encoder::GetEncoderName() const noexcept { return "unavailable"; }
+
+bool H264Encoder::GetExtradata(const uint8_t** outData, uint32_t* outSize) const noexcept {
+    if (outData) *outData = nullptr;
+    if (outSize) *outSize = 0;
+    return false;
+}
+
+} // namespace uz
+
+#endif // UZ_HAS_FFMPEG || _WIN32

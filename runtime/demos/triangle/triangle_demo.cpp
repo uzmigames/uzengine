@@ -24,10 +24,10 @@
 #include "shader_pipeline.h"
 #include "shader_compiler.h"
 #include "shader_compiler_fxc.h"
+#endif
 #include "screenshot_capture.h"
 #include "render_graph_builder.h"
 #include "render_graph_resources.h"
-#endif
 
 #include <chrono>
 #include <cstdlib>
@@ -418,22 +418,18 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
         UZ_LOG(Renderer, Info, "Vertex buffer SRV index: {}", vbSrvIndex);
     }
 
-    // ── Screenshot Capture (Windows only) ──────────────────────────────
-#ifdef _WIN32
+    // ── Screenshot Capture (RHI readback — portable) ────────────────────
     ScreenshotCapture screenshotCapture;
     bool screenshotPending = !config.screenshotPath.empty();
     if (screenshotPending) {
-        if (!screenshotCapture.Init(device, scDesc.width, scDesc.height)) {
+        if (!screenshotCapture.Init(device.get(), scDesc.width, scDesc.height)) {
             UZ_LOG(Renderer, Error, "Failed to initialize screenshot capture");
             screenshotPending = false;
         }
     }
-#else
-    bool screenshotPending = false;
-#endif
 
     // ── Render Graph Resource Pool (persistent across frames) ────────────
-    rg::RgResourcePool rgPool(device);
+    rg::RgResourcePool rgPool(device.get());
 
     // ── Render Loop ──────────────────────────────────────────────────────
     uint32_t frameIndex = 0;
@@ -472,7 +468,7 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
         RHITextureHandle backBuffer = swapChain->GetCurrentBackBuffer();
 
         // Build render graph for this frame.
-        rg::RgBuilder rgBuilder(device, &rgPool);
+        rg::RgBuilder rgBuilder(device.get(), &rgPool);
         auto bbRes = rgBuilder.ImportTexture("Backbuffer", backBuffer, RHIResourceState::Present);
 
         // Triangle pass: clear + draw.
@@ -514,7 +510,6 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
         });
 
         // Screenshot pass (optional).
-#ifdef _WIN32
         bool capturedThisFrame = false;
         if (screenshotPending && frameIndex == config.screenshotFrame) {
             rgBuilder.AddPass("Screenshot", [&](rg::RgPassBuilder& pb) {
@@ -525,7 +520,6 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
                 });
             });
         }
-#endif
 
         // Present transition pass.
         rgBuilder.AddPass("Present", [&](rg::RgPassBuilder& pb) {
@@ -546,14 +540,12 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
         fenceValues[allocFrame] = globalFenceValue;
         frameFences[allocFrame]->Signal(globalFenceValue);
 
-        // ── Save screenshot after GPU completes (Windows only) ────────────
-#ifdef _WIN32
+        // ── Save screenshot after GPU completes ─────────────────────────
         if (capturedThisFrame) {
             frameFences[allocFrame]->WaitCPU(globalFenceValue);
             screenshotCapture.SaveToPNG(config.screenshotPath);
             screenshotPending = false;
         }
-#endif
 
         frameIndex++;
     }

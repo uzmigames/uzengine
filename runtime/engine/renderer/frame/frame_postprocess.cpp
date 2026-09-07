@@ -137,7 +137,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
         // Apply SSR AFTER TAA to prevent TAA neighborhood contamination.
         // The deferred lighting pass outputs IBL-only specular; SSR is
         // composited here onto the TAA-resolved (or raw HDR) image.
-        if (ctx.ssrActive && m_ssrHasPrevColor
+        if (ctx.ssrActive && m_ssrHasPrevColor && ctx.perFrame.sdfReflectionsEnabled == 0
             && m_ssrResolvedOutput.IsValid()
             && m_ssrResolvedOutputSrv != UINT32_MAX) {
 
@@ -280,6 +280,8 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 UZ_PROFILE_SCOPE("Tonemap::Execute");
 
                 auto bb = res.GetTexture(ctx.bbRes);
+                const RHIPipelineHandle tonemapPipeline = ctx.pipelines->GetTonemap();
+                if (!tonemapPipeline.IsValid()) return;
 
                 RHIRenderPassDesc passDesc{};
                 passDesc.colorAttachmentCount        = 1;
@@ -287,7 +289,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 passDesc.colorAttachments[0].clear   = false;
                 cmd->BeginRenderPass(passDesc);
 
-                cmd->SetPipeline(ctx.pipelines->GetTonemap());
+                cmd->SetPipeline(tonemapPipeline);
 
                 RHIViewport vp{};
                 vp.width    = static_cast<uint32_t>(ctx.vpWidth);

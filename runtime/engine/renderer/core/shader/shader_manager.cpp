@@ -5,11 +5,14 @@
 #include "log.h"
 #include "rhi.h"
 #include "rhi_backend.h"
-#include "shader_compiler.h"
-#include "shader_compiler_fxc.h"
 #include "paths.h"
 
 UZ_DECLARE_LOG_CATEGORY(Renderer);
+
+#ifdef _WIN32
+
+#include "shader_compiler.h"
+#include "shader_compiler_fxc.h"
 
 namespace uz {
 
@@ -169,3 +172,119 @@ RHIShaderHandle ShaderManager::CreateShaderWithDefines(EngineShader shader,
 }
 
 } // namespace uz
+
+#else // !_WIN32
+
+// Non-Windows ShaderManager: the ShaderPipeline compiles the embedded engine
+// HLSL to MSL via Slang; this manager feeds the MSL text (carried in the
+// RHIShaderDesc bytecode field, which the Metal backend accepts as UTF-8
+// source) to the device. Slang renames HLSL `main` entry points to `main_0`
+// in MSL output.
+namespace uz {
+
+ShaderManager::~ShaderManager() = default;
+
+bool ShaderManager::Init(IRHIDevice* device) {
+    if (m_initialized) {
+        UZ_LOG(Renderer, Warning, "ShaderManager::Init called while already initialized");
+        return true;
+    }
+    if (!device) {
+        UZ_LOG(Renderer, Error, "ShaderManager::Init failed: device is null");
+        return false;
+    }
+
+    m_device = device;
+    m_bindless = device->IsBindless();
+    if (m_bindless) {
+        // Metal compiles the SM5 register-bound path — bindless resource heaps
+        // do not exist there.
+        UZ_LOG(Renderer, Warning,
+               "ShaderManager: device reports bindless; forcing non-bindless for MSL");
+        m_bindless = false;
+    }
+
+    ShaderPipeline::Config config{};
+    config.bindless = false;
+    m_pipeline.Init(config);
+    if (!m_pipeline.IsInitialized()) {
+        UZ_LOG(Renderer, Error, "ShaderManager: shader pipeline init failed");
+        return false;
+    }
+
+    m_initialized = true;
+    UZ_LOG(Renderer, Info, "ShaderManager: initialized (Slang -> MSL)");
+    return true;
+}
+
+std::vector<uint8_t> ShaderManager::GetBytecode(EngineShader shader) {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "ShaderManager::GetBytecode called before Init()");
+        return {};
+    }
+    const char* name = EngineShaders::GetName(shader);
+    const char* source = EngineShaders::GetSource(shader);
+    return m_pipeline.LoadBytecodeFromSource(name, source);
+}
+
+RHIShaderHandle ShaderManager::CreateShader(EngineShader shader, RHIShaderStage stage) {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "ShaderManager::CreateShader called before Init()");
+        return RHIShaderHandle::Invalid();
+    }
+
+    const char* name = EngineShaders::GetName(shader);
+    auto bytecode = GetBytecode(shader);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "ShaderManager: failed to compile '{}'", name);
+        return RHIShaderHandle::Invalid();
+    }
+
+    RHIShaderDesc desc;
+    desc.bytecode = bytecode.data();
+    desc.bytecodeSize = bytecode.size();
+    desc.stage = stage;
+    desc.entryPoint = "main_0";  // Slang MSL rename of HLSL `main`
+    desc.debugName = name;
+
+    return m_device->CreateShader(desc);
+}
+
+RHIShaderHandle ShaderManager::CreateShaderWithDefines(EngineShader shader,
+                                                       RHIShaderStage stage,
+                                                       const std::string& defines) {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error,
+               "ShaderManager::CreateShaderWithDefines called before Init()");
+        return RHIShaderHandle::Invalid();
+    }
+
+    const char* name = EngineShaders::GetName(shader);
+    const char* source = EngineShaders::GetSource(shader);
+    auto bytecode = m_pipeline.LoadBytecodeFromSource(name, source, defines);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error,
+               "ShaderManager: failed to compile '{}' with defines '{}'", name, defines);
+        return RHIShaderHandle::Invalid();
+    }
+
+    RHIShaderDesc desc;
+    desc.bytecode = bytecode.data();
+    desc.bytecodeSize = bytecode.size();
+    desc.stage = stage;
+    desc.entryPoint = "main_0";  // Slang MSL rename of HLSL `main`
+    desc.debugName = name;
+
+    return m_device->CreateShader(desc);
+}
+
+void ShaderManager::Shutdown() {
+    if (!m_initialized) return;
+    m_pipeline.Shutdown();
+    m_device = nullptr;
+    m_initialized = false;
+}
+
+} // namespace uz
+
+#endif // _WIN32

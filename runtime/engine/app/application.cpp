@@ -14,6 +14,7 @@
 #include "application.h"
 #include "pixel_debug.h"
 #include "crash_handler.h"
+#include "platform_window.h"
 #include "units.h"
 #include "uzengine.h"
 #include "scene_renderer.h"

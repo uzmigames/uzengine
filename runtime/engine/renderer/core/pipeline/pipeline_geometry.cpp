@@ -50,8 +50,10 @@ RHIPipelineHandle PipelineLibrary::GetForwardPBR(bool bindless) {
     desc.depthStencilFormat               = RHIFormat::D32Float;
     desc.debugName                        = bindless ? "ForwardPBR_Bindless" : "ForwardPBR";
 
+    const auto layout = VertexLayout::Standard();  // hoisted: desc.inputElements references it
+    // (must outlive the pipeline creation call below)
     if (!bindless) {
-        const auto layout = VertexLayout::Standard();
+
         desc.inputElements     = layout.elements;
         desc.inputElementCount = layout.count;
         desc.vertexStride      = layout.stride;
@@ -104,8 +106,10 @@ RHIPipelineHandle PipelineLibrary::GetGBuffer(bool bindless) {
     desc.depthStencilFormat               = RHIFormat::D32Float;
     desc.debugName                        = bindless ? "GBuffer_Bindless" : "GBuffer";
 
+    const auto layout = VertexLayout::Standard();  // hoisted: desc.inputElements references it
+    // (must outlive the pipeline creation call below)
     if (!bindless) {
-        const auto layout = VertexLayout::Standard();
+
         desc.inputElements     = layout.elements;
         desc.inputElementCount = layout.count;
         desc.vertexStride      = layout.stride;
@@ -169,8 +173,10 @@ RHIPipelineHandle PipelineLibrary::GetGBufferMasked(bool bindless) {
     desc.depthStencilFormat               = RHIFormat::D32Float;
     desc.debugName                        = bindless ? "GBufferMasked_Bindless" : "GBufferMasked";
 
+    const auto layout = VertexLayout::Standard();  // hoisted: desc.inputElements references it
+    // (must outlive the pipeline creation call below)
     if (!bindless) {
-        const auto layout = VertexLayout::Standard();
+
         desc.inputElements     = layout.elements;
         desc.inputElementCount = layout.count;
         desc.vertexStride      = layout.stride;
@@ -240,8 +246,10 @@ RHIPipelineHandle PipelineLibrary::GetTranslucent(bool bindless) {
     desc.depthStencilFormat               = RHIFormat::D32Float;
     desc.debugName                        = bindless ? "Translucent_Bindless" : "Translucent";
 
+    const auto layout = VertexLayout::Standard();  // hoisted: desc.inputElements references it
+    // (must outlive the pipeline creation call below)
     if (!bindless) {
-        const auto layout = VertexLayout::Standard();
+
         desc.inputElements     = layout.elements;
         desc.inputElementCount = layout.count;
         desc.vertexStride      = layout.stride;
@@ -306,8 +314,10 @@ RHIPipelineHandle PipelineLibrary::GetAdditive(bool bindless) {
     desc.depthStencilFormat               = RHIFormat::D32Float;
     desc.debugName                        = bindless ? "Additive_Bindless" : "Additive";
 
+    const auto layout = VertexLayout::Standard();  // hoisted: desc.inputElements references it
+    // (must outlive the pipeline creation call below)
     if (!bindless) {
-        const auto layout = VertexLayout::Standard();
+
         desc.inputElements     = layout.elements;
         desc.inputElementCount = layout.count;
         desc.vertexStride      = layout.stride;
@@ -571,8 +581,10 @@ RHIPipelineHandle PipelineLibrary::GetDepthPrepass(bool bindless) {
     desc.depthStencilFormat               = RHIFormat::D32Float;
     desc.debugName                        = bindless ? "DepthPrepass_Bindless" : "DepthPrepass";
 
+    const auto layout = VertexLayout::Standard();  // hoisted: desc.inputElements references it
+    // (must outlive the pipeline creation call below)
     if (!bindless) {
-        const auto layout = VertexLayout::Standard();
+
         desc.inputElements     = layout.elements;
         desc.inputElementCount = layout.count;
         desc.vertexStride      = layout.stride;
