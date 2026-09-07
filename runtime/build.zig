@@ -190,6 +190,11 @@ pub fn build(b: *std.Build) void {
         "platform/windows",
     };
 
+    // zlib and zstd are compiled from the vcpkg-extracted sources; the exact
+    // directory name depends on the vcpkg baseline, so resolve it at configure time.
+    const zlib_src = vcpkgSrcDir(b, "zlib");
+    const zstd_src = vcpkgSrcDir(b, "zstd");
+
     const windows_thirdparty_include_dirs = [_][]const u8{
         tp ++ "d3d12ma/include",
         tp ++ "directx_headers/include",
@@ -198,7 +203,7 @@ pub fn build(b: *std.Build) void {
         tp ++ "dxc/inc",
         // vcpkg-installed headers (zlib required by libpng, freetype, etc.)
         // zlib headers from source (not vcpkg DLL headers)
-        tp ++ "vcpkg/buildtrees/zlib/src/v1.3.1-2e5db616bf.clean",
+        zlib_src,
     };
 
     // ── uzembed build tool (generates .hlsl.gen.h headers) ─────────
@@ -395,15 +400,27 @@ pub fn build(b: *std.Build) void {
     });
 
     // Thirdparty — fastgltf (C++17 glTF 2.0 parser + bundled simdjson)
+    //
+    // SIMDJSON_IMPLEMENTATION_ICELAKE=0 disables simdjson's AVX-512 kernel.
+    // That kernel wraps its functions in `target("avx512f,avx512dq,...")`
+    // without naming `evex512`; clang 18 split 512-bit EVEX encoding into its
+    // own feature, so every 512-bit intrinsic there fails to inline. Upstream
+    // has not added it (checked through simdjson 4.6.11) and clang 21 removed
+    // the `-mevex512` escape hatch, so the kernel cannot be built at all.
+    // simdjson dispatches by CPUID at runtime and keeps the Haswell (AVX2),
+    // Westmere (SSE4.2) and portable kernels, so only the AVX-512 fast path
+    // for glTF parsing is lost. Defined for every TU that includes simdjson.h
+    // so the header's implementation list stays consistent.
+    const simdjson_flags = [_][]const u8{ "-std=c++17", "-DSIMDJSON_IMPLEMENTATION_ICELAKE=0" };
     runtime_mod.addCSourceFiles(.{
         .root = b.path(tp ++ "fastgltf/deps/simdjson"),
         .files = &.{"simdjson.cpp"},
-        .flags = &.{"-std=c++17"},
+        .flags = &simdjson_flags,
     });
     runtime_mod.addCSourceFiles(.{
         .root = b.path(tp ++ "fastgltf/src"),
         .files = &.{ "fastgltf.cpp", "base64.cpp", "io.cpp" },
-        .flags = &.{"-std=c++17"},
+        .flags = &simdjson_flags,
     });
 
     // Thirdparty — mikktspace (industry-standard tangent space generation)
@@ -599,7 +616,7 @@ pub fn build(b: *std.Build) void {
     });
     // Zstd decompression for KTX2 supercompression (compiled from vcpkg source)
     {
-        const zstd_root = tp ++ "vcpkg/buildtrees/zstd/src/v1.5.7-bb6cae2b2e.clean/lib/";
+        const zstd_root = b.fmt("{s}/lib/", .{zstd_src});
         runtime_mod.addCSourceFiles(.{
             .root = b.path(zstd_root),
             .files = &.{
@@ -617,7 +634,7 @@ pub fn build(b: *std.Build) void {
             .flags = &.{ "-std=c99", "-DZSTD_DISABLE_ASM" },
         });
         runtime_mod.addIncludePath(b.path(zstd_root));
-        runtime_mod.addIncludePath(b.path(zstd_root ++ "common"));
+        runtime_mod.addIncludePath(b.path(b.fmt("{s}common", .{zstd_root})));
     }
 
     // Thirdparty — miniz (zlib-compatible compression for tinyexr)
@@ -699,9 +716,9 @@ pub fn build(b: *std.Build) void {
 
     // Thirdparty — zlib (compiled from vcpkg source — static build avoids DLL import issues)
     // Use source dir headers instead of vcpkg-installed DLL headers
-    runtime_mod.addIncludePath(b.path(tp ++ "vcpkg/buildtrees/zlib/src/v1.3.1-2e5db616bf.clean"));
+    runtime_mod.addIncludePath(b.path(zlib_src));
     runtime_mod.addCSourceFiles(.{
-        .root = b.path(tp ++ "vcpkg/buildtrees/zlib/src/v1.3.1-2e5db616bf.clean"),
+        .root = b.path(zlib_src),
         .files = &.{
             "adler32.c", "compress.c", "crc32.c", "deflate.c",
             "gzclose.c", "gzlib.c", "gzread.c", "gzwrite.c",
@@ -1451,6 +1468,37 @@ pub fn build(b: *std.Build) void {
 // ─────────────────────────────────────────────────────────────────────────────
 // Build helpers
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Resolves the extracted vcpkg source tree for a port, relative to `runtime/`.
+///
+/// vcpkg names these directories after the upstream version plus a registry
+/// hash (`v1.3.2-c19a0bfd23.clean`), and that name changes every time the
+/// vcpkg baseline moves. Hardcoding one pins the build to a single vcpkg
+/// checkout and breaks with a `file_hash FileNotFound` cache error after any
+/// `vcpkg install`, so discover the directory instead.
+fn vcpkgSrcDir(b: *std.Build, port: []const u8) []const u8 {
+    const parent = b.fmt("thirdparty/vcpkg/buildtrees/{s}/src", .{port});
+    const parent_abs = b.path(parent).getPath(b);
+
+    var dir = std.Io.Dir.openDirAbsolute(b.graph.io, parent_abs, .{ .iterate = true }) catch
+        std.debug.panic(
+            "vcpkg port '{s}' has no extracted source at {s} — run scripts/setup.ps1",
+            .{ port, parent },
+        );
+    defer dir.close(b.graph.io);
+
+    var iter = dir.iterate();
+    while (iter.next(b.graph.io) catch null) |entry| {
+        if (entry.kind != .directory) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".clean")) continue;
+        return b.fmt("{s}/{s}", .{ parent, entry.name });
+    }
+
+    std.debug.panic(
+        "vcpkg port '{s}': no '*.clean' source directory under {s} — run scripts/setup.ps1",
+        .{ port, parent },
+    );
+}
 
 /// Scans a directory for all .cpp files (non-recursive) and adds them as
 /// C++ source files to the given module. This replaces manual file lists —
