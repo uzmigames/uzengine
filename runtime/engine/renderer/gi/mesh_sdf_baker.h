@@ -1,27 +1,9 @@
-/// UzEngine GI Mesh SDF Baker — CPU-side distance field generation for GI pipeline.
-///
-/// Generates a dense signed distance field from mesh triangles for use in the
-/// software ray-traced GI system (Lumen-style sphere marching). Unlike the sparse
-/// brick-based SDF in `sdf_types.h` (used for shadow cone tracing), this produces
-/// a flat dense R16F-compatible grid optimized for direct 3D texture upload.
-///
-/// The baker wraps the existing `BakeMeshSdf()` from the asset importer pipeline
-/// and converts its sparse brick output to a dense float grid suitable for the
-/// GI trace shaders.
-///
-/// # Algorithm
-/// 1. Compute mesh AABB, expand by 10% for narrow-band padding.
-/// 2. For each voxel in the grid, compute world position at voxel center.
-/// 3. Find distance to nearest triangle via spatial hash acceleration.
-/// 4. Determine sign via pseudo-normal method (dot with face normal at closest point).
-/// 5. Store signed distance (negative inside, positive outside) in world units (cm).
-///
-/// # References
-/// @ref Wright 2015 "Dynamic Occlusion with Signed Distance Fields" — brick SDF layout
+/// UzEngine GI Mesh SDF Baker — dense R16F distance fields generated on the GPU.
+/// Each voxel tests mesh triangles for the nearest point. Sign uses the face
+/// normal, oriented to supplied vertex normals when their offset is provided.
+/// The caller must exclusively own the command list while recording the bake.
+/// @ref Wright 2015 "Dynamic Occlusion with Signed Distance Fields"
 /// @ref Ericson 2005 "Real-Time Collision Detection" — closest-point-on-triangle
-///
-/// # Thread Safety
-/// Thread-safe — no shared mutable state. Can be called from worker threads.
 
 #pragma once
 
@@ -46,14 +28,19 @@ class IRHICommandList;
 struct MeshSDF {
     RHITextureHandle texture3D;                ///< R16F 3D texture of distance values.
     uint32_t         srvIndex = UINT32_MAX;    ///< Bindless SRV index in global descriptor heap.
-    float            volumeOrigin[3] = {};     ///< World-space center of the SDF volume.
-    float            volumeExtent[3] = {};     ///< World-space half-extents of the SDF volume.
+    float            volumeOrigin[3] = {};     ///< Mesh-local center of the SDF volume.
+    float            volumeExtent[3] = {};     ///< Mesh-local half-extents of the SDF volume.
     uint32_t         resolution = 0;           ///< Voxels per axis.
     bool             valid = false;            ///< True if texture is created and uploaded.
+    bool             twoSided = false;
+    uint32_t         albedoSrv = 0;
+    uint32_t         metallicSrv = 0;
+    float            baseColorTint[3] = {1.0f, 1.0f, 1.0f};
+    float            metallicMultiplier = 1.0f;
+    uint32_t         materialFlags = 0;
 
-    /// Cached world-to-local inverse transform (top 3 rows, row-major).
-    /// Precomputed to avoid per-frame Mat4::Inverse() in GDF composite.
-    /// Updated when the entity's world transform changes.
+    /// Three float4 dot products mapping world position to mesh-local position,
+    /// including translation in each vector's fourth component.
     float            invTransform[12] = {};
 
     /// Transient triangle buffer from GPU bake — must be destroyed after the
@@ -63,13 +50,13 @@ struct MeshSDF {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MeshSdfBaker — CPU baking + GPU upload
+// MeshSdfBaker — GPU baking
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Bakes mesh triangles into a signed distance field on the GPU.
 ///
 /// Uses a compute shader (mesh_sdf_bake_cs.hlsl) that dispatches one thread
-/// per voxel, brute-force iterating all triangles. 2500x faster than CPU path.
+/// per voxel, brute-force iterating all triangles.
 ///
 /// # Usage
 /// ```cpp
@@ -99,6 +86,8 @@ public:
     /// * `indices` — Triangle index buffer (3 per triangle). Null for non-indexed.
     /// * `indexCount` — Number of indices.
     /// * `resolution` — Voxels per axis (32 typical).
+    /// * `vertexNormalOffset` — Byte offset of float3 vertex normals; UINT32_MAX uses index winding.
+    /// * `twoSided` — Store unsigned distance for open surfaces without an interior.
     [[nodiscard]] static MeshSDF BakeMeshGPU(
         IRHIDevice* device,
         IRHICommandList* cmdList,
@@ -108,7 +97,9 @@ public:
         uint32_t vertexStride,
         const uint32_t* indices,
         uint32_t indexCount,
-        uint32_t resolution = 32);
+        uint32_t resolution = 32,
+        uint32_t vertexNormalOffset = UINT32_MAX,
+        bool twoSided = false);
 };
 
 } // namespace uz

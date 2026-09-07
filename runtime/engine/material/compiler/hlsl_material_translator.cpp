@@ -741,14 +741,8 @@ MaterialCompileResult HlslMaterialTranslator::Compile(const MaterialGraph& graph
             code_ += buf; code_ += "\n";
         }
 
-        // Specular multiplier — UE5 "Specular" param. Stored as the
-        // material's effective F0 baseline (default 1.0 = 4% F0). Pushed
-        // through the .a channel of the normal RT below would require an
-        // RT layout change; for now we bake it into the dielectric path
-        // by multiplying it into out_roughness=>spec response is nontrivial,
-        // so we expose it as a separate output planned in a follow-up.
-        // @ref Karis 2013 — Specular = 0.5 → 0.04 baseline F0.
-        (void)mp.specularMultiplier;
+        // Scene synchronization packs specularMultiplier into materialFlags;
+        // the GBuffer carries it in emissive alpha for deferred BRDF evaluation.
     }
 
     // Step 5: Wrap in function signature.

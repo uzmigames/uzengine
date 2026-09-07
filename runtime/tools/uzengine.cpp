@@ -687,10 +687,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         }
     }
 
-    // ── Pre-load: drain async texture decodes before the render loop ──────
-    // Render one frame to trigger lazy material texture loads (SyncWorldToDrawList
-    // → LoadTexture → async decoder submit), then drain all pending decodes via
-    // the lightweight DrainPendingTextureLoads (no full RenderFrame overhead).
+    // ── Pre-load: finish scene geometry and textures before presentation ──
     uint32_t frameIndex = 0;
     uint64_t globalFenceValue = 0;
 
@@ -702,27 +699,42 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     }
 
     if (sceneRendererReady && !defaultScene.empty()) {
-        UZ_LOG(Engine, Info, "Pre-loading scene textures...");
+        UZ_LOG(Engine, Info, "Pre-loading scene geometry, distance fields and textures...");
+#ifdef _WIN32
+        const std::string loadingTitle = std::string(winDesc.title) + " - Loading scene...";
+        window.SetTitle(loadingTitle.c_str());
+#endif
+        while (window.PumpMessages() && window.IsOpen()) {
+            // Keep the per-frame mesh budget and message pump active, but never
+            // present lighting computed without all of the scene's occluders.
+            sceneRenderer.RenderFrame(cmdList, swapChain, &world, &vfs, 0.016f, frameIndex);
+            device->WaitIdle();
+            ++frameIndex;
 
-        // First frame triggers lazy material texture loads via SyncWorldToDrawList.
-        sceneRenderer.RenderFrame(cmdList, swapChain, &world, &vfs, 0.016f, 0);
-        swapChain->Present(false);
-        globalFenceValue++;
-        fenceValues[0] = globalFenceValue;
-        frameFences[0]->Signal(globalFenceValue);
-        frameIndex = 1;
-
-        // Wait for frame 0 to finish before draining textures on the same command list.
-        frameFences[0]->WaitCPU(globalFenceValue);
-
-        // Drain all pending async texture decodes + GPU uploads.
-        cmdList->Begin();
-        sceneRenderer.DrainPendingTextureLoads(cmdList, &vfs);
-        cmdList->End();
-        cmdList->Execute();
-        device->WaitIdle();
-
-        UZ_LOG(Engine, Info, "Pre-load complete, all textures loaded");
+            cmdList->Begin();
+            sceneRenderer.DrainPendingTextureLoads(cmdList, &vfs);
+            cmdList->End();
+            cmdList->Execute();
+            device->WaitIdle();
+            if (sceneRenderer.IsSceneFullyLoaded()) {
+                // Exposure reads the previous HDR frame, then its result returns
+                // through a one-frame GPU readback. Seed both with the ready scene.
+                sceneRenderer.RenderFrame(cmdList, swapChain, &world, &vfs, 0.0f, frameIndex++);
+                device->WaitIdle();
+                cmdList->Begin();
+                sceneRenderer.ResetExposureHistory(cmdList);
+                cmdList->End();
+                cmdList->Execute();
+                device->WaitIdle();
+                sceneRenderer.RenderFrame(cmdList, swapChain, &world, &vfs, 0.0f, frameIndex++);
+                device->WaitIdle();
+                UZ_LOG(Engine, Info, "Pre-load complete: assets ready and exposure seeded after {} frames; no partial scene presented", frameIndex);
+                break;
+            }
+        }
+#ifdef _WIN32
+        window.SetTitle(winDesc.title);
+#endif
     }
 
     // ── Render Loop ─────────────────────────────────────────────────────
@@ -805,7 +817,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         }
         if (sceneRendererReady && !screenshotPath.empty() && !screenshotRequested
             && frameIndex >= static_cast<uint32_t>(screenshotFrame)
-            && (sceneRenderer.IsSceneFullyLoaded() || frameIndex >= static_cast<uint32_t>(screenshotFrame) + 120)) {
+            && sceneRenderer.IsSceneFullyLoaded()) {
             sceneRenderer.RequestScreenshot(screenshotPath);
             screenshotRequested = true;
         }
@@ -886,12 +898,6 @@ int main(int argc, char** argv) {
     // Config: project file + CLI overrides
     uz::Config config = uz::BuildConfig(argc, argv);
 
-    // --rt-test: enable RT and the UV test pass via CVar overrides
-    if (config.GetBool("rt-test", false)) {
-        config.AddPendingCvarOverride("r.RayTracing", 1.0f);
-        config.AddPendingCvarOverride("r.RayTracing.TestPass", 1.0f);
-    }
-
     // Log level: default is Error (set in log.cpp g_runtimeLevel).
     // --verbose sets Info. --log-level overrides both.
     {
@@ -939,12 +945,7 @@ int main(int argc, char** argv) {
             if (!config.Has("width"))  width = projectCfg->windowWidth;
             if (!config.Has("height")) height = projectCfg->windowHeight;
 
-            // Push the project's "cvars" block onto the pending override
-            // queue. These are flushed in the same place as `--cvar` CLI
-            // overrides (just before SceneRenderer::Init), so init-time
-            // gating CVars see the project values. CLI overrides added
-            // below — e.g., `--cvar` or `--rt-test` — are appended after
-            // these and therefore take precedence on duplicate names.
+            // Queue project defaults before the final CLI replay below.
             for (const auto& [name, value] : projectCfg->cvarOverrides) {
                 config.AddPendingCvarOverride(name, value);
             }
@@ -954,6 +955,13 @@ int main(int argc, char** argv) {
                        projectCfg->cvarOverrides.size());
             }
         }
+    }
+
+    // CLI overrides must follow project defaults in the pending CVar queue.
+    config.ApplyCLIOverrides(argc, argv);
+    if (config.GetBool("rt-test", false)) {
+        config.AddPendingCvarOverride("r.RayTracing", 1.0f);
+        config.AddPendingCvarOverride("r.RayTracing.TestPass", 1.0f);
     }
 
     // Fallback: --scene without --project

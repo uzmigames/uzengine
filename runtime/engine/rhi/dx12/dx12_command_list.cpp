@@ -918,7 +918,11 @@ void DX12CommandList::CopyTextureToBuffer(RHITextureHandle srcTexture, uint32_t 
     dstLoc.PlacedFootprint.Footprint.Depth = 1;
     dstLoc.PlacedFootprint.Footprint.RowPitch = dstRowPitch;
 
-    m_cmdList->CopyTextureRegion(&dstLoc, 0, 0, 0, &srcLoc, nullptr);
+    // A volume subresource contains every Z slice, but this readback holds one.
+    // Keep a null source box for 2D textures, as required for depth-stencil copies.
+    const D3D12_BOX firstSlice{0, 0, 0, mipWidth, mipHeight, 1};
+    m_cmdList->CopyTextureRegion(&dstLoc, 0, 0, 0, &srcLoc,
+                                tex->desc.is3D ? &firstSlice : nullptr);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

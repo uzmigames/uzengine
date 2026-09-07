@@ -156,6 +156,8 @@ public:
     float Execute(IRHICommandList* cmdList, uint32_t hdrSrvIndex,
                   uint32_t width, uint32_t height, float dt);
 
+    void ResetHistory(IRHICommandList* cmdList);
+
     /// Shutdown and release all GPU resources.
     ///
     /// Destroys buffers and pipelines. Safe to call multiple times or

@@ -26,6 +26,7 @@
 
 // Individual includes needed by post-frame work
 #include "camera.h"
+#include "input.h"
 #include "render_graph_builder.h"
 #include "render_graph_resources.h"
 #include "sh_projection.h"
@@ -37,6 +38,10 @@
 #include <cstring>
 
 namespace uz {
+
+void SceneRenderer::ResetExposureHistory(IRHICommandList* cmdList) {
+    if (m_autoExposure) m_autoExposure->ResetHistory(cmdList);
+}
 
 void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapChain,
                                  World* world, IVFS* vfs, float dt, uint32_t frameIndex) {
@@ -376,6 +381,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         }
         m_screenshotPath.clear();
     }
+    m_input->EndFrame();
 }
 
 

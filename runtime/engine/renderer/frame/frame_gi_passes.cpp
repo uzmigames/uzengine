@@ -49,13 +49,12 @@ static auto* cv_RayTracingGI       = UZ_CVAR_BOOL("r.RayTracing.GI", false, "Use
 
 namespace uz {
 
-// ── SSGI Compute Passes (after GTAO, before SSR and lighting) ───────────────
-// Dispatches 5 compute passes: PrevColorReduce, Trace, SpatialDenoise,
-// TemporalAccum, BilateralUpsample. The result SRV indices are written
-// to PerFrameCB in frame_setup.cpp for the deferred lighting shader.
+// Shared diffuse gather follows GDF/RC updates and precedes lighting.
+// World mode uses current surface rays; legacy SSGI also reduces previous HDR.
+// Both reconstruct filtered E/pi for deferred lighting.
 
 void SceneRenderer::RegisterSSGIPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
-    if (!m_showFlags.Get(ShowFlag::SSGI)) return;
+    if (!m_showFlags.Get(ShowFlag::SSGI) && ctx.perFrame.sdfDiffuseSamples == 0) return;
     // Screen-space global illumination — traces against the depth buffer for indirect light.
     const bool ssgiActive = m_ssgiRenderer.IsReady()
                           && m_device->IsBindless()
@@ -86,6 +85,9 @@ void SceneRenderer::RegisterSSGIPasses(rg::RgBuilder& rgBuilder, FrameContext& c
             ssgiParams.perFrameCpuPtr  = ctx.perFrameAlloc.cpuPtr;
             ssgiParams.perFrameSize    = sizeof(PerFrameCB);
             ssgiParams.frameIndex      = ctx.frameIndex;
+            ssgiParams.worldGather = ctx.perFrame.sdfDiffuseSamples != 0;
+            ssgiParams.resetHistory = !m_prevViewProjValid;
+            ssgiParams.sceneRevision = m_globalDistanceField.GetSceneRevision();
             ssgiParams.renderWidth     = static_cast<uint32_t>(ctx.renderWidth);
             ssgiParams.renderHeight    = static_cast<uint32_t>(ctx.renderHeight);
 
@@ -106,12 +108,15 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
                            && m_radianceCache.IsInitialized()
                            && m_device->IsBindless()
                            && m_passInspector.IsPassEnabled("sdf_gi");
+    if (ctx.frameIndex % 120 == 0) {
+        UZ_LOG(Renderer, Debug, "SDF GI: frame={}, active={}, probesReady={}, probeSrv={}",
+               ctx.frameIndex, sdfGiActive, m_radianceCache.HasProducedResult(),
+               m_radianceCache.GetProbeSHBufferSrv());
+    }
     if (!sdfGiActive) return;
 
     // ── Pass: GDF Composite ──────────────────────────────────────────
-    // Collect mesh SDFs and world transforms from all StaticMeshComponent
-    // entities, then composite them into the global distance field clipmaps.
-    // Composite all per-mesh SDFs into the cascaded GDF clipmaps.
+    // Composite distance and average diffuse reflectance from resolved scene draws.
     rgBuilder.AddPass("GDF_Composite", [&](rg::RgPassBuilder& pb) {
         pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
             UZ_PROFILE_SCOPE("GDF::Composite");
@@ -123,41 +128,46 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
             Vec3 camPos = ctx.perFrame.cameraPos.xyz();
             m_globalDistanceField.Update(camPos);
 
-            // Collect mesh SDFs from the ECS, precompute inverse transforms.
+            // The draw list contains the full scene before frustum culling and
+            // resolves streamed material textures and instance parameters.
             std::vector<MeshSDF> meshSDFs;
             std::vector<Mat4> meshTransforms;
 
-            if (ctx.world) {
-                auto meshView = ctx.world->GetRegistry().view<StaticMeshComponent, SceneComponent>();
-                for (auto [enttEntity, meshComp, sceneComp] : meshView.each()) {
-                    if (meshComp.meshId >= m_meshes.size()) continue;
-                    const GPUMesh& gpuMesh = m_meshes[meshComp.meshId];
-                    if (!gpuMesh.HasSDF()) continue;
+            for (const auto& draw : ctx.drawList.GetCommands()) {
+                if ((draw.materialFlags & 0x3u) >= 2u || draw.meshId >= m_meshes.size()) continue;
+                const GPUMesh& gpuMesh = m_meshes[draw.meshId];
+                if (!gpuMesh.HasSDF()) continue;
 
-                    MeshSDF sdfCopy = gpuMesh.sdf;
-                    // Precompute world-to-local inverse transform (cached in MeshSDF)
-                    Mat4 worldMat = sceneComp.GetWorldMatrix();
-                    Mat4 inv = worldMat.Inverse();
-                    sdfCopy.invTransform[0]  = inv.m._11;
-                    sdfCopy.invTransform[1]  = inv.m._12;
-                    sdfCopy.invTransform[2]  = inv.m._13;
-                    sdfCopy.invTransform[3]  = inv.m._14;
-                    sdfCopy.invTransform[4]  = inv.m._21;
-                    sdfCopy.invTransform[5]  = inv.m._22;
-                    sdfCopy.invTransform[6]  = inv.m._23;
-                    sdfCopy.invTransform[7]  = inv.m._24;
-                    sdfCopy.invTransform[8]  = inv.m._31;
-                    sdfCopy.invTransform[9]  = inv.m._32;
-                    sdfCopy.invTransform[10] = inv.m._33;
-                    sdfCopy.invTransform[11] = inv.m._34;
+                MeshSDF sdfCopy = gpuMesh.sdf;
+                sdfCopy.albedoSrv = draw.albedoSrvIndex;
+                sdfCopy.metallicSrv = (draw.materialFlags & 0x4u) != 0
+                    ? draw.aoSrvIndex : draw.metallicSrvIndex;
+                sdfCopy.baseColorTint[0] = draw.baseColorTintR;
+                sdfCopy.baseColorTint[1] = draw.baseColorTintG;
+                sdfCopy.baseColorTint[2] = draw.baseColorTintB;
+                sdfCopy.metallicMultiplier = draw.metallicMultiplier;
+                sdfCopy.materialFlags = draw.materialFlags;
+                Mat4 worldMat = draw.worldMatrix;
+                Mat4 inv = worldMat.Inverse();
+                sdfCopy.invTransform[0]  = inv.m._11;
+                sdfCopy.invTransform[1]  = inv.m._21;
+                sdfCopy.invTransform[2]  = inv.m._31;
+                sdfCopy.invTransform[3]  = inv.m._41;
+                sdfCopy.invTransform[4]  = inv.m._12;
+                sdfCopy.invTransform[5]  = inv.m._22;
+                sdfCopy.invTransform[6]  = inv.m._32;
+                sdfCopy.invTransform[7]  = inv.m._42;
+                sdfCopy.invTransform[8]  = inv.m._13;
+                sdfCopy.invTransform[9]  = inv.m._23;
+                sdfCopy.invTransform[10] = inv.m._33;
+                sdfCopy.invTransform[11] = inv.m._43;
 
-                    meshSDFs.push_back(sdfCopy);
-                    meshTransforms.push_back(worldMat);
-                }
+                meshSDFs.push_back(sdfCopy);
+                meshTransforms.push_back(worldMat);
             }
 
             const auto sdfCount = static_cast<uint32_t>(meshSDFs.size());
-
+            const uint64_t previousRevision = m_globalDistanceField.GetSceneRevision();
             m_globalDistanceField.CompositeFromMeshSDFs(
                 cmd,
                 sdfCount > 0 ? meshSDFs.data() : nullptr,
@@ -169,6 +179,9 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
                 ctx.perFrameAlloc.offsetBytes,
                 ctx.perFrameAlloc.cpuPtr,
                 sizeof(PerFrameCB));
+            if (m_globalDistanceField.GetSceneRevision() != previousRevision) {
+                m_radianceCache.InvalidateHistory();
+            }
         });
     });
 
@@ -186,6 +199,10 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
             // Always run the SDF SH path so the existing deferred lighting
             // SH sample stays populated regardless of DXR availability.
             auto rcPipeline = ctx.pipelines->GetRadianceCacheTrace();
+            if (ctx.frameIndex % 120 == 0) {
+                UZ_LOG(Renderer, Debug, "SDF GI trace: frame={}, pipelineValid={}",
+                       ctx.frameIndex, rcPipeline.IsValid());
+            }
             if (rcPipeline.IsValid()) {
                 Vec3 camPos = ctx.perFrame.cameraPos.xyz();
                 m_radianceCache.Update(camPos);
@@ -682,6 +699,7 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
 // post-process modifies the HDR buffer (bloom, tonemap, etc.).
 
 void SceneRenderer::RegisterSSGIPrevColorCopy(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
+    if (ctx.perFrame.sdfDiffuseSamples != 0) return;
     const bool ssgiActive = m_ssgiRenderer.IsReady()
                           && m_device->IsBindless()
                           && m_passInspector.IsPassEnabled("ssgi");

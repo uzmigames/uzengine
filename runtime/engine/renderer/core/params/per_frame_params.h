@@ -281,8 +281,21 @@ struct PerFrameParams {
     // ── Indirect AO ──────────────────────────────────────────────────────
     float    indirectAOExponent = 2.0f;     ///< CVar r.IndirectAO.Exponent
 
+    uint32_t sdfReflectionsEnabled = 0;
+    uint32_t sdfReflectionSkySrv = UINT32_MAX;
+    uint32_t sdfReflectionSamples = 4;
+    Vec4     sdfReflectionClipmaps[4] = {};
+    uint32_t sdfReflectionClipmapSrv[4] = {UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX};
+    float    sdfReflectionTraceDistance = 5000.0f;
+    float    sdfReflectionVoxelSize = 0.0f;
+    uint32_t sdfReflectionTraceSteps = 96;
+    float    sdfReflectionIntensity = 1.0f;
+    uint32_t sdfDiffuseSamples = 0;
+    uint32_t _padSdfRaw[3] = {};
+    uint32_t sdfRawClipmapSrv[4] = {UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX};
+
     // ── Padding to next 256-byte boundary (1024 bytes) ────────────────
-    float    _padToCBEnd[43]   = {};
+    float    _padToCBEnd[8]   = {};
 
     // ── Resource handles (NOT copied to CB) ──────────────────────────────
     // These are bound by ShaderParameterBinder at their HLSL register slots.
@@ -305,6 +318,7 @@ struct PerFrameParams {
 };
 
 // Verify scalar section matches PerFrameCB exactly
+static_assert(offsetof(PerFrameParams, sdfRawClipmapSrv) == 976);
 static_assert(offsetof(PerFrameParams, irradianceCubemap) == 1024,
               "PerFrameParams resource section must start at byte 1024 (after PerFrameCB-compatible scalar section)");
 

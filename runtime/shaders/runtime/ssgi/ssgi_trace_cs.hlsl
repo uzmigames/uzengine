@@ -1,26 +1,9 @@
-/// UzEngine SSGI Trace — Screen-Space Ray Tracing for Diffuse Indirect Lighting
-///
-/// @ref McGuire & Mara 2014 "Efficient GPU Screen-Space Ray Tracing"
-/// @ref Uludag 2014 "Hi-Z Screen-Space Cone-Traced Reflections"
-///
-/// Traces cosine-weighted hemisphere rays in screen space against the depth
-/// buffer. Uses Hi-Z hierarchical traversal when available (hizSrvIndex != 0xFFFF)
-/// for efficient skip of empty space, falling back to linear march otherwise.
-///
-/// Output: half-res indirect diffuse (RGBA16F) + AO occlusion (R16F).
-///
-/// Root constants at b0 (8 DWORDs):
-///   [0] depthSrvIndex    — full-res depth buffer SRV
-///   [1] normalSrvIndex   — full-res world-normal SRV (RG16F octahedral)
-///   [2] prevColorSrvIndex — half-res previous frame color SRV
-///   [3] outputUavIndex   — half-res indirect diffuse output UAV
-///   [4] aoOutputUavIndex — half-res AO output UAV
-///   [5] packed: low16=outputWidth, high16=outputHeight
-///   [6] frameIndex
-///   [7] hizSrvIndex (0xFFFF = no Hi-Z, use linear march)
-///
-/// PerFrameCB at b1: viewProj, invViewProj, cameraPos, nearPlane, farPlane, etc.
-
+/// Half-resolution diffuse trace: surface world gather or legacy screen-space tracing.
+/// @ref Wright et al. 2022 "Lumen", final gather backed by a world radiance cache.
+/// @ref McGuire & Mara 2014 "Efficient GPU Screen-Space Ray Tracing".
+/// World mode reads current GBuffer geometry and produces E/pi; it never samples previous HDR.
+/// Legacy mode retains linear screen-space tracing against depth and previous HDR.
+/// Root constants contain 13 DWORDs; shared PerFrameCB supplies current SDF/cache bindings.
 #include "../common/constants.hlsli"
 #include "../common/math.hlsli"
 #include "../common/sampling.hlsli"
@@ -44,16 +27,10 @@ cbuffer RootConstants : register(b0) {
     uint g_maxRayDistBits;    // Max ray distance in UV space as float bits (default 0.5)
 };
 
-cbuffer PerFrameCB : register(b1) {
-    row_major float4x4 viewProj;
-    float4 cameraPos;
-    float4 timeParams;
-    float4 lightDir;
-    float4 lightColor;
-    float4 ambientColor;
-    row_major float4x4 invViewProj;
-    float nearPlane, farPlane;
-};
+#include "ssgi_surface.hlsli"
+#ifdef UZ_BINDLESS
+#include "ssgi_world_gather.hlsli"
+#endif
 
 SamplerState pointSampler : register(s0);
 
@@ -66,19 +43,6 @@ SamplerState pointSampler : register(s0);
 #define kStepSize    asfloat(g_stepSizeBits)
 #define kThickness   asfloat(g_thicknessBits)
 #define kMaxRayDist  asfloat(g_maxRayDistBits)
-
-// ─── Octahedral normal decode ──────────────────────────────────────────────
-
-/// @ref Meyer et al. 2010 "On Floating-Point Normal Vectors"
-/// Decodes a unit normal from RG16F octahedral encoding.
-float3 OctDecode(float2 f) {
-    f = f * 2.0 - 1.0;
-    float3 n = float3(f.x, f.y, 1.0 - abs(f.x) - abs(f.y));
-    float t = saturate(-n.z);
-    n.x += (n.x >= 0.0) ? -t : t;
-    n.y += (n.y >= 0.0) ? -t : t;
-    return normalize(n);
-}
 
 // ─── Screen-space ray march ───────────────────────────────────────────────
 
@@ -175,8 +139,8 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     float2 uv = (float2(pixel) + 0.5) / float2(width, height);
 
     // Map half-res pixel to full-res depth/normal coordinates
-    uint fullWidth  = width * 2;
-    uint fullHeight = height * 2;
+    uint fullWidth;
+    uint fullHeight;
     int2 fullPx = int2(pixel) * 2;
 
 #ifdef UZ_BINDLESS
@@ -187,6 +151,8 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     RWTexture2D<float>  aoOutputTex = ResourceDescriptorHeap[g_aoOutputUavIndex];
 #endif
 
+    depthTex.GetDimensions(fullWidth, fullHeight);
+    fullPx = SurfacePixel(int2(pixel), uint2(fullWidth, fullHeight));
     // Read depth and normal at full resolution
     float depth = depthTex.Load(int3(fullPx, 0));
 
@@ -205,6 +171,14 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     float2 fullUV = (float2(fullPx) + 0.5) / float2(fullWidth, fullHeight);
     float3 worldPos = ReconstructWorldPos(fullUV, depth, invViewProj);
 
+#ifdef UZ_BINDLESS
+    if (sdfDiffuseSamples != 0) {
+        float3 geometricNormal = SurfaceGeometricNormal(depthTex,fullPx,uint2(fullWidth,fullHeight),depth,worldPos);
+        outputTex[pixel] = float4(GatherSurfaceLighting(worldPos,N,geometricNormal,uint2(fullPx),g_frameIndex),1.0);
+        aoOutputTex[pixel] = 1.0;
+        return;
+    }
+#endif
     // View direction for hemisphere orientation
     float3 viewDir = normalize(cameraPos.xyz - worldPos);
 

@@ -87,6 +87,32 @@ TEST(QuatTest, FromEuler) {
     EXPECT_NEAR(resultYaw.Z(), 0.0f, 1e-4f);
 }
 
+TEST(QuatTest, FromEulerCombinedPitchYawPreservesElevation) {
+    const Quat q = Quat::FromEuler(XMConvertToRadians(-56.0f), XMConvertToRadians(79.0f), 0.0f);
+    const Vec3 direction = q * Vec3::Forward();
+    EXPECT_NEAR(direction.x, 0.106699036f, 1e-5f);
+    EXPECT_NEAR(direction.y, 0.548918955f, 1e-5f);
+    EXPECT_NEAR(direction.z, 0.829037573f, 1e-5f);
+}
+
+TEST(QuatTest, FromEulerZenithRemainsUpAfterYaw) {
+    const Vec3 direction = Quat::FromEuler(-XM_PIDIV2, XM_PIDIV2, 0.0f) * Vec3::Forward();
+    EXPECT_NEAR(direction.x, 0.0f, 1e-5f);
+    EXPECT_NEAR(direction.y, 0.0f, 1e-5f);
+    EXPECT_NEAR(direction.z, 1.0f, 1e-5f);
+}
+
+TEST(QuatTest, FromEulerCombinedAxesRoundTrip) {
+    const Vec3 angles[] = {{-0.977384381f, 1.378810109f, 0.0f},
+                           {0.37f, -0.82f, 0.51f}, {-0.6f, 0.4f, -0.3f}};
+    for (const Vec3& expected : angles) {
+        const Vec3 actual = Quat::FromEuler(expected.x, expected.y, expected.z).get_euler();
+        EXPECT_NEAR(actual.x, expected.x, 1e-5f);
+        EXPECT_NEAR(actual.y, expected.y, 1e-5f);
+        EXPECT_NEAR(actual.z, expected.z, 1e-5f);
+    }
+}
+
 TEST(QuatTest, ToMatrix) {
     Quat q = Quat::FromAxisAngle(Vec3::UnitZ(), XM_PIDIV2);
     Mat4 m = q.ToMatrix();

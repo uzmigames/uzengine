@@ -197,6 +197,7 @@ RHIDeviceDesc ToDeviceDesc(const RHIConfig& config) {
     desc.backend = config.backend;
     desc.enableValidation = config.enableValidation;
     desc.enableGpuValidation = config.enableGpuValidation;
+    desc.enableBreadcrumbs   = config.enableBreadcrumbs;
     desc.adapterIndex = config.adapterIndex;
     // Pass CLI shader model override to force device negotiation down.
     // Without this, --sm 6.0 is parsed but never forwarded to the device.

@@ -31,6 +31,7 @@ struct RHIDeviceDesc {
     RHIBackend backend = RHIBackend::DX12;   ///< Which backend to initialize.
     bool enableValidation = false;           ///< Enable API validation layer (D3D12 Debug, VK validation).
     bool enableGpuValidation = false;        ///< Enable GPU-based validation (expensive, dev only).
+    bool enableBreadcrumbs = false;          ///< Enable DRED auto-breadcrumbs + page-fault tracking (DX12 only).
     uint32_t adapterIndex = 0;               ///< GPU adapter index (0 = system default/highest performance).
 
     /// Forces a specific shader model instead of auto-negotiating the highest supported.

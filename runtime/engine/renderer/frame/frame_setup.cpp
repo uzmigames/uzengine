@@ -93,8 +93,11 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     }
 
     // ── Destroy GPU buffers deferred from previous frame ────────────────
-    // Previous frame's fence has completed by now (Application::WaitForFrame),
-    // so it's safe to destroy buffers that were referenced by GPU commands.
+    // The frame fence only covers N-3; these buffers may belong to newer
+    // graphics or copy work. Drain all queues before releasing their storage.
+    if (!m_deferredDestroyBuffers.empty()) {
+        m_device->WaitIdle();
+    }
     for (auto& buf : m_deferredDestroyBuffers) {
         if (buf.IsValid()) {
             m_device->DestroyBuffer(buf);
@@ -198,7 +201,7 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     }
 
     // ── Input ───────────────────────────────────────────────────────────
-    m_input->BeginFrame();
+    m_input->PrepareFrame();
 
     // ── VFX Editor Overlay: handle mouse AFTER BeginFrame ────────────────
     // The overlay tracks just-pressed internally from IsMouseDown,
@@ -252,6 +255,7 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
             if (freeCam) {
                 const Camera& current = m_cameraManager->GetActiveCamera();
                 *freeCam = current; // Copy position, orientation, projection
+                m_cameraCtrl->InitFromCamera(*freeCam);
             }
             m_cameraManager->PushCamera(m_editorFreeCamId);
         } else {
@@ -259,6 +263,7 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
             m_cameraManager->PopCamera();
             m_cameraManager->DestroyCamera(m_editorFreeCamId);
             m_editorFreeCamId = kInvalidCameraId;
+            m_cameraCtrl->InitFromCamera(m_cameraManager->GetActiveCamera());
         }
     }
 
@@ -292,11 +297,10 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
         }
     }
 
-    // Fallback: FlyCameraController when no ECS camera is active AND
-    // we're on the default Main camera (id=0). Non-default cameras are
-    // controlled by Lua scripts via mgr_set_position/mgr_look_at.
-    // Suppress camera when VFX editor overlay wants mouse input.
-    if (!cameraFromECS && !vfxOverlayWantsMouse && m_cameraManager->GetActiveCameraId() == 0) {
+    if (!cameraFromECS && !vfxOverlayWantsMouse &&
+        (m_cameraManager->GetActiveCameraId() == 0 ||
+         (m_editorFreeCamId != kInvalidCameraId &&
+          m_cameraManager->GetActiveCameraId() == m_editorFreeCamId))) {
         m_cameraCtrl->Update(m_cameraManager->GetActiveCamera(), *m_input, ctx.dt);
     }
 

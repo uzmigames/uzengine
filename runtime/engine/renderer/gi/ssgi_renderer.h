@@ -1,27 +1,17 @@
-/// UzEngine SSGI Renderer — Screen-Space Global Illumination.
+/// UzEngine diffuse gather renderer.
 ///
-/// Dispatches 5 compute passes per frame for one-bounce diffuse indirect lighting:
-/// 1. **PrevColorReduce** — Downsample prev frame HDR to half-res (Karis weighted).
-/// 2. **SSGITrace** — Cosine-hemisphere ray march in screen space, sample prev color.
-/// 3. **SpatialDenoise** — Cross-bilateral spatial filter (depth+normal edge-stopping).
-/// 4. **TemporalAccum** — Velocity-reprojected temporal accumulation with variance clip.
-/// 5. **BilateralUpsample** — Joint bilateral upsample from half-res to full-res.
+/// r.GI.FinalGather selects surface SDF rays backed by the world radiance cache.
+/// Legacy r.SSGI traces the previous HDR buffer in screen space instead.
+/// Both paths share a half-resolution trace, receiver-plane spatial filter,
+/// geometric temporal accumulation and joint bilateral reconstruction.
+/// World mode omits previous-HDR reduction/copy and outputs material-independent E/pi.
+/// Unsupported full-resolution receivers trace locally instead of borrowing unrelated surfaces.
 ///
-/// # GPU Resources
-/// - Prev scene color copy (full-res RGBA16F)
-/// - Reduced prev color (half-res RGBA16F)
-/// - Trace output: indirect diffuse (half-res RGBA16F) + AO (half-res R16F)
-/// - Denoised output (half-res RGBA16F + R16F)
-/// - Temporal history ping-pong (half-res RGBA16F + R16F, x2)
-/// - Final result (full-res RGBA16F + R16F)
-///
-/// # Integration
-/// Created and owned by SceneRenderer. The final result SRV indices are passed
-/// to the deferred lighting pass via PerFrameCB::ssgiSrvIndex / ssgiAOSrvIndex.
-///
-/// SSGI (r.DynamicGlobalIlluminationMethod=2) — screen-space ray-traced GI
-/// Quality-to-ray-count map: Q1=4, Q2=8, Q3=16, Q4=32
-
+/// History stores irradiance, frame count, world position and octahedral normal.
+/// Reprojection uses the previous jittered view-projection; depth/normal rejection
+/// handles disocclusion. Creation, resizing, mode changes and scene revisions invalidate history.
+/// SceneRenderer schedules gather after GDF/RC updates and before deferred lighting,
+/// which consumes the full-resolution result through PerFrameCB::ssgiSrvIndex.
 #pragma once
 
 #include "rhi_types.h"
@@ -83,13 +73,16 @@ struct SSGIRenderParams {
     uint32_t frameIndex          = 0;
     uint32_t renderWidth         = 0;  ///< Full render resolution width.
     uint32_t renderHeight        = 0;  ///< Full render resolution height.
+    bool worldGather = false;
+    bool resetHistory = false;
+    uint64_t sceneRevision = 0;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SSGIRenderer
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// GPU SSGI subsystem — owns all textures and dispatches 5 compute passes.
+/// Shared diffuse gather subsystem; owns trace, reconstruction and history textures.
 ///
 /// # Ownership
 /// Owns all GPU textures. Does NOT own IRHIDevice, PipelineLibrary, or
@@ -117,12 +110,13 @@ public:
     /// Recreate textures at a new resolution. Called from SceneRenderer::Resize().
     void OnResize(uint32_t width, uint32_t height);
 
-    /// Dispatch all 5 SSGI compute passes for the current frame.
+    /// Dispatch the selected diffuse gather and reconstruction for the current frame.
     ///
     /// Must be called after GBuffer + GTAO and before deferred lighting.
     /// The prev scene color copy is performed at the END of the previous
     /// frame's HDR rendering (before tonemap).
     void Render(IRHICommandList* cmdList, const SSGIRenderParams& params);
+    [[nodiscard]] bool PrepareFrame(PipelineLibrary* pipelines, bool worldGather, bool screenSpace);
 
     /// Copy current HDR scene color to prev-frame buffer for next frame's use.
     /// Call this AFTER deferred lighting, BEFORE tonemap/post-process.
@@ -144,6 +138,7 @@ public:
     /// True once Render() has produced a valid output texture. Until then the
     /// result texture has never been written and must not be bound.
     [[nodiscard]] bool HasProducedResult() const noexcept { return m_hasProducedResult; }
+    [[nodiscard]] bool HasPreviousSceneColor() const noexcept { return m_hasPrevColor; }
 
     // ── PassInspector accessors for intermediate textures ────────────────
 
@@ -181,6 +176,7 @@ public:
 private:
     [[nodiscard]] bool CreateTextures(uint32_t width, uint32_t height);
     void DestroyTextures();
+    void LogGatherActivation(uint32_t samples);
 
     void DispatchPrevColorReduce(IRHICommandList* cmdList, const SSGIRenderParams& params);
     void DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParams& params);
@@ -230,6 +226,9 @@ private:
     RHITextureHandle m_ssgiHistoryAO[2];
     uint32_t m_ssgiHistoryAOSrv[2] = {UINT32_MAX, UINT32_MAX};
     uint32_t m_ssgiHistoryAOUav[2] = {UINT32_MAX, UINT32_MAX};
+    RHITextureHandle m_historyGeometry[2];
+    uint32_t m_historyGeometrySrv[2] = {UINT32_MAX, UINT32_MAX};
+    uint32_t m_historyGeometryUav[2] = {UINT32_MAX, UINT32_MAX};
 
     /// Full-res final upsampled result: indirect diffuse (RGBA16F).
     RHITextureHandle m_ssgiResult;
@@ -251,6 +250,13 @@ private:
     bool     m_initialized  = false;
     bool     m_hasPrevColor = false; ///< False on first frame (no valid prev scene color).
     bool     m_hasProducedResult = false; ///< False until Render() writes the result texture.
+    bool m_resourceStatesInitialized = false;
+    uint32_t m_loggedWorldSamples = 0;
+    bool m_worldGather = false;
+    bool m_hasHistory = false;
+    uint64_t m_sceneRevision = 0;
+    uint32_t m_lastFrame = UINT32_MAX;
+    float m_previousViewProj[16] = {};
 
     static constexpr uint32_t kThreadGroupSize = 8;
 };

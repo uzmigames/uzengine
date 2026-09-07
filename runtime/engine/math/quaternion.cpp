@@ -29,8 +29,8 @@ Quat Quat::FromEuler(float pitch, float yaw, float roll) {
     XMVECTOR qRoll  = XMQuaternionRotationAxis(kX, roll);
     XMVECTOR qPitch = XMQuaternionRotationAxis(kY, pitch);
     XMVECTOR qYaw   = XMQuaternionRotationAxis(kZ, yaw);
-    // q = qYaw * qPitch * qRoll: XMQuaternionMultiply(Q1,Q2) applies Q2 first, then Q1.
-    XMVECTOR q = XMQuaternionMultiply(qYaw, XMQuaternionMultiply(qPitch, qRoll));
+    // DirectXMath returns Q2*Q1, applying Q1 before Q2: roll, then pitch, then yaw.
+    XMVECTOR q = XMQuaternionMultiply(XMQuaternionMultiply(qRoll, qPitch), qYaw);
     return Quat(q);
 }
 

@@ -344,10 +344,26 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
 
         m_pendingCopyUploads.clear();
 
-        // Release staging buffers from the previous upload batch — the copy
-        // fence guarantees the GPU is done reading from them.
+        // Hand the previous batch's staging buffers to the deferred-destroy
+        // queue rather than freeing them here.
+        //
+        // GraphicsWaitForCopy() above is ID3D12CommandQueue::Wait — a GPU-side
+        // wait that only orders the graphics queue behind the copy fence. It
+        // returns immediately on the CPU, so the copy queue may still be
+        // reading these staging buffers at this point. Calling ReleaseStaging()
+        // here destroys them out from under an in-flight DMA copy, which
+        // surfaces as an intermittent GPU page fault on 'TextureStagingBuffer'
+        // and takes the device down with DXGI_ERROR_DEVICE_HUNG.
+        //
+        // The deferred queue is flushed at the start of the next frame, once
+        // that frame's fence has completed. Because the graphics queue was made
+        // to wait on the copy fence above, it cannot signal its frame fence
+        // before the copies have finished — so the deferred release is safe
+        // without stalling the CPU.
         if (m_textureBatchUpload) {
-            m_textureBatchUpload->ReleaseStaging();
+            for (RHIBufferHandle staging : m_textureBatchUpload->TakeStagingBuffers()) {
+                QueueBufferDestroy(staging);
+            }
             m_textureBatchUpload.reset();
         }
 

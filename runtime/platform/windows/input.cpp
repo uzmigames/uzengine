@@ -32,9 +32,11 @@ namespace uz {
 /// - Mouse position and delta left at default (will update on first move)
 void InputSystem::Init() {
     std::memset(m_keyCurrent, 0, sizeof(m_keyCurrent));
-    std::memset(m_keyPrevious, 0, sizeof(m_keyPrevious));
+    std::memset(m_keyPressed, 0, sizeof(m_keyPressed));
+    std::memset(m_keyReleased, 0, sizeof(m_keyReleased));
     std::memset(m_mouseCurrent, 0, sizeof(m_mouseCurrent));
-    std::memset(m_mousePrevious, 0, sizeof(m_mousePrevious));
+    std::memset(m_mousePressed, 0, sizeof(m_mousePressed));
+    std::memset(m_mouseReleased, 0, sizeof(m_mouseReleased));
     m_gamepadCurrent = {};
     m_gamepadPrevious = {};
     m_rawMouseDX = 0.f;
@@ -78,24 +80,29 @@ void InputSystem::Shutdown() {
 
 /// Snapshots state and polls gamepads.
 void InputSystem::BeginFrame() {
+    EndFrame();
+    PrepareFrame();
+}
+
+void InputSystem::EndFrame() {
     UZ_PROFILE_FUNCTION();
 
-    // Keyboard snapshot
-    std::memcpy(m_keyPrevious, m_keyCurrent, sizeof(m_keyCurrent));
-
-    // Mouse button snapshot
-    std::memcpy(m_mousePrevious, m_mouseCurrent, sizeof(m_mouseCurrent));
-
-    // Mouse delta from WM_MOUSEMOVE position
-    m_mouseDX = m_mouseX - m_prevMouseX;
-    m_mouseDY = m_mouseY - m_prevMouseY;
-    m_prevMouseX = m_mouseX;
-    m_prevMouseY = m_mouseY;
+    std::memset(m_keyPressed, 0, sizeof(m_keyPressed));
+    std::memset(m_keyReleased, 0, sizeof(m_keyReleased));
+    std::memset(m_mousePressed, 0, sizeof(m_mousePressed));
+    std::memset(m_mouseReleased, 0, sizeof(m_mouseReleased));
 
     // Reset per-frame accumulators
     m_scrollDelta = 0.f;
     m_rawMouseDX = 0.f;
     m_rawMouseDY = 0.f;
+}
+
+void InputSystem::PrepareFrame() {
+    m_mouseDX = m_mouseX - m_prevMouseX;
+    m_mouseDY = m_mouseY - m_prevMouseY;
+    m_prevMouseX = m_mouseX;
+    m_prevMouseY = m_mouseY;
 
     // Poll XInput gamepads
     PollGamepads();
@@ -112,12 +119,12 @@ bool InputSystem::IsKeyDown(Key key) const {
 
 bool InputSystem::IsKeyJustPressed(Key key) const {
     uint16_t k = static_cast<uint16_t>(key);
-    return k < kMaxKeys && m_keyCurrent[k] && !m_keyPrevious[k];
+    return k < kMaxKeys && m_keyPressed[k];
 }
 
 bool InputSystem::IsKeyJustReleased(Key key) const {
     uint16_t k = static_cast<uint16_t>(key);
-    return k < kMaxKeys && !m_keyCurrent[k] && m_keyPrevious[k];
+    return k < kMaxKeys && m_keyReleased[k];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -131,12 +138,12 @@ bool InputSystem::IsMouseDown(MouseButton btn) const {
 
 bool InputSystem::IsMouseJustPressed(MouseButton btn) const {
     int b = static_cast<int>(btn);
-    return b < kMaxMouseButtons && m_mouseCurrent[b] && !m_mousePrevious[b];
+    return b < kMaxMouseButtons && m_mousePressed[b];
 }
 
 bool InputSystem::IsMouseJustReleased(MouseButton btn) const {
     int b = static_cast<int>(btn);
-    return b < kMaxMouseButtons && !m_mouseCurrent[b] && m_mousePrevious[b];
+    return b < kMaxMouseButtons && m_mouseReleased[b];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -533,20 +540,24 @@ bool InputSystem::IsActionJustPressed(const std::string& name) const {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void InputSystem::SetModifierState(bool shift, bool ctrl, bool alt, bool meta) {
+    const auto setKey = [this](uint16_t key, bool down) {
+        if (down) OnKeyDown(key);
+        else OnKeyUp(key);
+    };
     // VK_LSHIFT = 0xA0, VK_RSHIFT = 0xA1, VK_SHIFT = 0x10
-    m_keyCurrent[0xA0] = shift;   // VK_LSHIFT
-    m_keyCurrent[0x10] = shift;   // VK_SHIFT (generic)
+    setKey(0xA0, shift);
+    setKey(0x10, shift);
 
     // VK_LCONTROL = 0xA2, VK_RCONTROL = 0xA3, VK_CONTROL = 0x11
-    m_keyCurrent[0xA2] = ctrl;    // VK_LCONTROL
-    m_keyCurrent[0x11] = ctrl;    // VK_CONTROL (generic)
+    setKey(0xA2, ctrl);
+    setKey(0x11, ctrl);
 
     // VK_LMENU = 0xA4, VK_RMENU = 0xA5, VK_MENU = 0x12
-    m_keyCurrent[0xA4] = alt;     // VK_LMENU (Alt)
-    m_keyCurrent[0x12] = alt;     // VK_MENU (generic)
+    setKey(0xA4, alt);
+    setKey(0x12, alt);
 
     // VK_LWIN = 0x5B, VK_RWIN = 0x5C
-    m_keyCurrent[0x5B] = meta;    // VK_LWIN
+    setKey(0x5B, meta);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -554,13 +565,17 @@ void InputSystem::SetModifierState(bool shift, bool ctrl, bool alt, bool meta) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void InputSystem::OnKeyDown(uint16_t vk) {
-    if (vk < kMaxKeys)
+    if (vk < kMaxKeys && !m_keyCurrent[vk]) {
+        m_keyPressed[vk] = true;
         m_keyCurrent[vk] = true;
+    }
 }
 
 void InputSystem::OnKeyUp(uint16_t vk) {
-    if (vk < kMaxKeys)
+    if (vk < kMaxKeys && m_keyCurrent[vk]) {
+        m_keyReleased[vk] = true;
         m_keyCurrent[vk] = false;
+    }
 }
 
 void InputSystem::OnMouseMove(float x, float y) {
@@ -570,8 +585,11 @@ void InputSystem::OnMouseMove(float x, float y) {
 
 void InputSystem::OnMouseButton(MouseButton btn, bool down) {
     int b = static_cast<int>(btn);
-    if (b < kMaxMouseButtons)
+    if (b < kMaxMouseButtons && m_mouseCurrent[b] != down) {
+        if (down) m_mousePressed[b] = true;
+        else m_mouseReleased[b] = true;
         m_mouseCurrent[b] = down;
+    }
 }
 
 void InputSystem::OnMouseScroll(float delta) {

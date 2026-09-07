@@ -3,8 +3,11 @@
   "version": "1.0",
   "cvars": {
     "r.PathTracer.Enable": 0,
-    "r.AutoExposure": 0,
-    "r.Exposure": 2.0,
+    "r.AutoExposure": 1,
+    "r.AutoExposure.MinBrightness": 0.001,
+    "r.Exposure": 0.5,
+    "r.ColorContrast": 0.65,
+    "r.ColorSaturation": 1.0,
     "r.GTAO": 1
   },
   "entities": [

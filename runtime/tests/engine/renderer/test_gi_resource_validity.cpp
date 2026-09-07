@@ -3,7 +3,7 @@
 /// The renderer must never bind GI result textures/buffers that have never been
 /// written: SSGI binds a sentinel SRV while disabled or before its first
 /// completed render; DDGI atlas SRVs stay sentinel until the first probe update;
-/// the Radiance Cache SH buffer starts zeroed.
+/// the Radiance Cache SH buffer stays hidden until its first full probe update.
 
 #include <gtest/gtest.h>
 
@@ -45,4 +45,10 @@ TEST(GIResourceValidity, DDGISystem_NoCompletedUpdateBeforeFirstDispatch) {
 TEST(GIResourceValidity, RadianceCache_NotInitializedBeforeCreateResources) {
     uz::RadianceCache rc;
     EXPECT_FALSE(rc.IsInitialized());
+    EXPECT_FALSE(rc.HasProducedResult());
+    EXPECT_EQ(rc.GetProbeSHBufferSrv(), UINT32_MAX);
+    EXPECT_EQ(rc.GetProbeSHBufferUav(), UINT32_MAX);
+    rc.DestroyResources();
+    EXPECT_FALSE(rc.HasProducedResult());
+    EXPECT_EQ(rc.GetProbeSHBufferSrv(), UINT32_MAX);
 }

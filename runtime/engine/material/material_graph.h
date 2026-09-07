@@ -42,6 +42,8 @@ enum class MaterialShadingModel : uint8_t {
     Subsurface,   ///< SSS approximation
 };
 
+enum class MaterialGraphBlendMode : uint8_t { Opaque, Masked, Translucent, Additive };
+
 /// Returns the string representation of a MaterialDomain.
 [[nodiscard]] const char* MaterialDomainToString(MaterialDomain domain);
 
@@ -173,6 +175,8 @@ public:
     /// Graph metadata.
     MaterialDomain domain = MaterialDomain::Surface;
     MaterialShadingModel shadingModel = MaterialShadingModel::DefaultLit;
+    MaterialGraphBlendMode blendMode = MaterialGraphBlendMode::Opaque;
+    bool twoSided = false;
     std::string name;  ///< Material name for display/debug
 
     /// Standard PBR knobs (UE5-style). Applied as post-multiplications by

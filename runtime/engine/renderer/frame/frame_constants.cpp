@@ -50,6 +50,12 @@ static auto* cv_TonemapShoulder    = UZ_CVAR_FLOAT("r.Tonemap.Shoulder", 0.22f, 
 static auto* cv_TonemapBlackClip   = UZ_CVAR_FLOAT("r.Tonemap.BlackClip", 0.f, "ACES black clip", 0.f, 1.f);
 static auto* cv_TonemapWhiteClip   = UZ_CVAR_FLOAT("r.Tonemap.WhiteClip", 0.04f, "ACES white clip", 0.f, 1.f);
 static auto* cv_MipBias            = UZ_CVAR_FLOAT("r.MipBias", 0.f, "Global mipmap LOD bias", -4.f, 4.f);
+static auto* cv_SdfReflections = UZ_CVAR_INT("r.GI.Reflections", 0, "Trace scene reflections through the global distance field", 0, 1);
+static auto* cv_SdfFinalGather = UZ_CVAR_INT("r.GI.FinalGather", 0, "Gather diffuse illumination from surface hemisphere rays", 0, 1);
+static auto* cv_SdfDiffuseSamples = UZ_CVAR_INT("r.GI.FinalGather.Samples", 8, "Cosine-weighted rays per diffuse surface gather", 1, 32);
+static auto* cv_SdfReflectionSamples = UZ_CVAR_INT("r.GI.Reflections.Samples", 4, "GGX rays per shaded pixel", 1, 16);
+static auto* cv_SdfReflectionSteps = UZ_CVAR_INT("r.GI.Reflections.Steps", 96, "Maximum sphere tracing steps per reflection ray", 16, 256);
+static auto* cv_SdfReflectionDistance = UZ_CVAR_FLOAT("r.GI.Reflections.Distance", 5000.f, "Reflection trace distance in world units", 100.f, 100000.f);
 
 // ── Shader CVar parameters (Phase 1 — zero hardcoded values in shaders) ──
 static auto* cv_ShadowPCFPenumbra     = UZ_CVAR_FLOAT("r.Shadow.PCFPenumbraRadius", 2.0f, "PCF texel radius", 0.5f, 8.0f);
@@ -575,7 +581,7 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     // falls back to the raw resolved SSR output. The history write target for
     // this frame is m_ssrHistoryIndex — the temporal pass writes to it and
     // transitions it to SRV before the lighting pass runs.
-    if (m_ssrEnabled && m_ssrResolvedOutput.IsValid()
+    if (m_ssrEnabled && m_ssrHasPrevColor && m_ssrResolvedOutput.IsValid()
         && m_ssrResolvedOutputSrv != UINT32_MAX) {
         // SSR pipeline: Trace → Resolve → Temporal → SpatialDenoise.
         // The SpatialDenoise pass writes its output to m_ssrResolvedOutput.
@@ -585,27 +591,13 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
         perFrame.ssrSrvIndex = UINT32_MAX;
     }
 
-    // ── SSGI SRV indices (set early — actual compute runs in render graph) ──
-    // SSGI result SRV indices — used by deferred lighting to add indirect diffuse.
-    // HasProducedResult gates the binding: until the first successful Render()
-    // completes, the result texture has never been written.
-    if (m_ssgiRenderer.IsReady() && m_ssgiRenderer.HasProducedResult()
-        && m_device->IsBindless()) {
-        perFrame.ssgiSrvIndex   = m_ssgiRenderer.GetResultSrvIndex();
-        perFrame.ssgiAOSrvIndex = m_ssgiRenderer.GetAOResultSrvIndex();
-        perFrame.ssgiEnabled    = 1;
-    } else {
-        perFrame.ssgiSrvIndex   = UINT32_MAX;
-        perFrame.ssgiAOSrvIndex = UINT32_MAX;
-        perFrame.ssgiEnabled    = 0;
-    }
-
     // ── Radiance Cache (SDF GI) parameters ────────────────────────────
-    if (m_sdfGiEnabled && m_radianceCache.IsInitialized() && m_device->IsBindless()) {
+    m_radianceCache.Update(camPos);
+    if (m_sdfGiEnabled && m_radianceCache.HasProducedResult() && m_device->IsBindless()) {
         perFrame.radianceCacheEnabled = 1;
         perFrame.rcProbeSHBufferSrv   = m_radianceCache.GetProbeSHBufferSrv();
         perFrame.rcProbesPerAxis      = RadianceCache::kProbesPerAxis;
-        perFrame.rcGridExtent         = m_rcGridExtentCVar;
+        perFrame.rcGridExtent         = m_radianceCache.GetGridExtent();
         const Vec3 origin = m_radianceCache.GetGridOrigin();
         perFrame.rcGridOriginX        = origin.x;
         perFrame.rcGridOriginY        = origin.y;
@@ -616,6 +608,36 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
         perFrame.rcProbeSHBufferSrv   = UINT32_MAX;
     }
 
+    m_globalDistanceField.Update(camPos);
+    if ((cv_SdfReflections->value != 0 || cv_SdfFinalGather->value != 0) && perFrame.radianceCacheEnabled != 0
+        && m_globalDistanceField.IsInitialized()) {
+        for (uint32_t cascade = 0; cascade < GlobalDistanceField::kNumClipmaps; ++cascade) {
+            const auto& clipmap = m_globalDistanceField.GetClipmap(cascade);
+            perFrame.sdfReflectionClipmaps[cascade] = {clipmap.center.x, clipmap.center.y, clipmap.center.z, clipmap.extent};
+            perFrame.sdfReflectionClipmapSrv[cascade] = clipmap.hasData ? clipmap.srvIndex : UINT32_MAX;
+            perFrame.sdfRawClipmapSrv[cascade] = clipmap.hasData ? clipmap.rawSrvIndex : UINT32_MAX;
+        }
+        const auto& nearClipmap = m_globalDistanceField.GetClipmap(0);
+        const bool hasDistanceField = nearClipmap.hasData && nearClipmap.rawSrvIndex != UINT32_MAX;
+        perFrame.sdfReflectionsEnabled = hasDistanceField && cv_SdfReflections->value != 0 ? 1u : 0u;
+        perFrame.sdfDiffuseSamples = hasDistanceField && cv_SdfFinalGather->value != 0
+            ? static_cast<uint32_t>(cv_SdfDiffuseSamples->value) : 0u;
+        perFrame.sdfReflectionSkySrv = perFrame.prefilteredSrvIndex;
+        perFrame.sdfReflectionSamples = static_cast<uint32_t>(cv_SdfReflectionSamples->value);
+        perFrame.sdfReflectionTraceSteps = static_cast<uint32_t>(cv_SdfReflectionSteps->value);
+        perFrame.sdfReflectionTraceDistance = cv_SdfReflectionDistance->value;
+        perFrame.sdfReflectionVoxelSize = m_globalDistanceField.GetVoxelSize(0);
+    }
+
+    const bool worldGather = perFrame.sdfDiffuseSamples != 0
+        && m_passInspector.IsPassEnabled("sdf_gi") && m_passInspector.IsPassEnabled("ssgi");
+    const bool screenGather = m_showFlags.Get(ShowFlag::SSGI) && m_passInspector.IsPassEnabled("ssgi");
+    const bool gatherReady = m_device->IsBindless()
+        && m_ssgiRenderer.PrepareFrame(m_pipelines.get(), worldGather, screenGather);
+    perFrame.ssgiSrvIndex = gatherReady ? m_ssgiRenderer.GetResultSrvIndex() : UINT32_MAX;
+    perFrame.ssgiAOSrvIndex = gatherReady ? m_ssgiRenderer.GetAOResultSrvIndex() : UINT32_MAX;
+    perFrame.ssgiEnabled = gatherReady ? 1u : 0u;
+    if (!worldGather || !gatherReady) perFrame.sdfDiffuseSamples = 0;
     // ── Brixelizer GI (AMD FidelityFX sparse SDF voxel GI) ──────────
     // Expose the diffuse GI atlas SRV to the deferred lighting shader.
     // The previous black-screen issue was caused by FFX rebinding the

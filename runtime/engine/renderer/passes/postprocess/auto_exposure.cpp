@@ -108,7 +108,7 @@ bool AutoExposure::Init(IRHIDevice* device, ShaderManager* shaderMgr) {
         desc.stride    = sizeof(float);
         desc.usage     = RHIBufferUsage::UnorderedAccess
                        | RHIBufferUsage::StructuredBuffer
-                       | RHIBufferUsage::CopySrc;
+                       | RHIBufferUsage::CopySrc | RHIBufferUsage::CopyDst;
         desc.memory    = RHIMemoryType::Default;
         desc.debugName = "AutoExposure_Exposure";
 
@@ -172,6 +172,20 @@ bool AutoExposure::Init(IRHIDevice* device, ShaderManager* shaderMgr) {
     UZ_LOG(Renderer, Info, "AutoExposure initialized (histogram UAV={}, SRV={}, exposure UAV={})",
            m_histogramUavIndex, m_histogramSrvIndex, m_exposureUavIndex);
     return true;
+}
+
+void AutoExposure::ResetHistory(IRHICommandList* cmdList) {
+    if (!m_initialized || !cmdList) return;
+    RHIBarrierDesc barrier{};
+    barrier.buffer = m_exposureBuffer;
+    barrier.texture = RHITextureHandle::Invalid();
+    barrier.stateBefore = RHIResourceState::UnorderedAccess;
+    barrier.stateAfter = RHIResourceState::CopyDst;
+    cmdList->ResourceBarrier(&barrier, 1);
+    cmdList->CopyBuffer(m_zeroBuffer, 0, m_exposureBuffer, 0, kExposureBytes);
+    barrier.stateBefore = RHIResourceState::CopyDst;
+    barrier.stateAfter = RHIResourceState::UnorderedAccess;
+    cmdList->ResourceBarrier(&barrier, 1);
 }
 
 void AutoExposure::Shutdown() {

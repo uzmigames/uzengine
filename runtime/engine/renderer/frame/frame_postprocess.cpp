@@ -137,7 +137,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
         // Apply SSR AFTER TAA to prevent TAA neighborhood contamination.
         // The deferred lighting pass outputs IBL-only specular; SSR is
         // composited here onto the TAA-resolved (or raw HDR) image.
-        if (ctx.ssrActive && m_ssrHasPrevColor
+        if (ctx.ssrActive && m_ssrHasPrevColor && ctx.perFrame.sdfReflectionsEnabled == 0
             && m_ssrResolvedOutput.IsValid()
             && m_ssrResolvedOutputSrv != UINT32_MAX) {
 

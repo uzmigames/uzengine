@@ -285,13 +285,20 @@ class InputSystem {
     /// Clears action mappings, releases raw input registration, and resets state.
     void Shutdown();
 
-    /// Snapshots current state into previous state for transition detection.
+    /// Clears latched transitions before dispatching a new frame's events.
     ///
     /// Must be called exactly once per frame, before the platform layer
     /// dispatches new WM_* messages. Computes mouse delta from position
     /// change since last frame, resets scroll and raw mouse accumulators,
     /// and polls XInput gamepads.
     void BeginFrame();
+
+    /// After event dispatch, updates mouse delta and gamepads without consuming events.
+    /// Pair with EndFrame after all input consumers; do not also call BeginFrame.
+    void PrepareFrame();
+
+    /// Consumes keyboard/mouse transitions and scroll/raw deltas after all frame consumers.
+    void EndFrame();
 
     // ── Keyboard Queries ────────────────────────────────────────────────
 
@@ -310,7 +317,7 @@ class InputSystem {
     /// * `key` - The key to query.
     ///
     /// # Returns
-    /// `true` if `current[key] && !previous[key]`.
+    /// Remains true until EndFrame, including a press released in the same frame.
     [[nodiscard]] bool IsKeyJustPressed(Key key) const;
 
     /// Returns `true` if the key transitioned from down to up this frame.
@@ -319,7 +326,7 @@ class InputSystem {
     /// * `key` - The key to query.
     ///
     /// # Returns
-    /// `true` if `!current[key] && previous[key]`.
+    /// Remains true until EndFrame, including a release pressed again in the same frame.
     [[nodiscard]] bool IsKeyJustReleased(Key key) const;
 
     // ── Mouse Queries ───────────────────────────────────────────────────
@@ -667,12 +674,14 @@ class InputSystem {
     static constexpr int kMaxKeys = 256;
 
     bool m_keyCurrent[kMaxKeys] = {};
-    bool m_keyPrevious[kMaxKeys] = {};
+    bool m_keyPressed[kMaxKeys] = {};
+    bool m_keyReleased[kMaxKeys] = {};
 
     // ── Mouse Button State ──────────────────────────────────────────────
     static constexpr int kMaxMouseButtons = static_cast<int>(MouseButton::Count);
     bool m_mouseCurrent[kMaxMouseButtons] = {};
-    bool m_mousePrevious[kMaxMouseButtons] = {};
+    bool m_mousePressed[kMaxMouseButtons] = {};
+    bool m_mouseReleased[kMaxMouseButtons] = {};
 
     // ── Mouse Position & Delta ──────────────────────────────────────────
     float m_mouseX = 0.f, m_mouseY = 0.f;

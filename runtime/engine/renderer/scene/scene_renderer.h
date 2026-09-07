@@ -172,6 +172,8 @@ public:
     /// Use after the first RenderFrame to ensure all textures are visible.
     void DrainPendingTextureLoads(IRHICommandList* cmdList, IVFS* vfs);
 
+    void ResetExposureHistory(IRHICommandList* cmdList);
+
     /// Initializes all rendering infrastructure.
     ///
     /// Creates ShaderManager, PipelineLibrary, CBRingAllocator (3 frames, 2MB),

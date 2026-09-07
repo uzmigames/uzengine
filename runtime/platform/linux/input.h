@@ -187,12 +187,19 @@ class InputSystem {
     /// Clears action mappings and resets state.
     void Shutdown();
 
-    /// Snapshots current state into previous state for transition detection.
+    /// Clears latched transitions before dispatching a new frame's events.
     ///
     /// Must be called exactly once per frame, before the platform layer
     /// dispatches new X11 events. Computes mouse delta from position
     /// change since last frame and resets scroll accumulator.
     void BeginFrame();
+
+    /// After event dispatch, updates mouse delta without consuming events.
+    /// Pair with EndFrame after all input consumers; do not also call BeginFrame.
+    void PrepareFrame();
+
+    /// Consumes keyboard/mouse transitions and scroll after all frame consumers.
+    void EndFrame();
 
     /// Returns `true` if the key is currently held down.
     ///
@@ -209,7 +216,7 @@ class InputSystem {
     /// * `key` - The key to query.
     ///
     /// # Returns
-    /// `true` if `current[key] && !previous[key]`.
+    /// Remains true until EndFrame, including a press released in the same frame.
     [[nodiscard]] bool IsKeyJustPressed(Key key) const;
 
     /// Returns `true` if the key transitioned from down to up this frame.
@@ -218,7 +225,7 @@ class InputSystem {
     /// * `key` - The key to query.
     ///
     /// # Returns
-    /// `true` if `!current[key] && previous[key]`.
+    /// Remains true until EndFrame, including a release pressed again in the same frame.
     [[nodiscard]] bool IsKeyJustReleased(Key key) const;
 
     /// Returns `true` if the mouse button is currently held down.
@@ -337,11 +344,13 @@ class InputSystem {
     static constexpr int kMaxKeys = 256;
 
     bool m_keyCurrent[kMaxKeys] = {};
-    bool m_keyPrevious[kMaxKeys] = {};
+    bool m_keyPressed[kMaxKeys] = {};
+    bool m_keyReleased[kMaxKeys] = {};
 
     static constexpr int kMaxMouseButtons = static_cast<int>(MouseButton::Count);
     bool m_mouseCurrent[kMaxMouseButtons] = {};
-    bool m_mousePrevious[kMaxMouseButtons] = {};
+    bool m_mousePressed[kMaxMouseButtons] = {};
+    bool m_mouseReleased[kMaxMouseButtons] = {};
 
     float m_mouseX = 0.f, m_mouseY = 0.f;
     float m_mouseDX = 0.f, m_mouseDY = 0.f;

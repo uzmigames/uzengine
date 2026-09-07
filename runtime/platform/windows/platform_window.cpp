@@ -25,6 +25,24 @@ namespace uz {
 
 static const wchar_t* kWindowClass = L"UzEngineWindow";
 
+static uint16_t NormalizeWindowKey(WPARAM wp, LPARAM lp) {
+    const auto flags = static_cast<uintptr_t>(lp);
+    const bool extended = (flags & (uintptr_t{1} << 24)) != 0;
+    switch (wp) {
+    case VK_SHIFT: {
+        const UINT scanCode = static_cast<UINT>((flags >> 16) & 0xffu);
+        const UINT mapped = MapVirtualKeyW(scanCode, MAPVK_VSC_TO_VK_EX);
+        return static_cast<uint16_t>(mapped != 0 ? mapped : wp);
+    }
+    case VK_CONTROL:
+        return extended ? VK_RCONTROL : VK_LCONTROL;
+    case VK_MENU:
+        return extended ? VK_RMENU : VK_LMENU;
+    default:
+        return static_cast<uint16_t>(wp);
+    }
+}
+
 LRESULT CALLBACK PlatformWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     auto* self = reinterpret_cast<PlatformWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
 
@@ -91,13 +109,15 @@ LRESULT CALLBACK PlatformWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     case WM_KEYDOWN:
     case WM_SYSKEYDOWN:
         if (self && self->m_input)
-            self->m_input->OnKeyDown(static_cast<uint16_t>(wp));
+            self->m_input->OnKeyDown(NormalizeWindowKey(wp, lp));
+        if (msg == WM_SYSKEYDOWN) return DefWindowProcW(hwnd, msg, wp, lp);
         return 0;
 
     case WM_KEYUP:
     case WM_SYSKEYUP:
         if (self && self->m_input)
-            self->m_input->OnKeyUp(static_cast<uint16_t>(wp));
+            self->m_input->OnKeyUp(NormalizeWindowKey(wp, lp));
+        if (msg == WM_SYSKEYUP) return DefWindowProcW(hwnd, msg, wp, lp);
         return 0;
 
     case WM_MOUSEMOVE:

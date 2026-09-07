@@ -23,6 +23,22 @@
 
 using namespace uz;
 
+TEST(MaterialGraphSerialization, BlendModeAndTwoSidedRoundTripAndHash) {
+    MaterialGraph graph;
+    const uint64_t opaqueHash = graph.ComputeContentHash();
+    graph.blendMode = MaterialGraphBlendMode::Translucent;
+    EXPECT_NE(graph.ComputeContentHash(), opaqueHash);
+    const uint64_t translucentHash = graph.ComputeContentHash();
+    graph.twoSided = true;
+    EXPECT_NE(graph.ComputeContentHash(), translucentHash);
+    MaterialGraph loaded;
+    std::string error;
+    ASSERT_TRUE(loaded.FromJson(graph.ToJson(), &error)) << error;
+    EXPECT_EQ(loaded.blendMode, MaterialGraphBlendMode::Translucent);
+    EXPECT_TRUE(loaded.twoSided);
+    EXPECT_EQ(loaded.ComputeContentHash(), graph.ComputeContentHash());
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
