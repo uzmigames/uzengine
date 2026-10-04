@@ -79,8 +79,15 @@ float2 GetCascadeTileOffset(uint idx, uint cols, out float2 tileSize) {
 float SampleShadowCascade(float3 worldPos, float3 N, float NdotL, uint cascadeIdx,
                           Texture2D<float> shadowAtlas, SamplerComparisonState smplr) {
     float normalBias = GetCascadeNormalBias(cascadeIdx);
-    float slopeScale = clamp(tan(acos(max(NdotL, 0.001))), 0.0, 10.0);
-    float3 biasedPos = worldPos + N * normalBias * slopeScale;
+    /// @ref Holbert 2011 "Saying Goodbye to Shadow Acne"; Castano 2013 "Shadow Mapping Summary"
+    /// @constants Normal offset uses sin(theta) in [0,1]; slope offset uses tan(theta), capped at 2.
+    /// 1e-6 protects the grazing-angle division; saturate also rejects cosine roundoff above 1.
+    /// The previous tan(acos(NdotL)) capped at 10 pushed the offset up to 10x the normal bias at
+    /// grazing angles, detaching contact shadows.
+    float cosine = saturate(NdotL);
+    float normalScale = sqrt(max(0.0, 1.0 - cosine * cosine));
+    float slopeScale = min(2.0, normalScale / max(cosine, 1e-6));
+    float3 biasedPos = worldPos + N * normalBias * normalScale;
 
     float4 lsp = mul(float4(biasedPos, 1.0), cascadeViewProj[cascadeIdx]);
     float3 proj = lsp.xyz / lsp.w;
@@ -96,9 +103,10 @@ float SampleShadowCascade(float3 worldPos, float3 N, float NdotL, uint cascadeId
     // OUT OF CASCADE XY RANGE — caller must fall back to next cascade.
     if (any(shadowUV < 0.0) || any(shadowUV > 1.0)) return -1.0;
 
-    // Depth bias: use CB value with a minimum floor to prevent shadow acne.
-    // @ref Holbert 2011 "Normal Offset Shadows" — constant + slope-scaled bias
-    float depthBias = max(GetCascadeDepthBias(cascadeIdx), 0.0005);
+    /// @ref Pettineo 2013 "A Sampling of Shadow Techniques" — bias normalized to cascade depth range.
+    /// @constants Zero is the lower bound; preserve the producer's world-scaled cascade bias.
+    /// The old 0.0005 floor over-biased near cascades and peeled shadows off the ornaments.
+    float depthBias = max(GetCascadeDepthBias(cascadeIdx), 0.0);
     // Slope-scaled depth bias: surfaces at grazing angles need more bias
     float slopeBias = depthBias * slopeScale;
     float cmpDepth = proj.z - depthBias - slopeBias;
@@ -173,19 +181,18 @@ float CascadeShadow(float3 worldPos, float viewDepth, float3 N, float NdotL) {
         shadow = 1.0;
     }
 
-    // Split-boundary blend: lerp shadow FACTOR (not UV) between cascades
-    // to hide the resolution seam. Uses a wide 40% fade zone to make
-    // the transition gradual enough that cascade projection differences
-    // are not visible as double-shadows.
+    // Split-boundary blend: when the pixel is near the far edge of `sel`, lerp
+    // the shadow FACTOR (not UV) toward `sel+1` to hide the resolution seam.
+    // Only blends if the next cascade actually covers the pixel too.
+    // Uses the producer's per-cascade fade start (ShadowDataParams::cascadeFadeStarts,
+    // the un-extended far split) instead of a fixed 60% of the split distance, so
+    // this matches shadow_pcss.hlsli and the CPU's own cascade layout.
     if (sel < cascadeCount - 1) {
         float splitDist = GetCascadeSplit(sel);
-        // Wide fade: start blending at 60% of cascade range
-        float fadeStart = splitDist * 0.6;
+        float fadeStart = GetCascadeFadeStart(sel);
         float blendRange = splitDist - fadeStart;
         if (blendRange > 0.0 && viewDepth > fadeStart) {
             float bf = saturate((viewDepth - fadeStart) / blendRange);
-            // Smooth step for perceptually even transition
-            bf = bf * bf * (3.0 - 2.0 * bf);
             float next = SampleShadowCascade(worldPos, N, NdotL, sel + 1, shadowAtlas, shadowSampler);
             if (next >= 0.0) {
                 shadow = lerp(shadow, next, bf);

@@ -35,6 +35,8 @@
     std::unique_ptr<FlyCameraController> m_cameraCtrl;
     std::unique_ptr<ViewportToolbar> m_viewportToolbar;
     bool m_viewportToolbarInitialized = false; ///< True after ViewportToolbar::Init() succeeds.
+    std::unique_ptr<TechPanel> m_techPanel;    ///< Runtime lighting-technology switchboard (F3 / r.TechPanel.Show).
+    bool m_techPanelInitialized = false;       ///< True after TechPanel::Init() succeeds.
     CameraId m_editorFreeCamId = kInvalidCameraId;     ///< Editor free-cam ID (kInvalidCameraId = not active).
     std::unique_ptr<rg::RgResourcePool> m_rgPool;
 
@@ -315,6 +317,40 @@
     uint32_t m_taaHistoryIndex = 0;            ///< Index of current write target (0 or 1).
     bool     m_taaEnabled = true;              ///< Enables jitter + temporal upscaler dispatch (DLSS/TSR/TAA).
     Mat4     m_prevViewProj;                   ///< Previous frame's unjittered viewProj for reprojection.
+
+    /// Region dump (diagnostics): writes `<dir>/region_<frame>.bin` from readback slot `slot`
+    /// and validates the GPU frame stamps against the frame that slot holds. Every value the
+    /// header needs was captured when the copy was queued, so this also runs at shutdown to
+    /// flush the frames still in flight (otherwise the last frames of a range would be missing).
+    void WriteRegionDumpFile(uint32_t slot);
+
+    // ── Region dump (diagnostics, SetRegionDump) ───────────────────────────
+    std::string                    m_regionDumpDir;
+    std::vector<RegionRect>        m_regionRects;
+    std::vector<uint32_t>          m_regionRectBase;      ///< float4 offset of each rect's records.
+    uint32_t         m_regionFirstFrame = 0, m_regionLastFrame = 0;
+    uint32_t         m_regionFields = 0;                  ///< Field-group bitmask (region_dump.hlsli).
+    uint32_t         m_regionRecordsPerPixel = 0;
+    uint64_t         m_regionBufferBytes = 0;
+    RHIBufferHandle  m_regionDumpBuffer{};
+    RHIBufferHandle  m_regionRectBuffer{};                ///< Upload buffer holding the rect table.
+    uint32_t         m_regionDumpUav = UINT32_MAX;
+    uint32_t         m_regionRectSrv = UINT32_MAX;
+    RHIBufferHandle  m_regionReadback[3]{};
+    uint32_t         m_regionReadbackFrame[3] = {UINT32_MAX, UINT32_MAX, UINT32_MAX};
+    float            m_regionReadbackJitter[3][2] = {};
+    float            m_regionReadbackExposure[3] = {};
+    uint32_t         m_regionReadbackJitterIdx[3] = {};
+    uint32_t         m_regionReadbackRes[3][4] = {};   ///< renderW, renderH, outputW, outputH per slot.
+    Mat4             m_regionReadbackViewProj[3]{};   ///< Unjittered view-projection of the frame in the slot.
+    Mat4             m_regionReadbackPrevViewProj[3]{};
+    Vec3             m_regionReadbackCamera[3]{};     ///< Camera position of the frame in the slot.
+    bool             m_regionReadbackTaa[3] = {};      ///< TAA active on the frame the slot holds.
+    bool             m_regionDumpRequested = false;
+    bool             m_regionDumpActive = false;
+    uint32_t         m_regionStampMismatches = 0;
+    uint32_t         m_regionFilesWritten = 0;
+    float            m_lastFrameExposure = 1.0f;
     bool     m_prevViewProjValid = false;      ///< False on first frame (no valid previous viewProj).
 
     // ── CB Update Optimization (dirty flag skip) ────────────────────────
@@ -366,6 +402,7 @@
     /// probe-update CS and the deferred lighting Chebyshev sampler.
     /// @ref Majercik 2019 "Dynamic Diffuse Global Illumination"
     DDGISystem m_ddgiSystem;
+    bool m_ddgiSkipLogged = false; ///< One warning per run when r.RayTracing.GI is set but DDGI cannot run (frame_gi_passes.cpp).
 
     // ── VFX -> DDGI emissive injection (phase16 lumen-gi-contribution) ─
     /// GPU buffer holding up to 32 top-emissive particle samples, fed
@@ -575,6 +612,16 @@
     int m_shadowReadbackPhase = 0;           ///< 0=issue copy, 1=wait+read, 2=done.
     uint32_t m_width = 0;                  ///< Display resolution width (backbuffer / swapchain).
     uint32_t m_height = 0;                 ///< Display resolution height (backbuffer / swapchain).
+    /// Diagnostic clamp-box storage for r.TAA.ClampFreezeAfterFrame (0 = min, 1 = max).
+    RHITextureHandle m_taaClampBox[2]{};
+    uint32_t m_taaClampBoxSrv[2]{UINT32_MAX, UINT32_MAX};
+    uint32_t m_taaClampBoxUav[2]{UINT32_MAX, UINT32_MAX};
+    bool     m_taaClampBoxInitialised = false;  ///< False until the box has been written once.
+    /// Component replay (diagnostic): recorded AO and specular, per frame and per pixel.
+    RHIBufferHandle m_componentReplay;
+    uint32_t m_componentReplaySrv = UINT32_MAX;
+    std::string m_componentReplayLoaded;   ///< Path currently resident ("" = none).
+
     uint32_t m_renderWidth = 0;            ///< Internal render resolution width (screen percentage applied).
     uint32_t m_renderHeight = 0;           ///< Internal render resolution height (screen percentage applied).
 
@@ -600,6 +647,10 @@
     /// Pending deferred mesh uploads accumulated during SyncWorldToDrawList.
     /// Flushed in a single GPU submission at the end of the sync pass.
     std::vector<DeferredMeshUpload> m_deferredMeshUploads;
+    /// Meshes SyncWorldToDrawList skipped this frame because the per-frame load
+    /// budget ran out. They live only in ECS components until a later frame
+    /// picks them up, which no upload queue can see — so readiness must count them.
+    uint32_t m_budgetDeferredMeshCount = 0;
 
     // ── Deferred SDF Baking ─────────────────────────────────────────────────
 

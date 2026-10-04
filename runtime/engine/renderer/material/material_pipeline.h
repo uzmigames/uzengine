@@ -25,6 +25,7 @@
 #include "rhi_types.h"
 #include "hlsl_material_translator.h"
 #include "material_types.h"  // EShadingModel, EBlendMode (sibling header)
+#include "vertex_layout.h"   // VertexLayoutResult (owned input layout for SM5 PSOs)
 
 #include <cstdint>
 #include <string>
@@ -286,10 +287,14 @@ private:
     /// * `vs` — Vertex shader handle (mesh_vs).
     /// * `ps` — Pixel shader handle (compiled material PS).
     /// * `bindless` — If true, omits vertex input layout.
+    /// * `twoSided` — Graph's two-sided flag: disables back-face culling.
     /// * `debugName` — Debug label for the PSO.
+    ///
+    /// The SM5 input layout points into `m_standardLayout` (a member), so the
+    /// returned descriptor stays valid for the caller's CreateGraphicsPipeline.
     [[nodiscard]] RHIGraphicsPipelineDesc BuildGBufferPipelineDesc(
         RHIShaderHandle vs, RHIShaderHandle ps,
-        bool bindless, const char* debugName) const;
+        bool bindless, bool twoSided, const char* debugName) const;
 
     IRHIDevice* m_device = nullptr;
     ShaderPipeline* m_shaderPipeline = nullptr;
@@ -297,6 +302,11 @@ private:
 
     /// Cached mesh vertex shader handle — compiled once and reused for all material PSOs.
     RHIShaderHandle m_meshVS = RHIShaderHandle::Invalid();
+
+    /// Standard vertex input layout, owned here so that the `inputElements`
+    /// pointer handed out by BuildGBufferPipelineDesc() never refers to a
+    /// destroyed local (`VertexLayoutResult` stores the elements inline).
+    VertexLayoutResult m_standardLayout = VertexLayout::Standard();
 
     /// Map of material content hash -> compiled PSO + metadata.
     std::unordered_map<uint64_t, CachedMaterialPSO> m_cache;

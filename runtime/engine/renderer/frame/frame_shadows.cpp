@@ -207,6 +207,10 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
                             for (uint32_t di = 0; di < commands.size(); ++di) {
                                 const auto& drawCmd = commands[di];
 
+                                // Translucent/additive materials (materialFlags
+                                // bits[0:1] >= 2) are not occluders.
+                                if ((drawCmd.materialFlags & 0x3u) >= 2u) continue;
+
                                 // Only static/stationary primitives
                                 if (drawCmd.mobility == EMobility::Movable) continue;
 
@@ -424,6 +428,8 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
                     // Draw all scene geometry into this tile
                     uint32_t lastBoundMeshId = UINT32_MAX;
                     for (const auto& drawCmd : commands) {
+                        // Translucent/additive materials are not occluders.
+                        if ((drawCmd.materialFlags & 0x3u) >= 2u) continue;
                         if (drawCmd.meshId >= localMeshCount) continue;
                         const GPUMesh& mesh = localMeshes[drawCmd.meshId];
                         if (!mesh.IsValid()) continue;

@@ -1,0 +1,7 @@
+{
+  "status": "completed",
+  "createdAt": "2026-09-08T15:13:11.000Z",
+  "updatedAt": "2026-09-08T16:24:15.000Z",
+  "origin": "phase0_sponza-parity-06-qa-harness-validation notes.md \u2014 open findings, priority order set by the user on 2026-09-08",
+  "resolution": "not-reproducible: the shadow cache invalidates correctly on a camera jump; the observed flash was auto-exposure seeded for the previous camera, already removed by phase0_sponza-parity-05"
+}

@@ -152,11 +152,14 @@ void main(uint3 DTid : SV_DispatchThreadID) {
         L += T * gRad;
     }
 
-    // No sun disk — IBL cubemaps exclude point-source specular
-    // Normalize: sky radiância → IBL-suitable range. The irradiance convolution
-    // integrates over the hemisphere but the raw sky values include sunIntensity
-    // which makes them too bright for IBL. Divide by PI to match the convention
-    // where SkyLightIntensity=1.0 produces physically balanced ambient.
-    // Normalize sky radiance by 1/PI for SH energy conservation
-    outputCubemap[uint3(texel, face)] = float4(L * M_1_PI, 1.0);
+    // No sun disk — IBL cubemaps exclude point-source specular.
+    // Store radiance, not radiance/PI. The atmospheric integration above already
+    // produces radiance (the ground term carries its own Lambertian 1/PI), and the
+    // consumers divide by PI themselves: PackSHToCompactFormat() bakes the UE5
+    // cosine-convolution constants (c0 = 1/(2*sqrt(PI)) = A0/PI * Y00, etc.), so
+    // EvalSH_L2 already returns E/PI. The old 1/PI here was a second division that
+    // darkened both the SH diffuse and the prefiltered specular by PI.
+    /// @ref Hillaire 2020 "A Scalable and Production Ready Sky and Atmosphere Rendering Technique"
+    /// @constants Alpha 1 marks valid radiance; diffuse consumers apply their own 1/PI.
+    outputCubemap[uint3(texel, face)] = float4(L, 1.0);
 }

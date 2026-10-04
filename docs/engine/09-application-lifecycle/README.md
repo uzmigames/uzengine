@@ -548,3 +548,4 @@ Example (reverse of above):
 - [Subsystem Registry](./04-subsystem-registry.md) — Registry implementation details
 - [Game Instance](./05-game-instance.md) — Scene loading, pause/resume, level transitions
 - [DemoApplication Guide](./06-demo-guide.md) — Lightweight base class for simple GPU demos + migration to EngineLoop
+- [Scene Readiness & Preload](./07-scene-readiness-and-preload.md) — What "loaded" means, the no-present preload loop, exposure seeding and frame counting

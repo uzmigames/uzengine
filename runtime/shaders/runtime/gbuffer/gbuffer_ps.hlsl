@@ -31,6 +31,14 @@ cbuffer PerFrameCB : register(b1) {
     float4   lightColor          : packoffset(c7);
     float4   ambientColor        : packoffset(c8);
     float    mipBias             : packoffset(c30);
+    // Diagnostic material overrides (-1 = off). followup-14 item 1.5: Sponza contains
+    // no mirror or glossy surfaces, so the only way to measure a TAA change on that
+    // material class is to force it here, where both the lighting and the recorded
+    // G-buffer roughness pick it up.
+    float    materialRoughnessOverride : packoffset(c63.y);
+    float    materialMetallicOverride  : packoffset(c63.z);
+    // Diagnostic (byte 972): bit0 = ignore normal maps, bit1 = ignore material AO maps.
+    uint     materialMapMask           : packoffset(c60.w);
 };
 
 cbuffer PerObjectCB : register(b2) {
@@ -289,7 +297,11 @@ GBufferOutput main(PSInput input) {
         alphaValue *= opacityTexture.Sample(linearSampler, uv).a;
 #endif
 #else
-        alphaValue *= opacity;
+        // Material-graph path: the graph's Opacity output is the authority.
+        // `matOpacity` is the same constant, resolved on the CPU (scene_sync)
+        // for the shadow / distance-field / translucent consumers; multiplying
+        // both applied it twice (a constant 0.7 clipped as 0.49).
+        alphaValue = opacity;
 #endif
         if (alphaValue < alphaClipThreshold) discard;
     }
@@ -304,6 +316,21 @@ GBufferOutput main(PSInput input) {
     }
 
     // ── Write GBuffer ─────────────────────────────────────────────────────
+    if (materialRoughnessOverride >= 0.0) {
+        roughness = materialRoughnessOverride;
+    }
+    if (materialMetallicOverride >= 0.0) {
+        metallic = materialMetallicOverride;
+    }
+    // Diagnostic map switches (r.Material.NormalMap / r.Material.AOMap = 0): the vertex
+    // normal is what every path above started from, and AO = 1 is "no texture".
+    if ((materialMapMask & 1u) != 0u) {
+        N = normalize(input.normalWS);
+    }
+    if ((materialMapMask & 2u) != 0u) {
+        ao = 1.0;
+    }
+
     GBufferOutput output;
     output.albedoAO     = float4(albedo, ao);
     output.normalMatPbr = float4(OctEncode(N), metallic, roughness);

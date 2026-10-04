@@ -1,0 +1,7 @@
+{
+  "status": "in-progress",
+  "createdAt": "2026-09-07T17:12:26.000Z",
+  "updatedAt": "2026-09-07T17:12:26.000Z",
+  "outstanding": "Item 1.4 is diagnosed rather than fixed. The blocker is not the VFX collision: the harness already extracts this codebase's VFX-aware fly-camera block. It is that the ported test calls InputSystem::PrepareFrame/EndFrame, which this engine does not have, because SponzaTest LATCHES input while this engine SNAPSHOTS (InputSystem::BeginFrame is a memcpy of current into previous). The consequence is a real defect: a key pressed and released between two BeginFrame calls reports neither edge, so a quick F5 tap does nothing. STILL OPEN: the input refactor itself, which touches frame_setup.cpp where VFX overlay input is in flight. UPDATE 2026-09-16: the input refactor is DONE. InputSystem records press/release edges as events arrive and exposes PrepareFrame()/EndFrame(); BeginFrame() keeps the same boundary so frame_setup.cpp and the in-flight VFX overlay input were not touched. A quick tap inside one frame now reports both edges (7 new tests in runtime/tests/platform/test_input.cpp, all passing; no InputTest among the suite 85 pre-existing failures). STILL OPEN: the two ported SponzaTest files live in the reference repo, not here, and test_editor_navigation.ps1 also needs NormalizeWindowKey in platform_window.cpp.",
+  "updated": "2026-09-16"
+}

@@ -134,7 +134,10 @@ public:
 
     /// Angular diameter of the sun disk in degrees (visual size in the sky).
     /// Equivalent: LightSourceAngle. Default: 0.5357 deg (≈ Earth sun).
-    float lightSourceAngle = 1.2f;
+    /// Default 0.5357° = the sun's angular diameter (UE5 `LightSourceAngle`
+    /// default). 1.2° was a soft-shadow artistic choice inherited from the
+    /// pre-port Sponza calibration; scenes wanting it set `light_source_angle`.
+    float lightSourceAngle = 0.5357f;
 
     /// Soft edge angle of the sun disk in degrees.
     /// Equivalent: LightSourceSoftAngle. Default: 0.0.

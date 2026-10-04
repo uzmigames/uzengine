@@ -86,6 +86,9 @@ struct LightingPassDesc {
     rg::RgResourceId  apVolumeResource;///< Aerial perspective volume (read, SRV). Invalid = no AP dependency.
 
     // ── Debug MRT targets (lighting split visualization) ─────────────
+    rg::RgResourceId  debugDirectResource;   ///< RT1 as a graph resource (write). Invalid = not imported.
+    rg::RgResourceId  debugIndirectResource; ///< RT2 as a graph resource (write).
+    rg::RgResourceId  debugShadowResource;   ///< RT3 as a graph resource (write).
     RHITextureHandle  debugDirectLight;  ///< RT1: direct lighting (Lo). Invalid = skip.
     RHITextureHandle  debugIndirectLight;///< RT2: indirect lighting (ambient). Invalid = skip.
     RHITextureHandle  debugShadowMask;   ///< RT3: shadow mask (R=shadow, G=AO). Invalid = skip.

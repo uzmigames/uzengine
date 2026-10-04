@@ -1,3 +1,10 @@
+> **Note (2026-09-08, from `phase0_sponza-parity-03-sdf-gi-radiance-cache`):** any item here that
+> assumed a working SDF GI was written against empty shaders — `mesh_sdf_bake_cs.hlsl` and
+> `global_sdf_composite_cs.hlsl` were one-line stubs until that task ported real implementations
+> (BVH bake, raw + expanded clipmaps, validity-tracked radiance cache). Re-verify SDF-dependent
+> results before trusting them; `r.RadianceCache=0` also only started disabling the cache on the
+> same date (Init() used to overwrite the CVar). Item lists left untouched on purpose.
+
 ## 1. SkyLight Indoor Wiring
 
 - [x] 1.1 Wire `SkyLightComponent.indirectLightingIntensity` into `PerFrameCB` and read in `deferred_lighting_ps.hlsl`. Already implemented: SH coefficients pre-scaled by indirectLightingIntensity on CPU (frame_constants.cpp:247).

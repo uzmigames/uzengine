@@ -50,7 +50,9 @@ namespace uz {
 struct PerFrameCB {
     Mat4  viewProj;             ///< Combined view-projection matrix (column-major).
     Vec4  cameraPos;            ///< xyz = world-space camera position, w = unused.
-    Vec4  timeParams;           ///< x = total elapsed seconds, y = delta time, z = frame count (float), w = unused.
+    Vec4  timeParams;           ///< x = total elapsed seconds, y = delta time, z = frame count (float),
+                                ///< w = diagnostic sampling-seed override (`r.GI.Reflections.FreezeSeed`,
+                                ///< negative = use the frame count).
     Vec4  lightDir;             ///< xyz = normalised direction toward the primary light source, w = 0.
     Vec4  lightColor;           ///< xyz = primary light color multiplied by intensity, w = unused.
     Vec4  ambientColor;         ///< xyz = ambient light color contribution, w = unused.
@@ -277,10 +279,44 @@ struct PerFrameCB {
     /// @ref Lagarde & de Rousiers 2014 "Moving Frostbite to PBR" — §4.9.3
     float    indirectAOExponent = 2.0f;     ///< CVar r.IndirectAO.Exponent — default 2.0.
 
+    uint32_t sdfReflectionsEnabled = 0;
+    uint32_t sdfReflectionSkySrv = UINT32_MAX;
+    uint32_t sdfReflectionSamples = 4;
+    Vec4     sdfReflectionClipmaps[4] = {};
+    uint32_t sdfReflectionClipmapSrv[4] = {UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX};
+    float    sdfReflectionTraceDistance = 5000.0f;
+    float    sdfReflectionVoxelSize = 0.0f;
+    uint32_t sdfReflectionTraceSteps = 96;
+    float    sdfReflectionIntensity = 1.0f;
+    uint32_t sdfDiffuseSamples = 0;
+    uint32_t sdfReflectionPlainMean = 0;   ///< 1 = GatherSdfReflections averages rays plainly (r.GI.Reflections.HdrWeight=0); 0 = Karis weight.
+    /// CVar r.GI.FinalGather.SampleRotation — 0 = radical inverse of the frame-strided seed
+           /// (shipping), 1 = Kronecker advance in the frame index (candidate, ledger H-31).
+    uint32_t sdfSampleRotation = 0;
+    uint32_t materialMapMask = 0;  ///< Diagnostic: bit0 = ignore normal maps, bit1 = ignore material AO maps (r.Material.NormalMap / .AOMap = 0).
+    uint32_t sdfRawClipmapSrv[4] = {UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX};
+
     // ── Padding to next 256-byte boundary (1024 bytes) ────────────────
-    float    _padToCBEnd[43]  = {};         ///< Pads PerFrameCB to 1024 bytes (4 x 256).
+    // Region dump (diagnostics: per-pixel lighting/TAA intermediates for a screen rectangle,
+    // see SceneRenderer::SetRegionDump). Carved out of the former tail padding: offsets 992..1011.
+    uint32_t debugRegionUav = UINT32_MAX;  ///< Bindless UAV of the region-dump StructuredBuffer<float4>; UINT32_MAX = off.
+    uint32_t debugRegionSrv = UINT32_MAX;  ///< Bindless SRV of the rect table (StructuredBuffer<uint4>, 2 elements per rect).
+    uint32_t debugRegionCount = 0;         ///< Number of rectangles (0 = off).
+    uint32_t debugRegionStamp = 0;         ///< Frame stamp the GPU writes into each rect footer.
+    uint32_t debugRegionFields = 0;        ///< Field-group bitmask, see shaders/runtime/common/region_dump.hlsli.
+    float    materialRoughnessOverride = -1.0f;  ///< CVar r.Material.RoughnessOverride (-1 = off, diagnostic).
+    float    materialMetallicOverride  = -1.0f;  ///< CVar r.Material.MetallicOverride (-1 = off, diagnostic).
+    uint32_t componentReplaySrv = UINT32_MAX;  ///< CVar r.GI.ComponentReplayFile buffer (diagnostic).
 };
 
+static_assert(offsetof(PerFrameCB, sdfSampleRotation) == 968);
+static_assert(offsetof(PerFrameCB, materialMapMask) == 972);
+static_assert(offsetof(PerFrameCB, sdfRawClipmapSrv) == 976);
+static_assert(offsetof(PerFrameCB, debugRegionUav) == 992);
+static_assert(offsetof(PerFrameCB, debugRegionFields) == 1008);
+static_assert(offsetof(PerFrameCB, materialRoughnessOverride) == 1012);
+static_assert(offsetof(PerFrameCB, materialMetallicOverride) == 1016);
+static_assert(offsetof(PerFrameCB, componentReplaySrv) == 1020);
 static_assert(sizeof(PerFrameCB) == 1024, "PerFrameCB must be 1024 bytes (4 x 256 D3D12 CB alignment)");
 
 // ─────────────────────────────────────────────────────────────────────────────

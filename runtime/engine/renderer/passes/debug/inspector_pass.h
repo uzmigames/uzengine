@@ -96,6 +96,14 @@ struct ValidationResult {
     float       minVal;    ///< Minimum value across all sampled channels.
     float       maxVal;    ///< Maximum value across all sampled channels.
     float       avgVal;    ///< Average value across all sampled channels.
+    /// True when the target could not be read back (depth format, unsupported format, over the
+    /// readback size cap, or a failed mapping). The values above are then NOT a measurement, and
+    /// reporting them as 0/0/0 with status OK once made three targets look like black images.
+    bool        skipped = false;
+    std::string skipReason;  ///< Why it was skipped; empty when it was measured.
+    /// Which channel was measured: "RGBA" for a whole texel, or "R"/"G"/"B"/"A" for a target
+    /// registered as one channel of a packed target (gbuffer.ao is the albedo target's alpha).
+    std::string channel = "RGBA";
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

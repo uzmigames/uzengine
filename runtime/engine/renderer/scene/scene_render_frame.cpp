@@ -11,6 +11,7 @@
 ///   - RegisterOverlayPasses()   → frame/frame_overlay.cpp
 
 #include "scene_renderer.h"
+#include "passes/postprocess/auto_exposure.h"
 #include "show_flags_cvar.h"
 #include "pixel_debug.h"
 #include "raytracing/rt_manager.h"
@@ -37,6 +38,10 @@
 #include <cstring>
 
 namespace uz {
+
+void SceneRenderer::ResetExposureHistory(IRHICommandList* cmdList) {
+    if (m_autoExposure) m_autoExposure->ResetHistory(cmdList);
+}
 
 void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapChain,
                                  World* world, IVFS* vfs, float dt, uint32_t frameIndex) {

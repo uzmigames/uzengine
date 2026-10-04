@@ -26,6 +26,8 @@
 
 // ─── Root constants at b0 ──────────────────────────────────────────────────
 
+SamplerState linearClamp : register(s2);
+
 cbuffer RootConstants : register(b0) {
     uint g_irradAtlasUav;      ///< Bindless UAV index — irradiance atlas (RGBA16F).
     uint g_depthAtlasUav;      ///< Bindless UAV index — depth atlas (RG16F).
@@ -34,7 +36,22 @@ cbuffer RootConstants : register(b0) {
     uint g_frameIndex;         ///< Frame counter for temporal jitter.
     uint g_probesPerAxis;      ///< Probes per axis (cube grid).
     uint g_probeOffset;        ///< Reserved for temporal probe spreading.
-    uint g_probeBudget;
+    uint g_skyRadianceSrv;     ///< Sky radiance cubemap, the same one the SDF radiance cache
+                               ///< samples for escaping rays (kSentinelSrvIndex = flat sky colour).
+    uint g_diagnosticUav;      ///< Irradiance pass only: bindless UAV of the transport
+                               ///< diagnostic (float2 per atlas texel: mean ray radiance
+                               ///< luminance, sky fraction); 0xffffffff = none. Mirrors the
+                               ///< SDF writer's `traceStats` so both writers can be compared
+                               ///< probe by probe on the same scene (test_gi_energy_gpu.ps1).
+    uint g_knownRadianceBits;  ///< Diagnostic (followup-01 consumer stage): float bits of a constant
+                               ///< radiance every ray returns instead of what it traced; 0 = off.
+    uint g_knownKeepDepth;     ///< With the above: 1 = keep the real hit distance (Chebyshev acts),
+                               ///< 0 = report the far distance (visibility 1).
+    uint g_knownRadianceMode;  ///< 0 = constant; 1 = directional L * (0.5 + 0.5 dot(dir, d0)); 2 = per-probe parity.
+    uint g_knownDistanceBits;  ///< Diagnostic: float bits of a known hit distance every ray reports; 0 = off.
+    uint g_knownDistanceMode;  ///< 0 = constant D; 1 = D * (0.75 + 0.25 dot(dir, d0)).
+    uint g_farDepth;           ///< Diagnostic: 1 = the DEPTH pass stores the far distance for every ray
+                               ///< (visibility 1 at the consumer) while the radiance stays real.
 };
 
 // ─── Trace constants at b2 (matches DDGI cb layout) ───────────────────────
@@ -53,16 +70,25 @@ cbuffer TraceConstants : register(b2) {
     float maxTraceDistance;
     float temporalBlendAlpha;
     uint  shBufferUav;          // Unused by atlas writer.
-    uint  _padTC;
+    uint  firstWrite;           // Unused by atlas writer; the radiance cache uses
+                                // it to replace instead of blend on the first pass.
 
-    float _gdf0[4];
-    float _gdf1[4];
-    float _gdf2[4];
-    float _gdf3[4];
-    uint  _gdfSrv0;
-    uint  _gdfSrv1;
-    uint  _gdfSrv2;
-    uint  _gdfSrv3;
+    // GDF clipmap parameters. Unused by the DXR atlas writer, but they MUST stay
+    // scalar to mirror RadianceCacheTraceConstants (208 bytes here: 176 shared +
+    // the 16-byte VFX emissive tail + the 16-byte grid-recentre row): HLSL gives every array element its own
+    // 16-byte register, so `float x[4]` occupies 64 bytes instead of 16. The four
+    // arrays took 256 bytes where the C++ struct has 64, shifting every field
+    // below by 192 bytes past the uploaded struct and feeding garbage sky/sun
+    // colors to every probe ray.
+    // @ref Microsoft HLSL "Packing Rules for Constant Variables"
+    float gdfCenter0X, gdfCenter0Y, gdfCenter0Z, gdfExtent0;
+    float gdfCenter1X, gdfCenter1Y, gdfCenter1Z, gdfExtent1;
+    float gdfCenter2X, gdfCenter2Y, gdfCenter2Z, gdfExtent2;
+    float gdfCenter3X, gdfCenter3Y, gdfCenter3Z, gdfExtent3;
+    uint  gdfClipmapSrv0;
+    uint  gdfClipmapSrv1;
+    uint  gdfClipmapSrv2;
+    uint  gdfClipmapSrv3;
 
     uint  numGdfClipmaps;
     float skyColorR;
@@ -89,6 +115,13 @@ cbuffer TraceConstants : register(b2) {
     uint  vfxEmissiveSampleCount;
     float _vfxEmissivePad0;
     float _vfxEmissivePad1;
+
+    // Radiance-cache grid-recentre row (history scroll); mirrored for layout
+    // parity with `RadianceCacheTraceConstants`, not consumed by the DDGI writer.
+    int   historyShiftX;
+    int   historyShiftY;
+    int   historyShiftZ;
+    uint  _historyShiftPad;
 };
 
 // ─── VFX emissive sample (mirrors `uz::VfxEmissiveSample`) ───────────────
@@ -121,9 +154,15 @@ struct VfxDDGIEmissiveSample {
 
 static const float kPI            = 3.14159265358979323846;
 static const float kRayTMin       = 1.0;          // cm — avoid self-hit
+static const float kSurfaceBias   = 2.0;          // cm — shadow ray origin offset
 static const uint  kIrradProbeSize = 6;           // matches DDGISystem::kIrradianceProbeSize
 static const uint  kDepthProbeSize = 16;          // matches DDGISystem::kDepthProbeSize
 static const uint  kMaxRaysPerProbe = 64;
+static const float kSurfaceEpsilon = 5.0;         // cm — GDF normal central-difference offset
+
+// Shared GDF surface sampling — supplies the hit normal and albedo that an
+// inline RayQuery cannot report. Needs linearClamp + the trace cbuffer above.
+#include "gdf_surface.hlsli"
 
 // ─── Hammersley + spherical sample (shared with SDF shader) ──────────────
 
@@ -200,11 +239,37 @@ uint2 ProbeAtlasOrigin(uint linearIdx, uint tileSize) {
                  tileY * stride + 1u);
 }
 
+// ─── Sky radiance for a ray that escapes the scene ──────────────────────
+//
+// The SDF radiance cache samples the sky cubemap in the ray direction and multiplies by the sky
+// colour (radiance_cache_trace_cs.hlsl). This path used a flat colour, which cost the DXR probes
+// the cubemap's directional variation and made the two paths disagree (followup-01). Same
+// cubemap, same Z-up to Y-up swizzle, same multiply.
+float3 SkyRadiance(float3 dir) {
+    const float3 tint = float3(skyColorR, skyColorG, skyColorB);
+    if (g_skyRadianceSrv == kSentinelSrvIndex) {
+        return tint;
+    }
+    TextureCube<float4> sky = ResourceDescriptorHeap[g_skyRadianceSrv];
+    return sky.SampleLevel(linearClamp, float3(dir.x, dir.z, dir.y), 0).rgb * tint;
+}
+
 // ─── Sample radiance toward a single direction ──────────────────────────
 
-float4 TraceProbeRay(float3 origin, float3 dir) {
+// Known-radiance diagnostic (followup-01): mode 0 = constant L, mode 1 = L * (0.5 + 0.5 dot(dir, d0))
+// with d0 = normalize(0.3, 0.5, 0.8), a smooth non-negative function of direction that crosses every
+// octahedral tile edge and corner — a misplaced or inverted border copy shows against it.
+static const float3 kKnownDir = float3(0.30305, 0.50508, 0.80812);
+float3 KnownRadiance(float L, float3 dir, uint mode) {
+    // mode 2 (per-probe parity) is applied by the caller through L itself; here it is a constant.
+    const float v = (mode == 1u) ? L * (0.5 + 0.5 * dot(dir, kKnownDir)) : L;
+    return float3(v, v, v);
+}
+
+float4 TraceProbeRay(float3 origin, float3 dir, out float4 hitInfo) {
+    hitInfo = float4(0.0, 0.0, 0.0, 0.0);
     if (g_tlasSrvIndex == kSentinelSrvIndex) {
-        return float4(skyColorR, skyColorG, skyColorB, maxTraceDistance);
+        return float4(SkyRadiance(dir), maxTraceDistance);
     }
     RaytracingAccelerationStructure tlas = ResourceDescriptorHeap[g_tlasSrvIndex];
 
@@ -222,14 +287,71 @@ float4 TraceProbeRay(float3 origin, float3 dir) {
         // Single-bounce sun lighting at the (unknown-normal) hit point.
         // Use the negated ray direction as a conservative outward normal —
         // accurate per-vertex normals require an SBT/hit-group pipeline.
-        float3 N    = -dir;
+        const float  hitT = q.CommittedRayT();
+        const float3 hitP = origin + dir * hitT;
+
+        // Surface attributes come from the global distance field, the same
+        // source the SDF writer shades with. Inline RayQuery reports the hit
+        // distance but no attributes, and `-dir` (the previous conservative
+        // normal) makes every hit face the incoming ray, so an interior wall
+        // was lit as if it were turned toward the sun. Fall back to `-dir`
+        // only where the field has no gradient (outside every cascade).
+        float3 N = GdfNormal(hitP);
+        if (dot(N, N) < 0.5) N = -dir;
         float3 L    = normalize(float3(lightDirX, lightDirY, lightDirZ));
         float  NdL  = max(dot(N, L), 0.0);
+
+        // Shadow ray. Without it every hit point is lit as if the sun were
+        // unoccluded, so interior walls inside the atrium fed the probes with
+        // full sunlight. The SDF writer has always done this test
+        // (`TraceGDF(shadowOrigin, L, ...) == -1` in radiance_cache_trace_cs).
+        float visibility = 0.0;
+        if (NdL > 0.0) {
+            RayDesc shadowRay;
+            shadowRay.Origin    = hitP + N * kSurfaceBias;
+            shadowRay.Direction = L;
+            shadowRay.TMin      = kRayTMin;
+            shadowRay.TMax      = maxTraceDistance;
+
+            RayQuery<RAY_FLAG_FORCE_OPAQUE
+                   | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> sq;
+            sq.TraceRayInline(tlas, RAY_FLAG_NONE, 0xFF, shadowRay);
+            sq.Proceed();
+            visibility = (sq.CommittedStatus() == COMMITTED_TRIANGLE_HIT) ? 0.0 : 1.0;
+        }
+
         float3 sunRad = float3(lightColorR, lightColorG, lightColorB)
-                      * lightIntensity * NdL;
-        return float4(sunRad * groundAlbedo, q.CommittedRayT());
+                      * lightIntensity * NdL * visibility;
+
+        // Lambertian BRDF: the radiance leaving a diffuse surface is
+        // `albedo/pi * E`, not `albedo * E`. The missing 1/pi made every
+        // surface bounce pi times too bright, which is why the DXR path
+        // measured 1.49x the SDF path's HDR mean on Sponza Camera A
+        // (12.1 vs 8.1 at 1080p, auto exposure off, identical CVars).
+        // The SDF writer already carries this term:
+        //   `radiance = albedo * (sunRad / kPI + indirect)`.
+        // @ref Majercik 2019 — probe atlases store E/pi (radiance-like).
+        //
+        // Albedo also comes from the field (GBA = diffuse reflectance), so both
+        // writers bounce the same energy off the same surface; `groundAlbedo`
+        // stays as the fallback for points outside every cascade.
+        // Validity comes from the field, not from the colour: a point inside a
+        // clipmap returns its distance (< 1e8) with its diffuse reflectance, and
+        // black is a legitimate reflectance (dark dirt; the composite writes
+        // zero for fully metallic surfaces on purpose). Only a hit outside every
+        // cascade (distance sentinel 1e9) falls back to the average albedo.
+        const float4 surface = SampleGdfSurface(hitP);
+        const float3 albedo = surface.x < 1e8 ? saturate(surface.gba)
+                                              : float3(groundAlbedo, groundAlbedo, groundAlbedo);
+        // z: 1 when the committed triangle faced the ray (diagnostic, H-63 follow-on): whether the
+        // rays of a probe the field calls "inside" find back faces, as a probe inside a closed
+        // volume would, or front faces, as a probe in free space would. The trace culls nothing.
+        hitInfo = float4((NdL * visibility) > 0.0 ? 1.0 : 0.0,
+                         dot(albedo, float3(0.2126, 0.7152, 0.0722)),
+                         q.CommittedTriangleFrontFace() ? 1.0 : 0.0, visibility);
+        return float4(albedo * (sunRad / kPI), hitT);
     }
-    return float4(skyColorR, skyColorG, skyColorB, maxTraceDistance);
+    return float4(SkyRadiance(dir), maxTraceDistance);
 }
 
 // ─── Entry point — one thread per atlas texel of one probe ───────────────
@@ -280,20 +402,74 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     float3 accumIrrad = float3(0, 0, 0);
     float  accumWeight = 0.0;
 
+    // Depth moments are stored normalised — see the accumulation below.
+    const float invMaxTraceDistance = 1.0 / max(maxTraceDistance, 1e-4);
+
     float  accumDepth  = 0.0;
     float  accumDepth2 = 0.0;
     float  accumDepthW = 0.0;
 
+    // Transport diagnostic: unweighted mean of the ray radiance luminance and the
+    // fraction of rays that escaped to the sky — the same two statistics the SDF
+    // writer records in `traceStats` (.w and .x), so the two writers can be compared
+    // in linear radiance rather than through the tonemapped frame.
+    float diagLum = 0.0;
+    float diagSky = 0.0;
+    float diagSkyLum = 0.0;   // luminance carried by the sky rays alone
+    // Hit side (followup-01 stage 3): what the rays that did NOT escape found.
+    float diagHitCount  = 0.0;
+    float diagHitDist   = 0.0;
+    float diagHitLit    = 0.0;
+    float diagHitAlbedo = 0.0;
+    float diagHitBack   = 0.0;   // hit rays whose committed triangle was back-facing
+
     [loop]
     for (uint i = 0; i < nRays; ++i) {
-        float2 xi = Hammersley(i + (frameJitter & 0xFFFFu),
-                               nRays + (frameJitter & 0xFFu));
-        xi = frac(xi);
+        // A full stratified set, rotated per frame and per probe (Cranley-Patterson), the
+        // same construction as radiance_cache_trace_cs.hlsl. The previous
+        // `Hammersley(i + j, nRays + (jitter & 0xFF))` was a contiguous window into a longer
+        // sequence: its polar coordinate spanned ~32/N of [0,1), so each frame's rays covered a
+        // band of the sphere (followup-01, H-57: mean 0.373 of a field whose mean is 0.5).
+        float2 xi = frac(Hammersley(i, nRays)
+                         + float2(RadicalInverseVdC(frameJitter),
+                                  RadicalInverseVdC(frameJitter ^ probeIdx)));
         float3 rayDir = SphericalSample(xi);
 
-        float4 rt = TraceProbeRay(probePos, rayDir);
+        float4 hitInfo;
+        float4 rt = TraceProbeRay(probePos, rayDir, hitInfo);
         float3 radiance = rt.rgb;
         float  hitT     = rt.a;
+        // Diagnostic (followup-01, H-60 follow-on): real radiance, far depth — separates the visibility
+        // test from the writer-side difference under real lighting. Depth pass only.
+        if (g_farDepth != 0u && g_atlasMode == 1u) hitT = maxTraceDistance;
+        {
+            const float knownL = asfloat(g_knownRadianceBits);
+            if (knownL > 0.0) {
+                float knownLeff = knownL;
+                if (g_knownRadianceMode == 2u) {
+                    // Per-probe parity: odd cells L, even cells L/4 (followup-01 step 4).
+                    const uint3 cell = ProbeIndexToCell(probeIdx);
+                    knownLeff = ((cell.x + cell.y + cell.z) & 1u) != 0u ? knownL : 0.25 * knownL;
+                }
+                radiance = KnownRadiance(knownLeff, rayDir, g_knownRadianceMode);
+                if (g_knownKeepDepth == 0u) hitT = maxTraceDistance;
+                const float knownD = asfloat(g_knownDistanceBits);
+                if (knownD > 0.0) {
+                    // Known hit distance for the depth atlas: constant, or varying with direction.
+                    hitT = (g_knownDistanceMode == 1u) ? knownD * (0.75 + 0.25 * dot(rayDir, kKnownDir)) : knownD;
+                }
+            }
+        }
+        if (hitT < maxTraceDistance) {
+            diagHitCount  += 1.0;
+            diagHitDist   += hitT;
+            diagHitLit    += hitInfo.x;
+            diagHitAlbedo += hitInfo.y;
+            diagHitBack   += 1.0 - hitInfo.z;
+        }
+        diagLum += dot(radiance, float3(0.2126, 0.7152, 0.0722));
+        diagSky += (hitT >= maxTraceDistance) ? 1.0 : 0.0;
+        diagSkyLum += (hitT >= maxTraceDistance) ? dot(radiance, float3(0.2126, 0.7152, 0.0722)) : 0.0;
 
         // Weight by max(0, dot(sampleDir, rayDir)) — cosine of the angle
         // between the texel direction and the traced ray. This is the
@@ -305,14 +481,39 @@ void main(uint3 DTid : SV_DispatchThreadID) {
         } else {
             // Depth atlas uses a sharper cone (square the weight) to
             // preserve depth discontinuities for the Chebyshev test.
+            //
+            // Store the distance NORMALISED by maxTraceDistance. The atlas is
+            // RG16F and the second moment is a squared distance: at Sponza's
+            // scale (cm, maxTraceDistance = probeSpacing*16*2 ~ 4000) d^2 is
+            // ~1.6e7 and saturates FP16's 65504 limit. A saturated second
+            // moment makes `variance = max(meanD2 - meanD*meanD, 1e-4)`
+            // collapse to 1e-4 and, because `distToProbe < meanD` then holds
+            // everywhere, Chebyshev returned visibility = 1 for every probe —
+            // DDGI had no occlusion at all and lit through walls.
+            // Measured before this change: gi.ddgi_depth max = 65504 (FP16 max).
             float dw = w * w;
-            accumDepth  += hitT * dw;
-            accumDepth2 += hitT * hitT * dw;
+            float hitNorm = hitT * invMaxTraceDistance;
+            accumDepth  += hitNorm * dw;
+            accumDepth2 += hitNorm * hitNorm * dw;
             accumDepthW += dw;
         }
     }
 
     if (g_atlasMode == 0u) {
+        if (g_diagnosticUav != 0xffffffffu) {
+            RWStructuredBuffer<float4> diagnostic = ResourceDescriptorHeap[g_diagnosticUav];
+            const uint texel = (localY - 1u) * tileSize + (localX - 1u);
+            const float invRays = 1.0 / float(max(nRays, 1u));
+            const float invHits = 1.0 / max(diagHitCount, 1.0);
+            const uint  rec = (probeIdx * (tileSize * tileSize) + texel) * 2u;
+            // w: back-face fraction over the HIT rays (H-63 follow-on); zero without hits.
+            diagnostic[rec] = float4(diagLum * invRays, diagSky * invRays,
+                                     diagSkyLum * invRays, diagHitBack * invHits);
+            // Hit side: mean distance, lit fraction and mean albedo over the HIT rays only
+            // (zero when the probe has none), and the hit count itself.
+            diagnostic[rec + 1] = float4(diagHitDist * invHits, diagHitLit * invHits,
+                                         diagHitAlbedo * invHits, diagHitCount);
+        }
         float3 irrad = (accumWeight > 1e-6) ? (accumIrrad / accumWeight)
                                             : float3(0, 0, 0);
 
@@ -389,10 +590,11 @@ void main(uint3 DTid : SV_DispatchThreadID) {
         float4 blended = lerp(prev, float4(irrad, 1.0), a);
         irradTex[atlasXY] = blended;
     } else {
-        float meanD  = (accumDepthW > 1e-6) ? (accumDepth  / accumDepthW)
-                                            : maxTraceDistance;
-        float meanD2 = (accumDepthW > 1e-6) ? (accumDepth2 / accumDepthW)
-                                            : (maxTraceDistance * maxTraceDistance);
+        // Both moments are in normalised units [0,1]; the consumer rescales
+        // by maxTraceDistance (derived from probe spacing) before the
+        // Chebyshev comparison.
+        float meanD  = (accumDepthW > 1e-6) ? (accumDepth  / accumDepthW) : 1.0;
+        float meanD2 = (accumDepthW > 1e-6) ? (accumDepth2 / accumDepthW) : 1.0;
 
         RWTexture2D<float2> depthTex = ResourceDescriptorHeap[g_depthAtlasUav];
         uint2 atlasOrigin = ProbeAtlasOrigin(probeIdx, kDepthProbeSize);

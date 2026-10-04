@@ -1,0 +1,17 @@
+# Proposal: Isolate lighting flicker on shadow walls and rear door
+
+## Why
+The instrumented window does not represent all reported shadows. Separate regional measurements must distinguish reflection noise, diffuse gather, probe updates, AO and geometry instability.
+
+## What Changes
+Create reproducible elimination experiments, full-resolution evidence and a hypothesis ledger. Execute checklist items in order. This task is diagnostic until a correction is explicitly selected in task 14.
+
+## Dependencies
+phase0_sponza-followup-11-isolate-flicker-display must finish before this task starts. Earlier evidence is reusable only with verified frame alignment and compatible settings.
+
+## Impact
+- Affected specs: rendering-flicker-validation
+- Affected code: runtime/tools/uzengine.cpp; renderer frame, GI and TAA paths; scripts/ diagnostic harnesses.
+- Breaking change: NO
+- User benefit: attribute visible flicker without hiding it through brightness changes, blur or stale history.
+- Existing tracking: followup-08 contains historical instrumentation; followup-06 retains reflection filtering; followup-01 retains DDGI/SDF energy parity. Do not duplicate or silently close those criteria.

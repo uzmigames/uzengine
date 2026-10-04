@@ -1,0 +1,7 @@
+{
+  "status": "in-progress",
+  "createdAt": "2026-09-09T13:14:58.517Z",
+  "updatedAt": "2026-09-09T13:16:12.306Z",
+  "outstanding": "Capture reliability had a targeted pass on 2026-09-15: the decision rules moved to scripts/flicker/criteria.py with tests (scripts/test_criteria_logic.py), one dump-retention rule lives in runner, and run_capture now fails on shader-compile errors and on DXGI_ERROR_DEVICE_REMOVED. Two criterion bugs found in review on 2026-09-15 are fixed and covered by tests: period_share summed the one-sided spectrum without weighting conjugate pairs (inflating the period-2 share), and NaN classified as 'below' so an unmeasurable condition passed as 'no worsening'. STILL OPEN: capture identity is weak — harness_stamp records path/size/mtime rather than a hash, and a report should inherit the identity from the capture's own manifest rather than stamping whatever binary is present at analysis time.",
+  "updated": "2026-09-15"
+}

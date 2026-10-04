@@ -68,3 +68,15 @@ These don't affect runtime behavior but signal that the renderer was developed a
 - [shadow_pcss.hlsli:87](../../../runtime/shaders/runtime/lighting/shadow_pcss.hlsli#L87) — `/// (Sponza bug 2026-04-10).`
 
 Generalize these comments to describe the bug behavior without naming the sample scene.
+
+## Re-audit 2026-09-08 (after the SponzaTest port, `phase0_sponza-parity-*`)
+
+| Row | Current state | Status |
+|---|---|---|
+| 1.1 Exposure | `cv_Exposure` default is now **1.0** (`frame_constants.cpp:82`, applied on top of auto exposure); Sponza sets `r.Exposure 0.5` in `sample/content/scenes/sponza.uzscene`. The "Exposure 3.0 — matched to … Sponza" comment above it (`:79-81`) is stale. | Resolved in code; comment to clean |
+| 1.2 Contact shadow length | `r.ContactShadow.Length = 0.10` unchanged, comment still says "large interiors like Sponza" (`:40`). | Open |
+| 1.4 SSGI thickness | `r.SSGI.Thickness = 50.0` unchanged (`ssgi_renderer.cpp:35`). | Open |
+| 1.5 Skylight | `r.SkyLight.Intensity = 1.0`, `r.SkyLight.MinAmbient = 0.25` unchanged; since task 03 the minimum-ambient floor is **not** applied when GI irradiance comes from the radiance cache (`deferred_lighting_ps.hlsl`, `!irradianceFromGI`). | Open, narrower |
+| new | `r.IndirectAO.Exponent` default **1.0** (linear AO, reference pipeline); the pre-port Sponza calibration used 3.0 as an artistic choice (`frame_constants.cpp:85-88`). | Neutral default |
+| new | `DirectionalLightComponent::lightSourceAngle` default **0.5357°** (physical sun disc; was 1.2°). Sponza sets `light_source_angle` explicitly; `RenderingParity.DirectionalLightDefaults` asserts the default. | Neutral default |
+| new | The hand-tuned Sponza calibration (materials, sun, HDRI skylight) lives in `sample/reference/sponza-manual-calibration/`; shipped Sponza materials are neutral (multipliers 1.0). | Moved out of engine/content |

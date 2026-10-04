@@ -1,0 +1,8 @@
+{
+  "status": "in-progress",
+  "createdAt": "2026-09-08T18:22:59.000Z",
+  "updatedAt": "2026-09-08T19:40:00.000Z",
+  "origin": "user report 2026-09-08: white specks on a shadowed wall beside a window while flying the Sponza scene",
+  "outstanding": "Re-counted in linear radiance before building any filter (ledger H-41): the reflection term carries 49-85 % of its energy in isolated pixels, but at the TAA output shadow_wall has none by that rule and right_shadow 0.74 %, while rear_door keeps 14.7 %. Enough not to prioritise a reflection filter; NOT enough to conclude one could not change the wall's oscillation, since absence of isolated pixels above a threshold is not absence of any effect. Item 4.2 is FIXED and verified (2026-09-16): lighting/shadows had no shader case, lightingonly read the HDR target the pass writes and clears, ao showed the G-buffer alpha instead of GTAO; all four now pass pre-registered checks against three working controls (scripts/run_debug_view_check.py). Item 4.3 is FIXED and verified (2026-09-16): a target registered for one channel is now validated on that channel (gbuffer.ao/metallic/roughness no longer duplicate albedo/normal) and unreadable targets report SKIPPED with a reason instead of 0/0/0 with status OK. Recorded limit: the validator samples a 4x4 block at the target centre, so a static centre reads the same at every pose. Not investigated: volfog.* and hiz.mip0 read measured zeros. Originally recorded as: items 4.2 and 4.3 are untouched — they were not needed by followup-12 or -13.",
+  "updated": "2026-09-16"
+}

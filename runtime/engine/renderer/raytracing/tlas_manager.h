@@ -75,6 +75,8 @@ public:
     ///
     /// Shaders access the TLAS via `ResourceDescriptorHeap[index]` (SM6.6).
     [[nodiscard]] uint32_t GetTLASSRVIndex() const;
+    /// Instances written by the last Rebuild(); 0 means the TLAS is empty (e.g. `r.RayTracing` off).
+    [[nodiscard]] uint32_t GetLastInstanceCount() const noexcept { return m_lastInstanceCount; }
 
     /// Returns true if the TLAS was successfully built at least once.
     [[nodiscard]] bool IsReady() const { return m_tlasHandle.IsValid(); }

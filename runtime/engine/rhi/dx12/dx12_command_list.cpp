@@ -899,9 +899,13 @@ void DX12CommandList::CopyTextureToBuffer(RHITextureHandle srcTexture, uint32_t 
     const uint32_t mipWidth  = std::max(1u, tex->desc.width >> mipLevel);
     const uint32_t mipHeight = std::max(1u, tex->desc.height >> mipLevel);
 
-    // DX12 subresource index = mipLevel + arraySlice * mipLevels
+    // DX12 subresource index = mipLevel + arraySlice * mipLevels.
+    // A volume texture has ONE subresource per mip holding every Z slice, so
+    // `arraySlice` selects a Z slice through the source box below instead.
     const uint32_t mipLevels = std::max(static_cast<uint16_t>(1), tex->desc.mipLevels);
-    const uint32_t subresourceIndex = mipLevel + arraySlice * mipLevels;
+    const uint32_t subresourceIndex = tex->desc.is3D
+        ? mipLevel
+        : mipLevel + arraySlice * mipLevels;
 
     D3D12_TEXTURE_COPY_LOCATION srcLoc = {};
     srcLoc.pResource = tex->resource;
@@ -918,7 +922,17 @@ void DX12CommandList::CopyTextureToBuffer(RHITextureHandle srcTexture, uint32_t 
     dstLoc.PlacedFootprint.Footprint.Depth = 1;
     dstLoc.PlacedFootprint.Footprint.RowPitch = dstRowPitch;
 
-    m_cmdList->CopyTextureRegion(&dstLoc, 0, 0, 0, &srcLoc, nullptr);
+    // A volume subresource contains every Z slice, but this readback holds one:
+    // copy the slice the caller asked for through `arraySlice`, clamped to the
+    // volume's depth. Keep a null source box for 2D textures, as required for
+    // depth-stencil copies.
+    const uint32_t mipDepth = tex->desc.is3D
+        ? std::max(1u, static_cast<uint32_t>(tex->desc.depthOrArraySize) >> mipLevel)
+        : 1u;
+    const uint32_t zSlice = std::min(arraySlice, mipDepth - 1u);
+    const D3D12_BOX sliceBox{0, 0, zSlice, mipWidth, mipHeight, zSlice + 1u};
+    m_cmdList->CopyTextureRegion(&dstLoc, 0, 0, 0, &srcLoc,
+                                tex->desc.is3D ? &sliceBox : nullptr);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -608,6 +608,179 @@ RHIPipelineHandle PipelineLibrary::GetDdgiProbeUpdate() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// DDGI Atlas Border Fill Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Fills the 1-texel octahedral border of every probe tile from the tile's interior after the
+// probe update (Cigolle 2014 identifications), and clears both atlases once at creation. The
+// deferred lighting samples the tiles bilinearly and reaches the border for every normal within
+// half a texel of a tile edge; until this pass existed those texels were never written
+// (followup-01, H-55: 0.57-0.72x with identical stored energy).
+
+bool PipelineLibrary::EnsureDdgiBorderFillShader() {
+    if (m_ddgiBorderFillCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::DdgiBorderFillCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile DdgiBorderFillCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "ddgi_border_fill_cs";
+
+    m_ddgiBorderFillCS = m_device->CreateShader(shaderDesc);
+    if (!m_ddgiBorderFillCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create DdgiBorderFillCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetDdgiBorderFill() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetDdgiBorderFill called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+    if (m_ddgiBorderFill.IsValid()) {
+        return m_ddgiBorderFill;
+    }
+    if (!EnsureDdgiBorderFillShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ddgiBorderFillCS;
+    desc.debugName     = "DDGI_BorderFill";
+
+    m_ddgiBorderFill = m_device->CreateComputePipeline(desc);
+    if (!m_ddgiBorderFill.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create DDGI_BorderFill pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created DDGI_BorderFill pipeline");
+    }
+    return m_ddgiBorderFill;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Radiance Cache Probe Side Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The nearest mesh triangle to every radiance-cache probe, over the instances the global distance
+// field was composited from: the side of that face the probe lies on and the direction from the face
+// to the probe. The trace classifies and relocates probes with it when
+// r.GI.RadianceCache.ProbeClassification = 1 (followup-01 candidate); the distance field alone is
+// unsigned and biased, and cannot tell the two sides of a wall apart.
+
+bool PipelineLibrary::EnsureProbeSideShader() {
+    if (m_probeSideCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::ProbeSideCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile ProbeSideCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "probe_side_cs";
+
+    m_probeSideCS = m_device->CreateShader(shaderDesc);
+    if (!m_probeSideCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create ProbeSideCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetProbeSide() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetProbeSide called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+    if (m_probeSide.IsValid()) {
+        return m_probeSide;
+    }
+    if (!EnsureProbeSideShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_probeSideCS;
+    desc.debugName     = "RadianceCache_ProbeSide";
+
+    m_probeSide = m_device->CreateComputePipeline(desc);
+    if (!m_probeSide.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create RadianceCache_ProbeSide pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created RadianceCache_ProbeSide pipeline");
+    }
+    return m_probeSide;
+}
+
+bool PipelineLibrary::EnsureProbeReachShader() {
+    if (m_probeReachCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::ProbeReachCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile ProbeReachCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "probe_reach_cs";
+
+    m_probeReachCS = m_device->CreateShader(shaderDesc);
+    if (!m_probeReachCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create ProbeReachCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetProbeReach() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetProbeReach called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+    if (m_probeReach.IsValid()) {
+        return m_probeReach;
+    }
+    if (!EnsureProbeReachShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_probeReachCS;
+    desc.debugName     = "RadianceCache_ProbeReach";
+
+    m_probeReach = m_device->CreateComputePipeline(desc);
+    if (!m_probeReach.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create RadianceCache_ProbeReach pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created RadianceCache_ProbeReach pipeline");
+    }
+    return m_probeReach;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SVGF Reproject Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 

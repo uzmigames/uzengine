@@ -1,5 +1,7 @@
 /// UzEngine Scene Renderer — Lifecycle (Init, Resize, Shutdown, CVar registration).
 
+#include <algorithm>
+#include <array>
 #include "scene_renderer.h"
 #include "quality_presets.h"
 #include "show_flags_cvar.h"
@@ -31,6 +33,7 @@
 #include "outline_pass.h"
 #include "stats_overlay.h"
 #include "viewport_toolbar.h"
+#include "tech_panel.h"
 #include "engine/vfx/editor/vfx_editor_overlay.h"
 #include "engine/vfx/system/vfx_system_instance.h"
 #include "shader_compiler.h"
@@ -149,6 +152,10 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     // ── Viewport Toolbar (deferred init — needs cmdList in recording state) ─
     m_viewportToolbar = std::make_unique<ViewportToolbar>();
     m_viewportToolbarInitialized = false;
+
+    // ── Tech Panel (deferred init — same reason; works without editor mode) ─
+    m_techPanel = std::make_unique<TechPanel>();
+    m_techPanelInitialized = false;
 
     // ── VFX Editor Overlay (deferred init — same as stats overlay) ────────
     m_vfxEditorOverlay = std::make_unique<VfxEditorOverlay>();
@@ -714,13 +721,28 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     if (!m_globalDistanceField.CreateResources(device)) {
         UZ_LOG(Renderer, Warning, "SceneRenderer: GDF init failed (SDF GI disabled)");
     }
-    if (!m_radianceCache.CreateResources(device, 5000.0f)) {
+    // The probe grid must be created at the extent the consumer will use:
+    // creating at a hardcoded 5000 and then reporting a different extent in
+    // PerFrameCB made producer spacing and consumer interpolation disagree.
+    m_rcGridExtentCVar = CVarRegistry::Get().GetFloat("r.GI.RadianceCache.GridExtent", 5000.f);
+    if (!m_radianceCache.CreateResources(device, m_rcGridExtentCVar)) {
         UZ_LOG(Renderer, Warning, "SceneRenderer: RadianceCache init failed (SDF GI disabled)");
     }
-    // Enable SDF GI when both subsystems initialized successfully.
-    m_sdfGiEnabled = m_globalDistanceField.IsInitialized() && m_radianceCache.IsInitialized();
+    // Enable SDF GI only when the user asked for it AND both subsystems came up.
+    // ApplyCVars() computes the same conjunction, but Init() runs after it and
+    // this assignment used to drop the CVar term — so `r.RadianceCache=0` never
+    // actually disabled the radiance cache. That was invisible while the SDF
+    // shaders were stubs (an empty field made the old consumer fall back to sky
+    // light); with a real field the consumer trusts the probes, and a scene
+    // that believes GI is off was silently lit by a probe grid with no final
+    // gather — the worst of both paths.
+    const bool wantSdfGi = CVarRegistry::Get().GetBool("r.RadianceCache", false);
+    const bool sdfGiReady = m_globalDistanceField.IsInitialized() && m_radianceCache.IsInitialized();
+    m_sdfGiEnabled = wantSdfGi && sdfGiReady;
     if (m_sdfGiEnabled) {
         UZ_LOG(Renderer, Info, "SceneRenderer: SDF GI enabled (GDF + RadianceCache ready)");
+    } else if (sdfGiReady) {
+        UZ_LOG(Renderer, Info, "SceneRenderer: SDF GI resources ready but r.RadianceCache=0 — disabled");
     }
 
     // ── DDGI octahedral atlases (Majercik 2019) ────────────────────────
@@ -979,6 +1001,11 @@ void SceneRenderer::RegisterCVars() {
                    "Toolbar profile: 0=Full, 1=MaterialPreview, 2=MeshPreview, 3=Minimal",
                    0.f, 3.f);
 
+    // ── Tech Panel CVar ───────────────────────────────────────────────────
+    cvars.Register("r.TechPanel.Show", 0.f,
+                   "Show the lighting-technology switchboard overlay (F3 toggles; 0=hide, 1=show)",
+                   0.f, 1.f);
+
     // All other CVars (pass toggles, parameters) are registered decentrally
     // via UZ_CVAR_* macros in their respective subsystem .cpp files.
     // ApplyCVars() reads them by name — no local registration needed.
@@ -1065,7 +1092,12 @@ void SceneRenderer::ApplyCVars() {
     m_passInspector.SetPassEnabled("clouds", cvars.GetBool("r.Clouds", true));
     m_passInspector.SetPassEnabled("contact_shadow", cvars.GetBool("r.ContactShadows", true));
     m_passInspector.SetPassEnabled("aerial_persp", cvars.GetBool("r.AerialPerspective", true));
-    m_passInspector.SetPassEnabled("ssgi", cvars.GetBool("r.SSGI", true));
+    // The world-space final gather shares the "ssgi" pass slot with the legacy
+    // screen-space trace, so the slot must open for either. Gating it on
+    // r.SSGI alone left r.GI.FinalGather=1 with r.SSGI=0 silently inactive
+    // (samples=0, sentinel SRV) — the second of SponzaTest's two activation blockers.
+    m_passInspector.SetPassEnabled("ssgi", cvars.GetBool("r.SSGI", true)
+        || cvars.GetBool("r.GI.FinalGather", false));
     m_passInspector.SetPassEnabled("sdf_gi", cvars.GetBool("r.RadianceCache", false));
     m_passInspector.SetPassEnabled("ssr", cvars.GetBool("r.SSR", true));
     m_passInspector.SetPassEnabled("motionblur", cvars.GetBool("r.MotionBlur", true));
@@ -1245,6 +1277,9 @@ void SceneRenderer::Resize(uint32_t width, uint32_t height) {
     if (m_viewportToolbar) {
         m_viewportToolbar->SetScreenSize(width, height);
     }
+    if (m_techPanel) {
+        m_techPanel->SetScreenSize(width, height);
+    }
     if (m_vfxEditorOverlay) {
         m_vfxEditorOverlay->SetScreenSize(width, height);
     }
@@ -1269,6 +1304,10 @@ bool SceneRenderer::IsEditorMode() const {
 
 void SceneRenderer::Shutdown() {
     if (!m_device) return;
+
+    // Diagnostic buffers first: the component replay is an upload-heap allocation that D3D12MA
+    // asserts on if it outlives the allocator.
+    EnsureComponentReplay("");
 
     // Wait for GPU to finish all in-flight work before destroying any resources.
     // Without this, D3D12MA asserts "Some allocations were not freed" because
@@ -1295,6 +1334,25 @@ void SceneRenderer::Shutdown() {
         m_device->DestroyBuffer(m_shadowReadbackBuffer);
         m_shadowReadbackBuffer = RHIBufferHandle{};
     }
+    // Region dump (diagnostics): flush the frames still in flight, oldest first, so the file
+    // set covers the whole requested range instead of stopping three frames early.
+    if (m_regionDumpActive) {
+        std::array<uint32_t, 3> order{0, 1, 2};
+        std::sort(order.begin(), order.end(), [this](uint32_t a, uint32_t b) {
+            return m_regionReadbackFrame[a] < m_regionReadbackFrame[b];
+        });
+        for (uint32_t slot : order) {
+            if (m_regionReadbackFrame[slot] != UINT32_MAX) WriteRegionDumpFile(slot);
+        }
+        UZ_LOG(Renderer, Info, "RegionDump: {} files written, {} rejected by frame-stamp mismatch",
+               m_regionFilesWritten, m_regionStampMismatches);
+    }
+    if (m_regionDumpBuffer.IsValid()) { m_device->DestroyBuffer(m_regionDumpBuffer); m_regionDumpBuffer = RHIBufferHandle{}; }
+    if (m_regionRectBuffer.IsValid()) { m_device->DestroyBuffer(m_regionRectBuffer); m_regionRectBuffer = RHIBufferHandle{}; }
+    for (auto& rb : m_regionReadback) {
+        if (rb.IsValid()) { m_device->DestroyBuffer(rb); rb = RHIBufferHandle{}; }
+    }
+    m_regionDumpActive = false;
 
     // Destroy material graph pipeline
     if (m_materialPipeline) {
@@ -1606,6 +1664,7 @@ void SceneRenderer::Shutdown() {
 
     if (m_statsOverlay)    m_statsOverlay->Shutdown();
     if (m_viewportToolbar) m_viewportToolbar->Shutdown();
+    if (m_techPanel)       m_techPanel->Shutdown();
     if (m_vfxEditorOverlay) m_vfxEditorOverlay->Shutdown(m_device);
     if (m_gizmoRenderer)   m_gizmoRenderer->Shutdown();
     if (m_outlinePass)     m_outlinePass->Shutdown();
@@ -1619,6 +1678,7 @@ void SceneRenderer::Shutdown() {
     m_cameraManager.reset();
     m_statsOverlay.reset();
     m_viewportToolbar.reset();
+    m_techPanel.reset();
     m_vfxEditorOverlay.reset();
     m_gizmoRenderer.reset();
     m_outlinePass.reset();

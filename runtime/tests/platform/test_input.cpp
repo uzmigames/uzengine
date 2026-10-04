@@ -819,3 +819,97 @@ TEST_F(InputTest, GetCursorShape_AfterSetCustomCursor_Failure_RemainsArrow) {
     EXPECT_EQ(input.GetCursorShape(), uz::CursorShape::Arrow)
         << "Shape must remain Arrow after any number of failed SetCustomCursor calls";
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Parity-06 item 1.4 — an edge inside one frame must survive to the queries.
+//
+// The engine snapshotted state at BeginFrame, so a key pressed AND released between two
+// BeginFrame calls ended with previous == current == up and reported neither edge: a quick F5 tap
+// did nothing. These reproduce that case and the behaviours that must not regress.
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_F(InputTest, QuickTapWithinOneFrame_ReportsBothKeyEdges) {
+    input.BeginFrame();
+    input.OnKeyDown(static_cast<uint16_t>(uz::Key::F5));
+    input.OnKeyUp(static_cast<uint16_t>(uz::Key::F5));
+
+    EXPECT_TRUE(input.IsKeyJustPressed(uz::Key::F5))
+        << "A key pressed and released inside one frame must still report the press";
+    EXPECT_TRUE(input.IsKeyJustReleased(uz::Key::F5))
+        << "...and the release";
+    EXPECT_FALSE(input.IsKeyDown(uz::Key::F5))
+        << "The key is not held any more";
+}
+
+TEST_F(InputTest, QuickTapWithinOneFrame_ReportsBothMouseEdges) {
+    input.BeginFrame();
+    input.OnMouseButton(uz::MouseButton::Left, true);
+    input.OnMouseButton(uz::MouseButton::Left, false);
+
+    EXPECT_TRUE(input.IsMouseJustPressed(uz::MouseButton::Left));
+    EXPECT_TRUE(input.IsMouseJustReleased(uz::MouseButton::Left));
+    EXPECT_FALSE(input.IsMouseDown(uz::MouseButton::Left));
+}
+
+TEST_F(InputTest, QuickTapEdges_AreGoneNextFrame) {
+    input.BeginFrame();
+    input.OnKeyDown(static_cast<uint16_t>(uz::Key::F5));
+    input.OnKeyUp(static_cast<uint16_t>(uz::Key::F5));
+    ASSERT_TRUE(input.IsKeyJustPressed(uz::Key::F5));
+
+    input.BeginFrame();
+    EXPECT_FALSE(input.IsKeyJustPressed(uz::Key::F5))
+        << "The edge belongs to the frame it happened in";
+    EXPECT_FALSE(input.IsKeyJustReleased(uz::Key::F5));
+}
+
+TEST_F(InputTest, HeldKeyAcrossFrames_ReportsOnePress) {
+    input.BeginFrame();
+    input.OnKeyDown(static_cast<uint16_t>(uz::Key::W));
+    EXPECT_TRUE(input.IsKeyJustPressed(uz::Key::W));
+
+    input.BeginFrame();
+    EXPECT_FALSE(input.IsKeyJustPressed(uz::Key::W))
+        << "A held key must report the press once, not every frame";
+    EXPECT_TRUE(input.IsKeyDown(uz::Key::W));
+
+    input.OnKeyUp(static_cast<uint16_t>(uz::Key::W));
+    EXPECT_TRUE(input.IsKeyJustReleased(uz::Key::W));
+}
+
+TEST_F(InputTest, AutoRepeatDown_DoesNotRepeatThePressEdge) {
+    input.BeginFrame();
+    input.OnKeyDown(static_cast<uint16_t>(uz::Key::W));
+    input.BeginFrame();
+    // WM_KEYDOWN repeats while the key is held.
+    input.OnKeyDown(static_cast<uint16_t>(uz::Key::W));
+    EXPECT_FALSE(input.IsKeyJustPressed(uz::Key::W))
+        << "Auto-repeat must not look like a new press";
+}
+
+TEST_F(InputTest, PrepareAndEndFrame_KeepTheEdgeUntilEndFrame) {
+    input.PrepareFrame();
+    input.OnKeyDown(static_cast<uint16_t>(uz::Key::F5));
+    input.OnKeyUp(static_cast<uint16_t>(uz::Key::F5));
+    EXPECT_TRUE(input.IsKeyJustPressed(uz::Key::F5));
+
+    input.PrepareFrame();  // publishing again must not drop it
+    EXPECT_TRUE(input.IsKeyJustPressed(uz::Key::F5))
+        << "Only EndFrame() ends an edge's life";
+
+    input.EndFrame();
+    EXPECT_FALSE(input.IsKeyJustPressed(uz::Key::F5));
+    EXPECT_FALSE(input.IsKeyJustReleased(uz::Key::F5));
+}
+
+TEST_F(InputTest, ReInit_ClearsPendingEdges) {
+    input.OnKeyDown(static_cast<uint16_t>(uz::Key::F5));
+    input.OnKeyUp(static_cast<uint16_t>(uz::Key::F5));
+    ASSERT_TRUE(input.IsKeyJustPressed(uz::Key::F5));
+
+    input.Shutdown();
+    input.Init();
+    EXPECT_FALSE(input.IsKeyJustPressed(uz::Key::F5))
+        << "A fresh Init must not report an edge recorded before it";
+    EXPECT_FALSE(input.IsKeyJustReleased(uz::Key::F5));
+}

@@ -17,9 +17,23 @@
 #include "profiler.h"
 #include "gi/mesh_sdf_baker.h"
 #include "pipeline_library.h"
+#include "vertex.h"
+#include "cvar.h"
 
 #include <fstream>
 #include <string>
+#include <algorithm>
+#include <cstddef>
+
+// Mesh distance-field baking parameters. Both take effect at bake time, so a
+// scene reload is required after changing them. TwoSided produces an unsigned
+// field: Sponza is split into open material partitions whose winding disagrees
+// with its vertex normals, and a nearest-face sign cannot define an interior
+// for such a surface — it classified free space as solid.
+static auto* cv_MeshSdfTwoSided = UZ_CVAR_BOOL("r.GI.MeshSdf.TwoSided", false,
+    "Unsigned mesh distance fields for open surfaces (requires scene reload)");
+static auto* cv_MeshSdfResolution = UZ_CVAR_INT("r.GI.MeshSdf.Resolution", 32,
+    "Mesh distance field voxels per axis (requires scene reload)", 1, 128);
 
 namespace uz {
 
@@ -177,6 +191,14 @@ uint32_t SceneRenderer::RegisterProceduralMesh(Mesh&& mesh, const std::string& k
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool SceneRenderer::IsSceneFullyLoaded() const {
+    // Budget-deferred meshes, batched mesh uploads, pending SDF bakes and
+    // in-flight async slots were all invisible to this check: it reported
+    // "loaded" while Sponza's ceiling was still streaming (task 05 evidence:
+    // screenshot at 14:29:40, last mesh at 14:29:41).
+    if (m_budgetDeferredMeshCount > 0) return false;
+    if (!m_deferredMeshUploads.empty()) return false;
+    if (!m_pendingSdfBakes.empty()) return false;
+    if (!m_asyncPendingSlots.empty()) return false;
     if (!m_pendingMeshPaths.empty()) return false;
     if (!m_pendingProceduralMeshes.empty()) return false;
     if (!m_pendingTexturePaths.empty()) return false;
@@ -189,6 +211,9 @@ bool SceneRenderer::IsSceneFullyLoaded() const {
 }
 
 bool SceneRenderer::IsSceneFullyLoadedDebug() const {
+    UZ_LOG(Renderer, Debug,
+           "IsSceneFullyLoaded (readiness extras): budgetDeferredMeshes={}, meshUploads={}, sdfBakes={}, asyncSlots={}",
+           m_budgetDeferredMeshCount, m_deferredMeshUploads.size(), m_pendingSdfBakes.size(), m_asyncPendingSlots.size());
     UZ_LOG(Renderer, Debug,
            "IsSceneFullyLoaded: meshPaths={}, procMeshes={}, texPaths={}, asyncPending={}, "
            "deferred={}, batch={}, copyUploads={}, copyFence={}",
@@ -216,6 +241,8 @@ void SceneRenderer::FlushSdfBakes(IRHICommandList* cmdList) {
         return;
     }
 
+    const auto resolution = static_cast<uint32_t>(std::clamp(cv_MeshSdfResolution->value, 1.0f, 128.0f));
+
     UZ_LOG(Renderer, Info, "SceneRenderer: batch SDF bake — {} meshes",
            m_pendingSdfBakes.size());
 
@@ -228,19 +255,19 @@ void SceneRenderer::FlushSdfBakes(IRHICommandList* cmdList) {
         MeshSDF sdf = MeshSdfBaker::BakeMeshGPU(
             m_device, cmdList, bakePipeline,
             positions, bake.vertexCount, bake.vertexStride,
-            indices, bake.indexCount, 32);
+            indices, bake.indexCount, resolution, static_cast<uint32_t>(offsetof(Vertex, normal)),
+            cv_MeshSdfTwoSided->value);
 
         if (sdf.valid) {
-            // Defer destruction of the temporary triangle upload buffer until the
-            // GPU finishes the command list that references it.
-            if (sdf.pendingTriBuffer.IsValid()) {
-                m_deferredDestroyBuffers.push_back(sdf.pendingTriBuffer);
-                sdf.pendingTriBuffer = RHIBufferHandle{};
-            }
+            // The triangle + BVH buffer the bake read is kept with the SDF: the radiance cache's
+            // probe side classifier (followup-01) asks it for the nearest face of each probe.
+            // It is released with the SDF texture (DestroyGPUMesh).
+            sdf.triangleBuffer = sdf.pendingTriBuffer;
+            sdf.pendingTriBuffer = RHIBufferHandle{};
             m_meshes[bake.meshIndex].sdf = sdf;
             UZ_LOG(Renderer, Info,
                    "SceneRenderer: GPU-baked mesh SDF (meshIdx={}, res={}, SRV={})",
-                   bake.meshIndex, 32, sdf.srvIndex);
+                   bake.meshIndex, sdf.resolution, sdf.srvIndex);
         } else {
             UZ_LOG(Renderer, Warning,
                    "SceneRenderer: SDF bake failed for meshIdx={} ({} verts, {} indices)",

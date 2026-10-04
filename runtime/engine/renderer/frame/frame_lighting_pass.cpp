@@ -84,6 +84,16 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
         dvDesc.positionTexture   = m_gbuffer.positionWS;
         dvDesc.hdrSrvIndex       = m_hdrSceneColorSrv;
         dvDesc.ssrSrvIndex       = m_ssrResolvedOutputSrv;
+        // Lighting split targets — what `lighting`, `shadows` and `lightingonly` show.
+        dvDesc.directGBuffer     = ctx.debugDirectRes;
+        dvDesc.indirectGBuffer   = ctx.debugIndirectRes;
+        dvDesc.shadowGBuffer     = ctx.debugShadowRes;
+        dvDesc.directSrvIndex    = m_debugDirectLightSrv;
+        dvDesc.indirectSrvIndex  = m_debugIndirectLightSrv;
+        dvDesc.shadowSrvIndex    = m_debugShadowMaskSrv;
+        // GTAO for the `ao` view; UINT32_MAX falls back to the G-buffer alpha.
+        dvDesc.gtaoSrvIndex      = (m_gtaoPass && m_gtaoPass->IsInitialized() && m_gtaoPass->IsEnabledCVar())
+                                 ? m_gtaoPass->GetFilteredAOSrvIndex() : UINT32_MAX;
         dvDesc.bindless          = ctx.bindless;
         dvDesc.viewportWidth     = ctx.renderWidth;
         dvDesc.viewportHeight    = ctx.renderHeight;
@@ -113,7 +123,11 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
         lightDesc.depthSrvIndex       = m_gbuffer.depthSRV;
         lightDesc.positionSrvIndex    = m_gbuffer.positionWSSRV;
         lightDesc.emissiveSrvIndex    = m_gbuffer.emissiveSRV;
-        lightDesc.envMisSrvIndex      = (m_envMISPass && m_envMISPass->IsInitialized())
+        // The env-MIS accumulation is the prefiltered-cubemap reflection path;
+        // when the SDF trace supplies reflections it must stay out, or the
+        // deferred pass adds a second specular term on top of the traced one.
+        lightDesc.envMisSrvIndex      = (ctx.perFrame.sdfReflectionsEnabled == 0
+                                        && m_envMISPass && m_envMISPass->IsInitialized())
                                         ? m_envMISPass->GetAccumulatedSrv() : UINT32_MAX;
         lightDesc.iblPrefilteredSrvIndex = m_iblResult.prefilteredSrvIndex;
         lightDesc.iblIrradianceSrvIndex  = m_iblResult.irradianceSrvIndex;
@@ -156,6 +170,9 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
         }
         lightDesc.apVolumeResource    = ctx.apVolumeRes;  // AP volume (read prev frame's data)
         // Debug MRT targets — lighting split visualization for --pass-dump
+        lightDesc.debugDirectResource   = ctx.debugDirectRes;
+        lightDesc.debugIndirectResource = ctx.debugIndirectRes;
+        lightDesc.debugShadowResource   = ctx.debugShadowRes;
         lightDesc.debugDirectLight    = m_debugDirectLight;
         lightDesc.debugIndirectLight  = m_debugIndirectLight;
         lightDesc.debugShadowMask     = m_debugShadowMask;
@@ -176,10 +193,10 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
         // the lighting pass has written hdrRes, then overwrite it with the debug view.
         if (needsLightingFirst) {
             auto dvDesc = makeDebugViewDesc();
-            // HDR resource was just written by the lighting pass — declare it as an
-            // input to the debug view pass so the render graph inserts the correct
-            // RT→SRV barrier before the fullscreen triangle reads it.
-            dvDesc.hdrGBuffer = ctx.hdrRes;
+            // The debug view WRITES this same HDR resource, and clears it first, so it must not
+            // also read it: `lightingonly` rendered black that way. The post-lighting modes now
+            // read the lighting split targets (Lighting, Shadows, LightingOnly) or the SSR result
+            // (Reflections), never their own output.
             // After debug view writes the HDR resource, the rest of the pipeline
             // (tonemap, TAA) reads it as before.  No extra transitions needed.
             AddDebugViewPass(rgBuilder, dvDesc);

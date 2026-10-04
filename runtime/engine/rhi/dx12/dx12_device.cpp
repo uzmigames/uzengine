@@ -192,6 +192,16 @@ bool DX12Device::Init(const RHIDeviceDesc& desc) {
         }
     }
 
+    // DRED settings are latched by the D3D12 runtime when the device is created,
+    // so they MUST be configured before D3D12CreateDevice — configuring them
+    // afterwards leaves auto-breadcrumbs permanently disabled and every
+    // device-removed report empty. Breadcrumbs are useful without the debug
+    // layer (they are the only way to diagnose a TDR in a release build), so
+    // --gpu-breadcrumbs enables them independently of --gpu-validation.
+    if (desc.enableValidation || desc.enableBreadcrumbs) {
+        EnableDRED();
+    }
+
     if (!CreateFactory(desc.enableValidation))  return false;
     if (!SelectAdapter(desc.adapterIndex))      return false;
     if (!CreateDevice())                        return false;
@@ -281,8 +291,6 @@ bool DX12Device::Init(const RHIDeviceDesc& desc) {
     }
 
     if (desc.enableValidation) {
-        EnableDRED();
-
         // Suppress noisy debug messages and limit stored count to prevent memory exhaustion
         ComPtr<ID3D12InfoQueue> infoQueue;
         if (SUCCEEDED(m_device.As(&infoQueue))) {
@@ -426,10 +434,20 @@ bool DX12Device::TryLoadAgilitySdk() {
 
 bool DX12Device::EnableDebugLayer(bool gpuValidation) {
     UZ_PROFILE_FUNCTION();
+    // Same runtime-mismatch caveat as EnableDRED(): with the Agility SDK active
+    // the debug layer must be enabled on the device factory's runtime, not on
+    // the system d3d12.dll, or validation silently never engages.
     ComPtr<ID3D12Debug3> debug;
-    HRESULT hr = D3D12GetDebugInterface(IID_PPV_ARGS(&debug));
+    HRESULT hr;
+    if (m_deviceFactory) {
+        hr = m_deviceFactory->GetConfigurationInterface(CLSID_D3D12Debug, IID_PPV_ARGS(&debug));
+    } else {
+        hr = D3D12GetDebugInterface(IID_PPV_ARGS(&debug));
+    }
     if (FAILED(hr)) {
-        UZ_LOG(RHI, Warning, "D3D12GetDebugInterface failed, hr=0x{:08X}", static_cast<uint32_t>(hr));
+        UZ_LOG(RHI, Error, "D3D12 debug interface unavailable, hr=0x{:08X}{}",
+               static_cast<uint32_t>(hr),
+               m_deviceFactory ? " (via Agility device factory)" : "");
         return false;
     }
 
@@ -741,10 +759,28 @@ bool DX12Device::CreateCommandQueues() {
 bool DX12Device::EnableDRED() {
     UZ_PROFILE_FUNCTION();
     ComPtr<ID3D12DeviceRemovedExtendedDataSettings1> dredSettings;
-    HRESULT hr = D3D12GetDebugInterface(IID_PPV_ARGS(&dredSettings));
-    if (FAILED(hr)) {
-        UZ_LOG(RHI, Warning, "DRED not available on this system, hr=0x{:08X}", static_cast<uint32_t>(hr));
-        return false;
+
+    // The global D3D12GetDebugInterface configures the SYSTEM d3d12.dll runtime.
+    // When the Agility SDK is active the device comes from the device factory,
+    // backed by our bundled D3D12Core.dll — a different runtime that never sees
+    // those settings, leaving DRED disarmed and every GetAutoBreadcrumbsOutput1
+    // returning DXGI_ERROR_UNSUPPORTED. Configure the factory's own runtime.
+    HRESULT hr;
+    if (m_deviceFactory) {
+        hr = m_deviceFactory->GetConfigurationInterface(CLSID_D3D12DeviceRemovedExtendedData,
+                                                        IID_PPV_ARGS(&dredSettings));
+        if (FAILED(hr)) {
+            UZ_LOG(RHI, Error, "DRED unavailable via Agility device factory, hr=0x{:08X}",
+                   static_cast<uint32_t>(hr));
+            return false;
+        }
+    } else {
+        hr = D3D12GetDebugInterface(IID_PPV_ARGS(&dredSettings));
+        if (FAILED(hr)) {
+            UZ_LOG(RHI, Error, "DRED not available on this system, hr=0x{:08X}",
+                   static_cast<uint32_t>(hr));
+            return false;
+        }
     }
 
     dredSettings->SetAutoBreadcrumbsEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
@@ -794,11 +830,25 @@ void DX12Device::LogDeviceRemoved() {
     UZ_LOG(RHI, Error, "Adapter: '{}'", m_adapterName);
     UZ_LOG(RHI, Error, "Removed reason: hr=0x{:08X}", static_cast<uint32_t>(removedReason));
 
-    // Query DRED auto-breadcrumbs
+    // Query DRED auto-breadcrumbs.
+    //
+    // Every branch below reports at Error level, including the "nothing to
+    // report" ones. The default runtime log level is Error, so a Warning here
+    // is invisible in exactly the situation this report exists for, and a
+    // branch that logs nothing at all is indistinguishable from a DRED query
+    // that failed. Both make an intermittent TDR undiagnosable.
     ComPtr<ID3D12DeviceRemovedExtendedData1> dred;
-    if (SUCCEEDED(m_device->QueryInterface(IID_PPV_ARGS(&dred)))) {
+    HRESULT dredHr = m_device->QueryInterface(IID_PPV_ARGS(&dred));
+    if (SUCCEEDED(dredHr)) {
         D3D12_DRED_AUTO_BREADCRUMBS_OUTPUT1 breadcrumbs = {};
-        if (SUCCEEDED(dred->GetAutoBreadcrumbsOutput1(&breadcrumbs))) {
+        HRESULT crumbHr = dred->GetAutoBreadcrumbsOutput1(&breadcrumbs);
+        if (FAILED(crumbHr)) {
+            UZ_LOG(RHI, Error,
+                   "DRED: GetAutoBreadcrumbsOutput1 failed, hr=0x{:08X} "
+                   "(auto-breadcrumbs were not armed before device creation — "
+                   "pass --gpu-breadcrumbs or --gpu-validation)",
+                   static_cast<uint32_t>(crumbHr));
+        } else {
             const auto* node = breadcrumbs.pHeadAutoBreadcrumbNode;
             uint32_t nodeIdx = 0;
             while (node) {
@@ -820,14 +870,20 @@ void DX12Device::LogDeviceRemoved() {
                 nodeIdx++;
             }
             if (nodeIdx == 0) {
-                UZ_LOG(RHI, Warning, "DRED: no breadcrumb nodes available");
+                UZ_LOG(RHI, Error, "DRED: no breadcrumb nodes available (no GPU work was in flight)");
             }
         }
 
         // Query page fault info
         D3D12_DRED_PAGE_FAULT_OUTPUT1 pageFault = {};
-        if (SUCCEEDED(dred->GetPageFaultAllocationOutput1(&pageFault))) {
-            if (pageFault.PageFaultVA != 0) {
+        HRESULT faultHr = dred->GetPageFaultAllocationOutput1(&pageFault);
+        if (FAILED(faultHr)) {
+            UZ_LOG(RHI, Error, "DRED: GetPageFaultAllocationOutput1 failed, hr=0x{:08X}",
+                   static_cast<uint32_t>(faultHr));
+        } else {
+            if (pageFault.PageFaultVA == 0) {
+                UZ_LOG(RHI, Error, "DRED: no page fault recorded (removal was not an invalid memory access)");
+            } else {
                 UZ_LOG(RHI, Error, "Page fault at VA=0x{:016X}", pageFault.PageFaultVA);
 
                 const auto* allocNode = pageFault.pHeadExistingAllocationNode;
@@ -845,7 +901,8 @@ void DX12Device::LogDeviceRemoved() {
             }
         }
     } else {
-        UZ_LOG(RHI, Warning, "DRED query interface not available — no detailed diagnostics");
+        UZ_LOG(RHI, Error, "DRED query interface not available, hr=0x{:08X} — no detailed diagnostics",
+               static_cast<uint32_t>(dredHr));
     }
 
     UZ_LOG(RHI, Error, "=== END DEVICE REMOVED ===");

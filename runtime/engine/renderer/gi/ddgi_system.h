@@ -31,6 +31,8 @@
 
 namespace uz {
 
+class GlobalDistanceField;
+
 class IRHIDevice;
 class IRHICommandList;
 class CBRingAllocator;
@@ -101,6 +103,11 @@ public:
 
     // ── Accessors ────────────────────────────────────────────────────────
 
+    /// Atlas texture handles — for diagnostics/readback registration only.
+    /// Lighting binds the bindless SRVs below, never these handles.
+    [[nodiscard]] RHITextureHandle GetIrradianceTexture() const noexcept { return m_irradAtlas; }
+    [[nodiscard]] RHITextureHandle GetDepthTexture() const noexcept      { return m_depthAtlas; }
+
     [[nodiscard]] uint32_t GetIrradianceSrv() const noexcept { return m_irradSrv; }
     [[nodiscard]] uint32_t GetIrradianceUav() const noexcept { return m_irradUav; }
     [[nodiscard]] uint32_t GetDepthSrv() const noexcept       { return m_depthSrv; }
@@ -122,6 +129,19 @@ public:
     [[nodiscard]] Vec3  GetGridOrigin() const noexcept   { return m_gridOrigin; }
     [[nodiscard]] float GetProbeSpacing() const noexcept { return m_probeSpacing; }
     [[nodiscard]] bool  IsInitialized() const noexcept   { return m_initialized; }
+
+    /// True once DispatchUpdate() has completed a full atlas write. Until then
+    /// the atlases have never been written and must not be bound for lighting.
+    // Diagnostic: what the last dispatch sampled the sky with, for the identity log line.
+    uint32_t m_lastSkyRadianceSrv = UINT32_MAX;
+    uint32_t m_lastRaysPerProbe = 0;
+    float    m_lastSkyColor[3] = {0.0f, 0.0f, 0.0f};
+    float    m_lastLightColor[3] = {0.0f, 0.0f, 0.0f};
+    float    m_lastLightDir[3] = {0.0f, 0.0f, 0.0f};
+    float    m_lastLightIntensity = 0.0f;
+    [[nodiscard]] bool  HasCompletedFirstUpdate() const noexcept {
+        return m_firstUpdateComplete;
+    }
 
     /// Atlas SRV/UAV pair to bind to the DDGI compute shader's root constants.
     /// Uses the bindless heap — both indices must be valid before dispatch.
@@ -149,13 +169,24 @@ public:
     ///   `vfxEmissiveSampleCount > 0 && srv != 0xFFFFFFFF`.
     /// * `vfxEmissiveSampleCount` — Number of valid samples in the buffer.
     ///   `0` is the natural disable signal; the shader skips its loop.
+    /// * `gdf` — Global distance field, sampled at ray hit points for the
+    ///   surface normal and albedo. Inline `RayQuery` reports a hit distance
+    ///   but no attributes, so without it the writer had to assume every hit
+    ///   faced the ray and reflected a constant 18% grey.
+    /// * `perFrameCpuPtr` — Mapped `PerFrameCB`. Supplies the sun direction,
+    ///   colour and sky radiance. Until 2026-09-08 this method hardcoded a sun
+    ///   pointing straight up at intensity 1 and a (0.6, 0.7, 0.9) sky, so the
+    ///   probes were lit by a placeholder environment instead of the scene.
     void DispatchUpdate(IRHICommandList* cmdList,
                         RHIPipelineHandle ddgiPipeline,
+                        RHIPipelineHandle borderPipeline,
                         uint32_t          tlasSrvIndex,
                         CBRingAllocator*  cbRing,
                         uint32_t          frameIndex,
-                        uint32_t          vfxEmissiveSrvIndex   = UINT32_MAX,
-                        uint32_t          vfxEmissiveSampleCount = 0);
+                        const GlobalDistanceField* gdf            = nullptr,
+                        const void*       perFrameCpuPtr          = nullptr,
+                        uint32_t          vfxEmissiveSrvIndex     = UINT32_MAX,
+                        uint32_t          vfxEmissiveSampleCount  = 0);
 
 private:
     IRHIDevice*      m_device       = nullptr;
@@ -169,7 +200,23 @@ private:
     Vec3             m_gridOrigin{};
     float            m_probeSpacing = 0.0f;
     bool             m_initialized  = false;
-    bool             m_firstDispatch = true; ///< Atlases start in Common state.
+    bool             m_firstUpdateComplete = false;
+    bool m_firstDispatch = true; ///< Atlases start in Common state.
+    bool m_atlasCleared = false;   ///< Both atlases cleared once (border fill pass, H-55).
+
+    // ── Transport diagnostic (r.GI.DDGI.Diagnostic) ────────────────────────
+    // One float2 per irradiance-atlas texel: mean ray radiance luminance and
+    // sky fraction, written by the irradiance pass. Copied to a readback
+    // buffer once (frame >= 120) and logged as "DDGI transport: ..." lines that
+    // pair with the radiance cache's "RC transport: ..." lines — the GPU-side
+    // DDGI/SDF energy comparison (phase0_sponza-followup-08, item 2).
+    RHIBufferHandle  m_diagnosticStats{};
+    RHIBufferHandle  m_diagnosticReadback{};
+    uint32_t         m_diagnosticStatsUav = UINT32_MAX;
+    uint32_t         m_diagnosticCopyFrame = UINT32_MAX;
+    bool             m_diagnosticComplete = false;
+    void QueueDiagnosticReadback(IRHICommandList* cmdList, uint32_t frameIndex);
+    void ReadDiagnosticResults(uint32_t frameIndex);
 };
 
 } // namespace uz

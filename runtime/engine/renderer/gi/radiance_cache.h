@@ -69,6 +69,18 @@ public:
     /// 7 float4s pack 3-channel L2 SH (27 coefficients) tightly.
     static constexpr uint32_t kSHFloat4PerProbe = 7;
 
+    /// One float4 per probe after the SH records, at `kTotalProbes * kSHFloat4PerProbe + probe`:
+    /// the guard of a probe the side classification kept although the biased field put it inside a
+    /// surface's band (followup-01 candidate, `r.GI.RadianceCache.ProbeClassification` = 1).
+    /// xyz = its nearest face's outward direction, w = its distance to that face; every reader of
+    /// the cache rejects the probe for receivers behind that face. w = 0: no guard (always, under
+    /// the current rule).
+    static constexpr uint32_t kGuardFloat4PerProbe = 1;
+
+    /// Diagnostic records per probe (r.GI.RadianceCache.Diagnostic): surface, trace, sky, path,
+    /// classification (signed side distance, relocation distance, class code, 0).
+    static constexpr uint32_t kDiagnosticFloat4PerProbe = 6;
+
     /// Number of rays traced per probe per frame.
     /// 32 rays is a balanced budget for 4096 probes (~131K rays/frame).
     static constexpr uint32_t kRaysPerProbe = 32;
@@ -140,17 +152,43 @@ public:
         uint32_t perFrameOffset,
         const void* perFrameCpuPtr,
         uint32_t perFrameSize,
-        uint32_t frameIndex);
+        uint32_t frameIndex,
+        RHIPipelineHandle sidePipeline = RHIPipelineHandle::Invalid());
+
+    /// `r.GI.RadianceCache.ProbeClassification`: 0 = the current rule (a probe whose biased field
+    /// distance is below the trace's 5 cm surface epsilon is inside geometry); 1 = the followup-01
+    /// candidate (the side of the nearest face decides, probes kept in the band are traced from a
+    /// relocated origin and carry a guard). The caller passes `sidePipeline` when this is non-zero.
+    [[nodiscard]] static uint32_t ClassificationMode();
+
+    /// Mode 3: the G-buffer world position (bindless SRV, cleared to 0 where nothing was drawn) whose
+    /// visible points seed the flood fill when `r.GI.RadianceCache.ReachVisibleSeeds` is on. The caller
+    /// declares the read in the render graph.
+    void SetVisibleSeedSource(uint32_t positionSrv, uint32_t width, uint32_t height) noexcept {
+        m_seedPositionSrv = positionSrv; m_seedWidth = width; m_seedHeight = height;
+    }
 
     /// Returns the SRV index for the probe SH buffer.
     /// Used by the deferred lighting shader to sample radiance cache probes.
-    [[nodiscard]] uint32_t GetProbeSHBufferSrv() const noexcept { return m_shBufferSrv; }
+    [[nodiscard]] uint32_t GetProbeSHBufferSrv() const noexcept {
+        return HasProducedResult() ? m_shBufferSrv : UINT32_MAX;
+    }
 
     /// Returns the UAV index for the probe SH buffer.
     [[nodiscard]] uint32_t GetProbeSHBufferUav() const noexcept { return m_shBufferUav; }
 
     /// Returns the world-space origin (corner) of the probe grid.
+    bool m_identityLogged = false;   ///< Diagnostic: the sky-sample identity line is written once.
     [[nodiscard]] Vec3 GetGridOrigin() const noexcept { return m_gridOrigin; }
+
+    /// Origin of the grid the last *completed* SH buffer (`GetProbeSHBufferSrv()`)
+    /// was traced with. The per-frame constants are built before the GI passes,
+    /// so deferred lighting samples last frame's buffer; on the frame the grid
+    /// recentres, `GetGridOrigin()` is already the new origin while that buffer
+    /// still holds the old grid — indexing it with the new origin shifts the
+    /// whole indirect lighting by one cell for a frame. Consumers of the SH
+    /// buffer must use this origin.
+    [[nodiscard]] Vec3 GetCompletedGridOrigin() const noexcept { return m_completedGridOrigin; }
 
     /// Returns the half-extent of the probe grid.
     [[nodiscard]] float GetGridExtent() const noexcept { return m_gridExtent; }
@@ -164,7 +202,48 @@ public:
     /// Returns true if resources have been created and are valid.
     [[nodiscard]] bool IsInitialized() const noexcept { return m_initialized; }
 
+    /// `m_dirty` (grid recentred this frame) deliberately does NOT gate
+    /// consumers: last frame's completed buffer stays valid for the recentre
+    /// frame (indexed with `GetCompletedGridOrigin()`), and the recentre itself
+    /// retraces every probe this frame while *keeping* the history of the probes
+    /// that stayed inside the grid (`m_pendingHistoryShift`). Gating on it
+    /// published `radianceCacheEnabled = 0` for the recentre frame, which also
+    /// zeroed `sdfDiffuseSamples`/`sdfReflectionsEnabled`, dropped the world
+    /// gather and reset its history — every ~probeSpacing (267 cm on Sponza) of
+    /// camera travel the whole indirect lighting fell to the sky-SH fallback for
+    /// one frame: "the whole scene flickers while flying".
+    /// Diagnostic (followup-12): when set, `UpdateProbes` keeps the last converged SH buffer and
+    /// skips the trace, so the diffuse GI is held still *without* falling back to another path.
+    /// Skipping the whole call instead would leave `HasProducedResult()` false and silently switch
+    /// the consumer to the sky-SH fallback, which is a different lighting path, not a frozen one.
+    void SetFrozen(bool frozen) noexcept { m_frozen = frozen; }
+    [[nodiscard]] bool IsFrozen() const noexcept { return m_frozen; }
+
+    [[nodiscard]] bool HasProducedResult() const noexcept {
+        return m_initialized && !m_firstWritePending;
+    }
+    /// The scene under the probes changed (GDF revision): the next UpdateProbes
+    /// retraces every probe and replaces its history instead of blending.
+    void InvalidateHistory() noexcept { m_dirty = true; m_historyInvalid = true; }
+    /// True between a grid recentre / invalidation and the UpdateProbes that consumes it.
+    [[nodiscard]] bool IsDirty() const noexcept { return m_dirty; }
+    /// True when InvalidateHistory() was called since the last UpdateProbes (scene changed).
+    [[nodiscard]] bool IsHistoryInvalid() const noexcept { return m_historyInvalid; }
+    /// Grid shift (whole probes) accumulated by Update() since the last UpdateProbes; non-zero = recentre.
+    [[nodiscard]] const int32_t* GetPendingHistoryShift() const noexcept { return m_pendingHistoryShift; }
+
 private:
+    void QueueDiagnosticReadback(IRHICommandList* cmdList, uint32_t frameIndex);
+    void ReadDiagnosticResults(uint32_t frameIndex);
+    void DispatchProbeSide(IRHICommandList* cmdList, const GlobalDistanceField& gdf,
+                           RHIPipelineHandle sidePipeline, CBRingAllocator* cbRing);
+    /// Mode 3: air grid, flood fill from the camera, per-probe decision into the probe side buffer.
+    /// Binds the trace constants (`traceConstants*`, already uploaded) at b2. False when the passes
+    /// could not run; the caller then keeps the current rule for this frame.
+    bool DispatchProbeReach(IRHICommandList* cmdList, RHIPipelineHandle reachPipeline,
+                            RHIBufferHandle traceConstants, uint64_t traceConstantsOffset,
+                            const void* traceConstantsCpu, uint32_t traceConstantsSize);
+
     IRHIDevice* m_device = nullptr;
 
     /// StructuredBuffer<float4> — kTotalProbes * kSHFloat4PerProbe float4 elements.
@@ -172,6 +251,54 @@ private:
     RHIBufferHandle m_shBuffer;
     uint32_t        m_shBufferSrv = UINT32_MAX;
     uint32_t        m_shBufferUav = UINT32_MAX;
+    RHIBufferHandle m_historyShBuffer;
+    uint32_t        m_historyShBufferSrv = UINT32_MAX;
+    uint32_t        m_historyShBufferUav = UINT32_MAX;
+    RHIResourceState m_shBufferState = RHIResourceState::Common;
+    RHIResourceState m_historyShBufferState = RHIResourceState::Common;
+    RHIBufferHandle m_diagnosticReadback;
+    RHIBufferHandle m_diagnosticStats;
+    uint32_t m_diagnosticStatsUav = UINT32_MAX;
+    RHIResourceState m_diagnosticStatsState = RHIResourceState::Common;
+    uint32_t m_diagnosticCopyFrame = UINT32_MAX;
+    bool m_diagnosticComplete = false;
+    Vec3 m_diagnosticOrigin;
+    float m_diagnosticSpacing = 0.0f;
+
+    /// Per probe, two float4 (`probe_side_cs.hlsl`): nearest face (direction to the probe, distance)
+    /// and the fixed rays (back-face fraction, hits, side of the nearest face). Recomputed when the
+    /// grid moves or the instances the field was built from change.
+    RHIBufferHandle m_probeSideBuffer;
+    uint32_t m_probeSideSrv = UINT32_MAX;
+    uint32_t m_probeSideUav = UINT32_MAX;
+    RHIResourceState m_probeSideState = RHIResourceState::Common;
+    bool     m_probeSideValid = false;
+    uint64_t m_probeSideHash = 0;
+    Vec3     m_probeSideOrigin;
+    bool     m_probeSideTooManyLogged = false;
+    uint32_t m_probeSideMode = 0;   ///< Classification mode whose layout the side buffer holds.
+
+    /// Mode 3 (`probe_reach_cs.hlsl`): one uint per voxel of a 128^3 grid over the probe grid
+    /// (0 solid, 1 air, 2 reached from the camera) and a seed counter. Created on first use (8 MiB).
+    static constexpr uint32_t kReachResolution = 128;
+    RHIBufferHandle m_reachAirBuffer;
+    uint32_t m_reachAirUav = UINT32_MAX;
+    RHIBufferHandle m_reachStatsBuffer;
+    uint32_t m_reachStatsUav = UINT32_MAX;
+    RHIResourceState m_reachAirState = RHIResourceState::Common;
+    RHIResourceState m_reachStatsState = RHIResourceState::Common;
+    /// Camera position of the last Update() — the flood fill's seed.
+    Vec3 m_cameraPos;
+    /// G-buffer world position the visible-surface seeds read (`r.GI.RadianceCache.ReachVisibleSeeds`).
+    uint32_t m_seedPositionSrv = UINT32_MAX;
+    uint32_t m_seedWidth = 0, m_seedHeight = 0;
+    /// Diagnostic (`r.GI.RadianceCache.ReachDump`): the air grid copied once at frame >= 120 and
+    /// logged four frames later, one line per (z, y) row.
+    RHIBufferHandle m_reachReadback;
+    uint32_t m_reachDumpFrame = UINT32_MAX;
+    bool m_reachDumped = false;
+    Vec3 m_reachDumpGridOrigin;
+    void HandleReachDump(IRHICommandList* cmdList, uint32_t frameIndex);
 
     /// World-space grid origin (minimum corner = center - extent).
     Vec3   m_gridOrigin;
@@ -190,7 +317,23 @@ private:
     uint32_t m_probeUpdateCursor = 0;  ///< Round-robin offset for temporal probe spreading.
 
     bool   m_initialized = false;
-    bool   m_dirty       = true;
+    bool   m_dirty       = true;       ///< Retrace every probe next UpdateProbes (recentre or invalidation).
+    bool   m_firstWritePending = true; ///< Set at CreateResources; consumed by the first UpdateProbes.
+    bool   m_frozen = false;           ///< Diagnostic: hold the converged probes (SetFrozen).
+    bool   m_historyInvalid    = false; ///< Set by InvalidateHistory(); the next trace replaces instead of blends.
+
+    /// Grid shift in whole probes (new − old) accumulated by Update() since the
+    /// last UpdateProbes(). The trace shader reads probe c's history at
+    /// c + shift, so a recentre keeps the temporal history of the 15/16 probes
+    /// that stayed inside the grid; only the slab that entered starts from
+    /// scratch. Without it every recentre was a first write: no history, no
+    /// multi-bounce feedback for that frame — a dark blink that took ~20 frames
+    /// (alpha 0.12) to recover, once per 267 cm of travel on any axis.
+    int32_t m_pendingHistoryShift[3] = {0, 0, 0};
+
+    /// Grid origin the last completed SH buffer was traced with (see
+    /// GetCompletedGridOrigin()).
+    Vec3   m_completedGridOrigin;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -212,7 +355,7 @@ struct RadianceCacheTraceConstants {
     float    maxTraceDistance;    ///< Maximum ray trace distance (cm).
     float    temporalBlendAlpha; ///< EMA blend factor (0.05).
     uint32_t shBufferUav;        ///< UAV index for SH buffer read/write.
-    uint32_t _pad;
+    uint32_t firstWrite;         ///< 1 = write SH without temporal blend (buffer never written).
 
     // GDF clipmap parameters for the trace shader
     float    gdfCenter0X, gdfCenter0Y, gdfCenter0Z, gdfExtent0;
@@ -255,8 +398,22 @@ struct RadianceCacheTraceConstants {
     uint32_t vfxEmissiveSampleCount = 0;          ///< Valid sample count in the buffer.
     float    _vfxEmissivePad0      = 0.0f;        ///< 16-byte alignment pad.
     float    _vfxEmissivePad1      = 0.0f;        ///< 16-byte alignment pad.
+
+    // ── Grid recentre (radiance-cache trace only) ─────────────────────────────
+    // Shift of the probe grid since the history buffer was written, in whole
+    // probes: history coordinate = probe coordinate + shift. Zero unless the
+    // grid recentred this frame. The DDGI writer mirrors the row and ignores it.
+    int32_t  historyShiftX = 0;
+    int32_t  historyShiftY = 0;
+    int32_t  historyShiftZ = 0;
+    uint32_t _historyShiftPad = 0;
 };
 
-static_assert(sizeof(RadianceCacheTraceConstants) == 192, "RadianceCacheTraceConstants must be 192 bytes");
+// 176 bytes of shared trace constants, the 16-byte VFX emissive tail and the
+// 16-byte grid-recentre row. Every shader that binds this CB —
+// `radiance_cache_trace_cs.hlsl` and `ddgi_probe_update_cs.hlsl` — must declare
+// all 13 four-field rows, scalars only, or HLSL register packing shifts every
+// field past the mismatch.
+static_assert(sizeof(RadianceCacheTraceConstants) == 208, "RadianceCacheTraceConstants must be 208 bytes");
 
 } // namespace uz

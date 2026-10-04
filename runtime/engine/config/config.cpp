@@ -14,6 +14,7 @@
 
 #include "file_system.h"
 
+#include <algorithm>
 #include <sstream>
 
 /// Log category for configuration loading and parsing errors.
@@ -90,6 +91,16 @@ void Config::ApplyCLIOverrides(int argc, const char* const* argv) {
             if (cvarEq != std::string::npos) {
                 std::string cvarName = value.substr(0, cvarEq);
                 float cvarValue = static_cast<float>(std::atof(value.substr(cvarEq + 1).c_str()));
+                // BuildConfig runs this twice (before and after the project file
+                // loads), so every --cvar used to be queued twice and flushed as
+                // `0, 0`. Drop an identical pending entry before re-queueing: the
+                // flush stays last-wins and the log shows each value once.
+                m_pendingCvarOverrides.erase(
+                    std::remove_if(m_pendingCvarOverrides.begin(), m_pendingCvarOverrides.end(),
+                                   [&](const std::pair<std::string, float>& e) {
+                                       return e.first == cvarName && e.second == cvarValue;
+                                   }),
+                    m_pendingCvarOverrides.end());
                 m_pendingCvarOverrides.emplace_back(cvarName, cvarValue);
             }
         }

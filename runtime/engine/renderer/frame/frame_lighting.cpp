@@ -46,7 +46,7 @@ static auto* cv_ContactShadows   = UZ_CVAR_BOOL("r.ContactShadows", true, "Conta
 static auto* cv_SSR              = UZ_CVAR_BOOL("r.SSR", false, "Screen-Space Reflections (stochastic VNDF + temporal denoise)");
 static auto* cv_SSRIntensity     = UZ_CVAR_FLOAT("r.SSR.Intensity", 1.0f, "SSR reflection intensity", 0.f, 2.f);
 static auto* cv_SSRMaxRoughness  = UZ_CVAR_FLOAT("r.SSR.MaxRoughness", 0.35f, "Max roughness for SSR (UE5 default)", 0.f, 1.f);
-static auto* cv_SSRNumSteps      = UZ_CVAR_INT("r.SSR.NumSteps", 16, "SSR ray march step count", 8, 32);
+static auto* cv_SSRNumSteps      = UZ_CVAR_INT("r.SSR.NumSteps", 16, "SSR ray march step count", 8, 64);
 static auto* cv_SSRStartMip      = UZ_CVAR_FLOAT("r.SSR.StartMipLevel", 1.0f, "SSR initial HZB mip level", 0.f, 3.f);
 static auto* cv_SSRSlopeTolerance = UZ_CVAR_FLOAT("r.SSR.SlopeToleranceScale", 4.0f, "SSR slope tolerance scale", 1.f, 16.f);
 static auto* cv_SSRCopyPrev      = UZ_CVAR_BOOL("r.SSR.CopyPrev", true, "SSR prev-frame color copy");
@@ -153,13 +153,14 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
     RegisterDBufferApplyPass(rgBuilder, ctx);
     RegisterGTAOPass(rgBuilder, ctx);
     RegisterDFSPasses(rgBuilder, ctx);
-    RegisterSSGIPasses(rgBuilder, ctx);
     RegisterSDFGIPasses(rgBuilder, ctx);
+    RegisterSSGIPasses(rgBuilder, ctx);
     RegisterBrixelizerGIPasses(rgBuilder, ctx);
     RegisterSSRPasses(rgBuilder, ctx);
     
     // ── Env MIS temporal accumulation (render graph compute pass) ───────
-    if (m_envMISPass && m_envMISPass->IsInitialized()
+    if (ctx.perFrame.sdfReflectionsEnabled == 0
+        && m_envMISPass && m_envMISPass->IsInitialized()
         && m_envMapSampler && m_envMapSampler->IsReady()) {
 
         rgBuilder.AddPass("EnvMIS_Temporal", [&](rg::RgPassBuilder& pb) {
@@ -302,14 +303,17 @@ void SceneRenderer::RegisterPassInspectorTargets(FrameContext& ctx) {
 
     // SSGI intermediate textures
     const bool ssgiActive = m_ssgiRenderer.IsReady()
+                          && ctx.perFrame.ssgiEnabled != 0
                           && m_device->IsBindless()
                           && m_passInspector.IsPassEnabled("ssgi");
     if (ssgiActive) {
         const uint32_t hw = m_ssgiRenderer.GetHalfWidth();
         const uint32_t hh = m_ssgiRenderer.GetHalfHeight();
 
-        m_passInspector.RegisterTarget("ssgi.prev_color", m_ssgiRenderer.GetPrevColorTexture(),
+        if (ctx.perFrame.sdfDiffuseSamples == 0 && m_ssgiRenderer.HasPreviousSceneColor()) {
+            m_passInspector.RegisterTarget("ssgi.prev_color", m_ssgiRenderer.GetPrevColorTexture(),
                                         m_ssgiRenderer.GetPrevColorSrvIndex(), VisDisplayMode::Color, rw, rh);
+        }
         m_passInspector.RegisterTarget("ssgi.trace", m_ssgiRenderer.GetTraceTexture(),
                                         m_ssgiRenderer.GetTraceSrvIndex(), VisDisplayMode::HDR, hw, hh);
         m_passInspector.RegisterTarget("ssgi.denoised", m_ssgiRenderer.GetDenoisedTexture(),
@@ -447,12 +451,42 @@ void SceneRenderer::RegisterPassInspectorTargets(FrameContext& ctx) {
                                         VisDisplayMode::Color, rw, rh);
     }
 
+    // DDGI octahedral atlases (DXR probe update). Registered only once the
+    // first full atlas write completed — before that they hold their clear
+    // value and would report a misleading all-zero range.
+    if (m_ddgiSystem.IsInitialized() && m_ddgiSystem.HasCompletedFirstUpdate()) {
+        if (m_ddgiSystem.GetIrradianceTexture().IsValid()
+            && m_ddgiSystem.GetIrradianceSrv() != UINT32_MAX) {
+            m_passInspector.RegisterTarget("gi.ddgi_irradiance",
+                                           m_ddgiSystem.GetIrradianceTexture(),
+                                           m_ddgiSystem.GetIrradianceSrv(),
+                                           VisDisplayMode::HDR,
+                                           m_ddgiSystem.GetIrradianceAtlasWidth(),
+                                           m_ddgiSystem.GetIrradianceAtlasHeight());
+        }
+        if (m_ddgiSystem.GetDepthTexture().IsValid()
+            && m_ddgiSystem.GetDepthSrv() != UINT32_MAX) {
+            m_passInspector.RegisterTarget("gi.ddgi_depth",
+                                           m_ddgiSystem.GetDepthTexture(),
+                                           m_ddgiSystem.GetDepthSrv(),
+                                           VisDisplayMode::Grayscale,
+                                           m_ddgiSystem.GetDepthAtlasWidth(),
+                                           m_ddgiSystem.GetDepthAtlasHeight());
+        }
+    }
+
     // Global Distance Field cascade 0
     if (m_sdfGiEnabled) {
         const auto& clip = m_globalDistanceField.GetClipmap(0);
-        if (clip.texture.IsValid() && clip.srvIndex != UINT32_MAX) {
+        if (clip.hasData && clip.texture.IsValid() && clip.srvIndex != UINT32_MAX) {
+            const auto desc = m_device->GetTextureDesc(clip.texture);
             m_passInspector.RegisterTarget("gi.gdf_cascade0", clip.texture, clip.srvIndex,
-                                            VisDisplayMode::Grayscale, 64, 64);
+                                            VisDisplayMode::Grayscale, desc.width, desc.height);
+            if (clip.rawTexture.IsValid() && clip.rawSrvIndex != UINT32_MAX) {
+                const auto rawDesc = m_device->GetTextureDesc(clip.rawTexture);
+                m_passInspector.RegisterTarget("gi.gdf_raw_cascade0", clip.rawTexture, clip.rawSrvIndex,
+                                               VisDisplayMode::Grayscale, rawDesc.width, rawDesc.height);
+            }
         }
     }
 }

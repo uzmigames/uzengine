@@ -216,7 +216,7 @@ RHIPipelineHandle MaterialPipeline::GetOrCreatePSO(const MaterialGraph& graph, b
             std::string debugName = "MatGraph_" + std::to_string(hash)
                                   + (bindless ? "_Bindless" : "_SM5");
             auto desc = BuildGBufferPipelineDesc(
-                m_meshVS, cached.pixelShader, bindless, debugName.c_str());
+                m_meshVS, cached.pixelShader, bindless, graph.twoSided, debugName.c_str());
             pso = m_device->CreateGraphicsPipeline(desc);
             if (!pso.IsValid()) {
                 UZ_LOG(Renderer, Error,
@@ -282,7 +282,7 @@ RHIPipelineHandle MaterialPipeline::GetOrCreatePSO(const MaterialGraph& graph, b
     std::string debugName = "MatGraph_" + std::to_string(hash)
                           + (bindless ? "_Bindless" : "_SM5");
     auto psoDesc = BuildGBufferPipelineDesc(
-        m_meshVS, psHandle, bindless, debugName.c_str());
+        m_meshVS, psHandle, bindless, graph.twoSided, debugName.c_str());
 
     RHIPipelineHandle pso = m_device->CreateGraphicsPipeline(psoDesc);
     if (!pso.IsValid()) {
@@ -401,7 +401,7 @@ std::string MaterialPipeline::BuildCombinedPixelShaderSource(const std::string& 
 
 RHIGraphicsPipelineDesc MaterialPipeline::BuildGBufferPipelineDesc(
     RHIShaderHandle vs, RHIShaderHandle ps,
-    bool bindless, const char* debugName) const
+    bool bindless, bool twoSided, const char* debugName) const
 {
     // Must match PipelineLibrary::GetGBuffer() exactly — same RT formats,
     // depth format, rasterizer state, and depth-stencil configuration.
@@ -411,8 +411,12 @@ RHIGraphicsPipelineDesc MaterialPipeline::BuildGBufferPipelineDesc(
     desc.pixelShader   = ps;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
 
-    // Rasterizer — back-face cull, CCW front face (DX12 standard, matching GBuffer)
-    desc.rasterizer.cullMode              = RHICullMode::Back;
+    // Rasterizer — back-face cull, CCW front face (DX12 standard, matching
+    // GBuffer) unless the graph is two-sided. `twoSided` is part of the graph's
+    // content hash, so a two-sided graph owns its own cached PSO; the draw
+    // command's `twoSided`/flag bit 3 (scene_sync) only reached the shadow and
+    // distance-field consumers before — the GBuffer PSO still culled.
+    desc.rasterizer.cullMode              = twoSided ? RHICullMode::None : RHICullMode::Back;
 
     // Depth — enabled, write enabled (deferred geometry pass writes depth)
     desc.depthStencil.depthEnable = true;
@@ -428,12 +432,15 @@ RHIGraphicsPipelineDesc MaterialPipeline::BuildGBufferPipelineDesc(
 
     desc.debugName = debugName;
 
-    // SM5 path requires vertex input layout; SM6.6 bindless omits it
+    // SM5 path requires vertex input layout; SM6.6 bindless omits it.
+    // `desc.inputElements` points into `m_standardLayout` (a member): a local
+    // `VertexLayoutResult` stores its elements inline, so pointing into one
+    // left the returned descriptor dangling for the caller's
+    // CreateGraphicsPipeline.
     if (!bindless) {
-        const auto layout = VertexLayout::Standard();
-        desc.inputElements     = layout.elements;
-        desc.inputElementCount = layout.count;
-        desc.vertexStride      = layout.stride;
+        desc.inputElements     = m_standardLayout.elements;
+        desc.inputElementCount = m_standardLayout.count;
+        desc.vertexStride      = m_standardLayout.stride;
     }
 
     return desc;

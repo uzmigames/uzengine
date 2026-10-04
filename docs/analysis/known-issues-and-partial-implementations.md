@@ -89,6 +89,82 @@ and a quality comparison.
 
 ---
 
+### Static TAA residual — `MODELLED (2026-09-10), STILL OPEN`
+The static flicker's *amplitude* is described by the TAA accumulation's steady-state ripple: the
+accumulation is a first-order IIR filter (`r.TAA.CurrentFrameWeight` = 0.04) whose input is
+periodic in the jitter cycle, and such a filter settles into a ripple rather than converging.
+Predicted from the measured input ripple and the blend weight, with no fitted parameters, it lands
+within 1.5x at jitter periods 4, 8 and 16 and reproduces the ordering; with the sub-pixel offset
+removed the residual falls four orders of magnitude. Ledger H-27, evidence in
+`.screenshots/flicker-elimination/15-isolate-clamp-bounds/`.
+
+This is an **approximate amplitude model, not a verdict on the image.** The shader's accumulator is
+not a constant-coefficient IIR (its effective weight ranges 0.039–0.300), the prediction applies the
+fundamental's gain to the whole variance, and neither phase nor per-pixel time series were
+reproduced. It bounds the remedies without declaring the visible behaviour acceptable — that
+judgement has not been made.
+
+Consequences for anyone tuning TAA here:
+
+* the residual is `input_ripple x |H|`, so reducing it means making the reconstruction less
+  jitter-dependent (measured, caps at −35 %, and it bleeds light into black pixels), lowering the
+  blend weight (lag, which the motion gate rejects), or shortening the jitter cycle (less
+  anti-aliasing);
+* the clamp *bounds* are rejected in steady state on a static camera (H-25b): freezing them moves
+  the oscillation by −3.4 %, below this ROI's decision threshold, while the error against the
+  correctly resampled image grows 14.3 %. Averaging the bounds over a jitter cycle, or filtering
+  them slowly, are different interventions and were not tested;
+* the history fetch is **not** eliminated (H-26): its immediate perturbation is small, but no run
+  substituted an exact history read while accumulating, so an effect that builds up over frames
+  remains possible;
+* `r.TAA.JitterScale=0` is a *control*, not a fix: it removes the residual by removing the
+  anti-aliasing.
+
+The shadowed walls and the behaviour in motion are outside all of this and remain open.
+
+### TAA reconstruction HDR weighting - `MEASURED, NOT CHANGED (2026-09-09)`
+The plus filter in `taa_resolve_cs.hlsl` weights each tap by `1 / (Y * exposure + 4)`
+(Karis 2014). It is a demonstrated source of part of the static flicker on bright features
+(ledger H-11, H-12): it makes the filtered colour depend on where the jitter put the samples,
+and it loses energy on thin bright features.
+
+`r.TAA.ReconstructionHdrWeightExponent` (default 1.0 = production, 0 = no weighting) was added
+to study it and is **opt-in**: it failed four of the seven preregistered acceptance gates, so
+the default was not changed. Measured at exponent 0, pose W window, 3 repeats:
+
+* static residual -35.4 % (the gate asked for -50 %; the whole exponent range was swept
+  and this is the ceiling);
+* 3x closer to the correctly resampled reference, with the bright side's energy deficit nearly
+  eliminated - the gain is real, and it is not blur;
+* but recovery after a camera cut goes 16 -> 60 frames, and a dark
+  ROI containing a small bright feature (pose A `rear_door`) gets
+  +120 % residual and
+  +79 % energy;
+* pixels whose correct value is ~0 receive about 6x more light.
+
+The weighting is a variance/bleed trade, not a defect to delete. The next experiment is a
+reversible-tonemap reconstruction (ledger H-24). `r.TAA.ClampMode=3` (AABB only) is now rejected
+as an alternative as well: on its own it moves recovery after a cut from 16 to
+48 frames.
+
+### Stale unit tests - `PRE-EXISTING, DIAGNOSED (2026-09-09)`
+Two tests in `runtime/tests/` fail against committed production values and are unrelated to the
+flicker work. Diagnosed rather than filtered out:
+
+* `BuildPerFrameCB_StructSize.PerFrameCB_Is768Bytes` expects `sizeof(PerFrameCB) == 768`. Commit
+  `29c83ba5` grew the struct to 1024 bytes (4 x 256) and
+  `runtime/engine/renderer/core/params/constant_buffers.h` carries its own
+  `static_assert(sizeof(PerFrameCB) == 1024)`, with fields in use out to offset 1008. The
+  invariant that matters - D3D12's 256-byte constant-buffer alignment - is already enforced
+  there; the test hardcodes the old size. Suggested fix: assert `sizeof(PerFrameCB) % 256 == 0`.
+* `PerFrameCB_IBL.PrefilteredMipLevelsDefaultIsFive` expects 5. Commit `6985ffac` ("IBL rough
+  metal excessive reflections") deliberately raised the prefiltered chain to 8 in
+  `IBLBaker::kPrefilteredMipLevels` and in all three CB structs, which agree with each other.
+  Suggested fix: expect `IBLBaker::kPrefilteredMipLevels` instead of a literal.
+
+Neither test was changed here: they belong to the IBL and constant-buffer areas, not to this
+programme.
+
 ## Global Illumination
 
 ### `r.SSGI` — `OFF` (BUG)
@@ -126,37 +202,274 @@ Current gaps:
 
 ---
 
-### `r.RadianceCache` — `OFF` (PARTIAL)
-**File**: [radiance_cache.cpp:24](../../runtime/engine/renderer/gi/radiance_cache.cpp)
+### `r.RadianceCache` — `OFF` by default, `ON` for Sponza (project CVar) — `FUNCTIONAL` since 2026-09-08
+**File**: [radiance_cache.cpp](../../runtime/engine/renderer/gi/radiance_cache.cpp)
 **Shader**: [radiance_cache_trace_cs.hlsl](../../runtime/shaders/runtime/gi/radiance_cache_trace_cs.hlsl)
+**Docs**: [33-sdf-gi-final-gather.md](../engine/12-rendering/33-sdf-gi-final-gather.md), [sponza-gi-correction-2026-09-06.md](rendering/sponza-gi-correction-2026-09-06.md)
 
-SH probe grid + SDF cone trace GI (16³ probes). Implemented but disabled
-because Brixelizer GI supersedes it. Left in the codebase because the
-probe grid is reused by the `IrradianceProbeGrid` (LightProbeVolume) path.
+16³ L2 SH probe grid traced through the global distance field, with SDF
+reflections (`r.GI.Reflections`, SSR lerped in before the BRDF) and the
+world-space final gather (`r.GI.FinalGather`) layered on top. Until the
+SponzaTest port (`phase0_sponza-parity-03/04`) every trace/bake/composite
+shader under `runtime/shaders/runtime/gi/` was an **empty stub** (32 stub
+files, 26 referenced) and `r.RadianceCache` could not actually be disabled —
+the earlier "implemented but disabled because Brixelizer supersedes it"
+description was wrong on both counts. Sponza enables it from
+`sample/projects/sponza.uzproject`; `--cvar` beats the project file since
+task 05. Brixelizer GI is the alternative path; they are not meant to run together.
+
+Unresolved (carried over from SponzaTest's handoff and reproduced here on 2026-09-08):
+- 1 of 32 world-reflection rays leaks through the enclosed-box fixture
+  (`scripts/test_sdf_surface_origin.ps1`, max abs error 0.009328).
+- An extreme grazing reflection exhausts the 256-step budget
+  (`scripts/test_sdf_dynamic_trace.ps1`, 14/15).
+- ~~Sponza LOD2/LOD3 decal triangles still carry the flipped normals~~ —
+  **fixed 2026-09-08** (`phase0_sponza-followup-04`). Cause: `GenerateAutoLODs`
+  (`runtime/engine/renderer/mesh/auto_lod.h`) ran `meshopt_simplify` with
+  **positions only**, so a collapse could leave a triangle whose winding no
+  longer matched its vertex normals. It now uses
+  `meshopt_simplifyWithAttributes` with the normals (weight 0.5), which fixes
+  every future import. Baked LODs in the shipped assets were repaired in place
+  by `scripts/test_decal_lod_normals.ps1 -Repair` (winding swap only, vertex
+  data untouched). The decal went from 23 inconsistent triangles at LOD2 and 26
+  at LOD3 to zero. Across the 145 Sponza meshes the audit classes are 56 clean,
+  43 simplifier artifacts (repaired) and 46 whose **LOD0** is itself
+  inconsistent — authored or smoothed normals that legitimately disagree with
+  some faces, left alone. One of those, `arch_stones_01_stone_trims_01_0`, is
+  100 % inconsistent at LOD0 (a whole-mesh winding inversion) and still needs
+  the treatment the decal got.
+- No Surface Cache and no complete emissive transport (only the VFX → DDGI
+  emissive feed); no Lumen parity is claimed.
+- Falcor PSNR ≥ 35 dB parity unverified (no Falcor install on either machine).
+- `--diag` reads `gi.gdf_cascade0` / `gi.gdf_raw_cascade0` as zero in **both**
+  repositories, even after the 3D readback `D3D12_BOX` fix.
+- ~~Stone materials read as metallic~~ — **fixed 2026-09-08**
+  (`phase0_sponza-followup-05`). The graphs wire `Metallic <- <tex>.B`
+  correctly (glTF metallicRoughness), but Sponza's maps carry 3-25 % in that
+  channel on dielectrics, and four materials with no Metallic input at all
+  (`glass`, `lamp_glass_01`, `light_bulb`, `dirt_decal`) hit
+  `gbuffer_ps.hlsl:188`'s `metallic = metallicMultiplier` and rendered fully
+  metallic at the neutral 1.0. 23 materials now carry
+  `metallicMultiplier: 0.0`; the metallic share above 0.25 fell from 33.2 % to
+  0.83 % at Camera A and 41.9 % to 3.9 % at Camera C (the remainder being
+  `metal_door`, which is genuinely metallic at 0.816). `E:\SponzaTest` carries
+  the same unfixed values. Guard: `scripts/audit_sponza_metallic.ps1`.
+- The metallicRoughness textures themselves still carry the dirty blue
+  channel; the multiplier neutralises them at material level. A clean re-export
+  is the asset-side fix.
 
 ---
 
-### DDGI (`DDGISystem`) — `STUB` (INFRA ONLY)
+### DDGI (`DDGISystem`) — `PARTIAL` (dispatched; DXR-gated)
 **File**: [ddgi_system.cpp](../../runtime/engine/renderer/gi/ddgi_system.cpp)
+**Shader**: [ddgi_probe_update_cs.hlsl](../../runtime/shaders/runtime/gi/ddgi_probe_update_cs.hlsl)
 
-DDGI infrastructure: octahedral irradiance + depth atlases, probe grid
-layout, bindless SRV/UAV slots. NO probe update shader, NO sampling path
-in deferred lighting. The atlases are created and never written. Needs:
-- Probe update compute shader (see `ddgi_probe_update_cs.hlsl` — exists
-  but not dispatched)
-- DXR ray update path (`r.RayTracing.GI=1` tries to enable but TLAS is
-  also not integrated — see RT section)
-- Chebyshev visibility sampling in `deferred_lighting_ps.hlsl`
+Octahedral irradiance + depth atlases, probe grid layout, bindless slots.
+`ddgi_probe_update_cs.hlsl` **is** dispatched from `frame_gi_passes.cpp`
+(`RadianceCache_Trace` pass) once `r.RayTracing.GI=1` and a TLAS is ready;
+deferred lighting samples the atlases after `HasCompletedFirstUpdate()`.
+It shares the 208-byte `RadianceCacheTraceConstants` (176 + VFX emissive
+tail + grid-recentre row) with the SDF trace. SponzaTest could not validate the DXR path
+(`DDGI_ProbeUpdate` pipeline failed with 0x80070057 on a Tier 1.0 GPU); the
+2026-09-08 run on an RTX 5080 (Tier 1.2) is recorded in
+`.rulebook/tasks/phase0_sponza-parity-06-qa-harness-validation/notes.md`.
+
+That first validated run exposed four probe-energy defects, all fixed on
+2026-09-08 (`phase0_sponza-followup-01-dxr-ddgi-energy-parity`):
+
+1. The probe hit radiance was missing the Lambert `1/pi`, so every surface
+   bounce was pi times too bright.
+2. There was no shadow ray, so each hit was lit as if the sun were unoccluded.
+3. Chebyshev visibility was inert: the RG16F depth atlas stored a squared
+   distance in centimetres, which saturates FP16 (65504) at Sponza's scale, so
+   the variance collapsed and every probe reported full visibility. Both
+   moments are now stored normalised by `maxTraceDistance`.
+4. `DDGISystem::DispatchUpdate` built its constants with a placeholder
+   environment (sun pointing straight up at intensity 1, sky 0.6/0.7/0.9,
+   no distance field), unrelated to the loaded scene. It now reads the same
+   `PerFrameCB` fields and `GlobalDistanceField` clipmaps the radiance cache
+   reads, and takes the hit normal and albedo from the field
+   (`runtime/shaders/runtime/gi/gdf_surface.hlsli`) because inline `RayQuery`
+   reports no hit attributes.
+
+Result: Camera A 52.0/255 for both paths (was 77.1 for DXR), Camera C 91.8 vs
+the SDF path's 90.1. Still open — with the final gather off the DXR path
+remains brighter: the per-probe GPU comparison (`scripts/test_gi_energy_gpu.ps1`, linear mean ray radiance of both writers on the same grid) reads DDGI/SDF = 0.5748 (parity 1 ± 0.10 NOT MET); the earlier display-referred PNG proxy gave 1.21. Found on the way: with `r.RayTracing` (master) off and `r.RayTracing.GI` on, the writer ran against an empty TLAS and filled every probe with sky — the dispatch is now gated on `IsGIEnabled()` and a populated TLAS; the SDF path's 96-step sphere
+trace drops energy on exhausted rays and the DDGI consumer's Chebyshev
+rejection is weaker than the radiance cache consumer's, and the two have not
+been separated. DDGI also uses a flat sky colour where the SDF writer samples
+the sky cubemap, and hardcodes 32 rays per probe.
+
+Regression guard: `scripts/test_ddgi_energy.ps1` (16 source-level checks).
+
+**Indirect-path noise (2026-09-08, `phase0_sponza-followup-06`).** With `r.TAA` off
+(the engine default), the stochastic passes — SDF reflections (4 GGX rays/pixel),
+world-space final gather, GTAO — show per-pixel noise; on a dark wall beside a
+window it reads as white specks. Root cause of the specks: reflection rays that
+escape through the opening return sky radiance, 0-or-1 per pixel, with no filter
+on that path. Three estimator defects were fixed along the way (plain mean →
+Karis weight; below-horizon rays renormalised away → weight kept; radiance-cache
+probe selection by the normal-mapped normal → geometric normal), and the Sponza
+project now sets `r.TAA: 1` (Camera A isolated bright pixels 944 → 244). A second report after enabling TAA — the whole scene flashing near-white
+while flying — was the radiance cache readiness gate dropping every indirect
+path for one frame each time the camera crossed a probe cell (~267 cm);
+`HasProducedResult()` is no longer gated on the recentre flag (frames at a
+crossing 18.9 → 236.3 → 15.4 before, 18.9 → 15.6 → 12.8 after). A third
+report — a blink at one point while rising (z ≈ 267 cm, the probe spacing) —
+was the recentre itself: lighting was handed the *current* grid origin with the
+buffer completed *last* frame (one frame indexed one cell off → flash), and the
+retrace ran with first-write semantics (no history, no multi-bounce feedback →
+a plateau decaying over ~40 frames). Vertical sweep at the user's pose, frames
+131→132→133: 83.4 → 95.3 → 88.0 before, 83.4 → 83.9 → 84.1 after
+(`scripts/sponza-vertical-camera.*`). Lighting now indexes the published buffer
+with `GetCompletedGridOrigin()`, and the recentre scrolls the probe history
+through an integer grid shift (`historyShift*` row, 208-byte trace constants);
+only the first write and a scene-revision change reset it. Open: a
+spatial/temporal filter for the SDF reflection path; the `shadows`,
+`lighting`, `lightingonly` and `ao` debug views render nothing usable. Guards:
+`scripts/test_sdf_reflection_firefly.ps1`, `scripts/test_rc_recentre_scroll.ps1`.
 
 ---
 
-### `GlobalSDF` — `PARTIAL`
-**File**: [global_distance_field.cpp](../../runtime/engine/renderer/gi/global_distance_field.cpp)
-**Shader**: [global_sdf_composite_cs.hlsl](../../runtime/shaders/runtime/gi/global_sdf_composite_cs.hlsl)
+### TAA jitter applied to the view-projection as if it were the projection — `FIXED` 2026-09-08
+**File**: [frame_setup.cpp](../../runtime/engine/renderer/frame/frame_setup.cpp), [taa_jitter.h](../../runtime/engine/renderer/frame/taa_jitter.h)
+**Tests**: gtest `TaaJitter.*`, `scripts/test_taa_bloom_input.ps1`; QA scenes `scripts/sponza-closeup-camera.*`, `scripts/sponza-closeup-approach.*`
 
-Global distance field composite exists for DFS cone tracing. Works with
-individual mesh SDFs baked offline by `mesh_sdf_baker.cpp`. Brixelizer
-has its own SDF path so this is partially redundant now.
+The Halton sub-pixel jitter was added to `m[2][0]/[2][1]` of the combined
+view-projection. That row multiplies view-space z only in a pure projection
+matrix; in the view-projection it multiplies the vertex's world z, so the NDC
+shift was `jitter · world_z / w` — ±7 px on a wall 40 cm from the camera at
+z ≈ 576, ~0.2 px on the far atrium wall. The TAA resolve un-jitters by the
+nominal (jx, jy) pixels and its history clamp then follows the displaced frame:
+near geometry shook while the camera stood still ("a mesh balança quando a
+câmera chega perto"). Static-camera pairs: 0.25–1.1 % of pixels changing by
+> 40/255 with TAA on, 0.00 % off; a cornice-edge pixel 180 → 188 → 31 → 179.
+Eliminated first: GTAO, final gather, SDF reflections, anti-flicker, variance
+clip, bloom, CAS, motion blur. Fix: `ApplyTaaJitter` folds the NDC translation
+through the matrix's w column so every vertex moves by exactly (jx, jy) pixels.
+After: 0.19 / 0.00 %, 0.22 / 0.00 %, 0.19 / 0.00 % (before 1.06 / 0.25 %, 2.45 / 1.11 %, 1.54 / 0.70 %; TAA off 0.94–0.98 / 0.00 %) — now below the TAA-off noise floor, the cornice-edge scanline identical across frames, changed-pixel grid (threshold 4) 92 897 → ~800. SponzaTest has the same defect (its `r.TAA` is off by
+default). Also fixed on the way: the TAA-path Bloom read the jittered scene
+colour instead of the TAA output (not the cause — `r.Bloom=0` control identical).
+
+---
+
+### Static-camera flicker on high-contrast HDR edges under TAA (Sponza window bars) — `OPEN`, attributed 2026-09-09
+**File**: [taa_resolve_cs.hlsl](../../runtime/shaders/runtime/postprocess/taa_resolve_cs.hlsl), [taa_upscaler.cpp](../../runtime/engine/renderer/passes/postprocess/taa_upscaler.cpp)
+**Tests**: `scripts/test_region_dump.ps1`; QA scenes `scripts/sponza-flicker-w-seq.*`; packages `.screenshots/flicker-{sequence,jitter,region}/`
+
+With the camera still, pixels on the bar/pane edges of the barred window oscillate with a
+period equal to `r.TAA.JitterSequenceLength`. Per-pixel records from the lighting pass and
+the resolve (`--region-dump`) show the raw sample is deterministic in the jitter index (no
+stochastic component; the SDF reflection term is 0.0006 Y there and switching reflections
+off leaves the linear oscillation unchanged). The residual is produced by the resolve itself
+on an 8 Y : 0 Y edge: the plus filter un-jitters by weights only, so pane light enters the
+adjacent bar pixel by a jitter-dependent amount (filtered 0 → 1.5 Y while the raw stays 0),
+and the variance clamp then snaps the history (17 % of the flicker pixels' frames, 41 % of
+their output change). On screen the visible part is the dark bars next to the panes: a
+0.005–0.10 Y change rendered at auto-exposure ≈ 67 (`r.AutoExposure.MinBrightness` 0.001
+with bars at 0.000 Y) is 50–100 display levels, on top of a ~94 L bloom floor. Anything that
+moves the exposure changes the *count* of threshold crossings without touching the
+oscillation (reflections off: 37 → 0.6 px > 40 per frame; bloom off: 39 → 1547).
+`UpscalerInput::exposure` was never consumed by the resolve's HDR weights; the opt-in
+`r.TAA.PreExposeWeights` halves the bar-side count but destabilises the pane side (output std
+p99 0.18 → 2.49 Y), so it stays off. Candidate fixes not yet tried: partial pre-exposure,
+resampling (not re-weighting) the un-jittered neighbourhood, or an exposure floor for the
+interior. Keep `r.TAA.JitterSequenceLength=8`; length 1 (a constant Halton23(1) offset) is a
+control, not a fix.
+
+**Measurement status (2026-09-09, followup-09).** The capture and the metrics behind those numbers
+were re-validated before any further conclusion is drawn. The instrumentation is now
+`--region-dump` version 2: several rectangles per run, GPU frame stamps on every record block, a
+readback that runs independently of TAA, a shutdown flush and a run manifest
+(`--run-manifest`: executable hash, effective CVars, exposure, frame timing, integrity counters).
+`scripts/test_region_capture.py` (23 behavioural checks) and `scripts/test_flicker_metrics.py`
+(22 synthetic checks) guard it. What the validation established, and what it corrected:
+
+* the records are linear scene radiance — a 16x exposure change leaves them bit-identical, and the
+  renderer is deterministic at a given frame index (two independent runs agree exactly);
+* the resolve's own blend equation, recomputed from the recorded fields, reproduces the recorded
+  output to 9.2e-07 relative error, so the field meanings are verified rather than assumed;
+* the linear-domain oscillation and the display-domain threshold crossings are **disjoint pixel
+  sets** (bright pane side vs dark bar side of the same edge) — the two descriptions in the earlier
+  package are consistent, but neither one can stand for the other;
+* **auto-exposure adapts with the frame time**, so any change of cost moves the displayed image by
+  about one code value; every display-referred comparison must fix the exposure;
+* **bloom mixes neighbouring pixels**, so a display value is not a per-pixel function of the
+  recorded radiance unless bloom is off;
+* `--screenshot-frames` file `f_N` held render N+1 until 2026-09-09; older packages must be aligned
+  by one frame.
+
+Open hypotheses, their scope and the next discriminating experiment are tracked in
+[flicker-hypothesis-ledger.md](flicker-hypothesis-ledger.md); evidence packages live under
+`.screenshots/flicker-elimination/`.
+
+**Mechanism, isolated 2026-09-09 (followup-10).** The window has two independent defects:
+
+1. **An energy bias.** The converged image holds 91.9 % of the radiance of the correctly resampled
+   input over the whole window rectangle; on an analytic 1.5-px bright bar the loss is 48.4 %. The
+   cause is the HDR weighting (`HdrWeightY`) applied *inside the reconstruction filter*: dropping it
+   (`r.TAA.ReconstructionMode=1`) takes the rectangle to 98.0 % and the bar loss to 20.6 %. The loss
+   scales with contrast — the same bar at 1.0 radiance loses 16.6 % instead of 48.4 %.
+2. **A temporal residual** driven by the jitter. A constant offset (`r.TAA.JitterScale=0`) removes it
+   completely (0.0486 → 0.00001 radiance on the edge pixels) and leaves the energy bias untouched.
+   Per stage: the raw sample is perfectly stable on the pane (0.00000) and swings 3.5 radiance at the
+   bars; the jitter-weighted plus filter spreads that onto the pane (0.248); the accumulation
+   attenuates everything about 25x. The variance clamp adds about 35 % of what is left — the
+   neighbourhood AABB alone behaves like no clamp.
+
+Removing the clamp is not an option: it gives the best static number and never clears invalid
+history (peak error after a camera cut 10x the baseline, still 46x after 80 frames). This TAA
+rejects history only when the reprojection leaves the screen, so the clamp is its only disocclusion
+defence. Diagnostic CVars `r.TAA.JitterScale`, `r.TAA.ReconstructionMode`, `r.TAA.ClampMode` and
+`r.TAA.BlendMode` all default to the production behaviour; the offline model that reproduces the
+resolve to 2e-7 is `scripts/flicker/taa_model.py`.
+
+**Display side, measured 2026-09-09 (followup-11).** The oscillation reaching the eye is a few per
+cent of radiance amplified by the exposure an interior needs. On the identical HDR sequence, replayed
+through a tonemap model validated against the engine to 1 code value, a 4x exposure change multiplies
+the px > 40 count by 31x while the linear records stay bit-identical — a threshold count is never an
+energy statement. Auto-exposure settles at 66.31 on pose W and is stable when still. Bloom lifts the
+dark floor 2.4x and halves local contrast, and its effect on a threshold count changes sign with the
+exposure. Two controls used in earlier packages turn out to substitute rather than subtract:
+`r.GI.Reflections=0` falls back to the prefiltered IBL cubemap (specular radiance is initialised from
+it and only overwritten by the SDF trace), making the interior 11x brighter and the exposure 16x
+lower without changing the oscillation; and `r.TAA.PreExposeWeights` is a no-op at exposure 1.0 and,
+at the real operating point, makes the bright side oscillate 11x more while crushing the dark side to
+2 % of its radiance.
+
+**Which pass owns each region, measured 2026-09-09 (followup-12).** The regions reported as
+flickering are not all lit the same way, and two of them are not lit by the deferred pass at all.
+With the forward translucent pass disabled, the barred window falls from 2.666 to 0.00006 radiance
+and the right-hand shadowed arcade from 0.0539 to 0.00047: their colour is **forward translucent
+geometry**, which the deferred lighting records do not describe and which no GI control moves
+(every one of them stays at 1.00x). The rear door is mixed (61.5 % deferred). The deeply shadowed
+walls and the sunlit floor are fully deferred, and their residuals have different sources again:
+the shadowed walls are 97.5 % diffuse indirect with the final gather's per-frame sampling dominating
+and GTAO contributing about 40 %, while the sunlit floor is 99 % direct light. The converged
+radiance cache contributes nothing to any of them (freezing it after convergence: 1.00x).
+
+**Moving camera: the GDF recentre is a demonstrated cause, 2026-09-09 (followup-13).** Measured with
+world-space tracking (each pixel's world point reprojected into the previous frame, 88 % valid
+coverage), on a trajectory that crosses one clipmap axis at a time: the motion-compensated residual
+is 1.31-1.35x higher on the frames where a clipmap recentres, and the ROI mean steps by 3-6x its
+ordinary local change (about 24 % of the shadowed wall's radiance and 9 % of the lit wall's), with no
+consistent sign. Shifting the voxel snapping phase by half a voxel moves the events to different
+frames **and the elevation follows them**; freezing the centres removes the events entirely and
+leaves the residual away from them unchanged. Diagnostic CVars `r.GI.GDF.FreezeCenter` and
+`r.GI.GDF.CenterPhaseOffset` (both default to production behaviour). What is *not* isolated is which
+half of a recentre does it: re-voxelising the clipmap or moving the sampling origin of everything
+that traces it.
+
+### `GlobalSDF` — `FUNCTIONAL` (4 clipmaps, raw + expanded)
+**File**: [global_distance_field.cpp](../../runtime/engine/renderer/gi/global_distance_field.cpp)
+**Shader**: [global_sdf_composite_cs.hlsl](../../runtime/shaders/runtime/gi/global_sdf_composite_cs.hlsl), [mesh_sdf_bake_cs.hlsl](../../runtime/shaders/runtime/gi/mesh_sdf_bake_cs.hlsl)
+
+Four clipmaps (`r.GI.GDF.Resolution`, default 256 on Sponza) composited on
+the GPU from per-mesh SDFs baked at load (`mesh_sdf_baker.cpp`, BVH,
+two-sided via `r.GI.MeshSdf.TwoSided`), kept as a raw R16F volume plus an
+expanded RGBA16F copy. Feeds the radiance cache trace, SDF reflections, the
+final gather and DFS. Scene readiness waits for pending bakes (138 on Sponza)
+before the first presented frame. Brixelizer keeps its own SDF; the two are alternatives.
 
 ---
 

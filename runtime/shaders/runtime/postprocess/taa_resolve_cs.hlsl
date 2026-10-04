@@ -14,6 +14,8 @@
 /// 6. Variance clip (Salvi 2016) intersected with AABB.
 /// 7. HDR-weighted blend with velocity-modulated blend factor.
 
+#include "../common/region_dump.hlsli"
+
 /// TAA constant buffer at b2 — uploaded via CBRingAllocator.
 cbuffer TaaCB : register(b2) {
     float2 jitterOffset;        ///< Sub-pixel jitter (pixels).
@@ -30,6 +32,22 @@ cbuffer TaaCB : register(b2) {
     float  antiFlickerMax;      ///< CVar r.TAA.AntiFlickerMax (default 0.3).
     float  spatialWeightMul;    ///< CVar r.TAA.SpatialWeightMultiplier (default 2.29).
     float  exposureScale;       ///< CVar r.TAA.ExposureScale (default 1.0).
+    uint   debugRegionUav;      ///< Region dump UAV (0xffffffff = off), see common/region_dump.hlsli.
+    uint   debugRegionSrv;      ///< Rect table SRV (StructuredBuffer<uint4>, 2 elements per rect).
+    uint   debugRegionCount;    ///< Rect count (0 = off).
+    uint   debugRegionStamp;    ///< Frame stamp the GPU writes into the rect footer.
+    uint   debugRegionFields;   ///< Field-group bitmask (UZ_REGION_FIELD_*).
+    uint   clampBoxSrvMin;      ///< r.TAA.ClampFreezeAfterFrame storage (0xffffffff = unavailable).
+    uint   clampBoxSrvMax;
+    uint   clampBoxUavMin;
+    uint   clampBoxUavMax;
+    uint   clampFreezeActive;   ///< 1 = read the stored clamp box, 0 = compute it and store it.
+    uint   clampFreezeEnabled;  ///< 0 = diagnostic off; do not touch the storage at all.
+    float  hdrWeightExponent;   ///< CVar r.TAA.ReconstructionHdrWeightExponent (1 = production).
+    uint   reconstructionMode;  ///< CVar r.TAA.ReconstructionMode (0 = production).
+    uint   clampMode;           ///< CVar r.TAA.ClampMode (0 = production).
+    uint   blendMode;           ///< CVar r.TAA.BlendMode (0 = production).
+    uint   _padModes;
 };
 
 SamplerState LinearClampSampler : register(s0);
@@ -176,21 +194,49 @@ void main(uint2 DTid : SV_DispatchThreadID)
         float2( 1,  0), float2( 0,  1)
     };
 
+    // `reconstructionMode` is a diagnostic switch (r.TAA.ReconstructionMode, 0 = production).
+    // It changes ONE factor at a time so the reconstruction can be separated from the clamp and
+    // the blend: 1 drops the HDR weighting, 2 drops the filter entirely, 3 widens it to the full
+    // 3x3 with the same sample-position-aware weights.
     float3 filteredColor = float3(0, 0, 0);
     float totalWeight = 0.0;
+    // Region dump (diagnostics): the weight applied to each plus tap, so the reconstruction can be
+    // recomputed from the records. Stays 0 for the 3x3 mode, which the records cannot describe.
+    float dbgPlusWeight[5] = { 0.0, 0.0, 0.0, 0.0, 0.0 };
 
-    [unroll]
-    for (uint j = 0; j < 5; j++)
-    {
-        float2 pixelOffset = kPlusOffsets[j] - jitterOffset;
-        /// @ref Karis 2014 — exp(-2.29 * d^2), sigma=0.47
-        float spatialWeight = exp(-spatialWeightMul * dot(pixelOffset, pixelOffset));
-        float hdrWeight = neighborWeights[kPlusIndices[j]];
-        float sampleWeight = spatialWeight * hdrWeight;
-        filteredColor += neighbors[kPlusIndices[j]] * sampleWeight;
-        totalWeight   += sampleWeight;
+    if (reconstructionMode == 2u) {
+        filteredColor = neighbors[4];
+        totalWeight = 1.0;
+        dbgPlusWeight[2] = 1.0;
+    } else if (reconstructionMode == 3u) {
+        [unroll]
+        for (uint k = 0; k < 9; k++) {
+            float2 pixelOffset = float2(kOffsets3x3[k]) - jitterOffset;
+            float spatialWeight = exp(-spatialWeightMul * dot(pixelOffset, pixelOffset));
+            float sampleWeight = spatialWeight * pow(neighborWeights[k], hdrWeightExponent);
+            filteredColor += neighbors[k] * sampleWeight;
+            totalWeight   += sampleWeight;
+        }
+        filteredColor *= rcp(totalWeight);
+    } else {
+        [unroll]
+        for (uint j = 0; j < 5; j++)
+        {
+            float2 pixelOffset = kPlusOffsets[j] - jitterOffset;
+            /// @ref Karis 2014 — exp(-2.29 * d^2), sigma=0.47
+            float spatialWeight = exp(-spatialWeightMul * dot(pixelOffset, pixelOffset));
+            // `hdrWeightExponent` (1 = production) softens the HDR weighting instead of removing
+            // it: pow(w, 0) is the unweighted filter, pow(w, 1) is Karis 2014.
+            float hdrWeight = (reconstructionMode == 1u)
+                            ? 1.0
+                            : pow(neighborWeights[kPlusIndices[j]], hdrWeightExponent);
+            float sampleWeight = spatialWeight * hdrWeight;
+            dbgPlusWeight[j] = sampleWeight;
+            filteredColor += neighbors[kPlusIndices[j]] * sampleWeight;
+            totalWeight   += sampleWeight;
+        }
+        filteredColor *= rcp(totalWeight);
     }
-    filteredColor *= rcp(totalWeight);
 
     // ── Neighborhood Min/Max ────────────────────────────────────────────────
     /// @ref Karis 2014 "High Quality Temporal Supersampling" — AABB clamping box
@@ -258,6 +304,10 @@ void main(uint2 DTid : SV_DispatchThreadID)
     /// @ref Karis 2014 "High Quality Temporal Supersampling" — 5-tap optimization
     float2 clampedHistoryUV = clamp(historyUV, outputTexelSize * 0.5, 1.0 - outputTexelSize * 0.5);
     float3 rawHistory;
+    // Recorded so an offline replay does not have to reconstruct the sample position from the
+    // velocity: a position error and a filtering difference are then separable.
+    float2 dbgHistorySamplePos = float2(0, 0);
+    float2 dbgHistoryFrac = float2(0, 0);
     {
         float2 historySize    = float2(outputWidth, outputHeight);
         float2 historyInvSize = outputTexelSize;
@@ -265,6 +315,8 @@ void main(uint2 DTid : SV_DispatchThreadID)
         float2 samplePos = clampedHistoryUV * historySize;
         float2 tc = floor(samplePos - 0.5) + 0.5;
         float2 f  = samplePos - tc;
+        dbgHistorySamplePos = samplePos;   // recorded for the offline replay
+        dbgHistoryFrac      = f;
         float2 f2 = f * f;
         float2 f3 = f2 * f;
 
@@ -315,9 +367,32 @@ void main(uint2 DTid : SV_DispatchThreadID)
     float3 varianceMin = neighborMu - kVarianceClipGamma * neighborSigma;
     float3 varianceMax = neighborMu + kVarianceClipGamma * neighborSigma;
 
-    // Intersect variance box with AABB for robustness
+    // Intersect variance box with AABB for robustness.
+    // `clampMode` is a diagnostic switch (r.TAA.ClampMode, 0 = production): 1 lets the history
+    // through unclamped, 2 keeps only the variance box, 3 only the neighbourhood AABB.
     float3 clipMin = max(neighborMin, varianceMin);
     float3 clipMax = min(neighborMax, varianceMax);
+    if (clampMode == 2u) { clipMin = varianceMin; clipMax = varianceMax; }
+    else if (clampMode == 3u) { clipMin = neighborMin; clipMax = neighborMax; }
+    else if (clampMode == 1u) { clipMin = float3(-1e30, -1e30, -1e30); clipMax = float3(1e30, 1e30, 1e30); }
+
+    // ── Frozen clamp bounds (diagnostic, r.TAA.ClampFreezeAfterFrame — ledger H-25) ────────
+    // Until the freeze frame the box is stored; after it the stored box is reused, so the bounds
+    // stop moving while the reconstruction, the exposure and the lighting are untouched. Stored in
+    // YCoCg, the space the clamp works in, so no conversion is involved either way.
+    if (clampFreezeEnabled != 0u) {
+        if (clampBoxSrvMin != 0xffffffffu && clampBoxSrvMax != 0xffffffffu) {
+            Texture2D<float4> BoxMin = ResourceDescriptorHeap[clampBoxSrvMin];
+            Texture2D<float4> BoxMax = ResourceDescriptorHeap[clampBoxSrvMax];
+            clipMin = BoxMin.Load(int3(DTid, 0)).rgb;
+            clipMax = BoxMax.Load(int3(DTid, 0)).rgb;
+        } else if (clampBoxUavMin != 0xffffffffu && clampBoxUavMax != 0xffffffffu) {
+            RWTexture2D<float4> BoxMinOut = ResourceDescriptorHeap[clampBoxUavMin];
+            RWTexture2D<float4> BoxMaxOut = ResourceDescriptorHeap[clampBoxUavMax];
+            BoxMinOut[DTid] = float4(clipMin, 0.0);
+            BoxMaxOut[DTid] = float4(clipMax, 0.0);
+        }
+    }
 
     float3 clampedHistory = clamp(historyYCoCg, clipMin, clipMax);
 
@@ -336,7 +411,10 @@ void main(uint2 DTid : SV_DispatchThreadID)
     float lumaHistory  = clampedHistory.x;
     float lumaDiff = abs(lumaFiltered - lumaHistory);
     float antiFlicker = saturate(0.01 * lumaHistory / max(lumaDiff, 0.001));
-    blendFinal = max(blendFinal, min(antiFlicker, antiFlickerMax));
+    // `blendMode` is a diagnostic switch (r.TAA.BlendMode, 0 = production): 1 keeps the constant
+    // r.TAA.CurrentFrameWeight, dropping both the velocity lerp and the anti-flicker guard.
+    if (blendMode == 1u) blendFinal = currentFrameWeight;
+    else blendFinal = max(blendFinal, min(antiFlicker, antiFlickerMax));
 
     // NaN guard
     blendFinal = -min(-blendFinal, 0.0);
@@ -358,4 +436,55 @@ void main(uint2 DTid : SV_DispatchThreadID)
     outputRGB = -min(-outputRGB, 0.0); // NaN/negative guard
 
     taaOutput[DTid] = float4(outputRGB, 1.0);
+
+#ifdef UZ_BINDLESS
+    // Region dump (diagnostics): resolve-side records, see common/region_dump.hlsli.
+    // Every colour is written as linear HDR RGB (the YCoCg working values are converted back),
+    // so the analysis never has to know this shader's internal colour space.
+    if (debugRegionUav != 0xffffffffu && debugRegionCount != 0u) {
+        StructuredBuffer<uint4>    rects = ResourceDescriptorHeap[debugRegionSrv];
+        RWStructuredBuffer<float4> dump  = ResourceDescriptorHeap[debugRegionUav];
+        const uint2 rp = DTid.xy;
+        for (uint r = 0u; r < debugRegionCount; ++r) {
+            const uint4 a = rects[r * 2u];
+            const uint4 b = rects[r * 2u + 1u];
+            if (!UzRegionContains(a, rp)) continue;
+            const uint pixelBase = UzRegionPixelBase(a, b, rp);
+            if ((debugRegionFields & UZ_REGION_FIELD_TAA) != 0u) {
+                const uint rec = pixelBase + UzRegionTaaOffset(debugRegionFields);
+                dump[rec + 0] = float4(YCoCgToRGB(neighbors[4]), blendFinal);
+                dump[rec + 1] = float4(YCoCgToRGB(filteredColor), velocityPixels.x);
+                dump[rec + 2] = float4(rawHistory, velocityPixels.y);
+                dump[rec + 3] = float4(YCoCgToRGB(clampedHistory), offScreen ? 1.0 : 0.0);
+                dump[rec + 4] = float4(outputRGB, FrameExposureScale);
+            }
+            if ((debugRegionFields & UZ_REGION_FIELD_OUTPUT) != 0u) {
+                dump[pixelBase + UzRegionOutputOffset(debugRegionFields)] =
+                    float4(outputRGB, FrameExposureScale);
+            }
+            if ((debugRegionFields & UZ_REGION_FIELD_TAA_EXTRA) != 0u) {
+                const uint rec = pixelBase + UzRegionTaaExtraOffset(debugRegionFields);
+                dump[rec + 0] = float4(YCoCgToRGB(clipMin), centerDepth);
+                dump[rec + 1] = float4(YCoCgToRGB(clipMax), length(velocityPixels));
+                dump[rec + 2] = float4(neighbors[1].x, neighbors[3].x, neighbors[5].x, neighbors[7].x);
+                dump[rec + 3] = float4(dbgHistorySamplePos, dbgHistoryFrac);
+                // +4..+8 the five plus taps the reconstruction used (up, left, centre, right, down):
+                // colour as linear RGB, and in w the weight ACTUALLY applied (spatial x HDR).
+                dump[rec + 4] = float4(YCoCgToRGB(neighbors[1]), dbgPlusWeight[0]);
+                dump[rec + 5] = float4(YCoCgToRGB(neighbors[3]), dbgPlusWeight[1]);
+                dump[rec + 6] = float4(YCoCgToRGB(neighbors[4]), dbgPlusWeight[2]);
+                dump[rec + 7] = float4(YCoCgToRGB(neighbors[5]), dbgPlusWeight[3]);
+                dump[rec + 8] = float4(YCoCgToRGB(neighbors[7]), dbgPlusWeight[4]);
+                // +9 the jitter the filter consumed, the normalisation and the spatial multiplier;
+                // +10 the HDR weighting parameters and the reconstruction mode.
+                dump[rec + 9]  = float4(jitterOffset.x, jitterOffset.y, totalWeight, spatialWeightMul);
+                dump[rec + 10] = float4(FrameExposureScale, hdrWeightExponent, float(reconstructionMode), 0.0);
+            }
+            if (rp.x == a.x && rp.y == a.y) {
+                dump[UzRegionFooterBase(a, b) + 1] =
+                    float4(asfloat(debugRegionStamp), float(outputWidth), float(outputHeight), 1.0);
+            }
+        }
+    }
+#endif
 }

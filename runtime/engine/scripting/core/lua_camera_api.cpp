@@ -254,6 +254,35 @@ static int CameraLookAt(lua_State* L) {
     return 0;
 }
 
+/// uz.camera.get_forward() -> x, y, z | nil
+///
+/// World-space (Z-up) unit forward direction of the active camera, using the
+/// same rule the renderer applies in frame_setup.cpp: the look-at target when
+/// one is set (scene `look_at` or `uz.camera.look_at`), otherwise the
+/// quaternion rotation applied to `Vec3::Forward()`. Lets a controller script
+/// start from the scene camera's pose instead of teleporting to a hard-coded
+/// one on its first update.
+static int CameraGetForward(lua_State* L) {
+    CameraComponent* cam = FindActiveCamera(L, "get_forward");
+    if (!cam) {
+        lua_pushnil(L);
+        return 1;
+    }
+    Vec3 fwd = cam->hasLookTarget
+        ? (cam->lookTarget - cam->GetPosition())
+        : (cam->GetRotation() * Vec3::Forward());
+    const float len = std::sqrt(fwd.x * fwd.x + fwd.y * fwd.y + fwd.z * fwd.z);
+    if (len > 1e-6f) {
+        fwd.x /= len; fwd.y /= len; fwd.z /= len;
+    } else {
+        fwd = Vec3::Forward();
+    }
+    lua_pushnumber(L, static_cast<double>(fwd.x));
+    lua_pushnumber(L, static_cast<double>(fwd.y));
+    lua_pushnumber(L, static_cast<double>(fwd.z));
+    return 3;
+}
+
 /// uz.camera.get_fov() -> degrees | nil
 static int CameraGetFov(lua_State* L) {
     CameraComponent* cam = FindActiveCamera(L, "get_fov");
@@ -496,6 +525,9 @@ void LuaRegisterCameraAPI(lua_State* L) {
 
     lua_pushcfunction(L, CameraLookAt);
     lua_setfield(L, -2, "look_at");
+
+    lua_pushcfunction(L, CameraGetForward);
+    lua_setfield(L, -2, "get_forward");
 
     lua_pushcfunction(L, CameraGetFov);
     lua_setfield(L, -2, "get_fov");

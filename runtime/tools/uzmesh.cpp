@@ -20,7 +20,9 @@
 /// ```
 
 #include "mesh.h"
-#include "auto_lod.h"
+#include "auto_lod.h"  // GenerateAutoLODs — simplifies with normal attributes
+                      // (phase0_sponza-followup-04); positions alone let a
+                      // collapse flip a triangle against its vertex normals.
 #include "log.h"
 #include "profiler.h"
 

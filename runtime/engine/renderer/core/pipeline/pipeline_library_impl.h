@@ -72,6 +72,9 @@
     [[nodiscard]] bool EnsureMeshSdfBakeShader();
     [[nodiscard]] bool EnsureRadianceCacheTraceShader();
     [[nodiscard]] bool EnsureDdgiProbeUpdateShader();
+    [[nodiscard]] bool EnsureDdgiBorderFillShader();
+    [[nodiscard]] bool EnsureProbeSideShader();
+    [[nodiscard]] bool EnsureProbeReachShader();
     [[nodiscard]] bool EnsureCloudCompositePixelShader();
     [[nodiscard]] bool EnsureVolumetricFogInjectShader();
     [[nodiscard]] bool EnsureVolumetricFogScatterShader();
@@ -155,6 +158,9 @@
     RHIShaderHandle m_meshSdfBakeCS             = RHIShaderHandle::Invalid();
     RHIShaderHandle m_radianceCacheTraceCS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ddgiProbeUpdateCS         = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_ddgiBorderFillCS          = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_probeSideCS               = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_probeReachCS              = RHIShaderHandle::Invalid();
     RHIShaderHandle m_volFogInjectCS            = RHIShaderHandle::Invalid();
     RHIShaderHandle m_volFogScatterCS           = RHIShaderHandle::Invalid();
     RHIShaderHandle m_volFogCompositePS         = RHIShaderHandle::Invalid();
@@ -229,6 +235,9 @@
     RHIPipelineHandle m_meshSdfBake           = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_radianceCacheTrace    = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ddgiProbeUpdate       = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_ddgiBorderFill        = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_probeSide             = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_probeReach            = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_decalRender           = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_decalApply            = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_volFogInject          = RHIPipelineHandle::Invalid();

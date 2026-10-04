@@ -20,6 +20,7 @@
 /// All `*Desc` structs use aggregate initialization with safe defaults.
 /// Only fields that differ from defaults need to be set explicitly.
 
+#include <cstddef>
 #include <cstdint>
 
 namespace uz {

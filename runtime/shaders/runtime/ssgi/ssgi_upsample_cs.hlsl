@@ -1,138 +1,105 @@
-/// UzEngine SSGI Bilateral Upsample — Half-Res to Full-Res
-///
-/// @ref Tomasi & Manduchi 1998 "Bilateral Filtering for Gray and Color Images"
-///
-/// Joint bilateral upsample from half-res SSGI to full-res using full-res
-/// depth and normals as guide signals. Each full-res pixel samples the 4
-/// nearest half-res texels, weighted by depth and normal similarity.
-///
-/// Root constants at b0 (8 DWORDs):
-///   [0] ssgiHalfSrvIndex     — half-res temporal output SRV
-///   [1] ssgiAOHalfSrvIndex   — half-res temporal AO output SRV
-///   [2] depthFullSrvIndex    — full-res depth buffer SRV
-///   [3] normalFullSrvIndex   — full-res world-normal SRV
-///   [4] outputUavIndex       — full-res result UAV
-///   [5] aoOutputUavIndex     — full-res AO result UAV
-///   [6] fullWidth
-///   [7] fullHeight
-
-#include "../common/constants.hlsli"
-#include "../common/math.hlsli"
-#include "../include/depth_common.hlsli"
-
+/// @ref Kopf et al. 2007 "Joint Bilateral Upsampling".
+/// @ref Wright et al. 2022 "Lumen", interpolation restricted to the receiver plane.
+#include "ssgi_world_gather.hlsli"
 cbuffer RootConstants : register(b0) {
-#ifdef UZ_BINDLESS
     uint g_ssgiHalfSrvIndex;
     uint g_ssgiAOHalfSrvIndex;
     uint g_depthFullSrvIndex;
     uint g_normalFullSrvIndex;
     uint g_outputUavIndex;
     uint g_aoOutputUavIndex;
-#endif
     uint g_fullWidth;
     uint g_fullHeight;
-    uint g_depthSigmaBits;    // CVar r.SSGI.UpsampleDepthSigma (default 0.5)
-    uint g_normalPowerBits;   // CVar r.SSGI.UpsampleNormalSigma (default 32.0)
+    uint g_depthSigmaBits;
+    uint g_normalPowerBits;
 };
 
-cbuffer PerFrameCB : register(b1) {
-    row_major float4x4 viewProj;
-    float4 cameraPos;
-    float4 timeParams;
-    float4 lightDir;
-    float4 lightColor;
-    float4 ambientColor;
-    row_major float4x4 invViewProj;
-    float nearPlane, farPlane;
-};
+/// What the upsample did with the pixel, recorded because an all-zero weight vector is otherwise
+/// ambiguous. Mirrors `GATHER_UPSAMPLE` in `scripts/flicker/regiondump.py`.
+#define UZ_UPSAMPLE_BILATERAL 0u
+#define UZ_UPSAMPLE_SKY       1u
+#define UZ_UPSAMPLE_FALLBACK  2u
+#define UZ_UPSAMPLE_EMPTY     3u
 
-/// Decodes a unit normal from RG16F octahedral encoding.
-float3 OctDecode(float2 f) {
-    f = f * 2.0 - 1.0;
-    float3 n = float3(f.x, f.y, 1.0 - abs(f.x) - abs(f.y));
-    float t = saturate(-n.z);
-    n.x += (n.x >= 0.0) ? -t : t;
-    n.y += (n.y >= 0.0) ? -t : t;
-    return normalize(n);
+/// Region dump (diagnostics): the reconstruction's own mapping and the value the lighting reads.
+///
+/// The four weights, the base and the fractions are recorded rather than derived: the mapping from
+/// a full-resolution pixel to the gather is not "halve the coordinate", it is a weighted
+/// combination of four gather pixels whose weights depend on the receiver-plane test, and a
+/// replay that assumed the simple mapping would silently disagree with the GPU.
+void WriteRegionDumpGatherUpsample(uint2 fp, uint2 halfSize, uint2 fullSize,
+                                   float4 weights, int2 base, float2 fraction,
+                                   float3 result, uint state) {
+    if (!UzGatherDumpActive()) return;
+    StructuredBuffer<uint4>    rects = ResourceDescriptorHeap[_debugRegionSrv];
+    RWStructuredBuffer<float4> dump  = ResourceDescriptorHeap[_debugRegionUav];
+    for (uint r = 0u; r < _debugRegionCount; ++r) {
+        const uint4 a = rects[r * 2u];
+        const uint4 b = rects[r * 2u + 1u];
+        if (!UzRegionContains(a, fp)) continue;
+        const uint rec = UzRegionPixelBase(a, b, fp) + UzRegionGatherOffset(_debugRegionFields);
+        dump[rec + 5] = weights;
+        dump[rec + 6] = float4(float(base.x), float(base.y), fraction.x, fraction.y);
+        dump[rec + 7] = float4(float(halfSize.x), float(halfSize.y),
+                               float(fullSize.x), float(fullSize.y));
+        dump[rec + 8] = float4(result, asfloat(state));
+    }
 }
 
-[numthreads(8, 8, 1)]
-void main(uint3 DTid : SV_DispatchThreadID) {
-    if (DTid.x >= g_fullWidth || DTid.y >= g_fullHeight) return;
-
-    int2 fullPx = int2(DTid.xy);
-    uint halfWidth  = g_fullWidth / 2;
-    uint halfHeight = g_fullHeight / 2;
-
-#ifdef UZ_BINDLESS
-    Texture2D<float4>   ssgiHalf   = ResourceDescriptorHeap[g_ssgiHalfSrvIndex];
-    Texture2D<float>    aoHalf     = ResourceDescriptorHeap[g_ssgiAOHalfSrvIndex];
-    Texture2D<float>    depthTex   = ResourceDescriptorHeap[g_depthFullSrvIndex];
-    Texture2D<float4>   normalTex  = ResourceDescriptorHeap[g_normalFullSrvIndex];
-    RWTexture2D<float4> outputTex  = ResourceDescriptorHeap[g_outputUavIndex];
-    RWTexture2D<float>  aoOutput   = ResourceDescriptorHeap[g_aoOutputUavIndex];
-#endif
-
-    // Full-res depth and normal at this pixel
-    float centerDepth = depthTex.Load(int3(fullPx, 0));
-
-    // Sky: output zero (no indirect light in sky)
-    if (IsSkyDepth(centerDepth)) {
-        outputTex[fullPx] = float4(0, 0, 0, 0);
-        aoOutput[fullPx]  = 1.0;
+/// @constants 8x8 threads; four bilinear taps on lattice fullPixel=2*halfPixel, including odd dimensions.
+[numthreads(8,8,1)]
+void main(uint3 id : SV_DispatchThreadID) {
+    uint2 fullSize = uint2(g_fullWidth,g_fullHeight);
+    if (any(id.xy >= fullSize)) return;
+    int2 pixel = int2(id.xy);
+    Texture2D<float4> inputTex = ResourceDescriptorHeap[g_ssgiHalfSrvIndex];
+    Texture2D<float> inputAO = ResourceDescriptorHeap[g_ssgiAOHalfSrvIndex];
+    Texture2D<float> depthTex = ResourceDescriptorHeap[g_depthFullSrvIndex];
+    Texture2D<float4> normalTex = ResourceDescriptorHeap[g_normalFullSrvIndex];
+    RWTexture2D<float4> outputTex = ResourceDescriptorHeap[g_outputUavIndex];
+    RWTexture2D<float> outputAO = ResourceDescriptorHeap[g_aoOutputUavIndex];
+    uint2 halfSize;
+    inputTex.GetDimensions(halfSize.x,halfSize.y);
+    float2 coordinate = float2(pixel)*0.5;
+    int2 base = int2(floor(coordinate));
+    float2 fraction = frac(coordinate);
+    float depth = depthTex.Load(int3(pixel,0));
+    if (IsSkyDepth(depth)) {
+        outputTex[pixel] = 0.0;
+        outputAO[pixel] = 1.0;
+        WriteRegionDumpGatherUpsample(id.xy, halfSize, fullSize, 0.0, base, fraction,
+                                      float3(0,0,0), UZ_UPSAMPLE_SKY);
         return;
     }
-
-    float centerLinZ    = LinearizeDepthReversedZ(centerDepth, nearPlane, farPlane);
-    float3 centerNormal = OctDecode(normalTex.Load(int3(fullPx, 0)).rg);
-
-    // Map full-res pixel to half-res neighborhood (2x2 bilinear)
-    float2 halfUV   = (float2(fullPx) + 0.5) * 0.5;
-    int2   halfBase  = int2(floor(halfUV - 0.5));
-    float2 frac2     = halfUV - 0.5 - float2(halfBase);
-
-    // Sample 4 nearest half-res texels with bilateral weights
-    float3 colorSum = float3(0, 0, 0);
-    float  aoSum    = 0.0;
-    float  wSum     = 0.0;
-
-    for (int ky = 0; ky <= 1; ++ky) {
-        for (int kx = 0; kx <= 1; ++kx) {
-            int2 hp = clamp(halfBase + int2(kx, ky), int2(0, 0),
-                            int2(halfWidth - 1, halfHeight - 1));
-
-            float3 sampleColor = ssgiHalf.Load(int3(hp, 0)).rgb;
-            float  sampleAO    = aoHalf.Load(int3(hp, 0));
-
-            // Get depth/normal at the corresponding full-res position
-            int2 sp = hp * 2;
-            float sampleDepth = depthTex.Load(int3(sp, 0));
-            float sampleLinZ  = LinearizeDepthReversedZ(sampleDepth, nearPlane, farPlane);
-            float3 sampleNorm = OctDecode(normalTex.Load(int3(sp, 0)).rg);
-
-            // Bilinear weight
-            float bx = (kx == 0) ? (1.0 - frac2.x) : frac2.x;
-            float by = (ky == 0) ? (1.0 - frac2.y) : frac2.y;
-            float wBilinear = bx * by;
-
-            // Depth weight (exponential falloff)
-            float wDepth = exp(-abs(centerLinZ - sampleLinZ) /
-                               (asfloat(g_depthSigmaBits) * centerLinZ + 1e-6));
-
-            // Normal weight (cosine power) — CVar r.SSGI.UpsampleNormalSigma
-            float wNormal = pow(max(dot(centerNormal, sampleNorm), 0.0), asfloat(g_normalPowerBits));
-
-            float w = wBilinear * wDepth * wNormal;
-
-            colorSum += sampleColor * w;
-            aoSum    += sampleAO * w;
-            wSum     += w;
-        }
+    float3 position = SurfacePosition(pixel,depth,fullSize);
+    float3 normal = OctDecode(normalTex.Load(int3(pixel,0)).rg);
+    float3 colorSum = 0.0;
+    float aoSum = 0.0, weightSum = 0.0;
+    float4 tapWeights = 0.0;
+    for (int y=0;y<2;++y) for (int x=0;x<2;++x) {
+        int2 hp = clamp(base+int2(x,y),int2(0,0),int2(halfSize)-1);
+        int2 sp = SurfacePixel(hp,fullSize);
+        float sd = depthTex.Load(int3(sp,0));
+        if (IsSkyDepth(sd)) continue;
+        float3 sn = OctDecode(normalTex.Load(int3(sp,0)).rg);
+        float3 samplePosition = SurfacePosition(sp,sd,fullSize);
+        if (!SurfaceCompatible(position,normal,samplePosition,sn)) continue;
+        float weight = (x == 0 ? 1.0-fraction.x : fraction.x) * (y == 0 ? 1.0-fraction.y : fraction.y);
+        weight *= SurfaceWeight(position,normal,samplePosition,sn,asfloat(g_normalPowerBits));
+        colorSum += inputTex.Load(int3(hp,0)).rgb*weight;
+        aoSum += inputAO.Load(int3(hp,0))*weight;
+        weightSum += weight;
+        tapWeights[y*2+x] = weight;
     }
-
-    float3 result   = (wSum > 0.0) ? colorSum / wSum : float3(0, 0, 0);
-    float  resultAO = (wSum > 0.0) ? aoSum / wSum : 1.0;
-
-    outputTex[fullPx] = float4(result, 1.0);
-    aoOutput[fullPx]  = resultAO;
+    float3 result = weightSum > 0.0 ? colorSum/weightSum : 0.0;
+    uint state = weightSum > 0.0 ? UZ_UPSAMPLE_BILATERAL : UZ_UPSAMPLE_EMPTY;
+    if (weightSum <= 0.0 && sdfDiffuseSamples != 0) {
+        float3 geometricNormal = SurfaceGeometricNormal(depthTex,pixel,fullSize,depth,position);
+        result = GatherSurfaceLighting(position,normal,geometricNormal,id.xy,uint(timeParams.z));
+        state = UZ_UPSAMPLE_FALLBACK;
+    }
+    outputTex[pixel] = float4(result,1.0);
+    outputAO[pixel] = weightSum > 0.0 ? aoSum/weightSum : 1.0;
+    WriteRegionDumpGatherUpsample(id.xy, halfSize, fullSize, tapWeights, base, fraction,
+                                  result, state);
 }

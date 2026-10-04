@@ -243,107 +243,73 @@ runtime/build/bin/uzengine.exe --project sample/projects/pbr_showcase.uzproject 
   --headless \
   --screenshot output.png \
   --screenshot-frame 5 \
-  --frames 8
-```
-
-### Run VSCode Extension
-
-```bash
-# Open VSCode
-code e:\UzEngine
-
-# Press F5 to launch Extension Development Host
-# Or: npm run build:debug
-```
-
-The Extension Development Host will:
-1. Load the extension
-2. Require the `.node` addon (triggers runtime initialization)
-3. Register commands: `uzengine.openViewport`, `uzengine.openScene`, etc.
-4. Open webview panels (scene tree, inspector, console)
-
-### Verify N-API Bridge
-
-Check that the addon loads correctly:
-
-```bash
-cd extension/native
-node -e "const uz = require('./uzengine.node'); console.log(uz.getVersion());"
-```
-
-Should output version string, e.g., `0.2.49`.
-
----
-
-## Compiler Variants
-
-### Zig Build (Default)
-
-Zig handles all C++ compilation internally via clang. Fast and reliable.
-
-```bash
-cd runtime && zig build -Ddll=true
-```
-
-### MSVC Build (Windows)
-
-Compile C++ source directly with MSVC (alternative to Zig's internal clang):
-
-```bash
-cd runtime && zig build -Dcompiler=msvc -Ddll=true
-```
-
-Requires `cl.exe` on PATH.
-
-### Clang Build (Experimental)
-
-```bash
-cd runtime && zig build -Dcompiler=clang -Ddll=true
-```
-
-Requires `clang++` on PATH.
-
----
-
-## Deployment
-
-### Package for Distribution
-
-```bash
-# Build release artifacts
-scripts/build.ps1 --compiler=msvc
-
-# Create distribution package
-mkdir dist
-cp -r extension dist/
-cp -r runtime/build/bin/*.exe dist/
-cp -r runtime/build/bin/*.dll dist/
-# extension/native/ already contains all .node + .dll files
-
-# Zip
-tar.exe -a -c -f uzengine-v0.2.49-win64.zip dist/
-```
-
-### VSCode Marketplace
-
-The extension can be published to the VSCode Marketplace:
-
-```bash
-cd extension
-npm install -g vsce                    # Install packaging tool
-npx vsce package                       # Create .vsix
-npx vsce publish --token <token>       # Publish to marketplace
-```
-
-See [VSCode Publishing Guide](https://code.visualstudio.com/api/working-with-extensions/publishing-extension) for details.
-
----
-
-## Troubleshooting
-
-### Build Errors
-
-**Error: `LNK1143: COMDAT already defined`**
+- `--screenshot-frames A-B[:step]` (with `--screenshot <base>.png`): captures every frame of the range from the same process as `<base>_<frame>.png` — for temporal analyses (consecutive frames share history, loading state and timing). Added 2026-09-08; the QA scenes `scripts/sponza-flicker-w-seq.*` use it. Since 2026-09-09 the file index is the render index of the frame it contains (matching `region_<N>.bin` of `--region-dump`); captures made before that carry file N = render N+1 because the request was issued after `RenderFrame(N)` and fulfilled by the next frame. `--screenshot-frame K` keeps its original semantics.
+- `--region-dump <dir>` with `--regions "name:x,y,w,h;name2:..."` (up to 8 rectangles; the older
+  `--region-x/y/w/h` still works for a single one), `--region-fields output|lighting|taa|full` and
+  `--region-first F --region-last L`: writes `<dir>/region_<frame>.bin` for every frame in the range
+  with per-pixel **linear HDR** records for each rectangle — the SDF reflection radiance and
+  roughness, the world normal and view distance (`-1` marks sky/no geometry), and the TAA resolve's
+  raw centre sample, plus-filtered colour, reprojected history before and after the clamp, blend
+  weight, velocity and output. Format version 2 (`UZR2`): 64-byte header (frame, rect count, field
+  mask, records per pixel, flags, render/output resolution, jitter index and offset, exposure), the
+  rectangle table, the per-rectangle GPU frame stamps, then the records. The GPU stamps every
+  rectangle with the frame it rendered and the readback rejects a file whose stamps disagree, so a
+  stale or partial readback can never be analysed as data; frames still in flight are flushed at
+  shutdown. Bindless (DX12 SM6.6+) only, three-frame delayed readback, no GPU stall. Read them with
+  `scripts/flicker/regiondump.py`; the record layout is documented in
+  `runtime/shaders/runtime/common/region_dump.hlsli`. Guard: `scripts/test_region_capture.py`.
+- TAA diagnostic CVars (all default to the production behaviour, added 2026-09-09 for
+  followup-10): `r.TAA.JitterScale` (0 = accumulation with no sub-pixel offset, which is not the same
+  as `r.TAA.JitterSequenceLength=1`), `r.TAA.ReconstructionMode` (1 spatial weights only, 2 centre tap
+  only, 3 full 3x3), `r.TAA.ClampMode` (1 none, 2 variance box only, 3 AABB only) and
+  `r.TAA.BlendMode` (1 fixed `r.TAA.CurrentFrameWeight`). Guard: `scripts/test_taa_modes.py`.
+- GI diagnostic CVars (default to production behaviour, added 2026-09-09 for followup-12):
+  `r.GI.Reflections.FreezeSeed` (freezes the per-frame sampling seed of the SDF reflections **and**
+  the world gather; -1 = frame count) and `r.GI.RadianceCache.FreezeAfterFrame` (from that absolute
+  frame on, the probes stop updating and the converged SH buffer is held; -1 = never). The region
+  dump preset `--region-fields components|full` adds the per-pixel lighting components and the
+  active-path bitmask. Guard: `scripts/test_lighting_components.py`.
+- GDF diagnostic CVars (default to production behaviour, added 2026-09-09 for followup-13):
+  `r.GI.GDF.FreezeCenter` (stop the clipmaps recentring; only valid while the measured geometry stays
+  inside the coverage the field already had) and `r.GI.GDF.CenterPhaseOffset` (shift the voxel
+  snapping grid in centimetres, so the same camera path crosses boundaries at different frames).
+  The region dump format is now version 3: a 144-byte camera block (unjittered view-projection, the
+  previous frame's, camera position) follows the header, which is what lets an analysis track a world
+  point across frames; `--region-fields motion` is the cheap preset for that (48 bytes per pixel).
+  Guard: `scripts/test_gdf_controls.py`.
+- Correction and material CVars (default to production behaviour, added 2026-09-09 for
+  followup-14): `r.TAA.ReconstructionHdrWeightExponent` (1.0 = the production Karis 2014 HDR
+  weighting inside the TAA reconstruction filter, 0 = no weighting and bit-identical to
+  `r.TAA.ReconstructionMode=1`, values between the two trade recovered bright-feature energy
+  against light bleeding into dark neighbours). It is **opt-in**: it failed four of the seven
+  preregistered acceptance gates, so the default was not changed - see
+  `docs/analysis/flicker-hypothesis-ledger.md` rows H-21..H-24.
+  `r.Material.RoughnessOverride` and `r.Material.MetallicOverride` (-1 = off) force a material
+  class into the G-buffer, which is the only way to measure a change on mirror or glossy surfaces
+  in a scene that contains none. Guards: `scripts/test_correction_gates.py`,
+  `scripts/diagnose_cvar_ulp.py`.
+- `r.TAA.ClampFreezeAfterFrame` (default -1 = off, added 2026-09-10 for ledger H-25b): from that
+  absolute frame on, the TAA resolve reuses the clamp box it captured up to then instead of
+  recomputing it, so the bounds stop moving while the reconstruction, exposure and lighting are
+  unchanged. Backed by two RGBA16Float textures (`TAA_ClampBox_Min` / `_Max`). It is a **static
+  camera diagnostic**, not a candidate correction: screen-space bounds frozen in place are
+  meaningless once the camera moves. Measured result: oscillation -3.4 % (below the ROI's decision
+  threshold) and error against the correctly resampled image +14.3 %, so it was rejected.
+  Guard: `scripts/run_clamp_freeze_study.py`, whose controls verify the freeze applied and the
+  reconstruction stayed identical before any number is interpreted.
+- Capture reproducibility: the renderer is **not** bit-reproducible across processes. Four captures
+  of an identical configuration differ in up to 795 of 786 432 recorded values, by up to 1.6e-2 in
+  linear radiance. Aggregates over a 256-frame run reproduce to ~1e-13, so run-to-run comparison of
+  statistics is sound, but any assertion of bit-identity must instead compare against a measured
+  per-configuration floor (`scripts/diagnose_cvar_ulp.py`). Closing the render window aborts a
+  capture with exit code 0 after a few frames; `runner.run_capture` now raises with that
+  explanation. The engine's `headless` mode only creates a device and exits, so captures need a
+  real 1920x1080 window.
+- `--run-manifest <path>`: writes the run's manifest as JSON — executable path and hash, project and
+  scene, output and render resolution, output encoding, frames rendered, CPU frame-time statistics
+  (from `--timing-first N`, default 200), effective exposure, camera pose, region-dump file and
+  rejection counts, the CLI arguments and every registered CVar with the subset that differs from
+  its default. Use it whenever a capture will be compared with another one.
 - Zig built a static `.lib` instead of DLL
 - Solution: Use `zig build -Ddll=true` (note the flag)
 

@@ -25,6 +25,7 @@
 #include "outline_pass.h"
 #include "stats_overlay.h"
 #include "viewport_toolbar.h"
+#include "tech_panel.h"
 #include "engine/vfx/vfx_system.h"
 #include "engine/vfx/components/particle_emitter.h"
 #include "engine/vfx/editor/vfx_editor_overlay.h"
@@ -381,8 +382,18 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
                 m_viewportToolbar->Render(cmd, *m_cbRing, ctx.frameIndex);
             }
 
+            // ── Tech Panel (lighting-technology switchboard, any mode) ──
+            if (m_techPanelInitialized && m_techPanel) {
+                m_techPanel->Render(cmd, *m_cbRing, ctx.frameIndex);
+            }
+
             // Clear typed chars after all UI consumers have processed them.
             m_input->ClearTypedChars();
+            // Same boundary for the press/release edges and the scroll/raw
+            // deltas: they were recorded by the message pump before this frame
+            // and every consumer has now read them (frame_setup.cpp only
+            // snapshots at the start of the frame).
+            m_input->EndFrame();
 
             cmd->EndRenderPass();
         });

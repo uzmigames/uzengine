@@ -389,6 +389,11 @@ uint64_t MaterialGraph::ComputeContentHash() const {
     XXH64_update(state, &domainVal, sizeof(domainVal));
     auto shadingVal = static_cast<uint8_t>(shadingModel);
     XXH64_update(state, &shadingVal, sizeof(shadingVal));
+    // Blend mode and two-sidedness change the PSO (blend state, cull mode) and
+    // the shadow/GI occluder set, so they belong in the content hash.
+    const auto blendVal = static_cast<uint8_t>(blendMode);
+    XXH64_update(state, &blendVal, sizeof(blendVal));
+    XXH64_update(state, &twoSided, sizeof(twoSided));
 
     // Hash MaterialParams — must be in the hash so PSO recompiles when the
     // author tweaks roughness/metallic/tint values.
@@ -461,6 +466,9 @@ std::string MaterialGraph::ToJson() const {
     root["name"]         = name;
     root["domain"]       = MaterialDomainToString(domain);
     root["shadingModel"] = MaterialShadingModelToString(shadingModel);
+    constexpr const char* blendNames[] = {"Opaque", "Masked", "Translucent", "Additive"};
+    root["blendMode"]    = blendNames[static_cast<uint8_t>(blendMode)];
+    root["twoSided"]     = twoSided;
 
     // ── Standard PBR knobs (always serialized so authors can tweak) ───
     nlohmann::json jParams;
@@ -584,6 +592,16 @@ bool MaterialGraph::FromJson(const std::string& jsonStr, std::string* outError) 
     name = root.value("name", "");
     domain = MaterialDomainFromString(root.value("domain", "Surface").c_str());
     shadingModel = MaterialShadingModelFromString(root.value("shadingModel", "DefaultLit").c_str());
+
+    // Blend mode and two-sidedness were previously dropped on load, which made
+    // authored translucent glass render — and occlude — as opaque.
+    const std::string blendName = root.value("blendMode", "Opaque");
+    if (blendName == "Opaque") blendMode = MaterialGraphBlendMode::Opaque;
+    else if (blendName == "Masked") blendMode = MaterialGraphBlendMode::Masked;
+    else if (blendName == "Translucent") blendMode = MaterialGraphBlendMode::Translucent;
+    else if (blendName == "Additive") blendMode = MaterialGraphBlendMode::Additive;
+    else return setError("Unsupported blendMode: " + blendName);
+    twoSided = root.value("twoSided", false);
 
     // Read MaterialParams (UE5-style PBR knobs). All fields optional;
     // missing fields keep their constructor defaults.

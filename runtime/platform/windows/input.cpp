@@ -35,6 +35,10 @@ void InputSystem::Init() {
     std::memset(m_keyPrevious, 0, sizeof(m_keyPrevious));
     std::memset(m_mouseCurrent, 0, sizeof(m_mouseCurrent));
     std::memset(m_mousePrevious, 0, sizeof(m_mousePrevious));
+    std::memset(m_keyPressedEdge, 0, sizeof(m_keyPressedEdge));
+    std::memset(m_keyReleasedEdge, 0, sizeof(m_keyReleasedEdge));
+    std::memset(m_mousePressedEdge, 0, sizeof(m_mousePressedEdge));
+    std::memset(m_mouseReleasedEdge, 0, sizeof(m_mouseReleasedEdge));
     m_gamepadCurrent = {};
     m_gamepadPrevious = {};
     m_rawMouseDX = 0.f;
@@ -76,8 +80,8 @@ void InputSystem::Shutdown() {
     UZ_LOG(Input, Info, "Input system shutdown");
 }
 
-/// Snapshots state and polls gamepads.
-void InputSystem::BeginFrame() {
+/// Publishes the frame's input: snapshot, mouse delta, gamepads. Leaves the recorded edges alone.
+void InputSystem::PrepareFrame() {
     UZ_PROFILE_FUNCTION();
 
     // Keyboard snapshot
@@ -92,7 +96,17 @@ void InputSystem::BeginFrame() {
     m_prevMouseX = m_mouseX;
     m_prevMouseY = m_mouseY;
 
-    // Reset per-frame accumulators
+    // Poll XInput gamepads
+    PollGamepads();
+}
+
+/// Ends the frame: drops the recorded edges and the per-frame accumulators.
+void InputSystem::EndFrame() {
+    std::memset(m_keyPressedEdge, 0, sizeof(m_keyPressedEdge));
+    std::memset(m_keyReleasedEdge, 0, sizeof(m_keyReleasedEdge));
+    std::memset(m_mousePressedEdge, 0, sizeof(m_mousePressedEdge));
+    std::memset(m_mouseReleasedEdge, 0, sizeof(m_mouseReleasedEdge));
+
     m_scrollDelta = 0.f;
     m_rawMouseDX = 0.f;
     m_rawMouseDY = 0.f;
@@ -100,9 +114,15 @@ void InputSystem::BeginFrame() {
     // from PumpMessages() which happens BEFORE BeginFrame(). Clearing here
     // would lose all chars typed this frame. Instead, call ClearTypedChars()
     // after all UI consumers have processed the chars.
+}
 
-    // Poll XInput gamepads
-    PollGamepads();
+/// Snapshots state and polls gamepads.
+///
+/// The boundary is exactly where it was: the previous frame's edges and accumulators are dropped and
+/// the new snapshot is taken in one call, so every existing call site keeps its timing.
+void InputSystem::BeginFrame() {
+    EndFrame();
+    PrepareFrame();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -116,12 +136,14 @@ bool InputSystem::IsKeyDown(Key key) const {
 
 bool InputSystem::IsKeyJustPressed(Key key) const {
     uint16_t k = static_cast<uint16_t>(key);
-    return k < kMaxKeys && m_keyCurrent[k] && !m_keyPrevious[k];
+    // The recorded edge OR the snapshot transition: a press that also ended this frame is reported
+    // by the edge, which a comparison of two snapshots cannot see (Parity-06 item 1.4).
+    return k < kMaxKeys && (m_keyPressedEdge[k] || (m_keyCurrent[k] && !m_keyPrevious[k]));
 }
 
 bool InputSystem::IsKeyJustReleased(Key key) const {
     uint16_t k = static_cast<uint16_t>(key);
-    return k < kMaxKeys && !m_keyCurrent[k] && m_keyPrevious[k];
+    return k < kMaxKeys && (m_keyReleasedEdge[k] || (!m_keyCurrent[k] && m_keyPrevious[k]));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -135,12 +157,12 @@ bool InputSystem::IsMouseDown(MouseButton btn) const {
 
 bool InputSystem::IsMouseJustPressed(MouseButton btn) const {
     int b = static_cast<int>(btn);
-    return b < kMaxMouseButtons && m_mouseCurrent[b] && !m_mousePrevious[b];
+    return b < kMaxMouseButtons && (m_mousePressedEdge[b] || (m_mouseCurrent[b] && !m_mousePrevious[b]));
 }
 
 bool InputSystem::IsMouseJustReleased(MouseButton btn) const {
     int b = static_cast<int>(btn);
-    return b < kMaxMouseButtons && !m_mouseCurrent[b] && m_mousePrevious[b];
+    return b < kMaxMouseButtons && (m_mouseReleasedEdge[b] || (!m_mouseCurrent[b] && m_mousePrevious[b]));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -558,13 +580,20 @@ void InputSystem::SetModifierState(bool shift, bool ctrl, bool alt, bool meta) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void InputSystem::OnKeyDown(uint16_t vk) {
-    if (vk < kMaxKeys)
-        m_keyCurrent[vk] = true;
+    if (vk >= kMaxKeys)
+        return;
+    // Guarded against WM_KEYDOWN auto-repeat: holding a key must report one press, not one per repeat.
+    if (!m_keyCurrent[vk])
+        m_keyPressedEdge[vk] = true;
+    m_keyCurrent[vk] = true;
 }
 
 void InputSystem::OnKeyUp(uint16_t vk) {
-    if (vk < kMaxKeys)
-        m_keyCurrent[vk] = false;
+    if (vk >= kMaxKeys)
+        return;
+    if (m_keyCurrent[vk] || m_keyPressedEdge[vk])
+        m_keyReleasedEdge[vk] = true;
+    m_keyCurrent[vk] = false;
 }
 
 void InputSystem::OnMouseMove(float x, float y) {
@@ -574,8 +603,13 @@ void InputSystem::OnMouseMove(float x, float y) {
 
 void InputSystem::OnMouseButton(MouseButton btn, bool down) {
     int b = static_cast<int>(btn);
-    if (b < kMaxMouseButtons)
-        m_mouseCurrent[b] = down;
+    if (b >= kMaxMouseButtons)
+        return;
+    if (down && !m_mouseCurrent[b])
+        m_mousePressedEdge[b] = true;
+    if (!down && (m_mouseCurrent[b] || m_mousePressedEdge[b]))
+        m_mouseReleasedEdge[b] = true;
+    m_mouseCurrent[b] = down;
 }
 
 void InputSystem::OnMouseScroll(float delta) {

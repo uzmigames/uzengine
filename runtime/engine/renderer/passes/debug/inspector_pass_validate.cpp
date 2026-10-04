@@ -69,6 +69,8 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
             result.maxVal = 0.0f;
             result.avgVal = 0.0f;
             result.isZero = false;
+            result.skipped = true;
+            result.skipReason = "unsupported format";
             results.push_back(std::move(result));
             continue;
         }
@@ -78,6 +80,8 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
             result.maxVal = 0.0f;
             result.avgVal = 0.0f;
             result.isZero = false; // Don't flag as zero — depth not validated.
+            result.skipped = true;
+            result.skipReason = "depth format — readback not supported";
             UZ_LOG(PassInspector, Info,
                    "[PASS VALIDATE] {}: SKIPPED (depth format — readback not supported)",
                    target.name);
@@ -85,20 +89,34 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
             continue;
         }
 
-        // 3D volume textures — CopyTextureToBuffer only copies Z-slice 0 of a
-        // volume subresource via the current RHI signature, so the readback
-        // cannot see data written to other Z slices (e.g., ap_volume, volfog
-        // froxel grid). Rather than producing misleading WARN_ZERO we skip
-        // the zero check entirely for 3D textures. Use the dedicated pass-dump
-        // / --vis tooling to inspect volume contents.
-        if (texDesc.is3D) {
+        // 3D volume textures are read back one Z slice at a time — see the
+        // slice selection below. They used to be skipped outright (reporting
+        // 0/0/0, which read as "the volume is empty"), because
+        // CopyTextureToBuffer could only reach Z-slice 0. It now takes the
+        // slice through its `arraySlice` parameter.
+
+        // A target registered as ONE channel of a packed target must be measured on that channel.
+        // Without this, "gbuffer.ao" (the albedo target's alpha) reported the albedo target's RGBA
+        // statistics, and "gbuffer.metallic"/"gbuffer.roughness" reported the normal target's.
+        uint32_t channelFirst = 0;
+        uint32_t channelCount = channels;
+        switch (target.dumpChannel) {
+            case DumpChannel::R: channelFirst = 0; channelCount = 1; result.channel = "R"; break;
+            case DumpChannel::G: channelFirst = 1; channelCount = 1; result.channel = "G"; break;
+            case DumpChannel::B: channelFirst = 2; channelCount = 1; result.channel = "B"; break;
+            case DumpChannel::A: channelFirst = 3; channelCount = 1; result.channel = "A"; break;
+            case DumpChannel::All: break;
+        }
+        if (channelFirst + channelCount > channels) {
+            UZ_LOG(PassInspector, Warning,
+                   "[PASS VALIDATE] {}: SKIPPED (channel {} but the format has {} channels)",
+                   target.name, result.channel, channels);
             result.minVal = 0.0f;
             result.maxVal = 0.0f;
             result.avgVal = 0.0f;
             result.isZero = false;
-            UZ_LOG(PassInspector, Info,
-                   "[PASS VALIDATE] {}: SKIPPED (3D volume — use --pass-dump/--vis)",
-                   target.name);
+            result.skipped = true;
+            result.skipReason = "registered channel is outside the format";
             results.push_back(std::move(result));
             continue;
         }
@@ -112,6 +130,8 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
             result.maxVal = 0.0f;
             result.avgVal = 0.0f;
             result.isZero = false;
+            result.skipped = true;
+            result.skipReason = "texture over the readback size cap";
             UZ_LOG(PassInspector, Info,
                    "[PASS VALIDATE] {}: SKIPPED (texture too large: {}x{}, {} bytes)",
                    target.name, target.width, target.height, totalBytes);
@@ -135,16 +155,26 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
             result.maxVal = 0.0f;
             result.avgVal = 0.0f;
             result.isZero = false;
+            result.skipped = true;
+            result.skipReason = "readback buffer could not be created";
             results.push_back(std::move(result));
             continue;
         }
 
-        // Determine how many array slices to sample. For a cubemap this is 6
-        // (one readback per face). For a texture array it is the array size.
-        // For a plain 2D texture it is 1.
+        // Determine how many slices to sample. For a cubemap this is 6 (one
+        // readback per face). For a texture array it is the array size. For a
+        // plain 2D texture it is 1.
+        //
+        // A volume is sampled at ONE slice — its centre. Slice 0 of a global
+        // distance field clipmap is its boundary plane, which is uniformly far
+        // from geometry and reads as a constant; the centre slice cuts through
+        // the scene and carries the signed distances the pass actually writes.
         const uint32_t arraySlices = (!texDesc.is3D)
             ? std::max<uint32_t>(1u, static_cast<uint32_t>(texDesc.depthOrArraySize))
             : 1u;
+        const uint32_t sliceBase = texDesc.is3D
+            ? std::max<uint32_t>(1u, static_cast<uint32_t>(texDesc.depthOrArraySize)) / 2u
+            : 0u;
 
         uint32_t    sampleCountTotal = 0;
         double      sumTotal         = 0.0;
@@ -161,7 +191,9 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
 
                 cmdList->CopyTextureToBuffer(target.texture, /*mip*/0,
                                               readbackBuffer, /*dstOffset*/0,
-                                              rowPitch, /*arraySlice*/slice);
+                                              rowPitch,
+                                              /*arraySlice (Z slice for a volume)*/
+                                              sliceBase + slice);
 
                 barrier.stateBefore = RHIResourceState::CopySrc;
                 barrier.stateAfter  = target.lastState;
@@ -196,7 +228,8 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
                 for (uint32_t x = 0; x < sampleW; ++x) {
                     const auto* texelBase = rowBase + (centerX + x) * bytesPerTexel;
 
-                    for (uint32_t c = 0; c < channels; ++c) {
+                    for (uint32_t ci = 0; ci < channelCount; ++ci) {
+                        const uint32_t c = channelFirst + ci;
                         const float val = detail::ReadChannel(texelBase, c, format);
 
                         if (std::isnan(val)) {
@@ -224,6 +257,8 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
             result.maxVal = 0.0f;
             result.avgVal = 0.0f;
             result.isZero = false; // Cannot confirm — don't warn.
+            result.skipped = true;
+            result.skipReason = "readback buffer could not be mapped";
         } else if (sampleCountTotal > 0) {
             result.avgVal = static_cast<float>(sumTotal / static_cast<double>(sampleCountTotal));
         } else {
@@ -239,13 +274,19 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
     // Log results.
     for (const auto& r : results) {
         const char* status = "OK";
-        if (r.hasNaN)       status = "FAIL — has NaN";
+        if (r.skipped)      status = "SKIPPED — not measured";
+        else if (r.hasNaN)  status = "FAIL — has NaN";
         else if (r.hasInf)  status = "FAIL — has Inf";
         else if (r.isZero)  status = "WARNING — all zeros";
 
-        UZ_LOG(PassInspector, Info,
-               "[PASS VALIDATE] {}: {} (min={:.4f}, max={:.4f}, avg={:.4f})",
-               r.name, status, r.minVal, r.maxVal, r.avgVal);
+        if (r.skipped) {
+            UZ_LOG(PassInspector, Info, "[PASS VALIDATE] {}: {} ({})",
+                   r.name, status, r.skipReason);
+        } else {
+            UZ_LOG(PassInspector, Info,
+                   "[PASS VALIDATE] {}: {} (channel={}, min={:.4f}, max={:.4f}, avg={:.4f})",
+                   r.name, status, r.channel, r.minVal, r.maxVal, r.avgVal);
+        }
     }
 
     return results;

@@ -5,10 +5,12 @@
 
 #include "../common/constants.hlsli"
 #include "../common/encoding.hlsli"
+#include "../common/region_dump.hlsli"
 #include "../material/brdf.hlsli"
 #include "../material/diffuse.hlsli"
 #include "light_types.hlsli"
 #include "ibl.hlsli"
+#include "../gi/rc_probe_guard.hlsli"
 
 /// Z-up world direction → Y-up DX cubemap convention.
 /// Must match skybox_cubemap_ps.hlsl and sky_cubemap_cs.hlsl.
@@ -168,6 +170,28 @@ cbuffer PerFrameCB : register(b1) {
     float  _ddgiIntensity;          //         (844)
     // ── Indirect AO ──────────────────────────────────────────────────
     float  _indirectAOExponent;     //         (848) pow(ao, N) for indirect light
+    // ── SDF gather / reflection bindings (mirror per_frame_params.h) ──
+    uint   _sdfReflectionsEnabled;      //         (852)
+    uint   _sdfReflectionSkySrv;        //         (856)
+    uint   _sdfReflectionSamples;       //         (860)
+    float4 _sdfReflectionClipmaps[4];   //         (864) center.xyz + extent
+    uint4  _sdfReflectionClipmapSrv;    //         (928) expanded field SRVs
+    float  _sdfReflectionTraceDistance; //         (944)
+    float  _sdfReflectionVoxelSize;     //         (948)
+    uint   _sdfReflectionTraceSteps;    //         (952)
+    float  _sdfReflectionIntensity;     //         (956)
+    uint   _sdfDiffuseSamples;          //         (960)
+    uint   _sdfReflectionPlainMean;     //         (964) 1 = plain mean in GatherSdfReflections (r.GI.Reflections.HdrWeight=0)
+    uint2  _padSdfRaw;                  //         (968)
+    uint4  _sdfRawClipmapSrv;           //         (976) raw (unexpanded) field SRVs
+    uint   _debugRegionUav;             //         (992) region dump UAV (0xffffffff = off), see common/region_dump.hlsli
+    uint   _debugRegionSrv;             //         (996) rect table SRV (StructuredBuffer<uint4>, 2 per rect)
+    uint   _debugRegionCount;           //        (1000) rect count (0 = off)
+    uint   _debugRegionStamp;           //        (1004) frame stamp the GPU writes into the footer
+    uint   _debugRegionFields;          //        (1008) field-group bitmask
+    float  _materialRoughnessOverride;  //        (1012) CVar r.Material.RoughnessOverride (-1 = off)
+    float  _materialMetallicOverride;   //        (1016) CVar r.Material.MetallicOverride (-1 = off)
+    uint   _componentReplaySrv;         //        (1020) CVar r.GI.ComponentReplayFile (0xffffffff = off)
 };
 
 // LightingCB at b2 via light_types.hlsli (already declared above)
@@ -178,6 +202,11 @@ cbuffer PerFrameCB : register(b1) {
 
 SamplerState      linearSampler : register(s0);
 SamplerState      clampSampler  : register(s2);
+
+#ifdef UZ_BINDLESS
+#define UZ_SDF_REFLECTION_SAMPLER clampSampler
+#include "../gi/sdf_diffuse_gather.hlsli"  // gather + Karis-weighted SDF reflections (sdf_reflections.hlsli)
+#endif
 
 // ─── Input ─────────────────────────────────────────────────────────────────
 
@@ -201,6 +230,62 @@ struct LightingOutput {
 };
 
 // ─── Entry Point ───────────────────────────────────────────────────────────
+
+/// Region dump (diagnostics): writes this pixel's lighting records into every rectangle that
+/// contains it, plus the rect's lighting frame stamp when the pixel owns the rect origin.
+/// `dist < 0` marks "no geometry this frame" (sky), so a stale record from a frame whose
+/// jittered raster did cover the pixel is never read as if it were current.
+/// Coordinates are RENDER-resolution pixels; the stamp carries the render size so the CPU can
+/// check that the lighting and TAA domains coincide (they differ when ScreenPercentage != 100).
+void WriteRegionDumpLighting(uint2 rp, float3 reflection, float roughness, float3 N, float dist,
+                             float3 directLight, float shadowVisibility,
+                             float3 diffuseIndirect, float ambientOcclusion,
+                             float3 specularIndirect, float metallicValue,
+                             float3 emissiveAndMis, uint pathMask,
+                             float3 ssgiConsumed, uint ssgiMode,
+                             float4 rcSupport, float4 ddgiSupport) {
+#ifdef UZ_BINDLESS
+    if (_debugRegionUav == 0xffffffffu || _debugRegionCount == 0u
+        || (_debugRegionFields & UZ_REGION_FIELD_LIGHTING) == 0u) return;
+    StructuredBuffer<uint4>    rects = ResourceDescriptorHeap[_debugRegionSrv];
+    RWStructuredBuffer<float4> dump  = ResourceDescriptorHeap[_debugRegionUav];
+    Texture2D<float> regionDepthTex = ResourceDescriptorHeap[gBufIndices.depthIdx];
+    uint renderW, renderH;
+    regionDepthTex.GetDimensions(renderW, renderH);
+    for (uint r = 0u; r < _debugRegionCount; ++r) {
+        const uint4 a = rects[r * 2u];
+        const uint4 b = rects[r * 2u + 1u];
+        if (!UzRegionContains(a, rp)) continue;
+        const uint rec = UzRegionPixelBase(a, b, rp) + UzRegionLightingOffset(_debugRegionFields);
+        dump[rec + 0] = float4(reflection, dist < 0.0 ? -1.0 : roughness);
+        dump[rec + 1] = float4(N, dist);
+        if ((_debugRegionFields & UZ_REGION_FIELD_LIGHTING_EXTRA) != 0u) {
+            const uint lrec = UzRegionPixelBase(a, b, rp) + UzRegionLightingExtraOffset(_debugRegionFields);
+            dump[lrec + 0] = float4(directLight, shadowVisibility);
+            dump[lrec + 1] = float4(diffuseIndirect, ambientOcclusion);
+            dump[lrec + 2] = float4(specularIndirect, metallicValue);
+            dump[lrec + 3] = float4(emissiveAndMis, asfloat(pathMask));
+            dump[lrec + 4] = float4(ssgiConsumed, asfloat(ssgiMode));
+            // +5..+10 belong to the forward translucent pass, which runs after this one. Clearing them
+            // here every frame means a pixel the translucent pass does not cover reads "not drawn"
+            // (opacity -1, zero layers) instead of whatever it held last frame.
+            dump[lrec + 5] = float4(0.0, 0.0, 0.0, -1.0);
+            dump[lrec + 6] = float4(0.0, 0.0, 0.0, 0.0);
+            dump[lrec + 7] = float4(0.0, 0.0, 0.0, 0.0);
+            dump[lrec + 8] = float4(0.0, 0.0, 0.0, 0.0);
+            dump[lrec + 9] = float4(0.0, 0.0, 0.0, 0.0);
+            dump[lrec + 10] = float4(0.0, 0.0, regionDepthTex.Load(int3(rp, 0)).x, 0.0);
+            // +11..+12: support of the probe queries (see region_dump.hlsli).
+            dump[lrec + 11] = rcSupport;
+            dump[lrec + 12] = ddgiSupport;
+        }
+        if (rp.x == a.x && rp.y == a.y) {
+            dump[UzRegionFooterBase(a, b) + 0] =
+                float4(asfloat(_debugRegionStamp), float(renderW), float(renderH), 1.0);
+        }
+    }
+#endif
+}
 
 LightingOutput main(FSInput input) {
     int2 px = int2(input.positionCS.xy);
@@ -226,8 +311,31 @@ LightingOutput main(FSInput input) {
     float3 emissive = gbufferEmissive.Load(int3(px, 0)).rgb;
 #endif
 
+    // Raster surface derivatives are independent of interpolated/normal-map shading normals.
+    // The SDF trace needs the real facet orientation: starting a ray from a
+    // normal-mapped direction can push the origin behind the surface it sits on.
+    // @ref Pharr, Jakob and Humphreys 2023 "Physically Based Rendering", surface normal orientation.
+    // @constants Squared area <=1e-12 is degenerate; unknown geometry produces zero transport.
+    float3 geometricNormal = cross(ddx_fine(worldPos), ddy_fine(worldPos));
+    float geometricArea = dot(geometricNormal, geometricNormal);
+    geometricNormal = geometricArea > 1e-12 ? geometricNormal * rsqrt(geometricArea) : 0.0;
+    if (dot(geometricNormal, cameraPos.xyz - worldPos) < 0.0) geometricNormal = -geometricNormal;
+
     // Sky pixels: reversed-Z far = 0
-    if (z <= 0.0001) discard;
+    if (z <= 0.0001) {
+#ifdef UZ_BINDLESS
+        // Region dump (diagnostics): mark "no geometry this frame" (distance -1) so stale
+        // records from a frame where the jittered raster covered this pixel are not read.
+        // The footer stamp is written here too: the rect origin may be a sky pixel, and a
+        // missing stamp invalidates the whole file on the CPU side.
+        WriteRegionDumpLighting(uint2(px), float3(0.0, 0.0, 0.0), -1.0, float3(0.0, 0.0, 0.0), -1.0,
+                                float3(0.0, 0.0, 0.0), 0.0, float3(0.0, 0.0, 0.0), 0.0,
+                                float3(0.0, 0.0, 0.0), 0.0, float3(0.0, 0.0, 0.0), 0u,
+                                float3(0.0, 0.0, 0.0), 0u,
+                                float4(0.0, 0.0, 0.0, 0.0), float4(0.0, 0.0, 0.0, 0.0));
+#endif
+        discard;
+    }
 
     // ── Decode GBuffer ────────────────────────────────────────────────────
     float3 baseColor = rt0.rgb;
@@ -256,10 +364,35 @@ LightingOutput main(FSInput input) {
     // occlusion paths. @ref SkyLightComponent.minOcclusion
     ao = max(ao, skyLightMinAmbient);
 
+    // Diagnostic substitution (r.GI.ComponentReplayFile): replace AO and the specular indirect with
+    // the values a reference run recorded at THIS frame and THIS pixel. Per frame and per pixel on
+    // purpose — holding one frozen frame would add a second temporal change and confound the
+    // separation this exists to make. Header in element 0: x, y, w, h | firstFrame, frameCount.
+    float3 replaySpecular = float3(0, 0, 0);
+    bool   replayActive = false;
+#ifdef UZ_BINDLESS
+    if (_componentReplaySrv != 0xffffffffu) {
+        StructuredBuffer<float4> replay = ResourceDescriptorHeap[_componentReplaySrv];
+        const float4 h0 = replay[0];
+        const float4 h1 = replay[1];
+        const int rx = int(h0.x), ry = int(h0.y), rw = int(h0.z), rh = int(h0.w);
+        const int f0 = int(h1.x), fn = int(h1.y);
+        const int fi = int(timeParams.z) - f0;
+        const int lx = int(px.x) - rx, ly = int(px.y) - ry;
+        if (fi >= 0 && fi < fn && lx >= 0 && lx < rw && ly >= 0 && ly < rh) {
+            const float4 v = replay[2 + (fi * rh + ly) * rw + lx];
+            replaySpecular = v.rgb;
+            ao = v.a;
+            replayActive = true;
+        }
+    }
+#endif
+
     float3 N         = OctDecode(rt1.rg);
     float  metallic  = rt1.b;
     float  roughness = max(rt1.a, 0.04);
     float  alpha     = roughness * roughness;
+    float3 dbgReflection = 0.0;   // SDF reflection term before the SSR blend (region dump record 0)
 
     // ── Decode shading model + specular from emissive.w ──────────────────
     // @ref gbuffer_ps.hlsl — packedAlpha = specular + smID * 16.0
@@ -283,7 +416,19 @@ LightingOutput main(FSInput input) {
         transmission = customW; // RT2.w holds the packed value (0-1)
     }
 
-    float3 F0         = ComputeF0(baseColor, metallic);
+    // Dielectric reflectance from the authored Specular parameter instead of a
+    // fixed 4%. The GBuffer packs it next to the shading-model id, so it comes
+    // back by subtracting the id: a material authored with Specular=0 (the dirt
+    // decal) now has no grazing reflection at all, which a constant F0 gave it.
+    /// @ref Karis 2013 "Real Shading in Unreal Engine 4"
+    /// @ref Guy and Agopian, "Physically Based Rendering in Filament" — specular micro-occlusion
+    /// @constants 16 separates shading IDs; 0.08 maps Specular=0.5 to F0=0.04;
+    /// 50 extinguishes grazing reflectance for authored F0 below 2%.
+    float  materialSpecular = saturate(packedAlpha - float(smID) * 16.0);
+    float3 dielectricF0  = 0.08 * materialSpecular;
+    float  dielectricF90 = saturate(50.0 * dielectricF0.g);
+    float3 F0         = lerp(dielectricF0, baseColor, metallic);
+    float3 F90        = lerp(dielectricF90, 1.0, metallic);
     float3 diffColor  = baseColor * (1.0 - metallic);
 
     float3 V   = normalize(cameraPos.xyz - worldPos);
@@ -333,7 +478,7 @@ LightingOutput main(FSInput input) {
             // @ref Heitz 2014 + Hammon 2017 — optimized correlated Smith visibility
             float  D = D_GGX(alpha, NoH);
             float  Vis = V_SmithGGXCorrelated(alpha, NoV, NoL);
-            float3 F = F_Schlick(F0, float3(1, 1, 1), VoH);
+            float3 F = F_Schlick(F0, F90, VoH);
             float3 spec = D * Vis * F;
 
             // Diffuse: Frostbite energy-conserving (already divided by PI)
@@ -365,7 +510,7 @@ LightingOutput main(FSInput input) {
 
         float  Dp   = D_GGX(alpha, NoHp);
         float  Visp = V_SmithGGXCorrelated(alpha, NoV, NoLp);
-        float3 Fp   = F_Schlick(F0, float3(1,1,1), VoHp);
+        float3 Fp   = F_Schlick(F0, F90, VoHp);
         float3 specp = Dp * Visp * Fp;
         float3 diffp = EvalFrostbiteDiffuse(diffColor, roughness, NoV, NoLp, VoHp);
 
@@ -430,7 +575,7 @@ LightingOutput main(FSInput input) {
 
         float  Ds   = D_GGX(alpha, NoHs);
         float  Viss = V_SmithGGXCorrelated(alpha, NoV, NoLs);
-        float3 Fs   = F_Schlick(F0, float3(1,1,1), VoHs);
+        float3 Fs   = F_Schlick(F0, F90, VoHs);
         float3 specs = Ds * Viss * Fs;
         float3 diffs = EvalFrostbiteDiffuse(diffColor, roughness, NoV, NoLs, VoHs);
 
@@ -452,6 +597,24 @@ LightingOutput main(FSInput input) {
     float3 skyTintDiffuse  = skyColor;
     float3 skyTintSpecular = skyColor * skyLightIntensity;
     float3 ambient = float3(0, 0, 0);
+    // Region dump (diagnostics, UZ_REGION_FIELD_LIGHTING_EXTRA): the lighting components as they
+    // are composited, so the analysis can check that they add up to the scene colour instead of
+    // assuming a breakdown.
+    float3 dbgDiffuseIndirect = float3(0, 0, 0);
+    // What the lighting pass reads from the SSGI/gather texture, and which branch read it.
+    float3 dbgSsgiConsumed = float3(0, 0, 0);
+    uint   dbgSsgiMode = 0u;   // 0 = never read, 1 = SDF world gather, 2 = legacy SSGI
+
+    float3 dbgSpecularIndirect = float3(0, 0, 0);
+    float3 dbgEmissiveAndMis = float3(0, 0, 0);
+    uint   dbgPath = 0u;
+    // Support of the two probe queries at this pixel (2026-09-18, followup-01 review item 2): is a
+    // zero from the cache path an unsupported query, and which rule emptied the support? Written
+    // to LIGHTING_EXTRA +11/+12; zero when the query did not run. Nothing reads them.
+    //   rc:   x surviving weight sum, y probes facing (weight > 0), z probes valid, w surviving both
+    //   ddgi: x visibility-weighted weight sum, y visibility > 1e-3, z visibility <= 1e-3, w trilinear > 0
+    float4 dbgRcSupport = float4(0, 0, 0, 0);
+    float4 dbgDdgiSupport = float4(0, 0, 0, 0);
     {
         // ── Indirect diffuse: pick ONE GI source by priority ─────────────
         //
@@ -510,6 +673,7 @@ LightingOutput main(FSInput input) {
 
             float3 ddgiIrrad = float3(0, 0, 0);
             float  ddgiTotalW = 0.0;
+            float  ddgiCntTri = 0.0, ddgiCntVis = 0.0, ddgiCntRej = 0.0;   // region dump only
             [unroll]
             for (uint corner = 0; corner < 8; ++corner) {
                 int3 idx3 = int3(
@@ -519,6 +683,7 @@ LightingOutput main(FSInput input) {
                 float wTri = ((corner & 1) ? ddgiFrac.x : (1.0 - ddgiFrac.x))
                            * ((corner & 2) ? ddgiFrac.y : (1.0 - ddgiFrac.y))
                            * ((corner & 4) ? ddgiFrac.z : (1.0 - ddgiFrac.z));
+                if (wTri > 0.0) ddgiCntTri += 1.0;
 
                 // Linear probe index using the same packing as the writer
                 // (`tileX = idx3.y * dim + idx3.x` then stacked along Y by z).
@@ -544,9 +709,16 @@ LightingOutput main(FSInput input) {
                     float2 depthUV = (depthOrigin + dirOct * float(kDepthTile))
                                    / float2(float(atlasDepthW),
                                             float(atlasDepthH));
+                    // The writer stores both moments normalised by
+                    // maxTraceDistance so the squared term fits FP16 (see
+                    // ddgi_probe_update_cs.hlsl). Rescale with the same
+                    // definition the writer uses:
+                    //   maxTraceDistance = probeSpacing * probesPerAxis * 2
+                    const float ddgiMaxTrace = _ddgiProbeSpacing
+                                             * float(_ddgiProbesPerAxis) * 2.0;
                     float2 momentT = ddgiDepthTex.SampleLevel(linearSampler, depthUV, 0);
-                    float meanD  = momentT.x;
-                    float meanD2 = momentT.y;
+                    float meanD  = momentT.x * ddgiMaxTrace;
+                    float meanD2 = momentT.y * (ddgiMaxTrace * ddgiMaxTrace);
                     float variance = max(meanD2 - meanD * meanD, 1e-4);
                     // VSM-style Chebyshev — fully visible if probe is closer
                     // than the surface, otherwise upper-bound the visibility
@@ -559,6 +731,7 @@ LightingOutput main(FSInput input) {
                         // remove residual leakage.
                         visibility = max(visibility * visibility * visibility, 0.0);
                     }
+                    if (visibility > 1e-3) ddgiCntVis += 1.0; else ddgiCntRej += 1.0;
                     wTri *= visibility;
                 }
 
@@ -576,6 +749,7 @@ LightingOutput main(FSInput input) {
                 ddgiIrrad += wTri * probeIrrad;
                 ddgiTotalW += wTri;
             }
+            dbgDdgiSupport = float4(ddgiTotalW, ddgiCntVis, ddgiCntRej, ddgiCntTri);
 
             if (ddgiTotalW > 1e-6) {
                 ddgiIrrad /= ddgiTotalW;
@@ -587,9 +761,7 @@ LightingOutput main(FSInput input) {
 
         // ── 2. Radiance cache (SDF sphere-traced spatially-varying SH) ───
 #ifdef UZ_BINDLESS
-        if (!irradianceFromGI
-            && _rcEnabled != 0 && _rcProbesSrv != 0xFFFFFFFFu
-            && _rcGiIntensity > 0.0) {
+        if (!irradianceFromGI && _rcEnabled != 0 && _rcProbesSrv != 0xFFFFFFFFu) {
             StructuredBuffer<float4> probeSH = ResourceDescriptorHeap[_rcProbesSrv];
 
             float3 gridOrigin = float3(_rcOriginX, _rcOriginY, _rcOriginZ);
@@ -605,6 +777,8 @@ LightingOutput main(FSInput input) {
                                             int(_rcProbesPerAxis) - 1));
 
             float3 rcIrrad = float3(0,0,0);
+            float rcTotalWeight = 0.0;
+            float rcCntFacing = 0.0, rcCntValid = 0.0, rcCntSurv = 0.0;   // region dump only
             [unroll]
             for (uint corner = 0; corner < 8; ++corner) {
                 int3 idx3 = int3(
@@ -615,10 +789,41 @@ LightingOutput main(FSInput input) {
                         * ((corner & 2) ? frac3.y : (1.0 - frac3.y))
                         * ((corner & 4) ? frac3.z : (1.0 - frac3.z));
 
+                // Match the surfel gather: probes behind the tangent plane must not darken or light this side.
+                //
+                // Which probes lie in front of the surface is a question about the
+                // surface, so weight with the GEOMETRIC normal, not the normal-mapped
+                // shading normal. With N here, neighbouring texels of a bumpy wall
+                // admitted different probe sets: a texel whose bump tilted toward a
+                // probe out in the sun-lit atrium picked it up (and the renormalisation
+                // below scaled it up further) while its neighbours rejected it — the
+                // isolated white specks on Sponza's shadowed walls, which survived with
+                // the sun off, reflections exhausted, gather off and GTAO off. The SDF
+                // paths already weight with the field normal (`SamplePreviousDiffuse`,
+                // `SdfReflectionIrradiance`); the shading normal still drives EvalSH_L2.
+                float3 probePosition = gridOrigin + float3(idx3) * (gridSize / (ppa - 1.0));
                 uint probeLinear = uint(idx3.x)
                                  + uint(idx3.y) * _rcProbesPerAxis
                                  + uint(idx3.z) * _rcProbesPerAxis * _rcProbesPerAxis;
+                // A relocated probe (rc_probe_guard.hlsli) is weighted where it was traced.
+                const float4 probeGuard = probeSH[ProbeGuardIndex(_rcProbesPerAxis, probeLinear)];
+                float3 toProbe = ProbeEffectivePosition(probeGuard, probePosition) - worldPos;
+                float probeDistance = length(toProbe);
+                float3 probeFacing = dot(geometricNormal, geometricNormal) > 0.5 ? geometricNormal : N;
+                float normalWeight = probeDistance > 0.0 ? saturate(dot(probeFacing, toProbe / probeDistance)) : 1.0;
+                w *= normalWeight * normalWeight;
+                if (normalWeight > 0.0) rcCntFacing += 1.0;
+
                 uint base = probeLinear * 7u;
+                // Record 6.w carries validity: a probe buried inside geometry
+                // holds meaningless irradiance and must not be blended in.
+                const bool rcValid = probeSH[base + 6].w > 0.0;
+                // A probe kept near a surface by the candidate classification does not reach behind
+                // that surface (rc_probe_guard.hlsli; no guard under the current rule).
+                if (rcValid && ProbeGuardRejects(probeGuard, probePosition, worldPos)) w = 0.0;
+                if (rcValid) rcCntValid += 1.0;
+                if (rcValid && w > 0.0) rcCntSurv += 1.0;
+                if (!rcValid) continue;
 
                 float4 sh0 = probeSH[base + 0];
                 float4 sh1 = probeSH[base + 1];
@@ -631,15 +836,17 @@ LightingOutput main(FSInput input) {
 
                 float3 probeIrrad = EvalSH_L2(N, shArr);
                 rcIrrad += w * max(probeIrrad, 0.0);
+                rcTotalWeight += w;
             }
+            dbgRcSupport = float4(rcTotalWeight, rcCntFacing, rcCntValid, rcCntSurv);
 
-            // Only adopt the radiance cache when it actually contains data —
-            // a fully-zero RC means the trace pass has not converged yet, so
-            // we fall through to the next source.
-            if (dot(rcIrrad, float3(1,1,1)) > 1e-5) {
-                irradiance = rcIrrad * _rcGiIntensity;
-                irradianceFromGI = true;
-            }
+            // Zero is a valid answer: an unlit enclosure really does receive no
+            // bounce light. Treating it as "not converged yet" and falling back
+            // to sky light was what made interiors glow. Validity is decided on
+            // the CPU (HasProducedResult) and per probe above; here we only
+            // renormalise by the weights that survived rejection.
+            irradiance = rcTotalWeight > 0.0 ? rcIrrad * (_rcGiIntensity / rcTotalWeight) : 0.0;
+            irradianceFromGI = true;
         }
 #endif
 
@@ -700,12 +907,6 @@ LightingOutput main(FSInput input) {
         }
 #endif
 
-        // Shadow-modulated sky IBL visibility — declared here so both the
-        // diffuse irradiance below AND the specular radiance further down
-        // can consume it. Default to 1.0 (full sky) — it is only overridden
-        // when we fall through to the Sky SH path with no real GI source.
-        float skyVisibility = 1.0;
-
         // ── 4. Sky SH (fallback when no GI source provides data) ─────────
         // @ref Ramamoorthi & Hanrahan 2001 — L2 SH for diffuse irradiance
         if (!irradianceFromGI) {
@@ -719,74 +920,28 @@ LightingOutput main(FSInput input) {
             }
 #endif
 
-            // Shadow-modulated sky IBL — approximate macro occlusion.
+            // No macro-occlusion hack here any more. This used to multiply the
+            // sky irradiance by the sun's shadow factor (10% floor) to fake the
+            // visibility that a sky SH lookup does not have. It was tuned while
+            // Quat::FromEuler put Sponza's sun at 9.1 degrees of elevation; with
+            // the composition order fixed the sun is at 56 and most of the
+            // interior falls outside direct light, so the hack drove whole walls
+            // to 10% sky and auto-exposure then crushed them to black.
             //
-            // The sky SH / IBL cubemap is sampled by world normal only, with
-            // ZERO visibility information. A pixel deep inside an enclosed
-            // room receives the same hemisphere as a pixel on an outdoor
-            // rooftop, which causes obvious light leak (interior walls light
-            // up as if the sun were shining through them — the Sponza
-            // "light through walls" bug, 2026-04-10).
-            //
-            // Without a world-space GI solver (DDGI / RadianceCache / LPV /
-            // Brixelizer) to provide real visibility, we approximate macro
-            // occlusion by modulating the sky irradiance by the primary
-            // directional shadow factor:
-            //
-            //   when `shadow == 1` (pixel sees the sun)        → full sky
-            //   when `shadow == 0` (pixel fully in sun shadow) → dim sky
-            //
-            // The physical rationale: in natural lighting the sky dome and
-            // the sun are on the same hemisphere, so pixels occluded from
-            // the sun are generally also occluded from most of the sky.
-            // UE5 uses a similar coupling (`StaticShadowing * SkyIrradiance`
-            // in DeferredLightingCommon.ush). The `kMinShadowedSkyFraction`
-            // leaves a small baseline (5%) so that deep shadows don't go
-            // pure black — ideally replaced by a real GI solver that
-            // propagates bounces into enclosed volumes.
-            //
-            // ONLY applied to the Sky SH fallback path. When a real GI
-            // source (DDGI/RC/LPV/Brixelizer) provides `irradiance`, that
-            // value already encodes world-space visibility and this hack
-            // would double-occlude.
-            //
-            // Penumbra softening + bounce-light floor.
-            //
-            // The raw `shadow` value comes from a narrow PCF kernel that
-            // has a hard lit↔unlit transition. Applying that curve linearly
-            // to indirect sky lighting produces visible hard edges where
-            // real bounce light would smoothly diffuse. Two knobs soften it:
-            //
-            // 1. `kMinShadowedSkyFraction = 0.18` — a fixed floor that
-            //    represents the fill light from surfaces bouncing the sun
-            //    onto shadowed geometry (the primary reason a fully
-            //    shadowed wall in Sponza still receives warm light from
-            //    its illuminated neighbours). Without a world-space GI
-            //    solver this is a constant — tuned to look reasonable in
-            //    a mostly-enclosed stone courtyard. When a real solver
-            //    (DDGI/RC/LPV/Brixelizer) is active, the whole block is
-            //    bypassed and `skyVisibility` stays at 1.0.
-            //
-            // 2. `pow(shadow, 0.4)` softening curve — lifts the penumbra
-            //    much more aggressively than `sqrt` would. At shadow=0.5
-            //    the softened value is ~0.76 (vs ~0.71 for sqrt); at
-            //    shadow=0.25 it is ~0.57 (vs 0.5). The penumbra becomes a
-            //    wide, smooth gradient instead of a crisp lit/unlit line.
-            //
-            // Only applied to the sky IBL path. Direct Lo keeps the crisp
-            // shadow for contour definition.
-            const float kMinShadowedSkyFraction = 0.10;
-            const float kShadowSoftenExponent   = 0.55;
-            float softenedShadow = pow(saturate(shadow), kShadowSoftenExponent);
-            skyVisibility        = lerp(kMinShadowedSkyFraction, 1.0, softenedShadow);
-            irradiance *= skyVisibility;
+            // Real visibility now comes from the SDF gather / radiance cache
+            // (r.GI.FinalGather, r.RadianceCache), which the block was always
+            // documented to defer to. Scenes with no GI solver get an unoccluded
+            // sky hemisphere — brighter and flatter, but not wrong in a way that
+            // a shadow factor can fix.
         }
 
         // skyLightMinAmbient provides a HARD floor on irradiance so the
         // shadow-modulated sky above cannot go below a minimum. Keep this
         // value low (0.005–0.02 in linear RGB) — high values defeat the
         // shadow modulation by lifting every pixel back up to full ambient.
-        irradiance = max(irradiance, skyLightMinAmbient);
+        if (!irradianceFromGI) {
+            irradiance = max(irradiance, skyLightMinAmbient);
+        }
 
         // Our SH coefficients are pre-convolved with cosine lobe (UE5 pattern),
         // so EvalSH_L2 returns irradiance E directly. No /PI needed — our
@@ -818,47 +973,87 @@ LightingOutput main(FSInput input) {
             radiance = prefTex.SampleLevel(linearSampler, WorldToCubemap(R), mipLevel).rgb;
         }
 #endif
-        // Shadow-modulated specular IBL — same rationale as the diffuse
-        // SH path above. Without world-space GI / SSR providing real
-        // visibility, a pixel deep inside an enclosed room receives full
-        // prefiltered cubemap reflections, creating bright "hot spot"
-        // reflections on polished surfaces (column capitals, floor tiles)
-        // even when physically no sky should be visible. Multiplying by
-        // the same `skyVisibility` used for the diffuse term suppresses
-        // these ghost reflections consistently with the diffuse macro
-        // occlusion. When `skyVisibility == 1.0` (lit pixel or GI source
-        // active) this is a no-op.
-        // @ref UE5 DeferredLightingCommon.ush — IndirectSpecular scaling
-        radiance *= skyVisibility;
+        // The specular counterpart of the diffuse hack was removed with it: the
+        // prefiltered cubemap used to be multiplied by the sun's shadow factor
+        // to suppress "hot spot" reflections inside enclosed rooms. Real
+        // reflection visibility now comes from the SDF trace (r.GI.Reflections)
+        // with SSR blended in below, both of which know what the surface can
+        // actually see.
         // Analytical DFG approximation — replaces GPU-baked BRDF LUT with the
         // closed-form fit from Karis 2014. No texture lookup needed. This is the
         // same approach used by Three.js, Filament, and Frostbite.
-        // @ref Karis 2014 "Physically Based Shading" — analytical DFG approximation
-        // @ref Three.js WebGLPrograms DFGApprox — production validation
-        // @ref Karis 2014 "Physically Based Shading" — analytical DFG approximation
-        // @ref Three.js WebGLPrograms DFGApprox — production validation
-        {
-            float a = roughness;
-            float4 r = float4(-1.0, -0.0275, -0.572, 0.022) * a + float4(1.0, 0.0425, 1.04, -0.04);
-            float ab = min(r.x * r.x, exp2(-9.28 * NoV)) * r.x + r.z;
-            envBRDF = float2(ab, r.y * a + r.w);
-            // Clamp to physical range — the analytical fit can exceed 1.0 at
-            // very low roughness, causing overbright specular rings on chrome.
-            envBRDF.x = saturate(envBRDF.x);
-            envBRDF.y = max(envBRDF.y, 0.0);
+        // Shared helper in ibl.hlsli so the specular and diffuse (NoV=1) call
+        // sites cannot drift apart. The previous inline form added r.z where the
+        // published fit adds r.y and omitted the (-1.04, 1.04) scale, inflating A.
+        // No clamping: A and B leave [0,1] only marginally at NoV→0
+        // (A ≈ -0.044, B ≈ 1.044) and their sum stays ≈ 1, which is what the
+        // multi-scatter terms below rely on.
+        // @ref Karis 2014 "Physically Based Shading on Mobile" — EnvBRDFApprox
+#ifdef UZ_BINDLESS
+        // World-space SDF gather. Diffuse replaces the probe-interpolated
+        // irradiance (never adds to it), and reflections replace the prefiltered
+        // cubemap lookup, with SSR blended in *before* the BRDF rather than
+        // summed after TAA. Both neutralise their sky tint because the traced
+        // radiance already carries the sky it hit.
+        if (_sdfReflectionsEnabled != 0 || _sdfDiffuseSamples != 0) {
+            SdfReflectionScene scene;
+            [unroll] for (uint cascade = 0; cascade < 4; ++cascade)
+                scene.clipmaps[cascade] = _sdfReflectionClipmaps[cascade];
+            scene.clipmapSrv = _sdfReflectionClipmapSrv;
+            scene.rawClipmapSrv = _sdfRawClipmapSrv;
+            scene.skySrv = _sdfReflectionSkySrv;
+            scene.probeSrv = _rcProbesSrv;
+            scene.probesPerAxis = _rcProbesPerAxis;
+            scene.probeOrigin = float3(_rcOriginX, _rcOriginY, _rcOriginZ);
+            scene.probeExtent = _rcExtent;
+            scene.voxelSize = _sdfReflectionVoxelSize;
+            scene.traceDistance = _sdfReflectionTraceDistance;
+            scene.traceSteps = _sdfReflectionTraceSteps;
+            scene.sunDirection = sunL;
+            scene.sunColor = lightColor.xyz;
+            scene.skyMultiplier = skyTintSpecular;
+            scene.plainMean = _sdfReflectionPlainMean;
+            if (_sdfDiffuseSamples != 0) {
+                Texture2D<float4> gatheredDiffuse = ResourceDescriptorHeap[ssgiSrvIndex];
+                cosineIrradiance = gatheredDiffuse.Load(int3(px, 0)).rgb;
+                dbgSsgiConsumed = cosineIrradiance;   // recorded before any threshold
+                dbgSsgiMode = 1u;                     // 1 = SDF world gather
+                skyTintDiffuse = 1.0;
+                dbgPath |= 2u;
+            }
+            if (_sdfReflectionsEnabled != 0) {
+                // timeParams.w < 0 is production (seed = frame count); a non-negative value is the
+                // diagnostic seed freeze of `r.GI.Reflections.FreezeSeed`.
+                const uint reflectionSeed = timeParams.w >= 0.0 ? uint(timeParams.w) : uint(timeParams.z);
+                radiance = GatherSdfReflections(scene, worldPos, N, geometricNormal, reflect(-V, N), roughness,
+                    uint2(px), reflectionSeed, _sdfReflectionSamples) * _sdfReflectionIntensity;
+                dbgReflection = radiance;
+                dbgPath |= 1u;
+                if (ssrSrvIndex != kSentinelSrvIndex) {
+                    Texture2D<float4> screenReflections = ResourceDescriptorHeap[ssrSrvIndex];
+                    float4 screenHit = screenReflections.SampleLevel(clampSampler, input.texcoord, 0);
+                    radiance = lerp(radiance, screenHit.rgb, saturate(screenHit.a));
+                    if (screenHit.a > 0.0) dbgPath |= 128u;
+                }
+                skyTintSpecular = 1.0;
+            }
         }
+#endif
+        envBRDF = EnvironmentBRDFApprox(roughness, NoV);
 
         // ── Split dielectric/metallic multi-scattering (Three.js pattern) ──
         // @ref Fdez-Aguera 2019 "A Multiple-Scattering Microfacet Model"
         // @ref Three.js computeMultiscattering — separate F0 per material type
-        float3 dielectricF0 = float3(0.04, 0.04, 0.04);
+        // dielectricF0/F90 come from the material's authored Specular (decoded
+        // near the top of main); the ambient path must use the same reflectance
+        // as the analytic lights above, not a hardcoded 4%.
         float3 metallicF0   = baseColor;
 
-        // Dielectric path (F0 = 0.04)
-        float3 FssEss_d = dielectricF0 * envBRDF.x + envBRDF.y;
+        // Dielectric path — authored F0, with the micro-occlusion F90.
+        float3 FssEss_d = dielectricF0 * envBRDF.x + dielectricF90 * envBRDF.y;
         float  Ess_d    = envBRDF.x + envBRDF.y;
         float  Ems_d    = 1.0 - Ess_d;
-        float3 Favg_d   = dielectricF0 + (1.0 - dielectricF0) * 0.047619;
+        float3 Favg_d   = dielectricF0 + (dielectricF90 - dielectricF0) * 0.047619;
         float3 Fms_d    = FssEss_d * Favg_d / max(1.0 - Ems_d * Favg_d, 0.001);
 
         // Metallic path (F0 = baseColor)
@@ -898,17 +1093,10 @@ LightingOutput main(FSInput input) {
         // @ref Three.js RE_IndirectSpecular uses the NoV-dependent version
         //      (known discrepancy with Frostbite/Filament — prioritises ALU
         //      count over correctness).
-        float2 envBRDF_diff;
-        {
-            float a = roughness;
-            float4 r = float4(-1.0, -0.0275, -0.572, 0.022) * a
-                     + float4( 1.0,  0.0425,  1.04,  -0.04);
-            // NoV = 1 → exp2(-9.28 * 1) ≈ 0.00159 (≤ r.x*r.x for all a).
-            float ab = min(r.x * r.x, exp2(-9.28)) * r.x + r.z;
-            envBRDF_diff.x = saturate(ab);
-            envBRDF_diff.y = max(r.y * a + r.w, 0.0);
-        }
-        float3 FssEss_d_diff = dielectricF0 * envBRDF_diff.x + envBRDF_diff.y;
+        // Same published fit evaluated at NoV = 1 (view-independent split-sum
+        // energy for the diffuse compensation term).
+        float2 envBRDF_diff = EnvironmentBRDFApprox(roughness, 1.0);
+        float3 FssEss_d_diff = dielectricF0 * envBRDF_diff.x + dielectricF90 * envBRDF_diff.y;
         float  Ess_d_diff    = envBRDF_diff.x + envBRDF_diff.y;
         float  Ems_d_diff    = 1.0 - Ess_d_diff;
         float3 Fms_d_diff    = FssEss_d_diff * Favg_d
@@ -943,11 +1131,20 @@ LightingOutput main(FSInput input) {
 
         // SSGI: add screen-space indirect diffuse if available
 #ifdef UZ_BINDLESS
-        if (ssgiSrvIndex != kSentinelSrvIndex) {
+        // Legacy screen-space SSGI is additive; the world gather already replaced
+        // cosineIrradiance above, so adding it too would double the indirect.
+        if (ssgiSrvIndex != kSentinelSrvIndex && _sdfDiffuseSamples == 0) {
             Texture2D<float4> ssgiTex = ResourceDescriptorHeap[ssgiSrvIndex];
             float3 ssgiColor = ssgiTex.Load(int3(px, 0)).rgb;
-            if (any(ssgiColor > 0.001))
+            // Recorded whether or not it passes the threshold below: a contribution that is
+            // rejected as too small can still be the thing that varies, and on a region whose
+            // whole output is 1.6e-4 the 0.001 threshold is above the signal.
+            dbgSsgiConsumed = ssgiColor;
+            dbgSsgiMode = 2u;                         // 2 = legacy screen-space SSGI
+            if (any(ssgiColor > 0.001)) {
                 diffuseAmbient += (1.0 - metallic) * ssgiColor * baseColor;
+                dbgPath |= 4u;
+            }
         }
 #else
         {
@@ -975,6 +1172,7 @@ LightingOutput main(FSInput input) {
             // bounce light.
             float brixLuma = dot(brixDiffuse, float3(0.299, 0.587, 0.114));
             if (brixLuma > 0.001) {
+                dbgPath |= 8u;
                 // diffuseAmbient was previously set from sky SH +
                 // multi-scattered Fms_d. Replace with the Brixelizer value
                 // tinted by base color (modulated by 1-metallic so metals
@@ -984,21 +1182,23 @@ LightingOutput main(FSInput input) {
         }
 #endif
 
-        // @ref Three.js MeshStandardMaterial — metallic mirrors use pure radiance
-        // without DFG scaling, multi-scatter, or specular occlusion. This avoids
-        // the warm ring artifact caused by envBRDF angular variation and irradiance
-        // bleed at grazing angles.
-        if (metallic > 0.95 && roughness < 0.1) {
-            ambient = radiance * metallicF0 * skyTintSpecular;
-        } else {
-            // Apply indirect AO exponent to all indirect diffuse light —
-            // pow(ao, N) darkens occluded areas more aggressively than
-            // linear ao, creating visible shadow definition even under
-            // omnidirectional bounce/sky light. CVar: r.IndirectAO.Exponent.
-            float aoForDiffuse = pow(saturate(ao), _indirectAOExponent);
-            ambient = diffuseAmbient * aoForDiffuse * skyTintDiffuse
-                    + specularAmbient * specOcclusion * skyTintSpecular;
-        }
+        // Single combine for every material. The old chrome special case
+        // (`metallic > 0.95 && roughness < 0.1` bypassing DFG, multi-scatter and
+        // specular occlusion) existed to hide a warm ring artifact that came from
+        // the incorrect envBRDF fit; with the published fit and the authored
+        // F0/F90 above there is nothing left to hide, and the bypass was itself
+        // an energy error on mirrors.
+        //
+        // `r.IndirectAO.Exponent` stays available for scenes that want extra
+        // crevice darkening (the pre-port Sponza calibration used 3.0), but its
+        // default is now 1.0, i.e. plain `ao` — an artistic exponent must be
+        // opted into, not baked into every scene's indirect light.
+        float aoForDiffuse = pow(saturate(ao), _indirectAOExponent);
+        dbgDiffuseIndirect = diffuseAmbient * aoForDiffuse * skyTintDiffuse;
+        dbgSpecularIndirect = specularAmbient * specOcclusion * skyTintSpecular;
+        // Substituted before it contributes, so the render and the recording agree.
+        if (replayActive) dbgSpecularIndirect = replaySpecular;
+        ambient = dbgDiffuseIndirect + dbgSpecularIndirect;
     }
 
     // ── Environment MIS (temporally accumulated specular) ───────────────
@@ -1007,6 +1207,8 @@ LightingOutput main(FSInput input) {
         Texture2D<float4> envMisTex = ResourceDescriptorHeap[gBufIndices.envMisSrvIdx];
         float3 envMIS = envMisTex.Load(int3(px, 0)).rgb;
         ambient += envMIS;
+        dbgEmissiveAndMis += envMIS;
+        if (any(envMIS > 0.0)) dbgPath |= 16u;
     }
 #endif
 
@@ -1070,6 +1272,10 @@ LightingOutput main(FSInput input) {
         Lo = float3(0, 0, 0);
         ambient = glassColor * transmission;
         emissive = float3(0, 0, 0);
+        dbgDiffuseIndirect = ambient;
+        dbgSpecularIndirect = float3(0, 0, 0);
+        dbgEmissiveAndMis = float3(0, 0, 0);
+        dbgPath |= 64u;
     }
 
     // ── Aerial Perspective ───────────────────────────────────────────────
@@ -1096,9 +1302,17 @@ LightingOutput main(FSInput input) {
         float4 ap = apVolume.SampleLevel(linearSampler, float3(screenUV, w), 0);
         // ap.rgb = inscattering (additive haze), ap.a = mean transmittance
         color = color * ap.a + ap.rgb;
+        dbgPath |= 32u;
     }
 #endif
 
+#ifdef UZ_BINDLESS
+    // Region dump (diagnostics): lighting-side records, see common/region_dump.hlsli.
+    WriteRegionDumpLighting(uint2(px), dbgReflection, roughness, N, length(worldPos - cameraPos.xyz),
+                            Lo, shadow, dbgDiffuseIndirect, ao, dbgSpecularIndirect, metallic,
+                            emissive + dbgEmissiveAndMis, dbgPath,
+                            dbgSsgiConsumed, dbgSsgiMode, dbgRcSupport, dbgDdgiSupport);
+#endif
     LightingOutput output;
     output.hdr      = float4(max(color, 0.0), 1.0);
     output.direct   = float4(max(Lo, 0.0), 1.0);

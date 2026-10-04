@@ -98,6 +98,7 @@ class EditorGrid;
 class EditorInputHandler;
 class StatsOverlay;
 class ViewportToolbar;
+class TechPanel;
 class VfxEditorOverlay;
 class OutlinePass;
 class GizmoRenderer;
@@ -162,6 +163,9 @@ public:
     [[nodiscard]] bool IsSceneFullyLoaded() const;
     /// Debug variant — also logs which async loads are still outstanding.
     [[nodiscard]] bool IsSceneFullyLoadedDebug() const;
+
+    /// Forwards to AutoExposure::ResetHistory (no-op when auto exposure is off).
+    void ResetExposureHistory(IRHICommandList* cmdList);
 
     /// Returns true if there are async texture decodes still in flight,
     /// decoded textures awaiting GPU upload, or copy-queue uploads pending
@@ -414,6 +418,30 @@ public:
     /// Returns the current shadow debug mode.
     [[nodiscard]] uint32_t GetShadowDebugMode() const { return m_shadowDebugMode; }
 
+    /// One rectangle of a region dump (diagnostics).
+    struct RegionRect {
+        std::string name;                       ///< Short label stored in the file (<= 15 chars).
+        uint32_t x = 0, y = 0, w = 0, h = 0;    ///< Screen rectangle in output-resolution pixels.
+    };
+
+    /// Region dump (diagnostics): for every frame in [firstFrame, lastFrame] writes
+    /// `<dir>/region_<frame>.bin` with per-pixel linear-HDR records for each rectangle.
+    /// `fields` is the bitmask of shaders/runtime/common/region_dump.hlsli
+    /// (1 = deferred-lighting records, 2 = TAA resolve records, 4 = TAA output only).
+    /// The GPU stamps every rectangle with the frame it rendered; the readback (three
+    /// frames later, no WaitIdle) rejects any file whose stamps disagree with the frame
+    /// the CPU believes it read, so a stale or partial readback is never analysed as data.
+    /// File layout: see `RegionFileHeader` in frame_postprocess.cpp.
+    void SetRegionDump(std::string dir, std::vector<RegionRect> rects,
+                       uint32_t firstFrame, uint32_t lastFrame, uint32_t fields);
+
+    /// Number of region-dump files rejected because a GPU frame stamp did not match.
+    [[nodiscard]] uint32_t GetRegionDumpMismatchCount() const noexcept { return m_regionStampMismatches; }
+    /// Number of region-dump files written.
+    [[nodiscard]] uint32_t GetRegionDumpFileCount() const noexcept { return m_regionFilesWritten; }
+    /// Exposure the last rendered frame used (auto-exposure result x r.Exposure).
+    [[nodiscard]] float GetLastFrameExposure() const noexcept { return m_lastFrameExposure; }
+
     /// Enables or disables shadow caching at runtime.
     ///
     /// Controls the shadow cache toggle at runtime.
@@ -622,6 +650,15 @@ public:
     ///
     /// # Arguments
     /// * `pct` — Screen percentage [10, 200]. Clamped internally.
+    /// Loads or releases the component-replay buffer (diagnostic, off by default).
+    void EnsureComponentReplay(const std::string& path);
+
+    /// Enables the component replay from a file built by scripts/make_component_replay.py.
+    void SetComponentReplay(const std::string& path) { EnsureComponentReplay(path); }
+
+    /// Creates or releases the r.TAA.ClampFreezeAfterFrame storage (diagnostic, off by default).
+    void EnsureTaaClampBoxResources(bool wanted);
+
     void SetScreenPercentage(float pct);
 
     /// Returns the current screen percentage (10-200, default 100).

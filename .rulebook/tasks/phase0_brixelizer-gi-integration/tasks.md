@@ -1,3 +1,10 @@
+> **Note (2026-09-08, from `phase0_sponza-parity-03-sdf-gi-radiance-cache`):** any item here that
+> assumed a working SDF GI was written against empty shaders — `mesh_sdf_bake_cs.hlsl` and
+> `global_sdf_composite_cs.hlsl` were one-line stubs until that task ported real implementations
+> (BVH bake, raw + expanded clipmaps, validity-tracked radiance cache). Re-verify SDF-dependent
+> results before trusting them; `r.RadianceCache=0` also only started disabling the cache on the
+> same date (Init() used to overwrite the CVar). Item lists left untouched on purpose.
+
 ## 1. FFX SDK Build Integration
 
 - [x] 1.1 Add FFX SDK 1.1.4 include paths to `build.zig`. Added 8 include paths for host, gpu, backends, components. Conditional on header presence.

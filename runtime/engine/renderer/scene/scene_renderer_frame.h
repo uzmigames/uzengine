@@ -127,6 +127,9 @@ struct FrameContext {
     rg::RgResourceId velocityRes{};
     rg::RgResourceId shadowAtlasRes{};
     rg::RgResourceId apVolumeRes{};        ///< Aerial perspective volume (imported, Read in deferred, Write in AP compute).
+    rg::RgResourceId debugDirectRes{};     ///< Lighting split RT1 (written by deferred lighting, read by the debug view).
+    rg::RgResourceId debugIndirectRes{};   ///< Lighting split RT2.
+    rg::RgResourceId debugShadowRes{};     ///< Lighting split RT3 (R = shadow, G = AO).
 
     // ── DBuffer resource IDs (decal system) ─────────────────────────
     rg::RgResourceId dbufferARes{};
@@ -135,6 +138,7 @@ struct FrameContext {
 
     // ── TAA state ───────────────────────────────────────────────────
     bool     taaActive = false;
+    uint32_t jitterIndex = 0;   ///< Halton index used this frame ((frame % r.TAA.JitterSequenceLength) + 1); 0 = no jitter.
     float    jitterX = 0.f;
     float    jitterY = 0.f;
     uint32_t taaWriteIdx = 0;

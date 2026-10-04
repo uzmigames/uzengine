@@ -27,10 +27,30 @@ local debug_views = {
 }
 local debug_view_index = 1
 
+-- Lua 5.1 has math.atan2; 5.3+ folds it into math.atan(y, x).
+local atan2 = math.atan2 or function(y, x) return math.atan(y, x) end
+
 function on_start(entity)
+    -- Start from the scene's active camera instead of the hard-coded pose
+    -- above. The first on_update used to teleport from the scene camera to
+    -- (0,-250,130): one frame with stale cascades plus an exposure seeded for
+    -- the old view, which showed as a white flash for ~40 frames on Sponza.
+    local px, py, pz = uz.camera.get_position()
+    if px then
+        cam_x, cam_y, cam_z = px, py, pz
+    end
+    if uz.camera.get_forward then
+        local fx, fy, fz = uz.camera.get_forward()
+        if fx then
+            local deg = 180.0 / math.pi
+            yaw = atan2(fy, fx) * deg
+            if fz > 1 then fz = 1 elseif fz < -1 then fz = -1 end
+            pitch = math.asin(fz) * deg
+        end
+    end
     uz.log("=== Fly Camera ===")
     uz.log("WASD: move | QE: up/down | Right-click+Mouse: look | Scroll: speed")
-    uz.log("F/F1/F2: render path | Tab: cycle views | 0-7: debug channels")
+    uz.log("F/F1/F2: render path | Tab: cycle views | 0-7: debug channels | P: print camera pose")
 end
 
 function on_update(entity, dt)
@@ -70,6 +90,17 @@ function on_update(entity, dt)
                 uz.log("Debug mode: " .. i)
             end
         end
+    end
+
+    -- P: print the camera pose so an artifact can be reported and reproduced
+    -- (position + the look-at point the script feeds the renderer).
+    if uz.input.is_key_just_pressed("P") then
+        local rad = math.pi / 180.0
+        local fx = math.cos(yaw * rad) * math.cos(pitch * rad)
+        local fy = math.sin(yaw * rad) * math.cos(pitch * rad)
+        local fz = math.sin(pitch * rad)
+        uz.log(string.format("Camera pose: position=(%.1f, %.1f, %.1f) look_at=(%.1f, %.1f, %.1f) yaw=%.1f pitch=%.1f",
+            cam_x, cam_y, cam_z, cam_x + fx * 1000.0, cam_y + fy * 1000.0, cam_z + fz * 1000.0, yaw, pitch))
     end
 
     -- Cycle debug view with Tab

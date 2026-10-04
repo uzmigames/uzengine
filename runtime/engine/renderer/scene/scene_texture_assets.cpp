@@ -347,7 +347,14 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
         // Release staging buffers from the previous upload batch — the copy
         // fence guarantees the GPU is done reading from them.
         if (m_textureBatchUpload) {
-            m_textureBatchUpload->ReleaseStaging();
+            // Hand the previous batch's staging buffers to the deferred-destroy
+            // queue rather than freeing them here. GraphicsWaitForCopy() above is
+            // a GPU-side queue wait; the copy queue may still be reading these
+            // buffers when this CPU code runs, and ReleaseStaging() surfaced as an
+            // intermittent GPU page fault on 'TextureStagingBuffer'.
+            for (RHIBufferHandle staging : m_textureBatchUpload->TakeStagingBuffers()) {
+                QueueBufferDestroy(staging);
+            }
             m_textureBatchUpload.reset();
         }
 

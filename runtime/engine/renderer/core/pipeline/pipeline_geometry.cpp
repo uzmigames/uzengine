@@ -3,10 +3,18 @@
 #include "pipeline_library.h"
 #include "engine_shaders.h"
 #include "log.h"
+#include "cvar.h"
 #include "rhi.h"
 #include "shader_manager.h"
 #include "vertex.h"
 #include "vertex_layout.h"
+
+// Diagnostic (followup-12, ledger H-45): 0 builds the forward translucent pipeline WITHOUT a depth test,
+// so every rasterised translucent fragment reaches the pixel shader and the region dump. It exists to
+// tell, at partly covered glass pixels, a fragment that was never rasterised from one hidden by opaque
+// geometry. It changes the image and is never a shipping setting. Read when the pipeline is created.
+static auto* cv_TranslucencyDepthTest = UZ_CVAR_INT("r.Translucency.DepthTest", 1,
+    "Diagnostic: 0 = forward translucent pipeline without a depth test (changes the image)", 0, 1);
 
 UZ_DECLARE_LOG_CATEGORY(Renderer);
 
@@ -50,8 +58,10 @@ RHIPipelineHandle PipelineLibrary::GetForwardPBR(bool bindless) {
     desc.depthStencilFormat               = RHIFormat::D32Float;
     desc.debugName                        = bindless ? "ForwardPBR_Bindless" : "ForwardPBR";
 
+    // Hoisted out of the branch: `desc.inputElements` keeps a pointer into
+    // `layout`, which must outlive the CreateCachedPipeline call below.
+    const auto layout = VertexLayout::Standard();
     if (!bindless) {
-        const auto layout = VertexLayout::Standard();
         desc.inputElements     = layout.elements;
         desc.inputElementCount = layout.count;
         desc.vertexStride      = layout.stride;
@@ -104,8 +114,10 @@ RHIPipelineHandle PipelineLibrary::GetGBuffer(bool bindless) {
     desc.depthStencilFormat               = RHIFormat::D32Float;
     desc.debugName                        = bindless ? "GBuffer_Bindless" : "GBuffer";
 
+    // Hoisted out of the branch: `desc.inputElements` keeps a pointer into
+    // `layout`, which must outlive the CreateCachedPipeline call below.
+    const auto layout = VertexLayout::Standard();
     if (!bindless) {
-        const auto layout = VertexLayout::Standard();
         desc.inputElements     = layout.elements;
         desc.inputElementCount = layout.count;
         desc.vertexStride      = layout.stride;
@@ -169,8 +181,10 @@ RHIPipelineHandle PipelineLibrary::GetGBufferMasked(bool bindless) {
     desc.depthStencilFormat               = RHIFormat::D32Float;
     desc.debugName                        = bindless ? "GBufferMasked_Bindless" : "GBufferMasked";
 
+    // Hoisted out of the branch: `desc.inputElements` keeps a pointer into
+    // `layout`, which must outlive the CreateCachedPipeline call below.
+    const auto layout = VertexLayout::Standard();
     if (!bindless) {
-        const auto layout = VertexLayout::Standard();
         desc.inputElements     = layout.elements;
         desc.inputElementCount = layout.count;
         desc.vertexStride      = layout.stride;
@@ -222,7 +236,7 @@ RHIPipelineHandle PipelineLibrary::GetTranslucent(bool bindless) {
     desc.pixelShader   = m_translucentPS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
     desc.rasterizer.cullMode              = RHICullMode::Back; // Front faces only — back faces cause Fresnel artifacts on glass
-    desc.depthStencil.depthEnable         = true;
+    desc.depthStencil.depthEnable         = cv_TranslucencyDepthTest->value != 0;  // 1 unless diagnosing
     desc.depthStencil.depthWrite          = false;  // Read depth, do NOT write
     // Premultiplied alpha blend (One, InvSrcAlpha):
     //   final.rgb = src.rgb + dst.rgb * (1 - src.a)
@@ -240,8 +254,10 @@ RHIPipelineHandle PipelineLibrary::GetTranslucent(bool bindless) {
     desc.depthStencilFormat               = RHIFormat::D32Float;
     desc.debugName                        = bindless ? "Translucent_Bindless" : "Translucent";
 
+    // Hoisted out of the branch: `desc.inputElements` keeps a pointer into
+    // `layout`, which must outlive the CreateCachedPipeline call below.
+    const auto layout = VertexLayout::Standard();
     if (!bindless) {
-        const auto layout = VertexLayout::Standard();
         desc.inputElements     = layout.elements;
         desc.inputElementCount = layout.count;
         desc.vertexStride      = layout.stride;
@@ -306,8 +322,10 @@ RHIPipelineHandle PipelineLibrary::GetAdditive(bool bindless) {
     desc.depthStencilFormat               = RHIFormat::D32Float;
     desc.debugName                        = bindless ? "Additive_Bindless" : "Additive";
 
+    // Hoisted out of the branch: `desc.inputElements` keeps a pointer into
+    // `layout`, which must outlive the CreateCachedPipeline call below.
+    const auto layout = VertexLayout::Standard();
     if (!bindless) {
-        const auto layout = VertexLayout::Standard();
         desc.inputElements     = layout.elements;
         desc.inputElementCount = layout.count;
         desc.vertexStride      = layout.stride;
@@ -571,8 +589,10 @@ RHIPipelineHandle PipelineLibrary::GetDepthPrepass(bool bindless) {
     desc.depthStencilFormat               = RHIFormat::D32Float;
     desc.debugName                        = bindless ? "DepthPrepass_Bindless" : "DepthPrepass";
 
+    // Hoisted out of the branch: `desc.inputElements` keeps a pointer into
+    // `layout`, which must outlive the CreateCachedPipeline call below.
+    const auto layout = VertexLayout::Standard();
     if (!bindless) {
-        const auto layout = VertexLayout::Standard();
         desc.inputElements     = layout.elements;
         desc.inputElementCount = layout.count;
         desc.vertexStride      = layout.stride;

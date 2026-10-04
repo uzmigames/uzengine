@@ -162,6 +162,11 @@ public:
     /// without prior `Init()`. Called automatically by the destructor.
     void Shutdown();
 
+    /// Clears the adaptation history (EV + exposure) on the GPU so the next
+    /// pass seeds itself from the current frame. Call once after a scene has
+    /// fully streamed in and one full-HDR frame has been rendered.
+    void ResetHistory(IRHICommandList* cmdList);
+
     /// Returns true if `Init()` has been called and `Shutdown()` has not.
     [[nodiscard]] bool IsInitialized() const noexcept { return m_initialized; }
 

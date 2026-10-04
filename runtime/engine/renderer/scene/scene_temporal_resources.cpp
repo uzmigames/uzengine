@@ -37,6 +37,107 @@ void SceneRenderer::CreateTaaResources(uint32_t width, uint32_t height) {
     UZ_LOG(Renderer, Info, "SceneRenderer: TAA history textures created ({}x{}, RGBA16F)", width, height);
 }
 
+/// Creates the r.TAA.ClampFreezeAfterFrame storage on demand, and releases it when the CVar is
+/// turned off. The diagnostic is off by default, and an unused diagnostic must not cost 31.6 MiB
+/// of video memory or a write per pixel per frame.
+void SceneRenderer::EnsureTaaClampBoxResources(bool wanted) {
+    const bool have = m_taaClampBox[0].IsValid() && m_taaClampBox[1].IsValid();
+    if (wanted == have) return;
+    if (!wanted) {
+        for (int i = 0; i < 2; ++i) {
+            if (m_taaClampBox[i].IsValid()) {
+                m_device->DestroyTexture(m_taaClampBox[i]);
+                m_taaClampBox[i] = RHITextureHandle{};
+                m_taaClampBoxSrv[i] = UINT32_MAX;
+                m_taaClampBoxUav[i] = UINT32_MAX;
+            }
+        }
+        m_taaClampBoxInitialised = false;
+        return;
+    }
+    for (int i = 0; i < 2; ++i) {
+        RHITextureDesc boxDesc{};
+        boxDesc.width     = m_width;
+        boxDesc.height    = m_height;
+        boxDesc.format    = RHIFormat::RGBA16Float;
+        boxDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::UnorderedAccess;
+        boxDesc.debugName = (i == 0) ? "TAA_ClampBox_Min" : "TAA_ClampBox_Max";
+        m_taaClampBox[i] = m_device->CreateTexture(boxDesc);
+        if (m_taaClampBox[i].IsValid()) {
+            m_taaClampBoxSrv[i] = m_device->GetTextureSRVIndex(m_taaClampBox[i]);
+            m_taaClampBoxUav[i] = m_device->GetTextureUAVIndex(m_taaClampBox[i]);
+        }
+    }
+    m_taaClampBoxInitialised = false;
+    UZ_LOG(Renderer, Info, "TAA clamp-box diagnostic storage created ({}x{})", m_width, m_height);
+}
+
+/// Loads the component-replay buffer, or releases it when the path is cleared.
+///
+/// The file is a flat float4 array: element 0 is the rectangle (x, y, w, h), element 1 the frame
+/// range (firstFrame, frameCount, 0, 0), then frameCount * h * w entries of (specular.rgb, ao).
+/// Everything the shader needs travels in the buffer, because only one 4-byte slot was left in
+/// PerFrameCB. Diagnostic, off by default; nothing is allocated while it is off.
+void SceneRenderer::EnsureComponentReplay(const std::string& path) {
+    if (path == m_componentReplayLoaded) return;
+    if (m_componentReplay.IsValid()) {
+        m_device->DestroyBuffer(m_componentReplay);
+        m_componentReplay = RHIBufferHandle{};
+        m_componentReplaySrv = UINT32_MAX;
+    }
+    m_componentReplayLoaded = path;
+    if (path.empty()) return;
+
+    FILE* fh = std::fopen(path.c_str(), "rb");
+    if (!fh) {
+        UZ_LOG(Renderer, Error, "ComponentReplay: cannot open '{}'", path);
+        m_componentReplayLoaded.clear();
+        return;
+    }
+    std::fseek(fh, 0, SEEK_END);
+    const long bytes = std::ftell(fh);
+    std::fseek(fh, 0, SEEK_SET);
+    std::vector<float> data(static_cast<size_t>(bytes > 0 ? bytes : 0) / sizeof(float));
+    const size_t got = data.empty() ? 0 : std::fread(data.data(), sizeof(float), data.size(), fh);
+    std::fclose(fh);
+    if (data.size() < 8 || got != data.size()) {
+        UZ_LOG(Renderer, Error, "ComponentReplay: '{}' is truncated or empty", path);
+        m_componentReplayLoaded.clear();
+        return;
+    }
+    const uint32_t rw = static_cast<uint32_t>(data[2]);
+    const uint32_t rh = static_cast<uint32_t>(data[3]);
+    const uint32_t frames = static_cast<uint32_t>(data[5]);
+    const size_t expect = 8 + static_cast<size_t>(frames) * rh * rw * 4;
+    if (data.size() != expect) {
+        UZ_LOG(Renderer, Error,
+               "ComponentReplay: '{}' holds {} floats but its header describes {}",
+               path, data.size(), expect);
+        m_componentReplayLoaded.clear();
+        return;
+    }
+
+    RHIBufferDesc desc{};
+    desc.sizeBytes = data.size() * sizeof(float);
+    desc.stride    = sizeof(float) * 4;
+    desc.usage     = RHIBufferUsage::StructuredBuffer;
+    desc.memory    = RHIMemoryType::Upload;
+    desc.debugName = "GI_ComponentReplay";
+    m_componentReplay = m_device->CreateBuffer(desc);
+    if (!m_componentReplay.IsValid()) {
+        UZ_LOG(Renderer, Error, "ComponentReplay: buffer creation failed");
+        m_componentReplayLoaded.clear();
+        return;
+    }
+    if (void* mapped = m_device->MapBuffer(m_componentReplay)) {
+        std::memcpy(mapped, data.data(), desc.sizeBytes);
+        m_device->UnmapBuffer(m_componentReplay);
+    }
+    m_componentReplaySrv = m_device->GetBufferSRVIndex(m_componentReplay);
+    UZ_LOG(Renderer, Info, "ComponentReplay: '{}' loaded ({}x{}, {} frames from {}), srv={}",
+           path, rw, rh, frames, static_cast<uint32_t>(data[4]), m_componentReplaySrv);
+}
+
 void SceneRenderer::DestroyTaaResources() {
     for (int i = 0; i < 2; ++i) {
         if (m_taaHistory[i].IsValid()) {
@@ -44,6 +145,12 @@ void SceneRenderer::DestroyTaaResources() {
             m_taaHistory[i] = RHITextureHandle{};
             m_taaHistorySrv[i] = UINT32_MAX;
             m_taaHistoryUav[i] = UINT32_MAX;
+        }
+        if (m_taaClampBox[i].IsValid()) {
+            m_device->DestroyTexture(m_taaClampBox[i]);
+            m_taaClampBox[i] = RHITextureHandle{};
+            m_taaClampBoxSrv[i] = UINT32_MAX;
+            m_taaClampBoxUav[i] = UINT32_MAX;
         }
     }
     m_taaHistoryIndex = 0;

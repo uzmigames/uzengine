@@ -1,6 +1,6 @@
 /// UzEngine SSGI Renderer — Implementation.
 ///
-/// SSGI method selection + quality presets (ray count per quality level)
+/// Shared half-resolution diffuse gather, geometric temporal filtering and reconstruction.
 
 #include "ssgi_renderer.h"
 
@@ -23,6 +23,13 @@ static auto* cv_SSGIEnabled   = UZ_CVAR_BOOL("r.SSGI", false, "Screen-space glob
 static auto* cv_SSGIQuality   = UZ_CVAR_INT("r.SSGI.Quality", 2, "SSGI quality (1=4rays, 2=8, 3=16, 4=32)", 1, 4);
 static auto* cv_SSGIIntensity = UZ_CVAR_FLOAT("r.SSGI.Intensity", 0.3f, "SSGI indirect diffuse intensity", 0.f, 10.f);
 static auto* cv_SSGIRayCount     = UZ_CVAR_INT("r.SSGI.RayCount", 8, "Rays per pixel (overrides quality preset)", 1, 32);
+// Diagnostic (H-31): shifts ONLY the diffuse gather's sample sequence, by whole frames. The jitter,
+// the TAA and every resource binding are untouched, so if the alternating groups follow it, the
+// alternation is in the sampling and not in what the sampling reads. Declared here, at file scope,
+// because a CVar declared inside the dispatch registers only on the first frame — after the command
+// line has been parsed, which drops every override silently.
+static auto* cv_SampleFrameOffset = UZ_CVAR_INT("r.GI.SDF.SampleFrameOffset", 0,
+    "Diagnostic: offset the diffuse gather's sample sequence by N frames", -8, 8);
 static auto* cv_SSGIMaxSteps     = UZ_CVAR_INT("r.SSGI.MaxMarchSteps", 32, "Max linear march steps per ray", 8, 128);
 static auto* cv_SSGIStepSize     = UZ_CVAR_FLOAT("r.SSGI.StepSize", 0.02f, "UV-space step size per march step", 0.005f, 0.1f);
 // Thickness default 0.5 cm is way too small for indoor scenes at cm scale.
@@ -58,8 +65,8 @@ bool SSGIRenderer::CreateResources(IRHIDevice* device, uint32_t width, uint32_t 
     m_device = device;
     m_fullWidth  = width;
     m_fullHeight = height;
-    m_halfWidth  = width / 2;
-    m_halfHeight = height / 2;
+    m_halfWidth  = (width + 1) / 2;
+    m_halfHeight = (height + 1) / 2;
 
     if (m_halfWidth == 0) m_halfWidth = 1;
     if (m_halfHeight == 0) m_halfHeight = 1;
@@ -72,6 +79,8 @@ bool SSGIRenderer::CreateResources(IRHIDevice* device, uint32_t width, uint32_t 
 
     m_initialized = true;
     m_hasPrevColor = false;
+    m_hasHistory = false;
+    m_hasProducedResult = false;
     m_historyIndex = 0;
 
     UZ_LOG(Renderer, Info,
@@ -86,6 +95,8 @@ void SSGIRenderer::DestroyResources() {
     DestroyTextures();
     m_initialized = false;
     m_hasPrevColor = false;
+    m_hasHistory = false;
+    m_hasProducedResult = false;
     m_device = nullptr;
 }
 
@@ -96,8 +107,8 @@ void SSGIRenderer::OnResize(uint32_t width, uint32_t height) {
 
     m_fullWidth  = width;
     m_fullHeight = height;
-    m_halfWidth  = (width > 1) ? (width / 2) : 1;
-    m_halfHeight = (height > 1) ? (height / 2) : 1;
+    m_halfWidth  = (width + 1) / 2;
+    m_halfHeight = (height + 1) / 2;
 
     if (!CreateTextures(width, height)) {
         UZ_LOG(Renderer, Error, "SSGIRenderer::OnResize: failed to recreate textures");
@@ -106,6 +117,8 @@ void SSGIRenderer::OnResize(uint32_t width, uint32_t height) {
     }
 
     m_hasPrevColor = false;
+    m_hasHistory = false;
+    m_hasProducedResult = false;
     m_historyIndex = 0;
 
     UZ_LOG(Renderer, Info,
@@ -118,6 +131,7 @@ void SSGIRenderer::OnResize(uint32_t width, uint32_t height) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool SSGIRenderer::CreateTextures(uint32_t width, uint32_t height) {
+    m_resourceStatesInitialized = false;
     const uint32_t halfW = m_halfWidth;
     const uint32_t halfH = m_halfHeight;
 
@@ -220,6 +234,12 @@ bool SSGIRenderer::CreateTextures(uint32_t width, uint32_t height) {
             return false;
     }
 
+    for (int i = 0; i < 2; ++i) {
+        if (!createTexSrvUav(halfW, halfH, RHIFormat::RGBA32Float,
+                            "SSGI_HistoryGeometry", m_historyGeometry[i],
+                            m_historyGeometrySrv[i], m_historyGeometryUav[i])) return false;
+    }
+
     // Temporal history ping-pong: AO x2
     for (int i = 0; i < 2; ++i) {
         const char* names[2] = {"SSGI_HistoryAO_0", "SSGI_HistoryAO_1"};
@@ -266,6 +286,9 @@ void SSGIRenderer::DestroyTextures() {
     m_ssgiDenoisedAOUav = UINT32_MAX;
 
     for (int i = 0; i < 2; ++i) {
+        destroyTex(m_historyGeometry[i]);
+        m_historyGeometrySrv[i] = UINT32_MAX;
+        m_historyGeometryUav[i] = UINT32_MAX;
         destroyTex(m_ssgiHistory[i]);
         m_ssgiHistorySrv[i] = UINT32_MAX;
         m_ssgiHistoryUav[i] = UINT32_MAX;
@@ -287,24 +310,68 @@ void SSGIRenderer::DestroyTextures() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Render — dispatches all 5 SSGI passes
+// Render — world gather and reconstruction; legacy SSGI also reduces previous HDR
 // ─────────────────────────────────────────────────────────────────────────────
 
+void SSGIRenderer::LogGatherActivation(uint32_t samples) {
+    if (samples == m_loggedWorldSamples) return;
+    UZ_LOG(Renderer, Info, "SSGI activation: worldGather={} samples={} outputSrv={} half={}x{}",
+           samples != 0, samples, samples != 0 ? m_ssgiResultSrv : UINT32_MAX, m_halfWidth, m_halfHeight);
+    m_loggedWorldSamples = samples;
+}
+
+bool SSGIRenderer::PrepareFrame(PipelineLibrary* pipelines, bool worldGather, bool screenSpace) {
+    if (m_worldGather != worldGather || !settings.enabled) m_hasHistory = false;
+    m_worldGather = worldGather;
+    settings.enabled = worldGather || (screenSpace && cv_SSGIEnabled->value >= 0.5f);
+    if (!m_initialized || !settings.enabled || !pipelines) {
+
+        LogGatherActivation(0);
+        m_hasHistory = false;
+        m_hasProducedResult = false;
+        return false;
+    }
+    const bool ready = pipelines->GetSsgiTrace().IsValid()
+        && pipelines->GetSsgiSpatialDenoise().IsValid()
+        && pipelines->GetSsgiTemporalAccum().IsValid()
+        && pipelines->GetSsgiBilateralUpsample().IsValid()
+        && (worldGather || pipelines->GetSsgiPrevColorReduce().IsValid());
+    if (!ready) { LogGatherActivation(0); settings.enabled = false; m_hasHistory = false; m_hasProducedResult = false; }
+    return ready && (worldGather || m_hasPrevColor);
+}
 void SSGIRenderer::Render(IRHICommandList* cmdList, const SSGIRenderParams& params) {
     UZ_PROFILE_FUNCTION();
 
     // Apply CVar overrides to settings
-    settings.enabled   = cv_SSGIEnabled->value >= 0.5f;
+    settings.enabled = params.worldGather || cv_SSGIEnabled->value >= 0.5f;
     settings.quality   = static_cast<int>(cv_SSGIQuality->value);
     settings.intensity = cv_SSGIIntensity->value;
 
     if (!m_initialized || !settings.enabled) return;
 
     // Skip if no previous frame color is available yet (first frame).
-    if (!m_hasPrevColor) return;
+    if (!params.worldGather && !m_hasPrevColor) return;
 
+    if (!m_resourceStatesInitialized) {
+        const RHITextureHandle textures[] = {
+            m_prevColorReduced, m_ssgiTrace, m_ssgiTraceAO, m_ssgiDenoised, m_ssgiDenoisedAO,
+            m_ssgiHistory[0], m_ssgiHistory[1], m_ssgiHistoryAO[0], m_ssgiHistoryAO[1],
+            m_historyGeometry[0], m_historyGeometry[1], m_ssgiResult, m_ssgiResultAO
+        };
+        RHIBarrierDesc barriers[13] = {};
+        for (uint32_t i=0; i<13; ++i) {
+            barriers[i].texture = textures[i];
+            barriers[i].stateBefore = RHIResourceState::Common;
+            barriers[i].stateAfter = RHIResourceState::ShaderResource;
+        }
+        cmdList->ResourceBarrier(barriers,13);
+        m_resourceStatesInitialized = true;
+    }
     // Pass 1: Downsample prev scene color to half-res
-    DispatchPrevColorReduce(cmdList, params);
+    if (params.resetHistory || m_lastFrame + 1 != params.frameIndex || m_sceneRevision != params.sceneRevision)
+        m_hasHistory = false;
+    m_sceneRevision = params.sceneRevision;
+    if (!params.worldGather) DispatchPrevColorReduce(cmdList, params);
 
     // Pass 2: SSGI trace (half-res)
     DispatchTrace(cmdList, params);
@@ -320,6 +387,12 @@ void SSGIRenderer::Render(IRHICommandList* cmdList, const SSGIRenderParams& para
 
     // Flip history ping-pong for next frame
     m_historyIndex = 1 - m_historyIndex;
+    m_hasProducedResult = true;
+    const auto* frameConstants = static_cast<const PerFrameCB*>(params.perFrameCpuPtr);
+    LogGatherActivation(params.worldGather ? frameConstants->sdfDiffuseSamples : 0u);
+    m_hasHistory = true;
+    m_lastFrame = params.frameIndex;
+    std::memcpy(m_previousViewProj, params.perFrameCpuPtr, sizeof(m_previousViewProj));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -329,7 +402,7 @@ void SSGIRenderer::Render(IRHICommandList* cmdList, const SSGIRenderParams& para
 void SSGIRenderer::CopyPrevSceneColor(IRHICommandList* cmdList,
                                        RHITextureHandle hdrSceneColor,
                                        uint32_t width, uint32_t height) {
-    if (!m_initialized || !settings.enabled) return;
+    if (!m_initialized || !settings.enabled || m_worldGather) return;
     if (!hdrSceneColor.IsValid() || !m_prevSceneColor.IsValid()) return;
 
     UZ_PROFILE_SCOPE("SSGI::CopyPrevSceneColor");
@@ -499,7 +572,7 @@ void SSGIRenderer::DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParam
     rc.outputUavIndex    = m_ssgiTraceUav;
     rc.aoOutputUavIndex  = m_ssgiTraceAOUav;
     rc.packedDimensions  = (m_halfWidth & 0xFFFF) | ((m_halfHeight & 0xFFFF) << 16);
-    rc.frameIndex        = params.frameIndex;
+    rc.frameIndex        = params.frameIndex + static_cast<uint32_t>(cv_SampleFrameOffset->value);
     rc.hizSrvIndex       = 0xFFFF; // Hi-Z disabled for now (linear march)
     rc.rayCount          = static_cast<uint32_t>(cv_SSGIRayCount->value);
     rc.maxSteps          = static_cast<uint32_t>(cv_SSGIMaxSteps->value);
@@ -638,19 +711,22 @@ void SSGIRenderer::DispatchTemporalAccum(IRHICommandList* cmdList, const SSGIRen
 
     // Transition write targets to UAV, read targets to SRV
     {
-        RHIBarrierDesc barriers[2] = {};
+        RHIBarrierDesc barriers[3] = {};
         barriers[0].texture     = m_ssgiHistory[writeIdx];
         barriers[0].stateBefore = RHIResourceState::ShaderResource;
         barriers[0].stateAfter  = RHIResourceState::UnorderedAccess;
         barriers[1].texture     = m_ssgiHistoryAO[writeIdx];
         barriers[1].stateBefore = RHIResourceState::ShaderResource;
         barriers[1].stateAfter  = RHIResourceState::UnorderedAccess;
-        cmdList->ResourceBarrier(barriers, 2);
+        barriers[2].texture = m_historyGeometry[writeIdx];
+        barriers[2].stateBefore = barriers[0].stateBefore;
+        barriers[2].stateAfter = barriers[0].stateAfter;
+        cmdList->ResourceBarrier(barriers, 3);
     }
 
     cmdList->SetPipeline(pso);
 
-    // Root constants: 10 DWORDs matching ssgi_temporal_accum_cs.hlsl RootConstants
+    // Fifteen DWORDs plus the previous jittered view-projection at b2.
     struct TemporalAccumRC {
         uint32_t currentSrvIndex;
         uint32_t currentAOSrvIndex;
@@ -662,10 +738,25 @@ void SSGIRenderer::DispatchTemporalAccum(IRHICommandList* cmdList, const SSGIRen
         uint32_t packedDimensions;  // low 16 = width, high 16 = height
         uint32_t temporalAlphaBits;
         uint32_t varianceClipGammaBits;
+        uint32_t depthSrv;
+        uint32_t normalSrv;
+        uint32_t historyGeometrySrv;
+        uint32_t geometryUav;
+        uint32_t historyValid;
     };
-    static_assert(sizeof(TemporalAccumRC) == 40, "Must be 10 DWORDs");
+    static_assert(sizeof(TemporalAccumRC) == 60, "Must fit 16 root DWORDs");
 
+    auto historyAllocation = params.cbRing->Allocate(sizeof(m_previousViewProj));
+    UZ_VERIFY(historyAllocation.cpuPtr != nullptr);
+    std::memcpy(historyAllocation.cpuPtr, m_previousViewProj, sizeof(m_previousViewProj));
+    cmdList->SetRootCBV(kSlotPerObject, historyAllocation.bufferHandle, historyAllocation.offsetBytes,
+                       historyAllocation.cpuPtr, sizeof(m_previousViewProj));
     TemporalAccumRC rc{};
+    rc.depthSrv = params.depthSrvIndex;
+    rc.normalSrv = params.normalSrvIndex;
+    rc.historyGeometrySrv = m_historyGeometrySrv[readIdx];
+    rc.geometryUav = m_historyGeometryUav[writeIdx];
+    rc.historyValid = m_hasHistory ? 1u : 0u;
     rc.currentSrvIndex   = m_ssgiDenoisedSrv;
     rc.currentAOSrvIndex = m_ssgiDenoisedAOSrv;
     rc.historySrvIndex   = m_ssgiHistorySrv[readIdx];
@@ -675,11 +766,11 @@ void SSGIRenderer::DispatchTemporalAccum(IRHICommandList* cmdList, const SSGIRen
     rc.aoOutputUavIndex  = m_ssgiHistoryAOUav[writeIdx];
     rc.packedDimensions  = (m_halfWidth & 0xFFFF) | ((m_halfHeight & 0xFFFF) << 16);
     float temporalAlpha = cv_SSGITemporalAlpha->value;
-    float varClipGamma = 1.0f; // Could be CVar in Phase 2
+    float varClipGamma = 1.0f; // Reserved ABI slot; geometric history rejection replaces color clipping.
     std::memcpy(&rc.temporalAlphaBits, &temporalAlpha, 4);
     std::memcpy(&rc.varianceClipGammaBits, &varClipGamma, 4);
 
-    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 10);
+    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 15);
 
     cmdList->SetRootCBV(kSlotPerFrame, params.perFrameBuffer,
                         params.perFrameOffset, params.perFrameCpuPtr,
@@ -693,14 +784,17 @@ void SSGIRenderer::DispatchTemporalAccum(IRHICommandList* cmdList, const SSGIRen
 
     // Transition write targets: UAV -> SRV for upsample pass
     {
-        RHIBarrierDesc barriers[2] = {};
+        RHIBarrierDesc barriers[3] = {};
         barriers[0].texture     = m_ssgiHistory[writeIdx];
         barriers[0].stateBefore = RHIResourceState::UnorderedAccess;
         barriers[0].stateAfter  = RHIResourceState::ShaderResource;
         barriers[1].texture     = m_ssgiHistoryAO[writeIdx];
         barriers[1].stateBefore = RHIResourceState::UnorderedAccess;
         barriers[1].stateAfter  = RHIResourceState::ShaderResource;
-        cmdList->ResourceBarrier(barriers, 2);
+        barriers[2].texture = m_historyGeometry[writeIdx];
+        barriers[2].stateBefore = barriers[0].stateBefore;
+        barriers[2].stateAfter = barriers[0].stateAfter;
+        cmdList->ResourceBarrier(barriers, 3);
     }
 }
 

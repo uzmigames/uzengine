@@ -68,8 +68,10 @@ RHIPipelineHandle PipelineLibrary::GetShadowDepth(bool bindless) {
     desc.depthStencilFormat               = RHIFormat::D32Float;
     desc.debugName                        = bindless ? "ShadowDepth_Bindless" : "ShadowDepth";
 
+    // Hoisted out of the branch: `desc.inputElements` keeps a pointer into
+    // `layout`, which must outlive the CreateCachedPipeline call below.
+    const auto layout = VertexLayout::Standard();
     if (!bindless) {
-        const auto layout = VertexLayout::Standard();
         desc.inputElements     = layout.elements;
         desc.inputElementCount = layout.count;
         desc.vertexStride      = layout.stride;

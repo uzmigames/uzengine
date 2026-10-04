@@ -10,22 +10,30 @@
             "id": 1,
             "type": "PBROutput",
             "inputs": [
-                { "pin": 4, "srcExpr": 2, "srcPin": 0 }
+                {
+                    "pin": 4,
+                    "srcExpr": 2,
+                    "srcPin": 0
+                }
             ]
         },
         {
             "id": 2,
             "type": "Vector3Constant",
             "name": "WindowSunGlow",
-            "scalarParams": { "x": 8.0, "y": 6.5, "z": 4.5 }
+            "scalarParams": {
+                "x": 8.0,
+                "y": 6.5,
+                "z": 4.5
+            }
         }
     ],
     "params": {
-        "roughnessMultiplier": 0.55,
+        "roughnessMultiplier": 1.0,
         "metallicMultiplier": 0.0,
         "baseColorTint": [
-            1.05,
-            1.03,
+            1.0,
+            1.0,
             1.0
         ],
         "normalStrength": 1.0,

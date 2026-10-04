@@ -8,6 +8,22 @@
 #include "../common/constants.hlsli"
 #include "../material/brdf.hlsli"
 
+/// Analytical DFG (environment BRDF) approximation — replaces a GPU-baked LUT.
+///
+/// Returns (A, B) such that the split-sum specular is `F0 * A + B` (or
+/// `F0 * A + F90 * B` when the material carries an authored F90).
+///
+/// @ref Karis 2014 "Physically Based Shading on Mobile" — EnvBRDFApprox
+/// @constants c0 = (-1, -0.0275, -0.572, 0.022), c1 = (1, 0.0425, 1.04, -0.04),
+/// exponential slope -9.28 and the AB scale (-1.04, 1.04) are the published fit.
+float2 EnvironmentBRDFApprox(float roughness, float NoV)
+{
+    float4 r = roughness * float4(-1.0, -0.0275, -0.572, 0.022)
+             + float4(1.0, 0.0425, 1.04, -0.04);
+    float a004 = min(r.x * r.x, exp2(-9.28 * NoV)) * r.x + r.y;
+    return float2(-1.04, 1.04) * a004 + r.zw;
+}
+
 /// Evaluate L2 spherical harmonics for irradiance.
 ///
 /// Uses compact 7-float4 packing from sh_projection.cpp PackSHToCompactFormat().

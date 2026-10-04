@@ -711,6 +711,23 @@ public:
     /// @ref Microsoft DirectX-Specs "Inline Raytracing (DXR 1.1)"
     [[nodiscard]] RHIPipelineHandle GetDdgiProbeUpdate();
 
+    /// Returns the DDGI atlas border-fill compute pipeline (`ddgi_border_fill_cs.hlsl`):
+    /// copies each probe tile's interior into its 1-texel octahedral border after the probe
+    /// update, and clears both atlases once at creation. Without it the deferred lighting's
+    /// bilinear tap read uninitialised texels at the tile edges (followup-01, H-55).
+    [[nodiscard]] RHIPipelineHandle GetDdgiBorderFill();
+
+    /// Returns the radiance cache probe side classifier (`probe_side_cs.hlsl`, followup-01
+    /// candidate `r.GI.RadianceCache.ProbeClassification` = 1): for every probe, the nearest mesh
+    /// triangle over the scene's instances — the side the probe lies on and the direction from the
+    /// face to the probe.
+    [[nodiscard]] RHIPipelineHandle GetProbeSide();
+
+    /// Returns the radiance cache probe reachability passes (`probe_reach_cs.hlsl`, followup-01
+    /// candidate `r.GI.RadianceCache.ProbeClassification` = 3): air grid, flood fill from the camera
+    /// and the per-probe decision, one pipeline selected by a root constant.
+    [[nodiscard]] RHIPipelineHandle GetProbeReach();
+
     /// Returns the DBuffer decal render pipeline (decal_vs + decal_ps, 3 RT, no depth).
     ///
     /// Rasterizer: front-face cull (render back faces of decal OBB).
