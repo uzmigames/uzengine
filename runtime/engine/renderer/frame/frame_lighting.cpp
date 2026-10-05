@@ -288,7 +288,7 @@ void SceneRenderer::RegisterPassInspectorTargets(FrameContext& ctx) {
         // Shadow atlas ends the frame in DepthStencilWrite (the render graph
         // does not emit restore barriers for imported depth resources).
         m_passInspector.RegisterTarget("shadow.atlas", m_shadowAtlas.GetTexture(), m_shadowAtlas.GetSrvIndex(),
-                                        VisDisplayMode::Grayscale, kShadowResolution, kShadowResolution,
+                                        VisDisplayMode::Grayscale, m_shadowAtlas.GetResolution(), m_shadowAtlas.GetResolution(),
                                         RHIResourceState::DepthStencilWrite);
     }
 

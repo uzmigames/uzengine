@@ -292,8 +292,8 @@ void WriteRegionDumpLighting(uint2 rp, float3 reflection, float roughness, float
 // atlasOffsetY, atlasScale, bias cm), [5] (light position xyz, radius). The tile stores
 // distance / radius (shadow_depth_linear_ps.hlsl), so the comparison is linear: the receiver is lit
 // when its own distance, minus the bias, is closer than the stored occluder (LESS comparison
-// sampler, atlas cleared to 1.0). Receivers are pushed along the geometric normal by 0.5 % of their
-// distance before the test (normal-offset bias, against acne on grazing surfaces). Block A.1.
+// sampler, atlas cleared to 1.0). Receivers are pushed along the geometric normal by
+// r.Shadow.Local.NormalOffset of their distance before the test (against acne on grazing surfaces).
 float SampleLocalShadow(uint entry, float3 worldPos, float3 geometricNormal) {
 #ifdef UZ_BINDLESS
     if (localShadowAtlasIndex == kSentinelSrvIndex) return 1.0;
@@ -304,7 +304,7 @@ float SampleLocalShadow(uint entry, float3 worldPos, float3 geometricNormal) {
     const float4 atlasParams = localShadowRaw[base + 4];
     const float4 lightParams = localShadowRaw[base + 5];
     const float  dist = length(lightParams.xyz - worldPos);
-    const float3 receiver = worldPos + geometricNormal * (dist * 0.005);
+    const float3 receiver = worldPos + geometricNormal * (dist * localShadowNormalOffset);
     const float4 lsPos = mul(float4(receiver, 1.0), localVP);
     if (lsPos.w <= 0.0) return 1.0;
     const float2 ndc = lsPos.xy / lsPos.w;
@@ -422,7 +422,8 @@ LightingOutput main(FSInput input) {
 
     float3 N         = OctDecode(rt1.rg);
     float  metallic  = rt1.b;
-    float  roughness = max(rt1.a, 0.04);
+    // Roughness floor = sqrt(r.Material.MinGGXAlpha) (0.04 until 2026-10-05, when it was a literal).
+    float  roughness = max(rt1.a, sqrt(materialMinGGXAlpha));
     float  alpha     = roughness * roughness;
     float3 dbgReflection = 0.0;   // SDF reflection term before the SSR blend (region dump record 0)
 
@@ -454,10 +455,10 @@ LightingOutput main(FSInput input) {
     // decal) now has no grazing reflection at all, which a constant F0 gave it.
     /// @ref Karis 2013 "Real Shading in Unreal Engine 4"
     /// @ref Guy and Agopian, "Physically Based Rendering in Filament" — specular micro-occlusion
-    /// @constants 16 separates shading IDs; 0.08 maps Specular=0.5 to F0=0.04;
+    /// @constants 16 separates shading IDs; 2 * r.Material.DielectricF0 maps Specular=0.5 to F0 (0.04 by default);
     /// 50 extinguishes grazing reflectance for authored F0 below 2%.
     float  materialSpecular = saturate(packedAlpha - float(smID) * 16.0);
-    float3 dielectricF0  = 0.08 * materialSpecular;
+    float3 dielectricF0  = (2.0 * materialDielectricF0) * materialSpecular;
     float  dielectricF90 = saturate(50.0 * dielectricF0.g);
     float3 F0         = lerp(dielectricF0, baseColor, metallic);
     float3 F90        = lerp(dielectricF90, 1.0, metallic);
@@ -486,13 +487,13 @@ LightingOutput main(FSInput input) {
         float cs = ComputeContactShadow(worldPos, sunL, csDpth,
                                          viewProj, invViewProj,
                                          csW, csH, nearPlane, farPlane,
-                                         farPlane * 0.01 * (_contactShadowLen / 0.10));
+                                         farPlane * _contactShadowLen);
 #else
         gbufferDepth.GetDimensions(csW, csH);
         float cs = ComputeContactShadow(worldPos, sunL,
                                          viewProj, invViewProj,
                                          csW, csH, nearPlane, farPlane,
-                                         farPlane * 0.01 * (_contactShadowLen / 0.10));
+                                         farPlane * _contactShadowLen);
 #endif
         shadow = min(shadow, cs);
     }

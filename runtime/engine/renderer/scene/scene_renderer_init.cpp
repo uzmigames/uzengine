@@ -308,8 +308,8 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         // Create static shadow atlas with same dimensions as dynamic atlas
         const uint32_t cols = GetAtlasColumns(4); // default 4 cascades
         const uint32_t rows = GetAtlasRows(4);
-        const uint32_t atlasW = cols * kShadowResolution;
-        const uint32_t atlasH = rows * kShadowResolution;
+        const uint32_t atlasW = cols * m_shadowAtlas.GetResolution();
+        const uint32_t atlasH = rows * m_shadowAtlas.GetResolution();
 
         RHITextureDesc staticAtlasDesc{};
         staticAtlasDesc.width     = atlasW;

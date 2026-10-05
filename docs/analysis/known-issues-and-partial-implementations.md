@@ -510,6 +510,19 @@ Guard: `scripts/test_local_light_shadows.py` (6/6; before 4/6 with lit/shadow ra
 Remaining: alpha-masked casters still cast solid shadows (the depth pipelines are vertex-only);
 see `docs/analysis/lighting-block-a-2026-10-05.md`.
 
+### Phantom default sun — `FIXED` 2026-10-05
+
+A scene without a `DirectionalLightComponent` was lit by `LightFrameData`'s defaults (direction
+0.5/0.3/0.8, colour 3/2.85/2.7) and shadowed by a CSM rendered for that light. The sun colour now
+defaults to zero, `hasDirectionalLight` is false, the cascade pass is skipped (`cascadeCount` 0 =
+full visibility) and the sky takes its direction from `SkyAtmosphereComponent::sunDirection`
+(scene key `sun_direction`). Guard: `scripts/test_no_sun_lighting.py` (before 2/6, after 6/6 (dark region direct light 0.0, sun shadow visibility 1.0 on the whole ground, sky light 0.080 -> 0.004 with the sky sun below the horizon, local lights lit 0.358 / 0.385 with shadow 0.0)).
+The same change moved the remaining block-A literals to CVars (`r.Shadow.Local.NormalOffset`,
+`r.Shadow.Local.NearPlane`, `r.SkyLight.Rebake*`, `r.AutoExposure.AdaptationLinearRange`) and wired
+`r.Shadow.AtlasResolution`, `r.Shadow.LocalAtlasSize/LocalTileSize`, `r.Material.MinGGXAlpha` and
+`r.Material.DielectricF0`, which were registered and never read; see
+`docs/analysis/hardcoded/01-rendering-defaults.md` (re-audit 2026-10-05).
+
 ### Shadow atlas depth dump — `STUB`
 The pass-dump code skips depth textures other than the GBuffer depth. The
 shadow atlas is D32Float and would need a depth → R8 copy path to be
@@ -693,8 +706,9 @@ No known bugs. Listed here for completeness.
 
 `r.AutoExposure.MidGrayTarget`, `SpeedUp`, `SpeedDown`, `LogLuminanceMin/Max` were registered and never
 read (the shader hard-coded 0.18, 3, 1 EV/s, 10-90 %). They are root constants now; the defaults
-reproduce the previous exposure. `r.ContactShadow.Length` now scales the contact-shadow ray (0.10 =
-the previous fixed 1 % of the far plane) instead of only switching it on.
+reproduce the previous exposure. `r.ContactShadow.Length` is the contact-shadow ray length as a
+fraction of the far plane (default 0.01 = the previously fixed length) instead of only switching it
+on; `r.AutoExposure.AdaptationLinearRange` (1.5) replaced the last literal of the adaptation.
 
 ### `r.SkyLight.MinAmbient` — `DEFAULT CHANGED` 2026-10-05 (block A.2)
 

@@ -5,6 +5,9 @@
 #include "shadow_pass.h"
 #include "rhi.h"
 #include "log.h"
+#include "cvar.h"
+
+#include <algorithm>
 
 UZ_DECLARE_LOG_CATEGORY(Shadow);
 
@@ -13,10 +16,13 @@ namespace uz {
 bool ShadowAtlas::Init(IRHIDevice* device, uint32_t totalCascades) {
     if (!device) return false;
 
+    // r.Shadow.AtlasResolution (registered in shadow_renderer.cpp; default = kShadowResolution).
+    m_resolution = static_cast<uint32_t>(std::clamp(
+        CVarRegistry::Get().GetInt("r.Shadow.AtlasResolution", static_cast<int>(kShadowResolution)), 512, 8192));
     const uint32_t cols = GetAtlasColumns(totalCascades);
     const uint32_t rows = GetAtlasRows(totalCascades);
-    const uint32_t atlasWidth  = kShadowResolution * cols;
-    const uint32_t atlasHeight = kShadowResolution * rows;
+    const uint32_t atlasWidth  = m_resolution * cols;
+    const uint32_t atlasHeight = m_resolution * rows;
 
     RHITextureDesc desc{};
     desc.width     = atlasWidth;

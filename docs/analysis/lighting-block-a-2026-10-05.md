@@ -36,8 +36,9 @@ mean). Sponza (no local lights): Camera C ROI means bit-identical (rule 0 and ru
 Rasterizer depth bias does not apply to a depth written by the pixel shader, so the bias lives in
 the shader, in centimetres (`shadowBias` of the light JSON, default 0.5).
 
-**Found on the way.** A scene without a directional-light entity is lit by `LightFrameData`'s
+**Found on the way.** A scene without a directional-light entity was lit by `LightFrameData`'s
 defaults (sun direction 0.5/0.3/0.8, colour 3/2.85/2.7); the test scenes carry a sun of intensity 0.
+Fixed the same day, see A.10.
 A spot's direction is `rotation * Forward` and the cone tests `dot(L, -direction)`, so a spot pointing
 down needs pitch **+90**, while the sun entity's rotation points *towards* the sun.
 
@@ -95,7 +96,8 @@ The three `dfs_*_cs.hlsl` are one-line scaffolds and the lighting shader never r
   now (13 DWORDs of 16). Defaults reproduce the previous behaviour: Sponza auto exposure 55.3754
   before — see the results table.
 - `r.ContactShadow.Length` only switched the effect on or off (the ray was fixed at 1 % of the far
-  plane). It now scales the ray; 0.10 keeps the previous length.
+  plane). It is now the ray length as a fraction of the far plane, default 0.01 = the previous
+  length (A.10 simplified the first version, which scaled the old literal).
 - Not done: the remaining ~35 unread CVars (PCSS.*, ESM, Bloom.Knee, tonemap curve, quality-preset
   keys) and the 15 unpolled `r.Show.*` flags — listed in the parecer, each needs a decision (wire or
   delete).
@@ -115,6 +117,40 @@ exists in the instance buffer; the single path can use `PerObjectCB.albedoIndex`
 `opacitySrvIndex`, `alphaClipThreshold`). Sponza has no masked mesh (only `dirt_decal`), so there is
 no visible gain on the current scenes; deferred with this plan.
 
+## A.10 Defaults out of the code (follow-up, same day)
+
+**The phantom sun.** `LightFrameData` defaulted to a sun that exists in no scene file (direction
+0.5/0.3/0.8, colour 3/2.85/2.7), so a world without a `DirectionalLightComponent` was lit and
+CSM-shadowed by it. Now `sunColor` defaults to zero and `hasDirectionalLight` records whether a sun
+was found; without one `frame_shadows.cpp` skips the cascade pass and `frame_constants.cpp` publishes
+`cascadeCount = 0` (the shader returns full visibility). The sky still needs a direction and owns it:
+`SkyAtmosphereComponent::sunDirection` (scene key `sun_direction`, default the former value, Lua
+`uz.scene.set_atmosphere_sun_direction`). A linked light overrides it as before.
+
+**Verification.** `scripts/test_no_sun_lighting.py`, scene `local-shadow-nosun` (= the local-shadow
+reference without its Sun entity) plus `local-shadow-nosun-sundown` (same, `sun_direction` below the
+horizon). Pre-registered: N1 `direct_light` on the ground outside both local lights <= 1e-5; N2 sun
+shadow visibility 1 on the whole ground; N3 the sky light still lights that region; N4 the sky
+follows `sun_direction` (less than half the indirect light with the sun below the horizon); N5 the
+local lights are unchanged (lit > 1e-3, lit / shadow >= 10). Before: **2/6** - the dark region
+received 0.252 of direct light, the sun visibility reached 0 (a CSM was rendered for the phantom
+sun), and the local ratios were 1.4 (spot) and 2.5 (point) because the sun floored every region.
+After: 6/6 (dark region direct light 0.0, sun shadow visibility 1.0 on the whole ground, sky light 0.080 -> 0.004 with the sky sun below the horizon, local lights lit 0.358 / 0.385 with shadow 0.0).
+
+**Literals that became data** (defaults reproduce the previous behaviour; the reference harnesses
+and the Sponza ROIs are unchanged, see the table): `r.Shadow.Local.NormalOffset` (0.005, carried in
+`ShadowDataCB`), `r.Shadow.Local.NearPlane` (1.0 cm for spot and point tiles; spots used 0.1 cm),
+`r.SkyLight.RebakeAngleDeg` / `RebakeIntensityDelta` / `RebakeMinInterval` (0.25 / 0.01 / 30),
+`r.AutoExposure.AdaptationLinearRange` (1.5, 14th root constant), `r.ContactShadow.Length` as a plain
+fraction of the far plane (0.01). **Registered-but-unread CVars wired:** `r.Shadow.AtlasResolution`
+(now default 4096 = the constant it replaces; `ShadowAtlas::GetResolution()` replaces
+`kShadowResolution` at every use), `r.Shadow.LocalAtlasSize` / `LocalTileSize` (read by
+`LocalLightShadowAtlas::Init`, tiles capped at 16), `r.Material.MinGGXAlpha` (published; default
+0.0016 = the 0.04 roughness floor squared) and `r.Material.DielectricF0` (the shader used a literal
+0.08 x specular; now 2 x F0 x specular). The dead `r.ContactShadow.Steps` / `Thickness` registrations
+were removed (the live knobs are `r.Shadow.ContactShadowSteps` / `Thickness`). Full list with the
+before/after of each item: `docs/analysis/hardcoded/01-rendering-defaults.md`, re-audit 2026-10-05.
+
 ## Results table
 
 | Check | Before | After |
@@ -125,4 +161,19 @@ no visible gain on the current scenes; deferred with this plan.
 | Sponza auto exposure (project defaults, frame 120) | 56.5726 / 57.0363 (pre-block-A exe, two runs) | 56.7676 — inside the ±0.8 % run-to-run floor; the value adapts with `dt` and is not converged at frame 120 |
 | `verify_sponza_loading.ps1` | 3/3 | 3/3 |
 | `test_region_capture.py` | 23/23 (merge build) | 23/23 (one 22/23 run while two other captures shared the GPU: contention, not a regression) |
+| `test_no_sun_lighting.py` (A.10) | 2/6 (dark region direct 0.252, sun visibility min 0, local ratios 1.4 / 2.5) | 6/6 (dark region direct light 0.0, sun shadow visibility 1.0 on the whole ground, sky light 0.080 -> 0.004 with the sky sun below the horizon, local lights lit 0.358 / 0.385 with shadow 0.0) |
 | gtests (`*GI*:*Radiance*:*Gdf*:*MeshSdf*:*DistanceField*:*Ddgi*:*Shadow*:*Exposure*:*Light*:TaaJitter.*`) | pass | 381 passed, 0 failed |
+
+### Re-run after A.10 (same build as the commit)
+
+`test_local_light_shadows.py` 6/6, `test_sky_ibl_rebake.py` 3/3, `verify_sponza_loading.ps1` 3/3,
+`test_region_capture.py` 23/23; Sponza Camera C ROI means (S2, rule 0 and rule 3, probe classification
+3 with relocation) equal to the block-A values to within run-to-run float noise (4e-9 relative, the
+same digits that differ between two block-A runs); gtests 438 passed, 1 skipped, 3 failures that
+predate this work (`RenderingParity.HeightFogDefaults_PrimaryLayer` and `_DirectionalInscattering`
+expect the pre-merge fog defaults, `SkyAtmosphereComponent.FallbackSunDiskIntensityIsOne` expects 1.0
+while the component default is 0.1). One `test_region_capture.py` run gave 22/23 on "a 16x exposure
+change does not move the linear records beyond run-to-run noise": that run's repeat pair was
+bit-identical (noise 0) while the exposure pair differed by 1e-3; re-run on both the pre-change and
+the new executable the check reports exposure delta 0 against noise 0.0038 (identical statistics),
+so the failure is the noise-relative threshold of the check, not the records.

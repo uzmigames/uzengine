@@ -245,7 +245,7 @@ struct PerFrameParams {
     float    exposureLowPercent      = 10.0f;          ///< CVar r.Exposure.LowPercent
     float    exposureHighPercent     = 90.0f;          ///< CVar r.Exposure.HighPercent
     float    materialDielectricF0    = 0.04f;          ///< CVar r.Material.DielectricF0
-    float    materialMinGGXAlpha     = 0.0064f;        ///< CVar r.Material.MinGGXAlpha
+    float    materialMinGGXAlpha     = 0.0016f;        ///< CVar r.Material.MinGGXAlpha
 
     // ── Brixelizer GI (AMD FidelityFX) ────────────────────────────────
     /// SRV index for Brixelizer GI diffuse output (RGBA16F). UINT32_MAX = disabled.

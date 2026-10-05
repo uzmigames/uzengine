@@ -168,6 +168,12 @@ struct SkyAtmosphereComponent {
     /// 0.1 = sun disk HDR ~2.0 (visible bright spot, not blown out without bloom).
     float sunDiskIntensity = 0.1f;
 
+    /// Direction TOWARDS the sun used for the sky when no DirectionalLight exists in the world
+    /// (a scene without a sun entity). Scene key `sun_direction` [x, y, z], normalized at use. A
+    /// DirectionalLight's rotation overrides it. Until 2026-10-05 this lived as a hidden default
+    /// in LightFrameData together with a phantom sun colour.
+    Vec3  sunDirection = {0.5f, 0.3f, 0.8f};
+
     // ── Tracing & Aerial Perspective ────────────────────────────────────────
 
     /// @ref Bruneton 2008 "Precomputed Atmospheric Scattering" — trace sample count scale

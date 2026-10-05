@@ -121,7 +121,7 @@ struct PerFrameCB {
 
     /// Screen-space contact shadow ray length. 0.0 = disabled.
     /// Positive = screen-space fraction (0.02 = 2% of depth-scaled screen ray length).
-    float    contactShadowLength = 0.02f;
+    float    contactShadowLength = 0.01f;
 
     uint32_t ssrSrvIndex = UINT32_MAX;             ///< SRV index for resolved SSR texture (UINT32_MAX = no SSR).
 
@@ -232,7 +232,7 @@ struct PerFrameCB {
     float    exposureLowPercent      = 10.0f;          ///< CVar r.Exposure.LowPercent — histogram low percentile.
     float    exposureHighPercent     = 90.0f;          ///< CVar r.Exposure.HighPercent — histogram high percentile.
     float    materialDielectricF0    = 0.04f;          ///< CVar r.Material.DielectricF0 — Fresnel reflectance.
-    float    materialMinGGXAlpha     = 0.0064f;        ///< CVar r.Material.MinGGXAlpha — prevents specular aliasing.
+    float    materialMinGGXAlpha     = 0.0016f;        ///< CVar r.Material.MinGGXAlpha — prevents specular aliasing.
 
     // ── Brixelizer GI (AMD FidelityFX) ────────────────────────────────
     /// SRV index for Brixelizer GI diffuse output (RGBA16F). UINT32_MAX = disabled.
@@ -617,7 +617,8 @@ struct ShadowDataCB {
     uint32_t dfsOutputSrvIndex = UINT32_MAX; ///< SRV index for DFS result texture (R16_FLOAT screen-space). UINT32_MAX = not bound.
     uint32_t localShadowAtlasIndex = UINT32_MAX; ///< SRV heap index for local light shadow atlas. UINT32_MAX = none.
     uint32_t localShadowCount = 0;  ///< Number of active local light shadows (0 to kMaxLocalShadowTiles).
-    float    _pad2[16] = {};        ///< Pad CSM section to 768 bytes.
+    float    localShadowNormalOffset = 0.005f; ///< r.Shadow.Local.NormalOffset (block A.1).
+    float    _pad2[15] = {};        ///< Pad CSM section to 768 bytes.
 
     // ── Local Light Shadow Data (appended after CSM section) ──────────────
     // Up to 16 local light shadows. Each entry stores the light-space viewProj

@@ -68,6 +68,7 @@ UZ_REGISTER_COMPONENT_SERIALIZER(sky_atmosphere, uz::SkyAtmosphereComponent,
         c.sunIlluminance  = uz::json::Vec3FromArray(j, "sun_illuminance", defaults.sunIlluminance);
         c.sunAngularRadius = uz::json::Float(j, "sun_angular_radius", defaults.sunAngularRadius);
         c.sunDiskIntensity = uz::json::Float(j, "sun_disk_intensity", defaults.sunDiskIntensity);
+        c.sunDirection     = uz::json::Vec3FromArray(j, "sun_direction", defaults.sunDirection);
 
         // Deprecated sky light fields
         c.skyLightIntensity = uz::json::Float(j, "sky_light_intensity", defaults.skyLightIntensity);
@@ -123,6 +124,7 @@ UZ_REGISTER_COMPONENT_SERIALIZER(sky_atmosphere, uz::SkyAtmosphereComponent,
         uz::json::WriteVec3(j, "sun_illuminance", c->sunIlluminance);
         j["sun_angular_radius"] = c->sunAngularRadius;
         j["sun_disk_intensity"] = c->sunDiskIntensity;
+        uz::json::WriteVec3(j, "sun_direction", c->sunDirection);
 
         // Deprecated sky light
         j["sky_light_intensity"] = c->skyLightIntensity;

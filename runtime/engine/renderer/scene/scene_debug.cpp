@@ -64,7 +64,7 @@ void SceneRenderer::PerformShadowAtlasReadback(IRHICommandList* cmdList) {
     if (m_shadowReadbackPhase == 0) {
         // Phase 0: Create readback buffer, issue GPU copy.
         // Buffer stays alive — destroyed only in phase 1 after GPU is done.
-        const uint32_t atlasWidth = kShadowResolution * GetAtlasColumns(4);
+        const uint32_t atlasWidth = m_shadowAtlas.GetResolution() * GetAtlasColumns(4);
         const uint32_t rowBytes   = atlasWidth * 4;
         const uint32_t rowPitch   = (rowBytes + 255) & ~255u;
         m_shadowReadbackRowPitch  = rowPitch;
@@ -113,7 +113,8 @@ void SceneRenderer::PerformShadowAtlasReadback(IRHICommandList* cmdList) {
         if (mapped) {
             const float* row0 = reinterpret_cast<const float*>(mapped);
             const uint32_t rowPixels = m_shadowReadbackWidth;
-            const uint32_t halfRes   = kShadowResolution / 2;
+            const uint32_t shadowRes = m_shadowAtlas.GetResolution();
+            const uint32_t halfRes   = shadowRes / 2;
 
             UZ_LOG(Shadow, Info, "=== Shadow Atlas Diagnostic Readback ===");
             UZ_LOG(Shadow, Info, "Atlas: {}x{} D32Float", rowPixels, rowPixels);
@@ -121,11 +122,11 @@ void SceneRenderer::PerformShadowAtlasReadback(IRHICommandList* cmdList) {
                    row0[0],
                    halfRes/2, row0[std::min(halfRes/2, rowPixels-1)],
                    halfRes,   row0[std::min(halfRes, rowPixels-1)],
-                   kShadowResolution-1, row0[std::min(kShadowResolution-1, rowPixels-1)]);
+                   shadowRes-1, row0[std::min(shadowRes-1, rowPixels-1)]);
 
             uint32_t nCleared = 0, nGeom = 0, nZero = 0;
             float minV = 1.0f, maxV = 0.0f;
-            for (uint32_t x = 0; x < std::min(rowPixels, kShadowResolution); ++x) {
+            for (uint32_t x = 0; x < std::min(rowPixels, shadowRes); ++x) {
                 float v = row0[x];
                 if (v >= 0.9999f) ++nCleared;
                 else if (v <= 0.0001f) ++nZero;

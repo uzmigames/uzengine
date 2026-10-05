@@ -760,6 +760,40 @@ static int SceneGetSkySunDiskIntensity(lua_State* L) {
     return 1;
 }
 
+/// uz.scene.set_atmosphere_sun_direction(entity, x, y, z)
+///
+/// Sets the direction TOWARDS the sun the sky uses when no DirectionalLight exists
+/// (scene key `sun_direction`). Normalized at use; a DirectionalLight overrides it.
+static int SceneSetSkySunDirection(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_atmosphere_sun_direction: World not set"); return 0; }
+    const Entity entity = CheckEntity(L, 1, "set_atmosphere_sun_direction");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+    if (!world->HasComponent<SkyAtmosphereComponent>(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.set_atmosphere_sun_direction: entity {} has no SkyAtmosphereComponent", entity.id);
+        return 0;
+    }
+    world->GetComponent<SkyAtmosphereComponent>(entity).sunDirection = {
+        static_cast<float>(luaL_checknumber(L, 2)),
+        static_cast<float>(luaL_checknumber(L, 3)),
+        static_cast<float>(luaL_checknumber(L, 4))};
+    return 0;
+}
+
+/// uz.scene.get_atmosphere_sun_direction(entity) -> x, y, z | nil
+static int SceneGetSkySunDirection(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+    const Entity entity = CheckEntity(L, 1, "get_atmosphere_sun_direction");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+    if (!world->HasComponent<SkyAtmosphereComponent>(entity)) { lua_pushnil(L); return 1; }
+    const Vec3& d = world->GetComponent<SkyAtmosphereComponent>(entity).sunDirection;
+    lua_pushnumber(L, static_cast<double>(d.x));
+    lua_pushnumber(L, static_cast<double>(d.y));
+    lua_pushnumber(L, static_cast<double>(d.z));
+    return 3;
+}
+
 /// uz.scene.set_atmosphere_enabled(entity, enabled)
 ///
 /// Enables or disables the sky atmosphere pass for this entity.
@@ -939,6 +973,8 @@ void LuaRegisterAtmosphereAPI(lua_State* L) {
     lua_pushcfunction(L, SceneGetSkySunAngularRadius);       lua_setfield(L, -2, "get_atmosphere_sun_angular_radius");
     lua_pushcfunction(L, SceneSetSkySunDiskIntensity);       lua_setfield(L, -2, "set_atmosphere_sun_disk_intensity");
     lua_pushcfunction(L, SceneGetSkySunDiskIntensity);       lua_setfield(L, -2, "get_atmosphere_sun_disk_intensity");
+    lua_pushcfunction(L, SceneSetSkySunDirection);           lua_setfield(L, -2, "set_atmosphere_sun_direction");
+    lua_pushcfunction(L, SceneGetSkySunDirection);           lua_setfield(L, -2, "get_atmosphere_sun_direction");
     lua_pushcfunction(L, SceneSetSkyAtmosphereEnabled);      lua_setfield(L, -2, "set_atmosphere_enabled");
 
     // Tracing and aerial perspective properties

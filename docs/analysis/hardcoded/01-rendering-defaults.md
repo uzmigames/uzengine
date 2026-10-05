@@ -80,3 +80,22 @@ Generalize these comments to describe the bug behavior without naming the sample
 | new | `r.IndirectAO.Exponent` default **1.0** (linear AO, reference pipeline); the pre-port Sponza calibration used 3.0 as an artistic choice (`frame_constants.cpp:85-88`). | Neutral default |
 | new | `DirectionalLightComponent::lightSourceAngle` default **0.5357°** (physical sun disc; was 1.2°). Sponza sets `light_source_angle` explicitly; `RenderingParity.DirectionalLightDefaults` asserts the default. | Neutral default |
 | new | The hand-tuned Sponza calibration (materials, sun, HDRI skylight) lives in `sample/reference/sponza-manual-calibration/`; shipped Sponza materials are neutral (multipliers 1.0). | Moved out of engine/content |
+
+## Re-audit 2026-10-05 (lighting block A follow-up: defaults out of the code)
+
+Branch `feat/sponza-gi-parity`. Every value below either moved to data (a component field, a scene
+key) or to a CVar whose default reproduces the previous behaviour; the measurements are in
+`docs/analysis/lighting-block-a-2026-10-05.md` (A.10).
+
+| Item | Before | Now |
+|---|---|---|
+| Phantom sun | `LightFrameData` defaulted to sun direction (0.5, 0.3, 0.8) and colour (3, 2.85, 2.7): every scene without a `DirectionalLightComponent` was lit and CSM-shadowed by a light that exists in no scene file (`light_renderer.h`). | `sunColor` defaults to 0 and `hasDirectionalLight` says whether a sun exists; without one the cascade pass is skipped and `cascadeCount` is 0 (full visibility). The sky keeps a direction from its own data: `SkyAtmosphereComponent::sunDirection`, scene key `sun_direction` (Lua `uz.scene.set_atmosphere_sun_direction`). Guard: `scripts/test_no_sun_lighting.py`. |
+| 1.2 Contact shadow length | `r.ContactShadow.Length = 0.10` meant "fraction of the far plane x 0.1"; the shader also carried the 1 % literal. | `r.ContactShadow.Length` is the fraction of the far plane itself, default **0.01** (the old fixed length), range [0, 0.05]; the dead `r.ContactShadow.Steps` / `r.ContactShadow.Thickness` registrations (never read; the live ones are `r.Shadow.ContactShadowSteps` / `r.Shadow.ContactShadowThickness`) were removed. |
+| 1.5 Skylight | `r.SkyLight.MinAmbient = 0.25` floored every scene. | Default **0** since block A.2 (the component value). |
+| Local shadow bias | Normal offset 0.5 % and the spot near plane 0.1 cm / point near plane 1.0 cm were literals in `deferred_lighting_ps.hlsl` and `frame_constants.cpp`. | `r.Shadow.Local.NormalOffset` (0.005, in `ShadowDataCB`) and `r.Shadow.Local.NearPlane` (1.0 cm for both spot and point tiles; the reference scene measures identically). |
+| Sky IBL re-bake | cos(0.25 deg), 1 % and 30 passes were literals in `atmosphere_renderer.cpp`. | `r.SkyLight.RebakeAngleDeg` 0.25, `r.SkyLight.RebakeIntensityDelta` 0.01, `r.SkyLight.RebakeMinInterval` 30. |
+| Auto exposure | `g_StartDistance = 1.5` (EV gap where adaptation turns linear) was a shader literal. | `r.AutoExposure.AdaptationLinearRange` 1.5, 14th root constant. |
+| CSM atlas resolution | `r.Shadow.AtlasResolution` registered with 2048 and never read; the atlas used the constant 4096. | Read by `ShadowAtlas::Init`, default **4096**; `ShadowAtlas::GetResolution()` feeds the cascade setup, the cache, the inspector and the readback. |
+| Local shadow atlas | `r.Shadow.LocalAtlasSize` / `r.Shadow.LocalTileSize` registered and never read; `kLocalShadow*` constants everywhere. | Read by `LocalLightShadowAtlas::Init` (tiles capped at 16 by the constant buffer); the frame uses the atlas getters. |
+| Material floors | `r.Material.MinGGXAlpha` registered and never published; the shader used `max(roughness, 0.04)`; `r.Material.DielectricF0` published but the shader used the literal `0.08 * specular`. | `materialMinGGXAlpha` published (default **0.0016** = 0.04 squared, so the floor is unchanged) and `roughness = max(r, sqrt(materialMinGGXAlpha))`; `dielectricF0 = 2 * materialDielectricF0 * specular`. |
+| Still in code (deliberately) | `SceneLighting` (`scene_lighting.h`) keeps the old sun defaults but nothing in the renderer reads it; `kShadowResolution` / `kLocalShadow*` remain as the CVar defaults; GI probe constants belong to the flicker programme. | - |

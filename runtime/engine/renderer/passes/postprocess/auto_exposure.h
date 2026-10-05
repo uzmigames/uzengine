@@ -48,7 +48,7 @@ class ShaderManager;
 
 /// Auto-exposure parameters (Eye Adaptation defaults).
 ///
-/// Dynamic per-frame parameters are passed via root constants (13 DWORDs of the 16 the
+/// Dynamic per-frame parameters are passed via root constants (14 DWORDs of the 16 the
 /// signature provides). Adaptation speeds, percentile bounds and the mid-grey target were
 /// hardcoded in the average shader until 2026-10-05 while CVars for them were registered and
 /// never read (block A.8); they are root constants now.
@@ -64,6 +64,7 @@ struct AutoExposureSettings {
     float speedDown      = 1.0f;   ///< Dark adaptation speed (EV/s).
     float lowPercent     = 10.0f;  ///< Histogram percentile that starts the average.
     float highPercent    = 90.0f;  ///< Histogram percentile that ends the average.
+    float adaptationLinearRange = 1.5f; ///< EV gap above which adaptation runs linearly instead of exponentially.
     bool  enabled        = true;   ///< Master toggle.
 };
 
@@ -106,10 +107,11 @@ struct AverageRootConstants {
     float    speedDown;        ///< EV/s towards darker (r.AutoExposure.SpeedDown).
     float    lowPercent;       ///< Average window start, percent of pixels.
     float    highPercent;      ///< Average window end, percent of pixels.
+    float    adaptationLinearRange; ///< EV gap above which adaptation is linear (r.AutoExposure.AdaptationLinearRange).
 };
 
-static_assert(sizeof(AverageRootConstants) == 52,
-    "AverageRootConstants must be 13 DWORDs (root constant budget 16)");
+static_assert(sizeof(AverageRootConstants) == 56,
+    "AverageRootConstants must be 14 DWORDs (root constant budget 16)");
 
 /// GPU auto-exposure system.
 ///

@@ -54,8 +54,8 @@ float ComputeContactShadow(
     float2 startUV = (startCS.xy / startCS.w) * 0.5 + 0.5;
     startUV.y = 1.0 - startUV.y;
 
-    // Step along light direction in world space. The length was fixed at 1 % of the far plane
-    // until 2026-10-05; r.ContactShadow.Length now scales it (0.10 = the old value).
+    // Step along light direction in world space: r.ContactShadow.Length x far plane
+    // (0.01 = the 1 % that was fixed here until 2026-10-05).
     float stepWorldDist = rayLength;
     float3 endWorldPos = worldPos + lightDir * stepWorldDist;
     float4 endCS = mul(float4(endWorldPos, 1.0), viewProjMat);

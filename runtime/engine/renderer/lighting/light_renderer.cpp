@@ -8,6 +8,7 @@
 #include "world.h"
 #include "light_component.h"
 #include "scene_component.h"
+#include "sky_atmosphere_component.h"
 #include "color_utils.h"
 
 #include <algorithm>
@@ -58,6 +59,7 @@ LightFrameData ExtractLightingFromECS(
                 dirCol = dirCol * KelvinToRgb(dirLight.temperature);
             }
             result.sunColor = dirCol * dirLight.intensity;
+            result.hasDirectionalLight = true;
 
             result.perLightShadowBias      = dirLight.shadowBias;
             result.perLightShadowSlopeBias = dirLight.shadowSlopeBias;
@@ -67,6 +69,17 @@ LightFrameData ExtractLightingFromECS(
             result.dynamicShadowDistance     = dirLight.dynamicShadowDistance;
             result.farShadowLodBias        = dirLight.farShadowLodBias;
             break;
+        }
+        if (!result.hasDirectionalLight) {
+            // No sun: the sky atmosphere still needs a sun direction for its own disc and
+            // scattering, and it owns that value (scene key `sun_direction`). The light itself
+            // stays zero and the cascade pass is skipped (frame_shadows.cpp).
+            auto skyView = world->GetRegistry().view<SkyAtmosphereComponent>();
+            for (auto skyEntity : skyView) {
+                const Vec3 d = skyView.get<SkyAtmosphereComponent>(skyEntity).sunDirection;
+                if (d.lengthSq() > 1e-8f) result.sunDir = d.Normalized();
+                break;
+            }
         }
     }
 

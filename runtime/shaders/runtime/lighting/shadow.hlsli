@@ -43,7 +43,9 @@ cbuffer ShadowDataCB : register(b4) {
     uint   dfsOutputSrvIndex;
     uint   localShadowAtlasIndex;
     uint   localShadowCount;
-    float4 _shadowPad[4];                      // pad to 768
+    float  localShadowNormalOffset;            // r.Shadow.Local.NormalOffset (fraction of the distance)
+    float3 _shadowPad0;
+    float4 _shadowPad[3];                      // pad to 768
     // 16 entries x 6 float4: [0..3] viewProj rows, [4] (atlasOffsetX, atlasOffsetY, atlasScale,
     // bias cm), [5] (light position xyz, radius). Tiles store distance / radius.
     float4 localShadowRaw[96];                 // 1536B

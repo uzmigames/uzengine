@@ -50,7 +50,9 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
     // (backward compatible behavior).
     //
     // EShadowDepthCacheMode — determines static vs dynamic shadow rendering
-    if (!m_meshes.empty()) {
+    // No directional light: no cascades to render (the lighting shader reads cascadeCount 0 and
+    // the sun colour is zero). Local light shadows below do not depend on the sun.
+    if (!m_meshes.empty() && ctx.lightData.hasDirectionalLight) {
         // Use the shadow cache status computed earlier (before SetupShadowFrame).
         const bool shadowCacheActive = ctx.shadowCacheEnabled;
 
@@ -68,7 +70,7 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
             for (uint32_t i = 0; i < totalCascadeCount; ++i) {
                 cascadeModes[i] = m_shadowCacheManager.UpdateCache(
                     lightId, i, cascades[i], ctx.sunDir, lightUp,
-                    kShadowResolution, ctx.frameIndex);
+                    m_shadowAtlas.GetResolution(), ctx.frameIndex);
                 if (cascadeModes[i] == ShadowCacheMode::StaticPrimitivesOnly
                     || cascadeModes[i] == ShadowCacheMode::Uncached) {
                     needStaticRerender = true;
@@ -91,7 +93,7 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
                 desc.cascades[ci] = cascades[ci];
             }
             desc.cascadeCount     = totalCascadeCount;
-            desc.atlasResolution  = kShadowResolution;
+            desc.atlasResolution  = m_shadowAtlas.GetResolution();
             desc.farShadowLodBias = ctx.shadowFrame.config.farShadowLodBias;
         };
 
@@ -355,11 +357,11 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
         };
         std::vector<LocalTileData> tileData(totalLocalShadowEntries);
         for (uint32_t si = 0; si < totalLocalShadowEntries; ++si) {
-            const uint32_t col = si % kLocalShadowTileCols;
-            const uint32_t row = si / kLocalShadowTileCols;
-            tileData[si].viewportX    = col * kLocalShadowTileSize;
-            tileData[si].viewportY    = row * kLocalShadowTileSize;
-            tileData[si].viewportSize = kLocalShadowTileSize;
+            const uint32_t col = si % m_localShadowAtlas.GetColumns();
+            const uint32_t row = si / m_localShadowAtlas.GetColumns();
+            tileData[si].viewportX    = col * m_localShadowAtlas.GetTileSize();
+            tileData[si].viewportY    = row * m_localShadowAtlas.GetTileSize();
+            tileData[si].viewportSize = m_localShadowAtlas.GetTileSize();
             tileData[si].viewProj     = shadowCBData->localShadows[si].viewProj;
             tileData[si].lightPosX    = shadowCBData->localShadows[si].lightPosX;
             tileData[si].lightPosY    = shadowCBData->localShadows[si].lightPosY;

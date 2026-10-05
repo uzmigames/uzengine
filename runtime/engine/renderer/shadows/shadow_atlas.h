@@ -21,7 +21,8 @@ class IRHIDevice;
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Per-cascade shadow map resolution in texels (width = height).
+/// Default per-cascade shadow map resolution in texels (width = height); the runtime value is
+/// `r.Shadow.AtlasResolution`, read in ShadowAtlas::Init and exposed by GetResolution().
 static constexpr uint32_t kShadowResolution = 4096;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -80,8 +81,8 @@ public:
     /// Returns the SRV heap index for shader sampling.
     [[nodiscard]] uint32_t GetSrvIndex() const { return m_srvIndex; }
 
-    /// Returns the per-cascade resolution in texels.
-    [[nodiscard]] static constexpr uint32_t GetResolution() { return kShadowResolution; }
+    /// Returns the per-cascade resolution in texels (r.Shadow.AtlasResolution at Init).
+    [[nodiscard]] uint32_t GetResolution() const { return m_resolution; }
 
     /// Returns the cascade count the atlas was created for.
     [[nodiscard]] uint32_t GetCascadeCount() const { return m_cascadeCount; }
@@ -90,6 +91,7 @@ private:
     RHITextureHandle m_texture;
     uint32_t m_srvIndex = UINT32_MAX;
     uint32_t m_cascadeCount = 0;
+    uint32_t m_resolution = kShadowResolution;
 };
 
 } // namespace uz

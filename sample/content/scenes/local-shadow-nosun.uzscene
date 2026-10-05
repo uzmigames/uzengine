@@ -1,0 +1,61 @@
+{
+  "name": "Local light shadow reference, no sun entity",
+  "version": "1.0",
+  "cvars": {
+    "r.AutoExposure": 0,
+    "r.Exposure": 1,
+    "r.GTAO": 0,
+    "r.RadianceCache": 0,
+    "r.GI.FinalGather": 0,
+    "r.GI.Reflections": 0,
+    "r.SSGI": 0,
+    "r.TAA": 1
+  },
+  "entities": [
+    {
+      "name": "Camera",
+      "components": {
+        "transform": { "position": [350.0, -300.0, 1400.0], "rotation": [0, 0, 0], "scale": [1, 1, 1] },
+        "camera": { "fov": 80.0, "near": 5, "far": 10000, "active": true, "look_at": [330.0, 100.0, 0.0] }
+      }
+    },
+    {
+      "name": "Sky",
+      "components": {
+        "transform": { "position": [0, 0, 0] },
+        "sky_atmosphere": { "sun_illuminance": [1.0, 1.0, 1.0] }
+      }
+    },
+    {
+      "name": "SkyLight",
+      "components": {
+        "transform": { "position": [0, 0, 0] },
+        "sky_light": { "intensity": 0.05, "light_color": [1, 1, 1], "indirect_lighting_intensity": 1.0, "min_occlusion": 0.0, "lower_hemisphere_is_black": true }
+      }
+    },
+    {
+      "name": "Spot",
+      "components": {
+        "transform": { "position": [300.0, 0.0, 900.0], "rotation": [90.0, 0.0, 0.0], "scale": [1, 1, 1] },
+        "light": { "type": "spot", "color": [1, 1, 1], "intensity": 4000000.0, "range": 1400.0, "innerAngle": 10.0, "outerAngle": 15.0, "castShadows": true, "shadowBias": 2.0 }
+      }
+    },
+    {
+      "name": "Point",
+      "components": {
+        "transform": { "position": [280.0, 380.0, 200.0], "rotation": [0, 0, 0], "scale": [1, 1, 1] },
+        "light": { "type": "point", "color": [1, 1, 1], "intensity": 400000.0, "range": 330.0, "castShadows": true, "shadowBias": 2.0 }
+      }
+    },
+    { "name": "Ground00", "components": { "transform": { "position": [0,0,0], "rotation": [0,0,0], "scale": [1,1,1] }, "mesh": { "asset": "meshes/reference/solid_ground00.uzmesh" }, "material": { "baseColorR": 0.5, "baseColorG": 0.5, "baseColorB": 0.5, "roughnessMultiplier": 1.0, "metallicMultiplier": 0.0 } } },
+    { "name": "Ground01", "components": { "transform": { "position": [0,0,0], "rotation": [0,0,0], "scale": [1,1,1] }, "mesh": { "asset": "meshes/reference/solid_ground01.uzmesh" }, "material": { "baseColorR": 0.5, "baseColorG": 0.5, "baseColorB": 0.5, "roughnessMultiplier": 1.0, "metallicMultiplier": 0.0 } } },
+    { "name": "Ground02", "components": { "transform": { "position": [0,0,0], "rotation": [0,0,0], "scale": [1,1,1] }, "mesh": { "asset": "meshes/reference/solid_ground02.uzmesh" }, "material": { "baseColorR": 0.5, "baseColorG": 0.5, "baseColorB": 0.5, "roughnessMultiplier": 1.0, "metallicMultiplier": 0.0 } } },
+    { "name": "Ground10", "components": { "transform": { "position": [0,0,0], "rotation": [0,0,0], "scale": [1,1,1] }, "mesh": { "asset": "meshes/reference/solid_ground10.uzmesh" }, "material": { "baseColorR": 0.5, "baseColorG": 0.5, "baseColorB": 0.5, "roughnessMultiplier": 1.0, "metallicMultiplier": 0.0 } } },
+    { "name": "Ground11", "components": { "transform": { "position": [0,0,0], "rotation": [0,0,0], "scale": [1,1,1] }, "mesh": { "asset": "meshes/reference/solid_ground11.uzmesh" }, "material": { "baseColorR": 0.5, "baseColorG": 0.5, "baseColorB": 0.5, "roughnessMultiplier": 1.0, "metallicMultiplier": 0.0 } } },
+    { "name": "Ground12", "components": { "transform": { "position": [0,0,0], "rotation": [0,0,0], "scale": [1,1,1] }, "mesh": { "asset": "meshes/reference/solid_ground12.uzmesh" }, "material": { "baseColorR": 0.5, "baseColorG": 0.5, "baseColorB": 0.5, "roughnessMultiplier": 1.0, "metallicMultiplier": 0.0 } } },
+    { "name": "Ground20", "components": { "transform": { "position": [0,0,0], "rotation": [0,0,0], "scale": [1,1,1] }, "mesh": { "asset": "meshes/reference/solid_ground20.uzmesh" }, "material": { "baseColorR": 0.5, "baseColorG": 0.5, "baseColorB": 0.5, "roughnessMultiplier": 1.0, "metallicMultiplier": 0.0 } } },
+    { "name": "Ground21", "components": { "transform": { "position": [0,0,0], "rotation": [0,0,0], "scale": [1,1,1] }, "mesh": { "asset": "meshes/reference/solid_ground21.uzmesh" }, "material": { "baseColorR": 0.5, "baseColorG": 0.5, "baseColorB": 0.5, "roughnessMultiplier": 1.0, "metallicMultiplier": 0.0 } } },
+    { "name": "Ground22", "components": { "transform": { "position": [0,0,0], "rotation": [0,0,0], "scale": [1,1,1] }, "mesh": { "asset": "meshes/reference/solid_ground22.uzmesh" }, "material": { "baseColorR": 0.5, "baseColorG": 0.5, "baseColorB": 0.5, "roughnessMultiplier": 1.0, "metallicMultiplier": 0.0 } } },
+    { "name": "Wall", "components": { "transform": { "position": [0,0,0], "rotation": [0,0,0], "scale": [1,1,1] }, "mesh": { "asset": "meshes/reference/solid_near_out_east.uzmesh" }, "material": { "baseColorR": 0.5, "baseColorG": 0.5, "baseColorB": 0.5, "roughnessMultiplier": 1.0, "metallicMultiplier": 0.0 } } }
+  ]
+}

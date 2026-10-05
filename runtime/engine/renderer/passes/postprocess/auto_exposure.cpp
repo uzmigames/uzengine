@@ -36,6 +36,7 @@ static auto* cv_AutoExpLogLumMin     = UZ_CVAR_FLOAT("r.AutoExposure.LogLuminanc
 static auto* cv_AutoExpLogLumMax     = UZ_CVAR_FLOAT("r.AutoExposure.LogLuminanceMax", 20.0f, "Histogram log2 luminance max", 0.f, 40.f);
 static auto* cv_AutoExpSpeedUp       = UZ_CVAR_FLOAT("r.AutoExposure.SpeedUp", 3.0f, "Bright adaptation speed (EV/s)", 0.1f, 20.f);
 static auto* cv_AutoExpSpeedDown     = UZ_CVAR_FLOAT("r.AutoExposure.SpeedDown", 1.0f, "Dark adaptation speed (EV/s)", 0.1f, 20.f);
+static auto* cv_AutoExpLinearRange   = UZ_CVAR_FLOAT("r.AutoExposure.AdaptationLinearRange", 1.5f, "EV gap above which adaptation proceeds linearly at the speed (below it, exponentially)", 0.1f, 10.f);
 
 namespace uz {
 
@@ -373,6 +374,7 @@ float AutoExposure::Execute(IRHICommandList* cmdList, uint32_t hdrSrvIndex,
     settings.midGray       = cv_AutoExpMidGray->value;
     settings.speedUp       = cv_AutoExpSpeedUp->value;
     settings.speedDown     = cv_AutoExpSpeedDown->value;
+    settings.adaptationLinearRange = cv_AutoExpLinearRange->value;
 
     // ── Bypass paths (no GPU work) ──────────────────────────────────────
 
@@ -488,6 +490,7 @@ float AutoExposure::Execute(IRHICommandList* cmdList, uint32_t hdrSrvIndex,
         rc.speedDown       = settings.speedDown;
         rc.lowPercent      = settings.lowPercent;
         rc.highPercent     = settings.highPercent;
+        rc.adaptationLinearRange = settings.adaptationLinearRange;
 
         // Dump average root constants on first frame
         static bool loggedAverageConstants = false;
@@ -501,7 +504,7 @@ float AutoExposure::Execute(IRHICommandList* cmdList, uint32_t hdrSrvIndex,
             loggedAverageConstants = true;
         }
 
-        cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 13);
+        cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 14);
 
         // Bind exposure UAV at root param 4 (u0 descriptor table)
         cmdList->SetDescriptorTable(4, m_exposureUavIndex);

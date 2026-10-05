@@ -43,7 +43,12 @@ static auto* cv_SkyLightIndirectIntensity = UZ_CVAR_FLOAT("r.SkyLight.IndirectIn
 // shadows at object/floor intersections without the GTAO over-occlusion bug.
 // 0.10 ≈ 10% of view depth — strong enough for column/floor contact in
 // large interiors like Sponza without leaking onto distant geometry.
-static auto* cv_ContactShadowLen   = UZ_CVAR_FLOAT("r.ContactShadow.Length", 0.10f, "Contact shadow ray length as a fraction of the far plane x 0.1 (0.10 = 1 % of far, the pre-2026-10-05 fixed value); 0 disables", 0.f, 0.2f);
+static auto* cv_ContactShadowLen   = UZ_CVAR_FLOAT("r.ContactShadow.Length", 0.01f, "Contact shadow ray length as a fraction of the far plane (0.01 = the length that was fixed in the shader until 2026-10-05); 0 disables", 0.f, 0.05f);
+// Local (spot / point) shadow tiles, block A.1: receivers are pushed along the geometric normal by
+// this fraction of their distance to the light before the comparison; the tiles are rendered with
+// this near plane (cm). Both were literals in the shader / this file until 2026-10-05.
+static auto* cv_LocalShadowNormalOffset = UZ_CVAR_FLOAT("r.Shadow.Local.NormalOffset", 0.005f, "Local light shadows: receiver offset along the geometric normal, as a fraction of the distance to the light", 0.f, 0.05f);
+static auto* cv_LocalShadowNearPlane    = UZ_CVAR_FLOAT("r.Shadow.Local.NearPlane", 1.0f, "Local light shadow tiles: near plane in cm (spot tiles used 0.1 until 2026-10-05)", 0.01f, 50.f);
 static auto* cv_FilmGrain          = UZ_CVAR_FLOAT("r.FilmGrain", 0.f, "Film grain intensity", 0.f, 1.f);
 static auto* cv_GIFreezeSeed      = UZ_CVAR_INT("r.GI.Reflections.FreezeSeed", -1,
     "Diagnostic (followup-12): freezes the per-frame sampling seed of the SDF reflections and the\n"
@@ -98,7 +103,7 @@ static auto* cv_MaterialNormalMap     = UZ_CVAR_BOOL("r.Material.NormalMap", tru
 static auto* cv_MaterialAOMap         = UZ_CVAR_BOOL("r.Material.AOMap", true,
     "Diagnostic: 0 = write material AO = 1 to the G-Buffer, ignoring AO/ORM textures and graph AO");
 static auto* cv_MaterialDielectricF0  = UZ_CVAR_FLOAT("r.Material.DielectricF0", 0.04f, "Dielectric Fresnel F0 reflectance", 0.01f, 0.08f);
-static auto* cv_MaterialMinGGXAlpha   = UZ_CVAR_FLOAT("r.Material.MinGGXAlpha", 0.0064f, "Min GGX alpha (prevents aliasing)", 0.001f, 0.01f);
+static auto* cv_MaterialMinGGXAlpha   = UZ_CVAR_FLOAT("r.Material.MinGGXAlpha", 0.0016f, "Min GGX alpha = min roughness squared (0.0016 = the 0.04 roughness floor the shader had hardcoded until 2026-10-05)", 0.0001f, 0.01f);
 /// Manual exposure multiplier. Applied on top of auto-exposure when active,
 /// or used as the sole exposure when auto-exposure is inactive.
 /// @ref UE5 default: pow(2, AutoExposureBias=1.0) = 2.0. For UzEngine's
@@ -992,7 +997,7 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
             camera, ctx.sunDir,
             ctx.lightData.perLightShadowBias, ctx.lightData.perLightShadowSlopeBias,
             ctx.lightData.lightSourceAngleDeg,
-            m_shadowAtlas.GetSrvIndex(), kShadowResolution, *m_cbRing,
+            m_shadowAtlas.GetSrvIndex(), m_shadowAtlas.GetResolution(), *m_cbRing,
             ctx.lightData.dynamicShadowDistance,
             ctx.lightData.farShadowCascadeCount,
             ctx.lightData.farShadowDistance,
@@ -1018,6 +1023,14 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
         ctx.shadowFrame.totalCascadeCount = m_prevShadowCB.cascadeCount;
         ctx.shadowFrame.cbAllocation = ctx.shadowAlloc;
         m_cbUpdatesSkipped++;
+    }
+    if (!ctx.lightData.hasDirectionalLight) {
+        // No directional light: no cascades. shadow.hlsli returns full visibility for
+        // cascadeCount 0 and frame_shadows.cpp skips the cascade pass; the local-light
+        // entries below do not depend on the sun.
+        reinterpret_cast<ShadowDataCB*>(ctx.shadowAlloc.cpuPtr)->cascadeCount = 0;
+        ctx.totalCascadeCount             = 0;
+        ctx.shadowFrame.totalCascadeCount = 0;
     }
 
     // ── Build ShadowDataParams for binder path ──────────────────────────
@@ -1081,7 +1094,7 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
             // Near = 0.1 cm (reference MinLightW), Far = radius (attenuation distance).
             // Near = 0.1 cm (minimum shadow near plane), Far = radius (light range).
             const float fovY     = 2.0f * spotShadow.outerAngle;
-            const float nearZ    = 0.1f;
+            const float nearZ    = cv_LocalShadowNearPlane->value;
             const float farZ     = spotShadow.radius;
 
             // Build view matrix (lookAt from spot position along spot direction).
@@ -1152,7 +1165,7 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
         static constexpr float kCubeFovDeg = 90.0f;
         // Near plane for point light shadows (1.0 cm).
         // 1.0 cm near plane prevents self-intersection at light origin.
-        static constexpr float kPointShadowNear = 1.0f;
+        const float kPointShadowNear = cv_LocalShadowNearPlane->value;
 
         for (uint32_t pi = 0; pi < ctx.lightData.pointShadowCount; ++pi) {
             const PointLightShadowInfo& ptShadow = ctx.lightData.pointShadows[pi];
@@ -1211,6 +1224,8 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
 
         shadowCBPtr->localShadowCount = totalLocalShadowEntries;
         ctx.shadowDataParams.localShadowCount = totalLocalShadowEntries;
+        shadowCBPtr->localShadowNormalOffset = cv_LocalShadowNormalOffset->value;
+        ctx.shadowDataParams.localShadowNormalOffset = cv_LocalShadowNormalOffset->value;
 
         static bool loggedLocalShadowOnce = false;
         if (!loggedLocalShadowOnce) {
@@ -1222,8 +1237,12 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
         }
     }
 
-    // Resize shadow atlas if cascade count changed (e.g., far shadows toggled)
-    m_shadowAtlas.Resize(m_device, ctx.totalCascadeCount);
+    // Resize shadow atlas if cascade count changed (e.g., far shadows toggled). With no
+    // directional light there are no cascades (cascadeCount 0): keep the atlas as it is, the
+    // frame still imports it and a 0-cascade atlas would be an invalid texture.
+    if (ctx.totalCascadeCount > 0) {
+        m_shadowAtlas.Resize(m_device, ctx.totalCascadeCount);
+    }
 }
 
 } // namespace uz

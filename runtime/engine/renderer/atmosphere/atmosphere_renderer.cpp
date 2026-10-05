@@ -35,6 +35,10 @@ UZ_DECLARE_LOG_CATEGORY(Renderer);
 // ── CVars ────────────────────────────────────────────────────────────────
 // r.AerialPerspective is registered once, in frame_constants.cpp (default false). A second
 // registration here with default true made the effective default depend on static-init order.
+// Sky IBL re-bake (block A.5): what counts as a change of the sun, and how often a bake may run.
+static auto* cv_SkyRebakeAngleDeg  = UZ_CVAR_FLOAT("r.SkyLight.RebakeAngleDeg", 0.25f, "Re-bake the sky IBL when the sun direction moved by more than this (degrees)", 0.01f, 30.f);
+static auto* cv_SkyRebakeIntensity = UZ_CVAR_FLOAT("r.SkyLight.RebakeIntensityDelta", 0.01f, "Re-bake the sky IBL when the sky sun colour changed by more than this (relative)", 0.001f, 1.f);
+static auto* cv_SkyRebakeInterval  = UZ_CVAR_INT("r.SkyLight.RebakeMinInterval", 30, "Minimum sky passes between two IBL bakes (each bake stalls on WaitIdle)", 1, 3600);
 static auto* cv_ScatteringLut = UZ_CVAR_BOOL("r.ScatteringLut", false, "Use Bruneton 3D scattering LUT for sky (experimental)");
 
 namespace uz {
@@ -183,9 +187,10 @@ void AddAtmospherePasses(
         // The capture below and PostFrameAtmosphereBake() run only while *skyIBLDirty, which
         // used to be set once at construction: a moving sun kept the SH and prefiltered maps
         // of the first frame forever. Compare the sun direction, the sky sun colour and the
-        // angular radius with what the IBL was baked from; a change above 0.25 degrees / 1 %
-        // marks it dirty, at most once per 30 passes (each bake stalls on WaitIdle plus an SH
-        // readback — an asynchronous bake is the follow-up, not this).
+        // angular radius with what the IBL was baked from; a change above r.SkyLight.RebakeAngleDeg
+        // / r.SkyLight.RebakeIntensityDelta marks it dirty, at most once per
+        // r.SkyLight.RebakeMinInterval passes (each bake stalls on WaitIdle plus an SH readback —
+        // an asynchronous bake is the follow-up, not this).
         if (ctx.skyBakeSignature != nullptr) {
             float* sig = ctx.skyBakeSignature;
             const float now[7] = {sunDir.x, sunDir.y, sunDir.z,
@@ -200,10 +205,11 @@ void AddAtmospherePasses(
                 for (int i = 3; i < 6; ++i) {
                     colorRel = std::max(colorRel, std::abs(now[i] - sig[i]) / std::max(std::abs(sig[i]), 1e-3f));
                 }
-                const bool changed = dirDot < 0.99999048f                       // cos(0.25 deg)
-                                  || colorRel > 0.01f
+                const float cosAngle = std::cos(cv_SkyRebakeAngleDeg->value * 3.14159265358979323846f / 180.f);
+                const bool changed = dirDot < cosAngle
+                                  || colorRel > cv_SkyRebakeIntensity->value
                                   || std::abs(now[6] - sig[6]) > 1e-4f;
-                if (changed && sig[7] >= 30.0f && !ctx.hdriActive) {
+                if (changed && sig[7] >= static_cast<float>(cv_SkyRebakeInterval->value) && !ctx.hdriActive) {
                     *ctx.skyIBLDirty = true;
                     for (int i = 0; i < 7; ++i) sig[i] = now[i];
                     sig[7] = 0.0f;
