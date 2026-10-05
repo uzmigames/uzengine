@@ -1,5 +1,10 @@
 """followup-13: does the recentre change the field itself, at points that stay inside the clipmap?
 
+Since 2026-10-05 (block B.2, toroidal clipmap storage) the engine compares, on every recentre, the
+field written by the slab recompose with a full recompose of the same window on the next frame
+(texel by texel, the whole volume is the "overlap"); IDENTICAL then means the incremental path
+produces the field the full recompose would. The log line format and this reader are unchanged.
+
 A recentre of clipmap 0 re-composites it at a centre snapped to the voxel lattice AND moves the origin
 everything samples with. The phase sweep (H-40) could not separate those two. This looks at the field
 alone, with `r.GI.GDF.Diagnostic.FieldCompare=1`: on every recentre the engine reads the raw R16F

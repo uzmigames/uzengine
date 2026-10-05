@@ -5,7 +5,10 @@
 #include <cstring>
 #include <random>
 using uint = uint32_t;
-struct uint3 { uint x,y,z; };
+struct uint3 { uint x,y,z; uint3():x(0),y(0),z(0){} uint3(uint a,uint b,uint c):x(a),y(b),z(c){} };
+uint3 operator+(uint3 a,uint3 b){return {a.x+b.x,a.y+b.y,a.z+b.z};}
+uint3 operator%(uint3 a,uint b){return {a.x%b,a.y%b,a.z%b};}
+bool operator>=(uint3 a,uint3 b){return a.x>=b.x||a.y>=b.y||a.z>=b.z;}
 struct float3 {
     float x,y,z;
     float3(float v=0):x(v),y(v),z(v){}
@@ -42,6 +45,7 @@ float rawValue=123;
 struct ExpandedOutput { float4& operator[](uint3){return expandedValue;} };
 struct RawOutput { float& operator[](uint3){return rawValue;} };
 uint outputUav=0,rawOutputUav=1,meshCount=0,accumulate=0,resolution=1;
+uint regionOrigin=0,regionSize=(1u|(1u<<9)|(1u<<18)),windowOrigin=0;   // one voxel, texel 0 (block B.2 region constants)
 float3 clipmapCenter;
 float clipmapExtent=1;
 int linearClamp=0;

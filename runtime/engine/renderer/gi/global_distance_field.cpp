@@ -57,6 +57,10 @@ static float GdfHalfToFloat(uint16_t h) {
     return f;
 }
 
+// Block B.2: clipmaps are stored toroidally (world voxel k in texel k mod resolution), so a
+// recentre only recomposes the slabs that entered the window. 0 = recompose the whole window
+// on every recentre (the pre-2026-10-05 cost; the storage layout is the same either way).
+static auto* cv_GdfIncremental = UZ_CVAR_BOOL("r.GI.GDF.Incremental", true, "Global distance field: recompose only the entering slabs on a recentre (0 = whole window)");
 static auto* cv_GdfResolution = UZ_CVAR_INT("r.GI.GDF.Resolution", 64,
     "Voxels per clipmap axis (requires scene reload)", 32, 256);
 
@@ -193,11 +197,15 @@ void GlobalDistanceField::Update(const Vec3& cameraPos) {
         // Re-center when camera moves more than half a voxel from the current center.
         // The diagnostic phase offset shifts the snapping grid, so the same camera path crosses a
         // boundary at different frames (followup-13 item 1.5).
+        // The window centre is always a whole number of voxels: toroidal storage (block B.2)
+        // addresses texels by the world voxel index, so the voxel grid itself never moves. The
+        // diagnostic phase offset therefore shifts WHEN a boundary is crossed (the event frames
+        // still move with it, which is what followup-13 used it for), no longer the grid.
         const float phase = m_centrePhaseOffsetCm;
         Vec3 snappedCenter;
-        snappedCenter.x = std::floor((cameraPos.x + phase) / voxelSize) * voxelSize - phase;
-        snappedCenter.y = std::floor((cameraPos.y + phase) / voxelSize) * voxelSize - phase;
-        snappedCenter.z = std::floor((cameraPos.z + phase) / voxelSize) * voxelSize - phase;
+        snappedCenter.x = std::floor((cameraPos.x + phase) / voxelSize) * voxelSize;
+        snappedCenter.y = std::floor((cameraPos.y + phase) / voxelSize) * voxelSize;
+        snappedCenter.z = std::floor((cameraPos.z + phase) / voxelSize) * voxelSize;
 
         // Check if the center changed (moved by at least one voxel)
         const float dx = std::abs(snappedCenter.x - clip.center.x);
@@ -207,6 +215,12 @@ void GlobalDistanceField::Update(const Vec3& cameraPos) {
         if (!m_centreFrozen && (dx >= voxelSize || dy >= voxelSize || dz >= voxelSize)) {
             clip.prevCenter = clip.center;
             clip.recentred  = true;
+            // Whole voxels the window moved, accumulated until the composite consumes them
+            // (Update may run twice per frame). Both centres are voxel multiples, so lround
+            // absorbs the float error.
+            clip.shift[0] += static_cast<int32_t>(std::lround((snappedCenter.x - clip.center.x) / voxelSize));
+            clip.shift[1] += static_cast<int32_t>(std::lround((snappedCenter.y - clip.center.y) / voxelSize));
+            clip.shift[2] += static_cast<int32_t>(std::lround((snappedCenter.z - clip.center.z) / voxelSize));
             clip.center = snappedCenter;
             clip.dirty  = true;
         }
@@ -296,8 +310,18 @@ void GlobalDistanceField::CompositeFromMeshSDFs(
     m_meshEntries = gpuMeshes;
     m_meshEntriesHash = meshHash ^ (static_cast<uint64_t>(meshCount) * 0x9E3779B97F4A7C15ull);
     bool needsComposite = false;
+    const bool sceneChanged = meshHash != m_meshDataHash || meshCount != m_meshDataCount;
+    if (m_fieldComparePending && m_fieldBeforeCopied) {
+        // Field-compare diagnostic: the slab snapshot was taken last frame; recompose the whole
+        // window now so the two can be compared (the dirty flag set with the snapshot is cleared
+        // at the end of that composite, so it is re-asserted here).
+        m_clipmaps[m_fieldCascade].dirty = true;
+        m_clipmaps[m_fieldCascade].full  = true;
+    }
+    m_incremental = cv_GdfIncremental->value != 0.0f;
     for (auto& clip : m_clipmaps) {
-        clip.dirty |= meshHash != m_meshDataHash || meshCount != m_meshDataCount;
+        if (sceneChanged) clip.full = true;   // the instances changed: every voxel may change
+        clip.dirty |= sceneChanged;
         needsComposite |= clip.dirty;
     }
     if (!needsComposite) return;
@@ -329,8 +353,9 @@ void GlobalDistanceField::CompositeFromMeshSDFs(
         toUav.stateAfter  = RHIResourceState::UnorderedAccess;
         RHIBarrierDesc initialBarriers[2] = {toUav, toUav};
         initialBarriers[1].texture = clip.rawTexture;
-        // Diagnostic (followup-13): the field BEFORE the recomposite, while it still holds the old
-        // centre's values. Only clipmap 0, only on a recentre, only once at a time.
+        // Diagnostic (followup-13, block B.2 gate G1): on a recentre, the slab recompose of this
+        // frame is copied out and a full recompose of the same window is scheduled for the next
+        // frame; the two must be identical. Only the selected cascade, only once at a time.
         const uint32_t compareCascade = static_cast<uint32_t>(
             std::clamp(static_cast<int>(cv_GdfFieldCompareCascade->value), 0, static_cast<int>(kNumClipmaps) - 1));
         const bool fieldCompareHere = cv_GdfFieldCompare->value != 0.0f && &clip == &m_clipmaps[compareCascade]
@@ -356,8 +381,8 @@ void GlobalDistanceField::CompositeFromMeshSDFs(
                 m_fieldOldCenter  = clip.prevCenter;
                 m_fieldCascade    = compareCascade;
                 m_fieldNewCenter  = clip.center;
-                CopyRawFieldTo(cmdList, clip, m_fieldBefore);
-                m_fieldBeforeCopied   = true;
+                m_fieldAwaitSlab      = true;
+                m_fieldBeforeCopied   = false;
                 m_fieldComparePending = true;
             } else {
                 UZ_LOG(Renderer, Error, "GDF field compare: readback allocation failed");
@@ -376,24 +401,67 @@ void GlobalDistanceField::CompositeFromMeshSDFs(
         constants.clipmapCenterY = clip.center.y;
         constants.clipmapCenterZ = clip.center.z;
         constants.clipmapExtent  = clip.extent;
-
-        for (uint32_t batch = 0; batch < batchCount; ++batch) {
-            const auto& allocation = batches[batch];
-            constants.meshCount = std::min(kGdfMeshesPerBatch, meshCount - batch * kGdfMeshesPerBatch);
-            constants.accumulate = batch > 0;
-            cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&constants), 9);
-            cmdList->SetRootCBV(2, allocation.bufferHandle, allocation.offsetBytes,
-                               allocation.cpuPtr, kGdfMeshesPerBatch * sizeof(GdfMeshSdfGPU));
-            const uint32_t groupsPerAxis = (constants.resolution + 3) / 4;
-            cmdList->Dispatch(groupsPerAxis, groupsPerAxis, groupsPerAxis);
-            if (batch + 1 < batchCount) {
-                RHIBarrierDesc uavBarrier{};
-                uavBarrier.texture = clip.texture;
-                uavBarrier.stateBefore = RHIResourceState::UnorderedAccess;
-                uavBarrier.stateAfter = RHIResourceState::UnorderedAccess;
-                RHIBarrierDesc batchBarriers[2] = {uavBarrier, uavBarrier};
-                batchBarriers[1].texture = clip.rawTexture;
-                cmdList->ResourceBarrier(batchBarriers, 2);
+        // Toroidal storage (block B.2): world voxel k lives in texel k mod resolution, so a voxel
+        // keeps its texel across recentres and a recentre only writes the voxels that entered the
+        // window. windowOrigin = the window's first world voxel index modulo the resolution; the
+        // shader adds it to the window-relative voxel before wrapping.
+        const uint32_t res = constants.resolution;
+        const float voxelSize = 2.0f * clip.extent / static_cast<float>(res);
+        uint32_t windowOrigin[3] = {};
+        {
+            const float origin[3] = {clip.center.x - clip.extent, clip.center.y - clip.extent, clip.center.z - clip.extent};
+            for (uint32_t a = 0; a < 3; ++a) {
+                const int64_t k0 = std::lround(origin[a] / voxelSize);
+                windowOrigin[a] = static_cast<uint32_t>(((k0 % static_cast<int64_t>(res)) + res) % res);
+            }
+        }
+        constants.windowOrigin = windowOrigin[0] | (windowOrigin[1] << 9) | (windowOrigin[2] << 18);
+        // Regions to recompose, window-relative: the whole window, or one slab per axis the
+        // window moved along (the entering side, |shift| planes; corners are written twice).
+        struct Region { uint32_t origin[3]; uint32_t size[3]; };
+        Region regions[3] = {};
+        uint32_t regionCount = 0;
+        const bool slabs = m_incremental && !clip.full && clip.hasData
+            && (clip.shift[0] != 0 || clip.shift[1] != 0 || clip.shift[2] != 0)
+            && std::abs(clip.shift[0]) < static_cast<int32_t>(res)
+            && std::abs(clip.shift[1]) < static_cast<int32_t>(res)
+            && std::abs(clip.shift[2]) < static_cast<int32_t>(res);
+        if (slabs) {
+            for (uint32_t a = 0; a < 3; ++a) {
+                const int32_t shift = clip.shift[a];
+                if (shift == 0) continue;
+                Region& r = regions[regionCount++];
+                for (uint32_t b = 0; b < 3; ++b) { r.origin[b] = 0; r.size[b] = res; }
+                r.size[a]   = static_cast<uint32_t>(std::abs(shift));
+                r.origin[a] = shift > 0 ? res - static_cast<uint32_t>(shift) : 0u;
+            }
+        } else {
+            Region& r = regions[regionCount++];
+            for (uint32_t b = 0; b < 3; ++b) { r.origin[b] = 0; r.size[b] = res; }
+        }
+        clip.shift[0] = clip.shift[1] = clip.shift[2] = 0;
+        clip.full = false;
+        for (uint32_t region = 0; region < regionCount; ++region) {
+            const Region& r = regions[region];
+            constants.regionOrigin = r.origin[0] | (r.origin[1] << 9) | (r.origin[2] << 18);
+            constants.regionSize   = r.size[0] | (r.size[1] << 9) | (r.size[2] << 18);
+            for (uint32_t batch = 0; batch < batchCount; ++batch) {
+                const auto& allocation = batches[batch];
+                constants.meshCount = std::min(kGdfMeshesPerBatch, meshCount - batch * kGdfMeshesPerBatch);
+                constants.accumulate = batch > 0;
+                cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&constants), 12);
+                cmdList->SetRootCBV(2, allocation.bufferHandle, allocation.offsetBytes,
+                                   allocation.cpuPtr, kGdfMeshesPerBatch * sizeof(GdfMeshSdfGPU));
+                cmdList->Dispatch((r.size[0] + 3) / 4, (r.size[1] + 3) / 4, (r.size[2] + 3) / 4);
+                if (batch + 1 < batchCount || region + 1 < regionCount) {
+                    RHIBarrierDesc uavBarrier{};
+                    uavBarrier.texture = clip.texture;
+                    uavBarrier.stateBefore = RHIResourceState::UnorderedAccess;
+                    uavBarrier.stateAfter = RHIResourceState::UnorderedAccess;
+                    RHIBarrierDesc batchBarriers[2] = {uavBarrier, uavBarrier};
+                    batchBarriers[1].texture = clip.rawTexture;
+                    cmdList->ResourceBarrier(batchBarriers, 2);
+                }
             }
         }
 
@@ -411,10 +479,32 @@ void GlobalDistanceField::CompositeFromMeshSDFs(
         // unconditionally while the "before" side followed the selected cascade, so a comparison on
         // cascade 1 measured cascade 1 against cascade 0 — two volumes with different extents, which
         // is what produced H-53's "the field is not preserved" (withdrawn 2026-09-17).
-        if (m_fieldBeforeCopied && &clip == &m_clipmaps[m_fieldCascade]) {
-            CopyRawFieldTo(cmdList, clip, m_fieldAfter);
-            m_fieldBeforeCopied = false;
-            m_fieldCompareAge   = 0;
+        if (m_fieldComparePending && &clip == &m_clipmaps[m_fieldCascade]) {
+            if (m_fieldAwaitSlab) {
+                // This composite wrote the entering slabs: keep its result and ask for a full
+                // recompose of the same window next frame.
+                CopyRawFieldTo(cmdList, clip, m_fieldBefore);
+                m_fieldAwaitSlab    = false;
+                m_fieldBeforeCopied = true;
+                m_fieldHash         = meshHash;
+                clip.full  = true;   // the next composite (forced at the top of this function) rewrites the whole window
+            } else if (m_fieldBeforeCopied) {
+                const bool sameWindow = clip.center.x == m_fieldNewCenter.x && clip.center.y == m_fieldNewCenter.y
+                                     && clip.center.z == m_fieldNewCenter.z && meshHash == m_fieldHash;
+                if (sameWindow) {
+                    CopyRawFieldTo(cmdList, clip, m_fieldAfter);
+                    m_fieldBeforeCopied = false;
+                    m_fieldCompareAge   = 0;
+                } else {
+                    // The window moved again before the full recompose: this event cannot be compared.
+                    UZ_LOG(Renderer, Warning, "GDF field compare: skipped, the window or the instances changed before the full recompose");
+                    m_device->DestroyBuffer(m_fieldBefore);
+                    m_device->DestroyBuffer(m_fieldAfter);
+                    m_fieldBefore = {}; m_fieldAfter = {};
+                    m_fieldBeforeCopied   = false;
+                    m_fieldComparePending = false;
+                }
+            }
         }
 
         clip.dirty = false;
@@ -501,21 +591,33 @@ void GlobalDistanceField::ServiceFieldCompare() {
                 }
             }
         }
+        // Toroidal storage (block B.2): both snapshots hold the NEW window (the slab recompose and
+        // the full recompose of the same window), so every texel is compared with itself; the
+        // "overlap" is the whole volume. The window test below is kept in the general form.
+        const int64_t resI = res;
+        int64_t k0Old[3], k0New[3];
+        {
+            const float newOrigin[3] = {m_fieldNewCenter.x - m_fieldExtent, m_fieldNewCenter.y - m_fieldExtent, m_fieldNewCenter.z - m_fieldExtent};
+            for (uint32_t a = 0; a < 3; ++a) {
+                k0New[a] = std::lround(newOrigin[a] / voxel);
+                k0Old[a] = k0New[a];
+            }
+        }
+        const auto inNewWindow = [&](uint32_t t, uint32_t axis) {
+            const int64_t k = k0Old[axis] + ((((static_cast<int64_t>(t) - k0Old[axis]) % resI) + resI) % resI);
+            return k >= k0New[axis] && k < k0New[axis] + resI;
+        };
         for (uint32_t z = 0; z < res; ++z) {
-            const int32_t nz = static_cast<int32_t>(z) + sz;
-            if (nz < 0 || nz >= static_cast<int32_t>(res)) continue;
+            if (!inNewWindow(z, 2)) continue;
             for (uint32_t y = 0; y < res; ++y) {
-                const int32_t ny = static_cast<int32_t>(y) + sy;
-                if (ny < 0 || ny >= static_cast<int32_t>(res)) continue;
+                if (!inNewWindow(y, 1)) continue;
                 const uint8_t* rowOld = before + z * slicePitch + static_cast<uint64_t>(y) * m_fieldRowPitch;
-                const uint8_t* rowNew = after + static_cast<uint64_t>(nz) * slicePitch
-                                      + static_cast<uint64_t>(ny) * m_fieldRowPitch;
+                const uint8_t* rowNew = after  + z * slicePitch + static_cast<uint64_t>(y) * m_fieldRowPitch;
                 for (uint32_t x = 0; x < res; ++x) {
-                    const int32_t nx = static_cast<int32_t>(x) + sx;
-                    if (nx < 0 || nx >= static_cast<int32_t>(res)) continue;
+                    if (!inNewWindow(x, 0)) continue;
                     uint16_t ho, hn;
                     std::memcpy(&ho, rowOld + x * 2u, 2);
-                    std::memcpy(&hn, rowNew + static_cast<uint32_t>(nx) * 2u, 2);
+                    std::memcpy(&hn, rowNew + x * 2u, 2);
                     const float vo = GdfHalfToFloat(ho), vn = GdfHalfToFloat(hn);
                     if (!std::isfinite(vo) || !std::isfinite(vn)) { ++nonFinite; continue; }
                     ++overlap;

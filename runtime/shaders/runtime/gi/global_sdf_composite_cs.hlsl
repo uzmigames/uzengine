@@ -13,6 +13,9 @@ cbuffer RootConstants : register(b0) {
     float3 clipmapCenter;
     float clipmapExtent;
     uint rawOutputUav;
+    uint regionOrigin;   // first window-relative voxel of the region, 9 bits per axis (x | y << 9 | z << 18)
+    uint regionSize;     // region size in voxels, 9 bits per axis
+    uint windowOrigin;   // window origin mod resolution, 9 bits per axis: toroidal storage (block B.2)
 };
 
 struct MeshSdf {
@@ -78,12 +81,20 @@ float MeshDistance(MeshSdf mesh, float3 localPosition, out float rawDistance) {
 }
 
 [numthreads(4, 4, 4)]
-void main(uint3 voxel : SV_DispatchThreadID) {
+void main(uint3 thread : SV_DispatchThreadID) {
+    uint3 regionO = uint3(regionOrigin & 0x1ffu, (regionOrigin >> 9) & 0x1ffu, (regionOrigin >> 18) & 0x1ffu);
+    uint3 regionS = uint3(regionSize & 0x1ffu, (regionSize >> 9) & 0x1ffu, (regionSize >> 18) & 0x1ffu);
+    uint3 windowO = uint3(windowOrigin & 0x1ffu, (windowOrigin >> 9) & 0x1ffu, (windowOrigin >> 18) & 0x1ffu);
+    if (any(thread >= regionS)) return;
+    uint3 voxel = regionO + thread;                 // window-relative voxel
     if (any(voxel >= resolution)) return;
+    // Toroidal storage: world voxel k lives in texel k mod resolution, so a recentre only writes
+    // the voxels that entered the window and the readers address by frac(p / window length).
+    uint3 texel = (voxel + windowO) % resolution;
     RWTexture3D<float4> output = ResourceDescriptorHeap[outputUav];
     RWTexture3D<float> rawOutput = ResourceDescriptorHeap[rawOutputUav];
-    float4 result = accumulate != 0 ? output[voxel] : float4(65504.0, 0.0, 0.0, 0.0);
-    float rawResult = accumulate != 0 ? rawOutput[voxel] : 65504.0;
+    float4 result = accumulate != 0 ? output[texel] : float4(65504.0, 0.0, 0.0, 0.0);
+    float rawResult = accumulate != 0 ? rawOutput[texel] : 65504.0;
     float3 worldPosition = clipmapCenter
         + ((float3(voxel) + 0.5) / resolution * 2.0 - 1.0) * clipmapExtent;
 
@@ -106,6 +117,6 @@ void main(uint3 voxel : SV_DispatchThreadID) {
         }
     }
     result.r = clamp(result.r, -65504.0, 65504.0);
-    output[voxel] = result;
-    rawOutput[voxel] = clamp(rawResult, -65504.0, 65504.0);
+    output[texel] = result;
+    rawOutput[texel] = clamp(rawResult, -65504.0, 65504.0);
 }

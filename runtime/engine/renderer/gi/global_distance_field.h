@@ -87,6 +87,8 @@ public:
         bool             hasData  = false;
         Vec3             prevCenter;             ///< Diagnostic: the centre before the last recentre.
         bool             recentred = false;      ///< Diagnostic: set by Update() on a recentre, cleared by the composite.
+        int32_t          shift[3]  = {0, 0, 0};  ///< Whole voxels the window moved since the last composite (it consumes them).
+        bool             full      = true;       ///< Next composite rewrites the whole window (first fill, scene change); otherwise only the entering slabs.
     };
 
     GlobalDistanceField() = default;
@@ -112,8 +114,9 @@ public:
     /// Updates clipmap centers to track the camera position and marks dirty
     /// clipmaps that need recompositing.
     ///
-    /// A clipmap is re-centered (and marked dirty) when the camera moves
-    /// more than half a voxel's worth in any axis for that cascade.
+    /// A clipmap is re-centered (and marked dirty) when the snapped camera position moves by a
+    /// whole voxel on any axis for that cascade; the whole-voxel shift is recorded so the
+    /// composite rewrites only the entering slabs (toroidal storage, block B.2).
     ///
     /// # Arguments
     /// * `cameraPos` — Current camera world-space position.
@@ -183,13 +186,18 @@ private:
     bool         m_centreFrozen = false;        ///< Diagnostic: stop recentring (SetDiagnosticCentreControls).
 
     // ── Diagnostic: the field before and after a recentre (r.GI.GDF.Diagnostic.FieldCompare) ──
-    // The raw R16F distance volume of clipmap 0 is copied to `m_fieldBefore` right before the
-    // recomposite that follows a recentre and to `m_fieldAfter` right after it; ServiceFieldCompare()
-    // maps both a few frames later and compares them at the same world positions. Followup-13.
+    // Toroidal storage (block B.2) never rewrites the voxels that stay in the window, so the old
+    // before/after comparison would be identical by construction. The diagnostic now copies the
+    // raw R16F volume after the slab recompose that follows a recentre (`m_fieldBefore`) and
+    // after a full recompose of the same window on the next frame (`m_fieldAfter`);
+    // ServiceFieldCompare() maps both a few frames later and compares them texel by texel.
+    // Followup-13 originally; block B.2 gate G1.
     RHIBufferHandle m_fieldBefore;
     RHIBufferHandle m_fieldAfter;
     bool            m_fieldComparePending = false;
-    bool            m_fieldBeforeCopied   = false;
+    bool            m_fieldBeforeCopied   = false;  ///< The slab result is in m_fieldBefore; the full recompose follows.
+    bool            m_fieldAwaitSlab      = false;  ///< The next composite of the cascade writes the entering slabs.
+    uint64_t        m_fieldHash           = 0;      ///< Instance hash the slab snapshot was built from; the full recompose must see the same.
     uint32_t        m_fieldCompareAge     = 0;
     Vec3            m_fieldOldCenter;
     Vec3            m_fieldNewCenter;
@@ -202,6 +210,7 @@ private:
     float        m_centrePhaseOffsetCm = 0.f;   ///< Diagnostic: shift the voxel snapping grid.
     uint64_t     m_meshDataHash = 0;
     uint32_t     m_meshDataCount = UINT32_MAX;
+    bool         m_incremental = true;          ///< r.GI.GDF.Incremental, read at every composite.
     uint64_t     m_sceneRevision = 0;
     std::vector<GdfMeshSdfGPU> m_meshEntries;   ///< See GetMeshEntries().
     uint64_t     m_meshEntriesHash = 0;
@@ -238,9 +247,9 @@ static_assert(offsetof(GdfMeshSdfGPU, materialFlags) == 112);
 static_assert(offsetof(GdfMeshSdfGPU, trianglesSrv) == 116);
 static_assert(sizeof(GdfMeshSdfGPU) * kGdfMeshesPerBatch <= 65536);
 
-/// Root constants for the GDF composite compute shader (9 DWORDs at b0).
+/// Root constants for the GDF composite compute shader (12 DWORDs at b0).
 ///
-/// Passed via SetRootConstants(0, ..., 9). Must exactly match the root
+/// Passed via SetRootConstants(0, ..., 12). Must exactly match the root
 /// constants layout in global_sdf_composite_cs.hlsl and fit within the
 /// 16-DWORD root parameter at slot 0.
 struct GdfCompositeConstants {
@@ -253,9 +262,13 @@ struct GdfCompositeConstants {
     float    clipmapCenterZ;  ///< [6] World-space clipmap center Z.
     float    clipmapExtent;   ///< [7] Clipmap half-size in world units (cm).
     uint32_t rawOutputUav;    ///< [8] UAV index for unexpanded R16F distance.
+    uint32_t regionOrigin;    ///< [9]  First window-relative voxel of the region, 9 bits per axis (x | y << 9 | z << 18).
+    uint32_t regionSize;      ///< [10] Region size in voxels, 9 bits per axis.
+    uint32_t windowOrigin;    ///< [11] Window origin modulo resolution, 9 bits per axis: texel = (voxel + windowOrigin) % resolution.
 };
 
-static_assert(sizeof(GdfCompositeConstants) == 36, "GdfCompositeConstants must be 9 DWORDs");
+static_assert(sizeof(GdfCompositeConstants) == 48, "GdfCompositeConstants must be 12 DWORDs");
 static_assert(offsetof(GdfCompositeConstants, rawOutputUav) == 32);
+static_assert(offsetof(GdfCompositeConstants, windowOrigin) == 44);
 
 } // namespace uz

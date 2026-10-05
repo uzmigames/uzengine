@@ -23,7 +23,7 @@ UzEngine implements a **four-tier global illumination system** combining softwar
 The radiance cache is updated incrementally each frame: 32 Fibonacci-distributed rays per probe trace through the global distance field, accumulate irradiance into SH coefficients, and blend with history via exponential moving average. Deferred lighting applies the cached irradiance to all pixels.
 
 **Key features:**
-- Fully dynamic — mesh and camera movement update GI in real-time
+- Camera movement updates the GI in real time (toroidal clipmaps, only the entering slabs are recomposed since 2026-10-05); a mesh that moves, appears or changes material still recomposes every clipmap and resets the GI history (per-instance regions are block B.2 phases 3-4, `phase0_lighting-block-b-02-gdf-incremental`)
 - Temporal coherence — EMA blending (α = 0.05) reduces noise
 - Memory efficient — ~6 MB GPU memory for full 3-tier system
 - Cascaded coverage — 2.5 km far-field distance across 4 GDF cascades
@@ -250,7 +250,7 @@ for (uint i = 0; i < kNumClipmaps; i++)
         floor(cameraPos.z / voxelSize) * voxelSize
     );
 
-    // Mark dirty if center moved more than half a voxel
+    // Mark dirty when the snapped centre moved by a whole voxel; the whole-voxel shift is recorded and the composite rewrites only the entering slabs (toroidal storage)
     float tolerance = voxelSize * 0.5f;
     if (distance(snappedCenter, m_clipmaps[i].center) > tolerance)
     {
@@ -777,7 +777,7 @@ Frame N:
 
 ### Phase E: Disk Persistence and Optimization
 - [ ] **SDF disk caching** — Save baked mesh SDFs to `.uzsdf` format; reload on level load
-- [ ] **Partial clipmap scrolling** — Update only moved regions instead of full recomposite
+- [x] **Partial clipmap scrolling** — done 2026-10-05 for recentres (toroidal storage, entering slabs; `r.GI.GDF.Incremental`); per-instance regions for scene changes still open (`docs/analysis/lighting-block-b-02-gdf-incremental.md`)
 - [ ] **Probe LOD** — Lower ray count for distant probes; higher rate for near-camera probes
 - [ ] **Cone tracing for soft shadows** — 3D cone march for contact shadow refinement
 

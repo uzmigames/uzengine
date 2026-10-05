@@ -30,17 +30,28 @@
 /// Samples one clipmap. Returns `(distance, reflectance.rgb)`; a point outside
 /// the clipmap returns a large positive distance so the caller falls through to
 /// the next, coarser cascade.
+#ifndef UZ_GDF_WRAP_SAMPLER
+SamplerState gdfWrapSampler : register(s3);   // linear WRAP: the clipmaps are stored toroidally (block B.2)
+#define UZ_GDF_WRAP_SAMPLER gdfWrapSampler
+#endif
+
 float4 SampleGdfClipmap(uint srvIdx, float3 worldPos, float3 center, float extent) {
     if (srvIdx == kSentinelSrvIndex || extent <= 0.0) {
         return float4(1e9, 0.0, 0.0, 0.0);
     }
+    Texture3D<float4> gdfTex = ResourceDescriptorHeap[srvIdx];
+    uint resX, resY, resZ;
+    gdfTex.GetDimensions(resX, resY, resZ);
+    // One voxel inside the window: a trilinear tap at the window edge would wrap to the far side.
     float3 local = (worldPos - center) / extent;       // [-1,1] inside the clipmap
-    if (any(abs(local) > 1.0)) {
+    if (any(abs(local) > 1.0 - 2.0 / float(resX))) {
         return float4(1e9, 0.0, 0.0, 0.0);
     }
-    float3 uvw = local * 0.5 + 0.5;                    // [0,1]
-    Texture3D<float4> gdfTex = ResourceDescriptorHeap[srvIdx];
-    return gdfTex.SampleLevel(linearClamp, uvw, 0);
+    // Toroidal storage: world voxel k lives in texel k mod resolution and the voxel grid sits at
+    // multiples of the voxel size, so the texel coordinate is the fractional part of the
+    // position measured in window lengths (2 * extent).
+    float3 uvw = frac(worldPos / (2.0 * extent));
+    return gdfTex.SampleLevel(UZ_GDF_WRAP_SAMPLER, uvw, 0);
 }
 
 float4 SampleGdfSurface(float3 worldPos) {

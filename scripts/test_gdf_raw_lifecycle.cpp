@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <map>
@@ -12,10 +13,17 @@ RHITextureUsage operator|(RHITextureUsage a,RHITextureUsage b){return RHITexture
 enum class RHIResourceState {Common,Undefined,ShaderResource,UnorderedAccess};
 struct RHITextureDesc {unsigned width=0,height=0,mipLevels=0;uint16_t depthOrArraySize=0;RHIFormat format=RHIFormat::RGBA16Float;RHITextureUsage usage{};bool is3D=false;const char* debugName=nullptr;};
 struct Texture {RHITextureDesc desc;RHIResourceState state=RHIResourceState::Common;};
+struct RHIBufferHandle {unsigned id=0;bool IsValid()const{return id!=0;}};
+enum class RHIBufferUsage {CopyDst};
+enum class RHIMemoryType {Readback};
+struct RHIBufferDesc {uint64_t sizeBytes=0;unsigned stride=0;RHIBufferUsage usage{};RHIMemoryType memory{};const char* debugName=nullptr;};
+struct {float value=0;} fieldCompareCvar;auto* cv_GdfFieldCompare=&fieldCompareCvar;auto* cv_GdfFieldCompareCascade=&fieldCompareCvar;
 struct IRHIDevice {
  bool failRawDescriptor=false;unsigned failAt=0,creates=0,destroys=0,errors=0;std::map<unsigned,Texture> textures;
  RHITextureHandle CreateTexture(RHITextureDesc desc){++creates;if(creates==failAt)return{};textures.emplace(creates,Texture{desc});return{creates};}
  void DestroyTexture(RHITextureHandle texture){if(textures.erase(texture.id)!=1)++errors;else ++destroys;}
+ RHIBufferHandle CreateBuffer(RHIBufferDesc){return {};}
+ void DestroyBuffer(RHIBufferHandle){}
  unsigned GetTextureSRVIndex(RHITextureHandle texture){return failRawDescriptor&&textures.at(texture.id).desc.format==RHIFormat::R16Float?UINT32_MAX:texture.id+100;}
  unsigned GetTextureUAVIndex(RHITextureHandle texture){return texture.id+200;}
  RHITextureDesc GetTextureDesc(RHITextureHandle texture){return textures.at(texture.id).desc;}
@@ -29,7 +37,7 @@ struct IRHICommandList {
  IRHIDevice& device;unsigned errors=0,dispatches=0,uavBarriers=0;GdfCompositeConstants current{};
  void SetPipeline(int){}
  void ResourceBarrier(const RHIBarrierDesc* barriers,unsigned count){for(unsigned i=0;i<count;++i){auto& texture=device.textures.at(barriers[i].texture.id);if(texture.state!=barriers[i].stateBefore)++errors;if(barriers[i].stateBefore==RHIResourceState::UnorderedAccess&&barriers[i].stateAfter==RHIResourceState::UnorderedAccess)++uavBarriers;texture.state=barriers[i].stateAfter;}}
- void SetRootConstants(unsigned,const uint32_t* data,unsigned count){if(count!=9){++errors;return;}current=*reinterpret_cast<const GdfCompositeConstants*>(data);}
+ void SetRootConstants(unsigned,const uint32_t* data,unsigned count){if(count!=12){++errors;return;}current=*reinterpret_cast<const GdfCompositeConstants*>(data);}
  void SetRootCBV(int,int,int,void*,unsigned){}
  void Dispatch(unsigned x,unsigned y,unsigned z){++dispatches;auto& expanded=device.textures.at(current.outputUav-200);auto& raw=device.textures.at(current.rawOutputUav-200);if(expanded.desc.format!=RHIFormat::RGBA16Float||raw.desc.format!=RHIFormat::R16Float||expanded.state!=RHIResourceState::UnorderedAccess||raw.state!=RHIResourceState::UnorderedAccess||x!=(current.resolution+3)/4||x!=y||y!=z)++errors;}
 };
@@ -40,9 +48,12 @@ public:
  static constexpr float kClipmapExtents[4]={2500,10000,40000,160000};
  PRODUCTION_CLIPMAP
  IRHIDevice* m_device=nullptr;ClipmapData m_clipmaps[4];bool m_initialized=false;
- uint64_t m_meshDataHash=0;uint32_t m_meshDataCount=UINT32_MAX;
+ uint64_t m_meshDataHash=0;uint32_t m_meshDataCount=UINT32_MAX;bool m_incremental=true;
+ RHIBufferHandle m_fieldBefore,m_fieldAfter;bool m_fieldComparePending=false,m_fieldBeforeCopied=false,m_fieldAwaitSlab=false;uint64_t m_fieldHash=0;
+ unsigned m_fieldCompareAge=0,m_fieldCascade=0,m_fieldResolution=0,m_fieldRowPitch=0;Vec3 m_fieldOldCenter,m_fieldNewCenter;float m_fieldExtent=0;
+ void CopyRawFieldTo(IRHICommandList*,ClipmapData&,RHIBufferHandle){}
  bool CreateResources(IRHIDevice* device);void DestroyResources();
- void Composite(IRHICommandList* cmdList,unsigned meshCount){int compositePipeline=1;unsigned batchCount=std::max(1u,(meshCount+511)/512);std::vector<CBAllocation>batches(batchCount);PRODUCTION_COMPOSITE}
+ void Composite(IRHICommandList* cmdList,unsigned meshCount){int compositePipeline=1;unsigned batchCount=std::max(1u,(meshCount+511)/512);std::vector<CBAllocation>batches(batchCount);uint64_t meshHash=0;PRODUCTION_COMPOSITE}
 };
 PRODUCTION_CREATE
 PRODUCTION_DESTROY

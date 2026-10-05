@@ -754,8 +754,8 @@ TEST_F(GIGpuTest, GDFShaderConstantStructLayout) {
         "GdfMeshSdfGPU must be 128 bytes for cbuffer packing");
 
     // Eight original DWORDs retain their offsets; rawOutputUav appends the ninth.
-    static_assert(sizeof(uz::GdfCompositeConstants) == 36,
-        "GdfCompositeConstants must be 36 bytes (9 root constants)");
+    static_assert(sizeof(uz::GdfCompositeConstants) == 48,
+        "GdfCompositeConstants must be 48 bytes (12 root constants)");
     static_assert(offsetof(uz::GdfCompositeConstants, outputUav) == 0);
     static_assert(offsetof(uz::GdfCompositeConstants, meshCount) == 4);
     static_assert(offsetof(uz::GdfCompositeConstants, accumulate) == 8);
@@ -765,6 +765,9 @@ TEST_F(GIGpuTest, GDFShaderConstantStructLayout) {
     static_assert(offsetof(uz::GdfCompositeConstants, clipmapCenterZ) == 24);
     static_assert(offsetof(uz::GdfCompositeConstants, clipmapExtent) == 28);
     static_assert(offsetof(uz::GdfCompositeConstants, rawOutputUav) == 32);
+    static_assert(offsetof(uz::GdfCompositeConstants, regionOrigin) == 36);
+    static_assert(offsetof(uz::GdfCompositeConstants, regionSize) == 40);
+    static_assert(offsetof(uz::GdfCompositeConstants, windowOrigin) == 44);
 
     // RadianceCacheTraceConstants must be exactly 208 bytes: the 176-byte
     // trace constants, the phase16 VFX→DDGI emissive injection row (16 bytes)

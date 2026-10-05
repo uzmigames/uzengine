@@ -473,6 +473,19 @@ before the first presented frame. Brixelizer keeps its own SDF; the two are alte
 
 ---
 
+### Global distance field recentre — `INCREMENTAL` 2026-10-05 (block B.2, phase 2)
+
+A recentre of a clipmap used to rewrite all of its voxels over every instance: ~125 ms of GPU per
+clipmap-0 recentre on Sponza (256^3, 138 instances), the hitch the flicker programme measured as
+a lighting step at grid crossings. The clipmaps are stored toroidally now (world voxel k in texel
+k mod resolution; readers address by `frac(p / (2 extent))` with the WRAP sampler and skip the
+outer voxel of the window) and a recentre recomposes only the entering slabs
+(`r.GI.GDF.Incremental`, default on). Gates: G1 slab recompose == full recompose PASS (20 recentre events of the boundary trajectory, +-x and +-y single-voxel moves: 100.0000 % identical texels over the whole 256^3 volume, max |delta| 0 cm; 2 events during loading skipped by design); G4 Sponza
+Camera C ROIs with Incremental 1 vs 0 PASS (2e-6 relative); G5 recentre cost PASS (1.327 -> 0.0224 ms, ratio 0.017). Still full: the first
+fill and any scene change (instance hash: a moved mesh, a streamed texture, a LOD swap), which also
+resets the radiance-cache and SSGI history — phases 3-4 of the task. The diagnostic
+`r.GI.GDF.CenterPhaseOffset` now shifts the crossing frames only, not the voxel grid.
+
 ### Radiance cache probe classification — `ENABLED` 2026-10-05 (followup-01 6.4, H-72)
 
 The current rule (field < 5 cm at the probe = inside) discarded free probes near faces and kept

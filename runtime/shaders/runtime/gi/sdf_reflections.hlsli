@@ -11,6 +11,22 @@
 SamplerState sdfReflectionSampler : register(s2);
 #define UZ_SDF_REFLECTION_SAMPLER sdfReflectionSampler
 #endif
+#ifndef UZ_SDF_REFLECTION_WRAP_SAMPLER
+SamplerState sdfReflectionWrapSampler : register(s3);   // linear WRAP: toroidal clipmap storage (block B.2)
+#define UZ_SDF_REFLECTION_WRAP_SAMPLER sdfReflectionWrapSampler
+#endif
+
+/// Toroidal clipmap addressing (block B.2): world voxel k lives in texel k mod resolution, the
+/// voxel grid sits at multiples of the voxel size, so the texel coordinate is frac(p / (2 extent)).
+/// A point within one voxel of the window edge is treated as outside (a trilinear tap there
+/// would wrap to the far side); the next cascade covers it.
+bool SdfClipmapContains(float4 clipmap, float3 position, uint resolution) {
+    float3 local = (position - clipmap.xyz) / clipmap.w;
+    return all(abs(local) <= 1.0 - 2.0 / float(resolution));
+}
+float3 SdfClipmapUvw(float4 clipmap, float3 position) {
+    return frac(position / (2.0 * clipmap.w));
+}
 
 struct SdfReflectionScene {
     float4 clipmaps[4];
@@ -40,10 +56,11 @@ float4 SampleSdfReflectionSurface(SdfReflectionScene scene, float3 position) {
     [unroll] for (uint cascade = 0; cascade < 4; ++cascade) {
         float4 clipmap = scene.clipmaps[cascade];
         if (scene.clipmapSrv[cascade] == 0xffffffffu || clipmap.w <= 0.0) continue;
-        float3 local = (position - clipmap.xyz) / clipmap.w;
-        if (any(abs(local) > 1.0)) continue;
         Texture3D<float4> volume = ResourceDescriptorHeap[scene.clipmapSrv[cascade]];
-        return volume.SampleLevel(UZ_SDF_REFLECTION_SAMPLER, local * 0.5 + 0.5, 0);
+        uint resX, resY, resZ;
+        volume.GetDimensions(resX, resY, resZ);
+        if (!SdfClipmapContains(clipmap, position, resX)) continue;
+        return volume.SampleLevel(UZ_SDF_REFLECTION_WRAP_SAMPLER, SdfClipmapUvw(clipmap, position), 0);
     }
     return float4(65504.0, 0.0, 0.0, 0.0);
 }
@@ -68,14 +85,15 @@ float2 SampleSdfRayDistances(SdfReflectionScene scene, float3 position) {
     [unroll] for (uint cascade = 0; cascade < 4; ++cascade) {
         float4 clipmap = scene.clipmaps[cascade];
         if (scene.clipmapSrv[cascade] == 0xffffffffu || clipmap.w <= 0.0) continue;
-        float3 local = (position - clipmap.xyz) / clipmap.w;
-        if (any(abs(local) > 1.0)) continue;
+        Texture3D<float4> expandedVolume = ResourceDescriptorHeap[scene.clipmapSrv[cascade]];
+        uint resX, resY, resZ;
+        expandedVolume.GetDimensions(resX, resY, resZ);
+        if (!SdfClipmapContains(clipmap, position, resX)) continue;
         if (scene.rawClipmapSrv[cascade] == 0xffffffffu) return float2(-65504.0,-65504.0);
         Texture3D<float> rawVolume = ResourceDescriptorHeap[scene.rawClipmapSrv[cascade]];
-        Texture3D<float4> expandedVolume = ResourceDescriptorHeap[scene.clipmapSrv[cascade]];
-        float3 uvw = local * 0.5 + 0.5;
-        return float2(rawVolume.SampleLevel(UZ_SDF_REFLECTION_SAMPLER, uvw, 0),
-            expandedVolume.SampleLevel(UZ_SDF_REFLECTION_SAMPLER, uvw, 0).r);
+        float3 uvw = SdfClipmapUvw(clipmap, position);
+        return float2(rawVolume.SampleLevel(UZ_SDF_REFLECTION_WRAP_SAMPLER, uvw, 0),
+            expandedVolume.SampleLevel(UZ_SDF_REFLECTION_WRAP_SAMPLER, uvw, 0).r);
     }
     return float2(65504.0,65504.0);
 }
