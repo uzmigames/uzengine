@@ -22,6 +22,7 @@
 #include "vector3.h"
 
 #include <cstdint>
+#include <vector>
 
 namespace uz {
 
@@ -49,6 +50,10 @@ class GlobalDistanceField;
 /// // Shutdown:
 /// rc.DestroyResources();
 /// ```
+/// Change boxes the trace constants carry (block B.2 phase 4): probes inside replace their
+/// history instead of blending. 16 four-float rows after the 13 shared ones.
+inline constexpr uint32_t kMaxFieldRegions = 8;
+
 class RadianceCache {
 public:
     /// Number of probes per axis. 16^3 = 4096 total probes.
@@ -225,6 +230,20 @@ public:
     /// The scene under the probes changed (GDF revision): the next UpdateProbes
     /// retraces every probe and replaces its history instead of blending.
     void InvalidateHistory() noexcept { m_dirty = true; m_historyInvalid = true; }
+    /// A world box where the distance field changed (block B.2).
+    struct FieldRegion { Vec3 lo; Vec3 hi; };
+    /// The field changed inside `boxes` (block B.2): retrace every probe next UpdateProbes, keep
+    /// the history everywhere except inside the boxes, where the probes replace it. More boxes
+    /// than kMaxFieldRegions pending at once fall back to a full invalidation.
+    void RetraceKeepingHistory(const FieldRegion* boxes, size_t count) {
+        m_dirty = true;
+        if (m_pendingRegions.size() + count > kMaxFieldRegions) {
+            m_historyInvalid = true;
+            m_pendingRegions.clear();
+            return;
+        }
+        m_pendingRegions.insert(m_pendingRegions.end(), boxes, boxes + count);
+    }
     /// True between a grid recentre / invalidation and the UpdateProbes that consumes it.
     [[nodiscard]] bool IsDirty() const noexcept { return m_dirty; }
     /// True when InvalidateHistory() was called since the last UpdateProbes (scene changed).
@@ -330,6 +349,8 @@ private:
     /// multi-bounce feedback for that frame — a dark blink that took ~20 frames
     /// (alpha 0.12) to recover, once per 267 cm of travel on any axis.
     int32_t m_pendingHistoryShift[3] = {0, 0, 0};
+    /// Change boxes accumulated by RetraceKeepingHistory() until UpdateProbes consumes them.
+    std::vector<FieldRegion> m_pendingRegions;
 
     /// Grid origin the last completed SH buffer was traced with (see
     /// GetCompletedGridOrigin()).
@@ -396,7 +417,7 @@ struct RadianceCacheTraceConstants {
     // CBV reads and HLSL cbuffer packing stay in lock-step.
     uint32_t vfxEmissiveSrvIndex   = UINT32_MAX; ///< Bindless SRV of the VFX emissive feed buffer.
     uint32_t vfxEmissiveSampleCount = 0;          ///< Valid sample count in the buffer.
-    float    _vfxEmissivePad0      = 0.0f;        ///< 16-byte alignment pad.
+    float    regionBlendAlpha      = 1.0f;        ///< Blend weight of a probe inside a change box (block B.2 phase 4): 1 = replace its history. Was a pad; the DDGI writer ignores it.
     float    _vfxEmissivePad1      = 0.0f;        ///< 16-byte alignment pad.
 
     // ── Grid recentre (radiance-cache trace only) ─────────────────────────────
@@ -406,7 +427,11 @@ struct RadianceCacheTraceConstants {
     int32_t  historyShiftX = 0;
     int32_t  historyShiftY = 0;
     int32_t  historyShiftZ = 0;
-    uint32_t _historyShiftPad = 0;
+    uint32_t regionCount = 0;         ///< Change boxes below; probes inside replace their history.
+    /// World boxes where the distance field changed this frame (lo.xyz, pad / hi.xyz, pad). The
+    /// DDGI writer and probe_reach declare the 13 rows before them and ignore these.
+    float    regionLo[kMaxFieldRegions][4] = {};
+    float    regionHi[kMaxFieldRegions][4] = {};
 };
 
 // 176 bytes of shared trace constants, the 16-byte VFX emissive tail and the
@@ -414,6 +439,8 @@ struct RadianceCacheTraceConstants {
 // `radiance_cache_trace_cs.hlsl` and `ddgi_probe_update_cs.hlsl` — must declare
 // all 13 four-field rows, scalars only, or HLSL register packing shifts every
 // field past the mismatch.
-static_assert(sizeof(RadianceCacheTraceConstants) == 208, "RadianceCacheTraceConstants must be 208 bytes");
+static_assert(sizeof(RadianceCacheTraceConstants) == 464, "RadianceCacheTraceConstants must be 464 bytes (13 shared rows + 16 change-box rows)");
+static_assert(offsetof(RadianceCacheTraceConstants, regionCount) == 204);
+static_assert(offsetof(RadianceCacheTraceConstants, regionLo) == 208);
 
 } // namespace uz

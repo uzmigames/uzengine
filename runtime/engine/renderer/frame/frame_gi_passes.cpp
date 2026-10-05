@@ -58,6 +58,10 @@ static auto* cv_RCFreezeAfter = UZ_CVAR_INT("r.GI.RadianceCache.FreezeAfterFrame
     "stop updating and the last converged SH buffer is held. -1 (default) never freezes. The "
     "frame is a parameter because freezing from the first frame holds a state that never "
     "converged, which measures the warm-up instead of stale lighting.", -1, 100000);
+// Block B.2 phase 4: how the radiance cache reacts to a regional field change. 1 = retrace every
+// probe keeping the history except inside the change boxes; 0 = discard the whole history as a
+// whole-window recompose does (A/B control).
+static auto* cv_GdfRegionalRetrace = UZ_CVAR_BOOL("r.GI.GDF.RegionalRetrace", true, "Radiance cache on a regional distance-field change: 1 = retrace keeping the history outside the change boxes, 0 = discard the history (control)");
 static auto* cv_GDFFreezeCentre = UZ_CVAR_BOOL("r.GI.GDF.FreezeCenter", false,
     "Diagnostic (followup-13): stops the global distance field clipmaps recentring. Valid only "
     "while the measured geometry stays inside the coverage the field already had.");
@@ -122,6 +126,7 @@ void SceneRenderer::RegisterSSGIPasses(rg::RgBuilder& rgBuilder, FrameContext& c
             ssgiParams.worldGather = ctx.perFrame.sdfDiffuseSamples != 0;
             ssgiParams.resetHistory = !m_prevViewProjValid;
             ssgiParams.sceneRevision = m_globalDistanceField.GetSceneRevision();
+            ssgiParams.changedRegions = &m_globalDistanceField.GetChangedRegions();   // read at execution (block B.2)
             ssgiParams.renderWidth     = static_cast<uint32_t>(ctx.renderWidth);
             ssgiParams.renderHeight    = static_cast<uint32_t>(ctx.renderHeight);
 
@@ -207,6 +212,7 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
                 sdfCopy.baseColorTint[2] = draw.baseColorTintB;
                 sdfCopy.metallicMultiplier = draw.metallicMultiplier;
                 sdfCopy.materialFlags = draw.materialFlags;
+                sdfCopy.instanceKey   = draw.entityId;
                 Mat4 worldMat = draw.worldMatrix;
                 Mat4 inv = worldMat.Inverse();
                 sdfCopy.invTransform[0]  = inv.m._11;
@@ -240,7 +246,22 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
                 ctx.perFrameAlloc.cpuPtr,
                 sizeof(PerFrameCB));
             if (m_globalDistanceField.GetSceneRevision() != previousRevision) {
-                m_radianceCache.InvalidateHistory();
+                m_radianceCache.InvalidateHistory();      // whole windows rewritten: the history is gone
+            } else if (!m_globalDistanceField.GetChangedRegions().empty()) {
+                // Only the neighbourhood of changed instances was recomposed (block B.2): retrace
+                // every probe but keep the history, as a recentre does.
+                const auto& regions = m_globalDistanceField.GetChangedRegions();
+                std::vector<RadianceCache::FieldRegion> boxes;
+                boxes.reserve(regions.size());
+                for (const auto& r : regions) boxes.push_back({r.lo, r.hi});
+                if (cv_GdfRegionalRetrace->value != 0.0f) {
+                    m_radianceCache.RetraceKeepingHistory(boxes.data(), boxes.size());
+                } else {
+                    m_radianceCache.InvalidateHistory();
+                }
+                UZ_LOG(Renderer, Info, "GDF regional recompose: frame={} regions={} first=({},{},{})-({},{},{})",
+                       ctx.frameIndex, regions.size(), regions[0].lo.x, regions[0].lo.y, regions[0].lo.z,
+                       regions[0].hi.x, regions[0].hi.y, regions[0].hi.z);
             }
         });
     });
@@ -274,7 +295,8 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
                     const int32_t* sh = m_radianceCache.GetPendingHistoryShift();
                     const bool recentred = sh[0] != 0 || sh[1] != 0 || sh[2] != 0;
                     UZ_LOG(Renderer, Info, "GI recentre: frame={} radianceCache reason={} shiftProbes=({},{},{}) previousOrigin=({},{},{}) newOrigin=({},{},{})",
-                           ctx.frameIndex, recentred ? (m_radianceCache.IsHistoryInvalid() ? "recentre+invalidate" : "recentre") : "invalidate",
+                           ctx.frameIndex, recentred ? (m_radianceCache.IsHistoryInvalid() ? "recentre+invalidate" : "recentre")
+                                                     : (m_radianceCache.IsHistoryInvalid() ? "invalidate" : "retrace"),
                            sh[0], sh[1], sh[2], c.x, c.y, c.z, o.x, o.y, o.z);
                 }
                 m_radianceCache.SetFrozen(cv_RCFreezeAfter->value >= 0.f

@@ -16,6 +16,7 @@ cbuffer RootConstants : register(b0) {
     uint regionOrigin;   // first window-relative voxel of the region, 9 bits per axis (x | y << 9 | z << 18)
     uint regionSize;     // region size in voxels, 9 bits per axis
     uint windowOrigin;   // window origin mod resolution, 9 bits per axis: toroidal storage (block B.2)
+    float band;          // stored distances are clamped to this (world units); 0 = untruncated
 };
 
 struct MeshSdf {
@@ -115,6 +116,12 @@ void main(uint3 thread : SV_DispatchThreadID) {
         if (distance < result.r) {
             result = float4(distance, DiffuseReflectance(mesh));
         }
+    }
+    // Truncation band (block B.2 phase 3): the readers only step by the distance, so clamping far
+    // values bounds the reach of an instance change to `band` and keeps regional recomposes exact.
+    if (band > 0.0) {
+        result.r  = min(result.r, band);
+        rawResult = min(rawResult, band);
     }
     result.r = clamp(result.r, -65504.0, 65504.0);
     output[texel] = result;

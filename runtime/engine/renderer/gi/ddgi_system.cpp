@@ -242,7 +242,7 @@ void DDGISystem::DispatchUpdate(IRHICommandList* cmdList,
     // the accumulation loop in `ddgi_probe_update_cs.hlsl` in that case.
     constants.vfxEmissiveSrvIndex   = vfxEmissiveSrvIndex;
     constants.vfxEmissiveSampleCount = vfxEmissiveSampleCount;
-    constants._vfxEmissivePad0      = 0.0f;
+    constants.regionBlendAlpha      = 1.0f;       // radiance cache only (block B.2); this shader ignores it
     constants._vfxEmissivePad1      = 0.0f;
 
     // Bind the pipeline once for both passes.

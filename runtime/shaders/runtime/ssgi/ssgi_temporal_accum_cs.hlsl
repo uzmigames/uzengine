@@ -18,7 +18,22 @@ cbuffer RootConstants : register(b0) {
     uint g_geometryUav;
     uint g_historyValid;
 };
-cbuffer HistoryCB : register(b2) { row_major float4x4 previousViewProj; };
+cbuffer HistoryCB : register(b2) {
+    row_major float4x4 previousViewProj;
+    uint   g_regionCount;      ///< World boxes where the distance field changed this frame or the last (block B.2)
+    uint3  _regionPad;
+    float4 g_regionLo[16];
+    float4 g_regionHi[16];
+};
+
+/// True inside one of the change boxes: the history there was accumulated against a field that
+/// no longer exists, so it is rejected (UZ_GATHER_FIELD_CHANGED).
+bool InChangedRegion(float3 p) {
+    [loop] for (uint r = 0; r < min(g_regionCount, 16u); ++r) {
+        if (all(p >= g_regionLo[r].xyz) && all(p <= g_regionHi[r].xyz)) return true;
+    }
+    return false;
+}
 
 /// Why the history was not used. Recorded explicitly in the region dump because `count == 1` alone
 /// cannot distinguish a rejected history from a freshly initialised one — both leave the pixel at
@@ -29,6 +44,7 @@ cbuffer HistoryCB : register(b2) { row_major float4x4 previousViewProj; };
 #define UZ_GATHER_BEHIND_CAMERA    3u
 #define UZ_GATHER_OFFSCREEN        4u
 #define UZ_GATHER_ZERO_WEIGHT      5u
+#define UZ_GATHER_FIELD_CHANGED    6u   ///< inside a box where the distance field changed (block B.2)
 
 /// The history reprojection: the four bilinear taps that survive the receiver-plane test, weighted
 /// and normalised. Returns the rejection code; the outputs are meaningful only when it is
@@ -145,9 +161,13 @@ void main(uint3 id : SV_DispatchThreadID) {
         float3 position = SurfacePosition(fullPixel, depth, fullSize);
         float3 normal = OctDecode(normalTex.Load(int3(fullPixel,0)).rg);
         outputGeometry[pixel] = float4(position, PackSurfaceNormal(normal));
-        reject = ReprojectGatherHistory(position, normal, size, fullSize,
-                                        historyGeometry, historyTex, historyAO,
-                                        historyColor, historyAOValue, historyCount, weightSum);
+        if (InChangedRegion(position)) {
+            reject = UZ_GATHER_FIELD_CHANGED;
+        } else {
+            reject = ReprojectGatherHistory(position, normal, size, fullSize,
+                                            historyGeometry, historyTex, historyAO,
+                                            historyColor, historyAOValue, historyCount, weightSum);
+        }
     }
 
     float3 result = current;

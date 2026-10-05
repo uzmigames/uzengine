@@ -133,7 +133,7 @@ CHANNELS = {
 #: history from an initialised one.
 GATHER_REJECT = {
     0: 'accepted', 1: 'sky_depth', 2: 'history_invalid', 3: 'behind_camera',
-    4: 'reprojected_offscreen', 5: 'zero_weight_sum',
+    4: 'reprojected_offscreen', 5: 'zero_weight_sum', 6: 'field_changed',
 }
 
 #: `gather_upsampled` state codes — an all-zero weight vector alone does not say whether the

@@ -84,6 +84,32 @@ not reset for partial updates (its temporal filter converges); probe classificat
 scene produces no regions and the hash disappears, so the per-frame cost is the diff itself
 (138 instances on Sponza).
 
+## Phase 3-4 implementation notes (2026-10-05)
+- `MeshSDF::instanceKey` = `DrawCommand::entityId`; records sorted by key with a stable sort, so
+  several draws of one entity pair up in order; unknown keys (UINT32_MAX) pair by order too.
+- World bounds of an instance = the eight corners of its local SDF volume through the world matrix,
+  expanded by the two-sided surface bias times the largest row length of the matrix.
+- A change region per clipmap = (old ∪ new bounds) ⊕ (band + 2 voxels), clipped to the window; its
+  instance list = records whose (bounds ⊕ band) intersects the box. Regions are dispatched after
+  the recentre slabs with a UAV barrier between them; the whole window wins when the band is 0,
+  when a clipmap has no data yet, or when more than `r.GI.GDF.MaxRegions` instances changed.
+- `GdfCompositeConstants` gains `band` (13 DWORDs); the shader clamps both outputs to it after the
+  instance loop. `test_gdf_raw_composite.ps1` runs with band 0 (the frozen original is untruncated).
+- The scene revision bumps only for whole-window recomposes; `RadianceCache::RetraceKeepingHistory()`
+  (`m_dirty = true`) is the regional reaction, logged as `GDF regional recompose`.
+
+- Phase 4: the change boxes (bounds ⊕ band of clipmap 0 + 1 voxel) go to the radiance cache
+  (`RadianceCacheTraceConstants`: `regionCount` + 8 boxes, 464 B; a probe inside replaces or blends
+  its history at `r.GI.RadianceCache.RegionBlendAlpha`, default 1.0) and to the SSGI temporal
+  accumulation (`HistoryCB` 592 B: this and last frame's boxes, reject code 6 `field_changed`).
+- Field compare rewritten to compare the incremental result with a whole-window recompose of the
+  same instances in the same command list (the earlier next-frame form skipped trajectory events
+  and was meaningless during loading).
+- The moving-box gates G3 were re-specified on 2026-10-05: the first form (7 frames after arrival
+  against the static reference at frame 95) measured the cache's own ~200-frame convergence, not the
+  regional path. The reference is now rendered over the same frames and the transient is gated
+  separately (G3e, registered before the blend-weight candidate was measured).
+
 ## Order and gates
 1. Baseline (manifests `73-b02-baseline`: longsweep `GDF_Composite` cost per recentre, preload
    invalidations) — task 1.1.

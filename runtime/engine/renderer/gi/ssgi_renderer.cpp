@@ -15,6 +15,8 @@
 #include "cvar.h"
 
 #include <cstring>
+#include <algorithm>
+#include <vector>
 
 UZ_DECLARE_LOG_CATEGORY(Renderer);
 
@@ -746,11 +748,34 @@ void SSGIRenderer::DispatchTemporalAccum(IRHICommandList* cmdList, const SSGIRen
     };
     static_assert(sizeof(TemporalAccumRC) == 60, "Must fit 16 root DWORDs");
 
-    auto historyAllocation = params.cbRing->Allocate(sizeof(m_previousViewProj));
+    // HistoryCB: the previous view-projection plus the world boxes where the distance field
+    // changed this frame or the last one (the gather reads the radiance cache one frame late):
+    // pixels inside reject their history (block B.2 phase 4). Mirrors ssgi_temporal_accum_cs.hlsl.
+    struct HistoryCB {
+        float    previousViewProj[16];
+        uint32_t regionCount;
+        uint32_t _pad[3];
+        float    regionLo[16][4];
+        float    regionHi[16][4];
+    };
+    static_assert(sizeof(HistoryCB) == 592, "HistoryCB mirrors ssgi_temporal_accum_cs.hlsl");
+    HistoryCB history{};
+    std::memcpy(history.previousViewProj, m_previousViewProj, sizeof(m_previousViewProj));
+    {
+        std::vector<GlobalDistanceField::ChangedRegion> boxes = m_previousRegions;
+        if (params.changedRegions) boxes.insert(boxes.end(), params.changedRegions->begin(), params.changedRegions->end());
+        history.regionCount = static_cast<uint32_t>(std::min<size_t>(boxes.size(), 16));
+        for (uint32_t r = 0; r < history.regionCount; ++r) {
+            history.regionLo[r][0] = boxes[r].lo.x; history.regionLo[r][1] = boxes[r].lo.y; history.regionLo[r][2] = boxes[r].lo.z;
+            history.regionHi[r][0] = boxes[r].hi.x; history.regionHi[r][1] = boxes[r].hi.y; history.regionHi[r][2] = boxes[r].hi.z;
+        }
+        m_previousRegions = params.changedRegions ? *params.changedRegions : std::vector<GlobalDistanceField::ChangedRegion>{};
+    }
+    auto historyAllocation = params.cbRing->Allocate(sizeof(HistoryCB));
     UZ_VERIFY(historyAllocation.cpuPtr != nullptr);
-    std::memcpy(historyAllocation.cpuPtr, m_previousViewProj, sizeof(m_previousViewProj));
+    std::memcpy(historyAllocation.cpuPtr, &history, sizeof(HistoryCB));
     cmdList->SetRootCBV(kSlotPerObject, historyAllocation.bufferHandle, historyAllocation.offsetBytes,
-                       historyAllocation.cpuPtr, sizeof(m_previousViewProj));
+                       historyAllocation.cpuPtr, sizeof(HistoryCB));
     TemporalAccumRC rc{};
     rc.depthSrv = params.depthSrvIndex;
     rc.normalSrv = params.normalSrvIndex;

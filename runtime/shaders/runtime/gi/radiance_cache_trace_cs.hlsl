@@ -91,7 +91,7 @@ cbuffer TraceConstants : register(b2) {
     // the cbuffer layout matches the 208-byte CPU mirror.
     uint  vfxEmissiveSrvIndex;
     uint  vfxEmissiveSampleCount;
-    float _vfxEmissivePad0;
+    float regionBlendAlpha;    ///< Blend weight of a probe inside a change box (1 = replace, block B.2 phase 4)
     float _vfxEmissivePad1;
 
     // Grid recentre: the history buffer was traced with the grid at its previous
@@ -100,8 +100,20 @@ cbuffer TraceConstants : register(b2) {
     int   historyShiftX;
     int   historyShiftY;
     int   historyShiftZ;
-    uint  _historyShiftPad;
+    uint  regionCount;         ///< Change boxes (block B.2): probes inside replace their history
+    float4 regionLo[8];        ///< lo.xyz of each box
+    float4 regionHi[8];        ///< hi.xyz of each box
 };
+
+/// True inside one of this frame's change boxes: the distance field changed there, so the
+/// probe's history was traced against geometry that no longer exists and it replaces instead of
+/// blending (block B.2 phase 4).
+bool InChangedRegion(float3 p) {
+    [loop] for (uint r = 0; r < min(regionCount, 8u); ++r) {
+        if (all(p >= regionLo[r].xyz) && all(p <= regionHi[r].xyz)) return true;
+    }
+    return false;
+}
 
 // ─── History grid (previous origin) ───────────────────────────────────────
 //
@@ -601,10 +613,17 @@ void main(uint3 DTid : SV_DispatchThreadID) {
         hasHistory = validity[historyBase + 6].w > 0.0;
     }
 
-    float a = hasHistory ? saturate(temporalBlendAlpha) : 1.0;
+    // Inside a change box the history was traced against geometry that no longer exists
+    // (block B.2 phase 4): it is replaced (regionBlendAlpha 1) or blended out over a few frames.
+    // A single-frame trace is noisy, and the clamped SH evaluation of the consumers turns that
+    // noise into a positive bias until the blend has averaged it, so a weight below 1 trades a
+    // short fade of the stale history for a smaller transient.
+    const bool fieldChanged = hasHistory && InChangedRegion(probePos);
+    float a = hasHistory ? saturate(fieldChanged ? regionBlendAlpha : temporalBlendAlpha) : 1.0;
+    const bool replace = !hasHistory || a >= 1.0;
     [unroll]
     for (uint k = 0; k < 7; ++k) {
-        if (!hasHistory) {
+        if (replace) {
             shBuf[base + k] = newPacked[k];
         } else {
             StructuredBuffer<float4> history = ResourceDescriptorHeap[g_shBufferSrvIndex];

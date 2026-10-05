@@ -46,6 +46,7 @@ struct ExpandedOutput { float4& operator[](uint3){return expandedValue;} };
 struct RawOutput { float& operator[](uint3){return rawValue;} };
 uint outputUav=0,rawOutputUav=1,meshCount=0,accumulate=0,resolution=1;
 uint regionOrigin=0,regionSize=(1u|(1u<<9)|(1u<<18)),windowOrigin=0;   // one voxel, texel 0 (block B.2 region constants)
+float band=0;   // untruncated, as the original shader
 float3 clipmapCenter;
 float clipmapExtent=1;
 int linearClamp=0;

@@ -113,7 +113,7 @@ cbuffer TraceConstants : register(b2) {
     // strips the entire branch on shader-stage scheduling.
     uint  vfxEmissiveSrvIndex;
     uint  vfxEmissiveSampleCount;
-    float _vfxEmissivePad0;
+    float regionBlendAlpha;    ///< radiance cache only (block B.2 phase 4); layout mirror
     float _vfxEmissivePad1;
 
     // Radiance-cache grid-recentre row (history scroll); mirrored for layout

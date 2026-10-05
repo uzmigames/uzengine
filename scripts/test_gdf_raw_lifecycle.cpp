@@ -37,7 +37,7 @@ struct IRHICommandList {
  IRHIDevice& device;unsigned errors=0,dispatches=0,uavBarriers=0;GdfCompositeConstants current{};
  void SetPipeline(int){}
  void ResourceBarrier(const RHIBarrierDesc* barriers,unsigned count){for(unsigned i=0;i<count;++i){auto& texture=device.textures.at(barriers[i].texture.id);if(texture.state!=barriers[i].stateBefore)++errors;if(barriers[i].stateBefore==RHIResourceState::UnorderedAccess&&barriers[i].stateAfter==RHIResourceState::UnorderedAccess)++uavBarriers;texture.state=barriers[i].stateAfter;}}
- void SetRootConstants(unsigned,const uint32_t* data,unsigned count){if(count!=12){++errors;return;}current=*reinterpret_cast<const GdfCompositeConstants*>(data);}
+ void SetRootConstants(unsigned,const uint32_t* data,unsigned count){if(count!=13){++errors;return;}current=*reinterpret_cast<const GdfCompositeConstants*>(data);}
  void SetRootCBV(int,int,int,void*,unsigned){}
  void Dispatch(unsigned x,unsigned y,unsigned z){++dispatches;auto& expanded=device.textures.at(current.outputUav-200);auto& raw=device.textures.at(current.rawOutputUav-200);if(expanded.desc.format!=RHIFormat::RGBA16Float||raw.desc.format!=RHIFormat::R16Float||expanded.state!=RHIResourceState::UnorderedAccess||raw.state!=RHIResourceState::UnorderedAccess||x!=(current.resolution+3)/4||x!=y||y!=z)++errors;}
 };

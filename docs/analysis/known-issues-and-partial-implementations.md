@@ -480,10 +480,23 @@ clipmap-0 recentre on Sponza (256^3, 138 instances), the hitch the flicker progr
 a lighting step at grid crossings. The clipmaps are stored toroidally now (world voxel k in texel
 k mod resolution; readers address by `frac(p / (2 extent))` with the WRAP sampler and skip the
 outer voxel of the window) and a recentre recomposes only the entering slabs
-(`r.GI.GDF.Incremental`, default on). Gates: G1 slab recompose == full recompose PASS (20 recentre events of the boundary trajectory, +-x and +-y single-voxel moves: 100.0000 % identical texels over the whole 256^3 volume, max |delta| 0 cm; 2 events during loading skipped by design); G4 Sponza
+(`r.GI.GDF.Incremental`, default on); since phases 3-4 (same day) a changed, added or removed
+instance recomposes only its neighbourhood (old ∪ new bounds plus the truncation band
+`r.GI.GDF.BandVoxels`, default 32 voxels), the scene revision bumps only for whole-window
+recomposes, and the change boxes reach the consumers: radiance-cache probes inside them replace
+their history (`r.GI.RadianceCache.RegionBlendAlpha` 1.0), the others blend as on a
+recentre, SSGI pixels inside reject theirs (reject code 6). Phase 3-4 gates: G2a PASS (moving box: 60 regional recomposes, 0 whole-window, 0 cache invalidations after loading); G2b PASS (GDF_Composite 0.015 ms mean over the window against 0.575 ms on the whole-window path); G3a-d PASS against the static reference rendered over the same frames (END strip +1.16 %, START -0.33 %, control area within 0.96 % on every frame where the whole-window path drops 8.63 %); G3e FAIL (8.83 % transient peak beside the arrival, gate 5 %, documented); G4 PASS (Sponza Camera C regional vs whole-window 0.13-0.15 %); G6 PASS (band within 2.2e-6); G5 PASS (ratio 0.015).
+Gates of phase 2: G1 slab recompose == full recompose PASS (20 recentre events of the boundary trajectory, +-x and +-y single-voxel moves: 100.0000 % identical texels over the whole 256^3 volume, max |delta| 0 cm; 2 events during loading skipped by design); G4 Sponza
 Camera C ROIs with Incremental 1 vs 0 PASS (2e-6 relative); G5 recentre cost PASS (1.327 -> 0.0224 ms, ratio 0.017). Still full: the first
-fill and any scene change (instance hash: a moved mesh, a streamed texture, a LOD swap), which also
-resets the radiance-cache and SSGI history — phases 3-4 of the task. The diagnostic
+fill, the band off, or more than `r.GI.GDF.MaxRegions` (8) instance changes in one frame (those
+still reset the GI history everywhere). Known transient: beside an arriving object the indirect
+light overshoots for ~60 frames (the replaced probes hold a single-frame estimate whose noise the
+clamped SH evaluation reads as a positive bias): 8.8 % peak on the moving-box reference against the
+5 % gate G3e of `scripts/test_gdf_regional.py` (FAIL, documented). A lower blend weight
+(`r.GI.RadianceCache.RegionBlendAlpha` 0.25) passes the box but fails G4 on Sponza (+6.5-8 %: a
+loading event's box lasts one frame, the stale history is blended once and the feedback keeps it);
+proposed fix: persist the boxes for a few frames and retrace only the probes inside them. A regional
+change also still costs a full retrace of the probe grid that frame (~4x the budgeted trace). The diagnostic
 `r.GI.GDF.CenterPhaseOffset` now shifts the crossing frames only, not the voxel grid.
 
 ### Radiance cache probe classification — `ENABLED` 2026-10-05 (followup-01 6.4, H-72)

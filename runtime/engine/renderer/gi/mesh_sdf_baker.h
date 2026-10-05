@@ -38,6 +38,9 @@ struct MeshSDF {
     float            baseColorTint[3] = {1.0f, 1.0f, 1.0f};
     float            metallicMultiplier = 1.0f;
     uint32_t         materialFlags = 0;
+    /// Identity of the instance this copy describes (the draw's entity id): the global distance
+    /// field diffs instances by it from frame to frame (block B.2).
+    uint32_t         instanceKey = UINT32_MAX;
 
     /// Three float4 dot products mapping world position to mesh-local position,
     /// including translation in each vector's fourth component.

@@ -58,7 +58,9 @@ def box_entity(name, extra=None):
     return entity(name, comps)
 
 
-def scene_json():
+def scene_json(static_end=False):
+    """`static_end`: the box sits at its END position from the first frame, without the mover, as the
+    converged reference the moving-box capture is compared against (scripts/test_gdf_regional.py)."""
     ents = [
         entity('Sun', {'transform': {'position': [0, 0, 0], 'rotation': [-35, 0, 0], 'scale': [1, 1, 1]},
                        'light': {'type': 'directional', 'color': [1, 1, 1], 'intensity': 10, 'cast_shadows': True,
@@ -71,13 +73,22 @@ def scene_json():
                                           'min_occlusion': 0.0, 'lower_hemisphere_is_black': True}}),
     ]
     for name in BOXES:
-        ents.append(box_entity(name, {'script': {'path': 'scripts/gdf_box_move.lua'}} if name == 'box' else None))
-    return {'name': 'GDF incremental reference', 'version': '1.0', 'cvars': {}, 'entities': ents}
+        if name == 'box':
+            if static_end:
+                ent = box_entity(name)
+                ent['components']['transform']['position'] = [BOX_END_X - BOX_START_X, 0, 0]
+            else:
+                ent = box_entity(name, {'script': {'path': 'scripts/gdf_box_move.lua'}})
+        else:
+            ent = box_entity(name)
+        ents.append(ent)
+    title = 'GDF incremental reference' + (' (box at the end, static)' if static_end else '')
+    return {'name': title, 'version': '1.0', 'cvars': {}, 'entities': ents}
 
 
-def project_json():
+def project_json(scene=SCENE):
     return {'name': 'GDF incremental reference', 'version': '1.0', 'content_root': '../sample/content',
-            'default_scene': f'scenes/{SCENE}.uzscene', 'window': {'width': 640, 'height': 360},
+            'default_scene': f'scenes/{scene}.uzscene', 'window': {'width': 640, 'height': 360},
             'cvars': PROJECT_CVARS}
 
 
@@ -90,14 +101,15 @@ def generate():
         with open(path, 'wb') as fh:
             fh.write(box_mesh_bytes(lo, hi))
         written.append(path)
-    path = os.path.join(CONTENT, 'scenes', f'{SCENE}.uzscene')
-    with open(path, 'w', encoding='utf-8') as fh:
-        json.dump(scene_json(), fh, indent=2)
-    written.append(path)
-    path = os.path.join(REPO, 'scripts', f'{SCENE}.uzproject')
-    with open(path, 'w', encoding='utf-8') as fh:
-        json.dump(project_json(), fh, indent=2)
-    written.append(path)
+    for scene, static_end in ((SCENE, False), (SCENE + '-end', True)):
+        path = os.path.join(CONTENT, 'scenes', f'{scene}.uzscene')
+        with open(path, 'w', encoding='utf-8') as fh:
+            json.dump(scene_json(static_end), fh, indent=2)
+        written.append(path)
+        path = os.path.join(REPO, 'scripts', f'{scene}.uzproject')
+        with open(path, 'w', encoding='utf-8') as fh:
+            json.dump(project_json(scene), fh, indent=2)
+        written.append(path)
     return written
 
 

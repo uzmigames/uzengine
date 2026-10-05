@@ -57,6 +57,10 @@ static auto* cv_RCRays = UZ_CVAR_INT("r.GI.RadianceCache.RaysPerProbe", 32,
     "Sphere tracing rays per updated irradiance probe", 4, 64);
 static auto* cv_RCProbeBudget = UZ_CVAR_INT("r.GI.RadianceCache.ProbesPerFrame", 1024,
     "Irradiance probes updated per frame after initialization", 64, 4096);
+static auto* cv_RCRegionBlendAlpha = UZ_CVAR_FLOAT("r.GI.RadianceCache.RegionBlendAlpha", 1.0f,
+    "Blend weight of a probe inside a box where the distance field changed this frame (block B.2 "
+    "phase 4): 1 = replace its history with this frame's trace, lower = blend the stale history out "
+    "over a few frames (less single-frame noise, a short fade of the old geometry)", 0.05f, 1.0f);
 static auto* cv_RCProbeClassification = UZ_CVAR_INT("r.GI.RadianceCache.ProbeClassification", 0,
     "Which probes the radiance cache treats as inside geometry. 0 = a biased field distance below 5 cm "
     "at the probe (the current rule: it cannot tell the two sides of a surface apart and discards free "
@@ -772,6 +776,18 @@ void RadianceCache::UpdateProbes(
     constants.historyShiftX     = resetHistory ? 0 : m_pendingHistoryShift[0];
     constants.historyShiftY     = resetHistory ? 0 : m_pendingHistoryShift[1];
     constants.historyShiftZ     = resetHistory ? 0 : m_pendingHistoryShift[2];
+    // Change boxes (block B.2 phase 4): probes inside replace their history instead of blending.
+    // Moot on a reset, when every probe replaces anyway.
+    constants.regionCount = resetHistory ? 0u : static_cast<uint32_t>(std::min<size_t>(m_pendingRegions.size(), kMaxFieldRegions));
+    for (uint32_t r = 0; r < constants.regionCount; ++r) {
+        constants.regionLo[r][0] = m_pendingRegions[r].lo.x;
+        constants.regionLo[r][1] = m_pendingRegions[r].lo.y;
+        constants.regionLo[r][2] = m_pendingRegions[r].lo.z;
+        constants.regionHi[r][0] = m_pendingRegions[r].hi.x;
+        constants.regionHi[r][1] = m_pendingRegions[r].hi.y;
+        constants.regionHi[r][2] = m_pendingRegions[r].hi.z;
+    }
+    constants.regionBlendAlpha = cv_RCRegionBlendAlpha->value;
 
     // Fill GDF clipmap parameters from the global distance field
     const uint32_t numClipmaps = GlobalDistanceField::kNumClipmaps;
@@ -918,6 +934,7 @@ void RadianceCache::UpdateProbes(
     m_dirty = false;
     m_firstWritePending = false;
     m_historyInvalid = false;
+    m_pendingRegions.clear();
     QueueDiagnosticReadback(cmdList, frameIndex);
     if (m_diagnosticCopyFrame == frameIndex) {
         UZ_LOG(Renderer, Info, "RC diagnostic: frame={} pfEnabled={} pfSHSrv={} pfGiIntensity={} skySRV={} skyMultiplier=({},{},{}) lightColor=({},{},{}) lightDir=({},{},{}) probeOffset={} probeBudget={} firstWrite={} historyShift=({},{},{})",
