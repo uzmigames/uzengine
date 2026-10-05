@@ -17,7 +17,7 @@ for this verification. The measured numbers were NOT reproduced here; only the c
 | 4 | no background rendering budget | `uzengine.cpp:1035-1040` the loop pauses only when minimized (10 ms sleep); no focus-based throttle |
 | 5 | the frame limit is a post-preload frame count, not elapsed time | `uzengine.cpp:1030-1031` `frameLimit = frameIndex + effectiveMaxFrames`, taken after preload |
 | 6 | the printed FPS mixes preload frames into the denominator | `uzengine.cpp:1028` `startTime` is taken after preload; `:1215` `LogRenderStats(frameIndex, totalMs)` divides by a `frameIndex` that kept counting through preload. With 37 preload frames the printed ms/frame is understated; their correction of the historical 24 FPS to 18.08 FPS (140444.3 ms / 2539 post-load frames = 55.32 ms) is arithmetically right |
-| 7 | no per-pass GPU timings | `--gpu-profile` appears 0× in `uzengine.cpp` (1× in `application_args.cpp`, the other entry point); `PassInspector::SetTimingData` has NO caller anywhere, so `DIAG_JSON` always carries `"timing":[]` — confirmed empty in this session's own `--diag` runs |
+| 7 | no per-pass GPU timings (resolved 2026-10-05, lighting block B item 1: `--diag` fills `timing`, the profiler readback race and the per-frame name mix-up are fixed) | `--gpu-profile` appears 0× in `uzengine.cpp` (1× in `application_args.cpp`, the other entry point); `PassInspector::SetTimingData` has NO caller anywhere, so `DIAG_JSON` always carries `"timing":[]` — confirmed empty in this session's own `--diag` runs |
 
 ## Where this checkout differs from the review's reading
 
@@ -80,7 +80,7 @@ engine's denominator bug, not the bug alone.
 
 ### Order agreed for the follow-up work
 
-1. Fix the frame-time metric and wire per-pass timings, verifying the synchronisation of the
+1. Fix the frame-time metric and wire per-pass timings, verifying the synchronisation of the (timings done 2026-10-05, `docs/analysis/lighting-block-b-01-pass-timings.md`; the frame-time metric is still open)
    timestamp readback.
 2. Measure, then reduce, the SDF reflection cost.
 3. Frame pacing with real headroom for the desktop, and reduced load in the background.

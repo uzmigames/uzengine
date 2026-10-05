@@ -36,6 +36,11 @@
 
 #include <cstdio>
 #include <cstring>
+#include "cvar.h"
+
+// Per-frame GPU pass log. The statistics reach the --diag report and the run manifest
+// regardless; this prints every pass every frame while the profiler runs.
+static auto* cv_GpuProfilerLog = UZ_CVAR_BOOL("r.GpuProfiler.Log", false, "Log every pass's GPU time every frame while the GPU profiler runs (--diag, --run-manifest, --gpu-profile)");
 
 namespace uz {
 
@@ -367,14 +372,13 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     cmdList->Execute();
 
     // ── GPU Profiler: resolve results from previous frame (N-2) ─────────
-    // After GPU execution, resolve the triple-buffered readback. Results
-    // lag by 2 frames due to the profiler's triple-buffered design. The
-    // first 2 frames will produce empty/zero results — this is expected.
+    // Resolve the ring slot of frame N-3, whose fence the CPU waited before recording this
+    // frame (ring depth = frames in flight + 1). The first three frames produce no results.
     if (m_gpuProfileEnabled) {
         m_device->GpuProfilerResolve();
 
         const auto& results = m_device->GpuProfilerGetResults();
-        if (!results.empty()) {
+        if (!results.empty() && cv_GpuProfilerLog->value) {
             UZ_LOG(Renderer, Info, "── GPU Profile (frame {}) ──", frameIndex);
             for (const auto& r : results) {
                 UZ_LOG(Renderer, Info, "  {:30s}  {:7.3f} ms", r.name ? r.name : "?", r.ms);

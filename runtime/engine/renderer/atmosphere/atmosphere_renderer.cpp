@@ -552,8 +552,13 @@ void AddAtmospherePasses(
                 std::memcpy(densAlloc.cpuPtr, &densCBV, sizeof(ScatteringDensityCBV));
 
                 if (densPipeline.IsValid()) {
-                    std::string densPassName = std::string("ScatteringDensity_Order") + std::to_string(order);
-                    rgBuilder.AddPass(densPassName.c_str(), [=](rg::RgPassBuilder& pb) {
+                    // AddPass keeps the pointer: the name must outlive the graph (a local string
+                    // did not, and the profiler read freed memory until 2026-10-05).
+                    static constexpr const char* kDensPassNames[] = {
+                        "ScatteringDensity_Order0", "ScatteringDensity_Order1", "ScatteringDensity_Order2",
+                        "ScatteringDensity_Order3", "ScatteringDensity_Order4"};
+                    static_assert(kNumScatterOrders <= 4, "extend the pass-name tables");
+                    rgBuilder.AddPass(kDensPassNames[order], [=](rg::RgPassBuilder& pb) {
                         pb.Read(lutRes, RHIResourceState::ShaderResource);
                         pb.Read(deltaRayRes, RHIResourceState::ShaderResource);
                         if (order == 2) pb.Read(deltaMieRes, RHIResourceState::ShaderResource);
@@ -579,8 +584,10 @@ void AddAtmospherePasses(
                 std::memcpy(indIrrAlloc.cpuPtr, &indIrrCBV, sizeof(IrradianceCBV));
 
                 if (irrPipeline.IsValid()) {
-                    std::string irrPassName = std::string("IndirectIrradiance_Order") + std::to_string(order);
-                    rgBuilder.AddPass(irrPassName.c_str(), [=](rg::RgPassBuilder& pb) {
+                    static constexpr const char* kIrrPassNames[] = {
+                        "IndirectIrradiance_Order0", "IndirectIrradiance_Order1", "IndirectIrradiance_Order2",
+                        "IndirectIrradiance_Order3", "IndirectIrradiance_Order4"};
+                    rgBuilder.AddPass(kIrrPassNames[order], [=](rg::RgPassBuilder& pb) {
                         pb.Read(deltaRayRes, RHIResourceState::ShaderResource);
                         if (order == 2) pb.Read(deltaMieRes, RHIResourceState::ShaderResource);
                         pb.Write(irrRes, RHIResourceState::UnorderedAccess);
@@ -629,8 +636,10 @@ void AddAtmospherePasses(
                 std::memcpy(indAlloc.cpuPtr, &indCBV, sizeof(IndirectScatteringCBV));
 
                 if (indPipeline.IsValid()) {
-                    std::string indPassName = std::string("IndirectScattering_Order") + std::to_string(order);
-                    rgBuilder.AddPass(indPassName.c_str(), [=](rg::RgPassBuilder& pb) {
+                    static constexpr const char* kIndPassNames[] = {
+                        "IndirectScattering_Order0", "IndirectScattering_Order1", "IndirectScattering_Order2",
+                        "IndirectScattering_Order3", "IndirectScattering_Order4"};
+                    rgBuilder.AddPass(kIndPassNames[order], [=](rg::RgPassBuilder& pb) {
                         pb.Read(lutRes, RHIResourceState::ShaderResource);
                         pb.Read(scatDensRes, RHIResourceState::ShaderResource);
                         pb.Write(scatRes, RHIResourceState::UnorderedAccess);

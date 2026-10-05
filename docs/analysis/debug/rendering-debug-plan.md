@@ -40,7 +40,7 @@ UzEngine already has a **powerful but underutilized** diagnostic infrastructure.
 | Stats Overlay | (always on in editor) | FPS, draw calls, memory, camera, LOD | **Working** |
 | DX12 Debug Layer | `--gpu-validation` | Resource state validation | **Working** |
 | DRED Breadcrumbs | `--gpu-breadcrumbs` | Device removal diagnostics | **Working** |
-| GPU Profiler | `--gpu-profile` | Per-pass timestamp queries | **Working** |
+| GPU Profiler | `--diag`, `--run-manifest`, `--gpu-profile` | Per-pass timestamp queries: mean / min / max ms and samples in the diag report and `gpu_ms` in the manifest; per-frame log with `r.GpuProfiler.Log` | **Working** (DX12; wired to `uzengine.exe` 2026-10-05, readback race fixed) |
 | GPU Breadcrumb Markers | `UZ_GPU_BREADCRUMBS` define | Manual command list markers | **Working** |
 | CVar Override | `--cvar name=value` | Override any CVar at startup | **Working** |
 

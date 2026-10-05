@@ -567,9 +567,12 @@ struct RunStats {
     uint32_t regionFiles = 0;
     uint32_t regionInvalid = 0;
     uint32_t renderWidth = 0, renderHeight = 0;
-    /// Per-pass GPU time, summed over the measured window (pass name -> total ms, sample count).
+    /// Per-pass GPU time over the measured window: sum, sample count, min and max ms.
     /// G5 asks about GPU cost; CPU wall time is a different quantity and cannot stand in for it.
-    std::map<std::string, std::pair<double, uint32_t>> gpuMs;
+    struct GpuAcc { double sum = 0.0; uint32_t count = 0; float minMs = 0.f; float maxMs = 0.f; };
+    std::map<std::string, GpuAcc> gpuMs;
+    /// GPU frame span (first pass begin to last pass end) of each measured frame, ms.
+    std::vector<float> gpuFrameMs;
 };
 
 static std::string JsonEscape(const std::string& in) {
@@ -630,13 +633,18 @@ static void WriteRunManifest(const std::string& path, const uz::Config& config,
         bool first = true;
         double total = 0.0;
         for (const auto& [name, acc] : stats.gpuMs) {
-            if (acc.second == 0) continue;
-            const double mean = acc.first / acc.second;
+            if (acc.count == 0) continue;
+            const double mean = acc.sum / acc.count;
             total += mean;
             o << (first ? "\n" : ",\n") << "    \"" << JsonEscape(name) << "\": " << mean;
             first = false;
         }
-        o << (first ? "" : ",\n") << "    \"_total\": " << total << "\n  },\n";
+        double frameSum = 0.0;
+        for (float v : stats.gpuFrameMs) frameSum += v;
+        // _total = sum of the per-pass means; _frame = mean GPU span of a frame (gaps included).
+        o << (first ? "" : ",\n") << "    \"_total\": " << total
+          << ",\n    \"_frame\": " << (stats.gpuFrameMs.empty() ? 0.0 : frameSum / static_cast<double>(stats.gpuFrameMs.size()))
+          << "\n  },\n";
     }
     o << "  \"output_encoding\": \"screenshots: 8-bit sRGB PNG; region dump: linear HDR float32 RGB\",\n";
     o << "  \"frames\": {\"rendered\": " << stats.framesRendered
@@ -890,8 +898,11 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     // plus --region-fields output|lighting|taa|full and --region-first/--region-last.
     // Per-pass GPU timestamps are off by default (they cost a pair of queries per pass), so a
     // manifest would otherwise report CPU wall time only — which is a different quantity from the
-    // GPU cost an acceptance gate asks about. Enabled exactly when a manifest is requested.
-    if (sceneRendererReady && configPtr && !configPtr->GetString("run-manifest", "").empty()) {
+    // GPU cost an acceptance gate asks about. Enabled when a manifest is requested, for --diag
+    // (its report carries the per-pass statistics) and for --gpu-profile.
+    if (sceneRendererReady && configPtr
+        && (diagMode || configPtr->GetBool("gpu-profile", false)
+            || !configPtr->GetString("run-manifest", "").empty())) {
         sceneRenderer.SetGpuProfileEnabled(true);
     }
 
@@ -1052,6 +1063,12 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     // frameLimit accounts for pre-load frames so --frames N means N frames after pre-load.
     const uint32_t frameLimit = effectiveMaxFrames == kInfiniteFrames
         ? 0 : (frameIndex + static_cast<uint32_t>(effectiveMaxFrames));
+    // --diag measures GPU timings inside its own frame budget: unless --timing-first was given,
+    // the window opens after the first quarter of the budget (the default of 200 lies beyond
+    // the 120-frame diagnostic run and collected nothing).
+    if (diagMode && configPtr && frameLimit > 0 && configPtr->GetString("timing-first", "").empty()) {
+        runStats.measuredFirst = frameIndex + static_cast<uint32_t>(effectiveMaxFrames) / 4;
+    }
     UZ_LOG(Engine, Info, "Starting render loop (frames={})", effectiveMaxFrames);
 
     while (window.PumpMessages() && window.IsOpen()) {
@@ -1091,11 +1108,17 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         if (frameIndex >= runStats.measuredFirst) {
             runStats.frameMs.push_back(dt * 1000.f);
             if (sceneRendererReady && sceneRenderer.GetDevice()) {
-                for (const auto& r : sceneRenderer.GetDevice()->GpuProfilerGetResults()) {
+                const auto& results = sceneRenderer.GetDevice()->GpuProfilerGetResults();
+                for (const auto& r : results) {
                     if (!r.name) continue;
                     auto& acc = runStats.gpuMs[r.name];
-                    acc.first += static_cast<double>(r.ms);
-                    acc.second += 1u;
+                    if (acc.count == 0 || r.ms < acc.minMs) acc.minMs = r.ms;
+                    if (acc.count == 0 || r.ms > acc.maxMs) acc.maxMs = r.ms;
+                    acc.sum += static_cast<double>(r.ms);
+                    acc.count += 1u;
+                }
+                if (!results.empty()) {
+                    runStats.gpuFrameMs.push_back(sceneRenderer.GetDevice()->GpuProfilerGetFrameTimeMs());
                 }
             }
         }
@@ -1214,6 +1237,35 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     // ── Diagnostic output (JSON to stdout) ──────────────────────────────
     if (diagMode && sceneRendererReady) {
         auto& inspector = sceneRenderer.GetPassInspector();
+        // Per-pass GPU statistics of the measured window (mean / min / max / samples) plus the
+        // GPU frame span, from the same accumulation the run manifest reports.
+        std::vector<PassTimingEntry> timing;
+        for (const auto& [name, acc] : runStats.gpuMs) {
+            if (acc.count == 0) continue;
+            PassTimingEntry e{};
+            e.name      = name;
+            e.gpuTimeMs = static_cast<float>(acc.sum / acc.count);
+            e.minMs     = acc.minMs;
+            e.maxMs     = acc.maxMs;
+            e.samples   = acc.count;
+            timing.push_back(std::move(e));
+        }
+        if (!runStats.gpuFrameMs.empty()) {
+            PassTimingEntry e{};
+            e.name  = "_frame";
+            e.minMs = runStats.gpuFrameMs.front();
+            e.maxMs = e.minMs;
+            double sum = 0.0;
+            for (float v : runStats.gpuFrameMs) {
+                sum += v;
+                e.minMs = std::min(e.minMs, v);
+                e.maxMs = std::max(e.maxMs, v);
+            }
+            e.gpuTimeMs = static_cast<float>(sum / static_cast<double>(runStats.gpuFrameMs.size()));
+            e.samples   = static_cast<uint32_t>(runStats.gpuFrameMs.size());
+            timing.push_back(std::move(e));
+        }
+        inspector.SetTimingData(timing);
         DiagnosticReport report = inspector.GenerateReport(device, cmdList, frameIndex);
         std::printf("DIAG_JSON:%s\n", report.ToJSON().c_str());
         std::fflush(stdout);

@@ -211,6 +211,12 @@ static int PassInspectorGetTiming(lua_State* L) {
         lua_setfield(L, -2, "max");
         lua_pushnumber(L, static_cast<double>(timings[i].avgVal));
         lua_setfield(L, -2, "avg");
+        lua_pushnumber(L, static_cast<double>(timings[i].minMs));
+        lua_setfield(L, -2, "min_ms");
+        lua_pushnumber(L, static_cast<double>(timings[i].maxMs));
+        lua_setfield(L, -2, "max_ms");
+        lua_pushinteger(L, static_cast<lua_Integer>(timings[i].samples));
+        lua_setfield(L, -2, "samples");
         lua_rawseti(L, -2, i + 1);
     }
     return 1;

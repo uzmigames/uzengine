@@ -112,11 +112,14 @@ struct ValidationResult {
 
 /// GPU timing and readback stats for a single pass.
 struct PassTimingEntry {
-    std::string name;      ///< Pass name.
-    float       gpuTimeMs; ///< GPU time in milliseconds (0 if timing unavailable).
-    float       minVal;    ///< Min channel value from readback sampling.
-    float       maxVal;    ///< Max channel value from readback sampling.
-    float       avgVal;    ///< Average channel value from readback sampling.
+    std::string name;            ///< Pass name; `_frame` = GPU span from the first pass begin to the last pass end.
+    float       gpuTimeMs = 0.f; ///< Mean GPU time in milliseconds over the measured frames (0 if unavailable).
+    float       minVal = 0.f;    ///< Min channel value from readback sampling (not set by the GPU path).
+    float       maxVal = 0.f;    ///< Max channel value from readback sampling (not set by the GPU path).
+    float       avgVal = 0.f;    ///< Average channel value from readback sampling (not set by the GPU path).
+    float       minMs = 0.f;     ///< Fastest measured frame, ms.
+    float       maxMs = 0.f;     ///< Slowest measured frame, ms.
+    uint32_t    samples = 0;     ///< Frames the statistics cover (0 = timing unavailable).
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -147,7 +150,8 @@ struct PassGridConfig {
 ///   "hasFailure": <bool>,    // true if any target has NaN or Inf
 ///   "hasWarning": <bool>,    // true if any target is all-zeros
 ///   "targets": [{ "name": <str>, "status": <str>, "min": <float>, "max": <float>, "avg": <float> }],
-///   "timing": [{ "name": <str>, "gpuMs": <float> }]
+///   "timing": [{ "name": <str>, "gpuMs": <float>, "minMs": <float>, "maxMs": <float>, "samples": <uint> }]
+///   // gpuMs = mean over the measured frames; the entry "_frame" is the GPU frame span
 /// }
 /// ```
 struct DiagnosticReport {
@@ -364,8 +368,8 @@ public:
 
     /// Stores per-pass timing data collected from the GPU profiler.
     ///
-    /// Called by the renderer at the end of each frame with the resolved
-    /// timing results from the backend's GPU profiler.
+    /// Called by the tool (`uzengine.cpp`, `--diag`) before GenerateReport with the statistics
+    /// of the measured window (no caller existed until 2026-10-05, so `timing` was always empty).
     void SetTimingData(const std::vector<PassTimingEntry>& entries);
 
     /// Returns the most recent per-pass timing data.

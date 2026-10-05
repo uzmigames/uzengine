@@ -902,6 +902,22 @@ but no code yet.
 
 ## Build / Tooling
 
+### `--diag` per-pass timing — `FIXED` 2026-10-05 (lighting block B.1)
+
+`DIAG_JSON` printed `"timing": []` on every run: the GPU profiler was never enabled for `--diag`
+and `PassInspector::SetTimingData` had no caller. Three defects in the existing DX12 path would
+have made the numbers wrong once read: the readback ring was as deep as the command-list ring
+(3), so the slot of frame N-2 was resolved while that frame could still execute; one shared name
+table labelled frame N-3's timings with frame N's pass list; the multi-scatter passes registered
+`std::string` names that were freed before execution. Now `--diag` (and `--gpu-profile`) enable the
+profiler, the report carries mean / min / max ms and samples per pass plus the GPU frame span,
+the ring has 4 slots with per-slot names and counts, and the per-frame log is opt-in
+(`r.GpuProfiler.Log`). Guard: `scripts/test_diag_timing.py` (before 2/7, after 7/7). Only DX12
+implements the `IRHIDevice::GpuProfiler*` calls; the DX11/Vulkan/Metal profiler classes exist but
+are not reachable. Still open: the FPS printed by `LogRenderStats` divides by a frame count that
+includes the preload frames.
+
+
 ### Runtime leaks — FIXED (2026-04-07)
 `PT_Accum0` / `PT_Accum1` textures leaked at shutdown, triggering D3D12MA
 assert. Fixed in commit `cb9f4028`. If similar "Unfreed committed allocations"

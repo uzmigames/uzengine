@@ -110,7 +110,10 @@ std::string DiagnosticReport::ToJSON() const {
         if (i > 0) os << ",";
         os << "{";
         os << "\"name\":"; JsonEscapeString(os, t.name); os << ",";
-        os << "\"gpuMs\":"; JsonFloat(os, t.gpuTimeMs);
+        os << "\"gpuMs\":"; JsonFloat(os, t.gpuTimeMs); os << ",";
+        os << "\"minMs\":"; JsonFloat(os, t.minMs); os << ",";
+        os << "\"maxMs\":"; JsonFloat(os, t.maxMs); os << ",";
+        os << "\"samples\":" << t.samples;
         os << "}";
     }
     os << "]";
