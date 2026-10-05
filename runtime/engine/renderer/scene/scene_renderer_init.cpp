@@ -792,6 +792,16 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     const int decoderThreads = std::max(2, hwThreads / 2); // clamped to [2,8] by decoder
     m_asyncDecoder = std::make_unique<AsyncTextureDecoder>(decoderThreads);
 
+    // ── Asynchronous, disk-cached mesh SDF bakes (block B.3) ──
+    m_bakeFence = m_device->CreateFence();
+    if (!m_bakeFence) {
+        UZ_LOG(Renderer, Warning, "SceneRenderer: no bake fence — mesh SDF bakes are marked valid when recorded");
+    }
+    m_sdfBakeQueue = std::make_unique<MeshSdfBakeQueue>(
+        m_device, m_bakeFence, std::string("cache/meshsdf"),
+        [this]() { return m_pipelines ? m_pipelines->GetMeshSdfBakeShaderHash() : 0ull; },
+        std::clamp(hwThreads / 2, 2, 8));
+
     // ── Copy command list for async texture uploads (zero-stall DMA queue) ──
     // Texture staging copies run on a dedicated copy queue so the graphics
     // pipeline never blocks on texture uploads. Falls back to graphics queue
@@ -1313,6 +1323,16 @@ void SceneRenderer::Shutdown() {
     // Without this, D3D12MA asserts "Some allocations were not freed" because
     // resources are destroyed while the GPU still references them.
     m_device->WaitIdle();
+
+    // Block B.3: stop the bake workers and release the scratch of unfinished bakes (device idle).
+    if (m_sdfBakeQueue) {
+        m_sdfBakeQueue->Shutdown();
+        m_sdfBakeQueue.reset();
+    }
+    if (m_bakeFence) {
+        m_device->DestroyFence(m_bakeFence);
+        m_bakeFence = nullptr;
+    }
 
     // Flush the deferred-destroy queue. Per-frame uploaders (skeletal mesh
     // staging buffers, SDF bake scratch, etc.) push transient RHI buffers

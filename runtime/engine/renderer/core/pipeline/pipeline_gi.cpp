@@ -459,6 +459,18 @@ bool PipelineLibrary::EnsureMeshSdfBakeShader() {
     return true;
 }
 
+uint64_t PipelineLibrary::GetMeshSdfBakeShaderHash() {
+    if (!m_shaderMgr) return 0;
+    const auto bytecode = m_shaderMgr->GetBytecode(EngineShader::MeshSdfBakeCS);
+    if (bytecode.empty()) return 0;
+    uint64_t hash = 1469598103934665603ull;
+    for (const uint8_t byte : bytecode) {
+        hash ^= byte;
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
 RHIPipelineHandle PipelineLibrary::GetMeshSdfBake() {
     if (!m_initialized) {
         UZ_LOG(Renderer, Error, "PipelineLibrary::GetMeshSdfBake called before Init()");

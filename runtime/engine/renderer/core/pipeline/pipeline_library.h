@@ -696,6 +696,10 @@ public:
     /// Per-voxel brute-force closest-point-on-triangle. 4x4x4 thread groups.
     [[nodiscard]] RHIPipelineHandle GetMeshSdfBake();
 
+    /// FNV-1a of the mesh SDF bake shader's bytecode (0 when unavailable): part of the mesh
+    /// SDF cache key, so a shader change invalidates the cached fields (block B.3).
+    [[nodiscard]] uint64_t GetMeshSdfBakeShaderHash();
+
     /// Returns the radiance cache trace compute pipeline (radiance_cache_trace_cs.hlsl).
     ///
     /// Per-probe ray trace through the GDF, accumulates radiance into L2 SH.

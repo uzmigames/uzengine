@@ -499,6 +499,22 @@ proposed fix: persist the boxes for a few frames and retrace only the probes ins
 change also still costs a full retrace of the probe grid that frame (~4x the budgeted trace). The diagnostic
 `r.GI.GDF.CenterPhaseOffset` now shifts the crossing frames only, not the voxel grid.
 
+**Mesh SDF bakes are asynchronous and cached (block B.3, 2026-10-05).** The preload used to bake
+every field on the main thread with a `WaitIdle` per batch (Sponza: 22.65 s of CPU half and
+5.62 s of GPU drain of a 37.4-38.0 s preload), marked the field valid before the GPU had run and
+cached nothing. Now `MeshSdfBakeQueue` prepares the bakes on worker threads, records the GPU
+half in the frame's command list (Z slabs in the render loop, unthrottled during the preload) and
+marks the field valid when the frame fence passes; `cache/meshsdf` keeps the GPU readback
+(LZ4, XXH64, keyed on the mesh bytes, the options and the bake shader) and a hit uploads the
+same bits. The global distance field's instance batches are now sized by their entry count (a full
+64 KiB batch per region and clipmap exhausted the 2 MiB frame ring when seven fields completed in one
+frame) and the queue completes at most four fields per frame. Gates: C1 PASS (138 cache hits bit-identical to a fresh bake, volume and records); C2 as registered FAIL (warm preload 10.9 s against cold 19.3 s = 56 %: a 10.0 s texture floor the cache cannot touch) and C2' PASS (SDF-attributable preload 9.3 s -> 0.8 s); C3a PASS (no WaitIdle in the path); C3b PASS (CPU frame max 38.8 ms against a 26.9 ms median while the fields arrive after enabling SDF GI at runtime; GPU bake scope 0.04 ms per frame); C4 as registered FAIL (not bit-identical) and C4' 0.5-1.1 % (one ROI 0.08 % over its 1 % gate: cold and warm receive their fields on different frames and the radiance cache keeps its history outside the change boxes, block B.2); C5 as registered FAIL (the gain criterion was meaningless: with SDF GI off the channel holds the sky ambient) and C5' PASS (1.25 % from a reference with SDF GI on from the start); N PASS (a truncated entry is baked and rewritten). Sponza preload 37.4-38.0 s -> 19.3 s cold, 10.9 s warm. Open: a bake start costs
+the main thread up to ~10 ms for a 128^3 field (resource creations and 12 MB into upload memory; one start
+per frame in the render loop; big buffers are freed on a worker because a Debug-build free of 8 MB cost ~38 ms;
+the `SDF bake service took` log line names any frame above 10 ms), a 128^3 field takes 16 frames at the default
+`r.GI.MeshSdf.BakeSlicesPerFrame` (8), the cache has no eviction, procedural meshes still get no
+field (`docs/analysis/lighting-block-b-03-async-sdf-bake.md`).
+
 ### Radiance cache probe classification — `ENABLED` 2026-10-05 (followup-01 6.4, H-72)
 
 The current rule (field < 5 cm at the probe = inside) discarded free probes near faces and kept

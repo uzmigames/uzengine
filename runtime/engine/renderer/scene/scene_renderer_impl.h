@@ -657,20 +657,19 @@
 
     // ── Deferred SDF Baking ─────────────────────────────────────────────────
 
-    /// Pending SDF bake request — holds CPU mesh data and mesh index for
-    /// deferred batch bake after all mesh uploads are flushed.
-    struct PendingSdfBake {
-        uint32_t meshIndex;                 ///< Index into m_meshes to receive the baked SDF.
-        std::vector<uint8_t> vertexData;    ///< CPU vertex bytes (moved from Mesh).
-        uint32_t vertexCount;               ///< Number of vertices.
-        uint32_t vertexStride;              ///< Byte stride between vertices.
-        std::vector<uint8_t> indexData;     ///< CPU index bytes (moved from Mesh).
-        uint32_t indexCount;                ///< Number of indices.
-    };
-
-    /// Pending SDF bakes accumulated during mesh loading.
-    /// Flushed in a single batch after mesh uploads complete.
-    std::vector<PendingSdfBake> m_pendingSdfBakes;
+    /// Asynchronous, disk-cached mesh SDF bakes (block B.3): worker threads prepare the bakes
+    /// and the cache, the GPU half is recorded in the frame's command list and completes by
+    /// `m_bakeFence`, signalled after every frame's Execute with `m_bakeFenceValue`.
+    std::unique_ptr<MeshSdfBakeQueue> m_sdfBakeQueue;
+    IRHIFence* m_bakeFence = nullptr;
+    uint64_t   m_bakeFenceValue = 0;
+    bool       m_preloading = false;
+    /// SDF GI switched on after meshes loaded without fields: the missing bakes are queued a
+    /// few per frame, the CPU meshes re-read by path (ServiceSdfBakes).
+    bool       m_sdfRetriggerPending = false;
+    bool       m_sdfGiEnabledLast = false;
+    bool       m_sdfServiceStarted = false;
+    uint32_t   m_sdfRetriggerCursor = 0;
 
     // ── Loaded Assets ──────────────────────────────────────────────────────
 
@@ -820,19 +819,14 @@
     /// Requires a command list in recording state for GPU uploads.
     void FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs);
 
-    /// Batch-bakes all pending mesh SDFs in a single GPU submission.
-    ///
-    /// Called after `FlushDeferredMeshUploads()` completes so mesh vertex/index
-    /// data is on the GPU and the command list is in recording state.
-    ///
-    /// Each bake dispatches the mesh_sdf_bake_cs compute shader via
-    /// `MeshSdfBaker::BakeMeshGPU`. The resulting `MeshSDF` is stored in the
-    /// corresponding `m_meshes[meshIndex].sdf`. Temporary triangle upload
-    /// buffers are deferred for destruction after the GPU finishes.
-    ///
-    /// # Arguments
-    /// * `cmdList` — Command list in recording state.
-    void FlushSdfBakes(IRHICommandList* cmdList);
+    /// Once per frame, at the end of the sync (block B.3): queues the bakes of meshes that
+    /// loaded without SDF GI when it was switched on since, then starts, advances and
+    /// completes the asynchronous mesh SDF bakes (`MeshSdfBakeQueue::Service`).
+    void ServiceSdfBakes(IRHICommandList* cmdList);
+
+    /// Hands a loaded mesh to the bake queue: bake options captured now, 16-bit indices
+    /// widened, the vertex bytes moved out of `cpuMesh`.
+    void QueueSdfBake(uint32_t meshIndex, Mesh& cpuMesh);
 
     /// Creates the shadow atlas depth texture.
     // Shadow atlas creation moved to ShadowAtlas::Init()

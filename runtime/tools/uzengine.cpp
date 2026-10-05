@@ -1025,6 +1025,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         // streaming geometry for seconds afterwards while lighting computed
         // through missing occluders was already on screen. Pump batches and
         // window messages until readiness, presenting nothing.
+        sceneRenderer.SetPreloading(true);   // mesh SDF bakes unthrottled while nothing is presented (block B.3)
         while (window.PumpMessages() && window.IsOpen()) {
             sceneRenderer.RenderFrame(cmdList, swapChain, &world, &vfs, 0.016f, frameIndex);
             device->WaitIdle();
@@ -1051,6 +1052,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
                 break;
             }
         }
+        sceneRenderer.SetPreloading(false);
 #ifdef _WIN32
         window.SetTitle(winDesc.title);
 #endif

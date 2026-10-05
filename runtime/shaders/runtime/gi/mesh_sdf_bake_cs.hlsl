@@ -6,6 +6,7 @@
 /// @constants Root resolution bit 31 selects unsigned distance; low 31 bits store the volume size.
 /// @ref Pharr, Jakob & Humphreys 2023 "Physically Based Rendering", 4th ed., section 7.3.
 /// @constants Triangle-count bit 31 enables BVH traversal; low 31 bits locate its nodes.
+/// @constants Root DWORD 9 (`sliceOffset`) shifts the thread z; slabs past the volume are rejected by the bounds check.
 /// Triangles and preorder nodes share a 64-byte stride; leaves contain at most four triangles.
 
 cbuffer BakeConstants : register(b0) {
@@ -15,6 +16,7 @@ cbuffer BakeConstants : register(b0) {
     uint resolutionAndFlags;
     float3 volumeMin;
     float voxelSize;
+    uint sliceOffset;       // first voxel z of this dispatch: a bake may be recorded in Z slabs across frames (block B.3)
 };
 
 // Triangle/BvhNode layout and the nearest-triangle search, shared with probe_side_cs.hlsl.
@@ -22,6 +24,7 @@ cbuffer BakeConstants : register(b0) {
 
 [numthreads(4,4,4)]
 void main(uint3 id : SV_DispatchThreadID) {
+    id.z += sliceOffset;
     uint resolution = resolutionAndFlags & 0x7fffffffu;
     bool twoSided = (resolutionAndFlags & 0x80000000u) != 0;
     if (any(id >= resolution)) return;

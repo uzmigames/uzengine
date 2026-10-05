@@ -9,12 +9,14 @@ New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
 $code = @'
 struct Queue { unsigned count = 0; bool empty() const { return count == 0; } };
 struct Decoder { unsigned count = 0; unsigned PendingCount() const { return count; } };
+struct BakeQueue { unsigned count = 0; unsigned InFlight() const { return count; } };
 struct SceneRenderer {
     Queue m_pendingMeshPaths, m_pendingProceduralMeshes, m_pendingTexturePaths;
     Queue m_deferredDecoded, m_pendingCopyUploads, m_asyncPendingSlots;
-    Queue m_deferredMeshUploads, m_pendingSdfBakes;
+    Queue m_deferredMeshUploads;
     unsigned m_textureBatchCount = 0, m_copyFenceValue = 0, m_budgetDeferredMeshCount = 0;
     Decoder* m_asyncDecoder = nullptr;
+    BakeQueue* m_sdfBakeQueue = nullptr;
     bool IsSceneFullyLoaded() const { PRODUCTION_BODY }
 };
 int main() {
@@ -25,7 +27,7 @@ int main() {
         &SceneRenderer::m_pendingMeshPaths, &SceneRenderer::m_pendingProceduralMeshes,
         &SceneRenderer::m_pendingTexturePaths, &SceneRenderer::m_deferredDecoded,
         &SceneRenderer::m_pendingCopyUploads, &SceneRenderer::m_asyncPendingSlots,
-        &SceneRenderer::m_deferredMeshUploads, &SceneRenderer::m_pendingSdfBakes };
+        &SceneRenderer::m_deferredMeshUploads };
     for (auto queue : queues) {
         (scene.*queue).count = 1;
         if (scene.IsSceneFullyLoaded()) ++failures;
@@ -42,6 +44,11 @@ int main() {
     scene.m_asyncDecoder = &decoder;
     if (scene.IsSceneFullyLoaded()) ++failures;
     decoder.count = 0;
+    if (!scene.IsSceneFullyLoaded()) ++failures;
+    BakeQueue bakes{1};
+    scene.m_sdfBakeQueue = &bakes;
+    if (scene.IsSceneFullyLoaded()) ++failures;
+    bakes.count = 0;
     if (!scene.IsSceneFullyLoaded()) ++failures;
     return failures;
 }

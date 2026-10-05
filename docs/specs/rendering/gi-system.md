@@ -116,6 +116,16 @@ struct MeshSDF {
 
 ### GPU Bake: `MeshSdfBaker::BakeMeshGPU()`
 
+> Since 2026-10-05 (block B.3) the scene renderer does not call this whole bake: `MeshSdfBakeQueue`
+> runs `MeshSdfBaker::PrepareCPU` (volume placement, triangle records, BVH) on worker threads,
+> looks the field up in the disk cache `cache/meshsdf` (`AssetCache`; key = mesh bytes + bake
+> options + bake shader bytecode; entry = header + LZ4 block of the GPU readback and the records,
+> XXH64 checksum), and on a miss records the dispatch in the frame's command list in Z slabs
+> (`r.GI.MeshSdf.BakeSlicesPerFrame`, unthrottled during the preload). The field is valid only when
+> the renderer's frame fence has passed; `IsSceneFullyLoaded` counts the bakes in flight; switching
+> `r.RadianceCache` on after load queues the missing bakes. `BakeMeshGPU` remains for tools.
+
+
 **Input:**
 - Vertex positions (float × 3 per vertex)
 - Triangle indices (uint32 × 3 per triangle)

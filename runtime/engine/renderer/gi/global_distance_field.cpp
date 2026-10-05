@@ -398,14 +398,17 @@ void GlobalDistanceField::CompositeFromMeshSDFs(
     std::vector<CBAllocation> batches;
     batches.reserve(batchCount);
     for (uint32_t batch = 0; batch < batchCount; ++batch) {
-        auto allocation = cbRing->Allocate(kGdfMeshesPerBatch * sizeof(GdfMeshSdfGPU));
+        const uint32_t offset = batch * kGdfMeshesPerBatch;
+        const uint32_t count = std::min(kGdfMeshesPerBatch, meshCount - offset);
+        // Only the entries the shader reads (meshCount): a full 64 KiB batch per region and clipmap
+        // exhausted the 2 MiB frame ring when several instances changed in one frame (block B.3).
+        const size_t batchBytes = static_cast<size_t>(std::max(1u, count)) * sizeof(GdfMeshSdfGPU);
+        auto allocation = cbRing->Allocate(batchBytes);
         if (!allocation.cpuPtr) {
             UZ_LOG(Renderer, Error, "GlobalDistanceField: failed to allocate mesh SDF batch {}", batch);
             return;
         }
-        std::memset(allocation.cpuPtr, 0, kGdfMeshesPerBatch * sizeof(GdfMeshSdfGPU));
-        const uint32_t offset = batch * kGdfMeshesPerBatch;
-        const uint32_t count = std::min(kGdfMeshesPerBatch, meshCount - offset);
+        std::memset(allocation.cpuPtr, 0, batchBytes);
         if (count > 0) {
             std::memcpy(allocation.cpuPtr, gpuMeshes.data() + offset, count * sizeof(GdfMeshSdfGPU));
         }
@@ -445,11 +448,12 @@ void GlobalDistanceField::CompositeFromMeshSDFs(
                 region.meshCount = static_cast<uint32_t>(overlapping.size());
                 const uint32_t regionBatches = std::max(1u, (region.meshCount + kGdfMeshesPerBatch - 1) / kGdfMeshesPerBatch);
                 for (uint32_t batch = 0; batch < regionBatches; ++batch) {
-                    auto allocation = cbRing->Allocate(kGdfMeshesPerBatch * sizeof(GdfMeshSdfGPU));
-                    if (!allocation.cpuPtr) { region.batches.clear(); break; }
-                    std::memset(allocation.cpuPtr, 0, kGdfMeshesPerBatch * sizeof(GdfMeshSdfGPU));
                     const uint32_t offset = batch * kGdfMeshesPerBatch;
                     const uint32_t count = std::min(kGdfMeshesPerBatch, region.meshCount - offset);
+                    const size_t batchBytes = static_cast<size_t>(std::max(1u, count)) * sizeof(GdfMeshSdfGPU);
+                    auto allocation = cbRing->Allocate(batchBytes);
+                    if (!allocation.cpuPtr) { region.batches.clear(); break; }
+                    std::memset(allocation.cpuPtr, 0, batchBytes);
                     if (count > 0) std::memcpy(allocation.cpuPtr, overlapping.data() + offset, count * sizeof(GdfMeshSdfGPU));
                     region.batches.push_back(allocation);
                 }
@@ -578,7 +582,7 @@ void GlobalDistanceField::CompositeFromMeshSDFs(
                 constants.accumulate = batch > 0;
                 cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&constants), 13);
                 cmdList->SetRootCBV(2, allocation.bufferHandle, allocation.offsetBytes,
-                                   allocation.cpuPtr, kGdfMeshesPerBatch * sizeof(GdfMeshSdfGPU));
+                                   allocation.cpuPtr, std::max(1u, constants.meshCount) * sizeof(GdfMeshSdfGPU));
                 cmdList->Dispatch((r.size[0] + 3) / 4, (r.size[1] + 3) / 4, (r.size[2] + 3) / 4);
                 if (batch + 1 < regionBatchCount || region + 1 < regionCount) {
                     RHIBarrierDesc uavBarrier{};
@@ -626,7 +630,7 @@ void GlobalDistanceField::CompositeFromMeshSDFs(
                 constants.accumulate = batch > 0;
                 cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&constants), 13);
                 cmdList->SetRootCBV(2, allocation.bufferHandle, allocation.offsetBytes,
-                                   allocation.cpuPtr, kGdfMeshesPerBatch * sizeof(GdfMeshSdfGPU));
+                                   allocation.cpuPtr, std::max(1u, constants.meshCount) * sizeof(GdfMeshSdfGPU));
                 cmdList->Dispatch((res + 3) / 4, (res + 3) / 4, (res + 3) / 4);
                 if (batch + 1 < batchCount) {
                     RHIBarrierDesc uavBarrier{};

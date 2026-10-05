@@ -61,6 +61,7 @@
 #include "engine/ecs/environment/light_probe_volume_component.h"
 #include "passes/gi/brixelizer_gi_pass.h"
 #include "async_texture_decoder.h"  // TextureDecodeResult for m_deferredDecoded
+#include "gi/mesh_sdf_bake_queue.h" // MeshSdfBakeQueue (block B.3)
 #include "inspector_pass.h"        // PassInspector for render target visualization
 #include "upload_ring.h"           // UploadRing for zero-alloc texture staging
 
@@ -163,6 +164,10 @@ public:
     [[nodiscard]] bool IsSceneFullyLoaded() const;
     /// Debug variant — also logs which async loads are still outstanding.
     [[nodiscard]] bool IsSceneFullyLoadedDebug() const;
+
+    /// Scene preload (nothing is presented): the asynchronous mesh SDF bakes run unthrottled
+    /// while this is set (block B.3). The host sets it around its preload loop.
+    void SetPreloading(bool preloading) { m_preloading = preloading; }
 
     /// Forwards to AutoExposure::ResetHistory (no-op when auto exposure is off).
     void ResetExposureHistory(IRHICommandList* cmdList);

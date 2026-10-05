@@ -700,9 +700,7 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
     }
 
     // ── Batch SDF bake for queued meshes ─────────────────────────────────
-    if (!m_pendingSdfBakes.empty()) {
-        FlushSdfBakes(cmdList);
-    }
+    ServiceSdfBakes(cmdList);   // starts, advances and completes the asynchronous bakes (block B.3)
 }
 
 } // namespace uz

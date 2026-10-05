@@ -370,6 +370,9 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     // ── End command list ────────────────────────────────────────────────
     cmdList->End();
     cmdList->Execute();
+    // Block B.3: the asynchronous mesh SDF bakes complete by this fence (direct queue, signalled
+    // after every frame's Execute, strictly increasing).
+    if (m_bakeFence) m_bakeFence->Signal(++m_bakeFenceValue);
 
     // ── GPU Profiler: resolve results from previous frame (N-2) ─────────
     // Resolve the ring slot of frame N-3, whose fence the CPU waited before recording this
