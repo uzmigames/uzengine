@@ -80,7 +80,19 @@ void DX12Fence::WaitCPU(uint64_t value) {
         return;
     }
 
-    WaitForSingleObject(m_event, INFINITE);
+    // Watchdog (see DX12Device::WaitIdle): never gives up, but a wait that outlives
+    // kGpuWaitWatchdogMs is logged with the device-removed reason instead of hanging silently.
+    uint32_t waited = 0;
+    while (WaitForSingleObject(m_event, kGpuWaitWatchdogMs) == WAIT_TIMEOUT) {
+        waited += kGpuWaitWatchdogMs;
+        HRESULT removed = S_OK;
+        ComPtr<ID3D12Device> device;
+        if (SUCCEEDED(m_fence->GetDevice(IID_PPV_ARGS(&device))) && device) {
+            removed = device->GetDeviceRemovedReason();
+        }
+        UZ_LOG(RHI, Error, "DX12Fence::WaitCPU: still waiting after {} ms for value {} (completed {}, device removed reason 0x{:08X})",
+               waited, value, m_fence->GetCompletedValue(), static_cast<uint32_t>(removed));
+    }
 }
 
 bool DX12Fence::IsComplete(uint64_t value) const {

@@ -1282,7 +1282,16 @@ void DX12Device::WaitIdle() {
             UZ_LOG(RHI, Error, "WaitIdle: SetEventOnCompletion failed, hr=0x{:08X}", static_cast<uint32_t>(hr));
             return;
         }
-        WaitForSingleObject(m_idleFenceEvent, INFINITE);
+        // Watchdog: a GPU that never completes (device removed, wedged queue) used to hang the
+        // process silently in an INFINITE wait (H-71 hang, 1800 s with nothing in the log).
+        // The wait still never gives up, but every kGpuWaitWatchdogMs it says where it is.
+        uint32_t waited = 0;
+        while (WaitForSingleObject(m_idleFenceEvent, kGpuWaitWatchdogMs) == WAIT_TIMEOUT) {
+            waited += kGpuWaitWatchdogMs;
+            UZ_LOG(RHI, Error, "WaitIdle: still waiting after {} ms for fence value {} (completed {}, device removed reason 0x{:08X})",
+                   waited, m_idleFenceValue, m_idleFence->GetCompletedValue(),
+                   static_cast<uint32_t>(m_device->GetDeviceRemovedReason()));
+        }
     }
 
     // Also drain the copy queue

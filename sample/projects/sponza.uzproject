@@ -16,6 +16,9 @@
     "r.GI.MeshSdf.Resolution": 128,
     "r.GI.MeshSdf.TwoSided": 1,
     "r.GI.RadianceCache.GridExtent": 2000,
+    "r.GI.RadianceCache.ProbeClassification": 3,
+    "r.GI.RadianceCache.ReachRelocate": 1,
+    "r.GI.RadianceCache.ReachVisibleSeeds": 1,
     "r.TAA": 1,
     "r.TechPanel.Show": 1
   }

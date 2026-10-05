@@ -1944,3 +1944,35 @@ unchanged where the current rule was right, gives the arcade wall back its suppo
 step or cost. It fails two registered criteria: P2 by 0.15 points, and S1, which is defined on the coarse
 QA field (GDF 64 / mesh SDF 32) where the band is fat enough that 29 % of the lit wall still has no
 probe. Not enabled by default; the hang is open.
+
+### Closure of 6.4 in the project configuration (2026-10-05, H-72, `72-64-closure`)
+
+Decision (lighting assessment of 2026-10-05, recommended order item 3, approved by the user): the
+candidate becomes the project configuration. `sample/projects/sponza.uzproject` now sets
+`r.GI.RadianceCache.ProbeClassification 3`, `ReachRelocate 1`, `ReachVisibleSeeds 1`; the study
+projects under `scripts/` keep their explicit experiment configurations.
+
+**The two registered failures.** S1 is retired: it is defined on the QA field (GDF 64 / mesh SDF 32,
+a 39 cm two-sided bias) where 29 % of the lit wall still has no probe after relocation; that field is
+not a product target and no project ships it. P2 stays FAIL by its band (CORE 1.0515, NEAR_IN 1.0492
+against 5 %) and is recorded as a premise failure: the control is rule 0, which discards free probes
+10 cm from a face (H-65 E1), so the faces P2 measures were not "untouched by either rule" — the +5 %
+is the support the candidate gives back (mode 3 alone 1.046, relocation +0.5 %). A P2 against a true
+oracle (an irradiance solution of the reference) is the open follow-up.
+
+**The hang.** Two candidates were named in H-71: the G-buffer position read declared on the cache
+pass and the diagnostic readbacks' `WaitIdle`. The readbacks (`HandleReachDump`,
+`ReadDiagnosticResults`) no longer wait: a copy recorded in frame F is complete once frame F + 4 is
+being recorded, because the host waits the fence of frame N-3 before recording frame N
+(`kReadbackFrameLag`). Every CPU wait for the GPU (`DX12Device::WaitIdle`, `DX12Fence::WaitCPU`)
+now has a watchdog: a wait above 10 s logs the fence values and `GetDeviceRemovedReason` every 10 s
+and keeps waiting, so a recurrence leaves evidence instead of 1800 s of silence. The exact S1 study
+configuration (QA project, mode 3 + relocation + visible seeds, RC diagnostic on) was run 10
+times in a row from a copied executable: none hung (36 s each).
+
+**Re-run on the final build** (reference PROJECT, Sponza S2 and S3): bit-identical to H-71 —
+P1 1.004, P3 0 on every sealed label, C pass, P2 1.0515 / 1.0492; S2 shadow_wall unsupported
+0 % (leak through the wall) -> 0.11 %, lit_wall and centre 0 %, ROI means identical; S3 pass on
+rear_door, right_shadow, lit_floor, left_wall with the same recentre frames (128 / 172 / 216); GPU
+frame on the sweep 16.4 ms (rule 0) -> 14.4 ms (candidate). `verify_sponza_loading.ps1` 3/3 (startup, converged, camera-c);
+Sponza `--diag` with the candidate: GPU frame 20.2 ms (baseline 21.6 ms with rule 0; DeferredLighting 8.6, SSGI 8.0, RadianceCache_Trace 0.73).

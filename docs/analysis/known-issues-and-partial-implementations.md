@@ -473,6 +473,19 @@ before the first presented frame. Brixelizer keeps its own SDF; the two are alte
 
 ---
 
+### Radiance cache probe classification — `ENABLED` 2026-10-05 (followup-01 6.4, H-72)
+
+The current rule (field < 5 cm at the probe = inside) discarded free probes near faces and kept
+probes inside solids and behind single-sided shells (H-65). The project configuration now uses
+reachability from the camera (`r.GI.RadianceCache.ProbeClassification 3`), relocation of invalid
+probes into reached air (`ReachRelocate`) and flood seeds in front of visible points
+(`ReachVisibleSeeds`): the reference passes R3r / P1 / P3 / C, Sponza loses its leak through the
+arcade wall (S2 unsupported 0 -> 0.11 %, means identical) and adds no motion step (S3). Known and
+accepted: P2 of the reference reads +5 % on two lit faces against rule 0 (the control itself
+under-lights them); S1 on the coarse QA field was retired. Defaults of the engine are unchanged
+(0): the switch lives in `sample/projects/sponza.uzproject`. The intermittent hang of H-71 never
+reproduced; the diagnostic readbacks no longer `WaitIdle` and every GPU wait has a 10 s watchdog log.
+
 ### `IrradianceProbeGrid` / `LightProbeVolume` — `PARTIAL`
 **File**: [irradiance_probe_grid.cpp](../../runtime/engine/renderer/gi/irradiance_probe_grid.cpp)
 

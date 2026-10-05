@@ -73,6 +73,10 @@ static auto* cv_RCReachVisibleSeeds = UZ_CVAR_BOOL("r.GI.RadianceCache.ReachVisi
     "Classification mode 3: air voxels just in front of visible points (G-buffer, every 4th pixel) also "
     "seed the flood fill - visibility proves they are connected to the camera where the biased field "
     "seals the opening");
+/// Frames between a readback copy and its CPU read: the host waits the fence of frame N-3
+/// before recording frame N (three command-list frames in flight), so a copy recorded in
+/// frame F is complete once frame F + 4 is being recorded.
+static constexpr uint32_t kReadbackFrameLag = 4;
 static auto* cv_RCReachDump = UZ_CVAR_BOOL("r.GI.RadianceCache.ReachDump", false,
     "Classification mode 3 diagnostic: log the air grid once after frame 120 (one 'RC reach dump' line per "
     "(z, y) row: '#' solid, '.' air not reached, 'R' reached from the camera)");
@@ -375,9 +379,10 @@ void RadianceCache::HandleReachDump(IRHICommandList* cmdList, uint32_t frameInde
         m_reachDumpGridOrigin = m_probeSideOrigin;
         return;
     }
-    if (frameIndex - m_reachDumpFrame < 4) return;
-    // The copy belongs to an earlier submitted frame; never wait on this recording command list.
-    m_device->WaitIdle();
+    if (frameIndex - m_reachDumpFrame < kReadbackFrameLag) return;
+    // The copy was recorded kReadbackFrameLag frames ago; the host waited that frame's fence
+    // before recording this one, so the readback is complete without a WaitIdle (the WaitIdle
+    // that stood here was one of the two candidates for the unexplained hang of H-71).
     m_reachDumped = true;
     const auto* data = static_cast<const uint32_t*>(m_device->MapBuffer(m_reachReadback));
     if (!data) {
@@ -491,9 +496,8 @@ bool RadianceCache::DispatchProbeReach(IRHICommandList* cmdList, RHIPipelineHand
 }
 
 void RadianceCache::ReadDiagnosticResults(uint32_t frameIndex) {
-    if (!m_diagnosticReadback.IsValid() || m_diagnosticComplete || frameIndex - m_diagnosticCopyFrame < 4) return;
-    // The copy belongs to an earlier submitted frame; never wait on this recording command list.
-    m_device->WaitIdle();
+    if (!m_diagnosticReadback.IsValid() || m_diagnosticComplete || frameIndex - m_diagnosticCopyFrame < kReadbackFrameLag) return;
+    // Complete by construction (see HandleReachDump): no WaitIdle on the recording thread.
     m_diagnosticComplete = true;
     const auto* data = static_cast<const float*>(m_device->MapBuffer(m_diagnosticReadback));
     if (!data) {
