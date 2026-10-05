@@ -49,9 +49,9 @@
 
 #ifdef _WIN32
 #include "platform_window.h"
-#include "crash_handler.h"
 #include <objbase.h>  // CoInitializeEx
 #endif
+#include "crash_handler.h"
 
 #include <json.hpp>
 
@@ -247,9 +247,12 @@ void uz_set_engine_dir(const char* path) {
     }
     uz::SetEngineDir(std::filesystem::path(path));
 
+#ifdef _WIN32
     // Redirect crash reports to the engine directory instead of the host
     // exe dir (which would be VSCode's install path for .node addons).
+    // macOS crash reports always go to {exe_dir}/crashes/.
     uz::CrashHandler_SetCrashDir(path);
+#endif
 
     UZ_LOG(RuntimeAPI, Info, "Engine resource dir set to: {}", path);
 }
@@ -572,11 +575,13 @@ void uz_resize_viewport(int width, int height) {
     const uint32_t newW = static_cast<uint32_t>(width);
     const uint32_t newH = static_cast<uint32_t>(height);
 
+#ifdef _WIN32
     // No-op if dimensions haven't changed.
     if (newW == static_cast<uint32_t>(state->window.GetWidth()) &&
         newH == static_cast<uint32_t>(state->window.GetHeight())) {
         return;
     }
+#endif
 
     state->device->WaitIdle();
     state->swapChain->Resize(newW, newH);

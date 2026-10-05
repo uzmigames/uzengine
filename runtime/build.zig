@@ -1,5 +1,16 @@
 const std = @import("std");
 
+/// Zig 0.16's bundled libc++ fails against the macOS 27 SDK — link the
+/// system libc++ on Apple targets, bundled libc++ elsewhere.
+fn linkLibCpp(b: *std.Build, mod: *std.Build.Module, is_apple: bool) void {
+    _ = b;
+    if (is_apple) {
+        mod.linkSystemLibrary("c++", .{});
+    } else {
+        mod.link_libcpp = true;
+    }
+}
+
 pub fn build(b: *std.Build) void {
     // Default output to build/ — user can override with -p <path>
     if (std.mem.endsWith(u8, b.install_prefix, "zig-out")) {
@@ -177,6 +188,8 @@ pub fn build(b: *std.Build) void {
         tp ++ "freetype/include",
         tp ++ "smaa",
         tp ++ "ffmpeg/include",
+        // Slang headers — slang_compiler.cpp dlopens libslang on every platform.
+        tp ++ "slang/include",
     };
 
     const linux_engine_include_dirs = [_][]const u8{
@@ -187,8 +200,11 @@ pub fn build(b: *std.Build) void {
         "platform/windows",
     };
 
-    // Discovered, not hardcoded: the vcpkg source dir name carries a registry hash.
+    // zlib and zstd are compiled from the vcpkg-extracted sources; the exact
+    // directory name depends on the vcpkg baseline, so resolve it at configure time.
     const zlib_src = vcpkgSrcDir(b, "zlib");
+    const zstd_src = vcpkgSrcDir(b, "zstd");
+
     const windows_thirdparty_include_dirs = [_][]const u8{
         tp ++ "d3d12ma/include",
         tp ++ "directx_headers/include",
@@ -204,7 +220,7 @@ pub fn build(b: *std.Build) void {
 
     const embed_mod = b.createModule(.{ .target = target, .optimize = optimize });
     embed_mod.link_libc = true;
-    embed_mod.link_libcpp = true;
+    linkLibCpp(b, embed_mod, is_apple);
     embed_mod.addCSourceFiles(.{
         .root = b.path("tools"),
         .files = &.{"uzembed.cpp"},
@@ -234,6 +250,7 @@ pub fn build(b: *std.Build) void {
     });
     run_embed.step.dependOn(&clean_generated.step);
 
+
     // ── Runtime static library ───────────────────────────────────────────
 
     const runtime_mod = b.createModule(.{
@@ -241,7 +258,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     runtime_mod.link_libc = true;
-    runtime_mod.link_libcpp = true;
+    linkLibCpp(b, runtime_mod, is_apple);
 
     // Cross-platform engine sources — auto-discovered via glob
     addCppDir(runtime_mod, b, "engine/app", cpp_flags);
@@ -408,15 +425,27 @@ pub fn build(b: *std.Build) void {
     });
 
     // Thirdparty — fastgltf (C++17 glTF 2.0 parser + bundled simdjson)
+    //
+    // SIMDJSON_IMPLEMENTATION_ICELAKE=0 disables simdjson's AVX-512 kernel.
+    // That kernel wraps its functions in `target("avx512f,avx512dq,...")`
+    // without naming `evex512`; clang 18 split 512-bit EVEX encoding into its
+    // own feature, so every 512-bit intrinsic there fails to inline. Upstream
+    // has not added it (checked through simdjson 4.6.11) and clang 21 removed
+    // the `-mevex512` escape hatch, so the kernel cannot be built at all.
+    // simdjson dispatches by CPUID at runtime and keeps the Haswell (AVX2),
+    // Westmere (SSE4.2) and portable kernels, so only the AVX-512 fast path
+    // for glTF parsing is lost. Defined for every TU that includes simdjson.h
+    // so the header's implementation list stays consistent.
+    const simdjson_flags = [_][]const u8{ "-std=c++17", "-DSIMDJSON_IMPLEMENTATION_ICELAKE=0" };
     runtime_mod.addCSourceFiles(.{
         .root = b.path(tp ++ "fastgltf/deps/simdjson"),
         .files = &.{"simdjson.cpp"},
-        .flags = &.{"-std=c++17"},
+        .flags = &simdjson_flags,
     });
     runtime_mod.addCSourceFiles(.{
         .root = b.path(tp ++ "fastgltf/src"),
         .files = &.{ "fastgltf.cpp", "base64.cpp", "io.cpp" },
-        .flags = &.{"-std=c++17"},
+        .flags = &simdjson_flags,
     });
 
     // Thirdparty — mikktspace (industry-standard tangent space generation)
@@ -612,7 +641,7 @@ pub fn build(b: *std.Build) void {
     });
     // Zstd decompression for KTX2 supercompression (compiled from vcpkg source)
     {
-        const zstd_root = tp ++ "vcpkg/buildtrees/zstd/src/v1.5.7-bb6cae2b2e.clean/lib/";
+        const zstd_root = b.fmt("{s}/lib/", .{zstd_src});
         runtime_mod.addCSourceFiles(.{
             .root = b.path(zstd_root),
             .files = &.{
@@ -630,7 +659,7 @@ pub fn build(b: *std.Build) void {
             .flags = &.{ "-std=c99", "-DZSTD_DISABLE_ASM" },
         });
         runtime_mod.addIncludePath(b.path(zstd_root));
-        runtime_mod.addIncludePath(b.path(zstd_root ++ "common"));
+        runtime_mod.addIncludePath(b.path(b.fmt("{s}common", .{zstd_root})));
     }
 
     // Thirdparty — miniz (zlib-compatible compression for tinyexr)
@@ -1040,7 +1069,7 @@ pub fn build(b: *std.Build) void {
     const editor_lib = blk: {
         const editor_mod = b.createModule(.{ .target = target, .optimize = optimize });
         editor_mod.link_libc = true;
-        editor_mod.link_libcpp = true;
+        linkLibCpp(b, editor_mod, is_apple);
 
         addCppDir(editor_mod, b, "editor/grid",       cpp_flags);
         addCppDir(editor_mod, b, "editor/outline",    cpp_flags);
@@ -1107,7 +1136,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         });
         dll_mod.link_libc = true;
-        dll_mod.link_libcpp = true;
+        linkLibCpp(b, dll_mod, is_apple);
 
         // Recompile runtime.cpp with -DUZ_BUILDING_DLL=1.
         // UZ_API in runtime.h expands to __declspec(dllexport), making every
@@ -1190,7 +1219,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     test_mod.link_libc = true;
-    test_mod.link_libcpp = true;
+    linkLibCpp(b, test_mod, is_apple);
 
     // GoogleTest — compiled from source (gtest-all.cc only, we provide main)
     const gtest_flags = &.{ "-std=c++17", "-DGTEST_HAS_PTHREAD=0" };
@@ -1342,7 +1371,7 @@ pub fn build(b: *std.Build) void {
         for (tool_names) |tool_name| {
             const tool_mod = b.createModule(.{ .target = target, .optimize = optimize });
             tool_mod.link_libc = true;
-            tool_mod.link_libcpp = true;
+            linkLibCpp(b, tool_mod, is_apple);
             tool_mod.addIncludePath(b.path("."));
             for (engine_include_dirs) |dir| tool_mod.addIncludePath(b.path(dir));
             for (thirdparty_include_dirs) |dir| tool_mod.addIncludePath(b.path(dir));
@@ -1389,7 +1418,7 @@ pub fn build(b: *std.Build) void {
         {
             const dbg_mod = b.createModule(.{ .target = target, .optimize = optimize });
             dbg_mod.link_libc = true;
-            dbg_mod.link_libcpp = true;
+            linkLibCpp(b, dbg_mod, is_apple);
             dbg_mod.addIncludePath(b.path("."));
             for (engine_include_dirs) |dir| dbg_mod.addIncludePath(b.path(dir));
             for (thirdparty_include_dirs) |dir| dbg_mod.addIncludePath(b.path(dir));
@@ -1505,7 +1534,7 @@ pub fn build(b: *std.Build) void {
 /// Resolves the extracted vcpkg source tree for a port, relative to `runtime/`.
 ///
 /// vcpkg names these directories after the upstream version plus a registry
-/// hash (`v1.3.1-2e5db616bf.clean`), and that name changes every time the
+/// hash (`v1.3.2-c19a0bfd23.clean`), and that name changes every time the
 /// vcpkg baseline moves. Hardcoding one pins the build to a single vcpkg
 /// checkout and breaks with a `file_hash FileNotFound` cache error after any
 /// `vcpkg install`, so discover the directory instead.

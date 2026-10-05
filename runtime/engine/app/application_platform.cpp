@@ -9,6 +9,7 @@
 #include "scene_renderer.h"
 #include "scene_loader.h"
 #include "world.h"
+#include "platform_window.h"
 
 #include <cstdlib>
 #include <cstring>

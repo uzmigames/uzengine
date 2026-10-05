@@ -409,4 +409,200 @@ std::string ShaderPipeline::ComputeCacheKey(
 
 } // namespace uz
 
+#else // !_WIN32
+
+// Non-Windows shader pipeline: HLSL is compiled to Metal Shading Language via
+// Slang (HLSL -> MSL direct). "Bytecode" returned from this pipeline is MSL
+// source text — the Metal backend's CreateShader() accepts MSL UTF-8 source.
+//
+// Metal has no DX12-style descriptor heaps, so the SM5 register-bound shader
+// path is always used: UZ_BINDLESS is never injected, and config.bindless is
+// ignored for this target.
+#include "shader_pipeline.h"
+#include "shader_vfs.h"
+#include "shader_source_manager.h"
+#include "slang_compiler.h"
+#include "log.h"
+
+#include <filesystem>
+#include <sstream>
+#include <unordered_map>
+
+namespace uz {
+
+namespace {
+
+/// Infers the Slang shader stage from the `_vs`/`_ps`/`_cs` suffix convention.
+SlangShaderStage SlangStageFromPath(const std::string& path) {
+    const auto stem = std::filesystem::path(path).stem().string();
+    if (stem.size() >= 3) {
+        const auto suffix = stem.substr(stem.size() - 3);
+        if (suffix == "_ps") return SlangShaderStage::Pixel;
+        if (suffix == "_cs") return SlangShaderStage::Compute;
+        if (suffix == "_gs" || suffix == "_hs" || suffix == "_ds" ||
+            suffix == "_as" || suffix == "_ms") {
+            UZ_LOG(IO, Warning,
+                   "ShaderPipeline: stage '{}' has no Metal target — compiling as vertex",
+                   suffix);
+        }
+    }
+    return SlangShaderStage::Vertex;
+}
+
+/// Builds the effective HLSL source with `defines` prepended as `#define`
+/// lines. UZ_BINDLESS is stripped: Metal always compiles the SM5 path.
+std::string BuildSourceWithDefines(const std::string& hlslSource,
+                                   const std::string& permutationDefines) {
+    if (permutationDefines.empty()) return hlslSource;
+
+    std::ostringstream prefix;
+    std::istringstream ss(permutationDefines);
+    std::string token;
+    while (std::getline(ss, token, ';')) {
+        if (token.empty() || token == "UZ_BINDLESS" || token == "UZ_BINDLESS=1") continue;
+        prefix << "#define " << token << "\n";
+    }
+    return prefix.str() + hlslSource;
+}
+
+} // namespace
+
+struct ShaderPipeline::Impl {
+    ShaderVFS vfs;
+    ShaderSourceManager sourceManager{vfs};
+    SlangCompiler slang;
+    /// In-memory MSL cache keyed by "name|defines" (process lifetime).
+    std::unordered_map<std::string, std::vector<uint8_t>> mslCache;
+};
+
+ShaderPipeline::ShaderPipeline() : m_impl(std::make_unique<Impl>()) {}
+ShaderPipeline::~ShaderPipeline() = default;
+
+void ShaderPipeline::Init(const Config& config) {
+    (void)config;  // cacheDir/hot-reload unused in the Slang path (no disk cache yet)
+    if (!m_impl->slang.Init()) {
+        m_initialized = false;  // SlangCompiler already logged the cause
+        return;
+    }
+    m_initialized = true;
+    UZ_LOG(IO, Info, "ShaderPipeline: initialized (Slang -> MSL, non-bindless)");
+}
+
+void ShaderPipeline::Shutdown() {
+    m_impl->slang.Shutdown();
+    m_impl->mslCache.clear();
+    m_initialized = false;
+}
+
+void ShaderPipeline::Mount(const std::string& virtualPath, const std::string& realPath) {
+    m_impl->vfs.Mount(virtualPath, realPath);
+}
+
+std::vector<uint8_t> ShaderPipeline::LoadBytecodeFromSource(
+    const std::string& name, const std::string& hlslSource,
+    const std::string& permutationDefines) {
+    if (!m_initialized) {
+        UZ_LOG(IO, Error,
+               "ShaderPipeline::LoadBytecodeFromSource: not initialized (name='{}')", name);
+        return {};
+    }
+
+    const std::string cacheKey = name + "|" + permutationDefines;
+    if (const auto it = m_impl->mslCache.find(cacheKey); it != m_impl->mslCache.end()) {
+        return it->second;
+    }
+
+    SlangCompileDesc desc{};
+    desc.sourceName   = name.c_str();
+    desc.entryPoint   = "main";
+    desc.stage        = SlangStageFromPath(name);
+    desc.outputFormat = SlangOutputFormat::MSL;
+    const std::string effectiveSource = BuildSourceWithDefines(hlslSource, permutationDefines);
+    desc.source       = effectiveSource.c_str();
+
+    auto result = m_impl->slang.Compile(desc);
+    if (!result.success) {
+        UZ_LOG(IO, Error, "ShaderPipeline: Slang compile failed for '{}': {}",
+               name, result.errors);
+        return {};
+    }
+    if (!result.errors.empty()) {
+        UZ_LOG(IO, Warning, "ShaderPipeline: Slang diagnostics for '{}': {}",
+               name, result.errors);
+    }
+
+    std::vector<uint8_t> bytes(result.output.begin(), result.output.end());
+    m_impl->mslCache.emplace(cacheKey, bytes);
+    UZ_LOG(IO, Info, "ShaderPipeline: '{}' -> MSL ({} bytes)", name, bytes.size());
+    return bytes;
+}
+
+std::vector<uint8_t> ShaderPipeline::LoadBytecode(
+    const std::string& virtualPath, const std::string& permutationDefines) {
+    if (!m_initialized) return {};
+
+    const std::string cacheKey = virtualPath + "|" + permutationDefines;
+    if (const auto it = m_impl->mslCache.find(cacheKey); it != m_impl->mslCache.end()) {
+        return it->second;
+    }
+
+    auto source = m_impl->vfs.ReadFile(virtualPath);
+    if (!source) {
+        UZ_LOG(IO, Error, "ShaderPipeline::LoadBytecode: '{}' not found in VFS",
+               virtualPath);
+        return {};
+    }
+    return LoadBytecodeFromSource(virtualPath, *source, permutationDefines);
+}
+
+bool ShaderPipeline::CompileShader(const std::string& virtualPath) {
+    return !LoadBytecode(virtualPath, "").empty();
+}
+
+ShaderPipeline::CompileAllResult ShaderPipeline::CompileAll() {
+    CompileAllResult result;
+    if (!m_initialized) {
+        result.errors.push_back("ShaderPipeline: not initialized");
+        return result;
+    }
+
+    // Enumerate .hlsl under every mounted real directory
+    std::vector<std::string> shaderFiles;
+    for (const auto& mount : m_impl->vfs.GetMounts()) {
+        std::error_code ec;
+        for (const auto& entry :
+             std::filesystem::recursive_directory_iterator(mount.realDirectory, ec)) {
+            if (!entry.is_regular_file()) continue;
+            if (entry.path().extension() == ".hlsl") {
+                shaderFiles.push_back(entry.path().string());
+            }
+        }
+    }
+
+    result.total = shaderFiles.size();
+    for (const auto& file : shaderFiles) {
+        if (CompileShader(file)) {
+            ++result.compiled;
+        } else {
+            ++result.failed;
+            result.errors.push_back(file);
+        }
+    }
+    return result;
+}
+
+std::vector<std::string> ShaderPipeline::PollHotReload() { return {}; }
+
+ShaderVFS& ShaderPipeline::GetVFS() { return m_impl->vfs; }
+ShaderSourceManager& ShaderPipeline::GetSourceManager() { return m_impl->sourceManager; }
+
+bool ShaderPipeline::IsInitialized() const noexcept { return m_initialized; }
+
+std::string ShaderPipeline::ComputeCacheKey(const std::string& virtualPath,
+                                            const std::string& permutationDefines) {
+    return virtualPath + "|" + permutationDefines + "|metal";
+}
+
+} // namespace uz
+
 #endif // _WIN32

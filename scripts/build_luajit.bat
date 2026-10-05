@@ -31,7 +31,9 @@ if !errorlevel! neq 0 (
     echo [luajit] MSVC not in PATH, searching for vcvarsall.bat...
     set "VSWHERE=C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
     if exist "!VSWHERE!" (
-        for /f "delims=" %%i in ('"!VSWHERE!" -latest -property installationPath') do set "VS_PATH=%%i"
+        REM -products * is REQUIRED: without it vswhere ignores Build Tools
+        REM installs (only Community/Professional/Enterprise are matched).
+        for /f "delims=" %%i in ('"!VSWHERE!" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set "VS_PATH=%%i"
     )
     if defined VS_PATH (
         call "!VS_PATH!\VC\Auxiliary\Build\vcvarsall.bat" x64

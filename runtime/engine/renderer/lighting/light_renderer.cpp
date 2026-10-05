@@ -64,6 +64,7 @@ LightFrameData ExtractLightingFromECS(
             result.lightSourceAngleDeg     = dirLight.lightSourceAngle;
             result.farShadowCascadeCount   = dirLight.farShadowCascadeCount;
             result.farShadowDistance       = dirLight.farShadowDistance;
+            result.dynamicShadowDistance     = dirLight.dynamicShadowDistance;
             result.farShadowLodBias        = dirLight.farShadowLodBias;
             break;
         }

@@ -131,8 +131,12 @@ public:
 
 private:
     IRHIDevice* m_device = nullptr;
+#ifdef _WIN32
+    // Runtime HLSL compilation (DXC/FXC) exists only on Windows; other
+    // platforms must ship precompiled shaders (see shader_manager.cpp).
     std::unique_ptr<ShaderCompiler> m_compiler;
     std::unique_ptr<ShaderCompilerFXC> m_compilerFXC;
+#endif
     ShaderPipeline m_pipeline;
     bool m_initialized = false;
     bool m_bindless = false;

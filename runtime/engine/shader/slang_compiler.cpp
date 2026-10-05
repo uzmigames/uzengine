@@ -1,32 +1,19 @@
-/// SlangCompiler Implementation
-///
-/// Dynamically loads the Slang shared library via dlopen (macOS/Linux) or
-/// LoadLibrary (Windows). Creates a SlangSession and compiles HLSL source
-/// to MSL, SPIR-V, or re-emitted HLSL.
-///
-/// # Slang API Overview
-/// The Slang C API follows a session-based model:
-/// 1. `spCreateSession()` — creates a global session
-/// 2. `spCreateCompileRequest()` — creates a per-compilation request
-/// 3. Configure the request: target, source, entry point
-/// 4. `spCompile()` — runs compilation, returns status code
-/// 5. Extract results: `spGetEntryPointSource()` for text, `spGetEntryPointCode()` for binary
-/// 6. `spDestroyCompileRequest()` — cleanup per-request
-/// 7. `spDestroySession()` — cleanup session
-///
-/// # Library Not Found
-/// If the Slang library is not installed, `Init()` logs a warning and returns
-/// false. All subsequent `Compile()` calls return an error result directing the
-/// user to install Slang. This matches the DXC compiler's graceful fallback.
+/// SlangCompiler implementation — dynamically loads libslang and compiles
+/// HLSL sources to MSL (Metal), SPIR-V, or re-emitted HLSL through the
+/// modern Slang interface API (IGlobalSession/ISession/IModule).
 
 #include "slang_compiler.h"
+
 #include "log.h"
 #include "paths.h"
-#include "profiler.h"
+
+#include <slang.h>
 
 #if defined(_WIN32)
-    #define WIN32_LEAN_AND_MEAN
-    #include <Windows.h>
+    #ifndef WIN32_LEAN_AND_MEAN
+        #define WIN32_LEAN_AND_MEAN
+    #endif
+    #include <windows.h>
 #else
     #include <dlfcn.h>
 #endif
@@ -36,37 +23,9 @@ UZ_DECLARE_LOG_CATEGORY(Shader);
 namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Slang API Constants
-//
-// These mirror the Slang C API enums so we don't depend on slang.h at compile
-// time. Values are from the Slang public API specification (2024.x).
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Slang API version passed to `spCreateSession`.
-/// 0 requests the latest available version from the loaded library.
-static constexpr int kSlangApiVersion = 0;
-
-/// Slang source language enum: SLANG_SOURCE_LANGUAGE_HLSL = 5.
-static constexpr int kSlangSourceLanguageHLSL = 5;
-
-/// Slang code generation targets.
-static constexpr int kSlangTargetMetal = 15;   ///< SLANG_METAL
-static constexpr int kSlangTargetSPIRV = 9;    ///< SLANG_SPIRV
-static constexpr int kSlangTargetHLSL  = 2;    ///< SLANG_HLSL
-
-/// Slang shader stage constants.
-static constexpr int kSlangStageVertex   = 1;  ///< SLANG_STAGE_VERTEX
-static constexpr int kSlangStageFragment = 2;  ///< SLANG_STAGE_FRAGMENT
-static constexpr int kSlangStageCompute  = 5;  ///< SLANG_STAGE_COMPUTE
-
-/// Slang compilation result: 0 means success.
-static constexpr int kSlangOK = 0;
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Platform-Specific Library Loading
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Platform-specific shared library filename for Slang.
 #if defined(_WIN32)
     static constexpr const char* kSlangLibraryName = "slang.dll";
 #elif defined(__APPLE__)
@@ -75,7 +34,6 @@ static constexpr int kSlangOK = 0;
     static constexpr const char* kSlangLibraryName = "libslang.so";
 #endif
 
-/// Loads a shared library by path. Returns the native handle or nullptr.
 static void* PlatformLoadLibrary(const char* path) {
 #if defined(_WIN32)
     return static_cast<void*>(::LoadLibraryA(path));
@@ -84,7 +42,6 @@ static void* PlatformLoadLibrary(const char* path) {
 #endif
 }
 
-/// Resolves a symbol from a loaded shared library. Returns nullptr on failure.
 static void* PlatformGetSymbol(void* handle, const char* name) {
 #if defined(_WIN32)
     return reinterpret_cast<void*>(
@@ -94,7 +51,6 @@ static void* PlatformGetSymbol(void* handle, const char* name) {
 #endif
 }
 
-/// Unloads a shared library.
 static void PlatformFreeLibrary(void* handle) {
     if (!handle) return;
 #if defined(_WIN32)
@@ -104,54 +60,38 @@ static void PlatformFreeLibrary(void* handle) {
 #endif
 }
 
-/// Returns a human-readable error string for the last library load failure.
 static std::string PlatformGetLoadError() {
 #if defined(_WIN32)
     DWORD err = ::GetLastError();
-    return "Win32 error=" + std::to_string(err);
+    return "error " + std::to_string(err);
 #else
-    const char* msg = dlerror();
-    return msg ? std::string(msg) : "unknown error";
+    const char* err = dlerror();
+    return err ? std::string(err) : std::string("unknown error");
 #endif
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Stage / Target Mapping Helpers
+// Enum mapping
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Maps UzEngine shader stage enum to Slang's SLANG_STAGE_* constant.
-///
-/// # Arguments
-/// * `stage` — Engine-side shader stage.
-///
-/// # Returns
-/// Slang stage integer constant.
-static int MapShaderStage(SlangShaderStage stage) {
+static SlangStage MapShaderStage(SlangShaderStage stage) {
     switch (stage) {
-        case SlangShaderStage::Vertex:  return kSlangStageVertex;
-        case SlangShaderStage::Pixel:   return kSlangStageFragment;
-        case SlangShaderStage::Compute: return kSlangStageCompute;
+        case SlangShaderStage::Vertex:  return SLANG_STAGE_VERTEX;
+        case SlangShaderStage::Pixel:   return SLANG_STAGE_FRAGMENT;
+        case SlangShaderStage::Compute: return SLANG_STAGE_COMPUTE;
     }
-    return kSlangStageVertex;
+    return SLANG_STAGE_VERTEX;
 }
 
-/// Maps UzEngine output format enum to Slang's code generation target constant.
-///
-/// # Arguments
-/// * `format` — Desired output format.
-///
-/// # Returns
-/// Slang target integer constant.
-static int MapOutputTarget(SlangOutputFormat format) {
+static SlangCompileTarget MapOutputTarget(SlangOutputFormat format) {
     switch (format) {
-        case SlangOutputFormat::MSL:   return kSlangTargetMetal;
-        case SlangOutputFormat::SPIRV: return kSlangTargetSPIRV;
-        case SlangOutputFormat::HLSL:  return kSlangTargetHLSL;
+        case SlangOutputFormat::MSL:   return SLANG_METAL;
+        case SlangOutputFormat::SPIRV: return SLANG_SPIRV;
+        case SlangOutputFormat::HLSL:  return SLANG_HLSL;
     }
-    return kSlangTargetMetal;
+    return SLANG_METAL;
 }
 
-/// Returns a human-readable name for the output format (for log messages).
 static const char* OutputFormatName(SlangOutputFormat format) {
     switch (format) {
         case SlangOutputFormat::MSL:   return "MSL";
@@ -161,262 +101,268 @@ static const char* OutputFormatName(SlangOutputFormat format) {
     return "unknown";
 }
 
-/// Returns a human-readable name for the shader stage (for log messages).
-static const char* ShaderStageName(SlangShaderStage stage) {
-    switch (stage) {
-        case SlangShaderStage::Vertex:  return "vertex";
-        case SlangShaderStage::Pixel:   return "pixel";
-        case SlangShaderStage::Compute: return "compute";
+/// Captures a Slang diagnostic blob's text into a std::string.
+static std::string BlobToString(slang::IBlob* blob) {
+    if (!blob) return {};
+    const auto* data = static_cast<const char*>(blob->getBufferPointer());
+    const size_t size = blob->getBufferSize();
+    if (!data || size == 0) return {};
+    std::string text(data, size);
+    while (!text.empty() && (text.back() == '\0' || text.back() == '\n')) {
+        text.pop_back();
     }
-    return "unknown";
+    return text;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Library Loading
+// Library loading
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Resolves a single Slang API function pointer by name.
-/// Returns false and logs an error if the symbol is not found.
-#define RESOLVE_SLANG_FN(fnPtr, fnName)                                        \
-    do {                                                                        \
-        (fnPtr) = reinterpret_cast<decltype(fnPtr)>(                           \
-            PlatformGetSymbol(m_libraryHandle, (fnName)));                     \
-        if (!(fnPtr)) {                                                        \
-            UZ_LOG(Shader, Error,                                              \
-                   "SlangCompiler: symbol '{}' not found in Slang library",    \
-                   (fnName));                                                   \
-            UnloadLibrary();                                                    \
-            return false;                                                       \
-        }                                                                       \
-    } while (0)
-
 bool SlangCompiler::LoadSlangLibrary() {
+    if (m_libraryHandle) return true;
+
     // Try engine thirdparty directory first, then system paths
     auto thirdpartyPath = ResolveEngineResource(
         std::string("thirdparty/slang/bin/") + kSlangLibraryName);
-    std::string resolvedPath = thirdpartyPath.string();
 
-    UZ_LOG(Shader, Info, "SlangCompiler: trying '{}'", resolvedPath);
-    m_libraryHandle = PlatformLoadLibrary(resolvedPath.c_str());
+    m_libraryHandle = PlatformLoadLibrary(thirdpartyPath.string().c_str());
 
     if (!m_libraryHandle) {
-        // Fall back to system search paths
-        UZ_LOG(Shader, Info,
-               "SlangCompiler: thirdparty not found, trying system path '{}'",
-               kSlangLibraryName);
+        UZ_LOG(Shader, Warning,
+               "SlangCompiler: thirdparty not found, trying system path '{}': {}",
+               kSlangLibraryName, PlatformGetLoadError());
         m_libraryHandle = PlatformLoadLibrary(kSlangLibraryName);
     }
 
     if (!m_libraryHandle) {
-        UZ_LOG(Shader, Warning,
-               "SlangCompiler: failed to load Slang library — {} "
-               "Install Slang to thirdparty/slang/ or add it to the system library path.",
-               PlatformGetLoadError());
-        return false;
-    }
-
-    // Resolve all Slang C API function pointers
-    RESOLVE_SLANG_FN(m_fnCreateSession,        "spCreateSession");
-    RESOLVE_SLANG_FN(m_fnDestroySession,       "spDestroySession");
-    RESOLVE_SLANG_FN(m_fnCreateCompileRequest, "spCreateCompileRequest");
-    RESOLVE_SLANG_FN(m_fnDestroyCompileRequest,"spDestroyCompileRequest");
-    RESOLVE_SLANG_FN(m_fnSetCodeGenTarget,     "spSetCodeGenTarget");
-    RESOLVE_SLANG_FN(m_fnAddTranslationUnit,   "spAddTranslationUnit");
-    RESOLVE_SLANG_FN(m_fnAddSourceString,      "spAddTranslationUnitSourceString");
-    RESOLVE_SLANG_FN(m_fnAddEntryPoint,        "spAddEntryPoint");
-    RESOLVE_SLANG_FN(m_fnCompile,              "spCompile");
-    RESOLVE_SLANG_FN(m_fnGetDiagnosticOutput,  "spGetDiagnosticOutput");
-    RESOLVE_SLANG_FN(m_fnGetEntryPointSource,  "spGetEntryPointSource");
-    RESOLVE_SLANG_FN(m_fnGetEntryPointCode,    "spGetEntryPointCode");
-
-    UZ_LOG(Shader, Info, "SlangCompiler: Slang library loaded successfully");
-    return true;
-}
-
-#undef RESOLVE_SLANG_FN
-
-void SlangCompiler::UnloadLibrary() {
-    // Clear all function pointers before unloading
-    m_fnCreateSession = nullptr;
-    m_fnDestroySession = nullptr;
-    m_fnCreateCompileRequest = nullptr;
-    m_fnDestroyCompileRequest = nullptr;
-    m_fnSetCodeGenTarget = nullptr;
-    m_fnAddTranslationUnit = nullptr;
-    m_fnAddSourceString = nullptr;
-    m_fnAddEntryPoint = nullptr;
-    m_fnCompile = nullptr;
-    m_fnGetDiagnosticOutput = nullptr;
-    m_fnGetEntryPointSource = nullptr;
-    m_fnGetEntryPointCode = nullptr;
-
-    PlatformFreeLibrary(m_libraryHandle);
-    m_libraryHandle = nullptr;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Init / Shutdown / Destructor
-// ─────────────────────────────────────────────────────────────────────────────
-
-bool SlangCompiler::Init() {
-    UZ_PROFILE_FUNCTION();
-
-    if (m_session) return true;  // Already initialized
-
-    if (!LoadSlangLibrary()) {
-        return false;
-    }
-
-    // Create the Slang global session
-    m_session = m_fnCreateSession(kSlangApiVersion);
-    if (!m_session) {
         UZ_LOG(Shader, Error,
-               "SlangCompiler: spCreateSession() returned null — "
-               "Slang library may be incompatible");
+               "SlangCompiler: failed to load {}. "
+               "Install Slang to thirdparty/slang/ or add it to the system library path.",
+               kSlangLibraryName);
+        return false;
+    }
+
+    m_fnCreateGlobalSession = reinterpret_cast<FnCreateGlobalSession>(
+        PlatformGetSymbol(m_libraryHandle, "slang_createGlobalSession"));
+    if (!m_fnCreateGlobalSession) {
+        UZ_LOG(Shader, Error,
+               "SlangCompiler: slang_createGlobalSession not found in {}",
+               kSlangLibraryName);
         UnloadLibrary();
         return false;
     }
 
-    UZ_LOG(Shader, Info, "SlangCompiler: session created, version: {}",
-           GetVersion());
+    void* gs = nullptr;
+    const int res = m_fnCreateGlobalSession(SLANG_API_VERSION, &gs);
+    if (res != 0 || !gs) {
+        UZ_LOG(Shader, Error,
+               "SlangCompiler: slang_createGlobalSession failed (result={})", res);
+        UnloadLibrary();
+        return false;
+    }
+    m_globalSession = gs;
+
+    UZ_LOG(Shader, Info, "SlangCompiler: loaded {} (version {})",
+           kSlangLibraryName, GetVersion());
     return true;
 }
 
-bool SlangCompiler::IsInitialized() const {
-    return m_session != nullptr;
-}
-
-void SlangCompiler::Shutdown() {
-    UZ_PROFILE_FUNCTION();
-
-    if (m_session && m_fnDestroySession) {
-        m_fnDestroySession(m_session);
-        m_session = nullptr;
+void SlangCompiler::UnloadLibrary() {
+    if (m_globalSession) {
+        static_cast<slang::IGlobalSession*>(m_globalSession)->release();
+        m_globalSession = nullptr;
     }
-
-    UnloadLibrary();
+    // Intentionally never dlclose the library: libslang does not survive an
+    // unload+reload cycle in the same process (crashes on the next session).
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lifecycle
+// ─────────────────────────────────────────────────────────────────────────────
 
 SlangCompiler::~SlangCompiler() {
     Shutdown();
 }
 
+bool SlangCompiler::Init() {
+    if (m_globalSession) return true;
+    if (m_libraryHandle) {
+        // Library still loaded from a prior Shutdown — just recreate the session.
+        void* gs = nullptr;
+        const int res = m_fnCreateGlobalSession(SLANG_API_VERSION, &gs);
+        if (res != 0 || !gs) return false;
+        m_globalSession = gs;
+        return true;
+    }
+    return LoadSlangLibrary();
+}
+
+bool SlangCompiler::IsInitialized() const {
+    return m_globalSession != nullptr;
+}
+
+void SlangCompiler::Shutdown() {
+    UnloadLibrary();
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Compile
+// Compilation
 // ─────────────────────────────────────────────────────────────────────────────
 
 SlangCompileResult SlangCompiler::Compile(const SlangCompileDesc& desc) {
-    UZ_PROFILE_FUNCTION();
     SlangCompileResult result;
 
-    // Validate preconditions
-    if (!m_session) {
-        result.errors =
-            "SlangCompiler not initialized — install libslang to "
-            "thirdparty/slang/ and call Init() before Compile()";
+    if (!m_globalSession) {
+        result.errors = "SlangCompiler not initialized — install libslang to "
+                        "thirdparty/slang/ and call Init() before Compile()";
         return result;
     }
 
     if (!desc.source) {
-        result.errors = "SlangCompiler: source is null";
+        result.errors = "SlangCompiler: null source";
         return result;
     }
 
-    UZ_LOG(Shader, Info,
-           "SlangCompiler: compiling '{}' entry='{}' stage={} target={}",
-           desc.sourceName ? desc.sourceName : "<unnamed>",
-           desc.entryPoint ? desc.entryPoint : "main",
-           ShaderStageName(desc.stage),
-           OutputFormatName(desc.outputFormat));
+    auto* globalSession = static_cast<slang::IGlobalSession*>(m_globalSession);
 
-    // Create a fresh compile request for this compilation unit
-    void* request = m_fnCreateCompileRequest(m_session);
-    if (!request) {
-        result.errors = "SlangCompiler: spCreateCompileRequest() returned null";
+    // Per-compilation session with the requested code generation target
+    slang::TargetDesc targetDesc{};
+    targetDesc.format = MapOutputTarget(desc.outputFormat);
+
+    slang::SessionDesc sessionDesc{};
+    sessionDesc.targets = &targetDesc;
+    sessionDesc.targetCount = 1;
+    sessionDesc.defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_COLUMN_MAJOR;
+
+    slang::ISession* session = nullptr;
+    {
+        const SlangResult res = globalSession->createSession(sessionDesc, &session);
+        if (SLANG_FAILED(res) || !session) {
+            result.errors = "SlangCompiler: createSession failed (result " +
+                            std::to_string(res) + ")";
+            return result;
+        }
+    }
+
+    const char* entryPoint = desc.entryPoint ? desc.entryPoint : "main";
+    const char* sourceName = desc.sourceName ? desc.sourceName : "shader";
+
+    // The .hlsl extension makes Slang parse the source as HLSL
+    const std::string modulePath = std::string(sourceName) + ".hlsl";
+
+    slang::IBlob* moduleDiags = nullptr;
+    slang::IModule* module = session->loadModuleFromSourceString(
+        sourceName, modulePath.c_str(), desc.source, &moduleDiags);
+    const std::string moduleDiagText = BlobToString(moduleDiags);
+    if (moduleDiags) moduleDiags->release();
+
+    if (!module) {
+        result.errors = moduleDiagText.empty()
+            ? "SlangCompiler: loadModuleFromSourceString failed"
+            : moduleDiagText;
+        session->release();
         return result;
     }
+    module->addRef();
 
-    // Set the code generation target (MSL, SPIR-V, or HLSL)
-    m_fnSetCodeGenTarget(request, MapOutputTarget(desc.outputFormat));
-
-    // Add a translation unit with the HLSL source
-    int unitIndex = m_fnAddTranslationUnit(
-        request,
-        kSlangSourceLanguageHLSL,
-        desc.sourceName ? desc.sourceName : "shader");
-
-    // Provide the HLSL source text
-    m_fnAddSourceString(
-        request,
-        unitIndex,
-        desc.sourceName ? desc.sourceName : "shader",
-        desc.source);
-
-    // Define the entry point and shader stage
-    int entryPointIndex = m_fnAddEntryPoint(
-        request,
-        unitIndex,
-        desc.entryPoint ? desc.entryPoint : "main",
-        MapShaderStage(desc.stage));
-
-    // Run compilation
-    int compileStatus = m_fnCompile(request);
-
-    // Extract diagnostics (errors/warnings) regardless of success
-    const char* diagnostics = m_fnGetDiagnosticOutput(request);
-    if (diagnostics && diagnostics[0] != '\0') {
-        result.errors = diagnostics;
+    slang::IBlob* epDiags = nullptr;
+    slang::IEntryPoint* entry = nullptr;
+    {
+        const SlangResult res = module->findAndCheckEntryPoint(
+            entryPoint, MapShaderStage(desc.stage), &entry, &epDiags);
+        const std::string epDiagText = BlobToString(epDiags);
+        if (epDiags) epDiags->release();
+        if (SLANG_FAILED(res) || !entry) {
+            result.errors = epDiagText.empty()
+                ? std::string("SlangCompiler: entry point '") + entryPoint + "' not found"
+                : epDiagText;
+            module->release();
+            session->release();
+            return result;
+        }
     }
 
-    if (compileStatus != kSlangOK) {
+    // Compose module + entry point into a linked program
+    slang::IComponentType* components[] = { module, entry };
+    slang::IComponentType* program = nullptr;
+    slang::IBlob* linkDiags = nullptr;
+    {
+        const SlangResult res = session->createCompositeComponentType(
+            components, 2, &program, &linkDiags);
+        const std::string linkDiagText = BlobToString(linkDiags);
+        if (linkDiags) linkDiags->release();
+        if (SLANG_FAILED(res) || !program) {
+            result.errors = linkDiagText.empty()
+                ? "SlangCompiler: createCompositeComponentType failed"
+                : linkDiagText;
+            entry->release();
+            module->release();
+            session->release();
+            return result;
+        }
+    }
+
+    // Emit the whole linked program for the target. getTargetCode is used
+    // instead of getEntryPointCode — the latter crashes in Slang 2026.16.1's
+    // Metal source-from-IR emission; target-level emission includes the
+    // requested entry point (the composite links only module + entry point).
+    slang::IBlob* codeBlob = nullptr;
+    slang::IBlob* codeDiags = nullptr;
+    const SlangResult codeRes = program->getTargetCode(0, &codeBlob, &codeDiags);
+
+    // Collect diagnostics from all stages (Slang reports warnings the same way)
+    if (!moduleDiagText.empty()) result.errors += moduleDiagText;
+    if (const std::string t = BlobToString(codeDiags); !t.empty()) {
+        if (!result.errors.empty()) result.errors += '\n';
+        result.errors += t;
+    }
+    if (codeDiags) codeDiags->release();
+
+    if (SLANG_FAILED(codeRes) || !codeBlob) {
+        if (result.errors.empty()) {
+            result.errors = "SlangCompiler: getTargetCode failed (result " +
+                            std::to_string(codeRes) + ")";
+        }
         UZ_LOG(Shader, Error,
                "SlangCompiler: compilation failed for '{}': {}",
-               desc.sourceName ? desc.sourceName : "<unnamed>",
-               result.errors.empty() ? "unknown error" : result.errors);
-        m_fnDestroyCompileRequest(request);
+               sourceName, result.errors);
+        program->release();
+        entry->release();
+        module->release();
+        session->release();
         return result;
     }
 
-    // Extract compiled output based on target format
+    const auto* data = static_cast<const uint8_t*>(codeBlob->getBufferPointer());
+    const size_t size = codeBlob->getBufferSize();
+    if (!data || size == 0) {
+        result.errors = "SlangCompiler: compilation succeeded but produced empty output";
+        codeBlob->release();
+        program->release();
+        entry->release();
+        module->release();
+        session->release();
+        return result;
+    }
+
     if (desc.outputFormat == SlangOutputFormat::SPIRV) {
-        // SPIR-V: binary blob output
-        size_t codeSize = 0;
-        const void* codePtr = m_fnGetEntryPointCode(
-            request, entryPointIndex, 0 /* targetIndex */, &codeSize);
-
-        if (codePtr && codeSize > 0) {
-            auto* bytes = static_cast<const uint8_t*>(codePtr);
-            result.bytecode.assign(bytes, bytes + codeSize);
-            result.success = true;
-        } else {
-            result.errors = "SlangCompiler: compilation succeeded but "
-                            "spGetEntryPointCode returned empty output";
-        }
+        result.bytecode.assign(data, data + size);
     } else {
-        // MSL / HLSL: text source output
-        const char* sourceOutput = m_fnGetEntryPointSource(
-            request, entryPointIndex, 0 /* targetIndex */);
-
-        if (sourceOutput && sourceOutput[0] != '\0') {
-            result.output = sourceOutput;
-            result.success = true;
-        } else {
-            result.errors = "SlangCompiler: compilation succeeded but "
-                            "spGetEntryPointSource returned empty output";
-        }
+        // Text targets (MSL/HLSL): trailing NUL may be included in the blob
+        size_t textLen = size;
+        if (textLen > 0 && data[textLen - 1] == 0) --textLen;
+        result.output.assign(reinterpret_cast<const char*>(data), textLen);
     }
+    result.success = true;
 
-    if (result.success) {
-        UZ_LOG(Shader, Info,
-               "SlangCompiler: compiled '{}' -> {} ({} bytes)",
-               desc.sourceName ? desc.sourceName : "<unnamed>",
-               OutputFormatName(desc.outputFormat),
-               desc.outputFormat == SlangOutputFormat::SPIRV
-                   ? result.bytecode.size()
-                   : result.output.size());
-    }
+    UZ_LOG(Shader, Info, "SlangCompiler: compiled '{}' -> {} ({} bytes)",
+           sourceName, OutputFormatName(desc.outputFormat), size);
 
-    m_fnDestroyCompileRequest(request);
+    codeBlob->release();
+    program->release();
+    entry->release();
+    module->release();
+    session->release();
     return result;
 }
 
@@ -425,22 +371,11 @@ SlangCompileResult SlangCompiler::Compile(const SlangCompileDesc& desc) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 std::string SlangCompiler::GetVersion() const {
-    if (!m_session) return {};
+    if (!m_globalSession) return {};
 
-    // Slang embeds version info in the session. The C API exposes
-    // `spGetBuildTagString()` which returns a compile-time version tag.
-    // We resolve it dynamically since it may not exist in older builds.
-    if (!m_libraryHandle) return "unknown";
-
-    auto fnGetBuildTag = reinterpret_cast<const char* (*)()>(
-        PlatformGetSymbol(m_libraryHandle, "spGetBuildTagString"));
-
-    if (fnGetBuildTag) {
-        const char* tag = fnGetBuildTag();
-        if (tag) return std::string(tag);
-    }
-
-    return "unknown";
+    // The build tag identifies the Slang runtime build (e.g., "2026.16.1")
+    const char* tag = static_cast<slang::IGlobalSession*>(m_globalSession)->getBuildTagString();
+    return tag ? std::string(tag) : std::string();
 }
 
 } // namespace uz

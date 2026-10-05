@@ -989,6 +989,7 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
             ctx.lightData.perLightShadowBias, ctx.lightData.perLightShadowSlopeBias,
             ctx.lightData.lightSourceAngleDeg,
             m_shadowAtlas.GetSrvIndex(), kShadowResolution, *m_cbRing,
+            ctx.lightData.dynamicShadowDistance,
             ctx.lightData.farShadowCascadeCount,
             ctx.lightData.farShadowDistance,
             ctx.lightData.farShadowLodBias,

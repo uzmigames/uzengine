@@ -22,8 +22,10 @@ Write-Host ""
 function Download-File {
     param([string]$Url, [string]$OutFile)
     Write-Host "  Downloading $Url..." -ForegroundColor Gray
-    curl.exe -sL -o $OutFile $Url
-    if ($LASTEXITCODE -ne 0) { Write-Error "Failed to download $Url" }
+    # -f makes curl exit non-zero on HTTP >= 400 instead of writing the error
+    # body to disk, which would surface later as a corrupt-archive failure.
+    curl.exe -fsSL -o $OutFile $Url
+    if ($LASTEXITCODE -ne 0) { Write-Error "Failed to download $Url (curl exit $LASTEXITCODE)" }
 }
 
 function Clone-Repo {
@@ -35,8 +37,14 @@ function Clone-Repo {
     }
     if (Test-Path $path) { Remove-Item -Recurse -Force $path }
     Write-Host "  [$Name] cloning $Branch..." -ForegroundColor Yellow
-    $cloneOutput = cmd /c "git clone --depth 1 -b $Branch $Url $path 2>&1"
-    if ($LASTEXITCODE -ne 0) { Write-Error "Failed to clone $Name" }
+    # $path is quoted: the repo may live under a directory containing spaces
+    # (e.g. C:\Users\First Last\...), which git would otherwise parse as extra
+    # positional arguments and reject with "Too many arguments".
+    $cloneOutput = cmd /c "git clone --depth 1 -b ""$Branch"" ""$Url"" ""$path"" 2>&1"
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host $cloneOutput -ForegroundColor DarkGray
+        Write-Error "Failed to clone $Name"
+    }
 
     # Remove .git
     $gitDir = Join-Path $path ".git"
@@ -52,11 +60,19 @@ function Clone-Repo {
 }
 
 function Download-Extract-Zip {
-    param([string]$Name, [string]$Url, [string]$SubPath)
+    # -VerifyFile: relative path of an artifact that proves the package is
+    # complete. Source trees are committed to git but *.dll/*.lib/*.exe are
+    # gitignored, so a fresh clone leaves these directories present but
+    # missing every binary. Testing the directory alone would skip forever.
+    param([string]$Name, [string]$Url, [string]$SubPath, [string]$VerifyFile)
     $path = Join-Path $ThirdPartyDir $Name
-    if (Test-Path $path) {
+    $probe = if ($VerifyFile) { Join-Path $path $VerifyFile } else { $path }
+    if (Test-Path $probe) {
         Write-Host "  [$Name] already exists, skipping." -ForegroundColor Green
         return
+    }
+    if ($VerifyFile -and (Test-Path $path)) {
+        Write-Host "  [$Name] incomplete (missing $VerifyFile), re-extracting..." -ForegroundColor Yellow
     }
     $zip = Join-Path $TempDir "$Name.zip"
     Write-Host "  [$Name] downloading..." -ForegroundColor Yellow
@@ -299,6 +315,13 @@ Clone-Repo -Name "glm" `
     -Url "https://github.com/g-truc/glm.git" `
     -Branch "1.0.3" `
     -RemoveDirs @("doc", "test", "util")
+
+# EnTT (ECS — header-only, engine/ecs/core/world.h includes <entt/entt.hpp>)
+# Pinned to the commit recorded in the git index for this path (tag v3.16.0).
+Clone-Repo -Name "entt" `
+    -Url "https://github.com/skypjack/entt.git" `
+    -Branch "v3.16.0" `
+    -RemoveDirs @("docs", "test", "docker")
 
 # nlohmann/json (config parsing)
 Download-Header -Name "nlohmann" `
@@ -558,6 +581,36 @@ Clone-Repo -Name "xatlas" `
     -Branch "master" `
     -RemoveDirs @("extra", "viewer", "test")
 
+# meshoptimizer — vertex cache / overdraw / fetch optimization, simplification
+# Pinned to the commit recorded in the git index for this path (tag v0.21).
+Clone-Repo -Name "meshoptimizer" `
+    -Url "https://github.com/zeux/meshoptimizer.git" `
+    -Branch "v0.21" `
+    -RemoveDirs @("demo", "js", "gltf", "tools")
+
+# fastgltf — glTF 2.0 parser (bundles simdjson under deps/simdjson)
+# Pinned to the commit recorded in the git index for this path (tag v0.8.0).
+Clone-Repo -Name "fastgltf" `
+    -Url "https://github.com/spnda/fastgltf.git" `
+    -Branch "v0.8.0" `
+    -RemoveDirs @("tests", "examples", "docs")
+
+# fastgltf pulls the simdjson singleheader at CMake configure time. The Zig
+# build compiles deps/simdjson/simdjson.cpp directly, so fetch it here instead.
+# Version must match SIMDJSON_TARGET_VERSION in fastgltf/CMakeLists.txt.
+$simdjsonVersion = "3.9.4"
+$simdjsonDir = Join-Path $ThirdPartyDir "fastgltf\deps\simdjson"
+foreach ($f in @("simdjson.h", "simdjson.cpp")) {
+    $dst = Join-Path $simdjsonDir $f
+    if (-not (Test-Path $dst)) {
+        New-Item -ItemType Directory -Path $simdjsonDir -Force | Out-Null
+        Write-Host "  [simdjson] downloading $f ($simdjsonVersion)..." -ForegroundColor Yellow
+        Download-File `
+            -Url "https://raw.githubusercontent.com/simdjson/simdjson/v$simdjsonVersion/singleheader/$f" `
+            -OutFile $dst
+    }
+}
+
 # ─── Image Formats ────────────────────────────────────────────────────────
 
 # libpng — PNG image format (16-bit, interlacing, robust asset pipeline)
@@ -596,7 +649,61 @@ Write-Host "[4/8] Downloading prebuilt packages..." -ForegroundColor Cyan
 
 # DXC (DirectX Shader Compiler)
 Download-Extract-Zip -Name "dxc" `
-    -Url "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2602/dxc_2026_02_20.zip"
+    -Url "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2602/dxc_2026_02_20.zip" `
+    -VerifyFile "bin\x64\dxcompiler.dll"
+
+# ─── DirectX 12 Agility SDK ───────────────────────────────────────────────
+# D3D12Core.dll must sit next to the exe (see engine/rhi/dx12/dx12_agility.cpp,
+# which exports D3D12SDKVersion/D3D12SDKPath). Version must match
+# D3D12_SDK_VERSION from thirdparty/directx_headers/include/directx/d3d12.h.
+# Shipped as a NuGet package, which is a plain zip with a build/native/ layout.
+$agilityDir = Join-Path $ThirdPartyDir "agility"
+$agilityCore = Join-Path $agilityDir "bin\x64\D3D12Core.dll"
+if (-not (Test-Path $agilityCore)) {
+    $agilityVersion = "1.619.2"
+    $agilityZip = Join-Path $TempDir "agility.zip"
+    Write-Host "  [agility] downloading D3D12 Agility SDK $agilityVersion..." -ForegroundColor Yellow
+    Download-File `
+        -Url "https://www.nuget.org/api/v2/package/Microsoft.Direct3D.D3D12/$agilityVersion" `
+        -OutFile $agilityZip
+
+    $agilityTemp = Join-Path $TempDir "agility_temp"
+    Expand-Archive -Path $agilityZip -DestinationPath $agilityTemp -Force
+
+    New-Item -ItemType Directory -Path $agilityDir -Force | Out-Null
+    Copy-Item -Path (Join-Path $agilityTemp "build\native\include") -Destination $agilityDir -Recurse -Force
+    Copy-Item -Path (Join-Path $agilityTemp "build\native\bin")     -Destination $agilityDir -Recurse -Force
+    Copy-Item -Path (Join-Path $agilityTemp "LICENSE.txt")          -Destination $agilityDir -Force -ErrorAction SilentlyContinue
+
+    Remove-Item -Recurse -Force $agilityTemp
+    Remove-Item $agilityZip
+
+    if (Test-Path $agilityCore) {
+        Write-Host "  [agility] installed $agilityVersion" -ForegroundColor Green
+    } else {
+        Write-Error "Agility SDK extraction failed - D3D12Core.dll not found"
+    }
+} else {
+    Write-Host "  [agility] already exists, skipping." -ForegroundColor Green
+}
+
+# ─── FXC (d3dcompiler_47.dll — SM5.0 fallback path) ───────────────────────
+# Not redistributed standalone; sourced from the installed Windows 10/11 SDK.
+$fxcDll = Join-Path $ThirdPartyDir "fxc\bin\x64\d3dcompiler_47.dll"
+if (-not (Test-Path $fxcDll)) {
+    $sdkCandidates = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\d3dcompiler_47.dll" -ErrorAction SilentlyContinue |
+        Sort-Object { [version]$_.Directory.Parent.Name } -Descending
+    if ($sdkCandidates) {
+        $src = $sdkCandidates[0].FullName
+        New-Item -ItemType Directory -Path (Split-Path $fxcDll) -Force | Out-Null
+        Copy-Item $src $fxcDll -Force
+        Write-Host "  [fxc] copied from $($sdkCandidates[0].Directory.Parent.Name)" -ForegroundColor Green
+    } else {
+        Write-Error "d3dcompiler_47.dll not found. Install the Windows 10/11 SDK (VS Installer > Individual Components)."
+    }
+} else {
+    Write-Host "  [fxc] already exists, skipping." -ForegroundColor Green
+}
 
 # ─── Metal Dependencies (macOS build cross-compile support) ──────────────────
 
@@ -609,12 +716,13 @@ Clone-Repo -Name "metal-cpp" `
 
 # Slang (HLSL→MSL/SPIR-V shader compiler, Windows prebuilt)
 # macOS uses libslang.dylib; see setup.sh for the macOS download.
-$slangArch = "win64"
+$slangArch = "windows-x86_64"
 if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [System.Runtime.InteropServices.Architecture]::Arm64) {
-    $slangArch = "win-arm64"
+    $slangArch = "windows-aarch64"
 }
 Download-Extract-Zip -Name "slang" `
-    -Url "https://github.com/shader-slang/slang/releases/download/v2025.6.3/slang-2025.6.3-$slangArch.zip"
+    -Url "https://github.com/shader-slang/slang/releases/download/v2025.6.3/slang-2025.6.3-$slangArch.zip" `
+    -VerifyFile "bin\slang.dll"
 
 # ─── FFmpeg (H.264 hardware encoding for viewport frame streaming) ────────
 
@@ -634,20 +742,25 @@ if ((Test-Path $ffmpegDir) -and -not (Test-Path $ffmpegBinDir)) {
     Remove-Item -Recurse -Force $ffmpegDir -ErrorAction SilentlyContinue
 }
 
-if (-not (Test-Path $ffmpegDir)) {
+# Probe an import lib, not the directory: the headers and *.dll.a files are
+# committed but *.lib and bin/*.dll are gitignored, so a fresh clone has the
+# directory without anything the linker needs.
+$ffmpegLib = Join-Path $ffmpegDir "lib\avcodec.lib"
+if (-not (Test-Path $ffmpegLib)) {
     $ffmpegZipUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl-shared.zip"
     $ffmpegZip = Join-Path $TempDir "ffmpeg.zip"
     Write-Host "  [ffmpeg] downloading LGPL shared build..." -ForegroundColor Yellow
     Download-File -Url $ffmpegZipUrl -OutFile $ffmpegZip
 
-    # Extract to temp, then move inner dir to thirdparty/ffmpeg
+    # Extract to temp, then merge inner dir into thirdparty/ffmpeg
     $ffmpegTemp = Join-Path $TempDir "ffmpeg_temp"
     Expand-Archive -Path $ffmpegZip -DestinationPath $ffmpegTemp -Force
 
     # Find the extracted inner directory (name varies with build date)
     $innerDir = Get-ChildItem $ffmpegTemp -Directory | Select-Object -First 1
     if ($innerDir) {
-        Move-Item $innerDir.FullName $ffmpegDir
+        New-Item -ItemType Directory -Path $ffmpegDir -Force | Out-Null
+        Copy-Item -Path (Join-Path $innerDir.FullName "*") -Destination $ffmpegDir -Recurse -Force
         Write-Host "  [ffmpeg] installed: $($innerDir.Name)" -ForegroundColor Green
     } else {
         Write-Error "FFmpeg extraction failed - no inner directory found"
@@ -729,8 +842,11 @@ foreach ($mod in $npmModules) {
     if (Test-Path (Join-Path $modPath "package.json")) {
         Write-Host "  [$mod] npm install..." -ForegroundColor Yellow
         Push-Location $modPath
-        & npm install
-        if ($LASTEXITCODE -ne 0) { Pop-Location; Write-Error "npm install failed in $mod (exit $LASTEXITCODE)" }
+        # No 2>&1: npm writes deprecation notices to stderr, and merging them
+        # into the success stream makes each one a terminating NativeCommandError
+        # under $ErrorActionPreference = "Stop".
+        npm install --no-fund --loglevel=error | Out-Null
+        if ($LASTEXITCODE -ne 0) { Pop-Location; Write-Error "npm install failed in $mod" }
         Pop-Location
         Write-Host "  [$mod] OK" -ForegroundColor Green
     }

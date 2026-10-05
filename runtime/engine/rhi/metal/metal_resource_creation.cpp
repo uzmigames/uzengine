@@ -323,21 +323,23 @@ RHITextureHandle MetalDevice::CreateTexture(const RHITextureDesc& desc) {
     texDesc.height = desc.height;
     texDesc.depth = desc.is3D ? desc.depthOrArraySize : 1;
     texDesc.mipmapLevelCount = desc.mipLevels;
-    texDesc.arrayLength = desc.is3D ? 1 : desc.depthOrArraySize;
-
-    // Pixel format
-    texDesc.pixelFormat = static_cast<MTLPixelFormat>(ToMTLPixelFormat(desc.format));
-
-    // Texture type
+    // Texture type (before arrayLength: Metal cubes encode the 6 faces in
+    // the type itself and require arrayLength == 1)
+    const bool isCube = !desc.is3D && desc.depthOrArraySize == 6;
     if (desc.is3D) {
         texDesc.textureType = MTLTextureType3D;
-    } else if (desc.depthOrArraySize == 6) {
+    } else if (isCube) {
         texDesc.textureType = MTLTextureTypeCube;
     } else if (desc.depthOrArraySize > 1) {
         texDesc.textureType = MTLTextureType2DArray;
     } else {
         texDesc.textureType = MTLTextureType2D;
     }
+
+    texDesc.arrayLength = (desc.is3D || isCube) ? 1 : desc.depthOrArraySize;
+
+    // Pixel format
+    texDesc.pixelFormat = static_cast<MTLPixelFormat>(ToMTLPixelFormat(desc.format));
 
     // Usage flags
     MTLTextureUsage usage = MTLTextureUsageUnknown;
@@ -505,10 +507,22 @@ RHIShaderHandle MetalDevice::CreateShader(const RHIShaderDesc& desc) {
     }
 
     // Extract the entry point function.
-    // SPIRV-Cross generates "main0" as the default entry point for MSL.
+    // SPIRV-Cross generates "main0" as the default entry point for MSL;
+    // Slang renames HLSL `main` to "main_0". Try the requested name first,
+    // then the Slang rename, then the SPIRV-Cross default.
     const char* entryName = desc.entryPoint ? desc.entryPoint : "main0";
     NSString* entryPoint = [NSString stringWithUTF8String:entryName];
     id<MTLFunction> function = [library newFunctionWithName:entryPoint];
+    if (!function && strcmp(entryName, "main") == 0) {
+        [entryPoint release];
+        entryPoint = @"main_0";
+        function = [library newFunctionWithName:entryPoint];
+    }
+    if (!function) {
+        [entryPoint release];
+        entryPoint = @"main0";
+        function = [library newFunctionWithName:entryPoint];
+    }
     if (!function) {
         UZ_LOG(MetalRHI, Error, "CreateShader: entry point '{}' not found in MSL library (name='{}')",
                entryName, desc.debugName ? desc.debugName : "");
@@ -698,9 +712,60 @@ RHIPipelineHandle MetalDevice::CreateGraphicsPipeline(const RHIGraphicsPipelineD
 }
 
 RHIPipelineHandle MetalDevice::CreateComputePipeline(const RHIComputePipelineDesc& desc) {
-    UZ_LOG(MetalRHI, Warning, "CreateComputePipeline: not yet implemented in Metal backend (name='{}')",
+    UZ_PROFILE_FUNCTION();
+#if defined(__APPLE__)
+    id<MTLDevice> device = (__bridge id<MTLDevice>)m_device;
+    if (!device) {
+        UZ_LOG(MetalRHI, Error, "CreateComputePipeline: device not initialized");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (!desc.computeShader.IsValid()) {
+        UZ_LOG(MetalRHI, Error, "CreateComputePipeline: invalid compute shader handle");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    MetalShader* csShader = m_shaderPool.Get(desc.computeShader.index,
+                                              desc.computeShader.generation);
+    if (!csShader || !csShader->function) {
+        UZ_LOG(MetalRHI, Error, "CreateComputePipeline: compute shader has no function");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    NSError* error = nil;
+    id<MTLComputePipelineState> pipelineState =
+        [device newComputePipelineStateWithFunction:(__bridge id<MTLFunction>)csShader->function
+                                              error:&error];
+    if (!pipelineState) {
+        UZ_LOG(MetalRHI, Error,
+               "CreateComputePipeline: MTLComputePipelineState creation failed: {} (name='{}')",
+               error ? [[error localizedDescription] UTF8String] : "unknown",
+               desc.debugName ? desc.debugName : "");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    uint32_t generation = 0;
+    const uint32_t index = m_pipelinePool.Allocate(generation);
+    MetalPipeline* slot = m_pipelinePool.Get(index, generation);
+    if (!slot) {
+        UZ_LOG(MetalRHI, Error, "CreateComputePipeline: pipeline pool exhausted");
+        [pipelineState release];
+        return RHIPipelineHandle::Invalid();
+    }
+
+    slot->renderPipeline = nullptr;
+    slot->computePipeline = (__bridge_retained MTL::ComputePipelineState*)pipelineState;
+    slot->generation = generation;
+
+    UZ_LOG(MetalRHI, Debug, "CreateComputePipeline: OK (name='{}')",
            desc.debugName ? desc.debugName : "");
+
+    return {index, generation};
+#else
+    (void)desc;
+    UZ_LOG(MetalRHI, Error, "CreateComputePipeline: Metal backend not available on this platform");
     return RHIPipelineHandle::Invalid();
+#endif
 }
 
 void MetalDevice::DestroyPipeline(RHIPipelineHandle handle) {
@@ -724,6 +789,11 @@ void MetalDevice::DestroyPipeline(RHIPipelineHandle handle) {
 #endif
 
     m_pipelinePool.Free(handle.index);
+}
+
+std::vector<uint8_t> MetalDevice::GetPipelineCachedBlob(RHIPipelineHandle /*handle*/) {
+    // Metal has no PSO blob export; the pipeline cache misses and recompiles.
+    return {};
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
