@@ -44,8 +44,9 @@ cbuffer ShadowDataCB : register(b4) {
     uint   localShadowAtlasIndex;
     uint   localShadowCount;
     float4 _shadowPad[4];                      // pad to 768
-    float4 localShadowRaw[80];                 // 1280B (16 entries × 5 float4s)
-    float4 _shadowPad3[16];                    // pad to 2304
+    // 16 entries x 6 float4: [0..3] viewProj rows, [4] (atlasOffsetX, atlasOffsetY, atlasScale,
+    // bias cm), [5] (light position xyz, radius). Tiles store distance / radius.
+    float4 localShadowRaw[96];                 // 1536B
 };
 
 float GetCascadeSplit(uint i)      { return cascadeSplitsPacked[i >> 2][i & 3]; }

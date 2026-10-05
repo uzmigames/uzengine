@@ -33,7 +33,8 @@
 UZ_DECLARE_LOG_CATEGORY(Renderer);
 
 // ── CVars ────────────────────────────────────────────────────────────────
-static auto* cv_AerialPerspective = UZ_CVAR_BOOL("r.AerialPerspective", true, "Aerial perspective");
+// r.AerialPerspective is registered once, in frame_constants.cpp (default false). A second
+// registration here with default true made the effective default depend on static-init order.
 static auto* cv_ScatteringLut = UZ_CVAR_BOOL("r.ScatteringLut", false, "Use Bruneton 3D scattering LUT for sky (experimental)");
 
 namespace uz {
@@ -178,6 +179,38 @@ void AddAtmospherePasses(
         //
         // When HDRI is active, the HDRI cubemap is used directly for IBL —
         // skip the procedural sky cubemap capture entirely.
+        // ── Sky IBL re-bake on change (block A.5) ───────────────────────────
+        // The capture below and PostFrameAtmosphereBake() run only while *skyIBLDirty, which
+        // used to be set once at construction: a moving sun kept the SH and prefiltered maps
+        // of the first frame forever. Compare the sun direction, the sky sun colour and the
+        // angular radius with what the IBL was baked from; a change above 0.25 degrees / 1 %
+        // marks it dirty, at most once per 30 passes (each bake stalls on WaitIdle plus an SH
+        // readback — an asynchronous bake is the follow-up, not this).
+        if (ctx.skyBakeSignature != nullptr) {
+            float* sig = ctx.skyBakeSignature;
+            const float now[7] = {sunDir.x, sunDir.y, sunDir.z,
+                                  skySunColor.x, skySunColor.y, skySunColor.z, skySunAngularRadius};
+            sig[7] += 1.0f;
+            if (sig[0] <= -1e29f) {
+                for (int i = 0; i < 7; ++i) sig[i] = now[i];   // the initial bake is already pending
+                sig[7] = 0.0f;
+            } else {
+                const float dirDot = sig[0] * now[0] + sig[1] * now[1] + sig[2] * now[2];
+                float colorRel = 0.0f;
+                for (int i = 3; i < 6; ++i) {
+                    colorRel = std::max(colorRel, std::abs(now[i] - sig[i]) / std::max(std::abs(sig[i]), 1e-3f));
+                }
+                const bool changed = dirDot < 0.99999048f                       // cos(0.25 deg)
+                                  || colorRel > 0.01f
+                                  || std::abs(now[6] - sig[6]) > 1e-4f;
+                if (changed && sig[7] >= 30.0f && !ctx.hdriActive) {
+                    *ctx.skyIBLDirty = true;
+                    for (int i = 0; i < 7; ++i) sig[i] = now[i];
+                    sig[7] = 0.0f;
+                    UZ_LOG(Renderer, Info, "Sky IBL: re-bake queued (sun dir dot={:.6f}, sun colour change={:.3f})", dirDot, colorRel);
+                }
+            }
+        }
         if (!ctx.hdriActive && *ctx.skyIBLDirty && ctx.skyCubemap.IsValid()
                 && ctx.transmittanceLutSrv != UINT32_MAX) {
 

@@ -485,7 +485,12 @@ irradiance data is zero until a bake step (which doesn't exist).
 
 ## Shadows
 
-### `r.DFS` (Distance Field Shadows) — `ON`
+### `r.DFS` (Distance Field Shadows) — `OFF` (STUB)
+
+**2026-10-05 (block A.7):** the three `dfs_*_cs.hlsl` are one-line scaffolds and the lighting shader
+never reads `dfsOutputSrvIndex`; the passes were dispatched for nothing. Default changed to `false`,
+TechPanel row removed. The description below is the intended design, not the state of the code.
+
 **File**: [frame_lighting.cpp:52](../../runtime/engine/renderer/frame/frame_lighting.cpp)
 **Shaders**: [shaders/runtime/shadows/dfs_*.hlsl](../../runtime/shaders/runtime/shadows/)
 
@@ -493,6 +498,17 @@ Cone-traced distance field shadows. Works on large-scale scenes but can
 produce splotchy noise on cm-scale interiors (low sample count, no temporal
 accumulation). Currently ON by default; if you see splotchy AO-like noise
 inside buildings, this is the first thing to disable.
+
+### Local light (spot / point) shadows — `FIXED` 2026-10-05 (block A.1)
+
+Until 2026-10-05 no spot or point light cast a shadow: the local atlas was cleared to 0.0 and drawn
+with the CSM pipeline (`Less`), so no caster passed; spots then read the atlas with NDC used as UV and
+the LESS comparison, which lit both sides of every occluder; point lights had six cube-face tiles
+rendered per light and `pl.shadowIndex` was never read. Fixed with linear-distance tiles
+(`shadow_depth_linear_ps.hlsl`, `SampleLocalShadow` in the lighting shader, cube-face selection).
+Guard: `scripts/test_local_light_shadows.py` (6/6; before 4/6 with lit/shadow ratios 1.07 and 4.2).
+Remaining: alpha-masked casters still cast solid shadows (the depth pipelines are vertex-only);
+see `docs/analysis/lighting-block-a-2026-10-05.md`.
 
 ### Shadow atlas depth dump — `STUB`
 The pass-dump code skips depth textures other than the GBuffer depth. The
@@ -596,7 +612,20 @@ reset). Full design in
 
 ## Atmosphere / Sky / Fog
 
+### Sky IBL (cubemap capture, SH, prefiltered maps) — `FIXED` 2026-10-05 (block A.5)
+
+`m_skyIBLDirty` was set once at construction and only ever cleared, so a moving sun kept the sky IBL
+of the first frame. The sky pass now re-bakes when the sun direction (> 0.25 deg), the sky sun colour
+(> 1 %) or the angular radius change, at most once per 30 passes; each bake still stalls on `WaitIdle`
+(asynchronous bake is the follow-up). Guard: `scripts/test_sky_ibl_rebake.py`.
+
+
 ### `r.AerialPerspective` — `OFF` (PARTIAL)
+
+**2026-10-05 (block A.4):** the CVar was registered twice (`true` in `atmosphere_renderer.cpp`, `false`
+in `frame_constants.cpp`); the registry keeps the first registration, so the effective default depended
+on static-initialisation order. One registration now, default `false`.
+
 **File**: [frame_constants.cpp:76](../../runtime/engine/renderer/frame/frame_constants.cpp)
 
 3D aerial perspective volume (Hillaire 2020) is computed each frame via
@@ -659,6 +688,20 @@ No known bugs. Listed here for completeness.
 ---
 
 ## Post-Process
+
+### Auto-exposure knobs — `WIRED` 2026-10-05 (block A.8)
+
+`r.AutoExposure.MidGrayTarget`, `SpeedUp`, `SpeedDown`, `LogLuminanceMin/Max` were registered and never
+read (the shader hard-coded 0.18, 3, 1 EV/s, 10-90 %). They are root constants now; the defaults
+reproduce the previous exposure. `r.ContactShadow.Length` now scales the contact-shadow ray (0.10 =
+the previous fixed 1 % of the far plane) instead of only switching it on.
+
+### `r.SkyLight.MinAmbient` — `DEFAULT CHANGED` 2026-10-05 (block A.2)
+
+Default 0.25 was applied as `max(component, cvar)` to the AO clamp and the no-GI irradiance floor,
+overriding every scene (Sponza authors 0.01; the shader documents 0.005-0.02). Default is 0 now (the
+component value). Sponza Camera C: `lit_wall` -1.6 %, other ROIs bit-identical.
+
 
 ### `r.GTAO` — `OFF` (WEAK EFFECT / SCENE-DEPENDENT)
 **File**: [gtao_pass.cpp:24](../../runtime/engine/renderer/passes/postprocess/gtao_pass.cpp)

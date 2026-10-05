@@ -95,6 +95,10 @@ struct AtmosphereFrameContext {
     uint32_t          skyCubemapUav = UINT32_MAX;
     bool*             skyIBLDirty       = nullptr;
     bool*             skyCubemapFilled  = nullptr;  ///< True once sky cubemap has been captured at least once.
+    /// 8 floats owned by the SceneRenderer: the sun direction (3), sky sun colour (3) and angular
+    /// radius the IBL was last baked with, and [7] = passes since that bake. Below -1e29 = never
+    /// set. The sky pass sets *skyIBLDirty when they change (block A.5, 2026-10-05).
+    float*            skyBakeSignature  = nullptr;
 
     // IBL (owned by SceneRenderer)
     IBLBaker*         iblBaker         = nullptr;

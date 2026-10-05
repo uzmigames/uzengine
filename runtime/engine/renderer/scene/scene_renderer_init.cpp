@@ -1071,7 +1071,7 @@ void SceneRenderer::ApplyCVars() {
 
     // ── Render Pass Toggles ─────────────────────────────────────────────
     m_taaEnabled        = cvars.GetBool("r.TAA", false);
-    m_ssrEnabled        = cvars.GetBool("r.SSR", true);
+    m_ssrEnabled        = cvars.GetBool("r.SSR", false);
     m_motionBlurEnabled = cvars.GetBool("r.MotionBlur", true);
     m_casEnabled        = cvars.GetBool("r.CAS", true);
     m_lensFlareEnabled  = cvars.GetBool("r.LensFlare", false);
@@ -1091,7 +1091,7 @@ void SceneRenderer::ApplyCVars() {
     m_passInspector.SetPassEnabled("fog", cvars.GetBool("r.Fog", true));
     m_passInspector.SetPassEnabled("clouds", cvars.GetBool("r.Clouds", true));
     m_passInspector.SetPassEnabled("contact_shadow", cvars.GetBool("r.ContactShadows", true));
-    m_passInspector.SetPassEnabled("aerial_persp", cvars.GetBool("r.AerialPerspective", true));
+    m_passInspector.SetPassEnabled("aerial_persp", cvars.GetBool("r.AerialPerspective", false));
     // The world-space final gather shares the "ssgi" pass slot with the legacy
     // screen-space trace, so the slot must open for either. Gating it on
     // r.SSGI alone left r.GI.FinalGather=1 with r.SSGI=0 silently inactive
@@ -1115,7 +1115,7 @@ void SceneRenderer::ApplyCVars() {
     m_motionBlurMax    = cvars.GetFloat("r.MotionBlur.Max", 5.f);
 
     // ── CAS ──────────────────────────────────────────────────────────────
-    m_casSharpenStrength = cvars.GetFloat("r.CAS.Sharpness", 0.15f);
+    m_casSharpenStrength = cvars.GetFloat("r.CAS.Sharpness", 0.2f);
 
     // ── Depth of Field ───────────────────────────────────────────────────
     m_dofFocusDistance  = cvars.GetFloat("r.DOF.FocusDistance", 0.f);

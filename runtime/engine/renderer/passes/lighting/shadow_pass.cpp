@@ -37,6 +37,8 @@ struct ShadowCB {
     /// Transforms world-space vertex positions into light clip space for
     /// depth comparison during shadow map sampling.
     Mat4 viewProj;
+    float lightPosX = 0.f, lightPosY = 0.f, lightPosZ = 0.f; ///< Unused by the CSM; keeps the 80-byte layout of shadow_depth_vs.hlsl (local tiles, block A.1).
+    float lightRadius = 0.f;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

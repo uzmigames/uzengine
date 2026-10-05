@@ -564,10 +564,15 @@ struct LocalLightShadowData {
     float    atlasOffsetX;   ///< UV offset X in atlas [0,1].
     float    atlasOffsetY;   ///< UV offset Y in atlas [0,1].
     float    atlasScale;     ///< UV scale (tile size / atlas size, e.g., 0.25 for 1024/4096).
-    float    bias;           ///< Shadow depth bias (default 0.5).
+    float    bias;           ///< Shadow bias in cm (JSON `shadowBias`, default 0.5): the receiver's distance
+                             ///< is reduced by this much before the comparison.
+    float    lightPosX;      ///< Light position (world, cm). The tile stores distance / radius
+    float    lightPosY;      ///< (shadow_depth_linear_ps.hlsl), so the consumer needs the same
+    float    lightPosZ;      ///< origin and range to compare in linear units (block A.1).
+    float    radius;         ///< Light range in cm.
 };
 
-static_assert(sizeof(LocalLightShadowData) == 80, "LocalLightShadowData must be 80 bytes (Mat4 + 4 floats)");
+static_assert(sizeof(LocalLightShadowData) == 96, "LocalLightShadowData must be 96 bytes (Mat4 + 8 floats)");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ShadowDataCB — bound at b4 (root CBV, updated once per frame for shadow sampling)
@@ -587,8 +592,7 @@ static_assert(sizeof(LocalLightShadowData) == 80, "LocalLightShadowData must be 
 /// - cascadeSplits/fades/biases:        128 bytes
 /// - scalar params + padding:           128 bytes
 /// ── CSM section subtotal:             768 bytes
-/// - localShadows[16]:                  16 * 80 = 1280 bytes
-/// - _pad3:                             256 bytes
+/// - localShadows[16]:                  16 * 96 = 1536 bytes
 /// Total: 2304 bytes
 struct ShadowDataCB {
     Mat4     cascadeViewProj[8];    ///< Light-space viewProj per cascade (8 * 64 = 512B).
@@ -619,8 +623,7 @@ struct ShadowDataCB {
     // Up to 16 local light shadows. Each entry stores the light-space viewProj
     // matrix and the atlas UV rect for shadow sampling.
     //
-    LocalLightShadowData localShadows[kMaxLocalLightShadows]; ///< Per-light shadow data (16 * 80 = 1280B).
-    float    _pad3[64] = {};        ///< Pad to 2304 bytes (9 * 256).
+    LocalLightShadowData localShadows[kMaxLocalLightShadows]; ///< Per-light shadow data (16 * 96 = 1536B).
 };
 
 static_assert(sizeof(ShadowDataCB) == 2304, "ShadowDataCB must be 2304 bytes (256-byte multiple)");

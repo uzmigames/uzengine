@@ -287,6 +287,38 @@ void WriteRegionDumpLighting(uint2 rp, float3 reflection, float roughness, float
 #endif
 }
 
+// ── Local light shadow tiles (spot lights and point-light cube faces) ────────
+// Entry layout in localShadowRaw[]: 6 float4 per entry — [0..3] viewProj rows, [4] (atlasOffsetX,
+// atlasOffsetY, atlasScale, bias cm), [5] (light position xyz, radius). The tile stores
+// distance / radius (shadow_depth_linear_ps.hlsl), so the comparison is linear: the receiver is lit
+// when its own distance, minus the bias, is closer than the stored occluder (LESS comparison
+// sampler, atlas cleared to 1.0). Receivers are pushed along the geometric normal by 0.5 % of their
+// distance before the test (normal-offset bias, against acne on grazing surfaces). Block A.1.
+float SampleLocalShadow(uint entry, float3 worldPos, float3 geometricNormal) {
+#ifdef UZ_BINDLESS
+    if (localShadowAtlasIndex == kSentinelSrvIndex) return 1.0;
+    Texture2D<float> localAtlas = ResourceDescriptorHeap[localShadowAtlasIndex];
+    const uint base = entry * 6u;
+    const float4x4 localVP = float4x4(localShadowRaw[base + 0], localShadowRaw[base + 1],
+                                      localShadowRaw[base + 2], localShadowRaw[base + 3]);
+    const float4 atlasParams = localShadowRaw[base + 4];
+    const float4 lightParams = localShadowRaw[base + 5];
+    const float  dist = length(lightParams.xyz - worldPos);
+    const float3 receiver = worldPos + geometricNormal * (dist * 0.005);
+    const float4 lsPos = mul(float4(receiver, 1.0), localVP);
+    if (lsPos.w <= 0.0) return 1.0;
+    const float2 ndc = lsPos.xy / lsPos.w;
+    if (any(abs(ndc) > 1.0)) return 1.0;
+    const float2 uv = ndc * float2(0.5, -0.5) + 0.5;           // same y flip as the CSM (shadow.hlsli)
+    const float2 atlasUV = uv * atlasParams.z + atlasParams.xy;
+    const float  radius = max(lightParams.w, 1e-3);
+    const float  ref = (length(lightParams.xyz - receiver) - atlasParams.w) / radius;
+    return localAtlas.SampleCmpLevelZero(shadowSampler, atlasUV, saturate(ref));
+#else
+    return 1.0;
+#endif
+}
+
 LightingOutput main(FSInput input) {
     int2 px = int2(input.positionCS.xy);
 
@@ -453,12 +485,14 @@ LightingOutput main(FSInput input) {
         csDpth.GetDimensions(csW, csH);
         float cs = ComputeContactShadow(worldPos, sunL, csDpth,
                                          viewProj, invViewProj,
-                                         csW, csH, nearPlane, farPlane);
+                                         csW, csH, nearPlane, farPlane,
+                                         farPlane * 0.01 * (_contactShadowLen / 0.10));
 #else
         gbufferDepth.GetDimensions(csW, csH);
         float cs = ComputeContactShadow(worldPos, sunL,
                                          viewProj, invViewProj,
-                                         csW, csH, nearPlane, farPlane);
+                                         csW, csH, nearPlane, farPlane,
+                                         farPlane * 0.01 * (_contactShadowLen / 0.10));
 #endif
         shadow = min(shadow, cs);
     }
@@ -503,6 +537,16 @@ LightingOutput main(FSInput input) {
         float f = distSq * invRadSq;
         float s = saturate(1.0 - f * f);
         float atten = (s * s) / max(distSq, 0.01);
+        // Shadowed point lights own six consecutive tiles (+X, -X, +Y, -Y, +Z, -Z, the order
+        // frame_constants.cpp allocates them); the face is the major axis of light -> pixel.
+        if (pl.shadowIndex != 0xFFFFFFFFu && pl.shadowIndex + 5u < localShadowCount) {
+            const float3 d = -toLight;
+            const float3 a = abs(d);
+            const uint face = (a.x >= a.y && a.x >= a.z) ? (d.x > 0.0 ? 0u : 1u)
+                            : (a.y >= a.z)               ? (d.y > 0.0 ? 2u : 3u)
+                                                         : (d.z > 0.0 ? 4u : 5u);
+            atten *= SampleLocalShadow(pl.shadowIndex + face, worldPos, geometricNormal);
+        }
 
         float3 Hp   = normalize(V + Lp);
         float  NoHp = saturate(dot(N, Hp));
@@ -539,35 +583,9 @@ LightingOutput main(FSInput input) {
         if (atten <= 0.0) continue;
 
         // ── Spot shadow map sampling ─────────────────────────────────
-        // Each local shadow entry is 5 float4s in localShadowRaw[]:
-        //   [0..3] = viewProj rows, [4] = (atlasOffsetX, atlasOffsetY, atlasScale, bias)
-        float spotShadow = 1.0;
-        if (sl.shadowIndex != 0xFFFFFFFFu && sl.shadowIndex < localShadowCount) {
-#ifdef UZ_BINDLESS
-            Texture2D<float> localAtlas = ResourceDescriptorHeap[localShadowAtlasIndex];
-#endif
-            uint base = sl.shadowIndex * 5u;
-            float4x4 localVP = float4x4(
-                localShadowRaw[base + 0],
-                localShadowRaw[base + 1],
-                localShadowRaw[base + 2],
-                localShadowRaw[base + 3]);
-            float4 atlasParams = localShadowRaw[base + 4];
-            float  localBias   = atlasParams.w;
-
-            float4 lsPos = mul(float4(worldPos, 1.0), localVP);
-            float3 lsProj = lsPos.xyz / lsPos.w;
-
-            if (lsProj.z > 0.0 && lsProj.z < 1.0) {
-                float2 atlasUV = lsProj.xy * atlasParams.z
-                               + float2(atlasParams.x, atlasParams.y);
-                float biasedZ = lsProj.z - localBias * 0.001;
-#ifdef UZ_BINDLESS
-                spotShadow = localAtlas.SampleCmpLevelZero(
-                    shadowSampler, atlasUV, biasedZ);
-#endif
-            }
-        }
+        // Linear-distance tile, sampled by SampleLocalShadow above (block A.1).
+        float spotShadow = (sl.shadowIndex != 0xFFFFFFFFu && sl.shadowIndex < localShadowCount)
+                         ? SampleLocalShadow(sl.shadowIndex, worldPos, geometricNormal) : 1.0;
 
         float3 Hs   = normalize(V + Ls);
         float  NoHs = saturate(dot(N, Hs));
@@ -942,6 +960,10 @@ LightingOutput main(FSInput input) {
         if (!irradianceFromGI) {
             irradiance = max(irradiance, skyLightMinAmbient);
         }
+        // Irradiance from a GI source (DDGI, radiance cache, LPV) already carries the sky light colour and
+        // intensity: the probe writers sample the sky cubemap times skyLightColor * intensity. Only the
+        // sky SH fallback is untinted, so the diffuse tint applies to that path alone (block A.3).
+        if (irradianceFromGI) skyTintDiffuse = 1.0;
 
         // Our SH coefficients are pre-convolved with cosine lobe (UE5 pattern),
         // so EvalSH_L2 returns irradiance E directly. No /PI needed — our
@@ -1205,10 +1227,16 @@ LightingOutput main(FSInput input) {
 #ifdef UZ_BINDLESS
     if (gBufIndices.envMisSrvIdx != kSentinelSrvIndex) {
         Texture2D<float4> envMisTex = ResourceDescriptorHeap[gBufIndices.envMisSrvIdx];
-        float3 envMIS = envMisTex.Load(int3(px, 0)).rgb;
-        ambient += envMIS;
-        dbgEmissiveAndMis += envMIS;
-        if (any(envMIS > 0.0)) dbgPath |= 16u;
+        float4 envMIS = envMisTex.Load(int3(px, 0));
+        // The MIS estimate is the specular environment term for the pixels it covers (metallic > 0.3,
+        // roughness < 0.7; alpha = 1 there, 0 elsewhere). It REPLACES the split-sum specular on those
+        // pixels; adding it on top counted the environment specular twice on metals (block A.3).
+        if (envMIS.a > 0.0) {
+            ambient = dbgDiffuseIndirect + envMIS.rgb;
+            dbgSpecularIndirect = envMIS.rgb;
+            dbgEmissiveAndMis += envMIS.rgb;
+            dbgPath |= 16u;
+        }
     }
 #endif
 

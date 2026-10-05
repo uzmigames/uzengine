@@ -41,7 +41,6 @@ static auto* cv_SSRResolve         = UZ_CVAR_FLOAT("r.SSR.Resolve", 1.0f, "Enabl
 static auto* cv_SSRTemporal        = UZ_CVAR_FLOAT("r.SSR.Temporal", 1.0f, "Enable SSR temporal pass (0=skip)", 0.0f, 1.0f);
 static auto* cv_SSRSpatialDenoise  = UZ_CVAR_FLOAT("r.SSR.SpatialDenoise", 1.0f, "Enable SSR spatial denoise pass (0=skip)", 0.0f, 1.0f);
 static auto* cv_SSRComposite       = UZ_CVAR_FLOAT("r.SSR.Composite", 1.0f, "Enable SSR post-TAA composite (0=skip)", 0.0f, 1.0f);
-static auto* cv_SSRCopy            = UZ_CVAR_FLOAT("r.SSR.CopyPrev", 1.0f, "Enable SSR prev-frame color copy (0=skip)", 0.0f, 1.0f);
 static auto* cv_SSRNumSteps        = UZ_CVAR_INT("r.SSR.NumSteps", 16, "SSR ray march step count", 8, 64);
 static auto* cv_SSRStartMip        = UZ_CVAR_FLOAT("r.SSR.StartMipLevel", 1.0f, "SSR initial HZB mip level", 0.f, 3.f);
 static auto* cv_SSRSlopeTolerance  = UZ_CVAR_FLOAT("r.SSR.SlopeToleranceScale", 4.0f, "SSR slope tolerance scale", 1.f, 16.f);

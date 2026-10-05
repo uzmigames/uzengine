@@ -23,7 +23,9 @@ namespace uz {
 /// Per-cascade shadow constant buffer — mirrors the one in shadow_pass.cpp.
 /// Contains only the light-space view-projection matrix, bound at root slot 3.
 struct ShadowCB {
-    Mat4 viewProj;
+    Mat4  viewProj;
+    float lightPosX = 0.f, lightPosY = 0.f, lightPosZ = 0.f; ///< Local tiles: the light the linear depth is measured from.
+    float lightRadius = 0.f;                                 ///< Local tiles: distance / radius is what the tile stores.
 };
 
 void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
@@ -336,7 +338,10 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
             "LocalShadowAtlas", m_localShadowAtlas.GetTexture(), RHIResourceState::ShaderResource);
 
         const auto localAtlasTex = m_localShadowAtlas.GetTexture();
-        const auto localShadowPipeline = pipelines->GetShadowDepth(bindless);
+        // Linear-distance variant: the Camera-built light projections are reversed-Z while the
+        // CSM convention (Less, clear 1.0, LESS comparison) is standard-Z; storing distance / radius
+        // makes the tile independent of either (shadow_depth_linear_ps.hlsl, block A.1).
+        const auto localShadowPipeline = pipelines->GetShadowDepthLinear(bindless);
         const auto* shadowCBData = reinterpret_cast<const ShadowDataCB*>(ctx.shadowAlloc.cpuPtr);
 
         // Build per-tile data for the lambda capture.
@@ -346,6 +351,7 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
         struct LocalTileData {
             uint32_t viewportX, viewportY, viewportSize;
             Mat4     viewProj;
+            float    lightPosX, lightPosY, lightPosZ, radius;
         };
         std::vector<LocalTileData> tileData(totalLocalShadowEntries);
         for (uint32_t si = 0; si < totalLocalShadowEntries; ++si) {
@@ -355,6 +361,14 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
             tileData[si].viewportY    = row * kLocalShadowTileSize;
             tileData[si].viewportSize = kLocalShadowTileSize;
             tileData[si].viewProj     = shadowCBData->localShadows[si].viewProj;
+            tileData[si].lightPosX    = shadowCBData->localShadows[si].lightPosX;
+            tileData[si].lightPosY    = shadowCBData->localShadows[si].lightPosY;
+            tileData[si].lightPosZ    = shadowCBData->localShadows[si].lightPosZ;
+            tileData[si].radius       = shadowCBData->localShadows[si].radius;
+            tileData[si].lightPosX    = shadowCBData->localShadows[si].lightPosX;
+            tileData[si].lightPosY    = shadowCBData->localShadows[si].lightPosY;
+            tileData[si].lightPosZ    = shadowCBData->localShadows[si].lightPosZ;
+            tileData[si].radius       = shadowCBData->localShadows[si].radius;
         }
 
         const DrawList* localDrawListPtr = &ctx.drawList;
@@ -376,8 +390,11 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
                                         IRHICommandList* cmd, const rg::RgPassResources& res) {
                 UZ_PROFILE_SCOPE("LocalShadowDepth::Execute");
 
-                // Clear the entire local shadow atlas to 0.0 (reversed-Z far = max distance = no occlusion)
-                cmd->ClearDepthStencil(localAtlasTex, 0.0f, 0);
+                // Clear to 1.0 = distance / radius of "nothing closer than the range". Tiles store
+                // linear distance and are tested with Less, like the CSM atlas. (Cleared to 0.0 until
+                // 2026-10-05: with Less no caster could pass, and the LESS comparison then read
+                // every spot pixel as shadowed.)
+                cmd->ClearDepthStencil(localAtlasTex, 1.0f, 0);
 
                 const auto& commands = localDrawListPtr->GetCommands();
                 uint32_t totalDrawCalls = 0;
@@ -415,7 +432,11 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
 
                     // Bind per-tile shadow CB (viewProj matrix) at slot 3
                     ShadowCB shadowCb{};
-                    shadowCb.viewProj = tile.viewProj;
+                    shadowCb.viewProj    = tile.viewProj;
+                    shadowCb.lightPosX   = tile.lightPosX;
+                    shadowCb.lightPosY   = tile.lightPosY;
+                    shadowCb.lightPosZ   = tile.lightPosZ;
+                    shadowCb.lightRadius = tile.radius;
                     CBAllocation shadowCbAlloc = localCbRing->Allocate(sizeof(ShadowCB));
                     if (shadowCbAlloc.cpuPtr == nullptr) {
                         cmd->EndRenderPass();

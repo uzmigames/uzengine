@@ -102,8 +102,7 @@ struct ShadowDataParams {
     float    _pad2[16]             = {};                  ///< Pad CSM section to 768 bytes.
 
     // ── Local Light Shadow Data ──────────────────────────────────────────
-    LocalLightShadowData localShadows[kMaxLocalLightShadows] = {}; ///< Per-light shadow data (16 * 80 = 1280B).
-    float    _pad3[64]             = {};                  ///< Pad to 2304 bytes.
+    LocalLightShadowData localShadows[kMaxLocalLightShadows] = {}; ///< Per-light shadow data (16 * 96 = 1536B).
 
     // ── Resource handles (NOT copied to CB) ──────────────────────────────
 

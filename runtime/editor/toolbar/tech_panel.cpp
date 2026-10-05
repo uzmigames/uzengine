@@ -103,7 +103,6 @@ void TechPanel::BuildRows() {
     scalar("Sky light",                      "r.SkyLight.Intensity");
     toggle("Atmosphere (sky)",               "r.Show.Atmosphere");
     toggle("Shadow maps (CSM + local)",      "r.Show.Shadows");
-    toggle("Distance-field shadows",         "r.DFS");
     toggle("Contact shadows",                "r.ContactShadows");
     toggle("GTAO",                           "r.GTAO");
     toggle("Height fog",                     "r.Fog");

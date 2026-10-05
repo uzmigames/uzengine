@@ -33,14 +33,17 @@
 
 // ── CVars consumed by PerFrameCB population ─────────────────────────────
 static auto* cv_SkyLightIntensity        = UZ_CVAR_FLOAT("r.SkyLight.Intensity", 1.0f, "IBL ambient multiplier", 0.f, 20.f);
-static auto* cv_SkyLightMinAmbient       = UZ_CVAR_FLOAT("r.SkyLight.MinAmbient", 0.25f, "Minimum ambient floor", 0.f, 1.f);
+static auto* cv_SkyLightMinAmbient       = UZ_CVAR_FLOAT("r.SkyLight.MinAmbient", 0.0f,
+    "Floor raised over SkyLightComponent.minOcclusion for the AO clamp and the no-GI irradiance floor; "
+    "0 = the component value (Sponza authors 0.01; the shader documents 0.005-0.02). The old 0.25 default "
+    "overrode every scene (block A.2, 2026-10-05)", 0.f, 1.f);
 static auto* cv_SkyLightIndirectIntensity = UZ_CVAR_FLOAT("r.SkyLight.IndirectIntensity", 1.0f, "Diffuse IBL multiplier (separate from specular)", 0.f, 10.f);
 // Contact shadows ON by default — they are NOT GTAO. Pure screen-space
 // ray-march from each pixel along the sun direction; produces hard contact
 // shadows at object/floor intersections without the GTAO over-occlusion bug.
 // 0.10 ≈ 10% of view depth — strong enough for column/floor contact in
 // large interiors like Sponza without leaking onto distant geometry.
-static auto* cv_ContactShadowLen   = UZ_CVAR_FLOAT("r.ContactShadow.Length", 0.10f, "Contact shadow ray length (0=off)", 0.f, 0.2f);
+static auto* cv_ContactShadowLen   = UZ_CVAR_FLOAT("r.ContactShadow.Length", 0.10f, "Contact shadow ray length as a fraction of the far plane x 0.1 (0.10 = 1 % of far, the pre-2026-10-05 fixed value); 0 disables", 0.f, 0.2f);
 static auto* cv_FilmGrain          = UZ_CVAR_FLOAT("r.FilmGrain", 0.f, "Film grain intensity", 0.f, 1.f);
 static auto* cv_GIFreezeSeed      = UZ_CVAR_INT("r.GI.Reflections.FreezeSeed", -1,
     "Diagnostic (followup-12): freezes the per-frame sampling seed of the SDF reflections and the\n"
@@ -105,7 +108,8 @@ static auto* cv_MaterialMinGGXAlpha   = UZ_CVAR_FLOAT("r.Material.MinGGXAlpha", 
 // without washing out the deep-shadowed corners of the atrium.
 static auto* cv_Exposure           = UZ_CVAR_FLOAT("r.Exposure", 1.0f, "Manual exposure multiplier (applied on auto-exposure)", 0.01f, 100.f);
 static auto* cv_GIIntensity        = UZ_CVAR_FLOAT("r.GI.Intensity", 1.f, "GI intensity multiplier", 0.f, 10.f);
-static auto* cv_AerialPersp        = UZ_CVAR_BOOL("r.AerialPerspective", false, "Aerial perspective in deferred lighting");
+static auto* cv_AerialPersp        = UZ_CVAR_BOOL("r.AerialPerspective", false,
+    "Aerial perspective in deferred lighting (single registration; atmosphere_renderer.cpp reads this one)");
 // Default 1.0 = plain `ao`, matching the reference pipeline. Values above 1
 // are an artistic crevice-darkening choice a scene opts into (the pre-port
 // Sponza calibration used 3.0); they are not physically motivated.
@@ -1107,6 +1111,10 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
             sd.atlasOffsetY = tile.uvOffsetY;
             sd.atlasScale   = tile.uvScale;
             sd.bias         = spotShadow.bias;
+            sd.lightPosX    = spotShadow.position.x;
+            sd.lightPosY    = spotShadow.position.y;
+            sd.lightPosZ    = spotShadow.position.z;
+            sd.radius       = spotShadow.radius;
 
             // Also copy to shadowDataParams for the binder path
             ctx.shadowDataParams.localShadows[si] = sd;
@@ -1190,6 +1198,10 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
                 sd.atlasOffsetY = tile.uvOffsetY;
                 sd.atlasScale   = tile.uvScale;
                 sd.bias         = ptShadow.bias;
+                sd.lightPosX    = ptShadow.position.x;
+                sd.lightPosY    = ptShadow.position.y;
+                sd.lightPosZ    = ptShadow.position.z;
+                sd.radius       = ptShadow.radius;
 
                 ctx.shadowDataParams.localShadows[entryIdx] = sd;
             }

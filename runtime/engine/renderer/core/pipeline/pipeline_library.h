@@ -246,6 +246,10 @@ public:
     /// Returns the shadow depth pipeline using the device's default bindless mode.
     [[nodiscard]] RHIPipelineHandle GetShadowDepth();
 
+    /// Returns the local-light shadow pipeline: the depth VS with UZ_SHADOW_LINEAR plus
+    /// `shadow_depth_linear_ps.hlsl`, which writes distance / radius to SV_Depth (block A.1).
+    [[nodiscard]] RHIPipelineHandle GetShadowDepthLinear(bool bindless);
+
     /// Returns the instanced G-Buffer pipeline (mesh_vs+UZ_INSTANCED + gbuffer_ps, 3 RT + depth).
     ///
     /// Uses `DrawIndexedInstanced` with per-instance transforms read from a

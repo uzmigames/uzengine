@@ -44,16 +44,16 @@ static auto* cv_ContactShadows   = UZ_CVAR_BOOL("r.ContactShadows", true, "Conta
 // compile to nonsense). Read via cvars.GetBool("r.GTAO", false) instead.
 // SSR — disabled (resolved-history pass produces zero).
 static auto* cv_SSR              = UZ_CVAR_BOOL("r.SSR", false, "Screen-Space Reflections (stochastic VNDF + temporal denoise)");
-static auto* cv_SSRIntensity     = UZ_CVAR_FLOAT("r.SSR.Intensity", 1.0f, "SSR reflection intensity", 0.f, 2.f);
 static auto* cv_SSRMaxRoughness  = UZ_CVAR_FLOAT("r.SSR.MaxRoughness", 0.35f, "Max roughness for SSR (UE5 default)", 0.f, 1.f);
 static auto* cv_SSRNumSteps      = UZ_CVAR_INT("r.SSR.NumSteps", 16, "SSR ray march step count", 8, 64);
 static auto* cv_SSRStartMip      = UZ_CVAR_FLOAT("r.SSR.StartMipLevel", 1.0f, "SSR initial HZB mip level", 0.f, 3.f);
 static auto* cv_SSRSlopeTolerance = UZ_CVAR_FLOAT("r.SSR.SlopeToleranceScale", 4.0f, "SSR slope tolerance scale", 1.f, 16.f);
-static auto* cv_SSRCopyPrev      = UZ_CVAR_BOOL("r.SSR.CopyPrev", true, "SSR prev-frame color copy");
 // SSGI
 static auto* cv_SSGI             = UZ_CVAR_BOOL("r.SSGI", false, "Screen-Space Global Illumination");
 // DFS (Distance Field Shadows)
-static auto* cv_DFS              = UZ_CVAR_BOOL("r.DFS", true, "Distance Field Shadows");
+static auto* cv_DFS              = UZ_CVAR_BOOL("r.DFS", false,
+    "Distance Field Shadows (NOT IMPLEMENTED: the dfs_*_cs.hlsl shaders are empty scaffolds and the lighting "
+    "shader never reads dfsOutputSrvIndex; left off so the passes are not dispatched)");
 // Fog
 static auto* cv_Fog              = UZ_CVAR_BOOL("r.Fog", true, "Height fog");
 // Clouds

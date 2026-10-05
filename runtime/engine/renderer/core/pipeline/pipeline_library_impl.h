@@ -75,6 +75,7 @@
     [[nodiscard]] bool EnsureDdgiBorderFillShader();
     [[nodiscard]] bool EnsureProbeSideShader();
     [[nodiscard]] bool EnsureProbeReachShader();
+    [[nodiscard]] bool EnsureLinearShadowShaders();
     [[nodiscard]] bool EnsureCloudCompositePixelShader();
     [[nodiscard]] bool EnsureVolumetricFogInjectShader();
     [[nodiscard]] bool EnsureVolumetricFogScatterShader();
@@ -111,6 +112,8 @@
     RHIShaderHandle m_instancedMeshVS  = RHIShaderHandle::Invalid();
     RHIShaderHandle m_instancedShadowVS = RHIShaderHandle::Invalid();
     RHIShaderHandle m_shadowVS         = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_shadowLinearVS   = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_shadowLinearPS   = RHIShaderHandle::Invalid();
     RHIShaderHandle m_skyAtmospherePS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_hdriSkyboxPS         = RHIShaderHandle::Invalid();
     RHIShaderHandle m_tonemapPS            = RHIShaderHandle::Invalid();
@@ -183,6 +186,8 @@
     RHIPipelineHandle m_pathTracer            = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_shadowDepth           = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_shadowDepthBindless   = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_shadowDepthLinear         = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_shadowDepthLinearBindless = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_gbufferInstanced      = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_shadowDepthInstanced  = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_skyAtmosphere         = RHIPipelineHandle::Invalid();

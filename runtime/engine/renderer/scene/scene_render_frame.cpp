@@ -285,6 +285,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         atmoCtx.skyCubemapSrv       = m_skyCubemapSrv;
         atmoCtx.skyCubemapUav       = m_skyCubemapUav;
         atmoCtx.skyIBLDirty         = &m_skyIBLDirty;
+        atmoCtx.skyBakeSignature    = m_skyBakeSignature;
         atmoCtx.iblBaker            = m_iblBaker.get();
         atmoCtx.iblResult           = &m_iblResult;
         atmoCtx.brdfLutSrvIndex     = m_brdfLutSrvIndex;

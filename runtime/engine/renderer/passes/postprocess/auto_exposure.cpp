@@ -368,6 +368,11 @@ float AutoExposure::Execute(IRHICommandList* cmdList, uint32_t hdrSrvIndex,
     settings.exposureBias  = cv_AutoExpBias->value;
     settings.minBrightness = cv_AutoExpMinBrightness->value;
     settings.maxBrightness = cv_AutoExpMaxBrightness->value;
+    settings.histLogMin    = cv_AutoExpLogLumMin->value;
+    settings.histLogMax    = cv_AutoExpLogLumMax->value;
+    settings.midGray       = cv_AutoExpMidGray->value;
+    settings.speedUp       = cv_AutoExpSpeedUp->value;
+    settings.speedDown     = cv_AutoExpSpeedDown->value;
 
     // ── Bypass paths (no GPU work) ──────────────────────────────────────
 
@@ -478,6 +483,11 @@ float AutoExposure::Execute(IRHICommandList* cmdList, uint32_t hdrSrvIndex,
         rc.minBrightness   = settings.minBrightness;
         rc.maxBrightness   = settings.maxBrightness;
         rc.deltaTime       = dt;
+        rc.midGray         = settings.midGray;
+        rc.speedUp         = settings.speedUp;
+        rc.speedDown       = settings.speedDown;
+        rc.lowPercent      = settings.lowPercent;
+        rc.highPercent     = settings.highPercent;
 
         // Dump average root constants on first frame
         static bool loggedAverageConstants = false;
@@ -491,7 +501,7 @@ float AutoExposure::Execute(IRHICommandList* cmdList, uint32_t hdrSrvIndex,
             loggedAverageConstants = true;
         }
 
-        cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
+        cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 13);
 
         // Bind exposure UAV at root param 4 (u0 descriptor table)
         cmdList->SetDescriptorTable(4, m_exposureUavIndex);
