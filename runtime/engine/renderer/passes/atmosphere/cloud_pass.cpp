@@ -498,6 +498,10 @@ struct alignas(16) CloudCB {
 };
 
 static_assert(sizeof(CloudCB) == 256, "CloudCB must be 256 bytes for CBV alignment");
+// The HLSL copy declares g_windVelocity as three scalars: a float3 at 152 would move to 160 and
+// shift the tail by 8 bytes (block B.4).
+static_assert(offsetof(CloudCB, windVelocity) == 152);
+static_assert(offsetof(CloudCB, detailNoiseSrv) == 252);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Execute

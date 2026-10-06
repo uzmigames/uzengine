@@ -50,9 +50,14 @@ cbuffer VolumetricFogCB : register(b2) {
     uint   gridY;
     uint   gridZ;
     float  extinctionScale;
-    float3 _emissive;
+    float  _emissiveR;                // scalars: a float3 here would be padded to offset 192 (C++ has 184)
+    float  _emissiveG;
+    float  _emissiveB;
     float  fogStartDistance;
     float  nearFadeInDistance;
+    float  cameraFarZ;                // camera far plane (cm): finite reversed-Z linearisation
+    uint   sunShadowEnabled;
+    uint   debugMode;                 // r.VolumetricFog.Debug: 1 = (view depth cm, slice coordinate, transmittance), 2 = (raw depth, in-scatter r, g)
 };
 
 SamplerState linearSampler : register(s0);
@@ -68,6 +73,14 @@ float SliceToDepth(uint slice, uint numSlices)
 
 /// Convert a view-space depth to UVW in the froxel volume.
 /// XY = screen UV, Z = normalized depth mapped to exponential slice distribution.
+/// Reversed-Z device depth (near 1, far 0; Mat4::Perspective) to view depth in cm, the form GTAO / SSR use.
+/// depth_common.hlsli's LinearizeDepthReversedZ carries the standard-Z formula (side finding of block B.4:
+/// it returns ~nearZ for every depth; the contact shadows are its other user).
+float ViewDepthFromReversedZ(float depth, float nearPlane, float farPlane)
+{
+    return (nearPlane * farPlane) / (nearPlane + depth * (farPlane - nearPlane));
+}
+
 float3 DepthToFroxelUVW(float2 screenUV, float viewDepthCm)
 {
     // Must match the inject/scatter depth distribution exactly.
@@ -93,9 +106,9 @@ float4 main(FSInput input) : SV_Target
     // (Sky fog is handled separately by the height fog / atmosphere passes)
     if (depth <= 0.0001) discard;
 
-    // Linearize reversed-Z depth → view-space distance in cm
-    // reversed-Z: near=1, far=0 → linear = near / depth
-    float viewDepthCm = nearZ / max(depth, 1e-7);
+    // Linearize reversed-Z depth → view-space distance in cm with the camera's finite far plane
+    // (nearZ / depth assumes an infinite far plane: 11 % off at 10 m, 2x at 50 m with far 10000).
+    float viewDepthCm = ViewDepthFromReversedZ(depth, nearZ, cameraFarZ);
 
     // Sample integrated froxel volume
     float3 uvw = DepthToFroxelUVW(input.texcoord, viewDepthCm);
@@ -107,6 +120,8 @@ float4 main(FSInput input) : SV_Target
     float4 fogData = float4(0, 0, 0, 1); // No volumetric fog on SM5
 #endif
 
+    if (debugMode == 1u) return float4(viewDepthCm, uvw.z, fogData.a, 1.0);   // opaque: replaces the HDR pixel
+    if (debugMode == 2u) return float4(depth, fogData.r, fogData.g, 1.0);
     float3 inscattering = fogData.rgb;
     float  transmittance = fogData.a;
 

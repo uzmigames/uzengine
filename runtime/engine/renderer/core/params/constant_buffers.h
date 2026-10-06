@@ -22,6 +22,7 @@
 #include "vector3.h"
 #include "mat4.h"
 
+#include <cstddef>
 #include <cstdint>
 
 namespace uz {
@@ -748,7 +749,7 @@ struct HeightFogCB {
     Vec4  directionalInscatteringColor; ///< xyz = sun-facing fog glow color, w = unused.
     float directionalInscatteringExponent; ///< Cone tightness (higher = tighter halo).
     float directionalInscatteringStartDistance; ///< Start distance for inscattering.
-    float _fogPad2[2] = {};     ///< Pad to 16-byte boundary.
+    float _fogPad2[2] = {};     ///< Pad to 16-byte boundary. The HLSL copy declares it as two scalars: an array element takes a whole 16-byte row and shifted everything from skyAtmContribColorScale on by 32 bytes (block B.4; offsets asserted after the struct).
 
     // ── Sky atmosphere injection (float4 + float4 = 32 bytes) ────────
     Vec4  skyAtmContribColorScale = {1.f, 1.f, 1.f, 0.f}; ///< Sky atmosphere ambient contribution color scale (default white).
@@ -799,6 +800,10 @@ struct HeightFogCB {
     // ── Remaining padding ──────────────────────────────────────────────
     float _fogPad3[3] = {};     ///< Pad to 256-byte alignment.
 };
+static_assert(offsetof(HeightFogCB, directionalInscatteringExponent) == 80);
+static_assert(offsetof(HeightFogCB, skyAtmContribColorScale) == 96);
+static_assert(offsetof(HeightFogCB, sunIllumPostTransR) == 128);
+static_assert(offsetof(HeightFogCB, sunDirX) == 144);
 
 static_assert(sizeof(HeightFogCB) == 256, "HeightFogCB must be 256 bytes (D3D12 CB alignment)");
 

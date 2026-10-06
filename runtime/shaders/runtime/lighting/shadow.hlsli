@@ -219,4 +219,55 @@ float CascadeShadow(float3 worldPos, float viewDepth, float3 N, float NdotL) {
     return shadow;
 }
 
+// ─── Volume variant (block B.4) ───────────────────────────────────────────
+
+/// One comparison tap of a cascade for volumes (fog froxels): the projection, tile and depth bias
+/// of SampleShadowCascade without the normal / slope offsets (a froxel has no normal) and without
+/// the Poisson kernel. -1 outside the cascade, as above.
+float SampleShadowCascadeTap(float3 worldPos, uint cascadeIdx,
+                             Texture2D<float> shadowAtlas, SamplerComparisonState smplr) {
+    float4 lsp = mul(float4(worldPos, 1.0), cascadeViewProj[cascadeIdx]);
+    float3 proj = lsp.xyz / lsp.w;
+    if (proj.z < 0.0 || proj.z > 1.0) return -1.0;
+    float2 shadowUV = proj.xy * 0.5 + 0.5;
+    shadowUV.y = 1.0 - shadowUV.y;
+    if (any(shadowUV < 0.0) || any(shadowUV > 1.0)) return -1.0;
+    float2 tileSize;
+    float2 tileOffset = GetCascadeTileOffset(cascadeIdx, atlasColumns, tileSize);
+    float2 atlasUV = tileOffset + shadowUV * tileSize;
+    float cmpDepth = proj.z - max(GetCascadeDepthBias(cascadeIdx), 0.0);
+    float halfTexel = 0.5 / shadowMapSize;
+    atlasUV = clamp(atlasUV, tileOffset + halfTexel, tileOffset + tileSize - halfTexel);
+    return shadowAtlas.SampleCmpLevelZero(smplr, atlasUV, cmpDepth);
+}
+
+/// The cascade walk and the distance fade of CascadeShadow with one tap per sample; for volumes,
+/// where 16 taps per froxel would not pay for themselves (block B.4).
+float CascadeShadowVolume(float3 worldPos, float viewDepth) {
+    if (cascadeCount == 0) return 1.0;
+#ifdef UZ_BINDLESS
+    Texture2D<float> atlas = ResourceDescriptorHeap[shadowAtlasIndex];
+#else
+    Texture2D<float> atlas = shadowAtlasTexture;
+#endif
+    uint startCascade = cascadeCount - 1;
+    [unroll] for (uint c = 0; c < kMaxCascades; ++c) {
+        if (c >= cascadeCount) break;
+        if (viewDepth < GetCascadeSplit(c)) { startCascade = c; break; }
+    }
+    float shadow = -1.0;
+    [unroll] for (uint step = 0; step < kMaxCascades; ++step) {
+        uint idx = startCascade + step;
+        if (idx >= cascadeCount) break;
+        float s = SampleShadowCascadeTap(worldPos, idx, atlas, shadowSampler);
+        if (s >= 0.0) { shadow = s; break; }
+    }
+    if (shadow < 0.0) shadow = 1.0;
+    if (shadowFadeEnd > shadowFadeStart && viewDepth > shadowFadeStart) {
+        float ff = saturate((viewDepth - shadowFadeStart) / (shadowFadeEnd - shadowFadeStart));
+        shadow = lerp(shadow, 1.0, ff);
+    }
+    return shadow;
+}
+
 #endif

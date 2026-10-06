@@ -32,9 +32,13 @@ cbuffer VolumetricFogCB : register(b2) {
     uint   gridY;
     uint   gridZ;
     float  extinctionScale;
-    float3 emissive;
+    float  emissiveR;                 // scalars: a float3 here would be padded to offset 192 (C++ has 184)
+    float  emissiveG;
+    float  emissiveB;
     float  fogStartDistance;
     float  nearFadeInDistance;
+    float  cameraFarZ;                // camera far plane (cm) for the composite depth linearisation
+    uint   sunShadowEnabled;          // r.VolumetricFog.SunShadow
 };
 
 /// @ref Hillaire 2015 — exponential depth distribution (must match inject)

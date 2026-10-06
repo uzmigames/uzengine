@@ -742,16 +742,43 @@ User comment: "ainda precisa de vários ajustes, não é prioridade agora".
 - [volumetric_fog_pass.cpp](../../runtime/engine/renderer/passes/atmosphere/volumetric_fog_pass.cpp)
 - Inject / scatter compute shaders exist
 
-Froxel volumetric fog (160×90×64 inscattering volume + temporal integration).
-Builds and runs but **not composited into the final HDR** by default — the
-integrated volume is computed and left unread. Needs the composite step
-wired into `frame_atmosphere_passes.cpp` after height fog.
+Froxel volumetric fog (160×90×64 inscattering volume, front-to-back integration, composite over
+the HDR scene before the height fog). It runs only for a `height_fog` entity with
+`enable_volumetric_fog`, which no shipped scene sets (`scripts/sponza_fog.py` and
+`scripts/fog_shaft_reference.py` write test scenes). Until 2026-10-06 (block B.4) it could not have
+worked: its constant buffer disagreed between C++ and HLSL (`float3 emissive` padded to 192 against
+184), the froxels were reconstructed 5-60 cm from the camera over a grid stretched to 6.4 km (the fog
+distance, in centimetres, multiplied by 100), the sun was applied twice and never shadowed. Now the
+froxels sit on the camera rays at their slice depth, the grid ends at the component's distance
+(64 m by default), the composite reads the volume at the pixel's view depth (the reversed-Z inverse;
+`r.VolumetricFog.Debug 1` writes its depth / slice / transmittance for verification), the sun is
+applied once and shadowed by the cascaded shadow maps (one tap per froxel,
+`r.VolumetricFog.SunShadow`), and `scripts/test_cbuffer_layouts.py` compares DXC's layout against
+`offsetof`. Gates: F1-F6 12/12 (scripts/test_froxel_fog.py, 2026-10-06): froxel placement, composite depth, sun once, Sponza shadowed floor 0.05, shaft reference lit rays 0.97 and rays crossing the shadow 0.270 against 0.269 predicted, 0.07 ms at 1080p, Sponza unchanged (DXIL identical, ROIs within the run-to-run spread). Still missing: temporal reprojection, point / spot injection, sky
+pixels (discarded by the composite), the combination with the height fog over the same range, a unit
+decision for the density (read per centimetre), and the scatter integrates along the view depth rather
+than the ray length.
 
 ---
 
 ### `r.Fog` (Height Fog) — `ON`
-Exponential height fog, Hillaire 2016 unified volumetric. Works correctly.
-No known bugs. Listed here for completeness.
+Exponential height fog, Hillaire 2016 unified volumetric. Until 2026-10-06 its constant buffer
+was misaligned: `float _fogPad2[2]` took two 16-byte rows in HLSL, shifting every field from
+`skyAtmContribColorScale` on by 32 bytes, so the sun lobe pointed along the volumetric albedo
+(1, 1, 1) and the sky / sun tints read other fields. Fixed by declaring the pad as two scalars
+(block B.4; `scripts/test_cbuffer_layouts.py`). Scenes with a height fog look different from
+that build on: the sun-facing glow follows the sun. `r.Fog` is registered twice; the pass is gated
+by the pass inspector entry "fog", which `scene_renderer_init.cpp` seeds from `r.Fog` at start-up
+(so the project CVar works, a runtime change does not).
+
+### `LinearizeDepthReversedZ` (depth_common.hlsli) — wrong formula
+Documented as the reversed-Z inverse, it implements the standard-Z one: near × far /
+(far − depth × (far − near)) returns about the near plane for every reversed-Z depth. The correct
+form, which GTAO and SSR carry inline, is near × far / (near + depth × (far − near)). Found in block
+B.4 (2026-10-06) when the fog composite used it and sampled slice 0 for every pixel; the composite now
+has its own `ViewDepthFromReversedZ`. The remaining user is `contact_shadows.hlsli` (start and sample
+depths of the screen-space march): a pre-existing bug in a pass that runs in Sponza, to be fixed in
+its own item with before / after evidence.
 
 ---
 
