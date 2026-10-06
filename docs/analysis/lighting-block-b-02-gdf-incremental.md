@@ -157,11 +157,37 @@ Other checks on the final build: GI gtests 59/59, `test_gdf_raw_composite.ps1` 2
 `test_gdf_raw_lifecycle.ps1` 34/34, `test_gdf_controls.py` 5/5, `verify_sponza_loading.ps1`
 3/3, `test_local_light_shadows.py` 6/6; Sponza preload: 34 regional recomposes, 0 whole-window.
 
+## Item 4.3 tried: persisted change boxes (2026-10-06, negative result)
+
+Hypothesis: the overshoot beside an arriving object (G3e) is the single-frame noise of the replaced
+probes, read as a positive bias by the clamped SH evaluation. Experiment: a change box stays alive
+`RegionPersistFrames` (6) frames with its age in the constants; a region-only dispatch of the trace
+shader traces every probe inside a live box every frame, whatever the budget window; the probe
+replaces at age 0 and then takes the running mean of its traces (1 / (age + 1)), so no stale history
+is blended back (what made the 0.25 weight fail G4 on Sponza); the full retrace of the grid on a
+regional change is dropped. Both builds measured with their own fresh references (the first attempt
+reused references from the build before block B.3, which moved the arrival frames of the fields, and
+read 8.2-8.8 % / 3.9 % for every variant — a build mismatch, not a result).
+
+| Build (same day, same scene) | G3e END peak | END mean abs. dev | control peak | START peak | `RadianceCache_Trace` over the move |
+|---|---|---|---|---|---|
+| HEAD (replace once, full retrace on the change frame) | 6.51 % | 0.70 % | 3.12 % | 2.33 % | 0.722121 ms (whole-window 0.690923 ms) |
+| persisted boxes, region-only dispatch, no full retrace | 7.34 % | 1.03 % | 3.20 % | 1.92 % | 0.84954 ms (whole-window 0.667968 ms) |
+
+Averaging six fresh traces does not move the peak, so the overshoot is not single-frame noise: the
+fresh traces themselves are too bright right after the arrival and settle over ~60 frames (the 0.25
+weight only looked better because it blended the darker pre-arrival history in). The code was
+reverted; the harness keeps `--cvar` and prints the trace cost of both paths. Next hypothesis to test
+with the per-probe transport readback (`r.GI.RadianceCache.Diagnostic`): the first traces after the
+arrival see the box top or east face lit before the surrounding probes have settled, i.e. the
+multi-bounce feedback through probes that are themselves in replace mode.
+
 ## Still open
 
-- The transient beside an arriving object (G3e): persist the change boxes for a few frames and retrace
-  only the probes inside them at a decreasing weight, without the full retrace; gates G3e + G4 + the
-  trace cost during the move (proposed phase 5).
+- The transient beside an arriving object (G3e 6.51 % on the block B.3 build, where the
+  fields arrive asynchronously; 8.8 % before): persisted boxes with averaged traces did not move it (see
+  above); the next step is the per-probe transport readback on the arrival frames. The control area
+  peaks at 3.12 % on that build against the 3 % gate (0.96 % before).
 - A regional change still costs a full retrace of the probe grid that frame (~4x the budgeted trace).
 - Mobility authoring (Static / Movable) is not needed by the diff; it would only skip the per-frame
   record build for static scenes (task 4.2 left open as a cost item).

@@ -138,10 +138,10 @@ def log_counts(work):
     return counts
 
 
-def composite_ms(work):
+def composite_ms(work, pass_name='GDF_Composite'):
     with open(os.path.join(work, 'manifest.json'), encoding='utf-8') as fh:
         man = json.load(fh)
-    return (man.get('gpu_ms') or {}).get('GDF_Composite')
+    return (man.get('gpu_ms') or {}).get(pass_name)
 
 
 def main():
@@ -150,6 +150,7 @@ def main():
     ap.add_argument('--reuse', action='store_true')
     ap.add_argument('--alpha', type=float, default=None, help='r.GI.RadianceCache.RegionBlendAlpha for capture B (default: the engine default)')
     ap.add_argument('--reuse-reference', action='store_true', help='keep captures A, C and D from a previous run; recapture B only')
+    ap.add_argument('--cvar', action='append', default=[], help='extra name=value CVar for capture B (repeatable)')
     args = ap.parse_args()
     works = {k: os.path.join(args.out, k) for k in ('a-before', 'c-end-static', 'b-regional', 'd-whole')}
     if not args.reuse:
@@ -169,13 +170,18 @@ def main():
                                                                   for (n, b), r in zip(before.items(), rects)))
     strips = dict(regions=rects, region_first=AFTER_FIRST, region_last=AFTER_LAST, timing_first=MOVE_TIMING_FIRST)
     capture(works['c-end-static'], PROJECT_END, FRAMES, **strips)
-    b_cvars = {'r.GI.RadianceCache.RegionBlendAlpha': args.alpha} if args.alpha is not None else None
+    b_cvars = {'r.GI.RadianceCache.RegionBlendAlpha': args.alpha} if args.alpha is not None else {}
+    for item in args.cvar:
+        name, _, value = item.partition('=')
+        b_cvars[name] = float(value) if '.' in value else int(value)
+    b_cvars = b_cvars or None
     capture(works['b-regional'], PROJECT, FRAMES, cvars=b_cvars, **strips)
     capture(works['d-whole'], PROJECT, FRAMES, cvars={'r.GI.GDF.Incremental': 0}, **strips)
 
     series = {k: strip_series(works[k]) for k in ('c-end-static', 'b-regional', 'd-whole')}
     counts = {k: log_counts(works[k]) for k in ('b-regional', 'd-whole')}
     ms = {k: composite_ms(works[k]) for k in ('b-regional', 'd-whole')}
+    rc_ms = {k: composite_ms(works[k], 'RadianceCache_Trace') for k in ('b-regional', 'd-whole')}
     steady = STEADY_FIRST - AFTER_FIRST
     ref = {n: np.array(series['c-end-static'][n]) for n in AREAS}
     refc = {n: float(np.nanmean(ref[n][steady:])) for n in AREAS}
@@ -208,6 +214,9 @@ def main():
           f'regional {cb["regional"]}, revoxelise {cb["revoxelise"]}, invalidate {cb["invalidate"]}, retrace {cb["retrace"]}')
     check(f'G2b GDF_Composite mean over frames {MOVE_TIMING_FIRST}-{FRAMES} < {G2B_MAX_MS} ms',
           ms['b-regional'] is not None and ms['b-regional'] < G2B_MAX_MS, f'B {ms["b-regional"]} ms (whole-window D {ms["d-whole"]} ms)')
+    # Informational (item 4.3): a regional change still retraces the whole probe grid that frame, like the
+    # whole-window path does after an invalidation, so the two cost about the same here.
+    print(f'  RadianceCache_Trace mean over frames {MOVE_TIMING_FIRST}-{FRAMES}: regional B {rc_ms["b-regional"]} ms, whole-window D {rc_ms["d-whole"]} ms')
     b, d = stats['b-regional'], stats['d-whole']
     check(f'G3a END strip within {100 * G3_STEADY_TOL:.0f} % of the static reference over frames {STEADY_FIRST}-{AFTER_LAST}',
           abs(b['end']['steady_dev']) <= G3_STEADY_TOL, f'{100 * b["end"]["steady_dev"]:+.2f} % (D {100 * d["end"]["steady_dev"]:+.2f} %)')
@@ -226,7 +235,7 @@ def main():
     os.makedirs(args.out, exist_ok=True)
     with open(os.path.join(args.out, 'gdf_regional.json'), 'w', encoding='utf-8') as fh:
         json.dump({'alpha': args.alpha, 'before': before, 'reference_steady': refc, 'stats': stats, 'series': series, 'counts': counts,
-                   'composite_ms': ms, 'first_frame': AFTER_FIRST,
+                   'composite_ms': ms, 'rc_trace_ms': rc_ms, 'first_frame': AFTER_FIRST, 'cvars': args.cvar,
                    'checks': [{'id': c, 'pass': ok, 'detail': str(d)} for c, ok, d in results]}, fh, indent=1)
     return 0 if passed == len(results) else 1
 

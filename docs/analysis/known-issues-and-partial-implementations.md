@@ -495,7 +495,7 @@ clamped SH evaluation reads as a positive bias): 8.8 % peak on the moving-box re
 5 % gate G3e of `scripts/test_gdf_regional.py` (FAIL, documented). A lower blend weight
 (`r.GI.RadianceCache.RegionBlendAlpha` 0.25) passes the box but fails G4 on Sponza (+6.5-8 %: a
 loading event's box lasts one frame, the stale history is blended once and the feedback keeps it);
-proposed fix: persist the boxes for a few frames and retrace only the probes inside them. A regional
+persisting the boxes for six frames and averaging the traces of the probes inside (tried 2026-10-06) gives 7.34 % against 6.51 % on the same-day build, so the overshoot is not single-frame noise; the next step is the per-probe transport readback on the arrival frames. A regional
 change also still costs a full retrace of the probe grid that frame (~4x the budgeted trace). The diagnostic
 `r.GI.GDF.CenterPhaseOffset` now shifts the crossing frames only, not the voxel grid.
 
