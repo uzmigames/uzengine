@@ -83,7 +83,7 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
         dvDesc.depthTexture      = m_gbuffer.depth;
         dvDesc.positionTexture   = m_gbuffer.positionWS;
         dvDesc.hdrSrvIndex       = m_hdrSceneColorSrv;
-        dvDesc.ssrSrvIndex       = m_ssrResolvedOutputSrv;
+        dvDesc.ssrSrvIndex       = ctx.ssrActive ? m_ssrResolvedOutputSrv : UINT32_MAX;   // block B.5: never a stale SSR
         // Lighting split targets — what `lighting`, `shadows` and `lightingonly` show.
         dvDesc.directGBuffer     = ctx.debugDirectRes;
         dvDesc.indirectGBuffer   = ctx.debugIndirectRes;

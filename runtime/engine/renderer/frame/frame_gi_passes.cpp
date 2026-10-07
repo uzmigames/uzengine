@@ -40,7 +40,7 @@ static auto* cv_SSRTrace           = UZ_CVAR_FLOAT("r.SSR.Trace", 1.0f, "Enable 
 static auto* cv_SSRResolve         = UZ_CVAR_FLOAT("r.SSR.Resolve", 1.0f, "Enable SSR resolve pass (0=skip)", 0.0f, 1.0f);
 static auto* cv_SSRTemporal        = UZ_CVAR_FLOAT("r.SSR.Temporal", 1.0f, "Enable SSR temporal pass (0=skip)", 0.0f, 1.0f);
 static auto* cv_SSRSpatialDenoise  = UZ_CVAR_FLOAT("r.SSR.SpatialDenoise", 1.0f, "Enable SSR spatial denoise pass (0=skip)", 0.0f, 1.0f);
-static auto* cv_SSRComposite       = UZ_CVAR_FLOAT("r.SSR.Composite", 1.0f, "Enable SSR post-TAA composite (0=skip)", 0.0f, 1.0f);
+static auto* cv_SSRComposite       = UZ_CVAR_FLOAT("r.SSR.Composite", 0.0f, "Legacy additive post-TAA SSR composite (block B.5: the lighting blends SSR before the BRDF; 1 double-counts, kept as the A/B control)", 0.0f, 1.0f);
 static auto* cv_SSRNumSteps        = UZ_CVAR_INT("r.SSR.NumSteps", 16, "SSR ray march step count", 8, 64);
 static auto* cv_SSRStartMip        = UZ_CVAR_FLOAT("r.SSR.StartMipLevel", 1.0f, "SSR initial HZB mip level", 0.f, 3.f);
 static auto* cv_SSRSlopeTolerance  = UZ_CVAR_FLOAT("r.SSR.SlopeToleranceScale", 4.0f, "SSR slope tolerance scale", 1.f, 16.f);
@@ -505,6 +505,7 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
 
     // ── SSR Prepare Indirect Args ───────────────────────────────────────
     rgBuilder.AddPass("SSR_PrepareIndirect", [&](rg::RgPassBuilder& pb) {
+        pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);   // block B.5: keeps it after the tile classify
         pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources&) {
             UZ_PROFILE_SCOPE("SSR::PrepareIndirect");
 
@@ -687,6 +688,12 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
                                  || !m_ssrHistory[ssrReadIdx].IsValid();
 
         rgBuilder.AddPass("SSR_Temporal", [&, ssrWriteIdx, ssrReadIdx, ssrFirstFrame](rg::RgPassBuilder& pb) {
+            // Block B.5: the depth read was undeclared, so the graph (which orders passes only through
+            // the resources they declare) scheduled this pass right after the velocity pass, before the
+            // trace and the resolve; it read last frame's resolved texture, the denoise then read its
+            // stale history and wrote zeros that it read back the next frame: no reflection ever reached
+            // the lighting while the denoise was on.
+            pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
             pb.Read(ctx.velocityRes, RHIResourceState::ShaderResource);
 
             pb.SetExecutionCallback([this, &ctx, ssrWriteIdx, ssrReadIdx, ssrFirstFrame](IRHICommandList* cmd, const rg::RgPassResources&) {

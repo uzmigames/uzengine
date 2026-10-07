@@ -625,6 +625,8 @@ LightingOutput main(FSInput input) {
     uint   dbgSsgiMode = 0u;   // 0 = never read, 1 = SDF world gather, 2 = legacy SSGI
 
     float3 dbgSpecularIndirect = float3(0, 0, 0);
+    float4 ssrHit = float4(0, 0, 0, 0);          // block B.5: screen-space reflection sample (rgb radiance, a confidence)
+    float3 ssrSingleScatter = float3(1, 1, 1);  // block B.5: the single-scatter Fresnel term of the pixel
     float3 dbgEmissiveAndMis = float3(0, 0, 0);
     uint   dbgPath = 0u;
     // Support of the two probe queries at this pixel (2026-09-18, followup-01 review item 2): is a
@@ -1052,14 +1054,21 @@ LightingOutput main(FSInput input) {
                     uint2(px), reflectionSeed, _sdfReflectionSamples) * _sdfReflectionIntensity;
                 dbgReflection = radiance;
                 dbgPath |= 1u;
-                if (ssrSrvIndex != kSentinelSrvIndex) {
-                    Texture2D<float4> screenReflections = ResourceDescriptorHeap[ssrSrvIndex];
-                    float4 screenHit = screenReflections.SampleLevel(clampSampler, input.texcoord, 0);
-                    radiance = lerp(radiance, screenHit.rgb, saturate(screenHit.a));
-                    if (screenHit.a > 0.0) dbgPath |= 128u;
-                }
                 skyTintSpecular = 1.0;
             }
+        }
+#endif
+#ifdef UZ_BINDLESS
+        // Block B.5: the screen-space reflection is blended before the BRDF over whichever layer is
+        // active, the SDF gather above or the prefiltered cubemap, so the DFG / Fresnel / multi-scatter
+        // terms below weight every layer alike (SSR -> SDF -> IBL by confidence). The additive post-TAA
+        // composite that used to carry the IBL case is off by default (r.SSR.Composite).
+        if (ssrSrvIndex != kSentinelSrvIndex) {
+            Texture2D<float4> screenReflections = ResourceDescriptorHeap[ssrSrvIndex];
+            ssrHit = screenReflections.SampleLevel(clampSampler, input.texcoord, 0);
+            ssrHit.a = saturate(ssrHit.a);
+            radiance = lerp(radiance, ssrHit.rgb, ssrHit.a);
+            if (ssrHit.a > 0.0) dbgPath |= 128u;
         }
 #endif
         envBRDF = EnvironmentBRDFApprox(roughness, NoV);
@@ -1088,6 +1097,7 @@ LightingOutput main(FSInput input) {
 
         // Blend by metallic factor
         float3 singleScatter = lerp(FssEss_d, FssEss_m, metallic);
+        ssrSingleScatter = singleScatter;
         // Clamp multi-scatter to non-negative — analytical DFG can produce Ems < 0
         // at very low roughness, causing negative multi-scatter that cancels specular.
         float3 multiScatter  = max(float3(0,0,0), lerp(Fms_d * Ems_d, Fms_m * Ems_m, metallic));
@@ -1233,9 +1243,13 @@ LightingOutput main(FSInput input) {
         // roughness < 0.7; alpha = 1 there, 0 elsewhere). It REPLACES the split-sum specular on those
         // pixels; adding it on top counted the environment specular twice on metals (block A.3).
         if (envMIS.a > 0.0) {
-            ambient = dbgDiffuseIndirect + envMIS.rgb;
-            dbgSpecularIndirect = envMIS.rgb;
-            dbgEmissiveAndMis += envMIS.rgb;
+            // Block B.5: the screen-space reflection is the first layer here too. The MIS term already
+            // carries the BRDF weight, so the raw hit radiance takes the single-scatter Fresnel term before
+            // the confidence blend (the same weight the split-sum path applies to its blended radiance).
+            float3 misSpecular = lerp(envMIS.rgb, ssrHit.rgb * ssrSingleScatter, ssrHit.a);
+            ambient = dbgDiffuseIndirect + misSpecular;
+            dbgSpecularIndirect = misSpecular;
+            dbgEmissiveAndMis += misSpecular;
             dbgPath |= 16u;
         }
     }

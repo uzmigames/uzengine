@@ -587,20 +587,39 @@ dumpable. Not critical; shadow atlas can be inspected via RenderDoc.
 
 ## Reflections
 
-### `r.SSR` — `OFF` (BUG)
+### `r.SSR` — `OFF` by default (alive since 2026-10-07, block B.5)
 **File**: [frame_lighting.cpp:44](../../runtime/engine/renderer/frame/frame_lighting.cpp)
 **Shaders**: [shaders/runtime/postprocess/ssr_*.hlsl](../../runtime/shaders/runtime/postprocess/)
 
-Full SSR pipeline exists: tile classify → trace → spatial denoise → temporal
-accum → resolve → composite. **Produces visible noise** that multiple tuning
-sessions could NOT resolve. The resolved-history pass at one point wrote
-zero output. Off by default pending a ground-up rewrite based on the
-`diharaw/hybrid-rendering` reference (hit-point reprojection, curvature-adaptive
-strategy, tile-based dispatch).
+Full pipeline: tile classify → trace (Hi-Z, VNDF) → resolve → temporal → spatial denoise. Until
+2026-10-07 the trace never found a hit anywhere: the Hi-Z pyramid it marches was built right
+after the depth prepass, where the depth read as zero (the GBuffer pass clears the depth-stencil
+before drawing), so every mip was zero and the "not sky" test failed for every sample. The
+pyramid is now built after the GBuffer pass. Second cause: the temporal pass declared only its
+velocity read, so the render graph (which orders passes only through declared resources) ran it
+before the trace; the denoise then fed zeros back through the history. The temporal and the
+prepare-indirect passes now declare their depth read. Third cause: the previous-colour copy the trace
+samples (`SSR_CopyPrevColor`) declared nothing either and ran first in the frame, so every hit colour
+was black; it and the legacy composite now declare their HDR read and run after TAA. The earlier "visible noise" note described an
+output of nothing passed through the denoisers. The SSR is now blended before the BRDF over the
+active reflection layer (SDF gather or prefiltered IBL), so Fresnel / DFG apply to it, and over the
+environment-MIS specular on smooth metals (which replaces the split-sum term there); the
+additive post-TAA composite is legacy (`r.SSR.Composite`, default 0, double-counts). Gates: R0-R5 7/7 (scripts/test_layered_reflections.py, 2026-10-07): mapping 91 % within 0.5 deg (median 0.08 deg), SSR layer median error 0.150 against F x reference (SSR off: 1.0), legacy composite 2.7 x the default on the reflecting floor (double count) while the default sits at 0.92 x, temporal stability unchanged, Sponza with SSR off: direct light identical to 8aeb8917 and colour within the run-to-run envelope, SSR passes 0.12 ms at 1080p. Note: the trace skips surfaces rougher than `r.SSR.MaxRoughness` (0.35); Sponza's
+stone is above it, so SSR shows nothing there by design unless the cut-off is raised.
+`r.SSR.MaxRoughness`, `NumSteps`, `StartMipLevel`, `SlopeToleranceScale`, `Composite` are each
+registered twice (frame_gi_passes.cpp and frame_lighting.cpp / frame_postprocess.cpp).
 
-**Recommendation**: wait for RT reflections (inline ray query against TLAS)
-to replace SSR entirely for the default path. Keep SSR as SM5 / low-end
-fallback.
+### Environment-MIS specular black on metals — `BUG` (side finding, block B.5)
+The environment-MIS estimate (`EnvMIS_Temporal`, block A.3) replaces the split-sum specular on smooth
+metals and comes out black in every scene without an HDRI: the chrome sphere of `chrome_test` is a
+black disc, the mirror floor of `scripts/reflection_reference.py` shows nothing of the sky with SSR off,
+although the env-map sampler builds its alias table from a sky cubemap of positive luminance. Own item.
+
+### Depth prepass discarded by the GBuffer clear — `PERF` (side finding, block B.5)
+`gbuffer_pass.cpp` clears the depth-stencil (`ClearDepthStencil`) before drawing, so the depth
+prepass (`r.DepthPrepass`, 0.38 ms in Sponza at 1080p) buys no early-Z for the GBuffer and
+anything that read the depth between the two passes read nothing. To be decided in its own item
+(keep the prepass depth and draw the GBuffer with depth-equal, or drop the prepass).
 
 ---
 

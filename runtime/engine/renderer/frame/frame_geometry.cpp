@@ -186,23 +186,6 @@ void SceneRenderer::RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContex
                 }
                 AddDepthPrepass(rgBuilder, zpDesc);
 
-                // ── Hi-Z Pyramid (runs after depth prepass) ───────────────
-                if (m_hizMipCount > 0) {
-                    HiZPyramidPassDesc hizDesc{};
-                    hizDesc.depthSource          = ctx.depthRes;
-                    hizDesc.depthSourceTexture   = m_gbuffer.depth;
-                    hizDesc.depthSourceSrvIndex  = m_gbuffer.depthSRV;
-                    hizDesc.mipCount             = m_hizMipCount;
-                    hizDesc.pipeline             = pipelines->GetHiZPyramid();
-                    hizDesc.sourceWidth          = m_renderWidth;
-                    hizDesc.sourceHeight         = m_renderHeight;
-                    hizDesc.bindless             = bindless;
-                    for (uint32_t i = 0; i < m_hizMipCount; ++i) {
-                        hizDesc.mipLevels[i] = m_hizMipLevels[i];
-                    }
-                    AddHiZPyramidPass(rgBuilder, hizDesc);
-                }
-
                 // ── Phase 2: GPU Cull against CURRENT frame's HiZ ────────
                 // Re-tests ALL instances against the updated HiZ pyramid.
                 // Objects that pass Phase 2 but were rejected by Phase 1
@@ -350,6 +333,25 @@ void SceneRenderer::RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContex
                 }
             }
             AddGBufferPass(rgBuilder, gbDesc);
+        }
+
+        // ── Hi-Z Pyramid (block B.5: after the GBuffer, where the opaque depth is complete). It ran
+        // right after the depth prepass before, and its mips came out all zero: the screen-space
+        // reflections never found a hit.
+        if (m_hizMipCount > 0) {
+            HiZPyramidPassDesc hizDesc{};
+            hizDesc.depthSource          = ctx.depthRes;
+            hizDesc.depthSourceTexture   = m_gbuffer.depth;
+            hizDesc.depthSourceSrvIndex  = m_gbuffer.depthSRV;
+            hizDesc.mipCount             = m_hizMipCount;
+            hizDesc.pipeline             = pipelines->GetHiZPyramid();
+            hizDesc.sourceWidth          = m_renderWidth;
+            hizDesc.sourceHeight         = m_renderHeight;
+            hizDesc.bindless             = bindless;
+            for (uint32_t i = 0; i < m_hizMipCount; ++i) {
+                hizDesc.mipLevels[i] = m_hizMipLevels[i];
+            }
+            AddHiZPyramidPass(rgBuilder, hizDesc);
         }
 
         // ── Decal Direct Render (after GBuffer — alpha blends onto GBuffer) ──

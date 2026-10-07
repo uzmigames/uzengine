@@ -27,7 +27,7 @@
 
 // ── CVars ────────────────────────────────────────────────────────────────
 // r.SSR CVar is declared in frame_lighting.cpp (single source of truth)
-static auto* cv_SSRComposite    = UZ_CVAR_FLOAT("r.SSR.Composite", 1.0f, "Enable SSR post-TAA composite (0=skip)", 0.0f, 1.0f);
+static auto* cv_SSRComposite    = UZ_CVAR_FLOAT("r.SSR.Composite", 0.0f, "Legacy additive post-TAA SSR composite (block B.5: the lighting blends SSR before the BRDF; 1 double-counts, kept as the A/B control)", 0.0f, 1.0f);
 static auto* cv_MotionBlur      = UZ_CVAR_BOOL("r.MotionBlur", true, "Motion blur");
 static auto* cv_DOF             = UZ_CVAR_BOOL("r.DOF", false, "Depth of field (inert: pass not wired in the current post chain)");
 static auto* cv_CAS             = UZ_CVAR_BOOL("r.CAS", true, "Contrast adaptive sharpening (inert: pass not wired in the current post chain)");
@@ -396,9 +396,9 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
         // Apply SSR AFTER TAA to prevent TAA neighborhood contamination.
         // The deferred lighting pass outputs IBL-only specular; SSR is
         // composited here onto the TAA-resolved (or raw HDR) image.
-        // SSR is lerped into the traced reflection before the BRDF when SDF
-        // reflections are on; the post-TAA additive composite would add it twice.
-        if (ctx.ssrActive && m_ssrHasPrevColor && ctx.perFrame.sdfReflectionsEnabled == 0
+        // Block B.5: the lighting pass blends SSR before the BRDF over the SDF or IBL layer; this
+        // additive composite double-counts it and runs only when r.SSR.Composite is set (A/B control).
+        if (ctx.ssrActive && m_ssrHasPrevColor && cv_SSRComposite->value >= 0.5f
             && m_ssrResolvedOutput.IsValid()
             && m_ssrResolvedOutputSrv != UINT32_MAX) {
 
@@ -409,6 +409,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
 
             if (compositeTargetUav != UINT32_MAX || !ctx.taaActive) {
                 rgBuilder.AddPass("SSR_Composite", [&, compositeTargetUav, tonemapInputSrv](rg::RgPassBuilder& pb) {
+                    pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);   // block B.5: after TAA, before the tonemap
                     pb.SetExecutionCallback([this, &ctx, compositeTargetUav, tonemapInputSrv](IRHICommandList* cmd, const rg::RgPassResources&) {
                         UZ_PROFILE_SCOPE("SSR::Composite");
 
@@ -488,6 +489,9 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 : RHIResourceState::RenderTarget;   // HDR is in RT
 
             rgBuilder.AddPass("SSR_CopyPrevColor", [&, copySource, copySourceState](rg::RgPassBuilder& pb) {
+                // Block B.5: declared so the graph schedules the copy after TAA (it declared nothing and ran
+                // first in the frame, copying the TAA history in the wrong state: every SSR hit was black).
+                pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
                 pb.SetExecutionCallback([this, copySource, copySourceState](IRHICommandList* cmd, const rg::RgPassResources&) {
                     UZ_PROFILE_SCOPE("SSR::CopyPrevColor");
 
