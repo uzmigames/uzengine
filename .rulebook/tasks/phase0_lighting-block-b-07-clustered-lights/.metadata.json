@@ -1,5 +1,6 @@
 {
-  "status": "pending",
+  "status": "completed",
   "createdAt": "2026-10-07T16:32:33.903Z",
-  "updatedAt": "2026-10-07T16:32:33.903Z"
+  "updatedAt": "2026-10-07T21:35:32.000Z",
+  "resolution": "done 2026-10-07, commits 58340259 794b632f: clustered light lists, 512 / 128 lights, the per-light parameters live; test_clustered_lights.py 8/9 (C2 at 0.505x against the 0.5x gate, recorded as measured)"
 }

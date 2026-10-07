@@ -1,5 +1,6 @@
 {
-  "status": "pending",
+  "status": "completed",
   "createdAt": "2026-10-06T21:09:23.391Z",
-  "updatedAt": "2026-10-06T21:09:23.391Z"
+  "updatedAt": "2026-10-07T21:35:32.000Z",
+  "resolution": "done 2026-10-06, commit 8851f37e: froxel fog on the camera rays, lit once by the sun and shadowed, three constant buffers aligned; test_froxel_fog.py 12/12"
 }

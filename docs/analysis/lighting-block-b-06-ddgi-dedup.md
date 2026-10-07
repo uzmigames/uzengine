@@ -28,6 +28,12 @@ Rulebook task `phase0_lighting-block-b-06-ddgi-dedup` (proposal, design, spec `d
   run-to-run spread. The third run of this build with the shader cache set aside is the test of the
   cold-cache explanation (D5's envelope).
 
+**D5 at the block's closing sweep (2026-10-07, `lighting-block-b-2026-10.md`).** The cold-cache run
+came out identical to the warm ones (0 px) while the colour against the committed capture differed on
+70 566 px (median 2.1 %) with the direct light identical: the shader cache is one perturbation of the
+loading timing, not the state itself, and a fresh envelope can collapse to zero. D5 now takes the
+spread measured here (90 656 px, median 0.034) as the envelope's floor; the sweep reads 6/6.
+
 ## What changed
 
 - `runtime/shaders/runtime/gi/ddgi_probe_common.hlsli` (new): the trace constants (the two

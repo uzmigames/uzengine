@@ -1,5 +1,6 @@
 {
-  "status": "pending",
+  "status": "completed",
   "createdAt": "2026-10-05T17:07:12.074Z",
-  "updatedAt": "2026-10-05T17:07:12.074Z"
+  "updatedAt": "2026-10-07T21:35:32.000Z",
+  "resolution": "done 2026-10-05, commit 8c4d14b6: asynchronous, disk-cached mesh SDF bakes (preload 38 -> 19 s cold / 11 s warm); C2/C4/C5 letters documented as measured"
 }

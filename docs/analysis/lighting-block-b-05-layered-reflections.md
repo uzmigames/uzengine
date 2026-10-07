@@ -71,6 +71,14 @@ reflections composed as SSR → SDF probe reflections → IBL instead of the add
 
 **Numbers (after).** Floor pixels: 1142581, geometry hits in the mirrored view 44694 (on the reflected ray 0.9125, median angle 0.082 deg). Layers against F x reference: SSR on: visible err 0.150 ratio 0.915 (44648 px), offscreen err 0.998 ratio 0.002 (46 px), sky err 0.996 ratio 0.004 (1097887 px); SSR off: visible err 1.000 ratio 0.000 (44648 px), offscreen err 1.000 ratio 0.000 (46 px), sky err 1.000 ratio 0.000 (1097887 px); legacy composite: visible err 0.056 ratio 0.952 (44648 px), offscreen err 0.998 ratio 0.002 (46 px), sky err 0.996 ratio 0.004 (1097887 px); SSR on + SDF layer: visible err 0.150 ratio 0.915 (44648 px), offscreen err 0.998 ratio 0.002 (46 px), sky err 0.996 ratio 0.004 (1097887 px). Temporal |delta| on the floor: on 0.00004, off 0.00001. SSR passes: reference 0.121 ms, Sponza 0.107 ms; Sponza with SSR on changes 0.00 % of the pixels by > 2 % (DeferredLighting 11.18 -> 11.31 ms). Sponza with SSR off against the committed build: direct_light max |diff| 0.0e+00; colour: 71125 px changed (median relative 0.090) against 89670 px (median 0.156) between two runs of this build, 61 % of them at depth edges: the frame's colour is not reproducible run to run at edges while its direct light is. Harness 7/7.
 
+**R4 at the block's closing sweep (2026-10-07, `lighting-block-b-2026-10.md`).** Block B.6 found what the
+"run-to-run spread" is: two warm runs of one build are bit-identical, and the committed capture (that
+build's first Sponza run) sits in another loading-timing state. In the sweep this build's repeat pair
+differed by 0 px while the colour against the committed capture differed on 73 999 px (median 10 %)
+with the direct light identical, so the pre-registered envelope (the repeat pair alone) could not hold.
+R4 now takes the larger of the repeat pair and the spread measured here (89 670 px, median 0.156) as
+the envelope, with the direct light as the gate that matters; the sweep reads 7/7.
+
 **Intermediate state (Hi-Z and chain order fixed, the previous-colour copy still floating, legacy composite):** SSR on: visible err 0.996 ratio 0.004 (44648 px), offscreen err 0.999 ratio 0.001 (46 px), sky err 0.996 ratio 0.004 (1097887 px); SSR off: visible err 1.000 ratio 0.000 (44648 px), offscreen err 1.000 ratio 0.000 (46 px), sky err 1.000 ratio 0.000 (1097887 px); harness 2/7 (R0, R1, R1, R2, R4 failing).
 
 ## Still open

@@ -1,5 +1,6 @@
 {
-  "status": "pending",
+  "status": "completed",
   "createdAt": "2026-10-05T16:58:12.671Z",
-  "updatedAt": "2026-10-05T16:58:12.671Z"
+  "updatedAt": "2026-10-07T21:35:32.000Z",
+  "resolution": "done 2026-10-05, commit 088b8f40: per-pass GPU timings in --diag (DX12 profiler ring of 4 slots with per-slot names); test_diag_timing.py 7/7"
 }
