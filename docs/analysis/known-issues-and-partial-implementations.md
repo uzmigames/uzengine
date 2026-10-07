@@ -771,14 +771,24 @@ that build on: the sun-facing glow follows the sun. `r.Fog` is registered twice;
 by the pass inspector entry "fog", which `scene_renderer_init.cpp` seeds from `r.Fog` at start-up
 (so the project CVar works, a runtime change does not).
 
-### `LinearizeDepthReversedZ` (depth_common.hlsli) — wrong formula
-Documented as the reversed-Z inverse, it implements the standard-Z one: near × far /
-(far − depth × (far − near)) returns about the near plane for every reversed-Z depth. The correct
-form, which GTAO and SSR carry inline, is near × far / (near + depth × (far − near)). Found in block
-B.4 (2026-10-06) when the fog composite used it and sampled slice 0 for every pixel; the composite now
-has its own `ViewDepthFromReversedZ`. The remaining user is `contact_shadows.hlsli` (start and sample
-depths of the screen-space march): a pre-existing bug in a pass that runs in Sponza, to be fixed in
-its own item with before / after evidence.
+### `LinearizeDepthReversedZ` (depth_common.hlsli) — fixed 2026-10-06 (block B.4b)
+Documented as the reversed-Z inverse, it implemented the standard-Z one: near × far /
+(far − depth × (far − near)) returned about the near plane for every reversed-Z depth. Now
+near × far / (near + depth × (far − near)), the form GTAO and SSR carry inline; the fog composite and
+the contact shadow march use it (`scripts/test_contact_shadows.py` CS1 round-trips it on the CPU, the
+fog harness F2b reads it through the composite's debug output).
+
+### Contact shadows (`contact_shadows.hlsli`, sun only) — alive since 2026-10-06 (block B.4b)
+Until then the screen-space march never found an occluder: every linear depth came out as ~5 cm (the
+function above), the hit window was 0.025 cm wide, the expected depth went negative at the second
+step, and the march assumed the ray approaches the camera at its full length while stepping 16 ray
+lengths across the screen. Verified: Sponza with `r.ContactShadow.Length` 0 and 0.01 was bit-identical
+on 8851f37e. Rewritten: clip-space interpolation of the ray, per-sample comparison of the scene's view
+depth with the ray point's (hit when a surface lies in front by more than 0.05 % and less than
+`r.Shadow.ContactShadowThickness` of the depth). Gates: CS1-CS6 9/9 (scripts/test_contact_shadows.py, 2026-10-06): function round trip exact, before pair identical and bridged, 0.000 % false shadows on open lit floor, no gap at the box base (CSM already exact, agreement kept), Sponza 2.9 % of lit pixels darkened with 93 % at depth steps (1.5x the base rate), DeferredLighting +0.10 ms. In Sponza it darkens 2.9 % of the
+sun-lit pixels, almost all the recessed bands of the far wall's 7 cm plaster relief under the raised
+bands (a CPU replica of the march on the dump reproduces them). Still: sharp 16-step march (no dither,
+no temporal filter), sun only, `r.ContactShadows` unread (`r.ContactShadow.Length 0` is the switch).
 
 ---
 

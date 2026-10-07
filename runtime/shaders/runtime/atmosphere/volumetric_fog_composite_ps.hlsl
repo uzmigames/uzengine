@@ -10,6 +10,7 @@
 ///
 /// @ref Hillaire 2015 "Physically Based & Unified Volumetric Rendering in Frostbite"
 
+#include "../include/depth_common.hlsli"   // LinearizeDepthReversedZ
 #include "../common/constants.hlsli"
 
 struct FSInput {
@@ -73,14 +74,6 @@ float SliceToDepth(uint slice, uint numSlices)
 
 /// Convert a view-space depth to UVW in the froxel volume.
 /// XY = screen UV, Z = normalized depth mapped to exponential slice distribution.
-/// Reversed-Z device depth (near 1, far 0; Mat4::Perspective) to view depth in cm, the form GTAO / SSR use.
-/// depth_common.hlsli's LinearizeDepthReversedZ carries the standard-Z formula (side finding of block B.4:
-/// it returns ~nearZ for every depth; the contact shadows are its other user).
-float ViewDepthFromReversedZ(float depth, float nearPlane, float farPlane)
-{
-    return (nearPlane * farPlane) / (nearPlane + depth * (farPlane - nearPlane));
-}
-
 float3 DepthToFroxelUVW(float2 screenUV, float viewDepthCm)
 {
     // Must match the inject/scatter depth distribution exactly.
@@ -108,7 +101,7 @@ float4 main(FSInput input) : SV_Target
 
     // Linearize reversed-Z depth → view-space distance in cm with the camera's finite far plane
     // (nearZ / depth assumes an infinite far plane: 11 % off at 10 m, 2x at 50 m with far 10000).
-    float viewDepthCm = ViewDepthFromReversedZ(depth, nearZ, cameraFarZ);
+    float viewDepthCm = LinearizeDepthReversedZ(depth, nearZ, cameraFarZ);   // depth_common, fixed in block B.4b
 
     // Sample integrated froxel volume
     float3 uvw = DepthToFroxelUVW(input.texcoord, viewDepthCm);

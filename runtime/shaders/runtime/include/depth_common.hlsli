@@ -11,7 +11,10 @@
 
 /// Linearizes a reversed-Z depth value to view-space distance.
 ///
-/// Reversed-Z maps depth as: d = (far * near) / (far - z * (far - near))
+/// Reversed-Z (Mat4::Perspective: near -> 1, far -> 0) maps the view depth z to
+/// d = near * (far - z) / (z * (far - near)), so z = near * far / (near + d * (far - near)).
+/// Until block B.4b (2026-10-06) this carried the standard-Z inverse, near * far / (far - d * (far - near)),
+/// which returns ~near for every reversed-Z depth; the contact shadows never found an occluder.
 /// where z is the raw depth buffer value in [0, 1].
 ///
 /// @param depth    Raw depth buffer value (reversed-Z: 1.0 = near, ~0.0 = far).
@@ -19,7 +22,7 @@
 /// @param farZ     Camera far plane distance.
 /// @return         Linear view-space distance in [nearZ, farZ].
 float LinearizeDepthReversedZ(float depth, float nearZ, float farZ) {
-    return (nearZ * farZ) / (farZ - depth * (farZ - nearZ));
+    return (nearZ * farZ) / (nearZ + depth * (farZ - nearZ));
 }
 
 /// Returns true if the depth value represents the sky (far plane).

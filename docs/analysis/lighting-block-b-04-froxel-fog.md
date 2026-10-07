@@ -91,8 +91,9 @@ The function is documented as the reversed-Z inverse but implements the standard
 which GTAO and SSR carry inline, is near × far / (near + depth × (far − near))). The fog composite used it
 for part of this item and sampled slice 0 for every pixel (F2b's negative control reproduces the error on
 the CPU). Its other user is `contact_shadows.hlsli` (start and sample depths of the screen-space march),
-a pre-existing bug in a pass that runs in Sponza; fixing the shared function changes Sponza, so it goes to
-its own item with its own before / after evidence.
+a pre-existing bug in a pass that runs in Sponza; fixing the shared function changes Sponza, so it went to
+its own item with its own before / after evidence: block B.4b, `lighting-block-b-04b-contact-shadows.md`
+(the function fixed, the march rewritten, the composite back on the shared function).
 
 ## Still open
 
