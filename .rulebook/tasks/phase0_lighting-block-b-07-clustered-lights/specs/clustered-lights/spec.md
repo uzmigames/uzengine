@@ -50,6 +50,8 @@ When the highlight's peak luminance is measured
 Then it decreases with the radius and the 50 cm peak is at most 0.8 × the 0 cm peak.
 
 ### Requirement: Scenes with one light are unchanged
+A frame without local lights SHALL produce the same direct lighting as before this item.
+
 #### Scenario: Sponza
 Given Sponza's fog project at frame 60 after a warm-up run
 When compared with the committed build's warm capture
