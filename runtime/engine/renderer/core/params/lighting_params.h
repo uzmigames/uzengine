@@ -41,15 +41,20 @@ namespace uz {
 /// ─── 5632 bytes (CB boundary, 256-byte aligned) ───
 /// ```
 struct LightingParams {
-    // ── Scalar section (5632 bytes, copied to CB) ────────────────────────
+    // ── Scalar section (43264 bytes, copied to CB) ───────────────────────
     // Layout MUST match LightingCB exactly.
 
-    PointLightData pointLights[kMaxPointLights];     ///< Point light array (4096 bytes).
+    PointLightData pointLights[kMaxPointLights];     ///< Point light array (32768 bytes).
     uint32_t       pointLightCount = 0;              ///< Number of active point lights.
     uint32_t       spotLightCount  = 0;              ///< Number of active spot lights.
     uint32_t       _pad[2]         = {};             ///< Align counts to 16 bytes.
-    SpotLightData  spotLights[kMaxSpotLights];       ///< Spot light array (1280 bytes).
-    float          _pad2[60]       = {};             ///< Pad to 5632 bytes (256-byte multiple).
+    SpotLightData  spotLights[kMaxSpotLights];       ///< Spot light array (10240 bytes).
+    float    clusterForwardX = 0.0f, clusterForwardY = 0.0f, clusterForwardZ = 1.0f;   ///< Block B.7 cluster parameters (LightingCB).
+    float    clusterNear = 10.0f, clusterFar = 100000.0f, clusterLogScale = 0.0f;
+    uint32_t clusterTileSize = kClusterTileSize, clusterTilesX = 0, clusterTilesY = 0, clusterSlices = kClusterSlices;
+    uint32_t clusterListSrv = UINT32_MAX, clusterListUav = UINT32_MAX, clusterSlots = kClusterSlotsMax, clusterFlags = 0;
+    float    clusterViewWidth = 0.0f, clusterViewHeight = 0.0f;
+    float          _pad2[44]       = {};             ///< Pad to 43264 bytes (256-byte multiple).
 
     // ── Metadata ─────────────────────────────────────────────────────────
 

@@ -421,6 +421,13 @@
     // ── Brixelizer GI (AMD FidelityFX sparse SDF voxel GI) ─────────────────
     std::unique_ptr<BrixelizerGIPass> m_brixelizerGI;  ///< FFX Brixelizer GI pass (diffuse + specular indirect).
 
+    // ── Clustered light lists (block B.7) ──────────────────────────────────
+    RHIBufferHandle  m_clusterListBuffer;           ///< StructuredBuffer<uint>: per cluster a count and kClusterSlotsMax light slots.
+    uint64_t         m_clusterListBytes = 0;        ///< Capacity; grows with the render resolution.
+    uint32_t         m_clusterListSrv = UINT32_MAX; ///< Read by the deferred lighting (LightingCB::clusterListSrv).
+    uint32_t         m_clusterListUav = UINT32_MAX; ///< Written by the cull pass.
+    RHIResourceState m_clusterListState = RHIResourceState::Common;
+
     // ── SSR (Screen-Space Reflections) ─────────────────────────────────────
 
     RHITextureHandle m_ssrTraceOutput;             ///< RGBA16F trace result (rgb=hit color, a=confidence).
@@ -910,6 +917,8 @@
 
     /// Registers the deferred lighting pass (or debug view / GBuffer debug).
     void RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, FrameContext& ctx);
+    /// Block B.7: the light cull compute pass (clusters of the view frustum -> light index lists).
+    void RegisterLightCullPass(rg::RgBuilder& rgBuilder, FrameContext& ctx);
 
     /// Registers atmosphere, height fog, and volumetric cloud composite passes.
     void RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);

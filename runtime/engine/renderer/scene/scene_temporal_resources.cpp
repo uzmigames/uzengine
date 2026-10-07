@@ -320,6 +320,16 @@ void SceneRenderer::CreateSsrResources(uint32_t width, uint32_t height) {
 }
 
 void SceneRenderer::DestroySsrResources() {
+    // Clustered light list (block B.7): sized for the render resolution, so it goes with the
+    // other resolution-dependent resources and is recreated on demand by RegisterLightCullPass.
+    if (m_clusterListBuffer.IsValid()) {
+        m_device->DestroyBuffer(m_clusterListBuffer);
+        m_clusterListBuffer = RHIBufferHandle{};
+        m_clusterListBytes  = 0;
+        m_clusterListSrv    = UINT32_MAX;
+        m_clusterListUav    = UINT32_MAX;
+        m_clusterListState  = RHIResourceState::Common;
+    }
     if (m_ssrRayList.IsValid()) {
         m_device->DestroyBuffer(m_ssrRayList);
         m_ssrRayList = RHIBufferHandle{};

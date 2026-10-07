@@ -433,11 +433,22 @@ static_assert(sizeof(PerObjectCB) == 256, "PerObjectCB must be 256 bytes (D3D12 
 // LightingCB — bound at b2 (root CBV slot 2, reused from PerObjectCB slot in fullscreen deferred passes)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Maximum number of point lights supported in the deferred lighting pass.
-static constexpr uint32_t kMaxPointLights = 64;
+/// Maximum number of point lights supported in the deferred lighting pass (block B.7: 512, was 64;
+/// the arrays stay in the 64 KB constant buffer and the clustered lists bound the per-pixel cost).
+static constexpr uint32_t kMaxPointLights = 512;
 
-/// Maximum number of spot lights supported in the deferred lighting pass.
-static constexpr uint32_t kMaxSpotLights = 16;
+/// Maximum number of spot lights supported in the deferred lighting pass (block B.7: 128, was 16).
+static constexpr uint32_t kMaxSpotLights = 128;
+
+/// Clustered light lists (block B.7): the view frustum is cut into screen tiles of
+/// `kClusterTileSize` pixels and `kClusterSlices` logarithmic depth slices; each cluster's record in the
+/// list buffer holds a count and `kClusterSlotsMax` light slots (cluster_assign_cs.hlsl).
+static constexpr uint32_t kClusterTileSize   = 32;
+static constexpr uint32_t kClusterSlices     = 24;
+static constexpr uint32_t kClusterSlotsMax   = 32;
+static constexpr uint32_t kClusterRecordUints = kClusterSlotsMax + 1;
+static constexpr uint32_t kClusterFlag_Enabled = 1u << 0;
+static constexpr uint32_t kClusterFlag_Debug   = 1u << 1;
 
 /// Point light data for the deferred lighting pass.
 ///
@@ -528,24 +539,47 @@ static_assert(sizeof(SpotLightData) == 80, "SpotLightData must be 80 bytes (five
 ///
 /// Padded to a 256-byte multiple as required by D3D12 constant buffer alignment.
 ///
-/// # Layout (5632 bytes = 22 * 256)
-/// - pointLights[64]:  64 * 64 = 4096 bytes
-/// - pointLightCount:  4 bytes
+/// # Layout (43264 bytes = 169 * 256)
+/// - pointLights[512]: 512 * 64 = 32768 bytes
+/// - pointLightCount:  4 bytes (32768)
 /// - spotLightCount:   4 bytes
 /// - _pad:             8 bytes
-/// - spotLights[16]:   16 * 80 = 1280 bytes
-/// - _pad2:            240 bytes
-/// Total: 5632 bytes
+/// - spotLights[128]:  128 * 80 = 10240 bytes (32784)
+/// - cluster parameters (block B.7): 64 bytes (43024)
+/// - _pad2:            176 bytes
+/// Total: 43264 bytes
 struct LightingCB {
-    PointLightData pointLights[kMaxPointLights]; ///< Point light array (64 * 64 = 4096 bytes).
+    PointLightData pointLights[kMaxPointLights]; ///< Point light array (512 * 64 = 32768 bytes).
     uint32_t       pointLightCount = 0;          ///< Number of active point lights in the array.
     uint32_t       spotLightCount  = 0;          ///< Number of active spot lights in the array.
     uint32_t       _pad[2] = {};                 ///< Align counts to 16 bytes.
-    SpotLightData  spotLights[kMaxSpotLights];   ///< Spot light array (16 * 80 = 1280 bytes).
-    float          _pad2[60] = {};               ///< Pad to 5632 bytes (256-byte multiple).
+    SpotLightData  spotLights[kMaxSpotLights];   ///< Spot light array (128 * 80 = 10240 bytes).
+
+    // ── Clustered light lists (block B.7); mirrors `cbuffer LightingCB` in light_types.hlsli ──
+    float    clusterForwardX = 0.0f;             ///< Camera forward (world): view depth = dot(p - camera, forward).
+    float    clusterForwardY = 0.0f;
+    float    clusterForwardZ = 1.0f;
+    float    clusterNear     = 10.0f;            ///< Depth of the first slice boundary (cm).
+    float    clusterFar      = 100000.0f;        ///< Depth of the last slice boundary (cm).
+    float    clusterLogScale = 0.0f;             ///< slices / log(far / near).
+    uint32_t clusterTileSize = kClusterTileSize; ///< Tile side in pixels.
+    uint32_t clusterTilesX   = 0;
+    uint32_t clusterTilesY   = 0;
+    uint32_t clusterSlices   = kClusterSlices;
+    uint32_t clusterListSrv  = UINT32_MAX;       ///< Bindless SRV of the list buffer (UINT32_MAX = per-pixel loop).
+    uint32_t clusterListUav  = UINT32_MAX;       ///< Bindless UAV of the list buffer (the cull pass).
+    uint32_t clusterSlots    = kClusterSlotsMax; ///< Light slots per cluster this frame (r.Lights.ClusterSlots).
+    uint32_t clusterFlags    = 0;                ///< kClusterFlag_*.
+    float    clusterViewWidth  = 0.0f;           ///< Render resolution the tiles cover.
+    float    clusterViewHeight = 0.0f;
+    float    _pad2[44] = {};                     ///< Pad to 43264 bytes (256-byte multiple).
 };
 
 static_assert(sizeof(LightingCB) % 256 == 0, "LightingCB must be a multiple of 256 bytes (D3D12 CB alignment)");
+static_assert(sizeof(LightingCB) == 43264, "LightingCB layout (block B.7)");
+static_assert(offsetof(LightingCB, spotLights) == 32784, "LightingCB::spotLights offset");
+static_assert(offsetof(LightingCB, clusterForwardX) == 43024, "LightingCB cluster parameters offset");
+static_assert(offsetof(LightingCB, clusterViewHeight) == 43084, "LightingCB::clusterViewHeight offset");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LocalLightShadowData — per-light shadow projection data for local lights

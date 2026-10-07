@@ -182,6 +182,11 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetLighting();
 
+    /// Returns the light cull compute pipeline (`cluster_assign_cs.hlsl`, block B.7): one thread per
+    /// cluster of the view frustum, writes the indices of the point and spot lights whose range
+    /// sphere touches it; the deferred lighting evaluates those lights only.
+    [[nodiscard]] RHIPipelineHandle GetLightCull();
+
     /// Returns the PixelDebug compute pipeline (pixel_debug_cs, 1x1x1 dispatch).
     ///
     /// A single-thread compute shader that reads GBuffer + HDR textures at a

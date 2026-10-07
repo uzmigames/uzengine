@@ -29,10 +29,21 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <cstring>
 
 // ── CVars consumed by PerFrameCB population ─────────────────────────────
 static auto* cv_SkyLightIntensity        = UZ_CVAR_FLOAT("r.SkyLight.Intensity", 1.0f, "IBL ambient multiplier", 0.f, 20.f);
+static auto* cv_LightsClustered = UZ_CVAR_BOOL("r.Lights.Clustered", true,
+    "Deferred lighting evaluates the lights of the pixel's cluster (32 px tiles x 24 depth slices, cluster_assign_cs) "
+    "instead of every point and spot light of the frame (block B.7). 0 = the per-pixel loop, for an A/B on one binary.");
+static auto* cv_LightsClusterSlots = UZ_CVAR_INT("r.Lights.ClusterSlots", 32,
+    "Light slots per cluster (1..32). A cluster with more lights overflows and evaluates every light of the frame; "
+    "a small value exercises that path.", 1, 32);
+static auto* cv_LightsClusterDebug = UZ_CVAR_INT("r.Lights.ClusterDebug", 0,
+    "1 = tint the frame by the pixel's cluster light count (blue 0, green 1-4, yellow 5-10, red 11+, magenta = overflow) "
+    "and write (slice, count, first slot, tile) to the region dump's rc_support record; 2 = write the cluster's AABB "
+    "(lo.x, lo.y, hi.x, hi.y) there; 3 = (lo.z, hi.z, count, first slot).", 0, 3);
 static auto* cv_SkyLightMinAmbient       = UZ_CVAR_FLOAT("r.SkyLight.MinAmbient", 0.0f,
     "Floor raised over SkyLightComponent.minOcclusion for the AO clamp and the no-GI irradiance floor; "
     "0 = the component value (Sponza authors 0.01; the shader documents 0.005-0.02). The old 0.25 default "
@@ -494,6 +505,57 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
                 lightingCB->pointLightCount++;
             }
         }
+    }
+
+    // ── Clustered light lists (block B.7): the cluster grid of this frame ─────────────
+    // The list buffer's descriptors are filled by RegisterLightCullPass once the buffer exists.
+    if (ctx.lightingAlloc.cpuPtr) {
+        auto* lightingCB = reinterpret_cast<LightingCB*>(ctx.lightingAlloc.cpuPtr);
+        const Vec3  fwd   = camera.GetForward().Normalized();
+        // The slice range follows the lights: from the nearest point any light reaches to the
+        // farthest, along the view direction (a pixel nearer than the first boundary falls into
+        // slice 0, beyond the last into the last slice, and no light reaches either region).
+        // Slicing the camera's whole [near, far] spent the slices near the camera and left the
+        // cells at the lights' distance 37 % deep, so most clusters overflowed their slots.
+        const Vec3  camPos  = camera.GetPosition();
+        float lightNear = std::numeric_limits<float>::max();
+        float lightFar  = 0.0f;
+        for (uint32_t i = 0; i < lightingCB->pointLightCount; ++i) {
+            const PointLightData& pl = lightingCB->pointLights[i];
+            const float d = (pl.position - camPos).Dot(fwd);
+            lightNear = std::min(lightNear, d - pl.radius);
+            lightFar  = std::max(lightFar, d + pl.radius);
+        }
+        for (uint32_t i = 0; i < lightingCB->spotLightCount; ++i) {
+            const SpotLightData& sl = lightingCB->spotLights[i];
+            const float d = (sl.position - camPos).Dot(fwd);
+            lightNear = std::min(lightNear, d - sl.radius);
+            lightFar  = std::max(lightFar, d + sl.radius);
+        }
+        const float camNear = std::max(camera.GetNearPlane(), 1.0f);
+        const float camFar  = std::max(camera.GetFarPlane(), camNear * 2.0f);
+        const bool  anyLight = lightingCB->pointLightCount + lightingCB->spotLightCount > 0;
+        const float nearZ = anyLight ? std::clamp(lightNear, camNear, camFar * 0.5f) : camNear;
+        const float farZ  = anyLight ? std::clamp(lightFar, nearZ * 2.0f, camFar) : camFar;
+        lightingCB->clusterForwardX  = fwd.x;
+        lightingCB->clusterForwardY  = fwd.y;
+        lightingCB->clusterForwardZ  = fwd.z;
+        lightingCB->clusterNear      = nearZ;
+        lightingCB->clusterFar       = farZ;
+        lightingCB->clusterLogScale  = static_cast<float>(kClusterSlices) / std::log(farZ / nearZ);
+        lightingCB->clusterTileSize  = kClusterTileSize;
+        lightingCB->clusterTilesX    = (m_renderWidth + kClusterTileSize - 1) / kClusterTileSize;
+        lightingCB->clusterTilesY    = (m_renderHeight + kClusterTileSize - 1) / kClusterTileSize;
+        lightingCB->clusterSlices    = kClusterSlices;
+        lightingCB->clusterSlots     = static_cast<uint32_t>(std::clamp(static_cast<int>(cv_LightsClusterSlots->value), 1,
+                                                                        static_cast<int>(kClusterSlotsMax)));
+        const uint32_t debugMode = static_cast<uint32_t>(std::clamp(static_cast<int>(cv_LightsClusterDebug->value), 0, 3));
+        lightingCB->clusterFlags     = (cv_LightsClustered->value != 0.0f ? kClusterFlag_Enabled : 0u)
+                                     | (debugMode != 0u ? kClusterFlag_Debug : 0u) | (debugMode << 2);
+        lightingCB->clusterListSrv   = UINT32_MAX;
+        lightingCB->clusterListUav   = UINT32_MAX;
+        lightingCB->clusterViewWidth  = static_cast<float>(m_renderWidth);
+        lightingCB->clusterViewHeight = static_cast<float>(m_renderHeight);
     }
 
     // ── Extract cloud shadow & light shaft parameters from primary DirectionalLight ──

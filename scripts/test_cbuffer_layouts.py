@@ -97,6 +97,18 @@ ENTRIES = [
         # The struct text alone does not compile: the nested struct and the array bound come from the same header.
         'extra_structs': ['LocalLightShadowData'], 'extra_constants': ['kMaxLocalLightShadows'],
     },
+    {
+        'name': 'LightingCB (block B.7: 512 point / 128 spot lights and the cluster parameters)', 'shader': 'lighting/deferred_lighting_ps.hlsl',
+        'profile': 'ps_6_6', 'header': 'runtime/engine/renderer/core/params/constant_buffers.h', 'struct': 'LightingCB',
+        'map': {'pointLights': 'pointLights', 'pointLightCount': 'pointLightCount', 'spotLightCount': 'spotLightCount', 'spotLights': 'spotLights',
+                'clusterForward': 'clusterForwardX', 'clusterNear': 'clusterNear', 'clusterFar': 'clusterFar', 'clusterLogScale': 'clusterLogScale',
+                'clusterTileSize': 'clusterTileSize', 'clusterTilesX': 'clusterTilesX', 'clusterTilesY': 'clusterTilesY', 'clusterSlices': 'clusterSlices',
+                'clusterListSrv': 'clusterListSrv', 'clusterListUav': 'clusterListUav', 'clusterSlots': 'clusterSlots', 'clusterFlags': 'clusterFlags',
+                'clusterViewWidth': 'clusterViewWidth', 'clusterViewHeight': 'clusterViewHeight'},
+        'extra_structs': ['PointLightData', 'SpotLightData'],
+        'extra_constants': ['kMaxPointLights', 'kMaxSpotLights', 'kClusterTileSize', 'kClusterSlices', 'kClusterSlotsMax', 'kClusterRecordUints',
+                            'kClusterFlag_Enabled', 'kClusterFlag_Debug'],
+    },
 ]
 
 STUBS = r'''
@@ -134,7 +146,9 @@ def dxc_offsets(shader_path: str, profile: str, cbuffer: str) -> dict[str, int]:
 
 def struct_text(header_path: str, struct: str) -> str:
     src = open(header_path, encoding='utf-8', errors='replace').read()
-    m = re.search(r'struct\s+(?:alignas\(\d+\)\s+)?' + struct + r'\s*\{.*?\n\};', src, re.S)
+    # Anchored at the start of a line: the doc comment of PointLightData / SpotLightData quotes the
+    # HLSL struct ("/// struct PointLightData {"), which an unanchored search picked up first (B.7).
+    m = re.search(r'^struct\s+(?:alignas\(\d+\)\s+)?' + struct + r'\s*\{.*?\n\};', src, re.S | re.M)
     if not m:
         raise SystemExit(f'{header_path}: struct {struct} not found')
     return m.group(0)

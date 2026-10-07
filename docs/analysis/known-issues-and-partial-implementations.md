@@ -559,6 +559,34 @@ irradiance data is zero until a bake step (which doesn't exist).
 
 ---
 
+## Local lights
+
+### Clustered light lists and the light parameters — `DONE` 2026-10-07 (block B.7)
+**Files**: [cluster_assign_cs.hlsl](../../runtime/shaders/runtime/lighting/cluster_assign_cs.hlsl),
+[light_types.hlsli](../../runtime/shaders/runtime/lighting/light_types.hlsli),
+[deferred_lighting_ps.hlsl](../../runtime/shaders/runtime/lighting/deferred_lighting_ps.hlsl),
+[frame_lighting_pass.cpp](../../runtime/engine/renderer/frame/frame_lighting_pass.cpp)
+
+Until 2026-10-07 the deferred lighting looped over every point (≤ 64) and spot (≤ 16) light of the
+frame in every pixel, `cluster_assign_cs.hlsl` was a one-line stub, and the components' `sourceRadius`,
+`lightFalloffExponent`, `specularScale`, `diffuseScale` and `useInverseSquaredFalloff` were packed into
+the constant buffer and never read (nor read from scene files). Now `cluster_assign_cs` assigns the
+lights to a 32-pixel-tile × 24-depth-slice grid (one thread per cluster, conservative world AABB,
+range-sphere test, the loop's order so the sums are identical, an overflow bit beyond
+`r.Lights.ClusterSlots`), the pixel evaluates its cluster's lights (`r.Lights.Clustered`, default 1;
+`r.Lights.ClusterDebug` = heat map), the limits are 512 / 128 (LightingCB 43264 bytes), and the
+parameters are live (custom falloff, scales, Karis sphere light for the source radius) and loaded
+from scenes. Measured (`scripts/test_clustered_lights.py`, 8/9): identity with the
+loop (max |diff| 0 with 80 lights, 0 with 500; C1 PASS, C1d PASS);
+500 lights at 1080p 0.909 ms clustered against 1.800 ms with the loop, cull
+0.070 ms (C2 FAIL); 80 lights 0.382 ms against the committed build's
+0.465 ms; diffuse scale ratio 0.526 (C3a PASS), falloff exponent against the
+formula median |error| 0.000 (C3b PASS), source radius peaks 2.944 / 0.965 /
+0.379 (C3c PASS); Sponza unchanged (C4 PASS). Still open: spots are culled with their range
+sphere (no cone test), the forward translucent pass and the froxel fog do not read the lists, local
+lights do not reach the GI, shadows stay at 16 atlas tiles. See
+[lighting-block-b-07-clustered-lights.md](lighting-block-b-07-clustered-lights.md).
+
 ## Shadows
 
 ### `r.DFS` (Distance Field Shadows) — `OFF` (STUB)

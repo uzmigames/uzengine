@@ -342,6 +342,64 @@ RHIPipelineHandle PipelineLibrary::GetAdditive(bool bindless) {
     return handle;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Light cull compute pipeline (block B.7)
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureLightCullShader() {
+    if (m_lightCullCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::ClusterAssignCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile ClusterAssignCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "cluster_assign_cs";
+
+    m_lightCullCS = m_device->CreateShader(shaderDesc);
+    if (!m_lightCullCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create ClusterAssignCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetLightCull() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetLightCull called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_lightCull.IsValid()) {
+        return m_lightCull;
+    }
+
+    if (!EnsureLightCullShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_lightCullCS;
+    desc.debugName     = "LightCull";
+
+    m_lightCull = m_device->CreateComputePipeline(desc);
+    if (!m_lightCull.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create LightCull pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created LightCull pipeline");
+    }
+
+    return m_lightCull;
+}
+
 RHIPipelineHandle PipelineLibrary::GetLighting() {
     if (!m_initialized) {
         UZ_LOG(Renderer, Error, "PipelineLibrary::GetLighting called before Init()");

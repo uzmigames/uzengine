@@ -53,6 +53,83 @@ static bool IsPostLightingMode(DebugViewMode m) {
         || m == DebugViewMode::Reflections;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Light cull (block B.7)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// One compute dispatch per frame (`cluster_assign_cs.hlsl`, one thread per cluster) writes, for every
+// cluster of the view frustum, the indices of the point and spot lights whose range sphere touches
+// it. The deferred lighting then evaluates those lights only (`r.Lights.Clustered`, default 1); the
+// per-pixel loop over every light of the frame stays as the A/B control and as the fallback of a
+// cluster that overflowed its slots. The list buffer is sized for the render resolution and grows
+// with it. Its bindless indices travel in LightingCB, which the lighting pass binds already.
+
+void SceneRenderer::RegisterLightCullPass(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
+    auto* lightingCB = reinterpret_cast<LightingCB*>(ctx.lightingAlloc.cpuPtr);
+    if (!lightingCB || !ctx.bindless) return;
+    if ((lightingCB->clusterFlags & kClusterFlag_Enabled) == 0u) return;   // per-pixel loop (r.Lights.Clustered 0)
+    if (lightingCB->pointLightCount == 0 && lightingCB->spotLightCount == 0) return;   // nothing to cull: the loops are empty
+
+    const uint32_t clusters = lightingCB->clusterTilesX * lightingCB->clusterTilesY * lightingCB->clusterSlices;
+    const uint64_t neededBytes = static_cast<uint64_t>(clusters) * kClusterRecordUints * sizeof(uint32_t);
+    if (clusters == 0) return;
+    if (!m_clusterListBuffer.IsValid() || m_clusterListBytes < neededBytes) {
+        if (m_clusterListBuffer.IsValid()) {
+            m_device->DestroyBuffer(m_clusterListBuffer);
+            m_clusterListBuffer = {};
+        }
+        RHIBufferDesc desc{};
+        desc.sizeBytes = neededBytes;
+        desc.stride    = sizeof(uint32_t);
+        desc.usage     = RHIBufferUsage::StructuredBuffer | RHIBufferUsage::UnorderedAccess;
+        desc.debugName = "LightClusterList";
+        m_clusterListBuffer = m_device->CreateBuffer(desc);
+        m_clusterListBytes  = m_clusterListBuffer.IsValid() ? neededBytes : 0;
+        m_clusterListSrv    = m_clusterListBuffer.IsValid() ? m_device->GetBufferSRVIndex(m_clusterListBuffer) : UINT32_MAX;
+        m_clusterListUav    = m_clusterListBuffer.IsValid() ? m_device->GetBufferUAVIndex(m_clusterListBuffer) : UINT32_MAX;
+        m_clusterListState  = RHIResourceState::Common;
+        UZ_LOG(Renderer, Info, "LightCull: cluster list {} clusters ({}x{}x{}) x {} uints = {} bytes (SRV={}, UAV={})",
+               clusters, lightingCB->clusterTilesX, lightingCB->clusterTilesY, lightingCB->clusterSlices,
+               kClusterRecordUints, neededBytes, m_clusterListSrv, m_clusterListUav);
+    }
+    const RHIPipelineHandle pipeline = ctx.pipelines->GetLightCull();
+    if (!m_clusterListBuffer.IsValid() || !pipeline.IsValid()) return;   // the lighting keeps its per-pixel loop
+
+    lightingCB->clusterListSrv = m_clusterListSrv;
+    lightingCB->clusterListUav = m_clusterListUav;
+
+    const CBAllocation perFrame = ctx.perFrameAlloc;
+    const CBAllocation lighting = ctx.lightingAlloc;
+    const RHIBufferHandle buffer = m_clusterListBuffer;
+    const uint32_t groups = (clusters + 63u) / 64u;
+    const auto depthRes = ctx.depthRes;
+    rgBuilder.AddPass("LightCull", [=, this](rg::RgPassBuilder& pb) {
+        // The graph orders passes only through declared resources and this pass reads constant
+        // buffers alone: the depth read it does not perform places it after the GBuffer and, with
+        // the lighting pass's own depth read, before the lighting (block B.5's lesson).
+        pb.Read(depthRes, RHIResourceState::ShaderResource);
+        pb.SetExecutionCallback([=, this](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
+            RHIBarrierDesc toUav{};
+            toUav.buffer      = buffer;
+            toUav.stateBefore = m_clusterListState;
+            toUav.stateAfter  = RHIResourceState::UnorderedAccess;
+            cmd->ResourceBarrier(&toUav, 1);
+
+            cmd->SetPipeline(pipeline);
+            cmd->SetRootCBV(kSlotPerFrame, perFrame.bufferHandle, perFrame.offsetBytes, perFrame.cpuPtr, sizeof(PerFrameCB));
+            cmd->SetRootCBV(kSlotPerObject, lighting.bufferHandle, lighting.offsetBytes, lighting.cpuPtr, sizeof(LightingCB));
+            cmd->Dispatch(groups, 1, 1);
+
+            RHIBarrierDesc toSrv{};
+            toSrv.buffer      = buffer;
+            toSrv.stateBefore = RHIResourceState::UnorderedAccess;
+            toSrv.stateAfter  = RHIResourceState::ShaderResource;
+            cmd->ResourceBarrier(&toSrv, 1);
+            m_clusterListState = RHIResourceState::ShaderResource;
+        });
+    });
+}
+
 void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
     // ── Deferred Lighting / Debug View / GBuffer Debug ──────────────────
     const bool debugActive = false; // Legacy GBufferDebug force-off — kept for safety
@@ -106,6 +183,10 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
         AddDebugViewPass(rgBuilder, dvDesc);
         return;
     }
+
+    // ── Light cull (block B.7): the frame's local lights assigned to the clusters of the view ──
+    // Registered before the lighting pass, which reads the list through LightingCB.
+    RegisterLightCullPass(rgBuilder, ctx);
 
     if (!debugActive) {
         LightingPassDesc lightDesc{};

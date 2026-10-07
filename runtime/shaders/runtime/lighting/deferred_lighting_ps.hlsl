@@ -319,6 +319,121 @@ float SampleLocalShadow(uint entry, float3 worldPos, float3 geometricNormal) {
 #endif
 }
 
+// ─── Local lights (block B.7) ─────────────────────────────────────────────
+//
+// The point and spot loop bodies of the deferred pass, as functions shared by the per-pixel loop and
+// the clustered list, with the per-light parameters the light components always carried but the
+// shader ignored: `falloffExponent` (custom falloff when the inverse-square flag is clear),
+// `diffuseScale` / `specularScale`, and the point light's `sourceRadius` (Karis 2013 sphere light:
+// the representative point on the sphere for the specular direction and the roughness widening with
+// its energy normalisation). With the defaults (inverse square, scales 1, radius 0) the code paths
+// are the previous ones.
+// @ref Karis 2013 "Real Shading in Unreal Engine 4" — sphere lights, energy normalisation
+// @ref UE5 DeferredLightingCommon.ush — RadialAttenuation (custom falloff exponent)
+
+float LocalLightAttenuation(float distSq, float radius, float falloffExponent, uint flags)
+{
+    float invRadSq = 1.0 / (radius * radius);
+    float f = distSq * invRadSq;
+    if ((flags & kLightFlag_InverseSquared) != 0u) {
+        float s = saturate(1.0 - f * f);
+        return (s * s) / max(distSq, 0.01);
+    }
+    // UE's custom falloff: no 1/d^2, the colour is a brightness.
+    return pow(saturate(1.0 - f), max(falloffExponent, 1e-3));
+}
+
+float3 ShadePointLight(PointLightData pl, float3 worldPos, float3 N, float3 geometricNormal, float3 V, float NoV,
+                       float alpha, float roughness, float3 F0, float3 F90, float3 diffColor)
+{
+    float3 toLight = pl.position - worldPos;
+    float  distSq  = dot(toLight, toLight);
+    if (distSq > pl.radius * pl.radius) return float3(0.0, 0.0, 0.0);
+
+    float3 Lp   = normalize(toLight);
+    float  NoLp = max(dot(N, Lp), 0.0);
+    if (NoLp <= 0.0) return float3(0.0, 0.0, 0.0);
+
+    float atten = LocalLightAttenuation(distSq, pl.radius, pl.falloffExponent, pl.flags);
+    // Shadowed point lights own six consecutive tiles (+X, -X, +Y, -Y, +Z, -Z, the order
+    // frame_constants.cpp allocates them); the face is the major axis of light -> pixel.
+    if (pl.shadowIndex != 0xFFFFFFFFu && pl.shadowIndex + 5u < localShadowCount) {
+        const float3 d = -toLight;
+        const float3 a = abs(d);
+        const uint face = (a.x >= a.y && a.x >= a.z) ? (d.x > 0.0 ? 0u : 1u)
+                        : (a.y >= a.z)               ? (d.y > 0.0 ? 2u : 3u)
+                                                     : (d.z > 0.0 ? 4u : 5u);
+        atten *= SampleLocalShadow(pl.shadowIndex + face, worldPos, geometricNormal);
+    }
+
+    float3 Hp   = normalize(V + Lp);
+    float  NoHp = saturate(dot(N, Hp));
+    float  VoHp = saturate(dot(V, Hp));
+
+    // Sphere light (sourceRadius > 0): the specular direction is the point of the sphere closest to
+    // the reflection ray, the lobe is widened by the sphere's angle and normalised.
+    float  specAlpha  = alpha;
+    float  specEnergy = 1.0;
+    float  NoHs = NoHp;
+    float  VoHs = VoHp;
+    if (pl.sourceRadius > 0.0) {
+        const float3 r = reflect(-V, N);
+        const float3 centerToRay = dot(toLight, r) * r - toLight;
+        const float3 closest = toLight + centerToRay * saturate(pl.sourceRadius / max(length(centerToRay), 1e-4));
+        const float3 Ls = normalize(closest);
+        const float3 Hs = normalize(V + Ls);
+        NoHs = saturate(dot(N, Hs));
+        VoHs = saturate(dot(V, Hs));
+        const float alphaPrime = saturate(alpha + pl.sourceRadius / (2.0 * sqrt(distSq)));
+        specEnergy = (alpha * alpha) / max(alphaPrime * alphaPrime, 1e-8);
+        specAlpha  = alphaPrime;
+    }
+
+    float  Dp   = D_GGX(specAlpha, NoHs);
+    float  Visp = V_SmithGGXCorrelated(specAlpha, NoV, NoLp);
+    float3 Fp   = F_Schlick(F0, F90, VoHs);
+    float3 specp = Dp * Visp * Fp * (specEnergy * pl.specularScale);
+    float3 diffp = EvalFrostbiteDiffuse(diffColor, roughness, NoV, NoLp, VoHp) * pl.diffuseScale;
+
+    return (diffp + specp) * pl.color * NoLp * atten;
+}
+
+float3 ShadeSpotLight(SpotLightData sl, float3 worldPos, float3 N, float3 geometricNormal, float3 V, float NoV,
+                      float alpha, float roughness, float3 F0, float3 F90, float3 diffColor)
+{
+    float3 toLight = sl.position - worldPos;
+    float  distSq  = dot(toLight, toLight);
+    if (distSq > sl.radius * sl.radius) return float3(0.0, 0.0, 0.0);
+
+    float3 Ls   = normalize(toLight);
+    float  NoLs = max(dot(N, Ls), 0.0);
+    if (NoLs <= 0.0) return float3(0.0, 0.0, 0.0);
+
+    float distAtten = LocalLightAttenuation(distSq, sl.radius, sl.falloffExponent, sl.flags);
+
+    float cosA = dot(Ls, -sl.direction);
+    float cone = saturate((cosA - sl.cosOuterAngle) * sl.invCosConeDifference);
+    float atten = distAtten * cone * cone;
+    if (atten <= 0.0) return float3(0.0, 0.0, 0.0);
+
+    // ── Spot shadow map sampling ─────────────────────────────────
+    // Linear-distance tile, sampled by SampleLocalShadow above (block A.1).
+    float spotShadow = (sl.shadowIndex != 0xFFFFFFFFu && sl.shadowIndex < localShadowCount)
+                     ? SampleLocalShadow(sl.shadowIndex, worldPos, geometricNormal) : 1.0;
+
+    float3 Hs   = normalize(V + Ls);
+    float  NoHs = saturate(dot(N, Hs));
+    float  VoHs = saturate(dot(V, Hs));
+
+    float  Ds   = D_GGX(alpha, NoHs);
+    float  Viss = V_SmithGGXCorrelated(alpha, NoV, NoLs);
+    float3 Fs   = F_Schlick(F0, F90, VoHs);
+    float3 specs = Ds * Viss * Fs * sl.specularScale;
+    float3 diffs = EvalFrostbiteDiffuse(diffColor, roughness, NoV, NoLs, VoHs) * sl.diffuseScale;
+
+    return (diffs + specs) * sl.color * NoLs * atten * spotShadow;
+}
+
 LightingOutput main(FSInput input) {
     int2 px = int2(input.positionCS.xy);
 
@@ -523,82 +638,65 @@ LightingOutput main(FSInput input) {
         }
     }
 
-    // ── Point lights ──────────────────────────────────────────────────────
-    for (uint pi = 0; pi < pointLightCount; ++pi) {
-        PointLightData pl = pointLights[pi];
-        float3 toLight = pl.position - worldPos;
-        float  distSq  = dot(toLight, toLight);
-        if (distSq > pl.radius * pl.radius) continue;
-
-        float3 Lp   = normalize(toLight);
-        float  NoLp = max(dot(N, Lp), 0.0);
-        if (NoLp <= 0.0) continue;
-
-        float invRadSq = 1.0 / (pl.radius * pl.radius);
-        float f = distSq * invRadSq;
-        float s = saturate(1.0 - f * f);
-        float atten = (s * s) / max(distSq, 0.01);
-        // Shadowed point lights own six consecutive tiles (+X, -X, +Y, -Y, +Z, -Z, the order
-        // frame_constants.cpp allocates them); the face is the major axis of light -> pixel.
-        if (pl.shadowIndex != 0xFFFFFFFFu && pl.shadowIndex + 5u < localShadowCount) {
-            const float3 d = -toLight;
-            const float3 a = abs(d);
-            const uint face = (a.x >= a.y && a.x >= a.z) ? (d.x > 0.0 ? 0u : 1u)
-                            : (a.y >= a.z)               ? (d.y > 0.0 ? 2u : 3u)
-                                                         : (d.z > 0.0 ? 4u : 5u);
-            atten *= SampleLocalShadow(pl.shadowIndex + face, worldPos, geometricNormal);
+    // ── Local lights: point and spot (block B.7) ──────────────────────────
+    // The lights of the pixel's cluster (cluster_assign_cs.hlsl), in the order the per-pixel loop
+    // used (points in index order, then spots), so the sums are identical; a cluster that overflowed
+    // its slots, or the per-pixel loop (r.Lights.Clustered 0), evaluates every light of the frame.
+    uint dbgClusterCount = 0u;
+    bool dbgClusterOverflow = false;
+    // r.Lights.ClusterDebug: (slice, count + 1000 x overflow, first slot, flat tile) in the region
+    // dump's rc_support record (the cache query is not what is being inspected then).
+    float4 dbgClusterInfo = float4(0.0, 0.0, 0.0, 0.0);
+    {
+        bool useList = false;
+        uint clusterBase = 0u;
+        uint clusterCount = 0u;
+#ifdef UZ_BINDLESS
+        if ((clusterFlags & kClusterFlag_Enabled) != 0u && clusterListSrv != kSentinelSrvIndex) {
+            const float pixelViewDepth = dot(worldPos - cameraPos.xyz, clusterForward);
+            StructuredBuffer<uint> clusterList = ResourceDescriptorHeap[clusterListSrv];
+            const uint clusterIdx = ClusterIndexForPixel(uint2(px), pixelViewDepth);
+            clusterBase = clusterIdx * kClusterRecordSize;
+            const uint packed = clusterList[clusterBase];
+            clusterCount = packed & 0x7FFFFFFFu;
+            dbgClusterCount = clusterCount;
+            dbgClusterOverflow = (packed & kClusterOverflow) != 0u;
+            useList = !dbgClusterOverflow;
+            const uint dbgMode = (clusterFlags >> 2) & 3u;
+            if (dbgMode == 2u) {
+                dbgClusterInfo = float4(asfloat(clusterList[clusterBase + kClusterSlotsMax - 5u]), asfloat(clusterList[clusterBase + kClusterSlotsMax - 4u]),
+                                        asfloat(clusterList[clusterBase + kClusterSlotsMax - 2u]), asfloat(clusterList[clusterBase + kClusterSlotsMax - 1u]));
+            } else if (dbgMode == 3u) {
+                dbgClusterInfo = float4(asfloat(clusterList[clusterBase + kClusterSlotsMax - 3u]), asfloat(clusterList[clusterBase + kClusterSlotsMax]),
+                                        float(clusterCount), clusterCount > 0u ? float(clusterList[clusterBase + 1u]) : -1.0);
+            } else {
+                dbgClusterInfo = float4(float(clusterIdx / (clusterTilesX * clusterTilesY)),
+                                        float(clusterCount) + (dbgClusterOverflow ? 1000.0 : 0.0),
+                                        clusterCount > 0u ? float(clusterList[clusterBase + 1u]) : -1.0,
+                                        float(clusterIdx % (clusterTilesX * clusterTilesY)));
+            }
         }
-
-        float3 Hp   = normalize(V + Lp);
-        float  NoHp = saturate(dot(N, Hp));
-        float  VoHp = saturate(dot(V, Hp));
-
-        float  Dp   = D_GGX(alpha, NoHp);
-        float  Visp = V_SmithGGXCorrelated(alpha, NoV, NoLp);
-        float3 Fp   = F_Schlick(F0, F90, VoHp);
-        float3 specp = Dp * Visp * Fp;
-        float3 diffp = EvalFrostbiteDiffuse(diffColor, roughness, NoV, NoLp, VoHp);
-
-        Lo += (diffp + specp) * pl.color * NoLp * atten;
-    }
-
-    // ── Spot lights ───────────────────────────────────────────────────────
-    for (uint si = 0; si < spotLightCount; ++si) {
-        SpotLightData sl = spotLights[si];
-        float3 toLight = sl.position - worldPos;
-        float  distSq  = dot(toLight, toLight);
-        if (distSq > sl.radius * sl.radius) continue;
-
-        float3 Ls   = normalize(toLight);
-        float  NoLs = max(dot(N, Ls), 0.0);
-        if (NoLs <= 0.0) continue;
-
-        float invRadSq = 1.0 / (sl.radius * sl.radius);
-        float f = distSq * invRadSq;
-        float s = saturate(1.0 - f * f);
-        float distAtten = (s * s) / max(distSq, 0.01);
-
-        float cosA = dot(Ls, -sl.direction);
-        float cone = saturate((cosA - sl.cosOuterAngle) * sl.invCosConeDifference);
-        float atten = distAtten * cone * cone;
-        if (atten <= 0.0) continue;
-
-        // ── Spot shadow map sampling ─────────────────────────────────
-        // Linear-distance tile, sampled by SampleLocalShadow above (block A.1).
-        float spotShadow = (sl.shadowIndex != 0xFFFFFFFFu && sl.shadowIndex < localShadowCount)
-                         ? SampleLocalShadow(sl.shadowIndex, worldPos, geometricNormal) : 1.0;
-
-        float3 Hs   = normalize(V + Ls);
-        float  NoHs = saturate(dot(N, Hs));
-        float  VoHs = saturate(dot(V, Hs));
-
-        float  Ds   = D_GGX(alpha, NoHs);
-        float  Viss = V_SmithGGXCorrelated(alpha, NoV, NoLs);
-        float3 Fs   = F_Schlick(F0, F90, VoHs);
-        float3 specs = Ds * Viss * Fs;
-        float3 diffs = EvalFrostbiteDiffuse(diffColor, roughness, NoV, NoLs, VoHs);
-
-        Lo += (diffs + specs) * sl.color * NoLs * atten * spotShadow;
+        if (useList) {
+            StructuredBuffer<uint> clusterList = ResourceDescriptorHeap[clusterListSrv];
+            [loop]
+            for (uint ci = 0u; ci < clusterCount; ++ci) {
+                const uint slot = clusterList[clusterBase + 1u + ci];
+                if ((slot & kClusterSpotBit) == 0u) {
+                    Lo += ShadePointLight(pointLights[slot], worldPos, N, geometricNormal, V, NoV, alpha, roughness, F0, F90, diffColor);
+                } else {
+                    Lo += ShadeSpotLight(spotLights[slot & 0x7FFFu], worldPos, N, geometricNormal, V, NoV, alpha, roughness, F0, F90, diffColor);
+                }
+            }
+        } else
+#endif
+        {
+            for (uint pi = 0; pi < pointLightCount; ++pi) {
+                Lo += ShadePointLight(pointLights[pi], worldPos, N, geometricNormal, V, NoV, alpha, roughness, F0, F90, diffColor);
+            }
+            for (uint si = 0; si < spotLightCount; ++si) {
+                Lo += ShadeSpotLight(spotLights[si], worldPos, N, geometricNormal, V, NoV, alpha, roughness, F0, F90, diffColor);
+            }
+        }
     }
 
     // ── IBL ambient (Falcor split-sum pattern) ──────────────────────────
@@ -1327,6 +1425,17 @@ LightingOutput main(FSInput input) {
     // Applied after all lighting to attenuate distant objects and add atmospheric haze.
     float3 color = Lo + ambient + emissive;
 
+    // r.Lights.ClusterDebug (block B.7): the pixel's cluster light count. Blue 0, green 1-4,
+    // yellow 5-10, red 11+, magenta = the cluster overflowed its slots (every light evaluated).
+    if ((clusterFlags & kClusterFlag_Debug) != 0u) {
+        float3 heat = float3(0.0, 0.0, 0.5);
+        if (dbgClusterOverflow)          heat = float3(1.0, 0.0, 1.0);
+        else if (dbgClusterCount >= 11u) heat = float3(1.0, 0.0, 0.0);
+        else if (dbgClusterCount >= 5u)  heat = float3(1.0, 1.0, 0.0);
+        else if (dbgClusterCount >= 1u)  heat = float3(0.0, 1.0, 0.0);
+        color = heat * 0.25 + color * 0.15;
+    }
+
 
 #ifdef UZ_BINDLESS
     if (aerialPerspectiveEnabled != 0 && apVolumeSrvIndex != kSentinelSrvIndex) {
@@ -1354,7 +1463,8 @@ LightingOutput main(FSInput input) {
     WriteRegionDumpLighting(uint2(px), dbgReflection, roughness, N, length(worldPos - cameraPos.xyz),
                             Lo, shadow, dbgDiffuseIndirect, ao, dbgSpecularIndirect, metallic,
                             emissive + dbgEmissiveAndMis, dbgPath,
-                            dbgSsgiConsumed, dbgSsgiMode, dbgRcSupport, dbgDdgiSupport);
+                            dbgSsgiConsumed, dbgSsgiMode,
+                            (clusterFlags & kClusterFlag_Debug) != 0u ? dbgClusterInfo : dbgRcSupport, dbgDdgiSupport);
 #endif
     LightingOutput output;
     output.hdr      = float4(max(color, 0.0), 1.0);

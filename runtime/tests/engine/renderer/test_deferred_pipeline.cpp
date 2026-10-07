@@ -195,8 +195,24 @@ TEST(LightingCB, SizeIsMultipleOf256) {
         << " is not a multiple of 256 (D3D12 CB alignment requirement)";
 }
 
-TEST(LightingCB, MaxPointLightsIs64) {
-    EXPECT_EQ(kMaxPointLights, 64u);
+TEST(LightingCB, MaxPointLightsIs512) {
+    EXPECT_EQ(kMaxPointLights, 512u);   // block B.7: 64 -> 512, still inside the 64 KB constant buffer
+    EXPECT_EQ(kMaxSpotLights, 128u);
+    EXPECT_LE(sizeof(LightingCB), 65536u);
+}
+
+/// Block B.7: the cluster parameters follow the spot light array and the struct keeps its 256-byte
+/// multiple; the HLSL mirror (light_types.hlsli) is checked by scripts/test_cbuffer_layouts.py.
+TEST(LightingCB, ClusterParameters_Layout) {
+    EXPECT_EQ(sizeof(LightingCB), 43264u);
+    EXPECT_EQ(offsetof(LightingCB, spotLights), 32784u);
+    EXPECT_EQ(offsetof(LightingCB, clusterForwardX), 43024u);
+    EXPECT_EQ(offsetof(LightingCB, clusterListSrv), 43064u);
+    EXPECT_EQ(offsetof(LightingCB, clusterViewHeight), 43084u);
+    LightingCB cb{};
+    EXPECT_EQ(cb.clusterListSrv, UINT32_MAX);
+    EXPECT_EQ(cb.clusterSlots, kClusterSlotsMax);
+    EXPECT_EQ(cb.clusterFlags, 0u);
 }
 
 /// The point light array must begin at offset 0 so the GPU array base address
@@ -205,12 +221,12 @@ TEST(LightingCB, PointLightArrayOffset_IsZero) {
     EXPECT_EQ(offsetof(LightingCB, pointLights), 0u);
 }
 
-/// pointLightCount must immediately follow the 64-element light array.
-/// 64 lights × 64 bytes = 4096 bytes.
-TEST(LightingCB, PointLightCountOffset_Is4096) {
-    // PointLightData is 64 bytes (four float4s), so 64 * 64 = 4096 bytes.
+/// pointLightCount must immediately follow the 512-element light array.
+/// 512 lights × 64 bytes = 32768 bytes.
+TEST(LightingCB, PointLightCountOffset_Is32768) {
+    // PointLightData is 64 bytes (four float4s), so 512 * 64 = 32768 bytes.
     constexpr size_t kExpected = kMaxPointLights * sizeof(PointLightData);
-    EXPECT_EQ(kExpected, 4096u);
+    EXPECT_EQ(kExpected, 32768u);
     EXPECT_EQ(offsetof(LightingCB, pointLightCount), kExpected);
 }
 

@@ -14,6 +14,7 @@
     [[nodiscard]] bool EnsureFullscreenShaders();
     [[nodiscard]] bool EnsureGBufferPixelShader();
     [[nodiscard]] bool EnsureLightingPixelShader();
+    [[nodiscard]] bool EnsureLightCullShader();
     [[nodiscard]] bool EnsurePixelDebugComputeShader();
     [[nodiscard]] bool EnsureGpuSkinningShader();
     [[nodiscard]] bool EnsureGBufferDebugPixelShader();
@@ -105,6 +106,7 @@
     RHIShaderHandle m_fullscreenVS     = RHIShaderHandle::Invalid();
     RHIShaderHandle m_gbufferPS        = RHIShaderHandle::Invalid();
     RHIShaderHandle m_lightingPS       = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_lightCullCS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_pixelDebugCS     = RHIShaderHandle::Invalid(); ///< PixelDebug compute post-pass shader.
     RHIShaderHandle m_gpuSkinningCS    = RHIShaderHandle::Invalid(); ///< GPU skinning compute shader.
     RHIShaderHandle m_gbufferDebugPS   = RHIShaderHandle::Invalid();
@@ -181,6 +183,7 @@
 
     // ── Cached pipeline handles (non-material pipelines) ────────────────
     RHIPipelineHandle m_lighting              = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_lightCull             = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_pixelDebugCompute     = RHIPipelineHandle::Invalid(); ///< PixelDebug compute post-pass PSO.
     RHIPipelineHandle m_gpuSkinningPipeline   = RHIPipelineHandle::Invalid(); ///< GPU skinning compute PSO.
     RHIPipelineHandle m_gbufferDebug          = RHIPipelineHandle::Invalid();
