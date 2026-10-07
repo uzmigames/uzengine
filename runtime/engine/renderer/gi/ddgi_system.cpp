@@ -89,12 +89,42 @@ bool DDGISystem::CreateResources(IRHIDevice* device) {
         m_depthUav = m_device->GetTextureUAVIndex(m_depthAtlas);
     }
 
+    // ── Per-ray buffers (block B.6) ─────────────────────────────────────
+    // Failure is not fatal: without them DispatchUpdate keeps the per-texel trace.
+    {
+        RHIBufferDesc desc{};
+        desc.sizeBytes = static_cast<uint64_t>(kTotalProbes) * kMaxRaysPerProbe * 4 * sizeof(float);
+        desc.stride    = 4 * sizeof(float);
+        desc.usage     = RHIBufferUsage::StructuredBuffer | RHIBufferUsage::UnorderedAccess;
+        desc.debugName = "DDGI_RayRadiance";
+        m_rayRadiance  = m_device->CreateBuffer(desc);
+        desc.debugName = "DDGI_RayInfo";
+        m_rayInfo      = m_device->CreateBuffer(desc);
+        if (m_rayRadiance.IsValid() && m_rayInfo.IsValid()) {
+            m_rayRadianceSrv = m_device->GetBufferSRVIndex(m_rayRadiance);
+            m_rayRadianceUav = m_device->GetBufferUAVIndex(m_rayRadiance);
+            m_rayInfoSrv     = m_device->GetBufferSRVIndex(m_rayInfo);
+            m_rayInfoUav     = m_device->GetBufferUAVIndex(m_rayInfo);
+        } else {
+            UZ_LOG(Renderer, Warning,
+                   "DDGISystem: ray buffers not created ({} bytes each); the atlas writer traces per texel",
+                   desc.sizeBytes);
+            if (m_rayRadiance.IsValid()) m_device->DestroyBuffer(m_rayRadiance);
+            if (m_rayInfo.IsValid()) m_device->DestroyBuffer(m_rayInfo);
+            m_rayRadiance = {};
+            m_rayInfo = {};
+        }
+        m_rayBufferState = RHIResourceState::Common;
+    }
+
     UZ_LOG(Renderer, Info,
-           "DDGISystem: allocated irrad {}x{} (SRV={}, UAV={}), depth {}x{} (SRV={}, UAV={})",
+           "DDGISystem: allocated irrad {}x{} (SRV={}, UAV={}), depth {}x{} (SRV={}, UAV={}), ray buffers {} x {} rays (SRV={}/{}, UAV={}/{})",
            GetIrradianceAtlasWidth(),  GetIrradianceAtlasHeight(),
            m_irradSrv, m_irradUav,
            GetDepthAtlasWidth(),       GetDepthAtlasHeight(),
-           m_depthSrv, m_depthUav);
+           m_depthSrv, m_depthUav,
+           kTotalProbes, kMaxRaysPerProbe,
+           m_rayRadianceSrv, m_rayInfoSrv, m_rayRadianceUav, m_rayInfoUav);
 
     m_initialized = true;
     return true;
@@ -111,8 +141,18 @@ static auto* cv_DdgiDirectionalSky = UZ_CVAR_BOOL("r.GI.DDGI.DirectionalSky", tr
 static auto* cv_DdgiDiagnostic = UZ_CVAR_BOOL("r.GI.DDGI.Diagnostic", false,
     "Read back and log the DDGI writer's per-probe mean ray radiance once after frame 120 (pairs with r.GI.RadianceCache.Diagnostic)");
 
+static auto* cv_DdgiRayBuffers = UZ_CVAR_BOOL("r.GI.DDGI.RayBuffers", true,
+    "Trace each probe ray once per frame (ddgi_probe_trace_cs) into ray buffers the atlas writer integrates "
+    "(block B.6). 0 restores the per-texel trace: every irradiance and depth texel of a probe traces the "
+    "probe's rays itself (292 traces of each ray), for an A/B on one binary.");
+
+static auto* cv_DdgiIndirectTerm = UZ_CVAR_BOOL("r.GI.DDGI.IndirectTerm", true,
+    "DDGI probe rays add albedo x the previous frame's probe irradiance at the hit (the second bounce the SDF "
+    "radiance cache has always carried). Needs r.GI.DDGI.RayBuffers; 0 = sun bounce only, as before block B.6.");
+
 void DDGISystem::DispatchUpdate(IRHICommandList* cmdList,
                                 RHIPipelineHandle ddgiPipeline,
+                                RHIPipelineHandle tracePipeline,
                                 RHIPipelineHandle borderPipeline,
                                 uint32_t          tlasSrvIndex,
                                 CBRingAllocator*  cbRing,
@@ -161,7 +201,16 @@ void DDGISystem::DispatchUpdate(IRHICommandList* cmdList,
     constants.maxTraceDistance  = m_probeSpacing
                                 * static_cast<float>(kProbesPerAxis) * 2.0f;
     constants.temporalBlendAlpha = 0.12f;
-    constants.shBufferUav       = UINT32_MAX;
+    // Block B.6: the two radiance-cache-only slots carry the ray buffers' SRVs to the atlas
+    // writer (`ddgiRayRadianceSrv` / `ddgiRayInfoSrv` in ddgi_probe_common.hlsli); the sentinel
+    // keeps its per-texel trace.
+    const bool useRayBuffers = cv_DdgiRayBuffers->value != 0.0f && tracePipeline.IsValid()
+                            && m_rayRadiance.IsValid() && m_rayInfo.IsValid();
+    const bool indirectTerm  = useRayBuffers && cv_DdgiIndirectTerm->value != 0.0f;
+    constants.shBufferUav       = useRayBuffers ? m_rayRadianceSrv : UINT32_MAX;
+    constants.firstWrite        = useRayBuffers ? m_rayInfoSrv : UINT32_MAX;
+    m_lastRayBuffers  = useRayBuffers;
+    m_lastIndirectTerm = indirectTerm;
     constants.groundAlbedo      = 0.18f; // fallback outside every GDF cascade
 
     // ── Surface attributes: the global distance field ────────────────────
@@ -304,6 +353,51 @@ void DDGISystem::DispatchUpdate(IRHICommandList* cmdList,
         m_atlasCleared = true;
     }
 
+    // ── Trace pass (block B.6): every probe ray once ─────────────────────
+    // Runs after the atlas transition (it reads the previous frame's irradiance through the
+    // UAV for the indirect term) and before the atlas passes, which read the buffers as SRVs.
+    const uint32_t nRays = std::min<uint32_t>(constants.raysPerProbe, kMaxRaysPerProbe);
+    if (useRayBuffers) {
+        RHIBarrierDesc toUavBuf[2]{};
+        toUavBuf[0].buffer = m_rayRadiance;
+        toUavBuf[1].buffer = m_rayInfo;
+        for (auto& b : toUavBuf) {
+            b.stateBefore = m_rayBufferState;
+            b.stateAfter  = RHIResourceState::UnorderedAccess;
+        }
+        cmdList->ResourceBarrier(toUavBuf, 2);
+
+        cmdList->SetPipeline(tracePipeline);
+        // Root constants at b0 (ddgi_probe_trace_cs.hlsl): the atlas writer's first eight,
+        // then [8] ray radiance UAV, [9] ray info UAV, [10] indirect term, [11] history valid.
+        uint32_t traceConstants[12] = {};
+        traceConstants[0]  = m_irradUav;
+        traceConstants[1]  = m_depthUav;
+        traceConstants[2]  = tlasSrvIndex;
+        traceConstants[3]  = 0u;
+        traceConstants[4]  = frameIndex;
+        traceConstants[5]  = kProbesPerAxis;
+        traceConstants[6]  = 0u;
+        traceConstants[7]  = skyRadianceSrv;
+        traceConstants[8]  = m_rayRadianceUav;
+        traceConstants[9]  = m_rayInfoUav;
+        traceConstants[10] = indirectTerm ? 1u : 0u;
+        traceConstants[11] = m_firstUpdateComplete ? 1u : 0u;
+        cmdList->SetRootConstants(0, traceConstants, 12);
+        const uint32_t threads = kTotalProbes * nRays;
+        cmdList->Dispatch((threads + 63u) / 64u, 1, 1);
+
+        RHIBarrierDesc toSrvBuf[2]{};
+        toSrvBuf[0].buffer = m_rayRadiance;
+        toSrvBuf[1].buffer = m_rayInfo;
+        for (auto& b : toSrvBuf) {
+            b.stateBefore = RHIResourceState::UnorderedAccess;
+            b.stateAfter  = RHIResourceState::ShaderResource;
+        }
+        cmdList->ResourceBarrier(toSrvBuf, 2);
+        m_rayBufferState = RHIResourceState::ShaderResource;
+    }
+
     auto dispatch = [&](uint32_t atlasMode, uint32_t tileSize) {
         cmdList->SetPipeline(ddgiPipeline);
         // Root constants at b0:
@@ -409,10 +503,11 @@ void DDGISystem::QueueDiagnosticReadback(IRHICommandList* cmdList, uint32_t fram
     m_diagnosticCopyFrame = frameIndex;
     UZ_LOG(Renderer, Info, "DDGI transport: queued diagnostic snapshot frame={} origin=({},{},{}) spacing={}",
            frameIndex, m_gridOrigin.x, m_gridOrigin.y, m_gridOrigin.z, m_probeSpacing);
-    UZ_LOG(Renderer, Info, "DDGI transport: identity skySrv={} mip=0 swizzle=(x,z,y) rays={} sequence=stratified-frame-probe-rotation skyMultiplier=({},{},{}) lightColor=({},{},{}) lightDir=({},{},{}) lightIntensity={} indirectTerm=none knownRadiance={} keepDepth={} knownMode={} knownDistance={} knownDistanceMode={} farDepth={}",
+    UZ_LOG(Renderer, Info, "DDGI transport: identity skySrv={} mip=0 swizzle=(x,z,y) rays={} sequence=stratified-frame-probe-rotation skyMultiplier=({},{},{}) lightColor=({},{},{}) lightDir=({},{},{}) lightIntensity={} indirectTerm={} rayBuffers={} knownRadiance={} keepDepth={} knownMode={} knownDistance={} knownDistanceMode={} farDepth={}",
            m_lastSkyRadianceSrv, m_lastRaysPerProbe, m_lastSkyColor[0], m_lastSkyColor[1], m_lastSkyColor[2],
            m_lastLightColor[0], m_lastLightColor[1], m_lastLightColor[2],
            m_lastLightDir[0], m_lastLightDir[1], m_lastLightDir[2], m_lastLightIntensity,
+           m_lastIndirectTerm ? "atlas-previous-frame" : "none", m_lastRayBuffers ? 1 : 0,
            CVarRegistry::Get().GetFloat("r.GI.Diagnostic.KnownRadiance", 0.0f),
            CVarRegistry::Get().GetBool("r.GI.Diagnostic.KnownRadianceKeepDepth", false) ? 1 : 0,
            CVarRegistry::Get().GetInt("r.GI.Diagnostic.KnownRadianceMode", 0),
@@ -478,7 +573,14 @@ void DDGISystem::DestroyResources() {
         }
         if (m_diagnosticStats.IsValid()) m_device->DestroyBuffer(m_diagnosticStats);
         if (m_diagnosticReadback.IsValid()) m_device->DestroyBuffer(m_diagnosticReadback);
+        if (m_rayRadiance.IsValid()) m_device->DestroyBuffer(m_rayRadiance);
+        if (m_rayInfo.IsValid()) m_device->DestroyBuffer(m_rayInfo);
     }
+    m_rayRadiance = {};
+    m_rayInfo = {};
+    m_rayRadianceSrv = m_rayRadianceUav = UINT32_MAX;
+    m_rayInfoSrv = m_rayInfoUav = UINT32_MAX;
+    m_rayBufferState = RHIResourceState::Common;
     m_diagnosticStats = {};
     m_diagnosticReadback = {};
     m_diagnosticStatsUav = UINT32_MAX;

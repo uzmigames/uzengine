@@ -2,6 +2,7 @@
 
 #include "tlas_manager.h"
 #include "core/gbuffer/draw_list.h"
+#include "core/cvar.h"
 #include "rhi_device.h"
 #include "rhi_command_list.h"
 #include "log.h"
@@ -9,6 +10,11 @@
 #include <cstring>
 
 namespace uz {
+
+static auto* cv_TlasReuse = UZ_CVAR_BOOL("r.RayTracing.TLAS.Reuse", true,
+    "Skip the TLAS build when the instance descriptors (transforms, BLAS addresses) are unchanged "
+    "and refit in place when only their contents changed (block B.6). 0 rebuilds every frame, as "
+    "before, for an A/B on one binary.");
 
 bool TLASManager::Init(IRHIDevice* device, uint32_t maxInstances) {
     m_device = device;
@@ -66,6 +72,7 @@ void TLASManager::Rebuild(const DrawCommand* drawCommands, uint32_t drawCount,
     }
 
     uint32_t instanceCount = 0;
+    uint64_t hash = 1469598103934665603ull;   // FNV-1a 64 offset basis
     for (uint32_t i = 0; i < drawCount && instanceCount < m_maxInstances; ++i) {
         const auto& cmd = drawCommands[i];
 
@@ -110,17 +117,56 @@ void TLASManager::Rebuild(const DrawCommand* drawCommands, uint32_t drawCount,
         // AccelerationStructure GPU VA at byte offset 56
         std::memcpy(inst + 56, &blasAddress, 8);
 
+        // The descriptor as the build reads it (transform, id/mask, flags, BLAS address), plus the
+        // BLAS handle's slot and generation: a BLAS rebuilt into a reused pool slot can land at the
+        // same GPU address with different geometry, and the TLAS must not keep its old bounds.
+        for (uint32_t b = 0; b < 64; ++b) {
+            hash ^= static_cast<uint64_t>(inst[b]);
+            hash *= 1099511628211ull;
+        }
+        hash ^= static_cast<uint64_t>(blasHandle.index);
+        hash *= 1099511628211ull;
+        hash ^= static_cast<uint64_t>(blasHandle.generation);
+        hash *= 1099511628211ull;
+
         ++instanceCount;
     }
 
     m_device->UnmapBuffer(m_instanceBuffer);
+    const uint32_t previousCount = m_lastInstanceCount;
+    const uint64_t previousHash  = m_lastInstanceHash;
     m_lastInstanceCount = instanceCount;
+    m_lastInstanceHash  = hash;
 
     if (instanceCount == 0) return;
 
-    // Build the TLAS
+    // Block B.6: the same descriptors build the same tree, so an unchanged set keeps the TLAS
+    // of the previous frame (no build, no barrier). A set of the same size is refit in place.
+    const bool reuse = cv_TlasReuse->value != 0.0f && m_built;
+    if (reuse && instanceCount == previousCount && hash == previousHash) {
+        ++m_skips;
+        if (!m_skipLogged) {
+            m_skipLogged = true;
+            UZ_LOG(Renderer, Info,
+                   "TLASManager: instance descriptors unchanged ({} instances, hash {:016x}); build skipped (full builds so far {}, refits {})",
+                   instanceCount, hash, m_fullBuilds, m_refits);
+        }
+        return;
+    }
+    const bool refit = reuse && instanceCount == previousCount
+                    && m_refitsSinceBuild < kRefitsBeforeRebuild;
+
+    // Build (or refit) the TLAS
     cmdList->BuildTLAS(m_tlasHandle, m_instanceBuffer, instanceCount,
-                       RHIBufferHandle::Invalid(), false);
+                       RHIBufferHandle::Invalid(), refit);
+    if (refit) {
+        ++m_refits;
+        ++m_refitsSinceBuild;
+    } else {
+        ++m_fullBuilds;
+        m_refitsSinceBuild = 0;
+    }
+    m_built = true;
 
     // UAV barrier after TLAS build
     cmdList->UAVBarrierAS();
@@ -132,6 +178,10 @@ uint32_t TLASManager::GetTLASSRVIndex() const {
 }
 
 void TLASManager::Shutdown() {
+    if (m_device && (m_fullBuilds || m_refits || m_skips)) {
+        UZ_LOG(Renderer, Info, "TLASManager: builds full={} refit={} skipped={} (last {} instances)",
+               m_fullBuilds, m_refits, m_skips, m_lastInstanceCount);
+    }
     if (m_device) {
         if (m_instanceBuffer.IsValid()) {
             m_device->DestroyBuffer(m_instanceBuffer);
@@ -144,6 +194,10 @@ void TLASManager::Shutdown() {
     m_tlasHandle     = RHITLASHandle::Invalid();
     m_device         = nullptr;
     m_lastInstanceCount = 0;
+    m_lastInstanceHash = 0;
+    m_fullBuilds = m_refits = m_skips = m_refitsSinceBuild = 0;
+    m_built = false;
+    m_skipLogged = false;
 }
 
 } // namespace uz

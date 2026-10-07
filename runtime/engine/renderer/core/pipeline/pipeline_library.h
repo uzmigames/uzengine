@@ -719,6 +719,12 @@ public:
     /// @ref Microsoft DirectX-Specs "Inline Raytracing (DXR 1.1)"
     [[nodiscard]] RHIPipelineHandle GetDdgiProbeUpdate();
 
+    /// Returns the DDGI probe trace compute pipeline (`ddgi_probe_trace_cs.hlsl`, block B.6):
+    /// one thread per probe ray, writes the (radiance, hitT) and hit-info ray buffers that
+    /// `GetDdgiProbeUpdate()` integrates per atlas texel. Before it, every atlas texel traced
+    /// the probe's rays itself (292 traces of each ray).
+    [[nodiscard]] RHIPipelineHandle GetDdgiProbeTrace();
+
     /// Returns the DDGI atlas border-fill compute pipeline (`ddgi_border_fill_cs.hlsl`):
     /// copies each probe tile's interior into its 1-texel octahedral border after the probe
     /// update, and clears both atlases once at creation. Without it the deferred lighting's

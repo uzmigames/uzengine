@@ -3,8 +3,12 @@
 /// TLASManager — Builds and maintains the top-level acceleration structure each frame.
 ///
 /// Collects all visible mesh instances (transform + BLAS reference) and rebuilds
-/// the TLAS for ray tracing passes. The TLAS is updated in-place (refit) when
-/// only transforms change, or fully rebuilt when instances are added/removed.
+/// the TLAS for ray tracing passes. The instance descriptors are hashed each
+/// frame (block B.6): an unchanged set skips the build, a set of the same size
+/// with different transforms or BLAS addresses is refit in place (a full build
+/// every `kRefitsBeforeRebuild` refits keeps the refit quality), and a changed
+/// instance count is fully rebuilt. Before that the TLAS was rebuilt every
+/// frame, static scene or not.
 ///
 /// @ref Microsoft DXR spec — D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL.
 ///
@@ -81,6 +85,17 @@ public:
     /// Returns true if the TLAS was successfully built at least once.
     [[nodiscard]] bool IsReady() const { return m_tlasHandle.IsValid(); }
 
+    /// Build statistics since Init() (block B.6): full builds, in-place refits and frames whose
+    /// build was skipped because the instance descriptors were unchanged.
+    [[nodiscard]] uint32_t GetFullBuildCount() const noexcept { return m_fullBuilds; }
+    [[nodiscard]] uint32_t GetRefitCount() const noexcept     { return m_refits; }
+    [[nodiscard]] uint32_t GetSkipCount() const noexcept      { return m_skips; }
+
+    /// Refits between two full builds; a refit keeps the previous tree topology, so a long
+    /// run of them under motion degrades trace performance (DXR spec, "Acceleration
+    /// structure update constraints").
+    static constexpr uint32_t kRefitsBeforeRebuild = 64;
+
     /// Destroys the TLAS, instance buffer, and frees all GPU resources.
     void Shutdown();
 
@@ -90,6 +105,13 @@ private:
     RHIBufferHandle  m_instanceBuffer;
     uint32_t         m_maxInstances     = 0;
     uint32_t         m_lastInstanceCount = 0;
+    uint64_t         m_lastInstanceHash = 0;     ///< FNV-1a 64 of the instance descriptors last written.
+    uint32_t         m_fullBuilds       = 0;
+    uint32_t         m_refits           = 0;
+    uint32_t         m_skips            = 0;
+    uint32_t         m_refitsSinceBuild = 0;
+    bool             m_built            = false; ///< The TLAS holds a completed build.
+    bool             m_skipLogged       = false;
 };
 
 } // namespace uz

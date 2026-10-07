@@ -337,6 +337,7 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
             }
             if (wantDdgi) {
                 auto ddgiPipeline   = ctx.pipelines->GetDdgiProbeUpdate();
+                auto tracePipeline  = ctx.pipelines->GetDdgiProbeTrace();   // block B.6; invalid = per-texel trace
                 auto borderPipeline = ctx.pipelines->GetDdgiBorderFill();
                 if (ddgiPipeline.IsValid() && borderPipeline.IsValid()) {
                     const uint32_t tlasSrv = m_rtManager->GetTLASSRVIndex();
@@ -359,7 +360,7 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
                             : 0u;
 
                     m_ddgiSystem.DispatchUpdate(
-                        cmd, ddgiPipeline, borderPipeline, tlasSrv,
+                        cmd, ddgiPipeline, tracePipeline, borderPipeline, tlasSrv,
                         m_cbRing.get(), ctx.frameIndex,
                         &m_globalDistanceField, ctx.perFrameAlloc.cpuPtr,
                         vfxSrv, vfxCount);

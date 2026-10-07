@@ -302,6 +302,27 @@ the sky cubemap, and hardcodes 32 rays per probe.
 
 Regression guard: `scripts/test_ddgi_energy.ps1` (16 source-level checks).
 
+**Block B.6 (2026-10-07, `phase0_lighting-block-b-06-ddgi-dedup`,
+[lighting-block-b-06-ddgi-dedup.md](lighting-block-b-06-ddgi-dedup.md)).** The update shader ran
+one thread per atlas texel and every thread traced ALL of its probe's rays: 36 irradiance + 256
+depth texels per probe, 292 traces of each ray (`RadianceCache_Trace` 3.57 ms on Sponza Camera C at
+1080p, the SDF writer included). `ddgi_probe_trace_cs.hlsl` (new) now traces each ray once into two
+ray buffers the atlas writer integrates (`ddgi_probe_common.hlsli` holds the shared trace and
+helpers), and adds the second bounce the SDF writer always carried (`albedo × the previous frame's
+probe irradiance` at the hit, `r.GI.DDGI.IndirectTerm`, default on; `r.GI.DDGI.RayBuffers 0`
+restores the per-texel trace). Measured: `RadianceCache_Trace` 1.203 ms with the dedup
+against 3.585 ms per-texel on the same binary (SDF writer alone
+0.941 ms: the DDGI writer went from 2.644 to
+0.262 ms); the writer's per-probe mean ray radiance with the buffers (indirect term off)
+matches the per-texel trace (median relative 0.00000, D1a PASS) and the
+frame with the final gather off matches too (median 0.00000, D1b PASS);
+with the indirect term the energy ratio DDGI/SDF reads 0.9662 (was 0.9321; D4 PASS) and the
+diffuse GI of the frame (gather off) rises × 3.093. Note for every DDGI measurement:
+with `r.GI.FinalGather 1` (the QA project) the SDF final gather replaces the probe irradiance in every
+pixel, so the frame does not show the atlases at all (the dump's `diffuse_indirect` is ~0.0006 there).
+The DDGI probes still have no relocation / classification, no Chebyshev test inside the indirect
+term, and `g_probeOffset` (temporal spreading) is unused.
+
 **Indirect-path noise (2026-09-08, `phase0_sponza-followup-06`).** With `r.TAA` off
 (the engine default), the stochastic passes — SDF reflections (4 GGX rays/pixel),
 world-space final gather, GTAO — show per-pixel noise; on a dark wall beside a
@@ -647,7 +668,13 @@ captured and bound — but:
 - [passes/raytracing/rt_uv_test_pass.cpp](../../runtime/engine/renderer/passes/raytracing/rt_uv_test_pass.cpp)
 
 Infrastructure exists:
-- `RTManager` singleton with per-frame TLAS rebuild
+- `RTManager` singleton; the TLAS is built only when the instance descriptors change (block
+  B.6, 2026-10-07: `TLASManager::Rebuild` hashes the descriptors, skips an unchanged set, refits a
+  same-size set in place, rebuilds otherwise; `r.RayTracing.TLAS.Reuse 0` = the previous per-frame
+  rebuild). Sponza Camera C: `RT_BLAS_TLAS` 0.0006 ms with reuse against
+  0.093 ms rebuilt every frame; over 126 frames 35 full
+  builds (while the meshes stream in), 0 refits, 133 skipped.
+  The refit bound (`kRefitsBeforeRebuild` 64) has not been measured on a moving scene.
 - `BLASManager` builds per-mesh on first draw, cached
 - `ShaderTableBuilder` for hit groups / miss shaders
 - Only one RT shader: `rt_uv_test_lib.hlsl` — a barycentric UV visualizer

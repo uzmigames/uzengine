@@ -620,6 +620,64 @@ RHIPipelineHandle PipelineLibrary::GetDdgiProbeUpdate() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// DDGI Probe Trace Compute Pipeline (block B.6: one thread per probe ray)
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureDdgiProbeTraceShader() {
+    if (m_ddgiProbeTraceCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::DdgiProbeTraceCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile DdgiProbeTraceCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "ddgi_probe_trace_cs";
+
+    m_ddgiProbeTraceCS = m_device->CreateShader(shaderDesc);
+    if (!m_ddgiProbeTraceCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create DdgiProbeTraceCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetDdgiProbeTrace() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetDdgiProbeTrace called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_ddgiProbeTrace.IsValid()) {
+        return m_ddgiProbeTrace;
+    }
+
+    if (!EnsureDdgiProbeTraceShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ddgiProbeTraceCS;
+    desc.debugName     = "DDGI_ProbeTrace";
+
+    m_ddgiProbeTrace = m_device->CreateComputePipeline(desc);
+    if (!m_ddgiProbeTrace.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create DDGI_ProbeTrace pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created DDGI_ProbeTrace pipeline");
+    }
+
+    return m_ddgiProbeTrace;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // DDGI Atlas Border Fill Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 //

@@ -7,8 +7,11 @@
 ///
 ///   1. Decode the (probe, octahedral xy) coordinates from the dispatch.
 ///   2. Decode the octahedral xy back into a unit direction.
-///   3. Trace `raysPerProbe` rays at that direction (cone-blurred via the
-///      basis dot weighting in Majercik 2019 §5).
+///   3. Read the probe's `raysPerProbe` rays from the buffers `ddgi_probe_trace_cs.hlsl`
+///      wrote this frame (block B.6; before it every texel traced the rays itself,
+///      292 traces of every ray) and weight them by the basis dot product
+///      (cone-blurred, Majercik 2019 §5). Without the buffers (sentinel SRV,
+///      r.GI.DDGI.RayBuffers 0) the texel traces the rays as before.
 ///   4. Accumulate either irradiance (cosine-weighted radiance) or depth
 ///      statistics (mean distance, mean distance²).
 ///   5. EMA-blend with the previous frame for temporal stability.
@@ -21,8 +24,6 @@
 /// @ref Cigolle et al. 2014 "A Survey of Efficient Representations for
 ///                           Independent Unit Vectors" — octahedral encoding
 /// @ref Microsoft DirectX-Specs "Inline Raytracing (DXR 1.1)" — RayQuery<>
-
-#include "../common/constants.hlsli"
 
 // ─── Root constants at b0 ──────────────────────────────────────────────────
 
@@ -54,305 +55,9 @@ cbuffer RootConstants : register(b0) {
                                ///< (visibility 1 at the consumer) while the radiance stays real.
 };
 
-// ─── Trace constants at b2 (matches DDGI cb layout) ───────────────────────
-
-cbuffer TraceConstants : register(b2) {
-    float gridOriginX;
-    float gridOriginY;
-    float gridOriginZ;
-    float probeSpacing;
-
-    uint  probesPerAxis;
-    uint  totalProbes;
-    uint  raysPerProbe;
-    uint  frameIndex;
-
-    float maxTraceDistance;
-    float temporalBlendAlpha;
-    uint  shBufferUav;          // Unused by atlas writer.
-    uint  firstWrite;           // Unused by atlas writer; the radiance cache uses
-                                // it to replace instead of blend on the first pass.
-
-    // GDF clipmap parameters. Unused by the DXR atlas writer, but they MUST stay
-    // scalar to mirror RadianceCacheTraceConstants (208 bytes here: 176 shared +
-    // the 16-byte VFX emissive tail + the 16-byte grid-recentre row): HLSL gives every array element its own
-    // 16-byte register, so `float x[4]` occupies 64 bytes instead of 16. The four
-    // arrays took 256 bytes where the C++ struct has 64, shifting every field
-    // below by 192 bytes past the uploaded struct and feeding garbage sky/sun
-    // colors to every probe ray.
-    // @ref Microsoft HLSL "Packing Rules for Constant Variables"
-    float gdfCenter0X, gdfCenter0Y, gdfCenter0Z, gdfExtent0;
-    float gdfCenter1X, gdfCenter1Y, gdfCenter1Z, gdfExtent1;
-    float gdfCenter2X, gdfCenter2Y, gdfCenter2Z, gdfExtent2;
-    float gdfCenter3X, gdfCenter3Y, gdfCenter3Z, gdfExtent3;
-    uint  gdfClipmapSrv0;
-    uint  gdfClipmapSrv1;
-    uint  gdfClipmapSrv2;
-    uint  gdfClipmapSrv3;
-
-    uint  numGdfClipmaps;
-    float skyColorR;
-    float skyColorG;
-    float skyColorB;
-
-    float lightDirX;
-    float lightDirY;
-    float lightDirZ;
-    float lightIntensity;
-
-    float lightColorR;
-    float lightColorG;
-    float lightColorB;
-    float groundAlbedo;
-
-    // ── VFX → DDGI emissive injection (phase16 hardware-validation) ──────
-    // Mirrors the trailing fields of `uz::RadianceCacheTraceConstants` in
-    // `engine/renderer/gi/radiance_cache.h`. When `vfxEmissiveSampleCount`
-    // is 0 (CVar off / no alive emitters / radiance-cache shader path) the
-    // accumulation loop below is skipped at runtime and DXC dead-code
-    // strips the entire branch on shader-stage scheduling.
-    uint  vfxEmissiveSrvIndex;
-    uint  vfxEmissiveSampleCount;
-    float regionBlendAlpha;    ///< radiance cache only (block B.2 phase 4); layout mirror
-    float _vfxEmissivePad1;
-
-    // Radiance-cache grid-recentre row (history scroll); mirrored for layout
-    // parity with `RadianceCacheTraceConstants`, not consumed by the DDGI writer.
-    int   historyShiftX;
-    int   historyShiftY;
-    int   historyShiftZ;
-    uint  _historyShiftPad;
-};
-
-// ─── VFX emissive sample (mirrors `uz::VfxEmissiveSample`) ───────────────
-//
-// Layout MUST match the CPU `struct VfxEmissiveSample` in
-// `engine/vfx/lighting/vfx_ddgi_injection.h` byte-for-byte. The CPU side is:
-//   Vec3  position;        // 12 bytes (3 floats, NOT a float4 — Vec3 is
-//                          //          tightly packed with no trailing pad)
-//   Vec3  emissive;        // 12 bytes
-//   float influenceRadius; //  4 bytes
-//   ───── total = 28 bytes ─────
-//
-// The structured buffer is created with `desc.stride = sizeof(VfxEmissiveSample)`
-// = 28 in `vfx_ddgi_emissive_feed.cpp:53`. We must therefore declare the HLSL
-// struct as scalars-only so DXC packs it tightly (28 bytes); a `float3 position`
-// followed by `float3 emissive` would force `emissive` to offset 16 (HLSL
-// disallows float3 straddling a 16-byte boundary), bloating the stride to 32
-// and corrupting buffer reads.
-struct VfxDDGIEmissiveSample {
-    float positionX;        // offset 0
-    float positionY;        // offset 4
-    float positionZ;        // offset 8
-    float emissiveX;        // offset 12
-    float emissiveY;        // offset 16
-    float emissiveZ;        // offset 20
-    float influenceRadius;  // offset 24
-};
-
-// ─── Constants ────────────────────────────────────────────────────────────
-
-static const float kPI            = 3.14159265358979323846;
-static const float kRayTMin       = 1.0;          // cm — avoid self-hit
-static const float kSurfaceBias   = 2.0;          // cm — shadow ray origin offset
-static const uint  kIrradProbeSize = 6;           // matches DDGISystem::kIrradianceProbeSize
-static const uint  kDepthProbeSize = 16;          // matches DDGISystem::kDepthProbeSize
-static const uint  kMaxRaysPerProbe = 64;
-static const float kSurfaceEpsilon = 5.0;         // cm — GDF normal central-difference offset
-
-// Shared GDF surface sampling — supplies the hit normal and albedo that an
-// inline RayQuery cannot report. Needs linearClamp + the trace cbuffer above.
-#include "gdf_surface.hlsli"
-
-// ─── Hammersley + spherical sample (shared with SDF shader) ──────────────
-
-float RadicalInverseVdC(uint bits) {
-    bits = (bits << 16u) | (bits >> 16u);
-    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
-    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
-    bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
-    bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
-    return float(bits) * 2.3283064365386963e-10;
-}
-
-float2 Hammersley(uint i, uint N) {
-    return float2(float(i) / float(N), RadicalInverseVdC(i));
-}
-
-float3 SphericalSample(float2 xi) {
-    float z = 1.0 - 2.0 * xi.x;
-    float r = sqrt(max(0.0, 1.0 - z * z));
-    float phi = 2.0 * kPI * xi.y;
-    return float3(r * cos(phi), r * sin(phi), z);
-}
-
-// ─── Octahedral encode/decode (Cigolle 2014) ─────────────────────────────
-//
-// Maps a unit direction <-> [-1,1]^2. The decode used by the atlas reader
-// must exactly mirror this so the per-texel direction is consistent.
-
-float2 OctWrap(float2 v) {
-    return (1.0 - abs(v.yx)) * float2(v.x >= 0.0 ? 1.0 : -1.0,
-                                      v.y >= 0.0 ? 1.0 : -1.0);
-}
-
-float2 OctEncodeDir(float3 n) {
-    n /= (abs(n.x) + abs(n.y) + abs(n.z));
-    float2 e = (n.z >= 0.0) ? n.xy : OctWrap(n.xy);
-    return e * 0.5 + 0.5; // map to [0,1]
-}
-
-float3 OctDecodeDir(float2 f) {
-    f = f * 2.0 - 1.0;
-    float3 n = float3(f.x, f.y, 1.0 - abs(f.x) - abs(f.y));
-    float t = saturate(-n.z);
-    n.x += (n.x >= 0.0) ? -t : t;
-    n.y += (n.y >= 0.0) ? -t : t;
-    return normalize(n);
-}
-
-// ─── Atlas tile layout helpers ───────────────────────────────────────────
-
-uint3 ProbeIndexToCell(uint linearIdx) {
-    uint x = linearIdx % g_probesPerAxis;
-    uint y = (linearIdx / g_probesPerAxis) % g_probesPerAxis;
-    uint z = linearIdx / (g_probesPerAxis * g_probesPerAxis);
-    return uint3(x, y, z);
-}
-
-float3 ProbePosition(uint linearIdx) {
-    uint3 c = ProbeIndexToCell(linearIdx);
-    return float3(gridOriginX, gridOriginY, gridOriginZ)
-         + float3(float(c.x), float(c.y), float(c.z)) * probeSpacing;
-}
-
-// Atlas tile = (probesPerAxis * probesPerAxis) tiles laid out across X,
-// stacked probesPerAxis tiles along Y. Each tile is `(size+2)` to include
-// the 1-texel border. Returns the texel coordinate of the probe's (0,0)
-// corner inside the atlas, EXCLUDING the border (i.e. the first interior
-// texel).
-uint2 ProbeAtlasOrigin(uint linearIdx, uint tileSize) {
-    uint stride = tileSize + 2u;
-    uint tileX  = linearIdx % (g_probesPerAxis * g_probesPerAxis);
-    uint tileY  = linearIdx / (g_probesPerAxis * g_probesPerAxis);
-    return uint2(tileX * stride + 1u,
-                 tileY * stride + 1u);
-}
-
-// ─── Sky radiance for a ray that escapes the scene ──────────────────────
-//
-// The SDF radiance cache samples the sky cubemap in the ray direction and multiplies by the sky
-// colour (radiance_cache_trace_cs.hlsl). This path used a flat colour, which cost the DXR probes
-// the cubemap's directional variation and made the two paths disagree (followup-01). Same
-// cubemap, same Z-up to Y-up swizzle, same multiply.
-float3 SkyRadiance(float3 dir) {
-    const float3 tint = float3(skyColorR, skyColorG, skyColorB);
-    if (g_skyRadianceSrv == kSentinelSrvIndex) {
-        return tint;
-    }
-    TextureCube<float4> sky = ResourceDescriptorHeap[g_skyRadianceSrv];
-    return sky.SampleLevel(linearClamp, float3(dir.x, dir.z, dir.y), 0).rgb * tint;
-}
-
-// ─── Sample radiance toward a single direction ──────────────────────────
-
-// Known-radiance diagnostic (followup-01): mode 0 = constant L, mode 1 = L * (0.5 + 0.5 dot(dir, d0))
-// with d0 = normalize(0.3, 0.5, 0.8), a smooth non-negative function of direction that crosses every
-// octahedral tile edge and corner — a misplaced or inverted border copy shows against it.
-static const float3 kKnownDir = float3(0.30305, 0.50508, 0.80812);
-float3 KnownRadiance(float L, float3 dir, uint mode) {
-    // mode 2 (per-probe parity) is applied by the caller through L itself; here it is a constant.
-    const float v = (mode == 1u) ? L * (0.5 + 0.5 * dot(dir, kKnownDir)) : L;
-    return float3(v, v, v);
-}
-
-float4 TraceProbeRay(float3 origin, float3 dir, out float4 hitInfo) {
-    hitInfo = float4(0.0, 0.0, 0.0, 0.0);
-    if (g_tlasSrvIndex == kSentinelSrvIndex) {
-        return float4(SkyRadiance(dir), maxTraceDistance);
-    }
-    RaytracingAccelerationStructure tlas = ResourceDescriptorHeap[g_tlasSrvIndex];
-
-    RayDesc ray;
-    ray.Origin    = origin;
-    ray.Direction = dir;
-    ray.TMin      = kRayTMin;
-    ray.TMax      = maxTraceDistance;
-
-    RayQuery<RAY_FLAG_FORCE_OPAQUE> q;
-    q.TraceRayInline(tlas, RAY_FLAG_NONE, 0xFF, ray);
-    q.Proceed();
-
-    if (q.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
-        // Single-bounce sun lighting at the (unknown-normal) hit point.
-        // Use the negated ray direction as a conservative outward normal —
-        // accurate per-vertex normals require an SBT/hit-group pipeline.
-        const float  hitT = q.CommittedRayT();
-        const float3 hitP = origin + dir * hitT;
-
-        // Surface attributes come from the global distance field, the same
-        // source the SDF writer shades with. Inline RayQuery reports the hit
-        // distance but no attributes, and `-dir` (the previous conservative
-        // normal) makes every hit face the incoming ray, so an interior wall
-        // was lit as if it were turned toward the sun. Fall back to `-dir`
-        // only where the field has no gradient (outside every cascade).
-        float3 N = GdfNormal(hitP);
-        if (dot(N, N) < 0.5) N = -dir;
-        float3 L    = normalize(float3(lightDirX, lightDirY, lightDirZ));
-        float  NdL  = max(dot(N, L), 0.0);
-
-        // Shadow ray. Without it every hit point is lit as if the sun were
-        // unoccluded, so interior walls inside the atrium fed the probes with
-        // full sunlight. The SDF writer has always done this test
-        // (`TraceGDF(shadowOrigin, L, ...) == -1` in radiance_cache_trace_cs).
-        float visibility = 0.0;
-        if (NdL > 0.0) {
-            RayDesc shadowRay;
-            shadowRay.Origin    = hitP + N * kSurfaceBias;
-            shadowRay.Direction = L;
-            shadowRay.TMin      = kRayTMin;
-            shadowRay.TMax      = maxTraceDistance;
-
-            RayQuery<RAY_FLAG_FORCE_OPAQUE
-                   | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> sq;
-            sq.TraceRayInline(tlas, RAY_FLAG_NONE, 0xFF, shadowRay);
-            sq.Proceed();
-            visibility = (sq.CommittedStatus() == COMMITTED_TRIANGLE_HIT) ? 0.0 : 1.0;
-        }
-
-        float3 sunRad = float3(lightColorR, lightColorG, lightColorB)
-                      * lightIntensity * NdL * visibility;
-
-        // Lambertian BRDF: the radiance leaving a diffuse surface is
-        // `albedo/pi * E`, not `albedo * E`. The missing 1/pi made every
-        // surface bounce pi times too bright, which is why the DXR path
-        // measured 1.49x the SDF path's HDR mean on Sponza Camera A
-        // (12.1 vs 8.1 at 1080p, auto exposure off, identical CVars).
-        // The SDF writer already carries this term:
-        //   `radiance = albedo * (sunRad / kPI + indirect)`.
-        // @ref Majercik 2019 — probe atlases store E/pi (radiance-like).
-        //
-        // Albedo also comes from the field (GBA = diffuse reflectance), so both
-        // writers bounce the same energy off the same surface; `groundAlbedo`
-        // stays as the fallback for points outside every cascade.
-        // Validity comes from the field, not from the colour: a point inside a
-        // clipmap returns its distance (< 1e8) with its diffuse reflectance, and
-        // black is a legitimate reflectance (dark dirt; the composite writes
-        // zero for fully metallic surfaces on purpose). Only a hit outside every
-        // cascade (distance sentinel 1e9) falls back to the average albedo.
-        const float4 surface = SampleGdfSurface(hitP);
-        const float3 albedo = surface.x < 1e8 ? saturate(surface.gba)
-                                              : float3(groundAlbedo, groundAlbedo, groundAlbedo);
-        // z: 1 when the committed triangle faced the ray (diagnostic, H-63 follow-on): whether the
-        // rays of a probe the field calls "inside" find back faces, as a probe inside a closed
-        // volume would, or front faces, as a probe in free space would. The trace culls nothing.
-        hitInfo = float4((NdL * visibility) > 0.0 ? 1.0 : 0.0,
-                         dot(albedo, float3(0.2126, 0.7152, 0.0722)),
-                         q.CommittedTriangleFrontFace() ? 1.0 : 0.0, visibility);
-        return float4(albedo * (sunRad / kPI), hitT);
-    }
-    return float4(SkyRadiance(dir), maxTraceDistance);
-}
+// Trace constants (b2), helpers, sky, GDF surface and `TraceProbeRay` — shared with the
+// trace pass so both derive the same ray i of probe p from the same arguments.
+#include "ddgi_probe_common.hlsli"
 
 // ─── Entry point — one thread per atlas texel of one probe ───────────────
 //
@@ -397,7 +102,13 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     // Majercik 2019 §5 — the per-texel cosine integration that gives DDGI
     // its smooth probe filtering without resampling at lookup time.
     uint nRays = min(raysPerProbe, kMaxRaysPerProbe);
-    uint frameJitter = (g_frameIndex * 1664525u + 1013904223u);
+
+    // Block B.6: the rays were traced once per probe by ddgi_probe_trace_cs.hlsl into the two
+    // ray buffers (index probe * nRays + i). The sentinel SRV (r.GI.DDGI.RayBuffers 0, or no
+    // buffers) keeps the per-texel trace of the previous design for an A/B on one binary.
+    const bool useRayBuffers = ddgiRayRadianceSrv != kSentinelSrvIndex
+                            && ddgiRayInfoSrv != kSentinelSrvIndex;
+    const uint rayBase = probeIdx * nRays;
 
     float3 accumIrrad = float3(0, 0, 0);
     float  accumWeight = 0.0;
@@ -426,17 +137,24 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     [loop]
     for (uint i = 0; i < nRays; ++i) {
         // A full stratified set, rotated per frame and per probe (Cranley-Patterson), the
-        // same construction as radiance_cache_trace_cs.hlsl. The previous
+        // same construction as radiance_cache_trace_cs.hlsl (`ProbeRayDirection`; the trace
+        // pass derives ray i of this probe from the same arguments). The previous
         // `Hammersley(i + j, nRays + (jitter & 0xFF))` was a contiguous window into a longer
         // sequence: its polar coordinate spanned ~32/N of [0,1), so each frame's rays covered a
         // band of the sphere (followup-01, H-57: mean 0.373 of a field whose mean is 0.5).
-        float2 xi = frac(Hammersley(i, nRays)
-                         + float2(RadicalInverseVdC(frameJitter),
-                                  RadicalInverseVdC(frameJitter ^ probeIdx)));
-        float3 rayDir = SphericalSample(xi);
+        float3 rayDir = ProbeRayDirection(i, nRays, probeIdx, g_frameIndex);
 
         float4 hitInfo;
-        float4 rt = TraceProbeRay(probePos, rayDir, hitInfo);
+        float4 rt;
+        if (useRayBuffers) {
+            StructuredBuffer<float4> rayRadiance = ResourceDescriptorHeap[ddgiRayRadianceSrv];
+            StructuredBuffer<float4> rayInfoBuf  = ResourceDescriptorHeap[ddgiRayInfoSrv];
+            rt      = rayRadiance[rayBase + i];
+            hitInfo = rayInfoBuf[rayBase + i];
+        } else {
+            float3 hitP, hitN, hitAlbedo;
+            rt = TraceProbeRay(probePos, rayDir, hitInfo, hitP, hitN, hitAlbedo);
+        }
         float3 radiance = rt.rgb;
         float  hitT     = rt.a;
         // Diagnostic (followup-01, H-60 follow-on): real radiance, far depth — separates the visibility

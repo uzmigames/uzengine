@@ -73,6 +73,10 @@ public:
     /// Higher resolution for depth — needed because depth has hard edges.
     static constexpr uint32_t kDepthProbeSize = 16;
 
+    /// Capacity of the per-ray buffers (block B.6): `r.GI.RadianceCache.RaysPerProbe` is clamped
+    /// to this in both DDGI shaders (`kMaxRaysPerProbe` in ddgi_probe_common.hlsli).
+    static constexpr uint32_t kMaxRaysPerProbe = 64;
+
     DDGISystem() = default;
     ~DDGISystem();
 
@@ -149,13 +153,17 @@ public:
         return m_irradUav != UINT32_MAX && m_depthUav != UINT32_MAX;
     }
 
-    /// Dispatches the DDGI atlas-writing compute shader twice — once for the
+    /// Traces every probe's rays once (`ddgi_probe_trace_cs.hlsl`, block B.6) into the two
+    /// ray buffers, then dispatches the DDGI atlas-writing compute shader twice — once for the
     /// irradiance atlas and once for the depth atlas — with the appropriate
     /// root constants and resource barriers.
     ///
     /// # Arguments
     /// * `cmdList` — Command list in recording state.
     /// * `ddgiPipeline` — Compute PSO created from `ddgi_probe_update_cs.hlsl`.
+    /// * `tracePipeline` — Compute PSO created from `ddgi_probe_trace_cs.hlsl`. Invalid (or
+    ///   `r.GI.DDGI.RayBuffers 0`, or no ray buffers) keeps the per-texel trace of the
+    ///   previous design: the update shader traces the rays itself, 292 times each.
     /// * `tlasSrvIndex` — Bindless SRV index of the scene TLAS (0xFFFFFFFF if none).
     /// * `cbRing` — CB ring allocator for trace constants.
     /// * `perFrameBuffer` / `perFrameOffset` / `perFrameCpuPtr` / `perFrameSize` —
@@ -179,6 +187,7 @@ public:
     ///   probes were lit by a placeholder environment instead of the scene.
     void DispatchUpdate(IRHICommandList* cmdList,
                         RHIPipelineHandle ddgiPipeline,
+                        RHIPipelineHandle tracePipeline,
                         RHIPipelineHandle borderPipeline,
                         uint32_t          tlasSrvIndex,
                         CBRingAllocator*  cbRing,
@@ -203,6 +212,20 @@ private:
     bool             m_firstUpdateComplete = false;
     bool m_firstDispatch = true; ///< Atlases start in Common state.
     bool m_atlasCleared = false;   ///< Both atlases cleared once (border fill pass, H-55).
+
+    // ── Per-ray buffers (block B.6) ────────────────────────────────────────
+    // `ddgi_probe_trace_cs.hlsl` writes (radiance, hitT) and the hit info of every probe ray
+    // once per frame; the atlas writer reads them per texel instead of tracing. Sized for
+    // kTotalProbes * kMaxRaysPerProbe float4 each.
+    RHIBufferHandle  m_rayRadiance{};
+    RHIBufferHandle  m_rayInfo{};
+    uint32_t         m_rayRadianceSrv = UINT32_MAX;
+    uint32_t         m_rayRadianceUav = UINT32_MAX;
+    uint32_t         m_rayInfoSrv     = UINT32_MAX;
+    uint32_t         m_rayInfoUav     = UINT32_MAX;
+    RHIResourceState m_rayBufferState = RHIResourceState::Common;
+    bool             m_lastRayBuffers  = false;   ///< identity log line
+    bool             m_lastIndirectTerm = false;  ///< identity log line
 
     // ── Transport diagnostic (r.GI.DDGI.Diagnostic) ────────────────────────
     // One float2 per irradiance-atlas texel: mean ray radiance luminance and
