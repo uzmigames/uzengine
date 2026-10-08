@@ -1485,6 +1485,17 @@ pub fn build(b: *std.Build) void {
             b.path(tp ++ "luajit/src/lua51.dll"), "lua51.dll",
         ).step);
 
+        // Engine content the renderer loads at run time for every project: the cloud noise volumes
+        // (runtime/content/atmosphere, MIT data from takram/three-geospatial, notice beside them).
+        // Installed as bin/content/atmosphere so uz::ResolveEngineResource("content/atmosphere/...")
+        // finds them; nothing deployed them after the pbr_test demo's copy step went away
+        // (phase0_clouds-noise-assets).
+        b.getInstallStep().dependOn(&b.addInstallDirectory(.{
+            .source_dir = b.path("content/atmosphere"),
+            .install_dir = .bin,
+            .install_subdir = "content/atmosphere",
+        }).step);
+
         // NVIDIA DLSS SDK — nvngx_dlss.dll must be next to the exe for NGX to find it.
         // The DLSS upscaler uses LoadLibrary("_nvngx.dll") which is driver-provided,
         // but the actual DLSS model DLL must be deployed alongside the application.
