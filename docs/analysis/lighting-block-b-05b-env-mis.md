@@ -90,7 +90,8 @@ on smooth metals in every scene without an HDRI"), taken after the block closed.
   agrees; p10-p90 of the reflection's ratio 1.705-1.726). Every image-based term samples this
   environment (the prefiltered specular, the sky SH, this estimate), so E1 reads the factor. Fixing
   the capture changes the ambient of every atmosphere scene, Sponza's calibrated look included:
-  recorded in known-issues, left to its own decision.
+  recorded in known-issues, left to its own decision. **Taken by the user and fixed in B.5c**
+  (`lighting-block-b-05c-sky-capture.md`): E1 reads the fix as S2 there.
 - **The sphere of `sample/content/meshes/sphere.uzmesh` renders inside-out.** In `chrome_test` the
   dump's visible positions are the far hemisphere's (x median -51.577 cm with the camera at x = 400) and the
   outward normals face away from the camera (N·V -0.698): back-face culling keeps the far side,

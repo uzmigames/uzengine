@@ -43,6 +43,8 @@ FLOOR_ROUGHNESS = 0.02
 FLOOR_VARIANTS = {'rough30': 0.3, 'rough50': 0.5}   # block B.5b: rough metal floors (same F0)
 HDRI_VARIANT = 'hdri'                                # block B.5b: the chrome floor under a PMREM environment
 HDRI_CUBEMAP = 'textures/ballroom_2k.pmrem.ktx2'
+WARM_VARIANT = 'warm'                                # block B.5c: a coloured sun (the sky capture per channel)
+WARM_SUN_COLOUR = (1.0, 0.7, 0.4)
 BOXES = {
     'red':   (((-350.0, 150.0, 0.0), (-250.0, 250.0, 100.0)), (0.8, 0.15, 0.1)),
     'green': (((-50.0, 350.0, 0.0), (50.0, 500.0, 150.0)), (0.15, 0.7, 0.15)),
@@ -97,10 +99,10 @@ def _mesh_entity(name, asset, colour, roughness, metallic):
 SCENE_CVARS = dict(shaft.SCENE_CVARS)
 
 
-def scene_json(with_floor: bool, eye, target, name, floor_roughness=FLOOR_ROUGHNESS, hdri=None):
+def scene_json(with_floor: bool, eye, target, name, floor_roughness=FLOOR_ROUGHNESS, hdri=None, sun_colour=(1.0, 1.0, 1.0)):
     ents = [
         _entity('Sun', {'transform': {'position': [0, 0, 0], 'rotation': [-SUN_ELEVATION, 0, 0], 'scale': [1, 1, 1]},
-                        'light': {'type': 'directional', 'color': [1, 1, 1], 'intensity': 10, 'cast_shadows': True,
+                        'light': {'type': 'directional', 'color': list(sun_colour), 'intensity': 10, 'cast_shadows': True,
                                   'atmosphere_sun_light': True, 'light_source_angle': 0.53}}),
         _entity('Camera', {'transform': {'position': list(eye), 'rotation': [0, 0, 0], 'scale': [1, 1, 1]},
                            'camera': {'fov': FOV, 'near': 5, 'far': 10000, 'active': True, 'look_at': list(target)}}),
@@ -146,13 +148,14 @@ def generate():
         with open(project, 'w', encoding='utf-8') as fh:
             json.dump(project_json(scene, title), fh, indent=2)
         written.append(project)
-    variants = [(key, f'Reflection reference (metal floor, roughness {rough})', rough, None) for key, rough in FLOOR_VARIANTS.items()]
-    variants.append((HDRI_VARIANT, 'Reflection reference (chrome floor, PMREM environment)', FLOOR_ROUGHNESS, HDRI_CUBEMAP))
-    for key, title, rough, hdri in variants:
+    variants = [(key, f'Reflection reference (metal floor, roughness {rough})', rough, None, (1.0, 1.0, 1.0)) for key, rough in FLOOR_VARIANTS.items()]
+    variants.append((HDRI_VARIANT, 'Reflection reference (chrome floor, PMREM environment)', FLOOR_ROUGHNESS, HDRI_CUBEMAP, (1.0, 1.0, 1.0)))
+    variants.append((WARM_VARIANT, 'Reflection reference (chrome floor, warm sun)', FLOOR_ROUGHNESS, None, WARM_SUN_COLOUR))
+    for key, title, rough, hdri, sun_colour in variants:
         scene = variant_scene(key)
         path = os.path.join(CONTENT, 'scenes', f'{scene}.uzscene')
         with open(path, 'w', encoding='utf-8') as fh:
-            json.dump(scene_json(True, CAMERA_EYE, CAMERA_TARGET, title, rough, hdri), fh, indent=2)
+            json.dump(scene_json(True, CAMERA_EYE, CAMERA_TARGET, title, rough, hdri, sun_colour), fh, indent=2)
         written.append(path)
         with open(variant_project(key), 'w', encoding='utf-8') as fh:
             json.dump(project_json(scene, title), fh, indent=2)

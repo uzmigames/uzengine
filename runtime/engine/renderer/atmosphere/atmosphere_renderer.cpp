@@ -251,7 +251,11 @@ void AddAtmospherePasses(
                 cubeRC.sunDirX             = sunDir.x;
                 cubeRC.sunDirY             = sunDir.y;
                 cubeRC.sunDirZ             = sunDir.z;
-                cubeRC.sunIntensity        = skySunColor.Length();
+                // Per channel, the sky pass's quantity (block B.5c: the length of the vector was
+                // sqrt 3 x the per-channel value of a white sun, and grey for a tinted one).
+                cubeRC.sunIllumX           = skySunColor.x;
+                cubeRC.sunIllumY           = skySunColor.y;
+                cubeRC.sunIllumZ           = skySunColor.z;
                 cubeRC.transmittanceLutIdx = ctx.transmittanceLutSrv;
                 cubeRC.packedScatterScales = packed;
                 // Bruneton 3D scattering LUT for cubemap capture — avoids 16-step ray march.
@@ -289,7 +293,9 @@ void AddAtmospherePasses(
                 psRC.sunDirX             = sunDir.x;
                 psRC.sunDirY             = sunDir.y;
                 psRC.sunDirZ             = sunDir.z;
-                psRC.sunIntensity        = skySunColor.Length();
+                psRC.sunIllumX           = skySunColor.x;
+                psRC.sunIllumY           = skySunColor.y;
+                psRC.sunIllumZ           = skySunColor.z;
                 psRC.cubeFaceIndex       = 0; // Updated per-face in the pass
                 psRC.packedScatterScales = packed;
 

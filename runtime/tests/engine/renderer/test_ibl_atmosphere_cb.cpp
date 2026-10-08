@@ -717,11 +717,12 @@ TEST(SkyLightComponent, CanSetAllFields) {
 // SkyCubemapCaptureRootConstants — size, field offsets, write/read, memcpy
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(SkyCubemapCaptureRootConstants, SizeIs40Bytes) {
-    // 10 DWORDs: bottomRadiusKm(4) + topRadiusKm(4) + sunDirX(4) + sunDirY(4)
-    //          + sunDirZ(4) + sunIntensity(4) + transmittanceLutIdx(4) + packedScatterScales(4)
-    //          + scatteringLut3DIdx(4) + muSMin(4)
-    EXPECT_EQ(sizeof(SkyCubemapCaptureRootConstants), 40u);
+TEST(SkyCubemapCaptureRootConstants, SizeIs48Bytes) {
+    // 12 DWORDs: bottomRadiusKm(4) + topRadiusKm(4) + sunDirX(4) + sunDirY(4)
+    //          + sunDirZ(4) + sunIllumX(4) + sunIllumY(4) + sunIllumZ(4) + transmittanceLutIdx(4)
+    //          + packedScatterScales(4) + scatteringLut3DIdx(4) + muSMin(4)
+    // (block B.5c: the sun illuminance per channel in place of the scalar |illuminance|)
+    EXPECT_EQ(sizeof(SkyCubemapCaptureRootConstants), 48u);
 }
 
 TEST(SkyCubemapCaptureRootConstants, FieldOffsets) {
@@ -730,11 +731,13 @@ TEST(SkyCubemapCaptureRootConstants, FieldOffsets) {
     EXPECT_EQ(offsetof(SkyCubemapCaptureRootConstants, sunDirX),               8u);
     EXPECT_EQ(offsetof(SkyCubemapCaptureRootConstants, sunDirY),              12u);
     EXPECT_EQ(offsetof(SkyCubemapCaptureRootConstants, sunDirZ),              16u);
-    EXPECT_EQ(offsetof(SkyCubemapCaptureRootConstants, sunIntensity),         20u);
-    EXPECT_EQ(offsetof(SkyCubemapCaptureRootConstants, transmittanceLutIdx),  24u);
-    EXPECT_EQ(offsetof(SkyCubemapCaptureRootConstants, packedScatterScales),  28u);
-    EXPECT_EQ(offsetof(SkyCubemapCaptureRootConstants, scatteringLut3DIdx),  32u);
-    EXPECT_EQ(offsetof(SkyCubemapCaptureRootConstants, muSMin),              36u);
+    EXPECT_EQ(offsetof(SkyCubemapCaptureRootConstants, sunIllumX),            20u);
+    EXPECT_EQ(offsetof(SkyCubemapCaptureRootConstants, sunIllumY),            24u);
+    EXPECT_EQ(offsetof(SkyCubemapCaptureRootConstants, sunIllumZ),            28u);
+    EXPECT_EQ(offsetof(SkyCubemapCaptureRootConstants, transmittanceLutIdx),  32u);
+    EXPECT_EQ(offsetof(SkyCubemapCaptureRootConstants, packedScatterScales),  36u);
+    EXPECT_EQ(offsetof(SkyCubemapCaptureRootConstants, scatteringLut3DIdx),  40u);
+    EXPECT_EQ(offsetof(SkyCubemapCaptureRootConstants, muSMin),              44u);
 }
 
 TEST(SkyCubemapCaptureRootConstants, WriteAndReadBack) {
@@ -744,7 +747,9 @@ TEST(SkyCubemapCaptureRootConstants, WriteAndReadBack) {
     rc.sunDirX             = 0.0f;
     rc.sunDirY             = 0.707f;
     rc.sunDirZ             = 0.707f;
-    rc.sunIntensity        = 20.0f;
+    rc.sunIllumX           = 20.0f;
+    rc.sunIllumY           = 19.0f;
+    rc.sunIllumZ           = 18.0f;
     rc.transmittanceLutIdx = 5u;
     rc.packedScatterScales = 0x3C003C00u; // f16(1.0) packed into both halves
 
@@ -753,7 +758,9 @@ TEST(SkyCubemapCaptureRootConstants, WriteAndReadBack) {
     EXPECT_FLOAT_EQ(rc.sunDirX,        0.0f);
     EXPECT_NEAR(rc.sunDirY,            0.707f, 1e-6f);
     EXPECT_NEAR(rc.sunDirZ,            0.707f, 1e-6f);
-    EXPECT_FLOAT_EQ(rc.sunIntensity,   20.0f);
+    EXPECT_FLOAT_EQ(rc.sunIllumX,      20.0f);
+    EXPECT_FLOAT_EQ(rc.sunIllumY,      19.0f);
+    EXPECT_FLOAT_EQ(rc.sunIllumZ,      18.0f);
     EXPECT_EQ(rc.transmittanceLutIdx,  5u);
     EXPECT_EQ(rc.packedScatterScales,  0x3C003C00u);
 }
@@ -772,13 +779,15 @@ TEST(SkyCubemapCaptureRootConstants, MemcpyRoundTrip) {
     src.sunDirX             = 0.577f;
     src.sunDirY             = 0.577f;
     src.sunDirZ             = 0.577f;
-    src.sunIntensity        = 1.0f;
+    src.sunIllumX           = 1.0f;
+    src.sunIllumY           = 0.9f;
+    src.sunIllumZ           = 0.8f;
     src.transmittanceLutIdx = 3u;
     src.packedScatterScales = 0u;
     src.scatteringLut3DIdx  = 0u;
     src.muSMin              = -0.2079116908f;
 
-    uint8_t buffer[40];
+    uint8_t buffer[sizeof(SkyCubemapCaptureRootConstants)];   // 48 bytes since block B.5c (12 DWORDs)
     std::memcpy(buffer, &src, sizeof(src));
 
     SkyCubemapCaptureRootConstants dst{};
@@ -789,7 +798,9 @@ TEST(SkyCubemapCaptureRootConstants, MemcpyRoundTrip) {
     EXPECT_NEAR(dst.sunDirX,  0.577f, 1e-6f);
     EXPECT_NEAR(dst.sunDirY,  0.577f, 1e-6f);
     EXPECT_NEAR(dst.sunDirZ,  0.577f, 1e-6f);
-    EXPECT_FLOAT_EQ(dst.sunIntensity, 1.0f);
+    EXPECT_FLOAT_EQ(dst.sunIllumX, 1.0f);
+    EXPECT_FLOAT_EQ(dst.sunIllumY, 0.9f);
+    EXPECT_FLOAT_EQ(dst.sunIllumZ, 0.8f);
     EXPECT_EQ(dst.transmittanceLutIdx, 3u);
     EXPECT_EQ(dst.packedScatterScales, 0u);
 }

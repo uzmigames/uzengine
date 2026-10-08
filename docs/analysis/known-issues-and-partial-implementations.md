@@ -799,16 +799,23 @@ of the first frame. The sky pass now re-bakes when the sun direction (> 0.25 deg
 (> 1 %) or the angular radius change, at most once per 30 passes; each bake still stalls on `WaitIdle`
 (asynchronous bake is the follow-up). Guard: `scripts/test_sky_ibl_rebake.py`.
 
-### Sky cubemap capture √3 brighter than the sky pass — `BUG` (found 2026-10-08, block B.5b; decision pending)
-`atmosphere_renderer.cpp` scales the capture's sun by `skySunColor.Length()` (the length of the
+### Sky cubemap capture — `FIXED` 2026-10-08 (block B.5c; was "√3 brighter than the sky pass", found in block B.5b)
+`atmosphere_renderer.cpp` scaled the capture's sun by `skySunColor.Length()` (the length of the
 illuminance vector, 17.32 for a white (10, 10, 10)) while the sky pass takes the per-channel
 illuminance (`skyCB.sunIlluminance`) and the aerial perspective its x component. Measured with the
 sampler's environment dump against the mirrored view's sky along the same directions (reflection
-reference, block B.5b): the ratio sky pass / capture is 0.584 at every elevation, the shape identical.
+reference, block B.5b): the ratio sky pass / capture was 0.584 at every elevation, the shape identical.
 Every image-based term samples the capture (the prefiltered specular, the sky SH, the environment-MIS
-estimate), so metals reflect a sky √3 brighter than the one behind them. The fix is one line (the
-luminance or the per-channel value), but it changes the ambient of every atmosphere scene, Sponza's
-calibrated look included: a decision item, not changed in block B.5b.
+estimate, the GI probes' sky), so metals reflected a sky √3 brighter than the one behind them.
+**Fixed at the user's decision (block B.5c, `lighting-block-b-05c-sky-capture.md`):** both capture
+paths take the sun illuminance per channel (three root constants in place of the scalar) and scatter
+it as the sky pass does. Measured (`scripts/test_sky_capture.py`, 5/5): the capture against the
+mirrored view's sky along the same rays, ratio median 1.002 (p10 0.994, p90 1.007; S1 PASS);
+the chrome floor against F × the mirrored view, median error 0.011 (S2 PASS; block B.5b's E1, 0.714
+before); a warm sun (1.0, 0.7, 0.4) per channel r 0.999, g 0.997, b 0.991 (S3 PASS; 0.78 / 0.54 / 0.31 before);
+Sponza's direct light identical, its `diffuse_indirect` at 0.894 × (S4 PASS); the PMREM floor
+bit-identical (S5 PASS). The look of every atmosphere scene changes by design (the sky's share of
+the image-based terms drops by 1/√3 for a white sun); re-tuning Sponza's calibration is the user's call.
 
 
 ### `r.AerialPerspective` — `OFF` (PARTIAL)

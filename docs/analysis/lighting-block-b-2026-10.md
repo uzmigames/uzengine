@@ -21,7 +21,8 @@ sweep.
 | B.6 DDGI dedup, second bounce, TLAS reuse | edfd7942 (07/10) | `lighting-block-b-06-ddgi-dedup.md` | `test_ddgi_dedup.py` 6/6 (+ `test_gi_energy_gpu.ps1`) |
 | B.7 clustered light lists, 512 / 128 lights, the light parameters | 58340259, 794b632f (07/10) | `lighting-block-b-07-clustered-lights.md` | `test_clustered_lights.py` 8/9 (C2 at 0.505 × against the 0.5 × gate) |
 | B.4c the depth prepass (side item of B.5, after the block closed) | 5470d37f (07/10) | `lighting-block-b-04c-depth-prepass.md` | `test_depth_prepass.py` 5/5 |
-| B.5b the environment-MIS specular (side item of B.5, after the block closed) | (08/10) | `lighting-block-b-05b-env-mis.md` | `test_env_mis.py` 8/9 (E1 reads the sky capture's √3, a finding of its own) |
+| B.5b the environment-MIS specular (side item of B.5, after the block closed) | ea13ab21 (08/10) | `lighting-block-b-05b-env-mis.md` | `test_env_mis.py` 8/9 (E1 read the sky capture's √3, fixed in B.5c) |
+| B.5c the sky capture's sun illuminance per channel (B.5b's finding, at the user's decision) | (08/10) | `lighting-block-b-05c-sky-capture.md` | `test_sky_capture.py` 5/5 |
 
 ## What the block changed, in one paragraph each
 
@@ -68,6 +69,12 @@ sweep.
   CPU integral to a ratio of 0.991 / 0.992, the chrome floor under a PMREM to 0.029. Found on the
   way: the sky cubemap capture is √3 brighter than the sky pass (white sun), a decision item; the
   sample sphere mesh renders inside-out; the split-sum path reads 3-5 × the integral on rough metals.
+- **Sky capture (B.5c, after the block closed).** The capture scaled the sun by the length of the
+  illuminance vector (√3 × the per-channel value of a white sun, grey for a tinted one) while the sky
+  pass scatters it per channel, so every image-based term saw a sky √3 brighter than the rendered
+  one. Per channel now: the capture matches the sky pass to 1.002 along the same rays, the
+  chrome floor reflects it to 0.011, a warm sun matches per channel; Sponza's direct light is identical
+  and its sky-lit indirect drops (0.894 × median), the look decision the user took.
 - **Local lights.** The deferred lighting looped over every light in every pixel and ignored the
   components' falloff exponent, scales and source radius. A compute pass assigns the lights to a
   32-pixel × 24-slice cluster grid whose depth range follows the lights; the pixel evaluates its
@@ -102,10 +109,9 @@ sweep.
   reprojection, `OnResize` never called, the captured sun disc counted twice); the depth prepass: done
   after the block closed (B.4c); the SDF reflection layer has no denoiser; the `r.SSR.*` CVars are
   registered twice.
-- Found in B.5b, decision pending: the sky cubemap capture scales the sun by the length of the
-  illuminance vector (√3 × the per-channel value of a white sun), so every image-based term reflects a
-  sky √3 brighter than the rendered one; the one-line fix changes every atmosphere scene's ambient,
-  Sponza's calibrated look included. Also found: `sphere.uzmesh` renders inside-out (content), and the
+- Found in B.5b and fixed in B.5c at the user's decision: the sky cubemap capture scaled the sun by
+  the length of the illuminance vector; every atmosphere scene's ambient changed (Sponza's
+  re-calibration, if wanted, is the user's call). Also found in B.5b: `sphere.uzmesh` renders inside-out (content), and the
   split-sum (prefiltered) specular reads 3-5 × the CPU integral on the roughness 0.3 / 0.5 metal floors
   (the estimate reads 1.0 ×): the prefiltered path's level on rough metals is an item of its own.
 - B.6: no Chebyshev test inside the indirect term, no DDGI probe relocation, the DDGI level with the
