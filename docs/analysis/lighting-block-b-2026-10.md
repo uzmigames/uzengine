@@ -22,7 +22,8 @@ sweep.
 | B.7 clustered light lists, 512 / 128 lights, the light parameters | 58340259, 794b632f (07/10) | `lighting-block-b-07-clustered-lights.md` | `test_clustered_lights.py` 8/9 (C2 at 0.505 × against the 0.5 × gate) |
 | B.4c the depth prepass (side item of B.5, after the block closed) | 5470d37f (07/10) | `lighting-block-b-04c-depth-prepass.md` | `test_depth_prepass.py` 5/5 |
 | B.5b the environment-MIS specular (side item of B.5, after the block closed) | ea13ab21 (08/10) | `lighting-block-b-05b-env-mis.md` | `test_env_mis.py` 8/9 (E1 read the sky capture's √3, fixed in B.5c) |
-| B.5c the sky capture's sun illuminance per channel (B.5b's finding, at the user's decision) | (08/10) | `lighting-block-b-05c-sky-capture.md` | `test_sky_capture.py` 5/5 |
+| B.5c the sky capture's sun illuminance per channel (B.5b's finding, at the user's decision) | b8ff5077 (08/10) | `lighting-block-b-05c-sky-capture.md` | `test_sky_capture.py` 5/5 |
+| Mesh winding: eleven sample meshes wound counter-clockwise (B.5b's sphere finding), repaired | (08/10) | `lighting-mesh-winding.md` | `test_mesh_winding.py` 4/4 |
 
 ## What the block changed, in one paragraph each
 
@@ -111,7 +112,8 @@ sweep.
   registered twice.
 - Found in B.5b and fixed in B.5c at the user's decision: the sky cubemap capture scaled the sun by
   the length of the illuminance vector; every atmosphere scene's ambient changed (Sponza's
-  re-calibration, if wanted, is the user's call). Also found in B.5b: `sphere.uzmesh` renders inside-out (content), and the
+  re-calibration, if wanted, is the user's call). Also found in B.5b: `sphere.uzmesh` renders inside-out (content; repaired with
+  ten more counter-clockwise meshes, `lighting-mesh-winding.md`), and the
   split-sum (prefiltered) specular reads 3-5 × the CPU integral on the roughness 0.3 / 0.5 metal floors
   (the estimate reads 1.0 ×): the prefiltered path's level on rough metals is an item of its own.
 - B.6: no Chebyshev test inside the indirect term, no DDGI probe relocation, the DDGI level with the

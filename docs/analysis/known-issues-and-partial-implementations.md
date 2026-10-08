@@ -236,8 +236,10 @@ Unresolved (carried over from SponzaTest's handoff and reproduced here on 2026-0
   43 simplifier artifacts (repaired) and 46 whose **LOD0** is itself
   inconsistent — authored or smoothed normals that legitimately disagree with
   some faces, left alone. One of those, `arch_stones_01_stone_trims_01_0`, is
-  100 % inconsistent at LOD0 (a whole-mesh winding inversion) and still needs
-  the treatment the decal got.
+  100 % inconsistent at LOD0 (a whole-mesh winding inversion) ~~and still needs
+  the treatment the decal got~~ — **repaired 2026-10-08** with six more Sponza
+  whole-mesh inversions by `scripts/repair_mesh_winding.py` (see "Meshes exported
+  counter-clockwise" under Rendering).
 - No Surface Cache and no complete emissive transport (only the VFX → DDGI
   emissive feed); no Lumen parity is claimed.
 - Falcor PSNR ≥ 35 dB parity unverified (no Falcor install on either machine).
@@ -685,12 +687,17 @@ frame's estimate (one frame of latency; silhouettes under the TAA jitter), no re
 history (the EMA smears under motion), `OnResize` never called, a captured sun disc counted twice
 (shared with the split-sum path), a fixed coverage band.
 
-### `sphere.uzmesh` renders inside-out — `BUG` (content, found 2026-10-08, block B.5b)
-In `chrome_test` the dump's visible positions on the sphere are the far hemisphere's (x median
--51.577 cm with the camera at x = 400) and the outward normals face away from the camera
-(N·V median -0.698): back-face culling keeps the far side, so every lighting term sees a surface
-facing away. The "black disc" of block B.5's finding had this second cause. The mesh's winding or
-its import is the item; `chrome_test` cannot measure reflections until it is fixed.
+### Meshes exported counter-clockwise — `FIXED` 2026-10-08 (`sphere.uzmesh` and ten more; found in block B.5b)
+In `chrome_test` the dump's visible positions on the sphere were the far hemisphere's (x median
+-51.6 cm with the camera at x = 400) and the outward normals faced away from the camera (N·V
+-0.70): the sphere is wound counter-clockwise while the engine renders clockwise-front, so back-face
+culling kept the far side. `scripts/repair_mesh_winding.py` audits every sample mesh against the rule
+of `test_decal_lod_normals.ps1` and flips whole-mesh inversions; it found and repaired 11 (the sphere,
+seven Sponza meshes including `arch_stones_01_stone_trims_01_0` below, bunny, teapot, `test_shard`)
+plus suzanne. Measured (`scripts/test_mesh_winding.py`, 4/4): the sphere's positions x median
+72.186 cm, N·V 0.697; its specular against F × the PMREM along the reflected ray, median error
+0.035 (block B.5b's E4 as first written); Sponza Camera C unchanged (the repaired meshes are out of
+its view). The importer that produced them is not traced (`lighting-mesh-winding.md`).
 
 ### Depth prepass — `FIXED` 2026-10-07 (block B.4c; was "discarded by the GBuffer clear", block B.5)
 The prepass never wrote a depth: it rendered with the shadow vertex shader whose view-projection
