@@ -693,9 +693,12 @@ TEST(PerFrameCB_IBL, BRDFLutSrvIndexDefaultIsMaxUint) {
     EXPECT_EQ(cb.brdfLutSrvIndex, UINT32_MAX);
 }
 
-TEST(PerFrameCB_IBL, PrefilteredMipLevelsDefaultIsFive) {
+TEST(PerFrameCB_IBL, PrefilteredMipLevelsDefaultMatchesTheBaker) {
+    // The mip count must match IBLBaker's output (8 since the 256^2 bake; the test expected 5 until 2026-10-08),
+    // and the PMREM flag (bit 8, split-sum item) is clear by default.
     PerFrameCB cb{};
-    EXPECT_EQ(cb.prefilteredMipLevels, 5u);
+    EXPECT_EQ(cb.prefilteredMipLevels & 0xFFu, IBLBaker::kPrefilteredMipLevels);
+    EXPECT_EQ(cb.prefilteredMipLevels & 0x100u, 0u);
 }
 
 TEST(PerFrameCB_IBL, SkyLightIntensityDefaultIsOne) {
