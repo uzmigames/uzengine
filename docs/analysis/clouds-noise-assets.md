@@ -36,7 +36,9 @@ VFS (rooted at `sample/content` for every sample project) and in the working dir
 
 **N5 (reported).** 95.8 % of the frame's pixels changed, mean |Δ luminance|
 0.0071 (p99 0.052): the overcast dome without structure
-became shaped clouds (`test-cloud-noise/cloud_noise_montage.jpg`). Cloud pass cost: CloudComposite 0.006 ms, CloudCompute 1.158 ms
+became shaped clouds (`test-cloud-noise/cloud_noise_montage.jpg`). Both screenshots are frame 5, not 170: the
+harness passed `--screenshot-frames 170`, which uzengine.exe rejected until the same day's parser fix ("N"
+now means "N-N"), so both captures fell back to the default frame alike. Cloud pass cost: CloudComposite 0.006 ms, CloudCompute 1.158 ms
 → CloudComposite 0.006 ms, CloudCompute 1.297 ms.
 
 ## Still open

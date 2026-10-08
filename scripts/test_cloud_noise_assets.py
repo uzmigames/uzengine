@@ -46,7 +46,7 @@ def capture(work, reuse):
     if reuse and os.path.isfile(os.path.join(work, 'manifest.json')):
         return json.load(open(os.path.join(work, 'manifest.json')))
     res = runner.run_capture(work, PROJECT, FRAMES, cvars={'r.TechPanel.Show': 0, 'r.Toolbar.Show': 0},
-                             timing_first=60, clean=True, timeout=900, screenshot_frames=str(SHOT))
+                             timing_first=60, clean=True, timeout=900, screenshot_frames=f'{SHOT}-{SHOT}')
     if res['exit_code'] != 0:
         raise SystemExit(f'{work}: engine exited {res["exit_code"]}')
     return json.load(open(os.path.join(work, 'manifest.json')))

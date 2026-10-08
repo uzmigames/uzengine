@@ -749,8 +749,12 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     if (!screenshotFrames.empty() && !screenshotPath.empty()) {
         unsigned a = 0, b = 0, st = 1;
         const int n = std::sscanf(screenshotFrames.c_str(), "%u-%u:%u", &a, &b, &st);
-        if (n >= 2 && b >= a) { seqFirst = a; seqLast = b; seqStep = std::max(st, 1u); seqActive = true; }
-        else UZ_LOG(Engine, Warning, "--screenshot-frames '{}' not understood (expected A-B or A-B:step)", screenshotFrames);
+        // A single frame "N" means "N-N". Until 2026-10-08 it was rejected with a warning and the harnesses
+        // that passed one number (test_layered_reflections.py, test_env_mis.py, test_cloud_noise_assets.py)
+        // got the default screenshot frame (5) instead of the one they named.
+        if (n == 1) { b = a; }
+        if (n >= 1 && b >= a) { seqFirst = a; seqLast = b; seqStep = std::max(st, 1u); seqActive = true; }
+        else UZ_LOG(Engine, Warning, "--screenshot-frames '{}' not understood (expected N, A-B or A-B:step)", screenshotFrames);
     }
     std::string seqBase = screenshotPath, seqExt = ".png";
     if (seqActive) {
