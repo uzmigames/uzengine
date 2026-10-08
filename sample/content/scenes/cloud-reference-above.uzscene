@@ -1,0 +1,192 @@
+{
+  "name": "Cloud reference (above the cloud layer)",
+  "version": "1.0",
+  "cvars": {
+    "r.AutoExposure": 0,
+    "r.Exposure": 1,
+    "r.GTAO": 0,
+    "r.RadianceCache": 0,
+    "r.GI.FinalGather": 0,
+    "r.GI.Reflections": 0,
+    "r.SSGI": 0,
+    "r.TAA": 1
+  },
+  "entities": [
+    {
+      "name": "Sun",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            -40.0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "light": {
+          "type": "directional",
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 10.0,
+          "cast_shadows": true,
+          "atmosphere_sun_light": true,
+          "light_source_angle": 0.53
+        }
+      }
+    },
+    {
+      "name": "Camera",
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            1500000.0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "camera": {
+          "fov": 58.51,
+          "near": 10000.0,
+          "far": 200000.0,
+          "active": true,
+          "look_at": [
+            0.0,
+            906.3078,
+            1499577.3817
+          ]
+        }
+      }
+    },
+    {
+      "name": "Sky",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        },
+        "sky_atmosphere": {
+          "sun_illuminance": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "SkyLight",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        },
+        "sky_light": {
+          "intensity": 1.0,
+          "light_color": [
+            1,
+            1,
+            1
+          ],
+          "indirect_lighting_intensity": 1.0,
+          "min_occlusion": 0.0,
+          "lower_hemisphere_is_black": true
+        }
+      }
+    },
+    {
+      "name": "Floor",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "mesh": {
+          "asset": "meshes/reference/cloudref_floor.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0.3,
+          "baseColorG": 0.3,
+          "baseColorB": 0.3,
+          "roughnessMultiplier": 1.0,
+          "metallicMultiplier": 0.0
+        }
+      }
+    },
+    {
+      "name": "VolumetricClouds",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        },
+        "volumetric_clouds": {
+          "enabled": true,
+          "layer_bottom_altitude_km": 7.0,
+          "layer_height_km": 6.0,
+          "coverage": 0.45,
+          "density": 0.6,
+          "cloud_type": 0.5,
+          "wind_velocity": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "detail_wind_scale": 2.0,
+          "extinction": 0.04,
+          "scattering_albedo": 0.99,
+          "phase_g": 0.5,
+          "phase_g2": -0.3,
+          "phase_blend": 0.7,
+          "ambient_multiplier": 6.0,
+          "tracing_max_distance_km": 50.0,
+          "primary_steps": 64,
+          "light_steps": 6
+        }
+      }
+    }
+  ]
+}
