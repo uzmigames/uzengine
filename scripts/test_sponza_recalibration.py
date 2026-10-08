@@ -41,7 +41,12 @@ FIX_ALONE = {'camera_a': (os.path.join(REPO, '.screenshots', 'flicker-eliminatio
 # This binary with the scene before the edit (the split-sum item's Sponza captures): the identity reference.
 SAME_BINARY = {'camera_a': (os.path.join(REPO, '.screenshots', 'flicker-elimination', 'test-split-sum', 'sponza-camera-a'), 60),
                'camera_c': (os.path.join(REPO, '.screenshots', 'flicker-elimination', 'test-split-sum', 'sponza-default'), SPONZA_FRAME)}
+# The captures with sqrt 3 in `intensity` only (the first committed state, 4501fa74), kept before the scenes took
+# sqrt 3 in `indirect_lighting_intensity` too: the reference of Q4.
+INTENSITY_ONLY = {'camera_a': (os.path.join(REPO, '.screenshots', 'flicker-elimination', 'test-sponza-recalibration', 'intensity-only', 'sponza-camera-a'), 60),
+                  'camera_c': (os.path.join(REPO, '.screenshots', 'flicker-elimination', 'test-sponza-recalibration', 'intensity-only', 'sponza-default'), SPONZA_FRAME)}
 Q_LO, Q_HI = 0.95, 1.05
+Q4_TOL = 0.005
 
 
 def compare(now, before, frame_n):
@@ -85,6 +90,12 @@ def main():
         fa = FIX_ALONE[key][0]
         if os.path.isdir(os.path.join(fa, 'region')):
             rows[key]['fix_alone'] = compare(fa, pre, frame_n)
+        io_ref = INTENSITY_ONLY[key][0]
+        if os.path.isdir(os.path.join(io_ref, 'region')):
+            rows[key]['intensity_only'] = compare(now[key][0], io_ref, frame_n)
+            s4 = rows[key]['intensity_only']
+            print(f'  {key} against the intensity-only captures: positions {s4["pos_max_diff"]:.3g}, direct {s4["direct_max_diff"]:.3g}, '
+                  f'diffuse_indirect ratio {s4["diffuse_indirect_ratio_median"]:.4f}, specular ratio {s4["specular_indirect_ratio_median"]}, colour ratio {s4["colour_ratio_median"]:.4f}', flush=True)
         sb = SAME_BINARY[key][0]
         if os.path.isdir(os.path.join(sb, 'region')):
             rows[key]['same_binary'] = compare(now[key][0], sb, frame_n)
@@ -103,6 +114,14 @@ def main():
     check('Q1 Sponza Camera A and C: positions and direct light identical to this binary with the scene before the edit',
           all(sbr.values()) and all(r['pos_max_diff'] <= 1e-6 and r['direct_max_diff'] <= 1e-6 for r in sbr.values()),
           '; '.join(f'{k}: positions {r["pos_max_diff"]:.3g}, direct {r["direct_max_diff"]:.3g}' if r else f'{k}: no same-binary reference' for k, r in sbr.items()))
+    ior = {k: (r or {}).get('intensity_only') for k, r in rows.items()}
+
+    def _inert(r):
+        vals = [r['diffuse_indirect_ratio_median'], r['colour_ratio_median']] + ([r['specular_indirect_ratio_median']] if r.get('specular_indirect_ratio_median') is not None else [])
+        return r['pos_max_diff'] <= 1e-6 and r['direct_max_diff'] <= 1e-6 and all(abs(v - 1.0) <= Q4_TOL for v in vals)
+    check('Q4 with GI on, indirect_lighting_intensity is inert: against the intensity-only captures, positions and direct identical and the diffuse / specular / colour medians within 0.5 %',
+          all(ior.values()) and all(_inert(r) for r in ior.values()),
+          '; '.join(f'{k}: diffuse {r["diffuse_indirect_ratio_median"]:.4f}, specular {r.get("specular_indirect_ratio_median")}, colour {r["colour_ratio_median"]:.4f}' if r else f'{k}: no intensity-only reference' for k, r in ior.items()))
     check('Q2 the sky-lit indirect is back: diffuse_indirect median ratio against the pre-fix capture within [0.95, 1.05] at both cameras',
           all(ok.values()) and all(Q_LO <= r['diffuse_indirect_ratio_median'] <= Q_HI for r in rows.values()),
           '; '.join(f'{k}: {r["diffuse_indirect_ratio_median"]:.3f} (the fix alone {r.get("fix_alone", {}).get("diffuse_indirect_ratio_median")})' if r else f'{k}: no reference' for k, r in rows.items()))

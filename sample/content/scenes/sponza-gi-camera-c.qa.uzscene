@@ -178,7 +178,7 @@
             1,
             1
           ],
-          "indirect_lighting_intensity": 1,
+          "indirect_lighting_intensity": 1.7320508,
           "min_occlusion": 0.01,
           "lower_hemisphere_is_black": false,
           "lower_hemisphere_color": [

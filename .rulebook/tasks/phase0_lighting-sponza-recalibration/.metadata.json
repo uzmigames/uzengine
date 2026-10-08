@@ -1,6 +1,6 @@
 {
   "status": "completed",
   "createdAt": "2026-10-08T15:09:32.276Z",
-  "updatedAt": "2026-10-08T16:04:34.000Z",
-  "resolution": "done 2026-10-08: the sqrt 3 the sky capture removed is in the SkyLight intensity of the three Sponza scenes (the scene of the user project, the Camera C and the Camera A harness scenes; indirect_lighting_intensity stays 1 since the SH and the fog read both); the edit alone moves diffuse_indirect 1.05 x / 1.07 x and the colour 1.01 x / 1.07 x (A / C) with positions and direct light identical; the pre-fix level is not reached (Q2 / Q3 fail): the mesh-decal commit had removed a bogus distance-field occluder (the atrium-spanning dirt-decal mesh, -43 % on the GI), so the pre-fix look is no longer the target; test_sponza_recalibration.py 1/3"
+  "updatedAt": "2026-10-08T18:10:50.000Z",
+  "resolution": "done 2026-10-08 (corrected the same day): the sqrt 3 the sky capture removed is in both SkyLight knobs of the three Sponza scenes (the user project scene, the Camera C and the Camera A harness scenes). No path reads both: intensity scales the specular, MIS, the probes, the gather and the fog; indirect_lighting_intensity only the SH fallback, which is inert with GI on (Q4). The edit alone moves diffuse_indirect 1.075 x / 1.072 x (A / C) with positions and direct light identical; the pre-fix level is not reached (Q2 / Q3 fail): the mesh-decal commit had removed a bogus distance-field occluder (the atrium-spanning dirt-decal mesh, -43 % on the GI). The first version (4501fa74) kept the indirect knob at 1 on a wrong reading (Amendment 3). test_sponza_recalibration.py 1/4."
 }

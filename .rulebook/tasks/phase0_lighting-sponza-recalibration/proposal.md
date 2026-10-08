@@ -46,6 +46,18 @@ The harness projects load `sponza-gi-camera-c.qa.uzscene` (Camera C) and `sponza
 not `sponza.uzscene` (the user's project): the first two runs measured an unedited scene (the ratios
 against this binary's captures read 1.000). The √3 goes into the SkyLight `intensity` of all three.
 
+## Amendment 3 (2026-10-08, the review of the indoor-lighting task): Amendment 1 was wrong
+
+Amendment 1's two claims do not hold. No path reads both knobs: the SH fallback reads
+`indirect_lighting_intensity` only (`shScale` on the coefficients; `skyTintDiffuse = skyColor`, without
+the intensity) and the height fog reads `intensity` only (the raw SH L0 × `skyLightIntensity`). And the
+first run never measured the knobs: it edited `sponza.uzscene` alone while the harness loads the other two
+scenes (Amendment 2), so its 1.52 × / 1.24 × were the mesh-decal commit's occluder removal against the
+pre-fix captures. The faithful restoration puts √3 in both knobs; with GI on the indirect knob is inert.
+Gate Q4, registered before the run: against the captures with √3 in `intensity` only, positions and
+direct light identical and the medians of the diffuse indirect, the specular indirect and the colour
+within 0.5 %.
+
 ## Gates (pre-registered)
 
 Q1 positions and direct light identical to the build before the sky fix (the sky light touches

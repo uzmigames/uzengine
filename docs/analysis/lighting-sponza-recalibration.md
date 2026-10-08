@@ -8,32 +8,46 @@ Branch `feat/sponza-gi-parity`, 2026-10-08. The user's choice after block B.5c.
 Block B.5c's capture fix removed the √3 the sky capture applied to a white sun; Sponza, calibrated with
 the old capture, read `diffuse_indirect` at 0.894 × (Camera C) and 0.928 × (Camera A) of its previous
 level and the colour at 0.902 × / 0.985 ×. The split-sum item of the same day (the prefiltered mip
-curve, the sky SH frame) changed the image-based specular and the SH fallback as well.
+curve, the sky SH frame and packing) changed the image-based specular and the SH fallback as well.
 
 ## What changed
 
 - `sample/content/scenes/sponza.uzscene` (the user's project), `sponza-gi-camera-c.qa.uzscene` (the
   Camera C harness project) and `sponza-fog.uzscene` (the Camera A harness project): the SkyLight's
-  `intensity` at √3 (1.7320508); `indirect_lighting_intensity` stays 1. (The first two runs edited
-  `sponza.uzscene` alone and measured an unedited scene: the ratios against this binary read 1.000.) `intensity` multiplies every sky-lit term: the prefiltered
-  specular and the environment-MIS estimate (`skyTintSpecular`), the GI probes' sky
-  (`skyLightColor × skyLightIntensity` in the radiance cache and the DDGI tracers), the final gather's
-  sky hits (`skyMultiplier`), the SH fallback (`skyTintDiffuse`) and the height fog's sky colour
-  (`SH L0 × skyLightIntensity`). `indirect_lighting_intensity` scales the SH coefficients, which the
-  SH fallback and the fog read on top of `intensity`: the first attempt with both at √3 tripled those
-  two paths (Camera C's colour 1.52 × through the fog, Camera A's diffuse 1.24 ×). The engine is
-  untouched; the visible sky stays the sky pass's.
-- `scripts/test_sponza_recalibration.py` (Q1-Q3).
+  `intensity` and `indirect_lighting_intensity` at √3 (1.7320508). The engine is untouched; the visible
+  sky stays the sky pass's.
+- No path reads both knobs. `intensity` (`skyLightIntensity`) multiplies the prefiltered specular and the
+  environment-MIS estimate (`skyTintSpecular`), the GI probes' sky (`skyLightColor × skyLightIntensity` in
+  the radiance cache and the DDGI tracers), the final gather's and the SDF reflections' sky hits
+  (`skyMultiplier`) and the height fog's sky colour (the raw SH L0 × `skyLightIntensity`,
+  `frame_atmosphere_passes.cpp`). `indirect_lighting_intensity` scales the SH coefficients (`shScale`,
+  `frame_constants.cpp`), which only the SH fallback diffuse reads (`skyTintDiffuse = skyColor`, without
+  the intensity) and the inert light probe volume's seed. The capture's √3 reached all of those through
+  the cubemap, so the faithful restoration puts √3 in both. With GI on (both Sponza projects) the radiance
+  cache answers every pixel and the final gather replaces its irradiance, so the indirect knob is inert
+  there (Q4); it restores the SH-fallback level in GI-off configurations.
+- `scripts/test_sponza_recalibration.py` (Q1-Q4).
+
+**Correction (2026-10-08, the commit after 4501fa74).** The first committed version (4501fa74) kept
+`indirect_lighting_intensity` at 1, on two claims that were both wrong: that the SH fallback and the fog
+read both knobs (in the code the fallback reads the indirect knob only and the fog the intensity only),
+and that a first attempt with both at √3 had tripled those paths (Camera C's colour 1.52 ×). The first two
+runs edited `sponza.uzscene` alone and never reached the harness scenes; the 1.52 × was the mesh-decal
+commit's occluder removal measured against the pre-fix captures (the second amendment). The review of the
+indoor-lighting task (2026-10-08) found the error.
 
 ## Gates (`scripts/test_sponza_recalibration.py`)
 
 | Gate | Criterion | Result |
 |---|---|---|
 | Q1 | Sponza Camera A and C: positions and direct light identical to this binary with the scene before the edit | PASS: camera_a: positions 0, direct 0; camera_c: positions 0, direct 0 |
-| Q2 | the sky-lit indirect is back: diffuse_indirect median ratio against the pre-fix capture within [0.95, 1.05] at both cameras | FAIL: camera_a: 1.358 (the fix alone 0.9280510144228076); camera_c: 1.627 (the fix alone 0.8943248750829234) |
-| Q3 | the colour: median luminance ratio against the pre-fix capture within [0.95, 1.05] at both cameras | FAIL: camera_a: 1.253; camera_c: 1.629 |
+| Q4 | with GI on, indirect_lighting_intensity is inert: against the intensity-only captures, positions and direct identical and the diffuse / specular / colour medians within 0.5 % | FAIL: camera_a: diffuse 1.0085, specular 1.001294676764355, colour 1.0003; camera_c: diffuse 1.0000, specular 1.0000526257980824, colour 1.0001 |
+| Q2 | the sky-lit indirect is back: diffuse_indirect median ratio against the pre-fix capture within [0.95, 1.05] at both cameras | FAIL: camera_a: 1.374 (the fix alone 0.9280510144228076); camera_c: 1.627 (the fix alone 0.8943248750829234) |
+| Q3 | the colour: median luminance ratio against the pre-fix capture within [0.95, 1.05] at both cameras | FAIL: camera_a: 1.273; camera_c: 1.629 |
 
-**Numbers (1080p).** Camera A: against the pre-fix capture, `diffuse_indirect` ratio 1.358 (p10 1.074, p90 2.355; the fix alone 0.928); `specular_indirect` ratio 1.211 (the fix alone 0.983); colour ratio 1.253 (the fix alone 0.985), median luminance 0.0035 → 0.0051. Against this binary with the scene before the edit: positions 0, direct 0, `diffuse_indirect` ratio 1.054, `specular_indirect` ratio 1.032, colour ratio 1.010. Camera C: against the pre-fix capture, `diffuse_indirect` ratio 1.627 (p10 1.413, p90 1.862; the fix alone 0.894); `specular_indirect` ratio 1.131 (the fix alone 0.988); colour ratio 1.629 (the fix alone 0.902), median luminance 0.0016 → 0.0027. Against this binary with the scene before the edit: positions 0, direct 0, `diffuse_indirect` ratio 1.072, `specular_indirect` ratio 1.038, colour ratio 1.072. Harness 1/3.
+**Numbers (1080p).** Camera A: the edit against this binary with the scenes before it: positions 0, direct 0, `diffuse_indirect` 1.075, `specular_indirect` 1.034, colour 1.015; against the intensity-only captures (Q4): `diffuse_indirect` 1.0085, `specular_indirect` 1.0013, colour 1.0003; against the pre-fix captures: `diffuse_indirect` 1.374 (the sky fix alone 0.928), colour 1.273 (the sky fix alone 0.985). Camera C: the edit against this binary with the scenes before it: positions 0, direct 0, `diffuse_indirect` 1.072, `specular_indirect` 1.038, colour 1.072; against the intensity-only captures (Q4): `diffuse_indirect` 1.0000, `specular_indirect` 1.0001, colour 1.0001; against the pre-fix captures: `diffuse_indirect` 1.627 (the sky fix alone 0.894), colour 1.629 (the sky fix alone 0.902). Harness 1/4.
+
+**Q4 at Camera A.** As registered, Q4 fails there: the diffuse indirect median read 1.0085 against the intensity-only capture (tolerance 0.5 %, set without a measured floor). Camera A is captured at frame 60, before the GI has converged, and a second process of the same configuration read 0.9913 against the harness run (p10 0.946, p90 1.026) and 1.0005 against the intensity-only capture (p10 1.000, p90 1.001; specular 1.0002, colour 1.0003). Every Camera A pixel takes the gather and reflection path (path bits 0x3), none reads the SH fallback, which is the only consumer of the indirect knob: the 0.85 % is the cross-process spread at frame 60, and the knob is inert (`q4_floor.json` beside the harness output).
 
 ## The level against the build before the sky fix is not the target any more
 

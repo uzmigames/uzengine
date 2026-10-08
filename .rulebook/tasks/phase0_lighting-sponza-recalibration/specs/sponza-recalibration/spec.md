@@ -7,9 +7,15 @@ Sponza's sky-lit ambient is back at its calibrated level, with the factor in the
 
 ### Requirement: The sky share is restored by the scene
 The three Sponza scenes calibrated with the old capture (the user's, the Camera C and the Camera A
-harness scenes) SHALL carry the √3 the sky capture used to hide in their SkyLight's intensity (the
-indirect-lighting intensity stays 1: the SH fallback and the fog read both), and the engine SHALL NOT
-change for it.
+harness scenes) SHALL carry the √3 the sky capture used to hide in their SkyLight's intensity and
+indirect-lighting intensity (no path reads both: the SH fallback reads the indirect one, every other
+sky-lit term the intensity), and the engine SHALL NOT change for it.
+
+#### Scenario: The indirect knob with GI on
+Given Sponza Camera A and C with the radiance cache and the final gather on
+When the frames with √3 in both knobs are compared with the frames with √3 in the intensity only
+Then positions and direct light are identical and the medians of the diffuse indirect, the specular
+indirect and the colour agree within 0.5 %.
 
 #### Scenario: The ambient level
 Given Sponza Camera A and C

@@ -6,12 +6,17 @@ harness project) and `sponza-fog.uzscene` (the Camera A harness project): `inten
 `indirect_lighting_intensity 1.0`; the capture's √3 gave the sky-lit terms their level.
 
 ## After
-- `intensity √3`: `skyLightIntensity` multiplies every sky-lit term: the prefiltered specular
-  (`skyTintSpecular`), the environment-MIS estimate, the probes' sky radiance, the final gather's sky
-  hits, the SH fallback (`skyTintDiffuse`) and the height fog's sky colour (SH L0 × intensity).
-  `indirect_lighting_intensity` stays 1: it scales the SH coefficients, which the SH fallback and the
-  fog read on top of `intensity`, so √3 on both tripled those paths (the first run: Camera C's colour
-  1.52 × through the fog).
+- `intensity √3` and `indirect_lighting_intensity √3`. No path reads both knobs. `intensity` (`skyLightIntensity`) multiplies the prefiltered specular and the
+  environment-MIS estimate (`skyTintSpecular`), the GI probes' sky (`skyLightColor × skyLightIntensity` in
+  the radiance cache and the DDGI tracers), the final gather's and the SDF reflections' sky hits
+  (`skyMultiplier`) and the height fog's sky colour (the raw SH L0 × `skyLightIntensity`,
+  `frame_atmosphere_passes.cpp`). `indirect_lighting_intensity` scales the SH coefficients (`shScale`,
+  `frame_constants.cpp`), which only the SH fallback diffuse reads (`skyTintDiffuse = skyColor`, without
+  the intensity) and the inert light probe volume's seed. The capture's √3 reached all of those through
+  the cubemap, so the faithful restoration puts √3 in both. With GI on (both Sponza projects) the radiance
+  cache answers every pixel and the final gather replaces its irradiance, so the indirect knob is inert
+  there (Q4); it restores the SH-fallback level in GI-off configurations.
+  (Amendment 3 corrects the earlier text, which kept the indirect knob at 1 on a wrong reading.)
 - The direct light, the sun's shadows and the visible sky are untouched; the split-sum and SH-frame
   fixes of the same day stay (the recalibration restores the sky share only).
 - The level against the pre-fix captures is not restored and is not meant to be any more: the mesh-decal

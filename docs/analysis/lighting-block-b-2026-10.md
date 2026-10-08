@@ -28,7 +28,7 @@ sweep.
 | Split-sum on rough metals: the mip curve and the sky SH frame (B.5b's finding) | (08/10) | `lighting-split-sum-mips.md` | `test_split_sum.py` 7/10 |
 | Cluster spot cone (B.7's open item) | (08/10) | `lighting-cluster-spot-cone.md` | `test_cluster_spot_cone.py` 4/4 |
 | CVars registered once (A.8's list) | (08/10) | `lighting-cvars-once.md` | `test_cvar_registrations.py` 3/3 |
-| Sponza recalibrated after the sky fix (the user's choice) | (08/10) | `lighting-sponza-recalibration.md` | `test_sponza_recalibration.py` 1/3 |
+| Sponza recalibrated after the sky fix (the user's choice; √3 in both SkyLight knobs, corrected the same day) | 4501fa74 (08/10) | `lighting-sponza-recalibration.md` | `test_sponza_recalibration.py` 1/4 |
 
 ## What the block changed, in one paragraph each
 

@@ -56,9 +56,10 @@ indirect light darkens unevenly (the `diffuse_indirect` ratio's p10-p90 above). 
 bit-identical. The montage (`test-sky-capture/sky_capture_montage.jpg`) shows Camera C before and
 after beside the reference floors; re-tuning the Sponza calibration (sky light intensity, exposure) is
 the user's call, not part of this item. **Taken (2026-10-08, `lighting-sponza-recalibration.md`):** the
-SkyLight's intensity at √3 in the scene file (the indirect-lighting intensity stays 1: the SH and the fog
-read both); `diffuse_indirect` back to
-1.358 × (Camera A) / 1.627 × (Camera C) of the pre-fix level.
+SkyLight's intensity and indirect-lighting intensity at √3 in the three Sponza scene files (the indirect
+one is inert with GI on; corrected the same day, see that document); `diffuse_indirect` at
+1.37 × (Camera A, frame 60) / 1.63 × (Camera C) of the pre-fix level, which the mesh-decal commit's
+occluder removal dominates (that document's second amendment).
 
 ## Still open
 
