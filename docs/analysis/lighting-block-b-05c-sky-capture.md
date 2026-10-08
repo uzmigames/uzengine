@@ -44,6 +44,12 @@ decision: it changes the ambient of every atmosphere scene, Sponza's calibrated 
 
 ## The look of Sponza
 
+Camera A (the atrium, the fog project with SSR off, frame 60) against block B.5's capture of build 9f1be63f (the
+lighting path of that view is unchanged by gate until this item): the direct light is identical (max |diff| 0),
+`diffuse_indirect` reads 0.928 x at the median (p10 0.685, p90 1.003: the sky-lit floor and walls darken, the
+sun-bounce areas do not), the colour luminance 0.985 x at the median over 528 539 lit pixels. Montage:
+`test-sky-capture/sky_capture_sponza_camera_a.jpg`.
+
 The sky's share of Sponza's indirect light drops by 1/√3 (the sun colour (1.0, 0.98, 0.95) × 10 has
 length 16.9 against 9.8 per channel); the bounce from sun-lit surfaces does not change, so the
 indirect light darkens unevenly (the `diffuse_indirect` ratio's p10-p90 above). The direct light is
