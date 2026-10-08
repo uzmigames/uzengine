@@ -467,6 +467,8 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
         // 0=Opaque, 1=Masked, 2=Translucent, 3=Additive.
         // GBuffer pass skips draws where bits[0:1] >= 2 (Translucent/Additive).
         // Forward translucent pass only draws where bits[0:1] >= 2.
+        // Bit 4 (0x10) = mesh decal (a Decal-domain graph on a mesh, set below): the GBuffer pass
+        // blends it after the opaque draws; the shadow and distance-field consumers skip it.
         if (mat) {
             const uint32_t bm = static_cast<uint32_t>(mat->GetBlendMode()) & 0x3u;
             cmd.materialFlags |= bm;
@@ -569,6 +571,11 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
             cmd.materialFlags = (cmd.materialFlags & ~0xfu)
                 | static_cast<uint32_t>(graph.blendMode) | (graph.twoSided ? 0x8u : 0u);
             cmd.twoSided = graph.twoSided ? 1u : 0u;
+            if (graph.domain == MaterialDomain::Decal) {
+                // Mesh decal: blended into the GBuffer by the graph's opacity after the opaque
+                // draws (bit 4); not a translucent draw (the blend bits cleared), not an occluder.
+                cmd.materialFlags = (cmd.materialFlags & ~0x3u) | 0x10u;
+            }
             switch (graph.shadingModel) {
                 case MaterialShadingModel::DefaultLit: cmd.shadingModel = EShadingModel::DefaultLit; break;
                 case MaterialShadingModel::Unlit:      cmd.shadingModel = EShadingModel::Unlit; break;

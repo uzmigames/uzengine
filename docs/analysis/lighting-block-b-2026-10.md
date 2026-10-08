@@ -24,6 +24,7 @@ sweep.
 | B.5b the environment-MIS specular (side item of B.5, after the block closed) | ea13ab21 (08/10) | `lighting-block-b-05b-env-mis.md` | `test_env_mis.py` 8/9 (E1 read the sky capture's √3, fixed in B.5c) |
 | B.5c the sky capture's sun illuminance per channel (B.5b's finding, at the user's decision) | b8ff5077 (08/10) | `lighting-block-b-05c-sky-capture.md` | `test_sky_capture.py` 5/5 |
 | Mesh winding: eleven sample meshes wound counter-clockwise (B.5b's sphere finding), repaired | (08/10) | `lighting-mesh-winding.md` | `test_mesh_winding.py` 4/4 |
+| Mesh decals: Sponza's dirt quads blended into the G-buffer by opacity (the user's report) | (08/10) | `lighting-sponza-mesh-decals.md` | `test_mesh_decals.py` 5/5 |
 
 ## What the block changed, in one paragraph each
 

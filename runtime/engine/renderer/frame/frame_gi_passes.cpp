@@ -199,7 +199,8 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
             std::vector<Mat4> meshTransforms;
 
             for (const auto& draw : ctx.drawList.GetCommands()) {
-                if ((draw.materialFlags & 0x3u) >= 2u || draw.meshId >= m_meshes.size()) continue;
+                // Translucent draws and mesh decals (bit 4) are not distance-field occluders.
+                if ((draw.materialFlags & 0x3u) >= 2u || (draw.materialFlags & 0x10u) != 0u || draw.meshId >= m_meshes.size()) continue;
                 const GPUMesh& gpuMesh = m_meshes[draw.meshId];
                 if (!gpuMesh.HasSDF()) continue;
 

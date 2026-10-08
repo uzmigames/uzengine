@@ -225,8 +225,8 @@ void AddShadowPass(rg::RgBuilder& builder, const ShadowPassDesc& desc)
                     // - Uncached: render all (default, backward compatible)
                     uint32_t lastBoundMeshId = UINT32_MAX; // Track to avoid redundant rebinds.
                     for (const auto& drawCmd : commands) {
-                        // Translucent/additive materials are not occluders.
-                        if ((drawCmd.materialFlags & 0x3u) >= 2u) continue;
+                        // Translucent/additive materials and mesh decals (bit 4) are not occluders.
+                        if ((drawCmd.materialFlags & 0x3u) >= 2u || (drawCmd.materialFlags & 0x10u) != 0u) continue;
 
                         // ── Mobility filter for shadow caching ───────────────
                         if (desc.cacheMode == ShadowCacheMode::StaticPrimitivesOnly) {

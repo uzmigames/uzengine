@@ -212,8 +212,8 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
                                 const auto& drawCmd = commands[di];
 
                                 // Translucent/additive materials (materialFlags
-                                // bits[0:1] >= 2) are not occluders.
-                                if ((drawCmd.materialFlags & 0x3u) >= 2u) continue;
+                                // bits[0:1] >= 2) and mesh decals (bit 4) are not occluders.
+                                if ((drawCmd.materialFlags & 0x3u) >= 2u || (drawCmd.materialFlags & 0x10u) != 0u) continue;
 
                                 // Only static/stationary primitives
                                 if (drawCmd.mobility == EMobility::Movable) continue;
@@ -451,8 +451,8 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
                     // Draw all scene geometry into this tile
                     uint32_t lastBoundMeshId = UINT32_MAX;
                     for (const auto& drawCmd : commands) {
-                        // Translucent/additive materials are not occluders.
-                        if ((drawCmd.materialFlags & 0x3u) >= 2u) continue;
+                        // Translucent/additive materials and mesh decals are not occluders.
+                        if ((drawCmd.materialFlags & 0x3u) >= 2u || (drawCmd.materialFlags & 0x10u) != 0u) continue;
                         if (drawCmd.meshId >= localMeshCount) continue;
                         const GPUMesh& mesh = localMeshes[drawCmd.meshId];
                         if (!mesh.IsValid()) continue;

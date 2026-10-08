@@ -292,9 +292,12 @@ private:
     ///
     /// The SM5 input layout points into `m_standardLayout` (a member), so the
     /// returned descriptor stays valid for the caller's CreateGraphicsPipeline.
+    /// * `meshDecal` — The graph's domain is Decal on a mesh: the albedo target blends
+    ///   SrcAlpha / InvSrcAlpha by the graph's opacity (the AO in its alpha kept), the other
+    ///   targets are kept (Zero / One), no depth write (Sponza mesh decals, 2026-10-08).
     [[nodiscard]] RHIGraphicsPipelineDesc BuildGBufferPipelineDesc(
         RHIShaderHandle vs, RHIShaderHandle ps,
-        bool bindless, bool twoSided, const char* debugName) const;
+        bool bindless, bool twoSided, bool meshDecal, const char* debugName) const;
 
     IRHIDevice* m_device = nullptr;
     ShaderPipeline* m_shaderPipeline = nullptr;

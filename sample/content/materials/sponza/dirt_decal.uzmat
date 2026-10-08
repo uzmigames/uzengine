@@ -1,7 +1,7 @@
 {
     "version": 1,
     "name": "dirt_decal",
-    "domain": "Surface",
+    "domain": "Decal",
     "shadingModel": "DefaultLit",
     "blendMode": "Masked",
     "twoSided": false,

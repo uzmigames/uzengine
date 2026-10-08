@@ -10,8 +10,8 @@ Gates (pre-registered in the Rulebook task):
   W3  the chrome sphere against F x the dumped PMREM environment along the reflected ray (block B.5b's E4 as
       first written): median relative error <= 0.2 (before 0.99).
   W4  Sponza Camera C against the capture of the build before (test-sky-capture/sponza-default, frame 120):
-      positions identical outside the repaired meshes' screen bounds; the changed pixels reported with their
-      share inside those bounds.
+      positions identical outside the repaired meshes' footprint (the pixels whose world position lies in the
+      meshes' world bounds, dilated by 5 cm); the changed pixels reported with their share inside it.
 
 Usage: python scripts/test_mesh_winding.py [--out DIR] [--reuse]
 """
@@ -49,13 +49,17 @@ def mesh_bounds(path):
     return np.array(struct.unpack_from('<6f', b, 32)).reshape(2, 3)
 
 
-def screen_rect(bounds, cam, scale=1.0):
-    corners = np.array([[bounds[i, 0], bounds[j, 1], bounds[k, 2]] for i in (0, 1) for j in (0, 1) for k in (0, 1)]) * scale
-    px, py, z = cam.project(corners)
-    if (z <= 1.0).all():
-        return None
-    ok = z > 1.0
-    return (float(px[ok].min()), float(py[ok].min()), float(px[ok].max()), float(py[ok].max()))
+def world_footprint(pos, mesh_names, dilate_cm=5.0):
+    """Pixels whose world position lies inside the world bounds (the UZMH header's, dilated) of any of the
+    meshes: the screen footprint of those meshes in the frame the positions came from, independent of the
+    camera's projection."""
+    inside = np.zeros(pos.shape[:2], dtype=bool)
+    ok = np.isfinite(pos).all(-1)
+    for m in mesh_names:
+        bb = mesh_bounds(os.path.join(REPO, 'sample', 'content', 'meshes', 'sponza', m + '.uzmesh'))
+        lo, hi = bb[0] - dilate_cm, bb[1] + dilate_cm
+        inside |= ok & ((pos > lo) & (pos < hi)).all(-1)
+    return inside
 
 
 def main():
@@ -127,24 +131,16 @@ def main():
         pos_changed = ~(np.isclose(np.nan_to_num(pa, nan=-1e9), np.nan_to_num(pb, nan=-1e9), atol=1e-3).all(-1))
         da, db = chan(fr_now, 'direct_light')[..., :3], chan(fr_before, 'direct_light')[..., :3]
         direct_changed = np.abs(da - db).max(-1) > 1e-4
-        cam_s = Camera(man_s.get('camera', {}).get('position', [0, 0, 0]), man_s.get('camera', {}).get('target', [0, 1, 0]))
-        inside = np.zeros((H, W), dtype=bool)
-        rects = {}
-        ys, xs = np.mgrid[0:H, 0:W]
-        for m in REPAIRED_SPONZA:
-            r = screen_rect(mesh_bounds(os.path.join(REPO, 'sample', 'content', 'meshes', 'sponza', m + '.uzmesh')), cam_s)
-            rects[m] = r
-            if r:
-                x0, y0, x1, y1 = r
-                inside |= (xs >= x0 - 2) & (xs <= x1 + 2) & (ys >= y0 - 2) & (ys <= y1 + 2)
+        # the repaired meshes' footprint: pixels whose position (before or after) lies in their world bounds
+        inside = world_footprint(pb, REPAIRED_SPONZA) | world_footprint(pa, REPAIRED_SPONZA)
         pos_outside = int((pos_changed & ~inside).sum())
         s4.update({'positions_changed_px': int(pos_changed.sum()), 'positions_changed_outside_bounds_px': pos_outside,
                    'direct_changed_px': int(direct_changed.sum()), 'direct_changed_inside_bounds_fraction': float(direct_changed[inside].sum() / max(direct_changed.sum(), 1)),
-                   'bounds_px': int(inside.sum()), 'screen_rects': rects})
+                   'bounds_px': int(inside.sum())})
         report['w4'] = s4
         print(f'  Sponza Camera C: positions changed {s4["positions_changed_px"]} px ({pos_outside} outside the repaired meshes\' bounds), direct changed {s4["direct_changed_px"]} px '
               f'({100 * s4["direct_changed_inside_bounds_fraction"]:.1f} % inside the bounds, which cover {s4["bounds_px"]} px); colour changed {s4["colour_changed_px"]} px', flush=True)
-        check('W4 Sponza Camera C: positions identical outside the repaired meshes\' screen bounds; the direct-light changes reported with their share inside those bounds',
+        check('W4 Sponza Camera C: positions identical outside the repaired meshes\' world-bounds footprint; the direct-light changes reported with their share inside it',
               pos_outside == 0, f'positions changed {s4["positions_changed_px"]} px, {pos_outside} outside the bounds; direct changed {s4["direct_changed_px"]} px, {100 * s4["direct_changed_inside_bounds_fraction"]:.1f} % inside')
     else:
         check('W4 Sponza capture of the build before available', False, SPONZA_BEFORE)

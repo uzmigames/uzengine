@@ -209,7 +209,18 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                 // commands sorted by mesh ID (the sort key places mesh ID in LSBs).
                 uint32_t lastBoundMeshId = UINT32_MAX;
 
+                // Mesh decals (materialFlags bit 4) blend over the finished opaque G-buffer: the
+                // commands run twice, the opaque and masked draws first and the decals second (their
+                // PSO blends the albedo and writes no depth); the depth-only pass has no decals.
+                for (int drawPhase = 0; drawPhase < 2; ++drawPhase)
                 for (const auto& drawCmd : commands) {
+                    const bool meshDecal = (drawCmd.materialFlags & 0x10u) != 0u;
+                    if (meshDecal != (drawPhase == 1)) {
+                        continue;
+                    }
+                    if (meshDecal && desc.depthOnly) {
+                        continue;
+                    }
                     // Skip translucent and additive draws — they are rendered in
                     // a separate forward pass after deferred lighting.
                     const uint32_t blendMode = drawCmd.materialFlags & 0x3u;

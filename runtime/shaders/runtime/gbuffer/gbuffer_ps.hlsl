@@ -283,7 +283,7 @@ GBufferOutput main(PSInput input) {
     // Alpha source priority:
     //   1. Separate opacity texture (opacitySrvIndex > 0) → sample .a channel
     //   2. Albedo texture alpha channel (captured during albedo sampling)
-    if ((materialFlags & 0x3u) == 1) {
+    if ((materialFlags & 0x3u) == 1 && (materialFlags & 0x10u) == 0u) {
         float alphaValue = matOpacity;
 #ifndef UZ_MATERIAL_GRAPH
 #ifdef UZ_BINDLESS
@@ -330,6 +330,16 @@ GBufferOutput main(PSInput input) {
     if ((materialMapMask & 2u) != 0u) {
         ao = 1.0;
     }
+
+#ifdef UZ_MATERIAL_GRAPH
+    // Mesh decal (materialFlags bit 4): the graph's opacity rides in the albedo target's alpha as the
+    // blend factor (the PSO blends SrcAlpha / InvSrcAlpha on the colour and keeps the AO underneath
+    // with Zero / One on the alpha); nothing below 1/255 is drawn.
+    if ((materialFlags & 0x10u) != 0u) {
+        if (opacity < 1.0 / 255.0) discard;
+        ao = opacity;
+    }
+#endif
 
     GBufferOutput output;
     output.albedoAO     = float4(albedo, ao);

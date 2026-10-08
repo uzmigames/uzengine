@@ -1061,6 +1061,20 @@ works. Trails work. Known gaps:
   segment transitions
 - **GPU sort** works for alpha-blended particles but no frustum cull yet
 
+### Mesh decals (Sponza's dirt quads) — `FIXED` 2026-10-08
+Sponza's two dirt decal meshes carried a `Masked` graph (`dirt_decal.uzmat`, `alphaClipThreshold: 0`, which
+the loader turns into 0.3333), so every texel above a third of opacity was drawn opaque with the texture's
+flat colour, writing depth, normal and position and occluding shadows and the distance field: grey blotches
+instead of soft dirt (the user's report). A material graph with `domain: Decal` on a mesh is now a mesh
+decal: drawn after the opaque geometry with the albedo target blended SrcAlpha / InvSrcAlpha by the graph's
+opacity (the AO kept), the other targets and the depth untouched, out of the shadow and distance-field sets
+(`materialFlags` bit 4; `lighting-sponza-mesh-decals.md`). Measured (`scripts/test_mesh_decals.py`,
+5/5): on the reference ramp the lit colour is lerp(wall, decal, alpha) to 0.012 (R² 1.000;
+D1 PASS), the positions under the decal sit on the wall (|y| 0.029 cm; D2 PASS), no shadow (D3 PASS);
+Sponza Camera A: positions changed only inside the decal bounds (D4 PASS), the footprint's boundary
+contrast 0.530 → 0.120 (D5 PASS). Open: only the albedo blends (roughness
+and normal stay the stone's); the reflection-probe capture still draws the quads opaque.
+
 ### Decals — `DONE`
 Deferred decal system (DBuffer) works. Decal material graph integration
 works. No known issues.

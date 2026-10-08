@@ -39,12 +39,12 @@ of its far hemisphere), taken at the user's request ("conserte essa renderizaç�
 
 | Gate | Criterion | Result |
 |---|---|---|
-| W1 | no sample mesh is a whole-mesh inversion (LOD0 >= 99 % inconsistent with clockwise-front) | PASS: 253 meshes, inverted [], mixed [('sample\\content\\meshes\\sponza\\ornament_doors_09_metal_door_0_0.uzmesh', 0.037), ('sample\\content\\meshes\\test_formats\\suzanne.uzmesh', 0.022)] |
+| W1 | no sample mesh is a whole-mesh inversion (LOD0 >= 99 % inconsistent with clockwise-front) | PASS: 255 meshes, inverted [], mixed [('sample\\content\\meshes\\sponza\\ornament_doors_09_metal_door_0_0.uzmesh', 0.037), ('sample\\content\\meshes\\test_formats\\suzanne.uzmesh', 0.022)] |
 | W2 | chrome_test: the sphere shows its near hemisphere (positions x median > 0 with the camera at x = 400) and N.V > 0 at the median | PASS: 366005 px, x median 72.18612639485798, N.V median 0.697388036278292 (p10 0.30762136507728177) |
 | W3 | the chrome sphere against F x the dumped PMREM along the reflected ray (median relative error <= 0.2) | PASS: median error 0.035 (ratio 0.995) over 91498 px; upward rays 0.022163654796533865 |
-| W4 | Sponza Camera C: positions identical outside the repaired meshes' screen bounds; the direct-light changes reported with their share inside those bounds | PASS: positions changed 0 px, 0 outside the bounds; direct changed 0 px, 0.0 % inside |
+| W4 | Sponza Camera C: positions identical outside the repaired meshes' world-bounds footprint; the direct-light changes reported with their share inside it | PASS: positions changed 0 px, 0 outside the bounds; direct changed 0 px, 0.0 % inside |
 
-**Numbers (after, 1080p).** Audit: 253 meshes, inverted [], mixed [('sample\\content\\meshes\\sponza\\ornament_doors_09_metal_door_0_0.uzmesh', 0.037), ('sample\\content\\meshes\\test_formats\\suzanne.uzmesh', 0.022)]. The chrome
+**Numbers (after, 1080p).** Audit: 255 meshes, inverted [], mixed [('sample\\content\\meshes\\sponza\\ornament_doors_09_metal_door_0_0.uzmesh', 0.037), ('sample\\content\\meshes\\test_formats\\suzanne.uzmesh', 0.022)]. The chrome
 sphere (366005 px): positions x median 72.186 cm, N·V median 0.697 (p10 0.308); against F × the PMREM along the
 reflected ray, median relative error 0.035 (ratio 0.995) over 91498 px, upward rays 0.022: block
 B.5b's E4 as first written now passes. Sponza Camera C against block B.5c's capture: positions changed 0 px, direct light changed

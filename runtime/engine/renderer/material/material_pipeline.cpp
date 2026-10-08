@@ -214,9 +214,11 @@ RHIPipelineHandle MaterialPipeline::GetOrCreatePSO(const MaterialGraph& graph, b
         // created yet. Create only the PSO for this variant.
         if (cached.pixelShader.IsValid()) {
             std::string debugName = "MatGraph_" + std::to_string(hash)
-                                  + (bindless ? "_Bindless" : "_SM5");
+                                  + (bindless ? "_Bindless" : "_SM5")
+                                  + (graph.domain == MaterialDomain::Decal ? "_MeshDecal" : "");
             auto desc = BuildGBufferPipelineDesc(
-                m_meshVS, cached.pixelShader, bindless, graph.twoSided, debugName.c_str());
+                m_meshVS, cached.pixelShader, bindless, graph.twoSided,
+                graph.domain == MaterialDomain::Decal, debugName.c_str());
             pso = m_device->CreateGraphicsPipeline(desc);
             if (!pso.IsValid()) {
                 UZ_LOG(Renderer, Error,
@@ -280,9 +282,11 @@ RHIPipelineHandle MaterialPipeline::GetOrCreatePSO(const MaterialGraph& graph, b
 
     // ── Step 5: Create GBuffer PSO ──
     std::string debugName = "MatGraph_" + std::to_string(hash)
-                          + (bindless ? "_Bindless" : "_SM5");
+                          + (bindless ? "_Bindless" : "_SM5")
+                          + (graph.domain == MaterialDomain::Decal ? "_MeshDecal" : "");
     auto psoDesc = BuildGBufferPipelineDesc(
-        m_meshVS, psHandle, bindless, graph.twoSided, debugName.c_str());
+        m_meshVS, psHandle, bindless, graph.twoSided,
+        graph.domain == MaterialDomain::Decal, debugName.c_str());
 
     RHIPipelineHandle pso = m_device->CreateGraphicsPipeline(psoDesc);
     if (!pso.IsValid()) {
@@ -401,7 +405,7 @@ std::string MaterialPipeline::BuildCombinedPixelShaderSource(const std::string& 
 
 RHIGraphicsPipelineDesc MaterialPipeline::BuildGBufferPipelineDesc(
     RHIShaderHandle vs, RHIShaderHandle ps,
-    bool bindless, bool twoSided, const char* debugName) const
+    bool bindless, bool twoSided, bool meshDecal, const char* debugName) const
 {
     // Must match PipelineLibrary::GetGBuffer() exactly — same RT formats,
     // depth format, rasterizer state, and depth-stencil configuration.
@@ -421,6 +425,26 @@ RHIGraphicsPipelineDesc MaterialPipeline::BuildGBufferPipelineDesc(
     // Depth — enabled, write enabled (deferred geometry pass writes depth)
     desc.depthStencil.depthEnable = true;
     desc.depthStencil.depthWrite  = true;
+
+    // Mesh decal (a Decal-domain graph on a mesh): drawn after the opaque geometry over the finished
+    // depth, blending its albedo by the opacity the pixel shader writes in the albedo target's alpha
+    // (SrcAlpha / InvSrcAlpha on the colour; Zero / One on the alpha keeps the AO underneath); the
+    // normal, position and emissive targets are kept (Zero / One), and the depth is not written.
+    if (meshDecal) {
+        desc.depthStencil.depthWrite = false;
+        for (uint32_t i = 0; i < 4; ++i) {
+            auto& b       = desc.renderTargetBlend[i];
+            b.blendEnable = true;
+            b.srcColor    = RHIBlendFactor::Zero;
+            b.dstColor    = RHIBlendFactor::One;
+            b.colorOp     = RHIBlendOp::Add;
+            b.srcAlpha    = RHIBlendFactor::Zero;
+            b.dstAlpha    = RHIBlendFactor::One;
+            b.alphaOp     = RHIBlendOp::Add;
+        }
+        desc.renderTargetBlend[0].srcColor = RHIBlendFactor::SrcAlpha;
+        desc.renderTargetBlend[0].dstColor = RHIBlendFactor::InvSrcAlpha;
+    }
 
     // G-Buffer render targets — matches GBuffer::Create() and PipelineLibrary::GetGBuffer()
     desc.renderTargetFormats[0] = RHIFormat::RGBA8Unorm;    // albedo + AO
