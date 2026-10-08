@@ -135,6 +135,102 @@ RHIPipelineHandle PipelineLibrary::GetGBuffer(bool bindless) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GBuffer depth-only and Equal pipelines (block B.4c: the depth prepass)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The depth prepass is the GBuffer pass in a depth-only mode: the same vertex shader and constants
+// as the colour pass, so the clip-space depths are the same bits, no pixel shader and no colour
+// targets. The colour pass then draws standard opaque geometry with `Equal` and no depth write. The
+// previous prepass used the shadow vertex shader (whose view-projection it never bound) with a
+// `LessEqual` test against the reversed-Z clear: it drew nothing.
+
+RHIPipelineHandle PipelineLibrary::GetGBufferDepthOnly(bool bindless) {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetGBufferDepthOnly called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+    RHIPipelineHandle& slot = m_gbufferDepthOnly[bindless ? 1 : 0];
+    if (slot.IsValid()) {
+        return slot;
+    }
+    if (!EnsureMeshShaders()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIGraphicsPipelineDesc desc{};
+    desc.vertexShader  = m_meshVS;
+    desc.pixelShader   = RHIShaderHandle::Invalid();   // depth only
+    desc.topology      = RHIPrimitiveTopology::TriangleList;
+    desc.rasterizer.cullMode              = RHICullMode::Back;   // as the opaque GBuffer pipeline
+    desc.depthStencil.depthEnable         = true;
+    desc.depthStencil.depthWrite          = true;
+    desc.depthStencil.depthFunc           = RHICompareFunc::Greater;   // reversed-Z, as the GBuffer
+    desc.renderTargetCount                = 0;
+    desc.depthStencilFormat               = RHIFormat::D32Float;
+    desc.debugName                        = bindless ? "GBufferDepthOnly_Bindless" : "GBufferDepthOnly";
+
+    const auto layout = VertexLayout::Standard();
+    if (!bindless) {
+        desc.inputElements     = layout.elements;
+        desc.inputElementCount = layout.count;
+        desc.vertexStride      = layout.stride;
+    }
+
+    slot = CreateCachedPipeline(desc);
+    if (slot.IsValid()) {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created GBufferDepthOnly pipeline (bindless={})", bindless);
+    } else {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create GBufferDepthOnly pipeline (bindless={})", bindless);
+    }
+    return slot;
+}
+
+RHIPipelineHandle PipelineLibrary::GetGBufferEqual(bool bindless) {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetGBufferEqual called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+    RHIPipelineHandle& slot = m_gbufferEqual[bindless ? 1 : 0];
+    if (slot.IsValid()) {
+        return slot;
+    }
+    if (!EnsureMeshShaders() || !EnsureGBufferPixelShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIGraphicsPipelineDesc desc{};
+    desc.vertexShader  = m_meshVS;
+    desc.pixelShader   = m_gbufferPS;
+    desc.topology      = RHIPrimitiveTopology::TriangleList;
+    desc.rasterizer.cullMode              = RHICullMode::Back;
+    desc.depthStencil.depthEnable         = true;
+    desc.depthStencil.depthWrite          = false;                   // the prepass wrote it
+    desc.depthStencil.depthFunc           = RHICompareFunc::Equal;   // only the prepass's fragments
+    desc.renderTargetFormats[0]           = RHIFormat::RGBA8Unorm;
+    desc.renderTargetFormats[1]           = RHIFormat::RGBA16Float;
+    desc.renderTargetFormats[2]           = RHIFormat::RGBA32Float;
+    desc.renderTargetFormats[3]           = RHIFormat::RGBA16Float;
+    desc.renderTargetCount                = 4;
+    desc.depthStencilFormat               = RHIFormat::D32Float;
+    desc.debugName                        = bindless ? "GBufferEqual_Bindless" : "GBufferEqual";
+
+    const auto layout = VertexLayout::Standard();
+    if (!bindless) {
+        desc.inputElements     = layout.elements;
+        desc.inputElementCount = layout.count;
+        desc.vertexStride      = layout.stride;
+    }
+
+    slot = CreateCachedPipeline(desc);
+    if (slot.IsValid()) {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created GBufferEqual pipeline (bindless={})", bindless);
+    } else {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create GBufferEqual pipeline (bindless={})", bindless);
+    }
+    return slot;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // GBuffer Masked Pipeline (alpha test, two-sided)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -605,104 +701,6 @@ RHIPipelineHandle PipelineLibrary::GetDebugView() {
     return m_debugView;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-
-// Depth Prepass Pipeline
-// ─────────────────────────────────────────────────────────────────────────────
-
-RHIPipelineHandle PipelineLibrary::GetDepthPrepass() {
-    return GetDepthPrepass(m_device->IsBindless());
-}
-
-RHIPipelineHandle PipelineLibrary::GetDepthPrepass(bool bindless) {
-    if (!m_initialized) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary::GetDepthPrepass called before Init()");
-        return RHIPipelineHandle::Invalid();
-    }
-
-    auto& cached = bindless ? m_depthPrepassBindless : m_depthPrepass;
-    if (cached.IsValid()) {
-        return cached;
-    }
-
-    // The depth prepass reuses the shadow depth vertex shader — it transforms
-    // vertices to clip space with only the model + viewProj matrices. No pixel
-    // shader is needed since we only write depth.
-    if (!EnsureShadowShaders()) {
-        return RHIPipelineHandle::Invalid();
-    }
-
-    RHIGraphicsPipelineDesc desc{};
-    desc.vertexShader  = m_shadowVS;
-    desc.topology      = RHIPrimitiveTopology::TriangleList;
-    desc.rasterizer.cullMode              = RHICullMode::Back; // Opaque depth — cull back faces
-    // No depth bias — unlike the shadow pass, the depth prepass writes to the
-    // GBuffer depth and does not need bias to prevent self-shadowing.
-    desc.rasterizer.slopeScaledDepthBias  = 0.0f;
-    desc.rasterizer.depthBias             = 0.0f;
-    desc.depthStencil.depthEnable         = true;
-    desc.depthStencil.depthWrite          = true;
-    desc.depthStencil.depthFunc           = RHICompareFunc::LessEqual;
-    desc.renderTargetCount                = 0;
-    desc.depthStencilFormat               = RHIFormat::D32Float;
-    desc.debugName                        = bindless ? "DepthPrepass_Bindless" : "DepthPrepass";
-
-    // Hoisted out of the branch: `desc.inputElements` keeps a pointer into
-    // `layout`, which must outlive the CreateCachedPipeline call below.
-    const auto layout = VertexLayout::Standard();
-    if (!bindless) {
-        desc.inputElements     = layout.elements;
-        desc.inputElementCount = layout.count;
-        desc.vertexStride      = layout.stride;
-    }
-
-    cached = CreateCachedPipeline(desc);
-    if (!cached.IsValid()) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create DepthPrepass pipeline (bindless={})", bindless);
-    } else {
-        UZ_LOG(Renderer, Info, "PipelineLibrary: created DepthPrepass pipeline (bindless={})", bindless);
-    }
-
-    return cached;
-}
-
-RHIPipelineHandle PipelineLibrary::GetDepthPrepassInstanced() {
-    if (!m_initialized) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary::GetDepthPrepassInstanced called before Init()");
-        return RHIPipelineHandle::Invalid();
-    }
-
-    if (m_depthPrepassInstanced.IsValid()) {
-        return m_depthPrepassInstanced;
-    }
-
-    if (!EnsureInstancedShadowShaders()) {
-        return RHIPipelineHandle::Invalid();
-    }
-
-    RHIGraphicsPipelineDesc desc{};
-    desc.vertexShader  = m_instancedShadowVS;
-    desc.topology      = RHIPrimitiveTopology::TriangleList;
-    desc.rasterizer.cullMode              = RHICullMode::Back; // Opaque depth — cull back faces
-    // No depth bias — same as non-instanced depth prepass.
-    desc.rasterizer.slopeScaledDepthBias  = 0.0f;
-    desc.rasterizer.depthBias             = 0.0f;
-    desc.depthStencil.depthEnable         = true;
-    desc.depthStencil.depthWrite          = true;
-    desc.depthStencil.depthFunc           = RHICompareFunc::LessEqual;
-    desc.renderTargetCount                = 0;
-    desc.depthStencilFormat               = RHIFormat::D32Float;
-    desc.debugName                        = "DepthPrepass_Instanced";
-
-    m_depthPrepassInstanced = CreateCachedPipeline(desc);
-    if (!m_depthPrepassInstanced.IsValid()) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create DepthPrepass_Instanced pipeline");
-    } else {
-        UZ_LOG(Renderer, Info, "PipelineLibrary: created DepthPrepass_Instanced pipeline");
-    }
-
-    return m_depthPrepassInstanced;
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 

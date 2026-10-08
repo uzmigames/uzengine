@@ -51,7 +51,10 @@ static auto* cv_TAAJitterScale     = UZ_CVAR_FLOAT("r.TAA.JitterScale", 1.f,
     "sub-pixel offset, which is not the same as JitterSequenceLength=1 (that is a constant "
     "Halton23(1) = (0, -0.167) px offset). Used by the followup-10 reconstruction experiments.", 0.f, 2.f);
 static auto* cv_PBRMinRoughness    = UZ_CVAR_FLOAT("r.PBR.MinRoughness", 0.045f, "Minimum roughness clamp", 0.01f, 0.2f);
-static auto* cv_DepthPrepass       = UZ_CVAR_BOOL("r.DepthPrepass", true, "Depth prepass before GBuffer");
+static auto* cv_DepthPrepass       = UZ_CVAR_BOOL("r.DepthPrepass", false,
+    "Depth prepass before the GBuffer (block B.4c: the GBuffer pass in depth-only mode, the colour pass then tests Equal). "
+    "Off by default: on Sponza prepass + GBuffer costs the same as the GBuffer alone (0.524 vs 0.514 ms at 1080p); "
+    "it pays where the GBuffer is overdrawn (a 48-wall stack: 0.180 -> 0.054 + 0.019 ms).");
 static auto* cv_ShadowDebug        = UZ_CVAR_INT("r.ShadowDebug", 0, "Shadow debug grid mode (0=off, 1-8)", 0, 8);
 
 namespace uz {

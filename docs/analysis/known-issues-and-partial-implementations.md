@@ -664,11 +664,21 @@ metals and comes out black in every scene without an HDRI: the chrome sphere of 
 black disc, the mirror floor of `scripts/reflection_reference.py` shows nothing of the sky with SSR off,
 although the env-map sampler builds its alias table from a sky cubemap of positive luminance. Own item.
 
-### Depth prepass discarded by the GBuffer clear — `PERF` (side finding, block B.5)
-`gbuffer_pass.cpp` clears the depth-stencil (`ClearDepthStencil`) before drawing, so the depth
-prepass (`r.DepthPrepass`, 0.38 ms in Sponza at 1080p) buys no early-Z for the GBuffer and
-anything that read the depth between the two passes read nothing. To be decided in its own item
-(keep the prepass depth and draw the GBuffer with depth-equal, or drop the prepass).
+### Depth prepass — `FIXED` 2026-10-07 (block B.4c; was "discarded by the GBuffer clear", block B.5)
+The prepass never wrote a depth: it rendered with the shadow vertex shader whose view-projection
+(`ShadowCB`, b4) the pass never bound, tested `LessEqual` against the reversed-Z clear of 0.0, and the
+GBuffer cleared the depth anyway (0.167 ms per frame on Sponza for a bit-identical G-buffer). It is now
+the GBuffer pass in a depth-only mode (`GBufferPassDesc::depthOnly`: the GBuffer's vertex shader and
+constants, no pixel shader, `Greater` with writes, standard opaque draws only); the colour pass keeps
+that depth and tests `Equal` without writes for standard draws, masked and material-graph draws keep
+`Greater` with writes. The old pass and pipelines are gone. Measured (`scripts/test_depth_prepass.py`,
+5/5): the G-buffer is bit-identical with and without the prepass on Sponza, the overdraw
+stack and the masked wall (Z1 PASS, Z1b PASS); on the 48-wall overdraw stack the GBuffer costs
+0.054 ms with the prepass (0.019 ms) against 0.180 ms
+without (Z2 PASS); on Sponza prepass + GBuffer 0.524 ms against GBuffer alone 0.514 ms, so
+`r.DepthPrepass` defaults to 0 (Z3 PASS). Open: no instanced depth-only path
+(instancing is never active), two-phase occlusion culling still expects a Hi-Z before the GBuffer,
+masked depth with an alpha texture untested (no such texture in the sample content).
 
 ---
 

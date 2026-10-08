@@ -143,8 +143,31 @@ def dense_lights_entities():
     return ents
 
 
+def overdraw_entities(count=48):
+    """Block B.4c: `count` walls facing the camera, one behind the other 40 cm apart (the farthest listed
+    first), each covering the middle of the view: without a depth prepass every pixel of the stack is
+    shaded once per wall that is drawn before a nearer one; with it, once."""
+    return [_mesh_entity(f'slab_{i}', mesh_asset(f'slab_{i}')) for i in reversed(range(count))]
+
+
+OVERDRAW_SLABS = {f'slab_{i}': ((-900.0, -1400.0 + 40.0 * i, 0.0), (900.0, -1394.0 + 40.0 * i, 700.0)) for i in range(48)}
+
+
+def masked_entities():
+    """Block B.4c: the mid wall as a Masked material with opacity 1 (no alpha texture in the sample
+    content): it must be drawn by the GBuffer's masked pipeline, not by the depth prepass."""
+    base = _base_entities()
+    for e in base:
+        if e['name'] == 'wall_mid':
+            e['components']['material']['blendMode'] = 'Masked'
+            e['components']['material']['opacity'] = 1.0
+    return base
+
+
 VARIANTS = {
     'lights-reference': (lambda: _base_entities() + many_lights_entities(), 'Many lights reference'),
+    'lights-reference-overdraw': (lambda: _base_entities() + overdraw_entities(), 'Overdraw stack, no local lights (block B.4c)'),
+    'lights-reference-masked': (lambda: masked_entities(), 'Masked mid wall, no local lights (block B.4c)'),
     'lights-reference-400': (lambda: _base_entities() + dense_lights_entities(), 'Many lights reference, 400 point + 100 spot'),
     'lights-reference-none': (lambda: _base_entities(), 'Many lights reference, no local lights'),
     'lights-reference-none-glossy': (lambda: _base_entities(0.2), 'Glossy floor, no local lights (the ambient of the source-radius scenes)'),
@@ -179,7 +202,7 @@ def project_json(variant):
 def generate():
     written = []
     os.makedirs(os.path.join(CONTENT, 'meshes', 'reference'), exist_ok=True)
-    for name, (lo, hi) in MESHES.items():
+    for name, (lo, hi) in {**MESHES, **OVERDRAW_SLABS}.items():
         path = os.path.join(CONTENT, *mesh_asset(name).split('/'))
         with open(path, 'wb') as fh:
             fh.write(box_mesh_bytes(lo, hi))

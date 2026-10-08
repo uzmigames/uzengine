@@ -141,6 +141,13 @@ public:
     /// Returns the G-Buffer Masked pipeline using the device's default bindless mode.
     [[nodiscard]] RHIPipelineHandle GetGBufferMasked();
 
+    /// Block B.4c: the depth prepass is the GBuffer pass in depth-only mode. This pipeline is the
+    /// GBuffer's vertex shader with no pixel shader and no colour targets (reversed-Z `Greater`,
+    /// depth writes); `GetGBufferEqual` is the GBuffer pipeline with `Equal` and no depth write,
+    /// used by the colour pass for the standard opaque draws the prepass wrote.
+    [[nodiscard]] RHIPipelineHandle GetGBufferDepthOnly(bool bindless);
+    [[nodiscard]] RHIPipelineHandle GetGBufferEqual(bool bindless);
+
     /// Returns the translucent forward pipeline (mesh_vs + mesh_ps, 1 HDR RT, depth read-only).
     ///
     /// Uses SrcAlpha/InvSrcAlpha blending for Porter-Duff alpha compositing.
@@ -375,33 +382,6 @@ public:
     /// Depth: disabled (no depth test or write).
     /// Render target: RGBA16Float (HDR scene color).
     [[nodiscard]] RHIPipelineHandle GetCloudComposite();
-
-    /// Returns the depth prepass pipeline (shadow_depth_vs, no pixel shader, depth-only).
-    ///
-    /// Similar to the shadow depth pipeline but WITHOUT depth bias (no slope-scaled
-    /// or constant bias) since the prepass writes to the GBuffer depth, not a shadow
-    /// atlas. Uses LessEqual comparison (reversed-Z).
-    ///
-    /// # Arguments
-    /// * `bindless` — If true, omits vertex input layout (SM6.6 path).
-    ///   Defaults to the device's bindless capability.
-    ///
-    /// # Returns
-    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
-    [[nodiscard]] RHIPipelineHandle GetDepthPrepass(bool bindless);
-
-    /// Returns the depth prepass pipeline using the device's default bindless mode.
-    [[nodiscard]] RHIPipelineHandle GetDepthPrepass();
-
-    /// Returns the instanced depth prepass pipeline (shadow_depth_vs+UZ_INSTANCED, depth-only, no bias).
-    ///
-    /// Uses `DrawIndexedInstanced` with per-instance world matrices. Only available
-    /// on SM6.6 bindless path. Identical to `GetDepthPrepass(true)` but with the
-    /// instanced vertex shader variant.
-    ///
-    /// # Returns
-    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
-    [[nodiscard]] RHIPipelineHandle GetDepthPrepassInstanced();
 
     /// Returns the Hi-Z pyramid compute pipeline (hiz_pyramid_cs.hlsl).
     ///

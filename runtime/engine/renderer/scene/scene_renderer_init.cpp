@@ -1090,7 +1090,7 @@ void SceneRenderer::ApplyCVars() {
     m_sdfGiEnabled      = cvars.GetBool("r.RadianceCache", false)
                         && m_globalDistanceField.IsInitialized()
                         && m_radianceCache.IsInitialized();
-    m_depthPrepassEnabled = cvars.GetBool("r.DepthPrepass", true);
+    m_depthPrepassEnabled = cvars.GetBool("r.DepthPrepass", false);   // block B.4c: off unless the scene is overdrawn
     m_gpuOcclusionCullingEnabled = cvars.GetBool("r.GpuCull", false);
     m_shadowDebugMode   = static_cast<uint32_t>(cvars.GetInt("r.ShadowDebug", 0));
 

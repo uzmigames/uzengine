@@ -20,6 +20,7 @@ sweep.
 | B.5 layered reflections (Hi-Z after the GBuffer, the SSR chain in order, SSR before the BRDF) | 9f1be63f (07/10) | `lighting-block-b-05-layered-reflections.md` | `test_layered_reflections.py` 7/7 |
 | B.6 DDGI dedup, second bounce, TLAS reuse | edfd7942 (07/10) | `lighting-block-b-06-ddgi-dedup.md` | `test_ddgi_dedup.py` 6/6 (+ `test_gi_energy_gpu.ps1`) |
 | B.7 clustered light lists, 512 / 128 lights, the light parameters | 58340259, 794b632f (07/10) | `lighting-block-b-07-clustered-lights.md` | `test_clustered_lights.py` 8/9 (C2 at 0.505 × against the 0.5 × gate) |
+| B.4c the depth prepass (side item of B.5, after the block closed) | (07/10) | `lighting-block-b-04c-depth-prepass.md` | `test_depth_prepass.py` 5/5 |
 
 ## What the block changed, in one paragraph each
 
@@ -51,6 +52,11 @@ sweep.
   now traces each ray once into buffers the writer integrates (DDGI writer 2.64 → 0.26 ms), the
   probe rays carry the second bounce the SDF writer always had (energy ratio DDGI/SDF 0.932 → 0.966),
   and the TLAS is built only when its instances change (0.093 → 0.0006 ms on the static scene).
+- **Depth prepass (B.4c, after the block closed).** The prepass never wrote a depth (the shadow
+  vertex shader with an unbound view-projection, `LessEqual` on a reversed-Z clear, and the GBuffer's
+  own clear). It is now the GBuffer pass in a depth-only mode with the colour pass testing `Equal`:
+  bit-identical G-buffers, the overdraw stack's GBuffer 0.180 → 0.054 ms, and
+  `r.DepthPrepass` defaulting to the cheaper configuration on Sponza (0).
 - **Local lights.** The deferred lighting looped over every light in every pixel and ignored the
   components' falloff exponent, scales and source radius. A compute pass assigns the lights to a
   32-pixel × 24-slice cluster grid whose depth range follows the lights; the pixel evaluates its
@@ -82,7 +88,7 @@ sweep.
 - B.4: height fog + froxel combination, density unit, temporal reprojection, local lights in the fog.
 - B.4b: the march has no dither or temporal filter, sun only.
 - B.5: the environment-MIS specular is black on smooth metals in scenes without an HDRI (own item,
-  B.5b); the GBuffer discards the depth prepass (own item, B.4c); the SDF reflection layer has no
+  B.5b); the depth prepass: done after the block closed (B.4c); the SDF reflection layer has no
   denoiser; the `r.SSR.*` CVars are registered twice.
 - B.6: no Chebyshev test inside the indirect term, no DDGI probe relocation, the DDGI level with the
   second bounce against a ground truth (the SDF cache and the gather leave the Camera C interior

@@ -487,7 +487,7 @@
 
     bool m_gpuProfileEnabled = false;   ///< When true, GPU timestamp profiling is active and results are logged.
 
-    bool m_depthPrepassEnabled = true;  ///< When true, depth prepass runs before GBuffer.
+    bool m_depthPrepassEnabled = false; ///< r.DepthPrepass (block B.4c): the depth-only GBuffer pass before the colour pass.
 
     bool m_gpuOcclusionCullingEnabled = false;  ///< When true, GPU cull pass performs HiZ occlusion test.
 

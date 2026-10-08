@@ -3,7 +3,6 @@
 
 // Geometry passes
 #include "geometry/decal_pass.h"
-#include "geometry/depth_prepass.h"
 #include "geometry/gbuffer_pass.h"
 #include "geometry/gpu_cull_pass.h"
 #include "geometry/pbr_pass.h"

@@ -194,6 +194,8 @@
     RHIPipelineHandle m_shadowDepthLinear         = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_shadowDepthLinearBindless = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_gbufferInstanced      = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_gbufferDepthOnly[2]   = {RHIPipelineHandle::Invalid(), RHIPipelineHandle::Invalid()}; ///< [bindless] block B.4c
+    RHIPipelineHandle m_gbufferEqual[2]       = {RHIPipelineHandle::Invalid(), RHIPipelineHandle::Invalid()}; ///< [bindless] block B.4c
     RHIPipelineHandle m_shadowDepthInstanced  = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_skyAtmosphere         = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_hdriSkybox            = RHIPipelineHandle::Invalid();
@@ -205,9 +207,6 @@
     RHIPipelineHandle m_apVolume             = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_skyCubemapCapture    = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_skyCubemapCapturePSPipeline = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_depthPrepass          = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_depthPrepassBindless  = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_depthPrepassInstanced = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_hizPyramid            = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_gpuCull              = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_dfsCullObjects        = RHIPipelineHandle::Invalid();
