@@ -657,8 +657,9 @@ active reflection layer (SDF gather or prefiltered IBL), so Fresnel / DFG apply 
 environment-MIS specular on smooth metals (which replaces the split-sum term there); the
 additive post-TAA composite is legacy (`r.SSR.Composite`, default 0, double-counts). Gates: R0-R5 7/7 (scripts/test_layered_reflections.py, 2026-10-07): mapping 91 % within 0.5 deg (median 0.08 deg), SSR layer median error 0.150 against F x reference (SSR off: 1.0), legacy composite 2.7 x the default on the reflecting floor (double count) while the default sits at 0.92 x, temporal stability unchanged, Sponza with SSR off: direct light identical to 8aeb8917 and colour within the run-to-run envelope, SSR passes 0.12 ms at 1080p. Note: the trace skips surfaces rougher than `r.SSR.MaxRoughness` (0.35); Sponza's
 stone is above it, so SSR shows nothing there by design unless the cut-off is raised.
-`r.SSR.MaxRoughness`, `NumSteps`, `StartMipLevel`, `SlopeToleranceScale`, `Composite` are each
-registered twice (frame_gi_passes.cpp and frame_lighting.cpp / frame_postprocess.cpp).
+~~`r.SSR.MaxRoughness`, `NumSteps`, `StartMipLevel`, `SlopeToleranceScale`, `Composite` are each
+registered twice (frame_gi_passes.cpp and frame_lighting.cpp / frame_postprocess.cpp).~~ Fixed
+2026-10-08 ("CVars registered twice" under Rendering).
 
 ### Environment-MIS specular — `FIXED` 2026-10-08 (block B.5b; was "black on metals", side finding of block B.5)
 The environment-MIS estimate (`EnvMIS_Temporal`) replaces the split-sum specular on smooth metals and
@@ -1060,6 +1061,47 @@ works. Trails work. Known gaps:
 - **Ribbons / trails** interpolation has a minor popping artifact at
   segment transitions
 - **GPU sort** works for alpha-blended particles but no frustum cull yet
+
+### Split-sum specular on rough metals — `FIXED` 2026-10-08 (block B.5b's finding)
+The prefiltered-cubemap specular read 3.3 x / 4.9 x the CPU integral of the GGX BRDF on the roughness
+0.3 / 0.5 metal floors (block B.5b). Two causes: the lighting picked the mip with the Three.js PMREM
+curve (`r(2-r) x maxMip x 1.2`) while the engine's bake distributes roughness linearly over the mips
+(roughness 0.5 read a mip baked for 0.9), and the sky SH was projected in the cubemap's frame (+Y up)
+but evaluated with the world normal, so every surface read the irradiance of the direction with y and
+z swapped (an upward normal got the horizon's grey 0.72 instead of the sky's (0.07, 0.13, 0.24));
+the multi-scatter term of the split-sum uses that irradiance and every scene without a GI probe source
+lights its ambient with it. The CPU packing also copied UE5's signs (whose basis negates y, x, yz
+and xz) onto the engine's positive Ramamoorthi basis, so the irradiance field was rotated 180 degrees
+about the cube's z axis (with the frame fixed, an upward normal read the ground, 1.33), and the
+lower-hemisphere colour injected into the SH was written into the red channel's L2 band with Y00 / 2 of
+the colour. Now: the engine's bake is read linearly (a PMREM keeps its curve, bit 8 of the per-frame mip
+count), the SH is evaluated with `WorldToCubemap(N)` and packed with the basis's own signs
+(`SHCubemapToWorld` for the light probe volume, which the shader evaluates with the world normal; 3
+gtests), the injection writes L / 2 and -L / 2 into the constant and the up terms;
+`EnvMapSampler::DumpRadiance` dumps the prefiltered mips for a CPU check. Measured
+(`scripts/test_split_sum.py`, 7/10): roughness 0.3 / 0.5 floors split-sum / integral
+1.309 / 2.331 (P1 FAIL / FAIL); the engine against a CPU model of its own
+approximations 0.967 / 0.994 (P1b PASS / PASS): what remains above the integral is the
+split-sum's N = V = R assumption at grazing incidence (NoV [0.00,0.20) 3.17 x, NoV [0.20,0.35) 2.58 x, NoV [0.35,0.50) 2.04 x, NoV [0.50,0.70) 1.75 x), not the implementation; box
+tops' irradiance against E / pi per channel [1.032, 1.015, 0.985] (P7 PASS), the bake's mips against a CPU prefilter
+(P8 PASS). Open: the split-sum's excess at grazing incidence on rough metals (a horizon term for
+metals is the usual mitigation; Three.js skips it for them), the PMREM curve against Three.js's
+convention (the rough PMREM floors read 1.149 / 0.396 of the integral), the bake's source-mip
+bias against the output size.
+
+### Cluster spot cone — `FIXED` 2026-10-08 (block B.7's open item)
+The light cull assigned spots by their range sphere alone. Now a conservative cone test against the
+cell's bounding sphere (Wronski 2017) after the range test, `r.Lights.ClusterSpotCone` (default 1);
+the culled lights contributed exactly 0, so the lighting is bit-identical (`scripts/test_cluster_spot_cone.py`,
+4/4: identity K1 PASS; mean cluster light count on the dense scene 126.63 → 66.88,
+K2 PASS; LightCull 0.070 → 0.070 ms, K3 PASS; DeferredLighting 0.897 → 0.714 ms, K4 PASS).
+
+### CVars registered twice — `FIXED` 2026-10-08 (block A.8's list)
+Nine names were registered in two translation units (the `r.SSR.*` five, `r.Fog`, `r.Clouds`, `r.SSGI`,
+`r.RayTracing.GI`); the registry keeps the first, so the default and range depended on static-init
+order. The never-read copies are gone, `r.RayTracing.GI` is read through the registry in its second
+file, and `scripts/test_cvar_registrations.py` (every name once, comments stripped, a duplicate fixture
+as the negative control, no registration in a header) guards it (`lighting-cvars-once.md`).
 
 ### Mesh decals (Sponza's dirt quads) — `FIXED` 2026-10-08
 Sponza's two dirt decal meshes carried a `Masked` graph (`dirt_decal.uzmat`, `alphaClipThreshold: 0`, which

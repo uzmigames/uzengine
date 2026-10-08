@@ -75,7 +75,7 @@ Rulebook task `phase0_lighting-block-b-07-clustered-lights` (proposal, design, s
 
 ## Still open
 
-- Spot lights are culled with their range sphere; a cone test would shrink their lists (the result is
+- Spot lights are culled with their range sphere; a cone test (done 2026-10-08, `lighting-cluster-spot-cone.md`) would shrink their lists (the result is
   the same, the cost is not).
 - The forward translucent pass and the froxel fog do not read the lists (nor the local lights, for
   the fog).

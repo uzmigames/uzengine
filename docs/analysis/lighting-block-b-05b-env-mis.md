@@ -100,7 +100,8 @@ on smooth metals in every scene without an HDRI"), taken after the block closed.
 - The split-sum path against the same references: ratio 3.255 / 4.850 of the integral on the
   roughness 0.3 / 0.5 floors and 1.082 of F × the PMREM along the reflected ray on the chrome
   floor: the prefiltered path is far from the integral on rough metals (reported, not gated; its own
-  item).
+  item). **Done 2026-10-08** (`lighting-split-sum-mips.md`): the mip curve of a PMREM applied to the
+  engine's linear bake, and the sky SH evaluated in the wrong frame.
 
 ## Still open
 

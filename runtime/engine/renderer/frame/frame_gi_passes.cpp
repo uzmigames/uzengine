@@ -40,7 +40,8 @@ static auto* cv_SSRTrace           = UZ_CVAR_FLOAT("r.SSR.Trace", 1.0f, "Enable 
 static auto* cv_SSRResolve         = UZ_CVAR_FLOAT("r.SSR.Resolve", 1.0f, "Enable SSR resolve pass (0=skip)", 0.0f, 1.0f);
 static auto* cv_SSRTemporal        = UZ_CVAR_FLOAT("r.SSR.Temporal", 1.0f, "Enable SSR temporal pass (0=skip)", 0.0f, 1.0f);
 static auto* cv_SSRSpatialDenoise  = UZ_CVAR_FLOAT("r.SSR.SpatialDenoise", 1.0f, "Enable SSR spatial denoise pass (0=skip)", 0.0f, 1.0f);
-static auto* cv_SSRComposite       = UZ_CVAR_FLOAT("r.SSR.Composite", 0.0f, "Legacy additive post-TAA SSR composite (block B.5: the lighting blends SSR before the BRDF; 1 double-counts, kept as the A/B control)", 0.0f, 1.0f);
+// r.SSR.Composite is registered where it is read (frame_postprocess.cpp); the copy that lived here was never
+// read (block A.8 list, removed 2026-10-08).
 static auto* cv_SSRNumSteps        = UZ_CVAR_INT("r.SSR.NumSteps", 16, "SSR ray march step count", 8, 64);
 static auto* cv_SSRStartMip        = UZ_CVAR_FLOAT("r.SSR.StartMipLevel", 1.0f, "SSR initial HZB mip level", 0.f, 3.f);
 static auto* cv_SSRSlopeTolerance  = UZ_CVAR_FLOAT("r.SSR.SlopeToleranceScale", 4.0f, "SSR slope tolerance scale", 1.f, 16.f);
@@ -49,7 +50,12 @@ static auto* cv_SSRSlopeTolerance  = UZ_CVAR_FLOAT("r.SSR.SlopeToleranceScale", 
 /// Requires DXR 1.1 (`RayQuery<>`) and a built TLAS. When the device does not
 /// support DXR or the TLAS is not yet ready, the runtime falls back to the
 /// SDF radiance cache shader transparently. @ref Majercik 2019 "DDGI"
-static auto* cv_RayTracingGI       = UZ_CVAR_BOOL("r.RayTracing.GI", false, "Use DXR ray-traced probe update (DDGI) instead of SDF sphere-tracing");
+// r.RayTracing.GI is registered in rt_manager.cpp (read there); this file reads it through the registry
+// (one registration per CVar, 2026-10-08).
+static const uz::CVar* RayTracingGICVar() {
+    static const uz::CVar* cvar = uz::CVarRegistry::Get().Find("r.RayTracing.GI");
+    return cvar;
+}
 
 #include <cstring>
 
@@ -330,7 +336,8 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
             const bool rtGiOn = m_rtManager && m_rtManager->IsGIEnabled();
             const uint32_t tlasInstances = m_rtManager ? m_rtManager->GetTLASInstanceCount() : 0u;
             const bool wantDdgi = rtGiOn && tlasInstances > 0u && m_ddgiSystem.IsInitialized();
-            if (cv_RayTracingGI && cv_RayTracingGI->value && !wantDdgi && !m_ddgiSkipLogged) {
+            const uz::CVar* rayTracingGI = RayTracingGICVar();
+            if (rayTracingGI && rayTracingGI->value && !wantDdgi && !m_ddgiSkipLogged) {
                 m_ddgiSkipLogged = true;
                 UZ_LOG(Renderer, Warning,
                        "DDGI: r.RayTracing.GI=1 but the writer is skipped (r.RayTracing master switch on={}, TLAS instances={}, ddgi initialised={}); deferred lighting stays on the SDF radiance cache",

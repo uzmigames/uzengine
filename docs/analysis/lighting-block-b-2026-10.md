@@ -24,7 +24,10 @@ sweep.
 | B.5b the environment-MIS specular (side item of B.5, after the block closed) | ea13ab21 (08/10) | `lighting-block-b-05b-env-mis.md` | `test_env_mis.py` 8/9 (E1 read the sky capture's √3, fixed in B.5c) |
 | B.5c the sky capture's sun illuminance per channel (B.5b's finding, at the user's decision) | b8ff5077 (08/10) | `lighting-block-b-05c-sky-capture.md` | `test_sky_capture.py` 5/5 |
 | Mesh winding: eleven sample meshes wound counter-clockwise (B.5b's sphere finding), repaired | (08/10) | `lighting-mesh-winding.md` | `test_mesh_winding.py` 4/4 |
-| Mesh decals: Sponza's dirt quads blended into the G-buffer by opacity (the user's report) | (08/10) | `lighting-sponza-mesh-decals.md` | `test_mesh_decals.py` 5/5 |
+| Mesh decals: Sponza's dirt quads blended into the G-buffer by opacity (the user's report) | 513e2983 (08/10) | `lighting-sponza-mesh-decals.md` | `test_mesh_decals.py` 5/5 |
+| Split-sum on rough metals: the mip curve and the sky SH frame (B.5b's finding) | (08/10) | `lighting-split-sum-mips.md` | `test_split_sum.py` 7/10 |
+| Cluster spot cone (B.7's open item) | (08/10) | `lighting-cluster-spot-cone.md` | `test_cluster_spot_cone.py` 4/4 |
+| CVars registered once (A.8's list) | (08/10) | `lighting-cvars-once.md` | `test_cvar_registrations.py` 3/3 |
 
 ## What the block changed, in one paragraph each
 
@@ -109,19 +112,22 @@ sweep.
 - B.4b: the march has no dither or temporal filter, sun only.
 - B.5: the environment-MIS specular: done after the block closed (B.5b; open there: no history
   reprojection, `OnResize` never called, the captured sun disc counted twice); the depth prepass: done
-  after the block closed (B.4c); the SDF reflection layer has no denoiser; the `r.SSR.*` CVars are
-  registered twice.
+  after the block closed (B.4c); the SDF reflection layer has no denoiser; ~~the `r.SSR.*` CVars are
+  registered twice~~ (done 2026-10-08, `lighting-cvars-once.md`).
 - Found in B.5b and fixed in B.5c at the user's decision: the sky cubemap capture scaled the sun by
   the length of the illuminance vector; every atmosphere scene's ambient changed (Sponza's
   re-calibration, if wanted, is the user's call). Also found in B.5b: `sphere.uzmesh` renders inside-out (content; repaired with
   ten more counter-clockwise meshes, `lighting-mesh-winding.md`), and the
-  split-sum (prefiltered) specular reads 3-5 × the CPU integral on the roughness 0.3 / 0.5 metal floors
-  (the estimate reads 1.0 ×): the prefiltered path's level on rough metals is an item of its own.
+  split-sum (prefiltered) specular read 3-5 × the CPU integral on the roughness 0.3 / 0.5 metal floors
+  (the estimate reads 1.0 ×): done 2026-10-08 (`lighting-split-sum-mips.md`: the mip curve, the sky SH's
+  frame and packing; 1.309 / 2.331 now, the remainder the N = V = R assumption at
+  grazing incidence, open).
 - B.6: no Chebyshev test inside the indirect term, no DDGI probe relocation, the DDGI level with the
   second bounce against a ground truth (the SDF cache and the gather leave the Camera C interior
   nearly black, the DDGI path lights it).
-- B.7: cone test for spots, the forward pass and the fog do not read the lists, local lights do not
-  reach the GI, a structured-buffer light list beyond 512 / 128.
+- B.7: ~~cone test for spots~~ (done 2026-10-08, `lighting-cluster-spot-cone.md`), the forward pass and
+  the fog do not read the lists, local lights do not reach the GI, a structured-buffer light list beyond
+  512 / 128.
 - The pre-existing gtest failures reported with every item (the fog / sky default-value tests,
   `SceneLoaderTest.CameraComponent_DefaultValues`) are not from this block.
 
