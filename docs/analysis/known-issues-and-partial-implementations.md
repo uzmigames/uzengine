@@ -1117,6 +1117,15 @@ Sponza Camera A: positions changed only inside the decal bounds (D4 PASS), the f
 contrast 0.530 → 0.120 (D5 PASS). Open: only the albedo blends (roughness
 and normal stay the stone's); the reflection-probe capture still draws the quads opaque.
 
+**Addendum (2026-10-08, the Sponza recalibration item):** the dirt-decal mesh had also been a
+distance-field occluder. `decals_1st_floor1_dirt_decal_0` (7036 vertices, bounds spanning the atrium)
+as a Masked mesh in the two-sided 128³ mesh SDF darkened Sponza's diffuse indirect by 43 %: the chain of
+Camera C captures puts × 1.69 (Camera A × 1.39) at the mesh-decal commit, uniform over the frame, and
+with the material back to the Surface domain on the same binary the indirect reads 0.571 × and the
+specular 0.34 ×. The look Sponza had been calibrated to included that occluder
+(`lighting-sponza-recalibration.md`). Open: thin open "sticker" meshes in the two-sided mesh SDF have no
+guard in the bake.
+
 ### Decals — `DONE`
 Deferred decal system (DBuffer) works. Decal material graph integration
 works. No known issues.

@@ -172,7 +172,7 @@
           ]
         },
         "sky_light": {
-          "intensity": 1,
+          "intensity": 1.7320508,
           "light_color": [
             1,
             1,

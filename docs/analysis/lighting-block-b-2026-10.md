@@ -28,6 +28,7 @@ sweep.
 | Split-sum on rough metals: the mip curve and the sky SH frame (B.5b's finding) | (08/10) | `lighting-split-sum-mips.md` | `test_split_sum.py` 7/10 |
 | Cluster spot cone (B.7's open item) | (08/10) | `lighting-cluster-spot-cone.md` | `test_cluster_spot_cone.py` 4/4 |
 | CVars registered once (A.8's list) | (08/10) | `lighting-cvars-once.md` | `test_cvar_registrations.py` 3/3 |
+| Sponza recalibrated after the sky fix (the user's choice) | (08/10) | `lighting-sponza-recalibration.md` | `test_sponza_recalibration.py` 1/3 |
 
 ## What the block changed, in one paragraph each
 
@@ -115,8 +116,8 @@ sweep.
   after the block closed (B.4c); the SDF reflection layer has no denoiser; ~~the `r.SSR.*` CVars are
   registered twice~~ (done 2026-10-08, `lighting-cvars-once.md`).
 - Found in B.5b and fixed in B.5c at the user's decision: the sky cubemap capture scaled the sun by
-  the length of the illuminance vector; every atmosphere scene's ambient changed (Sponza's
-  re-calibration, if wanted, is the user's call). Also found in B.5b: `sphere.uzmesh` renders inside-out (content; repaired with
+  the length of the illuminance vector; every atmosphere scene's ambient changed (Sponza recalibrated
+  2026-10-08 with the √3 in its SkyLight, `lighting-sponza-recalibration.md`). Also found in B.5b: `sphere.uzmesh` renders inside-out (content; repaired with
   ten more counter-clockwise meshes, `lighting-mesh-winding.md`), and the
   split-sum (prefiltered) specular read 3-5 × the CPU integral on the roughness 0.3 / 0.5 metal floors
   (the estimate reads 1.0 ×): done 2026-10-08 (`lighting-split-sum-mips.md`: the mip curve, the sky SH's
