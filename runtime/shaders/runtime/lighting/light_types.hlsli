@@ -18,8 +18,9 @@ static const uint kClusterSlotsMax     = 32u;
 static const uint kClusterRecordSize   = kClusterSlotsMax + 1u;
 static const uint kClusterSpotBit      = 0x8000u;
 static const uint kClusterOverflow     = 0x80000000u;
-static const uint kClusterFlag_Enabled = 1u;
-static const uint kClusterFlag_Debug   = 2u;
+static const uint kClusterFlag_Enabled  = 1u;
+static const uint kClusterFlag_Debug    = 2u;    // bits 2-3: the debug mode
+static const uint kClusterFlag_SpotCone = 16u;   // spots assigned by their cone (r.Lights.ClusterSpotCone)
 
 struct PointLightData   // 64 bytes — matches C++ exactly
 {

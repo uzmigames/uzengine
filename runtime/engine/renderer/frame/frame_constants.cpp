@@ -40,6 +40,9 @@ static auto* cv_LightsClustered = UZ_CVAR_BOOL("r.Lights.Clustered", true,
 static auto* cv_LightsClusterSlots = UZ_CVAR_INT("r.Lights.ClusterSlots", 32,
     "Light slots per cluster (1..32). A cluster with more lights overflows and evaluates every light of the frame; "
     "a small value exercises that path.", 1, 32);
+static auto* cv_LightsClusterSpotCone = UZ_CVAR_BOOL("r.Lights.ClusterSpotCone", true,
+    "The light cull assigns a spot light to a cluster only when its cone reaches the cluster (a conservative cone "
+    "against the cell's bounding sphere, after the range-sphere test); 0 = the range sphere alone, for an A/B.");
 static auto* cv_LightsClusterDebug = UZ_CVAR_INT("r.Lights.ClusterDebug", 0,
     "1 = tint the frame by the pixel's cluster light count (blue 0, green 1-4, yellow 5-10, red 11+, magenta = overflow) "
     "and write (slice, count, first slot, tile) to the region dump's rc_support record; 2 = write the cluster's AABB "
@@ -554,7 +557,8 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
                                                                         static_cast<int>(kClusterSlotsMax)));
         const uint32_t debugMode = static_cast<uint32_t>(std::clamp(static_cast<int>(cv_LightsClusterDebug->value), 0, 3));
         lightingCB->clusterFlags     = (cv_LightsClustered->value != 0.0f ? kClusterFlag_Enabled : 0u)
-                                     | (debugMode != 0u ? kClusterFlag_Debug : 0u) | (debugMode << 2);
+                                     | (debugMode != 0u ? kClusterFlag_Debug : 0u) | (debugMode << 2)
+                                     | (cv_LightsClusterSpotCone->value != 0.0f ? kClusterFlag_SpotCone : 0u);
         lightingCB->clusterListSrv   = UINT32_MAX;
         lightingCB->clusterListUav   = UINT32_MAX;
         lightingCB->clusterViewWidth  = static_cast<float>(m_renderWidth);

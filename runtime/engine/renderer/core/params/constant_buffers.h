@@ -447,8 +447,9 @@ static constexpr uint32_t kClusterTileSize   = 32;
 static constexpr uint32_t kClusterSlices     = 24;
 static constexpr uint32_t kClusterSlotsMax   = 32;
 static constexpr uint32_t kClusterRecordUints = kClusterSlotsMax + 1;
-static constexpr uint32_t kClusterFlag_Enabled = 1u << 0;
-static constexpr uint32_t kClusterFlag_Debug   = 1u << 1;
+static constexpr uint32_t kClusterFlag_Enabled  = 1u << 0;
+static constexpr uint32_t kClusterFlag_Debug    = 1u << 1;   // bits 2-3: the debug mode
+static constexpr uint32_t kClusterFlag_SpotCone = 1u << 4;   ///< Spots are assigned by their cone, not their range sphere alone.
 
 /// Point light data for the deferred lighting pass.
 ///

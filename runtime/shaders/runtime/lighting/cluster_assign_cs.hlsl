@@ -7,7 +7,10 @@
 /// the TAA jitter moves the frustum by half a pixel) at the slice's two depths, their world-space
 /// AABB is the conservative cell, and every light whose range sphere touches the AABB is appended to
 /// the cluster's record: points first, then spots, each in index order, so the lighting sums them in
-/// the order the per-pixel loop did. A spot light is tested with its range sphere (no cone test yet).
+/// the order the per-pixel loop did. A spot light is tested with its range sphere and, with
+/// kClusterFlag_SpotCone (r.Lights.ClusterSpotCone, default on), with its cone against the cell's
+/// bounding sphere: the lighting's cone factor is exactly 0 outside the outer angle, so the cull
+/// changes no sum, only the slots.
 /// More lights than slots sets the overflow bit; the lighting then evaluates every light.
 ///
 /// Dispatch X = ceil(clusters / 64).
@@ -111,11 +114,30 @@ void main(uint3 DTid : SV_DispatchThreadID)
             ++count;
         }
     }
+    // The cell's bounding sphere, for the cone test.
+    const float3 cellCentre = 0.5 * (lo + hi);
+    const float  cellRadius = 0.5 * length(hi - lo);
+    const bool   coneCull   = (clusterFlags & kClusterFlag_SpotCone) != 0u;
     [loop]
     for (uint si = 0u; si < spotLightCount; ++si) {
         const float3 p = spotLights[si].position;
         const float3 q = clamp(p, lo, hi) - p;
         if (dot(q, q) <= spotLights[si].radius * spotLights[si].radius) {
+            if (coneCull) {
+                // Cone vs sphere (conservative): the closest distance from the sphere's centre to the
+                // cone's surface, the range front and the apex back. @ref Wronski 2017 "Cull that cone!"
+                const float3 axis  = normalize(spotLights[si].direction);
+                const float  cosA  = spotLights[si].cosOuterAngle;
+                const float  sinA  = sqrt(saturate(1.0 - cosA * cosA));
+                const float3 v     = cellCentre - p;
+                const float  vLenSq = dot(v, v);
+                const float  v1    = dot(v, axis);
+                const float  distClosest = cosA * sqrt(max(vLenSq - v1 * v1, 0.0)) - v1 * sinA;
+                const bool angleCull = distClosest > cellRadius;
+                const bool frontCull = v1 > cellRadius + spotLights[si].radius;
+                const bool backCull  = v1 < -cellRadius;
+                if (angleCull || frontCull || backCull) continue;
+            }
             if (count < slots) list[base + 1u + count] = si | kClusterSpotBit;
             ++count;
         }
