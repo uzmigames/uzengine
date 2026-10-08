@@ -1,5 +1,6 @@
 {
-  "status": "pending",
+  "status": "completed",
   "createdAt": "2026-10-08T13:59:18.101Z",
-  "updatedAt": "2026-10-08T13:59:18.101Z"
+  "updatedAt": "2026-10-08T14:17:56.000Z",
+  "resolution": "done 2026-10-08, commit 975fc3c9: eleven sample meshes (the sphere, seven Sponza meshes, bunny, teapot, test_shard) plus suzanne were wound counter-clockwise against the engine clockwise-front rasterizer and rendered inside-out; repaired in place by scripts/repair_mesh_winding.py (whole-mesh flips) and the LOD tool; test_mesh_winding.py 4/4 (the chrome sphere shows its near hemisphere, its specular matches F x the PMREM to 0.035, Sponza Camera C unchanged)"
 }
