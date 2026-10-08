@@ -1,5 +1,6 @@
 {
-  "status": "pending",
+  "status": "completed",
   "createdAt": "2026-10-08T13:59:18.790Z",
-  "updatedAt": "2026-10-08T13:59:18.790Z"
+  "updatedAt": "2026-10-08T14:23:33.000Z",
+  "resolution": "done 2026-10-08, commit 513e2983: Sponza dirt quads (Masked at 0.3333 -> opaque grey blotches) are mesh decals: a Decal-domain graph on a mesh blends its albedo into the G-buffer by opacity after the opaque draws, no depth / normal / position, not an occluder; test_mesh_decals.py 5/5 (blend identity 0.012, R2 0.99995; positions on the wall; no shadow; Sponza changes only inside the decal footprint; boundary contrast 0.53 -> 0.12)"
 }
